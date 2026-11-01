@@ -228,6 +228,8 @@ impl Tab {
 /// リポジトリのタブを並べる窓。
 pub struct RepoWindow {
     pub window: gtk::ApplicationWindow,
+    /// 窓の番号（Window > Move Tab to Window の移す先を指す）。
+    id: u32,
     notebook: gtk::Notebook,
     tabs: RefCell<Vec<Rc<Tab>>>,
     /// 今、窓に入れているアクションの名前（前のタブを替えたら外す）。
@@ -239,6 +241,10 @@ pub struct RepoWindow {
 thread_local! {
     /// 開いているリポジトリの窓（開いた順）。
     static WINDOWS: RefCell<Vec<Rc<RepoWindow>>> = RefCell::default();
+    /// 次の窓の番号。
+    static NEXT_ID: Cell<u32> = const { Cell::new(1) };
+    /// Window > Move Tab to Window の中身（メニューのある部品と、その中身。窓とタブが変わったら作り直す）。
+    static MOVE_MENUS: RefCell<Vec<(glib::WeakRef<gtk::Widget>, gio::Menu)>> = RefCell::default();
     /// 最後に前にあったリポジトリの窓（Repositories・Quick Open から開く先）。
     static LAST: RefCell<glib::WeakRef<gtk::ApplicationWindow>> = RefCell::default();
     /// 確認用の起動（撮る・測る）か、前回のものを開き直している途中: 開いている窓の記録を書き換えない。
@@ -289,8 +295,10 @@ impl RepoWindow {
             .default_height(760)
             .child(&notebook)
             .build();
+        let id = NEXT_ID.with(|n| n.replace(n.get() + 1));
         let this = Rc::new(Self {
             window: window.clone(),
+            id,
             notebook: notebook.clone(),
             tabs: RefCell::default(),
             installed: RefCell::default(),
@@ -411,6 +419,8 @@ impl RepoWindow {
             return;
         }
         let old = self.shown.replace(Rc::downgrade(tab)).upgrade();
+        // 移す先の名前は前のタブの名前（Window > Move Tab to Window）。
+        glib::idle_add_local_once(refresh_move_menus);
         // 後ろになったタブ（少し後で。切り替えの途中で重い仕事をしない）。
         if let Some(old) = old.filter(|t| !t.closed()) {
             glib::idle_add_local_once(move || {
@@ -482,6 +492,61 @@ pub fn add(host: &Rc<RepoWindow>, tab: &Rc<Tab>, select: bool, position: Option<
         host.show(tab);
     }
     save();
+}
+
+/// Window > Move Tab to Window ▸ の中身を作る（`anchor` はメニューを出すタブの部品。その窓は移す先から除く）。
+/// 窓とタブが変わるたびに作り直す。
+pub fn move_menu(anchor: &impl IsA<gtk::Widget>) -> gio::Menu {
+    let menu = gio::Menu::new();
+    let anchor = anchor.upcast_ref::<gtk::Widget>().downgrade();
+    fill_move_menu(&anchor, &menu);
+    MOVE_MENUS.with(|m| m.borrow_mut().push((anchor, menu.clone())));
+    menu
+}
+
+/// 移す先: 前の窓とは別の窓ごとに 1 つ。その窓で前に出ているタブの名前と、ほかのタブの数で出す（macOS 版と同じ）。
+fn fill_move_menu(anchor: &glib::WeakRef<gtk::Widget>, menu: &gio::Menu) {
+    menu.remove_all();
+    let own = anchor
+        .upgrade()
+        .and_then(|a| a.root())
+        .and_downcast::<gtk::ApplicationWindow>()
+        .and_then(|w| host_of(&w));
+    let others: Vec<Rc<RepoWindow>> = WINDOWS.with(|w| {
+        w.borrow()
+            .iter()
+            .filter(|h| own.as_ref().is_none_or(|o| !Rc::ptr_eq(o, h)))
+            .cloned()
+            .collect()
+    });
+    for host in others {
+        let Some(shown) = host.current() else { continue };
+        let n = host.tabs.borrow().len();
+        let title = if n > 1 {
+            tr!("{name} (+{count})", name = shown.name, count = n - 1)
+        } else {
+            shown.name.clone()
+        };
+        let item = gio::MenuItem::new(Some(&title), None);
+        item.set_action_and_target_value(Some("win.move-tab-to-window"), Some(&host.id.to_variant()));
+        menu.append_item(&item);
+    }
+    if menu.n_items() == 0 {
+        // 押せない「None」（アクションのない項目）。
+        menu.append(Some(&tr!("None")), Some("win.move-tab-to-window-none"));
+    }
+}
+
+/// どの Move Tab to Window ▸ も作り直す（部品がなくなったものは外す）。
+fn refresh_move_menus() {
+    let menus: Vec<(glib::WeakRef<gtk::Widget>, gio::Menu)> = MOVE_MENUS.with(|m| {
+        let mut m = m.borrow_mut();
+        m.retain(|(a, _)| a.upgrade().is_some());
+        m.clone()
+    });
+    for (anchor, menu) in menus {
+        fill_move_menu(&anchor, &menu);
+    }
 }
 
 /// 窓の大きさ（場所 → `[幅, 高さ]` の JSON）。
@@ -936,6 +1001,21 @@ fn install_actions(tab: &Rc<Tab>) {
         target.window.present();
         save();
     });
+    // Window > Move Tab to Window ▸ の項目（移す先の窓の番号）。
+    let to_window = gio::SimpleAction::new("move-tab-to-window", Some(glib::VariantTy::UINT32));
+    let weak = Rc::downgrade(tab);
+    to_window.connect_activate(move |_, value| {
+        let (Some(tab), Some(id)) = (weak.upgrade(), value.and_then(|v| v.get::<u32>())) else {
+            return;
+        };
+        let target = WINDOWS.with(|w| w.borrow().iter().find(|h| h.id == id).cloned());
+        if let Some(target) = target {
+            move_tab(&tab, &target, true);
+            target.window.present();
+            save();
+        }
+    });
+    tab.group.add_action(&to_window);
     add("merge-all-windows", |tab| {
         let Some(host) = tab.host() else { return };
         let others: Vec<Rc<RepoWindow>> = WINDOWS.with(|w| {
@@ -969,6 +1049,7 @@ fn step(tab: &Rc<Tab>, delta: i32) {
 
 /// 開いている窓とタブの並びを覚える（次の起動で開き直す）。
 fn save() {
+    refresh_move_menus();
     if CHECK_RUN.with(Cell::get) || RESTORING.with(Cell::get) {
         return;
     }

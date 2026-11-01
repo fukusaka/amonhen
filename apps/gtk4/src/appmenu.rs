@@ -515,7 +515,7 @@ pub fn install(parts: Parts) -> Buttons {
     window.add_action(&customize);
 
     let primary = gtk::MenuButton::builder()
-        .menu_model(&primary_menu())
+        .menu_model(&primary_menu(&parts.anchor))
         .tooltip_text("Main Menu")
         .primary(true)
         .build();
@@ -596,7 +596,7 @@ fn table_sections(menu: Menu) -> gio::Menu {
     out
 }
 
-fn primary_menu() -> gio::Menu {
+fn primary_menu(anchor: &gtk::Box) -> gio::Menu {
     let menu = gio::Menu::new();
     let submenus = gio::Menu::new();
     let file = menu_of(&[
@@ -650,6 +650,19 @@ fn primary_menu() -> gio::Menu {
             Some((&tr!("Merge All Windows"), "win.merge-all-windows")),
         ]),
     );
+    // Move Tab to Window ▸（ほかの窓ごとに 1 つ。macOS 版と同じく Merge All Windows の後）。
+    if let Some(window) = submenus
+        .item_link(submenus.n_items() - 1, gio::MENU_LINK_SUBMENU)
+        .and_downcast::<gio::Menu>()
+        && let Some(section) = window
+            .item_link(window.n_items() - 1, gio::MENU_LINK_SECTION)
+            .and_downcast::<gio::Menu>()
+    {
+        section.append_submenu(
+            Some(&tr!("Move Tab to Window")),
+            &crate::tabs::move_menu(anchor),
+        );
+    }
     menu.append_section(None, &submenus);
     let app = gio::Menu::new();
     for part in [Menu::App, Menu::Window] {

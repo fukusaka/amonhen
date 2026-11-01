@@ -1683,6 +1683,8 @@
 "Show Previous Tab" = "前のタブを表示";
 "Move Tab to New Window" = "タブを新規ウインドウに移動";
 "Merge All Windows" = "すべてのウインドウを結合";
+"Move Tab to Window" = "タブをウインドウに移動";
+"{name} (+{count})" = "{name}（ほか {count} タブ）";
 "{count} changed files" = "変更のあるファイル {count} 個";
 "{count} commits ahead of upstream" = "上流より {count} コミット先";
 "{count} commits behind upstream" = "上流より {count} コミット後ろ";
