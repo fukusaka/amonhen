@@ -75,15 +75,18 @@ impl Buttons {
         self.worktree.set_visible(name.is_some());
     }
 
-    /// まだ開けていないリポジトリのタブ（つないでいる途中・つなげなかった）: ブランチを「—」にして押せなくする。
+    /// まだ開けていないリポジトリのタブ（つないでいる途中・つなげなかった）: ブランチを「—」にし、リポジトリの
+    /// 名前とともに押せなくする（macOS 版と同じ）。
     pub fn show_unopened(&self) {
         self.branch.set_text("—");
         self.branch_button.set_sensitive(false);
+        self.repository.set_sensitive(false);
     }
 
     /// 今のブランチ、上流との差（↓ 取り込める・↑ 送れる）、stash があるか。
     pub fn show_refs(&self, refs: &RefsSnapshot) {
         self.branch_button.set_sensitive(true);
+        self.repository.set_sensitive(true);
         let head = refs.refs.head_branch.as_deref();
         self.branch.set_text(head.unwrap_or("detached"));
         self.branch_button.set_tooltip_text(Some(&tr!(
