@@ -201,6 +201,12 @@ impl Search {
                 {
                     return;
                 }
+                // まだ探していなければ、欄を開く（macOS 版と同じ）。
+                if i.searched.borrow().is_none() {
+                    bar.set_search_mode(true);
+                    i.entry.grab_focus();
+                    return;
+                }
                 Inner::submit(&i, step)
             });
             group.add_action(&action);
