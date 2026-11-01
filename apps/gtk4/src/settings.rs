@@ -174,6 +174,9 @@ pub fn apply_fsmonitor() {
     });
 }
 
+/// 設定の窓の大きさの覚え場所。
+const WINDOW_SIZE: &str = "settingsWindowSize";
+
 /// git の `fsmonitor--daemon` を使える OS か（macOS と Windows だけ）。
 const FSMONITOR_AVAILABLE: bool = cfg!(any(target_os = "macos", target_os = "windows"));
 
@@ -431,8 +434,10 @@ fn page(sections: &[gtk::Box]) -> gtk::Box {
     b
 }
 
-/// 設定の窓を開く（開いていれば前に出す）。
-pub fn show(parent: &gtk::ApplicationWindow) {
+/// 設定の窓を開く（開いていれば前に出す）。窓はアプリに 1 つで、どの窓のものでもない（macOS 版の
+/// `SettingsWindowController.shared`）。閉じても隠すだけで、中身（SSH 先のつながりなど）は残す。`near` は
+/// 初めて出すときの画面を決めるだけ。
+pub fn show(near: &impl IsA<gtk::Widget>) {
     if let Some(w) = WINDOW.with(|w| w.borrow().upgrade()) {
         // 出し直すたびに読み直す（端末やほかの窓で変えた git の設定・新しい SSH 先。macOS 版と同じ）。
         if let Some(settings) = GIT_SETTINGS.with(|s| s.borrow().upgrade()) {
@@ -707,22 +712,37 @@ pub fn show(parent: &gtk::ApplicationWindow) {
         .title(tr!("Settings"))
         .default_width(660)
         .child(&stack)
-        .transient_for(parent)
-        .destroy_with_parent(true)
+        .hide_on_close(true)
         .build();
     window.set_titlebar(Some(&header));
+    window.set_display(&WidgetExt::display(near));
+    // 大きさは覚えておく（macOS 版は位置も。GTK では窓の位置はウィンドウマネージャーが決める）。
+    if let Some((w, h)) = string(WINDOW_SIZE).as_deref().and_then(parse_size) {
+        window.set_default_size(w, h);
+    }
+    window.connect_close_request(|window| {
+        let (w, h) = window.default_size();
+        if w > 0 && h > 0 {
+            set_string(WINDOW_SIZE, &format!("{w}x{h}"));
+        }
+        glib::Propagation::Proceed
+    });
     WINDOW.with(|w| w.replace(window.downgrade()));
     window.present();
 }
 
-/// `widget` のある窓の、もとの窓（Settings を出す先）。リポジトリの窓の中のページならその窓、別の窓（Settings
-/// など）ならその親。
-pub fn main_window_of(widget: &impl IsA<gtk::Widget>) -> Option<gtk::ApplicationWindow> {
-    let root = widget.root().and_downcast::<gtk::Window>()?;
-    root.clone()
-        .downcast::<gtk::ApplicationWindow>()
-        .ok()
-        .or_else(|| root.transient_for().and_downcast())
+/// 出ている設定の窓（撮るときに使う）。
+pub fn window() -> Option<gtk::Window> {
+    WINDOW
+        .with(|w| w.borrow().upgrade())
+        .filter(|w| w.is_visible())
+}
+
+/// 覚えておいた窓の大きさ（`幅x高さ`）。小さすぎるものは使わない。
+fn parse_size(s: &str) -> Option<(i32, i32)> {
+    let (w, h) = s.split_once('x')?;
+    let (w, h) = (w.parse::<i32>().ok()?, h.parse::<i32>().ok()?);
+    (w > 200 && h > 150).then_some((w, h))
 }
 
 /// 開いている設定の窓のタブ（`git` など）を選ぶ（確認用）。`git/programs` なら Git のタブのそのページ、

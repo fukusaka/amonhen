@@ -682,10 +682,8 @@ impl RepoSettings {
                 None => "git/programs".to_owned(),
             };
             git.connect_clicked(move |b| {
-                if let Some(parent) = crate::settings::main_window_of(b) {
-                    crate::settings::show(&parent);
-                    crate::settings::select(&page);
-                }
+                crate::settings::show(b);
+                crate::settings::select(&page);
             });
             left.append(&git);
             this.on_refresh(move |s| {

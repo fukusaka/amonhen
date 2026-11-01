@@ -857,10 +857,8 @@ impl Browser {
 
     /// Settings の窓を出して、`target`（`settings::select` の形）を選ぶ。
     fn show_settings(&self, target: &str) {
-        if let Some(parent) = crate::settings::main_window_of(&self.root) {
-            crate::settings::show(&parent);
-            crate::settings::select(target);
-        }
+        crate::settings::show(&self.root);
+        crate::settings::select(target);
     }
 
     /// 絞り込みの欄に入る（ページを前に出したとき）。
@@ -1212,7 +1210,10 @@ impl Browser {
         let settings = gio::SimpleAction::new("settings", None);
         let weak = Rc::downgrade(self);
         settings.connect_activate(move |_, _| {
-            if let Some(w) = weak.upgrade().and_then(|b| b.window().downcast().ok()) {
+            if let Some(w) = weak
+                .upgrade()
+                .and_then(|b| b.window().downcast::<gtk::ApplicationWindow>().ok())
+            {
                 crate::settings::show(&w);
             }
         });

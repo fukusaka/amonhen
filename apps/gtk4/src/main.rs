@@ -3099,6 +3099,7 @@ fn after_first_show(
     args: &Args,
 ) {
     let pending = pending.clone();
+    let settings_shown = args.settings.is_some();
     if let Some(png) = args.snapshot.clone() {
         // 見えている行が読めて、レーンが落ち着くまで待ってから撮る。
         glib::timeout_add_local(
@@ -3127,7 +3128,10 @@ fn after_first_show(
                             .filter_map(|w| w.downcast::<gtk::Window>().ok())
                             .find(|w| w.is_visible() && w.transient_for().as_ref() == Some(parent))
                     };
-                    let mut target: gtk::Window = window.clone().upcast();
+                    // `--settings` なら設定の窓（どの窓のものでもない）から。
+                    let mut target: gtk::Window = settings::window()
+                        .filter(|_| settings_shown)
+                        .unwrap_or_else(|| window.clone().upcast());
                     while let Some(front) = on(&target) {
                         target = front;
                     }

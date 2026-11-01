@@ -859,11 +859,9 @@ pub(crate) fn commits_page(s: &Rc<RepoSettings>) -> gtk::Box {
     let edit_shared = gtk::Button::with_label(&tr!("Edit Shared Template…"));
     edit_shared.connect_clicked(|b| {
         // 共有のテンプレートを直すのは Settings > Git > Commits。
-        if let Some(parent) = crate::settings::main_window_of(b) {
-            crate::settings::select("git/commits");
-            crate::settings::show(&parent);
-            crate::settings::select("git/commits");
-        }
+        crate::settings::select("git/commits");
+        crate::settings::show(b);
+        crate::settings::select("git/commits");
     });
     let make_own = gtk::Button::with_label(&tr!("Edit for This Repository"));
     let (w, e) = (s.weak(), row.error.clone());
