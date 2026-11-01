@@ -199,10 +199,18 @@ impl MessageAids {
     }
 
     /// リポジトリを開いた（読み直した）: 最近のコミットを読み、下書きか、なければテンプレートを入れる。
+    /// 書き込む先の worktree を切り替えたとき（下書きの鍵が変わったとき）も、その worktree の下書きに入れ替える
+    /// （前の worktree の下書きは打つたびに覚えてある）。
     pub fn set_repo(self: &Rc<Self>, repo: Arc<Repository>) {
         let first = self.repo.borrow().is_none();
+        let before = self.draft_key();
         self.repo.replace(Some(repo.clone()));
         if first {
+            self.restore_draft_or_template();
+        } else if self.draft_key() != before {
+            self.set_texts("", "");
+            self.cursor.set(-1);
+            self.before_recall.replace(None);
             self.restore_draft_or_template();
         }
         // 最近のコミット 30 個のメッセージと作者（一覧と Co-authored-by の候補）。
