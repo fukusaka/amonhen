@@ -15,7 +15,7 @@ use gtk::prelude::*;
 use gtk::{gio, glib};
 use serde_json::{Value, json};
 
-use crate::details::Details;
+use crate::commitpane::CommitPane;
 use crate::diff::{self, DiffWidget};
 use crate::history::HistoryView;
 use crate::menu::{self, Item};
@@ -131,9 +131,8 @@ pub struct RangeDiff {
     pair_title: gtk::Label,
     pair_note: gtk::Label,
     pair_diff: DiffWidget,
-    details: Rc<Details>,
-    commit_diff: DiffWidget,
-    commit_column: gtk::Paned,
+    /// コミットの中身（History の右の列と同じ）。
+    commit: Rc<CommitPane>,
     /// 選び直したら増やし、古い結果を捨てる。
     shown_generation: Rc<Cell<u64>>,
     /// 一覧を作り直している間は、選択の変化で右の欄を読み直さない。
@@ -237,20 +236,12 @@ impl RangeDiff {
         pair_page.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         pair_page.append(&pair_scrolled);
 
-        let details = Rc::new(Details::new());
-        details.show_style_switch();
-        let commit_diff = DiffWidget::default();
-        let commit_scrolled = gtk::ScrolledWindow::builder().child(&commit_diff).build();
-        let commit_column = gtk::Paned::new(gtk::Orientation::Vertical);
-        commit_column.set_start_child(Some(&details.root));
-        commit_column.set_end_child(Some(&commit_scrolled));
-        commit_column.set_resize_start_child(false);
-        commit_column.set_position(170);
+        let commit = CommitPane::new(pending.clone());
 
         let right = gtk::Stack::new();
         right.set_transition_type(gtk::StackTransitionType::None);
         right.add_named(&pair_page, Some("pair"));
-        right.add_named(&commit_column, Some("commit"));
+        right.add_named(&commit.root, Some("commit"));
 
         let root = gtk::Paned::new(gtk::Orientation::Horizontal);
         root.set_start_child(Some(&left));
@@ -277,9 +268,7 @@ impl RangeDiff {
             pair_title,
             pair_note,
             pair_diff,
-            details,
-            commit_diff,
-            commit_column,
+            commit,
             shown_generation: Rc::default(),
             filling: Cell::new(false),
             on_show_in_history: RefCell::default(),
@@ -439,12 +428,7 @@ impl RangeDiff {
     pub fn connect_show_in_history(self: &Rc<Self>, f: impl Fn(Oid) + 'static) {
         let f: Rc<dyn Fn(Oid)> = Rc::new(f);
         self.on_show_in_history.replace(Some(f.clone()));
-        let weak = Rc::downgrade(self);
-        self.details.connect_links(
-            Rc::new(move || weak.upgrade().and_then(|r| r.repo())),
-            f,
-            None,
-        );
+        self.commit.connect_select_commit(f);
     }
 
     /// 次に比べたら `select` の行を選び、`menu` の行の右クリックのメニューを出す（確認用。メニューの項目は
@@ -661,8 +645,6 @@ impl RangeDiff {
         let g = self.shown_generation.get() + 1;
         self.shown_generation.set(g);
         self.pair_diff.clear();
-        self.commit_diff.clear();
-        self.details.clear();
         let Some(pair) = pair else {
             self.right.set_visible_child_name("pair");
             self.pair_title
@@ -673,8 +655,9 @@ impl RangeDiff {
         if pair.status != "changed" {
             self.right.set_visible_child_name("commit");
             let side = pair.new.as_ref().or(pair.old.as_ref());
-            if let Some(id) = side.and_then(|s| Oid::from_hex(&s.oid)) {
-                self.load_commit(id, g);
+            match (self.repo(), side.and_then(|s| Oid::from_hex(&s.oid))) {
+                (Some(repo), Some(id)) => self.commit.show(repo, id, false),
+                _ => self.commit.clear(),
             }
             return;
         }
@@ -708,79 +691,6 @@ impl RangeDiff {
     /// 選び直しの世代を、裏の読み込みから確かめるための弱い参照（画面を持ち続けない）。
     fn shown_generation_ref(&self) -> std::rc::Weak<Cell<u64>> {
         Rc::downgrade(&self.shown_generation)
-    }
-
-    /// コミットの詳細（すぐ読める分・時間のかかる分）と差分を読んで出す（History の右の列と同じ）。
-    fn load_commit(&self, id: Oid, g: u64) {
-        let Some(repo) = self.repo() else { return };
-        let details = self.details.clone();
-        let generation = self.shown_generation_ref();
-        let column = self.commit_column.downgrade();
-        let pending = self.pending.clone();
-        let current = move || generation.upgrade().is_some_and(|c| c.get() == g);
-        let fit = {
-            let (column, details) = (column.clone(), details.clone());
-            move || {
-                if let Some(column) = column.upgrade() {
-                    crate::fit_details(&column, details.clone());
-                }
-            }
-        };
-        pending.set(pending.get() + 3);
-        let (r, p, d, c, f) = (
-            repo.clone(),
-            pending.clone(),
-            details.clone(),
-            current.clone(),
-            fit.clone(),
-        );
-        glib::spawn_future_local(async move {
-            let info =
-                gio::spawn_blocking(move || r.commit_info(&id).map_err(|e| e.to_string())).await;
-            p.set(p.get() - 1);
-            match info {
-                Ok(Ok(info)) if c() => {
-                    d.show(&info);
-                    f();
-                }
-                Ok(Err(e)) => eprintln!("コミットの詳細を読めない: {e}"),
-                _ => {}
-            }
-        });
-        let (r, p, d, c) = (repo.clone(), pending.clone(), details, current.clone());
-        glib::spawn_future_local(async move {
-            let extras =
-                gio::spawn_blocking(move || r.commit_extras(&id).map_err(|e| e.to_string())).await;
-            p.set(p.get() - 1);
-            match extras {
-                Ok(Ok(extras)) if c() => {
-                    d.show_extras(&extras);
-                    fit();
-                }
-                Ok(Err(e)) => eprintln!("コミットの詳細を読めない: {e}"),
-                _ => {}
-            }
-        });
-        let weak = self.commit_diff.downgrade();
-        glib::spawn_future_local(async move {
-            let result = gio::spawn_blocking(move || {
-                let changes = repo.commit_changes(&id).map_err(|e| e.to_string())?;
-                let stacked = repo.stacked_diff(&changes).map_err(|e| e.to_string())?;
-                let view = diff::View::build(&stacked, &[]);
-                Ok::<_, String>((Arc::new(diff::Source(stacked, None)), view))
-            })
-            .await;
-            pending.set(pending.get() - 1);
-            match result {
-                Ok(Ok((source, view))) if current() => {
-                    if let Some(diff) = weak.upgrade() {
-                        diff.show(source, view);
-                    }
-                }
-                Ok(Err(e)) => eprintln!("差分を読めない: {e}"),
-                _ => {}
-            }
-        });
     }
 
     /// サイドバーの Range Diff の行の右クリックのメニュー。

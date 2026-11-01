@@ -16,6 +16,7 @@ mod cipopover;
 mod commitfiles;
 mod commitmsg;
 mod commitops;
+mod commitpane;
 mod configtable;
 mod connecting;
 mod details;

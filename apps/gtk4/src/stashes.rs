@@ -16,8 +16,7 @@ use gtk::{gdk, gio, glib};
 use serde_json::{Value, json};
 
 use crate::actions::Actions;
-use crate::details::Details;
-use crate::diff::{self, DiffWidget};
+use crate::commitpane::CommitPane;
 use crate::menu::{self, Item};
 use crate::{sheets, titles};
 
@@ -102,13 +101,10 @@ struct Inner {
     /// 今のブランチ。ほかのブランチで作った stash は、ブランチの名前を薄くして見分ける。
     current_branch: RefCell<Option<String>>,
     buttons: Vec<gtk::Button>,
-    details: Rc<Details>,
-    diff: DiffWidget,
-    right: gtk::Paned,
+    /// 右の列（History の詳細と同じ）。
+    pane: Rc<CommitPane>,
     /// 裏で読んでいる数（`--snapshot` はなくなるまで待つ）。
     pending: Rc<Cell<u32>>,
-    /// 選び直したら増やし、古い結果を捨てる。
-    generation: Cell<u64>,
     /// 行を作り直している間は、選択の変化を知らせない。
     rebuilding: Cell<bool>,
     /// 作った行（使い回される）。情報が届いたら、一覧を入れ替えずにこれを書き直す。
@@ -173,20 +169,13 @@ impl Stashes {
         left.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         left.append(&scrolled);
 
-        // 右の列: 選んだ stash の詳細と差分（History と同じ）。
-        let details = Rc::new(Details::new());
-        details.show_style_switch();
-        let diff = DiffWidget::default();
-        let diff_scrolled = gtk::ScrolledWindow::builder().child(&diff).build();
-        let right = gtk::Paned::new(gtk::Orientation::Vertical);
-        right.set_start_child(Some(&details.root));
-        right.set_end_child(Some(&diff_scrolled));
-        right.set_resize_start_child(false);
-        right.set_position(170);
+        // 右の列: 選んだ stash の詳細と、変更ファイルと差分（History と同じ）。
+        let pane = CommitPane::new(pending.clone());
+        pane.clear();
 
         let root = gtk::Paned::new(gtk::Orientation::Horizontal);
         root.set_start_child(Some(&left));
-        root.set_end_child(Some(&right));
+        root.set_end_child(Some(&pane.root));
         root.set_shrink_start_child(false);
         root.set_resize_start_child(false);
         root.set_position(360);
@@ -203,11 +192,8 @@ impl Stashes {
             bases_request: Cell::new(0),
             current_branch: RefCell::default(),
             buttons,
-            details,
-            diff,
-            right,
+            pane,
             pending,
-            generation: Cell::new(0),
             rebuilding: Cell::new(false),
             bound: RefCell::default(),
         });
@@ -261,12 +247,7 @@ impl Stashes {
     /// 詳細の親（土台）・メッセージの中の ID を押したら `f(ID)` を呼ぶ（History でそのコミットを選ぶ。macOS 版の
     /// `stashes.detail.onSelectCommit`）。
     pub fn connect_select_commit(&self, f: impl Fn(Oid) + 'static) {
-        let weak = Rc::downgrade(&self.inner);
-        self.inner.details.connect_links(
-            Rc::new(move || weak.upgrade().and_then(|i| i.repo.borrow().clone())),
-            Rc::new(f),
-            None,
-        );
+        self.inner.pane.connect_select_commit(Rc::new(f));
     }
 
     pub fn set_repo(&self, repo: Arc<Repository>) {
@@ -398,52 +379,10 @@ impl Inner {
     /// 選んだ stash の詳細（作者・メッセージ・土台）と中身（作業中の変更と untracked のファイル）を裏で読む。
     fn show_selected(self: &Rc<Self>) {
         self.update_buttons();
-        let g = self.generation.get() + 1;
-        self.generation.set(g);
-        self.details.clear();
-        self.diff.clear();
-        let (Some(stash), Some(repo)) = (self.selected(), self.repo.borrow().clone()) else {
-            return;
-        };
-        let id = stash.id;
-        self.pending.set(self.pending.get() + 1);
-        let (this, r) = (self.clone(), repo.clone());
-        glib::spawn_future_local(async move {
-            let info =
-                gio::spawn_blocking(move || r.commit_info(&id).map_err(|e| e.to_string())).await;
-            this.pending.set(this.pending.get() - 1);
-            if this.generation.get() != g {
-                return;
-            }
-            match info {
-                Ok(Ok(info)) => {
-                    this.details.show(&info);
-                    crate::fit_details(&this.right, this.details.clone());
-                }
-                Ok(Err(e)) => eprintln!("stash の詳細を読めない: {e}"),
-                Err(_) => {}
-            }
-        });
-        self.pending.set(self.pending.get() + 1);
-        let this = self.clone();
-        glib::spawn_future_local(async move {
-            let result = gio::spawn_blocking(move || {
-                let changes = repo.stash_changes(&id).map_err(|e| e.to_string())?;
-                let stacked = repo.stacked_diff(&changes).map_err(|e| e.to_string())?;
-                let view = diff::View::build(&stacked, &[]);
-                Ok::<_, String>((Arc::new(diff::Source(stacked, None)), view))
-            })
-            .await;
-            this.pending.set(this.pending.get() - 1);
-            if this.generation.get() != g {
-                return;
-            }
-            match result {
-                Ok(Ok((source, view))) => this.diff.show(source, view),
-                Ok(Err(e)) => eprintln!("stash の差分を読めない: {e}"),
-                Err(_) => {}
-            }
-        });
+        match (self.selected(), self.repo.borrow().clone()) {
+            (Some(stash), Some(repo)) => self.pane.show(repo, stash.id, true),
+            _ => self.pane.clear(),
+        }
     }
 
     /// まだ読んでいない stash のコミットの情報を裏で読む。

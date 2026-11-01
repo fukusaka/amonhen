@@ -8,13 +8,12 @@ use std::sync::Arc;
 
 use amonhen_core::Repository;
 use amonhen_model::{Oid, tr};
+use gtk::glib;
 use gtk::prelude::*;
-use gtk::{gio, glib};
 use serde_json::{Value, json};
 
 use crate::actions::Actions;
-use crate::details::Details;
-use crate::diff::{self, DiffWidget};
+use crate::commitpane::CommitPane;
 use crate::menu::{self, Item};
 
 /// reflog の 1 行（コアの `reflog` の答えの `entries` の 1 つ）。
@@ -57,13 +56,10 @@ struct Inner {
     list: gtk::ListView,
     branch_button: gtk::Button,
     checkout_button: gtk::Button,
-    details: Rc<Details>,
-    diff: DiffWidget,
-    right: gtk::Paned,
+    /// 右の列（History の詳細と同じ）。
+    pane: Rc<CommitPane>,
     /// 読み直しの番号（古い答えを捨てる）。
     request: Cell<u64>,
-    /// 詳細と差分の番号（選び直したら古い結果を捨てる）。
-    generation: Cell<u64>,
     /// 見えていない間に変わった（次に出すときに読み直す）。
     stale: Cell<bool>,
     /// 行を入れ替えている間（選択の変化を知らせない）。
@@ -124,20 +120,13 @@ impl ReflogView {
         left.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         left.append(&scrolled);
 
-        // 右の列: History の詳細と同じ欄（詳細と差分）。
-        let details = Rc::new(Details::new());
-        details.show_style_switch();
-        let diff = DiffWidget::default();
-        let diff_scrolled = gtk::ScrolledWindow::builder().child(&diff).build();
-        let right = gtk::Paned::new(gtk::Orientation::Vertical);
-        right.set_start_child(Some(&details.root));
-        right.set_end_child(Some(&diff_scrolled));
-        right.set_resize_start_child(false);
-        right.set_position(170);
+        // 右の列: History の詳細と同じ欄（詳細と、変更ファイルと差分）。
+        let pane = CommitPane::new(pending.clone());
+        pane.clear();
 
         let root = gtk::Paned::new(gtk::Orientation::Horizontal);
         root.set_start_child(Some(&left));
-        root.set_end_child(Some(&right));
+        root.set_end_child(Some(&pane.root));
         root.set_resize_start_child(false);
         root.set_shrink_start_child(false);
         root.set_position(420);
@@ -151,11 +140,8 @@ impl ReflogView {
             list,
             branch_button,
             checkout_button,
-            details,
-            diff,
-            right,
+            pane,
             request: Cell::new(0),
-            generation: Cell::new(0),
             stale: Cell::new(true),
             replacing: Cell::new(false),
             pending,
@@ -165,12 +151,9 @@ impl ReflogView {
         });
         inner.connect_factory(&factory);
         // 詳細の親・子・メッセージの中の ID は、History でそのコミットを選ぶ（macOS 版と同じ）。
-        let weak = Rc::downgrade(&inner);
-        inner.details.connect_links(
-            Rc::new(move || weak.upgrade().and_then(|i| i.repo.borrow().clone())),
-            inner.on_show_in_history.clone(),
-            None,
-        );
+        inner
+            .pane
+            .connect_select_commit(inner.on_show_in_history.clone());
         let weak = Rc::downgrade(&inner);
         inner.selection.connect_selected_notify(move |_| {
             if let Some(inner) = weak.upgrade()
@@ -430,64 +413,13 @@ impl Inner {
     /// 選んだ行のコミットの詳細と差分を、裏で読んで出す。
     fn show_selected(self: &Rc<Self>) {
         self.update_buttons();
-        let g = self.generation.get() + 1;
-        self.generation.set(g);
-        self.details.clear();
-        self.diff.clear();
-        let (Some(repo), Some(id)) = (
+        match (
             self.repo.borrow().clone(),
             self.selected().and_then(|e| Oid::from_hex(&e.new)),
-        ) else {
-            return;
-        };
-        // すぐ読める分を先に、時間のかかる分（署名の検証・含むブランチなど）と差分はその後に。
-        for extras in [false, true] {
-            self.pending.set(self.pending.get() + 1);
-            let (this, repo) = (self.clone(), repo.clone());
-            glib::spawn_future_local(async move {
-                let value = gio::spawn_blocking(move || {
-                    if extras {
-                        repo.commit_extras(&id)
-                    } else {
-                        repo.commit_info(&id)
-                    }
-                    .map_err(|e| e.to_string())
-                })
-                .await;
-                this.pending.set(this.pending.get() - 1);
-                if this.generation.get() != g {
-                    return;
-                }
-                match value {
-                    Ok(Ok(value)) if extras => this.details.show_extras(&value),
-                    Ok(Ok(value)) => this.details.show(&value),
-                    Ok(Err(e)) => eprintln!("コミットの詳細を読めない: {e}"),
-                    Err(_) => return,
-                }
-                crate::fit_details(&this.right, this.details.clone());
-            });
+        ) {
+            (Some(repo), Some(id)) => self.pane.show(repo, id, false),
+            _ => self.pane.clear(),
         }
-        self.pending.set(self.pending.get() + 1);
-        let this = self.clone();
-        glib::spawn_future_local(async move {
-            // History にないコミット（どのブランチにもない）もあるので、History の行ではなくコミットから読む。
-            let result = gio::spawn_blocking(move || {
-                let changes = repo.commit_changes(&id).map_err(|e| e.to_string())?;
-                let stacked = repo.stacked_diff(&changes).map_err(|e| e.to_string())?;
-                let view = diff::View::build(&stacked, &[]);
-                Ok::<_, String>((Arc::new(diff::Source(stacked, None)), view))
-            })
-            .await;
-            this.pending.set(this.pending.get() - 1);
-            if this.generation.get() != g {
-                return;
-            }
-            match result {
-                Ok(Ok((source, view))) => this.diff.show(source, view),
-                Ok(Err(e)) => eprintln!("差分を読めない: {e}"),
-                Err(_) => {}
-            }
-        });
     }
 
     /// 行の右クリックのメニュー（macOS 版の `menuNeedsUpdate` と同じ並び）。

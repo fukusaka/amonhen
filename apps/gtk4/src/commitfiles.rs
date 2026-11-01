@@ -149,8 +149,9 @@ impl Prepared {
         Self::from_changes(repo.clone(), changes, viewed, all)
     }
 
-    /// コミットの変更ファイル `changes` から作る（`commit` と、見せ方を変えたとき）。裏のスレッドで呼ぶ。
-    fn from_changes(
+    /// コミットの変更ファイル `changes` から作る（`commit` と、見せ方を変えたとき、Stashes・Reflog・Range Diff の
+    /// 詳細）。裏のスレッドで呼ぶ。
+    pub fn from_changes(
         repo: Arc<Repository>,
         changes: Vec<FileChange>,
         viewed: &HashSet<String>,
