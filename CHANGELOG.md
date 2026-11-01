@@ -704,6 +704,9 @@ First release.
 
 #### Added
 
+- History has a search field with the app's syntax (`author:`, `path:`, `contents:`, `after:` …), highlighting and
+  moving between matches, and Matching Only; it needs the engine. In a partial clone a `contents:` search first says
+  how many file contents it will fetch.
 - Merge Branches… in the Command Palette merges several branches or tags in one commit, as `git merge a b c` does,
   showing the conflicts expected for each first; it offers to merge them one by one when git couldn't.
 

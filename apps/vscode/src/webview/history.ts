@@ -1,11 +1,12 @@
 /**
  * メインビューの History 画面。左にコミットの一覧とグラフ、右に選んだコミットの詳細を出す。
  * 一覧は見えている行だけを描く仮想スクロールで、グラフは行ごとの canvas に描く。
- * 末尾に近づいたら次のページを要求する。
+ * git で読むときは、末尾に近づいたら次のページを要求する。daemon の History は行の数が分かっているので、見えている
+ * ところのまだない行をまとめて要求する（離れた行へもすぐ移れる）。
  */
 import type { FileDiff } from '../diff/fileDiff.ts';
 import { type LaneMetrics, lanePositions } from '../history/lanes.ts';
-import type { CommitDetails, MessageEdit, Person, RowData, Scope } from '../history/protocol.ts';
+import type { CommitDetails, MessageEdit, Person, RowData, Scope, SearchState } from '../history/protocol.ts';
 import type { HostMessage } from '../view/protocol.ts';
 import { el, formatDate, getState, post, updateState, type View } from './api.ts';
 import { renderDiffBody } from './diffView.ts';
@@ -27,6 +28,8 @@ const LANES: LaneMetrics = {
 const OVERSCAN = 8;
 /** 末尾からこの行数以内に来たら次を読む */
 const PREFETCH = 50;
+/** daemon の History で、1 回に頼む行の数（拡張ホストの PAGE と同じ） */
+const CHUNK = 200;
 const PALETTE = [
   '--vscode-charts-blue',
   '--vscode-charts-green',
@@ -81,8 +84,28 @@ export function createHistoryView(): View {
     }
     scopeSelect.value = scope;
   }
+  // 検索（daemon の History のときだけ）。構文はコアのもの
+  const search = el('div', 'search');
+  search.hidden = true;
+  const searchInput = el('input');
+  searchInput.type = 'search';
+  searchInput.placeholder = 'Search';
+  searchInput.setAttribute('aria-label', 'Search History');
+  searchInput.title =
+    'Words, author:, subject:, commit:, path:, contents:, after:, before:, AND, OR and ( ).\nEnter: next match, Shift+Enter: previous match, Escape: clear';
+  const searchCount = el('span', 'search-count');
+  const previousMatch = el('button', 'icon-button', '∧');
+  previousMatch.title = 'Previous Match (Shift+Enter)';
+  const nextMatch = el('button', 'icon-button', '∨');
+  nextMatch.title = 'Next Match (Enter)';
+  const matchingOnlyLabel = el('label', 'matching-only');
+  const matchingOnly = el('input');
+  matchingOnly.type = 'checkbox';
+  matchingOnlyLabel.append(matchingOnly, 'Matching Only');
+  matchingOnlyLabel.title = 'Show only the matching commits';
+  search.append(searchInput, searchCount, previousMatch, nextMatch, matchingOnlyLabel);
   const status = el('span', 'status');
-  toolbar.append(scopeSelect, status);
+  toolbar.append(scopeSelect, search, status);
   const body = el('div', 'split');
   const list = el('div', 'list');
   list.tabIndex = 0;
@@ -94,10 +117,20 @@ export function createHistoryView(): View {
   body.append(list, splitter, detailsPane);
   root.append(toolbar, body);
 
-  let rows: RowData[] = [];
+  /** 行。daemon の History では行の数だけの長さで、まだ届いていない行は空 */
+  let rows: (RowData | undefined)[] = [];
+  /** daemon の History（行の数が分かっていて、飛び飛びに頼む） */
+  let sparse = false;
+  /** 頼んで届いていない、daemon の History の区切り（CHUNK 行ずつの始め） */
+  let pendingChunks = new Set<number>();
   let done = false;
   let requested = false;
   let selected = -1;
+  /** 検索の様子と、一致した行（一致だけの History では空。すべての行が一致） */
+  let searchState: SearchState | undefined;
+  let matchSet = new Set<number>();
+  /** 最後に頼んだ問い合わせ。同じなら Enter で次の一致へ */
+  let submitted = '';
   let colors: string[] = [];
   let frame = 0;
 
@@ -119,15 +152,29 @@ export function createHistoryView(): View {
     spacer.style.height = `${rows.length * ROW_HEIGHT}px`;
     const first = Math.max(0, Math.floor(list.scrollTop / ROW_HEIGHT) - OVERSCAN);
     const last = Math.min(rows.length, Math.ceil((list.scrollTop + list.clientHeight) / ROW_HEIGHT) + OVERSCAN);
-    // レーンは描く範囲に合わせて並べ（点のあるレーンは広く、線だけのレーンは細く）、列は上限までに収める
-    const lanes = lanePositions(rows.slice(first, last).map((r) => r.graph), LANES);
+    // レーンは描く範囲に合わせて並べ（点のあるレーンは広く、線だけのレーンは細く）、列は上限までに収める。
+    // まだ届いていない行は飛ばす
+    const lanes = lanePositions(
+      rows.slice(first, last).map((r) => r?.graph),
+      LANES,
+    );
     const graph = {
       width: Math.min(GRAPH_MAX_WIDTH, GRAPH_INSET + Math.max(lanes.width, LANE_WIDTH)),
       centers: lanes.centers,
     };
     const elements: HTMLElement[] = [];
     for (let i = first; i < last; i++) {
-      elements.push(renderRow(rows[i]!, i, graph));
+      const row = rows[i];
+      if (row) {
+        elements.push(renderRow(row, i, graph));
+      } else if (sparse) {
+        // まだ届いていない行は、その区切りを頼む
+        const chunk = Math.floor(i / CHUNK) * CHUNK;
+        if (!pendingChunks.has(chunk)) {
+          pendingChunks.add(chunk);
+          post({ type: 'range', start: chunk, count: CHUNK });
+        }
+      }
     }
     spacer.replaceChildren(...elements);
 
@@ -141,6 +188,7 @@ export function createHistoryView(): View {
   function renderRow(row: RowData, index: number, graph: GraphColumn): HTMLElement {
     const el = document.createElement('div');
     el.className = index === selected ? 'row selected' : 'row';
+    if (matchSet.has(index)) el.classList.add('match');
     el.style.top = `${index * ROW_HEIGHT}px`;
     el.dataset.index = String(index);
     // Webview の右クリックメニュー（package.json の webview/context）に渡す情報
@@ -220,6 +268,8 @@ export function createHistoryView(): View {
 
   let selectTimer = 0;
   let shownOid: string | undefined;
+  /** History を切り替えたあと、最初の行が届いたら選んだ行を見せる */
+  let revealOnRows = false;
 
   function select(index: number, reveal: boolean): void {
     if (index < 0 || index >= rows.length) {
@@ -229,12 +279,101 @@ export function createHistoryView(): View {
     requestDetails();
     if (reveal) {
       const top = index * ROW_HEIGHT;
-      if (top < list.scrollTop) {
+      const far = top + ROW_HEIGHT < list.scrollTop - list.clientHeight || top > list.scrollTop + 2 * list.clientHeight;
+      if (far) {
+        // 離れた行（検索の一致など）は、真ん中に出す
+        spacer.style.height = `${rows.length * ROW_HEIGHT}px`;
+        list.scrollTop = top - (list.clientHeight - ROW_HEIGHT) / 2;
+      } else if (top < list.scrollTop) {
         list.scrollTop = top;
       } else if (top + ROW_HEIGHT > list.scrollTop + list.clientHeight) {
         list.scrollTop = top + ROW_HEIGHT - list.clientHeight;
       }
     }
+    scheduleRender();
+  }
+
+  /** 一致した行（一致だけの History では、すべての行） */
+  function matchRows(): readonly number[] | undefined {
+    return searchState && !searchState.error && !searchState.matchingOnly ? searchState.rows : undefined;
+  }
+
+  /** 次（step が 1）か前（-1）の一致へ。今選んでいる行の下（上）で、いちばん近いもの。端では反対の端へ */
+  function moveMatch(step: number): void {
+    if (searchState?.matchingOnly) {
+      if (rows.length > 0) select((selected + step + rows.length) % rows.length, true);
+      return;
+    }
+    const matches = matchRows();
+    if (!matches || matches.length === 0) {
+      return;
+    }
+    let target: number | undefined;
+    if (step > 0) {
+      target = matches.find((r) => r > selected) ?? matches[0];
+    } else {
+      for (let i = matches.length - 1; i >= 0; i--) {
+        if (matches[i]! < selected) {
+          target = matches[i];
+          break;
+        }
+      }
+      target ??= matches[matches.length - 1];
+    }
+    if (target !== undefined) select(target, true);
+    showSearchCount();
+  }
+
+  /** 件数の欄: 探している途中なら分かった数と割合、終われば何番目か */
+  function showSearchCount(): void {
+    const s = searchState;
+    searchCount.title = '';
+    searchCount.classList.toggle('error', !!s?.error);
+    if (!s || !s.query) {
+      searchCount.textContent = '';
+    } else if (s.error) {
+      searchCount.textContent = s.error;
+      searchCount.title = s.error;
+    } else if (s.searching) {
+      const found = s.rows.length > 0 ? `${s.rows.length.toLocaleString()} found` : 'Searching…';
+      searchCount.textContent = s.done > 0 ? `${found} (${Math.floor(s.done * 100)}%)` : found;
+    } else {
+      const total = s.matchingOnly ? rows.length : s.rows.length;
+      if (total === 0) {
+        searchCount.textContent = 'No matches';
+      } else {
+        const index = s.matchingOnly ? selected : s.rows.indexOf(selected);
+        searchCount.textContent =
+          index >= 0 ? `${(index + 1).toLocaleString()} of ${total.toLocaleString()}` : `${total.toLocaleString()} found`;
+      }
+    }
+    const navigable = !!s && !s.error && !s.searching && (s.matchingOnly ? rows.length > 0 : s.rows.length > 0);
+    previousMatch.disabled = !navigable;
+    nextMatch.disabled = !navigable;
+  }
+
+  function submitSearch(step: number): void {
+    const query = searchInput.value.trim();
+    if (query && query === submitted && searchState && !searchState.searching && !searchState.error) {
+      moveMatch(step);
+      return;
+    }
+    submitted = query;
+    post({ type: 'search', query, matchingOnly: matchingOnly.checked, selected: Math.max(0, selected) });
+  }
+
+  function onSearchState(state: SearchState): void {
+    // 探し終えたところか（途中の答えのあと、または一致だけの切り替え）
+    const finished =
+      !state.searching && (!searchState || searchState.searching || searchState.query !== state.query);
+    searchState = state;
+    if (!state.query) submitted = '';
+    matchSet = state.matchingOnly ? new Set() : new Set(state.rows);
+    // 探し終えたら、選んでいる行から下で、いちばん近い一致へ
+    if (finished && !state.error && !state.matchingOnly && state.rows.length > 0 && !matchSet.has(selected)) {
+      moveMatch(1);
+    }
+    showSearchCount();
     scheduleRender();
   }
 
@@ -298,6 +437,7 @@ export function createHistoryView(): View {
     if (!oid || oid === shownOid) {
       return;
     }
+    if (searchState?.query) showSearchCount();
     clearTimeout(selectTimer);
     selectTimer = window.setTimeout(() => post({ type: 'select', oid }), 60);
   }
@@ -341,7 +481,7 @@ export function createHistoryView(): View {
         link.title = p;
         link.addEventListener('click', (e) => {
           e.preventDefault();
-          const index = rows.findIndex((r) => r.oid === p);
+          const index = rows.findIndex((r) => r?.oid === p);
           if (index >= 0) select(index, true);
         });
         parents.append(link, ' ');
@@ -478,9 +618,34 @@ export function createHistoryView(): View {
       select(Math.min(rows.length - 1, Math.max(0, selected + moves[e.key]!)), true);
     } else if (e.key === 'Enter' && rows[selected]) {
       post({ type: 'open', oid: rows[selected]!.oid });
+    } else if (e.key === 'F3' && searchState?.query) {
+      e.preventDefault();
+      moveMatch(e.shiftKey ? -1 : 1);
     }
   });
   scopeSelect.addEventListener('change', () => post({ type: 'scope', scope: scopeSelect.value as Scope }));
+  searchInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      submitSearch(e.shiftKey ? -1 : 1);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      searchInput.value = '';
+      submitSearch(1);
+      list.focus();
+    }
+  });
+  // × で消したとき
+  searchInput.addEventListener('search', () => {
+    if (!searchInput.value && submitted) submitSearch(1);
+  });
+  previousMatch.addEventListener('click', () => moveMatch(-1));
+  nextMatch.addEventListener('click', () => moveMatch(1));
+  matchingOnly.addEventListener('change', () => {
+    if (submitted) {
+      post({ type: 'search', query: submitted, matchingOnly: matchingOnly.checked, selected: Math.max(0, selected) });
+    }
+  });
 
   // ドラッグでの並べ替え。編集できるコミットの上にだけ落とせる
   let dragging: RowData | undefined;
@@ -553,21 +718,50 @@ export function createHistoryView(): View {
     switch (message.type) {
       case 'reset':
         rows = [];
+        sparse = false;
+        pendingChunks = new Set();
         done = false;
         requested = true;
-        selected = -1;
-        clearDetails();
+        matchSet = new Set();
         setScope(message.scope);
-        list.scrollTop = 0;
+        if (message.select !== undefined) {
+          // 一致だけの History との切り替え: 同じコミットを選んだまま、行が届いたら詳細を出し直す
+          selected = message.select;
+          shownOid = undefined;
+          revealOnRows = true;
+        } else {
+          selected = -1;
+          clearDetails();
+          list.scrollTop = 0;
+        }
         break;
       case 'rows':
-        rows.splice(message.start, rows.length - message.start, ...message.rows);
+        if (message.total !== undefined) {
+          if (!sparse || rows.length !== message.total) {
+            rows = new Array<RowData | undefined>(message.total);
+            sparse = true;
+          }
+          message.rows.forEach((row, i) => (rows[message.start + i] = row));
+          pendingChunks.delete(message.start);
+        } else {
+          rows.splice(message.start, rows.length - message.start, ...message.rows);
+        }
         done = message.done;
         requested = false;
         if (selected < 0 && rows.length > 0) {
           selected = 0;
-          requestDetails();
         }
+        if (revealOnRows && selected >= 0) {
+          revealOnRows = false;
+          select(Math.min(selected, rows.length - 1), true);
+        }
+        requestDetails();
+        break;
+      case 'searchable':
+        search.hidden = !message.searchable;
+        break;
+      case 'search':
+        onSearchState(message.state);
         break;
       case 'busy':
         root.classList.toggle('busy', message.busy);

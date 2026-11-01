@@ -54,6 +54,11 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
 
 - History・差分・Working Copy・書き込みは daemon を通す。daemon は History・検索の索引・SSH のつながりを持ち続け、
   アプリ・CLI と分け合う。
+- History の行の数が分かっているので、Webview は画面に入る行だけを頼み（`historyRows` で 200 行ずつ）、離れた一致へも
+  手前を読まずに移れる。History の検索はコアのもの（`historySearch`、アプリと同じ書き方）で、この経路だけにある。
+  `contents:` の検索は `historySearchPartial` を 300 ms ごとに読んで分かった一致から色を付け、partial clone では
+  `historyContentsToFetch` の数を出して先に確かめる（上限を超えれば絞るよう頼む）。Matching Only はコアの一致だけの
+  History（`historyMatching`）に替え、選んでいるコミットは選んだままにする。
 - Undo の記録は、コアと同じファイル・同じ形（`<git dir>/amonhen/undo.json`）。コアが記録する操作を拡張がもう一度
   記録しないよう、`delegation.ts` で分ける。
 - 合うエンジンがないとき、`amonhen.daemon.enabled` を切ったときは、拡張の git 実行層で動く。下の git の起動・`cat-file`・

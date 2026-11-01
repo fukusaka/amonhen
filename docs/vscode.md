@@ -57,6 +57,12 @@ is in [front.md](front.md), and the design in item 18 of
 
 - History, diffs, the Working Copy and writes go through the daemon. The daemon keeps the History, the search index and
   SSH connections, and shares them with the app and the CLI.
+- Knowing the History's row count, the webview asks only for the rows coming into view (`historyRows` by 200), so it
+  can jump to a match far down without loading what lies before it. History search is the core's (`historySearch`,
+  the app's syntax) and exists only on this path. A `contents:` search polls `historySearchPartial` every 300 ms to
+  color the matches found so far, and in a partial clone asks first with the count from `historyContentsToFetch`
+  (over the limit, it asks to narrow the search). Matching Only swaps in the core's History of the matches
+  (`historyMatching`), keeping the selected commit.
 - The Undo log is the same file in the same format as the core's (`<git dir>/amonhen/undo.json`). `delegation.ts` keeps
   operations the core already records from being recorded again by the extension.
 - Without a matching engine, or with `amonhen.daemon.enabled` off, everything runs on the extension's own git execution

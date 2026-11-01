@@ -812,6 +812,41 @@ suite('Amon Hen in VSCode', () => {
     );
   });
 
+  test('searches History through the daemon, and shows only the matches keeping the selection', async () => {
+    const mark = posted.length;
+    const panel = await showView('amonhen.showHistory');
+    await panel.history.reset();
+    await waitPosted('searchable', mark, (m) => m.searchable);
+    const total = (await waitPosted('rows', mark, (m) => m.total !== undefined)).total!;
+    const query = 'subject:crlf';
+    await panel.history.handle({ type: 'search', query, matchingOnly: false, selected: 0 });
+    const { state } = await waitPosted('search', mark, (m) => m.state.query === query && !m.state.searching);
+    assert.ok(state.rows.length > 0 && !state.error, JSON.stringify(state));
+    // 行は飛び飛びに頼める（離れた一致へ移るとき）
+    const last = state.rows[state.rows.length - 1]!;
+    let at = posted.length;
+    await panel.history.handle({ type: 'range', start: last, count: 1 });
+    assert.match((await waitPosted('rows', at, (m) => m.start === last)).rows[0]!.subject, /crlf/i);
+    // 一致だけの History にしても、選んでいたコミットを選んだまま
+    at = posted.length;
+    await panel.history.handle({ type: 'search', query, matchingOnly: true, selected: last });
+    assert.equal((await waitPosted('reset', at, (m) => m.select !== undefined)).select, state.rows.length - 1);
+    const only = await waitPosted('rows', at, (m) => m.total !== undefined);
+    assert.equal(only.total, state.rows.length);
+    assert.ok(only.rows.every((r) => /crlf/i.test(r.subject)));
+    assert.ok((await waitPosted('search', at, (m) => !m.state.searching)).state.matchingOnly);
+    // 検索をやめると、もとの History の同じコミットに戻る
+    at = posted.length;
+    await panel.history.handle({ type: 'search', query: '', matchingOnly: true, selected: state.rows.length - 1 });
+    assert.equal((await waitPosted('reset', at, (m) => m.select !== undefined)).select, last);
+    assert.equal((await waitPosted('rows', at, (m) => m.total !== undefined)).total, total);
+    // 構文の誤りは件数の欄に出す
+    at = posted.length;
+    await panel.history.handle({ type: 'search', query: 'after:yesterday-ish', matchingOnly: false, selected: 0 });
+    assert.ok((await waitPosted('search', at, (m) => !m.state.searching)).state.error);
+    await panel.history.handle({ type: 'search', query: '', matchingOnly: false, selected: 0 });
+  });
+
   test('shows names from the mailmap through the daemon and reloads them when it changes', async () => {
     await mailmapFlow();
   });
@@ -908,6 +943,15 @@ suite('Amon Hen in VSCode', () => {
 
   test('edits History on the git execution layer', async () => {
     await editFlow('git');
+  });
+
+  test('has no History search on the git execution layer', async () => {
+    const mark = posted.length;
+    const panel = await showView('amonhen.showHistory');
+    await panel.history.reset();
+    await waitPosted('searchable', mark, (m) => !m.searchable);
+    const rows = await waitPosted('rows', mark);
+    assert.equal(rows.total, undefined);
   });
 
   test('shows names from the mailmap on the git execution layer', async () => {
