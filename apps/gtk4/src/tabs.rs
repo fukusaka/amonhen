@@ -283,6 +283,7 @@ impl RepoWindow {
     pub fn new(app: &gtk::Application) -> Rc<Self> {
         let view = adw::TabView::new();
         view.set_vexpand(true);
+        keep_text_shortcuts(&view);
         let bar = adw::TabBar::new();
         bar.set_view(Some(&view));
         // タブが 1 つなら帯を隠す（View > Show Tab Bar で出す）。
@@ -1203,6 +1204,30 @@ fn step(tab: &Rc<Tab>, delta: i32) {
 }
 
 /// `view` の中の、中身が `child` のページ。
+/// Ctrl+Home・Ctrl+End（Shift 付きも）は、文字の欄で先頭・末尾へ動く（選ぶ）キー。TabView の既定では窓のどこでも
+/// 最初・最後のタブへの切り替えに取られ、コミットメッセージの編集中に押すとタブが変わる。macOS 版のタブにもないので
+/// 外す（`shortcuts` は libadwaita 1.2 から。なければそのまま）。
+fn keep_text_shortcuts(view: &adw::TabView) {
+    let Some(spec) = view.find_property("shortcuts") else {
+        return;
+    };
+    let Some(class) = glib::FlagsClass::with_type(spec.value_type()) else {
+        return;
+    };
+    let value = class
+        .builder_with_value(view.property_value("shortcuts"))
+        .and_then(|b| {
+            b.unset_by_nick("control-home")
+                .unset_by_nick("control-end")
+                .unset_by_nick("control-shift-home")
+                .unset_by_nick("control-shift-end")
+                .build()
+        });
+    if let Some(value) = value {
+        view.set_property_from_value("shortcuts", &value);
+    }
+}
+
 fn page_of(view: &adw::TabView, child: &impl IsA<gtk::Widget>) -> Option<adw::TabPage> {
     let child = child.upcast_ref::<gtk::Widget>();
     (0..view.n_pages())
