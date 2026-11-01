@@ -110,6 +110,20 @@ pub fn menu(
     items.push(menu::action(tr!("Copy Commit ID"), move || {
         w.clipboard().set_text(&h);
     }));
+    // このコミットを指すブランチ・タグの名前（リモートブランチは origin/ を付けたまま。5 つまで。macOS 版と同じ）。
+    if let Some(view) = widget.downcast_ref::<crate::history::HistoryView>() {
+        for (name, kind) in view.ref_names(id).into_iter().take(5) {
+            let title = if kind == amonhen_model::RefKind::Tag {
+                tr!("Copy Tag Name “{name}”", name = name)
+            } else {
+                tr!("Copy Branch Name “{name}”", name = name)
+            };
+            let w = widget.clone();
+            items.push(menu::action(title, move || {
+                w.clipboard().set_text(&name);
+            }));
+        }
+    }
     items
 }
 

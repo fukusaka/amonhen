@@ -462,6 +462,8 @@
 "Drop {commit}?" = "{commit} を取り除きますか？";
 "You can Undo this." = "Undo で戻せます。";
 "Copy Commit ID" = "コミット ID をコピー";
+"Copy Branch Name “{name}”" = "ブランチ名「{name}」をコピー";
+"Copy Tag Name “{name}”" = "タグ名「{name}」をコピー";
 "Cherry-pick {count} Commits (oldest first)" = "Cherry-pick {count} Commits（古い順）";
 "Revert {count} Commits (newest first)" = "Revert {count} Commits（新しい順）";
 "Copy Commit IDs" = "コミット ID をコピー";

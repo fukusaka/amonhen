@@ -683,6 +683,15 @@ impl HistoryView {
         self.queue_draw();
     }
 
+    /// `id` を指すブランチ・タグの名前と種類（行の札と同じ順。worktree の札は除く）。
+    pub fn ref_names(&self, id: &Oid) -> Vec<(String, RefKind)> {
+        self.state()
+            .ref_labels
+            .get(id)
+            .map(|list| list.iter().map(|l| (l.name.clone(), l.kind)).collect())
+            .unwrap_or_default()
+    }
+
     /// 各 worktree の HEAD の札（コミット、札の文字、書き込む先か）と、ほかの worktree が checkout している
     /// ブランチ（緑の札にする）。worktree が 1 つなら空で呼ぶ。
     pub fn set_worktrees(&self, heads: Vec<(Oid, String, bool)>, elsewhere: HashSet<String>) {
