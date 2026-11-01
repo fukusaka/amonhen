@@ -29,6 +29,7 @@ mod filepicker;
 mod filetools;
 mod github;
 mod graph;
+mod hangwatch;
 mod history;
 mod historydisplay;
 mod historyedit;
@@ -395,6 +396,8 @@ fn main() -> glib::ExitCode {
     app.connect_startup(|app| {
         // 一緒に配ったエンジンを置き、共有の daemon に使うエンジンを決める（動いているアプリのプロセスだけで）。
         prepare_engine();
+        // 開発用: メインスレッドが止まった瞬間を記録する（`AMONHEN_HANG_LOG`）。
+        hangwatch::start_if_requested();
         gtk::Window::set_default_icon_name(APP_ID);
         // ショートカットと Quit は、リポジトリのページしかない起動でも効くように最初に。
         appmenu::install_app(app);
