@@ -1723,7 +1723,12 @@ impl Inner {
         if let Some(refs) = &refs {
             let tags = self.tags.borrow();
             if filtering {
-                groups.extend(filtered_groups(refs, &self.filter.borrow(), tags.as_ref()));
+                groups.extend(filtered_groups(
+                    refs,
+                    &self.filter.borrow(),
+                    tags.as_ref(),
+                    self.groups.borrow().as_ref(),
+                ));
             } else {
                 let branch_groups = self.groups.borrow();
                 // ほかの worktree が checkout しているブランチ（Inactive に畳まない）。
@@ -2385,11 +2390,12 @@ fn groups_of(
 }
 
 /// 絞り込み中の見出し: 名前が `words` をすべて含むブランチ・リモートブランチ・タグを、名前のまま平らに
-/// （フォルダや積み重ねにはしない）。
+/// （フォルダや積み重ねにはしない）。ブランチの印と吹き出しは、絞り込んでいないときと同じ。
 fn filtered_groups(
     refs: &Refs,
     words: &[String],
     tags: Option<&TagRemotes>,
+    branch_groups: Option<&BranchGroups>,
 ) -> Vec<(&'static str, gio::ListStore)> {
     let head = refs.head_branch.as_deref();
     let remotes = tags.map_or_else(
@@ -2417,10 +2423,11 @@ fn filtered_groups(
         matched.sort_by(|a, b| a.name.cmp(&b.name));
         let store = gio::ListStore::new::<Node>();
         for e in matched {
-            let mut d = ref_data(e, &e.name, icon, head, None);
+            let mut d = ref_data(e, &e.name, icon, head, branch_groups);
             if kind == RefKind::Tag {
                 finish_tag(&mut d, tags, &remotes);
             }
+            finish_branch(&mut d);
             store.append(&Node::new(d, None));
         }
         groups.push((title, store));
