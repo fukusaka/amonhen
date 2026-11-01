@@ -347,6 +347,13 @@ pub fn button(
             g(row, Place::Tab);
         }
     });
+    // Esc: 欄（SearchEntry）が先に受けて popover まで届かないので、ここで閉じる（Quick Open・ブランチの切り替えと同じ）。
+    let p = popover.downgrade();
+    filter.connect_stop_search(move |_| {
+        if let Some(p) = p.upgrade() {
+            p.popdown();
+        }
+    });
     let p = popover.downgrade();
     all.connect_clicked(move |_| {
         if let Some(p) = p.upgrade() {
