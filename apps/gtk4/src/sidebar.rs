@@ -1627,7 +1627,15 @@ impl Inner {
                 groups.extend(filtered_groups(refs, &self.filter.borrow(), tags.as_ref()));
             } else {
                 let branch_groups = self.groups.borrow();
-                let (built, pinned) = groups_of(refs, branch_groups.as_ref(), tags.as_ref());
+                // ほかの worktree が checkout しているブランチ（Inactive に畳まない）。
+                let elsewhere: HashSet<&str> = worktrees
+                    .list
+                    .iter()
+                    .filter(|w| w.key != worktrees.editing)
+                    .filter_map(|w| w.branch.as_deref())
+                    .collect();
+                let (built, pinned) =
+                    groups_of(refs, branch_groups.as_ref(), tags.as_ref(), &elsewhere);
                 self.pinned.replace(pinned);
                 groups.extend(built);
             }
@@ -1966,7 +1974,8 @@ fn finish_branch(data: &mut Data) {
 /// - お気に入り（★。決めた順。積んだブランチでも入れ子にせず、ここに平らに出す）
 /// - 今のブランチ（その積み重ねの根元ごと）と既定のブランチ
 /// - 動いているブランチ（新しい順。`/` の名前はフォルダ）
-/// - Inactive（最後のコミットから 90 日以上。畳んでおく）
+/// - Inactive（最後のコミットから 90 日以上。畳んでおく。ほかの worktree が checkout しているもの（`elsewhere`）は
+///   入れない）
 /// - Archived（手でアーカイブしたもの。畳んでおく）
 ///
 /// ほかのブランチの上に積んだブランチは、その土台のブランチの行の下に入れ子で出す（↳ の印）。
@@ -1974,6 +1983,7 @@ fn branch_rows(
     locals: &[&RefEntry],
     head: Option<&str>,
     groups: Option<&BranchGroups>,
+    elsewhere: &HashSet<&str>,
 ) -> (Vec<Row>, Vec<String>) {
     let leaf = |e: &RefEntry, title: &str, icon: icon::Kind| {
         let mut d = ref_data(e, title, icon, head, groups);
@@ -2109,9 +2119,10 @@ fn branch_rows(
             top.push(e);
         } else if archived(&e.name) {
             archive.push(e);
-        } else if fact(&e.name)
-            .and_then(|f| f.time)
-            .is_some_and(|t| now - t > STALE_DAYS * 86_400)
+        } else if !elsewhere.contains(e.name.as_str())
+            && fact(&e.name)
+                .and_then(|f| f.time)
+                .is_some_and(|t| now - t > STALE_DAYS * 86_400)
         {
             inactive.push(e);
         } else {
@@ -2180,6 +2191,7 @@ fn groups_of(
     refs: &Refs,
     branch_groups: Option<&BranchGroups>,
     tags: Option<&TagRemotes>,
+    elsewhere: &HashSet<&str>,
 ) -> (Vec<(&'static str, gio::ListStore)>, Vec<String>) {
     let tag_remotes = tags.map_or_else(
         || branch_remotes(refs),
@@ -2190,7 +2202,7 @@ fn groups_of(
     let mut groups = Vec::new();
 
     let locals: Vec<&RefEntry> = of(RefKind::Local).collect();
-    let (rows, pinned) = branch_rows(&locals, head, branch_groups);
+    let (rows, pinned) = branch_rows(&locals, head, branch_groups, elsewhere);
     if !rows.is_empty() {
         groups.push(("Branches", store(rows)));
     }
