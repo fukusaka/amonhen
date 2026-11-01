@@ -383,6 +383,25 @@ pub fn host_of(location: &str) -> Option<String> {
     Some(rest.split('/').next().unwrap_or_default().to_owned())
 }
 
+/// ページの Save の Ctrl+S（macOS 版の `keyboardShortcut("s")`）: フォーカスがページのどこにあっても効く
+/// （窓が受ける）。ページが出ていて Save を押せるときだけ。付けるのはページのいちばん外の部品。
+pub(crate) fn save_shortcut(save: &gtk::Button, f: impl Fn() + 'static) -> gtk::ShortcutController {
+    let shortcuts = gtk::ShortcutController::new();
+    shortcuts.set_scope(gtk::ShortcutScope::Managed);
+    let save = save.downgrade();
+    shortcuts.add_shortcut(gtk::Shortcut::new(
+        gtk::ShortcutTrigger::parse_string("<Control>s"),
+        Some(gtk::CallbackAction::new(move |page, _| {
+            if !page.is_mapped() || !save.upgrade().is_some_and(|b| b.is_sensitive()) {
+                return glib::Propagation::Proceed;
+            }
+            f();
+            glib::Propagation::Stop
+        })),
+    ));
+    shortcuts
+}
+
 /// 色（テーマの色を使う）。
 fn install_css() {
     thread_local! {
@@ -1681,16 +1700,9 @@ impl RepoSettings {
         };
         let f = do_save.clone();
         save.connect_clicked(move |_| f());
-        let shortcuts = gtk::ShortcutController::new();
+        // Ctrl+S はページのどこからでも（macOS 版の keyboardShortcut）。
         let f = do_save.clone();
-        shortcuts.add_shortcut(gtk::Shortcut::new(
-            gtk::ShortcutTrigger::parse_string("<Control>s"),
-            Some(gtk::CallbackAction::new(move |_, _| {
-                f();
-                glib::Propagation::Stop
-            })),
-        ));
-        editor.add_controller(shortcuts);
+        let shortcuts = save_shortcut(&save, move || f());
         // 読んだ中身に戻して、ファイルを読み直す（外で変わっていれば、その中身になる。macOS 版と同じ）。
         let (s2, b2, w) = (saved.clone(), buffer.clone(), self.weak());
         revert.connect_clicked(move |_| {
@@ -1729,6 +1741,7 @@ impl RepoSettings {
         b.set_margin_end(20);
         b.append(&rows);
         b.append(&column);
+        b.add_controller(shortcuts);
         b
     }
 

@@ -928,15 +928,8 @@ pub(crate) fn commits_page(s: &Rc<RepoSettings>) -> gtk::Box {
     };
     let f = do_save.clone();
     save.connect_clicked(move |_| f());
-    let shortcuts = gtk::ShortcutController::new();
-    shortcuts.add_shortcut(gtk::Shortcut::new(
-        gtk::ShortcutTrigger::parse_string("<Control>s"),
-        Some(gtk::CallbackAction::new(move |_, _| {
-            do_save();
-            glib::Propagation::Stop
-        })),
-    ));
-    editor.add_controller(shortcuts);
+    // Ctrl+S はページのどこからでも（macOS 版の keyboardShortcut）。
+    let shortcuts = crate::reposettings::save_shortcut(&save, move || do_save());
     // 読んだ中身に戻して、ファイルを読み直す（外で変わっていれば、その中身になる。macOS 版と同じ）。
     let (s2, b2, w) = (saved.clone(), buffer.clone(), s.weak());
     revert.connect_clicked(move |_| {
@@ -1062,6 +1055,7 @@ pub(crate) fn commits_page(s: &Rc<RepoSettings>) -> gtk::Box {
     });
     let page = table_page(&[column.upcast_ref()]);
     page.insert_action_group("templates", library.as_ref());
+    page.add_controller(shortcuts);
     page
 }
 
