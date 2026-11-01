@@ -1438,11 +1438,14 @@ pub fn push(
             sheet.add(&push_preview(&repo, &state.outgoing, &lost, range));
         }
         let replace = force || diverged;
-        sheet.buttons(
-            if replace { "Force Push" } else { "Push" },
-            replace,
-            diverged.then_some("Pull…"),
-        );
+        if diverged {
+            // Cancel・Pull…・Force Push の順。Force Push は Return では押せず、Return は Pull…（macOS 版と同じ）。
+            sheet.button(&tr!("Cancel"), Response::Cancel, None);
+            sheet.button("Pull…", Response::Other, Some(Style::Suggested));
+            sheet.button("Force Push", Response::Ok, Some(Style::Destructive));
+        } else {
+            sheet.buttons(if replace { "Force Push" } else { "Push" }, replace, None);
+        }
         match sheet.run().await {
             Response::Ok => {
                 let (remote, remote_branch) = upstream
