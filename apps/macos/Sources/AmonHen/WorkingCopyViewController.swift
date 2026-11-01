@@ -241,6 +241,12 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         files.delegate = self
         // Space か Enter で、選んだファイルを次のコミットに含める・外す。
         files.onToggle = { [weak self] in self?.toggleSelected() }
+        // ⌫ か Delete で、選んだファイルの変更を捨てる（確かめてから。docs/ux.md の Working Copy）。
+        files.onDiscard = { [weak self] in
+            guard let self else { return }
+            guard let entry = files.item(atRow: files.selectedRow) as? Entry else { return NSSound.beep() }
+            discardFile(entry)
+        }
         let fileMenu = NSMenu()
         fileMenu.delegate = self
         files.menu = fileMenu
@@ -1696,14 +1702,18 @@ final class BarAndContentView: NSView {
     }
 }
 
-/// Space・Enter で選んだファイルを次のコミットに含める・外す一覧。
+/// Space・Enter で選んだファイルを次のコミットに含める・外し、⌫・Delete で変更を捨てる一覧。
 final class KeyOutlineView: NSOutlineView {
     var onToggle: (() -> Void)?
+    var onDiscard: (() -> Void)?
 
     override func keyDown(with event: NSEvent) {
         switch event.charactersIgnoringModifiers {
         case " ", "\r":
             onToggle?()
+        // ⌫（delete）と ⌦（forward delete、NSDeleteFunctionKey）。
+        case "\u{7f}", "\u{f728}":
+            onDiscard?()
         default:
             super.keyDown(with: event)
         }
