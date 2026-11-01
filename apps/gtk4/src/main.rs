@@ -2527,15 +2527,21 @@ fn connect_sidebar(
             _ => {}
         }
         // ブランチ・タグを選ぶと、その履歴に絞り込む（上流と分かれていれば上流も一緒に辿り、先にある・
-        // 遅れているコミットを両方出す。macOS 版の `sidebar.onSelect`）。
-        if let sidebar::Item::Ref(e) = &data.item
+        // 遅れているコミットを両方出す。macOS 版の `sidebar.onSelect`）。プルリクエストは、そのブランチが
+        // 手元にあればその履歴に。
+        let entry = match &data.item {
+            sidebar::Item::Ref(e) => Some(e),
+            sidebar::Item::PullRequest(_, branch) => branch.as_deref(),
+            _ => None,
+        };
+        if let Some(e) = entry
             && let Some(shaper) = shaper.upgrade()
             && shaper.scope_to_ref(e, true)
         {
             pages.set_visible_child_name("history");
             return;
         }
-        // ほかのもの（プルリクエストのブランチ）は、今の History にあればそのコミットを選ぶ。
+        // 絞り込めなかったもの（History の準備ができていない）は、今の History にあればそのコミットを選ぶ。
         if let Some(target) = sidebar::target(data) {
             jump_to(&pages, &view, target, &Rc::new(Cell::new(0)), &Weak::new());
         }

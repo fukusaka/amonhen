@@ -51,8 +51,9 @@ pub enum Item {
     Ref(RefEntry),
     /// Working Copy の下の worktree（選ぶと書き込む先にする）。
     Worktree(crate::worktrees::Info),
-    /// Pull Requests の下のプルリクエストと、そのブランチ（手元にあれば）が指すコミット。
-    PullRequest(Box<PullRequest>, Option<Oid>),
+    /// Pull Requests の下のプルリクエストと、そのブランチ（手元にあれば。リモートブランチ、なければローカル
+    /// ブランチ）。
+    PullRequest(Box<PullRequest>, Option<Box<RefEntry>>),
 }
 
 /// 行の右端のアイコン（取り込み済み・gone など）。意味はツールチップの先頭に出す。
@@ -2806,7 +2807,7 @@ pub fn target(data: &Data) -> Option<Oid> {
     match &data.item {
         Item::Ref(e) => e.target,
         // プルリクエストのブランチが手元にあれば、その先頭。
-        Item::PullRequest(_, target) => *target,
+        Item::PullRequest(_, branch) => branch.as_ref().and_then(|e| e.target),
         _ => None,
     }
 }
@@ -2815,9 +2816,9 @@ pub fn target(data: &Data) -> Option<Oid> {
 fn pull_request_rows(list: &[PullRequest], refs: Option<&Refs>) -> gio::ListStore {
     let store = gio::ListStore::new::<Node>();
     for pr in list {
-        // ブランチが手元にあれば（リモートブランチ、なければローカルブランチ）、選ぶとその先頭へ。
+        // ブランチが手元にあれば（リモートブランチ、なければローカルブランチ）、選ぶとその履歴に絞り込む。
         let entries = refs.map_or(&[][..], |r| &r.entries[..]);
-        let target = entries
+        let branch = entries
             .iter()
             .find(|e| {
                 e.kind == RefKind::Remote && e.name.ends_with(&format!("/{}", pr.head_ref_name))
@@ -2827,7 +2828,7 @@ fn pull_request_rows(list: &[PullRequest], refs: Option<&Refs>) -> gio::ListStor
                     .iter()
                     .find(|e| e.kind == RefKind::Local && e.name == pr.head_ref_name)
             })
-            .and_then(|e| e.target);
+            .map(|e| Box::new(e.clone()));
         let ci = pr.ci();
         let badge: Vec<&str> = [pr.is_draft.then_some("draft"), Some(pr.ci_mark())]
             .into_iter()
@@ -2847,7 +2848,7 @@ fn pull_request_rows(list: &[PullRequest], refs: Option<&Refs>) -> gio::ListStor
                 Ci::Passing => Some("success"),
                 _ => None,
             },
-            item: Item::PullRequest(Box::new(pr.clone()), target),
+            item: Item::PullRequest(Box::new(pr.clone()), branch),
             ..Data::default()
         };
         store.append(&Node::new(data, None));
