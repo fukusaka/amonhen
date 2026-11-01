@@ -570,9 +570,15 @@ fn build_tab(
     if !tabs::is_check_run() {
         repos::record(&path);
     }
-    // 窓の名前: リポジトリのフォルダーの名前（daemon・SSH 越しなら、場所の最後の部分と接続先）。
+    // 窓の名前: Repositories で付けた名前（Rename…）があればそれ、なければリポジトリのフォルダーの名前（daemon・
+    // SSH 越しなら、場所の最後の部分と接続先。macOS 版の `displayName`）。
     let text = path.to_string_lossy().into_owned();
-    let name = if amonhen_remote::location::is_remote(&text) {
+    let renamed = bookmarks::bookmark(&text)
+        .and_then(|b| b.name)
+        .filter(|n| !n.is_empty());
+    let name = if let Some(renamed) = renamed {
+        renamed
+    } else if amonhen_remote::location::is_remote(&text) {
         let last = text
             .trim_end_matches('/')
             .rsplit('/')
