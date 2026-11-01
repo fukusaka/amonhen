@@ -277,7 +277,7 @@ pub fn menu_many(
         widget.clone(),
         commits
             .iter()
-            .map(|(o, _)| o[..10].to_owned())
+            .map(|(o, _)| crate::titles::short(o).to_owned())
             .collect::<Vec<_>>(),
     );
     items.push(menu::action(tr!("Copy Short IDs"), move || {
