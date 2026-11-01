@@ -815,6 +815,8 @@ impl Opener {
             self.pages.upgrade()?,
             self.sidebar.upgrade()?,
         );
+        // リポジトリをまだ読んでいなければ比べられないので、画面も替えない（前の中身を見せない）。
+        view.repo()?;
         sidebar.set_range_diff_shown(true);
         sidebar.select_page(Page::RangeDiff);
         pages.set_visible_child_name(PAGE);
