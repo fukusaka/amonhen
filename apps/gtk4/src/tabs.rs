@@ -236,6 +236,8 @@ pub struct RepoWindow {
     installed: RefCell<Vec<String>>,
     /// 窓に出しているタブ。
     shown: RefCell<Weak<Tab>>,
+    /// タブが 1 つでもタブの帯を出す（View > Show Tab Bar。帯のタブをつかんでほかの窓に移せる。macOS 版と同じ）。
+    tab_bar: Cell<bool>,
 }
 
 thread_local! {
@@ -293,6 +295,8 @@ impl RepoWindow {
         }
         plus.set_action_name(Some("win.new-tab"));
         notebook.set_action_widget(&plus, gtk::PackType::End);
+        // タブはつかんでほかの窓の帯に落とせる。窓の外に落とすと新しい窓になる（macOS 版のタブと同じ）。
+        notebook.set_group_name(Some(TAB_GROUP));
         let window = gtk::ApplicationWindow::builder()
             .application(app)
             .title("Amon Hen")
@@ -308,6 +312,7 @@ impl RepoWindow {
             tabs: RefCell::default(),
             installed: RefCell::default(),
             shown: RefCell::default(),
+            tab_bar: Cell::new(false),
         });
         WINDOWS.with(|w| w.borrow_mut().push(this.clone()));
         // 窓の大きさは、そのリポジトリごとに覚える（macOS 版の窓の frame と同じ。GNOME では位置は決められない
@@ -340,6 +345,23 @@ impl RepoWindow {
             }
         });
         notebook.connect_page_reordered(|_, _, _| save());
+        // ほかの窓からタブを落とされた（つかんで運ばれた）: そのタブを、元の窓からこの窓のものにする。
+        let weak = Rc::downgrade(&this);
+        notebook.connect_page_added(move |_, page, _| {
+            if let Some(this) = weak.upgrade() {
+                this.adopt(page);
+            }
+        });
+        // 窓の外に落とされた: 新しい窓を作り、そこに入れる。
+        notebook.connect_create_window(|notebook, _| {
+            let app = notebook
+                .root()
+                .and_downcast::<gtk::ApplicationWindow>()
+                .and_then(|w| w.application())?;
+            let target = RepoWindow::new(&app);
+            target.window.present();
+            Some(target.notebook.clone())
+        });
         let weak = Rc::downgrade(&this);
         window.connect_close_request(move |_| {
             if let Some(this) = weak.upgrade() {
@@ -469,9 +491,62 @@ impl RepoWindow {
         }
     }
 
-    /// タブの帯は、タブが 2 つ以上のときだけ出す（macOS 版と同じ）。
+    /// タブの帯は、タブが 2 つ以上のときか、View > Show Tab Bar で出したときだけ出す（macOS 版と同じ）。帯を
+    /// 隠せるのはタブが 1 つのときだけ。
     fn update_tabs_bar(&self) {
-        self.notebook.set_show_tabs(self.notebook.n_pages() > 1);
+        let alone = self.notebook.n_pages() <= 1;
+        self.notebook.set_show_tabs(!alone || self.tab_bar.get());
+        for tab in self.tabs.borrow().iter() {
+            if let Some(action) = tab
+                .group
+                .lookup_action("toggle-tab-bar")
+                .and_downcast::<gio::SimpleAction>()
+            {
+                action.set_enabled(alone);
+            }
+        }
+    }
+
+    /// ほかの窓から運ばれてきたページを、この窓のタブにする（元の窓からは外す。空になった窓は閉じる）。
+    fn adopt(self: &Rc<Self>, page: &gtk::Widget) {
+        if self.tab_of(page).is_some() {
+            return;
+        }
+        let Some((source, tab)) = WINDOWS.with(|w| {
+            w.borrow().iter().find_map(|h| {
+                let tab = h.tab_of(page)?;
+                Some((h.clone(), tab))
+            })
+        }) else {
+            return;
+        };
+        source.tabs.borrow_mut().retain(|t| !Rc::ptr_eq(t, &tab));
+        if source
+            .shown
+            .borrow()
+            .upgrade()
+            .is_some_and(|t| Rc::ptr_eq(&t, &tab))
+        {
+            source.shown.replace(Weak::new());
+            if let Some(next) = source.current() {
+                source.show(&next);
+            }
+        }
+        source.update_tabs_bar();
+        self.tabs.borrow_mut().push(tab.clone());
+        self.notebook.set_tab_reorderable(&tab.root, true);
+        self.notebook.set_tab_detachable(&tab.root, true);
+        self.notebook.page(&tab.root).set_tab_expand(true);
+        if let Some(n) = self.notebook.page_num(&tab.root) {
+            self.notebook.set_current_page(Some(n));
+        }
+        self.show(&tab);
+        self.update_tabs_bar();
+        self.window.present();
+        if source.tabs.borrow().is_empty() {
+            source.window.close();
+        }
+        save();
     }
 
     /// 窓のすべてのタブで、裏で読んでいるものがないか（`--snapshot` はそれまで待つ）。
@@ -488,6 +563,7 @@ pub fn add(host: &Rc<RepoWindow>, tab: &Rc<Tab>, select: bool, position: Option<
         .notebook
         .insert_page(&tab.root, Some(&tab.handle), position);
     host.notebook.set_tab_reorderable(&tab.root, true);
+    host.notebook.set_tab_detachable(&tab.root, true);
     // タブは帯の幅を分け合う（macOS 版・GNOME のタブと同じ）。
     host.notebook.page(&tab.root).set_tab_expand(true);
     host.update_tabs_bar();
@@ -556,6 +632,19 @@ fn refresh_move_menus() {
     });
     for (anchor, menu) in menus {
         fill_move_menu(&anchor, &menu);
+    }
+}
+
+/// タブを運び合える Notebook の組の名前（どの窓も同じ）。
+const TAB_GROUP: &str = "amonhen-tabs";
+
+/// View > Show Tab Bar の今の名前（帯を出していれば Hide Tab Bar。macOS 版と同じく、メニューを開くときに合わせる）。
+pub fn tab_bar_title(window: &gtk::ApplicationWindow) -> String {
+    let shown = host_of(window).is_some_and(|h| h.notebook.shows_tabs());
+    if shown {
+        tr!("Hide Tab Bar")
+    } else {
+        tr!("Show Tab Bar")
     }
 }
 
@@ -991,6 +1080,15 @@ fn install_actions(tab: &Rc<Tab>) {
             window.close();
         }
     });
+    // View > Show Tab Bar（Ctrl+Shift+T）: タブが 1 つでも帯を出す・隠す。
+    add("toggle-tab-bar", |tab| {
+        let Some(host) = tab.host() else { return };
+        if host.notebook.n_pages() > 1 {
+            return;
+        }
+        host.tab_bar.set(!host.tab_bar.get());
+        host.update_tabs_bar();
+    });
     add("next-tab", |tab| step(tab, 1));
     add("previous-tab", |tab| step(tab, -1));
     add("move-tab-to-new-window", |tab| {
@@ -1082,6 +1180,7 @@ pub fn install_accels(app: &gtk::Application) {
     for (action, accels) in [
         ("win.new-tab", &["<Control>t"][..]),
         ("win.close-window", &["<Control><Shift>w"][..]),
+        ("win.toggle-tab-bar", &["<Control><Shift>t"][..]),
         ("win.next-tab", &["<Control>Page_Down", "<Control>Tab"][..]),
         (
             "win.previous-tab",

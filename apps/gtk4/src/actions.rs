@@ -392,6 +392,7 @@ impl Actions {
                 Some(label) => format!("Undo {label}…"),
                 None => "Undo…".to_owned(),
             },
+            "win.toggle-tab-bar" => crate::tabs::tab_bar_title(&self.window()?),
             _ => return None,
         })
     }

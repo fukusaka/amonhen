@@ -641,6 +641,12 @@ fn primary_menu(anchor: &gtk::Box) -> gio::Menu {
         let items = table_sections(part);
         // View は History の表示のメニューも兼ねる（docs/ux.md の 11）。
         if part == Menu::View {
+            // タブが 1 つの窓でもタブの帯を出す（タブをつかんで、ほかの窓の帯に落とせる）。名前は開くときに
+            // Hide にする（macOS 版と同じ）。
+            items.append_section(
+                None,
+                &menu_of(&[Some((&tr!("Show Tab Bar"), "win.toggle-tab-bar"))]),
+            );
             crate::historydisplay::append_sections(&items);
             // ツールバーの並び（macOS 版の View > Customize Toolbar…）。
             items.append_section(

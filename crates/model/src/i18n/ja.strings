@@ -1689,6 +1689,8 @@
 "Show Previous Tab" = "前のタブを表示";
 "Move Tab to New Window" = "タブを新規ウインドウに移動";
 "Merge All Windows" = "すべてのウインドウを結合";
+"Show Tab Bar" = "タブバーを表示";
+"Hide Tab Bar" = "タブバーを隠す";
 "Move Tab to Window" = "タブをウインドウに移動";
 "{name} (+{count})" = "{name}（ほか {count} タブ）";
 "{count} changed files" = "変更のあるファイル {count} 個";
