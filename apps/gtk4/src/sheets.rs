@@ -1410,7 +1410,12 @@ pub fn publish(actions: &Rc<Actions>, branch: &str, then: Option<Box<dyn FnOnce(
         if let Some(p) = &preferred {
             remote.set_selected(remotes.iter().position(|r| r == p).unwrap_or(0) as u32);
         }
-        let name = gtk::Entry::builder().text(&branch).hexpand(true).build();
+        // Return で Publish（macOS 版の入力欄と同じ）。
+        let name = gtk::Entry::builder()
+            .text(&branch)
+            .hexpand(true)
+            .activates_default(true)
+            .build();
         sheet.add(&row(&tr!("Remote"), &remote));
         sheet.add(&row(&tr!("Name there"), &name));
         sheet.buttons("Publish", false, None);
