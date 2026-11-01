@@ -6,6 +6,7 @@
 use std::rc::Rc;
 
 use amonhen_model::tr;
+use gtk::glib;
 use gtk::prelude::*;
 
 /// 場所の接続先（`ssh://user@host/…` なら `user@host`、手元の共有の daemon なら `daemon`）。手元なら None。
@@ -61,13 +62,34 @@ impl Connecting {
         root.set_vexpand(true);
         root.append(&stack);
         stack.set_vexpand(true);
+        // つないでいる間は Esc で Cancel、つなげなかったら Return で Try Again（macOS 版と同じ）。どちらも出す
+        // ときにボタンに入るので、この中のキーとして受ける。
+        let keys = gtk::EventControllerKey::new();
+        // ボタンより先に受ける（Close Tab に入っていても Return は Try Again。macOS 版と同じ）。
+        keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let close: Rc<dyn Fn()> = Rc::new(on_close);
+        let retry: Rc<dyn Fn()> = Rc::new(on_retry);
+        let s = stack.downgrade();
+        let (c, r) = (close.clone(), retry.clone());
+        keys.connect_key_pressed(move |_, key, _, _| {
+            let failed = s
+                .upgrade()
+                .is_some_and(|s| s.widget_name() == "failed");
+            match key {
+                gtk::gdk::Key::Escape if !failed => c(),
+                gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter if failed => r(),
+                _ => return glib::Propagation::Proceed,
+            }
+            glib::Propagation::Stop
+        });
+        root.add_controller(keys);
         Self {
             root,
             stack,
             location: location.to_owned(),
             name: name.to_owned(),
-            on_close: Rc::new(on_close),
-            on_retry: Rc::new(on_retry),
+            on_close: close,
+            on_retry: retry,
         }
     }
 
@@ -118,6 +140,8 @@ impl Connecting {
         self.stack.append(&heading);
         self.stack.append(&self.path_label());
         self.stack.append(&cancel);
+        self.stack.set_widget_name("connecting");
+        cancel.grab_focus();
     }
 
     /// つなげなかった（開けなかった）。タブは残し、閉じるまで次の起動でも開き直す。
@@ -157,6 +181,7 @@ impl Connecting {
         self.stack.append(&self.path_label());
         self.stack.append(&detail);
         self.stack.append(&buttons);
+        self.stack.set_widget_name("failed");
         retry.grab_focus();
     }
 }
