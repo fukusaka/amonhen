@@ -329,6 +329,9 @@ impl RepoWindow {
                 return;
             }
             LAST.with(|l| l.borrow().set(Some(window)));
+            // ほかのプロセスがブックマークを書き換えていたら読み直す（変わっていたときだけ一覧が描き直す。
+            // macOS 版はアプリが前に来たときに読み直す）。
+            crate::bookmarks::refresh();
             if let Some(tab) = weak.upgrade().and_then(|t| t.current()) {
                 tab.front();
             }
