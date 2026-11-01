@@ -67,9 +67,10 @@ pub fn confirm_remove(actions: &Rc<Actions>, name: &str) {
     });
 }
 
-/// `parent` の上で、リモート `name` を消してよいか確かめる。
+/// `parent` の上で、リモート `name` を消してよいか確かめる（リモートは worktree によらないので、worktree の名前は
+/// 書かない。macOS 版と同じ）。
 async fn ask_remove(parent: Option<&gtk::Window>, name: &str) -> bool {
-    let sheet = Sheet::new(
+    let sheet = Sheet::unnamed(
         parent,
         &tr!("Remove {name}?", name = name),
         &tr!(
@@ -180,7 +181,7 @@ pub fn present(actions: &Rc<Actions>, remote: Option<Remote>) {
         } else {
             tr!("Add Remote")
         };
-        let sheet = Sheet::new(sheets::parent(&actions).as_ref(), &title, "");
+        let sheet = Sheet::unnamed(sheets::parent(&actions).as_ref(), &title, "");
         // Return で保存する（macOS 版と同じ）。
         let entry = |text: &str| {
             let e = gtk::Entry::new();
