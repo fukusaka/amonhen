@@ -686,6 +686,24 @@ impl Inner {
             };
             menu::popup(&this.diff, x, y, items);
         });
+        // 1 ファイルずつ見せているときは、差分にファイルの見出しがない。差分の行の右クリックは、全ファイルを
+        // 並べたときの見出しの下の行と同じ（AI でこの hunk を解説・Blame・File History）。
+        let weak = Rc::downgrade(this);
+        this.diff.connect_row_menu(move |_, x, y| {
+            let Some(this) = weak.upgrade() else { return };
+            let Some(path) = this.single_path() else {
+                return;
+            };
+            let items = this
+                .file_items
+                .borrow()
+                .clone()
+                .map(|f| f(&path, Some(y)))
+                .unwrap_or_default();
+            if !items.is_empty() {
+                menu::popup(&this.diff, x, y, items);
+            }
+        });
         // 検索の帯。
         let weak = Rc::downgrade(this);
         this.find.entry.connect_search_changed(move |entry| {
@@ -860,6 +878,22 @@ impl Inner {
     }
 
     /// 1 ファイルずつ見せているとき: `file` の差分を裏で作って出す。
+    /// 1 ファイルずつ見せているときの、出しているファイルのパス（一覧で選んだもの。選んでいなければ最初のもの）。
+    fn single_path(&self) -> Option<String> {
+        if !self.single.get() {
+            return None;
+        }
+        let source = self.source.borrow().clone()?;
+        let file = self
+            .selection
+            .selected_item()
+            .and_downcast::<glib::BoxedAnyObject>()
+            .and_then(|o| o.borrow::<FileRow>().file)
+            .unwrap_or(0);
+        let (name, _) = source.0.files.get(file)?;
+        Some(path_of(name).to_owned())
+    }
+
     fn show_single(this: &Rc<Self>, file: usize) {
         let Some(source) = this.source.borrow().clone() else {
             return;
