@@ -742,13 +742,24 @@ impl Activity {
                 repo_list.clone(),
                 running.clone(),
             );
+            // 2 秒ごとに、前の問い合わせが返ってから（macOS 版と同じ。遅いソケットで積み重ねない）。
+            let loading = Rc::new(std::cell::Cell::new(false));
+            let tick = std::cell::Cell::new(0u32);
+            let last = Rc::new(std::cell::Cell::new(0));
             move || {
-                let (state, detail, toggle, repo_list, running) = (
+                tick.set(tick.get() + 1);
+                if loading.get() || tick.get().is_multiple_of(2) {
+                    return;
+                }
+                loading.set(true);
+                let (state, detail, toggle, repo_list, running, loading, last) = (
                     state.clone(),
                     detail.clone(),
                     toggle.clone(),
                     repo_list.clone(),
                     running.clone(),
+                    loading.clone(),
+                    last.clone(),
                 );
                 glib::spawn_future_local(async move {
                     let status = gio::spawn_blocking(|| {
@@ -760,8 +771,14 @@ impl Activity {
                     .await
                     .ok()
                     .flatten();
-                    repo_list.remove_all();
+                    loading.set(false);
                     running.set(status.is_some());
+                    // 一覧は、中身が変わったときだけ作り直す（ちらつかせず、スクロールの位置も保つ）。
+                    let repos = status.as_ref().map(|d| d["repos"].to_string());
+                    let same_repos = unchanged(&last, &repos);
+                    if !same_repos {
+                        repo_list.remove_all();
+                    }
                     let Some(d) = status else {
                         state.set_text(&tr!("The shared daemon isn’t running"));
                         detail.set_text(&tr!("It starts automatically when you open a repository through the daemon (right-click in the repository list, or Settings > Performance)."));
@@ -781,6 +798,9 @@ impl Activity {
                         socket = d["socket"].as_str().unwrap_or_default(),
                     ));
                     toggle.set_label(&tr!("Stop"));
+                    if same_repos {
+                        return;
+                    }
                     for r in d["repos"].as_array().into_iter().flatten() {
                         let yes = |key: &str| {
                             if r[key].as_bool() == Some(true) {
