@@ -2724,6 +2724,13 @@ fn fill_counts(counts: &gtk::Box, stats: Option<LineCounts>) {
     while let Some(child) = counts.first_child() {
         counts.remove(&child);
     }
+    // 行数のないファイル（バイナリ）は薄く「bin」（macOS 版と同じ）。まだ読めていなければ何も出さない。
+    if stats == Some((None, None)) {
+        let l = gtk::Label::new(Some("bin"));
+        l.add_css_class("caption");
+        l.add_css_class("dim-label");
+        counts.append(&l);
+    }
     let (added, removed) = stats.unwrap_or((None, None));
     for (n, mark, css) in [(added, "+", "success"), (removed, "−", "error")] {
         if let Some(n) = n.filter(|&n| n > 0) {
