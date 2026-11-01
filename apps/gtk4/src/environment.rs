@@ -709,6 +709,27 @@ pub fn page(s: &Rc<RepoSettings>) -> gtk::Widget {
     note.set_wrap(true);
     note.set_wrap_mode(gtk::pango::WrapMode::WordChar);
     b.append(&note);
+    // SSH の agent のソケットがあるか（SSH_AUTH_SOCK があるときだけ。macOS 版と同じ）。
+    if let Some(socket) = std::env::var_os("SSH_AUTH_SOCK") {
+        #[cfg(unix)]
+        let found = {
+            use std::os::unix::fs::FileTypeExt;
+            std::fs::metadata(&socket).is_ok_and(|m| m.file_type().is_socket())
+        };
+        // Windows の agent は名前付きパイプ。
+        #[cfg(not(unix))]
+        let found = std::path::Path::new(&socket).exists();
+        let agent = if found {
+            label(&tr!("SSH agent found"), &["dim-label", "caption"])
+        } else {
+            label(
+                &tr!("No SSH agent here, so keys that need a passphrase can’t be used"),
+                &["settings-warning", "caption"],
+            )
+        };
+        agent.set_wrap(true);
+        b.append(&agent);
+    }
 
     // この機械で選んだ git（PATH のものでなければ、PATH の行にそれを書く）。
     let (repo, w) = (s.repo.clone(), Rc::downgrade(&table));
