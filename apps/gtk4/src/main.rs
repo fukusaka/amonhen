@@ -2441,6 +2441,15 @@ fn build_tab(
                         }
                     }
                     Event::Note(repo, text) => activity::event(&repo, text),
+                    Event::Changed(repo, mut text, worktree) => {
+                        // 裏のタブでは、作業ツリーの変化は前に出るまで読まない（macOS 版と同じく、そう添える）。
+                        if worktree && !tab_weak.upgrade().is_some_and(|t| t.is_shown()) {
+                            text.push_str(&tr!(
+                                " (background tab: the working tree waits until the tab comes to the front)"
+                            ));
+                        }
+                        activity::event(&repo, text);
+                    }
                     Event::Timing(metric, ms) => {
                         activity::record(&amonhen_model::i18n::translate(metric), ms)
                     }
@@ -2916,6 +2925,8 @@ enum Event {
     StatusDirty(Arc<Repository>),
     /// Activity の Events に出す出来事（リポジトリの名前、内容）。
     Note(String, String),
+    /// リポジトリの変化の知らせ（リポジトリの名前、内容、作業ツリーか index が変わったか）。Events に出す。
+    Changed(String, String, bool),
     /// Activity の Performance に出す時間（項目、ms）。
     Timing(&'static str, f64),
     Failed(String),
@@ -3126,14 +3137,17 @@ fn load(
             (Changes::REFS, "ref".to_owned()),
             (Changes::INDEX, "index".to_owned()),
             (Changes::WORKTREE, tr!("working tree")),
+            (Changes::CONFIG, tr!("config")),
         ] {
             if changes.contains(bit) {
                 what.push(name);
             }
         }
         if !what.is_empty() {
-            let text = tr!("{what} changed (reloading)", what = what.join(&tr!(", ")));
-            let _ = tx.send_blocking(Event::Note(repo_name(&repo), text));
+            // 裏のタブかは受け手が見る（作業ツリーの読み直しは前に出るまで待つ）。
+            let worktree = changes.contains(Changes::INDEX) || changes.contains(Changes::WORKTREE);
+            let text = tr!("Changed: {what}", what = what.join(&tr!(", ")));
+            let _ = tx.send_blocking(Event::Changed(repo_name(&repo), text, worktree));
         }
         // `.mailmap`（作業ツリー・HEAD の）や `log.mailmap`・`mailmap.file` が変わったかもしれない（macOS 版と同じく、
         // 変化のたびに指紋を比べる）。

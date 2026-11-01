@@ -425,7 +425,9 @@
 "Can’t read History: {e}" = "History を読めない: {e}";
 "Reload status" = "status の読み直し";
 "working tree" = "作業ツリー";
-"{what} changed (reloading)" = "{what} が変わった（読み直す）";
+"Changed: {what}" = "変化: {what}";
+"config" = "設定";
+" (background tab: the working tree waits until the tab comes to the front)" = "（裏のタブ: 作業ツリーは前に出るまで待つ）";
 "{branch} — click to switch branch (Ctrl+Shift+B)" = "{branch} — 押すとブランチを切り替える（Ctrl+Shift+B）";
 "{count} commits behind upstream (Ctrl+Alt+L)" = "上流より {count} コミット後ろにあります（Ctrl+Alt+L）";
 "Pull (Ctrl+Alt+L)" = "Pull（Ctrl+Alt+L）";
