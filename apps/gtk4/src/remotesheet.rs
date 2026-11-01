@@ -59,17 +59,30 @@ pub fn edit(actions: &Rc<Actions>, name: &str) {
 
 /// リモートを消す前に確かめる（取り消せないが、リモートのリポジトリには触らないので赤くしない。macOS 版と同じ）。
 pub fn confirm_remove(actions: &Rc<Actions>, name: &str) {
-    sheets::confirm_ref_then(
-        actions,
-        tr!("Remove {name}?", name = name),
-        tr!(
+    let (actions, name) = (actions.clone(), name.to_owned());
+    glib::spawn_future_local(async move {
+        if ask_remove(sheets::parent(&actions).as_ref(), &name).await {
+            actions.perform(remove_command(&name));
+        }
+    });
+}
+
+/// `parent` の上で、リモート `name` を消してよいか確かめる。
+async fn ask_remove(parent: Option<&gtk::Window>, name: &str) -> bool {
+    let sheet = Sheet::new(
+        parent,
+        &tr!("Remove {name}?", name = name),
+        &tr!(
             "This removes the remote’s settings and its remote-tracking branches ({name}/…). The remote repository isn’t touched.",
             name = name
         ),
-        tr!("Delete"),
-        false,
-        vec![json!({ "op": "changeRemote", "change": { "kind": "remove", "name": name } })],
     );
+    sheet.buttons(&tr!("Delete"), false, None);
+    sheet.run().await == Response::Ok
+}
+
+fn remove_command(name: &str) -> Value {
+    json!({ "op": "changeRemote", "change": { "kind": "remove", "name": name } })
 }
 
 /// URL の先が何か: GitHub・GitLab などのサービス、パス、SSH 先、それ以外はホスト名。
@@ -207,10 +220,20 @@ pub fn present(actions: &Rc<Actions>, remote: Option<Remote>) {
         line.append(&result);
         sheet.add(&line);
 
-        if remote.is_some() {
-            let remove = sheet.button(&tr!("Remove…"), Response::Other, Some(Style::Destructive));
-            remove.set_hexpand(true);
-            remove.set_halign(gtk::Align::Start);
+        // 消す前の確認はシートの上に出す（Cancel ならシートに戻る。macOS 版と同じ）。
+        if let Some(r) = &remote {
+            let remove = sheet.side_button(&tr!("Remove…"), Some(Style::Destructive));
+            let (a, name, w) = (actions.clone(), r.name.clone(), sheet.window.downgrade());
+            remove.connect_clicked(move |_| {
+                let (a, name, w) = (a.clone(), name.clone(), w.clone());
+                glib::spawn_future_local(async move {
+                    let Some(window) = w.upgrade() else { return };
+                    if ask_remove(Some(&window), &name).await {
+                        window.close();
+                        a.perform(remove_command(&name));
+                    }
+                });
+            });
         }
         sheet.button(&tr!("Cancel"), Response::Cancel, None);
         let save = sheet.button(&tr!("Save"), Response::Ok, Some(Style::Suggested));
@@ -294,12 +317,7 @@ pub fn present(actions: &Rc<Actions>, remote: Option<Remote>) {
                     actions.perform_sequence(commands);
                 }
             }
-            Response::Other => {
-                if let Some(remote) = &remote {
-                    confirm_remove(&actions, &remote.name);
-                }
-            }
-            Response::Cancel => {}
+            Response::Other | Response::Cancel => {}
         }
     });
 }

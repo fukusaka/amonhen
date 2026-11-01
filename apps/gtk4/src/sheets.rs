@@ -185,6 +185,18 @@ impl Sheet {
         button
     }
 
+    /// 押してもシートを閉じない、左端のボタン（シートの上で、さらに確かめるもの）。押したときの動きは呼ぶ側が付ける。
+    pub fn side_button(&self, label: &str, style: Option<Style>) -> gtk::Button {
+        let button = gtk::Button::with_label(label);
+        if style == Some(Style::Destructive) {
+            button.add_css_class("destructive-action");
+        }
+        button.set_hexpand(true);
+        button.set_halign(gtk::Align::Start);
+        self.buttons.append(&button);
+        button
+    }
+
     /// よくある形: [Other] Cancel <ok>。
     pub fn buttons(&self, ok: &str, destructive: bool, other: Option<&str>) -> gtk::Button {
         if let Some(other) = other {
