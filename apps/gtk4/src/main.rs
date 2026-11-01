@@ -370,6 +370,7 @@ fn main() -> glib::ExitCode {
         gtk::Window::set_default_icon_name(APP_ID);
         // ショートカットと Quit は、リポジトリのページしかない起動でも効くように最初に。
         appmenu::install_app(app);
+        menu::install_css();
     });
     app.connect_activate(move |app| launch(app, &args));
     // 引数は自分で読んだので、GTK には渡さない。

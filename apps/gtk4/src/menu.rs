@@ -79,6 +79,23 @@ fn build(items: Vec<Item>, group: &gio::SimpleActionGroup, n: &mut usize) -> gio
     model
 }
 
+/// メニューの見た目の直し。GTK のメニューは中身をスクロールの枠に入れていて、その縦のスクロールバーの最小の
+/// 高さ（46）が枠の高さになるので、項目が 1 つだと下が空く。メニューの中では、スクロールバーの最小の高さをなくす。
+pub fn install_css() {
+    let provider = gtk::CssProvider::new();
+    provider.load_from_string(
+        "popover.menu scrollbar.vertical, popover.menu scrollbar.vertical range, \
+         popover.menu scrollbar.vertical trough, popover.menu scrollbar.vertical slider { min-height: 0; }",
+    );
+    if let Some(display) = gdk::Display::default() {
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
+}
+
 /// `parent` の `(x, y)` に `items` のメニューを出す。
 pub fn popup(parent: &impl IsA<gtk::Widget>, x: f64, y: f64, items: Vec<Item>) {
     if items.is_empty() {
