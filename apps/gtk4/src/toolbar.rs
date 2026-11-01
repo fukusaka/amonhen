@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use amonhen_model::tr;
-use gtk::glib;
+use gtk::{gio, glib};
 use gtk::prelude::*;
 
 use crate::icon;
@@ -268,15 +268,22 @@ pub fn install(start: &gtk::Box, end: &gtk::Box, given: Given) {
         .upcast(),
     );
     buttons.insert("activity", crate::activity::toolbar_button().upcast());
-    buttons.insert(
-        "refresh",
-        icon_button(
-            icon::Kind::Refresh,
-            "win.refresh",
-            &tr!("Reload History, branches and Working Copy (Ctrl+R)"),
-        )
-        .upcast(),
-    );
+    // Refresh: 押せば読み直し、▾ で History を作り直す（macOS 版と同じ）。
+    let refresh = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    refresh.add_css_class("linked");
+    refresh.append(&icon_button(
+        icon::Kind::Refresh,
+        "win.refresh",
+        &tr!("Reload History, branches and Working Copy (Ctrl+R)"),
+    ));
+    let more = gio::Menu::new();
+    more.append(Some(&tr!("Rebuild History")), Some("win.rebuild-history"));
+    let arrow = gtk::MenuButton::builder()
+        .menu_model(&more)
+        .tooltip_text(tr!("Refresh"))
+        .build();
+    refresh.append(&arrow);
+    buttons.insert("refresh", refresh.upcast());
     buttons.insert("undo", given.undo.upcast());
 
     let fill = {
