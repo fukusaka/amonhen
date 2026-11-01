@@ -233,6 +233,7 @@ fn build(
 
 /// メニューの見た目の直し。GTK のメニューは中身をスクロールの枠に入れていて、その縦のスクロールバーの最小の
 /// 高さ（46）が枠の高さになるので、項目が 1 つだと下が空く。メニューの中では、スクロールバーの最小の高さをなくす。
+/// 等幅の入力欄の説明（プレースホルダー）は、ふつうの字で（等幅だと横に長く、切れる）。
 pub fn install_css() {
     let provider = gtk::CssProvider::new();
     provider.load_from_string(
@@ -241,7 +242,8 @@ pub fn install_css() {
          popover.menu button.choice-row { padding: 0 8px; min-height: 30px; font-weight: normal; } \
          popover.menu button.choice-row label { color: @theme_fg_color; opacity: 1; } \
          popover.menu button.hint-row { padding: 0 12px; min-height: 30px; font-weight: normal; } \
-         popover.menu button.hint-row label { color: @theme_fg_color; opacity: 1; }",
+         popover.menu button.hint-row label { color: @theme_fg_color; opacity: 1; } \
+         entry.monospace text placeholder { font-family: sans-serif; }",
     );
     if let Some(display) = gdk::Display::default() {
         gtk::style_context_add_provider_for_display(

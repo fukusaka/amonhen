@@ -241,7 +241,7 @@ impl RangeDiff {
         root.set_end_child(Some(&right));
         root.set_shrink_start_child(false);
         root.set_resize_start_child(false);
-        root.set_position(380);
+        root.set_position(420);
 
         let this = Rc::new(Self {
             root,
