@@ -1150,7 +1150,9 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
             add(L("Add Folder to Scan…")) { [weak self] in self?.addScanFolder() }
         case let .group(name):
             add(L("Rename…")) { [weak self] in
-                guard let new = self?.ask(L("Rename Group"), message: L("Group name"), initial: name) else { return }
+                // 同じ名前のままなら何もしない（下で元のグループを消すと、グループがなくなる）。
+                guard let new = self?.ask(L("Rename Group"), message: L("Group name"), initial: name), new != name
+                else { return }
                 let members = Bookmarks.shared.data.items.filter { $0.group == name }.map(\.path)
                 Bookmarks.shared.addGroup(new)
                 for path in members { Bookmarks.shared.move(path, to: new) }
