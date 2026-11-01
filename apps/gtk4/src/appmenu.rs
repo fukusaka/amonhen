@@ -241,7 +241,8 @@ fn handlers() -> Vec<(&'static str, Handler)> {
                 )
             }),
         ),
-        ("add-remote", Box::new(add_remote)),
+        // git のリモートを加える（サイドバーの Remotes の Add Remote… と同じシート。macOS 版と同じ）。
+        ("add-remote", Box::new(|p| crate::remotesheet::add(&p.actions))),
         // View
         (
             "show-working-copy",
@@ -939,25 +940,6 @@ pub fn reveal(window: &gtk::Window, dir: &std::path::Path) {
             .is_err()
         {
             window.error_bell();
-        }
-    });
-}
-
-/// daemon・SSH 越しのリポジトリを、この窓のタブで開く。
-fn add_remote(p: &Rc<Parts>) {
-    let (actions, open) = (p.actions.clone(), p.open.clone());
-    glib::spawn_future_local(async move {
-        if let Some(location) = actions
-            .ask(
-                &tr!("Add Remote"),
-                &tr!("ssh://[user@]host[:port]/path (a daemon on an SSH host) or daemon:/path (the local shared daemon)"),
-                "ssh://",
-                &tr!("Open"),
-            )
-            .await
-            && amonhen_remote::location::is_remote(&location)
-        {
-            open(PathBuf::from(location), crate::tabs::Place::Tab);
         }
     });
 }

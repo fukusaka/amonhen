@@ -679,7 +679,7 @@ impl Activity {
                     running.set(status.is_some());
                     let Some(d) = status else {
                         state.set_text(&tr!("The shared daemon isn’t running"));
-                        detail.set_text(&tr!("It starts automatically when you open a repository through the daemon (daemon:/path in File > Add Remote…)."));
+                        detail.set_text(&tr!("It starts automatically when you open a repository through the daemon (right-click in the repository list, or Settings > Performance)."));
                         toggle.set_label(&tr!("Start"));
                         return;
                     };
