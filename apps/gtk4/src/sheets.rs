@@ -1420,23 +1420,21 @@ pub fn push(
             CommitRange::default()
         };
         // 送る範囲の両端: 上流のコミットから先端まで。上流が先に進んでいれば、分かれたところ（一番古い送る
-        // コミットの親）から（上流にしかない変更まで「送る変更」に見えないように）。
+        // コミットの親）から（上流にしかない変更まで「送る変更」に見えないように）。分かれたところが求められなければ
+        // （root コミットなど）、上流のコミットから（macOS 版と同じ）。
         let forked =
             state.incoming.count > 0 && state.outgoing.count == state.outgoing.commits.len() as u64;
-        let base = if forked {
-            match state.outgoing.commits.last() {
-                Some(oldest) => run(
-                    &repo,
-                    json!({ "op": "resolveCommit", "rev": format!("{}^", oldest.0) }),
-                )
-                .await["text"]
-                    .as_str()
-                    .map(str::to_owned),
-                None => None,
-            }
-        } else {
-            state.upstream_target.clone()
+        let fork_point = match state.outgoing.commits.last() {
+            Some(oldest) if forked => run(
+                &repo,
+                json!({ "op": "resolveCommit", "rev": format!("{}^", oldest.0) }),
+            )
+            .await["text"]
+                .as_str()
+                .map(str::to_owned),
+            _ => None,
         };
+        let base = fork_point.or_else(|| state.upstream_target.clone());
         let range = match (&base, &state.tip) {
             (Some(b), Some(t)) if state.outgoing.count > 0 => Some((b.clone(), t.clone())),
             _ => None,
