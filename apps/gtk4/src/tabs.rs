@@ -576,11 +576,19 @@ pub fn show_home(app: &gtk::Application, host: Option<Rc<RepoWindow>>) -> Rc<Rep
         let Some(host) = tab.host() else {
             return self::open(&a, location, place);
         };
-        let key = crate::repos::normalize(&location);
+        // 追加した worktree はメインのリポジトリのタブで開く（`open` と同じ）。
+        let worktree = crate::repos::main_of_worktree(&location);
+        let key = crate::repos::normalize(worktree.as_deref().unwrap_or(&location));
         match host.tabs().into_iter().find(|t| t.location == key) {
             Some(existing) => {
                 if let Some(n) = host.notebook.page_num(&existing.root) {
                     host.notebook.set_current_page(Some(n));
+                }
+                if worktree.is_some() {
+                    let path = location.to_string_lossy().into_owned();
+                    existing
+                        .group
+                        .activate_action("edit-worktree", Some(&path.to_variant()));
                 }
             }
             None => {
