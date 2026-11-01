@@ -504,6 +504,14 @@ pub fn show(parent: &gtk::ApplicationWindow) {
     let git = gtk::Box::new(gtk::Orientation::Vertical, 0);
     git.set_size_request(860, 560);
     stack.add_titled(&git, Some("git"), "Git");
+    // 読むまでは回る印（macOS 版の ProgressView）。
+    let loading = gtk::Spinner::builder()
+        .spinning(true)
+        .halign(gtk::Align::Center)
+        .valign(gtk::Align::Center)
+        .vexpand(true)
+        .build();
+    git.append(&loading);
     let g = git.downgrade();
     glib::spawn_future_local(async move {
         let result =
@@ -526,6 +534,7 @@ pub fn show(parent: &gtk::ApplicationWindow) {
             .await
             .unwrap_or_else(|_| Err(String::new()));
         let Some(git) = g.upgrade() else { return };
+        git.remove(&loading);
         match result {
             Ok((repo, location)) => {
                 let settings = crate::reposettings::RepoSettings::new(
@@ -546,7 +555,16 @@ pub fn show(parent: &gtk::ApplicationWindow) {
                 // 窓を閉じるまで持っておく。
                 unsafe { git.set_data("settings", settings) };
             }
-            Err(e) => git.append(&note(&e)),
+            // 読めなければ赤で（macOS 版と同じ）。
+            Err(e) => {
+                let l = gtk::Label::new(Some(&e));
+                l.set_wrap(true);
+                l.add_css_class("error");
+                l.set_margin_top(24);
+                l.set_margin_start(24);
+                l.set_margin_end(24);
+                git.append(&l);
+            }
         }
     });
 
