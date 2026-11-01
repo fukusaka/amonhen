@@ -1205,6 +1205,14 @@ impl Inner {
     }
 
     fn show_find(this: &Rc<Self>) {
+        // 選んだ文字（1 行）があれば、それを探す（macOS 版と同じ）。
+        if let Some(selected) = this
+            .diff
+            .selected_text()
+            .filter(|t| !t.is_empty() && !t.contains('\n'))
+        {
+            this.find.entry.set_text(&selected);
+        }
         this.find.bar.set_visible(true);
         this.find.entry.grab_focus();
         this.find.entry.select_region(0, -1);
