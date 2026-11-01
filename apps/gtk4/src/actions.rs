@@ -29,6 +29,8 @@ pub struct Actions {
     on_change: RefCell<Option<Callback>>,
     /// 操作の後に呼ぶ（Activity の History など）。
     on_after: RefCell<Vec<Callback>>,
+    /// fetch・pull の後（失敗しなければ。macOS 版の `onFetch`）。
+    on_fetch: RefCell<Vec<Callback>>,
     /// 書き込む先の worktree を替えたら呼ぶ（Activity の History など、Undo の先が変わるもの）。
     on_repo: RefCell<Vec<Callback>>,
     on_failure: RefCell<Option<FailureCallback>>,
@@ -65,6 +67,7 @@ impl Actions {
             undo,
             on_change: RefCell::default(),
             on_after: RefCell::default(),
+            on_fetch: RefCell::default(),
             on_repo: RefCell::default(),
             on_failure: RefCell::default(),
             on_done: RefCell::default(),
@@ -186,6 +189,11 @@ impl Actions {
         self.on_after.borrow_mut().push(Rc::new(f));
     }
 
+    /// fetch か pull を終えたら（失敗でなければ。コンフリクトで止まっても）`f` を呼ぶ。
+    pub fn connect_fetch(&self, f: impl Fn() + 'static) {
+        self.on_fetch.borrow_mut().push(Rc::new(f));
+    }
+
     /// 書き込む先の worktree を替えたら `f` を呼ぶ。
     pub fn connect_repo_changed(&self, f: impl Fn() + 'static) {
         self.on_repo.borrow_mut().push(Rc::new(f));
@@ -285,6 +293,14 @@ impl Actions {
                     &tr!("Merge them again after resolving these conflicts."),
                 )
                 .await;
+            }
+            if !result["error"].is_string()
+                && matches!(last_command["op"].as_str(), Some("fetch" | "pull"))
+            {
+                let fetched: Vec<Callback> = this.on_fetch.borrow().clone();
+                for f in fetched {
+                    f();
+                }
             }
             let after: Vec<Callback> = this.on_after.borrow().clone();
             for f in after {

@@ -1279,6 +1279,14 @@ fn build_tab(
             glib::ControlFlow::Continue
         });
     }
+    // fetch・pull の後は commit-graph に増えた分を書き足す（macOS 版の `onFetch`）。
+    let commit_graph = Rc::new(CommitGraph::default());
+    let (v, cg) = (view.downgrade(), commit_graph.clone());
+    actions.connect_fetch(move || {
+        if let Some((repo, _)) = v.upgrade().and_then(|v| v.current()) {
+            cg.update(repo);
+        }
+    });
     // 自動の fetch（Settings > General で決めた間隔。聞かずにすべてのリモートから。失敗はステータスバーに）。
     let elapsed = Rc::new(Cell::new(0u32));
     let (v, bar, a, r, t) = (
@@ -1304,7 +1312,7 @@ fn build_tab(
         let Some((repo, _)) = view.current() else {
             return glib::ControlFlow::Continue;
         };
-        let (bar, a, r) = (bar.clone(), a.clone(), r.clone());
+        let (bar, a, r, cg) = (bar.clone(), a.clone(), r.clone(), commit_graph.clone());
         let name = repo_name(&repo);
         glib::spawn_future_local(async move {
             let command = serde_json::json!({ "op": "fetch" });
@@ -1319,6 +1327,7 @@ fn build_tab(
                 bar.show_failure(failure, &a);
             } else {
                 activity::event(&name, amonhen_model::tr!("Automatic fetch"));
+                cg.update(repo.clone());
             }
             r();
         });
@@ -2687,6 +2696,40 @@ fn reload_history(repo: &Arc<Repository>, tx: &async_channel::Sender<Event>) {
     }
 }
 
+/// commit-graph を裏で最新にする（Settings > Performance で選んでいれば。fetch・pull の後。macOS 版の
+/// `updateCommitGraph`）。書き足しは増えたコミットの数に比例する。書いている間に呼ばれたら、終わってからもう一度。
+#[derive(Default)]
+struct CommitGraph {
+    running: Cell<bool>,
+    again: Cell<bool>,
+}
+
+impl CommitGraph {
+    fn update(self: &Rc<Self>, repo: Arc<Repository>) {
+        if !settings::bool(settings::WRITE_COMMIT_GRAPH) {
+            return;
+        }
+        if self.running.get() {
+            self.again.set(true);
+            return;
+        }
+        self.running.set(true);
+        let this = self.clone();
+        glib::spawn_future_local(async move {
+            let r = repo.clone();
+            match gio::spawn_blocking(move || r.update_commit_graph()).await {
+                Ok(Ok(true)) => eprintln!("commit-graph を書き出した"),
+                Ok(Ok(false)) | Err(_) => {}
+                Ok(Err(e)) => eprintln!("commit-graph を書き出せない: {e}"),
+            }
+            this.running.set(false);
+            if this.again.replace(false) {
+                this.update(repo);
+            }
+        });
+    }
+}
+
 /// status を読み直して知らせる（裏のスレッドで呼ぶ）。
 fn reload_status(repo: &Arc<Repository>, tx: &async_channel::Sender<Event>) {
     let started = std::time::Instant::now();
@@ -2719,8 +2762,9 @@ fn load(
         }
     };
     let _ = tx.send_blocking(Event::Opened(repo.clone()));
-    // Settings > Performance: commit-graph がなければ書き出し、あれば増えた分を書き足す（手元のリポジトリだけ）。
-    if settings::bool(settings::WRITE_COMMIT_GRAPH) && repo.connection_state().is_none() {
+    // Settings > Performance: commit-graph がなければ書き出し、あれば増えた分を書き足す（daemon・SSH 越しなら
+    // 向こうで。macOS 版と同じ）。fetch・pull の後は `CommitGraph` が書き足す。
+    if settings::bool(settings::WRITE_COMMIT_GRAPH) {
         let repo = repo.clone();
         std::thread::spawn(move || match repo.update_commit_graph() {
             Ok(true) => eprintln!("commit-graph を書き出した"),
