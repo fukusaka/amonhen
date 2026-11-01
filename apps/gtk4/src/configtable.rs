@@ -318,6 +318,7 @@ impl EditCell {
 
     fn end(&self) {
         self.editing.set(false);
+        self.give_focus_back();
         self.stack.set_visible_child_name("shown");
         if let Some(table) = self.table.upgrade()
             && table.pending.replace(false)
@@ -326,11 +327,23 @@ impl EditCell {
         }
     }
 
+    /// 欄が入力を受けていれば、表に返す（隠れる欄に残ると、選んだ行への Delete・矢印が効かない。macOS 版の
+    /// 表と同じく、書き終えたら表で続けられるように）。ほかへ移って離れたときは、移った先のままにする。
+    fn give_focus_back(&self) {
+        let focused = self.entry.root().and_then(|r| r.focus()).is_some_and(|f| {
+            f == *self.entry.upcast_ref::<gtk::Widget>() || f.is_ancestor(&self.entry)
+        });
+        if focused && let Some(table) = self.table.upgrade() {
+            table.view.grab_focus();
+        }
+    }
+
     /// 欄の値を書く（変わっていれば）。空ならこの段から消す。
     fn commit(&self) {
         if !self.editing.replace(false) {
             return;
         }
+        self.give_focus_back();
         self.stack.set_visible_child_name("shown");
         let key = self.key.borrow().clone();
         let Some(table) = self.table.upgrade() else {
