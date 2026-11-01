@@ -871,12 +871,12 @@ pub fn show_home(app: &gtk::Application, host: Option<Rc<RepoWindow>>) -> Rc<Rep
         close_tab(&tab);
         host.window.present();
     });
-    // Open Recent の項目。
+    // Open Recent の項目。ページは残して、新しいタブに開く（macOS 版は File > Open Recent からページを置き換えない）。
     let recent = gio::SimpleAction::new("open-recent", Some(glib::VariantTy::STRING));
-    let o = open.clone();
+    let a = app.clone();
     recent.connect_activate(move |_, value| {
         if let Some(location) = value.and_then(|v| v.get::<String>()) {
-            o(PathBuf::from(location), Place::Tab);
+            self::open(&a, PathBuf::from(location), Place::Tab);
         }
     });
     tab.group.add_action(&recent);
