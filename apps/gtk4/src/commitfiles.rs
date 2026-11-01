@@ -120,6 +120,8 @@ pub struct Prepared {
     collapsed: Vec<bool>,
     /// 1 ファイルずつ見せるなら、出しているファイル。
     single: Option<usize>,
+    /// コミットの変更ファイル（全ファイルを読んだときの、変更の種類ともとのパス。`source` の並びと同じ）。
+    changes: Option<Arc<Vec<FileChange>>>,
 }
 
 impl Prepared {
@@ -159,7 +161,9 @@ impl Prepared {
     ) -> Result<Self, String> {
         if all && (1..=STACK_LIMIT).contains(&changes.len()) {
             let stacked = repo.stacked_diff(&changes).map_err(|e| e.to_string())?;
-            return Ok(Self::new(stacked, viewed, true));
+            let mut prepared = Self::new(stacked, viewed, true);
+            prepared.changes = Some(Arc::new(changes));
+            return Ok(prepared);
         }
         // 一覧に出す名前だけを並べ、差分は選んだときに読む。
         let empty = || {
@@ -178,6 +182,7 @@ impl Prepared {
             view,
             collapsed: vec![false; count],
             single,
+            changes: None,
         })
     }
 
@@ -203,6 +208,7 @@ impl Prepared {
             view,
             collapsed,
             single,
+            changes: None,
         }
     }
 }
@@ -253,29 +259,54 @@ struct FileRow {
     depth: usize,
     /// ファイルの番号（フォルダの行は None）。
     file: Option<usize>,
-    /// 変更の種類（A・D・M）と、追加・削除の行数（バイナリなら None）。
+    /// 変更の種類（A・D・M・R・C）と、行数。
     mark: &'static str,
-    counts: Option<(u32, u32)>,
+    counts: Counts,
+    /// 説明（パス。名前を変えたファイルは「もとのパス → 今のパス」）。
+    tip: String,
+}
+
+/// 一覧の行の行数。
+#[derive(Clone, Copy)]
+enum Counts {
+    /// まだ読んでいない（選んだファイルだけを読むとき）か、フォルダの行。
+    Unknown,
+    Binary,
+    Lines(u32, u32),
 }
 
 /// 変更ファイルの一覧の行。木なら、フォルダごとにまとめ（子が 1 つだけのフォルダはつなげる）、各階層でフォルダを
 /// 先に、名前の順に並べる（macOS 版と同じ）。
-fn file_rows(source: &Source, tree: bool) -> Vec<FileRow> {
+fn file_rows(source: &Source, changes: Option<&[FileChange]>, tree: bool) -> Vec<FileRow> {
+    // 変更の種類ともとのパスは、コミットの変更ファイルから（macOS 版と同じ）。
+    let changes = source
+        .1
+        .as_ref()
+        .map(|lazy| lazy.changes.as_slice())
+        .or(changes)
+        .filter(|c| c.len() == source.0.files.len());
     let file = |i: usize, name: String, depth: usize| {
         let diff = &source.0.files[i].1;
-        // 選んだファイルだけを読む元では、変更ファイルの種類だけがわかる（行数は出さない）。
-        let (mark, counts) = match &source.1 {
-            Some(lazy) => (kind_mark(lazy.changes[i].kind), None),
-            None => {
-                let mark = if diff.old.is_empty() && !diff.new.is_empty() {
-                    "A"
-                } else if diff.new.is_empty() && !diff.old.is_empty() {
-                    "D"
-                } else {
-                    "M"
-                };
-                (mark, (!diff.binary).then_some((diff.added, diff.removed)))
-            }
+        let change = changes.map(|c| &c[i]);
+        let mark = match change {
+            Some(change) => kind_mark(change.kind),
+            // 変更ファイルがわからない差分（stash など）は、中身の有無から。
+            None if diff.old.is_empty() && !diff.new.is_empty() => "A",
+            None if diff.new.is_empty() && !diff.old.is_empty() => "D",
+            None => "M",
+        };
+        // 選んだファイルだけを読む元では、行数はまだわからない。
+        let counts = if source.1.is_some() {
+            Counts::Unknown
+        } else if diff.binary {
+            Counts::Binary
+        } else {
+            Counts::Lines(diff.added, diff.removed)
+        };
+        let path = path_of(source.0.files[i].0.as_str());
+        let tip = match change.and_then(|c| c.old_path.as_deref()) {
+            Some(old) => format!("{old} → {path}"),
+            None => path.to_owned(),
         };
         FileRow {
             name,
@@ -283,6 +314,7 @@ fn file_rows(source: &Source, tree: bool) -> Vec<FileRow> {
             file: Some(i),
             mark,
             counts,
+            tip,
         }
     };
     let names: Vec<&str> = source.0.files.iter().map(|(n, _)| n.as_str()).collect();
@@ -327,11 +359,12 @@ fn file_rows(source: &Source, tree: bool) -> Vec<FileRow> {
                 child = grand;
             }
             out.push(FileRow {
+                tip: label.clone(),
                 name: label,
                 depth,
                 file: None,
                 mark: "",
-                counts: None,
+                counts: Counts::Unknown,
             });
             add(child, depth + 1, out, file);
         }
@@ -383,6 +416,8 @@ struct Inner {
     current_repo: CurrentRepo,
     file_items: RefCell<Option<FileItems>>,
     find: FindBar,
+    /// 出しているコミットの変更ファイル（`Prepared::changes`）。
+    changes: RefCell<Option<Arc<Vec<FileChange>>>>,
 }
 
 /// 差分の中を探す帯（差分と一覧の下）。
@@ -532,6 +567,7 @@ impl CommitDiff {
             current_repo,
             file_items: RefCell::default(),
             find: FindBar { bar, entry, count },
+            changes: RefCell::default(),
         });
         OPEN.with(|open| open.borrow_mut().push(Rc::downgrade(&inner)));
         Inner::setup_factory(&inner, &factory);
@@ -708,10 +744,22 @@ impl Inner {
                 _ => "warning",
             });
             name.set_text(&row.name);
-            name.set_tooltip_text(Some(&row.name));
+            name.set_tooltip_text(Some(&row.tip));
+            // 行数（0 の側は出さない）。バイナリは「Binary」（macOS 版と同じ）。
             match row.counts {
-                Some((added, removed)) if !folder => counts.set_markup(&format!(
-                    "<span foreground=\"#2ec27e\">+{added}</span>  <span foreground=\"#e01b24\">−{removed}</span>"
+                Counts::Lines(added, removed) if !folder => {
+                    let mut parts = Vec::new();
+                    if added > 0 {
+                        parts.push(format!("<span foreground=\"#2ec27e\">+{added}</span>"));
+                    }
+                    if removed > 0 {
+                        parts.push(format!("<span foreground=\"#e01b24\">−{removed}</span>"));
+                    }
+                    counts.set_markup(&parts.join("  "));
+                }
+                Counts::Binary if !folder => counts.set_markup(&format!(
+                    "<span alpha=\"55%\">{}</span>",
+                    glib::markup_escape_text(&tr!("Binary"))
                 )),
                 _ => counts.set_text(""),
             }
@@ -913,7 +961,9 @@ impl Inner {
             view,
             collapsed,
             single,
+            changes,
         } = prepared;
+        this.changes.replace(changes);
         this.generation.set(this.generation.get() + 1);
         let viewed = viewed_paths(&key);
         let viewed_files: HashSet<usize> = source
@@ -966,7 +1016,8 @@ impl Inner {
             this.syncing.set(false);
             return;
         };
-        let rows = file_rows(&source, file_tree());
+        let changes = this.changes.borrow().clone();
+        let rows = file_rows(&source, changes.as_deref().map(Vec::as_slice), file_tree());
         let mut row_of_file = vec![0; source.0.files.len()];
         for (r, row) in rows.iter().enumerate() {
             if let Some(i) = row.file {
@@ -1038,6 +1089,7 @@ impl Inner {
         let Some(source) = this.source.borrow().clone() else {
             return;
         };
+        let changes = this.changes.borrow().clone();
         let key = this.key.borrow().clone();
         let viewed = viewed_paths(&key);
         let all = stacked();
@@ -1051,7 +1103,11 @@ impl Inner {
                 Some(lazy) => {
                     Prepared::from_changes(lazy.repo.clone(), lazy.changes.clone(), &viewed, all)
                 }
-                None => Ok(Prepared::with_source(source, &viewed, all)),
+                None => {
+                    let mut prepared = Prepared::with_source(source, &viewed, all);
+                    prepared.changes = changes;
+                    Ok(prepared)
+                }
             })
             .await;
             let Some(this) = weak.upgrade() else { return };
@@ -1290,7 +1346,7 @@ mod tests {
         assert_eq!(lazy.source.0.files.len(), 3);
         assert!(lazy.source.0.files.iter().all(|(_, d)| d.added == 0));
         assert!(!lazy.view.diff_view().rows.is_empty());
-        let marks: Vec<&str> = file_rows(&lazy.source, false)
+        let marks: Vec<&str> = file_rows(&lazy.source, None, false)
             .iter()
             .map(|r| r.mark)
             .collect();
