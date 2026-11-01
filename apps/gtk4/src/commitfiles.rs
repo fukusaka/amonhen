@@ -281,6 +281,8 @@ struct Inner {
     key: RefCell<String>,
     /// 1 ファイルずつ見せているか。
     single: Cell<bool>,
+    /// 1 ファイルずつ見せているとき、差分に出しているファイル（一覧でフォルダの行を選んでも替わらない）。
+    shown_file: Cell<Option<usize>>,
     /// 差分のスクロールに合わせて一覧の選択を変えている間（選択の変化でスクロールし返さない）。
     syncing: Cell<bool>,
     generation: Cell<u64>,
@@ -431,6 +433,7 @@ impl CommitDiff {
             source: RefCell::default(),
             key: RefCell::default(),
             single: Cell::new(false),
+            shown_file: Cell::new(None),
             syncing: Cell::new(false),
             generation: Cell::new(0),
             pending,
@@ -455,6 +458,7 @@ impl CommitDiff {
         let inner = &self.inner;
         inner.generation.set(inner.generation.get() + 1);
         inner.source.replace(None);
+        inner.shown_file.set(None);
         inner.syncing.set(true);
         inner.store.remove_all();
         inner.syncing.set(false);
@@ -818,6 +822,7 @@ impl Inner {
             .collect();
         this.key.replace(key);
         this.single.set(single.is_some());
+        this.shown_file.set(single);
         this.source.replace(Some(source.clone()));
         Inner::fill_list(this);
         match single {
@@ -877,18 +882,13 @@ impl Inner {
         this.syncing.set(false);
     }
 
-    /// 1 ファイルずつ見せているときの、出しているファイルのパス（一覧で選んだもの。選んでいなければ最初のもの）。
+    /// 1 ファイルずつ見せているときの、差分に出しているファイルのパス。
     fn single_path(&self) -> Option<String> {
         if !self.single.get() {
             return None;
         }
         let source = self.source.borrow().clone()?;
-        let file = self
-            .selection
-            .selected_item()
-            .and_downcast::<glib::BoxedAnyObject>()
-            .and_then(|o| o.borrow::<FileRow>().file)
-            .unwrap_or(0);
+        let file = self.shown_file.get()?;
         let (name, _) = source.0.files.get(file)?;
         Some(path_of(name).to_owned())
     }
@@ -912,6 +912,7 @@ impl Inner {
             }
             if let Ok(view) = view {
                 this.diff.show(source, view);
+                this.shown_file.set(Some(file));
                 if this.find.bar.is_visible() {
                     let (current, count) = this.diff.find(&this.find.entry.text());
                     this.show_count(current, count);
