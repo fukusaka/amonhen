@@ -739,6 +739,14 @@ impl Browser {
         self.root.root().and_downcast().expect("ページが窓にない")
     }
 
+    /// Settings の窓を出して、`target`（`settings::select` の形）を選ぶ。
+    fn show_settings(&self, target: &str) {
+        if let Some(parent) = crate::settings::main_window_of(&self.root) {
+            crate::settings::show(&parent);
+            crate::settings::select(target);
+        }
+    }
+
     /// 絞り込みの欄に入る（ページを前に出したとき）。
     pub fn focus_filter(&self) {
         self.filter.grab_focus();
@@ -1593,6 +1601,12 @@ impl Browser {
         }
         match &target {
             Category::Host(name) => {
+                // Settings > SSH Hosts のその SSH 先（macOS 版と同じ）。
+                let (b, h) = (self.clone(), name.clone());
+                items.push(menu::action(tr!("Settings…"), move || {
+                    b.show_settings(&format!("ssh-hosts/{h}"))
+                }));
+                items.push(Item::Separator);
                 let (b, h) = (self.clone(), name.clone());
                 items.push(menu::action(
                     tr!("Add Repository on This Host…"),
@@ -1611,6 +1625,10 @@ impl Browser {
                 ));
             }
             Category::Local => {
+                // この機械の git の設定（Settings > Git。SSH 先の Settings… と同じ入口。macOS 版と同じ）。
+                let b = self.clone();
+                items.push(menu::action(tr!("Settings…"), move || b.show_settings("git")));
+                items.push(Item::Separator);
                 let b = self.clone();
                 items.push(menu::action(tr!("Add Local Repository…"), move || {
                     b.add_repository()
