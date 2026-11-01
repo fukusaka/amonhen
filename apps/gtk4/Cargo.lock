@@ -82,6 +82,7 @@ dependencies = [
  "amonhen-watch",
  "async-channel",
  "gtk4",
+ "libc",
  "pangocairo",
  "serde_json",
 ]

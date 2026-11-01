@@ -262,14 +262,38 @@ fn notify(path: Option<&str>) {
 
 /// 変える。先にファイルを読み直し（ほかのプロセスの変更を手元の古い内容で消さない）、その上で `change` を当てて書く。
 fn edit(change: impl FnOnce(&mut Data)) {
-    let mut next = read().unwrap_or_else(data);
+    // ほかのプロセス（ほかの Amon Hen・macOS 版と同じファイルを使うとき）と書き合わないよう、隣の
+    // `bookmarks.lock` を取ってから読み直して書く（macOS 版と同じ）。
+    let path = file();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path.with_file_name("bookmarks.lock"));
+    // 閉じれば外れる（下の `drop`）。Windows は取らない（同じファイルを使う macOS 版もない）。
+    #[cfg(unix)]
+    if let Ok(lock) = &lock {
+        use std::os::fd::AsRawFd;
+        // SAFETY: 開いているファイルの記述子に、待つロックを掛けるだけ。
+        unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX) };
+    }
+    let shown = data();
+    let mut next = read().unwrap_or_else(|| shown.clone());
     let before = next.clone();
     change(&mut next);
     STATE.with(|s| s.borrow_mut().data = Some(next.clone()));
     if next != before {
         write(&next);
     }
-    notify(None);
+    // ロックを外してから知らせる（知らせを受けた側がまた変えても、待ち合わない）。出していた中身から変わった
+    // ときだけ。
+    drop(lock);
+    if next != shown {
+        notify(None);
+    }
 }
 
 fn write(data: &Data) {
