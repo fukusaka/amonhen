@@ -1263,12 +1263,17 @@ fn build_tab(
             return;
         };
         b.set_worktree(worktrees.toolbar_name().as_deref());
+        let elsewhere = worktrees.branches_elsewhere();
+        let main = elsewhere
+            .iter()
+            .find(|(_, w)| w.main)
+            .map(|(b, _)| b.clone());
         a.set_worktree_branches(
-            worktrees
-                .branches_elsewhere()
+            elsewhere
                 .into_iter()
                 .map(|(b, w)| (b, (w.name, w.path)))
                 .collect(),
+            main,
         );
         tab.set_worktree_name(worktrees.editing_name());
         let name = worktrees.editing_name();

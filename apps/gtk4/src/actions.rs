@@ -37,6 +37,8 @@ pub struct Actions {
     in_sequence: Cell<bool>,
     /// ほかの worktree が checkout しているブランチ → その worktree（名前、パス）。
     worktree_branches: RefCell<std::collections::HashMap<String, (String, String)>>,
+    /// そのうち、メインの worktree が checkout しているブランチ（印のアイコンを家にする）。
+    main_worktree_branch: RefCell<Option<String>>,
 }
 
 impl Actions {
@@ -60,6 +62,7 @@ impl Actions {
             head: RefCell::default(),
             in_sequence: Cell::new(false),
             worktree_branches: RefCell::default(),
+            main_worktree_branch: RefCell::default(),
         });
         // git の Undo は確かめてから（Ctrl+Z は入力欄の取り消しに残す。docs/ux.md の「Menus」）。
         let weak = Rc::downgrade(&actions);
@@ -92,9 +95,20 @@ impl Actions {
         self.head.borrow().clone()
     }
 
-    /// ほかの worktree が checkout しているブランチ（worktree の一覧を読むたびに入れる）。
-    pub fn set_worktree_branches(&self, map: std::collections::HashMap<String, (String, String)>) {
+    /// ほかの worktree が checkout しているブランチ（worktree の一覧を読むたびに入れる）。`main` はそのうち
+    /// メインの worktree が checkout しているもの。
+    pub fn set_worktree_branches(
+        &self,
+        map: std::collections::HashMap<String, (String, String)>,
+        main: Option<String>,
+    ) {
         self.worktree_branches.replace(map);
+        self.main_worktree_branch.replace(main);
+    }
+
+    /// `branch` を checkout しているのが、書き込む先でないメインの worktree か。
+    pub fn is_main_worktree_branch(&self, branch: &str) -> bool {
+        self.main_worktree_branch.borrow().as_deref() == Some(branch)
     }
 
     /// `branch` を checkout している、書き込む先でない worktree（名前、パス）。

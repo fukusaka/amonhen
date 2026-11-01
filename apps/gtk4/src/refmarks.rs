@@ -207,6 +207,7 @@ pub fn branch(
 ) -> gtk::Popover {
     // ほかの worktree が checkout している（名前・パス）。
     let other = actions.worktree_using(&item.name);
+    let main_worktree = actions.is_main_worktree_branch(&item.name);
     let fact = known.groups.as_ref().and_then(|g| g.get(&item.name));
     let merged = fact.is_some_and(|f| f.merged && !f.at_base);
     let base = known
@@ -246,9 +247,14 @@ pub fn branch(
                 base = base
             ),
         ),
+        // メインの worktree なら家（灰色）、追加した worktree なら緑のブランチ（macOS 版と同じ）。
         _ if let Some((name, path)) = &other => (
-            icon::Kind::Branch,
-            None,
+            if main_worktree {
+                icon::Kind::House
+            } else {
+                icon::Kind::Branch
+            },
+            (!main_worktree).then_some("success"),
             tr!("Checked out in the worktree “{name}”", name = name),
             tr!(
                 "Git lets a branch be checked out in only one worktree, so it can’t be checked out here. Open that worktree to work on it (its folder: {path}).",
