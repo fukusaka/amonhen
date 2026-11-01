@@ -306,6 +306,8 @@ struct Picker {
     columns_box: gtk::Box,
     columns_scroll: gtk::ScrolledWindow,
     status: gtk::Label,
+    /// つなげなかったときの「接続を確認」（もう一度つなぐ。macOS 版と同じ）。
+    retry: gtk::Button,
     spinner: gtk::Spinner,
     choose: gtk::Button,
     views: RefCell<Vec<Rc<ColumnView>>>,
@@ -445,6 +447,10 @@ impl Picker {
         status.add_css_class("caption");
         status.set_visible(false);
         content.append(&status);
+        let retry = gtk::Button::with_label(&tr!("Check Connection"));
+        retry.set_halign(gtk::Align::Start);
+        retry.set_visible(false);
+        content.append(&retry);
 
         let hidden = gtk::CheckButton::with_label(&tr!("Show hidden files"));
         hidden.set_hexpand(true);
@@ -487,6 +493,7 @@ impl Picker {
             columns_box,
             columns_scroll,
             status,
+            retry,
             spinner,
             choose,
             views: RefCell::default(),
@@ -508,6 +515,13 @@ impl Picker {
     }
 
     fn wire(self: &Rc<Self>, cancel: &gtk::Button) {
+        let w = Rc::downgrade(self);
+        self.retry.connect_clicked(move |_| {
+            if let Some(p) = w.upgrade() {
+                let host = p.host.borrow().clone();
+                p.connect(&host);
+            }
+        });
         let group = gio::SimpleActionGroup::new();
         let go = gio::SimpleAction::new("go", Some(glib::VariantTy::STRING));
         let w = Rc::downgrade(self);
@@ -667,6 +681,7 @@ impl Picker {
                         )),
                         true,
                     );
+                    p.retry.set_visible(true);
                     p.update_buttons();
                 }
             }
@@ -674,6 +689,7 @@ impl Picker {
     }
 
     fn set_status(&self, text: Option<String>, error: bool) {
+        self.retry.set_visible(false);
         match text {
             Some(t) => {
                 self.status.set_text(&t);
