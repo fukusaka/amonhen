@@ -93,6 +93,14 @@ pub fn popup(parent: &impl IsA<gtk::Widget>, x: f64, y: f64, items: Vec<Item>) {
     popover.set_halign(gtk::Align::Start);
     popover.set_parent(parent);
     popover.set_pointing_to(Some(&gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+    // 子の吹き出しを置くのは親の配置（layout manager）なので、それがない親（ListBox など）では最初に測った
+    // 大きさのままになり、項目が切れたり下が空いたりする。出ている間は自分で置く。
+    if parent.layout_manager().is_none() {
+        popover.add_tick_callback(|p, _| {
+            p.present();
+            glib::ControlFlow::Continue
+        });
+    }
     // 閉じたら外す（次は作り直す）。項目のアクションは閉じた後に呼ばれるので、外すのは少し後。
     popover.connect_closed(|p| {
         let p = p.clone();
