@@ -320,15 +320,18 @@ impl Inner {
         if let Some((repo, _)) = self.base.borrow().as_ref() {
             repo.cancel_search();
         }
+        // 絞り込みもやめて元の History に戻す。切り替えは押せなくするだけで、入れたままにする（次に探したときも
+        // 一致だけを出す。macOS 版と同じ）。
+        self.only.set_sensitive(false);
+        if self.filtered.replace(false)
+            && let Some((repo, base)) = self.base.borrow().clone()
+        {
+            self.view.show(repo, base);
+        }
         self.set_matches(Rc::default());
         self.set_searched(None);
         self.count.set_text("");
         self.view.set_matches(Rc::default());
-        // 絞り込みもやめる（元の History に戻す）。
-        self.only.set_sensitive(false);
-        if self.only.is_active() {
-            self.only.set_active(false);
-        }
     }
 
     /// 切り替えに合わせて、一致したコミットだけの History か、元の History を出す。
