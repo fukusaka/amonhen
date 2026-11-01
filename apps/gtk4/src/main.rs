@@ -1103,6 +1103,11 @@ fn build_tab(
         statusbar.clone(),
         pending.clone(),
     );
+    // 詳細の右クリックの Edit Message…: 編集モードを、そのコミットのメッセージを直すところから開く。
+    let eo = edit_opener.clone();
+    details.connect_edit_message(move |oid| {
+        eo.open(oid, Some(historyedit::Preset::Reword(oid.to_owned())));
+    });
     // History でコミットを運んで落とす: 編集モードで並べ替える（macOS 版と同じ）。
     let (a, v, eo) = (actions.clone(), view.downgrade(), edit_opener.clone());
     view.connect_drop_commit(move |id, row| {

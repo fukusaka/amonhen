@@ -11,8 +11,8 @@ use std::sync::Arc;
 use amonhen_core::{PairMode, Repository};
 use amonhen_model::{Oid, tr};
 
-use gtk::glib;
 use gtk::prelude::*;
+use gtk::{gio, glib};
 use serde_json::Value;
 
 /// 作者かコミッターの 1 人分（macOS 版の `PersonView`）: 左にアバター、右に名前（と役割）、メール、日時。名前と
@@ -137,6 +137,16 @@ pub struct Details {
     brief_text: gtk::Label,
     /// 件名と本文の中で強調する語（History の検索の語。macOS 版の `highlight`）。
     highlight: RefCell<Vec<String>>,
+    /// 右クリックのメニュー（ID・件名・メッセージ・git show のコピーと、Edit Message…。macOS 版の詳細の欄の
+    /// メニュー）。文字の欄では、その欄のメニューの後ろに足す。
+    menu: gio::Menu,
+    /// メニューの Edit Message… の節（HEAD から辿れる merge でないコミットのときだけ入れる）。
+    reword_section: gio::Menu,
+    actions: gio::SimpleActionGroup,
+    /// メニューの項目が使う、出しているコミット。
+    menu_info: Rc<RefCell<Option<Value>>>,
+    /// Edit Message… を選んだとき（コミットの ID。[`Details::connect_edit_message`]）。
+    on_reword: Rc<RefCell<Option<OnRef>>>,
 }
 
 /// 詳細の上の欄の見せ方（macOS 版の `CommitHeaderStyle`。同じ順の番号で覚える）。
@@ -474,7 +484,13 @@ impl Details {
             brief_avatar,
             brief_text,
             highlight: RefCell::default(),
+            menu: gio::Menu::new(),
+            reword_section: gio::Menu::new(),
+            actions: gio::SimpleActionGroup::new(),
+            menu_info: Rc::default(),
+            on_reword: Rc::default(),
         };
+        details.install_menu();
         for label in [&details.body, &details.notes] {
             let links = details.links.clone();
             label.connect_activate_link(move |_, uri| follow(&links, uri));
@@ -546,6 +562,118 @@ impl Details {
         }
     }
 
+    /// 右クリックのメニューを作る（項目はいま出しているコミットのもの）。
+    fn install_menu(&self) {
+        let copies = gio::Menu::new();
+        let info = self.menu_info.clone();
+        type Pick = fn(&Value) -> String;
+        let items: [(&str, String, Pick); 5] = [
+            ("copy-id", tr!("Copy Commit ID"), |i| {
+                str_of(i, "oid").to_owned()
+            }),
+            ("copy-short-id", tr!("Copy Short ID"), |i| {
+                crate::titles::short(str_of(i, "oid")).to_owned()
+            }),
+            ("copy-subject", tr!("Copy Subject"), |i| {
+                let m = str_of(i, "message").trim();
+                m.split('\n').next().unwrap_or(m).to_owned()
+            }),
+            ("copy-message", tr!("Copy Message"), |i| {
+                str_of(i, "message").trim().to_owned()
+            }),
+            ("copy-show", tr!("Copy git show Command"), |i| {
+                format!("git show {}", str_of(i, "oid"))
+            }),
+        ];
+        for (name, title, pick) in items {
+            let action = gio::SimpleAction::new(name, None);
+            let (root, info) = (self.root.downgrade(), info.clone());
+            action.connect_activate(move |_, _| {
+                if let (Some(root), Some(i)) = (root.upgrade(), info.borrow().as_ref()) {
+                    root.clipboard().set_text(&pick(i));
+                }
+            });
+            self.actions.add_action(&action);
+            copies.append(Some(&title), Some(&format!("details.{name}")));
+        }
+        let reword = gio::SimpleAction::new("edit-message", None);
+        let (on_reword, i) = (self.on_reword.clone(), info.clone());
+        reword.connect_activate(move |_, _| {
+            let oid = i.borrow().as_ref().map(|i| str_of(i, "oid").to_owned());
+            if let (Some(f), Some(oid)) = (on_reword.borrow().clone(), oid) {
+                f(&oid);
+            }
+        });
+        self.actions.add_action(&reword);
+        self.reword_section
+            .append(Some(&tr!("Edit Message…")), Some("details.edit-message"));
+        self.menu.append_section(None, &copies);
+        self.root
+            .insert_action_group("details", Some(&self.actions));
+        // 文字の欄の外を右クリックしても、同じメニュー。
+        let click = gtk::GestureClick::new();
+        click.set_button(gtk::gdk::BUTTON_SECONDARY);
+        let (column, menu, info) = (self.column.downgrade(), self.menu.clone(), info);
+        click.connect_pressed(move |_, _, x, y| {
+            let Some(column) = column.upgrade() else {
+                return;
+            };
+            if info.borrow().is_none() {
+                return;
+            }
+            let popover = gtk::PopoverMenu::from_model(Some(&menu));
+            popover.set_has_arrow(false);
+            popover.set_halign(gtk::Align::Start);
+            popover.set_parent(&column);
+            popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+            popover.connect_closed(|p| {
+                let p = p.clone();
+                glib::idle_add_local_once(move || p.unparent());
+            });
+            popover.popup();
+        });
+        self.column.add_controller(click);
+        for label in [
+            &self.subject,
+            &self.body,
+            &self.trailers,
+            &self.notes,
+            &self.brief_text,
+            &self.author.text,
+            &self.committer.text,
+        ] {
+            label.set_extra_menu(Some(&self.menu));
+        }
+    }
+
+    /// 右クリックのメニューの項目を、出しているコミットに合わせる。Edit Message… は、HEAD から辿れる merge でない
+    /// コミット（時間のかかる分が届いてから分かる）のときだけ（macOS 版と同じ）。
+    fn update_menu(&self) {
+        let info = self.info.borrow().clone();
+        self.menu_info.replace(info.clone());
+        let rewordable = self.on_reword.borrow().is_some()
+            && info
+                .as_ref()
+                .is_some_and(|i| i["parents"].as_array().is_none_or(|p| p.len() <= 1))
+            && self
+                .extras
+                .borrow()
+                .as_ref()
+                .is_some_and(|e| !e["headDistance"].is_null());
+        let shown = self.menu.n_items() > 1;
+        if rewordable && !shown {
+            self.menu.append_section(None, &self.reword_section);
+        } else if !rewordable && shown {
+            self.menu.remove(1);
+        }
+    }
+
+    /// 右クリックのメニューの Edit Message… を選んだら `f(コミット ID)` を呼ぶ（呼ぶまでは出さない）。
+    pub fn connect_edit_message(&self, f: impl Fn(&str) + 'static) {
+        self.on_reword.replace(Some(Rc::new(f)));
+        self.update_menu();
+    }
+
     /// History の検索の問い合わせ（消えたら None）。件名・本文・トレーラー・notes の中の語に色を付ける。
     pub fn set_search(&self, query: Option<&str>) {
         let terms = highlight_terms(query);
@@ -601,6 +729,7 @@ impl Details {
             l.set_visible(false);
         }
         self.apply_highlight();
+        self.update_menu();
         self.find.refresh();
     }
 
@@ -747,6 +876,7 @@ impl Details {
             None => self.build_table(None),
         }
         self.apply_highlight();
+        self.update_menu();
         self.find.refresh();
     }
 
@@ -763,6 +893,7 @@ impl Details {
             self.fill_message(&info, Some(extras));
         }
         self.apply_highlight();
+        self.update_menu();
         self.find.refresh();
     }
 
@@ -1098,6 +1229,7 @@ impl Details {
         cell.set_selectable(true);
         cell.set_hexpand(true);
         cell.add_css_class("caption");
+        cell.set_extra_menu(Some(&self.menu));
         cell
     }
 
