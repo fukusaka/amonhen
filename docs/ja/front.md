@@ -54,6 +54,8 @@ History と差分は番号（`history`・`diff`）で持つ。FE がスクロー
 | `historyRows` | history と、start・count か rows（行の配列）、recorded?（true なら mailmap で作者を変えた行を挙げる） | count・edges・recorded（行の何番目か、記録された名前とメール。頼まなければ空） | rowNumbers u32・nodes・ids・times i64・spans（件名と作者の `text` の中の始めと長さ、u32 × 4。作者は mailmap で置き換えたもの）・text（UTF-8）・signatures u8・folded u32（折りたたんだ History のとき）・parentStarts u32（行の数 + 1）・parents u32（親の行）・parentIds（親の ID）・edges・edgeIds u32（start・count のときだけ。その範囲に重なる線） |
 | `historyGraph` | history | rows・edges | nodes・edges・ids・folded（全行） |
 | `historySearch` | history・query（`crates/core/src/query.rs` の書き方） | count | rows u32（昇順） |
+| `historySearchPartial` | history・query（このつながりで走っている `historySearch` のもの） | count・done（探し終えた割合、0〜1。内容の条件がなければ 0 のまま） | rows u32（昇順。そこまでに分かった一致で、最後の答えの一部。最後に始めた検索でなければ空） |
+| `historyContentsToFetch` | history・query | count（partial clone で `contents:` を探す前に取る中身の数。なければ 0）・more（上限を超えた。`historySearch` は失敗する） | |
 | `historyDensity` | history・buckets | buckets | density（f32 × 2: 頻度・活動量、0〜1） |
 | `historyLineage` | history・row | | rows（u64 のビット列）・edgeFrom u32 |
 | `historyLanes` | history・start・end・metrics（full・thin・minFull・minThin・available） | width（レーン全体の幅） | positions f32 |
