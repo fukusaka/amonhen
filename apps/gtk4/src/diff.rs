@@ -186,8 +186,11 @@ pub struct State {
     char_width: f32,
     /// 作り直している途中の表示の世代（古い結果を捨てる）。
     generation: u64,
-    /// 行ごとの stage の印を出す（Working Copy）。
+    /// 行を選ぶ表示（Working Copy）。
     marks: bool,
+    /// 変更の行と hunk の見出しに stage のチェックボックスを出す（HEAD と作業ツリーの 1 本の差分だけ。片側だけの
+    /// 差分では出さない。macOS 版と同じ）。Space で含める・外すのも、このときだけ。
+    checks: bool,
     /// 選んだ変更の行。
     selection: BTreeSet<u32>,
     /// Shift で範囲を選ぶときの起点。
@@ -462,6 +465,7 @@ impl DiffWidget {
             st.view = Some(Arc::new(view));
             st.rows.clear();
             st.marks = false;
+            st.checks = false;
             st.selection.clear();
             st.anchor = None;
             st.text_selection = None;
@@ -477,7 +481,7 @@ impl DiffWidget {
     /// Working Copy の 1 ファイルの差分を、行ごとの stage の印つきで出す。`keep` なら同じファイルを
     /// 読み直したとして、スクロールの位置を保つ。選んだ行はいつも外す（macOS 版と同じ。読み直すと行の番号が
     /// 別の行を指すことがあり、そのまま Stage Lines・Discard Lines を押すと違う行に効いてしまう）。
-    pub fn show_working(&self, view: View, keep: bool) {
+    pub fn show_working(&self, view: View, keep: bool, checks: bool) {
         {
             let mut st = self.state();
             st.generation += 1;
@@ -486,6 +490,7 @@ impl DiffWidget {
             st.view = Some(Arc::new(view));
             st.rows.clear();
             st.marks = true;
+            st.checks = checks;
             st.selection.clear();
             st.anchor = None;
             st.text_selection = None;
@@ -518,6 +523,7 @@ impl DiffWidget {
             st.view = Some(Arc::new(view));
             st.rows.clear();
             st.marks = false;
+            st.checks = false;
             st.selection.clear();
             st.anchor = None;
             st.text_selection = None;
@@ -770,7 +776,7 @@ impl DiffWidget {
                 let (marks, rows, f) = {
                     let st = self.state();
                     (
-                        st.marks,
+                        st.checks,
                         st.selection.iter().map(|&r| r as usize).collect::<Vec<_>>(),
                         st.on_toggle_rows.clone(),
                     )
@@ -985,7 +991,7 @@ impl DiffWidget {
 
     /// 本文の左端（印・行番号の列の右。行番号の列の幅は、等幅なので桁数から）。行番号と印は横にスクロールしない。
     fn text_left(st: &State, view: &View) -> f32 {
-        let left = if st.marks {
+        let left = if st.checks {
             TEXT_INSET + MARK_WIDTH
         } else {
             TEXT_INSET
@@ -1028,10 +1034,10 @@ impl DiffWidget {
         let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
         let rh = self.row_height();
         let index = ((y + scroll) / rh).floor();
-        let (marks, view) = {
+        let (marks, checks, view) = {
             let mut st = self.state();
             st.dragging = false;
-            (st.marks, st.view.clone())
+            (st.marks, st.checks, st.view.clone())
         };
         let Some(view) = view else { return };
         if !marks {
@@ -1053,7 +1059,10 @@ impl DiffWidget {
         let rows = &view.view.rows;
         let row = rows[index as usize];
         // 左端のチェックボックス: その行（hunk の見出しなら hunk の変更すべて）を含める・外す（macOS 版と同じ）。
-        if x < TEXT_INSET + MARK_WIDTH && (Self::is_change(&row) || row.kind == DiffRow::HUNK) {
+        if checks
+            && x < TEXT_INSET + MARK_WIDTH
+            && (Self::is_change(&row) || row.kind == DiffRow::HUNK)
+        {
             let picked: Vec<usize> = if row.kind == DiffRow::HUNK {
                 Self::hunk_changes(rows, index as usize).collect()
             } else {
@@ -1644,7 +1653,7 @@ impl DiffWidget {
             st.rows.clear();
         }
         let secondary = gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), fg.alpha() * 0.5);
-        let left = if st.marks {
+        let left = if st.checks {
             TEXT_INSET + MARK_WIDTH
         } else {
             TEXT_INSET
@@ -1701,7 +1710,7 @@ impl DiffWidget {
             }
             // 変更の行と hunk の見出しのチェックボックス。hunk は中の変更がすべて含まれていれば ✓、一部なら −
             // （macOS 版と同じ）。
-            if st.marks {
+            if st.checks {
                 let check = if Self::is_change(row) {
                     Some(if row.flags & DiffRow::STAGED != 0 {
                         Check::On
@@ -1885,7 +1894,7 @@ impl DiffWidget {
         let line = &st.rows[&index];
         let (_, h) = line.text.pixel_size();
         let y = top + ((rh - h as f32) / 2.0).round();
-        let left = if st.marks {
+        let left = if st.checks {
             TEXT_INSET + MARK_WIDTH
         } else {
             TEXT_INSET

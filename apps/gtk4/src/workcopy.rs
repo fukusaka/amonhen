@@ -1544,9 +1544,10 @@ impl Inner {
                     this.sides.set_visible(w.is_some_and(|w| {
                         w.combined.is_none() && w.entry.is_staged() && w.entry.is_unstaged()
                     }));
+                    let checks = w.is_some_and(|w| w.combined.is_some());
                     this.conflict_buttons.set_visible(false);
                     this.current.replace(Some(working));
-                    this.diff.show_working(view, same);
+                    this.diff.show_working(view, same, checks);
                     if let Some(row) = this.toggle_once.take() {
                         Inner::set_rows(&this, vec![row as usize], None);
                     }
