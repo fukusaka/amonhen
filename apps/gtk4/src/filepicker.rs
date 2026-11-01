@@ -306,6 +306,8 @@ struct Picker {
     columns_box: gtk::Box,
     columns_scroll: gtk::ScrolledWindow,
     status: gtk::Label,
+    /// 最初に列ができたら、列にキーボードを移す（macOS 版と同じく、始めは列で選ぶ。SSH 先を選べるときは欄のまま）。
+    focus_columns: Cell<bool>,
     /// つなげなかったときの「接続を確認」（もう一度つなぐ。macOS 版と同じ）。
     retry: gtk::Button,
     spinner: gtk::Spinner,
@@ -341,6 +343,7 @@ pub async fn choose(
         Source::Host(host) | Source::AnyHost(host) => picker.connect(&host),
     }
     picker.window.present();
+    // 列ができるまでは欄に（列ができたら列へ。`sync`）。
     picker.field.grab_focus();
     debug_snapshot(&picker);
     // シートが閉じるまで持つ。
@@ -493,6 +496,7 @@ impl Picker {
             columns_box,
             columns_scroll,
             status,
+            focus_columns: Cell::new(!matches!(source, Source::AnyHost(_))),
             retry,
             spinner,
             choose,
@@ -554,13 +558,9 @@ impl Picker {
         }
         let w = Rc::downgrade(self);
         self.field.connect_activate(move |f| {
+            // 打ち込んだパスへ行く（つながらなかったときも。決めるのは Choose。macOS 版と同じ）。
             if let Some(p) = w.upgrade() {
-                // つながらなければ、打ち込んだパスで決める。
-                if p.connection_error.borrow().is_some() {
-                    p.finish();
-                } else {
-                    p.go(&f.text(), false);
-                }
+                p.go(&f.text(), false);
             }
         });
         let w = Rc::downgrade(self);
@@ -953,6 +953,12 @@ impl Picker {
             self.fill(i);
         }
         self.update_buttons();
+        if count > 0
+            && self.focus_columns.replace(false)
+            && let Some(view) = self.views.borrow().last()
+        {
+            view.list.grab_focus();
+        }
     }
 
     fn column_view(self: &Rc<Self>, index: usize) -> Rc<ColumnView> {
@@ -1059,11 +1065,12 @@ impl Picker {
             }
             p.select(index, name);
         });
-        // ダブルクリック・Enter: 選べるものなら決める、フォルダなら入る。
+        // ダブルクリック・Enter: 選べるものなら決める（フォルダを選ぶときは、開いているフォルダ）、選べなければ
+        // フォルダに入る（macOS 版の `activate`）。
         let w = Rc::downgrade(self);
         list.connect_activate(move |_, _| {
             if let Some(p) = w.upgrade() {
-                if p.chosen().is_some() && p.last_selected_is_choice() {
+                if p.chosen().is_some() {
                     p.finish();
                 } else {
                     p.enter(index);
@@ -1160,11 +1167,6 @@ impl Picker {
                 self.selectable(e).then(|| join(&last.path, name))
             }
         }
-    }
-
-    /// 最後の列で選んでいるものが、決めるもの（フォルダを選ぶときは、選んだフォルダに入るだけ）か。
-    fn last_selected_is_choice(&self) -> bool {
-        self.kind != Kind::Folder
     }
 
     fn finish(&self) {
