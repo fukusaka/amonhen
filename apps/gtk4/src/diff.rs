@@ -196,6 +196,8 @@ pub struct State {
     find: String,
     matches: Vec<(u32, u32, u32)>,
     current_match: Option<usize>,
+    /// 差分の代わりに出す知らせ（「Loading the diff…」など）。
+    message: Option<String>,
 }
 
 /// ファイルの見出し・差分の行を右クリックしたときに呼ぶ（見出しの上ならファイルの番号、パス、x、y）。
@@ -378,6 +380,7 @@ impl DiffWidget {
         {
             let mut st = self.state();
             st.generation += 1;
+            st.message = None;
             st.source = None;
             st.view = None;
             st.rows.clear();
@@ -387,6 +390,13 @@ impl DiffWidget {
             st.hunk_cursor = None;
         }
         self.configure_adjustments();
+        self.queue_draw();
+    }
+
+    /// 差分の代わりに知らせ `text` を出す（読んでいる・読めなかったなど。macOS 版と同じ文）。
+    pub fn show_message(&self, text: &str) {
+        self.clear();
+        self.state().message = Some(text.to_owned());
         self.queue_draw();
     }
 
@@ -407,6 +417,7 @@ impl DiffWidget {
         {
             let mut st = self.state();
             st.generation += 1;
+            st.message = None;
             st.collapsed = collapsed;
             st.viewed = viewed;
             st.top_file = None;
@@ -433,6 +444,7 @@ impl DiffWidget {
         {
             let mut st = self.state();
             st.generation += 1;
+            st.message = None;
             st.source = None;
             st.view = Some(Arc::new(view));
             st.rows.clear();
@@ -464,6 +476,7 @@ impl DiffWidget {
         {
             let mut st = self.state();
             st.generation += 1;
+            st.message = None;
             st.source = None;
             st.view = Some(Arc::new(view));
             st.rows.clear();
@@ -1283,6 +1296,7 @@ impl DiffWidget {
                 _ => return,
             }
             st.generation += 1;
+            st.message = None;
             (source, st.collapsed.clone(), st.generation)
         };
         let weak = self.downgrade();
@@ -1538,6 +1552,28 @@ impl DiffWidget {
         let mut st = self.state();
         let st = &mut *st;
         self.ensure_font(st);
+        // 差分の代わりの知らせ: 頼まれたもの、1 ファイルのバイナリ、変わったファイルのない差分（macOS 版と同じ）。
+        let message = st.message.clone().or_else(|| {
+            let view = st.view.as_ref()?;
+            if view.view.binary && view.file_rows.is_empty() {
+                Some(tr!("Binary file"))
+            } else if view.view.rows.is_empty()
+                && st.source.as_ref().is_some_and(|s| s.0.files.is_empty())
+            {
+                Some(tr!("No changes"))
+            } else {
+                None
+            }
+        });
+        if let Some(message) = message {
+            let layout = self.create_pango_layout(Some(&message));
+            let secondary = gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), fg.alpha() * 0.6);
+            snapshot.save();
+            snapshot.translate(&graphene::Point::new(12.0, 12.0));
+            snapshot.append_layout(&layout, &secondary);
+            snapshot.restore();
+            return;
+        }
         let Some(view) = st.view.clone() else {
             return;
         };

@@ -2357,6 +2357,7 @@ impl Loader {
         pair: PairMode,
     ) {
         let g = self.start();
+        self.files.show_message(&tr!("Loading the diff…"));
         let weak = Rc::downgrade(self);
         let (r, h, rs) = (repo.clone(), history.clone(), rows.clone());
         let on_pair: Rc<dyn Fn(PairMode)> = Rc::new(move |mode| {
@@ -2452,7 +2453,10 @@ impl Loader {
                     this.files.show(prepared, key);
                     then(kind);
                 }
-                Ok(Err(e)) => eprintln!("差分を読めない: {e}"),
+                Ok(Err(e)) => {
+                    eprintln!("差分を読めない: {e}");
+                    this.files.show_message(&tr!("Couldn’t load the diff"));
+                }
                 Err(_) => {}
             }
         });

@@ -1778,3 +1778,7 @@
 "Folders to Scan" = "探すフォルダ";
 "{count} levels" = "{count} 段まで";
 "The same list as under the host in Places." = "Repositories の Places の、この SSH 先の下と同じ一覧です。";
+/* GTK4: 差分の代わりに出す知らせ */
+"Select a commit to see its changes." = "コミットを選ぶと、変更が表示されます";
+"Couldn’t load the diff" = "差分を読めませんでした";
+"Can’t read the diff" = "差分を読めません";

@@ -444,6 +444,9 @@ impl CommitDiff {
         Inner::setup_factory(&inner, &factory);
         Inner::connect(&inner, &previous, &next, &done);
         Inner::arrange(&inner);
+        inner
+            .diff
+            .show_message(&tr!("Select a commit to see its changes."));
         Self { root, inner }
     }
 
@@ -463,6 +466,12 @@ impl CommitDiff {
         inner.syncing.set(false);
         inner.row_of_file.borrow_mut().clear();
         inner.diff.clear();
+    }
+
+    /// 一覧を消し、差分の代わりに知らせ `text` を出す（「Loading the diff…」など）。
+    pub fn show_message(&self, text: &str) {
+        self.clear();
+        self.inner.diff.show_message(text);
     }
 
     /// 用意した差分を出す。`key` は Viewed を覚える鍵。

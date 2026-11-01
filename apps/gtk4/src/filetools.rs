@@ -674,7 +674,10 @@ fn show_file_history(
             }
             match view {
                 Ok(Ok(view)) => diff.show_plain(view),
-                Ok(Err(e)) => eprintln!("差分を読めない: {e}"),
+                Ok(Err(e)) => {
+                    eprintln!("差分を読めない: {e}");
+                    diff.show_message(&tr!("Can’t read the diff"));
+                }
                 Err(_) => {}
             }
         });

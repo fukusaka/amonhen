@@ -1004,7 +1004,12 @@ impl Inner {
             this.selected.replace(None);
             this.current.replace(None);
             this.path.set_text("");
-            this.diff.clear();
+            // 変更がひとつもなければその旨（macOS 版と同じ）。
+            if this.all_entries.borrow().is_empty() {
+                this.diff.show_message(&tr!("No changes"));
+            } else {
+                this.diff.clear();
+            }
         }
         this.update_buttons();
     }
