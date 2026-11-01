@@ -1141,7 +1141,17 @@ pub fn pull(actions: &Rc<Actions>, mode: &str) {
         modes.set_list_factory(Some(&pull_mode_factory()));
         modes.set_selected(PULL_MODES.iter().position(|m| *m == mode).unwrap_or(0) as u32);
         sheet.add(&row(&tr!("Integrate with:"), &modes));
-        let explain = note("");
+        // 説明は取り込み方ごとに並べて重ね、高さをいちばん長いものに合わせる（選び直してもシートの大きさを
+        // 変えない。macOS 版と同じ）。
+        let explain = gtk::Stack::new();
+        let explains: Vec<gtk::Label> = PULL_MODES
+            .iter()
+            .map(|m| {
+                let l = note("");
+                explain.add_named(&l, Some(m));
+                l
+            })
+            .collect();
         sheet.add(&explain);
         let forecast =
             (state.upstream.is_some() && incoming > 0 && outgoing > 0).then(forecast_label);
@@ -1229,8 +1239,9 @@ pub fn pull(actions: &Rc<Actions>, mode: &str) {
         };
         let forecast_answer: Rc<std::cell::RefCell<Option<MergeForecast>>> = Rc::default();
         let update = {
-            let (explain, ok, forecast, answer, chosen, method, describe) = (
+            let (explain, explains, ok, forecast, answer, chosen, method, describe) = (
                 explain.clone(),
+                explains.clone(),
                 ok.clone(),
                 forecast.clone(),
                 forecast_answer.clone(),
@@ -1239,9 +1250,11 @@ pub fn pull(actions: &Rc<Actions>, mode: &str) {
                 describe.clone(),
             );
             Rc::new(move || {
-                let (text, blocked) = describe(&chosen());
-                explain.set_text(&text);
-                ok.set_sensitive(!blocked);
+                for (m, label) in PULL_MODES.iter().zip(&explains) {
+                    label.set_text(&describe(m).0);
+                }
+                explain.set_visible_child_name(&chosen());
+                ok.set_sensitive(!describe(&chosen()).1);
                 if let Some(label) = &forecast {
                     let m = method(&chosen());
                     if m == "fastForwardOnly" {
