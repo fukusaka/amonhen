@@ -3,7 +3,7 @@
 //! すぐ読める分（`commit_info`）を先に出し、時間のかかる分（`commit_extras`: 署名の検証・子・含むブランチと
 //! タグ・notes など）が届いたら表を作り直す。
 
-use std::cell::RefCell;
+use std::cell::{Cell as StdCell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -99,6 +99,57 @@ pub struct Details {
     place: RefCell<crate::signature::Place>,
     /// コミット ID・ref の名前のリンクを押したとき（[`Details::connect_links`]。なければリンクにしない）。
     links: Rc<RefCell<Option<Links>>>,
+    /// 作者の名前を押したとき（[`Details::connect_person`]）。
+    on_person: Rc<RefCell<Option<OnRef>>>,
+    /// 見せ方（簡潔・標準・詳細）。
+    style: StdCell<Style>,
+    /// 右上の見せ方の切り替え（[`Details::show_style_switch`] で出す）。
+    styles: gtk::Box,
+    style_buttons: Vec<gtk::ToggleButton>,
+    /// 簡潔の 1 行（小さなアバター・作者・日時・ref・親）。
+    brief: gtk::Box,
+    brief_avatar: Rc<crate::avatars::Avatar>,
+    brief_text: gtk::Label,
+}
+
+/// 詳細の上の欄の見せ方（macOS 版の `CommitHeaderStyle`。同じ順の番号で覚える）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Style {
+    /// 件名と 1 行のメタ情報。差分を広く見たいとき。
+    Brief,
+    /// 件名・ref・作者・ID・署名・含むタグと本文。
+    Standard,
+    /// 項目ごとの表と本文。
+    Full,
+}
+
+/// 見せ方を覚える鍵（macOS 版と同じ名前）。
+const STYLE_KEY: &str = "commitHeaderStyle";
+
+impl Style {
+    const ALL: [Style; 3] = [Style::Brief, Style::Standard, Style::Full];
+
+    fn title(self) -> String {
+        match self {
+            Style::Brief => tr!("Brief"),
+            Style::Standard => tr!("Standard"),
+            Style::Full => tr!("Full"),
+        }
+    }
+
+    /// 覚えている見せ方（なければ標準）。
+    fn saved() -> Self {
+        match crate::settings::string(STYLE_KEY).as_deref() {
+            Some("0") => Style::Brief,
+            Some("2") => Style::Full,
+            _ => Style::Standard,
+        }
+    }
+
+    fn save(self) {
+        let n = Self::ALL.iter().position(|s| *s == self).unwrap_or(1);
+        crate::settings::set_string(STYLE_KEY, &n.to_string());
+    }
 }
 
 /// ref の名前のリンクを押したとき。
@@ -208,7 +259,8 @@ const PAIRS: [(PairMode, &str); 3] = [
 impl Details {
     /// 作者・コミッターの名前を押したら `f(名前)` を呼ぶ（macOS 版と同じく History をその人で絞り込む）。
     pub fn connect_person(&self, f: impl Fn(&str) + 'static) {
-        let f = Rc::new(f);
+        let f: OnRef = Rc::new(f);
+        self.on_person.replace(Some(f.clone()));
         for person in [&self.author, &self.committer] {
             let f = f.clone();
             person.text.connect_activate_link(move |_, uri| {
@@ -284,9 +336,35 @@ impl Details {
         lead.set_hexpand(true);
         lead.append(&selection);
         lead.append(&people);
+        // 簡潔の 1 行（作者の帯と表の代わり）。
+        let brief_avatar = crate::avatars::Avatar::new(16);
+        brief_avatar.root.set_valign(gtk::Align::Center);
+        let brief_text = label(&["caption"]);
+        brief_text.set_hexpand(true);
+        let brief = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        brief.append(&brief_avatar.root);
+        brief.append(&brief_text);
+        brief.set_visible(false);
+        lead.append(&brief);
+        // 右上の見せ方の切り替え（簡潔・標準・詳細）。Push の確認のように埋め込むときは出さず、標準にする。
+        let styles = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        styles.add_css_class("linked");
+        styles.set_valign(gtk::Align::Start);
+        let mut style_buttons: Vec<gtk::ToggleButton> = Vec::new();
+        for style in Style::ALL {
+            let button = gtk::ToggleButton::with_label(&style.title());
+            button.add_css_class("caption");
+            if let Some(first) = style_buttons.first() {
+                button.set_group(Some(first));
+            }
+            styles.append(&button);
+            style_buttons.push(button);
+        }
+        styles.set_visible(false);
         let head = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         head.append(&lead);
         head.append(&tools);
+        head.append(&styles);
         let ai = gtk::Box::new(gtk::Orientation::Vertical, 8);
         let column = gtk::Box::new(gtk::Orientation::Vertical, 8);
         column.set_margin_top(10);
@@ -349,11 +427,32 @@ impl Details {
             ai,
             place: RefCell::default(),
             links: Rc::default(),
+            on_person: Rc::default(),
+            style: StdCell::new(Style::Standard),
+            styles,
+            style_buttons,
+            brief,
+            brief_avatar,
+            brief_text,
         };
         let links = details.links.clone();
         details
             .body
             .connect_activate_link(move |_, uri| follow(&links, uri));
+        // 簡潔の 1 行: 作者の名前・ref・親のリンク。
+        let (links, person) = (details.links.clone(), details.on_person.clone());
+        details.brief_text.connect_activate_link(move |_, uri| {
+            if let Some(name) = uri
+                .strip_prefix("person:")
+                .and_then(|n| glib::Uri::unescape_string(n, None::<&str>))
+            {
+                if let Some(f) = person.borrow().clone() {
+                    f(&name);
+                }
+                return glib::Propagation::Stop;
+            }
+            follow(&links, uri)
+        });
         details.clear();
         details
     }
@@ -374,6 +473,39 @@ impl Details {
         }));
     }
 
+    /// 右上に見せ方の切り替え（簡潔・標準・詳細）を出し、覚えている見せ方にする（macOS 版の詳細の欄。出さなければ
+    /// 標準のまま）。切り替えたら覚え、欄の高さを中身に合わせ直す。
+    pub fn show_style_switch(self: &Rc<Self>) {
+        self.styles.set_visible(true);
+        let saved = Style::saved();
+        for (style, button) in Style::ALL.into_iter().zip(&self.style_buttons) {
+            button.set_active(style == saved);
+            let weak = Rc::downgrade(self);
+            button.connect_toggled(move |button| {
+                let Some(d) = weak.upgrade() else { return };
+                if !button.is_active() || d.style.get() == style {
+                    return;
+                }
+                style.save();
+                d.set_style(style);
+                // 右の列の境目を、中身の高さに合わせ直す。
+                if let Some(paned) = d.root.parent().and_downcast::<gtk::Paned>() {
+                    crate::fit_details(&paned, d.clone());
+                }
+            });
+        }
+        self.set_style(saved);
+    }
+
+    /// 見せ方を変えて出し直す。
+    fn set_style(&self, style: Style) {
+        self.style.set(style);
+        let info = self.info.borrow().clone();
+        if let Some(info) = info {
+            self.show(&info);
+        }
+    }
+
     /// 開いたリポジトリの場所（署名を検証した場所を、Signature の吹き出しに出すため）。
     pub fn set_location(&self, location: &str) {
         self.place.replace(crate::signature::Place::of(location));
@@ -385,6 +517,7 @@ impl Details {
         self.extras.replace(None);
         self.author.root.set_visible(false);
         self.committer.root.set_visible(false);
+        self.brief.set_visible(false);
         self.clear_table();
         self.subject.set_text("");
         while let Some(child) = self.ai.first_child() {
@@ -415,7 +548,9 @@ impl Details {
     /// 複数選んだときの見出しか、1 つのコミットの詳細か。
     fn set_selection_mode(&self, on: bool) {
         self.selection.set_visible(on);
-        self.people.set_visible(!on);
+        // 簡潔では、作者の帯の代わりに 1 行（[`Details::show_brief`]）。
+        self.people
+            .set_visible(!on && self.style.get() != Style::Brief);
         self.table.set_visible(!on);
         self.subject.set_visible(!on);
     }
@@ -485,10 +620,13 @@ impl Details {
         let (subject, body) = message.split_once('\n').unwrap_or((message, ""));
         self.subject.set_text(subject.trim_end());
         let body = body.trim();
+        let brief = self.style.get() == Style::Brief;
         // URL はリンクにする（`#123` は、リモートの場所を読んでから）。
         let revs = self.links.borrow().is_some();
         self.body.set_markup(&linked(body, None, revs));
-        self.body.set_visible(!body.is_empty());
+        // 簡潔では件名だけ（macOS 版と同じ）。
+        self.body.set_visible(!body.is_empty() && !brief);
+        self.people.set_visible(!brief);
 
         // 上の帯: 作者と（違う人なら）コミッター。
         // mailmap で置き換えたなら、記録の名前とメールを下に添える。
@@ -558,14 +696,77 @@ impl Details {
         }
         let notes = str_of(extras, "notes").trim();
         self.notes.set_text(notes);
-        self.notes.set_visible(!notes.is_empty());
+        self.notes
+            .set_visible(!notes.is_empty() && self.style.get() != Style::Brief);
         self.find.refresh();
+    }
+
+    /// 簡潔の 1 行: 小さなアバター・作者（押すとその人のコミットで絞り込む）・作者の日時・ref・親（macOS 版の
+    /// `renderCompact`）。
+    fn show_brief(&self, info: &Value) {
+        let (commits, names) = {
+            let links = self.links.borrow();
+            (
+                links.is_some(),
+                links.as_ref().is_some_and(|l| l.reference.is_some()),
+            )
+        };
+        let author = str_of(info, "author");
+        self.brief_avatar.show(author, str_of(info, "authorEmail"));
+        let mut markup = format!(
+            "<a href=\"person:{}\" title=\"{}\"><b>{}</b></a>  <span alpha=\"60%\">{}</span>",
+            esc(&glib::Uri::escape_string(author, None, false)),
+            esc(&tr!("Show only commits by {name}", name = author)),
+            esc(author),
+            esc(&date(info["authorTime"].as_i64().unwrap_or_default()))
+        );
+        let refs = strings(&info["refs"]);
+        if !refs.is_empty() {
+            markup.push_str("  ");
+            markup.push_str(&if names {
+                format!("<b>{}</b>", ref_links(&refs))
+            } else {
+                format!("<b>{}</b>", esc(&refs.join(", ")))
+            });
+        }
+        let parents = strings(&info["parents"]);
+        if !parents.is_empty() {
+            let title = if parents.len() > 1 {
+                "Parents"
+            } else {
+                "Parent"
+            };
+            let ids: Vec<String> = parents
+                .iter()
+                .map(|id| {
+                    if commits {
+                        commit_link(id, 12)
+                    } else {
+                        esc(&id[..12.min(id.len())])
+                    }
+                })
+                .collect();
+            markup.push_str(&format!(
+                "  <span alpha=\"60%\">{title}</span> <tt>{}</tt>",
+                ids.join(", ")
+            ));
+        }
+        self.brief_text.set_markup(&markup);
+        self.brief.set_visible(true);
     }
 
     fn build_table(&self, extras: Option<&Value>) {
         self.clear_table();
         let info = self.info.borrow();
         let Some(info) = info.as_ref() else { return };
+        let style = self.style.get();
+        self.brief.set_visible(false);
+        if style == Style::Brief {
+            self.show_brief(info);
+            return;
+        }
+        // 詳細だけの行（標準は、ID・親・署名・ref・タグ・取り込んだ数に絞る。macOS 版の `renderStandard`）。
+        let full = style == Style::Full;
         let (commits, names) = {
             let links = self.links.borrow();
             (
@@ -605,7 +806,7 @@ impl Details {
             };
             rows.push((title.into(), ids(&parents)));
         }
-        if let Some(extras) = extras {
+        if let Some(extras) = extras.filter(|_| full) {
             let children = strings(&extras["children"]);
             if !children.is_empty() {
                 let title = if children.len() > 1 {
@@ -677,7 +878,8 @@ impl Details {
             rows.push(("Merged Tag".into(), Cell::Text(text)));
         }
         if let Some(extras) = extras {
-            let branches = strings(&extras["branches"]);
+            let branches = strings(&extras["branches"]).into_iter().filter(|_| full);
+            let branches: Vec<String> = branches.collect();
             if !branches.is_empty() {
                 rows.push(("Branches".into(), refs_cell(&branches)));
             }
@@ -690,12 +892,14 @@ impl Details {
                 } else {
                     String::new()
                 };
-                rows.push(("Tags".into(), Cell::Text(shown + &more)));
+                if full {
+                    rows.push(("Tags".into(), Cell::Text(shown + &more)));
+                }
             }
-            if let Some(previous) = extras["previousTag"].as_str() {
+            if let Some(previous) = extras["previousTag"].as_str().filter(|_| full) {
                 rows.push(("Previous Tag".into(), Cell::Text(previous.into())));
             }
-            if !extras["originUrl"].is_null() {
+            if full && !extras["originUrl"].is_null() {
                 let remote = strings(&extras["remoteBranches"]);
                 let pushed = if remote.is_empty() {
                     Cell::Text(tr!("Not pushed (not on any remote branch)"))
@@ -708,7 +912,14 @@ impl Details {
             if merged > 0 {
                 // 10 桁の ID（押すとそのコミットへ）・件名・作者（macOS 版の `summaryLine`）。
                 let mut text = esc(&tr!("{count} commits", count = merged));
-                for commit in extras["merged"].as_array().into_iter().flatten().take(20) {
+                // 標準は数だけ。
+                let listed = if full { 20 } else { 0 };
+                for commit in extras["merged"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .take(listed)
+                {
                     let oid = str_of(commit, "oid");
                     let id = if commits {
                         commit_link(oid, 10)
@@ -720,7 +931,7 @@ impl Details {
                         text.push_str(&format!("<span alpha=\"60%\"> — {}</span>", esc(author)));
                     }
                 }
-                if merged > 20 {
+                if full && merged > 20 {
                     text.push('\n');
                     text.push_str(&esc(&tr!("and {count} more", count = merged - 20)));
                 }

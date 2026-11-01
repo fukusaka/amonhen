@@ -1721,6 +1721,12 @@
 "Current Branch" = "現在のブランチ";
 "{count} branches" = "{count} 本のブランチ";
 "Show only the history of {name}" = "{name} の履歴に絞り込む";
+"Show only commits by {name}" = "{name} のコミットで絞り込む";
+
+/* GTK4: コミットの詳細の見せ方 */
+"Brief" = "簡潔";
+"Standard" = "標準";
+"Full" = "詳細";
 
 /* GTK4: 詳細の中を探す */
 "Search" = "検索";

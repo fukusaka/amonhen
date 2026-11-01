@@ -175,6 +175,7 @@ impl Stashes {
 
         // 右の列: 選んだ stash の詳細と差分（History と同じ）。
         let details = Rc::new(Details::new());
+        details.show_style_switch();
         let diff = DiffWidget::default();
         let diff_scrolled = gtk::ScrolledWindow::builder()
             .child(&diff)

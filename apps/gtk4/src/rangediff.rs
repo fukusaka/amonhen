@@ -239,6 +239,7 @@ impl RangeDiff {
         pair_page.append(&pair_scrolled);
 
         let details = Rc::new(Details::new());
+        details.show_style_switch();
         let commit_diff = DiffWidget::default();
         let commit_scrolled = gtk::ScrolledWindow::builder()
             .child(&commit_diff)

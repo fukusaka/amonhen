@@ -126,6 +126,7 @@ impl ReflogView {
 
         // 右の列: History の詳細と同じ欄（詳細と差分）。
         let details = Rc::new(Details::new());
+        details.show_style_switch();
         let diff = DiffWidget::default();
         let diff_scrolled = gtk::ScrolledWindow::builder()
             .child(&diff)

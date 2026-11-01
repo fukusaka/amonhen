@@ -641,6 +641,7 @@ fn build_tab(
     // 右の列: 選んだコミットの詳細と差分。
     let details = Rc::new(Details::new());
     details.set_location(&text);
+    details.show_style_switch();
     // 変更ファイルの一覧と差分（macOS 版の詳細の下の部分）。
     let commit_diff = {
         let v = view.downgrade();
