@@ -1132,18 +1132,37 @@ impl Browser {
                 b.reload_table();
             }
         });
-        // 絞り込みの欄から、↑↓ で行を選び、Enter で開く。
-        let weak = Rc::downgrade(self);
-        self.filter.connect_activate(move |_| {
-            if let Some(b) = weak.upgrade() {
-                let rows = b.selected_rows();
-                if let Some(&row) = rows.first() {
-                    b.open_row(row, true);
-                } else if b.selection.n_items() > 0 {
-                    b.open_row(0, true);
+        // 絞り込みの欄から、↑↓ で行を選び、Enter で開く（Ctrl+Enter は新しい窓に。macOS 版の ⌘⏎）。
+        let open_first = {
+            let weak = Rc::downgrade(self);
+            move |close: bool| {
+                if let Some(b) = weak.upgrade() {
+                    let rows = b.selected_rows();
+                    if let Some(&row) = rows.first() {
+                        b.open_row(row, close);
+                    } else if b.selection.n_items() > 0 {
+                        b.open_row(0, close);
+                    }
                 }
             }
+        };
+        let o = open_first.clone();
+        self.filter.connect_activate(move |_| o(true));
+        // 欄の Enter より先に受ける。
+        let keys = gtk::EventControllerKey::new();
+        keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+        keys.connect_key_pressed(move |_, key, _, modifiers| match key {
+            gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter
+                if modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK) =>
+            {
+                open_first(false);
+                glib::Propagation::Stop
+            }
+            _ => glib::Propagation::Proceed,
         });
+        self.filter.add_controller(keys);
+        // Esc: 打ってあれば消す（macOS 版と同じ）。
+        self.filter.connect_stop_search(|f| f.set_text(""));
         let keys = gtk::EventControllerKey::new();
         let weak = Rc::downgrade(self);
         keys.connect_key_pressed(move |_, key, _, _| {
@@ -1679,7 +1698,12 @@ impl Browser {
             }
             return;
         }
-        let scroll = self.view.vadjustment().map(|a| a.value());
+        // 絞り込んでいれば先頭（選ぶ行）を見せる。そうでなければスクロールの位置を残す（macOS 版と同じ）。
+        let scroll = if query.is_empty() {
+            self.view.vadjustment().map(|a| a.value())
+        } else {
+            Some(0.0)
+        };
         let refs: Vec<&str> = list.iter().map(String::as_str).collect();
         self.model.splice(0, self.model.n_items(), &refs);
         if let (Some(value), Some(adjustment)) = (scroll, self.view.vadjustment()) {
