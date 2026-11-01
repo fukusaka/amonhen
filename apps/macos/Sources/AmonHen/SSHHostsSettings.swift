@@ -570,7 +570,7 @@ private struct HostEnvironmentPage: View {
                     name: selection ?? "", value: selection.flatMap { name in vars.first { $0.name == name }?.value },
                     masked: selection.map(EnvironmentTable.isSecret) == true && !revealed,
                     reveal: { revealed = true }, height: 120,
-                    onHost: (chosenGit: chosenGit, gitDirectory: gitDirectory))
+                    onHost: (chosenGit: chosenGit, gitDirectory: gitDirectory), windows: onWindows)
             }
         }
         .task(id: ObjectIdentifier(model)) { await load() }
@@ -595,7 +595,12 @@ private struct HostEnvironmentPage: View {
                     git.flatMap { $0.source == "path" ? nil : $0.program })
         }.value
         vars = v
-        gitDirectory = g.map { ($0 as NSString).deletingLastPathComponent }
+        // Windows の SSH 先のパスは `\` で区切る。
+        let windows = v.contains { $0.name == "OS" && $0.value == "Windows_NT" }
+        gitDirectory = g.map { path in
+            guard windows else { return (path as NSString).deletingLastPathComponent }
+            return path.range(of: "\\", options: .backwards).map { String(path[..<$0.lowerBound]) } ?? ""
+        }
         chosenGit = chosen
         loaded = true
     }
