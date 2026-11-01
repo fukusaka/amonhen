@@ -565,8 +565,7 @@ impl RangeDiff {
         };
         self.counts.set_text(&counts);
         self.pairs.replace(pairs);
-        // 前に選んでいた組は選び直さない（比べ直したら最初の変わった組から）。
-        self.shown.borrow_mut().clear();
+        // 前に選んでいた組がまだあれば、それを選び直す（macOS 版と同じ）。
         self.filter();
         if let Some(row) = self.select_once.take()
             && row < self.model.n_items()
