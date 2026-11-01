@@ -497,16 +497,18 @@ impl HistoryView {
             st.selected = selected.and_then(|id| history.row_of(&id));
             st.extra = extra.iter().filter_map(|id| history.row_of(id)).collect();
             st.anchor = anchor.and_then(|id| history.row_of(&id));
-            let changed =
+            let mut changed =
                 st.selected.is_none() != selected.is_none() || st.extra.len() != extra.len();
             // 最後に選んだコミットが消えたら（ほかのプログラムが rebase・amend した）、残りのうち最後のものに
             // する。何も残らなければ先頭（いちばん新しいコミット）を選ぶ（macOS 版と同じ。表示の位置は動かさない）。
             if selected.is_some() && st.selected.is_none() {
                 st.selected = st.extra.pop_last();
-                if st.selected.is_none() && !history.graph.ids().is_empty() {
-                    st.selected = Some(0);
-                    st.anchor = Some(0);
-                }
+            }
+            // 何も選んでいなければ（開いたばかりも）先頭を選び、詳細が空のままにならないようにする（macOS 版と同じ）。
+            if st.selected.is_none() && !history.graph.ids().is_empty() {
+                st.selected = Some(0);
+                st.anchor = Some(0);
+                changed = true;
             }
             st.history = Some(history);
             st.chunks.clear();
