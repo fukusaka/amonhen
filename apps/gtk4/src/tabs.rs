@@ -712,12 +712,21 @@ fn teardown(tab: &Rc<Tab>) {
     }
 }
 
-/// タブを閉じる。窓の最後のタブなら窓を閉じる。
+/// タブを閉じる。窓の最後のタブなら窓を閉じる。ただし、ほかに窓がなくて最後のリポジトリを閉じるときは、終わらずに
+/// リポジトリのページを出す（macOS 版と同じ）。
 pub fn close_tab(tab: &Rc<Tab>) {
     let Some(host) = tab.host() else { return };
     if host.tabs.borrow().len() <= 1 {
-        host.window.close();
-        return;
+        let alone = WINDOWS.with(|w| w.borrow().len() <= 1);
+        match tab.window().and_then(|w| w.application()) {
+            Some(app) if alone && !tab.is_home() => {
+                show_home(&app, Some(host.clone()));
+            }
+            _ => {
+                host.window.close();
+                return;
+            }
+        }
     }
     detach(&host, tab);
     teardown(tab);
@@ -780,7 +789,8 @@ fn install_actions(tab: &Rc<Tab>) {
             show_home(&app, Some(host));
         }
     });
-    // File > Close（Ctrl+W）: タブを閉じる（最後のタブなら窓を閉じる。macOS 版と同じ）。
+    // File > Close（Ctrl+W）: タブを閉じる（最後のタブなら窓を閉じる。最後のリポジトリならリポジトリのページを出す。
+    // macOS 版と同じ）。
     add("close", close_tab);
     add("close-window", |tab| {
         if let Some(window) = tab.window() {
