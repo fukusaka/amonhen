@@ -673,7 +673,7 @@ impl RepoSettings {
             git.set_margin_bottom(6);
             git.set_tooltip_text(Some(&match &this.host {
                 Some(host) => tr!(
-                    "The git on {host} runs this repository. Every repository on that host uses it.",
+                    "The git on {host} runs this repository. Every repository on that host uses it. See it in Settings > SSH Hosts.",
                     host = host
                 ),
                 None => tr!("This computer’s git runs this repository. Choose it in Settings > Git."),

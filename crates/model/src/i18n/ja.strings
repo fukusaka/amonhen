@@ -980,7 +980,7 @@
 "system-wide" = "システム全体";
 "On" = "オン";
 "Off" = "オフ";
-"The git on {host} runs this repository. Every repository on that host uses it." = "{host} の git がこのリポジトリを動かしています。そのホストのすべてのリポジトリが同じ git を使います。";
+"The git on {host} runs this repository. Every repository on that host uses it. See it in Settings > SSH Hosts." = "{host} の git がこのリポジトリを動かしています。そのホストのすべてのリポジトリが同じ git を使います。設定 > SSH ホストで見られます。";
 "This computer’s git runs this repository. Choose it in Settings > Git." = "このコンピューターの git がこのリポジトリを動かしています。設定 > Git で選びます。";
 "This computer" = "このコンピューター";
 "git’s default" = "git の既定";
