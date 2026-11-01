@@ -405,6 +405,8 @@ impl WorkingCopy {
         root.set_start_child(Some(&left));
         root.set_end_child(Some(&right));
         root.set_resize_start_child(false);
+        // 左の列は最小の幅より狭くしない（「Commit 3 Files」などで行が伸びると、左の余白が削られて詰まる）。
+        root.set_shrink_start_child(false);
         root.set_position(340);
 
         let inner = Rc::new(Inner {
