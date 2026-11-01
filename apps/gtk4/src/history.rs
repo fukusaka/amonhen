@@ -127,6 +127,15 @@ fn signature_color(status: Option<Status>, fg: &gdk::RGBA) -> gdk::RGBA {
     }
 }
 
+/// 行の署名の丸を塗りつぶすか（macOS 版の SF Symbols の `.fill`: 強い信用の Verified、失効・不正な署名）。
+/// そのほか（marginal の信用・信用していない鍵・署名者の不一致・期限切れ・鍵なし・未検証）は縁だけ。
+fn signature_filled(status: Option<Status>) -> bool {
+    matches!(
+        status,
+        Some(Status::Verified(3..) | Status::Revoked | Status::Bad)
+    )
+}
+
 /// `verifySignatures` の答えの 1 件から状態を決める（コアがコミッターのメールを添える。macOS 版と同じ）。
 fn signature_status(check: &serde_json::Value) -> Status {
     let signer = check["signer"].as_str().unwrap_or_default();
@@ -1456,14 +1465,21 @@ impl HistoryView {
                         text_x + meta_natural.min(meta_max) + 9.0
                     };
                     let cy = meta_y + meta_h as f32 / 2.0;
-                    let path = gsk::PathBuilder::new();
-                    path.add_circle(&graphene::Point::new(cx, cy), 3.5);
                     let color = if selected {
                         white
                     } else {
                         signature_color(mark, &fg)
                     };
-                    snapshot.append_fill(&path.to_path(), gsk::FillRule::Winding, &color);
+                    // 塗りつぶしは強い信用（と、はっきり悪いもの）、縁だけは弱い信用やそれ以外（macOS 版の
+                    // アイコンの塗りつぶしと縁だけの違い）。
+                    let path = gsk::PathBuilder::new();
+                    if signature_filled(mark) {
+                        path.add_circle(&graphene::Point::new(cx, cy), 3.5);
+                        snapshot.append_fill(&path.to_path(), gsk::FillRule::Winding, &color);
+                    } else {
+                        path.add_circle(&graphene::Point::new(cx, cy), 3.0);
+                        snapshot.append_stroke(&path.to_path(), &gsk::Stroke::new(1.3), &color);
+                    }
                 }
             }
         }
