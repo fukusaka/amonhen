@@ -2432,6 +2432,11 @@ impl Loader {
         glib::spawn_future_local(async move {
             let started = std::time::Instant::now();
             let result = gio::spawn_blocking(move || {
+                // 1 つのコミットは、全ファイルを並べないなら最初のファイルの差分だけを読む（macOS 版と同じ）。
+                if let [row] = rows[..] {
+                    return commitfiles::Prepared::commit(&repo, &history, row, &viewed, all)
+                        .map(|prepared| ("range", prepared));
+                }
                 let (selection, stacked) = repo
                     .selection_diff(&history, &rows, pair)
                     .map_err(|e| e.to_string())?;

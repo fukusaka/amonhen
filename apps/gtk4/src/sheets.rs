@@ -825,7 +825,7 @@ fn push_preview(
                 };
                 let stacked = repo.stacked_diff(&changes).ok()?;
                 let view = crate::diff::View::build(&stacked, &[]);
-                Some((Arc::new(crate::diff::Source(stacked)), view))
+                Some((Arc::new(crate::diff::Source(stacked, None)), view))
             })
             .await
             .ok()

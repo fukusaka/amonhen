@@ -431,7 +431,7 @@ impl Inner {
                 let changes = repo.stash_changes(&id).map_err(|e| e.to_string())?;
                 let stacked = repo.stacked_diff(&changes).map_err(|e| e.to_string())?;
                 let view = diff::View::build(&stacked, &[]);
-                Ok::<_, String>((Arc::new(diff::Source(stacked)), view))
+                Ok::<_, String>((Arc::new(diff::Source(stacked, None)), view))
             })
             .await;
             this.pending.set(this.pending.get() - 1);

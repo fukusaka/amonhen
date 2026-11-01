@@ -6,6 +6,9 @@
 //! 全ファイルを並べるときは、一覧で選んだファイルの見出しまでスクロールし、スクロールしたら一覧の選択を合わせる。
 //! 見たことにしたファイル（Viewed）は畳み、コミットごとに覚えておく（古いものから捨てて 500 コミットまで）。
 //! lock ファイルなど生成されたファイルと、1000 行を超える変更のファイルは、最初は畳んでおく。
+//!
+//! 1 つのコミットで全ファイルを並べないとき（設定がオフか、変更ファイルが 200 を超える）は、最初のファイルの
+//! 差分だけを読み、ほかは一覧で選んだときに読む（macOS 版と同じ）。
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
@@ -13,14 +16,15 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use amonhen_core::diff::{DiffView, StackedDiff};
-use amonhen_model::tr;
+use amonhen_core::{HistorySnapshot, Repository, Selection};
+use amonhen_model::{ChangeKind, FileChange, tr};
 use amonhen_projection::FrontendProfile;
 use gtk::prelude::*;
 use gtk::{gio, glib};
 use serde_json::{Value, json};
 
 use crate::aiactions::CurrentRepo;
-use crate::diff::{DiffWidget, Source, View};
+use crate::diff::{DiffWidget, Lazy, Source, View};
 use crate::menu::{self, Item};
 
 /// 全ファイルを 1 つの差分に並べるか（既定は並べる）。
@@ -33,6 +37,8 @@ const VIEWED: &str = "viewedFiles";
 const VIEWED_KEEP: usize = 500;
 /// 1 ファイルの変更がこの行数を超えたら、最初は畳む。
 const COLLAPSE_ABOVE: u32 = 1000;
+/// 1 つのコミットで全ファイルを並べるのは、変更ファイルがこの数まで（多ければ 1 ファイルずつ。macOS 版と同じ）。
+const STACK_LIMIT: usize = 200;
 
 /// 全ファイルを 1 つの差分に並べるか。
 pub fn stacked() -> bool {
@@ -120,7 +126,58 @@ impl Prepared {
     /// `stacked` を、`viewed` のファイル・生成されたファイル・大きなファイルを畳んで（`all` でなければ最初の
     /// ファイルだけを）表示にする。裏のスレッドで呼ぶ。
     pub fn new(stacked: StackedDiff, viewed: &HashSet<String>, all: bool) -> Self {
-        Self::with_source(Arc::new(Source(stacked)), viewed, all)
+        Self::with_source(Arc::new(Source(stacked, None)), viewed, all)
+    }
+
+    /// History で選んだ 1 つのコミット（行 `row`）の差分。全ファイルを並べるなら（`all` で、変更ファイルが 1〜200）
+    /// 全ファイルの差分を、そうでなければ最初のファイルの差分だけを読む。裏のスレッドで呼ぶ。
+    pub fn commit(
+        repo: &Arc<Repository>,
+        history: &HistorySnapshot,
+        row: u32,
+        viewed: &HashSet<String>,
+        all: bool,
+    ) -> Result<Self, String> {
+        let Selection::Range { base, tip, .. } =
+            Selection::of(&history.graph, &[row]).map_err(|e| e.to_string())?
+        else {
+            return Err(tr!("No commit selected"));
+        };
+        let changes = repo
+            .changes_between(base.as_ref(), &tip)
+            .map_err(|e| e.to_string())?;
+        Self::from_changes(repo.clone(), changes, viewed, all)
+    }
+
+    /// コミットの変更ファイル `changes` から作る（`commit` と、見せ方を変えたとき）。裏のスレッドで呼ぶ。
+    fn from_changes(
+        repo: Arc<Repository>,
+        changes: Vec<FileChange>,
+        viewed: &HashSet<String>,
+        all: bool,
+    ) -> Result<Self, String> {
+        if all && (1..=STACK_LIMIT).contains(&changes.len()) {
+            let stacked = repo.stacked_diff(&changes).map_err(|e| e.to_string())?;
+            return Ok(Self::new(stacked, viewed, true));
+        }
+        // 一覧に出す名前だけを並べ、差分は選んだときに読む。
+        let empty = || {
+            amonhen_core::diff::file_diff(Arc::<Vec<u8>>::default(), Arc::<Vec<u8>>::default(), 0)
+        };
+        let files = changes.iter().map(|c| (c.path.clone(), empty())).collect();
+        let count = changes.len();
+        let source = Arc::new(Source(StackedDiff { files }, Some(Lazy { repo, changes })));
+        let (view, single) = if count == 0 {
+            (View::build(&source.0, &[]), None)
+        } else {
+            (single_view(&source, 0)?, Some(0))
+        };
+        Ok(Self {
+            source,
+            view,
+            collapsed: vec![false; count],
+            single,
+        })
     }
 
     /// 読んである差分 `source` から作る（見せ方を変えたとき）。裏のスレッドで呼ぶ。
@@ -138,7 +195,7 @@ impl Prepared {
         let (view, single) = if all || source.0.files.is_empty() {
             (View::build(&source.0, &collapsed), None)
         } else {
-            (single_view(&source, 0), Some(0))
+            (read_view(&source, 0), Some(0))
         };
         Self {
             source,
@@ -149,10 +206,38 @@ impl Prepared {
     }
 }
 
-/// 1 ファイルの差分の表示（裏のスレッドで呼ぶ）。
-fn single_view(source: &Source, file: usize) -> View {
+/// 1 ファイルの差分の表示（選んだファイルだけを読む元なら、ここで読む）。裏のスレッドで呼ぶ。
+fn single_view(source: &Source, file: usize) -> Result<View, String> {
+    match &source.1 {
+        Some(lazy) => {
+            let change = lazy
+                .changes
+                .get(file)
+                .ok_or_else(|| tr!("Couldn’t load the diff"))?;
+            lazy.repo
+                .file_diff(change, &FrontendProfile::GTK)
+                .map(View::new)
+                .map_err(|e| e.to_string())
+        }
+        None => Ok(read_view(source, file)),
+    }
+}
+
+/// 読んである差分の、1 ファイルの表示（裏のスレッドで呼ぶ）。
+fn read_view(source: &Source, file: usize) -> View {
     let (name, diff) = &source.0.files[file];
     View::new(DiffView::new(diff, &FrontendProfile::GTK).with_path(path_of(name)))
+}
+
+/// 変更の種類の印（macOS 版と同じ）。
+fn kind_mark(kind: ChangeKind) -> &'static str {
+    match kind {
+        ChangeKind::Added => "A",
+        ChangeKind::Deleted => "D",
+        ChangeKind::Modified => "M",
+        ChangeKind::Renamed => "R",
+        ChangeKind::Copied => "C",
+    }
 }
 
 /// とびとびに選んだときの見出し（「パス — 短い ID」）のパス。
@@ -177,19 +262,26 @@ struct FileRow {
 fn file_rows(source: &Source, tree: bool) -> Vec<FileRow> {
     let file = |i: usize, name: String, depth: usize| {
         let diff = &source.0.files[i].1;
-        let mark = if diff.old.is_empty() && !diff.new.is_empty() {
-            "A"
-        } else if diff.new.is_empty() && !diff.old.is_empty() {
-            "D"
-        } else {
-            "M"
+        // 選んだファイルだけを読む元では、変更ファイルの種類だけがわかる（行数は出さない）。
+        let (mark, counts) = match &source.1 {
+            Some(lazy) => (kind_mark(lazy.changes[i].kind), None),
+            None => {
+                let mark = if diff.old.is_empty() && !diff.new.is_empty() {
+                    "A"
+                } else if diff.new.is_empty() && !diff.old.is_empty() {
+                    "D"
+                } else {
+                    "M"
+                };
+                (mark, (!diff.binary).then_some((diff.added, diff.removed)))
+            }
         };
         FileRow {
             name,
             depth,
             file: Some(i),
             mark,
-            counts: (!diff.binary).then_some((diff.added, diff.removed)),
+            counts,
         }
     };
     let names: Vec<&str> = source.0.files.iter().map(|(n, _)| n.as_str()).collect();
@@ -921,13 +1013,21 @@ impl Inner {
             if this.generation.get() != generation {
                 return;
             }
-            if let Ok(view) = view {
-                this.diff.show(source, view);
-                this.shown_file.set(Some(file));
-                if this.find.bar.is_visible() {
-                    let (current, count) = this.diff.find(&this.find.entry.text());
-                    this.show_count(current, count);
+            match view {
+                Ok(Ok(view)) => {
+                    this.diff.show(source, view);
+                    this.shown_file.set(Some(file));
+                    if this.find.bar.is_visible() {
+                        let (current, count) = this.diff.find(&this.find.entry.text());
+                        this.show_count(current, count);
+                    }
                 }
+                Ok(Err(e)) => {
+                    eprintln!("差分を読めない: {e}");
+                    this.diff.show_message(&tr!("Couldn’t load the diff"));
+                    this.shown_file.set(Some(file));
+                }
+                Err(_) => {}
             }
         });
     }
@@ -945,15 +1045,26 @@ impl Inner {
         this.pending.set(this.pending.get() + 1);
         let weak = Rc::downgrade(this);
         glib::spawn_future_local(async move {
-            let prepared =
-                gio::spawn_blocking(move || Prepared::with_source(source, &viewed, all)).await;
+            let prepared = gio::spawn_blocking(move || match &source.1 {
+                // 選んだファイルだけを読んでいたなら、その見せ方で読み直す。
+                Some(lazy) => {
+                    Prepared::from_changes(lazy.repo.clone(), lazy.changes.clone(), &viewed, all)
+                }
+                None => Ok(Prepared::with_source(source, &viewed, all)),
+            })
+            .await;
             let Some(this) = weak.upgrade() else { return };
             this.pending.set(this.pending.get() - 1);
             if this.generation.get() != generation {
                 return;
             }
-            if let Ok(prepared) = prepared {
-                Inner::show(&this, prepared, key);
+            match prepared {
+                Ok(Ok(prepared)) => Inner::show(&this, prepared, key),
+                Ok(Err(e)) => {
+                    eprintln!("差分を読めない: {e}");
+                    this.diff.show_message(&tr!("Couldn’t load the diff"));
+                }
+                Err(_) => {}
             }
         });
     }
@@ -1123,5 +1234,71 @@ impl Inner {
             tr!("Not found")
         };
         self.find.count.set_text(&text);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 手元の設定を読まない git で、`dir` に 3 ファイルのコミットを 1 つ作る。
+    fn commit_three_files(dir: &std::path::Path) {
+        std::fs::create_dir_all(dir).unwrap();
+        for name in ["a.txt", "b.txt", "c.txt"] {
+            std::fs::write(dir.join(name), format!("{name}\n")).unwrap();
+        }
+        let git = |args: &[&str]| {
+            let ok = amonhen_model::process::command("git")
+                .args(["-c", "commit.gpgsign=false"])
+                .args(["-c", "user.name=T", "-c", "user.email=t@example.com"])
+                .args(args)
+                .current_dir(dir)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .status()
+                .is_ok_and(|s| s.success());
+            assert!(ok, "git {args:?}");
+        };
+        git(&["init", "-q"]);
+        git(&["add", "."]);
+        git(&["commit", "-q", "-m", "three"]);
+    }
+
+    #[test]
+    fn reads_only_the_first_file_unless_stacked() {
+        let dir = std::env::temp_dir().join(format!("amonhen-gtk-lazy-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        commit_three_files(&dir);
+        let backend = amonhen_backend_gix::GixBackend::open(&dir).unwrap();
+        let repo = Arc::new(Repository::new(backend));
+        let history = repo.load_history().unwrap();
+        let none = HashSet::new();
+
+        // 全ファイルを並べないなら、最初のファイルだけ読み、ほかは選んだときに読む。
+        let lazy = Prepared::commit(&repo, &history, 0, &none, false).unwrap();
+        assert_eq!(lazy.single, Some(0));
+        assert!(lazy.source.1.is_some());
+        assert_eq!(lazy.source.0.files.len(), 3);
+        assert!(lazy.source.0.files.iter().all(|(_, d)| d.added == 0));
+        assert!(!lazy.view.diff_view().rows.is_empty());
+        let marks: Vec<&str> = file_rows(&lazy.source, false)
+            .iter()
+            .map(|r| r.mark)
+            .collect();
+        assert_eq!(marks, ["A", "A", "A"]);
+        let third = single_view(&lazy.source, 2).unwrap();
+        assert_eq!(third.diff_view().added, 1);
+        // AI の解説など、全ファイルが要るときはその場で読む。
+        let added = lazy
+            .source
+            .with_all(|all| all.files.iter().map(|(_, d)| d.added).sum::<u32>());
+        assert_eq!(added, 3);
+
+        // 全ファイルを並べるなら（200 ファイルまで）、全部読む。
+        let stacked = Prepared::commit(&repo, &history, 0, &none, true).unwrap();
+        assert_eq!(stacked.single, None);
+        assert!(stacked.source.1.is_none());
+        assert!(stacked.source.0.files.iter().all(|(_, d)| d.added == 1));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

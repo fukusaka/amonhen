@@ -130,9 +130,10 @@ pub fn details(details: &Rc<Details>, diff: &DiffWidget, current: CurrentRepo, f
                         let diff = gio::spawn_blocking(move || {
                             let mut out = amonhen_assist::DiffText::new();
                             if let Some(source) = source {
-                                let view = source
-                                    .0
-                                    .view(&[], &amonhen_projection::FrontendProfile::GTK);
+                                // 選んだファイルだけ読んであるなら、ここで全ファイルを読む。
+                                let view = source.with_all(|all| {
+                                    all.view(&[], &amonhen_projection::FrontendProfile::GTK)
+                                });
                                 crate::diff::ai_text(&view, None, &mut out);
                             }
                             out.finish()

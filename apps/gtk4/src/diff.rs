@@ -106,14 +106,43 @@ impl View {
     fn text(&self, row: &DiffRow) -> &str {
         std::str::from_utf8(self.view.strings.bytes(row.text)).unwrap_or("")
     }
+
+    /// コアの表示（確認用）。
+    #[cfg(test)]
+    pub fn diff_view(&self) -> &DiffView {
+        &self.view
+    }
 }
 
-/// 差分の元（ファイルを畳んだとき、ここから作り直す）。
-pub struct Source(pub StackedDiff);
+/// 差分の元（ファイルを畳んだとき、ここから作り直す）。2 つめがあれば、選んだファイルの差分だけを読む元で、
+/// 1 つめの各ファイルの差分は空（名前だけが正しい）。
+pub struct Source(pub StackedDiff, pub Option<Lazy>);
 
 // SAFETY: `StackedDiff` の中身は共有の不変なバッファ（`Blob`）と、自分で持つ文字列と行の範囲だけ。
 unsafe impl Send for Source {}
 unsafe impl Sync for Source {}
+
+/// 選んだファイルの差分だけを読む元（全ファイルを並べないコミット。macOS 版と同じ）。
+pub struct Lazy {
+    pub repo: Arc<amonhen_core::Repository>,
+    pub changes: Vec<amonhen_model::FileChange>,
+}
+
+impl Source {
+    /// 全ファイルの差分で `f` を呼ぶ（選んだファイルだけを読む元なら、ここで全部読む）。裏のスレッドで呼ぶ。
+    pub fn with_all<R>(&self, f: impl FnOnce(&StackedDiff) -> R) -> R {
+        match &self.1 {
+            Some(lazy) => {
+                let all = lazy
+                    .repo
+                    .stacked_diff(&lazy.changes)
+                    .unwrap_or(StackedDiff { files: Vec::new() });
+                f(&all)
+            }
+            None => f(&self.0),
+        }
+    }
+}
 
 /// 差分の行の種類を、AI に渡す文字の行の種類にする。
 fn ai_line(kind: u8) -> amonhen_assist::Line {
