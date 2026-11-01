@@ -37,10 +37,12 @@ pub enum Kind {
 /// いればその名前で（merge のメッセージが git と同じになる）。
 pub fn sources(actions: &Actions, history: &HistorySnapshot, rows: &[u32]) -> Vec<Source> {
     let refs = actions.repo().and_then(|r| r.refs().ok());
+    // 今のコミットは、書き込む先の worktree の HEAD（History のものは開いた worktree の HEAD。macOS 版と同じ）。
+    let head = refs.as_ref().map_or(history.head, |r| r.refs.head);
     rows.iter()
         .filter_map(|&row| {
             let id = *history.graph.ids().get(row as usize)?;
-            if Some(id) == history.head {
+            if Some(id) == head {
                 return None;
             }
             let commit = Source {
