@@ -752,28 +752,6 @@ pub fn run_with(
     )
 }
 
-/// AI の提案の紫の帯の見た目。
-pub fn install_css() {
-    thread_local! {
-        static DONE: Cell<bool> = const { Cell::new(false) };
-    }
-    if DONE.with(|d| d.replace(true)) {
-        return;
-    }
-    let provider = gtk::CssProvider::new();
-    provider.load_from_string(
-        ".ai-suggestion { border-left: 4px solid #9141ac; background-color: alpha(#9141ac, 0.08); \
-         padding: 8px 10px; border-radius: 4px; }",
-    );
-    if let Some(display) = gtk::gdk::Display::default() {
-        gtk::style_context_add_provider_for_display(
-            &display,
-            &provider,
-            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
-        );
-    }
-}
-
 /// 変数の表を作る。
 pub fn variables<const N: usize>(pairs: [(&str, String); N]) -> Variables {
     pairs.into_iter().map(|(k, v)| (k.to_owned(), v)).collect()

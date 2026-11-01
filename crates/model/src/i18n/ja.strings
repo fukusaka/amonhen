@@ -1664,10 +1664,9 @@
 "AI: Explain what each side of the selected conflict is trying to do." = "AI: 選んだコンフリクトで、両側が何をしようとしているかを説明する";
 "One conflict in {path}" = "{path} のコンフリクト 1 つ";
 "Conflict Explanation" = "コンフリクトの解説";
-"AI Suggestion" = "AI の提案";
-"Accept" = "採用";
-"Edit and Accept" = "編集して採用";
-"Reject" = "却下";
+"Conflict Resolution" = "コンフリクトの解消";
+"Put in Result" = "Result に入れる";
+"── Suggestion ──" = "── 提案 ──";
 "Reason: {reason}" = "理由: {reason}";
 "(none)" = "（なし）";
 "Couldn’t read the reply (not JSON in the expected shape):" = "返事を読めませんでした（決めた形の JSON ではない）:";
