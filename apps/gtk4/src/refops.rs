@@ -277,6 +277,36 @@ fn several(actions: &Rc<Actions>, known: &Known, head: Option<&str>) -> Vec<Item
         tr!("Copy {count} Names", count = names.len()),
         names.join("\n"),
     )];
+    // 今のブランチ以外を、選んだ順（上から）に 1 つのコミットで merge する（octopus。macOS 版と同じ）。
+    let sources: Vec<crate::mergeseveral::Source> = selected
+        .iter()
+        .filter_map(|e| {
+            let kind = match e.kind {
+                RefKind::Local if Some(e.name.as_str()) != head => {
+                    crate::mergeseveral::Kind::Branch
+                }
+                RefKind::Remote => crate::mergeseveral::Kind::RemoteBranch,
+                RefKind::Tag => crate::mergeseveral::Kind::Tag,
+                _ => return None,
+            };
+            Some(crate::mergeseveral::Source {
+                rev: e.name.clone(),
+                kind,
+            })
+        })
+        .collect();
+    if sources.len() > 1 {
+        let branch = head.map(str::to_owned);
+        let title = tr!(
+            "Merge {count} into {branch}…",
+            count = sources.len(),
+            branch = head.unwrap_or("HEAD")
+        );
+        let a = actions.clone();
+        items.push(menu::action(title, move || {
+            crate::mergeseveral::confirm(&a, sources.clone(), branch.clone());
+        }));
+    }
     let locals: Vec<String> = selected
         .iter()
         .filter(|e| e.kind == RefKind::Local)
