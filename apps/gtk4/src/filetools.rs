@@ -629,10 +629,7 @@ fn show_file_history(
         .hscrollbar_policy(gtk::PolicyType::Never)
         .build();
     let diff = DiffWidget::default();
-    let right = gtk::ScrolledWindow::builder()
-        .child(&diff)
-        .hscrollbar_policy(gtk::PolicyType::Never)
-        .build();
+    let right = gtk::ScrolledWindow::builder().child(&diff).build();
     let split = gtk::Paned::new(gtk::Orientation::Horizontal);
     split.set_start_child(Some(&left));
     split.set_end_child(Some(&right));

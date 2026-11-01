@@ -230,7 +230,6 @@ impl RangeDiff {
         let pair_diff = DiffWidget::default();
         let pair_scrolled = gtk::ScrolledWindow::builder()
             .child(&pair_diff)
-            .hscrollbar_policy(gtk::PolicyType::Never)
             .vexpand(true)
             .build();
         let pair_page = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -241,10 +240,7 @@ impl RangeDiff {
         let details = Rc::new(Details::new());
         details.show_style_switch();
         let commit_diff = DiffWidget::default();
-        let commit_scrolled = gtk::ScrolledWindow::builder()
-            .child(&commit_diff)
-            .hscrollbar_policy(gtk::PolicyType::Never)
-            .build();
+        let commit_scrolled = gtk::ScrolledWindow::builder().child(&commit_diff).build();
         let commit_column = gtk::Paned::new(gtk::Orientation::Vertical);
         commit_column.set_start_child(Some(&details.root));
         commit_column.set_end_child(Some(&commit_scrolled));

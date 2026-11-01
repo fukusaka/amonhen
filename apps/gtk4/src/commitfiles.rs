@@ -365,7 +365,6 @@ impl CommitDiff {
         let diff = DiffWidget::default();
         let diff_scrolled = gtk::ScrolledWindow::builder()
             .child(&diff)
-            .hscrollbar_policy(gtk::PolicyType::Never)
             .vexpand(true)
             .build();
         // 検索の帯。

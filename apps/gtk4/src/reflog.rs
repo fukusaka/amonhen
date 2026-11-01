@@ -128,10 +128,7 @@ impl ReflogView {
         let details = Rc::new(Details::new());
         details.show_style_switch();
         let diff = DiffWidget::default();
-        let diff_scrolled = gtk::ScrolledWindow::builder()
-            .child(&diff)
-            .hscrollbar_policy(gtk::PolicyType::Never)
-            .build();
+        let diff_scrolled = gtk::ScrolledWindow::builder().child(&diff).build();
         let right = gtk::Paned::new(gtk::Orientation::Vertical);
         right.set_start_child(Some(&details.root));
         right.set_end_child(Some(&diff_scrolled));

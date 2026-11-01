@@ -334,7 +334,6 @@ impl WorkingCopy {
         let diff_scrolled = gtk::ScrolledWindow::builder()
             .child(&diff)
             .vexpand(true)
-            .hscrollbar_policy(gtk::PolicyType::Never)
             .build();
         let right = gtk::Box::new(gtk::Orientation::Vertical, 0);
         right.append(&bar);

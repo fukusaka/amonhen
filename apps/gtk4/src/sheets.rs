@@ -754,7 +754,6 @@ fn push_preview(
     let diff = crate::diff::DiffWidget::default();
     let diff_scrolled = gtk::ScrolledWindow::builder()
         .child(&diff)
-        .hscrollbar_policy(gtk::PolicyType::Never)
         .vexpand(true)
         .build();
     let right = gtk::Paned::new(gtk::Orientation::Vertical);

@@ -2,7 +2,8 @@
 //!
 //! History と同じく、見えている行だけを 1 つのウィジェットの `snapshot` で描く。変わった単語の強調と構文の
 //! 色は、コアが FE の符号単位（UTF-8 のバイト位置）で渡すので、そのまま Pango の属性にする。
-//! ファイルの見出しをクリックすると、そのファイルを畳む・開く。
+//! ファイルの見出しをクリックすると、そのファイルを畳む・開く。本文は折り返さず、一番長い行まで横にスクロール
+//! する（行番号・印・ファイルの見出しは動かない。macOS 版と同じ）。
 //!
 //! Working Copy では、変更の行をクリック（Shift で範囲、Ctrl で追加）して選び、行の左の印で
 //! 次のコミットに含めるか（index に入っているか）を見せる。印のクリックでその行を含める・外す。
@@ -38,6 +39,8 @@ pub struct View {
     digits: usize,
     /// ファイルの見出しの行（全ファイルを並べた差分。そうでなければ空）。
     file_rows: Vec<u32>,
+    /// 一番長い行の、等幅の文字での桁数（横にスクロールする幅）。
+    columns: usize,
 }
 
 // SAFETY: `DiffView` のポインタは、自分が持つバッファの先頭を指すだけ。
@@ -76,11 +79,19 @@ impl View {
             .filter(|(_, r)| r.kind == DiffRow::FILE)
             .map(|(i, _)| i as u32)
             .collect();
+        let columns = view
+            .rows
+            .iter()
+            .filter(|r| r.kind != DiffRow::FILE)
+            .map(|r| columns(std::str::from_utf8(view.strings.bytes(r.text)).unwrap_or("")))
+            .max()
+            .unwrap_or(0);
         Self {
             highlights,
             syntax,
             digits: max.to_string().len().max(3),
             file_rows,
+            columns,
             view,
         }
     }
@@ -135,6 +146,8 @@ pub struct State {
     rows: HashMap<u32, RowText>,
     font: Option<pango::FontDescription>,
     row_height: f32,
+    /// 等幅の文字 1 つの幅。
+    char_width: f32,
     /// 作り直している途中の表示の世代（古い結果を捨てる）。
     generation: u64,
     /// 行ごとの stage の印を出す（Working Copy）。
@@ -276,6 +289,14 @@ mod imp {
 
     impl DiffWidget {
         fn set_hadjustment(&self, adjustment: Option<gtk::Adjustment>) {
+            if let Some(adj) = &adjustment {
+                let weak = self.obj().downgrade();
+                adj.connect_value_changed(move |_| {
+                    if let Some(view) = weak.upgrade() {
+                        view.queue_draw();
+                    }
+                });
+            }
             self.hadjustment.replace(adjustment);
             self.obj().configure_adjustments();
         }
@@ -356,9 +377,7 @@ impl DiffWidget {
             st.anchor = None;
             st.hunk_cursor = None;
         }
-        if let Some(adj) = self.vadjustment() {
-            adj.set_value(0.0);
-        }
+        self.scroll_to_start();
         self.configure_adjustments();
         self.refresh_matches();
         self.queue_draw();
@@ -383,8 +402,8 @@ impl DiffWidget {
             }
             st.hunk_cursor = None;
         }
-        if !keep && let Some(adj) = self.vadjustment() {
-            adj.set_value(0.0);
+        if !keep {
+            self.scroll_to_start();
         }
         self.configure_adjustments();
         self.refresh_matches();
@@ -410,13 +429,21 @@ impl DiffWidget {
             st.anchor = None;
             st.hunk_cursor = None;
         }
-        if let Some(adj) = self.vadjustment() {
-            adj.set_value(0.0);
-        }
+        self.scroll_to_start();
         self.configure_adjustments();
         self.refresh_matches();
         self.queue_draw();
         self.selection_changed();
+    }
+
+    /// 先頭（左上）までスクロールする。
+    fn scroll_to_start(&self) {
+        for adj in [self.vadjustment(), self.hadjustment()]
+            .into_iter()
+            .flatten()
+        {
+            adj.set_value(0.0);
+        }
     }
 
     /// 選んだ変更の行（表示の行の番号。Working Copy の差分では、コアの差分の行の番号と同じ）。
@@ -838,7 +865,25 @@ impl DiffWidget {
         let layout = self.create_pango_layout(Some("Mg"));
         layout.set_font_description(Some(&font));
         st.row_height = (layout.pixel_size().1 as f32 + 3.0).round();
+        let probe = self.create_pango_layout(Some(&"0".repeat(20)));
+        probe.set_font_description(Some(&font));
+        st.char_width = probe.pixel_size().0 as f32 / 20.0;
         st.font = Some(font);
+    }
+
+    /// 本文の左端（印・行番号の列の右。行番号の列の幅は、等幅なので桁数から）。行番号と印は横にスクロールしない。
+    fn text_left(st: &State, view: &View) -> f32 {
+        let left = if st.marks {
+            TEXT_INSET + MARK_WIDTH
+        } else {
+            TEXT_INSET
+        };
+        left + st.char_width * (view.digits * 2 + 1) as f32 + GUTTER_GAP
+    }
+
+    /// 横にスクロールした位置。
+    fn scroll_x(&self) -> f32 {
+        self.hadjustment().map_or(0.0, |a| a.value()) as f32
     }
 
     fn configure_adjustments(&self) {
@@ -849,8 +894,19 @@ impl DiffWidget {
             let step = self.row_height() as f64 * 3.0;
             adj.configure(value, 0.0, upper, step, height * 0.9, height);
         }
+        // 横は一番長い行まで（折り返さない。macOS 版と同じ）。
+        let (content, step) = {
+            let mut st = self.state();
+            self.ensure_font(&mut st);
+            let content = st.view.clone().map_or(0.0, |view| {
+                Self::text_left(&st, &view) + view.columns as f32 * st.char_width + 40.0
+            });
+            (content as f64, st.char_width as f64 * 4.0)
+        };
         if let Some(adj) = self.hadjustment() {
-            adj.configure(0.0, 0.0, width, 10.0, width, width);
+            let upper = content.max(width);
+            let value = adj.value().clamp(0.0, (upper - width).max(0.0));
+            adj.configure(value, 0.0, upper, step, width * 0.9, width);
         }
     }
 
@@ -1058,7 +1114,49 @@ impl DiffWidget {
         };
         if let Some(row) = row {
             self.reveal_rows(row, row + 1);
+            self.reveal_columns(row);
         }
+    }
+
+    /// 今の一致が横に隠れていれば、見えるところまで横にスクロールする（macOS 版と同じ）。
+    fn reveal_columns(&self, row: u32) {
+        let (Some(adj), Some(layout)) = (self.hadjustment(), self.layout_of(row)) else {
+            return;
+        };
+        let range = {
+            let st = self.state();
+            st.current_match
+                .and_then(|c| st.matches.get(c))
+                .map(|m| (m.1, m.2))
+        };
+        let Some((start, end)) = range else { return };
+        let x = |index: u32| layout.index_to_pos(index as i32).x() as f64 / pango::SCALE as f64;
+        let (x0, x1) = (x(start), x(end));
+        let visible = {
+            let st = self.state();
+            let left = st.view.as_ref().map_or(0.0, |v| Self::text_left(&st, v));
+            self.width() as f64 - left as f64
+        };
+        let value = adj.value();
+        if x0 < value || x1 > value + visible {
+            let max = (adj.upper() - adj.page_size()).max(0.0);
+            adj.set_value((x0 - 40.0).clamp(0.0, max));
+        }
+    }
+
+    /// `index` 行目の本文の Pango の配置（なければ作って覚える）。
+    fn layout_of(&self, index: u32) -> Option<pango::Layout> {
+        let mut st = self.state();
+        self.ensure_font(&mut st);
+        let view = st.view.clone()?;
+        if index as usize >= view.view.rows.len() {
+            return None;
+        }
+        if !st.rows.contains_key(&index) {
+            let text = self.row_text(&st, &view, index);
+            st.rows.insert(index, text);
+        }
+        Some(st.rows[&index].text.clone())
     }
 
     fn row_text(&self, st: &State, view: &View, index: u32) -> RowText {
@@ -1146,6 +1244,7 @@ impl DiffWidget {
     fn draw(&self, snapshot: &gtk::Snapshot) {
         let (width, height) = (self.width() as f32, self.height() as f32);
         let scroll_y = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
+        let scroll_x = self.scroll_x();
         let fg = self.color();
         let viewed_x = self.viewed_x();
         let mut st = self.state();
@@ -1162,17 +1261,14 @@ impl DiffWidget {
             st.rows.clear();
         }
         let secondary = gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), fg.alpha() * 0.5);
-        // 行番号の列の幅（等幅なので桁数から）。
-        let gutter_width = {
-            let probe = self.create_pango_layout(Some(&"0".repeat(view.digits * 2 + 1)));
-            probe.set_font_description(st.font.as_ref());
-            probe.pixel_size().0 as f32
-        };
         let left = if st.marks {
             TEXT_INSET + MARK_WIDTH
         } else {
             TEXT_INSET
         };
+        let text_x = Self::text_left(st, &view);
+        // 本文は横にスクロールする（行番号と印はしない）。
+        let origin = text_x - scroll_x;
         // 一致の行の範囲（一致は行の順に並んでいる）。
         let match_from = st.matches.partition_point(|m| m.0 < first);
         for index in first..last {
@@ -1219,7 +1315,18 @@ impl DiffWidget {
                     &fg,
                 );
             }
-            let text_x = left + gutter_width + GUTTER_GAP;
+            if let Some(gutter) = &line.gutter {
+                snapshot.save();
+                snapshot.translate(&graphene::Point::new(left, y));
+                snapshot.append_layout(gutter, &secondary);
+                snapshot.restore();
+            }
+            snapshot.push_clip(&graphene::Rect::new(
+                text_x,
+                top,
+                (width - text_x).max(0.0),
+                rh,
+            ));
             // 探している語の一致（今の一致は濃く）。
             for (i, m) in st.matches[match_from..]
                 .iter()
@@ -1236,14 +1343,8 @@ impl DiffWidget {
                 };
                 snapshot.append_color(
                     &color,
-                    &graphene::Rect::new(text_x + x0, top + 1.0, (x1 - x0).max(2.0), rh - 2.0),
+                    &graphene::Rect::new(origin + x0, top + 1.0, (x1 - x0).max(2.0), rh - 2.0),
                 );
-            }
-            if let Some(gutter) = &line.gutter {
-                snapshot.save();
-                snapshot.translate(&graphene::Point::new(left, y));
-                snapshot.append_layout(gutter, &secondary);
-                snapshot.restore();
             }
             let color = if row.kind == DiffRow::HUNK {
                 &secondary
@@ -1251,16 +1352,10 @@ impl DiffWidget {
                 &fg
             };
             snapshot.save();
-            snapshot.push_clip(&graphene::Rect::new(
-                text_x,
-                top,
-                (width - text_x).max(0.0),
-                rh,
-            ));
-            snapshot.translate(&graphene::Point::new(text_x, y));
+            snapshot.translate(&graphene::Point::new(origin, y));
             snapshot.append_layout(&line.text, color);
-            snapshot.pop();
             snapshot.restore();
+            snapshot.pop();
         }
         // 見出しの行が上に隠れたファイルは、見出しを上に張り付かせる。
         if let Some((file, top)) = Self::sticky(&view, scroll_y, rh) {
@@ -1416,6 +1511,15 @@ impl DiffWidget {
     }
 }
 
+/// `text` を等幅で並べたときの桁数（タブは 8 桁ごと。全角など幅の広い文字は 2 桁として、多めに見積もる）。
+fn columns(text: &str) -> usize {
+    text.chars().fold(0, |n, c| match c {
+        '\t' => (n / 8 + 1) * 8,
+        c if c as u32 >= 0x1100 => n + 2,
+        _ => n + 1,
+    })
+}
+
 /// `text` の中の `query` の位置（バイト）。大文字・小文字は区別しない（小文字にして長さが変わる文字があれば、
 /// 区別して探す）。
 fn find_all(text: &str, query: &str) -> Vec<(usize, usize)> {
@@ -1500,5 +1604,19 @@ pub(crate) fn syntax_color(kind: u8, fg: &gdk::RGBA) -> Option<(f32, f32, f32)> 
         SyntaxSpan::ATTRIBUTE | SyntaxSpan::ESCAPE => orange,
         SyntaxSpan::MODULE => brown,
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn columns_count_tabs_and_wide_characters() {
+        assert_eq!(columns(""), 0);
+        assert_eq!(columns("abc"), 3);
+        assert_eq!(columns("\tx"), 9);
+        assert_eq!(columns("ab\tx"), 9);
+        assert_eq!(columns("日本"), 4);
     }
 }
