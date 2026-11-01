@@ -2054,9 +2054,9 @@ impl Browser {
 
     fn clone_repository(self: &Rc<Self>) {
         let b = self.clone();
-        // clone したものはブックマークにも入れて開く（macOS 版と同じ）。
+        // clone したものはブックマークにも入れて開く（グループには入れない。macOS 版と同じ）。
         let open: Rc<dyn Fn(PathBuf)> = Rc::new(move |path: PathBuf| {
-            bookmarks::add(&path.to_string_lossy(), b.selected_group().as_deref());
+            bookmarks::add(&path.to_string_lossy(), None);
             (b.beside)(path, crate::tabs::Place::Tab);
         });
         crate::repos::clone(&self.window(), open);
