@@ -165,7 +165,7 @@ pub fn clone(url: &str, dest: &std::path::Path, options: &CloneOptions) -> Resul
         // 選べるよう（`sparse_checkout`）、同じ中身のまま cone mode にする。
         let git = Git::new(dest);
         if git.repository_form()?.sparse.is_some_and(|s| !s.cone) {
-            git.write(&["sparse-checkout", "init", "--cone"])?;
+            git.init_sparse_cone()?;
         }
     }
     Ok(())

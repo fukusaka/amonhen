@@ -311,10 +311,23 @@ impl Git {
         // git 2.34 までは、set は cone mode を始められない。先に init --cone で始める。
         let form = self.repository_form()?;
         if !form.sparse.is_some_and(|s| s.cone) {
-            self.write(&["sparse-checkout", "init", "--cone"])?;
+            self.init_sparse_cone()?;
         }
         self.write_with_input(&["sparse-checkout", "set", "--stdin"], input.as_bytes())
             .map(drop)
+    }
+
+    /// cone mode の sparse checkout を始める（`git sparse-checkout init --cone`。根のファイルだけを取り出す）。
+    /// git 2.26 までは、根にファイルがないと「取り出すものがない」で失敗する（設定とパターンを書いたあと。2.27 で
+    /// 直った）。cone mode になっていれば続ける。
+    pub(crate) fn init_sparse_cone(&self) -> Result<()> {
+        let Err(error) = self.write(&["sparse-checkout", "init", "--cone"]) else {
+            return Ok(());
+        };
+        if !crate::git_at_least(2, 27) && self.repository_form()?.sparse.is_some_and(|s| s.cone) {
+            return Ok(());
+        }
+        Err(error)
     }
 
     /// `git maintenance start` は、登録（ユーザー全体の `maintenance.repo`）に加えて、このリポジトリの
