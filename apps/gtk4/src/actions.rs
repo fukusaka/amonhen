@@ -33,6 +33,8 @@ pub struct Actions {
     on_repo: RefCell<Vec<Callback>>,
     on_failure: RefCell<Option<FailureCallback>>,
     on_done: RefCell<Option<DoneCallback>>,
+    /// 操作がコンフリクトや途中で止まった（Working Copy で最初のコンフリクトを開く）。
+    on_stop: RefCell<Option<Callback>>,
     /// 今のブランチ（detached HEAD なら None）。Reset の名前と確認に出す。
     head: RefCell<Option<String>>,
     /// メニューの項目とツールバーのボタンを使えるかを決める状態（変えたら [`enabled`] でアクションに入れる）。
@@ -62,6 +64,7 @@ impl Actions {
             on_repo: RefCell::default(),
             on_failure: RefCell::default(),
             on_done: RefCell::default(),
+            on_stop: RefCell::default(),
             head: RefCell::default(),
             facts: Rc::default(),
             worktree_branches: RefCell::default(),
@@ -162,6 +165,12 @@ impl Actions {
         self.on_done.replace(Some(Rc::new(f)));
     }
 
+    /// 操作がコンフリクトや途中で止まったら `f` を呼ぶ（merge・rebase・cherry-pick・revert・pull・stash の
+    /// 適用など。macOS 版の `onStop`）。
+    pub fn connect_stop(&self, f: impl Fn() + 'static) {
+        self.on_stop.replace(Some(Rc::new(f)));
+    }
+
     pub fn connect_change(&self, f: impl Fn() + 'static) {
         self.on_change.replace(Some(Rc::new(f)));
     }
@@ -237,6 +246,12 @@ impl Actions {
                 && let Some(f) = this.on_done.borrow().clone()
             {
                 f(&last_command);
+            }
+            // どこで止まったか・次に何をするかはステータスバーの行に出る。Working Copy でコンフリクトを開く。
+            let stopped = !result["error"].is_string()
+                && matches!(result["outcome"].as_str(), Some("conflict" | "stopped"));
+            if stopped && let Some(f) = this.on_stop.borrow().clone() {
+                f();
             }
             if let Some(f) = this.on_change.borrow().clone() {
                 f();

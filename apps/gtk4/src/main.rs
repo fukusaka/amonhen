@@ -1384,6 +1384,36 @@ fn build_tab(
             activity::Activity::follow(&window, repo, a.clone());
         });
     }
+    // 操作がコンフリクトや途中で止まった: Working Copy に移り、読み直した status で最初のコンフリクトのファイルを
+    // 選ぶ（右にマージエディタが出る。macOS 版と同じ）。その status を覚えておき、届いたら選ぶ。
+    let first_conflict: Rc<std::cell::RefCell<Option<Arc<amonhen_core::StatusSnapshot>>>> =
+        Rc::default();
+    {
+        let (p, a, wanted, tx) = (
+            pages.downgrade(),
+            Rc::downgrade(&actions),
+            first_conflict.clone(),
+            tx.clone(),
+        );
+        actions.connect_stop(move || {
+            let (Some(pages), Some(actions)) = (p.upgrade(), a.upgrade()) else {
+                return;
+            };
+            let _ = WidgetExt::activate_action(&pages, "win.show-working-copy", None);
+            let Some(repo) = actions.repo() else {
+                return;
+            };
+            let (wanted, tx) = (wanted.clone(), tx.clone());
+            glib::spawn_future_local(async move {
+                let r = repo.clone();
+                let Ok(Ok(snapshot)) = gio::spawn_blocking(move || r.load_status()).await else {
+                    return;
+                };
+                wanted.replace(Some(snapshot.clone()));
+                let _ = tx.send(Event::Status(repo, snapshot)).await;
+            });
+        });
+    }
     let tab_weak = Rc::downgrade(&tab);
     std::thread::spawn(move || load(path, order, tx, changed_tx, changed_rx));
     glib::spawn_future_local(glib::clone!(
@@ -1964,6 +1994,24 @@ fn build_tab(
                         }
                         sidebar.set_conflict_count(conflicts);
                         last_status.replace(Some(snapshot.clone()));
+                        // 止まった操作の後に読んだ status: 最初のコンフリクトのファイルを選ぶ（一覧ではコンフリクトが先）。
+                        let stopped = first_conflict
+                            .borrow()
+                            .as_ref()
+                            .is_some_and(|s| Arc::ptr_eq(s, &snapshot));
+                        if stopped {
+                            first_conflict.replace(None);
+                            let first = snapshot
+                                .status
+                                .entries
+                                .iter()
+                                .filter(|e| e.kind == amonhen_model::StatusKind::Unmerged)
+                                .map(|e| e.path.clone())
+                                .min();
+                            if let Some(path) = first {
+                                working.select_path(&path);
+                            }
+                        }
                         working.show(snapshot);
                         if let Some(path) = &args.print_file_menu
                             && let Some(titles) = working.file_menu_titles(path)
