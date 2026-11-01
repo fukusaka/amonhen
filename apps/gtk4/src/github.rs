@@ -73,9 +73,41 @@ impl GitHubRepository {
     }
 }
 
+/// PATH のほかに gh を探す場所（デスクトップのランチャーから起動すると、端末の PATH がないことがある。macOS 版と
+/// 同じ）。gh を動かすときも PATH の前に足す。
+const GH_DIRS: [&str; 3] = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"];
+
+/// gh の場所（よくある場所、なければ PATH から。最初に一度だけ探す）。
+fn gh_path() -> Option<&'static std::path::Path> {
+    static PATH: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| {
+        GH_DIRS
+            .iter()
+            .map(|d| std::path::Path::new(d).join("gh"))
+            .find(|p| p.is_file())
+            .or_else(|| glib::find_program_in_path("gh"))
+    })
+    .as_deref()
+}
+
 /// `gh` が使えるか。
 pub fn available() -> bool {
-    glib::find_program_in_path("gh").is_some()
+    gh_path().is_some()
+}
+
+/// gh を動かす `Command`（見つけた場所の gh。尋ねてこないように、色を付けないように。gh が呼ぶもの（git など）も
+/// よくある場所から探せるよう PATH の前に足す）。gh がなければ None。
+pub fn gh_command() -> Option<std::process::Command> {
+    let mut command = amonhen_model::process::command(gh_path()?);
+    let mut dirs: Vec<std::path::PathBuf> = GH_DIRS.iter().map(Into::into).collect();
+    if let Some(path) = std::env::var_os("PATH") {
+        dirs.extend(std::env::split_paths(&path));
+    }
+    if let Ok(joined) = std::env::join_paths(dirs) {
+        command.env("PATH", joined);
+    }
+    command.env("GH_PROMPT_DISABLED", "1").env("NO_COLOR", "1");
+    Some(command)
 }
 
 /// リポジトリの GitHub（origin、なければ最初のリモート）。
@@ -115,15 +147,12 @@ pub fn open_on_github(actions: &Rc<Actions>, branch: Option<String>) {
 
 /// `gh` を `dir` で動かし、標準出力を返す。失敗したら標準エラー（空なら「gh … が失敗しました」）。裏の糸で呼ぶ。
 fn gh(args: &[&str], dir: Option<&std::path::Path>) -> Result<String, String> {
-    if !available() {
+    let Some(mut command) = gh_command() else {
         return Err(tr!(
             "gh (GitHub CLI) wasn’t found. Install it with brew install gh, then sign in with gh auth login."
         ));
-    }
-    let mut command = amonhen_model::process::command("gh");
+    };
     command.args(args);
-    // 尋ねてこないように、色を付けないように。
-    command.env("GH_PROMPT_DISABLED", "1").env("NO_COLOR", "1");
     if let Some(d) = dir {
         command.current_dir(d);
     }

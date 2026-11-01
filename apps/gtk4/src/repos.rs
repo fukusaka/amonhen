@@ -205,13 +205,13 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
             .build();
         sheet.add(&row("URL:", &url));
         // gh があれば、自分のリポジトリから選べる（読み終えたら一覧に入れる）。
-        if glib::find_program_in_path("gh").is_some() {
+        if crate::github::available() {
             let mine = gtk::DropDown::from_strings(&[&tr!("Choose from My GitHub Repositories")]);
             sheet.add(&row("", &mine));
             let (mine_w, url_w, name_w) = (mine.downgrade(), url.downgrade(), name.downgrade());
             glib::spawn_future_local(async move {
                 let repos = gio::spawn_blocking(|| {
-                    let out = amonhen_model::process::command("gh")
+                    let out = crate::github::gh_command()?
                         .args([
                             "repo",
                             "list",
