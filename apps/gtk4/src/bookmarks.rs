@@ -70,6 +70,23 @@ fn opt_str(v: &Value, key: &str) -> Option<String> {
 }
 
 impl Data {
+    /// グループの名前を変える（macOS 版と同じ）: 新しい名前のグループを（なければ終わりに）加え、中のリポジトリを
+    /// 移してから元のグループを消す。すでにある名前にすれば、そのグループに合わさる（同じ名前が 2 つにならない）。
+    fn rename_group(&mut self, old: &str, new: &str) {
+        if old == new {
+            return;
+        }
+        if !self.groups.iter().any(|g| g == new) {
+            self.groups.push(new.to_owned());
+        }
+        for b in &mut self.items {
+            if b.group.as_deref() == Some(old) {
+                b.group = Some(new.to_owned());
+            }
+        }
+        self.groups.retain(|g| g != old);
+    }
+
     /// macOS 版の JSON（Codable）から読む。
     fn from_json(v: &Value) -> Self {
         let strings = |v: &Value| -> Vec<String> {
@@ -415,18 +432,7 @@ pub fn remove_group(name: &str) {
 
 /// グループの名前を変える（macOS 版と同じく、新しいグループに移してから元を消す）。
 pub fn rename_group(old: &str, new: &str) {
-    edit(|d| {
-        for g in &mut d.groups {
-            if g == old {
-                *g = new.to_owned();
-            }
-        }
-        for b in &mut d.items {
-            if b.group.as_deref() == Some(old) {
-                b.group = Some(new.to_owned());
-            }
-        }
-    });
+    edit(|d| d.rename_group(old, new));
 }
 
 pub fn add_scan_root(path: &str) {
@@ -1067,6 +1073,19 @@ mod tests {
         assert_eq!(data.items[0].auto_fetch, Some(15));
         assert_eq!(data.scan_roots[0].depth, 2);
         assert_eq!(data.to_json(), serde_json::from_str::<Value>(text).unwrap());
+    }
+
+    #[test]
+    fn renames_a_group_into_an_existing_one() {
+        let text = r#"{"groups":["a","b","c"],"items":[{"favorite":false,"group":"a","path":"/x"},{"favorite":false,"group":"b","path":"/y"}],"scanRoots":[]}"#;
+        let mut data = Data::from_json(&serde_json::from_str(text).unwrap());
+        data.rename_group("a", "a");
+        assert_eq!(data.groups, ["a", "b", "c"]);
+        data.rename_group("a", "b");
+        assert_eq!(data.groups, ["b", "c"]);
+        assert!(data.items.iter().all(|b| b.group.as_deref() == Some("b")));
+        data.rename_group("b", "d");
+        assert_eq!(data.groups, ["c", "d"]);
     }
 
     #[test]
