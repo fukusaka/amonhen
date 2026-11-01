@@ -411,11 +411,16 @@ pub struct SshHosts {
 thread_local! {
     /// 開いたら選ぶ SSH 先とページ（`--settings ssh-hosts/<host>/<page>`）。
     static PENDING: RefCell<Option<(String, String)>> = const { RefCell::new(None) };
+    /// 作ってあるタブ（出している間に選ばれたら、すぐ選ぶ）。
+    static CURRENT: RefCell<std::rc::Weak<SshHosts>> = RefCell::default();
 }
 
-/// 次に出すときに選ぶ SSH 先とページ（なければ加える）。
+/// 選ぶ SSH 先とページ（なければ加える）。タブがもうあればすぐ、なければ次に出すときに選ぶ。
 pub fn select_pending(host: &str, page: &str) {
     PENDING.with(|p| p.replace(Some((host.to_owned(), page.to_owned()))));
+    if let Some(current) = CURRENT.with(|c| c.borrow().upgrade()) {
+        current.reload();
+    }
 }
 
 impl SshHosts {
@@ -541,6 +546,7 @@ impl SshHosts {
                 s.remove_selected();
             }
         });
+        CURRENT.with(|c| c.replace(Rc::downgrade(&this)));
         this.reload();
         this
     }
