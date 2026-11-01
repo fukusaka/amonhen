@@ -494,7 +494,8 @@ impl HistoryView {
 
     /// 表示する History を替える。同じ History の新しい世代なら、選んでいたコミットを選び直す。
     pub fn show(&self, repo: Arc<Repository>, history: Arc<HistorySnapshot>) {
-        {
+        // 選んでいたコミットが消えたか（ほかのプログラムが rebase・amend した）、選び直しで変わったか。
+        let changed = {
             let mut st = self.state();
             // 変わっていなければ何もしない（読み直すたびに同じスナップショットが来る）。
             if st
@@ -517,6 +518,16 @@ impl HistoryView {
             st.selected = selected.and_then(|id| history.row_of(&id));
             st.extra = extra.iter().filter_map(|id| history.row_of(id)).collect();
             st.anchor = anchor.and_then(|id| history.row_of(&id));
+            let changed = st.selected.is_none() != selected.is_none() || st.extra.len() != extra.len();
+            // 最後に選んだコミットが消えたら（ほかのプログラムが rebase・amend した）、残りのうち最後のものに
+            // する。何も残らなければ先頭（いちばん新しいコミット）を選ぶ（macOS 版と同じ。表示の位置は動かさない）。
+            if selected.is_some() && st.selected.is_none() {
+                st.selected = st.extra.pop_last();
+                if st.selected.is_none() && !history.graph.ids().is_empty() {
+                    st.selected = Some(0);
+                    st.anchor = Some(0);
+                }
+            }
             st.history = Some(history);
             st.chunks.clear();
             st.loading.clear();
@@ -524,10 +535,15 @@ impl HistoryView {
             st.complete = false;
             // 行の番号が変わるので、検索の一致は捨てる（検索の欄が探し直す）。
             st.matches = Rc::default();
-        }
+            changed
+        };
         self.configure_adjustments();
         self.update_lineage();
         self.queue_draw();
+        // 選んだコミットが変わったときだけ知らせる（詳細が消えたコミットのまま残らないように）。
+        if changed {
+            self.notify_selection();
+        }
     }
 
     /// 行の見せ方を替える（1 行・項目・祖先の強調）。
