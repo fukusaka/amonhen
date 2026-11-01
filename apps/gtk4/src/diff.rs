@@ -1458,10 +1458,8 @@ impl DiffWidget {
             return;
         };
         let query = st.find.clone();
+        // ファイルの見出し（パス）も含め、すべての行から探す（macOS 版と同じ）。
         for (i, row) in view.view.rows.iter().enumerate() {
-            if row.kind == DiffRow::FILE {
-                continue;
-            }
             for (start, end) in find_all(view.text(row), &query) {
                 st.matches.push((i as u32, start as u32, end as u32));
             }
@@ -1908,6 +1906,25 @@ impl DiffWidget {
             rh,
         ));
         snapshot.translate(&graphene::Point::new(left, y));
+        // パスの中の、探している語の一致（今の一致は濃く）。
+        let from = st.matches.partition_point(|m| m.0 < index);
+        for (i, m) in st.matches[from..]
+            .iter()
+            .enumerate()
+            .take_while(|(_, m)| m.0 == index)
+        {
+            let x0 = line.text.index_to_pos(m.1 as i32).x() as f32 / pango::SCALE as f32;
+            let x1 = line.text.index_to_pos(m.2 as i32).x() as f32 / pango::SCALE as f32;
+            let color = if st.current_match == Some(from + i) {
+                gdk::RGBA::new(1.0, 0.6, 0.0, 0.75)
+            } else {
+                gdk::RGBA::new(1.0, 0.85, 0.0, 0.45)
+            };
+            snapshot.append_color(
+                &color,
+                &graphene::Rect::new(x0, top - y + 1.0, (x1 - x0).max(2.0), rh - 2.0),
+            );
+        }
         snapshot.append_layout(&line.text, &fg);
         snapshot.pop();
         snapshot.restore();
