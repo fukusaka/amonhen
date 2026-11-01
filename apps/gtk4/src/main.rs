@@ -681,6 +681,13 @@ fn build_tab(
             p.clone(),
         );
     });
+    // History の検索の語を、詳細の件名・本文で強調する（macOS 版と同じ）。
+    let d = Rc::downgrade(&details);
+    search.connect_query(move |query| {
+        if let Some(d) = d.upgrade() {
+            d.set_search(query);
+        }
+    });
     // AI の翻訳・解説（詳細の右上）。
     let current_repo: aiactions::CurrentRepo = {
         let v = view.downgrade();

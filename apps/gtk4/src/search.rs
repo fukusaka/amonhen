@@ -16,6 +16,9 @@ use std::sync::Arc;
 
 use crate::history::HistoryView;
 
+/// 探した問い合わせが変わったときに呼ぶもの。
+type OnQuery = Rc<dyn Fn(Option<&str>)>;
+
 pub struct Search {
     pub bar: gtk::SearchBar,
     pub toggle: gtk::ToggleButton,
@@ -44,6 +47,8 @@ struct Inner {
     /// 前・次の一致へ（一致があるときだけ押せる。macOS 版と同じ）。
     previous: gtk::Button,
     next: gtk::Button,
+    /// 探した問い合わせが決まった・消えたとき（詳細の欄で一致を強調する）。
+    on_query: RefCell<Option<OnQuery>>,
 }
 
 impl Search {
@@ -111,6 +116,7 @@ impl Search {
             only: only.clone(),
             previous: previous.clone(),
             next: next.clone(),
+            on_query: RefCell::default(),
         });
         inner.set_matches(Rc::default());
         let i = inner.clone();
@@ -223,6 +229,11 @@ impl Search {
         }
     }
 
+    /// 探した問い合わせが決まった・消えたら `f(問い合わせ)` を呼ぶ（macOS 版の `onSearchChanged`）。
+    pub fn connect_query(&self, f: impl Fn(Option<&str>) + 'static) {
+        self.inner.on_query.replace(Some(Rc::new(f)));
+    }
+
     /// 欄を開いて `query` を探す（`--search`）。終わるまで `pending` を 1 つ増やしておく。`only` なら、
     /// 一致したコミットだけを出す。
     pub fn search(&self, query: &str, only: bool, pending: Rc<Cell<u32>>) {
@@ -248,6 +259,19 @@ impl Inner {
         self.next.set_sensitive(any);
     }
 
+    /// 探した問い合わせを入れ替え、変わったら知らせる。
+    fn set_searched(&self, searched: Option<(String, u64)>) {
+        let before = self.searched.borrow().as_ref().map(|(q, _)| q.clone());
+        let now = searched.as_ref().map(|(q, _)| q.clone());
+        self.searched.replace(searched);
+        if before != now {
+            let f = self.on_query.borrow().clone();
+            if let Some(f) = f {
+                f(now.as_deref());
+            }
+        }
+    }
+
     fn clear(&self) {
         self.generation.set(self.generation.get() + 1);
         // 走っている検索をやめさせる（`contents:` などは、次の検索を始めるまで裏で読み続けてしまう）。
@@ -255,7 +279,7 @@ impl Inner {
             repo.cancel_search();
         }
         self.set_matches(Rc::default());
-        self.searched.replace(None);
+        self.set_searched(None);
         self.count.set_text("");
         self.view.set_matches(Rc::default());
         // 絞り込みもやめる（元の History に戻す）。
@@ -364,7 +388,7 @@ impl Inner {
             match rows {
                 Ok(Ok(rows)) => {
                     let rows = Rc::new(rows);
-                    this.searched.replace(Some((query, snapshot_generation)));
+                    this.set_searched(Some((query, snapshot_generation)));
                     this.set_matches(rows.clone());
                     this.only.set_sensitive(true);
                     if this.only.is_active() {

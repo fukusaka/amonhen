@@ -135,6 +135,8 @@ pub struct Details {
     brief: gtk::Box,
     brief_avatar: Rc<crate::avatars::Avatar>,
     brief_text: gtk::Label,
+    /// 件名と本文の中で強調する語（History の検索の語。macOS 版の `highlight`）。
+    highlight: RefCell<Vec<String>>,
 }
 
 /// 詳細の上の欄の見せ方（macOS 版の `CommitHeaderStyle`。同じ順の番号で覚える）。
@@ -471,6 +473,7 @@ impl Details {
             brief,
             brief_avatar,
             brief_text,
+            highlight: RefCell::default(),
         };
         for label in [&details.body, &details.notes] {
             let links = details.links.clone();
@@ -543,6 +546,39 @@ impl Details {
         }
     }
 
+    /// History の検索の問い合わせ（消えたら None）。件名・本文・トレーラー・notes の中の語に色を付ける。
+    pub fn set_search(&self, query: Option<&str>) {
+        let terms = highlight_terms(query);
+        if *self.highlight.borrow() == terms {
+            return;
+        }
+        self.highlight.replace(terms);
+        self.apply_highlight();
+    }
+
+    /// 件名・本文・トレーラー・notes で、検索の語に背景の色を付ける（大文字・小文字は区別しない。macOS 版の
+    /// `highlightTerms`）。
+    fn apply_highlight(&self) {
+        let terms = self.highlight.borrow();
+        for label in [&self.subject, &self.body, &self.trailers, &self.notes] {
+            let attrs = gtk::pango::AttrList::new();
+            let text = label.text();
+            for term in terms.iter() {
+                for (start, end) in find_ignoring_case(&text, term) {
+                    let mut color = gtk::pango::AttrColor::new_background(65535, 52428, 0);
+                    color.set_start_index(start as u32);
+                    color.set_end_index(end as u32);
+                    attrs.insert(color);
+                    let mut alpha = gtk::pango::AttrInt::new_background_alpha(23000);
+                    alpha.set_start_index(start as u32);
+                    alpha.set_end_index(end as u32);
+                    attrs.insert(alpha);
+                }
+            }
+            label.set_attributes(Some(&attrs));
+        }
+    }
+
     /// 開いたリポジトリの場所（署名を検証した場所を、Signature の吹き出しに出すため）。
     pub fn set_location(&self, location: &str) {
         self.place.replace(crate::signature::Place::of(location));
@@ -564,6 +600,7 @@ impl Details {
             l.set_text("");
             l.set_visible(false);
         }
+        self.apply_highlight();
         self.find.refresh();
     }
 
@@ -709,6 +746,7 @@ impl Details {
             Some(extras) => self.show_extras(&extras),
             None => self.build_table(None),
         }
+        self.apply_highlight();
         self.find.refresh();
     }
 
@@ -724,6 +762,7 @@ impl Details {
         if let Some(info) = info {
             self.fill_message(&info, Some(extras));
         }
+        self.apply_highlight();
         self.find.refresh();
     }
 
@@ -1321,6 +1360,89 @@ fn linked(text: &str, web: Option<&str>, revs: bool) -> String {
     out
 }
 
+/// History の検索の問い合わせから、件名と本文で強調する語を取り出す（`author:`・`path:` などは除く。macOS 版の
+/// `highlightTerms(of:)`）。
+fn highlight_terms(query: Option<&str>) -> Vec<String> {
+    let Some(query) = query else {
+        return Vec::new();
+    };
+    let mut terms = Vec::new();
+    let mut flush = |word: &mut String| {
+        let w = std::mem::take(word);
+        let lower = w.to_lowercase();
+        if w.is_empty() || lower == "or" || lower == "and" {
+            return;
+        }
+        match w.split_once(':') {
+            Some((key, value)) => {
+                let key = key.to_lowercase();
+                if matches!(key.as_str(), "subject" | "message") && !value.is_empty() {
+                    terms.push(value.to_owned());
+                }
+                if !matches!(
+                    key.as_str(),
+                    "author"
+                        | "commit"
+                        | "id"
+                        | "path"
+                        | "file"
+                        | "contents"
+                        | "content"
+                        | "subject"
+                        | "message"
+                ) {
+                    terms.push(w);
+                }
+            }
+            None => terms.push(w),
+        }
+    };
+    let (mut word, mut quoted) = (String::new(), false);
+    for c in query.chars() {
+        if c == '"' {
+            quoted = !quoted;
+        } else if !quoted && (c.is_whitespace() || "()|".contains(c)) {
+            flush(&mut word);
+        } else {
+            word.push(c);
+        }
+    }
+    flush(&mut word);
+    terms
+}
+
+/// `text` の中の `term`（大文字・小文字は区別しない）の位置（バイトの範囲）。
+fn find_ignoring_case(text: &str, term: &str) -> Vec<(usize, usize)> {
+    let needle: Vec<char> = term.chars().flat_map(char::to_lowercase).collect();
+    if needle.is_empty() {
+        return Vec::new();
+    }
+    let chars: Vec<(usize, char)> = text.char_indices().collect();
+    let mut found = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        // `i` の文字から、小文字にして `needle` と同じになるところまで。
+        let (mut j, mut k) = (i, 0);
+        while j < chars.len() && k < needle.len() {
+            let lower: Vec<char> = chars[j].1.to_lowercase().collect();
+            if needle[k..].starts_with(&lower) {
+                k += lower.len();
+                j += 1;
+            } else {
+                break;
+            }
+        }
+        if k == needle.len() {
+            let end = chars.get(j).map_or(text.len(), |(b, _)| *b);
+            found.push((chars[i].0, end));
+            i = j;
+        } else {
+            i += 1;
+        }
+    }
+    found
+}
+
 /// 本文（件名の次の行から）。`trailers` なら、最後の段落（トレーラー）を除く（macOS 版の `bodyWithoutTrailers`）。
 fn body_without_trailers(message: &str, trailers: bool) -> String {
     let message = message.trim();
@@ -1415,6 +1537,19 @@ mod tests {
             "<a href=\"https://x.org/1a2b3c4d\">https://x.org/1a2b3c4d</a>"
         );
         assert_eq!(linked("1a2b3c4d", None, false), "1a2b3c4d");
+    }
+
+    #[test]
+    fn search_terms_are_highlighted() {
+        assert_eq!(
+            highlight_terms(Some(
+                "fix author:linus (\"bad thing\" or subject:oops) path:fs/"
+            )),
+            ["fix", "bad thing", "oops"]
+        );
+        assert!(highlight_terms(None).is_empty());
+        assert_eq!(find_ignoring_case("Fix fIX ふix", "fix"), [(0, 3), (4, 7)]);
+        assert_eq!(find_ignoring_case("aÄb", "ä"), [(1, 3)]);
     }
 
     #[test]
