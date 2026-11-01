@@ -740,17 +740,7 @@ fn rename_branch(p: &Rc<Parts>) {
     let Some(branch) = head_branch(p) else {
         return p.window().error_bell();
     };
-    let actions = p.actions.clone();
-    glib::spawn_future_local(async move {
-        let message = tr!("New name for {branch}", branch = branch);
-        if let Some(to) = actions
-            .ask("Rename Branch", &message, &branch, &tr!("Change"))
-            .await
-            && to != branch
-        {
-            actions.perform(json!({ "op": "renameBranch", "from": branch, "to": to }));
-        }
-    });
+    refops::ask_rename_branch(&p.actions, &branch);
 }
 
 /// 今のブランチの上流（pull・push の相手）を、リモートのブランチから選ぶ。

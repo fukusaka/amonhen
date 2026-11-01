@@ -419,7 +419,6 @@
 "Stash your uncommitted changes (Ctrl+Alt+S)" = "作業中の変更を退避（Ctrl+Alt+S）";
 "Apply the latest stash and remove it (Ctrl+Alt+Shift+S)" = "最新の stash を戻して消す（Ctrl+Alt+Shift+S）";
 "Reload History, branches and Working Copy (Ctrl+R)" = "History・ブランチ・Working Copy を読み直す（Ctrl+R）";
-"New name for {branch}" = "{branch} の新しい名前";
 "Change" = "変更";
 "Upstream of {branch}" = "{branch} の上流";
 "The remote branch that Pull brings in from and Push sends to." = "pull で取り込み、push で送るリモートのブランチ";
@@ -467,8 +466,6 @@
 "Copy Short IDs" = "短い ID をコピー";
 "Delete {name}" = "{name} を削除";
 "New Branch from {name}…" = "{name} から新しいブランチ…";
-"Name of the branch to create from {start}" = "{start} から作るブランチの名前";
-"Create and Switch" = "作成して切り替え";
 "Name of the tag for {target}" = "{target} に付けるタグの名前";
 "Name of the branch. It is checked out." = "ブランチの名前。作ったブランチに切り替えます。";
 "New Tag at {name}" = "{name} にタグを付ける";
@@ -634,7 +631,7 @@
 "From:" = "取り込み元:";
 "Follow git’s settings" = "git の設定に従う";
 "No remote branch to pull from" = "取り込み元のリモートのブランチがありません";
-"Fetch, or add a remote with Repository > Add Remote…." = "Fetch するか、Repository > リモートを追加… でリモートを足してください。";
+"Fetch, or add a remote in Repository Settings." = "Fetch するか、リポジトリの設定でリモートを足してください。";
 "Pull {count} commits from {upstream}?" = "{upstream} から {count} コミット取り込みますか？";
 "Pull from {upstream}?" = "{upstream} から Pull しますか？";
 "Pull into {branch}?" = "{branch} に Pull しますか？";
@@ -656,7 +653,7 @@
 "Commits to send" = "送るコミット";
 "Commits {upstream} will lose" = "{upstream} から消えるコミット";
 "Can’t Publish" = "Publish できません";
-"This repository has no remotes. Add one with Repository > Add Remote…." = "このリポジトリにはリモートがありません。Repository > リモートを追加… で足してください。";
+"This repository has no remotes. Add one in Repository > Add Remote…." = "このリポジトリにはリモートがありません。Repository > リモートを追加… で足してください。";
 "Publish {branch}?" = "{branch} を Publish しますか？";
 "This creates the branch on the remote and makes it the upstream (where Pull and Push go from now on)." = "リモートにブランチを作り、それを上流（これからの Pull と Push の相手）にします。";
 "Remote" = "リモート";
@@ -845,6 +842,9 @@
 "Adds files that may hold secrets: {files}" = "秘密を含みそうなファイルを追加しています: {files}";
 "Can’t read the status" = "状態を読めません";
 "Couldn’t check the branches" = "ブランチを調べられませんでした";
+"Rename {name}" = "{name} の名前を変える";
+"New name of the branch." = "ブランチの新しい名前。";
+"Name of the branch. It is checked out." = "ブランチの名前。作ったブランチに切り替えます。";
 "Brings the upstream commits in. When both sides have new commits, a merge commit joins them." = "上流のコミットを取り込みます。両方に新しいコミットがあれば、マージコミットでつなぎます。";
 "Puts your local commits on top of the upstream commits, keeping the History in one line." = "手元のコミットを上流のコミットの上に載せ直し、History を 1 本に保ちます。";
 "Only moves the branch forward. Stops without changing anything if you have local commits too." = "ブランチを進めるだけです。手元にもコミットがあれば、何も変えずに止まります。";

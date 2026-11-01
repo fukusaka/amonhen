@@ -1099,7 +1099,7 @@ pub fn pull(actions: &Rc<Actions>, mode: &str) {
                 inform(
                     parent(&actions).as_ref(),
                     &tr!("No remote branch to pull from"),
-                    &tr!("Fetch, or add a remote with Repository > Add Remote…."),
+                    &tr!("Fetch, or add a remote in Repository Settings."),
                 )
                 .await;
                 return;
@@ -1485,7 +1485,7 @@ pub fn publish(actions: &Rc<Actions>, branch: &str, then: Option<Box<dyn FnOnce(
             inform(
                 window.as_ref(),
                 &tr!("Can’t Publish"),
-                &tr!("This repository has no remotes. Add one with Repository > Add Remote…."),
+                &tr!("This repository has no remotes. Add one in Repository > Add Remote…."),
             )
             .await;
             return;

@@ -98,13 +98,8 @@ pub fn menu(
                 move || r.previous(Some(n.clone())),
             ));
             let (a, from) = (actions.clone(), name.clone());
-            items.push(menu::action(format!("Rename {name}…"), move || {
-                let (a, from) = (a.clone(), from.clone());
-                glib::spawn_future_local(async move {
-                    if let Some(to) = a.ask("Rename Branch", "", &from, &tr!("Change")).await {
-                        a.perform(json!({ "op": "renameBranch", "from": from, "to": to }));
-                    }
-                });
+            items.push(menu::action(tr!("Rename…"), move || {
+                ask_rename_branch(&a, &from)
             }));
             // ほかの worktree が checkout しているブランチは消せない（git が断る）。
             if !is_head && elsewhere.is_none() {
@@ -634,6 +629,7 @@ pub fn new_branch(actions: &Rc<Actions>, start: &str) -> Item {
     })
 }
 
+/// `start` から作るブランチの名前を聞いて、作って切り替える（文言は macOS 版と同じ）。
 pub fn ask_new_branch(actions: &Rc<Actions>, start: &str) {
     let (a, start) = (actions.clone(), start.to_owned());
     glib::spawn_future_local(async move {
@@ -644,6 +640,21 @@ pub fn ask_new_branch(actions: &Rc<Actions>, start: &str) {
             a.perform(
                 json!({ "op": "createBranch", "name": name, "start": start, "checkout": true }),
             );
+        }
+    });
+}
+
+/// ブランチ `name` の新しい名前を聞いて変える（サイドバーと Repository > Rename Branch…。macOS 版と同じ）。
+pub fn ask_rename_branch(actions: &Rc<Actions>, name: &str) {
+    let (a, from) = (actions.clone(), name.to_owned());
+    glib::spawn_future_local(async move {
+        let title = tr!("Rename {name}", name = from);
+        if let Some(to) = a
+            .ask(&title, &tr!("New name of the branch."), &from, "Rename")
+            .await
+            && to != from
+        {
+            a.perform(json!({ "op": "renameBranch", "from": from, "to": to }));
         }
     });
 }
