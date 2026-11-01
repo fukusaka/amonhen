@@ -196,6 +196,13 @@ pub struct State {
     on_drop: Option<DropCallback>,
     /// 運んでいる間の、落とす所（その行の上に線を引く）。
     drop_row: Option<u32>,
+    /// この表から運んでいるもの（運び、運んでいるコミット）。ほかから運んできたものは落とさせない。
+    dragging: Option<(gdk::Drag, Oid)>,
+    /// 運んでいる間だけ覚えておく、編集できるコミット（HEAD から最初の merge まで）。読み終えるまでは None で、
+    /// どこにでも落とせる（macOS 版の `dragChain`）。
+    drag_chain: Option<HashSet<Oid>>,
+    /// 運び始めたときに呼ぶ（編集できるコミットを読んで [`HistoryView::set_drag_chain`] で渡す）。
+    on_drag_start: Option<Rc<dyn Fn()>>,
 }
 
 /// コミットを落としたときに呼ぶもの。
@@ -297,12 +304,16 @@ mod imp {
             let drag = gtk::DragSource::new();
             drag.set_actions(gdk::DragAction::MOVE);
             let subject = Rc::new(RefCell::new(String::new()));
-            let (weak, sub) = (view.downgrade(), subject.clone());
+            let dragged: Rc<Cell<Option<Oid>>> = Rc::default();
+            let (weak, sub, prepared) = (view.downgrade(), subject.clone(), dragged.clone());
             drag.connect_prepare(move |_, _, y| {
                 let view = weak.upgrade()?;
                 let row = view.row_at(y as f32)?;
                 let (_, history) = view.current()?;
                 let id = *history.graph.ids().get(row as usize)?;
+                view.state().drag_chain = None;
+                view.state().dragging = None;
+                prepared.set(Some(id));
                 // 運んでいる間は、件名を札にして出す。件名は読んである行のものを使う（ここで読むと、daemon・
                 // SSH 先では 1 往復ぶん画面が止まる。macOS 版と同じ）。
                 sub.replace(
@@ -312,7 +323,17 @@ mod imp {
                 let value = format!("{DRAG_PREFIX}{id}");
                 Some(gdk::ContentProvider::for_value(&value.to_value()))
             });
+            let (weak, from) = (view.downgrade(), dragged);
             drag.connect_drag_begin(move |_, drag| {
+                if let Some(view) = weak.upgrade()
+                    && let Some(id) = from.get()
+                {
+                    view.state().dragging = Some((drag.clone(), id));
+                    let f = view.state().on_drag_start.clone();
+                    if let Some(f) = f {
+                        f();
+                    }
+                }
                 let label = gtk::Label::new(Some(&subject.borrow()));
                 label.set_max_width_chars(48);
                 label.set_ellipsize(pango::EllipsizeMode::End);
@@ -322,14 +343,40 @@ mod imp {
                 label.set_margin_end(6);
                 gtk::DragIcon::for_drag(drag).set_child(Some(&label));
             });
+            let weak = view.downgrade();
+            drag.connect_drag_end(move |_, _, _| {
+                if let Some(view) = weak.upgrade() {
+                    let mut st = view.state();
+                    st.dragging = None;
+                    st.drag_chain = None;
+                }
+            });
             view.add_controller(drag);
             let target = gtk::DropTarget::new(glib::Type::STRING, gdk::DragAction::MOVE);
+            // この表から運んだコミットだけを受ける（サイドバーのブランチなどは受けない。macOS 版と同じ）。
+            let weak = view.downgrade();
+            target.connect_accept(move |_, drop| {
+                let Some(view) = weak.upgrade() else {
+                    return false;
+                };
+                let ours = drop.drag();
+                drop.formats().contains_type(glib::Type::STRING)
+                    && ours.is_some()
+                    && view.state().dragging.as_ref().map(|(d, _)| d) == ours.as_ref()
+            });
             let weak = view.downgrade();
             target.connect_motion(move |_, _, y| {
                 let Some(view) = weak.upgrade() else {
                     return gdk::DragAction::empty();
                 };
                 let row = view.drop_row_at(y as f32);
+                // 編集できる並びの外（最初の merge より下、HEAD でない枝）には落とせない（印も出さない）。
+                if !view.can_drop_at(row) {
+                    if view.state().drop_row.take().is_some() {
+                        view.queue_draw();
+                    }
+                    return gdk::DragAction::empty();
+                }
                 if view.state().drop_row != Some(row) {
                     view.state().drop_row = Some(row);
                     view.queue_draw();
@@ -1043,6 +1090,39 @@ impl HistoryView {
     /// コミットを運んで落としたら `f(運んだコミット, 落とした所の下の行)` を呼ぶ。
     pub fn connect_drop_commit(&self, f: impl Fn(Oid, u32) + 'static) {
         self.state().on_drop = Some(Rc::new(f));
+    }
+
+    /// 運び始めたら `f()` を呼ぶ（編集できるコミットを読んで [`HistoryView::set_drag_chain`] で渡す）。
+    pub fn connect_drag_start(&self, f: impl Fn() + 'static) {
+        self.state().on_drag_start = Some(Rc::new(f));
+    }
+
+    /// 運んでいる間の、編集できるコミット（落とせる所を決める）。運び終えていれば捨てる。
+    pub fn set_drag_chain(&self, chain: HashSet<Oid>) {
+        let mut st = self.state();
+        if st.dragging.is_some() {
+            st.drag_chain = Some(chain);
+        }
+    }
+
+    /// `row` の上（その行の上の境目）に落とせるか: 運んでいるコミットが編集できる並びにあり、境目の上か下の行も
+    /// 並びにある（macOS 版の `validateDrop`）。並びを読み終えるまでは落とせる。
+    fn can_drop_at(&self, row: u32) -> bool {
+        let st = self.state();
+        let (Some(chain), Some((_, dragged)), Some(history)) = (
+            st.drag_chain.as_ref(),
+            st.dragging.as_ref(),
+            st.history.as_ref(),
+        ) else {
+            return true;
+        };
+        let ids = history.graph.ids();
+        let id = |r: u32| ids.get(r as usize);
+        let below = id(row.min((ids.len() as u32).saturating_sub(1)));
+        let above = row.checked_sub(1).and_then(id);
+        chain.contains(dragged)
+            && (below.is_some_and(|b| chain.contains(b))
+                || above.is_some_and(|a| chain.contains(a)))
     }
 
     /// 落とす所: `y` にいちばん近い行の境目（その下の行。いちばん下なら行の数）。

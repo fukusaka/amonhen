@@ -1152,6 +1152,25 @@ fn build_tab(
     details.connect_edit_message(move |oid| {
         eo.open(oid, Some(historyedit::Preset::Reword(oid.to_owned())));
     });
+    // 運び始めたら、編集できるコミットを読んでおく（並びの外には落とせないようにする。macOS 版と同じ）。
+    let (a, v) = (actions.clone(), view.downgrade());
+    view.connect_drag_start(move || {
+        let (Some(repo), v) = (a.repo(), v.clone()) else {
+            return;
+        };
+        glib::spawn_future_local(async move {
+            let reply = sheets::run(&repo, serde_json::json!({ "op": "editableCommits" })).await;
+            let chain = reply["text"]
+                .as_str()
+                .unwrap_or_default()
+                .lines()
+                .filter_map(|l| l.split(' ').next().and_then(amonhen_model::Oid::from_hex))
+                .collect();
+            if let Some(view) = v.upgrade() {
+                view.set_drag_chain(chain);
+            }
+        });
+    });
     // History でコミットを運んで落とす: 編集モードで並べ替える（macOS 版と同じ）。
     let (a, v, eo) = (actions.clone(), view.downgrade(), edit_opener.clone());
     view.connect_drop_commit(move |id, row| {
