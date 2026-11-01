@@ -839,25 +839,34 @@ impl Inner {
                 this.update_buttons();
             }
         });
-        // `#` を打ったら、開いている Issue・PR の番号を選べる（macOS 版と同じ。全角の ＃ でもよい）。
+        // カーソルの前が `#` になったら（打ったときも、消して `#` の後ろに戻ったときも）、開いている Issue・PR の
+        // 番号を選べる（macOS 版と同じ。全角の ＃ でもよい。前の文字は `offer_issues` が確かめる）。
         let weak = Rc::downgrade(this);
         // Entry の文字は中の GtkText が持ち、insert-text もそこに来る。
         let editable: gtk::Editable = this
             .subject
             .delegate()
             .unwrap_or_else(|| this.subject.clone().upcast());
-        editable.connect_insert_text(move |_, text, _| {
-            if let Some(this) = weak.upgrade()
-                && text.ends_with(['#', '＃'])
-            {
+        editable.connect_insert_text(move |_, _, _| {
+            if let Some(this) = weak.upgrade() {
                 Inner::offer_issues(&this, false);
             }
         });
         let weak = Rc::downgrade(this);
-        this.body.buffer().connect_insert_text(move |_, _, text| {
-            if let Some(this) = weak.upgrade()
-                && text.ends_with(['#', '＃'])
-            {
+        editable.connect_delete_text(move |_, _, _| {
+            if let Some(this) = weak.upgrade() {
+                Inner::offer_issues(&this, false);
+            }
+        });
+        let weak = Rc::downgrade(this);
+        this.body.buffer().connect_insert_text(move |_, _, _| {
+            if let Some(this) = weak.upgrade() {
+                Inner::offer_issues(&this, true);
+            }
+        });
+        let weak = Rc::downgrade(this);
+        this.body.buffer().connect_delete_range(move |_, _, _| {
+            if let Some(this) = weak.upgrade() {
                 Inner::offer_issues(&this, true);
             }
         });
@@ -950,7 +959,16 @@ impl Inner {
                     );
                     (x as f64, y as f64)
                 } else {
-                    (8.0, this.subject.height() as f64)
+                    // 件名の欄でも、文字の位置の下（中の GtkText のカーソルの位置から）。
+                    let text = this.subject.delegate().and_downcast::<gtk::Text>();
+                    let x = text
+                        .and_then(|t| {
+                            let (strong, _) = t.compute_cursor_extents(at as usize);
+                            let point = gtk::graphene::Point::new(strong.x(), 0.0);
+                            t.compute_point(&this.subject, &point)
+                        })
+                        .map_or(8.0, |p| p.x() as f64);
+                    (x, this.subject.height() as f64)
                 };
                 if body {
                     crate::menu::popup(&this.body, x, y, menu);
