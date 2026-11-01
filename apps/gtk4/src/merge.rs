@@ -1050,7 +1050,9 @@ impl Editor {
             return;
         }
         let text = self.result.text();
+        // 解けなければ知らせる（macOS 版は警告を出す。ここでは理由の文がないので音で）。
         let Some(resolved) = conflict::resolve(text.as_bytes(), index, choice) else {
+            self.root.error_bell();
             return;
         };
         self.replace(&String::from_utf8_lossy(&resolved));
