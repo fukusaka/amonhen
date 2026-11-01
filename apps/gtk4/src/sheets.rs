@@ -313,11 +313,9 @@ pub async fn try_between(
     }
 }
 
+/// コミットの時刻（どのくらい前か。macOS 版と同じ短い形）。
 fn time(t: i64) -> String {
-    glib::DateTime::from_unix_local(t)
-        .and_then(|d| d.format("%Y-%m-%d %H:%M"))
-        .map(|s| s.to_string())
-        .unwrap_or_default()
+    crate::stashes::ago(t)
 }
 
 /// コミットの一覧（見出しと、短い ID・件名・作者・日時）。空の一覧は出さない。`warn` は消えるもの（赤）。
