@@ -257,6 +257,14 @@ impl Actions {
                 f();
             }
             this.refresh_undo();
+            if let Some(names) = not_merged_yet(&result) {
+                // 1 つずつの merge が途中で止まった。まだ merge していないものは、ここでしか言えない。
+                this.alert(
+                    &tr!("Not merged yet: {names}", names = names),
+                    &tr!("Merge them again after resolving these conflicts."),
+                )
+                .await;
+            }
             let after: Vec<Callback> = this.on_after.borrow().clone();
             for f in after {
                 f();
@@ -540,6 +548,20 @@ impl Actions {
     }
 }
 
+/// 1 つずつの merge がコンフリクトで止まったときの、まだ merge していないもの（`info.remaining`。`, ` で
+/// つなぐ）。止まっていない・残りがなければ None。
+fn not_merged_yet(reply: &Value) -> Option<String> {
+    if reply["error"].is_string() || reply["outcome"].as_str() != Some("conflict") {
+        return None;
+    }
+    let names: Vec<&str> = reply["info"]["remaining"]
+        .as_array()?
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    (!names.is_empty()).then(|| names.join(", "))
+}
+
 /// メニューの項目とツールバーのボタンを使えるかを決める、タブの状態（macOS 版の `validate` が見るもの）。
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Facts {
@@ -653,6 +675,26 @@ mod tests {
             local: true,
             ..Facts::default()
         }
+    }
+
+    #[test]
+    fn names_what_a_stopped_merge_left() {
+        let reply = |v: Value| not_merged_yet(&v);
+        assert_eq!(
+            reply(
+                json!({ "ok": true, "outcome": "conflict", "info": { "remaining": ["b", "c"] } })
+            ),
+            Some("b, c".into())
+        );
+        assert_eq!(reply(json!({ "ok": true, "outcome": "conflict" })), None);
+        assert_eq!(
+            reply(json!({ "ok": true, "outcome": "conflict", "info": { "remaining": [] } })),
+            None
+        );
+        assert_eq!(
+            reply(json!({ "ok": true, "outcome": "done", "info": { "remaining": ["b"] } })),
+            None
+        );
     }
 
     #[test]

@@ -450,6 +450,8 @@
 "Edit Message" = "メッセージを編集";
 "Combine" = "まとめる";
 "Can’t Merge Them in One Commit" = "1 つのコミットにまとめられません";
+"Not merged yet: {names}" = "まだ merge していないもの: {names}";
+"Merge them again after resolving these conflicts." = "このコンフリクトを解決してから、もう一度 merge してください。";
 "Undo: {label} (Ctrl+Alt+Z)" = "Undo: {label}（Ctrl+Alt+Z）";
 "Nothing to Undo" = "Undo できる操作はありません";
 "Cancel" = "キャンセル";
