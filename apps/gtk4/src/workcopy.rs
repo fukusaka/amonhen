@@ -1257,14 +1257,18 @@ impl Inner {
         }
         drop(all);
         let wanted = this.selected.borrow().clone();
-        let index = wanted
-            .and_then(|p| entries.iter().position(|e| e.path == p))
-            .unwrap_or(0);
+        let found = wanted.and_then(|p| entries.iter().position(|e| e.path == p));
+        let index = found.unwrap_or(0);
         this.entries.replace(entries);
-        // そのファイルの行（畳んだディレクトリの中なら、最初のファイルの行）。
+        // そのファイルの行。畳んだディレクトリの中に隠れたら、行は選ばず差分もそのまま（macOS 版の
+        // NSOutlineView と同じ）。選んでいたファイルがなくなったときだけ、最初のファイルの行に移る。
         let row_of = |i: usize| this.row_entries.borrow().iter().position(|&r| r == Some(i));
-        let row_index =
-            row_of(index).or_else(|| this.row_entries.borrow().iter().position(Option::is_some));
+        let hidden = found.is_some_and(|i| row_of(i).is_none());
+        let row_index = if hidden {
+            None
+        } else {
+            row_of(index).or_else(|| this.row_entries.borrow().iter().position(Option::is_some))
+        };
         let index = row_index
             .and_then(|r| this.row_entries.borrow()[r])
             .unwrap_or(index);
@@ -1280,6 +1284,8 @@ impl Inner {
             let same = this.selected.borrow().as_deref() == Some(entry.path.as_str());
             this.selected.replace(Some(entry.path.clone()));
             Inner::load_diff(this, entry, same);
+        } else if hidden {
+            this.rebuilding.set(false);
         } else {
             this.rebuilding.set(false);
             this.selected.replace(None);
