@@ -777,13 +777,20 @@ fn pump() {
                             .await
                             .ok()
                             .flatten();
+                    // 読めなかったものは覚えず、次に描くときに読み直す（macOS 版と同じ）。知らせると、すぐ描き直して
+                    // 読み直し続けるので、知らせない（行は読む前と同じに見える）。
+                    let read = peek.is_some();
                     STATE.with(|s| {
                         let mut s = s.borrow_mut();
                         s.queued.remove(&path);
-                        s.peeks.insert(path.clone(), peek);
+                        if read {
+                            s.peeks.insert(path.clone(), peek);
+                        }
                         s.running -= 1;
                     });
-                    notify(Some(&path));
+                    if read {
+                        notify(Some(&path));
+                    }
                 }
                 Job::Fetch(path) => {
                     let p = path.clone();
