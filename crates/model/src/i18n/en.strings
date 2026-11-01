@@ -37,6 +37,7 @@
 "{count} files have conflicts at {subject} ({without} without markers). Resolve them in Working Copy, then Continue." = "{count} file has conflicts at {subject} ({without} without markers). Resolve it in Working Copy, then Continue.";
 "{count} days ago" = "{count} day ago";
 "{count} commits look unfinished (fixup!, squash! or WIP)." = "{count} commit looks unfinished (fixup!, squash! or WIP).";
+"Adds {count} binary files." = "Adds {count} binary file.";
 "Installed. {count} files are in LFS." = "Installed. {count} file is in LFS.";
 "File History — {path} ({count} commits)" = "File History — {path} ({count} commit)";
 "Show {count} Merged Commits" = "Show {count} Merged Commit";

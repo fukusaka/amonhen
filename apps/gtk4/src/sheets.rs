@@ -628,7 +628,12 @@ pub async fn sync_state(repo: &Arc<Repository>, branch: Option<String>) -> Optio
 }
 
 /// Push の前の注意（送るコミットの件名と、送る範囲で足すファイルから）。
-fn push_warnings(upstream: &str, outgoing: &CommitRange, added: &[String]) -> Vec<String> {
+fn push_warnings(
+    upstream: &str,
+    outgoing: &CommitRange,
+    added: &[String],
+    binaries: usize,
+) -> Vec<String> {
     let mut out = Vec::new();
     let remote_branch = upstream.split_once('/').map_or(upstream, |(_, b)| b);
     if ["main", "master", "trunk", "develop"].contains(&remote_branch) {
@@ -678,6 +683,9 @@ fn push_warnings(upstream: &str, outgoing: &CommitRange, added: &[String]) -> Ve
             "Adds files that may hold secrets: {files}",
             files = secret_like.join(", ")
         ));
+    }
+    if binaries > 0 {
+        out.push(tr!("Adds {count} binary files.", count = binaries));
     }
     out
 }
@@ -1286,30 +1294,40 @@ pub fn push(
             (Some(b), Some(t)) if state.outgoing.count > 0 => Some((b.clone(), t.clone())),
             _ => None,
         };
-        // 注意（既定のブランチへ直接、整理し忘れのコミット、秘密らしきファイルの追加）。
-        let added: Vec<String> = match &range {
+        // 注意（既定のブランチへ直接、整理し忘れのコミット、秘密らしきファイル・バイナリの追加）。
+        let (added, binaries): (Vec<String>, usize) = match &range {
             Some((b, t)) => {
                 let (r, b, t) = (repo.clone(), b.clone(), t.clone());
                 gio::spawn_blocking(move || {
                     use amonhen_model::{ChangeKind, Oid};
                     let tip = Oid::from_hex(&t)?;
                     let changes = r.changes_between(Oid::from_hex(&b).as_ref(), &tip).ok()?;
-                    Some(
-                        changes
-                            .into_iter()
-                            .filter(|c| c.kind == ChangeKind::Added)
-                            .map(|c| c.path)
-                            .collect::<Vec<_>>(),
-                    )
+                    // バイナリの追加（画像や成果物をうっかり入れたとき）。数えるのに blob を読むので、先頭の
+                    // 100 ファイルまで（macOS 版と同じ）。
+                    let binaries = changes
+                        .iter()
+                        .take(100)
+                        .filter(|c| c.kind == ChangeKind::Added)
+                        .filter(|c| {
+                            r.file_diff(c, &amonhen_projection::FrontendProfile::GTK)
+                                .is_ok_and(|d| d.binary)
+                        })
+                        .count();
+                    let added = changes
+                        .into_iter()
+                        .filter(|c| c.kind == ChangeKind::Added)
+                        .map(|c| c.path)
+                        .collect::<Vec<_>>();
+                    Some((added, binaries))
                 })
                 .await
                 .ok()
                 .flatten()
                 .unwrap_or_default()
             }
-            None => Vec::new(),
+            None => (Vec::new(), 0),
         };
-        for warning in push_warnings(&upstream, &state.outgoing, &added) {
+        for warning in push_warnings(&upstream, &state.outgoing, &added, binaries) {
             let l = note(&format!("⚠︎ {warning}"));
             l.remove_css_class("dim-label");
             l.add_css_class("warning");
