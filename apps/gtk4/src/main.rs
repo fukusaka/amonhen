@@ -2186,7 +2186,35 @@ fn build_tab(
                             stale.set(true);
                         }
                     }
-                    Event::Opened => content.set_visible_child_name("repository"),
+                    Event::Opened(repo) => {
+                        content.set_visible_child_name("repository");
+                        // daemon・SSH 越しで初めての History を読む間（キャッシュがなく、まだ何も出せないとき）は、
+                        // 受け取った量を出す（macOS 版と同じ）。
+                        if repo.connection_state().is_some() {
+                            let (st, v) = (status.downgrade(), view.downgrade());
+                            glib::timeout_add_local(
+                                std::time::Duration::from_millis(250),
+                                move || {
+                                    let (Some(st), Some(v)) = (st.upgrade(), v.upgrade()) else {
+                                        return glib::ControlFlow::Break;
+                                    };
+                                    if v.current().is_some() || !st.is_visible() {
+                                        return glib::ControlFlow::Break;
+                                    }
+                                    match repo.connection_state() {
+                                        Some(c) if c.closed.is_none() => {
+                                            st.set_text(&tr!(
+                                                "Loading History… {size} received",
+                                                size = glib::format_size(c.received)
+                                            ));
+                                            glib::ControlFlow::Continue
+                                        }
+                                        _ => glib::ControlFlow::Break,
+                                    }
+                                },
+                            );
+                        }
+                    }
                     Event::OpenFailed(e) => {
                         buttons.show_unopened();
                         connecting.show_error(&e);
@@ -2600,7 +2628,7 @@ enum Event {
     Timing(&'static str, f64),
     Failed(String),
     /// リポジトリを開けた（つながった）。
-    Opened,
+    Opened(Arc<Repository>),
     /// リポジトリを開けなかった（つなげなかった）。
     OpenFailed(String),
     /// mailmap（`.mailmap`・`log.mailmap`・`mailmap.file`）が変わった（作者名を出し直す）。
@@ -2687,7 +2715,7 @@ fn load(
             return;
         }
     };
-    let _ = tx.send_blocking(Event::Opened);
+    let _ = tx.send_blocking(Event::Opened(repo.clone()));
     // Settings > Performance: commit-graph がなければ書き出し、あれば増えた分を書き足す（手元のリポジトリだけ）。
     if settings::bool(settings::WRITE_COMMIT_GRAPH) && repo.connection_state().is_none() {
         let repo = repo.clone();
