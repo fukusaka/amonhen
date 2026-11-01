@@ -258,7 +258,14 @@ impl Stashes {
     }
 
     pub fn set_repo(&self, repo: Arc<Repository>) {
-        self.inner.repo.replace(Some(repo));
+        let old = self.inner.repo.replace(Some(repo.clone()));
+        // ref が先に届いて一覧だけ出していたら（リポジトリがまだで読めなかった）、選んだ stash の中身と行の情報を
+        // ここで読む。
+        if old.is_none_or(|o| !Arc::ptr_eq(&o, &repo)) && !self.inner.stashes.borrow().is_empty() {
+            self.inner.show_selected();
+            self.inner.load_infos();
+            self.inner.reload_bases();
+        }
     }
 
     /// ref の一覧の stash（新しい順）を出す。選んでいた stash は ID で選び直す（番号は積むたびにずれる）。
