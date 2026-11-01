@@ -39,6 +39,25 @@ impl Row {
     }
 }
 
+/// 選んでいる行の場所（並びの順）。
+fn selected_locations(selection: &gtk::MultiSelection) -> Vec<String> {
+    let set = selection.selection();
+    (0..set.size())
+        .filter_map(|i| {
+            selection
+                .item(set.nth(i as u32))
+                .and_downcast::<gtk::StringObject>()
+                .map(|s| s.string().to_string())
+        })
+        .collect()
+}
+
+/// 選んでいる最初の行（Enter で開くもの・↑↓ の起点）。
+fn first_selected(selection: &gtk::MultiSelection) -> Option<u32> {
+    let set = selection.selection();
+    (!set.is_empty()).then(|| set.minimum())
+}
+
 /// 一覧の並び: お気に入り、そのあと最後に開いた順（開いたことのないものは後ろに、名前の順）。
 fn ordered(query: &str) -> Vec<String> {
     // ブックマークと開いた日時は一度だけ読む（行ごとに読むと、数百行で目に見えて遅い）。
@@ -104,7 +123,8 @@ pub fn button(
     let filter = gtk::SearchEntry::new();
     filter.set_placeholder_text(Some(&tr!("Switch repository")));
     let model = gtk::StringList::new(&[]);
-    let selection = gtk::SingleSelection::new(Some(model.clone()));
+    // Ctrl・Shift+クリックでいくつも選べる（macOS 版と同じ。右クリックの Fetch・Group などは選んだものすべてに）。
+    let selection = gtk::MultiSelection::new(Some(model.clone()));
     let factory = gtk::SignalListItemFactory::new();
     let rows: Rc<RefCell<Vec<Rc<Row>>>> = Rc::default();
     let (r, s) = (rows.clone(), selection.downgrade());
@@ -166,18 +186,18 @@ pub fn button(
             let Some(window) = widget.root().and_downcast::<gtk::Window>() else {
                 return;
             };
+            // 選んでいる行の上なら選んだものすべて、そうでなければその行だけを選んで（macOS 版と同じ）。
+            let mut targets = vec![location.clone()];
             if let Some(s) = s.upgrade()
                 && item.position() != gtk::INVALID_LIST_POSITION
             {
-                s.set_selected(item.position());
+                if s.is_selected(item.position()) {
+                    targets = selected_locations(&s);
+                } else {
+                    s.select_item(item.position(), true);
+                }
             }
-            let items = repobrowser::row_items(
-                &window,
-                &location,
-                std::slice::from_ref(&location),
-                false,
-                o.clone(),
-            );
+            let items = repobrowser::row_items(&window, &location, &targets, false, o.clone());
             menu::popup(&widget, x, y, items);
         });
         line.add_controller(click);
@@ -243,7 +263,7 @@ pub fn button(
             let refs: Vec<&str> = shown.iter().map(String::as_str).collect();
             model.splice(0, model.n_items(), &refs);
             if !shown.is_empty() {
-                selection.set_selected(0);
+                selection.select_item(0, true);
             }
         })
     };
@@ -323,8 +343,8 @@ pub fn button(
     }
     let (g, s) = (go.clone(), selection.clone());
     filter.connect_activate(move |_| {
-        if s.selected() != gtk::INVALID_LIST_POSITION {
-            g(s.selected(), Place::Tab);
+        if let Some(row) = first_selected(&s) {
+            g(row, Place::Tab);
         }
     });
     let p = popover.downgrade();
@@ -345,8 +365,8 @@ pub fn button(
             gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter
                 if modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK) =>
             {
-                if s.selected() != gtk::INVALID_LIST_POSITION {
-                    g(s.selected(), Place::NewWindow);
+                if let Some(row) = first_selected(&s) {
+                    g(row, Place::NewWindow);
                 }
                 return glib::Propagation::Stop;
             }
@@ -354,12 +374,9 @@ pub fn button(
         };
         let n = s.n_items() as i64;
         if n > 0 {
-            let current = match s.selected() {
-                gtk::INVALID_LIST_POSITION => -1,
-                r => r as i64,
-            };
+            let current = first_selected(&s).map_or(-1, i64::from);
             let next = (current + step).clamp(0, n - 1) as u32;
-            s.set_selected(next);
+            s.select_item(next, true);
             if let Some(l) = l.upgrade() {
                 l.scroll_to(next, gtk::ListScrollFlags::NONE, None);
             }
