@@ -304,8 +304,38 @@ pub fn show_with(parent: Option<&gtk::Window>, open: Open, query: &str) -> gtk::
             g(s.selected(), crate::tabs::Place::Tab);
         }
     });
+    // ダブルクリックで開く。Ctrl を押しながらなら新しい窓に（macOS 版の ⌘）。開くときの知らせには押していた
+    // キーがないので、押したときに覚えておく。
+    let ctrl = Rc::new(std::cell::Cell::new(false));
+    let click = gtk::GestureClick::new();
+    click.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let c = ctrl.clone();
+    click.connect_pressed(move |g, _, _, _| {
+        c.set(
+            g.current_event_state()
+                .contains(gtk::gdk::ModifierType::CONTROL_MASK),
+        );
+    });
+    list.add_controller(click);
+    let row_keys = gtk::EventControllerKey::new();
+    row_keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let c = ctrl.clone();
+    row_keys.connect_key_pressed(move |_, _, _, modifiers| {
+        c.set(modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK));
+        glib::Propagation::Proceed
+    });
+    list.add_controller(row_keys);
     let g = go.clone();
-    list.connect_activate(move |_, row| g(row, crate::tabs::Place::Tab));
+    list.connect_activate(move |_, row| {
+        g(
+            row,
+            if ctrl.get() {
+                crate::tabs::Place::NewWindow
+            } else {
+                crate::tabs::Place::Tab
+            },
+        )
+    });
     let w = window.downgrade();
     field.connect_stop_search(move |_| {
         if let Some(w) = w.upgrade() {
