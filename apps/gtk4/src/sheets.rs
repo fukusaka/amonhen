@@ -793,6 +793,24 @@ fn push_preview(
     }
     let list = gtk::ListBox::new();
     list.add_css_class("navigation-sidebar");
+    // 一覧にフォーカスがあっても、Return はシートの既定のボタン（Push）を押す（macOS 版と同じ）。ListBox は
+    // Return を行の activate として受けて止めるので、その前に取る。
+    let keys = gtk::EventControllerKey::new();
+    keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let l = list.downgrade();
+    keys.connect_key_pressed(move |_, key, _, modifiers| {
+        if matches!(
+            key,
+            gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter | gtk::gdk::Key::ISO_Enter
+        ) && modifiers.is_empty()
+            && let Some(l) = l.upgrade()
+            && l.activate_action("default.activate", None).is_ok()
+        {
+            return glib::Propagation::Stop;
+        }
+        glib::Propagation::Proceed
+    });
+    list.add_controller(keys);
     for (title, detail, _, heading, lost) in &rows {
         let b = gtk::Box::new(gtk::Orientation::Vertical, 1);
         let t = gtk::Label::new(Some(title));
