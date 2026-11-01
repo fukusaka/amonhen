@@ -1907,6 +1907,10 @@ pub fn integrate_choosing(
         };
         // 見込みを読む（相手や、積み重ねたブランチを動かすかを変えたら読み直す。古い答えは捨てる）。
         let generation = Rc::new(std::cell::Cell::new(0u32));
+        // git の設定（rebase.updateRefs）。チェックをこれと違えたときだけ命令に入れる（macOS 版と同じ）。
+        let configured: Rc<std::cell::Cell<Option<bool>>> = Rc::default();
+        // 答えに合わせてチェックを入れている間（そのための toggled では読み直さない）。
+        let setting = Rc::new(std::cell::Cell::new(false));
         let load = {
             let (repo, forecast, update_refs, chosen, generation, set_drawing) = (
                 repo.clone(),
@@ -1916,15 +1920,18 @@ pub fn integrate_choosing(
                 generation.clone(),
                 set_drawing.clone(),
             );
+            let (configured, setting) = (configured.clone(), setting.clone());
             Rc::new(move |choice: Option<bool>| {
                 let g = generation.get() + 1;
                 generation.set(g);
-                let (repo, forecast, update_refs, generation, set_drawing) = (
+                let (repo, forecast, update_refs, generation, set_drawing, configured, setting) = (
                     repo.clone(),
                     forecast.clone(),
                     update_refs.clone(),
                     generation.clone(),
                     set_drawing.clone(),
+                    configured.clone(),
+                    setting.clone(),
                 );
                 let rev = chosen().1;
                 forecast.set_text(&tr!("Checking for conflicts…"));
@@ -1959,8 +1966,11 @@ pub fn integrate_choosing(
                         });
                     let available = info["updateRefs"]["available"].as_bool() == Some(true);
                     if choice.is_none() {
-                        update_refs
-                            .set_active(info["updateRefs"]["configured"].as_bool() == Some(true));
+                        let c = info["updateRefs"]["configured"].as_bool() == Some(true);
+                        configured.set(Some(c));
+                        setting.set(true);
+                        update_refs.set_active(c);
+                        setting.set(false);
                     }
                     // git が古くて動かせなければ、押せなくして理由を出す（macOS 版と同じ）。
                     update_refs.set_visible(stacked);
@@ -1974,8 +1984,12 @@ pub fn integrate_choosing(
             })
         };
         load(None);
-        let l = load.clone();
-        update_refs.connect_toggled(move |b| l(Some(b.is_active())));
+        let (l, s) = (load.clone(), setting.clone());
+        update_refs.connect_toggled(move |b| {
+            if !s.get() {
+                l(Some(b.is_active()));
+            }
+        });
         let (l, heading, title_for, c) = (
             load.clone(),
             sheet.heading.clone(),
@@ -1992,7 +2006,8 @@ pub fn integrate_choosing(
         let rev = chosen().1;
         let command = if rebase {
             let mut c = json!({ "op": "rebase", "onto": rev });
-            if update_refs.is_visible() {
+            // 選び直していなければ（git の設定のとおりなら）入れず、git の設定に任せる。
+            if update_refs.is_visible() && Some(update_refs.is_active()) != configured.get() {
                 c["updateRefs"] = json!(update_refs.is_active());
             }
             c
