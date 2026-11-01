@@ -21,6 +21,13 @@ use crate::sheets::{Response, Sheet};
 
 /// リポジトリを新しい窓で開く。
 /// リポジトリを開く（場所と、開く先: 前の窓のタブか新しい窓か）。
+/// 並べ替えた列（`name`・`branch`・`status`・`commit`・`opened`）と、上る向きか（macOS 版と同じ鍵）。
+const SORT_KEY: &str = "repositoryPageSort";
+const SORT_ASCENDING_KEY: &str = "repositoryPageSortAscending";
+/// 列の幅（列 → 幅の JSON）と、左右の境目の位置。
+const COLUMN_WIDTHS_KEY: &str = "repositoryPageColumns";
+const SPLIT_KEY: &str = "repositoryPageSplit";
+
 pub type Open = Rc<dyn Fn(PathBuf, crate::tabs::Place)>;
 
 /// 左の分類。
@@ -765,7 +772,17 @@ impl Browser {
         paned.set_end_child(Some(&right));
         paned.set_resize_start_child(false);
         paned.set_shrink_start_child(false);
-        paned.set_position(240);
+        // 左右の境目は覚えておく（macOS 版と同じ）。
+        let split = crate::settings::string(SPLIT_KEY)
+            .and_then(|s| s.parse::<i32>().ok())
+            .filter(|&p| p >= 120)
+            .unwrap_or(240);
+        paned.set_position(split);
+        paned.connect_position_notify(|p| {
+            if p.position() >= 120 {
+                crate::settings::set_string(SPLIT_KEY, &p.position().to_string());
+            }
+        });
 
         let saved = crate::settings::string(CATEGORY_KEY)
             .and_then(|k| Category::from_key(&k))
@@ -812,16 +829,30 @@ impl Browser {
     }
 
     /// 列（名前とパス・ブランチ・状態・最後のコミット・開いた日時）。見出しを押すと並べ替える（既定は開いた順）。
+    /// 並べ替えた列と向き・列の幅は覚えておく（macOS 版と同じ）。
     fn build_columns(self: &Rc<Self>) {
         let columns = [
-            (Column::Name, tr!("Name"), None),
-            (Column::Branch, tr!("Branch"), Some(130)),
-            (Column::Status, tr!("Status"), Some(100)),
-            (Column::Commit, tr!("Last Commit"), Some(260)),
-            (Column::Opened, tr!("Opened"), Some(100)),
+            (Column::Name, "name", tr!("Name"), None),
+            (Column::Branch, "branch", tr!("Branch"), Some(130)),
+            (Column::Status, "status", tr!("Status"), Some(100)),
+            (Column::Commit, "commit", tr!("Last Commit"), Some(260)),
+            (Column::Opened, "opened", tr!("Opened"), Some(100)),
         ];
+        let widths: serde_json::Map<String, serde_json::Value> =
+            crate::settings::string(COLUMN_WIDTHS_KEY)
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_default();
+        let sort_key =
+            crate::settings::string(SORT_KEY).unwrap_or_else(|| "opened".to_owned());
+        let mut sorted = None;
         let mut opened = None;
-        for (kind, title, width) in columns {
+        for (kind, id, title, width) in columns {
+            let width = width.map(|w| {
+                widths
+                    .get(id)
+                    .and_then(serde_json::Value::as_i64)
+                    .map_or(w, |w| w.max(40) as i32)
+            });
             let factory = gtk::SignalListItemFactory::new();
             let weak = Rc::downgrade(self);
             factory.connect_setup(move |_, item| {
@@ -903,10 +934,22 @@ impl Browser {
                 }
             });
             let column = gtk::ColumnViewColumn::new(Some(&title), Some(factory));
+            column.set_id(Some(id));
             match width {
                 Some(w) => {
                     column.set_fixed_width(w);
                     column.set_resizable(true);
+                    column.connect_fixed_width_notify(move |c| {
+                        let mut widths: serde_json::Map<String, serde_json::Value> =
+                            crate::settings::string(COLUMN_WIDTHS_KEY)
+                                .and_then(|s| serde_json::from_str(&s).ok())
+                                .unwrap_or_default();
+                        widths.insert(id.to_owned(), c.fixed_width().into());
+                        crate::settings::set_string(
+                            COLUMN_WIDTHS_KEY,
+                            &serde_json::Value::Object(widths).to_string(),
+                        );
+                    });
                 }
                 None => column.set_expand(true),
             }
@@ -918,10 +961,39 @@ impl Browser {
             if kind == Column::Opened {
                 opened = Some(column.clone());
             }
+            if id == sort_key {
+                sorted = Some(column.clone());
+            }
             self.view.append_column(&column);
         }
-        self.view
-            .sort_by_column(opened.as_ref(), gtk::SortType::Descending);
+        match sorted {
+            Some(column) => {
+                let ascending = crate::settings::string(SORT_ASCENDING_KEY).as_deref() == Some("true");
+                self.view.sort_by_column(
+                    Some(&column),
+                    if ascending {
+                        gtk::SortType::Ascending
+                    } else {
+                        gtk::SortType::Descending
+                    },
+                );
+            }
+            None => self
+                .view
+                .sort_by_column(opened.as_ref(), gtk::SortType::Descending),
+        }
+        // 並べ替えを変えたら覚える。
+        if let Some(sorter) = self.view.sorter().and_downcast::<gtk::ColumnViewSorter>() {
+            sorter.connect_changed(|s, _| {
+                if let Some(id) = s.primary_sort_column().and_then(|c| c.id()) {
+                    crate::settings::set_string(SORT_KEY, &id);
+                    crate::settings::set_bool(
+                        SORT_ASCENDING_KEY,
+                        s.primary_sort_order() == gtk::SortType::Ascending,
+                    );
+                }
+            });
+        }
     }
 
     fn connect(self: &Rc<Self>) {
