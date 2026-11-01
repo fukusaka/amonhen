@@ -360,6 +360,24 @@ fn folder_tree(
     }]
 }
 
+/// 左の節の印（macOS 版の tray・star・laptop・network・magnifier・folder にあたるアイコン）。テーマにあるものを
+/// 選び、どれもなければ None。
+fn symbol(widget: &impl IsA<gtk::Widget>, category: &Category) -> Option<&'static str> {
+    let candidates: &[&str] = match category {
+        Category::All => &["mail-inbox-symbolic", "inbox-symbolic", "view-list-symbolic"],
+        Category::Favorites => &["starred-symbolic", "non-starred-symbolic"],
+        Category::Local => &["computer-symbolic", "laptop-symbolic"],
+        Category::Host(_) => &["network-server-symbolic", "network-workgroup-symbolic"],
+        Category::Scan(_) => &["system-search-symbolic", "edit-find-symbolic"],
+        Category::Group(_)
+        | Category::Folder(_)
+        | Category::HostFolder(..)
+        | Category::ScanFolder(..) => &["folder-symbolic"],
+    };
+    let theme = gtk::IconTheme::for_display(&widget.display());
+    candidates.iter().copied().find(|name| theme.has_icon(name))
+}
+
 /// `nodes` とその下の節のツールチップの前に `host:` を付ける。
 fn prefix_tips(nodes: &mut [Node], host: &str) {
     for n in nodes {
@@ -1103,7 +1121,7 @@ impl Browser {
                             "Searches {path}",
                             path = host.map(|h| format!("{h}:")).unwrap_or_default() + &title
                         )),
-                        title: format!("🔍 {title}"),
+                        title,
                         category: Category::Scan(root.path.clone()),
                         children,
                     }
@@ -1287,6 +1305,18 @@ impl Browser {
                         disclosure.set_opacity(0.0);
                     }
                     line.append(&disclosure);
+                    // 節の印（macOS 版の記号。テーマにあるものだけ）。スキャンするフォルダは、印がなければ 🔍。
+                    match symbol(&line, c) {
+                        Some(icon) => {
+                            let image = gtk::Image::from_icon_name(icon);
+                            image.set_margin_end(4);
+                            line.append(&image);
+                        }
+                        None if matches!(c, Category::Scan(_)) => {
+                            label.set_text(&format!("🔍 {}", r.title));
+                        }
+                        None => {}
+                    }
                     line.append(&label);
                     let count = gtk::Label::new(Some(&Self::count_text(&sources, c)));
                     count.add_css_class("dim-label");
