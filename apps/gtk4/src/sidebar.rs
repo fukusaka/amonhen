@@ -1373,7 +1373,8 @@ impl Inner {
         out
     }
 
-    /// `data` の行で開くメニューが扱う ref: 選んだ行の上で開いたら選んだブランチ・タグ（2 つ以上のときだけ）。
+    /// `data` の行で開くメニューが扱う ref: 選んだ行の上で開いたら選んだブランチ・タグ・サブモジュール（2 つ
+    /// 以上のときだけ。サブモジュールも数える。macOS 版と同じ）。
     fn selected_refs(&self, data: &Data) -> Vec<RefEntry> {
         let nodes = self.selected_nodes();
         if !nodes.iter().any(|n| n.data().key == data.key) {
@@ -1382,11 +1383,7 @@ impl Inner {
         let refs: Vec<RefEntry> = nodes
             .iter()
             .filter_map(|n| match n.data().item {
-                Item::Ref(e)
-                    if matches!(e.kind, RefKind::Local | RefKind::Remote | RefKind::Tag) =>
-                {
-                    Some(e)
-                }
+                Item::Ref(e) => Some(e),
                 _ => None,
             })
             .collect();
