@@ -414,6 +414,10 @@ impl MessageAids {
                 },
             ));
         }
+        // 最近の作者がまだなければ、その旨（macOS 版と同じ）。
+        if seen.is_empty() {
+            items.push(action(tr!("Recent authors aren’t loaded yet"), || {}));
+        }
         items.push(Item::Separator);
         let w = Rc::downgrade(self);
         items.push(action(tr!("Signed-off-by (Me)"), move || {
