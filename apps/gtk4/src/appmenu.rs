@@ -195,6 +195,15 @@ const FE_ACCELS: &[(&str, &str)] = &[
     ("win.shortcuts", "<Control>question"),
 ];
 
+/// ページを出す View の項目と、そのページ（`pages` の子の名前）。出しているページの項目に ✓ を付ける。
+const PAGE_ACTIONS: &[(&str, &str)] = &[
+    ("show-working-copy", "working"),
+    ("show-history", "history"),
+    ("show-stashes", "stashes"),
+    ("show-reflog", "reflog"),
+    ("repository-settings", "settings"),
+];
+
 /// 表にあって、この FE にまだ機能のない操作（メニューに出さない）。
 pub const PENDING: &[&str] = &[];
 
@@ -455,11 +464,35 @@ pub fn install(parts: Parts) -> Buttons {
     });
     window.add_action(&recent);
     for (name, f) in handlers() {
-        let action = gio::SimpleAction::new(name, None);
+        // ページを出す項目は、出しているページに ✓ を付ける（下で合わせる。macOS 版と同じ）。
+        let action = if PAGE_ACTIONS.iter().any(|(n, _)| *n == name) {
+            gio::SimpleAction::new_stateful(name, None, &false.to_variant())
+        } else {
+            gio::SimpleAction::new(name, None)
+        };
         let p = parts.clone();
         action.connect_activate(move |_, _| f(&p));
         window.add_action(&action);
     }
+    let check_page = {
+        let group = parts.group.downgrade();
+        move |pages: &gtk::Stack| {
+            let Some(group) = group.upgrade() else { return };
+            let shown = pages.visible_child_name();
+            for (name, page) in PAGE_ACTIONS {
+                if let Some(action) = group
+                    .lookup_action(name)
+                    .and_downcast::<gio::SimpleAction>()
+                {
+                    action.set_state(&(shown.as_deref() == Some(*page)).to_variant());
+                }
+            }
+        }
+    };
+    check_page(&parts.pages);
+    parts
+        .pages
+        .connect_visible_child_name_notify(move |pages| check_page(pages));
     // ref・status を読むまでは、それで決まる項目を使えなくしておく（macOS 版と同じ）。端末・ファイルマネージャーは
     // 手元のリポジトリだけ（daemon・SSH 越しでは選べない）。
     let local = !amonhen_remote::location::is_remote(&parts.location);
@@ -1233,6 +1266,14 @@ pub fn show_about(parent: &gtk::ApplicationWindow) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_page_item_has_a_handler() {
+        let names: Vec<&str> = handlers().into_iter().map(|(n, _)| n).collect();
+        for (name, _) in PAGE_ACTIONS {
+            assert!(names.contains(name), "{name}");
+        }
+    }
 
     #[test]
     fn keeps_the_connection_of_remote_locations() {
