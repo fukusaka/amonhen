@@ -1,4 +1,4 @@
-//! サイドバー: Workspace（Working Copy・History・あるときだけ Conflicts と Stashes・開いている間だけ Range Diff、最後に Reflog と Settings）/ Branches / あるときだけ Pull Requests / Remotes / Tags / Stashes / Submodules。
+//! サイドバー: Workspace（Working Copy・History・あるときだけ Conflicts と Stashes・開いている間だけ Range Diff、最後に Reflog と Settings）/ Branches / あるときだけ Pull Requests / Remotes / Tags / Submodules。
 //!
 //! `GtkListView` と `GtkTreeListModel` の木（項目が多くても、見えている行の部品しか作らない）。
 //! `feature/x` のような名前はフォルダにまとめる。ref を選ぶと、指すコミットを History で選ぶ。
@@ -824,7 +824,7 @@ pub const CONFLICTS_KEY: &str = "page/conflicts";
 fn page_of_key(key: &str) -> &'static str {
     if key.starts_with("worktree/") || key == CONFLICTS_KEY || key == "page/working" {
         "page/working"
-    } else if key.starts_with("Stash/") || key == "page/stashes" {
+    } else if key == "page/stashes" {
         "page/stashes"
     } else if key == "page/reflog" {
         "page/reflog"
@@ -2372,25 +2372,15 @@ fn groups_of(
     if !tag_rows.is_empty() {
         groups.push(("Tags", store(tag_rows)));
     }
-    let mut simple = |title: &'static str, kind: RefKind, icon: icon::Kind| {
-        let store = gio::ListStore::new::<Node>();
-        for e in of(kind) {
-            // stash はメッセージを名前に、名前は説明に。
-            let mut d = ref_data(e, &e.name, icon, head, None);
-            if kind == RefKind::Stash
-                && let Some(message) = &e.detail
-            {
-                d.title = message.clone();
-                d.tooltip = Some(e.name.clone());
-            }
-            store.append(&Node::new(d, None));
-        }
-        if store.n_items() > 0 {
-            groups.push((title, store));
-        }
-    };
-    simple("Stashes", RefKind::Stash, icon::Kind::Stash);
-    simple("Submodules", RefKind::Submodule, icon::Kind::Submodule);
+    // stash は見出しにしない（Workspace の Stashes の行に数だけ。macOS 版と同じ）。
+    let submodules = gio::ListStore::new::<Node>();
+    for e in of(RefKind::Submodule) {
+        let d = ref_data(e, &e.name, icon::Kind::Submodule, head, None);
+        submodules.append(&Node::new(d, None));
+    }
+    if submodules.n_items() > 0 {
+        groups.push(("Submodules", submodules));
+    }
     (groups, pinned)
 }
 

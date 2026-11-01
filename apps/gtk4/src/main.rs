@@ -797,15 +797,7 @@ fn build_tab(
             }
         })
     };
-    connect_sidebar(
-        &sidebar,
-        &pages,
-        &view,
-        &stashes,
-        &worktrees,
-        open_conflict,
-        &shaper,
-    );
+    connect_sidebar(&sidebar, &pages, &view, &worktrees, open_conflict, &shaper);
     historydisplay::connect_select_many(&shaper, &sidebar, &pages);
     history_bar.prepend(&shaper.scope_bar);
     if let Some(words) = &args.filter_sidebar {
@@ -2137,12 +2129,11 @@ fn connect_sidebar(
     sidebar: &Sidebar,
     pages: &gtk::Stack,
     view: &HistoryView,
-    stashes: &Rc<Stashes>,
     worktrees: &Rc<worktrees::Worktrees>,
     open_conflict: Rc<dyn Fn()>,
     shaper: &Rc<historydisplay::Shaper>,
 ) {
-    let (pages, view, stashes) = (pages.downgrade(), view.downgrade(), Rc::downgrade(stashes));
+    let (pages, view) = (pages.downgrade(), view.downgrade());
     let shaper = Rc::downgrade(shaper);
     let worktrees = Rc::downgrade(worktrees);
     sidebar.connect_select(move |data| {
@@ -2159,14 +2150,6 @@ fn connect_sidebar(
             sidebar::Item::Page(Page::WorkingCopy) => pages.set_visible_child_name("working"),
             sidebar::Item::Page(Page::History) => pages.set_visible_child_name("history"),
             sidebar::Item::Page(Page::Stashes) => pages.set_visible_child_name("stashes"),
-            // Stashes の項目の stash は、Stashes の画面で選ぶ（stash のコミットは History にない）。
-            sidebar::Item::Ref(e) if e.kind == amonhen_model::RefKind::Stash => {
-                if let Some(stashes) = stashes.upgrade() {
-                    stashes.select(&e.name);
-                    pages.set_visible_child_name("stashes");
-                }
-                return;
-            }
             sidebar::Item::Page(Page::RangeDiff) => pages.set_visible_child_name(rangediff::PAGE),
             sidebar::Item::Page(Page::Reflog) => pages.set_visible_child_name("reflog"),
             // 中身は Repository > Repository Settings と同じく作る（読み直してから出す）。
