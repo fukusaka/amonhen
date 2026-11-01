@@ -176,7 +176,6 @@ struct RowCell {
     /// 木のディレクトリの ▸・▾（クリックで畳む・開く）。
     arrow: gtk::Label,
     check: gtk::CheckButton,
-    folder: crate::icon::Icon,
     state: gtk::Label,
     name: gtk::Label,
     /// 名前の後ろの薄い注記（Flat の親のディレクトリ、コンフリクトの「rerere」「no markers」）。
@@ -1387,14 +1386,12 @@ impl Inner {
         });
     }
 
-    /// 行の部品: ▸・▾（ディレクトリ）、チェック（次のコミットに含めるか）、フォルダの印、状態の文字、名前、薄い
+    /// 行の部品: ▸・▾（ディレクトリ）、チェック（次のコミットに含めるか）、状態の文字、名前、薄い
     /// 注記、行数、変更を捨てるボタン。どの行を出しているかは押したときに `item` で見る（使い回すので）。
     fn new_cell(this: &Rc<Self>, list_item: &gtk::ListItem) -> Rc<RowCell> {
         let arrow = gtk::Label::new(None);
         arrow.add_css_class("dim-label");
         let check = gtk::CheckButton::new();
-        let folder = crate::icon::Icon::default();
-        folder.set(crate::icon::Kind::Folder, false);
         let state = gtk::Label::new(None);
         state.set_width_chars(2);
         state.add_css_class("monospace");
@@ -1420,7 +1417,6 @@ impl Inner {
         for w in [
             arrow.upcast_ref::<gtk::Widget>(),
             check.upcast_ref(),
-            folder.upcast_ref(),
             state.upcast_ref(),
             name.upcast_ref(),
             detail.upcast_ref(),
@@ -1435,7 +1431,6 @@ impl Inner {
             line,
             arrow,
             check,
-            folder,
             state,
             name,
             detail,
@@ -1544,12 +1539,13 @@ impl Inner {
                 let (all, mixed) = (check.all(), check.mixed());
                 cell.check.set_active(all);
                 cell.check.set_inconsistent(mixed);
-                cell.check.set_visible(true);
-                cell.check.set_sensitive(check.files > 0);
+                // 中に含められるファイルがなければ（コンフリクトだけ）チェックを出さない（macOS 版と同じ）。
+                cell.check.set_visible(check.files > 0);
                 cell.check.set_tooltip_text(Some(&check_tip(all, mixed)));
-                cell.folder.set_visible(true);
                 cell.state.set_visible(false);
-                cell.name.set_text(&name);
+                // 名前は「/」を付けて薄く（macOS 版と同じ）。
+                cell.name.set_text(&format!("{name}/"));
+                cell.name.add_css_class("dim-label");
                 cell.name.set_hexpand(true);
                 cell.detail.set_visible(false);
                 cell.detail.set_hexpand(false);
@@ -1566,12 +1562,11 @@ impl Inner {
                 let conflict = entry.kind == StatusKind::Unmerged;
                 cell.line.set_margin_start((depth * 16) as i32);
                 cell.arrow.set_visible(false);
-                cell.folder.set_visible(false);
+                cell.name.remove_css_class("dim-label");
                 let on = entry.is_staged() && !entry.is_unstaged();
                 let mixed = entry.is_staged() && entry.is_unstaged();
                 cell.check.set_active(on);
                 cell.check.set_inconsistent(mixed);
-                cell.check.set_sensitive(true);
                 // コンフリクトのファイルにはチェックを出さない（index は両方の側で「一部」に見える。macOS 版と同じ）。
                 cell.check.set_visible(!conflict);
                 cell.check
