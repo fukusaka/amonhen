@@ -566,10 +566,6 @@ fn build_tab(
         path = main;
         args.path = Some(path.clone());
     }
-    // File > Open Recent に出す（確認用の起動では、`--tab` のタブも覚えない）。
-    if !tabs::is_check_run() {
-        repos::record(&path);
-    }
     // 窓の名前: Repositories で付けた名前（Rename…）があればそれ、なければリポジトリのフォルダーの名前（daemon・
     // SSH 越しなら、場所の最後の部分と接続先。macOS 版の `displayName`）。
     let text = path.to_string_lossy().into_owned();
@@ -1565,6 +1561,9 @@ fn build_tab(
     }
     let tab_weak = Rc::downgrade(&tab);
     let details_weak = Rc::downgrade(&details);
+    // 開けたら File > Open Recent に出す（開けなかったものは覚えない。確認用の起動では、`--tab` のタブも覚え
+    // ない。macOS 版と同じ）。
+    let opened_path = path.clone();
     std::thread::spawn(move || load(path, order, tx, changed_tx, changed_rx));
     glib::spawn_future_local(glib::clone!(
         #[weak]
@@ -2220,6 +2219,9 @@ fn build_tab(
                     }
                     Event::Opened(repo) => {
                         content.set_visible_child_name("repository");
+                        if !tabs::is_check_run() {
+                            repos::record(&opened_path);
+                        }
                         // daemon・SSH 越しで初めての History を読む間（キャッシュがなく、まだ何も出せないとき）は、
                         // 受け取った量を出す（macOS 版と同じ）。
                         if repo.connection_state().is_some() {
