@@ -184,8 +184,8 @@ pub struct State {
     /// 行の右端の CI の印を押したときに呼ぶ。
     on_ci: Option<CiCallback>,
     tick: Option<gtk::TickCallbackId>,
-    /// 大きさが決まる前に見えるようにと頼まれた行（決まったらスクロールする）。
-    pending_scroll: Option<u32>,
+    /// 大きさが決まる前に見えるようにと頼まれた行と、真ん中に置くか（決まったらスクロールする）。
+    pending_scroll: Option<(u32, bool)>,
     /// 最後に描いたとき、見えている行の文字がすべてそろっていた。
     complete: bool,
     /// `--measure-scroll` の記録（1 回の `snapshot` にかかった時間）。
@@ -281,7 +281,7 @@ mod imp {
                 if let Some(row) = view.row_at(y as f32) {
                     // 複数選んでいる行の上なら、選んだまま（まとめての操作のメニュー）。
                     if !view.selection().contains(&row) {
-                        view.select(row);
+                        view.select_visible(row);
                     }
                     let f = view.state().on_menu.clone();
                     if let Some(f) = f {
@@ -757,8 +757,18 @@ impl HistoryView {
         rows
     }
 
-    /// `row` だけを選ぶ。
+    /// `row` だけを選び、表の中ほどに見えるようにする（検索・Go to HEAD・リンクなど、プログラムから選ぶとき。
+    /// macOS 版の `select(row:)` と同じ）。
     pub fn select(&self, row: u32) {
+        self.select_row(row, true);
+    }
+
+    /// `row` だけを選び、見えるところまでだけスクロールする（クリック・矢印のキー）。
+    fn select_visible(&self, row: u32) {
+        self.select_row(row, false);
+    }
+
+    fn select_row(&self, row: u32, center: bool) {
         let changed = {
             let mut st = self.state();
             let changed = st.selected != Some(row) || !st.extra.is_empty();
@@ -767,7 +777,11 @@ impl HistoryView {
             st.anchor = Some(row);
             changed
         };
-        self.scroll_to_row(row);
+        if center {
+            self.center_row(row);
+        } else {
+            self.scroll_to_row(row);
+        }
         self.queue_draw();
         if changed {
             self.notify_selection();
@@ -811,7 +825,7 @@ impl HistoryView {
                 }
                 _ => {
                     drop(st);
-                    self.select(row);
+                    self.select_visible(row);
                     return;
                 }
             }
@@ -917,13 +931,27 @@ impl HistoryView {
         Some((st.repo.clone()?, st.history.clone()?))
     }
 
+    /// `row` を表の中ほどに置く（端では端まで）。
+    pub fn center_row(&self, row: u32) {
+        let Some(adj) = self.vadjustment() else {
+            return;
+        };
+        if adj.page_size() <= 0.0 {
+            self.state().pending_scroll = Some((row, true));
+            return;
+        }
+        let h = self.row_height() as f64;
+        let mid = row as f64 * h + h / 2.0 - adj.page_size() / 2.0;
+        adj.set_value(mid.clamp(0.0, (adj.upper() - adj.page_size()).max(0.0)));
+    }
+
     /// `row` が見えるようにスクロールする。
     pub fn scroll_to_row(&self, row: u32) {
         let Some(adj) = self.vadjustment() else {
             return;
         };
         if adj.page_size() <= 0.0 {
-            self.state().pending_scroll = Some(row);
+            self.state().pending_scroll = Some((row, false));
             return;
         }
         let h = self.row_height() as f64;
@@ -988,7 +1016,7 @@ impl HistoryView {
             self.select_with(row, true, false);
             self.scroll_to_row(row);
         } else {
-            self.select(row);
+            self.select_visible(row);
         }
         true
     }
@@ -1007,8 +1035,10 @@ impl HistoryView {
         }
         if height > 0.0 {
             let pending = self.state().pending_scroll.take();
-            if let Some(row) = pending {
-                self.scroll_to_row(row);
+            match pending {
+                Some((row, true)) => self.center_row(row),
+                Some((row, false)) => self.scroll_to_row(row),
+                None => {}
             }
         }
     }
