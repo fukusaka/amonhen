@@ -560,18 +560,34 @@ pub struct SyncState {
     pub tip: Option<String>,
 }
 
-/// `branch`（なければ今のブランチ）の同期の状態。
-pub async fn sync_state(repo: &Arc<Repository>, branch: Option<String>) -> Option<SyncState> {
+/// `branch`（なければ今のブランチ）の同期の状態。読めなければそう知らせて None（macOS 版と同じ。SSH が
+/// 切れたときなどに、押しても何も起きないように見えないように）。
+pub async fn sync_state(
+    actions: &Actions,
+    repo: &Arc<Repository>,
+    branch: Option<String>,
+) -> Option<SyncState> {
     let r = repo.clone();
     let b = branch.clone();
-    let (status, refs) = gio::spawn_blocking(move || {
-        let status = r.load_status().ok()?;
-        let refs = r.load_refs().ok()?;
-        Some((status, refs))
+    let read = gio::spawn_blocking(move || {
+        let status = r.load_status().map_err(|e| e.to_string())?;
+        let refs = r.load_refs().map_err(|e| e.to_string())?;
+        Ok::<_, String>((status, refs))
     })
     .await
-    .ok()
-    .flatten()?;
+    .unwrap_or_else(|_| Err(tr!("Can’t read the status")));
+    let (status, refs) = match read {
+        Ok(read) => read,
+        Err(error) => {
+            inform(
+                parent(actions).as_ref(),
+                &tr!("Can’t read the status"),
+                &error,
+            )
+            .await;
+            return None;
+        }
+    };
     let local = b.as_deref().and_then(|name| {
         refs.refs
             .entries
@@ -988,7 +1004,7 @@ pub fn pull(actions: &Rc<Actions>, mode: &str) {
     let (actions, mode) = (actions.clone(), mode.to_owned());
     glib::spawn_future_local(async move {
         let Some(repo) = actions.repo() else { return };
-        let Some(state) = sync_state(&repo, None).await else {
+        let Some(state) = sync_state(&actions, &repo, None).await else {
             return;
         };
         let Some(branch) = state.branch.clone() else {
@@ -1217,7 +1233,7 @@ pub fn push(
     let actions = actions.clone();
     glib::spawn_future_local(async move {
         let Some(repo) = actions.repo() else { return };
-        let Some(state) = sync_state(&repo, branch).await else {
+        let Some(state) = sync_state(&actions, &repo, branch).await else {
             return;
         };
         let Some(branch) = state.branch.clone() else {
@@ -1878,7 +1894,7 @@ pub fn push_after_commit(actions: &Rc<Actions>) {
     let actions = actions.clone();
     glib::spawn_future_local(async move {
         let Some(repo) = actions.repo() else { return };
-        let Some(state) = sync_state(&repo, None).await else {
+        let Some(state) = sync_state(&actions, &repo, None).await else {
             return;
         };
         match (&state.branch, &state.upstream) {
