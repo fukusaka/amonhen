@@ -817,9 +817,9 @@ impl GitBackend for GixBackend {
             }
             true
         };
-        // git 2.28 より古い git は、partial clone で差分を出すと（`--raw` でも）出てくる blob をすべて取ってくる
-        // （`diffcore_std`）。数えるだけで中身を取らないよう、gix で tree を比べる。
-        if amonhen_backend_cli::git_version().is_some_and(|(a, b, _)| (a, b) < (2, 28)) {
+        // git 2.27 より古い git は、partial clone で差分を出すと（`--raw` でも）出てくる blob をすべて取ってくる
+        // （`diffcore_std`。2.27 から中身の要る形の出力のときだけ取る）。数えるだけで中身を取らないよう、gix で tree を比べる。
+        if amonhen_backend_cli::git_version().is_some_and(|(a, b, _)| (a, b) < (2, 27)) {
             changed_blobs(&repo, tips, scope, cancelled, &mut visit)?;
         } else {
             self.git()?
@@ -1188,7 +1188,7 @@ mod tests {
         String::from_utf8(out.stdout).unwrap().trim().to_owned()
     }
 
-    /// gix で数えた blob が、`git log --raw` で数えたもの（git 2.28 から）と同じになる。
+    /// gix で数えた blob が、`git log --raw` で数えたもの（git 2.27 から）と同じになる。
     #[test]
     fn counts_changed_blobs_like_git_log_raw() {
         let tmp = tempfile::tempdir().unwrap();
