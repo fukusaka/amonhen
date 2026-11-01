@@ -1511,10 +1511,8 @@ impl Browser {
                     row.set_tooltip_text(r.tip.as_deref());
                     // お気に入り・グループには、表の行を落として入れられる（macOS 版と同じ）。
                     if matches!(c, Category::Favorites | Category::Group(_)) {
-                        let drop = gtk::DropTarget::new(
-                            String::static_type(),
-                            gtk::gdk::DragAction::MOVE,
-                        );
+                        let drop =
+                            gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
                         let target = c.clone();
                         drop.connect_drop(move |_, value, _, _| {
                             let Some(paths) = value
@@ -1524,19 +1522,26 @@ impl Browser {
                             else {
                                 return false;
                             };
-                            let paths: Vec<String> =
-                                paths.lines().filter(|l| !l.is_empty()).map(str::to_owned).collect();
+                            let paths: Vec<String> = paths
+                                .lines()
+                                .filter(|l| !l.is_empty())
+                                .map(str::to_owned)
+                                .collect();
                             let target = target.clone();
                             // 落とした後で（一覧を作り直すと、落とした先の行が消える）。
                             glib::idle_add_local_once(move || {
                                 for path in &paths {
                                     match &target {
                                         Category::Favorites => {
-                                            if !bookmarks::bookmark(path).is_some_and(|b| b.favorite) {
+                                            if !bookmarks::bookmark(path)
+                                                .is_some_and(|b| b.favorite)
+                                            {
                                                 bookmarks::toggle_favorite(path);
                                             }
                                         }
-                                        Category::Group(name) => bookmarks::move_to(path, Some(name)),
+                                        Category::Group(name) => {
+                                            bookmarks::move_to(path, Some(name))
+                                        }
                                         _ => {}
                                     }
                                 }

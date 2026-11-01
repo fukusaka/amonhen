@@ -520,7 +520,9 @@ fn fill_move_menu(anchor: &glib::WeakRef<gtk::Widget>, menu: &gio::Menu) {
             .collect()
     });
     for host in others {
-        let Some(shown) = host.current() else { continue };
+        let Some(shown) = host.current() else {
+            continue;
+        };
         let n = host.tabs.borrow().len();
         let title = if n > 1 {
             tr!("{name} (+{count})", name = shown.name, count = n - 1)
@@ -528,7 +530,10 @@ fn fill_move_menu(anchor: &glib::WeakRef<gtk::Widget>, menu: &gio::Menu) {
             shown.name.clone()
         };
         let item = gio::MenuItem::new(Some(&title), None);
-        item.set_action_and_target_value(Some("win.move-tab-to-window"), Some(&host.id.to_variant()));
+        item.set_action_and_target_value(
+            Some("win.move-tab-to-window"),
+            Some(&host.id.to_variant()),
+        );
         menu.append_item(&item);
     }
     if menu.n_items() == 0 {

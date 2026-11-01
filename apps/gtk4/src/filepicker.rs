@@ -945,7 +945,8 @@ impl Picker {
             && view.selection.selected() != row as u32
         {
             view.selection.set_selected(row as u32);
-            view.list.scroll_to(row as u32, gtk::ListScrollFlags::NONE, None);
+            view.list
+                .scroll_to(row as u32, gtk::ListScrollFlags::NONE, None);
         }
     }
 
