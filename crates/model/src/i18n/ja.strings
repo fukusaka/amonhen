@@ -237,6 +237,7 @@
 "Included in the next commit (click to exclude)" = "次のコミットに含める（クリックで外す）";
 "Only some lines are included (click to include all)" = "一部の行だけ含める（クリックですべて含める）";
 "Not included in the next commit (click to include)" = "次のコミットに含めない（クリックで含める）";
+"no markers" = "マーカーなし";
 "Include or exclude the selected lines in the next commit (Space)" = "選んだ行を次のコミットに含める・外す（Space）";
 "Discard the working tree changes and return to the content of the next commit (the index)" = "作業ツリーの変更を捨て、次のコミットに含める内容（index）に戻す";
 "Discard the selected lines’ changes from the working tree (included lines are excluded first)" = "選んだ行の変更を作業ツリーから捨てる（含めている行は先に外す）";

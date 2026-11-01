@@ -98,6 +98,10 @@ struct Inner {
     stats: RefCell<HashMap<String, LineCounts>>,
     /// 一覧のファイルの行の、行数を出す場所（パスごと）。行数が届いたら、一覧を作り直さずにここに入れる。
     count_boxes: RefCell<HashMap<String, gtk::Box>>,
+    /// 内容のコンフリクトのファイルに残っているマーカーの数と、rerere が解決を当てたか（パスごと）。
+    conflict_states: RefCell<HashMap<String, ConflictState>>,
+    /// 一覧のコンフリクトの行の、印を出す場所（パスごと）。状態が届いたら、一覧を作り直さずに直す。
+    conflict_marks: RefCell<HashMap<String, ConflictMark>>,
     list: gtk::ListBox,
     all: gtk::CheckButton,
     count: gtk::Label,
@@ -144,6 +148,22 @@ struct Inner {
     on_count: RefCell<Option<CountCallback>>,
     /// ファイルの行の右クリックのメニューに足す項目（パス、Blame できるか、File History を出せるか）。
     on_file_menu: RefCell<Option<FileMenuCallback>>,
+}
+
+/// コンフリクトのファイルの中身の状態（`conflictFiles`）: 残っているマーカーの数と、rerere が解決を当てたか。
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct ConflictState {
+    markers: u64,
+    rerere: bool,
+}
+
+/// 一覧のコンフリクトの行の、状態の印・注記と、印がないときの注記（Flat の親のディレクトリ）。
+struct ConflictMark {
+    row: gtk::ListBoxRow,
+    state: gtk::Label,
+    detail: gtk::Label,
+    plain_detail: String,
+    tip: String,
 }
 
 /// マージエディタの鍵: worktree（作業ツリーの場所）とパス。
@@ -363,6 +383,8 @@ impl WorkingCopy {
             all_entries: RefCell::default(),
             stats: RefCell::default(),
             count_boxes: RefCell::default(),
+            conflict_states: RefCell::default(),
+            conflict_marks: RefCell::default(),
             list,
             all,
             count,
@@ -901,6 +923,7 @@ impl Inner {
         this.prune_editors();
         Inner::rebuild_list(this);
         Inner::load_stats(this);
+        Inner::load_conflict_states(this);
         if let Some(f) = this.on_count.borrow().as_ref() {
             f(count);
         }
@@ -922,6 +945,7 @@ impl Inner {
         });
         this.rebuilding.set(true);
         this.count_boxes.borrow_mut().clear();
+        this.conflict_marks.borrow_mut().clear();
         this.list.remove_all();
         let mut row_entries = Vec::new();
         match this.layout.get() {
@@ -1051,6 +1075,87 @@ impl Inner {
                 fill_counts(counts, stats.get(path).copied());
             }
         });
+    }
+
+    /// コンフリクトのファイルの中身を読み直す（index が変わらなくても、ほかのエディタでマーカーを消せば変わる）。
+    /// 変わっていれば、一覧の印を直す（macOS 版と同じ）。
+    fn load_conflict_states(this: &Rc<Self>) {
+        let any = this
+            .all_entries
+            .borrow()
+            .iter()
+            .any(|e| e.kind == StatusKind::Unmerged);
+        let Some(repo) = this.repo().filter(|_| any) else {
+            this.conflict_states.borrow_mut().clear();
+            return;
+        };
+        let weak = Rc::downgrade(this);
+        glib::spawn_future_local(async move {
+            let reply = crate::sheets::run(&repo, json!({ "op": "conflictFiles" })).await;
+            let Some(files) = reply["info"]["files"].as_array() else {
+                return;
+            };
+            let states: HashMap<String, ConflictState> = files
+                .iter()
+                .filter_map(|f| {
+                    Some((
+                        f["path"].as_str()?.to_owned(),
+                        ConflictState {
+                            markers: f["markers"].as_u64()?,
+                            rerere: f["rerere"].as_bool().unwrap_or(false),
+                        },
+                    ))
+                })
+                .collect();
+            let Some(this) = weak.upgrade() else { return };
+            if *this.conflict_states.borrow() == states {
+                return;
+            }
+            this.conflict_states.replace(states);
+            for (path, mark) in this.conflict_marks.borrow().iter() {
+                this.apply_conflict_state(path, mark);
+            }
+        });
+    }
+
+    /// コンフリクトの行の印: マーカーが残っていなければ、解決できていそうなことを橙の ✓ と短い注記で示す。
+    fn apply_conflict_state(&self, path: &str, mark: &ConflictMark) {
+        let state = self
+            .conflict_states
+            .borrow()
+            .get(path)
+            .copied()
+            .filter(|s| s.markers == 0);
+        match state {
+            Some(state) => {
+                mark.state.set_text("✓");
+                mark.state.remove_css_class("error");
+                mark.state.add_css_class("warning");
+                mark.detail.set_text(&if state.rerere {
+                    "rerere".to_owned()
+                } else {
+                    tr!("no markers")
+                });
+                mark.detail.set_visible(true);
+                let message = if state.rerere {
+                    tr!(
+                        "git rerere applied the earlier resolution. Check the result, then Mark Resolved."
+                    )
+                } else {
+                    tr!("No conflict markers are left. Check the result, then Mark Resolved.")
+                };
+                mark.row
+                    .set_tooltip_text(Some(&format!("{}\n{message}", mark.tip)));
+            }
+            None => {
+                mark.state.set_text("⚠");
+                mark.state.remove_css_class("warning");
+                mark.state.add_css_class("error");
+                mark.detail.set_text(&mark.plain_detail);
+                mark.detail.set_visible(!mark.plain_detail.is_empty());
+                mark.row.set_tooltip_text(Some(&mark.tip));
+            }
+        }
     }
 
     /// 木で、畳んだディレクトリの中のファイルか。
@@ -1193,17 +1298,21 @@ impl Inner {
         line.append(&check);
         line.append(&state);
         line.append(&name);
+        // 名前の後ろの薄い注記: Flat では親のディレクトリ、マーカーの残っていないコンフリクトでは
+        // 「rerere」か「no markers」（macOS 版と同じ）。
+        let plain_detail = if layout == Layout::Flat { parent } else { "" };
+        let detail = gtk::Label::new(Some(plain_detail));
+        detail.set_xalign(0.0);
+        detail.set_ellipsize(gtk::pango::EllipsizeMode::Start);
+        detail.add_css_class("dim-label");
+        detail.add_css_class("caption");
+        detail.set_visible(!plain_detail.is_empty());
         if layout == Layout::Flat && !parent.is_empty() {
-            let dir = gtk::Label::new(Some(parent));
-            dir.set_xalign(0.0);
-            dir.set_ellipsize(gtk::pango::EllipsizeMode::Start);
-            dir.add_css_class("dim-label");
-            dir.add_css_class("caption");
-            dir.set_hexpand(true);
-            line.append(&dir);
+            detail.set_hexpand(true);
         } else {
             name.set_hexpand(true);
         }
+        line.append(&detail);
         // 行数（+ 追加 − 削除）。まだ読めていなければ、届いたときに入れる。
         let counts = gtk::Box::new(gtk::Orientation::Horizontal, 4);
         fill_counts(&counts, this.stats.borrow().get(&entry.path).copied());
@@ -1246,10 +1355,24 @@ impl Inner {
         let row = gtk::ListBoxRow::new();
         row.set_child(Some(&line));
         // パス（名前を変えたファイルはもとのパス → 今のパス。macOS 版と同じ）。
-        row.set_tooltip_text(Some(&match &entry.orig_path {
+        let tip = match &entry.orig_path {
             Some(orig) => format!("{orig} → {}", entry.path),
             None => entry.path.clone(),
-        }));
+        };
+        row.set_tooltip_text(Some(&tip));
+        if conflict {
+            let mark = ConflictMark {
+                row: row.clone(),
+                state: state.clone(),
+                detail,
+                plain_detail: plain_detail.to_owned(),
+                tip,
+            };
+            this.apply_conflict_state(&entry.path, &mark);
+            this.conflict_marks
+                .borrow_mut()
+                .insert(entry.path.clone(), mark);
+        }
         // 右クリック（macOS 版と同じ）: 含める・外す・捨てる、.gitignore に足す（untracked）、Blame（消した
         // ファイルにはない）と File History（untracked にはまだ履歴がない）、パスのコピー、ファイルで開く。
         let menu = gtk::GestureClick::new();
