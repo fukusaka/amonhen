@@ -598,6 +598,7 @@ pub fn panel(
             }
         })
     });
+    let on_use_shown = on_use.is_some();
     let view = ResultView::new(use_title, on_use, work);
     // 開いたときに文の欄に入力の印を出さない（マウスでは選べる）。
     view.body.set_focusable(false);
@@ -622,6 +623,30 @@ pub fn panel(
     content.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
     content.append(&view.bar);
     window.set_child(Some(&content));
+    // 「使う」は既定のボタン（Return で押す。macOS 版と同じ）。押せるようになるまでは、Return では何もしない。
+    if on_use_shown {
+        window.set_default_widget(Some(&view.use_button));
+        // フォーカスがほかのボタンにあっても、Return は「使う」。
+        let keys = gtk::EventControllerKey::new();
+        keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let b = view.use_button.downgrade();
+        keys.connect_key_pressed(move |_, key, _, modifiers| {
+            use gtk::gdk::{Key, ModifierType};
+            if matches!(key, Key::Return | Key::KP_Enter)
+                && !modifiers.intersects(
+                    ModifierType::CONTROL_MASK | ModifierType::ALT_MASK | ModifierType::SHIFT_MASK,
+                )
+                && let Some(b) = b.upgrade()
+                && b.is_visible()
+                && b.is_sensitive()
+            {
+                b.emit_clicked();
+                return glib::Propagation::Stop;
+            }
+            glib::Propagation::Proceed
+        });
+        window.add_controller(keys);
+    }
     let v = view.clone();
     window.connect_close_request(move |_| {
         v.stop();
