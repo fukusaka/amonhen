@@ -94,6 +94,8 @@ struct Inner {
     all_entries: RefCell<Vec<StatusEntry>>,
     /// ファイルごとの行数（追加, 削除）。HEAD と作業ツリーの比べ。
     stats: RefCell<HashMap<String, LineCounts>>,
+    /// 一覧のファイルの行の、行数を出す場所（パスごと）。行数が届いたら、一覧を作り直さずにここに入れる。
+    count_boxes: RefCell<HashMap<String, gtk::Box>>,
     list: gtk::ListBox,
     all: gtk::CheckButton,
     count: gtk::Label,
@@ -357,6 +359,7 @@ impl WorkingCopy {
             collapsed: RefCell::default(),
             all_entries: RefCell::default(),
             stats: RefCell::default(),
+            count_boxes: RefCell::default(),
             list,
             all,
             count,
@@ -886,6 +889,7 @@ impl Inner {
             .cloned()
             .collect();
         this.rebuilding.set(true);
+        this.count_boxes.borrow_mut().clear();
         this.list.remove_all();
         let mut row_entries = Vec::new();
         match this.layout.get() {
@@ -1001,7 +1005,11 @@ impl Inner {
                 })
                 .collect();
             this.stats.replace(stats);
-            Inner::rebuild_list(&this);
+            // 一覧と差分は作り直さない（行数の場所を埋めるだけ）。
+            let stats = this.stats.borrow();
+            for (path, counts) in this.count_boxes.borrow().iter() {
+                fill_counts(counts, stats.get(path).copied());
+            }
         });
     }
 
@@ -1149,20 +1157,13 @@ impl Inner {
         } else {
             name.set_hexpand(true);
         }
-        // 行数（+ 追加 − 削除）。
-        if let Some(&(added, removed)) = this.stats.borrow().get(&entry.path) {
-            let counts = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-            for (n, mark, css) in [(added, "+", "success"), (removed, "−", "error")] {
-                if let Some(n) = n.filter(|&n| n > 0) {
-                    let l = gtk::Label::new(Some(&format!("{mark}{n}")));
-                    l.add_css_class("caption");
-                    l.add_css_class("numeric");
-                    l.add_css_class(css);
-                    counts.append(&l);
-                }
-            }
-            line.append(&counts);
-        }
+        // 行数（+ 追加 − 削除）。まだ読めていなければ、届いたときに入れる。
+        let counts = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        fill_counts(&counts, this.stats.borrow().get(&entry.path).copied());
+        line.append(&counts);
+        this.count_boxes
+            .borrow_mut()
+            .insert(entry.path.clone(), counts);
         // 変更を捨てるボタン（マウスを載せたときだけ出す。コンフリクトと、stage 済みだけのファイルにはない）。
         if !conflict && entry.is_unstaged() {
             let discard = gtk::Button::new();
@@ -2077,6 +2078,24 @@ fn body_guide(body: &gtk::TextView) -> gtk::DrawingArea {
         let _ = cr.fill();
     });
     guide
+}
+
+/// 一覧の行の行数（+ 追加 − 削除）を入れ直す（0 の側は出さない。なければ隠す）。
+fn fill_counts(counts: &gtk::Box, stats: Option<LineCounts>) {
+    while let Some(child) = counts.first_child() {
+        counts.remove(&child);
+    }
+    let (added, removed) = stats.unwrap_or((None, None));
+    for (n, mark, css) in [(added, "+", "success"), (removed, "−", "error")] {
+        if let Some(n) = n.filter(|&n| n > 0) {
+            let l = gtk::Label::new(Some(&format!("{mark}{n}")));
+            l.add_css_class("caption");
+            l.add_css_class("numeric");
+            l.add_css_class(css);
+            counts.append(&l);
+        }
+    }
+    counts.set_visible(counts.first_child().is_some());
 }
 
 /// 次のコミットに含めるファイルの数（コンフリクトのファイルは index では stage 済みに見えるので除く）。
