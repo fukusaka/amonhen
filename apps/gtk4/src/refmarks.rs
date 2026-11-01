@@ -335,8 +335,9 @@ pub fn branch(
     if merged {
         p.row(&tr!("Merged into"), &base, false, Some("success"));
     }
-    // 既定のブランチに取り込んだらコンフリクトするか。取り込み済み・既定のブランチそのものなら調べない。
-    let forecast = (known.groups.is_some()
+    // 既定のブランチに取り込んだらコンフリクトするか。既定のブランチが分からない・取り込み済み・既定のブランチ
+    // そのものなら調べない（macOS 版と同じ）。
+    let forecast = (known.groups.as_ref().is_some_and(|g| g.base.is_some())
         && !merged
         && !fact.is_some_and(|f| f.at_base)
         && item.name != base
