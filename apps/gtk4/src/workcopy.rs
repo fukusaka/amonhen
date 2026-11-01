@@ -636,9 +636,9 @@ impl Inner {
             }
         });
         let weak = Rc::downgrade(this);
-        this.diff.connect_mark(move |row| {
+        this.diff.connect_mark(move |rows| {
             let Some(this) = weak.upgrade() else { return };
-            Inner::set_rows(&this, vec![row as usize], None);
+            Inner::set_rows(&this, rows, None);
         });
         // 一覧のキー（macOS 版と同じ）: Space・Enter で選んだファイルを含める・外す、⌫・Delete で捨てる（確かめて）。
         let keys = gtk::EventControllerKey::new();
@@ -1559,7 +1559,7 @@ impl Inner {
         });
     }
 
-    /// 選んだ行（`rows`）を含める・外す。`stage` が None なら、1 行の今の状態を反対にする。
+    /// 選んだ行（`rows`）を含める・外す。`stage` が None なら、すべて含めていれば外し、そうでなければ含める。
     fn set_rows(this: &Rc<Self>, rows: Vec<usize>, stage: Option<bool>) {
         let Some(current) = this.current.borrow().clone() else {
             return;
@@ -1571,7 +1571,7 @@ impl Inner {
             let w = current.0.as_ref().expect("working diff");
             match &w.combined {
                 Some(staged) => {
-                    let stage = stage.unwrap_or(!staged[rows[0]]);
+                    let stage = stage.unwrap_or_else(|| !rows.iter().all(|&r| staged[r]));
                     repo.set_rows_staged(w, &rows, stage)
                 }
                 // 片側だけの差分: 作業ツリーの側なら含める、stage 済みの側なら外す。

@@ -198,8 +198,8 @@ pub struct State {
     selection_unit: Option<((TextPos, TextPos), i32)>,
     /// 本文を押して、文字を選びながらドラッグしているか。
     dragging: bool,
-    /// 印をクリックしたときに呼ぶ（行）。
-    on_mark: Option<Rc<dyn Fn(u32)>>,
+    /// 印をクリックしたときに呼ぶ（変更の行。hunk の見出しなら、その hunk の変更の行すべて）。
+    on_mark: Option<Rc<dyn Fn(Vec<usize>)>>,
     /// 選んだ行が変わったときに呼ぶ。
     on_selection: Option<Rc<dyn Fn()>>,
     /// ファイルの見出し・差分の行を右クリックしたときに呼ぶ。
@@ -934,7 +934,7 @@ impl DiffWidget {
         adj.set_value(y.min((adj.upper() - adj.page_size()).max(0.0)));
     }
 
-    pub fn connect_mark(&self, f: impl Fn(u32) + 'static) {
+    pub fn connect_mark(&self, f: impl Fn(Vec<usize>) + 'static) {
         self.state().on_mark = Some(Rc::new(f));
     }
 
@@ -1050,11 +1050,23 @@ impl DiffWidget {
             return;
         }
         let index = index as u32;
-        let row = view.view.rows[index as usize];
-        if Self::is_change(&row) && x < TEXT_INSET + MARK_WIDTH {
+        let rows = &view.view.rows;
+        let row = rows[index as usize];
+        // 左端のチェックボックス: その行（hunk の見出しなら hunk の変更すべて）を含める・外す（macOS 版と同じ）。
+        if x < TEXT_INSET + MARK_WIDTH && (Self::is_change(&row) || row.kind == DiffRow::HUNK) {
+            let picked: Vec<usize> = if row.kind == DiffRow::HUNK {
+                Self::hunk_changes(rows, index as usize).collect()
+            } else {
+                vec![index as usize]
+            };
             let f = self.state().on_mark.clone();
-            if let Some(f) = f {
-                f(index);
+            if let (Some(f), Some(&last)) = (f, picked.iter().max()) {
+                // 切り替えた後は、次の hunk へ進む（Space と同じ）。
+                let hunks = self.hunk_rows();
+                if let Some(i) = hunks.iter().rposition(|&h| h as usize <= last) {
+                    self.state().hunk_after = Some((i + 1).min(hunks.len() - 1));
+                }
+                f(picked);
             }
             return;
         }
@@ -1276,6 +1288,16 @@ impl DiffWidget {
             self.queue_draw();
         }
         had
+    }
+
+    /// `hunk`（見出しの行）の中の変更の行。
+    fn hunk_changes(rows: &[DiffRow], hunk: usize) -> impl Iterator<Item = usize> + '_ {
+        rows.iter()
+            .enumerate()
+            .skip(hunk + 1)
+            .take_while(|(_, r)| !matches!(r.kind, DiffRow::HUNK | DiffRow::FILE))
+            .filter(|(_, r)| Self::is_change(r))
+            .map(|(i, _)| i)
     }
 
     /// 行を選ぶ。hunk の見出しなら、その hunk の変更の行をすべて。
@@ -1677,15 +1699,34 @@ impl DiffWidget {
                     &graphene::Rect::new(0.0, top, width, rh),
                 );
             }
-            if st.marks && Self::is_change(row) {
-                draw_mark(
-                    snapshot,
-                    TEXT_INSET,
-                    top,
-                    rh,
-                    row.flags & DiffRow::STAGED != 0,
-                    &fg,
-                );
+            // 変更の行と hunk の見出しのチェックボックス。hunk は中の変更がすべて含まれていれば ✓、一部なら −
+            // （macOS 版と同じ）。
+            if st.marks {
+                let check = if Self::is_change(row) {
+                    Some(if row.flags & DiffRow::STAGED != 0 {
+                        Check::On
+                    } else {
+                        Check::Off
+                    })
+                } else if row.kind == DiffRow::HUNK {
+                    let (mut staged, mut total) = (0, 0);
+                    for r in Self::hunk_changes(&view.view.rows, index as usize) {
+                        total += 1;
+                        if view.view.rows[r].flags & DiffRow::STAGED != 0 {
+                            staged += 1;
+                        }
+                    }
+                    (total > 0).then_some(match staged {
+                        0 => Check::Off,
+                        n if n == total => Check::On,
+                        _ => Check::Mixed,
+                    })
+                } else {
+                    None
+                };
+                if let Some(check) = check {
+                    draw_mark(snapshot, TEXT_INSET, top, rh, check, &fg);
+                }
             }
             if let Some(gutter) = &line.gutter {
                 snapshot.save();
@@ -1976,25 +2017,39 @@ fn find_all(text: &str, query: &str) -> Vec<(usize, usize)> {
 }
 
 /// 次のコミットに含めるかの印（含めていれば塗りつぶしにチェック、外していれば枠だけ）。
-fn draw_mark(snapshot: &gtk::Snapshot, x: f32, top: f32, rh: f32, staged: bool, fg: &gdk::RGBA) {
+/// stage のチェックボックスの状態。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Check {
+    Off,
+    On,
+    /// hunk の変更の一部だけを含めている。
+    Mixed,
+}
+
+fn draw_mark(snapshot: &gtk::Snapshot, x: f32, top: f32, rh: f32, check: Check, fg: &gdk::RGBA) {
     let size = (rh - 6.0).clamp(8.0, 12.0);
     let rect = graphene::Rect::new(x + 2.0, top + (rh - size) / 2.0, size, size);
     let path = gsk::PathBuilder::new();
     path.add_rounded_rect(&gsk::RoundedRect::from_rect(rect, 3.0));
     let path = path.to_path();
-    if staged {
+    if check != Check::Off {
         snapshot.append_fill(
             &path,
             gsk::FillRule::Winding,
             &gdk::RGBA::new(0.21, 0.52, 0.89, 1.0),
         );
-        let check = gsk::PathBuilder::new();
-        check.move_to(rect.x() + size * 0.22, rect.y() + size * 0.52);
-        check.line_to(rect.x() + size * 0.42, rect.y() + size * 0.72);
-        check.line_to(rect.x() + size * 0.78, rect.y() + size * 0.3);
+        let mark = gsk::PathBuilder::new();
+        if check == Check::On {
+            mark.move_to(rect.x() + size * 0.22, rect.y() + size * 0.52);
+            mark.line_to(rect.x() + size * 0.42, rect.y() + size * 0.72);
+            mark.line_to(rect.x() + size * 0.78, rect.y() + size * 0.3);
+        } else {
+            mark.move_to(rect.x() + size * 0.25, rect.y() + size * 0.5);
+            mark.line_to(rect.x() + size * 0.75, rect.y() + size * 0.5);
+        }
         let stroke = gsk::Stroke::new(1.6);
         stroke.set_line_cap(gsk::LineCap::Round);
-        snapshot.append_stroke(&check.to_path(), &stroke, &gdk::RGBA::WHITE);
+        snapshot.append_stroke(&mark.to_path(), &stroke, &gdk::RGBA::WHITE);
     } else {
         let color = gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), 0.45);
         snapshot.append_stroke(&path, &gsk::Stroke::new(1.0), &color);
