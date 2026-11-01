@@ -700,14 +700,9 @@ impl Inner {
             let button = gtk::Button::with_label(&amonhen_model::i18n::translate(title));
             let weak = Rc::downgrade(this);
             button.connect_clicked(move |_| {
-                let Some(this) = weak.upgrade() else { return };
-                let (Some(path), Some(actions)) = (
-                    this.selected.borrow().clone(),
-                    this.actions.borrow().clone(),
-                ) else {
-                    return;
-                };
-                actions.perform(json!({ "op": "takeSide", "path": path, "ours": ours }));
+                if let Some(this) = weak.upgrade() {
+                    Inner::take_side(&this, ours, title);
+                }
             });
             this.conflict_buttons.append(&button);
         }
@@ -1715,6 +1710,43 @@ impl Inner {
         if stale {
             self.unembed();
         }
+    }
+
+    /// Take Current File・Take Incoming File: コンフリクトのファイルを片側のファイルそのものにする。マーカーが
+    /// 残っていなければ、解決した内容（rerere・ほかのエディタ）を上書きしてしまうので確かめる（macOS 版と同じ）。
+    fn take_side(this: &Rc<Self>, ours: bool, title: &'static str) {
+        let (Some(path), Some(actions), Some(repo)) = (
+            this.selected.borrow().clone(),
+            this.actions.borrow().clone(),
+            this.repo(),
+        ) else {
+            return;
+        };
+        glib::spawn_future_local(async move {
+            // 内容のコンフリクトのファイルだけが載る（消した・足したの食い違いは載らないので、確かめない）。
+            let files = crate::sheets::run(&repo, json!({ "op": "conflictFiles" })).await;
+            let resolved = files["info"]["files"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|f| {
+                    f["path"].as_str() == Some(path.as_str()) && f["markers"].as_u64() == Some(0)
+                });
+            if resolved
+                && !actions
+                    .confirm(
+                        &tr!("Replace the resolved content of {path}?", path = path),
+                        &tr!(
+                            "No conflict markers are left, so it may already be resolved. It becomes one side’s whole file."
+                        ),
+                        &amonhen_model::i18n::translate(title),
+                    )
+                    .await
+            {
+                return;
+            }
+            actions.perform(json!({ "op": "takeSide", "path": path, "ours": ours }));
+        });
     }
 
     /// Mark Resolved: 残っているコンフリクトがあれば確かめてから、解決済みにする（index に入れる）。

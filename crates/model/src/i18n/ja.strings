@@ -784,6 +784,8 @@
 "Open with Default App" = "既定のアプリで開く";
 "git rerere applied the earlier resolution. Check the result, then Mark Resolved." = "git の rerere が前の解決を適用しました。結果を確かめて「解決済みにする」を押してください。";
 "No conflict markers are left. Check the result, then Mark Resolved." = "コンフリクトのマーカーは残っていません。結果を確かめて「解決済みにする」を押してください。";
+"Replace the resolved content of {path}?" = "{path} の解決した内容を置き換えますか？";
+"No conflict markers are left, so it may already be resolved. It becomes one side’s whole file." = "マーカーが残っていないので、もう解決しているかもしれません。片側のファイルそのものになります。";
 
 /* GTK4 の FE: Working Copy の改行の印 */
 "Mixed" = "混在";
