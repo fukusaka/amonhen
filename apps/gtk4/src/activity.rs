@@ -187,6 +187,12 @@ fn install_css() {
     }
 }
 
+/// 選べるか（選べても最初のフォーカスは取らない）。
+fn selectable(label: &gtk::Label, on: bool) {
+    label.set_selectable(on);
+    label.set_focusable(false);
+}
+
 /// 前に出したときと同じ中身か（同じなら作り直さない。スクロールや説明がそのまま残る）。
 fn unchanged(last: &std::cell::Cell<u64>, key: impl std::hash::Hash) -> bool {
     use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
@@ -947,7 +953,9 @@ impl Activity {
         margin(&daemon);
         let state = label(&tr!("Checking…"), &["heading"]);
         let detail = label("", &["caption", "numeric"]);
-        detail.set_selectable(true);
+        // 選べるのは動いているときの pid・ソケットの行だけ（macOS 版と同じ）。選べるラベルは最初のフォーカスを取って
+        // 全体を選んだ形で出るので、フォーカスは取らない（マウスで選んでコピーはできる）。
+        selectable(&detail, false);
         let toggle = gtk::Button::with_label(&tr!("Start"));
         let top = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         let texts = gtk::Box::new(gtk::Orientation::Vertical, 2);
@@ -1095,12 +1103,14 @@ impl Activity {
                     }
                     let Some(d) = status else {
                         state.set_text(&tr!("The shared daemon isn’t running"));
+                        selectable(&detail, false);
                         detail.set_text(&tr!("It starts automatically when you open a repository through the daemon (right-click in the repository list, or Settings > Performance)."));
                         toggle.set_label(&tr!("Start"));
                         toggle.set_tooltip_text(None);
                         return;
                     };
                     state.set_text(&tr!("The shared daemon is running"));
+                    selectable(&detail, true);
                     detail.set_text(&tr!(
                         "pid {pid} · version {version} (build {build}) · up {uptime} · connections {connections}\n{socket}",
                         pid = d["pid"],
