@@ -1188,7 +1188,6 @@ impl Editor {
                 return;
             }
             this.saved.replace(text);
-            this.note.set_text(&tr!("Saved"));
             if stage {
                 let f = this.on_resolved.borrow().clone();
                 f();

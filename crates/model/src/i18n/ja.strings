@@ -554,7 +554,6 @@
 "Nothing to resolve" = "解けるものはありません";
 "Resolved {count} (Ctrl+Z undoes them one at a time)." = "{count} 個を解きました（Ctrl+Z で 1 つずつ戻せる）";
 "Mark as resolved with {count} conflicts left?" = "コンフリクトが {count} 残っていますが、解決済みにしますか？";
-"Saved" = "保存しました";
 "All" = "すべて";
 "Commands" = "コマンド";
 "Failures Only" = "失敗だけ";
