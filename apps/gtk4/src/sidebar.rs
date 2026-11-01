@@ -2319,6 +2319,18 @@ fn groups_of(
         groups.push(("Remotes", store(remotes)));
     }
 
+    // タグも `v1/x` のような名前はフォルダにまとめる（macOS 版と同じ）。
+    let mut tag_tree = Tree::default();
+    for e in of(RefKind::Tag) {
+        let parts: Vec<&str> = e.name.split('/').collect();
+        let mut d = ref_data(e, parts[parts.len() - 1], icon::Kind::Tag, head, None);
+        finish_tag(&mut d, tags, &tag_remotes);
+        tag_tree.insert(&parts, d);
+    }
+    let tag_rows = tag_tree.into_rows("Tags");
+    if !tag_rows.is_empty() {
+        groups.push(("Tags", store(tag_rows)));
+    }
     let mut simple = |title: &'static str, kind: RefKind, icon: icon::Kind| {
         let store = gio::ListStore::new::<Node>();
         for e in of(kind) {
@@ -2330,16 +2342,12 @@ fn groups_of(
                 d.title = message.clone();
                 d.tooltip = Some(e.name.clone());
             }
-            if kind == RefKind::Tag {
-                finish_tag(&mut d, tags, &tag_remotes);
-            }
             store.append(&Node::new(d, None));
         }
         if store.n_items() > 0 {
             groups.push((title, store));
         }
     };
-    simple("Tags", RefKind::Tag, icon::Kind::Tag);
     simple("Stashes", RefKind::Stash, icon::Kind::Stash);
     simple("Submodules", RefKind::Submodule, icon::Kind::Submodule);
     (groups, pinned)
@@ -2416,12 +2424,17 @@ fn branch_remotes(refs: &Refs) -> Vec<String> {
 /// タグの行: どの（読んだ）リモートにもない・別のタグがあるリモートがあれば右端に印を出し、押すと吹き出し。
 /// ツールチップには、すべてのリモートでの様子。
 fn finish_tag(data: &mut Data, tags: Option<&TagRemotes>, remotes: &[String]) {
-    let mark = tags.and_then(|t| t.mark(&data.title));
+    // 行の名前はフォルダの下の部分だけのことがあるので、タグの名前は項目から。
+    let name = match &data.item {
+        Item::Ref(e) => e.name.clone(),
+        _ => data.title.clone(),
+    };
+    let mark = tags.and_then(|t| t.mark(&name));
     let mut lines: Vec<String> = mark.iter().map(|(_, text, _)| text.clone()).collect();
     lines.extend(
         remotes
             .iter()
-            .map(|r| reffacts::tag_state_text(tags, &data.title, r)),
+            .map(|r| reffacts::tag_state_text(tags, &name, r)),
     );
     if let Some((icon, tooltip, css)) = mark {
         data.marks.push(Mark { icon, tooltip, css });
