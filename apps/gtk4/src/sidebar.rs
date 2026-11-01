@@ -2869,4 +2869,24 @@ mod tests {
         assert_eq!(names(reordered(&order, "b", "b", true)), "a,b,c");
         assert!(reordered(&order, "x", "a", true).is_none());
     }
+
+    #[test]
+    fn creates_pull_requests_except_from_the_default_branch() {
+        use super::Known;
+        use crate::reffacts::BranchGroups;
+        let known = |base: Option<&str>| Known {
+            groups: Some(BranchGroups {
+                base: base.map(str::to_owned),
+                ..BranchGroups::default()
+            }),
+            can_create_pull_request: true,
+            ..Known::default()
+        };
+        assert!(!known(Some("main")).can_create_pull_request_from("main"));
+        assert!(known(Some("main")).can_create_pull_request_from("topic"));
+        // 比べるのは名前そのもの（macOS 版と同じ）。既定のブランチが分からなければ、どれからでも。
+        assert!(known(Some("origin/main")).can_create_pull_request_from("main"));
+        assert!(known(None).can_create_pull_request_from("main"));
+        assert!(!Known::default().can_create_pull_request_from("topic"));
+    }
 }
