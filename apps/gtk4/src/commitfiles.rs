@@ -381,7 +381,7 @@ fn file_rows(source: &Source, changes: Option<&[FileChange]>, tree: bool) -> Vec
 
 /// 変更ファイルの右クリックのメニューに足す項目を作る（パス、差分の中の位置 y。一覧からなら None。Blame を
 /// 出すか）。
-type FileItems = Rc<dyn Fn(&str, Option<f64>, bool) -> Vec<Item>>;
+type FileItems = Rc<dyn Fn(&str, Option<f64>, bool, bool) -> Vec<Item>>;
 
 pub struct CommitDiff {
     pub root: gtk::Box,
@@ -609,8 +609,13 @@ impl CommitDiff {
         Inner::show(&self.inner, prepared, key);
     }
 
-    /// 変更ファイルの右クリックのメニューに足す項目（Blame・File History など）を作る `f(パス, 差分の中の y)`。
-    pub fn connect_file_items(&self, f: impl Fn(&str, Option<f64>, bool) -> Vec<Item> + 'static) {
+    /// 変更ファイルの右クリックのメニューに足す項目（Blame・File History など）を作る
+    /// `f(パス, 差分の中の y, Blame を出すか, 差分の行の上か)`。差分の行の上（見出しでない所）では、AI でこの hunk を
+    /// 解説だけ（macOS 版と同じ）。
+    pub fn connect_file_items(
+        &self,
+        f: impl Fn(&str, Option<f64>, bool, bool) -> Vec<Item> + 'static,
+    ) {
         self.inner.file_items.replace(Some(Rc::new(f)));
     }
 
@@ -832,18 +837,21 @@ impl Inner {
             items.extend(match file {
                 // 見出しの上: 畳む・Viewed・Blame・パスのコピーなど。
                 Some(file) => Inner::menu_items(&this, Some(file), Some(y)),
-                // 差分の行の上: AI でこの hunk を解説・Blame・File History（持ち主が作る）。
+                // 差分の行の上: AI でこの hunk を解説だけ（持ち主が作る。macOS 版と同じ）。
                 None => this
                     .file_items
                     .borrow()
                     .clone()
-                    .map(|f| f(path, Some(y), true))
+                    .map(|f| f(path, Some(y), true, true))
                     .unwrap_or_default(),
             });
-            menu::popup(&this.diff, x, y, items);
+            // AI がなく文字も選んでいなければ、メニューは出さない（macOS 版と同じ）。
+            if !items.is_empty() {
+                menu::popup(&this.diff, x, y, items);
+            }
         });
         // 1 ファイルずつ見せているときは、差分にファイルの見出しがない。差分の行の右クリックは、全ファイルを
-        // 並べたときの見出しの下の行と同じ（AI でこの hunk を解説・Blame・File History）。
+        // 並べたときの見出しの下の行と同じ（AI でこの hunk を解説だけ）。
         let weak = Rc::downgrade(this);
         this.diff.connect_row_menu(move |_, x, y| {
             let Some(this) = weak.upgrade() else { return };
@@ -853,7 +861,7 @@ impl Inner {
                     this.file_items
                         .borrow()
                         .clone()
-                        .map(|f| f(&path, Some(y), true))
+                        .map(|f| f(&path, Some(y), true, true))
                         .unwrap_or_default(),
                 );
             }
@@ -1207,7 +1215,7 @@ impl Inner {
             Some(change) => change.kind == ChangeKind::Deleted,
             None => diff.new.is_empty() && !diff.old.is_empty(),
         };
-        f(path_of(name), None, !deleted)
+        f(path_of(name), None, !deleted, false)
     }
 
     fn menu_items(this: &Rc<Self>, file: Option<usize>, y: Option<f64>) -> Vec<Item> {
@@ -1243,7 +1251,7 @@ impl Inner {
             items.push(Item::Separator);
         }
         if let Some(f) = this.file_items.borrow().clone() {
-            items.extend(f(&path, y, true));
+            items.extend(f(&path, y, true, false));
             items.push(Item::Separator);
         }
         let (w, p) = (this.list.downgrade(), path.clone());

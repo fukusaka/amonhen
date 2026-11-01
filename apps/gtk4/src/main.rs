@@ -1229,7 +1229,7 @@ fn build_tab(
     reflog.set_range_diff(range_diff_opener.clone());
     let (v, w, oc) = (view.downgrade(), win_of.clone(), on_commit.clone());
     let (dw, dt) = (diff.downgrade(), details.clone());
-    commit_diff.connect_file_items(move |path, y, can_blame| {
+    commit_diff.connect_file_items(move |path, y, can_blame, hunk_only| {
         let (Some(view), Some(window)) = (v.upgrade(), w()) else {
             return Vec::new();
         };
@@ -1245,6 +1245,11 @@ fn build_tab(
         {
             items.push(item);
             items.push(menu::Item::Separator);
+        }
+        // 差分の行の上では、AI でこの hunk を解説だけ（macOS 版と同じ）。
+        if hunk_only {
+            items.retain(|i| !matches!(i, menu::Item::Separator));
+            return items;
         }
         // 1 つのコミットを選んでいるときだけ、そのコミットでの blame（一覧の消したファイルにはない）。
         if can_blame
