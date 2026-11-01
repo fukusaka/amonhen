@@ -698,6 +698,14 @@ impl Editor {
         this.band.edit.connect_clicked(move |_| f());
         let f = with(|t| t.reject_proposal());
         this.band.reject.connect_clicked(move |_| f());
+        let f = with(|t| Self::ai_resolve_with(t, true));
+        this.band.regenerate.connect_clicked(move |_| f());
+        let weak = Rc::downgrade(&this);
+        this.band.copy.connect_clicked(move |b| {
+            if let Some(this) = weak.upgrade() {
+                b.clipboard().set_text(&this.band.reply.borrow());
+            }
+        });
         crate::assist::auto_click(&ai_resolve, "resolve");
         crate::assist::auto_click(&ai_explain, "explain-conflict");
         crate::assist::auto_click(&this.band.accept, "accept");
@@ -1358,6 +1366,11 @@ struct Band {
     accept: gtk::Button,
     edit: gtk::Button,
     reject: gtk::Button,
+    /// 返事をコピーする・キャッシュを使わずに聞き直す（macOS 版の AssistantPanel と同じ）。
+    copy: gtk::Button,
+    regenerate: gtk::Button,
+    /// 最後に届いた返事（そのままの文）。
+    reply: RefCell<String>,
 }
 
 impl Band {
@@ -1373,10 +1386,15 @@ impl Band {
         accept.add_css_class("suggested-action");
         let edit = gtk::Button::with_label(&tr!("Edit and Accept"));
         let reject = gtk::Button::with_label(&tr!("Reject"));
+        let copy = gtk::Button::with_label(&tr!("Copy"));
+        let regenerate = gtk::Button::with_label(&tr!("Regenerate"));
+        regenerate.set_tooltip_text(Some(&tr!("Ask again without using the previous result")));
         let head = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         for w in [
             spinner.upcast_ref::<gtk::Widget>(),
             status.upcast_ref(),
+            copy.upcast_ref(),
+            regenerate.upcast_ref(),
             reject.upcast_ref(),
             edit.upcast_ref(),
             accept.upcast_ref(),
@@ -1416,6 +1434,9 @@ impl Band {
             accept,
             edit,
             reject,
+            copy,
+            regenerate,
+            reply: RefCell::default(),
         }
     }
 
@@ -1433,6 +1454,13 @@ impl Band {
         for b in [&self.accept, &self.edit] {
             b.set_visible(proposal.is_some());
         }
+        for b in [&self.copy, &self.regenerate] {
+            b.set_visible(!waiting);
+        }
+        if waiting {
+            self.reply.borrow_mut().clear();
+        }
+        self.copy.set_sensitive(!self.reply.borrow().is_empty());
         self.reject.set_label(&if proposal.is_some() {
             tr!("Reject")
         } else {
@@ -1521,6 +1549,11 @@ impl Editor {
 
     /// 解消の提案を頼み、帯で見せる。形の違う返事・マーカーの残る提案は失敗として見せる。
     fn ai_resolve(this: &Rc<Self>) {
+        Self::ai_resolve_with(this, false);
+    }
+
+    /// AI に解消を聞く。`regenerate` なら、前の返事（キャッシュ）を使わない。
+    fn ai_resolve_with(this: &Rc<Self>, regenerate: bool) {
         let Some((c, base)) = this.selected_texts() else {
             this.root.error_bell();
             return;
@@ -1548,7 +1581,7 @@ impl Editor {
                 }
             });
             let parent = this.parent_window();
-            let use_cache = !AI_FAILED.with(|f| f.borrow().contains(&asked));
+            let use_cache = !regenerate && !AI_FAILED.with(|f| f.borrow().contains(&asked));
             drop(this);
             let result = crate::assist::run(
                 parent,
@@ -1565,6 +1598,10 @@ impl Editor {
                 return;
             }
             let failed = tr!("Failed");
+            // コピーできるよう、返事はそのまま覚えておく。
+            if let Ok(raw) = &result {
+                this.band.reply.replace(raw.clone());
+            }
             match result.and_then(|raw| {
                 let proposal = amonhen_assist::Proposal::parse(&raw).ok_or_else(|| {
                     format!(
