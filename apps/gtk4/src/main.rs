@@ -1160,16 +1160,17 @@ fn build_tab(
         });
         glib::ControlFlow::Continue
     });
-    // サブモジュールは、作業ツリーからのパスで開く。
+    // サブモジュールは、作業ツリーからのパスで開く（daemon・SSH 越しなら、同じ接続先の上のパスとして）。
     let open_submodule: refops::OpenSubmodule = {
         let (open, view) = (open.clone(), view.downgrade());
+        let location = path.to_string_lossy().into_owned();
         Rc::new(move |name: &str| {
             let workdir = view
                 .upgrade()
                 .and_then(|v| v.current())
                 .and_then(|(repo, _)| repo.paths().workdir);
             if let Some(dir) = workdir {
-                open(dir.join(name));
+                open(appmenu::same_place(&location, &dir.join(name)));
             }
         })
     };

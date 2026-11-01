@@ -226,7 +226,7 @@ fn handlers() -> Vec<(&'static str, Handler)> {
             "new-window",
             Box::new(|p| {
                 if let Some(dir) = workdir(p) {
-                    (p.open)(dir, crate::tabs::Place::NewWindow);
+                    (p.open)(same_place(&p.location, &dir), crate::tabs::Place::NewWindow);
                 }
             }),
         ),
@@ -242,7 +242,10 @@ fn handlers() -> Vec<(&'static str, Handler)> {
             }),
         ),
         // git のリモートを加える（サイドバーの Remotes の Add Remote… と同じシート。macOS 版と同じ）。
-        ("add-remote", Box::new(|p| crate::remotesheet::add(&p.actions))),
+        (
+            "add-remote",
+            Box::new(|p| crate::remotesheet::add(&p.actions)),
+        ),
         // View
         (
             "show-working-copy",
@@ -407,6 +410,17 @@ pub fn install(parts: Parts) -> Buttons {
         let p = parts.clone();
         action.connect_activate(move |_, _| f(&p));
         window.add_action(&action);
+    }
+    // 端末・ファイルマネージャーは手元のリポジトリだけ（macOS 版と同じく、daemon・SSH 越しでは選べない）。
+    if amonhen_remote::location::is_remote(&parts.location) {
+        for name in ["open-in-terminal", "reveal-in-files"] {
+            if let Some(action) = window
+                .lookup_action(name)
+                .and_downcast::<gio::SimpleAction>()
+            {
+                action.set_enabled(false);
+            }
+        }
     }
     let sidebar = gio::SimpleAction::new_stateful("show-sidebar", None, &true.to_variant());
     let p = parts.clone();
@@ -634,9 +648,30 @@ fn show_page(p: &Parts, page: Page) {
     p.sidebar.select_page(page);
 }
 
-/// 書き込む先の worktree の作業ツリー。
+/// 書き込む先の worktree の作業ツリー。daemon・SSH 越しなら向こうのパスなので、手元のパスとしては使わない。
 fn workdir(p: &Parts) -> Option<PathBuf> {
     p.actions.repo()?.paths().workdir
+}
+
+/// 手元の作業ツリー（daemon・SSH 越しなら None。端末・ファイルマネージャーは手元のものしか開けない）。
+fn local_workdir(p: &Parts) -> Option<PathBuf> {
+    if amonhen_remote::location::is_remote(&p.location) {
+        return None;
+    }
+    workdir(p)
+}
+
+/// `location` と同じ接続先の、`dir`（リポジトリが返したパス）の場所。手元の場所なら `dir` のまま、daemon・SSH
+/// 越しなら場所のパスの部分を `dir` に替える（macOS 版の `replacingPath` と同じ）。
+pub fn same_place(location: &str, dir: &std::path::Path) -> PathBuf {
+    if !amonhen_remote::location::is_remote(location) {
+        return dir.to_path_buf();
+    }
+    let old = crate::bookmarks::path_part(location);
+    match location.strip_suffix(old.as_str()) {
+        Some(prefix) if !old.is_empty() => PathBuf::from(format!("{prefix}{}", dir.display())),
+        _ => PathBuf::from(location),
+    }
 }
 
 fn head_branch(p: &Parts) -> Option<String> {
@@ -883,7 +918,7 @@ fn pop_stash(p: &Rc<Parts>) {
 // 端末を開く（窓を出すのが目的）ので、process::command は使わない
 #[allow(clippy::disallowed_methods)]
 fn open_in_terminal(p: &Rc<Parts>) {
-    let Some(dir) = workdir(p) else {
+    let Some(dir) = local_workdir(p) else {
         return p.window().error_bell();
     };
     if !terminal_at(&dir) {
@@ -923,7 +958,7 @@ pub fn terminal_at(dir: &std::path::Path) -> bool {
 
 /// 作業ツリーを、ファイルマネージャーで（親のフォルダの中で選んだ状態で）見せる。
 fn reveal_in_files(p: &Rc<Parts>) {
-    let Some(dir) = workdir(p) else {
+    let Some(dir) = local_workdir(p) else {
         return p.window().error_bell();
     };
     reveal(p.window().upcast_ref(), &dir);
@@ -1053,6 +1088,26 @@ fn show_about(p: &Rc<Parts>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keeps_the_connection_of_remote_locations() {
+        let place = |l: &str, d: &str| same_place(l, std::path::Path::new(d));
+        assert_eq!(place("/a/r", "/a/r/sub"), PathBuf::from("/a/r/sub"));
+        assert_eq!(
+            place("ssh://me@h:22/a/r", "/a/r/sub"),
+            PathBuf::from("ssh://me@h:22/a/r/sub")
+        );
+        assert_eq!(
+            place("daemon:/a/r", "/a/r/sub"),
+            PathBuf::from("daemon:/a/r/sub")
+        );
+        assert_eq!(
+            place("daemon:ssh://h/a/r", "/a/w"),
+            PathBuf::from("daemon:ssh://h/a/w")
+        );
+        // パスのない場所は、そのまま。
+        assert_eq!(place("ssh://h", "/x"), PathBuf::from("ssh://h"));
+    }
 
     #[test]
     fn every_command_in_the_table_has_an_action_or_is_pending() {
