@@ -418,9 +418,13 @@ pub fn show_in_window(editor: &Rc<Editor>, parent: &gtk::Window) {
         .default_width(1400)
         .default_height(800)
         .child(&editor.root)
-        .transient_for(parent)
-        .destroy_with_parent(true)
         .build();
+    // リポジトリの窓とは別の窓にする（macOS 版と同じ）。リポジトリの窓を閉じても道連れにしない（道連れだと
+    // close-request が来ないので、保存していない Result を確かめずに失う）。アプリにも入れて、この窓が開いている
+    // 間はアプリを終えない。
+    if let Some(app) = parent.application() {
+        window.set_application(Some(&app));
+    }
     editor.window.replace(Some(window.downgrade()));
     OPEN.with(|o| {
         let mut o = o.borrow_mut();
