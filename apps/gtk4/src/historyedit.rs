@@ -136,9 +136,16 @@ fn choices(rows: &[Row], i: usize) -> Vec<Action> {
 }
 
 /// 行ですることの一覧の項目（名前と、選んでいる印。乗せると説明）。
-fn action_items() -> gtk::SignalListItemFactory {
+fn action_items(choice: &gtk::DropDown) -> gtk::SignalListItemFactory {
+    // 印は DropDown で選んでいるものに付ける。開いた一覧の項目の「選んでいる」は、マウスを乗せた項目に付いて回る。
+    let chosen = |choice: &glib::WeakRef<gtk::DropDown>, item: &gtk::ListItem| {
+        choice
+            .upgrade()
+            .is_some_and(|c| item.item().is_some() && c.selected() == item.position())
+    };
     let factory = gtk::SignalListItemFactory::new();
-    factory.connect_setup(|_, item| {
+    let weak = choice.downgrade();
+    factory.connect_setup(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
@@ -150,11 +157,17 @@ fn action_items() -> gtk::SignalListItemFactory {
         row.append(&label);
         row.append(&check);
         item.set_child(Some(&row));
-        item.connect_selected_notify(move |item| {
-            check.set_opacity(if item.is_selected() { 1.0 } else { 0.0 })
-        });
+        if let Some(c) = weak.upgrade() {
+            let (weak, item) = (weak.clone(), item.downgrade());
+            c.connect_selected_notify(move |_| {
+                if let Some(item) = item.upgrade() {
+                    check.set_opacity(if chosen(&weak, &item) { 1.0 } else { 0.0 });
+                }
+            });
+        }
     });
-    factory.connect_bind(|_, item| {
+    let weak = choice.downgrade();
+    factory.connect_bind(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
@@ -173,7 +186,7 @@ fn action_items() -> gtk::SignalListItemFactory {
             label.set_text(&title);
         }
         if let Some(check) = row.last_child() {
-            check.set_opacity(if item.is_selected() { 1.0 } else { 0.0 });
+            check.set_opacity(if chosen(&weak, item) { 1.0 } else { 0.0 });
         }
     });
     factory
@@ -436,7 +449,7 @@ impl Mode {
             texts.append(&detail);
             let choice = gtk::DropDown::from_strings(&[]);
             // 開いた一覧の項目ごとに説明（git の言葉）を出す（macOS 版のメニューの項目の説明と同じ）。
-            choice.set_list_factory(Some(&action_items()));
+            choice.set_list_factory(Some(&action_items(&choice)));
             choice.set_valign(gtk::Align::Center);
             choice.set_size_request(290, -1);
             let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
