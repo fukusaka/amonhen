@@ -103,6 +103,8 @@ struct Inner {
     /// 一覧のコンフリクトの行の、印を出す場所（パスごと）。状態が届いたら、一覧を作り直さずに直す。
     conflict_marks: RefCell<HashMap<String, ConflictMark>>,
     list: gtk::ListBox,
+    /// 一覧が空のときの文（変更がない・絞り込みに合うファイルがない）。
+    empty: gtk::Label,
     all: gtk::CheckButton,
     count: gtk::Label,
     filter: gtk::SearchEntry,
@@ -294,6 +296,10 @@ impl WorkingCopy {
         let list = gtk::ListBox::new();
         list.set_selection_mode(gtk::SelectionMode::Single);
         list.add_css_class("navigation-sidebar");
+        let empty = gtk::Label::new(None);
+        empty.add_css_class("dim-label");
+        empty.set_margin_top(12);
+        list.set_placeholder(Some(&empty));
         let list_scrolled = gtk::ScrolledWindow::builder()
             .child(&list)
             .vexpand(true)
@@ -386,6 +392,7 @@ impl WorkingCopy {
             conflict_states: RefCell::default(),
             conflict_marks: RefCell::default(),
             list,
+            empty,
             all,
             count,
             filter,
@@ -982,6 +989,13 @@ impl Inner {
             }
         }
         this.row_entries.replace(row_entries);
+        // 空のときの文（macOS 版と同じ）。
+        this.empty
+            .set_text(&if this.all_entries.borrow().is_empty() {
+                tr!("No changes")
+            } else {
+                tr!("No matching files")
+            });
         // すべてのチェック: 一覧に出しているファイルのうちコンフリクト以外の状態（押すとそれらを含める・外す）。
         // コンフリクトのファイルは index では stage 済みに見えるが、含めることも外すこともできない（macOS 版と同じ）。
         let candidates: Vec<&StatusEntry> = entries
