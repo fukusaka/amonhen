@@ -93,7 +93,7 @@ fn cache() -> Cache {
 pub enum Availability {
     /// CLI を選んでいない（ボタンを出さない）。
     Off,
-    /// 選んだ CLI が見つからない（ボタンは出すが押せない。理由）。
+    /// 選んだ CLI が見つからない（理由。ボタンは出さず、Settings > AI に理由を出す）。
     Missing(String),
     Ready(Cli, PathBuf),
 }
@@ -120,19 +120,14 @@ fn not_found(cli: Cli) -> String {
     )
 }
 
-/// AI のボタンを設定に合わせる: CLI を選んでいなければ出さず、見つからなければ押せなくして理由を出す。
+/// AI のボタンを設定に合わせる: 使える CLI がなければ（選んでいない・見つからない）出さない（macOS 版と同じ）。
 pub fn track(widget: &impl IsA<gtk::Widget>, tooltip: String) {
     let update = {
         let weak = widget.upcast_ref::<gtk::Widget>().downgrade();
         move || {
             let Some(w) = weak.upgrade() else { return };
             match availability() {
-                Availability::Off => w.set_visible(false),
-                Availability::Missing(reason) => {
-                    w.set_visible(true);
-                    w.set_sensitive(false);
-                    w.set_tooltip_text(Some(&reason));
-                }
+                Availability::Off | Availability::Missing(_) => w.set_visible(false),
                 Availability::Ready(..) => {
                     w.set_visible(true);
                     w.set_sensitive(true);
