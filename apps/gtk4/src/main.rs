@@ -366,7 +366,11 @@ fn main() -> glib::ExitCode {
         .flags(gio::ApplicationFlags::NON_UNIQUE)
         .build();
     // 窓のアイコン（配るときに hicolor のテーマに置く。.desktop の Icon と同じ名前）。GTK を初期化した後に。
-    app.connect_startup(|_| gtk::Window::set_default_icon_name(APP_ID));
+    app.connect_startup(|app| {
+        gtk::Window::set_default_icon_name(APP_ID);
+        // ショートカットと Quit は、リポジトリのページしかない起動でも効くように最初に。
+        appmenu::install_app(app);
+    });
     app.connect_activate(move |app| launch(app, &args));
     // 引数は自分で読んだので、GTK には渡さない。
     app.run_with_args::<&str>(&[])
@@ -495,6 +499,16 @@ fn launch(app: &gtk::Application, args: &Args) {
         build_window(app, args.clone());
         None
     };
+    // 確認用: リポジトリのページで、窓のアクションを（`--action`）。
+    if args.repositories
+        && let Some(id) = args.action.clone()
+    {
+        glib::timeout_add_local_once(std::time::Duration::from_millis(100), move || {
+            if let Some(tab) = tabs::front_window().and_then(|h| h.current()) {
+                let _ = WidgetExt::activate_action(&tab.root, &format!("win.{id}"), None);
+            }
+        });
+    }
     if args.repositories
         && let Some(row) = args.menu_row
     {

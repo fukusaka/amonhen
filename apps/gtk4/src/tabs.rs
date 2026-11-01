@@ -612,6 +612,34 @@ pub fn show_home(app: &gtk::Application, host: Option<Rc<RepoWindow>>) -> Rc<Rep
         }
     });
     tab.group.add_action(&recent);
+    // File > New Window・Open…・Keyboard Shortcuts・About（macOS 版ではどの窓からも効く）。New Window は新しい窓に
+    // このページを、Open… はこのページを出す（macOS 版と同じ）。
+    let add_action = |name: &str, f: fn(&Rc<Tab>, &gtk::Application)| {
+        let action = gio::SimpleAction::new(name, None);
+        let (t, a) = (Rc::downgrade(&tab), app.downgrade());
+        action.connect_activate(move |_, _| {
+            if let (Some(tab), Some(app)) = (t.upgrade(), a.upgrade()) {
+                f(&tab, &app);
+            }
+        });
+        tab.group.add_action(&action);
+    };
+    add_action("new-window", |_, app| {
+        show_home(app, None);
+    });
+    add_action("open", |tab, app| {
+        show_home(app, tab.host());
+    });
+    add_action("shortcuts", |tab, _| {
+        if let Some(window) = tab.window() {
+            crate::appmenu::show_shortcuts(&window);
+        }
+    });
+    add_action("about", |tab, _| {
+        if let Some(window) = tab.window() {
+            crate::appmenu::show_about(&window);
+        }
+    });
     let browser = crate::repobrowser::page(app, open, &tab.group);
     tab.root.append(&browser.root);
     let b = Rc::downgrade(&browser);

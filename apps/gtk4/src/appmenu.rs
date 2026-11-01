@@ -396,8 +396,8 @@ fn handlers() -> Vec<(&'static str, Handler)> {
                 crate::quickopen::show(Some(p.window().upcast_ref()), p.open.clone());
             }),
         ),
-        ("shortcuts", Box::new(show_shortcuts)),
-        ("about", Box::new(show_about)),
+        ("shortcuts", Box::new(|p| show_shortcuts(&p.window()))),
+        ("about", Box::new(|p| show_about(&p.window()))),
     ]
 }
 
@@ -406,6 +406,25 @@ impl Parts {
     fn window(&self) -> gtk::ApplicationWindow {
         self.anchor.root().and_downcast().expect("タブが窓にない")
     }
+}
+
+/// アプリのアクション（終える）とショートカット。起動したときに入れる（リポジトリのページしかなくても効くように）。
+pub fn install_app(app: &gtk::Application) {
+    if app.lookup_action("quit").is_none() {
+        let quit = gio::SimpleAction::new("quit", None);
+        let weak = app.downgrade();
+        quit.connect_activate(move |_, _| {
+            if let Some(app) = weak.upgrade() {
+                app.quit();
+            }
+        });
+        app.add_action(&quit);
+    }
+    for (action, accel) in accels() {
+        app.set_accels_for_action(&action, &[accel.as_str()]);
+    }
+    // タブの操作は、ほかのキーでも（Ctrl+Tab など）。
+    crate::tabs::install_accels(app);
 }
 
 pub fn install(parts: Parts) -> Buttons {
@@ -446,21 +465,7 @@ pub fn install(parts: Parts) -> Buttons {
     });
     window.add_action(&sidebar);
 
-    if parts.app.lookup_action("quit").is_none() {
-        let quit = gio::SimpleAction::new("quit", None);
-        let app = parts.app.downgrade();
-        quit.connect_activate(move |_, _| {
-            if let Some(app) = app.upgrade() {
-                app.quit();
-            }
-        });
-        parts.app.add_action(&quit);
-    }
-    for (action, accel) in accels() {
-        parts.app.set_accels_for_action(&action, &[accel.as_str()]);
-    }
-    // タブの操作は、ほかのキーでも（Ctrl+Tab など）。
-    crate::tabs::install_accels(&parts.app);
+    install_app(&parts.app);
 
     let repository = gtk::MenuButton::builder()
         .label("Repository")
@@ -1022,8 +1027,8 @@ fn open_folder(p: &Rc<Parts>) {
     });
 }
 
-/// ショートカットの一覧（メニューごと。表の操作は表から）。
-fn show_shortcuts(p: &Rc<Parts>) {
+/// ショートカットの一覧（メニューごと。表の操作は表から。リポジトリのページからも使う）。
+pub fn show_shortcuts(parent: &gtk::ApplicationWindow) {
     let accels = accels();
     let group = |title: &str, items: &[(String, String)]| {
         let group = gtk::ShortcutsGroup::builder().title(title).build();
@@ -1079,16 +1084,17 @@ fn show_shortcuts(p: &Rc<Parts>) {
     window.extend(table(Menu::Window));
     section.add_group(&group(&tr!("Window"), &window));
     let window = gtk::ShortcutsWindow::builder()
-        .transient_for(&p.window())
+        .transient_for(parent)
         .modal(true)
         .build();
     window.add_section(&section);
     window.present();
 }
 
-fn show_about(p: &Rc<Parts>) {
+/// About（リポジトリのページからも使う）。
+pub fn show_about(parent: &gtk::ApplicationWindow) {
     gtk::AboutDialog::builder()
-        .transient_for(&p.window())
+        .transient_for(parent)
         .modal(true)
         .program_name("Amon Hen")
         // 配るときは scripts/package-gtk4.sh が版を埋め込む。
