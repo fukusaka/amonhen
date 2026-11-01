@@ -405,6 +405,9 @@ impl Inner {
         // 一致したものだけを出しているなら、どの行も一致なので隣の行へ。
         if self.only.is_active() {
             let count = self.matches.borrow().len() as u32;
+            if count == 0 {
+                self.view.display().beep();
+            }
             if count > 0 {
                 let row = match self.view.selected() {
                     Some(r) if step >= 0 => (r + 1) % count,
@@ -418,6 +421,10 @@ impl Inner {
         }
         let matches = self.matches.borrow().clone();
         if matches.is_empty() {
+            // 一致がなければ鳴らす（macOS 版と同じ。探す前なら鳴らさない）。
+            if self.searched.borrow().is_some() {
+                self.view.display().beep();
+            }
             self.update_count();
             return;
         }
