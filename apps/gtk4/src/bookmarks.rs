@@ -617,12 +617,12 @@ fn scan_root(root: &ScanRoot) -> Result<Vec<String>, String> {
     use amonhen_remote::ssh;
     let target = ssh::Target::parse(&root.path).map_err(|e| e.to_string())?;
     let program = std::env::var("AMONHEN_SSH").unwrap_or_else(|_| "ssh".into());
-    // SSH 先ごとの選択（macOS の Settings > SSH Hosts）は、この FE にはまだない。
+    // SSH 先ごとの選択（Settings > SSH Hosts のエンジン・ログインシェル・環境。開くときと同じ）。
     let found = ssh::find_repositories(
         &program,
         &target,
         &ssh_daemons(),
-        &ssh::HostOptions::default(),
+        &crate::sshhosts::options_for(&root.path),
         root.depth,
         &root.excludes,
     )
