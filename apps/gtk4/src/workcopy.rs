@@ -1172,7 +1172,7 @@ impl Inner {
             Inner::toggle_entry(&this, &e);
         });
         let (letter, css) = state_letter(entry);
-        let state = gtk::Label::new(Some(letter));
+        let state = gtk::Label::new(Some(&letter));
         state.set_width_chars(2);
         state.add_css_class(css);
         state.add_css_class("monospace");
@@ -2231,24 +2231,23 @@ fn staged_count(entries: &[StatusEntry]) -> usize {
         .count()
 }
 
-/// 一覧に出す状態の文字と、その色の CSS のクラス。
-fn state_letter(entry: &StatusEntry) -> (&'static str, &'static str) {
-    match entry.kind {
-        StatusKind::Unmerged => ("U", "error"),
-        StatusKind::Untracked => ("?", "success"),
-        StatusKind::Renamed => ("R", "accent"),
-        StatusKind::Changed => {
-            let c = if entry.is_unstaged() {
-                entry.worktree
-            } else {
-                entry.index
-            };
-            match c {
-                b'A' => ("A", "success"),
-                b'D' => ("D", "error"),
-                _ => ("M", "warning"),
-            }
-        }
+/// 一覧に出す状態の文字と、その色の CSS のクラス（macOS 版と同じ）。作業ツリーの側を優先し、作業ツリーに変更が
+/// なければ index の側。untracked は U（緑）、コンフリクトは ⚠（赤）。
+fn state_letter(entry: &StatusEntry) -> (String, &'static str) {
+    if entry.kind == StatusKind::Unmerged {
+        return ("⚠".to_owned(), "error");
+    }
+    let state = if entry.worktree != b'.' {
+        entry.worktree
+    } else {
+        entry.index
+    };
+    match state {
+        b'?' => ("U".to_owned(), "success"),
+        b'A' => ("A".to_owned(), "success"),
+        b'D' => ("D".to_owned(), "error"),
+        b'R' => ("R".to_owned(), "accent"),
+        c => ((c as char).to_string(), "warning"),
     }
 }
 
@@ -2349,5 +2348,18 @@ mod tests {
         ];
         assert_eq!(staged_count(&entries), 1);
         assert_eq!(staged_count(&entries[..1]), 0);
+    }
+
+    /// 状態の文字は macOS 版と同じ: untracked は U、コンフリクトは ⚠、作業ツリーの側を先に見る。
+    #[test]
+    fn state_letters_follow_macos() {
+        let letter = |e: StatusEntry| state_letter(&e).0;
+        assert_eq!(letter(entry(StatusKind::Untracked, "a", b'?', b'?')), "U");
+        assert_eq!(letter(entry(StatusKind::Unmerged, "a", b'U', b'U')), "⚠");
+        assert_eq!(letter(entry(StatusKind::Changed, "a", b'A', b'M')), "M");
+        assert_eq!(letter(entry(StatusKind::Changed, "a", b'A', b'.')), "A");
+        assert_eq!(letter(entry(StatusKind::Changed, "a", b'.', b'D')), "D");
+        assert_eq!(letter(entry(StatusKind::Renamed, "a", b'R', b'.')), "R");
+        assert_eq!(letter(entry(StatusKind::Changed, "a", b'T', b'.')), "T");
     }
 }
