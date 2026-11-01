@@ -1653,7 +1653,6 @@
 "Explain This Hunk with AI" = "AI でこの hunk を解説";
 "One hunk of {path}" = "{path} の hunk 1 つ";
 "Hunk Explanation" = "hunk の解説";
-"Suggest" = "提案";
 "AI: suggest a commit message from the staged changes" = "AI: stage 済みの変更からコミットメッセージを提案する";
 "The diff of {count} staged files" = "stage 済みの {count} ファイルの差分";
 "Suggested Commit Message" = "コミットメッセージの提案";

@@ -232,7 +232,12 @@ impl WorkingCopy {
         )));
         commit_row.append(&summary_count);
         // AI: stage 済みの変更からメッセージを提案する。
-        let suggest = gtk::Button::with_label(&tr!("Suggest"));
+        let suggest = gtk::Button::new();
+        // macOS 版と同じ sparkles のアイコン。
+        let icon = crate::icon::Icon::default();
+        icon.set(crate::icon::Kind::Sparkles, false);
+        suggest.set_child(Some(&icon));
+        suggest.add_css_class("flat");
         crate::assist::track(
             &suggest,
             tr!("AI: suggest a commit message from the staged changes"),
