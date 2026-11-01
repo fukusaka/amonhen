@@ -841,8 +841,7 @@ impl Browser {
             if let Some(chosen) = chosen
                 && chosen != *b.category.borrow()
             {
-                crate::settings::set_string(CATEGORY_KEY, &chosen.key());
-                *b.category.borrow_mut() = chosen;
+                b.set_category(chosen);
                 b.reload_table();
             }
         });
@@ -1122,7 +1121,7 @@ impl Browser {
         match found {
             Some(ancestors) => self.expanded.borrow_mut().extend(ancestors),
             // 消えたグループ・フォルダを選んでいたら、すべてに戻す。
-            None => *self.category.borrow_mut() = Category::All,
+            None => self.set_category(Category::All),
         }
         let mut rows: Vec<SideRow> = Vec::new();
         fn flatten(
@@ -1238,6 +1237,12 @@ impl Browser {
             crate::settings::set_string(EXPANDED_KEY, &keys.join("\n"));
         }
         self.reload_sidebar();
+    }
+
+    /// 選んでいる分類を替えて覚える（次にページを開いたときもそれを選ぶ。macOS 版の `didSet` と同じ）。
+    fn set_category(&self, category: Category) {
+        crate::settings::set_string(CATEGORY_KEY, &category.key());
+        *self.category.borrow_mut() = category;
     }
 
     fn count_text(&self, category: &Category) -> String {
@@ -1572,7 +1577,7 @@ impl Browser {
                         if let Some(new) = b.ask(&tr!("Rename Group"), &tr!("Group name"), &n).await
                         {
                             bookmarks::rename_group(&n, &new);
-                            *b.category.borrow_mut() = Category::Group(new);
+                            b.set_category(Category::Group(new));
                             b.reload();
                         }
                     });
@@ -1829,7 +1834,7 @@ impl Browser {
             if let Some(location) = choose_remote_scan_folder(&b.window(), host, None).await {
                 bookmarks::add_scan_root(&location);
                 if let Some(h) = bookmarks::ssh_host(&location) {
-                    *b.category.borrow_mut() = Category::Host(h);
+                    b.set_category(Category::Host(h));
                     b.reload();
                 }
             }
@@ -1841,7 +1846,7 @@ impl Browser {
         glib::spawn_future_local(async move {
             if let Some(name) = b.ask(&tr!("New Group"), &tr!("Group name"), "").await {
                 bookmarks::add_group(&name);
-                *b.category.borrow_mut() = Category::Group(name);
+                b.set_category(Category::Group(name));
                 b.reload();
             }
         });
@@ -1879,7 +1884,7 @@ impl Browser {
             for r in &roots {
                 bookmarks::remove_scan_root(r);
             }
-            *b.category.borrow_mut() = Category::All;
+            b.set_category(Category::All);
             b.reload();
         });
     }
