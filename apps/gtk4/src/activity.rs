@@ -134,6 +134,11 @@ fn ms(value: f64) -> String {
     }
 }
 
+/// 並べた `len` 個のうち、割合 `p` の位置（macOS 版と同じく `len × p` を切り捨て、最後を超えない）。
+fn quantile_index(len: usize, p: f64) -> usize {
+    ((len as f64 * p) as usize).min(len.saturating_sub(1))
+}
+
 fn label(text: &str, css: &[&str]) -> gtk::Label {
     let l = gtk::Label::new(Some(text));
     l.set_xalign(0.0);
@@ -635,7 +640,7 @@ impl Activity {
         let (scrolled, perf_list) = list();
         perf.append(&scrolled);
         perf.append(&label(
-            &tr!("The last 500 of each item. The color changes when p95 exceeds 16.7 ms (one frame at 60 Hz)."),
+            &tr!("The last 500 of each since the app started. Orange when p95 exceeds twice a frame (16.7 ms)."),
             &["dim-label", "caption"],
         ));
         stack.add_titled(&perf, Some("performance"), &tr!("Performance"));
@@ -667,7 +672,7 @@ impl Activity {
                     let last = *values.last().unwrap_or(&0.0);
                     let mut sorted = values.clone();
                     sorted.sort_by(f64::total_cmp);
-                    let at = |p: f64| sorted[((sorted.len() - 1) as f64 * p).round() as usize];
+                    let at = |p: f64| sorted[quantile_index(sorted.len(), p)];
                     let p95 = at(0.95);
                     let slow: &[&str] = if p95 > 16.7 {
                         &["activity-warning", "numeric"]
@@ -906,5 +911,21 @@ impl Activity {
             target,
             retargeted,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// p50・p95 の位置は macOS 版と同じ（`len × p` を切り捨て）。
+    #[test]
+    fn quantiles_match_macos() {
+        assert_eq!(quantile_index(1, 0.95), 0);
+        assert_eq!(quantile_index(2, 0.5), 1);
+        assert_eq!(quantile_index(10, 0.5), 5);
+        assert_eq!(quantile_index(10, 0.95), 9);
+        assert_eq!(quantile_index(100, 0.95), 95);
+        assert_eq!(quantile_index(10, 1.0), 9);
     }
 }

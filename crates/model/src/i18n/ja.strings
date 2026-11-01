@@ -586,7 +586,7 @@
 "Undo to Here" = "ここまで戻す";
 "Undo this operation." = "この操作を戻す";
 "Undo the {count} latest operations, down to and including this one." = "この操作を含め、これより新しい {count} 個の操作を順に戻す";
-"The last 500 of each item. The color changes when p95 exceeds 16.7 ms (one frame at 60 Hz)." = "項目ごとに直近 500 回。p95 が 16.7 ms（60 Hz の 1 フレーム）を超えたら色を変える。";
+"The last 500 of each since the app started. Orange when p95 exceeds twice a frame (16.7 ms)." = "アプリを起動してからの直近 500 回ずつ。p95 が 1 フレームの倍（16.7 ms）を超えたら橙色。";
 "Performance" = "パフォーマンス";
 "Item" = "項目";
 "Count" = "回数";
