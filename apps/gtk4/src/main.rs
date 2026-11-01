@@ -941,6 +941,8 @@ fn build_tab(
                 };
                 sshhosts::apply_signature_check(&repo, &location);
                 details.set_location(&location);
+                // タグの署名の吹き出しの「Checked on」も（macOS 版の `updateSignaturePlace`）。
+                sidebar.set_location(&location);
                 view.forget_signatures();
                 sidebar.forget_signatures();
                 // 詳細の署名は、時間のかかる分を読み直して出し直す。
