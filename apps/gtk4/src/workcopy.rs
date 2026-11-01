@@ -860,6 +860,16 @@ impl Inner {
         });
     }
 
+    /// `source` で読んだ status を出す。その間に書き込む先の worktree を替えていたら捨てる（古い worktree の
+    /// 一覧で、今の worktree のマージエディタを捨ててしまわないように。新しい worktree の status は別に届く）。
+    fn show_from(this: &Rc<Self>, source: &Repository, status: Arc<StatusSnapshot>) {
+        let workdir = this.repo().and_then(|r| r.paths().workdir);
+        if source.paths().workdir != workdir {
+            return;
+        }
+        Inner::show(this, status);
+    }
+
     fn show(this: &Rc<Self>, status: Arc<StatusSnapshot>) {
         if this
             .status
@@ -1833,6 +1843,7 @@ impl Inner {
         this.message.set_visible(false);
         this.pending.set(this.pending.get() + 1);
         let weak = Rc::downgrade(this);
+        let source = repo.clone();
         glib::spawn_future_local(async move {
             let result = gio::spawn_blocking(move || {
                 op(&repo)
@@ -1843,7 +1854,7 @@ impl Inner {
             let Some(this) = weak.upgrade() else { return };
             this.pending.set(this.pending.get() - 1);
             match result {
-                Ok(Ok(status)) => Inner::show(&this, status),
+                Ok(Ok(status)) => Inner::show_from(&this, &source, status),
                 Ok(Err(e)) => this.show_error(&e),
                 Err(_) => {}
             }
@@ -1867,6 +1878,7 @@ impl Inner {
         let weak = Rc::downgrade(this);
         this.commit.set_sensitive(false);
         let Some(repo) = this.repo() else { return };
+        let source = repo.clone();
         this.message.set_visible(false);
         // hooks の出力を探すため、始めた時刻（Activity の記録と同じ UNIX 時刻のミリ秒）を覚えておく。
         let started = std::time::SystemTime::now()
@@ -1903,7 +1915,7 @@ impl Inner {
                     this.subject.set_text("");
                     this.body.buffer().set_text("");
                     this.amend.set_active(false);
-                    Inner::show(&this, status);
+                    Inner::show_from(&this, &source, status);
                     if let Some(then) = then {
                         then();
                     }
