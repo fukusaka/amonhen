@@ -452,7 +452,7 @@ impl Inner {
                 crate::sheets::checkout(&a, crate::sheets::CheckoutTarget::Detach(h.clone()));
             },
         ));
-        items.extend(crate::commitops::reset(actions, &hex));
+        items.push(crate::commitops::reset(actions, &hex));
         // 今の HEAD と比べる（`<hex>...HEAD` の範囲で Range Diff。一番上の行は今の HEAD そのもの）。
         if row > 0
             && let Some(opener) = self.range_diff.borrow().clone()

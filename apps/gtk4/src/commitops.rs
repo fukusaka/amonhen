@@ -54,7 +54,7 @@ pub fn menu(
             crate::sheets::checkout(&a, crate::sheets::CheckoutTarget::Detach(h.clone()));
         },
     ));
-    items.extend(reset(actions, &hex));
+    items.push(reset(actions, &hex));
     items.push(Item::Separator);
     if !is_merge {
         // コミットの編集は、History の編集モードで（変更を積んで Apply）。ここにあるのは、最初の変更を入れて
@@ -113,53 +113,71 @@ pub fn menu(
     items
 }
 
-/// 「Reset <今のブランチ> to <コミット> ▸」と、その下の Soft・Mixed・Hard（History と Reflog の右クリック。
-/// docs/ux.md の「5c. Reset」）。Soft などは git の言葉のまま。merge・rebase などの途中なら出さない（コアも断る）。
-pub fn reset(actions: &Rc<Actions>, hex: &str) -> Option<Item> {
-    if actions.in_sequence() {
-        return None;
-    }
+/// 「Reset <今のブランチ> to <コミット>…」（History と Reflog の右クリック。macOS 版の `resetMenuItem`）。動かし方
+/// （Soft・Mixed・Hard）は確認のシートで選ぶ。merge などの途中ならコアが断る。
+pub fn reset(actions: &Rc<Actions>, hex: &str) -> Item {
     let branch = actions.head().unwrap_or_else(|| "HEAD".to_owned());
-    let modes = [
-        ("Soft…", "soft", tr!("Soft: keep the changes staged")),
-        (
-            "Mixed…",
-            "mixed",
-            tr!("Mixed: keep the changes in the working tree"),
-        ),
-        (
-            "Hard…",
-            "hard",
-            tr!("Hard: match the commit (uncommitted changes are stashed first)"),
-        ),
-    ];
-    let children = modes
-        .into_iter()
-        .map(|(title, mode, what)| {
-            let (a, h, b) = (actions.clone(), hex.to_owned(), branch.clone());
-            menu::action(title, move || {
-                // 動かし方と、外れたコミットの行き先（Reflog）と、戻せること。
-                let message = format!(
-                    "{what}\n{} {}",
-                    tr!("Commits taken off stay in Reflog."),
-                    crate::sheets::can_undo()
-                );
-                crate::sheets::confirm_then(
-                    &a,
-                    tr!(
-                        "Reset {branch} to {id}?",
-                        branch = b,
-                        id = crate::titles::short(&h)
-                    ),
-                    message,
-                    "Reset".to_owned(),
-                    false,
-                    vec![json!({ "op": "reset", "oid": h, "mode": mode })],
-                );
-            })
-        })
-        .collect();
-    Some(Item::Submenu(crate::titles::reset(&branch, hex), children))
+    let (a, h) = (actions.clone(), hex.to_owned());
+    menu::action(crate::titles::reset(&branch, hex), move || {
+        ask_reset(&a, &h)
+    })
+}
+
+/// 今のブランチ（detached なら HEAD）を `hex` に動かす前に確かめる。動かし方はシートの中のラジオボタンで選ぶ
+/// （既定は Mixed。macOS 版の `reset(to:)` と同じ）。
+fn ask_reset(actions: &Rc<Actions>, hex: &str) {
+    let (actions, hex) = (actions.clone(), hex.to_owned());
+    glib::spawn_future_local(async move {
+        let branch = actions.head().unwrap_or_else(|| "HEAD".to_owned());
+        let parent = crate::sheets::parent(&actions);
+        let sheet = crate::sheets::Sheet::new(
+            parent.as_ref(),
+            &tr!(
+                "Reset {branch} to {id}?",
+                branch = branch,
+                id = crate::titles::short(&hex)
+            ),
+            &format!(
+                "{} {}",
+                tr!("Commits taken off stay in Reflog."),
+                crate::sheets::can_undo()
+            ),
+        );
+        let modes = [
+            ("soft", tr!("Soft: keep the changes staged")),
+            ("mixed", tr!("Mixed: keep the changes in the working tree")),
+            (
+                "hard",
+                tr!("Hard: match the commit (uncommitted changes are stashed first)"),
+            ),
+        ];
+        let column = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        let radios: Vec<gtk::CheckButton> = modes
+            .iter()
+            .map(|(_, title)| gtk::CheckButton::with_label(title))
+            .collect();
+        for r in &radios {
+            if r != &radios[0] {
+                r.set_group(Some(&radios[0]));
+            }
+            column.append(r);
+        }
+        radios[1].set_active(true);
+        sheet.add(&column);
+        sheet.buttons("Reset", false, None);
+        if sheet.run().await != crate::sheets::Response::Ok {
+            return;
+        }
+        let Some(mode) = radios
+            .iter()
+            .zip(modes.iter())
+            .find(|(r, _)| r.is_active())
+            .map(|(_, (mode, _))| *mode)
+        else {
+            return;
+        };
+        actions.perform(json!({ "op": "reset", "oid": hex, "mode": mode }));
+    });
 }
 
 /// 複数選んだ行の上のメニュー（macOS 版の `buildMultipleMenu` と同じ）。`rows` は昇順（新しい順）。

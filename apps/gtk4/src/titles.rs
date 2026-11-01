@@ -70,9 +70,9 @@ pub fn delete(name: &str) -> String {
     tr!("Delete {name}…", name = name)
 }
 
-/// 「Reset main to 1a2b3c4d ▸」（下に Soft・Mixed・Hard を開く）。
+/// 「Reset main to 1a2b3c4d…」（動かし方は確認のシートで選ぶ）。
 pub fn reset(branch: &str, oid: &str) -> String {
-    tr!("Reset {branch} to {id}", branch = branch, id = short(oid))
+    tr!("Reset {branch} to {id}…", branch = branch, id = short(oid))
 }
 
 /// Repositories の左の分類: 「すべて Fetch（3）」。

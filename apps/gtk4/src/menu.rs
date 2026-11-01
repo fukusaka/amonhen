@@ -14,7 +14,7 @@ pub enum Item {
         on: bool,
         f: Box<dyn Fn()>,
     },
-    /// 下に開くメニュー（「Reset … ▸」の Soft・Mixed・Hard など）。
+    /// 下に開くメニュー（Repositories の行の Group・Color Label など）。
     Submenu(String, Vec<Item>),
     /// ここで区切る（GNOME のメニューでは、区切りは節の境目）。
     Separator,
