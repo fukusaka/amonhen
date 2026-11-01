@@ -53,12 +53,23 @@ pub fn apply_added_names() {
     }
 }
 
-/// 足した名前を変えて、すぐ効かせる（共有の daemon への今のつながりにも送る）。
-fn set_added_names(names: &[String]) {
+/// 足した名前の設定の字（Undo の記録に使う）。
+fn added_text() -> String {
+    crate::settings::string(ADDED).unwrap_or_default()
+}
+
+/// 足した名前の字を `added_names` の形にする（並べ替えて重なりを除く）。
+fn added_text_of(names: &[String]) -> String {
     let mut names = names.to_vec();
     names.sort();
     names.dedup();
-    crate::settings::set_string(ADDED, &names.join(", "));
+    names.join(", ")
+}
+
+/// 足した名前（設定の字）を変えて、すぐ効かせる（共有の daemon への今のつながりにも送る）。Repository Settings の
+/// Undo からも呼ぶ。
+pub(crate) fn set_added_text(text: &str) {
+    crate::settings::set_string(ADDED, text);
     apply_added_names();
     glib::spawn_future_local(async {
         let _ = gio::spawn_blocking(amonhen_remote::local::update_environment).await;
@@ -181,6 +192,8 @@ struct Table {
     binding: Cell<bool>,
     /// Windows の SSH 先か（場所の区切りが `;`）。
     windows: Cell<bool>,
+    /// 渡すかの書き換えを記録する設定の窓（この機械の表だけ）。
+    settings: RefCell<std::rc::Weak<RepoSettings>>,
 }
 
 fn row_of(o: &glib::Object) -> Option<Row> {
@@ -214,6 +227,7 @@ impl Table {
             git_directory: RefCell::default(),
             binding: Cell::new(false),
             windows: Cell::new(false),
+            settings: RefCell::default(),
         })
     }
 
@@ -249,16 +263,35 @@ impl Table {
         self.show_detail();
     }
 
-    /// 渡すかを変える（足した名前に入れる・外す）。
+    /// 渡すかを変える（足した名前に入れる・外す）。Undo できるように、設定の窓の書き換えとして記録する（macOS
+    /// 版と同じ）。表は設定の知らせで作り直す（`page`）。
     fn set_passed(self: &Rc<Self>, name: &str, on: bool) {
         let mut names = self.added.borrow().clone();
         names.retain(|n| n != name);
         if on {
             names.push(name.to_owned());
         }
-        set_added_names(&names);
+        let (old, new) = (added_text(), added_text_of(&names));
+        if old == new {
+            return;
+        }
+        match self.settings.borrow().upgrade() {
+            Some(s) => s.apply_changes(
+                vec![crate::reposettings::Change {
+                    key: crate::reposettings::ADDED_ENVIRONMENT.to_owned(),
+                    old: Some(old),
+                    new: Some(new),
+                }],
+                None,
+                crate::reposettings::Record::New,
+            ),
+            None => set_added_text(&new),
+        }
+    }
+
+    /// 足した名前が変わった（ここで変えたか Undo）: 読み直して作り直す（チェックの知らせの中では作り直さない）。
+    fn added_changed(self: &Rc<Self>) {
         self.added.replace(added_names());
-        // チェックの知らせの中で行を作り直さない。
         let w = Rc::downgrade(self);
         glib::idle_add_local_once(move || {
             if let Some(t) = w.upgrade() {
@@ -688,6 +721,15 @@ pub fn page(s: &Rc<RepoSettings>) -> gtk::Widget {
             t.chosen_git
                 .replace((git.source != "path" && !git.source.is_empty()).then_some(git.program));
             t.rebuild();
+        }
+    });
+    table.settings.replace(Rc::downgrade(s));
+    let w = Rc::downgrade(&table);
+    crate::settings::connect_changed_while(&b, move |key| {
+        if key == ADDED
+            && let Some(t) = w.upgrade()
+        {
+            t.added_changed();
         }
     });
     table.rebuild();

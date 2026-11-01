@@ -112,6 +112,12 @@ impl Change {
     }
 }
 
+/// git の設定でない書き換えの鍵（git のキーには使えない字で始める）。Undo の記録に git の設定と並べて積む。
+/// この機械（か SSH 先）の使う git（`setMachineGit`。macOS 版の「Change git」）。
+pub(crate) const MACHINE_GIT: &str = "@machineGit";
+/// 環境変数の「渡す」の名前（アプリの設定 `addedEnvironmentNames`。macOS 版の「Change Environment Variables」）。
+pub(crate) const ADDED_ENVIRONMENT: &str = "@addedEnvironmentNames";
+
 /// 書き換えの記録の向き。
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Record {
@@ -944,16 +950,29 @@ impl RepoSettings {
         record: Record,
     ) {
         let global = self.level == Level::AllRepositories;
-        let commands: Vec<Value> = changes
-            .iter()
-            .map(|c| {
-                let mut command = json!({"op": "configSet", "key": c.key, "value": c.new});
-                if global {
-                    command["scope"] = json!("global");
+        let mut commands: Vec<Value> = Vec::new();
+        for c in &changes {
+            match c.key.as_str() {
+                MACHINE_GIT => {
+                    let mut command = json!({"op": "setMachineGit"});
+                    if let Some(git) = c.new.as_ref().filter(|g| !g.is_empty()) {
+                        command["git"] = json!(git);
+                    }
+                    commands.push(command);
                 }
-                command
-            })
-            .collect();
+                // アプリの設定なので、ここで書く。
+                ADDED_ENVIRONMENT => {
+                    crate::environment::set_added_text(c.new.as_deref().unwrap_or_default())
+                }
+                _ => {
+                    let mut command = json!({"op": "configSet", "key": c.key, "value": c.new});
+                    if global {
+                        command["scope"] = json!("global");
+                    }
+                    commands.push(command);
+                }
+            }
+        }
         let (repo, weak) = (self.repo.clone(), self.weak());
         glib::spawn_future_local(async move {
             let result = run_all(&repo, commands).await;
