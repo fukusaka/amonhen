@@ -130,6 +130,7 @@ struct Inner {
     discard: gtk::Button,
     /// 1 本の差分で表せないファイルで、作業ツリーの側と stage 済みの側を切り替える。
     sides: gtk::Box,
+    worktree_side: gtk::ToggleButton,
     staged_side: gtk::ToggleButton,
     /// コンフリクトのファイルの解決のボタン。
     conflict_buttons: gtk::Box,
@@ -448,6 +449,7 @@ impl WorkingCopy {
             lines,
             discard,
             sides,
+            worktree_side,
             staged_side,
             conflict_buttons,
             right_stack,
@@ -781,8 +783,18 @@ impl Inner {
             }
         });
         let weak = Rc::downgrade(this);
-        this.staged_side.connect_toggled(move |_| {
+        this.staged_side.connect_toggled(move |side| {
             let Some(this) = weak.upgrade() else { return };
+            // 出している差分に合わせただけなら、読み直さない。
+            let showing = this.current.borrow().as_ref().and_then(|c| {
+                c.0.as_ref()
+                    .map(|w| (w.entry.path.clone(), w.staged == side.is_active()))
+            });
+            if let Some((path, true)) = showing
+                && this.selected.borrow().as_deref() == Some(path.as_str())
+            {
+                return;
+            }
             let entry = this.selected_entry();
             if let Some(entry) = entry {
                 Inner::load_diff(&this, entry, false);
@@ -1796,7 +1808,15 @@ impl Inner {
     /// 1 ファイルの差分を裏で読んで出す。`same` なら同じファイルの読み直し（位置を保つ）。
     fn load_diff(this: &Rc<Self>, entry: StatusEntry, same: bool) {
         let Some(repo) = this.repo() else { return };
-        let prefer_staged = this.staged_side.is_active();
+        // 両側に変更のあるファイルは作業ツリーの側から。同じファイルを読み直すときだけ、今の側のまま
+        // （macOS 版の `side(for:)`）。
+        let reselect = this
+            .current
+            .borrow()
+            .as_ref()
+            .and_then(|c| c.0.as_ref())
+            .is_some_and(|w| w.entry.path == entry.path);
+        let prefer_staged = reselect && this.staged_side.is_active();
         let generation = this.generation.get() + 1;
         this.generation.set(generation);
         this.path.set_text(&entry.path);
@@ -1851,7 +1871,14 @@ impl Inner {
                     }));
                     let checks = w.is_some_and(|w| w.combined.is_some());
                     this.conflict_buttons.set_visible(false);
+                    let staged = w.is_some_and(|w| w.staged);
                     this.current.replace(Some(working));
+                    // 切り替えを、出した側に合わせる（ほかのファイルで Staged にしたままにしない）。
+                    if staged {
+                        this.staged_side.set_active(true);
+                    } else {
+                        this.worktree_side.set_active(true);
+                    }
                     this.diff.show_working(view, same, checks);
                     this.find.refresh();
                     if let Some(row) = this.toggle_once.take() {
