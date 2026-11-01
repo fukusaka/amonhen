@@ -714,7 +714,22 @@ pub struct Facts {
     pub local: bool,
     /// origin（なければ最初のリモート）が GitHub（gh があるときだけ調べる）。
     pub github: bool,
+    /// まだ開けていないタブ（つないでいる途中・つなげなかった）。リポジトリの操作はどれも使えない（macOS 版の
+    /// つないでいるタブは、リポジトリの窓でないので、その操作がない）。
+    pub unopened: bool,
 }
+
+/// リポジトリを開いていないと使えない、表の操作のメニュー（File・Window・アプリのものは開く前でも使える）。
+const REPOSITORY_MENUS: &[amonhen_commands::Menu] = &[
+    amonhen_commands::Menu::Edit,
+    amonhen_commands::Menu::View,
+    amonhen_commands::Menu::Navigate,
+    amonhen_commands::Menu::Repository,
+    amonhen_commands::Menu::Commit,
+];
+
+/// 表にない、リポジトリを開いていないと使えないタブのアクション。
+const REPOSITORY_ONLY: &[&str] = &["find", "find-next", "find-previous"];
 
 /// 状態から、タブのアクション（`win.<id>`）ごとに使えるか（macOS 版の `RepositoryWindow.validate` と同じ）。
 /// ここにないアクションはいつも使える。
@@ -724,7 +739,7 @@ pub fn enabled(f: &Facts) -> Vec<(&'static str, bool)> {
     // Skip は 1 つずつ当てていく操作だけ（merge・revert にはない）。
     let skip = sequence.is_some_and(|s| s.starts_with("rebase") || s == "cherry-pick" || s == "am");
     let commit = f.working_copy && f.can_commit;
-    vec![
+    let mut list = vec![
         ("continue", !idle),
         ("abort", !idle),
         ("skip", skip),
@@ -758,7 +773,23 @@ pub fn enabled(f: &Facts) -> Vec<(&'static str, bool)> {
         ("reveal-in-files", f.local),
         ("open-on-github", f.github),
         ("create-pull-request", f.github && f.head_branch),
-    ]
+    ];
+    // 開けていないタブでは、リポジトリの操作をどれも使えなくする。
+    let opened = !f.unopened;
+    for (_, yes) in &mut list {
+        *yes &= opened;
+    }
+    for section in amonhen_commands::SECTIONS {
+        if !REPOSITORY_MENUS.contains(&section.menu) {
+            continue;
+        }
+        for id in section.ids {
+            if !list.iter().any(|(n, _)| n == id) {
+                list.push((id, opened));
+            }
+        }
+    }
+    list
 }
 
 /// [`enabled`] の答えを、タブのアクションに入れる。
@@ -772,6 +803,14 @@ fn apply_facts(group: &glib::WeakRef<gio::SimpleActionGroup>, facts: &Facts) {
             .and_downcast::<gio::SimpleAction>()
         {
             action.set_enabled(yes);
+        }
+    }
+    for name in REPOSITORY_ONLY {
+        if let Some(action) = group
+            .lookup_action(name)
+            .and_downcast::<gio::SimpleAction>()
+        {
+            action.set_enabled(!facts.unopened);
         }
     }
 }
@@ -818,6 +857,31 @@ mod tests {
             reply(json!({ "ok": true, "outcome": "done", "info": { "remaining": ["b"] } })),
             None
         );
+    }
+
+    #[test]
+    fn an_unopened_tab_has_no_repository_actions() {
+        let facts = Facts {
+            unopened: true,
+            ..idle()
+        };
+        for name in [
+            "refresh",
+            "fetch",
+            "show-history",
+            "go-to-parent",
+            "commit",
+            "find-in-history",
+        ] {
+            assert!(!of(&facts, name), "{name}");
+        }
+        // File・Window・アプリの操作は表に入れない（いつも使える）。
+        for name in ["quick-open", "repositories", "activity", "settings"] {
+            assert!(enabled(&facts).iter().all(|(n, _)| *n != name), "{name}");
+        }
+        // 開けたら戻る。
+        assert!(of(&idle(), "refresh"));
+        assert!(of(&idle(), "fetch"));
     }
 
     #[test]

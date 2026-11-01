@@ -80,6 +80,8 @@ impl Buttons {
     /// まだ開けていないリポジトリのタブ（つないでいる途中・つなげなかった）: ブランチを「—」にし、リポジトリの
     /// 名前とともに押せなくする（macOS 版と同じ）。
     pub fn show_unopened(&self) {
+        // メニューとショートカットのリポジトリの操作も使えなくする（つないでいるタブはリポジトリの窓でない）。
+        self.actions.update_facts(|f| f.unopened = true);
         self.branch.set_text("—");
         self.branch_button.set_sensitive(false);
         self.repository.set_sensitive(false);
@@ -87,6 +89,7 @@ impl Buttons {
 
     /// 今のブランチ、上流との差（↓ 取り込める・↑ 送れる）、stash があるか。
     pub fn show_refs(&self, refs: &RefsSnapshot) {
+        self.actions.update_facts(|f| f.unopened = false);
         self.branch_button.set_sensitive(true);
         self.repository.set_sensitive(true);
         let head = refs.refs.head_branch.as_deref();

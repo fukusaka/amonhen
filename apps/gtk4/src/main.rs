@@ -1700,6 +1700,8 @@ fn build_tab(
     let github_loader = github::Loader::new(&actions, &view, &sidebar);
     let mut github_started = false;
     search.install(&tab.group, app);
+    // 足した検索のアクションにも、使えるか（開けていないタブでは使えない）を入れる。
+    actions.update_facts(|_| {});
     header.pack_end(&search.toggle);
     let order = settings::history_order();
     // 見張りからの変化の知らせ（裏の糸が受ける）。タブを閉じたら、知らせを受ける糸と下の受け手を止める。
