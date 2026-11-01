@@ -1279,6 +1279,20 @@ fn build_tab(
             glib::ControlFlow::Continue
         });
     }
+    // 後ろのタブになったら、History のメモリを絞る（macOS 版と同じ）。
+    let v = view.downgrade();
+    tab.connect_back(move || {
+        let Some(view) = v.upgrade() else { return };
+        let dropped = view.shrink_for_background();
+        if dropped > 0
+            && let Some((repo, _)) = view.current()
+        {
+            activity::event(
+                &repo_name(&repo),
+                tr!("Background tab: dropped {count} History chunks", count = dropped),
+            );
+        }
+    });
     // fetch・pull の後は commit-graph に増えた分を書き足す（macOS 版の `onFetch`）。
     let commit_graph = Rc::new(CommitGraph::default());
     let (v, cg) = (view.downgrade(), commit_graph.clone());

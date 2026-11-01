@@ -44,6 +44,8 @@ pub struct Tab {
     closed: Cell<bool>,
     on_close: RefCell<Vec<Box<dyn FnOnce()>>>,
     on_front: RefCell<Vec<FrontCallback>>,
+    /// 前のタブでなくなったら呼ぶ（裏になった History のメモリを絞る）。
+    on_back: RefCell<Vec<FrontCallback>>,
     /// 書き込む先の worktree の名前（確認のシートに出す。前にあるときに窓に入れる）。
     worktree_name: RefCell<Option<String>>,
 }
@@ -86,6 +88,7 @@ impl Tab {
             closed: Cell::new(false),
             on_close: RefCell::default(),
             on_front: RefCell::default(),
+            on_back: RefCell::default(),
             worktree_name: RefCell::default(),
         });
         // 前に出した後で足したアクション（メニューの操作は、タブを窓に置いてから入れる）も窓に入れる。
@@ -153,6 +156,18 @@ impl Tab {
     /// タブが前に出たら（窓が前に来たときも）`f` を呼ぶ。
     pub fn connect_front(&self, f: impl Fn() + 'static) {
         self.on_front.borrow_mut().push(Rc::new(f));
+    }
+
+    /// 窓の中でほかのタブが前に出て、このタブが後ろになったら `f` を呼ぶ。
+    pub fn connect_back(&self, f: impl Fn() + 'static) {
+        self.on_back.borrow_mut().push(Rc::new(f));
+    }
+
+    fn back(&self) {
+        let callbacks: Vec<FrontCallback> = self.on_back.borrow().clone();
+        for f in callbacks {
+            f();
+        }
     }
 
     fn front(&self) {
@@ -353,7 +368,15 @@ impl RepoWindow {
         {
             return;
         }
-        self.shown.replace(Rc::downgrade(tab));
+        let old = self.shown.replace(Rc::downgrade(tab)).upgrade();
+        // 後ろになったタブ（少し後で。切り替えの途中で重い仕事をしない）。
+        if let Some(old) = old.filter(|t| !t.closed()) {
+            glib::idle_add_local_once(move || {
+                if !old.is_shown() && !old.closed() {
+                    old.back();
+                }
+            });
+        }
         // ほかの窓の見出しになっていれば外す（タブを窓の間で移したとき）。
         if let Some(other) = tab.header.root().and_downcast::<gtk::Window>()
             && other != *self.window.upcast_ref::<gtk::Window>()

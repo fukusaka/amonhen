@@ -944,6 +944,21 @@ impl HistoryView {
         self.notify_selection();
     }
 
+    /// 裏のタブになった: 見えている所のほかのチャンクと並べた行を捨てる（前に戻ったら読み直す）。捨てた数を返す。
+    /// macOS 版の `shrinkForBackground`。
+    pub fn shrink_for_background(&self) -> usize {
+        let rh = self.row_height().max(1.0);
+        let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
+        let height = self.height() as f32;
+        let first = (scroll / rh) as u32 / CHUNK_ROWS;
+        let last = (((scroll + height.max(rh)) / rh) as u32 / CHUNK_ROWS).max(first);
+        let mut st = self.state();
+        let before = st.chunks.len();
+        st.chunks.retain(|i, _| (first..=last).contains(i));
+        st.rows.retain(|r, _| (first..=last).contains(&(r / CHUNK_ROWS)));
+        before - st.chunks.len()
+    }
+
     /// すべての行を選ぶ（Ctrl+A）。
     fn select_all(&self) {
         let count = self.row_count();
