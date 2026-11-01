@@ -108,7 +108,11 @@ impl Pane {
             Some("selected"),
             &[("paragraph-background-rgba", &rgba(0.32))],
         );
-        buffer.create_tag(Some("resolved"), &[("foreground-rgba", &rgba(0.45))]);
+        // 解決済みのコンフリクトは、背景をごく薄くする（macOS 版と同じ）。
+        buffer.create_tag(
+            Some("resolved"),
+            &[("paragraph-background-rgba", &rgba(0.05))],
+        );
         let scrolled = gtk::ScrolledWindow::builder()
             .child(&view)
             .vexpand(true)
@@ -164,7 +168,7 @@ impl Pane {
                         let tag = gtk::TextTag::new(Some(&name));
                         tag.set_foreground_rgba(Some(&gdk::RGBA::new(r, g, b, 1.0)));
                         table.add(&tag);
-                        // 解決済みを薄くする色（"resolved"）のほうを優先する。
+                        // コンフリクトの印より下にする。
                         tag.set_priority(0);
                         tag
                     }
@@ -942,14 +946,13 @@ impl Editor {
                 pane.tag(
                     if chosen == Some(j) {
                         "selected"
-                    } else {
+                    } else if live {
                         "conflict"
+                    } else {
+                        "resolved"
                     },
                     r,
                 );
-                if !live {
-                    pane.tag("resolved", r);
-                }
             }
         }
         self.result.clear();
