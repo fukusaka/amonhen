@@ -867,7 +867,8 @@ impl Activity {
                 r();
             }
         });
-        // 操作の後に読み直す（付け替えた先の操作でも。同じものには 1 度だけつなぐ）。
+        // 操作の後と、同じタブで書き込む先の worktree を替えたら読み直す（付け替えた先の操作でも。同じものには
+        // 1 度だけつなぐ）。
         let connected: Rc<RefCell<Vec<std::rc::Weak<Actions>>>> = Rc::default();
         let connect_after = {
             let r = refresh_undo.clone();
@@ -878,8 +879,10 @@ impl Activity {
                     return;
                 }
                 c.push(Rc::downgrade(actions));
+                let r1 = r.clone();
+                actions.connect_after(move || r1());
                 let r = r.clone();
-                actions.connect_after(move || r());
+                actions.connect_repo_changed(move || r());
             }
         };
         let first = target.borrow().actions.clone();

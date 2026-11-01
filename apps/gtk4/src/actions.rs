@@ -29,6 +29,8 @@ pub struct Actions {
     on_change: RefCell<Option<Callback>>,
     /// 操作の後に呼ぶ（Activity の History など）。
     on_after: RefCell<Vec<Callback>>,
+    /// 書き込む先の worktree を替えたら呼ぶ（Activity の History など、Undo の先が変わるもの）。
+    on_repo: RefCell<Vec<Callback>>,
     on_failure: RefCell<Option<FailureCallback>>,
     on_done: RefCell<Option<DoneCallback>>,
     /// 今のブランチ（detached HEAD なら None）。Reset の名前と確認に出す。
@@ -57,6 +59,7 @@ impl Actions {
             undo,
             on_change: RefCell::default(),
             on_after: RefCell::default(),
+            on_repo: RefCell::default(),
             on_failure: RefCell::default(),
             on_done: RefCell::default(),
             head: RefCell::default(),
@@ -75,10 +78,19 @@ impl Actions {
     }
 
     pub fn set_repo(&self, repo: Arc<Repository>) {
-        let first = self.repo.borrow().is_none();
-        self.repo.replace(Some(repo));
-        if first {
+        let workdir = repo.paths().workdir;
+        let old = self.repo.replace(Some(repo));
+        let first = old.is_none();
+        // 同じ worktree を読み直しただけなら何もしない。
+        let moved = old.is_some_and(|old| old.paths().workdir != workdir);
+        if first || moved {
             self.refresh_undo();
+        }
+        if moved {
+            let callbacks: Vec<Callback> = self.on_repo.borrow().clone();
+            for f in callbacks {
+                f();
+            }
         }
     }
 
@@ -154,6 +166,11 @@ impl Actions {
     /// 操作の後に `f` を呼ぶ。
     pub fn connect_after(&self, f: impl Fn() + 'static) {
         self.on_after.borrow_mut().push(Rc::new(f));
+    }
+
+    /// 書き込む先の worktree を替えたら `f` を呼ぶ。
+    pub fn connect_repo_changed(&self, f: impl Fn() + 'static) {
+        self.on_repo.borrow_mut().push(Rc::new(f));
     }
 
     /// `command` を実行する。
