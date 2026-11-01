@@ -1,5 +1,6 @@
 //! コミットの詳細。macOS 版の「詳細」の見せ方と同じ並び: 上に作者とコミッター、英語の見出しの表（Commit・
-//! Parent・Child・Rev・Signature・Refs・Branches・Tags・Previous Tag・Pushed・Merged）、件名・本文・notes。
+//! Parent・Child・Rev・Signature・Refs・Tag・Branches・Tags・Previous Tag・Pushed・Merged Tag・Merged・
+//! Related）、件名・本文・トレーラー・notes。
 //! すぐ読める分（`commit_info`）を先に出し、時間のかかる分（`commit_extras`: 署名の検証・子・含むブランチと
 //! タグ・notes など）が届いたら表を作り直す。
 
@@ -271,6 +272,10 @@ fn ref_links(names: &[String]) -> String {
 enum Cell {
     Text(String),
     Markup(String),
+    /// 色を付けた文字（CSS のクラス）。
+    Styled(String, &'static str),
+    /// 部品そのもの（署名の印など）。
+    Widget(gtk::Widget),
 }
 
 /// 2 つ選んだときの差分の取り方の切り替え（macOS 版と同じ言葉。訳の鍵）。
@@ -876,66 +881,55 @@ impl Details {
                 rows.push(("Rev".into(), Cell::Text(rev.into())));
             }
         }
-        let signature = signature_text(info, extras);
-        if let Some(signature) = &signature {
-            rows.push(("Signature".into(), Cell::Text(signature.clone())));
+        // 署名（押すと吹き出しで詳細）。
+        if let Some(status) = commit_signature_status(info, extras) {
+            let check = extras
+                .map(|e| e["signature"].clone())
+                .filter(|s| !s.is_null());
+            rows.push((
+                "Signature".into(),
+                Cell::Widget(crate::signature::row(
+                    status,
+                    check,
+                    info["signed"].as_str().unwrap_or("gpg").to_owned(),
+                    recorded_committer_email(info).to_owned(),
+                    self.place.borrow().clone(),
+                    None,
+                )),
+            ));
         }
         let refs = strings(&info["refs"]);
         if !refs.is_empty() {
             rows.push(("Refs".into(), refs_cell(&refs)));
         }
-        // このコミットを指すタグ: 名前・タガーと日時・件名と署名（軽量タグは名前だけ）。時間のかかる分で届く。
+        // このコミットを指すタグ: 名前・タガーと日時・件名と署名の印（軽量タグは名前だけ）。時間のかかる分で届く。
         if let Some(extras) = extras {
             for tag in extras["tagObjects"].as_array().into_iter().flatten() {
-                let mut text = str_of(tag, "name").to_owned();
+                let mut text = format!("<b>{}</b>", esc(str_of(tag, "name")));
                 if tag["id"].is_null() {
-                    text.push_str(&tr!(" (lightweight tag)"));
-                } else {
-                    let mut who = vec![str_of(tag, "tagger").to_owned()];
-                    if let Some(t) = tag["time"].as_i64() {
-                        who.push(date(t));
-                    }
-                    let who: Vec<String> = who.into_iter().filter(|w| !w.is_empty()).collect();
-                    if !who.is_empty() {
-                        text.push_str(&format!(" ({})", who.join(" · ")));
-                    }
-                    if !str_of(tag, "subject").is_empty() {
-                        text.push_str(&format!(" — {}", str_of(tag, "subject")));
-                    }
-                    let check = (!tag["signature"].is_null()).then_some(&tag["signature"]);
-                    if let Some(sig) = signature_label(tag["signed"].as_str(), check, true, "") {
-                        text.push_str(&format!("  {sig}"));
-                    }
+                    text.push_str(&dim(&tr!(" (lightweight tag)")));
+                    rows.push(("Tag".into(), Cell::Markup(text)));
+                    continue;
                 }
-                rows.push(("Tag".into(), Cell::Text(text)));
+                let mut who = vec![str_of(tag, "tagger").to_owned()];
+                if let Some(t) = tag["time"].as_i64() {
+                    who.push(date(t));
+                }
+                let who: Vec<String> = who.into_iter().filter(|w| !w.is_empty()).collect();
+                if !who.is_empty() {
+                    text.push_str(&dim(&format!(" ({})", who.join(" · "))));
+                }
+                if !str_of(tag, "subject").is_empty() {
+                    text.push_str(&dim(&format!(" — {}", str_of(tag, "subject"))));
+                }
+                let check = (!tag["signature"].is_null()).then(|| tag["signature"].clone());
+                let mark = tag_signature_status(tag["signed"].as_str(), check.as_ref(), true, tag)
+                    .map(|status| self.tag_mark(status, check, tag));
+                rows.push(("Tag".into(), tag_cell(&text, mark)));
             }
         }
-        // merge したタグ（merge コミットに埋め込まれたタグ）と、その署名。
-        for (i, tag) in info["mergedTags"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .enumerate()
-        {
-            let mut text = str_of(tag, "name").to_owned();
-            if !str_of(tag, "tagger").is_empty() {
-                text.push_str(&format!(" ({})", str_of(tag, "tagger")));
-            }
-            if !str_of(tag, "subject").is_empty() {
-                text.push_str(&format!(" — {}", str_of(tag, "subject")));
-            }
-            let check = extras
-                .map(|e| &e["mergedTagSignatures"][i])
-                .filter(|s| !s.is_null());
-            if let Some(sig) = signature_label(tag["signed"].as_str(), check, extras.is_some(), "")
-            {
-                text.push_str(&format!("  {sig}"));
-            }
-            rows.push(("Merged Tag".into(), Cell::Text(text)));
-        }
-        if let Some(extras) = extras {
-            let branches = strings(&extras["branches"]).into_iter().filter(|_| full);
-            let branches: Vec<String> = branches.collect();
+        if let Some(extras) = extras.filter(|_| full) {
+            let branches = strings(&extras["branches"]);
             if !branches.is_empty() {
                 rows.push(("Branches".into(), refs_cell(&branches)));
             }
@@ -948,22 +942,49 @@ impl Details {
                 } else {
                     String::new()
                 };
-                if full {
-                    rows.push(("Tags".into(), Cell::Text(shown + &more)));
-                }
+                rows.push(("Tags".into(), Cell::Text(shown + &more)));
             }
-            if let Some(previous) = extras["previousTag"].as_str().filter(|_| full) {
+            if let Some(previous) = extras["previousTag"].as_str() {
                 rows.push(("Previous Tag".into(), Cell::Text(previous.into())));
             }
-            if full && !extras["originUrl"].is_null() {
+            if !extras["originUrl"].is_null() {
                 let remote = strings(&extras["remoteBranches"]);
+                // どのリモートブランチにも含まれなければ、橙で「未 push」（macOS 版と同じ）。
                 let pushed = if remote.is_empty() {
-                    Cell::Text(tr!("Not pushed (not on any remote branch)"))
+                    Cell::Styled(tr!("Not pushed (not on any remote branch)"), "warning")
                 } else {
                     refs_cell(&remote)
                 };
                 rows.push(("Pushed".into(), pushed));
             }
+        }
+        // merge したタグ（merge コミットに埋め込まれたタグ）と、その署名の印。
+        for (i, tag) in info["mergedTags"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .enumerate()
+        {
+            let mut text = esc(str_of(tag, "name"));
+            if !str_of(tag, "tagger").is_empty() {
+                text.push_str(&dim(&format!(" ({})", str_of(tag, "tagger"))));
+            }
+            if !str_of(tag, "subject").is_empty() {
+                text.push_str(&dim(&format!(" — {}", str_of(tag, "subject"))));
+            }
+            let check = extras
+                .map(|e| e["mergedTagSignatures"][i].clone())
+                .filter(|s| !s.is_null());
+            let mark = tag_signature_status(
+                tag["signed"].as_str(),
+                check.as_ref(),
+                extras.is_some(),
+                tag,
+            )
+            .map(|status| self.tag_mark(status, check, tag));
+            rows.push(("Merged Tag".into(), tag_cell(&text, mark)));
+        }
+        if let Some(extras) = extras {
             let merged = extras["mergedCount"].as_u64().unwrap_or(0);
             if merged > 0 {
                 // 10 桁の ID（押すとそのコミットへ）・件名・作者（macOS 版の `summaryLine`）。
@@ -976,22 +997,23 @@ impl Details {
                     .flatten()
                     .take(listed)
                 {
-                    let oid = str_of(commit, "oid");
-                    let id = if commits {
-                        commit_link(oid, 10)
-                    } else {
-                        esc(&oid[..10.min(oid.len())])
-                    };
-                    text.push_str(&format!("\n{id}  {}", esc(str_of(commit, "subject"))));
-                    if let Some(author) = commit["author"].as_str() {
-                        text.push_str(&format!("<span alpha=\"60%\"> — {}</span>", esc(author)));
-                    }
+                    text.push('\n');
+                    text.push_str(&summary_line(commit, commits));
                 }
                 if full && merged > 20 {
                     text.push('\n');
-                    text.push_str(&esc(&tr!("and {count} more", count = merged - 20)));
+                    text.push_str(&dim(&tr!("and {count} more", count = merged - 20)));
                 }
                 rows.push(("Merged".into(), Cell::Markup(text)));
+            }
+            // メッセージに書かれたコミット（cherry-pick 元・revert 元・Fixes・そのほか。書かれた順）。
+            if full {
+                for (kind, commit) in
+                    related_commits(str_of(info, "message"), &extras["references"])
+                {
+                    let text = format!("{}  {}", dim(&kind), summary_line(&commit, commits));
+                    rows.push(("Related".into(), Cell::Markup(text)));
+                }
             }
         }
         for (i, (title, value)) in rows.into_iter().enumerate() {
@@ -1000,45 +1022,64 @@ impl Details {
             head.set_yalign(0.0);
             head.add_css_class("dim-label");
             head.add_css_class("caption");
-            // 署名の行は、押すと吹き出しで詳細を出す（macOS 版と同じ）。
-            if title == "Signature"
-                && let Cell::Text(value) = &value
-            {
-                let check = extras
-                    .map(|e| e["signature"].clone())
-                    .filter(|s| !s.is_null());
-                let cell = crate::signature::row(
-                    value,
-                    check,
-                    info["signed"].as_str().unwrap_or("gpg").to_owned(),
-                    recorded_committer_email(info).to_owned(),
-                    self.place.borrow().clone(),
-                );
-                self.table.attach(&head, 0, i as i32, 1, 1);
-                self.table.attach(&cell, 1, i as i32, 1, 1);
-                continue;
-            }
-            let cell = gtk::Label::new(None);
-            match &value {
-                Cell::Text(t) => cell.set_text(t),
-                Cell::Markup(m) => {
-                    cell.set_markup(m);
-                    let links = self.links.clone();
-                    cell.connect_activate_link(move |_, uri| follow(&links, uri));
+            self.table.attach(&head, 0, i as i32, 1, 1);
+            let cell = match value {
+                Cell::Widget(widget) => {
+                    self.table.attach(&widget, 1, i as i32, 1, 1);
+                    continue;
                 }
-            }
-            cell.set_xalign(0.0);
-            cell.set_wrap(true);
-            cell.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-            cell.set_selectable(true);
-            cell.set_hexpand(true);
-            cell.add_css_class("caption");
+                Cell::Text(t) => self.cell_label(&t, false),
+                Cell::Styled(t, css) => {
+                    let cell = self.cell_label(&t, false);
+                    cell.add_css_class(css);
+                    cell
+                }
+                Cell::Markup(m) => self.cell_label(&m, true),
+            };
             if title == "Commit" || title.starts_with("Parent") || title.starts_with("Child") {
                 cell.add_css_class("monospace");
             }
-            self.table.attach(&head, 0, i as i32, 1, 1);
             self.table.attach(&cell, 1, i as i32, 1, 1);
         }
+    }
+
+    /// 表の値の欄（`markup` なら、リンクを詳細の中の行き先へ）。
+    fn cell_label(&self, text: &str, markup: bool) -> gtk::Label {
+        let cell = gtk::Label::new(None);
+        if markup {
+            cell.set_markup(text);
+            let links = self.links.clone();
+            cell.connect_activate_link(move |_, uri| follow(&links, uri));
+        } else {
+            cell.set_text(text);
+        }
+        cell.set_xalign(0.0);
+        cell.set_wrap(true);
+        cell.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        cell.set_selectable(true);
+        cell.set_hexpand(true);
+        cell.add_css_class("caption");
+        cell
+    }
+
+    /// タグの署名の印（押すと、タグの名前とメッセージの入った吹き出し。タガーのメールと比べる）。
+    fn tag_mark(
+        &self,
+        status: crate::signature::Status,
+        check: Option<Value>,
+        tag: &Value,
+    ) -> gtk::Widget {
+        crate::signature::row(
+            status,
+            check,
+            tag["signed"].as_str().unwrap_or("gpg").to_owned(),
+            str_of(tag, "taggerEmail").to_owned(),
+            self.place.borrow().clone(),
+            Some(crate::signature::Tag {
+                name: str_of(tag, "name").to_owned(),
+                message: str_of(tag, "message").to_owned(),
+            }),
+        )
     }
 
     /// 出しているメッセージ（複数のコミットを選んでいれば、各コミットの 1 行の一覧）。
@@ -1064,15 +1105,39 @@ impl Details {
     }
 }
 
-/// 署名の行（macOS 版と同じ短い言葉と、種類・署名者）。署名がなければ None。
-fn signature_text(info: &Value, extras: Option<&Value>) -> Option<String> {
+/// コミットの署名の状態（macOS 版の `signatureStatus`）。署名がなければ None。時間のかかる分が届くまでは
+/// Checking…、届いて検証の結果がなければ No key。
+fn commit_signature_status(
+    info: &Value,
+    extras: Option<&Value>,
+) -> Option<crate::signature::Status> {
+    use crate::signature::Status;
     let check = extras.map(|e| &e["signature"]).filter(|s| !s.is_null());
-    signature_label(
-        info["signed"].as_str(),
-        check,
-        extras.is_some(),
-        recorded_committer_email(info),
-    )
+    let kind = info["signed"].as_str();
+    if kind.is_none() && check.is_none() {
+        return None;
+    }
+    Some(match (extras, check) {
+        (None, _) => Status::Pending,
+        (Some(_), None) => Status::NoKey,
+        (Some(_), Some(_)) => Status::new(check, recorded_committer_email(info), kind),
+    })
+}
+
+/// タグの署名の状態（macOS 版の `tagSignatureStatus`。タガーのメールと比べる）。署名がなければ None。
+fn tag_signature_status(
+    signed: Option<&str>,
+    check: Option<&Value>,
+    loaded: bool,
+    tag: &Value,
+) -> Option<crate::signature::Status> {
+    use crate::signature::Status;
+    signed?;
+    Some(match (loaded, check) {
+        (false, _) => Status::Pending,
+        (true, None) => Status::NoKey,
+        (true, Some(_)) => Status::new(check, str_of(tag, "taggerEmail"), signed),
+    })
 }
 
 /// コミットに記録されたコミッターのメール（署名と比べるのはこれ。mailmap で置き換えたものではない。macOS 版の
@@ -1083,30 +1148,73 @@ fn recorded_committer_email(info: &Value) -> &str {
         .unwrap_or_else(|| str_of(info, "committerEmail"))
 }
 
-/// 署名の状態の文（署名の種類 `kind`、検証の結果 `check`、時間のかかる分を読んだか `loaded`、署名者と比べる
-/// メールアドレス `committer`）。署名がなければ None。
-fn signature_label(
-    kind: Option<&str>,
-    check: Option<&Value>,
-    loaded: bool,
-    committer: &str,
-) -> Option<String> {
-    use crate::signature::Status;
-    if kind.is_none() && check.is_none() {
-        return None;
-    }
-    let label = match check {
-        None if !loaded => Status::Pending.label(),
-        None => Status::NoKey.label(),
-        Some(_) => Status::new(check, committer, kind).label(),
+/// 薄くした文字のマークアップ。
+fn dim(text: &str) -> String {
+    format!("<span alpha=\"60%\">{}</span>", esc(text))
+}
+
+/// タグの行: 名前などのマークアップと、署名の印（あれば右に並べる）。
+fn tag_cell(markup: &str, mark: Option<gtk::Widget>) -> Cell {
+    let Some(mark) = mark else {
+        return Cell::Markup(markup.to_owned());
     };
-    let signer = check.map(|s| str_of(s, "signer")).unwrap_or_default();
-    let kind = kind.unwrap_or("gpg").to_uppercase();
-    Some(if signer.is_empty() {
-        format!("{label}  {kind}")
+    let label = gtk::Label::new(None);
+    label.set_markup(markup);
+    label.set_xalign(0.0);
+    label.set_wrap(true);
+    label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+    label.set_selectable(true);
+    label.add_css_class("caption");
+    let line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    line.set_hexpand(true);
+    line.append(&label);
+    line.append(&mark);
+    Cell::Widget(line.upcast())
+}
+
+/// 取り込んだ・メッセージに書かれたコミットの 1 行: 10 桁の ID（`link` なら押すとそのコミットへ）・件名・作者
+/// （macOS 版の `summaryLine`）。
+fn summary_line(commit: &Value, link: bool) -> String {
+    let oid = str_of(commit, "oid");
+    let id = if link {
+        commit_link(oid, 10)
     } else {
-        format!("{label}  {kind} · {signer}")
-    })
+        esc(&oid[..10.min(oid.len())])
+    };
+    let mut text = format!("<tt>{id}</tt>  {}", esc(str_of(commit, "subject")));
+    if let Some(author) = commit["author"].as_str() {
+        text.push_str(&dim(&format!(" — {author}")));
+    }
+    text
+}
+
+/// メッセージに書かれたコミット（`references`: 書かれた ID → コミットの 1 行）を、書かれた順に、書かれ方と一緒に
+/// （macOS 版の `relatedCommits`）。
+fn related_commits(message: &str, references: &Value) -> Vec<(String, Value)> {
+    let Some(references) = references.as_object() else {
+        return Vec::new();
+    };
+    let mut found: Vec<(usize, String, Value)> = references
+        .iter()
+        .filter_map(|(token, commit)| {
+            let at = message.find(token.as_str())?;
+            let start = message[..at].rfind('\n').map_or(0, |i| i + 1);
+            let end = message[at..].find('\n').map_or(message.len(), |i| at + i);
+            let line = message[start..end].to_lowercase();
+            let kind = if line.contains("cherry picked from") {
+                tr!("Cherry-picked from")
+            } else if line.contains("reverts commit") {
+                tr!("Reverts")
+            } else if line.starts_with("fixes:") {
+                tr!("Fixes")
+            } else {
+                tr!("Mentions")
+            };
+            Some((at, kind, commit.clone()))
+        })
+        .collect();
+    found.sort_by_key(|(at, _, _)| *at);
+    found.into_iter().map(|(_, k, c)| (k, c)).collect()
 }
 
 /// `git@github.com:a/b.git`・`ssh://git@host/a/b`・`https://host/a/b.git` を、ブラウザで開ける URL にする（macOS 版の
@@ -1307,6 +1415,28 @@ mod tests {
             "<a href=\"https://x.org/1a2b3c4d\">https://x.org/1a2b3c4d</a>"
         );
         assert_eq!(linked("1a2b3c4d", None, false), "1a2b3c4d");
+    }
+
+    #[test]
+    fn related_commits_follow_the_message() {
+        let message = "Fix\n\nReverts commit 2222222.\n(cherry picked from commit 1111111)\nSee 3333333\nFixes: 4444444 (\"x\")";
+        let commit = |oid: &str| serde_json::json!({ "oid": oid, "subject": "s" });
+        let references = serde_json::json!({
+            "1111111": commit("1"), "2222222": commit("2"), "3333333": commit("3"), "4444444": commit("4"),
+        });
+        let kinds: Vec<(String, String)> = related_commits(message, &references)
+            .into_iter()
+            .map(|(k, c)| (k, str_of(&c, "oid").to_owned()))
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                ("Reverts".to_owned(), "2".to_owned()),
+                ("Cherry-picked from".to_owned(), "1".to_owned()),
+                ("Mentions".to_owned(), "3".to_owned()),
+                ("Fixes".to_owned(), "4".to_owned()),
+            ]
+        );
     }
 
     #[test]

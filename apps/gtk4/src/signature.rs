@@ -154,17 +154,35 @@ impl Status {
         }
     }
 
-    /// 吹き出しの説明。
-    pub fn explanation(self) -> String {
+    /// 信用度の目盛りの段数（0〜3。macOS 版の `trustBars`）。信用度に意味がない状態は None。
+    pub fn trust_bars(self) -> Option<u8> {
         match self {
+            Self::Verified(trust) => Some(trust),
+            Self::Untrusted => Some(1),
+            _ => None,
+        }
+    }
+
+    /// 吹き出しの説明。`tag` ならタグの署名の言い方（コミッターでなくタガー。macOS 版と同じ）。
+    pub fn explanation_for(self, tag: bool) -> String {
+        match self {
+            Self::Verified(trust) if trust >= 3 && tag => {
+                tr!("This tag has a valid signature from a trusted key.")
+            }
             Self::Verified(trust) if trust >= 3 => {
                 tr!("This commit has a valid signature from a trusted key.")
+            }
+            Self::Verified(_) if tag => {
+                tr!("This tag has a valid signature. The key’s trust is marginal (partly trusted).")
             }
             Self::Verified(_) => tr!(
                 "This commit has a valid signature. The key’s trust is marginal (partly trusted)."
             ),
             Self::Untrusted => tr!(
                 "The signature is valid, but the key’s trust isn’t set. Check who owns the key and set its trust to make it Verified."
+            ),
+            Self::SignerMismatch if tag => tr!(
+                "The signature is valid, but the tagger’s email address isn’t listed on the signing key. Someone other than the tagger may have signed it."
             ),
             Self::SignerMismatch => tr!(
                 "The signature is valid, but the committer’s email address isn’t listed on the signing key. Someone other than the committer may have signed it."
@@ -175,6 +193,9 @@ impl Status {
             Self::Revoked => {
                 tr!("The signing key has been revoked. This signature can’t be trusted.")
             }
+            Self::Bad if tag => tr!(
+                "The signature is invalid. The tag was changed after it was signed, or the signature is corrupt."
+            ),
             Self::Bad => tr!(
                 "The signature is invalid. The commit was changed after it was signed, or the signature is corrupt."
             ),
@@ -247,21 +268,28 @@ fn trust_text(trust: &str) -> String {
     }
 }
 
-/// 詳細の Signature の行の値: 押すと吹き出しを出す。`check` は検証の結果（まだなら None）。
+/// タグの署名なら、タグの名前とメッセージ（吹き出しの見出しとメッセージの行に出す。macOS 版の
+/// `SignaturePopover.Tag`）。
+#[derive(Clone, Debug, Default)]
+pub struct Tag {
+    pub name: String,
+    pub message: String,
+}
+
+/// 詳細の署名の印（macOS 版の `signatureMark`）: 状態の短い言葉（色付き。押すと吹き出し）・信用度の目盛り・方式と
+/// 署名者。`check` は検証の結果（なければ None）、`email` は署名した鍵と比べるメール（コミッター、タグならタガー）。
 pub fn row(
-    text: &str,
+    status: Status,
     check: Option<Value>,
     kind: String,
-    committer: String,
+    email: String,
     place: Place,
+    tag: Option<Tag>,
 ) -> gtk::Widget {
-    let status = Status::new(check.as_ref(), &committer, Some(&kind));
-    let label = gtk::Label::new(Some(text));
+    let label = gtk::Label::new(Some(status.label()));
     label.set_xalign(0.0);
-    label.set_wrap(true);
-    label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-    label.set_hexpand(true);
     label.add_css_class("caption");
+    label.add_css_class("heading");
     if let Some(css) = status.css() {
         label.add_css_class(css);
     }
@@ -269,10 +297,41 @@ pub fn row(
     label.set_tooltip_text(Some(&tr!(
         "{label} — {explanation} (Click for details.)",
         label = status.label(),
-        explanation = status.explanation()
+        explanation = status.explanation_for(tag.is_some())
     )));
+    let signer = check
+        .as_ref()
+        .and_then(|c| c["signer"].as_str())
+        .unwrap_or_default()
+        .to_owned();
+    let mark = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    mark.append(&label);
+    if let Some(bars) = status.trust_bars() {
+        mark.append(&trust_meter(bars, status.css()));
+    }
+    let shown = kind.to_uppercase();
+    let detail = gtk::Label::new(Some(&if signer.is_empty() {
+        format!(" {shown}")
+    } else {
+        format!(" {shown} · {signer}")
+    }));
+    detail.set_xalign(0.0);
+    detail.set_wrap(true);
+    detail.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+    detail.set_hexpand(true);
+    detail.add_css_class("caption");
+    detail.add_css_class("dim-label");
+    mark.append(&detail);
     let open: std::rc::Rc<dyn Fn(&gtk::Widget)> = std::rc::Rc::new(move |w| {
-        show(w, status, check.as_ref(), &kind, &committer, &place);
+        show(
+            w,
+            status,
+            check.as_ref(),
+            &kind,
+            &email,
+            &place,
+            tag.as_ref(),
+        );
     });
     let click = gtk::GestureClick::new();
     let f = open.clone();
@@ -287,7 +346,63 @@ pub fn row(
         let w = label.clone();
         gtk::glib::idle_add_local_once(move || open(w.upcast_ref()));
     }
-    label.upcast()
+    mark.upcast()
+}
+
+/// 信用度の 3 段の目盛り（`bars` 段を状態の色で塗る。macOS 版の `trustMeter`）。
+fn trust_meter(bars: u8, css: Option<&'static str>) -> gtk::DrawingArea {
+    let (width, height, gap) = (4.0, 10.0, 2.0);
+    let area = gtk::DrawingArea::new();
+    area.set_content_width((width * 3.0 + gap * 2.0) as i32);
+    area.set_content_height(height as i32);
+    area.set_valign(gtk::Align::Center);
+    if let Some(css) = css {
+        area.add_css_class(css);
+    }
+    area.set_draw_func(move |area, cr, _, _| {
+        let color = area.color();
+        for i in 0..3 {
+            let alpha = if i < bars as i32 {
+                color.alpha()
+            } else {
+                color.alpha() * 0.25
+            };
+            cr.set_source_rgba(
+                color.red() as f64,
+                color.green() as f64,
+                color.blue() as f64,
+                alpha as f64,
+            );
+            let x = i as f64 * (width + gap);
+            let r = 1.5;
+            cr.new_sub_path();
+            cr.arc(x + width - r, r, r, -std::f64::consts::FRAC_PI_2, 0.0);
+            cr.arc(
+                x + width - r,
+                height - r,
+                r,
+                0.0,
+                std::f64::consts::FRAC_PI_2,
+            );
+            cr.arc(
+                x + r,
+                height - r,
+                r,
+                std::f64::consts::FRAC_PI_2,
+                std::f64::consts::PI,
+            );
+            cr.arc(
+                x + r,
+                r,
+                r,
+                std::f64::consts::PI,
+                3.0 * std::f64::consts::FRAC_PI_2,
+            );
+            cr.close_path();
+            let _ = cr.fill();
+        }
+    });
+    area
 }
 
 thread_local! {
@@ -300,7 +415,7 @@ pub fn popover_once() {
     POPOVER_ONCE.with(|p| p.set(true));
 }
 
-/// 署名の詳細の吹き出し。値は選んでコピーできる。
+/// 署名の詳細の吹き出し。値は選んでコピーできる。`tag` ならタグの署名（タガーと比べ、名前とメッセージを出す）。
 fn show(
     parent: &gtk::Widget,
     status: Status,
@@ -308,6 +423,7 @@ fn show(
     kind: &str,
     committer: &str,
     place: &Place,
+    tag: Option<&Tag>,
 ) {
     let title = gtk::Label::new(Some(status.label()));
     title.add_css_class("heading");
@@ -321,8 +437,14 @@ fn show(
     badge.set_xalign(1.0);
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     header.append(&title);
+    if let Some(tag) = tag {
+        let name = gtk::Label::new(Some(&tr!("Tag {name}", name = tag.name)));
+        name.add_css_class("dim-label");
+        name.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+        header.append(&name);
+    }
     header.append(&badge);
-    let explanation = gtk::Label::new(Some(&status.explanation()));
+    let explanation = gtk::Label::new(Some(&status.explanation_for(tag.is_some())));
     explanation.set_wrap(true);
     explanation.set_max_width_chars(52);
     explanation.set_xalign(0.0);
@@ -335,17 +457,22 @@ fn show(
         if !signer.is_empty() {
             rows.push((tr!("Signer"), signer, None, false));
         }
-        // 署名した鍵のすべてのメールアドレスとコミッターを、状態に関係なく比べて出す。
+        // 署名した鍵のすべてのメールアドレスとコミッター（タグはタガー）を、状態に関係なく比べて出す。
         let list = emails(s);
+        let who = if tag.is_some() {
+            tr!("Tagger email")
+        } else {
+            tr!("Committer email")
+        };
         match CommitterMatch::new(&list, committer) {
             CommitterMatch::Matched(email) => rows.push((
-                tr!("Committer email"),
+                who,
                 tr!("Listed on the key ({email})", email = email),
                 Some("success"),
                 false,
             )),
             CommitterMatch::Unconfirmed(email) => rows.push((
-                tr!("Committer email"),
+                who,
                 tr!(
                     "Listed on the key ({email}), but that user ID isn’t confirmed",
                     email = email
@@ -354,13 +481,13 @@ fn show(
                 false,
             )),
             CommitterMatch::Mismatched => rows.push((
-                tr!("Committer email"),
+                who,
                 tr!("Not listed on the key ({email})", email = committer),
                 Some("warning"),
                 false,
             )),
             CommitterMatch::Unknown if !committer.is_empty() => rows.push((
-                tr!("Committer email"),
+                who,
                 tr!("Can’t check: the key’s email addresses can’t be read"),
                 Some("dim-label"),
                 false,
@@ -419,6 +546,9 @@ fn show(
         None,
         false,
     ));
+    if let Some(tag) = tag.filter(|t| !t.message.trim().is_empty()) {
+        rows.push((tr!("Message"), tag.message.trim().to_owned(), None, false));
+    }
 
     let grid = gtk::Grid::builder()
         .column_spacing(10)

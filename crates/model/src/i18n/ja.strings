@@ -1674,6 +1674,12 @@
 "The signature is valid, but the key’s trust isn’t set. Check who owns the key and set its trust to make it Verified." = "署名は正しいですが、鍵の信用度が決まっていません。鍵の持ち主を確かめて信用度を設定すると Verified になります。";
 "The signature or the key has expired. It may have been valid when it was signed." = "署名か鍵の期限が切れています。署名した時点では正しかった可能性があります。";
 "The signing key has been revoked. This signature can’t be trusted." = "署名した鍵は失効しています。この署名は信用できません。";
+"Tag {name}" = "タグ {name}";
+"Tagger email" = "タガーのメール";
+"Cherry-picked from" = "cherry-pick 元";
+"Reverts" = "revert 元";
+"Fixes" = "修正対象";
+"Mentions" = "参照";
 "This tag has a valid signature from a trusted key." = "このタグは、信用している鍵による正しい署名を持っています。";
 "This tag has a valid signature. The key’s trust is marginal (partly trusted)." = "このタグは正しい署名を持っています。鍵の信用度は marginal（部分的に信用）です。";
 "The signature is valid, but the tagger’s email address isn’t listed on the signing key. Someone other than the tagger may have signed it." = "署名は正しいですが、タガーのメールアドレスが署名した鍵に登録されていません。タガーとは別の人の鍵で署名された可能性があります。";
