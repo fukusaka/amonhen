@@ -2,7 +2,7 @@
 //! 押すとリポジトリの一覧を小さく出し、選んだものにこのタブを切り替える（Ctrl+Enter なら新しい窓）。お気に入り、
 //! そのあと最後に開いた順に、名前と状態だけを出す。下の「すべてのリポジトリ…」はリポジトリのページを出す。
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -167,7 +167,11 @@ pub fn button(
     // 出すたびに読み直す（ブックマーク・スキャンの結果・行の状態が変わったら、出している間は描き直す）。
     let (u, f, sc) = (update.clone(), filter.clone(), scanning.clone());
     let (r, p) = (rows.clone(), popover.downgrade());
+    // 出すたびに聞き手を足すので、前に出したときの分は外す（隠れている間に知らせが来なかったときも残らない）。
+    let shows = Rc::new(Cell::new(0u32));
     popover.connect_show(move |_| {
+        shows.set(shows.get() + 1);
+        let (shows, show) = (shows.clone(), shows.get());
         f.set_text("");
         bookmarks::refresh();
         if !bookmarks::has_scanned() && !bookmarks::data().scan_roots.is_empty() {
@@ -177,7 +181,7 @@ pub fn button(
         f.grab_focus();
         let (u, sc, r, p) = (u.clone(), sc.clone(), r.clone(), p.clone());
         bookmarks::connect(move |path| {
-            if !p.upgrade().is_some_and(|p| p.is_visible()) {
+            if shows.get() != show || !p.upgrade().is_some_and(|p| p.is_visible()) {
                 return false;
             }
             match path {
