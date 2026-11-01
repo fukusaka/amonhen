@@ -111,6 +111,8 @@ struct Inner {
     generation: Cell<u64>,
     /// 行を作り直している間は、選択の変化を知らせない。
     rebuilding: Cell<bool>,
+    /// 作った行（使い回される）。情報が届いたら、一覧を入れ替えずにこれを書き直す。
+    bound: RefCell<Vec<glib::WeakRef<gtk::ListItem>>>,
 }
 
 impl Stashes {
@@ -209,6 +211,7 @@ impl Stashes {
             pending,
             generation: Cell::new(0),
             rebuilding: Cell::new(false),
+            bound: RefCell::default(),
         });
         inner.list.set_factory(Some(&factory(&inner)));
         let weak = Rc::downgrade(&inner);
@@ -348,15 +351,34 @@ impl Inner {
         }
     }
 
-    /// 行を描き直させる（同じ名前を入れ替える。選択は保つ）。
+    /// 行を描き直す。一覧が同じなら、作ってある行の文を書き直すだけにする（入れ替えると、位置やキーボードの
+    /// フォーカスが戻ってしまう）。違えば入れ替える（選択は保つ）。
     fn refresh_rows(&self) {
-        let selected = self.selection.selected();
         let names: Vec<String> = self
             .stashes
             .borrow()
             .iter()
             .map(|s| s.name.clone())
             .collect();
+        let same = self.model.n_items() as usize == names.len()
+            && names
+                .iter()
+                .enumerate()
+                .all(|(i, n)| self.model.string(i as u32).is_some_and(|m| m == n.as_str()));
+        if same {
+            self.bound.borrow_mut().retain(|w| w.upgrade().is_some());
+            let items: Vec<gtk::ListItem> = self
+                .bound
+                .borrow()
+                .iter()
+                .filter_map(|w| w.upgrade())
+                .collect();
+            for item in items {
+                self.fill(&item);
+            }
+            return;
+        }
+        let selected = self.selection.selected();
         let names: Vec<&str> = names.iter().map(String::as_str).collect();
         self.rebuilding.set(true);
         self.model.splice(0, self.model.n_items(), &names);
@@ -486,6 +508,36 @@ impl Inner {
         });
     }
 
+    /// 行の文を、その行の stash に合わせる。
+    fn fill(&self, item: &gtk::ListItem) {
+        let Some(name) = item.item().and_downcast::<gtk::StringObject>() else {
+            return;
+        };
+        let Some(row) = item.child().and_downcast::<gtk::Box>() else {
+            return;
+        };
+        let title = row
+            .first_child()
+            .and_downcast::<gtk::Label>()
+            .expect("title");
+        let subtitle = title
+            .next_sibling()
+            .and_downcast::<gtk::Label>()
+            .expect("subtitle");
+        let stash = self
+            .stashes
+            .borrow()
+            .iter()
+            .find(|s| s.name == name.string())
+            .cloned();
+        let Some(stash) = stash else { return };
+        title.set_markup(&Inner::title_markup(&stash));
+        title.set_tooltip_text(stash.detail.as_deref());
+        let sub = self.subtitle_markup(&stash);
+        subtitle.set_markup(&sub);
+        subtitle.set_visible(!sub.is_empty());
+    }
+
     /// 1 行目: `stash@{n}` とメッセージ。
     fn title_markup(stash: &Stash) -> String {
         format!(
@@ -591,33 +643,16 @@ fn factory(inner: &Rc<Inner>) -> gtk::SignalListItemFactory {
     let weak = Rc::downgrade(inner);
     factory.connect_bind(move |_, item| {
         let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
-        let (Some(inner), Some(name)) = (
-            weak.upgrade(),
-            item.item().and_downcast::<gtk::StringObject>(),
-        ) else {
+        let Some(inner) = weak.upgrade() else {
             return;
         };
-        let row = item.child().and_downcast::<gtk::Box>().expect("row");
-        let title = row
-            .first_child()
-            .and_downcast::<gtk::Label>()
-            .expect("title");
-        let subtitle = title
-            .next_sibling()
-            .and_downcast::<gtk::Label>()
-            .expect("subtitle");
-        let stash = inner
-            .stashes
-            .borrow()
-            .iter()
-            .find(|s| s.name == name.string())
-            .cloned();
-        let Some(stash) = stash else { return };
-        title.set_markup(&Inner::title_markup(&stash));
-        title.set_tooltip_text(stash.detail.as_deref());
-        let sub = inner.subtitle_markup(&stash);
-        subtitle.set_markup(&sub);
-        subtitle.set_visible(!sub.is_empty());
+        {
+            let mut bound = inner.bound.borrow_mut();
+            if !bound.iter().any(|w| w.upgrade().as_ref() == Some(item)) {
+                bound.push(item.downgrade());
+            }
+        }
+        inner.fill(item);
     });
     factory
 }
