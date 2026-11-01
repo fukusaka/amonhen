@@ -373,6 +373,17 @@ mod imp {
                 let Some(view) = weak.upgrade() else {
                     return glib::Propagation::Proceed;
                 };
+                // Ctrl+A ですべて選ぶ、Menu・Shift+F10 で選んだ行のメニュー（macOS 版の表と同じ）。
+                let ctrl = state.contains(gdk::ModifierType::CONTROL_MASK);
+                let shift = state.contains(gdk::ModifierType::SHIFT_MASK);
+                if ctrl && !shift && matches!(key, gdk::Key::a | gdk::Key::A) {
+                    view.select_all();
+                    return glib::Propagation::Stop;
+                }
+                if key == gdk::Key::Menu || (shift && !ctrl && key == gdk::Key::F10) {
+                    view.popup_menu();
+                    return glib::Propagation::Stop;
+                }
                 if view.move_selection(key, state.contains(gdk::ModifierType::SHIFT_MASK)) {
                     glib::Propagation::Stop
                 } else {
@@ -834,6 +845,37 @@ impl HistoryView {
         }
         self.queue_draw();
         self.notify_selection();
+    }
+
+    /// すべての行を選ぶ（Ctrl+A）。
+    fn select_all(&self) {
+        let count = self.row_count();
+        if count == 0 {
+            return;
+        }
+        {
+            let mut st = self.state();
+            let last = st.selected.unwrap_or(0);
+            st.extra = (0..count).filter(|&r| r != last).collect();
+            st.selected = Some(last);
+            st.anchor = Some(0);
+        }
+        self.queue_draw();
+        self.notify_selection();
+    }
+
+    /// 選んでいる行のメニューを、その行の上に出す（Menu・Shift+F10）。
+    fn popup_menu(&self) {
+        let Some(row) = self.selected() else { return };
+        self.scroll_to_row(row);
+        let scroll = self.vadjustment().map_or(0.0, |a| a.value());
+        let h = self.row_height() as f64;
+        let y = row as f64 * h - scroll + h / 2.0;
+        let x = self.width() as f64 / 3.0;
+        let f = self.state().on_menu.clone();
+        if let Some(f) = f {
+            f(row, x, y);
+        }
     }
 
     fn notify_selection(&self) {
