@@ -490,9 +490,10 @@ impl MessageAids {
                     })
                     .and_then(|e| e["value"].as_str().map(str::to_owned))
             };
-            let (Some(this), Some(name), Some(email)) =
-                (w.upgrade(), value("user.name"), value("user.email"))
-            else {
+            let Some(this) = w.upgrade() else { return };
+            // user.name か user.email がなければ、音で知らせる（macOS 版と同じ）。
+            let (Some(name), Some(email)) = (value("user.name"), value("user.email")) else {
+                this.body.error_bell();
                 return;
             };
             this.add_trailer(&format!("Signed-off-by: {name} <{email}>"));
