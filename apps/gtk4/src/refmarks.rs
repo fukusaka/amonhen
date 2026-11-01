@@ -197,12 +197,14 @@ fn date(t: i64) -> String {
         .unwrap_or_default()
 }
 
-/// ローカルブランチの印（取り込み済み・gone・↑↓、ほかの worktree が checkout している ⌂・⑂）の詳細。
+/// ローカルブランチの印（取り込み済み・gone・↑↓、ほかの worktree が checkout している ⌂・⑂、書き込む先の ✎）の
+/// 詳細。`editing` は、worktree が 2 つ以上あり、書き込む先の worktree が checkout している今のブランチ。
 pub fn branch(
     actions: &Rc<Actions>,
     item: &RefEntry,
     known: &Known,
     is_head: bool,
+    editing: bool,
     anchor: &gtk::Widget,
 ) -> gtk::Popover {
     // ほかの worktree が checkout している（名前・パス）。
@@ -288,6 +290,14 @@ pub fn branch(
             };
             (icon::Kind::Push, None, title, text)
         }
+        _ if editing => (
+            icon::Kind::WorkingCopy,
+            Some("accent"),
+            tr!("Current branch, being edited"),
+            tr!(
+                "Working Copy shows and commits to this branch’s worktree. Other worktrees are listed under Working Copy."
+            ),
+        ),
         _ => (icon::Kind::Branch, None, item.name.clone(), String::new()),
     };
     let mut p = Popover::new(anchor, kind, css, &title, &text);

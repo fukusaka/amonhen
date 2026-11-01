@@ -1453,6 +1453,8 @@
 "detached HEAD" = "detached HEAD";
 "Editing this worktree" = "この worktree を編集中";
 "Click to edit this worktree" = "押すと、この worktree を編集する";
+"Current branch, being edited" = "今のブランチ（編集中）";
+"Working Copy shows and commits to this branch’s worktree. Other worktrees are listed under Working Copy." = "Working Copy は、このブランチの worktree を見せ、そこにコミットします。ほかの worktree は Working Copy の下に並びます。";
 "Locked" = "ロック中";
 "Locked: {reason}" = "ロック中: {reason}";
 "Its folder is gone (Prune removes it): {reason}" = "フォルダがありません（Prune で片付けられます）: {reason}";

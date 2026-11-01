@@ -85,6 +85,8 @@ pub struct Data {
     pub mark_click: bool,
     /// アイコンと右端の文字を緑にする（追加した worktree が checkout しているブランチ）。
     pub green: bool,
+    /// worktree が 2 つ以上あり、書き込む先の worktree が checkout している今のブランチ（✎ の印）。
+    pub editing: bool,
     /// 右端の文字の色の CSS のクラス（プルリクエストの CI の `success`・`error`）。
     pub badge_css: Option<&'static str>,
     /// タグの署名の印（右端の印の先頭。見えている行を出すときに、確かめた結果から入れる）。
@@ -1314,7 +1316,14 @@ impl Inner {
         };
         match &data.item {
             Item::Ref(entry) if entry.kind == RefKind::Local => {
-                crate::refmarks::branch(&actions, entry, &self.known(), data.head, anchor);
+                crate::refmarks::branch(
+                    &actions,
+                    entry,
+                    &self.known(),
+                    data.head,
+                    data.editing,
+                    anchor,
+                );
             }
             Item::Ref(entry) if entry.kind == RefKind::Tag => {
                 crate::refmarks::tag(&actions, entry, &self.known(), anchor);
@@ -1860,6 +1869,9 @@ fn mark_worktree_branches(store: &gio::ListStore, view: &crate::worktrees::View)
             } else {
                 format!("✎ {}", data.badge)
             };
+            // 押すと、書き込む先のブランチであることの吹き出し（macOS 版と同じ）。
+            data.editing = true;
+            data.mark_click = true;
         }
     }
 }
