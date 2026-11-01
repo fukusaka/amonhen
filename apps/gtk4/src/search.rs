@@ -30,6 +30,8 @@ struct Inner {
     matches: RefCell<Rc<Vec<u32>>>,
     searched: RefCell<Option<(String, u64)>>,
     generation: Cell<u64>,
+    /// 一致したコミットだけの History を作る世代（作り終えたとき、古いものなら捨てる）。
+    filter_generation: Cell<u64>,
     /// `--search` のとき、終わったら 1 つ減らす。
     pending: RefCell<Option<Rc<Cell<u32>>>>,
     /// 元の History（探すのはいつもこれ）。
@@ -92,12 +94,13 @@ impl Search {
             matches: RefCell::default(),
             searched: RefCell::default(),
             generation: Cell::new(0),
+            filter_generation: Cell::new(0),
             pending: RefCell::default(),
             base: RefCell::default(),
             only: only.clone(),
         });
         let i = inner.clone();
-        only.connect_toggled(move |_| i.apply_filter());
+        only.connect_toggled(move |_| Inner::apply_filter(&i));
         let i = inner.clone();
         entry.connect_activate(move |_| Inner::submit(&i, 1));
         // Shift+Enter: 前の一致へ。
@@ -241,24 +244,46 @@ impl Inner {
     }
 
     /// 切り替えに合わせて、一致したコミットだけの History か、元の History を出す。
-    fn apply_filter(&self) {
-        let Some((repo, base)) = self.base.borrow().clone() else {
+    fn apply_filter(this: &Rc<Self>) {
+        let generation = this.filter_generation.get() + 1;
+        this.filter_generation.set(generation);
+        let Some((repo, base)) = this.base.borrow().clone() else {
             return;
         };
-        if !self.only.is_active() {
-            self.view.show(repo, base);
-            self.view.set_matches(self.matches.borrow().clone());
-            self.update_count();
+        if !this.only.is_active() {
+            this.view.show(repo, base);
+            this.view.set_matches(this.matches.borrow().clone());
+            this.update_count();
             return;
         }
-        // 一致したコミットだけ（すべて一致なので塗らない）。作るのは linux の 25 万件でも 50 ms ほど。
-        let rows = self.matches.borrow().clone();
-        let filtered = repo.history_matching(&base, &rows);
-        self.view.show(repo, filtered);
-        if !rows.is_empty() {
-            self.view.select(0);
-        }
-        self.update_count();
+        // 一致したコミットだけ（すべて一致なので塗らない）。作るのは linux の 25 万件で 50 ms ほどで、
+        // History の大きさに比例するので裏で作る（macOS 版と同じ）。
+        let rows = this.matches.borrow().clone();
+        let weak = Rc::downgrade(this);
+        glib::spawn_future_local(async move {
+            let matched: Vec<u32> = rows.as_ref().clone();
+            let built = gio::spawn_blocking(move || {
+                let filtered = repo.history_matching(&base, &matched);
+                (repo, filtered)
+            })
+            .await;
+            let Some(this) = weak.upgrade() else { return };
+            if this.filter_generation.get() != generation {
+                return;
+            }
+            if this.only.is_active()
+                && let Ok((repo, filtered)) = built
+            {
+                this.view.show(repo, filtered);
+                if !rows.is_empty() {
+                    this.view.select(0);
+                }
+                this.update_count();
+            }
+            if let Some(p) = this.pending.take() {
+                p.set(p.get() - 1);
+            }
+        });
     }
 
     /// 問い合わせが前と同じなら `step` だけ一致を移り、違えば探す。
@@ -308,7 +333,9 @@ impl Inner {
                     this.matches.replace(rows.clone());
                     this.only.set_sensitive(true);
                     if this.only.is_active() {
-                        this.apply_filter();
+                        // 絞った History を出し終えてから `pending` を減らす。
+                        Inner::apply_filter(&this);
+                        return;
                     } else {
                         this.view.set_matches(rows);
                         if step != 0 {
