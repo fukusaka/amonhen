@@ -877,7 +877,6 @@ impl Inner {
         this.syncing.set(false);
     }
 
-    /// 1 ファイルずつ見せているとき: `file` の差分を裏で作って出す。
     /// 1 ファイルずつ見せているときの、出しているファイルのパス（一覧で選んだもの。選んでいなければ最初のもの）。
     fn single_path(&self) -> Option<String> {
         if !self.single.get() {
@@ -894,6 +893,7 @@ impl Inner {
         Some(path_of(name).to_owned())
     }
 
+    /// 1 ファイルずつ見せているとき: `file` の差分を裏で作って出す。
     fn show_single(this: &Rc<Self>, file: usize) {
         let Some(source) = this.source.borrow().clone() else {
             return;
