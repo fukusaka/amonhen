@@ -639,6 +639,23 @@ pub fn ask_new_tag(actions: &Rc<Actions>, target: &str) {
     });
 }
 
+/// `dragged`（`drop_menu` と同じ形）を `target` に落とせるか（`drop_menu` が何か出すか）。落とせない行の上では、
+/// 落とせないことを先に見せる（macOS 版の `validateDrop` と同じ）。
+pub fn accepts_drop(dragged: &str, target: &Data) -> bool {
+    let Some((kind, dragged)) = dragged
+        .split_once(':')
+        .filter(|(k, _)| matches!(*k, "local" | "other"))
+    else {
+        return false;
+    };
+    match &target.item {
+        sidebar::Item::Ref(e) if e.kind == RefKind::Local => e.name != dragged,
+        sidebar::Item::Folder => kind == "local" && is_remote_folder(target),
+        sidebar::Item::Ref(e) if e.kind == RefKind::Remote => kind == "local",
+        _ => false,
+    }
+}
+
 /// ドラッグ＆ドロップ: ブランチの上なら merge・rebase、リモート（かリモートブランチ）の上なら push。
 /// `dragged` は `local:<名前>` か `other:<名前>`。
 pub fn drop_menu(
@@ -660,7 +677,10 @@ pub fn drop_menu(
             if let Some((_, path)) = actions.worktree_using(&to) {
                 let a = actions.clone();
                 items.push(menu::action(
-                    tr!("Open the Worktree of {branch} to Merge or Rebase", branch = to),
+                    tr!(
+                        "Open the Worktree of {branch} to Merge or Rebase",
+                        branch = to
+                    ),
                     move || a.edit_worktree(&path),
                 ));
                 return items;
@@ -745,4 +765,58 @@ fn is_remote_folder(data: &Data) -> bool {
     data.key
         .strip_prefix("Remotes/")
         .is_some_and(|rest| !rest.contains('/'))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn data(key: &str, item: sidebar::Item) -> Data {
+        Data {
+            key: key.into(),
+            item,
+            ..Data::default()
+        }
+    }
+
+    fn entry(kind: RefKind, name: &str) -> sidebar::Item {
+        sidebar::Item::Ref(amonhen_model::RefEntry {
+            kind,
+            name: name.into(),
+            target: None,
+            detail: None,
+            ahead: 0,
+            behind: 0,
+            gone: false,
+        })
+    }
+
+    #[test]
+    fn drops_only_where_the_menu_has_items() {
+        let branch = data("Local/main", entry(RefKind::Local, "main"));
+        assert!(accepts_drop("local:topic", &branch));
+        assert!(accepts_drop("other:origin/topic", &branch));
+        // 自分の上・History のコミット。
+        assert!(!accepts_drop("local:main", &branch));
+        assert!(!accepts_drop("commit:0123", &branch));
+        // push できるのはローカルブランチだけ。
+        let remote = data("Remotes/origin", sidebar::Item::Folder);
+        assert!(accepts_drop("local:topic", &remote));
+        assert!(!accepts_drop("other:v1", &remote));
+        let remote_branch = data("Remote/origin/x", entry(RefKind::Remote, "origin/x"));
+        assert!(accepts_drop("local:topic", &remote_branch));
+        // タグ・名前のフォルダ・Workspace の行。
+        assert!(!accepts_drop(
+            "local:topic",
+            &data("Tag/v1", entry(RefKind::Tag, "v1"))
+        ));
+        assert!(!accepts_drop(
+            "local:topic",
+            &data("Branches/#feature", sidebar::Item::Folder)
+        ));
+        assert!(!accepts_drop(
+            "local:topic",
+            &data("page/history", sidebar::Item::Page(sidebar::Page::History))
+        ));
+    }
 }

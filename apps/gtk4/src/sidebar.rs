@@ -898,13 +898,32 @@ fn setup_row(item: &gtk::ListItem, inner: &Owner, drop_cb: &Rc<RefCell<Option<Dr
         String::static_type(),
         gtk::gdk::DragAction::COPY | gtk::gdk::DragAction::MOVE,
     );
+    // 落とせない行（Workspace・タグ・名前のフォルダなど）の上では、落とせないことを先に見せる（macOS 版と同じ）。
+    // History から運んだコミットは受けない（History の中で並べ替えるもの）。
+    target.set_preload(true);
+    let weak = expander.downgrade();
+    target.connect_motion(move |target, _, _| {
+        let accepts = weak
+            .upgrade()
+            .and_then(|e| node_of(&e))
+            .is_some_and(|node| {
+                target
+                    .value()
+                    .and_then(|v| v.get::<String>().ok())
+                    .is_some_and(|d| crate::refops::accepts_drop(&d, &node.data()))
+            });
+        if accepts {
+            gtk::gdk::DragAction::COPY
+        } else {
+            gtk::gdk::DragAction::empty()
+        }
+    });
     let (weak, cb, owner) = (expander.downgrade(), drop_cb.clone(), inner.clone());
     target.connect_drop(move |_, value, x, y| {
         let (Some(expander), Ok(dragged)) = (weak.upgrade(), value.get::<String>()) else {
             return false;
         };
-        // History から運んだコミットは受けない（History の中で並べ替えるもの）。
-        if dragged.starts_with(crate::history::DRAG_PREFIX) {
+        if node_of(&expander).is_none_or(|n| !crate::refops::accepts_drop(&dragged, &n.data())) {
             return false;
         }
         // お気に入りのブランチを、お気に入りの行の上端・下端に落とす: 並べ替える（真ん中は merge・rebase）。
