@@ -308,6 +308,8 @@ struct Picker {
     status: gtk::Label,
     /// 最初に列ができたら、列にキーボードを移す（macOS 版と同じく、始めは列で選ぶ。SSH 先を選べるときは欄のまま）。
     focus_columns: Cell<bool>,
+    /// 列で打った名前と、最後に打った時刻（1 秒あけば打ち直し。macOS 版の `typeSelect`）。
+    typed: RefCell<(String, Option<std::time::Instant>)>,
     /// つなげなかったときの「接続を確認」（もう一度つなぐ。macOS 版と同じ）。
     retry: gtk::Button,
     spinner: gtk::Spinner,
@@ -497,6 +499,7 @@ impl Picker {
             columns_scroll,
             status,
             focus_columns: Cell::new(!matches!(source, Source::AnyHost(_))),
+            typed: RefCell::default(),
             retry,
             spinner,
             choose,
@@ -905,6 +908,47 @@ impl Picker {
         }
     }
 
+    /// 列 `index` で名前を打った: 続けて打てば続きで、その名前の行を選ぶ（なければ、並びでその後にあるもの、
+    /// それもなければ最後。選べる（薄くない）ものだけ。macOS 版の `typeSelect`）。
+    fn type_select(self: &Rc<Self>, index: usize, c: char) {
+        let key = {
+            let mut typed = self.typed.borrow_mut();
+            let now = std::time::Instant::now();
+            if typed
+                .1
+                .is_none_or(|at| now.duration_since(at) > std::time::Duration::from_secs(1))
+            {
+                typed.0.clear();
+            }
+            typed.0.push(c);
+            typed.1 = Some(now);
+            typed.0.to_lowercase()
+        };
+        let Some(view) = self.views.borrow().get(index).cloned() else {
+            return;
+        };
+        let row = {
+            let shown = view.shown.borrow();
+            let usable: Vec<(usize, String)> = shown
+                .iter()
+                .enumerate()
+                .filter(|(_, e)| self.selectable(e) || self.opens(e))
+                .map(|(i, e)| (i, e.name.to_lowercase()))
+                .collect();
+            usable
+                .iter()
+                .find(|(_, n)| *n >= key)
+                .or(usable.last())
+                .map(|(i, _)| *i)
+        };
+        if let Some(row) = row
+            && view.selection.selected() != row as u32
+        {
+            view.selection.set_selected(row as u32);
+            view.list.scroll_to(row as u32, gtk::ListScrollFlags::NONE, None);
+        }
+    }
+
     /// 列 `index` の、選べる（薄くない）最初のものを選ぶ。
     fn select_first(self: &Rc<Self>, index: usize) {
         let Some(view) = self.views.borrow().get(index).cloned() else {
@@ -1079,14 +1123,26 @@ impl Picker {
         });
         let keys = gtk::EventControllerKey::new();
         let w = Rc::downgrade(self);
-        keys.connect_key_pressed(move |_, key, _, _| {
+        keys.connect_key_pressed(move |_, key, _, modifiers| {
             let Some(p) = w.upgrade() else {
                 return glib::Propagation::Proceed;
             };
             match key {
                 gtk::gdk::Key::Right => p.enter(index),
                 gtk::gdk::Key::Left => p.back(index),
-                _ => return glib::Propagation::Proceed,
+                // 名前を打つと、その名前の行を選ぶ（macOS 版と同じ）。
+                _ => match key.to_unicode().filter(|c| !c.is_control() && *c != ' ') {
+                    Some(c)
+                        if !modifiers.intersects(
+                            gtk::gdk::ModifierType::CONTROL_MASK
+                                | gtk::gdk::ModifierType::ALT_MASK
+                                | gtk::gdk::ModifierType::SUPER_MASK,
+                        ) =>
+                    {
+                        p.type_select(index, c)
+                    }
+                    _ => return glib::Propagation::Proceed,
+                },
             }
             glib::Propagation::Stop
         });
