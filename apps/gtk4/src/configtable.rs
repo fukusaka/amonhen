@@ -277,11 +277,19 @@ impl EditCell {
         });
         let keys = gtk::EventControllerKey::new();
         let c = Rc::downgrade(&cell);
-        keys.connect_key_pressed(move |_, key, _, _| {
-            if key == gtk::gdk::Key::Escape
-                && let Some(c) = c.upgrade()
-            {
+        keys.connect_key_pressed(move |_, key, _, state| {
+            let Some(c) = c.upgrade() else {
+                return glib::Propagation::Proceed;
+            };
+            if key == gtk::gdk::Key::Escape {
                 c.end();
+                return glib::Propagation::Stop;
+            }
+            // Ctrl+A は欄の文字だけを選ぶ（表まで届くと全部の行を選び、続く Delete・− がすべてのキーを消す）。
+            if state.contains(gtk::gdk::ModifierType::CONTROL_MASK)
+                && matches!(key, gtk::gdk::Key::a | gtk::gdk::Key::A)
+            {
+                c.entry.select_region(0, -1);
                 return glib::Propagation::Stop;
             }
             glib::Propagation::Proceed
