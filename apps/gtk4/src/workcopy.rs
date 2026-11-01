@@ -1187,15 +1187,55 @@ impl Inner {
         };
         // 中身の変わった所だけを入れ替える（変わらない行は部品も選択もそのまま）。
         let (start, old_end, new_end) = changed_span(&this.rows.borrow(), &rows);
-        let added: Vec<glib::BoxedAnyObject> = rows[start..new_end]
+        // 同じファイル・ディレクトリの行は、中身（状態・チェック）だけを入れ替える。入れ替えると GtkListView
+        // は行を消して足したと見て、その行がスクロールの基準なら隣の行が代わりに来て一覧がずれる（Space で
+        // 含めるたびに 1 行ずつ動いた）。
+        let (head, tail) = {
+            let old = &this.rows.borrow()[start..old_end];
+            let new = &rows[start..new_end];
+            let head = old
+                .iter()
+                .zip(new)
+                .take_while(|(a, b)| a.same_place(b))
+                .count();
+            let tail = old[head..]
+                .iter()
+                .rev()
+                .zip(new[head..].iter().rev())
+                .take_while(|(a, b)| a.same_place(b))
+                .count();
+            (head, tail)
+        };
+        let replace = |at: usize, row: &Row| {
+            if let Some(object) = this
+                .store
+                .item(at as u32)
+                .and_downcast::<glib::BoxedAnyObject>()
+            {
+                object.replace(row.clone());
+            }
+        };
+        for i in 0..head {
+            replace(start + i, &rows[start + i]);
+        }
+        for j in 0..tail {
+            replace(old_end - 1 - j, &rows[new_end - 1 - j]);
+        }
+        let added: Vec<glib::BoxedAnyObject> = rows[start + head..new_end - tail]
             .iter()
             .cloned()
             .map(glib::BoxedAnyObject::new)
             .collect();
         this.rows.replace(rows);
         this.row_entries.replace(row_entries);
-        this.store
-            .splice(start as u32, (old_end - start) as u32, &added);
+        this.store.splice(
+            (start + head) as u32,
+            (old_end - tail - start - head) as u32,
+            &added,
+        );
+        if head + tail > 0 {
+            this.rebind_cells();
+        }
         // 選び直すので、残った行の選択も外す（作り直していたときと同じ）。
         this.selection.unselect_all();
         // 空のときの文（macOS 版と同じ）。
@@ -1617,6 +1657,23 @@ impl Inner {
     }
 
     /// 見えている行の中身を入れ直す（行数・コンフリクトの状態が届いたとき。一覧は作り直さない）。
+    /// 見えている行の部品に、今の行の中身を入れ直す（行を入れ替えずに中身だけを変えたとき）。
+    fn rebind_cells(&self) {
+        let cells: Vec<Rc<RowCell>> = self.cells.borrow().values().cloned().collect();
+        for cell in cells {
+            let row = cell
+                .list_item
+                .upgrade()
+                .and_then(|item| item.item())
+                .and_downcast::<glib::BoxedAnyObject>()
+                .map(|object| object.borrow::<Row>().clone());
+            if let Some(row) = row {
+                cell.item.replace(Some(row));
+                self.fill_cell(&cell);
+            }
+        }
+    }
+
     fn refresh_cells(&self) {
         let cells: Vec<Rc<RowCell>> = self.cells.borrow().values().cloned().collect();
         for cell in cells {
@@ -3063,6 +3120,29 @@ enum Row {
 }
 
 impl Row {
+    /// 同じファイル・ディレクトリの行か（状態・チェック・畳んだかは問わない）。
+    fn same_place(&self, other: &Row) -> bool {
+        match (self, other) {
+            (
+                Row::File {
+                    entry: a, depth: x, ..
+                },
+                Row::File {
+                    entry: b, depth: y, ..
+                },
+            ) => a.path == b.path && x == y,
+            (
+                Row::Dir {
+                    path: a, depth: x, ..
+                },
+                Row::Dir {
+                    path: b, depth: y, ..
+                },
+            ) => a == b && x == y,
+            _ => false,
+        }
+    }
+
     /// 木の深さと、ディレクトリの行ならそのパス（← で親に移る・畳むのに使う）。
     fn tree_place(&self) -> (usize, Option<String>) {
         match self {
