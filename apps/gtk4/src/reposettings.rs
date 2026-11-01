@@ -368,13 +368,16 @@ pub(crate) fn config_file(entry: &Entry) -> String {
     tilde(entry.origin.strip_prefix("file:").unwrap_or(&entry.origin))
 }
 
-/// 場所（`ssh://[user@]host[:port]/path`）の SSH 先の名前。
+/// 場所の接続先の名前（macOS 版の `RepositoryLocation.host`）: `ssh://[user@]host[:port]/path` はその
+/// `[user@]host[:port]` のまま、`daemon:/path` は「daemon」、`daemon:ssh://…` は「ホスト · daemon」。手元なら None。
 pub fn host_of(location: &str) -> Option<String> {
+    if let Some(rest) = location.strip_prefix("daemon:") {
+        return Some(
+            host_of(rest).map_or_else(|| "daemon".to_owned(), |h| format!("{h} · daemon")),
+        );
+    }
     let rest = location.strip_prefix("ssh://")?;
-    let authority = rest.split('/').next()?;
-    let host = authority.rsplit('@').next()?;
-    let host = host.split(':').next()?;
-    (!host.is_empty()).then(|| host.to_owned())
+    Some(rest.split('/').next().unwrap_or_default().to_owned())
 }
 
 /// 色（テーマの色を使う）。
@@ -2419,4 +2422,24 @@ pub fn show(
     }
     slot.append(&settings.widget);
     open.1.replace(Some(settings));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::host_of;
+
+    #[test]
+    fn host_of_follows_macos() {
+        assert_eq!(host_of("/x"), None);
+        assert_eq!(host_of("ssh://box/~/x").as_deref(), Some("box"));
+        assert_eq!(
+            host_of("ssh://me@box:2222/~/x").as_deref(),
+            Some("me@box:2222")
+        );
+        assert_eq!(host_of("daemon:/x").as_deref(), Some("daemon"));
+        assert_eq!(
+            host_of("daemon:ssh://me@box/x").as_deref(),
+            Some("me@box · daemon")
+        );
+    }
 }
