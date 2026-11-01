@@ -15,7 +15,6 @@ use serde_json::json;
 use crate::actions::Actions;
 use crate::icon::{self, Icon};
 use crate::quickopen;
-use crate::sheets::{self, CheckoutTarget};
 
 /// 最近切り替えたブランチの記録（場所 → ブランチの名前、新しい順）。macOS 版の `recentBranches.<場所>`。
 const RECENT: &str = "recentBranches";
@@ -403,12 +402,16 @@ fn render(row: &Row, choice: &Choice, recent: &[String], actions: &Actions) {
     }
 }
 
-/// 選んだものに切り替える。ローカルのブランチは Checkout のシートで（ほかの worktree が使っていればその worktree
-/// に移る）、リモートのブランチは追跡ブランチを作るシートで、作る行はそのまま作って切り替える。
+/// 選んだものに切り替える。選んだこと自体を確かめとし、シートは出さない（macOS 版と同じ）。ローカルのブランチは
+/// checkout（ほかの worktree が使っていれば、git と同じく押し通さず、その worktree に移る）、リモートのブランチは
+/// 追跡ブランチを作って、作る行はそのまま作って切り替える。
 fn choose(actions: &Rc<Actions>, choice: Choice) {
     match choice {
-        Choice::Local(name) => sheets::checkout(actions, CheckoutTarget::Branch(name)),
-        Choice::Remote(name) => sheets::checkout(actions, CheckoutTarget::Track(name)),
+        Choice::Local(name) => match actions.worktree_using(&name) {
+            Some((_, path)) => actions.edit_worktree(&path),
+            None => actions.perform(json!({ "op": "checkout", "branch": name })),
+        },
+        Choice::Remote(name) => actions.perform(json!({ "op": "track", "remoteBranch": name })),
         Choice::Create(name) => actions.perform(
             json!({ "op": "createBranch", "name": name, "start": "HEAD", "checkout": true }),
         ),
