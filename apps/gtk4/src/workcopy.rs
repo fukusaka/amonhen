@@ -304,6 +304,9 @@ impl WorkingCopy {
         let list = gtk::ListBox::new();
         // 何行も選べる（Space・Enter で選んだファイルをまとめて含める・外す。macOS 版と同じ）。
         list.set_selection_mode(gtk::SelectionMode::Multiple);
+        // 1 回のクリックで「選んで activate」にすると、Multiple では選んだ行に足すだけになる（Shift の範囲・
+        // ふつうのクリックで選び直す、が効かない）。クリックは選ぶだけにする。
+        list.set_activate_on_single_click(false);
         list.add_css_class("navigation-sidebar");
         let empty = gtk::Label::new(None);
         empty.add_css_class("dim-label");
