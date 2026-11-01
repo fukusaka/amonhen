@@ -1169,6 +1169,7 @@ impl Picker {
                 .borrow()
                 .get(index)
                 .is_some_and(|c| c.marked.contains(&e.name));
+            line.set_widget_name(&e.name);
             if marked {
                 line.add_css_class("picker-marked");
             } else {
@@ -1312,19 +1313,49 @@ impl Picker {
             .selected
             .as_ref()
             .and_then(|s| entries.iter().position(|e| &e.name == s));
+        // 並びが同じ（Ctrl+クリックで足した・外しただけ）なら、作り直さずに選びと印だけ直す。作り直すと
+        // 一覧が先頭まで戻り、続けて Ctrl+クリックする行を見失う。
+        let same = view.model.n_items() as usize == names.len()
+            && names
+                .iter()
+                .enumerate()
+                .all(|(i, n)| view.model.string(i as u32).as_deref() == Some(*n));
         self.filling.set(true);
         view.shown.replace(entries.clone());
-        view.model.splice(0, view.model.n_items(), &names);
+        if !same {
+            view.model.splice(0, view.model.n_items(), &names);
+        }
         view.selection
             .set_selected(position.map_or(gtk::INVALID_LIST_POSITION, |p| p as u32));
         self.filling.set(false);
-        if let Some(p) = position {
+        if same {
+            self.refresh_marks(index, &view);
+        } else if let Some(p) = position {
             view.list
                 .scroll_to(p as u32, gtk::ListScrollFlags::NONE, None);
         }
         view.note
             .set_text(column.error.as_deref().unwrap_or_default());
         view.note.set_visible(column.error.is_some());
+    }
+
+    /// 出ている行の、Ctrl+クリックで足した印を付け直す（行の名前は bind で部品の名前に入れてある）。
+    fn refresh_marks(&self, index: usize, view: &ColumnView) {
+        let columns = self.columns.borrow();
+        let Some(column) = columns.get(index) else {
+            return;
+        };
+        let mut row = view.list.first_child();
+        while let Some(r) = row {
+            if let Some(line) = r.first_child() {
+                if column.marked.iter().any(|m| *m == line.widget_name()) {
+                    line.add_css_class("picker-marked");
+                } else {
+                    line.remove_css_class("picker-marked");
+                }
+            }
+            row = r.next_sibling();
+        }
     }
 
     /// 最後の列を見えるところまで送る。
