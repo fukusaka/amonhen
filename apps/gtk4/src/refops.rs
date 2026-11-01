@@ -721,11 +721,12 @@ pub fn drop_menu(
             let (d, t) = (dragged.clone(), to.clone());
             // checkout していなくても、fast-forward で済むならブランチだけ進める。
             items.push(menu::action(titles::merge(&dragged, &to), move || {
-                sheets::confirm_then(
+                sheets::confirm_integrate(
                     &a,
                     tr!("Merge {rev} into {target}?", rev = d, target = t),
-                    sheets::can_undo(),
-                    "Merge".to_owned(),
+                    "Merge",
+                    t.clone(),
+                    vec![d.clone()],
                     false,
                     vec![json!({ "op": "mergeInto", "target": t, "rev": d })],
                 );
@@ -741,16 +742,14 @@ pub fn drop_menu(
                 if sequence.len() == 1 {
                     sheets::integrate(&a, &d, &t, true);
                 } else {
-                    sheets::confirm_then(
+                    // 落とした先のブランチに取り込む見込み（rebase のときはコミットごと。macOS 版と同じ）。
+                    sheets::confirm_integrate(
                         &a,
                         tr!("Rebase {target} onto {rev}?", target = t, rev = d),
-                        format!(
-                            "{} {}",
-                            tr!("Checks out {branch} first.", branch = t),
-                            sheets::can_undo()
-                        ),
-                        "Rebase".to_owned(),
-                        false,
+                        "Rebase",
+                        t.clone(),
+                        vec![d.clone()],
+                        true,
                         sequence.clone(),
                     );
                 }

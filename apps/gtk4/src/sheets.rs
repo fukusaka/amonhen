@@ -1712,6 +1712,36 @@ pub fn confirm_then(
     });
 }
 
+/// 確かめてから merge・rebase の `commands` を順に実行する。`ours` に `theirs` を取り込むとコンフリクトするかを
+/// 裏で調べて見せる（`estimate` なら rebase の見込み）。サイドバーへのドロップのように、今のブランチ以外へ
+/// 取り込むとき（macOS 版の `integrateWithConfirmation`）。
+pub fn confirm_integrate(
+    actions: &Rc<Actions>,
+    title: String,
+    ok: &'static str,
+    ours: String,
+    theirs: Vec<String>,
+    estimate: bool,
+    commands: Vec<Value>,
+) {
+    let actions = actions.clone();
+    glib::spawn_future_local(async move {
+        let Some(repo) = actions.repo() else { return };
+        let sheet = Sheet::new(parent(&actions).as_ref(), &title, &can_undo());
+        let forecast = forecast_label();
+        sheet.add(&forecast);
+        sheet.buttons(ok, false, None);
+        let (label, several) = (forecast.clone(), theirs.len() > 1);
+        glib::spawn_future_local(async move {
+            let f = predict_merge(&repo, &ours, &theirs).await;
+            show_forecast(&label, &f, estimate || several);
+        });
+        if sheet.run().await == Response::Ok {
+            actions.perform_sequence(commands);
+        }
+    });
+}
+
 /// Cherry-pick・Revert の前に確かめる。`commits` は（16 進, merge か）を、実行する順に。
 pub fn pick(actions: &Rc<Actions>, revert: bool, commits: Vec<(String, bool)>) {
     let actions = actions.clone();
