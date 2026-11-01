@@ -42,25 +42,43 @@ pub fn score(query: &str, text: &str) -> Option<i64> {
     Some(score * 100 - t.len() as i64)
 }
 
+/// 候補（場所と、比べるための小文字の名前・場所）。候補を読み直すときに一度だけ作る（打つたび・候補ごとに
+/// ブックマークを読むと、たくさんあるときに遅い）。
+struct Candidate {
+    location: String,
+    name: String,
+    lower: String,
+}
+
+fn read_candidates(data: &bookmarks::Data, locations: Vec<String>) -> Vec<Candidate> {
+    locations
+        .into_iter()
+        .map(|location| Candidate {
+            name: bookmarks::display_name_in(data, &location).to_lowercase(),
+            lower: location.to_lowercase(),
+            location,
+        })
+        .collect()
+}
+
 /// 問い合わせに合うものを、合い方の良い順に並べる（名前で合えば高く、パスでしか合わなければ低く）。
-fn matches(candidates: &[String], query: &str) -> Vec<String> {
+fn matches(candidates: &[Candidate], query: &str) -> Vec<String> {
     let query = query.trim().to_lowercase();
     if query.is_empty() {
-        return candidates.to_vec();
+        return candidates.iter().map(|c| c.location.clone()).collect();
     }
-    let mut scored: Vec<(String, i64)> = candidates
+    let mut scored: Vec<(&str, i64)> = candidates
         .iter()
-        .filter_map(|path| {
-            let name = bookmarks::display_name(path).to_lowercase();
-            if let Some(s) = score(&query, &name) {
-                return Some((path.clone(), s + 1000));
+        .filter_map(|c| {
+            if let Some(s) = score(&query, &c.name) {
+                return Some((c.location.as_str(), s + 1000));
             }
-            score(&query, &path.to_lowercase()).map(|s| (path.clone(), s))
+            score(&query, &c.lower).map(|s| (c.location.as_str(), s))
         })
         .collect();
     // 同じ点なら元の並び（お気に入り・ブックマーク・最近・スキャンの順）。
     scored.sort_by_key(|(_, s)| -s);
-    scored.into_iter().map(|(p, _)| p).collect()
+    scored.into_iter().map(|(p, _)| p.to_owned()).collect()
 }
 
 struct Row {
@@ -69,12 +87,15 @@ struct Row {
     branch: gtk::Label,
     state: gtk::Label,
     location: RefCell<String>,
+    /// 読んだブックマーク（候補と一緒に読み直す。行ごとに読まない）。
+    data: Rc<RefCell<bookmarks::Data>>,
 }
 
 impl Row {
     fn render(&self) {
         let location = self.location.borrow().clone();
-        self.name.set_markup(&repobrowser::name_markup(&location));
+        self.name
+            .set_markup(&repobrowser::name_markup_in(&self.data.borrow(), &location));
         self.path.set_text(&repobrowser::path_text(&location));
         self.branch.set_text(&repobrowser::branch_text(&location));
         repobrowser::show_state(&self.state, &location, false);
@@ -104,7 +125,8 @@ pub fn show_with(parent: Option<&gtk::Window>, open: Open, query: &str) -> gtk::
     let selection = gtk::SingleSelection::new(Some(model.clone()));
     let factory = gtk::SignalListItemFactory::new();
     let rows: Rc<RefCell<Vec<Rc<Row>>>> = Rc::default();
-    let r = rows.clone();
+    let data = Rc::new(RefCell::new(bookmarks::data()));
+    let (r, d) = (rows.clone(), data.clone());
     factory.connect_setup(move |_, item| {
         let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
         let label = |class: Option<&str>, xalign: f32| {
@@ -146,6 +168,7 @@ pub fn show_with(parent: Option<&gtk::Window>, open: Open, query: &str) -> gtk::
             branch,
             state,
             location: RefCell::default(),
+            data: d.clone(),
         }));
     });
     let r = rows.clone();
@@ -206,7 +229,10 @@ pub fn show_with(parent: Option<&gtk::Window>, open: Open, query: &str) -> gtk::
     }
     WINDOW.with(|w| w.borrow().set(Some(&window)));
 
-    let candidates = Rc::new(RefCell::new(bookmarks::all_locations()));
+    let candidates = Rc::new(RefCell::new(read_candidates(
+        &data.borrow(),
+        bookmarks::all_locations(),
+    )));
     let update = {
         let (model, selection, field, candidates) = (
             model.clone(),
@@ -228,11 +254,12 @@ pub fn show_with(parent: Option<&gtk::Window>, open: Open, query: &str) -> gtk::
     let u = update.clone();
     field.connect_search_changed(move |_| u());
     // ブックマーク・スキャンの結果・行の状態が変わったら、出しているものを描き直す。
-    let (w, c, u, r) = (
+    let (w, c, u, r, d) = (
         window.downgrade(),
         candidates.clone(),
         update.clone(),
         rows.clone(),
+        data.clone(),
     );
     bookmarks::connect(move |path| {
         if w.upgrade().is_none() {
@@ -247,7 +274,8 @@ pub fn show_with(parent: Option<&gtk::Window>, open: Open, query: &str) -> gtk::
                 }
             }
             None => {
-                *c.borrow_mut() = bookmarks::all_locations();
+                *d.borrow_mut() = bookmarks::data();
+                *c.borrow_mut() = read_candidates(&d.borrow(), bookmarks::all_locations());
                 u();
             }
         }
@@ -340,7 +368,20 @@ pub fn show_with(parent: Option<&gtk::Window>, open: Open, query: &str) -> gtk::
 
 #[cfg(test)]
 mod tests {
-    use super::score;
+    use super::*;
+
+    #[test]
+    fn matches_names_before_paths() {
+        let data = bookmarks::Data::default();
+        let list = read_candidates(&data, vec!["/src/amonhen-x".into(), "/amonhen/zeta".into()]);
+        assert_eq!(matches(&list, "zeta"), ["/amonhen/zeta"]);
+        assert_eq!(
+            matches(&list, "AMONHEN"),
+            ["/src/amonhen-x", "/amonhen/zeta"]
+        );
+        assert_eq!(matches(&list, " ").len(), 2);
+        assert!(matches(&list, "qqq").is_empty());
+    }
 
     #[test]
     fn scores_in_order_and_prefers_word_starts() {
