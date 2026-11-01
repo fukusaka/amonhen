@@ -387,6 +387,8 @@ struct Picker {
     /// 今の移動・つなぎ（古い答えは捨てる）。
     generation: Cell<u64>,
     attempt: Cell<u64>,
+    /// SSH 先の欄で最後につないだ名前（同じ名前で何度もつながない。macOS 版の `last`）。
+    committed_host: RefCell<Option<String>>,
     /// 部品の選びを入れ直している間（選びの知らせを無視する）。
     filling: Cell<bool>,
     /// → で入ったが、まだ読んでいる列のパス（読めたら最初のものを選ぶ）。
@@ -620,6 +622,7 @@ impl Picker {
             initial,
             generation: Cell::new(0),
             attempt: Cell::new(0),
+            committed_host: RefCell::default(),
             filling: Cell::new(false),
             entering: RefCell::default(),
             tx,
@@ -664,7 +667,7 @@ impl Picker {
                 if let Some(e) = &p.host_entry {
                     e.set_text(&h);
                 }
-                p.connect(&h);
+                p.commit_host(&h);
             }
         });
         group.add_action(&host);
@@ -674,7 +677,7 @@ impl Picker {
             let w = Rc::downgrade(self);
             entry.connect_activate(move |e| {
                 if let Some(p) = w.upgrade() {
-                    p.connect(&e.text());
+                    p.commit_host(&e.text());
                 }
             });
         }
@@ -772,6 +775,16 @@ impl Picker {
     }
 
     /// `host` のエンジンにつなぐ（リポジトリなしで動かす。共有の daemon を使う設定なら daemon 越し）。
+    /// SSH 先の欄で決めた名前につなぐ。前に決めた名前と同じなら何もしない（macOS 版と同じ）。
+    fn commit_host(self: &Rc<Self>, host: &str) {
+        let host = host.trim().to_owned();
+        if self.committed_host.borrow().as_deref() == Some(host.as_str()) {
+            return;
+        }
+        self.committed_host.replace(Some(host.clone()));
+        self.connect(&host);
+    }
+
     fn connect(self: &Rc<Self>, host: &str) {
         let host = host.trim().to_owned();
         let attempt = self.attempt.get() + 1;
