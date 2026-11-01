@@ -925,8 +925,14 @@ pub(crate) fn commits_page(s: &Rc<RepoSettings>) -> gtk::Box {
         })),
     ));
     editor.add_controller(shortcuts);
-    let (s2, b2) = (saved.clone(), buffer.clone());
-    revert.connect_clicked(move |_| b2.set_text(&s2.borrow()));
+    // 読んだ中身に戻して、ファイルを読み直す（外で変わっていれば、その中身になる。macOS 版と同じ）。
+    let (s2, b2, w) = (saved.clone(), buffer.clone(), s.weak());
+    revert.connect_clicked(move |_| {
+        b2.set_text(&s2.borrow());
+        if let Some(s) = w.upgrade() {
+            s.load();
+        }
+    });
 
     let (o, p, sh, st) = (
         own.clone(),
