@@ -19,6 +19,9 @@ use gtk::{gio, glib};
 
 use crate::reposettings::{Level, RepoSettings, config_file, label, scope_label};
 
+/// キーの列を広げる上限。
+const KEY_WIDTH_MAX: i32 = 320;
+
 /// 「Basic」のキー: ページが尋ねるもの（docs/ux.md の 4.5）。git の文書の綴りで（比べるときは大文字小文字を
 /// 区別しない）。
 const BASIC_KEYS: &[&str] = &[
@@ -752,7 +755,10 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
         expander.set_child(Some(&l));
         item.set_child(Some(&expander));
     });
-    factory.connect_bind(|_, item| {
+    // キーの列は、キーが切れずに収まる幅まで広げる（上限まで。GTK の文字は macOS 版より大きい）。
+    let key_col: Rc<glib::WeakRef<gtk::ColumnViewColumn>> = Rc::default();
+    let kc = key_col.clone();
+    factory.connect_bind(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
@@ -775,10 +781,18 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
                 l.set_tooltip_text(Some(&row.key));
             }
         }
+        if let Some(column) = kc.upgrade() {
+            let need = expander.measure(gtk::Orientation::Horizontal, -1).1 + 16;
+            let wide = need.min(KEY_WIDTH_MAX);
+            if wide > column.fixed_width() {
+                column.set_fixed_width(wide);
+            }
+        }
     });
     let key_column = gtk::ColumnViewColumn::new(Some(&tr!("Key")), Some(factory));
     key_column.set_resizable(true);
     key_column.set_fixed_width(200);
+    key_col.set(Some(&key_column));
     key_column.set_sorter(Some(&sorter(|r| r.key.clone())));
     view.append_column(&key_column);
 
@@ -939,7 +953,7 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
     );
     for c in [&effective_edit, &effective_read] {
         c.set_resizable(true);
-        c.set_fixed_width(130);
+        c.set_fixed_width(150);
         c.set_sorter(Some(&sorter(|r| r.effective.clone())));
         view.append_column(c);
     }
@@ -1009,7 +1023,7 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
         column.set_fixed_width(match *scope {
             "system" => 90,
             "worktree" => 100,
-            _ => 115,
+            _ => 135,
         });
         column.set_expand(*scope == own);
         let sc = (*scope).to_owned();
