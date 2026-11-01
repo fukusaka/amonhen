@@ -1157,6 +1157,9 @@ pub fn pull(actions: &Rc<Actions>, mode: &str) {
                         label.set_text("");
                     } else if let Some(f) = answer.borrow().as_ref() {
                         show_forecast(label, f, m == "rebase");
+                    } else {
+                        // 答えがまだなら、調べていることを出し直す（Fast-Forward Only で消した後）。
+                        label.set_text(&tr!("Checking for conflicts…"));
                     }
                 }
             })
