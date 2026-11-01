@@ -12,7 +12,8 @@ use crate::sheets::{Response, Sheet, row};
 
 const RECENT: &str = "recentRepositories";
 const CLONE_FOLDER: &str = "cloneFolder";
-const KEEP: usize = 10;
+/// File > Open Recent に並べる数（記録はすべて残す。macOS 版と同じ）。
+const MENU_ITEMS: usize = 15;
 /// 最後に開いた日時（場所 → UNIX 時間。macOS 版の `repositoryOpenedAt`）。
 const OPENED: &str = "repositoryOpenedAt";
 
@@ -70,7 +71,6 @@ pub fn record(location: &Path) {
     let mut list = recent();
     list.retain(|l| *l != text);
     list.insert(0, text.clone());
-    list.truncate(KEEP);
     crate::settings::set_string(RECENT, &serde_json::json!(list).to_string());
     let mut opened = opened_all();
     opened.insert(
@@ -156,7 +156,12 @@ pub fn recent_menu() -> gio::Menu {
 
 fn fill(menu: &gio::Menu) {
     let home = glib::home_dir();
-    for location in recent() {
+    let list = recent();
+    if list.is_empty() {
+        // 何もないときは押せない「None」（macOS 版と同じ）。
+        menu.append(Some(&tr!("None")), Some("win.open-recent-none"));
+    }
+    for location in list.into_iter().take(MENU_ITEMS) {
         // ホームの下は ~ で短くする。
         let shown = match Path::new(&location).strip_prefix(&home) {
             Ok(rest) if !amonhen_remote::location::is_remote(&location) => {
