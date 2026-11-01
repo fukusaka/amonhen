@@ -783,8 +783,10 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
     view.append_column(&key_column);
 
     // 書けるセルの列（`shown` がセルに出す値）。
-    let editable_factory = |shown: fn(&Row, &str) -> Option<(String, bool)>| {
+    // `combined` なら Combined の効いている値の欄（マウスを載せると設定元とファイル。macOS 版と同じ）。
+    let editable_factory = |shown: fn(&Row, &str) -> Option<(String, bool)>, combined: bool| {
         let factory = gtk::SignalListItemFactory::new();
+        let h = host.clone();
         let t = Rc::downgrade(&table);
         factory.connect_setup(move |_, item| {
             let (Some(item), Some(table)) = (item.downcast_ref::<gtk::ListItem>(), t.upgrade())
@@ -841,12 +843,23 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
                 }
                 None => cell.text.set_text(""),
             }
-            cell.stack
-                .set_tooltip_text(Some(&if s.level == Level::Repository {
-                    tr!("Click to edit in this repository")
-                } else {
-                    tr!("Click to edit for all repositories")
-                }));
+            if combined {
+                let tip = (!row.scope.is_empty()).then(|| {
+                    format!(
+                        "{} · {}",
+                        scope_label(&row.scope, h.as_deref()),
+                        row.files.get(&row.scope).cloned().unwrap_or_default()
+                    )
+                });
+                cell.stack.set_tooltip_text(tip.as_deref());
+            } else {
+                cell.stack
+                    .set_tooltip_text(Some(&if s.level == Level::Repository {
+                        tr!("Click to edit in this repository")
+                    } else {
+                        tr!("Click to edit for all repositories")
+                    }));
+            }
             let mut cells = table.cells.borrow_mut();
             let list = cells.entry(row.key.clone()).or_default();
             list.retain(|c| c.upgrade().is_some_and(|c| *c.key.borrow() == row.key));
@@ -903,9 +916,10 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
     // 切り替える。
     let effective_edit = gtk::ColumnViewColumn::new(
         Some(&tr!("Value in effect")),
-        Some(editable_factory(|r, _| {
-            (!r.scope.is_empty()).then(|| (r.effective.clone(), false))
-        })),
+        Some(editable_factory(
+            |r, _| (!r.scope.is_empty()).then(|| (r.effective.clone(), false)),
+            true,
+        )),
     );
     let h = host.clone();
     let effective_read = gtk::ColumnViewColumn::new(
@@ -968,11 +982,14 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
             }
         };
         let factory = if *scope == own {
-            editable_factory(|r, own| {
-                r.values
-                    .get(own)
-                    .map(|v| (v.clone(), r.scope.as_str() == own))
-            })
+            editable_factory(
+                |r, own| {
+                    r.values
+                        .get(own)
+                        .map(|v| (v.clone(), r.scope.as_str() == own))
+                },
+                false,
+            )
         } else {
             let scope = (*scope).to_owned();
             text_factory(Rc::new(move |r| match r.values.get(&scope) {
