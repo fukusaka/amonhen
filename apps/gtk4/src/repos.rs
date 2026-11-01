@@ -175,6 +175,17 @@ fn fill(menu: &gio::Menu) {
     }
 }
 
+/// `~`・`~/…` をホームの下のパスにする。
+fn expand_tilde(text: &str) -> PathBuf {
+    if text == "~" {
+        return glib::home_dir();
+    }
+    match text.strip_prefix("~/") {
+        Some(rest) => glib::home_dir().join(rest),
+        None => PathBuf::from(text),
+    }
+}
+
 /// URL の最後の部分（`.git` を除く）。
 fn name_from_url(url: &str) -> String {
     let trimmed = url.trim().trim_end_matches('/');
@@ -193,11 +204,20 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
             ))
             .hexpand(true)
             .build();
+        // 置き場所の初期値: 前に clone した場所、なければスキャンするフォルダーの最初（手元のもの）、なければ
+        // ホーム。ホームの下は ~ で短く出す（macOS 版と同じ）。
         let folder_default = crate::settings::string(CLONE_FOLDER)
             .filter(|f| !f.is_empty())
+            .or_else(|| {
+                crate::bookmarks::data()
+                    .scan_roots
+                    .into_iter()
+                    .map(|r| r.path)
+                    .find(|p| !amonhen_remote::location::is_remote(p))
+            })
             .unwrap_or_else(|| glib::home_dir().to_string_lossy().into_owned());
         let folder = gtk::Entry::builder()
-            .text(&folder_default)
+            .text(crate::bookmarks::tilde(&folder_default))
             .hexpand(true)
             .build();
         let choose = gtk::Button::with_label(&tr!("Choose…"));
@@ -275,12 +295,12 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
                 .title(tr!("Clone Location"))
                 .modal(true)
                 .build();
-            dialog.set_initial_folder(Some(&gio::File::for_path(f.text().as_str())));
+            dialog.set_initial_folder(Some(&gio::File::for_path(expand_tilde(f.text().as_str()))));
             glib::spawn_future_local(async move {
                 if let Ok(picked) = dialog.select_folder_future(Some(&w)).await
                     && let Some(path) = picked.path()
                 {
-                    f.set_text(&path.to_string_lossy());
+                    f.set_text(&crate::bookmarks::tilde(&path.to_string_lossy()));
                 }
             });
         });
@@ -299,10 +319,7 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
             parent.error_bell();
             return;
         }
-        let parent_dir = match parent_dir.strip_prefix("~/") {
-            Some(rest) => glib::home_dir().join(rest),
-            None => PathBuf::from(parent_dir),
-        };
+        let parent_dir = expand_tilde(&parent_dir);
         let dest = parent_dir.join(&folder_name);
         if dest.exists() {
             crate::sheets::inform(
