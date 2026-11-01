@@ -405,6 +405,12 @@ fn main() -> glib::ExitCode {
         // ショートカットと Quit は、リポジトリのページしかない起動でも効くように最初に。
         appmenu::install_app(app);
         menu::install_css();
+        // スキャンするフォルダを起動したときから見張る（macOS 版と同じ。確認用の起動では見張らない）。
+        glib::idle_add_local_once(|| {
+            if !tabs::is_check_run() {
+                bookmarks::watch_scan_roots();
+            }
+        });
     });
     if scripted {
         app.connect_activate(move |app| launch(app, &args));

@@ -227,14 +227,22 @@ pub fn data() -> Data {
 /// ほかのプロセス（ほかの窓の Amon Hen・macOS 版ではない同じ FE）が書き換えていたら読み直す（一覧を開くとき）。
 pub fn refresh() {
     let fresh = read().unwrap_or_default();
-    let changed = STATE.with(|s| {
+    let (changed, roots_changed) = STATE.with(|s| {
         let mut s = s.borrow_mut();
         let changed = s.data.as_ref() != Some(&fresh);
+        let roots_changed = s
+            .data
+            .as_ref()
+            .is_some_and(|d| d.scan_roots != fresh.scan_roots);
         s.data = Some(fresh);
-        changed
+        (changed, roots_changed)
     });
     if changed {
         notify(None);
+    }
+    // スキャンするフォルダが変わっていれば探し直す（見張りも作り直す。macOS 版の `reloadIfChanged`）。
+    if roots_changed {
+        rescan();
     }
 }
 
@@ -433,6 +441,7 @@ pub fn add_scan_root(path: &str) {
 pub fn remove_scan_root(path: &str) {
     STATE.with(|s| s.borrow_mut().scanned.remove(path));
     edit(|d| d.scan_roots.retain(|r| r.path != path));
+    watch_scan_roots();
 }
 
 pub fn set_depth(path: &str, depth: u32) {
@@ -753,6 +762,30 @@ pub fn rescan() {
 /// 探し直したフォルダ `dirs`（手元のスキャンするフォルダの、探す深さまでの、リポジトリでないフォルダ）を見張り、
 /// 中でフォルダが増えた・消えたら探し直す（macOS 版の `watchScanRoots`。知らせは 1 秒まとめる）。見つけた
 /// リポジトリの中の変化（ビルドなど）は見ない。
+/// 手元のスキャンするフォルダを見張る（探しはしない。起動したときと、フォルダを外したとき。macOS 版の
+/// `watchScanRoots`）。見張る先（探す深さまでのフォルダ）は裏で集める。探し直すと、そのとき見張り直す。
+pub fn watch_scan_roots() {
+    let roots: Vec<ScanRoot> = data()
+        .scan_roots
+        .into_iter()
+        .filter(|r| !amonhen_remote::location::is_remote(&r.path))
+        .collect();
+    glib::spawn_future_local(async move {
+        let dirs = gio::spawn_blocking(move || {
+            roots
+                .iter()
+                .flat_map(|r| scan_local_with_dirs(r).1)
+                .collect::<Vec<_>>()
+        })
+        .await
+        .unwrap_or_default();
+        // 集めている間に探し直していれば、そちらの見張りのまま。
+        if !is_scanning() {
+            watch_dirs(&dirs);
+        }
+    });
+}
+
 fn watch_dirs(dirs: &[PathBuf]) {
     // 前の見張りを止めてから（同じフォルダを二重に見ない）。
     STATE.with(|s| s.borrow_mut().watch = None);
