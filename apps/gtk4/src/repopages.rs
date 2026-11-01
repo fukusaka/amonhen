@@ -1024,7 +1024,7 @@ pub(crate) fn commits_page(s: &Rc<RepoSettings>) -> gtk::Box {
     });
     // 共有のテンプレートの一覧が変わったら（Settings > Git > Commits で）、選びと中身を出し直す。
     let w = s.weak();
-    crate::settings::connect_changed(move |key| {
+    crate::settings::connect_changed_while(&s.widget, move |key| {
         if key == crate::templates::KEY
             && let Some(s) = w.upgrade()
         {
@@ -1408,7 +1408,7 @@ pub(crate) fn hooks_page(s: &Rc<RepoSettings>) -> gtk::ScrolledWindow {
     open_button.append(&more_button);
     open_button.set_visible(local);
     let (eb, mb) = (edit_button.downgrade(), more_button.downgrade());
-    crate::settings::connect_changed(move |key| {
+    crate::settings::connect_changed_while(&edit_button, move |key| {
         if key != crate::editor::KEY {
             return;
         }

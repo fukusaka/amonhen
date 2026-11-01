@@ -17,7 +17,9 @@ type Watcher = Rc<dyn Fn(&str)>;
 
 thread_local! {
     static FILE: glib::KeyFile = load();
-    static WATCHERS: RefCell<Vec<Watcher>> = RefCell::default();
+    /// 聞き手と、それを持つもの（なくなったら外す。None はずっと）。
+    static WATCHERS: RefCell<Vec<(Option<glib::WeakRef<glib::Object>>, Watcher)>> =
+        RefCell::default();
     static WINDOW: RefCell<glib::WeakRef<gtk::Window>> = RefCell::default();
     /// Git のタブで、読み終えたら開くページ（`--settings git/programs`）。
     static GIT_PAGE: RefCell<Option<String>> = const { RefCell::new(None) };
@@ -134,7 +136,12 @@ fn save(file: &glib::KeyFile) {
 }
 
 fn changed(key: &str) {
-    let watchers: Vec<_> = WATCHERS.with(|w| w.borrow().clone());
+    // 持ち主がなくなった聞き手は外す（設定の窓・Repository Settings を開くたびに足されるので）。
+    let watchers: Vec<Watcher> = WATCHERS.with(|w| {
+        let mut w = w.borrow_mut();
+        w.retain(|(owner, _)| owner.as_ref().is_none_or(|o| o.upgrade().is_some()));
+        w.iter().map(|(_, f)| f.clone()).collect()
+    });
     for f in watchers {
         f(key);
     }
@@ -191,7 +198,13 @@ pub fn set_string(key: &str, value: &str) {
 
 /// 設定が変わったら `f(鍵)` を呼ぶ。
 pub fn connect_changed(f: impl Fn(&str) + 'static) {
-    WATCHERS.with(|w| w.borrow_mut().push(Rc::new(f)));
+    WATCHERS.with(|w| w.borrow_mut().push((None, Rc::new(f))));
+}
+
+/// `connect_changed` の、`owner` がある間だけ呼ぶ形（なくなったら外す）。
+pub fn connect_changed_while(owner: &impl IsA<glib::Object>, f: impl Fn(&str) + 'static) {
+    let owner = owner.upcast_ref::<glib::Object>().downgrade();
+    WATCHERS.with(|w| w.borrow_mut().push((Some(owner), Rc::new(f))));
 }
 
 /// 項目の下に添える説明。
@@ -218,7 +231,7 @@ fn check(key: &'static str, title: &str) -> gtk::CheckButton {
     });
     // History の表示のメニューなど、ほかの所で変えたら合わせる。
     let weak = c.downgrade();
-    connect_changed(move |changed| {
+    connect_changed_while(&c, move |changed| {
         if changed == key
             && let Some(c) = weak.upgrade()
         {
@@ -244,7 +257,7 @@ fn item_check(bit: u32, title: &str) -> gtk::CheckButton {
         }
     });
     let weak = c.downgrade();
-    connect_changed(move |changed| {
+    connect_changed_while(&c, move |changed| {
         if changed == HISTORY_ITEMS
             && let Some(c) = weak.upgrade()
         {
@@ -270,7 +283,7 @@ fn order_row() -> gtk::Box {
         }
     });
     let weak = choice.downgrade();
-    connect_changed(move |changed| {
+    connect_changed_while(&choice, move |changed| {
         if changed == HISTORY_ORDER
             && let Some(d) = weak.upgrade()
         {
@@ -311,7 +324,7 @@ fn choice_row(
         }
     });
     let weak = choice.downgrade();
-    connect_changed(move |changed| {
+    connect_changed_while(&choice, move |changed| {
         if changed == key
             && let Some(d) = weak.upgrade()
         {
@@ -374,7 +387,7 @@ fn accounts() -> gtk::Box {
         }
     };
     enable();
-    connect_changed(move |key| {
+    connect_changed_while(&branches, move |key| {
         if key == GITHUB_CI_STATUS || key == GITHUB_AVATARS {
             enable();
         }
