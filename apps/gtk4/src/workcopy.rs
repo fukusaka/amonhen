@@ -925,15 +925,31 @@ impl Inner {
             }
         }
         this.row_entries.replace(row_entries);
+        // すべてのチェック: 一覧に出しているファイルのうちコンフリクト以外の状態（押すとそれらを含める・外す）。
+        // コンフリクトのファイルは index では stage 済みに見えるが、含めることも外すこともできない（macOS 版と同じ）。
+        let candidates: Vec<&StatusEntry> = entries
+            .iter()
+            .filter(|e| e.kind != StatusKind::Unmerged)
+            .collect();
+        let on = candidates
+            .iter()
+            .filter(|e| e.is_staged() && !e.is_unstaged())
+            .count();
+        let off = candidates.iter().filter(|e| !e.is_staged()).count();
+        let mixed = on != candidates.len() && off != candidates.len();
+        this.all.set_inconsistent(mixed);
+        this.all
+            .set_active(!candidates.is_empty() && on == candidates.len());
+        this.all.set_sensitive(!candidates.is_empty());
+        drop(candidates);
+        // 次のコミットに含めるファイルの数 / 変更のあるファイルの数。
         let all = this.all_entries.borrow();
-        let staged = all.iter().filter(|e| e.is_staged()).count();
-        let partial = all.iter().any(|e| e.is_staged() && e.is_unstaged());
-        this.all
-            .set_inconsistent(partial || (staged > 0 && staged < all.len()));
-        this.all
-            .set_active(!all.is_empty() && staged == all.len() && !partial);
-        this.all.set_sensitive(!all.is_empty());
-        this.count.set_text(&format!("{staged} / {}", all.len()));
+        if all.is_empty() {
+            this.count.set_text("");
+        } else {
+            this.count
+                .set_text(&format!("{} / {}", staged_count(&all), all.len()));
+        }
         drop(all);
         let wanted = this.selected.borrow().clone();
         let index = wanted
@@ -1931,7 +1947,7 @@ impl Inner {
     }
 
     fn update_buttons(&self) {
-        let staged = self.all_entries.borrow().iter().any(StatusEntry::is_staged);
+        let staged = staged_count(&self.all_entries.borrow()) > 0;
         let has_subject = !self.subject.text().trim().is_empty();
         let amend = self.amend.is_active();
         self.commit.set_sensitive(has_subject && (staged || amend));
@@ -2037,6 +2053,14 @@ fn body_guide(body: &gtk::TextView) -> gtk::DrawingArea {
     guide
 }
 
+/// 次のコミットに含めるファイルの数（コンフリクトのファイルは index では stage 済みに見えるので除く）。
+fn staged_count(entries: &[StatusEntry]) -> usize {
+    entries
+        .iter()
+        .filter(|e| e.is_staged() && e.kind != StatusKind::Unmerged)
+        .count()
+}
+
 /// 一覧に出す状態の文字と、その色の CSS のクラス。
 fn state_letter(entry: &StatusEntry) -> (&'static str, &'static str) {
     match entry.kind {
@@ -2124,4 +2148,36 @@ fn tree(entries: &[StatusEntry]) -> Vec<TreeItem> {
     let mut out = Vec::new();
     walk(&root, "", 0, entries, &mut out);
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(kind: StatusKind, path: &str, index: u8, worktree: u8) -> StatusEntry {
+        StatusEntry {
+            kind,
+            path: path.to_owned(),
+            orig_path: None,
+            index,
+            worktree,
+            head_id: None,
+            index_id: None,
+            index_mode: 0,
+            submodule: false,
+        }
+    }
+
+    /// コンフリクトのファイル（index が U）は、次のコミットに含める数に入れない。
+    #[test]
+    fn staged_count_skips_conflicts() {
+        let entries = [
+            entry(StatusKind::Unmerged, "a", b'U', b'U'),
+            entry(StatusKind::Changed, "b", b'M', b'.'),
+            entry(StatusKind::Changed, "c", b'.', b'M'),
+            entry(StatusKind::Untracked, "d", b'?', b'?'),
+        ];
+        assert_eq!(staged_count(&entries), 1);
+        assert_eq!(staged_count(&entries[..1]), 0);
+    }
 }
