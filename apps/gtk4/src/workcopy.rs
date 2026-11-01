@@ -1963,9 +1963,7 @@ impl Inner {
             crate::sheets::confirm_then(
                 &actions,
                 tr!("Discard changes to {path}?", path = path),
-                tr!(
-                    "This discards the working tree changes and returns to the content of the next commit (the index). You can Undo this."
-                ),
+                crate::sheets::can_undo(),
                 "Discard".to_owned(),
                 false,
                 vec![json!({ "op": "discard", "paths": [path] })],

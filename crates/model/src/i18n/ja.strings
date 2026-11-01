@@ -523,7 +523,6 @@
 "This can’t be undone." = "元に戻せません。";
 "Delete" = "削除";
 "Discard changes to {path}?" = "{path} の変更を捨てますか？";
-"This discards the working tree changes and returns to the content of the next commit (the index). You can Undo this." = "作業ツリーの変更を捨て、次のコミットに含める内容（index）に戻します。Undo で戻せます。";
 "Discard" = "捨てる";
 "Mark {path} as resolved with {count} conflicts left?" = "{path} にコンフリクトが {count} 残っていますが、解決済みにしますか？";
 "The conflict markers stay in the file." = "コンフリクトのマーカーはファイルに残ります。";
