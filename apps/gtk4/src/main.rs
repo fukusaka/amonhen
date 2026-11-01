@@ -70,7 +70,7 @@ mod toolbar;
 mod workcopy;
 mod worktrees;
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
@@ -1472,61 +1472,88 @@ fn build_tab(
         }
     });
     // 自動の fetch（Settings > General で決めた間隔。聞かずにすべてのリモートから。失敗はステータスバーに）。
-    let elapsed = Rc::new(Cell::new(0u32));
-    let (v, bar, a, r, t, sb) = (
-        view.downgrade(),
-        statusbar.clone(),
-        Rc::downgrade(&actions),
-        reload.clone(),
-        Rc::downgrade(&tab),
-        Rc::downgrade(&sidebar),
-    );
-    glib::timeout_add_seconds_local(60, move || {
-        let (Some(view), Some(a), Some(tab)) = (v.upgrade(), a.upgrade(), t.upgrade()) else {
-            return glib::ControlFlow::Break;
-        };
-        if tab.closed() {
-            return glib::ControlFlow::Break;
-        }
-        let minutes = settings::auto_fetch_minutes();
-        elapsed.set(elapsed.get() + 1);
-        if minutes == 0 || elapsed.get() < minutes {
-            return glib::ControlFlow::Continue;
-        }
-        elapsed.set(0);
-        let Some((repo, _)) = view.current() else {
-            return glib::ControlFlow::Continue;
-        };
-        let (bar, a, r, cg, sb) = (
-            bar.clone(),
-            a.clone(),
-            r.clone(),
+    // 間隔を変えたら、そこから数え直す（macOS 版と同じく Timer を作り直す）。
+    let auto_fetch: Rc<RefCell<Option<glib::SourceId>>> = Rc::default();
+    let schedule: Rc<dyn Fn()> = {
+        let (v, bar, a, r, t, cg, timer, sb) = (
+            view.downgrade(),
+            statusbar.clone(),
+            Rc::downgrade(&actions),
+            reload.clone(),
+            Rc::downgrade(&tab),
             commit_graph.clone(),
-            sb.clone(),
+            auto_fetch.clone(),
+            Rc::downgrade(&sidebar),
         );
-        let name = repo_name(&repo);
-        glib::spawn_future_local(async move {
-            let command = serde_json::json!({ "op": "fetch" });
-            let reply = sheets::run(&repo, command.clone()).await;
-            if reply["error"].is_string() {
-                let mut failure = statusbar::Failure::from_reply(&reply, Some(command));
-                failure.heading = Some(amonhen_model::tr!("Couldn’t Fetch Automatically"));
-                activity::event(
-                    &name,
-                    amonhen_model::tr!("Automatic fetch failed: {error}", error = failure.message),
-                );
-                bar.show_failure(failure, &a);
-            } else {
-                activity::event(&name, amonhen_model::tr!("Automatic fetch"));
-                // ref が変わらなくても、リモートのタグは読み直している（macOS 版と同じ）。
-                if let Some(sidebar) = sb.upgrade() {
-                    sidebar.reload_tag_remotes();
-                }
-                cg.update(repo.clone());
+        Rc::new(move || {
+            if let Some(id) = timer.borrow_mut().take() {
+                id.remove();
             }
-            r();
-        });
-        glib::ControlFlow::Continue
+            let minutes = settings::auto_fetch_minutes();
+            if minutes == 0 {
+                return;
+            }
+            let (v, bar, a, r, t, cg, own, sb) = (
+                v.clone(),
+                bar.clone(),
+                a.clone(),
+                r.clone(),
+                t.clone(),
+                cg.clone(),
+                timer.clone(),
+                sb.clone(),
+            );
+            let id = glib::timeout_add_seconds_local(minutes * 60, move || {
+                let (Some(view), Some(a), Some(tab)) = (v.upgrade(), a.upgrade(), t.upgrade())
+                else {
+                    // 止めた印を消す（glib が外すので、後で remove しない）。
+                    own.borrow_mut().take();
+                    return glib::ControlFlow::Break;
+                };
+                if tab.closed() {
+                    own.borrow_mut().take();
+                    return glib::ControlFlow::Break;
+                }
+                let Some((repo, _)) = view.current() else {
+                    return glib::ControlFlow::Continue;
+                };
+                let (bar, a, r, cg, sb) =
+                    (bar.clone(), a.clone(), r.clone(), cg.clone(), sb.clone());
+                let name = repo_name(&repo);
+                glib::spawn_future_local(async move {
+                    let command = serde_json::json!({ "op": "fetch" });
+                    let reply = sheets::run(&repo, command.clone()).await;
+                    if reply["error"].is_string() {
+                        let mut failure = statusbar::Failure::from_reply(&reply, Some(command));
+                        failure.heading = Some(amonhen_model::tr!("Couldn’t Fetch Automatically"));
+                        activity::event(
+                            &name,
+                            amonhen_model::tr!(
+                                "Automatic fetch failed: {error}",
+                                error = failure.message
+                            ),
+                        );
+                        bar.show_failure(failure, &a);
+                    } else {
+                        activity::event(&name, amonhen_model::tr!("Automatic fetch"));
+                        // ref が変わらなくても、リモートのタグは読み直している（macOS 版と同じ）。
+                        if let Some(sidebar) = sb.upgrade() {
+                            sidebar.reload_tag_remotes();
+                        }
+                        cg.update(repo.clone());
+                    }
+                    r();
+                });
+                glib::ControlFlow::Continue
+            });
+            timer.replace(Some(id));
+        })
+    };
+    schedule();
+    settings::connect_changed_while(&view, move |key| {
+        if key == settings::AUTO_FETCH_MINUTES {
+            schedule();
+        }
     });
     // サブモジュールは、作業ツリーからのパスで開く（daemon・SSH 越しなら、同じ接続先の上のパスとして）。
     let open_submodule: refops::OpenSubmodule = {
