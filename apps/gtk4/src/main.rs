@@ -745,7 +745,12 @@ fn build_tab(
     titles.append(&subtitle);
     // 裏で読んでいる詳細と差分の数（`--snapshot` はなくなるまで待つ）。
     let pending = Rc::new(Cell::new(0u32));
-    let tab = tabs::Tab::new(&name, &repos::normalize(&path), pending.clone());
+    // タブの場所は開いた形（覚える・戻す形。同じリポジトリか比べるときは `repos::normalize` で）。
+    let tab = tabs::Tab::new(
+        &name,
+        &repos::standardize(&path).to_string_lossy(),
+        pending.clone(),
+    );
     let header = tab.header.clone();
     // リポジトリ名: 押すとリポジトリの一覧を出し、選んだものにこのタブを切り替える。
     let repository_name = {
@@ -2147,7 +2152,10 @@ fn build_tab(
                             tab.set_tracking(ahead, behind);
                             // ブランチの切り替えで上に出す（最近切り替えたもの）。
                             if let Some(branch) = &refs.refs.head_branch {
-                                branchswitcher::remember(&tab.location, branch);
+                                branchswitcher::remember(
+                                    &repos::normalize(std::path::Path::new(&tab.location)),
+                                    branch,
+                                );
                             }
                         }
                         match &refs.refs.head_branch {

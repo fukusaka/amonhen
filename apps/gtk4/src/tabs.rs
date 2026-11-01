@@ -148,6 +148,11 @@ impl Tab {
         self.location.is_empty()
     }
 
+    /// `key`（`repos::normalize` した場所）を開いているタブか（場所は開いた形なので、リンクを解いて比べる）。
+    pub fn is_at(&self, key: &str) -> bool {
+        !self.is_home() && crate::repos::normalize(std::path::Path::new(&self.location)) == key
+    }
+
     /// タブを閉じたら `f` を呼ぶ（裏の糸や見張りを止める）。
     pub fn connect_close(&self, f: impl FnOnce() + 'static) {
         self.on_close.borrow_mut().push(Box::new(f));
@@ -407,7 +412,8 @@ impl RepoWindow {
         let mut sizes = window_sizes();
         for tab in self.tabs() {
             if !tab.location.is_empty() {
-                sizes.insert(tab.location.clone(), serde_json::json!([width, height]));
+                let key = crate::repos::normalize(std::path::Path::new(&tab.location));
+                sizes.insert(key, serde_json::json!([width, height]));
             }
         }
         crate::settings::set_string(WINDOW_SIZES, &serde_json::Value::Object(sizes).to_string());
@@ -693,7 +699,7 @@ fn find_open(location: &std::path::Path) -> Option<(Rc<RepoWindow>, Rc<Tab>)> {
             h.tabs
                 .borrow()
                 .iter()
-                .find(|t| t.location == key)
+                .find(|t| t.is_at(&key))
                 .map(|t| (h.clone(), t.clone()))
         })
     })
@@ -760,7 +766,7 @@ pub fn add_background(app: &gtk::Application, host: &Rc<RepoWindow>, location: P
     let open = WINDOWS.with(|w| {
         w.borrow()
             .iter()
-            .any(|h| h.tabs.borrow().iter().any(|t| t.location == key))
+            .any(|h| h.tabs.borrow().iter().any(|t| t.is_at(&key)))
     });
     if open {
         return;
@@ -949,7 +955,7 @@ pub fn switch(tab: &Rc<Tab>, location: PathBuf) {
             h.tabs
                 .borrow()
                 .iter()
-                .find(|t| t.location == key)
+                .find(|t| t.is_at(&key))
                 .map(|t| (h.clone(), t.clone()))
         })
     });

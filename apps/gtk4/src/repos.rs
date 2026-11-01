@@ -44,18 +44,43 @@ pub fn main_of_worktree(location: &Path) -> Option<PathBuf> {
 }
 
 /// 手元のリポジトリの中のフォルダーなら、その作業ツリーの一番上（`.git` のあるフォルダー）。git と同じく上へ
-/// たどる。見つからない・daemon・SSH 越しの場所はそのまま。
+/// たどる。見つからない・daemon・SSH 越しの場所はそのまま。パスは [`standardize`] した形（リンクは解かない）。
 pub fn top_of(location: &Path) -> PathBuf {
     if amonhen_remote::location::is_remote(&location.to_string_lossy()) {
         return location.to_owned();
     }
-    let full = std::fs::canonicalize(location).unwrap_or_else(|_| location.to_owned());
+    let full = standardize(location);
     full.ancestors()
         .find(|d| d.join(".git").exists())
         .map_or(full.clone(), Path::to_path_buf)
 }
 
-/// 場所を、比べられる形にする（手元のパスは正規の形に）。
+/// 手元のパスを、開く・覚える形にする（macOS 版の `standardizedFileURL`）: 絶対パスにし、`.`・`..` を字面で
+/// 除く。シンボリックリンクは解かない（リンクの下で選んだリポジトリは、そのパスのまま一覧・最近開いたものに
+/// 出す。ブックマーク・スキャンで見つけたものと同じ形）。daemon・SSH 越しの場所はそのまま。
+pub fn standardize(location: &Path) -> PathBuf {
+    if amonhen_remote::location::is_remote(&location.to_string_lossy()) {
+        return location.to_owned();
+    }
+    let absolute = if location.is_absolute() {
+        location.to_owned()
+    } else {
+        std::env::current_dir().unwrap_or_default().join(location)
+    };
+    let mut out = PathBuf::new();
+    for part in absolute.components() {
+        match part {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// 場所を、比べられる形にする（手元のパスは正規の形に。リンクを解く。同じリポジトリのタブを探すときなど）。
 pub fn normalize(location: &Path) -> String {
     let text = location.to_string_lossy().into_owned();
     if amonhen_remote::location::is_remote(&text) {
@@ -67,7 +92,8 @@ pub fn normalize(location: &Path) -> String {
 
 /// 開いたことを覚える（先頭に）。開いた日時も覚え、Settings > General で選んでいればブックマークにも入れる。
 pub fn record(location: &Path) {
-    let text = normalize(location);
+    // 覚えるのは開いた形のまま（リンクは解かない。ブックマークと同じ形にして、一覧に二度出さない。macOS 版と同じ）。
+    let text = standardize(location).to_string_lossy().into_owned();
     let mut list = recent();
     list.retain(|l| *l != text);
     list.insert(0, text.clone());
@@ -395,7 +421,9 @@ mod tests {
         assert_eq!(main_of_worktree(&wt), Some(main.clone()));
         let inner = wt.join("src");
         std::fs::create_dir_all(&inner).unwrap();
-        assert_eq!(super::top_of(&inner), std::fs::canonicalize(&wt).unwrap());
+        assert_eq!(super::top_of(&inner), wt);
+        // `.`・`..` は字面で除く（リンクは解かない）。
+        assert_eq!(super::standardize(&inner.join("../src/.")), inner);
         // メインの作業ツリーと、`.git` のないフォルダーは worktree ではない。
         assert_eq!(main_of_worktree(&plain), None);
         assert_eq!(main_of_worktree(&dir), None);
