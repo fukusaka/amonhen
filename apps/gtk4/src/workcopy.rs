@@ -2097,7 +2097,9 @@ impl Inner {
         } else {
             staged_side
         };
-        self.lines.set_visible(!conflict);
+        // 選んだファイルがなければ、ファイルの操作は出さない（macOS 版と同じ）。
+        let chosen = self.selected.borrow().is_some();
+        self.lines.set_visible(!conflict && chosen);
         self.lines.set_label(if unstage {
             "Unstage Lines"
         } else {
@@ -2105,7 +2107,7 @@ impl Inner {
         });
         self.lines.set_sensitive(selected > 0);
         // stage 済みの側では捨てない。選んだ行がなければファイルを捨てる。
-        self.discard.set_visible(!conflict);
+        self.discard.set_visible(!conflict && chosen && !staged_side);
         self.discard.set_label(if selected > 0 {
             "Discard Lines"
         } else {
