@@ -21,6 +21,9 @@ use crate::sheets::{Response, Sheet};
 
 /// リポジトリを新しい窓で開く。
 /// リポジトリを開く（場所と、開く先: 前の窓のタブか新しい窓か）。
+/// 表の行をドラッグしたときに運ぶ文字の頭（ほかから落とされた文字と見分ける）。その後に場所を 1 行ずつ。
+const DRAG_MARK: &str = "\u{1}amonhen-repositories\n";
+
 /// 並べ替えた列（`name`・`branch`・`status`・`commit`・`opened`）と、上る向きか（macOS 版と同じ鍵）。
 const SORT_KEY: &str = "repositoryPageSort";
 const SORT_ASCENDING_KEY: &str = "repositoryPageSortAscending";
@@ -897,6 +900,21 @@ impl Browser {
                     }
                 });
                 cell.add_controller(click);
+                // 行を左のお気に入り・グループへドラッグして入れる（選んだ行の上からなら、選んだものすべて。
+                // macOS 版と同じ）。
+                let drag = gtk::DragSource::new();
+                drag.set_actions(gtk::gdk::DragAction::MOVE);
+                let (w, list_item) = (Rc::downgrade(&b), item.downgrade());
+                drag.connect_prepare(move |_, _, _| {
+                    let (b, item) = (w.upgrade()?, list_item.upgrade()?);
+                    let row = item.position();
+                    if row == gtk::INVALID_LIST_POSITION {
+                        return None;
+                    }
+                    let text = format!("{DRAG_MARK}{}", b.targets(row).join("\n"));
+                    Some(gtk::gdk::ContentProvider::for_value(&text.to_value()))
+                });
+                cell.add_controller(drag);
                 item.set_child(Some(&cell));
                 let view = Rc::new(CellView {
                     column: kind,
@@ -1445,6 +1463,42 @@ impl Browser {
                     count.add_css_class("caption");
                     line.append(&count);
                     row.set_tooltip_text(r.tip.as_deref());
+                    // お気に入り・グループには、表の行を落として入れられる（macOS 版と同じ）。
+                    if matches!(c, Category::Favorites | Category::Group(_)) {
+                        let drop = gtk::DropTarget::new(
+                            String::static_type(),
+                            gtk::gdk::DragAction::MOVE,
+                        );
+                        let target = c.clone();
+                        drop.connect_drop(move |_, value, _, _| {
+                            let Some(paths) = value
+                                .get::<String>()
+                                .ok()
+                                .and_then(|t| t.strip_prefix(DRAG_MARK).map(str::to_owned))
+                            else {
+                                return false;
+                            };
+                            let paths: Vec<String> =
+                                paths.lines().filter(|l| !l.is_empty()).map(str::to_owned).collect();
+                            let target = target.clone();
+                            // 落とした後で（一覧を作り直すと、落とした先の行が消える）。
+                            glib::idle_add_local_once(move || {
+                                for path in &paths {
+                                    match &target {
+                                        Category::Favorites => {
+                                            if !bookmarks::bookmark(path).is_some_and(|b| b.favorite) {
+                                                bookmarks::toggle_favorite(path);
+                                            }
+                                        }
+                                        Category::Group(name) => bookmarks::move_to(path, Some(name)),
+                                        _ => {}
+                                    }
+                                }
+                            });
+                            true
+                        });
+                        row.add_controller(drop);
+                    }
                 }
             }
             row.set_child(Some(&line));
