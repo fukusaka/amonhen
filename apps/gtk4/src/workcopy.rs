@@ -300,9 +300,6 @@ impl WorkingCopy {
         path.add_css_class("heading");
         let lines = gtk::Button::with_label("Stage Lines");
         let discard = gtk::Button::with_label("Discard File");
-        discard.set_tooltip_text(Some(&tr!(
-            "Discard the working tree changes (return to the content of the index)"
-        )));
         let worktree_side = gtk::ToggleButton::with_label("Unstaged");
         worktree_side.set_tooltip_text(Some(&tr!(
             "Changes in the working tree that are not staged yet"
@@ -1094,6 +1091,7 @@ impl Inner {
         check.set_active(all);
         check.set_inconsistent(some && !all);
         check.set_sensitive(!inside.is_empty());
+        check.set_tooltip_text(Some(&check_tip(all, some && !all)));
         let paths: Vec<String> = inside.iter().map(|e| e.path.clone()).collect();
         let weak = Rc::downgrade(this);
         check.connect_toggled(move |_| {
@@ -1159,6 +1157,12 @@ impl Inner {
         check.set_active(entry.is_staged() && !entry.is_unstaged());
         check.set_inconsistent(entry.is_staged() && entry.is_unstaged());
         check.set_sensitive(!conflict);
+        if !conflict {
+            check.set_tooltip_text(Some(&check_tip(
+                entry.is_staged() && !entry.is_unstaged(),
+                entry.is_staged() && entry.is_unstaged(),
+            )));
+        }
         let (weak, e) = (Rc::downgrade(this), entry.clone());
         check.connect_toggled(move |_| {
             let Some(this) = weak.upgrade() else { return };
@@ -1241,6 +1245,11 @@ impl Inner {
         }
         let row = gtk::ListBoxRow::new();
         row.set_child(Some(&line));
+        // パス（名前を変えたファイルはもとのパス → 今のパス。macOS 版と同じ）。
+        row.set_tooltip_text(Some(&match &entry.orig_path {
+            Some(orig) => format!("{orig} → {}", entry.path),
+            None => entry.path.clone(),
+        }));
         // 右クリック（macOS 版と同じ）: 含める・外す・捨てる、.gitignore に足す（untracked）、Blame（消した
         // ファイルにはない）と File History（untracked にはまだ履歴がない）、パスのコピー、ファイルで開く。
         let menu = gtk::GestureClick::new();
@@ -2106,13 +2115,29 @@ impl Inner {
             "Stage Lines"
         });
         self.lines.set_sensitive(selected > 0);
+        self.lines.set_tooltip_text(
+            working
+                .is_some_and(|w| w.combined.is_some())
+                .then(|| tr!("Include or exclude the selected lines in the next commit (Space)"))
+                .as_deref(),
+        );
         // stage 済みの側では捨てない。選んだ行がなければファイルを捨てる。
-        self.discard.set_visible(!conflict && chosen && !staged_side);
+        self.discard
+            .set_visible(!conflict && chosen && !staged_side);
         self.discard.set_label(if selected > 0 {
             "Discard Lines"
         } else {
             "Discard File"
         });
+        self.discard.set_tooltip_text(Some(&if selected > 0 {
+            tr!(
+                "Discard the selected lines’ changes from the working tree (included lines are excluded first)"
+            )
+        } else {
+            tr!(
+                "Discard the working tree changes and return to the content of the next commit (the index)"
+            )
+        }));
         self.discard.set_sensitive(
             working.is_some_and(|w| !w.staged && w.entry.is_unstaged()) && selected_staged == 0,
         );
@@ -2167,6 +2192,17 @@ fn body_guide(body: &gtk::TextView) -> gtk::DrawingArea {
         let _ = cr.fill();
     });
     guide
+}
+
+/// 一覧のチェックの説明（含めている・一部の行だけ・含めていない。macOS 版と同じ）。
+fn check_tip(on: bool, mixed: bool) -> String {
+    if on {
+        tr!("Included in the next commit (click to exclude)")
+    } else if mixed {
+        tr!("Only some lines are included (click to include all)")
+    } else {
+        tr!("Not included in the next commit (click to include)")
+    }
 }
 
 /// 一覧の行の行数（+ 追加 − 削除）を入れ直す（0 の側は出さない。なければ隠す）。
