@@ -2346,8 +2346,8 @@ impl Inner {
         let message = this.composed_message();
         let amend = this.amend.is_active();
         let weak = Rc::downgrade(this);
-        this.commit.set_sensitive(false);
         let Some(repo) = this.repo() else { return };
+        this.commit.set_sensitive(false);
         let source = repo.clone();
         this.message.set_visible(false);
         // hooks の出力を探すため、始めた時刻（Activity の記録と同じ UNIX 時刻のミリ秒）を覚えておく。
