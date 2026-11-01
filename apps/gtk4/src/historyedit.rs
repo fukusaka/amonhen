@@ -144,7 +144,20 @@ fn action_items(choice: &gtk::DropDown) -> gtk::SignalListItemFactory {
             .is_some_and(|c| item.item().is_some() && c.selected() == item.position())
     };
     let factory = gtk::SignalListItemFactory::new();
-    let weak = choice.downgrade();
+    // 項目の印は、選択の知らせを 1 つだけつないで付け直す（項目ごとにつなぐと、作り直すたびに溜まる）。項目は
+    // 弱く持つ。
+    type Marks = Rc<RefCell<Vec<(glib::WeakRef<gtk::ListItem>, glib::WeakRef<gtk::Image>)>>>;
+    let marks: Marks = Rc::default();
+    let (weak, m) = (choice.downgrade(), marks.clone());
+    choice.connect_selected_notify(move |_| {
+        m.borrow_mut().retain(|(item, check)| {
+            let (Some(item), Some(check)) = (item.upgrade(), check.upgrade()) else {
+                return false;
+            };
+            check.set_opacity(if chosen(&weak, &item) { 1.0 } else { 0.0 });
+            true
+        });
+    });
     factory.connect_setup(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -157,14 +170,9 @@ fn action_items(choice: &gtk::DropDown) -> gtk::SignalListItemFactory {
         row.append(&label);
         row.append(&check);
         item.set_child(Some(&row));
-        if let Some(c) = weak.upgrade() {
-            let (weak, item) = (weak.clone(), item.downgrade());
-            c.connect_selected_notify(move |_| {
-                if let Some(item) = item.upgrade() {
-                    check.set_opacity(if chosen(&weak, &item) { 1.0 } else { 0.0 });
-                }
-            });
-        }
+        let mut marks = marks.borrow_mut();
+        marks.retain(|(item, check)| item.upgrade().is_some() && check.upgrade().is_some());
+        marks.push((item.downgrade(), check.downgrade()));
     });
     let weak = choice.downgrade();
     factory.connect_bind(move |_, item| {
