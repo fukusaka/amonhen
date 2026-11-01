@@ -610,6 +610,9 @@ fn show(
         cell.set_wrap_mode(gtk::pango::WrapMode::WordChar);
         cell.set_max_width_chars(40);
         cell.set_selectable(true);
+        // 選べるラベルはフォーカスを受けると全体を選ぶので、開いたときに最初の値が選ばれた見た目になる。
+        // フォーカスは取らない（マウスで選んでコピーはできる）。
+        cell.set_focusable(false);
         cell.add_css_class("caption");
         if mono {
             cell.add_css_class("monospace");
@@ -637,9 +640,6 @@ fn show(
         gtk::glib::idle_add_local_once(move || p.unparent());
     });
     popover.popup();
-    // 最初の値が選ばれた見た目にならないよう、フォーカスは吹き出しそのものに置く。
-    column.set_focusable(true);
-    column.grab_focus();
 }
 
 #[cfg(test)]
