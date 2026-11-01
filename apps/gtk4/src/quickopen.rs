@@ -1,5 +1,6 @@
 //! Quick Open（Ctrl+Shift+O。macOS 版の `QuickOpen.swift`）: ブックマーク・最近開いたもの・スキャンで見つけたものを、
-//! あいまい検索して開く。Enter で新しい窓に開く（この FE にはタブがない）。Esc か、ほかの窓に移ると閉じる。
+//! あいまい検索して開く。Enter で新しいタブに（開いていればそのタブを前に）、Ctrl+Enter で新しい窓に開く。Esc か、
+//! ほかの窓に移ると閉じる。
 
 use std::cell::RefCell;
 use std::path::PathBuf;
