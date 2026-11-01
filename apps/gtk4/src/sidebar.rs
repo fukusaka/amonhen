@@ -486,42 +486,54 @@ impl Sidebar {
         inner.anchor.borrow().set(Some(scrolled.upcast_ref()));
         owner.replace(Rc::downgrade(&inner));
         let weak = Rc::downgrade(&inner);
-        inner.selection.connect_selection_changed(move |_, _, _| {
-            let Some(inner) = weak.upgrade() else { return };
-            if inner.rebuilding.get() {
-                return;
-            }
-            let nodes = inner.selected_nodes();
-            // ブランチ・タグを 2 つ以上選んだら、それぞれから辿れる履歴をまとめて出す（macOS 版と同じ）。
-            if nodes.len() > 1 {
-                let refs: Vec<RefEntry> = nodes
-                    .iter()
-                    .filter_map(|n| match n.data().item {
-                        Item::Ref(e)
-                            if matches!(
-                                e.kind,
-                                RefKind::Local | RefKind::Remote | RefKind::Tag
-                            ) && e.target.is_some() =>
-                        {
-                            Some(e)
-                        }
-                        _ => None,
-                    })
-                    .collect();
-                if refs.len() > 1
-                    && let Some(f) = inner.on_select_many.borrow().as_ref()
-                {
-                    f(&refs);
+        inner
+            .selection
+            .connect_selection_changed(move |sel, at, n| {
+                let Some(inner) = weak.upgrade() else { return };
+                if inner.rebuilding.get() {
+                    return;
                 }
-                return;
-            }
-            // 1 つだけ選んだときに知らせる（複数選んだら、右クリックでまとめて扱う）。
-            if let [node] = &nodes[..]
-                && let Some(f) = inner.on_select.borrow().as_ref()
-            {
-                f(&node.data());
-            }
-        });
+                let nodes = inner.selected_nodes();
+                // ブランチ・タグを 2 つ以上選んだら、それぞれから辿れる履歴をまとめて出す（macOS 版と同じ）。
+                if nodes.len() > 1 {
+                    let refs: Vec<RefEntry> = nodes
+                        .iter()
+                        .filter_map(|n| match n.data().item {
+                            Item::Ref(e)
+                                if matches!(
+                                    e.kind,
+                                    RefKind::Local | RefKind::Remote | RefKind::Tag
+                                ) && e.target.is_some() =>
+                            {
+                                Some(e)
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    if refs.len() > 1 {
+                        if let Some(f) = inner.on_select_many.borrow().as_ref() {
+                            f(&refs);
+                        }
+                        return;
+                    }
+                }
+                // 1 つだけ選んだときに知らせる。ほかの行（ページなど）と一緒にブランチ・タグを 1 つだけ選んだときは、
+                // 最後に選び足した行を 1 つ選んだのと同じに扱う（macOS 版と同じ）。
+                let node = match &nodes[..] {
+                    [] => None,
+                    [node] => Some(node.clone()),
+                    _ => (n == 1 && sel.is_selected(at))
+                        .then(|| inner.model.row(at))
+                        .flatten()
+                        .and_then(|r| r.item().and_downcast::<Node>())
+                        .or_else(|| nodes.last().cloned()),
+                };
+                if let Some(node) = node
+                    && let Some(f) = inner.on_select.borrow().as_ref()
+                {
+                    f(&node.data());
+                }
+            });
         inner.rebuild(true);
 
         // 絞り込みの欄は一覧の上に。打つたびに絞り込む（Esc で消す）。
