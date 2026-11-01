@@ -369,7 +369,7 @@ impl Activity {
                     .is_some_and(|r| r.connection_state().is_some());
                 if remote
                     && !loading.get()
-                    && tick.get() % 2 == 1
+                    && tick.get() % 4 == 1
                     && let Some(repo) = repo.clone()
                 {
                     loading.set(true);
@@ -431,21 +431,20 @@ impl Activity {
                     return;
                 }
                 op_list.remove_all();
-                for r in records.iter().take(1000) {
-                    let ok = r["ok"].as_bool();
-                    if kind.is_some_and(|k| r["kind"].as_str() != Some(k))
-                        || (failures.is_active() && ok != Some(false))
-                    {
-                        continue;
-                    }
+                // すべての記録から絞り込み、合うものを新しい順に 1,000 件まで（macOS 版と同じ）。
+                let shown = records.iter().filter(|r| {
                     let label_text = r["label"].as_str().unwrap_or_default();
                     let repo_path = r["repo"].as_str().unwrap_or_default();
-                    if !text.is_empty()
-                        && !label_text.to_lowercase().contains(&text)
-                        && !repo_path.to_lowercase().contains(&text)
-                    {
-                        continue;
-                    }
+                    !(kind.is_some_and(|k| r["kind"].as_str() != Some(k))
+                        || (failures.is_active() && r["ok"].as_bool() != Some(false))
+                        || (!text.is_empty()
+                            && !label_text.to_lowercase().contains(&text)
+                            && !repo_path.to_lowercase().contains(&text)))
+                });
+                for r in shown.take(1000) {
+                    let ok = r["ok"].as_bool();
+                    let label_text = r["label"].as_str().unwrap_or_default();
+                    let repo_path = r["repo"].as_str().unwrap_or_default();
                     let mark = match ok {
                         None => ("●", "activity-warning"),
                         Some(true) => ("✓", "activity-success"),
@@ -757,7 +756,7 @@ impl Activity {
             let last = Rc::new(std::cell::Cell::new(0));
             move || {
                 tick.set(tick.get() + 1);
-                if loading.get() || tick.get().is_multiple_of(2) {
+                if loading.get() || tick.get() % 4 != 1 {
                     return;
                 }
                 loading.set(true);
@@ -852,7 +851,8 @@ impl Activity {
             });
         });
 
-        // 開いている間は 1 秒ごとに読み直す（History のタブは、見せたときと操作の後に）。
+        // 開いている間は 0.5 秒ごとに読み直す（macOS 版と同じ。daemon の記録と様子は 2 秒ごと。History のタブは、
+        // 見せたときと操作の後に）。
         let refresh_all = {
             let refreshers = refreshers;
             move || {
@@ -863,7 +863,7 @@ impl Activity {
         };
         refresh_all();
         let w = window.downgrade();
-        glib::timeout_add_local(std::time::Duration::from_secs(1), move || {
+        glib::timeout_add_local(std::time::Duration::from_millis(500), move || {
             if w.upgrade().is_none_or(|w| !w.is_visible()) {
                 return glib::ControlFlow::Break;
             }
