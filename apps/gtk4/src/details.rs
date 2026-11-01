@@ -955,7 +955,7 @@ impl Details {
                     value,
                     check,
                     info["signed"].as_str().unwrap_or("gpg").to_owned(),
-                    str_of(info, "committerEmail").to_owned(),
+                    recorded_committer_email(info).to_owned(),
                     self.place.borrow().clone(),
                 );
                 self.table.attach(&head, 0, i as i32, 1, 1);
@@ -1015,8 +1015,16 @@ fn signature_text(info: &Value, extras: Option<&Value>) -> Option<String> {
         info["signed"].as_str(),
         check,
         extras.is_some(),
-        str_of(info, "committerEmail"),
+        recorded_committer_email(info),
     )
+}
+
+/// コミットに記録されたコミッターのメール（署名と比べるのはこれ。mailmap で置き換えたものではない。macOS 版の
+/// `recordedCommitterEmail`）。
+fn recorded_committer_email(info: &Value) -> &str {
+    info["recordedCommitter"]["email"]
+        .as_str()
+        .unwrap_or_else(|| str_of(info, "committerEmail"))
 }
 
 /// 署名の状態の文（署名の種類 `kind`、検証の結果 `check`、時間のかかる分を読んだか `loaded`、署名者と比べる
