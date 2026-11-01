@@ -843,6 +843,13 @@ fn build_tab(
     columns.set_start_child(Some(&history_column));
     columns.set_end_child(Some(&right));
     columns.set_position(560);
+    // 一覧は 280、詳細は 420 より狭くしない（macOS 版の minimumThickness。詳細の見出しのボタンが切れない）。窓の
+    // 大きさを変えたときは一覧の幅を保ち、詳細の側を伸び縮みさせる（macOS 版の holdingPriority）。
+    history_column.set_size_request(280, -1);
+    right.set_size_request(420, -1);
+    columns.set_shrink_start_child(false);
+    columns.set_shrink_end_child(false);
+    columns.set_resize_start_child(false);
     // History で選び直したら呼ぶ（メニューの項目を使えるか。操作のアクションを作ってから入れる）。
     let selection_changed: Hook = Rc::default();
     connect_selection(
