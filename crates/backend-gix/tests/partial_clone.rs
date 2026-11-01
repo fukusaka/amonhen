@@ -108,13 +108,7 @@ fn reads_blobs_missing_from_a_partial_clone() {
     assert_eq!(packs(&dir), before + batched);
     backend.prefetch_blobs(&ids).unwrap();
     assert_eq!(packs(&dir), before + batched, "揃っていれば取りに行かない");
-    assert_eq!(
-        git(
-            &dir,
-            &["config", "--get", "remote.origin.partialclonefilter"]
-        ),
-        "blob:none"
-    );
+    assert_eq!(git(&dir, &["config", "--get", filter_key()]), "blob:none");
     for c in &changes {
         let new = backend.blob(&c.new_id.unwrap()).unwrap();
         assert!(String::from_utf8_lossy(&new).ends_with(" two\n"));
@@ -122,25 +116,19 @@ fn reads_blobs_missing_from_a_partial_clone() {
     assert!(!dir.join(".git/FETCH_HEAD").exists());
 
     // 中身をすべて取り直して filter を外したあとに取っても、filter を書き戻さない。
-    git(
-        &dir,
-        &["config", "--unset", "remote.origin.partialclonefilter"],
-    );
+    git(&dir, &["config", "--unset", filter_key()]);
     let changes = backend
         .changes_between(Some(&oid(second)), &oid(third))
         .unwrap();
     let ids: Vec<Oid> = changes.iter().flat_map(|c| c.new_id).collect();
     backend.prefetch_blobs(&ids).unwrap();
     let filter = Command::new("git")
-        .args(["config", "--get", "remote.origin.partialclonefilter"])
+        .args(["config", "--get", filter_key()])
         .current_dir(&dir)
         .output()
         .unwrap();
     assert!(!filter.status.success(), "filter が戻った");
-    git(
-        &dir,
-        &["config", "remote.origin.partialclonefilter", "blob:none"],
-    );
+    git(&dir, &["config", filter_key(), "blob:none"]);
 
     // 先に取っていなくても、1 つずつなら git に読ませる。
     let changes = backend
@@ -250,6 +238,15 @@ fn lists_submodules_of_a_partial_clone_not_checked_out() {
         .map(|e| e.name.as_str())
         .collect();
     assert_eq!(subs, ["lib"]);
+}
+
+/// clone が filter を書く設定（git 2.24 から remote ごと、それより前は `core.partialclonefilter`）。
+fn filter_key() -> &'static str {
+    if amonhen_backend_cli::git_version().is_some_and(|(a, b, _)| (a, b) < (2, 24)) {
+        "core.partialclonefilter"
+    } else {
+        "remote.origin.partialclonefilter"
+    }
 }
 
 fn git_older_than_2_29() -> bool {
