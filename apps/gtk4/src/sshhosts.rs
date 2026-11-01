@@ -38,6 +38,8 @@ const OTHER: &str = "\u{1}other";
 struct Mirror {
     options: HashMap<String, HostOptions>,
     local_signatures: HashMap<String, bool>,
+    /// SSH 先ごとに決めていないときの値（`checkRemoteSignaturesLocally`）。
+    local_by_default: bool,
 }
 
 static MIRROR: Mutex<Option<Mirror>> = Mutex::new(None);
@@ -64,6 +66,7 @@ pub fn load() {
     *MIRROR.lock().unwrap() = Some(Mirror {
         options,
         local_signatures: bool_map(SIGNATURE_BY_HOST),
+        local_by_default: local_by_default(),
     });
 }
 
@@ -89,17 +92,23 @@ pub fn options_for(location: &str) -> HostOptions {
         .unwrap_or_default()
 }
 
-/// `location`（SSH 先のリポジトリ）の署名を手元の鍵で検証するか（既定は手元）。どの糸からも読める。
+/// `location`（SSH 先のリポジトリ）の署名を手元の鍵で検証するか。SSH 先ごとの値、なければ全体の既定
+/// （`checkRemoteSignaturesLocally`。SSH でない daemon 越しもこれ。macOS 版と同じ）。どの糸からも読める。
 pub fn checks_signatures_locally(location: &str) -> bool {
+    let mirror = MIRROR.lock().unwrap();
+    let fallback = mirror.as_ref().is_none_or(|m| m.local_by_default);
     let Some(host) = host_of(location) else {
-        return true;
+        return fallback;
     };
-    MIRROR
-        .lock()
-        .unwrap()
+    mirror
         .as_ref()
         .and_then(|m| m.local_signatures.get(&host).copied())
-        .unwrap_or(true)
+        .unwrap_or(fallback)
+}
+
+/// SSH 先ごとに決めていないときに、署名を手元の鍵で検証するか（既定は手元）。
+fn local_by_default() -> bool {
+    crate::settings::bool(crate::settings::CHECK_REMOTE_SIGNATURES_LOCALLY)
 }
 
 /// daemon 越しのリポジトリの署名を検証する側を決める（macOS 版の `amonhen_repo_set_local_signature_check`）。手元の
@@ -145,7 +154,7 @@ fn checks_locally(host: &str) -> bool {
     bool_map(SIGNATURE_BY_HOST)
         .get(host)
         .copied()
-        .unwrap_or(true)
+        .unwrap_or_else(local_by_default)
 }
 
 fn set_checks_locally(host: &str, local: bool) {

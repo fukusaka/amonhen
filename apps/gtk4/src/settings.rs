@@ -40,6 +40,9 @@ pub const AUTO_MAGIC_MERGE: &str = "autoMagicMerge";
 pub const FILE_HISTORY_MERGES: &str = "fileHistoryMerges";
 /// 開いたリポジトリをブックマークに入れる（Repositories の一覧）。
 pub const AUTO_BOOKMARK: &str = "autoBookmark";
+/// SSH 先ごとに決めていないとき（と、SSH でない daemon 越し）に、署名を手元の鍵で検証するか（既定は手元。
+/// macOS 版と同じ鍵。画面では変えない）。
+pub const CHECK_REMOTE_SIGNATURES_LOCALLY: &str = "checkRemoteSignaturesLocally";
 /// 開いている間、何分ごとに fetch するか（0 はしない）。
 pub const AUTO_FETCH_MINUTES: &str = "autoFetchMinutes";
 /// History の並び順（`date`・`topo`。既定は日付順）。
@@ -160,6 +163,7 @@ pub fn bool(key: &str) -> bool {
             | GITHUB_CI_DEFAULT_BRANCH
             | GITHUB_AVATARS_ONCE
             | USE_FSMONITOR
+            | CHECK_REMOTE_SIGNATURES_LOCALLY
             | crate::commitfiles::STACKED
     ))
 }
