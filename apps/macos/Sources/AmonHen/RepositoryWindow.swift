@@ -289,6 +289,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         }
         let root = repository.workdir ?? RepositoryLocation.path(location)
         let remote = RepositoryLocation.isRemote(location)
+        sidebar.worktreesAreLocal = !remote
         sidebar.onOpenSubmodule = { [weak self] path in
             // サブモジュールは、同じ接続先の上の相対パスとして開く。
             let full = (root as NSString).appendingPathComponent(path)
