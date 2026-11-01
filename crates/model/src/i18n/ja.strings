@@ -489,9 +489,8 @@
 "Next Match (Enter, Ctrl+G)" = "次の一致（Enter・Ctrl+G）";
 "Show Only Matching Commits" = "一致したコミットだけを出す";
 "Search History (Ctrl+F)" = "History を検索（Ctrl+F）";
-"Searching…" = "探しています…";
 "{count} matches" = "{count} 件";
-"No matches" = "一致なし";
+"No Matches" = "見つかりません";
 "Can’t read the file’s information" = "ファイルの情報を読めません";
 "Not committed yet" = "まだコミットしていない";
 "Double-click to show in History." = "ダブルクリックで History に表示";

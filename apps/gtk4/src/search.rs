@@ -29,10 +29,18 @@ struct Inner {
     view: HistoryView,
     entry: gtk::SearchEntry,
     count: gtk::Label,
+    /// 探している間に回す（macOS 版と同じ）。
+    spinner: gtk::Spinner,
     /// 一致した行（昇順）と、それを探した問い合わせと History の世代。
     matches: RefCell<Rc<Vec<u32>>>,
     searched: RefCell<Option<(String, u64)>>,
     generation: Cell<u64>,
+    /// 最後に探し始めた問い合わせ（History を読み直したとき、絞り込んだままにするなら探し直す）。
+    requested: RefCell<Option<String>>,
+    /// 最後に移った一致の番目（選んだ行が一致でなくても、件数の欄はこれを出す。macOS 版と同じ）。
+    index: Cell<Option<usize>>,
+    /// 一致したコミットだけの History を出している（元の History ではない）。
+    filtered: Cell<bool>,
     /// 一致したコミットだけの History を作る世代（作り終えたとき、古いものなら捨てる）。
     filter_generation: Cell<u64>,
     /// 裏で作り始めた最後の世代（それより後の呼び出しが裏で作らなかったら、古いものを捨てるときに
@@ -64,6 +72,8 @@ impl Search {
         let count = gtk::Label::new(None);
         count.add_css_class("dim-label");
         count.add_css_class("numeric");
+        let spinner = gtk::Spinner::new();
+        spinner.set_visible(false);
         let previous = gtk::Button::from_icon_name("go-up-symbolic");
         let next = gtk::Button::from_icon_name("go-down-symbolic");
         if !gtk::IconTheme::for_display(&view.display()).has_icon("go-up-symbolic") {
@@ -85,6 +95,7 @@ impl Search {
         steps.append(&only);
         let line = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         line.append(&entry);
+        line.append(&spinner);
         line.append(&count);
         line.append(&steps);
         let bar = gtk::SearchBar::builder()
@@ -106,9 +117,13 @@ impl Search {
             view: view.clone(),
             entry: entry.clone(),
             count,
+            spinner,
             matches: RefCell::default(),
             searched: RefCell::default(),
             generation: Cell::new(0),
+            requested: RefCell::default(),
+            index: Cell::new(None),
+            filtered: Cell::new(false),
             filter_generation: Cell::new(0),
             filter_started: Cell::new(0),
             pending: RefCell::default(),
@@ -196,7 +211,8 @@ impl Search {
     }
 
     /// 新しく読んだ History を出す。行が変わるので、検索の結果は捨てる（問い合わせは欄に残し、Enter で探し直せる。
-    /// macOS 版と同じ）。一致したコミットだけを出していたなら、元の History に戻す。
+    /// macOS 版と同じ）。一致したコミットだけを出しているなら、新しい History で探し直して絞り込んだままにする
+    /// （それまでは今の絞り込みを出しておく。macOS 版の `showBase` と同じ）。
     pub fn show_history(&self, repo: Arc<Repository>, history: Arc<HistorySnapshot>) {
         let same = self
             .inner
@@ -207,13 +223,23 @@ impl Search {
         self.inner
             .base
             .replace(Some((repo.clone(), history.clone())));
-        if !self.inner.only.is_active() {
-            self.inner.view.show(repo, history);
+        if same {
+            if !self.inner.filtered.get() {
+                self.inner.view.show(repo, history);
+            }
+            return;
         }
-        if !same && self.inner.searched.borrow().is_some() {
-            // 絞り込みをやめると、元の History（今読んだもの）を出す。
-            self.inner.clear();
+        let query = self.inner.requested.borrow().clone();
+        if self.inner.only.is_active()
+            && self.inner.filtered.get()
+            && let Some(query) = query
+        {
+            Inner::run(&self.inner, query, 0);
+            return;
         }
+        self.inner.view.show(repo, history);
+        // 走っている検索・絞り込みは古い History のものなので捨てる。
+        self.inner.clear();
     }
 
     /// 探した問い合わせが決まった・消えたら `f(問い合わせ)` を呼ぶ（macOS 版の `onSearchChanged`）。
@@ -261,6 +287,16 @@ impl Inner {
 
     fn clear(&self) {
         self.generation.set(self.generation.get() + 1);
+        self.filter_generation.set(self.filter_generation.get() + 1);
+        self.requested.replace(None);
+        self.index.set(None);
+        self.spinner.stop();
+        self.spinner.set_visible(false);
+        self.count.set_tooltip_text(None);
+        // `--search` の途中なら、やめたので待たせない。
+        if let Some(p) = self.pending.take() {
+            p.set(p.get() - 1);
+        }
         // 走っている検索をやめさせる（`contents:` などは、次の検索を始めるまで裏で読み続けてしまう）。
         if let Some((repo, _)) = self.base.borrow().as_ref() {
             repo.cancel_search();
@@ -285,7 +321,9 @@ impl Inner {
         };
         if !this.only.is_active() {
             // 選んでいたコミットは、元の History でも選んだまま（`show` が ID で選び直す。macOS 版と同じ）。
-            this.view.show(repo, base);
+            if this.filtered.replace(false) {
+                this.view.show(repo, base);
+            }
             this.view.set_matches(this.matches.borrow().clone());
             if let Some(row) = this.view.selected() {
                 this.view.scroll_to_row(row);
@@ -300,8 +338,9 @@ impl Inner {
         let weak = Rc::downgrade(this);
         glib::spawn_future_local(async move {
             let matched: Vec<u32> = rows.as_ref().clone();
+            let source = base.clone();
             let built = gio::spawn_blocking(move || {
-                let filtered = repo.history_matching(&base, &matched);
+                let filtered = repo.history_matching(&source, &matched);
                 (repo, filtered)
             })
             .await;
@@ -315,9 +354,17 @@ impl Inner {
                 }
                 return;
             }
-            if this.only.is_active()
+            // 作っている間に History が替わったら捨てる（新しい History で探し直している）。
+            let current = this
+                .base
+                .borrow()
+                .as_ref()
+                .is_some_and(|(_, h)| Arc::ptr_eq(h, &base));
+            if current
+                && this.only.is_active()
                 && let Ok((repo, filtered)) = built
             {
+                this.filtered.set(true);
                 // 選んでいたコミットは、絞り込んだ History でも選んだまま（`show` が ID で選び直し、なければ
                 // 先頭を選ぶ。macOS 版と同じ）。
                 this.view.show(repo, filtered);
@@ -358,31 +405,50 @@ impl Inner {
         };
         let generation = this.generation.get() + 1;
         this.generation.set(generation);
-        this.count.set_text(&tr!("Searching…"));
+        this.requested.replace(Some(query.clone()));
+        this.count.set_text("");
+        this.count.set_tooltip_text(None);
+        this.spinner.set_visible(true);
+        this.spinner.start();
         let snapshot_generation = history.generation;
         let q = query.clone();
+        let searched = history.clone();
         let weak = Rc::downgrade(this);
         glib::spawn_future_local(async move {
             // 前の検索はやめさせる（コアは新しい検索を始めると古いものを止める）。
             let rows = gio::spawn_blocking(move || {
-                repo.search_history(&history, &q).map_err(|e| e.to_string())
+                repo.search_history(&searched, &q).map_err(|e| e.to_string())
             })
             .await;
             let Some(this) = weak.upgrade() else { return };
-            if this.generation.get() != generation {
+            // 探している間に History が替わったら、行番号が合わないので捨てる（macOS 版と同じ）。
+            let current = this
+                .base
+                .borrow()
+                .as_ref()
+                .is_some_and(|(_, h)| Arc::ptr_eq(h, &history));
+            if this.generation.get() != generation || !current {
                 return;
             }
+            this.spinner.stop();
+            this.spinner.set_visible(false);
             match rows {
                 Ok(Ok(rows)) => {
                     let rows = Rc::new(rows);
                     this.set_searched(Some((query, snapshot_generation)));
                     this.set_matches(rows.clone());
                     this.only.set_sensitive(true);
-                    if this.only.is_active() {
+                    if this.only.is_active() && !rows.is_empty() {
                         // 絞った History を出し終えてから `pending` を減らす。
                         Inner::apply_filter(&this);
                         return;
                     } else {
+                        // 一致がなければ、絞り込まずに元の History を出す（macOS 版と同じ）。
+                        if this.filtered.replace(false)
+                            && let Some((repo, base)) = this.base.borrow().clone()
+                        {
+                            this.view.show(repo, base);
+                        }
                         this.view.set_matches(rows);
                         if step != 0 {
                             this.first_match();
@@ -391,7 +457,11 @@ impl Inner {
                         }
                     }
                 }
-                Ok(Err(e)) => this.count.set_text(&e),
+                Ok(Err(e)) => {
+                    // 構文の誤りなどは件数の欄に出す（長いのでツールチップにも。macOS 版と同じ）。
+                    this.count.set_text(&e);
+                    this.count.set_tooltip_text(Some(&e));
+                }
                 Err(_) => {}
             }
             if let Some(p) = this.pending.take() {
@@ -414,7 +484,7 @@ impl Inner {
     /// 選んでいる行から `step` 方向の、次の一致を選ぶ（端では反対の端へ回る）。
     fn step(&self, step: i32) {
         // 一致したものだけを出しているなら、どの行も一致なので隣の行へ。
-        if self.only.is_active() {
+        if self.filtered.get() {
             let count = self.matches.borrow().len() as u32;
             if count == 0 {
                 self.view.display().beep();
@@ -457,7 +527,7 @@ impl Inner {
         self.update_count();
     }
 
-    /// 「何番目 / 全体」。
+    /// 「何番目 / 全体」。選んだ行が一致でなければ、最後に移った一致の番目を出したままにする（macOS 版と同じ）。
     fn update_count(&self) {
         // 探す前・結果を捨てた後（History を読み直したとき）は何も出さない（「一致なし」ではない）。
         if self.searched.borrow().is_none() {
@@ -466,23 +536,41 @@ impl Inner {
         }
         let matches = self.matches.borrow();
         let total = matches.len();
-        if self.only.is_active() {
-            let text = match self.view.selected() {
-                Some(r) => format!("{} / {total}", r + 1),
-                None => tr!("{count} matches", count = total),
-            };
-            self.count.set_text(&text);
-            return;
-        }
-        let text = match self
-            .view
-            .selected()
-            .and_then(|r| matches.binary_search(&r).ok())
-        {
-            Some(i) => format!("{} / {total}", i + 1),
-            None if total == 0 => tr!("No matches"),
-            None => tr!("{count} matches", count = total),
+        let selected = if self.filtered.get() {
+            self.view.selected().map(|r| r as usize)
+        } else {
+            self.view
+                .selected()
+                .and_then(|r| matches.binary_search(&r).ok())
         };
-        self.count.set_text(&text);
+        if selected.is_some() {
+            self.index.set(selected);
+        }
+        let index = self.index.get().filter(|&i| i < total);
+        self.count.set_text(&count_text(index, total));
+    }
+}
+
+/// 件数の欄の文字（macOS 版と同じく「N / M」か「No Matches」）。
+fn count_text(index: Option<usize>, total: usize) -> String {
+    match index {
+        _ if total == 0 => tr!("No Matches"),
+        Some(i) => format!("{} / {total}", i + 1),
+        None => tr!("{count} matches", count = total),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::count_text;
+
+    #[test]
+    fn count_shows_position_or_no_matches() {
+        amonhen_model::i18n::with(amonhen_model::i18n::Lang::En, || {
+            assert_eq!(count_text(Some(0), 3), "1 / 3");
+            assert_eq!(count_text(Some(2), 3), "3 / 3");
+            assert_eq!(count_text(None, 0), "No Matches");
+            assert_eq!(count_text(Some(0), 0), "No Matches");
+        });
     }
 }
