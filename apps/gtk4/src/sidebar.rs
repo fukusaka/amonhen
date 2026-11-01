@@ -894,6 +894,28 @@ fn setup_row(item: &gtk::ListItem, inner: &Owner, drop_cb: &Rc<RefCell<Option<Dr
     });
     trail.add_controller(press);
 
+    // 見出しと、選べない行（ブランチ・タグのフォルダ、リモート、No changes）は、行のどこを押しても開く・閉じる
+    // （矢印のほかでも。macOS 版と同じ）。矢印は行の部品の外なので、二度は動かない。
+    let toggle = gtk::GestureClick::new();
+    toggle.set_button(gtk::gdk::BUTTON_PRIMARY);
+    let weak = expander.downgrade();
+    toggle.connect_pressed(move |_, n_press, _, _| {
+        if n_press != 1 {
+            return;
+        }
+        let Some(row) = weak.upgrade().and_then(|e| e.list_row()) else {
+            return;
+        };
+        let foldable = row
+            .item()
+            .and_downcast::<Node>()
+            .is_some_and(|n| matches!(n.data().item, Item::Group | Item::Folder));
+        if foldable && row.is_expandable() {
+            row.set_expanded(!row.is_expanded());
+        }
+    });
+    line.add_controller(toggle);
+
     // 右クリック: 操作のメニュー。
     let click = gtk::GestureClick::new();
     click.set_button(gtk::gdk::BUTTON_SECONDARY);
