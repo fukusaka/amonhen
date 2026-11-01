@@ -1600,7 +1600,8 @@ impl Inner {
                 cell.name.set_hexpand(!flat_parent);
                 fill_counts(&cell.counts, self.stats.borrow().get(&entry.path).copied());
                 cell.can_discard.set(!conflict && entry.is_unstaged());
-                cell.discard.set_visible(cell.can_discard.get());
+                // 捨てられないファイル（すべて含めた・コンフリクト）でも幅は取っておく（行数の位置を揃える）。
+                cell.discard.set_visible(true);
                 // パス（名前を変えたファイルはもとのパス → 今のパス。macOS 版と同じ）。
                 let tip = match &entry.orig_path {
                     Some(orig) => format!("{orig} → {}", entry.path),
