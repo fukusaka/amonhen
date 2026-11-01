@@ -1072,6 +1072,9 @@ impl Inner {
             .as_ref()
             .is_some_and(|s| Arc::ptr_eq(s, &status))
         {
+            // status は同じでも、作業ツリーのファイルが変わった知らせ（ほかのエディタでマーカーを消した）なので、
+            // コンフリクトの中身は読み直す。
+            Inner::load_conflict_states(this);
             return;
         }
         // コンフリクトを先に、あとはパスの順。
