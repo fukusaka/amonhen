@@ -5,9 +5,10 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
 
-use amonhen_core::PairMode;
-use amonhen_model::tr;
+use amonhen_core::{PairMode, Repository};
+use amonhen_model::{Oid, tr};
 
 use gtk::glib;
 use gtk::prelude::*;
@@ -96,6 +97,105 @@ pub struct Details {
     pub ai: gtk::Box,
     /// 署名を検証した場所（Signature の吹き出しに出す）。
     place: RefCell<crate::signature::Place>,
+    /// コミット ID・ref の名前のリンクを押したとき（[`Details::connect_links`]。なければリンクにしない）。
+    links: Rc<RefCell<Option<Links>>>,
+}
+
+/// ref の名前のリンクを押したとき。
+pub type OnRef = Rc<dyn Fn(&str)>;
+
+/// コミット ID・ref の名前のリンクの行き先（macOS 版の `onSelectCommit`・`onSelectRef`）。
+#[derive(Clone)]
+struct Links {
+    /// メッセージの中の短い ID を引くリポジトリ。
+    repo: Rc<dyn Fn() -> Option<Arc<Repository>>>,
+    commit: Rc<dyn Fn(Oid)>,
+    /// ref の名前（Refs・Branches・Pushed）。なければ名前はリンクにしない。
+    reference: Option<OnRef>,
+}
+
+/// リンクの URI の形（macOS 版の `CommitHeaderRenderer` と同じ）。`commit:<40 桁>` はそのコミットを選び、
+/// `rev:<短い ID>` は引いてから選ぶ。`ref:<名前>` はその ref の履歴に絞り込む。
+const COMMIT_SCHEME: &str = "commit:";
+const REV_SCHEME: &str = "rev:";
+const REF_SCHEME: &str = "ref:";
+
+/// 押したリンクが詳細の中のもの（コミット・短い ID・ref）なら、その行き先へ。URL ならそのまま（ブラウザで開く）。
+fn follow(links: &RefCell<Option<Links>>, uri: &str) -> glib::Propagation {
+    let ours = [COMMIT_SCHEME, REV_SCHEME, REF_SCHEME]
+        .iter()
+        .any(|s| uri.starts_with(s));
+    if !ours {
+        return glib::Propagation::Proceed;
+    }
+    let Some(links) = links.borrow().clone() else {
+        return glib::Propagation::Stop;
+    };
+    if let Some(id) = uri.strip_prefix(COMMIT_SCHEME).and_then(Oid::from_hex) {
+        (links.commit)(id);
+    } else if let Some(rev) = uri.strip_prefix(REV_SCHEME) {
+        // メッセージの中の短い ID。コミットを引けたら選ぶ（引けなければ何もしない）。
+        if let Some(repo) = (links.repo)() {
+            let rev = rev.to_owned();
+            glib::spawn_future_local(async move {
+                let answer = crate::sheets::run(
+                    &repo,
+                    serde_json::json!({ "op": "resolveCommit", "rev": rev }),
+                )
+                .await;
+                match answer["text"].as_str().and_then(Oid::from_hex) {
+                    Some(id) => (links.commit)(id),
+                    None => {
+                        if let Some(display) = gtk::gdk::Display::default() {
+                            display.beep();
+                        }
+                    }
+                }
+            });
+        }
+    } else if let Some(name) = uri
+        .strip_prefix(REF_SCHEME)
+        .and_then(|n| glib::Uri::unescape_string(n, None::<&str>))
+        && let Some(f) = &links.reference
+    {
+        f(&name);
+    }
+    glib::Propagation::Stop
+}
+
+fn esc(s: &str) -> String {
+    glib::markup_escape_text(s).to_string()
+}
+
+/// コミット ID のリンク（`length` 桁を見せる）。
+fn commit_link(hex: &str, length: usize) -> String {
+    format!(
+        "<a href=\"{COMMIT_SCHEME}{}\">{}</a>",
+        esc(hex),
+        esc(&hex[..length.min(hex.len())])
+    )
+}
+
+/// ref の名前を並べたリンク（押すと、その ref の履歴に絞り込む）。
+fn ref_links(names: &[String]) -> String {
+    names
+        .iter()
+        .map(|name| {
+            format!(
+                "<a href=\"{REF_SCHEME}{}\" title=\"{}\">{}</a>",
+                esc(&glib::Uri::escape_string(name, None, false)),
+                esc(&tr!("Show only the history of {name}", name = name)),
+                esc(name)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// 表の値（そのままの文字か、リンクを含むマークアップ）。
+enum Cell {
+    Text(String),
+    Markup(String),
 }
 
 /// 2 つ選んだときの差分の取り方の切り替え（macOS 版と同じ言葉。訳の鍵）。
@@ -248,9 +348,30 @@ impl Details {
             tools,
             ai,
             place: RefCell::default(),
+            links: Rc::default(),
         };
+        let links = details.links.clone();
+        details
+            .body
+            .connect_activate_link(move |_, uri| follow(&links, uri));
         details.clear();
         details
+    }
+
+    /// 親・子・取り込んだコミットの ID とメッセージの中の短い ID を押したら `commit(ID)`（短い ID は `repo` で
+    /// 引く）、ref の名前を押したら `reference(名前)` を呼ぶ（macOS 版の `onSelectCommit`・`onSelectRef`）。
+    /// 呼ぶまでは、ID や名前をリンクにしない。
+    pub fn connect_links(
+        &self,
+        repo: Rc<dyn Fn() -> Option<Arc<Repository>>>,
+        commit: Rc<dyn Fn(Oid)>,
+        reference: Option<OnRef>,
+    ) {
+        self.links.replace(Some(Links {
+            repo,
+            commit,
+            reference,
+        }));
     }
 
     /// 開いたリポジトリの場所（署名を検証した場所を、Signature の吹き出しに出すため）。
@@ -365,7 +486,8 @@ impl Details {
         self.subject.set_text(subject.trim_end());
         let body = body.trim();
         // URL はリンクにする（`#123` は、リモートの場所を読んでから）。
-        self.body.set_markup(&linked(body, None));
+        let revs = self.links.borrow().is_some();
+        self.body.set_markup(&linked(body, None, revs));
         self.body.set_visible(!body.is_empty());
 
         // 上の帯: 作者と（違う人なら）コミッター。
@@ -431,7 +553,8 @@ impl Details {
             let message = str_of(info, "message");
             let body = message.split_once('\n').map_or("", |(_, b)| b).trim();
             let web = web_url(str_of(extras, "originUrl"));
-            self.body.set_markup(&linked(body, web.as_deref()));
+            let revs = self.links.borrow().is_some();
+            self.body.set_markup(&linked(body, web.as_deref(), revs));
         }
         let notes = str_of(extras, "notes").trim();
         self.notes.set_text(notes);
@@ -443,7 +566,36 @@ impl Details {
         self.clear_table();
         let info = self.info.borrow();
         let Some(info) = info.as_ref() else { return };
-        let mut rows: Vec<(String, String)> = vec![("Commit".into(), str_of(info, "oid").into())];
+        let (commits, names) = {
+            let links = self.links.borrow();
+            (
+                links.is_some(),
+                links.as_ref().is_some_and(|l| l.reference.is_some()),
+            )
+        };
+        // 40 桁の ID を 1 行ずつ（押すとそのコミットへ移る）。
+        let ids = |ids: &[String]| {
+            if commits {
+                Cell::Markup(
+                    ids.iter()
+                        .map(|id| commit_link(id, 40))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                )
+            } else {
+                Cell::Text(ids.join("\n"))
+            }
+        };
+        // ref の名前を並べる（押すと、その ref の履歴に絞り込む）。
+        let refs_cell = |list: &[String]| {
+            if names {
+                Cell::Markup(ref_links(list))
+            } else {
+                Cell::Text(list.join(", "))
+            }
+        };
+        let mut rows: Vec<(String, Cell)> =
+            vec![("Commit".into(), Cell::Text(str_of(info, "oid").into()))];
         let parents = strings(&info["parents"]);
         if !parents.is_empty() {
             let title = if parents.len() > 1 {
@@ -451,7 +603,7 @@ impl Details {
             } else {
                 "Parent"
             };
-            rows.push((title.into(), parents.join("  ")));
+            rows.push((title.into(), ids(&parents)));
         }
         if let Some(extras) = extras {
             let children = strings(&extras["children"]);
@@ -461,19 +613,19 @@ impl Details {
                 } else {
                     "Child"
                 };
-                rows.push((title.into(), children.join("  ")));
+                rows.push((title.into(), ids(&children)));
             }
             if let Some(rev) = extras["headRev"].as_str().filter(|r| !r.is_empty()) {
-                rows.push(("Rev".into(), rev.into()));
+                rows.push(("Rev".into(), Cell::Text(rev.into())));
             }
         }
         let signature = signature_text(info, extras);
         if let Some(signature) = &signature {
-            rows.push(("Signature".into(), signature.clone()));
+            rows.push(("Signature".into(), Cell::Text(signature.clone())));
         }
         let refs = strings(&info["refs"]);
         if !refs.is_empty() {
-            rows.push(("Refs".into(), refs.join(", ")));
+            rows.push(("Refs".into(), refs_cell(&refs)));
         }
         // このコミットを指すタグ: 名前・タガーと日時・件名と署名（軽量タグは名前だけ）。時間のかかる分で届く。
         if let Some(extras) = extras {
@@ -498,7 +650,7 @@ impl Details {
                         text.push_str(&format!("  {sig}"));
                     }
                 }
-                rows.push(("Tag".into(), text));
+                rows.push(("Tag".into(), Cell::Text(text)));
             }
         }
         // merge したタグ（merge コミットに埋め込まれたタグ）と、その署名。
@@ -522,12 +674,12 @@ impl Details {
             {
                 text.push_str(&format!("  {sig}"));
             }
-            rows.push(("Merged Tag".into(), text));
+            rows.push(("Merged Tag".into(), Cell::Text(text)));
         }
         if let Some(extras) = extras {
             let branches = strings(&extras["branches"]);
             if !branches.is_empty() {
-                rows.push(("Branches".into(), branches.join(", ")));
+                rows.push(("Branches".into(), refs_cell(&branches)));
             }
             let count = extras["tagCount"].as_u64().unwrap_or(0) as usize;
             if count > 0 {
@@ -538,36 +690,41 @@ impl Details {
                 } else {
                     String::new()
                 };
-                rows.push(("Tags".into(), shown + &more));
+                rows.push(("Tags".into(), Cell::Text(shown + &more)));
             }
             if let Some(previous) = extras["previousTag"].as_str() {
-                rows.push(("Previous Tag".into(), previous.into()));
+                rows.push(("Previous Tag".into(), Cell::Text(previous.into())));
             }
             if !extras["originUrl"].is_null() {
                 let remote = strings(&extras["remoteBranches"]);
                 let pushed = if remote.is_empty() {
-                    tr!("Not pushed (not on any remote branch)")
+                    Cell::Text(tr!("Not pushed (not on any remote branch)"))
                 } else {
-                    remote.join(", ")
+                    refs_cell(&remote)
                 };
                 rows.push(("Pushed".into(), pushed));
             }
             let merged = extras["mergedCount"].as_u64().unwrap_or(0);
             if merged > 0 {
-                let mut text = tr!("{count} commits", count = merged);
+                // 10 桁の ID（押すとそのコミットへ）・件名・作者（macOS 版の `summaryLine`）。
+                let mut text = esc(&tr!("{count} commits", count = merged));
                 for commit in extras["merged"].as_array().into_iter().flatten().take(20) {
                     let oid = str_of(commit, "oid");
-                    text.push_str(&format!(
-                        "\n{}  {}",
-                        &oid[..8.min(oid.len())],
-                        str_of(commit, "subject")
-                    ));
+                    let id = if commits {
+                        commit_link(oid, 10)
+                    } else {
+                        esc(&oid[..10.min(oid.len())])
+                    };
+                    text.push_str(&format!("\n{id}  {}", esc(str_of(commit, "subject"))));
+                    if let Some(author) = commit["author"].as_str() {
+                        text.push_str(&format!("<span alpha=\"60%\"> — {}</span>", esc(author)));
+                    }
                 }
                 if merged > 20 {
                     text.push('\n');
-                    text.push_str(&tr!("and {count} more", count = merged - 20));
+                    text.push_str(&esc(&tr!("and {count} more", count = merged - 20)));
                 }
-                rows.push(("Merged".into(), text));
+                rows.push(("Merged".into(), Cell::Markup(text)));
             }
         }
         for (i, (title, value)) in rows.into_iter().enumerate() {
@@ -577,12 +734,14 @@ impl Details {
             head.add_css_class("dim-label");
             head.add_css_class("caption");
             // 署名の行は、押すと吹き出しで詳細を出す（macOS 版と同じ）。
-            if title == "Signature" {
+            if title == "Signature"
+                && let Cell::Text(value) = &value
+            {
                 let check = extras
                     .map(|e| e["signature"].clone())
                     .filter(|s| !s.is_null());
                 let cell = crate::signature::row(
-                    &value,
+                    value,
                     check,
                     info["signed"].as_str().unwrap_or("gpg").to_owned(),
                     str_of(info, "committerEmail").to_owned(),
@@ -592,7 +751,15 @@ impl Details {
                 self.table.attach(&cell, 1, i as i32, 1, 1);
                 continue;
             }
-            let cell = gtk::Label::new(Some(&value));
+            let cell = gtk::Label::new(None);
+            match &value {
+                Cell::Text(t) => cell.set_text(t),
+                Cell::Markup(m) => {
+                    cell.set_markup(m);
+                    let links = self.links.clone();
+                    cell.connect_activate_link(move |_, uri| follow(&links, uri));
+                }
+            }
             cell.set_xalign(0.0);
             cell.set_wrap(true);
             cell.set_wrap_mode(gtk::pango::WrapMode::WordChar);
@@ -699,8 +866,9 @@ fn web_url(remote: &str) -> Option<String> {
 }
 
 /// 本文を、URL と（`web` があれば）`#123` をリンクにした Pango のマークアップにする。`#123` は `web` の issue
-/// （GitLab なら `-/issues`）へ。GitHub は pull request の番号でも開ける。
-fn linked(text: &str, web: Option<&str>) -> String {
+/// （GitLab なら `-/issues`）へ。GitHub は pull request の番号でも開ける。`revs` なら 7〜40 桁の 16 進（前後が
+/// 英数字でないもの）もコミット ID とみなしてリンクにする（押すと引いてから選ぶ。macOS 版と同じ）。
+fn linked(text: &str, web: Option<&str>, revs: bool) -> String {
     let e = |s: &str| glib::markup_escape_text(s).to_string();
     let link = |href: &str, label: &str| format!("<a href=\"{}\">{}</a>", e(href), e(label));
     let issues = web.map(|w| {
@@ -740,6 +908,26 @@ fn linked(text: &str, web: Option<&str>) -> String {
                 out.push_str(&e(&text[plain..i]));
                 out.push_str(&link(&format!("{issues}/{number}"), &rest[..1 + digits]));
                 i += 1 + digits;
+                plain = i;
+                continue;
+            }
+        }
+        // 7〜40 桁の 16 進（前が英数字や `/` でなく、後ろが英数字でない）。
+        if revs
+            && matches!(bytes[i], b'0'..=b'9' | b'a'..=b'f')
+            && (i == 0 || !(bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'/'))
+        {
+            let digits = rest
+                .find(|c: char| !matches!(c, '0'..='9' | 'a'..='f'))
+                .unwrap_or(rest.len());
+            let after = rest[digits..].chars().next();
+            if (7..=40).contains(&digits) && !after.is_some_and(|c| c.is_ascii_alphanumeric()) {
+                out.push_str(&e(&text[plain..i]));
+                out.push_str(&link(
+                    &format!("{REV_SCHEME}{}", &rest[..digits]),
+                    &rest[..digits],
+                ));
+                i += digits;
                 plain = i;
                 continue;
             }
@@ -794,19 +982,46 @@ mod tests {
     fn issue_numbers_and_urls_become_links() {
         let web = Some("https://github.com/a/b");
         assert_eq!(
-            linked("Fixes #12, see https://x.org/p.", web),
+            linked("Fixes #12, see https://x.org/p.", web, false),
             "Fixes <a href=\"https://github.com/a/b/issues/12\">#12</a>, see \
              <a href=\"https://x.org/p\">https://x.org/p</a>."
         );
         // 単語の途中・`&#` の後ろ・数字でないものはリンクにしない。リモートがなければ `#12` もそのまま。
         assert_eq!(
-            linked("a#1 &#38; #x <b>", web),
+            linked("a#1 &#38; #x <b>", web, false),
             "a#1 &amp;#38; #x &lt;b&gt;"
         );
-        assert_eq!(linked("#7", None), "#7");
+        assert_eq!(linked("#7", None, false), "#7");
         assert_eq!(
-            linked("#7", Some("https://gitlab.com/a/b")),
+            linked("#7", Some("https://gitlab.com/a/b"), false),
             "<a href=\"https://gitlab.com/a/b/-/issues/7\">#7</a>"
         );
+    }
+
+    #[test]
+    fn short_ids_in_messages_become_links() {
+        assert_eq!(
+            linked("Reverts 1a2b3c4d (see deadbeefcafe).", None, true),
+            "Reverts <a href=\"rev:1a2b3c4d\">1a2b3c4d</a> (see \
+             <a href=\"rev:deadbeefcafe\">deadbeefcafe</a>)."
+        );
+        // 6 桁・単語の途中・パスの中・大文字・URL の中はリンクにしない。リンクにしないなら、そのまま。
+        assert_eq!(
+            linked("abc123 x1a2b3c4d a/1a2b3c4d 1A2B3C4D", None, true),
+            "abc123 x1a2b3c4d a/1a2b3c4d 1A2B3C4D"
+        );
+        assert_eq!(
+            linked("https://x.org/1a2b3c4d", None, true),
+            "<a href=\"https://x.org/1a2b3c4d\">https://x.org/1a2b3c4d</a>"
+        );
+        assert_eq!(linked("1a2b3c4d", None, false), "1a2b3c4d");
+    }
+
+    #[test]
+    fn ref_names_link_with_escaped_names() {
+        let markup = ref_links(&["main".into(), "a&b".into()]);
+        assert!(markup.starts_with("<a href=\"ref:main\""));
+        assert!(markup.contains(">a&amp;b</a>"));
+        assert!(markup.contains("href=\"ref:a%26b\""));
     }
 }

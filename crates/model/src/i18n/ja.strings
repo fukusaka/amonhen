@@ -1720,6 +1720,7 @@
 "All Branches" = "すべてのブランチ";
 "Current Branch" = "現在のブランチ";
 "{count} branches" = "{count} 本のブランチ";
+"Show only the history of {name}" = "{name} の履歴に絞り込む";
 
 /* GTK4: 詳細の中を探す */
 "Search" = "検索";

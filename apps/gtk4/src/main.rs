@@ -1065,6 +1065,24 @@ fn build_tab(
         let on_commit = on_commit.clone();
         move |id| on_commit(id)
     });
+    // 詳細の親・子・取り込んだコミット・メッセージの中の ID は、そのコミットを選ぶ（今の範囲になければ全ブランチ
+    // にして）。ref の名前は、その ref の履歴に絞り込む（macOS 版の `onSelectCommit`・`selectRef(named:)`）。
+    {
+        let v = view.downgrade();
+        let (pages, view, sh) = (pages.clone(), view.clone(), Rc::downgrade(&shaper));
+        let s = Rc::downgrade(&shaper);
+        details.connect_links(
+            Rc::new(move || v.upgrade().and_then(|v| v.current()).map(|(r, _)| r)),
+            Rc::new(move |id| jump_to(&pages, &view, id, &Rc::new(Cell::new(0)), &sh)),
+            Some(Rc::new(move |name: &str| {
+                if !s.upgrade().is_some_and(|s| s.scope_to_ref_named(name))
+                    && let Some(display) = gtk::gdk::Display::default()
+                {
+                    display.beep();
+                }
+            })),
+        );
+    }
     // History の編集モード（History の画面と入れ替える）。
     let edit_opener = historyedit::Opener::new(
         actions.clone(),

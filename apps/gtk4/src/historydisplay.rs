@@ -396,6 +396,21 @@ impl Shaper {
         true
     }
 
+    /// 名前の ref（ブランチ・リモートブランチ・タグ）の History に絞り込む（詳細の欄の ref のリンク）。なければ
+    /// false。
+    pub fn scope_to_ref_named(&self, name: &str) -> bool {
+        let entry = self
+            .refs
+            .borrow()
+            .entries
+            .iter()
+            .find(|e| {
+                e.name == name && matches!(e.kind, RefKind::Local | RefKind::Remote | RefKind::Tag)
+            })
+            .cloned();
+        entry.is_some_and(|e| self.scope_to_ref(&e, false))
+    }
+
     /// ref の一覧が変わった。絞り込んだ ref がほかのプログラムで動いた（rebase・commit・fetch）なら、新しい
     /// コミットに付け替えて絞り込み直す（前のコミットのままだと、消えたコミットから辿ることになる）。今の
     /// ブランチに絞っていて HEAD が動いたら、絞り込み直す。
