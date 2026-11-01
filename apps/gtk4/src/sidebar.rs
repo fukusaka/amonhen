@@ -921,6 +921,104 @@ fn page_of_key(key: &str) -> &'static str {
     }
 }
 
+/// 行の並べ方: アイコン・名前・右端の印。幅が足りなければ、名前を切る前に印を行の外に出す（見えなくなる）。
+fn name_first_layout() -> gtk::LayoutManager {
+    glib::Object::new::<name_first::NameFirst>().upcast()
+}
+
+mod name_first {
+    use gtk::glib;
+    use gtk::prelude::*;
+    use gtk::subclass::prelude::*;
+
+    const GAP: i32 = 6;
+
+    fn children(w: &gtk::Widget) -> Vec<gtk::Widget> {
+        let mut out = Vec::new();
+        let mut child = w.first_child();
+        while let Some(c) = child {
+            child = c.next_sibling();
+            if c.should_layout() {
+                out.push(c);
+            }
+        }
+        out
+    }
+
+    fn width(c: &gtk::Widget) -> (i32, i32) {
+        let (min, nat, _, _) = c.measure(gtk::Orientation::Horizontal, -1);
+        (min, nat)
+    }
+
+    glib::wrapper! {
+        pub struct NameFirst(ObjectSubclass<Imp>) @extends gtk::LayoutManager;
+    }
+
+    #[derive(Default)]
+    pub struct Imp;
+
+    #[glib::object_subclass]
+    impl ObjectSubclass for Imp {
+        const NAME: &'static str = "AmonhenNameFirstLayout";
+        type Type = NameFirst;
+        type ParentType = gtk::LayoutManager;
+    }
+
+    impl ObjectImpl for Imp {}
+
+    impl LayoutManagerImpl for Imp {
+        fn measure(
+            &self,
+            widget: &gtk::Widget,
+            orientation: gtk::Orientation,
+            _for_size: i32,
+        ) -> (i32, i32, i32, i32) {
+            let kids = children(widget);
+            if orientation == gtk::Orientation::Vertical {
+                let (min, nat) = kids.iter().fold((0, 0), |(min, nat), c| {
+                    let (m, n, _, _) = c.measure(gtk::Orientation::Vertical, -1);
+                    (min.max(m), nat.max(n))
+                });
+                return (min, nat, -1, -1);
+            }
+            // いちばん狭いときは印なし（名前は切れる）。ふつうは全部の幅。
+            let gaps = |n: usize| GAP * (n as i32 - 1).max(0);
+            let nat = kids.iter().map(|c| width(c).1).sum::<i32>() + gaps(kids.len());
+            let min =
+                kids.iter().take(2).map(|c| width(c).0).sum::<i32>() + gaps(kids.len().min(2));
+            (min, nat.max(min), -1, -1)
+        }
+
+        fn allocate(&self, widget: &gtk::Widget, width_: i32, height: i32, baseline: i32) {
+            let kids = children(widget);
+            let n = kids.len();
+            let mut x = 0;
+            for (i, c) in kids.iter().enumerate() {
+                let (min, nat) = width(c);
+                let rest: i32 = kids[i + 1..].iter().map(|k| width(k).1 + GAP).sum();
+                let w = match i {
+                    // アイコン。
+                    0 if n > 1 => nat,
+                    // 名前: 後ろの印が入るなら、その分を残す。入らなければ印は外に出す。
+                    1 => {
+                        let room = width_ - x;
+                        if nat + rest <= room {
+                            room - rest
+                        } else {
+                            room.max(min)
+                        }
+                    }
+                    _ => nat,
+                };
+                let at =
+                    gtk::gsk::Transform::new().translate(&gtk::graphene::Point::new(x as f32, 0.0));
+                c.allocate(w, height, baseline, Some(at));
+                x += w + GAP;
+            }
+        }
+    }
+}
+
 /// 行の部品から届く Inner。
 type Owner = Rc<RefCell<std::rc::Weak<Inner>>>;
 
@@ -947,6 +1045,9 @@ fn setup_row(item: &gtk::ListItem, inner: &Owner, drop_cb: &Rc<RefCell<Option<Dr
     line.append(&icon);
     line.append(&title);
     line.append(&trail);
+    // 名前が収まらないときは、名前を切らずに右端の印を隠す（macOS 版と同じ）。
+    line.set_layout_manager(Some(name_first_layout()));
+    line.set_overflow(gtk::Overflow::Hidden);
     let expander = gtk::TreeExpander::new();
     expander.set_child(Some(&line));
     item.set_child(Some(&expander));
