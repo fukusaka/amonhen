@@ -29,6 +29,8 @@ pub enum Kind {
     Pull,
     /// arrow.up.circle
     Push,
+    /// icloud.and.arrow.up（上流のないブランチの Push、Publish）
+    Publish,
     /// arrow.triangle.merge
     Merge,
     /// arrow.triangle.pull
@@ -445,6 +447,14 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.line_to(8.0, 9.6);
             p.move_to(8.0, 11.2);
             p.line_to(8.0, 11.3);
+        }
+        Kind::Publish => {
+            cloud(&p);
+            p.move_to(8.0, 11.0);
+            p.line_to(8.0, 6.8);
+            p.move_to(6.3, 8.5);
+            p.line_to(8.0, 6.8);
+            p.line_to(9.7, 8.5);
         }
         Kind::CloudSlash => {
             cloud(&p);

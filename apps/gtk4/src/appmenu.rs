@@ -64,6 +64,8 @@ pub struct Buttons {
     pull_count: gtk::Label,
     push: gtk::Button,
     push_count: gtk::Label,
+    /// Push のアイコン（上流がなければ Publish の雲に）。
+    push_icon: icon::Icon,
     actions: Rc<Actions>,
 }
 
@@ -117,6 +119,15 @@ impl Buttons {
         let published = entry.is_none_or(|e| e.detail.is_some() && !e.gone);
         // メニューの Push・Commit and Push は Publish…・Commit and Publish… になる（macOS 版と同じ）。
         self.actions.set_publishes(!published);
+        // ツールバーの Push も Publish のアイコン（icloud.and.arrow.up）になる（macOS 版と同じ）。
+        self.push_icon.set(
+            if published {
+                icon::Kind::Push
+            } else {
+                icon::Kind::Publish
+            },
+            false,
+        );
         // 送るものがなければ押せない。理由はツールチップに（macOS 版と同じ）。
         self.push.set_tooltip_text(Some(&if !published {
             tr!("Publish — choose the remote to create this branch on first (Ctrl+Alt+P)")
@@ -146,7 +157,7 @@ impl Buttons {
 
 /// ▾ 付きのボタン（押すと `action`、▾ で `menu`）。アイコンの横に数を出せる。
 /// 数の付くボタン（Pull・Push。▾ のメニューは付けない: 押すと必ずシートで確かめる。docs/ux.md の「Toolbar」）。
-fn count_button(kind: icon::Kind, action: &str) -> (gtk::Button, gtk::Label) {
+fn count_button(kind: icon::Kind, action: &str) -> (gtk::Button, gtk::Label, icon::Icon) {
     let icon = icon::Icon::default();
     icon.set(kind, false);
     let count = gtk::Label::new(None);
@@ -158,7 +169,7 @@ fn count_button(kind: icon::Kind, action: &str) -> (gtk::Button, gtk::Label) {
     let button = gtk::Button::new();
     button.set_child(Some(&inner));
     button.set_action_name(Some(action));
-    (button, count)
+    (button, count, icon)
 }
 
 /// メニューの項目を選んだときの処理。
@@ -488,8 +499,8 @@ pub fn install(parts: Parts) -> Buttons {
         .action_name("win.switch-branch")
         .tooltip_text(tr!("Switch Branch (Ctrl+Shift+B)"))
         .build();
-    let (pull, pull_count) = count_button(icon::Kind::Pull, "win.pull");
-    let (push, push_count) = count_button(icon::Kind::Push, "win.push");
+    let (pull, pull_count, _) = count_button(icon::Kind::Pull, "win.pull");
+    let (push, push_count, push_icon) = count_button(icon::Kind::Push, "win.push");
     // ボタンの並びは View > Customize Toolbar… で変えられる（`toolbar.rs`）。左はここ、右は主メニューの左。
     let toolbar_start = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     let toolbar_end = gtk::Box::new(gtk::Orientation::Horizontal, 6);
@@ -532,6 +543,7 @@ pub fn install(parts: Parts) -> Buttons {
         pull_count,
         push,
         push_count,
+        push_icon,
         actions: parts.actions.clone(),
     }
 }
