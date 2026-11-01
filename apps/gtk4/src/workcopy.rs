@@ -1286,9 +1286,33 @@ impl Inner {
             if *this.conflict_states.borrow() == states {
                 return;
             }
-            this.conflict_states.replace(states);
+            let old = this.conflict_states.replace(states.clone());
             for (path, mark) in this.conflict_marks.borrow().iter() {
                 this.apply_conflict_state(path, mark);
+            }
+            // ほかで書き換えたファイル（マーカーの数が変わった）のマージエディタは、手を付けていなければ読み直す。
+            // 前の中身のまま「保存して解決済みにする」と、ほかでした解決をマーカー付きの中身で上書きしてしまう。
+            let changed: Vec<String> = states
+                .iter()
+                .filter(|(path, state)| old.get(*path).is_some_and(|o| o != *state))
+                .map(|(path, _)| path.clone())
+                .collect();
+            for path in changed {
+                let key = this.editor_key(&path);
+                let editor = this.editors.borrow().get(&key).cloned();
+                let Some(editor) = editor.filter(|e| !e.has_unsaved_changes()) else {
+                    continue;
+                };
+                this.editors.borrow_mut().remove(&key);
+                let shown = this
+                    .embedded
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|e| Rc::ptr_eq(e, &editor));
+                if shown {
+                    this.unembed();
+                    Inner::show_conflict(&this, &path, this.generation.get());
+                }
             }
         });
     }
