@@ -353,6 +353,8 @@ struct Inner {
     /// 確かめる予定のタグと、確かめている途中のタグ。
     tags_to_verify: RefCell<HashSet<String>>,
     verifying_tags: RefCell<HashSet<String>>,
+    /// 検証する側を変えたら進める（変える前に始めた検証の結果は使わない。macOS 版の `tagSignatureGeneration`）。
+    tag_generation: Cell<u64>,
     verify_timer: RefCell<Option<glib::SourceId>>,
     /// 確認用（`--sidebar-mark signature:<タグ>`）: 確かめ終えたら署名の吹き出しを出すタグ。
     debug_signature: RefCell<Option<String>>,
@@ -479,6 +481,7 @@ impl Sidebar {
             tag_epoch: Cell::new(0),
             tags_to_verify: RefCell::default(),
             verifying_tags: RefCell::default(),
+            tag_generation: Cell::new(0),
             verify_timer: RefCell::default(),
             debug_signature: RefCell::default(),
             signature_place: RefCell::default(),
@@ -657,6 +660,13 @@ impl Sidebar {
 
     /// 署名を検証する側が変わった: タグの署名の結果を捨て、確かめ直す（macOS 版の `forgetSignatures`）。
     pub fn forget_signatures(&self) {
+        let inner = &self.inner;
+        inner.tag_generation.set(inner.tag_generation.get() + 1);
+        if let Some(timer) = inner.verify_timer.take() {
+            timer.remove();
+        }
+        inner.tags_to_verify.borrow_mut().clear();
+        inner.verifying_tags.borrow_mut().clear();
         self.inner.tag_signatures.borrow_mut().clear();
         self.inner.tag_epoch.set(self.inner.tag_epoch.get() + 1);
         self.inner.rebuild(false);
@@ -1483,7 +1493,11 @@ impl Inner {
                     .verifying_tags
                     .borrow_mut()
                     .extend(pending.iter().cloned());
-                let (epoch, weak) = (inner.tag_epoch.get(), Rc::downgrade(&inner));
+                let (epoch, generation, weak) = (
+                    inner.tag_epoch.get(),
+                    inner.tag_generation.get(),
+                    Rc::downgrade(&inner),
+                );
                 glib::spawn_future_local(async move {
                     for batch in pending.chunks(8) {
                         let reply = crate::sheets::run(
@@ -1492,6 +1506,9 @@ impl Inner {
                         )
                         .await;
                         let Some(inner) = weak.upgrade() else { return };
+                        if inner.tag_generation.get() != generation {
+                            return;
+                        }
                         {
                             let mut known = inner.tag_signatures.borrow_mut();
                             for tag in reply["info"]["tags"].as_array().into_iter().flatten() {
