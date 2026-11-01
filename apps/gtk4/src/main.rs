@@ -723,6 +723,7 @@ fn build_tab(
     let range_diff = rangediff::RangeDiff::new(&view, pending.clone());
     pages.add_named(&range_diff.root, Some(rangediff::PAGE));
     let sidebar = Rc::new(Sidebar::new());
+    sidebar.set_location(&text);
     let range_diff_opener = rangediff::Opener::new(&range_diff, &pages, &sidebar);
     let o = range_diff_opener.clone();
     range_diff.connect_close(move || o.close());

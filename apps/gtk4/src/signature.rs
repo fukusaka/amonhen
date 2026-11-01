@@ -219,7 +219,7 @@ impl Place {
         }
     }
 
-    fn name(&self) -> String {
+    pub(crate) fn name(&self) -> String {
         match &self.host {
             None => tr!("this computer"),
             Some(host) => tr!("{host} (SSH host)", host = host),

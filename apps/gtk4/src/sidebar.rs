@@ -358,6 +358,8 @@ struct Inner {
     verify_timer: RefCell<Option<glib::SourceId>>,
     /// 確認用（`--sidebar-mark signature:<タグ>`）: 確かめ終えたら署名の吹き出しを出すタグ。
     debug_signature: RefCell<Option<String>>,
+    /// タグの署名を検証した場所（吹き出しに出す）。
+    signature_place: RefCell<crate::signature::Place>,
 }
 
 /// タグの署名を確かめた結果（状態、コアの `tagSignatures` の 1 件、確かめたときの refs の番号）。
@@ -481,6 +483,7 @@ impl Sidebar {
             verifying_tags: RefCell::default(),
             verify_timer: RefCell::default(),
             debug_signature: RefCell::default(),
+            signature_place: RefCell::default(),
         });
         inner.anchor.borrow().set(Some(scrolled.upcast_ref()));
         owner.replace(Rc::downgrade(&inner));
@@ -546,6 +549,13 @@ impl Sidebar {
             filter,
             inner,
         }
+    }
+
+    /// 開いたリポジトリの場所（タグの署名を検証した場所を、署名の吹き出しに出すため）。
+    pub fn set_location(&self, location: &str) {
+        self.inner
+            .signature_place
+            .replace(crate::signature::Place::of(location));
     }
 
     /// Navigate > Filter Branches…: 絞り込みの欄にカーソルを移す。
@@ -1344,7 +1354,8 @@ impl Inner {
         let Item::Ref(entry) = &data.item else { return };
         let known = self.tag_signatures.borrow().get(&entry.name).cloned();
         if let Some((Some(status), tag, _)) = known {
-            crate::tagsign::popover(anchor, &entry.name, status, &tag);
+            let place = self.signature_place.borrow().clone();
+            crate::tagsign::popover(anchor, &entry.name, status, &tag, &place);
         }
     }
 

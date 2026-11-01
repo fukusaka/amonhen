@@ -154,8 +154,14 @@ fn mismatched(emails: &Value, tagger: &str) -> bool {
     })
 }
 
-/// タグの署名の吹き出し（状態、説明、署名者・鍵・タグのメッセージ）を `anchor` の下に出す。
-pub fn popover(anchor: &gtk::Widget, name: &str, status: Status, tag: &Value) {
+/// タグの署名の吹き出し（状態、説明、署名者・鍵・検証した場所・タグのメッセージ）を `anchor` の下に出す。
+pub fn popover(
+    anchor: &gtk::Widget,
+    name: &str,
+    status: Status,
+    tag: &Value,
+    place: &crate::signature::Place,
+) {
     let (kind, css) = status.icon();
     let mark = Icon::default();
     mark.set(kind, false);
@@ -165,9 +171,16 @@ pub fn popover(anchor: &gtk::Widget, name: &str, status: Status, tag: &Value) {
     let heading = gtk::Label::new(Some(status.label()));
     heading.add_css_class("heading");
     heading.set_xalign(0.0);
+    // どこで検証したか（コミットの署名の吹き出しと同じ）。
+    let badge = gtk::Label::new(Some(&tr!("Checked on {place}", place = place.name())));
+    badge.add_css_class("caption");
+    badge.add_css_class("dim-label");
+    badge.set_hexpand(true);
+    badge.set_xalign(1.0);
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     header.append(&mark);
     header.append(&heading);
+    header.append(&badge);
     let content = gtk::Box::new(gtk::Orientation::Vertical, 10);
     content.set_margin_top(12);
     content.set_margin_bottom(12);
@@ -223,6 +236,21 @@ pub fn popover(anchor: &gtk::Widget, name: &str, status: Status, tag: &Value) {
     row(
         &tr!("Trust"),
         s["trust"].as_str().unwrap_or_default(),
+        false,
+    );
+    let keys = if tag["signed"].as_str() == Some("ssh") {
+        "allowed signers"
+    } else {
+        "~/.gnupg"
+    };
+    row(
+        &tr!("Checked on"),
+        &tr!(
+            "{keys} on {place} ({detail})",
+            keys = keys,
+            place = place.name(),
+            detail = place.detail
+        ),
         false,
     );
     content.append(&grid);
