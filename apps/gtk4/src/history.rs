@@ -216,7 +216,16 @@ pub struct State {
     on_drag_start: Option<Rc<dyn Fn()>>,
     /// 出す History が替わったときに呼ぶ（密度の帯が求め直す）。
     on_history: Option<Rc<dyn Fn()>>,
+    /// 最後に描いたもの（読み直したとき、ここから新しい表示へ溶かす）。
+    last_node: Option<gsk::RenderNode>,
+    /// 溶かしている途中の前の表示と、始めた時刻。
+    fade: Option<(gsk::RenderNode, Instant)>,
+    /// 次に出す History は溶かして入れ替える（ほかのプログラムの変化で読み直した。[`HistoryView::fade_next`]）。
+    fade_requested: Option<Instant>,
 }
+
+/// 読み直したときに、前の表示を新しい表示へ溶かす時間（macOS 版の 0.15 秒）。
+const FADE: std::time::Duration = std::time::Duration::from_millis(150);
 
 /// コミットを落としたときに呼ぶもの。
 type DropCallback = Rc<dyn Fn(Oid, u32)>;
@@ -472,9 +481,30 @@ mod imp {
 
         fn snapshot(&self, snapshot: &gtk::Snapshot) {
             let started = Instant::now();
-            self.obj().draw(snapshot);
-            self.obj().draw_drop(snapshot);
-            if let Some(times) = self.state.borrow_mut().snapshot_times.as_mut() {
+            // 描いたものを覚えておき、読み直したときに前の表示から溶かす（macOS 版と同じ）。
+            let own = gtk::Snapshot::new();
+            self.obj().draw(&own);
+            self.obj().draw_drop(&own);
+            let node = own.to_node();
+            let mut st = self.state.borrow_mut();
+            let fade = st
+                .fade
+                .as_ref()
+                .filter(|(_, at)| at.elapsed() < FADE)
+                .map(|(old, at)| (old.clone(), at.elapsed().as_secs_f32() / FADE.as_secs_f32()));
+            match (&node, fade) {
+                (Some(node), Some((old, progress))) => {
+                    snapshot.push_cross_fade(f64::from(progress.clamp(0.0, 1.0)));
+                    snapshot.append_node(&old);
+                    snapshot.pop();
+                    snapshot.append_node(node);
+                    snapshot.pop();
+                }
+                (Some(node), None) => snapshot.append_node(node),
+                (None, _) => {}
+            }
+            st.last_node = node;
+            if let Some(times) = st.snapshot_times.as_mut() {
                 times.push(started.elapsed().as_secs_f64() * 1000.0);
             }
         }
@@ -544,6 +574,36 @@ impl HistoryView {
         st.metrics.row_height
     }
 
+    /// 次に出す History を、前の表示から短く溶かして入れ替える（ほかのプログラムの変化で読み直したとき。
+    /// 自分で範囲を変えたときは待たせない。macOS 版と同じ）。少し待っても出さなければ忘れる。
+    pub fn fade_next(&self) {
+        self.state().fade_requested = Some(Instant::now());
+    }
+
+    /// 前の表示から溶かし始める（頼まれていて、前に描いたものがあれば）。
+    fn start_fade(&self) {
+        {
+            let mut st = self.state();
+            let requested = st
+                .fade_requested
+                .take()
+                .is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(2));
+            let Some(old) = st.last_node.clone().filter(|_| requested) else {
+                return;
+            };
+            st.fade = Some((old, Instant::now()));
+        }
+        self.add_tick_callback(|view, _| {
+            view.queue_draw();
+            let mut st = view.state();
+            if st.fade.as_ref().is_some_and(|(_, at)| at.elapsed() < FADE) {
+                return glib::ControlFlow::Continue;
+            }
+            st.fade = None;
+            glib::ControlFlow::Break
+        });
+    }
+
     /// 表示する History を替える。同じ History の新しい世代なら、選んでいたコミットを選び直す。
     pub fn show(&self, repo: Arc<Repository>, history: Arc<HistorySnapshot>) {
         // 選んでいたコミットが消えたか（ほかのプログラムが rebase・amend した）、選び直しで変わったか。
@@ -592,6 +652,7 @@ impl HistoryView {
             st.matches = Rc::default();
             changed
         };
+        self.start_fade();
         self.configure_adjustments();
         self.update_lineage();
         self.queue_draw();

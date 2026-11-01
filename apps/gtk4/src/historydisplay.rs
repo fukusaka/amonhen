@@ -328,6 +328,15 @@ impl Shaper {
 
     /// 読み直した（全体の）History を出す。
     pub fn present(&self, repo: Arc<Repository>, full: Arc<HistorySnapshot>) {
+        // 前に出していた History を読み直したもの（ほかのプログラムの変化など）なら、溶かして入れ替える。
+        let reloaded = self
+            .full
+            .borrow()
+            .as_ref()
+            .is_some_and(|(_, old)| old.generation != full.generation);
+        if reloaded {
+            self.view.fade_next();
+        }
         self.full.replace(Some((repo, full)));
         self.reshape(None);
     }
