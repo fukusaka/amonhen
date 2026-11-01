@@ -132,6 +132,18 @@ pub fn local_program_places() -> Vec<String> {
     .collect()
 }
 
+/// ↑↓ で行く先（候補の中の位置）。`current` は今の位置、候補がなければ None。端では止まる。
+fn step_target(current: Option<usize>, step: i32, count: usize) -> Option<usize> {
+    if count == 0 {
+        return None;
+    }
+    Some(match current {
+        Some(c) => (c as i64 + step as i64).clamp(0, count as i64 - 1) as usize,
+        None if step > 0 => 0,
+        None => count - 1,
+    })
+}
+
 // パス（その機械の形のまま。Windows なら `C:\…`・`\\server\share\…`）
 
 fn is_windows(path: &str) -> bool {
@@ -1089,6 +1101,38 @@ impl Picker {
         }
     }
 
+    /// ↑↓: 列 `index` の中で、選べるもの・開くものの前後を選ぶ。何も選んでいなければ端のもの（macOS 版の `move`）。
+    fn step(self: &Rc<Self>, index: usize, step: i32) {
+        let Some(view) = self.views.borrow().get(index).cloned() else {
+            return;
+        };
+        let rows: Vec<usize> = view
+            .shown
+            .borrow()
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| self.selectable(e) || self.opens(e))
+            .map(|(i, _)| i)
+            .collect();
+        let selected = self
+            .columns
+            .borrow()
+            .get(index)
+            .and_then(|c| c.selected.clone());
+        let current = selected.and_then(|name| {
+            let shown = view.shown.borrow();
+            rows.iter().position(|&r| shown[r].name == name)
+        });
+        let Some(next) = step_target(current, step, rows.len()) else {
+            return;
+        };
+        let row = rows[next] as u32;
+        if current != Some(next) {
+            view.selection.set_selected(row);
+        }
+        view.list.scroll_to(row, gtk::ListScrollFlags::FOCUS, None);
+    }
+
     /// ← : 上の列へ戻る（今の列の選びを外す）。
     fn back(self: &Rc<Self>, index: usize) {
         if index == 0 {
@@ -1264,16 +1308,27 @@ impl Picker {
             }
             p.select(index, name);
         });
-        // ダブルクリック・Enter: 選べるものなら決める（フォルダを選ぶときは、開いているフォルダ）、選べなければ
-        // フォルダに入る（macOS 版の `activate`）。
-        let w = Rc::downgrade(self);
-        list.connect_activate(move |_, _| {
-            if let Some(p) = w.upgrade() {
-                if p.chosen().is_some() {
-                    p.finish();
-                } else {
-                    p.enter(index);
+        // ダブルクリック・Enter: その行が選べるものなら、それを選んで決める（フォルダを選ぶときは、そのフォルダ）。
+        // 選べないが開くフォルダなら中に入る。薄いもの（選べず、開きもしない）では何もしない（macOS 版と同じ。
+        // 開いているフォルダで決めてしまわない）。
+        let (s, w) = (shown.clone(), Rc::downgrade(self));
+        list.connect_activate(move |_, position| {
+            let Some(p) = w.upgrade() else { return };
+            let Some(entry) = s.borrow().get(position as usize).cloned() else {
+                return;
+            };
+            if p.selectable(&entry) {
+                let selected = p
+                    .columns
+                    .borrow()
+                    .get(index)
+                    .and_then(|c| c.selected.clone());
+                if selected.as_deref() != Some(entry.name.as_str()) {
+                    p.select(index, Some(entry.name.clone()));
                 }
+                p.finish();
+            } else if p.opens(&entry) {
+                p.enter(index);
             }
         });
         let keys = gtk::EventControllerKey::new();
@@ -1282,9 +1337,17 @@ impl Picker {
             let Some(p) = w.upgrade() else {
                 return glib::Propagation::Proceed;
             };
+            let plain = !modifiers.intersects(
+                gtk::gdk::ModifierType::CONTROL_MASK
+                    | gtk::gdk::ModifierType::ALT_MASK
+                    | gtk::gdk::ModifierType::SUPER_MASK,
+            );
             match key {
                 gtk::gdk::Key::Right => p.enter(index),
                 gtk::gdk::Key::Left => p.back(index),
+                // ↑↓ は選べるもの・開くものだけを渡る（ListView のままだと薄い行に止まる。macOS 版と同じ）。
+                gtk::gdk::Key::Up | gtk::gdk::Key::KP_Up if plain => p.step(index, -1),
+                gtk::gdk::Key::Down | gtk::gdk::Key::KP_Down if plain => p.step(index, 1),
                 // 名前を打つと、その名前の行を選ぶ（macOS 版と同じ）。
                 _ => match key.to_unicode().filter(|c| !c.is_control() && *c != ' ') {
                     Some(c)
@@ -1301,6 +1364,8 @@ impl Picker {
             }
             glib::Propagation::Stop
         });
+        // 行より先に受ける（↑↓ を ListView に渡さない）。
+        keys.set_propagation_phase(gtk::PropagationPhase::Capture);
         list.add_controller(keys);
         Rc::new(ColumnView {
             widget: outer,
@@ -1639,6 +1704,16 @@ mod tests {
         assert_eq!(shown("/home/me/prj", Some("/home/me")), "~/prj");
         assert_eq!(shown("/home/me", Some("/home/me")), "~");
         assert_eq!(shown("/srv", Some("/home/me")), "/srv");
+    }
+
+    #[test]
+    fn steps_over_the_candidates() {
+        assert_eq!(step_target(None, 1, 0), None);
+        assert_eq!(step_target(None, 1, 3), Some(0));
+        assert_eq!(step_target(None, -1, 3), Some(2));
+        assert_eq!(step_target(Some(1), 1, 3), Some(2));
+        assert_eq!(step_target(Some(2), 1, 3), Some(2));
+        assert_eq!(step_target(Some(0), -1, 3), Some(0));
     }
 
     #[test]
