@@ -253,6 +253,46 @@ impl WorktreeWatch {
     }
 }
 
+/// いくつかのフォルダの直下の出入り（作る・消す・名前を変える）を見張る（中のフォルダには入らない）。
+/// スキャンするフォルダで、リポジトリが増えた・消えたのを知るのに使う（見張るのは探す深さまでのフォルダだけに
+/// して、Linux の inotify の数を抑える）。監視を止めるには落とす。
+pub struct DirsWatch {
+    _watcher: notify::RecommendedWatcher,
+}
+
+impl DirsWatch {
+    /// `dirs` を見張る（見張れなかったフォルダは飛ばす）。`on_change` は監視用のスレッドから、変わったパスで呼ぶ。
+    pub fn new(
+        dirs: &[PathBuf],
+        on_change: impl Fn(&[PathBuf]) + Send + 'static,
+    ) -> notify::Result<Self> {
+        let mut watcher =
+            notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+                let Ok(event) = event else { return };
+                // 読んだだけ（スキャンが中を読むたびに届く）と、中身・属性だけの書き込みは出入りではない。
+                use notify::event::ModifyKind;
+                if is_read_only(&event.kind)
+                    || matches!(
+                        event.kind,
+                        notify::EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Metadata(_))
+                    )
+                {
+                    return;
+                }
+                if !event.paths.is_empty() {
+                    on_change(&event.paths);
+                }
+            })?;
+        // FSEvents は 1 つずつ足すと、そのたびに作り直すので、まとめて足す。
+        let mut paths = watcher.paths_mut();
+        for dir in dirs {
+            let _ = paths.add(dir, RecursiveMode::NonRecursive);
+        }
+        paths.commit()?;
+        Ok(Self { _watcher: watcher })
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::disallowed_methods)] // テストの git などはそのまま起動する
 mod tests {
@@ -397,5 +437,34 @@ mod tests {
         let before = watch.generation(&key(&main));
         git(&main, &["rm", "-q", "--cached", "a"]);
         wait_for(&main, before);
+    }
+
+    #[test]
+    fn sees_folders_come_and_go() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let (tx, rx) = mpsc::channel::<Vec<PathBuf>>();
+        let tx = Mutex::new(tx);
+        let _watch = DirsWatch::new(std::slice::from_ref(&root), move |paths| {
+            let _ = tx.lock().unwrap().send(paths.to_vec());
+        })
+        .unwrap();
+        let wait_for = |path: &Path| {
+            let started = Instant::now();
+            loop {
+                let left = Duration::from_secs(5).saturating_sub(started.elapsed());
+                assert!(!left.is_zero(), "no change seen at {}", path.display());
+                if let Ok(paths) = rx.recv_timeout(left)
+                    && paths.iter().any(|p| p == path)
+                {
+                    return;
+                }
+            }
+        };
+        let repo = root.join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        wait_for(&repo);
+        std::fs::remove_dir(&repo).unwrap();
+        wait_for(&repo);
     }
 }

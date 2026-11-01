@@ -188,6 +188,10 @@ struct State {
     fetching: HashSet<String>,
     fetch_errors: HashMap<String, String>,
     listeners: Vec<Listener>,
+    /// スキャンするフォルダ（手元のもの）の見張り。探し直すたびに、探したフォルダで作り直す。
+    watch: Option<amonhen_watch::DirsWatch>,
+    /// 見張りの知らせで、探し直すのを待っている。
+    rescan_pending: bool,
 }
 
 thread_local! {
@@ -614,13 +618,19 @@ pub fn rescan() {
         })
         .await
         .unwrap_or_default();
+        let dirs: Vec<PathBuf> = results
+            .iter()
+            .filter_map(|(_, r)| r.as_ref().ok())
+            .flat_map(|(_, dirs)| dirs.iter().cloned())
+            .collect();
+        watch_dirs(&dirs);
         STATE.with(|s| {
             let mut s = s.borrow_mut();
             let mut found = HashMap::new();
             let mut errors = HashMap::new();
             for (path, result) in results {
                 match result {
-                    Ok(list) => {
+                    Ok((list, _)) => {
                         found.insert(path, list);
                     }
                     Err(e) => {
@@ -641,9 +651,50 @@ pub fn rescan() {
     });
 }
 
-fn scan_root(root: &ScanRoot) -> Result<Vec<String>, String> {
+/// 探し直したフォルダ `dirs`（手元のスキャンするフォルダの、探す深さまでの、リポジトリでないフォルダ）を見張り、
+/// 中でフォルダが増えた・消えたら探し直す（macOS 版の `watchScanRoots`。知らせは 1 秒まとめる）。見つけた
+/// リポジトリの中の変化（ビルドなど）は見ない。
+fn watch_dirs(dirs: &[PathBuf]) {
+    // 前の見張りを止めてから（同じフォルダを二重に見ない）。
+    STATE.with(|s| s.borrow_mut().watch = None);
+    if dirs.is_empty() {
+        return;
+    }
+    let (tx, rx) = async_channel::unbounded::<()>();
+    let watch = amonhen_watch::DirsWatch::new(dirs, move |paths| {
+        // 隠しフォルダ（`.git` など）と、今あるファイル（フォルダでないもの）の出入りは、リポジトリの増減ではない。
+        let relevant = paths.iter().any(|p| {
+            let hidden = p
+                .file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with('.'));
+            !hidden && (p.is_dir() || !p.exists())
+        });
+        if relevant {
+            let _ = tx.send_blocking(());
+        }
+    });
+    let Ok(watch) = watch else {
+        return;
+    };
+    STATE.with(|s| s.borrow_mut().watch = Some(watch));
+    glib::spawn_future_local(async move {
+        // 見張りを作り直すと、送り手が落ちて終わる。
+        while rx.recv().await.is_ok() {
+            if STATE.with(|s| std::mem::replace(&mut s.borrow_mut().rescan_pending, true)) {
+                continue;
+            }
+            glib::timeout_add_local_once(std::time::Duration::from_secs(1), || {
+                STATE.with(|s| s.borrow_mut().rescan_pending = false);
+                rescan();
+            });
+        }
+    });
+}
+
+/// フォルダの下のリポジトリと、探したフォルダ（見張る先。SSH 先はなし）。
+fn scan_root(root: &ScanRoot) -> Result<(Vec<String>, Vec<PathBuf>), String> {
     if !amonhen_remote::location::is_remote(&root.path) {
-        return Ok(scan_local(root));
+        return Ok(scan_local_with_dirs(root));
     }
     use amonhen_remote::ssh;
     let target = ssh::Target::parse(&root.path).map_err(|e| e.to_string())?;
@@ -660,13 +711,28 @@ fn scan_root(root: &ScanRoot) -> Result<Vec<String>, String> {
     .map_err(|e| e.to_string())?;
     // 場所の形に戻す（`ssh://` と接続先はそのまま、パスだけ見つけたものに）。
     let prefix = &root.path[..root.path.len() - target.path.len()];
-    Ok(found.iter().map(|p| format!("{prefix}{p}")).collect())
+    Ok((
+        found.iter().map(|p| format!("{prefix}{p}")).collect(),
+        Vec::new(),
+    ))
 }
 
 /// `root` の下のリポジトリ（作業ツリーの直下に `.git` があるフォルダ）。リポジトリの中には入らない。隠しフォルダ・
 /// リンク・`excludes` の名前のフォルダには入らない。
+#[cfg(test)]
 fn scan_local(root: &ScanRoot) -> Vec<String> {
-    fn walk(dir: &Path, depth: u32, excludes: &[String], found: &mut Vec<String>) {
+    scan_local_with_dirs(root).0
+}
+
+/// [`scan_local`] と、中を読んだフォルダ（その中でリポジトリが増えたら見つかるフォルダ。見張る先）。
+fn scan_local_with_dirs(root: &ScanRoot) -> (Vec<String>, Vec<PathBuf>) {
+    fn walk(
+        dir: &Path,
+        depth: u32,
+        excludes: &[String],
+        found: &mut Vec<String>,
+        dirs: &mut Vec<PathBuf>,
+    ) {
         if dir.join(".git").exists() {
             found.push(dir.to_string_lossy().into_owned());
             return;
@@ -677,6 +743,7 @@ fn scan_local(root: &ScanRoot) -> Vec<String> {
         let Ok(entries) = std::fs::read_dir(dir) else {
             return;
         };
+        dirs.push(dir.to_owned());
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
             let is_dir = entry
@@ -685,13 +752,19 @@ fn scan_local(root: &ScanRoot) -> Vec<String> {
             if !is_dir || name.starts_with('.') || excludes.contains(&name) {
                 continue;
             }
-            walk(&entry.path(), depth - 1, excludes, found);
+            walk(&entry.path(), depth - 1, excludes, found, dirs);
         }
     }
-    let mut found = Vec::new();
-    walk(&expand(&root.path), root.depth, &root.excludes, &mut found);
+    let (mut found, mut dirs) = (Vec::new(), Vec::new());
+    walk(
+        &expand(&root.path),
+        root.depth,
+        &root.excludes,
+        &mut found,
+        &mut dirs,
+    );
     found.sort_by_key(|p| p.to_lowercase());
-    found
+    (found, dirs)
 }
 
 // 行の状態
