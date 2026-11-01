@@ -1635,10 +1635,26 @@ impl HistoryView {
         }
         self.state().complete = wanted.is_empty() && width > 0.0;
         self.verify_soon();
-        for index in wanted {
+        // 見えている行のチャンクを先に、前後のチャンクも先読みする（速くスクロールしても、新しいチャンクに入る
+        // たびに行が空で出ないように。macOS 版と同じ）。
+        let ahead = self.ahead_chunks(scroll_y, height);
+        for index in wanted.into_iter().chain(ahead) {
             self.load_chunk(index);
         }
         self.trim_chunks(scroll_y, height);
+    }
+
+    /// 見えている所の前後で、まだ読んでいないチャンク（後ろ、前の順）。
+    fn ahead_chunks(&self, scroll_y: f32, height: f32) -> Vec<u32> {
+        let st = self.state();
+        let Some(history) = st.history.as_ref() else {
+            return Vec::new();
+        };
+        let count = history.layout.nodes().len() as u32;
+        neighbor_chunks(scroll_y, height, st.metrics.row_height, count)
+            .into_iter()
+            .filter(|i| !st.chunks.contains_key(i) && !st.loading.contains(i))
+            .collect()
     }
 
     fn row_text(&self, st: &State, history: &HistorySnapshot, chunk: &Chunk, row: u32) -> RowText {
@@ -1749,12 +1765,12 @@ impl HistoryView {
             st.loading.insert(index);
             (repo, history)
         };
-        let generation = history.generation;
         let weak = self.downgrade();
+        let target = history.clone();
         glib::spawn_future_local(async move {
             let result = gio::spawn_blocking(move || {
                 repo.history_chunk(
-                    &history,
+                    &target,
                     index * CHUNK_ROWS,
                     CHUNK_ROWS,
                     &FrontendProfile::GTK,
@@ -1767,7 +1783,11 @@ impl HistoryView {
             {
                 let mut st = view.state();
                 // 読んでいる間に History が替わっていたら捨てる。
-                if st.history.as_ref().map(|h| h.generation) != Some(generation) {
+                if !st
+                    .history
+                    .as_ref()
+                    .is_some_and(|h| Arc::ptr_eq(h, &history))
+                {
                     return;
                 }
                 st.loading.remove(&index);
@@ -1798,6 +1818,22 @@ impl HistoryView {
             st.rows.retain(|r, _| !rows.contains(r));
         }
     }
+}
+
+/// 見えている行（上端 `scroll_y`、高さ `height`）のチャンクの、すぐ後とすぐ前のチャンク（History の中のもの）。
+fn neighbor_chunks(scroll_y: f32, height: f32, row_height: f32, rows: u32) -> Vec<u32> {
+    if rows == 0 || row_height <= 0.0 {
+        return Vec::new();
+    }
+    let first = ((scroll_y / row_height).floor().max(0.0) as u32).min(rows - 1);
+    let last = (((scroll_y + height) / row_height).ceil() as u32).clamp(first, rows - 1);
+    let (first, last) = (first / CHUNK_ROWS, last / CHUNK_ROWS);
+    let after = (last + 1) * CHUNK_ROWS < rows;
+    after
+        .then_some(last + 1)
+        .into_iter()
+        .chain(first.checked_sub(1))
+        .collect()
 }
 
 /// CI の印の色（macOS 版と同じく、成功は緑・失敗は赤・途中は橙）。
@@ -1880,6 +1916,18 @@ fn label_colors(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn neighbors_are_the_chunks_around_the_visible_rows() {
+        // 行の高さ 10、256 行のチャンク。
+        assert_eq!(neighbor_chunks(0.0, 100.0, 10.0, 1000), vec![1]);
+        assert_eq!(neighbor_chunks(2560.0, 100.0, 10.0, 1000), vec![2, 0]);
+        // チャンクの境をまたいでいれば、その外側。
+        assert_eq!(neighbor_chunks(2500.0, 200.0, 10.0, 1000), vec![2]);
+        assert_eq!(neighbor_chunks(9000.0, 1000.0, 10.0, 1000), vec![2]);
+        assert_eq!(neighbor_chunks(0.0, 100.0, 10.0, 100), Vec::<u32>::new());
+        assert_eq!(neighbor_chunks(0.0, 100.0, 10.0, 0), Vec::<u32>::new());
+    }
 
     #[test]
     fn signature_status_matches_the_details() {
