@@ -801,6 +801,70 @@ pub fn reload(actions: &Rc<Actions>) {
     }
 }
 
+/// #123 の候補（番号とタイトル）と、読んだ時刻。
+type IssueCache = (std::time::Instant, Vec<(u64, String)>);
+
+thread_local! {
+    /// コミットのメッセージの #123 の候補（リポジトリの slug ごと）。
+    static ISSUES: RefCell<std::collections::HashMap<String, IssueCache>> = RefCell::default();
+}
+
+/// コミットのメッセージの #123 の候補: 開いている Issue（30 件）と PR（「PR: 」を付けて）を、番号の大きい順に。
+/// 5 分は覚えておく（macOS 版と同じ）。GitHub のリポジトリでなければ空。
+pub async fn issue_candidates(actions: &Rc<Actions>) -> Vec<(u64, String)> {
+    let Some(github) = github_of(actions).filter(|_| available()) else {
+        return Vec::new();
+    };
+    let slug = github.slug();
+    let cached = ISSUES.with(|i| {
+        i.borrow()
+            .get(&slug)
+            .filter(|(at, _)| at.elapsed() < std::time::Duration::from_secs(300))
+            .map(|(_, items)| items.clone())
+    });
+    if let Some(items) = cached {
+        return items;
+    }
+    let args = [
+        "issue",
+        "list",
+        "-R",
+        &slug,
+        "--state",
+        "open",
+        "--limit",
+        "30",
+        "--json",
+        "number,title",
+    ]
+    .map(str::to_owned)
+    .to_vec();
+    let issues: Vec<(u64, String)> = gh_async(args, None)
+        .await
+        .ok()
+        .and_then(|out| serde_json::from_str::<Value>(&out).ok())
+        .and_then(|v| v.as_array().cloned())
+        .into_iter()
+        .flatten()
+        .filter_map(|i| Some((i["number"].as_u64()?, i["title"].as_str()?.to_owned())))
+        .collect();
+    let pulls = pull_requests(&github).await.unwrap_or_default();
+    let mut items: Vec<(u64, String)> = issues
+        .into_iter()
+        .chain(
+            pulls
+                .into_iter()
+                .map(|p| (p.number, format!("PR: {}", p.title))),
+        )
+        .collect();
+    items.sort_by_key(|item| std::cmp::Reverse(item.0));
+    ISSUES.with(|i| {
+        i.borrow_mut()
+            .insert(slug, (std::time::Instant::now(), items.clone()))
+    });
+    items
+}
+
 /// `actions` の窓の GitHub のリポジトリ（読んでいれば）。
 pub fn github_of(actions: &Rc<Actions>) -> Option<GitHubRepository> {
     loader_of(actions).and_then(|l| l.github())

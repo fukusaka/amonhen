@@ -795,6 +795,28 @@ impl Inner {
                 this.update_buttons();
             }
         });
+        // `#` を打ったら、開いている Issue・PR の番号を選べる（macOS 版と同じ。全角の ＃ でもよい）。
+        let weak = Rc::downgrade(this);
+        // Entry の文字は中の GtkText が持ち、insert-text もそこに来る。
+        let editable: gtk::Editable = this
+            .subject
+            .delegate()
+            .unwrap_or_else(|| this.subject.clone().upcast());
+        editable.connect_insert_text(move |_, text, _| {
+            if let Some(this) = weak.upgrade()
+                && text.ends_with(['#', '＃'])
+            {
+                Inner::offer_issues(&this, false);
+            }
+        });
+        let weak = Rc::downgrade(this);
+        this.body.buffer().connect_insert_text(move |_, _, text| {
+            if let Some(this) = weak.upgrade()
+                && text.ends_with(['#', '＃'])
+            {
+                Inner::offer_issues(&this, true);
+            }
+        });
         // Description だけでもコミットできるので、本文の変化でもボタンを直す（macOS 版と同じ）。
         let weak = Rc::downgrade(this);
         this.body.buffer().connect_changed(move |_| {
@@ -821,6 +843,100 @@ impl Inner {
 
     fn repo(&self) -> Option<Arc<Repository>> {
         self.repo.borrow().clone()
+    }
+
+    /// 文字の位置（Summary か Description）の、カーソルの前の 1 文字（文字の数え方の位置と、その文字）。
+    fn char_before_cursor(&self, body: bool) -> Option<(i32, char)> {
+        let (text, at) = if body {
+            let buffer = self.body.buffer();
+            let at = buffer.iter_at_mark(&buffer.get_insert()).offset();
+            let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false);
+            (text.to_string(), at)
+        } else {
+            (self.subject.text().to_string(), self.subject.position())
+        };
+        let c = text.chars().nth(usize::try_from(at - 1).ok()?)?;
+        Some((at, c))
+    }
+
+    /// `#` を打った直後: 開いている Issue・PR の一覧を出し、選んだら `#番号` を入れる（全角の ＃ は半角に直す）。
+    /// 読んでいる間に打ち進めていたら出さない（macOS 版と同じ）。
+    fn offer_issues(this: &Rc<Self>, body: bool) {
+        let Some(actions) = this.actions.borrow().clone() else {
+            return;
+        };
+        let weak = Rc::downgrade(this);
+        // 文字が入り終えてから位置を読む。
+        glib::idle_add_local_once(move || {
+            let Some(this) = weak.upgrade() else { return };
+            let Some((at, _)) = this
+                .char_before_cursor(body)
+                .filter(|(_, c)| matches!(c, '#' | '＃'))
+            else {
+                return;
+            };
+            let weak = Rc::downgrade(&this);
+            glib::spawn_future_local(async move {
+                let items = crate::github::issue_candidates(&actions).await;
+                let Some(this) = weak.upgrade() else { return };
+                if items.is_empty() || this.char_before_cursor(body).map(|(p, _)| p) != Some(at) {
+                    return;
+                }
+                let menu: Vec<crate::menu::Item> = items
+                    .into_iter()
+                    .take(30)
+                    .map(|(number, title)| {
+                        let w = Rc::downgrade(&this);
+                        crate::menu::action(format!("#{number}  {title}"), move || {
+                            if let Some(this) = w.upgrade() {
+                                this.put_issue(body, at, number);
+                            }
+                        })
+                    })
+                    .collect();
+                // 文字の位置の下に出す。
+                let (x, y) = if body {
+                    let buffer = this.body.buffer();
+                    let iter = buffer.iter_at_offset(at);
+                    let rect = this.body.iter_location(&iter);
+                    let (x, y) = this.body.buffer_to_window_coords(
+                        gtk::TextWindowType::Widget,
+                        rect.x(),
+                        rect.y() + rect.height(),
+                    );
+                    (x as f64, y as f64)
+                } else {
+                    (8.0, this.subject.height() as f64)
+                };
+                if body {
+                    crate::menu::popup(&this.body, x, y, menu);
+                } else {
+                    crate::menu::popup(&this.subject, x, y, menu);
+                }
+            });
+        });
+    }
+
+    /// `at`（`#` の直後）の `#`（全角でも）を `#番号` にする。
+    fn put_issue(&self, body: bool, at: i32, number: u64) {
+        if self.char_before_cursor(body).map(|(p, _)| p) != Some(at) {
+            return;
+        }
+        let text = format!("#{number}");
+        if body {
+            let buffer = self.body.buffer();
+            let mut start = buffer.iter_at_offset(at - 1);
+            let mut end = buffer.iter_at_offset(at);
+            buffer.delete(&mut start, &mut end);
+            buffer.insert(&mut start, &text);
+            self.body.grab_focus();
+        } else {
+            self.subject.delete_text(at - 1, at);
+            let mut position = at - 1;
+            self.subject.insert_text(&text, &mut position);
+            self.subject.grab_focus();
+            self.subject.set_position(position);
+        }
     }
 
     /// 差分の `row` 行目を含む hunk の「AI でこの hunk を解説」（hunk の外か、AI を使えなければ None）。
