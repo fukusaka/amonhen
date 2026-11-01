@@ -165,30 +165,39 @@ fn set_added_hosts(hosts: &[String]) {
     crate::settings::set_string(SSH_HOSTS, &json!(hosts).to_string());
 }
 
-/// Amon Hen が知っている SSH 先: 最近開いたリポジトリのものと、＋ で加えたもの。
+/// Amon Hen が知っている SSH 先: Places にあるもの（リポジトリかスキャンするフォルダー）と、＋ で加えたもの
+/// （macOS 版と同じ）。
 fn known_hosts() -> Vec<String> {
     let mut hosts = added_hosts();
-    hosts.extend(crate::repos::recent().iter().filter_map(|l| host_of(l)));
+    hosts.extend(
+        crate::bookmarks::all_locations()
+            .iter()
+            .filter_map(|l| host_of(l)),
+    );
+    hosts.extend(
+        crate::bookmarks::data()
+            .scan_roots
+            .iter()
+            .filter_map(|r| host_of(&r.path)),
+    );
     hosts.sort_by_key(|h| h.to_lowercase());
     hosts.dedup();
     hosts
 }
 
-/// 最近開いたリポジトリのうち、`host` のもの。
-fn recent_on(host: &str) -> Vec<String> {
-    crate::repos::recent()
+/// Places のリポジトリとスキャンするフォルダーのうち、`host` のもの。
+fn places_on(host: &str) -> (Vec<String>, Vec<String>) {
+    let paths = crate::bookmarks::all_locations()
         .into_iter()
         .filter(|l| host_of(l).as_deref() == Some(host))
-        .collect()
-}
-
-/// 最近開いたリポジトリから外す（`repos.rs` の `recentRepositories` と同じ鍵）。
-fn forget_recent(locations: &[String]) {
-    let list: Vec<String> = crate::repos::recent()
-        .into_iter()
-        .filter(|l| !locations.contains(l))
         .collect();
-    crate::settings::set_string("recentRepositories", &json!(list).to_string());
+    let roots = crate::bookmarks::data()
+        .scan_roots
+        .into_iter()
+        .map(|r| r.path)
+        .filter(|p| host_of(p).as_deref() == Some(host))
+        .collect();
+    (paths, roots)
 }
 
 /// SSH の接続先の候補: `~/.ssh/config` の `Host`（`*`・`?` のない名前）と `~/.ssh/known_hosts` のホスト（ハッシュに
@@ -972,7 +981,8 @@ impl SshHosts {
         });
     }
 
-    /// 選んだ SSH 先を忘れる。最近開いたリポジトリにあれば、確かめてから一覧から外す（SSH 先には触れない）。
+    /// 選んだ SSH 先を忘れる。リポジトリやスキャンするフォルダーがあれば、Places から外すのと同じ確認をして同じ
+    /// ように外す（SSH 先には触れない。macOS 版と同じ）。
     fn remove_selected(self: &Rc<Self>) {
         let Some(host) = self.selected.borrow().clone() else {
             return;
@@ -980,22 +990,28 @@ impl SshHosts {
         let parent = self.widget.root().and_downcast::<gtk::Window>();
         let w = Rc::downgrade(self);
         glib::spawn_future_local(async move {
-            let recent = recent_on(&host);
-            if !recent.is_empty() {
+            let (paths, roots) = places_on(&host);
+            if !paths.is_empty() || !roots.is_empty() {
                 let sheet = Sheet::new(
                     parent.as_ref(),
                     &tr!("Remove {host}?", host = host),
                     &tr!(
                         "This removes its {repositories} repositories and {folders} folders to scan from the list. Nothing on the host is touched.",
-                        repositories = recent.len(),
-                        folders = 0
+                        repositories = paths.len(),
+                        folders = roots.len()
                     ),
                 );
                 sheet.buttons(&tr!("Delete"), true, None);
                 if sheet.run().await != Response::Ok {
                     return;
                 }
-                forget_recent(&recent);
+                for p in &paths {
+                    crate::repos::forget(p);
+                    crate::bookmarks::remove(p);
+                }
+                for r in &roots {
+                    crate::bookmarks::remove_scan_root(r);
+                }
             }
             let mut added = added_hosts();
             added.retain(|h| *h != host);
