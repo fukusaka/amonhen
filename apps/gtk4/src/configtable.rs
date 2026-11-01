@@ -1226,6 +1226,13 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
         });
     });
     group.add_action(&edit);
+    // 行を開く（ダブルクリック・Return）と、選んだ 1 つのキーの編集を始める（macOS 版の primaryAction）。
+    let e = edit.clone();
+    view.connect_activate(move |_, _| {
+        if e.is_enabled() {
+            e.activate(None);
+        }
+    });
     let remove = gio::SimpleAction::new("remove", None);
     let t = table.clone();
     remove.connect_activate(move |_, _| t.remove_selected());
