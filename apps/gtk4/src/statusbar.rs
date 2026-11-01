@@ -154,7 +154,7 @@ impl Failure {
     pub fn advice(&self) -> Option<String> {
         match self.kind.as_deref() {
             Some("auth") => Some(tr!(
-                "The remote refused the password, token or SSH key. If a dialog asked for a password or passphrase, check what you typed (GitHub needs a token, not the account password). To stop being asked, store the credentials with a credential helper (for example `gh auth setup-git` or `git config --global credential.helper libsecret`), or add the SSH key to the agent (`ssh-add`)."
+                "The remote refused the password, token or SSH key. If a dialog asked for a password or passphrase, check what you typed (GitHub needs a token, not the account password). To stop being asked, store the credentials with a credential helper (for example `gh auth setup-git` or `git config --global credential.helper libsecret`), or add the SSH key to the agent (`ssh-add`). Settings > Git > Programs shows which git the app uses, and Settings > Git > Environment Variables whether the SSH agent is there."
             )),
             Some("hostKey") => Some(tr!(
                 "Connect once in a terminal (for example `ssh -T git@github.com`) and confirm the host key, then try again."
