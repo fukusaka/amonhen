@@ -637,6 +637,19 @@ pub fn show_home(app: &gtk::Application, host: Option<Rc<RepoWindow>>) -> Rc<Rep
             crate::appmenu::show_about(&window);
         }
     });
+    // Activity（Ctrl+Alt+A。macOS 版ではどの窓からも開ける）。このページにはリポジトリがないので、History の
+    // Undo の一覧は空（git の記録とプロセスは出す）。
+    let activity = gio::SimpleAction::new("activity", None);
+    let (t, actions) = (
+        Rc::downgrade(&tab),
+        crate::actions::Actions::new(&tab.root, &tab.group),
+    );
+    activity.connect_activate(move |_, _| {
+        if let Some(window) = t.upgrade().and_then(|t| t.window()) {
+            crate::activity::Activity::show(&window, None, actions.clone(), crate::engine());
+        }
+    });
+    tab.group.add_action(&activity);
     let browser = crate::repobrowser::page(app, open, &tab.group);
     tab.root.append(&browser.root);
     let b = Rc::downgrade(&browser);
