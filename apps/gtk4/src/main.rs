@@ -1245,33 +1245,36 @@ fn build_tab(
         }
     });
     // daemon・SSH 越しのつながりが切れたら、ステータスバーで知らせ、同じ場所につなぎ直せるようにする
-    // （同じ場所のタブで開き直し、このタブを閉じる）。
+    // （同じ場所のタブで開き直し、このタブを閉じる）。macOS 版と同じく 0.25 秒ごとに見て、切れたら見るのをやめる。
     if let Some(location) = args.path.clone() {
         let (v, bar, t) = (view.downgrade(), statusbar.clone(), Rc::downgrade(&tab));
-        glib::timeout_add_seconds_local(3, move || {
+        glib::timeout_add_local(std::time::Duration::from_millis(250), move || {
             let (Some(view), Some(tab)) = (v.upgrade(), t.upgrade()) else {
                 return glib::ControlFlow::Break;
             };
             if tab.closed() {
                 return glib::ControlFlow::Break;
             }
-            let closed = view
-                .current()
-                .and_then(|(repo, _)| repo.connection_state())
-                .and_then(|c| c.closed);
+            let Some((repo, _)) = view.current() else {
+                return glib::ControlFlow::Continue;
+            };
+            // 手元のリポジトリ（daemon 越しでない）なら見ない。
+            let Some(state) = repo.connection_state() else {
+                return glib::ControlFlow::Break;
+            };
+            let closed = state.closed;
             if let Some(reason) = closed {
-                let text = location.to_string_lossy().into_owned();
-                let host = text
-                    .trim_start_matches("daemon:")
-                    .strip_prefix("ssh://")
-                    .and_then(|rest| rest.split('/').next())
-                    .map_or_else(|| "daemon".to_owned(), str::to_owned);
+                // 接続先の名前はつないでいる間のタブと同じ（`host · daemon` など）。
+                // 手元のパスを共有の daemon 越しに開いたものは `daemon`。
+                let host = connecting::host(&location.to_string_lossy())
+                    .unwrap_or_else(|| "daemon".to_owned());
                 let (location, t) = (location.clone(), Rc::downgrade(&tab));
                 bar.show_disconnected(&host, &reason, move || {
                     if let Some(tab) = t.upgrade() {
                         tabs::reopen(&tab, location.clone());
                     }
                 });
+                return glib::ControlFlow::Break;
             }
             glib::ControlFlow::Continue
         });
