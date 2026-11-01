@@ -535,6 +535,7 @@ impl Sidebar {
                 }
             });
         inner.rebuild(true);
+        add_type_select(&list, &inner);
 
         // 絞り込みの欄は一覧の上に。打つたびに絞り込む（Esc で消す）。
         let filter = gtk::SearchEntry::new();
@@ -833,6 +834,66 @@ impl Sidebar {
             (None, false) => {}
         }
     }
+}
+
+/// 一覧で文字を打つと、名前がそれで始まる行を選ぶ（続けて打てば語の頭として、1 秒あけたら初めから。macOS 版の
+/// `allowsTypeSelect`）。見出しとフォルダは選べないので飛ばす。
+fn add_type_select(list: &gtk::ListView, inner: &Rc<Inner>) {
+    let typed = Rc::new(RefCell::new((String::new(), 0i64)));
+    let keys = gtk::EventControllerKey::new();
+    let (weak, view) = (Rc::downgrade(inner), list.downgrade());
+    keys.connect_key_pressed(move |_, key, _, state| {
+        let (Some(inner), Some(view)) = (weak.upgrade(), view.upgrade()) else {
+            return glib::Propagation::Proceed;
+        };
+        let modifiers = gtk::gdk::ModifierType::CONTROL_MASK
+            | gtk::gdk::ModifierType::ALT_MASK
+            | gtk::gdk::ModifierType::SUPER_MASK
+            | gtk::gdk::ModifierType::META_MASK;
+        let Some(c) = key
+            .to_unicode()
+            .filter(|c| !c.is_control() && !c.is_whitespace())
+        else {
+            return glib::Propagation::Proceed;
+        };
+        if state.intersects(modifiers) {
+            return glib::Propagation::Proceed;
+        }
+        let now = glib::monotonic_time();
+        let mut typed = typed.borrow_mut();
+        if now - typed.1 > 1_000_000 {
+            typed.0.clear();
+        }
+        typed.1 = now;
+        typed.0.extend(c.to_lowercase());
+        let prefix = typed.0.clone();
+        drop(typed);
+        let n = inner.model.n_items();
+        let current = (0..n).find(|&i| inner.selection.is_selected(i));
+        // 1 文字目は今の行の次から、続けて打った文字は今の行から探す。
+        let start = match current {
+            Some(i) if prefix.chars().count() == 1 => i + 1,
+            Some(i) => i,
+            None => 0,
+        };
+        let hit = (0..n).map(|k| (start + k) % n.max(1)).find(|&i| {
+            inner
+                .model
+                .row(i)
+                .and_then(|r| r.item().and_downcast::<Node>())
+                .is_some_and(|node| {
+                    let data = node.data();
+                    !matches!(data.item, Item::Group | Item::Folder)
+                        && data.title.to_lowercase().starts_with(&prefix)
+                })
+        });
+        if let Some(i) = hit {
+            view.scroll_to(i, gtk::ListScrollFlags::FOCUS, None);
+            inner.selection.select_item(i, true);
+        }
+        glib::Propagation::Stop
+    });
+    list.add_controller(keys);
 }
 
 /// Conflicts の行の鍵（選んだら最初のコンフリクトのファイルを開く）。
