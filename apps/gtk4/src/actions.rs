@@ -265,11 +265,7 @@ impl Actions {
                 } else {
                     let failure =
                         crate::statusbar::Failure::from_reply(&result, Some(last_command.clone()));
-                    let on_failure = this.on_failure.borrow().clone();
-                    match on_failure {
-                        Some(f) => f(failure),
-                        None => this.alert(&failure.title(), &failure.message).await,
-                    }
+                    this.fail(failure).await;
                 }
             } else if result["outcome"].as_str().is_none_or(|o| o == "done")
                 && let Some(f) = this.on_done.borrow().clone()
@@ -416,6 +412,26 @@ impl Actions {
             };
             button.set_tooltip_text(Some(&tip));
         });
+    }
+
+    /// 失敗をステータスバーに（つないでいなければ、要点・次の一手・git の文を並べた知らせで。macOS 版の `fail`）。
+    async fn fail(&self, failure: crate::statusbar::Failure) {
+        let on_failure = self.on_failure.borrow().clone();
+        match on_failure {
+            Some(f) => f(failure),
+            None => {
+                let text = [
+                    Some(failure.summary()),
+                    failure.advice(),
+                    failure.kind.is_some().then(|| failure.message.clone()),
+                ]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join("\n\n");
+                self.alert(&failure.title(), &text).await
+            }
+        }
     }
 
     async fn alert(&self, title: &str, message: &str) {
