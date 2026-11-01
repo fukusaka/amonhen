@@ -930,11 +930,18 @@ pub fn checkout_pull_request(actions: &Rc<Actions>, pr: &PullRequest) {
             return;
         }
         let (number, slug) = (pr.number.to_string(), github.slug());
-        actions.perform_work(move |_| {
-            gh(&["pr", "checkout", &number, "-R", &slug], Some(&dir))
-                .map(|_| ())
-                .map_err(Into::into)
-        });
+        // 失敗したら gh の文をそのまま知らせ、その後で読み直す（macOS 版と同じ）。
+        crate::activity::begin();
+        let result = gio::spawn_blocking(move || {
+            gh(&["pr", "checkout", &number, "-R", &slug], Some(&dir)).map(|_| ())
+        })
+        .await
+        .unwrap_or_else(|_| Err(String::new()));
+        crate::activity::end();
+        if let Err(e) = result {
+            crate::sheets::inform(window.as_ref(), &e, "").await;
+        }
+        actions.reload();
     });
 }
 

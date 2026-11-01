@@ -402,6 +402,14 @@ impl Actions {
         crate::menu::retitle(menu, &|action| self.menu_title(action));
     }
 
+    /// 操作の後と同じく読み直す（命令を通さずに変えたとき。gh pr checkout など）。
+    pub fn reload(&self) {
+        if let Some(f) = self.on_change.borrow().clone() {
+            f();
+        }
+        self.refresh_undo();
+    }
+
     /// 次に取り消せる操作の名前を読み、「取り消す」に出す。
     pub fn refresh_undo(&self) {
         let Some(repo) = self.repo.borrow().clone() else {
