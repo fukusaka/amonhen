@@ -297,6 +297,26 @@ impl RepoWindow {
             shown: RefCell::default(),
         });
         WINDOWS.with(|w| w.borrow_mut().push(this.clone()));
+        // 窓の大きさは、そのリポジトリごとに覚える（macOS 版の窓の frame と同じ。GNOME では位置は決められない
+        // ので大きさだけ）。変えている間は書かず、止まってから。
+        let pending: Rc<RefCell<Option<glib::SourceId>>> = Rc::default();
+        let weak = Rc::downgrade(&this);
+        let remember = move |_: &gtk::ApplicationWindow| {
+            if let Some(id) = pending.borrow_mut().take() {
+                id.remove();
+            }
+            let (w, p) = (weak.clone(), pending.clone());
+            let id = glib::timeout_add_local_once(std::time::Duration::from_millis(500), move || {
+                p.borrow_mut().take();
+                if let Some(this) = w.upgrade() {
+                    this.save_size();
+                }
+            });
+            pending.borrow_mut().replace(id);
+        };
+        let r = remember.clone();
+        window.connect_default_width_notify(move |w| r(w));
+        window.connect_default_height_notify(move |w| remember(w));
         let weak = Rc::downgrade(&this);
         notebook.connect_switch_page(move |_, page, _| {
             if let Some(this) = weak.upgrade()
@@ -337,6 +357,24 @@ impl RepoWindow {
             }
         });
         this
+    }
+
+    /// 窓の大きさを、窓のタブのリポジトリごとに覚える（最大化しているときは覚えない）。
+    fn save_size(&self) {
+        if CHECK_RUN.with(Cell::get) || self.window.is_maximized() {
+            return;
+        }
+        let (width, height) = self.window.default_size();
+        if width <= 0 || height <= 0 {
+            return;
+        }
+        let mut sizes = window_sizes();
+        for tab in self.tabs() {
+            if !tab.location.is_empty() {
+                sizes.insert(tab.location.clone(), serde_json::json!([width, height]));
+            }
+        }
+        crate::settings::set_string(WINDOW_SIZES, &serde_json::Value::Object(sizes).to_string());
     }
 
     fn tab_of(&self, page: &gtk::Widget) -> Option<Rc<Tab>> {
@@ -445,9 +483,27 @@ pub fn add(host: &Rc<RepoWindow>, tab: &Rc<Tab>, select: bool, position: Option<
     save();
 }
 
-/// 窓を作って、`location` を開いたタブを置く。
+/// 窓の大きさ（場所 → `[幅, 高さ]` の JSON）。
+const WINDOW_SIZES: &str = "windowSizes";
+
+fn window_sizes() -> serde_json::Map<String, serde_json::Value> {
+    crate::settings::string(WINDOW_SIZES)
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+/// 窓を作って、`location` を開いたタブを置く。前にその場所の窓を開いていたら、その大きさで（macOS 版と同じ）。
 pub fn new_window_with(app: &gtk::Application, location: PathBuf) -> Rc<RepoWindow> {
     let host = RepoWindow::new(app);
+    let key = crate::repos::normalize(&location);
+    // 確認用の起動（撮る・計測する）は、いつも同じ大きさで。
+    if !CHECK_RUN.with(Cell::get)
+        && let Some(size) = window_sizes().get(&key).and_then(|v| v.as_array().cloned())
+        && let [w, h] = size.as_slice()
+        && let (Some(w), Some(h)) = (w.as_i64(), h.as_i64())
+    {
+        host.window.set_default_size(w.max(400) as i32, h.max(300) as i32);
+    }
     crate::build_tab(
         app,
         &host,
