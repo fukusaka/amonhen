@@ -342,6 +342,7 @@ pub fn row(
             &email,
             &place,
             tag.as_ref(),
+            None,
         );
     });
     let click = gtk::GestureClick::new();
@@ -449,7 +450,9 @@ pub fn popover_once() {
 }
 
 /// 署名の詳細の吹き出し。値は選んでコピーできる。`tag` ならタグの署名（タガーと比べ、名前とメッセージを出す）。
-fn show(
+/// `position` は `parent` のどちら側に出すか（None なら GTK の既定）。
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn show(
     parent: &gtk::Widget,
     status: Status,
     check: Option<&Value>,
@@ -457,6 +460,7 @@ fn show(
     committer: &str,
     place: &Place,
     tag: Option<&Tag>,
+    position: Option<gtk::PositionType>,
 ) {
     install_css();
     // 見出し: 状態の色のアイコンと言葉、右に検証した場所の札（状態の色の文字と薄い地。macOS 版と同じ）。
@@ -635,6 +639,9 @@ fn show(
     let popover = gtk::Popover::new();
     popover.set_child(Some(&column));
     popover.set_parent(parent);
+    if let Some(position) = position {
+        popover.set_position(position);
+    }
     popover.connect_closed(|p| {
         let p = p.clone();
         gtk::glib::idle_add_local_once(move || p.unparent());

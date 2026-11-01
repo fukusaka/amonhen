@@ -2,11 +2,9 @@
 //! git の検証結果（`%G?`）に、信用度と「署名者がタガーと一致するか」を加えて決める。
 
 use amonhen_model::tr;
-use gtk::glib;
-use gtk::prelude::*;
 use serde_json::Value;
 
-use crate::icon::{self, Icon};
+use crate::icon;
 use crate::sidebar::Mark;
 
 /// タグの署名の状態。
@@ -154,7 +152,8 @@ fn mismatched(emails: &Value, tagger: &str) -> bool {
     })
 }
 
-/// タグの署名の吹き出し（状態、説明、署名者・鍵・検証した場所・タグのメッセージ）を `anchor` の下に出す。
+/// タグの署名の吹き出しを `anchor` の右に出す。中身はコミットの署名の吹き出しと同じ（状態・説明・署名者・タガーとの
+/// 一致・鍵のほかの ID・方式・鍵・指紋・信用度・検証した場所・メッセージ。macOS 版の `SignaturePopover`）。
 pub fn popover(
     anchor: &gtk::Widget,
     name: &str,
@@ -162,119 +161,36 @@ pub fn popover(
     tag: &Value,
     place: &crate::signature::Place,
 ) {
-    let (kind, css) = status.icon();
-    let mark = Icon::default();
-    mark.set(kind, false);
-    if let Some(css) = css {
-        mark.add_css_class(css);
-    }
-    let heading = gtk::Label::new(Some(status.label()));
-    heading.add_css_class("heading");
-    heading.set_xalign(0.0);
-    // どこで検証したか（コミットの署名の吹き出しと同じ）。
-    let badge = gtk::Label::new(Some(&tr!("Checked on {place}", place = place.name())));
-    badge.add_css_class("caption");
-    badge.add_css_class("dim-label");
-    badge.set_hexpand(true);
-    badge.set_xalign(1.0);
-    let header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    header.append(&mark);
-    header.append(&heading);
-    header.append(&badge);
-    let content = gtk::Box::new(gtk::Orientation::Vertical, 10);
-    content.set_margin_top(12);
-    content.set_margin_bottom(12);
-    content.set_margin_start(14);
-    content.set_margin_end(14);
-    content.set_width_request(400);
-    content.append(&header);
-    let explanation = crate::sheets::note(&status.explanation());
-    explanation.set_max_width_chars(56);
-    content.append(&explanation);
+    let check = Some(&tag["signature"]).filter(|s| !s.is_null());
+    crate::signature::show(
+        anchor,
+        status.into(),
+        check,
+        tag["signed"].as_str().unwrap_or("gpg"),
+        tag["taggerEmail"].as_str().unwrap_or_default(),
+        place,
+        Some(&crate::signature::Tag {
+            name: name.to_owned(),
+            message: tag["message"].as_str().unwrap_or_default().to_owned(),
+        }),
+        Some(gtk::PositionType::Right),
+    );
+}
 
-    let grid = gtk::Grid::new();
-    grid.set_row_spacing(5);
-    grid.set_column_spacing(10);
-    let mut rows = 0;
-    let mut row = |title: &str, value: &str, mono: bool| {
-        if value.is_empty() {
-            return;
+impl From<Status> for crate::signature::Status {
+    fn from(status: Status) -> Self {
+        use crate::signature::Status as S;
+        match status {
+            Status::Verified(trust) => S::Verified(trust),
+            Status::Untrusted => S::Untrusted,
+            Status::SignerMismatch => S::SignerMismatch,
+            Status::Expired => S::Expired,
+            Status::Revoked => S::Revoked,
+            Status::Bad => S::Bad,
+            Status::NoKey => S::NoKey,
+            Status::Unsupported => S::Unsupported,
         }
-        let l = gtk::Label::new(Some(title));
-        l.set_xalign(1.0);
-        l.set_yalign(0.0);
-        l.add_css_class("dim-label");
-        l.add_css_class("caption-heading");
-        let v = gtk::Label::new(Some(value));
-        v.set_xalign(0.0);
-        v.set_wrap(true);
-        v.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-        v.set_max_width_chars(44);
-        v.set_hexpand(true);
-        if mono {
-            v.add_css_class("monospace");
-        }
-        grid.attach(&l, 0, rows, 1, 1);
-        grid.attach(&v, 1, rows, 1, 1);
-        rows += 1;
-    };
-    let s = &tag["signature"];
-    let kind = tag["signed"].as_str().unwrap_or("gpg").to_uppercase();
-    row(&tr!("Tag"), name, false);
-    row(&tr!("Signature"), &kind, false);
-    row(
-        &tr!("Signer"),
-        s["signer"].as_str().unwrap_or_default(),
-        false,
-    );
-    row(&tr!("Key"), s["key"].as_str().unwrap_or_default(), true);
-    row(
-        &tr!("Fingerprint"),
-        s["fingerprint"].as_str().unwrap_or_default(),
-        true,
-    );
-    row(
-        &tr!("Trust"),
-        s["trust"].as_str().unwrap_or_default(),
-        false,
-    );
-    let keys = if tag["signed"].as_str() == Some("ssh") {
-        "allowed signers"
-    } else {
-        "~/.gnupg"
-    };
-    row(
-        &tr!("Checked on"),
-        &tr!(
-            "{keys} on {place} ({detail})",
-            keys = keys,
-            place = place.name(),
-            detail = place.detail
-        ),
-        false,
-    );
-    content.append(&grid);
-    let message = tag["message"].as_str().unwrap_or_default().trim();
-    if !message.is_empty() {
-        let m = gtk::Label::new(Some(message));
-        m.set_xalign(0.0);
-        m.set_wrap(true);
-        m.set_max_width_chars(56);
-        m.set_lines(8);
-        m.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        content.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-        content.append(&m);
     }
-
-    let popover = gtk::Popover::new();
-    popover.set_child(Some(&content));
-    popover.set_parent(anchor);
-    popover.set_position(gtk::PositionType::Right);
-    popover.connect_closed(|p| {
-        let p = p.clone();
-        glib::idle_add_local_once(move || p.unparent());
-    });
-    popover.popup();
 }
 
 #[cfg(test)]
