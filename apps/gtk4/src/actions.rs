@@ -293,7 +293,7 @@ impl Actions {
                 action.set_enabled(label.is_some());
             }
             let tip = match label {
-                Some(l) => tr!("Undo: {label} (Ctrl+Z)", label = l),
+                Some(l) => tr!("Undo: {label} (Ctrl+Alt+Z)", label = l),
                 None => tr!("Nothing to Undo"),
             };
             button.set_tooltip_text(Some(&tip));

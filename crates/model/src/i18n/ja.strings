@@ -450,7 +450,7 @@
 "Edit Message" = "メッセージを編集";
 "Combine" = "まとめる";
 "Can’t Merge Them in One Commit" = "1 つのコミットにまとめられません";
-"Undo: {label} (Ctrl+Z)" = "Undo: {label}（Ctrl+Z）";
+"Undo: {label} (Ctrl+Alt+Z)" = "Undo: {label}（Ctrl+Alt+Z）";
 "Nothing to Undo" = "Undo できる操作はありません";
 "Cancel" = "キャンセル";
 "New Tag at {name}…" = "{name} にタグを付ける…";
