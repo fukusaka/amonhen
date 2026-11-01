@@ -667,6 +667,10 @@ pub struct Browser {
     add: gtk::Button,
     /// 並べ替えとセルの描画に使う、行ごとの値（一覧を作り直すたびに読む）。
     sort_keys: Rc<RefCell<SortKeys>>,
+    /// 左の木の形（節・名前・数・開き方・選び）。変わらなければ作り直さない（macOS 版と同じ）。
+    side_shape: RefCell<String>,
+    /// ブックマークの知らせをまとめて読み直す（0.1 秒待つ。macOS 版と同じ）。
+    pending_reload: RefCell<Option<glib::SourceId>>,
 }
 
 thread_local! {
@@ -795,6 +799,8 @@ impl Browser {
             root: paned,
             open,
             beside,
+            side_shape: RefCell::default(),
+            pending_reload: RefCell::default(),
             category: RefCell::new(saved),
             side,
             side_rows: RefCell::default(),
@@ -1199,7 +1205,18 @@ impl Browser {
     fn bookmarks_changed(self: &Rc<Self>) {
         self.scanning.set_visible(bookmarks::is_scanning());
         self.scanning.set_spinning(bookmarks::is_scanning());
-        self.reload();
+        // 続けて来る知らせ（スキャンの途中など）は、まとめて 1 回読み直す。
+        if let Some(id) = self.pending_reload.borrow_mut().take() {
+            id.remove();
+        }
+        let w = Rc::downgrade(self);
+        let id = glib::timeout_add_local_once(std::time::Duration::from_millis(100), move || {
+            if let Some(b) = w.upgrade() {
+                b.pending_reload.borrow_mut().take();
+                b.reload();
+            }
+        });
+        self.pending_reload.borrow_mut().replace(id);
     }
 
     /// 行の状態が変わった。その場所のセルだけ描き直す（並びは変えない。読めるたびに行が動くと選びにくい）。
@@ -1399,9 +1416,38 @@ impl Browser {
             }
             flatten(nodes, 0, &self.expanded.borrow(), &mut rows);
         }
+        let current = self.category.borrow().clone();
+        // 形が前と同じなら作り直さない（スクロールと選びがそのまま。macOS 版と同じ）。
+        let shape = format!(
+            "{:?}|{}",
+            current.key(),
+            rows.iter()
+                .map(|r| {
+                    let count = r
+                        .side
+                        .category()
+                        .map(|c| Self::count_text(&sources, c))
+                        .unwrap_or_default();
+                    format!(
+                        "{}\u{1}{}\u{1}{}\u{1}{:?}\u{1}{}\u{1}{count}",
+                        r.side
+                            .category()
+                            .map_or_else(|| r.title.clone(), Category::key),
+                        r.title,
+                        r.depth,
+                        r.tip,
+                        r.parent,
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        if *self.side_shape.borrow() == shape {
+            return;
+        }
+        self.side_shape.replace(shape);
         self.rebuilding.set(true);
         self.side.remove_all();
-        let current = self.category.borrow().clone();
         let mut selected = None;
         for r in &rows {
             let row = gtk::ListBoxRow::new();
@@ -1563,8 +1609,28 @@ impl Browser {
             })
             .collect();
         *self.sort_keys.borrow_mut() = keys;
+        // 中身が同じなら入れ直さない。入れ直すときは、表のスクロールの位置を残す（macOS 版と同じ）。
+        let same = self.model.n_items() as usize == list.len()
+            && list
+                .iter()
+                .enumerate()
+                .all(|(i, l)| self.model.string(i as u32).as_deref() == Some(l.as_str()));
+        if same {
+            // 名前などが変われば並びも変わるので、並べ直す（入れ直しはしない）。
+            if let Some(sorter) = self.view.sorter() {
+                sorter.changed(gtk::SorterChange::Different);
+            }
+            for cell in self.cells.borrow().iter() {
+                cell.render();
+            }
+            return;
+        }
+        let scroll = self.view.vadjustment().map(|a| a.value());
         let refs: Vec<&str> = list.iter().map(String::as_str).collect();
         self.model.splice(0, self.model.n_items(), &refs);
+        if let (Some(value), Some(adjustment)) = (scroll, self.view.vadjustment()) {
+            glib::idle_add_local_once(move || adjustment.set_value(value));
+        }
         self.selection.unselect_all();
         let mut any = false;
         if query.is_empty() {
