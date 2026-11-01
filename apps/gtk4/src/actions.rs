@@ -1,7 +1,7 @@
 //! 操作の実行。コアの命令（`crates/core/src/command.rs` の `Command`、JSON）を裏で実行し、失敗や
 //! コンフリクトを知らせ、終わったら画面を読み直す。Undo の記録はコアが書く。
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -35,8 +35,8 @@ pub struct Actions {
     on_done: RefCell<Option<DoneCallback>>,
     /// 今のブランチ（detached HEAD なら None）。Reset の名前と確認に出す。
     head: RefCell<Option<String>>,
-    /// merge・rebase・cherry-pick・revert の途中か（途中なら Reset を出さない）。
-    in_sequence: Cell<bool>,
+    /// メニューの項目とツールバーのボタンを使えるかを決める状態（変えたら [`enabled`] でアクションに入れる）。
+    facts: Rc<RefCell<Facts>>,
     /// ほかの worktree が checkout しているブランチ → その worktree（名前、パス）。
     worktree_branches: RefCell<std::collections::HashMap<String, (String, String)>>,
     /// そのうち、メインの worktree が checkout しているブランチ（印のアイコンを家にする）。
@@ -63,7 +63,7 @@ impl Actions {
             on_failure: RefCell::default(),
             on_done: RefCell::default(),
             head: RefCell::default(),
-            in_sequence: Cell::new(false),
+            facts: Rc::default(),
             worktree_branches: RefCell::default(),
             main_worktree_branch: RefCell::default(),
         });
@@ -135,13 +135,16 @@ impl Actions {
         }
     }
 
-    /// merge・rebase などの途中か（status を読むたびに入れる）。
-    pub fn set_in_sequence(&self, yes: bool) {
-        self.in_sequence.set(yes);
+    /// merge・rebase・cherry-pick・revert・am の途中か（途中なら Reset を出さない）。
+    pub fn in_sequence(&self) -> bool {
+        self.facts.borrow().sequence.is_some()
     }
 
-    pub fn in_sequence(&self) -> bool {
-        self.in_sequence.get()
+    /// 使えるかを決める状態を `f` で変え、タブのアクションに入れる（ref・status・画面が変わるたびに。macOS 版で
+    /// メニューを開くたびに `validate` が見るものと同じ）。
+    pub fn update_facts(&self, f: impl FnOnce(&mut Facts)) {
+        f(&mut self.facts.borrow_mut());
+        apply_facts(&self.group, &self.facts.borrow());
     }
 
     /// タブのある窓。
@@ -304,7 +307,7 @@ impl Actions {
             return;
         };
         let button = self.undo.downgrade();
-        let group = self.group.clone();
+        let (group, facts) = (self.group.clone(), self.facts.clone());
         glib::spawn_future_local(async move {
             let reply = gio::spawn_blocking(move || {
                 serde_json::from_str::<Value>(&repo.run_json(r#"{"op":"undoPeek"}"#))
@@ -316,13 +319,8 @@ impl Actions {
                 return;
             };
             let label = reply["label"].as_str();
-            if let Some(action) = group
-                .upgrade()
-                .and_then(|g| g.lookup_action("undo"))
-                .and_downcast::<gio::SimpleAction>()
-            {
-                action.set_enabled(label.is_some());
-            }
+            facts.borrow_mut().undo = label.is_some();
+            apply_facts(&group, &facts.borrow());
             let tip = match label {
                 Some(l) => tr!("Undo: {label} (Ctrl+Alt+Z)", label = l),
                 None => tr!("Nothing to Undo"),
@@ -524,5 +522,263 @@ impl Actions {
         let answer = rx.recv().await.unwrap_or(false);
         dialog.destroy();
         answer
+    }
+}
+
+/// メニューの項目とツールバーのボタンを使えるかを決める、タブの状態（macOS 版の `validate` が見るもの）。
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Facts {
+    /// ref を読んだ。
+    pub refs: bool,
+    /// HEAD がコミットを指している（まだコミットのないブランチでない）。
+    pub head: bool,
+    /// ブランチを checkout している（detached HEAD でない）。
+    pub head_branch: bool,
+    /// 今のブランチの（上流に送れるか、上流より先にあるコミットの数）。ブランチの項目がなければ None。
+    pub tracking: Option<(bool, u32)>,
+    /// stash がある。
+    pub stash: bool,
+    /// 途中の操作（`sequence` の `kind`: merge・rebase・cherry-pick・revert・am）。
+    pub sequence: Option<String>,
+    /// 取り消せる操作がある。
+    pub undo: bool,
+    /// Working Copy を出している。
+    pub working_copy: bool,
+    /// Working Copy の Commit を押せる。
+    pub can_commit: bool,
+    /// コンフリクト以外に、stage していない変更がある。
+    pub can_stage_all: bool,
+    /// History を出していて、パッチにできるコミット（merge でないもの）だけを選んでいる。
+    pub patch: bool,
+    /// 手元のリポジトリ（daemon・SSH 越しでない。端末・ファイルマネージャーは手元のものしか開けない）。
+    pub local: bool,
+    /// origin（なければ最初のリモート）が GitHub（gh があるときだけ調べる）。
+    pub github: bool,
+}
+
+/// 状態から、タブのアクション（`win.<id>`）ごとに使えるか（macOS 版の `RepositoryWindow.validate` と同じ）。
+/// ここにないアクションはいつも使える。
+pub fn enabled(f: &Facts) -> Vec<(&'static str, bool)> {
+    let sequence = f.sequence.as_deref();
+    let idle = sequence.is_none();
+    // Skip は 1 つずつ当てていく操作だけ（merge・revert にはない）。
+    let skip = sequence.is_some_and(|s| s.starts_with("rebase") || s == "cherry-pick" || s == "am");
+    let commit = f.working_copy && f.can_commit;
+    vec![
+        ("continue", !idle),
+        ("abort", !idle),
+        ("skip", skip),
+        ("save-patch", f.patch),
+        ("apply-patch", idle),
+        // 送るものがなければ押せない（理由はツールバーのツールチップ）。上流のないブランチは Publish。
+        (
+            "push",
+            f.tracking
+                .is_some_and(|(published, ahead)| !published || ahead > 0),
+        ),
+        (
+            "force-push",
+            f.tracking.is_some_and(|(published, _)| published),
+        ),
+        ("pull", f.head_branch && idle),
+        ("merge", f.refs && idle),
+        ("rebase", f.refs && idle),
+        ("pop-stash", f.stash),
+        ("show-stashes", f.stash),
+        ("undo", f.undo),
+        ("go-to-head", f.head),
+        ("switch-branch", f.refs),
+        ("rename-branch", f.head_branch),
+        ("set-upstream", f.head_branch),
+        ("compare-with-previous", f.head_branch),
+        ("commit", commit),
+        ("commit-and-push", commit),
+        ("stage-all", f.working_copy && f.can_stage_all),
+        ("open-in-terminal", f.local),
+        ("reveal-in-files", f.local),
+        ("open-on-github", f.github),
+        ("create-pull-request", f.github && f.head_branch),
+    ]
+}
+
+/// [`enabled`] の答えを、タブのアクションに入れる。
+fn apply_facts(group: &glib::WeakRef<gio::SimpleActionGroup>, facts: &Facts) {
+    let Some(group) = group.upgrade() else {
+        return;
+    };
+    for (name, yes) in enabled(facts) {
+        if let Some(action) = group
+            .lookup_action(name)
+            .and_downcast::<gio::SimpleAction>()
+        {
+            action.set_enabled(yes);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn of(facts: &Facts, name: &str) -> bool {
+        enabled(facts)
+            .into_iter()
+            .find(|(n, _)| *n == name)
+            .unwrap_or_else(|| panic!("{name} がない"))
+            .1
+    }
+
+    /// ブランチを checkout していて、ref を読み終え、何の途中でもない。
+    fn idle() -> Facts {
+        Facts {
+            refs: true,
+            head: true,
+            head_branch: true,
+            tracking: Some((true, 0)),
+            local: true,
+            ..Facts::default()
+        }
+    }
+
+    #[test]
+    fn every_name_is_a_command_of_the_table() {
+        for (name, _) in enabled(&Facts::default()) {
+            assert!(amonhen_commands::find(name).is_some(), "表にない: {name}");
+        }
+    }
+
+    #[test]
+    fn nothing_that_needs_refs_is_enabled_before_they_load() {
+        let facts = Facts::default();
+        for name in [
+            "pull",
+            "push",
+            "force-push",
+            "merge",
+            "rebase",
+            "switch-branch",
+            "go-to-head",
+            "rename-branch",
+            "create-pull-request",
+        ] {
+            assert!(!of(&facts, name), "{name}");
+        }
+    }
+
+    #[test]
+    fn continue_abort_and_skip_only_during_an_operation() {
+        let mut facts = idle();
+        for name in ["continue", "abort", "skip"] {
+            assert!(!of(&facts, name), "{name}");
+        }
+        assert!(of(&facts, "apply-patch"));
+        for (kind, skip) in [
+            ("merge", false),
+            ("revert", false),
+            ("rebase", true),
+            ("cherry-pick", true),
+            ("am", true),
+        ] {
+            facts.sequence = Some(kind.into());
+            assert!(of(&facts, "continue") && of(&facts, "abort"), "{kind}");
+            assert_eq!(of(&facts, "skip"), skip, "{kind}");
+            // 途中では、新しく取り込む操作とパッチを当てる操作はできない。
+            for name in ["pull", "merge", "rebase", "apply-patch"] {
+                assert!(!of(&facts, name), "{kind}: {name}");
+            }
+        }
+    }
+
+    #[test]
+    fn pull_and_branch_operations_need_a_branch() {
+        let mut facts = idle();
+        for name in [
+            "pull",
+            "rename-branch",
+            "set-upstream",
+            "compare-with-previous",
+        ] {
+            assert!(of(&facts, name), "{name}");
+        }
+        // detached HEAD: 切り替えや Merge・Rebase はできる。
+        facts.head_branch = false;
+        facts.tracking = None;
+        for name in [
+            "pull",
+            "push",
+            "force-push",
+            "rename-branch",
+            "set-upstream",
+            "compare-with-previous",
+        ] {
+            assert!(!of(&facts, name), "{name}");
+        }
+        for name in ["merge", "rebase", "switch-branch", "go-to-head"] {
+            assert!(of(&facts, name), "{name}");
+        }
+    }
+
+    #[test]
+    fn push_needs_something_to_send() {
+        let mut facts = idle();
+        assert!(!of(&facts, "push"));
+        assert!(of(&facts, "force-push"));
+        facts.tracking = Some((true, 2));
+        assert!(of(&facts, "push"));
+        // 上流がない: Publish（Force Push はない）。
+        facts.tracking = Some((false, 0));
+        assert!(of(&facts, "push"));
+        assert!(!of(&facts, "force-push"));
+    }
+
+    #[test]
+    fn commit_and_stage_all_only_in_working_copy() {
+        let mut facts = Facts {
+            can_commit: true,
+            can_stage_all: true,
+            ..idle()
+        };
+        for name in ["commit", "commit-and-push", "stage-all"] {
+            assert!(!of(&facts, name), "{name}");
+        }
+        facts.working_copy = true;
+        for name in ["commit", "commit-and-push", "stage-all"] {
+            assert!(of(&facts, name), "{name}");
+        }
+        facts.can_commit = false;
+        facts.can_stage_all = false;
+        for name in ["commit", "commit-and-push", "stage-all"] {
+            assert!(!of(&facts, name), "{name}");
+        }
+    }
+
+    #[test]
+    fn local_github_stash_undo_and_patch() {
+        let names = [
+            "open-on-github",
+            "create-pull-request",
+            "pop-stash",
+            "show-stashes",
+            "undo",
+            "save-patch",
+        ];
+        let mut facts = idle();
+        for name in names {
+            assert!(!of(&facts, name), "{name}");
+        }
+        assert!(of(&facts, "open-in-terminal") && of(&facts, "reveal-in-files"));
+        facts.local = false;
+        assert!(!of(&facts, "open-in-terminal") && !of(&facts, "reveal-in-files"));
+        facts.github = true;
+        facts.stash = true;
+        facts.undo = true;
+        facts.patch = true;
+        for name in names {
+            assert!(of(&facts, name), "{name}");
+        }
+        // プルリクエストは今のブランチから作る。
+        facts.head_branch = false;
+        assert!(!of(&facts, "create-pull-request"));
+        assert!(of(&facts, "open-on-github"));
     }
 }

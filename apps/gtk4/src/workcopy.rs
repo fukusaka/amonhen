@@ -472,6 +472,7 @@ impl WorkingCopy {
     /// 確かめる窓や、知らせに使う。
     pub fn set_actions(&self, actions: Rc<Actions>) {
         self.inner.actions.replace(Some(actions));
+        self.inner.update_buttons();
     }
 
     /// 新しい status を出す。同じスナップショットなら何もしない。
@@ -2014,9 +2015,22 @@ impl Inner {
         let staged = staged_count(&self.all_entries.borrow()) > 0;
         let has_subject = !self.subject.text().trim().is_empty();
         let amend = self.amend.is_active();
-        self.commit.set_sensitive(has_subject && (staged || amend));
+        let can_commit = has_subject && (staged || amend);
+        self.commit.set_sensitive(can_commit);
         self.commit
             .set_label(if amend { "Amend Commit" } else { "Commit" });
+        // Commit メニューの Commit・Commit and Push・Stage All も、押せるときだけ（macOS 版と同じ）。
+        if let Some(actions) = self.actions.borrow().as_ref() {
+            let can_stage_all = self
+                .all_entries
+                .borrow()
+                .iter()
+                .any(|e| e.kind != StatusKind::Unmerged && e.is_unstaged());
+            actions.update_facts(|f| {
+                f.can_commit = can_commit;
+                f.can_stage_all = can_stage_all;
+            });
+        }
         // 件名の文字数（空なら出さない）。
         let length = self.subject.text().chars().count();
         let color = if length > 72 {

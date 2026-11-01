@@ -64,7 +64,7 @@ pub struct Buttons {
     pull_count: gtk::Label,
     push: gtk::Button,
     push_count: gtk::Label,
-    group: gio::SimpleActionGroup,
+    actions: Rc<Actions>,
 }
 
 impl Buttons {
@@ -128,27 +128,14 @@ impl Buttons {
         } else {
             tr!("Nothing to push")
         }));
-        let enable = |name: &str, yes: bool| {
-            if let Some(action) = self
-                .group
-                .lookup_action(name)
-                .and_downcast::<gio::SimpleAction>()
-            {
-                action.set_enabled(yes);
-            }
-        };
-        enable("push", entry.is_some() && (!published || ahead > 0));
-        enable("force-push", entry.is_some() && published);
-        let has_stash = refs.refs.entries.iter().any(|e| e.kind == RefKind::Stash);
-        for name in ["pop-stash", "show-stashes"] {
-            if let Some(action) = self
-                .group
-                .lookup_action(name)
-                .and_downcast::<gio::SimpleAction>()
-            {
-                action.set_enabled(has_stash);
-            }
-        }
+        // 使えるかは、ref から決まるものをまとめて（`actions::enabled`）。
+        self.actions.update_facts(|f| {
+            f.refs = true;
+            f.head = refs.refs.head.is_some();
+            f.head_branch = head.is_some();
+            f.tracking = entry.map(|e| (published, e.ahead));
+            f.stash = refs.refs.entries.iter().any(|e| e.kind == RefKind::Stash);
+        });
     }
 }
 
@@ -445,17 +432,10 @@ pub fn install(parts: Parts) -> Buttons {
         action.connect_activate(move |_, _| f(&p));
         window.add_action(&action);
     }
-    // 端末・ファイルマネージャーは手元のリポジトリだけ（macOS 版と同じく、daemon・SSH 越しでは選べない）。
-    if amonhen_remote::location::is_remote(&parts.location) {
-        for name in ["open-in-terminal", "reveal-in-files"] {
-            if let Some(action) = window
-                .lookup_action(name)
-                .and_downcast::<gio::SimpleAction>()
-            {
-                action.set_enabled(false);
-            }
-        }
-    }
+    // ref・status を読むまでは、それで決まる項目を使えなくしておく（macOS 版と同じ）。端末・ファイルマネージャーは
+    // 手元のリポジトリだけ（daemon・SSH 越しでは選べない）。
+    let local = !amonhen_remote::location::is_remote(&parts.location);
+    parts.actions.update_facts(|f| f.local = local);
     let sidebar = gio::SimpleAction::new_stateful("show-sidebar", None, &true.to_variant());
     let p = parts.clone();
     sidebar.connect_activate(move |action, _| {
@@ -537,7 +517,7 @@ pub fn install(parts: Parts) -> Buttons {
         pull_count,
         push,
         push_count,
-        group: parts.group.clone(),
+        actions: parts.actions.clone(),
     }
 }
 
@@ -721,28 +701,31 @@ fn start_point(p: &Parts) -> String {
 
 /// Commit › Save as Patch…: History で選んだコミットを古い順に（マージを含む・選んでいなければ鳴らす）。
 fn save_patch(p: &Rc<Parts>) {
-    let oids = (|| {
-        if p.pages.visible_child_name().as_deref() != Some("history") {
-            return None;
-        }
-        let (_, history) = p.view.current()?;
-        let nodes = history.layout.nodes();
-        let mut oids = Vec::new();
-        for row in p.view.selection().into_iter().rev() {
-            let merge = nodes
-                .get(row as usize)
-                .is_some_and(|n| n.flags & amonhen_layout::Node::MERGE != 0);
-            if merge {
-                return None;
-            }
-            oids.push(history.graph.ids().get(row as usize)?.to_string());
-        }
-        (!oids.is_empty()).then_some(oids)
-    })();
-    match oids {
+    match patch_commits(&p.pages, &p.view) {
         Some(oids) => crate::patches::save(&p.actions, oids),
         None => p.window().error_bell(),
     }
+}
+
+/// Save as Patch… にする、History で選んだコミット（古い順）。History を出していない、選んでいない、merge を
+/// 含むなら None（macOS 版の `selectedCommitsForPatch` と同じ）。
+pub fn patch_commits(pages: &gtk::Stack, view: &HistoryView) -> Option<Vec<String>> {
+    if pages.visible_child_name().as_deref() != Some("history") {
+        return None;
+    }
+    let (_, history) = view.current()?;
+    let nodes = history.layout.nodes();
+    let mut oids = Vec::new();
+    for row in view.selection().into_iter().rev() {
+        let merge = nodes
+            .get(row as usize)
+            .is_some_and(|n| n.flags & amonhen_layout::Node::MERGE != 0);
+        if merge {
+            return None;
+        }
+        oids.push(history.graph.ids().get(row as usize)?.to_string());
+    }
+    (!oids.is_empty()).then_some(oids)
 }
 
 /// Repository › Apply Patch…（merge などの途中なら鳴らす）。

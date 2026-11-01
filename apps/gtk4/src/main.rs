@@ -659,7 +659,16 @@ fn build_tab(
     columns.set_start_child(Some(&history_column));
     columns.set_end_child(Some(&right));
     columns.set_position(560);
-    connect_selection(&view, &details, &commit_diff, &right, &pending);
+    // History で選び直したら呼ぶ（メニューの項目を使えるか。操作のアクションを作ってから入れる）。
+    let selection_changed: Hook = Rc::default();
+    connect_selection(
+        &view,
+        &details,
+        &commit_diff,
+        &right,
+        &pending,
+        selection_changed.clone(),
+    );
     // 詳細の作者・コミッターの名前を押す: History をその人のコミットで探す（macOS 版と同じ）。
     let (s, p) = (search.clone(), pending.clone());
     details.connect_person(move |name| {
@@ -897,6 +906,26 @@ fn build_tab(
     patches::install_drop(&tab.root, &actions);
     working.set_actions(actions.clone());
     stashes.set_actions(actions.clone());
+    // 出している画面と History で選んだコミットで、Commit・Stage All・Save as Patch… を使えるか決める。
+    let page_facts: Rc<dyn Fn()> = {
+        let (a, p, v) = (Rc::downgrade(&actions), pages.downgrade(), view.downgrade());
+        Rc::new(move || {
+            let (Some(actions), Some(pages), Some(view)) = (a.upgrade(), p.upgrade(), v.upgrade())
+            else {
+                return;
+            };
+            let working = pages.visible_child_name().as_deref() == Some("working");
+            let patch = appmenu::patch_commits(&pages, &view).is_some();
+            actions.update_facts(|f| {
+                f.working_copy = working;
+                f.patch = patch;
+            });
+        })
+    };
+    let f = page_facts.clone();
+    pages.connect_visible_child_name_notify(move |_| f());
+    selection_changed.replace(Some(page_facts.clone()));
+    page_facts();
     let reload_tx = tx.clone();
     let weak_view = view.downgrade();
     let w = Rc::downgrade(&worktrees);
@@ -1926,7 +1955,10 @@ fn build_tab(
                                 }
                                 let info =
                                     sequence["info"].is_object().then_some(&sequence["info"]);
-                                a.set_in_sequence(info.is_some());
+                                a.update_facts(|f| {
+                                    f.sequence = info
+                                        .map(|i| i["kind"].as_str().unwrap_or_default().to_owned())
+                                });
                                 bar.show_sequence(info, conflicts, without, &a);
                             });
                         }
@@ -2109,6 +2141,9 @@ fn jump_to(
     });
 }
 
+/// 後から入れる知らせ先（作る順の都合で、先に渡しておく）。
+type Hook = Rc<std::cell::RefCell<Option<Rc<dyn Fn()>>>>;
+
 /// History で選んだコミットの詳細と差分を、裏で読んで出す。選び直したら古い結果は捨てる。
 fn connect_selection(
     view: &HistoryView,
@@ -2116,6 +2151,7 @@ fn connect_selection(
     files: &Rc<commitfiles::CommitDiff>,
     right: &gtk::Paned,
     pending: &Rc<Cell<u32>>,
+    changed: Hook,
 ) {
     let loader = Rc::new(Loader {
         details: details.clone(),
@@ -2129,6 +2165,10 @@ fn connect_selection(
         let Some(view) = weak_view.upgrade() else {
             return;
         };
+        let f = changed.borrow().clone();
+        if let Some(f) = f {
+            f();
+        }
         let Some((repo, history)) = view.current() else {
             return;
         };
