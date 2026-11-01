@@ -749,6 +749,17 @@ fn build_tab(
     titles.set_valign(gtk::Align::Center);
     titles.append(&title);
     titles.append(&subtitle);
+    // ツールバーのブランチのボタンを出し入れしたら、名前の下のブランチ名を合わせる（読んだ後だけ出す）。
+    {
+        let weak = subtitle.downgrade();
+        settings::connect_changed_while(&subtitle, move |key| {
+            if key == toolbar::ITEMS_KEY
+                && let Some(subtitle) = weak.upgrade()
+            {
+                subtitle.set_visible(!subtitle.text().is_empty() && !toolbar::shows("branch"));
+            }
+        });
+    }
     // 裏で読んでいる詳細と差分の数（`--snapshot` はなくなるまで待つ）。
     let pending = Rc::new(Cell::new(0u32));
     // タブの場所は開いた形（覚える・戻す形。同じリポジトリか比べるときは `repos::normalize` で）。
@@ -2230,7 +2241,8 @@ fn build_tab(
                             Some(branch) => subtitle.set_text(branch),
                             None => subtitle.set_text("detached HEAD"),
                         }
-                        subtitle.set_visible(true);
+                        // ツールバーにブランチのボタンがあれば、同じ名前を 2 か所に出さない（macOS 版と同じ）。
+                        subtitle.set_visible(!toolbar::shows("branch"));
                         view.show_refs(&refs);
                         shaper.show_refs(&refs.refs);
                         sidebar.show(&refs);

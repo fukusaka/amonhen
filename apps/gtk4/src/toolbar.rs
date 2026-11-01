@@ -151,6 +151,16 @@ fn format(entries: &[Entry]) -> String {
         .join(",")
 }
 
+/// ツールバーに `id` のボタンを出しているか。
+pub fn shows(id: &str) -> bool {
+    entries()
+        .iter()
+        .any(|e| matches!(e, Entry::Item { id: i, shown: true } if i == id))
+}
+
+/// 並びを覚える設定の鍵（変わったら `crate::settings::connect_changed` で知らせる）。
+pub const ITEMS_KEY: &str = KEY;
+
 fn entries() -> Vec<Entry> {
     crate::settings::string(KEY).map_or_else(default_entries, |s| parse(&s))
 }
