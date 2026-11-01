@@ -306,12 +306,13 @@ impl RepoWindow {
                 id.remove();
             }
             let (w, p) = (weak.clone(), pending.clone());
-            let id = glib::timeout_add_local_once(std::time::Duration::from_millis(500), move || {
-                p.borrow_mut().take();
-                if let Some(this) = w.upgrade() {
-                    this.save_size();
-                }
-            });
+            let id =
+                glib::timeout_add_local_once(std::time::Duration::from_millis(500), move || {
+                    p.borrow_mut().take();
+                    if let Some(this) = w.upgrade() {
+                        this.save_size();
+                    }
+                });
             pending.borrow_mut().replace(id);
         };
         let r = remember.clone();
@@ -502,7 +503,8 @@ pub fn new_window_with(app: &gtk::Application, location: PathBuf) -> Rc<RepoWind
         && let [w, h] = size.as_slice()
         && let (Some(w), Some(h)) = (w.as_i64(), h.as_i64())
     {
-        host.window.set_default_size(w.max(400) as i32, h.max(300) as i32);
+        host.window
+            .set_default_size(w.max(400) as i32, h.max(300) as i32);
     }
     crate::build_tab(
         app,

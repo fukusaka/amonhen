@@ -843,8 +843,7 @@ impl Browser {
             crate::settings::string(COLUMN_WIDTHS_KEY)
                 .and_then(|s| serde_json::from_str(&s).ok())
                 .unwrap_or_default();
-        let sort_key =
-            crate::settings::string(SORT_KEY).unwrap_or_else(|| "opened".to_owned());
+        let sort_key = crate::settings::string(SORT_KEY).unwrap_or_else(|| "opened".to_owned());
         let mut sorted = None;
         let mut opened = None;
         for (kind, id, title, width) in columns {
@@ -969,7 +968,8 @@ impl Browser {
         }
         match sorted {
             Some(column) => {
-                let ascending = crate::settings::string(SORT_ASCENDING_KEY).as_deref() == Some("true");
+                let ascending =
+                    crate::settings::string(SORT_ASCENDING_KEY).as_deref() == Some("true");
                 self.view.sort_by_column(
                     Some(&column),
                     if ascending {
@@ -2015,10 +2015,12 @@ impl Browser {
     /// そのホストのフォルダを列で見て選べる。
     fn add_remote(self: &Rc<Self>, host: Option<&str>) {
         // ホストの行から（右クリック・ホストを選んでいるときの ＋）なら、接続先は決まっている（macOS 版と同じ）。
-        let fixed = host.map(str::to_owned).or_else(|| match &*self.category.borrow() {
-            Category::Host(h) | Category::HostFolder(h, _) => Some(h.clone()),
-            _ => None,
-        });
+        let fixed = host
+            .map(str::to_owned)
+            .or_else(|| match &*self.category.borrow() {
+                Category::Host(h) | Category::HostFolder(h, _) => Some(h.clone()),
+                _ => None,
+            });
         let b = self.clone();
         glib::spawn_future_local(async move {
             let Some((host, path)) = ssh_connection_sheet(&b.window(), fixed).await else {
@@ -2159,14 +2161,19 @@ pub async fn choose_remote_scan_folder(
 /// SSH 接続（SSH 先のリポジトリ）を加えるシート（macOS 版の `SSHConnectionSheet`）: 接続先（~/.ssh/config の名前か
 /// user@host:port。▾ で候補から）、リポジトリのパス（Choose… でホストの中を見て選ぶ）、接続の確認（BatchMode の
 /// ssh で git とエンジンの有無を読む）、Add and Open。`fixed` なら接続先は変えられない。選んだ接続先とパスを返す。
-async fn ssh_connection_sheet(parent: &gtk::Window, fixed: Option<String>) -> Option<(String, String)> {
+async fn ssh_connection_sheet(
+    parent: &gtk::Window,
+    fixed: Option<String>,
+) -> Option<(String, String)> {
     let sheet = Sheet::new(
         Some(parent),
         &match &fixed {
             Some(h) => tr!("Add a Repository on {host}", host = h),
             None => tr!("Add SSH Connection"),
         },
-        &tr!("Connects over SSH. Use a host you can log in to without a password (with a key or ssh-agent)."),
+        &tr!(
+            "Connects over SSH. Use a host you can log in to without a password (with a key or ssh-agent)."
+        ),
     );
     let host = gtk::Entry::builder()
         .text(
@@ -2259,7 +2266,10 @@ async fn ssh_connection_sheet(parent: &gtk::Window, fixed: Option<String>) -> Op
     // 接続先とパスがそろい、確かめている途中でなければ加えられる（macOS 版の `canAdd`）。
     let valid = |h: &str, p: &str| {
         let h = h.trim();
-        !h.is_empty() && !p.trim().is_empty() && !h.contains(char::is_whitespace) && !h.contains('/')
+        !h.is_empty()
+            && !p.trim().is_empty()
+            && !h.contains(char::is_whitespace)
+            && !h.contains('/')
     };
     let update = {
         let (host, path, ok, choose, check, checking) = (
@@ -2361,7 +2371,14 @@ fn check_ssh_host(host: &str) -> (String, bool) {
     let program = std::env::var("AMONHEN_SSH").unwrap_or_else(|_| "ssh".into());
     let run = |command: &str| {
         amonhen_model::process::command(&program)
-            .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", host, command])
+            .args([
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=10",
+                host,
+                command,
+            ])
             .stdin(std::process::Stdio::null())
             .output()
             .ok()
