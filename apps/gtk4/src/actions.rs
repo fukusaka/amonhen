@@ -475,7 +475,7 @@ impl Actions {
         }
     }
 
-    async fn alert(&self, title: &str, message: &str) {
+    pub async fn alert(&self, title: &str, message: &str) {
         let dialog = gtk::AlertDialog::builder()
             .message(title)
             .detail(message)

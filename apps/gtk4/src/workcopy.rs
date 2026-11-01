@@ -603,7 +603,7 @@ impl WorkingCopy {
         if paths.is_empty() {
             return;
         }
-        Inner::run(&self.inner, move |repo| {
+        Inner::perform(&self.inner, move |repo| {
             let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
             repo.stage(&paths)
         });
@@ -1826,7 +1826,7 @@ impl Inner {
         }
         let rows = this.diff.selected_rows();
         if !rows.is_empty() {
-            Inner::run(this, move |repo| {
+            Inner::perform(this, move |repo| {
                 repo.discard_rows(current.0.as_ref().expect("working diff"), &rows)
             });
             return;
@@ -2213,7 +2213,7 @@ impl Inner {
                 return;
             }
             if let Some(this) = weak.upgrade() {
-                Inner::run(&this, move |repo| repo.stage(&[&path]));
+                Inner::perform(&this, move |repo| repo.stage(&[&path]));
             }
         });
     }
@@ -2229,20 +2229,43 @@ impl Inner {
         let weak = Rc::downgrade(this);
         let source = repo.clone();
         glib::spawn_future_local(async move {
+            // 失敗しても status は読み直す（途中まで進んだかもしれない。macOS 版と同じ）。
             let result = gio::spawn_blocking(move || {
-                op(&repo)
-                    .map_err(|e| e.to_string())
-                    .and_then(|()| repo.load_status().map_err(|e| e.to_string()))
+                let done = op(&repo).map_err(|e| e.to_string());
+                (done, repo.load_status())
             })
             .await;
             let Some(this) = weak.upgrade() else { return };
             this.pending.set(this.pending.get() - 1);
-            match result {
-                Ok(Ok(status)) => Inner::show_from(&this, &source, status),
-                Ok(Err(e)) => this.show_error(&e),
-                Err(_) => {}
+            let Ok((done, status)) = result else { return };
+            if let Ok(status) = status {
+                Inner::show_from(&this, &source, status);
+            }
+            let actions = this.actions.borrow().clone();
+            if let Some(actions) = actions {
+                // 取り消せる操作が変わったかもしれない（見張りの知らせを待たない）。
+                actions.refresh_undo();
+                // 失敗はシートで（macOS 版の `run` と同じ）。
+                if let Err(e) = done {
+                    actions.alert(&e, "").await;
+                }
+            } else if let Err(e) = done {
+                this.show_error(&e);
             }
         });
+    }
+
+    /// `op` を操作として行う（macOS 版の `actions.perform`）。失敗は操作の失敗の知らせに出し、読み直しと
+    /// Undo の更新は操作の窓口に任せる。
+    fn perform(
+        this: &Rc<Self>,
+        op: impl FnOnce(&Repository) -> amonhen_model::Result<()> + Send + 'static,
+    ) {
+        let actions = this.actions.borrow().clone();
+        match actions {
+            Some(actions) => actions.perform_work(op),
+            None => Inner::run(this, op),
+        }
     }
 
     /// コミットする。できたら `then` を呼ぶ（Commit and Push の push）。
