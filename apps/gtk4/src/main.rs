@@ -1076,14 +1076,19 @@ fn build_tab(
         pages.set_visible_child_name("working");
         sidebar.select_page(Page::WorkingCopy);
     }
+    // 右側（ページ）の下のステータスバー（途中の操作・失敗・終わった操作の一言）。サイドバーの下には伸ばさない
+    // （macOS 版と同じ）。
+    let statusbar = statusbar::StatusBar::new();
+    let right_side = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    pages.set_vexpand(true);
+    right_side.append(&pages);
+    right_side.append(&statusbar.root);
     let body = gtk::Paned::new(gtk::Orientation::Horizontal);
     body.set_start_child(Some(&sidebar.root));
-    body.set_end_child(Some(&pages));
+    body.set_end_child(Some(&right_side));
     body.set_resize_start_child(false);
     body.set_shrink_start_child(false);
     body.set_position(200);
-    // 窓の下のステータスバー（途中の操作・失敗・終わった操作の一言）。
-    let statusbar = statusbar::StatusBar::new();
     body.set_vexpand(true);
     // daemon 越し・SSH 先は、つながるまで「つないでいます」を出す（開けなかったら、エラーと Try Again）。
     let content = gtk::Stack::new();
@@ -1115,7 +1120,6 @@ fn build_tab(
         content.set_visible_child_name("repository");
     }
     tab.root.append(&content);
-    tab.root.append(&statusbar.root);
     if args.connecting
         && let Some(png) = args.snapshot.clone()
     {
