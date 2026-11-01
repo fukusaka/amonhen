@@ -349,6 +349,8 @@ pub struct StatusBar {
     rows: RefCell<Vec<(Row, gtk::Widget)>>,
     /// 終わった操作の一言を消すまでの時計（出し直したら前のものは効かせない）。
     flash_generation: Cell<u64>,
+    /// 出している途中の行の中身（同じなら作り直さない。ボタンのホバー・フォーカスを保つ）。
+    sequence_shown: RefCell<Option<(Value, usize, Vec<String>)>>,
 }
 
 impl StatusBar {
@@ -360,6 +362,7 @@ impl StatusBar {
             root,
             rows: RefCell::default(),
             flash_generation: Cell::new(0),
+            sequence_shown: RefCell::default(),
         })
     }
 
@@ -618,9 +621,16 @@ impl StatusBar {
         actions: &Rc<crate::actions::Actions>,
     ) {
         let Some(s) = info else {
+            self.sequence_shown.replace(None);
             self.hide(Row::Sequence);
             return;
         };
+        let shown = (s.clone(), conflicts, without.clone());
+        let same = self.sequence_shown.borrow().as_ref() == Some(&shown);
+        if same && self.rows.borrow().iter().any(|(r, _)| *r == Row::Sequence) {
+            return;
+        }
+        self.sequence_shown.replace(Some(shown));
         let icon = gtk::Label::new(Some("⇄"));
         icon.add_css_class("warning");
         icon.add_css_class("title-3");

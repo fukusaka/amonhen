@@ -1350,6 +1350,8 @@ fn build_tab(
         subtitle,
         async move {
             let mut first = true;
+            // 途中の行を読んだ回（後から来た古い答えで、新しい行を戻さないように）。
+            let sequence_generation = Rc::new(Cell::new(0u64));
             while let Ok(event) = rx.recv().await {
                 match event {
                     Event::History(repo, history) => {
@@ -1883,6 +1885,9 @@ fn build_tab(
                             .count();
                         {
                             let (repo, bar, a) = (source, statusbar.clone(), actions.clone());
+                            let generation = sequence_generation.get() + 1;
+                            sequence_generation.set(generation);
+                            let latest = sequence_generation.clone();
                             glib::spawn_future_local(async move {
                                 let sequence =
                                     sheets::run(&repo, serde_json::json!({ "op": "sequence" }))
@@ -1899,6 +1904,10 @@ fn build_tab(
                                 } else {
                                     Vec::new()
                                 };
+                                // もっと新しい status の答えを待っている（または出した）なら、捨てる。
+                                if latest.get() != generation {
+                                    return;
+                                }
                                 let info =
                                     sequence["info"].is_object().then_some(&sequence["info"]);
                                 a.set_in_sequence(info.is_some());
