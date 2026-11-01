@@ -1248,12 +1248,11 @@ fn build_tab(
         })
     };
     let (a, h, o) = (actions.clone(), head.clone(), open_submodule.clone());
-    let (rd, rdo) = (Rc::downgrade(&range_diff), range_diff_opener.clone());
+    let rdo = range_diff_opener.clone();
     let w = Rc::downgrade(&worktrees);
     sidebar.set_actions(actions.clone());
-    sidebar.connect_menu(move |data, known| match (&data.item, rd.upgrade()) {
-        (sidebar::Item::Page(Page::RangeDiff), Some(range_diff)) => range_diff.sidebar_menu(),
-        (sidebar::Item::Worktree(info), _) => match w.upgrade() {
+    sidebar.connect_menu(move |data, known| match &data.item {
+        sidebar::Item::Worktree(info) => match w.upgrade() {
             Some(worktrees) => worktrees::menu(&a, &worktrees, info),
             None => Vec::new(),
         },

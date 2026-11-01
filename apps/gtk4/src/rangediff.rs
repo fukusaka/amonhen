@@ -684,16 +684,6 @@ impl RangeDiff {
     fn shown_generation_ref(&self) -> std::rc::Weak<Cell<u64>> {
         Rc::downgrade(&self.shown_generation)
     }
-
-    /// サイドバーの Range Diff の行の右クリックのメニュー。
-    pub fn sidebar_menu(&self) -> Vec<Item> {
-        let f = self.on_close.borrow().clone();
-        vec![menu::action(tr!("Close Range Diff"), move || {
-            if let Some(f) = &f {
-                f();
-            }
-        })]
-    }
 }
 
 /// ページの `gtk::Stack` での名前。
