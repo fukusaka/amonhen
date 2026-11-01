@@ -642,6 +642,16 @@ impl Editor {
             on_pop_out: RefCell::default(),
         });
         this.update_conflicts();
+        // AI の設定が変わると `assist::track` がボタンを押せるようにするので、その後でコンフリクトの有無に
+        // 合わせ直す（残っていなければ押せない）。
+        let weak = Rc::downgrade(&this);
+        crate::settings::connect_changed(move |key| {
+            if (key == crate::assist::ASSISTANT || key.starts_with("assistantPath."))
+                && let Some(this) = weak.upgrade()
+            {
+                this.refresh();
+            }
+        });
 
         let weak = Rc::downgrade(&this);
         let with = move |f: fn(&Rc<Self>)| {
