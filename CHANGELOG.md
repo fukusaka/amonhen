@@ -55,6 +55,7 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- Combine with Older Commit… on a single commit in History marks it in the edit mode; it opened with nothing marked.
 - History opens in a shallow clone: it stopped with "Commit … not found" at the boundary, and now ends there as
   `git log` does. After `git fetch --deepen` or `--unshallow`, History is read again with the older commits.
 - Starting a merge, rebase, cherry-pick, revert, pull or patch while another one is stopped no longer reports a
