@@ -814,6 +814,9 @@
 "Insert the message of a recent commit (Alt+Up and Alt+Down in the Summary field also work)" = "最近のコミットのメッセージを入れる（件名の欄で Alt+↑・Alt+↓ でも呼び出せる）";
 "Insert a Conventional Commits type, Co-authored-by or Signed-off-by" = "Conventional Commits の型、Co-authored-by、Signed-off-by を入れる";
 "Not loaded yet" = "まだ読めていません";
+"Conventional Commits Type" = "Conventional Commits の型";
+"Commit as a fixup! of the chosen commit (combine later with rebase -i --autosquash)" = "選んだコミットへの fixup! としてコミットする（後で rebase -i --autosquash でまとめる）";
+"Commit as a squash! of the chosen commit (its message is added when combined)" = "選んだコミットへの squash! としてコミットする（まとめるときにメッセージも足す）";
 "Signed-off-by (Me)" = "Signed-off-by（自分）";
 
 /* GTK4 の FE: Settings */

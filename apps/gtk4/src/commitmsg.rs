@@ -399,30 +399,33 @@ impl MessageAids {
                 .chars()
                 .take(80)
                 .collect();
+            // メッセージ全体はツールチップで見せる（macOS 版と同じ）。
             let (w, m) = (Rc::downgrade(self), message.clone());
-            items.push(action(subject, move || {
+            items.push(crate::menu::hint(subject, message.clone(), move || {
                 if let Some(this) = w.upgrade() {
                     this.use_message(&m);
                 }
             }));
         }
         if items.is_empty() {
-            items.push(action(tr!("Not loaded yet"), || {}));
+            items.push(Item::Disabled(tr!("Not loaded yet")));
         }
         items
     }
 
+    /// + のメニュー: Conventional Commits の型と Co-authored-by は下のメニューに、Signed-off-by はそのまま
+    /// （macOS 版と同じ）。
     fn insert_menu(self: &Rc<Self>) -> Vec<Item> {
-        let mut items = Vec::new();
+        let mut types = Vec::new();
         for t in TYPES {
             let w = Rc::downgrade(self);
-            items.push(action(format!("{t}:"), move || {
+            types.push(action(format!("{t}:"), move || {
                 if let Some(this) = w.upgrade() {
                     this.set_type(t);
                 }
             }));
         }
-        items.push(Item::Separator);
+        let mut authors = Vec::new();
         let mut seen: Vec<String> = Vec::new();
         for (_, author, email) in self.recent.borrow().iter() {
             if email.is_empty() || seen.contains(&email.to_lowercase()) {
@@ -433,20 +436,20 @@ impl MessageAids {
                 Rc::downgrade(self),
                 format!("Co-authored-by: {author} <{email}>"),
             );
-            items.push(action(
-                format!("Co-authored-by: {author} <{email}>"),
-                move || {
-                    if let Some(this) = w.upgrade() {
-                        this.add_trailer(&line);
-                    }
-                },
-            ));
+            authors.push(action(format!("{author} <{email}>"), move || {
+                if let Some(this) = w.upgrade() {
+                    this.add_trailer(&line);
+                }
+            }));
         }
         // 最近の作者がまだなければ、その旨（macOS 版と同じ）。
         if seen.is_empty() {
-            items.push(action(tr!("Recent authors aren’t loaded yet"), || {}));
+            authors.push(Item::Disabled(tr!("Recent authors aren’t loaded yet")));
         }
-        items.push(Item::Separator);
+        let mut items = vec![
+            Item::Submenu(tr!("Conventional Commits Type"), types),
+            Item::Submenu("Co-authored-by".to_owned(), authors),
+        ];
         let w = Rc::downgrade(self);
         items.push(action(tr!("Signed-off-by (Me)"), move || {
             if let Some(this) = w.upgrade() {
@@ -584,9 +587,21 @@ impl MessageAids {
             }
             if !subjects.is_empty() {
                 let section = gio::Menu::new();
-                for (title, name) in [
-                    ("Fixup Commit For", "message.fixup"),
-                    ("Squash Commit For", "message.squash"),
+                for (title, name, tip) in [
+                    (
+                        "Fixup Commit For",
+                        "message.fixup",
+                        tr!(
+                            "Commit as a fixup! of the chosen commit (combine later with rebase -i --autosquash)"
+                        ),
+                    ),
+                    (
+                        "Squash Commit For",
+                        "message.squash",
+                        tr!(
+                            "Commit as a squash! of the chosen commit (its message is added when combined)"
+                        ),
+                    ),
                 ] {
                     let sub = gio::Menu::new();
                     for subject in &subjects {
@@ -594,11 +609,15 @@ impl MessageAids {
                         item.set_action_and_target_value(Some(name), Some(&subject.to_variant()));
                         sub.append_item(&item);
                     }
-                    section.append_submenu(Some(title), &sub);
+                    let item = gio::MenuItem::new_submenu(Some(title), &sub);
+                    item.set_attribute_value(crate::menu::TOOLTIP, Some(&tip.to_variant()));
+                    section.append_item(&item);
                 }
                 menu.append_section(None, &section);
             }
             button.set_menu_model(Some(&menu));
+            // 作り直したメニューの項目に、ツールチップを付ける（新しいメニューを出すたび）。
+            crate::menu::tooltips_on_show(button);
         });
     }
 }
