@@ -17,7 +17,7 @@ use gtk::{gio, glib};
 use serde_json::{Value, json};
 
 use crate::actions::Actions;
-use crate::sheets::{Response, Sheet, row};
+use crate::sheets::{Response, Sheet, Style, row};
 
 /// GitHub のリポジトリ（ホスト、持ち主、名前）。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1060,8 +1060,14 @@ pub fn create_pull_request(actions: &Rc<Actions>, branch: String, pushed: bool) 
         }
         match result {
             Ok(url) => {
+                // 済んだことの知らせなので、閉じるボタンは Close（macOS 版と同じ）。
                 let sheet = Sheet::new(window.as_ref(), &tr!("Pull Request Created"), &url);
-                sheet.buttons(&tr!("Open in Browser"), false, None);
+                sheet.button(&tr!("Close"), Response::Cancel, None);
+                sheet.button(
+                    &tr!("Open in Browser"),
+                    Response::Ok,
+                    Some(Style::Suggested),
+                );
                 if sheet.run().await == Response::Ok {
                     open_uri(window.as_ref(), &url);
                 }
