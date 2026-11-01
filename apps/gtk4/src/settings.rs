@@ -460,6 +460,7 @@ pub fn show(near: &impl IsA<gtk::Widget>) {
             settings.load();
         }
         crate::sshhosts::reload_shown();
+        join_application(&w, near);
         w.present();
         return;
     }
@@ -741,10 +742,27 @@ pub fn show(near: &impl IsA<gtk::Widget>) {
         if w > 0 && h > 0 {
             set_string(WINDOW_SIZE, &format!("{w}x{h}"));
         }
+        // 隠すだけなので、アプリの窓から外す（ほかに窓がなければ、Activity と同じくアプリを終える）。
+        window.set_application(None::<&gtk::Application>);
         glib::Propagation::Proceed
     });
     WINDOW.with(|w| w.replace(window.downgrade()));
+    join_application(&window, near);
     window.present();
+}
+
+/// 出している間はアプリの窓にする: 開いたリポジトリの窓を閉じても、Settings とアプリが続く（macOS 版と同じ）。
+fn join_application(window: &gtk::Window, near: &impl IsA<gtk::Widget>) {
+    let app = near
+        .root()
+        .and_downcast::<gtk::Window>()
+        .and_then(|w| w.application())
+        .or_else(|| gio::Application::default().and_downcast::<gtk::Application>());
+    if let Some(app) = app
+        && window.application().as_ref() != Some(&app)
+    {
+        window.set_application(Some(&app));
+    }
 }
 
 /// 出ている設定の窓（撮るときに使う）。
