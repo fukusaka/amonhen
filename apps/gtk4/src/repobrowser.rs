@@ -1749,7 +1749,13 @@ impl Browser {
                     .hexpand(true)
                     .build();
                 sheet.add(&entry);
-                sheet.buttons("OK", false, Some(&tr!("Choose…")));
+                let ok = sheet.buttons("OK", false, Some(&tr!("Choose…")));
+                // ホストとパスがそろうまで OK を押せない（macOS 版と同じ）。
+                let check = move |e: &gtk::Entry| {
+                    ok.set_sensitive(bookmarks::is_connection(e.text().trim()));
+                };
+                check(&entry);
+                entry.connect_changed(check);
                 entry.grab_focus();
                 let response = sheet.run().await;
                 let location = entry.text().trim().to_owned();
@@ -1789,9 +1795,11 @@ impl Browser {
                         };
                     }
                     Response::Ok => {
-                        if !amonhen_remote::location::is_remote(&location) {
+                        // Enter は押せない OK でも届くので、ここでも確かめる（書いたものは残して聞き直す）。
+                        if !bookmarks::is_connection(&location) {
                             b.root.error_bell();
-                            return;
+                            initial = location;
+                            continue;
                         }
                         bookmarks::add(&location, b.selected_group().as_deref());
                         b.open_location(&location, true);
