@@ -849,6 +849,15 @@ pub fn show_home(app: &gtk::Application, host: Option<Rc<RepoWindow>>) -> Rc<Rep
         primary.set_label("≡");
     }
     tab.header.pack_end(&primary);
+    // 開くときに、View > Show Tab Bar の名前を合わせる（リポジトリのタブと同じく、帯を出していれば Hide Tab Bar）。
+    crate::appmenu::retitle_on_show_with(&primary, |button, model| {
+        let Some(window) = button.root().and_downcast::<gtk::ApplicationWindow>() else {
+            return;
+        };
+        crate::menu::retitle(model, &|action| {
+            (action == "win.toggle-tab-bar").then(|| tab_bar_title(&window))
+        });
+    });
     // 開いたリポジトリは、このタブの場所に置いて、このタブを閉じる（ページがそのリポジトリになる）。
     let (a, t) = (app.clone(), Rc::downgrade(&tab));
     let open: crate::repobrowser::Open = Rc::new(move |location, place| {

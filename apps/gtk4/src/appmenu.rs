@@ -586,23 +586,37 @@ pub fn install(parts: Parts) -> Buttons {
 /// メニューを開くたびに作り直すボタン（`set_create_popup_func` で `set_menu_model` する Commit ▾）は
 /// そのたびに新しい popover になるので、popover が替わったら付け直し、名前は開いたときのメニューで合わせる。
 pub fn retitle_on_show(button: &gtk::MenuButton, actions: &Rc<Actions>) {
-    fn hook(button: &gtk::MenuButton, actions: &std::rc::Weak<Actions>) {
+    let actions = Rc::downgrade(actions);
+    retitle_on_show_with(button, move |_, model| {
+        if let Some(actions) = actions.upgrade() {
+            actions.retitle(model);
+        }
+    });
+}
+
+/// `retitle_on_show` の、名前の合わせ方を渡す形（`Actions` のないタブ。Repositories のページ）。
+pub fn retitle_on_show_with(
+    button: &gtk::MenuButton,
+    retitle: impl Fn(&gtk::MenuButton, &gio::MenuModel) + 'static,
+) {
+    type Retitle = Rc<dyn Fn(&gtk::MenuButton, &gio::MenuModel)>;
+    fn hook(button: &gtk::MenuButton, retitle: &Retitle) {
         let Some(popover) = button.popover() else {
             return;
         };
-        let (button, actions) = (button.downgrade(), actions.clone());
+        let (button, retitle) = (button.downgrade(), retitle.clone());
         popover.connect_show(move |_| {
-            let (Some(button), Some(actions)) = (button.upgrade(), actions.upgrade()) else {
+            let Some(button) = button.upgrade() else {
                 return;
             };
             if let Some(model) = button.menu_model() {
-                actions.retitle(&model);
+                retitle(&button, &model);
             }
         });
     }
-    let actions = Rc::downgrade(actions);
-    hook(button, &actions);
-    button.connect_notify_local(Some("popover"), move |button, _| hook(button, &actions));
+    let retitle: Retitle = Rc::new(retitle);
+    hook(button, &retitle);
+    button.connect_notify_local(Some("popover"), move |button, _| hook(button, &retitle));
 }
 
 /// テーマにアイコンがあればアイコン、なければ文字（macOS の GTK などは GNOME のアイコンを持たない）。
