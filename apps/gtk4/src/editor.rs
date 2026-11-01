@@ -198,10 +198,14 @@ pub fn settings_row() -> gtk::Box {
             crate::settings::set_string(KEY, &value);
             return;
         }
-        // 選んでいる間も、今の値を出しておく（選んだら変える）。
-        f.set(true);
-        fill();
-        f.set(false);
+        // 選んでいる間も、今の値を出しておく（選んだら変える）。選んだ通知の中で model を替えると GTK の一覧が
+        // 固まるので、通知が終わってから替える。
+        let (f2, fill2) = (f.clone(), fill.clone());
+        glib::idle_add_local_once(move || {
+            f2.set(true);
+            fill2();
+            f2.set(false);
+        });
         let (f, fill) = (f.clone(), fill.clone());
         let parent = d.root().and_downcast::<gtk::Window>();
         let dialog = gtk::FileDialog::builder()
