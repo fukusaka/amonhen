@@ -2220,36 +2220,10 @@ fn build_tab(
                             stale.set(true);
                         }
                     }
-                    Event::Opened(repo) => {
+                    Event::Opened => {
                         content.set_visible_child_name("repository");
                         if !tabs::is_check_run() {
                             repos::record(&opened_path);
-                        }
-                        // daemon・SSH 越しで初めての History を読む間（キャッシュがなく、まだ何も出せないとき）は、
-                        // 受け取った量を出す（macOS 版と同じ）。
-                        if repo.connection_state().is_some() {
-                            let (st, v) = (status.downgrade(), view.downgrade());
-                            glib::timeout_add_local(
-                                std::time::Duration::from_millis(250),
-                                move || {
-                                    let (Some(st), Some(v)) = (st.upgrade(), v.upgrade()) else {
-                                        return glib::ControlFlow::Break;
-                                    };
-                                    if v.current().is_some() || !st.is_visible() {
-                                        return glib::ControlFlow::Break;
-                                    }
-                                    match repo.connection_state() {
-                                        Some(c) if c.closed.is_none() => {
-                                            st.set_text(&tr!(
-                                                "Loading History… {size} received",
-                                                size = glib::format_size(c.received)
-                                            ));
-                                            glib::ControlFlow::Continue
-                                        }
-                                        _ => glib::ControlFlow::Break,
-                                    }
-                                },
-                            );
                         }
                     }
                     Event::OpenFailed(e) => {
@@ -2665,7 +2639,7 @@ enum Event {
     Timing(&'static str, f64),
     Failed(String),
     /// リポジトリを開けた（つながった）。
-    Opened(Arc<Repository>),
+    Opened,
     /// リポジトリを開けなかった（つなげなかった）。
     OpenFailed(String),
     /// mailmap（`.mailmap`・`log.mailmap`・`mailmap.file`）が変わった（作者名を出し直す）。
@@ -2786,7 +2760,7 @@ fn load(
             return;
         }
     };
-    let _ = tx.send_blocking(Event::Opened(repo.clone()));
+    let _ = tx.send_blocking(Event::Opened);
     // Settings > Performance: commit-graph がなければ書き出し、あれば増えた分を書き足す（daemon・SSH 越しなら
     // 向こうで。macOS 版と同じ）。fetch・pull の後は `CommitGraph` が書き足す。
     if settings::bool(settings::WRITE_COMMIT_GRAPH) {
