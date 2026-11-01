@@ -629,9 +629,17 @@ fn build_tab(
         .build();
     let status = gtk::Label::new(Some(&tr!("Loading History…")));
     status.add_css_class("dim-label");
+    // daemon・SSH 越しに初めて読むときは、受け取った量と回る印を添える（macOS 版と同じ）。
+    let spinner = gtk::Spinner::new();
+    spinner.set_visible(false);
+    let loading = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    loading.set_halign(gtk::Align::Center);
+    loading.set_valign(gtk::Align::Center);
+    loading.append(&spinner);
+    loading.append(&status);
     let overlay = gtk::Overlay::new();
     overlay.set_child(Some(&scrolled));
-    overlay.add_overlay(&status);
+    overlay.add_overlay(&loading);
     // History の検索の欄（History の上に出す）。
     let search = Rc::new(search::Search::new(&view));
     let history_column = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -1520,6 +1528,8 @@ fn build_tab(
         #[weak]
         status,
         #[weak]
+        spinner,
+        #[weak]
         subtitle,
         async move {
             let mut first = true;
@@ -1529,6 +1539,8 @@ fn build_tab(
                 match event {
                     Event::History(repo, history) => {
                         status.set_visible(false);
+                        spinner.stop();
+                        spinner.set_visible(false);
                         worktrees.set_opened(repo.clone());
                         // Working Copy・操作・Reflog は書き込む先の worktree のもの。
                         let editing = worktrees.editing_repo().unwrap_or_else(|| repo.clone());
@@ -2133,6 +2145,17 @@ fn build_tab(
                         activity::record(&amonhen_model::i18n::translate(metric), ms)
                     }
                     Event::Reload => reload(),
+                    // まだ何も出せていない間だけ（キャッシュがあれば差分だけで済み、すぐ終わる）。
+                    Event::Received(bytes) => {
+                        if view.current().is_none() && status.is_visible() {
+                            status.set_text(&tr!(
+                                "Loading History… {size} received",
+                                size = glib::format_size(bytes)
+                            ));
+                            spinner.set_visible(true);
+                            spinner.start();
+                        }
+                    }
                     // History は作り直さず、行と詳細を読み直す（macOS 版の `checkMailmap`）。
                     Event::MailmapChanged => {
                         view.reload_rows();
@@ -2177,6 +2200,8 @@ fn build_tab(
                         }
                     }
                     Event::Failed(e) => {
+                        spinner.stop();
+                        spinner.set_visible(false);
                         status.set_text(&e);
                         status.set_visible(true);
                         if (args.snapshot.is_some() || args.measure_scroll)
@@ -2568,6 +2593,8 @@ enum Event {
     OpenFailed(String),
     /// mailmap（`.mailmap`・`log.mailmap`・`mailmap.file`）が変わった（作者名を出し直す）。
     MailmapChanged,
+    /// daemon・SSH 越しに初めて読んでいる間の、受け取ったバイト数。
+    Received(u64),
 }
 
 fn repo_name(repo: &Repository) -> String {
@@ -2665,12 +2692,35 @@ fn load(
         eprintln!("History の並び順を変えられない: {e}");
     }
     // 前回の History をすぐ出してから、最新にする。
-    if let Some(cached) = repo.load_cached_history() {
+    let cached = repo.load_cached_history();
+    let has_cache = cached.is_some();
+    if let Some(cached) = cached {
         let _ = tx.send_blocking(Event::History(repo.clone(), cached));
+    }
+    // daemon・SSH 越しでキャッシュがなければ、読み終えるまで受け取った量を知らせる（数十 MB で数秒かかる）。
+    let receiving = Arc::new(std::sync::atomic::AtomicBool::new(
+        !has_cache && repo.connection_state().is_some(),
+    ));
+    if receiving.load(std::sync::atomic::Ordering::Relaxed) {
+        let (repo, tx, receiving) = (repo.clone(), tx.clone(), receiving.clone());
+        std::thread::spawn(move || {
+            while receiving.load(std::sync::atomic::Ordering::Relaxed) {
+                std::thread::sleep(std::time::Duration::from_millis(250));
+                let Some(state) = repo.connection_state() else {
+                    return;
+                };
+                if !receiving.load(std::sync::atomic::Ordering::Relaxed)
+                    || tx.send_blocking(Event::Received(state.received)).is_err()
+                {
+                    return;
+                }
+            }
+        });
     }
     let status = |repo: &Arc<Repository>| reload_status(repo, &tx);
     let reload = |repo: &Arc<Repository>| reload_history(repo, &tx);
     reload(&repo);
+    receiving.store(false, std::sync::atomic::Ordering::Relaxed);
     status(&repo);
     // 最後に見た mailmap の指紋（変わったら作者名を出し直す）。
     let mut mailmap = repo.mailmap_fingerprint();

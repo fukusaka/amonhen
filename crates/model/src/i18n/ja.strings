@@ -402,6 +402,7 @@
 
 /* GTK4 の FE */
 "Loading History…" = "History を読み込んでいます…";
+"Loading History… {size} received" = "History を読み込んでいます… {size} 受信";
 "Blame at {commit}" = "{commit} の時点で Blame";
 "Load diff" = "差分の読み込み";
 "Reload History" = "History の読み直し";
