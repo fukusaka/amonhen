@@ -120,7 +120,9 @@ impl MessageAids {
             let Some(this) = w.upgrade() else {
                 return glib::Propagation::Proceed;
             };
-            if state != gtk::gdk::ModifierType::ALT_MASK {
+            // Caps Lock などは見ない（macOS 版も ⌥ を含むかだけを見る）。
+            let mods = state & gtk::accelerator_get_default_mod_mask();
+            if mods != gtk::gdk::ModifierType::ALT_MASK {
                 return glib::Propagation::Proceed;
             }
             let step = match key {
