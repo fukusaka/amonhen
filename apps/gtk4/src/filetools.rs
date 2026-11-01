@@ -307,7 +307,11 @@ fn show_blame(
         let Some(row) = r.get(position as usize) else {
             return;
         };
-        if let Some(id) = Oid::from_hex(&c[row.commit].0) {
+        // まだコミットしていない行（ID がすべて 0）は History に出せない（macOS 版と同じく何もしない）。
+        let oid = &c[row.commit].0;
+        if oid.bytes().any(|b| b != b'0')
+            && let Some(id) = Oid::from_hex(oid)
+        {
             on_commit(id);
         }
     });
