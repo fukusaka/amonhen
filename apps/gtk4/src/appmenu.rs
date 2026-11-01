@@ -432,6 +432,8 @@ pub fn install_app(app: &gtk::Application) {
         let weak = app.downgrade();
         quit.connect_activate(move |_, _| {
             if let Some(app) = weak.upgrade() {
+                // 少し待ってから書く下書きを、終える前に書く。
+                crate::commitmsg::flush_all();
                 app.quit();
             }
         });

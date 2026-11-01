@@ -19,6 +19,23 @@ use crate::menu::{Item, action};
 /// 最近のコミット（メッセージ、作者、メール）。
 type Recent = Vec<(String, String, String)>;
 
+thread_local! {
+    /// 開いている入力欄（終えるときに、待っている下書きを書く）。
+    static OPEN: RefCell<Vec<std::rc::Weak<MessageAids>>> = RefCell::default();
+}
+
+/// 待っている下書きをすべてすぐ書く（アプリを終えるとき。少し待つ間に終えても、最後に打った字を失わない）。
+pub fn flush_all() {
+    let open: Vec<Rc<MessageAids>> = OPEN.with(|o| {
+        let mut o = o.borrow_mut();
+        o.retain(|w| w.strong_count() > 0);
+        o.iter().filter_map(std::rc::Weak::upgrade).collect()
+    });
+    for aids in open {
+        aids.flush_draft();
+    }
+}
+
 const TYPES: [&str; 11] = [
     "feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "ci", "chore", "revert",
 ];
@@ -80,6 +97,11 @@ impl MessageAids {
             before_recall: RefCell::default(),
             quiet: Cell::new(false),
             unsaved_draft: RefCell::default(),
+        });
+        OPEN.with(|o| {
+            let mut o = o.borrow_mut();
+            o.retain(|w| w.strong_count() > 0);
+            o.push(Rc::downgrade(&this));
         });
         let w = Rc::downgrade(&this);
         this.history.connect_clicked(move |b| {
@@ -192,7 +214,7 @@ impl MessageAids {
         });
     }
 
-    /// 待っている下書きを書く。空なら鍵ごと消す（使わなくなった鍵を設定のファイルに残さない）。
+    /// 待っている下書きを書く（タブ・窓を閉じたら `Drop` でも）。空なら鍵ごと消す（使わなくなった鍵を設定のファイルに残さない）。
     fn flush_draft(&self) {
         let Some((key, value)) = self.unsaved_draft.take() else {
             return;
@@ -619,5 +641,12 @@ impl MessageAids {
             // 作り直したメニューの項目に、ツールチップを付ける（新しいメニューを出すたび）。
             crate::menu::tooltips_on_show(button);
         });
+    }
+}
+
+/// タブ・窓を閉じたら、待っている下書きをすぐ書く。
+impl Drop for MessageAids {
+    fn drop(&mut self) {
+        self.flush_draft();
     }
 }
