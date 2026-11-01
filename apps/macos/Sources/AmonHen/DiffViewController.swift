@@ -2277,6 +2277,11 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             let diff = try? await Task.detached(priority: .userInitiated) { try changes.diff(at: index) }.value
             guard request == self.request else { return }
             FrameProfile.add("select: file diff (FFI)", CACurrentMediaTime() - started)
+            // 読めなければ、空の本文ではなくそう出す。
+            guard let diff else {
+                diffView.show(nil, message: L("Couldn’t load the diff"))
+                return
+            }
             FrameProfile.measure("select: diff draw") { showFileDiff(diff) }
             FrameProfile.add("select: → diff shown", CACurrentMediaTime() - selectedAt)
                 PerformanceLog.record("History: select → diff", ms: (CACurrentMediaTime() - selectedAt) * 1000)
