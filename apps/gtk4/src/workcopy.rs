@@ -118,6 +118,8 @@ struct Inner {
     summary_count: gtk::Label,
     message: gtk::Label,
     diff: DiffWidget,
+    /// 差分の中を探す帯（Ctrl+F）。
+    find: crate::difffind::DiffFind,
     path: gtk::Label,
     lines: gtk::Button,
     discard: gtk::Button,
@@ -382,7 +384,12 @@ impl WorkingCopy {
         let merge_holder = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let right_stack = gtk::Stack::new();
         right_stack.set_vexpand(true);
-        right_stack.add_named(&diff_scrolled, Some("diff"));
+        // 差分の下に検索の帯（macOS 版と同じく、どの差分でも Ctrl+F で探せる）。
+        let diff_area = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        diff_area.append(&diff_scrolled);
+        let (find, find_bar) = crate::difffind::DiffFind::new(&diff, &diff_area);
+        diff_area.append(&find_bar);
+        right_stack.add_named(&diff_area, Some("diff"));
         right_stack.add_named(&merge_holder, Some("merge"));
         right.append(&right_stack);
 
@@ -419,6 +426,7 @@ impl WorkingCopy {
             summary_count,
             message,
             diff,
+            find,
             path,
             lines,
             discard,
@@ -1616,6 +1624,7 @@ impl Inner {
                     this.conflict_buttons.set_visible(false);
                     this.current.replace(Some(working));
                     this.diff.show_working(view, same, checks);
+                    this.find.refresh();
                     if let Some(row) = this.toggle_once.take() {
                         Inner::set_rows(&this, vec![row as usize], None);
                     }

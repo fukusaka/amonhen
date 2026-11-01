@@ -351,6 +351,8 @@ pub fn file_history(
         .build();
     window.set_transient_for(Some(parent));
     window.set_destroy_with_parent(true);
+    // タブの窓ではないので、Ctrl+F・Ctrl+G は自分で差分の検索の帯に回す。
+    crate::difffind::add_shortcuts(&window);
     window.present();
     load_file_history(&window, parent, repo, path.to_owned(), on_commit);
 }
@@ -626,7 +628,15 @@ fn show_file_history(
         .hscrollbar_policy(gtk::PolicyType::Never)
         .build();
     let diff = DiffWidget::default();
-    let right = gtk::ScrolledWindow::builder().child(&diff).build();
+    let scrolled = gtk::ScrolledWindow::builder()
+        .child(&diff)
+        .vexpand(true)
+        .build();
+    // 差分の下に検索の帯（Ctrl+F。macOS 版と同じく、どの差分でも探せる）。
+    let right = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    right.append(&scrolled);
+    let (find, find_bar) = crate::difffind::DiffFind::new(&diff, &right);
+    right.append(&find_bar);
     let split = gtk::Paned::new(gtk::Orientation::Horizontal);
     split.set_start_child(Some(&left));
     split.set_end_child(Some(&right));
@@ -652,6 +662,7 @@ fn show_file_history(
             d.clone(),
             generation.clone(),
         );
+        let find = find.clone();
         glib::spawn_future_local(async move {
             let view = gio::spawn_blocking(move || {
                 let changes = repo.commit_changes(&id).map_err(|e| e.to_string())?;
@@ -670,7 +681,10 @@ fn show_file_history(
                 return;
             }
             match view {
-                Ok(Ok(view)) => diff.show_plain(view),
+                Ok(Ok(view)) => {
+                    diff.show_plain(view);
+                    find.refresh();
+                }
                 Ok(Err(e)) => {
                     eprintln!("差分を読めない: {e}");
                     diff.show_message(&tr!("Can’t read the diff"));

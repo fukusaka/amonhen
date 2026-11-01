@@ -22,6 +22,7 @@ mod connecting;
 mod density;
 mod details;
 mod diff;
+mod difffind;
 mod editor;
 mod environment;
 mod filepicker;
