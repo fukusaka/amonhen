@@ -35,7 +35,7 @@ pub fn menu(
     let mut items = Vec::new();
     let (a, h) = (actions.clone(), hex.clone());
     items.push(menu::action(
-        format!("New Branch at {short}…"),
+        crate::titles::new_branch_from(&short),
         move || {
             refops::ask_new_branch(&a, &h);
         },
