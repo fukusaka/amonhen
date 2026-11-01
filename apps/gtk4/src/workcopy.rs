@@ -89,13 +89,16 @@ struct Inner {
     entries: RefCell<Vec<StatusEntry>>,
     /// 一覧の行ごとの、`entries` の番号（ディレクトリの行は None）。
     row_entries: RefCell<Vec<Option<usize>>>,
-    /// 一覧の行ごとの、木の深さと、ディレクトリの行ならそのパス（← で親に移る・畳むのに使う）。
-    row_tree: RefCell<Vec<(usize, Option<String>)>>,
-    /// 作った行（ファイルはパス、ディレクトリは `\0` + パスごと）と、作ったときの中身。中身が変わらなければ
-    /// 作り直さずに使う（変更が何千もあっても、status が届くたびや絞り込みのたびに作り直さない）。
-    row_cache: RefCell<HashMap<String, (RowKey, gtk::ListBoxRow)>>,
-    /// 一覧に今入れている行（並びのまま）。
-    shown_rows: RefCell<Vec<gtk::ListBoxRow>>,
+    /// 一覧の行（並びのまま。`store` と同じ）。部品は見えている行の分だけ作り、使い回す（変更が何千もあっても、
+    /// 最初に出すときも status が届くたびも、全部の行の部品は作らない）。
+    rows: RefCell<Vec<Row>>,
+    /// 一覧の行の中身（`Row` を入れた BoxedAnyObject）と、その選択。
+    store: gio::ListStore,
+    selection: gtk::MultiSelection,
+    /// 作った行の部品（行の部品の箱ごと）。行数・コンフリクトの状態が届いたら、見えている行だけ直す。
+    cells: RefCell<HashMap<gtk::Box, Rc<RowCell>>>,
+    /// 選び直しを待っている（選択の変化は、フォーカスが移り終えてから読む）世代。作り直したら捨てる。
+    follow: Cell<u64>,
     layout: Cell<Layout>,
     /// 木で畳んでいるディレクトリ。
     collapsed: RefCell<std::collections::HashSet<String>>,
@@ -103,13 +106,9 @@ struct Inner {
     all_entries: RefCell<Vec<StatusEntry>>,
     /// ファイルごとの行数（追加, 削除）。HEAD と作業ツリーの比べ。
     stats: RefCell<HashMap<String, LineCounts>>,
-    /// 一覧のファイルの行の、行数を出す場所（パスごと）。行数が届いたら、一覧を作り直さずにここに入れる。
-    count_boxes: RefCell<HashMap<String, gtk::Box>>,
     /// 内容のコンフリクトのファイルに残っているマーカーの数と、rerere が解決を当てたか（パスごと）。
     conflict_states: RefCell<HashMap<String, ConflictState>>,
-    /// 一覧のコンフリクトの行の、印を出す場所（パスごと）。状態が届いたら、一覧を作り直さずに直す。
-    conflict_marks: RefCell<HashMap<String, ConflictMark>>,
-    list: gtk::ListBox,
+    list: gtk::ListView,
     /// 一覧が空のときの文（変更がない・絞り込みに合うファイルがない）。
     empty: gtk::Label,
     all: gtk::CheckButton,
@@ -169,13 +168,25 @@ struct ConflictState {
     rerere: bool,
 }
 
-/// 一覧のコンフリクトの行の、状態の印・注記と、印がないときの注記（Flat の親のディレクトリ）。
-struct ConflictMark {
-    row: gtk::ListBoxRow,
+/// 一覧の 1 行の部品（使い回す。出している行は `item`）。
+struct RowCell {
+    item: RefCell<Option<Row>>,
+    list_item: glib::WeakRef<gtk::ListItem>,
+    line: gtk::Box,
+    /// 木のディレクトリの ▸・▾（クリックで畳む・開く）。
+    arrow: gtk::Label,
+    check: gtk::CheckButton,
+    folder: crate::icon::Icon,
     state: gtk::Label,
+    name: gtk::Label,
+    /// 名前の後ろの薄い注記（Flat の親のディレクトリ、コンフリクトの「rerere」「no markers」）。
     detail: gtk::Label,
-    plain_detail: String,
-    tip: String,
+    counts: gtk::Box,
+    discard: gtk::Button,
+    /// 変更を捨てるボタンを、マウスを載せたときに出すか（コンフリクトと、stage 済みだけのファイルにはない）。
+    can_discard: Cell<bool>,
+    /// 中身を入れている間（チェックの変化を操作として扱わない）。
+    binding: Cell<bool>,
 }
 
 /// マージエディタの鍵: worktree（作業ツリーの場所）とパス。
@@ -310,22 +321,27 @@ impl WorkingCopy {
         let filter = gtk::SearchEntry::builder()
             .placeholder_text(tr!("Filter by path"))
             .build();
-        let list = gtk::ListBox::new();
-        // 何行も選べる（Space・Enter で選んだファイルをまとめて含める・外す。macOS 版と同じ）。
-        list.set_selection_mode(gtk::SelectionMode::Multiple);
-        // 1 回のクリックで「選んで activate」にすると、Multiple では選んだ行に足すだけになる（Shift の範囲・
-        // ふつうのクリックで選び直す、が効かない）。クリックは選ぶだけにする。
-        list.set_activate_on_single_click(false);
+        // 見えている行だけに部品を作る（変更が何千もあっても、最初に出すときに固まらない）。何行も選べる（Space・
+        // Enter で選んだファイルをまとめて含める・外す。macOS 版と同じ）。クリックは選ぶだけ（activate しない）。
+        let store = gio::ListStore::new::<glib::BoxedAnyObject>();
+        let selection = gtk::MultiSelection::new(Some(store.clone()));
+        let factory = gtk::SignalListItemFactory::new();
+        let list = gtk::ListView::new(Some(selection.clone()), Some(factory.clone()));
         list.add_css_class("navigation-sidebar");
         let empty = gtk::Label::new(None);
         empty.add_css_class("dim-label");
         empty.set_margin_top(12);
-        list.set_placeholder(Some(&empty));
+        empty.set_valign(gtk::Align::Start);
+        empty.set_can_target(false);
         let list_scrolled = gtk::ScrolledWindow::builder()
             .child(&list)
             .vexpand(true)
             .hscrollbar_policy(gtk::PolicyType::Never)
             .build();
+        // 一覧が空のときの文は、一覧の上に重ねる（GtkListView には placeholder がない）。
+        let list_area = gtk::Overlay::new();
+        list_area.set_child(Some(&list_scrolled));
+        list_area.add_overlay(&empty);
 
         // 左の列は上下 2 段: 上にコミットの入力、下にファイルの一覧。間の仕切りをドラッグするとメッセージの欄の
         // 高さが変わり、位置は覚えておく。窓の高さが変わったときは、ファイルの一覧の側が伸び縮みする（macOS 版と同じ）。
@@ -341,7 +357,7 @@ impl WorkingCopy {
         list_scrolled.set_min_content_height(100);
         files_part.append(&list_header);
         files_part.append(&filter);
-        files_part.append(&list_scrolled);
+        files_part.append(&list_area);
         let left = gtk::Paned::new(gtk::Orientation::Vertical);
         left.set_margin_start(10);
         left.set_margin_end(10);
@@ -425,16 +441,16 @@ impl WorkingCopy {
             status: RefCell::default(),
             entries: RefCell::default(),
             row_entries: RefCell::default(),
-            row_tree: RefCell::default(),
-            row_cache: RefCell::default(),
-            shown_rows: RefCell::default(),
+            rows: RefCell::default(),
+            store,
+            selection,
+            cells: RefCell::default(),
+            follow: Cell::new(0),
             layout: Cell::new(Layout::List),
             collapsed: RefCell::default(),
             all_entries: RefCell::default(),
             stats: RefCell::default(),
-            count_boxes: RefCell::default(),
             conflict_states: RefCell::default(),
-            conflict_marks: RefCell::default(),
             list,
             empty,
             all,
@@ -471,6 +487,7 @@ impl WorkingCopy {
             on_file_menu: RefCell::default(),
         });
         Inner::connect(&inner);
+        Inner::install_factory(&inner, &factory);
         let weak = Rc::downgrade(&inner);
         suggest.connect_clicked(move |_| {
             if let Some(this) = weak.upgrade() {
@@ -653,32 +670,22 @@ impl WorkingCopy {
 impl Inner {
     fn connect(this: &Rc<Self>) {
         let weak = Rc::downgrade(this);
-        this.list.connect_selected_rows_changed(move |list| {
+        this.selection.connect_selection_changed(move |_, _, _| {
             let Some(this) = weak.upgrade() else { return };
             if this.rebuilding.get() {
                 return;
             }
-            // 差分に出すのは、クリックした（フォーカスのある）行。なければ選んだ最初の行。
-            let selected = list.selected_rows();
-            let focused = list
-                .focus_child()
-                .and_downcast::<gtk::ListBoxRow>()
-                .filter(|r| r.is_selected());
-            let Some(row) = focused.or_else(|| selected.first().cloned()) else {
-                return;
-            };
-            let index = this
-                .row_entries
-                .borrow()
-                .get(row.index() as usize)
-                .copied()
-                .flatten();
-            let entry = index.and_then(|i| this.entries.borrow().get(i).cloned());
-            if let Some(entry) = entry {
-                let same = this.selected.borrow().as_deref() == Some(entry.path.as_str());
-                this.selected.replace(Some(entry.path.clone()));
-                Inner::load_diff(&this, entry, same);
-            }
+            // クリック・キーでフォーカスが移り終えてから、どの行かを読む（続けて変わったら 1 回だけ）。
+            let generation = this.follow.get() + 1;
+            this.follow.set(generation);
+            let weak = Rc::downgrade(&this);
+            glib::idle_add_local_once(move || {
+                if let Some(this) = weak.upgrade()
+                    && this.follow.get() == generation
+                {
+                    Inner::follow_selection(&this);
+                }
+            });
         });
         let weak = Rc::downgrade(this);
         this.all.connect_toggled(move |all| {
@@ -1166,116 +1173,34 @@ impl Inner {
         });
         // ディレクトリの行を選んでいたら、作り直した後もその行に戻す（畳む・開く、Space で含める）。
         let kept_dir = this
-            .list
-            .focus_child()
-            .and_downcast::<gtk::ListBoxRow>()
-            .filter(|r| r.is_selected())
-            .and_then(|r| {
-                this.row_tree
-                    .borrow()
-                    .get(r.index() as usize)
-                    .and_then(|(_, d)| d.clone())
+            .focused_position()
+            .filter(|&p| this.selection.is_selected(p as u32))
+            .and_then(|p| match this.rows.borrow().get(p) {
+                Some(Row::Dir { path, .. }) => Some(path.clone()),
+                _ => None,
             });
         this.rebuilding.set(true);
-        // 前に作った行のうち、中身が同じものはそのまま使う。
-        let mut cache = this.row_cache.take();
-        let mut rows = Vec::new();
-        let mut row_entries = Vec::new();
-        let mut row_tree = Vec::new();
-        let mut used = std::collections::HashSet::new();
-        match this.layout.get() {
-            Layout::Tree => {
-                // 畳んだディレクトリの中（それより深い行）は飛ばす。
-                let mut folded_at: Option<usize> = None;
-                for item in tree(&entries) {
-                    let depth = item.depth();
-                    if folded_at.is_some_and(|d| depth > d) {
-                        continue;
-                    }
-                    folded_at = None;
-                    match item {
-                        TreeItem::Dir {
-                            name,
-                            path,
-                            depth,
-                            check,
-                        } => {
-                            let collapsed = this.collapsed.borrow().contains(&path);
-                            if collapsed {
-                                folded_at = Some(depth);
-                            }
-                            let id = format!("\0{path}");
-                            let key = RowKey::Dir(name.clone(), depth, collapsed, check);
-                            let row = match cache.get(&id) {
-                                Some((k, row)) if *k == key => row.clone(),
-                                _ => {
-                                    let row =
-                                        Inner::dir_row(this, &name, &path, depth, collapsed, check);
-                                    cache.insert(id.clone(), (key, row.clone()));
-                                    row
-                                }
-                            };
-                            used.insert(id);
-                            rows.push(row);
-                            row_entries.push(None);
-                            row_tree.push((depth, Some(path)));
-                        }
-                        TreeItem::File { index, depth } => {
-                            rows.push(Inner::cached_row(
-                                this,
-                                &mut cache,
-                                &entries[index],
-                                Layout::Tree,
-                                depth,
-                            ));
-                            row_entries.push(Some(index));
-                            row_tree.push((depth, None));
-                        }
-                    }
-                }
-            }
-            layout => {
-                for (i, entry) in entries.iter().enumerate() {
-                    rows.push(Inner::cached_row(this, &mut cache, entry, layout, 0));
-                    row_entries.push(Some(i));
-                    row_tree.push((0, None));
-                }
-            }
-        }
-        // 変更のなくなったファイルと、出していないディレクトリの行は捨てる（絞り込みで隠したファイルの行は、
-        // 戻したときのために残す）。
-        {
-            let all = this.all_entries.borrow();
-            let paths: std::collections::HashSet<&str> =
-                all.iter().map(|e| e.path.as_str()).collect();
-            let mut gone = Vec::new();
-            cache.retain(|id, _| {
-                let keep = match id.strip_prefix('\0') {
-                    Some(_) => used.contains(id),
-                    None => paths.contains(id.as_str()),
-                };
-                if !keep && !id.starts_with('\0') {
-                    gone.push(id.clone());
-                }
-                keep
-            });
-            let (mut counts, mut marks) = (
-                this.count_boxes.borrow_mut(),
-                this.conflict_marks.borrow_mut(),
-            );
-            for path in gone {
-                counts.remove(&path);
-                marks.remove(&path);
-            }
-        }
-        this.row_cache.replace(cache);
-        // 選び直すので、使い回した行の選択も外す（作り直していたときと同じ）。
-        this.list.unselect_all();
-        sync_rows(&this.list, &this.shown_rows.borrow(), &rows);
-        this.shown_rows.replace(rows);
+        // 待っている選び直しは捨てる（ここで選び直す）。
+        this.follow.set(this.follow.get() + 1);
+        let (rows, row_entries) = {
+            let collapsed = this.collapsed.borrow();
+            list_rows(&entries, this.layout.get(), &collapsed)
+        };
+        // 中身の変わった所だけを入れ替える（変わらない行は部品も選択もそのまま）。
+        let (start, old_end, new_end) = changed_span(&this.rows.borrow(), &rows);
+        let added: Vec<glib::BoxedAnyObject> = rows[start..new_end]
+            .iter()
+            .cloned()
+            .map(glib::BoxedAnyObject::new)
+            .collect();
+        this.rows.replace(rows);
         this.row_entries.replace(row_entries);
-        this.row_tree.replace(row_tree);
+        this.store
+            .splice(start as u32, (old_end - start) as u32, &added);
+        // 選び直すので、残った行の選択も外す（作り直していたときと同じ）。
+        this.selection.unselect_all();
         // 空のときの文（macOS 版と同じ）。
+        this.empty.set_visible(this.store.n_items() == 0);
         this.empty
             .set_text(&if this.all_entries.borrow().is_empty() {
                 tr!("No changes")
@@ -1320,13 +1245,14 @@ impl Inner {
         let index = row_index
             .and_then(|r| this.row_entries.borrow()[r])
             .unwrap_or(index);
-        if let Some(row) = row_index.and_then(|r| this.list.row_at_index(r as i32)) {
-            this.list.select_row(Some(&row));
+        if let Some(row) = row_index {
+            this.selection.select_item(row as u32, true);
             if focused {
-                row.grab_focus();
+                this.list
+                    .scroll_to(row as u32, gtk::ListScrollFlags::FOCUS, None);
             }
             this.rebuilding.set(false);
-            // 選び直しでは `row-selected` を扱わないので、差分は自分で読み直す。
+            // 選び直しでは選択の変化を扱わないので、差分は自分で読み直す。
             let entry = this.entries.borrow()[index].clone();
             let same = this.selected.borrow().as_deref() == Some(entry.path.as_str());
             this.selected.replace(Some(entry.path.clone()));
@@ -1344,24 +1270,359 @@ impl Inner {
             }
         }
         // 選んでいたディレクトリの行があれば、そこを選び直す（差分は選んでいたファイルのまま）。
-        let dir_row = kept_dir
-            .and_then(|dir| {
-                this.row_tree
-                    .borrow()
-                    .iter()
-                    .position(|(_, d)| d.as_deref() == Some(dir.as_str()))
-            })
-            .and_then(|r| this.list.row_at_index(r as i32));
+        let dir_row = kept_dir.and_then(|dir| {
+            this.rows
+                .borrow()
+                .iter()
+                .position(|r| matches!(r, Row::Dir { path, .. } if *path == dir))
+        });
         if let Some(row) = dir_row {
             this.rebuilding.set(true);
-            this.list.unselect_all();
-            this.list.select_row(Some(&row));
+            this.selection.select_item(row as u32, true);
             if focused {
-                row.grab_focus();
+                this.list
+                    .scroll_to(row as u32, gtk::ListScrollFlags::FOCUS, None);
             }
             this.rebuilding.set(false);
         }
         this.update_buttons();
+    }
+
+    /// 選んだ行が変わった: 差分に出すのは、クリックした（フォーカスのある）行。なければ選んだ最初の行。
+    fn follow_selection(this: &Rc<Self>) {
+        let focused = this
+            .focused_position()
+            .filter(|&p| this.selection.is_selected(p as u32));
+        let first = || {
+            let bits = this.selection.selection();
+            (!bits.is_empty()).then(|| bits.minimum() as usize)
+        };
+        let Some(row) = focused.or_else(first) else {
+            return;
+        };
+        let index = this.row_entries.borrow().get(row).copied().flatten();
+        let entry = index.and_then(|i| this.entries.borrow().get(i).cloned());
+        if let Some(entry) = entry {
+            let same = this.selected.borrow().as_deref() == Some(entry.path.as_str());
+            this.selected.replace(Some(entry.path.clone()));
+            Inner::load_diff(this, entry, same);
+        }
+    }
+
+    /// 一覧でフォーカスのある行（なければ None）。
+    fn focused_position(&self) -> Option<usize> {
+        let focus = self.list.root().and_then(|r| r.focus())?;
+        if &focus == self.list.upcast_ref::<gtk::Widget>() || !focus.is_ancestor(&self.list) {
+            return None;
+        }
+        self.cells.borrow().values().find_map(|cell| {
+            let inside = focus == *cell.line.upcast_ref::<gtk::Widget>()
+                || focus.is_ancestor(&cell.line)
+                || cell.line.is_ancestor(&focus);
+            let position = cell.list_item.upgrade()?.position();
+            (inside && position != gtk::INVALID_LIST_POSITION).then_some(position as usize)
+        })
+    }
+
+    /// 選んでいる行（並びの順）。
+    fn selected_positions(&self) -> Vec<usize> {
+        let bits = self.selection.selection();
+        (0..bits.size())
+            .map(|i| bits.nth(i as u32) as usize)
+            .collect()
+    }
+
+    /// 一覧の行の部品を作る・中身を入れる（見えている行の分だけ。スクロールすると使い回す）。
+    fn install_factory(this: &Rc<Self>, factory: &gtk::SignalListItemFactory) {
+        let weak = Rc::downgrade(this);
+        factory.connect_setup(move |_, item| {
+            let (Some(this), Some(item)) = (weak.upgrade(), item.downcast_ref::<gtk::ListItem>())
+            else {
+                return;
+            };
+            let cell = Inner::new_cell(&this, item);
+            item.set_child(Some(&cell.line));
+            this.cells.borrow_mut().insert(cell.line.clone(), cell);
+        });
+        let weak = Rc::downgrade(this);
+        factory.connect_bind(move |_, item| {
+            let (Some(this), Some(item)) = (weak.upgrade(), item.downcast_ref::<gtk::ListItem>())
+            else {
+                return;
+            };
+            let (Some(line), Some(object)) = (
+                item.child().and_downcast::<gtk::Box>(),
+                item.item().and_downcast::<glib::BoxedAnyObject>(),
+            ) else {
+                return;
+            };
+            let Some(cell) = this.cells.borrow().get(&line).cloned() else {
+                return;
+            };
+            let row = object.borrow::<Row>().clone();
+            cell.item.replace(Some(row));
+            this.fill_cell(&cell);
+        });
+        let weak = Rc::downgrade(this);
+        factory.connect_unbind(move |_, item| {
+            let (Some(this), Some(item)) = (weak.upgrade(), item.downcast_ref::<gtk::ListItem>())
+            else {
+                return;
+            };
+            if let Some(line) = item.child().and_downcast::<gtk::Box>()
+                && let Some(cell) = this.cells.borrow().get(&line)
+            {
+                cell.item.replace(None);
+            }
+        });
+        let weak = Rc::downgrade(this);
+        factory.connect_teardown(move |_, item| {
+            let (Some(this), Some(item)) = (weak.upgrade(), item.downcast_ref::<gtk::ListItem>())
+            else {
+                return;
+            };
+            if let Some(line) = item.child().and_downcast::<gtk::Box>() {
+                this.cells.borrow_mut().remove(&line);
+            }
+        });
+    }
+
+    /// 行の部品: ▸・▾（ディレクトリ）、チェック（次のコミットに含めるか）、フォルダの印、状態の文字、名前、薄い
+    /// 注記、行数、変更を捨てるボタン。どの行を出しているかは押したときに `item` で見る（使い回すので）。
+    fn new_cell(this: &Rc<Self>, list_item: &gtk::ListItem) -> Rc<RowCell> {
+        let arrow = gtk::Label::new(None);
+        arrow.add_css_class("dim-label");
+        let check = gtk::CheckButton::new();
+        let folder = crate::icon::Icon::default();
+        folder.set(crate::icon::Kind::Folder, false);
+        let state = gtk::Label::new(None);
+        state.set_width_chars(2);
+        state.add_css_class("monospace");
+        let name = gtk::Label::new(None);
+        name.set_xalign(0.0);
+        name.set_ellipsize(gtk::pango::EllipsizeMode::Start);
+        let detail = gtk::Label::new(None);
+        detail.set_xalign(0.0);
+        detail.set_ellipsize(gtk::pango::EllipsizeMode::Start);
+        detail.add_css_class("dim-label");
+        detail.add_css_class("caption");
+        // 行数（+ 追加 − 削除）。まだ読めていなければ、届いたときに入れる。
+        let counts = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        let discard = gtk::Button::new();
+        let icon = crate::icon::Icon::default();
+        icon.set(crate::icon::Kind::Undo, false);
+        discard.set_child(Some(&icon));
+        discard.add_css_class("flat");
+        discard.set_tooltip_text(Some(&tr!(
+            "Discard the working tree changes (return to the content of the index)"
+        )));
+        let line = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        for w in [
+            arrow.upcast_ref::<gtk::Widget>(),
+            check.upcast_ref(),
+            folder.upcast_ref(),
+            state.upcast_ref(),
+            name.upcast_ref(),
+            detail.upcast_ref(),
+            counts.upcast_ref(),
+            discard.upcast_ref(),
+        ] {
+            line.append(w);
+        }
+        let cell = Rc::new(RowCell {
+            item: RefCell::default(),
+            list_item: list_item.downgrade(),
+            line,
+            arrow,
+            check,
+            folder,
+            state,
+            name,
+            detail,
+            counts,
+            discard,
+            can_discard: Cell::new(false),
+            binding: Cell::new(false),
+        });
+        reveal_discard(&cell.discard, false);
+        // チェック: ファイルなら含める・外す、ディレクトリなら中のファイル（一覧に出しているもののうち
+        // コンフリクト以外）をまとめて（macOS 版と同じ）。
+        let (weak, c) = (Rc::downgrade(this), Rc::downgrade(&cell));
+        cell.check.connect_toggled(move |_| {
+            let (Some(this), Some(cell)) = (weak.upgrade(), c.upgrade()) else {
+                return;
+            };
+            if this.rebuilding.get() || cell.binding.get() {
+                return;
+            }
+            let item = cell.item.borrow().clone();
+            match item {
+                Some(Row::File { entry, .. }) => Inner::toggle_entry(&this, &entry),
+                Some(Row::Dir { path, check, .. }) => Inner::toggle_dir(&this, &path, check.all()),
+                None => {}
+            }
+        });
+        // ▸・▾ のクリックで畳む・開く（macOS 版の NSOutlineView の三角と同じ）。
+        let click = gtk::GestureClick::new();
+        let (weak, c) = (Rc::downgrade(this), Rc::downgrade(&cell));
+        click.connect_released(move |gesture, _, _, _| {
+            gesture.set_state(gtk::EventSequenceState::Claimed);
+            let (Some(this), Some(cell)) = (weak.upgrade(), c.upgrade()) else {
+                return;
+            };
+            let item = cell.item.borrow().clone();
+            if let Some(Row::Dir {
+                path, collapsed, ..
+            }) = item
+            {
+                Inner::set_collapsed(&this, &path, !collapsed);
+            }
+        });
+        cell.arrow.add_controller(click);
+        // 変更を捨てるボタン（マウスを載せたときだけ出す）。
+        let (weak, c) = (Rc::downgrade(this), Rc::downgrade(&cell));
+        cell.discard.connect_clicked(move |_| {
+            let (Some(this), Some(cell)) = (weak.upgrade(), c.upgrade()) else {
+                return;
+            };
+            let item = cell.item.borrow().clone();
+            if let Some(Row::File { entry, .. }) = item {
+                Inner::discard_file(&this, &entry);
+            }
+        });
+        let motion = gtk::EventControllerMotion::new();
+        let c = Rc::downgrade(&cell);
+        motion.connect_enter(move |_, _, _| {
+            if let Some(cell) = c.upgrade() {
+                reveal_discard(&cell.discard, cell.can_discard.get());
+            }
+        });
+        let c = Rc::downgrade(&cell);
+        motion.connect_leave(move |_| {
+            if let Some(cell) = c.upgrade() {
+                reveal_discard(&cell.discard, false);
+            }
+        });
+        cell.line.add_controller(motion);
+        // 右クリック（macOS 版と同じ）: 含める・外す・捨てる、.gitignore に足す（untracked）、Blame（消した
+        // ファイルにはない）と File History（untracked にはまだ履歴がない）、パスのコピー、ファイルで開く。
+        let menu = gtk::GestureClick::new();
+        menu.set_button(gtk::gdk::BUTTON_SECONDARY);
+        let (weak, c) = (Rc::downgrade(this), Rc::downgrade(&cell));
+        menu.connect_pressed(move |_, _, x, y| {
+            let (Some(this), Some(cell)) = (weak.upgrade(), c.upgrade()) else {
+                return;
+            };
+            let item = cell.item.borrow().clone();
+            if let Some(Row::File { entry, .. }) = item {
+                let items = Inner::file_menu(&this, &entry);
+                crate::menu::popup(cell.line.upcast_ref::<gtk::Widget>(), x, y, items);
+            }
+        });
+        cell.line.add_controller(menu);
+        cell
+    }
+
+    /// 行の部品に、出している行の中身を入れる。
+    fn fill_cell(&self, cell: &RowCell) {
+        let Some(item) = cell.item.borrow().clone() else {
+            return;
+        };
+        cell.binding.set(true);
+        reveal_discard(&cell.discard, false);
+        match item {
+            Row::Dir {
+                name,
+                depth,
+                collapsed,
+                check,
+                ..
+            } => {
+                cell.line.set_margin_start((depth * 16) as i32);
+                cell.arrow.set_text(if collapsed { "▸" } else { "▾" });
+                cell.arrow.set_visible(true);
+                let (all, mixed) = (check.all(), check.mixed());
+                cell.check.set_active(all);
+                cell.check.set_inconsistent(mixed);
+                cell.check.set_visible(true);
+                cell.check.set_sensitive(check.files > 0);
+                cell.check.set_tooltip_text(Some(&check_tip(all, mixed)));
+                cell.folder.set_visible(true);
+                cell.state.set_visible(false);
+                cell.name.set_text(&name);
+                cell.name.set_hexpand(true);
+                cell.detail.set_visible(false);
+                cell.detail.set_hexpand(false);
+                cell.counts.set_visible(false);
+                cell.can_discard.set(false);
+                cell.discard.set_visible(false);
+                cell.line.set_tooltip_text(None);
+            }
+            Row::File {
+                entry,
+                layout,
+                depth,
+            } => {
+                let conflict = entry.kind == StatusKind::Unmerged;
+                cell.line.set_margin_start((depth * 16) as i32);
+                cell.arrow.set_visible(false);
+                cell.folder.set_visible(false);
+                let on = entry.is_staged() && !entry.is_unstaged();
+                let mixed = entry.is_staged() && entry.is_unstaged();
+                cell.check.set_active(on);
+                cell.check.set_inconsistent(mixed);
+                cell.check.set_sensitive(true);
+                // コンフリクトのファイルにはチェックを出さない（index は両方の側で「一部」に見える。macOS 版と同じ）。
+                cell.check.set_visible(!conflict);
+                cell.check
+                    .set_tooltip_text((!conflict).then(|| check_tip(on, mixed)).as_deref());
+                let (letter, css) = state_letter(&entry);
+                cell.state.set_text(&letter);
+                for c in ["error", "success", "accent", "warning"] {
+                    cell.state.remove_css_class(c);
+                }
+                cell.state.add_css_class(css);
+                cell.state.set_visible(true);
+                let (parent, file) = match entry.path.rsplit_once('/') {
+                    Some((p, f)) => (p, f),
+                    None => ("", entry.path.as_str()),
+                };
+                // 名前を変えたファイルのもとのパスは、ツールチップだけに出す（macOS 版と同じ）。
+                cell.name.set_text(match layout {
+                    Layout::List => entry.path.as_str(),
+                    _ => file,
+                });
+                // 名前の後ろの薄い注記: Flat では親のディレクトリ、マーカーの残っていないコンフリクトでは
+                // 「rerere」か「no markers」（macOS 版と同じ）。
+                let plain_detail = if layout == Layout::Flat { parent } else { "" };
+                cell.detail.set_text(plain_detail);
+                cell.detail.set_visible(!plain_detail.is_empty());
+                let flat_parent = layout == Layout::Flat && !parent.is_empty();
+                cell.detail.set_hexpand(flat_parent);
+                cell.name.set_hexpand(!flat_parent);
+                fill_counts(&cell.counts, self.stats.borrow().get(&entry.path).copied());
+                cell.can_discard.set(!conflict && entry.is_unstaged());
+                cell.discard.set_visible(cell.can_discard.get());
+                // パス（名前を変えたファイルはもとのパス → 今のパス。macOS 版と同じ）。
+                let tip = match &entry.orig_path {
+                    Some(orig) => format!("{orig} → {}", entry.path),
+                    None => entry.path.clone(),
+                };
+                cell.line.set_tooltip_text(Some(&tip));
+                if conflict {
+                    self.apply_conflict_state(cell, &entry.path, plain_detail, &tip);
+                }
+            }
+        }
+        cell.binding.set(false);
+    }
+
+    /// 見えている行の中身を入れ直す（行数・コンフリクトの状態が届いたとき。一覧は作り直さない）。
+    fn refresh_cells(&self) {
+        let cells: Vec<Rc<RowCell>> = self.cells.borrow().values().cloned().collect();
+        for cell in cells {
+            self.fill_cell(&cell);
+        }
     }
 
     /// ファイルごとの行数を裏で読み、一覧に出す（数がなくても一覧は先に出す）。
@@ -1387,11 +1648,8 @@ impl Inner {
                 })
                 .collect();
             this.stats.replace(stats);
-            // 一覧と差分は作り直さない（行数の場所を埋めるだけ）。
-            let stats = this.stats.borrow();
-            for (path, counts) in this.count_boxes.borrow().iter() {
-                fill_counts(counts, stats.get(path).copied());
-            }
+            // 一覧と差分は作り直さない（見えている行の行数を埋めるだけ）。
+            this.refresh_cells();
         });
     }
 
@@ -1430,9 +1688,7 @@ impl Inner {
                 return;
             }
             let old = this.conflict_states.replace(states.clone());
-            for (path, mark) in this.conflict_marks.borrow().iter() {
-                this.apply_conflict_state(path, mark);
-            }
+            this.refresh_cells();
             // ほかで書き換えたファイル（マーカーの数が変わった）のマージエディタは、手を付けていなければ読み直す。
             // 前の中身のまま「保存して解決済みにする」と、ほかでした解決をマーカー付きの中身で上書きしてしまう。
             let changed: Vec<String> = states
@@ -1461,7 +1717,8 @@ impl Inner {
     }
 
     /// コンフリクトの行の印: マーカーが残っていなければ、解決できていそうなことを橙の ✓ と短い注記で示す。
-    fn apply_conflict_state(&self, path: &str, mark: &ConflictMark) {
+    /// `plain_detail` は印がないときの注記（Flat の親のディレクトリ）、`tip` は行の説明。
+    fn apply_conflict_state(&self, cell: &RowCell, path: &str, plain_detail: &str, tip: &str) {
         let state = self
             .conflict_states
             .borrow()
@@ -1470,15 +1727,15 @@ impl Inner {
             .filter(|s| s.markers == 0);
         match state {
             Some(state) => {
-                mark.state.set_text("✓");
-                mark.state.remove_css_class("error");
-                mark.state.add_css_class("warning");
-                mark.detail.set_text(&if state.rerere {
+                cell.state.set_text("✓");
+                cell.state.remove_css_class("error");
+                cell.state.add_css_class("warning");
+                cell.detail.set_text(&if state.rerere {
                     "rerere".to_owned()
                 } else {
                     tr!("no markers")
                 });
-                mark.detail.set_visible(true);
+                cell.detail.set_visible(true);
                 let message = if state.rerere {
                     tr!(
                         "git rerere applied the earlier resolution. Check the result, then Mark Resolved."
@@ -1486,115 +1743,41 @@ impl Inner {
                 } else {
                     tr!("No conflict markers are left. Check the result, then Mark Resolved.")
                 };
-                mark.row
-                    .set_tooltip_text(Some(&format!("{}\n{message}", mark.tip)));
+                cell.line
+                    .set_tooltip_text(Some(&format!("{tip}\n{message}")));
             }
             None => {
-                mark.state.set_text("⚠");
-                mark.state.remove_css_class("warning");
-                mark.state.add_css_class("error");
-                mark.detail.set_text(&mark.plain_detail);
-                mark.detail.set_visible(!mark.plain_detail.is_empty());
-                mark.row.set_tooltip_text(Some(&mark.tip));
+                cell.state.set_text("⚠");
+                cell.state.remove_css_class("warning");
+                cell.state.add_css_class("error");
+                cell.detail.set_text(plain_detail);
+                cell.detail.set_visible(!plain_detail.is_empty());
+                cell.line.set_tooltip_text(Some(tip));
             }
         }
     }
 
-    /// ファイルの行。作ったときと中身が同じなら、前の行を使う。
-    fn cached_row(
-        this: &Rc<Self>,
-        cache: &mut HashMap<String, (RowKey, gtk::ListBoxRow)>,
-        entry: &StatusEntry,
-        layout: Layout,
-        depth: usize,
-    ) -> gtk::ListBoxRow {
-        let key = RowKey::File(entry.clone(), layout, depth);
-        if let Some((k, row)) = cache.get(&entry.path)
-            && *k == key
-        {
-            return row.clone();
+    /// 木のディレクトリ `dir` の中のファイル（一覧に出しているもののうちコンフリクト以外）を、`all`（すべて
+    /// 含めている）なら外し、そうでなければ含める（macOS 版と同じ）。
+    fn toggle_dir(this: &Rc<Self>, dir: &str, all: bool) {
+        let paths: Vec<String> = this
+            .entries
+            .borrow()
+            .iter()
+            .filter(|e| e.kind != StatusKind::Unmerged && in_dir(&e.path, dir))
+            .map(|e| e.path.clone())
+            .collect();
+        if paths.is_empty() {
+            return;
         }
-        // 作り直す行の、前の行の印は外しておく（コンフリクトでなくなった行に残さない）。
-        this.conflict_marks.borrow_mut().remove(&entry.path);
-        let row = Inner::row(this, entry, layout, depth);
-        cache.insert(entry.path.clone(), (key, row.clone()));
-        row
-    }
-
-    /// 木のディレクトリの行（クリックで畳む・開く）。チェックは中のファイル（一覧に出しているもののうち
-    /// コンフリクト以外）をまとめて含める・外す: すべて含めていれば ☑、一部なら ▣（macOS 版と同じ）。
-    fn dir_row(
-        this: &Rc<Self>,
-        name: &str,
-        path: &str,
-        depth: usize,
-        collapsed: bool,
-        state: DirCheck,
-    ) -> gtk::ListBoxRow {
-        let arrow = gtk::Label::new(Some(if collapsed { "▸" } else { "▾" }));
-        arrow.add_css_class("dim-label");
-        let (all, mixed) = (state.all(), state.mixed());
-        let check = gtk::CheckButton::new();
-        check.set_active(all);
-        check.set_inconsistent(mixed);
-        check.set_sensitive(state.files > 0);
-        check.set_tooltip_text(Some(&check_tip(all, mixed)));
-        let (weak, dir) = (Rc::downgrade(this), path.to_owned());
-        check.connect_toggled(move |_| {
-            let Some(this) = weak.upgrade() else { return };
-            if this.rebuilding.get() {
-                return;
-            }
-            // 中のファイルは押したときに集める（行を使い回すので、作ったときのものは古いかもしれない）。
-            let paths: Vec<String> = this
-                .entries
-                .borrow()
-                .iter()
-                .filter(|e| {
-                    e.kind != StatusKind::Unmerged
-                        && e.path.starts_with(dir.as_str())
-                        && e.path[dir.len()..].starts_with('/')
-                })
-                .map(|e| e.path.clone())
-                .collect();
-            if paths.is_empty() {
-                return;
-            }
-            Inner::run(&this, move |repo| {
-                let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
-                if all {
-                    repo.unstage(&paths)
-                } else {
-                    repo.stage(&paths)
-                }
-            });
-        });
-        let icon = crate::icon::Icon::default();
-        icon.set(crate::icon::Kind::Folder, false);
-        let label = gtk::Label::new(Some(name));
-        label.set_xalign(0.0);
-        label.set_hexpand(true);
-        label.set_ellipsize(gtk::pango::EllipsizeMode::Start);
-        let line = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        line.set_margin_start((depth * 16) as i32);
-        line.append(&arrow);
-        line.append(&check);
-        line.append(&icon);
-        line.append(&label);
-        // 行は選べる（Space で中のファイルを含める・外す、←・→ で畳む・開く）。畳む・開くのは ▸・▾ のクリック
-        // （macOS 版の NSOutlineView の三角と同じ）。
-        let row = gtk::ListBoxRow::new();
-        row.set_child(Some(&line));
-        let click = gtk::GestureClick::new();
-        let (weak, path) = (Rc::downgrade(this), path.to_owned());
-        click.connect_released(move |gesture, _, _, _| {
-            gesture.set_state(gtk::EventSequenceState::Claimed);
-            if let Some(this) = weak.upgrade() {
-                Inner::set_collapsed(&this, &path, !collapsed);
+        Inner::run(this, move |repo| {
+            let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
+            if all {
+                repo.unstage(&paths)
+            } else {
+                repo.stage(&paths)
             }
         });
-        arrow.add_controller(click);
-        row
     }
 
     /// 木のディレクトリ `path` を畳む・開く。
@@ -1616,11 +1799,10 @@ impl Inner {
         if this.layout.get() != Layout::Tree {
             return false;
         }
-        let Some(row) = this.list.focus_child().and_downcast::<gtk::ListBoxRow>() else {
+        let Some(at) = this.focused_position() else {
             return false;
         };
-        let at = row.index() as usize;
-        let Some((depth, dir)) = this.row_tree.borrow().get(at).cloned() else {
+        let Some((depth, dir)) = this.rows.borrow().get(at).map(Row::tree_place) else {
             return false;
         };
         let folded = dir
@@ -1630,15 +1812,15 @@ impl Inner {
             Key::Left | Key::KP_Left => match dir {
                 Some(dir) if !folded => Inner::set_collapsed(this, &dir, true),
                 _ => {
-                    let parent = this.row_tree.borrow()[..at]
+                    let parent = this.rows.borrow()[..at]
                         .iter()
-                        .rposition(|(d, p)| p.is_some() && *d < depth);
-                    match parent.and_then(|p| this.list.row_at_index(p as i32)) {
-                        Some(parent) => {
-                            this.list.unselect_all();
-                            this.list.select_row(Some(&parent));
-                            parent.grab_focus();
-                        }
+                        .rposition(|r| matches!(r, Row::Dir { depth: d, .. } if *d < depth));
+                    match parent {
+                        Some(parent) => this.list.scroll_to(
+                            parent as u32,
+                            gtk::ListScrollFlags::SELECT | gtk::ListScrollFlags::FOCUS,
+                            None,
+                        ),
                         None => this.list.error_bell(),
                     }
                 }
@@ -1650,142 +1832,6 @@ impl Inner {
             _ => return false,
         }
         true
-    }
-
-    /// 一覧の 1 行: チェック（次のコミットに含めるか）、状態の文字、パス、行数、変更を捨てるボタン。
-    /// 木ならファイル名を `depth` 段下げ、ファイル名を先にするならパスの親を薄く添える。
-    fn row(this: &Rc<Self>, entry: &StatusEntry, layout: Layout, depth: usize) -> gtk::ListBoxRow {
-        let conflict = entry.kind == StatusKind::Unmerged;
-        let check = gtk::CheckButton::new();
-        check.set_active(entry.is_staged() && !entry.is_unstaged());
-        check.set_inconsistent(entry.is_staged() && entry.is_unstaged());
-        // コンフリクトのファイルにはチェックを出さない（index は両方の側で「一部」に見える。macOS 版と同じ）。
-        check.set_visible(!conflict);
-        if !conflict {
-            check.set_tooltip_text(Some(&check_tip(
-                entry.is_staged() && !entry.is_unstaged(),
-                entry.is_staged() && entry.is_unstaged(),
-            )));
-        }
-        let (weak, e) = (Rc::downgrade(this), entry.clone());
-        check.connect_toggled(move |_| {
-            let Some(this) = weak.upgrade() else { return };
-            if this.rebuilding.get() {
-                return;
-            }
-            Inner::toggle_entry(&this, &e);
-        });
-        let (letter, css) = state_letter(entry);
-        let state = gtk::Label::new(Some(&letter));
-        state.set_width_chars(2);
-        state.add_css_class(css);
-        state.add_css_class("monospace");
-        let (parent, file) = match entry.path.rsplit_once('/') {
-            Some((p, f)) => (p, f),
-            None => ("", entry.path.as_str()),
-        };
-        // 名前を変えたファイルのもとのパスは、ツールチップだけに出す（macOS 版と同じ）。
-        let shown = match layout {
-            Layout::List => entry.path.clone(),
-            _ => file.to_owned(),
-        };
-        let name = gtk::Label::new(Some(&shown));
-        name.set_xalign(0.0);
-        name.set_ellipsize(gtk::pango::EllipsizeMode::Start);
-        let line = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        line.set_margin_start((depth * 16) as i32);
-        line.append(&check);
-        line.append(&state);
-        line.append(&name);
-        // 名前の後ろの薄い注記: Flat では親のディレクトリ、マーカーの残っていないコンフリクトでは
-        // 「rerere」か「no markers」（macOS 版と同じ）。
-        let plain_detail = if layout == Layout::Flat { parent } else { "" };
-        let detail = gtk::Label::new(Some(plain_detail));
-        detail.set_xalign(0.0);
-        detail.set_ellipsize(gtk::pango::EllipsizeMode::Start);
-        detail.add_css_class("dim-label");
-        detail.add_css_class("caption");
-        detail.set_visible(!plain_detail.is_empty());
-        if layout == Layout::Flat && !parent.is_empty() {
-            detail.set_hexpand(true);
-        } else {
-            name.set_hexpand(true);
-        }
-        line.append(&detail);
-        // 行数（+ 追加 − 削除）。まだ読めていなければ、届いたときに入れる。
-        let counts = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-        fill_counts(&counts, this.stats.borrow().get(&entry.path).copied());
-        line.append(&counts);
-        this.count_boxes
-            .borrow_mut()
-            .insert(entry.path.clone(), counts);
-        // 変更を捨てるボタン（マウスを載せたときだけ出す。コンフリクトと、stage 済みだけのファイルにはない）。
-        if !conflict && entry.is_unstaged() {
-            let discard = gtk::Button::new();
-            let icon = crate::icon::Icon::default();
-            icon.set(crate::icon::Kind::Undo, false);
-            discard.set_child(Some(&icon));
-            discard.add_css_class("flat");
-            discard.set_tooltip_text(Some(&tr!(
-                "Discard the working tree changes (return to the content of the index)"
-            )));
-            // 隠している間は、透明なだけでなくクリックも Tab のフォーカスも受けない（macOS 版は隠す）。
-            // 幅は取ったままにして、出し入れで行数の位置が動かないようにする。
-            let reveal = |d: &gtk::Button, shown: bool| {
-                d.set_opacity(if shown { 1.0 } else { 0.0 });
-                d.set_can_target(shown);
-                d.set_focusable(shown);
-            };
-            reveal(&discard, false);
-            let (weak, e) = (Rc::downgrade(this), entry.clone());
-            discard.connect_clicked(move |_| {
-                if let Some(this) = weak.upgrade() {
-                    Inner::discard_file(&this, &e);
-                }
-            });
-            let motion = gtk::EventControllerMotion::new();
-            let d = discard.clone();
-            motion.connect_enter(move |_, _, _| reveal(&d, true));
-            let d = discard.clone();
-            motion.connect_leave(move |_| reveal(&d, false));
-            line.add_controller(motion);
-            line.append(&discard);
-        }
-        let row = gtk::ListBoxRow::new();
-        row.set_child(Some(&line));
-        // パス（名前を変えたファイルはもとのパス → 今のパス。macOS 版と同じ）。
-        let tip = match &entry.orig_path {
-            Some(orig) => format!("{orig} → {}", entry.path),
-            None => entry.path.clone(),
-        };
-        row.set_tooltip_text(Some(&tip));
-        if conflict {
-            let mark = ConflictMark {
-                row: row.clone(),
-                state: state.clone(),
-                detail,
-                plain_detail: plain_detail.to_owned(),
-                tip,
-            };
-            this.apply_conflict_state(&entry.path, &mark);
-            this.conflict_marks
-                .borrow_mut()
-                .insert(entry.path.clone(), mark);
-        }
-        // 右クリック（macOS 版と同じ）: 含める・外す・捨てる、.gitignore に足す（untracked）、Blame（消した
-        // ファイルにはない）と File History（untracked にはまだ履歴がない）、パスのコピー、ファイルで開く。
-        let menu = gtk::GestureClick::new();
-        menu.set_button(gtk::gdk::BUTTON_SECONDARY);
-        let (weak, e, r) = (Rc::downgrade(this), entry.clone(), row.downgrade());
-        menu.connect_pressed(move |_, _, x, y| {
-            let (Some(this), Some(row)) = (weak.upgrade(), r.upgrade()) else {
-                return;
-            };
-            let items = Inner::file_menu(&this, &e);
-            crate::menu::popup(row.upcast_ref::<gtk::Widget>(), x, y, items);
-        });
-        row.add_controller(menu);
-        row
     }
 
     /// 確認用（`--keys`）: 差分を出すたびに、残っているキーを 1 つ押したことにする。`list:space`・`list:delete`
@@ -1830,7 +1876,7 @@ impl Inner {
         }
         if matches!(key, Key::space | Key::Return | Key::KP_Enter) {
             // ディレクトリの行だけを選んでいても、その中のファイルを含める・外す。
-            if this.list.selected_rows().is_empty() {
+            if this.selection.selection().is_empty() {
                 return false;
             }
             Inner::toggle_selected(this);
@@ -1856,20 +1902,21 @@ impl Inner {
     /// （macOS 版と同じ）。含める・外すものがなければ音で知らせる。
     fn toggle_selected(this: &Rc<Self>) {
         let targets: Vec<StatusEntry> = {
-            let rows = this.row_entries.borrow();
-            let tree = this.row_tree.borrow();
+            let row_entries = this.row_entries.borrow();
+            let rows = this.rows.borrow();
             let entries = this.entries.borrow();
             let mut indices = Vec::new();
-            for row in this.list.selected_rows() {
-                let at = row.index() as usize;
-                if let Some(i) = rows.get(at).copied().flatten() {
+            for at in this.selected_positions() {
+                if let Some(i) = row_entries.get(at).copied().flatten() {
                     indices.push(i);
-                } else if let Some((_, Some(dir))) = tree.get(at) {
+                } else if let Some(Row::Dir { path: dir, .. }) = rows.get(at) {
                     // ディレクトリの行: 中のファイル（畳んで見えていないものも。macOS 版と同じ）。
-                    indices.extend(entries.iter().enumerate().filter_map(|(i, e)| {
-                        (e.path.starts_with(dir.as_str()) && e.path[dir.len()..].starts_with('/'))
-                            .then_some(i)
-                    }));
+                    indices.extend(
+                        entries
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(i, e)| in_dir(&e.path, dir).then_some(i)),
+                    );
                 }
             }
             // ディレクトリとその中のファイルを一緒に選んでいても、1 回ずつにする。
@@ -1922,11 +1969,9 @@ impl Inner {
         let mut i = current.map_or(-1, |c| c as i32) + step;
         while i >= 0 && (i as usize) < rows.len() {
             if rows[i as usize].is_some() {
-                if let Some(row) = this.list.row_at_index(i) {
-                    this.list.unselect_all();
-                    this.list.select_row(Some(&row));
-                    this.diff.grab_focus();
-                }
+                this.list
+                    .scroll_to(i as u32, gtk::ListScrollFlags::SELECT, None);
+                this.diff.grab_focus();
                 return;
             }
             i += step;
@@ -2979,35 +3024,117 @@ impl DirCheck {
     }
 }
 
-/// 一覧の行を作ったときの中身（同じなら行を使い回す）。
+/// 一覧の 1 行の中身（同じなら部品を入れ直さない）。
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum RowKey {
-    File(StatusEntry, Layout, usize),
-    Dir(String, usize, bool, DirCheck),
+enum Row {
+    File {
+        entry: StatusEntry,
+        layout: Layout,
+        depth: usize,
+    },
+    /// 木のディレクトリ（`name` は出す名前、`path` はパス。子が 1 つのディレクトリはつないだもの）。
+    Dir {
+        name: String,
+        path: String,
+        depth: usize,
+        collapsed: bool,
+        check: DirCheck,
+    },
 }
 
-/// `list` の行の並びを `old` から `new` にする。そのまま残る行は触らない（外して入れ直すと、何千行でも
-/// 作り直すのと同じだけ重い）。
-fn sync_rows(list: &gtk::ListBox, old: &[gtk::ListBoxRow], new: &[gtk::ListBoxRow]) {
-    if old == new {
-        return;
-    }
-    let keep: std::collections::HashSet<&gtk::ListBoxRow> = new.iter().collect();
-    for row in old {
-        if !keep.contains(row) {
-            list.remove(row);
+impl Row {
+    /// 木の深さと、ディレクトリの行ならそのパス（← で親に移る・畳むのに使う）。
+    fn tree_place(&self) -> (usize, Option<String>) {
+        match self {
+            Row::File { depth, .. } => (*depth, None),
+            Row::Dir { depth, path, .. } => (*depth, Some(path.clone())),
         }
     }
-    for (i, row) in new.iter().enumerate() {
-        let at = i as i32;
-        if list.row_at_index(at).as_ref() == Some(row) {
+}
+
+/// 一覧の行と、行ごとの `entries` の番号（ディレクトリの行は None）。木では畳んだディレクトリの中を飛ばす。
+fn list_rows(
+    entries: &[StatusEntry],
+    layout: Layout,
+    collapsed: &std::collections::HashSet<String>,
+) -> (Vec<Row>, Vec<Option<usize>>) {
+    let mut rows = Vec::new();
+    let mut row_entries = Vec::new();
+    if layout != Layout::Tree {
+        for (i, entry) in entries.iter().enumerate() {
+            rows.push(Row::File {
+                entry: entry.clone(),
+                layout,
+                depth: 0,
+            });
+            row_entries.push(Some(i));
+        }
+        return (rows, row_entries);
+    }
+    let mut folded_at: Option<usize> = None;
+    for item in tree(entries) {
+        let depth = item.depth();
+        if folded_at.is_some_and(|d| depth > d) {
             continue;
         }
-        if row.parent().is_some() {
-            list.remove(row);
+        folded_at = None;
+        match item {
+            TreeItem::Dir {
+                name,
+                path,
+                depth,
+                check,
+            } => {
+                let folded = collapsed.contains(&path);
+                if folded {
+                    folded_at = Some(depth);
+                }
+                rows.push(Row::Dir {
+                    name,
+                    path,
+                    depth,
+                    collapsed: folded,
+                    check,
+                });
+                row_entries.push(None);
+            }
+            TreeItem::File { index, depth } => {
+                rows.push(Row::File {
+                    entry: entries[index].clone(),
+                    layout,
+                    depth,
+                });
+                row_entries.push(Some(index));
+            }
         }
-        list.insert(row, at);
     }
+    (rows, row_entries)
+}
+
+/// `old` を `new` にするのに入れ替える所: 前後の同じ所を除いた `(始め, old の終わり, new の終わり)`。
+fn changed_span<T: PartialEq>(old: &[T], new: &[T]) -> (usize, usize, usize) {
+    let start = old.iter().zip(new).take_while(|(a, b)| a == b).count();
+    let tail = old[start..]
+        .iter()
+        .rev()
+        .zip(new[start..].iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    (start, old.len() - tail, new.len() - tail)
+}
+
+/// `path` がディレクトリ `dir` の中か。
+fn in_dir(path: &str, dir: &str) -> bool {
+    path.strip_prefix(dir)
+        .is_some_and(|rest| rest.starts_with('/'))
+}
+
+/// 行の変更を捨てるボタンを出す・隠す。隠している間は、透明なだけでなくクリックも Tab のフォーカスも受けない
+/// （macOS 版は隠す）。幅は取ったままにして、出し入れで行数の位置が動かないようにする。
+fn reveal_discard(discard: &gtk::Button, shown: bool) {
+    discard.set_opacity(if shown { 1.0 } else { 0.0 });
+    discard.set_can_target(shown);
+    discard.set_focusable(shown);
 }
 
 /// ファイルをディレクトリの木の順に並べる（macOS 版と同じく、ファイルを持たず子が 1 つだけのディレクトリは
@@ -3140,6 +3267,71 @@ mod tests {
             panic!("dir")
         };
         assert!(check.mixed() && !check.all());
+    }
+
+    /// 木の行: 畳んだディレクトリの中は飛ばし、行ごとのファイルの番号はディレクトリの行で None。
+    #[test]
+    fn list_rows_skip_folded_directories() {
+        let entries = [
+            entry(StatusKind::Changed, "a/x.rs", b'M', b'.'),
+            entry(StatusKind::Changed, "a/b/y.rs", b'.', b'M'),
+            entry(StatusKind::Changed, "a/b/z.rs", b'.', b'M'),
+            entry(StatusKind::Changed, "top.txt", b'M', b'.'),
+        ];
+        let shape = |rows: &[Row]| -> Vec<String> {
+            rows.iter()
+                .map(|r| match r {
+                    Row::Dir {
+                        path, collapsed, ..
+                    } => format!("{path}/{}", if *collapsed { " ▸" } else { "" }),
+                    Row::File { entry, depth, .. } => format!("{depth} {}", entry.path),
+                })
+                .collect()
+        };
+        let none = std::collections::HashSet::new();
+        let (rows, indices) = list_rows(&entries, Layout::Tree, &none);
+        assert_eq!(
+            shape(&rows),
+            [
+                "a/",
+                "a/b/",
+                "2 a/b/y.rs",
+                "2 a/b/z.rs",
+                "1 a/x.rs",
+                "0 top.txt"
+            ]
+        );
+        assert_eq!(indices, [None, None, Some(1), Some(2), Some(0), Some(3)]);
+        let folded: std::collections::HashSet<String> = ["a/b".to_owned()].into();
+        let (rows, indices) = list_rows(&entries, Layout::Tree, &folded);
+        assert_eq!(shape(&rows), ["a/", "a/b/ ▸", "1 a/x.rs", "0 top.txt"]);
+        assert_eq!(indices, [None, None, Some(0), Some(3)]);
+        // 一覧と Flat はファイルだけを並びのまま。
+        let (rows, indices) = list_rows(&entries, Layout::Flat, &folded);
+        assert_eq!(rows.len(), 4);
+        assert_eq!(indices, [Some(0), Some(1), Some(2), Some(3)]);
+    }
+
+    /// 入れ替える所は、前後の同じ所を除いた真ん中だけ。
+    #[test]
+    fn changed_span_keeps_common_ends() {
+        assert_eq!(changed_span(&[1, 2, 3], &[1, 2, 3]), (3, 3, 3));
+        assert_eq!(changed_span(&[1, 2, 3], &[1, 9, 3]), (1, 2, 2));
+        assert_eq!(changed_span(&[1, 2, 3], &[1, 3]), (1, 2, 1));
+        assert_eq!(changed_span(&[1, 3], &[1, 2, 3]), (1, 1, 2));
+        assert_eq!(changed_span::<i32>(&[], &[1, 2]), (0, 0, 2));
+        assert_eq!(changed_span(&[1, 2], &[]), (0, 2, 0));
+        // 同じ値が続いても、前と後ろで重ならない。
+        assert_eq!(changed_span(&[1, 1], &[1, 1, 1]), (2, 2, 3));
+    }
+
+    /// ディレクトリの中かは、名前の区切りで見る（`src` に `srcx/a` は入らない）。
+    #[test]
+    fn in_dir_needs_a_separator() {
+        assert!(in_dir("src/a.rs", "src"));
+        assert!(in_dir("src/deep/a.rs", "src"));
+        assert!(!in_dir("srcx/a.rs", "src"));
+        assert!(!in_dir("src", "src"));
     }
 
     /// コンフリクトのファイル（index が U）は、次のコミットに含める数に入れない。
