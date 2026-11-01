@@ -284,7 +284,7 @@ fn handlers() -> Vec<(&'static str, Handler)> {
             Box::new(|p| {
                 // History に移って、その検索欄へ（macOS 版と同じ）。
                 show_page(p, Page::History);
-                p.group.activate_action("find", None);
+                p.group.activate_action("search-history", None);
             }),
         ),
         ("show-stashes", Box::new(show_stashes)),

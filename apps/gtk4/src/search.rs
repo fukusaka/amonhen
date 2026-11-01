@@ -190,6 +190,15 @@ impl Search {
             entry.grab_focus();
         });
         group.add_action(&find);
+        // Edit > Find in History…: フォーカスがどこにあっても History の検索欄へ（macOS 版と同じ。`win.find` と違い、
+        // 差分の中は探さない）。
+        let history = gio::SimpleAction::new("search-history", None);
+        let (bar, entry) = (self.bar.clone(), self.inner.entry.clone());
+        history.connect_activate(move |_, _| {
+            bar.set_search_mode(true);
+            entry.grab_focus();
+        });
+        group.add_action(&history);
         for (name, step) in [("find-next", 1), ("find-previous", -1)] {
             let action = gio::SimpleAction::new(name, None);
             let (i, bar) = (self.inner.clone(), self.bar.clone());

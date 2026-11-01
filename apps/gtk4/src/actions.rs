@@ -729,7 +729,7 @@ const REPOSITORY_MENUS: &[amonhen_commands::Menu] = &[
 ];
 
 /// 表にない、リポジトリを開いていないと使えないタブのアクション。
-const REPOSITORY_ONLY: &[&str] = &["find", "find-next", "find-previous"];
+const REPOSITORY_ONLY: &[&str] = &["find", "find-next", "find-previous", "search-history"];
 
 /// 状態から、タブのアクション（`win.<id>`）ごとに使えるか（macOS 版の `RepositoryWindow.validate` と同じ）。
 /// ここにないアクションはいつも使える。
