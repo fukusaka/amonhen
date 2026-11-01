@@ -384,6 +384,11 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             if let w, w.generation != self.status?.generation {
                 show(w)
                 loadStats()
+            } else if w != nil {
+                // status は同じでも、変更のあるファイルをさらに書き換えたかもしれない。行数と出している差分は
+                // 読み直す（コアは中身が同じなら前回の status を返すので、一覧は作り直さない）。
+                loadStats()
+                reloadShownDiff()
             }
             loadConflictStates()
             isRefreshing = false
@@ -392,6 +397,13 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
                 refresh()
             }
         }
+    }
+
+    /// 出している差分を、位置を保って読み直す（コンフリクトはマージエディタのまま）。
+    private func reloadShownDiff() {
+        guard let key = selectedKey, let entry = entries.first(where: { $0.item.path == key.path }),
+              !entry.isConflict else { return }
+        showDiff(of: entry, staged: side(for: entry.item), keepScroll: true)
     }
 
     /// 行数を裏で読み、一覧を描き直す（数がなくても一覧は先に出す）。
