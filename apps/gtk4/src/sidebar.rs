@@ -2330,22 +2330,32 @@ fn groups_of(
         groups.push(("Branches", store(rows)));
     }
 
-    // リモートごとにまとめ、その中もフォルダにまとめる。
-    let mut remotes = Tree::default();
+    // リモートごとにまとめる（origin/feature/x → origin の下の feature/x。その下はフォルダにしない。macOS 版と同じ）。
+    let mut by_remote: Vec<(String, Vec<Row>)> = Vec::new();
     for e in of(RefKind::Remote) {
-        let parts: Vec<&str> = e.name.split('/').collect();
-        remotes.insert(
-            &parts,
-            ref_data(e, parts[parts.len() - 1], icon::Kind::Branch, head, None),
-        );
-    }
-    let mut remotes = remotes.into_rows("Remotes");
-    for row in &mut remotes {
-        if matches!(row.data.item, Item::Folder) {
-            row.data.icon = icon::Kind::Remote;
-            row.data.remote = Some(row.data.title.clone());
+        let (remote, branch) = e.name.split_once('/').unwrap_or((&e.name, &e.name));
+        let row = Row::leaf(ref_data(e, branch, icon::Kind::Branch, head, None));
+        match by_remote.iter_mut().find(|(r, _)| r == remote) {
+            Some((_, rows)) => rows.push(row),
+            None => by_remote.push((remote.to_owned(), vec![row])),
         }
     }
+    by_remote.sort_by(|a, b| a.0.cmp(&b.0));
+    let remotes: Vec<Row> = by_remote
+        .into_iter()
+        .map(|(remote, children)| Row {
+            data: Data {
+                title: remote.clone(),
+                key: format!("Remotes/{remote}"),
+                item: Item::Folder,
+                icon: icon::Kind::Remote,
+                remote: Some(remote),
+                ..Data::default()
+            },
+            children,
+            folder: true,
+        })
+        .collect();
     if !remotes.is_empty() {
         groups.push(("Remotes", store(remotes)));
     }
