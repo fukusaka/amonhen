@@ -2034,13 +2034,20 @@ impl Inner {
     }
 
     fn update_buttons(&self) {
-        let staged = staged_count(&self.all_entries.borrow()) > 0;
+        let staged_files = staged_count(&self.all_entries.borrow());
+        let staged = staged_files > 0;
         let has_message = !self.composed_message().is_empty();
         let amend = self.amend.is_active();
         let can_commit = has_message && (staged || amend);
         self.commit.set_sensitive(can_commit);
-        self.commit
-            .set_label(if amend { "Amend Commit" } else { "Commit" });
+        // 含めるファイルの数も出す（macOS 版と同じ）。
+        let label = match (amend, staged_files) {
+            (true, _) => "Amend Commit".to_owned(),
+            (false, 0) => "Commit".to_owned(),
+            (false, 1) => "Commit 1 File".to_owned(),
+            (false, n) => format!("Commit {n} Files"),
+        };
+        self.commit.set_label(&label);
         // Commit メニューの Commit・Commit and Push・Stage All も、押せるときだけ（macOS 版と同じ）。
         if let Some(actions) = self.actions.borrow().as_ref() {
             let can_stage_all = self
