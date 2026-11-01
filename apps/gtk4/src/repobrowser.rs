@@ -158,13 +158,29 @@ pub fn hidden_worktrees(all: &[String]) -> std::collections::HashSet<String> {
     all.iter()
         .filter(|l| !l.contains("ssh://"))
         .filter(|l| {
-            crate::repos::main_of_worktree(std::path::Path::new(&local(l))).is_some_and(|main| {
-                let main = main.to_string_lossy().into_owned();
+            main_of_worktree(&local(l)).is_some_and(|main| {
                 listed.contains(&main) || listed.contains(&crate::repos::normalize(main.as_ref()))
             })
         })
         .cloned()
         .collect()
+}
+
+thread_local! {
+    /// 場所ごとの、追加した worktree のメインのリポジトリ（macOS 版の `worktreeMains`）。打つたび・読み直すたびに
+    /// 全部の `.git` を読まないよう、一度読んだら覚えておく。
+    static WORKTREE_MAINS: RefCell<std::collections::HashMap<String, Option<String>>> =
+        RefCell::default();
+}
+
+fn main_of_worktree(location: &str) -> Option<String> {
+    if let Some(cached) = WORKTREE_MAINS.with(|m| m.borrow().get(location).cloned()) {
+        return cached;
+    }
+    let main = crate::repos::main_of_worktree(std::path::Path::new(location))
+        .map(|m| m.to_string_lossy().into_owned());
+    WORKTREE_MAINS.with(|m| m.borrow_mut().insert(location.to_owned(), main.clone()));
+    main
 }
 
 /// 分類の中身を引くもと（ブックマーク・すべての場所・スキャンするフォルダ）。左の行ごとの数を出すときは、一度
