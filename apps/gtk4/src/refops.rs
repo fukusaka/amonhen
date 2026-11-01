@@ -655,6 +655,16 @@ pub fn drop_menu(
     match &target.item {
         sidebar::Item::Ref(e) if e.kind == RefKind::Local && e.name != dragged => {
             let to = e.name.clone();
+            // ほかの worktree が checkout しているブランチは、ここでは checkout できず、fast-forward でも動かせない
+            // （その作業ツリーとずれる）。その worktree で行う（macOS 版と同じ）。
+            if let Some((_, path)) = actions.worktree_using(&to) {
+                let a = actions.clone();
+                items.push(menu::action(
+                    tr!("Open the Worktree of {branch} to Merge or Rebase", branch = to),
+                    move || a.edit_worktree(&path),
+                ));
+                return items;
+            }
             let a = actions.clone();
             let (d, t) = (dragged.clone(), to.clone());
             // checkout していなくても、fast-forward で済むならブランチだけ進める。

@@ -1453,6 +1453,7 @@
 /* GTK4: Worktrees（History の札と Branches の印） */
 "Checked out in the worktree “{name}” ({path})" = "worktree「{name}」（{path}）で checkout されています";
 "Open Worktree {name}" = "worktree {name} を開く";
+"Open the Worktree of {branch} to Merge or Rebase" = "{branch} の worktree を開いて merge か rebase をする";
 "  · in the worktree {name}" = "　· worktree {name} で使用中";
 
 /* GTK4: Worktrees（New Worktree…・Remove Worktree…・右クリック） */
