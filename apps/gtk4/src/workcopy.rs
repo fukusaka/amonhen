@@ -1171,7 +1171,14 @@ impl Inner {
             discard.set_tooltip_text(Some(&tr!(
                 "Discard the working tree changes (return to the content of the index)"
             )));
-            discard.set_opacity(0.0);
+            // 隠している間は、透明なだけでなくクリックも Tab のフォーカスも受けない（macOS 版は隠す）。
+            // 幅は取ったままにして、出し入れで行数の位置が動かないようにする。
+            let reveal = |d: &gtk::Button, shown: bool| {
+                d.set_opacity(if shown { 1.0 } else { 0.0 });
+                d.set_can_target(shown);
+                d.set_focusable(shown);
+            };
+            reveal(&discard, false);
             let (weak, e) = (Rc::downgrade(this), entry.clone());
             discard.connect_clicked(move |_| {
                 if let Some(this) = weak.upgrade() {
@@ -1180,9 +1187,9 @@ impl Inner {
             });
             let motion = gtk::EventControllerMotion::new();
             let d = discard.clone();
-            motion.connect_enter(move |_, _, _| d.set_opacity(1.0));
+            motion.connect_enter(move |_, _, _| reveal(&d, true));
             let d = discard.clone();
-            motion.connect_leave(move |_| d.set_opacity(0.0));
+            motion.connect_leave(move |_| reveal(&d, false));
             line.add_controller(motion);
             line.append(&discard);
         }
