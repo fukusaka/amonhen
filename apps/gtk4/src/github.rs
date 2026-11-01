@@ -930,15 +930,9 @@ pub fn create_pull_request(actions: &Rc<Actions>, branch: String, pushed: bool) 
             .unwrap_or_default()
             .trim()
             .to_owned();
+        // メッセージが空なら、タイトルも空のまま（macOS 版と同じ。空のタイトルでは作らない）。
         let (title, body) = message.split_once('\n').unwrap_or((&message, ""));
-        let (title, body) = (
-            if title.is_empty() {
-                branch.clone()
-            } else {
-                title.to_owned()
-            },
-            body.trim().to_owned(),
-        );
+        let (title, body) = (title.to_owned(), body.trim().to_owned());
         let slug = github.slug();
         let base = default_branch(&github)
             .await
