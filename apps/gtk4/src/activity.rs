@@ -134,6 +134,9 @@ fn ms(value: f64) -> String {
     }
 }
 
+/// Activity の窓の大きさを覚える設定の鍵（「幅x高さ」）。
+const WINDOW_SIZE: &str = "activityWindowSize";
+
 /// 時間（ミリ秒）を、秒・分・時間で（macOS 版の Daemon のタブと同じ）。
 fn duration(ms: u64) -> String {
     match ms / 1000 {
@@ -323,6 +326,22 @@ impl Activity {
         window.set_titlebar(Some(&header));
         window.set_transient_for(Some(parent));
         window.set_destroy_with_parent(true);
+        // 大きさは覚えておく（macOS 版は位置も。GTK では窓の位置はウィンドウマネージャーが決める）。
+        if let Some((w, h)) = crate::settings::string(WINDOW_SIZE)
+            .as_deref()
+            .and_then(|s| s.split_once('x'))
+            .and_then(|(w, h)| Some((w.parse::<i32>().ok()?, h.parse::<i32>().ok()?)))
+            .filter(|&(w, h)| w > 200 && h > 150)
+        {
+            window.set_default_size(w, h);
+        }
+        window.connect_close_request(|window| {
+            let (w, h) = window.default_size();
+            if w > 0 && h > 0 {
+                crate::settings::set_string(WINDOW_SIZE, &format!("{w}x{h}"));
+            }
+            glib::Propagation::Proceed
+        });
 
         let target = Rc::new(RefCell::new(Target { repo, actions }));
         let mut refreshers: Vec<Box<dyn Fn()>> = Vec::new();
