@@ -496,6 +496,7 @@
 "The diff of the two non-consecutive commits from their common ancestor to the newer (A...B: only the changes on the newer side)." = "続いていない 2 つの、共通の祖先から新しいほうまでの差分（A...B。新しいほうの側の変更だけ）";
 "They are not contiguous, so each commit’s diff is listed file by file (headed by the path and short ID)." = "とびとびなので、コミットごとの差分をファイルごとに並べています（見出しはパスと短い ID）";
 "Loading the diff…" = "差分を読んでいます…";
+"Loading…" = "読んでいます…";
 "and {count} more tags" = "ほか {count} 個";
 "Not pushed (not on any remote branch)" = "未 push（どのリモートブランチにも含まれない）";
 "{count} commits" = "{count} コミット";

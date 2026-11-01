@@ -98,26 +98,41 @@ pub fn blame(
     }
     let key = tool_key("blame", &repo, path, rev);
     let command = json!({ "op": "blame", "path": path, "rev": rev });
-    let parent = parent.clone();
+    // 窓は先に出し、読んでいる間は「Loading…」（macOS 版と同じ）。
+    let window = tool_window(parent, key, &title);
+    window.set_child(Some(&note(&tr!("Loading…"))));
     let path = path.to_owned();
     glib::spawn_future_local(async move {
-        // 構文の色も、読むのと同じく裏で。
-        let info = gio::spawn_blocking(move || {
-            run(&repo, command).map(|info| {
-                let spans = blame_syntax(&path, &info);
-                (info, spans)
-            })
-        })
-        .await;
+        let info = gio::spawn_blocking(move || run(&repo, command)).await;
         match info {
-            Ok(Ok((info, spans))) => {
-                let window = tool_window(&parent, key, &title);
-                show_blame(&window, &info, spans, on_commit)
+            Ok(Ok(info)) => {
+                let spans: Rc<std::cell::RefCell<LineSpans>> = Rc::default();
+                let (model, selection) = show_blame(&window, &info, spans.clone(), on_commit);
+                // 構文の色は、行を出してから裏で付ける（読めたら描き直す）。
+                let colored = gio::spawn_blocking(move || blame_syntax(&path, &info)).await;
+                if let Ok(colored) = colored
+                    && colored.iter().any(|l| !l.is_empty())
+                {
+                    spans.replace(colored);
+                    let selected = selection.selected();
+                    let n = model.n_items();
+                    model.items_changed(0, n, n);
+                    selection.set_selected(selected);
+                }
             }
-            Ok(Err(e)) => fail(&parent, &e),
+            Ok(Err(e)) => window.set_child(Some(&note(&e))),
             Err(_) => {}
         }
     });
+}
+
+/// 窓の中身の代わりの知らせ（読んでいる・読めなかった理由）。
+fn note(text: &str) -> gtk::Label {
+    let note = gtk::Label::new(Some(text));
+    note.add_css_class("dim-label");
+    note.set_wrap(true);
+    note.set_selectable(true);
+    note
 }
 
 /// Blame の各行の構文の色（行の中のバイト位置と種類。macOS 版と同じく、ファイル全体で色を付けて行に分ける）。
@@ -185,7 +200,13 @@ struct BlameRow {
     text: String,
 }
 
-fn show_blame(window: &gtk::Window, info: &Value, spans: LineSpans, on_commit: OnCommit) {
+/// Blame の行を窓に出す。構文の色（`spans`）は後から入れられるよう、一覧の中身と選択を返す。
+fn show_blame(
+    window: &gtk::Window,
+    info: &Value,
+    spans: Rc<std::cell::RefCell<LineSpans>>,
+    on_commit: OnCommit,
+) -> (gtk::StringList, gtk::SingleSelection) {
     let commits: Vec<(String, String, i64, String)> = info["commits"]
         .as_array()
         .into_iter()
@@ -221,7 +242,6 @@ fn show_blame(window: &gtk::Window, info: &Value, spans: LineSpans, on_commit: O
     }
     let rows = Rc::new(rows);
     let commits = Rc::new(commits);
-    let spans = Rc::new(spans);
     let digits = rows.len().to_string().len();
 
     let model = gtk::StringList::new(&[]);
@@ -296,7 +316,7 @@ fn show_blame(window: &gtk::Window, info: &Value, spans: LineSpans, on_commit: O
         code.set_text(&row.text);
         let attrs = gtk::pango::AttrList::new();
         let fg = code.color();
-        for &(start, end, kind) in s.get(index).into_iter().flatten() {
+        for &(start, end, kind) in s.borrow().get(index).into_iter().flatten() {
             if let Some((r, g, b)) = crate::diff::syntax_color(kind, &fg) {
                 let mut attr = gtk::pango::AttrColor::new_foreground(
                     (r * 65535.0) as u16,
@@ -318,12 +338,12 @@ fn show_blame(window: &gtk::Window, info: &Value, spans: LineSpans, on_commit: O
             }
         }
     });
-    let selection = gtk::SingleSelection::new(Some(model));
+    let selection = gtk::SingleSelection::new(Some(model.clone()));
     // 開いたときは何も選ばない。
     selection.set_autoselect(false);
     selection.set_can_unselect(true);
     selection.set_selected(gtk::INVALID_LIST_POSITION);
-    let list = gtk::ListView::new(Some(selection), Some(factory));
+    let list = gtk::ListView::new(Some(selection.clone()), Some(factory));
     list.add_css_class("view");
     let (r, c) = (rows.clone(), commits.clone());
     list.connect_activate(move |_, position| {
@@ -341,6 +361,7 @@ fn show_blame(window: &gtk::Window, info: &Value, spans: LineSpans, on_commit: O
     install_css();
     let scrolled = gtk::ScrolledWindow::builder().child(&list).build();
     window.set_child(Some(&scrolled));
+    (model, selection)
 }
 
 /// Blame の交互の背景。
