@@ -436,6 +436,21 @@ pub fn new_window_with(app: &gtk::Application, location: PathBuf) -> Rc<RepoWind
     host
 }
 
+/// `location` を開いているタブ（どの窓でも。追加した worktree なら、メインのリポジトリのタブ）。
+fn find_open(location: &std::path::Path) -> Option<(Rc<RepoWindow>, Rc<Tab>)> {
+    let worktree = crate::repos::main_of_worktree(location);
+    let key = crate::repos::normalize(worktree.as_deref().unwrap_or(location));
+    WINDOWS.with(|w| {
+        w.borrow().iter().find_map(|h| {
+            h.tabs
+                .borrow()
+                .iter()
+                .find(|t| t.location == key)
+                .map(|t| (h.clone(), t.clone()))
+        })
+    })
+}
+
 /// リポジトリを開く。`place` が `Tab` なら最後に前にあった窓の新しいタブ（なければ新しい窓）に。すでに開いて
 /// いればそのタブを前に出す。`NewWindow` なら、開いていても新しい窓に開く（File > New Window）。
 pub fn open(app: &gtk::Application, location: PathBuf, place: Place) {
@@ -446,17 +461,7 @@ pub fn open(app: &gtk::Application, location: PathBuf, place: Place) {
     // 追加した worktree のフォルダー: メインのリポジトリのタブがあれば、それを前に出してその worktree を書き込む
     // 先にする（なければ、開くときにメインのリポジトリに替える。`build_tab`）。
     let worktree = crate::repos::main_of_worktree(&location);
-    let key = crate::repos::normalize(worktree.as_deref().unwrap_or(&location));
-    let existing = WINDOWS.with(|w| {
-        w.borrow().iter().find_map(|h| {
-            h.tabs
-                .borrow()
-                .iter()
-                .find(|t| t.location == key)
-                .map(|t| (h.clone(), t.clone()))
-        })
-    });
-    if let Some((host, tab)) = existing {
+    if let Some((host, tab)) = find_open(&location) {
         if let Some(n) = host.notebook.page_num(&tab.root) {
             host.notebook.set_current_page(Some(n));
         }
@@ -580,21 +585,13 @@ pub fn show_home(app: &gtk::Application, host: Option<Rc<RepoWindow>>) -> Rc<Rep
         let Some(host) = tab.host() else {
             return self::open(&a, location, place);
         };
-        // 追加した worktree はメインのリポジトリのタブで開く（`open` と同じ）。
-        let worktree = crate::repos::main_of_worktree(&location);
-        let key = crate::repos::normalize(worktree.as_deref().unwrap_or(&location));
-        match host.tabs().into_iter().find(|t| t.location == key) {
-            Some(existing) => {
-                if let Some(n) = host.notebook.page_num(&existing.root) {
-                    host.notebook.set_current_page(Some(n));
-                }
-                if worktree.is_some() {
-                    let path = location.to_string_lossy().into_owned();
-                    existing
-                        .group
-                        .activate_action("edit-worktree", Some(&path.to_variant()));
-                }
+        // もう開いていれば（ほかの窓でも）そのタブを前に出す。追加した worktree はメインのリポジトリのタブで
+        // 開く（`open` と同じ）。ほかの窓のタブなら、このページは残す（macOS 版と同じ）。
+        match find_open(&location) {
+            Some((other, _)) if !Rc::ptr_eq(&other, &host) => {
+                return self::open(&a, location, place);
             }
+            Some(_) => self::open(&a, location, place),
             None => {
                 let position = host.notebook.page_num(&tab.root);
                 open_in(&a, &host, location, position);
