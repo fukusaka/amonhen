@@ -194,6 +194,8 @@ struct Table {
     windows: Cell<bool>,
     /// 渡すかの書き換えを記録する設定の窓（この機械の表だけ）。
     settings: RefCell<std::rc::Weak<RepoSettings>>,
+    /// 表の部品（作り直しでフォーカスを失ったら戻す先）。
+    column_view: glib::WeakRef<gtk::ColumnView>,
 }
 
 fn row_of(o: &glib::Object) -> Option<Row> {
@@ -228,6 +230,7 @@ impl Table {
             binding: Cell::new(false),
             windows: Cell::new(false),
             settings: RefCell::default(),
+            column_view: glib::WeakRef::new(),
         })
     }
 
@@ -295,7 +298,24 @@ impl Table {
         let w = Rc::downgrade(self);
         glib::idle_add_local_once(move || {
             if let Some(t) = w.upgrade() {
+                // 表の中（押したチェック）にフォーカスがあったなら、作り直した後も表に置く。チェックの部品が外れて
+                // フォーカスがなくなると、Ctrl+Z（Undo）が設定のページに届かない。
+                let view = t.column_view.upgrade();
+                let inside = |view: &gtk::ColumnView| {
+                    view.root().and_then(|r| r.focus()).is_some_and(|f| {
+                        &f == view.upcast_ref::<gtk::Widget>() || f.is_ancestor(view)
+                    })
+                };
+                let lost =
+                    |view: &gtk::ColumnView| view.root().is_some_and(|r| r.focus().is_none());
+                let had = view.as_ref().is_some_and(|v| inside(v) || lost(v));
                 t.rebuild();
+                if let Some(view) = view
+                    && had
+                    && !inside(&view)
+                {
+                    view.grab_focus();
+                }
             }
         });
     }
@@ -451,6 +471,7 @@ impl Table {
     /// 表の部品（ColumnView。見えている行だけに部品を作る）。
     fn view(self: &Rc<Self>) -> gtk::ScrolledWindow {
         let view = gtk::ColumnView::new(Some(self.selection.clone()));
+        self.column_view.set(Some(&view));
         view.set_show_column_separators(false);
         view.set_reorderable(false);
         let w = Rc::downgrade(self);
