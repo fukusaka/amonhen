@@ -775,7 +775,16 @@ impl Sidebar {
         };
         self.inner.rebuilding.set(true);
         if shown {
-            store.append(&self.inner.range_diff);
+            // Reflog・Settings の前に入れる（作り直したときと同じ並び。macOS 版と同じ）。
+            let at = (0..store.n_items())
+                .find(|&i| {
+                    store
+                        .item(i)
+                        .and_downcast::<Node>()
+                        .is_some_and(|n| n.data().key == "page/reflog")
+                })
+                .unwrap_or(store.n_items());
+            store.insert(at, &self.inner.range_diff);
         } else if let Some(at) = store.find(&self.inner.range_diff) {
             store.remove(at);
         }
