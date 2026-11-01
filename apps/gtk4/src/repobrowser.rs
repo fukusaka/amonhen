@@ -136,51 +136,70 @@ struct SideRow {
 
 /// 分類の中のリポジトリ（絞り込み・並べ替えの前）。
 fn paths_in(category: &Category) -> Vec<String> {
-    let data = bookmarks::data();
-    // 場所の下のフォルダは、スキャンするフォルダの外のものだけ（左の木と同じ。スキャンした分は 🔍 の下に出す）。
-    let outside_under = |host: Option<&str>, prefix: &str| -> Vec<String> {
+    Sources::read().paths_in(category)
+}
+
+/// 分類の中身を引くもと（ブックマーク・すべての場所・スキャンするフォルダ）。左の行ごとの数を出すときは、一度
+/// 読んだものを使い回す（行ごとに読み直すと、数百のリポジトリで目に見えて遅い）。
+struct Sources {
+    data: bookmarks::Data,
+    all: Vec<String>,
+    roots: Roots,
+}
+
+impl Sources {
+    fn read() -> Self {
+        let data = bookmarks::data();
         let roots = Roots::new(&data);
-        let under = format!("{prefix}/");
-        bookmarks::all_locations()
-            .into_iter()
-            .filter(|l| {
-                bookmarks::ssh_host(l).as_deref() == host
-                    && !roots.contains(l)
-                    && bookmarks::path_part(l).starts_with(&under)
-            })
-            .collect()
-    };
-    match category {
-        Category::All => bookmarks::all_locations(),
-        Category::Local => bookmarks::all_locations()
-            .into_iter()
-            .filter(|l| bookmarks::ssh_host(l).is_none())
-            .collect(),
-        Category::Host(h) => bookmarks::all_locations()
-            .into_iter()
-            .filter(|l| bookmarks::ssh_host(l).as_ref() == Some(h))
-            .collect(),
-        Category::Favorites => data
-            .items
-            .iter()
-            .filter(|b| b.favorite)
-            .map(|b| b.path.clone())
-            .collect(),
-        Category::Group(g) => data
-            .items
-            .iter()
-            .filter(|b| b.group.as_ref() == Some(g))
-            .map(|b| b.path.clone())
-            .collect(),
-        Category::Scan(root) => bookmarks::scanned(root),
-        Category::Folder(prefix) => outside_under(None, prefix),
-        Category::HostFolder(host, prefix) => outside_under(Some(host), prefix),
-        Category::ScanFolder(root, prefix) => {
+        Self {
+            data,
+            all: bookmarks::all_locations(),
+            roots,
+        }
+    }
+
+    fn paths_in(&self, category: &Category) -> Vec<String> {
+        let data = &self.data;
+        let all = || self.all.iter().cloned();
+        // 場所の下のフォルダは、スキャンするフォルダの外のものだけ（左の木と同じ。スキャンした分は 🔍 の下に出す）。
+        let outside_under = |host: Option<&str>, prefix: &str| -> Vec<String> {
             let under = format!("{prefix}/");
-            bookmarks::scanned(root)
-                .into_iter()
-                .filter(|l| bookmarks::path_part(l).starts_with(&under))
+            all()
+                .filter(|l| {
+                    bookmarks::ssh_host(l).as_deref() == host
+                        && !self.roots.contains(l)
+                        && bookmarks::path_part(l).starts_with(&under)
+                })
                 .collect()
+        };
+        match category {
+            Category::All => all().collect(),
+            Category::Local => all().filter(|l| bookmarks::ssh_host(l).is_none()).collect(),
+            Category::Host(h) => all()
+                .filter(|l| bookmarks::ssh_host(l).as_ref() == Some(h))
+                .collect(),
+            Category::Favorites => data
+                .items
+                .iter()
+                .filter(|b| b.favorite)
+                .map(|b| b.path.clone())
+                .collect(),
+            Category::Group(g) => data
+                .items
+                .iter()
+                .filter(|b| b.group.as_ref() == Some(g))
+                .map(|b| b.path.clone())
+                .collect(),
+            Category::Scan(root) => bookmarks::scanned(root),
+            Category::Folder(prefix) => outside_under(None, prefix),
+            Category::HostFolder(host, prefix) => outside_under(Some(host), prefix),
+            Category::ScanFolder(root, prefix) => {
+                let under = format!("{prefix}/");
+                bookmarks::scanned(root)
+                    .into_iter()
+                    .filter(|l| bookmarks::path_part(l).starts_with(&under))
+                    .collect()
+            }
         }
     }
 }
@@ -349,15 +368,20 @@ fn esc(s: &str) -> String {
 
 /// 名前の行: 色ラベルの丸、お気に入りの ★、表示名（見つからなければ薄く）。
 pub fn name_markup(location: &str) -> String {
-    let bookmark = bookmarks::bookmark(location);
+    name_markup_in(&bookmarks::data(), location)
+}
+
+/// `name_markup` の、読んだブックマークから引く形（たくさんの行を描くとき用）。
+pub fn name_markup_in(data: &bookmarks::Data, location: &str) -> String {
+    let bookmark = data.items.iter().find(|b| b.path == location);
     let mut out = String::new();
-    if let Some(color) = bookmarks::color(bookmark.as_ref().and_then(|b| b.color.as_deref())) {
+    if let Some(color) = bookmarks::color(bookmark.and_then(|b| b.color.as_deref())) {
         out.push_str(&format!("<span foreground=\"{color}\">●</span> "));
     }
-    if bookmark.as_ref().is_some_and(|b| b.favorite) {
+    if bookmark.is_some_and(|b| b.favorite) {
         out.push_str("★ ");
     }
-    let name = esc(&bookmarks::display_name(location));
+    let name = esc(&bookmarks::display_name_in(data, location));
     if bookmarks::is_repository(location) {
         out.push_str(&format!("<b>{name}</b>"));
     } else {
@@ -501,8 +525,8 @@ fn commit_text(location: &str) -> (String, Option<String>) {
     }
 }
 
-fn opened_text(location: &str) -> String {
-    crate::repos::opened_at(location).map_or_else(|| "—".into(), crate::stashes::ago)
+fn opened_text(opened: Option<i64>) -> String {
+    opened.map_or_else(|| "—".into(), crate::stashes::ago)
 }
 
 /// 列。
@@ -521,14 +545,18 @@ struct CellView {
     title: gtk::Label,
     sub: gtk::Label,
     location: RefCell<String>,
+    /// 一覧を作り直したときに読んだブックマークと開いた日時（セルごとに読み直さない）。
+    keys: Rc<RefCell<SortKeys>>,
 }
 
 impl CellView {
     fn render(&self) {
         let location = self.location.borrow().clone();
+        let keys = self.keys.borrow();
         match self.column {
             Column::Name => {
-                self.title.set_markup(&name_markup(&location));
+                self.title
+                    .set_markup(&name_markup_in(&keys.data, &location));
                 self.sub.set_text(&path_text(&location));
                 self.title.set_tooltip_text(Some(&location));
             }
@@ -543,7 +571,9 @@ impl CellView {
                 self.title.set_text(&text);
                 self.title.set_tooltip_text(tip.as_deref());
             }
-            Column::Opened => self.title.set_text(&opened_text(&location)),
+            Column::Opened => self
+                .title
+                .set_text(&opened_text(keys.opened.get(&location).copied())),
         }
     }
 }
@@ -566,7 +596,7 @@ pub struct Browser {
     cells: RefCell<Vec<Rc<CellView>>>,
     scanning: gtk::Spinner,
     add: gtk::Button,
-    /// 並べ替えに使う、行ごとの値（一覧を作り直すたびに読む）。
+    /// 並べ替えとセルの描画に使う、行ごとの値（一覧を作り直すたびに読む）。
     sort_keys: Rc<RefCell<SortKeys>>,
 }
 
@@ -773,6 +803,7 @@ impl Browser {
                     title,
                     sub,
                     location: RefCell::default(),
+                    keys: b.sort_keys.clone(),
                 });
                 // 消えたセルの分は、作るたびに片づける。
                 let mut cells = b.cells.borrow_mut();
@@ -1123,6 +1154,8 @@ impl Browser {
             // 消えたグループ・フォルダを選んでいたら、すべてに戻す。
             None => self.set_category(Category::All),
         }
+        // 行ごとの数は、一度読んだものから数える。
+        let sources = Sources::read();
         let mut rows: Vec<SideRow> = Vec::new();
         fn flatten(
             nodes: &[Node],
@@ -1207,7 +1240,7 @@ impl Browser {
                     }
                     line.append(&disclosure);
                     line.append(&label);
-                    let count = gtk::Label::new(Some(&self.count_text(c)));
+                    let count = gtk::Label::new(Some(&Self::count_text(&sources, c)));
                     count.add_css_class("dim-label");
                     count.add_css_class("caption");
                     line.append(&count);
@@ -1245,7 +1278,7 @@ impl Browser {
         *self.category.borrow_mut() = category;
     }
 
-    fn count_text(&self, category: &Category) -> String {
+    fn count_text(sources: &Sources, category: &Category) -> String {
         if let Category::Scan(root) = category {
             if bookmarks::is_scanning() {
                 return "…".into();
@@ -1254,7 +1287,7 @@ impl Browser {
                 return "⚠︎".into();
             }
         }
-        paths_in(category).len().to_string()
+        sources.paths_in(category).len().to_string()
     }
 
     /// 右の一覧を作り直す（選んでいたものは選び直す）。
@@ -1945,12 +1978,14 @@ pub async fn choose_remote_scan_folder(
     Some(chosen.ssh_location())
 }
 
-/// 並べ替えに使う、行ごとの名前（小文字）と開いた日時。一覧を作り直すたびに一度だけ読む（比べるたびに
-/// ブックマークと `repositoryOpenedAt` を読むと、数百行で何秒もかかる。macOS 版も作り直すときに先に読む）。
+/// 並べ替えとセルの描画に使う、行ごとの名前（小文字）と開いた日時、読んだブックマーク。一覧を作り直すたびに
+/// 一度だけ読む（比べるたび・セルを描くたびにブックマークと `repositoryOpenedAt` を読むと、数百行で何秒も
+/// かかる。macOS 版も作り直すときに先に読む）。
 #[derive(Default)]
 struct SortKeys {
     names: std::collections::HashMap<String, String>,
     opened: std::collections::HashMap<String, i64>,
+    data: bookmarks::Data,
 }
 
 impl SortKeys {
@@ -1970,7 +2005,11 @@ impl SortKeys {
             .iter()
             .filter_map(|l| opened.get(l).map(|&t| (l.clone(), t)))
             .collect();
-        Self { names, opened }
+        Self {
+            names,
+            opened,
+            data,
+        }
     }
 
     fn name(&self, location: &str) -> String {
@@ -2056,4 +2095,37 @@ pub fn snapshot_when_ready(window: &gtk::Window, png: PathBuf) {
         }
         glib::ControlFlow::Break
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 行の名前は、渡したブックマークだけから描く（色・★・名前の上書き）。数百行を描いても速いこと。
+    #[test]
+    fn name_markup_reads_the_given_bookmarks() {
+        let items = (0..400)
+            .map(|i| bookmarks::Bookmark {
+                path: format!("ssh://h/r{i}"),
+                name: (i == 7).then(|| "Seven".to_owned()),
+                favorite: i == 7,
+                color: (i == 7).then(|| "red".to_owned()),
+                ..bookmarks::Bookmark::default()
+            })
+            .collect();
+        let data = bookmarks::Data {
+            items,
+            ..bookmarks::Data::default()
+        };
+        assert_eq!(
+            name_markup_in(&data, "ssh://h/r7"),
+            "<span foreground=\"#e01b24\">●</span> ★ <b>Seven</b>"
+        );
+        assert_eq!(name_markup_in(&data, "ssh://h/r8"), "<b>r8 — h</b>");
+        let start = std::time::Instant::now();
+        for i in 0..400 {
+            name_markup_in(&data, &format!("ssh://h/r{i}"));
+        }
+        assert!(start.elapsed() < std::time::Duration::from_millis(100));
+    }
 }

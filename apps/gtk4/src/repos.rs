@@ -97,14 +97,6 @@ pub fn opened_all_at() -> std::collections::HashMap<String, i64> {
         .collect()
 }
 
-/// 最後に開いた日時（UNIX 時間）。覚える前に開いたものは None。
-pub fn opened_at(location: &str) -> Option<i64> {
-    opened_all()
-        .get(location)
-        .and_then(|v| v.as_f64())
-        .map(|t| t as i64)
-}
-
 /// 最近開いたもの・開いた日時から外す（Repositories の「一覧から外す」）。
 pub fn forget(location: &str) {
     let mut list = recent();

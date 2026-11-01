@@ -35,7 +35,10 @@ impl Row {
 
 /// 一覧の並び: お気に入り、そのあと最後に開いた順（開いたことのないものは後ろに、名前の順）。
 fn ordered(query: &str) -> Vec<String> {
-    let favorites: Vec<String> = bookmarks::data()
+    // ブックマークと開いた日時は一度だけ読む（行ごとに読むと、数百行で目に見えて遅い）。
+    let data = bookmarks::data();
+    let opened = crate::repos::opened_all_at();
+    let favorites: std::collections::HashSet<String> = data
         .items
         .iter()
         .filter(|b| b.favorite)
@@ -46,15 +49,17 @@ fn ordered(query: &str) -> Vec<String> {
         .into_iter()
         .filter(|l| {
             query.is_empty()
-                || bookmarks::display_name(l).to_lowercase().contains(&query)
+                || bookmarks::display_name_in(&data, l)
+                    .to_lowercase()
+                    .contains(&query)
                 || l.to_lowercase().contains(&query)
         })
         .collect();
     list.sort_by_cached_key(|l| {
         (
             !favorites.contains(l),
-            std::cmp::Reverse(crate::repos::opened_at(l).unwrap_or(i64::MIN)),
-            bookmarks::display_name(l).to_lowercase(),
+            std::cmp::Reverse(opened.get(l).copied().unwrap_or(i64::MIN)),
+            bookmarks::display_name_in(&data, l).to_lowercase(),
         )
     });
     list
