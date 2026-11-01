@@ -357,11 +357,14 @@ async fn run(parent: &gtk::Window, url: String, dest: PathBuf, open: Rc<dyn Fn(P
         .build();
     window.present();
     let d = dest.clone();
+    // 走っている操作に数える（Activity の印が回る。macOS 版と同じ）。
+    crate::activity::begin();
     let result = gio::spawn_blocking(move || {
         amonhen_backend_cli::clone(&url, &d).map_err(|e| e.to_string())
     })
     .await
     .unwrap_or_else(|_| Err(String::new()));
+    crate::activity::end();
     window.destroy();
     match result {
         Ok(()) => open(dest),
