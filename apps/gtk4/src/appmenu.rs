@@ -969,7 +969,11 @@ pub fn terminal_at(dir: &std::path::Path) -> bool {
             .args(&args)
             .current_dir(dir)
             .spawn();
-        if started.is_ok() {
+        if let Ok(mut child) = started {
+            // 終わるのを待って片付ける（待たないと、アプリを終えるまでゾンビのプロセスが残る）。
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
             return true;
         }
     }
