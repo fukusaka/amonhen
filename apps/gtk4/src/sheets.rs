@@ -657,8 +657,27 @@ pub async fn sync_state(
         .iter()
         .find(|i| i.kind == amonhen_model::RefKind::Remote && i.name == upstream)
         .and_then(|i| i.target.map(|t| t.to_string()));
-    let outgoing = between(repo, &upstream, &tip, 500).await;
-    let incoming = between(repo, &tip, &upstream, 500).await;
+    // 範囲が読めなければ 0 件とみなさず、知らせて止める（macOS 版と同じ。送るものがない・上流が進んでいないと
+    // 誤って見て、Push が何もしない・Commit and Push が聞かずに送る、とならないように）。
+    let ranges: Result<_, String> = async {
+        Ok((
+            try_between(repo, &upstream, &tip, 500).await?,
+            try_between(repo, &tip, &upstream, 500).await?,
+        ))
+    }
+    .await;
+    let (outgoing, incoming) = match ranges {
+        Ok(ranges) => ranges,
+        Err(error) => {
+            inform(
+                parent(actions).as_ref(),
+                &tr!("Can’t read the status"),
+                &error,
+            )
+            .await;
+            return None;
+        }
+    };
     let tip_oid = local
         .and_then(|l| l.target)
         .or(refs.refs.head)
