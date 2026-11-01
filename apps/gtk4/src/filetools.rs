@@ -34,16 +34,44 @@ fn date(time: i64) -> String {
     crate::titles::date_time(time, false)
 }
 
-fn new_window(parent: &gtk::ApplicationWindow, title: &str, child: &impl IsA<gtk::Widget>) {
+thread_local! {
+    /// 開いている Blame・File History の窓（何の窓か → 窓）。
+    static TOOL_WINDOWS: std::cell::RefCell<std::collections::HashMap<String, glib::WeakRef<gtk::Window>>> =
+        std::cell::RefCell::default();
+}
+
+/// 何の窓か（同じリポジトリの同じファイル、Blame なら同じコミット。macOS 版のタブの鍵と同じ）。
+fn tool_key(kind: &str, repo: &Arc<Repository>, path: &str, rev: Option<&str>) -> String {
+    format!(
+        "{kind}\0{}\0{path}\0{}",
+        Arc::as_ptr(repo) as usize,
+        rev.unwrap_or("")
+    )
+}
+
+/// `key` の窓。もう開いていれば、それを前に出して返す（中身は呼んだ側が入れ直す。macOS 版は前のタブを
+/// 読み直したものに入れ替える）。なければ新しく開く。
+fn tool_window(parent: &gtk::ApplicationWindow, key: String, title: &str) -> gtk::Window {
+    let open = TOOL_WINDOWS.with(|w| {
+        let mut w = w.borrow_mut();
+        w.retain(|_, window| window.upgrade().is_some());
+        w.get(&key).and_then(|window| window.upgrade())
+    });
+    if let Some(window) = open {
+        window.set_title(Some(title));
+        window.present();
+        return window;
+    }
     let window = gtk::Window::builder()
         .title(title)
         .default_width(1100)
         .default_height(760)
-        .child(child)
         .build();
     window.set_transient_for(Some(parent));
     window.set_destroy_with_parent(true);
+    TOOL_WINDOWS.with(|w| w.borrow_mut().insert(key, window.downgrade()));
     window.present();
+    window
 }
 
 /// 失敗を知らせる。
@@ -68,6 +96,7 @@ pub fn blame(
     if let Some(rev) = rev {
         title.push_str(&format!(" @ {}", &rev[..8.min(rev.len())]));
     }
+    let key = tool_key("blame", &repo, path, rev);
     let command = json!({ "op": "blame", "path": path, "rev": rev });
     let parent = parent.clone();
     let path = path.to_owned();
@@ -81,7 +110,10 @@ pub fn blame(
         })
         .await;
         match info {
-            Ok(Ok((info, spans))) => show_blame(&parent, &title, &info, spans, on_commit),
+            Ok(Ok((info, spans))) => {
+                let window = tool_window(&parent, key, &title);
+                show_blame(&window, &info, spans, on_commit)
+            }
             Ok(Err(e)) => fail(&parent, &e),
             Err(_) => {}
         }
@@ -153,13 +185,7 @@ struct BlameRow {
     text: String,
 }
 
-fn show_blame(
-    parent: &gtk::ApplicationWindow,
-    title: &str,
-    info: &Value,
-    spans: LineSpans,
-    on_commit: OnCommit,
-) {
+fn show_blame(window: &gtk::Window, info: &Value, spans: LineSpans, on_commit: OnCommit) {
     let commits: Vec<(String, String, i64, String)> = info["commits"]
         .as_array()
         .into_iter()
@@ -314,7 +340,7 @@ fn show_blame(
     });
     install_css();
     let scrolled = gtk::ScrolledWindow::builder().child(&list).build();
-    new_window(parent, title, &scrolled);
+    window.set_child(Some(&scrolled));
 }
 
 /// Blame の交互の背景。
@@ -344,16 +370,14 @@ pub fn file_history(
     path: &str,
     on_commit: OnCommit,
 ) {
-    let window = gtk::Window::builder()
-        .title(format!("File History — {path}"))
-        .default_width(1100)
-        .default_height(760)
-        .build();
-    window.set_transient_for(Some(parent));
-    window.set_destroy_with_parent(true);
-    // タブの窓ではないので、Ctrl+F・Ctrl+G は自分で差分の検索の帯に回す。
-    crate::difffind::add_shortcuts(&window);
-    window.present();
+    // 同じファイルの File History がもう開いていれば、それを読み直す（macOS 版と同じ）。
+    let key = tool_key("fileHistory", &repo, path, None);
+    let fresh = TOOL_WINDOWS.with(|w| !w.borrow().get(&key).is_some_and(|w| w.upgrade().is_some()));
+    let window = tool_window(parent, key, &format!("File History — {path}"));
+    if fresh {
+        // タブの窓ではないので、Ctrl+F・Ctrl+G は自分で差分の検索の帯に回す。
+        crate::difffind::add_shortcuts(&window);
+    }
     load_file_history(&window, parent, repo, path.to_owned(), on_commit);
 }
 
