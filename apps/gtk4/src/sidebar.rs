@@ -253,10 +253,11 @@ impl Known {
             .find(|p| p.head_ref_name == branch)
     }
 
-    /// `branch` からプルリクエストを作れるか（既定のブランチからは作らない）。
+    /// `branch` からプルリクエストを作れるか（既定のブランチからは作らない。比べるのは名前そのもの。macOS 版と
+    /// 同じ）。
     pub fn can_create_pull_request_from(&self, branch: &str) -> bool {
-        let base = self.groups.as_ref().map_or("main", |g| g.base_name());
-        self.can_create_pull_request && branch != base && !base.ends_with(&format!("/{branch}"))
+        let base = self.groups.as_ref().and_then(|g| g.base.as_deref());
+        self.can_create_pull_request && base != Some(branch)
     }
 }
 
