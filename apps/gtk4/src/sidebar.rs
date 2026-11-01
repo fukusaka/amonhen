@@ -322,6 +322,9 @@ struct Inner {
     actions: RefCell<Option<Rc<Actions>>>,
     /// 分け方を読む番号（古い答えは使わない）。
     loading: Cell<u64>,
+    loading_tags: Cell<u64>,
+    /// 読んでいる途中の数（確認用のメニュー・吹き出しは、両方を読み終えてから出す）。
+    facts_pending: Cell<u32>,
     on_select: RefCell<Option<SelectCallback>>,
     /// ブランチ・タグを 2 つ以上選んだら呼ぶ（macOS 版の `onSelectMany`）。
     on_select_many: RefCell<Option<SelectManyCallback>>,
@@ -463,6 +466,8 @@ impl Sidebar {
             folded: RefCell::default(),
             actions: RefCell::default(),
             loading: Cell::new(0),
+            loading_tags: Cell::new(0),
+            facts_pending: Cell::new(0),
             on_select: RefCell::default(),
             on_select_many: RefCell::default(),
             on_menu,
@@ -656,6 +661,12 @@ impl Sidebar {
         self.inner.tag_epoch.set(self.inner.tag_epoch.get() + 1);
         self.inner.rebuild(first);
         self.inner.load_facts();
+    }
+
+    /// タグがどのリモートにあるかを読み直す（自動の fetch の後。ref が変わらなくても、コアはリモートのタグを
+    /// 読み直している。macOS 版の `reloadTagRemotes`）。
+    pub fn reload_tag_remotes(&self) {
+        self.inner.load_tag_remotes();
     }
 
     /// 署名を検証する側が変わった: タグの署名の結果を捨て、確かめ直す（macOS 版の `forgetSignatures`）。
@@ -1643,38 +1654,64 @@ impl Inner {
         }
     }
 
-    /// ローカルブランチの分け方を裏で読み、変わっていたら作り直す。
+    /// ローカルブランチの分け方とタグがどのリモートにあるかを裏で（2 つを並べて。macOS 版と同じ）読み、変わって
+    /// いたら作り直す。
     fn load_facts(self: &Rc<Self>) {
-        let Some(repo) = self.actions.borrow().as_ref().and_then(|a| a.repo()) else {
+        self.load_groups();
+        self.load_tag_remotes();
+    }
+
+    /// コアの命令（答えの要らない読み取り）を裏で始める（待つ前から動く）。
+    fn ask(&self, op: &'static str) -> Option<gio::JoinHandle<Value>> {
+        let repo = self.actions.borrow().as_ref().and_then(|a| a.repo())?;
+        self.facts_pending.set(self.facts_pending.get() + 1);
+        Some(gio::spawn_blocking(move || {
+            serde_json::from_str::<Value>(&repo.run_json(&json!({ "op": op }).to_string()))
+                .unwrap_or_default()
+        }))
+    }
+
+    /// ローカルブランチの分け方を裏で読み、変わっていたら作り直す。
+    fn load_groups(self: &Rc<Self>) {
+        let Some(reply) = self.ask("branchGroups") else {
             return;
         };
         let token = self.loading.get() + 1;
         self.loading.set(token);
         let weak = Rc::downgrade(self);
         glib::spawn_future_local(async move {
-            let reply = crate::sheets::run(&repo, json!({ "op": "branchGroups" })).await;
+            let reply = reply.await.unwrap_or_default();
             let Some(inner) = weak.upgrade() else { return };
-            if inner.loading.get() != token {
-                return;
+            inner.facts_pending.set(inner.facts_pending.get() - 1);
+            if inner.loading.get() == token {
+                let groups = BranchGroups::from(&reply["info"]);
+                if groups.is_some() && groups != *inner.groups.borrow() {
+                    inner.groups.replace(groups);
+                    inner.rebuild(false);
+                }
             }
-            let groups = BranchGroups::from(&reply["info"]);
-            let mut changed = false;
-            if groups.is_some() && groups != *inner.groups.borrow() {
-                inner.groups.replace(groups);
-                changed = true;
-            }
-            // タグがどのリモートにあるか（変わるのはタグの行の印とツールチップだけ）。
-            let reply = crate::sheets::run(&repo, json!({ "op": "tagRemotes" })).await;
-            if inner.loading.get() != token {
-                return;
-            }
-            let tags = TagRemotes::from(&reply["info"]);
-            if tags.is_some() && tags != *inner.tags.borrow() {
-                inner.tags.replace(tags);
-                changed = true;
-            }
-            if changed {
-                inner.rebuild(false);
+            inner.run_debug();
+        });
+    }
+
+    /// タグがどのリモートにあるかを裏で読み、変わっていたら作り直す（変わるのはタグの行の印とツールチップだけ）。
+    fn load_tag_remotes(self: &Rc<Self>) {
+        let Some(reply) = self.ask("tagRemotes") else {
+            return;
+        };
+        let token = self.loading_tags.get() + 1;
+        self.loading_tags.set(token);
+        let weak = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let reply = reply.await.unwrap_or_default();
+            let Some(inner) = weak.upgrade() else { return };
+            inner.facts_pending.set(inner.facts_pending.get() - 1);
+            if inner.loading_tags.get() == token {
+                let tags = TagRemotes::from(&reply["info"]);
+                if tags.is_some() && tags != *inner.tags.borrow() {
+                    inner.tags.replace(tags);
+                    inner.rebuild(false);
+                }
             }
             inner.run_debug();
         });
@@ -1717,6 +1754,7 @@ impl Inner {
             && spec.split(',').any(|s| self.find(s).is_none());
         // プルリクエストの行（`pr/<番号>`）は、GitHub から読むまで待つ。
         let waiting = worktree_waiting
+            || self.facts_pending.get() > 0
             || [&debug.menu, &debug.mark]
                 .into_iter()
                 .flatten()
