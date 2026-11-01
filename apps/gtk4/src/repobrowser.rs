@@ -2072,12 +2072,9 @@ impl Browser {
             let Some((host, path)) = ssh_connection_sheet(&b.window(), fixed).await else {
                 return;
             };
-            let location = filepicker::Chosen {
-                host: host.clone(),
-                path: path.clone(),
-                shown: path,
-            }
-            .ssh_location();
+            let Some(location) = filepicker::ssh_location(&host, &path) else {
+                return;
+            };
             crate::settings::set_string(LAST_HOST_KEY, &host);
             bookmarks::add(&location, b.selected_group().as_deref());
             b.open_location(&location, true);

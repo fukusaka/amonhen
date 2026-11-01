@@ -51,14 +51,35 @@ pub struct Chosen {
 impl Chosen {
     /// SSH 先のフォルダの場所（`ssh://host/~/src`・`ssh://host/C:/src`。Places と同じ書き方）。
     pub fn ssh_location(&self) -> String {
-        let path = self.shown.replace('\\', "/");
-        let path = if path.starts_with('/') {
-            path
-        } else {
-            format!("/{path}")
-        };
-        format!("ssh://{}{path}", self.host)
+        ssh_location(&self.host, &self.shown)
+            .unwrap_or_else(|| format!("ssh://{}/{}", self.host, self.shown))
     }
+}
+
+/// SSH の場所を組み立てる（macOS 版の `RepositoryLocation.ssh`）。`host` は `[user@]host[:port]`、`path` は
+/// 向こうの絶対パス（Windows の `C:\…` は `/C:/…` にする）か `~/` から始まるパス（どちらでもなければホームからの
+/// 相対とみなす）。終わりの `/` は落とす。書き方がおかしければ None。
+pub fn ssh_location(host: &str, path: &str) -> Option<String> {
+    let host = host.trim();
+    let path = path.trim();
+    if host.is_empty() || path.is_empty() || host.contains(|c: char| c == '/' || c.is_whitespace())
+    {
+        return None;
+    }
+    let mut path = if path == "~" || path.starts_with("~/") {
+        format!("/{path}")
+    } else if is_windows(path) {
+        format!("/{}", path.replace('\\', "/"))
+    } else if !path.starts_with('/') {
+        format!("/~/{path}")
+    } else {
+        path.to_owned()
+    };
+    // ドライブの根（`/C:/`）の `/` は残す（`C:` だけはそのドライブの今のフォルダ）。
+    while path.len() > 1 && path.ends_with('/') && !(path.len() == 4 && is_windows(&path[1..])) {
+        path.pop();
+    }
+    Some(format!("ssh://{host}{path}"))
 }
 
 /// シートに出すもの。
@@ -1630,5 +1651,14 @@ mod tests {
         assert_eq!(c("~/src").ssh_location(), "ssh://build/~/src");
         assert_eq!(c("/srv/git").ssh_location(), "ssh://build/srv/git");
         assert_eq!(c("C:\\src").ssh_location(), "ssh://build/C:/src");
+        assert_eq!(c("~/src/").ssh_location(), "ssh://build/~/src");
+        assert_eq!(c("~").ssh_location(), "ssh://build/~");
+        assert_eq!(c("src/repo").ssh_location(), "ssh://build/~/src/repo");
+        assert_eq!(c("/srv/git//").ssh_location(), "ssh://build/srv/git");
+        assert_eq!(c("/").ssh_location(), "ssh://build/");
+        assert_eq!(c("C:\\").ssh_location(), "ssh://build/C:/");
+        assert_eq!(ssh_location("", "~/a"), None);
+        assert_eq!(ssh_location("a b", "~/a"), None);
+        assert_eq!(ssh_location("build", " "), None);
     }
 }
