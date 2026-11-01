@@ -206,7 +206,7 @@ impl Sources {
                 .filter(|l| {
                     bookmarks::ssh_host(l).as_deref() == host
                         && !self.roots.contains(l)
-                        && bookmarks::path_part(l).starts_with(&under)
+                        && bookmarks::tree_path(l).starts_with(&under)
                 })
                 .collect()
         };
@@ -235,7 +235,7 @@ impl Sources {
                 let under = format!("{prefix}/");
                 bookmarks::scanned(root)
                     .into_iter()
-                    .filter(|l| bookmarks::path_part(l).starts_with(&under))
+                    .filter(|l| bookmarks::tree_path(l).starts_with(&under))
                     .collect()
             }
         }
@@ -268,7 +268,7 @@ impl Roots {
     /// `location` がスキャンするフォルダの下にあるか（見つけたもの、またはパスがその下のもの）。
     fn contains(&self, location: &str) -> bool {
         let host = bookmarks::ssh_host(location);
-        let path = bookmarks::path_part(location);
+        let path = bookmarks::tree_path(location);
         self.roots.iter().any(|(h, base, found)| {
             found.contains(location)
                 || (*h == host && (path == *base || path.starts_with(&format!("{base}/"))))
@@ -279,8 +279,8 @@ impl Roots {
 /// スキャンするフォルダのパス（手元なら `~` を広げる。比べるため）。
 fn root_base(root: &str) -> String {
     match bookmarks::ssh_host(root) {
-        Some(_) => bookmarks::path_part(root).trim_end_matches('/').to_owned(),
-        None => bookmarks::expand(&bookmarks::path_part(root))
+        Some(_) => bookmarks::tree_path(root).trim_end_matches('/').to_owned(),
+        None => bookmarks::expand(&bookmarks::tree_path(root))
             .to_string_lossy()
             .trim_end_matches('/')
             .to_owned(),
@@ -1254,7 +1254,7 @@ impl Browser {
                     let base = root_base(&root.path);
                     let found: Vec<String> = bookmarks::scanned(&root.path)
                         .iter()
-                        .map(|l| bookmarks::path_part(l))
+                        .map(|l| bookmarks::tree_path(l))
                         .collect();
                     // SSH 先は `~` のまま探すので、見つけたものが絶対パスで返ることがある。そのときは根から木にする。
                     let inside = format!("{base}/");
@@ -1270,7 +1270,7 @@ impl Browser {
                         },
                     );
                     let title = match host {
-                        Some(_) => remote_title(&bookmarks::path_part(&root.path)),
+                        Some(_) => remote_title(&bookmarks::tree_path(&root.path)),
                         None => bookmarks::tilde(&base),
                     };
                     Node {
@@ -1288,7 +1288,7 @@ impl Browser {
         let outside = |host: Option<&str>| -> Vec<String> {
             all.iter()
                 .filter(|l| bookmarks::ssh_host(l).as_deref() == host && !roots.contains(l))
-                .map(|l| bookmarks::path_part(l))
+                .map(|l| bookmarks::tree_path(l))
                 .collect()
         };
         let mut local = scan_nodes(None);
@@ -1311,6 +1311,8 @@ impl Browser {
         hosts.sort();
         hosts.dedup();
         for host in hosts {
+            // ホームを知らなければ問い合わせる（分かったら木を作り直す。macOS 版と同じ）。
+            bookmarks::learn_remote_home(&host);
             let mut children = scan_nodes(Some(&host));
             let h = host.clone();
             children.extend(folder_tree(

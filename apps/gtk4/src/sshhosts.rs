@@ -1072,7 +1072,7 @@ fn fill_scan_folders(list: &gtk::ListBox, session: &Rc<HostSession>) {
     for root in roots {
         let line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         let path = label(
-            &crate::repobrowser::remote_title(&crate::bookmarks::path_part(&root.path)),
+            &crate::repobrowser::remote_title(&crate::bookmarks::tree_path(&root.path)),
             &["monospace"],
         );
         path.set_hexpand(true);

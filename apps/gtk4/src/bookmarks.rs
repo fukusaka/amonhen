@@ -462,6 +462,105 @@ pub fn path_part(location: &str) -> String {
     }
 }
 
+/// 場所の中のパスを木・分類に使う形（macOS 版の `pathPart`）: SSH 先なら、ホームの下の絶対パスを `/~` に揃える
+/// （`ssh://h/~/prj` と `ssh://h/home/me/prj` を同じ木に並べる。ホームは [`learn_remote_home`] で覚えたもの）。
+pub fn tree_path(location: &str) -> String {
+    let path = path_part(location);
+    if let Some(host) = ssh_host(location)
+        && let Some(home) = remote_home(&host)
+    {
+        return home_relative(&path, &home);
+    }
+    path
+}
+
+/// `path` がホーム `home` かその下なら `/~…` に（[`tree_path`]）。
+fn home_relative(path: &str, home: &str) -> String {
+    match path.strip_prefix(home) {
+        Some(rest) if rest.is_empty() || rest.starts_with('/') => format!("/~{rest}"),
+        _ => path.to_owned(),
+    }
+}
+
+/// 覚えた SSH 先のホーム（ホスト → `$HOME`。macOS 版の `RemoteHome` の `sshHome`）。
+const SSH_HOME_KEY: &str = "sshHome";
+
+thread_local! {
+    /// このプロセスで一度問い合わせたホスト（答えがなくても二度は聞かない）。
+    static HOME_ASKED: RefCell<HashSet<String>> = RefCell::default();
+    /// 読んだ [`SSH_HOME_KEY`]（木を作るたびに行の数だけ引くので、一度だけ読む。覚えたら替える）。
+    static HOMES: RefCell<Option<serde_json::Map<String, Value>>> = const { RefCell::new(None) };
+}
+
+fn remote_homes() -> serde_json::Map<String, Value> {
+    HOMES.with(|h| {
+        h.borrow_mut()
+            .get_or_insert_with(|| {
+                crate::settings::string(SSH_HOME_KEY)
+                    .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+                    .and_then(|v| v.as_object().cloned())
+                    .unwrap_or_default()
+            })
+            .clone()
+    })
+}
+
+/// 覚えている `host` のホーム。
+pub fn remote_home(host: &str) -> Option<String> {
+    HOMES.with(|h| {
+        if h.borrow().is_none() {
+            remote_homes();
+        }
+        h.borrow()
+            .as_ref()?
+            .get(host)
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    })
+}
+
+/// `host` のホームを、まだ知らなければ裏で一度だけ問い合わせる（`ssh <host> 'printf %s "$HOME"'`。パスワードを
+/// 聞かれるホストでは問い合わせない: BatchMode）。分かったら覚えて、一覧に知らせる（木を作り直す）。macOS 版の
+/// `RemoteHome.learn`。
+pub fn learn_remote_home(host: &str) {
+    if remote_home(host).is_some() || !HOME_ASKED.with(|a| a.borrow_mut().insert(host.to_owned())) {
+        return;
+    }
+    let h = host.to_owned();
+    glib::spawn_future_local(async move {
+        let asked = h.clone();
+        let home = gio::spawn_blocking(move || {
+            let program = std::env::var("AMONHEN_SSH").unwrap_or_else(|_| "ssh".into());
+            let out = amonhen_model::process::command(&program)
+                .args([
+                    "-o",
+                    "BatchMode=yes",
+                    "-o",
+                    "ConnectTimeout=10",
+                    &asked,
+                    "printf %s \"$HOME\"",
+                ])
+                .stdin(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .output()
+                .ok()?;
+            let home = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+            (out.status.success() && home.starts_with('/') && home.len() > 1).then_some(home)
+        })
+        .await
+        .ok()
+        .flatten();
+        let Some(home) = home else {
+            return;
+        };
+        let mut all = remote_homes();
+        all.insert(h, Value::String(home));
+        crate::settings::set_string(SSH_HOME_KEY, &Value::Object(all.clone()).to_string());
+        HOMES.with(|h| *h.borrow_mut() = Some(all));
+        notify(None);
+    });
+}
+
 /// ホームの下を `~` で短くする（手元のパスだけ）。
 pub fn tilde(path: &str) -> String {
     let home = glib::home_dir();
@@ -944,6 +1043,9 @@ mod tests {
         assert_eq!(ssh_host("/x"), None);
         assert_eq!(path_part("ssh://h/x/y"), "/x/y");
         assert_eq!(path_part("daemon:/x"), "/x");
+        assert_eq!(home_relative("/home/me/prj/a", "/home/me"), "/~/prj/a");
+        assert_eq!(home_relative("/home/me", "/home/me"), "/~");
+        assert_eq!(home_relative("/home/meg/a", "/home/me"), "/home/meg/a");
     }
 
     #[test]
