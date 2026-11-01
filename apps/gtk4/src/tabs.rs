@@ -585,18 +585,13 @@ pub fn show_home(app: &gtk::Application, host: Option<Rc<RepoWindow>>) -> Rc<Rep
         let Some(host) = tab.host() else {
             return self::open(&a, location, place);
         };
-        // もう開いていれば（ほかの窓でも）そのタブを前に出す。追加した worktree はメインのリポジトリのタブで
-        // 開く（`open` と同じ）。ほかの窓のタブなら、このページは残す（macOS 版と同じ）。
-        match find_open(&location) {
-            Some((other, _)) if !Rc::ptr_eq(&other, &host) => {
-                return self::open(&a, location, place);
-            }
-            Some(_) => self::open(&a, location, place),
-            None => {
-                let position = host.notebook.page_num(&tab.root);
-                open_in(&a, &host, location, position);
-            }
+        // もう開いていれば（ほかの窓でも）そのタブを前に出し、このページは残す。追加した worktree はメインの
+        // リポジトリのタブで開く（`open` と同じ。macOS 版と同じ）。
+        if find_open(&location).is_some() {
+            return self::open(&a, location, place);
         }
+        let position = host.notebook.page_num(&tab.root);
+        open_in(&a, &host, location, position);
         close_tab(&tab);
         host.window.present();
     });
