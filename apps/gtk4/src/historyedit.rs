@@ -963,12 +963,10 @@ impl Opener {
                 .map(|e| e + usize::from(including_older))
                 .filter(|&e| e < line.len());
             let Some(end) = end else {
-                crate::sheets::inform(
-                    crate::sheets::parent(&inner.actions).as_ref(),
-                    &tr!("Edit Commits"),
-                    &tr!("Only commits on HEAD’s first-parent line can be edited."),
-                )
-                .await;
+                // 状態の帯に少し出す（macOS 版と同じ。シートで止めない）。
+                inner.statusbar.flash_warning(&tr!(
+                    "Only commits on HEAD’s first-parent line can be edited."
+                ));
                 return;
             };
             let chosen: Vec<(String, bool)> = line[..=end].to_vec();

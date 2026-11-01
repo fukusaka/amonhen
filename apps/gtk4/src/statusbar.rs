@@ -395,8 +395,18 @@ impl StatusBar {
 
     /// 終わった操作の一言を、しばらく出して消す。
     pub fn flash(self: &Rc<Self>, text: &str) {
-        let icon = gtk::Label::new(Some("✓"));
-        icon.add_css_class("success");
+        self.flash_with("✓", "success", text);
+    }
+
+    /// できなかったことの一言を、警告の印でしばらく出して消す（macOS 版の `flash(_:symbol:)` の
+    /// exclamationmark.triangle）。
+    pub fn flash_warning(self: &Rc<Self>, text: &str) {
+        self.flash_with("⚠", "warning", text);
+    }
+
+    fn flash_with(self: &Rc<Self>, mark: &str, css: &str, text: &str) {
+        let icon = gtk::Label::new(Some(mark));
+        icon.add_css_class(css);
         let label = gtk::Label::new(Some(text));
         label.add_css_class("dim-label");
         label.add_css_class("caption");
