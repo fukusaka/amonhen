@@ -123,6 +123,12 @@ impl Table {
 
     /// 右クリックで、その行を選んでからメニューを出す。
     pub fn context_menu(&self, menu: &gio::Menu) {
+        self.context_menu_or(menu, None);
+    }
+
+    /// `context_menu` と同じ。行のないところを右クリックしたら `empty` のメニューを出す（なければ出さない。
+    /// macOS 版の、何も選んでいないときのメニュー）。
+    pub fn context_menu_or(&self, menu: &gio::Menu, empty: Option<gio::Menu>) {
         let popover = gtk::PopoverMenu::from_model(Some(menu));
         popover.set_parent(&self.view);
         popover.set_has_arrow(false);
@@ -134,21 +140,26 @@ impl Table {
             self.model.clone(),
             self.selection.clone(),
         );
+        let menu = menu.clone();
         click.connect_pressed(move |_, _, x, y| {
             // 押したところのセル（部品の名前が行の id）の行を選ぶ。
             let mut widget = view.pick(x, y, gtk::PickFlags::DEFAULT);
+            let mut hit = false;
             while let Some(w) = widget {
                 let name = w.widget_name();
                 let n = model.n_items();
                 if let Some(i) = (0..n).find(|i| model.string(*i).as_deref() == Some(name.as_str()))
                 {
                     selection.set_selected(i);
+                    hit = true;
                     break;
                 }
                 widget = w.parent();
             }
-            if selection.selected_item().is_none() {
-                return;
+            match &empty {
+                Some(empty) => popover.set_menu_model(Some(if hit { &menu } else { empty })),
+                None if selection.selected_item().is_none() => return,
+                None => {}
             }
             popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
             popover.popup();
@@ -1361,7 +1372,10 @@ pub(crate) fn hooks_page(s: &Rc<RepoSettings>) -> gtk::ScrolledWindow {
     group.add_action(&create);
     // 右クリックのメニュー（エディタの名前は Settings > General で変わるので、そのたびに作り直す）。
     let menu = gio::Menu::new();
-    table.context_menu(&menu);
+    // 行のないところでは Create Hook… だけ（macOS 版と同じ）。
+    let empty_menu = gio::Menu::new();
+    empty_menu.append(Some(&tr!("Create Hook…")), Some("hooks.create"));
+    table.context_menu_or(&menu, Some(empty_menu));
     let fill_menu = {
         let menu = menu.clone();
         move || {
