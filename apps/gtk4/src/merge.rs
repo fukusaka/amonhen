@@ -244,9 +244,6 @@ pub struct Editor {
     band: Band,
     proposal: RefCell<Option<(Region, amonhen_assist::Proposal)>>,
     ai_cancel: RefCell<Arc<AtomicBool>>,
-    /// 前の AI の返事が使えなかった（読めない・マーカーが残る）。次はキャッシュを使わずに聞き直す（同じ返事を
-    /// 出し続けないように。macOS 版の Regenerate にあたる）。
-    ai_failed: Cell<bool>,
     on_resolved: RefCell<Rc<dyn Fn()>>,
     /// 別の窓で開く（埋め込んだ側が決める）。
     on_pop_out: RefCell<Option<Rc<dyn Fn()>>>,
@@ -255,6 +252,9 @@ pub struct Editor {
 thread_local! {
     /// 開いているマージエディタ（パスごとに 1 つ）。
     static OPEN: RefCell<Vec<(WindowKey, glib::WeakRef<gtk::Window>)>> = RefCell::default();
+    /// AI の返事が使えなかった（読めない・マーカーが残る）問い合わせ（worktree と中身）。次はキャッシュを使わずに
+    /// 聞き直す（同じ返事を出し続けないように。macOS 版の Regenerate にあたる）。エディタを作り直しても覚えておく。
+    static AI_FAILED: RefCell<std::collections::HashSet<String>> = RefCell::default();
     /// 次に開いたとき、最初のコンフリクトをこれで解く（`--accept`。確認用）。
     static ACCEPT_ONCE: Cell<Option<Choice>> = const { Cell::new(None) };
     /// 開いているマージエディタ（窓を閉じたら外す）。
@@ -656,7 +656,6 @@ impl Editor {
             band,
             proposal: RefCell::default(),
             ai_cancel: RefCell::new(Arc::new(AtomicBool::new(false))),
-            ai_failed: Cell::new(false),
             on_resolved: RefCell::new(Rc::new(|| {})),
             on_pop_out: RefCell::default(),
         });
@@ -1517,6 +1516,7 @@ impl Editor {
         };
         let vars = this.ai_variables(&c, base);
         let workdir = this.workdir();
+        let asked = format!("{workdir:?}\0{vars:?}");
         let weak = Rc::downgrade(this);
         glib::spawn_future_local(async move {
             let Some(this) = weak.upgrade() else { return };
@@ -1537,7 +1537,7 @@ impl Editor {
                 }
             });
             let parent = this.parent_window();
-            let use_cache = !this.ai_failed.get();
+            let use_cache = !AI_FAILED.with(|f| f.borrow().contains(&asked));
             drop(this);
             let result = crate::assist::run(
                 parent,
@@ -1571,12 +1571,12 @@ impl Editor {
                 Ok(proposal)
             }) {
                 Ok(proposal) => {
-                    this.ai_failed.set(false);
+                    AI_FAILED.with(|f| f.borrow_mut().remove(&asked));
                     this.band.show(&tr!("AI Suggestion"), Some(&proposal), None);
                     this.proposal.replace(Some((c, proposal)));
                 }
                 Err(e) => {
-                    this.ai_failed.set(true);
+                    AI_FAILED.with(|f| f.borrow_mut().insert(asked));
                     this.band.show(&failed, None, Some(&e));
                 }
             }
