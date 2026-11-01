@@ -607,11 +607,10 @@ pub fn new_branch(actions: &Rc<Actions>, start: &str) -> Item {
 pub fn ask_new_branch(actions: &Rc<Actions>, start: &str) {
     let (a, start) = (actions.clone(), start.to_owned());
     glib::spawn_future_local(async move {
-        let message = tr!("Name of the branch to create from {start}", start = start);
-        if let Some(name) = a
-            .ask("New Branch", &message, "", &tr!("Create and Switch"))
-            .await
-        {
+        // 見出し・説明・ボタンは macOS 版と同じ。
+        let title = tr!("New Branch from {name}", name = start);
+        let message = tr!("Name of the branch. It is checked out.");
+        if let Some(name) = a.ask(&title, &message, "", &tr!("Create")).await {
             a.perform(
                 json!({ "op": "createBranch", "name": name, "start": start, "checkout": true }),
             );
@@ -630,8 +629,11 @@ pub fn new_tag(actions: &Rc<Actions>, target: &str) -> Item {
 pub fn ask_new_tag(actions: &Rc<Actions>, target: &str) {
     let (a, target) = (actions.clone(), target.to_owned());
     glib::spawn_future_local(async move {
-        let message = tr!("Name of the tag for {target}", target = target);
-        if let Some(name) = a.ask("New Tag", &message, "", &tr!("Create")).await {
+        let title = tr!("New Tag at {name}", name = target);
+        if let Some(name) = a
+            .ask(&title, &tr!("Name of the tag."), "", &tr!("Create"))
+            .await
+        {
             a.perform(
                 json!({ "op": "createTag", "name": name, "target": target, "message": null }),
             );

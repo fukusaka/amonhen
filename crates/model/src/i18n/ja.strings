@@ -470,6 +470,9 @@
 "Name of the branch to create from {start}" = "{start} から作るブランチの名前";
 "Create and Switch" = "作成して切り替え";
 "Name of the tag for {target}" = "{target} に付けるタグの名前";
+"Name of the branch. It is checked out." = "ブランチの名前。作ったブランチに切り替えます。";
+"New Tag at {name}" = "{name} にタグを付ける";
+"Name of the tag." = "タグの名前。";
 "Create" = "作成";
 "Reverse" = "向きを入れ替える";
 "From the merge-base (A...B)" = "merge-base から（A...B）";
