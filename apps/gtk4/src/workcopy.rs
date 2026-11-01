@@ -542,6 +542,20 @@ impl WorkingCopy {
     /// 確かめる窓や、知らせに使う。
     pub fn set_actions(&self, actions: Rc<Actions>) {
         crate::appmenu::retitle_on_show(&self.inner.commit_menu, &actions);
+        // 上流がなければ、Commit ▾ のツールチップも Commit and Publish（macOS 版と同じ）。
+        let (menu, weak) = (self.inner.commit_menu.downgrade(), Rc::downgrade(&actions));
+        let retip = move || {
+            let (Some(menu), Some(actions)) = (menu.upgrade(), weak.upgrade()) else {
+                return;
+            };
+            menu.set_tooltip_text(Some(&if actions.publishes() {
+                tr!("Commit and Publish (Ctrl+Shift+Return), Amend")
+            } else {
+                tr!("Commit and Push (Ctrl+Shift+Return), Amend")
+            }));
+        };
+        retip();
+        actions.connect_publishes_changed(retip);
         self.inner.actions.replace(Some(actions));
         self.inner.update_buttons();
     }

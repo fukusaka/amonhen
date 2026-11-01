@@ -33,6 +33,8 @@ pub struct Actions {
     on_fetch: RefCell<Vec<Callback>>,
     /// 書き込む先の worktree を替えたら呼ぶ（Activity の History など、Undo の先が変わるもの）。
     on_repo: RefCell<Vec<Callback>>,
+    /// 今のブランチを送るのが Publish かどうかが変わったら呼ぶ（Commit ▾ のツールチップ）。
+    on_publishes: RefCell<Vec<Callback>>,
     on_failure: RefCell<Option<FailureCallback>>,
     on_done: RefCell<Option<DoneCallback>>,
     /// 操作がコンフリクトや途中で止まった（Working Copy で最初のコンフリクトを開く）。
@@ -69,6 +71,7 @@ impl Actions {
             on_after: RefCell::default(),
             on_fetch: RefCell::default(),
             on_repo: RefCell::default(),
+            on_publishes: RefCell::default(),
             on_failure: RefCell::default(),
             on_done: RefCell::default(),
             on_stop: RefCell::default(),
@@ -391,7 +394,23 @@ impl Actions {
 
     /// 今のブランチを送るのが Publish か（ref を読んだときに決める）。
     pub fn set_publishes(&self, publishes: bool) {
-        self.publishes.set(publishes);
+        if self.publishes.replace(publishes) == publishes {
+            return;
+        }
+        let callbacks: Vec<Callback> = self.on_publishes.borrow().clone();
+        for f in callbacks {
+            f();
+        }
+    }
+
+    /// 今のブランチを送るのが Publish か。
+    pub fn publishes(&self) -> bool {
+        self.publishes.get()
+    }
+
+    /// [`Self::publishes`] が変わったら `f` を呼ぶ。
+    pub fn connect_publishes_changed(&self, f: impl Fn() + 'static) {
+        self.on_publishes.borrow_mut().push(Rc::new(f));
     }
 
     /// 状態で変わるメニューの項目の名前（macOS 版の `validateMenuItem` と同じ）。`action` は `win.push` など。

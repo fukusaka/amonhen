@@ -504,6 +504,7 @@
 "This commit has no changes to the file" = "このコミットでの変更が見つかりません";
 "Commit the checked files (Ctrl+Return)" = "チェックしたファイルをコミット（Ctrl+Return）";
 "Commit and Push (Ctrl+Shift+Return), Amend" = "Commit and Push（Ctrl+Shift+Return）、Amend";
+"Commit and Publish (Ctrl+Shift+Return), Amend" = "Commit and Publish（Ctrl+Shift+Return）、Amend";
 "Changes" = "変更";
 "Include or exclude all listed files in the next commit" = "一覧のファイルをすべて次のコミットに含める・外す";
 "Files in the next commit / changed files" = "次のコミットに含めるファイル / 変更のあるファイル";
