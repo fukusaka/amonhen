@@ -24,7 +24,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | Workspace の行でメインの表示を切り替える（Working Copy・History・Stashes・Reflog…） | ✓ | ✓ | △ | n/a | VSCode: Working Copy・History・Stashes だけで、Reflog・Conflicts はない。 |
 | コンフリクトがあるあいだ Conflicts の行と数 | ✓ | ✓ | △ | n/a | VSCode: Working Copy の中の Conflicts のグループ。 |
 | stash があるときだけ Stashes の行と数 | ✓ | ✓ | △ | n/a | VSCode: Stashes の節はいつも出る。 |
-| Range Diff を開いているあいだの Range Diff の行 | ✓ | ✓ | — | n/a | GTK4: × ではなく Close Range Diff で閉じる。 |
+| Range Diff を開いているあいだの Range Diff の行 | ✓ | ✓ | — | n/a |  |
 | Branches・Remotes・Tags を絞り込む欄 | ✓ | ✓ | — | n/a |  |
 | ブランチ・タグをいくつも選ぶ | ✓ | ✓ | — | n/a |  |
 | Pull Requests・Worktrees は中身があるときだけ出す | ✓ | ✓ | — | n/a | VSCode: どちらのグループもない。 |
@@ -37,7 +37,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | お気に入りのブランチ | ✓ | ✓ | — | — |  |
 | ブランチのアーカイブ | ✓ | ✓ | — | — |  |
 | お気に入りをドラッグで並べ替える | ✓ | ✓ | — | n/a | GTK4: お気に入りの行の上 3 分の 1 か下 3 分の 1 に落とす。真ん中なら Merge・Rebase。 |
-| ブランチのメニュー: checkout・名前の変更・削除（未マージは Delete Anyway） | ✓ | ✓ | ✓ | △ | macOS: Set Upstream は Repository メニューだけ。<br>GTK4: Set Upstream は今のブランチだけ。<br>CLI: `amonhen run` から。 |
+| ブランチのメニュー: checkout・名前の変更・削除（未マージは Delete Anyway） | ✓ | ✓ | ✓ | △ | macOS: Set Upstream は Repository メニューだけ。<br>GTK4: Set Upstream は Repository メニューだけ。<br>CLI: `amonhen run` から。 |
 | checkout していないブランチの同期（Fast-Forward・Push・Publish） | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | タグの一覧 | ✓ | ✓ | ✓ | ✓ |  |
 | タグのリモートの印（ない・違う）とポップオーバー | ✓ | ✓ | — | △ | CLI: `amonhen run`（`tagRemotes`）から。 |
@@ -53,7 +53,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| 窓の中のリポジトリのタブ | ✓ | △ | n/a | n/a | GTK4: 窓の間の移動はメニュー（Move Tab to New Window・Merge All Windows）で、ドラッグではできない。 |
+| 窓の中のリポジトリのタブ | ✓ | ✓ | n/a | n/a |  |
 | 別の窓（New Window） | ✓ | ✓ | n/a | n/a |  |
 | 起動時に窓とタブを戻す | ✓ | ✓ | n/a | n/a |  |
 | SSH・daemon のリポジトリのつなぎ中のタブ（Cancel・Try Again） | ✓ | ✓ | n/a | n/a |  |
@@ -66,15 +66,15 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | --- | :-: | :-: | :-: | :-: | --- |
 | All・Favorites・Places・グループのあるリポジトリのページ | ✓ | ✓ | n/a | n/a | GTK4: ページの見出しの帯は、リポジトリのツールバーではなく短いメニューだけ。 |
 | 手元・SSH のリポジトリを足す | ✓ | ✓ | n/a | n/a |  |
-| この機械の探すフォルダー（深さ・見張り） | △ | △ | n/a | n/a | macOS: 除くものは決まった一覧。<br>GTK4: 除くものは決まった一覧で、フォルダーを見張らない。 |
+| この機械の探すフォルダー（深さ・見張り） | △ | △ | n/a | n/a | macOS: 除くものは決まった一覧。<br>GTK4: 除くものは決まった一覧。 |
 | SSH 先の探すフォルダー | ✓ | ✓ | n/a | △ | CLI: `find-repositories` がアプリのために探す。 |
 | 場所の下のリポジトリのフォルダーの木 | ✓ | ✓ | n/a | n/a |  |
-| 手で作るグループ・行を Favorites やグループへドラッグ | △ | △ | n/a | n/a | macOS: グループそのものはドラッグで並べ替えられない。<br>GTK4: ドラッグはない。 |
+| 手で作るグループ・行を Favorites やグループへドラッグ | △ | △ | n/a | n/a | macOS: グループそのものはドラッグで並べ替えられない。<br>GTK4: グループそのものはドラッグで並べ替えられない。 |
 | 状態の列（ブランチ・変更・ahead/behind・最後のコミット・開いた時）、並べ替え | ✓ | ✓ | n/a | n/a |  |
 | お気に入り・表示名・色のラベル | ✓ | ✓ | n/a | n/a |  |
 | タブ・窓で開く、Finder（ファイル）・Terminal | △ | △ | n/a | n/a | macOS: Open in Editor はない。<br>GTK4: Open in Editor はない。 |
 | 選んだリポジトリを Fetch | ✓ | ✓ | n/a | n/a |  |
-| Quick Open（あいまい検索） | ✓ | ✓ | n/a | n/a | GTK4: 新しい窓で開く。 |
+| Quick Open（あいまい検索） | ✓ | ✓ | n/a | n/a |  |
 | ツールバーのリポジトリ名で切り替える | ✓ | ✓ | △ | n/a | VSCode: Select Repository でワークスペースのリポジトリから選ぶ。 |
 | Clone（自分の GitHub のリポジトリから選ぶ） | ✓ | ✓ | n/a | △ | VSCode: VSCode 自身の Git: Clone。<br>CLI: `clone <url>` だけ。 |
 | 新しいリポジトリの Init | — | — | n/a | — | macOS: docs/ux.md の File メニューにあるが、作っていない。 |
@@ -99,7 +99,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | SSH Hosts > Connection: 探すフォルダー | ✓ | ✓ | n/a | n/a |  |
 | SSH Hosts: ホストのすべてのリポジトリの git のページ | ✓ | ✓ | n/a | n/a |  |
 | SSH Hosts: ホストの Environment Variables（ログインシェルの切り替え） | ✓ | ✓ | n/a | n/a |  |
-| ホスト・この機械の列で選ぶパスのシート | ✓ | ✓ | n/a | n/a | GTK4: リポジトリを加えるときは 1 つずつ。clone の置き場所と外部のエディタは GTK のファイルのダイアログ。 |
+| ホスト・この機械の列で選ぶパスのシート | ✓ | ✓ | n/a | n/a | GTK4: 外のエディターは GTK のファイルのダイアログで選ぶ。 |
 | Accounts: GitHub（CI の状態・アバター） | ✓ | ✓ | — | n/a |  |
 | Appearance: History の順・1 行・行の項目・アバター | ✓ | ✓ | n/a | n/a |  |
 | Appearance: テーマ・フォント・グラフの色 | — | — | n/a | n/a |  |
@@ -110,7 +110,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | Performance: commit-graph・共有の daemon | ✓ | ✓ | △ | n/a | VSCode: VSCode の設定の `amonhen.daemon.enabled`・`amonhen.daemon.path`。 |
 | Performance: fsmonitor | ✓ | ✓ | — | n/a | GTK4: git に fsmonitor--daemon のない Linux・BSD では押せない。 |
 | Performance: 永続キャッシュの場所・大きさ・消す | — | — | — | △ | CLI: `log --rebuild`・`daemon rebuild`。 |
-| 設定の変更の Undo・Redo | △ | △ | n/a | n/a | macOS: Git のページとリポジトリの設定だけ。<br>GTK4: Git のページと Keys and Values だけ。 |
+| 設定の変更の Undo・Redo | △ | △ | n/a | n/a | macOS: Git のページとリポジトリの設定だけ。<br>GTK4: Git のページとリポジトリの設定だけ。 |
 
 ## 4. リポジトリの設定
 
@@ -194,7 +194,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | リポジトリごとの下書き、テンプレートから始める | ✓ | ✓ | — | n/a |  |
 | 最近のメッセージ（⌥↑ / ⌥↓・一覧） | ✓ | ✓ | — | n/a |  |
 | Conventional の種類・Co-authored-by・Signed-off-by を入れる | ✓ | ✓ | — | n/a |  |
-| `#issue` の補完 | — | — | — | n/a |  |
+| `#issue` の補完 | ✓ | ✓ | — | n/a |  |
 | Commit and Push・Amend | ✓ | ✓ | △ | △ | VSCode: Amend だけ。<br>CLI: `commit -m … --amend`。 |
 | Fixup / Squash Commit For | ✓ | ✓ | — | n/a |  |
 | hooks の出力のシート | ✓ | ✓ | — | n/a |  |
@@ -272,7 +272,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | 直せる Result とコンフリクトごとの Undo | ✓ | ✓ | n/a | n/a |  |
 | ファイルを Current / Incoming で解く | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | 外のマージツールで開く | — | — | n/a | n/a |  |
-| エディターを別の窓に出す | ✓ | n/a | n/a | n/a | GTK4: いつも別の窓。 |
+| エディターを別の窓に出す | ✓ | ✓ | n/a | n/a |  |
 | Continue / Skip / Abort | ✓ | ✓ | ✓ | △ | VSCode: サイドバーの進行中の行に出る。<br>CLI: `amonhen run` から。 |
 
 ## 9. AI
@@ -281,11 +281,11 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | --- | :-: | :-: | :-: | :-: | --- |
 | Claude Code と Codex | ✓ | ✓ | — | — |  |
 | Apple Intelligence（端末の中） | ✓ | n/a | n/a | n/a |  |
-| コミットのメッセージを翻訳 | ✓ | ✓ | — | — | GTK4: メッセージの下にそのまま出す。 |
-| コミット・選んだものを解説 | ✓ | ✓ | — | — | GTK4: そのまま出す。 |
+| コミットのメッセージを翻訳 | ✓ | ✓ | — | — |  |
+| コミット・選んだものを解説 | ✓ | ✓ | — | — |  |
 | コミットのメッセージを提案 | ✓ | ✓ | — | — |  |
 | 差分の hunk を解説 | ✓ | ✓ | — | — |  |
-| AI でコンフリクトを解く | ✓ | △ | — | — | GTK4: 1 つずつで、帯として出す。 |
+| AI でコンフリクトを解く | ✓ | ✓ | — | — |  |
 | すべてのファイルを AI で解く | — | — | — | — | docs/ux.md（9 章）に設計はあるが、まだない。マージエディタはコンフリクトを 1 つずつ解く。 |
 | コンフリクトを解説 | ✓ | ✓ | — | — |  |
 | リポジトリごと・リポジトリのプロンプトの初回の確認 | ✓ | ✓ | — | — |  |

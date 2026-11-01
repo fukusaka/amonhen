@@ -24,7 +24,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Workspace rows switch the main view (Working Copy, History, Stashes, Reflog…) | ✓ | ✓ | △ | n/a | VSCode: Working Copy, History and Stashes only; no Reflog or Conflicts. |
 | Conflicts row with a count while there are conflicts | ✓ | ✓ | △ | n/a | VSCode: A Conflicts group inside the Working Copy view. |
 | Stashes row with a count only when there are stashes | ✓ | ✓ | △ | n/a | VSCode: The Stashes section is always shown. |
-| Range Diff row while a range diff is open | ✓ | ✓ | — | n/a | GTK4: Closed with Close Range Diff, not ×. |
+| Range Diff row while a range diff is open | ✓ | ✓ | — | n/a |  |
 | Filter field over Branches, Remotes and Tags | ✓ | ✓ | — | n/a |  |
 | Several branches or tags selected at once | ✓ | ✓ | — | n/a |  |
 | Pull Requests and Worktrees shown only when not empty | ✓ | ✓ | — | n/a | VSCode: Neither group exists. |
@@ -37,7 +37,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Favorite branches | ✓ | ✓ | — | — |  |
 | Archived branches | ✓ | ✓ | — | — |  |
 | Favorites reordered by dragging | ✓ | ✓ | — | n/a | GTK4: Dropped on the upper or lower third of a favorite; the middle offers Merge and Rebase. |
-| Branch menu: checkout, rename, delete (Delete Anyway when unmerged) | ✓ | ✓ | ✓ | △ | macOS: Set Upstream is only in the Repository menu.<br>GTK4: Set Upstream is only for the current branch.<br>CLI: Via `amonhen run`. |
+| Branch menu: checkout, rename, delete (Delete Anyway when unmerged) | ✓ | ✓ | ✓ | △ | macOS: Set Upstream is only in the Repository menu.<br>GTK4: Set Upstream is only in the Repository menu.<br>CLI: Via `amonhen run`. |
 | Sync a branch that is not checked out (Fast-Forward, Push, Publish) | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Tags listed | ✓ | ✓ | ✓ | ✓ |  |
 | Tag marks for remotes (missing, different) with a popover | ✓ | ✓ | — | △ | CLI: Via `amonhen run` (`tagRemotes`). |
@@ -53,7 +53,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| Repository tabs in a window | ✓ | △ | n/a | n/a | GTK4: Tabs are moved between windows with menu items (Move Tab to New Window, Merge All Windows), not by dragging. |
+| Repository tabs in a window | ✓ | ✓ | n/a | n/a |  |
 | Separate windows (New Window) | ✓ | ✓ | n/a | n/a |  |
 | Open windows and tabs restored at launch | ✓ | ✓ | n/a | n/a |  |
 | Connecting tab for SSH and daemon repositories (Cancel, Try Again) | ✓ | ✓ | n/a | n/a |  |
@@ -66,15 +66,15 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | --- | :-: | :-: | :-: | :-: | --- |
 | Repository page with All, Favorites, Places and groups | ✓ | ✓ | n/a | n/a | GTK4: The page's header bar has its own short menu instead of the repository toolbar. |
 | Add a local or an SSH repository | ✓ | ✓ | n/a | n/a |  |
-| Folders to scan on this machine (depth, watched) | △ | △ | n/a | n/a | macOS: Excludes are a fixed list.<br>GTK4: Excludes are a fixed list and folders are not watched. |
+| Folders to scan on this machine (depth, watched) | △ | △ | n/a | n/a | macOS: Excludes are a fixed list.<br>GTK4: Excludes are a fixed list. |
 | Folders to scan on SSH hosts | ✓ | ✓ | n/a | △ | CLI: `find-repositories` does the scan for the apps. |
 | Folder tree of the repositories under a place | ✓ | ✓ | n/a | n/a |  |
-| Manual groups; rows dragged onto Favorites or a group | △ | △ | n/a | n/a | macOS: Groups themselves can't be reordered by dragging.<br>GTK4: No dragging. |
+| Manual groups; rows dragged onto Favorites or a group | △ | △ | n/a | n/a | macOS: Groups themselves can't be reordered by dragging.<br>GTK4: Groups themselves can't be reordered by dragging. |
 | Status columns (branch, changes, ahead/behind, last commit, opened), sortable | ✓ | ✓ | n/a | n/a |  |
 | Favorites, display name, color label | ✓ | ✓ | n/a | n/a |  |
 | Open in a tab or window; Finder / Files, Terminal | △ | △ | n/a | n/a | macOS: No Open in Editor.<br>GTK4: No Open in Editor. |
 | Fetch the selected repositories | ✓ | ✓ | n/a | n/a |  |
-| Quick Open (fuzzy search) | ✓ | ✓ | n/a | n/a | GTK4: Opens in a new window. |
+| Quick Open (fuzzy search) | ✓ | ✓ | n/a | n/a |  |
 | Repository name in the toolbar switches the repository | ✓ | ✓ | △ | n/a | VSCode: Select Repository picks among workspace repositories. |
 | Clone (choosing from your own GitHub repositories) | ✓ | ✓ | n/a | △ | VSCode: VSCode's own Git: Clone.<br>CLI: `clone <url>` only. |
 | Init a new repository | — | — | n/a | — | macOS: Listed in docs/ux.md's File menu but not built. |
@@ -99,7 +99,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | SSH Hosts > Connection: folders to scan | ✓ | ✓ | n/a | n/a |  |
 | SSH Hosts: git pages for every repository on the host | ✓ | ✓ | n/a | n/a |  |
 | SSH Hosts: the host's Environment Variables (login shell switch) | ✓ | ✓ | n/a | n/a |  |
-| Path picker in columns for a host or this machine | ✓ | ✓ | n/a | n/a | GTK4: One repository at a time when adding; the clone location and the external editor use the GTK file dialog. |
+| Path picker in columns for a host or this machine | ✓ | ✓ | n/a | n/a | GTK4: The external editor uses the GTK file dialog. |
 | Accounts: GitHub (CI status, avatars) | ✓ | ✓ | — | n/a |  |
 | Appearance: History order, one line, row items, avatars | ✓ | ✓ | n/a | n/a |  |
 | Appearance: theme, fonts, graph colors | — | — | n/a | n/a |  |
@@ -110,7 +110,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Performance: commit-graph, shared daemon | ✓ | ✓ | △ | n/a | VSCode: `amonhen.daemon.enabled` and `amonhen.daemon.path` as VSCode settings. |
 | Performance: fsmonitor | ✓ | ✓ | — | n/a | GTK4: Disabled on Linux and the BSDs, where git has no fsmonitor--daemon. |
 | Performance: persistent cache location, size, clearing | — | — | — | △ | CLI: `log --rebuild`, `daemon rebuild`. |
-| Undo / Redo of settings changes | △ | △ | n/a | n/a | macOS: Git pages and repository settings only.<br>GTK4: Git pages and Keys and Values only. |
+| Undo / Redo of settings changes | △ | △ | n/a | n/a | macOS: Git pages and repository settings only.<br>GTK4: Git pages and repository settings only. |
 
 ## 4. Repository settings
 
@@ -194,7 +194,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Draft per repository, starting from the template | ✓ | ✓ | — | n/a |  |
 | Recent messages (⌥↑ / ⌥↓, list) | ✓ | ✓ | — | n/a |  |
 | Insert Conventional types, Co-authored-by, Signed-off-by | ✓ | ✓ | — | n/a |  |
-| `#issue` completion | — | — | — | n/a |  |
+| `#issue` completion | ✓ | ✓ | — | n/a |  |
 | Commit and Push, Amend | ✓ | ✓ | △ | △ | VSCode: Amend only.<br>CLI: `commit -m … --amend`. |
 | Fixup / Squash Commit For | ✓ | ✓ | — | n/a |  |
 | Hooks output sheet | ✓ | ✓ | — | n/a |  |
@@ -272,7 +272,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Editable Result with undo per conflict | ✓ | ✓ | n/a | n/a |  |
 | Resolve a file with Current / Incoming | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Open in an external merge tool | — | — | n/a | n/a |  |
-| Pop out the editor into a window | ✓ | n/a | n/a | n/a | GTK4: Always its own window. |
+| Pop out the editor into a window | ✓ | ✓ | n/a | n/a |  |
 | Continue / Skip / Abort | ✓ | ✓ | ✓ | △ | VSCode: On the sidebar's in-progress row.<br>CLI: Via `amonhen run`. |
 
 ## 9. AI
@@ -281,11 +281,11 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | --- | :-: | :-: | :-: | :-: | --- |
 | Claude Code and Codex | ✓ | ✓ | — | — |  |
 | Apple Intelligence (on-device) | ✓ | n/a | n/a | n/a |  |
-| Translate a commit message | ✓ | ✓ | — | — | GTK4: Shown inline under the message. |
-| Explain a commit or a selection | ✓ | ✓ | — | — | GTK4: Shown inline. |
+| Translate a commit message | ✓ | ✓ | — | — |  |
+| Explain a commit or a selection | ✓ | ✓ | — | — |  |
 | Suggest a commit message | ✓ | ✓ | — | — |  |
 | Explain a diff hunk | ✓ | ✓ | — | — |  |
-| Resolve a conflict with AI | ✓ | △ | — | — | GTK4: One conflict at a time, shown as a band. |
+| Resolve a conflict with AI | ✓ | ✓ | — | — |  |
 | Resolve every file with AI | — | — | — | — | Designed in docs/ux.md (chapter 9), not built: the merge editor resolves one conflict at a time. |
 | Explain a conflict | ✓ | ✓ | — | — |  |
 | First-time confirmation per repository and for repository prompts | ✓ | ✓ | — | — |  |
