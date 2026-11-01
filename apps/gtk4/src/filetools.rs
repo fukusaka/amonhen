@@ -75,16 +75,6 @@ fn tool_window(parent: &gtk::ApplicationWindow, key: String, title: &str) -> gtk
     window
 }
 
-/// 失敗を知らせる。
-fn fail(parent: &gtk::ApplicationWindow, e: &str) {
-    gtk::AlertDialog::builder()
-        .message(tr!("Can’t read the file’s information"))
-        .detail(e)
-        .modal(true)
-        .build()
-        .show(Some(parent));
-}
-
 /// `path` の blame を、`rev`（なければ作業ツリー）で開く。
 pub fn blame(
     parent: &gtk::ApplicationWindow,
@@ -839,19 +829,13 @@ impl FileHistoryView {
         });
     }
 
-    /// 読めなかった: 何も出していなければ差分の場所に理由を、出していれば出したまま知らせる。
+    /// 読めなかった: 読めた分は出したまま、差分の場所に理由を出す（macOS 版と同じ）。
     fn fail(self: &Rc<Self>, e: &str) {
-        let had = !self.entries.borrow().is_empty();
+        eprintln!("ファイルの履歴を読めない: {e}");
         self.complete.set(true);
         let entries = self.entries.borrow().clone();
         self.apply(entries, true);
-        if had {
-            if let Some(parent) = self.parent.upgrade() {
-                fail(&parent, e);
-            }
-        } else {
-            self.diff.show_message(e);
-        }
+        self.diff.show_message(e);
     }
 
     /// 一覧を入れ替える。選んでいたコミットは選んだまま（見出しが増えて行がずれても）。

@@ -494,7 +494,6 @@
 "Search History (Ctrl+F)" = "History を検索（Ctrl+F）";
 "{count} matches" = "{count} 件";
 "No Matches" = "見つかりません";
-"Can’t read the file’s information" = "ファイルの情報を読めません";
 "Not committed yet" = "まだコミットしていない";
 "Double-click to show in History." = "ダブルクリックで History に表示";
 "This commit has no changes to the file" = "このコミットでの変更が見つかりません";
