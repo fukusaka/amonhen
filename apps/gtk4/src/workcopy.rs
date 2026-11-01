@@ -739,6 +739,13 @@ impl Inner {
                 this.update_buttons();
             }
         });
+        // Description だけでもコミットできるので、本文の変化でもボタンを直す（macOS 版と同じ）。
+        let weak = Rc::downgrade(this);
+        this.body.buffer().connect_changed(move |_| {
+            if let Some(this) = weak.upgrade() {
+                this.update_buttons();
+            }
+        });
         let weak = Rc::downgrade(this);
         this.amend.connect_toggled(move |amend| {
             let Some(this) = weak.upgrade() else { return };
@@ -1874,17 +1881,7 @@ impl Inner {
 
     /// コミットする。できたら `then` を呼ぶ（Commit and Push の push）。
     fn commit(this: &Rc<Self>, then: Option<Box<dyn FnOnce()>>) {
-        let subject = this.subject.text().trim().to_owned();
-        let buffer = this.body.buffer();
-        let body = buffer
-            .text(&buffer.start_iter(), &buffer.end_iter(), false)
-            .trim()
-            .to_owned();
-        let message = if body.is_empty() {
-            subject
-        } else {
-            format!("{subject}\n\n{body}")
-        };
+        let message = this.composed_message();
         let amend = this.amend.is_active();
         let weak = Rc::downgrade(this);
         this.commit.set_sensitive(false);
@@ -1942,6 +1939,21 @@ impl Inner {
                 pending.set(pending.get() - 1);
             });
         });
+    }
+
+    /// Summary と Description をつないだメッセージ（片方だけでもよい。macOS 版と同じ）。
+    fn composed_message(&self) -> String {
+        let subject = self.subject.text().trim().to_owned();
+        let buffer = self.body.buffer();
+        let body = buffer
+            .text(&buffer.start_iter(), &buffer.end_iter(), false)
+            .trim()
+            .to_owned();
+        match (subject.is_empty(), body.is_empty()) {
+            (_, true) => subject,
+            (true, false) => body,
+            (false, false) => format!("{subject}\n\n{body}"),
+        }
     }
 
     /// Summary も Description も空か（書きかけのメッセージを直前のコミットのもので上書きしない）。
@@ -2023,9 +2035,9 @@ impl Inner {
 
     fn update_buttons(&self) {
         let staged = staged_count(&self.all_entries.borrow()) > 0;
-        let has_subject = !self.subject.text().trim().is_empty();
+        let has_message = !self.composed_message().is_empty();
         let amend = self.amend.is_active();
-        let can_commit = has_subject && (staged || amend);
+        let can_commit = has_message && (staged || amend);
         self.commit.set_sensitive(can_commit);
         self.commit
             .set_label(if amend { "Amend Commit" } else { "Commit" });
