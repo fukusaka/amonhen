@@ -273,8 +273,12 @@ impl Inner {
             return;
         };
         if !this.only.is_active() {
+            // 選んでいたコミットは、元の History でも選んだまま（`show` が ID で選び直す。macOS 版と同じ）。
             this.view.show(repo, base);
             this.view.set_matches(this.matches.borrow().clone());
+            if let Some(row) = this.view.selected() {
+                this.view.scroll_to_row(row);
+            }
             this.update_count();
             return;
         }
@@ -303,9 +307,11 @@ impl Inner {
             if this.only.is_active()
                 && let Ok((repo, filtered)) = built
             {
+                // 選んでいたコミットは、絞り込んだ History でも選んだまま（`show` が ID で選び直し、なければ
+                // 先頭を選ぶ。macOS 版と同じ）。
                 this.view.show(repo, filtered);
-                if !rows.is_empty() {
-                    this.view.select(0);
+                if let Some(row) = this.view.selected() {
+                    this.view.scroll_to_row(row);
                 }
                 this.update_count();
             }
