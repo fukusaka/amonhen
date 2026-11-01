@@ -1722,24 +1722,8 @@ impl Browser {
     }
 
     fn open_location(self: &Rc<Self>, location: &str, close: bool) {
-        if !bookmarks::is_repository(location) {
-            let (b, location) = (self.clone(), location.to_owned());
-            glib::spawn_future_local(async move {
-                let sheet = Sheet::new(
-                    Some(&b.window()),
-                    &tr!(
-                        "{name} not found",
-                        name = bookmarks::display_name(&location)
-                    ),
-                    &tr!("{path}\nRemove it from the list?", path = location),
-                );
-                sheet.buttons(&tr!("Remove"), false, None);
-                if sheet.run().await == Response::Ok {
-                    crate::repos::forget(&location);
-                    bookmarks::remove(&location);
-                    b.reload();
-                }
-            });
+        let b = self.clone();
+        if !found_or_offer_removal(&self.window(), location, move || b.reload()) {
             return;
         }
         let place = if close {
@@ -2378,6 +2362,36 @@ pub async fn choose_remote_scan_folder(
     }
     crate::settings::set_string(LAST_HOST_KEY, &chosen.host);
     Some(chosen.ssh_location())
+}
+
+/// 開く前に: 見つからない場所なら、一覧から外すか聞いて false（外したら `removed`）。見つかれば true（macOS 版の
+/// `open` の始め。ページとツールバーの一覧で同じ）。
+pub fn found_or_offer_removal(
+    parent: &gtk::Window,
+    location: &str,
+    removed: impl FnOnce() + 'static,
+) -> bool {
+    if bookmarks::is_repository(location) {
+        return true;
+    }
+    let (parent, location) = (parent.clone(), location.to_owned());
+    glib::spawn_future_local(async move {
+        let sheet = Sheet::new(
+            Some(&parent),
+            &tr!(
+                "{name} not found",
+                name = bookmarks::display_name(&location)
+            ),
+            &tr!("{path}\nRemove it from the list?", path = location),
+        );
+        sheet.buttons(&tr!("Remove"), false, None);
+        if sheet.run().await == Response::Ok {
+            crate::repos::forget(&location);
+            bookmarks::remove(&location);
+            removed();
+        }
+    });
+    false
 }
 
 /// SSH 接続（SSH 先のリポジトリ）を加えるシート（macOS 版の `SSHConnectionSheet`）: 接続先（~/.ssh/config の名前か

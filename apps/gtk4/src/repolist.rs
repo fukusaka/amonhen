@@ -107,8 +107,14 @@ pub fn button(
     let menu_open: repobrowser::RowOpener = {
         let (p, open) = (popover.downgrade(), open.clone());
         Rc::new(move |location, how| {
-            if let Some(p) = p.upgrade() {
-                p.popdown();
+            let Some(p) = p.upgrade() else { return };
+            let window = p.root().and_downcast::<gtk::Window>();
+            p.popdown();
+            // 見つからなければ、一覧から外すか聞く（リポジトリのページと同じ。macOS 版の `open`）。
+            if let Some(window) = window
+                && !repobrowser::found_or_offer_removal(&window, &location, || {})
+            {
+                return;
             }
             let location = PathBuf::from(location);
             match how {
@@ -314,14 +320,50 @@ pub fn button(
             else {
                 return;
             };
-            if let Some(p) = p.upgrade() {
-                p.popdown();
+            let Some(p) = p.upgrade() else { return };
+            let window = p.root().and_downcast::<gtk::Window>();
+            p.popdown();
+            // 見つからなければ、一覧から外すか聞く（リポジトリのページと同じ。macOS 版の `open`）。
+            if let Some(window) = window
+                && !repobrowser::found_or_offer_removal(&window, &location, || {})
+            {
+                return;
             }
             open(PathBuf::from(location), place);
         })
     };
+    // ダブルクリック・Enter で開く。Ctrl を押しながらなら新しい窓に（macOS 版の ⌘。リポジトリのページと同じ）。
+    // 開くときの知らせには押していたキーがないので、押したときに覚えておく。
+    let ctrl = Rc::new(Cell::new(false));
+    let click = gtk::GestureClick::new();
+    click.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let c = ctrl.clone();
+    click.connect_pressed(move |g, _, _, _| {
+        c.set(
+            g.current_event_state()
+                .contains(gtk::gdk::ModifierType::CONTROL_MASK),
+        );
+    });
+    list.add_controller(click);
+    let keys = gtk::EventControllerKey::new();
+    keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let c = ctrl.clone();
+    keys.connect_key_pressed(move |_, _, _, modifiers| {
+        c.set(modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK));
+        glib::Propagation::Proceed
+    });
+    list.add_controller(keys);
     let g = go.clone();
-    list.connect_activate(move |_, row| g(row, Place::Tab));
+    list.connect_activate(move |_, row| {
+        g(
+            row,
+            if ctrl.get() {
+                Place::NewWindow
+            } else {
+                Place::Tab
+            },
+        )
+    });
     // 確認用（`--open-menu repository-name` と）: 出したら、この表示名の行を選ぶ。
     if let Ok(name) = std::env::var("AMONHEN_CHOOSE_REPOSITORY") {
         let (g, m) = (go.clone(), model.clone());
@@ -346,9 +388,12 @@ pub fn button(
         }
     });
     // Esc: 欄（SearchEntry）が先に受けて popover まで届かないので、ここで閉じる（Quick Open・ブランチの切り替えと同じ）。
+    // 打ってあれば、まず消す（もう一度で閉じる。macOS 版と同じ）。
     let p = popover.downgrade();
-    filter.connect_stop_search(move |_| {
-        if let Some(p) = p.upgrade() {
+    filter.connect_stop_search(move |f| {
+        if !f.text().is_empty() {
+            f.set_text("");
+        } else if let Some(p) = p.upgrade() {
             p.popdown();
         }
     });
