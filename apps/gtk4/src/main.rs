@@ -805,7 +805,11 @@ fn build_tab(
     let table = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     scrolled.set_hexpand(true);
     table.append(&scrolled);
-    table.append(&density::strip(&view));
+    let strip = density::strip(&view);
+    // 右の仕切り（Paned）のつかむ所は線の両側 6 px まで広がり、帯の上の押す・ドラッグを先に取ってしまう。帯を
+    // その外に置く（帯の 8 px がそのまま押せる）。
+    strip.set_margin_end(6);
+    table.append(&strip);
     let overlay = gtk::Overlay::new();
     overlay.set_child(Some(&table));
     overlay.add_overlay(&loading);
