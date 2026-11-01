@@ -431,9 +431,12 @@ impl Activity {
                         let repo = repo.clone();
                         cancel.connect_clicked(move |_| {
                             if is_remote {
-                                if let Some(repo) = &repo {
+                                // daemon への往復なので、裏の糸で（macOS 版と同じ）。
+                                if let Some(repo) = repo.clone() {
                                     let command = json!({ "op": "cancelActivity", "seq": seq, "remote": true });
-                                    let _ = repo.run_json(&command.to_string());
+                                    gio::spawn_blocking(move || {
+                                        let _ = repo.run_json(&command.to_string());
+                                    });
                                 }
                             } else {
                                 amonhen_model::activity::cancel(seq);
