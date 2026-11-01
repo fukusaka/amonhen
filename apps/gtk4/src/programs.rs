@@ -344,32 +344,24 @@ fn git_row(
         })
     };
 
-    let (w, g, f, e, r) = (
-        s.weak(),
-        git.clone(),
-        found.clone(),
-        error.clone(),
-        reload.clone(),
-    );
+    let (w, g, f, e) = (s.weak(), git.clone(), found.clone(), error.clone());
+    // 使う git を変える。設定の窓の書き換えとして Undo に前の値を積む（Ctrl+Shift+Z でやり直せる。macOS 版と
+    // 同じ）。書いたら読み直す（下の `on_refresh`）。
     let set: Rc<dyn Fn(String)> = Rc::new(move |value: String| {
         let Some(s) = w.upgrade() else { return };
-        if value == g.borrow().chosen.clone().unwrap_or_default() {
+        let old = g.borrow().chosen.clone().unwrap_or_default();
+        if value == old {
             return;
         }
-        let (repo, e, r) = (s.repo.clone(), e.clone(), r.clone());
-        let w = s.weak();
-        glib::spawn_future_local(async move {
-            let mut command = json!({"op": "setMachineGit"});
-            if !value.is_empty() {
-                command["git"] = json!(value);
-            }
-            let result = run_one(&repo, command).await;
-            if let Some(s) = w.upgrade() {
-                s.show_error(Some(&e), result.err().as_deref());
-                s.changed();
-            }
-            r();
-        });
+        s.apply_changes(
+            vec![crate::reposettings::Change {
+                key: crate::reposettings::MACHINE_GIT.to_owned(),
+                old: Some(old),
+                new: Some(value),
+            }],
+            Some(e.clone()),
+            crate::reposettings::Record::New,
+        );
     });
     let (w, g, st) = (s.weak(), git.clone(), set.clone());
     let picker = Picker::new(move |value| {
@@ -421,7 +413,14 @@ fn git_row(
     widget.append(&warning);
     widget.append(&error);
 
+    // 書いたあと（Undo・やり直しも）は、使う git を読み直す。
+    let seen_writes = std::cell::Cell::new(s.writes());
+    let r = reload.clone();
     s.on_refresh(move |s| {
+        if s.writes() != seen_writes.get() {
+            seen_writes.set(s.writes());
+            r();
+        }
         let current = git.borrow().chosen.clone().unwrap_or_default();
         let list = found.borrow().get("git").cloned().unwrap_or_default();
         picker.set(
