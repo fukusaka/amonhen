@@ -219,6 +219,22 @@ impl Sheet {
     /// 出して、答えを待つ。
     pub async fn run(self) -> Response {
         self.window.present();
+        // 最初の入力がボタンの列に来たら（欄のないシート）、既定のボタンに移す: Return で既定の操作になる（macOS 版の
+        // シートと同じ。GTK は並びの最初の Cancel に入力を置くので、そのままだと Return で取り消しになる）。
+        let (w, buttons) = (self.window.downgrade(), self.buttons.downgrade());
+        glib::idle_add_local_once(move || {
+            let (Some(w), Some(buttons)) = (w.upgrade(), buttons.upgrade()) else {
+                return;
+            };
+            let Some(default) = w.default_widget() else {
+                return;
+            };
+            let on_buttons = GtkWindowExt::focus(&w)
+                .is_none_or(|f| f.parent().as_ref() == Some(buttons.upcast_ref()));
+            if on_buttons && default.is_sensitive() {
+                default.grab_focus();
+            }
+        });
         self.rx.recv().await.unwrap_or(Response::Cancel)
     }
 }
