@@ -1,4 +1,4 @@
-//! AI のボタン（docs/ux.md の「AI」）: History の詳細の翻訳・解説（メッセージの下に、畳める形で流しながら出す）、
+//! AI のボタン（docs/ux.md の「AI」）: History の詳細の翻訳・解説（macOS 版と同じく、返事を流しながら別の窓に出す）、
 //! Working Copy のメッセージの提案、差分の hunk の解説。どれも送る前にリポジトリごとの許可を確かめる
 //! （[`assist::confirm`]）。
 
@@ -23,24 +23,23 @@ fn workdir(repo: &Option<Arc<Repository>>) -> Option<PathBuf> {
     repo.as_ref().and_then(|r| r.paths().workdir)
 }
 
-/// 詳細の欄に、前に出した同じ種類の返事があれば消す。
-fn remove_named(container: &gtk::Box, name: &str) {
-    let mut child = container.first_child();
-    while let Some(c) = child {
-        child = c.next_sibling();
-        if c.widget_name() == name {
-            container.remove(&c);
-        }
-    }
+/// 詳細の右上の小さなアイコンのボタン（macOS 版の sparkles・character.bubble）。
+fn icon_button(kind: crate::icon::Kind) -> gtk::Button {
+    let icon = crate::icon::Icon::default();
+    icon.set(kind, false);
+    let button = gtk::Button::new();
+    button.set_child(Some(&icon));
+    button.add_css_class("flat");
+    button.set_valign(gtk::Align::Start);
+    button
 }
 
-/// History の詳細の右上に、翻訳と解説のボタンを置く。
-pub fn details(details: &Rc<Details>, diff: &DiffWidget, current: CurrentRepo, fit: Rc<dyn Fn()>) {
-    let translate = gtk::Button::with_label(&tr!("Translate"));
-    let explain = gtk::Button::with_label(&tr!("Explain"));
-    for b in [&explain, &translate] {
-        b.add_css_class("flat");
-        b.add_css_class("caption");
+/// History の詳細の右上に、翻訳と解説のボタンを置く（返事は macOS 版と同じく別の窓に出す）。
+pub fn details(details: &Rc<Details>, diff: &DiffWidget, current: CurrentRepo) {
+    let translate = icon_button(crate::icon::Kind::Bubble);
+    let explain = icon_button(crate::icon::Kind::Sparkles);
+    // 並びは macOS 版と同じ（翻訳・解説、その右に差分の検索と広げるボタン）。
+    for b in [&translate, &explain] {
         details.tools.append(b);
     }
     assist::track(&translate, tr!("AI: Translate the message."));
@@ -49,7 +48,7 @@ pub fn details(details: &Rc<Details>, diff: &DiffWidget, current: CurrentRepo, f
         tr!("AI: Explain this commit (or the combined diff of the selected commits)."),
     );
 
-    let (d, c, f) = (Rc::downgrade(details), current.clone(), fit.clone());
+    let (d, c) = (Rc::downgrade(details), current.clone());
     translate.connect_clicked(move |b| {
         let Some(details) = d.upgrade() else { return };
         let message = details.message().trim().to_owned();
@@ -58,8 +57,6 @@ pub fn details(details: &Rc<Details>, diff: &DiffWidget, current: CurrentRepo, f
         }
         let parent = b.root().and_downcast::<gtk::Window>();
         let workdir = workdir(&c());
-        let d = Rc::downgrade(&details);
-        let fit = f.clone();
         glib::spawn_future_local(async move {
             let key = assist::repository_key(workdir.as_deref());
             let summary = tr!(
@@ -69,20 +66,17 @@ pub fn details(details: &Rc<Details>, diff: &DiffWidget, current: CurrentRepo, f
             if !assist::confirm(parent.as_ref(), &key, &summary).await {
                 return;
             }
-            let Some(details) = d.upgrade() else { return };
             let p = parent.clone();
-            let (root, view) = assist::inline(
+            assist::panel(
+                parent.as_ref(),
                 &tr!("Translation"),
+                None,
+                None,
                 assist::work(move |run: Run| {
                     let vars = assist::variables([("message", message.clone())]);
                     assist::run_with(p.clone(), Purpose::Translate, vars, workdir.clone(), run)
                 }),
             );
-            root.set_widget_name("translation");
-            remove_named(&details.ai, "translation");
-            details.ai.prepend(&root);
-            view.on_change.replace(Some(fit.clone()));
-            fit();
         });
     });
 
@@ -102,8 +96,6 @@ pub fn details(details: &Rc<Details>, diff: &DiffWidget, current: CurrentRepo, f
         }
         let parent = b.root().and_downcast::<gtk::Window>();
         let workdir = workdir(&c());
-        let d = Rc::downgrade(&details);
-        let fit = fit.clone();
         glib::spawn_future_local(async move {
             let key = assist::repository_key(workdir.as_deref());
             let summary = tr!(
@@ -113,10 +105,12 @@ pub fn details(details: &Rc<Details>, diff: &DiffWidget, current: CurrentRepo, f
             if !assist::confirm(parent.as_ref(), &key, &summary).await {
                 return;
             }
-            let Some(details) = d.upgrade() else { return };
             let p = parent.clone();
-            let (root, view) = assist::inline(
+            assist::panel(
+                parent.as_ref(),
                 &tr!("Explanation"),
+                None,
+                None,
                 assist::work(move |run: Run| {
                     let (source, message, files, workdir, p) = (
                         source.clone(),
@@ -149,11 +143,6 @@ pub fn details(details: &Rc<Details>, diff: &DiffWidget, current: CurrentRepo, f
                     }
                 }),
             );
-            root.set_widget_name("explanation");
-            remove_named(&details.ai, "explanation");
-            details.ai.append(&root);
-            view.on_change.replace(Some(fit.clone()));
-            fit();
         });
     });
     // 確認用（`--ai translate,explain`）: コミットの詳細と差分が出てから押す。

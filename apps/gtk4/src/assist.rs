@@ -409,8 +409,6 @@ pub struct ResultView {
     generation: Cell<u64>,
     /// 今の文（流れてきた途中の分を含む）。
     shown: RefCell<String>,
-    /// 文が変わったら呼ぶ（詳細の欄の高さを合わせるなど）。
-    pub on_change: RefCell<Option<Rc<dyn Fn()>>>,
 }
 
 impl ResultView {
@@ -458,7 +456,6 @@ impl ResultView {
             cancel: RefCell::new(Arc::new(AtomicBool::new(false))),
             generation: Cell::new(0),
             shown: RefCell::default(),
-            on_change: RefCell::default(),
         });
         let weak = Rc::downgrade(&this);
         copy.connect_clicked(move |b| {
@@ -566,10 +563,6 @@ impl ResultView {
     fn set_text(&self, text: &str) {
         self.shown.replace(text.to_owned());
         self.body.set_text(text);
-        let f = self.on_change.borrow().clone();
-        if let Some(f) = f {
-            f();
-        }
     }
 }
 
@@ -671,55 +664,6 @@ pub fn panel(
     view
 }
 
-/// 畳める見出しの下に返事を出す（History の詳細の翻訳・解説）。
-pub fn inline(title: &str, work: Work) -> (gtk::Box, Rc<ResultView>) {
-    install_css();
-    let view = ResultView::new(None, None, work);
-    let arrow = gtk::Button::from_icon_name("pan-down-symbolic");
-    arrow.add_css_class("flat");
-    arrow.set_tooltip_text(Some(&tr!("Collapse")));
-    // 使った CLI とモデルは、終わったときの状態の文に出る。
-    let heading = gtk::Label::new(Some(title));
-    heading.add_css_class("heading");
-    heading.set_xalign(0.0);
-    let head = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-    head.append(&arrow);
-    head.append(&heading);
-    view.bar.set_hexpand(true);
-    view.bar.set_margin_start(8);
-    // 詳細の欄の中なので、ボタンは小さく。
-    let mut child = view.bar.first_child();
-    while let Some(c) = child {
-        if c.is::<gtk::Button>() {
-            c.add_css_class("flat");
-            c.add_css_class("caption");
-        }
-        child = c.next_sibling();
-    }
-    head.append(&view.bar);
-    view.body.set_margin_start(28);
-    let root = gtk::Box::new(gtk::Orientation::Vertical, 4);
-    root.add_css_class("ai-result");
-    root.append(&head);
-    root.append(&view.body);
-    let body = view.body.clone();
-    arrow.connect_clicked(move |b| {
-        let open = !body.is_visible();
-        body.set_visible(open);
-        b.set_icon_name(if open {
-            "pan-down-symbolic"
-        } else {
-            "pan-end-symbolic"
-        });
-        b.set_tooltip_text(Some(&if open { tr!("Collapse") } else { tr!("Expand") }));
-    });
-    // 部品があるうちは持っておく。
-    // SAFETY: 同じ名前の値は、この型でだけ置く・読む。
-    unsafe { root.set_data("assist-view", view.clone()) };
-    view.start(true);
-    (root, view)
-}
-
 /// `f` を [`Work`] にする。
 pub fn work<F, Fut>(f: F) -> Work
 where
@@ -808,7 +752,7 @@ pub fn run_with(
     )
 }
 
-/// AI の提案の紫の帯と、返事の欄の見た目。
+/// AI の提案の紫の帯の見た目。
 pub fn install_css() {
     thread_local! {
         static DONE: Cell<bool> = const { Cell::new(false) };
@@ -819,8 +763,7 @@ pub fn install_css() {
     let provider = gtk::CssProvider::new();
     provider.load_from_string(
         ".ai-suggestion { border-left: 4px solid #9141ac; background-color: alpha(#9141ac, 0.08); \
-         padding: 8px 10px; border-radius: 4px; }
-         .ai-result { border-left: 3px solid alpha(#9141ac, 0.6); padding: 4px 0 4px 6px; }",
+         padding: 8px 10px; border-radius: 4px; }",
     );
     if let Some(display) = gtk::gdk::Display::default() {
         gtk::style_context_add_provider_for_display(

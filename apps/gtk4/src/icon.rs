@@ -83,6 +83,10 @@ pub enum Kind {
     SealCross,
     /// questionmark.circle（鍵がない・確かめられない・署名者が違う）
     Question,
+    /// sparkles（AI の解説・提案）
+    Sparkles,
+    /// character.bubble（AI の翻訳）
+    Bubble,
 }
 
 mod imp {
@@ -550,6 +554,37 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             let dot = gsk::PathBuilder::new();
             dot.add_circle(&point(8.0, 11.6), 0.8);
             fill = Some(dot);
+        }
+        Kind::Sparkles => {
+            // 辺のへこんだ 4 つ角の星（大）と、右上の小さな星。
+            for (cx, cy, r) in [(6.5_f32, 9.5_f32, 5.0_f32), (12.3, 3.7, 2.3)] {
+                p.move_to(cx, cy - r);
+                p.quad_to(cx, cy, cx + r, cy);
+                p.quad_to(cx, cy, cx, cy + r);
+                p.quad_to(cx, cy, cx - r, cy);
+                p.quad_to(cx, cy, cx, cy - r);
+                p.close();
+            }
+        }
+        Kind::Bubble => {
+            // 角の丸い吹き出し（左下にしっぽ）と、中の「A」。
+            p.move_to(4.0, 2.5);
+            p.line_to(12.0, 2.5);
+            p.svg_arc_to(2.0, 2.0, 0.0, false, true, 14.0, 4.5);
+            p.line_to(14.0, 9.5);
+            p.svg_arc_to(2.0, 2.0, 0.0, false, true, 12.0, 11.5);
+            p.line_to(6.5, 11.5);
+            p.line_to(3.5, 14.0);
+            p.line_to(3.8, 11.4);
+            p.svg_arc_to(2.0, 2.0, 0.0, false, true, 2.0, 9.5);
+            p.line_to(2.0, 4.5);
+            p.svg_arc_to(2.0, 2.0, 0.0, false, true, 4.0, 2.5);
+            p.close();
+            p.move_to(5.6, 9.4);
+            p.line_to(8.0, 4.6);
+            p.line_to(10.4, 9.4);
+            p.move_to(6.5, 7.7);
+            p.line_to(9.5, 7.7);
         }
         Kind::Undo => {
             p.add_circle(&point(8.0, 8.0), 6.3);

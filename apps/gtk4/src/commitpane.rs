@@ -50,15 +50,7 @@ impl CommitPane {
             root.set_resize_start_child(false);
             root.set_position(170);
             // AI の翻訳・解説と、差分の中の検索・詳細を広げるボタン（詳細の右上。History と同じ）。
-            let fit: Rc<dyn Fn()> = {
-                let (r, d) = (root.downgrade(), details.clone());
-                Rc::new(move || {
-                    if let Some(r) = r.upgrade() {
-                        crate::fit_details(&r, d.clone());
-                    }
-                })
-            };
-            crate::aiactions::details(&details, files.diff(), current, fit);
+            crate::aiactions::details(&details, files.diff(), current);
             details.tools.append(&files.find_button());
             details.tools.append(&files.expand_button());
             // 変更ファイルの右クリック: AI でこの hunk を解説、Blame（コミットのときだけ）・File History。

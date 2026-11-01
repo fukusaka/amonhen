@@ -714,15 +714,7 @@ fn build_tab(
         let v = view.downgrade();
         Rc::new(move || v.upgrade().and_then(|v| v.current()).map(|(r, _)| r))
     };
-    let fit: Rc<dyn Fn()> = {
-        let (r, d) = (right.downgrade(), details.clone());
-        Rc::new(move || {
-            if let Some(r) = r.upgrade() {
-                fit_details(&r, d.clone());
-            }
-        })
-    };
-    aiactions::details(&details, &diff, current_repo.clone(), fit);
+    aiactions::details(&details, &diff, current_repo.clone());
     details.tools.append(&commit_diff.find_button());
     details.tools.append(&commit_diff.expand_button());
     aiactions::auto_history_hunk(&diff, &details, current_repo);

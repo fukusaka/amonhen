@@ -118,8 +118,6 @@ pub struct Details {
     selection_lines: gtk::Label,
     /// 右上のボタン（AI の翻訳・解説）を置く所。
     pub tools: gtk::Box,
-    /// メッセージの下に出す AI の返事（コミットを選び直したら消す）。
-    pub ai: gtk::Box,
     /// 署名を検証した場所（Signature の吹き出しに出す）。
     place: RefCell<crate::signature::Place>,
     /// コミット ID・ref の名前のリンクを押したとき（[`Details::connect_links`]。なければリンクにしない）。
@@ -407,7 +405,6 @@ impl Details {
         head.append(&lead);
         head.append(&tools);
         head.append(&styles);
-        let ai = gtk::Box::new(gtk::Orientation::Vertical, 8);
         let column = gtk::Box::new(gtk::Orientation::Vertical, 8);
         column.set_margin_top(10);
         column.set_margin_bottom(10);
@@ -419,7 +416,6 @@ impl Details {
         column.append(&body);
         column.append(&trailers);
         column.append(&notes);
-        column.append(&ai);
         let scrolled = gtk::ScrolledWindow::builder()
             .child(&column)
             .hscrollbar_policy(gtk::PolicyType::Never)
@@ -473,7 +469,6 @@ impl Details {
             pairs,
             selection_lines,
             tools,
-            ai,
             place: RefCell::default(),
             links: Rc::default(),
             on_person: Rc::default(),
@@ -729,9 +724,6 @@ impl Details {
         self.brief.set_visible(false);
         self.clear_table();
         self.subject.set_text("");
-        while let Some(child) = self.ai.first_child() {
-            self.ai.remove(&child);
-        }
         for l in [&self.body, &self.trailers, &self.notes] {
             l.set_text("");
             l.set_visible(false);
