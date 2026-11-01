@@ -14,6 +14,8 @@ pub enum Item {
         on: bool,
         f: Box<dyn Fn()>,
     },
+    /// 押せない項目（説明だけ。macOS 版の `isEnabled = false`）。
+    Disabled(String),
     /// 下に開くメニュー（Repositories の行の Group・Color Label など）。
     Submenu(String, Vec<Item>),
     /// ここで区切る（GNOME のメニューでは、区切りは節の境目）。
@@ -42,6 +44,7 @@ pub fn titles(items: &[Item]) -> Vec<String> {
     for i in items {
         match i {
             Item::Action(title, _) | Item::Choice { title, .. } => out.push(title.clone()),
+            Item::Disabled(title) => out.push(format!("({title})")),
             Item::Submenu(title, children) => {
                 out.push(format!("{title} ▸"));
                 out.extend(titles(children).into_iter().map(|t| format!("    {t}")));
@@ -157,6 +160,10 @@ fn build(
             } => {
                 let dot = swatches.then_some(color);
                 add_custom(&section, n, custom, choice_row(&title, on, dot, f));
+            }
+            Item::Disabled(title) => {
+                // グループにないアクションの項目は、GTK が押せない見た目にする。
+                section.append(Some(&title), Some("context.disabled"));
             }
             Item::Submenu(title, children) => {
                 let sub = build(children, group, n, custom);

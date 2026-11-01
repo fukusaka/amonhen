@@ -1640,16 +1640,19 @@ impl Browser {
             }
             Category::Scan(path) => {
                 if let Some(error) = bookmarks::scan_error(path) {
-                    items.push(menu::action(
-                        tr!("Couldn’t search: {error}", error = error),
-                        || {},
-                    ));
+                    items.push(Item::Disabled(tr!("Couldn’t search: {error}", error = error)));
                     items.push(Item::Separator);
                 }
+                // 今の深さに印（macOS 版と同じ）。
+                let depth = bookmarks::data()
+                    .scan_roots
+                    .iter()
+                    .find(|r| r.path == *path)
+                    .map_or(3, |r| r.depth);
                 let mut depths = Vec::new();
                 for d in 1..=6u32 {
                     let p = path.clone();
-                    depths.push(menu::action(d.to_string(), move || {
+                    depths.push(menu::choice(d.to_string(), d == depth, move || {
                         bookmarks::set_depth(&p, d)
                     }));
                 }
