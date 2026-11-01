@@ -309,8 +309,11 @@ fn several(actions: &Rc<Actions>, known: &Known, head: Option<&str>) -> Vec<Item
             },
             move || a.perform_sequence(commands.clone()),
         ));
-        // 今のブランチは消せない（git が断る）。
-        if locals.iter().all(|n| Some(n.as_str()) != head) {
+        // 今のブランチと、ほかの worktree が checkout しているブランチは消せない（git が断る）。
+        if locals
+            .iter()
+            .all(|n| Some(n.as_str()) != head && actions.worktree_using(n).is_none())
+        {
             let a = actions.clone();
             items.push(menu::action(
                 tr!("Delete {count} Branches…", count = locals.len()),
