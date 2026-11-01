@@ -211,15 +211,20 @@ fn handlers() -> Vec<(&'static str, Handler)> {
     };
     vec![
         // File
+        // New Window（Ctrl+N）は新しい窓にリポジトリのページを、Open…（Ctrl+O）はこの窓のリポジトリのページを
+        // 出す（一覧から選ぶ。一覧にないフォルダーはページの Add から加える。macOS 版と同じ）。
         (
             "new-window",
             Box::new(|p| {
-                if let Some(dir) = workdir(p) {
-                    (p.open)(same_place(&p.location, &dir), crate::tabs::Place::NewWindow);
-                }
+                crate::tabs::show_home(&p.app, None);
             }),
         ),
-        ("open", Box::new(open_folder)),
+        (
+            "open",
+            Box::new(|p| {
+                crate::tabs::show_home(&p.app, crate::tabs::host_of(&p.window()));
+            }),
+        ),
         (
             "clone",
             Box::new(|p| {
@@ -1006,21 +1011,6 @@ fn repository_settings(p: &Rc<Parts>) {
     };
     crate::reposettings::show(&slot, repo, &p.location, p.reload.clone(), None);
     show_page(p, Page::Settings);
-}
-
-fn open_folder(p: &Rc<Parts>) {
-    let dialog = gtk::FileDialog::builder()
-        .title(tr!("Open"))
-        .modal(true)
-        .build();
-    let (window, open) = (p.window().clone(), p.open.clone());
-    glib::spawn_future_local(async move {
-        if let Ok(folder) = dialog.select_folder_future(Some(&window)).await
-            && let Some(path) = folder.path()
-        {
-            open(path, crate::tabs::Place::Tab);
-        }
-    });
 }
 
 /// ショートカットの一覧（メニューごと。表の操作は表から。リポジトリのページからも使う）。
