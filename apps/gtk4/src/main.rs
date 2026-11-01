@@ -1,6 +1,6 @@
 //! Amon Hen の GTK4 の FE。Linux・BSD が本命で、GTK の動く Windows・macOS でも動く。
 //!
-//! `amonhen-gtk [<path>] [--snapshot <png>] [--edit-worktree <path>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row> [--menu-item <title>]] [--search <query> [--only-matching]] [--blame <path> | --file-history <path> | --activity <tab> | --settings <tab> | --merge-editor <path> [--accept ours|theirs|both|base]] [--reflog] [--apply-patch <path,...>] [--open-menu repository|primary] [--action <id>] [--print-file-menu <path>] [--perform <json>] [--stashes [--stash-button apply|pop|drop|branch]] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]] [--range-diff[=<ranges>] [--select-pair <n>] [--menu-pair <n>]] [--repositories | --quick-open <query>] [--tab <location>]...`
+//! `amonhen-gtk [<path>] [--snapshot <png>] [--edit-worktree <path>] [--measure-scroll [--scroll-rows <n>] | --measure-select <n>] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row> [--menu-item <title>]] [--search <query> [--only-matching]] [--blame <path> | --file-history <path> | --activity <tab> | --settings <tab> | --merge-editor <path> [--accept ours|theirs|both|base]] [--reflog] [--apply-patch <path,...>] [--open-menu repository|primary] [--action <id>] [--print-file-menu <path>] [--perform <json>] [--stashes [--stash-button apply|pop|drop|branch]] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]] [--range-diff[=<ranges>] [--select-pair <n>] [--menu-pair <n>]] [--repositories | --quick-open <query>] [--tab <location>]...`
 
 mod actions;
 mod activity;
@@ -98,6 +98,8 @@ struct Args {
     snapshot: Option<PathBuf>,
     /// 自動でスクロールして、1 フレームの時間を測って終わる。
     measure_scroll: bool,
+    /// History の行をこの数だけ順に選び、詳細と差分が出るまでの時間を測って終わる。
+    measure_select: Option<usize>,
     /// `--measure-scroll` で 1 フレームにスクロールする行数。
     scroll_rows: Option<f64>,
     /// Working Copy を開いた状態で始める。
@@ -196,6 +198,10 @@ fn parse_args() -> Result<Args, String> {
         match a.as_str() {
             "--snapshot" => args.snapshot = Some(it.next().ok_or("--snapshot <png>")?.into()),
             "--measure-scroll" => args.measure_scroll = true,
+            "--measure-select" => {
+                let n = it.next().ok_or("--measure-select <n>")?;
+                args.measure_select = Some(n.parse().map_err(|_| "--measure-select <n>")?);
+            }
             "--scroll-rows" => {
                 let rows = it.next().ok_or("--scroll-rows <n>")?;
                 args.scroll_rows = Some(rows.parse().map_err(|_| "--scroll-rows <n>")?);
@@ -596,7 +602,7 @@ fn opener(app: &gtk::Application) -> repobrowser::Open {
 /// 起動したとき: 引数のリポジトリを開く。なければ前回の終わりに開いていた窓とタブを同じ並びで開き直し、それも
 /// なければリポジトリのページを出す（macOS 版と同じ。確認用の起動だけは、今のフォルダのリポジトリを引数にする）。
 fn launch(app: &gtk::Application, args: &Args) {
-    let check = args.snapshot.is_some() || args.measure_scroll;
+    let check = args.snapshot.is_some() || args.measure_scroll || args.measure_select.is_some();
     if check {
         tabs::set_check_run();
     }
@@ -2365,7 +2371,9 @@ fn build_tab(
                         connecting.show_error(&e);
                         content.set_visible_child_name("connecting");
                         // 確認用の起動では、エラーの画面を撮ってから閉じる。
-                        if (args.snapshot.is_some() || args.measure_scroll)
+                        if (args.snapshot.is_some()
+                            || args.measure_scroll
+                            || args.measure_select.is_some())
                             && let Some(window) = win_of()
                         {
                             eprintln!("{e}");
@@ -2389,7 +2397,9 @@ fn build_tab(
                         spinner.set_visible(false);
                         status.set_text(&e);
                         status.set_visible(true);
-                        if (args.snapshot.is_some() || args.measure_scroll)
+                        if (args.snapshot.is_some()
+                            || args.measure_scroll
+                            || args.measure_select.is_some())
                             && let Some(window) = win_of()
                         {
                             eprintln!("{e}");
@@ -2599,10 +2609,12 @@ impl Loader {
             if this.generation.get() != g {
                 return;
             }
+            measure::select_mark("select: commit info");
             match info {
                 Ok(Ok(info)) => {
                     this.details.show(&info);
                     this.fit();
+                    measure::select_mark("select: → header shown");
                 }
                 Ok(Err(e)) => eprintln!("コミットの詳細を読めない: {e}"),
                 Err(_) => {}
@@ -2736,9 +2748,11 @@ impl Loader {
             if this.generation.get() != g {
                 return;
             }
+            let loaded = started.elapsed().as_secs_f64() * 1000.0;
+            measure::select_add("select: changed files and diff (core)", loaded);
             match result {
                 Ok(Ok((kind, prepared))) => {
-                    activity::record(&tr!("Load diff"), started.elapsed().as_secs_f64() * 1000.0);
+                    activity::record(&tr!("Load diff"), loaded);
                     this.files.show(prepared, key);
                     then(kind);
                 }
@@ -2748,6 +2762,7 @@ impl Loader {
                 }
                 Err(_) => {}
             }
+            measure::select_shown();
         });
     }
 
@@ -3066,6 +3081,14 @@ fn after_first_show(
     } else if args.measure_scroll {
         let rows = args.scroll_rows.unwrap_or(measure::ROWS_PER_FRAME);
         measure::scroll(window, view, rows);
+    } else if let Some(count) = args.measure_select {
+        // 先頭の行を選び終えてから（macOS 版は 1 秒待つ）。
+        let (w, v) = (window.downgrade(), view.downgrade());
+        glib::timeout_add_local_once(std::time::Duration::from_secs(1), move || {
+            if let (Some(w), Some(v)) = (w.upgrade(), v.upgrade()) {
+                measure::select(&w, &v, count);
+            }
+        });
     }
 }
 
