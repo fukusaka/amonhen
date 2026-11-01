@@ -1281,7 +1281,19 @@ impl Inner {
                 let Some(repo) = inner.actions.borrow().as_ref().and_then(|a| a.repo()) else {
                     return;
                 };
-                let mut pending: Vec<String> = inner.tags_to_verify.take().into_iter().collect();
+                // まだ見えている行のタグだけ（スクロールで外れたものは、また見えたときに確かめる。macOS 版と同じ）。
+                let mut visible = inner.visible_tags();
+                // 確認用（`--sidebar-mark signature:<タグ>`）のタグは、見えていなくても。
+                visible.extend(inner.debug_signature.borrow().clone());
+                let mut pending: Vec<String> = inner
+                    .tags_to_verify
+                    .take()
+                    .into_iter()
+                    .filter(|n| visible.contains(n))
+                    .collect();
+                if pending.is_empty() {
+                    return;
+                }
                 pending.sort();
                 inner
                     .verifying_tags
@@ -1325,6 +1337,36 @@ impl Inner {
                 });
             });
         self.verify_timer.replace(Some(timer));
+    }
+
+    /// 一覧の見えている範囲にあるタグの行の、タグの名前。
+    fn visible_tags(&self) -> HashSet<String> {
+        fn walk(w: &gtk::Widget, view: &gtk::Widget, height: f32, out: &mut HashSet<String>) {
+            if let Some(expander) = w.downcast_ref::<gtk::TreeExpander>() {
+                let shown = expander.is_mapped()
+                    && expander
+                        .compute_bounds(view)
+                        .is_some_and(|b| b.y() + b.height() > 0.0 && b.y() < height);
+                if shown
+                    && let Some(node) = node_of(expander)
+                    && let Item::Ref(e) = &node.data().item
+                    && e.kind == RefKind::Tag
+                {
+                    out.insert(e.name.clone());
+                }
+                return;
+            }
+            let mut child = w.first_child();
+            while let Some(c) = child {
+                walk(&c, view, height, out);
+                child = c.next_sibling();
+            }
+        }
+        let mut out = HashSet::new();
+        if let Some(view) = self.root_widget() {
+            walk(&view, &view, view.height() as f32, &mut out);
+        }
+        out
     }
 
     /// `names` のタグの行を描き直す（印を入れ直す）。
@@ -1547,6 +1589,8 @@ impl Inner {
                 self.show_debug_signature(name);
             } else {
                 self.debug_signature.replace(Some(name.to_owned()));
+                // タグの行は、出したときに確かめる（Tags の見出しは初めは畳んである）ので、行まで開く。
+                self.reveal(name);
             }
             wait = 3000;
         } else if let Some(spec) = &debug.mark {
@@ -1564,6 +1608,29 @@ impl Inner {
         glib::timeout_add_local_once(std::time::Duration::from_millis(wait), move || {
             pending.set(pending.get() - 1)
         });
+    }
+
+    /// 確認用: 名前が `name` の ref の行が出るように、その上の見出しとフォルダを開く。
+    fn reveal(&self, name: &str) {
+        fn contains(store: &gio::ListStore, name: &str) -> bool {
+            (0..store.n_items())
+                .filter_map(|i| store.item(i).and_downcast::<Node>())
+                .any(|n| {
+                    matches!(&n.data().item, Item::Ref(e) if e.name == name)
+                        || n.children().is_some_and(|c| contains(&c, name))
+                })
+        }
+        let mut i = 0;
+        while i < self.model.n_items() {
+            if let Some(row) = self.model.row(i)
+                && !row.is_expanded()
+                && let Some(children) = row.item().and_downcast::<Node>().and_then(|n| n.children())
+                && contains(&children, name)
+            {
+                row.set_expanded(true);
+            }
+            i += 1;
+        }
     }
 
     /// 見えている行のうち `key` の行の、右端の印と数の部品。
