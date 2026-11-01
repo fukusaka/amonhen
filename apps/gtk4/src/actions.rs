@@ -238,24 +238,39 @@ impl Actions {
         let this = self.clone();
         crate::activity::begin();
         glib::spawn_future_local(async move {
-            let (result, last_command) = gio::spawn_blocking(move || {
-                let mut last = Value::Null;
-                let mut last_command = Value::Null;
-                for command in commands {
-                    let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
-                        .unwrap_or_default();
-                    let done = reply["ok"].as_bool() == Some(true)
-                        && reply["outcome"].as_str().is_none_or(|o| o == "done");
-                    last = reply;
-                    last_command = command;
-                    if !done {
-                        break;
+            let mut result = Value::Null;
+            let mut last_command = Value::Null;
+            let count = commands.len();
+            for (i, command) in commands.into_iter().enumerate() {
+                let (r, c) = (repo.clone(), command.to_string());
+                let reply: Value = gio::spawn_blocking(move || {
+                    serde_json::from_str(&r.run_json(&c)).unwrap_or_default()
+                })
+                .await
+                .unwrap_or_default();
+                let done = reply["ok"].as_bool() == Some(true)
+                    && reply["outcome"].as_str().is_none_or(|o| o == "done");
+                result = reply;
+                last_command = command;
+                if !done || i + 1 == count {
+                    break;
+                }
+                // 途中の命令が済んだ。macOS 版と同じく 1 つごとに知らせて読み直す（いくつかのブランチの削除や
+                // Cherry-pick で、途中の状態も画面に出す）。最後の 1 つは下でまとめて扱う。
+                if let Some(f) = this.on_done.borrow().clone() {
+                    f(&last_command);
+                }
+                if matches!(last_command["op"].as_str(), Some("fetch" | "pull")) {
+                    let fetched: Vec<Callback> = this.on_fetch.borrow().clone();
+                    for f in fetched {
+                        f();
                     }
                 }
-                (last, last_command)
-            })
-            .await
-            .unwrap_or_default();
+                if let Some(f) = this.on_change.borrow().clone() {
+                    f();
+                }
+                this.refresh_undo();
+            }
             crate::activity::end();
             // 失敗はステータスバーに（作業を止めない）。コンフリクトや途中で止まったことは、読み直したときに
             // ステータスバーの途中の操作の行が知らせる。
