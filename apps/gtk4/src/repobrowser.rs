@@ -570,6 +570,8 @@ fn state_text(location: &str, check: bool) -> (String, &'static str, Option<Stri
         parts.push(tr!("Fetching…"));
     }
     if let Some(peek) = &peek {
+        // ✓ は状態だけを見る（fetch 中でも「Fetching…  ✓」。macOS 版と同じ）。
+        let before = parts.len();
         if peek.changed > 0 {
             parts.push(tr!("Changes {count}", count = peek.changed));
         }
@@ -579,7 +581,7 @@ fn state_text(location: &str, check: bool) -> (String, &'static str, Option<Stri
         if peek.behind > 0 {
             parts.push(format!("↓{}", peek.behind));
         }
-        if parts.is_empty() && check {
+        if parts.len() == before && check {
             parts.push("✓".into());
         }
     }
