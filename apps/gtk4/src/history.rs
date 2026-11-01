@@ -224,7 +224,13 @@ pub struct State {
     accent: Option<(gtk::Label, gtk::Label)>,
     /// 次に出す History は溶かして入れ替える（ほかのプログラムの変化で読み直した。[`HistoryView::fade_next`]）。
     fade_requested: Option<Instant>,
+    /// History を入れ替えた直後、見えている行の文字を読み終えるまで出しておく前の表示と、入れ替えた時刻・
+    /// 読み終えたら溶かすか（入れ替えの間に文字が空の行が出ないように。macOS 版の `present`）。
+    held: Option<(gsk::RenderNode, Instant, bool)>,
 }
+
+/// 前の表示を出しておく長さの上限（読むのが遅くても、これを過ぎたら新しい表示を出す）。
+const HOLD: std::time::Duration = std::time::Duration::from_millis(300);
 
 /// 読み直したときに、前の表示を新しい表示へ溶かす時間（macOS 版の 0.15 秒）。
 const FADE: std::time::Duration = std::time::Duration::from_millis(150);
@@ -529,6 +535,20 @@ mod imp {
             self.obj().draw_drop(&own);
             let node = own.to_node();
             let mut st = self.state.borrow_mut();
+            // 入れ替えた History の見えている行を読み終えるまでは、前の表示を出しておく。
+            if let Some((old, at, _)) = st.held.as_ref()
+                && !st.complete
+                && at.elapsed() < HOLD
+            {
+                snapshot.append_node(old);
+                return;
+            }
+            let released = st.held.take();
+            drop(st);
+            if let Some((old, _, true)) = released {
+                self.obj().start_fade_from(old);
+            }
+            let mut st = self.state.borrow_mut();
             let fade = st
                 .fade
                 .as_ref()
@@ -631,19 +651,36 @@ impl HistoryView {
         self.state().fade_requested = Some(Instant::now());
     }
 
-    /// 前の表示から溶かし始める（頼まれていて、前に描いたものがあれば）。
-    fn start_fade(&self) {
-        {
-            let mut st = self.state();
-            let requested = st
-                .fade_requested
-                .take()
-                .is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(2));
-            let Some(old) = st.last_node.clone().filter(|_| requested) else {
-                return;
-            };
-            st.fade = Some((old, Instant::now()));
-        }
+    /// 前の表示を、新しい History の見えている行を読み終えるまで出しておく（前に描いたものがあれば）。読み終えたら、
+    /// 頼まれていれば溶かして入れ替える。
+    fn hold_previous(&self) {
+        let mut st = self.state();
+        let fade = st
+            .fade_requested
+            .take()
+            .is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(2));
+        // 前の表示を出している途中なら、それを出したまま（入れ替えの途中の表示は覚えない）。
+        let old = match st.held.take() {
+            Some((old, _, faded)) => Some((old, faded || fade)),
+            None => st.last_node.clone().map(|old| (old, fade)),
+        };
+        let Some((old, fade)) = old else {
+            return;
+        };
+        st.held = Some((old, Instant::now(), fade));
+        drop(st);
+        // 読むのが遅くても、上限を過ぎたら新しい表示を出す。
+        let weak = self.downgrade();
+        glib::timeout_add_local_once(HOLD, move || {
+            if let Some(view) = weak.upgrade() {
+                view.queue_draw();
+            }
+        });
+    }
+
+    /// 前の表示 `old` から溶かし始める。
+    fn start_fade_from(&self, old: gsk::RenderNode) {
+        self.state().fade = Some((old, Instant::now()));
         self.add_tick_callback(|view, _| {
             view.queue_draw();
             let mut st = view.state();
@@ -703,7 +740,7 @@ impl HistoryView {
             st.matches = Rc::default();
             changed
         };
-        self.start_fade();
+        self.hold_previous();
         self.configure_adjustments();
         self.update_lineage();
         self.queue_draw();
@@ -726,6 +763,7 @@ impl HistoryView {
             st.rows.clear();
             st.complete = false;
         }
+        self.hold_previous();
         self.queue_draw();
     }
 
