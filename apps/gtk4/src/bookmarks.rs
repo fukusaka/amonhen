@@ -468,6 +468,19 @@ pub fn ssh_host(location: &str) -> Option<String> {
     Some(rest.split('/').next().unwrap_or_default().to_owned())
 }
 
+/// 名前に添える接続先（macOS 版の `RepositoryLocation.host`）: `ssh://host/…` は `host`、`daemon:ssh://host/…` は
+/// `host · daemon`、`daemon:/…` は `daemon`。手元のものは None。
+pub fn shown_host(location: &str) -> Option<String> {
+    match location.strip_prefix("daemon:") {
+        Some(rest) => {
+            Some(shown_host(rest).map_or_else(|| "daemon".to_owned(), |h| format!("{h} · daemon")))
+        }
+        None => location
+            .strip_prefix("ssh://")
+            .map(|rest| rest.split('/').next().unwrap_or_default().to_owned()),
+    }
+}
+
 /// 場所のパスの部分（`ssh://host/path` なら `/path`、`daemon:/path` なら `/path`）。
 pub fn path_part(location: &str) -> String {
     let rest = location.strip_prefix("daemon:").unwrap_or(location);
@@ -610,7 +623,7 @@ pub fn display_name_in(data: &Data, location: &str) -> String {
         .filter(|s| !s.is_empty())
         .unwrap_or(location)
         .to_owned();
-    match ssh_host(location) {
+    match shown_host(location) {
         Some(host) => format!("{last} — {host}"),
         None => last,
     }
@@ -1097,6 +1110,13 @@ mod tests {
         assert_eq!(ssh_host("ssh://me@h:22/x/y").as_deref(), Some("me@h:22"));
         assert_eq!(ssh_host("daemon:ssh://h/x").as_deref(), Some("h"));
         assert_eq!(ssh_host("/x"), None);
+        assert_eq!(shown_host("ssh://me@h:22/x").as_deref(), Some("me@h:22"));
+        assert_eq!(
+            shown_host("daemon:ssh://h/x").as_deref(),
+            Some("h · daemon")
+        );
+        assert_eq!(shown_host("daemon:/x").as_deref(), Some("daemon"));
+        assert_eq!(shown_host("/x"), None);
         assert_eq!(path_part("ssh://h/x/y"), "/x/y");
         assert_eq!(path_part("daemon:/x"), "/x");
         assert_eq!(home_relative("/home/me/prj/a", "/home/me"), "/~/prj/a");

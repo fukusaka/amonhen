@@ -727,15 +727,8 @@ fn build_tab(
     let name = if let Some(renamed) = renamed {
         renamed
     } else if amonhen_remote::location::is_remote(&text) {
-        let last = text
-            .trim_end_matches('/')
-            .rsplit('/')
-            .next()
-            .unwrap_or(&text);
-        match text.strip_prefix("ssh://") {
-            Some(rest) => format!("{last} — {}", rest.split('/').next().unwrap_or_default()),
-            None => last.to_owned(),
-        }
+        // 場所の最後の部分と接続先（`daemon:` は「· daemon」を添える。macOS 版の `displayName`）。
+        bookmarks::display_name(&text)
     } else {
         // フォルダーがなければ（開けないタブ）、パスの最後の部分。
         std::fs::canonicalize(&path)
