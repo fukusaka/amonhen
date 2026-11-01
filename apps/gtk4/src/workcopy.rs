@@ -1570,9 +1570,9 @@ impl Inner {
             Some((p, f)) => (p, f),
             None => ("", entry.path.as_str()),
         };
-        let shown = match (layout, &entry.orig_path) {
-            (Layout::List, Some(orig)) => format!("{orig} → {}", entry.path),
-            (Layout::List, None) => entry.path.clone(),
+        // 名前を変えたファイルのもとのパスは、ツールチップだけに出す（macOS 版と同じ）。
+        let shown = match layout {
+            Layout::List => entry.path.clone(),
             _ => file.to_owned(),
         };
         let name = gtk::Label::new(Some(&shown));
