@@ -368,7 +368,7 @@ impl Inner {
                     } else {
                         this.view.set_matches(rows);
                         if step != 0 {
-                            this.step(1);
+                            this.first_match();
                         } else {
                             this.update_count();
                         }
@@ -381,6 +381,17 @@ impl Inner {
                 p.set(p.get() - 1);
             }
         });
+    }
+
+    /// 新しく探したとき: 選んでいる行から下で、いちばん近い一致（選んでいる行が一致ならそれ）を選ぶ。なければ
+    /// 先頭の一致へ回る（macOS 版と同じ）。
+    fn first_match(&self) {
+        let matches = self.matches.borrow().clone();
+        let from = self.view.selected().unwrap_or(0);
+        if let Some(&row) = matches.iter().find(|&&r| r >= from).or(matches.first()) {
+            self.view.select(row);
+        }
+        self.update_count();
     }
 
     /// 選んでいる行から `step` 方向の、次の一致を選ぶ（端では反対の端へ回る）。
