@@ -229,6 +229,8 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
                 "https://github.com/owner/repo.git or git@host:owner/repo.git"
             ))
             .hexpand(true)
+            // Enter で Clone（macOS 版と同じ）。
+            .activates_default(true)
             .build();
         // 置き場所の初期値: 前に clone した場所、なければスキャンするフォルダーの最初（手元のもの）、なければ
         // ホーム。ホームの下は ~ で短く出す（macOS 版と同じ）。
@@ -245,6 +247,8 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
         let folder = gtk::Entry::builder()
             .text(crate::bookmarks::tilde(&folder_default))
             .hexpand(true)
+            // Enter で Clone（macOS 版と同じ）。
+            .activates_default(true)
             .build();
         let choose = gtk::Button::with_label(&tr!("Choose…"));
         let location = gtk::Box::new(gtk::Orientation::Horizontal, 6);
@@ -253,6 +257,8 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
         let name = gtk::Entry::builder()
             .placeholder_text(tr!("Taken from the URL"))
             .hexpand(true)
+            // Enter で Clone（macOS 版と同じ）。
+            .activates_default(true)
             .build();
         sheet.add(&row("URL:", &url));
         // gh があれば、自分のリポジトリから選べる（読み終えたら一覧に入れる）。
