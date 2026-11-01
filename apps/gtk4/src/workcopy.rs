@@ -1292,7 +1292,7 @@ impl Inner {
             .cloned()
     }
 
-    /// 1 ファイルの差分を裏で読んで出す。`same` なら同じファイルの読み直し（位置と選んだ行を保つ）。
+    /// 1 ファイルの差分を裏で読んで出す。`same` なら同じファイルの読み直し（位置を保つ）。
     fn load_diff(this: &Rc<Self>, entry: StatusEntry, same: bool) {
         let Some(repo) = this.repo() else { return };
         let prefer_staged = this.staged_side.is_active();

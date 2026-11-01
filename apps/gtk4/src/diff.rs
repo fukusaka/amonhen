@@ -366,21 +366,19 @@ impl DiffWidget {
     }
 
     /// Working Copy の 1 ファイルの差分を、行ごとの stage の印つきで出す。`keep` なら同じファイルを
-    /// 読み直したとして、スクロールの位置と選んだ行を保つ。
+    /// 読み直したとして、スクロールの位置を保つ。選んだ行はいつも外す（macOS 版と同じ。読み直すと行の番号が
+    /// 別の行を指すことがあり、そのまま Stage Lines・Discard Lines を押すと違う行に効いてしまう）。
     pub fn show_working(&self, view: View, keep: bool) {
         {
             let mut st = self.state();
             st.generation += 1;
             st.source = None;
-            let rows = view.view.rows.len() as u32;
             st.view = Some(Arc::new(view));
             st.rows.clear();
             st.marks = true;
-            if keep {
-                st.selection.retain(|&r| r < rows);
-            } else {
-                st.selection.clear();
-                st.anchor = None;
+            st.selection.clear();
+            st.anchor = None;
+            if !keep {
                 st.hunk_after = None;
             }
             st.hunk_cursor = None;
