@@ -696,6 +696,11 @@ pub fn restore(app: &gtk::Application, groups: Vec<Vec<String>>) {
         for location in it {
             add_background(app, &host, location.into());
         }
+        // 前に出すのは最後のタブ（macOS 版はタブを順に開いて前に出していくので、最後のものが残る）。
+        let n = host.notebook.n_pages();
+        if n > 1 {
+            host.notebook.set_current_page(Some(n - 1));
+        }
     }
     set_restoring(false);
 }
