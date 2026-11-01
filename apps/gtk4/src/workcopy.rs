@@ -1400,8 +1400,8 @@ impl Inner {
         });
     }
 
-    /// Discard Lines・Discard File（macOS 版と同じ）: 選んだ行があれば行を、なければファイルを捨てる。
-    /// untracked のファイルは消す（Undo では戻せないので確かめる）。
+    /// Discard Lines・Discard File（macOS 版と同じ）: 選んだ行があれば行を、なければファイルを捨てる
+    /// （ファイルは確かめてから。untracked のファイルは消す）。
     fn discard(this: &Rc<Self>) {
         let Some(current) = this.current.borrow().clone() else {
             return;
@@ -1417,30 +1417,9 @@ impl Inner {
             });
             return;
         }
+        // ファイル全体を一度に捨てるときは確かめる（行の単位は選んで押すので、そのまま。macOS 版と同じ）。
         let entry = w.entry.clone();
-        let (Some(actions), path) = (this.actions.borrow().clone(), entry.path.clone()) else {
-            return;
-        };
-        if entry.kind == StatusKind::Untracked {
-            glib::spawn_future_local(async move {
-                if actions
-                    .confirm(
-                        &tr!("Delete {path}?", path = path),
-                        &format!(
-                            "{} {}",
-                            tr!("It’s untracked."),
-                            tr!("This can’t be undone.")
-                        ),
-                        &tr!("Delete"),
-                    )
-                    .await
-                {
-                    actions.perform(json!({ "op": "deleteUntracked", "paths": [path] }));
-                }
-            });
-        } else {
-            actions.perform(json!({ "op": "discard", "paths": [path] }));
-        }
+        Inner::discard_file(this, &entry);
     }
 
     /// 一覧の行のボタン: 1 ファイルの変更を捨てる（確かめてから）。作業ツリーを index の内容に戻すので、
