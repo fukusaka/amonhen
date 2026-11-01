@@ -38,7 +38,18 @@ struct Filters {
 
 impl GixBackend {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        let repo = gix::ThreadSafeRepository::discover(path.as_ref())?;
+        // gix は、開いたときの pack の数から読める pack の枠を決め（既定は 1.1 倍、最低 32）、後から増やせない。
+        // partial clone では中身を取るたびに pack が 1 つ増える（fetch も、git が自分で取るときも）ので、開いた
+        // ままでも読めるよう枠を多めにとる。
+        let slots = gix::odb::store::init::Slots::AsNeededByDiskState {
+            multiplier: 2.0,
+            minimum: 4096,
+        };
+        let mut trust = gix::sec::trust::Mapping::<gix::open::Options>::default();
+        trust.full = trust.full.object_store_slots(slots);
+        trust.reduced = trust.reduced.object_store_slots(slots);
+        let repo =
+            gix::ThreadSafeRepository::discover_opts(path.as_ref(), Default::default(), trust)?;
         let git = repo.work_dir().map(amonhen_backend_cli::Git::new);
         Ok(Self {
             repo,

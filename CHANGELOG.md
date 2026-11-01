@@ -95,6 +95,8 @@ becomes the GitHub Release notes.
 - Error messages show what went wrong: the macOS app showed only "AmonhenError error 1" (a locked index, for
   example), and a git command that failed without a message showed a raw exit status; it now names the command, its
   exit code, or the branch or commit that doesn't exist.
+- Diffs no longer come up empty after many fetches while a repository stays open (each partial clone fetch adds a
+  pack, and only about 32 new packs could be read).
 
 ### [0.2.8] - 2026-10-30
 

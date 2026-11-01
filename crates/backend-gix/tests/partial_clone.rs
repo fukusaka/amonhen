@@ -138,6 +138,49 @@ fn reads_blobs_missing_from_a_partial_clone() {
     assert_eq!(&**new, b"a.txt three\n");
 }
 
+/// 開いたあとに取った pack が、開いたときの数から gix が用意する枠（最低 32）を超えても読める。
+#[test]
+fn reads_blobs_after_many_fetches() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("src");
+    std::fs::create_dir(&src).unwrap();
+    git(&src, &["init", "-q"]);
+    git(&src, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    for n in 0..40 {
+        std::fs::write(src.join("a.txt"), format!("{n}\n")).unwrap();
+        git(&src, &["add", "a.txt"]);
+        git(&src, &["commit", "-q", "-m", &format!("commit {n}")]);
+    }
+    git(&src, &["config", "uploadpack.allowFilter", "true"]);
+    git(&src, &["config", "uploadpack.allowAnySHA1InWant", "true"]);
+    let blobs: Vec<Oid> = (1..40)
+        .map(|n| Oid::from_hex(&git(&src, &["rev-parse", &format!("HEAD~{n}:a.txt")])).unwrap())
+        .collect();
+    let path = src.to_str().unwrap().replace('\\', "/");
+    let url = if path.starts_with('/') {
+        format!("file://{path}")
+    } else {
+        format!("file:///{path}")
+    };
+    git(
+        tmp.path(),
+        &["clone", "-q", "--filter=blob:none", &url, "partial"],
+    );
+    let dir = tmp.path().join("partial");
+    let backend = GixBackend::open(&dir).unwrap();
+    // 1 つずつ取って、pack を 1 つずつ増やす（git 2.29 より古ければ、読むときに git が 1 つずつ取る）。
+    for blob in &blobs {
+        backend.prefetch_blobs(std::slice::from_ref(blob)).unwrap();
+    }
+    if !git_older_than_2_29() {
+        assert!(packs(&dir) > 40, "{}", packs(&dir));
+    }
+    for (n, blob) in blobs.iter().enumerate() {
+        let text = backend.blob(blob).unwrap();
+        assert_eq!(&**text, format!("{}\n", 38 - n).as_bytes());
+    }
+}
+
 #[test]
 fn counts_the_missing_contents_a_search_needs() {
     let tmp = tempfile::tempdir().unwrap();
