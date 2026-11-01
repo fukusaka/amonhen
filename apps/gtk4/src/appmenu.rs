@@ -509,6 +509,12 @@ pub fn install(parts: Parts) -> Buttons {
         &toolbar_start,
         &toolbar_end,
         crate::toolbar::Given {
+            header: parts.header.clone(),
+            // リポジトリの名前（main.rs が見出しの真ん中に置いたもの）。
+            repository: parts
+                .header
+                .title_widget()
+                .expect("リポジトリの名前のボタン"),
             branch: branch_button.clone(),
             pull: pull.clone(),
             push: push.clone(),

@@ -29,6 +29,8 @@ pub enum Kind {
     Pull,
     /// arrow.up.circle
     Push,
+    /// sidebar.left（サイドバーの切り替え）
+    Sidebar,
     /// icloud.and.arrow.up（上流のないブランチの Push、Publish）
     Publish,
     /// arrow.triangle.merge
@@ -447,6 +449,11 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.line_to(8.0, 9.6);
             p.move_to(8.0, 11.2);
             p.line_to(8.0, 11.3);
+        }
+        Kind::Sidebar => {
+            p.add_rect(&graphene::Rect::new(2.5, 3.5, 11.0, 9.0));
+            p.move_to(6.5, 3.5);
+            p.line_to(6.5, 12.5);
         }
         Kind::Publish => {
             cloud(&p);

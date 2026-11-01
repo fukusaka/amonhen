@@ -1,9 +1,10 @@
 //! 見出しのツールバーのボタンの並び（macOS 版の `MainToolbar` のカスタマイズ）。どのボタンを出すかと順番を、
 //! View > Customize Toolbar… の窓で決める（GNOME の見出しには並べ替えの仕組みがないので、一覧で上下に動かす）。
 //! 見出しの左（Repository のメニューの右）と右（主メニューの左）に分けて並べ、間に空きを入れられる。
-//! 並びはアプリ全体で 1 つ（設定の `toolbarItems`）で、変えるとすべての窓のタブに効く。
+//! 並びはアプリ全体で 1 つ（設定の `toolbarItemsV2`）で、変えるとすべての窓のタブに効く。
 //!
-//! Repository のメニュー・リポジトリの名前・検索・主メニュー（≡）は動かさない。
+//! Repository のメニュー・検索・主メニュー（≡）は動かさない。リポジトリの名前は並びの 1 つで、並びから外すと
+//! 見出しの真ん中に出す。
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -15,20 +16,37 @@ use gtk::{gio, glib};
 
 use crate::icon;
 
-/// 設定の鍵。並びを `,` でつなぐ（出さないものは `-` を前に付ける）。
-const KEY: &str = "toolbarItems";
+/// 設定の鍵。並びを `,` でつなぐ（出さないものは `-` を前に付ける）。既定の並びを変えたら名前を変える（macOS 版の
+/// ツールバーの名前と同じく、前に保存した並びに新しいボタンが出てこないため）。
+const KEY: &str = "toolbarItemsV2";
 /// 空き（いくつでも入れられる）。
 const SPACE: &str = "space";
 /// ここから右は見出しの右に並べる。
 const SPLIT: &str = "|";
 
-/// macOS 版の既定の並び（Branch・Fetch・Pull・Push、Merge・Rebase、Stash・Pop、右に Activity・Refresh・Undo）。
+/// macOS 版の既定の並び（サイドバーの切り替え・Repositories・リポジトリの名前・Branch・Fetch・Pull・Push、
+/// Merge・Rebase、Stash・Pop、右に Activity・Refresh・Undo）。
 const DEFAULT: &[&str] = &[
-    "branch", "fetch", "pull", "push", SPACE, "merge", "rebase", SPACE, "stash", "pop", SPLIT,
-    "activity", "refresh", "undo",
+    "sidebar",
+    "repositories",
+    "repository",
+    "branch",
+    "fetch",
+    "pull",
+    "push",
+    SPACE,
+    "merge",
+    "rebase",
+    SPACE,
+    "stash",
+    "pop",
+    SPLIT,
+    "activity",
+    "refresh",
+    "undo",
 ];
 /// 既定では出さないボタン（macOS 版のツールバーに足せるもの）。
-const OPTIONAL: &[&str] = &["new-branch", "repositories", "terminal", "files"];
+const OPTIONAL: &[&str] = &["new-branch", "terminal", "files"];
 
 /// 並びの 1 つ。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -41,6 +59,8 @@ enum Entry {
 /// ボタンの名前（一覧に出す。操作の名前は英語のまま）。
 fn name(id: &str) -> String {
     match id {
+        "sidebar" => tr!("Show Sidebar"),
+        "repository" => "Repository".to_owned(),
         "branch" => "Branch".to_owned(),
         "fetch" => "Fetch".to_owned(),
         "pull" => "Pull".to_owned(),
@@ -141,6 +161,10 @@ fn save(entries: &[Entry]) {
 
 /// タブごとに作ってあるボタン（ほかの所でも中身を変えるもの）。
 pub struct Given {
+    /// 見出し（リポジトリの名前を並びから外したら、真ん中に戻す）。
+    pub header: gtk::HeaderBar,
+    /// リポジトリの名前（押すとリポジトリの一覧）。
+    pub repository: gtk::Widget,
     pub branch: gtk::Button,
     pub pull: gtk::Button,
     pub push: gtk::Button,
@@ -174,6 +198,15 @@ fn text_button(icon_name: &str, label: &str, action: &str, tip: &str) -> gtk::Bu
 /// ボタンを作り、`start`（見出しの左）と `end`（右）に設定の並びで入れる。並びが変わったら入れ直す。
 pub fn install(start: &gtk::Box, end: &gtk::Box, given: Given) {
     let mut buttons: HashMap<&'static str, gtk::Widget> = HashMap::new();
+    // サイドバーの切り替え（F9。macOS 版のツールバーの toggleSidebar）。状態はアクションと揃う。
+    let sidebar = gtk::ToggleButton::new();
+    let sidebar_icon = icon::Icon::default();
+    sidebar_icon.set(icon::Kind::Sidebar, false);
+    sidebar.set_child(Some(&sidebar_icon));
+    sidebar.set_action_name(Some("win.show-sidebar"));
+    sidebar.set_tooltip_text(Some(&format!("{} (F9)", tr!("Show Sidebar"))));
+    buttons.insert("sidebar", sidebar.upcast());
+    buttons.insert("repository", given.repository.clone());
     buttons.insert("branch", given.branch.upcast());
     buttons.insert(
         "fetch",
@@ -286,16 +319,29 @@ pub fn install(start: &gtk::Box, end: &gtk::Box, given: Given) {
     buttons.insert("refresh", refresh.upcast());
     buttons.insert("undo", given.undo.upcast());
 
+    // リポジトリの名前を並べるときの、見出しの真ん中（空けておく。窓の名前を重ねて出さない）。
+    let center = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     let fill = {
         let (start, end) = (start.downgrade(), end.downgrade());
+        let (header, repository) = (given.header.downgrade(), given.repository.clone());
         move || {
-            let (Some(start), Some(end)) = (start.upgrade(), end.upgrade()) else {
+            let (Some(start), Some(end), Some(header)) =
+                (start.upgrade(), end.upgrade(), header.upgrade())
+            else {
                 return;
             };
             for b in [&start, &end] {
                 while let Some(child) = b.first_child() {
                     b.remove(&child);
                 }
+            }
+            let shown = entries()
+                .iter()
+                .any(|e| matches!(e, Entry::Item { id, shown: true } if id == "repository"));
+            if shown {
+                header.set_title_widget(Some(&center));
+            } else {
+                header.set_title_widget(Some(&repository));
             }
             let mut target = &start;
             for entry in entries() {
@@ -552,5 +598,18 @@ mod tests {
                 .all(|x| matches!(x, Entry::Item { shown: false, .. }))
         );
         assert_eq!(e.len(), 3 + (DEFAULT.len() - 3 - 1) + OPTIONAL.len());
+    }
+
+    #[test]
+    fn the_default_starts_like_macos() {
+        let ids: Vec<String> = default_entries()
+            .into_iter()
+            .take(4)
+            .filter_map(|e| match e {
+                Entry::Item { id, shown: true } => Some(id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ids, ["sidebar", "repositories", "repository", "branch"]);
     }
 }
