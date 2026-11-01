@@ -541,6 +541,18 @@ impl HistoryView {
         }
     }
 
+    /// 行の文字を読み直す（mailmap が変わって作者名が変わるときなど。History はそのまま）。
+    pub fn reload_rows(&self) {
+        {
+            let mut st = self.state();
+            st.chunks.clear();
+            st.loading.clear();
+            st.rows.clear();
+            st.complete = false;
+        }
+        self.queue_draw();
+    }
+
     /// 行の見せ方を替える（1 行・項目・祖先の強調）。
     pub fn set_display(&self, display: Display) {
         {

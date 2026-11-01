@@ -1493,6 +1493,7 @@ fn build_tab(
         });
     }
     let tab_weak = Rc::downgrade(&tab);
+    let details_weak = Rc::downgrade(&details);
     std::thread::spawn(move || load(path, order, tx, changed_tx, changed_rx));
     glib::spawn_future_local(glib::clone!(
         #[weak]
@@ -2113,6 +2114,15 @@ fn build_tab(
                         activity::record(&amonhen_model::i18n::translate(metric), ms)
                     }
                     Event::Reload => reload(),
+                    // History は作り直さず、行と詳細を読み直す（macOS 版の `checkMailmap`）。
+                    Event::MailmapChanged => {
+                        view.reload_rows();
+                        if let (Some(details), Some((repo, _))) =
+                            (details_weak.upgrade(), view.current())
+                        {
+                            reload_details_info(&details, repo);
+                        }
+                    }
                     Event::StatusDirty(repo) => {
                         // 後ろのタブなら、前に出たときに読む。
                         if tab_weak.upgrade().is_some_and(|t| t.is_shown()) {
@@ -2537,6 +2547,8 @@ enum Event {
     Opened,
     /// リポジトリを開けなかった（つなげなかった）。
     OpenFailed(String),
+    /// mailmap（`.mailmap`・`log.mailmap`・`mailmap.file`）が変わった（作者名を出し直す）。
+    MailmapChanged,
 }
 
 fn repo_name(repo: &Repository) -> String {
@@ -2546,6 +2558,23 @@ fn repo_name(repo: &Repository) -> String {
         .and_then(|p| p.file_name())
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default()
+}
+
+/// 詳細に出しているコミットの、すぐ読める分（作者名など）を読み直して出し直す。
+fn reload_details_info(details: &Rc<Details>, repo: Arc<Repository>) {
+    let Some(oid) = details.oid() else { return };
+    let Some(id) = amonhen_model::Oid::from_hex(&oid) else {
+        return;
+    };
+    let details = details.clone();
+    glib::spawn_future_local(async move {
+        let info = gio::spawn_blocking(move || repo.commit_info(&id)).await;
+        if let Ok(Ok(info)) = info
+            && details.oid().as_deref() == Some(oid.as_str())
+        {
+            details.show(&info);
+        }
+    });
 }
 
 /// History と ref を読み直して知らせる（裏のスレッドで呼ぶ）。
@@ -2624,6 +2653,8 @@ fn load(
     let reload = |repo: &Arc<Repository>| reload_history(repo, &tx);
     reload(&repo);
     status(&repo);
+    // 最後に見た mailmap の指紋（変わったら作者名を出し直す）。
+    let mut mailmap = repo.mailmap_fingerprint();
 
     // ref が変わったら History を、index か作業ツリーが変わったら status を読み直す。知らせは監視の
     // スレッド（daemon 越しなら daemon の知らせ）から来るので、このスレッドで受けて読む。
@@ -2667,6 +2698,15 @@ fn load(
         if !what.is_empty() {
             let text = tr!("{what} changed (reloading)", what = what.join(&tr!(", ")));
             let _ = tx.send_blocking(Event::Note(repo_name(&repo), text));
+        }
+        // `.mailmap`（作業ツリー・HEAD の）や `log.mailmap`・`mailmap.file` が変わったかもしれない（macOS 版と同じく、
+        // 変化のたびに指紋を比べる）。
+        let now = repo.mailmap_fingerprint();
+        if now != mailmap {
+            mailmap = now;
+            let text = tr!("The mailmap changed. Showing the names again.");
+            let _ = tx.send_blocking(Event::Note(repo_name(&repo), text));
+            let _ = tx.send_blocking(Event::MailmapChanged);
         }
         if changes.contains(Changes::REFS) {
             reload(&repo);
