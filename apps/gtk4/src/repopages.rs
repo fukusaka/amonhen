@@ -1399,9 +1399,6 @@ pub(crate) fn hooks_page(s: &Rc<RepoSettings>) -> gtk::ScrolledWindow {
         }
     };
     fill_menu();
-    table.view.connect_activate(|view, _| {
-        let _ = view.activate_action("hooks.edit", None);
-    });
 
     let empty = label("", &["dim-label"]);
     empty.set_wrap(true);
