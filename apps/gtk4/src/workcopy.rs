@@ -1206,23 +1206,7 @@ impl Inner {
             } else {
                 tr!("No matching files")
             });
-        // すべてのチェック: 一覧に出しているファイルのうちコンフリクト以外の状態（押すとそれらを含める・外す）。
-        // コンフリクトのファイルは index では stage 済みに見えるが、含めることも外すこともできない（macOS 版と同じ）。
-        let candidates: Vec<&StatusEntry> = entries
-            .iter()
-            .filter(|e| e.kind != StatusKind::Unmerged)
-            .collect();
-        let on = candidates
-            .iter()
-            .filter(|e| e.is_staged() && !e.is_unstaged())
-            .count();
-        let off = candidates.iter().filter(|e| !e.is_staged()).count();
-        let mixed = on != candidates.len() && off != candidates.len();
-        this.all.set_inconsistent(mixed);
-        this.all
-            .set_active(!candidates.is_empty() && on == candidates.len());
-        this.all.set_sensitive(!candidates.is_empty());
-        drop(candidates);
+        this.set_all_check(&entries);
         // 次のコミットに含めるファイルの数 / 変更のあるファイルの数。
         let all = this.all_entries.borrow();
         if all.is_empty() {
@@ -1285,6 +1269,25 @@ impl Inner {
             this.rebuilding.set(false);
         }
         this.update_buttons();
+    }
+
+    /// すべてのチェックを、一覧に出しているファイル `entries` の状態に合わせる（押すとそれらを含める・外す）。
+    fn set_all_check(&self, entries: &[StatusEntry]) {
+        let (on, mixed, enabled) = all_check(entries);
+        self.all.set_inconsistent(mixed);
+        self.all.set_active(on);
+        self.all.set_sensitive(enabled);
+    }
+
+    /// チェックを押した後、すべてのチェックと見えている行のチェックを index の状態から入れ直す。
+    /// 押した時点で GTK がチェックを進めるが、何も変わらなかった（失敗した・断られた）ときは status が
+    /// 同じで一覧を入れ直さないので、押した見た目が残ってしまう（macOS 版の `toggled` と同じく、正しい
+    /// 状態は index を読み直して決める）。
+    fn restore_checks(&self) {
+        self.rebuilding.set(true);
+        self.set_all_check(&self.entries.borrow());
+        self.rebuilding.set(false);
+        self.refresh_cells();
     }
 
     /// 選んだ行が変わった: 差分に出すのは、クリックした（フォーカスのある）行。なければ選んだ最初の行。
@@ -2526,6 +2529,7 @@ impl Inner {
             if let Ok(status) = status {
                 Inner::show_from(&this, &source, status);
             }
+            this.restore_checks();
             let actions = this.actions.borrow().clone();
             if let Some(actions) = actions {
                 // 取り消せる操作が変わったかもしれない（見張りの知らせを待たない）。
@@ -2907,6 +2911,26 @@ fn body_placeholder(body: &gtk::TextView) -> gtk::Label {
         }
     });
     label
+}
+
+/// すべてのチェックの状態（含めている, 一部, 押せる）。一覧に出しているファイルのうちコンフリクト以外を見る。
+/// コンフリクトのファイルは index では stage 済みに見えるが、含めることも外すこともできない（macOS 版と同じ）。
+fn all_check(entries: &[StatusEntry]) -> (bool, bool, bool) {
+    let candidates: Vec<&StatusEntry> = entries
+        .iter()
+        .filter(|e| e.kind != StatusKind::Unmerged)
+        .collect();
+    let on = candidates
+        .iter()
+        .filter(|e| e.is_staged() && !e.is_unstaged())
+        .count();
+    let off = candidates.iter().filter(|e| !e.is_staged()).count();
+    let mixed = on != candidates.len() && off != candidates.len();
+    (
+        !candidates.is_empty() && on == candidates.len(),
+        mixed,
+        !candidates.is_empty(),
+    )
 }
 
 /// 一覧のチェックの説明（含めている・一部の行だけ・含めていない。macOS 版と同じ）。
@@ -3330,6 +3354,27 @@ mod tests {
     }
 
     /// コンフリクトのファイル（index が U）は、次のコミットに含める数に入れない。
+    #[test]
+    fn all_check_follows_files_outside_conflicts() {
+        let on = entry(StatusKind::Changed, "a", b'M', b'.');
+        let off = entry(StatusKind::Changed, "b", b'.', b'M');
+        let part = entry(StatusKind::Changed, "c", b'M', b'M');
+        let conflict = entry(StatusKind::Unmerged, "d", b'U', b'U');
+        assert_eq!(
+            all_check(&[on.clone(), conflict.clone()]),
+            (true, false, true)
+        );
+        assert_eq!(
+            all_check(&[off.clone(), conflict.clone()]),
+            (false, false, true)
+        );
+        assert_eq!(all_check(&[on.clone(), off]), (false, true, true));
+        assert_eq!(all_check(&[part]), (false, true, true));
+        // コンフリクトだけなら押せない。
+        assert_eq!(all_check(&[conflict]), (false, false, false));
+        assert_eq!(all_check(&[]), (false, false, false));
+    }
+
     #[test]
     fn staged_count_skips_conflicts() {
         let entries = [
