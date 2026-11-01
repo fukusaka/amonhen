@@ -1105,6 +1105,8 @@ impl Inner {
         this.count_boxes.borrow_mut().clear();
         this.conflict_marks.borrow_mut().clear();
         this.list.remove_all();
+        // remove_all は placeholder も外すので、付け直す。
+        this.list.set_placeholder(Some(&this.empty));
         let mut row_entries = Vec::new();
         match this.layout.get() {
             Layout::Tree => {
