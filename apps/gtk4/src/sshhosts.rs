@@ -1240,7 +1240,11 @@ fn engine_choice(session: &Rc<HostSession>) -> Vec<gtk::Widget> {
                 initial: current,
                 places: crate::filepicker::host_program_places(),
             };
-            let parent = a.borrow().upgrade().and_then(|b| b.root()).and_downcast::<gtk::Window>();
+            let parent = a
+                .borrow()
+                .upgrade()
+                .and_then(|b| b.root())
+                .and_downcast::<gtk::Window>();
             let source = crate::filepicker::Source::Host(h.clone());
             glib::spawn_future_local(async move {
                 if let Some(chosen) =

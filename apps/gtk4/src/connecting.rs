@@ -72,9 +72,7 @@ impl Connecting {
         let s = stack.downgrade();
         let (c, r) = (close.clone(), retry.clone());
         keys.connect_key_pressed(move |_, key, _, _| {
-            let failed = s
-                .upgrade()
-                .is_some_and(|s| s.widget_name() == "failed");
+            let failed = s.upgrade().is_some_and(|s| s.widget_name() == "failed");
             match key {
                 gtk::gdk::Key::Escape if !failed => c(),
                 gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter if failed => r(),

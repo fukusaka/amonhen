@@ -1291,7 +1291,10 @@ fn build_tab(
         {
             activity::event(
                 &repo_name(&repo),
-                tr!("Background tab: dropped {count} History chunks", count = dropped),
+                tr!(
+                    "Background tab: dropped {count} History chunks",
+                    count = dropped
+                ),
             );
         }
     });

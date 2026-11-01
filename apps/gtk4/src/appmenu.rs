@@ -333,10 +333,10 @@ fn handlers() -> Vec<(&'static str, Handler)> {
         (
             "rebuild-history",
             Box::new(|p| {
-                p.actions.perform_work_titled(
-                    Some(tr!("Couldn’t Rebuild History")),
-                    |repo| repo.rebuild_history().map(|_| ()),
-                );
+                p.actions
+                    .perform_work_titled(Some(tr!("Couldn’t Rebuild History")), |repo| {
+                        repo.rebuild_history().map(|_| ())
+                    });
             }),
         ),
         ("repository-settings", Box::new(repository_settings)),

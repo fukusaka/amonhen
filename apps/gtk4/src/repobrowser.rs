@@ -364,7 +364,11 @@ fn folder_tree(
 /// 選び、どれもなければ None。
 fn symbol(widget: &impl IsA<gtk::Widget>, category: &Category) -> Option<&'static str> {
     let candidates: &[&str] = match category {
-        Category::All => &["mail-inbox-symbolic", "inbox-symbolic", "view-list-symbolic"],
+        Category::All => &[
+            "mail-inbox-symbolic",
+            "inbox-symbolic",
+            "view-list-symbolic",
+        ],
         Category::Favorites => &["starred-symbolic", "non-starred-symbolic"],
         Category::Local => &["computer-symbolic", "laptop-symbolic"],
         Category::Host(_) => &["network-server-symbolic", "network-workgroup-symbolic"],
@@ -1695,7 +1699,9 @@ impl Browser {
             Category::Local => {
                 // この機械の git の設定（Settings > Git。SSH 先の Settings… と同じ入口。macOS 版と同じ）。
                 let b = self.clone();
-                items.push(menu::action(tr!("Settings…"), move || b.show_settings("git")));
+                items.push(menu::action(tr!("Settings…"), move || {
+                    b.show_settings("git")
+                }));
                 items.push(Item::Separator);
                 let b = self.clone();
                 items.push(menu::action(tr!("Add Local Repository…"), move || {
@@ -1726,7 +1732,10 @@ impl Browser {
             }
             Category::Scan(path) => {
                 if let Some(error) = bookmarks::scan_error(path) {
-                    items.push(Item::Disabled(tr!("Couldn’t search: {error}", error = error)));
+                    items.push(Item::Disabled(tr!(
+                        "Couldn’t search: {error}",
+                        error = error
+                    )));
                     items.push(Item::Separator);
                 }
                 // 今の深さに印（macOS 版と同じ）。

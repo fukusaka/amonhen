@@ -955,7 +955,8 @@ impl HistoryView {
         let mut st = self.state();
         let before = st.chunks.len();
         st.chunks.retain(|i, _| (first..=last).contains(i));
-        st.rows.retain(|r, _| (first..=last).contains(&(r / CHUNK_ROWS)));
+        st.rows
+            .retain(|r, _| (first..=last).contains(&(r / CHUNK_ROWS)));
         before - st.chunks.len()
     }
 

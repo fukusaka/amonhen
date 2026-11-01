@@ -10,8 +10,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use amonhen_model::tr;
-use gtk::{gio, glib};
 use gtk::prelude::*;
+use gtk::{gio, glib};
 
 use crate::icon;
 
