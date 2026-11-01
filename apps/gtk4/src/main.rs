@@ -1058,7 +1058,7 @@ fn build_tab(
     reflog.set_range_diff(range_diff_opener.clone());
     let (v, w, oc) = (view.downgrade(), win_of.clone(), on_commit.clone());
     let (dw, dt) = (diff.downgrade(), details.clone());
-    commit_diff.connect_file_items(move |path, y| {
+    commit_diff.connect_file_items(move |path, y, can_blame| {
         let (Some(view), Some(window)) = (v.upgrade(), w()) else {
             return Vec::new();
         };
@@ -1075,8 +1075,9 @@ fn build_tab(
             items.push(item);
             items.push(menu::Item::Separator);
         }
-        // 1 つのコミットを選んでいるときだけ、そのコミットでの blame。
-        if let [row] = view.selection()[..]
+        // 1 つのコミットを選んでいるときだけ、そのコミットでの blame（一覧の消したファイルにはない）。
+        if can_blame
+            && let [row] = view.selection()[..]
             && let Some(id) = history.graph.ids().get(row as usize)
         {
             let hex = id.to_string();

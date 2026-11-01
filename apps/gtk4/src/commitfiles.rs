@@ -379,8 +379,9 @@ fn file_rows(source: &Source, changes: Option<&[FileChange]>, tree: bool) -> Vec
     out
 }
 
-/// 変更ファイルの右クリックのメニューに足す項目を作る（パス、差分の中の位置 y。一覧からなら None）。
-type FileItems = Rc<dyn Fn(&str, Option<f64>) -> Vec<Item>>;
+/// 変更ファイルの右クリックのメニューに足す項目を作る（パス、差分の中の位置 y。一覧からなら None。Blame を
+/// 出すか）。
+type FileItems = Rc<dyn Fn(&str, Option<f64>, bool) -> Vec<Item>>;
 
 pub struct CommitDiff {
     pub root: gtk::Box,
@@ -609,7 +610,7 @@ impl CommitDiff {
     }
 
     /// 変更ファイルの右クリックのメニューに足す項目（Blame・File History など）を作る `f(パス, 差分の中の y)`。
-    pub fn connect_file_items(&self, f: impl Fn(&str, Option<f64>) -> Vec<Item> + 'static) {
+    pub fn connect_file_items(&self, f: impl Fn(&str, Option<f64>, bool) -> Vec<Item> + 'static) {
         self.inner.file_items.replace(Some(Rc::new(f)));
     }
 
@@ -696,7 +697,7 @@ impl Inner {
                 else {
                     return;
                 };
-                let items = Inner::menu_items(&this, Some(file), None);
+                let items = Inner::list_menu_items(&this, file);
                 menu::popup(&line, x, y, items);
             });
             line.add_controller(click);
@@ -836,7 +837,7 @@ impl Inner {
                     .file_items
                     .borrow()
                     .clone()
-                    .map(|f| f(path, Some(y)))
+                    .map(|f| f(path, Some(y), true))
                     .unwrap_or_default(),
             });
             menu::popup(&this.diff, x, y, items);
@@ -852,7 +853,7 @@ impl Inner {
                     this.file_items
                         .borrow()
                         .clone()
-                        .map(|f| f(&path, Some(y)))
+                        .map(|f| f(&path, Some(y), true))
                         .unwrap_or_default(),
                 );
             }
@@ -1182,6 +1183,33 @@ impl Inner {
 
     /// 変更ファイルの右クリックのメニュー（macOS 版と同じ）: 開く・畳む・Viewed、Blame・File History、パスの
     /// コピー・ファイルマネージャーで見る・既定のアプリで開く。`y` は差分の中の位置（一覧からなら None）。
+    /// 変更ファイルの一覧の右クリック（macOS 版と同じ）: そのコミットでの Blame（消したファイルにはない）と
+    /// File History。持ち主が項目を作らない一覧（Stashes など）では、見出しと同じメニュー。
+    fn list_menu_items(this: &Rc<Self>, file: usize) -> Vec<Item> {
+        let Some(f) = this.file_items.borrow().clone() else {
+            return Inner::menu_items(this, Some(file), None);
+        };
+        let Some(source) = this.source.borrow().clone() else {
+            return Vec::new();
+        };
+        let Some((name, diff)) = source.0.files.get(file) else {
+            return Vec::new();
+        };
+        let changes = this.changes.borrow().clone();
+        let change = source
+            .1
+            .as_ref()
+            .map(|lazy| lazy.changes.as_slice())
+            .or(changes.as_deref().map(Vec::as_slice))
+            .filter(|c| c.len() == source.0.files.len())
+            .map(|c| &c[file]);
+        let deleted = match change {
+            Some(change) => change.kind == ChangeKind::Deleted,
+            None => diff.new.is_empty() && !diff.old.is_empty(),
+        };
+        f(path_of(name), None, !deleted)
+    }
+
     fn menu_items(this: &Rc<Self>, file: Option<usize>, y: Option<f64>) -> Vec<Item> {
         let Some(source) = this.source.borrow().clone() else {
             return Vec::new();
@@ -1215,7 +1243,7 @@ impl Inner {
             items.push(Item::Separator);
         }
         if let Some(f) = this.file_items.borrow().clone() {
-            items.extend(f(&path, y));
+            items.extend(f(&path, y, true));
             items.push(Item::Separator);
         }
         let (w, p) = (this.list.downgrade(), path.clone());

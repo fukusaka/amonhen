@@ -63,7 +63,7 @@ impl CommitPane {
             details.tools.append(&files.expand_button());
             // 変更ファイルの右クリック: AI でこの hunk を解説、Blame（コミットのときだけ）・File History。
             let (w, dw, dt) = (weak.clone(), files.diff().downgrade(), details.clone());
-            files.connect_file_items(move |path, y| {
+            files.connect_file_items(move |path, y, can_blame| {
                 let Some(pane) = w.upgrade() else {
                     return Vec::new();
                 };
@@ -84,7 +84,8 @@ impl CommitPane {
                     items.push(item);
                     items.push(menu::Item::Separator);
                 }
-                if let Some(hex) = pane.commit.borrow().clone() {
+                // 一覧の消したファイルには Blame を出さない（macOS 版と同じ）。
+                if can_blame && let Some(hex) = pane.commit.borrow().clone() {
                     let (repo, window, path, oc) = (
                         repo.clone(),
                         window.clone(),
