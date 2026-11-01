@@ -1613,10 +1613,7 @@ fn strings(v: &Value) -> Vec<String> {
 }
 
 fn date(time: i64) -> String {
-    glib::DateTime::from_unix_local(time)
-        .and_then(|d| d.format("%Y-%m-%d %H:%M:%S"))
-        .map(|s| s.to_string())
-        .unwrap_or_default()
+    crate::titles::date_time(time, true)
 }
 
 #[cfg(test)]

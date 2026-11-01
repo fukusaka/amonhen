@@ -31,10 +31,7 @@ fn run(repo: &Repository, command: Value) -> Result<Value, String> {
 }
 
 fn date(time: i64) -> String {
-    glib::DateTime::from_unix_local(time)
-        .and_then(|d| d.format("%Y-%m-%d %H:%M"))
-        .map(|s| s.to_string())
-        .unwrap_or_default()
+    crate::titles::date_time(time, false)
 }
 
 fn new_window(parent: &gtk::ApplicationWindow, title: &str, child: &impl IsA<gtk::Widget>) {

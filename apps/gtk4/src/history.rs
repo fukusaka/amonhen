@@ -1518,17 +1518,13 @@ impl HistoryView {
             parts.push(chunk.text(chunk.0.author_names[i]).to_owned());
         }
         if shown & items::DATE != 0 {
-            let format = if compact {
-                "%Y-%m-%d"
+            // 地域の書式（1 行では日付だけ。macOS 版と同じ）。
+            let time = chunk.0.author_times[i];
+            parts.push(if compact {
+                crate::titles::date(time)
             } else {
-                "%Y-%m-%d %H:%M"
-            };
-            parts.push(
-                glib::DateTime::from_unix_local(chunk.0.author_times[i])
-                    .and_then(|d| d.format(format))
-                    .map(|s| s.to_string())
-                    .unwrap_or_default(),
-            );
+                crate::titles::date_time(time, false)
+            });
         }
         if shown & items::ID != 0 {
             parts.push(history.graph.ids()[row as usize].to_string()[..8].to_owned());

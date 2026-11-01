@@ -512,10 +512,7 @@ fn commit_text(location: &str) -> (String, Option<String>) {
     }
     match bookmarks::peek(location).and_then(|p| p.last_commit) {
         Some((time, subject)) => {
-            let date = glib::DateTime::from_unix_local(time)
-                .and_then(|d| d.format("%Y-%m-%d %H:%M"))
-                .map(|s| s.to_string())
-                .unwrap_or_default();
+            let date = crate::titles::date_time(time, false);
             (
                 format!("{} — {subject}", crate::stashes::ago(time)),
                 Some(format!("{subject}\n{date}")),

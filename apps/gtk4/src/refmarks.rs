@@ -194,10 +194,7 @@ pub fn tag(actions: &Rc<Actions>, item: &RefEntry, known: &Known, anchor: &gtk::
 }
 
 fn date(t: i64) -> String {
-    glib::DateTime::from_unix_local(t)
-        .and_then(|d| d.format("%Y-%m-%d %H:%M"))
-        .map(|s| s.to_string())
-        .unwrap_or_default()
+    crate::titles::date_time(t, false)
 }
 
 /// ローカルブランチの印（取り込み済み・gone・↑↓、ほかの worktree が checkout している ⌂・⑂、書き込む先の ✎）の
