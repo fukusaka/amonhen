@@ -32,6 +32,9 @@ struct Inner {
     generation: Cell<u64>,
     /// 一致したコミットだけの History を作る世代（作り終えたとき、古いものなら捨てる）。
     filter_generation: Cell<u64>,
+    /// 裏で作り始めた最後の世代（それより後の呼び出しが裏で作らなかったら、古いものを捨てるときに
+    /// `pending` を減らす。ほかに減らすものがないため）。
+    filter_started: Cell<u64>,
     /// `--search` のとき、終わったら 1 つ減らす。
     pending: RefCell<Option<Rc<Cell<u32>>>>,
     /// 元の History（探すのはいつもこれ）。
@@ -95,6 +98,7 @@ impl Search {
             searched: RefCell::default(),
             generation: Cell::new(0),
             filter_generation: Cell::new(0),
+            filter_started: Cell::new(0),
             pending: RefCell::default(),
             base: RefCell::default(),
             only: only.clone(),
@@ -259,6 +263,7 @@ impl Inner {
         // 一致したコミットだけ（すべて一致なので塗らない）。作るのは linux の 25 万件で 50 ms ほどで、
         // History の大きさに比例するので裏で作る（macOS 版と同じ）。
         let rows = this.matches.borrow().clone();
+        this.filter_started.set(generation);
         let weak = Rc::downgrade(this);
         glib::spawn_future_local(async move {
             let matched: Vec<u32> = rows.as_ref().clone();
@@ -269,6 +274,12 @@ impl Inner {
             .await;
             let Some(this) = weak.upgrade() else { return };
             if this.filter_generation.get() != generation {
+                // 後の呼び出しが裏で作っていれば、それが減らす。
+                if this.filter_started.get() == generation
+                    && let Some(p) = this.pending.take()
+                {
+                    p.set(p.get() - 1);
+                }
                 return;
             }
             if this.only.is_active()
