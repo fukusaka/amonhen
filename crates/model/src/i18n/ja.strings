@@ -786,6 +786,8 @@
 /* GTK4 の FE: 詳細のタグと mailmap */
 " (lightweight tag)" = "（軽量タグ）";
 "Recorded: {identity}" = "記録: {identity}";
+"Filter to this person’s commits" = "この人のコミットで絞り込む";
+"The name and email recorded in the commit. The mailmap shows them as above." = "コミットに記録された名前とメール。mailmap で上のように見せています。";
 
 /* GTK4 の FE: Working Copy のファイルのメニュー */
 "Add “{pattern}” to .gitignore" = "“{pattern}” を .gitignore に追加";

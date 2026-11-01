@@ -20,6 +20,8 @@ struct Person {
     root: gtk::Box,
     avatar: Rc<crate::avatars::Avatar>,
     text: gtk::Label,
+    /// 記録された名前とメール（mailmap で置き換えて違うときだけ）。
+    recorded: gtk::Label,
     role: String,
 }
 
@@ -32,15 +34,27 @@ impl Person {
         text.set_wrap(true);
         text.set_wrap_mode(gtk::pango::WrapMode::WordChar);
         text.set_selectable(true);
-        text.set_hexpand(true);
         text.add_css_class("caption");
+        let recorded = gtk::Label::new(None);
+        recorded.set_xalign(0.0);
+        recorded.set_wrap(true);
+        recorded.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        recorded.set_selectable(true);
+        recorded.add_css_class("caption");
+        recorded.add_css_class("dim-label");
+        recorded.set_visible(false);
+        let lines = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        lines.set_hexpand(true);
+        lines.append(&text);
+        lines.append(&recorded);
         let root = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         root.append(&avatar.root);
-        root.append(&text);
+        root.append(&lines);
         Self {
             root,
             avatar,
             text,
+            recorded,
             role,
         }
     }
@@ -48,21 +62,29 @@ impl Person {
     fn show(&self, name: &str, email: &str, time: &str, recorded: Option<String>) {
         let e = |s: &str| glib::markup_escape_text(s).to_string();
         // 名前を押すと、History をその人のコミットで絞り込む（[`Details::connect_person`]）。
-        let mut markup = format!(
-            "<a href=\"person:{}\"><b>{}</b></a>  <span size=\"small\" alpha=\"55%\">{}</span>\n<span alpha=\"70%\">{}\n{}</span>",
+        let markup = format!(
+            "<a href=\"person:{}\" title=\"{}\"><b>{}</b></a>  <span size=\"small\" alpha=\"55%\">{}</span>\n<span alpha=\"70%\">{}\n{}</span>",
             e(&glib::Uri::escape_string(name, None, false)),
+            e(&tr!("Filter to this person’s commits")),
             e(name),
             e(&self.role),
             e(email),
             e(time)
         );
-        if let Some(r) = recorded {
-            markup.push_str(&format!(
-                "\n<span size=\"small\" alpha=\"55%\">{}</span>",
-                e(&r)
-            ));
-        }
         self.text.set_markup(&markup);
+        // 記録のものは、何なのかを吹き出しで説明する（macOS 版と同じ）。
+        match recorded {
+            Some(r) => {
+                self.recorded
+                    .set_markup(&format!("<span size=\"small\">{}</span>", e(&r)));
+                self.recorded.set_tooltip_text(Some(&format!(
+                    "{r}\n{}",
+                    tr!("The name and email recorded in the commit. The mailmap shows them as above.")
+                )));
+                self.recorded.set_visible(true);
+            }
+            None => self.recorded.set_visible(false),
+        }
         self.avatar.show(name, email);
         self.root.set_visible(true);
     }
