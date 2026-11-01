@@ -105,16 +105,40 @@ const LAST_HOST_KEY: &str = "lastRemoteHost";
 /// 開いている左の節（鍵を改行で区切る）。
 const EXPANDED_KEY: &str = "repositoryPageExpanded";
 
-/// 覚えている、開いている左の節（初めは、このコンピュータだけ。macOS 版と同じ）。
+/// 覚えている、開いている左の節（初めは、見出しとこのコンピュータ。macOS 版と同じ）。
 fn saved_expanded() -> std::collections::HashSet<String> {
-    match crate::settings::string(EXPANDED_KEY) {
-        Some(s) => s
-            .split('\n')
-            .filter(|k| !k.is_empty())
-            .map(str::to_owned)
-            .collect(),
-        None => [Category::Local.key()].into_iter().collect(),
+    expanded_from(crate::settings::string(EXPANDED_KEY).as_deref())
+}
+
+/// 見出しの開閉を覚えていることの印（見出しを閉じられなかったころに覚えたものと見分ける）。
+const HEADERS_MARK: &str = "header:";
+
+fn expanded_from(saved: Option<&str>) -> std::collections::HashSet<String> {
+    let headers = [Side::Places.key(), Side::Groups.key()];
+    match saved {
+        Some(s) => {
+            let mut keys: std::collections::HashSet<String> = s
+                .split('\n')
+                .filter(|k| !k.is_empty())
+                .map(str::to_owned)
+                .collect();
+            // 見出しを閉じられなかったころのもの: 見出しは開いている。
+            if !keys.iter().any(|k| k.starts_with(HEADERS_MARK)) {
+                keys.extend(headers);
+            }
+            keys
+        }
+        None => headers.into_iter().chain([Category::Local.key()]).collect(),
     }
+}
+
+/// 覚えるときの形（`expanded_from` で読み戻せる。見出しの印を付ける）。
+fn expanded_text(expanded: &std::collections::HashSet<String>) -> String {
+    let mut keys: Vec<&str> = expanded.iter().map(String::as_str).collect();
+    keys.push(HEADERS_MARK);
+    keys.sort();
+    keys.dedup();
+    keys.join("\n")
 }
 
 /// 左の行: 見出し（場所・グループ）か分類。
@@ -130,6 +154,15 @@ impl Side {
         match self {
             Self::Category(c) => Some(c),
             _ => None,
+        }
+    }
+
+    /// 開いた・閉じたを覚える鍵（見出しは訳さない名前で。macOS 版の `SideNode.key` と同じ）。
+    fn key(&self) -> String {
+        match self {
+            Self::Places => "header:場所".into(),
+            Self::Groups => "header:グループ".into(),
+            Self::Category(c) => c.key(),
         }
     }
 }
@@ -703,6 +736,8 @@ pub struct Browser {
     side: gtk::ListBox,
     /// 左の行ごとの分類と見出し。
     side_rows: RefCell<Vec<Side>>,
+    /// 左の行ごとの深さと、開け閉めできるか（← → で使う）。
+    side_shape_rows: RefCell<Vec<(i32, bool)>>,
     /// 開いている節の鍵。
     expanded: RefCell<std::collections::HashSet<String>>,
     rebuilding: Cell<bool>,
@@ -852,6 +887,7 @@ impl Browser {
             category: RefCell::new(saved),
             side,
             side_rows: RefCell::default(),
+            side_shape_rows: RefCell::default(),
             expanded: RefCell::new(saved_expanded()),
             rebuilding: Cell::new(false),
             filter,
@@ -1106,6 +1142,46 @@ impl Browser {
                 b.reload_table();
             }
         });
+        // 見出しを押すと、中を隠す・出す。
+        let weak = Rc::downgrade(self);
+        self.side.connect_row_activated(move |_, row| {
+            let Some(b) = weak.upgrade() else { return };
+            let index = row.index();
+            let side = b.side_rows.borrow().get(index as usize).cloned();
+            if let Some(side @ (Side::Places | Side::Groups)) = side {
+                b.toggle_expanded(&side.key());
+                // 作り直した見出しの行に戻す（Enter・Space で続けて開け閉めできるように）。
+                if let Some(row) = b.side.row_at_index(index) {
+                    row.grab_focus();
+                }
+            }
+        });
+        // ← → で節を開く・閉じる（macOS 版の NSOutlineView と同じ）。
+        let keys = gtk::EventControllerKey::new();
+        let weak = Rc::downgrade(self);
+        keys.connect_key_pressed(move |_, key, _, modifiers| {
+            let Some(b) = weak.upgrade() else {
+                return glib::Propagation::Proceed;
+            };
+            if modifiers.intersects(
+                gtk::gdk::ModifierType::CONTROL_MASK
+                    | gtk::gdk::ModifierType::ALT_MASK
+                    | gtk::gdk::ModifierType::SUPER_MASK,
+            ) {
+                return glib::Propagation::Proceed;
+            }
+            let handled = match key {
+                gtk::gdk::Key::Right | gtk::gdk::Key::KP_Right => b.side_arrow(true),
+                gtk::gdk::Key::Left | gtk::gdk::Key::KP_Left => b.side_arrow(false),
+                _ => false,
+            };
+            if handled {
+                glib::Propagation::Stop
+            } else {
+                glib::Propagation::Proceed
+            }
+        });
+        self.side.add_controller(keys);
         // 左の右クリック: その分類のメニュー。
         let click = gtk::GestureClick::new();
         click.set_button(gtk::gdk::BUTTON_SECONDARY);
@@ -1481,8 +1557,12 @@ impl Browser {
                     title,
                     depth: 0,
                     tip: None,
-                    parent: false,
+                    parent: !nodes.is_empty(),
                 });
+                // 閉じた見出しの中は出さない（macOS 版の見出しの「隠す」）。
+                if !self.expanded.borrow().contains(&side.key()) {
+                    continue;
+                }
             }
             flatten(nodes, 0, &self.expanded.borrow(), &mut rows);
         }
@@ -1499,14 +1579,13 @@ impl Browser {
                         .map(|c| Self::count_text(&sources, c))
                         .unwrap_or_default();
                     format!(
-                        "{}\u{1}{}\u{1}{}\u{1}{:?}\u{1}{}\u{1}{count}",
-                        r.side
-                            .category()
-                            .map_or_else(|| r.title.clone(), Category::key),
+                        "{}\u{1}{}\u{1}{}\u{1}{:?}\u{1}{}\u{1}{}\u{1}{count}",
+                        r.side.key(),
                         r.title,
                         r.depth,
                         r.tip,
                         r.parent,
+                        self.expanded.borrow().contains(&r.side.key()),
                     )
                 })
                 .collect::<Vec<_>>()
@@ -1528,13 +1607,24 @@ impl Browser {
             label.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
             match r.side.category() {
                 None => {
-                    // 見出し。
+                    // 見出し。押すと中を隠す・出す（macOS 版の見出しの Hide・Show）。
                     line.append(&label);
                     label.add_css_class("caption-heading");
                     label.add_css_class("dim-label");
                     line.set_margin_top(8);
                     row.set_selectable(false);
-                    row.set_activatable(false);
+                    row.set_activatable(r.parent);
+                    if r.parent {
+                        let open = self.expanded.borrow().contains(&r.side.key());
+                        let disclosure = gtk::Image::from_icon_name(if open {
+                            "pan-down-symbolic"
+                        } else {
+                            "pan-end-symbolic"
+                        });
+                        disclosure.add_css_class("dim-label");
+                        line.append(&disclosure);
+                        row.set_tooltip_text(Some(&if open { tr!("Hide") } else { tr!("Show") }));
+                    }
                 }
                 Some(c) => {
                     line.set_margin_start(r.depth * 14);
@@ -1629,6 +1719,7 @@ impl Browser {
             }
         }
         self.side.select_row(selected.as_ref());
+        *self.side_shape_rows.borrow_mut() = rows.iter().map(|r| (r.depth, r.parent)).collect();
         *self.side_rows.borrow_mut() = rows.into_iter().map(|r| r.side).collect();
         self.rebuilding.set(false);
     }
@@ -1640,11 +1731,50 @@ impl Browser {
             if !expanded.remove(key) {
                 expanded.insert(key.to_owned());
             }
-            let mut keys: Vec<&str> = expanded.iter().map(String::as_str).collect();
-            keys.sort();
-            crate::settings::set_string(EXPANDED_KEY, &keys.join("\n"));
+            crate::settings::set_string(EXPANDED_KEY, &expanded_text(&expanded));
         }
         self.reload_sidebar();
+    }
+
+    /// ← →（macOS 版の NSOutlineView）: → は選んでいる節を開く、← は開いていれば閉じ、閉じていれば上の節を選ぶ。
+    fn side_arrow(self: &Rc<Self>, open: bool) -> bool {
+        let Some(index) = self.side.selected_row().map(|r| r.index() as usize) else {
+            return false;
+        };
+        let (side, shape) = {
+            let (rows, shapes) = (self.side_rows.borrow(), self.side_shape_rows.borrow());
+            match (rows.get(index), shapes.get(index)) {
+                (Some(side), Some(&shape)) => (side.clone(), shape),
+                _ => return false,
+            }
+        };
+        let (depth, parent) = shape;
+        let key = side.key();
+        let expanded = self.expanded.borrow().contains(&key);
+        if parent && expanded != open {
+            self.toggle_expanded(&key);
+            // 作り直すと行が替わるので、選んでいる行に戻す（続けてキーで動けるように）。
+            if let Some(row) = self.side.selected_row() {
+                row.grab_focus();
+            }
+            return true;
+        }
+        if open {
+            return true;
+        }
+        // 上の節（深さの浅い、分類の行）へ。
+        let target = (0..index).rev().find(|&i| {
+            self.side_shape_rows
+                .borrow()
+                .get(i)
+                .is_some_and(|&(d, _)| d < depth)
+                && self.side_rows.borrow()[i].category().is_some()
+        });
+        if let Some(row) = target.and_then(|i| self.side.row_at_index(i as i32)) {
+            self.side.select_row(Some(&row));
+            row.grab_focus();
+        }
+        true
     }
 
     /// 選んでいる分類を替えて覚える（次にページを開いたときもそれを選ぶ。macOS 版の `didSet` と同じ）。
@@ -2855,6 +2985,17 @@ pub fn snapshot_when_ready(window: &gtk::Window, png: PathBuf) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keeps_headers_open_for_lists_saved_before_they_could_close() {
+        let old = expanded_from(Some("local"));
+        assert!(old.contains("header:場所") && old.contains("header:グループ"));
+        let saved = expanded_text(&old.iter().filter(|k| *k == "local").cloned().collect());
+        let back = expanded_from(Some(&saved));
+        assert!(!back.contains("header:場所") && back.contains("local"));
+        let first = expanded_from(None);
+        assert!(first.contains("header:場所") && first.contains(&Category::Local.key()));
+    }
 
     #[test]
     fn lists_used_hosts_first_in_order() {

@@ -1845,3 +1845,6 @@
 "Select a commit to see its changes." = "コミットを選ぶと、変更が表示されます";
 "Couldn’t load the diff" = "差分を読めませんでした";
 "Can’t read the diff" = "差分を読めません";
+
+/* GTK4 の FE: リポジトリのページの左の見出し（macOS の NSOutlineView の Show・Hide） */
+"Hide" = "非表示";
