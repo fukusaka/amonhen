@@ -629,7 +629,7 @@ fn opened_text(opened: Option<i64>) -> String {
 }
 
 /// 列。
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Column {
     Name,
     Branch,
@@ -2648,6 +2648,16 @@ struct SortKeys {
     names: std::collections::HashMap<String, String>,
     opened: std::collections::HashMap<String, i64>,
     data: bookmarks::Data,
+    /// 列ごとの並べ替えの値（ブランチ・状態・コミット）。初めて比べるときに行ごとに一度だけ引き、作り直すまで使う
+    /// （比べるたびに `.git` を読むと、数百行で並べ替えが遅い。macOS 版も並べる前に一度だけ引く）。
+    values: RefCell<std::collections::HashMap<(Column, String), SortValue>>,
+}
+
+/// 並べ替えの値。
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum SortValue {
+    Text(String),
+    Number(i64),
 }
 
 impl SortKeys {
@@ -2671,6 +2681,7 @@ impl SortKeys {
             names,
             opened,
             data,
+            values: RefCell::default(),
         }
     }
 
@@ -2679,6 +2690,31 @@ impl SortKeys {
             .get(location)
             .cloned()
             .unwrap_or_else(|| bookmarks::display_name(location).to_lowercase())
+    }
+
+    /// 列 `column` で並べる値（一度引いたら覚えておく）。
+    fn value(&self, column: Column, location: &str) -> SortValue {
+        let key = (column, location.to_owned());
+        if let Some(v) = self.values.borrow().get(&key) {
+            return v.clone();
+        }
+        let value = match column {
+            Column::Name => SortValue::Text(self.name(location)),
+            Column::Branch => SortValue::Text(branch_text(location)),
+            Column::Status => SortValue::Number(bookmarks::peek(location).map_or(-1, |p| {
+                p.changed as i64 * 10_000 + p.ahead as i64 + p.behind as i64
+            })),
+            Column::Commit => SortValue::Number(
+                bookmarks::peek(location)
+                    .and_then(|p| p.last_commit)
+                    .map_or(i64::MIN, |c| c.0),
+            ),
+            Column::Opened => {
+                SortValue::Number(self.opened.get(location).copied().unwrap_or(i64::MIN))
+            }
+        };
+        self.values.borrow_mut().insert(key, value.clone());
+        value
     }
 }
 
@@ -2696,18 +2732,6 @@ fn sorter(
         };
         let keys = keys.borrow();
         let name = |l: &str| keys.name(l);
-        let number = |l: &str| -> i64 {
-            match column {
-                Column::Status => bookmarks::peek(l).map_or(-1, |p| {
-                    p.changed as i64 * 10_000 + p.ahead as i64 + p.behind as i64
-                }),
-                Column::Commit => bookmarks::peek(l)
-                    .and_then(|p| p.last_commit)
-                    .map_or(i64::MIN, |c| c.0),
-                Column::Opened => keys.opened.get(l).copied().unwrap_or(i64::MIN),
-                _ => 0,
-            }
-        };
         // 逆順に並べるときも、同じ値の中は名前の昇順にする（並べ替えは比べた結果ごと逆にするので、先に逆にしておく）。
         let descending = view
             .upgrade()
@@ -2715,12 +2739,10 @@ fn sorter(
             .and_downcast::<gtk::ColumnViewSorter>()
             .is_some_and(|s| s.primary_sort_order() == gtk::SortType::Descending);
         let tie = name(&a).cmp(&name(&b));
-        let order = match column {
-            Column::Name => name(&a).cmp(&name(&b)),
-            Column::Branch => branch_text(&a).cmp(&branch_text(&b)),
-            _ => number(&a).cmp(&number(&b)),
-        }
-        .then(if descending { tie.reverse() } else { tie });
+        let order = keys
+            .value(column, &a)
+            .cmp(&keys.value(column, &b))
+            .then(if descending { tie.reverse() } else { tie });
         order.into()
     })
 }
