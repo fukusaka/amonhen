@@ -877,28 +877,38 @@ impl SshHosts {
         }
 
         // 署名の検証。
+        // 選んだら欄の文字と印も直す（macOS は Binding が設定を読むので、すぐ変わる）。
+        let show_verify = |picker: &Picker, host: &str| {
+            picker.set(
+                &vec![(
+                    None,
+                    vec![
+                        ("local".into(), tr!("This computer’s keys")),
+                        ("host".into(), tr!("The host’s git and keys")),
+                    ],
+                )],
+                &[],
+                if checks_locally(host) {
+                    "local"
+                } else {
+                    "host"
+                },
+            );
+        };
+        let verify_cell: Rc<std::cell::OnceCell<crate::reposettings::WeakPicker>> = Rc::default();
         let h = host.clone();
+        let cell = verify_cell.clone();
         let verify = Picker::new(move |value| {
             let local = value == "local";
             if local != checks_locally(&h) {
                 set_checks_locally(&h, local);
             }
+            if let Some(picker) = cell.get().and_then(|w| w.upgrade()) {
+                show_verify(&picker, &h);
+            }
         });
-        verify.set(
-            &vec![(
-                None,
-                vec![
-                    ("local".into(), tr!("This computer’s keys")),
-                    ("host".into(), tr!("The host’s git and keys")),
-                ],
-            )],
-            &[],
-            if checks_locally(&host) {
-                "local"
-            } else {
-                "host"
-            },
-        );
+        show_verify(&verify, &host);
+        let _ = verify_cell.set(verify.downgrade());
 
         let host_label = label(&host, &[]);
         host_label.set_selectable(true);

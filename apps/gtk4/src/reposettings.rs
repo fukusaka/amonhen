@@ -480,6 +480,23 @@ pub(crate) struct Picker {
     action: gio::SimpleAction,
 }
 
+/// `Picker` の弱い参照。
+pub(crate) struct WeakPicker {
+    button: glib::WeakRef<gtk::MenuButton>,
+    label: glib::WeakRef<gtk::Label>,
+    action: glib::WeakRef<gio::SimpleAction>,
+}
+
+impl WeakPicker {
+    pub fn upgrade(&self) -> Option<Picker> {
+        Some(Picker {
+            button: self.button.upgrade()?,
+            label: self.label.upgrade()?,
+            action: self.action.upgrade()?,
+        })
+    }
+}
+
 /// メニューの節: 見出し（なければ区切りだけ）と、値と言い方の組。
 pub(crate) type Options = Vec<(Option<String>, Vec<(String, String)>)>;
 
@@ -519,6 +536,15 @@ impl Picker {
             button,
             label,
             action,
+        }
+    }
+
+    /// 弱い参照（選んだときの関数から自分を直すのに使う。強い参照だと循環する）。
+    pub fn downgrade(&self) -> WeakPicker {
+        WeakPicker {
+            button: self.button.downgrade(),
+            label: self.label.downgrade(),
+            action: self.action.downgrade(),
         }
     }
 
