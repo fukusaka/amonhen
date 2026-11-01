@@ -594,9 +594,11 @@ impl Editor {
         root.append(&top);
         root.append(&bottom);
         // マーカーの残っていないファイル（rerere が解決を当てた、ほかのエディタで直した）の案内。
-        if let Some(text) = &without_markers {
-            root.append(&Self::without_markers_banner(text));
-        }
+        let banner_resolve = without_markers.as_ref().map(|text| {
+            let (banner, button) = Self::without_markers_banner(text);
+            root.append(&banner);
+            button
+        });
         root.append(&band.root);
         root.append(&columns);
 
@@ -717,6 +719,10 @@ impl Editor {
         save.connect_clicked(move |_| f());
         let f = with(Self::save_and_resolve);
         resolve.connect_clicked(move |_| f());
+        if let Some(button) = banner_resolve {
+            let f = with(Self::save_and_resolve);
+            button.connect_clicked(move |_| f());
+        }
 
         let weak = Rc::downgrade(&this);
         popout.connect_clicked(move |_| {
@@ -1154,8 +1160,8 @@ impl Editor {
         b
     }
 
-    /// マーカーの残っていないファイルの案内の帯（Mark Resolved つき）。
-    fn without_markers_banner(text: &str) -> gtk::Box {
+    /// マーカーの残っていないファイルの案内の帯と、その Mark Resolved のボタン（macOS 版と同じ）。
+    fn without_markers_banner(text: &str) -> (gtk::Box, gtk::Button) {
         let label = gtk::Label::new(Some(&format!("✓ {text}")));
         label.set_xalign(0.0);
         label.set_hexpand(true);
@@ -1167,6 +1173,9 @@ impl Editor {
         b.set_margin_end(6);
         b.set_margin_bottom(6);
         b.append(&label);
+        let resolve = gtk::Button::with_label(&tr!("Mark Resolved"));
+        resolve.set_valign(gtk::Align::Center);
+        b.append(&resolve);
         let css = gtk::CssProvider::new();
         css.load_from_string(
             ".merge-without-markers { background: alpha(#e66100, 0.14); border-radius: 6px; padding: 6px 10px; }",
@@ -1176,7 +1185,7 @@ impl Editor {
             &css,
             gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
         );
-        b
+        (b, resolve)
     }
 
     fn redraw_bands(&self) {
