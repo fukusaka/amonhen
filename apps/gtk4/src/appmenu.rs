@@ -556,16 +556,26 @@ pub fn install(parts: Parts) -> Buttons {
 }
 
 /// `button` のメニューを開くたびに、項目の名前を今の状態に合わせる（[`Actions::retitle`]）。
+/// メニューを開くたびに作り直すボタン（`set_create_popup_func` で `set_menu_model` する Commit ▾）は
+/// そのたびに新しい popover になるので、popover が替わったら付け直し、名前は開いたときのメニューで合わせる。
 pub fn retitle_on_show(button: &gtk::MenuButton, actions: &Rc<Actions>) {
-    let (Some(popover), Some(model)) = (button.popover(), button.menu_model()) else {
-        return;
-    };
+    fn hook(button: &gtk::MenuButton, actions: &std::rc::Weak<Actions>) {
+        let Some(popover) = button.popover() else {
+            return;
+        };
+        let (button, actions) = (button.downgrade(), actions.clone());
+        popover.connect_show(move |_| {
+            let (Some(button), Some(actions)) = (button.upgrade(), actions.upgrade()) else {
+                return;
+            };
+            if let Some(model) = button.menu_model() {
+                actions.retitle(&model);
+            }
+        });
+    }
     let actions = Rc::downgrade(actions);
-    popover.connect_show(move |_| {
-        if let Some(actions) = actions.upgrade() {
-            actions.retitle(&model);
-        }
-    });
+    hook(button, &actions);
+    button.connect_notify_local(Some("popover"), move |button, _| hook(button, &actions));
 }
 
 /// テーマにアイコンがあればアイコン、なければ文字（macOS の GTK などは GNOME のアイコンを持たない）。
