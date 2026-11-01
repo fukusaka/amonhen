@@ -638,10 +638,12 @@ impl RangeDiff {
         self.shown_generation.set(g);
         self.pair_diff.clear();
         let Some(pair) = pair else {
+            // 見出しは空にし、差分の場所に知らせを出す（macOS 版と同じ）。
             self.right.set_visible_child_name("pair");
-            self.pair_title
-                .set_text(&tr!("Choose two versions to compare"));
+            self.pair_title.set_text("");
             self.pair_note.set_text("");
+            self.pair_diff
+                .show_message(&tr!("Choose two versions to compare"));
             return;
         };
         if pair.status != "changed" {
