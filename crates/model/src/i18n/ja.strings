@@ -450,6 +450,7 @@
 "The operation failed" = "操作に失敗しました";
 "Force push {branch}?" = "{branch} を force push しますか？";
 "Message (optional)" = "メッセージ（空でもよい）";
+"Description (optional)" = "説明（空でもよい）";
 "Include untracked files" = "untracked のファイルも含める";
 "Edit Message" = "メッセージを編集";
 "Can’t Merge Them in One Commit" = "1 つのコミットにまとめられません";

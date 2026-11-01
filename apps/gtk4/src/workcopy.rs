@@ -205,6 +205,7 @@ impl WorkingCopy {
         let body_box = gtk::Overlay::new();
         body_box.set_child(Some(&body_scrolled));
         body_box.add_overlay(&body_guide(&body));
+        body_box.add_overlay(&body_placeholder(&body));
         let amend = gtk::CheckButton::with_label("Amend");
         let commit = gtk::Button::with_label("Commit");
         commit.add_css_class("suggested-action");
@@ -2720,6 +2721,28 @@ fn body_guide(body: &gtk::TextView) -> gtk::DrawingArea {
         let _ = cr.fill();
     });
     guide
+}
+
+/// 本文が空のときの薄い文（TextView には placeholder がないので、上に重ねる。macOS 版と同じ文）。
+fn body_placeholder(body: &gtk::TextView) -> gtk::Label {
+    let label = gtk::Label::new(Some(&tr!("Description (optional)")));
+    label.add_css_class("dim-label");
+    label.add_css_class("monospace");
+    label.set_can_target(false);
+    label.set_halign(gtk::Align::Start);
+    label.set_valign(gtk::Align::Start);
+    // 本文の 1 文字目の位置（欄の枠 1 px と余白）。
+    label.set_margin_start(1 + body.left_margin());
+    label.set_margin_top(1 + body.top_margin());
+    let buffer = body.buffer();
+    label.set_visible(buffer.char_count() == 0);
+    let weak = label.downgrade();
+    buffer.connect_changed(move |b| {
+        if let Some(label) = weak.upgrade() {
+            label.set_visible(b.char_count() == 0);
+        }
+    });
+    label
 }
 
 /// 一覧のチェックの説明（含めている・一部の行だけ・含めていない。macOS 版と同じ）。
