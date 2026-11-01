@@ -410,8 +410,15 @@ pub fn branch(
         glib::spawn_future_local(async move {
             let answer = sheets::predict_merge(&repo, &base, &[name]).await;
             label.remove_css_class("dim-label");
-            label.set_text(&answer.text(false));
-            if answer.has_conflicts() {
+            label.set_text(
+                &answer
+                    .as_ref()
+                    .map_or_else(|| tr!("Couldn’t check for conflicts."), |a| a.text(false)),
+            );
+            if answer
+                .as_ref()
+                .is_some_and(sheets::MergeForecast::has_conflicts)
+            {
                 label.add_css_class("warning");
             }
         });

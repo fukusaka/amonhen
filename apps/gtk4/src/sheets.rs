@@ -387,7 +387,7 @@ pub fn commit_lists(lists: &[(String, &CommitRange, bool)]) -> gtk::Box {
     out
 }
 
-/// `predictMerge` の答え（コンフリクトするファイル。調べられなければ None）。
+/// `predictMerge` の答え（コンフリクトするファイル。git が古くて調べられなければ None）。
 pub struct MergeForecast {
     pub conflicts: Option<Vec<String>>,
 }
@@ -431,8 +431,13 @@ impl MergeForecast {
     }
 }
 
-/// `theirs` を `ours` にマージしたらコンフリクトするか（作業ツリーと index には触らない）。
-pub async fn predict_merge(repo: &Arc<Repository>, ours: &str, theirs: &[String]) -> MergeForecast {
+/// `theirs` を `ours` にマージしたらコンフリクトするか（作業ツリーと index には触らない）。命令が失敗したら
+/// （SSH が切れた、rev がないなど）None。git の版のせいにしない（macOS 版と同じ）。
+pub async fn predict_merge(
+    repo: &Arc<Repository>,
+    ours: &str,
+    theirs: &[String],
+) -> Option<MergeForecast> {
     let theirs: Value = if theirs.len() == 1 {
         json!(theirs[0])
     } else {
@@ -443,12 +448,19 @@ pub async fn predict_merge(repo: &Arc<Repository>, ours: &str, theirs: &[String]
         json!({ "op": "predictMerge", "ours": ours, "theirs": theirs }),
     )
     .await;
-    MergeForecast {
-        conflicts: reply["info"]["conflicts"].as_array().map(|a| {
-            a.iter()
-                .filter_map(|v| v.as_str().map(str::to_owned))
-                .collect()
-        }),
+    MergeForecast::from_reply(&reply)
+}
+
+impl MergeForecast {
+    /// `predictMerge` の答えから。失敗した答えなら None。
+    fn from_reply(reply: &Value) -> Option<Self> {
+        (reply["ok"].as_bool() == Some(true)).then(|| Self {
+            conflicts: reply["info"]["conflicts"].as_array().map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_owned))
+                    .collect()
+            }),
+        })
     }
 }
 
@@ -459,9 +471,10 @@ pub fn forecast_label() -> gtk::Label {
     l
 }
 
-pub fn show_forecast(label: &gtk::Label, forecast: &MergeForecast, estimate: bool) {
-    label.set_text(&forecast.text(estimate));
-    if forecast.has_conflicts() {
+/// 見込みの行に答えを書く（調べられなかったら空にする。macOS 版と同じ）。
+pub fn show_forecast(label: &gtk::Label, forecast: Option<&MergeForecast>, estimate: bool) {
+    label.set_text(&forecast.map(|f| f.text(estimate)).unwrap_or_default());
+    if forecast.is_some_and(MergeForecast::has_conflicts) {
         label.add_css_class("warning");
     } else {
         label.remove_css_class("warning");
@@ -1287,7 +1300,7 @@ pub fn pull(actions: &Rc<Actions>, mode: &str) {
                 (lines.join("\n"), blocked)
             }
         };
-        let forecast_answer: Rc<std::cell::RefCell<Option<MergeForecast>>> = Rc::default();
+        let forecast_answer: Rc<std::cell::RefCell<Option<Option<MergeForecast>>>> = Rc::default();
         let update = {
             let (explain, explains, ok, forecast, answer, chosen, method, describe) = (
                 explain.clone(),
@@ -1310,7 +1323,7 @@ pub fn pull(actions: &Rc<Actions>, mode: &str) {
                     if m == "fastForwardOnly" {
                         label.set_text("");
                     } else if let Some(f) = answer.borrow().as_ref() {
-                        show_forecast(label, f, m == "rebase");
+                        show_forecast(label, f.as_ref(), m == "rebase");
                     } else {
                         // 答えがまだなら、調べていることを出し直す（Fast-Forward Only で消した後）。
                         label.set_text(&tr!("Checking for conflicts…"));
@@ -1826,7 +1839,7 @@ pub fn confirm_integrate(
         let (label, several) = (forecast.clone(), theirs.len() > 1);
         glib::spawn_future_local(async move {
             let f = predict_merge(&repo, &ours, &theirs).await;
-            show_forecast(&label, &f, estimate || several);
+            show_forecast(&label, f.as_ref(), estimate || several);
         });
         if sheet.run().await == Response::Ok {
             actions.perform_sequence(commands);
@@ -2031,7 +2044,7 @@ pub fn integrate_choosing(
                     if !rebase {
                         let f = predict_merge(&repo, "HEAD", &[rev]).await;
                         if generation.get() == g {
-                            show_forecast(&forecast, &f, false);
+                            show_forecast(&forecast, f.as_ref(), false);
                         }
                         return;
                     }
@@ -2305,4 +2318,22 @@ pub fn push_to(actions: &Rc<Actions>, branch: &str, target: &str, command: Value
         }
         actions.perform(command);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn forecast_from_reply() {
+        // 失敗した答え（SSH が切れた、rev がないなど）は、版のせいにせず None。
+        assert!(MergeForecast::from_reply(&json!({ "ok": false, "error": "x" })).is_none());
+        // 調べられた答え。
+        let f = MergeForecast::from_reply(&json!({ "ok": true, "info": { "conflicts": ["a"] } }))
+            .unwrap();
+        assert_eq!(f.conflicts, Some(vec!["a".to_owned()]));
+        // 版が古くて調べられない（conflicts がない）。
+        let f = MergeForecast::from_reply(&json!({ "ok": true, "info": {} })).unwrap();
+        assert!(f.conflicts.is_none());
+    }
 }

@@ -166,14 +166,16 @@ pub fn confirm(actions: &Rc<Actions>, sources: Vec<Source>, branch: Option<Strin
         sheet.buttons("Merge", false, Some(&tr!("Merge One by One")));
 
         // 順を変えるたびに調べる（答えは順ごとに覚えておき、遅れて来た前の答えは捨てる）。
-        let known: Rc<RefCell<HashMap<Vec<String>, Steps>>> = Rc::default();
+        let known: Rc<RefCell<HashMap<Vec<String>, Option<Steps>>>> = Rc::default();
         let shown: Rc<RefCell<Vec<String>>> = Rc::default();
         // 「最後に回す」で動かす行。
         let last: Rc<RefCell<Option<usize>>> = Rc::default();
         let show = {
             let (list, label, put_last, last) =
                 (list.clone(), label.clone(), put_last.clone(), last.clone());
-            Rc::new(move |steps: Option<Vec<Vec<String>>>| {
+            // `answer` は None なら調べられなかった（行は空にする。macOS 版と同じ）。
+            Rc::new(move |answer: Option<Steps>| {
+                let steps = answer.clone().flatten();
                 list.set_steps(steps.clone());
                 let sources = list.sources();
                 let conflicting: Vec<usize> = steps
@@ -195,7 +197,8 @@ pub fn confirm(actions: &Rc<Actions>, sources: Vec<Source>, branch: Option<Strin
                         all.sort();
                         all.dedup();
                     }
-                    sheets::show_forecast(&label, &sheets::MergeForecast { conflicts: all }, false);
+                    let forecast = answer.map(|_| sheets::MergeForecast { conflicts: all });
+                    sheets::show_forecast(&label, forecast.as_ref(), false);
                 } else {
                     let names: Vec<&str> = early.iter().map(|&i| sources[i].rev.as_str()).collect();
                     label.set_text(&if conflicting.len() == 1 {
@@ -278,16 +281,20 @@ pub fn confirm(actions: &Rc<Actions>, sources: Vec<Source>, branch: Option<Strin
 }
 
 /// `predictMerge` の、順ごとのコンフリクトするファイル（調べられなければ None）。
+/// 命令が失敗したら None（git が古くて調べられなければ Some(None)）。
 async fn predict(
     repo: &std::sync::Arc<amonhen_core::Repository>,
     revs: &[String],
-) -> Option<Vec<Vec<String>>> {
+) -> Option<Steps> {
     let reply = sheets::run(
         repo,
         json!({ "op": "predictMerge", "ours": "HEAD", "theirs": revs }),
     )
     .await;
-    reply["info"]["steps"].as_array().map(|steps| {
+    if reply["ok"].as_bool() != Some(true) {
+        return None;
+    }
+    Some(reply["info"]["steps"].as_array().map(|steps| {
         steps
             .iter()
             .map(|s| {
@@ -299,7 +306,7 @@ async fn predict(
                     .collect()
             })
             .collect()
-    })
+    }))
 }
 
 /// `revs` を merge する。1 つのコミットにまとめるのを git が断ったら（何も変わっていない）、1 つずつ merge

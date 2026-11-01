@@ -620,6 +620,7 @@
 "Revert {id}…" = "{id} を Revert…";
 "Delete {name}…" = "{name} を削除…";
 "Can’t check for conflicts ahead (needs git 2.38 or newer)." = "前もってコンフリクトを調べられません（git 2.38 以降が必要です）。";
+"Couldn’t check for conflicts." = "コンフリクトを調べられませんでした。";
 "No conflicts expected." = "コンフリクトしない見込みです。";
 "⚠︎ Conflicts expected in {count} files: {names}" = "⚠︎ {count} ファイルでコンフリクトする見込みです: {names}";
 "Rebase applies the commits one at a time, so this is only an estimate." = "Rebase はコミットを 1 つずつ載せ直すので、これは目安です。";
