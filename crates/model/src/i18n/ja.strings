@@ -1150,6 +1150,8 @@
 
 /* GTK4 の FE: File History */
 "File History — {path} ({count} commits)" = "File History — {path}（{count} コミット）";
+"File History — {path} ({count}+ commits)" = "File History — {path}（{count}+ コミット）";
+"File History — {path} (loading…)" = "File History — {path}（読んでいます…）";
 "Renamed or copied to {path} in {commit}" = "{commit} で {path} に名前を変えた（またはコピーした）";
 "Copy Short ID" = "短い ID をコピー";
 "Copy Subject" = "件名をコピー";
