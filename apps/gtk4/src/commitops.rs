@@ -98,8 +98,10 @@ pub fn menu(
     items.push(menu::action(crate::titles::revert(&hex), move || {
         crate::sheets::pick(&a, true, vec![(h.clone(), is_merge)]);
     }));
-    // マージはパッチにできない（git format-patch は飛ばす）。
-    if !is_merge {
+    // マージはパッチにできない（git format-patch は飛ばす）。押せない項目で残す（macOS 版と同じ）。
+    if is_merge {
+        items.push(Item::Disabled(tr!("Save as Patch…")));
+    } else {
         let (a, h) = (actions.clone(), hex.clone());
         items.push(menu::action(tr!("Save as Patch…"), move || {
             crate::patches::save(&a, vec![h.clone()]);
@@ -227,8 +229,13 @@ pub fn menu_many(
         tr!("Revert {count} Commits…", count = n),
         move || crate::sheets::pick(&a, true, c.clone()),
     ));
-    // マージはパッチにできない（git format-patch は飛ばす）。古い順に。
-    if !commits.iter().any(|(_, merge)| *merge) {
+    // マージはパッチにできない（git format-patch は飛ばす）。押せない項目で残す（macOS 版と同じ）。古い順に。
+    if commits.iter().any(|(_, merge)| *merge) {
+        items.push(Item::Disabled(tr!(
+            "Save {count} Commits as Patches…",
+            count = n
+        )));
+    } else {
         let (a, oids) = (
             actions.clone(),
             commits
