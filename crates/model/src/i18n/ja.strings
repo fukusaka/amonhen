@@ -678,6 +678,7 @@
 "Gives the branch its earlier name back." = "ブランチの名前を元に戻します。";
 "Returns HEAD and the branches to where they were." = "HEAD とブランチを元の場所に戻します。";
 "Undo “{label}”?" = "「{label}」を戻しますか？";
+"Undo the last {count} operations?" = "直近の {count} 個の操作を Undo しますか？";
 "Rebase {target} onto {rev}?" = "{target} を {rev} の上に Rebase しますか？";
 "Merge {rev} into {target}?" = "{rev} を {target} に Merge しますか？";
 "Onto:" = "載せ先:";

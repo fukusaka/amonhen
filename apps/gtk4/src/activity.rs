@@ -496,10 +496,15 @@ impl Activity {
         ));
         stack.add_titled(&history, Some("history"), "History");
         let refresh_undo: Rc<dyn Fn()> = {
-            let (undo_list, repo, actions) = (undo_list.clone(), repo.clone(), actions.clone());
+            let (undo_list, repo, actions, w) = (
+                undo_list.clone(),
+                repo.clone(),
+                actions.clone(),
+                window.downgrade(),
+            );
             Rc::new(move || {
                 let Some(repo) = repo.clone() else { return };
-                let (undo_list, actions) = (undo_list.clone(), actions.clone());
+                let (undo_list, actions, w) = (undo_list.clone(), actions.clone(), w.clone());
                 glib::spawn_future_local(async move {
                     let reply: Value = gio::spawn_blocking(move || {
                         serde_json::from_str(&repo.run_json(r#"{"op":"undoLog"}"#))
@@ -535,9 +540,29 @@ impl Activity {
                                 count = i + 1
                             )
                         }));
-                        let a = actions.clone();
+                        let (a, w) = (actions.clone(), w.clone());
+                        let title = if i == 0 {
+                            tr!(
+                                "Undo “{label}”?",
+                                label = e["label"].as_str().unwrap_or_default()
+                            )
+                        } else {
+                            tr!("Undo the last {count} operations?", count = i + 1)
+                        };
+                        // 戻す前に確かめる（macOS 版と同じ）。
                         button.connect_clicked(move |_| {
-                            a.perform_sequence(vec![json!({ "op": "undo" }); i + 1]);
+                            let (a, w, title) = (a.clone(), w.clone(), title.clone());
+                            glib::spawn_future_local(async move {
+                                let sheet = crate::sheets::Sheet::new(
+                                    w.upgrade().as_ref(),
+                                    &title,
+                                    &tr!("Returns HEAD and the branches to where they were."),
+                                );
+                                sheet.buttons("Undo", false, None);
+                                if sheet.run().await == crate::sheets::Response::Ok {
+                                    a.perform_sequence(vec![json!({ "op": "undo" }); i + 1]);
+                                }
+                            });
                         });
                         line.append(&button);
                         undo_list.append(&line);
