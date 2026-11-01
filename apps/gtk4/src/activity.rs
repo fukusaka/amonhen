@@ -134,6 +134,16 @@ fn ms(value: f64) -> String {
     }
 }
 
+/// 時間（ミリ秒）を、秒・分・時間で（macOS 版の Daemon のタブと同じ）。
+fn duration(ms: u64) -> String {
+    match ms / 1000 {
+        s if s < 60 => tr!("{s} s", s = s),
+        s if s < 3600 && s % 60 == 0 => tr!("{m} min", m = s / 60),
+        s if s < 3600 => tr!("{m} min {s} s", m = s / 60, s = s % 60),
+        s => tr!("{h} h {m} min", h = s / 3600, m = s % 3600 / 60),
+    }
+}
+
 /// 並べた `len` 個のうち、割合 `p` の位置（macOS 版と同じく `len × p` を切り捨て、最後を超えない）。
 fn quantile_index(len: usize, p: f64) -> usize {
     ((len as f64 * p) as usize).min(len.saturating_sub(1))
@@ -811,15 +821,20 @@ impl Activity {
         daemon.append(&top);
         daemon.append(&label(&tr!("Open Repositories"), &["heading"]));
         daemon.append(&scrolled);
+        // だれもつながらなくなって終わるまでの時間（macOS 版と同じ）。
+        let idle_exit = label("", &["dim-label", "caption"]);
+        idle_exit.set_wrap(true);
+        daemon.append(&idle_exit);
         stack.add_titled(&daemon, Some("daemon"), "Daemon");
         let running = Rc::new(std::cell::Cell::new(false));
         let refresh_daemon = {
-            let (state, detail, toggle, repo_list, running) = (
+            let (state, detail, toggle, repo_list, running, idle_exit) = (
                 state.clone(),
                 detail.clone(),
                 toggle.clone(),
                 repo_list.clone(),
                 running.clone(),
+                idle_exit.clone(),
             );
             // 2 秒ごとに、前の問い合わせが返ってから（macOS 版と同じ。遅いソケットで積み重ねない）。
             let loading = Rc::new(std::cell::Cell::new(false));
@@ -831,7 +846,7 @@ impl Activity {
                     return;
                 }
                 loading.set(true);
-                let (state, detail, toggle, repo_list, running, loading, last) = (
+                let (state, detail, toggle, repo_list, running, loading, last, idle_exit) = (
                     state.clone(),
                     detail.clone(),
                     toggle.clone(),
@@ -839,6 +854,7 @@ impl Activity {
                     running.clone(),
                     loading.clone(),
                     last.clone(),
+                    idle_exit.clone(),
                 );
                 glib::spawn_future_local(async move {
                     let status = gio::spawn_blocking(|| {
@@ -853,6 +869,15 @@ impl Activity {
                     loading.set(false);
                     running.set(status.is_some());
                     // 一覧は、中身が変わったときだけ作り直す（ちらつかせず、スクロールの位置も保つ）。
+                    idle_exit.set_text(&tr!(
+                        "The daemon exits after {duration} with no connections. From a terminal, run amonhen daemon status to see it.",
+                        duration = duration(
+                            status
+                                .as_ref()
+                                .and_then(|d| d["idleExitMs"].as_u64())
+                                .unwrap_or(600_000)
+                        )
+                    ));
                     let repos = status.as_ref().map(|d| d["repos"].to_string());
                     let same_repos = unchanged(&last, &repos);
                     if !same_repos {
@@ -862,24 +887,35 @@ impl Activity {
                         state.set_text(&tr!("The shared daemon isn’t running"));
                         detail.set_text(&tr!("It starts automatically when you open a repository through the daemon (right-click in the repository list, or Settings > Performance)."));
                         toggle.set_label(&tr!("Start"));
+                        toggle.set_tooltip_text(None);
                         return;
                     };
                     state.set_text(&tr!("The shared daemon is running"));
-                    let uptime = d["uptimeMs"].as_u64().unwrap_or(0) / 1000;
                     detail.set_text(&tr!(
-                        "pid {pid} · version {version} (protocol {protocol}) · up {minutes} min {seconds} s · connections {connections}\n{socket}",
+                        "pid {pid} · version {version} (build {build}) · up {uptime} · connections {connections}\n{socket}",
                         pid = d["pid"],
                         version = d["version"].as_str().unwrap_or_default(),
-                        protocol = d["protocol"],
-                        minutes = uptime / 60,
-                        seconds = uptime % 60,
+                        build = d["build"].as_str().unwrap_or_default(),
+                        uptime = duration(d["uptimeMs"].as_u64().unwrap_or(0)),
                         connections = d["connections"],
                         socket = d["socket"].as_str().unwrap_or_default(),
                     ));
                     toggle.set_label(&tr!("Stop"));
+                    toggle.set_tooltip_text(Some(&tr!(
+                        "Repositories opened through the daemon get disconnected (Reconnect starts it again)."
+                    )));
                     if same_repos {
                         return;
                     }
+                    // 列の見出し（macOS 版の表と同じ列）。
+                    repo_list.append(&row(&[
+                        (&tr!("Repository"), 0, &["dim-label"]),
+                        ("SSH", 16, &["dim-label"]),
+                        (&tr!("Connections"), 16, &["dim-label"]),
+                        ("History", 6, &["dim-label"]),
+                        (&tr!("Watching"), 6, &["dim-label"]),
+                        (&tr!("Search Index"), 16, &["dim-label"]),
+                    ]));
                     for r in d["repos"].as_array().into_iter().flatten() {
                         let yes = |key: &str| {
                             if r[key].as_bool() == Some(true) {
@@ -890,35 +926,90 @@ impl Activity {
                         };
                         let clients = r["clients"].as_u64().unwrap_or(0);
                         let clients = if clients > 0 {
-                            tr!("{clients} connections", clients = clients)
+                            clients.to_string()
                         } else {
                             tr!(
-                                "No connections (for {seconds} s)",
-                                seconds = r["idleMs"].as_u64().unwrap_or(0) / 1000
+                                "None (for {duration})",
+                                duration = duration(r["idleMs"].as_u64().unwrap_or(0))
                             )
                         };
-                        repo_list.append(&row(&[
-                            (r["path"].as_str().unwrap_or_default(), 0, &[]),
-                            (&clients, 18, &["numeric"]),
-                            (&format!("History {}", yes("history")), 10, &[]),
-                            (&tr!("Watching {state}", state = yes("watching")), 8, &[]),
-                        ]));
+                        // SSH 先: 送った・受け取った量（切れていれば「切れた」と理由）。
+                        let bytes = |key: &str| glib::format_size(r[key].as_u64().unwrap_or(0));
+                        let (ssh, ssh_css, ssh_tip): (String, &[&str], Option<String>) =
+                            if r["ssh"].as_bool() != Some(true) {
+                                ("—".to_owned(), &["dim-label"], None)
+                            } else if let Some(reason) = r["closed"].as_str() {
+                                (
+                                    tr!("Disconnected"),
+                                    &["activity-error"],
+                                    Some(reason.to_owned()),
+                                )
+                            } else {
+                                let mut tip = tr!("Sent to and received from the SSH host");
+                                if let Some(engine) = r["engine"].as_str() {
+                                    tip.push_str(&format!(
+                                        "\n{}",
+                                        tr!("Engine on the SSH host: {engine}", engine = engine)
+                                    ));
+                                }
+                                (
+                                    format!("{} · {}", bytes("sent"), bytes("received")),
+                                    &["numeric"],
+                                    Some(tip),
+                                )
+                            };
+                        let index = match r["indexRows"].as_u64() {
+                            Some(rows) => tr!(
+                                "{rows} rows · {size}",
+                                rows = rows,
+                                size = bytes("indexBytes")
+                            ),
+                            None => "—".to_owned(),
+                        };
+                        let path = r["path"].as_str().unwrap_or_default();
+                        let line = row(&[
+                            (path, 0, &[]),
+                            (&ssh, 16, ssh_css),
+                            (&clients, 16, &["numeric"]),
+                            (&yes("history"), 6, &[]),
+                            (&yes("watching"), 6, &[]),
+                            (&index, 16, &["numeric"]),
+                        ]);
+                        line.set_tooltip_text(Some(path));
+                        if let (Some(tip), Some(cell)) =
+                            (ssh_tip, line.first_child().and_then(|c| c.next_sibling()))
+                        {
+                            cell.set_tooltip_text(Some(&tip));
+                        }
+                        repo_list.append(&line);
                     }
                 });
             }
         };
         refreshers.push(Box::new(refresh_daemon));
+        let w = window.downgrade();
         toggle.connect_clicked(move |_| {
-            let (running, engine) = (running.get(), engine.clone());
+            let (running, engine, w) = (running.get(), engine.clone(), w.clone());
             glib::spawn_future_local(async move {
-                let _ = gio::spawn_blocking(move || {
+                let result = gio::spawn_blocking(move || {
                     if running {
                         let _ = amonhen_remote::local::control("stop");
+                        Ok(())
                     } else {
-                        let _ = amonhen_remote::local::start(&engine.to_string_lossy());
+                        amonhen_remote::local::start(&engine.to_string_lossy())
+                            .map_err(|e| e.to_string())
                     }
                 })
                 .await;
+                // 起動できなければ知らせる（macOS 版と同じ）。
+                if let Ok(Err(e)) = result {
+                    gtk::AlertDialog::builder()
+                        .message(tr!("Couldn’t start the shared daemon"))
+                        .detail(e)
+                        .modal(true)
+                        .build()
+                        .show(w.upgrade().as_ref());
+                }
             });
         });
 
@@ -998,5 +1089,16 @@ mod tests {
         assert_eq!(quantile_index(10, 0.95), 9);
         assert_eq!(quantile_index(100, 0.95), 95);
         assert_eq!(quantile_index(10, 1.0), 9);
+    }
+
+    /// 時間は macOS 版と同じく、秒・分・時間で。
+    #[test]
+    fn durations_use_seconds_minutes_and_hours() {
+        amonhen_model::i18n::with(amonhen_model::i18n::Lang::En, || {
+            assert_eq!(duration(5_000), "5 s");
+            assert_eq!(duration(600_000), "10 min");
+            assert_eq!(duration(125_000), "2 min 5 s");
+            assert_eq!(duration(7_380_000), "2 h 3 min");
+        });
     }
 }
