@@ -339,6 +339,16 @@ impl Actions {
         self: &Rc<Self>,
         work: impl FnOnce(&Repository) -> amonhen_model::Result<()> + Send + 'static,
     ) {
+        self.perform_work_titled(None, work);
+    }
+
+    /// `perform_work` の、失敗の見出しを決める形（Rebuild History なら「Couldn’t Rebuild History」）。失敗は
+    /// 命令の失敗と同じくステータスバーに出す（macOS 版と同じ）。
+    pub fn perform_work_titled(
+        self: &Rc<Self>,
+        heading: Option<String>,
+        work: impl FnOnce(&Repository) -> amonhen_model::Result<()> + Send + 'static,
+    ) {
         let Some(repo) = self.repo.borrow().clone() else {
             return;
         };
@@ -348,7 +358,14 @@ impl Actions {
             let result = gio::spawn_blocking(move || work(&repo).map_err(|e| e.to_string())).await;
             crate::activity::end();
             if let Ok(Err(e)) = result {
-                this.alert(&tr!("The operation failed"), &e).await;
+                this.fail(crate::statusbar::Failure {
+                    message: e,
+                    kind: None,
+                    path: None,
+                    command: None,
+                    heading: Some(heading.unwrap_or_else(|| tr!("The operation failed"))),
+                })
+                .await;
             }
             if let Some(f) = this.on_change.borrow().clone() {
                 f();
