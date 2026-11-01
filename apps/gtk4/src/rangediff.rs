@@ -97,8 +97,9 @@ fn shorten(range: &str) -> String {
     out
 }
 
+/// 組の行と右の欄の見出しの短い ID（macOS 版の Range Diff と同じく 7 桁）。
 fn short(oid: &str) -> &str {
-    crate::titles::short(oid)
+    &oid[..oid.len().min(7)]
 }
 
 pub struct RangeDiff {
