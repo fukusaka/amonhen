@@ -1377,6 +1377,10 @@
 "Not found — {path}" = "見つかりません — {path}";
 "Open in New Window" = "新しいウィンドウで開く";
 "Open in New Tab" = "新しいタブで開く";
+"Current branch" = "今のブランチ";
+"Changes n: files with changes (untracked files aren’t counted)\n↑ commits ahead of the upstream · ↓ commits behind it\n✓ no changes and same as the upstream" = "変更 n: 変更のあるファイルの数（untracked は数えない）\n↑ 上流より先・↓ 後ろのコミットの数\n✓ 変更なしで上流と同じ";
+"Date and subject of the last commit" = "最後のコミットの日時と件名";
+"When you last opened it in this app (— if never)" = "このアプリで最後に開いた日時（— はまだ開いていない）";
 "Switch repository" = "リポジトリを切り替える";
 "Open Through the Shared daemon" = "共有の daemon 越しに開く";
 "Opened" = "開いた日時";

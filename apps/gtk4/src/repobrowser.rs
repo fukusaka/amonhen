@@ -982,6 +982,24 @@ impl Browser {
                 .view
                 .sort_by_column(opened.as_ref(), gtk::SortType::Descending),
         }
+        // 見出しの説明（macOS 版の `headerToolTip`）。列の見出しの部品は表の見出しの行の子に、列の順に並ぶ。
+        let tips = [
+            None,
+            Some(tr!("Current branch")),
+            Some(tr!(
+                "Changes n: files with changes (untracked files aren’t counted)\n↑ commits ahead of the upstream · ↓ commits behind it\n✓ no changes and same as the upstream"
+            )),
+            Some(tr!("Date and subject of the last commit")),
+            Some(tr!("When you last opened it in this app (— if never)")),
+        ];
+        let titles = std::iter::successors(
+            self.view.first_child().and_then(|h| h.first_child()),
+            gtk::Widget::next_sibling,
+        )
+        .filter(|w| w.type_().name() == "GtkColumnViewTitle");
+        for (title, tip) in titles.zip(tips) {
+            title.set_tooltip_text(tip.as_deref());
+        }
         // 並べ替えを変えたら覚える。
         if let Some(sorter) = self.view.sorter().and_downcast::<gtk::ColumnViewSorter>() {
             sorter.connect_changed(|s, _| {
