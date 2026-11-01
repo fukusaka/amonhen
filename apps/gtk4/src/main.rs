@@ -924,7 +924,8 @@ fn build_tab(
             Rc::downgrade(&sidebar),
             text.clone(),
         );
-        settings::connect_changed(move |key| {
+        // History の表がある間だけ見る（閉じたタブの分を残さない）。
+        settings::connect_changed_while(&view, move |key| {
             if key != sshhosts::SIGNATURE_BY_HOST {
                 return;
             }

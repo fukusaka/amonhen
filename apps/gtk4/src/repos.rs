@@ -170,9 +170,12 @@ pub fn inside_repository(dir: &Path) -> bool {
 pub fn recent_menu() -> gio::Menu {
     let menu = gio::Menu::new();
     fill(&menu);
-    let m = menu.clone();
-    crate::settings::connect_changed(move |key| {
-        if key == RECENT {
+    // メニューがある間だけ見る（閉じたタブ・Repositories のページのメニューは手放す）。
+    let weak = menu.downgrade();
+    crate::settings::connect_changed_while(&menu, move |key| {
+        if key == RECENT
+            && let Some(m) = weak.upgrade()
+        {
             m.remove_all();
             fill(&m);
         }

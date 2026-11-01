@@ -371,7 +371,8 @@ pub fn install(start: &gtk::Box, end: &gtk::Box, given: Given) {
         }
     };
     fill();
-    crate::settings::connect_changed(move |key| {
+    // タブの見出しがある間だけ見る（閉じたタブのボタンを持ち続けない）。
+    crate::settings::connect_changed_while(&given.header, move |key| {
         if key == KEY {
             fill();
         }
