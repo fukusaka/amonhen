@@ -76,6 +76,8 @@ struct Pane {
     root: gtk::Box,
     view: gtk::TextView,
     scrolled: gtk::ScrolledWindow,
+    /// 構文の色付けを頼んだ回数（解析している間に書き換わったら、古い結果を捨てる）。
+    syntax_generation: Rc<Cell<u64>>,
 }
 
 impl Pane {
@@ -120,7 +122,61 @@ impl Pane {
             root,
             view,
             scrolled,
+            syntax_generation: Rc::default(),
         }
+    }
+
+    /// 構文の色を付け直す（macOS 版と同じく、解析は裏で。色は文字の色のタグで、中身や Undo の履歴は変えない）。
+    fn color_syntax(&self, path: &str) {
+        let generation = self.syntax_generation.get() + 1;
+        self.syntax_generation.set(generation);
+        let text = self.text();
+        let path = path.to_owned();
+        let (view, current) = (self.view.downgrade(), self.syntax_generation.clone());
+        glib::spawn_future_local(async move {
+            let spans = gio::spawn_blocking(move || {
+                let spans = amonhen_core::diff::text_syntax(&path, text.as_bytes());
+                char_spans(&text, &spans)
+            })
+            .await
+            .unwrap_or_default();
+            let Some(view) = view.upgrade() else { return };
+            // 解析している間に書き換わっていたら、次の色付けに任せる。
+            if current.get() != generation {
+                return;
+            }
+            let buffer = view.buffer();
+            let table = buffer.tag_table();
+            let fg = view.color();
+            let (start, end) = (buffer.start_iter(), buffer.end_iter());
+            for kind in 0..16u8 {
+                if let Some(tag) = table.lookup(&format!("syntax-{kind}")) {
+                    buffer.remove_tag(&tag, &start, &end);
+                }
+            }
+            for (from, to, kind) in spans {
+                let name = format!("syntax-{kind}");
+                let tag = match table.lookup(&name) {
+                    Some(tag) => tag,
+                    None => {
+                        let Some((r, g, b)) = crate::diff::syntax_color(kind, &fg) else {
+                            continue;
+                        };
+                        let tag = gtk::TextTag::new(Some(&name));
+                        tag.set_foreground_rgba(Some(&gdk::RGBA::new(r, g, b, 1.0)));
+                        table.add(&tag);
+                        // 解決済みを薄くする色（"resolved"）のほうを優先する。
+                        tag.set_priority(0);
+                        tag
+                    }
+                };
+                buffer.apply_tag(
+                    &tag,
+                    &buffer.iter_at_offset(from as i32),
+                    &buffer.iter_at_offset(to as i32),
+                );
+            }
+        });
     }
 
     fn text(&self) -> String {
@@ -141,9 +197,12 @@ impl Pane {
             .apply_tag_by_name(tag, &self.line_iter(start), &self.line_iter(end));
     }
 
+    /// コンフリクトの印（構文の色は残す）を外す。
     fn clear(&self) {
         let b = self.view.buffer();
-        b.remove_all_tags(&b.start_iter(), &b.end_iter());
+        for name in ["conflict", "selected", "resolved"] {
+            b.remove_tag_by_name(name, &b.start_iter(), &b.end_iter());
+        }
     }
 
     /// 一番上に見えている行（小数は行の中の位置）。
@@ -624,6 +683,10 @@ impl Editor {
         buffer.set_text(&result);
         buffer.end_irreversible_action();
         buffer.place_cursor(&buffer.start_iter());
+        // 構文の色（4 つの欄とも。Result は書き換えたら付け直す）。
+        for pane in [&current, &incoming, &base, &result_pane] {
+            pane.color_syntax(path);
+        }
         let originals = regions(&result)
             .into_iter()
             .map(|r| (r.current, r.incoming))
@@ -774,6 +837,7 @@ impl Editor {
                     if let Some(this) = weak.upgrade() {
                         this.reparse.take();
                         this.update_conflicts();
+                        this.result.color_syntax(&this.path);
                     }
                 });
             this.reparse.replace(Some(id));
@@ -1147,6 +1211,28 @@ impl Editor {
             }
         });
     }
+}
+
+/// テキスト全体の UTF-16 の位置の色を、文字（Unicode のスカラー値）の位置に直す（GtkTextBuffer の位置）。
+fn char_spans(text: &str, spans: &[amonhen_layout::SyntaxSpan]) -> Vec<(u32, u32, u8)> {
+    if spans.is_empty() {
+        return Vec::new();
+    }
+    // UTF-16 の位置ごとの文字の位置（サロゲートの後半は同じ文字）。
+    let mut char_at = Vec::with_capacity(text.len() + 1);
+    for (i, c) in text.chars().enumerate() {
+        for _ in 0..c.len_utf16() {
+            char_at.push(i as u32);
+        }
+    }
+    let total = text.chars().count() as u32;
+    char_at.push(total);
+    let at = |unit: u32| char_at.get(unit as usize).copied().unwrap_or(total);
+    spans
+        .iter()
+        .map(|s| (at(s.start), at(s.end), s.kind))
+        .filter(|(a, b, _)| a < b)
+        .collect()
 }
 
 // 列の間の帯（macOS 版の `ConflictBand`）: コンフリクトごとに、左右の欄の行範囲と Result の行範囲を曲線で
@@ -1682,5 +1768,31 @@ impl Editor {
         self.ai_cancel.borrow().store(true, Ordering::Relaxed);
         self.proposal.replace(None);
         self.band.root.set_visible(false);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn span(start: u32, end: u32, kind: u8) -> amonhen_layout::SyntaxSpan {
+        amonhen_layout::SyntaxSpan {
+            row: 0,
+            start,
+            end,
+            kind,
+            _pad: [0; 3],
+        }
+    }
+
+    /// UTF-16 の位置を文字の位置に直す（😀 は UTF-16 で 2、文字では 1）。
+    #[test]
+    fn converts_utf16_spans_to_chars() {
+        let text = "a😀b é";
+        let spans = [span(0, 1, 1), span(3, 4, 2), span(5, 6, 3), span(9, 12, 4)];
+        assert_eq!(
+            char_spans(text, &spans),
+            vec![(0, 1, 1), (2, 3, 2), (4, 5, 3)]
+        );
     }
 }
