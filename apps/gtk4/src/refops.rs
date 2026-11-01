@@ -208,7 +208,7 @@ fn sync_items(actions: &Rc<Actions>, entry: &amonhen_model::RefEntry, is_head: b
                 items.push(menu::action(
                     format!("Fast-Forward {name} to {upstream}…"),
                     move || {
-                        sheets::confirm_then(
+                        sheets::confirm_ref_then(
                             &a,
                             title.clone(),
                             sheets::can_undo(),
@@ -451,7 +451,7 @@ fn tag_items(actions: &Rc<Actions>, names: &[String], known: &Known) -> Vec<Item
         .collect();
     let a = actions.clone();
     items.push(menu::action(title, move || {
-        sheets::confirm_then(
+        sheets::confirm_ref_then(
             &a,
             question.clone(),
             message.clone(),
@@ -507,7 +507,7 @@ fn tag_items(actions: &Rc<Actions>, names: &[String], known: &Known) -> Vec<Item
         let command = json!({ "op": "pushTags", "remote": remote, "names": tags, "delete": true });
         let a = actions.clone();
         items.push(menu::action(title, move || {
-            sheets::confirm_then(
+            sheets::confirm_ref_then(
                 &a,
                 question.clone(),
                 message.clone(),
@@ -540,7 +540,7 @@ pub fn confirm_replace(actions: &Rc<Actions>, tags: &[String], remote: &str) {
         ),
         sheets::cant_undo()
     );
-    sheets::confirm_then(
+    sheets::confirm_ref_then(
         actions,
         title,
         message,

@@ -1706,9 +1706,39 @@ pub fn confirm_then(
     destructive: bool,
     commands: Vec<Value>,
 ) {
+    confirm_sheet(actions, true, title, message, ok, destructive, commands);
+}
+
+/// [`confirm_then`] と同じで、worktree の名前を書かない（作業ツリーによらない ref・リモートの操作: タグ、
+/// fast-forward、リモートの削除など。macOS 版の `confirm` と同じ）。
+pub fn confirm_ref_then(
+    actions: &Rc<Actions>,
+    title: String,
+    message: String,
+    ok: String,
+    destructive: bool,
+    commands: Vec<Value>,
+) {
+    confirm_sheet(actions, false, title, message, ok, destructive, commands);
+}
+
+fn confirm_sheet(
+    actions: &Rc<Actions>,
+    named: bool,
+    title: String,
+    message: String,
+    ok: String,
+    destructive: bool,
+    commands: Vec<Value>,
+) {
     let actions = actions.clone();
     glib::spawn_future_local(async move {
-        let sheet = Sheet::new(parent(&actions).as_ref(), &title, &message);
+        let parent = parent(&actions);
+        let sheet = if named {
+            Sheet::new(parent.as_ref(), &title, &message)
+        } else {
+            Sheet::unnamed(parent.as_ref(), &title, &message)
+        };
         sheet.buttons(&ok, destructive, None);
         if sheet.run().await == Response::Ok {
             actions.perform_sequence(commands);
@@ -2197,7 +2227,8 @@ pub fn push_to(actions: &Rc<Actions>, branch: &str, target: &str, command: Value
         } else {
             String::new()
         };
-        let sheet = Sheet::new(parent(&actions).as_ref(), &title, &message);
+        // 作業ツリーによらないので、worktree の名前は書かない（macOS 版と同じ）。
+        let sheet = Sheet::unnamed(parent(&actions).as_ref(), &title, &message);
         sheet.buttons(if force { "Force Push" } else { "Push" }, force, None);
         if sheet.run().await != Response::Ok {
             return;

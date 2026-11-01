@@ -59,7 +59,7 @@ pub fn edit(actions: &Rc<Actions>, name: &str) {
 
 /// リモートを消す前に確かめる（取り消せないが、リモートのリポジトリには触らないので赤くしない。macOS 版と同じ）。
 pub fn confirm_remove(actions: &Rc<Actions>, name: &str) {
-    sheets::confirm_then(
+    sheets::confirm_ref_then(
         actions,
         tr!("Remove {name}?", name = name),
         tr!(
