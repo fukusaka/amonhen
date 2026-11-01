@@ -38,6 +38,8 @@ pub struct MessageAids {
     before_recall: RefCell<Option<(String, String)>>,
     /// 下書きを覚えないでいる間（中身を入れ替えているとき）。
     quiet: Cell<bool>,
+    /// まだ書いていない下書き（鍵と中身）。打つたびに設定のファイルを書かないよう、少し待ってまとめて書く。
+    unsaved_draft: RefCell<Option<(String, String)>>,
 }
 
 fn icon_button(icon: &str, fallback: &str, tip: &str) -> gtk::Button {
@@ -77,6 +79,7 @@ impl MessageAids {
             cursor: Cell::new(-1),
             before_recall: RefCell::default(),
             quiet: Cell::new(false),
+            unsaved_draft: RefCell::default(),
         });
         let w = Rc::downgrade(&this);
         this.history.connect_clicked(move |b| {
@@ -164,8 +167,9 @@ impl MessageAids {
         self.quiet.set(false);
     }
 
-    /// 書きかけのメッセージを覚える（コミットするまで、アプリを終えても残る）。
-    fn save_draft(&self) {
+    /// 書きかけのメッセージを覚える（コミットするまで、アプリを終えても残る）。設定のファイルに書くのは、
+    /// 打つのが止まってから（macOS 版の UserDefaults も、まとめて書く）。
+    fn save_draft(self: &Rc<Self>) {
         if self.quiet.get() || self.cursor.get() >= 0 {
             return;
         }
@@ -176,7 +180,26 @@ impl MessageAids {
         } else {
             json!([subject, body]).to_string()
         };
-        if crate::settings::string(&key).unwrap_or_default() != value {
+        let waiting = self.unsaved_draft.replace(Some((key, value))).is_some();
+        if waiting {
+            return;
+        }
+        let w = Rc::downgrade(self);
+        glib::timeout_add_local_once(std::time::Duration::from_millis(500), move || {
+            if let Some(this) = w.upgrade() {
+                this.flush_draft();
+            }
+        });
+    }
+
+    /// 待っている下書きを書く。空なら鍵ごと消す（使わなくなった鍵を設定のファイルに残さない）。
+    fn flush_draft(&self) {
+        let Some((key, value)) = self.unsaved_draft.take() else {
+            return;
+        };
+        if value.is_empty() {
+            crate::settings::remove(&key);
+        } else if crate::settings::string(&key).as_deref() != Some(value.as_str()) {
             crate::settings::set_string(&key, &value);
         }
     }
@@ -193,8 +216,9 @@ impl MessageAids {
 
     /// コミットした: 下書きを消す。
     pub fn clear_draft(&self) {
+        self.unsaved_draft.replace(None);
         if let Some(key) = self.draft_key() {
-            crate::settings::set_string(&key, "");
+            crate::settings::remove(&key);
         }
         self.cursor.set(-1);
         self.before_recall.replace(None);
@@ -204,6 +228,8 @@ impl MessageAids {
     /// 書き込む先の worktree を切り替えたとき（下書きの鍵が変わったとき）も、その worktree の下書きに入れ替える
     /// （前の worktree の下書きは打つたびに覚えてある）。
     pub fn set_repo(self: &Rc<Self>, repo: Arc<Repository>) {
+        // 待っている下書きは、もとのリポジトリの鍵に先に書く（読み直す下書きが古くならないように）。
+        self.flush_draft();
         let first = self.repo.borrow().is_none();
         let before = self.draft_key();
         self.repo.replace(Some(repo.clone()));

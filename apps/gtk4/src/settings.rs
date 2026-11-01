@@ -202,6 +202,20 @@ pub fn set_string(key: &str, value: &str) {
     changed(key);
 }
 
+/// 鍵を消す（なければ何もしない）。
+pub fn remove(key: &str) {
+    let removed = FILE.with(|f| {
+        let removed = f.remove_key(GROUP, key).is_ok();
+        if removed {
+            save(f);
+        }
+        removed
+    });
+    if removed {
+        changed(key);
+    }
+}
+
 /// 設定が変わったら `f(鍵)` を呼ぶ。
 pub fn connect_changed(f: impl Fn(&str) + 'static) {
     WATCHERS.with(|w| w.borrow_mut().push((None, Rc::new(f))));
