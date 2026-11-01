@@ -555,7 +555,10 @@ mod tests {
         if std::env::var_os("AMONHEN_UPDATE").is_some() {
             std::fs::write(&path, &source).unwrap();
         }
-        let committed = std::fs::read_to_string(&path).unwrap_or_default();
+        // Windows の取り出しは改行を CRLF にするので、改行の違いは見ない。
+        let committed = std::fs::read_to_string(&path)
+            .unwrap_or_default()
+            .replace("\r\n", "\n");
         assert!(
             committed == source,
             "CommandTable.swift が表と違う。AMONHEN_UPDATE=1 cargo test -p amonhen-commands で作り直す"
