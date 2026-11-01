@@ -923,6 +923,8 @@ pub(crate) fn commits_page(s: &Rc<RepoSettings>) -> gtk::Box {
         shared.clone(),
         shared_text.clone(),
     );
+    // 中身を出しているファイル（変わったときだけ、裏で読み直す）。
+    let previewing: Rc<std::cell::RefCell<Option<std::path::PathBuf>>> = Rc::default();
     s.on_refresh(move |s| {
         let choice = template_choice(s);
         let repository = s.level == crate::reposettings::Level::Repository;
@@ -977,13 +979,35 @@ pub(crate) fn commits_page(s: &Rc<RepoSettings>) -> gtk::Box {
         saved.replace(text);
         dirty(&buffer);
         o.set_visible(choice == Choice::Own);
-        // ファイル: 中身を見せる（手元のリポジトリだけ。SSH 先は読まない）。
-        let shown = match &choice {
-            Choice::File(path) if s.host.is_none() => file_preview(s, path),
+        // ファイル: 中身を見せる（手元のリポジトリだけ。SSH 先は読まない）。読むのは選んだファイルが変わった
+        // ときだけで、裏で読む（遅い場所でも止まらない。macOS 版と同じ）。
+        let file = match &choice {
+            Choice::File(path) if s.host.is_none() => file_path(s, path),
             _ => None,
         };
-        p.set_text(shown.as_deref().unwrap_or_default());
-        p.set_visible(shown.is_some_and(|t| !t.is_empty()));
+        if *previewing.borrow() == file {
+            return;
+        }
+        previewing.replace(file.clone());
+        p.set_text("");
+        p.set_visible(false);
+        let Some(file) = file else { return };
+        let (p, previewing) = (p.clone(), previewing.clone());
+        glib::spawn_future_local(async move {
+            let f = file.clone();
+            let text = gio::spawn_blocking(move || std::fs::read_to_string(f).ok())
+                .await
+                .ok()
+                .flatten()
+                .map(|t| t.trim().to_owned());
+            // 読んでいる間に選び直していたら捨てる。
+            if previewing.borrow().as_ref() != Some(&file) {
+                return;
+            }
+            let text = text.unwrap_or_default();
+            p.set_text(&text);
+            p.set_visible(!text.is_empty());
+        });
     });
 
     let column = gtk::Box::new(gtk::Orientation::Vertical, 6);
@@ -1012,8 +1036,8 @@ pub(crate) fn commits_page(s: &Rc<RepoSettings>) -> gtk::Box {
     page
 }
 
-/// ファイルのテンプレートの中身（`~` はホーム、相対パスは作業ツリーから）。
-fn file_preview(s: &RepoSettings, path: &str) -> Option<String> {
+/// ファイルのテンプレートの場所（`~` はホーム、相対パスは作業ツリーから）。
+fn file_path(s: &RepoSettings, path: &str) -> Option<std::path::PathBuf> {
     let path = match path.strip_prefix('~') {
         Some(rest) => format!("{}{rest}", glib::home_dir().display()),
         None => path.to_owned(),
@@ -1022,9 +1046,7 @@ fn file_preview(s: &RepoSettings, path: &str) -> Option<String> {
     if full.is_relative() {
         full = s.repo.paths().workdir?.join(full);
     }
-    std::fs::read_to_string(full)
-        .ok()
-        .map(|t| t.trim().to_owned())
+    Some(full)
 }
 
 // MARK: Hooks · LFS
