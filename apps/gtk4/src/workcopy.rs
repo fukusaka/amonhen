@@ -1894,16 +1894,16 @@ impl Inner {
             .map_or(0, |d| d.as_millis() as u64);
         this.pending.set(this.pending.get() + 1);
         glib::spawn_future_local(async move {
+            // できなくても status は読み直す（hooks がファイルを直していることがある。macOS 版と同じ）。
             let result = gio::spawn_blocking(move || {
-                repo.commit(&message, amend)
-                    .map_err(|e| e.to_string())
-                    .and_then(|()| repo.load_status().map_err(|e| e.to_string()))
+                let done = repo.commit(&message, amend).map_err(|e| e.to_string());
+                (done, repo.load_status().ok())
             })
             .await;
             let Some(this) = weak.upgrade() else { return };
             let parent = this.list.root().and_downcast::<gtk::Window>();
             match result {
-                Ok(Ok(status)) => {
+                Ok((Ok(()), status)) => {
                     // hooks（pre-commit・commit-msg など）が何か書いていれば見せる（macOS 版と同じ）。
                     let output = amonhen_model::activity::records()
                         .into_iter()
@@ -1923,13 +1923,20 @@ impl Inner {
                     this.subject.set_text("");
                     this.body.buffer().set_text("");
                     this.amend.set_active(false);
-                    Inner::show_from(&this, &source, status);
+                    if let Some(status) = status {
+                        Inner::show_from(&this, &source, status);
+                    }
                     if let Some(then) = then {
                         then();
                     }
                 }
                 // hooks で止まったときは出力が長いので、読めるシートで出す。
-                Ok(Err(e)) => hooks_sheet(parent.as_ref(), &tr!("Couldn’t Commit"), &e),
+                Ok((Err(e), status)) => {
+                    hooks_sheet(parent.as_ref(), &tr!("Couldn’t Commit"), &e);
+                    if let Some(status) = status {
+                        Inner::show_from(&this, &source, status);
+                    }
+                }
                 Err(_) => {}
             }
             this.update_buttons();
