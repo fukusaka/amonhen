@@ -455,6 +455,22 @@ pub fn button(label: &str, suggested: bool) -> gtk::Button {
     b
 }
 
+/// `button` を、見えている間だけ窓の既定のボタン（Return で押す）にする。後ろのタブ・消した行のボタンは外す。
+fn make_default_while_mapped(button: &gtk::Button) {
+    button.connect_map(|b| {
+        if let Some(window) = b.root().and_downcast::<gtk::Window>() {
+            window.set_default_widget(Some(b));
+        }
+    });
+    button.connect_unmap(|b| {
+        if let Some(window) = b.root().and_downcast::<gtk::Window>()
+            && window.default_widget().as_ref() == Some(b.upcast_ref())
+        {
+            window.set_default_widget(None::<&gtk::Widget>);
+        }
+    });
+}
+
 fn install_css() {
     thread_local! {
         static DONE: Cell<bool> = const { Cell::new(false) };
@@ -693,8 +709,14 @@ impl StatusBar {
             b.connect_clicked(move |_| a.perform(serde_json::json!({ "op": "amThreeWay" })));
             children.push(b.upcast());
         }
-        let cont = button("Continue", conflicts == 0 && !retry);
+        let ready = conflicts == 0 && !retry;
+        let cont = button("Continue", ready);
         cont.set_action_name(Some("win.continue"));
+        // 解くものが残っていなければ、Continue を Return で押せる既定のボタンにする（macOS 版の keyEquivalent "\r"）。
+        // 窓はタブで共有するので、行が見えている（前のタブ）間だけ窓の既定にする。
+        if ready {
+            make_default_while_mapped(&cont);
+        }
         children.push(cont.upcast());
         if matches!(kind, "rebase" | "cherry-pick" | "am") {
             let skip = button("Skip", false);
