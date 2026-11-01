@@ -49,6 +49,8 @@ pub struct Parts {
     pub location: String,
     /// リポジトリの worktree。
     pub worktrees: Rc<crate::worktrees::Worktrees>,
+    /// History のコミットの詳細（Go to Parent・Go to Child はその親・子へ）。
+    pub details: std::rc::Weak<crate::details::Details>,
 }
 
 /// 見出しのメニューとツールバーのボタン（`--open-menu` で開く、ref を読んだら数を出す）。
@@ -1033,20 +1035,10 @@ fn go_to_head(p: &Rc<Parts>) {
 
 /// 選んでいるコミットの最初の親（`parent`）か、子のうち最も近いもの。
 fn go_to_relative(p: &Rc<Parts>, parent: bool) {
-    let (Some(row), Some((_, history))) = (p.view.selected(), p.view.current()) else {
-        return p.window().error_bell();
-    };
-    let graph = &history.graph;
-    let target = if parent {
-        graph.parents(row as usize).first().copied()
-    } else {
-        // 子は上の行にある（子が親より先に並ぶ）。
-        (0..row)
-            .rev()
-            .find(|&r| graph.parents(r as usize).contains(&row))
-    };
-    match target {
-        Some(r) => p.view.select(r),
+    // 詳細に出しているコミットの最初の親・最初の子へ。今の History になければ、すべての履歴にして選ぶ（macOS 版と
+    // 同じ）。
+    match p.details.upgrade().and_then(|d| d.relative(parent)) {
+        Some(id) => (p.go_to)(id),
         None => p.window().error_bell(),
     }
 }

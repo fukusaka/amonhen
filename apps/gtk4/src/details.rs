@@ -853,6 +853,18 @@ impl Details {
             .map(|i| str_of(i, "oid").to_owned())
     }
 
+    /// 出しているコミットの最初の親（`parent`）か最初の子（Navigate > Go to Parent・Go to Child。macOS 版の
+    /// `currentParents`・`currentChildren`）。子は時間のかかる分が届いてから。
+    pub fn relative(&self, parent: bool) -> Option<Oid> {
+        let list = if parent {
+            strings(&self.info.borrow().as_ref()?["parents"])
+        } else {
+            self.info.borrow().as_ref()?;
+            strings(&self.extras.borrow().as_ref()?["children"])
+        };
+        list.first().and_then(|h| Oid::from_hex(h))
+    }
+
     /// 開いたリポジトリの場所（署名を検証した場所を、Signature の吹き出しに出すため）。
     pub fn set_location(&self, location: &str) {
         self.place.replace(crate::signature::Place::of(location));

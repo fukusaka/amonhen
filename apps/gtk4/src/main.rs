@@ -1649,6 +1649,7 @@ fn build_tab(
         range_diff: range_diff_opener.clone(),
         location: text.clone(),
         worktrees: worktrees.clone(),
+        details: Rc::downgrade(&details),
     });
     // つながるまでは、ブランチを「—」にして押せなくする（macOS 版と同じ）。
     if amonhen_remote::location::is_remote(&text) {
