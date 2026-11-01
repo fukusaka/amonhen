@@ -630,6 +630,42 @@ impl GitBackend for GixBackend {
         self.git()?.fetch_missing(&remote, &missing)
     }
 
+    fn contents_to_fetch(
+        &self,
+        tips: &[Oid],
+        scope: &amonhen_model::LogScope,
+        limit: usize,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<amonhen_model::ContentsToFetch> {
+        let repo = self.repo.to_thread_local();
+        let mut found = amonhen_model::ContentsToFetch::default();
+        let Some(remote) = promisor_remote(&repo) else {
+            return Ok(found);
+        };
+        // filter を外して中身をすべて取り直したなら、足りないものはないので数えない（数えると履歴をすべて辿る）。
+        let config = repo.config_snapshot();
+        if config
+            .string(&format!("remote.{remote}.partialclonefilter"))
+            .is_none()
+            && config.string("core.partialclonefilter").is_none()
+        {
+            return Ok(found);
+        }
+        let mut seen = amonhen_model::OidSet::default();
+        self.git()?
+            .changed_blobs(tips, scope, cancelled, &mut |id| {
+                if seen.insert(id) && !repo.has_object(gix::ObjectId::from_bytes_or_panic(&id.0)) {
+                    if found.ids.len() == limit {
+                        found.more = true;
+                        return false;
+                    }
+                    found.ids.push(id);
+                }
+                true
+            })?;
+        Ok(found)
+    }
+
     fn operations(&self) -> Result<&dyn amonhen_model::Operations> {
         Ok(self.git()?)
     }

@@ -436,6 +436,21 @@ impl GitBackend for RemoteBackend {
         self.conn.call(&Request::PrefetchBlobs(ids.to_vec()))
     }
 
+    fn contents_to_fetch(
+        &self,
+        tips: &[Oid],
+        scope: &amonhen_model::LogScope,
+        limit: usize,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<amonhen_model::ContentsToFetch> {
+        let request = Request::ContentsToFetch {
+            tips: tips.to_vec(),
+            scope: scope.clone(),
+            limit,
+        };
+        self.conn.call_cancellable(&request, cancelled)
+    }
+
     fn operations(&self) -> Result<&dyn Operations> {
         Ok(&self.ops)
     }
@@ -686,6 +701,21 @@ impl Operations for RemoteOperations {
             tips: tips.to_vec(),
             path: path.map(str::to_owned),
             contents: contents.map(str::to_owned),
+        };
+        self.conn.call_cancellable(&Request::Op(op), cancelled)
+    }
+
+    fn log_matching_commits(
+        &self,
+        commits: &[Oid],
+        paths: &[String],
+        contents: &str,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<Oid>> {
+        let op = Op::LogMatchingCommits {
+            commits: commits.to_vec(),
+            paths: paths.to_vec(),
+            contents: contents.to_owned(),
         };
         self.conn.call_cancellable(&Request::Op(op), cancelled)
     }

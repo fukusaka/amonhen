@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use amonhen_model::{Oid, PartialClone, RepositoryForm, Result, SparseCheckout, tr};
+use amonhen_model::{LogScope, Oid, PartialClone, RepositoryForm, Result, SparseCheckout, tr};
 
 use crate::Git;
 
@@ -212,26 +212,48 @@ impl Git {
         fetched
     }
 
-    /// partial clone なら、`tips` から辿れる範囲（`path` があればその下）の手元にない中身をまとめて取る。内容で探す
-    /// （`log -G`）前に呼ぶ。git は足りない blob を 1 つずつ取りに行くので、大きなリポジトリでは終わらない。
-    pub(crate) fn fetch_missing_reachable(&self, tips: &[Oid], path: Option<&str>) -> Result<()> {
-        let Some(partial) = self.repository_form()?.partial else {
-            return Ok(());
-        };
-        // `--missing=print` は足りないものを取りに行かず、`?<ID>` の行で知らせる。
-        let mut args = vec!["rev-list", "--objects", "--missing=print", "--stdin", "--"];
-        args.extend(path);
-        let revs: String = tips.iter().map(|t| format!("{t}\n")).collect();
-        let out = self.read_with_input(&args, revs.as_bytes())?;
-        let missing: Vec<String> = String::from_utf8_lossy(&out)
-            .lines()
-            .filter_map(|line| line.strip_prefix('?'))
-            .map(|id| id.trim().to_owned())
-            .collect();
-        if missing.is_empty() {
-            return Ok(());
-        }
-        self.fetch_missing(&partial.remote, &missing)
+    /// `tips` から辿れる `scope` のコミットで、変わったファイルの前後の blob を、出てきた順に `visit` に渡す（同じものが
+    /// 何度も出る）。blob は読まず tree を比べるだけなので、partial clone でも取りに行かない。`visit` が false を
+    /// 返したらやめる。マージは `log -G` と同じく数えない。
+    pub fn changed_blobs(
+        &self,
+        tips: &[Oid],
+        scope: &LogScope,
+        cancelled: &dyn Fn() -> bool,
+        visit: &mut dyn FnMut(Oid) -> bool,
+    ) -> Result<()> {
+        let after = scope.after.map(|t| format!("--max-age={t}"));
+        let before = scope.before.map(|t| format!("--min-age={t}"));
+        let mut args = vec![
+            "log",
+            "--raw",
+            "--no-abbrev",
+            "--no-renames",
+            "--format=",
+            "--stdin",
+        ];
+        args.extend(after.as_deref());
+        args.extend(before.as_deref());
+        args.push("--");
+        args.extend(scope.paths.iter().map(String::as_str));
+        let input: String = tips.iter().map(|t| format!("{t}\n")).collect();
+        // `:100644 100644 <前> <後> M\tpath`。ないほうは 0 が並ぶ。submodule（160000）はコミットなので数えない。
+        self.stream_lines(&args, input, cancelled, &mut |line| {
+            let fields: Vec<&str> = line.split_whitespace().take(4).collect();
+            let [old_mode, new_mode, old, new] = fields[..] else {
+                return true;
+            };
+            for (mode, id) in [(old_mode.trim_start_matches(':'), old), (new_mode, new)] {
+                if mode != "160000"
+                    && let Some(id) = Oid::from_hex(id)
+                    && id.0 != [0; 20]
+                    && !visit(id)
+                {
+                    return false;
+                }
+            }
+            true
+        })
     }
 
     pub(crate) fn fetch_all_contents(&self, remote: &str) -> Result<()> {

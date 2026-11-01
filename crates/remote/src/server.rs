@@ -304,6 +304,12 @@ fn handle(
         Request::ChangesBetween(old, new) => encode(&backend.changes_between(old.as_ref(), &new)?),
         Request::Blob(id) => encode(&Bytes(backend.blob(&id)?.to_vec())),
         Request::PrefetchBlobs(ids) => encode(&backend.prefetch_blobs(&ids)?),
+        Request::ContentsToFetch { tips, scope, limit } => {
+            encode(
+                &backend
+                    .contents_to_fetch(&tips, &scope, limit, &|| cancel.load(Ordering::Relaxed))?,
+            )
+        }
         Request::Status => encode(&backend.status()?),
         Request::WorktreeFile(path) => encode(&Bytes(backend.worktree_file(&path)?.to_vec())),
         Request::LineEndingRule(path) => encode(&backend.line_ending_rule(&path)?),
@@ -406,6 +412,13 @@ fn handle_op(backend: &dyn GitBackend, op: Op, cancel: &AtomicBool) -> Result<Ve
                 cancel.load(Ordering::Relaxed)
             })?,
         ),
+        Op::LogMatchingCommits {
+            commits,
+            paths,
+            contents,
+        } => encode(&ops.log_matching_commits(&commits, &paths, &contents, &|| {
+            cancel.load(Ordering::Relaxed)
+        })?),
         Op::Blame { path, rev } => encode(&Bytes(ops.blame(&path, rev.as_ref())?)),
         Op::FileLog {
             path,

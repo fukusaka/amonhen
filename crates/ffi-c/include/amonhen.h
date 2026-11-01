@@ -739,7 +739,7 @@ uint32_t amonhen_history_lane_positions(const AmonhenHistory *history_ptr,
 
 /**
  * `query` に合うコミットの行（昇順、`amonhen_rows_free` で解放する）。構文は `amonhen-core` の
- * `query`（`author:` `subject:` `commit:` `path:` `contents:`、AND・OR・括弧）。すべてのコミットを読むので
+ * `query`（`author:` `subject:` `commit:` `path:` `contents:` `after:` `before:`、AND・OR・括弧）。すべてのコミットを読むので
  * 裏のスレッドで呼ぶ（linux の 148 万コミットで約 1.2 秒）。新しい検索を始めるか `amonhen_search_cancel` を
  * 呼ぶと、走っている検索は NULL を返す。
  *
@@ -749,6 +749,30 @@ uint32_t amonhen_history_lane_positions(const AmonhenHistory *history_ptr,
 AmonhenRows *amonhen_history_search(const AmonhenRepo *repo_ptr,
                                     const AmonhenHistory *history_ptr,
                                     const char *query);
+
+/**
+ * partial clone で、`query` の内容の条件（`contents:`）を探す前に取る、手元にない中身の数。取るものがあれば 1
+ * を返して `count` と `more`（上限を超えたので数えるのをやめた）を書き、なければ 0、失敗（取り消しも）なら -1。
+ * 履歴を辿るので裏のスレッドで呼ぶ。`amonhen_search_cancel` でやめられる。
+ *
+ * # Safety
+ * `repo` と `history` は有効、`query` は NUL 終端の UTF-8、`count` と `more` は書けること。
+ */
+int32_t amonhen_history_contents_to_fetch(const AmonhenRepo *repo_ptr,
+                                          const AmonhenHistory *history_ptr,
+                                          const char *query,
+                                          uint32_t *count,
+                                          bool *more);
+
+/**
+ * 走っている検索（`amonhen_history_search`）の、そこまでに分かった行（昇順、`amonhen_rows_free` で解放する）。
+ * `done` に探し終えた割合（0〜1。内容の条件がなければ 0 のまま）を書く。
+ *
+ * # Safety
+ * `repo` は有効、`done` は書けること。
+ */
+AmonhenRows *amonhen_search_partial(const AmonhenRepo *repo_ptr,
+                                    float *done);
 
 /**
  * 走っている検索をやめる。

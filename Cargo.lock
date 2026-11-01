@@ -91,6 +91,7 @@ dependencies = [
  "amonhen-syntax",
  "arc-swap",
  "criterion",
+ "gix-date",
  "imara-diff",
  "memmap2",
  "postcard",

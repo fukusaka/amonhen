@@ -298,6 +298,70 @@ impl Git {
     pub fn write_with_input(&self, args: &[&str], input: &[u8]) -> Result<Vec<u8>> {
         run(self.command(args), Some(input))
     }
+
+    /// 読み取り系の `git log` で、出力を 1 行ずつ `on_line` に渡す（結果がなかなか出ない `log -G` でも、取り消しに応え、見つかった
+    /// 分から使える）。`on_line` が false を返したら git を止めて `Ok` で戻る。`cancelled` なら止めて `Err`。
+    pub fn stream_lines(
+        &self,
+        args: &[&str],
+        input: String,
+        cancelled: &dyn Fn() -> bool,
+        on_line: &mut dyn FnMut(&str) -> bool,
+    ) -> Result<()> {
+        use std::io::BufRead;
+        let mut cmd = self.command(args);
+        cmd.env("GIT_OPTIONAL_LOCKS", "0")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        if let Some(reason) = amonhen_model::process::missing_git() {
+            return Err(reason.into());
+        }
+        let mut child = cmd.spawn()?;
+        let mut stderr = child.stderr.take().unwrap();
+        let errors = std::thread::spawn(move || {
+            let mut text = String::new();
+            let _ = std::io::Read::read_to_string(&mut stderr, &mut text);
+            text
+        });
+        let mut stdin = child.stdin.take().unwrap();
+        std::thread::spawn(move || stdin.write_all(input.as_bytes()));
+        // 読むのは別のスレッドで行い、待つあいだも取り消しを見る。
+        let stdout = child.stdout.take().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            for line in std::io::BufReader::new(stdout).lines() {
+                let Ok(line) = line else { break };
+                if tx.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+        loop {
+            if cancelled() {
+                kill_tree(&mut child);
+                let _ = child.wait();
+                return Err(amonhen_model::i18n::cancelled().into());
+            }
+            match rx.recv_timeout(std::time::Duration::from_millis(50)) {
+                Ok(line) => {
+                    if !on_line(&line) {
+                        kill_tree(&mut child);
+                        let _ = child.wait();
+                        return Ok(());
+                    }
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        let status = child.wait()?;
+        if !status.success() {
+            let message = errors.join().unwrap_or_default();
+            return Err(tr!("git log failed: {message}", message = message.trim()).into());
+        }
+        Ok(())
+    }
 }
 
 /// git を実行し、Activity に記録する（どのリポジトリで、何を、どれだけかかったか）。

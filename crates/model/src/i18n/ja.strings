@@ -1888,3 +1888,5 @@
 "sparse checkout" = "sparse checkout";
 "Can’t change git maintenance here" = "ここでは、git maintenance の登録を変えられません";
 "git maintenance" = "git maintenance";
+"Can’t read the date “{date}”" = "日時「{date}」を読めません";
+"This search needs more than {limit} file contents that aren’t fetched yet. Narrow it with path:, after: or before:, or fetch all contents in Repository Settings." = "この検索には、まだ取っていない中身が {limit} 個より多く要ります。path:・after:・before: で絞るか、リポジトリの設定で中身をすべて取ってください。";

@@ -5,7 +5,7 @@ use std::path::Path;
 use std::process::Command;
 
 use amonhen_backend_gix::GixBackend;
-use amonhen_model::{GitBackend, Oid};
+use amonhen_model::{GitBackend, LogScope, Oid};
 
 fn git(dir: &Path, args: &[&str]) -> String {
     amonhen_model::testing::isolate_from_user_settings();
@@ -151,24 +151,50 @@ fn reads_blobs_missing_from_a_partial_clone() {
 }
 
 #[test]
-fn fetches_missing_contents_at_once_before_searching_them() {
+fn counts_the_missing_contents_a_search_needs() {
     let tmp = tempfile::tempdir().unwrap();
     let (dir, commits) = partial_clone(tmp.path());
     let backend = GixBackend::open(&dir).unwrap();
-    let tip = Oid::from_hex(&commits[3]).unwrap();
+    let commits: Vec<Oid> = commits.iter().map(|c| Oid::from_hex(c).unwrap()).collect();
+    let tip = [commits[3]];
+    let count = |scope: &LogScope, limit| {
+        backend
+            .contents_to_fetch(&tip, scope, limit, &|| false)
+            .unwrap()
+    };
+    // 3 つのファイルの 3 つの版。取り出したコミットではすべて消してあるので、どれも手元にない。
+    let all = count(&LogScope::default(), 100);
+    assert_eq!((all.ids.len(), all.more), (9, false));
+    // 上限を超えたら、そこで数えるのをやめる。
+    let capped = count(&LogScope::default(), 4);
+    assert_eq!((capped.ids.len(), capped.more), (4, true));
+    let one = LogScope {
+        paths: vec!["b.txt".into()],
+        ..LogScope::default()
+    };
+    assert_eq!(count(&one, 100).ids.len(), 3);
+
+    // 1 回の fetch でまとめて取れば、`log -G` は取りに行かずに探せる。
     let before = packs(&dir);
-    // `log -G` は足りない blob を 1 つずつ取りに行く（6 個なら 6 回）。先にまとめて 1 回で取る。
+    backend.prefetch_blobs(&all.ids).unwrap();
+    if !git_older_than_2_29() {
+        assert_eq!(packs(&dir), before + 1);
+        assert_eq!(count(&LogScope::default(), 100).ids.len(), 0);
+    }
+    let newest_first: Vec<Oid> = commits.iter().rev().copied().collect();
     let found = backend
         .operations()
         .unwrap()
-        .log_matching(&[tip], None, Some("b.txt two"), &|| false)
+        .log_matching_commits(&newest_first, &[], "b.txt two", &|| false)
         .unwrap();
-    let found: Vec<String> = found.iter().map(Oid::to_string).collect();
-    // 足したコミットと、消したコミット（`-G` は消えた行も数える）。
-    assert_eq!(found, [commits[2].clone(), commits[1].clone()]);
-    if !git_older_than_2_29() {
-        assert_eq!(packs(&dir), before + 1);
-    }
+    // 足したコミットと、変えたコミット（`-G` は消えた行も数える）。
+    assert_eq!(found, [commits[2], commits[1]]);
+    let elsewhere = backend
+        .operations()
+        .unwrap()
+        .log_matching_commits(&newest_first, &["a.txt".into()], "b.txt two", &|| false)
+        .unwrap();
+    assert!(elsewhere.is_empty(), "パスを渡せば、その差分だけを探す");
 }
 
 #[test]

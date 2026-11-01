@@ -711,7 +711,7 @@ pub struct AmonhenRowsView {
 }
 
 /// `query` に合うコミットの行（昇順、`amonhen_rows_free` で解放する）。構文は `amonhen-core` の
-/// `query`（`author:` `subject:` `commit:` `path:` `contents:`、AND・OR・括弧）。すべてのコミットを読むので
+/// `query`（`author:` `subject:` `commit:` `path:` `contents:` `after:` `before:`、AND・OR・括弧）。すべてのコミットを読むので
 /// 裏のスレッドで呼ぶ（linux の 148 万コミットで約 1.2 秒）。新しい検索を始めるか `amonhen_search_cancel` を
 /// 呼ぶと、走っている検索は NULL を返す。
 ///
@@ -733,6 +733,54 @@ pub unsafe extern "C" fn amonhen_history_search(
             std::ptr::null_mut()
         }
     }
+}
+
+/// partial clone で、`query` の内容の条件（`contents:`）を探す前に取る、手元にない中身の数。取るものがあれば 1
+/// を返して `count` と `more`（上限を超えたので数えるのをやめた）を書き、なければ 0、失敗（取り消しも）なら -1。
+/// 履歴を辿るので裏のスレッドで呼ぶ。`amonhen_search_cancel` でやめられる。
+///
+/// # Safety
+/// `repo` と `history` は有効、`query` は NUL 終端の UTF-8、`count` と `more` は書けること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_history_contents_to_fetch(
+    repo_ptr: *const AmonhenRepo,
+    history_ptr: *const AmonhenHistory,
+    query: *const c_char,
+    count: *mut u32,
+    more: *mut bool,
+) -> i32 {
+    let result = str_arg(query)
+        .map_err(Into::into)
+        .and_then(|q| repo(repo_ptr).count_contents_to_fetch(history(history_ptr), q));
+    match result {
+        Ok(Some(need)) => {
+            unsafe {
+                count.write(need.count as u32);
+                more.write(need.more);
+            }
+            1
+        }
+        Ok(None) => 0,
+        Err(e) => {
+            set_error(e);
+            -1
+        }
+    }
+}
+
+/// 走っている検索（`amonhen_history_search`）の、そこまでに分かった行（昇順、`amonhen_rows_free` で解放する）。
+/// `done` に探し終えた割合（0〜1。内容の条件がなければ 0 のまま）を書く。
+///
+/// # Safety
+/// `repo` は有効、`done` は書けること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_search_partial(
+    repo_ptr: *const AmonhenRepo,
+    done: *mut f32,
+) -> *mut AmonhenRows {
+    let (rows, fraction) = repo(repo_ptr).search_partial();
+    unsafe { done.write(fraction) };
+    Box::into_raw(Box::new(rows)).cast()
 }
 
 /// 走っている検索をやめる。

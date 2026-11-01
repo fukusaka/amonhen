@@ -167,6 +167,11 @@ impl Git {
 }
 
 /// `-G` に渡す正規表現（git は拡張正規表現として読む）で、`text` をそのままの文字列として探すための書き方。
+/// 標準入力で渡すコミット（1 行に 1 つ）。
+fn revs(ids: &[Oid]) -> String {
+    ids.iter().map(|t| format!("{t}\n")).collect()
+}
+
 fn literal_regex(text: &str) -> String {
     let mut out = String::with_capacity(text.len() * 2);
     for c in text.chars() {
@@ -315,13 +320,6 @@ impl Operations for Git {
         contents: Option<&str>,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Vec<Oid>> {
-        use std::io::{BufRead, Write};
-        if contents.is_some() {
-            self.fetch_missing_reachable(tips, path)?;
-            if cancelled() {
-                return Err(amonhen_model::i18n::cancelled().into());
-            }
-        }
         let pattern = contents.map(|c| format!("-G{}", literal_regex(c)));
         let mut args = vec!["log", "--format=%H", "--stdin"];
         if let Some(p) = &pattern {
@@ -331,54 +329,38 @@ impl Operations for Git {
         if let Some(p) = path {
             args.push(p);
         }
-        let mut cmd = self.command(&args);
-        cmd.env("GIT_OPTIONAL_LOCKS", "0")
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
-        if let Some(reason) = amonhen_model::process::missing_git() {
-            return Err(reason.into());
-        }
-        let mut child = cmd.spawn()?;
-        let mut stderr = child.stderr.take().unwrap();
-        let errors = std::thread::spawn(move || {
-            let mut text = String::new();
-            let _ = std::io::Read::read_to_string(&mut stderr, &mut text);
-            text
-        });
         // 起点は引数に並べず標準入力で渡す（ref が数千あっても長さの制限にかからない）。
-        let mut stdin = child.stdin.take().unwrap();
-        let revs: String = tips.iter().map(|t| format!("{t}\n")).collect();
-        std::thread::spawn(move || stdin.write_all(revs.as_bytes()));
-        // 結果がなかなか出ない検索（内容の検索）でも取り消しに応えられるよう、読むのは別のスレッドで行う。
-        let stdout = child.stdout.take().unwrap();
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            for line in std::io::BufReader::new(stdout).lines() {
-                let Ok(line) = line else { break };
-                if tx.send(line).is_err() {
-                    break;
-                }
-            }
-        });
         let mut found = Vec::new();
-        loop {
-            if cancelled() {
-                crate::kill_tree(&mut child);
-                let _ = child.wait();
-                return Err(amonhen_model::i18n::cancelled().into());
-            }
-            match rx.recv_timeout(std::time::Duration::from_millis(50)) {
-                Ok(line) => found.extend(Oid::from_hex(line.trim())),
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
-            }
-        }
-        let status = child.wait()?;
-        if !status.success() {
-            let message = errors.join().unwrap_or_default();
-            return Err(tr!("git log failed: {message}", message = message.trim()).into());
-        }
+        self.stream_lines(&args, revs(tips), cancelled, &mut |line| {
+            found.extend(Oid::from_hex(line.trim()));
+            true
+        })?;
+        Ok(found)
+    }
+
+    fn log_matching_commits(
+        &self,
+        commits: &[Oid],
+        paths: &[String],
+        contents: &str,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<Oid>> {
+        let pattern = format!("-G{}", literal_regex(contents));
+        // 渡したコミットだけを、その順に（`--no-walk=unsorted`）。
+        let mut args = vec![
+            "log",
+            "--no-walk=unsorted",
+            "--format=%H",
+            "--stdin",
+            &pattern,
+            "--",
+        ];
+        args.extend(paths.iter().map(String::as_str));
+        let mut found = Vec::new();
+        self.stream_lines(&args, revs(commits), cancelled, &mut |line| {
+            found.extend(Oid::from_hex(line.trim()));
+            true
+        })?;
         Ok(found)
     }
 

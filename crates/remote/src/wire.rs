@@ -70,6 +70,12 @@ pub enum Request {
     Blob(Oid),
     /// → `()`（手元にない blob をまとめて取ってくる）
     PrefetchBlobs(Vec<Oid>),
+    /// → `ContentsToFetch`（取り消せる）
+    ContentsToFetch {
+        tips: Vec<Oid>,
+        scope: amonhen_model::LogScope,
+        limit: usize,
+    },
     /// → `Status`
     Status,
     /// → `Bytes`
@@ -177,6 +183,11 @@ pub enum Op {
         tips: Vec<Oid>,
         path: Option<String>,
         contents: Option<String>,
+    },
+    LogMatchingCommits {
+        commits: Vec<Oid>,
+        paths: Vec<String>,
+        contents: String,
     },
     Blame {
         path: String,

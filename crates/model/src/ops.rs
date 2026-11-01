@@ -62,6 +62,24 @@ pub struct RepositoryForm {
     pub maintenance: bool,
 }
 
+/// コミットを辿って探す範囲（`git log` のパスと日時。日時は秒、`after` より新しく `before` より古いもの）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct LogScope {
+    pub paths: Vec<String>,
+    pub after: Option<i64>,
+    pub before: Option<i64>,
+}
+
+/// 内容で探す前に取ってくる、手元にない中身（`GitBackend::contents_to_fetch`）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ContentsToFetch {
+    pub ids: Vec<Oid>,
+    /// 上限を超えたので数えるのをやめた（`ids` は上限まで）。
+    pub more: bool,
+}
+
 /// partial clone の様子。
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -363,6 +381,19 @@ pub trait Operations: Send + Sync {
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Vec<Oid>> {
         let _ = (tips, path, contents, cancelled);
+        Err(crate::tr!("Can’t search by path or content here").into())
+    }
+
+    /// `commits` のうち、差分（最初の親との。`paths` があればその下だけ）に `contents` を含む行があるもの
+    /// （`git log --no-walk -G`）。大きな履歴を区切って探し、見つかった分から出すときに使う。
+    fn log_matching_commits(
+        &self,
+        commits: &[Oid],
+        paths: &[String],
+        contents: &str,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<Oid>> {
+        let _ = (commits, paths, contents, cancelled);
         Err(crate::tr!("Can’t search by path or content here").into())
     }
 
