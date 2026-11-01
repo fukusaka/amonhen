@@ -692,6 +692,10 @@ impl Activity {
         margin(&events);
         let (scrolled, event_list) = list();
         events.append(&scrolled);
+        events.append(&label(
+            &tr!("File change notices and the reloads they cause (newest first, up to 500)."),
+            &["dim-label", "caption"],
+        ));
         stack.add_titled(&events, Some("events"), &tr!("Events"));
         let refresh_events = {
             let event_list = event_list.clone();

@@ -594,6 +594,7 @@
 "Last ms" = "直近 ms";
 "Events" = "イベント";
 "Start" = "起動";
+"File change notices and the reloads they cause (newest first, up to 500)." = "ファイルの変化の知らせと、それによる読み直し（新しい順に最大 500 件）。";
 "Open Repositories" = "開いているリポジトリ";
 "It starts automatically when you open a repository through the daemon (right-click in the repository list, or Settings > Performance)." = "daemon 越しにリポジトリを開くと（リポジトリの一覧の右クリック、または Settings > パフォーマンス）、自動で起動します。";
 "The shared daemon is running" = "共有の daemon は動いています";
