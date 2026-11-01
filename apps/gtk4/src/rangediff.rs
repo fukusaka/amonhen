@@ -97,13 +97,6 @@ fn shorten(range: &str) -> String {
     out
 }
 
-fn date(time: i64) -> String {
-    glib::DateTime::from_unix_local(time)
-        .and_then(|d| d.format("%Y-%m-%d %H:%M"))
-        .map(|s| s.to_string())
-        .unwrap_or_default()
-}
-
 fn short(oid: &str) -> &str {
     crate::titles::short(oid)
 }
@@ -482,7 +475,7 @@ impl RangeDiff {
                         selector = previous["selector"].as_str().unwrap_or_default(),
                         branch = previous["branch"].as_str().unwrap_or_default(),
                         message = previous["message"].as_str().unwrap_or_default(),
-                        time = date(previous["time"].as_i64().unwrap_or_default()),
+                        time = crate::stashes::ago(previous["time"].as_i64().unwrap_or_default()),
                     );
                     this.open_ranges(ranges, Some(text));
                 } else {
