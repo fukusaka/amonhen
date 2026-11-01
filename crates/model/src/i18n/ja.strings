@@ -1821,6 +1821,7 @@
 "All Repositories…" = "すべてのリポジトリ…";
 "Open the repository page (Ctrl+Shift+R)" = "リポジトリのページを開く（Ctrl+Shift+R）";
 "{name} — click to switch repository" = "{name} — 押すとリポジトリを切り替える";
+"{name} — editing the worktree {worktree}. Click to switch repository" = "{name} — worktree {worktree} を編集中。押すとリポジトリを切り替える";
 /* GTK4: パスを列で選ぶシート */
 "Host:" = "接続先:";
 "You can still type the path above and choose it." = "上の欄にパスを打ち込んで選ぶこともできます。";

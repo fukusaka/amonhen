@@ -492,6 +492,24 @@ fn open(location: &Path) -> Result<Repository, String> {
     })
 }
 
+/// リポジトリの名前のボタンの文字とツールチップ。`worktree` は書き込む先の worktree（開いたものでなければ）。
+fn repository_title(name: &str, worktree: Option<&str>) -> (String, String) {
+    match worktree {
+        Some(w) => (
+            format!("{name} ✎ {w}"),
+            tr!(
+                "{name} — editing the worktree {worktree}. Click to switch repository",
+                name = name,
+                worktree = w
+            ),
+        ),
+        None => (
+            name.to_owned(),
+            tr!("{name} — click to switch repository", name = name),
+        ),
+    }
+}
+
 /// daemon 越しに開く（macOS 版の `amonhen_repo_open_location` と同じ）。
 fn open_remote(location: &str) -> amonhen_model::Result<Repository> {
     use amonhen_remote::ssh;
@@ -1645,20 +1663,26 @@ fn build_tab(
     };
     // 最後に読んだ、開いたリポジトリの ref（書き込む先を変えたら、その worktree から見たものに出し直す）。
     let raw_refs: Rc<std::cell::RefCell<Option<Arc<amonhen_core::RefsSnapshot>>>> = Rc::default();
-    let (w, a, b, t, r, refs_tx) = (
+    let (w, a, t, r, refs_tx) = (
         Rc::downgrade(&worktrees),
         actions.clone(),
-        buttons.clone(),
         Rc::downgrade(&tab),
         raw_refs.clone(),
         tx.clone(),
     );
     let (st, rl) = (Rc::downgrade(&stashes), reflog_slot.clone());
+    let (title_weak, name_button) = (title.downgrade(), repository_name.downgrade());
+    let shown_name = name.clone();
     worktrees.connect_list(move || {
         let (Some(worktrees), Some(tab)) = (w.upgrade(), t.upgrade()) else {
             return;
         };
-        b.set_worktree(worktrees.toolbar_name().as_deref());
+        // 書き込む先の worktree（開いたものでないとき）は、リポジトリの名前に ✎ で添える（macOS 版と同じ）。
+        if let (Some(title), Some(button)) = (title_weak.upgrade(), name_button.upgrade()) {
+            let (text, tip) = repository_title(&shown_name, worktrees.toolbar_name().as_deref());
+            title.set_text(&text);
+            button.set_tooltip_text(Some(&tip));
+        }
         let elsewhere = worktrees.branches_elsewhere();
         let main = elsewhere
             .iter()

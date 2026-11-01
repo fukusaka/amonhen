@@ -57,8 +57,6 @@ pub struct Buttons {
     pub repository: gtk::MenuButton,
     pub primary: gtk::MenuButton,
     branch: gtk::Label,
-    /// 書き込む先の worktree（✎ 名前。開いたものでないときだけ）。
-    worktree: gtk::Label,
     branch_button: gtk::Button,
     pull: gtk::Button,
     pull_count: gtk::Label,
@@ -70,13 +68,6 @@ pub struct Buttons {
 }
 
 impl Buttons {
-    /// ブランチの横に、書き込む先の worktree の名前を出す（None なら出さない）。
-    pub fn set_worktree(&self, name: Option<&str>) {
-        self.worktree
-            .set_text(&name.map(|n| format!("✎ {n}")).unwrap_or_default());
-        self.worktree.set_visible(name.is_some());
-    }
-
     /// まだ開けていないリポジトリのタブ（つないでいる途中・つなげなかった）: ブランチを「—」にし、リポジトリの
     /// 名前とともに押せなくする（macOS 版と同じ）。
     pub fn show_unopened(&self) {
@@ -526,12 +517,6 @@ pub fn install(parts: Parts) -> Buttons {
     let branch_inner = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     branch_inner.append(&branch_icon);
     branch_inner.append(&branch);
-    let worktree = gtk::Label::new(None);
-    worktree.add_css_class("dim-label");
-    worktree.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
-    worktree.set_max_width_chars(24);
-    worktree.set_visible(false);
-    branch_inner.append(&worktree);
     // 押すとブランチの切り替え（macOS 版のツールバーの Branch と同じ）。
     let branch_button = gtk::Button::builder()
         .child(&branch_inner)
@@ -583,7 +568,6 @@ pub fn install(parts: Parts) -> Buttons {
         repository,
         primary,
         branch,
-        worktree,
         branch_button,
         pull,
         pull_count,
