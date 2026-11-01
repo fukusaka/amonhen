@@ -141,6 +141,50 @@ impl CommitPane {
             .show_message(&tr!("Select a commit to see its changes."));
     }
 
+    /// Push のシートの「送る変更すべて」: `base`..`tip` の差分を、全ファイル縦に並べて出す（macOS 版の
+    /// `show(range:)`）。詳細は `title` と、送るコミットの 1 行ずつ（`lines`）。
+    pub fn show_range(
+        self: &Rc<Self>,
+        repo: Arc<Repository>,
+        base: Option<Oid>,
+        tip: Oid,
+        title: &str,
+        lines: &str,
+    ) {
+        let g = self.generation.get() + 1;
+        self.generation.set(g);
+        self.repo.replace(Some(repo.clone()));
+        self.commit.replace(None);
+        self.details.show_text(title, lines);
+        crate::fit_details(&self.root, self.details.clone());
+        self.files.clear();
+        let key = format!("{}..{tip}", base.map(|b| b.to_string()).unwrap_or_default());
+        let viewed = commitfiles::viewed_paths(&key);
+        self.pending.set(self.pending.get() + 1);
+        let this = self.clone();
+        glib::spawn_future_local(async move {
+            let result = gio::spawn_blocking(move || {
+                let changes = repo
+                    .changes_between(base.as_ref(), &tip)
+                    .map_err(|e| e.to_string())?;
+                Prepared::from_changes(repo, changes, &viewed, true)
+            })
+            .await;
+            this.pending.set(this.pending.get() - 1);
+            if this.generation.get() != g {
+                return;
+            }
+            match result {
+                Ok(Ok(prepared)) => this.files.show(prepared, key),
+                Ok(Err(e)) => {
+                    eprintln!("差分を読めない: {e}");
+                    this.files.show_message(&tr!("Couldn’t load the diff"));
+                }
+                Err(_) => {}
+            }
+        });
+    }
+
     /// `repo` の `id` の詳細と変更を裏で読んで出す。`stash` なら stash の中身（untracked のファイルを含む）で、
     /// 時間のかかる分（署名の検証・含むブランチなど）は読まない（macOS 版と同じ）。全ファイルを並べるか・畳む
     /// ファイル・Viewed は History と同じ。

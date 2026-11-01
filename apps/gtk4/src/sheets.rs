@@ -855,26 +855,17 @@ fn push_preview(
         .hscrollbar_policy(gtk::PolicyType::Never)
         .min_content_width(260)
         .build();
-    let details = Rc::new(crate::details::Details::new());
-    let diff = crate::diff::DiffWidget::default();
-    let diff_scrolled = gtk::ScrolledWindow::builder()
-        .child(&diff)
-        .vexpand(true)
-        .build();
-    let right = gtk::Paned::new(gtk::Orientation::Vertical);
-    right.set_start_child(Some(&details.root));
-    right.set_end_child(Some(&diff_scrolled));
-    right.set_resize_start_child(false);
-    right.set_position(150);
+    // 右: 選んだものの詳細と、変更ファイルの一覧と差分（History の右の欄と同じ部品。macOS 版の
+    // `CommitDetailViewController`）。
+    let pane = crate::commitpane::CommitPane::new(Rc::default());
     let paned = gtk::Paned::new(gtk::Orientation::Horizontal);
     paned.set_start_child(Some(&left));
-    paned.set_end_child(Some(&right));
+    paned.set_end_child(Some(&pane.root));
     paned.set_resize_start_child(false);
     paned.set_shrink_start_child(false);
     paned.set_position(320);
     paned.set_vexpand(true);
     paned.add_css_class("frame");
-    let generation = Rc::new(std::cell::Cell::new(0u32));
     let (repo, rows) = (repo.clone(), Rc::new(rows));
     let range_lines: String = outgoing
         .commits
@@ -887,60 +878,23 @@ fn push_preview(
         let Some((_, _, commit, _, _)) = rows.get(row.index() as usize).cloned() else {
             return;
         };
-        let g = generation.get() + 1;
-        generation.set(g);
-        details.clear();
-        diff.clear();
-        let repo = repo.clone();
-        let (details, diff, generation, right, range, range_lines) = (
-            details.clone(),
-            diff.clone(),
-            generation.clone(),
-            right.clone(),
-            range.clone(),
-            range_lines.clone(),
-        );
-        glib::spawn_future_local(async move {
-            let id = commit.as_deref().and_then(Oid::from_hex);
-            let r = repo.clone();
-            match id {
-                Some(id) => {
-                    let info = gio::spawn_blocking(move || r.commit_info(&id).ok())
-                        .await
-                        .ok()
-                        .flatten();
-                    if generation.get() != g {
-                        return;
-                    }
-                    if let Some(info) = info {
-                        details.show(&info);
-                    }
-                }
-                // 送る変更すべて: 送るコミットの一覧を本文に。
-                None => details.show_text(&tr!("All changes to send"), &range_lines),
-            }
-            crate::fit_details(&right, details.clone());
-            let result = gio::spawn_blocking(move || {
-                let changes = match (id, &range) {
-                    (Some(id), _) => repo.commit_changes(&id).ok()?,
-                    (None, Some((base, tip))) => repo
-                        .changes_between(Oid::from_hex(base).as_ref(), &Oid::from_hex(tip)?)
-                        .ok()?,
-                    (None, None) => return None,
-                };
-                let stacked = repo.stacked_diff(&changes).ok()?;
-                let view = crate::diff::View::build(&stacked, &[]);
-                Some((Arc::new(crate::diff::Source(stacked, None)), view))
-            })
-            .await
-            .ok()
-            .flatten();
-            if generation.get() == g
-                && let Some((source, view)) = result
+        match commit.as_deref().and_then(Oid::from_hex) {
+            Some(id) => pane.show(repo.clone(), id, false),
+            // 送る変更すべて: 送るコミットの一覧を本文に、上流から先端までの差分。
+            None => match range
+                .as_ref()
+                .and_then(|(b, t)| Some((Oid::from_hex(b), Oid::from_hex(t)?)))
             {
-                diff.show(source, view);
-            }
-        });
+                Some((base, tip)) => pane.show_range(
+                    repo.clone(),
+                    base,
+                    tip,
+                    &tr!("All changes to send"),
+                    &range_lines,
+                ),
+                None => pane.clear(),
+            },
+        }
     });
     if let Some(first) = list.row_at_index(0) {
         list.select_row(Some(&first));
