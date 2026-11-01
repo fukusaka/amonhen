@@ -830,17 +830,10 @@ pub fn show_home(app: &gtk::Application, host: Option<Rc<RepoWindow>>) -> Rc<Rep
     titles.append(&title);
     titles.append(&subtitle);
     tab.header.set_title_widget(Some(&titles));
-    // 主メニュー（リポジトリへの操作はないので、開く・設定・閉じるだけ）。
-    let menu = gio::Menu::new();
-    let open = gio::Menu::new();
-    open.append(Some("Quick Open…"), Some("win.quick-open"));
-    open.append(Some("Clone…"), Some("win.clone"));
-    open.append_submenu(Some(&tr!("Open Recent")), &crate::repos::recent_menu());
-    menu.append_section(None, &open);
-    let rest = gio::Menu::new();
-    rest.append(Some(&tr!("Settings…")), Some("win.settings"));
-    rest.append(Some(&tr!("Close")), Some("win.close"));
-    menu.append_section(None, &rest);
+    // 主メニュー（リポジトリの窓と同じもの。リポジトリへの操作は、このタブにアクションがないので押せない。macOS 版で
+    // Repositories の窓が前にあっても、メニューバーはそのままなのと同じ）。History の表示は設定なので、ここでも変えられる。
+    crate::historydisplay::install_actions(&tab.group);
+    let menu = crate::appmenu::primary_menu(&tab.root);
     let primary = gtk::MenuButton::builder()
         .menu_model(&menu)
         .tooltip_text("Main Menu")

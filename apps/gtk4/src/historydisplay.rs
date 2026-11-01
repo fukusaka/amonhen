@@ -193,7 +193,8 @@ pub fn install_actions(group: &gio::SimpleActionGroup) {
         group.add_action(&action);
     }
     let weak = group.downgrade();
-    settings::connect_changed(move |key| {
+    // タブのアクションがある間だけ見る（閉じたタブの分を残さない）。
+    settings::connect_changed_while(group, move |key| {
         let Some(group) = weak.upgrade() else { return };
         let set = |name: &str, state: glib::Variant| {
             if let Some(a) = group
