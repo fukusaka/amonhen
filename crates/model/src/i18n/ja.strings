@@ -221,6 +221,7 @@
 "{file}: resolved {resolved} of {before} conflicts, {remaining} left" = "{file}: コンフリクト {before} 個のうち {resolved} 個を解いた、残り {remaining} 個";
 "Opening in the app works only on macOS" = "アプリで開くのは macOS だけです";
 "Can’t start Amon Hen ({bundle}). Check that it’s in /Applications" = "Amon Hen（{bundle}）を起動できません。/Applications に入っているか確かめてください";
+"Can’t start Amon Hen (amonhen-gtk): {e}. Check that it’s installed" = "Amon Hen（amonhen-gtk）を起動できません: {e}。入っているか確かめてください";
 "Can’t read the command: {e}" = "命令を読めない: {e}";
 "none" = "なし";
 "HEAD {head} · commits {commits} · changed files {changed}" = "HEAD {head}・コミット {commits}・変更のあるファイル {changed}";

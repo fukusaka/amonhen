@@ -262,6 +262,11 @@ pub fn is_check_run() -> bool {
     CHECK_RUN.with(Cell::get)
 }
 
+/// 前回の窓とタブを開き直している途中か。
+pub fn is_restoring() -> bool {
+    RESTORING.with(Cell::get)
+}
+
 /// 前回の窓とタブを開き直している間は覚えない（終わったら `save` する）。
 pub fn set_restoring(yes: bool) {
     RESTORING.with(|r| r.set(yes));

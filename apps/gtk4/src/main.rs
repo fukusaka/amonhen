@@ -1557,6 +1557,13 @@ fn build_tab(
     // 開けたら File > Open Recent に出す（開けなかったものは覚えない。確認用の起動では、`--tab` のタブも覚え
     // ない。macOS 版と同じ）。
     let opened_path = path.clone();
+    // 手元のリポジトリを（daemon 越しでなく）開けなかったら、タブを残さずに知らせる（macOS 版の NSAlert）。起動時に
+    // 前回のものを開き直しているとき・確認用の起動では、エラーのタブを残す（macOS 版と同じく、閉じるまで次の起動
+    // でも開き直す）。
+    let alert_on_failure = !amonhen_remote::location::is_remote(&text)
+        && !settings::bool(settings::OPEN_THROUGH_DAEMON)
+        && !tabs::is_restoring()
+        && !tabs::is_check_run();
     std::thread::spawn(move || load(path, order, tx, changed_tx, changed_rx));
     glib::spawn_future_local(glib::clone!(
         #[weak]
@@ -2215,6 +2222,18 @@ fn build_tab(
                         if !tabs::is_check_run() {
                             repos::record(&opened_path);
                         }
+                    }
+                    Event::OpenFailed(e) if alert_on_failure => {
+                        if let Some(tab) = tab_weak.upgrade() {
+                            tabs::close_tab(&tab);
+                        }
+                        // 閉じた後に前にある窓（最後のタブならリポジトリのページになった同じ窓）に出す。
+                        let window = tabs::front_window().map(|h| h.window.clone());
+                        gtk::AlertDialog::builder()
+                            .message(&e)
+                            .modal(true)
+                            .build()
+                            .show(window.as_ref());
                     }
                     Event::OpenFailed(e) => {
                         buttons.show_unopened();
