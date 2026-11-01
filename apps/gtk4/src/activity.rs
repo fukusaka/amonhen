@@ -1,6 +1,7 @@
 //! Activity の窓（macOS 版の `Activity.swift` と同じタブ）: Operations（実行した git とコアの命令）、History
 //! （Undo できる操作と「ここまで戻す」）、Performance（画面の速さの記録）、Events（ファイルの変化の知らせ・
-//! 読み直し）、Daemon（共有の daemon の様子と、起動・停止）。開いている間は 1 秒ごとに読み直す。
+//! 読み直し）、Daemon（共有の daemon の様子と、起動・停止）。窓はアプリに 1 つで、開いているすべての窓・タブの
+//! リポジトリを扱う（History のタブで選ぶ）。開いている間は 0.5 秒ごとに読み直す。
 
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
@@ -25,8 +26,10 @@ thread_local! {
     static PERFORMANCE: RefCell<HashMap<String, VecDeque<f64>>> = RefCell::default();
     /// 内部の出来事（時刻、リポジトリ、内容）。
     static EVENTS: RefCell<VecDeque<(i64, String, String)>> = RefCell::default();
-    /// 開いている Activity の窓（元の窓ごとに 1 つ）。
-    static OPEN: RefCell<Vec<(glib::WeakRef<gtk::ApplicationWindow>, Activity)>> = RefCell::default();
+    /// 開いている Activity の窓（アプリに 1 つ。macOS 版と同じ）。
+    static OPEN: RefCell<Option<Activity>> = const { RefCell::new(None) };
+    /// Activity に出す、開いているリポジトリのタブ（[`register`]）。
+    static REGISTERED: RefCell<Vec<Registered>> = RefCell::default();
     /// 実行している操作の数（見出しの Activity に出す。macOS 版の `RunningOperations`）。
     static RUNNING: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
     /// 数が変わったら知らせる先（false を返したものは外す）。
@@ -224,94 +227,128 @@ fn row(cells: &[(&str, i32, &[&str])]) -> gtk::Box {
     line
 }
 
-/// Activity が見ているリポジトリ（元の窓の前のタブのもの。タブを替えたら付け替える）。
-struct Target {
-    /// 開いたリポジトリ（daemon 越しなら、その記録を読む）。
-    repo: Option<Arc<Repository>>,
+/// タブが今見ているリポジトリ（まだつないでいなければ None）。
+pub type CurrentRepo = Rc<dyn Fn() -> Option<Arc<Repository>>>;
+
+/// History のタブで、このリポジトリを選ぶ。
+type Choose = Rc<dyn Fn(&Arc<Repository>)>;
+/// 選び直したとき（あとで入れる）。
+type Hook = Rc<RefCell<Option<Rc<dyn Fn()>>>>;
+/// Daemon のタブの「このアプリのつながり」の 1 行（名前・場所・切れた理由・送受信量・SSH 先のエンジン）。
+type ConnectionRow = (String, String, Option<String>, (u64, u64), String);
+
+/// Activity に出す、開いているタブ。
+struct Registered {
+    tab: std::rc::Weak<crate::tabs::Tab>,
+    current: CurrentRepo,
+    actions: std::rc::Weak<Actions>,
+}
+
+/// リポジトリのタブを Activity の一覧に入れる（タブを閉じたら外れる）。`actions` は History の Undo の先。
+pub fn register(tab: &Rc<crate::tabs::Tab>, current: CurrentRepo, actions: &Rc<Actions>) {
+    REGISTERED.with(|r| {
+        r.borrow_mut().push(Registered {
+            tab: Rc::downgrade(tab),
+            current,
+            actions: Rc::downgrade(actions),
+        })
+    });
+}
+
+/// Activity が読む、開いているリポジトリ（macOS 版の `ActivityRepository`）。
+#[derive(Clone)]
+struct Entry {
+    /// タブ（窓）の名前。
+    name: String,
+    /// 開いた場所（手元のパス、`daemon:/path`、`ssh://host/path`）。
+    location: String,
+    repo: Arc<Repository>,
     /// History の Undo の先（書き込む先の worktree。Undo の記録もここから読む）。
     actions: Rc<Actions>,
+}
+
+impl Entry {
+    /// daemon 越しのリポジトリか（SSH 先・手元の共有の daemon。daemon の記録も読む）。
+    fn is_remote(&self) -> bool {
+        self.repo.connection_state().is_some()
+    }
+
+    fn same(&self, other: &Entry) -> bool {
+        Arc::ptr_eq(&self.repo, &other.repo) && Rc::ptr_eq(&self.actions, &other.actions)
+    }
+}
+
+/// 開いているすべての窓・タブのリポジトリ（開いた順。macOS 版と同じ）。
+fn repositories() -> Vec<Entry> {
+    REGISTERED.with(|r| {
+        let mut r = r.borrow_mut();
+        r.retain(|e| e.tab.upgrade().is_some_and(|t| !t.closed()) && e.actions.strong_count() > 0);
+        r.iter()
+            .filter_map(|e| {
+                let tab = e.tab.upgrade()?;
+                Some(Entry {
+                    name: tab.name.clone(),
+                    location: tab.location.clone(),
+                    repo: (e.current)()?,
+                    actions: e.actions.upgrade()?,
+                })
+            })
+            .collect()
+    })
+}
+
+/// SSH 先・daemon のどこを通っているか（Daemon のタブの表）。
+fn location_kind(location: &str) -> String {
+    if location.starts_with("ssh://") {
+        tr!("SSH host (direct)")
+    } else if location.starts_with("daemon:ssh://") {
+        tr!("Shared daemon → SSH host")
+    } else {
+        tr!("Local shared daemon")
+    }
 }
 
 #[derive(Clone)]
 pub struct Activity {
     window: gtk::Window,
     stack: gtk::Stack,
-    target: Rc<RefCell<Target>>,
-    /// 付け替えたときに読み直す。
-    retargeted: Rc<dyn Fn()>,
+    /// History のタブで、このリポジトリを選ぶ（一覧にあれば）。
+    choose: Choose,
 }
 
 impl Activity {
-    /// `parent` の Activity を開く（開いていれば前に出す）。
+    /// Activity を開く（開いていれば前に出す）。初めて開くときは、History のタブで `repo`（開いた窓の前の
+    /// タブのもの）を選ぶ。開き直したときは選んでいたものを保つ（macOS 版と同じ）。
     pub fn show(
         parent: &gtk::ApplicationWindow,
         repo: Option<Arc<Repository>>,
-        actions: Rc<Actions>,
         engine: std::path::PathBuf,
     ) {
-        if let Some(a) = Self::find(parent) {
-            a.retarget(repo, actions);
+        if let Some(a) = Self::find() {
             a.window.present();
             return;
         }
-        let activity = Self::new(parent, repo, actions, engine);
-        OPEN.with(|o| {
-            let mut o = o.borrow_mut();
-            o.retain(|(p, a)| p.upgrade().is_some() && a.window.is_visible());
-            o.push((parent.downgrade(), activity.clone()));
-        });
+        let activity = Self::new(parent, engine);
+        if let Some(repo) = &repo {
+            (activity.choose)(repo);
+        }
+        OPEN.with(|o| o.replace(Some(activity.clone())));
         activity.window.present();
     }
 
-    /// `parent` の Activity が開いていれば、`repo` のもの（前に出たタブ）に付け替える。
-    pub fn follow(
-        parent: &gtk::ApplicationWindow,
-        repo: Option<Arc<Repository>>,
-        actions: Rc<Actions>,
-    ) {
-        if let Some(a) = Self::find(parent) {
-            a.retarget(repo, actions);
-        }
-    }
-
-    fn retarget(&self, repo: Option<Arc<Repository>>, actions: Rc<Actions>) {
-        {
-            let t = self.target.borrow();
-            let same_repo = match (&t.repo, &repo) {
-                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
-                (None, None) => true,
-                _ => false,
-            };
-            if same_repo && Rc::ptr_eq(&t.actions, &actions) {
-                return;
-            }
-        }
-        self.target.replace(Target { repo, actions });
-        (self.retargeted)();
-    }
-
     /// 開いている Activity のタブ（`operations` など）を選ぶ。
-    pub fn select(parent: &gtk::ApplicationWindow, tab: &str) {
-        if let Some(a) = Self::find(parent) {
+    pub fn select(tab: &str) {
+        if let Some(a) = Self::find() {
             a.stack.set_visible_child_name(tab);
         }
     }
 
-    fn find(parent: &gtk::ApplicationWindow) -> Option<Self> {
-        OPEN.with(|o| {
-            o.borrow()
-                .iter()
-                .find(|(p, a)| p.upgrade().as_ref() == Some(parent) && a.window.is_visible())
-                .map(|(_, a)| a.clone())
-        })
+    fn find() -> Option<Self> {
+        OPEN.with(|o| o.borrow().clone())
+            .filter(|a| a.window.is_visible())
     }
 
-    fn new(
-        parent: &gtk::ApplicationWindow,
-        repo: Option<Arc<Repository>>,
-        actions: Rc<Actions>,
-        engine: std::path::PathBuf,
-    ) -> Self {
+    fn new(parent: &gtk::ApplicationWindow, engine: std::path::PathBuf) -> Self {
         install_css();
         let stack = gtk::Stack::new();
         let switcher = gtk::StackSwitcher::builder().stack(&stack).build();
@@ -324,8 +361,8 @@ impl Activity {
             .child(&stack)
             .build();
         window.set_titlebar(Some(&header));
-        window.set_transient_for(Some(parent));
-        window.set_destroy_with_parent(true);
+        // どの窓のものでもない（アプリに 1 つ。macOS 版と同じ）。最初は開いた窓の画面に出す。
+        window.set_display(&WidgetExt::display(parent));
         // 大きさは覚えておく（macOS 版は位置も。GTK では窓の位置はウィンドウマネージャーが決める）。
         if let Some((w, h)) = crate::settings::string(WINDOW_SIZE)
             .as_deref()
@@ -343,8 +380,82 @@ impl Activity {
             glib::Propagation::Proceed
         });
 
-        let target = Rc::new(RefCell::new(Target { repo, actions }));
         let mut refreshers: Vec<Box<dyn Fn()>> = Vec::new();
+        // 開いているすべてのリポジトリ（読み直すたびに集め直す）と、History のタブで選んでいるもの（macOS 版の
+        // Repository の選択。なければ最初のもの）。
+        let entries: Rc<RefCell<Vec<Entry>>> = Rc::default();
+        let selected: Rc<RefCell<Option<Entry>>> = Rc::default();
+        let repo_choice = gtk::DropDown::from_strings(&[]);
+        repo_choice.set_width_request(320);
+        repo_choice.set_halign(gtk::Align::Start);
+        // 選び直したとき（History の一覧を読み直す。下で入れる）。
+        let on_selected: Hook = Rc::default();
+        let choosing = Rc::new(std::cell::Cell::new(false));
+        let refresh_repos: Rc<dyn Fn()> = {
+            let (entries, selected, repo_choice, on_selected, choosing) = (
+                entries.clone(),
+                selected.clone(),
+                repo_choice.clone(),
+                on_selected.clone(),
+                choosing.clone(),
+            );
+            Rc::new(move || {
+                let now = repositories();
+                let same_list = {
+                    let old = entries.borrow();
+                    old.len() == now.len()
+                        && old
+                            .iter()
+                            .zip(&now)
+                            .all(|(a, b)| a.same(b) && a.name == b.name)
+                };
+                if same_list {
+                    return;
+                }
+                let names: Vec<&str> = now.iter().map(|e| e.name.as_str()).collect();
+                let index = selected
+                    .borrow()
+                    .as_ref()
+                    .and_then(|s| now.iter().position(|e| e.same(s)))
+                    .or((!now.is_empty()).then_some(0));
+                choosing.set(true);
+                repo_choice.set_model(Some(&gtk::StringList::new(&names)));
+                repo_choice.set_selected(index.map_or(gtk::INVALID_LIST_POSITION, |i| i as u32));
+                choosing.set(false);
+                let chosen = index.map(|i| now[i].clone());
+                let changed = match (&*selected.borrow(), &chosen) {
+                    (Some(a), Some(b)) => !a.same(b),
+                    (None, None) => false,
+                    _ => true,
+                };
+                entries.replace(now);
+                selected.replace(chosen);
+                if changed && let Some(f) = on_selected.borrow().clone() {
+                    f();
+                }
+            })
+        };
+        {
+            let (entries, selected, on_selected, choosing) = (
+                entries.clone(),
+                selected.clone(),
+                on_selected.clone(),
+                choosing.clone(),
+            );
+            repo_choice.connect_selected_notify(move |d| {
+                if choosing.get() {
+                    return;
+                }
+                let chosen = entries.borrow().get(d.selected() as usize).cloned();
+                selected.replace(chosen);
+                if let Some(f) = on_selected.borrow().clone() {
+                    f();
+                }
+            });
+        }
+        refresh_repos();
+        let r = refresh_repos.clone();
+        refreshers.push(Box::new(move || r()));
         let margin = |w: &gtk::Box| {
             w.set_margin_top(10);
             w.set_margin_bottom(10);
@@ -417,7 +528,7 @@ impl Activity {
             &["dim-label", "caption"],
         ));
         stack.add_titled(&ops, Some("operations"), &tr!("Operations"));
-        // daemon の記録（裏で 2 秒ごとに読む。付け替えたら捨てる）。
+        // daemon 越しのリポジトリの記録（裏で 2 秒ごとに読む。macOS 版と同じく、名前はタブの名前）。
         let remote_records: Rc<RefCell<Vec<Value>>> = Rc::default();
         let refresh_ops = {
             let (op_selected, op_rebuilding, op_detail, op_detail_scrolled) = (
@@ -426,12 +537,12 @@ impl Activity {
                 op_detail.clone(),
                 op_detail_scrolled.clone(),
             );
-            let (op_list, kinds, failures, filter, target, remote_records) = (
+            let (op_list, kinds, failures, filter, entries, remote_records) = (
                 op_list.clone(),
                 kinds.clone(),
                 failures.clone(),
                 filter.clone(),
-                target.clone(),
+                entries.clone(),
                 remote_records.clone(),
             );
             let loading = Rc::new(std::cell::Cell::new(false));
@@ -439,44 +550,38 @@ impl Activity {
             let last = std::cell::Cell::new(0);
             move || {
                 tick.set(tick.get() + 1);
-                let repo = target.borrow().repo.clone();
-                let remote = repo
-                    .as_ref()
-                    .is_some_and(|r| r.connection_state().is_some());
-                if remote
-                    && !loading.get()
-                    && tick.get() % 4 == 1
-                    && let Some(repo) = repo.clone()
-                {
+                let remotes: Vec<Entry> = entries
+                    .borrow()
+                    .iter()
+                    .filter(|e| e.is_remote())
+                    .cloned()
+                    .collect();
+                if remotes.is_empty() {
+                    remote_records.borrow_mut().clear();
+                } else if !loading.get() && tick.get() % 4 == 1 {
                     loading.set(true);
-                    let (remote_records, loading, target) =
-                        (remote_records.clone(), loading.clone(), target.clone());
+                    let (remote_records, loading) = (remote_records.clone(), loading.clone());
                     glib::spawn_future_local(async move {
-                        let asked = repo.clone();
-                        let reply: Value = gio::spawn_blocking(move || {
-                            serde_json::from_str(&asked.run_json(r#"{"op":"remoteActivity"}"#))
-                                .unwrap_or_default()
-                        })
-                        .await
-                        .unwrap_or_default();
-                        loading.set(false);
-                        // 読んでいる間に付け替えたら捨てる。
-                        if !target
-                            .borrow()
-                            .repo
-                            .as_ref()
-                            .is_some_and(|r| Arc::ptr_eq(r, &repo))
-                        {
-                            return;
-                        }
-                        let mut records = reply["info"]["records"]
-                            .as_array()
-                            .cloned()
+                        let mut loaded = Vec::new();
+                        for entry in remotes {
+                            let asked = entry.repo.clone();
+                            let reply: Value = gio::spawn_blocking(move || {
+                                serde_json::from_str(&asked.run_json(r#"{"op":"remoteActivity"}"#))
+                                    .unwrap_or_default()
+                            })
+                            .await
                             .unwrap_or_default();
-                        for r in &mut records {
-                            r["remote"] = json!(true);
+                            for mut r in reply["info"]["records"]
+                                .as_array()
+                                .cloned()
+                                .unwrap_or_default()
+                            {
+                                r["remote"] = json!(entry.name);
+                                loaded.push(r);
+                            }
                         }
-                        remote_records.replace(records);
+                        loading.set(false);
+                        remote_records.replace(loaded);
                     });
                 }
                 let mut records: Vec<Value> = amonhen_model::activity::entries()
@@ -528,11 +633,10 @@ impl Activity {
                         Some(true) => ("✓", "activity-success"),
                         Some(false) => ("✗", "activity-error"),
                     };
-                    let name = repo_path.rsplit('/').next().unwrap_or_default();
-                    let name = if r["remote"].as_bool() == Some(true) {
-                        tr!("{name} (daemon)", name = name)
-                    } else {
-                        name.to_owned()
+                    let remote = r["remote"].as_str();
+                    let name = match remote {
+                        Some(name) => tr!("{name} (daemon)", name = name),
+                        None => repo_path.rsplit('/').next().unwrap_or_default().to_owned(),
                     };
                     let mut content = label_text.to_owned();
                     if ok.is_none()
@@ -559,7 +663,7 @@ impl Activity {
                     line.set_tooltip_text(Some(&tip));
                     let key = format!(
                         "{}:{}",
-                        r["remote"].as_bool() == Some(true),
+                        remote.unwrap_or_default(),
                         r["seq"].as_u64().unwrap_or(0)
                     );
                     line.set_widget_name(&key);
@@ -571,12 +675,17 @@ impl Activity {
                         let cancel = gtk::Button::with_label(&tr!("Cancel Operation"));
                         cancel.add_css_class("flat");
                         let seq = r["seq"].as_u64().unwrap_or(0);
-                        let is_remote = r["remote"].as_bool() == Some(true);
-                        let repo = repo.clone();
+                        let remote = remote.map(str::to_owned);
+                        let entries = entries.clone();
                         cancel.connect_clicked(move |_| {
-                            if is_remote {
+                            if let Some(name) = &remote {
                                 // daemon への往復なので、裏の糸で（macOS 版と同じ）。
-                                if let Some(repo) = repo.clone() {
+                                let repo = entries
+                                    .borrow()
+                                    .iter()
+                                    .find(|e| e.name == *name)
+                                    .map(|e| e.repo.clone());
+                                if let Some(repo) = repo {
                                     let command = json!({ "op": "cancelActivity", "seq": seq, "remote": true });
                                     gio::spawn_blocking(move || {
                                         let _ = repo.run_json(&command.to_string());
@@ -646,6 +755,11 @@ impl Activity {
         let history = gtk::Box::new(gtk::Orientation::Vertical, 8);
         margin(&history);
         let (scrolled, undo_list) = list();
+        // どのリポジトリの操作か（開いているすべての窓・タブから選ぶ。macOS 版と同じ）。
+        let choice_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        choice_row.append(&label(&tr!("Repository"), &[]));
+        choice_row.append(&repo_choice);
+        history.append(&choice_row);
         history.append(&scrolled);
         history.append(&label(
             &tr!("Operations you can Undo (newest first). It stops where another tool has moved a ref."),
@@ -653,15 +767,17 @@ impl Activity {
         ));
         stack.add_titled(&history, Some("history"), "History");
         let refresh_undo: Rc<dyn Fn()> = {
-            let (undo_list, target, w) = (undo_list.clone(), target.clone(), window.downgrade());
+            let (undo_list, selected, w) =
+                (undo_list.clone(), selected.clone(), window.downgrade());
             Rc::new(move || {
                 // Undo する先（書き込む先の worktree）の記録を出す（一覧と Undo の先を取り違えない）。
-                let actions = target.borrow().actions.clone();
-                let Some(repo) = actions.repo().or_else(|| target.borrow().repo.clone()) else {
+                let Some(entry) = selected.borrow().clone() else {
                     undo_list.remove_all();
                     return;
                 };
-                let (undo_list, target, w) = (undo_list.clone(), target.clone(), w.clone());
+                let actions = entry.actions.clone();
+                let repo = actions.repo().unwrap_or_else(|| entry.repo.clone());
+                let (undo_list, selected, w) = (undo_list.clone(), selected.clone(), w.clone());
                 glib::spawn_future_local(async move {
                     let reply: Value = gio::spawn_blocking(move || {
                         serde_json::from_str(&repo.run_json(r#"{"op":"undoLog"}"#))
@@ -669,8 +785,12 @@ impl Activity {
                     })
                     .await
                     .unwrap_or_default();
-                    // 読んでいる間に付け替えたら捨てる（付け替えたほうで読み直す）。
-                    if !Rc::ptr_eq(&target.borrow().actions, &actions) {
+                    // 読んでいる間に選び直したら捨てる（選んだほうで読み直す）。
+                    if !selected
+                        .borrow()
+                        .as_ref()
+                        .is_some_and(|e| Rc::ptr_eq(&e.actions, &actions))
+                    {
                         return;
                     }
                     undo_list.remove_all();
@@ -840,6 +960,77 @@ impl Activity {
         daemon.append(&top);
         daemon.append(&label(&tr!("Open Repositories"), &["heading"]));
         daemon.append(&scrolled);
+        // このアプリから daemon 越しに開いているリポジトリ（macOS 版と同じ列）。
+        let (scrolled, conn_list) = list();
+        scrolled.set_min_content_height(80);
+        daemon.append(&label(
+            &tr!("This App’s Connections to the Daemon"),
+            &["heading"],
+        ));
+        daemon.append(&scrolled);
+        {
+            let (conn_list, entries) = (conn_list.clone(), entries.clone());
+            let last = std::cell::Cell::new(0);
+            refreshers.push(Box::new(move || {
+                let rows: Vec<ConnectionRow> = entries
+                    .borrow()
+                    .iter()
+                    .filter_map(|e| {
+                        let state = e.repo.connection_state()?;
+                        Some((
+                            e.name.clone(),
+                            location_kind(&e.location),
+                            state.closed,
+                            (state.sent, state.received),
+                            state.engine.unwrap_or_default(),
+                        ))
+                    })
+                    .collect();
+                if unchanged(&last, &rows) {
+                    return;
+                }
+                conn_list.remove_all();
+                conn_list.append(&row(&[
+                    (&tr!("Repository"), 0, &["dim-label"]),
+                    (&tr!("Location"), 18, &["dim-label"]),
+                    (&tr!("Status"), 10, &["dim-label"]),
+                    (&tr!("Sent · Received"), 18, &["dim-label"]),
+                    (&tr!("Engine on the SSH Host"), 24, &["dim-label"]),
+                ]));
+                for (name, kind, closed, traffic, engine) in rows {
+                    let (status, status_css): (String, &[&str]) = match &closed {
+                        Some(_) => (tr!("Disconnected"), &["activity-error"]),
+                        None => (tr!("Connected"), &["activity-success"]),
+                    };
+                    let traffic = format!(
+                        "{} · {}",
+                        glib::format_size(traffic.0),
+                        glib::format_size(traffic.1)
+                    );
+                    let engine_text = if engine.is_empty() { "—" } else { &engine };
+                    let line = row(&[
+                        (&name, 0, &[]),
+                        (&kind, 18, &["dim-label"]),
+                        (&status, 10, status_css),
+                        (&traffic, 18, &["numeric"]),
+                        (engine_text, 24, &["dim-label"]),
+                    ]);
+                    // 切れた理由と、SSH 先のエンジンの全文は説明に。
+                    let mut cell = line.first_child();
+                    let mut i = 0;
+                    while let Some(c) = cell {
+                        match i {
+                            2 => c.set_tooltip_text(closed.as_deref()),
+                            4 if !engine.is_empty() => c.set_tooltip_text(Some(&engine)),
+                            _ => {}
+                        }
+                        cell = c.next_sibling();
+                        i += 1;
+                    }
+                    conn_list.append(&line);
+                }
+            }));
+        }
         // だれもつながらなくなって終わるまでの時間（macOS 版と同じ）。
         let idle_exit = label("", &["dim-label", "caption"]);
         idle_exit.set_wrap(true);
@@ -1075,22 +1266,38 @@ impl Activity {
                 actions.connect_repo_changed(move || r());
             }
         };
-        let first = target.borrow().actions.clone();
-        connect_after(&first);
-        let retargeted: Rc<dyn Fn()> = {
-            let (target, r) = (target.clone(), refresh_undo);
+        // 選び直したら、その操作の記録を読み、その後の操作でも読み直す。
+        on_selected.replace(Some({
+            let (selected, r) = (selected.clone(), refresh_undo);
             Rc::new(move || {
-                remote_records.borrow_mut().clear();
-                let actions = target.borrow().actions.clone();
-                connect_after(&actions);
+                let actions = selected.borrow().as_ref().map(|e| e.actions.clone());
+                if let Some(actions) = actions {
+                    connect_after(&actions);
+                }
                 r();
+            })
+        }));
+        if let Some(f) = on_selected.borrow().clone() {
+            f();
+        }
+        // 開いた窓の前のタブのリポジトリを選ぶ（一覧になければそのまま）。
+        let choose: Choose = {
+            let (entries, repo_choice) = (entries.clone(), repo_choice.clone());
+            Rc::new(move |repo: &Arc<Repository>| {
+                refresh_repos();
+                let index = entries
+                    .borrow()
+                    .iter()
+                    .position(|e| Arc::ptr_eq(&e.repo, repo));
+                if let Some(i) = index {
+                    repo_choice.set_selected(i as u32);
+                }
             })
         };
         Self {
             window,
             stack,
-            target,
-            retargeted,
+            choose,
         }
     }
 }

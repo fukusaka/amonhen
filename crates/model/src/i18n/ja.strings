@@ -613,6 +613,13 @@
 "Sent to and received from the SSH host" = "SSH 先との送った・受け取った量";
 "Engine on the SSH host: {engine}" = "SSH 先のエンジン: {engine}";
 "{rows} rows · {size}" = "{rows} 行・{size}";
+"This App’s Connections to the Daemon" = "このアプリの daemon とのつながり";
+"Location" = "場所";
+"Sent · Received" = "送った・受け取った";
+"Engine on the SSH Host" = "SSH 先のエンジン";
+"SSH host (direct)" = "SSH 先（直接）";
+"Shared daemon → SSH host" = "共有の daemon → SSH 先";
+"Local shared daemon" = "手元の共有の daemon";
 "The daemon exits after {duration} with no connections. From a terminal, run amonhen daemon status to see it." = "daemon はだれもつながらなくなって {duration}たつと終わる。端末からは amonhen daemon status で見られる。";
 "Couldn’t start the shared daemon" = "共有の daemon を起動できませんでした";
 "Yes" = "あり";

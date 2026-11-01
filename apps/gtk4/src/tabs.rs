@@ -787,15 +787,12 @@ pub fn show_home(app: &gtk::Application, host: Option<Rc<RepoWindow>>) -> Rc<Rep
         }
     });
     // Activity（Ctrl+Alt+A。macOS 版ではどの窓からも開ける）。このページにはリポジトリがないので、History の
-    // Undo の一覧は空（git の記録とプロセスは出す）。
+    // タブは開いているリポジトリの最初のものを選ぶ。
     let activity = gio::SimpleAction::new("activity", None);
-    let (t, actions) = (
-        Rc::downgrade(&tab),
-        crate::actions::Actions::new(&tab.root, &tab.group),
-    );
+    let t = Rc::downgrade(&tab);
     activity.connect_activate(move |_, _| {
         if let Some(window) = t.upgrade().and_then(|t| t.window()) {
-            crate::activity::Activity::show(&window, None, actions.clone(), crate::engine());
+            crate::activity::Activity::show(&window, None, crate::engine());
         }
     });
     tab.group.add_action(&activity);

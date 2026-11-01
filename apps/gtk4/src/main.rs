@@ -1513,16 +1513,14 @@ fn build_tab(
             std::thread::spawn(move || reload_status(&repo, &tx));
         });
     }
-    // 開いている Activity は、前に出たタブのリポジトリに付け替える（Undo の先を取り違えない）。
+    // Activity の一覧に入れる（History のタブでリポジトリを選び、Undo はこのタブの操作で。macOS 版と同じ）。
     {
-        let (t, v, a) = (Rc::downgrade(&tab), view.downgrade(), actions.clone());
-        tab.connect_front(move || {
-            let Some(window) = t.upgrade().and_then(|t| t.window()) else {
-                return;
-            };
-            let repo = v.upgrade().and_then(|v| v.current()).map(|(r, _)| r);
-            activity::Activity::follow(&window, repo, a.clone());
-        });
+        let v = view.downgrade();
+        activity::register(
+            &tab,
+            Rc::new(move || v.upgrade().and_then(|v| v.current()).map(|(r, _)| r)),
+            &actions,
+        );
     }
     // 操作がコンフリクトや途中で止まった: Working Copy に移り、読み直した status で最初のコンフリクトのファイルを
     // 選ぶ（右にマージエディタが出る。macOS 版と同じ）。その status を覚えておき、届いたら選ぶ。
@@ -1789,8 +1787,8 @@ fn build_tab(
                             }
                             if let Some(tab) = &args.activity {
                                 let repo = view.current().map(|(r, _)| r);
-                                activity::Activity::show(&window, repo, actions.clone(), engine());
-                                activity::Activity::select(&window, tab);
+                                activity::Activity::show(&window, repo, engine());
+                                activity::Activity::select(tab);
                                 pending.set(pending.get() + 1);
                                 let p = pending.clone();
                                 glib::timeout_add_local_once(

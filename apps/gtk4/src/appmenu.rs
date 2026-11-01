@@ -379,12 +379,7 @@ fn handlers() -> Vec<(&'static str, Handler)> {
             "activity",
             Box::new(|p| {
                 let repo = p.view.current().map(|(r, _)| r);
-                crate::activity::Activity::show(
-                    &p.window(),
-                    repo,
-                    p.actions.clone(),
-                    crate::engine(),
-                );
+                crate::activity::Activity::show(&p.window(), repo, crate::engine());
             }),
         ),
         (
