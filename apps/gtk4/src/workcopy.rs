@@ -733,17 +733,10 @@ impl Inner {
             }
             this.update_buttons();
         });
+        // Summary の欄の Enter ではコミットしない（macOS 版と同じ。コミットは Ctrl+Return か Commit のボタン）。
         let weak = Rc::downgrade(this);
         this.commit.connect_clicked(move |_| {
             if let Some(this) = weak.upgrade() {
-                Inner::commit(&this, None);
-            }
-        });
-        let weak = Rc::downgrade(this);
-        this.subject.connect_activate(move |_| {
-            if let Some(this) = weak.upgrade()
-                && this.commit.is_sensitive()
-            {
                 Inner::commit(&this, None);
             }
         });
