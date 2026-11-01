@@ -103,6 +103,8 @@ pub struct Details {
     table: gtk::Grid,
     subject: gtk::Label,
     body: gtk::Label,
+    /// 本文の最後の段落のトレーラー（`Signed-off-by:` など。本文から除いて薄く並べる。macOS 版と同じ）。
+    trailers: gtk::Label,
     notes: gtk::Label,
     info: RefCell<Option<Value>>,
     /// 詳細より先に届いた、時間のかかる分。
@@ -341,7 +343,8 @@ impl Details {
                 monospace(&body);
             }
         });
-        let notes = label(&["dim-label"]);
+        let trailers = label(&["dim-label"]);
+        let notes = label(&[]);
         let selection_title = label(&["title-4"]);
         let selection_note = label(&["dim-label", "caption"]);
         let pairs = gtk::Box::new(gtk::Orientation::Horizontal, 4);
@@ -397,6 +400,7 @@ impl Details {
         column.append(&table);
         column.append(&subject);
         column.append(&body);
+        column.append(&trailers);
         column.append(&notes);
         column.append(&ai);
         let scrolled = gtk::ScrolledWindow::builder()
@@ -409,7 +413,12 @@ impl Details {
         let searched = {
             let fixed = [selection_title.clone(), selection_note.clone()];
             let (lines, table) = (selection_lines.clone(), table.clone());
-            let message = [subject.clone(), body.clone(), notes.clone()];
+            let message = [
+                subject.clone(),
+                body.clone(),
+                trailers.clone(),
+                notes.clone(),
+            ];
             move || {
                 let mut labels: Vec<gtk::Label> = fixed.to_vec();
                 labels.push(lines.clone());
@@ -437,6 +446,7 @@ impl Details {
             table,
             subject,
             body,
+            trailers,
             notes,
             info: RefCell::default(),
             extras: RefCell::default(),
@@ -457,10 +467,10 @@ impl Details {
             brief_avatar,
             brief_text,
         };
-        let links = details.links.clone();
-        details
-            .body
-            .connect_activate_link(move |_, uri| follow(&links, uri));
+        for label in [&details.body, &details.notes] {
+            let links = details.links.clone();
+            label.connect_activate_link(move |_, uri| follow(&links, uri));
+        }
         // 簡潔の 1 行: 作者の名前・ref・親のリンク。
         let (links, person) = (details.links.clone(), details.on_person.clone());
         details.brief_text.connect_activate_link(move |_, uri| {
@@ -545,7 +555,7 @@ impl Details {
         while let Some(child) = self.ai.first_child() {
             self.ai.remove(&child);
         }
-        for l in [&self.body, &self.notes] {
+        for l in [&self.body, &self.trailers, &self.notes] {
             l.set_text("");
             l.set_visible(false);
         }
@@ -639,15 +649,11 @@ impl Details {
     pub fn show(&self, info: &Value) {
         self.info.replace(Some(info.clone()));
         let message = info["message"].as_str().unwrap_or_default();
-        let (subject, body) = message.split_once('\n').unwrap_or((message, ""));
+        let subject = message.trim().split('\n').next().unwrap_or_default();
         self.subject.set_text(subject.trim_end());
-        let body = body.trim();
         let brief = self.style.get() == Style::Brief;
-        // URL はリンクにする（`#123` は、リモートの場所を読んでから）。
-        let revs = self.links.borrow().is_some();
-        self.body.set_markup(&linked(body, None, revs));
-        // 簡潔では件名だけ（macOS 版と同じ）。
-        self.body.set_visible(!body.is_empty() && !brief);
+        // URL はリンクにする（`#123` は、リモートの場所を読んでから）。簡潔では件名だけ（macOS 版と同じ）。
+        self.fill_message(info, None);
         self.people.set_visible(!brief);
 
         // 上の帯: 作者と（違う人なら）コミッター。
@@ -709,18 +715,46 @@ impl Details {
         }
         self.build_table(Some(extras));
         // 本文の `#123` を、リモートのリポジトリの issue・pull request へのリンクにする（macOS 版と同じ）。
-        if let Some(info) = self.info.borrow().as_ref() {
-            let message = str_of(info, "message");
-            let body = message.split_once('\n').map_or("", |(_, b)| b).trim();
-            let web = web_url(str_of(extras, "originUrl"));
-            let revs = self.links.borrow().is_some();
-            self.body.set_markup(&linked(body, web.as_deref(), revs));
+        let info = self.info.borrow().clone();
+        if let Some(info) = info {
+            self.fill_message(&info, Some(extras));
         }
-        let notes = str_of(extras, "notes").trim();
-        self.notes.set_text(notes);
-        self.notes
-            .set_visible(!notes.is_empty() && self.style.get() != Style::Brief);
         self.find.refresh();
+    }
+
+    /// 本文（トレーラーは除く）・トレーラー・notes を出す（macOS 版の `renderMessage`）。簡潔では出さない。
+    /// `extras` が届いていれば、`#123` をリモートの issue へのリンクにし、notes を「Notes:」の見出しの下に出す。
+    fn fill_message(&self, info: &Value, extras: Option<&Value>) {
+        let brief = self.style.get() == Style::Brief;
+        let revs = self.links.borrow().is_some();
+        let web = extras.and_then(|e| web_url(str_of(e, "originUrl")));
+        let trailers: Vec<(&str, &str)> = info["trailers"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|t| (str_of(t, "key"), str_of(t, "value")))
+            .collect();
+        let body = body_without_trailers(str_of(info, "message"), !trailers.is_empty());
+        self.body.set_markup(&linked(&body, web.as_deref(), revs));
+        self.body.set_visible(!body.is_empty() && !brief);
+        let lines: Vec<String> = trailers
+            .iter()
+            .map(|(key, value)| {
+                format!(
+                    "<span weight=\"medium\">{}: </span>{}",
+                    esc(key),
+                    linked(value, None, false)
+                )
+            })
+            .collect();
+        self.trailers.set_markup(&lines.join("\n"));
+        self.trailers.set_visible(!lines.is_empty() && !brief);
+        let notes = extras.map_or("", |e| str_of(e, "notes")).trim();
+        self.notes.set_markup(&format!(
+            "<span size=\"small\" weight=\"bold\" alpha=\"60%\">Notes:</span>\n{}",
+            linked(notes, web.as_deref(), revs)
+        ));
+        self.notes.set_visible(!notes.is_empty() && !brief);
     }
 
     /// 簡潔の 1 行: 小さなアバター・作者（押すとその人のコミットで絞り込む）・作者の日時・ref・親（macOS 版の
@@ -1179,6 +1213,23 @@ fn linked(text: &str, web: Option<&str>, revs: bool) -> String {
     out
 }
 
+/// 本文（件名の次の行から）。`trailers` なら、最後の段落（トレーラー）を除く（macOS 版の `bodyWithoutTrailers`）。
+fn body_without_trailers(message: &str, trailers: bool) -> String {
+    let message = message.trim();
+    let body = message
+        .split_once('\n')
+        .map_or("", |(_, b)| b)
+        .trim_matches('\n');
+    if !trailers {
+        return body.trim().to_owned();
+    }
+    match body.rfind("\n\n") {
+        Some(split) => body[..split].trim_matches('\n').trim().to_owned(),
+        // 本文がトレーラーだけ。
+        None => String::new(),
+    }
+}
+
 fn str_of<'a>(v: &'a Value, key: &str) -> &'a str {
     v[key].as_str().unwrap_or_default()
 }
@@ -1256,6 +1307,17 @@ mod tests {
             "<a href=\"https://x.org/1a2b3c4d\">https://x.org/1a2b3c4d</a>"
         );
         assert_eq!(linked("1a2b3c4d", None, false), "1a2b3c4d");
+    }
+
+    #[test]
+    fn trailers_leave_the_body() {
+        let message = "Fix it\n\nBody.\n\nMore.\n\nSigned-off-by: A <a@x>\n";
+        assert_eq!(body_without_trailers(message, true), "Body.\n\nMore.");
+        assert_eq!(
+            body_without_trailers(message, false),
+            "Body.\n\nMore.\n\nSigned-off-by: A <a@x>"
+        );
+        assert_eq!(body_without_trailers("Fix\n\nSigned-off-by: A", true), "");
     }
 
     #[test]
