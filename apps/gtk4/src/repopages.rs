@@ -9,7 +9,7 @@ use gtk::{gio, glib};
 use serde_json::{Value, json};
 
 use crate::reposettings::{Remote, RepoSettings, label, run_one};
-use crate::sheets::{Response, Sheet};
+use crate::sheets::{Response, Sheet, Style};
 
 /// 小さな表（行は id の文字列。中身は列の `bind` が id から引く）。行は多くないが、見えている行の部品しか作らない。
 pub(crate) struct Table {
@@ -368,11 +368,30 @@ pub(crate) fn remote_sheet(s: &Rc<RepoSettings>, remote: Option<Remote>) {
         line.append(&spinner);
         line.append(&result);
         sheet.add(&line);
-        let save = if remote.is_some() {
-            sheet.buttons(&tr!("Save"), false, Some(&tr!("Remove…")))
-        } else {
-            sheet.buttons(&tr!("Save"), false, None)
-        };
+        // 消す前の確認はシートの上に出す（Cancel ならシートに戻り、直していた中身は残る。macOS 版と同じ）。
+        if let Some(r) = &remote {
+            let remove = sheet.side_button(&tr!("Remove…"), Some(Style::Destructive));
+            let (w, name, window) = (w.clone(), r.name.clone(), sheet.window.downgrade());
+            remove.connect_clicked(move |_| {
+                let (w, name, window) = (w.clone(), name.clone(), window.clone());
+                glib::spawn_future_local(async move {
+                    let Some(window) = window.upgrade() else {
+                        return;
+                    };
+                    if confirm_remove(Some(&window), &name).await {
+                        window.close();
+                        if let Some(s) = w.upgrade() {
+                            s.perform(
+                                vec![json!({"op": "changeRemote",
+                                    "change": {"kind": "remove", "name": name}})],
+                                |_| {},
+                            );
+                        }
+                    }
+                });
+            });
+        }
+        let save = sheet.buttons(&tr!("Save"), false, None);
         let update = {
             let (name, fetch, points, save, check) = (
                 name.clone(),
@@ -480,12 +499,7 @@ pub(crate) fn remote_sheet(s: &Rc<RepoSettings>, remote: Option<Remote>) {
                     |_| {},
                 );
             }
-            Response::Other => {
-                if let (Some(s), Some(r)) = (w.upgrade(), remote) {
-                    remove_remote(&s, r.name);
-                }
-            }
-            Response::Cancel => {}
+            Response::Other | Response::Cancel => {}
         }
     });
 }
