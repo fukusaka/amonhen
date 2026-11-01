@@ -437,8 +437,17 @@ impl RangeDiff {
     }
 
     /// 組の右クリックで「History で見る」を選んだら `f(コミット)` を呼ぶ。
-    pub fn connect_show_in_history(&self, f: impl Fn(Oid) + 'static) {
-        self.on_show_in_history.replace(Some(Rc::new(f)));
+    /// 詳細の親・子・メッセージの中の ID も、History でそのコミットを選ぶ（macOS 版の
+    /// `rangeDiff.detail.onSelectCommit`）。
+    pub fn connect_show_in_history(self: &Rc<Self>, f: impl Fn(Oid) + 'static) {
+        let f: Rc<dyn Fn(Oid)> = Rc::new(f);
+        self.on_show_in_history.replace(Some(f.clone()));
+        let weak = Rc::downgrade(self);
+        self.details.connect_links(
+            Rc::new(move || weak.upgrade().and_then(|r| r.repo())),
+            f,
+            None,
+        );
     }
 
     /// 次に比べたら `select` の行を選び、`menu` の行の右クリックのメニューを出す（確認用。メニューの項目は

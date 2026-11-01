@@ -166,6 +166,13 @@ impl ReflogView {
             after_load: RefCell::default(),
         });
         inner.connect_factory(&factory);
+        // 詳細の親・子・メッセージの中の ID は、History でそのコミットを選ぶ（macOS 版と同じ）。
+        let weak = Rc::downgrade(&inner);
+        inner.details.connect_links(
+            Rc::new(move || weak.upgrade().and_then(|i| i.repo.borrow().clone())),
+            inner.on_show_in_history.clone(),
+            None,
+        );
         let weak = Rc::downgrade(&inner);
         inner.selection.connect_selected_notify(move |_| {
             if let Some(inner) = weak.upgrade()

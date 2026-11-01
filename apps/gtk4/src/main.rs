@@ -1065,6 +1065,10 @@ fn build_tab(
         let on_commit = on_commit.clone();
         move |id| on_commit(id)
     });
+    stashes.connect_select_commit({
+        let on_commit = on_commit.clone();
+        move |id| on_commit(id)
+    });
     // 詳細の親・子・取り込んだコミット・メッセージの中の ID は、そのコミットを選ぶ（今の範囲になければ全ブランチ
     // にして）。ref の名前は、その ref の履歴に絞り込む（macOS 版の `onSelectCommit`・`selectRef(named:)`）。
     {

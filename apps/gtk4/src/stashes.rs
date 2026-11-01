@@ -260,6 +260,17 @@ impl Stashes {
         );
     }
 
+    /// 詳細の親（土台）・メッセージの中の ID を押したら `f(ID)` を呼ぶ（History でそのコミットを選ぶ。macOS 版の
+    /// `stashes.detail.onSelectCommit`）。
+    pub fn connect_select_commit(&self, f: impl Fn(Oid) + 'static) {
+        let weak = Rc::downgrade(&self.inner);
+        self.inner.details.connect_links(
+            Rc::new(move || weak.upgrade().and_then(|i| i.repo.borrow().clone())),
+            Rc::new(f),
+            None,
+        );
+    }
+
     pub fn set_repo(&self, repo: Arc<Repository>) {
         let old = self.inner.repo.replace(Some(repo.clone()));
         // ref が先に届いて一覧だけ出していたら（リポジトリがまだで読めなかった）、選んだ stash の中身と行の情報を
