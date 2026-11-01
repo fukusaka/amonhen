@@ -181,10 +181,12 @@ pub fn present(actions: &Rc<Actions>, remote: Option<Remote>) {
             tr!("Add Remote")
         };
         let sheet = Sheet::new(sheets::parent(&actions).as_ref(), &title, "");
+        // Return で保存する（macOS 版と同じ）。
         let entry = |text: &str| {
             let e = gtk::Entry::new();
             e.set_text(text);
             e.set_hexpand(true);
+            e.set_activates_default(true);
             e
         };
         let name = entry(remote.as_ref().map_or("origin", |r| r.name.as_str()));
