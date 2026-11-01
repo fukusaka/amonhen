@@ -1,6 +1,6 @@
 //! Amon Hen の GTK4 の FE。Linux・BSD が本命で、GTK の動く Windows・macOS でも動く。
 //!
-//! `amonhen-gtk [<path>] [--snapshot <png>] [--edit-worktree <path>] [--measure-scroll [--scroll-rows <n>] | --measure-select <n>] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row> [--menu-item <title>]] [--search <query> [--only-matching]] [--blame <path> | --file-history <path> | --activity <tab> | --settings <tab> | --merge-editor <path> [--accept ours|theirs|both|base]] [--reflog] [--apply-patch <path,...>] [--open-menu repository|primary] [--action <id>] [--print-file-menu <path>] [--perform <json>] [--stashes [--stash-button apply|pop|drop|branch]] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]] [--range-diff[=<ranges>] [--select-pair <n>] [--menu-pair <n>]] [--repositories | --quick-open <query>] [--tab <location>]...`
+//! `amonhen-gtk [<path>] [--snapshot <png>] [--edit-worktree <path>] [--measure-scroll [--scroll-rows <n>] | --measure-select <n>] [--print-menus] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row> [--menu-item <title>]] [--search <query> [--only-matching]] [--blame <path> | --file-history <path> | --activity <tab> | --settings <tab> | --merge-editor <path> [--accept ours|theirs|both|base]] [--reflog] [--apply-patch <path,...>] [--open-menu repository|primary] [--action <id>] [--print-file-menu <path>] [--perform <json>] [--stashes [--stash-button apply|pop|drop|branch]] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]] [--range-diff[=<ranges>] [--select-pair <n>] [--menu-pair <n>]] [--repositories | --quick-open <query>] [--tab <location>]...`
 
 mod actions;
 mod activity;
@@ -99,6 +99,8 @@ struct Args {
     snapshot: Option<PathBuf>,
     /// 自動でスクロールして、1 フレームの時間を測って終わる。
     measure_scroll: bool,
+    /// 見出しのメニューの中身を出して終わる（操作の表を作り直す前と後で比べる用）。
+    print_menus: bool,
     /// History の行をこの数だけ順に選び、詳細と差分が出るまでの時間を測って終わる。
     measure_select: Option<usize>,
     /// `--measure-scroll` で 1 フレームにスクロールする行数。
@@ -199,6 +201,7 @@ fn parse_args() -> Result<Args, String> {
         match a.as_str() {
             "--snapshot" => args.snapshot = Some(it.next().ok_or("--snapshot <png>")?.into()),
             "--measure-scroll" => args.measure_scroll = true,
+            "--print-menus" => args.print_menus = true,
             "--measure-select" => {
                 let n = it.next().ok_or("--measure-select <n>")?;
                 args.measure_select = Some(n.parse().map_err(|_| "--measure-select <n>")?);
@@ -605,6 +608,11 @@ fn opener(app: &gtk::Application) -> repobrowser::Open {
 /// 起動したとき: 引数のリポジトリを開く。なければ前回の終わりに開いていた窓とタブを同じ並びで開き直し、それも
 /// なければリポジトリのページを出す（macOS 版と同じ。確認用の起動だけは、今のフォルダのリポジトリを引数にする）。
 fn launch(app: &gtk::Application, args: &Args) {
+    // メニューの中身を出すだけ（窓を作らないので、そのまま終わる）。
+    if args.print_menus {
+        appmenu::print_menus(app);
+        return;
+    }
     let check = args.snapshot.is_some() || args.measure_scroll || args.measure_select.is_some();
     if check {
         tabs::set_check_run();

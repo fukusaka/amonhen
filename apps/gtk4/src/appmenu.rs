@@ -689,6 +689,51 @@ fn repository_menu() -> gio::Menu {
     table_sections(Menu::Repository)
 }
 
+/// `--print-menus`: 見出しのメニュー（Repository と主メニュー）の中身を、1 項目 1 行で出す（macOS 版の
+/// `--print-menus` と同じく、操作の表を作り直す前と後で比べる用）。`場所 | 名前 | ショートカット | アクション |
+/// 説明 | 出どころ`（`table` は操作の表、`fe` はこの FE だけの操作）。区切りは `場所 | ---`。
+pub fn print_menus(app: &gtk::Application) {
+    let anchor = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    print_menu(app, repository_menu().upcast_ref(), &tr!("Repository"));
+    print_menu(app, primary_menu(&anchor).upcast_ref(), "Main Menu");
+}
+
+fn print_menu(app: &gtk::Application, model: &gio::MenuModel, path: &str) {
+    let string = |i: i32, name: &str| {
+        model
+            .item_attribute_value(i, name, Some(glib::VariantTy::STRING))
+            .and_then(|v| v.get::<String>())
+            .unwrap_or_default()
+    };
+    for i in 0..model.n_items() {
+        if let Some(section) = model.item_link(i, gio::MENU_LINK_SECTION) {
+            if i > 0 {
+                println!("{path} | ---");
+            }
+            print_menu(app, &section, path);
+            continue;
+        }
+        let label = string(i, gio::MENU_ATTRIBUTE_LABEL);
+        if let Some(submenu) = model.item_link(i, gio::MENU_LINK_SUBMENU) {
+            print_menu(app, &submenu, &format!("{path} > {label}"));
+            continue;
+        }
+        let action = string(i, gio::MENU_ATTRIBUTE_ACTION);
+        let detailed = match model.item_attribute_value(i, gio::MENU_ATTRIBUTE_TARGET, None) {
+            Some(target) => format!("{action}({})", target.print(true)),
+            None => action.clone(),
+        };
+        let accels = app.accels_for_action(&detailed).join(" ");
+        let command = action.strip_prefix("win.").and_then(amonhen_commands::find);
+        let tooltip = command
+            .and_then(|c| c.tooltip)
+            .map(|t| amonhen_model::i18n::translate(t).into_owned())
+            .unwrap_or_default();
+        let source = if command.is_some() { "table" } else { "fe" };
+        println!("{path} | {label} | {accels} | {detailed} | {tooltip} | {source}");
+    }
+}
+
 fn show_page(p: &Parts, page: Page) {
     p.pages.set_visible_child_name(match page {
         Page::WorkingCopy => "working",
