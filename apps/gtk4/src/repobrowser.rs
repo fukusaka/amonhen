@@ -1718,141 +1718,17 @@ impl Browser {
             return Vec::new();
         };
         let targets = self.targets(row);
-        let bookmark = bookmarks::bookmark(&path);
-        let mut items = Vec::new();
-        let (b, p) = (self.clone(), path.clone());
-        items.push(menu::action(tr!("Open"), move || b.open_location(&p, true)));
-        // ページを残して、隣の新しいタブに開く（macOS 版と同じ）。
-        let (b, p) = (self.clone(), path.clone());
-        items.push(menu::action(tr!("Open in New Tab"), move || {
-            if bookmarks::is_repository(&p) {
-                (b.beside)(PathBuf::from(&p), crate::tabs::Place::Tab);
-            } else {
-                b.open_location(&p, true);
+        let b = self.clone();
+        let open: RowOpener = Rc::new(move |location, how| match how {
+            RowOpen::Here => b.open_location(&location, true),
+            // ページを残して、隣の新しいタブに開く（macOS 版と同じ）。
+            RowOpen::NewTab if bookmarks::is_repository(&location) => {
+                (b.beside)(PathBuf::from(&location), crate::tabs::Place::Tab)
             }
-        }));
-        let (b, p) = (self.clone(), path.clone());
-        items.push(menu::action(tr!("Open in New Window"), move || {
-            b.open_location(&p, false)
-        }));
-        // SSH 先も（`daemon:ssh://…`。共有の daemon が SSH 先につなぐ。macOS 版と同じ）。
-        if !path.starts_with("daemon:")
-            && !crate::settings::bool(crate::settings::OPEN_THROUGH_DAEMON)
-        {
-            let (b, p) = (self.clone(), path.clone());
-            items.push(menu::hint(
-                tr!("Open Through the Shared daemon"),
-                tr!(
-                    "Share History, the search index and the operation log with the CLI and others"
-                ),
-                move || b.open_location(&format!("daemon:{p}"), true),
-            ));
-        }
-        items.push(Item::Separator);
-        let t = targets.clone();
-        let title = if targets.len() > 1 {
-            crate::titles::fetch_several(targets.len())
-        } else {
-            "Fetch".to_owned()
-        };
-        items.push(menu::action(title, move || bookmarks::fetch(&t)));
-        items.push(Item::Separator);
-        let p = path.clone();
-        let favorite = bookmark.as_ref().is_some_and(|b| b.favorite);
-        items.push(menu::action(
-            if favorite {
-                tr!("Remove from Favorites")
-            } else {
-                tr!("Add to Favorites")
-            },
-            move || bookmarks::toggle_favorite(&p),
-        ));
-        let mut groups = Vec::new();
-        let t = targets.clone();
-        let group = bookmark.as_ref().and_then(|b| b.group.clone());
-        groups.push(menu::choice(tr!("None"), group.is_none(), move || {
-            for p in &t {
-                bookmarks::move_to(p, None);
-            }
-        }));
-        for g in bookmarks::data().groups {
-            let t = targets.clone();
-            let on = group.as_deref() == Some(g.as_str());
-            groups.push(menu::choice(g.clone(), on, move || {
-                for p in &t {
-                    bookmarks::move_to(p, Some(&g));
-                }
-            }));
-        }
-        groups.push(Item::Separator);
-        let (b, t) = (self.clone(), targets.clone());
-        groups.push(menu::action(tr!("New Group…"), move || {
-            let (b, t) = (b.clone(), t.clone());
-            glib::spawn_future_local(async move {
-                if let Some(name) = b.ask(&tr!("New Group"), &tr!("Group name"), "").await {
-                    bookmarks::add_group(&name);
-                    for p in &t {
-                        bookmarks::move_to(p, Some(&name));
-                    }
-                }
-            });
-        }));
-        items.push(Item::Submenu(tr!("Group"), groups));
-        let mut colors = Vec::new();
-        let t = targets.clone();
-        let color = bookmark.as_ref().and_then(|b| b.color.clone());
-        colors.push(menu::choice(tr!("None"), color.is_none(), move || {
-            for p in &t {
-                bookmarks::set_color(p, None);
-            }
-        }));
-        for (name, title, hex) in bookmarks::COLORS {
-            let t = targets.clone();
-            let title = amonhen_model::i18n::translate(title).into_owned();
-            // macOS 版と同じく、名前の前にその色の丸。
-            colors.push(Item::Choice {
-                color: Some(hex),
-                title,
-                on: color.as_deref() == Some(*name),
-                f: Box::new(move || {
-                    for p in &t {
-                        bookmarks::set_color(p, Some(name));
-                    }
-                }),
-            });
-        }
-        items.push(Item::Submenu(tr!("Color Label"), colors));
-        let (b, p) = (self.clone(), path.clone());
-        items.push(menu::action(tr!("Rename…"), move || {
-            let (b, p) = (b.clone(), p.clone());
-            glib::spawn_future_local(async move {
-                let current = bookmarks::display_name(&p);
-                // 空にするとフォルダの名前に戻す。
-                if let Some(name) = b
-                    .ask_allowing_empty(
-                        &tr!("Rename"),
-                        &tr!("Name shown in the list (leave empty for the folder name)"),
-                        &current,
-                    )
-                    .await
-                {
-                    bookmarks::rename(&p, Some(name));
-                }
-            });
-        }));
-        if !amonhen_remote::location::is_remote(&path) {
-            items.push(Item::Separator);
-            let (b, p) = (self.clone(), path.clone());
-            items.push(menu::action(tr!("Show in Files"), move || {
-                crate::appmenu::reveal(&b.window(), std::path::Path::new(&p))
-            }));
-            let (b, p) = (self.clone(), path.clone());
-            items.push(menu::action(tr!("Open in Terminal"), move || {
-                if !crate::appmenu::terminal_at(std::path::Path::new(&p)) {
-                    b.root.error_bell();
-                }
-            }));
-        }
+            RowOpen::NewTab => b.open_location(&location, true),
+            RowOpen::NewWindow => b.open_location(&location, false),
+        });
+        let mut items = row_items(&self.window(), &path, &targets, true, open);
         let category = self.category.borrow().clone();
         let remove = match category {
             Category::All
@@ -2232,28 +2108,190 @@ impl Browser {
 
     /// 文字を入れてもらう。キャンセルか空なら None。
     async fn ask(&self, title: &str, message: &str, initial: &str) -> Option<String> {
-        self.ask_allowing_empty(title, message, initial)
-            .await
-            .filter(|s| !s.is_empty())
+        ask(&self.window(), title, message, initial).await
     }
+}
 
-    async fn ask_allowing_empty(
-        &self,
-        title: &str,
-        message: &str,
-        initial: &str,
-    ) -> Option<String> {
-        let sheet = Sheet::new(Some(&self.window()), title, message);
-        let entry = gtk::Entry::builder()
-            .text(initial)
-            .activates_default(true)
-            .hexpand(true)
-            .build();
-        sheet.add(&entry);
-        sheet.buttons("OK", false, None);
-        entry.grab_focus();
-        (sheet.run().await == Response::Ok).then(|| entry.text().trim().to_owned())
+/// 行の開き方（行のメニューの開く項目）。
+#[derive(Clone, Copy)]
+pub enum RowOpen {
+    /// ページならここに（ページを閉じる）、ツールバーの一覧ならこのタブを切り替える。
+    Here,
+    NewTab,
+    NewWindow,
+}
+
+/// 行を開く処理（場所と開き方）。
+pub type RowOpener = Rc<dyn Fn(String, RowOpen)>;
+
+/// リポジトリの行の右クリックのメニュー（macOS 版の `rowMenu`。リポジトリのページとツールバーの一覧で共通）。
+/// `targets` は選んでいるもの（Fetch・Group・Color Label をかける）、`page` はリポジトリのページか（ツールバーの
+/// 一覧なら最初の項目は「このリポジトリに切り替える」）。今の分類から外す項目はページが後ろに足す。
+pub fn row_items(
+    window: &gtk::Window,
+    path: &str,
+    targets: &[String],
+    page: bool,
+    open: RowOpener,
+) -> Vec<Item> {
+    let bookmark = bookmarks::bookmark(path);
+    let mut items = Vec::new();
+    // ツールバーの一覧では、このタブを切り替える（macOS 版と同じ）。
+    let here = if page {
+        tr!("Open")
+    } else {
+        tr!("Switch to This Repository")
+    };
+    for (title, how) in [
+        (here, RowOpen::Here),
+        (tr!("Open in New Tab"), RowOpen::NewTab),
+        (tr!("Open in New Window"), RowOpen::NewWindow),
+    ] {
+        let (o, p) = (open.clone(), path.to_owned());
+        items.push(menu::action(title, move || o(p.clone(), how)));
     }
+    // SSH 先も（`daemon:ssh://…`。共有の daemon が SSH 先につなぐ。macOS 版と同じ）。
+    if !path.starts_with("daemon:") && !crate::settings::bool(crate::settings::OPEN_THROUGH_DAEMON)
+    {
+        let (o, p) = (open.clone(), path.to_owned());
+        items.push(menu::hint(
+            tr!("Open Through the Shared daemon"),
+            tr!("Share History, the search index and the operation log with the CLI and others"),
+            move || o(format!("daemon:{p}"), RowOpen::Here),
+        ));
+    }
+    items.push(Item::Separator);
+    let t = targets.to_vec();
+    let title = if targets.len() > 1 {
+        crate::titles::fetch_several(targets.len())
+    } else {
+        "Fetch".to_owned()
+    };
+    items.push(menu::action(title, move || bookmarks::fetch(&t)));
+    items.push(Item::Separator);
+    let p = path.to_owned();
+    let favorite = bookmark.as_ref().is_some_and(|b| b.favorite);
+    items.push(menu::action(
+        if favorite {
+            tr!("Remove from Favorites")
+        } else {
+            tr!("Add to Favorites")
+        },
+        move || bookmarks::toggle_favorite(&p),
+    ));
+    let mut groups = Vec::new();
+    let t = targets.to_vec();
+    let group = bookmark.as_ref().and_then(|b| b.group.clone());
+    groups.push(menu::choice(tr!("None"), group.is_none(), move || {
+        for p in &t {
+            bookmarks::move_to(p, None);
+        }
+    }));
+    for g in bookmarks::data().groups {
+        let t = targets.to_vec();
+        let on = group.as_deref() == Some(g.as_str());
+        groups.push(menu::choice(g.clone(), on, move || {
+            for p in &t {
+                bookmarks::move_to(p, Some(&g));
+            }
+        }));
+    }
+    groups.push(Item::Separator);
+    let (w, t) = (window.clone(), targets.to_vec());
+    groups.push(menu::action(tr!("New Group…"), move || {
+        let (w, t) = (w.clone(), t.clone());
+        glib::spawn_future_local(async move {
+            if let Some(name) = ask(&w, &tr!("New Group"), &tr!("Group name"), "").await {
+                bookmarks::add_group(&name);
+                for p in &t {
+                    bookmarks::move_to(p, Some(&name));
+                }
+            }
+        });
+    }));
+    items.push(Item::Submenu(tr!("Group"), groups));
+    let mut colors = Vec::new();
+    let t = targets.to_vec();
+    let color = bookmark.as_ref().and_then(|b| b.color.clone());
+    colors.push(menu::choice(tr!("None"), color.is_none(), move || {
+        for p in &t {
+            bookmarks::set_color(p, None);
+        }
+    }));
+    for (name, title, hex) in bookmarks::COLORS {
+        let t = targets.to_vec();
+        let title = amonhen_model::i18n::translate(title).into_owned();
+        // macOS 版と同じく、名前の前にその色の丸。
+        colors.push(Item::Choice {
+            color: Some(hex),
+            title,
+            on: color.as_deref() == Some(*name),
+            f: Box::new(move || {
+                for p in &t {
+                    bookmarks::set_color(p, Some(name));
+                }
+            }),
+        });
+    }
+    items.push(Item::Submenu(tr!("Color Label"), colors));
+    let (w, p) = (window.clone(), path.to_owned());
+    items.push(menu::action(tr!("Rename…"), move || {
+        let (w, p) = (w.clone(), p.clone());
+        glib::spawn_future_local(async move {
+            let current = bookmarks::display_name(&p);
+            // 空にするとフォルダの名前に戻す。
+            if let Some(name) = ask_allowing_empty(
+                &w,
+                &tr!("Rename"),
+                &tr!("Name shown in the list (leave empty for the folder name)"),
+                &current,
+            )
+            .await
+            {
+                bookmarks::rename(&p, Some(name));
+            }
+        });
+    }));
+    if !amonhen_remote::location::is_remote(path) {
+        items.push(Item::Separator);
+        let (w, p) = (window.clone(), path.to_owned());
+        items.push(menu::action(tr!("Show in Files"), move || {
+            crate::appmenu::reveal(&w, std::path::Path::new(&p))
+        }));
+        let (w, p) = (window.clone(), path.to_owned());
+        items.push(menu::action(tr!("Open in Terminal"), move || {
+            if !crate::appmenu::terminal_at(std::path::Path::new(&p)) {
+                w.error_bell();
+            }
+        }));
+    }
+    items
+}
+
+/// 文字を入れてもらう。キャンセルか空なら None。
+async fn ask(window: &gtk::Window, title: &str, message: &str, initial: &str) -> Option<String> {
+    ask_allowing_empty(window, title, message, initial)
+        .await
+        .filter(|s| !s.is_empty())
+}
+
+/// 文字を入れてもらう（空でもよい）。キャンセルなら None。
+async fn ask_allowing_empty(
+    window: &gtk::Window,
+    title: &str,
+    message: &str,
+    initial: &str,
+) -> Option<String> {
+    let sheet = Sheet::new(Some(window), title, message);
+    let entry = gtk::Entry::builder()
+        .text(initial)
+        .activates_default(true)
+        .hexpand(true)
+        .build();
+    sheet.add(&entry);
+    sheet.buttons("OK", false, None);
+    entry.grab_focus();
+    (sheet.run().await == Response::Ok).then(|| entry.text().trim().to_owned())
 }
 
 /// SSH 先でスキャンするフォルダを列で選んでもらい、その場所（`ssh://host/~/src`）を返す。`host` がなければ、

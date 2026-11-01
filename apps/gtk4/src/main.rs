@@ -762,7 +762,10 @@ fn build_tab(
                 .and_then(|w| tabs::host_of(&w));
             tabs::show_home(&a, host);
         });
-        repolist::button(&titles, &name, open, show_all)
+        let a = app.clone();
+        let beside: repobrowser::Open =
+            Rc::new(move |location, place| tabs::open(&a, location, place));
+        repolist::button(&titles, &name, open, beside, show_all)
     };
     header.set_title_widget(Some(&repository_name));
     // タブのある窓（タブは窓を移れるので、使うときに辿る）。

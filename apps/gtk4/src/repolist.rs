@@ -12,7 +12,8 @@ use gtk::glib;
 use gtk::prelude::*;
 
 use crate::bookmarks;
-use crate::repobrowser::{self, Open};
+use crate::menu;
+use crate::repobrowser::{self, Open, RowOpen};
 use crate::tabs::Place;
 
 /// 一覧の 1 行（名前・パス・ブランチ・状態。macOS 版の `RepositoryCell` の小さい形）。
@@ -75,21 +76,38 @@ fn ordered(query: &str) -> Vec<String> {
 }
 
 /// リポジトリ名のボタン。`titles` を中身にし、押すと一覧を出す。`open` は選んだもの（`Place::Tab` ならこのタブを
-/// 切り替える）、`show_all` はリポジトリのページを出す。
+/// 切り替える）、`beside` は行の右クリックの「新しいタブで開く」（このタブはそのまま）、`show_all` はリポジトリの
+/// ページを出す。
 pub fn button(
     titles: &gtk::Box,
     name: &str,
     open: Open,
+    beside: Open,
     show_all: Rc<dyn Fn()>,
 ) -> gtk::MenuButton {
     let popover = gtk::Popover::new();
+    // 行の右クリックのメニュー（リポジトリのページと同じもの。macOS 版と同じ）から開くとき。一覧は閉じる。
+    let menu_open: repobrowser::RowOpener = {
+        let (p, open) = (popover.downgrade(), open.clone());
+        Rc::new(move |location, how| {
+            if let Some(p) = p.upgrade() {
+                p.popdown();
+            }
+            let location = PathBuf::from(location);
+            match how {
+                RowOpen::Here => open(location, Place::Tab),
+                RowOpen::NewTab => beside(location, Place::Tab),
+                RowOpen::NewWindow => open(location, Place::NewWindow),
+            }
+        })
+    };
     let filter = gtk::SearchEntry::new();
     filter.set_placeholder_text(Some(&tr!("Switch repository")));
     let model = gtk::StringList::new(&[]);
     let selection = gtk::SingleSelection::new(Some(model.clone()));
     let factory = gtk::SignalListItemFactory::new();
     let rows: Rc<RefCell<Vec<Rc<Row>>>> = Rc::default();
-    let r = rows.clone();
+    let (r, s) = (rows.clone(), selection.downgrade());
     factory.connect_setup(move |_, item| {
         let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
         // 左に名前と、その下にパス。右にブランチと、その下に状態（macOS 版と同じ）。
@@ -122,15 +140,50 @@ pub fn button(
         line.attach(&branch, 1, 0, 1, 1);
         line.attach(&state, 1, 1, 1, 1);
         item.set_child(Some(&line));
-        let mut rows = r.borrow_mut();
-        rows.retain(|row| row.name.parent().is_some());
-        rows.push(Rc::new(Row {
+        let row = Rc::new(Row {
             name,
             path,
             branch,
             state,
             location: RefCell::default(),
-        }));
+        });
+        // 右クリックで、その行を選んでメニュー（macOS 版と同じ）。
+        let click = gtk::GestureClick::new();
+        click.set_button(gtk::gdk::BUTTON_SECONDARY);
+        let (w, list_item, s, o) = (
+            Rc::downgrade(&row),
+            item.downgrade(),
+            s.clone(),
+            menu_open.clone(),
+        );
+        click.connect_pressed(move |gesture, _, x, y| {
+            let (Some(row), Some(item), Some(widget)) =
+                (w.upgrade(), list_item.upgrade(), gesture.widget())
+            else {
+                return;
+            };
+            let location = row.location.borrow().clone();
+            let Some(window) = widget.root().and_downcast::<gtk::Window>() else {
+                return;
+            };
+            if let Some(s) = s.upgrade()
+                && item.position() != gtk::INVALID_LIST_POSITION
+            {
+                s.set_selected(item.position());
+            }
+            let items = repobrowser::row_items(
+                &window,
+                &location,
+                std::slice::from_ref(&location),
+                false,
+                o.clone(),
+            );
+            menu::popup(&widget, x, y, items);
+        });
+        line.add_controller(click);
+        let mut rows = r.borrow_mut();
+        rows.retain(|row| row.name.parent().is_some());
+        rows.push(row);
     });
     let r = rows.clone();
     factory.connect_bind(move |_, item| {

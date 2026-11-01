@@ -1411,6 +1411,7 @@
 "When you last opened it in this app (— if never)" = "このアプリで最後に開いた日時（— はまだ開いていない）";
 "Switch repository" = "リポジトリを切り替える";
 "Open Through the Shared daemon" = "共有の daemon 越しに開く";
+"Switch to This Repository" = "このリポジトリに切り替える";
 "Share History, the search index and the operation log with the CLI and others" = "History・検索の索引・操作の記録を CLI などと共有する";
 "Opened" = "開いた日時";
 "Places" = "場所";
