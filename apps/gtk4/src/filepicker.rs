@@ -320,6 +320,8 @@ struct Picker {
     attempt: Cell<u64>,
     /// 部品の選びを入れ直している間（選びの知らせを無視する）。
     filling: Cell<bool>,
+    /// → で入ったが、まだ読んでいる列のパス（読めたら最初のものを選ぶ）。
+    entering: RefCell<Option<String>>,
     tx: async_channel::Sender<Option<Chosen>>,
 }
 
@@ -497,6 +499,7 @@ impl Picker {
             generation: Cell::new(0),
             attempt: Cell::new(0),
             filling: Cell::new(false),
+            entering: RefCell::default(),
             tx,
         });
         picker.wire(&cancel);
@@ -810,6 +813,10 @@ impl Picker {
             }
             p.fill(index);
             p.update_field();
+            if p.entering.borrow().as_deref() == Some(path.as_str()) {
+                p.entering.replace(None);
+                p.select_first(index);
+            }
         });
     }
 
@@ -831,6 +838,7 @@ impl Picker {
     /// 列 `index` の `name` を選ぶ。開くフォルダなら、その中を次の列に出す。
     fn select(self: &Rc<Self>, index: usize, name: Option<String>) {
         self.generation.set(self.generation.get() + 1);
+        self.entering.replace(None);
         self.spinner.set_spinning(false);
         let entry = {
             let mut columns = self.columns.borrow_mut();
@@ -860,16 +868,40 @@ impl Picker {
         self.reveal();
     }
 
-    /// → : 選んでいるフォルダに入り、その最初のものを選ぶ。
+    /// → : 選んでいるフォルダに入り、その最初のものを選ぶ（まだ読んでいれば、読めたら）。
     fn enter(self: &Rc<Self>, index: usize) {
         if index + 1 >= self.views.borrow().len() {
             return;
         }
-        let view = self.views.borrow()[index + 1].clone();
-        if view.selection.n_items() > 0 {
-            view.selection.set_selected(0);
+        let unread = self
+            .columns
+            .borrow()
+            .get(index + 1)
+            .filter(|c| c.entries.is_none())
+            .map(|c| c.path.clone());
+        if unread.is_some() {
+            self.entering.replace(unread);
+        } else {
+            self.select_first(index + 1);
         }
-        view.list.grab_focus();
+        if let Some(view) = self.views.borrow().get(index + 1) {
+            view.list.grab_focus();
+        }
+    }
+
+    /// 列 `index` の、選べる（薄くない）最初のものを選ぶ。
+    fn select_first(self: &Rc<Self>, index: usize) {
+        let Some(view) = self.views.borrow().get(index).cloned() else {
+            return;
+        };
+        let first = view
+            .shown
+            .borrow()
+            .iter()
+            .position(|e| self.selectable(e) || self.opens(e));
+        if let Some(row) = first {
+            view.selection.set_selected(row as u32);
+        }
     }
 
     /// ← : 上の列へ戻る（今の列の選びを外す）。
@@ -877,6 +909,7 @@ impl Picker {
         if index == 0 {
             return;
         }
+        self.entering.replace(None);
         self.select(index, None);
         self.fill(index);
         if let Some(view) = self.views.borrow().get(index - 1) {
