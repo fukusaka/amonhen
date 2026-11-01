@@ -1178,7 +1178,7 @@ bool amonhen_activity_cancel(uint64_t seq);
 
 /**
  * `url` を `dest`（まだないフォルダ）に clone する。`filter`（NULL・空でなければ `--filter`。`blob:none` など）、
- * `depth`（0 でなければ `--depth`）、`sparse`（`--sparse`。根のファイルだけを取り出す。git 2.25 から）で取得する
+ * `depth`（0 でなければ `--depth`）、`sparse`（`--sparse`。根のファイルだけを取り出す。git 2.27 から）で取得する
  * 範囲と取り出すものを決める。失敗したら false（理由は `amonhen_last_error`）。時間がかかるので裏のスレッドで呼ぶ。
  *
  * # Safety

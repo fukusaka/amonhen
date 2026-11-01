@@ -215,7 +215,7 @@ public struct RepositoryPeek: Sendable, Equatable {
 
 extension Repository {
     /// `url` を `dest`（まだないフォルダ）に clone する。`filter`（`blob:none` など）があれば partial clone、`depth`
-    /// があれば最近のその数のコミットだけ、`sparse` なら根のファイルだけを取り出す（git 2.25 から）。時間がかかるので
+    /// があれば最近のその数のコミットだけ、`sparse` なら根のファイルだけを取り出す（git 2.27 から）。時間がかかるので
     /// 裏のスレッドで呼ぶ。
     public static func clone(url: String, to dest: String, filter: String? = nil, depth: Int? = nil,
                              sparse: Bool = false) throws {

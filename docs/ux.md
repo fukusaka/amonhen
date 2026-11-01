@@ -625,7 +625,7 @@ the sidebar is wider.
   with one sentence of help. Treeless clones (`--filter=tree:0`) aren't offered. Check out only some folders clones
   with `--sparse` (only the top-level files) and right after the clone asks for a folder from HEAD's tree with the
   picker of Fetching and Folders; canceling leaves only the top-level files, and folders can be added there later. It
-  is disabled with ⚠ and the version found below git 2.25. A server that doesn't support filters makes an ordinary
+  is disabled with ⚠ and the version found below git 2.27. A server that doesn't support filters makes an ordinary
   clone (git's warning stays in Activity's output). `amonhen clone` takes `--filter=<spec>`, `--depth <n>` and
   `--sparse`.
 - Partial clone: the sidebar's History row has a small cloud mark with the filter in its tooltip. Diffs fetch the

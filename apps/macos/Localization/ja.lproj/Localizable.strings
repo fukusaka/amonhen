@@ -346,7 +346,7 @@
 "Older history can be fetched later from the end of History." = "古い履歴は、あとで History の終わりから取得できます。";
 "Check out only some folders" = "一部のフォルダだけ取り出す";
 "Only the files at the top are checked out; right after the clone, choose a folder to check out." = "最上位のファイルだけを取り出し、clone の後で取り出すフォルダを選びます。";
-"Needs git 2.25 or later. This Mac’s git is %@." = "git 2.25 以降が必要です。この Mac の git は %@ です。";
+"Needs git 2.27 or later. This Mac’s git is %@." = "git 2.27 以降が必要です。この Mac の git は %@ です。";
 "Only the files at the top are checked out. Choose a folder to check out too; add more later in Settings > Fetching and Folders." = "最上位のファイルだけを取り出しました。ほかに取り出すフォルダを選んでください。後から Settings の「取得とフォルダ」で足せます。";
 "Checking out %@…" = "%@ を取り出しています…";
 "Couldn’t check out %@" = "%@ を取り出せませんでした";

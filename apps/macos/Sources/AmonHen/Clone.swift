@@ -7,7 +7,7 @@ import AppKit
 enum CloneSheet {
     private static let folderKey = "cloneFolder"
     /// `git clone --sparse` が使える git の版。
-    private static let sparseVersion = (2, 25)
+    private static let sparseVersion = (2, 27)
 
     /// 取得する範囲。
     enum Download: Int, CaseIterable {
@@ -137,7 +137,7 @@ enum CloneSheet {
         depth.target = depthTarget
         depth.action = #selector(ClosureTarget.fire)
         let downloadHelp = helpLabel()
-        // 一部のフォルダだけ取り出す（git 2.25 から）。下に説明か、使えなければ ⚠ と理由。
+        // 一部のフォルダだけ取り出す（git 2.27 から）。下に説明か、使えなければ ⚠ と理由。
         let sparse = NSButton(checkboxWithTitle: L("Check out only some folders"), target: nil, action: nil)
         let sparseHelp = helpLabel()
         var sparseUnavailable: String?
@@ -169,7 +169,7 @@ enum CloneSheet {
             let version = await Task.detached(priority: .userInitiated) { LocalGit.version() }.value
             let numbers = version?.split(separator: ".").prefix(2).compactMap { Int($0) } ?? []
             if numbers.count == 2, (numbers[0], numbers[1]) < sparseVersion, let version {
-                sparseUnavailable = L("Needs git 2.25 or later. This Mac’s git is %@.", version)
+                sparseUnavailable = L("Needs git 2.27 or later. This Mac’s git is %@.", version)
                 update()
             }
         }

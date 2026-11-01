@@ -96,7 +96,7 @@ applies a diff to the worktree (--index stages it too); both can be undone with 
 change and whether they apply. When am stops at a patch that doesn't apply, --retry-3way merges it with conflicts to
 resolve.
 clone --filter=blob:none fetches file contents only when they're needed (a partial clone), --depth <n> only the latest
-n commits (a shallow clone), and --sparse checks out only the top-level files (git 2.25 or later; choose folders with
+n commits (a shallow clone), and --sparse checks out only the top-level files (git 2.27 or later; choose folders with
 run '{\"op\":\"sparseCheckout\",\"folders\":[\"<dir>\"]}').")
 }
 

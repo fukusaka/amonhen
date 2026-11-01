@@ -115,12 +115,13 @@ pub struct CloneOptions {
     pub filter: Option<String>,
     /// shallow clone の `--depth`（最近のこの数のコミットだけ取る。`file://` でない手元のパスでは git が無視する）。
     pub depth: Option<u32>,
-    /// `--sparse`: 根のファイルだけを取り出す sparse checkout（cone mode）で始める（git 2.25 から）。
+    /// `--sparse`: 根のファイルだけを取り出す sparse checkout（cone mode）で始める（git 2.27 から）。
     pub sparse: bool,
 }
 
-/// sparse checkout で始める clone（`git clone --sparse`）が使える git の版。
-const CLONE_SPARSE: (u32, u32) = (2, 25);
+/// sparse checkout で始める clone（`git clone --sparse`）が使える git の版。2.25 は URL を渡すと失敗し（2.26 で
+/// 直った）、2.26 までは根にファイルがないと取り出しに失敗する。
+const CLONE_SPARSE: (u32, u32) = (2, 27);
 
 /// `url` を `dest`（まだないフォルダ）に clone する。`dest` の親で git を起動する（Activity に残る）。
 pub fn clone(url: &str, dest: &std::path::Path, options: &CloneOptions) -> Result<()> {
@@ -1059,10 +1060,10 @@ mod tests {
             sparse: true,
             ..Default::default()
         };
-        if !git_at_least(2, 25) {
+        if !git_at_least(CLONE_SPARSE.0, CLONE_SPARSE.1) {
             // 古い git では、git を起動する前に版を言って断る（フォルダも作らない）。
             let error = clone(&url, &sparse, &options).unwrap_err().to_string();
-            assert!(error.contains("2.25"), "{error}");
+            assert!(error.contains("2.27"), "{error}");
             assert!(!sparse.exists());
             return;
         }
@@ -1076,6 +1077,35 @@ mod tests {
         assert!(form.folders.is_empty());
         assert!(sparse.join("top.txt").exists());
         assert!(!sparse.join("sub").exists());
+    }
+
+    /// 根にファイルがないリポジトリでも、`--sparse` で clone してフォルダを選べる（git 2.26 までは
+    /// `sparse-checkout init` が「取り出すものがない」で失敗する）。
+    #[test]
+    fn clones_folders_only_repository_sparsely() {
+        if !git_at_least(CLONE_SPARSE.0, CLONE_SPARSE.1) {
+            return;
+        }
+        let (tmp, git) = repo();
+        for folder in ["a", "b"] {
+            std::fs::create_dir(tmp.path().join(folder)).unwrap();
+            std::fs::write(tmp.path().join(folder).join("f.txt"), "x\n").unwrap();
+        }
+        git.stage(&["a/f.txt", "b/f.txt"]).unwrap();
+        git.commit("folders", false).unwrap();
+        let out = tempfile::tempdir().unwrap();
+        let dest = out.path().join("sparse");
+        let options = CloneOptions {
+            sparse: true,
+            ..Default::default()
+        };
+        clone(tmp.path().to_str().unwrap(), &dest, &options).unwrap();
+        let git = Git::new(&dest);
+        assert!(git.repository_form().unwrap().sparse.unwrap().cone);
+        assert!(!dest.join("a").exists());
+        git.sparse_checkout(Some(&["a".to_owned()])).unwrap();
+        assert!(dest.join("a/f.txt").exists());
+        assert!(!dest.join("b").exists());
     }
 
     #[test]
