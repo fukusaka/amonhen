@@ -333,6 +333,8 @@ struct Picker {
     hidden: gtk::CheckButton,
     columns_box: gtk::Box,
     columns_scroll: gtk::ScrolledWindow,
+    /// 列を足した後、幅が決まったら最後の列まで送る（足した直後はまだ幅が変わっていない）。
+    reveal_pending: Cell<bool>,
     status: gtk::Label,
     /// 最初に列ができたら、列にキーボードを移す（macOS 版と同じく、始めは列で選ぶ。SSH 先を選べるときは欄のまま）。
     focus_columns: Cell<bool>,
@@ -569,6 +571,7 @@ impl Picker {
             hidden,
             columns_box,
             columns_scroll,
+            reveal_pending: Cell::new(false),
             status,
             focus_columns: Cell::new(!matches!(source, Source::AnyHost(_))),
             typed: RefCell::default(),
@@ -594,6 +597,17 @@ impl Picker {
     }
 
     fn wire(self: &Rc<Self>, cancel: &gtk::Button) {
+        // 列の幅が決まって送れる幅が変わったら、頼まれていれば最後の列まで送る。
+        let w = Rc::downgrade(self);
+        self.columns_scroll
+            .hadjustment()
+            .connect_upper_notify(move |adj| {
+                if let Some(p) = w.upgrade()
+                    && p.reveal_pending.get()
+                {
+                    adj.set_value(adj.upper());
+                }
+            });
         let w = Rc::downgrade(self);
         self.retry.connect_clicked(move |_| {
             if let Some(p) = w.upgrade() {
@@ -1314,9 +1328,20 @@ impl Picker {
     }
 
     /// 最後の列を見えるところまで送る。
-    fn reveal(&self) {
+    fn reveal(self: &Rc<Self>) {
         let adj = self.columns_scroll.hadjustment();
-        glib::idle_add_local_once(move || adj.set_value(adj.upper()));
+        adj.set_value(adj.upper());
+        // 幅は列の中身を読むたびに何度か変わるので、少しの間は変わるたびに送る。
+        self.reveal_pending.set(true);
+        let generation = self.generation.get();
+        let w = Rc::downgrade(self);
+        glib::timeout_add_local_once(std::time::Duration::from_millis(500), move || {
+            if let Some(p) = w.upgrade()
+                && p.generation.get() == generation
+            {
+                p.reveal_pending.set(false);
+            }
+        });
     }
 
     // 決める
