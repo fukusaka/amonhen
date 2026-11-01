@@ -587,14 +587,10 @@ pub fn all_locations() -> Vec<String> {
 /// SSH 先に送るエンジンの置き場所（main.rs の `open_remote` と同じ決め方）。
 fn ssh_daemons() -> amonhen_remote::ssh::Daemons {
     use amonhen_remote::ssh;
-    let engines = std::env::var_os("AMONHEN_ENGINES")
-        .map(PathBuf::from)
-        .or_else(|| {
-            let exe = std::env::current_exe().ok()?;
-            Some(exe.parent()?.join("engines"))
-        })
-        .unwrap_or_default();
-    ssh::Daemons::new(engines, Some((ssh::local_platform(), crate::engine())))
+    ssh::Daemons::new(
+        crate::engines_dir(),
+        Some((ssh::local_platform(), crate::engine())),
+    )
 }
 
 /// すべてのフォルダを裏で探し直す（SSH 先は時間がかかるので、フォルダごとに並べて探す）。

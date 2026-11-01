@@ -387,6 +387,8 @@ fn main() -> glib::ExitCode {
         .build();
     // 窓のアイコン（配るときに hicolor のテーマに置く。.desktop の Icon と同じ名前）。GTK を初期化した後に。
     app.connect_startup(|app| {
+        // 一緒に配ったエンジンを置き、共有の daemon に使うエンジンを決める（動いているアプリのプロセスだけで）。
+        prepare_engine();
         gtk::Window::set_default_icon_name(APP_ID);
         // ショートカットと Quit は、リポジトリのページしかない起動でも効くように最初に。
         appmenu::install_app(app);
@@ -475,17 +477,9 @@ fn open_remote(location: &str) -> amonhen_model::Result<Repository> {
     // SSH 先ごとの選択（Settings > SSH Hosts のエンジンとログインシェル。macOS 版の `hostOptions`）。
     let options = sshhosts::options_for(location);
     let conn = if location.starts_with("ssh://") {
-        // SSH 先に送るエンジン（`amonhen-<os>-<arch>`）の置き場所: `AMONHEN_ENGINES`、なければ実行ファイルの隣の
-        // `engines`（配るときに同梱する。macOS 版の Resources/engines と同じ）。SSH 先が手元と同じ OS と CPU なら
-        // 手元のエンジンを送る。
-        let engines = std::env::var_os("AMONHEN_ENGINES")
-            .map(PathBuf::from)
-            .or_else(|| {
-                let exe = std::env::current_exe().ok()?;
-                Some(exe.parent()?.join("engines"))
-            })
-            .unwrap_or_default();
-        let daemons = ssh::Daemons::new(engines, Some((ssh::local_platform(), daemon.clone())));
+        // SSH 先が手元と同じ OS と CPU なら、手元のエンジンを送る。
+        let daemons =
+            ssh::Daemons::new(engines_dir(), Some((ssh::local_platform(), daemon.clone())));
         let program = std::env::var("AMONHEN_SSH").unwrap_or_else(|_| "ssh".into());
         ssh::connect(&program, &ssh::Target::parse(location)?, &daemons, &options)?
     } else {
@@ -507,8 +501,80 @@ fn open_remote(location: &str) -> amonhen_model::Result<Repository> {
     Ok(repo)
 }
 
-/// 共有の daemon として起動するエンジン: 置き場所の `current`（`amonhen install` が置く）か、PATH の `amonhen`。
+/// SSH 先に送るエンジン（`amonhen-<os>-<arch>`）の置き場所: `AMONHEN_ENGINES`、なければ実行ファイルの隣の
+/// `engines`（配るときに同梱する。macOS 版の Resources/engines と同じ）、開発中はチェックアウトの `dist/engine`
+/// （macOS 版の `Engines.bundledDirectory` と同じ決め方）。
+fn engines_dir() -> PathBuf {
+    std::env::current_exe()
+        .map(|exe| amonhen_remote::engines::bundled_dir(&exe))
+        .unwrap_or_default()
+}
+
+/// 一緒に配った、この機械の OS と CPU のエンジン（`engines/amonhen-<os>-<arch>`。macOS 版の Contents/Helpers の
+/// エンジン）。配った形でなければ（開発中）None。
+fn bundled_engine() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?.canonicalize().ok()?;
+    let name = format!(
+        "amonhen-{}{}",
+        amonhen_remote::ssh::local_platform(),
+        std::env::consts::EXE_SUFFIX
+    );
+    let engine = exe.parent()?.join("engines").join(name);
+    engine.is_file().then_some(engine)
+}
+
+/// 起動時に `amonhen engine` が選んだエンジン。
+static RESOLVED_ENGINE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// 一緒に配ったエンジンを置き場所（`~/.local/share/amonhen`）に置き（`amonhen install`）、共有の daemon に使う
+/// エンジンを決める（`amonhen engine`。置き場所の current が同じビルドならそれ）。起動時に裏で（macOS 版の
+/// `Daemon.prepare`）。どの FE が先に起動しても同じ daemon になる。`AMONHEN_DAEMON` で差し替えているときと、
+/// 開発中（同梱のエンジンがない）は何もしない。
+fn prepare_engine() {
+    if std::env::var_os("AMONHEN_DAEMON").is_some() {
+        return;
+    }
+    let Some(helper) = bundled_engine() else {
+        return;
+    };
+    std::thread::spawn(move || {
+        let run = |args: &[&str]| {
+            let out = amonhen_model::process::command(&helper)
+                .args(args)
+                .stdin(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .output()
+                .ok()?;
+            out.status
+                .success()
+                .then(|| String::from_utf8_lossy(&out.stdout).trim().to_owned())
+        };
+        let _ = run(&["install", "--quiet"]);
+        if let Some(engine) = run(&["engine"]).filter(|e| !e.is_empty()) {
+            let _ = RESOLVED_ENGINE.set(PathBuf::from(engine));
+        }
+    });
+}
+
+/// 共有の daemon として起動するエンジン（macOS 版の `Daemon.path`）: `AMONHEN_DAEMON`、起動時に `amonhen engine`
+/// が選んだもの、一緒に配ったエンジン、開発中はチェックアウトの `target/release/amonhen`、置き場所の `current`
+/// （`amonhen install` が置く）、PATH の `amonhen` の順。
 fn engine() -> PathBuf {
+    if let Some(path) = std::env::var_os("AMONHEN_DAEMON") {
+        return PathBuf::from(path);
+    }
+    if let Some(engine) = RESOLVED_ENGINE.get() {
+        return engine.clone();
+    }
+    if let Some(engine) = bundled_engine() {
+        return engine;
+    }
+    if let Some(engine) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| amonhen_remote::engines::development_engine(&exe))
+    {
+        return engine;
+    }
     let data = std::env::var_os("XDG_DATA_HOME")
         .filter(|d| !d.is_empty())
         .map(PathBuf::from)
