@@ -403,6 +403,7 @@
 /* GTK4 の FE */
 "Loading History…" = "History を読み込んでいます…";
 "Loading History… {size} received" = "History を読み込んでいます… {size} 受信";
+"Commit frequency (left) and branch activity (right). Click to jump there." = "コミットの頻度（左）とブランチの活動量（右）。押すとそこへ飛ぶ";
 "Blame at {commit}" = "{commit} の時点で Blame";
 "Load diff" = "差分の読み込み";
 "Reload History" = "History の読み直し";

@@ -214,6 +214,8 @@ pub struct State {
     drag_chain: Option<HashSet<Oid>>,
     /// 運び始めたときに呼ぶ（編集できるコミットを読んで [`HistoryView::set_drag_chain`] で渡す）。
     on_drag_start: Option<Rc<dyn Fn()>>,
+    /// 出す History が替わったときに呼ぶ（密度の帯が求め直す）。
+    on_history: Option<Rc<dyn Fn()>>,
 }
 
 /// コミットを落としたときに呼ぶもの。
@@ -593,6 +595,10 @@ impl HistoryView {
         self.configure_adjustments();
         self.update_lineage();
         self.queue_draw();
+        let f = self.state().on_history.clone();
+        if let Some(f) = f {
+            f();
+        }
         // 選んだコミットが変わったときだけ知らせる（詳細が消えたコミットのまま残らないように）。
         if changed {
             self.notify_selection();
@@ -1101,6 +1107,11 @@ impl HistoryView {
     /// コミットを運んで落としたら `f(運んだコミット, 落とした所の下の行)` を呼ぶ。
     pub fn connect_drop_commit(&self, f: impl Fn(Oid, u32) + 'static) {
         self.state().on_drop = Some(Rc::new(f));
+    }
+
+    /// 出す History が替わったら `f()` を呼ぶ。
+    pub fn connect_history_changed(&self, f: impl Fn() + 'static) {
+        self.state().on_history = Some(Rc::new(f));
     }
 
     /// 運び始めたら `f()` を呼ぶ（編集できるコミットを読んで [`HistoryView::set_drag_chain`] で渡す）。

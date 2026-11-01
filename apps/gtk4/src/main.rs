@@ -19,6 +19,7 @@ mod commitops;
 mod commitpane;
 mod configtable;
 mod connecting;
+mod density;
 mod details;
 mod diff;
 mod editor;
@@ -637,8 +638,13 @@ fn build_tab(
     loading.set_valign(gtk::Align::Center);
     loading.append(&spinner);
     loading.append(&status);
+    // 右端に密度の帯（コミットの頻度とブランチの活動量。押すとそこへ飛ぶ。macOS 版と同じ）。
+    let table = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    scrolled.set_hexpand(true);
+    table.append(&scrolled);
+    table.append(&density::strip(&view));
     let overlay = gtk::Overlay::new();
-    overlay.set_child(Some(&scrolled));
+    overlay.set_child(Some(&table));
     overlay.add_overlay(&loading);
     // History の検索の欄（History の上に出す）。
     let search = Rc::new(search::Search::new(&view));
