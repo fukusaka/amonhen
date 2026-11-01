@@ -160,6 +160,7 @@ pub fn bool(key: &str) -> bool {
             | GITHUB_CI_DEFAULT_BRANCH
             | GITHUB_AVATARS_ONCE
             | USE_FSMONITOR
+            | crate::commitfiles::STACKED
     ))
 }
 
@@ -601,6 +602,16 @@ pub fn show(parent: &gtk::ApplicationWindow) {
                     note(&tr!(
                         "Fetched from Gravatar (sends a hash of the email address to gravatar.com)."
                     ))
+                    .upcast(),
+                    check(
+                        crate::commitfiles::STACKED,
+                        &tr!("Stack the diffs of all files"),
+                    )
+                    .upcast(),
+                    check(
+                        crate::commitfiles::FILE_TREE,
+                        &tr!("Show changed files as a tree left of the diff"),
+                    )
                     .upcast(),
                 ],
             ),
