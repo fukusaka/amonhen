@@ -127,7 +127,13 @@ fn gh(args: &[&str], dir: Option<&std::path::Path>) -> Result<String, String> {
     if let Some(d) = dir {
         command.current_dir(d);
     }
-    let out = command.output().map_err(|e| e.to_string())?;
+    // かかった時間を Activity の Performance に（macOS 版と同じ「GitHub: gh <サブコマンド>」）。記録は画面の糸で。
+    let started = std::time::Instant::now();
+    let out = command.output();
+    let label = format!("GitHub: gh {}", args.first().copied().unwrap_or_default());
+    let ms = started.elapsed().as_secs_f64() * 1000.0;
+    glib::MainContext::default().invoke(move || crate::activity::record(&label, ms));
+    let out = out.map_err(|e| e.to_string())?;
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
     } else {
