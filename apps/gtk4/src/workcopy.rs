@@ -1886,7 +1886,15 @@ impl Inner {
                     }
                     Inner::press_next_key(&this);
                 }
-                Ok(Err(e)) => this.show_error(&tr!("Can’t read the diff: {e}", e = e)),
+                Ok(Err(e)) => {
+                    // 前に出していたもの（コンフリクトのボタンなど）を残さない。理由は差分の場所に。
+                    this.conflict_buttons.set_visible(false);
+                    this.sides.set_visible(false);
+                    this.show_line_endings(None);
+                    this.current.replace(None);
+                    this.diff
+                        .show_message(&tr!("Can’t read the diff: {e}", e = e));
+                }
                 Err(_) => {}
             }
             this.update_buttons();
