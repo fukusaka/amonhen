@@ -14,6 +14,12 @@ pub enum Item {
         on: bool,
         f: Box<dyn Fn()>,
     },
+    /// ツールチップの付いた項目（macOS 版の `toolTip`。GMenu の項目には出せないので、自前の部品で出す）。
+    Hint {
+        title: String,
+        tip: String,
+        f: Box<dyn Fn()>,
+    },
     /// 押せない項目（説明だけ。macOS 版の `isEnabled = false`）。
     Disabled(String),
     /// 下に開くメニュー（Repositories の行の Group・Color Label など）。
@@ -37,13 +43,24 @@ pub fn choice(title: impl Into<String>, on: bool, f: impl Fn() + 'static) -> Ite
     }
 }
 
+/// ツールチップ `tip` の付いた `title` の項目を作る。
+pub fn hint(title: impl Into<String>, tip: impl Into<String>, f: impl Fn() + 'static) -> Item {
+    Item::Hint {
+        title: title.into(),
+        tip: tip.into(),
+        f: Box::new(f),
+    }
+}
+
 /// 項目の名前（区切りは `---`、下に開くメニューは `▸` と、字下げした中身）。確認用に、出したメニューを文字で
 /// 書き出すのに使う。
 pub fn titles(items: &[Item]) -> Vec<String> {
     let mut out = Vec::new();
     for i in items {
         match i {
-            Item::Action(title, _) | Item::Choice { title, .. } => out.push(title.clone()),
+            Item::Action(title, _) | Item::Choice { title, .. } | Item::Hint { title, .. } => {
+                out.push(title.clone())
+            }
             Item::Disabled(title) => out.push(format!("({title})")),
             Item::Submenu(title, children) => {
                 out.push(format!("{title} ▸"));
@@ -59,7 +76,7 @@ pub fn titles(items: &[Item]) -> Vec<String> {
 pub fn activate(items: &[Item], path: &str) -> bool {
     let (first, rest) = path.split_once(" > ").unwrap_or((path, ""));
     items.iter().any(|item| match item {
-        Item::Action(title, f) | Item::Choice { title, f, .. }
+        Item::Action(title, f) | Item::Choice { title, f, .. } | Item::Hint { title, f, .. }
             if title == first && rest.is_empty() =>
         {
             f();
@@ -72,12 +89,21 @@ pub fn activate(items: &[Item], path: &str) -> bool {
 
 /// 選ぶ項目のある段の項目（macOS 版のように、印の欄を空けて今の値にだけ ✓ を出す。GTK の印は四角の中の ✓
 /// で、項目の名前に色もアイコンも出せないので、自前の部品にする）。印・色の丸（`dot` が Some のとき、その欄を
-/// 空ける）・名前の順に並べ、押したらメニューを閉じて `f` を呼ぶ。
-fn choice_row(title: &str, on: bool, dot: Option<Option<&str>>, f: Box<dyn Fn()>) -> gtk::Widget {
+/// 空ける）・名前の順に並べ、押したらメニューを閉じて `f` を呼ぶ。`on` が None なら印の欄を置かない（選ぶ項目の
+/// ない段のツールチップ付きの項目。名前は GTK の項目と同じ位置）。`tip` はツールチップ。
+fn choice_row(
+    title: &str,
+    on: Option<bool>,
+    dot: Option<Option<&str>>,
+    tip: Option<&str>,
+    f: Box<dyn Fn()>,
+) -> gtk::Widget {
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    let check = gtk::Label::new(Some(if on { "✓" } else { "" }));
-    check.set_width_chars(2);
-    row.append(&check);
+    if let Some(on) = on {
+        let check = gtk::Label::new(Some(if on { "✓" } else { "" }));
+        check.set_width_chars(2);
+        row.append(&check);
+    }
     if let Some(color) = dot {
         let dot = gtk::Label::new(None);
         dot.set_width_chars(2);
@@ -92,7 +118,12 @@ fn choice_row(title: &str, on: bool, dot: Option<Option<&str>>, f: Box<dyn Fn()>
     row.append(&label);
     let button = gtk::Button::builder().child(&row).build();
     button.add_css_class("flat");
-    button.add_css_class("choice-row");
+    button.add_css_class(if on.is_some() {
+        "choice-row"
+    } else {
+        "hint-row"
+    });
+    button.set_tooltip_text(tip);
     button.connect_clicked(move |b| {
         if let Some(p) = b.ancestor(gtk::Popover::static_type()) {
             p.downcast::<gtk::Popover>().expect("popover").popdown();
@@ -142,7 +173,25 @@ fn build(
             }
             Item::Action(title, f) if choices => {
                 let dot = swatches.then_some(None);
-                add_custom(&section, n, custom, choice_row(&title, false, dot, f));
+                add_custom(
+                    &section,
+                    n,
+                    custom,
+                    choice_row(&title, Some(false), dot, None, f),
+                );
+            }
+            Item::Hint { title, tip, f } => {
+                let (on, dot) = if choices {
+                    (Some(false), swatches.then_some(None))
+                } else {
+                    (None, None)
+                };
+                add_custom(
+                    &section,
+                    n,
+                    custom,
+                    choice_row(&title, on, dot, Some(&tip), f),
+                );
             }
             Item::Action(title, f) => {
                 let name = format!("item{n}");
@@ -159,7 +208,12 @@ fn build(
                 f,
             } => {
                 let dot = swatches.then_some(color);
-                add_custom(&section, n, custom, choice_row(&title, on, dot, f));
+                add_custom(
+                    &section,
+                    n,
+                    custom,
+                    choice_row(&title, Some(on), dot, None, f),
+                );
             }
             Item::Disabled(title) => {
                 // グループにないアクションの項目は、GTK が押せない見た目にする。
@@ -185,7 +239,9 @@ pub fn install_css() {
         "popover.menu scrollbar.vertical, popover.menu scrollbar.vertical range, \
          popover.menu scrollbar.vertical trough, popover.menu scrollbar.vertical slider { min-height: 0; } \
          popover.menu button.choice-row { padding: 0 8px; min-height: 30px; font-weight: normal; } \
-         popover.menu button.choice-row label { color: @theme_fg_color; opacity: 1; }",
+         popover.menu button.choice-row label { color: @theme_fg_color; opacity: 1; } \
+         popover.menu button.hint-row { padding: 0 12px; min-height: 30px; font-weight: normal; } \
+         popover.menu button.hint-row label { color: @theme_fg_color; opacity: 1; }",
     );
     if let Some(display) = gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
@@ -222,6 +278,73 @@ pub fn retitle(menu: &gio::MenuModel, title: &dyn Fn(&str) -> Option<String>) {
             menu.insert_item(i, &item);
         }
     }
+}
+
+/// GMenu の項目のツールチップを入れておく属性（macOS 版の項目の `toolTip`）。GTK の `GtkPopoverMenu` は項目に
+/// ツールチップを出さないので、[`tooltips_on_show`] が出すたびに項目の部品に付ける。
+pub const TOOLTIP: &str = "amonhen-tooltip";
+
+/// `title` の項目（アクション `action`）にツールチップ `tip` を付けて `menu` に足す。
+pub fn append_with_tip(menu: &gio::Menu, title: &str, action: &str, tip: Option<&str>) {
+    let item = gio::MenuItem::new(Some(title), Some(action));
+    if let Some(tip) = tip {
+        item.set_attribute_value(TOOLTIP, Some(&tip.to_variant()));
+    }
+    menu.append_item(&item);
+}
+
+/// 項目の名前とツールチップ（`menu` の節・下のメニューの中も）。
+fn collect_tips(menu: &gio::MenuModel, out: &mut std::collections::HashMap<String, String>) {
+    for i in 0..menu.n_items() {
+        for link in [gio::MENU_LINK_SECTION, gio::MENU_LINK_SUBMENU] {
+            if let Some(child) = menu.item_link(i, link) {
+                collect_tips(&child, out);
+            }
+        }
+        let get = |name: &str| {
+            menu.item_attribute_value(i, name, Some(glib::VariantTy::STRING))
+                .and_then(|v| v.get::<String>())
+        };
+        if let (Some(label), Some(tip)) = (get(gio::MENU_ATTRIBUTE_LABEL), get(TOOLTIP)) {
+            out.insert(label, tip);
+        }
+    }
+}
+
+/// `widget` の下の項目の部品（`GtkModelButton`。名前は `text`）のうち、`tips` にある名前のものにツールチップを
+/// 付ける（下のメニューの段も、GTK は最初に作って Stack に入れている）。
+fn apply_tips(widget: &gtk::Widget, tips: &std::collections::HashMap<String, String>) {
+    let mut child = widget.first_child();
+    while let Some(c) = child {
+        if c.type_().name() == "GtkModelButton" && c.find_property("text").is_some() {
+            let text = c.property::<Option<String>>("text");
+            if let Some(tip) = text.and_then(|t| tips.get(&t)) {
+                c.set_tooltip_text(Some(tip));
+            }
+        }
+        apply_tips(&c, tips);
+        child = c.next_sibling();
+    }
+}
+
+/// `button` のメニューを出すたびに、[`append_with_tip`] で付けたツールチップを項目に付ける（項目の部品は、
+/// メニューの中身が変わると作り直されるので、そのたび）。GTK の内側の部品の形に頼るので、形が違えば何も付かない。
+pub fn tooltips_on_show(button: &gtk::MenuButton) {
+    let (Some(popover), Some(model)) = (button.popover(), button.menu_model()) else {
+        return;
+    };
+    popover.connect_map(move |p| {
+        let p = p.clone().upcast::<gtk::Widget>();
+        let model = model.clone();
+        // 出すときに名前を合わせる処理（`appmenu::retitle_on_show`）で作り直された後に付ける。
+        glib::idle_add_local_once(move || {
+            let mut tips = std::collections::HashMap::new();
+            collect_tips(&model, &mut tips);
+            if !tips.is_empty() {
+                apply_tips(&p, &tips);
+            }
+        });
+    });
 }
 
 /// `parent` の `(x, y)` に `items` のメニューを出す。

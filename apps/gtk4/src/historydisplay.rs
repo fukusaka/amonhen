@@ -66,48 +66,85 @@ pub fn display() -> Display {
 /// View の後ろ）。
 pub fn sections() -> Vec<(Option<String>, gio::Menu)> {
     let order = gio::Menu::new();
-    for (title, value) in [
-        (tr!("Date Order"), HistoryOrder::Date),
-        (tr!("Topological Order"), HistoryOrder::Topo),
+    for (title, value, tip) in [
+        (
+            tr!("Date Order"),
+            HistoryOrder::Date,
+            tr!("Newest first wherever the graph allows (like git log --date-order)"),
+        ),
+        (
+            tr!("Topological Order"),
+            HistoryOrder::Topo,
+            tr!(
+                "Keep a branch’s commits together under the merge that brought them in (like git log --topo-order)"
+            ),
+        ),
     ] {
         let item = gio::MenuItem::new(Some(&title), None);
         item.set_action_and_target_value(
             Some("win.history-order"),
             Some(&value.name().to_variant()),
         );
+        // ツールチップ（macOS 版と同じ。`menu::tooltips_on_show` が付ける）。
+        item.set_attribute_value(menu::TOOLTIP, Some(&tip.to_variant()));
         order.append_item(&item);
     }
     let shown = gio::Menu::new();
     for (action, _, title) in item_entries() {
         shown.append(Some(&title), Some(&format!("win.{action}")));
     }
+    // 切り替えの項目とツールチップ（macOS 版と同じ）。
     let toggles = gio::Menu::new();
-    toggles.append(
-        Some(&tr!("One Line per Commit")),
-        Some("win.one-line-history"),
-    );
-    toggles.append(
-        Some(&tr!("Fold Merged Branches")),
-        Some("win.fold-merged-branches"),
-    );
-    toggles.append(
-        Some(&tr!("Highlight Ancestors")),
-        Some("win.highlight-ancestors"),
-    );
+    for (title, action, tip) in [
+        (tr!("One Line per Commit"), "win.one-line-history", None),
+        (
+            tr!("Fold Merged Branches"),
+            "win.fold-merged-branches",
+            Some(tr!(
+                "In History, hide the commits brought in by a merge and show their count on the merge row (right-click to expand)"
+            )),
+        ),
+        (
+            tr!("Highlight Ancestors"),
+            "win.highlight-ancestors",
+            Some(tr!(
+                "Draw only the selected commit’s ancestors and the lines between them in full color, and dim the rest"
+            )),
+        ),
+    ] {
+        menu::append_with_tip(&toggles, &title, action, tip.as_deref());
+    }
     let details = gio::Menu::new();
-    details.append(
-        Some(&tr!("Monospaced Commit Message")),
-        Some("win.monospaced-commit-message"),
-    );
-    details.append(Some(&tr!("Show Avatars")), Some("win.show-avatars"));
-    details.append(
-        Some(&tr!("All Files in One Diff")),
-        Some("win.all-files-in-one-diff"),
-    );
-    details.append(
-        Some(&tr!("Changed Files as Tree")),
-        Some("win.changed-files-as-tree"),
-    );
+    for (title, action, tip) in [
+        (
+            tr!("Monospaced Commit Message"),
+            "win.monospaced-commit-message",
+            tr!(
+                "Show commit messages in a monospaced font (keeps bodies wrapped at 72 columns aligned)"
+            ),
+        ),
+        (
+            tr!("Show Avatars"),
+            "win.show-avatars",
+            tr!(
+                "Show Gravatar avatars in commit details (sends a hash of the email address to gravatar.com)"
+            ),
+        ),
+        (
+            tr!("All Files in One Diff"),
+            "win.all-files-in-one-diff",
+            tr!("Stack every file in a commit’s diff (when off, only the selected file)"),
+        ),
+        (
+            tr!("Changed Files as Tree"),
+            "win.changed-files-as-tree",
+            tr!(
+                "Show a commit’s changed files as a tree to the left of the diff (when off, as a list between the message and the diff)"
+            ),
+        ),
+    ] {
+        menu::append_with_tip(&details, &title, action, Some(&tip));
+    }
     vec![
         (Some(tr!("Order")), order),
         (Some(tr!("Items")), shown),
@@ -214,6 +251,7 @@ pub fn bar() -> (gtk::Box, gtk::MenuButton) {
         .menu_model(&model)
         .tooltip_text(tr!("History Display: order, items, one line per commit"))
         .build();
+    menu::tooltips_on_show(&button);
     button.add_css_class("flat");
     bar.append(&button);
     (bar, button)

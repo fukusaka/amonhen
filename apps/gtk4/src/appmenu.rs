@@ -537,6 +537,7 @@ pub fn install(parts: Parts) -> Buttons {
     // 開くときに、状態で変わる項目の名前（Publish…・Undo <操作>…）を合わせる。
     for button in [&repository, &primary] {
         retitle_on_show(button, &parts.actions);
+        crate::menu::tooltips_on_show(button);
     }
     parts.header.pack_end(&toolbar_end);
     Buttons {
@@ -600,7 +601,14 @@ fn table_sections(menu: Menu) -> gio::Menu {
     for section in amonhen_commands::menu(menu) {
         let items = gio::Menu::new();
         for c in section.iter().filter(|c| !PENDING.contains(&c.id)) {
-            items.append(Some(&title(c)), Some(&format!("win.{}", c.id)));
+            // 表の説明は項目のツールチップに（macOS 版と同じ）。
+            let tip = c.tooltip.map(amonhen_model::i18n::translate);
+            crate::menu::append_with_tip(
+                &items,
+                &title(c),
+                &format!("win.{}", c.id),
+                tip.as_deref(),
+            );
         }
         if items.n_items() > 0 {
             out.append_section(None, &items);

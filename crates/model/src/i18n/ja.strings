@@ -1199,6 +1199,14 @@
 "Fold Merged Branches" = "merge したブランチを畳む";
 "Highlight Ancestors" = "祖先を強調";
 "Monospaced Commit Message" = "コミットメッセージを等幅で表示";
+"Newest first wherever the graph allows (like git log --date-order)" = "グラフが許す限り新しいものから（git log --date-order と同じ）";
+"Keep a branch’s commits together under the merge that brought them in (like git log --topo-order)" = "枝のコミットを散らさず、取り込んだ merge の下にまとめる（git log --topo-order と同じ）";
+"In History, hide the commits brought in by a merge and show their count on the merge row (right-click to expand)" = "History で、merge で取り込んだ側のコミットを隠し、merge の行に数を出す（右クリックで開く）";
+"Draw only the selected commit’s ancestors and the lines between them in full color, and dim the rest" = "選んだコミットの祖先と、それをつなぐ線だけを濃く描き、ほかを薄くする";
+"Show commit messages in a monospaced font (keeps bodies wrapped at 72 columns aligned)" = "コミットの本文を等幅の字体で出す（72 桁で改行した本文が崩れない）";
+"Show Gravatar avatars in commit details (sends a hash of the email address to gravatar.com)" = "コミットの詳細に Gravatar のアバターを出す（メールアドレスのハッシュを gravatar.com に送る）";
+"Stack every file in a commit’s diff (when off, only the selected file)" = "コミットの差分で、全ファイルを縦に並べる（オフなら選んだファイルだけ）";
+"Show a commit’s changed files as a tree to the left of the diff (when off, as a list between the message and the diff)" = "コミットの変更ファイルを、差分の左に木で出す（オフならメッセージと差分の間に一覧）";
 "Go to HEAD (Ctrl+Shift+H)" = "HEAD へ移動（Ctrl+Shift+H）";
 "History Display: order, items, one line per commit" = "History の表示: 並び順・表示項目・1 行表示";
 "Show {count} Merged Commits" = "取り込んだ {count} コミットを表示";
@@ -1403,6 +1411,7 @@
 "When you last opened it in this app (— if never)" = "このアプリで最後に開いた日時（— はまだ開いていない）";
 "Switch repository" = "リポジトリを切り替える";
 "Open Through the Shared daemon" = "共有の daemon 越しに開く";
+"Share History, the search index and the operation log with the CLI and others" = "History・検索の索引・操作の記録を CLI などと共有する";
 "Opened" = "開いた日時";
 "Places" = "場所";
 "Remove" = "外す";

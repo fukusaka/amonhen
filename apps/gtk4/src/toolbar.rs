@@ -310,11 +310,19 @@ pub fn install(start: &gtk::Box, end: &gtk::Box, given: Given) {
         &tr!("Reload History, branches and Working Copy (Ctrl+R)"),
     ));
     let more = gio::Menu::new();
-    more.append(Some(&tr!("Rebuild History")), Some("win.rebuild-history"));
+    crate::menu::append_with_tip(
+        &more,
+        &tr!("Rebuild History"),
+        "win.rebuild-history",
+        Some(&tr!(
+            "Discard the History cache and rebuild it from scratch (over the shared daemon, the daemon’s too)"
+        )),
+    );
     let arrow = gtk::MenuButton::builder()
         .menu_model(&more)
         .tooltip_text(tr!("Refresh"))
         .build();
+    crate::menu::tooltips_on_show(&arrow);
     refresh.append(&arrow);
     buttons.insert("refresh", refresh.upcast());
     buttons.insert("undo", given.undo.upcast());

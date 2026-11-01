@@ -1740,8 +1740,11 @@ impl Browser {
             && !crate::settings::bool(crate::settings::OPEN_THROUGH_DAEMON)
         {
             let (b, p) = (self.clone(), path.clone());
-            items.push(menu::action(
+            items.push(menu::hint(
                 tr!("Open Through the Shared daemon"),
+                tr!(
+                    "Share History, the search index and the operation log with the CLI and others"
+                ),
                 move || b.open_location(&format!("daemon:{p}"), true),
             ));
         }
