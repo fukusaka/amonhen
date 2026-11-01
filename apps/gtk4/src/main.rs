@@ -357,16 +357,33 @@ fn main() -> glib::ExitCode {
     settings::apply_fsmonitor();
     // コアが作る文（エラーなど）の言語。Linux の慣習どおり LC_ALL・LC_MESSAGES・LANG から。
     amonhen_model::i18n::set_default(amonhen_model::i18n::Lang::from_env());
-    let args = match parse_args() {
+    let mut args = match parse_args() {
         Ok(args) => args,
         Err(e) => {
             eprintln!("{e}");
             return glib::ExitCode::FAILURE;
         }
     };
+    // 確認用の起動（オプションを付けたもの: `--snapshot`・`--measure-scroll`・スクリプトで動かすものなど）は、
+    // 動いているアプリとは別のプロセスで動かす。今のフォルダのリポジトリを開くのも、これらだけ。
+    let scripted = raw.iter().skip(1).any(|a| a.starts_with('-'));
+    if scripted
+        && args.path.is_none()
+        && let Ok(cwd) = std::env::current_dir()
+        && repos::inside_repository(&cwd)
+    {
+        args.path = Some(cwd);
+    }
+    // ふだんの起動はアプリを 1 つだけにする（macOS 版と同じ）。2 つ目の起動（`amonhen open`・ファイルマネージャー・
+    // もう一度の起動）は、渡された場所を動いているアプリに渡して終わる。
+    let flags = if scripted {
+        gio::ApplicationFlags::NON_UNIQUE
+    } else {
+        gio::ApplicationFlags::HANDLES_COMMAND_LINE
+    };
     let app = gtk::Application::builder()
         .application_id(APP_ID)
-        .flags(gio::ApplicationFlags::NON_UNIQUE)
+        .flags(flags)
         .build();
     // 窓のアイコン（配るときに hicolor のテーマに置く。.desktop の Icon と同じ名前）。GTK を初期化した後に。
     app.connect_startup(|app| {
@@ -375,9 +392,53 @@ fn main() -> glib::ExitCode {
         appmenu::install_app(app);
         menu::install_css();
     });
-    app.connect_activate(move |app| launch(app, &args));
-    // 引数は自分で読んだので、GTK には渡さない。
-    app.run_with_args::<&str>(&[])
+    if scripted {
+        app.connect_activate(move |app| launch(app, &args));
+        // 引数は自分で読んだので、GTK には渡さない。
+        return app.run_with_args::<&str>(&[]);
+    }
+    app.connect_command_line(|app, line| {
+        let location = line
+            .arguments()
+            .get(1)
+            .map(|a| outside_location(a, line.cwd().as_deref()));
+        if line.is_remote() {
+            open_from_outside(app, location);
+        } else {
+            launch(
+                app,
+                &Args {
+                    path: location,
+                    ..Args::default()
+                },
+            );
+        }
+        glib::ExitCode::SUCCESS
+    });
+    app.run_with_args(&raw)
+}
+
+/// 外から渡された場所: SSH 先・daemon 越しはそのまま、手元の相対パスは起動したフォルダから。
+fn outside_location(arg: &std::ffi::OsStr, cwd: Option<&Path>) -> PathBuf {
+    let path = PathBuf::from(arg);
+    if amonhen_remote::location::is_remote(&arg.to_string_lossy()) || path.is_absolute() {
+        return path;
+    }
+    cwd.map_or(path.clone(), |cwd| cwd.join(&path))
+}
+
+/// 動いているアプリに、ほかの起動から場所が渡された（macOS 版の `application(_:open:)`）: 前にある窓のタブで開く
+/// （開いていれば前に出す）。場所がなければ（もう一度の起動）、前の窓を出し、窓がなければリポジトリのページを出す。
+fn open_from_outside(app: &gtk::Application, location: Option<PathBuf>) {
+    match location {
+        Some(location) => tabs::open(app, repos::top_of(&location), tabs::Place::Tab),
+        None => match tabs::front_window() {
+            Some(host) => host.window.present(),
+            None => {
+                tabs::show_home(app, None);
+            }
+        },
+    }
 }
 
 /// リポジトリを開く。`location` は手元のパス、`daemon:/path`（手元の共有の daemon。いなければ起動する）、
@@ -466,8 +527,8 @@ fn opener(app: &gtk::Application) -> repobrowser::Open {
     Rc::new(move |path, place| tabs::open(&app, path, place))
 }
 
-/// 起動したとき: 引数のリポジトリ、なければ今のフォルダのリポジトリを開く。今のフォルダがリポジトリでなければ、
-/// 前回の終わりに開いていた窓とタブを同じ並びで開き直し（macOS 版と同じ）、それもなければリポジトリのページを出す。
+/// 起動したとき: 引数のリポジトリを開く。なければ前回の終わりに開いていた窓とタブを同じ並びで開き直し、それも
+/// なければリポジトリのページを出す（macOS 版と同じ。確認用の起動だけは、今のフォルダのリポジトリを引数にする）。
 fn launch(app: &gtk::Application, args: &Args) {
     let check = args.snapshot.is_some() || args.measure_scroll;
     if check {
@@ -484,9 +545,7 @@ fn launch(app: &gtk::Application, args: &Args) {
         let window = quickopen::show_with(None, opener(app), query);
         window.set_application(Some(app));
         Some(window)
-    } else if args.path.is_none()
-        && !repos::inside_repository(&std::env::current_dir().unwrap_or_default())
-    {
+    } else if args.path.is_none() {
         let restore = if check {
             Vec::new()
         } else {
@@ -3022,4 +3081,20 @@ fn snapshot(window: &gtk::Window, png: &Path) -> Result<(), String> {
         Some(&graphene::Rect::new(0.0, 0.0, w * scale, h * scale)),
     );
     texture.save_to_png(png).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsStr;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn resolves_outside_locations() {
+        let cwd = Some(Path::new("/work"));
+        let at = |a: &str| super::outside_location(OsStr::new(a), cwd);
+        assert_eq!(at("repo"), PathBuf::from("/work/repo"));
+        assert_eq!(at("/abs/repo"), PathBuf::from("/abs/repo"));
+        assert_eq!(at("ssh://host/~/x"), PathBuf::from("ssh://host/~/x"));
+        assert_eq!(at("daemon:/x"), PathBuf::from("daemon:/x"));
+    }
 }
