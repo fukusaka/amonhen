@@ -81,8 +81,6 @@ pub mod items {
     /// GitHub の CI の状態。
     pub const CI: u32 = 32;
     pub const ALL: u32 = REFS | AUTHOR | DATE | ID | SIGNATURE | CI;
-    /// 作者・日時の行に出すもの。
-    pub const META: u32 = AUTHOR | DATE | ID;
 }
 
 /// History の行に出す項目（[`items`] のビット）。

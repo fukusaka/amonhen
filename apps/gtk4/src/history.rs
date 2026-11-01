@@ -108,9 +108,10 @@ impl Default for Display {
 }
 
 impl Display {
-    /// 実際に 1 行で出すか: 1 行にしたか、作者・日時の行に出す項目が 1 つもないとき。
+    /// 1 行で出すか。作者・日時の行に出す項目が 1 つもなくても、行の高さは変えない（macOS 版と同じく、行の高さは
+    /// One Line per Commit だけで決まる）。
     fn compact(&self) -> bool {
-        self.one_line || self.items & items::META == 0
+        self.one_line
     }
 }
 
