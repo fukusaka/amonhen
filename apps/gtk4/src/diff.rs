@@ -349,6 +349,14 @@ mod imp {
         fn size_allocate(&self, width: i32, height: i32, baseline: i32) {
             self.parent_size_allocate(width, height, baseline);
             self.obj().configure_adjustments();
+            // 右クリックのメニューは子なので、自分で置く（置かないと、最初に測った高さのまま項目が切れる）。
+            let mut child = self.obj().first_child();
+            while let Some(c) = child {
+                if let Some(p) = c.downcast_ref::<gtk::Popover>() {
+                    p.present();
+                }
+                child = c.next_sibling();
+            }
         }
 
         fn snapshot(&self, snapshot: &gtk::Snapshot) {
