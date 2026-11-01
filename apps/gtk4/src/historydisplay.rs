@@ -293,11 +293,18 @@ impl Shaper {
             if s.updating_scope.get() {
                 return;
             }
-            match bar.selected() {
-                0 => s.set_scope(Scope::All, None, Vec::new()),
-                1 => s.set_scope(Scope::Current, None, Vec::new()),
-                _ => {}
-            }
+            let scope = match bar.selected() {
+                0 => Scope::All,
+                1 => Scope::Current,
+                _ => return,
+            };
+            // 選んだ通知の中で model を替えると、GTK の一覧が作り直しを繰り返して固まる。通知が終わってから替える。
+            let weak = Rc::downgrade(&s);
+            glib::idle_add_local_once(move || {
+                if let Some(s) = weak.upgrade() {
+                    s.set_scope(scope, None, Vec::new());
+                }
+            });
         });
         let weak = Rc::downgrade(&shaper);
         settings::connect_changed(move |key| {
@@ -339,11 +346,27 @@ impl Shaper {
                 2
             }
         };
-        let titles: Vec<&str> = titles.iter().map(String::as_str).collect();
         self.updating_scope.set(true);
-        self.scope_bar
-            .set_model(Some(&gtk::StringList::new(&titles)));
-        self.scope_bar.set_selected(selected);
+        // 項目が同じなら model は替えない（替えると開いている一覧を作り直す）。
+        let same = self
+            .scope_bar
+            .model()
+            .and_downcast::<gtk::StringList>()
+            .is_some_and(|list| {
+                list.n_items() as usize == titles.len()
+                    && titles
+                        .iter()
+                        .enumerate()
+                        .all(|(i, t)| list.string(i as u32).as_deref() == Some(t.as_str()))
+            });
+        if !same {
+            let titles: Vec<&str> = titles.iter().map(String::as_str).collect();
+            self.scope_bar
+                .set_model(Some(&gtk::StringList::new(&titles)));
+        }
+        if self.scope_bar.selected() != selected {
+            self.scope_bar.set_selected(selected);
+        }
         self.updating_scope.set(false);
     }
 
