@@ -1432,14 +1432,16 @@ impl Browser {
         ));
         let mut groups = Vec::new();
         let t = targets.clone();
-        groups.push(menu::action(tr!("None"), move || {
+        let group = bookmark.as_ref().and_then(|b| b.group.clone());
+        groups.push(menu::choice(tr!("None"), group.is_none(), move || {
             for p in &t {
                 bookmarks::move_to(p, None);
             }
         }));
         for g in bookmarks::data().groups {
             let t = targets.clone();
-            groups.push(menu::action(g.clone(), move || {
+            let on = group.as_deref() == Some(g.as_str());
+            groups.push(menu::choice(g.clone(), on, move || {
                 for p in &t {
                     bookmarks::move_to(p, Some(&g));
                 }
@@ -1461,21 +1463,26 @@ impl Browser {
         items.push(Item::Submenu(tr!("Group"), groups));
         let mut colors = Vec::new();
         let t = targets.clone();
-        colors.push(menu::action(tr!("None"), move || {
+        let color = bookmark.as_ref().and_then(|b| b.color.clone());
+        colors.push(menu::choice(tr!("None"), color.is_none(), move || {
             for p in &t {
                 bookmarks::set_color(p, None);
             }
         }));
-        for (name, title, _) in bookmarks::COLORS {
+        for (name, title, hex) in bookmarks::COLORS {
             let t = targets.clone();
-            colors.push(menu::action(
-                format!("● {}", amonhen_model::i18n::translate(title)),
-                move || {
+            let title = amonhen_model::i18n::translate(title).into_owned();
+            // macOS 版と同じく、名前の前にその色の丸。
+            colors.push(Item::Choice {
+                color: Some(hex),
+                title,
+                on: color.as_deref() == Some(*name),
+                f: Box::new(move || {
                     for p in &t {
                         bookmarks::set_color(p, Some(name));
                     }
-                },
-            ));
+                }),
+            });
         }
         items.push(Item::Submenu(tr!("Color Label"), colors));
         let (b, p) = (self.clone(), path.clone());
