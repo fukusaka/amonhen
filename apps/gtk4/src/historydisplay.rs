@@ -284,7 +284,13 @@ pub struct Shaper {
     pub scope_bar: gtk::DropDown,
     /// 範囲を選ぶものを作り直している間（選んだ知らせを無視する）。
     updating_scope: Cell<bool>,
+    /// 少し待ってから絞り込み直す（History と ref の読み直しが続いても 1 回にまとめる。macOS 版の
+    /// `scheduleReloadScope`）。
+    reshape_soon: RefCell<Option<glib::SourceId>>,
 }
+
+/// 絞り込み直すまで待つ時間（macOS 版と同じ 0.1 秒）。
+const RESHAPE_DELAY: std::time::Duration = std::time::Duration::from_millis(100);
 
 /// 表示する範囲（macOS 版の `HistoryViewController.Scope`）。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -325,6 +331,7 @@ impl Shaper {
             refs: RefCell::default(),
             scope_bar,
             updating_scope: Cell::new(false),
+            reshape_soon: RefCell::default(),
         });
         shaper.update_scope_bar();
         let weak = Rc::downgrade(&shaper);
@@ -364,8 +371,9 @@ impl Shaper {
         shaper
     }
 
-    /// 読み直した（全体の）History を出す。
-    pub fn present(&self, repo: Arc<Repository>, full: Arc<HistorySnapshot>) {
+    /// 読み直した（全体の）History を出す。絞り込んで・折りたたんで出しているなら、少し待ってから作り直す
+    /// （続けて ref も読み直すので、1 回にまとめる。macOS 版と同じ）。
+    pub fn present(self: &Rc<Self>, repo: Arc<Repository>, full: Arc<HistorySnapshot>) {
         // 前に出していた History を読み直したもの（ほかのプログラムの変化など）なら、溶かして入れ替える。
         let reloaded = self
             .full
@@ -376,7 +384,30 @@ impl Shaper {
             self.view.fade_next();
         }
         self.full.replace(Some((repo, full)));
-        self.reshape(None);
+        let shaped = settings::bool(settings::FOLD_MERGED_BRANCHES) || !self.tips().is_empty();
+        if reloaded && shaped {
+            self.schedule_reshape();
+        } else {
+            self.reshape(None);
+        }
+    }
+
+    /// 少し待ってから絞り込み直す（待っている間に頼まれたら、まとめて 1 回）。
+    fn schedule_reshape(self: &Rc<Self>) {
+        if let Some(id) = self.reshape_soon.take() {
+            id.remove();
+        } else {
+            // `--snapshot` は作り直すまで待つ。
+            self.pending.set(self.pending.get() + 1);
+        }
+        let weak = Rc::downgrade(self);
+        let id = glib::timeout_add_local_once(RESHAPE_DELAY, move || {
+            let Some(s) = weak.upgrade() else { return };
+            s.reshape_soon.replace(None);
+            s.pending.set(s.pending.get() - 1);
+            s.reshape(None);
+        });
+        self.reshape_soon.replace(Some(id));
     }
 
     /// 範囲を選ぶものを今の範囲に合わせる（3 つめは絞り込んだ ref の名前か、ブランチの数。macOS 版の
@@ -486,7 +517,7 @@ impl Shaper {
     /// ref の一覧が変わった。絞り込んだ ref がほかのプログラムで動いた（rebase・commit・fetch）なら、新しい
     /// コミットに付け替えて絞り込み直す（前のコミットのままだと、消えたコミットから辿ることになる）。今の
     /// ブランチに絞っていて HEAD が動いたら、絞り込み直す。
-    pub fn show_refs(&self, refs: &Refs) {
+    pub fn show_refs(self: &Rc<Self>, refs: &Refs) {
         let now = |kind: RefKind, name: &str, target: Oid| {
             refs.entries
                 .iter()
@@ -512,7 +543,7 @@ impl Shaper {
             self.scope.replace(moved);
         }
         if scope_moved || (head_moved && *self.scope.borrow() == Scope::Current) {
-            self.reshape(None);
+            self.schedule_reshape();
         }
     }
 
@@ -529,6 +560,11 @@ impl Shaper {
     }
 
     fn reshape(&self, select: Option<Oid>) {
+        // すぐ作り直すなら、待っている分は要らない。
+        if let Some(id) = self.reshape_soon.take() {
+            id.remove();
+            self.pending.set(self.pending.get() - 1);
+        }
         let Some((repo, full)) = self.full.borrow().clone() else {
             return;
         };
