@@ -1213,6 +1213,9 @@ fn engine_choice(session: &Rc<HostSession>) -> Vec<gtk::Widget> {
         })
     };
     let (h, sv, w) = (host.clone(), save.clone(), Rc::downgrade(session));
+    // 選ぶ欄（つながっていないときに、パスを選ぶ窓を出す親を探す）。
+    let anchor: Rc<RefCell<glib::WeakRef<gtk::Widget>>> = Rc::default();
+    let a = anchor.clone();
     let picker = Picker::new(move |value| {
         let mut new = host_options(&h);
         if value != OTHER {
@@ -1226,10 +1229,30 @@ fn engine_choice(session: &Rc<HostSession>) -> Vec<gtk::Widget> {
             .clone()
             .filter(|e| is_engine_path(e))
             .unwrap_or_else(|| "~/.local/share/amonhen".into());
+        let sv = sv.clone();
         let Some(settings) = w.upgrade().and_then(|s| s.settings()) else {
+            // つないでいる途中か、つながらなかった: 選ぶ窓が自分で SSH 先につなぐ（エンジンが動かない SSH 先も
+            // パスを直せるように。macOS 版と同じ）。
+            let request = crate::filepicker::Request {
+                title: tr!("Engine on {host}", host = h),
+                message: tr!("Choose amonhen on the host. It must be this build."),
+                kind: crate::filepicker::Kind::Executable,
+                initial: current,
+                places: crate::filepicker::host_program_places(),
+            };
+            let parent = a.borrow().upgrade().and_then(|b| b.root()).and_downcast::<gtk::Window>();
+            let source = crate::filepicker::Source::Host(h.clone());
+            glib::spawn_future_local(async move {
+                if let Some(chosen) =
+                    crate::filepicker::choose(parent.as_ref(), request, source).await
+                    && is_engine_path(&chosen.path)
+                {
+                    new.engine = Some(chosen.path);
+                    sv(new);
+                }
+            });
             return;
         };
-        let sv = sv.clone();
         settings.choose_path(
             crate::filepicker::Kind::Executable,
             &tr!("Engine on {host}", host = h),
@@ -1253,6 +1276,7 @@ fn engine_choice(session: &Rc<HostSession>) -> Vec<gtk::Widget> {
     if let Some(path) = options.engine.clone().filter(|e| is_engine_path(e)) {
         items.push((path.clone(), path));
     }
+    anchor.replace(picker.button.upcast_ref::<gtk::Widget>().downgrade());
     picker.set(
         &vec![
             (None, vec![(String::new(), tr!("Automatic"))]),
