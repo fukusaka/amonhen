@@ -295,7 +295,8 @@ impl WorkingCopy {
             .placeholder_text(tr!("Filter by path"))
             .build();
         let list = gtk::ListBox::new();
-        list.set_selection_mode(gtk::SelectionMode::Single);
+        // 何行も選べる（Space・Enter で選んだファイルをまとめて含める・外す。macOS 版と同じ）。
+        list.set_selection_mode(gtk::SelectionMode::Multiple);
         list.add_css_class("navigation-sidebar");
         let empty = gtk::Label::new(None);
         empty.add_css_class("dim-label");
@@ -607,13 +608,20 @@ impl WorkingCopy {
 impl Inner {
     fn connect(this: &Rc<Self>) {
         let weak = Rc::downgrade(this);
-        this.list.connect_row_selected(move |_, row| {
-            let (Some(this), Some(row)) = (weak.upgrade(), row) else {
-                return;
-            };
+        this.list.connect_selected_rows_changed(move |list| {
+            let Some(this) = weak.upgrade() else { return };
             if this.rebuilding.get() {
                 return;
             }
+            // 差分に出すのは、クリックした（フォーカスのある）行。なければ選んだ最初の行。
+            let selected = list.selected_rows();
+            let focused = list
+                .focus_child()
+                .and_downcast::<gtk::ListBoxRow>()
+                .filter(|r| r.is_selected());
+            let Some(row) = focused.or_else(|| selected.first().cloned()) else {
+                return;
+            };
             let index = this
                 .row_entries
                 .borrow()
@@ -1458,11 +1466,7 @@ impl Inner {
             return false;
         };
         match key {
-            Key::space | Key::Return | Key::KP_Enter => {
-                if entry.kind != StatusKind::Unmerged {
-                    Inner::toggle_entry(this, &entry);
-                }
-            }
+            Key::space | Key::Return | Key::KP_Enter => Inner::toggle_selected(this),
             Key::BackSpace | Key::Delete | Key::KP_Delete => {
                 if entry.kind != StatusKind::Unmerged && entry.is_unstaged() {
                     Inner::discard_file(this, &entry);
@@ -1473,6 +1477,36 @@ impl Inner {
             _ => return false,
         }
         true
+    }
+
+    /// Space・Enter: 一覧で選んだファイル（コンフリクトを除く）を、すべて含めていれば外し、そうでなければ含める
+    /// （macOS 版と同じ）。含める・外すものがなければ音で知らせる。
+    fn toggle_selected(this: &Rc<Self>) {
+        let targets: Vec<StatusEntry> = {
+            let rows = this.row_entries.borrow();
+            let entries = this.entries.borrow();
+            this.list
+                .selected_rows()
+                .iter()
+                .filter_map(|row| rows.get(row.index() as usize).copied().flatten())
+                .filter_map(|i| entries.get(i).cloned())
+                .filter(|e| e.kind != StatusKind::Unmerged)
+                .collect()
+        };
+        if targets.is_empty() {
+            this.list.error_bell();
+            return;
+        }
+        let fully = targets.iter().all(|e| e.is_staged() && !e.is_unstaged());
+        let paths: Vec<String> = targets.into_iter().map(|e| e.path).collect();
+        Inner::run(this, move |repo| {
+            let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
+            if fully {
+                repo.unstage(&paths)
+            } else {
+                repo.stage(&paths)
+            }
+        });
     }
 
     /// ファイルを次のコミットに含める・外す（すべて含めていれば外し、そうでなければ含める）。
@@ -1491,11 +1525,17 @@ impl Inner {
     /// ⌥J・⌥K: 一覧で次・前のファイルを選ぶ（ディレクトリの行は飛ばす）。
     fn move_file(this: &Rc<Self>, step: i32) {
         let rows = this.row_entries.borrow().clone();
-        let current = this.list.selected_row().map_or(-1, |r| r.index());
-        let mut i = current + step;
+        // 今の差分のファイルの行から数える（何行も選んでいても）。
+        let current = this.selected.borrow().as_deref().and_then(|path| {
+            let entries = this.entries.borrow();
+            rows.iter()
+                .position(|r| r.is_some_and(|i| entries.get(i).is_some_and(|e| e.path == path)))
+        });
+        let mut i = current.map_or(-1, |c| c as i32) + step;
         while i >= 0 && (i as usize) < rows.len() {
             if rows[i as usize].is_some() {
                 if let Some(row) = this.list.row_at_index(i) {
+                    this.list.unselect_all();
                     this.list.select_row(Some(&row));
                     this.diff.grab_focus();
                 }
