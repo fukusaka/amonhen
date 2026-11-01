@@ -262,7 +262,7 @@ impl Inner {
             column.set_margin_bottom(4);
             column.append(&title);
             column.append(&sub);
-            // 右クリックで、その行のメニュー（選択も移す）。
+            // 右クリックで、その行のメニュー（選択は動かさない。macOS 版の clickedRow と同じ）。
             let click = gtk::GestureClick::new();
             click.set_button(gtk::gdk::BUTTON_SECONDARY);
             let (weak, list_item) = (weak.clone(), item.downgrade());
@@ -274,7 +274,6 @@ impl Inner {
                 if row == gtk::INVALID_LIST_POSITION {
                     return;
                 }
-                inner.selection.set_selected(row);
                 if let Some(widget) = gesture.widget() {
                     menu::popup(&widget, x, y, inner.menu(row));
                 }
