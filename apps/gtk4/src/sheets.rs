@@ -292,6 +292,27 @@ pub async fn between(repo: &Arc<Repository>, base: &str, tip: &str, limit: u32) 
     CommitRange::from(&reply["info"])
 }
 
+/// [`between`] と同じで、調べられなければその理由。
+pub async fn try_between(
+    repo: &Arc<Repository>,
+    base: &str,
+    tip: &str,
+    limit: u32,
+) -> Result<CommitRange, String> {
+    let reply = run(
+        repo,
+        json!({ "op": "between", "base": base, "tip": tip, "limit": limit }),
+    )
+    .await;
+    if reply["ok"].as_bool() == Some(true) {
+        Ok(CommitRange::from(&reply["info"]))
+    } else {
+        Err(reply["error"]
+            .as_str()
+            .map_or_else(|| tr!("Couldn’t check the branches"), str::to_owned))
+    }
+}
+
 fn time(t: i64) -> String {
     glib::DateTime::from_unix_local(t)
         .and_then(|d| d.format("%Y-%m-%d %H:%M"))
@@ -1912,41 +1933,58 @@ pub fn push_after_commit(actions: &Rc<Actions>) {
     });
 }
 
+/// それぞれのブランチにしかないコミット。git と同じく、今のブランチか上流のどちらかに取り込まれていれば消せる。
+async fn unique_commits(
+    repo: &Arc<Repository>,
+    names: &[String],
+) -> Result<Vec<(String, CommitRange)>, String> {
+    let r = repo.clone();
+    let refs = gio::spawn_blocking(move || r.load_refs().map_err(|e| e.to_string()))
+        .await
+        .unwrap_or_else(|_| Err(tr!("Couldn’t check the branches")))?;
+    let mut unique = Vec::new();
+    for name in names {
+        let item = refs
+            .refs
+            .entries
+            .iter()
+            .find(|i| i.kind == amonhen_model::RefKind::Local && &i.name == name);
+        let upstream = item.and_then(|i| if i.gone { None } else { i.detail.clone() });
+        let from_head = try_between(repo, "HEAD", name, 30).await?;
+        let only = match upstream {
+            Some(u) if from_head.count > 0 => {
+                let from_upstream = try_between(repo, &u, name, 30).await?;
+                if from_upstream.count < from_head.count {
+                    from_upstream
+                } else {
+                    from_head
+                }
+            }
+            _ => from_head,
+        };
+        unique.push((name.clone(), only));
+    }
+    Ok(unique)
+}
+
 /// ブランチを消す前に確かめる。今のブランチにも上流にも取り込まれていないコミットがあれば、それを並べて見せ、
 /// Delete Anyway（`-D`）で消す。どちらも Undo で戻せる。
 pub fn delete_branches(actions: &Rc<Actions>, names: Vec<String>) {
     let actions = actions.clone();
     glib::spawn_future_local(async move {
         let Some(repo) = actions.repo() else { return };
-        let r = repo.clone();
-        let refs = gio::spawn_blocking(move || r.load_refs().ok())
-            .await
-            .ok()
-            .flatten();
-        let mut unique: Vec<(String, CommitRange)> = Vec::new();
-        for name in &names {
-            // git と同じく、今のブランチか上流のどちらかに取り込まれていれば消せる。
-            let item = refs.as_ref().and_then(|r| {
-                r.refs
-                    .entries
-                    .iter()
-                    .find(|i| i.kind == amonhen_model::RefKind::Local && &i.name == name)
-            });
-            let upstream = item.and_then(|i| if i.gone { None } else { i.detail.clone() });
-            let from_head = between(&repo, "HEAD", name, 30).await;
-            let only = match upstream {
-                Some(u) if from_head.count > 0 => {
-                    let from_upstream = between(&repo, &u, name, 30).await;
-                    if from_upstream.count < from_head.count {
-                        from_upstream
-                    } else {
-                        from_head
-                    }
-                }
-                _ => from_head,
-            };
-            unique.push((name.clone(), only));
-        }
+        // 調べられなければ、そう知らせて消さない（macOS 版と同じ。数を 0 とみなして `-d` で断られないように）。
+        let unique = match unique_commits(&repo, &names).await {
+            Ok(unique) => unique,
+            Err(error) => {
+                return inform(
+                    parent(&actions).as_ref(),
+                    &tr!("Couldn’t check the branches"),
+                    &error,
+                )
+                .await;
+            }
+        };
         let unmerged = unique.iter().any(|(_, r)| r.count > 0);
         let title = if names.len() == 1 {
             tr!("Delete {name}?", name = names[0])
