@@ -22,6 +22,8 @@ becomes the GitHub Release notes.
 
 #### Changed
 
+- On Linux, `amonhen open` (and `amonhen <path>`) opens the repository in the GTK4 app, as a tab of the running app.
+
 - The Fetch sheet chooses the remote: all of them, as before, or one. The core's `fetch` takes the remote too.
 
 - History's edit mode and the Rebase sheets say which stacked branches move with the rewrite or stay and why, which
