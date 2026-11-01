@@ -1412,8 +1412,8 @@ impl Browser {
         items.push(menu::action(tr!("Open in New Window"), move || {
             b.open_location(&p, false)
         }));
+        // SSH 先も（`daemon:ssh://…`。共有の daemon が SSH 先につなぐ。macOS 版と同じ）。
         if !path.starts_with("daemon:")
-            && !path.starts_with("ssh://")
             && !crate::settings::bool(crate::settings::OPEN_THROUGH_DAEMON)
         {
             let (b, p) = (self.clone(), path.clone());

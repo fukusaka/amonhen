@@ -385,6 +385,10 @@ fn main() -> glib::ExitCode {
 /// 同じ永続キャッシュに置く（手元の共有の daemon なら、daemon が用意したものを読む）。
 fn open(location: &Path) -> Result<Repository, String> {
     let text = location.to_string_lossy();
+    // Settings > Advanced で共有の daemon 越しに開くなら、SSH 先も `daemon:ssh://…` に（macOS 版と同じ）。
+    if text.starts_with("ssh://") && settings::bool(settings::OPEN_THROUGH_DAEMON) {
+        return open_remote(&format!("daemon:{text}")).map_err(|e| e.to_string());
+    }
     if amonhen_remote::location::is_remote(&text) {
         return open_remote(&text).map_err(|e| e.to_string());
     }
