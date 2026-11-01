@@ -321,6 +321,30 @@ impl Mode {
                 m.apply_clicked();
             }
         });
+        // Esc で Cancel、Return で Apply Changes（macOS 版のボタンのキーと同じ）。欄の中の Return・Esc は欄が使う。
+        for widget in [mode.root.upcast_ref::<gtk::Widget>(), mode.bar.upcast_ref()] {
+            let keys = gtk::EventControllerKey::new();
+            let weak = Rc::downgrade(&mode);
+            keys.connect_key_pressed(move |_, key, _, state| {
+                let Some(m) = weak.upgrade() else {
+                    return glib::Propagation::Proceed;
+                };
+                if state.intersects(
+                    gdk::ModifierType::CONTROL_MASK
+                        | gdk::ModifierType::ALT_MASK
+                        | gdk::ModifierType::SHIFT_MASK,
+                ) {
+                    return glib::Propagation::Proceed;
+                }
+                match key {
+                    gdk::Key::Escape => m.finish(),
+                    gdk::Key::Return | gdk::Key::KP_Enter => m.apply_clicked(),
+                    _ => return glib::Propagation::Proceed,
+                }
+                glib::Propagation::Stop
+            });
+            widget.add_controller(keys);
+        }
         let weak = Rc::downgrade(&mode);
         mode.move_stacked.connect_toggled(move |_| {
             if let Some(m) = weak.upgrade()
