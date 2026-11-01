@@ -67,26 +67,29 @@ pub fn activate(items: &[Item], path: &str) -> bool {
     })
 }
 
-/// 色の丸の付いた選ぶ項目（GTK の縦のメニューは項目の名前に色もアイコンも出せないので、自前の部品にする）。
-/// 印・色の丸・名前の順に並べ、押したらメニューを閉じて `f` を呼ぶ。
-fn swatch_row(title: &str, color: Option<&str>, on: bool, f: Box<dyn Fn()>) -> gtk::Widget {
+/// 選ぶ項目のある段の項目（macOS 版のように、印の欄を空けて今の値にだけ ✓ を出す。GTK の印は四角の中の ✓
+/// で、項目の名前に色もアイコンも出せないので、自前の部品にする）。印・色の丸（`dot` が Some のとき、その欄を
+/// 空ける）・名前の順に並べ、押したらメニューを閉じて `f` を呼ぶ。
+fn choice_row(title: &str, on: bool, dot: Option<Option<&str>>, f: Box<dyn Fn()>) -> gtk::Widget {
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     let check = gtk::Label::new(Some(if on { "✓" } else { "" }));
     check.set_width_chars(2);
     row.append(&check);
-    let dot = gtk::Label::new(None);
-    dot.set_width_chars(2);
-    if let Some(color) = color {
-        dot.set_markup(&format!("<span foreground=\"{color}\">●</span>"));
+    if let Some(color) = dot {
+        let dot = gtk::Label::new(None);
+        dot.set_width_chars(2);
+        if let Some(color) = color {
+            dot.set_markup(&format!("<span foreground=\"{color}\">●</span>"));
+        }
+        row.append(&dot);
     }
-    row.append(&dot);
     let label = gtk::Label::new(Some(title));
     label.set_xalign(0.0);
     label.set_hexpand(true);
     row.append(&label);
     let button = gtk::Button::builder().child(&row).build();
     button.add_css_class("flat");
-    button.add_css_class("swatch-row");
+    button.add_css_class("choice-row");
     button.connect_clicked(move |b| {
         if let Some(p) = b.ancestor(gtk::Popover::static_type()) {
             p.downcast::<gtk::Popover>().expect("popover").popdown();
@@ -94,6 +97,21 @@ fn swatch_row(title: &str, color: Option<&str>, on: bool, f: Box<dyn Fn()>) -> g
         f();
     });
     button.upcast()
+}
+
+/// 自前の部品の項目を `section` に足す（部品は `custom` に。メニューを作った後に置く）。
+fn add_custom(
+    section: &gio::Menu,
+    n: &mut usize,
+    custom: &mut Vec<(String, gtk::Widget)>,
+    widget: gtk::Widget,
+) {
+    let name = format!("item{n}");
+    *n += 1;
+    let item = gio::MenuItem::new(None, None);
+    item.set_attribute_value("custom", Some(&name.to_variant()));
+    section.append_item(&item);
+    custom.push((name, widget));
 }
 
 /// `items` を節に分けた `GMenu` にする。項目のアクションは `group` に足す（名前は `n` から順に振る）。
@@ -104,7 +122,8 @@ fn build(
     n: &mut usize,
     custom: &mut Vec<(String, gtk::Widget)>,
 ) -> gio::Menu {
-    // 色の丸のある段は、そろえるために、選ぶ項目をみな自前の部品で出す。
+    // 選ぶ項目のある段は、名前の位置をそろえるために、項目をみな自前の部品で出す。色の丸があれば、その欄も。
+    let choices = items.iter().any(|i| matches!(i, Item::Choice { .. }));
     let swatches = items
         .iter()
         .any(|i| matches!(i, Item::Choice { color: Some(_), .. }));
@@ -117,6 +136,10 @@ fn build(
                     model.append_section(None, &section);
                     section = gio::Menu::new();
                 }
+            }
+            Item::Action(title, f) if choices => {
+                let dot = swatches.then_some(None);
+                add_custom(&section, n, custom, choice_row(&title, false, dot, f));
             }
             Item::Action(title, f) => {
                 let name = format!("item{n}");
@@ -132,25 +155,8 @@ fn build(
                 on,
                 f,
             } => {
-                let name = format!("item{n}");
-                *n += 1;
-                if swatches {
-                    let item = gio::MenuItem::new(None, None);
-                    item.set_attribute_value("custom", Some(&name.to_variant()));
-                    section.append_item(&item);
-                    custom.push((name, swatch_row(&title, color, on, f)));
-                    continue;
-                }
-                // 真偽の状態を持つアクションの項目には、GTK が印を付ける。macOS 版と同じく、印は今の値にだけ
-                // （ほかの項目は状態を持たせず、空の印も出さない）。
-                let action = if on {
-                    gio::SimpleAction::new_stateful(&name, None, &true.to_variant())
-                } else {
-                    gio::SimpleAction::new(&name, None)
-                };
-                action.connect_activate(move |_, _| f());
-                group.add_action(&action);
-                section.append(Some(&title), Some(&format!("context.{name}")));
+                let dot = swatches.then_some(color);
+                add_custom(&section, n, custom, choice_row(&title, on, dot, f));
             }
             Item::Submenu(title, children) => {
                 let sub = build(children, group, n, custom);
@@ -171,8 +177,8 @@ pub fn install_css() {
     provider.load_from_string(
         "popover.menu scrollbar.vertical, popover.menu scrollbar.vertical range, \
          popover.menu scrollbar.vertical trough, popover.menu scrollbar.vertical slider { min-height: 0; } \
-         popover.menu button.swatch-row { padding: 0 8px; min-height: 30px; font-weight: normal; } \
-         popover.menu button.swatch-row label { color: @theme_fg_color; opacity: 1; }",
+         popover.menu button.choice-row { padding: 0 8px; min-height: 30px; font-weight: normal; } \
+         popover.menu button.choice-row label { color: @theme_fg_color; opacity: 1; }",
     );
     if let Some(display) = gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
