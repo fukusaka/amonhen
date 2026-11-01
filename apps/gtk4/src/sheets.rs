@@ -1028,9 +1028,9 @@ fn pull_mode_tooltip(mode: &str) -> String {
         "fastForwardOnly" => tr!(
             "Only moves the branch forward. Stops without changing anything if you have local commits too."
         ),
-        "git" => tr!(
-            "Uses this repository’s pull.rebase and pull.ff, as git pull in a terminal does."
-        ),
+        "git" => {
+            tr!("Uses this repository’s pull.rebase and pull.ff, as git pull in a terminal does.")
+        }
         _ => tr!(
             "Brings the upstream commits in. When both sides have new commits, a merge commit joins them."
         ),
@@ -1059,7 +1059,10 @@ fn pull_mode_factory() -> gtk::SignalListItemFactory {
             return;
         };
         label.set_text(&text.string());
-        let mode = PULL_MODES.get(item.position() as usize).copied().unwrap_or("merge");
+        let mode = PULL_MODES
+            .get(item.position() as usize)
+            .copied()
+            .unwrap_or("merge");
         label.set_tooltip_text(Some(&pull_mode_tooltip(mode)));
     });
     factory

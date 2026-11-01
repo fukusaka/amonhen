@@ -206,6 +206,17 @@ impl Actions {
         commands: Vec<Value>,
         done: impl FnOnce(&Value) + 'static,
     ) {
+        self.perform_recovering(commands, |_| false, done);
+    }
+
+    /// [`Self::perform_with`] と同じで、失敗の答えを `handled` が引き受けたら（`done` で別に尋ねるなど）、失敗を
+    /// 知らせない（同じことを、失敗とその問いの 2 つで見せないように。macOS 版の `recover`）。
+    pub fn perform_recovering(
+        self: &Rc<Self>,
+        commands: Vec<Value>,
+        handled: impl FnOnce(&Value) -> bool + 'static,
+        done: impl FnOnce(&Value) + 'static,
+    ) {
         let Some(repo) = self.repo.borrow().clone() else {
             done(&Value::Null);
             return;
@@ -235,12 +246,16 @@ impl Actions {
             // 失敗はステータスバーに（作業を止めない）。コンフリクトや途中で止まったことは、読み直したときに
             // ステータスバーの途中の操作の行が知らせる。
             if result["error"].is_string() {
-                let failure =
-                    crate::statusbar::Failure::from_reply(&result, Some(last_command.clone()));
-                let on_failure = this.on_failure.borrow().clone();
-                match on_failure {
-                    Some(f) => f(failure),
-                    None => this.alert(&failure.title(), &failure.message).await,
+                if handled(&result) {
+                    // 知らせは `done` に任せる。
+                } else {
+                    let failure =
+                        crate::statusbar::Failure::from_reply(&result, Some(last_command.clone()));
+                    let on_failure = this.on_failure.borrow().clone();
+                    match on_failure {
+                        Some(f) => f(failure),
+                        None => this.alert(&failure.title(), &failure.message).await,
+                    }
                 }
             } else if result["outcome"].as_str().is_none_or(|o| o == "done")
                 && let Some(f) = this.on_done.borrow().clone()

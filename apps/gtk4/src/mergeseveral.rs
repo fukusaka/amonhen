@@ -310,8 +310,11 @@ fn merge(actions: &Rc<Actions>, revs: Vec<String>, one_by_one: bool) {
         command["oneByOne"] = json!(true);
     }
     let a = actions.clone();
-    actions.perform_with(vec![command], move |reply: &Value| {
-        if one_by_one || reply["errorKind"].as_str() != Some("octopus") {
+    // 1 つのコミットにまとめるのを断られたら、失敗は知らせずに、1 つずつ merge するかを尋ねる（macOS 版と同じ）。
+    let refused =
+        move |reply: &Value| !one_by_one && reply["errorKind"].as_str() == Some("octopus");
+    actions.perform_recovering(vec![command], refused, move |reply: &Value| {
+        if !refused(reply) {
             return;
         }
         let a = a.clone();
