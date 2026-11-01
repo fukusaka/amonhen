@@ -135,6 +135,50 @@ fn choices(rows: &[Row], i: usize) -> Vec<Action> {
         .collect()
 }
 
+/// 行ですることの一覧の項目（名前と、選んでいる印。乗せると説明）。
+fn action_items() -> gtk::SignalListItemFactory {
+    let factory = gtk::SignalListItemFactory::new();
+    factory.connect_setup(|_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let label = gtk::Label::new(None);
+        label.set_xalign(0.0);
+        label.set_hexpand(true);
+        let check = gtk::Image::from_icon_name("object-select-symbolic");
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        row.append(&label);
+        row.append(&check);
+        item.set_child(Some(&row));
+        item.connect_selected_notify(move |item| {
+            check.set_opacity(if item.is_selected() { 1.0 } else { 0.0 })
+        });
+    });
+    factory.connect_bind(|_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let title = item
+            .item()
+            .and_downcast::<gtk::StringObject>()
+            .map(|s| s.string().to_string())
+            .unwrap_or_default();
+        let Some(row) = item.child() else { return };
+        let tip = Action::ALL
+            .into_iter()
+            .find(|a| a.title() == title)
+            .map(Action::tip);
+        row.set_tooltip_text(tip.as_deref());
+        if let Some(label) = row.first_child().and_downcast::<gtk::Label>() {
+            label.set_text(&title);
+        }
+        if let Some(check) = row.last_child() {
+            check.set_opacity(if item.is_selected() { 1.0 } else { 0.0 });
+        }
+    });
+    factory
+}
+
 /// `i` の行（squash）までのまとまりのメッセージを、古い順につないだもの（git の squash の既定と同じ）。
 fn combined_message(rows: &[Row], i: usize) -> String {
     // 新しい順の並びで、i から下（古い方）へ、まとめる先の行まで。
@@ -391,6 +435,8 @@ impl Mode {
             texts.append(&subject);
             texts.append(&detail);
             let choice = gtk::DropDown::from_strings(&[]);
+            // 開いた一覧の項目ごとに説明（git の言葉）を出す（macOS 版のメニューの項目の説明と同じ）。
+            choice.set_list_factory(Some(&action_items()));
             choice.set_valign(gtk::Align::Center);
             choice.set_size_request(290, -1);
             let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
