@@ -1015,7 +1015,6 @@ fn bind_row(item: &gtk::ListItem) {
     } else {
         badge.add_css_class("dim-label");
     }
-    title.set_text(&data.title);
     for css in ["heading", "dim-label"] {
         if group {
             title.add_css_class(css);
@@ -1026,6 +1025,22 @@ fn bind_row(item: &gtk::ListItem) {
     let attrs = gtk::pango::AttrList::new();
     if data.head {
         attrs.insert(gtk::pango::AttrInt::new_weight(gtk::pango::Weight::Bold));
+    }
+    // 見出しの数は、名前のすぐ後ろに薄く小さく（右端には出さない）。
+    if group && !data.badge.is_empty() {
+        let start = data.title.len() as u32;
+        let mut alpha = gtk::pango::AttrInt::new_foreground_alpha(u16::MAX / 2);
+        alpha.set_start_index(start);
+        attrs.insert(alpha);
+        let mut scale = gtk::pango::AttrFloat::new_scale(gtk::pango::SCALE_SMALL);
+        scale.set_start_index(start);
+        attrs.insert(scale);
+        let mut weight = gtk::pango::AttrInt::new_weight(gtk::pango::Weight::Normal);
+        weight.set_start_index(start);
+        attrs.insert(weight);
+        title.set_text(&format!("{}  {}", data.title, data.badge));
+    } else {
+        title.set_text(&data.title);
     }
     title.set_attributes(Some(&attrs));
     let mut child = marks.first_child();
@@ -1051,8 +1066,10 @@ fn bind_row(item: &gtk::ListItem) {
     }
     let has_marks = !data.marks.is_empty() || data.signature.is_some();
     marks.set_visible(has_marks);
-    badge.set_text(&data.badge);
-    badge.set_visible(!data.badge.is_empty());
+    // 見出しの数は名前の後ろに出した。
+    let badge_text = if group { "" } else { data.badge.as_str() };
+    badge.set_text(badge_text);
+    badge.set_visible(!badge_text.is_empty());
     for css in ["success", "error"] {
         badge.remove_css_class(css);
     }
@@ -1063,7 +1080,7 @@ fn bind_row(item: &gtk::ListItem) {
         }
         None => badge.add_css_class("dim-label"),
     }
-    trail.set_visible(has_marks || !data.badge.is_empty());
+    trail.set_visible(has_marks || !badge_text.is_empty());
     // 署名の印の意味は、ツールチップの先頭に。
     let tooltip = match (&data.signature, &data.tooltip) {
         (Some(s), Some(t)) => Some(format!("{}\n{t}", s.tooltip)),
@@ -1716,13 +1733,20 @@ impl Inner {
         drop(pull_requests);
         // 初めて出すときは開いておく。
         let open_pull_requests = pr_shown && self.pull_requests_first.replace(false);
+        // 閉じていても中身があると分かるよう、見出しに数を添える（Workspace は除く。macOS 版と同じ）。
         let nodes: Vec<Node> = groups
             .into_iter()
             .map(|(title, children)| {
+                let badge = if title == "Workspace" {
+                    String::new()
+                } else {
+                    leaf_count(&children).to_string()
+                };
                 Node::new(
                     Data {
                         title: title.into(),
                         key: format!("group/{title}"),
+                        badge,
                         ..Data::default()
                     },
                     Some(children),
@@ -1828,6 +1852,17 @@ impl Inner {
             }
         }
     }
+}
+
+/// 見出しの下の項目の数（子のない行を数える。リモートはブランチの数。macOS 版の `leafCount`）。
+fn leaf_count(store: &gio::ListStore) -> usize {
+    (0..store.n_items())
+        .filter_map(|i| store.item(i).and_downcast::<Node>())
+        .map(|node| match node.children() {
+            Some(children) if children.n_items() > 0 => leaf_count(&children),
+            _ => 1,
+        })
+        .sum()
 }
 
 /// ブランチの行の worktree の印: ほかの worktree が checkout しているもの（git はここでは checkout させない）は、
