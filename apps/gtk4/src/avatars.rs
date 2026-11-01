@@ -135,13 +135,21 @@ pub fn shown() -> bool {
     crate::settings::bool(crate::settings::SHOW_AVATARS)
 }
 
-/// `url` の中身（裏の糸で）。取れなければ None。
+/// `url` の中身（裏の糸で）。取れなければ None。`curl` で取り、`curl` がなければ GIO（gvfs）で取る
+/// （`curl` のない環境で、何も言わずにどのアバターも出なくならないように）。
 fn fetch(url: &str) -> Option<Vec<u8>> {
-    let out = amonhen_model::process::command("curl")
+    match amonhen_model::process::command("curl")
         .args(["-fsSL", "--max-time", "15", url])
         .output()
-        .ok()?;
-    (out.status.success() && !out.stdout.is_empty()).then_some(out.stdout)
+    {
+        Ok(out) => (out.status.success() && !out.stdout.is_empty()).then_some(out.stdout),
+        Err(_) => {
+            let (bytes, _) = gio::File::for_uri(url)
+                .load_contents(None::<&gio::Cancellable>)
+                .ok()?;
+            (!bytes.is_empty()).then(|| bytes.to_vec())
+        }
+    }
 }
 
 fn install_css() {
