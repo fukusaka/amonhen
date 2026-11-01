@@ -643,11 +643,16 @@ impl RepoSettings {
                 ),
                 None => tr!("This computer’s git runs this repository. Choose it in Settings > Git."),
             }));
-            git.connect_clicked(|b| {
-                // その機械（この機械）の git を選ぶのは Settings > Git。
+            // このリポジトリを動かしている git。機械（この機械か SSH 先）のものなので、変えるのはその機械の設定で
+            // （Settings > Git か、Settings > SSH Hosts のその SSH 先）の Programs。
+            let page = match crate::sshhosts::host_of(location) {
+                Some(host) => format!("ssh-hosts/{host}/programs"),
+                None => "git/programs".to_owned(),
+            };
+            git.connect_clicked(move |b| {
                 if let Some(parent) = crate::settings::main_window_of(b) {
                     crate::settings::show(&parent);
-                    crate::settings::select("git");
+                    crate::settings::select(&page);
                 }
             });
             left.append(&git);
