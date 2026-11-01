@@ -231,7 +231,11 @@ fn handlers() -> Vec<(&'static str, Handler)> {
                 let open = p.open.clone();
                 crate::repos::clone(
                     p.window().upcast_ref(),
-                    Rc::new(move |path| open(path, crate::tabs::Place::Tab)),
+                    Rc::new(move |path| {
+                        // clone したものはブックマークにも入れる（macOS 版と同じ）。
+                        crate::bookmarks::add(&path.to_string_lossy(), None);
+                        open(path, crate::tabs::Place::Tab)
+                    }),
                 )
             }),
         ),
