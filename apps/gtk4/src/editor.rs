@@ -74,8 +74,9 @@ pub fn app_of(value: &str) -> Option<App> {
     if value.is_empty() {
         return None;
     }
-    if value.starts_with('/') {
-        let path = std::path::Path::new(value);
+    // 実行ファイルのパス（Windows の `C:\…` も）。そうでなければアプリの ID。
+    let path = std::path::Path::new(value);
+    if path.is_absolute() {
         if !path.is_file() {
             return None;
         }
@@ -206,8 +207,11 @@ pub fn settings_row() -> gtk::Box {
         let dialog = gtk::FileDialog::builder()
             .title(tr!("External Editor"))
             .accept_label(tr!("Choose"))
-            .initial_folder(&gio::File::for_path("/usr/bin"))
             .build();
+        // 最初に開くフォルダ（Windows は既定のまま）。
+        if cfg!(unix) {
+            dialog.set_initial_folder(Some(&gio::File::for_path("/usr/bin")));
+        }
         glib::spawn_future_local(async move {
             if let Ok(file) = dialog.open_future(parent.as_ref()).await
                 && let Some(path) = file.path()
