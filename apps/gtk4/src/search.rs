@@ -423,7 +423,8 @@ impl Inner {
         glib::spawn_future_local(async move {
             // 前の検索はやめさせる（コアは新しい検索を始めると古いものを止める）。
             let rows = gio::spawn_blocking(move || {
-                repo.search_history(&searched, &q).map_err(|e| e.to_string())
+                repo.search_history(&searched, &q)
+                    .map_err(|e| e.to_string())
             })
             .await;
             let Some(this) = weak.upgrade() else { return };

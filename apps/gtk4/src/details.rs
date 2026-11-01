@@ -109,7 +109,7 @@ pub struct Details {
     notes: gtk::Label,
     info: RefCell<Option<Value>>,
     /// 詳細より先に届いた、時間のかかる分。
-    extras: RefCell<Option<Value>>,
+    extras: Rc<RefCell<Option<Value>>>,
     /// 複数のコミットを選んだときの見出し（ほかの部品の代わりに出す）。
     selection: gtk::Box,
     selection_title: gtk::Label,
@@ -143,8 +143,83 @@ pub struct Details {
     actions: gio::SimpleActionGroup,
     /// メニューの項目が使う、出しているコミット。
     menu_info: Rc<RefCell<Option<Value>>>,
-    /// Edit Message… を選んだとき（コミットの ID。[`Details::connect_edit_message`]）。
-    on_reword: Rc<RefCell<Option<OnRef>>>,
+    /// 書き直したメッセージを保存したとき（コミットの ID、メッセージ。[`Details::connect_edit_message`]）。
+    on_reword: Rc<RefCell<Option<OnReword>>>,
+    /// その場で書き直す欄（Edit Message…。macOS 版の `beginReword`）。
+    reword: Rc<Reword>,
+    /// 詳細のスクロール（書き直す間は隠して、書き直す欄を出す）。
+    scrolled: gtk::ScrolledWindow,
+}
+
+/// 書き直したメッセージを保存したとき（コミットの ID、メッセージ）。
+pub type OnReword = Rc<dyn Fn(&str, &str)>;
+
+/// その場でメッセージを書き直す欄: 上に編集欄、下の帯に説明と「キャンセル」「保存」（macOS 版と同じ）。
+struct Reword {
+    root: gtk::Box,
+    text: gtk::TextView,
+    save: gtk::Button,
+    cancel: gtk::Button,
+    /// 書き直しているコミット（ID と、もとのメッセージ）。
+    editing: RefCell<Option<(String, String)>>,
+}
+
+impl Reword {
+    fn new() -> Self {
+        let text = gtk::TextView::builder()
+            .monospace(true)
+            .wrap_mode(gtk::WrapMode::WordChar)
+            .top_margin(6)
+            .bottom_margin(6)
+            .left_margin(6)
+            .right_margin(6)
+            .build();
+        let scroll = gtk::ScrolledWindow::builder()
+            .child(&text)
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .vexpand(true)
+            .build();
+        let hint = gtk::Label::new(Some(&tr!(
+            "Ctrl+Return to save, Esc to cancel. You can Undo it."
+        )));
+        hint.add_css_class("caption");
+        hint.add_css_class("dim-label");
+        hint.set_xalign(0.0);
+        hint.set_hexpand(true);
+        hint.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        let cancel = gtk::Button::with_label(&tr!("Cancel"));
+        let save = gtk::Button::with_label(&tr!("Save"));
+        save.add_css_class("suggested-action");
+        let bar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        bar.set_margin_top(4);
+        bar.set_margin_bottom(4);
+        bar.set_margin_start(10);
+        bar.set_margin_end(8);
+        bar.append(&hint);
+        bar.append(&cancel);
+        bar.append(&save);
+        let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        root.set_vexpand(true);
+        root.append(&scroll);
+        root.append(&bar);
+        root.set_visible(false);
+        Self {
+            root,
+            text,
+            save,
+            cancel,
+            editing: RefCell::default(),
+        }
+    }
+}
+
+/// 保存するメッセージ（前後の空白を除く）。空なら None、もとと同じなら `Some(None)`（何もせず閉じる）。
+fn reworded(original: &str, edited: &str) -> Option<Option<String>> {
+    let message = edited.trim();
+    if message.is_empty() {
+        return None;
+    }
+    Some((message != original.trim()).then(|| message.to_owned()))
 }
 
 /// 詳細の上の欄の見せ方（macOS 版の `CommitHeaderStyle`。同じ順の番号で覚える）。
@@ -449,6 +524,8 @@ impl Details {
         let find = crate::messagefind::MessageFind::new(&root, &scrolled, searched);
         root.append(&find.bar);
         root.append(&scrolled);
+        let reword = Rc::new(Reword::new());
+        root.append(&reword.root);
         let details = Self {
             root,
             find,
@@ -462,7 +539,7 @@ impl Details {
             trailers,
             notes,
             info: RefCell::default(),
-            extras: RefCell::default(),
+            extras: Rc::default(),
             selection,
             selection_title,
             selection_note,
@@ -484,8 +561,11 @@ impl Details {
             actions: gio::SimpleActionGroup::new(),
             menu_info: Rc::default(),
             on_reword: Rc::default(),
+            reword,
+            scrolled,
         };
         details.install_menu();
+        details.install_reword();
         for label in [&details.body, &details.notes] {
             let links = details.links.clone();
             label.connect_activate_link(move |_, uri| follow(&links, uri));
@@ -592,11 +672,18 @@ impl Details {
             copies.append(Some(&title), Some(&format!("details.{name}")));
         }
         let reword = gio::SimpleAction::new("edit-message", None);
-        let (on_reword, i) = (self.on_reword.clone(), info.clone());
+        let (editor, scrolled, root, i) = (
+            self.reword.clone(),
+            self.scrolled.downgrade(),
+            self.root.downgrade(),
+            info.clone(),
+        );
         reword.connect_activate(move |_, _| {
-            let oid = i.borrow().as_ref().map(|i| str_of(i, "oid").to_owned());
-            if let (Some(f), Some(oid)) = (on_reword.borrow().clone(), oid) {
-                f(&oid);
+            let (Some(scrolled), Some(root)) = (scrolled.upgrade(), root.upgrade()) else {
+                return;
+            };
+            if let Some(info) = i.borrow().as_ref() {
+                begin_reword(&editor, &scrolled, &root, info);
             }
         });
         self.actions.add_action(&reword);
@@ -663,8 +750,64 @@ impl Details {
         }
     }
 
-    /// 右クリックのメニューの Edit Message… を選んだら `f(コミット ID)` を呼ぶ（呼ぶまでは出さない）。
-    pub fn connect_edit_message(&self, f: impl Fn(&str) + 'static) {
+    /// 書き直す欄の保存・キャンセル（Ctrl+Return・Esc）。
+    fn install_reword(&self) {
+        let editor = self.reword.clone();
+        let save: Rc<dyn Fn()> = Rc::new({
+            let (editor, scrolled, extras, on_reword) = (
+                Rc::downgrade(&editor),
+                self.scrolled.downgrade(),
+                self.extras.clone(),
+                self.on_reword.clone(),
+            );
+            move || {
+                let (Some(editor), Some(scrolled)) = (editor.upgrade(), scrolled.upgrade()) else {
+                    return;
+                };
+                save_reword(&editor, &scrolled, &extras, &on_reword);
+            }
+        });
+        let s = save.clone();
+        editor.save.connect_clicked(move |_| s());
+        let (e, sc) = (Rc::downgrade(&editor), self.scrolled.downgrade());
+        editor.cancel.connect_clicked(move |_| {
+            if let (Some(e), Some(sc)) = (e.upgrade(), sc.upgrade()) {
+                end_reword(&e, &sc);
+            }
+        });
+        // 編集欄より先に受ける（Ctrl+Return で改行を入れさせない）。
+        let keys = gtk::EventControllerKey::new();
+        keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let (e, sc) = (Rc::downgrade(&editor), self.scrolled.downgrade());
+        keys.connect_key_pressed(move |_, key, _, state| {
+            let (Some(e), Some(sc)) = (e.upgrade(), sc.upgrade()) else {
+                return glib::Propagation::Proceed;
+            };
+            match key {
+                gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter
+                    if state.contains(gtk::gdk::ModifierType::CONTROL_MASK) =>
+                {
+                    save();
+                    glib::Propagation::Stop
+                }
+                gtk::gdk::Key::Escape => {
+                    end_reword(&e, &sc);
+                    glib::Propagation::Stop
+                }
+                _ => glib::Propagation::Proceed,
+            }
+        });
+        editor.root.add_controller(keys);
+    }
+
+    /// 書き直しをやめる（ほかのコミットを選んだときも。macOS 版と同じ）。
+    fn end_reword(&self) {
+        end_reword(&self.reword, &self.scrolled);
+    }
+
+    /// 右クリックのメニューの Edit Message… で、メッセージをその場で書き直す。保存したら
+    /// `f(コミット ID, メッセージ)` を呼ぶ（呼ぶまでは Edit Message… を出さない）。
+    pub fn connect_edit_message(&self, f: impl Fn(&str, &str) + 'static) {
         self.on_reword.replace(Some(Rc::new(f)));
         self.update_menu();
     }
@@ -716,6 +859,7 @@ impl Details {
     }
 
     pub fn clear(&self) {
+        self.end_reword();
         self.set_selection_mode(false);
         self.info.replace(None);
         self.extras.replace(None);
@@ -1276,6 +1420,97 @@ impl Details {
     }
 }
 
+/// メッセージの欄を書き直す欄に替える。詳細が低い（簡潔の）ときは、書き直す間だけ広げる（macOS 版と同じ）。
+fn begin_reword(editor: &Reword, scrolled: &gtk::ScrolledWindow, root: &gtk::Box, info: &Value) {
+    if editor.editing.borrow().is_some() {
+        return;
+    }
+    let (oid, message) = (str_of(info, "oid"), str_of(info, "message"));
+    editor
+        .editing
+        .replace(Some((oid.to_owned(), message.to_owned())));
+    editor.text.buffer().set_text(message.trim());
+    if let Some(paned) = root
+        .ancestor(gtk::Paned::static_type())
+        .and_downcast::<gtk::Paned>()
+        && paned
+            .start_child()
+            .is_some_and(|c| c == *root.upcast_ref::<gtk::Widget>() || root.is_ancestor(&c))
+        && paned.position() < 160
+    {
+        paned.set_position(220);
+    }
+    scrolled.set_visible(false);
+    editor.root.set_visible(true);
+    editor.text.grab_focus();
+}
+
+fn end_reword(editor: &Reword, scrolled: &gtk::ScrolledWindow) {
+    if editor.editing.take().is_none() {
+        return;
+    }
+    editor.root.set_visible(false);
+    scrolled.set_visible(true);
+}
+
+/// 保存: 変えていなければ閉じるだけ。リモートブランチに含まれていれば、後の push に Force Push が要ることを
+/// 確かめてから書き直す（macOS 版と同じ）。
+fn save_reword(
+    editor: &Rc<Reword>,
+    scrolled: &gtk::ScrolledWindow,
+    extras: &Rc<RefCell<Option<Value>>>,
+    on_reword: &Rc<RefCell<Option<OnReword>>>,
+) {
+    let Some((oid, original)) = editor.editing.borrow().clone() else {
+        return;
+    };
+    let buffer = editor.text.buffer();
+    let edited = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false);
+    let message = match reworded(&original, &edited) {
+        None => {
+            editor.root.display().beep();
+            return;
+        }
+        Some(None) => return end_reword(editor, scrolled),
+        Some(Some(message)) => message,
+    };
+    let Some(f) = on_reword.borrow().clone() else {
+        return;
+    };
+    let remotes = extras
+        .borrow()
+        .as_ref()
+        .map(|e| strings(&e["remoteBranches"]))
+        .unwrap_or_default();
+    if remotes.is_empty() {
+        end_reword(editor, scrolled);
+        f(&oid, &message);
+        return;
+    }
+    let parent = editor.root.root().and_downcast::<gtk::Window>();
+    let (editor, scrolled) = (editor.clone(), scrolled.clone());
+    glib::spawn_future_local(async move {
+        let sheet = crate::sheets::Sheet::unnamed(
+            parent.as_ref(),
+            &tr!("Edit a pushed commit?"),
+            &tr!(
+                "It is in {branches}, so pushing afterwards needs Force Push.",
+                branches = remotes.join(", ")
+            ),
+        );
+        sheet.buttons(&tr!("Edit Message"), false, None);
+        if sheet.run().await != crate::sheets::Response::Ok {
+            return;
+        }
+        // 確かめている間に、ほかのコミットを選んでいたら書き直さない。
+        if editor.editing.borrow().as_ref().map(|(o, _)| o.as_str()) != Some(oid.as_str()) {
+            return;
+        }
+        end_reword(&editor, &scrolled);
+        f(&oid, &message);
+    });
+}
+
 /// コミットの署名の状態（macOS 版の `signatureStatus`）。署名がなければ None。時間のかかる分が届くまでは
 /// Checking…、届いて検証の結果がなければ No key。
 fn commit_signature_status(
@@ -1701,6 +1936,13 @@ mod tests {
                 ("Fixes".to_owned(), "4".to_owned()),
             ]
         );
+    }
+
+    #[test]
+    fn reword_saves_only_a_changed_message() {
+        assert_eq!(reworded("a\n\nb\n", "  \n"), None);
+        assert_eq!(reworded("a\n\nb\n", "a\n\nb"), Some(None));
+        assert_eq!(reworded("a\n", " c\n\nd \n"), Some(Some("c\n\nd".into())));
     }
 
     #[test]

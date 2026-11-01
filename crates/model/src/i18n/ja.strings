@@ -455,6 +455,9 @@
 "Cancel" = "キャンセル";
 "New Tag at {name}…" = "{name} にタグを付ける…";
 "Edit Message…" = "メッセージを編集…";
+"Ctrl+Return to save, Esc to cancel. You can Undo it." = "Ctrl+Return で保存、Esc でやめる。Undo で戻せる";
+"Edit a pushed commit?" = "push 済みのコミットを書き換えますか？";
+"It is in {branches}, so pushing afterwards needs Force Push." = "{branches} にあるので、あとの push には Force Push が要ります。";
 "Drop" = "取り除く";
 "Copy Commit ID" = "コミット ID をコピー";
 "Copy Branch Name “{name}”" = "ブランチ名「{name}」をコピー";

@@ -1334,10 +1334,13 @@ fn build_tab(
         statusbar.clone(),
         pending.clone(),
     );
-    // 詳細の右クリックの Edit Message…: 編集モードを、そのコミットのメッセージを直すところから開く。
-    let eo = edit_opener.clone();
-    details.connect_edit_message(move |oid| {
-        eo.open(oid, Some(historyedit::Preset::Reword(oid.to_owned())));
+    // 詳細の右クリックの Edit Message…: その場で書き直したメッセージで reword する（macOS 版と同じ）。
+    let a = actions.clone();
+    details.connect_edit_message(move |oid, message| {
+        a.rewrite(
+            &format!("Reword {}", &oid[..oid.len().min(8)]),
+            serde_json::json!({ "kind": "reword", "oid": oid, "message": message }),
+        );
     });
     // 運び始めたら、編集できるコミットを読んでおく（並びの外には落とせないようにする。macOS 版と同じ）。
     let (a, v) = (actions.clone(), view.downgrade());
