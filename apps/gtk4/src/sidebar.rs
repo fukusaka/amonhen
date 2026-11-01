@@ -1807,7 +1807,8 @@ fn mark_worktree_branches(store: &gio::ListStore, view: &crate::worktrees::View)
             ));
             data.badge = w.mark(false).to_owned();
             data.marks.clear();
-            data.mark_click = false;
+            // 押すと、そのことと Open Worktree の吹き出し（macOS 版と同じ）。
+            data.mark_click = true;
             data.green = !w.main;
         } else if data.head {
             data.badge = if data.badge.is_empty() {

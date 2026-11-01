@@ -1452,6 +1452,8 @@
 
 /* GTK4: Worktrees（History の札と Branches の印） */
 "Checked out in the worktree “{name}” ({path})" = "worktree「{name}」（{path}）で checkout されています";
+"Checked out in the worktree “{name}”" = "worktree「{name}」でチェックアウト中";
+"Git lets a branch be checked out in only one worktree, so it can’t be checked out here. Open that worktree to work on it (its folder: {path})." = "git はブランチを 1 つの worktree でしかチェックアウトさせないので、ここではチェックアウトできません。作業するならその worktree を開いてください（フォルダ: {path}）。";
 "Open Worktree {name}" = "worktree {name} を開く";
 "Open the Worktree of {branch} to Merge or Rebase" = "{branch} の worktree を開いて merge か rebase をする";
 "  · in the worktree {name}" = "　· worktree {name} で使用中";

@@ -197,7 +197,7 @@ fn date(t: i64) -> String {
         .unwrap_or_default()
 }
 
-/// ローカルブランチの印（取り込み済み・gone・↑↓）の詳細。
+/// ローカルブランチの印（取り込み済み・gone・↑↓、ほかの worktree が checkout している ⌂・⑂）の詳細。
 pub fn branch(
     actions: &Rc<Actions>,
     item: &RefEntry,
@@ -205,6 +205,8 @@ pub fn branch(
     is_head: bool,
     anchor: &gtk::Widget,
 ) -> gtk::Popover {
+    // ほかの worktree が checkout している（名前・パス）。
+    let other = actions.worktree_using(&item.name);
     let fact = known.groups.as_ref().and_then(|g| g.get(&item.name));
     let merged = fact.is_some_and(|f| f.merged && !f.at_base);
     let base = known
@@ -242,6 +244,15 @@ pub fn branch(
                 "This branch tracks {upstream}, which no longer exists on the remote. Its commits are not in {base} in the local history: the pull request was merged by squash or rebase, or it was closed without merging. Check before deleting.",
                 upstream = upstream,
                 base = base
+            ),
+        ),
+        _ if let Some((name, path)) = &other => (
+            icon::Kind::Branch,
+            None,
+            tr!("Checked out in the worktree “{name}”", name = name),
+            tr!(
+                "Git lets a branch be checked out in only one worktree, so it can’t be checked out here. Open that worktree to work on it (its folder: {path}).",
+                path = path
             ),
         ),
         _ if item.ahead > 0 || item.behind > 0 => {
@@ -336,8 +347,12 @@ pub fn branch(
             None,
         );
     }
-    // 次にできること。消すのは merged のときだけ（git の -d と同じく、取り込んでいないものは消さない）。
-    if !is_head {
+    // 次にできること。消すのは merged のときだけ（git の -d と同じく、取り込んでいないものは消さない）。ほかの
+    // worktree が checkout しているなら、その worktree を開くだけ（消せない・ここでは動かせない）。
+    if let Some((_, path)) = &other {
+        let (a, path) = (actions.clone(), path.clone());
+        p.button(&tr!("Open Worktree"), move || a.edit_worktree(&path));
+    } else if !is_head {
         if merged {
             let (a, name) = (actions.clone(), item.name.clone());
             p.button(&tr!("Delete Branch"), move || {
