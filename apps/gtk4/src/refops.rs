@@ -138,10 +138,7 @@ pub fn menu(
                 run(json!({ "op": "updateSubmodules", "paths": [name] })),
             ));
             let (open, path) = (open_submodule.clone(), name.clone());
-            items.push(menu::action(
-                format!("Open {name} in New Window"),
-                move || open(&path),
-            ));
+            items.push(menu::action(tr!("Open in New Window"), move || open(&path)));
         }
     }
     items
@@ -650,7 +647,12 @@ pub fn ask_rename_branch(actions: &Rc<Actions>, name: &str) {
     glib::spawn_future_local(async move {
         let title = tr!("Rename {name}", name = from);
         if let Some(to) = a
-            .ask(&title, &tr!("New name of the branch."), &from, "Rename")
+            .ask(
+                &title,
+                &tr!("New name of the branch."),
+                &from,
+                &tr!("Rename"),
+            )
             .await
             && to != from
         {
