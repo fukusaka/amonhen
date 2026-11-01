@@ -31,7 +31,7 @@ fn item_entries() -> [(&'static str, u32, String); 6] {
 }
 
 /// 切り替えの項目（アクションの名前、設定の鍵）。
-const TOGGLES: [(&str, &str); 6] = [
+const TOGGLES: [(&str, &str); 7] = [
     ("one-line-history", settings::COMPACT_HISTORY_ROWS),
     ("fold-merged-branches", settings::FOLD_MERGED_BRANCHES),
     ("highlight-ancestors", settings::HIGHLIGHT_ANCESTORS),
@@ -39,6 +39,7 @@ const TOGGLES: [(&str, &str); 6] = [
         "monospaced-commit-message",
         settings::MONOSPACED_COMMIT_MESSAGE,
     ),
+    ("show-avatars", settings::SHOW_AVATARS),
     ("all-files-in-one-diff", crate::commitfiles::STACKED),
     ("changed-files-as-tree", crate::commitfiles::FILE_TREE),
 ];
@@ -98,6 +99,7 @@ pub fn sections() -> Vec<(Option<String>, gio::Menu)> {
         Some(&tr!("Monospaced Commit Message")),
         Some("win.monospaced-commit-message"),
     );
+    details.append(Some(&tr!("Show Avatars")), Some("win.show-avatars"));
     details.append(
         Some(&tr!("All Files in One Diff")),
         Some("win.all-files-in-one-diff"),
