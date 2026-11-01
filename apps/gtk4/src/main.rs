@@ -68,7 +68,7 @@ mod worktrees;
 
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
 use amonhen_backend_gix::GixBackend;
@@ -977,9 +977,10 @@ fn build_tab(
     // Blame・File History（History の差分のファイルの見出しと、Working Copy のファイルの右クリック）。
     let on_commit: filetools::OnCommit = {
         let (pages, view, sidebar) = (pages.clone(), view.clone(), sidebar.clone());
+        let shaper = Rc::downgrade(&shaper);
         Rc::new(move |id| {
             sidebar.select_page(Page::History);
-            jump_to(&pages, &view, id, &Rc::new(Cell::new(0)));
+            jump_to(&pages, &view, id, &Rc::new(Cell::new(0)), &shaper);
         })
     };
     // Reflog の画面（HEAD の reflog と、選んだ行のコミットの中身）。
@@ -1240,8 +1241,8 @@ fn build_tab(
     });
     // 見出しのメニュー（主メニューが右端、その左に Undo）。
     let go_to: Rc<dyn Fn(amonhen_model::Oid)> = {
-        let (pages, view) = (pages.clone(), view.clone());
-        Rc::new(move |id| jump_to(&pages, &view, id, &Rc::new(Cell::new(0))))
+        let (pages, view, shaper) = (pages.clone(), view.clone(), Rc::downgrade(&shaper));
+        Rc::new(move |id| jump_to(&pages, &view, id, &Rc::new(Cell::new(0)), &shaper))
     };
     let buttons = appmenu::install(appmenu::Parts {
         app: app.clone(),
@@ -1941,7 +1942,9 @@ fn build_tab(
                                 .find(|e| e.name == name)
                                 .and_then(|e| e.target);
                             match target {
-                                Some(target) => jump_to(&pages, &view, target, &pending),
+                                Some(target) => {
+                                    jump_to(&pages, &view, target, &pending, &Weak::new())
+                                }
                                 None => eprintln!("ref がない: {name}"),
                             }
                         }
@@ -2150,22 +2153,30 @@ fn connect_sidebar(
             }
             _ => {}
         }
+        // ブランチ・タグを選ぶと、その履歴に絞り込む（上流と分かれていれば上流も一緒に辿り、先にある・
+        // 遅れているコミットを両方出す。macOS 版の `sidebar.onSelect`）。
+        if let sidebar::Item::Ref(e) = &data.item
+            && let Some(shaper) = shaper.upgrade()
+            && shaper.scope_to_ref(e, true)
+        {
+            pages.set_visible_child_name("history");
+            return;
+        }
+        // ほかのもの（プルリクエストのブランチ）は、今の History にあればそのコミットを選ぶ。
         if let Some(target) = sidebar::target(data) {
-            // 複数のブランチ・タグで絞り込んでいたら、全ブランチに戻す。
-            if let Some(shaper) = shaper.upgrade() {
-                shaper.set_scope(Vec::new(), Some(target));
-            }
-            jump_to(&pages, &view, target, &Rc::new(Cell::new(0)));
+            jump_to(&pages, &view, target, &Rc::new(Cell::new(0)), &Weak::new());
         }
     });
 }
 
-/// History に切り替えて、`target` のコミットを選ぶ。`pending` は終わるまで 1 つ増やしておく。
+/// History に切り替えて、`target` のコミットを選ぶ。`pending` は終わるまで 1 つ増やしておく。今の範囲に
+/// なければ、`shaper` があれば全ブランチに戻して選ぶ（macOS 版の `goTo(id:)`）。
 fn jump_to(
     pages: &gtk::Stack,
     view: &HistoryView,
     target: amonhen_model::Oid,
     pending: &Rc<Cell<u32>>,
+    shaper: &Weak<historydisplay::Shaper>,
 ) {
     pages.set_visible_child_name("history");
     let Some((_, history)) = view.current() else {
@@ -2174,17 +2185,28 @@ fn jump_to(
     // 行の索引は初回に作る（150 万コミットで 80 ms ほど）ので、裏で引く。
     let weak = view.downgrade();
     let pending = pending.clone();
+    let shaper = shaper.clone();
     pending.set(pending.get() + 1);
     glib::spawn_future_local(async move {
         let generation = history.generation;
         let row = gio::spawn_blocking(move || history.row_of(&target)).await;
         pending.set(pending.get() - 1);
-        let (Some(view), Ok(Some(row))) = (weak.upgrade(), row) else {
+        let (Some(view), Ok(row)) = (weak.upgrade(), row) else {
             return;
         };
-        if view.current().map(|(_, h)| h.generation) == Some(generation) {
-            view.select(row);
-            view.grab_focus();
+        if view.current().map(|(_, h)| h.generation) != Some(generation) {
+            return;
+        }
+        match row {
+            Some(row) => {
+                view.select(row);
+                view.grab_focus();
+            }
+            None => {
+                if let Some(shaper) = shaper.upgrade() {
+                    shaper.show_all_selecting(target);
+                }
+            }
         }
     });
 }

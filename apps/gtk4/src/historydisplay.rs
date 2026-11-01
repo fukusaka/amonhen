@@ -9,7 +9,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use amonhen_core::{HistorySnapshot, Repository};
-use amonhen_model::{HistoryOrder, Oid, RefKind, Refs, tr};
+use amonhen_model::{HistoryOrder, Oid, RefEntry, RefKind, Refs, tr};
 use gtk::prelude::*;
 use gtk::{gio, glib};
 
@@ -232,11 +232,32 @@ pub struct Shaper {
     shaped: RefCell<Option<Shape>>,
     /// 頼んだ回数（古い結果を捨てるため）。
     request: Rc<Cell<u64>>,
-    /// サイドバーで複数選んだブランチ・タグ。空なら全ブランチ（macOS 版の `Scope.refs`）。
-    scope: RefCell<Vec<ScopeRef>>,
-    /// 絞り込んでいる間だけ History のバーの左に出す、ブランチの数と All Branches のボタン。
-    pub scope_bar: gtk::Box,
-    scope_label: gtk::Label,
+    /// 表示する範囲（macOS 版の `HistoryViewController.Scope`）。
+    scope: RefCell<Scope>,
+    /// `Scope::Ref` で一緒に辿る起点（選んだブランチの上流。先にある・遅れているコミットを両方見せる）。
+    companions: RefCell<Vec<Oid>>,
+    /// HEAD のコミット（`Scope::Current` で使う）。
+    head: Cell<Option<Oid>>,
+    /// 最後に受け取った ref の一覧（選んだブランチの上流を引く）。
+    refs: RefCell<Refs>,
+    /// History のバーの左に出す、範囲を選ぶもの（All Branches・Current Branch・絞り込んだ ref）。
+    pub scope_bar: gtk::DropDown,
+    /// 範囲を選ぶものを作り直している間（選んだ知らせを無視する）。
+    updating_scope: Cell<bool>,
+}
+
+/// 表示する範囲（macOS 版の `HistoryViewController.Scope`）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum Scope {
+    /// 全ブランチ。
+    #[default]
+    All,
+    /// 今のブランチ（HEAD から辿れるもの）。HEAD が動いたら絞り込み直す。
+    Current,
+    /// サイドバーで選んだ ref。ref が動いたら、コミットを付け替える。
+    Ref(ScopeRef),
+    /// サイドバーで複数選んだ ref。それぞれから辿れるコミットをまとめて出す。
+    Refs(Vec<ScopeRef>),
 }
 
 /// 作った History の形（全体の History の世代、開いた merge、絞り込む起点、折りたたむか）。
@@ -248,15 +269,8 @@ pub type ScopeRef = (RefKind, String, Oid);
 impl Shaper {
     pub fn new(view: &HistoryView, search: Rc<Search>, pending: Rc<Cell<u32>>) -> Rc<Self> {
         view.set_display(display());
-        let scope_bar = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-        let scope_label = gtk::Label::new(None);
-        scope_label.add_css_class("dim-label");
-        scope_label.set_margin_start(4);
-        let all = gtk::Button::with_label(&tr!("All Branches"));
-        all.add_css_class("flat");
-        scope_bar.append(&scope_label);
-        scope_bar.append(&all);
-        scope_bar.set_visible(false);
+        let scope_bar = gtk::DropDown::from_strings(&[]);
+        scope_bar.set_margin_start(4);
         let shaper = Rc::new(Self {
             view: view.clone(),
             search,
@@ -266,13 +280,23 @@ impl Shaper {
             shaped: RefCell::default(),
             request: Rc::default(),
             scope: RefCell::default(),
+            companions: RefCell::default(),
+            head: Cell::default(),
+            refs: RefCell::default(),
             scope_bar,
-            scope_label,
+            updating_scope: Cell::new(false),
         });
+        shaper.update_scope_bar();
         let weak = Rc::downgrade(&shaper);
-        all.connect_clicked(move |_| {
-            if let Some(s) = weak.upgrade() {
-                s.set_scope(Vec::new(), None);
+        shaper.scope_bar.connect_selected_notify(move |bar| {
+            let Some(s) = weak.upgrade() else { return };
+            if s.updating_scope.get() {
+                return;
+            }
+            match bar.selected() {
+                0 => s.set_scope(Scope::All, None, Vec::new()),
+                1 => s.set_scope(Scope::Current, None, Vec::new()),
+                _ => {}
             }
         });
         let weak = Rc::downgrade(&shaper);
@@ -299,40 +323,121 @@ impl Shaper {
         self.reshape(None);
     }
 
-    /// 複数選んだブランチ・タグから辿れる History にする（空なら全ブランチに戻す）。変えたら true。`select` は
-    /// 作り直したら選ぶコミット。
-    pub fn set_scope(&self, refs: Vec<ScopeRef>, select: Option<Oid>) -> bool {
-        if *self.scope.borrow() == refs {
+    /// 範囲を選ぶものを今の範囲に合わせる（3 つめは絞り込んだ ref の名前か、ブランチの数。macOS 版の
+    /// `updateScopePopup`）。
+    fn update_scope_bar(&self) {
+        let mut titles = vec![tr!("All Branches"), tr!("Current Branch")];
+        let selected = match &*self.scope.borrow() {
+            Scope::All => 0,
+            Scope::Current => 1,
+            Scope::Ref((_, name, _)) => {
+                titles.push(name.clone());
+                2
+            }
+            Scope::Refs(list) => {
+                titles.push(tr!("{count} branches", count = list.len()));
+                2
+            }
+        };
+        let titles: Vec<&str> = titles.iter().map(String::as_str).collect();
+        self.updating_scope.set(true);
+        self.scope_bar
+            .set_model(Some(&gtk::StringList::new(&titles)));
+        self.scope_bar.set_selected(selected);
+        self.updating_scope.set(false);
+    }
+
+    /// 表示する範囲を変えて作り直す。`select` は作り直したら選ぶコミット、`companions` は `Scope::Ref` のときに
+    /// 一緒に辿る起点（ブランチの上流）。
+    pub fn set_scope(&self, scope: Scope, select: Option<Oid>, companions: Vec<Oid>) {
+        self.scope.replace(scope);
+        self.companions.replace(companions);
+        self.update_scope_bar();
+        self.reshape(select);
+    }
+
+    /// 全ブランチでなければ全ブランチに戻して `id` を選ぶ（今の範囲にないコミットへ移るとき。macOS 版の
+    /// `set(scope: .all, select:)`）。戻したら true。
+    pub fn show_all_selecting(&self, id: Oid) -> bool {
+        if *self.scope.borrow() == Scope::All {
             return false;
         }
-        self.scope_label
-            .set_text(&tr!("{count} branches", count = refs.len()));
-        self.scope_bar.set_visible(!refs.is_empty());
-        self.scope.replace(refs);
-        self.reshape(select);
+        self.set_scope(Scope::All, Some(id), Vec::new());
+        true
+    }
+
+    /// サイドバー・詳細で選んだブランチ・タグの History に絞り込み、指すコミットを選ぶ（macOS 版の
+    /// `sidebar.onSelect`・`selectRef(named:)`）。`with_upstream` なら、上流と分かれたローカルブランチは上流も
+    /// 一緒に辿る。ブランチ・リモートブランチ・タグでなければ false。
+    pub fn scope_to_ref(&self, entry: &RefEntry, with_upstream: bool) -> bool {
+        let Some(target) = entry.target else {
+            return false;
+        };
+        if !matches!(entry.kind, RefKind::Local | RefKind::Remote | RefKind::Tag) {
+            return false;
+        }
+        let upstream = (with_upstream
+            && entry.kind == RefKind::Local
+            && (entry.ahead > 0 || entry.behind > 0))
+            .then(|| {
+                self.refs
+                    .borrow()
+                    .entries
+                    .iter()
+                    .find(|e| e.kind == RefKind::Remote && Some(&e.name) == entry.detail.as_ref())
+                    .and_then(|e| e.target)
+            })
+            .flatten();
+        self.set_scope(
+            Scope::Ref((entry.kind, entry.name.clone(), target)),
+            Some(target),
+            upstream.into_iter().collect(),
+        );
         true
     }
 
     /// ref の一覧が変わった。絞り込んだ ref がほかのプログラムで動いた（rebase・commit・fetch）なら、新しい
-    /// コミットに付け替えて絞り込み直す（前のコミットのままだと、消えたコミットから辿ることになる）。
+    /// コミットに付け替えて絞り込み直す（前のコミットのままだと、消えたコミットから辿ることになる）。今の
+    /// ブランチに絞っていて HEAD が動いたら、絞り込み直す。
     pub fn show_refs(&self, refs: &Refs) {
-        let moved: Vec<ScopeRef> = self
-            .scope
-            .borrow()
-            .iter()
-            .map(|(kind, name, target)| {
-                let now = refs
-                    .entries
-                    .iter()
-                    .find(|e| e.kind == *kind && e.name == *name)
-                    .and_then(|e| e.target)
-                    .unwrap_or(*target);
-                (*kind, name.clone(), now)
-            })
-            .collect();
-        if moved != *self.scope.borrow() {
+        let now = |kind: RefKind, name: &str, target: Oid| {
+            refs.entries
+                .iter()
+                .find(|e| e.kind == kind && e.name == name)
+                .and_then(|e| e.target)
+                .unwrap_or(target)
+        };
+        let moved = match &*self.scope.borrow() {
+            Scope::Ref((kind, name, target)) => {
+                Scope::Ref((*kind, name.clone(), now(*kind, name, *target)))
+            }
+            Scope::Refs(list) => Scope::Refs(
+                list.iter()
+                    .map(|(kind, name, target)| (*kind, name.clone(), now(*kind, name, *target)))
+                    .collect(),
+            ),
+            other => other.clone(),
+        };
+        self.refs.replace(refs.clone());
+        let head_moved = self.head.replace(refs.head) != refs.head;
+        let scope_moved = moved != *self.scope.borrow();
+        if scope_moved {
             self.scope.replace(moved);
+        }
+        if scope_moved || (head_moved && *self.scope.borrow() == Scope::Current) {
             self.reshape(None);
+        }
+    }
+
+    /// 絞り込む起点（空なら全ブランチ）。
+    fn tips(&self) -> Vec<Oid> {
+        match &*self.scope.borrow() {
+            Scope::All => Vec::new(),
+            Scope::Current => self.head.get().into_iter().collect(),
+            Scope::Ref((_, _, target)) => std::iter::once(*target)
+                .chain(self.companions.borrow().iter().copied())
+                .collect(),
+            Scope::Refs(list) => list.iter().map(|(_, _, t)| *t).collect(),
         }
     }
 
@@ -341,12 +446,15 @@ impl Shaper {
             return;
         };
         let fold = settings::bool(settings::FOLD_MERGED_BRANCHES);
-        let tips: Vec<Oid> = self.scope.borrow().iter().map(|(_, _, t)| *t).collect();
+        let tips = self.tips();
         if !fold && tips.is_empty() {
             // 作っている途中の折りたたみ・絞り込みは捨てる。
             self.request.set(self.request.get() + 1);
             self.shaped.replace(None);
-            self.search.show_history(repo, full);
+            self.search.show_history(repo, full.clone());
+            if let Some(id) = select {
+                select_when_found(&self.view, full, id, self.pending.clone());
+            }
             return;
         }
         let mut expanded: Vec<Oid> = if fold {
@@ -485,6 +593,29 @@ pub fn connect_select_many(
             .iter()
             .filter_map(|e| Some((e.kind, e.name.clone(), e.target?)))
             .collect();
-        shaper.set_scope(scope, None);
+        shaper.set_scope(Scope::Refs(scope), None, Vec::new());
+    });
+}
+
+/// `history` で `id` の行を裏で引き、見つかったら（まだ同じ History を出していれば）選ぶ。
+fn select_when_found(
+    view: &HistoryView,
+    history: Arc<HistorySnapshot>,
+    id: Oid,
+    pending: Rc<Cell<u32>>,
+) {
+    // 行の索引は初回に作る（150 万コミットで 80 ms ほど）ので、裏で引く。
+    let weak = view.downgrade();
+    let generation = history.generation;
+    pending.set(pending.get() + 1);
+    glib::spawn_future_local(async move {
+        let row = gio::spawn_blocking(move || history.row_of(&id)).await;
+        pending.set(pending.get() - 1);
+        let (Some(view), Ok(Some(row))) = (weak.upgrade(), row) else {
+            return;
+        };
+        if view.current().map(|(_, h)| h.generation) == Some(generation) {
+            view.select(row);
+        }
     });
 }

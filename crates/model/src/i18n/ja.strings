@@ -1716,8 +1716,9 @@
 "{trust} (trust not set)" = "{trust}（信用度が決まっていない）";
 "Expand the commit details to fill the right column (click again to restore)." = "コミットの詳細だけを右の列いっぱいに広げる（もう一度押すと戻す）";
 
-/* GTK4: 複数のブランチ・タグの History */
+/* GTK4: History の範囲 */
 "All Branches" = "すべてのブランチ";
+"Current Branch" = "現在のブランチ";
 "{count} branches" = "{count} 本のブランチ";
 
 /* GTK4: 詳細の中を探す */
