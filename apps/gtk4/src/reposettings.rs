@@ -128,6 +128,7 @@ pub(crate) enum Record {
 }
 
 type Refresher = Rc<dyn Fn(&Rc<RepoSettings>)>;
+type AfterLoad = Box<dyn FnOnce(&Rc<RepoSettings>)>;
 
 /// ページ（macOS 版の `SettingsPage`）。名前は `--repository-settings <page>` でも使う。
 pub const PAGES: &[&str] = &[
@@ -195,6 +196,8 @@ pub struct RepoSettings {
     error: gtk::Label,
     /// 読み込みの世代（古い読み込みの答えは捨てる）。
     generation: Cell<u64>,
+    /// 今の読み込みを終えたら呼ぶもの（`perform` の続き）。
+    after_load: RefCell<Vec<AfterLoad>>,
     signing_loaded: Cell<bool>,
     /// 書けた書き換えの数（Keys and Values が、最後の削除のあとに書き換えがあったかを見る）。
     writes: Cell<u64>,
@@ -650,6 +653,7 @@ impl RepoSettings {
             stack: stack.clone(),
             error: error.clone(),
             generation: Cell::new(0),
+            after_load: RefCell::default(),
             signing_loaded: Cell::new(false),
             controls: RefCell::default(),
             writes: Cell::new(0),
@@ -794,6 +798,10 @@ impl RepoSettings {
             match result {
                 Ok(loaded) => s.apply(loaded),
                 Err(e) => s.show_error(None, Some(&e)),
+            }
+            let after: Vec<AfterLoad> = s.after_load.take();
+            for f in after {
+                f(&s);
             }
         });
     }
@@ -1082,7 +1090,7 @@ impl RepoSettings {
     }
 
     /// 命令を順に実行し（リモート・フックなど、設定の書き換えでないもの。Undo には積まない）、読み直す。
-    /// 失敗したらページの下に出す。できたら `then`。
+    /// 失敗したらページの下に出す。できたら、読み直したあとに `then`。
     pub(crate) fn perform(
         self: &Rc<Self>,
         commands: Vec<Value>,
@@ -1093,11 +1101,12 @@ impl RepoSettings {
             let result = run_all(&repo, commands).await;
             let Some(s) = weak.upgrade() else { return };
             s.show_error(None, result.as_ref().err().map(String::as_str));
+            // 続きは読み直してから（表の行ができてから。macOS 版の `run` と同じ）。
+            if result.is_ok() {
+                s.after_load.borrow_mut().push(Box::new(then));
+            }
             s.load();
             s.changed();
-            if result.is_ok() {
-                then(&s);
-            }
         });
     }
 

@@ -1265,15 +1265,10 @@ fn create_hook(s: &Rc<RepoSettings>, table: Rc<Table>) {
             return;
         };
         let Some(s) = w.upgrade() else { return };
+        // `perform` の続きは読み直したあとに動く（表の行ができている）。
         s.perform(vec![json!({"op": "createHook", "name": name})], move |s| {
-            // 読み直してから選ぶ（表の行ができてから）。
-            let (w, name) = (s.weak(), name.clone());
-            glib::timeout_add_local_once(std::time::Duration::from_millis(300), move || {
-                if let Some(s) = w.upgrade() {
-                    table.select(&name);
-                    open_hook(&s, &name, "edit");
-                }
-            });
+            table.select(&name);
+            open_hook(s, &name, "edit");
         });
     });
 }
