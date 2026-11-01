@@ -101,8 +101,8 @@ pub fn menu(
             items.push(menu::action(tr!("Rename…"), move || {
                 ask_rename_branch(&a, &from)
             }));
-            // ほかの worktree が checkout しているブランチは消せない（git が断る）。
-            if !is_head && elsewhere.is_none() {
+            // ほかの worktree が checkout しているブランチも出す（git が断る。macOS 版と同じ）。
+            if !is_head {
                 let (a, n) = (actions.clone(), name.clone());
                 items.push(menu::action(titles::delete(&name), move || {
                     sheets::delete_branches(&a, vec![n.clone()])
