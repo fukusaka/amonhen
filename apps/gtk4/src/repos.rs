@@ -90,6 +90,23 @@ pub fn normalize(location: &Path) -> String {
     }
 }
 
+/// Settings > Advanced で共有の daemon 越しに開くなら、場所を `daemon:` の形にする（SSH 先も `daemon:ssh://…`）。
+/// 開いているかを比べる・覚える・Activity に出すのもこの形（macOS 版と同じ）。
+pub fn through_daemon(location: &Path) -> PathBuf {
+    PathBuf::from(with_daemon(
+        &standardize(location).to_string_lossy(),
+        crate::settings::bool(crate::settings::OPEN_THROUGH_DAEMON),
+    ))
+}
+
+fn with_daemon(location: &str, on: bool) -> String {
+    if on && !location.starts_with("daemon:") {
+        format!("daemon:{location}")
+    } else {
+        location.to_owned()
+    }
+}
+
 /// 開いたことを覚える（先頭に）。開いた日時も覚え、Settings > General で選んでいればブックマークにも入れる。
 pub fn record(location: &Path) {
     // 覚えるのは開いた形のまま（リンクは解かない。ブックマークと同じ形にして、一覧に二度出さない。macOS 版と同じ）。
@@ -416,7 +433,19 @@ async fn run(parent: &gtk::Window, url: String, dest: PathBuf, open: Rc<dyn Fn(P
 
 #[cfg(test)]
 mod tests {
-    use super::main_of_worktree;
+    use super::{main_of_worktree, with_daemon};
+
+    #[test]
+    fn opens_through_the_daemon_in_the_daemon_form() {
+        assert_eq!(with_daemon("/a/r", true), "daemon:/a/r");
+        assert_eq!(
+            with_daemon("ssh://me@h:22/a/r", true),
+            "daemon:ssh://me@h:22/a/r"
+        );
+        assert_eq!(with_daemon("daemon:/a/r", true), "daemon:/a/r");
+        assert_eq!(with_daemon("/a/r", false), "/a/r");
+        assert_eq!(with_daemon("ssh://h/a/r", false), "ssh://h/a/r");
+    }
 
     #[test]
     fn finds_the_main_repository_of_a_worktree() {

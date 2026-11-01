@@ -718,6 +718,9 @@ fn build_tab(
         path = main;
         args.path = Some(path.clone());
     }
+    // 共有の daemon 越しに開く設定なら、場所を `daemon:` の形に（タブの場所・名前・記録もこの形。macOS 版と同じ）。
+    path = repos::through_daemon(&path);
+    args.path = Some(path.clone());
     // 窓の名前: Repositories で付けた名前（Rename…）があればそれ、なければリポジトリのフォルダーの名前（daemon・
     // SSH 越しなら、場所の最後の部分と接続先。macOS 版の `displayName`）。
     let text = path.to_string_lossy().into_owned();

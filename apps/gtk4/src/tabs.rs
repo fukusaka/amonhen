@@ -719,7 +719,9 @@ pub fn new_window_with(app: &gtk::Application, location: PathBuf) -> Rc<RepoWind
 /// `location` を開いているタブ（どの窓でも。追加した worktree なら、メインのリポジトリのタブ）。
 fn find_open(location: &std::path::Path) -> Option<(Rc<RepoWindow>, Rc<Tab>)> {
     let worktree = crate::repos::main_of_worktree(location);
-    let key = crate::repos::normalize(worktree.as_deref().unwrap_or(location));
+    let key = crate::repos::normalize(&crate::repos::through_daemon(
+        worktree.as_deref().unwrap_or(location),
+    ));
     WINDOWS.with(|w| {
         w.borrow().iter().find_map(|h| {
             h.tabs
@@ -786,7 +788,9 @@ pub fn add_background(app: &gtk::Application, host: &Rc<RepoWindow>, location: P
     // 追加した worktree のフォルダーはメインのリポジトリとして開くので、そのタブがもうあれば足さない（前の窓を
     // 戻すとき、worktree とメインの両方が記録されていることがある）。
     let worktree = crate::repos::main_of_worktree(&location);
-    let key = crate::repos::normalize(worktree.as_deref().unwrap_or(&location));
+    let key = crate::repos::normalize(&crate::repos::through_daemon(
+        worktree.as_deref().unwrap_or(&location),
+    ));
     let open = WINDOWS.with(|w| {
         w.borrow()
             .iter()
@@ -964,7 +968,7 @@ pub fn reopen(tab: &Rc<Tab>, location: PathBuf) {
 /// ツールバーのリポジトリ名から: `tab` を `location` のリポジトリに切り替える（同じ場所に開き直して、`tab` を閉じる）。
 /// もうどこかのタブで開いていれば、そのタブを前に出す（`tab` は残す。macOS 版と同じ）。
 pub fn switch(tab: &Rc<Tab>, location: PathBuf) {
-    let key = crate::repos::normalize(&location);
+    let key = crate::repos::normalize(&crate::repos::through_daemon(&location));
     let existing = WINDOWS.with(|w| {
         w.borrow().iter().find_map(|h| {
             h.tabs
