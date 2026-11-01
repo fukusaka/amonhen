@@ -2388,6 +2388,19 @@ pub async fn choose_remote_scan_folder(
     Some(chosen.ssh_location())
 }
 
+/// SSH 接続のシートの ▾ の候補: `used`（場所）のホストを名前の順に、そのあと `known` のうちまだないもの。
+fn host_candidates<'a>(used: impl Iterator<Item = &'a String>, known: Vec<String>) -> Vec<String> {
+    let used: std::collections::BTreeSet<String> = used
+        .filter_map(|l| bookmarks::ssh_host(l))
+        .filter(|h| !h.is_empty())
+        .collect();
+    let mut out: Vec<String> = used.iter().cloned().collect();
+    out.extend(known.into_iter().filter(|h| !used.contains(h)));
+    let mut seen = std::collections::HashSet::new();
+    out.retain(|h| seen.insert(h.clone()));
+    out
+}
+
 /// 開く前に: 見つからない場所なら、一覧から外すか聞いて false（外したら `removed`）。見つかれば true（macOS 版の
 /// `open` の始め。ページとツールバーの一覧で同じ）。
 pub fn found_or_offer_removal(
@@ -2450,15 +2463,17 @@ async fn ssh_connection_sheet(
     let host_line = gtk::Box::new(gtk::Orientation::Horizontal, 4);
     host_line.append(&host);
     if fixed.is_none() {
-        // 候補: 一覧にあるホスト、~/.ssh/config・known_hosts のホスト。
-        let mut candidates: Vec<String> = bookmarks::all_locations()
-            .iter()
-            .filter_map(|l| bookmarks::ssh_host(l))
-            .filter(|h| !h.is_empty())
+        // 候補: 使ったことのあるホスト（一覧の場所とスキャンするフォルダ。名前の順）、そのあと ~/.ssh/config・
+        // known_hosts のホスト（macOS 版の `sshHostCandidates`）。
+        let roots: Vec<String> = bookmarks::data()
+            .scan_roots
+            .into_iter()
+            .map(|r| r.path)
             .collect();
-        candidates.extend(crate::sshhosts::candidates());
-        let mut seen = std::collections::HashSet::new();
-        candidates.retain(|h| seen.insert(h.clone()));
+        let candidates = host_candidates(
+            bookmarks::all_locations().iter().chain(&roots),
+            crate::sshhosts::candidates(),
+        );
         if !candidates.is_empty() {
             let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
             let popover = gtk::Popover::new();
@@ -2838,6 +2853,22 @@ pub fn snapshot_when_ready(window: &gtk::Window, png: PathBuf) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lists_used_hosts_first_in_order() {
+        let used: Vec<String> = [
+            "ssh://zed/~/a",
+            "/local",
+            "daemon:ssh://alpha/~/b",
+            "ssh://zed/~/c",
+        ]
+        .map(String::from)
+        .to_vec();
+        assert_eq!(
+            host_candidates(used.iter(), vec!["beta".into(), "zed".into()]),
+            ["alpha", "zed", "beta"]
+        );
+    }
 
     /// 行の名前は、渡したブックマークだけから描く（色・★・名前の上書き）。数百行を描いても速いこと。
     #[test]
