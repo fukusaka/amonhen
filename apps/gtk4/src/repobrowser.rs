@@ -566,6 +566,8 @@ pub struct Browser {
     cells: RefCell<Vec<Rc<CellView>>>,
     scanning: gtk::Spinner,
     add: gtk::Button,
+    /// 並べ替えに使う、行ごとの値（一覧を作り直すたびに読む）。
+    sort_keys: Rc<RefCell<SortKeys>>,
 }
 
 thread_local! {
@@ -693,6 +695,7 @@ impl Browser {
             cells: RefCell::default(),
             scanning,
             add,
+            sort_keys: Rc::default(),
         });
         browser.build_columns();
         browser.connect();
@@ -807,7 +810,11 @@ impl Browser {
                 }
                 None => column.set_expand(true),
             }
-            column.set_sorter(Some(&sorter(kind, self.view.downgrade())));
+            column.set_sorter(Some(&sorter(
+                kind,
+                self.view.downgrade(),
+                self.sort_keys.clone(),
+            )));
             if kind == Column::Opened {
                 opened = Some(column.clone());
             }
@@ -1253,14 +1260,17 @@ impl Browser {
             .filter_map(|&r| self.location(r))
             .collect();
         let query = self.filter.text().trim().to_lowercase();
-        let list: Vec<String> = paths_in(&self.category.borrow())
+        let all = paths_in(&self.category.borrow());
+        let keys = SortKeys::new(&all);
+        let list: Vec<String> = all
             .into_iter()
             .filter(|l| {
                 query.is_empty()
-                    || bookmarks::display_name(l).to_lowercase().contains(&query)
+                    || keys.name(l).contains(&query)
                     || l.to_lowercase().contains(&query)
             })
             .collect();
+        *self.sort_keys.borrow_mut() = keys;
         let refs: Vec<&str> = list.iter().map(String::as_str).collect();
         self.model.splice(0, self.model.n_items(), &refs);
         self.selection.unselect_all();
@@ -1930,15 +1940,56 @@ pub async fn choose_remote_scan_folder(
     Some(chosen.ssh_location())
 }
 
+/// 並べ替えに使う、行ごとの名前（小文字）と開いた日時。一覧を作り直すたびに一度だけ読む（比べるたびに
+/// ブックマークと `repositoryOpenedAt` を読むと、数百行で何秒もかかる。macOS 版も作り直すときに先に読む）。
+#[derive(Default)]
+struct SortKeys {
+    names: std::collections::HashMap<String, String>,
+    opened: std::collections::HashMap<String, i64>,
+}
+
+impl SortKeys {
+    fn new(list: &[String]) -> Self {
+        let opened = crate::repos::opened_all_at();
+        let data = bookmarks::data();
+        let names = list
+            .iter()
+            .map(|l| {
+                (
+                    l.clone(),
+                    bookmarks::display_name_in(&data, l).to_lowercase(),
+                )
+            })
+            .collect();
+        let opened = list
+            .iter()
+            .filter_map(|l| opened.get(l).map(|&t| (l.clone(), t)))
+            .collect();
+        Self { names, opened }
+    }
+
+    fn name(&self, location: &str) -> String {
+        self.names
+            .get(location)
+            .cloned()
+            .unwrap_or_else(|| bookmarks::display_name(location).to_lowercase())
+    }
+}
+
 /// 列の並べ替え（同じ値なら名前の順。並びが毎回変わらないように）。
-fn sorter(column: Column, view: glib::WeakRef<gtk::ColumnView>) -> gtk::CustomSorter {
+fn sorter(
+    column: Column,
+    view: glib::WeakRef<gtk::ColumnView>,
+    keys: Rc<RefCell<SortKeys>>,
+) -> gtk::CustomSorter {
     gtk::CustomSorter::new(move |a, b| {
         let a = a.downcast_ref::<gtk::StringObject>().map(|s| s.string());
         let b = b.downcast_ref::<gtk::StringObject>().map(|s| s.string());
         let (Some(a), Some(b)) = (a, b) else {
             return gtk::Ordering::Equal;
         };
-        let name = |l: &str| bookmarks::display_name(l).to_lowercase();
+        let keys = keys.borrow();
+        let name = |l: &str| keys.name(l);
         let number = |l: &str| -> i64 {
             match column {
                 Column::Status => bookmarks::peek(l).map_or(-1, |p| {
@@ -1947,7 +1998,7 @@ fn sorter(column: Column, view: glib::WeakRef<gtk::ColumnView>) -> gtk::CustomSo
                 Column::Commit => bookmarks::peek(l)
                     .and_then(|p| p.last_commit)
                     .map_or(i64::MIN, |c| c.0),
-                Column::Opened => crate::repos::opened_at(l).unwrap_or(i64::MIN),
+                Column::Opened => keys.opened.get(l).copied().unwrap_or(i64::MIN),
                 _ => 0,
             }
         };

@@ -459,7 +459,16 @@ pub fn tilde(path: &str) -> String {
 
 /// 表示名（上書きがなければフォルダの名前。SSH 先ならホストを添える）。
 pub fn display_name(location: &str) -> String {
-    if let Some(name) = bookmark(location).and_then(|b| b.name)
+    display_name_in(&data(), location)
+}
+
+/// `display_name` の、読んだブックマークから引く形（たくさんの行の名前を引くとき用）。
+pub fn display_name_in(data: &Data, location: &str) -> String {
+    if let Some(name) = data
+        .items
+        .iter()
+        .find(|b| b.path == location)
+        .and_then(|b| b.name.clone())
         && !name.is_empty()
     {
         return name;

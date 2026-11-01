@@ -89,6 +89,14 @@ fn opened_all() -> serde_json::Map<String, serde_json::Value> {
         .unwrap_or_default()
 }
 
+/// 開いた日時のすべて（場所 → UNIX 時間）。たくさんの場所の日時を引くとき用（一度だけ読む）。
+pub fn opened_all_at() -> std::collections::HashMap<String, i64> {
+    opened_all()
+        .into_iter()
+        .filter_map(|(k, v)| v.as_f64().map(|t| (k, t as i64)))
+        .collect()
+}
+
 /// 最後に開いた日時（UNIX 時間）。覚える前に開いたものは None。
 pub fn opened_at(location: &str) -> Option<i64> {
     opened_all()
