@@ -127,6 +127,25 @@ fn config_rows(s: &RepoSettings) -> Vec<Row> {
         .collect()
 }
 
+/// 出す行の中身の要約（キー・段ごとの値・ファイル）。同じなら表を作り直さない。
+fn signature(rows: &[Row]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for r in rows {
+        r.key.hash(&mut h);
+        r.scope.hash(&mut h);
+        r.effective.hash(&mut h);
+        let mut values: Vec<_> = r.values.iter().collect();
+        values.sort();
+        values.hash(&mut h);
+        let mut files: Vec<_> = r.files.iter().collect();
+        files.sort();
+        files.hash(&mut h);
+    }
+    rows.len().hash(&mut h);
+    h.finish()
+}
+
 fn blank(key: &str) -> Row {
     Row {
         key: key.to_owned(),
@@ -196,6 +215,10 @@ struct Table {
     effective_column: RefCell<Option<gtk::ColumnViewColumn>>,
     source_column: RefCell<Option<gtk::ColumnViewColumn>>,
     scope_columns: RefCell<Vec<(String, gtk::ColumnViewColumn)>>,
+    /// 今出している行の中身（同じなら作り直さない。選択・スクロール・編集中のセルをそのまま残す）。
+    shown: Cell<Option<u64>>,
+    /// 編集中に読み直しが来たら、編集が終わってから作り直す。
+    pending: Cell<bool>,
     /// 足している途中の行。
     adding: gtk::Box,
     new_key: gtk::Entry,
@@ -296,6 +319,11 @@ impl EditCell {
     fn end(&self) {
         self.editing.set(false);
         self.stack.set_visible_child_name("shown");
+        if let Some(table) = self.table.upgrade()
+            && table.pending.replace(false)
+        {
+            glib::idle_add_local_once(move || table.rebuild());
+        }
     }
 
     /// 欄の値を書く（変わっていれば）。空ならこの段から消す。
@@ -309,7 +337,12 @@ impl EditCell {
             return;
         };
         let value = self.entry.text().trim().to_owned();
+        let pending = table.pending.replace(false);
         table.write(vec![(key, (!value.is_empty()).then_some(value))], false);
+        // 書かなかった（変わっていない）ときも、待たせていた読み直しを出す。
+        if pending {
+            glib::idle_add_local_once(move || table.rebuild());
+        }
     }
 }
 
@@ -416,9 +449,23 @@ impl Table {
         }
     }
 
-    /// 出す行を作り直す（切り替え・検索・読み直しのたび）。開閉の状態は残す。
+    /// 編集中のセルがあるか。
+    fn editing(&self) -> bool {
+        self.all_cells
+            .borrow()
+            .iter()
+            .filter_map(Weak::upgrade)
+            .any(|c| c.editing.get())
+    }
+
+    /// 出す行を作り直す（切り替え・検索・読み直しのたび）。開閉の状態・選んだキー・スクロールの位置は残す
+    /// （macOS 版の選択はキーの Set で、読み直しても残る）。中身が同じなら何もしない。編集中なら終わるまで待つ。
     fn rebuild(&self) {
         let Some(s) = self.settings() else { return };
+        if self.editing() {
+            self.pending.set(true);
+            return;
+        }
         // 今閉じている組を覚える。
         if let Some(tree) = self.sort_model.model().and_downcast::<gtk::TreeListModel>() {
             let mut collapsed = self.collapsed.borrow_mut();
@@ -474,6 +521,14 @@ impl Table {
                     || r.values.values().any(|v| v.to_lowercase().contains(&f))
             });
         }
+        let signature = signature(&all);
+        if self.shown.get() == Some(signature) {
+            self.update_removed();
+            return;
+        }
+        self.shown.set(Some(signature));
+        let selected: HashSet<String> = self.selected_keys().into_iter().collect();
+        let scroll = self.view.vadjustment().map(|a| (a.clone(), a.value()));
         // section、その下に subsection の組にする。
         let mut sections: BTreeMap<String, Row> = BTreeMap::new();
         for mut row in all {
@@ -533,6 +588,24 @@ impl Table {
         }
         drop(collapsed);
         self.sort_model.set_model(Some(&tree));
+        // 選んでいたキーを選び直す。
+        if !selected.is_empty() {
+            for i in 0..self.sort_model.n_items() {
+                if self
+                    .sort_model
+                    .item(i)
+                    .and_then(|o| row_of(&o))
+                    .is_some_and(|r| !r.group && selected.contains(&r.key))
+                {
+                    self.selection.select_item(i, false);
+                }
+            }
+        }
+        // スクロールの位置を戻す（中身の高さが決まってから）。
+        if let Some((adjustment, value)) = scroll {
+            adjustment.set_value(value);
+            glib::idle_add_local_once(move || adjustment.set_value(value));
+        }
         self.update_removed();
     }
 
@@ -717,6 +790,8 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
         cells: RefCell::default(),
         all_cells: RefCell::default(),
         removed: RefCell::default(),
+        shown: Cell::default(),
+        pending: Cell::default(),
         removed_label: removed_label.clone(),
         restore: restore.clone(),
         effective_column: RefCell::default(),
@@ -1340,4 +1415,30 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
     page.append(&bottom);
     page.insert_action_group("config", Some(&group));
     page
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(key: &str, values: &[(&str, &str)]) -> Row {
+        Row {
+            key: key.into(),
+            values: values
+                .iter()
+                .map(|(s, v)| ((*s).to_owned(), (*v).to_owned()))
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn signature_follows_the_contents_only() {
+        let a = vec![row("user.name", &[("global", "a"), ("local", "b")])];
+        let b = vec![row("user.name", &[("local", "b"), ("global", "a")])];
+        assert_eq!(signature(&a), signature(&b));
+        let c = vec![row("user.name", &[("global", "a"), ("local", "c")])];
+        assert_ne!(signature(&a), signature(&c));
+        assert_ne!(signature(&a), signature(&[]));
+    }
 }
