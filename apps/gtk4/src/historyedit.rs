@@ -978,6 +978,8 @@ impl Opener {
                     .filter_map(|(o, _)| Oid::from_hex(o))
                     .collect();
                 let texts = repo.commit_texts(&ids).unwrap_or_default();
+                // 作者は mailmap で置き換えたもの（History・詳細と同じ。macOS 版と同じ）。
+                let mailmap = repo.mailmap();
                 chosen
                     .iter()
                     .enumerate()
@@ -988,7 +990,10 @@ impl Opener {
                             .unwrap_or_default();
                         let author = texts
                             .get(i)
-                            .map(|t| String::from_utf8_lossy(t.author_name()).into_owned())
+                            .map(|t| {
+                                String::from_utf8_lossy(&t.author(mailmap.as_deref()).name)
+                                    .into_owned()
+                            })
                             .unwrap_or_default();
                         Row {
                             oid: oid.clone(),
