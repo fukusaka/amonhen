@@ -307,9 +307,20 @@ fn plan_steps(
         return Err(tr!("Can’t squash: the parent isn’t in the editable range").into());
     }
     let messages = plan_messages(steps)?;
-    let lines: Vec<String> = steps
+    // 先頭の、元の位置のままの pick は git も早送りするだけなので、todo に入れずに起点を進める（空のコミットの
+    // reword で `--force-rebase` にしても作り直さない）。続く squash・fixup のまとめる先なら残す。
+    let mut skip = 0;
+    while skip + 1 < steps.len()
+        && steps[skip].action == "pick"
+        && oids[skip] == original[start + skip].oid
+        && !matches!(steps[skip + 1].action.as_str(), "squash" | "fixup")
+    {
+        skip += 1;
+    }
+    let start = start + skip;
+    let lines: Vec<String> = steps[skip..]
         .iter()
-        .zip(&oids)
+        .zip(&oids[skip..])
         .map(|(step, oid)| format!("{} {oid}", step.action))
         .collect();
     let base = if start > 0 {
@@ -461,6 +472,27 @@ mod tests {
         })
         .unwrap();
         assert!(fixup.messages.is_empty());
+        // 先頭の元のままの pick は起点に含める。まとめる先は残す。
+        let p = plan(HistoryEdit::Plan {
+            steps: vec![
+                step('b', "pick", None),
+                step('c', "pick", None),
+                step('d', "reword", Some("d2")),
+            ],
+        })
+        .unwrap();
+        assert_eq!(p.base, Some(oid('c')));
+        assert_eq!(short(&p.todo), "reword d\n");
+        let p = plan(HistoryEdit::Plan {
+            steps: vec![
+                step('b', "pick", None),
+                step('c', "pick", None),
+                step('d', "fixup", None),
+            ],
+        })
+        .unwrap();
+        assert_eq!(p.base, Some(oid('b')));
+        assert_eq!(short(&p.todo), "pick c\nfixup d\n");
         // 抜けがある・先頭をまとめる・メッセージがない、は断る。
         assert!(
             plan(HistoryEdit::Plan {
