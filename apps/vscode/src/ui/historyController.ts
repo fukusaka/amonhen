@@ -128,6 +128,8 @@ export class HistoryController implements vscode.Disposable {
   /** 今の検索。`rows` は `history`（もとの History）の行 */
   private search: { query: string; history: unknown; rows: number[] } | undefined;
   private searchAbort: AbortController | undefined;
+  /** 探している途中の検索の文（History を読み直したら、終わっていなくても探し直す） */
+  private searching: string | undefined;
   /** 一致だけを出す切り替え（最後に頼まれたもの） */
   private matchingOnly = false;
 
@@ -368,10 +370,10 @@ export class HistoryController implements vscode.Disposable {
     }
     this.post({ type: 'searchable', searchable: this.daemon !== undefined });
     await this.loadMore();
-    // 探していたら、新しい History で探し直す
-    const search = this.search;
-    if (search && this.daemon && generation === this.generation) {
-      await this.runSearch(search.query, this.matchingOnly, 0);
+    // 探していたら（途中でも）、新しい History で探し直す
+    const query = this.searching ?? this.search?.query;
+    if (query && this.daemon && generation === this.generation) {
+      await this.runSearch(query, this.matchingOnly, 0);
     }
   }
 
@@ -383,7 +385,23 @@ export class HistoryController implements vscode.Disposable {
     this.searchAbort?.abort();
     const abort = new AbortController();
     this.searchAbort = abort;
+    this.searching = query || undefined;
     this.matchingOnly = matchingOnly;
+    try {
+      await this.searchOnce(query, matchingOnly, selected, abort);
+    } finally {
+      if (this.searchAbort === abort && !abort.signal.aborted) {
+        this.searching = undefined;
+      }
+    }
+  }
+
+  private async searchOnce(
+    query: string,
+    matchingOnly: boolean,
+    selected: number,
+    abort: AbortController,
+  ): Promise<void> {
     const shown = this.daemon;
     if (!shown) {
       return;
@@ -398,7 +416,7 @@ export class HistoryController implements vscode.Disposable {
       });
     if (!query) {
       this.search = undefined;
-      await this.showMatching(base, undefined, baseSelected);
+      await this.showMatching(base, undefined, baseSelected, abort.signal);
       post({});
       return;
     }
@@ -440,7 +458,7 @@ export class HistoryController implements vscode.Disposable {
     }
     this.search = { query, history: base.history, rows };
     try {
-      await this.showMatching(base, matchingOnly && rows.length > 0 ? rows : undefined, baseSelected);
+      await this.showMatching(base, matchingOnly && rows.length > 0 ? rows : undefined, baseSelected, abort.signal);
     } catch (err) {
       post({ error: errorMessage(err) });
       return;
@@ -454,12 +472,22 @@ export class HistoryController implements vscode.Disposable {
    * `rows` があれば、`base` のその行だけの History（一致だけ）を、なければ `base` を出す。`selected` は `base` での
    * 選んでいる行
    */
-  private async showMatching(base: DaemonHistory, rows: number[] | undefined, selected: number): Promise<void> {
+  private async showMatching(
+    base: DaemonHistory,
+    rows: number[] | undefined,
+    selected: number,
+    signal: AbortSignal,
+  ): Promise<void> {
     const filtered = this.base ? this.daemon : undefined;
     let next = base;
     let select = selected;
     if (rows) {
       const reply = await base.client.call({ op: 'historyMatching', history: base.history, rows });
+      // 待つ間に読み直しや次の検索が始まっていれば、作った History は使わない（今の History を取り違える）
+      if (signal.aborted) {
+        void base.client.call({ op: 'historyRelease', history: reply.json['history'] }).catch(() => undefined);
+        return;
+      }
       next = { client: base.client, history: reply.json['history'], rows: Number(reply.json['rows']) };
       select = lowerBound(rows, selected);
     } else if (!filtered) {
