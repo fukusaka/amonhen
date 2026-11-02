@@ -493,7 +493,7 @@ pub fn connect(
     if let Some(slot) = slot {
         conn.hold(Box::new(slot));
     }
-    conn.set_remote_engine(engine.describe());
+    conn.set_ssh_engine(engine);
     Ok(conn)
 }
 

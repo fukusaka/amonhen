@@ -80,7 +80,7 @@ becomes the GitHub Release notes.
   repository over SSH or through the shared daemon.
 
 - Errors from an SSH host opened through the shared daemon are in the language of the app or CLI that asked, not the
-  daemon's.
+  daemon's. So are the SSH host engine and why a connection was lost, in Activity and `amonhen daemon status`.
 
 - `amonhen diff` with a name that is neither a commit nor a file in the working tree stops with an error, as git does,
   instead of printing an empty diff. Paths after `--` are taken as paths.

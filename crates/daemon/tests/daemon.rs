@@ -1153,4 +1153,24 @@ fn shared_daemon_opens_an_ssh_repository_for_everyone() {
         text.contains("sent now") || text.contains("sent earlier"),
         "SSH 先のエンジンが出る: {text}"
     );
+    // 様子を尋ねた相手の言語で（SSH 先のエンジンをつないだ相手や daemon の言語ではなく）。
+    let mut status = std::os::unix::net::UnixStream::connect(&socket).unwrap();
+    amonhen_remote::local::write_preamble(&mut status, "\0status\0ja").unwrap();
+    let frame = amonhen_remote::frame::read(&mut status).unwrap().unwrap();
+    let text = String::from_utf8_lossy(&frame.payload).into_owned();
+    assert!(
+        text.contains("今回送った") || text.contains("前に送った"),
+        "SSH 先のエンジンが日本語で出る: {text}"
+    );
+    // 日本語の FE（b）にも、その言語で。
+    let engine = amonhen_model::i18n::with(amonhen_model::i18n::Lang::Ja, || {
+        Repository::new(RemoteBackend::connect(connect(&location)).unwrap())
+            .connection_state()
+            .and_then(|s| s.engine)
+            .unwrap_or_default()
+    });
+    assert!(
+        engine.contains("今回送った") || engine.contains("前に送った"),
+        "{engine}"
+    );
 }

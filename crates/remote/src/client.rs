@@ -27,6 +27,14 @@ use crate::wire::{
 type Reply = std::result::Result<Vec<u8>, String>;
 type Listener = Box<dyn Fn(Notification) + Send + Sync>;
 
+/// SSH 先のエンジンについて覚えていること。
+enum EngineNote {
+    /// このプロセスがつないだ SSH 先のエンジン。
+    Ssh(crate::ssh::RemoteEngine),
+    /// daemon 越しに聞いた説明。
+    Described(String),
+}
+
 /// daemon とのつながり。要求に番号を振り、応答を番号で待ち手に渡す（複数のスレッドから同時に呼べる）。
 pub struct Connection {
     writer: Mutex<Box<dyn Write + Send>>,
@@ -46,8 +54,8 @@ pub struct Connection {
     local: AtomicBool,
     /// daemon（や ssh）が標準エラーに書いた最後の部分。つながらなかったときの理由に添える。
     stderr: Arc<Mutex<String>>,
-    /// SSH 先で使っているエンジンと、その用意のしかた（`crate::ssh::RemoteEngine::describe`）。
-    remote_engine: Mutex<Option<String>>,
+    /// SSH 先で使っているエンジンと、その用意のしかた。
+    remote_engine: Mutex<Option<EngineNote>>,
     /// つながっている間だけ持っておくもの（SSH の接続の上のセッションの数え。`crate::ssh`）。
     held: Mutex<Option<Box<dyn Send>>>,
 }
@@ -151,13 +159,27 @@ impl Connection {
         self.local.load(Ordering::Relaxed)
     }
 
+    /// daemon が説明したエンジン（daemon が、頼んだこのプロセスの言語で書いたもの）を覚える。
     pub fn set_remote_engine(&self, description: String) {
-        *self.remote_engine.lock().unwrap() = Some(description);
+        *self.remote_engine.lock().unwrap() = Some(EngineNote::Described(description));
     }
 
-    /// SSH 先で使っているエンジン（SSH のつながりでなければ None）。
+    /// SSH 先につないだエンジンを覚える（文は読むときに、読む側の言語で作る）。
+    pub(crate) fn set_ssh_engine(&self, engine: crate::ssh::RemoteEngine) {
+        *self.remote_engine.lock().unwrap() = Some(EngineNote::Ssh(engine));
+    }
+
+    /// SSH 先で使っているエンジン（SSH のつながりでなければ None）。今のスレッドの言語で（共有の daemon では、
+    /// 1 つのつながりを言語の違う FE が使う）。
     pub fn remote_engine(&self) -> Option<String> {
-        self.remote_engine.lock().unwrap().clone()
+        self.remote_engine
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|note| match note {
+                EngineNote::Ssh(engine) => engine.describe(),
+                EngineNote::Described(text) => text.clone(),
+            })
     }
 
     /// 知らせを受けたら `f` を呼ぶ。`f` は返事を読むスレッドで動くので、`call` の返事を待つ間に持たれうるロックを
