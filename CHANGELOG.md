@@ -73,6 +73,9 @@ becomes the GitHub Release notes.
   `git log` does. After `git fetch --deepen` or `--unshallow`, History is read again with the older commits.
 - Starting a merge, rebase, cherry-pick, revert, pull or patch while another one is stopped no longer reports a
   conflict; it says which one is in progress, to continue or abort first.
+- Error messages show what went wrong: the macOS app showed only "AmonhenError error 1" (a locked index, for
+  example), and a git command that failed without a message showed a raw exit status; it now names the command, its
+  exit code, or the branch or commit that doesn't exist.
 
 ### [0.2.8] - 2026-10-30
 
