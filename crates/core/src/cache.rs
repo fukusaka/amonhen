@@ -139,12 +139,15 @@ fn bytes_of<T: Pod>(values: &[T]) -> &[u8] {
     unsafe { std::slice::from_raw_parts(values.as_ptr().cast(), std::mem::size_of_val(values)) }
 }
 
-/// 一時ファイルに書いてから置き換える（書きかけを読ませない）。
+/// 一時ファイルに書いてから置き換える（書きかけを読ませない）。同じプロセスの中でも同時に書くことがあるので、
+/// 一時ファイルは呼ぶたびに別にする。
 pub fn write(path: &Path, history: &CachedHistory) -> Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = path.with_extension(format!("tmp-{}-{n}", std::process::id()));
     let result = write_to(&tmp, history).and_then(|()| Ok(std::fs::rename(&tmp, path)?));
     if result.is_err() {
         let _ = std::fs::remove_file(&tmp);
@@ -405,6 +408,33 @@ mod tests {
         old[8] ^= 0xff;
         std::fs::write(&path, &old).unwrap();
         assert!(read(&path).is_none(), "形式が違う");
+    }
+
+    /// 同じキャッシュを同時に書いても、互いの一時ファイルを使わない（共有の daemon やアプリは、1 つのプロセスで
+    /// 同じリポジトリの History を同時に読み込むことがある）。
+    #[test]
+    fn writes_the_same_cache_from_several_threads_at_once() {
+        let (graph, head_row) = synthetic::graph(20_000, 4);
+        let history = CachedHistory {
+            tips: vec![graph.ids()[0]],
+            shallow: vec![],
+            head: None,
+            order: HistoryOrder::Date,
+            layout: layout(&graph, head_row),
+            graph,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = path_for(dir.path(), "/r");
+        std::thread::scope(|s| {
+            for _ in 0..8 {
+                s.spawn(|| {
+                    for _ in 0..5 {
+                        write(&path, &history).unwrap();
+                    }
+                });
+            }
+        });
+        assert_eq!(read(&path).unwrap().graph, history.graph);
     }
 
     /// 同じリポジトリのほかの形式（と前の名前）のファイルは、7 日書かれていなければ消す。最近のもの（並んで動く

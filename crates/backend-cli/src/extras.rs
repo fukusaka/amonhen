@@ -505,8 +505,11 @@ fn no_fetch_wrapper(program: &str) -> Option<std::path::PathBuf> {
         program.replace('\'', "'\\''")
     );
     if std::fs::read_to_string(&path).ok().as_deref() != Some(script.as_str()) {
-        // 別の名前で書いてから置き換える（同時に検証していても、書きかけを実行しない）。
-        let tmp = path.with_extension(format!("tmp{}", std::process::id()));
+        // 別の名前で書いてから置き換える（同時に検証していても、書きかけを実行しない）。同じプロセスの中でも
+        // 同時に作ることがあるので、呼ぶたびに別の名前にする。
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let tmp = path.with_extension(format!("tmp{}-{n}", std::process::id()));
         std::fs::write(&tmp, &script).ok()?;
         std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).ok()?;
         std::fs::rename(&tmp, &path).ok()?;
@@ -672,6 +675,28 @@ mod tests {
             (sig.unwrap().trust.as_str(), primary.as_str()),
             ("", "ABCD")
         );
+    }
+
+    /// 同時に検証して同じ gpg の包みを作っても、どれも包みを使える（互いの一時ファイルを使わない）。
+    #[cfg(unix)]
+    #[test]
+    fn makes_the_gpg_wrapper_from_several_threads_at_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        for round in 0..20 {
+            // 毎回まだない包みにする（包みは gpg のパスごとに 1 つ）。
+            let program = tmp.path().join(format!("gpg {round}"));
+            let program = program.to_str().unwrap();
+            let start = std::sync::Barrier::new(8);
+            std::thread::scope(|s| {
+                for _ in 0..8 {
+                    s.spawn(|| {
+                        start.wait();
+                        assert!(no_fetch_wrapper(program).is_some(), "{round}");
+                    });
+                }
+            });
+            let _ = std::fs::remove_file(no_fetch_wrapper(program).unwrap());
+        }
     }
 
     #[cfg(unix)]
