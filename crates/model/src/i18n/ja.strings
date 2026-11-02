@@ -1967,3 +1967,22 @@
 "Every hour git prefetches and writes the commit-graph; it’s set in the global git config and the scheduler on {host} (git maintenance)." = "git が毎時 prefetch と commit-graph の書き出しをします。{host} の git のユーザー全体の設定と予定に書きます（git maintenance）。";
 "Couldn’t Change git maintenance" = "git maintenance を変えられませんでした";
 "Writes to .git, except in repositories git maintenance looks after." = ".git に書きます（git maintenance が手入れするリポジトリには書きません）。";
+
+/* GTK4 の FE: Clone のシートの取得する範囲と、一部のフォルダ */
+"Everything" = "すべて";
+"File contents when needed" = "ファイルの中身は必要なときに取る";
+"Recent history only" = "最近の履歴だけ";
+"The whole history and the contents of every file, as git does by default." = "すべての履歴と、すべてのファイルの中身を取得します（git の既定）。";
+"Good for large repositories: file contents are fetched when a diff or file needs them." = "大きなリポジトリ向けです。ファイルの中身は、差分やファイルを見るときに取得します。";
+"Older history can be fetched later from the end of History." = "古い履歴は、あとで History の終わりから取得できます。";
+"1 Commit" = "1 コミット";
+"{count} Commits" = "{count} コミット";
+"Recent History" = "最近の履歴";
+"How many recent commits to fetch (git clone --depth)." = "新しいほうからいくつのコミットを取るか（git clone --depth）。";
+"Download:" = "取得する範囲:";
+"Check out only some folders" = "一部のフォルダだけ取り出す";
+"Only the files at the top are checked out; right after the clone, choose a folder to check out." = "最上位のファイルだけを取り出し、clone の後で取り出すフォルダを選びます。";
+"Needs git 2.27 or later. This computer’s git is {version}." = "git 2.27 以降が必要です。このコンピューターの git は {version} です。";
+"Only the files at the top are checked out. Choose a folder to check out too; add more later in Settings > Fetching and Folders." = "最上位のファイルだけを取り出しました。ほかに取り出すフォルダを選んでください。後から Settings の「取得とフォルダ」で足せます。";
+"Checking out {folder}…" = "{folder} を取り出しています…";
+"Couldn’t check out {folder}" = "{folder} を取り出せませんでした";

@@ -25,6 +25,22 @@ pub fn more_choices() -> Vec<(String, u32)> {
     ]
 }
 
+/// コミットの数の項目の名前（`1 Commit`・`2,500 Commits`。3 桁ごとに区切る）。
+pub fn commits_title(commits: u32) -> String {
+    if commits == 1 {
+        return tr!("1 Commit");
+    }
+    let digits = commits.to_string();
+    let mut grouped = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            grouped.push(',');
+        }
+        grouped.push(c);
+    }
+    tr!("{count} Commits", count = grouped)
+}
+
 fn install_css() {
     thread_local! {
         static DONE: Cell<bool> = const { Cell::new(false) };
@@ -237,7 +253,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn offers_the_same_counts_as_macos() {
+    fn titles_counts_of_commits_with_separators() {
+        assert_eq!(commits_title(1), "1 Commit");
+        assert_eq!(commits_title(100), "100 Commits");
+        assert_eq!(commits_title(2500), "2,500 Commits");
+        assert_eq!(commits_title(1_000_000), "1,000,000 Commits");
         assert_eq!(
             more_choices().iter().map(|c| c.1).collect::<Vec<_>>(),
             [100, 1_000, 10_000]
