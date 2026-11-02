@@ -292,7 +292,8 @@ extension Actions {
                     }
                 }
                 if changed > 0 { lines.append(L("%ld files have uncommitted changes. Pull stops if the incoming changes touch them.", changed)) }
-                lines.append(L("You can Undo this (⌥⌘Z)."))
+                // 押せないときは、戻すものもない。
+                if !blocked { lines.append(L("You can Undo this (⌥⌘Z).")) }
                 return (lines.joined(separator: "\n"), blocked)
             }
             // 説明の高さは、いちばん長い取り込み方に合わせて決めておく（選び直してもシートの大きさを変えない）。

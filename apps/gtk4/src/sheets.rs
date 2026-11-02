@@ -1283,7 +1283,10 @@ pub fn pull(actions: &Rc<Actions>, mode: &str) {
                         count = changed
                     ));
                 }
-                lines.push(can_undo());
+                // 押せないときは、戻すものもない。
+                if !blocked {
+                    lines.push(can_undo());
+                }
                 (lines.join("\n"), blocked)
             }
         };
