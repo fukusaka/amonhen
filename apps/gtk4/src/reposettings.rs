@@ -752,6 +752,8 @@ impl RepoSettings {
                     item.add_css_class("flat");
                     let l = label(&title, &["dim-label", "caption"]);
                     l.set_ellipsize(gtk::pango::EllipsizeMode::End);
+                    // 長い言い方でも、左の列を広げない（切って出し、全体はツールチップに）。
+                    l.set_max_width_chars(20);
                     item.set_child(Some(&l));
                     item.set_tooltip_text(Some(&help));
                     let w = s.weak();
