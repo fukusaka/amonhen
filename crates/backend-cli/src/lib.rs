@@ -600,7 +600,15 @@ fn spawn_with_stderr(mut cmd: Command, input: Option<&[u8]>) -> Result<(Vec<u8>,
     }
     let out = child.wait_with_output()?;
     if !out.status.success() {
-        let message = String::from_utf8_lossy(&out.stderr).trim().to_owned();
+        let mut message = String::from_utf8_lossy(&out.stderr).trim().to_owned();
+        // commit と merge は、失敗のわけ（何も stage していない、など）を標準出力の最後に書く。
+        if message.is_empty() && matches!(git_subcommand(&cmd).as_deref(), Some("commit" | "merge"))
+        {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            if let Some(last) = stdout.lines().rev().find(|l| !l.trim().is_empty()) {
+                message = last.trim().to_owned();
+            }
+        }
         return Err(if message.is_empty() {
             silent_failure(&cmd, out.status)
         } else {
@@ -955,6 +963,15 @@ mod ops_tests {
             .unwrap_err()
             .to_string();
         assert!(!other.contains("main"), "{other}");
+    }
+
+    #[test]
+    fn commit_with_nothing_staged_says_why() {
+        let (tmp, git) = repo();
+        commit_file(&tmp, &git, "a", "1");
+        std::fs::write(tmp.path().join("a"), "2").unwrap();
+        let message = git.commit("x", false).unwrap_err().to_string();
+        assert!(message.contains("no changes added to commit"), "{message}");
     }
 
     fn commit_file(tmp: &tempfile::TempDir, git: &Git, name: &str, content: &str) -> Oid {
