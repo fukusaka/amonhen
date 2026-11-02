@@ -1080,11 +1080,6 @@ fn build_tab(
         pages.set_visible_child_name("working");
         sidebar.select_page(Page::WorkingCopy);
     }
-    // つなぎ直したタブ: それまでのページを出す（Stashes は stash を読んでから、Settings は窓が出てから）。
-    if args.page == Some(Page::Reflog) {
-        pages.set_visible_child_name("reflog");
-        sidebar.select_page(Page::Reflog);
-    }
     // 右側（ページ）の下のステータスバー（途中の操作・失敗・終わった操作の一言）。サイドバーの下には伸ばさない
     // （macOS 版と同じ）。
     let statusbar = statusbar::StatusBar::new();
@@ -1262,6 +1257,12 @@ fn build_tab(
         on_commit.clone(),
     ));
     pages.add_named(&reflog.root, Some("reflog"));
+    // つなぎ直したタブ: それまでのページを出す（Reflog はページを足してから。Stashes は stash を読んでから、
+    // Settings は窓が出てから）。
+    if args.page == Some(Page::Reflog) {
+        pages.set_visible_child_name("reflog");
+        sidebar.select_page(Page::Reflog);
+    }
     let settings_slot = reposettings::page_slot();
     pages.add_named(&settings_slot, Some("settings"));
     reflog_slot.replace(Some(reflog.clone()));
