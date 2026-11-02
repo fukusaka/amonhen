@@ -272,10 +272,7 @@ fn run(cmd: Command, input: Option<&[u8]>) -> Result<Vec<u8>> {
         label.push_str(&arg.to_string_lossy());
     }
     // ネットワークを使う操作は、進み具合を流しながら読み、取り消せるようにする。
-    let subcommand = cmd
-        .get_args()
-        .find(|a| !a.to_string_lossy().starts_with('-') && !a.to_string_lossy().contains('='))
-        .map(|a| a.to_string_lossy().into_owned());
+    let subcommand = git_subcommand(&cmd);
     let network = subcommand
         .as_deref()
         .is_some_and(|a| ["fetch", "pull", "push", "clone", "ls-remote"].contains(&a));
