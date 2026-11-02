@@ -1155,6 +1155,7 @@ fn build_tab(
     if open_stashes {
         pending.set(pending.get() + 1);
     }
+    let mut open_settings = args.page == Some(Page::Settings);
 
     historydisplay::install_actions(&tab.group);
     tabs::add(host, &tab, select, position);
@@ -1258,7 +1259,7 @@ fn build_tab(
     ));
     pages.add_named(&reflog.root, Some("reflog"));
     // つなぎ直したタブ: それまでのページを出す（Reflog はページを足してから。Stashes は stash を読んでから、
-    // Settings は窓が出てから）。
+    // Settings は ref を読んでから）。
     if args.page == Some(Page::Reflog) {
         pages.set_visible_child_name("reflog");
         sidebar.select_page(Page::Reflog);
@@ -2030,13 +2031,6 @@ fn build_tab(
                                     },
                                 );
                             }
-                            if args.page == Some(Page::Settings) {
-                                let _ = WidgetExt::activate_action(
-                                    &pages,
-                                    "win.repository-settings",
-                                    None,
-                                );
-                            }
                             if let Some(tab) = &args.settings {
                                 settings::show(&window);
                                 settings::select(tab);
@@ -2342,6 +2336,16 @@ fn build_tab(
                         // HEAD が動いたら Reflog も読み直す（見えていなければ、次に出すときに）。
                         reflog.reload();
                         buttons.show_refs(&refs);
+                        // つなぎ直したタブ: Settings を出していたら、ref を読んでから出す（SSH・daemon 越しの
+                        // タブは、それまでリポジトリの操作を使えない。`Buttons::show_unopened`）。
+                        if open_settings && let Some(tab) = tab_weak.upgrade() {
+                            open_settings = false;
+                            let _ = WidgetExt::activate_action(
+                                &tab.root,
+                                "win.repository-settings",
+                                None,
+                            );
+                        }
                         if let Some(name) = menu_ref.take()
                             && let Some(entry) = refs.refs.entries.iter().find(|e| e.name == name)
                         {
