@@ -97,7 +97,9 @@ select {
   cursor: default;
 }
 
+/* 件数は縮めず、欄を先に縮める。長いエラーだけ切る */
 .search-count {
+  flex-shrink: 0;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -106,6 +108,7 @@ select {
 }
 
 .search-count.error {
+  flex-shrink: 1;
   color: var(--vscode-errorForeground);
 }
 
