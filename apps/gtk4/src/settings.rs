@@ -704,7 +704,10 @@ pub fn show(near: &impl IsA<gtk::Widget>) {
                 None,
                 &[
                     check(WRITE_COMMIT_GRAPH, &tr!("Write commit-graph automatically")).upcast(),
-                    note(&tr!("Writes to .git.")).upcast(),
+                    note(&tr!(
+                        "Writes to .git, except in repositories git maintenance looks after."
+                    ))
+                    .upcast(),
                     fsmonitor.upcast(),
                     note(&tr!("A git fsmonitor--daemon runs for each repository.")).upcast(),
                 ],

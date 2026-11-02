@@ -214,8 +214,8 @@ fn action_row(
 }
 
 /// 取得とフォルダ（docs/ux.md の 4.5。macOS 版の `FetchingPage`）: shallow clone の履歴、partial clone の中身、
-/// sparse checkout のフォルダ。そのリポジトリにあるものだけを出す（フォルダは作業ツリーがあればいつも）。読み直す
-/// たびに作り直す。
+/// sparse checkout のフォルダ。そのリポジトリにあるものだけを出す（フォルダは作業ツリーがあればいつも）。最後に、
+/// git maintenance への登録。読み直すたびに作り直す。
 pub fn fetching_page(s: &Rc<RepoSettings>) -> gtk::Box {
     let outer = gtk::Box::new(gtk::Orientation::Vertical, 0);
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -266,6 +266,7 @@ pub fn fetching_page(s: &Rc<RepoSettings>) -> gtk::Box {
             let note = help_label(&tr!("This repository has all of its history and contents."));
             sections.push(section(None, &[note.upcast()]));
         }
+        sections.push(maintenance_section(s, &form));
         content.append(&page(&sections));
     });
     outer
@@ -341,6 +342,43 @@ fn contents_section(s: &Rc<RepoSettings>, form: &Form, partial: &Partial) -> gtk
             ),
             reason.as_deref(),
             &[button.upcast()],
+        )],
+    )
+}
+
+/// git maintenance への登録（コアの `maintenance`）。入れると `git maintenance start`、切ると `unregister`
+/// （予定はほかのリポジトリも使うので残る）。登録してあれば、アプリは commit-graph を書かない（毎時 git が書く）。
+/// git の予定は、Linux では systemd のタイマー（なければ cron）。
+fn maintenance_section(s: &Rc<RepoSettings>, form: &Form) -> gtk::Box {
+    let switch = gtk::Switch::new();
+    switch.set_active(form.maintenance);
+    let w = s.weak();
+    switch.connect_state_set(move |_, on| {
+        if let Some(s) = w.upgrade()
+            && !s.quiet()
+        {
+            s.run_operation(json!({ "op": "maintenance", "on": on }));
+        }
+        glib::Propagation::Proceed
+    });
+    let help = match &s.host {
+        Some(host) => tr!(
+            "Every hour git prefetches and writes the commit-graph; it’s set in the global git config and the scheduler on {host} (git maintenance).",
+            host = host
+        ),
+        None => tr!(
+            "Every hour git prefetches and writes the commit-graph; it’s set in your global git config and systemd or cron (git maintenance)."
+        ),
+    };
+    let reason = (!form.can_maintain)
+        .then(|| too_old("2.31", form.git_version.as_deref(), s.host.as_deref()));
+    section(
+        Some(&tr!("Maintenance")),
+        &[action_row(
+            &tr!("Keep this repository maintained in the background"),
+            &help,
+            reason.as_deref(),
+            &[switch.upcast()],
         )],
     )
 }

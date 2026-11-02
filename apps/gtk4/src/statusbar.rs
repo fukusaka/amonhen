@@ -87,6 +87,7 @@ impl Failure {
             Some("push" | "pushTags") => tr!("Couldn’t Push"),
             Some("fetch" | "deepen" | "unshallow" | "fetchAllContents") => tr!("Couldn’t Fetch"),
             Some("sparseCheckout" | "disableSparseCheckout") => tr!("Couldn’t Change the Folders"),
+            Some("maintenance") => tr!("Couldn’t Change git maintenance"),
             Some("merge" | "mergeInto") => tr!("Couldn’t Merge"),
             Some("rebase") => tr!("Couldn’t Rebase"),
             Some("cherryPick") => tr!("Couldn’t Cherry-pick"),
