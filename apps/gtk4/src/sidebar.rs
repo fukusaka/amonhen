@@ -2841,7 +2841,6 @@ fn finish_tag(data: &mut Data, tags: Option<&TagRemotes>, remotes: &[String]) {
     }
 }
 
-/// ref が指すコミット（History で選ぶ）。
 /// History の行の右端の、リポジトリの形の印（macOS 版の `formMarks`）。
 fn history_marks(form: &crate::repoform::Form) -> Vec<Mark> {
     let mut marks = Vec::new();
@@ -2877,6 +2876,7 @@ fn with_marks(mut data: Data, marks: Vec<Mark>) -> Data {
     data
 }
 
+/// ref が指すコミット（History で選ぶ）。
 pub fn target(data: &Data) -> Option<Oid> {
     match &data.item {
         Item::Ref(e) => e.target,
