@@ -76,6 +76,9 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- Saving patches no longer fails with “No such file or directory” when another save runs at the same time in the same
+  repository over SSH or through the shared daemon.
+
 - Errors from an SSH host opened through the shared daemon are in the language of the app or CLI that asked, not the
   daemon's.
 

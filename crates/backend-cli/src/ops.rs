@@ -886,11 +886,14 @@ impl Operations for Git {
             }]);
         }
         // ファイル名は git に付けさせる（`format.filenameMaxLength` なども効く）。SSH 先でも同じように動くよう、
-        // git dir の中の一時フォルダに書かせて、中身を読んで返す。
+        // git dir の中の一時フォルダに書かせて、中身を読んで返す。SSH 先のエンジンや共有の daemon は 1 つの
+        // プロセスで要求を同時に処理するので、呼ぶたびに別のフォルダにする。
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let dir = self
             .git_dir()?
             .join("amonhen")
-            .join(format!("format-patch-{}", std::process::id()));
+            .join(format!("format-patch-{}-{n}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir)?;
         let out_dir = dir.to_string_lossy().into_owned();

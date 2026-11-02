@@ -1223,6 +1223,28 @@ mod ops_tests {
         git.head_state().unwrap().oid.unwrap()
     }
 
+    /// 同じリポジトリに同時にパッチを書き出させても、互いの一時フォルダを消し合わない（SSH 先のエンジンや共有の
+    /// daemon は、1 つのプロセスで要求を同時に処理する）。
+    #[test]
+    fn saves_patches_from_several_threads_at_once() {
+        let (tmp, git) = repo();
+        let first = commit_file(&tmp, &git, "a", "1");
+        let second = commit_file(&tmp, &git, "b", "2");
+        std::thread::scope(|s| {
+            for _ in 0..8 {
+                s.spawn(|| {
+                    for _ in 0..5 {
+                        let patches = git
+                            .format_patch(&[first, second], &amonhen_model::FormatPatch::default())
+                            .unwrap();
+                        let names: Vec<_> = patches.iter().map(|p| p.name.as_str()).collect();
+                        assert_eq!(names, ["0001-a-1.patch", "0002-b-2.patch"]);
+                    }
+                });
+            }
+        });
+    }
+
     #[test]
     fn merges_rebases_and_aborts_conflicts() {
         let (tmp, git) = repo();
