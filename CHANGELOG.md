@@ -60,6 +60,9 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- Errors from an SSH host opened through the shared daemon are in the language of the app or CLI that asked, not the
+  daemon's.
+
 - Combine with Older Commit… on a single commit in History marks it in the edit mode; it opened with nothing marked.
 
 - Working Copy puts a check box back when staging fails or changes nothing; it kept showing the click.

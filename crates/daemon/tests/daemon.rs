@@ -1131,6 +1131,15 @@ fn shared_daemon_opens_an_ssh_repository_for_everyone() {
     );
     assert_eq!(b.load_history().unwrap().graph.len(), 2);
 
+    // SSH 先のエラーの文は、daemon（英語）や SSH 先へのつながりを先に開いた相手ではなく、頼んだ相手の言語で。
+    let missing = r#"{"op":"resolveCommit","rev":"no-such"}"#;
+    let english = a.run_json(missing);
+    let japanese = amonhen_model::i18n::with(amonhen_model::i18n::Lang::Ja, || b.run_json(missing));
+    assert!(english.contains(r#""ok":false"#), "{english}");
+    assert!(japanese.contains(r#""ok":false"#), "{japanese}");
+    assert_ne!(english, japanese);
+    assert_eq!(english, a.run_json(missing));
+
     // daemon の様子に、SSH 先のつながりが出る。
     let mut status = std::os::unix::net::UnixStream::connect(&socket).unwrap();
     amonhen_remote::local::write_preamble(&mut status, "\0status").unwrap();

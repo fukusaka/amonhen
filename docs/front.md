@@ -79,4 +79,4 @@ Diff line records: rows (diff line × number of rows), textLengths u32, text (UT
 
 When the shape of the API changes, bump `amonhen_front::VERSION` (check it with the version in the `hello` reply). The socket name includes the build fingerprint (`amonhen_remote::BUILD_ID`, a hash of the workspace's sources), so it never connects to a daemon of a different build.
 
-When a front-end starts the shared daemon itself, it passes its language as `AMONHEN_LANG` (the daemon uses it for what it does on its own, such as connecting to SSH hosts).
+When a front-end starts the shared daemon itself, it passes its language as `AMONHEN_LANG` (the daemon uses it for what it does on its own). Errors from an SSH host follow the language of the front-end that asked, even when several front-ends share the connection to that host.

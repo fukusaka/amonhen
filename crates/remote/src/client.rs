@@ -221,13 +221,15 @@ impl Connection {
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = mpsc::channel();
         self.pending.lock().unwrap().insert(id, tx);
-        let payload = postcard::to_allocvec(request)?;
-        match frame::write(
-            &mut *self.writer.lock().unwrap(),
-            Kind::Request,
-            id,
-            &payload,
-        ) {
+        // 挨拶のほかは、いまの利用者の言語を添える（共有の daemon では、要求ごとに頼んだ利用者が違う）。
+        let (kind, payload) = match request {
+            Request::Hello { .. } => (Kind::Request, postcard::to_allocvec(request)?),
+            _ => (
+                Kind::LangRequest,
+                postcard::to_extend(request, vec![amonhen_model::i18n::current() as u8])?,
+            ),
+        };
+        match frame::write(&mut *self.writer.lock().unwrap(), kind, id, &payload) {
             Ok(n) => {
                 self.sent.fetch_add(n as u64, Ordering::Relaxed);
             }

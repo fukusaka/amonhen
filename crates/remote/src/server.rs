@@ -122,8 +122,13 @@ impl Server {
     pub fn run(&self, mut input: impl Read) -> io::Result<()> {
         while let Some(f) = frame::read(&mut input)? {
             match f.kind {
-                Kind::Request => {
-                    let request: Request = match postcard::from_bytes(&f.payload) {
+                Kind::Request | Kind::LangRequest => {
+                    // 言語つきなら先頭の 1 バイトが言語、なければ挨拶の言語。
+                    let (asked, body) = match (f.kind, f.payload.split_first()) {
+                        (Kind::LangRequest, Some((&b, rest))) => (Some(b), rest),
+                        _ => (None, &f.payload[..]),
+                    };
+                    let request: Request = match postcard::from_bytes(body) {
                         Ok(r) => r,
                         Err(e) => {
                             self.reply(f.id, Err(tr!("Can’t read the request: {e}", e = e).into()));
@@ -134,7 +139,8 @@ impl Server {
                         self.language
                             .store(Lang::parse(language) as u8, Ordering::Relaxed);
                     }
-                    let lang = if self.language.load(Ordering::Relaxed) == Lang::Ja as u8 {
+                    let asked = asked.unwrap_or_else(|| self.language.load(Ordering::Relaxed));
+                    let lang = if asked == Lang::Ja as u8 {
                         Lang::Ja
                     } else {
                         Lang::En

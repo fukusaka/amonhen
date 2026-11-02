@@ -79,4 +79,4 @@ History と差分は番号（`history`・`diff`）で持つ。FE がスクロー
 
 窓口の形を変えたら `amonhen_front::VERSION` を上げる（`hello` の答えの version で確かめる）。ソケットの名前にはビルドの指紋（`amonhen_remote::BUILD_ID`。ワークスペースのソースのハッシュ）が入るので、ビルドの違う daemon にはつながらない。
 
-FE が共有の daemon を自分で起動するときは、言語を `AMONHEN_LANG` で渡す（daemon が自分で行うこと、たとえば SSH 先へつなぐときに使う）。
+FE が共有の daemon を自分で起動するときは、言語を `AMONHEN_LANG` で渡す（daemon が自分で行うことに使う）。SSH 先からのエラーの文は、その SSH 先へのつながりを何人の FE で使っていても、頼んだ FE の言語になる。
