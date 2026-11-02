@@ -1243,7 +1243,12 @@ fn build_tab(
     // （macOS 版の `loadForm`。shallow の境界は fetch で、partial clone と sparse checkout は設定で変わるので、
     // History を読み直すたびと、書き込む先を変えたとき）。
     let load_form: Rc<dyn Fn()> = {
-        let (sb, a) = (sidebar.clone(), Rc::downgrade(&actions));
+        let (sb, a, wc, cd) = (
+            sidebar.clone(),
+            Rc::downgrade(&actions),
+            working.clone(),
+            commit_diff.clone(),
+        );
         let generation = Rc::new(Cell::new(0u64));
         Rc::new(move || {
             let Some(repo) = a.upgrade().and_then(|a| a.repo()) else {
@@ -1251,13 +1256,15 @@ fn build_tab(
             };
             let request = generation.get() + 1;
             generation.set(request);
-            let (sb, generation) = (sb.clone(), generation.clone());
+            let (sb, wc, cd, generation) = (sb.clone(), wc.clone(), cd.clone(), generation.clone());
             glib::spawn_future_local(async move {
                 let Some(form) = repoform::load(&repo).await else {
                     return;
                 };
                 if generation.get() == request {
                     sb.set_repository_form(&form);
+                    wc.set_sparse(form.sparse.as_ref());
+                    cd.set_sparse(form.sparse.clone());
                 }
             });
         })
@@ -1308,6 +1315,17 @@ fn build_tab(
     }
     let settings_slot = reposettings::page_slot();
     pages.add_named(&settings_slot, Some("settings"));
+    // Working Copy の sparse checkout の知らせを押すと、リポジトリの設定の「取得とフォルダ」を開く。
+    {
+        let (p, slot) = (pages.downgrade(), settings_slot.downgrade());
+        working.connect_show_folders(move || {
+            let (Some(pages), Some(slot)) = (p.upgrade(), slot.upgrade()) else {
+                return;
+            };
+            let _ = WidgetExt::activate_action(&pages, "win.repository-settings", None);
+            reposettings::select(&slot, "fetching");
+        });
+    }
     reflog_slot.replace(Some(reflog.clone()));
     reflog.set_range_diff(range_diff_opener.clone());
     let (v, w, oc) = (view.downgrade(), win_of.clone(), on_commit.clone());

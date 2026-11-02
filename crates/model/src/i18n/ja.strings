@@ -1954,3 +1954,9 @@
 "Every folder is checked out again (git sparse-checkout disable). In a large repository this can take long and use a lot of disk." = "すべてのフォルダをまた取り出します（git sparse-checkout disable）。大きなリポジトリでは時間がかかり、ディスクも多く使います。";
 "Check Out All" = "すべて取り出す";
 "Couldn’t Change the Folders" = "取り出すフォルダを変えられませんでした";
+
+/* GTK4 の FE: sparse checkout の Working Copy とファイルのメニュー */
+"This folder isn’t checked out" = "取り出していないフォルダです";
+"Only some folders are checked out ({count})" = "一部のフォルダだけ取り出し中（{count}）";
+"Only some files are checked out" = "一部のファイルだけ取り出し中";
+"Click to change them in Settings > Fetching and Folders." = "押すと、Settings の「取得とフォルダ」で変えられます。";

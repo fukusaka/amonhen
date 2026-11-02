@@ -29,6 +29,19 @@ pub struct Sparse {
 }
 
 impl Sparse {
+    /// `path`（ファイル）を取り出しているか（コアの `SparseCheckout::contains` と同じ）。cone mode は、取り出す
+    /// フォルダの下すべてと、根とその途中のフォルダの直下のファイル。cone mode でなければ、取り出しているとみなす。
+    pub fn contains(&self, path: &str) -> bool {
+        let Some((parent, _)) = path.rsplit_once('/').filter(|_| self.cone) else {
+            return true;
+        };
+        self.folders.iter().any(|folder| {
+            parent == folder
+                || parent.starts_with(&format!("{folder}/"))
+                || folder.starts_with(&format!("{parent}/"))
+        })
+    }
+
     /// 1 文の説明（サイドバーの印・Working Copy の見出しのツールチップ）。
     pub fn help(&self) -> String {
         if !self.cone {
@@ -536,6 +549,27 @@ mod tests {
         let plain = Form::from_info(&json!({ "shallow": false, "partial": null, "sparse": null }));
         assert!(plain.items().is_empty());
         assert!(plain.can_fetch_all_contents);
+    }
+
+    #[test]
+    fn checks_out_files_as_cone_mode_does() {
+        let sparse = Sparse {
+            cone: true,
+            folders: vec!["a/b".into()],
+        };
+        // 根と、途中のフォルダの直下のファイル、取り出すフォルダの下すべて。
+        assert!(sparse.contains("top.txt"));
+        assert!(sparse.contains("a/file"));
+        assert!(sparse.contains("a/b/file"));
+        assert!(sparse.contains("a/b/c/d"));
+        assert!(!sparse.contains("a/c/file"));
+        assert!(!sparse.contains("x/file"));
+        // cone mode でなければ、取り出しているとみなす。
+        let patterns = Sparse {
+            cone: false,
+            folders: vec!["/*.md".into()],
+        };
+        assert!(patterns.contains("x/file"));
     }
 
     #[test]

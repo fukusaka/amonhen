@@ -22,10 +22,23 @@ pub enum Item {
     },
     /// 押せない項目（説明だけ。macOS 版の `isEnabled = false`）。
     Disabled(String),
+    /// 押せない項目で、押せないわけをツールチップに出すもの（macOS 版の `isEnabled = false` と `toolTip`）。
+    DisabledHint {
+        title: String,
+        tip: String,
+    },
     /// 下に開くメニュー（Repositories の行の Group・Color Label など）。
     Submenu(String, Vec<Item>),
     /// ここで区切る（GNOME のメニューでは、区切りは節の境目）。
     Separator,
+}
+
+/// 押せない `title` の項目に、押せないわけ `tip` をツールチップで添える。
+pub fn disabled_hint(title: impl Into<String>, tip: impl Into<String>) -> Item {
+    Item::DisabledHint {
+        title: title.into(),
+        tip: tip.into(),
+    }
 }
 
 /// `title` の項目を作る。
@@ -61,7 +74,9 @@ pub fn titles(items: &[Item]) -> Vec<String> {
             Item::Action(title, _) | Item::Choice { title, .. } | Item::Hint { title, .. } => {
                 out.push(title.clone())
             }
-            Item::Disabled(title) => out.push(format!("({title})")),
+            Item::Disabled(title) | Item::DisabledHint { title, .. } => {
+                out.push(format!("({title})"))
+            }
             Item::Submenu(title, children) => {
                 out.push(format!("{title} ▸"));
                 out.extend(titles(children).into_iter().map(|t| format!("    {t}")));
@@ -218,6 +233,17 @@ fn build(
             Item::Disabled(title) => {
                 // グループにないアクションの項目は、GTK が押せない見た目にする。
                 section.append(Some(&title), Some("context.disabled"));
+            }
+            Item::DisabledHint { title, tip } => {
+                // GMenu の項目にはツールチップを出せないので、自前の部品を押せなくして出す。
+                let (on, dot) = if choices {
+                    (Some(false), swatches.then_some(None))
+                } else {
+                    (None, None)
+                };
+                let row = choice_row(&title, on, dot, Some(&tip), Box::new(|| {}));
+                row.set_sensitive(false);
+                add_custom(&section, n, custom, row);
             }
             Item::Submenu(title, children) => {
                 let sub = build(children, group, n, custom);

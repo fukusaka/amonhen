@@ -70,6 +70,9 @@ struct Working(Option<WorkingDiff>);
 unsafe impl Send for Working {}
 unsafe impl Sync for Working {}
 
+/// sparse checkout の知らせを押したときに呼ぶもの。
+type ShowFolders = Rc<RefCell<Option<Rc<dyn Fn()>>>>;
+
 pub struct WorkingCopy {
     pub root: gtk::Paned,
     inner: Rc<Inner>,
@@ -77,6 +80,10 @@ pub struct WorkingCopy {
     layouts: Vec<(gtk::ToggleButton, Layout)>,
     /// 見せ方を変えたら設定に覚えるか。
     remember: Rc<Cell<bool>>,
+    /// sparse checkout なら、一覧の上にそう出す（押すと、リポジトリの設定の「取得とフォルダ」へ）。
+    sparse_note: gtk::Button,
+    sparse_label: gtk::Label,
+    on_show_folders: ShowFolders,
 }
 
 struct Inner {
@@ -355,6 +362,30 @@ impl WorkingCopy {
         files_part.set_margin_top(6);
         list_scrolled.set_min_content_height(100);
         files_part.append(&list_header);
+        // sparse checkout なら、一覧の上にそう出す（取り出していないフォルダのファイルは変更に出ない。macOS 版と同じ）。
+        let sparse_label = gtk::Label::new(None);
+        sparse_label.add_css_class("dim-label");
+        sparse_label.add_css_class("caption");
+        sparse_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        let sparse_icon = crate::icon::Icon::default();
+        sparse_icon.set(crate::icon::Kind::FolderMinus, false);
+        let sparse_box = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        sparse_box.append(&sparse_icon);
+        sparse_box.append(&sparse_label);
+        let sparse_note = gtk::Button::new();
+        sparse_note.set_child(Some(&sparse_box));
+        sparse_note.add_css_class("flat");
+        sparse_note.set_halign(gtk::Align::Start);
+        sparse_note.set_visible(false);
+        let on_show_folders: ShowFolders = Rc::default();
+        let f = on_show_folders.clone();
+        sparse_note.connect_clicked(move |_| {
+            let show = f.borrow().clone();
+            if let Some(show) = show {
+                show();
+            }
+        });
+        files_part.append(&sparse_note);
         files_part.append(&filter);
         files_part.append(&list_area);
         let left = gtk::Paned::new(gtk::Orientation::Vertical);
@@ -547,7 +578,34 @@ impl WorkingCopy {
             inner,
             layouts,
             remember,
+            sparse_note,
+            sparse_label,
+            on_show_folders,
         }
+    }
+
+    /// sparse checkout なら、一覧の上にそう出す（取り出していないフォルダのファイルは変更に出ない）。
+    pub fn set_sparse(&self, sparse: Option<&crate::repoform::Sparse>) {
+        self.sparse_note.set_visible(sparse.is_some());
+        let Some(sparse) = sparse else { return };
+        self.sparse_label.set_text(&if sparse.cone {
+            tr!(
+                "Only some folders are checked out ({count})",
+                count = sparse.folders.len()
+            )
+        } else {
+            tr!("Only some files are checked out")
+        });
+        self.sparse_note.set_tooltip_text(Some(&format!(
+            "{}\n{}",
+            sparse.help(),
+            tr!("Click to change them in Settings > Fetching and Folders.")
+        )));
+    }
+
+    /// sparse checkout の知らせを押したら `f` を呼ぶ（リポジトリの設定の「取得とフォルダ」を開く）。
+    pub fn connect_show_folders(&self, f: impl Fn() + 'static) {
+        self.on_show_folders.replace(Some(Rc::new(f)));
     }
 
     pub fn set_repo(&self, repo: Arc<Repository>) {
