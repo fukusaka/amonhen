@@ -78,6 +78,9 @@ becomes the GitHub Release notes.
 
 - Saving patches no longer fails with “No such file or directory” when another save runs at the same time in the same
   repository over SSH or through the shared daemon.
+- When nothing sets how to pull (`pull.rebase`, `pull.ff`) and the branch has diverged, the Pull sheet says git won't
+  pull (git 2.33.1 and later refuse) and asks for Merge or Rebase for this pull, instead of promising a merge that then
+  failed. No settings are written.
 
 - Errors from an SSH host opened through the shared daemon are in the language of the app or CLI that asked, not the
   daemon's. So are the SSH host engine and why a connection was lost, in Activity and `amonhen daemon status`.
@@ -730,6 +733,8 @@ First release.
 
 #### Fixed
 
+- Pull on a diverged branch asks for Merge or Rebase for this pull when nothing sets how to pull (`pull.rebase`,
+  `pull.ff`), since git 2.33.1 and later refuse to pull then; it used to merge.
 - Starting a merge, rebase, cherry-pick or revert while another one is stopped no longer reports a conflict; it says
   which one is in progress, to continue or abort first.
 - In a History with many branches side by side (git/git, linux), the graph no longer pushes the commit text out of the
