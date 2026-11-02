@@ -95,12 +95,6 @@ pub fn band(fetch: Fetch, boundary_time: Rc<dyn Fn() -> Option<i64>>) -> gtk::Bo
     widget.append(&spinner);
     widget.set_accessible_role(gtk::AccessibleRole::Group);
     widget.update_property(&[gtk::accessible::Property::Label(&label.text())]);
-    // 表の空いた所と同じく、押しても行の選択を変えない（下の表に通さない）。
-    let swallow = gtk::GestureClick::new();
-    swallow.connect_pressed(|g, _, _, _| {
-        g.set_state(gtk::EventSequenceState::Claimed);
-    });
-    widget.add_controller(swallow);
     // 取っている間はボタンを止めて回る印を出す。
     let (m, a, s) = (more.downgrade(), all.downgrade(), spinner.downgrade());
     let set_running = move |running: bool| {
@@ -193,23 +187,32 @@ pub async fn ask_count(
     initial: u32,
 ) -> Option<u32> {
     let sheet = Sheet::unnamed(parent, title, message);
-    let field = gtk::SpinButton::with_range(1.0, f64::from(u32::MAX), 1.0);
-    field.set_digits(0);
-    field.set_value(f64::from(initial));
-    field.set_activates_default(true);
-    field.set_halign(gtk::Align::Start);
-    field.set_width_chars(10);
+    // 数の欄（macOS 版の数だけの欄。Enter で決める）。数でなければ決められない。
+    let field = gtk::Entry::builder()
+        .text(initial.to_string())
+        .input_purpose(gtk::InputPurpose::Digits)
+        .activates_default(true)
+        .width_chars(10)
+        .halign(gtk::Align::Start)
+        .build();
     sheet.add(&field);
-    sheet.buttons(button, false, None);
+    let ok = sheet.buttons(button, false, None);
+    field.connect_changed(move |f| ok.set_sensitive(parse_count(&f.text()).is_some()));
     field.grab_focus();
     let f = field.clone();
     if sheet.run().await != Response::Ok {
         return None;
     }
-    // 打ち込んだまま押しても、その数で。
-    f.update();
-    let value = f.value();
-    (value >= 1.0).then_some(value as u32)
+    parse_count(&f.text())
+}
+
+/// 欄の数（1 以上。3 桁ごとの `,` は除く）。
+fn parse_count(text: &str) -> Option<u32> {
+    text.trim()
+        .replace([',', '_'], "")
+        .parse::<u32>()
+        .ok()
+        .filter(|&n| n >= 1)
 }
 
 /// 初めに出す日付: 境界のコミットの日時（分からなければ今）の 1 年前。今より後にはしない。
@@ -262,6 +265,13 @@ mod tests {
             more_choices().iter().map(|c| c.1).collect::<Vec<_>>(),
             [100, 1_000, 10_000]
         );
+    }
+
+    #[test]
+    fn reads_a_count_of_one_or_more() {
+        assert_eq!(parse_count(" 2,500 "), Some(2500));
+        assert_eq!(parse_count("0"), None);
+        assert_eq!(parse_count("x"), None);
     }
 
     #[test]
