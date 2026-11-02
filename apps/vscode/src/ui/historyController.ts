@@ -179,7 +179,9 @@ export class HistoryController implements vscode.Disposable {
     if (changed.has('mailmap')) {
       this.details.clear();
     }
-    if (refsChanged || changed.has('mailmap') || headOid !== this.headOid) {
+    // status をまだ読んでいなければ、HEAD が動いたかは分からない（読み直さない）
+    const headMoved = headOid !== undefined && headOid !== this.headOid;
+    if (refsChanged || changed.has('mailmap') || headMoved) {
       clearTimeout(this.resetTimer);
       this.resetTimer = setTimeout(() => void this.reset(), 100);
     }
