@@ -488,7 +488,14 @@ pub enum Command {
         on: bool,
     },
     /// git の設定から決まる、pull と fetch のふるまい（`info.pull`: `merge`・`rebase`・`fastForwardOnly`、
-    /// `info.prune`）。Pull のシートが「git の設定に従う」の中身を見せるのに使う。
+    /// `info.prune`）。Pull のシートが「git の設定に従う」の中身を見せるのに使う。今のブランチの
+    /// `branch.<name>.rebase` は `pull.rebase` より先に見る（git と同じ）。
+    ///
+    /// `info.pullRefuses`: どれも決めていない（`branch.<name>.rebase`・`pull.rebase`・`pull.ff` がない）ときに、git
+    /// が pull を断る場合。git 2.33.1 から、取り込み方を決めずに分かれたブランチを pull すると断る（`Need to specify
+    /// how to reconcile divergent branches`）。2.34.1 からは両方に新しいコミットがあるとき（`diverged`）だけで、
+    /// 2.33.1〜2.34.0 は fast-forward できなければ（手元だけが進んでいても）断る（`notFastForward`）。それより前の
+    /// git や、どれかを決めていれば null（git は merge する）。
     SyncDefaults,
     /// リモート（`info.remotes`）。
     Remotes,
@@ -3389,10 +3396,44 @@ impl Repository {
                         .find(|e| e.key.eq_ignore_ascii_case(key))
                         .map(|e| e.value.to_ascii_lowercase())
                 };
-                let pull = if value("pull.ff").as_deref() == Some("only") {
+                // 今のブランチの branch.<name>.rebase が pull.rebase より先（git の pull と同じ）。ブランチの名前は
+                // 大文字と小文字を区別する。
+                let branch_rebase = ops
+                    .head_state()?
+                    .branch
+                    .and_then(|b| b.strip_prefix("refs/heads/").map(str::to_owned))
+                    .and_then(|b| {
+                        config
+                            .iter()
+                            .rev()
+                            .find(|e| {
+                                e.key
+                                    .get(..7)
+                                    .is_some_and(|s| s.eq_ignore_ascii_case("branch."))
+                                    && e.key
+                                        .get(7..)
+                                        .and_then(|s| s.strip_prefix(b.as_str()))
+                                        .is_some_and(|s| s.eq_ignore_ascii_case(".rebase"))
+                            })
+                            .map(|e| e.value.to_ascii_lowercase())
+                    });
+                let rebase = branch_rebase.or_else(|| value("pull.rebase"));
+                let ff = value("pull.ff");
+                // どれも決めていなければ、git 2.33.1 から分かれたブランチの pull を断る（`builtin/pull.c` の
+                // `show_advice_pull_non_ff`）。2.34.1 からは、手元だけが進んでいるときは断らない。
+                let pull_refuses = if rebase.is_none() && ff.is_none() {
+                    match ops.git_version()? {
+                        Some(v) if v < (2, 33, 1) => None,
+                        Some(v) if v < (2, 34, 1) => Some("notFastForward"),
+                        _ => Some("diverged"),
+                    }
+                } else {
+                    None
+                };
+                let pull = if ff.as_deref() == Some("only") {
                     "fastForwardOnly"
                 } else if matches!(
-                    value("pull.rebase").as_deref(),
+                    rebase.as_deref(),
                     Some("true" | "yes" | "on" | "1" | "merges" | "interactive")
                 ) {
                     "rebase"
@@ -3405,7 +3446,11 @@ impl Repository {
                 );
                 Ok(Response {
                     ok: true,
-                    info: Some(serde_json::json!({ "pull": pull, "prune": prune })),
+                    info: Some(serde_json::json!({
+                        "pull": pull,
+                        "pullRefuses": pull_refuses,
+                        "prune": prune,
+                    })),
                     ..Default::default()
                 })
             }
@@ -6213,6 +6258,85 @@ mod tests {
         // pull.ff=only は pull.rebase より強い。
         git(dir, &["config", "pull.ff", "only"]);
         assert_eq!(defaults()["pull"], "fastForwardOnly");
+    }
+
+    #[test]
+    fn pull_without_a_reconcile_setting_follows_git_on_diverged_branches() {
+        let (upstream, _) = setup();
+        let tmp = tempfile::tempdir().unwrap();
+        let bare = tmp.path().join("upstream.git");
+        git(
+            tmp.path(),
+            &[
+                "clone",
+                "-q",
+                "--bare",
+                upstream.path().to_str().unwrap(),
+                "upstream.git",
+            ],
+        );
+        git(
+            tmp.path(),
+            &["clone", "-q", bare.to_str().unwrap(), "clone"],
+        );
+        git(
+            tmp.path(),
+            &["clone", "-q", bare.to_str().unwrap(), "other"],
+        );
+        let (dir, other) = (tmp.path().join("clone"), tmp.path().join("other"));
+        for d in [&dir, &other] {
+            for (key, value) in [("user.name", "a"), ("user.email", "a@example.com")] {
+                git(d, &["config", key, value]);
+            }
+        }
+        // 上流と手元の両方で進め、分かれさせる。
+        std::fs::write(other.join("b.txt"), "b\n").unwrap();
+        git(&other, &["add", "."]);
+        git(&other, &["commit", "-q", "-m", "upstream"]);
+        git(&other, &["push", "-q"]);
+        std::fs::write(dir.join("c.txt"), "c\n").unwrap();
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-q", "-m", "local"]);
+        let repo = Repository::new(GixBackend::open(&dir).unwrap());
+        let defaults = || run(&repo, r#"{"op":"syncDefaults"}"#)["info"].clone();
+        let config = || git(&dir, &["config", "--local", "--list"]);
+        let before = config();
+
+        let (major, minor) = git_version();
+        let refuses = defaults()["pullRefuses"].clone();
+        if (major, minor) >= (2, 35) {
+            assert_eq!(refuses, "diverged");
+            // git の設定に任せると、git は取り込み方が決まっていないので断る。
+            let r = run(&repo, r#"{"op":"pull"}"#);
+            assert_eq!(r["ok"], false, "{r}");
+            assert!(r["error"].as_str().unwrap().contains("divergent"), "{r}");
+        } else if (major, minor) < (2, 33) {
+            assert!(refuses.is_null(), "{refuses}");
+        }
+        // この pull だけ選べば取り込める。設定は書かない。
+        let r = run(&repo, r#"{"op":"pull","mode":"rebase"}"#);
+        assert_eq!(r["outcome"], "done", "{r}");
+        assert_eq!(git(&dir, &["log", "--format=%s"]), "local\nupstream\nfirst");
+        assert_eq!(run(&repo, r#"{"op":"undo"}"#)["ok"], true);
+        let r = run(&repo, r#"{"op":"pull","mode":"merge"}"#);
+        assert_eq!(r["outcome"], "done", "{r}");
+        assert_eq!(git(&dir, &["rev-list", "--count", "--merges", "HEAD"]), "1");
+        assert_eq!(config(), before);
+
+        // どれかを決めていれば断らない。branch.<name>.rebase は pull.rebase より先。
+        git(&dir, &["config", "pull.rebase", "false"]);
+        let d = defaults();
+        assert!(d["pullRefuses"].is_null(), "{d}");
+        assert_eq!(d["pull"], "merge", "{d}");
+        git(&dir, &["config", "branch.main.rebase", "true"]);
+        assert_eq!(defaults()["pull"], "rebase");
+        git(&dir, &["config", "--unset", "pull.rebase"]);
+        let d = defaults();
+        assert!(d["pullRefuses"].is_null(), "{d}");
+        assert_eq!(d["pull"], "rebase", "{d}");
+        git(&dir, &["config", "--unset", "branch.main.rebase"]);
+        git(&dir, &["config", "pull.ff", "true"]);
+        assert!(defaults()["pullRefuses"].is_null());
     }
 
     #[test]
