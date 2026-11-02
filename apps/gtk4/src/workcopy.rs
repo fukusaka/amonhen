@@ -1190,6 +1190,14 @@ impl Inner {
                 Some(Row::Dir { path, .. }) => Some(path.clone()),
                 _ => None,
             });
+        // 選んでいた行（いくつでも）。作り直した後も、一覧に残っているものは選んだままにする。
+        let kept: Vec<RowKey> = {
+            let rows = this.rows.borrow();
+            this.selected_positions()
+                .into_iter()
+                .filter_map(|p| rows.get(p).map(Row::key))
+                .collect()
+        };
         this.rebuilding.set(true);
         // 待っている選び直しは捨てる（ここで選び直す）。
         this.follow.set(this.follow.get() + 1);
@@ -1269,12 +1277,19 @@ impl Inner {
         }
         drop(all);
         let wanted = this.selected.borrow().clone();
-        let found = wanted.and_then(|p| entries.iter().position(|e| e.path == p));
+        let row_of = |i: usize| this.row_entries.borrow().iter().position(|&r| r == Some(i));
+        // 差分に出していたファイルがなくなれば、ほかに選んでいて一覧に残ったファイル。
+        let found = wanted
+            .and_then(|p| entries.iter().position(|e| e.path == p))
+            .or_else(|| {
+                entries.iter().enumerate().position(|(i, e)| {
+                    row_of(i).is_some() && kept.contains(&RowKey::File(e.path.clone()))
+                })
+            });
         let index = found.unwrap_or(0);
         this.entries.replace(entries);
         // そのファイルの行。畳んだディレクトリの中に隠れたら、行は選ばず差分もそのまま（macOS 版の
         // NSOutlineView と同じ）。選んでいたファイルがなくなったときだけ、最初のファイルの行に移る。
-        let row_of = |i: usize| this.row_entries.borrow().iter().position(|&r| r == Some(i));
         let hidden = found.is_some_and(|i| row_of(i).is_none());
         let row_index = if hidden {
             None
@@ -1326,6 +1341,12 @@ impl Inner {
             }
             this.rebuilding.set(false);
         }
+        // ほかに選んでいた行も選び直す（差分とフォーカスは上で決めた行のまま）。
+        this.rebuilding.set(true);
+        for row in rows_to_reselect(&kept, &this.rows.borrow()) {
+            this.selection.select_item(row as u32, false);
+        }
+        this.rebuilding.set(false);
         this.update_buttons();
     }
 
@@ -3161,7 +3182,30 @@ enum Row {
     },
 }
 
+/// 作り直しをまたいで同じ行を探すための鍵（ファイルかディレクトリかと、そのパス）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum RowKey {
+    File(String),
+    Dir(String),
+}
+
+/// 作り直した一覧 `rows` で、前に選んでいた行 `kept` に当たる行（なくなったものは除く）。
+fn rows_to_reselect(kept: &[RowKey], rows: &[Row]) -> Vec<usize> {
+    rows.iter()
+        .enumerate()
+        .filter(|(_, r)| kept.contains(&r.key()))
+        .map(|(i, _)| i)
+        .collect()
+}
+
 impl Row {
+    fn key(&self) -> RowKey {
+        match self {
+            Row::File { entry, .. } => RowKey::File(entry.path.clone()),
+            Row::Dir { path, .. } => RowKey::Dir(path.clone()),
+        }
+    }
+
     /// 同じファイル・ディレクトリの行か（状態・チェック・畳んだかは問わない）。
     fn same_place(&self, other: &Row) -> bool {
         match (self, other) {
@@ -3465,6 +3509,29 @@ mod tests {
         assert_eq!(changed_span(&[1, 2], &[]), (0, 2, 0));
         // 同じ値が続いても、前と後ろで重ならない。
         assert_eq!(changed_span(&[1, 1], &[1, 1, 1]), (2, 2, 3));
+    }
+
+    /// 読み直した後は、選んでいたファイル・ディレクトリのうち一覧に残ったものをすべて選び直す。
+    #[test]
+    fn reselects_every_row_still_listed() {
+        let a = entry(StatusKind::Changed, "src/a.rs", b'.', b'M');
+        let b = entry(StatusKind::Changed, "src/b.rs", b'.', b'M');
+        let c = entry(StatusKind::Changed, "z.txt", b'.', b'M');
+        let none = std::collections::HashSet::new();
+        let kept = vec![
+            RowKey::File("src/a.rs".into()),
+            RowKey::File("z.txt".into()),
+            RowKey::Dir("src".into()),
+        ];
+        // 一覧: a・b・z。a と z を選んでいた。
+        let (rows, _) = list_rows(&[a.clone(), b.clone(), c.clone()], Layout::List, &none);
+        assert_eq!(rows_to_reselect(&kept, &rows), vec![0, 2]);
+        // a がなくなった: z だけ残る（行の番号は新しい一覧で）。
+        let (rows, _) = list_rows(&[b.clone(), c.clone()], Layout::List, &none);
+        assert_eq!(rows_to_reselect(&kept, &rows), vec![1]);
+        // 木: src/・a・b・z。ディレクトリの行も選び直す。
+        let (rows, _) = list_rows(&[a, b, c], Layout::Tree, &none);
+        assert_eq!(rows_to_reselect(&kept, &rows), vec![0, 1, 3]);
     }
 
     /// ディレクトリの中かは、名前の区切りで見る（`src` に `srcx/a` は入らない）。
