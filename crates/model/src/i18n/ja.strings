@@ -664,6 +664,8 @@
 "Moves {branch} forward (fast-forward)." = "{branch} を進めます（fast-forward）。";
 "Your {count} local commits are replayed on top (their IDs change)." = "手元の {count} コミットを、取り込んだコミットの上に載せ直します（ID が変わります）。";
 "⚠︎ Fast-Forward Only can’t pull these: you have {count} local commits. Choose Merge or Rebase." = "⚠︎ 手元にも {count} コミットあるので、Fast-Forward Only では取り込めません。Merge か Rebase を選んでください。";
+"⚠︎ git won’t pull: the branches have diverged, and neither pull.rebase nor pull.ff says how to reconcile them. Choose Merge or Rebase for this pull (your settings stay as they are)." = "⚠︎ ブランチが分かれていて、pull.rebase・pull.ff のどちらも取り込み方を決めていないので、git は取り込みません。この Pull の取り込み方として Merge か Rebase を選んでください（設定は変えません）。";
+"not set" = "未設定";
 "You have {count} local commits, so this makes a merge commit." = "手元に {count} コミットあるので、マージコミットを 1 つ作ります。";
 "{count} files have uncommitted changes. Pull stops if the incoming changes touch them." = "作業中の変更が {count} ファイルあります。取り込む変更と重なると止まります。";
 "{upstream} has {count} commits you don’t have" = "{upstream} に、手元にないコミットが {count} あります";

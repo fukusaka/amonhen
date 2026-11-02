@@ -1137,11 +1137,18 @@ pub fn pull(actions: &Rc<Actions>, mode: &str) {
                 return;
             }
         }
-        let by_git = run(&repo, json!({ "op": "syncDefaults" })).await["info"]["pull"]
-            .as_str()
-            .unwrap_or("merge")
-            .to_owned();
+        let defaults = run(&repo, json!({ "op": "syncDefaults" })).await["info"].clone();
+        let by_git = defaults["pull"].as_str().unwrap_or("merge").to_owned();
         let (incoming, outgoing) = (state.incoming.count, state.outgoing.count);
+        // 取り込み方を何も決めていなければ、git（2.33.1 から）は分かれたブランチの pull を断る（2.34.1 からは両方に
+        // 新しいコミットがあるときだけ。それまでは手元だけが進んでいても）。設定は書かず、この pull だけの取り込み方を
+        // 選んでもらう（macOS 版と同じ）。
+        let refuses = defaults["pullRefuses"].as_str();
+        let unset = refuses.is_some();
+        let refused = unset
+            && state.upstream.is_some()
+            && outgoing > 0
+            && (incoming > 0 || refuses == Some("notFastForward"));
         let title = match &state.upstream {
             Some(u) if incoming > 0 => {
                 tr!(
@@ -1163,7 +1170,12 @@ pub fn pull(actions: &Rc<Actions>, mode: &str) {
             .iter()
             .map(|m| {
                 if *m == "git" {
-                    format!("{} ({})", pull_mode_title(m), pull_mode_title(&by_git))
+                    let by = if unset {
+                        tr!("not set")
+                    } else {
+                        pull_mode_title(&by_git)
+                    };
+                    format!("{} ({})", pull_mode_title(m), by)
                 } else {
                     pull_mode_title(m)
                 }
@@ -1232,6 +1244,11 @@ pub fn pull(actions: &Rc<Actions>, mode: &str) {
                         "Sets {source} as the upstream, then pulls.",
                         source = picked
                     ));
+                } else if m == "git" && refused {
+                    lines.push(tr!(
+                        "⚠︎ git won’t pull: the branches have diverged, and neither pull.rebase nor pull.ff says how to reconcile them. Choose Merge or Rebase for this pull (your settings stay as they are)."
+                    ));
+                    blocked = true;
                 } else if incoming == 0 {
                     lines.push(tr!(
                         "Nothing new as of the last Fetch (Pull fetches first)."
@@ -1290,7 +1307,7 @@ pub fn pull(actions: &Rc<Actions>, mode: &str) {
                 ok.set_sensitive(!describe(&chosen()).1);
                 if let Some(label) = &forecast {
                     let m = method(&chosen());
-                    if m == "fastForwardOnly" {
+                    if m == "fastForwardOnly" || (chosen() == "git" && refused) {
                         label.set_text("");
                     } else if let Some(f) = answer.borrow().as_ref() {
                         show_forecast(label, f.as_ref(), m == "rebase");

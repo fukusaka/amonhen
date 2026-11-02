@@ -229,9 +229,16 @@ extension Actions {
             let (outgoing, incoming) = (state.outgoing, state.incoming)
             let changed = state.status.items.filter { $0.kind != .untracked }.count
             // git の設定（pull.rebase・pull.ff）が決める取り込み方。「git の設定に従う」の中身として見せる。
-            struct Defaults: Decodable { let pull: String }
-            let byGit = await Task.detached { try? repository.info(["op": "syncDefaults"], as: Defaults.self) }.value
-                .flatMap { PullMode(rawValue: $0.pull) } ?? .merge
+            struct Defaults: Decodable { let pull: String; let pullRefuses: String? }
+            let defaults = await Task.detached { try? repository.info(["op": "syncDefaults"], as: Defaults.self) }.value
+            let byGit = defaults.flatMap { PullMode(rawValue: $0.pull) } ?? .merge
+            // 取り込み方を何も決めていなければ、git（2.33.1 から）は分かれたブランチの pull を断る（2.34.1 からは
+            // 両方に新しいコミットがあるときだけ。それまでは手元だけが進んでいても）。設定は書かず、この pull だけの
+            // 取り込み方を選んでもらう。
+            let unset = defaults?.pullRefuses != nil
+            let refused = upstream != nil && outgoing.count > 0
+                && (incoming.count > 0 || defaults?.pullRefuses == "notFastForward")
+                && unset
             // 選んだ取り込み方が実際に行うこと（.git なら git の設定が決める方）。
             let method = { (m: PullMode) -> PullMode in m == .git ? byGit : m }
             let title = upstream.map {
@@ -246,7 +253,7 @@ extension Actions {
             source.addItems(withTitles: sources)
             let popup = NSPopUpButton(frame: .zero, pullsDown: false)
             for m in PullMode.allCases {
-                popup.addItem(withTitle: m == .git ? L("%@ (%@)", m.title, byGit.title) : m.title)
+                popup.addItem(withTitle: m == .git ? L("%@ (%@)", m.title, unset ? L("not set") : byGit.title) : m.title)
                 popup.lastItem?.representedObject = m.rawValue
                 popup.lastItem?.toolTip = switch m {
                 case .merge: L("Brings the upstream commits in. When both sides have new commits, a merge commit joins them.")
@@ -267,6 +274,9 @@ extension Actions {
                 var blocked = false
                 if upstream == nil {
                     lines.append(L("Sets %@ as the upstream, then pulls.", source.titleOfSelectedItem ?? ""))
+                } else if m == .git && refused {
+                    lines.append(L("⚠︎ git won’t pull: the branches have diverged, and neither pull.rebase nor pull.ff says how to reconcile them. Choose Merge or Rebase for this pull (your settings stay as they are)."))
+                    blocked = true
                 } else if incoming.count == 0 {
                     lines.append(L("Nothing new as of the last Fetch (Pull fetches first)."))
                 } else if outgoing.count == 0 {
@@ -305,7 +315,7 @@ extension Actions {
             let showForecast = {
                 guard let forecastLabel else { return }
                 let m = method(chosen())
-                if m == .fastForwardOnly {
+                if m == .fastForwardOnly || (chosen() == .git && refused) {
                     forecastLabel.stringValue = ""
                 } else if answer.done {
                     Self.show(answer.forecast, estimate: m == .rebase, in: forecastLabel)
