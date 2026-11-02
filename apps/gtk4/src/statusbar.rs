@@ -85,7 +85,7 @@ impl Failure {
             Some("checkout" | "track" | "detach") => tr!("Couldn’t Checkout"),
             Some("pull") => tr!("Couldn’t Pull"),
             Some("push" | "pushTags") => tr!("Couldn’t Push"),
-            Some("fetch") => tr!("Couldn’t Fetch"),
+            Some("fetch" | "deepen" | "unshallow") => tr!("Couldn’t Fetch"),
             Some("merge" | "mergeInto") => tr!("Couldn’t Merge"),
             Some("rebase") => tr!("Couldn’t Rebase"),
             Some("cherryPick") => tr!("Couldn’t Cherry-pick"),

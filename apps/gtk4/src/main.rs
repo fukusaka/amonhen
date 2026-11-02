@@ -56,6 +56,7 @@ mod reposettings;
 mod rewritedraw;
 mod search;
 mod settings;
+mod shallow;
 mod sheets;
 mod sidebar;
 mod signature;
@@ -1214,6 +1215,21 @@ fn build_tab(
     });
     let r = reload.clone();
     actions.connect_change(move || r());
+    // shallow clone の History の最後の行の下の帯。取り足す操作は、Fetch と同じく窓の操作で（進み具合はツールバーと
+    // Activity、失敗はステータスバー。macOS 版と同じ）。
+    {
+        let a = Rc::downgrade(&actions);
+        let fetch: shallow::Fetch = Rc::new(move |command, done| match a.upgrade() {
+            Some(actions) => actions.perform_with(vec![command], move |_| done()),
+            None => done(),
+        });
+        let v = view.downgrade();
+        let band = shallow::band(
+            fetch,
+            Rc::new(move || v.upgrade().and_then(|v| v.oldest_boundary_time())),
+        );
+        view.set_footer(Some(band.upcast_ref()));
+    }
     // 書き込む先にした worktree の見張りの知らせ（裏のスレッドから）。
     let note_tx = tx.clone();
     worktrees.set_notify(Arc::new(move |note| {

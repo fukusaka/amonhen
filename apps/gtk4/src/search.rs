@@ -256,6 +256,7 @@ impl Search {
             Inner::run(&self.inner, query, 0);
             return;
         }
+        self.inner.view.set_matching_only(false);
         self.inner.view.show(repo, history);
         // 走っている検索・絞り込みは古い History のものなので捨てる。
         self.inner.clear();
@@ -326,6 +327,7 @@ impl Inner {
         if self.filtered.replace(false)
             && let Some((repo, base)) = self.base.borrow().clone()
         {
+            self.view.set_matching_only(false);
             self.view.show(repo, base);
         }
         self.set_matches(Rc::default());
@@ -344,6 +346,7 @@ impl Inner {
         if !this.only.is_active() {
             // 選んでいたコミットは、元の History でも選んだまま（`show` が ID で選び直す。macOS 版と同じ）。
             if this.filtered.replace(false) {
+                this.view.set_matching_only(false);
                 this.view.show(repo, base);
             }
             this.view.set_matches(this.matches.borrow().clone());
@@ -387,6 +390,7 @@ impl Inner {
                 && let Ok((repo, filtered)) = built
             {
                 this.filtered.set(true);
+                this.view.set_matching_only(true);
                 // 選んでいたコミットは、絞り込んだ History でも選んだまま（`show` が ID で選び直し、なければ
                 // 先頭を選ぶ。macOS 版と同じ）。
                 this.view.show(repo, filtered);
@@ -470,6 +474,7 @@ impl Inner {
                         if this.filtered.replace(false)
                             && let Some((repo, base)) = this.base.borrow().clone()
                         {
+                            this.view.set_matching_only(false);
                             this.view.show(repo, base);
                         }
                         this.view.set_matches(rows);

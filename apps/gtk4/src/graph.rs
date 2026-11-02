@@ -4,7 +4,7 @@
 //! （GSK は GPU でパスを描くので、命令の数を少なく保つ）。形は macOS 版（`GraphRenderer.swift`）と同じで、
 //! 縦線は区間 1 つ、レーンをまたぐ所は縦向きの接線を持つ 3 次ベジェ曲線。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::time::Instant;
 
@@ -204,8 +204,10 @@ impl Style {
 const DIMMED_ALPHA: f32 = 0.18;
 
 /// `rows` 行の点と線を `snapshot` に描く。y は `scroll_y` だけずらす。`lineage` があれば、祖先の点と
-/// それをつなぐ線のほかは薄く描く。行ごとのグラフの右端（その行の点と、その行を通る線のいちばん右。macOS 版の
-/// `rightExtent`）を返す。文字はそのすぐ右から始める。
+/// それをつなぐ線のほかは薄く描く。`boundary`（shallow clone の境界のコミットの行）の点からは、下へ短い点線を
+/// 描く（親はあるが取得していない。macOS 版の `appendUnfetchedStub`）。行ごとのグラフの右端（その行の点と、その行を
+/// 通る線のいちばん右。macOS 版の `rightExtent`）を返す。文字はそのすぐ右から始める。
+#[allow(clippy::too_many_arguments)]
 pub fn draw(
     snapshot: &gtk::Snapshot,
     history: &HistorySnapshot,
@@ -214,6 +216,7 @@ pub fn draw(
     scroll_y: f32,
     m: &Metrics,
     lineage: Option<&Lineage>,
+    boundary: &HashSet<u32>,
 ) -> Vec<f32> {
     let row_y = |row: u32| (row as f32 + 0.5) * m.row_height - scroll_y;
     // 幹線の点の分は必ず取る。
@@ -290,6 +293,7 @@ pub fn draw(
     }
 
     let mut fills: HashMap<(u16, bool), gsk::PathBuilder> = HashMap::new();
+    let mut stubs: HashMap<(u16, bool), gsk::PathBuilder> = HashMap::new();
     let nodes = history.layout.nodes();
     for n in &nodes[rows.start as usize..rows.end as usize] {
         let p = graphene::Point::new(lanes.x(n.lane, m), row_y(n.row));
@@ -305,10 +309,48 @@ pub fn draw(
             .entry((n.color % PALETTE.len() as u16, dimmed))
             .or_default()
             .add_circle(&p, m.node_radius);
+        if boundary.contains(&n.row) {
+            let dots = stubs
+                .entry((n.color % PALETTE.len() as u16, dimmed))
+                .or_default();
+            for y in unfetched_stub(m) {
+                dots.add_circle(&graphene::Point::new(p.x(), p.y() + y), 0.6);
+            }
+        }
     }
     for ((c, dimmed), path) in fills {
         let alpha = if dimmed { DIMMED_ALPHA } else { 1.0 };
         snapshot.append_fill(&path.to_path(), gsk::FillRule::Winding, &color(c, alpha));
     }
+    for ((c, dimmed), path) in stubs {
+        let alpha = if dimmed { DIMMED_ALPHA } else { 1.0 } * 0.8;
+        snapshot.append_fill(&path.to_path(), gsk::FillRule::Winding, &color(c, alpha));
+    }
     extents
+}
+
+/// shallow clone の境界のコミットの点から下へ描く点線の、点の位置（点の中心からの下向きの距離）。行の下半分に
+/// 収める（macOS 版と同じく、点の縁から 3.5 離して 4 ずつ）。
+fn unfetched_stub(m: &Metrics) -> Vec<f32> {
+    let mut ys = Vec::new();
+    let mut y = m.node_radius + 3.5;
+    while y <= m.row_height / 2.0 + 1.0 {
+        ys.push(y);
+        y += 4.0;
+    }
+    ys
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_unfetched_stub_stays_in_the_lower_half_of_the_row() {
+        let m = Metrics::default();
+        let ys = unfetched_stub(&m);
+        assert!(!ys.is_empty());
+        assert!(ys[0] > m.node_radius);
+        assert!(ys.iter().all(|&y| y <= m.row_height / 2.0 + 1.0));
+    }
 }

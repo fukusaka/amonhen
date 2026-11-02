@@ -228,7 +228,16 @@ pub struct State {
     /// History を入れ替えた直後、見えている行の文字を読み終えるまで出しておく前の表示と、入れ替えた時刻・
     /// 読み終えたら溶かすか（入れ替えの間に文字が空の行が出ないように。macOS 版の `present`）。
     held: Option<(gsk::RenderNode, Instant, bool)>,
+    /// shallow clone の境界のコミット（親を取得していない）の行。グラフの点から下へ点線を描く。
+    boundary: Rc<HashSet<u32>>,
+    /// shallow clone の History の最後の行の下に置く部品（取得していない古い履歴を取り足す帯）。
+    footer: Option<gtk::Widget>,
+    /// 一致したコミットだけを出している（その終わりは History の終わりではないので、帯を出さない）。
+    matching_only: bool,
 }
+
+/// 最後の行の下に置く帯の高さ（macOS 版の `ShallowHistoryBand.height`）。
+pub const FOOTER_HEIGHT: f32 = 44.0;
 
 /// 前の表示を出しておく長さの上限（読むのが遅くても、これを過ぎたら新しい表示を出す）。
 const HOLD: std::time::Duration = std::time::Duration::from_millis(300);
@@ -308,6 +317,9 @@ mod imp {
             if let Some((bg, fg)) = self.state.borrow_mut().accent.take() {
                 bg.unparent();
                 fg.unparent();
+            }
+            if let Some(footer) = self.state.borrow_mut().footer.take() {
+                footer.unparent();
             }
         }
 
@@ -518,6 +530,7 @@ mod imp {
         fn size_allocate(&self, width: i32, height: i32, baseline: i32) {
             self.parent_size_allocate(width, height, baseline);
             self.obj().configure_adjustments();
+            self.obj().place_footer();
             // 吹き出し（CI の印のもの）は子なので、自分で置く。
             let mut child = self.obj().first_child();
             while let Some(c) = child {
@@ -570,6 +583,11 @@ mod imp {
             if let Some(times) = st.snapshot_times.as_mut() {
                 times.push(started.elapsed().as_secs_f64() * 1000.0);
             }
+            let footer = st.footer.clone();
+            drop(st);
+            if let Some(footer) = footer.filter(|f| f.is_child_visible()) {
+                self.obj().snapshot_child(&footer, snapshot);
+            }
         }
     }
 
@@ -587,6 +605,10 @@ mod imp {
                 adj.connect_value_changed(move |_| {
                     if let Some(view) = weak.upgrade() {
                         view.queue_draw();
+                        // 最後の行の下の帯は、スクロールに合わせて置き直す。
+                        if view.footer_shown() {
+                            view.queue_allocate();
+                        }
                     }
                 });
             }
@@ -732,6 +754,8 @@ impl HistoryView {
                 st.anchor = Some(0);
                 changed = true;
             }
+            // shallow clone の境界のコミットの行（境界はたいてい数個なので、全行を見ても数 ms）。
+            st.boundary = Rc::new(history.boundary_rows().into_iter().collect());
             st.history = Some(history);
             st.chunks.clear();
             st.loading.clear();
@@ -745,6 +769,7 @@ impl HistoryView {
         self.configure_adjustments();
         self.update_lineage();
         self.queue_draw();
+        self.queue_allocate();
         let f = self.state().on_history.clone();
         if let Some(f) = f {
             f();
@@ -1367,12 +1392,88 @@ impl HistoryView {
         true
     }
 
+    /// 最後の行の下に置く部品（shallow clone の帯）を決める。出すのは shallow clone の History で、一致したコミット
+    /// だけを出していないとき。
+    pub fn set_footer(&self, footer: Option<&gtk::Widget>) {
+        let old = self.state().footer.take();
+        if let Some(old) = old {
+            old.unparent();
+        }
+        if let Some(footer) = footer {
+            footer.set_parent(self);
+            self.state().footer = Some(footer.clone());
+        }
+        self.configure_adjustments();
+        self.queue_allocate();
+    }
+
+    /// 一致したコミットだけを出しているか（検索の「一致だけ」。その間は帯を出さない。macOS 版の `baseHistory`）。
+    pub fn set_matching_only(&self, matching_only: bool) {
+        if std::mem::replace(&mut self.state().matching_only, matching_only) != matching_only {
+            self.configure_adjustments();
+            self.queue_allocate();
+        }
+    }
+
+    /// shallow clone の境界のコミットの行（昇順）。
+    pub fn boundary_rows(&self) -> Vec<u32> {
+        let mut rows: Vec<u32> = self.state().boundary.iter().copied().collect();
+        rows.sort_unstable();
+        rows
+    }
+
+    /// 境界のコミットのうち、いちばん古いものの作者の日時（読み込んであるチャンクにあれば。macOS 版の
+    /// `oldestBoundaryDate`）。
+    pub fn oldest_boundary_time(&self) -> Option<i64> {
+        let st = self.state();
+        st.boundary
+            .iter()
+            .filter_map(|&row| {
+                let chunk = st.chunks.get(&(row / CHUNK_ROWS))?;
+                chunk.0.author_times.get(chunk.index(row)).copied()
+            })
+            .min()
+    }
+
+    /// 最後の行の下に帯を出すか。
+    fn footer_shown(&self) -> bool {
+        let st = self.state();
+        st.footer.is_some()
+            && !st.matching_only
+            && st.history.as_ref().is_some_and(|h| !h.shallow.is_empty())
+    }
+
+    /// 帯を最後の行の下に置く（スクロールで行と一緒に動く）。出さないときは隠す。
+    fn place_footer(&self) {
+        let Some(footer) = self.state().footer.clone() else {
+            return;
+        };
+        let shown = self.footer_shown();
+        footer.set_child_visible(shown);
+        if !shown {
+            return;
+        }
+        let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
+        let top = self.row_count() as f32 * self.row_height() - scroll;
+        let (minimum, _, _, _) = footer.measure(gtk::Orientation::Horizontal, -1);
+        let width = self.width().max(minimum);
+        footer.size_allocate(
+            &gtk::Allocation::new(0, top.round() as i32, width, FOOTER_HEIGHT as i32),
+            -1,
+        );
+    }
+
     fn configure_adjustments(&self) {
         let (width, height) = (self.width() as f64, self.height() as f64);
         let rows = self.row_count() as f64;
         let row_height = self.row_height() as f64;
+        let footer = if self.footer_shown() {
+            f64::from(FOOTER_HEIGHT)
+        } else {
+            0.0
+        };
         if let Some(adj) = self.vadjustment() {
-            let upper = (rows * row_height).max(height);
+            let upper = (rows * row_height + footer).max(height);
             let value = adj.value().clamp(0.0, (upper - height).max(0.0));
             adj.configure(value, 0.0, upper, row_height * 3.0, height * 0.9, height);
         }
@@ -1498,6 +1599,7 @@ impl HistoryView {
                     .as_ref()
                     .filter(|(g, _, _)| *g == history.generation)
                     .map(|(_, _, l)| &**l),
+                &st.boundary,
             );
             snapshot.pop();
             if st.lanes.animating && st.tick.is_none() {

@@ -329,6 +329,19 @@ fn esc(s: &str) -> String {
 }
 
 /// コミット ID のリンク（`length` 桁を見せる）。
+/// 親の ID を並べたもの（`ids` は markup。等幅）。`not_fetched`（shallow clone の境界のコミット）なら、薄くして
+/// 「（取得していません）」を添える。
+fn parent_ids(ids: &[String], separator: &str, not_fetched: bool) -> String {
+    if !not_fetched {
+        return format!("<tt>{}</tt>", ids.join(separator));
+    }
+    format!(
+        "<span alpha=\"40%\"><tt>{}</tt></span> <span alpha=\"60%\">{}</span>",
+        ids.join(separator),
+        esc(&tr!("(not fetched)"))
+    )
+}
+
 fn commit_link(hex: &str, length: usize) -> String {
     format!(
         "<a href=\"{COMMIT_SCHEME}{}\">{}</a>",
@@ -857,7 +870,13 @@ impl Details {
     /// `currentParents`・`currentChildren`）。子は時間のかかる分が届いてから。
     pub fn relative(&self, parent: bool) -> Option<Oid> {
         let list = if parent {
-            strings(&self.info.borrow().as_ref()?["parents"])
+            // shallow clone の境界のコミットの親は取得していないので、移れない。
+            let info = self.info.borrow();
+            let info = info.as_ref()?;
+            if info["parentsNotFetched"].as_bool() == Some(true) {
+                return None;
+            }
+            strings(&info["parents"])
         } else {
             self.info.borrow().as_ref()?;
             strings(&self.extras.borrow().as_ref()?["children"])
@@ -1123,10 +1142,11 @@ impl Details {
             } else {
                 "Parent"
             };
+            let not_fetched = info["parentsNotFetched"].as_bool() == Some(true);
             let ids: Vec<String> = parents
                 .iter()
                 .map(|id| {
-                    if commits {
+                    if commits && !not_fetched {
                         commit_link(id, 12)
                     } else {
                         esc(&id[..12.min(id.len())])
@@ -1134,8 +1154,8 @@ impl Details {
                 })
                 .collect();
             markup.push_str(&format!(
-                "  <span alpha=\"60%\">{title}</span> <tt>{}</tt>",
-                ids.join(", ")
+                "  <span alpha=\"60%\">{title}</span> {}",
+                parent_ids(&ids, ", ", not_fetched)
             ));
         }
         self.brief_text.set_markup(&markup);
@@ -1191,7 +1211,14 @@ impl Details {
             } else {
                 "Parent"
             };
-            rows.push((title.into(), ids(&parents)));
+            // shallow clone の境界のコミットの親は取得していない（History で選べない）ので、リンクにせずに薄く出し、
+            // そう添える（macOS 版の `parentLinks`）。
+            if info["parentsNotFetched"].as_bool() == Some(true) {
+                let plain: Vec<String> = parents.iter().map(|id| esc(id)).collect();
+                rows.push((title.into(), Cell::Markup(parent_ids(&plain, "\n", true))));
+            } else {
+                rows.push((title.into(), ids(&parents)));
+            }
         }
         if let Some(extras) = extras.filter(|_| full) {
             let children = strings(&extras["children"]);
