@@ -5,8 +5,10 @@ import Foundation
 /// Rust のコアの薄いラッパー。コアが返すメモリは、対応するオブジェクトが生きている間だけ有効。
 /// 生ポインタや NoCopy の CFString は `with…` のクロージャの外に持ち出さないこと。
 
-public struct AmonhenError: Error, CustomStringConvertible {
+public struct AmonhenError: LocalizedError, CustomStringConvertible {
     public let description: String
+    /// アラートなどに出す文（`localizedDescription`）。これがないと「AmonhenError error 1」になる。
+    public var errorDescription: String? { description }
     /// 失敗の種類（`crates/core/src/failure.rs` の定数、`worktreeInUse`・`auth` など）。見分けられなければ nil。
     public var kind: String?
     /// 失敗に関わるパス（ほかの worktree の場所、ロックファイル）。

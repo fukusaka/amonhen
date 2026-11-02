@@ -33,6 +33,12 @@ private func makeRepo() throws -> URL {
     return dir
 }
 
+@Test func errorsShowTheCoreText() {
+    // アラート（NSAlert(error:)）は localizedDescription を出す。
+    let error: Error = AmonhenError(description: "fatal: Unable to create index.lock")
+    #expect(error.localizedDescription == "fatal: Unable to create index.lock")
+}
+
 @Test func readsHistoryAndTexts() throws {
     let dir = try makeRepo()
     defer { try? FileManager.default.removeItem(at: dir) }
