@@ -1146,7 +1146,7 @@ impl Inner {
                     .cloned()
             });
             if let Some(entry) = shown {
-                Inner::load_diff(this, entry, true);
+                Inner::reload_diff(this, entry);
             }
             return;
         }
@@ -2065,6 +2065,15 @@ impl Inner {
 
     /// 1 ファイルの差分を裏で読んで出す。`same` なら同じファイルの読み直し（位置を保つ）。
     fn load_diff(this: &Rc<Self>, entry: StatusEntry, same: bool) {
+        Inner::read_diff(this, entry, same, false);
+    }
+
+    /// 出している差分を読み直す。中身（両側・含めた行）が変わったときだけ出し直す（選んだ行を外さない）。
+    fn reload_diff(this: &Rc<Self>, entry: StatusEntry) {
+        Inner::read_diff(this, entry, true, true);
+    }
+
+    fn read_diff(this: &Rc<Self>, entry: StatusEntry, same: bool, only_changed: bool) {
         let Some(repo) = this.repo() else { return };
         // 両側に変更のあるファイルは作業ツリーの側から。同じファイルを読み直すときだけ、今の側のまま
         // （macOS 版の `side(for:)`）。
@@ -2121,6 +2130,21 @@ impl Inner {
                 return;
             }
             match result {
+                Ok(Ok((working, _)))
+                    if only_changed
+                        && this
+                            .current
+                            .borrow()
+                            .as_ref()
+                            .and_then(|c| c.0.as_ref())
+                            .zip(working.0.as_ref())
+                            .is_some_and(|(a, b)| {
+                                a.entry.path == b.entry.path
+                                    && a.staged == b.staged
+                                    && a.combined == b.combined
+                                    && a.file.old == b.file.old
+                                    && a.file.new == b.file.new
+                            }) => {}
                 Ok(Ok((working, view))) => {
                     let w = working.0.as_ref();
                     this.show_line_endings(w.and_then(|w| w.line_endings.as_ref()));
