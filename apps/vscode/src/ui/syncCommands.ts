@@ -1,6 +1,13 @@
 /** 現在のブランチの Pull / Push / Publish */
 import * as vscode from 'vscode';
-import { publishBranch, publishChoices, pullCurrent, pushCurrent, shortName } from '../state/operations.ts';
+import {
+  publishBranch,
+  publishChoices,
+  pullCurrent,
+  pushCurrent,
+  shortName,
+  type ReconcileChoice,
+} from '../state/operations.ts';
 import type { RepositoryManager } from '../state/manager.ts';
 import type { Repository } from '../state/repository.ts';
 import { runAction } from './dragDrop.ts';
@@ -13,7 +20,7 @@ export function registerSyncCommands(manager: RepositoryManager): vscode.Disposa
       await runAction(repo, {
         label: '$(repo-pull) Pull',
         run: async () => {
-          const result = await pullCurrent(repo.backend, repo.undo);
+          const result = await pullCurrent(repo.backend, repo.undo, chooseReconcile);
           if (result === 'no-upstream') {
             throw new Error('upstream が設定されていません。Publish でリモートに送ると設定されます');
           }
@@ -36,6 +43,24 @@ export function registerSyncCommands(manager: RepositoryManager): vscode.Disposa
       if (choice === 'Force Push') await push(manager, true);
     }),
   );
+}
+
+/**
+ * 分かれたブランチを、取り込み方を決めずに pull するとき（git 2.33.1 からは git が断る）。この pull だけの取り込み方を
+ * 選ぶ。設定は書かない
+ */
+async function chooseReconcile(branch: string, upstream: string): Promise<ReconcileChoice | undefined> {
+  const choice = await vscode.window.showWarningMessage(
+    `${shortName(branch)} と ${shortName(upstream)} が分かれています`,
+    {
+      modal: true,
+      detail:
+        'pull.rebase・pull.ff のどちらも取り込み方を決めていないので、git は取り込みません。この Pull の取り込み方を選んでください（設定は変えません）。',
+    },
+    'Merge',
+    'Rebase',
+  );
+  return choice === 'Merge' ? 'merge' : choice === 'Rebase' ? 'rebase' : undefined;
 }
 
 async function push(manager: RepositoryManager, force: boolean): Promise<void> {
