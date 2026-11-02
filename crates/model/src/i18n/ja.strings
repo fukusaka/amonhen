@@ -105,7 +105,11 @@
 "The clone destination folder is invalid" = "clone する先のフォルダがおかしい";
 "The clone destination folder’s name is invalid" = "clone する先のフォルダの名前がおかしい";
 "Stopped after {seconds} seconds without a response. It may have been waiting for a sign-in (a password or passphrase dialog, or the SSH agent) or for the network" = "{seconds} 秒のあいだ応答がないので止めました。サインインの入力（パスワードやパスフレーズのダイアログ、SSH の agent）か、ネットワークを待っていたのかもしれません";
-"git failed: {status}" = "git が失敗した: {status}";
+"git {command} failed with exit code {code}" = "git {command} が失敗した（終了コード {code}）";
+"git {command} was stopped by signal {signal}" = "git {command} がシグナル {signal} で止められた";
+"git {command} was stopped" = "git {command} が止められた";
+"git failed with exit code {code}" = "git が失敗した（終了コード {code}）";
+"git was stopped" = "git が止められた";
 
 /* amonhen-remote */
 "Frame too large" = "フレームが大きすぎる";

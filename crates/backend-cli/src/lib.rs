@@ -533,13 +533,54 @@ fn spawn_streaming(mut cmd: Command, seq: u64, progress: bool) -> Result<Vec<u8>
             .trim()
             .to_owned();
         return Err(if message.is_empty() {
-            tr!("git failed: {status}", status = format!("{status:?}"))
+            silent_failure(&cmd, status)
         } else {
             amonhen_model::process::explain_agent(message)
         }
         .into());
     }
     Ok(out)
+}
+
+/// 何も言わずに失敗した git の文: どの命令が、どの終了コードで終えたか（`ExitStatus` の中身そのままにしない）。
+fn silent_failure(cmd: &Command, status: std::process::ExitStatus) -> String {
+    let Some(command) = git_subcommand(cmd) else {
+        return match status.code() {
+            Some(code) => tr!("git failed with exit code {code}", code = code),
+            None => tr!("git was stopped"),
+        };
+    };
+    if let Some(code) = status.code() {
+        return tr!(
+            "git {command} failed with exit code {code}",
+            command = command,
+            code = code
+        );
+    }
+    #[cfg(unix)]
+    if let Some(signal) = std::os::unix::process::ExitStatusExt::signal(&status) {
+        return tr!(
+            "git {command} was stopped by signal {signal}",
+            command = command,
+            signal = signal
+        );
+    }
+    tr!("git {command} was stopped", command = command)
+}
+
+/// git の命令の名前（`-c key=value` や `-C dir` などの前置きを飛ばした最初の引数）。
+fn git_subcommand(cmd: &Command) -> Option<String> {
+    let mut args = cmd.get_args().map(|a| a.to_string_lossy().into_owned());
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "-c" | "-C" | "--git-dir" | "--work-tree" | "--namespace" | "--config-env" => {
+                args.next();
+            }
+            a if a.starts_with('-') => {}
+            _ => return Some(arg),
+        }
+    }
+    None
 }
 
 /// 実行して、標準出力と標準エラーを返す。失敗したら標準エラーの文を返す。
@@ -561,7 +602,7 @@ fn spawn_with_stderr(mut cmd: Command, input: Option<&[u8]>) -> Result<(Vec<u8>,
     if !out.status.success() {
         let message = String::from_utf8_lossy(&out.stderr).trim().to_owned();
         return Err(if message.is_empty() {
-            tr!("git failed: {status}", status = format!("{:?}", out.status))
+            silent_failure(&cmd, out.status)
         } else {
             amonhen_model::process::explain_agent(message)
         }
@@ -706,6 +747,39 @@ pub(crate) fn kill_tree(child: &mut std::process::Child) {
 #[allow(clippy::disallowed_methods)] // テストの git などはそのまま起動する
 mod tests {
     use super::*;
+
+    #[test]
+    fn names_the_git_command_that_failed_silently() {
+        let mut cmd = amonhen_model::process::command("git");
+        cmd.args([
+            "-c",
+            "core.quotePath=false",
+            "-C",
+            "/x",
+            "--no-optional-locks",
+        ]);
+        cmd.args(["rev-list", "--count", "a..b"]);
+        assert_eq!(git_subcommand(&cmd).as_deref(), Some("rev-list"));
+        let status = amonhen_model::process::command("git")
+            .args([
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                "no-such-ref-for-amonhen-test",
+            ])
+            .status()
+            .unwrap();
+        let message = silent_failure(&cmd, status);
+        assert!(
+            message.contains("rev-list") && message.contains('1'),
+            "{message}"
+        );
+        assert!(!message.contains("ExitStatus"), "{message}");
+        let mut bare = amonhen_model::process::command("git");
+        bare.args(["--config-env", "core.x=VAR", "-c", "a=b"]);
+        assert_eq!(git_subcommand(&bare), None);
+        assert!(!silent_failure(&bare, status).contains("  "));
+    }
 
     #[test]
     fn reads_the_git_version() {
