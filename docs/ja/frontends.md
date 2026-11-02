@@ -48,6 +48,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | Pull Requests のグループ | ✓ | ✓ | — | — |  |
 | Submodules のグループ（Update・新しい窓で開く） | ✓ | ✓ | ✓ | △ | CLI: `refs` が並べ、Update は `amonhen run` から。 |
 | Working Copy の下の worktree と変更の数（✎ ⌂ ⑂） | ✓ | ✓ | — | △ | CLI: `worktree list --changes`。 |
+| shallow clone・partial clone（History）と sparse checkout（Working Copy）の印 | ✓ | ✓ | — | n/a |  |
 
 ## 1. タブと窓
 
@@ -77,6 +78,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | Quick Open（あいまい検索） | ✓ | ✓ | n/a | n/a |  |
 | ツールバーのリポジトリ名で切り替える | ✓ | ✓ | △ | n/a | VSCode: Select Repository でワークスペースのリポジトリから選ぶ。 |
 | Clone（自分の GitHub のリポジトリから選ぶ） | ✓ | ✓ | n/a | △ | VSCode: VSCode 自身の Git: Clone。<br>CLI: `clone <url>` だけ。 |
+| Clone: 取得する範囲（すべて・中身は必要なときに・最近の履歴）と、一部のフォルダだけ | ✓ | ✓ | — | ✓ | CLI: `clone --filter`・`--depth`・`--sparse`。 |
 | 新しいリポジトリの Init | — | — | n/a | — | macOS: docs/ux.md の File メニューにあるが、作っていない。 |
 
 ## 3. Settings
@@ -127,6 +129,11 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | LFS: 入っているか・パターン・Track Pattern…・ファイルの数 | ✓ | ✓ | — | △ | CLI: `amonhen run` から。 |
 | Keys and Values（git config の表、Basic / Customized / All、Combined / Levels） | ✓ | ✓ | — | △ | CLI: `amonhen run`（`configList`・`configSet`）から。 |
 | 要る git の版を添えて行を無効にする | ✓ | ✓ | — | n/a |  |
+| git の行にリポジトリの形（shallow・partial・sparse・maintenance） | ✓ | ✓ | — | △ | CLI: `status` が shallow・partial・sparse を添える。 |
+| 取得とフォルダ: shallow clone の履歴を取り足す（数・日付まで・すべて） | ✓ | ✓ | — | △ | CLI: `amonhen run`（`deepen`・`unshallow`）から。 |
+| 取得とフォルダ: partial clone の中身をすべて取る（git 2.36） | ✓ | ✓ | — | △ | CLI: `amonhen run`（`fetchAllContents`）から。 |
+| 取得とフォルダ: sparse checkout のフォルダを HEAD の木から選ぶ（git 2.25） | ✓ | ✓ | — | △ | CLI: `amonhen run`（`sparseCheckout`・`treeFolders`）から。 |
+| 取得とフォルダ: git maintenance の切り替え（git 2.31） | ✓ | ✓ | — | △ | CLI: `amonhen run`（`maintenance`）から。 |
 
 ## 5. ツールバー
 
@@ -206,6 +213,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | 行・hunk・ファイルを捨てる（Undo できる） | ✓ | ✓ | ✓ | ✓ | CLI: `discard --rows`。 |
 | Add to .gitignore | ✓ | ✓ | — | n/a |  |
 | コンフリクトのファイルからマージエディターを開く | ✓ | ✓ | △ | n/a | VSCode: VSCode のマージエディターを開く。 |
+| 一部のフォルダだけを取り出しているとき、一覧の上に知らせる | ✓ | ✓ | — | △ | CLI: `status` が sparse checkout を添える。 |
 
 ## History
 
@@ -229,6 +237,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | 近道: Edit Message…・Combine with Older…・Drop…・Combine N…・コミットのドラッグ | ✓ | ✓ | △ | △ | VSCode: Combine N Commits はない。<br>CLI: `amonhen run` から。 |
 | コミットを分ける | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | 編集でマージを保つ（`--rebase-merges`） | ✓ | ✓ | — | △ | VSCode: 最初のマージで止まる。<br>CLI: `amonhen run` から。 |
+| shallow clone: 終わりの帯で取り足す、境界のコミットの印 | ✓ | ✓ | — | △ | CLI: `log` が履歴の止まる所を添える。取り足すのは `amonhen run` から。 |
 
 ## 7. History の右の列
 

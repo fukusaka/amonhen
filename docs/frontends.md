@@ -48,6 +48,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Pull Requests group | ✓ | ✓ | — | — |  |
 | Submodules group (Update, Open in New Window) | ✓ | ✓ | ✓ | △ | CLI: Listed by `refs`; Update via `amonhen run`. |
 | Worktrees under Working Copy with change counts (✎ ⌂ ⑂) | ✓ | ✓ | — | △ | CLI: `worktree list --changes`. |
+| Marks for a shallow or partial clone (History) and a sparse checkout (Working Copy) | ✓ | ✓ | — | n/a |  |
 
 ## 1. Tabs and windows
 
@@ -77,6 +78,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Quick Open (fuzzy search) | ✓ | ✓ | n/a | n/a |  |
 | Repository name in the toolbar switches the repository | ✓ | ✓ | △ | n/a | VSCode: Select Repository picks among workspace repositories. |
 | Clone (choosing from your own GitHub repositories) | ✓ | ✓ | n/a | △ | VSCode: VSCode's own Git: Clone.<br>CLI: `clone <url>` only. |
+| Clone: what to download (everything, contents when needed, recent history) and only some folders | ✓ | ✓ | — | ✓ | CLI: `clone --filter`, `--depth`, `--sparse`. |
 | Init a new repository | — | — | n/a | — | macOS: Listed in docs/ux.md's File menu but not built. |
 
 ## 3. Settings
@@ -127,6 +129,11 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | LFS: installed, patterns, Track Pattern…, file count | ✓ | ✓ | — | △ | CLI: Via `amonhen run`. |
 | Keys and Values (git config table, Basic / Customized / All, Combined / Levels) | ✓ | ✓ | — | △ | CLI: Via `amonhen run` (`configList`, `configSet`). |
 | Rows disabled with the git version needed | ✓ | ✓ | — | n/a |  |
+| Repository's form on the git line (shallow, partial, sparse, maintenance) | ✓ | ✓ | — | △ | CLI: `status` notes shallow, partial and sparse repositories. |
+| Fetching and Folders: fetch more of a shallow clone (a count, up to a date, all) | ✓ | ✓ | — | △ | CLI: Via `amonhen run` (`deepen`, `unshallow`). |
+| Fetching and Folders: fetch all contents of a partial clone (git 2.36) | ✓ | ✓ | — | △ | CLI: Via `amonhen run` (`fetchAllContents`). |
+| Fetching and Folders: folders of a sparse checkout picked from HEAD's tree (git 2.25) | ✓ | ✓ | — | △ | CLI: Via `amonhen run` (`sparseCheckout`, `treeFolders`). |
+| Fetching and Folders: git maintenance switch (git 2.31) | ✓ | ✓ | — | △ | CLI: Via `amonhen run` (`maintenance`). |
 
 ## 5. Toolbar
 
@@ -206,6 +213,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Discard lines, hunks and files (undoable) | ✓ | ✓ | ✓ | ✓ | CLI: `discard --rows`. |
 | Add to .gitignore | ✓ | ✓ | — | n/a |  |
 | Conflicted files open the merge editor | ✓ | ✓ | △ | n/a | VSCode: Opens VSCode's merge editor. |
+| Note above the list when only some folders are checked out | ✓ | ✓ | — | △ | CLI: `status` notes a sparse checkout. |
 
 ## History
 
@@ -229,6 +237,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Shortcuts: Edit Message…, Combine with Older…, Drop…, Combine N…, drag a commit | ✓ | ✓ | △ | △ | VSCode: No Combine N Commits.<br>CLI: Via `amonhen run`. |
 | Split a commit | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Merges kept when editing (`--rebase-merges`) | ✓ | ✓ | — | △ | VSCode: Stops at the first merge.<br>CLI: Via `amonhen run`. |
+| Shallow clone: band at the end to fetch more, boundary commits marked | ✓ | ✓ | — | △ | CLI: `log` notes where the history stops; fetching more via `amonhen run`. |
 
 ## 7. History's right column
 
