@@ -338,6 +338,7 @@ const SPARSE_VERSION: (u32, u32) = (2, 27);
 /// 選んだものの説明（小さく、薄く。選び直して文の長さが変わっても、シートの高さが変わらないよう 2 行分を取っておく）。
 fn clone_help() -> gtk::Label {
     let label = crate::sheets::note("");
+    label.set_hexpand(true);
     label.set_lines(2);
     label.set_ellipsize(gtk::pango::EllipsizeMode::End);
     label.set_height_request(34);
@@ -509,9 +510,13 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
                         Some(at) => at,
                         None => {
                             // 数の順に入れる。
-                            let mut list = depths.borrow_mut();
-                            let at = list.partition_point(|&x| x < commits);
-                            list.insert(at, commits);
+                            let at = {
+                                let mut list = depths.borrow_mut();
+                                let at = list.partition_point(|&x| x < commits);
+                                list.insert(at, commits);
+                                at
+                            };
+                            // 項目を足すと選んでいる項目の知らせが来る（数の並びを読む）ので、借りを返してから。
                             titles.splice(at as u32, 0, &[&crate::shallow::commits_title(commits)]);
                             at
                         }
