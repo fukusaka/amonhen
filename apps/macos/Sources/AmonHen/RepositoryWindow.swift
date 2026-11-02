@@ -1133,8 +1133,19 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         let icon = NSImageView(image: NSImage(systemSymbolName: "bolt.horizontal.circle", accessibilityDescription: nil) ?? NSImage())
         icon.contentTintColor = .systemOrange
         let host = RepositoryLocation.host(location) ?? location
-        let label = NSTextField(labelWithString: L("Lost connection to %@", host))
+        let heading = L("Lost connection to %@", host)
+        let label = NSTextField(labelWithString: heading)
         label.font = .boldSystemFont(ofSize: NSFont.smallSystemFontSize)
+        // SSH 先とのつながりなら、コアの理由も同じ文で始まる。見出しを繰り返さず、残り（標準エラー）だけを出す。
+        var reason = reason
+        if reason.hasPrefix(heading) {
+            let rest = reason.dropFirst(heading.count)
+            if rest.isEmpty {
+                reason = ""
+            } else if rest.hasPrefix(": ") {
+                reason = String(rest.dropFirst(2))
+            }
+        }
         let detail = NSTextField(labelWithString: reason)
         detail.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         detail.textColor = .secondaryLabelColor

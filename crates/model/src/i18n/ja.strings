@@ -125,6 +125,8 @@
 "Lost connection to the daemon: {detail}" = "daemon との接続が切れました: {detail}";
 "Can’t start {program}: {e}" = "{program} を起動できない: {e}";
 "The connection to the daemon is closed" = "daemon との接続が切れています";
+"Lost connection to {host}: {detail}" = "{host} との接続が切れました: {detail}";
+"The connection to {host} is closed" = "{host} との接続が切れています";
 "Can’t send to the daemon: {e}" = "daemon に送れない: {e}";
 "Shared memory isn’t available in this environment" = "共有メモリを使えない環境です";
 "Shared memory range is outside the region" = "共有メモリの範囲が領域の外";

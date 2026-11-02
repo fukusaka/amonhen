@@ -62,6 +62,14 @@ impl Target {
         })
     }
 
+    /// `user@host:port`（場所の `ssh://` と `/` の間。利用者に SSH 先の名前として見せる）。
+    pub fn authority(&self) -> String {
+        match &self.port {
+            Some(port) => format!("{}:{port}", self.destination),
+            None => self.destination.clone(),
+        }
+    }
+
     /// SSH 先のシェルに渡すパス（`/~/x` は `"$HOME"/'x'`、それ以外は引用符で囲む。空なら空）。
     fn shell_path(&self) -> String {
         if self.path.is_empty() {
@@ -493,7 +501,7 @@ pub fn connect(
     if let Some(slot) = slot {
         conn.hold(Box::new(slot));
     }
-    conn.set_ssh_engine(engine);
+    conn.set_ssh_engine(target.authority(), engine);
     Ok(conn)
 }
 

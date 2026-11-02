@@ -616,8 +616,10 @@ impl StatusBar {
         }
         let icon = gtk::Label::new(Some("⚡"));
         icon.add_css_class("warning");
-        let title = gtk::Label::new(Some(&tr!("Lost connection to {host}", host = host)));
+        let heading = tr!("Lost connection to {host}", host = host);
+        let title = gtk::Label::new(Some(&heading));
         title.add_css_class("heading");
+        let reason = reason_detail(&heading, reason);
         let detail = gtk::Label::new(Some(reason));
         detail.add_css_class("caption");
         detail.add_css_class("dim-label");
@@ -727,5 +729,34 @@ impl StatusBar {
         abort.set_action_name(Some("win.abort"));
         children.push(abort.upcast());
         self.show(Row::Sequence, &line(&children, Some("status-sequence")));
+    }
+}
+
+/// 切れた理由のうち、見出し（「{host} との接続が切れました」）に続けて出す部分。コアの理由が見出しと同じ文で
+/// 始まっていれば（SSH 先とのつながり）、繰り返さずに残りだけ（なければ空）。
+pub fn reason_detail<'a>(heading: &str, reason: &'a str) -> &'a str {
+    match reason.strip_prefix(heading) {
+        Some("") => "",
+        Some(rest) => rest.strip_prefix(": ").unwrap_or(reason),
+        None => reason,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reason_detail;
+
+    #[test]
+    fn the_reason_does_not_repeat_the_heading() {
+        let heading = "dev との接続が切れました";
+        assert_eq!(reason_detail(heading, "dev との接続が切れました"), "");
+        assert_eq!(
+            reason_detail(heading, "dev との接続が切れました: Broken pipe"),
+            "Broken pipe"
+        );
+        assert_eq!(
+            reason_detail(heading, "daemon との接続が切れました"),
+            "daemon との接続が切れました"
+        );
     }
 }

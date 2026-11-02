@@ -50,6 +50,8 @@ pub struct Connection {
     /// 切れたときに標準エラーに残っていたもの（切れていなければ None）。文は読む側の言語で作る（`closed`）:
     /// 共有の daemon では、1 つのつながりを言語の違う FE が使う。
     reason: Mutex<Option<String>>,
+    /// SSH 先につないだつながりなら、その SSH 先（`user@host:port`。切れた理由の文で名前を出す）。
+    host: Mutex<Option<String>>,
     /// 手元の共有の daemon とのつながりか（History を用意してもらえる）。
     local: AtomicBool,
     /// daemon（や ssh）が標準エラーに書いた最後の部分。つながらなかったときの理由に添える。
@@ -76,6 +78,7 @@ impl Connection {
             sent: AtomicU64::new(0),
             received: Arc::default(),
             reason: Mutex::default(),
+            host: Mutex::default(),
             stderr: Arc::default(),
             local: AtomicBool::new(false),
             remote_engine: Mutex::default(),
@@ -164,8 +167,10 @@ impl Connection {
         *self.remote_engine.lock().unwrap() = Some(EngineNote::Described(description));
     }
 
-    /// SSH 先につないだエンジンを覚える（文は読むときに、読む側の言語で作る）。
-    pub(crate) fn set_ssh_engine(&self, engine: crate::ssh::RemoteEngine) {
+    /// SSH 先につないだエンジンを覚える（文は読むときに、読む側の言語で作る）。`host` はその SSH 先
+    /// （切れたときの文で、daemon ではなくこの名前を出す）。
+    pub(crate) fn set_ssh_engine(&self, host: String, engine: crate::ssh::RemoteEngine) {
+        *self.host.lock().unwrap() = Some(host);
         *self.remote_engine.lock().unwrap() = Some(EngineNote::Ssh(engine));
     }
 
@@ -219,15 +224,25 @@ impl Connection {
         }
     }
 
-    /// 切れていれば、その理由（今のスレッドの言語で）。
+    /// 切れていれば、その理由（今のスレッドの言語で）。SSH 先につないだものなら、その SSH 先の名前で。
     pub fn closed(&self) -> Option<String> {
         let detail = self.reason.lock().unwrap().clone()?;
         let detail = amonhen_model::process::explain_agent(detail);
-        Some(if detail.is_empty() {
-            tr!("Lost connection to the daemon")
-        } else {
-            tr!("Lost connection to the daemon: {detail}", detail = detail)
-        })
+        Some(self.lost_text(&detail))
+    }
+
+    /// 切れたことの文（`detail` は標準エラーに残っていたもの。空なら添えない）。
+    fn lost_text(&self, detail: &str) -> String {
+        match (self.host.lock().unwrap().as_deref(), detail.is_empty()) {
+            (Some(host), true) => tr!("Lost connection to {host}", host = host),
+            (Some(host), false) => tr!(
+                "Lost connection to {host}: {detail}",
+                host = host,
+                detail = detail
+            ),
+            (None, true) => tr!("Lost connection to the daemon"),
+            (None, false) => tr!("Lost connection to the daemon: {detail}", detail = detail),
+        }
     }
 
     /// 切れた理由（そのとき標準エラーに残っていたもの）を残し、待っている要求を終わらせる（待ち手は `closed` の
@@ -240,14 +255,16 @@ impl Connection {
 
     /// 応答を待てなくなったときのエラー（切れた理由があればそれ）。
     fn lost(&self) -> amonhen_model::Error {
-        self.closed()
-            .unwrap_or_else(|| tr!("Lost connection to the daemon"))
-            .into()
+        self.closed().unwrap_or_else(|| self.lost_text("")).into()
     }
 
     fn send(&self, request: &Request) -> Result<(u64, mpsc::Receiver<Reply>)> {
         if self.closed.load(Ordering::Relaxed) {
-            return Err(tr!("The connection to the daemon is closed").into());
+            return Err(match self.host.lock().unwrap().as_deref() {
+                Some(host) => tr!("The connection to {host} is closed", host = host),
+                None => tr!("The connection to the daemon is closed"),
+            }
+            .into());
         }
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = mpsc::channel();
@@ -1231,5 +1248,60 @@ impl<R: Read> Read for Counting<R> {
         let n = self.inner.read(buf)?;
         self.count.fetch_add(n as u64, Ordering::Relaxed);
         Ok(n)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_lost_ssh_connection_names_the_host() {
+        // SSH 先のエンジンとのつながりが切れたら、daemon ではなく SSH 先の名前で（標準エラーは添えたまま）。
+        use amonhen_model::i18n::{self, Lang};
+        struct Pipe(std::sync::mpsc::Receiver<()>);
+        impl std::io::Read for Pipe {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                let _ = self.0.recv();
+                Ok(0)
+            }
+        }
+        let (hang_up, rx) = std::sync::mpsc::channel();
+        let conn = Connection::new(Pipe(rx), std::io::sink());
+        let target = crate::ssh::Target::parse("ssh://me@dev:2222/~/repo").unwrap();
+        assert_eq!(target.authority(), "me@dev:2222");
+        conn.set_ssh_engine(
+            target.authority(),
+            crate::ssh::RemoteEngine {
+                path: "amonhen".into(),
+                source: "installed",
+                pushed_bytes: None,
+                windows: None,
+            },
+        );
+        conn.stderr
+            .lock()
+            .unwrap()
+            .push_str("Connection closed by remote host\n");
+        drop(hang_up);
+        let started = std::time::Instant::now();
+        while conn.closed().is_none() {
+            assert!(started.elapsed().as_secs() < 5);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(
+            i18n::with(Lang::En, || conn.closed()).as_deref(),
+            Some("Lost connection to me@dev:2222: Connection closed by remote host")
+        );
+        assert_eq!(
+            i18n::with(Lang::Ja, || conn.closed()).as_deref(),
+            Some("me@dev:2222 との接続が切れました: Connection closed by remote host")
+        );
+        let err = i18n::with(Lang::En, || {
+            conn.call::<Option<Oid>>(&crate::wire::Request::Head)
+                .unwrap_err()
+                .to_string()
+        });
+        assert_eq!(err, "The connection to me@dev:2222 is closed");
     }
 }
