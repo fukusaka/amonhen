@@ -1569,7 +1569,7 @@ impl Repository {
                 .filter(|id| history.as_ref().is_some_and(|h| h.row_of(id).is_some()));
             let id = match full {
                 Some(id) => Some(id),
-                None => ops.resolve(&format!("{token}^{{commit}}")).ok(),
+                None => ops.resolve(token).ok(),
             };
             if let Some(id) = id {
                 out.push((token.to_owned(), id));
@@ -3010,7 +3010,7 @@ impl Repository {
             }
             Command::ResolveCommit { rev } => Ok(Response {
                 ok: true,
-                text: Some(ops.resolve(&format!("{rev}^{{commit}}"))?.to_string()),
+                text: Some(ops.resolve(&rev)?.to_string()),
                 ..Default::default()
             }),
             Command::CommitExtras { oid: o } => Ok(Response {
@@ -3189,7 +3189,7 @@ impl Repository {
                 let history = self.load_history()?;
                 let graph = &history.graph;
                 let row = |rev: &str| -> Result<usize> {
-                    let id = ops.resolve(&format!("{rev}^{{commit}}"))?;
+                    let id = ops.resolve(rev)?;
                     history.row_of(&id).map(|r| r as usize).ok_or_else(|| {
                         tr!("{rev} isn’t in the History (reload it)", rev = rev).into()
                     })

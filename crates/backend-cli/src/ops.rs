@@ -668,8 +668,27 @@ impl Operations for Git {
 
     fn resolve(&self, rev: &str) -> Result<Oid> {
         let spec = format!("{rev}^{{commit}}");
-        let out = text(self.read(&["rev-parse", "--verify", "--quiet", &spec])?)?;
-        Oid::from_hex(&out).ok_or_else(|| tr!("{rev} not found", rev = rev).into())
+        // `--quiet` は見つからないとき何も言わないので、その名前を出す。ほかの失敗（壊れたリポジトリなど）は
+        // git の文をそのまま返す。
+        let not_found = || -> amonhen_model::Error { tr!("{rev} not found", rev = rev).into() };
+        let mut cmd = self.command(&["rev-parse", "--verify", "--quiet", &spec]);
+        cmd.env("GIT_OPTIONAL_LOCKS", "0");
+        let (ok, out, err) = crate::run_lenient(cmd)?;
+        if !ok {
+            let err = String::from_utf8_lossy(&err).trim().replace(&spec, rev);
+            if !err.is_empty() {
+                return Err(err.into());
+            }
+            // 何も言わずに失敗しても、あるけれどコミットではないもの（`main:a.txt` など）なら、そう言う。
+            let mut exists = self.command(&["rev-parse", "--verify", "--quiet", rev]);
+            exists.env("GIT_OPTIONAL_LOCKS", "0");
+            return Err(if crate::run_lenient(exists)?.0 {
+                tr!("{rev} isn’t a commit", rev = rev).into()
+            } else {
+                not_found()
+            });
+        }
+        Oid::from_hex(&text(out)?).ok_or_else(not_found)
     }
 
     fn merge(&self, revs: &[String]) -> Result<Outcome> {

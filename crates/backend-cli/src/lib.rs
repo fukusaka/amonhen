@@ -939,6 +939,24 @@ mod ops_tests {
         (tmp, git)
     }
 
+    #[test]
+    fn resolve_names_a_missing_rev_but_keeps_other_failures() {
+        let (tmp, git) = repo();
+        let first = commit_file(&tmp, &git, "a", "1");
+        git.write(&["tag", "-a", "-m", "t", "t1"]).unwrap();
+        assert_eq!(git.resolve("t1").unwrap(), first);
+        let missing = git.resolve("no-such").unwrap_err().to_string();
+        assert!(missing.contains("no-such"), "{missing}");
+        assert!(!missing.contains("^{commit}"), "{missing}");
+        // リポジトリでなければ、「見つからない」ではなく git の文を出す。
+        let elsewhere = tempfile::tempdir().unwrap();
+        let other = Git::new(elsewhere.path())
+            .resolve("main")
+            .unwrap_err()
+            .to_string();
+        assert!(!other.contains("main"), "{other}");
+    }
+
     fn commit_file(tmp: &tempfile::TempDir, git: &Git, name: &str, content: &str) -> Oid {
         std::fs::write(tmp.path().join(name), content).unwrap();
         git.stage(&[name]).unwrap();

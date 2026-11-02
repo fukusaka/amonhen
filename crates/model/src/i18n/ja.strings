@@ -102,6 +102,7 @@
 "Can’t compare {ancestor} and {descendant}" = "{ancestor} と {descendant} を比べられない";
 "Can’t merge {theirs} into {ours}: {error}" = "{theirs} を {ours} にマージできない: {error}";
 "{rev} not found" = "{rev} が見つからない";
+"{rev} isn’t a commit" = "{rev} はコミットではない";
 "The clone destination folder is invalid" = "clone する先のフォルダがおかしい";
 "The clone destination folder’s name is invalid" = "clone する先のフォルダの名前がおかしい";
 "Stopped after {seconds} seconds without a response. It may have been waiting for a sign-in (a password or passphrase dialog, or the SSH agent) or for the network" = "{seconds} 秒のあいだ応答がないので止めました。サインインの入力（パスワードやパスフレーズのダイアログ、SSH の agent）か、ネットワークを待っていたのかもしれません";
