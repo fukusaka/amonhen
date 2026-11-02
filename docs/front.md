@@ -48,12 +48,14 @@ History and diffs are held by number (`history`, `diff`). Even if History is ref
 |---|---|---|---|
 | `hello` | language | version, workdir, gitDir | |
 | `environment` | env (the front-end's environment, `NAME=value` pairs separated by `"\u0000"`, as at opening) | | |
-| `history` | rebuild?, fold?, expanded? (array of IDs), tips? (array of IDs; only what is reachable from them) | history, generation, rows, head, headRow, folded | |
+| `history` | rebuild?, fold?, expanded? (array of IDs), tips? (array of IDs; only what is reachable from them) | history, generation, rows, head, headRow, folded, shallow (a shallow clone's History), boundaryRows (rows of the commits at the shallow boundary, whose parents aren't fetched) | |
 | `historyMatching` | history, rows | same as `history` (a History of only the matching rows) | |
 | `historyRelease` | history | | |
 | `historyRows` | history, and start and count or rows (array of rows), recorded? (true to list the rows whose author the mailmap changed) | count, edges, recorded (index into the rows, name and email as recorded; empty unless asked) | rowNumbers u32, nodes, ids, times i64, spans (start and length of the subject and author in `text`, u32 × 4; the author by the mailmap), text (UTF-8), signatures u8, folded u32 (for a folded History), parentStarts u32 (number of rows + 1), parents u32 (parent rows), parentIds (parent IDs), edges, edgeIds u32 (only with start and count; edges overlapping that range) |
 | `historyGraph` | history | rows, edges | nodes, edges, ids, folded (all rows) |
 | `historySearch` | history, query (syntax of `crates/core/src/query.rs`) | count | rows u32 (ascending) |
+| `historySearchPartial` | history, query (of the `historySearch` running on this connection) | count, done (how much is searched, 0–1; stays 0 without a contents term) | rows u32 (ascending; the matches found so far, part of the final answer; empty unless that search is the latest one started) |
+| `historyContentsToFetch` | history, query | count (contents a partial clone must fetch before searching `contents:`; 0 when nothing), more (over the limit; `historySearch` then fails) | |
 | `historyDensity` | history, buckets | buckets | density (f32 × 2: frequency, activity, 0 to 1) |
 | `historyLineage` | history, row | | rows (u64 bit set), edgeFrom u32 |
 | `historyLanes` | history, start, end, metrics (full, thin, minFull, minThin, available) | width (of all lanes) | positions f32 |
@@ -79,4 +81,4 @@ Diff line records: rows (diff line × number of rows), textLengths u32, text (UT
 
 When the shape of the API changes, bump `amonhen_front::VERSION` (check it with the version in the `hello` reply). The socket name includes the build fingerprint (`amonhen_remote::BUILD_ID`, a hash of the workspace's sources), so it never connects to a daemon of a different build.
 
-When a front-end starts the shared daemon itself, it passes its language as `AMONHEN_LANG` (the daemon uses it for what it does on its own, such as connecting to SSH hosts).
+When a front-end starts the shared daemon itself, it passes its language as `AMONHEN_LANG` (the daemon uses it for what it does on its own). Errors from an SSH host follow the language of the front-end that asked, even when several front-ends share the connection to that host.

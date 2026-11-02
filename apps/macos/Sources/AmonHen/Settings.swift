@@ -727,7 +727,7 @@ private struct PerformanceSettings: View {
         Form {
             Section {
                 Toggle(L("Write commit-graph automatically"), isOn: $model.writeCommitGraph)
-                Note(L("Writes to .git."))
+                Note(L("Writes to .git, except in repositories git maintenance looks after."))
                 Toggle(L("Speed up status with fsmonitor"), isOn: $model.useFSMonitor)
                 Note(L("A git fsmonitor--daemon runs for each repository."))
             }

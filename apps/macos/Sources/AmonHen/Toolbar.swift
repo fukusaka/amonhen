@@ -99,14 +99,14 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
         branchItem.label = "Branch"
         branchItem.paletteLabel = "Branch"
         branchItem.toolTip = L("Switch Branch (⌘⇧B)")
-        // History の検索。▾ で、作者・パス・内容で探す書き方を入れる。
+        // History の検索。▾ で、作者・パス・内容・日時で探す書き方を入れる。
         let field = searchItem.searchField
         field.placeholderString = L("Search History")
         field.sendsWholeSearchString = true
         field.target = self
         field.action = #selector(searchSubmitted)
         let scopes = NSMenu(title: L("Search"))
-        for (title, prefix) in [(L("Search by Author (author:)"), "author:"), (L("Search by Path (path:)"), "path:"), (L("Search by Contents (contents:)"), "contents:")] {
+        for (title, prefix) in [(L("Search by Author (author:)"), "author:"), (L("Search by Path (path:)"), "path:"), (L("Search by Contents (contents:)"), "contents:"), (L("Committed After (after:)"), "after:"), (L("Committed Before (before:)"), "before:")] {
             let item = NSMenuItem(title: title, action: #selector(insertSearchPrefix(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = prefix

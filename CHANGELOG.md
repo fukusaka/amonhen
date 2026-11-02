@@ -19,6 +19,22 @@ becomes the GitHub Release notes.
 - Several branches, tags or commits selected in the sidebar or History merge in one commit, as `git merge a b c` does,
   from a sheet showing their order and the conflicts expected for each; it offers to merge them one by one when git
   couldn't. `amonhen merge-check a b c` checks the same.
+- In a shallow clone, History ends with a band to fetch any number of older commits, up to a date, or all of it, and
+  boundary commits are marked as having parents not fetched. `amonhen log` notes where the history stops.
+- Repository Settings has a Fetching and Folders page: fetch more of a shallow clone, fetch all contents of a partial
+  clone (git 2.36), and choose the folders of a sparse checkout from HEAD's tree (git 2.25). The git line, the
+  sidebar and Working Copy show when a repository is shallow, partial, sparse or registered for maintenance.
+- In a partial clone, a History search with `contents:` says how many contents it will fetch and fetches them in one
+  go (git 2.29); past 50,000 it asks to narrow the search or fetch all contents. `amonhen status` notes shallow,
+  partial and sparse repositories.
+- The History search takes `after:` and `before:` (a date or `"1 year ago"`), and `contents:` with `path:` looks
+  only at that path's changes. A `contents:` search shows the matches and its progress as it goes.
+- Fetching and Folders has a switch to keep the repository maintained in the background (`git maintenance start`,
+  git 2.31); the app then leaves writing the commit-graph to it. Turning it off lets git's automatic maintenance
+  run again.
+- The Clone sheet chooses what to download (everything, file contents when needed, or recent history only) and can
+  check out only some folders, picked right after the clone (git 2.27). `amonhen clone` takes `--filter`, `--depth`
+  and `--sparse`.
 
 #### Changed
 
@@ -60,6 +76,12 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- Errors from an SSH host opened through the shared daemon are in the language of the app or CLI that asked, not the
+  daemon's.
+
+- `amonhen diff` with a name that is neither a commit nor a file in the working tree stops with an error, as git does,
+  instead of printing an empty diff. Paths after `--` are taken as paths.
+
 - Combine with Older Commit… on a single commit in History marks it in the edit mode; it opened with nothing marked.
 
 - Working Copy puts a check box back when staging fails or changes nothing; it kept showing the click.
@@ -70,6 +92,11 @@ becomes the GitHub Release notes.
   `git log` does. After `git fetch --deepen` or `--unshallow`, History is read again with the older commits.
 - Starting a merge, rebase, cherry-pick, revert, pull or patch while another one is stopped no longer reports a
   conflict; it says which one is in progress, to continue or abort first.
+- Error messages show what went wrong: the macOS app showed only "AmonhenError error 1" (a locked index, for
+  example), and a git command that failed without a message showed a raw exit status; it now names the command, its
+  exit code, or the branch or commit that doesn't exist.
+- Diffs no longer come up empty after many fetches while a repository stays open (each partial clone fetch adds a
+  pack, and only about 32 new packs could be read).
 
 ### [0.2.8] - 2026-10-30
 
@@ -677,6 +704,9 @@ First release.
 
 #### Added
 
+- History has a search field with the app's syntax (`author:`, `path:`, `contents:`, `after:` …), highlighting and
+  moving between matches, and Matching Only; it needs the engine. In a partial clone a `contents:` search first says
+  how many file contents it will fetch.
 - Merge Branches… in the Command Palette merges several branches or tags in one commit, as `git merge a b c` does,
   showing the conflicts expected for each first; it offers to merge them one by one when git couldn't.
 
@@ -694,6 +724,8 @@ First release.
 
 - Starting a merge, rebase, cherry-pick or revert while another one is stopped no longer reports a conflict; it says
   which one is in progress, to continue or abort first.
+- In a History with many branches side by side (git/git, linux), the graph no longer pushes the commit text out of the
+  list: lanes with only lines are squeezed and the graph stays within a fixed width, as in the app.
 
 #### Fixed
 

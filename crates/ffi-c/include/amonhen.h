@@ -658,8 +658,8 @@ uint64_t amonhen_repo_mailmap_fingerprint(const AmonhenRepo *repo_ptr);
 
 /**
  * commit-graph を最新にする（`git commit-graph write --reachable`）。なければ全体を書き出して 1、
- * あれば後から増えたコミットだけを書き足して（`--split`）0、失敗したら -1 を返す。利用者が設定で
- * 選んだときだけ、裏のスレッドから呼ぶこと。
+ * あれば後から増えたコミットだけを書き足して（`--split`）0、失敗したら -1 を返す。git maintenance に
+ * 登録してあれば（そちらが毎時書く）何もせずに 0。利用者が設定で選んだときだけ、裏のスレッドから呼ぶこと。
  *
  * # Safety
  * `repo` は有効なリポジトリであること。
@@ -739,7 +739,7 @@ uint32_t amonhen_history_lane_positions(const AmonhenHistory *history_ptr,
 
 /**
  * `query` に合うコミットの行（昇順、`amonhen_rows_free` で解放する）。構文は `amonhen-core` の
- * `query`（`author:` `subject:` `commit:` `path:` `contents:`、AND・OR・括弧）。すべてのコミットを読むので
+ * `query`（`author:` `subject:` `commit:` `path:` `contents:` `after:` `before:`、AND・OR・括弧）。すべてのコミットを読むので
  * 裏のスレッドで呼ぶ（linux の 148 万コミットで約 1.2 秒）。新しい検索を始めるか `amonhen_search_cancel` を
  * 呼ぶと、走っている検索は NULL を返す。
  *
@@ -749,6 +749,30 @@ uint32_t amonhen_history_lane_positions(const AmonhenHistory *history_ptr,
 AmonhenRows *amonhen_history_search(const AmonhenRepo *repo_ptr,
                                     const AmonhenHistory *history_ptr,
                                     const char *query);
+
+/**
+ * partial clone で、`query` の内容の条件（`contents:`）を探す前に取る、手元にない中身の数。取るものがあれば 1
+ * を返して `count` と `more`（上限を超えたので数えるのをやめた）を書き、なければ 0、失敗（取り消しも）なら -1。
+ * 履歴を辿るので裏のスレッドで呼ぶ。`amonhen_search_cancel` でやめられる。
+ *
+ * # Safety
+ * `repo` と `history` は有効、`query` は NUL 終端の UTF-8、`count` と `more` は書けること。
+ */
+int32_t amonhen_history_contents_to_fetch(const AmonhenRepo *repo_ptr,
+                                          const AmonhenHistory *history_ptr,
+                                          const char *query,
+                                          uint32_t *count,
+                                          bool *more);
+
+/**
+ * 走っている検索（`amonhen_history_search`）の、そこまでに分かった行（昇順、`amonhen_rows_free` で解放する）。
+ * `done` に探し終えた割合（0〜1。内容の条件がなければ 0 のまま）を書く。
+ *
+ * # Safety
+ * `repo` は有効、`done` は書けること。
+ */
+AmonhenRows *amonhen_search_partial(const AmonhenRepo *repo_ptr,
+                                    float *done);
 
 /**
  * 走っている検索をやめる。
@@ -1153,14 +1177,18 @@ char *amonhen_activity(void);
 bool amonhen_activity_cancel(uint64_t seq);
 
 /**
- * `url` を `dest`（まだないフォルダ）に clone する。失敗したら false（理由は `amonhen_last_error`）。時間が
- * かかるので裏のスレッドで呼ぶ。
+ * `url` を `dest`（まだないフォルダ）に clone する。`filter`（NULL・空でなければ `--filter`。`blob:none` など）、
+ * `depth`（0 でなければ `--depth`）、`sparse`（`--sparse`。根のファイルだけを取り出す。git 2.27 から）で取得する
+ * 範囲と取り出すものを決める。失敗したら false（理由は `amonhen_last_error`）。時間がかかるので裏のスレッドで呼ぶ。
  *
  * # Safety
- * `url` と `dest` は NUL 終端の UTF-8 文字列であること。
+ * `url` と `dest` は NUL 終端の UTF-8 文字列、`filter` は NULL か NUL 終端の UTF-8 文字列であること。
  */
 bool amonhen_clone(const char *url,
-                   const char *dest);
+                   const char *dest,
+                   const char *filter,
+                   uint32_t depth,
+                   bool sparse);
 
 /**
  * `path` のリポジトリの軽い状態（リポジトリの一覧に出す）。行に分けた文字列で、順にブランチ（detached なら
@@ -1291,6 +1319,25 @@ const AmonhenHistory *amonhen_history_folded(const AmonhenRepo *repo_ptr,
  */
 uint32_t amonhen_history_hidden(const AmonhenHistory *history_ptr,
                                 uint32_t row);
+
+/**
+ * shallow clone の History か（境界より古いコミットを取得していない）。
+ *
+ * # Safety
+ * `history` は有効な History であること。
+ */
+bool amonhen_history_is_shallow(const AmonhenHistory *history_ptr);
+
+/**
+ * shallow clone の境界のコミット（親を取得していない）の行を、昇順に `out` へ最大 `capacity` 個書き、全体の
+ * 個数を返す。全行を見るので、大きな History では裏のスレッドで呼ぶ。
+ *
+ * # Safety
+ * `history` は有効な History、`out` は `capacity` 個の `u32` を書ける領域であること（0 個なら NULL でよい）。
+ */
+uint32_t amonhen_history_boundary_rows(const AmonhenHistory *history_ptr,
+                                       uint32_t *out,
+                                       uint32_t capacity);
 
 /**
  * スクロールバーに描く密度。`out` に区間ごとの [頻度, 活動量]（0〜1）を `buckets * 2` 個書き、書いた区間の数を

@@ -1,7 +1,7 @@
 //! Working Copy とコミットの中身: status・diff・show・stage・unstage・discard・commit・refs。どれもコアへの窓口
 //! （`amonhen-front`）だけを使う。`--json` で、FE が読む形（人が読む形と同じ中身）を出す。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use amonhen_front::{Front, Reply};
@@ -111,6 +111,42 @@ pub fn status(args: &[String]) -> Result<ExitCode> {
         out.push_str(&tr!(" ({items})", items = items.join(&tr!(", "))));
     }
     out.push('\n');
+    // リポジトリの形（shallow・partial clone・sparse checkout・maintenance の登録）。git status は言わないが、
+    // ないファイルや履歴のわけになる。読めなければ出さない。
+    if let Ok(form) = command(&*front, json!({"op": "repositoryForm"})) {
+        let form = &form["info"];
+        let mut items = Vec::new();
+        if form["shallow"] == true {
+            items.push(tr!("shallow clone"));
+        }
+        if let Some(partial) = form["partial"].as_object() {
+            items.push(match partial["filter"].as_str() {
+                Some(filter) => tr!("partial clone ({filter})", filter = filter),
+                None => tr!("partial clone"),
+            });
+        }
+        if let Some(sparse) = form["sparse"].as_object() {
+            items.push(match sparse["folders"].as_array() {
+                Some(folders) if sparse["cone"] == true && folders.is_empty() => {
+                    tr!("sparse checkout (top-level files only)")
+                }
+                Some(folders) if sparse["cone"] == true && folders.len() == 1 => {
+                    tr!("sparse checkout (1 folder)")
+                }
+                Some(folders) if sparse["cone"] == true => {
+                    tr!("sparse checkout ({count} folders)", count = folders.len())
+                }
+                _ => tr!("sparse checkout"),
+            });
+        }
+        if form["maintenance"] == true {
+            items.push(tr!("git maintenance"));
+        }
+        if !items.is_empty() {
+            out.push_str(&paint(&items.join(" · "), "90", c.color));
+            out.push('\n');
+        }
+    }
     let entries = status["entries"].as_array().cloned().unwrap_or_default();
     if entries.is_empty() {
         out.push_str(&tr!("No changes"));
@@ -261,7 +297,7 @@ pub fn diff(args: &[String]) -> Result<ExitCode> {
     let front = open_repository(&c.dir)?;
     let numbers = flag(&seen, "--rows");
     let stat = flag(&seen, "--stat");
-    let (revs, paths) = split_revs(&*front, &c.rest);
+    let (revs, paths) = split_revs(&*front, &c.dir, &c.rest)?;
     if !revs.is_empty() {
         let ids = revs
             .iter()
@@ -542,8 +578,20 @@ fn print_commit_diff(
 }
 
 /// 引数のうち、コミットとして読めるものと、パス（`--` の後ろはいつもパス）。
-fn split_revs(front: &dyn Front, rest: &[String]) -> (Vec<String>, Vec<String>) {
+/// 引数を rev とパスに分ける。`--` がなければ、git と同じく、rev でもなく作業ツリーにもないものは取り違え（打ち間違えた
+/// ブランチの名前など）として止める（黙ってパスとして扱うと、空の差分になる）。SSH 先の作業ツリーは手元から見えない
+/// ので確かめない。
+fn split_revs(
+    front: &dyn Front,
+    dir: &Path,
+    rest: &[String],
+) -> Result<(Vec<String>, Vec<String>)> {
     let (mut revs, mut paths) = (Vec::new(), Vec::new());
+    let given = dir.to_str().unwrap_or_default();
+    let local = given.strip_prefix("daemon:").unwrap_or(given);
+    let root = (!local.starts_with("ssh://"))
+        .then(|| crate::repository_root(Path::new(local)).ok())
+        .flatten();
     let mut after_dashes = false;
     for arg in rest {
         if arg == "--" {
@@ -551,10 +599,20 @@ fn split_revs(front: &dyn Front, rest: &[String]) -> (Vec<String>, Vec<String>) 
         } else if !after_dashes && paths.is_empty() && resolve(front, arg).is_ok() {
             revs.push(arg.clone());
         } else {
+            if !after_dashes
+                && let Some(root) = &root
+                && !root.join(arg).exists()
+            {
+                return Err(tr!(
+                    "{arg} is neither a commit nor a path in the working tree (put paths after --)",
+                    arg = arg
+                )
+                .into());
+            }
             paths.push(arg.clone());
         }
     }
-    (revs, paths)
+    Ok((revs, paths))
 }
 
 fn wanted(path: &str, paths: &[String]) -> bool {

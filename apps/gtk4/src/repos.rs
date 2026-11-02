@@ -417,7 +417,8 @@ async fn run(parent: &gtk::Window, url: String, dest: PathBuf, open: Rc<dyn Fn(P
     // 走っている操作に数える（Activity の印が回る。macOS 版と同じ）。
     crate::activity::begin();
     let result = gio::spawn_blocking(move || {
-        amonhen_backend_cli::clone(&url, &d).map_err(|e| e.to_string())
+        // 取得する範囲を選ぶシートは GTK4 版にはまだないので、git の既定（すべて取得する）で。
+        amonhen_backend_cli::clone(&url, &d, &Default::default()).map_err(|e| e.to_string())
     })
     .await
     .unwrap_or_else(|_| Err(String::new()));

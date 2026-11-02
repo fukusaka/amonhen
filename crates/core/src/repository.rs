@@ -1,12 +1,12 @@
 use amonhen_model::tr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use amonhen_layout::DiffRow;
 use amonhen_model::{
-    CommitGraph, Eol, FileChange, GitBackend, HistoryOrder, LineEndings, Oid, OidMap, Refs,
-    RepoPaths, Result, Status, StatusEntry, topo,
+    CommitGraph, ContentsToFetch, Eol, FileChange, GitBackend, HistoryOrder, LineEndings, Oid,
+    OidMap, Refs, RepoPaths, Result, Status, StatusEntry, topo,
 };
 use amonhen_projection::{FrontendProfile, HistoryChunk};
 use arc_swap::ArcSwapOption;
@@ -196,6 +196,30 @@ impl HistorySnapshot {
         self.rows().get(id).copied()
     }
 
+    /// shallow clone の境界のコミット（親を取得していない）の行（昇順）。shallow clone でなければ空。索引は
+    /// 作らずに全行を見る（境界はたいてい数個なので、150 万コミットでも数 ms）。
+    pub fn boundary_rows(&self) -> Vec<u32> {
+        if self.shallow.is_empty() {
+            return Vec::new();
+        }
+        if let Some(rows) = self.rows.get() {
+            let mut found: Vec<u32> = self
+                .shallow
+                .iter()
+                .filter_map(|id| rows.get(id).copied())
+                .collect();
+            found.sort_unstable();
+            return found;
+        }
+        self.graph
+            .ids()
+            .iter()
+            .enumerate()
+            .filter(|(_, id)| self.shallow.contains(id))
+            .map(|(r, _)| r as u32)
+            .collect()
+    }
+
     fn rows(&self) -> &OidMap<u32> {
         self.rows.get_or_init(|| {
             self.graph
@@ -231,6 +255,26 @@ pub struct Repository {
     texts: amonhen_model::search::TextIndexCache,
     /// History の並び順（`set_history_order`）。
     history_order: std::sync::Mutex<HistoryOrder>,
+    /// 走っている検索（`search_history`）の、そこまでに分かった行と探し終えた割合。番号は `search_generation`。
+    search_partial: std::sync::Mutex<(u64, Vec<u32>, f32)>,
+    /// 最後に数えた、内容の検索の前に取る中身（起点と範囲ごと。`contents_to_fetch` のあとに探すとき数え直さない）。
+    contents_counted: std::sync::Mutex<Option<ContentsCounted>>,
+    /// 内容の検索の前にまとめて取る中身の数の上限（`CONTENTS_FETCH_LIMIT`。テストでは小さくする）。
+    contents_limit: usize,
+}
+
+type ContentsCounted = (Vec<Oid>, Vec<amonhen_model::LogScope>, ContentsToFetch);
+
+/// 内容の検索の前に、まとめて取る中身の数の上限。超える検索は、範囲を絞るか中身をすべて取るよう頼む（ID を並べて
+/// 取る fetch は、git の手元の処理が ID の数の 2 乗で遅くなり、数十万を超えると終わらない）。
+pub const CONTENTS_FETCH_LIMIT: usize = 50_000;
+
+/// 内容の検索の前に取る、手元にない中身（`Repository::contents_to_fetch`）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ContentsNeed {
+    pub count: usize,
+    /// 上限（`CONTENTS_FETCH_LIMIT`）を超えた。`count` は上限まで。
+    pub more: bool,
 }
 
 impl Repository {
@@ -242,6 +286,9 @@ impl Repository {
             status: ArcSwapOption::empty(),
             generation: AtomicU64::new(0),
             search_generation: AtomicU64::new(0),
+            search_partial: Default::default(),
+            contents_counted: Default::default(),
+            contents_limit: CONTENTS_FETCH_LIMIT,
             cache_path: None,
             undo: OnceLock::new(),
             signatures: Default::default(),
@@ -802,6 +849,14 @@ impl Repository {
             let files = changes.iter().map(|c| c.path.clone()).zip(diffs).collect();
             return Ok(diff::StackedDiff { files });
         }
+        // partial clone では、足りない blob を先にまとめて取ってくる（1 つずつ取りに行かない）。
+        let ids: Vec<Oid> = changes
+            .iter()
+            .filter(|c| !c.submodule)
+            .flat_map(|c| [c.old_id, c.new_id])
+            .flatten()
+            .collect();
+        self.backend.prefetch_blobs(&ids)?;
         let one = |c: &FileChange| Ok((c.path.clone(), self.change_diff(c)?));
         // ファイルごとの差分は独立しているので、多ければ分けて並列に取る（コミットを選んでから表示までの時間）。
         let threads = std::thread::available_parallelism()
@@ -1260,8 +1315,13 @@ impl Repository {
     /// commit-graph を最新にする。なければ全体を書き出して true を、あれば後から増えたコミットだけを
     /// 書き足して false を返す（増えていなければ git は何も書かない）。開いたときと fetch の後に呼ぶ。
     /// リポジトリの `.git` に書き込むので、利用者が設定で選んだときだけ呼ぶ。大きなリポジトリでは
-    /// 全体の書き出しに数十秒〜数分かかるので、裏のスレッドで呼ぶこと。
+    /// 全体の書き出しに数十秒〜数分かかるので、裏のスレッドで呼ぶこと。git maintenance に登録してあれば、
+    /// 毎時そちらが書くので、何もせずに false を返す。
     pub fn update_commit_graph(&self) -> Result<bool> {
+        let registered = self.backend.operations()?.repository_form();
+        if registered.is_ok_and(|form| form.maintenance) {
+            return Ok(false);
+        }
         let missing = !self.backend.has_commit_graph()?;
         self.backend.write_commit_graph(!missing)?;
         Ok(missing)
@@ -1312,11 +1372,41 @@ impl Repository {
 
     /// `query`（`crate::query` の構文）に合うコミットの行（昇順）。件名・作者・ID はコミットを読みながら
     /// 行を分けて並列に、パス・内容は git に問い合わせて探し、行の集合を組み合わせる。新しい検索を始めるか
-    /// `cancel_search` すると、走っている検索は `Err` で終わる。
+    /// `cancel_search` すると、走っている検索は `Err` で終わる。走っているあいだ、そこまでに分かった行は
+    /// `search_partial` で読める。
     pub fn search_history(&self, snapshot: &HistorySnapshot, query: &str) -> Result<Vec<u32>> {
         let generation = self.search_generation.fetch_add(1, Ordering::Relaxed) + 1;
         let cancelled = || self.search_generation.load(Ordering::Relaxed) != generation;
-        self.search_history_until(snapshot, query, &cancelled)
+        *self.search_partial.lock().unwrap() = (generation, Vec::new(), 0.0);
+        self.search_history_streaming(snapshot, query, &cancelled, &|rows, done| {
+            let mut partial = self.search_partial.lock().unwrap();
+            if partial.0 == generation {
+                *partial = (generation, rows.to_vec(), done);
+            }
+        })
+    }
+
+    /// 走っている `search_history` の、そこまでに分かった行（昇順。最後の答えの一部）と、探し終えた割合（0〜1。
+    /// 内容の条件がなければ 0 のまま）。
+    pub fn search_partial(&self) -> (Vec<u32>, f32) {
+        let partial = self.search_partial.lock().unwrap();
+        if partial.0 == self.search_generation.load(Ordering::Relaxed) {
+            (partial.1.clone(), partial.2)
+        } else {
+            (Vec::new(), 0.0)
+        }
+    }
+
+    /// `contents_to_fetch` を、検索と同じく `cancel_search`（と新しい検索）でやめられるように数える（大きな履歴で、
+    /// 中身がほとんど手元にあると、数え終えるまで履歴をすべて辿る）。
+    pub fn count_contents_to_fetch(
+        &self,
+        snapshot: &HistorySnapshot,
+        query: &str,
+    ) -> Result<Option<ContentsNeed>> {
+        let generation = self.search_generation.fetch_add(1, Ordering::Relaxed) + 1;
+        let cancelled = || self.search_generation.load(Ordering::Relaxed) != generation;
+        self.contents_to_fetch(snapshot, query, &cancelled)
     }
 
     /// `search_history` と同じだが、ほかの検索とは関係なく、`cancelled` が true になったときだけやめる（共有の
@@ -1327,17 +1417,131 @@ impl Repository {
         query: &str,
         cancelled: &(dyn Fn() -> bool + Sync),
     ) -> Result<Vec<u32>> {
+        self.search_history_streaming(snapshot, query, cancelled, &|_, _| {})
+    }
+
+    /// partial clone で、`query` の内容の条件（`contents:`）を探す前に取る、手元にない中身。取るものがなければ
+    /// `None`。上限（`CONTENTS_FETCH_LIMIT`）を超えたら数えるのをやめる。数えたものは覚えておき、続けて同じ
+    /// 問い合わせを探すときは数え直さない。
+    pub fn contents_to_fetch(
+        &self,
+        snapshot: &HistorySnapshot,
+        query: &str,
+        cancelled: &(dyn Fn() -> bool + Sync),
+    ) -> Result<Option<ContentsNeed>> {
+        let Some(expr) = crate::query::parse(query)? else {
+            return Ok(None);
+        };
+        let scopes: Vec<_> = log_scopes(&expr)?.into_iter().flatten().collect();
+        if scopes.is_empty() {
+            return Ok(None);
+        }
+        let found = self.missing_contents(snapshot, &scopes, cancelled)?;
+        Ok(
+            (!found.ids.is_empty() || found.more).then_some(ContentsNeed {
+                count: found.ids.len(),
+                more: found.more,
+            }),
+        )
+    }
+
+    /// `scopes` の内容の検索に要る、手元にない中身（上限まで）。
+    fn missing_contents(
+        &self,
+        snapshot: &HistorySnapshot,
+        scopes: &[amonhen_model::LogScope],
+        cancelled: &(dyn Fn() -> bool + Sync),
+    ) -> Result<ContentsToFetch> {
+        let mut scopes = scopes.to_vec();
+        scopes.dedup();
+        if let Some((tips, counted, found)) = &*self.contents_counted.lock().unwrap()
+            && *tips == snapshot.tips
+            && *counted == scopes
+        {
+            return Ok(found.clone());
+        }
+        let mut all = ContentsToFetch::default();
+        let mut seen = amonhen_model::OidSet::default();
+        for scope in &scopes {
+            let left = self.contents_limit - all.ids.len();
+            let found = self
+                .backend
+                .contents_to_fetch(&snapshot.tips, scope, left, cancelled)?;
+            all.ids
+                .extend(found.ids.into_iter().filter(|id| seen.insert(*id)));
+            if found.more {
+                all.more = true;
+                break;
+            }
+        }
+        *self.contents_counted.lock().unwrap() = Some((snapshot.tips.clone(), scopes, all.clone()));
+        Ok(all)
+    }
+
+    /// `search_history_until` と同じだが、内容の条件はコミットを区切って新しい方から探し、区切るごとに、そこまでに
+    /// 分かった行（昇順）と探し終えた割合（0〜1）を `progress` に渡す（大きな履歴を内容で探すと数分かかる）。
+    /// 条件は AND と OR だけなので、分かった行は最後の答えの一部になる（増えることはあっても減らない）。
+    /// partial clone では、先に要る中身をまとめて取る。上限（`CONTENTS_FETCH_LIMIT`）を超えるならエラー。
+    pub fn search_history_streaming(
+        &self,
+        snapshot: &HistorySnapshot,
+        query: &str,
+        cancelled: &(dyn Fn() -> bool + Sync),
+        progress: &(dyn Fn(&[u32], f32) + Sync),
+    ) -> Result<Vec<u32>> {
+        use crate::query::Field;
         let Some(expr) = crate::query::parse(query)? else {
             return Ok(Vec::new());
         };
         let rows = snapshot.graph.len();
         let terms = expr.terms();
-        // 葉の条件ごとの、合う行の集合（ビット列）。
+        let scopes = log_scopes(&expr)?;
+        // 葉の条件ごとの、合う行の集合（ビット列）。日時の条件は、行の日時で決まる。
         let mut sets: Vec<Option<RowSet>> = vec![None; terms.len()];
+        for (i, term) in terms.iter().enumerate() {
+            if term.field.is_date() {
+                let at = parse_date(&term.value)?;
+                sets[i] = Some(rows_in_time(snapshot, |t| {
+                    if term.field == Field::After {
+                        t >= at
+                    } else {
+                        t <= at
+                    }
+                }));
+            }
+        }
+        let wanted: Vec<_> = scopes.iter().flatten().cloned().collect();
+        if !wanted.is_empty() {
+            let found = self.missing_contents(snapshot, &wanted, cancelled)?;
+            if found.more {
+                return Err(too_many_contents(self.contents_limit).into());
+            }
+            if !found.ids.is_empty() {
+                self.backend.prefetch_blobs(&found.ids)?;
+                *self.contents_counted.lock().unwrap() = None;
+            }
+            if cancelled() {
+                return Err(amonhen_model::i18n::cancelled().into());
+            }
+        }
         let textual: Vec<usize> = (0..terms.len())
             .filter(|&i| terms[i].field.is_textual())
             .collect();
         let ops = self.backend.operations()?;
+        // 途中の答え: 分かった集合（まだのものは空とみなす）と、内容の条件ごとの探し終えた割合。
+        let partial = Mutex::new((sets.clone(), vec![0.0f32; terms.len()]));
+        let contents_terms = scopes.iter().flatten().count().max(1) as f32;
+        let publish = || {
+            let (mut sets, done) = {
+                let partial = partial.lock().unwrap();
+                (
+                    partial.0.clone(),
+                    partial.1.iter().sum::<f32>() / contents_terms,
+                )
+            };
+            let mut next = 0;
+            progress(&combine(&expr, &mut sets, &mut next, rows).rows(), done);
+        };
         // パス・内容の問い合わせ（git）は、件名・作者を読む走査と同時に進める。分けたスレッドでも、共有の daemon
         // なら要求した FE の環境と言語で git を動かす。
         let carried = &amonhen_model::process::carry();
@@ -1345,15 +1549,39 @@ impl Repository {
             let queries: Vec<_> = terms
                 .iter()
                 .enumerate()
-                .filter(|(_, t)| !t.field.is_textual())
+                .filter(|(_, t)| !t.field.is_textual() && !t.field.is_date())
                 .map(|(i, term)| {
-                    let (path, contents) = match term.field {
-                        crate::query::Field::Path => (Some(term.value.as_str()), None),
-                        _ => (None, Some(term.value.as_str())),
-                    };
                     let cancelled = &cancelled;
+                    let (partial, publish) = (&partial, &publish);
+                    let contents = scopes[i].clone();
                     let handle = scope.spawn(move || {
-                        carried.run(|| ops.log_matching(&snapshot.tips, path, contents, cancelled))
+                        carried.run(|| match &contents {
+                            Some(within) => self.search_contents(
+                                snapshot,
+                                &term.value,
+                                within,
+                                cancelled,
+                                &mut |set, done| {
+                                    {
+                                        let mut p = partial.lock().unwrap();
+                                        p.0[i] = Some(set.clone());
+                                        p.1[i] = done;
+                                    }
+                                    publish();
+                                },
+                            ),
+                            None => {
+                                let ids = ops.log_matching(
+                                    &snapshot.tips,
+                                    Some(&term.value),
+                                    None,
+                                    cancelled,
+                                )?;
+                                let set = rows_of(snapshot, &ids);
+                                partial.lock().unwrap().0[i] = Some(set.clone());
+                                Ok(set)
+                            }
+                        })
                     });
                     (i, handle)
                 })
@@ -1364,13 +1592,19 @@ impl Repository {
                 let textual_terms: Vec<_> = textual.iter().map(|&i| terms[i]).collect();
                 self.scan_texts(snapshot, &textual_terms, &cancelled)
             };
+            if let Ok(found) = &scanned {
+                let mut p = partial.lock().unwrap();
+                for (i, set) in textual.iter().zip(found) {
+                    p.0[*i] = Some(set.clone());
+                }
+            }
             let queried: Vec<_> = queries
                 .into_iter()
                 .map(|(i, handle)| {
-                    let ids = handle
+                    let set = handle
                         .join()
                         .unwrap_or_else(|_| Err(tr!("Search failed unexpectedly").into()));
-                    (i, ids)
+                    (i, set)
                 })
                 .collect();
             (scanned, queried)
@@ -1378,14 +1612,8 @@ impl Repository {
         for (i, set) in textual.iter().zip(scanned?) {
             sets[*i] = Some(set);
         }
-        for (i, ids) in queried {
-            let mut set = RowSet::new(rows);
-            for id in &ids? {
-                if let Some(row) = snapshot.row_of(id) {
-                    set.insert(row as usize);
-                }
-            }
-            sets[i] = Some(set);
+        for (i, set) in queried {
+            sets[i] = Some(set?);
         }
         if cancelled() {
             return Err(amonhen_model::i18n::cancelled().into());
@@ -1393,6 +1621,60 @@ impl Repository {
         let mut next = 0;
         let result = combine(&expr, &mut sets, &mut next, rows);
         Ok(result.rows())
+    }
+
+    /// 内容の条件 1 つを、`within` のコミットを区切って新しい方から探す。区切るごとに、そこまでの集合と探し終えた
+    /// 割合を `found` に渡す。
+    fn search_contents(
+        &self,
+        snapshot: &HistorySnapshot,
+        contents: &str,
+        within: &amonhen_model::LogScope,
+        cancelled: &(dyn Fn() -> bool + Sync),
+        found: &mut dyn FnMut(&RowSet, f32),
+    ) -> Result<RowSet> {
+        let ops = self.backend.operations()?;
+        let rows = snapshot.graph.len();
+        // パスで絞るなら、先にそのパスを変えたコミットを git に挙げさせる（パスだけなら差分の中身を読まないので速い）。
+        let mut candidates: Vec<u32> = if within.paths.is_empty() {
+            (0..rows as u32).collect()
+        } else {
+            let mut ids = Vec::new();
+            for path in &within.paths {
+                ids.extend(ops.log_matching(&snapshot.tips, Some(path), None, cancelled)?);
+            }
+            rows_of(snapshot, &ids).rows()
+        };
+        let times = snapshot.graph.commit_times();
+        candidates.retain(|&row| {
+            let t = times[row as usize];
+            within.after.is_none_or(|a| t >= a) && within.before.is_none_or(|b| t <= b)
+        });
+        let ids = snapshot.graph.ids();
+        let mut set = RowSet::new(rows);
+        let total = candidates.len().max(1) as f32;
+        let (mut at, mut size) = (0, 2_000);
+        while at < candidates.len() {
+            let chunk = &candidates[at..(at + size).min(candidates.len())];
+            let commits: Vec<Oid> = chunk.iter().map(|&row| ids[row as usize]).collect();
+            let started = std::time::Instant::now();
+            for id in ops.log_matching_commits(&commits, &within.paths, contents, cancelled)? {
+                if let Some(row) = snapshot.row_of(&id) {
+                    set.insert(row as usize);
+                }
+            }
+            at += chunk.len();
+            found(&set, at as f32 / total);
+            // 1 回が 2〜8 秒になるよう区切りを変える。大きなリポジトリでは git を起こすたびに 0.1 秒ほどかかる
+            // （linux の 1 年分を 2,000 個ずつ探すと、区切らないときより 3 割遅い）。最初の答えは小さな区切りで早く出す。
+            let took = started.elapsed();
+            if took < std::time::Duration::from_secs(2) {
+                size = (size * 2).min(200_000);
+            } else if took > std::time::Duration::from_secs(8) {
+                size = (size / 2).max(500);
+            }
+        }
+        Ok(set)
     }
 
     /// 件名・作者・ID の条件を、コミットを読みながら行を分けて並列に調べる。
@@ -1445,6 +1727,64 @@ impl Repository {
         )?;
         Ok(words.into_iter().map(|words| RowSet { words }).collect())
     }
+}
+
+/// `ids` のうち History にあるコミットの行。
+fn rows_of(snapshot: &HistorySnapshot, ids: &[Oid]) -> RowSet {
+    let mut set = RowSet::new(snapshot.graph.len());
+    for id in ids {
+        if let Some(row) = snapshot.row_of(id) {
+            set.insert(row as usize);
+        }
+    }
+    set
+}
+
+/// コミットの日時が `keep` に合う行。
+fn rows_in_time(snapshot: &HistorySnapshot, keep: impl Fn(i64) -> bool) -> RowSet {
+    let mut set = RowSet::new(snapshot.graph.len());
+    for (row, &t) in snapshot.graph.commit_times().iter().enumerate() {
+        if keep(t) {
+            set.insert(row);
+        }
+    }
+    set
+}
+
+/// `after:`・`before:` の値（日付、`1 year ago` のような相対の日時など、git が読むおもな形）を秒に。
+fn parse_date(value: &str) -> Result<i64> {
+    gix_date::parse(value, Some(gix_date::Zoned::now()))
+        .map(|t| t.seconds)
+        .map_err(|_| tr!("Can’t read the date “{date}”", date = value).into())
+}
+
+/// 葉の条件ごとの、内容の条件を探す範囲（git に渡す形。内容の条件でなければ `None`）。日時の条件が重なれば
+/// いちばん狭いもの。
+fn log_scopes(expr: &crate::query::Expr) -> Result<Vec<Option<amonhen_model::LogScope>>> {
+    expr.contents_scopes()
+        .into_iter()
+        .map(|scope| {
+            scope
+                .map(|s| -> Result<_> {
+                    let dates = |values: &[String]| -> Result<Vec<i64>> {
+                        values.iter().map(|v| parse_date(v)).collect()
+                    };
+                    Ok(amonhen_model::LogScope {
+                        paths: s.paths,
+                        after: dates(&s.after)?.into_iter().max(),
+                        before: dates(&s.before)?.into_iter().min(),
+                    })
+                })
+                .transpose()
+        })
+        .collect()
+}
+
+fn too_many_contents(limit: usize) -> String {
+    tr!(
+        "This search needs more than {limit} file contents that aren’t fetched yet. Narrow it with path:, after: or before:, or fetch all contents in Repository Settings.",
+        limit = limit
+    )
 }
 
 /// 行の集合（行番号のビット列）。
@@ -1677,6 +2017,125 @@ mod tests {
     }
 
     #[test]
+    fn searches_contents_within_paths_and_dates() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        git(dir, &["init", "-q"]);
+        git(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        std::fs::create_dir(dir.join("src")).unwrap();
+        // `after:`・`before:` が見るコミットの日時（committer）は、環境変数でしか決められない。
+        let commit = |message: &str, date: &str| {
+            git(dir, &["add", "."]);
+            let date = format!("{date}T12:00:00Z");
+            let ok = Command::new("git")
+                .args(["commit", "-q", "-m", message])
+                .current_dir(dir)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_AUTHOR_DATE", &date)
+                .env("GIT_COMMITTER_DATE", &date)
+                .status()
+                .unwrap()
+                .success();
+            assert!(ok);
+        };
+        std::fs::write(dir.join("src/a.rs"), "lock()\n").unwrap();
+        commit("a", "2020-01-01");
+        std::fs::write(dir.join("README"), "lock()\n").unwrap();
+        commit("readme", "2021-01-01");
+        std::fs::write(dir.join("src/a.rs"), "lock(); unlock()\n").unwrap();
+        std::fs::write(dir.join("README"), "only_in_readme\n").unwrap();
+        commit("both", "2022-01-01");
+        let repo =
+            Repository::with_cache(GixBackend::open(dir).unwrap(), tmp.path().join("cache.bin"));
+        let history = repo.load_history().unwrap();
+        let search = |q: &str| repo.search_history(&history, q).unwrap();
+        // 新しい順: both, readme, a。
+        assert_eq!(search("contents:lock"), [0, 1, 2]);
+        assert_eq!(search("path:src contents:lock"), [0, 2]);
+        // パスと一緒なら、そのパスの差分だけを探す（both は README に足しているが src にはない）。
+        assert_eq!(search("contents:only_in_readme"), [0]);
+        assert!(search("path:src contents:only_in_readme").is_empty());
+        assert_eq!(search("contents:lock after:2020-06-01"), [0, 1]);
+        assert_eq!(search("contents:lock before:2021-06-01"), [1, 2]);
+        assert_eq!(search("since:2021-06-01"), [0]);
+        assert!(search(r#"after:"1 day ago""#).is_empty());
+        assert!(repo.search_history(&history, "after:someday").is_err());
+
+        // 区切って探すあいだ、分かった分を渡す。最後に渡す行は答えと同じ。
+        let seen = Mutex::new(Vec::new());
+        let rows = repo
+            .search_history_streaming(&history, "contents:lock", &|| false, &|rows, done| {
+                seen.lock().unwrap().push((rows.to_vec(), done));
+            })
+            .unwrap();
+        let seen = seen.into_inner().unwrap();
+        assert_eq!(seen.last().unwrap(), &(rows, 1.0));
+    }
+
+    #[test]
+    fn fetches_the_contents_a_search_needs_unless_there_are_too_many() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir(&src).unwrap();
+        git(&src, &["init", "-q"]);
+        git(&src, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        for text in ["one", "two", "three"] {
+            std::fs::write(src.join("a.txt"), format!("a {text}\n")).unwrap();
+            std::fs::write(src.join("b.txt"), format!("b {text}\n")).unwrap();
+            git(&src, &["add", "."]);
+            git(&src, &["commit", "-q", "-m", text]);
+        }
+        git(&src, &["rm", "-q", "a.txt", "b.txt"]);
+        git(&src, &["commit", "-q", "-m", "remove"]);
+        git(&src, &["config", "uploadpack.allowFilter", "true"]);
+        git(&src, &["config", "uploadpack.allowAnySHA1InWant", "true"]);
+        let path = src.to_str().unwrap().replace('\\', "/");
+        let url = if path.starts_with('/') {
+            format!("file://{path}")
+        } else {
+            format!("file:///{path}")
+        };
+        git(
+            tmp.path(),
+            &["clone", "-q", "--filter=blob:none", &url, "partial"],
+        );
+        let dir = tmp.path().join("partial");
+        let mut repo = Repository::with_cache(
+            GixBackend::open(&dir).unwrap(),
+            tmp.path().join("cache.bin"),
+        );
+        repo.contents_limit = 4;
+        let history = repo.load_history().unwrap();
+        let need = |q: &str| repo.contents_to_fetch(&history, q, &|| false).unwrap();
+        // a と b の 3 つの版。上限を超えたら数えるのをやめる。
+        assert_eq!(need("subject:two"), None);
+        assert_eq!(
+            need("contents:two path:b.txt"),
+            Some(ContentsNeed {
+                count: 3,
+                more: false
+            })
+        );
+        assert_eq!(
+            need("contents:two"),
+            Some(ContentsNeed {
+                count: 4,
+                more: true
+            })
+        );
+        let error = repo.search_history(&history, "contents:two").unwrap_err();
+        assert!(error.to_string().contains("more than 4"), "{error}");
+        // 上限までなら、まとめて取ってから探す。
+        assert_eq!(
+            repo.search_history(&history, "contents:two path:b.txt")
+                .unwrap(),
+            [1, 2]
+        );
+        assert_eq!(need("contents:two path:b.txt"), None);
+    }
+
+    #[test]
     fn rebuilds_history_when_a_shallow_clone_gets_deeper() {
         let tmp = tempfile::tempdir().unwrap();
         let src = tmp.path().join("src");
@@ -1701,7 +2160,9 @@ mod tests {
         let cache = tmp.path().join("cache/history.bin");
 
         let repo = Repository::with_cache(GixBackend::open(&dir).unwrap(), cache.clone());
-        assert_eq!(repo.load_history().unwrap().graph.len(), 1);
+        let history = repo.load_history().unwrap();
+        assert_eq!(history.graph.len(), 1);
+        assert_eq!(history.boundary_rows(), [0]);
         // 起点（ブランチ）は変わらないが、境界のコミットに親ができる。
         git(&dir, &["fetch", "-q", "--deepen", "1"]);
         assert_eq!(repo.load_history().unwrap().graph.len(), 2);
@@ -1713,6 +2174,7 @@ mod tests {
         let history = repo.load_history().unwrap();
         assert_eq!(history.graph.len(), 3);
         assert!(history.shallow.is_empty());
+        assert!(history.boundary_rows().is_empty());
     }
 
     #[test]

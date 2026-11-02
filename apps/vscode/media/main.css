@@ -62,6 +62,69 @@ select {
   color: var(--vscode-descriptionForeground);
 }
 
+.search {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.search[hidden] {
+  display: none;
+}
+
+.search input[type='search'] {
+  flex: 0 1 320px;
+  min-width: 120px;
+  padding: 2px 6px;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, transparent);
+  outline: none;
+}
+
+.search input[type='search']:focus {
+  border-color: var(--vscode-focusBorder);
+}
+
+.search .icon-button {
+  visibility: visible;
+}
+
+.search .icon-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* 件数は縮めず、欄を先に縮める。長いエラーだけ切る */
+.search-count {
+  flex-shrink: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--vscode-descriptionForeground);
+}
+
+.search-count.error {
+  flex-shrink: 1;
+  color: var(--vscode-errorForeground);
+}
+
+.matching-only {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 4px;
+  white-space: nowrap;
+}
+
+.toolbar .status {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
 .split {
   flex: 1;
   display: flex;
@@ -256,6 +319,10 @@ button.secondary {
 
 .row:hover {
   background: var(--vscode-list-hoverBackground);
+}
+
+.row.match {
+  background: var(--vscode-editor-findMatchHighlightBackground);
 }
 
 .row.selected {

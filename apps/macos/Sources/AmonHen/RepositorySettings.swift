@@ -78,6 +78,50 @@ final class RepositorySettingsModel {
     var onRepositoryChange: (() -> Void)?
     /// git config の表で「−」などで最後に消したキーと値（表の下の「戻す」の 1 行）。次の書き換えで忘れる。
     var removedConfig: [(key: String, value: String)] = []
+    /// リポジトリの形（shallow clone・partial clone・sparse checkout・maintenance）。このリポジトリの段だけ。
+    private(set) var form: RepositoryForm?
+    /// 取り足す・取り直す・取り出すフォルダを変える命令を、ウィンドウの操作として動かす（Fetch と同じく、進み具合は
+    /// ツールバーと Activity、失敗はウィンドウの帯）。終わったら（失敗しても）`done` を呼んでもらう。
+    var performOperation: (([String: Any], _ done: @escaping @MainActor () -> Void) -> Void)?
+    /// その命令が走っている（ページのボタンを止める）。
+    private(set) var operationRunning = false
+    /// 外から開くように頼まれたページ（`show(_:)`）と、頼まれた回数（同じページを続けて頼まれても開く）。
+    private(set) var requestedPage: SettingsPage?
+    private(set) var pageRequests = 0
+
+    /// `page` を開く（画面が出ていれば、すぐ切り替わる）。
+    func show(_ page: SettingsPage) {
+        requestedPage = page
+        pageRequests += 1
+    }
+
+    /// 取得とフォルダのページの操作を動かし、終わったら読み直す。
+    func runOperation(_ command: [String: Any]) {
+        guard !operationRunning else { return }
+        operationRunning = true
+        let finish: @MainActor () -> Void = { [weak self] in
+            guard let self else { return }
+            operationRunning = false
+            load()
+            onRepositoryChange?()
+        }
+        if let performOperation {
+            performOperation(command, finish)
+        } else {
+            let repository = self.repository
+            guard let json = try? Repository.json(command) else { return finish() }
+            Task {
+                do {
+                    try await Task.detached(priority: .userInitiated) { try repository.run(json: json) }.value
+                    error = nil
+                } catch {
+                    self.error = "\(error)"
+                }
+                finish()
+            }
+        }
+    }
+
     /// このリポジトリ専用のコミットのテンプレート: 中身（ファイルがなければ nil）と、`commit.template` に書くパス。
     private(set) var commitTemplate: (text: String?, path: String)?
 
@@ -133,7 +177,7 @@ final class RepositorySettingsModel {
             struct Groups: Decodable { struct Branch: Decodable { let name: String }; let base: String?; let branches: [Branch] }
             do {
                 let global = level == .allRepositories
-                let (e, k, r, i, x, h, v, g, t) = try await Task.detached(priority: .userInitiated) {
+                let (e, k, r, i, x, h, v, g, t, f) = try await Task.detached(priority: .userInitiated) {
                     (
                         try repository.info(["op": "configList"], as: Entries.self),
                         try? repository.info(["op": "configKeys"], as: Keys.self),
@@ -144,9 +188,11 @@ final class RepositorySettingsModel {
                         try repository.info(["op": "hooksAndLfs"], as: Hooks.self),
                         try repository.info(["op": "gitVersion"], as: Version.self),
                         try? repository.info(["op": "branchGroups"], as: Groups.self),
-                        try? repository.info(["op": "commitTemplate"], as: Template.self)
+                        try? repository.info(["op": "commitTemplate"], as: Template.self),
+                        global ? nil : try? repository.info(["op": "repositoryForm"], as: RepositoryForm.self)
                     )
                 }.value
+                form = f
                 commitTemplate = t.map { ($0.text, $0.path) }
                 gitVersion = v.version
                 updateRefsSupported = v.updateRefs
@@ -1170,14 +1216,14 @@ private struct PullMethodRow: View {
 
 /// 左の一覧の項目。組はなく、よく変えるものを先に、たまに見る 2 つを最後に。
 enum SettingsPage: String, CaseIterable, Identifiable {
-    case author, commits, operations, branches, workingCopy, remotes, hooks, programs, environment, config
+    case author, commits, operations, branches, workingCopy, fetching, remotes, hooks, programs, environment, config
     var id: String { rawValue }
 
     /// その段にあるページ。プログラムと環境変数はすべてのリポジトリの段（Settings > Git。この Mac のもの）だけ、リポジトリに
     /// しかないものはこのリポジトリの段だけ。
     static func cases(for level: RepositorySettingsModel.Level) -> [SettingsPage] {
         switch level {
-        case .repository: [.author, .commits, .operations, .branches, .workingCopy, .remotes, .hooks, .config]
+        case .repository: [.author, .commits, .operations, .branches, .workingCopy, .fetching, .remotes, .hooks, .config]
         case .allRepositories: [.author, .commits, .operations, .workingCopy, .programs, .environment, .config]
         }
     }
@@ -1191,6 +1237,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .operations: L("Operations")
         case .branches: L("Branches")
         case .workingCopy: "Working Copy"
+        case .fetching: L("Fetching and Folders")
         case .remotes: L("Remotes")
         case .hooks: "Hooks · LFS"
         case .config: L("Keys and Values")
@@ -1972,7 +2019,25 @@ struct RepositorySettingsView: View {
                     .buttonStyle(.plain)
                     .help(model.host.map { L("The git on %@ runs this repository. Every repository on that host uses it. See it in Settings > SSH Hosts.", $0) }
                         ?? L("This Mac’s git runs this repository. Choose it in Settings > Git."))
-                    .padding(.horizontal, 14).padding(.vertical, 8)
+                    .padding(.horizontal, 14).padding(.top, 8)
+                    .padding(.bottom, model.form?.items.isEmpty == false ? 2 : 8)
+                    // リポジトリの形（shallow clone・partial clone など）。押すと、それを扱うページへ。
+                    if let items = model.form?.items, !items.isEmpty {
+                        VStack(alignment: .leading, spacing: 2) {
+                            ForEach(items, id: \.title) { item in
+                                Button { page = .fetching } label: {
+                                    Text(item.title)
+                                        .font(.caption).foregroundStyle(.secondary)
+                                        .lineLimit(1).truncationMode(.tail)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .help(item.help)
+                            }
+                        }
+                        .padding(.horizontal, 14).padding(.bottom, 8)
+                    }
                 }
             }
             .frame(width: 200)
@@ -1992,6 +2057,8 @@ struct RepositorySettingsView: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear { model.undo = undoManager }
         .onChange(of: undoManager) { _, now in model.undo = now }
+        .onAppear { if let p = model.requestedPage { page = p } }
+        .onChange(of: model.pageRequests) { if let p = model.requestedPage { page = p } }
         .onReceive(NotificationCenter.default.publisher(for: GitSettings.showPage)) { note in
             if model.level == .allRepositories, let p = note.object as? SettingsPage { page = p }
         }
@@ -2013,6 +2080,7 @@ struct SettingsPageContent: View {
         case .operations: OperationsPage(model: model)
         case .branches: BranchesPage(model: model)
         case .workingCopy: WorkingCopyPage(model: model)
+        case .fetching: FetchingPage(model: model)
         case .remotes: RemotesTab(model: model)
         case .hooks: HooksLFSPage(model: model)
         case .config: AllSettingsTab(model: model)

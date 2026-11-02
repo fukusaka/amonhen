@@ -27,6 +27,16 @@ pub struct Session {
     diffs: Mutex<Kept<Arc<WorkingDiff>>>,
     /// 相手が `hello` で伝えた言語（`Lang` の値）。答えのエラーの文に使う。伝えなければプロセスの既定。
     language: AtomicU8,
+    /// 最後に始めた `historySearch` の途中の答え（History の番号・問い合わせ・分かった行・探し終えた割合）。
+    search: Mutex<SearchPartial>,
+}
+
+#[derive(Default)]
+struct SearchPartial {
+    history: u64,
+    query: String,
+    rows: Vec<u32>,
+    done: f32,
 }
 
 /// 番号つきで、新しいものを `KEEP` 個まで。
@@ -120,6 +130,7 @@ impl Session {
             histories: Mutex::new(Kept::new()),
             diffs: Mutex::new(Kept::new()),
             language: AtomicU8::new(i18n::current() as u8),
+            search: Mutex::new(SearchPartial::default()),
         }
     }
 
@@ -150,6 +161,8 @@ impl Session {
             "head": h.head.map(|o| o.to_string()),
             "headRow": head,
             "folded": !h.folded.is_empty(),
+            "shallow": !h.shallow.is_empty(),
+            "boundaryRows": h.boundary_rows(),
         });
         self.histories.lock().unwrap().insert(id, h);
         reply
@@ -229,10 +242,44 @@ impl Session {
             }
             "historySearch" => {
                 let h = self.history(request)?;
-                let rows = repo.search_history_until(&h, str_arg(request, "query")?, cancelled)?;
+                let (history, query) = (u64_arg(request, "history")?, str_arg(request, "query")?);
+                *self.search.lock().unwrap() = SearchPartial {
+                    history,
+                    query: query.to_owned(),
+                    ..Default::default()
+                };
+                // 内容の検索は数分かかるので、分かった分を `historySearchPartial` で読めるようにしておく。
+                let rows = repo.search_history_streaming(&h, query, cancelled, &|rows, done| {
+                    let mut partial = self.search.lock().unwrap();
+                    if partial.history == history && partial.query == query {
+                        partial.rows = rows.to_vec();
+                        partial.done = done;
+                    }
+                })?;
                 let mut r = Records::new();
                 r.put_slice("rows", &rows);
                 r.finish(json!({"count": rows.len()}))
+            }
+            "historySearchPartial" => {
+                let partial = self.search.lock().unwrap();
+                let same = partial.history == u64_arg(request, "history")?
+                    && partial.query == str_arg(request, "query")?;
+                let (rows, done): (&[u32], f32) = if same {
+                    (&partial.rows, partial.done)
+                } else {
+                    (&[], 0.0)
+                };
+                let mut r = Records::new();
+                r.put_slice("rows", rows);
+                r.finish(json!({"count": rows.len(), "done": done}))
+            }
+            "historyContentsToFetch" => {
+                let h = self.history(request)?;
+                let need = repo.contents_to_fetch(&h, str_arg(request, "query")?, cancelled)?;
+                Reply::json(json!({
+                    "count": need.as_ref().map_or(0, |n| n.count),
+                    "more": need.is_some_and(|n| n.more),
+                }))
             }
             "historyDensity" => {
                 let h = self.history(request)?;

@@ -55,9 +55,28 @@ export interface Person {
 /** メッセージを編集してから行う操作 */
 export type MessageEdit = 'reword' | 'squash';
 
+/** History の検索の様子 */
+export interface SearchState {
+  query: string;
+  /** 一致した行（昇順）。探している途中なら、そこまでに分かったもの */
+  rows: number[];
+  /** 探している途中か。`done` は探し終えた割合（0〜1。内容の条件がなければ 0 のまま） */
+  searching: boolean;
+  done: number;
+  /** 一致だけの History を出している（行はすべて一致） */
+  matchingOnly: boolean;
+  /** 構文の誤りなど */
+  error?: string;
+}
+
 export type HistoryHostMessage =
-  | { type: 'reset'; title: string; scope: Scope }
-  | { type: 'rows'; start: number; rows: RowData[]; done: boolean }
+  /** `select` があれば、新しい History のその行を選ぶ（一致だけの History との切り替え） */
+  | { type: 'reset'; title: string; scope: Scope; select?: number }
+  /** `total` があれば daemon の History で、行は `range` で頼んだところだけ届く（`done` は常に true） */
+  | { type: 'rows'; start: number; rows: RowData[]; done: boolean; total?: number }
+  /** 検索できるか（daemon の History のときだけ） */
+  | { type: 'searchable'; searchable: boolean }
+  | { type: 'search'; state: SearchState }
   | { type: 'busy'; busy: boolean }
   | { type: 'details'; details: CommitDetails }
   /** コミットの中の 1 ファイルの差分（最初の親との差分） */
@@ -66,6 +85,10 @@ export type HistoryHostMessage =
 
 export type HistoryWebviewMessage =
   | { type: 'more' }
+  /** daemon の History の、start から count 行 */
+  | { type: 'range'; start: number; count: number }
+  /** 探す（空なら検索をやめる）。`selected` は今選んでいる行（一致だけの History との切り替えで選んだままにする） */
+  | { type: 'search'; query: string; matchingOnly: boolean; selected: number }
   /** コミットの変更をまとめて開く */
   | { type: 'open'; oid: string }
   /** 選んだコミットの詳細を求める */

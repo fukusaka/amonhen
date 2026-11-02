@@ -5,8 +5,10 @@ import Foundation
 /// Rust のコアの薄いラッパー。コアが返すメモリは、対応するオブジェクトが生きている間だけ有効。
 /// 生ポインタや NoCopy の CFString は `with…` のクロージャの外に持ち出さないこと。
 
-public struct AmonhenError: Error, CustomStringConvertible {
+public struct AmonhenError: LocalizedError, CustomStringConvertible {
     public let description: String
+    /// アラートなどに出す文（`localizedDescription`）。これがないと「AmonhenError error 1」になる。
+    public var errorDescription: String? { description }
     /// 失敗の種類（`crates/core/src/failure.rs` の定数、`worktreeInUse`・`auth` など）。見分けられなければ nil。
     public var kind: String?
     /// 失敗に関わるパス（ほかの worktree の場所、ロックファイル）。
@@ -295,13 +297,24 @@ public final class History: @unchecked Sendable {
         return width
     }
 
-    /// `query` に合うコミットの行（昇順）。構文は `author:` `subject:` `commit:` `path:` `contents:` と
-    /// AND（空白）・OR・括弧。すべてのコミットを読むので裏のスレッドで呼ぶ。取り消されたら投げる。
+    /// `query` に合うコミットの行（昇順）。構文は `author:` `subject:` `commit:` `path:` `contents:` `after:`
+    /// `before:` と AND（空白）・OR・括弧。すべてのコミットを読むので裏のスレッドで呼ぶ。取り消されたら投げる。
+    /// 走っているあいだ、分かった分は `Repository.searchPartial()` で読める。
     public func search(_ query: String) throws -> [Int] {
         guard let rows = amonhen_history_search(repository.raw, raw, query) else { throw AmonhenError.last() }
-        defer { amonhen_rows_free(rows) }
-        let view = amonhen_rows_view(rows)
-        return UnsafeBufferPointer(start: view.rows, count: Int(view.count)).map(Int.init)
+        return Repository.takeRows(rows)
+    }
+
+    /// partial clone で、`query` の `contents:` を探す前に取る、手元にない中身の数（取るものがなければ nil）。
+    /// `more` は上限を超えたので数えるのをやめたこと。裏のスレッドで呼ぶ。取り消されたら投げる。
+    public func contentsToFetch(_ query: String) throws -> (count: Int, more: Bool)? {
+        var count: UInt32 = 0
+        var more = false
+        switch amonhen_history_contents_to_fetch(repository.raw, raw, query, &count, &more) {
+        case 1: return (Int(count), more)
+        case 0: return nil
+        default: throw AmonhenError.last()
+        }
     }
 
     /// `rows` の件名・作者・日時。

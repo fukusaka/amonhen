@@ -16,6 +16,9 @@ pub enum Kind {
     Notify = 4,
     /// 番号の要求を取り消す（パス・内容の検索など）。
     Cancel = 5,
+    /// 言語つきの要求。中身の先頭の 1 バイトが言語（`Lang` の番号）、残りは `Request`。エラーの文をその言語で
+    /// 作る（共有の daemon は 1 つの接続を何人もの利用者で使うので、挨拶の言語では足りない）。
+    LangRequest = 6,
 }
 
 impl Kind {
@@ -26,6 +29,7 @@ impl Kind {
             3 => Self::Err,
             4 => Self::Notify,
             5 => Self::Cancel,
+            6 => Self::LangRequest,
             _ => return None,
         })
     }

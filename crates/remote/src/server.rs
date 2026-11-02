@@ -122,8 +122,13 @@ impl Server {
     pub fn run(&self, mut input: impl Read) -> io::Result<()> {
         while let Some(f) = frame::read(&mut input)? {
             match f.kind {
-                Kind::Request => {
-                    let request: Request = match postcard::from_bytes(&f.payload) {
+                Kind::Request | Kind::LangRequest => {
+                    // 言語つきなら先頭の 1 バイトが言語、なければ挨拶の言語。
+                    let (asked, body) = match (f.kind, f.payload.split_first()) {
+                        (Kind::LangRequest, Some((&b, rest))) => (Some(b), rest),
+                        _ => (None, &f.payload[..]),
+                    };
+                    let request: Request = match postcard::from_bytes(body) {
                         Ok(r) => r,
                         Err(e) => {
                             self.reply(f.id, Err(tr!("Can’t read the request: {e}", e = e).into()));
@@ -134,7 +139,8 @@ impl Server {
                         self.language
                             .store(Lang::parse(language) as u8, Ordering::Relaxed);
                     }
-                    let lang = if self.language.load(Ordering::Relaxed) == Lang::Ja as u8 {
+                    let asked = asked.unwrap_or_else(|| self.language.load(Ordering::Relaxed));
+                    let lang = if asked == Lang::Ja as u8 {
                         Lang::Ja
                     } else {
                         Lang::En
@@ -297,6 +303,13 @@ fn handle(
         Request::StashChanges(id) => encode(&backend.stash_changes(&id)?),
         Request::ChangesBetween(old, new) => encode(&backend.changes_between(old.as_ref(), &new)?),
         Request::Blob(id) => encode(&Bytes(backend.blob(&id)?.to_vec())),
+        Request::PrefetchBlobs(ids) => encode(&backend.prefetch_blobs(&ids)?),
+        Request::ContentsToFetch { tips, scope, limit } => {
+            encode(
+                &backend
+                    .contents_to_fetch(&tips, &scope, limit, &|| cancel.load(Ordering::Relaxed))?,
+            )
+        }
         Request::Status => encode(&backend.status()?),
         Request::WorktreeFile(path) => encode(&Bytes(backend.worktree_file(&path)?.to_vec())),
         Request::LineEndingRule(path) => encode(&backend.line_ending_rule(&path)?),
@@ -399,6 +412,13 @@ fn handle_op(backend: &dyn GitBackend, op: Op, cancel: &AtomicBool) -> Result<Ve
                 cancel.load(Ordering::Relaxed)
             })?,
         ),
+        Op::LogMatchingCommits {
+            commits,
+            paths,
+            contents,
+        } => encode(&ops.log_matching_commits(&commits, &paths, &contents, &|| {
+            cancel.load(Ordering::Relaxed)
+        })?),
         Op::Blame { path, rev } => encode(&Bytes(ops.blame(&path, rev.as_ref())?)),
         Op::FileLog {
             path,
@@ -477,6 +497,8 @@ fn handle_op(backend: &dyn GitBackend, op: Op, cancel: &AtomicBool) -> Result<Ve
         Op::TakeSide { path, ours } => encode(&ops.take_side(&path, ours)?),
         Op::ConflictStages(path) => encode(&ops.conflict_stages(&path)?),
         Op::Fetch(remote) => encode(&ops.fetch(remote.as_deref())?),
+        Op::Deepen(how) => encode(&ops.deepen(&how)?),
+        Op::FetchAllContents(remote) => encode(&ops.fetch_all_contents(&remote)?),
         Op::Pull(mode) => encode(&ops.pull(mode)?),
         Op::BranchTracking => encode(&ops.branch_tracking()?),
         Op::Push {
@@ -510,6 +532,10 @@ fn handle_op(backend: &dyn GitBackend, op: Op, cancel: &AtomicBool) -> Result<Ve
         Op::ConfigSet(key, value) => encode(&ops.config_set(&key, value.as_deref())?),
         Op::ConfigSetGlobal(key, value) => encode(&ops.config_set_global(&key, value.as_deref())?),
         Op::GitVersion => encode(&ops.git_version()?),
+        Op::RepositoryForm => encode(&ops.repository_form()?),
+        Op::SparseCheckout(folders) => encode(&ops.sparse_checkout(folders.as_deref())?),
+        Op::TreeFolders(path) => encode(&ops.tree_folders(&path)?),
+        Op::Maintenance(on) => encode(&ops.maintenance(on)?),
         Op::Remotes => encode(&ops.remotes()?),
         Op::CheckRemote(url) => encode(&ops.check_remote(&url)?),
         Op::LfsTrack(pattern, track) => encode(&ops.lfs_track(&pattern, track)?),

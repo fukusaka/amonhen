@@ -33,6 +33,12 @@ private func makeRepo() throws -> URL {
     return dir
 }
 
+@Test func errorsShowTheCoreText() {
+    // アラート（NSAlert(error:)）は localizedDescription を出す。
+    let error: Error = AmonhenError(description: "fatal: Unable to create index.lock")
+    #expect(error.localizedDescription == "fatal: Unable to create index.lock")
+}
+
 @Test func readsHistoryAndTexts() throws {
     let dir = try makeRepo()
     defer { try? FileManager.default.removeItem(at: dir) }
@@ -210,6 +216,30 @@ private func makeRepo() throws -> URL {
     #expect(refs.headBranch == "main")
     #expect(refs.items.map(\.name) == ["main"])
     #expect(try repo.undoPeek() == nil)
+}
+
+/// shallow clone の History は、境界のコミットの行を教え、取り足すと伸びる。
+@Test func tellsWhereAShallowCloneStops() throws {
+    let src = try makeRepo()
+    defer { try? FileManager.default.removeItem(at: src) }
+    let parent = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: parent) }
+    // --depth はパスの clone では効かないので file:// にする。
+    try git(parent, "clone", "-q", "--depth", "1", src.absoluteString, "shallow")
+    let repo = try Repository(path: parent.appendingPathComponent("shallow").path)
+    let history = try repo.loadHistory()
+    #expect(history.isShallow)
+    #expect(history.boundaryRows() == [0])
+    let oid = history.commitID(row: 0)!.map { String(format: "%02x", $0) }.joined()
+    #expect(try repo.commitInfo(oid: oid).parentsNotFetched)
+
+    try repo.run(["op": "deepen", "commits": 1])
+    let deeper = try repo.loadHistory()
+    #expect(deeper.rowCount == 2)
+    #expect(!deeper.isShallow)
+    #expect(deeper.boundaryRows().isEmpty)
+    #expect(try !repo.commitInfo(oid: oid).parentsNotFetched)
 }
 
 @Test func tellsWhatTheNextUndoPutsBack() throws {

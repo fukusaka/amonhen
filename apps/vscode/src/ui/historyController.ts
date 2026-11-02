@@ -4,6 +4,7 @@ import type { DaemonClient } from '../daemon/client.ts';
 import { daemonFor } from '../daemon/connection.ts';
 import { commitFiles, splitCommitDiff } from '../daemon/diff.ts';
 import { readRows, toRowData } from '../daemon/history.ts';
+import { contentsToFetch, searchesContents, searchHistory } from '../daemon/search.ts';
 import { computeDiff, type FileDiff } from '../diff/fileDiff.ts';
 import { parseCommitObject } from '../git/commitObject.ts';
 import type { Commit } from '../git/log.ts';
@@ -16,6 +17,7 @@ import type {
   RefLabel,
   RowData,
   Scope,
+  SearchState,
 } from '../history/protocol.ts';
 import { editableChain, refLabels } from '../history/rows.ts';
 import type { Repository, Section } from '../state/repository.ts';
@@ -44,6 +46,47 @@ const DETAILS_CACHE = 100;
 /** 差分を覚えておくファイルの数 */
 const DIFF_CACHE = 200;
 
+/** 共有の daemon の History: そのつながりと History の番号と行の数 */
+interface DaemonHistory {
+  client: DaemonClient;
+  history: unknown;
+  rows: number;
+}
+
+/** 昇順の `rows` で、`row` 以上の最初の位置（なければ最後） */
+function lowerBound(rows: readonly number[], row: number): number {
+  let lo = 0;
+  let hi = rows.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (rows[mid]! < row) lo = mid + 1;
+    else hi = mid;
+  }
+  return Math.min(lo, Math.max(0, rows.length - 1));
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** partial clone で中身を探す前に、取る中身の数を出して断る。上限を超えるなら探さず、絞るよう頼む */
+async function confirmContentsSearch(count: number, more: boolean): Promise<boolean> {
+  const n = count.toLocaleString();
+  if (more) {
+    await vscode.window.showWarningMessage('Too Many Contents to Fetch', {
+      modal: true,
+      detail: `This search needs more than ${n} file contents not fetched yet. Narrow it with path:, after: or before:.`,
+    });
+    return false;
+  }
+  const answer = await vscode.window.showWarningMessage(
+    'Search the Contents?',
+    { modal: true, detail: `This search fetches ${n} file contents not fetched yet.` },
+    'Search',
+  );
+  return answer === 'Search';
+}
+
 /**
  * メインビューの History の拡張ホスト側。
  * log は分割して読み込み、グラフのレーンはこちらで計算して、描画に必要な最小限の配列だけ送る。
@@ -62,6 +105,8 @@ export class HistoryController implements vscode.Disposable {
   private scope: Scope = 'head';
 
   private commits: Commit[] = [];
+  /** 読み込んだコミット（daemon の History は飛び飛びに読むので、ID から） */
+  private readonly known = new Map<string, Commit>();
   private graph = new GraphBuilder();
   private labels = new Map<string, RefLabel[]>();
   /** 編集できるコミットと、その位置（新しい順） */
@@ -76,8 +121,17 @@ export class HistoryController implements vscode.Disposable {
   private readonly details = new Map<string, Omit<CommitDetails, 'refs'>>();
   /** 一度求めたファイルの差分。キーは `oid:path` */
   private readonly diffs = new Map<string, FileDiff>();
-  /** 共有の daemon で History を読むとき（設定 `amonhen.daemon.path`）、そのつながりと History の番号と行の数 */
-  private daemon: { client: DaemonClient; history: unknown; rows: number } | undefined;
+  /** 共有の daemon で History を読むとき（設定 `amonhen.daemon.path`）、出している History */
+  private daemon: DaemonHistory | undefined;
+  /** 一致だけの History を出しているとき、もとの History */
+  private base: DaemonHistory | undefined;
+  /** 今の検索。`rows` は `history`（もとの History）の行 */
+  private search: { query: string; history: unknown; rows: number[] } | undefined;
+  private searchAbort: AbortController | undefined;
+  /** 探している途中の検索の文（History を読み直したら、終わっていなくても探し直す） */
+  private searching: string | undefined;
+  /** 一致だけを出す切り替え（最後に頼まれたもの） */
+  private matchingOnly = false;
 
   constructor(post: (message: HistoryHostMessage) => void) {
     this.post = post;
@@ -109,7 +163,7 @@ export class HistoryController implements vscode.Disposable {
   }
 
   commit(oid: string): Commit | undefined {
-    return this.commits.find((c) => c.oid === oid);
+    return this.known.get(oid);
   }
 
   /** 編集できる範囲での位置（新しい順） */
@@ -127,7 +181,9 @@ export class HistoryController implements vscode.Disposable {
     if (changed.has('mailmap')) {
       this.details.clear();
     }
-    if (refsChanged || changed.has('mailmap') || headOid !== this.headOid) {
+    // status をまだ読んでいなければ、HEAD が動いたかは分からない（読み直さない）
+    const headMoved = headOid !== undefined && headOid !== this.headOid;
+    if (refsChanged || changed.has('mailmap') || headMoved) {
       clearTimeout(this.resetTimer);
       this.resetTimer = setTimeout(() => void this.reset(), 100);
     }
@@ -137,6 +193,14 @@ export class HistoryController implements vscode.Disposable {
     switch (message.type) {
       case 'more':
         await this.loadMore();
+        break;
+      case 'range':
+        if (this.daemon) {
+          await this.loadRange(this.daemon, message.start, message.count);
+        }
+        break;
+      case 'search':
+        await this.runSearch(message.query.trim(), message.matchingOnly, message.selected);
         break;
       case 'scope':
         this.scope = message.scope;
@@ -263,6 +327,7 @@ export class HistoryController implements vscode.Disposable {
   async reset(): Promise<void> {
     const generation = ++this.generation;
     this.commits = [];
+    this.known.clear();
     this.graph = new GraphBuilder();
     this.done = false;
     this.loading = false;
@@ -284,9 +349,12 @@ export class HistoryController implements vscode.Disposable {
     } catch (err) {
       showError(err);
     }
-    const previous = this.daemon;
+    this.searchAbort?.abort();
+    for (const previous of [this.daemon, this.base]) {
+      void previous?.client.call({ op: 'historyRelease', history: previous.history }).catch(() => undefined);
+    }
     this.daemon = undefined;
-    void previous?.client.call({ op: 'historyRelease', history: previous.history }).catch(() => undefined);
+    this.base = undefined;
     try {
       const opened = this.headOid ? await this.openDaemonHistory(repo.root) : undefined;
       if (generation !== this.generation) {
@@ -297,13 +365,147 @@ export class HistoryController implements vscode.Disposable {
       // daemon を使えなければ、git で読む
       showError(err);
     }
-    if (generation === this.generation) {
-      await this.loadMore();
+    if (generation !== this.generation) {
+      return;
+    }
+    this.post({ type: 'searchable', searchable: this.daemon !== undefined });
+    await this.loadMore();
+    // 探していたら（途中でも）、新しい History で探し直す
+    const query = this.searching ?? this.search?.query;
+    if (query && this.daemon && generation === this.generation) {
+      await this.runSearch(query, this.matchingOnly, 0);
     }
   }
 
+  /**
+   * 探して、一致を Webview に送る。`matchingOnly` なら一致だけの History に切り替える。`selected` は Webview で
+   * 選んでいる行で、History を切り替えるときは同じコミット（なければ近いもの）を選んだままにする。空なら検索をやめる
+   */
+  private async runSearch(query: string, matchingOnly: boolean, selected: number): Promise<void> {
+    this.searchAbort?.abort();
+    const abort = new AbortController();
+    this.searchAbort = abort;
+    this.searching = query || undefined;
+    this.matchingOnly = matchingOnly;
+    try {
+      await this.searchOnce(query, matchingOnly, selected, abort);
+    } finally {
+      if (this.searchAbort === abort && !abort.signal.aborted) {
+        this.searching = undefined;
+      }
+    }
+  }
+
+  private async searchOnce(
+    query: string,
+    matchingOnly: boolean,
+    selected: number,
+    abort: AbortController,
+  ): Promise<void> {
+    const shown = this.daemon;
+    if (!shown) {
+      return;
+    }
+    const base = this.base ?? shown;
+    // もとの History での、選んでいる行
+    const baseSelected = this.base ? (this.search?.rows[selected] ?? 0) : selected;
+    const post = (state: Partial<SearchState>) =>
+      this.post({
+        type: 'search',
+        state: { query, rows: [], searching: false, done: 0, matchingOnly: false, ...state },
+      });
+    if (!query) {
+      this.search = undefined;
+      await this.showMatching(base, undefined, baseSelected, abort.signal);
+      post({});
+      return;
+    }
+    let rows: number[];
+    if (this.search?.query === query && this.search.history === base.history) {
+      // 一致だけを出す切り替えだけなら、探し直さない
+      rows = this.search.rows;
+    } else {
+      try {
+        if (searchesContents(query)) {
+          post({ searching: true });
+          const need = await contentsToFetch(base.client, base.history, query, abort.signal);
+          if (abort.signal.aborted) {
+            return;
+          }
+          if (need.count > 0 && !(await confirmContentsSearch(need.count, need.more))) {
+            if (this.searchAbort === abort) {
+              await this.runSearch('', false, selected);
+            }
+            return;
+          }
+          if (abort.signal.aborted) {
+            return;
+          }
+        }
+        post({ searching: true });
+        rows = await searchHistory(base.client, base.history, query, abort.signal, (partial, done) =>
+          post({ rows: this.base ? [] : partial, searching: true, done, matchingOnly: this.base !== undefined }),
+        );
+      } catch (err) {
+        if (!abort.signal.aborted) {
+          post({ error: errorMessage(err) });
+        }
+        return;
+      }
+    }
+    if (abort.signal.aborted) {
+      return;
+    }
+    this.search = { query, history: base.history, rows };
+    try {
+      await this.showMatching(base, matchingOnly && rows.length > 0 ? rows : undefined, baseSelected, abort.signal);
+    } catch (err) {
+      post({ error: errorMessage(err) });
+      return;
+    }
+    if (!abort.signal.aborted) {
+      post({ rows, matchingOnly: this.base !== undefined });
+    }
+  }
+
+  /**
+   * `rows` があれば、`base` のその行だけの History（一致だけ）を、なければ `base` を出す。`selected` は `base` での
+   * 選んでいる行
+   */
+  private async showMatching(
+    base: DaemonHistory,
+    rows: number[] | undefined,
+    selected: number,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const filtered = this.base ? this.daemon : undefined;
+    let next = base;
+    let select = selected;
+    if (rows) {
+      const reply = await base.client.call({ op: 'historyMatching', history: base.history, rows });
+      // 待つ間に読み直しや次の検索が始まっていれば、作った History は使わない（今の History を取り違える）
+      if (signal.aborted) {
+        void base.client.call({ op: 'historyRelease', history: reply.json['history'] }).catch(() => undefined);
+        return;
+      }
+      next = { client: base.client, history: reply.json['history'], rows: Number(reply.json['rows']) };
+      select = lowerBound(rows, selected);
+    } else if (!filtered) {
+      return;
+    }
+    if (filtered) {
+      void filtered.client.call({ op: 'historyRelease', history: filtered.history }).catch(() => undefined);
+    }
+    this.base = rows ? base : undefined;
+    this.daemon = next;
+    const repo = this.repo;
+    this.post({ type: 'reset', title: repo ? basename(repo.root) : '', scope: this.scope, select });
+    const start = Math.floor(select / PAGE) * PAGE;
+    await this.loadRange(next, start, PAGE);
+  }
+
   /** 共有の daemon で、今の範囲の History を開く（daemon を使わない設定なら undefined） */
-  private async openDaemonHistory(root: string): Promise<{ client: DaemonClient; history: unknown; rows: number } | undefined> {
+  private async openDaemonHistory(root: string): Promise<DaemonHistory | undefined> {
     const client = await daemonFor(root);
     if (!client) {
       return undefined;
@@ -319,27 +521,29 @@ export class HistoryController implements vscode.Disposable {
     return { client, history: history.json['history'], rows: Number(history.json['rows']) };
   }
 
-  /** 共有の daemon から次のページを読む */
-  private async loadMoreFromDaemon(daemon: { client: DaemonClient; history: unknown; rows: number }): Promise<void> {
-    const generation = this.generation;
-    const start = this.commits.length;
+  /**
+   * 共有の daemon の History の、start から count 行を送る。行の数を知っているので、Webview は見えているところだけを
+   * 飛び飛びに頼む（離れた一致へもすぐ移れる）
+   */
+  private async loadRange(daemon: DaemonHistory, start: number, count: number): Promise<void> {
     let rows: RowData[] = [];
     try {
-      const reply = await daemon.client.call({ op: 'historyRows', history: daemon.history, start, count: PAGE });
-      if (generation !== this.generation) {
+      const reply = await daemon.client.call({ op: 'historyRows', history: daemon.history, start, count });
+      if (daemon !== this.daemon) {
         return;
       }
       const page = readRows(reply);
-      this.commits.push(
-        ...page.map((r) => ({ oid: r.oid, parents: r.parentOids, author: r.author, email: '', date: r.date, subject: r.subject })),
-      );
+      for (const r of page) {
+        this.known.set(r.oid, { oid: r.oid, parents: r.parentOids, author: r.author, email: '', date: r.date, subject: r.subject });
+      }
       rows = toRowData(page, this.labels, this.chain);
     } catch (err) {
+      if (daemon !== this.daemon) {
+        return;
+      }
       showError(err);
     }
-    this.done = this.commits.length >= daemon.rows || rows.length === 0;
-    this.loading = false;
-    this.post({ type: 'rows', start, rows, done: this.done });
+    this.post({ type: 'rows', start, rows, done: true, total: daemon.rows });
   }
 
   private async loadMore(): Promise<void> {
@@ -347,10 +551,11 @@ export class HistoryController implements vscode.Disposable {
     if (!repo || this.loading || this.done) {
       return;
     }
-    this.loading = true;
     if (this.daemon) {
-      return this.loadMoreFromDaemon(this.daemon);
+      this.done = true;
+      return this.loadRange(this.daemon, 0, PAGE);
     }
+    this.loading = true;
     const generation = this.generation;
     const revs =
       this.scope === 'all'
@@ -369,6 +574,9 @@ export class HistoryController implements vscode.Disposable {
     }
     const start = this.commits.length;
     this.commits.push(...page);
+    for (const c of page) {
+      this.known.set(c.oid, c);
+    }
     const rows: RowData[] = page.map((c) => {
       const chain = this.chain.get(c.oid);
       return {
@@ -390,6 +598,7 @@ export class HistoryController implements vscode.Disposable {
 
   dispose(): void {
     clearTimeout(this.resetTimer);
+    this.searchAbort?.abort();
     this.repoListener?.dispose();
   }
 }

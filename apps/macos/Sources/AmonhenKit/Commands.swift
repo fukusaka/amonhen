@@ -178,6 +178,8 @@ public struct CommitInfo: Decodable, Equatable, Sendable {
     public let recordedAuthor: Identity?
     public let recordedCommitter: Identity?
     public let parents: [String]
+    /// shallow clone の境界のコミットで、`parents` を取得していない。
+    public let parentsNotFetched: Bool
     public let refs: [String]
     /// 署名の種類（`gpg`・`ssh`・`x509`）。署名がなければ nil。検証の結果は `CommitExtras.signature`。
     public let signed: String?
@@ -357,6 +359,20 @@ extension Repository {
     /// 走っている History の検索をやめる。
     public func cancelSearch() {
         amonhen_search_cancel(raw)
+    }
+
+    /// 走っている History の検索の、そこまでに分かった行（昇順）と探し終えた割合（0〜1）。どのスレッドから呼んでもよい。
+    public func searchPartial() -> (rows: [Int], done: Float) {
+        var done: Float = 0
+        let rows = amonhen_search_partial(raw, &done)!
+        return (Repository.takeRows(rows), done)
+    }
+
+    /// コアが返した行の列を読み、解放する。
+    static func takeRows(_ rows: OpaquePointer) -> [Int] {
+        defer { amonhen_rows_free(rows) }
+        let view = amonhen_rows_view(rows)
+        return UnsafeBufferPointer(start: view.rows, count: Int(view.count)).map(Int.init)
     }
 
     /// 命令を実行し、結果の `info` を `T` として読む。裏のスレッドで呼ぶ。

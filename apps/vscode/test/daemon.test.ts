@@ -8,6 +8,7 @@ import { Changes, clientEnv, controlDaemon, DaemonClient } from '../src/daemon/c
 import { readWorkingDiff, selectedRows } from '../src/daemon/diff.ts';
 import { platformName, prepareEngine } from '../src/daemon/engine.ts';
 import { readRows } from '../src/daemon/history.ts';
+import { contentsToFetch, searchesContents, searchHistory } from '../src/daemon/search.ts';
 import { CliBackend } from '../src/git/backend.ts';
 import { GitExecutor } from '../src/git/exec.ts';
 import { UndoLog } from '../src/state/undo.ts';
@@ -84,6 +85,53 @@ test('reads History rows and the graph through the daemon', { skip }, async () =
     assert.deepEqual(Array.from(found.u32('rows')), [0, 2]);
   } finally {
     client.dispose();
+  }
+});
+
+test('tells which queries search the contents', () => {
+  assert.ok(searchesContents('contents:foo'));
+  assert.ok(searchesContents('fix (content:"a b" OR author:x)'));
+  assert.ok(!searchesContents('mycontents:foo'));
+  assert.ok(!searchesContents('contents: foo'));
+});
+
+test('searches contents through the daemon, counting what a partial clone must fetch first', { skip }, async () => {
+  const client = await DaemonClient.open(daemon, repo);
+  const partial = join(dir, 'partial');
+  try {
+    // ふつうのリポジトリでは取るものがない
+    const history = await client.call({ op: 'history' });
+    assert.deepEqual(await contentsToFetch(client, history.json['history'], 'contents:topic'), { count: 0, more: false });
+    const seen: number[][] = [];
+    const rows = await searchHistory(client, history.json['history'], 'contents:topic', new AbortController().signal, (r) =>
+      seen.push(r),
+    );
+    assert.deepEqual(rows, [2]);
+    assert.ok(seen.every((r) => r.every((row) => rows.includes(row))), 'partial results are part of the answer');
+    // 探していない問い合わせの途中の答えは空
+    const other = await client.call({ op: 'historySearchPartial', history: history.json['history'], query: 'other' });
+    assert.equal(other.u32('rows').length, 0);
+    const matching = await client.call({ op: 'historyMatching', history: history.json['history'], rows });
+    assert.equal(matching.json['rows'], 1);
+  } finally {
+    client.dispose();
+  }
+
+  // blobless clone では、要る中身を数えてから、まとめて取って探す
+  // protocol v2 が既定でない git（2.26 より前）は、`allowAnySHA1InWant` がないと手元にない blob を取れない
+  git('config', 'uploadpack.allowFilter', 'true');
+  git('config', 'uploadpack.allowAnySHA1InWant', 'true');
+  execFileSync('git', ['clone', '-q', '--filter=blob:none', '--no-checkout', `file://${repo}`, partial]);
+  const remote = await DaemonClient.open(daemon, partial);
+  try {
+    const history = await remote.call({ op: 'history', tips: [git('rev-parse', 'HEAD').trim()] });
+    const need = await contentsToFetch(remote, history.json['history'], 'contents:topic');
+    assert.ok(need.count > 0 && !need.more, JSON.stringify(need));
+    const rows = await searchHistory(remote, history.json['history'], 'contents:topic', new AbortController().signal, () => undefined);
+    assert.deepEqual(rows, [2]);
+    assert.deepEqual(await contentsToFetch(remote, history.json['history'], 'contents:topic'), { count: 0, more: false });
+  } finally {
+    remote.dispose();
   }
 });
 

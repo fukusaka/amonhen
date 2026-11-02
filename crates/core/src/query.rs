@@ -5,6 +5,7 @@
 //! author:linus or author:greg
 //! (path:fs/ or path:mm/) contents:"spin_lock"
 //! commit:3857c2f subject:"Merge tag"
+//! contents:kmalloc after:"1 year ago" before:2026-01-01
 //! ```
 //!
 //! AND は OR より強く結び付く。`and` は書いてもよい（空白と同じ）。値に空白を含めるときは `"..."` で囲む。
@@ -21,8 +22,13 @@ pub enum Field {
     Commit,
     /// そのパス（の下）を変えたコミット。
     Path,
-    /// 差分に、その文字列を含む行があるコミット。
+    /// 差分に、その文字列を含む行があるコミット。同じ AND に `path:` があれば、そのパスの差分だけを探す
+    /// （`git log -G<文字列> -- <パス>`）。
     Contents,
+    /// その日時より後のコミット（`git log --after`。値は日付か `1 year ago` のような相対の日時）。
+    After,
+    /// その日時より前のコミット（`git log --before`）。
+    Before,
 }
 
 impl Field {
@@ -33,6 +39,19 @@ impl Field {
             Self::Any | Self::Author | Self::Subject | Self::Commit
         )
     }
+
+    /// コミットの日時で判定する。
+    pub fn is_date(&self) -> bool {
+        matches!(self, Self::After | Self::Before)
+    }
+}
+
+/// 内容の条件（`contents:`）を探す範囲。同じ AND にある `path:`（`path:` だけの OR も）と `after:`・`before:`。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Scope {
+    pub paths: Vec<String>,
+    pub after: Vec<String>,
+    pub before: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -54,6 +73,51 @@ impl Expr {
         match self {
             Self::Term(t) => vec![t],
             Self::And(v) | Self::Or(v) => v.iter().flat_map(Self::terms).collect(),
+        }
+    }
+
+    /// 葉の条件（`terms` と同じ順）ごとの、内容の条件を探す範囲（内容の条件でなければ `None`）。AND の中の
+    /// 内容の条件は、その AND の `path:` と日時の条件を満たすコミットしか結果に残らないので、git にもその範囲だけを
+    /// 探させる。OR の中は、隣の条件に縛られない。
+    pub fn contents_scopes(&self) -> Vec<Option<Scope>> {
+        fn walk(expr: &Expr, scope: &Scope, out: &mut Vec<Option<Scope>>) {
+            match expr {
+                Expr::Term(t) => out.push((t.field == Field::Contents).then(|| scope.clone())),
+                Expr::Or(v) => v.iter().for_each(|e| walk(e, scope, out)),
+                Expr::And(v) => {
+                    let mut inner = scope.clone();
+                    // パスの条件は最初の 1 つ（内側の AND のものが優先）。2 つ目からは結果を絞るだけ。
+                    if let Some(paths) = v.iter().find_map(Expr::paths_only) {
+                        inner.paths = paths;
+                    }
+                    for e in v {
+                        if let Expr::Term(t) = e {
+                            match t.field {
+                                Field::After => inner.after.push(t.value.clone()),
+                                Field::Before => inner.before.push(t.value.clone()),
+                                _ => {}
+                            }
+                        }
+                    }
+                    v.iter().for_each(|e| walk(e, &inner, out));
+                }
+            }
+        }
+        let mut out = Vec::new();
+        walk(self, &Scope::default(), &mut out);
+        out
+    }
+
+    /// `path:` か、`path:` だけの OR なら、そのパス。
+    fn paths_only(&self) -> Option<Vec<String>> {
+        match self {
+            Self::Term(t) if t.field == Field::Path => Some(vec![t.value.clone()]),
+            Self::Or(v) => v
+                .iter()
+                .map(Self::paths_only)
+                .collect::<Option<Vec<_>>>()
+                .map(|p| p.concat()),
+            _ => None,
         }
     }
 }
@@ -124,6 +188,8 @@ fn term(word: &str) -> Term {
             "commit" | "id" => Some(Field::Commit),
             "path" | "file" => Some(Field::Path),
             "contents" | "content" => Some(Field::Contents),
+            "after" | "since" => Some(Field::After),
+            "before" | "until" => Some(Field::Before),
             _ => None,
         };
         if let Some(field) = field
@@ -244,6 +310,37 @@ mod tests {
         // 知らない接頭辞や空の値は、語そのものを探す。
         assert_eq!(parse("fix:").unwrap().unwrap(), t(Field::Any, "fix:"));
         assert_eq!(parse("  ").unwrap(), None);
+    }
+
+    #[test]
+    fn contents_are_searched_within_their_paths_and_dates() {
+        let scopes = |q: &str| parse(q).unwrap().unwrap().contents_scopes();
+        let scope = |paths: &[&str], after: &[&str]| {
+            Some(Scope {
+                paths: paths.iter().map(|p| p.to_string()).collect(),
+                after: after.iter().map(|p| p.to_string()).collect(),
+                before: Vec::new(),
+            })
+        };
+        assert_eq!(
+            scopes(r#"(path:fs/ or path:mm/) contents:spin after:"1 year ago""#),
+            [None, None, scope(&["fs/", "mm/"], &["1 year ago"]), None]
+        );
+        // OR の隣の条件には縛られない。内側の AND は外側の日時も受け継ぐ。
+        assert_eq!(scopes("contents:a or path:b"), [scope(&[], &[]), None]);
+        assert_eq!(
+            scopes("after:2025-01-01 (path:x contents:a or contents:b)"),
+            [
+                None,
+                None,
+                scope(&["x"], &["2025-01-01"]),
+                scope(&[], &["2025-01-01"])
+            ]
+        );
+        assert_eq!(
+            parse("since:2025-01-01").unwrap().unwrap(),
+            t(Field::After, "2025-01-01")
+        );
     }
 
     #[test]

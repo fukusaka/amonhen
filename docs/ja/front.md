@@ -48,12 +48,14 @@ History と差分は番号（`history`・`diff`）で持つ。FE がスクロー
 |---|---|---|---|
 | `hello` | language | version・workdir・gitDir | |
 | `environment` | env（FE の環境。開くときと同じく `NAME=value` を `"\u0000"` で区切ったもの） | | |
-| `history` | rebuild?・fold?・expanded?（ID の配列）・tips?（ID の配列。そこから辿れるものだけ） | history・generation・rows・head・headRow・folded | |
+| `history` | rebuild?・fold?・expanded?（ID の配列）・tips?（ID の配列。そこから辿れるものだけ） | history・generation・rows・head・headRow・folded・shallow（shallow clone の History か）・boundaryRows（shallow clone の境界の、親を取得していないコミットの行） | |
 | `historyMatching` | history・rows | `history` と同じ（一致した行だけの History） | |
 | `historyRelease` | history | | |
 | `historyRows` | history と、start・count か rows（行の配列）、recorded?（true なら mailmap で作者を変えた行を挙げる） | count・edges・recorded（行の何番目か、記録された名前とメール。頼まなければ空） | rowNumbers u32・nodes・ids・times i64・spans（件名と作者の `text` の中の始めと長さ、u32 × 4。作者は mailmap で置き換えたもの）・text（UTF-8）・signatures u8・folded u32（折りたたんだ History のとき）・parentStarts u32（行の数 + 1）・parents u32（親の行）・parentIds（親の ID）・edges・edgeIds u32（start・count のときだけ。その範囲に重なる線） |
 | `historyGraph` | history | rows・edges | nodes・edges・ids・folded（全行） |
 | `historySearch` | history・query（`crates/core/src/query.rs` の書き方） | count | rows u32（昇順） |
+| `historySearchPartial` | history・query（このつながりで走っている `historySearch` のもの） | count・done（探し終えた割合、0〜1。内容の条件がなければ 0 のまま） | rows u32（昇順。そこまでに分かった一致で、最後の答えの一部。最後に始めた検索でなければ空） |
+| `historyContentsToFetch` | history・query | count（partial clone で `contents:` を探す前に取る中身の数。なければ 0）・more（上限を超えた。`historySearch` は失敗する） | |
 | `historyDensity` | history・buckets | buckets | density（f32 × 2: 頻度・活動量、0〜1） |
 | `historyLineage` | history・row | | rows（u64 のビット列）・edgeFrom u32 |
 | `historyLanes` | history・start・end・metrics（full・thin・minFull・minThin・available） | width（レーン全体の幅） | positions f32 |
@@ -79,4 +81,4 @@ History と差分は番号（`history`・`diff`）で持つ。FE がスクロー
 
 窓口の形を変えたら `amonhen_front::VERSION` を上げる（`hello` の答えの version で確かめる）。ソケットの名前にはビルドの指紋（`amonhen_remote::BUILD_ID`。ワークスペースのソースのハッシュ）が入るので、ビルドの違う daemon にはつながらない。
 
-FE が共有の daemon を自分で起動するときは、言語を `AMONHEN_LANG` で渡す（daemon が自分で行うこと、たとえば SSH 先へつなぐときに使う）。
+FE が共有の daemon を自分で起動するときは、言語を `AMONHEN_LANG` で渡す（daemon が自分で行うことに使う）。SSH 先からのエラーの文は、その SSH 先へのつながりを何人の FE で使っていても、頼んだ FE の言語になる。

@@ -527,8 +527,8 @@ pub unsafe extern "C" fn amonhen_repo_mailmap_fingerprint(repo_ptr: *const Amonh
 }
 
 /// commit-graph を最新にする（`git commit-graph write --reachable`）。なければ全体を書き出して 1、
-/// あれば後から増えたコミットだけを書き足して（`--split`）0、失敗したら -1 を返す。利用者が設定で
-/// 選んだときだけ、裏のスレッドから呼ぶこと。
+/// あれば後から増えたコミットだけを書き足して（`--split`）0、失敗したら -1 を返す。git maintenance に
+/// 登録してあれば（そちらが毎時書く）何もせずに 0。利用者が設定で選んだときだけ、裏のスレッドから呼ぶこと。
 ///
 /// # Safety
 /// `repo` は有効なリポジトリであること。
@@ -711,7 +711,7 @@ pub struct AmonhenRowsView {
 }
 
 /// `query` に合うコミットの行（昇順、`amonhen_rows_free` で解放する）。構文は `amonhen-core` の
-/// `query`（`author:` `subject:` `commit:` `path:` `contents:`、AND・OR・括弧）。すべてのコミットを読むので
+/// `query`（`author:` `subject:` `commit:` `path:` `contents:` `after:` `before:`、AND・OR・括弧）。すべてのコミットを読むので
 /// 裏のスレッドで呼ぶ（linux の 148 万コミットで約 1.2 秒）。新しい検索を始めるか `amonhen_search_cancel` を
 /// 呼ぶと、走っている検索は NULL を返す。
 ///
@@ -733,6 +733,54 @@ pub unsafe extern "C" fn amonhen_history_search(
             std::ptr::null_mut()
         }
     }
+}
+
+/// partial clone で、`query` の内容の条件（`contents:`）を探す前に取る、手元にない中身の数。取るものがあれば 1
+/// を返して `count` と `more`（上限を超えたので数えるのをやめた）を書き、なければ 0、失敗（取り消しも）なら -1。
+/// 履歴を辿るので裏のスレッドで呼ぶ。`amonhen_search_cancel` でやめられる。
+///
+/// # Safety
+/// `repo` と `history` は有効、`query` は NUL 終端の UTF-8、`count` と `more` は書けること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_history_contents_to_fetch(
+    repo_ptr: *const AmonhenRepo,
+    history_ptr: *const AmonhenHistory,
+    query: *const c_char,
+    count: *mut u32,
+    more: *mut bool,
+) -> i32 {
+    let result = str_arg(query)
+        .map_err(Into::into)
+        .and_then(|q| repo(repo_ptr).count_contents_to_fetch(history(history_ptr), q));
+    match result {
+        Ok(Some(need)) => {
+            unsafe {
+                count.write(need.count as u32);
+                more.write(need.more);
+            }
+            1
+        }
+        Ok(None) => 0,
+        Err(e) => {
+            set_error(e);
+            -1
+        }
+    }
+}
+
+/// 走っている検索（`amonhen_history_search`）の、そこまでに分かった行（昇順、`amonhen_rows_free` で解放する）。
+/// `done` に探し終えた割合（0〜1。内容の条件がなければ 0 のまま）を書く。
+///
+/// # Safety
+/// `repo` は有効、`done` は書けること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_search_partial(
+    repo_ptr: *const AmonhenRepo,
+    done: *mut f32,
+) -> *mut AmonhenRows {
+    let (rows, fraction) = repo(repo_ptr).search_partial();
+    unsafe { done.write(fraction) };
+    Box::into_raw(Box::new(rows)).cast()
 }
 
 /// 走っている検索をやめる。
@@ -1794,16 +1842,39 @@ pub extern "C" fn amonhen_activity_cancel(seq: u64) -> bool {
     amonhen_core::cancel_activity(seq)
 }
 
-/// `url` を `dest`（まだないフォルダ）に clone する。失敗したら false（理由は `amonhen_last_error`）。時間が
-/// かかるので裏のスレッドで呼ぶ。
+/// `url` を `dest`（まだないフォルダ）に clone する。`filter`（NULL・空でなければ `--filter`。`blob:none` など）、
+/// `depth`（0 でなければ `--depth`）、`sparse`（`--sparse`。根のファイルだけを取り出す。git 2.27 から）で取得する
+/// 範囲と取り出すものを決める。失敗したら false（理由は `amonhen_last_error`）。時間がかかるので裏のスレッドで呼ぶ。
 ///
 /// # Safety
-/// `url` と `dest` は NUL 終端の UTF-8 文字列であること。
+/// `url` と `dest` は NUL 終端の UTF-8 文字列、`filter` は NULL か NUL 終端の UTF-8 文字列であること。
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn amonhen_clone(url: *const c_char, dest: *const c_char) -> bool {
-    match (str_arg(url), str_arg(dest)) {
-        (Ok(url), Ok(dest)) => done(amonhen_backend_cli::clone(url, std::path::Path::new(dest))),
-        (Err(e), _) | (_, Err(e)) => done(Err(e.into())),
+pub unsafe extern "C" fn amonhen_clone(
+    url: *const c_char,
+    dest: *const c_char,
+    filter: *const c_char,
+    depth: u32,
+    sparse: bool,
+) -> bool {
+    let filter = if filter.is_null() {
+        Ok(None)
+    } else {
+        str_arg(filter).map(|f| Some(f.to_owned()).filter(|f| !f.is_empty()))
+    };
+    match (str_arg(url), str_arg(dest), filter) {
+        (Ok(url), Ok(dest), Ok(filter)) => {
+            let options = amonhen_backend_cli::CloneOptions {
+                filter,
+                depth: (depth > 0).then_some(depth),
+                sparse,
+            };
+            done(amonhen_backend_cli::clone(
+                url,
+                std::path::Path::new(dest),
+                &options,
+            ))
+        }
+        (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => done(Err(e.into())),
     }
 }
 
@@ -2083,6 +2154,33 @@ pub unsafe extern "C" fn amonhen_history_hidden(
         .get(row as usize)
         .copied()
         .unwrap_or(0)
+}
+
+/// shallow clone の History か（境界より古いコミットを取得していない）。
+///
+/// # Safety
+/// `history` は有効な History であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_history_is_shallow(history_ptr: *const AmonhenHistory) -> bool {
+    !history(history_ptr).shallow.is_empty()
+}
+
+/// shallow clone の境界のコミット（親を取得していない）の行を、昇順に `out` へ最大 `capacity` 個書き、全体の
+/// 個数を返す。全行を見るので、大きな History では裏のスレッドで呼ぶ。
+///
+/// # Safety
+/// `history` は有効な History、`out` は `capacity` 個の `u32` を書ける領域であること（0 個なら NULL でよい）。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_history_boundary_rows(
+    history_ptr: *const AmonhenHistory,
+    out: *mut u32,
+    capacity: u32,
+) -> u32 {
+    let rows = history(history_ptr).boundary_rows();
+    for (i, row) in rows.iter().take(capacity as usize).enumerate() {
+        unsafe { out.add(i).write(*row) };
+    }
+    rows.len() as u32
 }
 
 /// スクロールバーに描く密度。`out` に区間ごとの [頻度, 活動量]（0〜1）を `buckets * 2` 個書き、書いた区間の数を

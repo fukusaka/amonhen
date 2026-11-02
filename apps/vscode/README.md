@@ -58,6 +58,7 @@ The Conflicts / Staged / Changes files are on the left, the commit form below th
 The commit list and graph are on the left, and the details of the selected commit on the right. The divider can be dragged, and its width is remembered. At the top, switch between Current Branch / All Branches / the ref selected in the nav.
 
 - Select in the list by clicking, or with the up and down keys and PageUp / PageDown. The history is loaded 200 entries at a time as you scroll.
+- With the engine, the search field finds commits with the app's syntax: words, `author:`, `subject:`, `commit:`, `path:`, `contents:`, `after:`, `before:`, AND, OR and parentheses. Matches are highlighted; Enter and Shift+Enter (or ∧ ∨, F3 in the list) move between them, and Matching Only shows only the matching commits. A `contents:` search shows the matches found so far and how far it has got. In a partial clone it first says how many file contents it will fetch, and asks you to narrow the search with `path:`, `after:` or `before:` when they are too many.
 - The details show the full message, branches and tags, author and date, commit ID, parent commits (click to move to that commit), the changed files, and the diff of each file. Diffs are loaded for the files that come into view. A merge commit shows the diff against its first parent.
 - Each file's Open, Open All, and double-click / Enter in the list also open it in the standard diff editor.
 

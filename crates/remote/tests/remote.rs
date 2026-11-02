@@ -220,3 +220,71 @@ fn the_mailmap_comes_from_the_remote_side() {
         serde_json::from_str(&remote.run_json(r#"{"op":"fileHistory","path":"a.txt"}"#)).unwrap();
     assert_eq!(log["info"]["entries"][0]["author"], "Ann Example");
 }
+
+/// shallow clone の履歴を daemon 越しに取り足す（git fetch は daemon の側で動く）。
+#[test]
+fn a_shallow_clone_gets_deeper_through_the_daemon() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("src");
+    std::fs::create_dir(&src).unwrap();
+    init(&src);
+    for message in ["root", "second", "third"] {
+        git(&src, &["commit", "--allow-empty", "-q", "-m", message]);
+    }
+    // --depth はパスの clone では効かないので file:// にする（Windows は file:///C:/…）。
+    let path = src.to_str().unwrap().replace('\\', "/");
+    let url = if path.starts_with('/') {
+        format!("file://{path}")
+    } else {
+        format!("file:///{path}")
+    };
+    git(
+        tmp.path(),
+        &["clone", "-q", "--depth", "1", &url, "shallow"],
+    );
+    let remote = remote(&tmp.path().join("shallow"));
+    assert_eq!(remote.load_history().unwrap().shallow.len(), 1);
+    let run =
+        |json: &str| -> serde_json::Value { serde_json::from_str(&remote.run_json(json)).unwrap() };
+    assert_eq!(run(r#"{"op":"deepen","commits":1}"#)["ok"], true);
+    assert_eq!(remote.load_history().unwrap().graph.len(), 2);
+    assert_eq!(run(r#"{"op":"unshallow"}"#)["ok"], true);
+    let history = remote.load_history().unwrap();
+    assert_eq!(history.graph.len(), 3);
+    assert!(history.shallow.is_empty());
+}
+
+/// リポジトリの形を読み、HEAD の木のフォルダを読み、sparse checkout を daemon 越しに変える（git は daemon の側で
+/// 動く）。
+#[test]
+fn sparse_checkout_through_the_daemon() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    init(dir);
+    for folder in ["a", "b"] {
+        std::fs::create_dir(dir.join(folder)).unwrap();
+        commit(dir, &format!("{folder}/f.txt"), folder, folder);
+    }
+    let remote = remote(dir);
+    let run =
+        |json: &str| -> serde_json::Value { serde_json::from_str(&remote.run_json(json)).unwrap() };
+    let folders = run(r#"{"op":"treeFolders","path":"/"}"#);
+    assert_eq!(folders["info"]["entries"][1]["name"], "b", "{folders}");
+    assert!(run(r#"{"op":"repositoryForm"}"#)["info"]["sparse"].is_null());
+    if amonhen_backend_cli::git_version().is_some_and(|(a, b, _)| (a, b) < (2, 25)) {
+        return;
+    }
+    assert_eq!(
+        run(r#"{"op":"sparseCheckout","folders":["a"]}"#)["ok"],
+        true
+    );
+    assert!(!dir.join("b/f.txt").exists());
+    let form = run(r#"{"op":"repositoryForm"}"#);
+    assert_eq!(
+        form["info"]["sparse"]["folders"],
+        serde_json::json!(["a"]),
+        "{form}"
+    );
+    assert_eq!(run(r#"{"op":"disableSparseCheckout"}"#)["ok"], true);
+    assert!(dir.join("b/f.txt").exists());
+}

@@ -57,6 +57,12 @@ is in [front.md](front.md), and the design in item 18 of
 
 - History, diffs, the Working Copy and writes go through the daemon. The daemon keeps the History, the search index and
   SSH connections, and shares them with the app and the CLI.
+- Knowing the History's row count, the webview asks only for the rows coming into view (`historyRows` by 200), so it
+  can jump to a match far down without loading what lies before it. History search is the core's (`historySearch`,
+  the app's syntax) and exists only on this path. A `contents:` search polls `historySearchPartial` every 300 ms to
+  color the matches found so far, and in a partial clone asks first with the count from `historyContentsToFetch`
+  (over the limit, it asks to narrow the search). Matching Only swaps in the core's History of the matches
+  (`historyMatching`), keeping the selected commit.
 - The Undo log is the same file in the same format as the core's (`<git dir>/amonhen/undo.json`). `delegation.ts` keeps
   operations the core already records from being recorded again by the extension.
 - Without a matching engine, or with `amonhen.daemon.enabled` off, everything runs on the extension's own git execution
@@ -160,6 +166,7 @@ On the git execution layer, the time taken by a small git command is almost enti
 - Get status with `git status --porcelain=v2 -z`. For large repositories, suggest enabling `core.untrackedCache` and fsmonitor.
 - Pass `--no-optional-locks` to read commands, so as not to contend for locks with the user's own git operations.
 - Fetch the log about 200 entries at a time. The graph's lane computation advances bit by bit on the extension host side, and only minimal arrays are sent to the Webview. The Webview side renders with virtual scrolling.
+- The Webview places the graph's lanes as the app does (`crates/core/src/lanes.rs`): lanes with a commit in view are wide, lanes with only lines are squeezed into a thin bundle, and the column stays within 120px, so the text is never pushed out of the list.
 - Suggesting `git commit-graph write --reachable` speeds up the graph display and ancestry checks.
 - With Remote-SSH, postMessage goes over SSH, so large diffs and logs are sent in chunks.
 

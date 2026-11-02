@@ -38,7 +38,18 @@ struct Filters {
 
 impl GixBackend {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        let repo = gix::ThreadSafeRepository::discover(path.as_ref())?;
+        // gix は、開いたときの pack の数から読める pack の枠を決め（既定は 1.1 倍、最低 32）、後から増やせない。
+        // partial clone では中身を取るたびに pack が 1 つ増える（fetch も、git が自分で取るときも）ので、開いた
+        // ままでも読めるよう枠を多めにとる。
+        let slots = gix::odb::store::init::Slots::AsNeededByDiskState {
+            multiplier: 2.0,
+            minimum: 4096,
+        };
+        let mut trust = gix::sec::trust::Mapping::<gix::open::Options>::default();
+        trust.full = trust.full.object_store_slots(slots);
+        trust.reduced = trust.reduced.object_store_slots(slots);
+        let repo =
+            gix::ThreadSafeRepository::discover_opts(path.as_ref(), Default::default(), trust)?;
         let git = repo.work_dir().map(amonhen_backend_cli::Git::new);
         Ok(Self {
             repo,
@@ -123,6 +134,174 @@ fn read_commit_object(
     })
 }
 
+/// partial clone なら、足りないオブジェクトを取ってくる remote（git 2.24 からの `remote.<name>.promisor`、
+/// それより古い git が書く `extensions.partialClone`）。
+fn promisor_remote(repo: &gix::Repository) -> Option<String> {
+    let config = repo.config_snapshot();
+    if let Some(name) = config.string("extensions.partialClone") {
+        return Some(name.to_string());
+    }
+    repo.remote_names()
+        .into_iter()
+        .map(|name| name.to_string())
+        .find(|name| config.boolean(&format!("remote.{name}.promisor")) == Some(true))
+}
+
+/// `git log --raw --no-renames` と同じく、`tips` から辿ったマージでないコミットが変えた blob を `visit` に渡す
+/// （`visit` が false を返したらやめる）。blob は読まず tree だけを比べるので、partial clone でも取りに行かない。
+/// パスはそのファイルかフォルダの下だけを比べる（git の pathspec のワイルドカードは読まない）。git の
+/// `-- <path>` と違って履歴を簡略化しないので、マージで捨てられた横の枝の変更も数える。
+fn changed_blobs(
+    repo: &gix::Repository,
+    tips: &[Oid],
+    scope: &amonhen_model::LogScope,
+    cancelled: &dyn Fn() -> bool,
+    visit: &mut dyn FnMut(Oid) -> bool,
+) -> Result<()> {
+    use gix::revision::walk::Sorting;
+    use gix::traverse::commit::simple::CommitTimeOrder;
+
+    let mut repo = repo.clone();
+    // 親の tree は、ひとつ前に比べたコミットの tree であることが多い。
+    repo.object_cache_size_if_unset(64 << 20);
+    let order = CommitTimeOrder::NewestFirst;
+    let sorting = match scope.after {
+        Some(seconds) => Sorting::ByCommitTimeCutoff { order, seconds },
+        None => Sorting::ByCommitTime(order),
+    };
+    let tips = tips
+        .iter()
+        .map(|t| gix::ObjectId::from_bytes_or_panic(&t.0));
+    let shallow = repo.shallow_commits()?;
+    let paths: Vec<&str> = scope
+        .paths
+        .iter()
+        .map(|p| p.trim_end_matches('/'))
+        .collect();
+    let mut differ = TreeDiffer::default();
+    for info in repo.rev_walk(tips).sorting(sorting).all()? {
+        if cancelled() {
+            return Err(amonhen_model::i18n::cancelled().into());
+        }
+        let info = info.map_err(|e| e.to_string())?;
+        if info.parent_ids.len() > 1 {
+            continue;
+        }
+        let commit = info.object()?;
+        if scope
+            .before
+            .is_some_and(|before| commit.time().is_ok_and(|t| t.seconds > before))
+        {
+            continue;
+        }
+        let boundary = shallow.as_ref().is_some_and(|s| s.contains(&info.id));
+        let old = match info.parent_ids.first().filter(|_| !boundary) {
+            Some(parent) => Some(repo.find_commit(*parent)?.tree_id()?.detach()),
+            None => None,
+        };
+        let new = commit.tree_id()?.detach();
+        let tree = gix::object::tree::EntryKind::Tree.into();
+        let roots = [(old.map(|id| (tree, id)), Some((tree, new)))];
+        let entries: Vec<_> = if paths.is_empty() {
+            roots.to_vec()
+        } else {
+            let at = |root: Option<gix::ObjectId>, path: &str| -> Result<_> {
+                let Some(root) = root else { return Ok(None) };
+                Ok(repo
+                    .find_tree(root)?
+                    .peel_to_entry_by_path(path)?
+                    .map(|e| (e.mode(), e.object_id())))
+            };
+            paths
+                .iter()
+                .map(|p| Ok((at(old, p)?, at(Some(new), p)?)))
+                .collect::<Result<_>>()?
+        };
+        for (old, new) in entries {
+            if !differ.changed(&repo, old, new, visit)? {
+                return Ok(());
+            }
+        }
+    }
+    Ok(())
+}
+
+type Entry = (gix::object::tree::EntryMode, gix::ObjectId);
+
+/// `changed_blobs` で、2 つの版の tree の項目を比べる。使い回す入れ物を持つ。
+#[derive(Default)]
+struct TreeDiffer {
+    state: gix::diff::tree::State,
+    old: Vec<u8>,
+    new: Vec<u8>,
+}
+
+impl TreeDiffer {
+    /// `old` から `new` で変わった blob を `visit` に渡す（tree なら中を比べる）。`visit` が false を返したら false。
+    fn changed(
+        &mut self,
+        repo: &gix::Repository,
+        old: Option<Entry>,
+        new: Option<Entry>,
+        visit: &mut dyn FnMut(Oid) -> bool,
+    ) -> Result<bool> {
+        use gix::diff::tree::recorder::Change;
+        use gix::objs::FindExt as _;
+
+        if old == new {
+            return Ok(true);
+        }
+        let tree = |e: Option<Entry>| e.filter(|(mode, _)| mode.is_tree()).map(|(_, id)| id);
+        let (old_tree, new_tree) = (tree(old), tree(new));
+        let mut changes = Vec::new();
+        // ファイルの版はそのまま数える（フォルダは下で中を比べる。ファイルとフォルダが入れ替わることもある）。
+        for (mode, id) in [old, new].into_iter().flatten() {
+            changes.push((mode, id));
+        }
+        if old_tree.is_some() || new_tree.is_some() {
+            let empty = gix::objs::TreeRefIter::from_bytes(&[], repo.object_hash());
+            let lhs = match old_tree {
+                Some(id) => repo.objects.find_tree_iter(&id, &mut self.old)?,
+                None => empty,
+            };
+            let rhs = match new_tree {
+                Some(id) => repo.objects.find_tree_iter(&id, &mut self.new)?,
+                None => empty,
+            };
+            let mut recorder = gix::diff::tree::Recorder::default().track_location(None);
+            gix::diff::tree(lhs, rhs, &mut self.state, &repo.objects, &mut recorder)
+                .map_err(|e| e.to_string())?;
+            for change in recorder.records {
+                match change {
+                    Change::Addition {
+                        entry_mode, oid, ..
+                    }
+                    | Change::Deletion {
+                        entry_mode, oid, ..
+                    } => changes.push((entry_mode, oid)),
+                    Change::Modification {
+                        previous_entry_mode,
+                        previous_oid,
+                        entry_mode,
+                        oid,
+                        ..
+                    } => {
+                        changes.push((previous_entry_mode, previous_oid));
+                        changes.push((entry_mode, oid));
+                    }
+                }
+            }
+        }
+        // tree そのものの変化は中のファイルの変化として出る。submodule（コミット）は数えない。
+        for (mode, id) in changes {
+            if mode.is_blob_or_symlink() && !visit(to_oid(&id)?) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+}
+
 fn to_oid(id: &gix::oid) -> Result<Oid> {
     let bytes: [u8; 20] = id
         .as_bytes()
@@ -132,6 +311,49 @@ fn to_oid(id: &gix::oid) -> Result<Oid> {
 }
 
 impl GixBackend {
+    /// `.gitmodules` のサブモジュールの行（パスの順）。gix は作業ツリーになければ index か HEAD のツリーの blob を
+    /// 読むので、partial clone で取り出していない（`--no-checkout` など）と中身が手元になく、ref の一覧ごと失敗する。
+    /// そのときはその blob だけを取ってから読み直す。
+    fn submodule_entries(&self, repo: &gix::Repository) -> Result<Vec<RefEntry>> {
+        let read = |repo: &gix::Repository| -> Result<Vec<RefEntry>> {
+            let mut subs = Vec::new();
+            for sm in repo.submodules()?.into_iter().flatten() {
+                let target = sm
+                    .index_id()
+                    .ok()
+                    .flatten()
+                    .map(|id| to_oid(id.as_ref()))
+                    .transpose()?;
+                subs.push(RefEntry {
+                    kind: RefKind::Submodule,
+                    name: sm.path()?.to_string(),
+                    target,
+                    detail: None,
+                    ahead: 0,
+                    behind: 0,
+                    gone: false,
+                });
+            }
+            subs.sort_by(|a, b| a.name.cmp(&b.name));
+            Ok(subs)
+        };
+        let error = match read(repo) {
+            Ok(subs) => return Ok(subs),
+            Err(e) => e,
+        };
+        let blob = promisor_remote(repo).and_then(|_| {
+            let tree = repo.head_tree().ok()?;
+            let entry = tree.lookup_entry_by_path(".gitmodules").ok()??;
+            to_oid(entry.oid()).ok()
+        });
+        let Some(blob) = blob else {
+            return Err(error);
+        };
+        // 足りなければ git に読ませる（取ってくる）。どの版の git でも 1 つなら取れる。
+        self.blob(&blob)?;
+        read(&self.repo.to_thread_local())
+    }
+
     /// 改行の変換などの pipeline を使う（index が変わっていれば作り直す）。
     fn with_filters<T>(
         &self,
@@ -223,10 +445,20 @@ impl GitBackend for GixBackend {
     }
 
     fn shallow(&self) -> Result<Vec<Oid>> {
-        match self.repo.to_thread_local().shallow_commits()? {
-            Some(commits) => commits.iter().map(|id| to_oid(id)).collect(),
-            None => Ok(Vec::new()),
-        }
+        let repo = self.repo.to_thread_local();
+        let Some(commits) = repo.shallow_commits()? else {
+            return Ok(Vec::new());
+        };
+        // `git fetch --deepen` で根に届くと、git は根のコミットを境界として `shallow` に残す。親のないコミットは
+        // 取得していないものがないので、境界に数えない（読めなければ境界のままにする）。
+        commits
+            .iter()
+            .filter(|id| {
+                repo.find_commit(**id)
+                    .map_or(true, |c| c.parent_ids().next().is_some())
+            })
+            .map(|id| to_oid(id))
+            .collect()
     }
 
     fn read_commits(
@@ -363,28 +595,7 @@ impl GitBackend for GixBackend {
             }
         }
 
-        if let Some(submodules) = repo.submodules()? {
-            let mut subs = Vec::new();
-            for sm in submodules {
-                let target = sm
-                    .index_id()
-                    .ok()
-                    .flatten()
-                    .map(|id| to_oid(id.as_ref()))
-                    .transpose()?;
-                subs.push(RefEntry {
-                    kind: RefKind::Submodule,
-                    name: sm.path()?.to_string(),
-                    target,
-                    detail: None,
-                    ahead: 0,
-                    behind: 0,
-                    gone: false,
-                });
-            }
-            subs.sort_by(|a, b| a.name.cmp(&b.name));
-            entries.extend(subs);
-        }
+        entries.extend(self.submodule_entries(&repo)?);
 
         // 上流との差は git に数えさせる（gix で数えるより速く、git と同じ結果になる）。
         if let Some(git) = &self.git
@@ -546,14 +757,86 @@ impl GitBackend for GixBackend {
     fn blob(&self, id: &Oid) -> Result<Arc<Vec<u8>>> {
         let repo = self.repo.to_thread_local();
         let mut buf = Vec::new();
-        let len = repo
+        let Some(data) = repo
             .objects
             .try_find(&gix::ObjectId::from_bytes_or_panic(&id.0), &mut buf)?
-            .ok_or_else(|| tr!("Blob {id} not found", id = id))?
-            .data
-            .len();
+        else {
+            // partial clone で手元にない blob は、git に読ませる（git が promisor の remote から取ってくる）。
+            if promisor_remote(&repo).is_some()
+                && let Ok(git) = self.git()
+            {
+                return Ok(Arc::new(git.write(&[
+                    "cat-file",
+                    "blob",
+                    &id.to_string(),
+                ])?));
+            }
+            return Err(tr!("Blob {id} not found", id = id).into());
+        };
+        let len = data.data.len();
         buf.truncate(len);
         Ok(Arc::new(buf))
+    }
+
+    fn prefetch_blobs(&self, ids: &[Oid]) -> Result<()> {
+        let repo = self.repo.to_thread_local();
+        let Some(remote) = promisor_remote(&repo) else {
+            return Ok(());
+        };
+        let missing: Vec<String> = ids
+            .iter()
+            .filter(|id| !repo.has_object(gix::ObjectId::from_bytes_or_panic(&id.0)))
+            .map(Oid::to_string)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        if missing.is_empty() {
+            return Ok(());
+        }
+        self.git()?.fetch_missing(&remote, &missing)
+    }
+
+    fn contents_to_fetch(
+        &self,
+        tips: &[Oid],
+        scope: &amonhen_model::LogScope,
+        limit: usize,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<amonhen_model::ContentsToFetch> {
+        let repo = self.repo.to_thread_local();
+        let mut found = amonhen_model::ContentsToFetch::default();
+        let Some(remote) = promisor_remote(&repo) else {
+            return Ok(found);
+        };
+        // filter を外して中身をすべて取り直したなら、足りないものはないので数えない（数えると履歴をすべて辿る）。
+        let config = repo.config_snapshot();
+        if config
+            .string(&format!("remote.{remote}.partialclonefilter"))
+            .is_none()
+            && config.string("core.partialclonefilter").is_none()
+        {
+            return Ok(found);
+        }
+        let mut seen = amonhen_model::OidSet::default();
+        let mut visit = |id: Oid| {
+            if seen.insert(id) && !repo.has_object(gix::ObjectId::from_bytes_or_panic(&id.0)) {
+                if found.ids.len() == limit {
+                    found.more = true;
+                    return false;
+                }
+                found.ids.push(id);
+            }
+            true
+        };
+        // git 2.27 より古い git は、partial clone で差分を出すと（`--raw` でも）出てくる blob をすべて取ってくる
+        // （`diffcore_std`。2.27 から中身の要る形の出力のときだけ取る）。数えるだけで中身を取らないよう、gix で tree を比べる。
+        if amonhen_backend_cli::git_version().is_some_and(|(a, b, _)| (a, b) < (2, 27)) {
+            changed_blobs(&repo, tips, scope, cancelled, &mut visit)?;
+        } else {
+            self.git()?
+                .changed_blobs(tips, scope, cancelled, &mut visit)?;
+        }
+        Ok(found)
     }
 
     fn operations(&self) -> Result<&dyn amonhen_model::Operations> {
@@ -882,5 +1165,112 @@ impl GitBackend for GixBackend {
                 })
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::disallowed_methods)] // テストの git はそのまま起動する
+    use super::*;
+    use amonhen_model::LogScope;
+    use std::process::Command;
+
+    /// 日時は、この時刻からの秒数（git は小さすぎる数を日時として読まない）。
+    const EPOCH: i64 = 1_700_000_000;
+
+    fn git(dir: &Path, date: i64, args: &[&str]) -> String {
+        amonhen_model::testing::isolate_from_user_settings();
+        let date = EPOCH + date;
+        let out = Command::new("git")
+            .args(["-c", "user.name=a", "-c", "user.email=a@example.com"])
+            .args(["-c", "commit.gpgsign=false", "-c", "core.autocrlf=false"])
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_AUTHOR_DATE", format!("{date} +0000"))
+            .env("GIT_COMMITTER_DATE", format!("{date} +0000"))
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap().trim().to_owned()
+    }
+
+    /// gix で数えた blob が、`git log --raw` で数えたもの（git 2.27 から）と同じになる。
+    #[test]
+    fn counts_changed_blobs_like_git_log_raw() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        git(dir, 0, &["init", "-q"]);
+        git(dir, 0, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        std::fs::create_dir(dir.join("src")).unwrap();
+        let commit = |date: i64, files: &[(&str, Option<&str>)]| {
+            for (path, text) in files {
+                match text {
+                    Some(text) => std::fs::write(dir.join(path), text).unwrap(),
+                    None => std::fs::remove_file(dir.join(path)).unwrap(),
+                }
+            }
+            git(dir, date, &["add", "-A"]);
+            git(dir, date, &["commit", "-q", "-m", &date.to_string()]);
+        };
+        commit(1000, &[("a.txt", Some("a1")), ("src/b.rs", Some("b1"))]);
+        commit(2000, &[("a.txt", Some("a2")), ("src/c.rs", Some("c1"))]);
+        git(dir, 2500, &["checkout", "-q", "-b", "side"]);
+        commit(3000, &[("src/b.rs", Some("b2")), ("srcx.txt", Some("x"))]);
+        git(dir, 3500, &["checkout", "-q", "main"]);
+        commit(4000, &[("src/c.rs", None), ("a.txt", Some("a3"))]);
+        git(
+            dir,
+            5000,
+            &["merge", "-q", "--no-ff", "-m", "merge", "side"],
+        );
+        commit(6000, &[("src/b.rs", Some("b3"))]);
+
+        let backend = GixBackend::open(dir).unwrap();
+        let repo = backend.repo.to_thread_local();
+        let tip = [Oid::from_hex(&git(dir, 0, &["rev-parse", "HEAD"])).unwrap()];
+        let count = |scope: &LogScope, with_git: bool| {
+            let mut ids = Vec::new();
+            let mut visit = |id| {
+                ids.push(id);
+                true
+            };
+            if with_git {
+                backend
+                    .git()
+                    .unwrap()
+                    .changed_blobs(&tip, scope, &|| false, &mut visit)
+                    .unwrap();
+            } else {
+                changed_blobs(&repo, &tip, scope, &|| false, &mut visit).unwrap();
+            }
+            ids.sort();
+            ids
+        };
+        let scopes = [
+            LogScope::default(),
+            LogScope {
+                paths: vec!["src".into()],
+                ..LogScope::default()
+            },
+            LogScope {
+                paths: vec!["src/".into(), "a.txt".into()],
+                ..LogScope::default()
+            },
+            LogScope {
+                after: Some(EPOCH + 2000),
+                before: Some(EPOCH + 4000),
+                ..LogScope::default()
+            },
+        ];
+        for scope in &scopes {
+            let by_gix = count(scope, false);
+            assert!(!by_gix.is_empty(), "{scope:?}");
+            assert_eq!(by_gix, count(scope, true), "{scope:?}");
+        }
     }
 }

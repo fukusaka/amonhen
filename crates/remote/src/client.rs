@@ -12,10 +12,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use amonhen_model::{
-    ApplyPatch, CommitGraph, CommitText, ConfigEntry, ConnectionState, FileChange, FormatPatch,
-    GitBackend, HeadState, Oid, Operations, Outcome, PatchFile, PullMode, RawCommit, RefUpdate,
-    Refs, RemoteChange, RemoteCheck, RemoteEntry, RepoFiles, RepoPaths, ResetMode, Result, Root,
-    Sequence, SigningKey, Status, WorktreeChange,
+    ApplyPatch, CommitGraph, CommitText, ConfigEntry, ConnectionState, Deepen, FileChange,
+    FormatPatch, GitBackend, HeadState, Oid, Operations, Outcome, PatchFile, PullMode, RawCommit,
+    RefUpdate, Refs, RemoteChange, RemoteCheck, RemoteEntry, RepoFiles, RepoPaths, ResetMode,
+    Result, Root, Sequence, SigningKey, Status, WorktreeChange,
 };
 use serde::de::DeserializeOwned;
 
@@ -221,13 +221,15 @@ impl Connection {
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = mpsc::channel();
         self.pending.lock().unwrap().insert(id, tx);
-        let payload = postcard::to_allocvec(request)?;
-        match frame::write(
-            &mut *self.writer.lock().unwrap(),
-            Kind::Request,
-            id,
-            &payload,
-        ) {
+        // 挨拶のほかは、いまの利用者の言語を添える（共有の daemon では、要求ごとに頼んだ利用者が違う）。
+        let (kind, payload) = match request {
+            Request::Hello { .. } => (Kind::Request, postcard::to_allocvec(request)?),
+            _ => (
+                Kind::LangRequest,
+                postcard::to_extend(request, vec![amonhen_model::i18n::current() as u8])?,
+            ),
+        };
+        match frame::write(&mut *self.writer.lock().unwrap(), kind, id, &payload) {
             Ok(n) => {
                 self.sent.fetch_add(n as u64, Ordering::Relaxed);
             }
@@ -428,6 +430,25 @@ impl GitBackend for RemoteBackend {
     fn blob(&self, id: &Oid) -> Result<Arc<Vec<u8>>> {
         let bytes: Bytes = self.conn.call(&Request::Blob(*id))?;
         Ok(Arc::new(bytes.0))
+    }
+
+    fn prefetch_blobs(&self, ids: &[Oid]) -> Result<()> {
+        self.conn.call(&Request::PrefetchBlobs(ids.to_vec()))
+    }
+
+    fn contents_to_fetch(
+        &self,
+        tips: &[Oid],
+        scope: &amonhen_model::LogScope,
+        limit: usize,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<amonhen_model::ContentsToFetch> {
+        let request = Request::ContentsToFetch {
+            tips: tips.to_vec(),
+            scope: scope.clone(),
+            limit,
+        };
+        self.conn.call_cancellable(&request, cancelled)
     }
 
     fn operations(&self) -> Result<&dyn Operations> {
@@ -684,6 +705,21 @@ impl Operations for RemoteOperations {
         self.conn.call_cancellable(&Request::Op(op), cancelled)
     }
 
+    fn log_matching_commits(
+        &self,
+        commits: &[Oid],
+        paths: &[String],
+        contents: &str,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<Oid>> {
+        let op = Op::LogMatchingCommits {
+            commits: commits.to_vec(),
+            paths: paths.to_vec(),
+            contents: contents.to_owned(),
+        };
+        self.conn.call_cancellable(&Request::Op(op), cancelled)
+    }
+
     fn blame(&self, path: &str, rev: Option<&Oid>) -> Result<Vec<u8>> {
         let bytes: Bytes = self.op(Op::Blame {
             path: path.to_owned(),
@@ -933,6 +969,14 @@ impl Operations for RemoteOperations {
         self.op(Op::Fetch(remote.map(str::to_owned)))
     }
 
+    fn deepen(&self, how: &Deepen) -> Result<()> {
+        self.op(Op::Deepen(how.clone()))
+    }
+
+    fn fetch_all_contents(&self, remote: &str) -> Result<()> {
+        self.op(Op::FetchAllContents(remote.to_owned()))
+    }
+
     fn pull(&self, mode: PullMode) -> Result<Outcome> {
         self.op(Op::Pull(mode))
     }
@@ -1028,6 +1072,22 @@ impl Operations for RemoteOperations {
 
     fn git_version(&self) -> Result<Option<(u32, u32, u32)>> {
         self.op(Op::GitVersion)
+    }
+
+    fn repository_form(&self) -> Result<amonhen_model::RepositoryForm> {
+        self.op(Op::RepositoryForm)
+    }
+
+    fn sparse_checkout(&self, folders: Option<&[String]>) -> Result<()> {
+        self.op(Op::SparseCheckout(folders.map(<[String]>::to_vec)))
+    }
+
+    fn tree_folders(&self, path: &str) -> Result<Vec<String>> {
+        self.op(Op::TreeFolders(path.to_owned()))
+    }
+
+    fn maintenance(&self, on: bool) -> Result<()> {
+        self.op(Op::Maintenance(on))
     }
 
     fn remotes(&self) -> Result<Vec<RemoteEntry>> {

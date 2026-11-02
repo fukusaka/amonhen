@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use crate::{
-    CommitExtras, CommitGraph, CommitText, FileChange, Oid, Operations, RawCommit, Refs, RepoFiles,
-    RepoPaths, Status, topo,
+    CommitExtras, CommitGraph, CommitText, ContentsToFetch, FileChange, LogScope, Oid, Operations,
+    RawCommit, Refs, RepoFiles, RepoPaths, Status, topo,
 };
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -28,6 +28,7 @@ pub trait GitBackend: Send + Sync {
 
     /// shallow clone の境界のコミット（親が手元にない。`read_commits` は親のないコミットとして返す）。shallow
     /// clone でなければ空。`git fetch --deepen` などで変わると、前回の History の境界のコミットに親ができる。
+    /// 根まで取ると git は根のコミットを境界に残すが、取得していない親はないので含めない。
     fn shallow(&self) -> Result<Vec<Oid>> {
         Ok(Vec::new())
     }
@@ -90,6 +91,27 @@ pub trait GitBackend: Send + Sync {
 
     /// blob の中身。展開したバッファをそのまま返し、差分の各行はここを直接指す。
     fn blob(&self, id: &Oid) -> Result<Arc<Vec<u8>>>;
+
+    /// これから読む blob のうち手元にないものを、まとめて取ってくる（partial clone。`blob` は 1 つずつ取るので、
+    /// 差分のようにいくつも読む前に呼ぶ）。partial clone でなければ何もしない。
+    fn prefetch_blobs(&self, ids: &[Oid]) -> Result<()> {
+        let _ = ids;
+        Ok(())
+    }
+
+    /// partial clone で、`tips` から辿れる `scope` のコミットの差分に要る中身（変わったファイルの前後の blob）の
+    /// うち、手元にないもの。内容で探す（`git log -G`）前に、取るかどうかを決めるのに使う。`limit` を超えたら数える
+    /// のをやめる（数百万になる大きな履歴でも、すぐに答える）。partial clone でなければ空。
+    fn contents_to_fetch(
+        &self,
+        tips: &[Oid],
+        scope: &LogScope,
+        limit: usize,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<ContentsToFetch> {
+        let _ = (tips, scope, limit, cancelled);
+        Ok(ContentsToFetch::default())
+    }
 
     /// 書き込み系の操作。対応しない実装（作業ツリーがない・モバイル）はエラー。
     fn operations(&self) -> Result<&dyn Operations>;

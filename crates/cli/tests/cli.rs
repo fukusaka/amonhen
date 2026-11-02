@@ -96,6 +96,82 @@ fn log_draws_the_branch_and_the_merge() {
     assert_eq!(out.lines().count(), 2, "{out}");
 }
 
+/// shallow clone の log は、最後に古い履歴を取得していないと添える。`run` で取り足せる。
+#[test]
+fn log_notes_where_a_shallow_clone_stops() {
+    let src = repository();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    // --depth はパスの clone では効かないので file:// にする（Windows は file:///C:/…）。
+    let path = src.path().to_str().unwrap().replace('\\', "/");
+    let url = if path.starts_with('/') {
+        format!("file://{path}")
+    } else {
+        format!("file:///{path}")
+    };
+    git(
+        tmp.path(),
+        &["clone", "-q", "--depth", "1", &url, "shallow"],
+    );
+    let dir = tmp.path().join("shallow");
+    let dir = dir.to_str().unwrap();
+    let (out, code) = amonhen(home.path(), &["log", "-C", dir, "--color=never"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("merge topic"), "{out}");
+    assert!(out.contains("Older history isn’t fetched"), "{out}");
+    let (out, code) = amonhen(home.path(), &["status", "-C", dir, "--color=never"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("shallow clone"), "{out}");
+
+    let (out, code) = amonhen(home.path(), &["run", "-C", dir, r#"{"op":"unshallow"}"#]);
+    assert_eq!(code, 0, "{out}");
+    let (out, _) = amonhen(home.path(), &["log", "-C", dir, "--color=never"]);
+    assert!(out.contains("first"), "{out}");
+    assert!(!out.contains("Older history"), "{out}");
+    let (out, _) = amonhen(home.path(), &["status", "-C", dir, "--color=never"]);
+    assert!(!out.contains("shallow clone"), "{out}");
+}
+
+/// clone の --depth・--filter を git に渡す。おかしな引数は使い方を出して断る。
+#[test]
+fn clones_with_depth_and_filter() {
+    let src = repository();
+    git(src.path(), &["config", "uploadpack.allowFilter", "true"]);
+    // 古い git は、取り出しに要る blob を ID で取りにくる。
+    git(
+        src.path(),
+        &["config", "uploadpack.allowAnySHA1InWant", "true"],
+    );
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let path = src.path().to_str().unwrap().replace('\\', "/");
+    let url = if path.starts_with('/') {
+        format!("file://{path}")
+    } else {
+        format!("file:///{path}")
+    };
+    let dest = tmp.path().join("both");
+    let dest = dest.to_str().unwrap();
+    let (out, code) = amonhen(
+        home.path(),
+        &["clone", "--depth=1", "--filter", "blob:none", &url, dest],
+    );
+    assert_eq!(code, 0, "{out}");
+    assert!(tmp.path().join("both/.git/shallow").exists());
+    let (out, _) = amonhen(home.path(), &["status", "-C", dest, "--color=never"]);
+    assert!(out.contains("shallow clone"), "{out}");
+    assert!(out.contains("partial clone (blob:none)"), "{out}");
+
+    for args in [
+        &["clone", "--depth", "x", &url][..],
+        &["clone", "--shallow", &url],
+    ] {
+        let (out, code) = amonhen(home.path(), args);
+        assert_ne!(code, 0, "{out}");
+        assert!(out.contains("usage:"), "{out}");
+    }
+}
+
 #[test]
 fn undo_and_merge_file() {
     let repo = repository();
@@ -400,6 +476,22 @@ fn works_the_same_directly_through_the_daemon_and_over_ssh() {
             .map(|r| r["text"].as_str().unwrap())
             .collect();
         assert_eq!(texts, ["b", "B"], "{at}: {staged}");
+
+        // 打ち間違えた名前は、空の差分ではなくエラーに（`--` の後ならパスとして扱う）。SSH 先の作業ツリーは手元から
+        // 見えないので確かめない。
+        let typo = env
+            .command(&["diff", "-C", at, "no-such", "--json"])
+            .output()
+            .unwrap();
+        assert_eq!(typo.status.success(), at.starts_with("ssh://"), "{at}");
+        if !typo.status.success() {
+            let text = String::from_utf8_lossy(&typo.stderr);
+            assert!(text.contains("no-such is neither a commit"), "{at}: {text}");
+        }
+        assert_eq!(
+            env.json(&["diff", "-C", at, "--", "no-such", "--json"]),
+            serde_json::json!([])
+        );
 
         // コミットし、残りの変更は捨てて、Undo で戻す。
         let message = format!("change {i}");
