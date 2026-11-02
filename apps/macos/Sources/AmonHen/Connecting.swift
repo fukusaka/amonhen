@@ -14,6 +14,8 @@ final class ConnectingTab: NSObject, NSWindowDelegate {
     private(set) var isClosed = false
     /// 「もう一度」。
     var onRetry: (() -> Void)?
+    /// つないだら出すページ（つなぎ直すときの、それまで出していたページ）。
+    var page: SidebarViewController.Page?
     /// 閉じられた（AppDelegate が手放す）。リポジトリのタブに替わったとき（`finish`）は呼ばない。
     var onClose: (() -> Void)?
 

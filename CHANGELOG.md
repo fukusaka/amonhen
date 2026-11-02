@@ -85,6 +85,7 @@ becomes the GitHub Release notes.
 - Errors from an SSH host opened through the shared daemon are in the language of the app or CLI that asked, not the
   daemon's. So are the SSH host engine and why a connection was lost, in Activity and `amonhen daemon status`.
 - A lost connection to an SSH host names that host instead of "the daemon", and the bar no longer repeats it.
+- Reconnecting after a lost connection shows the page that was open, not History.
 
 - `amonhen diff` with a name that is neither a commit nor a file in the working tree stops with an error, as git does,
   instead of printing an empty diff. Paths after `--` are taken as paths.

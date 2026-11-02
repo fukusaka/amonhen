@@ -10,6 +10,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     /// 差分の文字を描く（ファイルの履歴のウィンドウでも使う）。
     private let textRenderer: TextRenderer
     private var pages: PageViewController?
+    /// ref を読んだら Stashes を出す（`show(page:)`）。
+    private var stashesAfterRefs = false
     let window: NSWindow
     /// ほかのリポジトリ（サブモジュールなど）を新しいウィンドウで開く。
     var onOpenRepository: ((String) -> Void)?
@@ -1443,6 +1445,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 stashes.show(refs.items)
                 stashes.reloadBases()
                 reflog.reload()
+                if stashesAfterRefs {
+                    stashesAfterRefs = false
+                    sidebar.select(page: .stashes)
+                }
                 // 最後の stash を戻した・消したら、空の Stashes の画面から History に移る。
                 if pages?.page == .stashes, !refs.items.contains(where: { $0.kind == .stash }) {
                     sidebar.select(page: .history)
@@ -1660,6 +1666,17 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     /// Repository > Undo（⌥⌘Z）・ツールバーの Undo。git の操作を操作ログで戻す（テキストの ⌘Z とは別）。
     @objc func undoOperation(_ sender: Any?) { actions.undoWithConfirmation() }
+
+    /// 出しているページ（つなぎ直したタブで同じページを出すため）。Range Diff は開いたときの範囲を持たないので nil。
+    var shownPage: SidebarViewController.Page? {
+        pages?.page == .rangeDiff ? nil : pages?.page
+    }
+
+    /// `page` を出す（つなぎ直したタブ）。Stashes の行は ref を読んでからできるので、そのときに選ぶ。
+    func show(page: SidebarViewController.Page) {
+        if page == .stashes { stashesAfterRefs = true }
+        sidebar.select(page: page)
+    }
 
     @objc func showWorkingCopy(_ sender: Any?) { sidebar.select(page: .workingCopy) }
     @objc func showHistory(_ sender: Any?) { sidebar.select(page: .history) }

@@ -756,7 +756,7 @@ pub fn open(app: &gtk::Application, location: PathBuf, place: Place) {
     }
     match (place, front_window()) {
         (Place::Tab, Some(host)) => {
-            open_in(app, &host, location, None);
+            open_in(app, &host, location, None, None);
             host.window.present();
         }
         _ => {
@@ -771,12 +771,14 @@ fn open_in(
     host: &Rc<RepoWindow>,
     location: PathBuf,
     position: Option<u32>,
+    page: Option<crate::sidebar::Page>,
 ) {
     crate::build_tab(
         app,
         host,
         crate::Args {
             path: Some(location),
+            page,
             ..crate::Args::default()
         },
         true,
@@ -874,7 +876,7 @@ pub fn show_home(app: &gtk::Application, host: Option<Rc<RepoWindow>>) -> Rc<Rep
             return self::open(&a, location, place);
         }
         let position = host.position(&tab).map(|p| p as u32);
-        open_in(&a, &host, location, position);
+        open_in(&a, &host, location, position, None);
         close_tab(&tab);
         host.window.present();
     });
@@ -963,7 +965,8 @@ pub fn restore(app: &gtk::Application, groups: Vec<Vec<String>>) {
 }
 
 /// 前のタブを、同じ場所に開き直したタブに替える（daemon・SSH 越しのつながりが切れたとき）。
-pub fn reopen(tab: &Rc<Tab>, location: PathBuf) {
+/// `page` は開き直したタブで出すページ（つなぎ直すときの、それまで出していたページ。None なら History）。
+pub fn reopen(tab: &Rc<Tab>, location: PathBuf, page: Option<crate::sidebar::Page>) {
     let (Some(host), Some(window)) = (tab.host(), tab.window()) else {
         return;
     };
@@ -971,7 +974,7 @@ pub fn reopen(tab: &Rc<Tab>, location: PathBuf) {
         return;
     };
     let position = host.position(tab).map(|n| n as u32 + 1);
-    open_in(&app, &host, location, position);
+    open_in(&app, &host, location, position, page);
     close_tab(tab);
 }
 
@@ -993,7 +996,7 @@ pub fn switch(tab: &Rc<Tab>, location: PathBuf) {
             host.select(&t);
             host.window.present();
         }
-        None => reopen(tab, location),
+        None => reopen(tab, location, None),
     }
 }
 

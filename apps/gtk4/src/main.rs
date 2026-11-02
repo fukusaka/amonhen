@@ -107,6 +107,8 @@ struct Args {
     scroll_rows: Option<f64>,
     /// Working Copy を開いた状態で始める。
     working_copy: bool,
+    /// このページを出して始める（つなぎ直したタブで、それまで出していたページ。`tabs::reopen`）。
+    page: Option<Page>,
     /// Working Copy で選んでおくファイル。
     select_path: Option<String>,
     /// 最初に ref を読んだら、この名前の ref をサイドバーで選んだことにする（確認用）。
@@ -1074,9 +1076,14 @@ fn build_tab(
         args.menu_item.clone(),
         pending.clone(),
     );
-    if args.working_copy {
+    if args.working_copy || args.page == Some(Page::WorkingCopy) {
         pages.set_visible_child_name("working");
         sidebar.select_page(Page::WorkingCopy);
+    }
+    // つなぎ直したタブ: それまでのページを出す（Stashes は stash を読んでから、Settings は窓が出てから）。
+    if args.page == Some(Page::Reflog) {
+        pages.set_visible_child_name("reflog");
+        sidebar.select_page(Page::Reflog);
     }
     // 右側（ページ）の下のステータスバー（途中の操作・失敗・終わった操作の一言）。サイドバーの下には伸ばさない
     // （macOS 版と同じ）。
@@ -1097,7 +1104,7 @@ fn build_tab(
     content.set_vexpand(true);
     content.add_named(&body, Some("repository"));
     let connecting = {
-        let (t, location) = (Rc::downgrade(&tab), path.clone());
+        let (t, location, page) = (Rc::downgrade(&tab), path.clone(), args.page);
         let t2 = t.clone();
         Rc::new(connecting::Connecting::new(
             &text,
@@ -1109,7 +1116,7 @@ fn build_tab(
             },
             move || {
                 if let Some(tab) = t2.upgrade() {
-                    tabs::reopen(&tab, location.clone());
+                    tabs::reopen(&tab, location.clone(), page);
                 }
             },
         ))
@@ -1149,7 +1156,7 @@ fn build_tab(
     if select_ref.is_some() {
         pending.set(pending.get() + 1);
     }
-    let mut open_stashes = args.stashes;
+    let mut open_stashes = args.stashes || args.page == Some(Page::Stashes);
     if open_stashes {
         pending.set(pending.get() + 1);
     }
@@ -1454,7 +1461,12 @@ fn build_tab(
     // daemon・SSH 越しのつながりが切れたら、ステータスバーで知らせ、同じ場所につなぎ直せるようにする
     // （同じ場所のタブで開き直し、このタブを閉じる）。macOS 版と同じく 0.25 秒ごとに見て、切れたら見るのをやめる。
     if let Some(location) = args.path.clone() {
-        let (v, bar, t) = (view.downgrade(), statusbar.clone(), Rc::downgrade(&tab));
+        let (v, bar, t, p) = (
+            view.downgrade(),
+            statusbar.clone(),
+            Rc::downgrade(&tab),
+            pages.downgrade(),
+        );
         glib::timeout_add_local(std::time::Duration::from_millis(250), move || {
             let (Some(view), Some(tab)) = (v.upgrade(), t.upgrade()) else {
                 return glib::ControlFlow::Break;
@@ -1475,10 +1487,15 @@ fn build_tab(
                 // 手元のパスを共有の daemon 越しに開いたものは `daemon`。
                 let host = connecting::host(&location.to_string_lossy())
                     .unwrap_or_else(|| "daemon".to_owned());
-                let (location, t) = (location.clone(), Rc::downgrade(&tab));
+                let (location, t, p) = (location.clone(), Rc::downgrade(&tab), p.clone());
                 bar.show_disconnected(&host, &reason, move || {
+                    // つなぎ直したタブでも、出していたページを出す（macOS 版と同じ）。
+                    let page = p
+                        .upgrade()
+                        .and_then(|p| p.visible_child_name())
+                        .and_then(|name| page_of(&name));
                     if let Some(tab) = t.upgrade() {
-                        tabs::reopen(&tab, location.clone());
+                        tabs::reopen(&tab, location.clone(), page);
                     }
                 });
                 return glib::ControlFlow::Break;
@@ -2010,6 +2027,13 @@ fn build_tab(
                                         );
                                         glib::ControlFlow::Break
                                     },
+                                );
+                            }
+                            if args.page == Some(Page::Settings) {
+                                let _ = WidgetExt::activate_action(
+                                    &pages,
+                                    "win.repository-settings",
+                                    None,
                                 );
                             }
                             if let Some(tab) = &args.settings {
@@ -2947,6 +2971,18 @@ enum Event {
     Received(u64),
 }
 
+/// ページの切り替え（`pages`）の名前のページ。Range Diff は開いたときの範囲を持たないので、出し直さない（None）。
+fn page_of(name: &str) -> Option<Page> {
+    match name {
+        "history" => Some(Page::History),
+        "working" => Some(Page::WorkingCopy),
+        "stashes" => Some(Page::Stashes),
+        "reflog" => Some(Page::Reflog),
+        "settings" => Some(Page::Settings),
+        _ => None,
+    }
+}
+
 fn repo_name(repo: &Repository) -> String {
     repo.paths()
         .workdir
@@ -3342,5 +3378,17 @@ mod tests {
         assert_eq!(at("/abs/repo"), PathBuf::from("/abs/repo"));
         assert_eq!(at("ssh://host/~/x"), PathBuf::from("ssh://host/~/x"));
         assert_eq!(at("daemon:/x"), PathBuf::from("daemon:/x"));
+    }
+
+    #[test]
+    fn reconnecting_keeps_the_shown_page() {
+        use super::{Page, page_of};
+        // ページの切り替えの名前は、ページを足したときのもの。
+        assert_eq!(page_of("working"), Some(Page::WorkingCopy));
+        assert_eq!(page_of("reflog"), Some(Page::Reflog));
+        assert_eq!(page_of("stashes"), Some(Page::Stashes));
+        assert_eq!(page_of("settings"), Some(Page::Settings));
+        assert_eq!(page_of("history"), Some(Page::History));
+        assert_eq!(page_of(crate::rangediff::PAGE), None);
     }
 }
