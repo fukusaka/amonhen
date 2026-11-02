@@ -118,7 +118,9 @@ test('searches contents through the daemon, counting what a partial clone must f
   }
 
   // blobless clone では、要る中身を数えてから、まとめて取って探す
+  // protocol v2 が既定でない git（2.26 より前）は、`allowAnySHA1InWant` がないと手元にない blob を取れない
   git('config', 'uploadpack.allowFilter', 'true');
+  git('config', 'uploadpack.allowAnySHA1InWant', 'true');
   execFileSync('git', ['clone', '-q', '--filter=blob:none', '--no-checkout', `file://${repo}`, partial]);
   const remote = await DaemonClient.open(daemon, partial);
   try {
