@@ -153,6 +153,15 @@ test('pullCurrent asks how to reconcile diverged branches when git config leaves
   const config = git('config', '--local', '--list');
 
   const undo = new UndoLog(backend);
+  // git 2.33.1 より前は、設定がなくても git が merge する（聞かない）
+  const [major, minor, patch] = (/(\d+)\.(\d+)(?:\.(\d+))?/.exec(git('version')) ?? [])
+    .slice(1)
+    .map((n) => Number(n ?? 0));
+  if (major! * 10000 + minor! * 100 + patch! < 23301) {
+    assert.equal(await pullCurrent(backend, undo, async () => assert.fail('asked')), 'done');
+    assert.equal(git('rev-list', '--count', '--merges', 'HEAD'), '1');
+    return;
+  }
   const asked: string[] = [];
   // 選ばなければ何もしない
   assert.equal(await pullCurrent(backend, undo, async (b) => void asked.push(b)), undefined);
