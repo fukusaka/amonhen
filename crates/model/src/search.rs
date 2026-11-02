@@ -165,38 +165,42 @@ impl TextIndex {
         let next = AtomicUsize::new(0);
         let read_parts = Mutex::new(Vec::new());
         let failed = Mutex::new(None);
+        // 読み手（`read`）が返すエラーの文は、分けたスレッドでも要求した FE の言語で（共有の daemon）。
+        let carried = &crate::process::carry();
         std::thread::scope(|scope| {
             for _ in 0..threads() {
                 scope.spawn(|| {
-                    loop {
-                        let start = next.fetch_add(BATCH, Ordering::Relaxed);
-                        if start >= missing.len() || cancelled() {
-                            break;
-                        }
-                        let rows = &missing[start..(start + BATCH).min(missing.len())];
-                        let batch: Vec<Oid> = rows.iter().map(|&r| ids[r]).collect();
-                        match read(&batch) {
-                            Ok(texts) => {
-                                let part: Vec<ReadRow> = rows
-                                    .iter()
-                                    .zip(texts)
-                                    .map(|(&r, t)| {
-                                        (
-                                            r,
-                                            t.subject().to_vec(),
-                                            t.author_name().to_vec(),
-                                            t.author_email().to_vec(),
-                                        )
-                                    })
-                                    .collect();
-                                read_parts.lock().unwrap().push(part);
-                            }
-                            Err(e) => {
-                                *failed.lock().unwrap() = Some(e.to_string());
+                    carried.run(|| {
+                        loop {
+                            let start = next.fetch_add(BATCH, Ordering::Relaxed);
+                            if start >= missing.len() || cancelled() {
                                 break;
                             }
+                            let rows = &missing[start..(start + BATCH).min(missing.len())];
+                            let batch: Vec<Oid> = rows.iter().map(|&r| ids[r]).collect();
+                            match read(&batch) {
+                                Ok(texts) => {
+                                    let part: Vec<ReadRow> = rows
+                                        .iter()
+                                        .zip(texts)
+                                        .map(|(&r, t)| {
+                                            (
+                                                r,
+                                                t.subject().to_vec(),
+                                                t.author_name().to_vec(),
+                                                t.author_email().to_vec(),
+                                            )
+                                        })
+                                        .collect();
+                                    read_parts.lock().unwrap().push(part);
+                                }
+                                Err(e) => {
+                                    *failed.lock().unwrap() = Some(e.to_string());
+                                    break;
+                                }
+                            }
                         }
-                    }
+                    })
                 });
             }
         });
@@ -357,32 +361,36 @@ pub fn scan(
     let next = AtomicUsize::new(0);
     let parts = Mutex::new(Vec::new());
     let failed = Mutex::new(None);
+    // 読み手（`read`）が返すエラーの文は、分けたスレッドでも要求した FE の言語で（共有の daemon）。
+    let carried = &crate::process::carry();
     std::thread::scope(|scope| {
         for _ in 0..threads {
             scope.spawn(|| {
-                loop {
-                    let start = next.fetch_add(BATCH, Ordering::Relaxed);
-                    if start >= ids.len() || cancelled() {
-                        break;
-                    }
-                    let end = (start + BATCH).min(ids.len());
-                    let texts = match read(&ids[start..end]) {
-                        Ok(t) => t,
-                        Err(e) => {
-                            *failed.lock().unwrap() = Some(e.to_string());
+                carried.run(|| {
+                    loop {
+                        let start = next.fetch_add(BATCH, Ordering::Relaxed);
+                        if start >= ids.len() || cancelled() {
                             break;
                         }
-                    };
-                    let mut words = vec![vec![0u64; (end - start).div_ceil(64)]; terms.len()];
-                    for (i, t) in texts.iter().enumerate() {
-                        for (k, term) in terms.iter().enumerate() {
-                            if matches(term, t, &ids[start + i], mailmap) {
-                                words[k][i / 64] |= 1 << (i % 64);
+                        let end = (start + BATCH).min(ids.len());
+                        let texts = match read(&ids[start..end]) {
+                            Ok(t) => t,
+                            Err(e) => {
+                                *failed.lock().unwrap() = Some(e.to_string());
+                                break;
+                            }
+                        };
+                        let mut words = vec![vec![0u64; (end - start).div_ceil(64)]; terms.len()];
+                        for (i, t) in texts.iter().enumerate() {
+                            for (k, term) in terms.iter().enumerate() {
+                                if matches(term, t, &ids[start + i], mailmap) {
+                                    words[k][i / 64] |= 1 << (i % 64);
+                                }
                             }
                         }
+                        parts.lock().unwrap().push((start, words));
                     }
-                    parts.lock().unwrap().push((start, words));
-                }
+                })
             });
         }
     });
@@ -482,6 +490,24 @@ mod tests {
             rows(&found[0], 102).contains(&0),
             "新しいコミット（200、Alice）も探せる"
         );
+    }
+
+    #[test]
+    fn errors_from_reading_on_worker_threads_are_in_the_requester_language() {
+        // 読み手は分けたスレッドで動く。共有の daemon では、そこでのエラーの文も頼んだ FE の言語で作る。
+        let read = |_: &[Oid]| -> Result<Vec<CommitText>> {
+            Err(crate::tr!("Commit {id} not found", id = "x").into())
+        };
+        let never = || false;
+        let ids: Vec<Oid> = (0..10).map(oid).collect();
+        let terms = [TextTerm::new(TextField::Author, "alice")];
+        let japanese = "コミット x が見つからない";
+        crate::i18n::with(crate::i18n::Lang::Ja, || {
+            let index = TextIndex::build(&ids, None, &read, &never).err().unwrap();
+            assert_eq!(index.to_string(), japanese);
+            let scanned = scan(&ids, &terms, None, &read, &never).unwrap_err();
+            assert_eq!(scanned.to_string(), japanese);
+        });
     }
 
     #[test]
