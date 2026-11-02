@@ -401,6 +401,22 @@ fn works_the_same_directly_through_the_daemon_and_over_ssh() {
             .collect();
         assert_eq!(texts, ["b", "B"], "{at}: {staged}");
 
+        // 打ち間違えた名前は、空の差分ではなくエラーに（`--` の後ならパスとして扱う）。SSH 先の作業ツリーは手元から
+        // 見えないので確かめない。
+        let typo = env
+            .command(&["diff", "-C", at, "no-such", "--json"])
+            .output()
+            .unwrap();
+        assert_eq!(typo.status.success(), at.starts_with("ssh://"), "{at}");
+        if !typo.status.success() {
+            let text = String::from_utf8_lossy(&typo.stderr);
+            assert!(text.contains("no-such is neither a commit"), "{at}: {text}");
+        }
+        assert_eq!(
+            env.json(&["diff", "-C", at, "--", "no-such", "--json"]),
+            serde_json::json!([])
+        );
+
         // コミットし、残りの変更は捨てて、Undo で戻す。
         let message = format!("change {i}");
         let committed = env.json(&["commit", "-C", at, "-m", &message, "--json"]);

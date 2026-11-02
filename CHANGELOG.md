@@ -63,6 +63,9 @@ becomes the GitHub Release notes.
 - Errors from an SSH host opened through the shared daemon are in the language of the app or CLI that asked, not the
   daemon's.
 
+- `amonhen diff` with a name that is neither a commit nor a file in the working tree stops with an error, as git does,
+  instead of printing an empty diff. Paths after `--` are taken as paths.
+
 - Combine with Older Commit… on a single commit in History marks it in the edit mode; it opened with nothing marked.
 
 - Working Copy puts a check box back when staging fails or changes nothing; it kept showing the click.

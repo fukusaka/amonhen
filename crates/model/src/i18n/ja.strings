@@ -102,6 +102,7 @@
 "Can’t compare {ancestor} and {descendant}" = "{ancestor} と {descendant} を比べられない";
 "Can’t merge {theirs} into {ours}: {error}" = "{theirs} を {ours} にマージできない: {error}";
 "{rev} not found" = "{rev} が見つからない";
+"{arg} is neither a commit nor a path in the working tree (put paths after --)" = "{arg} はコミットでも作業ツリーのパスでもない（パスは -- の後に書く）";
 "{rev} isn’t a commit" = "{rev} はコミットではない";
 "The clone destination folder is invalid" = "clone する先のフォルダがおかしい";
 "The clone destination folder’s name is invalid" = "clone する先のフォルダの名前がおかしい";
