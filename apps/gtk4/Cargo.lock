@@ -57,6 +57,7 @@ dependencies = [
  "amonhen-projection",
  "amonhen-syntax",
  "arc-swap",
+ "gix-date",
  "imara-diff",
  "memmap2",
  "postcard",
