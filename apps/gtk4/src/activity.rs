@@ -204,6 +204,18 @@ fn unchanged(last: &std::cell::Cell<u64>, key: impl std::hash::Hash) -> bool {
 const TIME: i32 = 100;
 /// リポジトリの列の幅（`name — host (daemon)` も入るように、macOS 版の列より広く）。
 const REPOSITORY: i32 = 180;
+/// リポジトリの列を、名前に合わせて広げるときの上限（中身の列を残す）。
+const REPOSITORY_MAX: i32 = 320;
+
+/// リポジトリの列の幅: いちばん長い名前が入る幅（[`REPOSITORY`] から [`REPOSITORY_MAX`] まで）。文字の大きさは
+/// 機械ごとに違うので、決まった幅では名前が切れる。
+fn repository_width<S: AsRef<str>>(widget: &impl IsA<gtk::Widget>, names: &[S]) -> i32 {
+    names
+        .iter()
+        .map(|n| widget.create_pango_layout(Some(n.as_ref())).pixel_size().0 + 2)
+        .fold(REPOSITORY, i32::max)
+        .min(REPOSITORY_MAX)
+}
 
 /// 中身を作り直す一覧（行は少ないので ListBox で足りる）。
 fn list() -> (gtk::ScrolledWindow, gtk::ListBox) {
@@ -655,7 +667,19 @@ impl Activity {
                             && !label_text.to_lowercase().contains(&text)
                             && !repo_path.to_lowercase().contains(&text)))
                 });
-                for r in shown.take(1000) {
+                let shown: Vec<&Value> = shown.take(1000).collect();
+                let names: Vec<String> = shown
+                    .iter()
+                    .map(|r| match r["remote"].as_str() {
+                        Some(name) => tr!("{name} (daemon)", name = name),
+                        None => {
+                            let repo_path = r["repo"].as_str().unwrap_or_default();
+                            repo_path.rsplit('/').next().unwrap_or_default().to_owned()
+                        }
+                    })
+                    .collect();
+                let name_width = repository_width(&op_list, &names);
+                for (r, name) in shown.into_iter().zip(names) {
                     let ok = r["ok"].as_bool();
                     let label_text = r["label"].as_str().unwrap_or_default();
                     let repo_path = r["repo"].as_str().unwrap_or_default();
@@ -665,10 +689,6 @@ impl Activity {
                         Some(false) => ("✗", "activity-error"),
                     };
                     let remote = r["remote"].as_str();
-                    let name = match remote {
-                        Some(name) => tr!("{name} (daemon)", name = name),
-                        None => repo_path.rsplit('/').next().unwrap_or_default().to_owned(),
-                    };
                     let mut content = label_text.to_owned();
                     if ok.is_none()
                         && let Some(p) = r["progress"].as_str()
@@ -683,7 +703,7 @@ impl Activity {
                             &["numeric", "dim-label"],
                         ),
                         (mark.0, 16, &[mark.1]),
-                        (&name, REPOSITORY, &[]),
+                        (&name, name_width, &[]),
                         (&content, 0, &[]),
                         (&duration, 64, &["numeric"]),
                     ]);
@@ -962,11 +982,13 @@ impl Activity {
                     return;
                 }
                 event_list.remove_all();
-                for (t, repo, text) in items {
+                let repos: Vec<&str> = items.iter().map(|(_, repo, _)| repo.as_str()).collect();
+                let name_width = repository_width(&event_list, &repos);
+                for (t, repo, text) in &items {
                     event_list.append(&row(&[
-                        (&time(t), TIME, &["numeric", "dim-label"]),
-                        (&repo, REPOSITORY, &[]),
-                        (&text, 0, &[]),
+                        (&time(*t), TIME, &["numeric", "dim-label"]),
+                        (repo, name_width, &[]),
+                        (text, 0, &[]),
                     ]));
                 }
             }
