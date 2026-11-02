@@ -790,6 +790,8 @@ suite('Amon Hen in VSCode', () => {
   test('shows History, commit details and diffs through the daemon', async () => {
     const mark = posted.length;
     const panel = await showView('amonhen.showHistory');
+    // 開いたときの読み直しは、記録を始める前に送り終えていることがある
+    await panel.history.reset();
     const rows = await waitPosted('rows', mark, (m) => m.rows.some((r) => r.subject === 'add crlf.txt'));
     const commit = rows.rows.find((r) => r.subject === 'add crlf.txt')!;
     await panel.history.handle({ type: 'select', oid: commit.oid });
@@ -830,8 +832,10 @@ suite('Amon Hen in VSCode', () => {
     // 一致だけの History にしても、選んでいたコミットを選んだまま
     at = posted.length;
     await panel.history.handle({ type: 'search', query, matchingOnly: true, selected: last });
-    assert.equal((await waitPosted('reset', at, (m) => m.select !== undefined)).select, state.rows.length - 1);
-    const only = await waitPosted('rows', at, (m) => m.total !== undefined);
+    const switched = await waitPosted('reset', at, (m) => m.select !== undefined);
+    assert.equal(switched.select, state.rows.length - 1);
+    // 一致だけの行は、切り替えの reset の後から（History の読み直しが間に入っても取り違えない）
+    const only = await waitPosted('rows', posted.indexOf(switched), (m) => m.total !== undefined);
     assert.equal(only.total, state.rows.length);
     assert.ok(only.rows.every((r) => /crlf/i.test(r.subject)));
     assert.ok((await waitPosted('search', at, (m) => !m.state.searching)).state.matchingOnly);

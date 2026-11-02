@@ -132,6 +132,8 @@ export class HistoryController implements vscode.Disposable {
   private searching: string | undefined;
   /** 一致だけを出す切り替え（最後に頼まれたもの） */
   private matchingOnly = false;
+  /** ref をまだ読み終えていない読み直しの数（その間の ref の知らせは、その読み直しが拾う） */
+  private readingRefs = 0;
 
   constructor(post: (message: HistoryHostMessage) => void) {
     this.post = post;
@@ -177,12 +179,13 @@ export class HistoryController implements vscode.Disposable {
    */
   private onRepositoryChange(changed: ReadonlySet<Section>): void {
     const headOid = this.repo?.current.status?.branch.oid;
-    const refsChanged = changed.has('branches') || changed.has('remotes') || changed.has('tags');
+    const refsChanged =
+      this.readingRefs === 0 && (changed.has('branches') || changed.has('remotes') || changed.has('tags'));
     if (changed.has('mailmap')) {
       this.details.clear();
     }
     // status をまだ読んでいなければ、HEAD が動いたかは分からない（読み直さない）
-    const headMoved = headOid !== undefined && headOid !== this.headOid;
+    const headMoved = this.readingRefs === 0 && headOid !== undefined && headOid !== this.headOid;
     if (refsChanged || changed.has('mailmap') || headMoved) {
       clearTimeout(this.resetTimer);
       this.resetTimer = setTimeout(() => void this.reset(), 100);
@@ -337,17 +340,28 @@ export class HistoryController implements vscode.Disposable {
       this.post({ type: 'rows', start: 0, rows: [], done: true });
       return;
     }
+    this.readingRefs++;
+    let refsRead = false;
+    const doneReadingRefs = () => {
+      if (!refsRead) {
+        refsRead = true;
+        this.readingRefs--;
+      }
+    };
     try {
       await repo.want('tags');
       const head = await repo.backend.head();
       const state = repo.current;
       this.headOid = head.oid;
+      doneReadingRefs();
       this.labels = refLabels(head, state.branches ?? [], state.remoteBranches ?? [], state.tags ?? []);
       this.chain = head.oid
         ? editableChain(await repo.backend.log(['--first-parent', 'HEAD'], 0, EDITABLE_LIMIT))
         : new Map();
     } catch (err) {
       showError(err);
+    } finally {
+      doneReadingRefs();
     }
     this.searchAbort?.abort();
     for (const previous of [this.daemon, this.base]) {
