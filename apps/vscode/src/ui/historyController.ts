@@ -221,7 +221,18 @@ export class HistoryController implements vscode.Disposable {
         break;
       }
       case 'open': {
-        const commit = this.commit(message.oid);
+        // History にないコミット（Reflog の、どのブランチからも辿れないもの）は、出した詳細から
+        const details = this.details.get(message.oid);
+        const commit =
+          this.commit(message.oid) ??
+          (details && {
+            oid: details.oid,
+            parents: details.parents,
+            author: details.author.name,
+            email: details.author.email,
+            date: details.author.date,
+            subject: details.message.split('\n', 1)[0] ?? '',
+          });
         if (this.repo && commit) {
           await openCommitChanges(this.repo, commit).catch(showError);
         }
@@ -321,6 +332,28 @@ export class HistoryController implements vscode.Disposable {
       }
     }
     this.post({ type: 'commitDiff', oid, path, diff });
+  }
+
+  /**
+   * oid のコミットを選んで見せる（Reflog の Show in History）。今の範囲になければ All Branches にして探す。
+   * 共有の daemon の History だけ。見つかったか返す（一致だけの History で、一致しなければ見つからない）
+   */
+  async reveal(oid: string): Promise<boolean> {
+    const rowOf = async (): Promise<number | undefined> => {
+      const shown = this.daemon;
+      if (!shown) return undefined;
+      const row = (await shown.client.call({ op: 'historyRowOf', history: shown.history, id: oid })).json['row'];
+      return typeof row === 'number' ? row : undefined;
+    };
+    let row = await rowOf();
+    if (row === undefined && this.scope !== 'all') {
+      this.scope = 'all';
+      await this.reset();
+      row = await rowOf();
+    }
+    if (row === undefined) return false;
+    this.post({ type: 'reveal', row });
+    return true;
   }
 
   /** 最初から読み直す */

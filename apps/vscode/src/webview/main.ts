@@ -1,15 +1,17 @@
 /**
- * メインビュー。Working Copy か History のどちらかを出す。どちらを出すかはサイドバーのナビで選ぶ。
- * 両方の画面を作っておき、表示だけを切り替えるので、切り替えたときに作り直さない。
+ * メインビュー。Working Copy・History・Reflog のどれかを出す。どれを出すかはサイドバーのナビで選ぶ。
+ * どの画面も作っておき、表示だけを切り替えるので、切り替えたときに作り直さない。
  */
 import type { HostMessage, ViewName } from '../view/protocol.ts';
 import { el, getState, post, updateState, type View } from './api.ts';
 import { createHistoryView } from './history.ts';
+import { createReflogView } from './reflog.ts';
 import { createWorkingCopyView } from './workingCopy.ts';
 
 const views: Record<ViewName, View> = {
   workingCopy: createWorkingCopyView(),
   history: createHistoryView(),
+  reflog: createReflogView(),
 };
 
 const content = el('div', 'content');

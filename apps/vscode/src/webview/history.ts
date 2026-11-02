@@ -595,6 +595,9 @@ export function createHistoryView(): View {
         }
         requestDetails();
         break;
+      case 'reveal':
+        select(message.row, true);
+        break;
       case 'searchable':
         search.hidden = !message.searchable;
         break;

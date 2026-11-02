@@ -77,6 +77,16 @@ is in [front.md](front.md), and the design in item 18 of
 - Range Diff (Compare with Previous Version on a local branch, and Range Diff… in the palette) shows a read-only
   `amonhen:` document in `git range-diff`'s form. The engine runs the core's `previousVersion` and `rangeDiff`; the
   git execution layer reads the branch's reflog (`git log -g`) and runs `git range-diff` itself.
+- Features that came after the engine are built on the engine only (the core's commands through `run`); without it
+  their sidebar rows and commands are hidden (the `amonhen.engine` context key).
+- Reflog, the sidebar's last row, opens a page of the main view with HEAD's reflog (the core's `reflog`) on the left
+  and the selected entry's commit on the right, in the same details pane as History. Entries no ref reaches are marked
+  "not on any branch". Its buttons and context menu create a branch or tag there, check it out (detached), reset to
+  it, show it in History (switching to All Branches when the current scope lacks it, `historyRowOf`) and copy its ID
+  or name. It reloads when HEAD moves.
+- Reset Current Branch to Here… (History's commit menu and Reflog) asks Mixed, Soft or Hard in a modal and runs the
+  core's `reset`, which stashes uncommitted changes before a hard reset and records the Undo. Checkout (Detached)
+  works on both paths.
 
 ## Implementation approach for the required features
 
@@ -206,3 +216,19 @@ Using the engine:
 
 - [ ] 12. History, diffs, the Working Copy and writes through the shared daemon. Tracked as item 18 of
   [design.md](design.md)
+
+Catching up with the macOS app (one feature per pull request, through the engine; [frontends.md](frontends.md) tracks
+what is still missing). GitHub, AI, Activity beyond the Undo log, the machine-wide git settings and localization are
+left out for now: VSCode has its own extensions and settings for them.
+
+- [x] 13. Reflog, Reset to a commit, and Checkout (Detached) of a commit
+- [ ] 14. Tag and remote menus, tag marks for remotes and signatures
+- [ ] 15. Worktrees
+- [ ] 16. File History
+- [ ] 17. Blame
+- [ ] 18. Branches arranged as in the app, favorites, archived, several selected, filtering
+- [ ] 19. Signature marks in History; Go to HEAD, Parent, Child
+- [ ] 20. Fetching more of a shallow clone, all contents of a partial clone
+- [ ] 21. The rest of Stashes (Branch…, `--index`, row details, Pop asking first)
+- [ ] 22. Undo asking first, and the Undo log
+- [ ] 23. Repository settings
