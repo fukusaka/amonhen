@@ -10,7 +10,7 @@ use amonhen_backend_gix::GixBackend;
 use amonhen_core::Repository;
 use amonhen_model::GitBackend;
 use amonhen_projection::FrontendProfile;
-use amonhen_remote::{Connection, RemoteBackend, Server};
+use amonhen_remote::{Connection, Notification, RemoteBackend, Server};
 
 fn git(dir: &Path, args: &[&str]) {
     amonhen_model::testing::isolate_from_user_settings();
@@ -287,4 +287,59 @@ fn sparse_checkout_through_the_daemon() {
     );
     assert_eq!(run(r#"{"op":"disableSparseCheckout"}"#)["ok"], true);
     assert!(dir.join("b/f.txt").exists());
+}
+
+/// mailmap を聞き直して返事を待つ間に変化の知らせが届いても、止まらない（返事を読むスレッドが、知らせを受けて
+/// mailmap のロックを待っていた）。その変化は、次に聞くときに拾う。
+#[test]
+fn a_change_notice_while_asking_for_the_mailmap_does_not_stall() {
+    use amonhen_remote::frame::{self, Kind};
+    use amonhen_remote::wire::{BUILD_ID, HELLO_VERSION, Hello, Request};
+
+    let (client_read, mut server_write) = std::io::pipe().unwrap();
+    let (mut server_read, client_write) = std::io::pipe().unwrap();
+    let (asked_tx, asked) = std::sync::mpsc::channel();
+    // mailmap の要求には、先に変化を知らせてから答える daemon。
+    std::thread::spawn(move || {
+        while let Ok(Some(f)) = frame::read(&mut server_read) {
+            // 挨拶のほかは、先頭の 1 バイトが言語。
+            let body = match f.kind {
+                Kind::LangRequest => &f.payload[1..],
+                _ => &f.payload[..],
+            };
+            let reply = match postcard::from_bytes::<Request>(body).unwrap() {
+                Request::Hello { .. } => postcard::to_stdvec(&Hello {
+                    version: HELLO_VERSION,
+                    build: BUILD_ID.to_owned(),
+                }),
+                Request::Paths => postcard::to_stdvec(&amonhen_model::RepoPaths {
+                    git_dir: "/r/.git".into(),
+                    common_dir: "/r/.git".into(),
+                    workdir: Some("/r".into()),
+                }),
+                Request::Mailmap { .. } => {
+                    let changed = postcard::to_stdvec(&Notification::Changed(1)).unwrap();
+                    frame::write(&mut server_write, Kind::Notify, 0, &changed).unwrap();
+                    asked_tx.send(()).unwrap();
+                    postcard::to_stdvec(&None::<amonhen_model::Mailmap>)
+                }
+                other => panic!("{other:?}"),
+            };
+            frame::write(&mut server_write, Kind::Ok, f.id, &reply.unwrap()).unwrap();
+        }
+    });
+    let backend = RemoteBackend::connect(Connection::new(client_read, client_write)).unwrap();
+
+    let (done_tx, done) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for _ in 0..2 {
+            backend.mailmap().unwrap();
+        }
+        done_tx.send(()).unwrap();
+    });
+    let limit = std::time::Duration::from_secs(10);
+    done.recv_timeout(limit)
+        .expect("mailmap の返事を待ったまま止まった");
+    // 1 回目の途中で知らされた変化で、2 回目も聞き直す（間を置かずに聞いても）。
+    assert_eq!(asked.try_iter().count(), 2);
 }

@@ -166,6 +166,8 @@ impl Connection {
         self.remote_engine.lock().unwrap().clone()
     }
 
+    /// 知らせを受けたら `f` を呼ぶ。`f` は返事を読むスレッドで動くので、`call` の返事を待つ間に持たれうるロックを
+    /// 取ってはいけない（返事を読めなくなって、どちらも止まる）。
     pub fn on_notification(&self, f: impl Fn(Notification) + Send + Sync + 'static) {
         self.listeners.lock().unwrap().push(Box::new(f));
     }
@@ -298,13 +300,22 @@ pub struct RemoteBackend {
     paths: RepoPaths,
     ops: RemoteOperations,
     files: Arc<RemoteFiles>,
-    mailmap: Arc<Mutex<MailmapCache>>,
+    mailmap: Arc<MailmapCache>,
 }
 
 /// 受け取った mailmap。リポジトリの変化を知らされたか、しばらく経ったら、変わったかを daemon に聞き直す（変わって
 /// いなければ答えは空）。
 #[derive(Default)]
 struct MailmapCache {
+    /// 聞き直す間もロックを持つ（同時に聞き直さない）。
+    state: Mutex<MailmapState>,
+    /// リポジトリの変化を知らされた。知らせは返事を読むスレッドで受けるので、`state` のロックは取らない（聞き直して
+    /// 返事を待つ間もロックを持つので、取ると返事を読めなくなる）。
+    changed: AtomicBool,
+}
+
+#[derive(Default)]
+struct MailmapState {
     mailmap: Option<Arc<amonhen_model::Mailmap>>,
     checked: Option<std::time::Instant>,
 }
@@ -331,12 +342,12 @@ impl RemoteBackend {
         {
             conn.set_remote_engine(engine);
         }
-        let mailmap = Arc::new(Mutex::new(MailmapCache::default()));
+        let mailmap = Arc::new(MailmapCache::default());
         let stale = Arc::downgrade(&mailmap);
         conn.on_notification(move |n| match n {
             Notification::Changed(_) => {
                 if let Some(cache) = stale.upgrade() {
-                    cache.lock().unwrap().checked = None;
+                    cache.changed.store(true, Ordering::Relaxed);
                 }
             }
         });
@@ -610,13 +621,18 @@ impl GitBackend for RemoteBackend {
     }
 
     fn mailmap(&self) -> Result<Arc<amonhen_model::Mailmap>> {
-        let mut cache = self.mailmap.lock().unwrap();
-        if let (Some(mailmap), Some(checked)) = (&cache.mailmap, cache.checked)
+        let mut cache = self.mailmap.state.lock().unwrap();
+        // 聞き直している間に知らされた変化は、次に聞くときに拾う。
+        let changed = self.mailmap.changed.swap(false, Ordering::Relaxed);
+        if !changed
+            && let (Some(mailmap), Some(checked)) = (&cache.mailmap, cache.checked)
             && checked.elapsed() < MAILMAP_RECHECK
         {
             return Ok(mailmap.clone());
         }
         let known = cache.mailmap.as_ref().map(|m| m.fingerprint());
+        // 確かめられなければ、次も聞き直す。
+        cache.checked = None;
         let fresh: Option<amonhen_model::Mailmap> = self.conn.call(&Request::Mailmap { known })?;
         if let Some(fresh) = fresh {
             cache.mailmap = Some(Arc::new(fresh));
