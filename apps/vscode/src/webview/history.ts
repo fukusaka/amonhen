@@ -4,6 +4,7 @@
  * 末尾に近づいたら次のページを要求する。
  */
 import type { FileDiff } from '../diff/fileDiff.ts';
+import { type LaneMetrics, lanePositions } from '../history/lanes.ts';
 import type { CommitDetails, MessageEdit, Person, RowData, Scope } from '../history/protocol.ts';
 import type { HostMessage } from '../view/protocol.ts';
 import { el, formatDate, getState, post, updateState, type View } from './api.ts';
@@ -11,6 +12,17 @@ import { renderDiffBody } from './diffView.ts';
 
 const ROW_HEIGHT = 24;
 const LANE_WIDTH = 14;
+/** グラフの列の幅の上限。線が多い履歴でも、文字を押し出さない（アプリと同じ） */
+const GRAPH_MAX_WIDTH = 120;
+/** グラフの左右の余白の和 */
+const GRAPH_INSET = 4;
+const LANES: LaneMetrics = {
+  full: LANE_WIDTH,
+  thin: 3,
+  minFull: 7,
+  minThin: 0,
+  available: GRAPH_MAX_WIDTH - GRAPH_INSET,
+};
 /** 見えている範囲の外に余分に描く行数 */
 const OVERSCAN = 8;
 /** 末尾からこの行数以内に来たら次を読む */
@@ -25,6 +37,12 @@ const PALETTE = [
   '--vscode-terminal-ansiCyan',
   '--vscode-terminal-ansiMagenta',
 ];
+
+/** グラフの列の幅と、レーンごとの中心の横位置（左の余白を除く） */
+interface GraphColumn {
+  width: number;
+  centers: readonly number[];
+}
 
 /** mailmap で置き換えた人。記録と違えば、記録されたものを下に小さく添える */
 function withRecorded(text: string, recorded: Person | undefined): Node | string {
@@ -101,15 +119,15 @@ export function createHistoryView(): View {
     spacer.style.height = `${rows.length * ROW_HEIGHT}px`;
     const first = Math.max(0, Math.floor(list.scrollTop / ROW_HEIGHT) - OVERSCAN);
     const last = Math.min(rows.length, Math.ceil((list.scrollTop + list.clientHeight) / ROW_HEIGHT) + OVERSCAN);
-    // グラフの幅は見えている範囲で一番広い行に合わせる
-    let lanes = 1;
-    for (let i = first; i < last; i++) {
-      lanes = Math.max(lanes, rows[i]!.graph.width);
-    }
-    const graphWidth = lanes * LANE_WIDTH + 4;
+    // レーンは描く範囲に合わせて並べ（点のあるレーンは広く、線だけのレーンは細く）、列は上限までに収める
+    const lanes = lanePositions(rows.slice(first, last).map((r) => r.graph), LANES);
+    const graph = {
+      width: Math.min(GRAPH_MAX_WIDTH, GRAPH_INSET + Math.max(lanes.width, LANE_WIDTH)),
+      centers: lanes.centers,
+    };
     const elements: HTMLElement[] = [];
     for (let i = first; i < last; i++) {
-      elements.push(renderRow(rows[i]!, i, graphWidth));
+      elements.push(renderRow(rows[i]!, i, graph));
     }
     spacer.replaceChildren(...elements);
 
@@ -120,7 +138,7 @@ export function createHistoryView(): View {
     status.textContent = done ? `${rows.length} commits` : `${rows.length}+ commits`;
   }
 
-  function renderRow(row: RowData, index: number, graphWidth: number): HTMLElement {
+  function renderRow(row: RowData, index: number, graph: GraphColumn): HTMLElement {
     const el = document.createElement('div');
     el.className = index === selected ? 'row selected' : 'row';
     el.style.top = `${index * ROW_HEIGHT}px`;
@@ -138,7 +156,7 @@ export function createHistoryView(): View {
       el.draggable = true;
     }
 
-    el.append(drawGraph(row, graphWidth));
+    el.append(drawGraph(row, graph));
     const text = document.createElement('div');
     text.className = 'text';
     for (const ref of row.refs) {
@@ -166,7 +184,7 @@ export function createHistoryView(): View {
     return el;
   }
 
-  function drawGraph(row: RowData, width: number): HTMLCanvasElement {
+  function drawGraph(row: RowData, { width, centers }: GraphColumn): HTMLCanvasElement {
     const canvas = document.createElement('canvas');
     const ratio = window.devicePixelRatio || 1;
     canvas.width = width * ratio;
@@ -176,7 +194,7 @@ export function createHistoryView(): View {
     const ctx = canvas.getContext('2d')!;
     ctx.scale(ratio, ratio);
     ctx.lineWidth = 1.5;
-    const x = (col: number) => col * LANE_WIDTH + LANE_WIDTH / 2 + 2;
+    const x = (col: number) => GRAPH_INSET / 2 + (centers[col] ?? col * LANE_WIDTH + LANE_WIDTH / 2);
     const y = (pos: number) => (pos * ROW_HEIGHT) / 2;
     const { segs } = row.graph;
     for (let i = 0; i < segs.length; i += 5) {

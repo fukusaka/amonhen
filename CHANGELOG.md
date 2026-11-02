@@ -703,6 +703,8 @@ First release.
 
 - Starting a merge, rebase, cherry-pick or revert while another one is stopped no longer reports a conflict; it says
   which one is in progress, to continue or abort first.
+- In a History with many branches side by side (git/git, linux), the graph no longer pushes the commit text out of the
+  list: lanes with only lines are squeezed and the graph stays within a fixed width, as in the app.
 
 #### Fixed
 

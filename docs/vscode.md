@@ -160,6 +160,7 @@ On the git execution layer, the time taken by a small git command is almost enti
 - Get status with `git status --porcelain=v2 -z`. For large repositories, suggest enabling `core.untrackedCache` and fsmonitor.
 - Pass `--no-optional-locks` to read commands, so as not to contend for locks with the user's own git operations.
 - Fetch the log about 200 entries at a time. The graph's lane computation advances bit by bit on the extension host side, and only minimal arrays are sent to the Webview. The Webview side renders with virtual scrolling.
+- The Webview places the graph's lanes as the app does (`crates/core/src/lanes.rs`): lanes with a commit in view are wide, lanes with only lines are squeezed into a thin bundle, and the column stays within 120px, so the text is never pushed out of the list.
 - Suggesting `git commit-graph write --reachable` speeds up the graph display and ancestry checks.
 - With Remote-SSH, postMessage goes over SSH, so large diffs and logs are sent in chunks.
 

@@ -155,6 +155,7 @@ git 実行層では、小さな git コマンドの所要時間は、ほぼプ�
 - status は `git status --porcelain=v2 -z` で取得する。大きなリポジトリでは `core.untrackedCache` と fsmonitor の有効化を案内する。
 - 読み取り系コマンドには `--no-optional-locks` を付け、ユーザー自身の git 操作とロックを奪い合わない。
 - log は 200 件程度ずつ取得する。グラフのレーン計算は拡張ホスト側で少しずつ進め、Webview には最小限の配列だけ送る。Webview 側は仮想スクロールで描画する。
+- グラフのレーンは Webview がアプリと同じ決め方（`crates/core/src/lanes.rs`）で並べる。見えている範囲に点があるレーンは広く、線だけのレーンは細い束に詰め、列は 120px までに収めるので、文字が一覧の外に押し出されない。
 - `git commit-graph write --reachable` の実行を案内すると、グラフ表示と ancestry 判定が速くなる。
 - Remote-SSH では postMessage が SSH を経由するため、大きな差分やログは分割して送る。
 
