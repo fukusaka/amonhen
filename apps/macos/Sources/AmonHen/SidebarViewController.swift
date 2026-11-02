@@ -345,6 +345,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     var onSelectWorktree: ((String) -> Void)?
     enum WorktreeAction { case reveal, terminal, remove, prune }
     var onWorktreeAction: ((String, WorktreeAction) -> Void)?
+    /// worktree のフォルダがこの Mac にあるか（SSH 先・daemon 越しなら、Finder・ターミナルでは開けないので出さない）。
+    var worktreesAreLocal = true
     /// Remotes の組の文脈メニューの「リモートを追加…」（name は nil）と、リモートの「名前を変更…」「URL を編集…」「削除…」。
     enum RemoteAction { case add, edit, remove }
     var onRemoteAction: ((String?, RemoteAction) -> Void)?
@@ -1169,8 +1171,10 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             let path = w.path
             if w.prunable == nil {
                 menu.addItem(ClosureMenuItem(title: L("Edit This Worktree")) { [weak self] in self?.onSelectWorktree?(path) })
-                menu.addItem(ClosureMenuItem(title: L("Show in Finder")) { [weak self] in self?.onWorktreeAction?(path, .reveal) })
-                menu.addItem(ClosureMenuItem(title: L("Open in Terminal")) { [weak self] in self?.onWorktreeAction?(path, .terminal) })
+                if worktreesAreLocal {
+                    menu.addItem(ClosureMenuItem(title: L("Show in Finder")) { [weak self] in self?.onWorktreeAction?(path, .reveal) })
+                    menu.addItem(ClosureMenuItem(title: L("Open in Terminal")) { [weak self] in self?.onWorktreeAction?(path, .terminal) })
+                }
             }
             if !w.main {
                 menu.addItem(.separator())

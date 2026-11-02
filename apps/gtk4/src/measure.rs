@@ -1,12 +1,15 @@
 //! `--measure-scroll`: History を毎フレーム決まった行数だけスクロールし、メインスレッドの時間と
 //! 落としたフレームを数える（macOS 版の `--measure-scroll` と同じ考え）。
 //!
+//! `--measure-select <n>`: History の行を n 個順に選び、選んでから詳細・差分が出るまでの段階ごとの時間を測る
+//! （macOS 版の `--measure-select` と `FrameProfile`）。
+//!
 //! 画面に出るまでの遅れは、GTK のフレームの記録（`GdkFrameTimings`）の、フレームの始まり（スクロールを
 //! 進めた時点）から、コンポジタが画面に出したと知らせた時刻（presentation time）まで。GPU の仕事や
 //! コンポジタの合成も含む。知らせはフレームを描いた後で届くので、数フレーム後に読む。
 
 use std::cell::RefCell;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use std::time::Instant;
 
@@ -154,4 +157,139 @@ fn summary(r: &Record, snapshots: &[f64], frames: usize) -> String {
         r.presented.len(),
         r.unknown + r.unpresented.len(),
     )
+}
+
+/// `--measure-select` の記録（選ぶたびに 1 つ。macOS 版の `FrameProfile` の frames）。
+#[derive(Default)]
+struct Selections {
+    /// 今の選択を始めた時刻。
+    selected_at: Option<Instant>,
+    current: HashMap<&'static str, f64>,
+    /// 段階の名前（出てきた順）。
+    order: Vec<&'static str>,
+    done: Vec<HashMap<&'static str, f64>>,
+    /// 差分が出たら次を選ぶ。
+    next: Option<Rc<dyn Fn()>>,
+}
+
+thread_local! {
+    static SELECTIONS: RefCell<Option<Selections>> = const { RefCell::new(None) };
+}
+
+/// `--measure-select` の間: 選んでから今までの時間を `name` に足す。
+pub fn select_mark(name: &'static str) {
+    SELECTIONS.with(|s| {
+        if let Some(s) = s.borrow_mut().as_mut()
+            && let Some(at) = s.selected_at
+        {
+            s.add(name, at.elapsed().as_secs_f64() * 1000.0);
+        }
+    });
+}
+
+/// `--measure-select` の間: 裏で測った時間を `name` に足す。
+pub fn select_add(name: &'static str, ms: f64) {
+    SELECTIONS.with(|s| {
+        if let Some(s) = s.borrow_mut().as_mut()
+            && s.selected_at.is_some()
+        {
+            s.add(name, ms);
+        }
+    });
+}
+
+/// `--measure-select` の間: 差分を出した（読めなかったときも）。この選択を締めて、次を選ぶ。
+pub fn select_shown() {
+    select_mark("select: → diff shown");
+    let next = SELECTIONS.with(|s| {
+        let mut s = s.borrow_mut();
+        let s = s.as_mut()?;
+        s.selected_at?;
+        s.selected_at = None;
+        let current = std::mem::take(&mut s.current);
+        s.done.push(current);
+        s.next.clone()
+    });
+    if let Some(next) = next {
+        glib::idle_add_local_once(move || next());
+    }
+}
+
+impl Selections {
+    fn add(&mut self, name: &'static str, ms: f64) {
+        if !self.order.contains(&name) {
+            self.order.push(name);
+        }
+        *self.current.entry(name).or_default() += ms;
+    }
+
+    /// 段階ごとの p50 / p95（ミリ秒）。
+    fn summary(&self) -> String {
+        self.order
+            .iter()
+            .map(|name| {
+                let values: Vec<f64> = self
+                    .done
+                    .iter()
+                    .map(|f| f.get(name).copied().unwrap_or(0.0))
+                    .collect();
+                format!(
+                    "  {name:<36} p50 {}  p95 {} ms",
+                    percentile(&values, 0.5),
+                    percentile(&values, 0.95)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+/// History の行を `count` 個順に選び（前の差分が出てから次を）、段階ごとの時間を出して終わる。行は History 全体に
+/// 散らす（キャッシュに乗らないように。macOS 版と同じ選び方）。
+pub fn select(window: &gtk::ApplicationWindow, view: &HistoryView, count: usize) {
+    let total = view
+        .current()
+        .map_or(0, |(_, history)| history.graph.ids().len());
+    if total < 2 {
+        eprintln!("History のコミットが 2 つより少ない");
+        window.close();
+        return;
+    }
+    let done = Rc::new(std::cell::Cell::new(0usize));
+    let (window, view) = (window.downgrade(), view.downgrade());
+    let next: Rc<dyn Fn()> = Rc::new(move || {
+        let n = done.get();
+        if n >= count {
+            let summary = SELECTIONS.with(|s| s.borrow_mut().take().map(|s| s.summary()));
+            println!("selections: {count}\n{}", summary.unwrap_or_default());
+            if let Some(w) = window.upgrade() {
+                w.close();
+            }
+            return;
+        }
+        // 起動時に選んである先頭の行は避ける（選び直しても読み込みが起きない）。
+        let mut row = 1 + (n * 7919) % (total - 1).max(1);
+        done.set(n + 1);
+        // 今選んでいる行と同じなら、隣に（選び直しにならず、差分を読まないので止まってしまう）。
+        if let Some(view) = view.upgrade()
+            && view.selected() == Some(row as u32)
+        {
+            row = (row + 1) % total;
+        }
+        SELECTIONS.with(|s| {
+            if let Some(s) = s.borrow_mut().as_mut() {
+                s.selected_at = Some(Instant::now());
+            }
+        });
+        if let Some(view) = view.upgrade() {
+            view.select(row as u32);
+        }
+    });
+    SELECTIONS.with(|s| {
+        s.replace(Some(Selections {
+            next: Some(next.clone()),
+            ..Selections::default()
+        }))
+    });
+    next();
 }

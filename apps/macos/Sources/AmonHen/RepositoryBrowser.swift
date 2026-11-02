@@ -943,7 +943,8 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         reload()
     }
 
-    private func ask(_ title: String, message: String, initial: String) -> String? {
+    /// 名前を聞く。Cancel なら nil。空なら nil（`allowEmpty` なら ""。空にして元に戻すとき）。
+    private func ask(_ title: String, message: String, initial: String, allowEmpty: Bool = false) -> String? {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = message
@@ -955,7 +956,7 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         alert.window.initialFirstResponder = field
         guard alert.runModal() == .alertFirstButtonReturn else { return nil }
         let value = field.stringValue.trimmingCharacters(in: .whitespaces)
-        return value.isEmpty ? nil : value
+        return value.isEmpty && !allowEmpty ? nil : value
     }
 
     /// 前回入れた接続先（続けて同じホストのリポジトリを加えやすくする）。
@@ -1149,7 +1150,9 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
             add(L("Add Folder to Scan…")) { [weak self] in self?.addScanFolder() }
         case let .group(name):
             add(L("Rename…")) { [weak self] in
-                guard let new = self?.ask(L("Rename Group"), message: L("Group name"), initial: name) else { return }
+                // 同じ名前のままなら何もしない（下で元のグループを消すと、グループがなくなる）。
+                guard let new = self?.ask(L("Rename Group"), message: L("Group name"), initial: name), new != name
+                else { return }
                 let members = Bookmarks.shared.data.items.filter { $0.group == name }.map(\.path)
                 Bookmarks.shared.addGroup(new)
                 for path in members { Bookmarks.shared.move(path, to: new) }
@@ -1236,8 +1239,12 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         menu.addItem(colorItem)
         add(L("Rename…")) { [weak self] in
             let current = Bookmarks.shared.displayName(path)
-            let name = self?.ask(L("Rename"), message: L("Name shown in the list (leave empty for the folder name)"), initial: current)
-            Bookmarks.shared.rename(path, to: name)
+            // Cancel なら変えない（空にして OK ならフォルダの名前に戻す）。
+            guard let name = self?.ask(
+                L("Rename"), message: L("Name shown in the list (leave empty for the folder name)"), initial: current,
+                allowEmpty: true
+            ) else { return }
+            Bookmarks.shared.rename(path, to: name.isEmpty ? nil : name)
         }
         if !RepositoryLocation.isRemote(path) {
             menu.addItem(.separator())

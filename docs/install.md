@@ -30,8 +30,9 @@ tar xzf amonhen-gtk-<version>-linux-x86_64.tar.gz
 amonhen-gtk-linux-x86_64/install.sh
 ```
 
-This puts it in `~/.local`, adds it to the desktop's app list and sets up the command line tool too. GTK is not
-included; if it is missing, install it (`sudo apt install libgtk-4-1` on Ubuntu).
+This puts it in `~/.local`, adds it to the desktop's app list and sets up the command line tool too. GTK and
+libadwaita are not included; if they are missing, install them (`sudo apt install libgtk-4-1 libadwaita-1-0` on
+Ubuntu).
 
 ## Command line only
 

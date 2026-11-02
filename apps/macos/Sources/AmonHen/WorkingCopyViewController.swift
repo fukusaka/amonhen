@@ -241,6 +241,12 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         files.delegate = self
         // Space か Enter で、選んだファイルを次のコミットに含める・外す。
         files.onToggle = { [weak self] in self?.toggleSelected() }
+        // ⌫ か Delete で、選んだファイルの変更を捨てる（確かめてから。docs/ux.md の Working Copy）。
+        files.onDiscard = { [weak self] in
+            guard let self else { return }
+            guard let entry = files.item(atRow: files.selectedRow) as? Entry else { return NSSound.beep() }
+            discardFile(entry)
+        }
         let fileMenu = NSMenu()
         fileMenu.delegate = self
         files.menu = fileMenu
@@ -378,6 +384,11 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             if let w, w.generation != self.status?.generation {
                 show(w)
                 loadStats()
+            } else if w != nil {
+                // status は同じでも、変更のあるファイルをさらに書き換えたかもしれない。行数と出している差分は
+                // 読み直す（コアは中身が同じなら前回の status を返すので、一覧は作り直さない）。
+                loadStats()
+                reloadShownDiff()
             }
             loadConflictStates()
             isRefreshing = false
@@ -386,6 +397,13 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
                 refresh()
             }
         }
+    }
+
+    /// 出している差分を読み直し、中身が変わっていれば位置を保って出し直す（コンフリクトはマージエディタのまま）。
+    private func reloadShownDiff() {
+        guard let key = selectedKey, let entry = entries.first(where: { $0.item.path == key.path }),
+              !entry.isConflict else { return }
+        showDiff(of: entry, staged: side(for: entry.item), keepScroll: true, onlyIfChanged: true)
     }
 
     /// 行数を裏で読み、一覧を描き直す（数がなくても一覧は先に出す）。
@@ -661,7 +679,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         }
     }
 
-    private func showDiff(of entry: Entry, staged: Bool, keepScroll: Bool = false) {
+    /// `onlyIfChanged` なら、読んだ差分が出しているものと同じ中身のとき出し直さない（選んだ行を外さない）。
+    private func showDiff(of entry: Entry, staged: Bool, keepScroll: Bool = false, onlyIfChanged: Bool = false) {
         guard let status else { return }
         selectedKey = (entry.item.path, staged)
         titleLabel.stringValue = entry.item.path
@@ -704,6 +723,10 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
                 return (try? status.diff(of: entry.item, staged: staged), false)
             }.value
             guard request == self.request else { return }
+            if onlyIfChanged, let diff, let shown = current, shown.item.path == diff.item.path,
+               shown.isCombined == diff.isCombined, shown.staged == diff.staged, shown.hasSameRows(as: diff) {
+                return
+            }
             sideControl.isHidden = combined || !(entry.item.isStaged && entry.item.isUnstaged)
             selectedKey = (entry.item.path, combined ? false : staged)
             current = diff
@@ -826,6 +849,10 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             } catch {
                 _ = await NSAlert(error: error).beginSheetModal(for: view.window!)
             }
+            // 押したチェックは AppKit が先に進めている。何も変わらなかったとき（失敗・断られた）は status が同じで
+            // 一覧を作り直さないので、今の状態から付け直す。
+            files.reloadData(forRowIndexes: IndexSet(integersIn: 0..<files.numberOfRows), columnIndexes: [0])
+            updateHeader()
             refresh()
         }
     }
@@ -1696,14 +1723,18 @@ final class BarAndContentView: NSView {
     }
 }
 
-/// Space・Enter で選んだファイルを次のコミットに含める・外す一覧。
+/// Space・Enter で選んだファイルを次のコミットに含める・外し、⌫・Delete で変更を捨てる一覧。
 final class KeyOutlineView: NSOutlineView {
     var onToggle: (() -> Void)?
+    var onDiscard: (() -> Void)?
 
     override func keyDown(with event: NSEvent) {
         switch event.charactersIgnoringModifiers {
         case " ", "\r":
             onToggle?()
+        // ⌫（delete）と ⌦（forward delete、NSDeleteFunctionKey）。
+        case "\u{7f}", "\u{f728}":
+            onDiscard?()
         default:
             super.keyDown(with: event)
         }

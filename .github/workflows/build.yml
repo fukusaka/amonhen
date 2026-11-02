@@ -93,7 +93,7 @@ jobs:
           fetch-depth: 0
       - uses: ./.github/actions/apt-install
         with:
-          packages: libgtk-4-dev
+          packages: libgtk-4-dev libadwaita-1-dev
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:

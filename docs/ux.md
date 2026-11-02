@@ -4,6 +4,8 @@
 
 A review, built on "Screen layout" in `docs/design.md`, aimed at making everyday operations as easy as in SourceTree, Fork, Tower and JetBrains (the IDE's Git), or easier. The speed policy (never wait on git on the UI thread, stay within one frame) does not change.
 
+Which of these features each front end (macOS, GTK4, VSCode, CLI) has is in [Front-end features](frontends.md).
+
 ## Principles
 
 | Principle | Details |
@@ -376,22 +378,23 @@ rebase or amend left behind and that no branch reaches any more. It is where tho
 - Each row shows `HEAD@{n}` and what was done (git's message: `commit: …`, `checkout: moving from a to b`,
   `reset: moving to …`), then, in orange, "not on any branch" when no ref reaches the commit, when, the short ID and
   the commit's subject.
-- New Branch… and Checkout (detached) sit above the list. Each row's context menu also has New Tag, Reset ▸ (section
+- New Branch… and Checkout (detached) sit above the list. Each row's context menu also has New Tag, Reset… (section
   5c), Show in History (for commits History has), Copy Commit ID and Copy Name. With two or more worktrees, the bar says whose HEAD it is
   (✎).
 - It reloads when HEAD moves and when the edited worktree changes.
 
 ## 5c. Reset
 
-"Reset <branch> to <commit> ▸" in the context menu of a History row and of a Reflog row moves the edited worktree's
-current branch (HEAD when detached) to that commit, like `git reset`. It asks first, naming the branch and the commit.
+"Reset <branch> to <commit>…" in the context menu of a History row and of a Reflog row moves the edited worktree's
+current branch (HEAD when detached) to that commit, like `git reset`. It asks first, naming the branch and the commit,
+and the sheet chooses how (Soft, Mixed or Hard; Mixed by default).
 
 - Soft keeps the changes of the commits taken off staged; Mixed keeps them in the working tree, unstaged; Hard makes
   the index and the working tree match the commit.
 - Hard keeps uncommitted changes (untracked files are left alone, as git does) as a stash first ("Before reset --hard
   to …"), so nothing is lost.
 - All three can be undone (⌥⌘Z): Soft and Mixed with the same kind of reset, Hard with `--keep`. Commits taken off
-  stay reachable from Reflog. Not during a merge, rebase, cherry-pick or revert.
+  stay reachable from Reflog. During a merge, rebase, cherry-pick or revert, the core refuses it.
 
 ## 5d. Range Diff
 
@@ -709,9 +712,14 @@ Make every operation available from the menus. Shortcuts do not follow other cli
 | Help | List of shortcuts, open the log location |
 
 - Context menus show the same operations under the same names as the menu bar (one name to remember). Every
-  command is defined once (`apps/macos/Sources/AmonHen/Commands.swift`: title, shortcut, tooltip) with an id that is
-  also the GTK4 front end's action name (`win.<id>`); the menu bar is built from that table, and context menus take
-  their titles with a target from the same file ("New Branch from …", "Copy Short ID" with 8 characters everywhere).
+  command is defined once, for every front end, in `crates/commands` (amonhen-commands): its id, English title (also
+  the translation key), tooltip, a platform-neutral shortcut (`Primary+Shift+B`: ⌘ on macOS, Ctrl elsewhere) and the
+  menu section it belongs to. Tests check that ids are unique, shortcuts don't collide on either platform and every
+  translated title has both translations. The id is also the GTK4 front end's action name (`win.<id>`), and GTK4 uses
+  the crate directly; macOS gets a generated `CommandTable.swift` (committed, kept in step by a test) and binds only
+  the selectors in `Commands.swift`. Each front end decides where the sections go (the macOS menu bar; on GTK4 the
+  Repository button and the primary menu) and which commands are enabled. Context menus take their titles with a
+  target from `Commands.swift` ("New Branch from …", "Copy Short ID" with 8 characters everywhere).
 - The View menu is History's display menu (order, items, one line, fold, ancestors, and the commit details: monospaced
   message, avatars, all files in one diff, files as a tree); History's bar button and header show the same menu.
 - Unavailable items are disabled, not removed (so their place can be remembered).

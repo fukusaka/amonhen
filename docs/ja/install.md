@@ -31,8 +31,8 @@ tar xzf amonhen-gtk-<版>-linux-x86_64.tar.gz
 amonhen-gtk-linux-x86_64/install.sh
 ```
 
-`~/.local` に置き、デスクトップのアプリの一覧に出し、コマンドも使えるようにします。GTK は入っていないので、
-なければ入れてください（Ubuntu なら `sudo apt install libgtk-4-1`）。
+`~/.local` に置き、デスクトップのアプリの一覧に出し、コマンドも使えるようにします。GTK と libadwaita は
+入っていないので、なければ入れてください（Ubuntu なら `sudo apt install libgtk-4-1 libadwaita-1-0`）。
 
 ## コマンドだけ
 

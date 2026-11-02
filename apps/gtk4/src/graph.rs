@@ -10,6 +10,7 @@ use std::time::Instant;
 
 use amonhen_core::HistorySnapshot;
 use amonhen_core::lanes::{LaneMetrics, lane_positions};
+use amonhen_core::lineage::{Lineage, NOT_LIT};
 use amonhen_layout::Edge;
 use gtk::prelude::*;
 use gtk::{gdk, graphene, gsk};
@@ -61,18 +62,24 @@ fn color(index: u16, alpha: f32) -> gdk::RGBA {
     gdk::RGBA::new(r, g, b, alpha)
 }
 
-/// レーンの横位置。見えている範囲が変わったら、コアの決めた位置へ約 0.15 秒で近づける。
+/// グラフの右の余白（列の幅に足す）。
+const RIGHT_INSET: f32 = 4.0;
+
+/// レーンの横位置と列の幅。見えている範囲が変わったら、コアの決めた位置と、見えているレーンの分の幅へ約 0.15 秒で
+/// 近づける（macOS 版の `GraphRenderer` と同じ）。
 #[derive(Default)]
 pub struct Lanes {
     current: Vec<f32>,
     target: Vec<f32>,
+    current_width: f32,
+    target_width: f32,
     key: Option<(u64, Range<u32>, u32)>,
     last_advance: Option<Instant>,
     pub animating: bool,
 }
 
 impl Lanes {
-    /// `rows` を `width` の列に描くときの位置に近づける。`animate` でなければすぐ合わせる。
+    /// `rows` を、幅 `width` まで使える列に描くときの位置と列の幅に近づける。`animate` でなければすぐ合わせる。
     pub fn update(
         &mut self,
         history: &HistorySnapshot,
@@ -88,18 +95,23 @@ impl Lanes {
         let key = (history.generation, window.clone(), width.to_bits());
         let history_changed = self.key.as_ref().is_none_or(|k| k.0 != key.0);
         if self.key.as_ref() != Some(&key) {
+            let slack = (m.left_inset - m.lane_width / 2.0) + RIGHT_INSET;
             let metrics = LaneMetrics {
                 full: m.lane_width,
                 thin: m.thin_lane_width,
                 min_full: m.min_lane_width,
                 min_thin: m.min_thin_lane_width,
-                available: width - (m.left_inset - m.lane_width / 2.0) - 4.0,
+                available: width - slack,
             };
-            self.target = lane_positions(&history.layout, window, &metrics).0;
+            let (target, total) = lane_positions(&history.layout, window, &metrics);
+            self.target = target;
+            // 列は見えているレーンの分だけ取る（幹線の分は必ず取る）。
+            self.target_width = (slack + total.max(m.lane_width)).min(width);
             self.key = Some(key);
             // 別の History に替わったときは、動かさずにその位置から始める。
             if history_changed || self.current.len() != self.target.len() {
                 self.current = self.target.clone();
+                self.current_width = self.target_width;
             }
         }
         let now = Instant::now();
@@ -110,12 +122,20 @@ impl Lanes {
         self.last_advance = Some(now);
         if !animate {
             self.current.clone_from(&self.target);
+            self.current_width = self.target_width;
             self.animating = false;
             return;
         }
         // 約 0.15 秒で近づく指数的な動き。
         let k = (dt * 18.0).min(1.0);
         let mut moving = false;
+        let d = self.target_width - self.current_width;
+        if d.abs() < 0.05 {
+            self.current_width = self.target_width;
+        } else {
+            self.current_width += d * k;
+            moving = true;
+        }
         for (c, t) in self.current.iter_mut().zip(&self.target) {
             let d = t - *c;
             if d.abs() < 0.05 {
@@ -126,6 +146,11 @@ impl Lanes {
             }
         }
         self.animating = moving;
+    }
+
+    /// 今の列の幅（文字の位置がにじまないように整数にする）。
+    pub fn width(&self) -> f32 {
+        self.current_width.round()
     }
 
     pub fn x(&self, lane: u16, m: &Metrics) -> f32 {
@@ -175,7 +200,12 @@ impl Style {
     }
 }
 
-/// `rows` 行の点と線を `snapshot` に描く。y は `scroll_y` だけずらす。
+/// 祖先を強調するときの、ほかの点と線の不透明度（macOS 版と同じ）。
+const DIMMED_ALPHA: f32 = 0.18;
+
+/// `rows` 行の点と線を `snapshot` に描く。y は `scroll_y` だけずらす。`lineage` があれば、祖先の点と
+/// それをつなぐ線のほかは薄く描く。行ごとのグラフの右端（その行の点と、その行を通る線のいちばん右。macOS 版の
+/// `rightExtent`）を返す。文字はそのすぐ右から始める。
 pub fn draw(
     snapshot: &gtk::Snapshot,
     history: &HistorySnapshot,
@@ -183,14 +213,29 @@ pub fn draw(
     rows: Range<u32>,
     scroll_y: f32,
     m: &Metrics,
-) {
+    lineage: Option<&Lineage>,
+) -> Vec<f32> {
     let row_y = |row: u32| (row as f32 + 0.5) * m.row_height - scroll_y;
+    // 幹線の点の分は必ず取る。
+    let mut extents = vec![lanes.x(0, m) + m.node_radius; rows.len()];
     let mut strokes: HashMap<Style, gsk::PathBuilder> = HashMap::new();
     let edges = history.layout.edges();
     for i in history.layout.edges_in(rows.clone()) {
         let e = &edges[i as usize];
         let (ax, ay) = (lanes.x(e.lane_start, m), row_y(e.row_start));
         let (bx, by) = (lanes.x(e.lane_end, m), row_y(e.row_end));
+        // 線は 2 つのレーンの間に収まる（曲線もその間）。通る行の右端を広げる。
+        let (lower, upper) = (
+            e.row_start.max(rows.start),
+            e.row_end.min(rows.end.saturating_sub(1)),
+        );
+        if lower <= upper && !rows.is_empty() {
+            let right = ax.max(bx) + m.first_parent_width / 2.0;
+            for r in lower..=upper {
+                let x = &mut extents[(r - rows.start) as usize];
+                *x = x.max(right);
+            }
+        }
         let mut width = if e.kind & Edge::FIRST_PARENT != 0 {
             m.first_parent_width
         } else {
@@ -204,6 +249,24 @@ pub fn draw(
         if spacing < m.lane_width / 2.0 {
             width = width.min((spacing * 0.8).max(0.6));
             alpha = 0.45;
+        }
+        // 祖先を強調するときは、光らない線（や縦線の光らない上の部分）を薄くする。
+        let from = lineage.map_or(e.row_start, |l| l.edge_from[i as usize]);
+        if from == NOT_LIT {
+            alpha *= DIMMED_ALPHA;
+        } else if from > e.row_start && e.lane_start == e.lane_end {
+            let my = row_y(from);
+            let dim = strokes
+                .entry(Style::new(e.color, width, alpha * DIMMED_ALPHA))
+                .or_default();
+            dim.move_to(ax, ay);
+            dim.line_to(ax, my);
+            let lit = strokes
+                .entry(Style::new(e.color, width, alpha))
+                .or_default();
+            lit.move_to(ax, my);
+            lit.line_to(bx, by);
+            continue;
         }
         let path = strokes
             .entry(Style::new(e.color, width, alpha))
@@ -226,16 +289,26 @@ pub fn draw(
         );
     }
 
-    let mut fills: HashMap<u16, gsk::PathBuilder> = HashMap::new();
+    let mut fills: HashMap<(u16, bool), gsk::PathBuilder> = HashMap::new();
     let nodes = history.layout.nodes();
     for n in &nodes[rows.start as usize..rows.end as usize] {
         let p = graphene::Point::new(lanes.x(n.lane, m), row_y(n.row));
+        if let Some(x) = n
+            .row
+            .checked_sub(rows.start)
+            .and_then(|i| extents.get_mut(i as usize))
+        {
+            *x = x.max(p.x() + m.node_radius);
+        }
+        let dimmed = lineage.is_some_and(|l| !l.contains(n.row));
         fills
-            .entry(n.color % PALETTE.len() as u16)
+            .entry((n.color % PALETTE.len() as u16, dimmed))
             .or_default()
             .add_circle(&p, m.node_radius);
     }
-    for (c, path) in fills {
-        snapshot.append_fill(&path.to_path(), gsk::FillRule::Winding, &color(c, 1.0));
+    for ((c, dimmed), path) in fills {
+        let alpha = if dimmed { DIMMED_ALPHA } else { 1.0 };
+        snapshot.append_fill(&path.to_path(), gsk::FillRule::Winding, &color(c, alpha));
     }
+    extents
 }

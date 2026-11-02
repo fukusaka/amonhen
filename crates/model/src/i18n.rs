@@ -164,6 +164,24 @@ pub fn translate(key: &'static str) -> Cow<'static, str> {
     }
 }
 
+fn english_one() -> &'static HashMap<&'static str, String> {
+    static TABLE: OnceLock<HashMap<&'static str, String>> = OnceLock::new();
+    TABLE.get_or_init(|| parse_strings(include_str!("i18n/en.strings")))
+}
+
+/// `translate` に、英語の単数形を足したもの: 英語で `count` が 1 なら `i18n/en.strings` の文（なければもとの文）。
+pub fn translate_counted(key: &'static str, args: &[(&str, &dyn Display)]) -> Cow<'static, str> {
+    if current() == Lang::En
+        && args
+            .iter()
+            .any(|(name, value)| *name == "count" && value.to_string() == "1")
+        && let Some(one) = english_one().get(key)
+    {
+        return Cow::Owned(one.clone());
+    }
+    translate(key)
+}
+
 /// `template` の `{name}` に値を入れる。知らない名前はそのまま残す。
 pub fn fill(template: &str, args: &[(&str, &dyn Display)]) -> String {
     let mut out = String::with_capacity(template.len() + 16);
@@ -205,11 +223,11 @@ macro_rules! tr {
     ($key:literal) => {
         $crate::i18n::translate($key).into_owned()
     };
+    // 一時の値（`x.to_string_lossy()` など）が式の終わりまで生きるよう、match で受ける。
     ($key:literal, $($name:ident = $value:expr),+ $(,)?) => {
-        $crate::i18n::fill(
-            &$crate::i18n::translate($key),
-            &[$((stringify!($name), &$value as &dyn ::std::fmt::Display)),+],
-        )
+        match &[$((stringify!($name), &$value as &dyn ::std::fmt::Display)),+] {
+            args => $crate::i18n::fill(&$crate::i18n::translate_counted($key, args), args),
+        }
     };
 }
 
@@ -238,6 +256,15 @@ mod tests {
             assert!(is_cancelled(&cancelled()));
         });
         assert_eq!(current(), Lang::En);
+        // 英語の単数形（`{count}` が 1 のときだけ）。
+        assert_eq!(
+            crate::tr!("{count} commits selected", count = 1),
+            "1 commit selected"
+        );
+        assert_eq!(
+            crate::tr!("{count} commits selected", count = 2),
+            "2 commits selected"
+        );
         assert_eq!(tr!("Cancelled"), "Cancelled");
         // 本物の表が最後まで読めている（書き間違いで途中から読めなくなっていない）。
         assert!(japanese().len() > 200, "{}", japanese().len());

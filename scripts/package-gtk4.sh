@@ -4,7 +4,9 @@
 # 出力: dist/amonhen-gtk-<版>-linux-<arch>.tar.gz（中身は amonhen-gtk-linux-<arch>/ に、実行ファイル、engines/、
 # .desktop、アイコン、install.sh）。<版> がなければ snapshot の版（scripts/version.sh）で、About に出す。
 # engines/ には dist/engine の Linux のエンジン（scripts/build-engine.sh が作る）を入れ、SSH 先に送るのに使う
-# （なければ入れない。そのときは SSH 先に amonhen が要る）。
+# （なければ入れない。そのときは SSH 先に amonhen が要る）。手元の CPU のものは、アプリが起動するたびに
+# `amonhen install` で置き場所（~/.local/share/amonhen）に置き、`amonhen engine` の選んだものを共有の daemon に
+# する（macOS 版の Contents/Helpers のエンジンと同じ）。
 # GTK は同梱せず、そのマシンの GTK 4.14 以降を使う（Ubuntu 24.04 以降・Debian 13 以降など）。
 set -eu
 cd "$(dirname "$0")/.."

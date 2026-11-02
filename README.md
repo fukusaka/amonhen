@@ -39,6 +39,7 @@ For Linux (an early GTK4 app, and the command line), Windows (command line), the
 - [Installation](docs/install.md)
 - [Usage](docs/usage.md): the app, repositories over SSH, the command line
 - [VSCode extension](apps/vscode)
+- [Front-end features](docs/frontends.md): what the macOS app, the GTK4 app, the VSCode extension and the CLI each have
 - [Design](docs/design.md), and how [the VSCode extension](docs/vscode.md) and
   [the engine's protocol](docs/front.md) are built
 - [Development](docs/development.md), [a Windows machine](docs/windows.md) and [making a release](docs/release.md)

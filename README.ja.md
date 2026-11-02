@@ -40,6 +40,7 @@ Linux（作り始めの GTK4 のアプリとコマンド）・Windows（コマ�
 - [インストール](docs/ja/install.md)
 - [使い方](docs/ja/usage.md): アプリ、SSH 越しのリポジトリ、コマンド
 - [VSCode 拡張](apps/vscode/README.ja.md)
+- [FE ごとの機能](docs/ja/frontends.md): macOS のアプリ・GTK4 のアプリ・VSCode 拡張・CLI のそれぞれにあるもの
 - [設計](docs/ja/design.md)と、[VSCode 拡張](docs/ja/vscode.md)・[エンジンのやりとりの決まり](docs/ja/front.md)の作り
 - [開発](docs/ja/development.md)、[Windows の実機](docs/ja/windows.md)と[リリースの出し方](docs/ja/release.md)
 - [変更履歴](CHANGELOG.md)（英語）

@@ -654,13 +654,15 @@ struct EnvironmentValueView: View {
     /// SSH 先の変数なら、その git（プログラムで選んだもの、なければ SSH 先の PATH で見つかったものの場所）。SSH 先の
     /// 場所はこの Mac では調べられないので、「ない」は出さない。
     var onHost: (chosenGit: String?, gitDirectory: String?)? = nil
+    /// Windows の SSH 先の変数か（場所を `;` で区切る）。
+    var windows = false
 
     var body: some View {
         Group {
             if let value, !name.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
-                        Text(Self.isList(name) ? L("%@ (%ld places)", name, Self.places(value).count) : name)
+                        Text(Self.isList(name) ? L("%@ (%ld places)", name, Self.places(value, windows: windows).count) : name)
                             .font(.callout.monospaced().weight(.medium))
                         Spacer()
                         if masked { Button(L("Show"), action: reveal).controlSize(.small) }
@@ -688,7 +690,7 @@ struct EnvironmentValueView: View {
     /// 1 行に 1 か所。番号、場所、添え書き（ない・前と同じ・ここの git を使う）。設定 > Git で git を選んでいれば、
     /// PATH ではなくそれを使うと書く。
     private func placeList(_ value: String) -> some View {
-        let places = Self.places(value)
+        let places = Self.places(value, windows: windows)
         let chosenGit = onHost.map { $0.chosenGit } ?? MachineGit.thisMac.flatMap { $0.source == "path" ? nil : $0.program }
         let git: Int? = if name != "PATH" || chosenGit != nil {
             nil
@@ -724,7 +726,8 @@ struct EnvironmentValueView: View {
         name.hasSuffix("PATH") || name.hasSuffix("_DIRS") || name.hasSuffix("PATHS")
     }
 
-    static func places(_ value: String) -> [String] {
-        value.split(separator: ":", omittingEmptySubsequences: true).map(String.init)
+    /// 場所に分ける（Windows は `;`、ほかは `:` で区切る）。
+    static func places(_ value: String, windows: Bool = false) -> [String] {
+        value.split(separator: windows ? ";" : ":", omittingEmptySubsequences: true).map(String.init)
     }
 }

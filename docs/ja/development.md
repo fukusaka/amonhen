@@ -17,7 +17,7 @@ scripts/third-party-notices.sh   # dist/THIRD-PARTY-NOTICES.md（cargo install -
 cargo deny check licenses        # 依存が deny.toml で許したライセンスだけか（cargo install --locked cargo-deny）
 cargo build -p amonhen-cli && (cd apps/vscode && npm ci && npm test)   # VSCode 拡張
 (cd apps/vscode && npm run test:e2e)   # 実際の VSCode での VSCode 拡張（上の行のあとで）
-(cd apps/gtk4 && cargo clippy --all-targets -- -D warnings && cargo run --release -- <repo>)   # GTK4 のアプリ（GTK 4.14 以降が要る。libgtk-4-dev か brew install gtk4 pkgconf）
+(cd apps/gtk4 && cargo clippy --all-targets -- -D warnings && cargo run --release -- <repo>)   # GTK4 のアプリ（GTK 4.14 以降と libadwaita が要る。libgtk-4-dev libadwaita-1-dev か brew install gtk4 libadwaita pkgconf）
 scripts/package-gtk4.sh          # GTK4 のアプリを dist/amonhen-gtk-<版>-linux-<arch>.tar.gz に（Linux で。dist/engine の Linux のエンジンがあれば入れる）
 ```
 
@@ -34,7 +34,22 @@ README の画面は、`--snapshot`（ツールバーが空のまま写る）で�
 `defaults write AmonHen showAvatars -bool NO`（デバッグ版の設定のドメイン）を書き、撮ったら消す。ウィンドウの大きさは同じ
 ドメインの `NSWindow Frame Repository <パス>` で決まる（README は 1200×720: `"1300 500 1200 720 0 0 <画面の幅> <画面の高さ> "`）。
 
-GTK4 のアプリ（`apps/gtk4`）: `amonhen-gtk <repo> --snapshot out.png [--scroll-to N | --select-rows N,N,... | --select-ref NAME] [--menu-ref NAME | --menu-row N] [--search QUERY [--only-matching]] [--blame PATH | --file-history PATH | --activity operations|history|performance|events|daemon | --settings git|appearance|performance|advanced | --merge-editor PATH [--accept ours|theirs|both|base]] [--open-menu repository|primary] [--perform JSON] [--working-copy [--select-path PATH] [--toggle-row N] [--layout list|tree|flat]]`（`--menu-ref` はその ref の右クリックのメニューを開く、`--perform` はコアの命令を 1 つメニューと同じ経路で実行する、`--toggle-row` はその差分の行の印を一度クリックしたことにする）（見えている行を読んだら窓を PNG に書き出して終了）、`--measure-scroll [--scroll-rows N]`（History を 1 フレームに 40 行（か N 行）ずつ 600 フレームスクロールし、1 フレームのメインスレッドの時間・History の snapshot の時間・落としたフレーム・フレームの始まりから画面に出るまでの時間を表示。描画器は `GSK_RENDERER=cairo|gl|vulkan` で選ぶ）。
+GTK4 のアプリ（`apps/gtk4`）: `amonhen-gtk <repo> --snapshot out.png` は、見えている行を読んだら窓を PNG に書き出して終了する（macOS で真っ白になるときは `GSK_RENDERER=cairo`）。写すものは次のフラグで用意する。
+
+- History: `--scroll-to N`、`--select-rows N,N,...`、`--select-ref NAME`、`--select-refs NAME,NAME,...`（その ref の History）、`--find-message TEXT`（詳細の中を探す）、`--search QUERY [--only-matching]`、`--menu-ref NAME` か `--menu-row N`（その ref・行の右クリックのメニュー。`--menu-item TITLE` で項目を選ぶ。サブメニューは ` > ` でつなぐ）、`--open-menu repository|primary|history-display|repository-name`（`repository-name` では `AMONHEN_CHOOSE_REPOSITORY=NAME` でその表示名の行を開く）、`--ci-row N`（CI の状態を読んだら、その行の CI の印を押す）、`--drop-commit FROM:TO`（そのコミットを TO の行の上へドラッグする）、`--find-diff TEXT`、`--toggle-viewed N`、`--diff-file-menu N`、`--signature-popover`、`--edit-commits ID [--edit-plan pick,squash,drop,...] [--edit-move FROM:ABOVE] [--edit-apply]`（History の編集モード）。
+- サイドバー: `--sidebar-menu SPEC`（ref・リモート・見出し・worktree・`pr/<番号>`。`a,b` は複数選択。`--menu-item` も使える）、`--sidebar-mark SPEC`（その行の印の吹き出し）、`--filter-sidebar WORDS`、`--sidebar-mark signature:TAG`（タグの署名の吹き出し）、`--conflicts`（Conflicts の行）。
+- ページ: `--working-copy [--select-path PATH] [--toggle-row N] [--layout list|tree|flat]`（`--toggle-row` はその差分の行の印を一度クリックしたことにする。`--keys list:space,diff:j,...` はそのキーを 1 つずつ押す: `list:space`・`list:delete`・`diff:space`・`diff:j`・`diff:k`・`diff:alt+j`・`diff:alt+k`・`commit`）、`--stashes [--stash-button apply|pop|drop|branch]`、`--reflog`、`--range-diff[=RANGES] [--select-pair N] [--menu-pair N]`、`--repository-settings PAGE`、`--edit-worktree PATH`（その worktree を書き込む先にする）。
+- タブ: `--tab LOCATION`（繰り返せる）は最初の窓に裏のタブを足す。ほかのフラグは最初のタブに効く。`--connecting` は 1.5 秒後につなぎ中のページを撮る（遅い `AMONHEN_SSH` と使う）。
+- 窓: `--blame PATH`、`--file-history PATH`、`--activity operations|history|performance|events|daemon`、`--settings general|git[/PAGE]|ssh-hosts[/HOST/PAGE]|accounts|appearance|diff-merge|ai|performance`、`--merge-editor PATH [--accept ours|theirs|both|base]`、`--apply-patch PATH,...`、`--repositories [--menu-row N [--menu-item TITLE]]`、`--quick-open QUERY`。
+- パスを選ぶシート: `AMONHEN_PICKER_SNAPSHOT=PNG` はシートが出て 1.5 秒後に撮って取り消す（`AMONHEN_PICKER_CHOOSE` があれば決める）。`AMONHEN_SCAN_ADD` は SSH 先の探すフォルダーの ＋ を一度押す（`--settings ssh-hosts/HOST/connection` と使う）。
+- 動かす: `--perform JSON`（コアの命令を 1 つメニューと同じ経路で実行）、`--action ID,...`（コマンドの表の操作。700 ms ずつ空けて順に）、`--print-file-menu PATH`（Working Copy のファイルのメニューを出力）、`--switch-query TEXT [--switch-enter]`（`--action switch-branch` と使う。ブランチの切り替えに打ち込み、選んだ行で切り替える）、`--busy`（操作が動いているものとして Activity を回す）、`--ai translate,explain,hunk,working-hunk,suggest,use,resolve,explain-conflict [--ai-allow]`（その AI のボタンを押せるようになったら押す。`--ai-allow` はリポジトリごとの確認を飛ばす。`gtk.ini` の `assistantPath.<cli>` で CLI の場所を指せる。試し用の偽の CLI など）。`AMONHEN_SETTINGS_SCRIPT` は設定のページ（`--settings git/PAGE`・`--repository-settings`・SSH 先のページ）で手順を動かす: `switch:NAME=on|off`、`git=PATH`、`revert:git` ほか（`reposettings.rs`）。
+
+`--measure-scroll [--scroll-rows N]` は History を 1 フレームに 40 行（か N 行）ずつ 600 フレームスクロールし、1 フレームのメインスレッドの時間・History の snapshot の時間・落としたフレーム・フレームの始まりから画面に出るまでの時間を表示する。描画器は `GSK_RENDERER=cairo|gl|vulkan` で選ぶ。
+
+- `--measure-select N` は History の行を N 個順に選び、差分が出るまでの段階ごとの p50・p95 を表示する。
+- `--print-menus` は Repository メニューと主メニュー（≡）を 1 項目 1 行で出力し、窓を作らずに終える。
+- `AMONHEN_HANG_LOG=DIR` はメインループが 0.15 秒答えないたびに、スタックを `DIR/hang-<時刻>.txt` に、1 行を `DIR/hangs.log` に書く（macOS は `sample`、ほかは `gdb`）。
+- `AMONHEN_DAEMON=PATH` は同梱・置き場所のものではなく、そのエンジンを共有の daemon にする。
 
 ## VSCode 拡張
 

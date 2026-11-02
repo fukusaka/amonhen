@@ -11,11 +11,21 @@ becomes the GitHub Release notes.
 
 #### Added
 
+- The GTK4 app for Linux catches up with the macOS app: tabs, worktrees, the Repositories window and Quick Open,
+  Repository Settings and the machine settings (Programs, Environment Variables, SSH Hosts), Stashes, Reflog, Range
+  Diff, patches, History's edit mode, GitHub (CI marks, avatars, pull requests) and AI. `docs/frontends.md` lists
+  what each front end has.
+
 - Several branches, tags or commits selected in the sidebar or History merge in one commit, as `git merge a b c` does,
   from a sheet showing their order and the conflicts expected for each; it offers to merge them one by one when git
   couldn't. `amonhen merge-check a b c` checks the same.
 
 #### Changed
+
+- On Linux, `amonhen open` (and `amonhen <path>`) opens the repository in the GTK4 app, as a tab of the running app.
+
+- The GTK4 app now needs libadwaita (`libadwaita-1-0` on Ubuntu). Its tabs can be dragged out into a new window on
+  Wayland too, and it follows the system's light or dark style.
 
 - The Fetch sheet chooses the remote: all of them, as before, or one. The core's `fetch` takes the remote too.
 
@@ -50,6 +60,12 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- Combine with Older Commit… on a single commit in History marks it in the edit mode; it opened with nothing marked.
+
+- Working Copy puts a check box back when staging fails or changes nothing; it kept showing the click.
+
+- Working Copy reloads the shown diff and line counts when an already changed file changes again, and keeps the
+  selected lines when the diff is the same.
 - History opens in a shallow clone: it stopped with "Commit … not found" at the boundary, and now ends there as
   `git log` does. After `git fetch --deepen` or `--unshallow`, History is read again with the older commits.
 - Starting a merge, rebase, cherry-pick, revert, pull or patch while another one is stopped no longer reports a

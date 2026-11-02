@@ -4,6 +4,8 @@
 
 `docs/design.md` の「画面構成」を土台に、日常の操作を SourceTree・Fork・Tower・JetBrains（IDE の Git）と同じかそれ以上に楽にするための見直し。速度の方針（UI スレッドで git を待たない、1 フレーム以内）は変えない。
 
+ここの機能がどの FE（macOS・GTK4・VSCode・CLI）にあるかは [FE ごとの機能](frontends.md) にある。
+
 ## 原則
 
 | 原則 | 内容 |
@@ -363,21 +365,22 @@ stash は `refs/stash` とその reflog に置かれるコミット。中身は�
 - 各行は `HEAD@{n}` と何をしたか（git のメッセージ: `commit: …`、`checkout: moving from a to b`、
   `reset: moving to …`）、その下に、どの ref からも辿れなければ橙で「どのブランチにもない」、いつ、短い ID、
   コミットの件名。
-- New Branch… と Checkout（detached）は一覧の上。各行の右クリックには、ほかに New Tag、Reset ▸（5c 節）、History で
+- New Branch… と Checkout（detached）は一覧の上。各行の右クリックには、ほかに New Tag、Reset…（5c 節）、History で
   見る（History にあるコミットだけ）、Copy Commit ID、Copy Name。worktree が 2 つ以上あれば、どの worktree の HEAD か（✎）を帯に出す。
 - HEAD が動いたとき、書き込む先の worktree を変えたときに読み直す。
 
 ## 5c. Reset
 
-History の行と Reflog の行の右クリックの「Reset <ブランチ> to <コミット> ▸」は、書き込む先の worktree の今のブランチ
-（detached なら HEAD）をそのコミットに動かす（`git reset`）。先に、ブランチとコミットを書いて確かめる。
+History の行と Reflog の行の右クリックの「Reset <ブランチ> to <コミット>…」は、書き込む先の worktree の今のブランチ
+（detached なら HEAD）をそのコミットに動かす（`git reset`）。先に、ブランチとコミットを書いて確かめ、そのシートで
+動かし方（Soft・Mixed・Hard。既定は Mixed）を選ぶ。
 
 - Soft は外したコミットの変更を stage したまま残し、Mixed は stage せずに作業ツリーに残し、Hard は index と作業
   ツリーもそのコミットに合わせる。
 - Hard は、コミットしていない変更を先に stash に残す（「Before reset --hard to …」。untracked のファイルは git と
   同じく触らない）ので、なにも失わない。
 - どれも Undo（⌥⌘Z）できる: Soft と Mixed は同じ種類の reset で、Hard は `--keep` で戻す。外したコミットは Reflog
-  から辿れる。merge・rebase・cherry-pick・revert の途中はできない。
+  から辿れる。merge・rebase・cherry-pick・revert の途中は、コアが断る。
 
 ## 5d. Range Diff
 
@@ -673,7 +676,7 @@ Window > Activity（⌥⌘A）。ツールバーのスピナーからも開く�
 | Window | 標準（最小化・タブ・すべてのウィンドウを結合）、Repositories ⌘⇧R、Activity ⌥⌘A |
 | Help | ショートカットの一覧、ログの場所を開く |
 
-- 右クリックのメニューは、同じ操作をメニューバーと同じ名前で出す（覚える名前を 1 つにする）。操作は 1 か所（`apps/macos/Sources/AmonHen/Commands.swift`: 名前・ショートカット・ツールチップ）で決め、その id は GTK4 の FE の action 名（`win.<id>`）と同じにする。メニューバーはこの表から作り、右クリックの対象つきの名前も同じファイルから取る（「… から新しいブランチ」、短い ID はどこでも 8 桁）。
+- 右クリックのメニューは、同じ操作をメニューバーと同じ名前で出す（覚える名前を 1 つにする）。操作は、どの FE も 1 か所の `crates/commands`（amonhen-commands）で決める: id・英語の名前（訳の鍵も兼ねる）・ツールチップ・OS によらない形のショートカット（`Primary+Shift+B`。macOS は ⌘、ほかは Ctrl）・属するメニューの区切り。id が重ならない、どちらの OS でもショートカットがぶつからない、訳す名前に両方の訳がある、をテストで確かめる。id は GTK4 の FE の action 名（`win.<id>`）と同じで、GTK4 は crate をそのまま使う。macOS には表から作った `CommandTable.swift`（コミットする。テストで表と合っているかを確かめる）を渡し、`Commands.swift` では呼び先（Selector）だけを結びつける。区切りを画面のどこに置くか（macOS はメニューバー、GTK4 は見出しの Repository ボタンと主メニュー）と、押せるかどうかは FE が決める。右クリックの対象つきの名前は `Commands.swift` から取る（「… から新しいブランチ」、短い ID はどこでも 8 桁）。
 - View メニューは History の表示メニュー（並び順・表示項目・1 行表示・畳む・祖先の強調と、コミットの詳細: 等幅のメッセージ・アバター・全ファイルを 1 つの差分に・ファイルをツリーで）と同じもの。History のバーのボタンとヘッダーも同じメニューを出す。
 - 使えない項目は消さずに無効にする（ある場所を覚えられるように）。
 - **ステータスバー**。ウィンドウの下（ページの下）の 1 本に、今どうなっているかを集める: merge・rebase・cherry-pick の途中（Continue・Skip・Abort）、失敗（原因・次の一手・詳細）、接続が切れた、終わった操作が何をしたかの一言（数秒、「main を origin/main に Push しました」）。失敗は、あとの操作が成功すれば消える。GTK4 ではアクションバーが同じ役。

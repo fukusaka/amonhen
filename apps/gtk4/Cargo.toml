@@ -11,7 +11,10 @@ publish = false
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+amonhen-assist = { path = "../../crates/assist" }
+amonhen-backend-cli = { path = "../../crates/backend-cli" }
 amonhen-backend-gix = { path = "../../crates/backend-gix" }
+amonhen-commands = { path = "../../crates/commands" }
 amonhen-core = { path = "../../crates/core", features = ["syntax"] }
 amonhen-layout = { path = "../../crates/layout" }
 amonhen-model = { path = "../../crates/model" }
@@ -21,6 +24,11 @@ amonhen-watch = { path = "../../crates/watch" }
 async-channel = "2"
 serde_json = "1"
 gtk = { package = "gtk4", version = "0.11", features = ["v4_14"] }
+pangocairo = "0.22"
+adw = { version = "0.9", package = "libadwaita" }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [profile.release]
 lto = "thin"

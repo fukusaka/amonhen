@@ -10,20 +10,28 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
+use amonhen_core::lineage::Lineage;
 use amonhen_core::{HistorySnapshot, RefsSnapshot, Repository};
-use amonhen_model::{Oid, RefKind};
+use amonhen_model::{Oid, RefKind, tr};
 use amonhen_projection::{FrontendProfile, HistoryChunk};
 use gtk::glib::Properties;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 use gtk::{gdk, gio, glib, graphene, gsk, pango};
 
+use crate::github::Ci;
 use crate::graph::{self, Lanes, Metrics};
+use crate::settings::items;
+use crate::signature::Status;
 
 /// 行を右クリックしたときに呼ぶ（行、x、y）。
 type MenuCallback = Rc<dyn Fn(u32, f64, f64)>;
 /// 選んだ行が変わったときに呼ぶ（選んでいる行、昇順）。
 type SelectCallback = Rc<dyn Fn(&[u32])>;
+/// 行の右端の CI の印を押したときに呼ぶ（コミット、状態、印の位置）。
+type CiCallback = Rc<dyn Fn(Oid, Ci, gdk::Rectangle)>;
+/// CI の印に空ける幅（行の右端から）。
+const CI_SPACE: f32 = 18.0;
 
 const CHUNK_ROWS: u32 = 256;
 /// 持っておくチャンクの数（見えている所に近いものから）。
@@ -32,6 +40,8 @@ const KEPT_CHUNKS: usize = 24;
 const GRAPH_WIDTH: f32 = 160.0;
 /// 文字の列の左右の余白。
 const TEXT_INSET: f32 = 8.0;
+/// 行ごとのグラフの右端と、件名などの間（macOS 版の `graphGap`）。
+const GRAPH_GAP: f32 = 10.0;
 
 /// 裏のスレッドから受け取るチャンク。文字列置き場は自分のバッファ（`Blob`）を持っているので、
 /// どのスレッドに渡してもよい。
@@ -55,6 +65,8 @@ impl Chunk {
 struct RowText {
     subject: pango::Layout,
     meta: pango::Layout,
+    /// 署名がある（検証の結果の印を出す）。
+    signed: bool,
 }
 
 #[derive(Clone)]
@@ -62,12 +74,82 @@ struct Label {
     name: String,
     kind: RefKind,
     head: bool,
+    /// worktree の HEAD の札（緑。`head` なら書き込む先）。
+    worktree: bool,
+    /// ほかの worktree が checkout しているブランチ（worktree の札と同じ緑）。
+    elsewhere: bool,
 }
 
 struct Fonts {
     subject: pango::FontDescription,
     meta: pango::FontDescription,
     label: pango::FontDescription,
+}
+
+/// History の行の見せ方（View の History の表示）。
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct Display {
+    /// 1 行で出す（件名の右に作者・日時）。
+    pub one_line: bool,
+    /// 行に出す項目（`settings::items` のビット）。
+    pub items: u32,
+    /// 選んだコミットの祖先を強調する。
+    pub highlight_ancestors: bool,
+}
+
+impl Default for Display {
+    fn default() -> Self {
+        Self {
+            one_line: false,
+            items: items::ALL,
+            highlight_ancestors: true,
+        }
+    }
+}
+
+impl Display {
+    /// 1 行で出すか。作者・日時の行に出す項目が 1 つもなくても、行の高さは変えない（macOS 版と同じく、行の高さは
+    /// One Line per Commit だけで決まる）。
+    fn compact(&self) -> bool {
+        self.one_line
+    }
+}
+
+/// 署名の検証の結果の色（macOS 版の `SignatureStatus` の色）。状態は詳細の Signature の行と同じ
+/// `signature::Status` で決める（行と詳細で食い違わないように）。`None` はまだ検証していない。
+fn signature_color(status: Option<Status>, fg: &gdk::RGBA) -> gdk::RGBA {
+    match status {
+        Some(Status::Verified(_)) => gdk::RGBA::new(0.20, 0.70, 0.30, 1.0),
+        Some(Status::Untrusted | Status::SignerMismatch) => gdk::RGBA::new(0.90, 0.75, 0.10, 1.0),
+        Some(Status::Expired) => gdk::RGBA::new(0.95, 0.55, 0.15, 1.0),
+        Some(Status::Revoked | Status::Bad) => gdk::RGBA::new(0.90, 0.25, 0.25, 1.0),
+        Some(Status::NoKey | Status::Unsupported) => {
+            gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), 0.55)
+        }
+        Some(Status::Pending) | None => gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), 0.25),
+    }
+}
+
+/// 行の署名の丸を塗りつぶすか（macOS 版の SF Symbols の `.fill`: 強い信用の Verified、失効・不正な署名）。
+/// そのほか（marginal の信用・信用していない鍵・署名者の不一致・期限切れ・鍵なし・未検証）は縁だけ。
+fn signature_filled(status: Option<Status>) -> bool {
+    matches!(
+        status,
+        Some(Status::Verified(3..) | Status::Revoked | Status::Bad)
+    )
+}
+
+/// `verifySignatures` の答えの 1 件から状態を決める（コアがコミッターのメールを添える。macOS 版と同じ）。
+fn signature_status(check: &serde_json::Value) -> Status {
+    let signer = check["signer"].as_str().unwrap_or_default();
+    let key = check["key"].as_str().unwrap_or_default();
+    let kind = if !signer.contains('<') && key.starts_with("SHA256:") {
+        "ssh"
+    } else {
+        "gpg"
+    };
+    let committer = check["committerEmail"].as_str().unwrap_or_default();
+    Status::new(Some(check), committer, Some(kind))
 }
 
 #[derive(Default)]
@@ -77,7 +159,12 @@ pub struct State {
     chunks: HashMap<u32, Rc<Chunk>>,
     loading: HashSet<u32>,
     rows: HashMap<u32, RowText>,
+    /// 行に出す札（worktree の HEAD の札、ref の札の順）。
     labels: HashMap<Oid, Vec<Label>>,
+    ref_labels: HashMap<Oid, Vec<Label>>,
+    worktree_labels: HashMap<Oid, Vec<Label>>,
+    /// ほかの worktree（メインのものを除く）が checkout しているブランチ。
+    elsewhere: HashSet<String>,
     label_layouts: HashMap<String, pango::Layout>,
     fonts: Option<Fonts>,
     /// 選んでいる行（複数選んでいるときは、最後に選んだ行）。
@@ -94,14 +181,89 @@ pub struct State {
     matches: Rc<Vec<u32>>,
     lanes: Lanes,
     metrics: Metrics,
+    display: Display,
+    /// 選んだコミットの祖先（History の世代、行、結果）。
+    lineage: Option<(u64, u32, Rc<Lineage>)>,
+    lineage_request: u64,
+    /// 署名の検証の結果（コミットごと）と、検証している途中のもの。
+    signatures: HashMap<Oid, Status>,
+    verifying: HashSet<Oid>,
+    /// 描いたときに見つけた、まだ検証していない署名（少し待ってから検証する）。
+    unverified: Vec<Oid>,
+    verify_soon: Option<glib::SourceId>,
+    /// 検証する側を変えた回数。変える前に始めた検証の結果は捨てる（macOS 版の `signatureGeneration`）。
+    signature_generation: u64,
+    /// GitHub の CI の状態（コミットごと）。窓の側が gh で読んで渡す。
+    ci: HashMap<Oid, Ci>,
+    /// 行の右端の CI の印を押したときに呼ぶ。
+    on_ci: Option<CiCallback>,
     tick: Option<gtk::TickCallbackId>,
-    /// 大きさが決まる前に見えるようにと頼まれた行（決まったらスクロールする）。
-    pending_scroll: Option<u32>,
+    /// 大きさが決まる前に見えるようにと頼まれた行と、真ん中に置くか（決まったらスクロールする）。
+    pending_scroll: Option<(u32, bool)>,
     /// 最後に描いたとき、見えている行の文字がすべてそろっていた。
     complete: bool,
     /// `--measure-scroll` の記録（1 回の `snapshot` にかかった時間）。
     snapshot_times: Option<Vec<f64>>,
+    /// コミットを運んで落としたときに呼ぶ（運んだコミット、落とした所の下の行。最後の行より下なら行の数）。
+    on_drop: Option<DropCallback>,
+    /// 運んでいる間の、落とす所（その行の上に線を引く）。
+    drop_row: Option<u32>,
+    /// この表から運んでいるもの（運び、運んでいるコミット）。ほかから運んできたものは落とさせない。
+    dragging: Option<(gdk::Drag, Oid)>,
+    /// 運んでいる間だけ覚えておく、編集できるコミット（HEAD から最初の merge まで）。読み終えるまでは None で、
+    /// どこにでも落とせる（macOS 版の `dragChain`）。
+    drag_chain: Option<HashSet<Oid>>,
+    /// 運び始めたときに呼ぶ（編集できるコミットを読んで [`HistoryView::set_drag_chain`] で渡す）。
+    on_drag_start: Option<Rc<dyn Fn()>>,
+    /// 出す History が替わったときに呼ぶ（密度の帯が求め直す）。
+    on_history: Option<Rc<dyn Fn()>>,
+    /// 最後に描いたもの（読み直したとき、ここから新しい表示へ溶かす）。
+    last_node: Option<gsk::RenderNode>,
+    /// 溶かしている途中の前の表示と、始めた時刻。
+    fade: Option<(gsk::RenderNode, Instant)>,
+    /// テーマの選択の色（背景と、その上の文字）を読むための、見えない子（macOS 版は表の選択でアクセントカラー）。
+    accent: Option<(gtk::Label, gtk::Label)>,
+    /// 次に出す History は溶かして入れ替える（ほかのプログラムの変化で読み直した。[`HistoryView::fade_next`]）。
+    fade_requested: Option<Instant>,
+    /// History を入れ替えた直後、見えている行の文字を読み終えるまで出しておく前の表示と、入れ替えた時刻・
+    /// 読み終えたら溶かすか（入れ替えの間に文字が空の行が出ないように。macOS 版の `present`）。
+    held: Option<(gsk::RenderNode, Instant, bool)>,
 }
+
+/// 前の表示を出しておく長さの上限（読むのが遅くても、これを過ぎたら新しい表示を出す）。
+const HOLD: std::time::Duration = std::time::Duration::from_millis(300);
+
+/// 読み直したときに、前の表示を新しい表示へ溶かす時間（macOS 版の 0.15 秒）。
+const FADE: std::time::Duration = std::time::Duration::from_millis(150);
+
+/// 選択の色を読む見えない子の色（テーマの選択の背景と文字。GTK の既定のテーマも libadwaita も、アクセント
+/// カラーに合わせる）。
+fn install_accent_css() {
+    thread_local! {
+        static DONE: Cell<bool> = const { Cell::new(false) };
+    }
+    if DONE.with(|d| d.replace(true)) {
+        return;
+    }
+    let provider = gtk::CssProvider::new();
+    provider.load_from_string(
+        ".history-accent-bg { color: @theme_selected_bg_color; } \
+         .history-accent-fg { color: @theme_selected_fg_color; }",
+    );
+    if let Some(display) = gdk::Display::default() {
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
+}
+
+/// コミットを落としたときに呼ぶもの。
+type DropCallback = Rc<dyn Fn(Oid, u32)>;
+
+/// History の行を運ぶときの中身の頭（サイドバーのブランチ・タグの `local:`・`other:` と分ける）。
+pub const DRAG_PREFIX: &str = "commit:";
 
 mod imp {
     use super::*;
@@ -142,6 +304,13 @@ mod imp {
 
     #[glib::derived_properties]
     impl ObjectImpl for HistoryView {
+        fn dispose(&self) {
+            if let Some((bg, fg)) = self.state.borrow_mut().accent.take() {
+                bg.unparent();
+                fg.unparent();
+            }
+        }
+
         fn constructed(&self) {
             self.parent_constructed();
             let view = self.obj();
@@ -149,12 +318,26 @@ mod imp {
             view.set_overflow(gtk::Overflow::Hidden);
             // テーマの一覧の背景（暗いテーマでも文字と合う）。
             view.add_css_class("view");
+            // 選択の色はテーマ（アクセントカラー）から読む。
+            install_accent_css();
+            let probes = (gtk::Label::new(None), gtk::Label::new(None));
+            probes.0.add_css_class("history-accent-bg");
+            probes.1.add_css_class("history-accent-fg");
+            for p in [&probes.0, &probes.1] {
+                p.set_visible(false);
+                p.set_parent(&*view);
+            }
+            self.state.borrow_mut().accent = Some(probes);
 
             let click = gtk::GestureClick::new();
             let weak = view.downgrade();
-            click.connect_pressed(move |gesture, _, _, y| {
+            click.connect_pressed(move |gesture, _, x, y| {
                 if let Some(view) = weak.upgrade() {
                     view.grab_focus();
+                    // 行の右端の CI の印なら、行を選ばずに詳細の吹き出し。
+                    if view.click_ci(x as f32, y as f32) {
+                        return;
+                    }
                     if let Some(row) = view.row_at(y as f32) {
                         // Ctrl で 1 行ずつ足す・外す、Shift で範囲（macOS の ⌘・⇧ と同じ）。
                         let state = gesture.current_event_state();
@@ -178,7 +361,7 @@ mod imp {
                 if let Some(row) = view.row_at(y as f32) {
                     // 複数選んでいる行の上なら、選んだまま（まとめての操作のメニュー）。
                     if !view.selection().contains(&row) {
-                        view.select(row);
+                        view.select_visible(row);
                     }
                     let f = view.state().on_menu.clone();
                     if let Some(f) = f {
@@ -188,12 +371,139 @@ mod imp {
             });
             view.add_controller(menu);
 
+            // コミットを運ぶ（History の中で落として並べ替える。macOS 版と同じ）。
+            let drag = gtk::DragSource::new();
+            drag.set_actions(gdk::DragAction::MOVE);
+            let subject = Rc::new(RefCell::new(String::new()));
+            let dragged: Rc<Cell<Option<Oid>>> = Rc::default();
+            let (weak, sub, prepared) = (view.downgrade(), subject.clone(), dragged.clone());
+            drag.connect_prepare(move |_, _, y| {
+                let view = weak.upgrade()?;
+                let row = view.row_at(y as f32)?;
+                let (_, history) = view.current()?;
+                let id = *history.graph.ids().get(row as usize)?;
+                view.state().drag_chain = None;
+                view.state().dragging = None;
+                prepared.set(Some(id));
+                // 運んでいる間は、件名を札にして出す。件名は読んである行のものを使う（ここで読むと、daemon・
+                // SSH 先では 1 往復ぶん画面が止まる。macOS 版と同じ）。
+                sub.replace(
+                    view.loaded_subject(row)
+                        .unwrap_or_else(|| id.to_string()[..8].to_owned()),
+                );
+                let value = format!("{DRAG_PREFIX}{id}");
+                Some(gdk::ContentProvider::for_value(&value.to_value()))
+            });
+            let (weak, from) = (view.downgrade(), dragged);
+            drag.connect_drag_begin(move |_, drag| {
+                if let Some(view) = weak.upgrade()
+                    && let Some(id) = from.get()
+                {
+                    view.state().dragging = Some((drag.clone(), id));
+                    let f = view.state().on_drag_start.clone();
+                    if let Some(f) = f {
+                        f();
+                    }
+                }
+                let label = gtk::Label::new(Some(&subject.borrow()));
+                label.set_max_width_chars(48);
+                label.set_ellipsize(pango::EllipsizeMode::End);
+                label.add_css_class("osd");
+                label.add_css_class("card");
+                label.set_margin_start(6);
+                label.set_margin_end(6);
+                gtk::DragIcon::for_drag(drag).set_child(Some(&label));
+            });
+            let weak = view.downgrade();
+            drag.connect_drag_end(move |_, _, _| {
+                if let Some(view) = weak.upgrade() {
+                    let mut st = view.state();
+                    st.dragging = None;
+                    st.drag_chain = None;
+                }
+            });
+            view.add_controller(drag);
+            let target = gtk::DropTarget::new(glib::Type::STRING, gdk::DragAction::MOVE);
+            // この表から運んだコミットだけを受ける（サイドバーのブランチなどは受けない。macOS 版と同じ）。
+            let weak = view.downgrade();
+            target.connect_accept(move |_, drop| {
+                let Some(view) = weak.upgrade() else {
+                    return false;
+                };
+                let ours = drop.drag();
+                drop.formats().contains_type(glib::Type::STRING)
+                    && ours.is_some()
+                    && view.state().dragging.as_ref().map(|(d, _)| d) == ours.as_ref()
+            });
+            let weak = view.downgrade();
+            target.connect_motion(move |_, _, y| {
+                let Some(view) = weak.upgrade() else {
+                    return gdk::DragAction::empty();
+                };
+                let row = view.drop_row_at(y as f32);
+                // 編集できる並びの外（最初の merge より下、HEAD でない枝）には落とせない（印も出さない）。
+                if !view.can_drop_at(row) {
+                    if view.state().drop_row.take().is_some() {
+                        view.queue_draw();
+                    }
+                    return gdk::DragAction::empty();
+                }
+                if view.state().drop_row != Some(row) {
+                    view.state().drop_row = Some(row);
+                    view.queue_draw();
+                }
+                gdk::DragAction::MOVE
+            });
+            let weak = view.downgrade();
+            target.connect_leave(move |_| {
+                if let Some(view) = weak.upgrade() {
+                    view.state().drop_row = None;
+                    view.queue_draw();
+                }
+            });
+            let weak = view.downgrade();
+            target.connect_drop(move |_, value, _, y| {
+                let Some(view) = weak.upgrade() else {
+                    return false;
+                };
+                view.state().drop_row = None;
+                view.queue_draw();
+                let Some(id) = value
+                    .get::<String>()
+                    .ok()
+                    .and_then(|v| v.strip_prefix(DRAG_PREFIX).and_then(Oid::from_hex))
+                else {
+                    return false;
+                };
+                let row = view.drop_row_at(y as f32);
+                let f = view.state().on_drop.clone();
+                match f {
+                    Some(f) => {
+                        f(id, row);
+                        true
+                    }
+                    None => false,
+                }
+            });
+            view.add_controller(target);
+
             let keys = gtk::EventControllerKey::new();
             let weak = view.downgrade();
             keys.connect_key_pressed(move |_, key, _, state| {
                 let Some(view) = weak.upgrade() else {
                     return glib::Propagation::Proceed;
                 };
+                // Ctrl+A ですべて選ぶ、Menu・Shift+F10 で選んだ行のメニュー（macOS 版の表と同じ）。
+                let ctrl = state.contains(gdk::ModifierType::CONTROL_MASK);
+                let shift = state.contains(gdk::ModifierType::SHIFT_MASK);
+                if ctrl && !shift && matches!(key, gdk::Key::a | gdk::Key::A) {
+                    view.select_all();
+                    return glib::Propagation::Stop;
+                }
+                if key == gdk::Key::Menu || (shift && !ctrl && key == gdk::Key::F10) {
+                    view.popup_menu();
+                    return glib::Propagation::Stop;
+                }
                 if view.move_selection(key, state.contains(gdk::ModifierType::SHIFT_MASK)) {
                     glib::Propagation::Stop
                 } else {
@@ -208,12 +518,56 @@ mod imp {
         fn size_allocate(&self, width: i32, height: i32, baseline: i32) {
             self.parent_size_allocate(width, height, baseline);
             self.obj().configure_adjustments();
+            // 吹き出し（CI の印のもの）は子なので、自分で置く。
+            let mut child = self.obj().first_child();
+            while let Some(c) = child {
+                if let Some(p) = c.downcast_ref::<gtk::Popover>() {
+                    p.present();
+                }
+                child = c.next_sibling();
+            }
         }
 
         fn snapshot(&self, snapshot: &gtk::Snapshot) {
             let started = Instant::now();
-            self.obj().draw(snapshot);
-            if let Some(times) = self.state.borrow_mut().snapshot_times.as_mut() {
+            // 描いたものを覚えておき、読み直したときに前の表示から溶かす（macOS 版と同じ）。
+            let own = gtk::Snapshot::new();
+            self.obj().draw(&own);
+            self.obj().draw_drop(&own);
+            let node = own.to_node();
+            let mut st = self.state.borrow_mut();
+            // 入れ替えた History の見えている行を読み終えるまでは、前の表示を出しておく。
+            if let Some((old, at, _)) = st.held.as_ref()
+                && !st.complete
+                && at.elapsed() < HOLD
+            {
+                snapshot.append_node(old);
+                return;
+            }
+            let released = st.held.take();
+            drop(st);
+            if let Some((old, _, true)) = released {
+                self.obj().start_fade_from(old);
+            }
+            let mut st = self.state.borrow_mut();
+            let fade = st
+                .fade
+                .as_ref()
+                .filter(|(_, at)| at.elapsed() < FADE)
+                .map(|(old, at)| (old.clone(), at.elapsed().as_secs_f32() / FADE.as_secs_f32()));
+            match (&node, fade) {
+                (Some(node), Some((old, progress))) => {
+                    snapshot.push_cross_fade(f64::from(progress.clamp(0.0, 1.0)));
+                    snapshot.append_node(&old);
+                    snapshot.pop();
+                    snapshot.append_node(node);
+                    snapshot.pop();
+                }
+                (Some(node), None) => snapshot.append_node(node),
+                (None, _) => {}
+            }
+            st.last_node = node;
+            if let Some(times) = st.snapshot_times.as_mut() {
                 times.push(started.elapsed().as_secs_f64() * 1000.0);
             }
         }
@@ -277,15 +631,72 @@ impl HistoryView {
         }
     }
 
+    /// 選択の背景と、その上の文字の色（テーマのアクセントカラー）。
+    fn accent(&self) -> (gdk::RGBA, gdk::RGBA) {
+        let probes = self.state().accent.clone();
+        probes.map_or(
+            (gdk::RGBA::new(0.21, 0.52, 0.89, 1.0), gdk::RGBA::WHITE),
+            |(bg, fg)| (bg.color(), fg.color()),
+        )
+    }
+
     pub fn row_height(&self) -> f32 {
         let mut st = self.state();
         self.fonts(&mut st);
         st.metrics.row_height
     }
 
+    /// 次に出す History を、前の表示から短く溶かして入れ替える（ほかのプログラムの変化で読み直したとき。
+    /// 自分で範囲を変えたときは待たせない。macOS 版と同じ）。少し待っても出さなければ忘れる。
+    pub fn fade_next(&self) {
+        self.state().fade_requested = Some(Instant::now());
+    }
+
+    /// 前の表示を、新しい History の見えている行を読み終えるまで出しておく（前に描いたものがあれば）。読み終えたら、
+    /// 頼まれていれば溶かして入れ替える。
+    fn hold_previous(&self) {
+        let mut st = self.state();
+        let fade = st
+            .fade_requested
+            .take()
+            .is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(2));
+        // 前の表示を出している途中なら、それを出したまま（入れ替えの途中の表示は覚えない）。
+        let old = match st.held.take() {
+            Some((old, _, faded)) => Some((old, faded || fade)),
+            None => st.last_node.clone().map(|old| (old, fade)),
+        };
+        let Some((old, fade)) = old else {
+            return;
+        };
+        st.held = Some((old, Instant::now(), fade));
+        drop(st);
+        // 読むのが遅くても、上限を過ぎたら新しい表示を出す。
+        let weak = self.downgrade();
+        glib::timeout_add_local_once(HOLD, move || {
+            if let Some(view) = weak.upgrade() {
+                view.queue_draw();
+            }
+        });
+    }
+
+    /// 前の表示 `old` から溶かし始める。
+    fn start_fade_from(&self, old: gsk::RenderNode) {
+        self.state().fade = Some((old, Instant::now()));
+        self.add_tick_callback(|view, _| {
+            view.queue_draw();
+            let mut st = view.state();
+            if st.fade.as_ref().is_some_and(|(_, at)| at.elapsed() < FADE) {
+                return glib::ControlFlow::Continue;
+            }
+            st.fade = None;
+            glib::ControlFlow::Break
+        });
+    }
+
     /// 表示する History を替える。同じ History の新しい世代なら、選んでいたコミットを選び直す。
     pub fn show(&self, repo: Arc<Repository>, history: Arc<HistorySnapshot>) {
-        {
+        // 選んでいたコミットが消えたか（ほかのプログラムが rebase・amend した）、選び直しで変わったか。
+        let changed = {
             let mut st = self.state();
             // 変わっていなければ何もしない（読み直すたびに同じスナップショットが来る）。
             if st
@@ -308,6 +719,19 @@ impl HistoryView {
             st.selected = selected.and_then(|id| history.row_of(&id));
             st.extra = extra.iter().filter_map(|id| history.row_of(id)).collect();
             st.anchor = anchor.and_then(|id| history.row_of(&id));
+            let mut changed =
+                st.selected.is_none() != selected.is_none() || st.extra.len() != extra.len();
+            // 最後に選んだコミットが消えたら（ほかのプログラムが rebase・amend した）、残りのうち最後のものに
+            // する。何も残らなければ先頭（いちばん新しいコミット）を選ぶ（macOS 版と同じ。表示の位置は動かさない）。
+            if selected.is_some() && st.selected.is_none() {
+                st.selected = st.extra.pop_last();
+            }
+            // 何も選んでいなければ（開いたばかりも）先頭を選び、詳細が空のままにならないようにする（macOS 版と同じ）。
+            if st.selected.is_none() && !history.graph.ids().is_empty() {
+                st.selected = Some(0);
+                st.anchor = Some(0);
+                changed = true;
+            }
             st.history = Some(history);
             st.chunks.clear();
             st.loading.clear();
@@ -315,8 +739,180 @@ impl HistoryView {
             st.complete = false;
             // 行の番号が変わるので、検索の一致は捨てる（検索の欄が探し直す）。
             st.matches = Rc::default();
+            changed
+        };
+        self.hold_previous();
+        self.configure_adjustments();
+        self.update_lineage();
+        self.queue_draw();
+        let f = self.state().on_history.clone();
+        if let Some(f) = f {
+            f();
+        }
+        // 選んだコミットが変わったときだけ知らせる（詳細が消えたコミットのまま残らないように）。
+        if changed {
+            self.notify_selection();
+        }
+    }
+
+    /// 行の文字を読み直す（mailmap が変わって作者名が変わるときなど。History はそのまま）。
+    pub fn reload_rows(&self) {
+        {
+            let mut st = self.state();
+            st.chunks.clear();
+            st.loading.clear();
+            st.rows.clear();
+            st.complete = false;
+        }
+        self.hold_previous();
+        self.queue_draw();
+    }
+
+    /// 行の見せ方を替える（1 行・項目・祖先の強調）。
+    pub fn set_display(&self, display: Display) {
+        {
+            let mut st = self.state();
+            if st.display == display {
+                return;
+            }
+            st.display = display;
+            st.rows.clear();
+            st.fonts = None;
         }
         self.configure_adjustments();
+        if let Some(row) = self.selected() {
+            self.scroll_to_row(row);
+        }
+        self.update_lineage();
+        self.queue_draw();
+    }
+
+    /// 選んだコミットの祖先を裏で求め、求まったらグラフを描き直す。
+    fn update_lineage(&self) {
+        let (history, row, request) = {
+            let mut st = self.state();
+            st.lineage_request += 1;
+            let target = st
+                .history
+                .clone()
+                .zip(st.selected)
+                .filter(|_| st.display.highlight_ancestors);
+            let Some((history, row)) = target else {
+                if st.lineage.take().is_some() {
+                    drop(st);
+                    self.queue_draw();
+                }
+                return;
+            };
+            if st
+                .lineage
+                .as_ref()
+                .is_some_and(|(g, r, _)| *g == history.generation && *r == row)
+            {
+                return;
+            }
+            (history, row, st.lineage_request)
+        };
+        let weak = self.downgrade();
+        let generation = history.generation;
+        glib::spawn_future_local(async move {
+            let Ok(lineage) = gio::spawn_blocking(move || {
+                amonhen_core::lineage::lineage(&history.graph, &history.layout, row)
+            })
+            .await
+            else {
+                return;
+            };
+            let Some(view) = weak.upgrade() else { return };
+            {
+                let mut st = view.state();
+                if st.lineage_request != request {
+                    return;
+                }
+                st.lineage = Some((generation, row, Rc::new(lineage)));
+            }
+            view.queue_draw();
+        });
+    }
+
+    /// 見えている署名を、スクロールが落ち着いてから 8 件ずつ裏で検証し、終わった分から色を付ける
+    /// （gpg を 1 件ずつ起動するので 1 件 15 ms ほどかかる）。
+    fn verify_soon(&self) {
+        let mut st = self.state();
+        if st.unverified.is_empty() {
+            return;
+        }
+        if let Some(id) = st.verify_soon.take() {
+            id.remove();
+        }
+        let weak = self.downgrade();
+        st.verify_soon = Some(glib::timeout_add_local_once(
+            std::time::Duration::from_millis(150),
+            move || {
+                let Some(view) = weak.upgrade() else { return };
+                let (repo, pending, generation) = {
+                    let mut st = view.state();
+                    st.verify_soon = None;
+                    let ids = std::mem::take(&mut st.unverified);
+                    let mut pending: Vec<Oid> = Vec::new();
+                    for id in ids {
+                        if !st.signatures.contains_key(&id) && st.verifying.insert(id) {
+                            pending.push(id);
+                        }
+                    }
+                    (st.repo.clone(), pending, st.signature_generation)
+                };
+                let Some(repo) = repo else { return };
+                glib::spawn_future_local(async move {
+                    for batch in pending.chunks(8) {
+                        let (r, ids) = (repo.clone(), batch.to_vec());
+                        let checks = gio::spawn_blocking(move || {
+                            let oids: Vec<String> = ids.iter().map(Oid::to_string).collect();
+                            let command =
+                                serde_json::json!({ "op": "verifySignatures", "oids": oids });
+                            let reply: serde_json::Value =
+                                serde_json::from_str(&r.run_json(&command.to_string()))
+                                    .unwrap_or_default();
+                            reply["info"]["checks"]
+                                .as_array()
+                                .map(|c| c.iter().map(signature_status).collect::<Vec<_>>())
+                                .unwrap_or_default()
+                        })
+                        .await
+                        .unwrap_or_default();
+                        let Some(view) = weak.upgrade() else { return };
+                        {
+                            let mut st = view.state();
+                            if st.signature_generation != generation {
+                                return;
+                            }
+                            for (id, status) in batch.iter().zip(checks) {
+                                st.signatures.insert(*id, status);
+                            }
+                            for id in batch {
+                                st.verifying.remove(id);
+                            }
+                        }
+                        view.queue_draw();
+                    }
+                });
+            },
+        ));
+    }
+
+    /// 署名を検証する側が変わった: 覚えていた結果を捨て、見えている行を検証し直す（macOS 版の
+    /// `forgetSignatures`）。
+    pub fn forget_signatures(&self) {
+        {
+            let mut st = self.state();
+            st.signature_generation += 1;
+            if let Some(id) = st.verify_soon.take() {
+                id.remove();
+            }
+            st.signatures.clear();
+            st.verifying.clear();
+            st.unverified.clear();
+        }
         self.queue_draw();
     }
 
@@ -333,20 +929,80 @@ impl HistoryView {
                 kind: e.kind,
                 head: e.kind == RefKind::Local
                     && Some(e.name.as_str()) == refs.refs.head_branch.as_deref(),
+                worktree: false,
+                elsewhere: false,
             });
         }
         // 今のブランチ、ローカル、リモート、タグの順。
         for list in labels.values_mut() {
             list.sort_by_key(|l| (!l.head, l.kind, l.name.clone()));
         }
-        self.state().labels = labels;
+        let mut st = self.state();
+        st.ref_labels = labels;
+        Self::merge_labels(&mut st);
+        drop(st);
         self.queue_draw();
+    }
+
+    /// `id` を指すブランチ・タグの名前と種類（行の札と同じ順。worktree の札は除く）。
+    pub fn ref_names(&self, id: &Oid) -> Vec<(String, RefKind)> {
+        self.state()
+            .ref_labels
+            .get(id)
+            .map(|list| list.iter().map(|l| (l.name.clone(), l.kind)).collect())
+            .unwrap_or_default()
+    }
+
+    /// 各 worktree の HEAD の札（コミット、札の文字、書き込む先か）と、ほかの worktree が checkout している
+    /// ブランチ（緑の札にする）。worktree が 1 つなら空で呼ぶ。
+    pub fn set_worktrees(&self, heads: Vec<(Oid, String, bool)>, elsewhere: HashSet<String>) {
+        let mut labels: HashMap<Oid, Vec<Label>> = HashMap::new();
+        for (head, name, editing) in heads {
+            labels.entry(head).or_default().push(Label {
+                name,
+                kind: RefKind::Local,
+                head: editing,
+                worktree: true,
+                elsewhere: false,
+            });
+        }
+        let mut st = self.state();
+        st.worktree_labels = labels;
+        st.elsewhere = elsewhere;
+        Self::merge_labels(&mut st);
+        drop(st);
+        self.queue_draw();
+    }
+
+    /// worktree の札を先に、ref の札を後に並べる（ほかの worktree のブランチに印を付ける）。
+    fn merge_labels(st: &mut State) {
+        let mut merged = st.worktree_labels.clone();
+        for (id, list) in &st.ref_labels {
+            let entry = merged.entry(*id).or_default();
+            entry.extend(list.iter().map(|l| Label {
+                elsewhere: l.kind == RefKind::Local && st.elsewhere.contains(&l.name),
+                ..l.clone()
+            }));
+        }
+        st.labels = merged;
     }
 
     /// 見えている行の件名などがすべて読めている（`--snapshot` で撮るのを待つ）。
     pub fn is_settled(&self) -> bool {
         let st = self.state();
-        st.complete && st.loading.is_empty() && !st.lanes.animating
+        st.complete
+            && st.loading.is_empty()
+            && !st.lanes.animating
+            && st.verifying.is_empty()
+            && st.unverified.is_empty()
+    }
+
+    /// 読んである行の件名（まだ読んでいなければ `None`）。
+    fn loaded_subject(&self, row: u32) -> Option<String> {
+        let st = self.state();
+        let chunk = st.chunks.get(&(row / CHUNK_ROWS))?;
+        let i = chunk.index(row);
+        Some(chunk.text(chunk.0.subjects[i]).to_owned())
     }
 
     pub fn selected(&self) -> Option<u32> {
@@ -362,8 +1018,18 @@ impl HistoryView {
         rows
     }
 
-    /// `row` だけを選ぶ。
+    /// `row` だけを選び、表の中ほどに見えるようにする（検索・Go to HEAD・リンクなど、プログラムから選ぶとき。
+    /// macOS 版の `select(row:)` と同じ）。
     pub fn select(&self, row: u32) {
+        self.select_row(row, true);
+    }
+
+    /// `row` だけを選び、見えるところまでだけスクロールする（クリック・矢印のキー）。
+    fn select_visible(&self, row: u32) {
+        self.select_row(row, false);
+    }
+
+    fn select_row(&self, row: u32, center: bool) {
         let changed = {
             let mut st = self.state();
             let changed = st.selected != Some(row) || !st.extra.is_empty();
@@ -372,7 +1038,11 @@ impl HistoryView {
             st.anchor = Some(row);
             changed
         };
-        self.scroll_to_row(row);
+        if center {
+            self.center_row(row);
+        } else {
+            self.scroll_to_row(row);
+        }
         self.queue_draw();
         if changed {
             self.notify_selection();
@@ -416,7 +1086,7 @@ impl HistoryView {
                 }
                 _ => {
                     drop(st);
-                    self.select(row);
+                    self.select_visible(row);
                     return;
                 }
             }
@@ -425,7 +1095,55 @@ impl HistoryView {
         self.notify_selection();
     }
 
+    /// 裏のタブになった: 見えている所のほかのチャンクと並べた行を捨てる（前に戻ったら読み直す）。捨てた数を返す。
+    /// macOS 版の `shrinkForBackground`。
+    pub fn shrink_for_background(&self) -> usize {
+        let rh = self.row_height().max(1.0);
+        let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
+        let height = self.height() as f32;
+        let first = (scroll / rh) as u32 / CHUNK_ROWS;
+        let last = (((scroll + height.max(rh)) / rh) as u32 / CHUNK_ROWS).max(first);
+        let mut st = self.state();
+        let before = st.chunks.len();
+        st.chunks.retain(|i, _| (first..=last).contains(i));
+        st.rows
+            .retain(|r, _| (first..=last).contains(&(r / CHUNK_ROWS)));
+        before - st.chunks.len()
+    }
+
+    /// すべての行を選ぶ（Ctrl+A）。
+    fn select_all(&self) {
+        let count = self.row_count();
+        if count == 0 {
+            return;
+        }
+        {
+            let mut st = self.state();
+            let last = st.selected.unwrap_or(0);
+            st.extra = (0..count).filter(|&r| r != last).collect();
+            st.selected = Some(last);
+            st.anchor = Some(0);
+        }
+        self.queue_draw();
+        self.notify_selection();
+    }
+
+    /// 選んでいる行のメニューを、その行の上に出す（Menu・Shift+F10）。
+    fn popup_menu(&self) {
+        let Some(row) = self.selected() else { return };
+        self.scroll_to_row(row);
+        let scroll = self.vadjustment().map_or(0.0, |a| a.value());
+        let h = self.row_height() as f64;
+        let y = row as f64 * h - scroll + h / 2.0;
+        let x = self.width() as f64 / 3.0;
+        let f = self.state().on_menu.clone();
+        if let Some(f) = f {
+            f(row, x, y);
+        }
+    }
+
     fn notify_selection(&self) {
+        self.update_lineage();
         let f = self.state().on_select.clone();
         if let Some(f) = f {
             f(&self.selection());
@@ -444,6 +1162,73 @@ impl HistoryView {
     }
 
     /// 選んだ行が変わったら `f(選んでいる行、昇順)` を呼ぶ。
+    /// GitHub の CI の状態（コミットごと）を替える。変わったら描き直す。
+    pub fn set_ci(&self, ci: HashMap<Oid, Ci>) {
+        {
+            let mut st = self.state();
+            if st.ci == ci {
+                return;
+            }
+            st.ci = ci;
+        }
+        self.queue_draw();
+    }
+
+    /// 行の右端の CI の印を押したら `f(コミット, 状態, 印の位置)` を呼ぶ。
+    pub fn connect_ci(&self, f: impl Fn(Oid, Ci, gdk::Rectangle) + 'static) {
+        self.state().on_ci = Some(Rc::new(f));
+    }
+
+    /// `row` の行の CI の印（出していなければ None）: コミット、状態、印の位置。
+    pub fn ci_mark(&self, row: u32) -> Option<(Oid, Ci, gdk::Rectangle)> {
+        let rh = self.row_height();
+        let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
+        let st = self.state();
+        if st.display.items & items::CI == 0 {
+            return None;
+        }
+        let id = *st.history.as_ref()?.graph.ids().get(row as usize)?;
+        let ci = *st.ci.get(&id)?;
+        // 描くのと同じ位置（文字の列の右端から 9 の所を中心に 14 の四角）。
+        let end = self.width() as f32 - TEXT_INSET;
+        let cy = row as f32 * rh - scroll + rh / 2.0;
+        let rect = gdk::Rectangle::new((end - 16.0) as i32, (cy - 7.0) as i32, 14, 14);
+        Some((id, ci, rect))
+    }
+
+    /// (x, y) が CI の印の上なら、知らせて true。
+    fn click_ci(&self, x: f32, y: f32) -> bool {
+        let Some(f) = self.state().on_ci.clone() else {
+            return false;
+        };
+        let Some(row) = self.row_at(y) else {
+            return false;
+        };
+        let end = self.width() as f32 - TEXT_INSET;
+        if x < end - CI_SPACE || x > end + 2.0 {
+            return false;
+        }
+        let Some((id, ci, rect)) = self.ci_mark(row) else {
+            return false;
+        };
+        f(id, ci, rect);
+        true
+    }
+
+    /// 確認用: `row` の行の CI の印を押したことにする。
+    pub fn click_ci_row(&self, row: u32) -> bool {
+        let Some(f) = self.state().on_ci.clone() else {
+            return false;
+        };
+        match self.ci_mark(row) {
+            Some((id, ci, rect)) => {
+                f(id, ci, rect);
+                true
+            }
+            None => false,
+        }
+    }
+
     pub fn connect_selected(&self, f: impl Fn(&[u32]) + 'static) {
         self.state().on_select = Some(Rc::new(f));
     }
@@ -454,13 +1239,27 @@ impl HistoryView {
         Some((st.repo.clone()?, st.history.clone()?))
     }
 
+    /// `row` を表の中ほどに置く（端では端まで）。
+    pub fn center_row(&self, row: u32) {
+        let Some(adj) = self.vadjustment() else {
+            return;
+        };
+        if adj.page_size() <= 0.0 {
+            self.state().pending_scroll = Some((row, true));
+            return;
+        }
+        let h = self.row_height() as f64;
+        let mid = row as f64 * h + h / 2.0 - adj.page_size() / 2.0;
+        adj.set_value(mid.clamp(0.0, (adj.upper() - adj.page_size()).max(0.0)));
+    }
+
     /// `row` が見えるようにスクロールする。
     pub fn scroll_to_row(&self, row: u32) {
         let Some(adj) = self.vadjustment() else {
             return;
         };
         if adj.page_size() <= 0.0 {
-            self.state().pending_scroll = Some(row);
+            self.state().pending_scroll = Some((row, false));
             return;
         }
         let h = self.row_height() as f64;
@@ -470,6 +1269,69 @@ impl HistoryView {
         } else if top + h > adj.value() + adj.page_size() {
             adj.set_value(top + h - adj.page_size());
         }
+    }
+
+    /// コミットを運んで落としたら `f(運んだコミット, 落とした所の下の行)` を呼ぶ。
+    pub fn connect_drop_commit(&self, f: impl Fn(Oid, u32) + 'static) {
+        self.state().on_drop = Some(Rc::new(f));
+    }
+
+    /// 出す History が替わったら `f()` を呼ぶ。
+    pub fn connect_history_changed(&self, f: impl Fn() + 'static) {
+        self.state().on_history = Some(Rc::new(f));
+    }
+
+    /// 運び始めたら `f()` を呼ぶ（編集できるコミットを読んで [`HistoryView::set_drag_chain`] で渡す）。
+    pub fn connect_drag_start(&self, f: impl Fn() + 'static) {
+        self.state().on_drag_start = Some(Rc::new(f));
+    }
+
+    /// 運んでいる間の、編集できるコミット（落とせる所を決める）。運び終えていれば捨てる。
+    pub fn set_drag_chain(&self, chain: HashSet<Oid>) {
+        let mut st = self.state();
+        if st.dragging.is_some() {
+            st.drag_chain = Some(chain);
+        }
+    }
+
+    /// `row` の上（その行の上の境目）に落とせるか: 運んでいるコミットが編集できる並びにあり、境目の上か下の行も
+    /// 並びにある（macOS 版の `validateDrop`）。並びを読み終えるまでは落とせる。
+    fn can_drop_at(&self, row: u32) -> bool {
+        let st = self.state();
+        let (Some(chain), Some((_, dragged)), Some(history)) = (
+            st.drag_chain.as_ref(),
+            st.dragging.as_ref(),
+            st.history.as_ref(),
+        ) else {
+            return true;
+        };
+        let ids = history.graph.ids();
+        let id = |r: u32| ids.get(r as usize);
+        let below = id(row.min((ids.len() as u32).saturating_sub(1)));
+        let above = row.checked_sub(1).and_then(id);
+        chain.contains(dragged)
+            && (below.is_some_and(|b| chain.contains(b))
+                || above.is_some_and(|a| chain.contains(a)))
+    }
+
+    /// 落とす所: `y` にいちばん近い行の境目（その下の行。いちばん下なら行の数）。
+    fn drop_row_at(&self, y: f32) -> u32 {
+        let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
+        let row = ((y + scroll) / self.row_height() + 0.5).floor().max(0.0) as u32;
+        row.min(self.row_count())
+    }
+
+    /// 運んでいる間、落とす所に線を引く。
+    fn draw_drop(&self, snapshot: &gtk::Snapshot) {
+        let Some(row) = self.state().drop_row else {
+            return;
+        };
+        let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
+        let y = row as f32 * self.row_height() - scroll;
+        snapshot.append_color(
+            &self.accent().0,
+            &graphene::Rect::new(4.0, y - 1.0, self.width() as f32 - 8.0, 2.0),
+        );
     }
 
     fn row_at(&self, y: f32) -> Option<u32> {
@@ -500,7 +1362,7 @@ impl HistoryView {
             self.select_with(row, true, false);
             self.scroll_to_row(row);
         } else {
-            self.select(row);
+            self.select_visible(row);
         }
         true
     }
@@ -519,8 +1381,10 @@ impl HistoryView {
         }
         if height > 0.0 {
             let pending = self.state().pending_scroll.take();
-            if let Some(row) = pending {
-                self.scroll_to_row(row);
+            match pending {
+                Some((row, true)) => self.center_row(row),
+                Some((row, false)) => self.scroll_to_row(row),
+                None => {}
             }
         }
     }
@@ -541,8 +1405,13 @@ impl HistoryView {
             layout.set_font_description(Some(font));
             layout.pixel_size().1 as f32
         };
-        let needed = (height(&subject) + 2.0 + height(&meta) + 8.0).ceil();
-        st.metrics.row_height = needed.max(Metrics::default().row_height);
+        st.metrics.row_height = if st.display.compact() {
+            (height(&subject) + 8.0).ceil().max(24.0)
+        } else {
+            (height(&subject) + 2.0 + height(&meta) + 8.0)
+                .ceil()
+                .max(Metrics::default().row_height)
+        };
         st.fonts = Some(Fonts {
             subject,
             meta,
@@ -564,6 +1433,7 @@ impl HistoryView {
         let scroll_y = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
         let focused = self.has_focus();
         let fg = self.color();
+        let (accent, on_accent) = self.accent();
         let mut wanted = Vec::new();
         {
             let mut st = self.state();
@@ -595,7 +1465,7 @@ impl HistoryView {
             }
             // 選んでいる行の背景。
             let color = if focused {
-                gdk::RGBA::new(0.21, 0.52, 0.89, 1.0)
+                accent
             } else {
                 gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), 0.12)
             };
@@ -610,23 +1480,24 @@ impl HistoryView {
                 snapshot.append_color(&color, &graphene::Rect::new(0.0, y, width, rh));
             }
 
-            // グラフ。
-            // レーンが少なければ狭く（History 全体のレーンの数で決め、スクロールで変えない）。
-            let m = &st.metrics;
-            let lanes = history.layout.lane_count() as f32;
-            let graph_width = (m.left_inset + lanes * m.lane_width)
-                .clamp(40.0, GRAPH_WIDTH)
-                .min(width * 0.4);
+            // グラフ。列は見えているレーンの分だけ取り、スクロールで見えるレーンが変われば伸び縮みする（macOS 版と
+            // 同じ）。使えるのは上限まで（狭い窓では幅の 4 割まで）。
+            let max_graph = GRAPH_WIDTH.min(width * 0.4).max(40.0);
             st.lanes
-                .update(&history, first..last, graph_width, &st.metrics, true);
-            snapshot.push_clip(&graphene::Rect::new(0.0, 0.0, graph_width, height));
-            graph::draw(
+                .update(&history, first..last, max_graph, &st.metrics, true);
+            let graph_width = st.lanes.width();
+            snapshot.push_clip(&graphene::Rect::new(0.0, 0.0, max_graph, height));
+            let extents = graph::draw(
                 snapshot,
                 &history,
                 &st.lanes,
                 first..last,
                 scroll_y,
                 &st.metrics,
+                st.lineage
+                    .as_ref()
+                    .filter(|(g, _, _)| *g == history.generation)
+                    .map(|(_, _, l)| &**l),
             );
             snapshot.pop();
             if st.lanes.animating && st.tick.is_none() {
@@ -646,14 +1517,20 @@ impl HistoryView {
                 }));
             }
 
-            // 文字。
-            let text_x = graph_width + TEXT_INSET;
-            let text_end = width - TEXT_INSET;
+            // 文字。行ごとに、その行のグラフの右端のすぐ右から始める（macOS 版と同じ）。
+            let text_x_of = |row: u32| {
+                extents
+                    .get((row - first) as usize)
+                    .map_or(graph_width + TEXT_INSET, |x| (x + GRAPH_GAP).round())
+            };
+            let row_end = width - TEXT_INSET;
             let secondary = gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), fg.alpha() * 0.6);
-            let white = gdk::RGBA::WHITE;
+            // 選んだ行の文字は、選択の色の上の文字の色（macOS 版の alternateSelectedControlTextColor）。
+            let white = on_accent;
             if st.rows.len() > 4096 {
                 st.rows.clear();
             }
+            let compact = st.display.compact();
             for row in first..last {
                 let index = row / CHUNK_ROWS;
                 let Some(chunk) = st.chunks.get(&index).cloned() else {
@@ -668,14 +1545,38 @@ impl HistoryView {
                 }
                 let selected = focused && (st.selected == Some(row) || st.extra.contains(&row));
                 let top = row as f32 * rh - scroll_y;
+                let text_x = text_x_of(row);
                 let mut x = text_x;
                 let line = &st.rows[&row];
                 let (_, subject_h) = line.subject.pixel_size();
                 let (_, meta_h) = line.meta.pixel_size();
                 let gap = 2.0;
                 let text_top = ((rh - subject_h as f32 - gap - meta_h as f32) / 2.0).round();
+                // 2 行なら行の高さの中ほどに 2 行を、1 行なら件名と同じ高さに作者・日時を置く。
+                let text_top = if compact {
+                    ((rh - subject_h as f32) / 2.0).round()
+                } else {
+                    text_top
+                };
                 let id = history.graph.ids()[row as usize];
-                if let Some(labels) = st.labels.get(&id).cloned() {
+                // GitHub の CI の状態（知っていれば）。行の右端に置き、署名の印とは離す。
+                let ci = if st.display.items & items::CI != 0 {
+                    st.ci.get(&id).copied()
+                } else {
+                    None
+                };
+                let text_end = if ci.is_some() {
+                    row_end - CI_SPACE
+                } else {
+                    row_end
+                };
+                if let Some(ci) = ci {
+                    let color = if selected { white } else { ci_color(ci, &fg) };
+                    draw_ci(snapshot, ci, row_end - 9.0, top + rh / 2.0, &color);
+                }
+                if st.display.items & items::REFS != 0
+                    && let Some(labels) = st.labels.get(&id).cloned()
+                {
                     x = self.draw_labels(
                         snapshot,
                         st,
@@ -687,58 +1588,154 @@ impl HistoryView {
                         selected,
                     );
                 }
+                // 署名があれば、作者・日時の行に検証の結果の色の丸を置く。結果をまだ知らなければ、裏で検証する。
+                let signed = st.rows[&row].signed && st.display.items & items::SIGNATURE != 0;
+                let mark = if signed {
+                    let known = st.signatures.get(&id).copied();
+                    if known.is_none() && !st.verifying.contains(&id) {
+                        st.unverified.push(id);
+                    }
+                    Some(known)
+                } else {
+                    None
+                };
+                let dot = if signed { 12.0 } else { 0.0 };
                 let line = &st.rows[&row];
+                line.meta.set_width(-1);
+                let meta_natural = line.meta.pixel_size().0 as f32;
+                // 1 行なら、作者・日時・ID を右に寄せ、件名はその手前まで。
+                let meta_width = if compact {
+                    meta_natural.min((text_end - text_x) * 0.45)
+                } else {
+                    0.0
+                };
+                let subject_end = if compact {
+                    text_end - meta_width - 12.0 - dot
+                } else {
+                    text_end
+                };
+                let meta_max = text_end - text_x - dot;
                 line.subject
-                    .set_width(((text_end - x).max(0.0) * pango::SCALE as f32) as i32);
-                line.meta
-                    .set_width(((text_end - text_x).max(0.0) * pango::SCALE as f32) as i32);
+                    .set_width(((subject_end - x).max(0.0) * pango::SCALE as f32) as i32);
+                line.meta.set_width(
+                    ((if compact { meta_width } else { meta_max }).max(0.0) * pango::SCALE as f32)
+                        as i32,
+                );
                 snapshot.save();
                 snapshot.translate(&graphene::Point::new(x, top + text_top));
                 snapshot.append_layout(&line.subject, if selected { &white } else { &fg });
                 snapshot.restore();
+                let (meta_x, meta_y) = if compact {
+                    // 件名と並べて、ベースラインをそろえる。
+                    let shift = (line.subject.baseline() - line.meta.baseline()) as f32
+                        / pango::SCALE as f32;
+                    (text_end - meta_width, top + text_top + shift)
+                } else {
+                    (text_x, top + text_top + subject_h as f32 + gap)
+                };
                 snapshot.save();
-                snapshot.translate(&graphene::Point::new(
-                    text_x,
-                    top + text_top + subject_h as f32 + gap,
-                ));
+                snapshot.translate(&graphene::Point::new(meta_x, meta_y));
                 let meta_color = if selected {
-                    gdk::RGBA::new(1.0, 1.0, 1.0, 0.8)
+                    gdk::RGBA::new(
+                        white.red(),
+                        white.green(),
+                        white.blue(),
+                        white.alpha() * 0.8,
+                    )
                 } else {
                     secondary
                 };
                 snapshot.append_layout(&line.meta, &meta_color);
                 snapshot.restore();
+                if let Some(mark) = mark {
+                    let cx = if compact {
+                        text_end - meta_width - 7.0
+                    } else {
+                        text_x + meta_natural.min(meta_max) + 9.0
+                    };
+                    let cy = meta_y + meta_h as f32 / 2.0;
+                    let color = if selected {
+                        white
+                    } else {
+                        signature_color(mark, &fg)
+                    };
+                    // 塗りつぶしは強い信用（と、はっきり悪いもの）、縁だけは弱い信用やそれ以外（macOS 版の
+                    // アイコンの塗りつぶしと縁だけの違い）。
+                    let path = gsk::PathBuilder::new();
+                    if signature_filled(mark) {
+                        path.add_circle(&graphene::Point::new(cx, cy), 3.5);
+                        snapshot.append_fill(&path.to_path(), gsk::FillRule::Winding, &color);
+                    } else {
+                        path.add_circle(&graphene::Point::new(cx, cy), 3.0);
+                        snapshot.append_stroke(&path.to_path(), &gsk::Stroke::new(1.3), &color);
+                    }
+                }
             }
         }
         self.state().complete = wanted.is_empty() && width > 0.0;
-        for index in wanted {
+        self.verify_soon();
+        // 見えている行のチャンクを先に、前後のチャンクも先読みする（速くスクロールしても、新しいチャンクに入る
+        // たびに行が空で出ないように。macOS 版と同じ）。
+        let ahead = self.ahead_chunks(scroll_y, height);
+        for index in wanted.into_iter().chain(ahead) {
             self.load_chunk(index);
         }
         self.trim_chunks(scroll_y, height);
+    }
+
+    /// 見えている所の前後で、まだ読んでいないチャンク（後ろ、前の順）。
+    fn ahead_chunks(&self, scroll_y: f32, height: f32) -> Vec<u32> {
+        let st = self.state();
+        let Some(history) = st.history.as_ref() else {
+            return Vec::new();
+        };
+        let count = history.layout.nodes().len() as u32;
+        neighbor_chunks(scroll_y, height, st.metrics.row_height, count)
+            .into_iter()
+            .filter(|i| !st.chunks.contains_key(i) && !st.loading.contains(i))
+            .collect()
     }
 
     fn row_text(&self, st: &State, history: &HistorySnapshot, chunk: &Chunk, row: u32) -> RowText {
         let fonts = st.fonts.as_ref().expect("fonts");
         let i = chunk.index(row);
         let subject = self.layout(chunk.text(chunk.0.subjects[i]), &fonts.subject);
-        let author = chunk.text(chunk.0.author_names[i]);
-        let date = glib::DateTime::from_unix_local(chunk.0.author_times[i])
-            .and_then(|d| d.format("%Y-%m-%d %H:%M"))
-            .map(|s| s.to_string())
-            .unwrap_or_default();
-        let id = history.graph.ids()[row as usize].to_string();
-        let mut meta = format!("{author}  ·  {date}  ·  {}", &id[..8]);
+        // 作者・日時・ID のうち出すもの。1 行では件名に幅を譲り、日付だけにして詰めて並べる。
+        let shown = st.display.items;
+        let compact = st.display.compact();
+        let mut parts = Vec::new();
+        if shown & items::AUTHOR != 0 {
+            parts.push(chunk.text(chunk.0.author_names[i]).to_owned());
+        }
+        if shown & items::DATE != 0 {
+            // 地域の書式（1 行では日付だけ。macOS 版と同じ）。
+            let time = chunk.0.author_times[i];
+            parts.push(if compact {
+                crate::titles::date(time)
+            } else {
+                crate::titles::date_time(time, false)
+            });
+        }
+        if shown & items::ID != 0 {
+            parts.push(history.graph.ids()[row as usize].to_string()[..8].to_owned());
+        }
         // 折りたたんだ merge は、隠しているコミットの数を添える。
         if let Some(&hidden) = history.folded.get(row as usize)
             && hidden > 0
         {
-            meta.push_str(&format!("  ·  ⊕ {hidden} 件を折りたたみ"));
+            parts.push(format!("⊕ {}", tr!("{count} folded", count = hidden)));
         }
+        let meta = parts.join(if compact { "  " } else { "  ·  " });
         let meta = self.layout(&meta, &fonts.meta);
         let attrs = pango::AttrList::new();
         attrs.insert(pango::AttrFontFeatures::new("tnum"));
         meta.set_attributes(Some(&attrs));
-        RowText { subject, meta }
+        let signed = chunk.0.signatures.get(i).is_some_and(|&k| k != 0);
+        RowText {
+            subject,
+            meta,
+            signed,
+        }
     }
 
     /// ref のラベルを `x` から並べ、次に件名を置く位置を返す。
@@ -776,7 +1773,12 @@ impl HistoryView {
                 break;
             }
             let y = (top + (line_height - height) / 2.0).round();
-            let (fill, ink) = label_colors(i < 3, label, selected, &fg);
+            // 選んだ行の文字の色（テーマの選択の上の文字）。st を借りているので、子から直接読む。
+            let on_accent = st
+                .accent
+                .as_ref()
+                .map_or(gdk::RGBA::WHITE, |(_, f)| f.color());
+            let (fill, ink) = label_colors(i < 3, label, selected, &fg, &on_accent);
             let rect = gsk::RoundedRect::from_rect(graphene::Rect::new(x, y, width, height), 4.0);
             let path = gsk::PathBuilder::new();
             path.add_rounded_rect(&rect);
@@ -802,12 +1804,12 @@ impl HistoryView {
             st.loading.insert(index);
             (repo, history)
         };
-        let generation = history.generation;
         let weak = self.downgrade();
+        let target = history.clone();
         glib::spawn_future_local(async move {
             let result = gio::spawn_blocking(move || {
                 repo.history_chunk(
-                    &history,
+                    &target,
                     index * CHUNK_ROWS,
                     CHUNK_ROWS,
                     &FrontendProfile::GTK,
@@ -820,7 +1822,11 @@ impl HistoryView {
             {
                 let mut st = view.state();
                 // 読んでいる間に History が替わっていたら捨てる。
-                if st.history.as_ref().map(|h| h.generation) != Some(generation) {
+                if !st
+                    .history
+                    .as_ref()
+                    .is_some_and(|h| Arc::ptr_eq(h, &history))
+                {
                     return;
                 }
                 st.loading.remove(&index);
@@ -853,14 +1859,82 @@ impl HistoryView {
     }
 }
 
+/// 見えている行（上端 `scroll_y`、高さ `height`）のチャンクの、すぐ後とすぐ前のチャンク（History の中のもの）。
+fn neighbor_chunks(scroll_y: f32, height: f32, row_height: f32, rows: u32) -> Vec<u32> {
+    if rows == 0 || row_height <= 0.0 {
+        return Vec::new();
+    }
+    let first = ((scroll_y / row_height).floor().max(0.0) as u32).min(rows - 1);
+    let last = (((scroll_y + height) / row_height).ceil() as u32).clamp(first, rows - 1);
+    let (first, last) = (first / CHUNK_ROWS, last / CHUNK_ROWS);
+    let after = (last + 1) * CHUNK_ROWS < rows;
+    after
+        .then_some(last + 1)
+        .into_iter()
+        .chain(first.checked_sub(1))
+        .collect()
+}
+
+/// CI の印の色（macOS 版と同じく、成功は緑・失敗は赤・途中は橙）。
+fn ci_color(ci: Ci, fg: &gdk::RGBA) -> gdk::RGBA {
+    match ci {
+        Ci::Passing => gdk::RGBA::new(0.20, 0.70, 0.30, 1.0),
+        Ci::Failing => gdk::RGBA::new(0.90, 0.25, 0.25, 1.0),
+        Ci::Pending => gdk::RGBA::new(0.95, 0.55, 0.15, 1.0),
+        Ci::None => gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), 0.55),
+    }
+}
+
+/// CI の印を (cx, cy) を中心に描く: 枠のないチェック・バツ・点（署名の丸と形で見分ける）。
+fn draw_ci(snapshot: &gtk::Snapshot, ci: Ci, cx: f32, cy: f32, color: &gdk::RGBA) {
+    let path = gsk::PathBuilder::new();
+    let stroke = gsk::Stroke::new(1.6);
+    stroke.set_line_cap(gsk::LineCap::Round);
+    stroke.set_line_join(gsk::LineJoin::Round);
+    match ci {
+        Ci::Passing => {
+            path.move_to(cx - 3.8, cy + 0.2);
+            path.line_to(cx - 1.2, cy + 2.9);
+            path.line_to(cx + 4.0, cy - 3.2);
+            snapshot.append_stroke(&path.to_path(), &stroke, color);
+        }
+        Ci::Failing => {
+            path.move_to(cx - 3.2, cy - 3.2);
+            path.line_to(cx + 3.2, cy + 3.2);
+            path.move_to(cx + 3.2, cy - 3.2);
+            path.line_to(cx - 3.2, cy + 3.2);
+            snapshot.append_stroke(&path.to_path(), &stroke, color);
+        }
+        Ci::Pending => {
+            path.add_circle(&graphene::Point::new(cx, cy), 3.0);
+            snapshot.append_fill(&path.to_path(), gsk::FillRule::Winding, color);
+        }
+        Ci::None => {
+            path.add_circle(&graphene::Point::new(cx, cy), 3.0);
+            snapshot.append_stroke(&path.to_path(), &gsk::Stroke::new(1.0), color);
+        }
+    }
+}
+
 fn label_colors(
     named: bool,
     label: &Label,
     selected: bool,
     fg: &gdk::RGBA,
+    on_accent: &gdk::RGBA,
 ) -> (gdk::RGBA, gdk::RGBA) {
     if !named {
         return (gdk::RGBA::new(0.5, 0.5, 0.5, 0.25), *fg);
+    }
+    let ink = if selected { *on_accent } else { *fg };
+    // worktree の HEAD の札と、ほかの worktree が checkout しているブランチは緑。
+    let (r, g, b) = (0.20, 0.66, 0.30);
+    if label.worktree && label.head {
+        return (gdk::RGBA::new(r, g, b, 0.85), gdk::RGBA::WHITE);
+    }
+    if label.worktree || label.elsewhere {
+        let alpha = if selected { 0.45 } else { 0.25 };
+        return (gdk::RGBA::new(r, g, b, alpha), ink);
     }
     let (r, g, b) = match label.kind {
         RefKind::Local => (0.21, 0.52, 0.89),
@@ -870,9 +1944,52 @@ fn label_colors(
     if label.head {
         return (gdk::RGBA::new(r, g, b, 0.85), gdk::RGBA::WHITE);
     }
-    let ink = if selected { gdk::RGBA::WHITE } else { *fg };
+    let ink = if selected { *on_accent } else { *fg };
     (
         gdk::RGBA::new(r, g, b, if selected { 0.45 } else { 0.22 }),
         ink,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn neighbors_are_the_chunks_around_the_visible_rows() {
+        // 行の高さ 10、256 行のチャンク。
+        assert_eq!(neighbor_chunks(0.0, 100.0, 10.0, 1000), vec![1]);
+        assert_eq!(neighbor_chunks(2560.0, 100.0, 10.0, 1000), vec![2, 0]);
+        // チャンクの境をまたいでいれば、その外側。
+        assert_eq!(neighbor_chunks(2500.0, 200.0, 10.0, 1000), vec![2]);
+        assert_eq!(neighbor_chunks(9000.0, 1000.0, 10.0, 1000), vec![2]);
+        assert_eq!(neighbor_chunks(0.0, 100.0, 10.0, 100), Vec::<u32>::new());
+        assert_eq!(neighbor_chunks(0.0, 100.0, 10.0, 0), Vec::<u32>::new());
+    }
+
+    #[test]
+    fn signature_status_matches_the_details() {
+        let check = |status: &str, email: &str, committer: &str| {
+            json!({
+                "status": status, "signer": "A <a@x>", "key": "ABCD", "fingerprint": "",
+                "trust": "full", "emails": [{ "email": email, "validity": "u" }],
+                "committerEmail": committer,
+            })
+        };
+        assert_eq!(
+            signature_status(&check("G", "a@x", "a@x")),
+            Status::Verified(3)
+        );
+        // 署名した鍵のメールがコミッターと違う（行では緑にしない）。
+        assert_eq!(
+            signature_status(&check("G", "a@x", "b@x")),
+            Status::SignerMismatch
+        );
+        assert_eq!(
+            signature_status(&check("V", "a@x", "")),
+            Status::Unsupported
+        );
+        assert_eq!(signature_status(&check("R", "a@x", "")), Status::Revoked);
+    }
 }

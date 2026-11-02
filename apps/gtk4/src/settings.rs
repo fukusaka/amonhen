@@ -1,13 +1,14 @@
 //! 利用者の設定（macOS 版の `Settings.swift` のうち、GTK4 版に機能のあるもの）。`~/.config/amonhen/gtk.ini`
 //! （GLib の KeyFile）に置く。GSettings はスキーマを入れる必要があり、展開しただけの実行ファイルでは使えないため。
-//! 設定の窓は macOS 版と同じタブ（Git・Appearance・Performance・Advanced）。
+//! 設定の窓は macOS 版と同じタブのうち、中身のあるもの（General・Appearance・Diff & Merge・Performance）。
 
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use gtk::glib;
+use amonhen_model::tr;
 use gtk::prelude::*;
+use gtk::{gio, glib};
 
 const GROUP: &str = "settings";
 
@@ -16,17 +17,104 @@ type Watcher = Rc<dyn Fn(&str)>;
 
 thread_local! {
     static FILE: glib::KeyFile = load();
-    static WATCHERS: RefCell<Vec<Watcher>> = RefCell::default();
+    /// 聞き手と、それを持つもの（なくなったら外す。None はずっと）。
+    static WATCHERS: RefCell<Vec<(Option<glib::WeakRef<glib::Object>>, Watcher)>> =
+        RefCell::default();
     static WINDOW: RefCell<glib::WeakRef<gtk::Window>> = RefCell::default();
+    /// Git のタブで、読み終えたら開くページ（`--settings git/programs`）。
+    static GIT_PAGE: RefCell<Option<String>> = const { RefCell::new(None) };
+    /// Git のタブの中身（読み終えて作ったら。窓が開いている間に `select("git/<page>")` されたらそのページへ）。
+    static GIT_SETTINGS: RefCell<std::rc::Weak<crate::reposettings::RepoSettings>> =
+        RefCell::default();
 }
 
 /// 鍵の名前（macOS 版の UserDefaults と同じ）。
-pub const PULL_MODE: &str = "pullMode";
 pub const MONOSPACED_COMMIT_MESSAGE: &str = "monospacedCommitMessage";
 pub const WRITE_COMMIT_GRAPH: &str = "writeCommitGraph";
 pub const OPEN_THROUGH_DAEMON: &str = "openThroughDaemon";
+/// 手元のリポジトリの status で git の fsmonitor を使うか（既定は使う。macOS と Windows でだけ効く）。
+pub const USE_FSMONITOR: &str = "useFSMonitor";
 pub const WORKING_COPY_LAYOUT: &str = "workingCopyLayout";
 pub const AUTO_MAGIC_MERGE: &str = "autoMagicMerge";
+/// File History に merge のコミットも出すか。
+pub const FILE_HISTORY_MERGES: &str = "fileHistoryMerges";
+/// 開いたリポジトリをブックマークに入れる（Repositories の一覧）。
+pub const AUTO_BOOKMARK: &str = "autoBookmark";
+/// SSH 先ごとに決めていないとき（と、SSH でない daemon 越し）に、署名を手元の鍵で検証するか（既定は手元。
+/// macOS 版と同じ鍵。画面では変えない）。
+pub const CHECK_REMOTE_SIGNATURES_LOCALLY: &str = "checkRemoteSignaturesLocally";
+/// 開いている間、何分ごとに fetch するか（0 はしない）。
+pub const AUTO_FETCH_MINUTES: &str = "autoFetchMinutes";
+/// History の並び順（`date`・`topo`。既定は日付順）。
+pub const HISTORY_ORDER: &str = "historyOrder";
+/// History の行に出す項目（[`items`] のビット。既定はすべて）。
+pub const HISTORY_ITEMS: &str = "historyItems";
+/// History の行を 1 行にするか（既定は件名と作者・日時の 2 行）。
+pub const COMPACT_HISTORY_ROWS: &str = "compactHistoryRows";
+/// History でマージ済みブランチを折りたたむか（既定は折りたたまない）。
+pub const FOLD_MERGED_BRANCHES: &str = "foldMergedBranches";
+/// 選んだコミットの祖先を強調するか（既定はする）。
+pub const HIGHLIGHT_ANCESTORS: &str = "highlightAncestors";
+/// コミットの詳細に作者・コミッターのアバターを出すか（既定は出す。Gravatar にメールアドレスのハッシュを送る）。
+pub const SHOW_AVATARS: &str = "showAvatars";
+/// GitHub（gh で読む。Settings > Accounts）: History のコミットごとに CI の状態を出すか（既定は出す）。
+pub const GITHUB_CI_STATUS: &str = "gitHubCIStatus";
+/// コミットの作者の GitHub のアバターを使うか（既定は使う。使わなければ Gravatar だけ）。
+pub const GITHUB_AVATARS: &str = "gitHubAvatars";
+/// CI を読むブランチに、既定のブランチも含めるか（既定は含める。外すと今のブランチだけ）。
+pub const GITHUB_CI_DEFAULT_BRANCH: &str = "gitHubCIDefaultBranch";
+/// ブランチごとに読む直近のコミットの数（30・50・100。既定は 100）。
+pub const GITHUB_CI_COMMITS: &str = "gitHubCICommits";
+/// アバターの URL は、窓を開いて最初の 1 回だけ読むか（既定はそうする）。
+pub const GITHUB_AVATARS_ONCE: &str = "gitHubAvatarsOnce";
+
+/// History の行に出す項目のビット（macOS 版の `HistoryItems` と同じ値）。件名はいつも出す。
+pub mod items {
+    /// ブランチ・タグのラベル。
+    pub const REFS: u32 = 1;
+    pub const AUTHOR: u32 = 2;
+    pub const DATE: u32 = 4;
+    /// 短いコミット ID。
+    pub const ID: u32 = 8;
+    /// 署名の検証結果の印。
+    pub const SIGNATURE: u32 = 16;
+    /// GitHub の CI の状態。
+    pub const CI: u32 = 32;
+    pub const ALL: u32 = REFS | AUTHOR | DATE | ID | SIGNATURE | CI;
+}
+
+/// History の行に出す項目（[`items`] のビット）。
+pub fn history_items() -> u32 {
+    string(HISTORY_ITEMS)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(items::ALL)
+}
+
+pub fn set_history_items(value: u32) {
+    set_string(HISTORY_ITEMS, &value.to_string());
+}
+
+/// History の並び順。
+pub fn history_order() -> amonhen_model::HistoryOrder {
+    string(HISTORY_ORDER)
+        .and_then(|s| amonhen_model::HistoryOrder::from_name(&s))
+        .unwrap_or_default()
+}
+
+/// GitHub で、ブランチごとに読む直近のコミットの数。
+pub fn github_ci_commits() -> u32 {
+    string(GITHUB_CI_COMMITS)
+        .and_then(|s| s.parse().ok())
+        .filter(|n| [30, 50, 100].contains(n))
+        .unwrap_or(100)
+}
+
+/// 自動の fetch の間隔（分。0 はしない）。
+pub fn auto_fetch_minutes() -> u32 {
+    string(AUTO_FETCH_MINUTES)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0)
+}
 
 fn path() -> PathBuf {
     glib::user_config_dir().join("amonhen").join("gtk.ini")
@@ -49,16 +137,50 @@ fn save(file: &glib::KeyFile) {
 }
 
 fn changed(key: &str) {
-    let watchers: Vec<_> = WATCHERS.with(|w| w.borrow().clone());
+    // 持ち主がなくなった聞き手は外す（設定の窓・Repository Settings を開くたびに足されるので）。
+    let watchers: Vec<Watcher> = WATCHERS.with(|w| {
+        let mut w = w.borrow_mut();
+        w.retain(|(owner, _)| owner.as_ref().is_none_or(|o| o.upgrade().is_some()));
+        w.iter().map(|(_, f)| f.clone()).collect()
+    });
     for f in watchers {
         f(key);
     }
 }
 
 pub fn bool(key: &str) -> bool {
-    FILE.with(|f| f.boolean(GROUP, key))
-        .unwrap_or(matches!(key, MONOSPACED_COMMIT_MESSAGE | AUTO_MAGIC_MERGE))
+    FILE.with(|f| f.boolean(GROUP, key)).unwrap_or(matches!(
+        key,
+        MONOSPACED_COMMIT_MESSAGE
+            | AUTO_MAGIC_MERGE
+            | HIGHLIGHT_ANCESTORS
+            | AUTO_BOOKMARK
+            | SHOW_AVATARS
+            | GITHUB_CI_STATUS
+            | GITHUB_AVATARS
+            | GITHUB_CI_DEFAULT_BRANCH
+            | GITHUB_AVATARS_ONCE
+            | USE_FSMONITOR
+            | CHECK_REMOTE_SIGNATURES_LOCALLY
+            | crate::commitfiles::STACKED
+    ))
 }
+
+/// status で git の fsmonitor を使うかを設定から決め、設定を変えたら合わせる（起動したときに一度呼ぶ）。
+pub fn apply_fsmonitor() {
+    amonhen_backend_cli::set_fsmonitor(bool(USE_FSMONITOR));
+    connect_changed(|key| {
+        if key == USE_FSMONITOR {
+            amonhen_backend_cli::set_fsmonitor(bool(USE_FSMONITOR));
+        }
+    });
+}
+
+/// 設定の窓の大きさの覚え場所。
+const WINDOW_SIZE: &str = "settingsWindowSize";
+
+/// git の `fsmonitor--daemon` を使える OS か（macOS と Windows だけ）。
+const FSMONITOR_AVAILABLE: bool = cfg!(any(target_os = "macos", target_os = "windows"));
 
 pub fn set_bool(key: &str, value: bool) {
     FILE.with(|f| {
@@ -80,18 +202,29 @@ pub fn set_string(key: &str, value: &str) {
     changed(key);
 }
 
-/// 設定が変わったら `f(鍵)` を呼ぶ。
-pub fn connect_changed(f: impl Fn(&str) + 'static) {
-    WATCHERS.with(|w| w.borrow_mut().push(Rc::new(f)));
+/// 鍵を消す（なければ何もしない）。
+pub fn remove(key: &str) {
+    let removed = FILE.with(|f| {
+        let removed = f.remove_key(GROUP, key).is_ok();
+        if removed {
+            save(f);
+        }
+        removed
+    });
+    if removed {
+        changed(key);
+    }
 }
 
-/// Pull の既定（コアの `pull` の `mode`）。
-pub fn pull_mode() -> &'static str {
-    match string(PULL_MODE).as_deref() {
-        Some("rebase") => "rebase",
-        Some("fastForwardOnly") => "fastForwardOnly",
-        _ => "merge",
-    }
+/// 設定が変わったら `f(鍵)` を呼ぶ。
+pub fn connect_changed(f: impl Fn(&str) + 'static) {
+    WATCHERS.with(|w| w.borrow_mut().push((None, Rc::new(f))));
+}
+
+/// `connect_changed` の、`owner` がある間だけ呼ぶ形（なくなったら外す）。
+pub fn connect_changed_while(owner: &impl IsA<glib::Object>, f: impl Fn(&str) + 'static) {
+    let owner = owner.upcast_ref::<glib::Object>().downgrade();
+    WATCHERS.with(|w| w.borrow_mut().push((Some(owner), Rc::new(f))));
 }
 
 /// 項目の下に添える説明。
@@ -111,8 +244,184 @@ fn note(text: &str) -> gtk::Label {
 fn check(key: &'static str, title: &str) -> gtk::CheckButton {
     let c = gtk::CheckButton::with_label(title);
     c.set_active(bool(key));
-    c.connect_toggled(move |c| set_bool(key, c.is_active()));
+    c.connect_toggled(move |c| {
+        if c.is_active() != bool(key) {
+            set_bool(key, c.is_active());
+        }
+    });
+    // History の表示のメニューなど、ほかの所で変えたら合わせる。
+    let weak = c.downgrade();
+    connect_changed_while(&c, move |changed| {
+        if changed == key
+            && let Some(c) = weak.upgrade()
+        {
+            c.set_active(bool(key));
+        }
+    });
     c
+}
+
+/// History の行に出す項目の 1 つ（`bit`）を出すか。
+fn item_check(bit: u32, title: &str) -> gtk::CheckButton {
+    let c = gtk::CheckButton::with_label(title);
+    c.set_active(history_items() & bit != 0);
+    c.connect_toggled(move |c| {
+        let items = history_items();
+        let next = if c.is_active() {
+            items | bit
+        } else {
+            items & !bit
+        };
+        if next != items {
+            set_history_items(next);
+        }
+    });
+    let weak = c.downgrade();
+    connect_changed_while(&c, move |changed| {
+        if changed == HISTORY_ITEMS
+            && let Some(c) = weak.upgrade()
+        {
+            c.set_active(history_items() & bit != 0);
+        }
+    });
+    c
+}
+
+/// History の並び順を選ぶ行と、その説明（Settings > Appearance）。
+fn order_row() -> gtk::Box {
+    use amonhen_model::HistoryOrder;
+    const ORDERS: [HistoryOrder; 2] = [HistoryOrder::Date, HistoryOrder::Topo];
+    let titles = [tr!("Date Order"), tr!("Topological Order")];
+    let refs: Vec<&str> = titles.iter().map(String::as_str).collect();
+    let choice = gtk::DropDown::from_strings(&refs);
+    let index = |o: HistoryOrder| ORDERS.iter().position(|&x| x == o).unwrap_or(0) as u32;
+    choice.set_selected(index(history_order()));
+    choice.connect_selected_notify(move |d| {
+        let order = ORDERS[d.selected() as usize];
+        if order != history_order() {
+            set_string(HISTORY_ORDER, order.name());
+        }
+    });
+    let weak = choice.downgrade();
+    connect_changed_while(&choice, move |changed| {
+        if changed == HISTORY_ORDER
+            && let Some(d) = weak.upgrade()
+        {
+            d.set_selected(index(history_order()));
+        }
+    });
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    let l = gtk::Label::new(Some(&tr!("Order")));
+    l.set_hexpand(true);
+    l.set_xalign(0.0);
+    row.append(&l);
+    row.append(&choice);
+    // 説明は見出しの下にそろえる（ほかの説明はチェックボックスの文字にそろえる）。
+    let n = note(&tr!(
+        "Topological order keeps a branch’s commits together under the merge that brought them in."
+    ));
+    n.set_margin_start(0);
+    let b = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    b.append(&row);
+    b.append(&n);
+    b
+}
+
+/// 選ぶ行（名前と、`titles` から選ぶ欄）。`get`・`set` で `key` の設定を読み書きする。
+fn choice_row(
+    title: &str,
+    titles: &[String],
+    get: fn() -> usize,
+    set: impl Fn(usize) + 'static,
+    key: &'static str,
+) -> gtk::Box {
+    let refs: Vec<&str> = titles.iter().map(String::as_str).collect();
+    let choice = gtk::DropDown::from_strings(&refs);
+    choice.set_selected(get() as u32);
+    choice.connect_selected_notify(move |d| {
+        if d.selected() as usize != get() {
+            set(d.selected() as usize);
+        }
+    });
+    let weak = choice.downgrade();
+    connect_changed_while(&choice, move |changed| {
+        if changed == key
+            && let Some(d) = weak.upgrade()
+        {
+            d.set_selected(get() as u32);
+        }
+    });
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    let l = gtk::Label::new(Some(title));
+    l.set_hexpand(true);
+    l.set_xalign(0.0);
+    row.append(&l);
+    row.append(&choice);
+    row
+}
+
+/// Settings > Accounts（macOS 版の `AccountsSettings`）: GitHub から History に読むもの。
+fn accounts() -> gtk::Box {
+    const COMMITS: [u32; 3] = [100, 50, 30];
+    let ci = check(
+        GITHUB_CI_STATUS,
+        &tr!("Show each commit’s CI status in History"),
+    );
+    let avatars = check(GITHUB_AVATARS, &tr!("Use commit authors’ GitHub avatars"));
+    let branches = choice_row(
+        &tr!("Branches to read CI for"),
+        &[
+            tr!("Current and default branch"),
+            tr!("Current branch only"),
+        ],
+        || usize::from(!bool(GITHUB_CI_DEFAULT_BRANCH)),
+        |i| set_bool(GITHUB_CI_DEFAULT_BRANCH, i == 0),
+        GITHUB_CI_DEFAULT_BRANCH,
+    );
+    let commits = choice_row(
+        &tr!("Commits to read per branch"),
+        &COMMITS.map(|n| tr!("Last {count}", count = n)),
+        || {
+            COMMITS
+                .iter()
+                .position(|&n| n == github_ci_commits())
+                .unwrap_or(0)
+        },
+        |i| set_string(GITHUB_CI_COMMITS, &COMMITS[i].to_string()),
+        GITHUB_CI_COMMITS,
+    );
+    let once = check(
+        GITHUB_AVATARS_ONCE,
+        &tr!("Read avatar URLs only once per window"),
+    );
+    // どちらも読まないなら、ブランチと数は選べない。アバターを使わないなら、1 回だけかも選べない。
+    let enable = {
+        let (b, c, o) = (branches.downgrade(), commits.downgrade(), once.downgrade());
+        move || {
+            let any = bool(GITHUB_CI_STATUS) || bool(GITHUB_AVATARS);
+            if let (Some(b), Some(c), Some(o)) = (b.upgrade(), c.upgrade(), o.upgrade()) {
+                b.set_sensitive(any);
+                c.set_sensitive(any);
+                o.set_sensitive(bool(GITHUB_AVATARS));
+            }
+        }
+    };
+    enable();
+    connect_changed_while(&branches, move |key| {
+        if key == GITHUB_CI_STATUS || key == GITHUB_AVATARS {
+            enable();
+        }
+    });
+    page(&[section(
+        Some("GitHub"),
+        &[
+            ci.upcast(),
+            avatars.upcast(),
+            branches.upcast(),
+            commits.upcast(),
+            once.upcast(),
+        ],
+    )])
 }
 
 fn section(title: Option<&str>, items: &[gtk::Widget]) -> gtk::Box {
@@ -141,111 +450,352 @@ fn page(sections: &[gtk::Box]) -> gtk::Box {
     b
 }
 
-/// 設定の窓を開く（開いていれば前に出す）。
-pub fn show(parent: &gtk::ApplicationWindow) {
+/// 設定の窓を開く（開いていれば前に出す）。窓はアプリに 1 つで、どの窓のものでもない（macOS 版の
+/// `SettingsWindowController.shared`）。閉じても隠すだけで、中身（SSH 先のつながりなど）は残す。`near` は
+/// 初めて出すときの画面を決めるだけ。
+pub fn show(near: &impl IsA<gtk::Widget>) {
     if let Some(w) = WINDOW.with(|w| w.borrow().upgrade()) {
+        // 出し直すたびに読み直す（端末やほかの窓で変えた git の設定・新しい SSH 先。macOS 版と同じ）。
+        if let Some(settings) = GIT_SETTINGS.with(|s| s.borrow().upgrade()) {
+            settings.load();
+        }
+        crate::sshhosts::reload_shown();
+        join_application(&w, near);
         w.present();
         return;
     }
     let stack = gtk::Stack::new();
 
-    // Git
-    let modes = [
-        ("merge", "Merge"),
-        ("rebase", "Rebase"),
-        ("fastForwardOnly", "Fast-Forward Only"),
-    ];
-    let pull = gtk::DropDown::from_strings(&modes.map(|m| m.1));
-    pull.set_selected(modes.iter().position(|m| m.0 == pull_mode()).unwrap_or(0) as u32);
-    pull.connect_selected_notify(move |d| {
-        if let Some(m) = modes.get(d.selected() as usize) {
-            set_string(PULL_MODE, m.0);
-        }
+    // General
+    let choices: [u32; 5] = [0, 5, 15, 30, 60];
+    let titles: Vec<String> = choices
+        .iter()
+        .map(|&m| {
+            if m == 0 {
+                tr!("Never")
+            } else {
+                tr!("Every {count} minutes", count = m)
+            }
+        })
+        .collect();
+    let refs: Vec<&str> = titles.iter().map(String::as_str).collect();
+    let fetch = gtk::DropDown::from_strings(&refs);
+    fetch.set_selected(
+        choices
+            .iter()
+            .position(|&m| m == auto_fetch_minutes())
+            .unwrap_or(0) as u32,
+    );
+    fetch.connect_selected_notify(move |d| {
+        set_string(
+            AUTO_FETCH_MINUTES,
+            &choices[d.selected() as usize].to_string(),
+        )
     });
-    let pull_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    let l = gtk::Label::new(Some("Pull の既定"));
+    let fetch_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    let l = gtk::Label::new(Some(&tr!("Fetch automatically")));
     l.set_hexpand(true);
     l.set_xalign(0.0);
-    pull_row.append(&l);
-    pull_row.append(&pull);
+    fetch_row.append(&l);
+    fetch_row.append(&fetch);
     stack.add_titled(
         &page(&[
             section(
                 None,
                 &[
-                    pull_row.upcast(),
-                    note("ツールバーの Pull と Ctrl+Alt+L で使う。Pull ボタンの ▾ や Repository > Pull With でその都度も選べる。")
-                        .upcast(),
+                    // 説明は付けない（macOS 版と同じ）。
+                    check(AUTO_BOOKMARK, &tr!("Bookmark repositories you open")).upcast(),
+                    fetch_row.upcast(),
                 ],
             ),
-            section(
-                Some("マージ"),
-                &[
-                    check(AUTO_MAGIC_MERGE, "マージエディタを開いたときに、間違えようのないコンフリクトを解く").upcast(),
-                    note("両側が同じ・片側だけが変えた、のどちらかに当たるコンフリクト。Ctrl+Z で戻せる。残りは ✨ Magic Merge で。")
-                        .upcast(),
-                ],
-            ),
+            section(None, &[crate::editor::settings_row().upcast()]),
         ]),
-        Some("git"),
-        "Git",
+        Some("general"),
+        &tr!("General"),
     );
+
+    // Git: すべてのリポジトリの段（`--global`）の、Repository Settings と同じページ。git の設定は手元の空の
+    // リポジトリ（settings-repo）から読み書きする（macOS 版の `MachineSettings` と同じ）。
+    let git = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    git.set_size_request(860, 560);
+    stack.add_titled(&git, Some("git"), "Git");
+    // 読むまでは回る印（macOS 版の ProgressView）。
+    let loading = gtk::Spinner::builder()
+        .spinning(true)
+        .halign(gtk::Align::Center)
+        .valign(gtk::Align::Center)
+        .vexpand(true)
+        .build();
+    git.append(&loading);
+    let g = git.downgrade();
+    glib::spawn_future_local(async move {
+        let result =
+            gio::spawn_blocking(|| -> Result<(amonhen_core::Repository, String), String> {
+                let dir = glib::user_data_dir().join("amonhen").join("settings-repo");
+                if !dir.join(".git").exists() {
+                    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+                    let ok = amonhen_model::process::command("git")
+                        .args(["init", "-q"])
+                        .current_dir(&dir)
+                        .status()
+                        .is_ok_and(|s| s.success());
+                    if !ok {
+                        return Err(tr!("Couldn’t prepare the settings repository"));
+                    }
+                }
+                let repo = crate::open(&dir)?;
+                Ok((repo, dir.to_string_lossy().into_owned()))
+            })
+            .await
+            .unwrap_or_else(|_| Err(String::new()));
+        let Some(git) = g.upgrade() else { return };
+        git.remove(&loading);
+        match result {
+            Ok((repo, location)) => {
+                let settings = crate::reposettings::RepoSettings::new(
+                    std::sync::Arc::new(repo),
+                    &location,
+                    crate::reposettings::Level::AllRepositories,
+                );
+                settings.widget.set_vexpand(true);
+                GIT_SETTINGS.with(|s| s.replace(Rc::downgrade(&settings)));
+                if let Some(page) = GIT_PAGE.with(|p| p.take()) {
+                    settings.select(&page);
+                    // 確認用の手順（`--settings git/<page>` と一緒に）。
+                    if let Ok(script) = std::env::var("AMONHEN_SETTINGS_SCRIPT") {
+                        settings.run_script(&script);
+                    }
+                }
+                git.append(&settings.widget);
+                // 窓を閉じるまで持っておく。
+                unsafe { git.set_data("settings", settings) };
+            }
+            // 読めなければ赤で（macOS 版と同じ）。
+            Err(e) => {
+                let l = gtk::Label::new(Some(&e));
+                l.set_wrap(true);
+                l.add_css_class("error");
+                l.set_margin_top(24);
+                l.set_margin_start(24);
+                l.set_margin_end(24);
+                git.append(&l);
+            }
+        }
+    });
+
+    // SSH Hosts: 開いたときに作る（選んだ SSH 先につなぎに行くので、タブを出すまではつながない）。
+    let hosts = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    stack.add_titled(&hosts, Some("ssh-hosts"), &tr!("SSH Hosts"));
+    stack.connect_visible_child_name_notify(move |stack| {
+        // タブを出し直したら読み直す（macOS 版と同じ）。
+        match stack.visible_child_name().as_deref() {
+            Some("git") => {
+                if let Some(settings) = GIT_SETTINGS.with(|s| s.borrow().upgrade()) {
+                    settings.load();
+                }
+            }
+            Some("ssh-hosts") if hosts.first_child().is_some() => crate::sshhosts::reload_shown(),
+            _ => {}
+        }
+        if stack.visible_child_name().as_deref() == Some("ssh-hosts")
+            && hosts.first_child().is_none()
+        {
+            let tab = crate::sshhosts::SshHosts::new();
+            tab.widget.set_vexpand(true);
+            hosts.append(&tab.widget);
+            // 窓を閉じるまで持っておく。
+            unsafe { hosts.set_data("tab", tab) };
+        }
+    });
+
+    // Accounts: 外部サービス。今は GitHub の表示だけ（macOS 版と同じ）。
+    stack.add_titled(&accounts(), Some("accounts"), &tr!("Accounts"));
 
     // Appearance
     stack.add_titled(
-        &page(&[section(
-            Some("コミットの詳細"),
-            &[check(MONOSPACED_COMMIT_MESSAGE, "本文を等幅の字体で表示する").upcast()],
-        )]),
+        &page(&[
+            section(
+                Some("History"),
+                &[
+                    order_row().upcast(),
+                    check(COMPACT_HISTORY_ROWS, &tr!("Show each commit on one line")).upcast(),
+                    check(
+                        HIGHLIGHT_ANCESTORS,
+                        &tr!("Highlight the selected commit’s ancestors"),
+                    )
+                    .upcast(),
+                ],
+            ),
+            section(
+                Some(&tr!("Items")),
+                &[
+                    item_check(items::REFS, &tr!("Branches and Tags")).upcast(),
+                    item_check(items::AUTHOR, &tr!("Author")).upcast(),
+                    item_check(items::DATE, &tr!("Date")).upcast(),
+                    item_check(items::ID, &tr!("Commit ID")).upcast(),
+                    item_check(items::SIGNATURE, &tr!("Signature")).upcast(),
+                    item_check(items::CI, &tr!("CI Status")).upcast(),
+                    note(&tr!("What each commit’s row shows besides the subject.")).upcast(),
+                ],
+            ),
+            section(
+                Some(&tr!("Commit Details")),
+                &[
+                    check(
+                        MONOSPACED_COMMIT_MESSAGE,
+                        &tr!("Show the message in a monospaced font"),
+                    )
+                    .upcast(),
+                    check(SHOW_AVATARS, &tr!("Show avatars")).upcast(),
+                    note(&tr!(
+                        "Fetched from Gravatar (sends a hash of the email address to gravatar.com)."
+                    ))
+                    .upcast(),
+                    check(
+                        crate::commitfiles::STACKED,
+                        &tr!("Stack the diffs of all files"),
+                    )
+                    .upcast(),
+                    check(
+                        crate::commitfiles::FILE_TREE,
+                        &tr!("Show changed files as a tree left of the diff"),
+                    )
+                    .upcast(),
+                ],
+            ),
+            section(
+                Some("File History"),
+                &[check(FILE_HISTORY_MERGES, &tr!("Show merge commits")).upcast()],
+            ),
+        ]),
         Some("appearance"),
-        "Appearance",
+        &tr!("Appearance"),
     );
+
+    // Diff & Merge
+    stack.add_titled(
+        &page(&[section(
+            Some(&tr!("Merge Editor")),
+            &[check(
+                AUTO_MAGIC_MERGE,
+                &tr!("Resolve unambiguous conflicts when the merge editor opens"),
+            )
+            .upcast()],
+        )]),
+        Some("diff-merge"),
+        &tr!("Diff & Merge"),
+    );
+
+    // AI（`aisettings.rs`）。
+    stack.add_titled(&crate::aisettings::page(), Some("ai"), "AI");
 
     // Performance
+    // fsmonitor: git の fsmonitor--daemon のない OS（Linux など）では押せなくし、理由を出す。
+    let fsmonitor = check(USE_FSMONITOR, &tr!("Speed up status with fsmonitor"));
+    if !FSMONITOR_AVAILABLE {
+        fsmonitor.set_sensitive(false);
+        fsmonitor.set_tooltip_text(Some(&tr!(
+            "git’s fsmonitor--daemon runs only on macOS and Windows."
+        )));
+    }
     stack.add_titled(
-        &page(&[section(
-            None,
-            &[
-                check(WRITE_COMMIT_GRAPH, "commit-graph を自動で書き出す").upcast(),
-                note("commit-graph がないリポジトリを開いたとき、裏で git commit-graph write --reachable --changed-paths を実行する（.git に書き込む）。履歴の読み込みと path: での検索が速くなる。")
-                    .upcast(),
-            ],
-        )]),
+        &page(&[
+            section(
+                None,
+                &[
+                    check(WRITE_COMMIT_GRAPH, &tr!("Write commit-graph automatically")).upcast(),
+                    note(&tr!("Writes to .git.")).upcast(),
+                    fsmonitor.upcast(),
+                    note(&tr!("A git fsmonitor--daemon runs for each repository.")).upcast(),
+                ],
+            ),
+            section(
+                Some(&tr!("Shared daemon")),
+                &[check(
+                    OPEN_THROUGH_DAEMON,
+                    &tr!("Open repositories through the shared daemon (SSH hosts too)"),
+                )
+                .upcast()],
+            ),
+        ]),
         Some("performance"),
-        "Performance",
-    );
-
-    // Advanced
-    stack.add_titled(
-        &page(&[section(
-            Some("共有の daemon"),
-            &[
-                check(OPEN_THROUGH_DAEMON, "リポジトリを共有の daemon 越しに開く（SSH 先も）").upcast(),
-                note("History・検索の索引・操作の記録と SSH のつながりを、アプリ・CLI（amonhen -C daemon:… や -C ssh://…）・VSCode 拡張と共有する。これから開くリポジトリから効く。daemon の様子は Activity の Daemon。")
-                    .upcast(),
-            ],
-        )]),
-        Some("advanced"),
-        "Advanced",
+        &tr!("Performance"),
     );
 
     let switcher = gtk::StackSwitcher::builder().stack(&stack).build();
     let header = gtk::HeaderBar::new();
     header.set_title_widget(Some(&switcher));
     let window = gtk::Window::builder()
-        .title("Settings")
+        .title(tr!("Settings"))
         .default_width(660)
         .child(&stack)
-        .transient_for(parent)
-        .destroy_with_parent(true)
+        .hide_on_close(true)
         .build();
     window.set_titlebar(Some(&header));
+    window.set_display(&WidgetExt::display(near));
+    // 大きさは覚えておく（macOS 版は位置も。GTK では窓の位置はウィンドウマネージャーが決める）。
+    if let Some((w, h)) = string(WINDOW_SIZE).as_deref().and_then(parse_size) {
+        window.set_default_size(w, h);
+    }
+    window.connect_close_request(|window| {
+        let (w, h) = window.default_size();
+        if w > 0 && h > 0 {
+            set_string(WINDOW_SIZE, &format!("{w}x{h}"));
+        }
+        // 隠すだけなので、アプリの窓から外す（ほかに窓がなければ、Activity と同じくアプリを終える）。
+        window.set_application(None::<&gtk::Application>);
+        glib::Propagation::Proceed
+    });
     WINDOW.with(|w| w.replace(window.downgrade()));
+    join_application(&window, near);
     window.present();
 }
 
-/// 開いている設定の窓のタブ（`git` など）を選ぶ（確認用）。
+/// 出している間はアプリの窓にする: 開いたリポジトリの窓を閉じても、Settings とアプリが続く（macOS 版と同じ）。
+fn join_application(window: &gtk::Window, near: &impl IsA<gtk::Widget>) {
+    let app = near
+        .root()
+        .and_downcast::<gtk::Window>()
+        .and_then(|w| w.application())
+        .or_else(|| gio::Application::default().and_downcast::<gtk::Application>());
+    if let Some(app) = app
+        && window.application().as_ref() != Some(&app)
+    {
+        window.set_application(Some(&app));
+    }
+}
+
+/// 出ている設定の窓（撮るときに使う）。
+pub fn window() -> Option<gtk::Window> {
+    WINDOW
+        .with(|w| w.borrow().upgrade())
+        .filter(|w| w.is_visible())
+}
+
+/// 覚えておいた窓の大きさ（`幅x高さ`）。小さすぎるものは使わない。
+fn parse_size(s: &str) -> Option<(i32, i32)> {
+    let (w, h) = s.split_once('x')?;
+    let (w, h) = (w.parse::<i32>().ok()?, h.parse::<i32>().ok()?);
+    (w > 200 && h > 150).then_some((w, h))
+}
+
+/// 開いている設定の窓のタブ（`git` など）を選ぶ（確認用）。`git/programs` なら Git のタブのそのページ、
+/// `ssh-hosts/<SSH 先>/<ページ>` なら SSH Hosts のタブでその SSH 先（なければ加える）のページ。
 pub fn select(tab: &str) {
+    let (tab, page) = tab.split_once('/').unwrap_or((tab, ""));
+    if tab == "git" && !page.is_empty() {
+        // もう作ってあればそのページへ。まだなら、作ったときに開く。
+        match GIT_SETTINGS.with(|s| s.borrow().upgrade()) {
+            Some(settings) => settings.select(page),
+            None => {
+                GIT_PAGE.with(|p| p.replace(Some(page.to_owned())));
+            }
+        }
+    }
+    if tab == "ssh-hosts" && !page.is_empty() {
+        let (host, page) = page.split_once('/').unwrap_or((page, ""));
+        crate::sshhosts::select_pending(host, page);
+    }
     if let Some(stack) = WINDOW
         .with(|w| w.borrow().upgrade())
         .and_then(|w| w.child())

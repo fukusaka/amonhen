@@ -6,7 +6,8 @@
 #   ~/.local/bin/amonhen-gtk         実行ファイルへのリンク
 #   ~/.local/share/applications/     アプリの一覧に出す .desktop
 #   ~/.local/share/icons/hicolor/    アイコン
-# 同梱のエンジンのうち手元の CPU に合うものを `amonhen install` で置く（daemon: で開くときの共有の daemon）。
+# 同梱のエンジンのうち手元の CPU に合うものを `amonhen install` で置く（daemon: で開くときの共有の daemon。アプリも
+# 起動するたびに置き直すが、端末の CLI を起動の前から使えるように、ここでも置く）。
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 prefix=${PREFIX:-$HOME/.local}

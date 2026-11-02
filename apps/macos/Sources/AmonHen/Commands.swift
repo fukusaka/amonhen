@@ -1,7 +1,8 @@
 import AppKit
 
-/// 操作の表。メニューバー・ツールバーの ≡・右クリックの名前は、ここから作る（同じ操作を同じ名前で出す。
-/// docs/ux.md の「Menus」）。`id` は GTK4 の FE の action 名（`win.<id>`）と同じにする。
+/// 操作の表の、macOS の側。表そのもの（id・名前・ショートカット・説明・メニューの区切り）は crates/commands にあり、
+/// そこから作った `CommandTable.swift` を使う（docs/ux.md の「Menus」）。ここでは呼び先（Selector）だけを結びつける。
+/// メニューバー・ツールバーの ≡・右クリックの名前は、ここから作る（同じ操作を同じ名前で出す）。
 ///
 /// 名前の決まり: git の操作と画面の名前（Fetch・Push・Working Copy など）は英語のまま、それ以外は `L()` で訳す。
 /// シートを開くものだけ「…」で終える。
@@ -12,10 +13,21 @@ struct Command {
     let id: String
     let title: String
     let action: Selector
-    var key = ""
-    var modifiers: NSEvent.ModifierFlags = .command
-    var target = Target.window
-    var toolTip: String?
+    let key: String
+    let modifiers: NSEvent.ModifierFlags
+    let target: Target
+    let toolTip: String?
+
+    /// 表（`CommandTable`）の操作を `action` に結びつける。名前と説明は、表の決まりどおりに訳す。
+    init(_ entry: CommandTable.Entry, action: Selector) {
+        id = entry.id
+        title = entry.localized ? L(entry.title) : entry.title
+        self.action = action
+        key = entry.key
+        modifiers = entry.modifiers
+        target = entry.app ? .app : .window
+        toolTip = entry.toolTip.map { L($0) }
+    }
 
     /// メニューの項目。`app` の操作は `appTarget` に送る。
     @MainActor
@@ -29,103 +41,116 @@ struct Command {
     }
 }
 
+/// 操作の表（`CommandTable`。元は crates/commands）の呼び先。
 @MainActor
 enum Commands {
-    // MARK: - リモート
+    static let fetch = Command(CommandTable.fetch, action: #selector(RepositoryWindow.fetch(_:)))
+    static let pull = Command(CommandTable.pull, action: #selector(RepositoryWindow.pull(_:)))
+    static let push = Command(CommandTable.push, action: #selector(RepositoryWindow.push(_:)))
+    static let forcePush = Command(CommandTable.forcePush, action: #selector(RepositoryWindow.forcePush(_:)))
+    static let setUpstream = Command(CommandTable.setUpstream, action: #selector(RepositoryWindow.setUpstream(_:)))
+    static let addRemote = Command(CommandTable.addRemote, action: #selector(RepositoryWindow.addRemote(_:)))
+    static let createPullRequest = Command(CommandTable.createPullRequest, action: #selector(RepositoryWindow.createPullRequest(_:)))
+    static let openOnGitHub = Command(CommandTable.openOnGithub, action: #selector(RepositoryWindow.openOnGitHub(_:)))
+    static let switchBranch = Command(CommandTable.switchBranch, action: #selector(RepositoryWindow.switchBranch(_:)))
+    static let newBranch = Command(CommandTable.newBranch, action: #selector(RepositoryWindow.newBranch(_:)))
+    static let renameBranch = Command(CommandTable.renameBranch, action: #selector(RepositoryWindow.renameBranch(_:)))
+    static let newTag = Command(CommandTable.newTag, action: #selector(RepositoryWindow.newTag(_:)))
+    static let newWorktree = Command(CommandTable.newWorktree, action: #selector(RepositoryWindow.newWorktree(_:)))
+    static let pruneWorktrees = Command(CommandTable.pruneWorktrees, action: #selector(RepositoryWindow.pruneWorktrees(_:)))
+    static let merge = Command(CommandTable.merge, action: #selector(RepositoryWindow.mergeIntoCurrent(_:)))
+    static let rebase = Command(CommandTable.rebase, action: #selector(RepositoryWindow.rebaseCurrent(_:)))
+    static let compareWithPrevious = Command(CommandTable.compareWithPrevious, action: #selector(RepositoryWindow.compareWithPreviousVersion(_:)))
+    static let applyPatch = Command(CommandTable.applyPatch, action: #selector(RepositoryWindow.applyPatch(_:)))
+    static let continueSequence = Command(CommandTable.`continue`, action: #selector(RepositoryWindow.continueSequence(_:)))
+    static let skipSequence = Command(CommandTable.skip, action: #selector(RepositoryWindow.skipSequence(_:)))
+    static let abortSequence = Command(CommandTable.abort, action: #selector(RepositoryWindow.abortSequence(_:)))
+    static let stash = Command(CommandTable.stash, action: #selector(RepositoryWindow.stashChanges(_:)))
+    static let popStash = Command(CommandTable.popStash, action: #selector(RepositoryWindow.popStash(_:)))
+    static let undo = Command(CommandTable.undo, action: #selector(RepositoryWindow.undoOperation(_:)))
+    static let commit = Command(CommandTable.commit, action: #selector(RepositoryWindow.commitChanges(_:)))
+    static let commitAndPush = Command(CommandTable.commitAndPush, action: #selector(RepositoryWindow.commitAndPush(_:)))
+    static let stageAll = Command(CommandTable.stageAll, action: #selector(RepositoryWindow.stageAllChanges(_:)))
+    static let savePatch = Command(CommandTable.savePatch, action: #selector(RepositoryWindow.savePatch(_:)))
+    static let showWorkingCopy = Command(CommandTable.showWorkingCopy, action: #selector(RepositoryWindow.showWorkingCopy(_:)))
+    static let showHistory = Command(CommandTable.showHistory, action: #selector(RepositoryWindow.showHistory(_:)))
+    static let showStashes = Command(CommandTable.showStashes, action: #selector(RepositoryWindow.showStashes(_:)))
+    static let showReflog = Command(CommandTable.showReflog, action: #selector(RepositoryWindow.showReflog(_:)))
+    static let refresh = Command(CommandTable.refresh, action: #selector(RepositoryWindow.refreshRepository(_:)))
+    static let rebuildHistory = Command(CommandTable.rebuildHistory, action: #selector(RepositoryWindow.rebuildHistory(_:)))
+    static let showSidebar = Command(CommandTable.showSidebar, action: #selector(NSSplitViewController.toggleSidebar(_:)))
+    static let filterBranches = Command(CommandTable.filterBranches, action: #selector(RepositoryWindow.filterBranches(_:)))
+    static let goToHead = Command(CommandTable.goToHead, action: #selector(RepositoryWindow.goToHead(_:)))
+    static let goToParent = Command(CommandTable.goToParent, action: #selector(RepositoryWindow.goToParent(_:)))
+    static let goToChild = Command(CommandTable.goToChild, action: #selector(RepositoryWindow.goToChild(_:)))
+    static let findInHistory = Command(CommandTable.findInHistory, action: #selector(RepositoryWindow.findInHistory(_:)))
+    static let repositorySettings = Command(CommandTable.repositorySettings, action: #selector(RepositoryWindow.showRepositorySettings(_:)))
+    static let openInTerminal = Command(CommandTable.openInTerminal, action: #selector(RepositoryWindow.openInTerminal(_:)))
+    static let revealInFinder = Command(CommandTable.revealInFiles, action: #selector(RepositoryWindow.revealInFinder(_:)))
+    static let quickOpen = Command(CommandTable.quickOpen, action: #selector(AppDelegate.quickOpen(_:)))
+    static let repositories = Command(CommandTable.repositories, action: #selector(AppDelegate.showRepositories(_:)))
+    static let activity = Command(CommandTable.activity, action: #selector(AppDelegate.showActivity(_:)))
+    static let settings = Command(CommandTable.settings, action: #selector(AppDelegate.showSettings(_:)))
 
-    static let fetch = Command(id: "fetch", title: "Fetch…", action: #selector(RepositoryWindow.fetch(_:)), key: "f",
-                               modifiers: [.command, .control])
-    static let pull = Command(id: "pull", title: "Pull…", action: #selector(RepositoryWindow.pull(_:)), key: "l",
-                              modifiers: [.command, .control])
-    static let push = Command(id: "push", title: "Push…", action: #selector(RepositoryWindow.push(_:)), key: "p",
-                              modifiers: [.command, .control])
-    static let forcePush = Command(id: "force-push", title: "Force Push…", action: #selector(RepositoryWindow.forcePush(_:)))
-    static let setUpstream = Command(id: "set-upstream", title: L("Set Upstream…"), action: #selector(RepositoryWindow.setUpstream(_:)))
-    static let addRemote = Command(id: "add-remote", title: L("Add Remote…"), action: #selector(RepositoryWindow.addRemote(_:)))
-    static let createPullRequest = Command(id: "create-pull-request", title: L("Create Pull Request…"),
-                                           action: #selector(RepositoryWindow.createPullRequest(_:)))
-    static let openOnGitHub = Command(id: "open-on-github", title: L("Open on GitHub"), action: #selector(RepositoryWindow.openOnGitHub(_:)))
+    static let all: [Command] = [
+        fetch,
+        pull,
+        push,
+        forcePush,
+        setUpstream,
+        addRemote,
+        createPullRequest,
+        openOnGitHub,
+        switchBranch,
+        newBranch,
+        renameBranch,
+        newTag,
+        newWorktree,
+        pruneWorktrees,
+        merge,
+        rebase,
+        compareWithPrevious,
+        applyPatch,
+        continueSequence,
+        skipSequence,
+        abortSequence,
+        stash,
+        popStash,
+        undo,
+        commit,
+        commitAndPush,
+        stageAll,
+        savePatch,
+        showWorkingCopy,
+        showHistory,
+        showStashes,
+        showReflog,
+        refresh,
+        rebuildHistory,
+        showSidebar,
+        filterBranches,
+        goToHead,
+        goToParent,
+        goToChild,
+        findInHistory,
+        repositorySettings,
+        openInTerminal,
+        revealInFinder,
+        quickOpen,
+        repositories,
+        activity,
+        settings,
+    ]
 
-    // MARK: - ブランチ・タグ・worktree
-
-    static let switchBranch = Command(id: "switch-branch", title: L("Switch Branch…"), action: #selector(RepositoryWindow.switchBranch(_:)),
-                                      key: "b", modifiers: [.command, .shift])
-    static let newBranch = Command(id: "new-branch", title: "New Branch…", action: #selector(RepositoryWindow.newBranch(_:)), key: "b",
-                                   modifiers: [.command, .option])
-    static let renameBranch = Command(id: "rename-branch", title: L("Rename Branch…"), action: #selector(RepositoryWindow.renameBranch(_:)))
-    static let newTag = Command(id: "new-tag", title: "New Tag…", action: #selector(RepositoryWindow.newTag(_:)), key: "t",
-                                modifiers: [.command, .option])
-    static let newWorktree = Command(id: "new-worktree", title: "New Worktree…", action: #selector(RepositoryWindow.newWorktree(_:)))
-    static let pruneWorktrees = Command(id: "prune-worktrees", title: L("Prune Worktrees"), action: #selector(RepositoryWindow.pruneWorktrees(_:)))
-
-    // MARK: - 取り込み・書き換え
-
-    static let merge = Command(id: "merge", title: "Merge…", action: #selector(RepositoryWindow.mergeIntoCurrent(_:)), key: "m",
-                               modifiers: [.command, .option])
-    static let rebase = Command(id: "rebase", title: "Rebase…", action: #selector(RepositoryWindow.rebaseCurrent(_:)), key: "r",
-                                modifiers: [.command, .option])
-    static let compareWithPrevious = Command(
-        id: "compare-with-previous", title: L("Compare with Previous Version"),
-        action: #selector(RepositoryWindow.compareWithPreviousVersion(_:)),
-        toolTip: L("Compare the current branch with its version before it was last rewritten (a rebase, History edit, amend or reset), like git range-diff"))
-    static let applyPatch = Command(id: "apply-patch", title: L("Apply Patch…"), action: #selector(RepositoryWindow.applyPatch(_:)))
-    static let continueSequence = Command(id: "continue", title: "Continue", action: #selector(RepositoryWindow.continueSequence(_:)))
-    static let skipSequence = Command(id: "skip", title: "Skip", action: #selector(RepositoryWindow.skipSequence(_:)))
-    static let abortSequence = Command(id: "abort", title: "Abort", action: #selector(RepositoryWindow.abortSequence(_:)))
-    static let stash = Command(id: "stash", title: "Stash…", action: #selector(RepositoryWindow.stashChanges(_:)), key: "s",
-                               modifiers: [.command, .option])
-    static let popStash = Command(id: "pop-stash", title: "Pop…", action: #selector(RepositoryWindow.popStash(_:)), key: "s",
-                                  modifiers: [.command, .option, .shift])
-    static let undo = Command(id: "undo", title: "Undo…", action: #selector(RepositoryWindow.undoOperation(_:)), key: "z",
-                              modifiers: [.command, .option])
-
-    // MARK: - コミット
-
-    static let commit = Command(id: "commit", title: "Commit", action: #selector(RepositoryWindow.commitChanges(_:)), key: "\r")
-    static let commitAndPush = Command(id: "commit-and-push", title: "Commit and Push", action: #selector(RepositoryWindow.commitAndPush(_:)),
-                                       key: "\r", modifiers: [.command, .shift])
-    static let stageAll = Command(id: "stage-all", title: "Stage All", action: #selector(RepositoryWindow.stageAllChanges(_:)))
-    static let savePatch = Command(id: "save-patch", title: L("Save as Patch…"), action: #selector(RepositoryWindow.savePatch(_:)))
-
-    // MARK: - 画面・移動
-
-    static let showWorkingCopy = Command(id: "show-working-copy", title: "Working Copy", action: #selector(RepositoryWindow.showWorkingCopy(_:)), key: "1")
-    static let showHistory = Command(id: "show-history", title: "History", action: #selector(RepositoryWindow.showHistory(_:)), key: "2")
-    static let showStashes = Command(id: "show-stashes", title: "Stashes", action: #selector(RepositoryWindow.showStashes(_:)), key: "4")
-    static let showReflog = Command(id: "show-reflog", title: "Reflog", action: #selector(RepositoryWindow.showReflog(_:)), key: "5")
-    static let refresh = Command(
-        id: "refresh", title: L("Refresh"), action: #selector(RepositoryWindow.refreshRepository(_:)), key: "r",
-        toolTip: L("Reload History, branches and Working Copy (they normally reload on their own when something changes)"))
-    static let rebuildHistory = Command(
-        id: "rebuild-history", title: L("Rebuild History"), action: #selector(RepositoryWindow.rebuildHistory(_:)),
-        toolTip: L("Discard the History cache and rebuild it from scratch (over the shared daemon, the daemon’s too)"))
-    static let showSidebar = Command(id: "show-sidebar", title: L("Show Sidebar"), action: #selector(NSSplitViewController.toggleSidebar(_:)),
-                                     key: "s", modifiers: [.command, .control])
-    static let filterBranches = Command(id: "filter-branches", title: L("Filter Branches…"), action: #selector(RepositoryWindow.filterBranches(_:)),
-                                        key: "f", modifiers: [.command, .option])
-    static let goToHead = Command(id: "go-to-head", title: L("Go to HEAD"), action: #selector(RepositoryWindow.goToHead(_:)), key: "h",
-                                  modifiers: [.command, .shift])
-    static let goToParent = Command(id: "go-to-parent", title: L("Go to Parent"), action: #selector(RepositoryWindow.goToParent(_:)),
-                                    key: String(UnicodeScalar(NSDownArrowFunctionKey)!), modifiers: [.command, .option])
-    static let goToChild = Command(id: "go-to-child", title: L("Go to Child"), action: #selector(RepositoryWindow.goToChild(_:)),
-                                   key: String(UnicodeScalar(NSUpArrowFunctionKey)!), modifiers: [.command, .option])
-    static let findInHistory = Command(id: "find-in-history", title: L("Find in History…"), action: #selector(RepositoryWindow.findInHistory(_:)),
-                                       key: "f", modifiers: [.command, .shift])
-    static let repositorySettings = Command(id: "repository-settings", title: L("Repository Settings"),
-                                            action: #selector(RepositoryWindow.showRepositorySettings(_:)), key: ";")
-    static let openInTerminal = Command(id: "open-in-terminal", title: L("Open in Terminal"), action: #selector(RepositoryWindow.openInTerminal(_:)))
-    static let revealInFinder = Command(id: "reveal-in-files", title: L("Show in Finder"), action: #selector(RepositoryWindow.revealInFinder(_:)))
-
-    // MARK: - アプリ
-
-    static let quickOpen = Command(id: "quick-open", title: "Quick Open…", action: #selector(AppDelegate.quickOpen(_:)), key: "o",
-                                   modifiers: [.command, .shift], target: .app)
-    static let repositories = Command(id: "repositories", title: "Repositories", action: #selector(AppDelegate.showRepositories(_:)),
-                                      key: "r", modifiers: [.command, .shift], target: .app)
-    static let activity = Command(id: "activity", title: "Activity", action: #selector(AppDelegate.showActivity(_:)), key: "a",
-                                  modifiers: [.command, .option], target: .app)
-    static let settings = Command(id: "settings", title: L("Settings…"), action: #selector(AppDelegate.showSettings(_:)), key: ",",
-                                  target: .app)
+    /// 表のメニューの区切りを、この FE の操作にする。
+    static func menu(_ sections: [[CommandTable.Entry]]) -> [Command?] {
+        var out: [Command?] = []
+        for (i, section) in sections.enumerated() {
+            if i > 0 { out.append(nil) }
+            out += section.compactMap { entry in all.first { $0.id == entry.id } }
+        }
+        return out
+    }
 }
 
 /// 右クリックとドラッグのメニューの、対象の入った名前。同じ操作はどこでも同じ言い方にする（History と Reflog の

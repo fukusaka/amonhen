@@ -174,9 +174,10 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
         case let .reword(oid):
             if let i = rows.firstIndex(where: { $0.oid == oid }) { editMessage(at: i) }
         case let .combine(oids):
-            // 選んだもののうちいちばん古いものに、ほかをまとめる。
+            // 選んだもののうちいちばん古いものに、ほかをまとめる。1 つだけなら、1 つ古いコミット（そのために読んで
+            // ある）にまとめる。
             let indices = oids.compactMap { oid in rows.firstIndex { $0.oid == oid } }.sorted()
-            for i in indices.dropLast() { set(.squash, at: i) }
+            for i in indices.count == 1 ? indices : Array(indices.dropLast()) { set(.squash, at: i) }
         case let .drop(oid):
             if let i = rows.firstIndex(where: { $0.oid == oid }) { set(.drop, at: i) }
         case let .move(oid, to):

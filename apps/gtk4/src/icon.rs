@@ -15,6 +15,8 @@ pub enum Kind {
     None,
     WorkingCopy,
     History,
+    /// clock.arrow.circlepath
+    Reflog,
     Branch,
     Remote,
     Tag,
@@ -27,6 +29,10 @@ pub enum Kind {
     Pull,
     /// arrow.up.circle
     Push,
+    /// sidebar.left（サイドバーの切り替え）
+    Sidebar,
+    /// icloud.and.arrow.up（上流のないブランチの Push、Publish）
+    Publish,
     /// arrow.triangle.merge
     Merge,
     /// arrow.triangle.pull
@@ -49,6 +55,42 @@ pub enum Kind {
     Tree,
     /// doc.text
     Doc,
+    /// arrow.left.arrow.right（Range Diff）
+    RangeDiff,
+    /// slider.horizontal.3（History の表示のメニュー）
+    Sliders,
+    /// location（Go to HEAD）
+    Location,
+    /// star.fill（お気に入りのブランチ）
+    Star,
+    /// arrow.turn.down.right（ほかのブランチの上に積んだブランチ）
+    Stacked,
+    /// icloud.slash（上流がリモートで消えた）
+    CloudSlash,
+    /// exclamationmark.icloud（リモートに同じ名前の別のタグがある）
+    CloudAlert,
+    /// house（メインの worktree）
+    House,
+    /// checkmark.circle（変更のない worktree をまとめた行）
+    CheckCircle,
+    /// gearshape（リポジトリの設定）
+    Gear,
+    /// exclamationmark.triangle（コンフリクト）
+    Warning,
+    /// waveform.path.ecg（Activity）
+    Activity,
+    /// plus.circle（ブランチの切り替えで、新しいブランチを作る行）
+    PlusCircle,
+    /// checkmark.seal（署名を確かめた。署名の印）
+    Seal,
+    /// xmark.seal（不正な署名・失効した鍵）
+    SealCross,
+    /// questionmark.circle（鍵がない・確かめられない・署名者が違う）
+    Question,
+    /// sparkles（AI の解説・提案）
+    Sparkles,
+    /// character.bubble（AI の翻訳）
+    Bubble,
 }
 
 mod imp {
@@ -84,8 +126,19 @@ mod imp {
 
         fn snapshot(&self, snapshot: &gtk::Snapshot) {
             let fg = self.obj().color();
+            let obj = self.obj();
             let color = if self.accent.get() {
                 gdk::RGBA::new(0.21, 0.52, 0.89, 1.0)
+            } else if obj.has_css_class("warning") {
+                // 注意（オレンジ）と、済んだこと（緑）。テーマの色はラベルにしか付かないので、ここで決める。
+                gdk::RGBA::new(0.96, 0.47, 0.0, 1.0)
+            } else if obj.has_css_class("success") {
+                gdk::RGBA::new(0.15, 0.64, 0.25, 1.0)
+            } else if obj.has_css_class("error") {
+                gdk::RGBA::new(0.90, 0.25, 0.25, 1.0)
+            } else if obj.has_css_class("caution") {
+                // 黄色（署名は正しいが、鍵の信用度が決まっていないなど）。
+                gdk::RGBA::new(0.85, 0.68, 0.0, 1.0)
             } else {
                 gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), fg.alpha() * 0.7)
             };
@@ -115,6 +168,16 @@ impl Icon {
     }
 }
 
+/// 雲の輪郭（icloud）。
+fn cloud(p: &gsk::PathBuilder) {
+    p.move_to(4.5, 12.5);
+    p.line_to(11.8, 12.5);
+    p.svg_arc_to(2.4, 2.4, 0.0, false, false, 12.2, 7.7);
+    p.svg_arc_to(3.6, 3.6, 0.0, false, false, 5.3, 7.0);
+    p.svg_arc_to(2.8, 2.8, 0.0, false, false, 4.5, 12.5);
+    p.close();
+}
+
 /// 16×16 の中に描く。
 fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
     let p = gsk::PathBuilder::new();
@@ -139,6 +202,17 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.move_to(8.0, 4.8);
             p.line_to(8.0, 8.0);
             p.line_to(10.5, 9.5);
+        }
+        Kind::Reflog => {
+            // 左上を開けた円と、その端の矢じり（左回り）、中に時計の針。
+            p.move_to(3.0, 8.0);
+            p.svg_arc_to(5.0, 5.0, 0.0, true, false, 6.5, 3.2);
+            p.move_to(7.0, 1.2);
+            p.line_to(4.8, 3.4);
+            p.line_to(7.2, 5.4);
+            p.move_to(8.0, 5.5);
+            p.line_to(8.0, 8.0);
+            p.line_to(10.0, 9.3);
         }
         Kind::Branch => {
             // 幹と、合流してくる枝。
@@ -307,6 +381,93 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.move_to(6.0, 10.5);
             p.line_to(10.5, 10.5);
         }
+        Kind::RangeDiff => {
+            // 右向きの矢印（上）と左向きの矢印（下）。
+            p.move_to(2.5, 5.5);
+            p.line_to(13.0, 5.5);
+            p.move_to(10.5, 3.0);
+            p.line_to(13.0, 5.5);
+            p.line_to(10.5, 8.0);
+            p.move_to(13.5, 10.5);
+            p.line_to(3.0, 10.5);
+            p.move_to(5.5, 8.0);
+            p.line_to(3.0, 10.5);
+            p.line_to(5.5, 13.0);
+        }
+        Kind::Sliders => {
+            // 3 本の横線と、それぞれのつまみ。
+            for (y, knob) in [(4.0f32, 10.5f32), (8.0, 5.5), (12.0, 9.0)] {
+                p.move_to(2.5, y);
+                p.line_to(13.5, y);
+                let dot = gsk::PathBuilder::new();
+                dot.add_circle(&point(knob, y), 1.6);
+                fill.get_or_insert_with(gsk::PathBuilder::new)
+                    .add_path(&dot.to_path());
+            }
+        }
+        Kind::Location => {
+            // 右上を指す矢じり（位置を示す矢印）。
+            p.move_to(13.5, 2.5);
+            p.line_to(2.5, 7.3);
+            p.line_to(8.0, 8.0);
+            p.line_to(8.7, 13.5);
+            p.close();
+        }
+        Kind::Star => {
+            // 塗った五つの角の星。
+            let star = gsk::PathBuilder::new();
+            for i in 0..10 {
+                let r = if i % 2 == 0 { 6.3 } else { 2.7 };
+                let a = std::f32::consts::PI * (i as f32 / 5.0 - 0.5);
+                let (x, y) = (8.0 + r * a.cos(), 8.4 + r * a.sin());
+                if i == 0 {
+                    star.move_to(x, y);
+                } else {
+                    star.line_to(x, y);
+                }
+            }
+            star.close();
+            // to_path で空になるので、作ったパスを輪郭と塗りの両方に入れる。
+            let star = star.to_path();
+            p.add_path(&star);
+            let solid = gsk::PathBuilder::new();
+            solid.add_path(&star);
+            fill = Some(solid);
+        }
+        Kind::Stacked => {
+            // 下に折れて右へ向かう矢印。
+            p.move_to(4.0, 2.5);
+            p.line_to(4.0, 9.5);
+            p.line_to(12.5, 9.5);
+            p.move_to(10.0, 7.0);
+            p.line_to(12.5, 9.5);
+            p.line_to(10.0, 12.0);
+        }
+        Kind::CloudAlert => {
+            cloud(&p);
+            p.move_to(8.0, 7.6);
+            p.line_to(8.0, 9.6);
+            p.move_to(8.0, 11.2);
+            p.line_to(8.0, 11.3);
+        }
+        Kind::Sidebar => {
+            p.add_rect(&graphene::Rect::new(2.5, 3.5, 11.0, 9.0));
+            p.move_to(6.5, 3.5);
+            p.line_to(6.5, 12.5);
+        }
+        Kind::Publish => {
+            cloud(&p);
+            p.move_to(8.0, 11.0);
+            p.line_to(8.0, 6.8);
+            p.move_to(6.3, 8.5);
+            p.line_to(8.0, 6.8);
+            p.line_to(9.7, 8.5);
+        }
+        Kind::CloudSlash => {
+            cloud(&p);
+            p.move_to(2.5, 2.5);
+            p.line_to(13.5, 13.5);
+        }
         Kind::Filter => {
             p.move_to(2.5, 4.5);
             p.line_to(13.5, 4.5);
@@ -319,6 +480,128 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.add_circle(&point(6.8, 6.8), 4.3);
             p.move_to(10.0, 10.0);
             p.line_to(13.8, 13.8);
+        }
+        Kind::House => {
+            // 屋根と壁、戸口。
+            p.move_to(2.0, 8.0);
+            p.line_to(8.0, 2.5);
+            p.line_to(14.0, 8.0);
+            p.move_to(4.0, 6.5);
+            p.line_to(4.0, 13.5);
+            p.line_to(12.0, 13.5);
+            p.line_to(12.0, 6.5);
+            p.move_to(6.8, 13.5);
+            p.line_to(6.8, 10.0);
+            p.line_to(9.2, 10.0);
+            p.line_to(9.2, 13.5);
+        }
+        Kind::CheckCircle => {
+            p.add_circle(&point(8.0, 8.0), 6.3);
+            p.move_to(5.2, 8.2);
+            p.line_to(7.2, 10.2);
+            p.line_to(10.9, 6.0);
+        }
+        Kind::PlusCircle => {
+            p.add_circle(&point(8.0, 8.0), 6.3);
+            p.move_to(8.0, 5.0);
+            p.line_to(8.0, 11.0);
+            p.move_to(5.0, 8.0);
+            p.line_to(11.0, 8.0);
+        }
+        Kind::Activity => {
+            // 心電図の波形。
+            p.move_to(1.5, 8.5);
+            p.line_to(4.5, 8.5);
+            p.line_to(6.0, 4.0);
+            p.line_to(8.5, 13.0);
+            p.line_to(10.5, 6.0);
+            p.line_to(11.5, 8.5);
+            p.line_to(14.5, 8.5);
+        }
+        Kind::Warning => {
+            // 角を丸めない三角と、中の「!」。
+            p.move_to(8.0, 2.2);
+            p.line_to(14.2, 13.3);
+            p.line_to(1.8, 13.3);
+            p.close();
+            p.move_to(8.0, 6.3);
+            p.line_to(8.0, 9.6);
+            p.move_to(8.0, 11.3);
+            p.line_to(8.0, 11.4);
+        }
+        Kind::Gear => {
+            // 歯車: 中の穴と、外周の 8 つの歯（それぞれ短い線）。
+            p.add_circle(&point(8.0, 8.0), 2.0);
+            p.add_circle(&point(8.0, 8.0), 4.6);
+            for i in 0..8 {
+                let a = std::f32::consts::PI * i as f32 / 4.0;
+                let (c, s) = (a.cos(), a.sin());
+                p.move_to(8.0 + 4.6 * c, 8.0 + 4.6 * s);
+                p.line_to(8.0 + 6.6 * c, 8.0 + 6.6 * s);
+            }
+        }
+        Kind::Seal | Kind::SealCross => {
+            // 縁がぎざぎざの丸（12 の山）と、中にチェックか ×。
+            for i in 0..=24 {
+                let a = std::f32::consts::PI * i as f32 / 12.0;
+                let r = if i % 2 == 0 { 6.6 } else { 5.5 };
+                let (x, y) = (8.0 + r * a.cos(), 8.0 + r * a.sin());
+                if i == 0 {
+                    p.move_to(x, y);
+                } else {
+                    p.line_to(x, y);
+                }
+            }
+            if kind == Kind::Seal {
+                p.move_to(5.4, 8.1);
+                p.line_to(7.2, 9.9);
+                p.line_to(10.6, 6.2);
+            } else {
+                p.move_to(6.0, 6.0);
+                p.line_to(10.0, 10.0);
+                p.move_to(10.0, 6.0);
+                p.line_to(6.0, 10.0);
+            }
+        }
+        Kind::Question => {
+            p.add_circle(&point(8.0, 8.0), 6.3);
+            p.move_to(6.0, 6.4);
+            p.svg_arc_to(2.0, 2.0, 0.0, true, true, 8.6, 8.3);
+            p.line_to(8.0, 9.4);
+            let dot = gsk::PathBuilder::new();
+            dot.add_circle(&point(8.0, 11.6), 0.8);
+            fill = Some(dot);
+        }
+        Kind::Sparkles => {
+            // 辺のへこんだ 4 つ角の星（大）と、右上の小さな星。
+            for (cx, cy, r) in [(6.5_f32, 9.5_f32, 5.0_f32), (12.3, 3.7, 2.3)] {
+                p.move_to(cx, cy - r);
+                p.quad_to(cx, cy, cx + r, cy);
+                p.quad_to(cx, cy, cx, cy + r);
+                p.quad_to(cx, cy, cx - r, cy);
+                p.quad_to(cx, cy, cx, cy - r);
+                p.close();
+            }
+        }
+        Kind::Bubble => {
+            // 角の丸い吹き出し（左下にしっぽ）と、中の「A」。
+            p.move_to(4.0, 2.5);
+            p.line_to(12.0, 2.5);
+            p.svg_arc_to(2.0, 2.0, 0.0, false, true, 14.0, 4.5);
+            p.line_to(14.0, 9.5);
+            p.svg_arc_to(2.0, 2.0, 0.0, false, true, 12.0, 11.5);
+            p.line_to(6.5, 11.5);
+            p.line_to(3.5, 14.0);
+            p.line_to(3.8, 11.4);
+            p.svg_arc_to(2.0, 2.0, 0.0, false, true, 2.0, 9.5);
+            p.line_to(2.0, 4.5);
+            p.svg_arc_to(2.0, 2.0, 0.0, false, true, 4.0, 2.5);
+            p.close();
+            p.move_to(5.6, 9.4);
+            p.line_to(8.0, 4.6);
+            p.line_to(10.4, 9.4);
+            p.move_to(6.5, 7.7);
+            p.line_to(9.5, 7.7);
         }
         Kind::Undo => {
             p.add_circle(&point(8.0, 8.0), 6.3);
