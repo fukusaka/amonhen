@@ -82,6 +82,9 @@ becomes the GitHub Release notes.
 - `amonhen diff` with a name that is neither a commit nor a file in the working tree stops with an error, as git does,
   instead of printing an empty diff. Paths after `--` are taken as paths.
 
+- A repository over SSH or through the shared daemon no longer stops answering when it changes just as its mailmap is
+  checked; the connection waited forever for an answer it had stopped reading.
+
 - Combine with Older Commit… on a single commit in History marks it in the edit mode; it opened with nothing marked.
 
 - Working Copy puts a check box back when staging fails or changes nothing; it kept showing the click.
