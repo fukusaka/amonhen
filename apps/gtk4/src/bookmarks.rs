@@ -369,8 +369,10 @@ pub fn register(path: &str) {
     }
 }
 
+/// `daemon:` の付いた同じ場所も外す（一覧には 1 つにまとめて出している。`repos::without_daemon_twins`）。
 pub fn remove(path: &str) {
-    edit(|d| d.items.retain(|b| b.path != path));
+    let twins = crate::repos::with_twin(path);
+    edit(|d| d.items.retain(|b| !twins.contains(&b.path)));
 }
 
 /// `path` のブックマークを変える（なければ作る。最近開いたもの・スキャンで見つけたものをお気に入りにするときなど）。
@@ -705,12 +707,14 @@ pub fn all_locations() -> Vec<String> {
         .map(|b| b.path.clone());
     let items = d.items.iter().map(|b| b.path.clone());
     let scanned: Vec<String> = d.scan_roots.iter().flat_map(|r| scanned(&r.path)).collect();
-    favorites
-        .chain(items)
-        .chain(crate::repos::recent())
-        .chain(scanned)
-        .filter(|p| seen.insert(p.clone()))
-        .collect()
+    crate::repos::without_daemon_twins(
+        favorites
+            .chain(items)
+            .chain(crate::repos::recent())
+            .chain(scanned)
+            .filter(|p| seen.insert(p.clone()))
+            .collect(),
+    )
 }
 
 // スキャン

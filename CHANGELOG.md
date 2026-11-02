@@ -78,9 +78,16 @@ becomes the GitHub Release notes.
 
 - Saving patches no longer fails with “No such file or directory” when another save runs at the same time in the same
   repository over SSH or through the shared daemon.
+- When nothing sets how to pull (`pull.rebase`, `pull.ff`) and the branch has diverged, the Pull sheet says git won't
+  pull (git 2.33.1 and later refuse) and asks for Merge or Rebase for this pull, instead of promising a merge that then
+  failed. No settings are written.
 
 - Errors from an SSH host opened through the shared daemon are in the language of the app or CLI that asked, not the
-  daemon's.
+  daemon's. So are the SSH host engine and why a connection was lost, in Activity and `amonhen daemon status`.
+- A lost connection to an SSH host names that host instead of "the daemon", and the bar no longer repeats it.
+- Reconnecting after a lost connection shows the page that was open, not History.
+- With "Open repositories through the shared daemon" on, Repositories and Open Recent list a repository once, not
+  again as `daemon:…`.
 
 - `amonhen diff` with a name that is neither a commit nor a file in the working tree stops with an error, as git does,
   instead of printing an empty diff. Paths after `--` are taken as paths.
@@ -94,6 +101,8 @@ becomes the GitHub Release notes.
 
 - Working Copy reloads the shown diff and line counts when an already changed file changes again, and keeps the
   selected lines when the diff is the same.
+- Working Copy keeps several selected files selected when it reloads (after a file is edited elsewhere, for
+  example), dropping only those no longer listed; it went back to one file.
 - History opens in a shallow clone: it stopped with "Commit … not found" at the boundary, and now ends there as
   `git log` does. After `git fetch --deepen` or `--unshallow`, History is read again with the older commits.
 - Starting a merge, rebase, cherry-pick, revert, pull or patch while another one is stopped no longer reports a
@@ -103,6 +112,8 @@ becomes the GitHub Release notes.
   exit code, or the branch or commit that doesn't exist.
 - Diffs no longer come up empty after many fetches while a repository stays open (each partial clone fetch adds a
   pack, and only about 32 new packs could be read).
+- Editing the message of an empty commit (made with `git commit --allow-empty`) finishes and keeps the commit; with
+  older git (2.23, for example) the rebase stopped on it.
 
 ### [0.2.8] - 2026-10-30
 
@@ -728,6 +739,8 @@ First release.
 
 #### Fixed
 
+- Pull on a diverged branch asks for Merge or Rebase for this pull when nothing sets how to pull (`pull.rebase`,
+  `pull.ff`), since git 2.33.1 and later refuse to pull then; it used to merge.
 - Starting a merge, rebase, cherry-pick or revert while another one is stopped no longer reports a conflict; it says
   which one is in progress, to continue or abort first.
 - In a History with many branches side by side (git/git, linux), the graph no longer pushes the commit text out of the

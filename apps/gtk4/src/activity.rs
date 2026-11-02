@@ -200,6 +200,23 @@ fn unchanged(last: &std::cell::Cell<u64>, key: impl std::hash::Hash) -> bool {
     last.replace(hash) == hash
 }
 
+/// 時刻の列の幅（`23:44:31.539`）。
+const TIME: i32 = 100;
+/// リポジトリの列の幅（`name — host (daemon)` も入るように、macOS 版の列より広く）。
+const REPOSITORY: i32 = 180;
+/// リポジトリの列を、名前に合わせて広げるときの上限（中身の列を残す）。
+const REPOSITORY_MAX: i32 = 320;
+
+/// リポジトリの列の幅: いちばん長い名前が入る幅（[`REPOSITORY`] から [`REPOSITORY_MAX`] まで）。文字の大きさは
+/// 機械ごとに違うので、決まった幅では名前が切れる。
+fn repository_width<S: AsRef<str>>(widget: &impl IsA<gtk::Widget>, names: &[S]) -> i32 {
+    names
+        .iter()
+        .map(|n| widget.create_pango_layout(Some(n.as_ref())).pixel_size().0 + 2)
+        .fold(REPOSITORY, i32::max)
+        .min(REPOSITORY_MAX)
+}
+
 /// 中身を作り直す一覧（行は少ないので ListBox で足りる）。
 fn list() -> (gtk::ScrolledWindow, gtk::ListBox) {
     let list = gtk::ListBox::new();
@@ -212,7 +229,8 @@ fn list() -> (gtk::ScrolledWindow, gtk::ListBox) {
     (scrolled, list)
 }
 
-/// 行（列の文字を左から並べる。`widths` は文字数の幅、0 は残りすべて）。
+/// 行（列の文字を左から並べる。幅はピクセル、0 は残りすべて）。幅は macOS 版の表の列に合わせ、文字の大きい分だけ
+/// 広くする（文字数で決めると、日本語や長いリポジトリ名が切れる）。
 fn row(cells: &[(&str, i32, &[&str])]) -> gtk::Box {
     let line = gtk::Box::new(gtk::Orientation::Horizontal, 10);
     line.set_margin_top(3);
@@ -223,8 +241,9 @@ fn row(cells: &[(&str, i32, &[&str])]) -> gtk::Box {
         let l = label(text, css);
         l.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
         if *width > 0 {
-            l.set_width_chars(*width);
-            l.set_max_width_chars(*width);
+            // 中身の長さで幅が変わらないよう、自然な幅を縮めてからピクセルで決める（列が揃う）。
+            l.set_max_width_chars(1);
+            l.set_size_request(*width, -1);
         } else {
             l.set_hexpand(true);
         }
@@ -347,6 +366,11 @@ impl Activity {
         if let Some(a) = Self::find() {
             a.stack.set_visible_child_name(tab);
         }
+    }
+
+    /// 開いている Activity の窓（`--activity` の `--snapshot` で撮る）。
+    pub fn window() -> Option<gtk::Window> {
+        Self::find().map(|a| a.window.clone().upcast())
     }
 
     fn find() -> Option<Self> {
@@ -643,7 +667,19 @@ impl Activity {
                             && !label_text.to_lowercase().contains(&text)
                             && !repo_path.to_lowercase().contains(&text)))
                 });
-                for r in shown.take(1000) {
+                let shown: Vec<&Value> = shown.take(1000).collect();
+                let names: Vec<String> = shown
+                    .iter()
+                    .map(|r| match r["remote"].as_str() {
+                        Some(name) => tr!("{name} (daemon)", name = name),
+                        None => {
+                            let repo_path = r["repo"].as_str().unwrap_or_default();
+                            repo_path.rsplit('/').next().unwrap_or_default().to_owned()
+                        }
+                    })
+                    .collect();
+                let name_width = repository_width(&op_list, &names);
+                for (r, name) in shown.into_iter().zip(names) {
                     let ok = r["ok"].as_bool();
                     let label_text = r["label"].as_str().unwrap_or_default();
                     let repo_path = r["repo"].as_str().unwrap_or_default();
@@ -653,10 +689,6 @@ impl Activity {
                         Some(false) => ("✗", "activity-error"),
                     };
                     let remote = r["remote"].as_str();
-                    let name = match remote {
-                        Some(name) => tr!("{name} (daemon)", name = name),
-                        None => repo_path.rsplit('/').next().unwrap_or_default().to_owned(),
-                    };
                     let mut content = label_text.to_owned();
                     if ok.is_none()
                         && let Some(p) = r["progress"].as_str()
@@ -667,13 +699,13 @@ impl Activity {
                     let line = row(&[
                         (
                             &time(r["started"].as_i64().unwrap_or(0)),
-                            12,
+                            TIME,
                             &["numeric", "dim-label"],
                         ),
-                        (mark.0, 2, &[mark.1]),
-                        (&name, 14, &[]),
+                        (mark.0, 16, &[mark.1]),
+                        (&name, name_width, &[]),
                         (&content, 0, &[]),
-                        (&duration, 6, &["numeric"]),
+                        (&duration, 64, &["numeric"]),
                     ]);
                     let mut tip = format!("{repo_path}\n{label_text}");
                     if let Some(e) = r["error"].as_str() {
@@ -821,7 +853,7 @@ impl Activity {
                         let line = row(&[
                             (
                                 &time(e["time"].as_f64().unwrap_or(0.0) as i64),
-                                12,
+                                TIME,
                                 &["numeric", "dim-label"],
                             ),
                             (e["label"].as_str().unwrap_or_default(), 0, &[]),
@@ -899,11 +931,11 @@ impl Activity {
                 perf_list.remove_all();
                 perf_list.append(&row(&[
                     (&tr!("Item"), 0, &["dim-label"]),
-                    (&tr!("Count"), 6, &["dim-label"]),
-                    ("p50 ms", 7, &["dim-label"]),
-                    ("p95 ms", 7, &["dim-label"]),
-                    (&tr!("Max ms"), 7, &["dim-label"]),
-                    (&tr!("Last ms"), 7, &["dim-label"]),
+                    (&tr!("Count"), 60, &["dim-label"]),
+                    ("p50 ms", 70, &["dim-label"]),
+                    ("p95 ms", 70, &["dim-label"]),
+                    (&tr!("Max ms"), 70, &["dim-label"]),
+                    (&tr!("Last ms"), 70, &["dim-label"]),
                 ]));
                 metrics.sort_by(|a, b| a.0.cmp(&b.0));
                 for (name, values) in metrics {
@@ -919,11 +951,11 @@ impl Activity {
                     };
                     perf_list.append(&row(&[
                         (&name, 0, &[]),
-                        (&values.len().to_string(), 6, &["numeric"]),
-                        (&ms(at(0.5)), 7, &["numeric"]),
-                        (&ms(p95), 7, slow),
-                        (&ms(at(1.0)), 7, &["numeric"]),
-                        (&ms(last), 7, &["numeric"]),
+                        (&values.len().to_string(), 60, &["numeric"]),
+                        (&ms(at(0.5)), 70, &["numeric"]),
+                        (&ms(p95), 70, slow),
+                        (&ms(at(1.0)), 70, &["numeric"]),
+                        (&ms(last), 70, &["numeric"]),
                     ]));
                 }
             }
@@ -950,11 +982,13 @@ impl Activity {
                     return;
                 }
                 event_list.remove_all();
-                for (t, repo, text) in items {
+                let repos: Vec<&str> = items.iter().map(|(_, repo, _)| repo.as_str()).collect();
+                let name_width = repository_width(&event_list, &repos);
+                for (t, repo, text) in &items {
                     event_list.append(&row(&[
-                        (&time(t), 12, &["numeric", "dim-label"]),
-                        (&repo, 14, &[]),
-                        (&text, 0, &[]),
+                        (&time(*t), TIME, &["numeric", "dim-label"]),
+                        (repo, name_width, &[]),
+                        (text, 0, &[]),
                     ]));
                 }
             }
@@ -1013,10 +1047,10 @@ impl Activity {
                 conn_list.remove_all();
                 conn_list.append(&row(&[
                     (&tr!("Repository"), 0, &["dim-label"]),
-                    (&tr!("Location"), 18, &["dim-label"]),
-                    (&tr!("Status"), 10, &["dim-label"]),
-                    (&tr!("Sent · Received"), 18, &["dim-label"]),
-                    (&tr!("Engine on the SSH Host"), 24, &["dim-label"]),
+                    (&tr!("Location"), 190, &["dim-label"]),
+                    (&tr!("Status"), 110, &["dim-label"]),
+                    (&tr!("Sent · Received"), 160, &["dim-label"]),
+                    (&tr!("Engine on the SSH Host"), 240, &["dim-label"]),
                 ]));
                 for (name, kind, closed, traffic, engine) in rows {
                     let (status, status_css): (String, &[&str]) = match &closed {
@@ -1031,10 +1065,10 @@ impl Activity {
                     let engine_text = if engine.is_empty() { "—" } else { &engine };
                     let line = row(&[
                         (&name, 0, &[]),
-                        (&kind, 18, &["dim-label"]),
-                        (&status, 10, status_css),
-                        (&traffic, 18, &["numeric"]),
-                        (engine_text, 24, &["dim-label"]),
+                        (&kind, 190, &["dim-label"]),
+                        (&status, 110, status_css),
+                        (&traffic, 160, &["numeric"]),
+                        (engine_text, 240, &["dim-label"]),
                     ]);
                     // 切れた理由と、SSH 先のエンジンの全文は説明に。
                     let mut cell = line.first_child();
@@ -1143,11 +1177,11 @@ impl Activity {
                     // 列の見出し（macOS 版の表と同じ列）。
                     repo_list.append(&row(&[
                         (&tr!("Repository"), 0, &["dim-label"]),
-                        ("SSH", 16, &["dim-label"]),
-                        (&tr!("Connections"), 16, &["dim-label"]),
-                        ("History", 6, &["dim-label"]),
-                        (&tr!("Watching"), 6, &["dim-label"]),
-                        (&tr!("Search Index"), 16, &["dim-label"]),
+                        ("SSH", 150, &["dim-label"]),
+                        (&tr!("Connections"), 150, &["dim-label"]),
+                        ("History", 70, &["dim-label"]),
+                        (&tr!("Watching"), 70, &["dim-label"]),
+                        (&tr!("Search Index"), 170, &["dim-label"]),
                     ]));
                     for r in d["repos"].as_array().into_iter().flatten() {
                         let yes = |key: &str| {
@@ -1202,11 +1236,11 @@ impl Activity {
                         let path = r["path"].as_str().unwrap_or_default();
                         let line = row(&[
                             (path, 0, &[]),
-                            (&ssh, 16, ssh_css),
-                            (&clients, 16, &["numeric"]),
-                            (&yes("history"), 6, &[]),
-                            (&yes("watching"), 6, &[]),
-                            (&index, 16, &["numeric"]),
+                            (&ssh, 150, ssh_css),
+                            (&clients, 150, &["numeric"]),
+                            (&yes("history"), 70, &[]),
+                            (&yes("watching"), 70, &[]),
+                            (&index, 170, &["numeric"]),
                         ]);
                         line.set_tooltip_text(Some(path));
                         if let (Some(tip), Some(cell)) =

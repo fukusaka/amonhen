@@ -104,6 +104,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     private var current: WorkingFileDiff?
     /// 選んでいたファイルと、見せていた側（読み直した後に選び直す）。
     private var selectedKey: (path: String, staged: Bool)?
+    /// 読み直した後に選び直している途中（選択の変化で差分を替えない）。
+    private var isRestoringSelection = false
     private var request = 0
     private var isConflict = false
     /// 右の欄（帯と、差分かマージエディタ）。
@@ -532,6 +534,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     /// 絞り込みと見せ方（一覧・木）に合わせて並べ直し、選んでいたファイルを選び直す。
     private func rebuildList() {
+        // 選んでいたファイル（いくつでも）。読み直しても、一覧に残っているものは選んだままにする。
+        let selectedPaths = Set(files.selectedRowIndexes.compactMap { (files.item(atRow: $0) as? Entry)?.item.path })
         let query = filterField.stringValue.trimmingCharacters(in: .whitespaces).lowercased()
         entries = query.isEmpty ? allEntries : allEntries.filter { $0.item.path.lowercased().contains(query) }
         tree = showsTree ? Self.makeTree(entries) : nil
@@ -541,11 +545,18 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         emptyLabel.isHidden = !entries.isEmpty
         updateHeader()
 
-        // 同じファイルを選び直す。なければ最初のもの。
-        let target = selectedKey.flatMap { key in entries.first { $0.item.path == key.path } } ?? entries.first
+        // 同じファイルを選び直す（いくつか選んでいれば、残っているものをすべて）。差分に出していたファイルが
+        // なくなれば、選んでいたほかのファイル、それもなければ最初のもの。
+        let kept = entries.filter { selectedPaths.contains($0.item.path) }
+        let target = selectedKey.flatMap { key in entries.first { $0.item.path == key.path } } ?? kept.first ?? entries.first
         if let target {
             let row = files.row(forItem: target)
-            files.selectRowIndexes([row], byExtendingSelection: false)
+            let others = IndexSet(kept.filter { $0 !== target }.map { files.row(forItem: $0) }.filter { $0 >= 0 })
+            // 差分に出すファイルを最後に足し、選択の起点（selectedRow）にする。途中の選択の変化では差分を替えない。
+            isRestoringSelection = true
+            files.selectRowIndexes(others, byExtendingSelection: false)
+            files.selectRowIndexes([row], byExtendingSelection: !others.isEmpty)
+            isRestoringSelection = false
             let keep = target.item.path == selectedKey?.path
             showDiff(of: target, staged: side(for: target.item), keepScroll: keep)
         } else {
@@ -1526,7 +1537,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     }
 
     func outlineViewSelectionDidChange(_ notification: Notification) {
-        guard let entry = files.item(atRow: files.selectedRow) as? Entry else { return }
+        guard !isRestoringSelection, let entry = files.item(atRow: files.selectedRow) as? Entry else { return }
         if selectedKey?.path == entry.item.path, current != nil || isConflict { return }
         showDiff(of: entry, staged: side(for: entry.item))
     }

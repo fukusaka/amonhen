@@ -141,6 +141,47 @@ test('publishBranch sets the upstream, and pullCurrent fast-forwards from it', a
   assert.equal((await undo.peek())?.label, 'Fast-forward main to origin/main');
 });
 
+test('pullCurrent asks how to reconcile diverged branches when git config leaves it open', async () => {
+  await publishBranch(backend, 'refs/heads/main', 'origin', 'main');
+  const other = join(tmp, 'other');
+  execFileSync('git', ['clone', '-q', join(tmp, 'remote.git'), other]);
+  writeFileSync(join(other, 'b.txt'), 'b\n');
+  execFileSync('git', ['add', 'b.txt'], { cwd: other });
+  execFileSync('git', ['commit', '-q', '-m', 'from other'], { cwd: other });
+  execFileSync('git', ['push', '-q'], { cwd: other });
+  commitFile('c.txt', 'c\n', 'local');
+  const config = git('config', '--local', '--list');
+
+  const undo = new UndoLog(backend);
+  // git 2.33.1 より前は、設定がなくても git が merge する（聞かない）
+  const [major, minor, patch] = (/(\d+)\.(\d+)(?:\.(\d+))?/.exec(git('version')) ?? [])
+    .slice(1)
+    .map((n) => Number(n ?? 0));
+  if (major! * 10000 + minor! * 100 + patch! < 23301) {
+    assert.equal(await pullCurrent(backend, undo, async () => assert.fail('asked')), 'done');
+    assert.equal(git('rev-list', '--count', '--merges', 'HEAD'), '1');
+    return;
+  }
+  const asked: string[] = [];
+  // 選ばなければ何もしない
+  assert.equal(await pullCurrent(backend, undo, async (b) => void asked.push(b)), undefined);
+  assert.deepEqual(asked, ['refs/heads/main']);
+  assert.equal(git('log', '--format=%s'), 'local\nbase');
+  // この pull だけ rebase。設定は書かない
+  assert.equal(await pullCurrent(backend, undo, async () => 'rebase'), 'done');
+  assert.equal(git('log', '--format=%s'), 'local\nfrom other\nbase');
+  assert.equal(git('config', '--local', '--list'), config);
+  await undo.undo();
+
+  // 設定で決めていれば聞かずに merge する（今までどおり）
+  git('config', 'pull.rebase', 'false');
+  assert.equal(
+    await pullCurrent(backend, undo, async () => assert.fail('asked')),
+    'done',
+  );
+  assert.equal(git('rev-list', '--count', '--merges', 'HEAD'), '1');
+});
+
 test('pullCurrent without an upstream', async () => {
   assert.equal(await pullCurrent(backend, new UndoLog(backend)), 'no-upstream');
 });

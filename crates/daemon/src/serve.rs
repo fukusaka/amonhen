@@ -166,14 +166,19 @@ fn serve_opened(
     // リポジトリではなく、daemon への指示。
     if let Some(command) = path.strip_prefix(local::CONTROL) {
         use amonhen_remote::frame::{self, Kind};
-        let (kind, reply) = match command {
+        // 指示に添えた言語（前の版の FE は添えない）で答える（SSH 先のエンジン・切れた理由の文）。
+        let (command, lang) = match command.split_once('\0') {
+            Some((command, lang)) => (command, amonhen_model::i18n::Lang::parse(lang)),
+            None => (command, amonhen_model::i18n::current()),
+        };
+        let (kind, reply) = amonhen_model::i18n::with(lang, || match command {
             "status" => (Kind::Ok, status(state).to_string()),
             "stop" => (Kind::Ok, "stopping".to_owned()),
             other => (
                 Kind::Err,
                 tr!("Unknown command: {command}", command = other),
             ),
-        };
+        });
         frame::write_with(&mut writer, kind, 0, reply.as_bytes(), false)?;
         if command == "stop" {
             amonhen_remote::endpoint::remove(&state.socket);

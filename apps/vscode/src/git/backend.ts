@@ -237,6 +237,11 @@ export interface RepositoryBackend {
   fastForward(branch: string, value: string, expected: string): Promise<void>;
   /** git の設定の値（`git config --get`）。無ければ undefined */
   config(key: string): Promise<string | undefined>;
+  /**
+   * ローカルブランチ branch（短い名前）を、取り込み方を決めずに pull すると、分かれていれば git が断るか。
+   * `branch.<name>.rebase`・`pull.rebase`・`pull.ff` のどれもなく、git が 2.33.1 以降なら true（それより前の git は merge する）
+   */
+  pullLeftUndecided(branch: string): Promise<boolean>;
   /** ローカルブランチ branch（短い名前）の upstream を upstream（`refs/remotes/...`）にする */
   setUpstream(branch: string, upstream: string): Promise<void>;
   fetch(): Promise<void>;
@@ -900,6 +905,16 @@ export class CliBackend implements RepositoryBackend {
 
   async config(key: string): Promise<string | undefined> {
     return (await this.read(['config', '--get', key], [0, 1])).trim() || undefined;
+  }
+
+  async pullLeftUndecided(branch: string): Promise<boolean> {
+    const values = await Promise.all([`branch.${branch}.rebase`, 'pull.rebase', 'pull.ff'].map((key) => this.config(key)));
+    if (values.some((v) => v !== undefined)) return false;
+    // `git version 2.39.5 (Apple Git-154)`・`git version 2.45.1.windows.1` など。読めなければ新しい git とみなす
+    const m = /(\d+)\.(\d+)(?:\.(\d+))?/.exec(await this.read(['version']).catch(() => ''));
+    if (!m) return true;
+    const [major, minor, patch] = [m[1], m[2], m[3] ?? '0'].map(Number) as [number, number, number];
+    return major > 2 || (major === 2 && (minor > 33 || (minor === 33 && patch >= 1)));
   }
 
   async setUpstream(branch: string, upstream: string): Promise<void> {

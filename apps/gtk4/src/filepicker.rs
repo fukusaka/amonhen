@@ -633,16 +633,17 @@ impl Picker {
     }
 
     fn wire(self: &Rc<Self>, cancel: &gtk::Button) {
-        // 列の幅が決まって送れる幅が変わったら、頼まれていれば最後の列まで送る。
+        // 列の幅が決まって送れる幅が変わったら、頼まれていれば最後の列まで送る。幅が変わるのは割り付けの
+        // 途中なので、送るのはそれが終わってから（途中で値を変えても、列の位置は次に割り付けるまで動かない）。
         let w = Rc::downgrade(self);
         self.columns_scroll
             .hadjustment()
             .connect_upper_notify(move |adj| {
-                if let Some(p) = w.upgrade()
-                    && p.reveal_pending.get()
-                {
-                    adj.set_value(adj.upper());
+                if !w.upgrade().is_some_and(|p| p.reveal_pending.get()) {
+                    return;
                 }
+                let adj = adj.clone();
+                glib::idle_add_local_once(move || adj.set_value(adj.upper()));
             });
         let w = Rc::downgrade(self);
         self.retry.connect_clicked(move |_| {
@@ -1430,8 +1431,14 @@ impl Picker {
         if same {
             self.refresh_marks(index, &view);
         } else if let Some(p) = position {
-            view.list
-                .scroll_to(p as u32, gtk::ListScrollFlags::NONE, None);
+            // 割り付ける前の一覧では送っても効かない（列を作ってすぐに中身が届く）ので、割り付けてから。
+            view.list.add_tick_callback(move |list, _| {
+                if list.height() == 0 {
+                    return glib::ControlFlow::Continue;
+                }
+                list.scroll_to(p as u32, gtk::ListScrollFlags::NONE, None);
+                glib::ControlFlow::Break
+            });
         }
         view.note
             .set_text(column.error.as_deref().unwrap_or_default());

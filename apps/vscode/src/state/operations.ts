@@ -133,17 +133,32 @@ async function upstreamOf(backend: RepositoryBackend, branch: string): Promise<s
   return ref?.upstream;
 }
 
+/** 分かれたブランチを pull するときの、この pull だけの取り込み方 */
+export type ReconcileChoice = 'merge' | 'rebase';
+
 /**
  * fetch してから、現在のブランチに upstream を merge する（fast-forward で済めばそうなる）。
- * upstream が無ければ no-upstream
+ * upstream が無ければ no-upstream。分かれていて、取り込み方を git の設定が決めていなければ（git 2.33.1 からは pull を
+ * 断る）、choose で選んでもらう（設定は書かない）。選ばなければ undefined
  */
-export async function pullCurrent(backend: RepositoryBackend, undo: UndoLog): Promise<OperationResult | 'no-upstream'> {
+export async function pullCurrent(
+  backend: RepositoryBackend,
+  undo: UndoLog,
+  choose?: (branch: string, upstream: string) => Promise<ReconcileChoice | undefined>,
+): Promise<OperationResult | 'no-upstream' | undefined> {
   const branch = (await backend.head()).branch;
   const upstream = branch && (await upstreamOf(backend, branch));
   if (!branch || !upstream) {
     return 'no-upstream';
   }
   await backend.fetch();
+  if (choose && (await planUpdate(backend, upstream, branch)).kind === 'diverged') {
+    if (await backend.pullLeftUndecided(shortName(branch))) {
+      const how = await choose(branch, upstream);
+      if (!how) return undefined;
+      if (how === 'rebase') return rebaseOnto(backend, undo, branch, upstream);
+    }
+  }
   return mergeInto(backend, undo, upstream, branch);
 }
 

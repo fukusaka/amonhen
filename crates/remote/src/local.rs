@@ -75,8 +75,17 @@ pub fn canonical_path(path: &str) -> std::io::Result<String> {
 /// つないで最初に送るものが、この文字で始まれば、リポジトリではなく daemon への指示（`status`・`stop`）。
 pub const CONTROL: char = '\0';
 
-/// 共有の daemon に指示を送り、答え（`status` なら JSON）を返す。daemon が動いていなければ `None`。
+/// 共有の daemon に指示を送り、答え（`status` なら JSON）を返す。daemon が動いていなければ `None`。答えの文は
+/// 今の言語で（指示に言語を添える。添えた形を知らない前の版の daemon には、添えずに送り直す）。
 pub fn control(command: &str) -> Result<Option<String>> {
+    let tagged = format!("{command}\0{}", amonhen_model::i18n::current().code());
+    match control_as_is(&tagged) {
+        Err(_) => control_as_is(command),
+        answer => answer,
+    }
+}
+
+fn control_as_is(command: &str) -> Result<Option<String>> {
     let Ok(mut duplex) = crate::endpoint::connect(&crate::endpoint::endpoint()) else {
         return Ok(None);
     };

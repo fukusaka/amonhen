@@ -27,18 +27,21 @@ enum RepositoryList {
 
     private static let openedKey = "repositoryOpenedAt"
 
-    /// 開いたリポジトリを先頭に置き、開いた日時を覚える。
-    static func touch(_ path: String) {
+    /// 開いたリポジトリを先頭に置き、開いた日時を覚える（Settings で付けた `daemon:` は外した形で）。
+    static func touch(_ location: String) {
+        let path = RepositoryLocation.listed(location, throughDaemon: Settings.openThroughDaemon)
         paths = [path] + paths.filter { $0 != path }
         var opened = UserDefaults.standard.dictionary(forKey: openedKey) ?? [:]
         opened[path] = Date().timeIntervalSince1970
         UserDefaults.standard.set(opened, forKey: openedKey)
     }
 
+    /// `daemon:` の付いた同じ場所も外す（一覧には 1 つにまとめて出している。`withoutDaemonTwins`）。
     static func remove(_ path: String) {
-        paths = paths.filter { $0 != path }
+        let twins = RepositoryLocation.withTwin(path)
+        paths = paths.filter { !twins.contains($0) }
         var opened = UserDefaults.standard.dictionary(forKey: openedKey) ?? [:]
-        opened[path] = nil
+        for twin in twins { opened[twin] = nil }
         UserDefaults.standard.set(opened, forKey: openedKey)
     }
 

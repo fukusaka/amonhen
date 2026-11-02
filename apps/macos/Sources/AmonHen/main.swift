@@ -356,8 +356,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// daemon 越し・SSH 先のリポジトリ: すぐにそのタブを `tabWith` の隣（なければ新しいウィンドウ）に置き、裏で
     /// つなぎ、つながったらリポジトリのタブに替える。`failed` を渡すと、つながずにそのエラーを出す。
     private func connect(location: String, debug: Bool, tabWith: NSWindow?, replacing: NSWindow? = nil,
-                         failed: Error? = nil) -> NSWindow {
+                         failed: Error? = nil, page: SidebarViewController.Page? = nil) -> NSWindow {
         let tab = ConnectingTab(location: location, tabWith: tabWith)
+        tab.page = page
         tab.onRetry = { [weak self, weak tab] in
             if let self, let tab { start(tab, debug: debug) }
         }
@@ -395,6 +396,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let key = tab.window.isKeyWindow || (!NSApp.isActive && lastActiveWindow === tab.window)
         let window = try RepositoryWindow(
             location: tab.location, repository: repository, debug: debug, tabWith: tab.window, front: key)
+        if let page = tab.page { window.show(page: page) }
         if selected, !key { group?.selectedWindow = window.window }
         if lastActiveWindow === tab.window { lastActiveWindow = window.window }
         connecting.removeAll { $0 === tab }
@@ -412,7 +414,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.onReconnect = { [weak self, weak window] in
             guard let self, let window else { return }
             // 同じ場所につなぎ直すタブに置き換える（閉じたときにリポジトリのページを出さないよう、先に置く）。
-            connect(location: window.location, debug: false, tabWith: window.window, replacing: window.window)
+            // 出していたページは、つないだタブでも出す。
+            connect(location: window.location, debug: false, tabWith: window.window, replacing: window.window,
+                    page: window.shownPage)
         }
         window.onClose = { [weak self, weak window] in
             self?.windows.removeAll { $0 === window }

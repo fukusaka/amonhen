@@ -296,6 +296,16 @@ private func makeRepo() throws -> URL {
     #expect(RepositoryLocation.path(location) == "/~/repo")
 }
 
+@Test func listsARepositoryOnceWithOrWithoutTheDaemon() {
+    #expect(RepositoryLocation.listed("daemon:ssh://h/~/r", throughDaemon: true) == "ssh://h/~/r")
+    #expect(RepositoryLocation.listed("daemon:/a/r", throughDaemon: true) == "/a/r")
+    #expect(RepositoryLocation.listed("daemon:/a/r", throughDaemon: false) == "daemon:/a/r")
+    #expect(RepositoryLocation.withoutDaemonTwins(["daemon:ssh://h/~/r", "ssh://h/~/r", "daemon:/only", "/a"])
+        == ["ssh://h/~/r", "daemon:/only", "/a"])
+    #expect(RepositoryLocation.withTwin("/a") == ["/a", "daemon:/a"])
+    #expect(RepositoryLocation.withTwin("daemon:/a") == ["daemon:/a"])
+}
+
 @Test func masksVariablesWhoseNamesLookSecret() {
     for name in ["GH_TOKEN", "CLIENT_SECRET", "DB_PASSWORD", "MYSQL_PASSWD", "AWS_SECRET_ACCESS_KEY", "SSH_KEY",
                  "OPENAI_APIKEY", "ACCESSKEY", "GOOGLE_APPLICATION_CREDENTIALS", "NPM_AUTH", "DB_PASS",

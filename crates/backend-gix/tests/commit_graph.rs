@@ -474,3 +474,27 @@ fn stops_at_the_boundary_of_a_shallow_clone() {
             .is_empty()
     );
 }
+
+#[test]
+fn errors_from_parallel_reads_are_in_the_requester_language() {
+    // 同じ深さのコミットが多いと rayon のスレッドで読む。共有の daemon では、そこでのエラーの文も頼んだ FE の言語で。
+    let tmp = tempfile::tempdir().unwrap();
+    git(tmp.path(), &["init", "-q"]);
+    let backend = GixBackend::open(tmp.path()).unwrap();
+    let missing: Vec<amonhen_model::Oid> = (0..200u8)
+        .map(|i| {
+            let mut b = [0u8; 20];
+            b[0] = 0xab;
+            b[1] = i;
+            amonhen_model::Oid(b)
+        })
+        .collect();
+    let error = amonhen_model::i18n::with(amonhen_model::i18n::Lang::Ja, || {
+        backend.read_commits(&missing, &|_| false).unwrap_err()
+    });
+    let text = error.to_string();
+    assert!(
+        text.starts_with("コミット ") && text.ends_with(" が見つからない"),
+        "{text}"
+    );
+}

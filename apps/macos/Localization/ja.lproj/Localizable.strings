@@ -48,6 +48,8 @@
 "Sets %@ as the upstream, then pulls." = "%@ を上流にしてから取り込みます。";
 "Moves %@ forward (fast-forward)." = "%@ を進めます（fast-forward）。";
 "⚠︎ Fast-Forward Only can’t pull these: you have %ld local commits. Choose Merge or Rebase." = "⚠︎ 手元にも %ld コミットあるので、Fast-Forward Only では取り込めません。Merge か Rebase を選んでください。";
+"⚠︎ git won’t pull: the branches have diverged, and neither pull.rebase nor pull.ff says how to reconcile them. Choose Merge or Rebase for this pull (your settings stay as they are)." = "⚠︎ ブランチが分かれていて、pull.rebase・pull.ff のどちらも取り込み方を決めていないので、git は取り込みません。この Pull の取り込み方として Merge か Rebase を選んでください（設定は変えません）。";
+"not set" = "未設定";
 "You can Undo this (⌥⌘Z)." = "Undo（⌥⌘Z）で戻せます。";
 "Fetch?" = "Fetch しますか？";
 "All Remotes (%@)" = "すべてのリモート（%@）";

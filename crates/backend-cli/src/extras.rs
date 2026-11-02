@@ -288,31 +288,35 @@ impl Git {
             let gpg = self.gpg_without_key_fetch();
             let next = std::sync::atomic::AtomicUsize::new(0);
             let found = std::sync::Mutex::new(Vec::new());
+            // 分けたスレッドでも、共有の daemon なら要求した FE の環境（gpg の agent など）と言語で git を動かす。
+            let carried = &amonhen_model::process::carry();
             std::thread::scope(|scope| {
                 for _ in 0..pending.len().min(8) {
                     scope.spawn(|| {
-                        loop {
-                            let n = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            let Some(&i) = pending.get(n) else { break };
-                            let check = if ids.contains(&tags[i].0) {
-                                let mut cmd = self.command(&[
-                                    "-c",
-                                    &gpg,
-                                    "verify-tag",
-                                    "--raw",
-                                    &tags[i].0.to_string(),
-                                ]);
-                                cmd.env("GIT_ALTERNATE_OBJECT_DIRECTORIES", &objects.dir)
-                                    .env("GIT_OPTIONAL_LOCKS", "0");
-                                crate::run_lenient(cmd).map(|(_, _, err)| {
-                                    parse_verify_tag(&String::from_utf8_lossy(&err))
-                                })
-                            } else {
-                                // 中身が ID と合わない（壊れている）。
-                                Ok(parse_verify_tag(""))
-                            };
-                            found.lock().unwrap().push((i, check));
-                        }
+                        carried.run(|| {
+                            loop {
+                                let n = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                let Some(&i) = pending.get(n) else { break };
+                                let check = if ids.contains(&tags[i].0) {
+                                    let mut cmd = self.command(&[
+                                        "-c",
+                                        &gpg,
+                                        "verify-tag",
+                                        "--raw",
+                                        &tags[i].0.to_string(),
+                                    ]);
+                                    cmd.env("GIT_ALTERNATE_OBJECT_DIRECTORIES", &objects.dir)
+                                        .env("GIT_OPTIONAL_LOCKS", "0");
+                                    crate::run_lenient(cmd).map(|(_, _, err)| {
+                                        parse_verify_tag(&String::from_utf8_lossy(&err))
+                                    })
+                                } else {
+                                    // 中身が ID と合わない（壊れている）。
+                                    Ok(parse_verify_tag(""))
+                                };
+                                found.lock().unwrap().push((i, check));
+                            }
+                        })
                     });
                 }
             });

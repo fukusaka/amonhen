@@ -218,6 +218,25 @@ public enum RepositoryLocation {
         return "ssh://\(host)\(path)"
     }
 
+    /// リポジトリの一覧・Open Recent に覚える形。Settings で共有の daemon 越しに開くときに付けた `daemon:` は外す
+    /// （開き方の設定で、別のリポジトリではない。同じリポジトリを `daemon:` の有無で二度並べない）。設定が切れていて
+    /// `daemon:` で開いたもの（右クリックの「共有の daemon 越しに開く」）は、そのまま。
+    public static func listed(_ location: String, throughDaemon: Bool) -> String {
+        throughDaemon && location.hasPrefix("daemon:") ? String(location.dropFirst("daemon:".count)) : location
+    }
+
+    /// 一覧の場所のうち、`daemon:` を外した同じ場所もあるもの（`daemon:X` と `X`）は `X` だけにする（前の版が覚えた
+    /// `daemon:` の形と、今の形が並ばないように）。
+    public static func withoutDaemonTwins(_ list: [String]) -> [String] {
+        let plain = Set(list.filter { !$0.hasPrefix("daemon:") })
+        return list.filter { !$0.hasPrefix("daemon:") || !plain.contains(String($0.dropFirst("daemon:".count))) }
+    }
+
+    /// `location` と、一覧で同じものとして扱う `daemon:` の付いた場所（一覧から外すときは両方外す）。
+    public static func withTwin(_ location: String) -> [String] {
+        location.hasPrefix("daemon:") ? [location] : [location, "daemon:" + location]
+    }
+
     /// 接続先（`ssh://` のホスト、`daemon:` は "daemon"、`daemon:ssh://` は「ホスト · daemon」）。手元なら nil。
     public static func host(_ location: String) -> String? {
         if location.hasPrefix("daemon:") {

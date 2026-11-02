@@ -483,6 +483,8 @@ impl GitBackend for GixBackend {
         // そのたびに作り直すと読むより高くつく（musl ではバッファのたびに mmap・munmap して、5 倍遅くなっていた）。
         let threads = rayon::current_num_threads();
         let readers: Vec<Reader> = (0..=threads).map(|_| Mutex::new(None)).collect();
+        // rayon のスレッドは頼んだ FE の言語を引き継がない。読めないときの文はその言語で（共有の daemon）。
+        let lang = amonhen_model::i18n::current();
 
         // 幅優先で辿り、同じ深さのコミットが多ければまとめて並列に読む（展開が時間の大半を占める）。ふつうの履歴は
         // ほとんどの深さで 1〜数個しかないので、そこはスレッドを起こさずに順に読む。
@@ -502,7 +504,9 @@ impl GitBackend for GixBackend {
                         let mut reader = readers[slot].lock().unwrap_or_else(|e| e.into_inner());
                         let (repo, buf) =
                             reader.get_or_insert_with(|| (self.repo.to_thread_local(), Vec::new()));
-                        read_commit(repo, graph.as_ref(), hash, buf, &shallow, id)
+                        amonhen_model::i18n::with(lang, || {
+                            read_commit(repo, graph.as_ref(), hash, buf, &shallow, id)
+                        })
                     })
                     .collect::<Result<_>>()?
             };
