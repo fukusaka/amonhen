@@ -175,6 +175,19 @@ public class FileDiff: @unchecked Sendable {
         withText(row: row) { $0 as String }
     }
 
+    /// 同じ中身の差分か（行の種類・印・行番号・文字列が同じ）。読み直したとき、出し直すかを決める。
+    public func hasSameRows(as other: FileDiff) -> Bool {
+        guard rowCount == other.rowCount, isBinary == other.isBinary else { return false }
+        return withRows { a in
+            other.withRows { b in
+                (0..<rowCount).allSatisfy {
+                    a[$0].kind == b[$0].kind && a[$0].flags == b[$0].flags && a[$0].old_no == b[$0].old_no
+                        && a[$0].new_no == b[$0].new_no && text(row: $0) == other.text(row: $0)
+                }
+            }
+        }
+    }
+
     /// 構文の色付け。ファイル全体を解析するので、裏のスレッドで呼ぶ。
     public func syntax() -> SyntaxSpans? {
         withExtendedLifetime(self) { makeSyntax(raw).map(SyntaxSpans.init) }

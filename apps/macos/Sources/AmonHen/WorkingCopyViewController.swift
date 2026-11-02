@@ -399,11 +399,11 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         }
     }
 
-    /// 出している差分を、位置を保って読み直す（コンフリクトはマージエディタのまま）。
+    /// 出している差分を読み直し、中身が変わっていれば位置を保って出し直す（コンフリクトはマージエディタのまま）。
     private func reloadShownDiff() {
         guard let key = selectedKey, let entry = entries.first(where: { $0.item.path == key.path }),
               !entry.isConflict else { return }
-        showDiff(of: entry, staged: side(for: entry.item), keepScroll: true)
+        showDiff(of: entry, staged: side(for: entry.item), keepScroll: true, onlyIfChanged: true)
     }
 
     /// 行数を裏で読み、一覧を描き直す（数がなくても一覧は先に出す）。
@@ -679,7 +679,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         }
     }
 
-    private func showDiff(of entry: Entry, staged: Bool, keepScroll: Bool = false) {
+    /// `onlyIfChanged` なら、読んだ差分が出しているものと同じ中身のとき出し直さない（選んだ行を外さない）。
+    private func showDiff(of entry: Entry, staged: Bool, keepScroll: Bool = false, onlyIfChanged: Bool = false) {
         guard let status else { return }
         selectedKey = (entry.item.path, staged)
         titleLabel.stringValue = entry.item.path
@@ -722,6 +723,10 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
                 return (try? status.diff(of: entry.item, staged: staged), false)
             }.value
             guard request == self.request else { return }
+            if onlyIfChanged, let diff, let shown = current, shown.item.path == diff.item.path,
+               shown.isCombined == diff.isCombined, shown.staged == diff.staged, shown.hasSameRows(as: diff) {
+                return
+            }
             sideControl.isHidden = combined || !(entry.item.isStaged && entry.item.isUnstaged)
             selectedKey = (entry.item.path, combined ? false : staged)
             current = diff
