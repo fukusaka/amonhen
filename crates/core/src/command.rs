@@ -4788,6 +4788,26 @@ mod tests {
         assert!(!dir.join("four.txt").exists() && dir.join("side.txt").exists());
         run(&repo, r#"{"op":"undo"}"#);
         assert_eq!(git(dir, &["rev-parse", "HEAD"]), four);
+
+        // 空のコミットも、書き換えて最後まで進み、残る。
+        git(dir, &["commit", "-q", "--allow-empty", "-m", "empty"]);
+        let empty = git(dir, &["rev-parse", "HEAD"]);
+        let out = plan(serde_json::json!([
+            {"oid": two, "action": "reword", "message": "two, reworded"},
+            {"oid": three, "action": "pick"},
+            {"oid": merge, "action": "pick"},
+            {"oid": four, "action": "pick"},
+            {"oid": empty, "action": "reword", "message": "empty, reworded"}]));
+        assert_eq!(out["outcome"], "done", "{out}");
+        assert!(!dir.join(".git/rebase-merge").exists());
+        assert_eq!(
+            git(dir, &["log", "-2", "--format=%s"]),
+            "empty, reworded\nfour"
+        );
+        assert_eq!(
+            git(dir, &["rev-parse", "HEAD^{tree}"]),
+            git(dir, &["rev-parse", "HEAD^^{tree}"])
+        );
     }
 
     #[test]
@@ -5571,6 +5591,84 @@ mod tests {
         assert_eq!(log(dir), ["b", "d", "c", "first"]);
         run(&repo, r#"{"op":"undo"}"#);
         assert_eq!(log(dir), ["d", "c", "b", "first"]);
+    }
+
+    #[test]
+    fn rewrites_empty_commits_and_keeps_them() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        let b = commit_file(dir, "b.txt", "b");
+        git(dir, &["commit", "-q", "--allow-empty", "-m", "empty"]);
+        let empty = git(dir, &["rev-parse", "HEAD"]);
+        let empty_tree = |rev: &str| git(dir, &["rev-parse", &format!("{rev}^{{tree}}")]);
+        let assert_empty = |rev: &str| {
+            assert_eq!(empty_tree(rev), empty_tree(&format!("{rev}^")), "{rev}");
+        };
+        let assert_finished = |r: &serde_json::Value| {
+            assert_eq!(r["outcome"], "done", "{r}");
+            assert!(!dir.join(".git/rebase-merge").exists(), "{r}");
+        };
+
+        // 空のコミットが先頭（HEAD）でも、途中でも、書き換えて最後まで進む。
+        let r = rewrite(
+            &repo,
+            serde_json::json!({"kind": "reword", "oid": empty, "message": "empty!"}),
+        );
+        assert_finished(&r);
+        assert_eq!(log(dir), ["empty!", "b", "first"]);
+        assert_empty("HEAD");
+        run(&repo, r#"{"op":"undo"}"#);
+
+        let d = commit_file(dir, "d.txt", "d");
+        let r = rewrite(
+            &repo,
+            serde_json::json!({"kind": "reword", "oid": empty, "message": "empty!"}),
+        );
+        assert_finished(&r);
+        assert_eq!(log(dir), ["d", "empty!", "b", "first"]);
+        assert_empty("HEAD^");
+        run(&repo, r#"{"op":"undo"}"#);
+
+        // 編集モードでまとめて決めても同じ。
+        let json = serde_json::json!({"op": "rewrite", "label": "edit", "edit": {"kind": "plan", "steps": [
+            {"oid": b, "action": "reword", "message": "b!"},
+            {"oid": empty, "action": "reword", "message": "empty!"},
+            {"oid": d, "action": "pick"},
+        ]}});
+        let r = run(&repo, &json.to_string());
+        assert_finished(&r);
+        assert_eq!(log(dir), ["d", "empty!", "b!", "first"]);
+        assert_empty("HEAD^");
+        run(&repo, r#"{"op":"undo"}"#);
+
+        // squash・fixup で前のコミットにまとめても、edit で止めても進む。
+        let r = rewrite(
+            &repo,
+            serde_json::json!({"kind": "squash", "oid": empty, "message": "b+empty"}),
+        );
+        assert_finished(&r);
+        assert_eq!(log(dir), ["d", "b+empty", "first"]);
+        run(&repo, r#"{"op":"undo"}"#);
+        let r = rewrite(&repo, serde_json::json!({"kind": "fixup", "oid": empty}));
+        assert_finished(&r);
+        assert_eq!(log(dir), ["d", "b", "first"]);
+        run(&repo, r#"{"op":"undo"}"#);
+        let r = rewrite(&repo, serde_json::json!({"kind": "edit", "oid": empty}));
+        assert_eq!(r["outcome"], "stopped", "{r}");
+        assert_eq!(log(dir), ["empty", "b", "first"]);
+        let r = run(&repo, r#"{"op":"continue"}"#);
+        assert_finished(&r);
+        assert_eq!(log(dir), ["d", "empty", "b", "first"]);
+        assert_empty("HEAD^");
+
+        // 前のコミットを書き換えても、空のコミットを落とさない。
+        let r = rewrite(
+            &repo,
+            serde_json::json!({"kind": "reword", "oid": b, "message": "b!"}),
+        );
+        assert_finished(&r);
+        assert_eq!(log(dir), ["d", "empty", "b!", "first"]);
+        assert_empty("HEAD^");
     }
 
     #[test]

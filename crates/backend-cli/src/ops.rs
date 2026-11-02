@@ -164,6 +164,43 @@ impl Git {
     fn has_unmerged(&self) -> Result<bool> {
         Ok(!self.read(&["ls-files", "--unmerged", "-z"])?.is_empty())
     }
+
+    /// `rebase_todo` の todo（`rebase_merges` なら todo を書き換える awk のプログラム）が、空のコミットを
+    /// `reword` するか。
+    fn rewords_empty_commit(&self, todo: &std::path::Path, rebase_merges: bool) -> Result<bool> {
+        let text = std::fs::read_to_string(todo)?;
+        for oid in reworded_commits(&text, rebase_merges) {
+            // 親（root なら空のツリー）と比べて、変えたファイルがなければ空。
+            let changed = self.read(&[
+                "diff-tree",
+                "-r",
+                "--root",
+                "--no-commit-id",
+                "--name-only",
+                oid,
+            ])?;
+            if changed.is_empty() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+}
+
+/// todo の `reword <oid>` の行（`rebase_merges` なら awk のプログラムの `a["<oid>"] = "reword"`）のコミット。
+fn reworded_commits(text: &str, rebase_merges: bool) -> Vec<&str> {
+    text.lines()
+        .filter_map(|line| {
+            if rebase_merges {
+                let rest = line.trim().strip_prefix("a[\"")?;
+                let (oid, action) = rest.split_once("\"] = ")?;
+                (action == "\"reword\"").then_some(oid)
+            } else {
+                line.strip_prefix("reword ")?.split_whitespace().next()
+            }
+        })
+        .filter(|oid| !oid.is_empty() && oid.bytes().all(|b| b.is_ascii_hexdigit()))
+        .collect()
 }
 
 /// `-G` に渡す正規表現（git は拡張正規表現として読む）で、`text` をそのままの文字列として探すための書き方。
@@ -799,7 +836,21 @@ impl Operations for Git {
                 args.extend(["-c", "commit.cleanup=whitespace"]);
             }
         }
-        args.extend(["rebase", "--interactive", "--autostash", "--no-autosquash"]);
+        // 空のコミット（`commit --allow-empty`）も残す。git 2.26 からは対話の rebase の既定だが、それより前は
+        // 範囲が空のコミットだけだと始めずに断り、git が作る todo（`--rebase-merges`）では除いてしまう。
+        args.extend([
+            "rebase",
+            "--interactive",
+            "--autostash",
+            "--no-autosquash",
+            "--keep-empty",
+        ]);
+        // 空のコミットの `reword` は、親がそのままだと早送りしてから `commit --amend` でメッセージを変える。古い git
+        // （2.23 など）はこれを `--allow-empty` なしで行い、空になると断って止まる。早送りさせずに作り直させる
+        // （作り直すときは元が空なら `--allow-empty` を付ける）。どの版でもできあがりは同じ。
+        if self.rewords_empty_commit(todo, rebase_merges)? {
+            args.push("--force-rebase");
+        }
         if rebase_merges {
             args.push("--rebase-merges");
             args.extend(update_refs_flag(update_refs));
@@ -1691,5 +1742,16 @@ impl Git {
             .or_else(|| std::env::var_os("USERPROFILE"))
             .ok_or_else(|| amonhen_model::tr!("HOME isn’t set"))?;
         Ok(std::path::PathBuf::from(home).join(".config/git/ignore"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn reads_the_reworded_commits_from_a_todo_and_an_awk_program() {
+        let todo = "reword aaaa\npick bbbb\nupdate-ref refs/heads/x\nreword cccc # c\n";
+        assert_eq!(super::reworded_commits(todo, false), ["aaaa", "cccc"]);
+        let awk = "BEGIN {\n  a[\"aaaa\"] = \"reword\"\n  a[\"bbbb\"] = \"drop\"\n}\n/^pick / { print }\n";
+        assert_eq!(super::reworded_commits(awk, true), ["aaaa"]);
     }
 }
