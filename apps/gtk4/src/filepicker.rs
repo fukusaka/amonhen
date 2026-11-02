@@ -1431,8 +1431,14 @@ impl Picker {
         if same {
             self.refresh_marks(index, &view);
         } else if let Some(p) = position {
-            view.list
-                .scroll_to(p as u32, gtk::ListScrollFlags::NONE, None);
+            // 割り付ける前の一覧では送っても効かない（列を作ってすぐに中身が届く）ので、割り付けてから。
+            view.list.add_tick_callback(move |list, _| {
+                if list.height() == 0 {
+                    return glib::ControlFlow::Continue;
+                }
+                list.scroll_to(p as u32, gtk::ListScrollFlags::NONE, None);
+                glib::ControlFlow::Break
+            });
         }
         view.note
             .set_text(column.error.as_deref().unwrap_or_default());
