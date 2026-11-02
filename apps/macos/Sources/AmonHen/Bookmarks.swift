@@ -148,14 +148,17 @@ final class Bookmarks {
     }
 
     /// 開いたリポジトリを、まだどこにもなければ（ブックマークにも、スキャンするフォルダの下にもない）ブックマークに入れる。
-    func register(_ path: String) {
+    func register(_ location: String) {
+        let path = RepositoryLocation.listed(location, throughDaemon: Settings.openThroughDaemon)
         let real = Self.real(path)
         guard bookmark(path) == nil, !data.scanRoots.contains(where: { real.hasPrefix(Self.real($0.path) + "/") }) else { return }
         add(path)
     }
 
+    /// `daemon:` の付いた同じ場所も外す（一覧には 1 つにまとめて出している）。
     func remove(_ path: String) {
-        edit { $0.items.removeAll { $0.path == path } }
+        let twins = RepositoryLocation.withTwin(path)
+        edit { $0.items.removeAll { twins.contains($0.path) } }
     }
 
     private func update(_ path: String, _ change: (inout Bookmark) -> Void) {
@@ -245,7 +248,7 @@ final class Bookmarks {
         var seen = Set<String>()
         let ordered = data.items.filter(\.favorite).map(\.path) + data.items.map(\.path) + RepositoryList.paths
             + data.scanRoots.flatMap { scanned[$0.path] ?? [] }
-        return ordered.filter { seen.insert($0).inserted }
+        return RepositoryLocation.withoutDaemonTwins(ordered.filter { seen.insert($0).inserted })
     }
 
     // MARK: - スキャン

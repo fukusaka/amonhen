@@ -99,6 +99,41 @@ pub fn through_daemon(location: &Path) -> PathBuf {
     ))
 }
 
+/// 一覧・Open Recent に覚える形。Settings で共有の daemon 越しに開くときに付けた `daemon:` は外す（開き方の設定で、
+/// 別のリポジトリではない。同じリポジトリを `daemon:` の有無で二度並べない。macOS 版と同じ）。設定が切れていて
+/// `daemon:` で開いたもの（右クリックの「共有の daemon 越しに開く」）は、そのまま。
+fn listed_form(location: &str, through_daemon: bool) -> String {
+    match location.strip_prefix("daemon:") {
+        Some(rest) if through_daemon => rest.to_owned(),
+        _ => location.to_owned(),
+    }
+}
+
+/// 一覧の場所のうち、`daemon:` を外した同じ場所もあるもの（`daemon:X` と `X`）は `X` だけにする（前の版が覚えた
+/// `daemon:` の形と、今の形が並ばないように）。
+pub fn without_daemon_twins(list: Vec<String>) -> Vec<String> {
+    let plain: std::collections::HashSet<String> = list
+        .iter()
+        .filter(|l| !l.starts_with("daemon:"))
+        .cloned()
+        .collect();
+    list.into_iter()
+        .filter(|l| {
+            l.strip_prefix("daemon:")
+                .is_none_or(|rest| !plain.contains(rest))
+        })
+        .collect()
+}
+
+/// `location` と、一覧で同じものとして扱う `daemon:` の付いた場所（外すときは両方外す）。
+pub fn with_twin(location: &str) -> Vec<String> {
+    if location.starts_with("daemon:") {
+        vec![location.to_owned()]
+    } else {
+        vec![location.to_owned(), format!("daemon:{location}")]
+    }
+}
+
 fn with_daemon(location: &str, on: bool) -> String {
     if on && !location.starts_with("daemon:") {
         format!("daemon:{location}")
@@ -110,7 +145,10 @@ fn with_daemon(location: &str, on: bool) -> String {
 /// 開いたことを覚える（先頭に）。開いた日時も覚え、Settings > General で選んでいればブックマークにも入れる。
 pub fn record(location: &Path) {
     // 覚えるのは開いた形のまま（リンクは解かない。ブックマークと同じ形にして、一覧に二度出さない。macOS 版と同じ）。
-    let text = standardize(location).to_string_lossy().into_owned();
+    let text = listed_form(
+        &standardize(location).to_string_lossy(),
+        crate::settings::bool(crate::settings::OPEN_THROUGH_DAEMON),
+    );
     let mut list = recent();
     list.retain(|l| *l != text);
     list.insert(0, text.clone());
@@ -141,12 +179,16 @@ pub fn opened_all_at() -> std::collections::HashMap<String, i64> {
 }
 
 /// 最近開いたもの・開いた日時から外す（Repositories の「一覧から外す」）。
+/// `daemon:` の付いた同じ場所も外す（一覧には 1 つにまとめて出している。`without_daemon_twins`）。
 pub fn forget(location: &str) {
+    let twins = with_twin(location);
     let mut list = recent();
-    list.retain(|l| l != location);
+    list.retain(|l| !twins.contains(l));
     crate::settings::set_string(RECENT, &serde_json::json!(list).to_string());
     let mut opened = opened_all();
-    if opened.remove(location).is_some() {
+    let before = opened.len();
+    opened.retain(|k, _| !twins.contains(k));
+    if opened.len() != before {
         crate::settings::set_string(OPENED, &serde_json::Value::Object(opened).to_string());
     }
 }
@@ -202,7 +244,7 @@ pub fn recent_menu() -> gio::Menu {
 
 fn fill(menu: &gio::Menu) {
     let home = glib::home_dir();
-    let list = recent();
+    let list = without_daemon_twins(recent());
     if list.is_empty() {
         // 何もないときは押せない「None」（macOS 版と同じ）。
         menu.append(Some(&tr!("None")), Some("win.open-recent-none"));
@@ -446,6 +488,28 @@ mod tests {
         assert_eq!(with_daemon("daemon:/a/r", true), "daemon:/a/r");
         assert_eq!(with_daemon("/a/r", false), "/a/r");
         assert_eq!(with_daemon("ssh://h/a/r", false), "ssh://h/a/r");
+    }
+
+    #[test]
+    fn lists_a_repository_once_with_or_without_the_daemon() {
+        use super::{listed_form, with_twin, without_daemon_twins};
+        // 設定で付けた `daemon:` は覚えない。設定なしで選んだ `daemon:` は残す。
+        assert_eq!(listed_form("daemon:ssh://h/~/r", true), "ssh://h/~/r");
+        assert_eq!(listed_form("daemon:/a/r", true), "/a/r");
+        assert_eq!(listed_form("daemon:/a/r", false), "daemon:/a/r");
+        assert_eq!(listed_form("ssh://h/~/r", true), "ssh://h/~/r");
+        let list = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            without_daemon_twins(list(&[
+                "daemon:ssh://h/~/r",
+                "ssh://h/~/r",
+                "daemon:/only",
+                "/a"
+            ])),
+            list(&["ssh://h/~/r", "daemon:/only", "/a"])
+        );
+        assert_eq!(with_twin("/a"), list(&["/a", "daemon:/a"]));
+        assert_eq!(with_twin("daemon:/a"), list(&["daemon:/a"]));
     }
 
     #[test]

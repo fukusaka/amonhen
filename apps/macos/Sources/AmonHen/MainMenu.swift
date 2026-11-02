@@ -188,7 +188,7 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
         }
         guard menu.title == L("Open Recent") else { return }
         menu.removeAllItems()
-        for path in RepositoryList.paths.prefix(15) {
+        for path in RepositoryLocation.withoutDaemonTwins(RepositoryList.paths).prefix(15) {
             let title = RepositoryLocation.isRemote(path) ? path : (path as NSString).abbreviatingWithTildeInPath
             let item = NSMenuItem(title: title, action: #selector(openRecent(_:)), keyEquivalent: "")
             item.target = self
