@@ -343,3 +343,48 @@ fn a_change_notice_while_asking_for_the_mailmap_does_not_stall() {
     // 1 回目の途中で知らされた変化で、2 回目も聞き直す（間を置かずに聞いても）。
     assert_eq!(asked.try_iter().count(), 2);
 }
+
+#[test]
+fn a_lost_connection_is_explained_in_each_caller_language() {
+    // 共有の daemon では、1 つのつながりを言語の違う FE が使う。切れた理由は、読む側（待っていた要求・様子を
+    // 尋ねた相手）の言語で。
+    use amonhen_model::i18n::{self, Lang};
+    struct Pipe(std::sync::mpsc::Receiver<()>);
+    impl std::io::Read for Pipe {
+        fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+            let _ = self.0.recv();
+            Ok(0)
+        }
+    }
+    let (hang_up, rx) = std::sync::mpsc::channel();
+    let conn = Connection::new(Pipe(rx), std::io::sink());
+    let waiting = {
+        let conn = conn.clone();
+        std::thread::spawn(move || {
+            i18n::with(Lang::Ja, || {
+                conn.call::<Option<amonhen_model::Oid>>(&amonhen_remote::wire::Request::Head)
+                    .unwrap_err()
+                    .to_string()
+            })
+        })
+    };
+    // 要求が送られるのを待ってから切る。
+    while conn.traffic().0 == 0 {
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    drop(hang_up);
+    assert_eq!(waiting.join().unwrap(), "daemon との接続が切れました");
+    let started = std::time::Instant::now();
+    while conn.closed().is_none() {
+        assert!(started.elapsed().as_secs() < 5);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(
+        i18n::with(Lang::En, || conn.closed()).as_deref(),
+        Some("Lost connection to the daemon")
+    );
+    assert_eq!(
+        i18n::with(Lang::Ja, || conn.closed()).as_deref(),
+        Some("daemon との接続が切れました")
+    );
+}

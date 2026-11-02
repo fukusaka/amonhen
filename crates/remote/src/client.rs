@@ -39,7 +39,8 @@ pub struct Connection {
     sent: AtomicU64,
     /// 読んだ分だけ増やす（大きな応答を受け取っている途中の進み具合も分かる）。
     received: Arc<AtomicU64>,
-    /// 切れた理由。
+    /// 切れたときに標準エラーに残っていたもの（切れていなければ None）。文は読む側の言語で作る（`closed`）:
+    /// 共有の daemon では、1 つのつながりを言語の違う FE が使う。
     reason: Mutex<Option<String>>,
     /// 手元の共有の daemon とのつながりか（History を用意してもらえる）。
     local: AtomicBool,
@@ -89,15 +90,8 @@ impl Connection {
                         _ => {
                             // 標準エラーの最後の行を読み終えるのを少し待ってから、理由に添える。
                             std::thread::sleep(Duration::from_millis(100));
-                            let detail = amonhen_model::process::explain_agent(
-                                conn.stderr.lock().unwrap().trim().to_owned(),
-                            );
-                            let reason = if detail.is_empty() {
-                                tr!("Lost connection to the daemon")
-                            } else {
-                                tr!("Lost connection to the daemon: {detail}", detail = detail)
-                            };
-                            conn.close(&reason);
+                            let detail = conn.stderr.lock().unwrap().trim().to_owned();
+                            conn.close(detail);
                             break;
                         }
                     }
@@ -203,17 +197,30 @@ impl Connection {
         }
     }
 
-    /// 切れていれば、その理由。
+    /// 切れていれば、その理由（今のスレッドの言語で）。
     pub fn closed(&self) -> Option<String> {
-        self.reason.lock().unwrap().clone()
+        let detail = self.reason.lock().unwrap().clone()?;
+        let detail = amonhen_model::process::explain_agent(detail);
+        Some(if detail.is_empty() {
+            tr!("Lost connection to the daemon")
+        } else {
+            tr!("Lost connection to the daemon: {detail}", detail = detail)
+        })
     }
 
-    fn close(&self, reason: &str) {
-        *self.reason.lock().unwrap() = Some(reason.to_owned());
+    /// 切れた理由（そのとき標準エラーに残っていたもの）を残し、待っている要求を終わらせる（待ち手は `closed` の
+    /// 文を自分の言語で作る）。
+    fn close(&self, detail: String) {
+        *self.reason.lock().unwrap() = Some(detail);
         self.closed.store(true, Ordering::Relaxed);
-        for (_, tx) in self.pending.lock().unwrap().drain() {
-            let _ = tx.send(Err(reason.to_owned()));
-        }
+        self.pending.lock().unwrap().clear();
+    }
+
+    /// 応答を待てなくなったときのエラー（切れた理由があればそれ）。
+    fn lost(&self) -> amonhen_model::Error {
+        self.closed()
+            .unwrap_or_else(|| tr!("Lost connection to the daemon"))
+            .into()
     }
 
     fn send(&self, request: &Request) -> Result<(u64, mpsc::Receiver<Reply>)> {
@@ -252,10 +259,7 @@ impl Connection {
 
     pub fn call<T: DeserializeOwned>(&self, request: &Request) -> Result<T> {
         let (_, rx) = self.send(request)?;
-        Self::decode(
-            rx.recv()
-                .map_err(|_| tr!("Lost connection to the daemon"))?,
-        )
+        Self::decode(rx.recv().map_err(|_| self.lost())?)
     }
 
     /// `cancelled` が true になったら daemon に取り消しを送り、`Err` を返す。
@@ -276,9 +280,7 @@ impl Connection {
                         return Err(amonhen_model::i18n::cancelled().into());
                     }
                 }
-                Err(RecvTimeoutError::Disconnected) => {
-                    return Err(tr!("Lost connection to the daemon").into());
-                }
+                Err(RecvTimeoutError::Disconnected) => return Err(self.lost()),
             }
         }
     }
