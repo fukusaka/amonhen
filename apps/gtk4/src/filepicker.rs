@@ -38,6 +38,9 @@ pub enum Source {
     Connected(String, Arc<Repository>),
     /// SSH 先を選べる（最初のホスト。空でもよい）。
     AnyHost(String),
+    /// リポジトリの HEAD の木のフォルダ（まだ取り出していないものも。sparse checkout で取り出すフォルダ。パスは
+    /// `/` を根にした形。ホームはなく、根は選べない）。
+    Tree(Arc<Repository>),
 }
 
 /// 選んだもの: SSH 先（この機械なら空）と、そこでの絶対パス、ホームの下なら `~/…` にしたもの。
@@ -261,6 +264,8 @@ struct Dir {
 enum Reader {
     Local,
     Engine(Arc<Repository>),
+    /// リポジトリの HEAD の木（フォルダだけ）。
+    Tree(Arc<Repository>),
 }
 
 fn parse(info: &Value) -> Dir {
@@ -309,6 +314,10 @@ fn list(reader: &Reader, path: &str) -> Result<Dir, String> {
         }
         Reader::Engine(repo) => {
             crate::reposettings::call(repo, &json!({ "op": "listDirectory", "path": path }))
+                .map(|info| parse(&info))
+        }
+        Reader::Tree(repo) => {
+            crate::reposettings::call(repo, &json!({ "op": "treeFolders", "path": path }))
                 .map(|info| parse(&info))
         }
     }
@@ -418,6 +427,7 @@ pub async fn choose_several(
     let picker = Picker::new(parent, &request, &source, tx);
     match source {
         Source::Local => picker.use_reader(Reader::Local, ""),
+        Source::Tree(repo) => picker.use_reader(Reader::Tree(repo), ""),
         Source::Connected(host, repo) => picker.use_reader(Reader::Engine(repo), &host),
         Source::Host(host) | Source::AnyHost(host) => picker.connect(&host),
     }
@@ -504,13 +514,18 @@ impl Picker {
         let field = gtk::Entry::new();
         field.set_hexpand(true);
         field.add_css_class("monospace");
-        field.set_placeholder_text(Some(if request.kind == Kind::Executable {
+        let tree = matches!(source, Source::Tree(_));
+        field.set_placeholder_text(Some(if tree {
+            "/src"
+        } else if request.kind == Kind::Executable {
             "/usr/local/bin/git"
         } else {
             "~/prj"
         }));
         let home_button = gtk::Button::with_label("~");
         home_button.set_tooltip_text(Some(&tr!("Home folder")));
+        // リポジトリの木にはホームがない。
+        home_button.set_visible(!tree);
         let spinner = gtk::Spinner::new();
         let path_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         path_row.append(&field);
@@ -1502,8 +1517,10 @@ impl Picker {
         let Some(last) = columns.last() else {
             return Vec::new();
         };
+        // リポジトリの木の根は選べない（すべてのフォルダになる）。
+        let tree_root = matches!(*self.reader.borrow(), Some(Reader::Tree(_))) && last.path == "/";
         match self.kind {
-            Kind::Folder if last.error.is_none() => vec![last.path.clone()],
+            Kind::Folder if last.error.is_none() && !tree_root => vec![last.path.clone()],
             Kind::Folder => Vec::new(),
             _ => last
                 .entries

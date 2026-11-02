@@ -91,6 +91,12 @@ pub enum Kind {
     Sparkles,
     /// character.bubble（AI の翻訳）
     Bubble,
+    /// scissors（shallow clone: 古い履歴を取得していない）
+    Scissors,
+    /// icloud.and.arrow.down（partial clone: 中身は必要なときに取る）
+    CloudDown,
+    /// folder.badge.minus（sparse checkout: 一部のフォルダだけ取り出している）
+    FolderMinus,
 }
 
 mod imp {
@@ -462,6 +468,36 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.move_to(6.3, 8.5);
             p.line_to(8.0, 6.8);
             p.line_to(9.7, 8.5);
+        }
+        Kind::Scissors => {
+            // 2 つの輪と、交わる 2 本の刃。
+            p.add_circle(&point(4.5, 11.5), 2.0);
+            p.add_circle(&point(11.5, 11.5), 2.0);
+            p.move_to(5.9, 10.1);
+            p.line_to(11.5, 2.5);
+            p.move_to(10.1, 10.1);
+            p.line_to(4.5, 2.5);
+        }
+        Kind::CloudDown => {
+            cloud(&p);
+            p.move_to(8.0, 6.8);
+            p.line_to(8.0, 11.0);
+            p.move_to(6.3, 9.3);
+            p.line_to(8.0, 11.0);
+            p.line_to(9.7, 9.3);
+        }
+        Kind::FolderMinus => {
+            p.move_to(2.5, 4.0);
+            p.line_to(6.5, 4.0);
+            p.line_to(8.0, 5.5);
+            p.line_to(13.5, 5.5);
+            p.line_to(13.5, 8.0);
+            p.move_to(8.5, 12.5);
+            p.line_to(2.5, 12.5);
+            p.line_to(2.5, 4.0);
+            // 右下の −。
+            p.move_to(10.0, 11.0);
+            p.line_to(14.5, 11.0);
         }
         Kind::CloudSlash => {
             cloud(&p);

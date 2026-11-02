@@ -49,6 +49,7 @@ mod refmarks;
 mod refops;
 mod remotesheet;
 mod repobrowser;
+mod repoform;
 mod repolist;
 mod repopages;
 mod repos;
@@ -1238,7 +1239,31 @@ fn build_tab(
             worktrees::Note::Refs => Event::Reload,
         });
     }));
+    // リポジトリの形（書き込む先の worktree の。sparse checkout は worktree ごと）を読み、サイドバーの印などに渡す
+    // （macOS 版の `loadForm`。shallow の境界は fetch で、partial clone と sparse checkout は設定で変わるので、
+    // History を読み直すたびと、書き込む先を変えたとき）。
+    let load_form: Rc<dyn Fn()> = {
+        let (sb, a) = (sidebar.clone(), Rc::downgrade(&actions));
+        let generation = Rc::new(Cell::new(0u64));
+        Rc::new(move || {
+            let Some(repo) = a.upgrade().and_then(|a| a.repo()) else {
+                return;
+            };
+            let request = generation.get() + 1;
+            generation.set(request);
+            let (sb, generation) = (sb.clone(), generation.clone());
+            glib::spawn_future_local(async move {
+                let Some(form) = repoform::load(&repo).await else {
+                    return;
+                };
+                if generation.get() == request {
+                    sb.set_repository_form(&form);
+                }
+            });
+        })
+    };
     // 書き込む先を変えた: Working Copy・操作・Reflog をその worktree に向ける。
+    let lf = load_form.clone();
     let (wc, st, rf, a, edit_tx) = (
         working.clone(),
         stashes.clone(),
@@ -1255,6 +1280,7 @@ fn build_tab(
             reflog.reload();
         }
         a.refresh_undo();
+        lf();
         let tx = edit_tx.clone();
         std::thread::spawn(move || reload_status(&repo, &tx));
     });
@@ -1886,6 +1912,7 @@ fn build_tab(
                         stashes.set_repo(editing.clone());
                         reflog.set_repo(editing.clone());
                         actions.set_repo(editing);
+                        load_form();
                         // ref を先に読んでいたら、ここで GitHub から読み始める。
                         if !github_started && latest_refs.borrow().is_some() {
                             github_started = true;
