@@ -15,6 +15,7 @@ use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use crate::worktrees::natural_cmp;
 use amonhen_core::diff::{DiffView, StackedDiff};
 use amonhen_core::{HistorySnapshot, Repository, Selection};
 use amonhen_model::{ChangeKind, FileChange, tr};
@@ -358,7 +359,10 @@ fn file_rows(
         out: &mut Vec<FileRow>,
         file: &dyn Fn(usize, String, usize) -> FileRow,
     ) {
-        for (name, child) in &folder.folders {
+        // フォルダもファイルも、大文字小文字を区別せず数は数として並べる（macOS 版の localizedStandardCompare）。
+        let mut folders: Vec<_> = folder.folders.iter().collect();
+        folders.sort_by(|a, b| natural_cmp(a.0, b.0).then_with(|| a.0.cmp(b.0)));
+        for (name, child) in folders {
             let (mut label, mut child) = (name.clone(), child);
             while child.files.is_empty() && child.folders.len() == 1 {
                 let (next, grand) = child.folders.iter().next().expect("one");
@@ -376,7 +380,7 @@ fn file_rows(
             add(child, depth + 1, out, file);
         }
         let mut files = folder.files.clone();
-        files.sort();
+        files.sort_by(|a, b| natural_cmp(&a.0, &b.0).then_with(|| a.cmp(b)));
         for (name, index) in files {
             out.push(file(index, name, depth));
         }
@@ -804,6 +808,12 @@ impl Inner {
             line.set_margin_start(6 + (row.depth * 14) as i32);
             let folder = row.file.is_none();
             icon.set_visible(folder);
+            // フォルダの行は薄い色で（macOS 版と同じ）。
+            if folder {
+                line.add_css_class("dim-label");
+            } else {
+                line.remove_css_class("dim-label");
+            }
             // 種類はパスの前にふつうの文字で（macOS 版と同じ）。長いパスは真ん中を、フォルダは頭を省く。
             if folder {
                 name.set_text(&row.name);
@@ -1466,6 +1476,30 @@ mod tests {
         git(&["init", "-q"]);
         git(&["add", "."]);
         git(&["commit", "-q", "-m", "three"]);
+    }
+
+    #[test]
+    fn sorts_the_file_tree_like_finder() {
+        let empty = || {
+            amonhen_core::diff::file_diff(Arc::<Vec<u8>>::default(), Arc::<Vec<u8>>::default(), 0)
+        };
+        let files = [
+            "b/x", "B2/x", "a10/x", "a9/x", "z.txt", "Readme", "file10", "file9",
+        ]
+        .iter()
+        .map(|n| ((*n).to_owned(), empty()))
+        .collect();
+        let source = Source(StackedDiff { files }, None);
+        let names: Vec<String> = file_rows(&source, None, &Stats::default(), true)
+            .into_iter()
+            .map(|r| r.name)
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "a9", "x", "a10", "x", "b", "x", "B2", "x", "file9", "file10", "Readme", "z.txt"
+            ]
+        );
     }
 
     #[test]
