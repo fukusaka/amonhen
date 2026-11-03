@@ -43,7 +43,8 @@ pub fn save(actions: &Rc<Actions>, oids: Vec<String>) {
         } else {
             tr!("Save {count} Commits as Patches", count = n)
         };
-        let sheet = Sheet::new(
+        // コミットを書き出すだけで作業ツリーによらないので、worktree の名前は書かない（macOS 版と同じ）。
+        let sheet = Sheet::unnamed(
             parent.as_ref(),
             &title,
             &tr!("Numbering, recipients and sign-offs follow git’s format.* settings."),
@@ -155,22 +156,9 @@ fn file_name(subject: &str) -> String {
 pub fn choose_and_apply(actions: &Rc<Actions>) {
     let actions = actions.clone();
     glib::spawn_future_local(async move {
-        let patches = gtk::FileFilter::new();
-        patches.set_name(Some(&tr!(
-            "Choose patch files (.patch, .diff, .mbox, .eml)."
-        )));
-        for e in EXTENSIONS {
-            patches.add_suffix(e);
-        }
-        let all = gtk::FileFilter::new();
-        all.set_name(Some("*"));
-        all.add_pattern("*");
-        let filters = gio::ListStore::new::<gtk::FileFilter>();
-        filters.append(&patches);
-        filters.append(&all);
+        // どのファイルも選べる（macOS 版と同じく絞らない）。選んでほしいものは、macOS 版の説明の文を題に。
         let dialog = gtk::FileDialog::builder()
-            .title(tr!("Apply Patch…").trim_end_matches('…'))
-            .filters(&filters)
+            .title(tr!("Choose patch files (.patch, .diff, .mbox, .eml)."))
             .modal(true)
             .build();
         let parent = sheets::parent(&actions);
