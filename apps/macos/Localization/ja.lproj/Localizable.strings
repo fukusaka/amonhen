@@ -680,7 +680,6 @@
 "Export JSON…" = "JSON に書き出す…";
 "Time" = "時刻";
 "Repository" = "リポジトリ";
-"%@ (daemon)" = "%@（daemon）";
 "Details" = "詳細";
 "Cancel Operation" = "取り消す";
 "git runs and core commands, newest first, up to 1,000 (for repositories through the daemon, also the git it starts). ● means running; fetch, pull, push and clone show their progress and can be canceled." = "git の起動とコアの命令を、新しい順に最大 1000 件（daemon 越しのリポジトリは daemon で起動した git も）。● は実行中で、fetch・pull・push・clone は進み具合を出し、取り消せる。";

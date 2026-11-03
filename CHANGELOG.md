@@ -76,6 +76,8 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- Activity no longer says “daemon” twice for a repository opened through the shared daemon, nor “(daemon)” for an
+  SSH host connected directly.
 - Saving patches no longer fails with “No such file or directory” when another save runs at the same time in the same
   repository over SSH or through the shared daemon.
 - When nothing sets how to pull (`pull.rebase`, `pull.ff`) and the branch has diverged, the Pull sheet says git won't

@@ -242,7 +242,7 @@ private struct OperationsTab: View {
                 }
                 .width(16)
                 TableColumn(L("Repository")) { r in
-                    Text(r.remote.map { L("%@ (daemon)", $0) } ?? repoName(r.repo))
+                    Text(r.remote ?? repoName(r.repo))
                 }
                 .width(min: 60, ideal: 110)
                 TableColumn(L("Content")) { r in

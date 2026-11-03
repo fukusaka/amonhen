@@ -202,7 +202,7 @@ fn unchanged(last: &std::cell::Cell<u64>, key: impl std::hash::Hash) -> bool {
 
 /// 時刻の列の幅（`23:44:31.539`）。
 const TIME: i32 = 100;
-/// リポジトリの列の幅（`name — host (daemon)` も入るように、macOS 版の列より広く）。
+/// リポジトリの列の幅（`name — host · daemon` も入るように、macOS 版の列より広く）。
 const REPOSITORY: i32 = 180;
 /// リポジトリの列を、名前に合わせて広げるときの上限（中身の列を残す）。
 const REPOSITORY_MAX: i32 = 320;
@@ -671,7 +671,7 @@ impl Activity {
                 let names: Vec<String> = shown
                     .iter()
                     .map(|r| match r["remote"].as_str() {
-                        Some(name) => tr!("{name} (daemon)", name = name),
+                        Some(name) => name.to_owned(),
                         None => {
                             let repo_path = r["repo"].as_str().unwrap_or_default();
                             repo_path.rsplit('/').next().unwrap_or_default().to_owned()
