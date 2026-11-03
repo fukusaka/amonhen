@@ -190,7 +190,8 @@ pub fn settings_row() -> gtk::Box {
     };
     fill();
     let filling = std::rc::Rc::new(std::cell::Cell::new(false));
-    let (v, f, fill) = (values.clone(), filling.clone(), std::rc::Rc::new(fill));
+    let fill = std::rc::Rc::new(fill);
+    let (v, f, refill) = (values.clone(), filling.clone(), fill.clone());
     dropdown.connect_selected_notify(move |d| {
         if f.get() {
             return;
@@ -204,13 +205,13 @@ pub fn settings_row() -> gtk::Box {
         }
         // 選んでいる間も、今の値を出しておく（選んだら変える）。選んだ通知の中で model を替えると GTK の一覧が
         // 固まるので、通知が終わってから替える。
-        let (f2, fill2) = (f.clone(), fill.clone());
+        let (f2, fill2) = (f.clone(), refill.clone());
         glib::idle_add_local_once(move || {
             f2.set(true);
             fill2();
             f2.set(false);
         });
-        let (f, fill) = (f.clone(), fill.clone());
+        let (f, fill) = (f.clone(), refill.clone());
         let parent = d.root().and_downcast::<gtk::Window>();
         // この機械のプログラムを選ぶシート（macOS 版と同じく、アプリのファイルを選ぶ形。Settings > Git > Programs と同じ）。
         let current = crate::settings::string(KEY).unwrap_or_default();
@@ -243,6 +244,13 @@ pub fn settings_row() -> gtk::Box {
             fill();
             f.set(false);
         });
+    });
+    // タブを出すたびに入っているエディタを読み直す（あとで入れたものも出る。macOS 版の onAppear と同じ）。
+    // 選んでいる最中に model を替えないよう、選んだ通知と同じ印を立てる。
+    row.connect_map(move |_| {
+        filling.set(true);
+        fill();
+        filling.set(false);
     });
     row
 }
