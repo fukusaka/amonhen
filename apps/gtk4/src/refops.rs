@@ -343,6 +343,18 @@ fn several(actions: &Rc<Actions>, known: &Known, head: Option<&str>) -> Vec<Item
             })
         })
         .collect();
+    if sources.len() > 1 {
+        let branch = head.map(str::to_owned);
+        let title = tr!(
+            "Merge {count} into {branch}…",
+            count = sources.len(),
+            branch = head.unwrap_or("HEAD")
+        );
+        let a = actions.clone();
+        items.push(menu::action(title, move || {
+            crate::mergeseveral::confirm(&a, sources.clone(), branch.clone());
+        }));
+    }
     // ブランチ・タグだけなら、まとめて bundle に。
     let refs: Vec<String> = selected
         .iter()
@@ -355,18 +367,6 @@ fn several(actions: &Rc<Actions>, known: &Known, head: Option<&str>) -> Vec<Item
             tr!("Save {count} as Bundle…", count = refs.len()),
             move || crate::bundle::save(&a, refs.clone(), names.clone(), label.clone()),
         ));
-    }
-    if sources.len() > 1 {
-        let branch = head.map(str::to_owned);
-        let title = tr!(
-            "Merge {count} into {branch}…",
-            count = sources.len(),
-            branch = head.unwrap_or("HEAD")
-        );
-        let a = actions.clone();
-        items.push(menu::action(title, move || {
-            crate::mergeseveral::confirm(&a, sources.clone(), branch.clone());
-        }));
     }
     let locals: Vec<String> = selected
         .iter()
@@ -788,8 +788,22 @@ pub fn accepts_drop(dragged: &str, target: &Data) -> bool {
 }
 
 /// ドラッグ＆ドロップ: ブランチの上なら merge・rebase、リモート（かリモートブランチ）の上なら push。
-/// `dragged` は `local:<名前>` か `other:<名前>`。
+/// `dragged` は `local:<名前>` か `other:<名前>`。最後に区切りと「キャンセル」を置く（macOS 版と同じ）。
 pub fn drop_menu(
+    actions: &Rc<Actions>,
+    dragged: &str,
+    target: &Data,
+    head: Option<&str>,
+) -> Vec<Item> {
+    let mut items = drop_items(actions, dragged, target, head);
+    if !items.is_empty() {
+        items.push(Item::Separator);
+        items.push(menu::action(tr!("Cancel"), || {}));
+    }
+    items
+}
+
+fn drop_items(
     actions: &Rc<Actions>,
     dragged: &str,
     target: &Data,
