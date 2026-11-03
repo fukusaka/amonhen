@@ -442,6 +442,11 @@ impl RangeDiff {
         self.on_close.replace(Some(Rc::new(f)));
     }
 
+    /// 組のコミットの Blame・File History を開くリポジトリ（書き込む先の worktree）。比べるのは開いたリポジトリのまま。
+    pub fn set_tools_repo(&self, repo: Arc<Repository>) {
+        self.commit.set_tools_repo(repo);
+    }
+
     fn repo(&self) -> Option<Arc<Repository>> {
         self.view.upgrade()?.current().map(|(r, _)| r)
     }

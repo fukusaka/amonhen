@@ -1294,9 +1294,13 @@ fn build_tab(
         actions.clone(),
         tx.clone(),
     );
+    let rd = Rc::downgrade(&range_diff);
     worktrees.connect_edit(move |repo| {
         wc.set_repo(repo.clone());
         st.set_repo(repo.clone());
+        if let Some(rd) = rd.upgrade() {
+            rd.set_tools_repo(repo.clone());
+        }
         a.set_repo(repo.clone());
         if let Some(reflog) = rf.borrow().as_ref() {
             reflog.set_repo(repo.clone());
@@ -1355,6 +1359,7 @@ fn build_tab(
     reflog.set_range_diff(range_diff_opener.clone());
     let (v, w, oc) = (view.downgrade(), win_of.clone(), on_commit.clone());
     let (dw, dt) = (diff.downgrade(), details.clone());
+    let wt = Rc::downgrade(&worktrees);
     commit_diff.connect_file_items(move |path, y, can_blame, hunk_only| {
         let (Some(view), Some(window)) = (v.upgrade(), w()) else {
             return Vec::new();
@@ -1377,6 +1382,8 @@ fn build_tab(
             items.retain(|i| !matches!(i, menu::Item::Separator));
             return items;
         }
+        // Blame・File History は書き込む先の worktree で開く（File History の起点はその HEAD。macOS 版と同じ）。
+        let repo = wt.upgrade().and_then(|w| w.editing_repo()).unwrap_or(repo);
         // 1 つのコミットを選んでいるときだけ、そのコミットでの blame（一覧の消したファイルにはない）。
         if can_blame
             && let [row] = view.selection()[..]
@@ -1961,6 +1968,7 @@ fn build_tab(
                         working.set_repo(editing.clone());
                         stashes.set_repo(editing.clone());
                         reflog.set_repo(editing.clone());
+                        range_diff.set_tools_repo(editing.clone());
                         actions.set_repo(editing);
                         load_form();
                         // ref を先に読んでいたら、ここで GitHub から読み始める。

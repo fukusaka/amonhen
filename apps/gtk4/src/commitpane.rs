@@ -24,6 +24,8 @@ pub struct CommitPane {
     files: Rc<CommitDiff>,
     /// 出しているコミットのリポジトリ（変更ファイルのメニュー・AI が使う）。
     repo: RefCell<Option<Arc<Repository>>>,
+    /// Blame・File History を開くリポジトリ（書き込む先の worktree。None なら出しているコミットのリポジトリ）。
+    tools_repo: RefCell<Option<Arc<Repository>>>,
     /// 出しているコミット（stash なら None。Blame はコミットでだけ出す）。
     commit: RefCell<Option<String>>,
     /// 詳細の親・メッセージの中の ID、Blame・File History の行を押したら、History でそのコミットを選ぶ。
@@ -81,6 +83,8 @@ impl CommitPane {
                     items.retain(|i| !matches!(i, menu::Item::Separator));
                     return items;
                 }
+                // Blame・File History は書き込む先の worktree で開く（File History の起点はその HEAD。macOS 版と同じ）。
+                let repo = pane.tools_repo.borrow().clone().unwrap_or(repo);
                 // 一覧の消したファイルには Blame を出さない（macOS 版と同じ）。
                 if can_blame && let Some(hex) = pane.commit.borrow().clone() {
                     let (repo, window, path, oc) = (
@@ -113,6 +117,7 @@ impl CommitPane {
                 details,
                 files,
                 repo: RefCell::default(),
+                tools_repo: RefCell::default(),
                 commit: RefCell::default(),
                 on_commit: RefCell::default(),
                 pending,
@@ -131,6 +136,11 @@ impl CommitPane {
             f,
             None,
         );
+    }
+
+    /// Blame・File History を開くリポジトリ（書き込む先の worktree）を決める。
+    pub fn set_tools_repo(&self, repo: Arc<Repository>) {
+        self.tools_repo.replace(Some(repo));
     }
 
     fn window(&self) -> Option<gtk::ApplicationWindow> {
