@@ -308,6 +308,13 @@ impl Search {
                 // まだ探していないとき: History を見ていれば欄を開き、ほかの所にいれば鳴らす。探していれば
                 // History に移って次の一致へ（macOS 版の History の moveSearch と、窓の findNext と同じ）。
                 if i.searched.borrow().is_none() {
+                    // 差分にフォーカスがあれば、差分の検索の帯を開いて次の一致へ（macOS 版と同じ）。
+                    if let Some(w) = bar.root().and_downcast::<gtk::Window>()
+                        && (crate::commitfiles::find_next_opening(&w, step)
+                            || crate::difffind::find_next_opening(&w, step))
+                    {
+                        return;
+                    }
                     if bar.is_mapped() {
                         bar.set_search_mode(true);
                         i.entry.grab_focus();

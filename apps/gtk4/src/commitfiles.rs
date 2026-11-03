@@ -492,7 +492,20 @@ pub fn find_next_in_focused(window: &gtk::Window, step: i32) -> bool {
     }
 }
 
-/// `window` で、フォーカスが中にある差分の列。
+/// `window` でフォーカスのある差分の検索の帯が閉じていれば、帯を開いて次・前の一致へ（History を探していない
+/// ときの Ctrl+G。macOS 版の差分の `findNext`）。移ったら true。
+pub fn find_next_opening(window: &gtk::Window, step: i32) -> bool {
+    match focused(window) {
+        Some(inner) => {
+            Inner::move_match(&inner, step);
+            true
+        }
+        None => false,
+    }
+}
+
+/// `window` で、フォーカスが差分か検索の帯にある差分の列（変更ファイルの一覧は含めない。一覧で Ctrl+F・Ctrl+G を
+/// 押しても差分は探さない。macOS 版と同じ）。
 fn focused(window: &gtk::Window) -> Option<Rc<Inner>> {
     let focus = gtk::prelude::GtkWindowExt::focus(window)?;
     OPEN.with(|open| {
@@ -500,8 +513,9 @@ fn focused(window: &gtk::Window) -> Option<Rc<Inner>> {
         open.retain(|w| w.strong_count() > 0);
         open.iter().filter_map(|w| w.upgrade()).find(|inner| {
             inner.root.is_mapped()
-                && (focus == *inner.root.upcast_ref::<gtk::Widget>()
-                    || focus.is_ancestor(&inner.root))
+                && (focus == *inner.diff.upcast_ref::<gtk::Widget>()
+                    || focus.is_ancestor(&inner.diff)
+                    || focus.is_ancestor(&inner.find.bar))
         })
     })
 }

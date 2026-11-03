@@ -51,6 +51,18 @@ pub fn find_next_in_focused(window: &gtk::Window, step: i32) -> bool {
     }
 }
 
+/// `window` でフォーカスのある差分の検索の帯が閉じていれば、帯を開いて次・前の一致へ（History を探していない
+/// ときの Ctrl+G。macOS 版の差分の `findNext`）。移ったら true。
+pub fn find_next_opening(window: &gtk::Window, step: i32) -> bool {
+    match focused(window) {
+        Some(find) => {
+            find.move_match(step);
+            true
+        }
+        None => false,
+    }
+}
+
 fn focused(window: &gtk::Window) -> Option<DiffFind> {
     let focus = gtk::prelude::GtkWindowExt::focus(window)?;
     OPEN.with(|open| {
