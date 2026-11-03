@@ -152,6 +152,8 @@ becomes the GitHub Release notes.
   edits in a merge editor, as closing the tab does.
 - macOS: Working Copy's List, Tree and File Name layout belongs to each tab and worktree; changing it in one changed
   the others' lists while their buttons showed the old choice.
+- macOS: Take Current File, Take Incoming File and Mark Resolved leave the diff bar when Working Copy's list empties,
+  such as after `git merge --abort`.
 
 - The GTK4 app's Undo button asks once; it opened the question twice, so one stayed after undoing.
 - A `.mailmap`, or a mailmap setting (`log.mailmap`, `mailmap.file`), changed while the engine was reading the old

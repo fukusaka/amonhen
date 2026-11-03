@@ -592,6 +592,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         } else {
             current = nil
             selectedKey = nil
+            // 選んでいたコンフリクトがなくなった（merge --abort など）: その解決のボタンも消す。
+            isConflict = false
             diffView.show(nil, message: allEntries.isEmpty ? L("No changes") : "")
             titleLabel.stringValue = ""
             showLineEndings(nil)
