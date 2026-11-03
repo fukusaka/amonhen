@@ -633,6 +633,18 @@ Staged / Unstaged の 2 群をやめ、変更のあるファイルを 1 つの�
   （`refs/remotes/<名前>/*`。既定はファイルの名前から。既にある remote の名前は使えない）。タグは取り込まない。bundle
   が前提とするコミットがリポジトリになければ、わけを言って止める。
 
+## 7f. submodule
+
+- サイドバーの Submodules の見出しの下に並べ、右端に印を付ける: 取り出していない（名前を薄く）、記録と違うコミットに
+  いる、中に変更がある、コンフリクトしている。ツールチップに URL と追うブランチ。
+- submodule のメニュー: Update（git の既定: 記録したコミット、中の submodule には入らない）、Update…（中の
+  submodule も、または追うブランチの最新のコミットにするシート）、新しい窓で開く、URL の編集…、追うブランチ…、
+  削除…。削除は `.git/modules` のリポジトリのデータも消すかを聞く（既定は git と同じく残す。また追加すれば
+  push していないコミットも戻る）。
+- 見出しのメニュー: Update All、Update Submodules…、Sync URLs、submodule を追加…（URL、フォルダ（既定は URL から）、
+  あれば追うブランチ）。Repository のメニューにも submodule を追加…・Update Submodules… がある。
+- Clone のシートに「submodule も取り出す」（既定はオフ。git と同じ）。
+
 ## 8. コンフリクトの解決（埋め込みのマージエディタ）
 
 ### 流れ

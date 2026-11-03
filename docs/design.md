@@ -463,6 +463,23 @@ or split history in ways that are hard to see afterwards.
   overwritten; tags are left out so no tag is replaced.
 - `bundle create -`, `clone -b`, `fetch <file>` and all of the above are in git 2.23.
 
+## Submodules
+
+- What a submodule is like (`{"op":"submodules"}`) is read from three places: `.gitmodules` (`git config -f
+  .gitmodules -z --list`; the name, path, URL and branch to follow), `git submodule status` (`-` not checked out, `+`
+  at another commit than the one recorded, `U` in conflict) and the `S<C><M><U>` field of `git status
+  --porcelain=v2` for the submodule paths (changes inside: modified tracked files or untracked files).
+- `{"op":"changeSubmodule"}` adds (`git submodule add`), removes, sets the URL (`set-url`, git 2.25; before that,
+  `.gitmodules` is written and synced), sets the branch to follow (`set-branch`) and syncs URLs. Removing is
+  `deinit -f` then `git rm -f`; `.git/modules/<name>` is kept as git does unless `deleteGitDir`, since it holds the
+  submodule's commits and stashes, pushed or not. `git rm` refuses when `.gitmodules` has unstaged changes, so the
+  core refuses before deinit rather than stop halfway.
+- `{"op":"updateSubmodules"}` is `update --init`; git's defaults (the recorded commit, nested submodules left alone)
+  stay the default, with `recursive` and `remote` as choices. Clone checks out submodules only when asked
+  (`--recurse-submodules`).
+- `RemoteChange` and `SubmoduleChange` are internally tagged (`kind`) for the JSON commands, which postcard can't
+  read, so they cross the daemon and SSH as JSON strings (`wire::Tagged`).
+
 ## Speed targets and measurement
 
 | Item | Target |

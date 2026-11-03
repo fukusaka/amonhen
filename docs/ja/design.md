@@ -440,6 +440,23 @@ rebase と History の編集（reword・squash・fixup・drop・edit・split・m
   でないこと（remote の追跡ブランチを書き換えない）。タグは取らない（タグを置き換えない）。
 - `bundle create -`・`clone -b`・`fetch <file>` も、上のこともすべて git 2.23 にある。
 
+## submodule
+
+- submodule の様子（`{"op":"submodules"}`）は 3 つから読む: `.gitmodules`（`git config -f .gitmodules -z --list`。
+  名前・場所・URL・追うブランチ）、`git submodule status`（`-` は取り出していない、`+` は記録と違うコミット、`U` は
+  コンフリクト）、submodule の場所だけの `git status --porcelain=v2` の `S<C><M><U>`（中の変更: 追跡している
+  ファイルの変更か untracked のファイル）。
+- `{"op":"changeSubmodule"}` は足す（`git submodule add`）・外す・URL を変える（`set-url`、git 2.25 から。それより
+  前は `.gitmodules` を書いて sync）・追うブランチを変える（`set-branch`）・URL を写す。外すのは `deinit -f` の後に
+  `git rm -f`。`.git/modules/<name>` には submodule のコミットや stash（push していないものも）が残るので、git と
+  同じく残し、`deleteGitDir` のときだけ消す。`.gitmodules` に stage していない変更があると `git rm` が断るので、
+  途中で止まらないよう deinit の前に断る。
+- `{"op":"updateSubmodules"}` は `update --init`。git の既定（記録したコミット、中の submodule には入らない）を
+  既定のままにし、`recursive`・`remote` を選べる。clone は、選んだときだけ submodule も取り出す
+  （`--recurse-submodules`）。
+- `RemoteChange`・`SubmoduleChange` は JSON の命令のために中にタグ（`kind`）を持つ形で、postcard では読めないので、
+  daemon や SSH 先へは JSON の文字列にして送る（`wire::Tagged`）。
+
 ## 速度目標と計測
 
 | 項目 | 目標 |
