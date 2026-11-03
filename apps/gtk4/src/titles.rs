@@ -11,6 +11,12 @@ pub fn short(oid: &str) -> &str {
     &oid[..oid.len().min(SHORT_ID)]
 }
 
+/// 題に出す起点: コミットの完全な ID（40・64 桁）は短い ID に（ブランチ名などはそのまま。macOS 版と同じ）。
+pub fn shown_start(rev: &str) -> &str {
+    let full = matches!(rev.len(), 40 | 64) && rev.bytes().all(|b| b.is_ascii_hexdigit());
+    if full { short(rev) } else { rev }
+}
+
 pub fn checkout(name: &str) -> String {
     tr!("Checkout {name}…", name = name)
 }
@@ -197,6 +203,18 @@ mod tests {
         assert_eq!(
             medium_date(Lang::Ja, 2026, 11, 3, "10:00"),
             "2026/11/03 10:00"
+        );
+    }
+
+    #[test]
+    fn shown_start_shortens_only_full_ids() {
+        let sha1 = "0123456789abcdef0123456789abcdef01234567";
+        assert_eq!(shown_start(sha1), "01234567");
+        assert_eq!(shown_start(&"a".repeat(64)), "aaaaaaaa");
+        assert_eq!(shown_start("main"), "main");
+        assert_eq!(
+            shown_start("feature/0123456789abcdef0123456789abcdef0123"),
+            "feature/0123456789abcdef0123456789abcdef0123"
         );
     }
 

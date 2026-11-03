@@ -690,9 +690,15 @@ fn favorite_items(actions: &Rc<Actions>, name: &str, known: &Known) -> Vec<Item>
 /// `start` から新しいブランチを作って切り替える。
 pub fn new_branch(actions: &Rc<Actions>, start: &str) -> Item {
     let (a, start) = (actions.clone(), start.to_owned());
-    menu::action(tr!("New Branch from {name}…", name = start), move || {
-        ask_new_branch(&a, &start);
-    })
+    menu::action(
+        tr!(
+            "New Branch from {name}…",
+            name = crate::titles::shown_start(&start)
+        ),
+        move || {
+            ask_new_branch(&a, &start);
+        },
+    )
 }
 
 /// `start` から作るブランチの名前を聞いて、作って切り替える（文言は macOS 版と同じ）。
@@ -700,7 +706,10 @@ pub fn ask_new_branch(actions: &Rc<Actions>, start: &str) {
     let (a, start) = (actions.clone(), start.to_owned());
     glib::spawn_future_local(async move {
         // 見出し・説明・ボタンは macOS 版と同じ。
-        let title = tr!("New Branch from {name}", name = start);
+        let title = tr!(
+            "New Branch from {name}",
+            name = crate::titles::shown_start(&start)
+        );
         let message = tr!("Name of the branch. It is checked out.");
         if let Some(name) = a.ask(&title, &message, "", &tr!("Create")).await {
             a.perform(
@@ -730,7 +739,6 @@ pub fn ask_rename_branch(actions: &Rc<Actions>, name: &str) {
     });
 }
 
-/// `target` に新しいタグを付ける。
 /// Export Archive…: ref（`kind` は `refs/heads/` など。同じ名前のブランチとタグを取り違えない）の時点を書き出す。
 fn export_archive(actions: &Rc<Actions>, kind: &str, name: &str) -> Item {
     let (a, rev, label) = (actions.clone(), format!("{kind}{name}"), name.to_owned());
@@ -748,17 +756,27 @@ fn save_bundle(actions: &Rc<Actions>, kind: RefKind, name: &str) -> Item {
     })
 }
 
+/// `target` に新しいタグを付ける。
 pub fn new_tag(actions: &Rc<Actions>, target: &str) -> Item {
     let (a, target) = (actions.clone(), target.to_owned());
-    menu::action(tr!("New Tag at {name}…", name = target), move || {
-        ask_new_tag(&a, &target);
-    })
+    menu::action(
+        tr!(
+            "New Tag at {name}…",
+            name = crate::titles::shown_start(&target)
+        ),
+        move || {
+            ask_new_tag(&a, &target);
+        },
+    )
 }
 
 pub fn ask_new_tag(actions: &Rc<Actions>, target: &str) {
     let (a, target) = (actions.clone(), target.to_owned());
     glib::spawn_future_local(async move {
-        let title = tr!("New Tag at {name}", name = target);
+        let title = tr!(
+            "New Tag at {name}",
+            name = crate::titles::shown_start(&target)
+        );
         if let Some(name) = a
             .ask(&title, &tr!("Name of the tag."), "", &tr!("Create"))
             .await
