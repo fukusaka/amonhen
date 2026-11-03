@@ -1148,7 +1148,7 @@ pub fn show_home(app: &gtk::Application, host: Option<Rc<RepoWindow>>) -> Rc<Rep
     let t = Rc::downgrade(&tab);
     activity.connect_activate(move |_, _| {
         if let Some(window) = t.upgrade().and_then(|t| t.window()) {
-            crate::activity::Activity::show(&window, None, crate::engine());
+            crate::activity::Activity::show(&window, crate::engine());
         }
     });
     tab.group.add_action(&activity);

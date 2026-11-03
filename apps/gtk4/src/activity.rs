@@ -363,8 +363,6 @@ impl Segmented {
 /// タブが今見ているリポジトリ（まだつないでいなければ None）。
 pub type CurrentRepo = Rc<dyn Fn() -> Option<Arc<Repository>>>;
 
-/// History のタブで、このリポジトリを選ぶ。
-type Choose = Rc<dyn Fn(&Arc<Repository>)>;
 /// 選び直したとき（あとで入れる）。
 type Hook = Rc<RefCell<Option<Rc<dyn Fn()>>>>;
 /// Daemon のタブの「このアプリのつながり」の 1 行（名前・場所・切れた理由・送受信量・SSH 先のエンジン）。
@@ -445,26 +443,17 @@ fn location_kind(location: &str) -> String {
 pub struct Activity {
     window: gtk::ApplicationWindow,
     stack: gtk::Stack,
-    /// History のタブで、このリポジトリを選ぶ（一覧にあれば）。
-    choose: Choose,
 }
 
 impl Activity {
-    /// Activity を開く（開いていれば前に出す）。初めて開くときは、History のタブで `repo`（開いた窓の前の
-    /// タブのもの）を選ぶ。開き直したときは選んでいたものを保つ（macOS 版と同じ）。
-    pub fn show(
-        parent: &gtk::ApplicationWindow,
-        repo: Option<Arc<Repository>>,
-        engine: std::path::PathBuf,
-    ) {
+    /// Activity を開く（開いていれば前に出す）。初めて開くときは、History のタブで開いているリポジトリの最初の
+    /// ものを選ぶ。開き直したときは選んでいたものを保つ（macOS 版と同じ）。
+    pub fn show(parent: &gtk::ApplicationWindow, engine: std::path::PathBuf) {
         if let Some(a) = Self::find() {
             a.window.present();
             return;
         }
         let activity = Self::new(parent, engine);
-        if let Some(repo) = &repo {
-            (activity.choose)(repo);
-        }
         OPEN.with(|o| o.replace(Some(activity.clone())));
         activity.window.present();
     }
@@ -1537,25 +1526,7 @@ impl Activity {
         if let Some(f) = on_selected.borrow().clone() {
             f();
         }
-        // 開いた窓の前のタブのリポジトリを選ぶ（一覧になければそのまま）。
-        let choose: Choose = {
-            let (entries, repo_choice) = (entries.clone(), repo_choice.clone());
-            Rc::new(move |repo: &Arc<Repository>| {
-                refresh_repos();
-                let index = entries
-                    .borrow()
-                    .iter()
-                    .position(|e| Arc::ptr_eq(&e.repo, repo));
-                if let Some(i) = index {
-                    repo_choice.set_selected(i as u32);
-                }
-            })
-        };
-        Self {
-            window,
-            stack,
-            choose,
-        }
+        Self { window, stack }
     }
 }
 

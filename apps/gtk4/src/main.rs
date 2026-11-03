@@ -2165,8 +2165,7 @@ fn build_tab(
                                 );
                             }
                             if let Some(tab) = &args.activity {
-                                let repo = view.current().map(|(r, _)| r);
-                                activity::Activity::show(&window, repo, engine());
+                                activity::Activity::show(&window, engine());
                                 activity::Activity::select(tab);
                                 pending.set(pending.get() + 1);
                                 let p = pending.clone();

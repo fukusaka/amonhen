@@ -595,10 +595,7 @@ fn handlers() -> Vec<(&'static str, Handler)> {
         ("settings", Box::new(|p| crate::settings::show(&p.window()))),
         (
             "activity",
-            Box::new(|p| {
-                let repo = p.view.current().map(|(r, _)| r);
-                crate::activity::Activity::show(&p.window(), repo, crate::engine());
-            }),
+            Box::new(|p| crate::activity::Activity::show(&p.window(), crate::engine())),
         ),
         (
             "repositories",
