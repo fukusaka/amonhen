@@ -577,6 +577,18 @@ fn row_tip(location: &str) -> Option<String> {
     }
 }
 
+/// 表のセルの部品 `cell` が載っている行の部品（右クリックした行を囲む）。
+fn row_widget(cell: &gtk::Widget) -> Option<gtk::Widget> {
+    let mut widget = cell.parent();
+    while let Some(w) = widget {
+        if w.css_name() == "row" {
+            return Some(w);
+        }
+        widget = w.parent();
+    }
+    None
+}
+
 /// 状態の文字の色（CSS のクラス）。選んだ行の上ではテーマの選択の文字の色にする（強調色の地の上でも読める。
 /// macOS 版の強調した行と同じ）。
 const STATE_CLASSES: [&str; 3] = ["repo-state-error", "repo-state-changed", "dim-label"];
@@ -607,7 +619,8 @@ fn install_state_css() {
     provider.load_from_string(
         ".repo-state-error { color: #e01b24; } \
          .repo-state-changed { color: #e66100; } \
-         row:selected .repo-state-error, row:selected .repo-state-changed { color: inherit; }",
+         row:selected .repo-state-error, row:selected .repo-state-changed { color: inherit; } \
+         row.repo-clicked { box-shadow: inset 0 0 0 2px @accent_color; }",
     );
     if let Some(display) = gtk::gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
@@ -1010,7 +1023,8 @@ impl Browser {
                 cell.set_margin_end(4);
                 cell.append(&title);
                 cell.append(&sub);
-                // 右クリックで、その行のメニュー（選んでいなければ選ぶ）。
+                // 右クリックで、その行のメニュー。選びは変えない: 選んでいない行なら、その行だけに効き、メニュー
+                // を出している間は行を枠で囲む（macOS 版の clickedRow）。
                 let click = gtk::GestureClick::new();
                 click.set_button(gtk::gdk::BUTTON_SECONDARY);
                 let (w, list_item) = (Rc::downgrade(&b), item.downgrade());
@@ -1022,11 +1036,17 @@ impl Browser {
                     if row == gtk::INVALID_LIST_POSITION {
                         return;
                     }
-                    if !b.selection.is_selected(row) {
-                        b.selection.select_item(row, true);
-                    }
-                    if let Some(widget) = gesture.widget() {
-                        menu::popup(&widget, x, y, b.row_menu(row));
+                    let Some(widget) = gesture.widget() else {
+                        return;
+                    };
+                    let outlined = (!b.selection.is_selected(row))
+                        .then(|| row_widget(&widget))
+                        .flatten();
+                    if let Some(popover) = menu::popup_returning(&widget, x, y, b.row_menu(row))
+                        && let Some(outlined) = outlined
+                    {
+                        outlined.add_css_class("repo-clicked");
+                        popover.connect_closed(move |_| outlined.remove_css_class("repo-clicked"));
                     }
                 });
                 cell.add_controller(click);
