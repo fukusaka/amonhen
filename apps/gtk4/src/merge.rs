@@ -279,6 +279,8 @@ pub struct Editor {
     bands: [gtk::DrawingArea; 2],
     arrows: [RefCell<Vec<Arrow>>; 2],
     actions: Rc<Actions>,
+    /// 開いた worktree のリポジトリ。保存・AI はここに対して行う（タブが書き込む先の worktree を後で替えても）。
+    repo: Arc<Repository>,
     /// コンフリクトのある worktree の作業ツリー（同じパスでも、worktree が違えば別のエディタ）。
     workdir: Option<PathBuf>,
     path: String,
@@ -434,7 +436,7 @@ pub async fn load(
     path: &str,
 ) -> Result<Rc<Editor>, String> {
     let p = path.to_owned();
-    let workdir = repo.paths().workdir;
+    let opened = repo.clone();
     let reply: Value = gio::spawn_blocking(move || {
         let command = json!({ "op": "mergeSides", "path": p });
         serde_json::from_str(&repo.run_json(&command.to_string())).unwrap_or_default()
@@ -461,7 +463,7 @@ pub async fn load(
     });
     Ok(Editor::new(
         actions,
-        workdir,
+        opened,
         path,
         sides,
         result,
@@ -600,7 +602,7 @@ impl Editor {
 impl Editor {
     fn new(
         actions: Rc<Actions>,
-        workdir: Option<PathBuf>,
+        repo: Arc<Repository>,
         path: &str,
         sides: [Option<Side>; 3],
         result: String,
@@ -797,7 +799,8 @@ impl Editor {
             bands,
             arrows: Default::default(),
             actions,
-            workdir,
+            workdir: repo.paths().workdir,
+            repo,
             path: path.to_owned(),
             current,
             result: result_pane,
@@ -1253,17 +1256,18 @@ impl Editor {
         let text = self.result.text();
         let command = json!({ "op": "saveMerge", "path": self.path, "text": text, "stage": stage });
         let weak = Rc::downgrade(self);
-        self.actions.perform_with(vec![command], move |reply| {
-            let Some(this) = weak.upgrade() else { return };
-            if reply["ok"].as_bool() != Some(true) {
-                return;
-            }
-            this.saved.replace(text);
-            if stage {
-                let f = this.on_resolved.borrow().clone();
-                f();
-            }
-        });
+        self.actions
+            .perform_in(self.repo.clone(), vec![command], move |reply| {
+                let Some(this) = weak.upgrade() else { return };
+                if reply["ok"].as_bool() != Some(true) {
+                    return;
+                }
+                this.saved.replace(text);
+                if stage {
+                    let f = this.on_resolved.borrow().clone();
+                    f();
+                }
+            });
     }
 }
 
@@ -1522,7 +1526,7 @@ impl Editor {
     }
 
     fn workdir(&self) -> Option<std::path::PathBuf> {
-        self.actions.repo().and_then(|r| r.paths().workdir)
+        self.workdir.clone()
     }
 
     fn ai_variables(&self, c: &Region, base: String) -> amonhen_assist::Variables {

@@ -155,6 +155,8 @@ becomes the GitHub Release notes.
 - With newer GTK (4.24), the GTK4 app's sidebar shows Working Copy's change count and the sparse checkout mark.
 - In the GTK4 app, opening a repository that is already open in a new window, or switching to a worktree whose
   repository is open, brings its tab forward instead of opening a second one.
+- The GTK4 app's separate merge window saves, marks resolved and asks AI in the worktree it was opened for; after
+  selecting another worktree, Save wrote its Result over the same file there.
 - Activity no longer says “daemon” twice for a repository opened through the shared daemon, nor “(daemon)” for an
   SSH host connected directly.
 - Saving patches no longer fails with “No such file or directory” when another save runs at the same time in the same

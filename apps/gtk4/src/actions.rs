@@ -236,6 +236,27 @@ impl Actions {
             done(&Value::Null);
             return;
         };
+        self.perform_on(repo, commands, handled, done);
+    }
+
+    /// [`Self::perform_with`] と同じで、書き込む先の worktree ではなく `repo` で実行する（別の窓のマージエディタ
+    /// は、開いた worktree に書く。後で書き込む先を替えても。macOS 版は worktree ごとに `Actions` がある）。
+    pub fn perform_in(
+        self: &Rc<Self>,
+        repo: Arc<Repository>,
+        commands: Vec<Value>,
+        done: impl FnOnce(&Value) + 'static,
+    ) {
+        self.perform_on(repo, commands, |_| false, done);
+    }
+
+    fn perform_on(
+        self: &Rc<Self>,
+        repo: Arc<Repository>,
+        commands: Vec<Value>,
+        handled: impl FnOnce(&Value) -> bool + 'static,
+        done: impl FnOnce(&Value) + 'static,
+    ) {
         let this = self.clone();
         crate::activity::begin();
         glib::spawn_future_local(async move {
