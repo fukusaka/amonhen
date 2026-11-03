@@ -278,7 +278,8 @@ fn expand_tilde(text: &str) -> PathBuf {
 fn name_from_url(url: &str) -> String {
     let trimmed = url.trim().trim_end_matches('/');
     let last = trimmed.rsplit(['/', ':']).next().unwrap_or_default();
-    last.strip_suffix(".git").unwrap_or(last).to_owned()
+    let last = last.strip_suffix(".git").unwrap_or(last);
+    last.strip_suffix(".bundle").unwrap_or(last).to_owned()
 }
 
 /// 取得する範囲（macOS 版の `CloneSheet.Download`）。
@@ -328,6 +329,7 @@ impl Download {
             filter: (self == Download::ContentsWhenNeeded).then(|| "blob:none".to_owned()),
             depth: (self == Download::RecentHistory).then_some(depth),
             sparse,
+            branch: None,
         }
     }
 }
@@ -355,7 +357,7 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
         let sheet = Sheet::unnamed(Some(&parent), "Clone Repository", "");
         let url = gtk::Entry::builder()
             .placeholder_text(tr!(
-                "https://github.com/owner/repo.git or git@host:owner/repo.git"
+                "https://github.com/owner/repo.git, git@host:owner/repo.git or a bundle file"
             ))
             .hexpand(true)
             // Enter で Clone（macOS 版と同じ）。
@@ -389,7 +391,12 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
             // Enter で Clone（macOS 版と同じ）。
             .activates_default(true)
             .build();
-        sheet.add(&row("URL:", &url));
+        // bundle のファイルを選ぶ（URL の欄にパスを入れる）。
+        let bundle_button = gtk::Button::with_label(&tr!("Choose Bundle…"));
+        let url_line = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        url_line.append(&url);
+        url_line.append(&bundle_button);
+        sheet.add(&row("URL:", &url_line));
         // gh があれば、自分のリポジトリから選べる（読み終えたら一覧に入れる）。
         if crate::github::available() {
             let mine = gtk::DropDown::from_strings(&[&tr!("Choose from My GitHub Repositories")]);
@@ -526,6 +533,13 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
                 });
             });
         }
+        // bundle のファイルで HEAD がなければ、取り出すブランチ（既定は main・master・最初のブランチ）。
+        let branch = gtk::DropDown::from_strings(&[]);
+        let branch_row = row(&tr!("Branch:"), &branch);
+        branch_row.set_visible(false);
+        sheet.add(&branch_row);
+        let bundle: Rc<std::cell::RefCell<Option<amonhen_backend_cli::BundleInfo>>> = Rc::default();
+        let branch_names: Rc<std::cell::RefCell<Vec<String>>> = Rc::default();
         let download_line = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         download_line.append(&download);
         download_line.append(&depth);
@@ -547,6 +561,13 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
                 sparse_help.downgrade(),
                 sparse_unavailable.clone(),
             );
+            let (url, branch, branch_row, bundle, branch_names) = (
+                url.downgrade(),
+                branch.downgrade(),
+                branch_row.downgrade(),
+                bundle.clone(),
+                branch_names.clone(),
+            );
             Rc::new(move || {
                 let (Some(download), Some(depth), Some(dh), Some(sparse), Some(sh)) = (
                     download.upgrade(),
@@ -557,9 +578,70 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
                 ) else {
                     return;
                 };
-                let choice = Download::ALL[(download.selected() as usize).min(2)];
+                // bundle のファイルなら: 取得する範囲は選べない（git は中身をすべて写す）。HEAD がなければ、取り出す
+                // ブランチを選ぶ。
+                let source = url
+                    .upgrade()
+                    .map(|u| u.text().trim().to_owned())
+                    .unwrap_or_default();
+                let path = expand_tilde(&source);
+                let read = if source.is_empty() || !path.is_file() {
+                    None
+                } else {
+                    amonhen_backend_cli::bundle_info(&path)
+                };
+                if read != *bundle.borrow() {
+                    let names: Vec<String> = read
+                        .iter()
+                        .flat_map(|i| i.refs.iter())
+                        .map(|r| {
+                            r.strip_prefix("refs/heads/")
+                                .or_else(|| r.strip_prefix("refs/tags/"))
+                                .unwrap_or(r)
+                                .to_owned()
+                        })
+                        .collect();
+                    if let Some(b) = branch.upgrade() {
+                        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+                        b.set_model(Some(&gtk::StringList::new(&refs)));
+                        let chosen = read
+                            .as_ref()
+                            .and_then(amonhen_backend_cli::bundle_default_branch);
+                        if let Some(at) = chosen.and_then(|c| names.iter().position(|n| *n == c)) {
+                            b.set_selected(at as u32);
+                        }
+                    }
+                    branch_names.replace(names);
+                    bundle.replace(read);
+                }
+                let info = bundle.borrow();
+                if let Some(r) = branch_row.upgrade() {
+                    r.set_visible(
+                        info.as_ref()
+                            .is_some_and(|i| !i.head && !i.refs.is_empty() && i.prerequisites == 0),
+                    );
+                }
+                download.set_sensitive(info.is_none());
+                let choice = if info.is_some() {
+                    Download::Everything
+                } else {
+                    Download::ALL[(download.selected() as usize).min(2)]
+                };
                 depth.set_visible(choice == Download::RecentHistory);
-                dh.set_text(&choice.help());
+                dh.remove_css_class("warning");
+                dh.add_css_class("dim-label");
+                match info.as_ref() {
+                    Some(i) if i.prerequisites > 0 => {
+                        dh.set_text(&format!(
+                            "⚠ {}",
+                            tr!("This bundle has only the commits after ones it doesn’t include, so it can’t be cloned.")
+                        ));
+                        dh.remove_css_class("dim-label");
+                        dh.add_css_class("warning");
+                    }
+                    Some(_) => dh.set_text(&tr!("From a bundle file, everything in it is copied.")),
+                    None => dh.set_text(&choice.help()),
+                }
                 match unavailable.borrow().as_deref() {
                     Some(reason) => {
                         sparse.set_sensitive(false);
@@ -579,6 +661,32 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
         };
         let u = update.clone();
         download.connect_selected_notify(move |_| u());
+        let u = update.clone();
+        url.connect_changed(move |_| u());
+        {
+            let (url, w) = (url.downgrade(), sheet.window.downgrade());
+            bundle_button.connect_clicked(move |_| {
+                let (url, w) = (url.clone(), w.clone());
+                glib::spawn_future_local(async move {
+                    let filter = gtk::FileFilter::new();
+                    filter.set_name(Some("bundle"));
+                    filter.add_suffix("bundle");
+                    let filters = gio::ListStore::new::<gtk::FileFilter>();
+                    filters.append(&filter);
+                    let dialog = gtk::FileDialog::builder()
+                        .title(tr!("Choose a bundle file (git bundle) to clone from."))
+                        .filters(&filters)
+                        .modal(true)
+                        .build();
+                    let Ok(file) = dialog.open_future(w.upgrade().as_ref()).await else {
+                        return;
+                    };
+                    if let (Some(path), Some(url)) = (file.path(), url.upgrade()) {
+                        url.set_text(&crate::bookmarks::tilde(&path.to_string_lossy()));
+                    }
+                });
+            });
+        }
         // 見た目の確認用の起動（`AMONHEN_CLONE_SHEET=history,sparse` など）では、その選び方で出す。
         let preset = std::env::var("AMONHEN_CLONE_SHEET").unwrap_or_default();
         if preset.contains("contents") {
@@ -638,7 +746,12 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
         if sheet.run().await != Response::Ok {
             return;
         }
-        let source = url.text().trim().to_owned();
+        update();
+        let from_bundle = bundle.borrow().is_some();
+        let mut source = url.text().trim().to_owned();
+        if from_bundle {
+            source = expand_tilde(&source).to_string_lossy().into_owned();
+        }
         let folder_name = match name.text().trim() {
             "" => name_from_url(&source),
             n => n.to_owned(),
@@ -660,11 +773,21 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
             return;
         }
         crate::settings::set_string(CLONE_FOLDER, &parent_dir.to_string_lossy());
-        let choice = Download::ALL[(download.selected() as usize).min(2)];
-        let options = choice.options(
+        let choice = if from_bundle {
+            Download::Everything
+        } else {
+            Download::ALL[(download.selected() as usize).min(2)]
+        };
+        let mut options = choice.options(
             depth_chosen.get(),
             sparse.is_sensitive() && sparse.is_active(),
         );
+        if branch_row.is_visible() {
+            options.branch = branch_names
+                .borrow()
+                .get(branch.selected() as usize)
+                .cloned();
+        }
         run(&parent, source, dest, options, open).await;
     });
 }

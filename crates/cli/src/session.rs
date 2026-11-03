@@ -182,7 +182,8 @@ fn now() -> i64 {
         .map_or(0, |d| d.as_secs() as i64)
 }
 
-/// `amonhen clone [--filter=<spec>] [--depth <n>] [--sparse] <url> [<dir>]`
+/// `amonhen clone [--filter=<spec>] [--depth <n>] [--sparse] [-b <branch>] <url> [<dir>]`（`<url>` は bundle の
+/// ファイルでもよい）
 pub fn clone(args: &[String]) -> Result<ExitCode> {
     let mut options = amonhen_backend_cli::CloneOptions::default();
     let mut rest: Vec<&String> = Vec::new();
@@ -202,6 +203,7 @@ pub fn clone(args: &[String]) -> Result<ExitCode> {
                 options.depth = Some(n);
             }
             "--filter" => options.filter = Some(iter.next().ok_or_else(bad)?.clone()),
+            "-b" | "--branch" => options.branch = Some(iter.next().ok_or_else(bad)?.clone()),
             a if a.starts_with("--depth=") => {
                 options.depth = Some(a["--depth=".len()..].parse().map_err(|_| bad())?);
             }
@@ -219,9 +221,10 @@ pub fn clone(args: &[String]) -> Result<ExitCode> {
                 .rsplit(['/', ':'])
                 .next()
                 .unwrap_or("repo");
+            let name = name.strip_suffix(".git").unwrap_or(name);
             (
                 url,
-                PathBuf::from(name.strip_suffix(".git").unwrap_or(name)),
+                PathBuf::from(name.strip_suffix(".bundle").unwrap_or(name)),
             )
         }
         [url, dir] => (url, PathBuf::from(dir)),

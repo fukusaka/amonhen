@@ -100,3 +100,73 @@ impl Git {
         Ok(found)
     }
 }
+
+/// bundle のファイルの見出し（git を動かさずに読む。どの版の git でも同じ形）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BundleInfo {
+    /// 入っている ref（`refs/heads/main` など。HEAD は除く）。
+    pub refs: Vec<String>,
+    /// HEAD が入っている（clone したとき、それを取り出す）。
+    pub head: bool,
+    /// 前提のコミットの数（受け取る側が持っているはずのもの。あれば clone できない）。
+    pub prerequisites: usize,
+}
+
+/// `path` が bundle のファイルなら、その見出し。bundle でなければ None。
+///
+/// 形（`git bundle` の v2・v3）: `# v2 git bundle`（v3 なら続けて `@capability` の行）、前提のコミットの
+/// `-<id> <comment>` の行、ref の `<id> <name>` の行、空の行、その後に pack。
+pub fn bundle_info(path: &std::path::Path) -> Option<BundleInfo> {
+    use std::io::BufRead;
+    let file = std::fs::File::open(path).ok()?;
+    let mut lines = std::io::BufReader::new(file).split(b'\n');
+    let first = lines.next()?.ok()?;
+    if first != b"# v2 git bundle" && first != b"# v3 git bundle" {
+        return None;
+    }
+    let mut info = BundleInfo::default();
+    for line in lines {
+        let line = line.ok()?;
+        let line = String::from_utf8_lossy(&line);
+        let line = line.trim_end_matches('\r');
+        if line.is_empty() {
+            return Some(info);
+        }
+        if line.starts_with('@') {
+            continue;
+        }
+        if line.starts_with('-') {
+            info.prerequisites += 1;
+        } else if let Some((_, name)) = line.split_once(' ') {
+            if name == "HEAD" {
+                info.head = true;
+            } else {
+                info.refs.push(name.to_owned());
+            }
+        }
+    }
+    // 見出しが終わらないうちにファイルが終わった。
+    None
+}
+
+/// HEAD のない bundle から clone するとき取り出すブランチ: main、master、なければ最初のブランチ、ブランチがなければ
+/// 最初の ref（タグなら detached）。短い名前で返す（`git clone -b` に渡す）。
+pub fn bundle_default_branch(info: &BundleInfo) -> Option<String> {
+    let short = |r: &str| {
+        r.strip_prefix("refs/heads/")
+            .or_else(|| r.strip_prefix("refs/tags/"))
+            .unwrap_or(r)
+            .to_owned()
+    };
+    ["refs/heads/main", "refs/heads/master"]
+        .iter()
+        .find(|b| info.refs.iter().any(|r| r == *b))
+        .map(|b| short(b))
+        .or_else(|| {
+            info.refs
+                .iter()
+                .find(|r| r.starts_with("refs/heads/"))
+                .map(|r| short(r))
+        })
+        .or_else(|| info.refs.first().map(|r| short(r)))
+}

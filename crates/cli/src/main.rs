@@ -60,7 +60,7 @@ usage: amonhen [<path>]
        amonhen apply [--index] [--3way] [--check] <file>…
        amonhen archive [--format zip|tar|tar.gz] [--prefix <dir>/] [-o <file>] [<rev>] [-- <path>…]
        amonhen bundle create [--json] <file> (--all | <ref>… [^<base>…] | <base>..<ref>)
-       amonhen clone [--filter=<spec>] [--depth <n>] [--sparse] <url> [<dir>]
+       amonhen clone [--filter=<spec>] [--depth <n>] [--sparse] [-b <branch>] <url> [<dir>]
        amonhen daemon [status [--json] | start | stop | rebuild [<path> | ssh://host/path]]
        amonhen install [--quiet] [--no-link] [--force]   (puts the engine in ~/.local/share/amonhen and links ~/.local/bin/amonhen)
        amonhen engine   (the engine to start as the shared daemon)
@@ -107,7 +107,9 @@ and every branch and tag, or the refs given, leaving out what <base> already has
 needs history it hasn't fetched.
 clone --filter=blob:none fetches file contents only when they're needed (a partial clone), --depth <n> only the latest
 n commits (a shallow clone), and --sparse checks out only the top-level files (git 2.27 or later; choose folders with
-run '{\"op\":\"sparseCheckout\",\"folders\":[\"<dir>\"]}').")
+run '{\"op\":\"sparseCheckout\",\"folders\":[\"<dir>\"]}').
+<url> can be a bundle file. When the bundle has no HEAD, clone checks out main, master or its first branch
+(-b chooses another); a bundle of only the commits after some others can't be cloned, so it says so.")
 }
 
 fn main() -> ExitCode {

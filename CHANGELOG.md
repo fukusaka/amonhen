@@ -40,6 +40,8 @@ becomes the GitHub Release notes.
   and only one folder, from the Commit menu, History and the sidebar's branches and tags. `amonhen archive` does the same.
 - Save as Bundle… writes branches and tags, or the whole repository, into one file that git can clone or fetch from
   (`git bundle`), optionally only the commits after a base. `amonhen bundle create` does the same.
+- The Clone sheet clones from a bundle file (typed, or Choose Bundle…), choosing the branch to check out when the
+  bundle has no HEAD. `amonhen clone` takes a bundle file and `-b`.
 
 #### Changed
 

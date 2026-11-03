@@ -1844,10 +1844,12 @@ pub extern "C" fn amonhen_activity_cancel(seq: u64) -> bool {
 
 /// `url` を `dest`（まだないフォルダ）に clone する。`filter`（NULL・空でなければ `--filter`。`blob:none` など）、
 /// `depth`（0 でなければ `--depth`）、`sparse`（`--sparse`。根のファイルだけを取り出す。git 2.27 から）で取得する
-/// 範囲と取り出すものを決める。失敗したら false（理由は `amonhen_last_error`）。時間がかかるので裏のスレッドで呼ぶ。
+/// 範囲と取り出すものを決め、`branch`（NULL・空でなければ `-b`）で取り出すブランチを決める（`url` が HEAD のない
+/// bundle なら、決めなくても main・master・最初のブランチ）。失敗したら false（理由は `amonhen_last_error`）。
+/// 時間がかかるので裏のスレッドで呼ぶ。
 ///
 /// # Safety
-/// `url` と `dest` は NUL 終端の UTF-8 文字列、`filter` は NULL か NUL 終端の UTF-8 文字列であること。
+/// `url` と `dest` は NUL 終端の UTF-8 文字列、`filter` と `branch` は NULL か NUL 終端の UTF-8 文字列であること。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amonhen_clone(
     url: *const c_char,
@@ -1855,18 +1857,27 @@ pub unsafe extern "C" fn amonhen_clone(
     filter: *const c_char,
     depth: u32,
     sparse: bool,
+    branch: *const c_char,
 ) -> bool {
-    let filter = if filter.is_null() {
-        Ok(None)
-    } else {
-        str_arg(filter).map(|f| Some(f.to_owned()).filter(|f| !f.is_empty()))
+    let optional = |p: *const c_char| {
+        if p.is_null() {
+            Ok(None)
+        } else {
+            str_arg(p).map(|f| Some(f.to_owned()).filter(|f| !f.is_empty()))
+        }
     };
-    match (str_arg(url), str_arg(dest), filter) {
-        (Ok(url), Ok(dest), Ok(filter)) => {
+    match (
+        str_arg(url),
+        str_arg(dest),
+        optional(filter),
+        optional(branch),
+    ) {
+        (Ok(url), Ok(dest), Ok(filter), Ok(branch)) => {
             let options = amonhen_backend_cli::CloneOptions {
                 filter,
                 depth: (depth > 0).then_some(depth),
                 sparse,
+                branch,
             };
             done(amonhen_backend_cli::clone(
                 url,
@@ -1874,8 +1885,35 @@ pub unsafe extern "C" fn amonhen_clone(
                 &options,
             ))
         }
-        (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => done(Err(e.into())),
+        (Err(e), _, _, _) | (_, Err(e), _, _) | (_, _, Err(e), _) | (_, _, _, Err(e)) => {
+            done(Err(e.into()))
+        }
     }
+}
+
+/// `path` が bundle のファイルなら、その見出しの JSON（`refs`: 入っている ref、`head`: HEAD が入っているか、
+/// `prerequisites`: 前提のコミットの数（あれば clone できない）、`branch`: HEAD がないとき取り出すブランチ）。
+/// bundle でなければ NULL。解放は `amonhen_string_free`。
+///
+/// # Safety
+/// `path` は NUL 終端の UTF-8 文字列であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_bundle_info(path: *const c_char) -> *mut c_char {
+    let Ok(path) = str_arg(path) else {
+        return std::ptr::null_mut();
+    };
+    let Some(info) = amonhen_backend_cli::bundle_info(std::path::Path::new(path)) else {
+        return std::ptr::null_mut();
+    };
+    let json = serde_json::json!({
+        "refs": info.refs,
+        "head": info.head,
+        "prerequisites": info.prerequisites,
+        "branch": amonhen_backend_cli::bundle_default_branch(&info),
+    });
+    CString::new(json.to_string())
+        .unwrap_or_default()
+        .into_raw()
 }
 
 /// `path` のリポジトリの軽い状態（リポジトリの一覧に出す）。行に分けた文字列で、順にブランチ（detached なら

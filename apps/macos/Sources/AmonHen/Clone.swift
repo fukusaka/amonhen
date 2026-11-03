@@ -1,5 +1,6 @@
 import AmonhenKit
 import AppKit
+import UniformTypeIdentifiers
 
 /// File > Clone…: URL（gh があれば自分の GitHub のリポジトリからも選べる）と置き場所を決めて clone し、タブで開く。
 /// 取得する範囲（すべて・ファイルの中身は必要なときに・最近の履歴だけ）と、一部のフォルダだけを取り出すかも選べる
@@ -49,12 +50,15 @@ enum CloneSheet {
         while last.hasSuffix("/") { last.removeLast() }
         last = String(last.split(whereSeparator: { $0 == "/" || $0 == ":" }).last ?? "")
         if last.hasSuffix(".git") { last.removeLast(4) }
+        if last.hasSuffix(".bundle") { last.removeLast(7) }
         return last
     }
 
     static func show(onCloned: @escaping (String) -> Void) {
         let url = NSTextField(string: "")
-        url.placeholderString = L("https://github.com/owner/repo.git or git@host:owner/repo.git")
+        url.placeholderString = L("https://github.com/owner/repo.git, git@host:owner/repo.git or a bundle file")
+        // bundle のファイルを選ぶ（URL の欄にパスを入れる）。
+        let bundleButton = NSButton(title: L("Choose Bundle…"), target: nil, action: nil)
         let folder = NSTextField(string: (defaultFolder as NSString).abbreviatingWithTildeInPath)
         let name = NSTextField(string: "")
         name.placeholderString = L("Taken from the URL")
@@ -68,7 +72,7 @@ enum CloneSheet {
         choose.target = chooser
         choose.action = #selector(ClosureTarget.fire)
         var rows: [[NSView]] = [
-            [NSTextField(labelWithString: "URL:"), url],
+            [NSTextField(labelWithString: "URL:"), NSStackView(views: [url, bundleButton])],
             [NSTextField(labelWithString: L("Location:")), NSStackView(views: [folder, choose])],
             [NSTextField(labelWithString: L("Folder Name:")), name],
         ]
@@ -141,10 +145,38 @@ enum CloneSheet {
         let sparse = NSButton(checkboxWithTitle: L("Check out only some folders"), target: nil, action: nil)
         let sparseHelp = helpLabel()
         var sparseUnavailable: String?
+        // bundle のファイルなら: 取得する範囲は選べない（git は中身をすべて写す）。HEAD がなければ取り出すブランチを選ぶ。
+        let branch = NSPopUpButton(frame: .zero, pullsDown: false)
+        let branchLabel = NSTextField(labelWithString: L("Branch:"))
+        var bundle: BundleFileInfo?
         let update = {
-            let choice = Download(rawValue: download.indexOfSelectedItem) ?? .everything
+            let source = (url.stringValue.trimmingCharacters(in: .whitespaces) as NSString).expandingTildeInPath
+            let read = FileManager.default.fileExists(atPath: source) ? BundleFileInfo.read(path: source) : nil
+            if read?.refs != bundle?.refs || (read == nil) != (bundle == nil) {
+                bundle = read
+                branch.removeAllItems()
+                for ref in read?.refs ?? [] {
+                    let short = ref.hasPrefix("refs/heads/") ? String(ref.dropFirst(11))
+                        : ref.hasPrefix("refs/tags/") ? String(ref.dropFirst(10)) : ref
+                    branch.addItem(withTitle: short)
+                }
+                if let chosen = read?.branch { branch.selectItem(withTitle: chosen) }
+            }
+            let showBranch = bundle.map { !$0.head && !$0.refs.isEmpty && $0.prerequisites == 0 } ?? false
+            branch.isHidden = !showBranch
+            branchLabel.isHidden = !showBranch
+            download.isEnabled = bundle == nil
+            let choice = bundle == nil ? (Download(rawValue: download.indexOfSelectedItem) ?? .everything) : .everything
             depth.isHidden = choice != .recentHistory
-            downloadHelp.stringValue = choice.help
+            downloadHelp.textColor = .secondaryLabelColor
+            if let bundle, bundle.prerequisites > 0 {
+                downloadHelp.stringValue = "⚠ " + L("This bundle has only the commits after ones it doesn’t include, so it can’t be cloned.")
+                downloadHelp.textColor = .systemOrange
+            } else if bundle != nil {
+                downloadHelp.stringValue = L("From a bundle file, everything in it is copied.")
+            } else {
+                downloadHelp.stringValue = choice.help
+            }
             sparse.isEnabled = sparseUnavailable == nil
             if let sparseUnavailable {
                 sparse.state = .off
@@ -158,6 +190,25 @@ enum CloneSheet {
         let changed = ClosureTarget { update() }
         download.target = changed
         download.action = #selector(ClosureTarget.fire)
+        // 打ち込んだり貼り付けたりしたパスが bundle なら、すぐ切り替える（知らせはメインスレッドに来る）。
+        nonisolated(unsafe) let refresh = update
+        let typed = NotificationCenter.default.addObserver(forName: NSControl.textDidChangeNotification, object: url,
+                                                          queue: .main) { _ in MainActor.assumeIsolated { refresh() } }
+        defer { NotificationCenter.default.removeObserver(typed) }
+        let bundleChooser = ClosureTarget { [weak alert] in
+            let panel = NSOpenPanel()
+            panel.allowedContentTypes = [UTType(filenameExtension: "bundle") ?? .data]
+            panel.canChooseDirectories = false
+            panel.message = L("Choose a bundle file (git bundle) to clone from.")
+            let picked = { (response: NSApplication.ModalResponse) in
+                guard response == .OK, let path = panel.url?.path else { return }
+                url.stringValue = (path as NSString).abbreviatingWithTildeInPath
+                update()
+            }
+            if let window = alert?.window { panel.beginSheetModal(for: window, completionHandler: picked) } else { picked(panel.runModal()) }
+        }
+        bundleButton.target = bundleChooser
+        bundleButton.action = #selector(ClosureTarget.fire)
         // 見た目の確認用の起動（`--clone-sheet history,sparse` など）では、その選び方で出す。
         let preset = AppDelegate.option("--clone-sheet") ?? ""
         if preset.contains("contents") { download.selectItem(at: Download.contentsWhenNeeded.rawValue) }
@@ -174,6 +225,7 @@ enum CloneSheet {
             }
         }
         rows += [
+            [branchLabel, branch],
             [NSTextField(labelWithString: L("Download:")), NSStackView(views: [download, depth])],
             [NSGridCell.emptyContentView, downloadHelp],
             [NSGridCell.emptyContentView, sparse],
@@ -190,8 +242,10 @@ enum CloneSheet {
         alert.accessoryView = grid
         alert.window.initialFirstResponder = url
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        _ = (chooser, changed, depthTarget)
-        let source = url.stringValue.trimmingCharacters(in: .whitespaces)
+        _ = (chooser, changed, depthTarget, bundleChooser)
+        update()
+        var source = url.stringValue.trimmingCharacters(in: .whitespaces)
+        if bundle != nil { source = (source as NSString).expandingTildeInPath }
         let folderName = name.stringValue.trimmingCharacters(in: .whitespaces).isEmpty
             ? Self.name(fromURL: source) : name.stringValue.trimmingCharacters(in: .whitespaces)
         let parent = (folder.stringValue.trimmingCharacters(in: .whitespaces) as NSString).expandingTildeInPath
@@ -205,10 +259,11 @@ enum CloneSheet {
             return
         }
         UserDefaults.standard.set(parent, forKey: folderKey)
-        let choice = Download(rawValue: download.indexOfSelectedItem) ?? .everything
+        let choice = bundle == nil ? (Download(rawValue: download.indexOfSelectedItem) ?? .everything) : .everything
         run(url: source, dest: dest, filter: choice == .contentsWhenNeeded ? "blob:none" : nil,
             depth: choice == .recentHistory ? depth.selectedTag() : nil,
-            sparse: sparse.isEnabled && sparse.state == .on, onCloned: onCloned)
+            sparse: sparse.isEnabled && sparse.state == .on,
+            branch: branch.isHidden ? nil : branch.titleOfSelectedItem, onCloned: onCloned)
     }
 
     /// 選んだものの説明（小さく、薄く。2 行まで折り返す）。
@@ -230,7 +285,7 @@ enum CloneSheet {
 
     /// clone している間は、進み具合の小さなウィンドウを出す。`sparse` なら、clone の後で取り出すフォルダを選んで
     /// もらってから開く（取り消したら根のファイルだけのまま。フォルダは Settings の「取得とフォルダ」で足せる）。
-    private static func run(url: String, dest: String, filter: String?, depth: Int?, sparse: Bool,
+    private static func run(url: String, dest: String, filter: String?, depth: Int?, sparse: Bool, branch: String?,
                             onCloned: @escaping (String) -> Void) {
         let panel = progressPanel(L("Cloning %@…", url))
         RunningOperations.begin()
@@ -238,7 +293,7 @@ enum CloneSheet {
             defer { RunningOperations.end() }
             do {
                 try await Task.detached(priority: .userInitiated) {
-                    try Repository.clone(url: url, to: dest, filter: filter, depth: depth, sparse: sparse)
+                    try Repository.clone(url: url, to: dest, filter: filter, depth: depth, sparse: sparse, branch: branch)
                 }.value
                 panel.close()
                 if sparse {

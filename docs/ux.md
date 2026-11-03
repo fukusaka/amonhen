@@ -670,6 +670,9 @@ the sidebar is wider.
 - A sheet chooses all history or only the commits after a tag, branch or commit the receiver already has. Then the
   app checks: nothing to save, a shallow clone that lacks the history (refused), or contents a partial clone fetches
   first (asked). A save panel chooses the `.bundle` file, and Finder (the file manager) shows it.
+- Cloning: the Clone sheet's URL takes a bundle file (typed, or Choose Bundle…). The Download choice is off for a
+  bundle, a bundle without HEAD shows Branch: to choose what to check out, and a bundle of only the commits after
+  others is marked as one that can't be cloned.
 
 ## 8. Resolving conflicts (the embedded merge editor)
 

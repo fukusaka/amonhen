@@ -446,8 +446,15 @@ or split history in ways that are hard to see afterwards.
     inside the fetched history works.
   - In a partial clone git fetches each missing content one at a time. The missing ones are counted
     (`rev-list --objects --missing=print`), the app asks, and they are fetched in one go first, as for archives.
-- A bundle of a few branches has no HEAD, so git clones it without checking anything out; cloning from a bundle is the
-  next step and picks the branch. `bundle create -` and all of the above are in git 2.23.
+- Cloning from a bundle file is `git clone <file>` (the Clone sheet and `amonhen clone` take the file as the URL). The
+  backend reads the bundle's header itself, without git (`bundle_info`: `# v2`/`# v3 git bundle`, `@` capabilities,
+  `-<id>` prerequisites, `<id> <ref>` refs, a blank line, then the pack):
+  - a bundle of a few branches has no HEAD and git would clone it without checking anything out, so `-b` picks main,
+    master or the first branch unless one is chosen;
+  - a bundle with prerequisites can't be cloned (git stops with "remote transport reported error"), so it is refused
+    with the reason;
+  - `--filter` and `--depth` are ignored by git for a bundle, so the sheet turns the Download choice off.
+- `bundle create -`, `clone -b` and all of the above are in git 2.23.
 
 ## Speed targets and measurement
 
