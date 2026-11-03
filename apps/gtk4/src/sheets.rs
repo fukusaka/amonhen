@@ -2119,6 +2119,12 @@ fn integrate_sheet(
         };
         let labels: Vec<&str> = choices.iter().map(|(l, _)| l.as_str()).collect();
         let picker = gtk::DropDown::from_strings(&labels);
+        // 探す欄は、名前で絞り込む式がないと何も絞らない（`Actions::choose` と同じ）。
+        picker.set_expression(Some(gtk::PropertyExpression::new(
+            gtk::StringObject::static_type(),
+            gtk::Expression::NONE,
+            "string",
+        )));
         picker.set_enable_search(true);
         picker.set_halign(gtk::Align::Start);
         picker.set_size_request(320, -1);
