@@ -1252,8 +1252,21 @@ impl Inner {
         let Some(source) = this.source.borrow().clone() else {
             return Vec::new();
         };
-        let Some((name, diff)) = source.0.files.get(file) else {
+        let Some((name, _)) = source.0.files.get(file) else {
             return Vec::new();
+        };
+        f(
+            path_of(name),
+            None,
+            !Inner::deleted(this, &source, file),
+            false,
+        )
+    }
+
+    /// `file` 番目のファイルをそのコミットで消したか（消したファイルには Blame を出さない）。
+    fn deleted(this: &Rc<Self>, source: &Source, file: usize) -> bool {
+        let Some((_, diff)) = source.0.files.get(file) else {
+            return false;
         };
         let changes = this.changes.borrow().clone();
         let change = source
@@ -1263,11 +1276,10 @@ impl Inner {
             .or(changes.as_deref().map(Vec::as_slice))
             .filter(|c| c.len() == source.0.files.len())
             .map(|c| &c[file]);
-        let deleted = match change {
+        match change {
             Some(change) => change.kind == ChangeKind::Deleted,
             None => diff.new.is_empty() && !diff.old.is_empty(),
-        };
-        f(path_of(name), None, !deleted, false)
+        }
     }
 
     fn menu_items(this: &Rc<Self>, file: Option<usize>, y: Option<f64>) -> Vec<Item> {
@@ -1303,7 +1315,9 @@ impl Inner {
             items.push(Item::Separator);
         }
         if let Some(f) = this.file_items.borrow().clone() {
-            items.extend(f(&path, y, true, false));
+            // 消したファイルは、そのコミットにはない（一覧の右クリックと同じく Blame を出さない）。
+            let blame = !Inner::deleted(this, &source, file);
+            items.extend(f(&path, y, blame, false));
             items.push(Item::Separator);
         }
         let (w, p) = (this.list.downgrade(), path.clone());
