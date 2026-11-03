@@ -434,6 +434,21 @@ or split history in ways that are hard to see afterwards.
 - The folder to export is chosen from the exported commit's tree (`{"op":"treeFolders","rev":…}`, the same chooser as
   sparse checkout).
 
+## Bundles
+
+- Saving commits in one file is `git bundle create - <refs> ^<bases>` (HEAD, `--branches` and `--tags` when no refs
+  are given); git can clone or fetch from the file. As with archives, the backend returns the bytes and the core writes
+  the file on its own machine (`{"op":"bundle"}`), and over 1 GB is refused before sending through the daemon or SSH.
+- `{"op":"bundlePreview"}` counts the commits (`rev-list`), and before writing:
+  - In a shallow clone, git writes a bundle whose commits reach the shallow boundary, and `git bundle verify` even
+    calls it complete, but it can't be cloned ("Failed to traverse parents"). The core refuses when a commit in the
+    range is in `.git/shallow` and has parents (a root kept there after deepening to the start doesn't count); a base
+    inside the fetched history works.
+  - In a partial clone git fetches each missing content one at a time. The missing ones are counted
+    (`rev-list --objects --missing=print`), the app asks, and they are fetched in one go first, as for archives.
+- A bundle of a few branches has no HEAD, so git clones it without checking anything out; cloning from a bundle is the
+  next step and picks the branch. `bundle create -` and all of the above are in git 2.23.
+
 ## Speed targets and measurement
 
 | Item | Target |

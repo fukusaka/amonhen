@@ -270,6 +270,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | Apply Patch（am / apply・下見・3-way・--index） | ✓ | ✓ | ✓ | ✓ | CLI: `am`・`apply`（`--check`）。 |
 | パッチのファイルを窓に落とす | ✓ | ✓ | △ | n/a | VSCode: エクスプローラーのメニューから。 |
 | Export Archive（zip・tar.gz・tar、先頭のフォルダ、1 つのフォルダ） | ✓ | ✓ | — | ✓ | CLI: `archive`。 |
+| Save as Bundle（すべて・一部の ref・基点より後） | ✓ | ✓ | — | ✓ | CLI: `bundle create`。 |
 | 止まった `am` と Retry with 3-Way・Skip・Abort・Continue | ✓ | ✓ | ✓ | ✓ | VSCode: サイドバーの行に出る。<br>CLI: `am --continue / --skip / --abort / --retry-3way`。 |
 
 ## 8. マージエディター

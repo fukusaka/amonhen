@@ -413,6 +413,20 @@ rebase と History の編集（reword・squash・fixup・drop・edit・split・m
   取る（`fetch --filter=blob:none --stdin`。差分のときと同じ。git 2.29 から。それより前は git が 1 つずつ取る）。
 - 書き出すフォルダは、書き出すコミットの木から選ぶ（`{"op":"treeFolders","rev":…}`。sparse checkout と同じ選ぶ窓）。
 
+## bundle
+
+- コミットを 1 つのファイルにまとめるのは `git bundle create - <refs> ^<bases>`（ref を渡さなければ HEAD・`--branches`・
+  `--tags`）。git はそのファイルから clone や fetch ができる。アーカイブと同じく、バックエンドは中身を返し、コアが
+  自分の機械に書く（`{"op":"bundle"}`）。daemon 越しや SSH 先では、1 GB を超えれば送る前に断る。
+- `{"op":"bundlePreview"}` はコミットを数え（`rev-list`）、書く前に次を見る:
+  - shallow clone では、git は範囲が shallow の境に届く bundle も書き、`git bundle verify` は完全と言うが、clone
+    できない（「Failed to traverse parents」）。範囲のコミットが `.git/shallow` にあり、親を持つなら断る（根まで取り
+    足すと根のコミットも残るが、それは数えない）。取得した範囲の中の基点からなら作れる。
+  - partial clone では、git は手元にない中身を 1 つずつ取りに行く。手元にないものを数え
+    （`rev-list --objects --missing=print`）、アプリが確かめ、アーカイブと同じく先にまとめて取る。
+- いくつかのブランチだけの bundle には HEAD がないので、git は clone しても何も取り出さない。bundle からの clone は
+  次の段で、取り出すブランチを選ぶ。`bundle create -` も上のこともすべて git 2.23 にある。
+
 ## 速度目標と計測
 
 | 項目 | 目標 |

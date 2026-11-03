@@ -663,6 +663,14 @@ the sidebar is wider.
   from that commit's tree. `.gitattributes` decides what is left out. In a partial clone it says how many contents
   are fetched first and asks. Then a save panel chooses the file, and Finder (the file manager) shows it.
 
+## 7e. Bundles
+
+- Repository > Save Repository as Bundle… saves HEAD and every branch and tag; Save as Bundle… on a branch, remote
+  branch or tag in the sidebar (or on several selected) saves those. git can clone or fetch from the file.
+- A sheet chooses all history or only the commits after a tag, branch or commit the receiver already has. Then the
+  app checks: nothing to save, a shallow clone that lacks the history (refused), or contents a partial clone fetches
+  first (asked). A save panel chooses the `.bundle` file, and Finder (the file manager) shows it.
+
 ## 8. Resolving conflicts (the embedded merge editor)
 
 ### Flow
