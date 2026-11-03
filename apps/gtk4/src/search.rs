@@ -279,8 +279,36 @@ impl Search {
     /// タブのアクション（`win.find`・`win.find-next`・`win.find-previous`）を足す（ショートカットは
     /// `crate::appmenu` が入れる）。
     pub fn install(&self, group: &gio::SimpleActionGroup) {
+        // 見出しの検索のボタン・Ctrl+F で欄を開いたとき、ほかの画面にいれば History に移る（欄は History の上に
+        // しかない。macOS 版の検索欄も History を選んでから探す）。
+        let g = group.downgrade();
+        self.bar.connect_search_mode_enabled_notify(move |bar| {
+            if bar.is_search_mode()
+                && !bar.is_mapped()
+                && let Some(group) = g.upgrade()
+            {
+                group.activate_action("show-history", None);
+            }
+        });
+        // 欄を開いたまま History を離れていれば、押しても閉じずに History に移る。
+        let (g, bar, entry) = (
+            group.downgrade(),
+            self.bar.clone(),
+            self.inner.entry.clone(),
+        );
+        self.toggle.connect_clicked(move |_| {
+            if !bar.is_mapped()
+                && !bar.is_search_mode()
+                && let Some(group) = g.upgrade()
+            {
+                bar.set_search_mode(true);
+                group.activate_action("show-history", None);
+                entry.grab_focus();
+            }
+        });
         let find = gio::SimpleAction::new("find", None);
         let (bar, entry) = (self.bar.clone(), self.inner.entry.clone());
+        let g = group.downgrade();
         find.connect_activate(move |_, _| {
             // フォーカスが History の差分にあれば、その差分の中を探す（macOS 版と同じ）。
             if let Some(w) = bar.root().and_downcast::<gtk::Window>()
@@ -289,6 +317,13 @@ impl Search {
                     || crate::difffind::find_in_focused(&w))
             {
                 return;
+            }
+            // もう開いていれば notify が来ないので、ここで History に移る。
+            if bar.is_search_mode()
+                && !bar.is_mapped()
+                && let Some(group) = g.upgrade()
+            {
+                group.activate_action("show-history", None);
             }
             bar.set_search_mode(true);
             entry.grab_focus();
