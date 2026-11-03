@@ -1401,22 +1401,31 @@ impl HistoryView {
         (row >= 0.0 && (row as u32) < self.row_count()).then_some(row as u32)
     }
 
-    /// 矢印などで選ぶ行を動かす。`extend`（Shift）なら起点からの範囲を選ぶ。
+    /// 矢印で選ぶ行を動かす。`extend`（Shift）なら起点からの範囲を選ぶ。Page Up・Page Down・Home・End は
+    /// 選ばずにスクロールだけ（macOS 版の表と同じ）。
     fn move_selection(&self, key: gdk::Key, extend: bool) -> bool {
         let count = self.row_count();
         if count == 0 {
             return false;
         }
-        let page = self.vadjustment().map_or(1.0, |a| a.page_size()) as f32 / self.row_height();
-        let page = (page.floor() as u32).max(1);
+        if let Some(adj) = self.vadjustment() {
+            let (value, page) = (adj.value(), adj.page_size());
+            let target = match key {
+                gdk::Key::Page_Down => Some(value + page),
+                gdk::Key::Page_Up => Some(value - page),
+                gdk::Key::Home => Some(adj.lower()),
+                gdk::Key::End => Some(adj.upper()),
+                _ => None,
+            };
+            if let Some(target) = target {
+                adj.set_value(target.clamp(adj.lower(), (adj.upper() - page).max(adj.lower())));
+                return true;
+            }
+        }
         let current = self.selected();
         let row = match key {
             gdk::Key::Down => current.map_or(0, |r| (r + 1).min(count - 1)),
             gdk::Key::Up => current.map_or(0, |r| r.saturating_sub(1)),
-            gdk::Key::Page_Down => current.map_or(0, |r| (r + page).min(count - 1)),
-            gdk::Key::Page_Up => current.map_or(0, |r| r.saturating_sub(page)),
-            gdk::Key::Home => 0,
-            gdk::Key::End => count - 1,
             _ => return false,
         };
         if extend {
