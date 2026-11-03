@@ -859,6 +859,11 @@ private final class ConflictBand: NSView {
     }
 }
 
+extension Notification.Name {
+    /// 別ウィンドウのマージエディタを、解決せずに閉じた（`userInfo["key"]` はその `windowKey`）。
+    static let mergeWindowClosed = Notification.Name("mergeWindowClosed")
+}
+
 /// マージエディタを別ウィンドウで開く。worktree とパスごとに 1 つ（worktree が違えば同じパスでも別のファイル）。
 final class MergeEditorWindowController: NSWindowController, NSWindowDelegate {
     private static var open: [String: MergeEditorWindowController] = [:]
@@ -914,7 +919,10 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate {
         window.title = "Merge — \(editor.path)"
         super.init(window: window)
         editor.onPopOut = nil
-        editor.onResolved = { [weak self] in self?.close() }
+        editor.onResolved = { [weak self] in
+            self?.resolved = true
+            self?.close()
+        }
         window.contentViewController = editor
         window.setContentSize(NSSize(width: 1300, height: 820))
         window.center()
@@ -957,7 +965,14 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate {
         return false
     }
 
+    /// 解決済みにして閉じた。
+    private var resolved = false
+
     func windowWillClose(_ notification: Notification) {
         Self.open[editor.windowKey] = nil
+        // 解決せずに閉じたら知らせる（Working Copy が、そのファイルを出していれば埋め込み直す）。
+        if !resolved {
+            NotificationCenter.default.post(name: .mergeWindowClosed, object: nil, userInfo: ["key": editor.windowKey])
+        }
     }
 }

@@ -137,6 +137,8 @@ becomes the GitHub Release notes.
 - macOS: closing the AI panel stops the claude or codex run, so the activity indicator stops and nothing is cached.
 - macOS: typing in Working Copy's Description field can be undone with ⌘Z.
 - macOS: the merge editor's Resolve with AI and Explain with AI no longer beep when the AI question is cancelled.
+- macOS: closing a separate merge window without resolving puts the merge editor back in Working Copy if that file is
+  shown.
 
 - The GTK4 app's Undo button asks once; it opened the question twice, so one stayed after undoing.
 - A `.mailmap`, or a mailmap setting (`log.mailmap`, `mailmap.file`), changed while the engine was reading the old

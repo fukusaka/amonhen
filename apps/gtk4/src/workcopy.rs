@@ -802,6 +802,20 @@ impl Inner {
                 Inner::rebuild_list(&this);
             }
         });
+        // 別の窓のマージエディタを解決せずに閉じた: そのファイルを出していれば（「別の窓で開いている」の案内の
+        // まま）、ここに埋め込み直す（同じ行を押し直しても何も起きないので。macOS 版と同じ）。
+        let weak = Rc::downgrade(this);
+        crate::merge::connect_window_closed(move |workdir, path| {
+            let Some(this) = weak.upgrade() else { return };
+            let same_worktree = this.repo().and_then(|r| r.paths().workdir).as_deref() == workdir;
+            if same_worktree
+                && this.embedded.borrow().is_none()
+                && this.conflict_buttons.is_visible()
+                && this.selected.borrow().as_deref() == Some(path)
+            {
+                Inner::show_conflict(&this, path, this.generation.get());
+            }
+        });
         // 埋め込んだマージエディタにフォーカスがある間は、Ctrl+Return をエディタに渡す（Commit を止める）。
         let focus = gtk::EventControllerFocus::new();
         let weak = Rc::downgrade(this);

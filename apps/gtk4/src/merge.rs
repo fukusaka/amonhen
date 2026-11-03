@@ -314,6 +314,16 @@ thread_local! {
     static ACCEPT_ONCE: Cell<Option<Choice>> = const { Cell::new(None) };
     /// 開いているマージエディタ（窓を閉じたら外す）。
     static KEEP: RefCell<Vec<Rc<Editor>>> = RefCell::default();
+    /// 別の窓を解決せずに閉じたときの知らせ先。
+    static CLOSED: RefCell<Vec<Closed>> = RefCell::default();
+}
+
+/// 別の窓のマージエディタを解決せずに閉じたときの知らせ（worktree の作業ツリーとパス）。
+type Closed = Rc<dyn Fn(Option<&Path>, &str)>;
+
+/// 別の窓のマージエディタを解決せずに閉じたら `f(作業ツリー, パス)` を呼ぶ。
+pub fn connect_window_closed(f: impl Fn(Option<&Path>, &str) + 'static) {
+    CLOSED.with(|c| c.borrow_mut().push(Rc::new(f)));
 }
 
 /// 次に開いたとき、最初のコンフリクトを `choice`（`ours`・`theirs`・`both`・`base`）で解く（確認用）。
@@ -480,18 +490,32 @@ pub fn show_in_window(editor: &Rc<Editor>, parent: &gtk::Window) {
     });
     // 窓がある間は持っておく（ボタンなどは弱い参照で呼ぶので、持たなければ開いた直後に消える）。
     KEEP.with(|k| k.borrow_mut().push(editor.clone()));
-    let weak = Rc::downgrade(editor);
-    window.connect_destroy(move |_| {
+    let resolved = Rc::new(Cell::new(false));
+    let (weak, r) = (Rc::downgrade(editor), resolved.clone());
+    let key = (editor.workdir.clone(), editor.path.clone());
+    window.connect_destroy(move |window| {
         KEEP.with(|k| {
             k.borrow_mut()
                 .retain(|e| !std::ptr::eq(Rc::as_ptr(e), weak.as_ptr()))
         });
+        OPEN.with(|o| {
+            o.borrow_mut()
+                .retain(|(_, w)| w.upgrade().is_some_and(|w| w != *window))
+        });
+        // 解決せずに閉じたら知らせる（Working Copy が、そのファイルを出していれば埋め込み直す）。
+        if !r.get() {
+            let listeners: Vec<Closed> = CLOSED.with(|c| c.borrow().clone());
+            for f in listeners {
+                f(key.0.as_deref(), &key.1);
+            }
+        }
     });
     // 解決済みにしたら閉じる（その前に、渡されていた知らせを呼ぶ）。
     let previous = editor.on_resolved.borrow().clone();
     let w = window.downgrade();
     editor.set_on_resolved(move || {
         previous();
+        resolved.set(true);
         if let Some(w) = w.upgrade() {
             w.destroy();
         }

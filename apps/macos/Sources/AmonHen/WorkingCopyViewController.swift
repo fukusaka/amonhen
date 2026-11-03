@@ -180,6 +180,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         suggestButton.isHidden = !Assistant.isConfigured
         NotificationCenter.default.addObserver(
             self, selector: #selector(assistantChanged), name: .assistantChanged, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(mergeWindowClosed(_:)), name: .mergeWindowClosed, object: nil)
         for (button, symbol, tip) in [
             (historyButton, "clock.arrow.circlepath", L("Insert the message of a recent commit (⌥↑ and ⌥↓ in the Summary field also work)")),
             (insertButton, "plus.circle", L("Insert a Conventional Commits type, Co-authored-by or Signed-off-by")),
@@ -878,6 +880,15 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     /// 埋め込んだ・覚えているマージエディタに、保存していない Result の変更がある（閉じる前に確かめる）。
     var hasUnsavedMergeEdits: Bool {
         mergeEditors.values.contains { $0.hasUnsavedChanges } || embeddedEditor?.hasUnsavedChanges == true
+    }
+
+    /// 別ウィンドウのマージエディタを解決せずに閉じた: そのファイルを出していれば（「別のウィンドウで開いている」の
+    /// 案内のまま）、ここに埋め込み直す（同じ行を押し直しても何も起きないので）。
+    @objc private func mergeWindowClosed(_ notification: Notification) {
+        guard isConflict, embeddedEditor == nil, let key = selectedKey,
+              notification.userInfo?["key"] as? String == MergeEditorWindowController.key(path: key.path, repository: repository),
+              let entry = entries.first(where: { $0.item.path == key.path }) else { return }
+        showDiff(of: entry, staged: key.staged)
     }
 
     /// 右の欄の差分の代わりに、マージエディタを出す。
