@@ -970,6 +970,54 @@ fn window_keys(mode: &Rc<Mode>) -> gtk::EventControllerKey {
     keys
 }
 
+/// 編集モードの Esc・Return のキーを、編集モードのある窓に付けておく（タブをほかの窓に移したら、移した先の窓に
+/// 付け替える。macOS 版はタブごとに窓なので、いつもそのタブの窓に効く）。
+struct WindowKeys {
+    keys: gtk::EventControllerKey,
+    /// 今付けている窓。
+    window: Rc<RefCell<Option<gtk::Window>>>,
+    /// 編集モードの部品の窓が替わるのを見ているもの（閉じたら外す）。
+    watch: (gtk::Widget, glib::SignalHandlerId),
+}
+
+impl WindowKeys {
+    fn new(mode: &Rc<Mode>) -> Self {
+        let keys = window_keys(mode);
+        let window: Rc<RefCell<Option<gtk::Window>>> = Rc::default();
+        let follow = {
+            let (keys, window) = (keys.clone(), window.clone());
+            move |widget: &gtk::Widget| {
+                let now = widget.root().and_downcast::<gtk::Window>();
+                if *window.borrow() == now {
+                    return;
+                }
+                if let Some(old) = window.replace(now.clone()) {
+                    old.remove_controller(&keys);
+                }
+                if let Some(now) = now {
+                    now.add_controller(keys.clone());
+                }
+            }
+        };
+        let widget: gtk::Widget = mode.root.clone().upcast();
+        follow(&widget);
+        let id = widget.connect_root_notify(move |w| follow(w));
+        Self {
+            keys,
+            window,
+            watch: (widget, id),
+        }
+    }
+
+    fn remove(self) {
+        let (widget, id) = self.watch;
+        widget.disconnect(id);
+        if let Some(window) = self.window.take() {
+            window.remove_controller(&self.keys);
+        }
+    }
+}
+
 /// 編集モードを開く・閉じる（History の画面と入れ替える）。
 #[derive(Clone)]
 pub struct Opener(Rc<OpenerInner>);
@@ -982,8 +1030,8 @@ struct OpenerInner {
     sidebar: Rc<Sidebar>,
     statusbar: Rc<StatusBar>,
     current: RefCell<Option<Rc<Mode>>>,
-    /// 編集モードの間だけ窓に付ける、Esc・Return のキー（窓と、付けたもの）。
-    keys: RefCell<Option<(gtk::Window, gtk::EventControllerKey)>>,
+    /// 編集モードの間だけ窓に付ける、Esc・Return のキー。
+    keys: RefCell<Option<WindowKeys>>,
     /// 読んでいる間は 1 つ増やす（`--snapshot` は開き終えるまで待つ）。
     pending: Rc<Cell<u32>>,
 }
@@ -1131,11 +1179,7 @@ impl Opener {
             inner.pages.set_visible_child_name("history");
             inner.sidebar.select_page(Page::History);
             inner.statusbar.show(statusbar::Row::Editing, &mode.bar);
-            if let Some(window) = inner.actions.window() {
-                let keys = window_keys(&mode);
-                window.add_controller(keys.clone());
-                inner.keys.replace(Some((window.upcast(), keys)));
-            }
+            inner.keys.replace(Some(WindowKeys::new(&mode)));
             if let Some(preset) = preset {
                 mode.apply_preset(preset);
             }
@@ -1148,8 +1192,8 @@ impl Opener {
             return;
         };
         inner.statusbar.hide(statusbar::Row::Editing);
-        if let Some((window, keys)) = inner.keys.take() {
-            window.remove_controller(&keys);
+        if let Some(keys) = inner.keys.take() {
+            keys.remove();
         }
         inner.pages.remove(&mode.root);
         inner.pages.add_named(&inner.history, Some("history"));
