@@ -404,8 +404,13 @@ struct Picker {
     /// 列を足した後、幅が決まったら最後の列まで送る（足した直後はまだ幅が変わっていない）。
     reveal_pending: Cell<bool>,
     status: gtk::Label,
-    /// 最初に列ができたら、列にキーボードを移す（macOS 版と同じく、始めは列で選ぶ。SSH 先を選べるときは欄のまま）。
+    /// 列ができたら、列にキーボードを移す（macOS 版と同じく、始めは列で選ぶ。SSH 先を選べるときは、つないで列が
+    /// 出るたび。パスの欄に打ち込んでいれば欄のまま）。
     focus_columns: Cell<bool>,
+    /// パスの欄に打ち込んだ（macOS 版の `typing`。選んだものを欄に出すのは数えない）。
+    typing: Cell<bool>,
+    /// 選んだものを欄に出している間（打ち込んだことにしない）。
+    setting_field: Cell<bool>,
     /// 列で打った名前と、最後に打った時刻（1 秒あけば打ち直し。macOS 版の `typeSelect`）。
     typed: RefCell<(String, Option<std::time::Instant>)>,
     /// つなげなかったときの「接続を確認」（もう一度つなぐ。macOS 版と同じ）。
@@ -707,7 +712,9 @@ impl Picker {
             columns_scroll,
             reveal_pending: Cell::new(false),
             status,
-            focus_columns: Cell::new(!matches!(source, Source::AnyHost(_))),
+            focus_columns: Cell::new(true),
+            typing: Cell::new(false),
+            setting_field: Cell::new(false),
             typed: RefCell::default(),
             retry,
             area,
@@ -794,6 +801,9 @@ impl Picker {
         let w = Rc::downgrade(self);
         self.field.connect_changed(move |_| {
             if let Some(p) = w.upgrade() {
+                if !p.setting_field.get() {
+                    p.typing.set(true);
+                }
                 p.update_buttons();
             }
         });
@@ -896,6 +906,8 @@ impl Picker {
         self.reader.replace(None);
         self.connection_error.replace(None);
         self.columns.borrow_mut().clear();
+        // つないで列が出たら、列に移す（macOS 版は列の部品が出るたび）。
+        self.focus_columns.set(true);
         self.sync(0);
         if host.is_empty() || host.contains('/') || host.contains(char::is_whitespace) {
             self.show_connecting(None);
@@ -1294,6 +1306,7 @@ impl Picker {
         self.update_buttons();
         if count > 0
             && self.focus_columns.replace(false)
+            && !self.typing.get()
             && let Some(view) = self.views.borrow().last()
         {
             view.list.grab_focus();
@@ -1779,7 +1792,9 @@ impl Picker {
                 .map_or_else(|| last.path.clone(), |s| join(&last.path, s));
             shown(&path, self.home.borrow().as_deref())
         };
+        self.setting_field.set(true);
         self.field.set_text(&text);
+        self.setting_field.set(false);
         self.field.set_position(-1);
         self.update_buttons();
     }
