@@ -1809,6 +1809,8 @@
 "never (not trusted)" = "never（信用しない）";
 "{trust} (trust not set)" = "{trust}（信用度が決まっていない）";
 "Expand the commit details to fill the right column (click again to restore)." = "コミットの詳細だけを右の列いっぱいに広げる（もう一度押すと戻す）";
+"Expand Details" = "詳細を広げる";
+"Restore Details" = "詳細を戻す";
 
 /* GTK4: History の範囲 */
 "All Branches" = "すべてのブランチ";

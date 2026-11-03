@@ -147,6 +147,10 @@ pub enum Kind {
     CircleFill,
     /// circle（CI がない）
     Circle,
+    /// arrow.up.left.and.arrow.down.right（詳細を広げる）
+    Expand,
+    /// arrow.down.right.and.arrow.up.left（広げた詳細を戻す）
+    Restore,
 }
 
 mod imp {
@@ -862,6 +866,32 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
         }
         Kind::Circle => {
             p.add_circle(&point(8.0, 8.0), 6.3);
+        }
+        Kind::Expand => {
+            // 左上と右下の角へ向かう矢印。
+            p.move_to(7.0, 7.0);
+            p.line_to(2.5, 2.5);
+            p.move_to(2.5, 7.0);
+            p.line_to(2.5, 2.5);
+            p.line_to(7.0, 2.5);
+            p.move_to(9.0, 9.0);
+            p.line_to(13.5, 13.5);
+            p.move_to(13.5, 9.0);
+            p.line_to(13.5, 13.5);
+            p.line_to(9.0, 13.5);
+        }
+        Kind::Restore => {
+            // 角から真ん中へ向かう矢印。
+            p.move_to(2.5, 2.5);
+            p.line_to(7.0, 7.0);
+            p.move_to(2.5, 7.0);
+            p.line_to(7.0, 7.0);
+            p.line_to(7.0, 2.5);
+            p.move_to(13.5, 13.5);
+            p.line_to(9.0, 9.0);
+            p.move_to(13.5, 9.0);
+            p.line_to(9.0, 9.0);
+            p.line_to(9.0, 13.5);
         }
         Kind::BoltCircle => {
             // 円の中に、横向きの稲妻。

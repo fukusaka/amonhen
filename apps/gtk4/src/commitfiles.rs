@@ -706,12 +706,22 @@ impl CommitDiff {
 
     /// 詳細の欄だけを右の列いっぱいに広げるボタン（⤢。変更ファイルと差分を隠す。もう一度押すと戻す）。
     pub fn expand_button(&self) -> gtk::ToggleButton {
-        let label = gtk::Label::new(None);
-        label.set_markup("<span size=\"large\">⤢</span>");
+        // 広げている間は、戻す形の矢印と「Restore Details」（macOS 版と同じ）。
+        let icon = crate::icon::Icon::default();
+        let show = |icon: &crate::icon::Icon, button: &gtk::ToggleButton, expanded: bool| {
+            let (kind, name) = if expanded {
+                (crate::icon::Kind::Restore, tr!("Restore Details"))
+            } else {
+                (crate::icon::Kind::Expand, tr!("Expand Details"))
+            };
+            icon.set(kind, false);
+            button.update_property(&[gtk::accessible::Property::Label(&name)]);
+        };
         let button = gtk::ToggleButton::new();
         // 詳細の見せ方を変えたときに戻せるように（`Details::show_style_switch`）。
         button.set_widget_name(crate::details::EXPAND_BUTTON);
-        button.set_child(Some(&label));
+        button.set_child(Some(&icon));
+        show(&icon, &button, false);
         button.add_css_class("flat");
         button.add_css_class("image-button");
         button.set_valign(gtk::Align::Start);
@@ -720,6 +730,7 @@ impl CommitDiff {
         )));
         let root = self.root.downgrade();
         button.connect_toggled(move |b| {
+            show(&icon, b, b.is_active());
             if let Some(root) = root.upgrade() {
                 root.set_visible(!b.is_active());
             }
