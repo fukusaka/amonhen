@@ -225,7 +225,18 @@ final class RewritePreviewPanel: NSStackView {
         task?.cancel()
         let choice = touched ? moveStacked.state == .on : nil
         task = Task { @MainActor [weak self] in
-            guard let self, let preview = await actions.rewritePreview(onto: onto, updateRefs: choice), !Task.isCancelled else { return }
+            guard let self else { return }
+            let answer = await actions.rewritePreview(onto: onto, updateRefs: choice)
+            guard !Task.isCancelled else { return }
+            guard let preview = answer else {
+                // 見通しを出せなければ、「確かめている」のままにせず消す（実行はできる）。
+                lines.stringValue = ""
+                drawing.isHidden = true
+                layoutSubtreeIfNeeded()
+                frame.size = fittingSize
+                onUpdate?()
+                return
+            }
             if let state = preview.updateRefs, !touched {
                 configured = state.configured
                 moveStacked.state = state.configured ? .on : .off
