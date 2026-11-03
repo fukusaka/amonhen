@@ -829,8 +829,10 @@ fn build_tab(
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vexpand(true)
         .build();
-    let status = gtk::Label::new(Some(&tr!("Loading History…")));
+    // 手元で初めて読むときは何も出さない。daemon・SSH 越しのときだけ、受け取った量を出す（macOS 版と同じ）。
+    let status = gtk::Label::new(None);
     status.add_css_class("dim-label");
+    status.set_visible(false);
     // daemon・SSH 越しに初めて読むときは、受け取った量と回る印を添える（macOS 版と同じ）。
     let spinner = gtk::Spinner::new();
     spinner.set_visible(false);
@@ -2594,11 +2596,12 @@ fn build_tab(
                     Event::Reload => reload(),
                     // まだ何も出せていない間だけ（キャッシュがあれば差分だけで済み、すぐ終わる）。
                     Event::Received(bytes) => {
-                        if view.current().is_none() && status.is_visible() {
+                        if view.current().is_none() {
                             status.set_text(&tr!(
                                 "Loading History… {size} received",
                                 size = glib::format_size(bytes)
                             ));
+                            status.set_visible(true);
                             spinner.set_visible(true);
                             spinner.start();
                         }
@@ -2665,18 +2668,26 @@ fn build_tab(
                             );
                         }
                     }
-                    Event::Failed(e) => {
+                    // 読めなかったら、読んでいる途中の一言を消して、エラーを窓の前に出す（つながりが切れたのなら
+                    // ステータスバーが知らせるので出さない。macOS 版と同じ）。
+                    Event::Failed(repo, e) => {
                         spinner.stop();
                         spinner.set_visible(false);
-                        status.set_text(&e);
-                        status.set_visible(true);
-                        if (args.snapshot.is_some()
+                        status.set_visible(false);
+                        if args.snapshot.is_some()
                             || args.measure_scroll
-                            || args.measure_select.is_some())
-                            && let Some(window) = win_of()
+                            || args.measure_select.is_some()
                         {
                             eprintln!("{e}");
-                            window.close();
+                            if let Some(window) = win_of() {
+                                window.close();
+                            }
+                        } else if !repo.connection_state().is_some_and(|s| s.closed.is_some()) {
+                            gtk::AlertDialog::builder()
+                                .message(&e)
+                                .modal(true)
+                                .build()
+                                .show(win_of().as_ref());
                         }
                     }
                 }
@@ -3073,7 +3084,8 @@ enum Event {
     Changed(String, String, bool),
     /// Activity の Performance に出す時間（項目、ms）。
     Timing(&'static str, f64),
-    Failed(String),
+    /// History を読めなかった（読んだリポジトリ、エラー）。
+    Failed(Arc<Repository>, String),
     /// リポジトリを開けた（つながった）。
     Opened,
     /// リポジトリを開けなかった（つなげなかった）。
@@ -3135,7 +3147,7 @@ fn reload_history(repo: &Arc<Repository>, tx: &async_channel::Sender<Event>) {
             let _ = tx.send_blocking(Event::History(repo.clone(), history));
         }
         Err(e) => {
-            let _ = tx.send_blocking(Event::Failed(tr!("Can’t read History: {e}", e = e)));
+            let _ = tx.send_blocking(Event::Failed(repo.clone(), e.to_string()));
         }
     }
     if let Ok(refs) = repo.load_refs() {
