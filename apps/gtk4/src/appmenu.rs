@@ -275,6 +275,11 @@ fn handlers() -> Vec<(&'static str, Handler)> {
             "update-submodules",
             Box::new(|p| crate::submodulesheet::update(&p.actions, Vec::new())),
         ),
+        // subtree（サイドバーの Subtrees の見出しと同じシート。macOS 版と同じ）。
+        (
+            "add-subtree",
+            Box::new(|p| crate::subtreesheet::add(&p.actions)),
+        ),
         // View
         (
             "show-working-copy",

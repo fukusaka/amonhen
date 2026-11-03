@@ -67,6 +67,7 @@ mod sshhosts;
 mod stashes;
 mod statusbar;
 mod submodulesheet;
+mod subtreesheet;
 mod tabs;
 mod tagsign;
 mod templates;

@@ -2088,3 +2088,11 @@
 "Give the URL and the ref for {dir}" = "{dir} の URL と ref を渡してください";
 "Merged with conflicts. Resolve them, then commit" = "コンフリクトがあります。解決してからコミットしてください";
 "Add Subtree…" = "subtree を追加…";
+"Add Subtree" = "subtree を追加";
+"Branch or tag" = "ブランチかタグ";
+"Brings another repository’s branch into a folder of this one as a commit (git subtree add). Pull and Push later use the same repository and branch." = "別のリポジトリのブランチを、このリポジトリのフォルダにコミットとして取り込みます（git subtree add）。後の Pull・Push も同じリポジトリとブランチを使います。";
+"Creates a branch with only the history of this folder, its files at the top (git subtree split)." = "このフォルダの履歴だけの、フォルダの中身を一番上に置いたブランチを作ります（git subtree split）。";
+"Merges the repository’s branch into this folder (git subtree pull). Conflicts stop it like a merge." = "リポジトリのブランチをこのフォルダに merge します（git subtree pull）。コンフリクトすれば merge と同じく止まります。";
+"Sends the commits that changed this folder to the repository’s branch, as that repository’s own history (git subtree push)." = "このフォルダを変えたコミットを、そのリポジトリの履歴にしてブランチに送ります（git subtree push）。";
+"Squash its history into one commit (--squash)" = "履歴を 1 つのコミットにまとめる（--squash）";
+"Squashed when last pulled" = "最後の取り込みは squash";
