@@ -629,6 +629,9 @@ Staged / Unstaged の 2 群をやめ、変更のあるファイルを 1 つの�
 - clone: Clone のシートの URL に bundle のファイルを入れられる（打ち込むか、bundle を選ぶ…）。bundle では取得する
   範囲を選べず、HEAD のない bundle では「ブランチ:」で取り出すものを選ぶ。ほかのコミットより後だけの bundle は、
   clone できないと示す。
+- 取り込み: Repository > Fetch from Bundle… で bundle のファイルを選ぶと、ブランチを並べ、取り込む名前を尋ねる
+  （`refs/remotes/<名前>/*`。既定はファイルの名前から。既にある remote の名前は使えない）。タグは取り込まない。bundle
+  が前提とするコミットがリポジトリになければ、わけを言って止める。
 
 ## 8. コンフリクトの解決（埋め込みのマージエディタ）
 

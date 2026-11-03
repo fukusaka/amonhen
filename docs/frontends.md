@@ -272,6 +272,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Export Archive (zip / tar.gz / tar, top folder, one folder) | ✓ | ✓ | — | ✓ | CLI: `archive`. |
 | Save as Bundle (all, some refs, after a base) | ✓ | ✓ | — | ✓ | CLI: `bundle create`. |
 | Clone from a bundle file (branch when no HEAD) | ✓ | ✓ | — | ✓ | CLI: `clone <file> [-b <branch>]`. |
+| Fetch from Bundle (under a name, prerequisites checked) | ✓ | ✓ | — | ✓ | CLI: `bundle fetch`. |
 | Stopped `am` with Retry with 3-Way, Skip, Abort, Continue | ✓ | ✓ | ✓ | ✓ | VSCode: In a sidebar row.<br>CLI: `am --continue / --skip / --abort / --retry-3way`. |
 
 ## 8. Merge editor

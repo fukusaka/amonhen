@@ -272,6 +272,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | Export Archive（zip・tar.gz・tar、先頭のフォルダ、1 つのフォルダ） | ✓ | ✓ | — | ✓ | CLI: `archive`。 |
 | Save as Bundle（すべて・一部の ref・基点より後） | ✓ | ✓ | — | ✓ | CLI: `bundle create`。 |
 | bundle のファイルから clone（HEAD がなければブランチを選ぶ） | ✓ | ✓ | — | ✓ | CLI: `clone <file> [-b <branch>]`。 |
+| Fetch from Bundle（名前の下に、前提のコミットを確かめて） | ✓ | ✓ | — | ✓ | CLI: `bundle fetch`。 |
 | 止まった `am` と Retry with 3-Way・Skip・Abort・Continue | ✓ | ✓ | ✓ | ✓ | VSCode: サイドバーの行に出る。<br>CLI: `am --continue / --skip / --abort / --retry-3way`。 |
 
 ## 8. マージエディター

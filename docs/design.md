@@ -454,7 +454,14 @@ or split history in ways that are hard to see afterwards.
   - a bundle with prerequisites can't be cloned (git stops with "remote transport reported error"), so it is refused
     with the reason;
   - `--filter` and `--depth` are ignored by git for a bundle, so the sheet turns the Download choice off.
-- `bundle create -`, `clone -b` and all of the above are in git 2.23.
+- Fetching from a bundle (`{"op":"fetchBundle"}`) reads the file on the core's machine and sends its bytes to the
+  backend, which writes them to a temporary file in the git dir and runs `git fetch --no-tags <file>
+  +refs/heads/*:refs/remotes/<name>/*`; so it works over SSH and through the daemon (over 1 GB is refused before
+  sending). `{"op":"bundleCheck"}` reads the header and asks the backend which prerequisites are missing
+  (`rev-parse --verify <id>^{commit}`), so the app stops with the reason instead of git's "lacks these prerequisite
+  commits". The name must be a valid ref part and not an existing remote's, so a remote's tracking branches are never
+  overwritten; tags are left out so no tag is replaced.
+- `bundle create -`, `clone -b`, `fetch <file>` and all of the above are in git 2.23.
 
 ## Speed targets and measurement
 

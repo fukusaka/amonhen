@@ -432,7 +432,13 @@ rebase と History の編集（reword・squash・fixup・drop・edit・split・m
   - 前提のコミットがある bundle は clone できない（git は「remote transport reported error」で止まる）ので、わけを
     言って断る。
   - bundle では git は `--filter` と `--depth` を無視するので、シートでは取得する範囲を選べなくする。
-- `bundle create -`・`clone -b` も、上のこともすべて git 2.23 にある。
+- bundle からの取り込み（`{"op":"fetchBundle"}`）は、コアの機械でファイルを読み、中身をバックエンドに送る。
+  バックエンドは git dir の中の一時ファイルに書いて `git fetch --no-tags <file> +refs/heads/*:refs/remotes/<name>/*`
+  する。なので SSH 先や daemon 越しでも動く（1 GB を超えれば送る前に断る）。`{"op":"bundleCheck"}` は見出しを読み、
+  前提のコミットのうちないものをバックエンドに尋ねる（`rev-parse --verify <id>^{commit}`）。git の「lacks these
+  prerequisite commits」ではなく、アプリがわけを言って止める。名前は ref の一部として使えて、既にある remote の名前
+  でないこと（remote の追跡ブランチを書き換えない）。タグは取らない（タグを置き換えない）。
+- `bundle create -`・`clone -b`・`fetch <file>` も、上のこともすべて git 2.23 にある。
 
 ## 速度目標と計測
 
