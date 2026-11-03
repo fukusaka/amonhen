@@ -399,7 +399,8 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
         sheet.add(&row("URL:", &url_line));
         // gh があれば、自分のリポジトリから選べる（読み終えたら一覧に入れる）。
         if crate::github::available() {
-            // 読み終えるまでは「読み込み中…」（macOS 版と同じ）。選べる項目でなければ、選んでも見出しに戻す。
+            // 読み終えるまでは「読み込み中…」（macOS 版と同じ）。macOS 版のプルダウンと同じく、選んだ後も見出しに
+            // 戻す（URL を書き直した後に選んだ名前が残らず、同じものをもう一度選べる）。
             let mine = gtk::DropDown::from_strings(&[
                 &tr!("Choose from My GitHub Repositories"),
                 &tr!("Loading…"),
@@ -413,10 +414,15 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
                     if i == 0 {
                         return;
                     }
-                    let Some((_, link)) = repos.borrow().get(i - 1).cloned() else {
-                        d.set_selected(0);
-                        return;
-                    };
+                    let picked = repos.borrow().get(i - 1).cloned();
+                    // 選んでいる最中に選び直さず、一息おいて見出しに戻す。
+                    let weak = d.downgrade();
+                    glib::idle_add_local_once(move || {
+                        if let Some(d) = weak.upgrade() {
+                            d.set_selected(0);
+                        }
+                    });
+                    let Some((_, link)) = picked else { return };
                     if let (Some(url), Some(name)) = (url_w.upgrade(), name_w.upgrade()) {
                         url.set_text(&format!("{link}.git"));
                         name.set_text("");
