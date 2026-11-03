@@ -187,8 +187,14 @@ extension Actions {
                     (L("Commits to send"), outgoing, false),
                     (L("Commits %@ will lose", upstream), force || diverged ? incoming : .empty, true),
                 ])
-                alert.addButton(withTitle: ok).hasDestructiveAction = force || diverged
-                alert.addButton(withTitle: L("Cancel"))
+                let okButton = alert.addButton(withTitle: ok)
+                let cancel = alert.addButton(withTitle: L("Cancel"))
+                // Force Push は戻せない（赤く、↩ では押せない。PushSheet と同じ）。
+                if force || diverged {
+                    okButton.hasDestructiveAction = true
+                    okButton.keyEquivalent = ""
+                    cancel.keyEquivalent = "\r"
+                }
                 if diverged { alert.addButton(withTitle: "Pull…") }
                 choice = switch await present(alert) {
                 case .alertFirstButtonReturn: .ok
