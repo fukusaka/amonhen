@@ -135,6 +135,7 @@ becomes the GitHub Release notes.
 - macOS: the Commit ▾ menu no longer gains a separator after every commit.
 - macOS: the Commit button is off while a commit runs, so a second ⌘↩ can't start another one.
 - macOS: closing the AI panel stops the claude or codex run, so the activity indicator stops and nothing is cached.
+- macOS: typing in Working Copy's Description field can be undone with ⌘Z.
 
 - The GTK4 app's Undo button asks once; it opened the question twice, so one stayed after undoing.
 - A `.mailmap`, or a mailmap setting (`log.mailmap`, `mailmap.file`), changed while the engine was reading the old

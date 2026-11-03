@@ -139,6 +139,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
         // 左の上: コミットの入力。
         message.isRichText = false
+        // ⌘Z で打ったものを戻せるように（コードで作った NSTextView は既定で戻せない）。
+        message.allowsUndo = true
         message.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         message.isAutomaticQuoteSubstitutionEnabled = false
         message.isAutomaticDashSubstitutionEnabled = false
@@ -1819,6 +1821,16 @@ final class TitleAndButtonsBar: NSView {
 /// 空のときに薄い案内を出すテキスト欄。`guideColumn` があれば、その桁に目安の縦線を引く（72 桁で改行する慣習）。
 final class PlaceholderTextView: NSTextView {
     var placeholder = "" { didSet { needsDisplay = true } }
+
+    /// コードで中身を入れ替えたら、前に打ったものの Undo は捨てる（入れ替えた後の文に当てると範囲がずれる。
+    /// マージエディタの Result と同じ）。
+    override var string: String {
+        get { super.string }
+        set {
+            super.string = newValue
+            if allowsUndo { undoManager?.removeAllActions() }
+        }
+    }
     var guideColumn: Int? { didSet { needsDisplay = true } }
 
     override func draw(_ dirtyRect: NSRect) {
