@@ -875,47 +875,25 @@ impl Inner {
         self.update_count();
     }
 
-    /// 選んでいる行から `step` 方向の、次の一致を選ぶ（端では反対の端へ回る）。
+    /// 最後に移った一致から `step` 方向の、次の一致を選ぶ（端では反対の端へ回る）。ほかの行を押して選んでも、
+    /// 移る先は変わらない（macOS 版の `moveSearch` と同じ）。
     fn step(&self, step: i32) {
-        // 一致したものだけを出しているなら、どの行も一致なので隣の行へ。
-        if self.filtered.get() {
-            let count = self.matches.borrow().len() as u32;
-            if count == 0 {
-                self.view.display().beep();
-            }
-            if count > 0 {
-                let row = match self.view.selected() {
-                    Some(r) if step >= 0 => (r + 1) % count,
-                    Some(r) => (r + count - 1) % count,
-                    None => 0,
-                };
-                self.view.select(row);
-            }
-            self.update_count();
-            return;
-        }
-        let matches = self.matches.borrow().clone();
-        if matches.is_empty() {
+        let count = self.matches.borrow().len();
+        if count == 0 {
             // 一致がなければ鳴らす（macOS 版と同じ。探す前なら鳴らさない）。
-            if self.searched.borrow().is_some() {
+            if self.filtered.get() || self.searched.borrow().is_some() {
                 self.view.display().beep();
             }
             self.update_count();
             return;
         }
-        let row = match (self.view.selected(), step >= 0) {
-            (Some(cur), true) => matches
-                .iter()
-                .copied()
-                .find(|&r| r > cur)
-                .unwrap_or(matches[0]),
-            (Some(cur), false) => matches
-                .iter()
-                .rev()
-                .copied()
-                .find(|&r| r < cur)
-                .unwrap_or(*matches.last().unwrap()),
-            (None, _) => matches[0],
+        let index = next_index(self.index.get().filter(|&i| i < count), step, count);
+        self.index.set(Some(index));
+        // 一致したものだけを出しているなら、どの行も一致なので、番目がそのまま行。
+        let row = if self.filtered.get() {
+            index as u32
+        } else {
+            self.matches.borrow()[index]
         };
         self.view.select(row);
         self.update_count();
@@ -943,6 +921,13 @@ impl Inner {
         let index = self.index.get().filter(|&i| i < total);
         self.count.set_text(&count_text(index, total));
     }
+}
+
+/// 一致の `index` 番目から `step` だけ動いた番目（端では反対の端へ。まだどこにも移っていなければ先頭）。
+fn next_index(index: Option<usize>, step: i32, count: usize) -> usize {
+    let count = count as i64;
+    let from = index.map_or(-i64::from(step), |i| i as i64);
+    (from + i64::from(step)).rem_euclid(count) as usize
 }
 
 /// 件数の欄の文字（macOS 版と同じく「N / M」か「No Matches」）。
@@ -1011,7 +996,16 @@ fn focus_in_history(window: &gtk::Window, bar: &gtk::SearchBar) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{SCOPES, count_text, grouped, searches_contents, with_prefix};
+    use super::{SCOPES, count_text, grouped, next_index, searches_contents, with_prefix};
+
+    #[test]
+    fn steps_from_the_last_visited_match() {
+        assert_eq!(next_index(None, 1, 3), 0);
+        assert_eq!(next_index(None, -1, 3), 0);
+        assert_eq!(next_index(Some(0), 1, 3), 1);
+        assert_eq!(next_index(Some(2), 1, 3), 0);
+        assert_eq!(next_index(Some(0), -1, 3), 2);
+    }
 
     #[test]
     fn inserts_a_scope_prefix() {
