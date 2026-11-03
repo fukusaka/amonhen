@@ -89,6 +89,20 @@ pub enum Kind {
     SealCross,
     /// questionmark.circle（鍵がない・確かめられない・署名者が違う）
     Question,
+    /// checkmark.seal.fill（署名を確かめ、鍵を強く信用している）
+    SealFill,
+    /// xmark.seal.fill（不正な署名）
+    SealCrossFill,
+    /// checkmark.shield（署名は正しいが、鍵の信用度が決まっていない）
+    Shield,
+    /// exclamationmark.shield.fill（失効した鍵）
+    ShieldAlertFill,
+    /// person.crop.circle.badge.questionmark（署名した人がタガーと違う）
+    PersonQuestion,
+    /// clock.badge.exclamationmark（期限の切れた鍵）
+    ClockAlert,
+    /// exclamationmark.circle（この git では確かめられない）
+    ExclamationCircle,
     /// sparkles（AI の解説・提案）
     Sparkles,
     /// character.bubble（AI の翻訳）
@@ -290,6 +304,8 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
     let p = gsk::PathBuilder::new();
     let point = |x: f32, y: f32| graphene::Point::new(x, y);
     let mut fill = None;
+    // 塗りから抜く線（白抜きの印。macOS 版の .fill の記号の中の印）。
+    let mut knock: Option<gsk::PathBuilder> = None;
     match kind {
         Kind::None => return,
         Kind::WorkingCopy => {
@@ -741,6 +757,67 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             seal_outline(&p);
             seal_mark(&p, kind == Kind::SealCross);
         }
+        Kind::SealFill | Kind::SealCrossFill => {
+            // 塗ったぎざぎざの丸と、白く抜いたチェックか ×。
+            let solid = gsk::PathBuilder::new();
+            seal_outline(&solid);
+            let mark = gsk::PathBuilder::new();
+            seal_mark(&mark, kind == Kind::SealCrossFill);
+            fill = Some(solid);
+            knock = Some(mark);
+        }
+        Kind::Shield => {
+            shield(&p);
+            p.move_to(5.6, 8.0);
+            p.line_to(7.4, 9.8);
+            p.line_to(10.4, 6.4);
+        }
+        Kind::ShieldAlertFill => {
+            let solid = gsk::PathBuilder::new();
+            shield(&solid);
+            let mark = gsk::PathBuilder::new();
+            mark.move_to(8.0, 5.0);
+            mark.line_to(8.0, 8.6);
+            mark.move_to(8.0, 11.0);
+            mark.line_to(8.0, 11.1);
+            fill = Some(solid);
+            knock = Some(mark);
+        }
+        Kind::PersonQuestion => {
+            // 丸の中の人（頭と肩）と、右下の小さな「?」。
+            p.move_to(12.6, 6.0);
+            p.svg_arc_to(6.0, 6.0, 0.0, true, false, 7.0, 13.9);
+            p.add_circle(&point(7.0, 6.2), 1.9);
+            p.move_to(3.4, 11.8);
+            p.svg_arc_to(4.0, 3.2, 0.0, false, true, 9.6, 9.8);
+            p.move_to(11.0, 9.6);
+            p.svg_arc_to(1.6, 1.6, 0.0, true, true, 13.2, 11.3);
+            p.line_to(12.6, 12.0);
+            let dot = gsk::PathBuilder::new();
+            dot.add_circle(&point(12.6, 14.2), 0.75);
+            fill = Some(dot);
+        }
+        Kind::ClockAlert => {
+            // 時計（右上を開ける）と、右の「!」。
+            p.move_to(11.0, 3.1);
+            p.svg_arc_to(5.6, 5.6, 0.0, true, false, 11.9, 12.2);
+            p.move_to(7.4, 5.2);
+            p.line_to(7.4, 8.4);
+            p.line_to(9.4, 9.6);
+            p.move_to(14.0, 3.0);
+            p.line_to(14.0, 8.6);
+            let dot = gsk::PathBuilder::new();
+            dot.add_circle(&point(14.0, 11.6), 0.8);
+            fill = Some(dot);
+        }
+        Kind::ExclamationCircle => {
+            p.add_circle(&point(8.0, 8.0), 6.3);
+            p.move_to(8.0, 4.6);
+            p.line_to(8.0, 8.8);
+            let dot = gsk::PathBuilder::new();
+            dot.add_circle(&point(8.0, 11.4), 0.8);
+            fill = Some(dot);
+        }
         Kind::Question => {
             p.add_circle(&point(8.0, 8.0), 6.3);
             p.move_to(6.0, 6.4);
@@ -796,7 +873,30 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
     stroke.set_line_cap(gsk::LineCap::Round);
     stroke.set_line_join(gsk::LineJoin::Round);
     snapshot.append_stroke(&p.to_path(), &stroke, color);
-    if let Some(f) = fill {
-        snapshot.append_fill(&f.to_path(), gsk::FillRule::Winding, color);
+    match (fill, knock) {
+        (Some(f), Some(k)) => {
+            // 先に抜く線を印（mask）にして、塗りをその外だけに描く。
+            snapshot.push_mask(gsk::MaskMode::InvertedAlpha);
+            let wide = gsk::Stroke::new(1.6);
+            wide.set_line_cap(gsk::LineCap::Round);
+            wide.set_line_join(gsk::LineJoin::Round);
+            snapshot.append_stroke(&k.to_path(), &wide, color);
+            snapshot.pop();
+            snapshot.append_fill(&f.to_path(), gsk::FillRule::Winding, color);
+            snapshot.pop();
+        }
+        (Some(f), None) => snapshot.append_fill(&f.to_path(), gsk::FillRule::Winding, color),
+        _ => {}
     }
+}
+
+/// 盾の形（上が平ら、下がとがる）。
+fn shield(p: &gsk::PathBuilder) {
+    p.move_to(8.0, 1.8);
+    p.line_to(13.2, 3.8);
+    p.line_to(13.2, 7.6);
+    p.quad_to(13.2, 12.2, 8.0, 14.4);
+    p.quad_to(2.8, 12.2, 2.8, 7.6);
+    p.line_to(2.8, 3.8);
+    p.close();
 }

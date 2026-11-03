@@ -105,12 +105,16 @@ impl Status {
     /// 印のアイコンと色（CSS のクラス）。
     fn icon(self) -> (icon::Kind, Option<&'static str>) {
         match self {
+            // 信用度は形でも分かる（塗った seal は強い信用、縁だけは弱い信用。macOS 版と同じ記号）。
+            Self::Verified(t) if t >= 3 => (icon::Kind::SealFill, Some("success")),
             Self::Verified(_) => (icon::Kind::Seal, Some("success")),
-            Self::Untrusted => (icon::Kind::Seal, Some("caution")),
-            Self::SignerMismatch => (icon::Kind::Question, Some("caution")),
-            Self::Expired => (icon::Kind::History, Some("warning")),
-            Self::Revoked | Self::Bad => (icon::Kind::SealCross, Some("error")),
-            Self::NoKey | Self::Unsupported => (icon::Kind::Question, None),
+            Self::Untrusted => (icon::Kind::Shield, Some("caution")),
+            Self::SignerMismatch => (icon::Kind::PersonQuestion, Some("caution")),
+            Self::Expired => (icon::Kind::ClockAlert, Some("warning")),
+            Self::Revoked => (icon::Kind::ShieldAlertFill, Some("error")),
+            Self::Bad => (icon::Kind::SealCrossFill, Some("error")),
+            Self::NoKey => (icon::Kind::Question, None),
+            Self::Unsupported => (icon::Kind::ExclamationCircle, None),
         }
     }
 
