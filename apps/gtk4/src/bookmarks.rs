@@ -918,7 +918,7 @@ fn scan_local_with_dirs(root: &ScanRoot) -> (Vec<String>, Vec<PathBuf>) {
         &mut found,
         &mut dirs,
     );
-    found.sort_by_key(|p| p.to_lowercase());
+    found.sort_by(|a, b| crate::patches::natural(a, b));
     (found, dirs)
 }
 

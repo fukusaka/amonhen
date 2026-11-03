@@ -412,8 +412,8 @@ fn first_line(text: &str) -> String {
         .to_owned()
 }
 
-/// 数字を数として比べる（`2.patch` が `10.patch` より前。Finder の並びと同じ考え）。
-fn natural(a: &str, b: &str) -> std::cmp::Ordering {
+/// 数字を数として比べる（`2.patch` が `10.patch` より前。Finder の並び、macOS 版の localizedStandardCompare と同じ考え）。
+pub(crate) fn natural(a: &str, b: &str) -> std::cmp::Ordering {
     fn chunks(s: &str) -> Vec<(bool, String)> {
         let mut out: Vec<(bool, String)> = Vec::new();
         for c in s.chars() {
@@ -444,6 +444,13 @@ fn natural(a: &str, b: &str) -> std::cmp::Ordering {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn orders_names_like_finder() {
+        let mut names = vec!["prj10", "Prj2", "prj1", "w10", "w2"];
+        names.sort_by(|a, b| natural(a, b));
+        assert_eq!(names, ["prj1", "Prj2", "prj10", "w2", "w10"]);
+    }
 
     #[test]
     fn takes_a_drop_only_when_every_file_is_a_patch() {

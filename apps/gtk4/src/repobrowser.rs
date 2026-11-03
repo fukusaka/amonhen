@@ -400,7 +400,7 @@ fn folder_tree(
         title: &dyn Fn(&str) -> String,
     ) -> Vec<Node> {
         let mut names: Vec<&String> = node.children.keys().collect();
-        names.sort_by_key(|n| n.to_lowercase());
+        names.sort_by(|a, b| crate::patches::natural(a, b));
         names
             .into_iter()
             .map(|name| {
