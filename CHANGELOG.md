@@ -196,6 +196,7 @@ becomes the GitHub Release notes.
   Group and Color Label do.
 - macOS: Activity's History tab updates its Undo list after each operation in the repository windows.
 - macOS: Japanese messages that point to a settings page name it as 「設定 > …」, as the menu calls it.
+- macOS: clearing the sidebar's branch filter closes again the headings that the filter opened.
 
 ### [0.2.8] - 2026-10-30
 

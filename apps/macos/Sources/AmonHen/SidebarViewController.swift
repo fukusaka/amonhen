@@ -230,6 +230,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private let filterField = NSSearchField()
     /// 絞り込みの語（空白で区切る。小文字。名前がすべてを含む行だけ出す）。空なら絞り込まない。
     private var filterWords: [String] = []
+    /// 絞り込みを始める前に開いていた見出し（絞り込みが開いた見出しは覚えず、やめたらこの開き方に戻す）。
+    private var unfilteredExpanded: Set<String>?
 
     override func loadView() {
         let column = NSTableColumn(identifier: .init("name"))
@@ -492,7 +494,14 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         // 今のブランチは、書き込む先の worktree のもの（worktree が 1 つなら開いたリポジトリの HEAD）。
         headBranch = editingInfo.map(\.branch) ?? refs.headBranch
         let head = headBranch
-        let expanded = Set(groups.filter { outline.isItemExpanded($0) }.map(\.title))
+        var expanded = Set(groups.filter { outline.isItemExpanded($0) }.map(\.title))
+        // 絞り込んでいる間に開いた見出しは覚えない（絞り込みをやめたら、前の開き方に戻す）。
+        if filterWords.isEmpty {
+            if let before = unfilteredExpanded { expanded = before }
+            unfilteredExpanded = nil
+        } else if unfilteredExpanded == nil {
+            unfilteredExpanded = expanded
+        }
         // Workspace と Working Copy は、畳んであれば畳んだまま（初めは開く）。
         let workspaceOpen = first || expanded.contains(workspace.title)
         let workingCopyOpen = isWorkingCopyOpen
