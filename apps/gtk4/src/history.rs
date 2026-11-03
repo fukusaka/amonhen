@@ -177,6 +177,8 @@ pub struct State {
     on_select: Option<SelectCallback>,
     /// 行を右クリックしたときに呼ぶ（行、x、y）。
     on_menu: Option<MenuCallback>,
+    /// メニューを出している行（選びはせず、枠で示す。macOS 版の `clickedRow`）。
+    menu_row: Option<u32>,
     /// 検索に一致した行（昇順）。薄く塗る。
     matches: Rc<Vec<u32>>,
     lanes: Lanes,
@@ -363,7 +365,8 @@ mod imp {
             });
             view.add_controller(click);
 
-            // 右クリック: その行を選んで、コミットのメニュー。
+            // 右クリック: その行のコミットのメニュー。選びはせず（詳細はそのまま）、メニューの間は行を枠で示す
+            // （macOS 版の `clickedRow`）。複数選んでいる行の上なら、まとめての操作のメニュー。
             let menu = gtk::GestureClick::new();
             menu.set_button(gdk::BUTTON_SECONDARY);
             let weak = view.downgrade();
@@ -371,10 +374,6 @@ mod imp {
                 let Some(view) = weak.upgrade() else { return };
                 view.grab_focus();
                 if let Some(row) = view.row_at(y as f32) {
-                    // 複数選んでいる行の上なら、選んだまま（まとめての操作のメニュー）。
-                    if !view.selection().contains(&row) {
-                        view.select_visible(row);
-                    }
                     let f = view.state().on_menu.clone();
                     if let Some(f) = f {
                         f(row, x, y);
@@ -756,6 +755,8 @@ impl HistoryView {
             }
             // shallow clone の境界のコミットの行（境界はたいてい数個なので、全行を見ても数 ms）。
             st.boundary = Rc::new(history.boundary_rows().into_iter().collect());
+            // 行の番号が変わるので、メニューの行の枠は外す。
+            st.menu_row = None;
             st.history = Some(history);
             st.chunks.clear();
             st.loading.clear();
@@ -1186,6 +1187,23 @@ impl HistoryView {
         self.state().on_menu = Some(Rc::new(f));
     }
 
+    /// `row` のメニュー `popover` を出した。閉じるまで、その行を枠で示す（選んでいない行でも）。
+    pub fn mark_menu_row(&self, row: u32, popover: &impl IsA<gtk::Popover>) {
+        self.state().menu_row = Some(row);
+        self.queue_draw();
+        let weak = self.downgrade();
+        popover.connect_closed(move |_| {
+            if let Some(view) = weak.upgrade() {
+                let mut st = view.state();
+                if st.menu_row == Some(row) {
+                    st.menu_row = None;
+                    drop(st);
+                    view.queue_draw();
+                }
+            }
+        });
+    }
+
     /// 選んだ行が変わったら `f(選んでいる行、昇順)` を呼ぶ。
     /// GitHub の CI の状態（コミットごと）を替える。変わったら描き直す。
     pub fn set_ci(&self, ci: HashMap<Oid, Ci>) {
@@ -1585,6 +1603,22 @@ impl HistoryView {
             for &row in &chosen {
                 let y = row as f32 * rh - scroll_y;
                 snapshot.append_color(&color, &graphene::Rect::new(0.0, y, width, rh));
+            }
+            // メニューを出している行の枠（macOS 版の表の、右クリックした行の枠）。
+            if let Some(row) = st.menu_row.filter(|r| (first..last).contains(r)) {
+                let y = row as f32 * rh - scroll_y;
+                let rect = gsk::RoundedRect::from_rect(
+                    graphene::Rect::new(1.0, y + 1.0, width - 2.0, rh - 2.0),
+                    4.0,
+                );
+                let path = gsk::PathBuilder::new();
+                path.add_rounded_rect(&rect);
+                let ring = if chosen.contains(&row) && focused {
+                    on_accent
+                } else {
+                    accent
+                };
+                snapshot.append_stroke(&path.to_path(), &gsk::Stroke::new(2.0), &ring);
             }
 
             // グラフ。列は見えているレーンの分だけ取り、スクロールで見えるレーンが変われば伸び縮みする（macOS 版と

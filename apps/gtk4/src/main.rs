@@ -1524,7 +1524,9 @@ fn build_tab(
                 items.extend(commitops::menu(&a, &history, row, view.upcast_ref(), &eo));
                 items
             };
-            menu::popup(&view, x, y, items);
+            if let Some(popover) = menu::popup_returning(&view, x, y, items) {
+                view.mark_menu_row(row, &popover);
+            }
         }
     });
     // 最後に読んだ ref（メニューにはチェックアウト中のブランチや最新の stash が要る）。
@@ -2833,7 +2835,13 @@ fn connect_selection(
             return;
         };
         match rows {
-            [] => {}
+            // 選んだ行を外して何も選んでいない（Ctrl で外した）: 詳細を消して「コミットを選ぶと…」（macOS 版と同じ）。
+            [] => {
+                loader.start();
+                loader
+                    .files
+                    .show_message(&tr!("Select a commit to see its changes."));
+            }
             [row] => loader.one(repo, history, *row),
             _ => loader.many(repo, history, rows.to_vec(), PairMode::Forward),
         }

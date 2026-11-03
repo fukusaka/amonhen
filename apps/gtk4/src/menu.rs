@@ -427,8 +427,18 @@ pub fn tooltips_on_show(button: &gtk::MenuButton) {
 
 /// `parent` の `(x, y)` に `items` のメニューを出す。
 pub fn popup(parent: &impl IsA<gtk::Widget>, x: f64, y: f64, items: Vec<Item>) {
+    popup_returning(parent, x, y, items);
+}
+
+/// [`popup`] と同じ。出した吹き出しを返す（閉じたときに何かしたいとき）。
+pub fn popup_returning(
+    parent: &impl IsA<gtk::Widget>,
+    x: f64,
+    y: f64,
+    items: Vec<Item>,
+) -> Option<gtk::PopoverMenu> {
     if items.is_empty() {
-        return;
+        return None;
     }
     let group = gio::SimpleActionGroup::new();
     let mut custom = Vec::new();
@@ -457,4 +467,5 @@ pub fn popup(parent: &impl IsA<gtk::Widget>, x: f64, y: f64, items: Vec<Item>) {
         glib::idle_add_local_once(move || p.unparent());
     });
     popover.popup();
+    Some(popover)
 }
