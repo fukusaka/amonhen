@@ -120,15 +120,15 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| 設定のページ（ページの一覧・git の行・行ごとの出どころ・↩︎・ⓘ） | ✓ | ✓ | △ | n/a | VSCode: メインビューの Repository Settings（エンジンがあるとき）。今は Operations・Branches・Working Copy・Fetching and Folders・Remotes・Keys and Values で、このリポジトリの設定だけ。 |
+| 設定のページ（ページの一覧・git の行・行ごとの出どころ・↩︎・ⓘ） | ✓ | ✓ | △ | n/a | VSCode: メインビューの Repository Settings（エンジンがあるとき）。今は Operations・Branches・Working Copy・Fetching and Folders・Remotes・Hooks and LFS・Keys and Values で、このリポジトリの設定だけ。 |
 | Author and Signing（署名の選択・集めた鍵・mailmap） | ✓ | ✓ | — | △ | CLI: `amonhen run`（`signingKeys`・`configSet`）から。 |
 | Commits: メッセージのテンプレート（なし・共有・独自・ファイル） | ✓ | ✓ | — | △ | CLI: `amonhen run` から。 |
 | Branches: 既定のブランチを選ぶ | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | Operations: pull・fetch.prune・autostash・updateRefs・コンフリクトの書き方・rerere | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | Working Copy: 改行・実行ビット・`.git/info/exclude` の編集 | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | Remotes: 表と、つながるか確かめるシート | ✓ | ✓ | △ | △ | VSCode: 表と行ごとのボタン（Edit URL…・Push URL…・Check・Prune・Rename…・Remove…）と Add…。値はシートでなく入力欄で聞く。<br>CLI: `amonhen run` から。 |
-| Hooks: 表・Enabled・スクリプト・Create Hook… | ✓ | ✓ | — | △ | CLI: `amonhen run` から。 |
-| LFS: 入っているか・パターン・Track Pattern…・ファイルの数 | ✓ | ✓ | — | △ | CLI: `amonhen run` から。 |
+| Hooks: 表・Enabled・スクリプト・Create Hook… | ✓ | ✓ | ✓ | △ | VSCode: Open で VSCode のエディターにスクリプトを開く。<br>CLI: `amonhen run` から。 |
+| LFS: 入っているか・パターン・Track Pattern…・ファイルの数 | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | Keys and Values（git config の表、Basic / Customized / All、Combined / Levels） | ✓ | ✓ | △ | △ | VSCode: Basic / Customized / All と検索、効いている値と設定元。値は入力欄で変える。Levels の列はない。<br>CLI: `amonhen run`（`configList`・`configSet`）から。 |
 | 要る git の版を添えて行を無効にする | ✓ | ✓ | ✓ | n/a |  |
 | git の行にリポジトリの形（shallow・partial・sparse・maintenance） | ✓ | ✓ | ✓ | △ | CLI: `status` が shallow・partial・sparse を添える。 |

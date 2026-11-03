@@ -5,6 +5,7 @@
  */
 import { ConfigView, normalizedBool, pullMethod, pullWrites, remoteKind, scopeLabel, type ConfigEntry, type PullMethod } from '../settings/model.ts';
 import { PAGES, pageKeys, type SettingRow } from '../settings/pages.ts';
+import { hookWhen } from '../settings/hooks.ts';
 import type { FetchingAction, SettingsFacts } from '../settings/protocol.ts';
 import type { HostMessage } from '../view/protocol.ts';
 import { el, getState, post, updateState, type View } from './api.ts';
@@ -391,6 +392,68 @@ export function createSettingsView(): View {
     return box;
   }
 
+  /** Hooks and LFS（アプリと同じ）: フックの表（名前・いつ動くか・有効）と Git LFS（入っているか・パターン・数） */
+  function hooksRows(): HTMLElement {
+    const box = el('div');
+    const info = facts.hooksAndLfs;
+    if (!info) return box;
+    const hooks = el('section', 'settings-section');
+    hooks.append(el('h3', '', 'Hooks'));
+    if (info.hooks.length === 0) {
+      hooks.append(el('div', 'setting-help', 'No hooks. .sample files aren’t counted.'));
+    } else {
+      const table = el('table', 'settings-table');
+      const head = el('tr');
+      for (const h of ['Name', 'Runs', 'Enabled', '']) head.append(el('th', '', h));
+      table.append(head);
+      for (const h of info.hooks) {
+        const tr = el('tr');
+        const box = el('input');
+        box.type = 'checkbox';
+        box.checked = h.enabled;
+        box.title = 'The executable bit. git runs only executable hooks.';
+        box.addEventListener('change', () => post({ type: 'settingsRun', action: 'hookEnabled', name: h.name, enabled: box.checked }));
+        const enabled = el('td');
+        enabled.append(box);
+        const actions = el('td', 'settings-actions');
+        actions.append(button('Open', { action: 'hookOpen', name: h.name }, 'Open the script in the editor'));
+        tr.append(el('td', 'mono', h.name), el('td', 'muted', hookWhen(h.name)), enabled, actions);
+        table.append(tr);
+      }
+      hooks.append(table);
+    }
+    hooks.append(
+      button('Create Hook…', { action: 'hookCreate' }, 'Puts a #!/bin/sh skeleton in place and makes it executable.'),
+      el('div', 'setting-help', `Location: ${info.hooksPath ? `core.hooksPath = ${info.hooksPath}` : '.git/hooks'}`),
+    );
+    const lfs = el('section', 'settings-section');
+    lfs.append(el('h3', '', 'Git LFS'));
+    lfs.append(
+      el(
+        'div',
+        'setting-help',
+        info.lfs
+          ? info.lfsFiles !== null
+            ? `Installed. ${info.lfsFiles} files are in LFS.`
+            : 'Installed (filter.lfs is set)'
+          : 'Not installed. Install git-lfs and run git lfs install.',
+      ),
+    );
+    if (info.lfsPatterns.length === 0) {
+      lfs.append(el('div', 'setting-help', 'No LFS patterns in .gitattributes.'));
+    }
+    for (const pattern of info.lfsPatterns) {
+      const item = el('div', 'setting-folder');
+      item.append(el('code', '', pattern), button('Remove', { action: 'lfsTrack', pattern, track: false }, 'Stop storing these in LFS (git lfs untrack)'));
+      lfs.append(item);
+    }
+    const track = button('Track Pattern…', { action: 'lfsTrack', track: true }, 'Store files matching a pattern in LFS (git lfs track)');
+    track.disabled = !info.lfs;
+    lfs.append(track);
+    box.append(hooks, lfs);
+    return box;
+  }
+
   function renderRow(r: SettingRow): HTMLElement {
     const disabled =
       'needs' in r && r.needs === 'updateRefs' && !facts.updateRefs
@@ -407,6 +470,8 @@ export function createSettingsView(): View {
         return remotesTable();
       case 'config':
         return configTable();
+      case 'hooks':
+        return hooksRows();
       case 'pull': {
         const method = pullMethod(config);
         const decidingKey = config.effective('pull.ff')?.value.toLowerCase() === 'only' ? 'pull.ff' : 'pull.rebase';

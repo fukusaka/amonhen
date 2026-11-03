@@ -22,6 +22,14 @@ export interface SettingsFacts {
   remotes: { name: string; fetchUrl: string; pushUrl: string }[];
   /** git が知っている設定の名前（Keys and Values の All） */
   knownKeys: string[];
+  /** コアの `hooksAndLfs`（Hooks and LFS） */
+  hooksAndLfs?: {
+    hooks: { name: string; enabled: boolean }[];
+    hooksPath: string | null;
+    lfs: boolean;
+    lfsFiles: number | null;
+    lfsPatterns: string[];
+  };
 }
 
 export interface RepositoryForm {
@@ -44,7 +52,12 @@ export type FetchingAction =
   /** Remotes の行のボタン（add は名前なし） */
   | { action: 'remote'; op: 'add' | 'rename' | 'editUrl' | 'editPushUrl' | 'check' | 'prune' | 'remove'; name?: string }
   /** Keys and Values: キーの値を聞いて書く（`key` がなければ、キーから聞いて足す） */
-  | { action: 'configEdit'; key?: string };
+  | { action: 'configEdit'; key?: string }
+  /** Hooks and LFS: フックの実行の許可・エディタで開く・作る、LFS で追跡するパターンを足す・外す */
+  | { action: 'hookEnabled'; name: string; enabled: boolean }
+  | { action: 'hookOpen'; name: string }
+  | { action: 'hookCreate' }
+  | { action: 'lfsTrack'; pattern?: string; track: boolean };
 
 export type SettingsHostMessage =
   /** 読んだ設定（`error` は読めなかったわけ） */

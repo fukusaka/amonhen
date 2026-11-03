@@ -2,8 +2,12 @@
  * メインビューの Repository Settings の拡張ホスト側。共有の daemon のコアで、設定の並び（`configList`）・git の版
  * （`gitVersion`）・リポジトリの形（`repositoryForm`）を読み、行の値をこのリポジトリの設定に書く（`configSet`）
  */
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import * as vscode from 'vscode';
 import { daemonFor } from '../daemon/connection.ts';
+import { hooksDirectory } from '../settings/hookFiles.ts';
+import { HOOK_NAMES, hookWhen } from '../settings/hooks.ts';
 import type { ConfigEntry } from '../settings/model.ts';
 import type { FetchingAction, RepositoryForm, SettingsFacts, SettingsHostMessage, SettingsWebviewMessage } from '../settings/protocol.ts';
 import type { Repository } from '../state/repository.ts';
@@ -140,6 +144,40 @@ export class SettingsController implements vscode.Disposable {
     const form = (await client.call({ op: 'run', command: { op: 'repositoryForm' } })).json['info'] as RepositoryForm | undefined;
     const folders = form?.sparse?.cone ? form.sparse.folders : [];
     switch (a.action) {
+      case 'hookEnabled':
+        await run({ op: 'setHookEnabled', name: a.name, enabled: a.enabled }, a.enabled ? `Enable ${a.name}` : `Disable ${a.name}`);
+        return;
+      case 'hookOpen':
+        await this.openHook(client, a.name);
+        return;
+      case 'hookCreate': {
+        const info = (await client.call({ op: 'run', command: { op: 'hooksAndLfs' } })).json['info'] as { hooks?: { name: string }[] } | undefined;
+        const present = new Set((info?.hooks ?? []).map((h) => h.name));
+        const picked = await vscode.window.showQuickPick(
+          HOOK_NAMES.filter((n) => !present.has(n)).map((n) => ({ label: n, description: hookWhen(n) })),
+          { title: 'Create Hook', placeHolder: 'Puts a #!/bin/sh skeleton in place and makes it executable.' },
+        );
+        if (!picked) return;
+        await run({ op: 'createHook', name: picked.label }, `Create ${picked.label}`);
+        await this.openHook(client, picked.label);
+        return;
+      }
+      case 'lfsTrack': {
+        let pattern = a.pattern;
+        if (!pattern) {
+          pattern = (
+            await vscode.window.showInputBox({
+              title: 'Track a Pattern with LFS',
+              prompt: 'Files matching the pattern are stored in LFS from now on (git lfs track).',
+              placeHolder: '*.psd',
+              validateInput: (v) => (v.trim() ? undefined : 'Enter a pattern'),
+            })
+          )?.trim();
+          if (!pattern) return;
+        }
+        await run({ op: 'lfsTrack', pattern, track: a.track }, a.track ? `Track ${pattern} with LFS` : `Stop tracking ${pattern} with LFS`);
+        break;
+      }
       case 'configEdit':
         await this.editConfig(client, a.key);
         return;
@@ -182,6 +220,15 @@ export class SettingsController implements vscode.Disposable {
       }
     }
     await repo.refresh();
+  }
+
+  /** フックをエディタで開く（置き場所は core.hooksPath、なければ git dir の hooks） */
+  private async openHook(client: NonNullable<Awaited<ReturnType<typeof daemonFor>>>, name: string): Promise<void> {
+    const repo = this.repo;
+    if (!repo) return;
+    const info = (await client.call({ op: 'run', command: { op: 'hooksAndLfs' } })).json['info'] as { hooksPath?: string | null } | undefined;
+    const dir = hooksDirectory(info?.hooksPath, repo.root, repo.backend.dirs.commonDir, homedir());
+    await vscode.window.showTextDocument(vscode.Uri.file(join(dir, name)));
   }
 
   /** Keys and Values: このリポジトリの値を聞いて書く。キーがなければ、キーから聞く（git の知っている名前を出す） */
@@ -283,7 +330,7 @@ export class SettingsController implements vscode.Disposable {
         return;
       }
       const run = async (op: string) => (await client.call({ op: 'run', command: { op } })).json['info'] as Record<string, unknown> | undefined;
-      const [list, version, form, groups, ignore, remotes, known] = await Promise.all([
+      const [list, version, form, groups, ignore, remotes, known, hooks] = await Promise.all([
         run('configList'),
         run('gitVersion'),
         run('repositoryForm'),
@@ -291,6 +338,7 @@ export class SettingsController implements vscode.Disposable {
         run('ignoreFiles'),
         run('remotes'),
         run('configKeys'),
+        run('hooksAndLfs'),
       ]);
       if (generation !== this.generation) return;
       this.post({
@@ -307,6 +355,7 @@ export class SettingsController implements vscode.Disposable {
           ...(form ? { repositoryForm: form as unknown as RepositoryForm } : {}),
           remotes: (remotes?.['remotes'] as SettingsFacts['remotes'] | undefined) ?? [],
           knownKeys: (known?.['keys'] as string[] | undefined) ?? [],
+          ...(hooks ? { hooksAndLfs: hooks as unknown as NonNullable<SettingsFacts['hooksAndLfs']> } : {}),
         },
       });
     } catch (err) {

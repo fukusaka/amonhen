@@ -983,6 +983,8 @@ async function settingsFlow(): Promise<void> {
   const exclude = existsSync(excludeFile) ? readFileSync(excludeFile, 'utf8') : '';
   const hadGitignore = existsSync(join(root, '.gitignore'));
   let sparseCommit = false;
+  let hookFile: string | undefined;
+  const gitattributes = existsSync(join(root, '.gitattributes')) ? readFileSync(join(root, '.gitattributes'), 'utf8') : undefined;
   try {
     let mark = posted.length;
     await vscode.commands.executeCommand('amonhen.showRepositorySettings');
@@ -1050,6 +1052,33 @@ async function settingsFlow(): Promise<void> {
     await panel.settings.handle({ type: 'settingsSet', writes: [['e2e.added', null]] });
     assert.equal(config('e2e.added'), undefined);
 
+    // Hooks and LFS: フックを作り（エディタで開く）、実行の許可を外す（Windows では外せない）。LFS は入っていれば
+    const hook = join(git('rev-parse', '--git-common-dir').trim().replace(/^(?![\\/]|[A-Za-z]:)/, `${root}/`), 'hooks', 'pre-commit');
+    hookFile = hook;
+    mark = posted.length;
+    await withWindow(
+      { showQuickPick: async (items: readonly vscode.QuickPickItem[]) => items.find((i) => i.label === 'pre-commit') },
+      async () => panel.settings.handle({ type: 'settingsRun', action: 'hookCreate' }),
+    );
+    const created = await waitPosted('settings', mark, (m) => !!m.facts.hooksAndLfs?.hooks.some((h) => h.name === 'pre-commit'));
+    assert.ok(existsSync(hook));
+    assert.equal(vscode.window.activeTextEditor?.document.uri.fsPath.toLowerCase(), hook.toLowerCase());
+    await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+    if (process.platform !== 'win32') {
+      mark = posted.length;
+      await panel.settings.handle({ type: 'settingsRun', action: 'hookEnabled', name: 'pre-commit', enabled: false });
+      const off = await waitPosted('settings', mark);
+      assert.equal(off.facts.hooksAndLfs?.hooks.find((h) => h.name === 'pre-commit')?.enabled, false);
+    }
+    if (created.facts.hooksAndLfs?.lfs) {
+      mark = posted.length;
+      await panel.settings.handle({ type: 'settingsRun', action: 'lfsTrack', pattern: '*.e2e-bin', track: true });
+      assert.ok((await waitPosted('settings', mark)).facts.hooksAndLfs?.lfsPatterns.includes('*.e2e-bin'));
+      mark = posted.length;
+      await panel.settings.handle({ type: 'settingsRun', action: 'lfsTrack', pattern: '*.e2e-bin', track: false });
+      assert.ok(!(await waitPosted('settings', mark)).facts.hooksAndLfs?.lfsPatterns.includes('*.e2e-bin'));
+    }
+
     // Fetching and Folders: HEAD の木からフォルダを選んで sparse checkout にし、すべてに戻す（git 2.25 から）。
     // maintenance は OS の予定に登録するので、ここでは試さない
     if (first.facts.repositoryForm?.canSparseCheckout) {
@@ -1085,6 +1114,9 @@ async function settingsFlow(): Promise<void> {
     }
     for (const k of [...keys, 'amonhen.defaultBranch', 'e2e.added']) if (config(k) !== undefined) git('config', '--local', '--unset', k);
     writeFileSync(excludeFile, exclude);
+    if (hookFile) rmSync(hookFile, { force: true });
+    if (gitattributes === undefined) rmSync(join(root, '.gitattributes'), { force: true });
+    else writeFileSync(join(root, '.gitattributes'), gitattributes);
     if (!hadGitignore) rmSync(join(root, '.gitignore'), { force: true });
   }
 }

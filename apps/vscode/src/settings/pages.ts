@@ -26,7 +26,9 @@ export type SettingRow =
   /** リモートの表（Add・Edit URL・Push URL・Check・Prune・Rename・Remove） */
   | { kind: 'remotes' }
   /** git の設定の表（Keys and Values） */
-  | { kind: 'config' };
+  | { kind: 'config' }
+  /** フックの表と Git LFS（Hooks and LFS） */
+  | { kind: 'hooks' };
 
 /** 使えるのに要る git（無ければ欄を灰色にし、理由を出す） */
 export type Needs = 'updateRefs';
@@ -149,6 +151,11 @@ export const PAGES: SettingPage[] = [
     id: 'remotes',
     title: 'Remotes',
     sections: [{ title: '', rows: [{ kind: 'remotes' }] }],
+  },
+  {
+    id: 'hooks',
+    title: 'Hooks and LFS',
+    sections: [{ title: '', rows: [{ kind: 'hooks' }] }],
   },
   {
     id: 'config',
