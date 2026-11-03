@@ -689,6 +689,57 @@ fn shows_mailmap_names_directly_through_the_daemon_and_over_ssh() {
 /// パッチのファイルは手元に置いたまま（SSH 先には中身を送る）。
 #[cfg(unix)]
 #[test]
+fn exports_an_archive_directly_through_the_daemon_and_over_ssh() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir_all(repo.join("docs")).unwrap();
+    git(&repo, &["init", "-q"]);
+    git(&repo, &["config", "user.name", "a"]);
+    git(&repo, &["config", "user.email", "a@example.com"]);
+    std::fs::write(repo.join("a.txt"), "a\n").unwrap();
+    std::fs::write(repo.join("docs/guide.md"), "guide\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "first"]);
+    let env = Env::new(tmp.path());
+    let repo = repo.canonicalize().unwrap();
+    let path = repo.to_str().unwrap().to_owned();
+    for (i, at) in [
+        path.clone(),
+        format!("daemon:{path}"),
+        format!("ssh://dev{path}"),
+    ]
+    .iter()
+    .enumerate()
+    {
+        let at = at.as_str();
+        // 形はファイル名から。書くのはこの機械のファイル（SSH 先でも）。
+        let zip = tmp.path().join(format!("app-{i}.zip"));
+        let written = env.json(&[
+            "archive",
+            "-C",
+            at,
+            "--json",
+            "--prefix",
+            "app/",
+            "-o",
+            zip.to_str().unwrap(),
+        ]);
+        assert_eq!(
+            written["size"],
+            std::fs::metadata(&zip).unwrap().len(),
+            "{at}: {written}"
+        );
+        assert!(std::fs::read(&zip).unwrap().starts_with(b"PK"), "{at}");
+        // 出力を選ばなければ標準出力に tar。`--` の後はパス。
+        let tar = env.ok(&["archive", "-C", at, "HEAD", "--", "docs"]);
+        assert!(
+            tar.contains("docs/guide.md") && !tar.contains("a.txt"),
+            "{at}"
+        );
+    }
+}
+
+#[test]
 fn saves_and_applies_patches_directly_through_the_daemon_and_over_ssh() {
     let tmp = tempfile::tempdir().unwrap();
     let repo = tmp.path().join("repo");
