@@ -1288,8 +1288,11 @@ impl Details {
                 Cell::Text(list.join(", "))
             }
         };
-        let mut rows: Vec<(String, Cell)> =
-            vec![("Commit".into(), Cell::Text(str_of(info, "oid").into()))];
+        // コミット ID は等幅で薄く（macOS 版の `mono`）。
+        let mut rows: Vec<(String, Cell)> = vec![(
+            "Commit".into(),
+            Cell::Styled(str_of(info, "oid").into(), "dim-label"),
+        )];
         let parents = strings(&info["parents"]);
         if !parents.is_empty() {
             let title = if parents.len() > 1 {
@@ -1317,7 +1320,7 @@ impl Details {
                 rows.push((title.into(), ids(&children)));
             }
             if let Some(rev) = extras["headRev"].as_str().filter(|r| !r.is_empty()) {
-                rows.push(("Rev".into(), Cell::Text(rev.into())));
+                rows.push(("Rev".into(), Cell::Styled(rev.into(), "dim-label")));
             }
         }
         // 署名（押すと吹き出しで詳細）。
@@ -1475,7 +1478,11 @@ impl Details {
                 }
                 Cell::Markup(m) => self.cell_label(&m, true),
             };
-            if title == "Commit" || title.starts_with("Parent") || title.starts_with("Child") {
+            if title == "Commit"
+                || title == "Rev"
+                || title.starts_with("Parent")
+                || title.starts_with("Child")
+            {
                 cell.add_css_class("monospace");
             }
             self.table.attach(&cell, 1, i as i32, 1, 1);
