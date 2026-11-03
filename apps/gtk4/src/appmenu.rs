@@ -69,6 +69,12 @@ pub struct Buttons {
     /// Push のアイコン（上流がなければ Publish の雲に）。
     push_icon: icon::Icon,
     actions: Rc<Actions>,
+    /// リポジトリの名前のボタン（見出しの真ん中か、ツールバーの並びの 1 つ）。
+    name: gtk::Widget,
+    /// History の検索のボタン。
+    search: gtk::Widget,
+    /// File History・Blame のタブの見出しの Push のアイコン（このタブのものと一緒に替える）。
+    mirror_push_icons: Rc<RefCell<Vec<glib::WeakRef<icon::Icon>>>>,
 }
 
 impl Buttons {
@@ -118,14 +124,15 @@ impl Buttons {
         // メニューの Push・Commit and Push は Publish…・Commit and Publish… になる（macOS 版と同じ）。
         self.actions.set_publishes(!published);
         // ツールバーの Push も Publish のアイコン（icloud.and.arrow.up）になる（macOS 版と同じ）。
-        self.push_icon.set(
-            if published {
-                icon::Kind::Push
-            } else {
-                icon::Kind::Publish
-            },
-            false,
-        );
+        let push_kind = if published {
+            icon::Kind::Push
+        } else {
+            icon::Kind::Publish
+        };
+        self.push_icon.set(push_kind, false);
+        self.mirror_push_icons
+            .borrow_mut()
+            .retain(|w| w.upgrade().inspect(|i| i.set(push_kind, false)).is_some());
         // 送るものがなければ押せない。理由はツールチップに（macOS 版と同じ）。
         self.push.set_tooltip_text(Some(&if !published {
             tr!("Publish — choose the remote to create this branch on first (Ctrl+Alt+P)")
@@ -150,6 +157,157 @@ impl Buttons {
             f.tracking = entry.map(|e| (published, e.ahead));
             f.stash = refs.refs.entries.iter().any(|e| e.kind == RefKind::Stash);
         });
+    }
+}
+
+impl Buttons {
+    /// File History・Blame のタブ `tool` の見出しに、このタブと同じツールバーを作る（macOS 版の
+    /// `MainToolbar.mirror()`）。ボタンはタブのアクション（リポジトリのタブに渡すもの）を押し、ブランチ名・数・説明・
+    /// 押せるかはこのタブのものに合わせ続ける。リポジトリの名前と検索は、リポジトリのタブに切り替えてから開く。
+    /// リポジトリのタブがほかの窓で前にあっても、閉じた後でも、そのタブに付いたまま。
+    pub fn mirror(&self, tool: &Rc<crate::tabs::Tab>) {
+        let header = &tool.header;
+        let bind = |from: &gtk::Widget, to: &gtk::Widget, names: &[&str]| {
+            for name in names {
+                from.bind_property(name, to, name).sync_create().build();
+            }
+        };
+        let repository = gtk::MenuButton::builder()
+            .label("Repository")
+            .menu_model(&repository_menu())
+            .build();
+        if let Some(popover) = repository.popover() {
+            popover.set_halign(gtk::Align::Start);
+        }
+        retitle_on_show(&repository, &self.actions);
+        crate::menu::tooltips_on_show(&repository);
+        header.pack_start(&repository);
+
+        // リポジトリの名前（下にブランチ名）。押すとリポジトリのタブに切り替えて、一覧を出す。
+        let titles = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        titles.set_valign(gtk::Align::Center);
+        let theirs = self
+            .name
+            .downcast_ref::<gtk::MenuButton>()
+            .and_then(|b| b.child());
+        let mut label = theirs.as_ref().and_then(|t| t.first_child());
+        for css in ["title", "subtitle"] {
+            let mine = gtk::Label::new(None);
+            mine.add_css_class(css);
+            if let Some(l) = &label {
+                bind(l, mine.upcast_ref(), &["label", "visible"]);
+                label = l.next_sibling();
+            }
+            titles.append(&mine);
+        }
+        let name = gtk::Button::builder()
+            .child(&titles)
+            .has_frame(false)
+            .build();
+        bind(
+            &self.name,
+            name.upcast_ref(),
+            &["sensitive", "tooltip-text"],
+        );
+        let (t, theirs) = (Rc::downgrade(tool), self.name.downgrade());
+        name.connect_clicked(move |_| {
+            if let Some(owner) = t.upgrade().and_then(|t| t.owner()) {
+                owner.bring_front();
+                if let Some(button) = theirs.upgrade().and_downcast::<gtk::MenuButton>() {
+                    button.popup();
+                }
+            }
+        });
+
+        let branch = gtk::Label::new(None);
+        bind(self.branch.upcast_ref(), branch.upcast_ref(), &["label"]);
+        let branch_icon = icon::Icon::default();
+        branch_icon.set(icon::Kind::Branch, false);
+        let branch_inner = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        branch_inner.append(&branch_icon);
+        branch_inner.append(&branch);
+        let branch_button = gtk::Button::builder()
+            .child(&branch_inner)
+            .action_name("win.switch-branch")
+            .build();
+        bind(
+            self.branch_button.upcast_ref(),
+            branch_button.upcast_ref(),
+            &["tooltip-text", "sensitive"],
+        );
+        let (pull, pull_count, _) = count_button(icon::Kind::Pull, "win.pull");
+        let (push, push_count, push_icon) = count_button(icon::Kind::Push, "win.push");
+        for (from, to) in [
+            (&self.pull_count, &pull_count),
+            (&self.push_count, &push_count),
+        ] {
+            bind(from.upcast_ref(), to.upcast_ref(), &["label", "visible"]);
+        }
+        for (from, to) in [(&self.pull, &pull), (&self.push, &push)] {
+            bind(from.upcast_ref(), to.upcast_ref(), &["tooltip-text"]);
+        }
+        push_icon.set(self.push_icon.kind(), false);
+        self.mirror_push_icons
+            .borrow_mut()
+            .push(push_icon.downgrade());
+        let undo = gtk::Button::new();
+        let undo_icon = icon::Icon::default();
+        undo_icon.set(icon::Kind::Undo, false);
+        undo.set_child(Some(&undo_icon));
+        undo.set_action_name(Some("win.undo"));
+        bind(
+            self.actions.undo.upcast_ref(),
+            undo.upcast_ref(),
+            &["tooltip-text"],
+        );
+        // History の検索: リポジトリのタブに切り替えて、History で探す（macOS 版と同じ）。
+        let search = gtk::Button::new();
+        let search_icon = icon::Icon::default();
+        search_icon.set(icon::Kind::Search, false);
+        search.set_child(Some(&search_icon));
+        bind(
+            &self.search,
+            search.upcast_ref(),
+            &["tooltip-text", "sensitive"],
+        );
+        let (t, theirs) = (Rc::downgrade(tool), self.search.downgrade());
+        search.connect_clicked(move |_| {
+            let Some(owner) = t.upgrade().and_then(|t| t.owner()) else {
+                return;
+            };
+            owner.bring_front();
+            let _ = WidgetExt::activate_action(&owner.root, "win.show-history", None);
+            if let Some(toggle) = theirs.upgrade().and_downcast::<gtk::ToggleButton>() {
+                toggle.set_active(true);
+            }
+        });
+        let toolbar_start = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let toolbar_end = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        header.pack_start(&toolbar_start);
+        crate::toolbar::install(
+            &toolbar_start,
+            &toolbar_end,
+            crate::toolbar::Given {
+                header: header.clone(),
+                repository: name.upcast(),
+                title: None,
+                branch: branch_button,
+                pull,
+                push,
+                undo,
+                search: search.upcast(),
+            },
+        );
+        let primary = gtk::MenuButton::builder()
+            .menu_model(&primary_menu(&tool.root))
+            .tooltip_text(tr!("Main Menu"))
+            .primary(true)
+            .build();
+        set_icon(&primary, "open-menu-symbolic", "≡");
+        retitle_on_show(&primary, &self.actions);
+        crate::menu::tooltips_on_show(&primary);
+        header.pack_end(&primary);
+        header.pack_end(&toolbar_end);
     }
 }
 
@@ -550,16 +708,17 @@ pub fn install(parts: Parts) -> Buttons {
     let toolbar_start = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     let toolbar_end = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     parts.header.pack_start(&toolbar_start);
+    // リポジトリの名前（main.rs が見出しの真ん中に置いたもの）。
+    let name = parts
+        .header
+        .title_widget()
+        .expect("リポジトリの名前のボタン");
     crate::toolbar::install(
         &toolbar_start,
         &toolbar_end,
         crate::toolbar::Given {
             header: parts.header.clone(),
-            // リポジトリの名前（main.rs が見出しの真ん中に置いたもの）。
-            repository: parts
-                .header
-                .title_widget()
-                .expect("リポジトリの名前のボタン"),
+            repository: name.clone(),
             title: None,
             branch: branch_button.clone(),
             pull: pull.clone(),
@@ -598,6 +757,9 @@ pub fn install(parts: Parts) -> Buttons {
         push_count,
         push_icon,
         actions: parts.actions.clone(),
+        name,
+        search: parts.search.clone(),
+        mirror_push_icons: Rc::default(),
     }
 }
 

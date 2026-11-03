@@ -230,6 +230,11 @@ impl Icon {
         self.queue_draw();
     }
 
+    /// 描いている形。
+    pub fn kind(&self) -> Kind {
+        self.imp().kind.get()
+    }
+
     /// 16 でない大きさで描く（形は 16 のものを伸ばす。macOS 版で大きめの記号を使うところ）。
     pub fn set_pixel_size(&self, size: i32) {
         self.imp().size.set(size);

@@ -53,9 +53,12 @@ pub struct Tab {
     owner: RefCell<Option<Weak<Tab>>>,
     /// File History・Blame のタブの窓の題（タブの見出しより長い。macOS 版の `heading`）。
     heading: RefCell<String>,
-    /// このタブの見出しの帯を、File History・Blame のタブに貸しているか（帯のアクションをそのタブのものにしている）。
-    lent: Cell<bool>,
+    /// File History・Blame のタブの見出しに、このタブと同じツールバーを作る（macOS 版の `MainToolbar.mirror()`）。
+    mirror: RefCell<Option<Mirror>>,
 }
+
+/// File History・Blame のタブの見出しを作る。
+type Mirror = Rc<dyn Fn(&Rc<Tab>)>;
 
 impl Tab {
     pub fn new(name: &str, location: &str, pending: Rc<Cell<u32>>) -> Rc<Self> {
@@ -82,7 +85,7 @@ impl Tab {
             worktree_name: RefCell::default(),
             owner: RefCell::default(),
             heading: RefCell::default(),
-            lent: Cell::new(false),
+            mirror: RefCell::default(),
         });
         // 前に出した後で足したアクション（メニューの操作は、タブを窓に置いてから入れる）も窓に入れる。
         let weak = Rc::downgrade(&tab);
@@ -151,12 +154,21 @@ impl Tab {
     }
 
     /// File History・Blame のタブ（`owner` のリポジトリのタブの隣に置く。macOS 版と同じく、リポジトリのタブと同じ
-    /// ツールバーを付け、ツールバーとメニューの操作はリポジトリのタブに切り替えてから渡す）。中身は `root` に入れる。
-    /// 次の起動で開き直すタブの記録には入らない（場所を持たない）。
+    /// ツールバーを自分の見出しに付け、ツールバーとメニューの操作はリポジトリのタブに切り替えてから渡す）。中身は
+    /// `root` に入れる。次の起動で開き直すタブの記録には入らない（場所を持たない）。
     pub fn new_tool(owner: &Rc<Tab>, title: &str) -> Rc<Self> {
         let tab = Self::new(title, "", owner.pending.clone());
         tab.owner.replace(Some(Rc::downgrade(owner)));
+        let mirror = owner.mirror.borrow().clone();
+        if let Some(mirror) = mirror {
+            mirror(&tab);
+        }
         tab
+    }
+
+    /// File History・Blame のタブの見出しに、このタブと同じツールバーを作る `f` を置く。
+    pub fn set_mirror(&self, f: impl Fn(&Rc<Tab>) + 'static) {
+        self.mirror.replace(Some(Rc::new(f)));
     }
 
     /// File History・Blame のタブか。
@@ -195,19 +207,6 @@ impl Tab {
             host.select(self);
             host.window.present();
         }
-    }
-
-    /// このタブの見出しの帯を、File History・Blame のタブに貸していて、そのタブが前にあるか（ツールバーの
-    /// 検索は、リポジトリのタブに戻ってから探す）。
-    pub fn header_lent(&self) -> bool {
-        self.lent.get()
-            && self
-                .header
-                .root()
-                .and_downcast::<gtk::ApplicationWindow>()
-                .and_then(|w| host_of(&w))
-                .and_then(|h| h.current())
-                .is_some_and(|t| t.owner().is_some_and(|o| std::ptr::eq(&*o, self)))
     }
 
     /// File History・Blame のタブで、リポジトリのタブのアクションのうち、このタブにないもの（タブの操作と、
@@ -641,35 +640,15 @@ impl RepoWindow {
                 }
             });
         }
-        // 見出しの帯: File History・Blame のタブは、リポジトリのタブの帯を借りる（同じツールバー。帯のアクションは
-        // このタブのもの）。リポジトリのタブがほかの窓で前に出ていれば、自分の帯（題だけ）。
+        // 見出しの帯: タブごとに持つ（File History・Blame のタブは、リポジトリのタブと同じツールバーを自分の帯に
+        // 作ってある。macOS 版と同じく、リポジトリのタブがほかの窓で前にあっても使える）。
         let owner = tab.owner();
-        let header = match &owner {
-            Some(owner) if !owner.is_shown() => {
-                owner.header.insert_action_group("win", Some(&tab.group));
-                owner.lent.set(true);
-                owner.header.clone()
-            }
-            Some(_) => tab.header.clone(),
-            None => {
-                if tab.lent.replace(false) {
-                    tab.header.insert_action_group("win", Some(&tab.group));
-                }
-                tab.header.clone()
-            }
-        };
-        // ほかの窓の見出しになっていれば外す（タブを窓の間で移したとき）。借りていた File History・Blame のタブには、
-        // 自分の帯を付ける。
+        let header = tab.header.clone();
+        // ほかの窓の見出しになっていれば外す（タブを窓の間で移したとき）。
         if let Some(other) = header.root().and_downcast::<gtk::Window>()
             && other != *self.window.upcast_ref::<gtk::Window>()
         {
-            let fallback = other
-                .downcast_ref::<gtk::ApplicationWindow>()
-                .and_then(host_of)
-                .and_then(|h| h.current())
-                .filter(|t| t.is_tool())
-                .map(|t| t.header.clone());
-            other.set_titlebar(fallback.as_ref());
+            other.set_titlebar(None::<&gtk::Widget>);
         }
         if self.window.titlebar().as_ref() != Some(header.upcast_ref::<gtk::Widget>()) {
             self.window.set_titlebar(Some(&header));
@@ -1212,6 +1191,7 @@ fn teardown(tab: &Rc<Tab>) {
         f();
     }
     tab.on_front.borrow_mut().clear();
+    tab.mirror.replace(None);
     for name in tab.group.list_actions() {
         tab.group.remove_action(&name);
     }

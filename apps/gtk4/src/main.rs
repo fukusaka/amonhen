@@ -861,19 +861,6 @@ fn build_tab(
     history_column.append(&search.bar);
     history_column.append(&historydisplay::header(&view));
     history_column.append(&overlay);
-    // File History・Blame のタブでツールバーの検索を押したら、このタブに戻って History を探す（macOS 版と同じ）。
-    {
-        let t = Rc::downgrade(&tab);
-        search.bar.connect_search_mode_enabled_notify(move |bar| {
-            if bar.is_search_mode()
-                && let Some(tab) = t.upgrade()
-                && tab.header_lent()
-            {
-                tab.bring_front();
-                let _ = WidgetExt::activate_action(&tab.root, "win.show-history", None);
-            }
-        });
-    }
 
     // 右の列: 選んだコミットの詳細と差分。
     let details = Rc::new(Details::new());
@@ -1773,6 +1760,11 @@ fn build_tab(
         details: Rc::downgrade(&details),
         search: search.toggle.clone().upcast(),
     });
+    // File History・Blame のタブの見出しに、このタブと同じツールバーを作る（macOS 版の `MainToolbar.mirror()`）。
+    {
+        let b = buttons.clone();
+        tab.set_mirror(move |tool| b.mirror(tool));
+    }
     // つながるまでは、ブランチを「—」にして押せなくする（macOS 版と同じ）。
     if amonhen_remote::location::is_remote(&text) {
         buttons.show_unopened();
