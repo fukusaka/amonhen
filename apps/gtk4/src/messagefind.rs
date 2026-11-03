@@ -58,9 +58,21 @@ pub fn find_next_in_focused(window: &gtk::Window, step: i32) -> bool {
     }
 }
 
-/// `window` で Ctrl+G が詳細の一致に移れるか（帯が開いていて、フォーカスが詳細の中にある）。
+/// `window` でフォーカスのある詳細の検索の帯が閉じていれば、帯を開いて次・前の一致へ（History を探していない
+/// ときの Ctrl+G。macOS 版のメッセージの欄の `findNext`）。移ったら true。
+pub fn find_next_opening(window: &gtk::Window, step: i32) -> bool {
+    match focused(window) {
+        Some(find) => {
+            find.open_and_move(step);
+            true
+        }
+        None => false,
+    }
+}
+
+/// `window` で Ctrl+G が詳細の一致に移れるか（フォーカスが詳細の中にある。帯が閉じていれば開いて移る）。
 pub fn find_next_possible(window: &gtk::Window) -> bool {
-    focused(window).is_some_and(|f| f.bar.is_visible())
+    focused(window).is_some()
 }
 
 /// `window` で、フォーカスが中にある詳細の帯。
@@ -188,6 +200,20 @@ impl MessageFind {
         self.entry.grab_focus();
         self.entry.select_region(0, -1);
         self.update(true);
+    }
+
+    /// 帯を開き（前に探した語のまま）、次なら最初の一致、前なら最後の一致へ。語がなければ開くだけ。
+    fn open_and_move(&self, step: i32) {
+        if self.bar.is_visible() {
+            self.move_match(step);
+            return;
+        }
+        self.show();
+        if self.entry.text().is_empty() {
+            return;
+        }
+        self.current.set(None);
+        self.move_match(step);
     }
 
     fn hide(&self) {

@@ -323,9 +323,10 @@ impl Search {
                 // まだ探していないとき: History を見ていれば欄を開き、ほかの所にいれば鳴らす。探していれば
                 // History に移って次の一致へ（macOS 版の History の moveSearch と、窓の findNext と同じ）。
                 if i.searched.borrow().is_none() {
-                    // 差分にフォーカスがあれば、差分の検索の帯を開いて次の一致へ（macOS 版と同じ）。
+                    // 詳細・差分にフォーカスがあれば、その検索の帯を開いて次の一致へ（macOS 版と同じ）。
                     if let Some(w) = bar.root().and_downcast::<gtk::Window>()
-                        && (crate::commitfiles::find_next_opening(&w, step)
+                        && (crate::messagefind::find_next_opening(&w, step)
+                            || crate::commitfiles::find_next_opening(&w, step)
                             || crate::difffind::find_next_opening(&w, step))
                     {
                         return;
@@ -352,7 +353,7 @@ impl Search {
     }
 
     /// Find Next・Find Previous が効くか（macOS 版で ⌘G を受ける部品があるか）を、変わるたびに `f(効くか)` で
-    /// 知らせる: History を探した、またはフォーカスが差分（検索の帯の欄は除く）か開いた詳細の検索の帯か History の
+    /// 知らせる: History を探した、またはフォーカスが差分（検索の帯の欄は除く）か詳細か History の
     /// 中にある。`root`（タブの中身）が前にある間、窓のフォーカスの移りを見る。フォーカスがタブの外（メニュー・
     /// 見出しの帯）に移っても、タブの中で最後にフォーカスがあった所で決める。
     pub fn track_focus(&self, root: &gtk::Widget, f: impl Fn(bool) + 'static) {
