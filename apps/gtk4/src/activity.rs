@@ -1093,17 +1093,31 @@ impl Activity {
         // Daemon: 共有の daemon の様子と、起動・停止。
         let daemon = gtk::Box::new(gtk::Orientation::Vertical, 8);
         margin(&daemon);
-        let state = label(&tr!("Checking…"), &["heading"]);
-        let detail = label("", &["caption", "numeric"]);
-        // 選べるのは動いているときの pid・ソケットの行だけ（macOS 版と同じ）。選べるラベルは最初のフォーカスを取って
-        // 全体を選んだ形で出るので、フォーカスは取らない（マウスで選んでコピーはできる）。
-        selectable(&detail, false);
+        // 見出しの前の丸: 動いていれば塗った緑、そうでなければ（調べている間も）白抜きの薄い色（macOS 版の
+        // circle.fill・circle の Label）。
+        let state_mark = label("○", &["heading", "dim-label"]);
+        let state = label(&tr!("Checking…"), &["heading", "dim-label"]);
+        let state_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        state_row.append(&state_mark);
+        state_row.append(&state);
+        // 動いていなければ（調べている間も）、ひとりでに起動することの説明。動いていれば pid などの行。
+        let not_running = tr!(
+            "It starts automatically when you open a repository through the daemon (right-click in the repository list, or Settings > Performance)."
+        );
+        let detail = label(&not_running, &["caption", "dim-label"]);
+        detail.set_wrap(true);
+        // 選べるのは動いているときのソケットの行だけ（macOS 版と同じ）。選べるラベルは最初のフォーカスを取って全体を
+        // 選んだ形で出るので、フォーカスは取らない（マウスで選んでコピーはできる）。
+        let socket = label("", &["caption", "dim-label"]);
+        selectable(&socket, true);
+        socket.set_visible(false);
         let toggle = gtk::Button::with_label(&tr!("Start"));
         let top = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         let texts = gtk::Box::new(gtk::Orientation::Vertical, 2);
         texts.set_hexpand(true);
-        texts.append(&state);
+        texts.append(&state_row);
         texts.append(&detail);
+        texts.append(&socket);
         top.append(&texts);
         top.append(&toggle);
         let (scrolled, repo_list) = list();
@@ -1199,6 +1213,8 @@ impl Activity {
                 running.clone(),
                 idle_exit.clone(),
             );
+            let (state_mark, socket, not_running) =
+                (state_mark.clone(), socket.clone(), not_running.clone());
             // 2 秒ごとに、前の問い合わせが返ってから（macOS 版と同じ。遅いソケットで積み重ねない）。
             let loading = Rc::new(std::cell::Cell::new(false));
             let last = Rc::new(std::cell::Cell::new(0));
@@ -1218,6 +1234,8 @@ impl Activity {
                     last.clone(),
                     idle_exit.clone(),
                 );
+                let (state_mark, socket, not_running) =
+                    (state_mark.clone(), socket.clone(), not_running.clone());
                 glib::spawn_future_local(async move {
                     let status = gio::spawn_blocking(|| {
                         amonhen_remote::local::control("status")
@@ -1245,25 +1263,42 @@ impl Activity {
                     if !same_repos {
                         repo_list.remove_all();
                     }
+                    let shown = status.is_some();
+                    state_mark.set_text(if shown { "●" } else { "○" });
+                    for l in [&state_mark, &state] {
+                        if shown {
+                            l.remove_css_class("dim-label");
+                            l.add_css_class("activity-success");
+                        } else {
+                            l.remove_css_class("activity-success");
+                            l.add_css_class("dim-label");
+                        }
+                    }
+                    if shown {
+                        detail.remove_css_class("dim-label");
+                        detail.add_css_class("numeric");
+                    } else {
+                        detail.remove_css_class("numeric");
+                        detail.add_css_class("dim-label");
+                    }
+                    socket.set_visible(shown);
                     let Some(d) = status else {
                         state.set_text(&tr!("The shared daemon isn’t running"));
-                        selectable(&detail, false);
-                        detail.set_text(&tr!("It starts automatically when you open a repository through the daemon (right-click in the repository list, or Settings > Performance)."));
+                        detail.set_text(&not_running);
                         toggle.set_label(&tr!("Start"));
                         toggle.set_tooltip_text(None);
                         return;
                     };
                     state.set_text(&tr!("The shared daemon is running"));
-                    selectable(&detail, true);
                     detail.set_text(&tr!(
-                        "pid {pid} · version {version} (build {build}) · up {uptime} · connections {connections}\n{socket}",
+                        "pid {pid} · version {version} (build {build}) · up {uptime} · connections {connections}",
                         pid = d["pid"],
                         version = d["version"].as_str().unwrap_or_default(),
                         build = d["build"].as_str().unwrap_or_default(),
                         uptime = duration(d["uptimeMs"].as_u64().unwrap_or(0)),
                         connections = d["connections"],
-                        socket = d["socket"].as_str().unwrap_or_default(),
                     ));
+                    socket.set_text(d["socket"].as_str().unwrap_or_default());
                     toggle.set_label(&tr!("Stop"));
                     toggle.set_tooltip_text(Some(&tr!(
                         "Repositories opened through the daemon get disconnected (Reconnect starts it again)."
@@ -1371,11 +1406,10 @@ impl Activity {
                 // 2 秒待たずに、すぐに様子を読み直す（macOS 版の loadDaemon(force: true)）。
                 tick.set(0);
                 refresh_daemon();
-                // 起動できなければ知らせる（macOS 版と同じ）。
+                // 起動できなければ、エラーの文そのものを見出しにして知らせる（macOS 版の NSAlert(error:)）。
                 if let Ok(Err(e)) = result {
                     gtk::AlertDialog::builder()
-                        .message(tr!("Couldn’t start the shared daemon"))
-                        .detail(e)
+                        .message(e)
                         .modal(true)
                         .build()
                         .show(w.upgrade().as_ref());
