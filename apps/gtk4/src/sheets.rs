@@ -66,7 +66,7 @@ pub fn set_worktree_name(window: &gtk::Window, name: Option<String>) {
     });
 }
 
-fn worktree_name(window: &gtk::Window) -> Option<String> {
+pub fn worktree_name(window: &gtk::Window) -> Option<String> {
     WORKTREE_NAMES.with(|names| {
         names
             .borrow()
@@ -79,7 +79,12 @@ fn worktree_name(window: &gtk::Window) -> Option<String> {
 /// シートの説明: worktree が 2 つ以上あれば、どの worktree に対する操作かを先頭に書く（説明を書き換えるときも
 /// これを通す）。
 pub fn with_worktree(parent: Option<&gtk::Window>, message: &str) -> String {
-    match parent.and_then(worktree_name) {
+    named(parent.and_then(worktree_name).as_deref(), message)
+}
+
+/// [`with_worktree`] の、worktree の名前を渡す形（`None` なら書かない）。
+fn named(worktree: Option<&str>, message: &str) -> String {
+    match worktree {
         Some(name) => {
             let mut text = tr!("In the worktree “{name}”.", name = name);
             if !message.is_empty() {
@@ -89,6 +94,37 @@ pub fn with_worktree(parent: Option<&gtk::Window>, message: &str) -> String {
             text
         }
         None => message.to_owned(),
+    }
+}
+
+/// 操作の相手の worktree: 選んだときに書き込む先だったもの。シートの前に読むもの・シートに書く名前・OK で
+/// 書くものをこれに揃える（読んでいる間やシートを出している間に書き込む先を替えても。macOS 版は worktree ごとに
+/// `Actions` があり、シートはその worktree を書く）。
+#[derive(Clone)]
+pub struct Target {
+    pub repo: Arc<Repository>,
+    /// シートに書く worktree の名前（worktree が 1 つなら None）。
+    pub worktree: Option<String>,
+}
+
+impl Target {
+    /// 今の書き込む先。
+    pub fn current(actions: &Actions) -> Option<Self> {
+        let repo = actions.repo()?;
+        let worktree = parent(actions).as_ref().and_then(worktree_name);
+        Some(Self { repo, worktree })
+    }
+
+    /// この worktree の名前を書いた確認のシート。
+    pub fn sheet(&self, parent: Option<&gtk::Window>, title: &str, message: &str) -> Sheet {
+        Sheet::unnamed(parent, title, &named(self.worktree.as_deref(), message))
+    }
+
+    /// この worktree の名前を書いて知らせる（[`inform`]）。
+    pub async fn inform(&self, parent: Option<&gtk::Window>, title: &str, message: &str) {
+        let sheet = self.sheet(parent, title, message);
+        sheet.button("OK", Response::Ok, Some(Style::Suggested));
+        sheet.run().await;
     }
 }
 
@@ -709,9 +745,10 @@ pub struct SyncState {
 /// 切れたときなどに、押しても何も起きないように見えないように）。
 pub async fn sync_state(
     actions: &Actions,
-    repo: &Arc<Repository>,
+    target: &Target,
     branch: Option<String>,
 ) -> Option<SyncState> {
+    let repo = &target.repo;
     let r = repo.clone();
     let b = branch.clone();
     let read = gio::spawn_blocking(move || {
@@ -724,12 +761,13 @@ pub async fn sync_state(
     let (status, refs) = match read {
         Ok(read) => read,
         Err(error) => {
-            inform(
-                parent(actions).as_ref(),
-                &tr!("Can’t read the status"),
-                &error,
-            )
-            .await;
+            target
+                .inform(
+                    parent(actions).as_ref(),
+                    &tr!("Can’t read the status"),
+                    &error,
+                )
+                .await;
             return None;
         }
     };
@@ -783,12 +821,13 @@ pub async fn sync_state(
     let (outgoing, incoming) = match ranges {
         Ok(ranges) => ranges,
         Err(error) => {
-            inform(
-                parent(actions).as_ref(),
-                &tr!("Can’t read the status"),
-                &error,
-            )
-            .await;
+            target
+                .inform(
+                    parent(actions).as_ref(),
+                    &tr!("Can’t read the status"),
+                    &error,
+                )
+                .await;
             return None;
         }
     };
@@ -1214,10 +1253,17 @@ fn pull_mode_factory() -> gtk::SignalListItemFactory {
 /// Pull の前に、取り込むコミットと取り込み方を見せる。上流がなければ、取り込み元のリモートのブランチを選び、それを
 /// 上流にして取り込む。
 pub fn pull(actions: &Rc<Actions>, mode: &str) {
+    if let Some(target) = Target::current(actions) {
+        pull_in(actions, target, mode);
+    }
+}
+
+/// [`pull`] を `target` の worktree で（読むのも、シートに書くのも、取り込むのも）。
+pub fn pull_in(actions: &Rc<Actions>, target: Target, mode: &str) {
     let (actions, mode) = (actions.clone(), mode.to_owned());
     glib::spawn_future_local(async move {
-        let Some(repo) = actions.repo() else { return };
-        let Some(state) = sync_state(&actions, &repo, None).await else {
+        let repo = target.repo.clone();
+        let Some(state) = sync_state(&actions, &target, None).await else {
             return;
         };
         let Some(branch) = state.branch.clone() else {
@@ -1241,12 +1287,13 @@ pub fn pull(actions: &Rc<Actions>, mode: &str) {
             sources = remotes.iter().filter(|n| same(n)).cloned().collect();
             sources.extend(remotes.iter().filter(|n| !same(n)).cloned());
             if sources.is_empty() {
-                inform(
-                    parent(&actions).as_ref(),
-                    &tr!("No remote branch to pull from"),
-                    &tr!("Fetch, or add a remote in Repository Settings."),
-                )
-                .await;
+                target
+                    .inform(
+                        parent(&actions).as_ref(),
+                        &tr!("No remote branch to pull from"),
+                        &tr!("Fetch, or add a remote in Repository Settings."),
+                    )
+                    .await;
                 return;
             }
         }
@@ -1273,7 +1320,7 @@ pub fn pull(actions: &Rc<Actions>, mode: &str) {
             Some(u) => tr!("Pull from {upstream}?", upstream = u),
             None => tr!("Pull into {branch}?", branch = branch),
         };
-        let sheet = Sheet::new(parent(&actions).as_ref(), &title, "");
+        let sheet = target.sheet(parent(&actions).as_ref(), &title, "");
         let source_refs: Vec<&str> = sources.iter().map(String::as_str).collect();
         let source = gtk::DropDown::from_strings(&source_refs);
         if !sources.is_empty() {
@@ -1458,12 +1505,16 @@ pub fn pull(actions: &Rc<Actions>, mode: &str) {
             .and_downcast::<gtk::StringObject>()
             .map(|s| s.string().to_string());
         match (state.upstream.is_none(), picked.as_deref().and_then(|p| p.split_once('/'))) {
-            (true, Some((remote, name))) => actions.perform_sequence(vec![
-                json!({ "op": "configSet", "key": format!("branch.{branch}.remote"), "value": remote }),
-                json!({ "op": "configSet", "key": format!("branch.{branch}.merge"), "value": format!("refs/heads/{name}") }),
-                pull,
-            ]),
-            _ => actions.perform(pull),
+            (true, Some((remote, name))) => actions.perform_in(
+                repo,
+                vec![
+                    json!({ "op": "configSet", "key": format!("branch.{branch}.remote"), "value": remote }),
+                    json!({ "op": "configSet", "key": format!("branch.{branch}.merge"), "value": format!("refs/heads/{name}") }),
+                    pull,
+                ],
+                |_| {},
+            ),
+            _ => actions.perform_in(repo, vec![pull], |_| {}),
         }
     });
 }
@@ -1477,17 +1528,30 @@ pub fn push(
     force: bool,
     then: Option<Box<dyn FnOnce()>>,
 ) {
+    if let Some(target) = Target::current(actions) {
+        push_in(actions, target, branch, force, then);
+    }
+}
+
+/// [`push`] を `target` の worktree で（Commit and Push で、コミットした worktree を送る）。
+pub fn push_in(
+    actions: &Rc<Actions>,
+    target: Target,
+    branch: Option<String>,
+    force: bool,
+    then: Option<Box<dyn FnOnce()>>,
+) {
     let actions = actions.clone();
     glib::spawn_future_local(async move {
-        let Some(repo) = actions.repo() else { return };
-        let Some(state) = sync_state(&actions, &repo, branch).await else {
+        let repo = target.repo.clone();
+        let Some(state) = sync_state(&actions, &target, branch).await else {
             return;
         };
         let Some(branch) = state.branch.clone() else {
             return beep(&actions);
         };
         let Some(upstream) = state.upstream.clone() else {
-            return publish(&actions, &branch, then);
+            return publish_in(&actions, target, &branch, then);
         };
         let (outgoing, incoming) = (state.outgoing.count, state.incoming.count);
         let diverged = !force && incoming > 0;
@@ -1529,7 +1593,7 @@ pub fn push(
                 String::new(),
             )
         };
-        let sheet = Sheet::new(parent(&actions).as_ref(), &title, &message);
+        let sheet = target.sheet(parent(&actions).as_ref(), &title, &message);
         let lost = if force || diverged {
             state.incoming.clone()
         } else {
@@ -1642,7 +1706,7 @@ pub fn push(
                     "force": replace, "expect": if replace { state.upstream_target.clone() } else { None },
                     "setUpstream": false,
                 });
-                actions.perform_with(vec![command], move |reply| {
+                actions.perform_in(repo, vec![command], move |reply| {
                     if reply["ok"].as_bool() == Some(true)
                         && let Some(then) = then
                     {
@@ -1650,7 +1714,7 @@ pub fn push(
                     }
                 });
             }
-            Response::Other => pull(&actions, "git"),
+            Response::Other => pull_in(&actions, target, "git"),
             Response::Cancel => {}
         }
     });
@@ -1658,9 +1722,21 @@ pub fn push(
 
 /// 上流のないブランチを初めて送る（Publish）。送り先のリモートとそこでの名前を選ばせ、送ったらそれを上流にする。
 pub fn publish(actions: &Rc<Actions>, branch: &str, then: Option<Box<dyn FnOnce()>>) {
+    if let Some(target) = Target::current(actions) {
+        publish_in(actions, target, branch, then);
+    }
+}
+
+/// [`publish`] を `target` の worktree で（送ったら、その worktree のブランチの上流にする）。
+pub fn publish_in(
+    actions: &Rc<Actions>,
+    target: Target,
+    branch: &str,
+    then: Option<Box<dyn FnOnce()>>,
+) {
     let (actions, branch) = (actions.clone(), branch.to_owned());
     glib::spawn_future_local(async move {
-        let Some(repo) = actions.repo() else { return };
+        let repo = target.repo.clone();
         let remotes: Vec<String> = run(&repo, json!({ "op": "remotes" })).await["info"]["remotes"]
             .as_array()
             .into_iter()
@@ -1669,12 +1745,13 @@ pub fn publish(actions: &Rc<Actions>, branch: &str, then: Option<Box<dyn FnOnce(
             .collect();
         let window = parent(&actions);
         if remotes.is_empty() {
-            inform(
-                window.as_ref(),
-                &tr!("Can’t Publish"),
-                &tr!("This repository has no remotes. Add one in Repository > Add Remote…."),
-            )
-            .await;
+            target
+                .inform(
+                    window.as_ref(),
+                    &tr!("Can’t Publish"),
+                    &tr!("This repository has no remotes. Add one in Repository > Add Remote…."),
+                )
+                .await;
             return;
         }
         let config = run(&repo, json!({ "op": "configList" })).await;
@@ -1703,7 +1780,7 @@ pub fn publish(actions: &Rc<Actions>, branch: &str, then: Option<Box<dyn FnOnce(
         .into_iter()
         .flatten()
         .find(|r| remotes.contains(r));
-        let sheet = Sheet::new(
+        let sheet = target.sheet(
             window.as_ref(),
             &tr!("Publish {branch}?", branch = branch),
             &tr!(
@@ -1734,7 +1811,7 @@ pub fn publish(actions: &Rc<Actions>, branch: &str, then: Option<Box<dyn FnOnce(
         if remote_branch.is_empty() {
             return;
         }
-        let target = format!("{remote}/{remote_branch}");
+        let there = format!("{remote}/{remote_branch}");
         let r = repo.clone();
         let exists = gio::spawn_blocking(move || r.load_refs().ok())
             .await
@@ -1744,19 +1821,19 @@ pub fn publish(actions: &Rc<Actions>, branch: &str, then: Option<Box<dyn FnOnce(
                 refs.refs
                     .entries
                     .iter()
-                    .any(|i| i.kind == amonhen_model::RefKind::Remote && i.name == target)
+                    .any(|i| i.kind == amonhen_model::RefKind::Remote && i.name == there)
             });
         // その名前のブランチがもうリモートにある（最後の Fetch の時点）。作るのではなく、それを上流にして送る。
         if exists {
-            let outgoing = between(&repo, &target, &branch, 1).await.count;
-            let incoming = between(&repo, &branch, &target, 1).await.count;
+            let outgoing = between(&repo, &there, &branch, 1).await.count;
+            let incoming = between(&repo, &branch, &there, 1).await.count;
             let set_upstream = vec![
                 json!({ "op": "configSet", "key": format!("branch.{branch}.remote"), "value": remote }),
                 json!({ "op": "configSet", "key": format!("branch.{branch}.merge"), "value": format!("refs/heads/{remote_branch}") }),
             ];
-            let title = tr!("{target} already exists", target = target);
+            let title = tr!("{target} already exists", target = there);
             if incoming > 0 {
-                let sheet = Sheet::new(
+                let sheet = target.sheet(
                     window.as_ref(),
                     &title,
                     &tr!(
@@ -1767,11 +1844,11 @@ pub fn publish(actions: &Rc<Actions>, branch: &str, then: Option<Box<dyn FnOnce(
                 );
                 sheet.buttons(&tr!("Set Upstream"), false, None);
                 if sheet.run().await == Response::Ok {
-                    actions.perform_sequence(set_upstream);
+                    actions.perform_in(repo, set_upstream, |_| {});
                 }
                 return;
             }
-            let sheet = Sheet::new(
+            let sheet = target.sheet(
                 window.as_ref(),
                 &title,
                 &if outgoing > 0 {
@@ -1796,7 +1873,8 @@ pub fn publish(actions: &Rc<Actions>, branch: &str, then: Option<Box<dyn FnOnce(
                 return;
             }
         }
-        actions.perform_with(
+        actions.perform_in(
+            repo,
             vec![json!({
                 "op": "push", "remote": remote, "branch": branch, "remoteBranch": remote_branch,
                 "force": false, "setUpstream": true,
@@ -2329,14 +2407,15 @@ fn integrate_sheet(
 
 /// Commit and Push のあとの push: 上流があって先に進んでいなければ、聞かずに送る。上流がない・上流が先に
 /// 進んでいるときは Push のシート（docs/ux.md の「Toolbar」）。
-/// `repo` はコミットしたリポジトリ。コミットしている間に書き込む先の worktree を替えていても、そこを送る（macOS 版は
-/// worktree ごとの `Actions` で送る）。Push のシートは書き込む先に向くので、替えていたら出さない。
-pub fn push_after_commit(actions: &Rc<Actions>, repo: Arc<Repository>) {
+/// `target` はコミットした worktree。コミットしている間に書き込む先の worktree を替えていても、そこを送り、
+/// シートにはその worktree の名前を書く（macOS 版は worktree ごとの `Actions` で送る）。サイドバーは戻さない。
+pub fn push_after_commit(actions: &Rc<Actions>, target: Target) {
     let actions = actions.clone();
     glib::spawn_future_local(async move {
-        let Some(state) = sync_state(&actions, &repo, None).await else {
+        let Some(state) = sync_state(&actions, &target, None).await else {
             return;
         };
+        let repo = target.repo.clone();
         match (&state.branch, &state.upstream) {
             (Some(branch), Some(upstream)) if state.incoming.count == 0 => {
                 let Some((remote, remote_branch)) = upstream.split_once('/') else {
@@ -2351,13 +2430,7 @@ pub fn push_after_commit(actions: &Rc<Actions>, repo: Arc<Repository>) {
                     |_| {},
                 );
             }
-            _ if actions
-                .repo()
-                .is_some_and(|r| r.paths().workdir == repo.paths().workdir) =>
-            {
-                push(&actions, None, false, None)
-            }
-            _ => {}
+            _ => push_in(&actions, target, None, false, None),
         }
     });
 }
@@ -2534,6 +2607,13 @@ pub fn push_to(actions: &Rc<Actions>, branch: &str, target: &str, command: Value
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn names_the_worktree_it_was_given() {
+        assert_eq!(named(None, "Pushes."), "Pushes.");
+        assert_eq!(named(Some("a"), "Pushes."), "In the worktree “a”.\nPushes.");
+        assert_eq!(named(Some("a"), ""), "In the worktree “a”.");
+    }
 
     #[test]
     fn rewrite_lines_list_the_branches() {

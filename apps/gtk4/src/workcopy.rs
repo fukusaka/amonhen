@@ -26,9 +26,9 @@ use crate::diff::{DiffWidget, View};
 
 type CountCallback = Box<dyn Fn(usize)>;
 
-/// コミットできた後にすること（Commit and Push の push）。コミットしたリポジトリを渡す（その間に書き込む先の
-/// worktree を替えても、コミットした worktree を push する。macOS 版と同じ）。
-pub type AfterCommit = Box<dyn FnOnce(Arc<Repository>)>;
+/// コミットできた後にすること（Commit and Push の push）。コミットした worktree（リポジトリと名前）を渡す（その間に
+/// 書き込む先の worktree を替えても、コミットした worktree を push し、シートにはその名前を書く。macOS 版と同じ）。
+pub type AfterCommit = Box<dyn FnOnce(crate::sheets::Target)>;
 
 /// 同じ worktree か（作業ツリーの場所で比べる）。
 fn same_worktree(a: &Repository, b: Option<&Repository>) -> bool {
@@ -2997,6 +2997,13 @@ impl Inner {
         let weak = Rc::downgrade(this);
         this.update_buttons();
         let source = repo.clone();
+        // Commit and Push のシートに書く、コミットする worktree の名前（コミットしている間に替えても）。
+        let worktree = this
+            .list
+            .root()
+            .and_downcast::<gtk::Window>()
+            .as_ref()
+            .and_then(crate::sheets::worktree_name);
         this.message.set_visible(false);
         // hooks の出力を探すため、始めた時刻（Activity の記録と同じ UNIX 時刻のミリ秒）を覚えておく。
         let started = std::time::SystemTime::now()
@@ -3050,7 +3057,10 @@ impl Inner {
                         Inner::show_from(&this, &source, status);
                     }
                     if let Some(then) = then {
-                        then(source.clone());
+                        then(crate::sheets::Target {
+                            repo: source.clone(),
+                            worktree,
+                        });
                     }
                 }
                 // hooks で止まったときは出力が長いので、読めるシートで出す。
