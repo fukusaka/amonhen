@@ -377,6 +377,12 @@
         "enablement": "amonhen.hasRepository"
       },
       {
+        "command": "amonhen.showRepositorySettings",
+        "title": "Repository Settings",
+        "category": "Amon Hen",
+        "enablement": "amonhen.hasRepository"
+      },
+      {
         "command": "amonhen.skipSequence",
         "title": "Skip",
         "category": "Amon Hen",
@@ -1140,6 +1146,10 @@
         },
         {
           "command": "amonhen.blame",
+          "when": "amonhen.hasRepository && amonhen.engine"
+        },
+        {
+          "command": "amonhen.showRepositorySettings",
           "when": "amonhen.hasRepository && amonhen.engine"
         },
         {

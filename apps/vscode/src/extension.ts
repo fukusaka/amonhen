@@ -90,6 +90,7 @@ export async function activate(
     vscode.commands.registerCommand('amonhen.showWorkingCopy', () => show('workingCopy')),
     vscode.commands.registerCommand('amonhen.showHistory', () => show('history')),
     vscode.commands.registerCommand('amonhen.showReflog', () => show('reflog')),
+    vscode.commands.registerCommand('amonhen.showRepositorySettings', () => show('settings')),
     vscode.commands.registerCommand('amonhen.showRef', (ref: string) => show('history', ref)),
     registerUndoCommand(manager),
     registerFetchCommand(manager, () => sidebar.tagMarks.reload()),

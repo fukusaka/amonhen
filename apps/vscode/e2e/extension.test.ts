@@ -964,6 +964,45 @@ async function undoFlow(): Promise<void> {
   }
 }
 
+/**
+ * Repository Settings に、このリポジトリの git の設定（どこで決まっているか付き）と git の版が出て、行の値を
+ * このリポジトリの設定に書き、↩︎ で上書きをやめる（daemon だけ）
+ */
+async function settingsFlow(): Promise<void> {
+  await showView('amonhen.showHistory');
+  const panel = api.panel()!;
+  const config = (key: string) => {
+    try {
+      return git('config', '--local', key).trim();
+    } catch {
+      return undefined;
+    }
+  };
+  const keys = ['fetch.prune', 'pull.rebase', 'pull.ff'];
+  try {
+    let mark = posted.length;
+    await vscode.commands.executeCommand('amonhen.showRepositorySettings');
+    await panel.settings.handle({ type: 'settingsLoad' });
+    const first = await waitPosted('settings', mark, (m) => m.entries.length > 0);
+    assert.match(String(first.facts.gitVersion), /^\d+\.\d+/);
+    assert.ok(first.entries.some((e) => e.key === 'user.email' && e.scope === 'local'));
+
+    mark = posted.length;
+    await panel.settings.handle({ type: 'settingsSet', writes: [['fetch.prune', 'true'], ['pull.rebase', 'false'], ['pull.ff', 'only']] });
+    const written = await waitPosted('settings', mark);
+    assert.deepEqual(keys.map(config), ['true', 'false', 'only']);
+    assert.ok(written.entries.some((e) => e.key === 'pull.ff' && e.value === 'only' && e.scope === 'local'));
+
+    // ↩︎（上書きをやめる）
+    mark = posted.length;
+    await panel.settings.handle({ type: 'settingsSet', writes: keys.map((k): [string, null] => [k, null]) });
+    await waitPosted('settings', mark);
+    assert.deepEqual(keys.map(config), [undefined, undefined, undefined]);
+  } finally {
+    for (const k of keys) if (config(k) !== undefined) git('config', '--local', '--unset', k);
+  }
+}
+
 /** showInputBox の代わり。呼ばれるたびに values を順に返す */
 function inputs(...values: string[]): () => Promise<string | undefined> {
   let i = 0;
@@ -1719,6 +1758,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('asks before Undo and undoes several operations from Undo History', async () => {
     await undoFlow();
+  });
+
+  test('shows and writes this repository’s settings through the daemon', async () => {
+    await settingsFlow();
   });
 
   test('drops the selection of a file whose changes went away before its diff is read', async () => {

@@ -208,7 +208,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
       const stashes = Math.max(state.status?.stashCount ?? 0, state.stashes?.length ?? 0);
       nodes.push(...[...this.sections.values()].filter((n) => n.kind !== 'section' || n.section !== 'stashes' || stashes > 0));
       // Reflog はいつもいちばん下（アプリと同じ）
-      if (this.engine) nodes.push({ kind: 'view', view: 'reflog' });
+      if (this.engine) nodes.push({ kind: 'view', view: 'reflog' }, { kind: 'view', view: 'settings' });
       return nodes;
     }
     switch (node.kind) {
@@ -310,6 +310,14 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
             item.collapsibleState = vscode.TreeItemCollapsibleState.Expanded;
             item.tooltip = `Working Copy of ✎ ${repo.root}`;
           }
+          return item;
+        }
+        if (node.view === 'settings') {
+          const item = new vscode.TreeItem('Repository Settings');
+          item.id = 'view:settings';
+          item.tooltip = 'This repository’s git settings (Operations…)';
+          item.iconPath = new vscode.ThemeIcon('settings-gear');
+          item.command = { command: 'amonhen.showRepositorySettings', title: 'Show Repository Settings' };
           return item;
         }
         if (node.view === 'reflog') {

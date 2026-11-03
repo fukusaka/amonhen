@@ -120,18 +120,18 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| 設定のページ（ページの一覧・git の行・行ごとの出どころ・↩︎・ⓘ） | ✓ | ✓ | — | n/a |  |
+| 設定のページ（ページの一覧・git の行・行ごとの出どころ・↩︎・ⓘ） | ✓ | ✓ | △ | n/a | VSCode: メインビューの Repository Settings（エンジンがあるとき）。今は Operations だけで、このリポジトリの設定だけ。 |
 | Author and Signing（署名の選択・集めた鍵・mailmap） | ✓ | ✓ | — | △ | CLI: `amonhen run`（`signingKeys`・`configSet`）から。 |
 | Commits: メッセージのテンプレート（なし・共有・独自・ファイル） | ✓ | ✓ | — | △ | CLI: `amonhen run` から。 |
 | Branches: 既定のブランチを選ぶ | ✓ | ✓ | — | △ | CLI: `amonhen run` から。 |
-| Operations: pull・fetch.prune・autostash・updateRefs・コンフリクトの書き方・rerere | ✓ | ✓ | — | △ | CLI: `amonhen run` から。 |
+| Operations: pull・fetch.prune・autostash・updateRefs・コンフリクトの書き方・rerere | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | Working Copy: 改行・実行ビット・`.git/info/exclude` の編集 | ✓ | ✓ | — | △ | CLI: `amonhen run` から。 |
 | Remotes: 表と、つながるか確かめるシート | ✓ | ✓ | — | △ | CLI: `amonhen run` から。 |
 | Hooks: 表・Enabled・スクリプト・Create Hook… | ✓ | ✓ | — | △ | CLI: `amonhen run` から。 |
 | LFS: 入っているか・パターン・Track Pattern…・ファイルの数 | ✓ | ✓ | — | △ | CLI: `amonhen run` から。 |
 | Keys and Values（git config の表、Basic / Customized / All、Combined / Levels） | ✓ | ✓ | — | △ | CLI: `amonhen run`（`configList`・`configSet`）から。 |
-| 要る git の版を添えて行を無効にする | ✓ | ✓ | — | n/a |  |
-| git の行にリポジトリの形（shallow・partial・sparse・maintenance） | ✓ | ✓ | — | △ | CLI: `status` が shallow・partial・sparse を添える。 |
+| 要る git の版を添えて行を無効にする | ✓ | ✓ | ✓ | n/a |  |
+| git の行にリポジトリの形（shallow・partial・sparse・maintenance） | ✓ | ✓ | ✓ | △ | CLI: `status` が shallow・partial・sparse を添える。 |
 | 取得とフォルダ: shallow clone の履歴を取り足す（数・日付まで・すべて） | ✓ | ✓ | △ | △ | VSCode: コマンドパレットと History の帯の Fetch More History…・Fetch All History。設定のページはない。<br>CLI: `amonhen run`（`deepen`・`unshallow`）から。 |
 | 取得とフォルダ: partial clone の中身をすべて取る（git 2.36） | ✓ | ✓ | △ | △ | VSCode: コマンドパレットと History の Partial の札の Fetch All Contents…。設定のページはない。<br>CLI: `amonhen run`（`fetchAllContents`）から。 |
 | 取得とフォルダ: sparse checkout のフォルダを HEAD の木から選ぶ（git 2.25） | ✓ | ✓ | — | △ | CLI: `amonhen run`（`sparseCheckout`・`treeFolders`）から。 |

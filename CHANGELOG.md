@@ -778,6 +778,8 @@ First release.
   a stash can become a branch, and Pop Latest Stash… asks first.
 - Undo on the sidebar's title and in the Command Palette says what it puts back and asks first, and Undo History…
   undoes several operations down to the one chosen.
+- With the engine, Repository Settings shows this repository's git settings in the app's pages, starting with
+  Operations.
 
 #### Changed
 
