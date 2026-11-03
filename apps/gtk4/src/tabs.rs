@@ -222,6 +222,7 @@ impl Tab {
     /// `RepositoryForwarder`）。使えるか・状態はリポジトリのタブのものに合わせる。中身のアクションを足してから呼ぶ。
     pub fn forward_actions(self: &Rc<Self>) {
         let Some(owner) = self.owner() else { return };
+        self.add_app_actions();
         for name in owner.group.list_actions() {
             forward(self, &owner, &name);
         }
@@ -250,6 +251,79 @@ impl Tab {
                 proxy.set_enabled(false);
             }
         });
+    }
+
+    /// File History・Blame のタブで、アプリの操作（New Window・Open…・Clone…・Quick Open…・Open Recent・
+    /// Repositories・Activity・Settings…・Keyboard Shortcuts・About）を、リポジトリのタブに渡さずにこのタブで
+    /// 行うものとして入れる。リポジトリのタブを閉じても使え、リポジトリのタブを前に出さない（macOS 版ではこれらは
+    /// `AppDelegate` に行き、`RepositoryForwarder` を通らない）。
+    fn add_app_actions(self: &Rc<Self>) {
+        type F = fn(&Rc<Tab>, &gtk::ApplicationWindow, &gtk::Application);
+        let actions: [(&str, F); 9] = [
+            ("new-window", |_, _, app| {
+                show_home(app, None);
+            }),
+            ("open", |tab, _, app| {
+                show_home(app, tab.host());
+            }),
+            ("repositories", |tab, _, app| {
+                show_home(app, tab.host());
+            }),
+            ("clone", |_, window, app| {
+                let a = app.clone();
+                crate::repos::clone(
+                    window.upcast_ref(),
+                    Rc::new(move |path| {
+                        // clone したものはブックマークにも入れる（リポジトリのタブと同じ）。
+                        crate::bookmarks::add(&path.to_string_lossy(), None);
+                        self::open(&a, path, Place::Tab)
+                    }),
+                )
+            }),
+            ("quick-open", |_, window, app| {
+                let a = app.clone();
+                crate::quickopen::show(
+                    Some(window.upcast_ref()),
+                    Rc::new(move |location, place| self::open(&a, location, place)),
+                );
+            }),
+            ("activity", |_, window, _| {
+                crate::activity::Activity::show(window, crate::engine());
+            }),
+            ("settings", |_, window, _| crate::settings::show(window)),
+            ("shortcuts", |_, window, _| {
+                crate::appmenu::show_shortcuts(window)
+            }),
+            ("about", |_, window, _| crate::appmenu::show_about(window)),
+        ];
+        for (name, f) in actions {
+            let action = gio::SimpleAction::new(name, None);
+            let t = Rc::downgrade(self);
+            action.connect_activate(move |_, _| {
+                let Some(tab) = t.upgrade() else { return };
+                let Some(window) = tab.window() else { return };
+                let Some(app) = window.application() else {
+                    return;
+                };
+                f(&tab, &window, &app);
+            });
+            self.group.add_action(&action);
+        }
+        let recent = gio::SimpleAction::new("open-recent", Some(glib::VariantTy::STRING));
+        let t = Rc::downgrade(self);
+        recent.connect_activate(move |_, value| {
+            let Some(app) = t
+                .upgrade()
+                .and_then(|t| t.window())
+                .and_then(|w| w.application())
+            else {
+                return;
+            };
+            if let Some(location) = value.and_then(|v| v.get::<String>()) {
+                self::open(&app, PathBuf::from(location), Place::Tab);
+            }
+        });
+        self.group.add_action(&recent);
     }
 
     /// `key`（`repos::normalize` した場所）を開いているタブか（場所は開いた形なので、リンクを解いて比べる）。
