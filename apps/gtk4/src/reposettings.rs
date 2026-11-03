@@ -97,11 +97,15 @@ pub(crate) struct State {
 }
 
 /// 設定の書き換え 1 つ（`new` が None なら消す。`Some("")` は空の値を書く）。
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct Change {
     pub key: String,
     pub old: Option<String>,
     pub new: Option<String>,
+    /// 書く前のこの段の値がいくつもあったとき（`remote.origin.fetch` など）は、そのすべて（`old` は最後のもの）。
+    pub old_all: Vec<String>,
+    /// 書く値がいくつもあるとき（そういうキーを消した後に戻すとき）は、そのすべて（`new` より先に使う）。
+    pub new_all: Vec<String>,
 }
 
 impl Change {
@@ -110,6 +114,8 @@ impl Change {
             key: self.key.clone(),
             old: self.new.clone(),
             new: self.old.clone(),
+            old_all: self.new_all.clone(),
+            new_all: self.old_all.clone(),
         }
     }
 }
@@ -1021,6 +1027,18 @@ impl RepoSettings {
             .map(|e| e.value.clone())
     }
 
+    /// この段での値すべて（いくつも値を持てるキーなら、書かれている順に）。
+    pub(crate) fn local_all(&self, key: &str) -> Vec<String> {
+        let scope = self.own_scope();
+        self.state
+            .borrow()
+            .entries
+            .iter()
+            .filter(|e| e.key.eq_ignore_ascii_case(key) && e.scope == scope)
+            .map(|e| e.value.clone())
+            .collect()
+    }
+
     /// この段以外で決まっている値（この段の値を消したときに効く値）。
     pub(crate) fn inherited(&self, key: &str) -> Option<Entry> {
         let scope = self.own_scope();
@@ -1049,10 +1067,15 @@ impl RepoSettings {
     pub(crate) fn write(self: &Rc<Self>, changes: Vec<(String, Option<String>)>) {
         let changes: Vec<Change> = changes
             .into_iter()
-            .map(|(key, new)| Change {
-                old: self.local(&key),
-                key,
-                new,
+            .map(|(key, new)| {
+                let all = self.local_all(&key);
+                Change {
+                    old: self.local(&key),
+                    old_all: if all.len() > 1 { all } else { Vec::new() },
+                    key,
+                    new,
+                    new_all: Vec::new(),
+                }
             })
             .filter(|c| c.old != c.new)
             .collect();
@@ -1082,6 +1105,10 @@ impl RepoSettings {
                 }
                 _ => {
                     let mut command = json!({"op": "configSet", "key": c.key, "value": c.new});
+                    // いくつもの値はすべて書き戻す（最後の値だけにしない）。
+                    if c.new_all.len() > 1 {
+                        command["values"] = json!(c.new_all);
+                    }
                     if global {
                         command["scope"] = json!("global");
                     }
@@ -2531,7 +2558,24 @@ pub fn show(
 
 #[cfg(test)]
 mod tests {
-    use super::host_of;
+    use super::{Change, host_of};
+
+    /// いくつも値のあったキーを消した書き換えを戻すと、値をすべて書き戻し、やり直すとまた消す。
+    #[test]
+    fn undoing_a_multi_valued_removal_restores_every_value() {
+        let removal = Change {
+            key: "remote.origin.fetch".into(),
+            old: Some("b".into()),
+            new: None,
+            old_all: vec!["a".into(), "b".into()],
+            new_all: Vec::new(),
+        };
+        let back = removal.inverse();
+        assert_eq!(back.new_all, ["a", "b"]);
+        assert_eq!(back.new.as_deref(), Some("b"));
+        let again = back.inverse();
+        assert!(again.new.is_none() && again.new_all.is_empty());
+    }
 
     #[test]
     fn host_of_follows_macos() {

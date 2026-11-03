@@ -357,6 +357,7 @@ fn git_row(
                 key: crate::reposettings::MACHINE_GIT.to_owned(),
                 old: Some(old),
                 new: Some(value),
+                ..Default::default()
             }],
             crate::reposettings::Record::New,
         );

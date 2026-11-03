@@ -284,6 +284,7 @@ impl Table {
                     key: crate::reposettings::ADDED_ENVIRONMENT.to_owned(),
                     old: Some(old),
                     new: Some(new),
+                    ..Default::default()
                 }],
                 crate::reposettings::Record::New,
             ),
