@@ -699,8 +699,8 @@ impl Actions {
     }
 }
 
-/// 1 つずつの merge がコンフリクトで止まったときの、まだ merge していないもの（`info.remaining`。`, ` で
-/// つなぐ）。止まっていない・残りがなければ None。
+/// 1 つずつの merge がコンフリクトで止まったときの、まだ merge していないもの（`info.remaining`。今の言語の
+/// 並べ方でつなぐ）。止まっていない・残りがなければ None。
 fn not_merged_yet(reply: &Value) -> Option<String> {
     if reply["error"].is_string() || reply["outcome"].as_str() != Some("conflict") {
         return None;
@@ -710,7 +710,7 @@ fn not_merged_yet(reply: &Value) -> Option<String> {
         .iter()
         .filter_map(Value::as_str)
         .collect();
-    (!names.is_empty()).then(|| names.join(", "))
+    (!names.is_empty()).then(|| amonhen_model::i18n::list(&names))
 }
 
 /// メニューの項目とツールバーのボタンを使えるかを決める、タブの状態（macOS 版の `validate` が見るもの）。
@@ -874,7 +874,7 @@ mod tests {
             reply(
                 json!({ "ok": true, "outcome": "conflict", "info": { "remaining": ["b", "c"] } })
             ),
-            Some("b, c".into())
+            Some("b and c".into())
         );
         assert_eq!(reply(json!({ "ok": true, "outcome": "conflict" })), None);
         assert_eq!(

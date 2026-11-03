@@ -502,10 +502,12 @@ pub fn show_forecast(label: &gtk::Label, forecast: Option<&MergeForecast>, estim
 /// `rewritePreview` の答えを、確認に出す行にする（動く・残るブランチ、push 済み、コンフリクト）。
 pub fn rewrite_lines(info: &Value) -> (Vec<String>, bool) {
     let names = |list: &[Value]| -> String {
-        list.iter()
-            .filter_map(|b| b["name"].as_str())
-            .collect::<Vec<_>>()
-            .join(", ")
+        amonhen_model::i18n::list(
+            &list
+                .iter()
+                .filter_map(|b| b["name"].as_str())
+                .collect::<Vec<_>>(),
+        )
     };
     let moving = info["moving"].as_array().cloned().unwrap_or_default();
     let staying = info["staying"].as_array().cloned().unwrap_or_default();
@@ -556,7 +558,7 @@ pub fn rewrite_lines(info: &Value) -> (Vec<String>, bool) {
             .filter_map(|b| b["name"].as_str().map(str::to_owned)),
     );
     if !pushed.is_empty() {
-        let list = pushed.join(", ");
+        let list = amonhen_model::i18n::list(&pushed);
         out.push(if pushed.len() == 1 {
             tr!(
                 "{names} is pushed, so pushing afterwards needs Force Push.",
@@ -996,17 +998,13 @@ pub fn fetch(actions: &Rc<Actions>) {
             if names.len() == chosen.len() {
                 tr!(
                     "Remote branches deleted there are removed here too ({settings}).",
-                    settings = keys.join(", ")
+                    settings = amonhen_model::i18n::list(&keys)
                 )
             } else {
                 tr!(
                     "Remote branches deleted on {remotes} are removed here too ({settings}).",
-                    remotes = names
-                        .iter()
-                        .map(|s| s.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    settings = keys.join(", ")
+                    remotes = amonhen_model::i18n::list(&names),
+                    settings = amonhen_model::i18n::list(&keys)
                 )
             }
         };
@@ -1016,10 +1014,15 @@ pub fn fetch(actions: &Rc<Actions>) {
             tr!("Fetch?")
         };
         let sheet = Sheet::new(parent(&actions).as_ref(), &title, &prune_line(&remotes));
-        let mut choices = vec![tr!("All Remotes ({names})", names = remotes.join(", "))];
+        let mut choices = vec![tr!(
+            "All Remotes ({names})",
+            names = amonhen_model::i18n::list(&remotes)
+        )];
         choices.extend(remotes.iter().cloned());
         let refs: Vec<&str> = choices.iter().map(String::as_str).collect();
         let from = gtk::DropDown::from_strings(&refs);
+        // 「すべてのリモート」の下に区切りの線（macOS 版と同じ）。
+        crate::settings::separate_items(&from, Rc::new(std::cell::RefCell::new(vec![1])));
         if remotes.len() > 1 {
             sheet.add(&row(&tr!("From:"), &from));
             let (message, remotes, prune_line) =
@@ -2329,6 +2332,15 @@ pub fn push_to(actions: &Rc<Actions>, branch: &str, target: &str, command: Value
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rewrite_lines_list_the_branches() {
+        let info = json!({
+            "moving": [{ "name": "a" }, { "name": "b" }, { "name": "c" }],
+            "staying": [],
+        });
+        assert_eq!(rewrite_lines(&info).0[0], "Also moves a, b, and c.");
+    }
 
     #[test]
     fn the_wide_sheet_is_most_of_the_parent() {
