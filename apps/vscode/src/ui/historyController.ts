@@ -274,7 +274,8 @@ export class HistoryController implements vscode.Disposable {
     if (to === 'head') {
       target = this.headOid;
     } else if (oid && to === 'parent') {
-      target = (this.details.get(oid) ?? (this.daemon && (await this.daemonDetails(this.daemon.client, oid))))?.parents[0];
+      const client = this.details.has(oid) ? undefined : await this.engine();
+      target = (this.details.get(oid) ?? (client && (await this.daemonDetails(client, oid))))?.parents[0];
     } else if (oid) {
       const children = (await this.readExtras(oid))?.children ?? [];
       if (children.length > 1) {
@@ -310,13 +311,21 @@ export class HistoryController implements vscode.Disposable {
     if (Object.keys(marks).length > 0) this.post({ type: 'signatures', marks });
   }
 
+  /**
+   * このリポジトリのエンジンへのつながり（使わないなら undefined）。History を読み直している間は `this.daemon` が
+   * ないので、History によらないコアの命令はこちらで頼む
+   */
+  private async engine(): Promise<DaemonClient | undefined> {
+    return this.daemon?.client ?? (this.repo ? await daemonFor(this.repo.root) : undefined);
+  }
+
   /** 詳細の残り（署名・子のコミット）を読む */
   private async readExtras(oid: string): Promise<DetailsExtras | undefined> {
     const cached = this.extras.get(oid);
     if (cached) return cached;
-    const daemon = this.daemon;
-    if (!daemon) return undefined;
-    const reply = (await daemon.client.call({ op: 'run', command: { op: 'commitExtras', oid } })).json;
+    const client = await this.engine();
+    if (!client) return undefined;
+    const reply = (await client.call({ op: 'run', command: { op: 'commitExtras', oid } })).json;
     if (reply['ok'] !== true) return undefined;
     const info = reply['info'] as { signature?: SignatureCheck | null; children?: string[] } | undefined;
     const committer = this.details.get(oid)?.committer.email ?? '';
