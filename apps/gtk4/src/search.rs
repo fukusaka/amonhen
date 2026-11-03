@@ -719,36 +719,33 @@ impl Inner {
             let window = this.entry.root().and_downcast::<gtk::Window>();
             let count = grouped(need.count);
             if need.more {
-                let dialog = gtk::AlertDialog::builder()
-                    .message(tr!("Too Many Contents to Fetch"))
-                    .detail(tr!(
+                // ほかの確認と同じシートで（macOS 版と同じ）。
+                let sheet = crate::sheets::Sheet::unnamed(
+                    window.as_ref(),
+                    &tr!("Too Many Contents to Fetch"),
+                    &tr!(
                         "This search needs more than {count} file contents not fetched yet. Narrow it with path:, after: or before:, or fetch all contents in Fetching and Folders.",
                         count = count
-                    ))
-                    .buttons([tr!("Cancel").as_str(), &tr!("Open Fetching and Folders")])
-                    .cancel_button(0)
-                    .default_button(1)
-                    .modal(true)
-                    .build();
-                if dialog.choose_future(window.as_ref()).await == Ok(1)
+                    ),
+                );
+                sheet.buttons(&tr!("Open Fetching and Folders"), false, None);
+                if sheet.run().await == crate::sheets::Response::Ok
                     && let Some(f) = this.on_show_fetching.borrow().clone()
                 {
                     f();
                 }
                 return;
             }
-            let dialog = gtk::AlertDialog::builder()
-                .message(tr!("Search the Contents?"))
-                .detail(tr!(
+            let sheet = crate::sheets::Sheet::unnamed(
+                window.as_ref(),
+                &tr!("Search the Contents?"),
+                &tr!(
                     "This search fetches {count} file contents not fetched yet.",
                     count = count
-                ))
-                .buttons([tr!("Cancel").as_str(), &tr!("Search")])
-                .cancel_button(0)
-                .default_button(1)
-                .modal(true)
-                .build();
-            let chosen = dialog.choose_future(window.as_ref()).await == Ok(1);
+                ),
+            );
+            sheet.buttons(&tr!("Search"), false, None);
+            let chosen = sheet.run().await == crate::sheets::Response::Ok;
             // 尋ねている間に History が替わったら探さない（macOS 版と同じ）。
             let current = this
                 .base

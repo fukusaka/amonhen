@@ -492,14 +492,16 @@ impl Actions {
         }
     }
 
+    /// 知らせる（ボタンは OK だけの、ほかの確認と同じシート。macOS 版の `alert` と同じく、worktree は書かない）。
     pub async fn alert(&self, title: &str, message: &str) {
-        let dialog = gtk::AlertDialog::builder()
-            .message(title)
-            .detail(message)
-            .modal(true)
-            .build();
-        let window = self.window();
-        let _ = dialog.choose_future(window.as_ref()).await;
+        let parent: Option<gtk::Window> = self.window().map(|w| w.upcast());
+        let sheet = crate::sheets::Sheet::unnamed(parent.as_ref(), title, message);
+        sheet.button(
+            "OK",
+            crate::sheets::Response::Ok,
+            Some(crate::sheets::Style::Suggested),
+        );
+        sheet.run().await;
     }
 
     /// 実行の前に確かめる（macOS 版の `confirm`。ほかの確認と同じシートで）。
