@@ -1670,6 +1670,11 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         }
     }
 
+    /// Repository > Save Repository as Bundle…: HEAD とすべてのブランチ・タグ。
+    @objc func saveBundle(_ sender: Any?) {
+        actions.saveBundle(refs: [], names: [], label: "all")
+    }
+
     /// Repository > Apply Patch…。
     @objc func applyPatch(_ sender: Any?) { actions.chooseAndApplyPatches() }
 
