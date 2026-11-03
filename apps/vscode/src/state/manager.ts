@@ -2,7 +2,7 @@ import { basename } from 'node:path';
 import * as vscode from 'vscode';
 import { accessSync, constants } from 'node:fs';
 import { setFallbackGit } from '../daemon/client.ts';
-import { daemonFor, resendDaemonEnvironment } from '../daemon/connection.ts';
+import { closeDaemonClient, daemonFor, resendDaemonEnvironment } from '../daemon/connection.ts';
 import { withDaemonWrites } from '../daemon/writes.ts';
 import { CliBackend } from '../git/backend.ts';
 import { GitExecutor } from '../git/exec.ts';
@@ -198,6 +198,8 @@ export class RepositoryManager implements vscode.Disposable {
     if (!entry) return;
     this.entries.delete(entry.repository.root);
     vscode.Disposable.from(...entry.disposables).dispose();
+    // daemon へのつながりも閉じる（Windows では、daemon が使っているフォルダーを消せない）
+    closeDaemonClient(entry.repository.root);
     this.updateContext();
     if (this._current === entry.repository) this.select(this.repositories[0]);
   }

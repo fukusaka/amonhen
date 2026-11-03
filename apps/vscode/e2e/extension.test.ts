@@ -822,14 +822,18 @@ async function shallowFlow(): Promise<void> {
   const clone = join(dirname(root), 'shallow-e2e');
   await showView('amonhen.showHistory');
   try {
+    // partial clone の中身をすべて取るのは git 2.36 から（古い git では shallow だけを確かめる）
+    const [major, minor] = git('--version').match(/(\d+)\.(\d+)/)!.slice(1).map(Number) as [number, number];
+    const partial = major > 2 || (major === 2 && minor >= 36);
     childProcess.execFileSync('git', ['-C', origin, 'config', 'uploadpack.allowFilter', 'true']);
-    childProcess.execFileSync('git', ['clone', '-q', '--depth', '1', '--filter=blob:none', `file://${origin.replaceAll('\\', '/')}`, clone]);
+    const url = `file://${origin.replaceAll('\\', '/')}`;
+    childProcess.execFileSync('git', ['clone', '-q', '--depth', '1', ...(partial ? ['--filter=blob:none'] : []), url, clone]);
     const repo = (await manager.openPath(clone))!;
     let mark = posted.length;
     manager.select(repo);
     const form = await waitPosted('form', mark, (m) => m.shallow);
     assert.equal(form.boundary.length, 1, 'the one commit fetched is the boundary');
-    assert.equal(form.partial?.filter, 'blob:none');
+    if (partial) assert.equal(form.partial?.filter, 'blob:none');
 
     mark = posted.length;
     await withWindow({ showQuickPick: async (items: readonly vscode.QuickPickItem[]) => items[0] }, async () =>
@@ -840,7 +844,12 @@ async function shallowFlow(): Promise<void> {
   } finally {
     manager.select(main);
     manager.forget(clone);
-    rmSync(clone, { recursive: true, force: true });
+    // Windows では daemon がまだ見張っていて消せないことがある（e2e の一時ディレクトリごと、終わりに消える）
+    try {
+      rmSync(clone, { recursive: true, force: true });
+    } catch {
+      // 後で消える
+    }
     childProcess.execFileSync('git', ['-C', origin, 'config', '--unset', 'uploadpack.allowFilter']);
   }
 }
