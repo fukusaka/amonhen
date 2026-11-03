@@ -1370,8 +1370,9 @@ fn install_actions(tab: &Rc<Tab>) {
     // の標準の項目と同じ。キーは部品がじかに受ける）。メニューを開くとフォーカスはメニューに移るので、その前に
     // フォーカスのあった部品へ。
     for (name, targets) in [
-        ("edit-undo", &["text.undo"][..]),
-        ("edit-redo", &["text.redo"][..]),
+        // Repository Settings のページでは、欄の外なら設定の書き換えの Undo・やり直し。
+        ("edit-undo", &["text.undo", "reposettings.undo"][..]),
+        ("edit-redo", &["text.redo", "reposettings.redo"][..]),
         ("edit-cut", &["clipboard.cut"][..]),
         ("edit-copy", &["clipboard.copy"][..]),
         ("edit-paste", &["clipboard.paste"][..]),

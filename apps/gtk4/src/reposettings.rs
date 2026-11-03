@@ -810,6 +810,30 @@ impl RepoSettings {
             ));
         }
         widget.add_controller(shortcuts);
+        // Edit > Undo・Redo からも（macOS 版は窓の UndoManager。欄にフォーカスがあれば欄の Undo が先。
+        // `tabs` の edit-undo・edit-redo がフォーカスのある部品からたどる）。戻すものがなければ鳴らす。
+        let group = gio::SimpleActionGroup::new();
+        for (name, redo) in [("undo", false), ("redo", true)] {
+            let action = gio::SimpleAction::new(name, None);
+            let w = Rc::downgrade(&this);
+            action.connect_activate(move |_, _| {
+                let Some(s) = w.upgrade() else { return };
+                let empty = if redo {
+                    s.redo.borrow().is_empty()
+                } else {
+                    s.undo.borrow().is_empty()
+                };
+                if empty {
+                    s.widget.error_bell();
+                } else if redo {
+                    s.redo();
+                } else {
+                    s.undo();
+                }
+            });
+            group.add_action(&action);
+        }
+        widget.insert_action_group("reposettings", Some(&group));
         this.load();
         this
     }
