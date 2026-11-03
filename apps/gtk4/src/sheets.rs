@@ -1988,22 +1988,36 @@ pub fn undo(actions: &Rc<Actions>) {
 
 /// 相手の決まった Merge・Rebase の前に確かめる。
 pub fn integrate(actions: &Rc<Actions>, rev: &str, current: &str, rebase: bool) {
-    integrate_choosing(
+    integrate_sheet(
         actions,
         vec![(rev.to_owned(), rev.to_owned())],
         current,
         rebase,
+        false,
     );
 }
 
-/// Merge・Rebase の前に確かめる。`choices`（名前, rev）がいくつもあれば、同じシートで相手を選ぶ（最初のもの
-/// から）。コンフリクトの見込み（rebase なら書き換えの見通し: 一緒に動くブランチ、push 済み、コミットごとの
-/// コンフリクト）を裏で調べて見せ、rebase なら積み重ねたブランチを動かすかをこの操作だけ選べる。
+/// メニューの Merge…・Rebase…: 同じシートで相手を選ぶ（`choices` は名前と rev、最初のものから）。題と説明は
+/// 選ぶ前のもので変わらない（macOS 版の `chooseRevision`）。
 pub fn integrate_choosing(
     actions: &Rc<Actions>,
     choices: Vec<(String, String)>,
     current: &str,
     rebase: bool,
+) {
+    integrate_sheet(actions, choices, current, rebase, true);
+}
+
+/// Merge・Rebase の前に確かめる。`chooser` なら相手を選ぶシート（題は「X に merge する」、選ぶ欄はいつも出す）、
+/// でなければ決まった相手の問いと Undo の文。コンフリクトの見込み（rebase なら書き換えの見通し: 一緒に動く
+/// ブランチ、push 済み、コミットごとのコンフリクト）を裏で調べて見せ、rebase なら積み重ねたブランチを動かすかを
+/// この操作だけ選べる。
+fn integrate_sheet(
+    actions: &Rc<Actions>,
+    choices: Vec<(String, String)>,
+    current: &str,
+    rebase: bool,
+    chooser: bool,
 ) {
     let (actions, current) = (actions.clone(), current.to_owned());
     glib::spawn_future_local(async move {
@@ -2021,19 +2035,32 @@ pub fn integrate_choosing(
                 }
             }
         };
-        let sheet = Sheet::new(
-            parent(&actions).as_ref(),
-            &title_for(&choices[0].0),
-            &can_undo(),
-        );
+        let sheet = if !chooser {
+            Sheet::new(
+                parent(&actions).as_ref(),
+                &title_for(&choices[0].0),
+                &can_undo(),
+            )
+        } else if rebase {
+            Sheet::unnamed(
+                parent(&actions).as_ref(),
+                &tr!("Rebase {name}", name = current),
+                &tr!("The branch, tag or commit to rebase onto"),
+            )
+        } else {
+            Sheet::unnamed(
+                parent(&actions).as_ref(),
+                &tr!("Merge into {name}", name = current),
+                &tr!("The branch, tag or commit to merge in"),
+            )
+        };
         let labels: Vec<&str> = choices.iter().map(|(l, _)| l.as_str()).collect();
         let picker = gtk::DropDown::from_strings(&labels);
         picker.set_enable_search(true);
-        if choices.len() > 1 {
-            sheet.add(&row(
-                &if rebase { tr!("Onto:") } else { tr!("Merge:") },
-                &picker,
-            ));
+        picker.set_halign(gtk::Align::Start);
+        picker.set_size_request(320, -1);
+        if chooser {
+            sheet.add(&picker);
         }
         // rebase なら、前と後の絵（今のブランチの rebase のとき）。
         let (drawing, set_drawing) = crate::rewritedraw::new();
@@ -2152,7 +2179,9 @@ pub fn integrate_choosing(
             chosen.clone(),
         );
         picker.connect_selected_notify(move |_| {
-            heading.set_text(&title_for(&c().0));
+            if !chooser {
+                heading.set_text(&title_for(&c().0));
+            }
             l();
         });
         if sheet.run().await != Response::Ok {

@@ -705,8 +705,10 @@
 "Undo the last {count} operations?" = "直近の {count} 個の操作を Undo しますか？";
 "Rebase {target} onto {rev}?" = "{target} を {rev} の上に Rebase しますか？";
 "Merge {rev} into {target}?" = "{rev} を {target} に Merge しますか？";
-"Onto:" = "載せ先:";
-"Merge:" = "取り込むもの:";
+"Merge into {name}" = "{name} に merge する";
+"The branch, tag or commit to merge in" = "取り込むブランチ・タグ・コミット";
+"Rebase {name}" = "{name} を rebase する";
+"The branch, tag or commit to rebase onto" = "上に載せる先のブランチ・タグ・コミット";
 "Delete {name}?" = "{name} を削除しますか？";
 "Delete {count} branches?" = "{count} 本のブランチを削除しますか？";
 "Some commits are on no other branch; they go with the branch." = "どのブランチにもないコミットがあります。ブランチと一緒に消えます。";
