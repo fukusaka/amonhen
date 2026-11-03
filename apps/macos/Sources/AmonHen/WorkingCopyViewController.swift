@@ -722,11 +722,16 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     // MARK: - fixup! と squash!
 
     /// Commit ▾ の Fixup・Squash の一覧を、最近のコミットで作り直す。
+    /// Fixup・Squash の項目の前の区切りの印。
+    private static let fixupSeparatorTag = 0x6678
+
     private func buildFixupMenus() {
         guard let menu = commitMenuButton.menu else { return }
         for title in ["Fixup Commit For", "Squash Commit For"] {
             if let old = menu.item(withTitle: title) { menu.removeItem(old) }
         }
+        // 前に足した区切りも外す（作り直すたびに区切りが増えないように）。
+        while let old = menu.item(withTag: Self.fixupSeparatorTag) { menu.removeItem(old) }
         var subjects: [String] = []
         for commit in recentCommits {
             let subject = commit.message.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? ""
@@ -736,7 +741,9 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             if subjects.count == 15 { break }
         }
         guard !subjects.isEmpty else { return }
-        menu.addItem(.separator())
+        let separator = NSMenuItem.separator()
+        separator.tag = Self.fixupSeparatorTag
+        menu.addItem(separator)
         for (title, prefix, keepBody) in [("Fixup Commit For", "fixup! ", false), ("Squash Commit For", "squash! ", true)] {
             let sub = NSMenu(title: title)
             for subject in subjects {
