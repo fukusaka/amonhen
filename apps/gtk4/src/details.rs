@@ -1001,17 +1001,38 @@ impl Details {
         }
         self.pairs.set_visible(kind == Some("pair"));
         if kind == Some("pair") {
-            for (mode, title) in PAIRS {
-                if mode == pair {
-                    continue;
+            // 取り方の切り替えは、説明の下の文中のリンク（macOS 版と同じ。押すと読み直す）。
+            let modes: Vec<(usize, PairMode, &str)> = PAIRS
+                .into_iter()
+                .enumerate()
+                .filter(|(_, (mode, _))| *mode != pair)
+                .map(|(i, (mode, title))| (i, mode, title))
+                .collect();
+            let markup: Vec<String> = modes
+                .iter()
+                .map(|(i, _, title)| {
+                    format!(
+                        "<a href=\"pair:{i}\">{}</a>",
+                        glib::markup_escape_text(&amonhen_model::i18n::translate(title))
+                    )
+                })
+                .collect();
+            let links = gtk::Label::new(None);
+            links.set_markup(&markup.join("　"));
+            links.set_xalign(0.0);
+            links.add_css_class("caption");
+            let f = on_pair.clone();
+            links.connect_activate_link(move |_, uri| {
+                if let Some(&(_, mode, _)) = uri
+                    .strip_prefix("pair:")
+                    .and_then(|i| i.parse::<usize>().ok())
+                    .and_then(|i| modes.iter().find(|(n, _, _)| *n == i))
+                {
+                    f(mode);
                 }
-                let button = gtk::Button::with_label(&amonhen_model::i18n::translate(title));
-                button.add_css_class("flat");
-                button.add_css_class("caption");
-                let f = on_pair.clone();
-                button.connect_clicked(move |_| f(mode));
-                self.pairs.append(&button);
-            }
+                glib::Propagation::Stop
+            });
+            self.pairs.append(&links);
         }
         let text: Vec<String> = lines
             .iter()
