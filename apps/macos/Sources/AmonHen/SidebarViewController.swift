@@ -864,9 +864,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         (item as? Node).map { $0.item != nil || $0.page != nil || $0.pullRequest != nil || $0.worktree != nil } ?? false
     }
 
-    /// 見出しの下の項目の数（リモートはブランチの数）。
+    /// 見出しの下の項目の数（リモートはブランチの数）。ほかのブランチを積んだブランチは、それ自身も数える。
     private static func leafCount(_ node: Node) -> Int {
-        node.children.isEmpty ? 1 : node.children.reduce(0) { $0 + leafCount($1) }
+        node.children.isEmpty ? 1 : (node.item != nil ? 1 : 0) + node.children.reduce(0) { $0 + leafCount($1) }
     }
 
     @objc private func outlineClicked() {
