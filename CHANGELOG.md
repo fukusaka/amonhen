@@ -729,6 +729,8 @@ First release.
   the pre-commit and commit-msg hooks as git does. Lines starting with `#` are still kept.
 - The conflict notice names the sidebar row whose Continue and Abort to use, since VSCode moves the notice to the
   notification center after a few seconds.
+- On macOS, opening History for the first time after the engine is installed or updated no longer waits for the OS
+  to check the new engine; the extension starts it once in the background at startup.
 
 #### Fixed
 

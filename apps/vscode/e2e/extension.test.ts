@@ -877,6 +877,9 @@ suite('Amon Hen in VSCode', () => {
       process.platform === 'win32' ? join(data, 'bin', 'amonhen.exe') : join(process.env['HOME']!, '.local', 'bin', 'amonhen');
     // install は current を書いてから CLI を写す（Windows では写すのに時間がかかる）
     await until(`${link} がある`, () => existsSync(link));
+    // エンジンの用意（置いたエンジンを一度起動する。macOS では OS の確認で数十秒かかることがある）が済むと、
+    // サイドバーに Reflog が出る。後のテストがこの待ちを負わないよう、ここで待つ
+    await until('サイドバーの Reflog', () => api.sidebar.getChildren().some((n) => n.kind === 'view' && n.view === 'reflog'), 50_000);
   });
 
   test('shows History, commit details and diffs through the daemon', async () => {
