@@ -24,7 +24,11 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
     private let scrollView = NSScrollView()
     private let document = DiffDocumentView()
     private let textView = GraphView()
-    private var diff: FileDiff?
+    private var diff: FileDiff? {
+        didSet { hunkCursor = nil }
+    }
+    /// J・K で最後に出した hunk の番号（行を選べない差分で、次の J・K をそこから進めるため）。
+    private var hunkCursor: Int?
     /// 行ごとの並べたグリフ。表示し直すまで使い回す。
     private var shaped: [Int: TextRenderer.ShapedLine] = [:]
     private var numberCache: [UInt32: TextRenderer.ShapedLine] = [:]
@@ -355,7 +359,11 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         let hunks = hunkRows
         guard !hunks.isEmpty else { return NSSound.beep() }
         let target: Int
-        if selectedRows.isEmpty {
+        if selectedRows.isEmpty, let hunkCursor {
+            // 選べない差分では、前に J・K で出した hunk から進む（出した hunk は上から 3 分の 1 にあるので、
+            // 見えている一番上から探すと同じ hunk にまた止まる）。
+            target = hunkCursor + step
+        } else if selectedRows.isEmpty {
             // 選んでいなければ、見えている一番上から: J はそこ以降の最初、K はそれより前の最後。
             let top = Int(scrollView.contentView.bounds.origin.y / lineHeight)
             target = step > 0 ? (hunks.firstIndex { $0 >= top } ?? hunks.count) : (hunks.lastIndex { $0 < top } ?? -1)
@@ -372,6 +380,7 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         guard hunks.indices.contains(index) else { return }
         let start = hunks[index]
         let end = index + 1 < hunks.count ? hunks[index + 1] : (diff?.rowCount ?? start + 1)
+        hunkCursor = index
         if isSelectable {
             selectedRows = Set(start..<end)
             anchorRow = start

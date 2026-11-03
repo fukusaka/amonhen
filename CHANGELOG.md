@@ -164,6 +164,7 @@ becomes the GitHub Release notes.
   older git (2.23, for example) the rebase stopped on it.
 - macOS: the toolbar search field keeps its text when History reloads after a fetch or commit.
 - macOS: Combine with Older Commit… no longer marks a commit whose parent is a merge for squashing onto the merge.
+- macOS: J and K step through every hunk in History, Stashes and File History diffs; they stopped at the same one.
 
 ### [0.2.8] - 2026-10-30
 
