@@ -428,6 +428,12 @@ fn git_row(
             &[(OTHER.to_owned(), tr!("Other…"))],
             &current,
         );
+        // 使う git のパス（Automatic なら最初の候補。macOS 版と同じ）。
+        picker.button.set_tooltip_text(Some(if current.is_empty() {
+            list.first().map_or("", |c| c.path.as_str())
+        } else {
+            &current
+        }));
         let chosen = !current.is_empty();
         revert.set_opacity(if chosen { 1.0 } else { 0.0 });
         revert.set_can_target(chosen);

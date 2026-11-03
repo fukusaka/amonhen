@@ -95,6 +95,8 @@ impl Sheet {
         heading.set_wrap(true);
         heading.set_max_width_chars(48);
         heading.set_xalign(0.0);
+        // 見出しのないシート（macOS 版のテンプレートを書くシートなど）。
+        heading.set_visible(!title.is_empty());
         let label = gtk::Label::new(Some(message));
         label.set_wrap(true);
         label.set_max_width_chars(60);

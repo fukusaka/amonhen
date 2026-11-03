@@ -177,6 +177,11 @@ fn fill_details(b: &gtk::Box) {
     let other = ids.len() as u32;
     let refs: Vec<&str> = titles.iter().map(String::as_str).collect();
     let picker = gtk::DropDown::from_strings(&refs);
+    // Other… の上に線（macOS 版の Divider）。
+    crate::settings::separate_items(
+        &picker,
+        std::rc::Rc::new(std::cell::RefCell::new(vec![other])),
+    );
     let custom = !ids.contains(&current);
     picker.set_selected(if custom {
         other
@@ -193,11 +198,17 @@ fn fill_details(b: &gtk::Box) {
     name_row.set_visible(custom);
     b.append(&row(&tr!("Model"), &picker));
     b.append(&name_row);
-    let nr = name_row.downgrade();
+    let (nr, nm) = (name_row.downgrade(), name.downgrade());
     picker.connect_selected_notify(move |d| {
         let i = d.selected();
         if let Some(nr) = nr.upgrade() {
             nr.set_visible(i == other);
+        }
+        // 欄には今のモデルの名前を入れておく（macOS 版は欄が設定そのもの）。
+        if i == other
+            && let Some(nm) = nm.upgrade()
+        {
+            nm.set_text(&assist::model(cli));
         }
         if i != other {
             assist::set_model(cli, &ids[i as usize]);

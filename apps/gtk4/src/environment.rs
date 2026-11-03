@@ -717,20 +717,7 @@ pub fn page(s: &Rc<RepoSettings>) -> gtk::Widget {
     spacer.set_hexpand(true);
     top.append(&spacer);
     top.append(&table.search());
-    b.append(&top);
-    b.append(&table.view());
-    b.append(&table.detail);
-    let note = label(
-        &tr!(
-            "Checked variables go to the git and ssh this app runs, through the shared daemon too, but not to SSH hosts. Always passed, when the shell sets them: {names}.",
-            names = always_names()
-        ),
-        &["dim-label", "caption"],
-    );
-    note.set_wrap(true);
-    note.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-    b.append(&note);
-    // SSH の agent のソケットがあるか（SSH_AUTH_SOCK があるときだけ。macOS 版と同じ）。
+    // SSH の agent のソケットがあるか（SSH_AUTH_SOCK があるときだけ）。macOS 版と同じく表の上に、線で分けて。
     if let Some(socket) = std::env::var_os("SSH_AUTH_SOCK") {
         #[cfg(unix)]
         let found = {
@@ -750,8 +737,21 @@ pub fn page(s: &Rc<RepoSettings>) -> gtk::Widget {
         };
         agent.set_wrap(true);
         b.append(&agent);
+        b.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
     }
-
+    b.append(&top);
+    b.append(&table.view());
+    b.append(&table.detail);
+    let note = label(
+        &tr!(
+            "Checked variables go to the git and ssh this app runs, through the shared daemon too, but not to SSH hosts. Always passed, when the shell sets them: {names}.",
+            names = always_names()
+        ),
+        &["dim-label", "caption"],
+    );
+    note.set_wrap(true);
+    note.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+    b.append(&note);
     // この機械で選んだ git（PATH のものでなければ、PATH の行にそれを書く）。
     let (repo, w) = (s.repo.clone(), Rc::downgrade(&table));
     glib::spawn_future_local(async move {
