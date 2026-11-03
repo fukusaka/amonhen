@@ -350,7 +350,8 @@ fn show_blame(
         };
         info.set_text(&text);
         info.set_opacity(if row.offset == 0 { 0.75 } else { 0.5 });
-        line.set_tooltip_text(
+        // 説明はコミットの列だけ（macOS 版と同じ）。
+        info.set_tooltip_text(
             committed
                 .then(|| {
                     format!(
@@ -393,6 +394,21 @@ fn show_blame(
     selection.set_selected(gtk::INVALID_LIST_POSITION);
     let list = gtk::ListView::new(Some(selection.clone()), Some(factory));
     list.add_css_class("view");
+    // History に出すのはダブルクリックだけ。Return では何もしない（ListView は Return でも activate を出す。
+    // macOS 版と同じ）。
+    let keys = gtk::EventControllerKey::new();
+    keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+    keys.connect_key_pressed(|_, key, _, _| {
+        if matches!(
+            key,
+            gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter | gtk::gdk::Key::ISO_Enter
+        ) {
+            glib::Propagation::Stop
+        } else {
+            glib::Propagation::Proceed
+        }
+    });
+    list.add_controller(keys);
     let (r, c) = (rows.clone(), commits.clone());
     list.connect_activate(move |_, position| {
         let Some(row) = r.get(position as usize) else {
