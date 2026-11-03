@@ -269,6 +269,17 @@ fn column_header(cells: &[(&str, i32)]) -> (gtk::ListBox, gtk::Box) {
     (list, line)
 }
 
+/// `line` の `index` 番目の列を、頭を切って縮める（パス。終わりが見える）。
+fn ellipsize_start(line: &gtk::Box, index: usize) {
+    let mut cell = line.first_child();
+    for _ in 0..index {
+        cell = cell.and_then(|c| c.next_sibling());
+    }
+    if let Some(l) = cell.and_downcast::<gtk::Label>() {
+        l.set_ellipsize(gtk::pango::EllipsizeMode::Start);
+    }
+}
+
 /// `line` の `index` 番目の列の幅を変える（リポジトリの列は、名前の長さで幅が変わる）。
 fn set_column_width(line: &gtk::Box, index: usize, width: i32) {
     let mut cell = line.first_child();
@@ -995,6 +1006,16 @@ impl Activity {
         let perf = gtk::Box::new(gtk::Orientation::Vertical, 8);
         margin(&perf);
         let (scrolled, perf_list) = list();
+        // 列の見出しは一覧の上に置き、流れない（macOS 版の表と同じ）。
+        let (perf_header, _) = column_header(&[
+            (tr!("Item").as_str(), 0),
+            (tr!("Count").as_str(), 60),
+            ("p50 ms", 70),
+            ("p95 ms", 70),
+            (tr!("Max ms").as_str(), 70),
+            (tr!("Last ms").as_str(), 70),
+        ]);
+        perf.append(&perf_header);
         perf.append(&scrolled);
         perf.append(&label(
             &tr!("The last 500 of each since the app started. Orange when p95 exceeds twice a frame (16.7 ms)."),
@@ -1016,14 +1037,6 @@ impl Activity {
                 }
                 let mut metrics = metrics;
                 perf_list.remove_all();
-                perf_list.append(&row(&[
-                    (&tr!("Item"), 0, &["dim-label"]),
-                    (&tr!("Count"), 60, &["dim-label"]),
-                    ("p50 ms", 70, &["dim-label"]),
-                    ("p95 ms", 70, &["dim-label"]),
-                    (&tr!("Max ms"), 70, &["dim-label"]),
-                    (&tr!("Last ms"), 70, &["dim-label"]),
-                ]));
                 metrics.sort_by(|a, b| a.0.cmp(&b.0));
                 for (name, values) in metrics {
                     let last = *values.last().unwrap_or(&0.0);
@@ -1123,6 +1136,16 @@ impl Activity {
         let (scrolled, repo_list) = list();
         daemon.append(&top);
         daemon.append(&label(&tr!("Open Repositories"), &["heading"]));
+        // 列の見出しは一覧の上に置き、流れない。daemon が動いていなくても出す（macOS 版の表と同じ）。
+        let (repo_header, _) = column_header(&[
+            (tr!("Repository").as_str(), 0),
+            ("SSH", 150),
+            (tr!("Connections").as_str(), 150),
+            ("History", 70),
+            (tr!("Watching").as_str(), 70),
+            (tr!("Search Index").as_str(), 170),
+        ]);
+        daemon.append(&repo_header);
         daemon.append(&scrolled);
         // このアプリから daemon 越しに開いているリポジトリ（macOS 版と同じ列）。
         let (scrolled, conn_list) = list();
@@ -1131,6 +1154,14 @@ impl Activity {
             &tr!("This App’s Connections to the Daemon"),
             &["heading"],
         ));
+        let (conn_header, _) = column_header(&[
+            (tr!("Repository").as_str(), 0),
+            (tr!("Location").as_str(), 190),
+            (tr!("Status").as_str(), 110),
+            (tr!("Sent · Received").as_str(), 160),
+            (tr!("Engine on the SSH Host").as_str(), 240),
+        ]);
+        daemon.append(&conn_header);
         daemon.append(&scrolled);
         {
             let (conn_list, entries) = (conn_list.clone(), entries.clone());
@@ -1154,13 +1185,6 @@ impl Activity {
                     return;
                 }
                 conn_list.remove_all();
-                conn_list.append(&row(&[
-                    (&tr!("Repository"), 0, &["dim-label"]),
-                    (&tr!("Location"), 190, &["dim-label"]),
-                    (&tr!("Status"), 110, &["dim-label"]),
-                    (&tr!("Sent · Received"), 160, &["dim-label"]),
-                    (&tr!("Engine on the SSH Host"), 240, &["dim-label"]),
-                ]));
                 for (name, kind, closed, traffic, engine) in rows {
                     let (status, status_css): (String, &[&str]) = match &closed {
                         Some(_) => (tr!("Disconnected"), &["activity-error"]),
@@ -1179,6 +1203,8 @@ impl Activity {
                         (&traffic, 160, &["numeric"]),
                         (engine_text, 240, &["dim-label"]),
                     ]);
+                    // エンジンのパスは頭を切る（macOS 版と同じ）。
+                    ellipsize_start(&line, 4);
                     // 切れた理由と、SSH 先のエンジンの全文は説明に。
                     let mut cell = line.first_child();
                     let mut i = 0;
@@ -1306,15 +1332,6 @@ impl Activity {
                     if same_repos {
                         return;
                     }
-                    // 列の見出し（macOS 版の表と同じ列）。
-                    repo_list.append(&row(&[
-                        (&tr!("Repository"), 0, &["dim-label"]),
-                        ("SSH", 150, &["dim-label"]),
-                        (&tr!("Connections"), 150, &["dim-label"]),
-                        ("History", 70, &["dim-label"]),
-                        (&tr!("Watching"), 70, &["dim-label"]),
-                        (&tr!("Search Index"), 170, &["dim-label"]),
-                    ]));
                     for r in d["repos"].as_array().into_iter().flatten() {
                         let yes = |key: &str| {
                             if r[key].as_bool() == Some(true) {
@@ -1375,6 +1392,8 @@ impl Activity {
                             (&index, 170, &["numeric"]),
                         ]);
                         line.set_tooltip_text(Some(path));
+                        // パスは頭を切る（終わりの名前が見える。macOS 版と同じ）。
+                        ellipsize_start(&line, 0);
                         if let (Some(tip), Some(cell)) =
                             (ssh_tip, line.first_child().and_then(|c| c.next_sibling()))
                         {
