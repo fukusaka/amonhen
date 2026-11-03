@@ -1592,7 +1592,11 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             self.changes = changes
             self.stacked = stacked
             reloadFiles()
-            if changes?.items.isEmpty ?? true {
+            if changes == nil {
+                // 読めなかった（変更がないのとは違う）。
+                diffView.show(nil, message: L("Couldn’t load the diff"))
+                onDiffShown?()
+            } else if changes?.items.isEmpty ?? true {
                 diffView.show(nil, message: L("No changes"))
                 onDiffShown?()
             } else if let stacked {
