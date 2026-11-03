@@ -849,6 +849,9 @@ pub fn page(app: &gtk::Application, open: Open, group: &gio::SimpleActionGroup) 
     bookmarks::forget_peeks();
     bookmarks::rescan();
     browser.reload();
+    // 始めた知らせは聞き手を足す前に出ているので、ここで回す（macOS 版と同じ）。
+    browser.scanning.set_visible(bookmarks::is_scanning());
+    browser.scanning.set_spinning(bookmarks::is_scanning());
     // ページを閉じるまで知らせを受ける。
     let weak = Rc::downgrade(&browser);
     bookmarks::connect(move |path| {

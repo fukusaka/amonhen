@@ -317,6 +317,9 @@ pub fn button(
         bookmarks::refresh();
         bookmarks::forget_peeks();
         bookmarks::rescan();
+        // 始めた知らせは聞き手を足す前に出ているので、ここで出す（macOS 版はすぐ知らせが来て回る）。
+        sc.set_visible(bookmarks::is_scanning());
+        sc.set_spinning(bookmarks::is_scanning());
         u(false);
         f.grab_focus();
         let (u, sc, r, p) = (u.clone(), sc.clone(), r.clone(), p.clone());
