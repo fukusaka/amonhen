@@ -2881,6 +2881,7 @@ impl Loader {
         self.generation.set(g);
         self.details.clear();
         self.files.clear();
+        self.files.reset_stats();
         g
     }
 
@@ -2931,6 +2932,7 @@ impl Loader {
                 Ok(Ok(extras)) => {
                     // 詳細より先に届いたら、詳細が出たときに足す。
                     this.details.show_extras(&extras);
+                    this.files.set_stats(&extras);
                     this.fit();
                 }
                 Ok(Err(e)) => eprintln!("コミットの詳細を読めない: {e}"),

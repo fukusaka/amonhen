@@ -163,6 +163,7 @@ impl CommitPane {
         self.details.show_text(title, lines);
         crate::fit_details(&self.root, self.details.clone());
         self.files.clear();
+        self.files.reset_stats();
         let key = format!("{}..{tip}", base.map(|b| b.to_string()).unwrap_or_default());
         let viewed = commitfiles::viewed_paths(&key);
         self.pending.set(self.pending.get() + 1);
@@ -201,6 +202,7 @@ impl CommitPane {
         self.commit.replace((!stash).then(|| hex.clone()));
         self.details.clear();
         self.files.clear();
+        self.files.reset_stats();
         // すぐ読める分を先に、時間のかかる分はその後に。
         for extras in [false, true] {
             if extras && stash {
@@ -223,7 +225,10 @@ impl CommitPane {
                     return;
                 }
                 match value {
-                    Ok(Ok(value)) if extras => this.details.show_extras(&value),
+                    Ok(Ok(value)) if extras => {
+                        this.details.show_extras(&value);
+                        this.files.set_stats(&value);
+                    }
                     Ok(Ok(value)) => this.details.show(&value),
                     Ok(Err(e)) => eprintln!("コミットの詳細を読めない: {e}"),
                     Err(_) => return,

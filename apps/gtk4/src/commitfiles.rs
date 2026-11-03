@@ -277,7 +277,12 @@ enum Counts {
 
 /// 変更ファイルの一覧の行。木なら、フォルダごとにまとめ（子が 1 つだけのフォルダはつなげる）、各階層でフォルダを
 /// 先に、名前の順に並べる（macOS 版と同じ）。
-fn file_rows(source: &Source, changes: Option<&[FileChange]>, tree: bool) -> Vec<FileRow> {
+fn file_rows(
+    source: &Source,
+    changes: Option<&[FileChange]>,
+    stats: &Stats,
+    tree: bool,
+) -> Vec<FileRow> {
     // 変更の種類ともとのパスは、コミットの変更ファイルから（macOS 版と同じ）。
     let changes = source
         .1
@@ -295,9 +300,13 @@ fn file_rows(source: &Source, changes: Option<&[FileChange]>, tree: bool) -> Vec
             None if diff.new.is_empty() && !diff.old.is_empty() => "D",
             None => "M",
         };
-        // 選んだファイルだけを読む元では、行数はまだわからない。
+        // 選んだファイルだけを読む元では、行数は `commit_extras` の数（届くまではわからない）。
         let counts = if source.1.is_some() {
-            Counts::Unknown
+            match stats.get(path_of(source.0.files[i].0.as_str())) {
+                Some((None, None)) => Counts::Binary,
+                Some(&(added, removed)) => Counts::Lines(added.unwrap_or(0), removed.unwrap_or(0)),
+                None => Counts::Unknown,
+            }
         } else if diff.binary {
             Counts::Binary
         } else {
@@ -421,7 +430,13 @@ struct Inner {
     find: FindBar,
     /// 出しているコミットの変更ファイル（`Prepared::changes`）。
     changes: RefCell<Option<Arc<Vec<FileChange>>>>,
+    /// 出しているコミットのファイルごとの行数（`commit_extras` の `stats`。パス → 追加・削除、両方 None は
+    /// バイナリ）。選んだファイルだけを読むときも、一覧に行数を出す（macOS 版と同じ）。
+    stats: RefCell<Stats>,
 }
+
+/// ファイルごとの行数（パス → 追加・削除。両方 None はバイナリ）。
+type Stats = std::collections::HashMap<String, (Option<u32>, Option<u32>)>;
 
 /// 差分の中を探す帯（差分と一覧の下）。
 struct FindBar {
@@ -573,6 +588,7 @@ impl CommitDiff {
             sparse: RefCell::default(),
             find: FindBar { bar, entry, count },
             changes: RefCell::default(),
+            stats: RefCell::default(),
         });
         OPEN.with(|open| open.borrow_mut().push(Rc::downgrade(&inner)));
         Inner::setup_factory(&inner, &factory);
@@ -600,6 +616,38 @@ impl CommitDiff {
         inner.syncing.set(false);
         inner.row_of_file.borrow_mut().clear();
         inner.diff.clear();
+    }
+
+    /// 別のコミットを読み始める: 前のコミットの行数を捨てる（`clear` は読んでいる途中にも呼ぶので、そこでは捨てない）。
+    pub fn reset_stats(&self) {
+        self.inner.stats.borrow_mut().clear();
+    }
+
+    /// 出しているコミットの `commit_extras` の答えから、ファイルごとの行数を受け取る。選んだファイルだけを読む
+    /// 一覧なら、行数を出し直す（まとめて並べる一覧は、差分から数えた行数をもう出している）。
+    pub fn set_stats(&self, extras: &serde_json::Value) {
+        let inner = &self.inner;
+        let stats: Stats = extras["stats"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|s| {
+                let count = |k: &str| s[k].as_u64().map(|n| n as u32);
+                Some((
+                    s["path"].as_str()?.to_owned(),
+                    (count("added"), count("removed")),
+                ))
+            })
+            .collect();
+        inner.stats.replace(stats);
+        let lazy = inner
+            .source
+            .borrow()
+            .as_ref()
+            .is_some_and(|source| source.1.is_some());
+        if lazy {
+            Inner::fill_list(inner);
+        }
     }
 
     /// 一覧を消し、差分の代わりに知らせ `text` を出す（「Loading the diff…」など）。
@@ -1035,7 +1083,12 @@ impl Inner {
             return;
         };
         let changes = this.changes.borrow().clone();
-        let rows = file_rows(&source, changes.as_deref().map(Vec::as_slice), file_tree());
+        let rows = file_rows(
+            &source,
+            changes.as_deref().map(Vec::as_slice),
+            &this.stats.borrow(),
+            file_tree(),
+        );
         let mut row_of_file = vec![0; source.0.files.len()];
         for (r, row) in rows.iter().enumerate() {
             if let Some(i) = row.file {
@@ -1409,7 +1462,7 @@ mod tests {
         assert_eq!(lazy.source.0.files.len(), 3);
         assert!(lazy.source.0.files.iter().all(|(_, d)| d.added == 0));
         assert!(!lazy.view.diff_view().rows.is_empty());
-        let marks: Vec<&str> = file_rows(&lazy.source, None, false)
+        let marks: Vec<&str> = file_rows(&lazy.source, None, &Stats::default(), false)
             .iter()
             .map(|r| r.mark)
             .collect();
