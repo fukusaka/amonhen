@@ -182,8 +182,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         }
         history.onShowFetchingSettings = { [weak self] in self?.showFetchingSettings() }
         history.onSearchChanged = { [weak self] query in
-            self?.detail.searchQuery = query
-            self?.toolbar.setSearch(query)
+            guard let self else { return }
+            detail.searchQuery = query
+            // 読み直しで結果を捨てても問い合わせは残すので、ツールバーの欄は History の欄に合わせる。
+            toolbar.setSearch(query ?? history.searchText)
         }
         toolbar.onSearch = { [weak self] query in
             guard let self else { return }

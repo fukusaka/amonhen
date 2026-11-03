@@ -1453,6 +1453,9 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     /// History で探しているか（一致がなくても、問い合わせがあれば true）。
     var hasSearch: Bool { searchQuery != nil }
 
+    /// 検索欄に書いてある問い合わせ。History を読み直して結果を捨てても残る（Enter で探し直せる）。
+    var searchText: String { searchField.stringValue.trimmingCharacters(in: .whitespaces) }
+
     /// 検索で一致したコミットの次・前へ（⌘G・⌘⇧G、ツールバーの検索欄の ⇧↩）。探していなければ false。
     @discardableResult
     func moveToMatch(by step: Int) -> Bool {
