@@ -399,11 +399,33 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
         sheet.add(&row("URL:", &url_line));
         // gh があれば、自分のリポジトリから選べる（読み終えたら一覧に入れる）。
         if crate::github::available() {
-            let mine = gtk::DropDown::from_strings(&[&tr!("Choose from My GitHub Repositories")]);
+            // 読み終えるまでは「読み込み中…」（macOS 版と同じ）。選べる項目でなければ、選んでも見出しに戻す。
+            let mine = gtk::DropDown::from_strings(&[
+                &tr!("Choose from My GitHub Repositories"),
+                &tr!("Loading…"),
+            ]);
             sheet.add(&row("", &mine));
-            let (mine_w, url_w, name_w) = (mine.downgrade(), url.downgrade(), name.downgrade());
+            let repos: Rc<std::cell::RefCell<Vec<(String, String)>>> = Rc::default();
+            {
+                let (repos, url_w, name_w) = (repos.clone(), url.downgrade(), name.downgrade());
+                mine.connect_selected_notify(move |d| {
+                    let i = d.selected() as usize;
+                    if i == 0 {
+                        return;
+                    }
+                    let Some((_, link)) = repos.borrow().get(i - 1).cloned() else {
+                        d.set_selected(0);
+                        return;
+                    };
+                    if let (Some(url), Some(name)) = (url_w.upgrade(), name_w.upgrade()) {
+                        url.set_text(&format!("{link}.git"));
+                        name.set_text("");
+                    }
+                });
+            }
+            let mine_w = mine.downgrade();
             glib::spawn_future_local(async move {
-                let repos = gio::spawn_blocking(|| {
+                let found = gio::spawn_blocking(|| {
                     let out = crate::github::gh_command()?
                         .args([
                             "repo",
@@ -434,22 +456,14 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
                 .unwrap_or_default();
                 let Some(mine) = mine_w.upgrade() else { return };
                 let mut titles = vec![tr!("Choose from My GitHub Repositories")];
-                if repos.is_empty() {
+                if found.is_empty() {
                     titles.push(tr!("None found"));
                 }
-                titles.extend(repos.iter().map(|r| r.0.clone()));
+                titles.extend(found.iter().map(|r| r.0.clone()));
+                repos.replace(found);
                 let refs: Vec<&str> = titles.iter().map(String::as_str).collect();
                 mine.set_model(Some(&gtk::StringList::new(&refs)));
-                mine.connect_selected_notify(move |d| {
-                    let i = d.selected() as usize;
-                    if i == 0 || repos.is_empty() {
-                        return;
-                    }
-                    if let (Some(url), Some(name)) = (url_w.upgrade(), name_w.upgrade()) {
-                        url.set_text(&format!("{}.git", repos[i - 1].1));
-                        name.set_text("");
-                    }
-                });
+                mine.set_selected(0);
             });
         }
         sheet.add(&row(&tr!("Location:"), &location));
@@ -470,6 +484,9 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
         }
         depth_titles.append(&tr!("Other…"));
         let depth = gtk::DropDown::new(Some(depth_titles.clone()), gtk::Expression::NONE);
+        // 「その他…」の上に区切りの線（macOS 版と同じ）。
+        let other_at = Rc::new(std::cell::RefCell::new(vec![depths.borrow().len() as u32]));
+        crate::settings::separate_items(&depth, other_at.clone());
         depth.set_selected(1);
         let depth_chosen = Rc::new(std::cell::Cell::new(100u32));
         {
@@ -479,6 +496,7 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
                 depth_titles.clone(),
                 sheet.window.downgrade(),
             );
+            let other_at = other_at.clone();
             depth.connect_selected_notify(move |d| {
                 let i = d.selected() as usize;
                 let count = depths.borrow().len();
@@ -493,12 +511,13 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
                     .position(|&x| x == chosen.get())
                     .unwrap_or(0);
                 d.set_selected(back as u32);
-                let (d, depths, chosen, titles, w) = (
+                let (d, depths, chosen, titles, w, other_at) = (
                     d.clone(),
                     depths.clone(),
                     chosen.clone(),
                     titles.clone(),
                     w.clone(),
+                    other_at.clone(),
                 );
                 glib::spawn_future_local(async move {
                     let Some(commits) = crate::shallow::ask_count(
@@ -521,6 +540,7 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
                                 let mut list = depths.borrow_mut();
                                 let at = list.partition_point(|&x| x < commits);
                                 list.insert(at, commits);
+                                other_at.replace(vec![list.len() as u32]);
                                 at
                             };
                             // 項目を足すと選んでいる項目の知らせが来る（数の並びを読む）ので、借りを返してから。
@@ -772,7 +792,10 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
         if dest.exists() {
             crate::sheets::inform(
                 Some(&parent),
-                &tr!("{path} already exists", path = dest.display()),
+                &tr!(
+                    "{path} already exists",
+                    path = crate::bookmarks::tilde(&dest.to_string_lossy())
+                ),
                 &tr!("Choose a different name or location."),
             )
             .await;
