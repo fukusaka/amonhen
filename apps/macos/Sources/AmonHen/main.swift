@@ -188,7 +188,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         Bookmarks.shared.onRowChange = { path in
             RepositoryBrowser.rowChanged(path)
-            QuickOpenPanel.shared.refreshIfVisible()
+            QuickOpenPanel.shared.rowChanged(path)
         }
         Bookmarks.shared.watchScanRoots()
         // 引数でリポジトリを渡されたらそれを、なければ前回開いていたものを同じウィンドウ・タブの並びで開く。

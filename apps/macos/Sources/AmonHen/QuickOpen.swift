@@ -85,6 +85,13 @@ final class QuickOpenPanel: NSObject, NSSearchFieldDelegate, NSTableViewDataSour
         panel.makeFirstResponder(field)
     }
 
+    /// 行の状態（ブランチ・変更など）を読めた: その行だけを描き直す（並べ直さず、選んでいる行も動かさない。
+    /// 見えてきた行の読み込みが後から届くので、並べ直すと ↓ で選んだ行が先頭に戻ってしまう）。
+    func rowChanged(_ path: String) {
+        guard panel.isVisible, let row = shown.firstIndex(of: path) else { return }
+        table.reloadData(forRowIndexes: [row], columnIndexes: IndexSet(integersIn: 0..<table.numberOfColumns))
+    }
+
     /// ブックマークやスキャンの結果が変わった。
     func refreshIfVisible() {
         guard panel.isVisible else { return }
