@@ -1192,7 +1192,7 @@ bool amonhen_clone(const char *url,
 
 /**
  * `path` のリポジトリの軽い状態（リポジトリの一覧に出す）。行に分けた文字列で、順にブランチ（detached なら
- * 空）、上流があれば 1、ahead、behind、変更のあるファイルの数（untracked は数えない）。読めなければ NULL。
+ * 空）、上流があれば 1、ahead、behind、変更のあるファイルの数（untracked も数える）。読めなければ NULL。
  * `amonhen_string_free` で解放する。git を 1 回起動するので、裏のスレッドで呼ぶ。
  *
  * # Safety

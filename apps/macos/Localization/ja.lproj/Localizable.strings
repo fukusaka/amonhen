@@ -223,7 +223,7 @@
 "Last Commit" = "最後のコミット";
 "Opened" = "開いた日時";
 "Current branch" = "今のブランチ";
-"Changes n: files with changes (untracked files aren’t counted)\n↑ commits ahead of the upstream · ↓ commits behind it\n✓ no changes and same as the upstream" = "変更 n: 変更のあるファイルの数（untracked は数えない）\n↑ 上流より先・↓ 後ろのコミットの数\n✓ 変更なしで上流と同じ";
+"Changes n: files with changes\n↑ commits ahead of the upstream · ↓ commits behind it\n✓ no changes and same as the upstream" = "変更 n: 変更のあるファイルの数\n↑ 上流より先・↓ 後ろのコミットの数\n✓ 変更なしで上流と同じ";
 "Date and subject of the last commit" = "最後のコミットの日時と件名";
 "When you last opened it in this app (— if never)" = "このアプリで最後に開いた日時（— はまだ開いていない）";
 "Filter by name or path" = "名前・パスで絞り込む";
@@ -299,7 +299,7 @@
 "Fetch failed" = "Fetch に失敗";
 "Not found" = "見つかりません";
 "Fetch failed: %@" = "Fetch に失敗: %@";
-"%ld files with changes (untracked files aren’t counted)" = "変更のあるファイル %ld 個（untracked は数えない）";
+"%ld files with changes" = "変更のあるファイル %ld 個";
 "No changes" = "変更なし";
 "%ld ahead of the upstream, %ld behind" = "上流より %ld 先、%ld 後ろ";
 "No upstream" = "上流なし";

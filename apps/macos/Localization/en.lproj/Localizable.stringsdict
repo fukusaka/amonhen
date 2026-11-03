@@ -178,10 +178,10 @@
 			<string>%ld files have uncommitted changes. Pull stops if the incoming changes touch them.</string>
 		</dict>
 	</dict>
-	<key>%ld files with changes (untracked files aren’t counted)</key>
+	<key>%ld files with changes</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
-		<string>%#@n0@ with changes (untracked files aren’t counted)</string>
+		<string>%#@n0@ with changes</string>
 		<key>n0</key>
 		<dict>
 			<key>NSStringFormatSpecTypeKey</key>

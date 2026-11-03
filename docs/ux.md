@@ -85,7 +85,7 @@ Extend today's "Repositories…" (a list in the order opened) into the equivalen
 | Adding one by one | Choose a folder with "Add…", drop from the Finder, or add repositories automatically when opened (can be turned off in settings). SSH hosts (`ssh://`) go here too |
 | Picking up from folders | Register several "folders to scan" (e.g. `~/prj`). Specify depth (default 3) and exclude patterns (`node_modules` and so on). Repositories found go into a group named after the folder. Folders are watched with FSEvents, and additions and removals are reflected. Repositories that disappear stay, greyed out, until removed by hand |
 | Groups | Manual groups (nested like folders) and scan groups. Reorder and move by dragging |
-| Status | Each row shows the current branch, ahead/behind and the number of changed files. Only `.git/HEAD` is read right away; for the rest, only visible rows run `git status --porcelain=v2 --branch --untracked-files=no` (takes no lock) in the background, 4 at a time. Untracked files are not counted |
+| Status | Each row shows the current branch, ahead/behind and the number of changed files. Only `.git/HEAD` is read right away; for the rest, only visible rows run `git status --porcelain=v2 --branch --untracked-files=all` (takes no lock) in the background, 4 at a time. Untracked files are counted one by one, as in Working Copy |
 | Extra information | Color labels, favorites (★), display name override, last opened time |
 | Operations | Open (⏎ in a tab of the current window, ⌘⏎ in a new window), Show in Finder, Open in Terminal, Open in Editor, Fetch (all selected ones at once) |
 | Quick Open | ⌘⇧O opens a panel (Spotlight-style) that fuzzy-searches all bookmarks |

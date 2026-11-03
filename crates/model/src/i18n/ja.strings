@@ -1329,7 +1329,7 @@
 ", HEAD at {head}" = "、HEAD は {head}";
 /* GTK4: Repositories（ブックマーク・スキャンするフォルダ・行の状態） */
 "{ahead} ahead of the upstream, {behind} behind" = "上流より {ahead} 先、{behind} 後ろ";
-"{count} files with changes (untracked files aren’t counted)" = "変更のあるファイル {count} 個（untracked は数えない）";
+"{count} files with changes" = "変更のあるファイル {count} 個";
 "{path}\nRemove it from the list?" = "{path}\n一覧から外しますか？";
 "Add" = "追加";
 "Add a Folder to Scan" = "スキャンするフォルダを加える";
@@ -1389,7 +1389,7 @@
 "Open in New Window" = "新しいウィンドウで開く";
 "Open in New Tab" = "新しいタブで開く";
 "Current branch" = "今のブランチ";
-"Changes n: files with changes (untracked files aren’t counted)\n↑ commits ahead of the upstream · ↓ commits behind it\n✓ no changes and same as the upstream" = "変更 n: 変更のあるファイルの数（untracked は数えない）\n↑ 上流より先・↓ 後ろのコミットの数\n✓ 変更なしで上流と同じ";
+"Changes n: files with changes\n↑ commits ahead of the upstream · ↓ commits behind it\n✓ no changes and same as the upstream" = "変更 n: 変更のあるファイルの数\n↑ 上流より先・↓ 後ろのコミットの数\n✓ 変更なしで上流と同じ";
 "Date and subject of the last commit" = "最後のコミットの日時と件名";
 "When you last opened it in this app (— if never)" = "このアプリで最後に開いた日時（— はまだ開いていない）";
 "Switch repository" = "リポジトリを切り替える";

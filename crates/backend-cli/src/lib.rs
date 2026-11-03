@@ -180,7 +180,7 @@ pub struct Peek {
     pub upstream: bool,
     pub ahead: u32,
     pub behind: u32,
-    /// 変更のあるファイルの数（untracked は数えない）。
+    /// 変更のあるファイルの数（untracked も数える）。
     pub changed: u32,
     /// HEAD のコミットの日時（UNIX 時間、コミッターの日時）と件名。まだコミットがなければ None。
     pub last_commit: Option<(i64, String)>,
@@ -246,14 +246,19 @@ impl Git {
         run(cmd, None)
     }
 
-    /// リポジトリの一覧に出す、軽い状態（ブランチ・上流との差・変更のあるファイルの数）。untracked のファイルは
-    /// 数えず、ロックも取らない（一覧の行ごとに裏で呼ぶ）。
+    /// リポジトリの一覧に出す、軽い状態（ブランチ・上流との差・変更のあるファイルの数）。untracked のファイルも
+    /// Working Copy と同じく 1 つずつ数え（[`Git::status`] と同じ untracked cache を使う）、ロックは取らない
+    /// （一覧の行ごとに裏で呼ぶ）。
     pub fn peek(&self) -> Result<Peek> {
         let out = self.read(&[
+            "-c",
+            "core.untrackedCache=true",
+            "-c",
+            "status.showUntrackedFiles=all",
             "status",
             "--porcelain=v2",
             "--branch",
-            "--untracked-files=no",
+            "--untracked-files=all",
         ])?;
         let mut peek = Peek::default();
         for line in String::from_utf8_lossy(&out).lines() {
@@ -1125,7 +1130,13 @@ mod tests {
         let peek = git.peek().unwrap();
         assert_eq!(peek.branch.as_deref(), Some("main"));
         assert!(peek.upstream);
-        assert_eq!((peek.ahead, peek.behind, peek.changed), (1, 0, 1));
+        // untracked も Working Copy と同じく 1 つずつ数える（新しいフォルダの中も）。
+        assert_eq!((peek.ahead, peek.behind, peek.changed), (1, 0, 2));
+        std::fs::create_dir(tmp.path().join("dir")).unwrap();
+        for f in ["x", "y"] {
+            std::fs::write(tmp.path().join("dir").join(f), "new\n").unwrap();
+        }
+        assert_eq!(git.peek().unwrap().changed, 4);
         assert_eq!(peek.last_commit.map(|(_, s)| s).as_deref(), Some("second"));
     }
 

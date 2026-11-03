@@ -192,7 +192,7 @@ public struct RepositoryPeek: Sendable, Equatable {
     public let hasUpstream: Bool
     public let ahead: Int
     public let behind: Int
-    /// 変更のあるファイルの数（untracked は数えない）。
+    /// 変更のあるファイルの数（untracked も数える）。
     public let changed: Int
     /// HEAD のコミットの日時と件名。まだコミットがなければ nil。
     public let lastCommitDate: Date?
