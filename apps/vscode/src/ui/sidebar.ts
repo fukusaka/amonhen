@@ -127,7 +127,8 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
     this.repoListener = repository?.onDidChange((changed) => {
       if (changed.has('branches')) this.updateContext(repository);
       // Working Copy の変化は、入口の数と途中の merge / rebase に出る
-      if (changed.has('workingCopy')) {
+      // Stashes の節は、stash があるかで出たり消えたりする
+      if (changed.has('workingCopy') || changed.has('stashes')) {
         this._onDidChangeTreeData.fire(undefined);
         return;
       }
@@ -201,8 +202,10 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
         { kind: 'view', view: 'history' },
       ];
       if (state.sequence) nodes.push({ kind: 'sequence', sequence: state.sequence, progress: state.progress });
-      // Stashes は stash があるときだけ（アプリと同じ）
-      const stashes = state.status?.stashCount ?? 0;
+      // Stashes は stash があるときだけ（アプリと同じ）。status が stash の数を言うのは git 2.35 からなので、
+      // 一覧も読んでおく（git stash list は軽い）
+      if (!state.stashes) void repo.want('stashes');
+      const stashes = Math.max(state.status?.stashCount ?? 0, state.stashes?.length ?? 0);
       nodes.push(...[...this.sections.values()].filter((n) => n.kind !== 'section' || n.section !== 'stashes' || stashes > 0));
       // Reflog はいつもいちばん下（アプリと同じ）
       if (this.engine) nodes.push({ kind: 'view', view: 'reflog' });
