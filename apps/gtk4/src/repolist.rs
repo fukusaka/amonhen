@@ -260,19 +260,50 @@ pub fn button(
     content.append(&bottom);
     popover.set_child(Some(&content));
 
+    // 作り直す。`keep` なら（ブックマーク・スキャンの変化）、絞り込んでいなければ選んでいた行とスクロールの位置を
+    // 保つ（macOS 版の `reloadTable`）。そうでなければ先頭を選ぶ。
     let update = {
-        let (model, selection, filter) = (model.clone(), selection.clone(), filter.clone());
-        Rc::new(move || {
-            let shown = ordered(&filter.text());
+        let (model, selection, filter, scrolled) = (
+            model.clone(),
+            selection.clone(),
+            filter.clone(),
+            scrolled.clone(),
+        );
+        Rc::new(move |keep: bool| {
+            let query = filter.text();
+            let keep = keep && query.trim().is_empty();
+            let selected: std::collections::HashSet<String> = if keep {
+                selected_locations(&selection).into_iter().collect()
+            } else {
+                Default::default()
+            };
+            let top = scrolled.vadjustment().value();
+            let shown = ordered(&query);
             let refs: Vec<&str> = shown.iter().map(String::as_str).collect();
             model.splice(0, model.n_items(), &refs);
-            if !shown.is_empty() {
+            let rows: Vec<u32> = shown
+                .iter()
+                .enumerate()
+                .filter(|(_, l)| selected.contains(*l))
+                .map(|(i, _)| i as u32)
+                .collect();
+            if !rows.is_empty() {
+                selection.unselect_all();
+                for row in rows {
+                    selection.select_item(row, false);
+                }
+            } else if !shown.is_empty() {
                 selection.select_item(0, true);
+            }
+            if keep {
+                // 行を作り直した後に、元の位置へ。
+                let adjustment = scrolled.vadjustment();
+                glib::idle_add_local_once(move || adjustment.set_value(top));
             }
         })
     };
     let u = update.clone();
-    filter.connect_search_changed(move |_| u());
+    filter.connect_search_changed(move |_| u(false));
     // 出すたびに読み直す（ブックマーク・スキャンの結果・行の状態が変わったら、出している間は描き直す）。
     let (u, f, sc) = (update.clone(), filter.clone(), scanning.clone());
     let (r, p) = (rows.clone(), popover.downgrade());
@@ -286,7 +317,7 @@ pub fn button(
         bookmarks::refresh();
         bookmarks::forget_peeks();
         bookmarks::rescan();
-        u();
+        u(false);
         f.grab_focus();
         let (u, sc, r, p) = (u.clone(), sc.clone(), r.clone(), p.clone());
         bookmarks::connect(move |path| {
@@ -304,7 +335,7 @@ pub fn button(
                 None => {
                     sc.set_visible(bookmarks::is_scanning());
                     sc.set_spinning(bookmarks::is_scanning());
-                    u();
+                    u(true);
                 }
             }
             true
