@@ -130,6 +130,8 @@ struct Inner {
     /// macOS 版は worktree ごとに Working Copy がある）。
     worktree_states: RefCell<HashMap<Option<std::path::PathBuf>, (bool, String)>>,
     commit: gtk::Button,
+    /// コミットしている途中（2 回目の Ctrl+Return で、もう 1 つ git commit を始めない。macOS 版と同じ）。
+    committing: Cell<bool>,
     /// 件名の文字数。
     summary_count: gtk::Label,
     message: gtk::Label,
@@ -508,6 +510,7 @@ impl WorkingCopy {
             amend,
             worktree_states: RefCell::default(),
             commit,
+            committing: Cell::new(false),
             summary_count,
             message,
             diff,
@@ -2885,11 +2888,16 @@ impl Inner {
 
     /// コミットする。できたら `then` を呼ぶ（Commit and Push の push）。
     fn commit(this: &Rc<Self>, then: Option<Box<dyn FnOnce()>>) {
+        if this.committing.get() {
+            this.list.error_bell();
+            return;
+        }
         let message = this.composed_message();
         let amend = this.amend.is_active();
         let weak = Rc::downgrade(this);
         let Some(repo) = this.repo() else { return };
-        this.commit.set_sensitive(false);
+        this.committing.set(true);
+        this.update_buttons();
         let source = repo.clone();
         this.message.set_visible(false);
         // hooks の出力を探すため、始めた時刻（Activity の記録と同じ UNIX 時刻のミリ秒）を覚えておく。
@@ -2905,6 +2913,7 @@ impl Inner {
             })
             .await;
             let Some(this) = weak.upgrade() else { return };
+            this.committing.set(false);
             let parent = this.list.root().and_downcast::<gtk::Window>();
             match result {
                 Ok((Ok(()), status)) => {
@@ -3062,7 +3071,7 @@ impl Inner {
         let staged = staged_files > 0;
         let has_message = !self.composed_message().is_empty();
         let amend = self.amend.is_active();
-        let can_commit = has_message && (staged || amend);
+        let can_commit = !self.committing.get() && has_message && (staged || amend);
         self.commit.set_sensitive(can_commit);
         // 含めるファイルの数も出す（macOS 版と同じ）。
         let label = match (amend, staged_files) {
