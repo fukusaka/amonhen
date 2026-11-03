@@ -75,22 +75,13 @@ impl Git {
         if states.is_empty() {
             return Ok(states);
         }
-        // `git submodule status`: 先頭の `-` は取り出していない、`+` は記録と違うコミット、`U` はコンフリクト。
-        let out = self.read(&["submodule", "status"])?;
-        for line in String::from_utf8_lossy(&out).lines() {
-            let mut chars = line.chars();
-            let flag = chars.next().unwrap_or(' ');
-            let rest: String = chars.collect();
-            let Some(path) = rest.split(' ').nth(1) else {
-                continue;
-            };
-            if let Some(s) = states.iter_mut().find(|s| s.path == path) {
-                s.initialized = flag != '-';
-                s.moved = flag == '+';
-                s.conflict = flag == 'U';
-            }
+        // `git submodule status` は使わない: index のロックを取ることがあり、裏で読むと同時に動く `submodule add`
+        // などの `git add` とぶつかる。取り出してあるか（status の `-` でない）は、場所に `.git` があるかで見る。
+        for s in &mut states {
+            s.initialized = self.workdir.join(&s.path).join(".git").exists();
         }
-        // 中の変更: 状態の行の `S<C><M><U>`（M は追跡しているファイルの変更、U は untracked のファイル）。
+        // ロックを取らない status の行から: `S<C><M><U>`（C は記録と違うコミット、M は追跡しているファイルの変更、
+        // U は untracked のファイル）と、コンフリクトの `u` の行。
         let mut args = vec![
             "status",
             "--porcelain=v2",
@@ -102,6 +93,13 @@ impl Git {
         let out = self.read(&args)?;
         for entry in out.split(|&b| b == 0) {
             let entry = String::from_utf8_lossy(entry);
+            if let Some(rest) = entry.strip_prefix("u ") {
+                let path = rest.splitn(10, ' ').nth(9);
+                if let Some(s) = states.iter_mut().find(|s| Some(s.path.as_str()) == path) {
+                    s.conflict = true;
+                }
+                continue;
+            }
             let fields: Vec<&str> = entry.splitn(9, ' ').collect();
             if fields.first() != Some(&"1") || fields.len() < 9 {
                 continue;
@@ -112,6 +110,7 @@ impl Git {
             }
             let path = fields[8];
             if let Some(s) = states.iter_mut().find(|s| s.path == path) {
+                s.moved = sub[1] == b'C';
                 s.changed = sub[2] == b'M' || sub[3] == b'U';
             }
         }

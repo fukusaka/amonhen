@@ -442,10 +442,11 @@ rebase と History の編集（reword・squash・fixup・drop・edit・split・m
 
 ## submodule
 
-- submodule の様子（`{"op":"submodules"}`）は 3 つから読む: `.gitmodules`（`git config -f .gitmodules -z --list`。
-  名前・場所・URL・追うブランチ）、`git submodule status`（`-` は取り出していない、`+` は記録と違うコミット、`U` は
-  コンフリクト）、submodule の場所だけの `git status --porcelain=v2` の `S<C><M><U>`（中の変更: 追跡している
-  ファイルの変更か untracked のファイル）。
+- submodule の様子（`{"op":"submodules"}`）は、`.gitmodules`（`git config -f .gitmodules -z --list`。名前・場所・
+  URL・追うブランチ）と、submodule の場所だけの `git status --porcelain=v2` から読む: `S<C><M><U>`（記録と違う
+  コミット・追跡しているファイルの変更・untracked のファイル）と `u` の行（コンフリクト）。取り出してあるかは、
+  場所に `.git` があるかで見る。`git submodule status` は使わない: index のロックを取ることがあり、裏で読むと
+  同時に動く `submodule add` が失敗した。
 - `{"op":"changeSubmodule"}` は足す（`git submodule add`）・外す・URL を変える（`set-url`、git 2.25 から。それより
   前は `.gitmodules` を書いて sync）・追うブランチを変える（`set-branch`）・URL を写す。外すのは `deinit -f` の後に
   `git rm -f`。`.git/modules/<name>` には submodule のコミットや stash（push していないものも）が残るので、git と
