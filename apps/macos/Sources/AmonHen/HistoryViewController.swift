@@ -744,6 +744,11 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     /// `row` を選び、表の中ほどに見えるようにする。
     func select(row: Int) {
         tableView.selectRowIndexes([row], byExtendingSelection: false)
+        scrollToCenter(row: row)
+    }
+
+    /// `row` を真ん中あたりに出す（選択は変えない）。
+    private func scrollToCenter(row: Int) {
         let clip = scrollView.contentView
         let rect = tableView.rect(ofRow: row)
         // 上端はヘッダーの分だけ負になる（表の 0 行目がヘッダーのすぐ下に来る位置）。
@@ -945,7 +950,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     }
 
     @objc private func rowStyleChanged() {
-        // 見ていたコミットが同じ位置に来るように、選んだ行を見える位置に戻す。
+        // 見ていたコミットが同じ位置に来るように、選んだ行を見える位置に戻す（いくつか選んでいれば、選んだまま）。
         let selected = tableView.selectedRow
         applyRowStyle()
         rowText.removeAll()
@@ -954,7 +959,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         chunks.removeAll()
         loadingChunks.removeAll()
         tableView.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<tableView.numberOfRows))
-        if selected >= 0 { select(row: selected) }
+        if selected >= 0 { scrollToCenter(row: selected) }
         layoutGraphView()
     }
 
