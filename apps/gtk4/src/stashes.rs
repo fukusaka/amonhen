@@ -625,14 +625,19 @@ fn info_of(info: &Value) -> Info {
 /// どのくらい前か（macOS 版の RelativeDateTimeFormatter の短い形）。
 pub fn ago(time: i64) -> String {
     let now = glib::real_time() / 1_000_000;
-    let s = (now - time).max(0);
+    ago_by((now - time).max(0))
+}
+
+/// `s` 秒前（1 分より前も秒で書く: 「30 sec. ago」「30 秒前」。macOS 版と同じ）。
+fn ago_by(s: i64) -> String {
     const MIN: i64 = 60;
     const HOUR: i64 = 60 * MIN;
     const DAY: i64 = 24 * HOUR;
     match s {
-        _ if s < MIN => tr!("now"),
+        _ if s < MIN => tr!("{count} sec. ago", count = s),
         _ if s < HOUR => tr!("{count} min. ago", count = s / MIN),
         _ if s < DAY => tr!("{count} hr. ago", count = s / HOUR),
+        _ if s < 2 * DAY => tr!("{count} day ago", count = 1),
         _ if s < 7 * DAY => tr!("{count} days ago", count = s / DAY),
         _ if s < 30 * DAY => tr!("{count} wk. ago", count = s / (7 * DAY)),
         _ if s < 365 * DAY => tr!("{count} mo. ago", count = s / (30 * DAY)),
@@ -706,4 +711,24 @@ pub fn branch(actions: &Rc<Actions>, name: &str) {
         };
         actions.perform(json!({ "op": "stashBranch", "name": name, "branch": branch }));
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn says_how_long_ago_as_macos_does() {
+        use amonhen_model::i18n::{Lang, with};
+        with(Lang::En, || {
+            assert_eq!(ago_by(30), "30 sec. ago");
+            assert_eq!(ago_by(3 * 60), "3 min. ago");
+            assert_eq!(ago_by(30 * 3600), "1 day ago");
+            assert_eq!(ago_by(3 * 86400), "3 days ago");
+        });
+        with(Lang::Ja, || {
+            assert_eq!(ago_by(30), "30 秒前");
+            assert_eq!(ago_by(86400), "1 日前");
+        });
+    }
 }

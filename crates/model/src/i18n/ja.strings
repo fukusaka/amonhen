@@ -861,9 +861,10 @@
 "at HEAD" = "HEAD と同じ";
 "{count} behind HEAD" = "HEAD から {count} 個後ろ";
 "with untracked files" = "untracked のファイルを含む";
-"now" = "今";
+"{count} sec. ago" = "{count} 秒前";
 "{count} min. ago" = "{count} 分前";
 "{count} hr. ago" = "{count} 時間前";
+"{count} day ago" = "{count} 日前";
 "{count} days ago" = "{count} 日前";
 "{count} wk. ago" = "{count} 週間前";
 "{count} mo. ago" = "{count} か月前";
