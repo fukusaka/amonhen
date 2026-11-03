@@ -1057,6 +1057,15 @@ async function settingsFlow(): Promise<void> {
     await panel.settings.handle({ type: 'settingsSet', writes: [['e2e.added', null]] });
     assert.equal(config('e2e.added'), undefined);
 
+    // Author and Signing: 名前を上書きし、SSH で署名するにすると、その形式の鍵を集める（e2e の HOME には鍵がない）
+    mark = posted.length;
+    await panel.settings.handle({ type: 'settingsSet', writes: [['user.name', 'E2E Author'], ['commit.gpgsign', 'true'], ['gpg.format', 'ssh']] });
+    const signing = await waitPosted('settings', mark);
+    assert.deepEqual(['user.name', 'commit.gpgsign', 'gpg.format'].map(config), ['E2E Author', 'true', 'ssh']);
+    assert.ok(Array.isArray(signing.facts.signingKeys));
+    await panel.settings.handle({ type: 'settingsSet', writes: [['user.name', 'a'], ['commit.gpgsign', null], ['gpg.format', null]] });
+    assert.equal(config('user.name'), 'a');
+
     // Commits: このリポジトリ専用のテンプレートを書くと commit.template がそれを指し、None で外れる
     mark = posted.length;
     await panel.settings.handle({ type: 'settingsRun', action: 'templateSave', text: 'e2e: \n' });
@@ -1125,7 +1134,10 @@ async function settingsFlow(): Promise<void> {
       }
       git('reset', '-q', '--hard', 'HEAD~1');
     }
-    for (const k of [...keys, 'amonhen.defaultBranch', 'e2e.added', 'commit.template']) if (config(k) !== undefined) git('config', '--local', '--unset', k);
+    for (const k of [...keys, 'amonhen.defaultBranch', 'e2e.added', 'commit.template', 'commit.gpgsign', 'gpg.format']) {
+      if (config(k) !== undefined) git('config', '--local', '--unset', k);
+    }
+    git('config', '--local', 'user.name', 'a');
     writeFileSync(excludeFile, exclude);
     if (hookFile) rmSync(hookFile, { force: true });
     if (existsSync(hooksDir)) for (const f of readdirSync(hooksDir)) if (!hooksBefore.has(f)) rmSync(join(hooksDir, f), { force: true });

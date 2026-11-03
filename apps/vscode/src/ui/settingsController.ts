@@ -144,6 +144,22 @@ export class SettingsController implements vscode.Disposable {
     const form = (await client.call({ op: 'run', command: { op: 'repositoryForm' } })).json['info'] as RepositoryForm | undefined;
     const folders = form?.sparse?.cone ? form.sparse.folders : [];
     switch (a.action) {
+      case 'signingKeyOther': {
+        const value = await vscode.window.showInputBox({
+          title: 'Signing Key',
+          prompt: 'user.signingkey: a key ID or fingerprint (OpenPGP, X.509), or a public key file (SSH)',
+          placeHolder: '~/.ssh/id_ed25519.pub',
+        });
+        if (value === undefined) return;
+        await run({ op: 'configSet', key: 'user.signingkey', value: value.trim() || null }, 'Set the signing key');
+        return;
+      }
+      case 'mailmapFile': {
+        const picked = await vscode.window.showOpenDialog({ title: 'Mailmap file', openLabel: 'Use as Mailmap', canSelectMany: false });
+        if (!picked?.[0]) return;
+        await run({ op: 'configSet', key: 'mailmap.file', value: picked[0].fsPath }, 'Set the mailmap file');
+        return;
+      }
       case 'templateSave':
         await run({ op: 'saveCommitTemplate', text: a.text }, 'Save the message template');
         return;
@@ -332,7 +348,16 @@ export class SettingsController implements vscode.Disposable {
   private async load(): Promise<void> {
     const generation = ++this.generation;
     const repo = this.repo;
-    const empty: SettingsFacts = { updateRefs: true, rerereCache: false, form: [], branches: [], exclude: '', remotes: [], knownKeys: [] };
+    const empty: SettingsFacts = {
+      updateRefs: true,
+      rerereCache: false,
+      form: [],
+      branches: [],
+      exclude: '',
+      remotes: [],
+      knownKeys: [],
+      signingKeys: [],
+    };
     if (!repo) {
       this.post({ type: 'settings', entries: [], facts: empty });
       return;
@@ -355,10 +380,17 @@ export class SettingsController implements vscode.Disposable {
         run('hooksAndLfs'),
         run('commitTemplate'),
       ]);
+      // 鍵は今の形式のものだけを集める（gpg を起動するので、ほかの形式は選んだときに）
+      const entries = (list?.['entries'] as ConfigEntry[] | undefined) ?? [];
+      const format = [...entries].reverse().find((e) => e.key.toLowerCase() === 'gpg.format')?.value.toLowerCase() ?? 'openpgp';
+      const keys = await client
+        .call({ op: 'run', command: { op: 'signingKeys', format: ['openpgp', 'ssh', 'x509'].includes(format) ? format : 'openpgp' } })
+        .then((r) => ((r.json['info'] as { keys?: SettingsFacts['signingKeys'] } | undefined)?.keys ?? []))
+        .catch(() => []);
       if (generation !== this.generation) return;
       this.post({
         type: 'settings',
-        entries: (list?.['entries'] as ConfigEntry[] | undefined) ?? [],
+        entries,
         facts: {
           ...(typeof version?.['version'] === 'string' ? { gitVersion: version['version'] } : {}),
           updateRefs: version?.['updateRefs'] !== false,
@@ -370,6 +402,7 @@ export class SettingsController implements vscode.Disposable {
           ...(form ? { repositoryForm: form as unknown as RepositoryForm } : {}),
           remotes: (remotes?.['remotes'] as SettingsFacts['remotes'] | undefined) ?? [],
           knownKeys: (known?.['keys'] as string[] | undefined) ?? [],
+          signingKeys: keys,
           ...(hooks ? { hooksAndLfs: hooks as unknown as NonNullable<SettingsFacts['hooksAndLfs']> } : {}),
           ...(template ? { commitTemplate: template as unknown as NonNullable<SettingsFacts['commitTemplate']> } : {}),
         },

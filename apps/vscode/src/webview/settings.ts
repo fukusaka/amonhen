@@ -23,7 +23,16 @@ export function createSettingsView(): View {
 
   let page = PAGES.find((p) => p.id === getState().settingsPage) ?? PAGES[0]!;
   let config = new ConfigView([]);
-  let facts: SettingsFacts = { updateRefs: true, rerereCache: false, form: [], branches: [], exclude: '', remotes: [], knownKeys: [] };
+  let facts: SettingsFacts = {
+    updateRefs: true,
+    rerereCache: false,
+    form: [],
+    branches: [],
+    exclude: '',
+    remotes: [],
+    knownKeys: [],
+    signingKeys: [],
+  };
   let entries: ConfigEntry[] = [];
   /** Keys and Values の出し方と絞り込み */
   let configMode: 'basic' | 'customized' | 'all' = 'customized';
@@ -510,6 +519,78 @@ export function createSettingsView(): View {
     return box;
   }
 
+  const FORMATS: Record<string, string> = { openpgp: 'OpenPGP', ssh: 'SSH', x509: 'X.509' };
+  const signingFormat = () => {
+    const f = config.effective('gpg.format')?.value.toLowerCase() ?? 'openpgp';
+    return f in FORMATS ? f : 'openpgp';
+  };
+
+  /** 文字の設定。欄から離れたときか Enter で書き、空にすると上書きを消す */
+  function textRow(r: Extract<SettingRow, { kind: 'text' }>): HTMLElement {
+    const input = el('input', 'setting-input');
+    input.value = config.local(r.key) ?? '';
+    input.placeholder = config.effective(r.key)?.value ?? r.placeholder ?? '';
+    const commit = () => {
+      const value = input.value.trim();
+      if (value !== (config.local(r.key) ?? '')) set([[r.key, value || null]]);
+    };
+    input.addEventListener('change', commit);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') commit();
+    });
+    return row(r.question, r.help, [r.key], input, (v) => v);
+  }
+
+  /** 署名（アプリと同じく、しない・OpenPGP・SSH・X.509。形式を選ぶと gpg.format も書く） */
+  function signingRow(): HTMLElement {
+    const on = normalizedBool(config.effective('commit.gpgsign')?.value ?? 'false') === 'true';
+    const format = signingFormat();
+    const control = select(
+      [{ value: '', label: 'No signing' }, ...Object.entries(FORMATS).map(([value, label]) => ({ value, label }))],
+      on ? format : '',
+      (v) => {
+        if (!v) set([['commit.gpgsign', 'false']]);
+        else set([['commit.gpgsign', 'true'], ...(format !== v || config.local('gpg.format') !== undefined ? [['gpg.format', v] as [string, string]] : [])]);
+      },
+    );
+    return row('Signing', undefined, ['commit.gpgsign', 'gpg.format'], control, (v) =>
+      normalizedBool(v) === 'true' ? 'On' : normalizedBool(v) === 'false' ? 'Off' : (FORMATS[v.toLowerCase()] ?? v),
+    );
+  }
+
+  /** 鍵: コアが集めた今の形式の鍵（user.email の鍵が先）から選ぶ。一覧にないものは Other… で */
+  function signingKeyRow(): HTMLElement {
+    const key = 'user.signingkey';
+    const format = signingFormat();
+    const current = config.effective(key)?.value ?? '';
+    const options = [
+      { value: '', label: format === 'openpgp' ? 'Key for your email' : 'None' },
+      ...facts.signingKeys.map((k) => ({ value: k.id, label: k.label })),
+      { value: '\u0001other', label: 'Other…' },
+    ];
+    const control = select(options, current, (v) => {
+      if (v === '\u0001other') post({ type: 'settingsRun', action: 'signingKeyOther' });
+      else set([[key, v || null]]);
+    });
+    return row('Key', `${FORMATS[format]} keys found on the machine that runs git.`, [key], control, (v) => facts.signingKeys.find((k) => k.id === v)?.label ?? v);
+  }
+
+  /** mailmap のファイル（mailmap.file。リポジトリの .mailmap の後に読む） */
+  function mailmapFileRow(): HTMLElement {
+    const key = 'mailmap.file';
+    const current = config.effective(key)?.value ?? '';
+    const options = [
+      { value: '', label: 'None' },
+      ...(current ? [{ value: current, label: `File: ${current}` }] : []),
+      { value: '\u0001pick', label: 'A file…' },
+    ];
+    const control = select(options, current, (v) => {
+      if (v === '\u0001pick') post({ type: 'settingsRun', action: 'mailmapFile' });
+      else if (!v) set([[key, null]]);
+    });
+    return row('Mailmap file', 'Read after the repository’s .mailmap.', [key], control, (v) => (v ? `File: ${v}` : 'None'));
+  }
+
   function renderRow(r: SettingRow): HTMLElement {
     const disabled =
       'needs' in r && r.needs === 'updateRefs' && !facts.updateRefs
@@ -530,6 +611,14 @@ export function createSettingsView(): View {
         return hooksRows();
       case 'template':
         return templateRows();
+      case 'text':
+        return textRow(r);
+      case 'signing':
+        return signingRow();
+      case 'signingKey':
+        return signingKeyRow();
+      case 'mailmapFile':
+        return mailmapFileRow();
       case 'pull': {
         const method = pullMethod(config);
         const decidingKey = config.effective('pull.ff')?.value.toLowerCase() === 'only' ? 'pull.ff' : 'pull.rebase';

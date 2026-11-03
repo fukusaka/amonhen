@@ -1173,3 +1173,10 @@ button.secondary {
 .settings-config-bar input[type='search'] {
   flex: 1;
 }
+
+.setting-input {
+  width: 260px;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+}

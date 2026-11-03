@@ -22,6 +22,8 @@ export interface SettingsFacts {
   remotes: { name: string; fetchUrl: string; pushUrl: string }[];
   /** git が知っている設定の名前（Keys and Values の All） */
   knownKeys: string[];
+  /** 今の署名の形式（gpg.format）で使える鍵（コアの `signingKeys`。`user.email` の鍵が先） */
+  signingKeys: { id: string; label: string; emails: string[] }[];
   /** このリポジトリ専用のテンプレート（`text` はなければ null）と、`commit.template` に書くそのパス */
   commitTemplate?: { text: string | null; path: string };
   /** コアの `hooksAndLfs`（Hooks and LFS） */
@@ -62,7 +64,10 @@ export type FetchingAction =
   | { action: 'lfsTrack'; pattern?: string; track: boolean }
   /** Commits: 専用のテンプレートを書く（commit.template をそれに向ける）・ファイルを選ぶ */
   | { action: 'templateSave'; text: string }
-  | { action: 'templateFile' };
+  | { action: 'templateFile' }
+  /** Author and Signing: 一覧にない鍵を入れる・mailmap のファイルを選ぶ */
+  | { action: 'signingKeyOther' }
+  | { action: 'mailmapFile' };
 
 export type SettingsHostMessage =
   /** 読んだ設定（`error` は読めなかったわけ） */

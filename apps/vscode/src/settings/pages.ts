@@ -30,7 +30,14 @@ export type SettingRow =
   /** フックの表と Git LFS（Hooks and LFS） */
   | { kind: 'hooks' }
   /** コミットのメッセージのテンプレート（なし・このリポジトリ専用・ファイル）と、専用のものの中身 */
-  | { kind: 'template' };
+  | { kind: 'template' }
+  /** 文字の設定（欄から離れたときか Enter で書く。空にすると上書きを消す） */
+  | { kind: 'text'; question: string; help?: string; key: string; placeholder?: string }
+  /** 署名（しない・OpenPGP・SSH・X.509。commit.gpgsign と gpg.format を一緒に書く）と、その鍵 */
+  | { kind: 'signing' }
+  | { kind: 'signingKey' }
+  /** mailmap のファイル（mailmap.file。なし・ファイル） */
+  | { kind: 'mailmapFile' };
 
 /** 使えるのに要る git（無ければ欄を灰色にし、理由を出す） */
 export type Needs = 'updateRefs';
@@ -48,6 +55,33 @@ export interface SettingPage {
 
 /** ページの並び（アプリと同じ順。まだ作っていないページは入れない） */
 export const PAGES: SettingPage[] = [
+  {
+    id: 'author',
+    title: 'Author and Signing',
+    sections: [
+      {
+        title: 'Author',
+        rows: [
+          { kind: 'text', question: 'Name', key: 'user.name' },
+          { kind: 'text', question: 'Email', key: 'user.email' },
+        ],
+      },
+      { title: 'Signing', rows: [{ kind: 'signing' }, { kind: 'signingKey' }] },
+      {
+        title: 'mailmap',
+        rows: [
+          {
+            kind: 'switch',
+            question: 'Use the mailmap',
+            help: 'History, the details, File History and search show people by the mailmap’s names and emails, as git log does. Blame always does.',
+            key: 'log.mailmap',
+            defaultOn: true,
+          },
+          { kind: 'mailmapFile' },
+        ],
+      },
+    ],
+  },
   {
     id: 'commits',
     title: 'Commits',
