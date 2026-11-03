@@ -252,11 +252,11 @@ enum CloneSheet {
             if let window { alert.beginSheetModal(for: window, completionHandler: ended) } else { ended(alert.runModal()) }
         }
         func ended(_ response: NSApplication.ModalResponse) {
-            guard response == .alertFirstButtonReturn, !startOrAskAgain() else {
-                _ = (chooser, changed, depthTarget, bundleChooser)
-                NotificationCenter.default.removeObserver(typed)
-                return
-            }
+            // シートに戻るときは、URL の欄の見張りとボタンの相手を残す（bundle のパスを打てば切り替わるように）。
+            if response == .alertFirstButtonReturn, startOrAskAgain() { return }
+            // 閉じ終えた（取り消した・clone を始めた）ら片づける。
+            _ = (chooser, changed, depthTarget, bundleChooser)
+            NotificationCenter.default.removeObserver(typed)
         }
         present()
 

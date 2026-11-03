@@ -215,6 +215,8 @@ becomes the GitHub Release notes.
   only beeped there.
 - macOS: changing From: in the Fetch sheet keeps the line naming the worktree.
 - macOS: Publish is off while Name there is empty; it closed the sheet and did nothing.
+- macOS: after the Clone sheet comes back because the destination exists, typing a bundle path still switches it to
+  bundle mode.
 
 ### [0.2.8] - 2026-10-30
 
