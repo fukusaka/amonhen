@@ -1973,12 +1973,21 @@ private struct HooksLFSPage: View {
             popup.lastItem?.representedObject = name
         }
         alert.accessoryView = popup
-        guard alert.runModal() == .alertFirstButtonReturn,
-              let name = popup.selectedItem?.representedObject as? String else { return }
-        model.createHook(name) {
-            hookSelection = name
-            edit(name)
+        Task { @MainActor in
+            guard await Self.ask(alert) == .alertFirstButtonReturn,
+                  let name = popup.selectedItem?.representedObject as? String else { return }
+            model.createHook(name) {
+                hookSelection = name
+                edit(name)
+            }
         }
+    }
+
+    /// 設定の窓のシートで聞く（窓がなければアプリ全体で）。
+    @MainActor
+    private static func ask(_ alert: NSAlert) async -> NSApplication.ModalResponse {
+        guard let window = NSApp.keyWindow ?? NSApp.mainWindow else { return alert.runModal() }
+        return await alert.beginSheetModal(for: window)
     }
 
     private func track() {
@@ -1992,9 +2001,11 @@ private struct HooksLFSPage: View {
         field.frame = NSRect(x: 0, y: 0, width: 300, height: 24)
         alert.accessoryView = field
         alert.window.initialFirstResponder = field
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let pattern = field.stringValue.trimmingCharacters(in: .whitespaces)
-        if !pattern.isEmpty { model.lfsTrack(pattern, true) }
+        Task { @MainActor in
+            guard await Self.ask(alert) == .alertFirstButtonReturn else { return }
+            let pattern = field.stringValue.trimmingCharacters(in: .whitespaces)
+            if !pattern.isEmpty { model.lfsTrack(pattern, true) }
+        }
     }
 }
 
