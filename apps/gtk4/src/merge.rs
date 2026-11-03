@@ -322,8 +322,9 @@ thread_local! {
     static CLOSED: RefCell<Vec<Closed>> = RefCell::default();
 }
 
-/// 別の窓のマージエディタを解決せずに閉じたときの知らせ（worktree の作業ツリーとパス）。
-type Closed = Rc<dyn Fn(Option<&Path>, &str)>;
+/// 別の窓のマージエディタを解決せずに閉じたときの知らせ（worktree の作業ツリーとパス）。false を返したら外す
+/// （知らせ先がもうない）。
+type Closed = Rc<dyn Fn(Option<&Path>, &str) -> bool>;
 
 /// `workdir` の worktree の `path` を別の窓で開いているエディタ。
 pub fn window_editor(workdir: Option<&Path>, path: &str) -> Option<Rc<Editor>> {
@@ -346,9 +347,23 @@ pub fn discard_window(workdir: Option<&Path>, path: &str) {
     }
 }
 
-/// 別の窓のマージエディタを解決せずに閉じたら `f(作業ツリー, パス)` を呼ぶ。
-pub fn connect_window_closed(f: impl Fn(Option<&Path>, &str) + 'static) {
+/// 別の窓のマージエディタを解決せずに閉じたら `f(作業ツリー, パス)` を呼ぶ。`f` が false を返したら（知らせ先の
+/// Working Copy がなくなった）、それからは呼ばない。
+pub fn connect_window_closed(f: impl Fn(Option<&Path>, &str) -> bool + 'static) {
     CLOSED.with(|c| c.borrow_mut().push(Rc::new(f)));
+}
+
+/// 別の窓を解決せずに閉じたことを知らせ、知らせ先がなくなったものを外す。
+fn notify_closed(workdir: Option<&Path>, path: &str) {
+    let listeners: Vec<Closed> = CLOSED.with(|c| c.borrow().clone());
+    let gone: Vec<Closed> = listeners
+        .into_iter()
+        .filter(|f| !f(workdir, path))
+        .collect();
+    CLOSED.with(|c| {
+        c.borrow_mut()
+            .retain(|f| !gone.iter().any(|g| Rc::ptr_eq(f, g)))
+    });
 }
 
 /// 次に開いたとき、最初のコンフリクトを `choice`（`ours`・`theirs`・`both`・`base`）で解く（確認用）。
@@ -529,10 +544,7 @@ pub fn show_in_window(editor: &Rc<Editor>, parent: &gtk::Window) {
         });
         // 解決せずに閉じたら知らせる（Working Copy が、そのファイルを出していれば埋め込み直す）。
         if !done {
-            let listeners: Vec<Closed> = CLOSED.with(|c| c.borrow().clone());
-            for f in listeners {
-                f(key.0.as_deref(), &key.1);
-            }
+            notify_closed(key.0.as_deref(), &key.1);
         }
     });
     // 解決済みにしたら閉じる（その前に、渡されていた知らせを呼ぶ）。
@@ -1689,6 +1701,26 @@ mod tests {
             kind,
             _pad: [0; 3],
         }
+    }
+
+    /// 知らせ先がなくなった（false を返した）ものは、次からは呼ばない（タブを閉じても残り続けない）。
+    #[test]
+    fn drops_closed_listeners_that_are_gone() {
+        let calls = Rc::new(Cell::new(0));
+        let alive = Rc::new(());
+        let (c, a) = (calls.clone(), Rc::downgrade(&alive));
+        connect_window_closed(move |_, _| {
+            c.set(c.get() + 1);
+            a.upgrade().is_some()
+        });
+        notify_closed(None, "a");
+        assert_eq!(calls.get(), 1);
+        drop(alive);
+        notify_closed(None, "a");
+        assert_eq!(calls.get(), 2);
+        notify_closed(None, "a");
+        assert_eq!(calls.get(), 2);
+        assert_eq!(CLOSED.with(|c| c.borrow().len()), 0);
     }
 
     /// UTF-16 の位置を文字の位置に直す（😀 は UTF-16 で 2、文字では 1）。

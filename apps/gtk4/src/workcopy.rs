@@ -837,7 +837,9 @@ impl Inner {
         // まま）、ここに埋め込み直す（同じ行を押し直しても何も起きないので。macOS 版と同じ）。
         let weak = Rc::downgrade(this);
         crate::merge::connect_window_closed(move |workdir, path| {
-            let Some(this) = weak.upgrade() else { return };
+            let Some(this) = weak.upgrade() else {
+                return false;
+            };
             let same_worktree = this.repo().and_then(|r| r.paths().workdir).as_deref() == workdir;
             if same_worktree
                 && this.embedded.borrow().is_none()
@@ -846,6 +848,7 @@ impl Inner {
             {
                 Inner::show_conflict(&this, path, this.generation.get());
             }
+            true
         });
         // 埋め込んだマージエディタにフォーカスがある間は、Ctrl+Return をエディタに渡す（Commit を止める）。
         let focus = gtk::EventControllerFocus::new();
