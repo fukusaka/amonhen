@@ -2619,7 +2619,8 @@ impl Repository {
                     prefix,
                     paths,
                 })?;
-                std::fs::write(&file, &data)?;
+                std::fs::write(&file, &data)
+                    .map_err(|e| tr!("Couldn’t write {file}: {error}", file = file, error = e))?;
                 Ok(Response {
                     ok: true,
                     info: Some(serde_json::json!({ "file": file, "size": data.len() })),
@@ -6145,6 +6146,12 @@ mod tests {
         assert!(std::fs::read(&zip).unwrap().starts_with(b"PK\x03\x04"));
 
         // 知らない形・ない時点は書かずに断る。
+        // 書けない所なら、どのファイルかを言う。
+        let nowhere = out.path().join("no-such-folder").join("a.zip");
+        let r = export(serde_json::json!({
+            "op": "archive", "rev": "HEAD", "format": "zip", "file": nowhere,
+        }));
+        assert!(r["error"].as_str().unwrap().contains("a.zip"), "{r}");
         let bad = out.path().join("bad");
         let r = export(serde_json::json!({
             "op": "archive", "rev": "HEAD", "format": "rar", "file": bad,

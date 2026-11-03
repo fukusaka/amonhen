@@ -2003,3 +2003,4 @@
 "Fetch File Contents First?" = "先に中身を取ってきますか？";
 "This is a partial clone: the contents of {count} files in the archive aren’t here yet. They are fetched from the remote in one go before the archive is written." = "partial clone なので、アーカイブに入るファイルのうち {count} 個の中身がまだ手元にありません。書き出す前に、リモートからまとめて取ってきます。";
 "Fetch and Export" = "取ってきて書き出す";
+"Couldn’t write {file}: {error}" = "{file} に書けませんでした: {error}";
