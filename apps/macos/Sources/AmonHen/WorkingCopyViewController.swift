@@ -23,12 +23,14 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     private let layoutControl = NSSegmentedControl()
     /// 一覧の見せ方: パスの一覧・ディレクトリの木・ファイル名（親のディレクトリは薄く）。
     private enum Layout: Int { case list, tree, flat }
-    private var layout: Layout {
-        get {
-            if let raw = UserDefaults.standard.object(forKey: "workingCopyLayout") as? Int { return Layout(rawValue: raw) ?? .list }
-            return UserDefaults.standard.bool(forKey: "workingCopyTree") ? .tree : .list
-        }
-        set { UserDefaults.standard.set(newValue.rawValue, forKey: "workingCopyLayout") }
+    /// この Working Copy の見せ方（タブ・worktree ごと。ほかのタブの一覧は、そのボタンと合ったまま変わらない）。
+    /// 変えたら覚えて、次に開く Working Copy の最初の見せ方にする。
+    private var layout: Layout = WorkingCopyViewController.savedLayout {
+        didSet { UserDefaults.standard.set(layout.rawValue, forKey: "workingCopyLayout") }
+    }
+    private static var savedLayout: Layout {
+        if let raw = UserDefaults.standard.object(forKey: "workingCopyLayout") as? Int { return Layout(rawValue: raw) ?? .list }
+        return UserDefaults.standard.bool(forKey: "workingCopyTree") ? .tree : .list
     }
     private var showsTree: Bool { layout == .tree }
     /// ファイルごとの追加・削除の行数（HEAD と作業ツリー。untracked はない）。

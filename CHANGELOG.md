@@ -150,6 +150,8 @@ becomes the GitHub Release notes.
   no longer wipes undo for Summary, the merge editor's Result or Repository Settings.
 - macOS: switching a tab to another repository from the toolbar's repository list asks before losing unsaved Result
   edits in a merge editor, as closing the tab does.
+- macOS: Working Copy's List, Tree and File Name layout belongs to each tab and worktree; changing it in one changed
+  the others' lists while their buttons showed the old choice.
 
 - The GTK4 app's Undo button asks once; it opened the question twice, so one stayed after undoing.
 - A `.mailmap`, or a mailmap setting (`log.mailmap`, `mailmap.file`), changed while the engine was reading the old
