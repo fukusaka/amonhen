@@ -1162,3 +1162,14 @@ button.secondary {
   margin: 2px 0 2px 4px;
   white-space: nowrap;
 }
+
+.settings-config-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 8px 0;
+}
+
+.settings-config-bar input[type='search'] {
+  flex: 1;
+}

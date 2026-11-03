@@ -3,8 +3,8 @@
  * 扱う git・リポジトリの形、右に選んだページの行。行は、質問とその下の説明、効いている値の欄、このリポジトリが
  * 上書きしている間だけ ↩︎、設定元、ⓘ（キーと値とファイル、上書きしなければ効く値）
  */
-import { ConfigView, normalizedBool, pullMethod, pullWrites, remoteKind, type PullMethod } from '../settings/model.ts';
-import { PAGES, type SettingRow } from '../settings/pages.ts';
+import { ConfigView, normalizedBool, pullMethod, pullWrites, remoteKind, scopeLabel, type ConfigEntry, type PullMethod } from '../settings/model.ts';
+import { PAGES, pageKeys, type SettingRow } from '../settings/pages.ts';
 import type { FetchingAction, SettingsFacts } from '../settings/protocol.ts';
 import type { HostMessage } from '../view/protocol.ts';
 import { el, getState, post, updateState, type View } from './api.ts';
@@ -22,7 +22,11 @@ export function createSettingsView(): View {
 
   let page = PAGES.find((p) => p.id === getState().settingsPage) ?? PAGES[0]!;
   let config = new ConfigView([]);
-  let facts: SettingsFacts = { updateRefs: true, rerereCache: false, form: [], branches: [], exclude: '', remotes: [] };
+  let facts: SettingsFacts = { updateRefs: true, rerereCache: false, form: [], branches: [], exclude: '', remotes: [], knownKeys: [] };
+  let entries: ConfigEntry[] = [];
+  /** Keys and Values の出し方と絞り込み */
+  let configMode: 'basic' | 'customized' | 'all' = 'customized';
+  let configFilter = '';
   /** 書きかけの exclude（読み直しで消さない） */
   let excludeDraft: string | undefined;
   let error: string | undefined;
@@ -311,6 +315,82 @@ export function createSettingsView(): View {
     return box;
   }
 
+  /**
+   * Keys and Values（アプリの git の設定の表）。Basic はページの行が聞くキー（設定してあってもなくても）、
+   * Customized はこのリポジトリ（と worktree）で決めているキー、All は git が読むキーすべて
+   */
+  function configTable(): HTMLElement {
+    const box = el('div');
+    const bar = el('div', 'settings-config-bar');
+    const mode = select(
+      [
+        { value: 'basic', label: 'Basic' },
+        { value: 'customized', label: 'Customized' },
+        { value: 'all', label: 'All' },
+      ],
+      configMode,
+      (v) => {
+        configMode = v as typeof configMode;
+        render();
+      },
+    );
+    mode.title = 'Basic: the settings the pages here ask about, set or not. Customized: the keys set in this repository or this worktree. All: every key git reads.';
+    const search = el('input');
+    search.type = 'search';
+    search.placeholder = 'Search by key or value';
+    search.value = configFilter;
+    search.addEventListener('input', () => {
+      configFilter = search.value;
+      fill();
+      search.focus();
+    });
+    bar.append(mode, search, button('Add…', { action: 'configEdit' }, 'Add a key to this repository'));
+    const table = el('table', 'settings-table');
+    const fill = () => {
+      const lower = (k: string) => k.toLowerCase();
+      const named = new Map<string, string>();
+      for (const e of entries) named.set(lower(e.key), e.key);
+      let keys: string[];
+      if (configMode === 'basic') keys = pageKeys();
+      else if (configMode === 'customized') keys = [...new Set(entries.filter((e) => e.scope === 'local' || e.scope === 'worktree').map((e) => e.key))];
+      else keys = [...new Set([...facts.knownKeys, ...named.values()].map((k) => named.get(lower(k)) ?? k))];
+      const words = configFilter.toLowerCase().split(/\s+/).filter(Boolean);
+      const rows = keys
+        .map((key) => ({ key, e: config.effective(key) }))
+        .filter(({ key, e }) => words.every((w) => key.toLowerCase().includes(w) || (e?.value.toLowerCase().includes(w) ?? false)))
+        .sort((a, b) => a.key.localeCompare(b.key));
+      const head = el('tr');
+      for (const h of ['Key', 'Value in effect', 'Source', '']) head.append(el('th', '', h));
+      table.replaceChildren(head);
+      for (const { key, e } of rows) {
+        const tr = el('tr');
+        const value = el('td', e ? 'mono' : 'mono muted', e ? e.value : '—');
+        const source = el('td', 'muted', e ? scopeLabel(e.scope) : 'git’s default');
+        if (e) source.title = e.origin.replace(/^file:/, '');
+        const actions = el('td', 'settings-actions');
+        actions.append(button('Edit…', { action: 'configEdit', key }, 'Edit in this repository'));
+        if (config.local(key) !== undefined) {
+          const remove = el('button', 'secondary', 'Remove');
+          remove.title = 'Remove from this repository';
+          remove.addEventListener('click', () => set([[key, null]]));
+          actions.append(remove);
+        }
+        tr.append(el('td', 'mono', key), value, source, actions);
+        table.append(tr);
+      }
+      if (rows.length === 0) {
+        const tr = el('tr');
+        const td = el('td', 'muted', configMode === 'customized' && !configFilter ? 'Nothing is set in this repository' : 'No keys');
+        td.colSpan = 4;
+        tr.append(td);
+        table.append(tr);
+      }
+    };
+    fill();
+    box.append(bar, table);
+    return box;
+  }
+
   function renderRow(r: SettingRow): HTMLElement {
     const disabled =
       'needs' in r && r.needs === 'updateRefs' && !facts.updateRefs
@@ -325,6 +405,8 @@ export function createSettingsView(): View {
         return fetchingRows();
       case 'remotes':
         return remotesTable();
+      case 'config':
+        return configTable();
       case 'pull': {
         const method = pullMethod(config);
         const decidingKey = config.effective('pull.ff')?.value.toLowerCase() === 'only' ? 'pull.ff' : 'pull.rebase';
@@ -374,6 +456,7 @@ export function createSettingsView(): View {
     onMessage(message: HostMessage) {
       if (message.type !== 'settings') return;
       config = new ConfigView(message.entries);
+      entries = message.entries;
       facts = message.facts;
       error = message.error;
       render();

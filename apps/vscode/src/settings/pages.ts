@@ -24,7 +24,9 @@ export type SettingRow =
   /** リポジトリの形（shallow・partial・sparse・maintenance）に合わせた、取得とフォルダの行（Fetching and Folders） */
   | { kind: 'fetching' }
   /** リモートの表（Add・Edit URL・Push URL・Check・Prune・Rename・Remove） */
-  | { kind: 'remotes' };
+  | { kind: 'remotes' }
+  /** git の設定の表（Keys and Values） */
+  | { kind: 'config' };
 
 /** 使えるのに要る git（無ければ欄を灰色にし、理由を出す） */
 export type Needs = 'updateRefs';
@@ -148,4 +150,20 @@ export const PAGES: SettingPage[] = [
     title: 'Remotes',
     sections: [{ title: '', rows: [{ kind: 'remotes' }] }],
   },
+  {
+    id: 'config',
+    title: 'Keys and Values',
+    sections: [{ title: '', rows: [{ kind: 'config' }] }],
+  },
 ];
+
+/** ページの行が聞くキー（Keys and Values の Basic に出す） */
+export function pageKeys(): string[] {
+  const keys = new Set<string>(['pull.rebase', 'pull.ff', 'amonhen.defaultBranch']);
+  for (const page of PAGES) {
+    for (const section of page.sections) {
+      for (const row of section.rows) if ('key' in row) keys.add(row.key);
+    }
+  }
+  return [...keys].sort();
+}

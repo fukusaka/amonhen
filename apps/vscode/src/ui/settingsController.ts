@@ -140,6 +140,9 @@ export class SettingsController implements vscode.Disposable {
     const form = (await client.call({ op: 'run', command: { op: 'repositoryForm' } })).json['info'] as RepositoryForm | undefined;
     const folders = form?.sparse?.cone ? form.sparse.folders : [];
     switch (a.action) {
+      case 'configEdit':
+        await this.editConfig(client, a.key);
+        return;
       case 'remote':
         await this.remoteAction(client, a.op, a.name);
         return;
@@ -179,6 +182,33 @@ export class SettingsController implements vscode.Disposable {
       }
     }
     await repo.refresh();
+  }
+
+  /** Keys and Values: このリポジトリの値を聞いて書く。キーがなければ、キーから聞く（git の知っている名前を出す） */
+  private async editConfig(client: NonNullable<Awaited<ReturnType<typeof daemonFor>>>, key: string | undefined): Promise<void> {
+    let name = key;
+    if (!name) {
+      name = (
+        await vscode.window.showInputBox({
+          title: 'Add a Key to This Repository',
+          prompt: 'The key (section.name, or section.subsection.name)',
+          placeHolder: 'core.editor',
+          validateInput: (v) => (/^[A-Za-z0-9-]+(\..+)?\.[A-Za-z][A-Za-z0-9-]*$/.test(v.trim()) ? undefined : 'Write the key as section.name'),
+        })
+      )?.trim();
+      if (!name) return;
+    }
+    const list = (await client.call({ op: 'run', command: { op: 'configList' } })).json['info'] as { entries?: ConfigEntry[] } | undefined;
+    const local = [...(list?.entries ?? [])].reverse().find((e) => e.key.toLowerCase() === name!.toLowerCase() && e.scope === 'local');
+    const value = await vscode.window.showInputBox({
+      title: `${name} in This Repository`,
+      prompt: 'The value to set in this repository (.git/config)',
+      value: local?.value ?? '',
+    });
+    if (value === undefined) return;
+    const reply = (await client.call({ op: 'run', command: { op: 'configSet', key: name, value } })).json;
+    if (reply['ok'] !== true) throw new Error(String(reply['error'] ?? `Can’t set ${name}`));
+    await this.repo?.refresh();
   }
 
   /**
@@ -241,7 +271,7 @@ export class SettingsController implements vscode.Disposable {
   private async load(): Promise<void> {
     const generation = ++this.generation;
     const repo = this.repo;
-    const empty: SettingsFacts = { updateRefs: true, rerereCache: false, form: [], branches: [], exclude: '', remotes: [] };
+    const empty: SettingsFacts = { updateRefs: true, rerereCache: false, form: [], branches: [], exclude: '', remotes: [], knownKeys: [] };
     if (!repo) {
       this.post({ type: 'settings', entries: [], facts: empty });
       return;
@@ -253,13 +283,14 @@ export class SettingsController implements vscode.Disposable {
         return;
       }
       const run = async (op: string) => (await client.call({ op: 'run', command: { op } })).json['info'] as Record<string, unknown> | undefined;
-      const [list, version, form, groups, ignore, remotes] = await Promise.all([
+      const [list, version, form, groups, ignore, remotes, known] = await Promise.all([
         run('configList'),
         run('gitVersion'),
         run('repositoryForm'),
         run('branchGroups'),
         run('ignoreFiles'),
         run('remotes'),
+        run('configKeys'),
       ]);
       if (generation !== this.generation) return;
       this.post({
@@ -275,6 +306,7 @@ export class SettingsController implements vscode.Disposable {
           exclude: String(ignore?.['exclude'] ?? ''),
           ...(form ? { repositoryForm: form as unknown as RepositoryForm } : {}),
           remotes: (remotes?.['remotes'] as SettingsFacts['remotes'] | undefined) ?? [],
+          knownKeys: (known?.['keys'] as string[] | undefined) ?? [],
         },
       });
     } catch (err) {

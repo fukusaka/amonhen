@@ -20,6 +20,8 @@ export interface SettingsFacts {
   repositoryForm?: RepositoryForm;
   /** リモート（Remotes） */
   remotes: { name: string; fetchUrl: string; pushUrl: string }[];
+  /** git が知っている設定の名前（Keys and Values の All） */
+  knownKeys: string[];
 }
 
 export interface RepositoryForm {
@@ -40,7 +42,9 @@ export type FetchingAction =
   | { action: 'maintenance'; on: boolean }
   | { action: 'removeFolder'; folder: string }
   /** Remotes の行のボタン（add は名前なし） */
-  | { action: 'remote'; op: 'add' | 'rename' | 'editUrl' | 'editPushUrl' | 'check' | 'prune' | 'remove'; name?: string };
+  | { action: 'remote'; op: 'add' | 'rename' | 'editUrl' | 'editPushUrl' | 'check' | 'prune' | 'remove'; name?: string }
+  /** Keys and Values: キーの値を聞いて書く（`key` がなければ、キーから聞いて足す） */
+  | { action: 'configEdit'; key?: string };
 
 export type SettingsHostMessage =
   /** 読んだ設定（`error` は読めなかったわけ） */

@@ -780,7 +780,7 @@ First release.
   undoes several operations down to the one chosen.
 - With the engine, Repository Settings shows this repository's git settings in the app's pages: Operations,
   Branches (the default branch), Working Copy (line endings, the executable bit, `.git/info/exclude`) and Fetching
-  and Folders (fetching more, sparse checkout, git maintenance) and Remotes so far.
+  and Folders (fetching more, sparse checkout, git maintenance), Remotes and Keys and Values so far.
 
 #### Changed
 

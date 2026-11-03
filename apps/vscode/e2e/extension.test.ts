@@ -1036,6 +1036,20 @@ async function settingsFlow(): Promise<void> {
     );
     assert.match(reached, /^origin: reachable, \d+ branches/);
 
+    // Keys and Values: キーを足し、値を変え、消す。git が知っている名前も届く
+    assert.ok(first.facts.knownKeys.includes('core.autocrlf'));
+    mark = posted.length;
+    await withWindow({ showInputBox: inputs('e2e.added', 'one') }, async () =>
+      panel.settings.handle({ type: 'settingsRun', action: 'configEdit' }),
+    );
+    await waitPosted('settings', mark, (m) => m.entries.some((e) => e.key === 'e2e.added' && e.value === 'one'));
+    await withWindow({ showInputBox: inputs('two') }, async () =>
+      panel.settings.handle({ type: 'settingsRun', action: 'configEdit', key: 'e2e.added' }),
+    );
+    assert.equal(config('e2e.added'), 'two');
+    await panel.settings.handle({ type: 'settingsSet', writes: [['e2e.added', null]] });
+    assert.equal(config('e2e.added'), undefined);
+
     // Fetching and Folders: HEAD の木からフォルダを選んで sparse checkout にし、すべてに戻す（git 2.25 から）。
     // maintenance は OS の予定に登録するので、ここでは試さない
     if (first.facts.repositoryForm?.canSparseCheckout) {
@@ -1069,7 +1083,7 @@ async function settingsFlow(): Promise<void> {
       }
       git('reset', '-q', '--hard', 'HEAD~1');
     }
-    for (const k of [...keys, 'amonhen.defaultBranch']) if (config(k) !== undefined) git('config', '--local', '--unset', k);
+    for (const k of [...keys, 'amonhen.defaultBranch', 'e2e.added']) if (config(k) !== undefined) git('config', '--local', '--unset', k);
     writeFileSync(excludeFile, exclude);
     if (!hadGitignore) rmSync(join(root, '.gitignore'), { force: true });
   }
