@@ -6,7 +6,7 @@
 
 /* SyncSheets.swift */
 "Can’t Publish" = "Publish できません";
-"This repository has no remotes. Add one in Repository > Add Remote…." = "このリポジトリにはリモートがありません。Repository > Add Remote… で足してください。";
+"This repository has no remotes. Add one in Repository > Add Remote…." = "このリポジトリにはリモートがありません。Repository > リモートを追加… で足してください。";
 "Remote" = "リモート";
 "Name there" = "そこでの名前";
 "Publish %@?" = "%@ を Publish しますか？";
