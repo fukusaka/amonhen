@@ -27,8 +27,11 @@ enum RemoteSheet {
         let alert = NSAlert()
         alert.messageText = L("Remove %@?", name)
         alert.informativeText = L("This removes the remote’s settings and its remote-tracking branches (%@/…). The remote repository isn’t touched.", name)
-        alert.addButton(withTitle: L("Delete"))
-        alert.addButton(withTitle: L("Cancel"))
+        // 戻せないので、赤く、↩ では押せない（↩ は Cancel）。
+        let delete = alert.addButton(withTitle: L("Delete"))
+        delete.hasDestructiveAction = true
+        delete.keyEquivalent = ""
+        alert.addButton(withTitle: L("Cancel")).keyEquivalent = "\r"
         guard let window else { return alert.runModal() == .alertFirstButtonReturn }
         return await alert.beginSheetModal(for: window) == .alertFirstButtonReturn
     }
