@@ -1011,9 +1011,9 @@ impl Activity {
                 let repo = actions.repo().unwrap_or_else(|| entry.repo.clone());
                 let (undo_list, selected, w) = (undo_list.clone(), selected.clone(), w.clone());
                 glib::spawn_future_local(async move {
+                    let r = repo.clone();
                     let reply: Value = gio::spawn_blocking(move || {
-                        serde_json::from_str(&repo.run_json(r#"{"op":"undoLog"}"#))
-                            .unwrap_or_default()
+                        serde_json::from_str(&r.run_json(r#"{"op":"undoLog"}"#)).unwrap_or_default()
                     })
                     .await
                     .unwrap_or_default();
@@ -1054,7 +1054,8 @@ impl Activity {
                                 count = i + 1
                             )
                         }));
-                        let (a, w) = (actions.clone(), w.clone());
+                        // 読んだ worktree の記録を戻す（読み直すまでの間に書き込む先を替えても）。
+                        let (a, w, repo) = (actions.clone(), w.clone(), repo.clone());
                         let title = if i == 0 {
                             tr!(
                                 "Undo “{label}”?",
@@ -1065,7 +1066,8 @@ impl Activity {
                         };
                         // 戻す前に確かめる（macOS 版と同じ）。
                         button.connect_clicked(move |_| {
-                            let (a, w, title) = (a.clone(), w.clone(), title.clone());
+                            let (a, w, title, repo) =
+                                (a.clone(), w.clone(), title.clone(), repo.clone());
                             glib::spawn_future_local(async move {
                                 let sheet = crate::sheets::Sheet::new(
                                     w.upgrade().map(|w| w.upcast::<gtk::Window>()).as_ref(),
@@ -1074,7 +1076,11 @@ impl Activity {
                                 );
                                 sheet.buttons("Undo", false, None);
                                 if sheet.run().await == crate::sheets::Response::Ok {
-                                    a.perform_sequence(vec![json!({ "op": "undo" }); i + 1]);
+                                    a.perform_in(
+                                        repo,
+                                        vec![json!({ "op": "undo" }); i + 1],
+                                        |_| {},
+                                    );
                                 }
                             });
                         });
