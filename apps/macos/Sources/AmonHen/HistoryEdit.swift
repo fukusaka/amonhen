@@ -275,6 +275,8 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
 
     /// メッセージの欄を開く。まとめる行なら、まとめたコミットのメッセージ（最初は、まとめるものを古い順につないだもの）。
     private func editMessage(at i: Int) {
+        // merge の行は作り直すだけで、メッセージは変えられない（することの選択と同じ）。
+        guard !rows[i].merge else { return }
         let combining = rows[i].action == .squash
         let initial = rows[i].newMessage ?? (combining ? combinedMessage(endingAt: i) : rows[i].message)
         Task { @MainActor in
