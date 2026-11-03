@@ -748,8 +748,12 @@ impl Sidebar {
             marks,
         );
         node.imp().data.replace(data);
-        // History の行は作り直すときに印を付ける（Working Copy の行も描き直す）。
+        // History の行は作り直すときに印を付ける。Working Copy の行は同じ項目のままなので、入れ直して描き直させる。
         self.inner.rebuild(false);
+        let workspace = self.inner.root.item(0).and_downcast::<Node>();
+        if let Some(store) = workspace.and_then(|w| w.children()) {
+            self.inner.replace_keeping(&store, 0, node);
+        }
     }
 
     /// リポジトリの worktree と変更の数を出す。並びが変われば作り直し、数だけなら行を描き直す。
@@ -2209,7 +2213,9 @@ impl Inner {
         }
         let selected: Vec<String> = self.selected_nodes().iter().map(|n| n.data().key).collect();
         self.rebuilding.set(true);
-        store.splice(at, 1, std::slice::from_ref(node));
+        // 同じ項目への入れ替え（splice）では、GTK は行を作り直さない（4.24 など）。外してから入れ直す。
+        store.remove(at);
+        store.insert(at, node);
         let mut i = 0;
         while i < self.model.n_items() {
             if let Some(row) = self.model.row(i)
