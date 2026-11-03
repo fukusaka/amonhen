@@ -1235,7 +1235,8 @@ impl Inner {
 
     /// 絞り込みに合うファイルで一覧を作り直し、選んでいたファイルを選び直す（なければ最初のもの）。
     fn rebuild_list(this: &Rc<Self>) {
-        let filter = this.filter.text().to_lowercase();
+        // 前後の空白は除いて比べる（macOS 版と同じ）。
+        let filter = this.filter.text().trim().to_lowercase();
         let entries: Vec<StatusEntry> = this
             .all_entries
             .borrow()
