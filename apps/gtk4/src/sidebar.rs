@@ -15,7 +15,7 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use amonhen_core::RefsSnapshot;
-use amonhen_model::{Oid, RefEntry, RefKind, Refs, tr};
+use amonhen_model::{Oid, RefEntry, RefKind, Refs, SubmoduleState, tr};
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 use gtk::{gio, glib};
@@ -92,6 +92,8 @@ pub struct Data {
     pub badge_css: Option<&'static str>,
     /// タグの署名の印（右端の印の先頭。見えている行を出すときに、確かめた結果から入れる）。
     pub signature: Option<Mark>,
+    /// 名前を薄く出す（取り出していない submodule）。
+    pub dim: bool,
     /// `marks` の終わりのいくつかが、リポジトリの形の印（添え物なので、名前が切れるほど狭ければ出さない。
     /// macOS 版と同じ）。
     pub optional_marks: usize,
@@ -246,6 +248,8 @@ pub struct Known {
     pub pull_requests: Vec<PullRequest>,
     /// プルリクエストを作れる（GitHub のリポジトリで gh が使える）。
     pub can_create_pull_request: bool,
+    /// submodule の様子（場所 → 様子。まだ読んでいなければ空）。
+    pub submodules: HashMap<String, SubmoduleState>,
 }
 
 impl Known {
@@ -320,6 +324,9 @@ struct Inner {
     refs: RefCell<Option<Refs>>,
     groups: RefCell<Option<BranchGroups>>,
     tags: RefCell<Option<TagRemotes>>,
+    /// submodule の様子（場所 → 様子。submodule がなければ読まない）。
+    submodules: RefCell<HashMap<String, SubmoduleState>>,
+    loading_submodules: Cell<u64>,
     /// お気に入りのブランチ（上から順。作り直すたびに求める）。
     pinned: RefCell<Vec<String>>,
     /// 畳んだ、積んだブランチのあるブランチ（初めはすべて開いておく）。
@@ -469,6 +476,8 @@ impl Sidebar {
             refs: RefCell::default(),
             groups: RefCell::default(),
             tags: RefCell::default(),
+            submodules: RefCell::default(),
+            loading_submodules: Cell::new(0),
             pinned: RefCell::default(),
             folded: RefCell::default(),
             actions: RefCell::default(),
@@ -673,6 +682,11 @@ impl Sidebar {
 
     /// タグがどのリモートにあるかを読み直す（自動の fetch の後。ref が変わらなくても、コアはリモートのタグを
     /// 読み直している。macOS 版の `reloadTagRemotes`）。
+    /// submodule の様子を読み直す（Working Copy が変わったとき。中の変更は ref を変えない）。
+    pub fn reload_submodules(&self) {
+        self.inner.load_submodules();
+    }
+
     pub fn reload_tag_remotes(&self) {
         self.inner.load_tag_remotes();
     }
@@ -1398,6 +1412,10 @@ fn bind_row(item: &gtk::ListItem) {
             title.remove_css_class(css);
         }
     }
+    // 取り出していない submodule の名前は薄く（macOS 版と同じ）。
+    if data.dim {
+        title.add_css_class("dim-label");
+    }
     let attrs = gtk::pango::AttrList::new();
     if data.head {
         attrs.insert(gtk::pango::AttrInt::new_weight(gtk::pango::Weight::Bold));
@@ -1487,6 +1505,7 @@ impl Inner {
                 .map_or_else(Vec::new, branch_remotes),
             pull_requests: self.pull_requests.borrow().clone(),
             can_create_pull_request: self.can_create_pull_request.get(),
+            submodules: self.submodules.borrow().clone(),
         }
     }
 
@@ -1792,6 +1811,44 @@ impl Inner {
     fn load_facts(self: &Rc<Self>) {
         self.load_groups();
         self.load_tag_remotes();
+        self.load_submodules();
+    }
+
+    /// submodule の様子（取り出してあるか・記録と違うコミットか・中の変更）を裏で読み、変わっていたら作り直す。
+    /// submodule がなければ読まない。
+    fn load_submodules(self: &Rc<Self>) {
+        let has = self
+            .refs
+            .borrow()
+            .as_ref()
+            .is_some_and(|r| r.entries.iter().any(|e| e.kind == RefKind::Submodule));
+        if !has && self.submodules.borrow().is_empty() {
+            return;
+        }
+        let Some(reply) = self.ask("submodules") else {
+            return;
+        };
+        let token = self.loading_submodules.get() + 1;
+        self.loading_submodules.set(token);
+        let weak = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let reply = reply.await.unwrap_or_default();
+            let Some(inner) = weak.upgrade() else { return };
+            inner.facts_pending.set(inner.facts_pending.get() - 1);
+            if inner.loading_submodules.get() == token
+                && let Ok(list) = serde_json::from_value::<Vec<SubmoduleState>>(
+                    reply["info"]["submodules"].clone(),
+                )
+            {
+                let states: HashMap<String, SubmoduleState> =
+                    list.into_iter().map(|s| (s.path.clone(), s)).collect();
+                if states != *inner.submodules.borrow() {
+                    inner.submodules.replace(states);
+                    inner.rebuild(false);
+                }
+            }
+            inner.run_debug();
+        });
     }
 
     /// コアの命令（答えの要らない読み取り）を裏で始める（待つ前から動く）。
@@ -2196,8 +2253,13 @@ impl Inner {
                     .filter(|w| w.key != worktrees.editing)
                     .filter_map(|w| w.branch.as_deref())
                     .collect();
-                let (built, pinned) =
-                    groups_of(refs, branch_groups.as_ref(), tags.as_ref(), &elsewhere);
+                let (built, pinned) = groups_of(
+                    refs,
+                    branch_groups.as_ref(),
+                    tags.as_ref(),
+                    &elsewhere,
+                    &self.submodules.borrow(),
+                );
                 self.pinned.replace(pinned);
                 groups.extend(built);
             }
@@ -2531,6 +2593,58 @@ fn ref_data(
     data
 }
 
+/// submodule の様子の印（macOS 版と同じ: コンフリクト・取り出していない・記録と違うコミット・中の変更）と、URL と
+/// 追うブランチのツールチップ。印の意味はツールチップの先頭に。
+fn finish_submodule(data: &mut Data, state: &SubmoduleState) {
+    let mark = |icon, tooltip: String, css| Mark { icon, tooltip, css };
+    data.marks = if state.conflict {
+        vec![mark(icon::Kind::Warning, tr!("In conflict"), Some("error"))]
+    } else if !state.initialized {
+        data.dim = true;
+        vec![mark(
+            icon::Kind::CircleDashed,
+            tr!("Not checked out (Update checks it out)"),
+            None,
+        )]
+    } else {
+        [
+            state.moved.then(|| {
+                mark(
+                    icon::Kind::RangeDiff,
+                    tr!("At another commit than the one recorded (Update goes back to it)"),
+                    Some("warning"),
+                )
+            }),
+            state.changed.then(|| {
+                mark(
+                    icon::Kind::Pencil,
+                    tr!("Has uncommitted changes inside"),
+                    None,
+                )
+            }),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
+    };
+    let about = [
+        state.url.clone(),
+        state
+            .branch
+            .as_ref()
+            .map(|b| tr!("Follows {branch}", branch = b)),
+    ]
+    .into_iter()
+    .flatten();
+    let lines: Vec<String> = data
+        .marks
+        .iter()
+        .map(|m| m.tooltip.clone())
+        .chain(about)
+        .collect();
+    data.tooltip = (!lines.is_empty()).then(|| lines.join("\n"));
+}
+
 /// 印のある・数のあるローカルブランチは押せるようにし、印の意味をツールチップの先頭に置く。
 fn finish_branch(data: &mut Data) {
     if !matches!(&data.item, Item::Ref(e) if e.kind == RefKind::Local) {
@@ -2780,6 +2894,7 @@ fn groups_of(
     branch_groups: Option<&BranchGroups>,
     tags: Option<&TagRemotes>,
     elsewhere: &HashSet<&str>,
+    submodule_states: &HashMap<String, SubmoduleState>,
 ) -> (Vec<(&'static str, gio::ListStore)>, Vec<String>) {
     let tag_remotes = tags.map_or_else(
         || branch_remotes(refs),
@@ -2840,7 +2955,10 @@ fn groups_of(
     // stash は見出しにしない（Workspace の Stashes の行に数だけ。macOS 版と同じ）。
     let submodules = gio::ListStore::new::<Node>();
     for e in of(RefKind::Submodule) {
-        let d = ref_data(e, &e.name, icon::Kind::Submodule, head, None);
+        let mut d = ref_data(e, &e.name, icon::Kind::Submodule, head, None);
+        if let Some(state) = submodule_states.get(&e.name) {
+            finish_submodule(&mut d, state);
+        }
         submodules.append(&Node::new(d, None));
     }
     if submodules.n_items() > 0 {

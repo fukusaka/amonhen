@@ -556,7 +556,11 @@ fn handle_op(backend: &dyn GitBackend, op: Op, cancel: &AtomicBool) -> Result<Ve
         Op::StashStore { oid, message } => encode(&ops.stash_store(&oid, &message)?),
         Op::StashBranch { branch, name } => encode(&ops.stash_branch(&branch, &name)?),
         Op::CountApart { left, right } => encode(&ops.count_apart(&left, &right)?),
-        Op::UpdateSubmodules(paths) => encode(&ops.update_submodules(&strs(&paths))?),
+        Op::UpdateSubmodules(paths, options) => {
+            encode(&ops.update_submodules(&strs(&paths), &options)?)
+        }
+        Op::Submodules => encode(&ops.submodules()?),
+        Op::ChangeSubmodule(change) => encode(&ops.change_submodule(&change.0)?),
         Op::ConfigList => encode(&ops.config_list()?),
         Op::ConfigKeys => encode(&ops.config_keys()?),
         Op::ConfigSet(key, value) => encode(&ops.config_set(&key, value.as_deref())?),
@@ -578,7 +582,7 @@ fn handle_op(backend: &dyn GitBackend, op: Op, cancel: &AtomicBool) -> Result<Ve
         Op::ProcessEnvironment => encode(&ops.process_environment()?),
         Op::MachineGit => encode(&ops.machine_git()?),
         Op::SetMachineGit(git) => encode(&ops.set_machine_git(git.as_deref())?),
-        Op::ChangeRemote(change) => encode(&ops.change_remote(&change)?),
+        Op::ChangeRemote(change) => encode(&ops.change_remote(&change.0)?),
         Op::WorktreeList => encode(&Bytes(ops.worktree_list()?)),
         Op::WorktreeChanges(paths, fresh) => encode(&ops.worktree_changes(&paths, fresh)?),
         Op::ChangeWorktree(change) => encode(&ops.change_worktree(&change)?),

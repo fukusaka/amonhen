@@ -177,6 +177,32 @@ pub enum Request {
 }
 
 /// 書き込み系の操作。応答の型はそれぞれの `Operations` のメソッドの戻り値。
+/// 中身を JSON で運ぶ包み。postcard は `#[serde(tag = ...)]` の enum を読めない（`deserialize_any` が要る）ので、
+/// そういう型（`RemoteChange` など）はこれで包む。
+#[derive(Clone, Debug)]
+pub struct Tagged<T>(pub T);
+
+impl<T: Serialize> Serialize for Tagged<T> {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        let json = serde_json::to_string(&self.0).map_err(serde::ser::Error::custom)?;
+        serializer.serialize_str(&json)
+    }
+}
+
+impl<'de, T: serde::de::DeserializeOwned> Deserialize<'de> for Tagged<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        let json = String::deserialize(deserializer)?;
+        serde_json::from_str(&json)
+            .map(Tagged)
+            .map_err(serde::de::Error::custom)
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Op {
     LogMatching {
@@ -335,7 +361,7 @@ pub enum Op {
         left: String,
         right: String,
     },
-    UpdateSubmodules(Vec<String>),
+    UpdateSubmodules(Vec<String>, amonhen_model::SubmoduleUpdate),
     ConfigList,
     ConfigKeys,
     ConfigSet(String, Option<String>),
@@ -368,7 +394,7 @@ pub enum Op {
     SetMachineGit(Option<String>),
     LfsTrack(String, bool),
     LfsFileCount,
-    ChangeRemote(RemoteChange),
+    ChangeRemote(Tagged<RemoteChange>),
     WorkingStats,
     IgnoreMatches(Vec<String>, usize),
     Activity,
@@ -393,6 +419,10 @@ pub enum Op {
     FetchBundle(Bytes, String),
     /// → `Vec<String>`
     MissingCommits(Vec<String>),
+    /// → `Vec<SubmoduleState>`
+    Submodules,
+    /// → `()`
+    ChangeSubmodule(Tagged<amonhen_model::SubmoduleChange>),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -546,5 +576,26 @@ mod tests {
             super::BUILD_MARK,
             format!("amonhen-build={};", super::BUILD_ID)
         );
+    }
+}
+
+#[cfg(test)]
+mod tagged {
+    use super::*;
+
+    #[test]
+    fn tagged_changes_survive_the_wire() {
+        let op = Op::ChangeRemote(Tagged(RemoteChange::Remove { name: "up".into() }));
+        let back: Op = postcard::from_bytes(&postcard::to_allocvec(&op).unwrap()).unwrap();
+        assert!(
+            matches!(back, Op::ChangeRemote(Tagged(RemoteChange::Remove { name })) if name == "up")
+        );
+        let change = amonhen_model::SubmoduleChange::Remove {
+            path: "lib".into(),
+            delete_git_dir: true,
+        };
+        let op = Op::ChangeSubmodule(Tagged(change.clone()));
+        let back: Op = postcard::from_bytes(&postcard::to_allocvec(&op).unwrap()).unwrap();
+        assert!(matches!(back, Op::ChangeSubmodule(Tagged(c)) if c == change));
     }
 }

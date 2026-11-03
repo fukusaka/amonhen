@@ -15,6 +15,12 @@ pub fn isolate_from_user_settings() {
         let home = home();
         let config = home.join(".config");
         std::fs::create_dir_all(&config).expect("the test home can be made");
+        // 手元のフォルダを URL にした submodule を足せるように（git 2.38.1 から、既定では断る）。
+        std::fs::write(
+            home.join(".gitconfig"),
+            "[protocol \"file\"]\n\tallow = always\n",
+        )
+        .expect("the test home can be made");
         // SAFETY: 環境を変えるのはここだけで、1 回だけ。Rust の環境の読み書き（Command の起動も）はロックで
         // 守られている。テストは C の getenv を並べて呼ばない。
         unsafe {

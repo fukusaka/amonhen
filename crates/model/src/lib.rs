@@ -36,8 +36,8 @@ pub use ops::{
     ApplyPatch, Archive, Bundle, BundlePreview, ConfigEntry, ContentsToFetch, Deepen, Directory,
     DirectoryEntry, FormatPatch, HeadState, LogScope, MachineGit, Operations, Outcome,
     PartialClone, PatchFile, Program, PullMode, RefUpdate, RemoteChange, RemoteCheck, RemoteEntry,
-    RepositoryForm, ResetMode, Sequence, SigningKey, SparseCheckout, WorktreeChange,
-    WorktreeChanges,
+    RepositoryForm, ResetMode, Sequence, SigningKey, SparseCheckout, SubmoduleChange,
+    SubmoduleState, SubmoduleUpdate, WorktreeChange, WorktreeChanges,
 };
 pub use range_diff::{
     RangeCommit, RangePair, RangeStatus, parse_range_diff, rebase_onto, rebase_onto_from_head,

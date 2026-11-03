@@ -50,6 +50,8 @@ enum Commands {
     static let forcePush = Command(CommandTable.forcePush, action: #selector(RepositoryWindow.forcePush(_:)))
     static let setUpstream = Command(CommandTable.setUpstream, action: #selector(RepositoryWindow.setUpstream(_:)))
     static let addRemote = Command(CommandTable.addRemote, action: #selector(RepositoryWindow.addRemote(_:)))
+    static let addSubmodule = Command(CommandTable.addSubmodule, action: #selector(RepositoryWindow.addSubmodule(_:)))
+    static let updateSubmodules = Command(CommandTable.updateSubmodules, action: #selector(RepositoryWindow.updateSubmodules(_:)))
     static let createPullRequest = Command(CommandTable.createPullRequest, action: #selector(RepositoryWindow.createPullRequest(_:)))
     static let openOnGitHub = Command(CommandTable.openOnGithub, action: #selector(RepositoryWindow.openOnGitHub(_:)))
     static let switchBranch = Command(CommandTable.switchBranch, action: #selector(RepositoryWindow.switchBranch(_:)))
@@ -102,6 +104,8 @@ enum Commands {
         forcePush,
         setUpstream,
         addRemote,
+        addSubmodule,
+        updateSubmodules,
         createPullRequest,
         openOnGitHub,
         switchBranch,

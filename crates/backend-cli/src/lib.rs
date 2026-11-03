@@ -10,6 +10,7 @@ mod ops;
 mod programs;
 mod signing;
 mod status;
+mod submodule;
 mod verify;
 
 use amonhen_model::tr;
@@ -124,6 +125,8 @@ pub struct CloneOptions {
     /// `-b`: 取り出すブランチ（タグなら detached）。bundle から clone するとき、bundle に HEAD がなければ選ばなくても
     /// main・master・最初のブランチを取り出す（git は何も取り出さない）。
     pub branch: Option<String>,
+    /// `--recurse-submodules`: submodule も取り出す（git の既定は取り出さない）。
+    pub recurse_submodules: bool,
 }
 
 /// sparse checkout で始める clone（`git clone --sparse`）が使える git の版。2.25 は URL を渡すと失敗し（2.26 で
@@ -182,6 +185,9 @@ pub fn clone(url: &str, dest: &std::path::Path, options: &CloneOptions) -> Resul
     }
     if let Some(branch) = &branch {
         args.extend(["-b", branch]);
+    }
+    if options.recurse_submodules {
+        args.push("--recurse-submodules");
     }
     args.extend(["--", url, name]);
     Git::new(parent).write(&args)?;

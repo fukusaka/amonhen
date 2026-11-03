@@ -350,6 +350,28 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     /// Remotes の組の文脈メニューの「リモートを追加…」（name は nil）と、リモートの「名前を変更…」「URL を編集…」「削除…」。
     enum RemoteAction { case add, edit, remove }
     var onRemoteAction: ((String?, RemoteAction) -> Void)?
+    /// Submodules の組の文脈メニュー（path は nil）と、submodule の行の文脈メニュー。
+    enum SubmoduleAction { case add, update, sync, setURL, setBranch, remove }
+    var onSubmoduleAction: ((String?, SubmoduleAction) -> Void)?
+    /// submodule の様子（場所 → 様子。まだ読んでいなければ空）。
+    private var submoduleStates: [String: SubmoduleState] = [:]
+
+    /// submodule の様子が変わった（取り出してあるか・記録と違うコミットか・中の変更）。
+    func show(submodules: [SubmoduleState]) {
+        let states = Dictionary(submodules.map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a })
+        guard states != submoduleStates else { return }
+        submoduleStates = states
+        outline.reloadData()
+    }
+
+    /// 行の右端に出す、submodule の様子の印（SF Symbols の名前, ツールチップ, 色）。
+    private func submoduleMarks(_ state: SubmoduleState) -> [(String, String, NSColor)] {
+        if state.conflict { return [("exclamationmark.triangle", L("In conflict"), .systemRed)] }
+        if !state.initialized { return [("circle.dashed", L("Not checked out (Update checks it out)"), .tertiaryLabelColor)] }
+        return [state.moved ? ("arrow.left.arrow.right", L("At another commit than the one recorded (Update goes back to it)"), .systemOrange) : nil,
+                state.changed ? ("pencil", L("Has uncommitted changes inside"), .secondaryLabelColor) : nil]
+            .compactMap { $0 }
+    }
 
     /// リポジトリの worktree（2 つ以上あるときだけ Worktrees に出す）。
     func show(worktrees: [WorktreeInfo], editing: String) {
@@ -994,6 +1016,11 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         if let item = node.item, item.kind == .tag {
             marks = [tagSignatureMark(item.name), tagRemoteMark].compactMap { $0 }
         }
+        let submodule = node.item.flatMap { $0.kind == .submodule ? submoduleStates[$0.name] : nil }
+        if let submodule {
+            marks = submoduleMarks(submodule)
+            if !submodule.initialized { cell.textField?.textColor = .secondaryLabelColor }
+        }
         // リポジトリの形の印は添え物なので、名前が切れるほど狭ければ出さない（ツールチップには残す）。
         let optionalMarks = formMarks(node)
         let requiredMarks = marks
@@ -1011,6 +1038,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             : node.branchGroup.flatMap(Self.branchGroupHelp)
             ?? node.stackedOn.map { L("Built on %@ (its commits are on top of that branch)", $0) }
             ?? node.item?.detail
+        if let submodule {
+            cell.toolTip = [submodule.url, submodule.branch.map { L("Follows %@", $0) }].compactMap { $0 }.joined(separator: "\n")
+        }
         // 右端のアイコンの意味は、ツールチップの先頭に（上流の名前はその後ろに残す）。右端に何か出ているローカル
         // ブランチは、押すと詳細の吹き出し。
         cell.onBadgeClick = nil
@@ -1243,6 +1273,14 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 menu.addItem(ClosureMenuItem(title: L("Add Remote…")) { [weak self] in self?.onRemoteAction?(nil, .add) })
                 return
             }
+            if node.title == "Submodules" {
+                menu.addItem(ClosureMenuItem(title: "Update All") { actions.perform(["op": "updateSubmodules", "paths": [String]()]) })
+                menu.addItem(ClosureMenuItem(title: "Update Submodules…") { [weak self] in self?.onSubmoduleAction?(nil, .update) })
+                menu.addItem(ClosureMenuItem(title: "Sync URLs") { [weak self] in self?.onSubmoduleAction?(nil, .sync) })
+                menu.addItem(.separator())
+                menu.addItem(ClosureMenuItem(title: L("Add Submodule…")) { [weak self] in self?.onSubmoduleAction?(nil, .add) })
+                return
+            }
         }
         guard let actions, let node = outline.item(atRow: outline.clickedRow) as? Node, let item = node.item else { return }
         let name = item.name
@@ -1408,8 +1446,17 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             // stash の行はサイドバーにない（Stashes の画面の一覧で操作する）。
             break
         case .submodule:
+            // Update は git の既定（記録したコミット、中の submodule には入らない）。Update… で変えられる。
             add("Update \(name)") { actions.perform(["op": "updateSubmodules", "paths": [name]]) }
-            add(L("Open in New Window")) { [weak self] in self?.onOpenSubmodule?(name) }
+            add("Update…") { [weak self] in self?.onSubmoduleAction?(name, .update) }
+            if submoduleStates[name]?.initialized != false {
+                add(L("Open in New Window")) { [weak self] in self?.onOpenSubmodule?(name) }
+            }
+            menu.addItem(.separator())
+            add(L("Edit URL…")) { [weak self] in self?.onSubmoduleAction?(name, .setURL) }
+            add(L("Branch to Follow…")) { [weak self] in self?.onSubmoduleAction?(name, .setBranch) }
+            menu.addItem(.separator())
+            add(L("Remove…")) { [weak self] in self?.onSubmoduleAction?(name, .remove) }
         }
     }
 

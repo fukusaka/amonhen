@@ -1845,7 +1845,8 @@ pub extern "C" fn amonhen_activity_cancel(seq: u64) -> bool {
 /// `url` を `dest`（まだないフォルダ）に clone する。`filter`（NULL・空でなければ `--filter`。`blob:none` など）、
 /// `depth`（0 でなければ `--depth`）、`sparse`（`--sparse`。根のファイルだけを取り出す。git 2.27 から）で取得する
 /// 範囲と取り出すものを決め、`branch`（NULL・空でなければ `-b`）で取り出すブランチを決める（`url` が HEAD のない
-/// bundle なら、決めなくても main・master・最初のブランチ）。失敗したら false（理由は `amonhen_last_error`）。
+/// bundle なら、決めなくても main・master・最初のブランチ）。`recurse_submodules` なら submodule も取り出す
+/// （`--recurse-submodules`）。失敗したら false（理由は `amonhen_last_error`）。
 /// 時間がかかるので裏のスレッドで呼ぶ。
 ///
 /// # Safety
@@ -1858,6 +1859,7 @@ pub unsafe extern "C" fn amonhen_clone(
     depth: u32,
     sparse: bool,
     branch: *const c_char,
+    recurse_submodules: bool,
 ) -> bool {
     let optional = |p: *const c_char| {
         if p.is_null() {
@@ -1878,6 +1880,7 @@ pub unsafe extern "C" fn amonhen_clone(
                 depth: (depth > 0).then_some(depth),
                 sparse,
                 branch,
+                recurse_submodules,
             };
             done(amonhen_backend_cli::clone(
                 url,

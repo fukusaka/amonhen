@@ -34,6 +34,12 @@ enum CommandTable {
     static let addRemote = Entry(
         id: "add-remote", title: "Add Remote…", localized: true, key: "", modifiers: [.command],
         toolTip: nil, app: false)
+    static let addSubmodule = Entry(
+        id: "add-submodule", title: "Add Submodule…", localized: true, key: "", modifiers: [.command],
+        toolTip: nil, app: false)
+    static let updateSubmodules = Entry(
+        id: "update-submodules", title: "Update Submodules…", localized: false, key: "", modifiers: [.command],
+        toolTip: nil, app: false)
     static let createPullRequest = Entry(
         id: "create-pull-request", title: "Create Pull Request…", localized: true, key: "", modifiers: [.command],
         toolTip: nil, app: false)
@@ -179,7 +185,7 @@ enum CommandTable {
     static let repositoryMenu: [[Entry]] = [
         [fetch, pull, push, forcePush],
         [newBranch, renameBranch, setUpstream, newTag],
-        [newWorktree, pruneWorktrees, addRemote],
+        [newWorktree, pruneWorktrees, addRemote, addSubmodule, updateSubmodules],
         [merge, rebase, compareWithPrevious, applyPatch, saveBundle, fetchBundle],
         [`continue`, skip, abort],
         [stash, popStash],

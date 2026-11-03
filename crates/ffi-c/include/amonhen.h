@@ -1180,7 +1180,8 @@ bool amonhen_activity_cancel(uint64_t seq);
  * `url` を `dest`（まだないフォルダ）に clone する。`filter`（NULL・空でなければ `--filter`。`blob:none` など）、
  * `depth`（0 でなければ `--depth`）、`sparse`（`--sparse`。根のファイルだけを取り出す。git 2.27 から）で取得する
  * 範囲と取り出すものを決め、`branch`（NULL・空でなければ `-b`）で取り出すブランチを決める（`url` が HEAD のない
- * bundle なら、決めなくても main・master・最初のブランチ）。失敗したら false（理由は `amonhen_last_error`）。
+ * bundle なら、決めなくても main・master・最初のブランチ）。`recurse_submodules` なら submodule も取り出す
+ * （`--recurse-submodules`）。失敗したら false（理由は `amonhen_last_error`）。
  * 時間がかかるので裏のスレッドで呼ぶ。
  *
  * # Safety
@@ -1191,7 +1192,8 @@ bool amonhen_clone(const char *url,
                    const char *filter,
                    uint32_t depth,
                    bool sparse,
-                   const char *branch);
+                   const char *branch,
+                   bool recurse_submodules);
 
 /**
  * `path` が bundle のファイルなら、その見出しの JSON（`refs`: 入っている ref、`head`: HEAD が入っているか、

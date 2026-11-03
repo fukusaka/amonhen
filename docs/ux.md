@@ -677,6 +677,18 @@ the sidebar is wider.
   under (`refs/remotes/<name>/*`, from the file name by default; not an existing remote's). Tags aren't fetched. A
   repository that lacks the commits the bundle builds on stops with the reason.
 
+## 7f. Submodules
+
+- The sidebar's Submodules group lists them with marks at the right: not checked out (the name dimmed), at another
+  commit than the one recorded, changes inside, in conflict. The tooltip has the URL and the branch it follows.
+- A submodule's menu: Update (git's default: the recorded commit, nested submodules left alone), Update… (a sheet to
+  also update the submodules inside it, or use the latest commit of the branch it follows), Open in New Window,
+  Edit URL…, Branch to Follow… and Remove…. Remove asks whether to delete the repository data in `.git/modules` too
+  (off: kept, as git does, so adding it again brings back commits not pushed).
+- The group's menu: Update All, Update Submodules…, Sync URLs and Add Submodule… (URL, folder from the URL by default,
+  branch to follow if any). The Repository menu has Add Submodule… and Update Submodules… too.
+- The Clone sheet has "Check out submodules too" (off by default, as in git).
+
 ## 8. Resolving conflicts (the embedded merge editor)
 
 ### Flow

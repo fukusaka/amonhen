@@ -1237,10 +1237,20 @@ impl Operations for Git {
             .map(drop)
     }
 
-    fn update_submodules(&self, paths: &[&str]) -> Result<()> {
-        let mut args = vec!["submodule", "update", "--init", "--"];
-        args.extend(paths);
-        self.write(&args).map(drop)
+    fn update_submodules(
+        &self,
+        paths: &[&str],
+        options: &amonhen_model::SubmoduleUpdate,
+    ) -> Result<()> {
+        self.run_submodule_update(paths, options)
+    }
+
+    fn submodules(&self) -> Result<Vec<amonhen_model::SubmoduleState>> {
+        self.submodule_states()
+    }
+
+    fn change_submodule(&self, change: &amonhen_model::SubmoduleChange) -> Result<()> {
+        self.run_submodule_change(change)
     }
 
     fn config_list(&self) -> Result<Vec<ConfigEntry>> {

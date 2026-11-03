@@ -329,7 +329,7 @@ impl Download {
             filter: (self == Download::ContentsWhenNeeded).then(|| "blob:none".to_owned()),
             depth: (self == Download::RecentHistory).then_some(depth),
             sparse,
-            branch: None,
+            ..Default::default()
         }
     }
 }
@@ -552,6 +552,9 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
         let sparse_help = clone_help();
         sheet.add(&row("", &sparse_help));
         let sparse_unavailable: Rc<std::cell::RefCell<Option<String>>> = Rc::default();
+        // submodule も取り出す（git の既定は取り出さない。あとからサイドバーの Submodules で取り出せる）。
+        let submodules = gtk::CheckButton::with_label(&tr!("Check out submodules too"));
+        sheet.add(&row("", &submodules));
         let update: Rc<dyn Fn()> = {
             let (download, depth, download_help, sparse, sparse_help, unavailable) = (
                 download.downgrade(),
@@ -695,6 +698,9 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
         if preset.contains("history") {
             download.set_selected(2);
         }
+        if preset.contains("submodules") {
+            submodules.set_active(true);
+        }
         if preset.contains("sparse") {
             sparse.set_active(true);
         }
@@ -782,6 +788,7 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
             depth_chosen.get(),
             sparse.is_sensitive() && sparse.is_active(),
         );
+        options.recurse_submodules = submodules.is_active();
         if branch_row.is_visible() {
             options.branch = branch_names
                 .borrow()

@@ -46,7 +46,8 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Remotes with their branches | ✓ | ✓ | ✓ | ✓ |  |
 | Remote menu: Add, Rename, Edit URL, Remove, Prune | ✓ | ✓ | — | △ | CLI: Via `amonhen run`. |
 | Pull Requests group | ✓ | ✓ | — | — |  |
-| Submodules group (Update, Open in New Window) | ✓ | ✓ | ✓ | △ | CLI: Listed by `refs`; Update via `amonhen run`. |
+| Submodules group (Update, Open in New Window) | ✓ | ✓ | ✓ | ✓ | CLI: `submodule`, `submodule update`. |
+| Submodule marks (not checked out, another commit, changes inside, conflict) and menus: Update… (recursive, remote), Edit URL, Branch to Follow, Remove (optionally .git/modules), Add, Sync URLs | ✓ | ✓ | — | ✓ | CLI: `submodule` (`add`, `remove`, `set-url`, `set-branch`, `sync`). |
 | Worktrees under Working Copy with change counts (✎ ⌂ ⑂) | ✓ | ✓ | — | △ | CLI: `worktree list --changes`. |
 | Marks for a shallow or partial clone (History) and a sparse checkout (Working Copy) | ✓ | ✓ | — | n/a |  |
 
@@ -79,6 +80,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Repository name in the toolbar switches the repository | ✓ | ✓ | △ | n/a | VSCode: Select Repository picks among workspace repositories. |
 | Clone (choosing from your own GitHub repositories) | ✓ | ✓ | n/a | △ | VSCode: VSCode's own Git: Clone.<br>CLI: `clone <url>` only. |
 | Clone: what to download (everything, contents when needed, recent history) and only some folders | ✓ | ✓ | — | ✓ | CLI: `clone --filter`, `--depth`, `--sparse`. |
+| Clone: check out submodules too | ✓ | ✓ | — | ✓ | CLI: `clone --recurse-submodules`. |
 | Init a new repository | — | — | n/a | — | macOS: Listed in docs/ux.md's File menu but not built. |
 
 ## 3. Settings

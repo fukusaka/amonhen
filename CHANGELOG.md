@@ -44,6 +44,10 @@ becomes the GitHub Release notes.
   bundle has no HEAD. `amonhen clone` takes a bundle file and `-b`.
 - Fetch from Bundle… puts a bundle's branches under a name of their own, like a remote's, also into a repository on an
   SSH host. `amonhen bundle fetch` does the same.
+- Submodules: the sidebar marks those not checked out, at another commit than the one recorded, with changes inside or
+  in conflict, and their menus add, update (optionally recursive or to the branch they follow), change the URL or the
+  branch to follow, sync and remove them (keeping `.git/modules` unless asked). The Clone sheet can check them out
+  too. `amonhen submodule` and `amonhen clone --recurse-submodules` do the same.
 
 #### Changed
 
@@ -85,6 +89,8 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- Adding, renaming and removing remotes and changing their URLs work over SSH and through the shared daemon; they
+  failed to reach the engine.
 - The GTK4 app's Undo button asks once; it opened the question twice, so one stayed after undoing.
 - With newer GTK (4.24), the GTK4 app's sidebar shows Working Copy's change count and the sparse checkout mark.
 - Activity no longer says “daemon” twice for a repository opened through the shared daemon, nor “(daemon)” for an
