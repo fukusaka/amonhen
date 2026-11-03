@@ -79,8 +79,9 @@ final class RepositorySettingsModel {
     /// git config の表で「−」などで最後に消したキーと値（表の下の「戻す」の 1 行）。どのページのものでも、次の
     /// 書き換えで忘れる（「戻す」がほかの書き換えを戻さないように）。
     private(set) var removedConfig: [(key: String, value: String)] = []
-    /// その削除の Undo の名前（Undo のいちばん上がこれなら「戻す」は ⌘Z と同じ）。
+    /// その削除の Undo の名前（Undo のいちばん上がこれなら「戻す」は ⌘Z と同じ）と、その書き換え。
     private(set) var removalName: String?
+    private var removedChanges: [ConfigChange] = []
     /// リポジトリの形（shallow clone・partial clone・sparse checkout・maintenance）。このリポジトリの段だけ。
     private(set) var form: RepositoryForm?
     /// 取り足す・取り直す・取り出すフォルダを変える命令を、ウィンドウの操作として動かす（Fetch と同じく、進み具合は
@@ -245,6 +246,11 @@ final class RepositorySettingsModel {
         entries.last { $0.key.lowercased() == key.lowercased() && $0.scope == ownScope }?.value
     }
 
+    /// この段での値すべて（いくつも値を持てるキーなら、書かれている順に）。
+    func localAll(_ key: String) -> [String] {
+        entries.filter { $0.key.lowercased() == key.lowercased() && $0.scope == ownScope }.map(\.value)
+    }
+
     /// この段以外で決まっている値（この段の値を消したときに効く値）。
     func inherited(_ key: String) -> ConfigEntry? {
         entries.last { $0.key.lowercased() == key.lowercased() && $0.scope != ownScope }
@@ -263,12 +269,15 @@ final class RepositorySettingsModel {
         write([ConfigChange(key: key, old: local(key), new: new)], name: L("Change %@", key))
     }
 
-    /// この段の値の書き換え 1 つ（`new` が nil なら消す）。
+    /// この段の値の書き換え 1 つ（`new` が nil なら消す）。いくつも値を持てるキー（`remote.origin.fetch` など）に
+    /// 値がいくつもあったときは、`oldAll` にそのすべて（`old` は最後のもの）。戻すときは `newAll` のすべてを書く。
     struct ConfigChange {
         let key: String
         let old: String?
         let new: String?
-        var inverse: ConfigChange { ConfigChange(key: key, old: new, new: old) }
+        var oldAll: [String] = []
+        var newAll: [String] = []
+        var inverse: ConfigChange { ConfigChange(key: key, old: new, new: old, oldAll: newAll, newAll: oldAll) }
     }
 
     /// この出来事で頼まれた書き換え（次の出来事でまとめて書く）と、その Undo の名前・表の下に出す消したもの。
@@ -280,7 +289,12 @@ final class RepositorySettingsModel {
     /// すべて書けたら、逆の書き換えを Undo に 1 段として積む（失敗した書き換えは積まない。名前は最後に頼まれたもの）。
     /// `removed` があれば、表の下の「戻す」の 1 行に出す。
     func write(_ changes: [ConfigChange], name: String, removed: [(key: String, value: String)]? = nil) {
-        let changes = changes.filter { $0.old != $0.new }
+        let changes = changes.filter { $0.old != $0.new }.map { change in
+            var change = change
+            let all = localAll(change.key)
+            if all.count > 1 { change.oldAll = all }
+            return change
+        }
         guard !changes.isEmpty else { return }
         if pending.isEmpty { DispatchQueue.main.async { [weak self] in self?.flush() } }
         pending += changes
@@ -295,11 +309,13 @@ final class RepositorySettingsModel {
         // 書いている間に「戻す」を押させない（書けたら、消したものなら出し直す）。
         removedConfig = []
         removalName = nil
+        removedChanges = []
         enqueue(changes.map(command)) { [weak self] ok in
             guard let self, ok else { return }
             if !removed.isEmpty {
                 removedConfig = removed
                 removalName = name
+                removedChanges = changes
             }
             guard let undo else { return }
             undo.registerUndo(withTarget: self) { m in m.replay(changes.reversed().map(\.inverse), name: name) }
@@ -313,8 +329,7 @@ final class RepositorySettingsModel {
         if let undo, undo.canUndo, let removalName, undo.undoActionName == removalName {
             undo.undo()
         } else {
-            let back = removedConfig.map { ConfigChange(key: $0.key, old: nil, new: $0.value) }
-            write(back, name: L("Restore"))
+            write(removedChanges.reversed().map(\.inverse), name: L("Restore"))
         }
     }
 
@@ -324,11 +339,14 @@ final class RepositorySettingsModel {
         undo?.setActionName(name)
         removedConfig = []
         removalName = nil
+        removedChanges = []
         enqueue(changes.map(command))
     }
 
     private func command(_ change: ConfigChange) -> [String: Any] {
         var command: [String: Any] = ["op": "configSet", "key": change.key, "value": change.new.map { $0 as Any } ?? NSNull()]
+        // いくつもの値はすべて書き戻す（最後の値だけにしない）。
+        if change.newAll.count > 1 { command["values"] = change.newAll }
         if level == .allRepositories { command["scope"] = "global" }
         return command
     }

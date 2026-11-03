@@ -208,6 +208,8 @@ becomes the GitHub Release notes.
 - macOS: a Repository Settings change that git couldn't write no longer adds an Undo step.
 - macOS: Keys and Values' Restore line goes away after any other settings change, so Restore no longer undoes that
   change instead of the removal.
+- macOS: undoing or restoring the removal of a key with several values, such as two remote.origin.fetch, puts all of
+  them back instead of only the last.
 
 ### [0.2.8] - 2026-10-30
 
