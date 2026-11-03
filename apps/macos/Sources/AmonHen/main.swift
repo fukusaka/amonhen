@@ -347,7 +347,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// リポジトリのページを出す。前のウィンドウのタブの並びにもうあれば、それを前に出す。`newWindow` なら
     /// 新しいウィンドウに出す。
-    func showHome(newWindow: Bool = false) {
+    func showHome(newWindow: Bool = false, tabWith explicit: NSWindow? = nil) {
+        let tabTarget = explicit ?? self.tabTarget
         if !newWindow, let target = tabTarget {
             let group = target.tabbedWindows ?? [target]
             if let home = homes.first(where: { h in group.contains { $0 === h.window } }) {
@@ -462,6 +463,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// File > New Tab（⌘T）・タブバーの「+」: 前のウィンドウに、リポジトリのページのタブを出す。
     @objc func newTab(_ sender: Any?) {
+        // File History・Blame のタブ（`tabTarget` が数えないウィンドウ）が前なら、そのウィンドウのタブの並びに。
+        if let key = NSApp.keyWindow, key.tabbingIdentifier == RepositoryWindow.tabbingIdentifier,
+           !windows.contains(where: { $0.window === key }), !connecting.contains(where: { $0.window === key }),
+           !homes.contains(where: { $0.window === key }) {
+            return showHome(tabWith: key)
+        }
         showHome()
     }
 

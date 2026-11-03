@@ -121,6 +121,7 @@ becomes the GitHub Release notes.
   the separate merge window does.
 - macOS: with another worktree selected, the window subtitle and the branch switcher's recent list use that worktree's
   branch.
+- macOS: New Tab from a File History or Blame tab in its own window adds the Repositories tab to that window.
 
 - The GTK4 app's Undo button asks once; it opened the question twice, so one stayed after undoing.
 - A `.mailmap`, or a mailmap setting (`log.mailmap`, `mailmap.file`), changed while the engine was reading the old
