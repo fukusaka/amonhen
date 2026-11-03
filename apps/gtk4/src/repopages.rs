@@ -773,7 +773,7 @@ pub(crate) fn commits_page(s: &Rc<RepoSettings>) -> gtk::Box {
         }),
         None,
     );
-    let (w, e) = (s.weak(), row.error.clone());
+    let w = s.weak();
     let picker = crate::reposettings::Picker::new(move |value| {
         let Some(s) = w.upgrade() else { return };
         let current = template_choice(&s);
@@ -791,14 +791,13 @@ pub(crate) fn commits_page(s: &Rc<RepoSettings>) -> gtk::Box {
                     Some((Some(_), path)) => {
                         let mut changes = vec![(FILE_KEY.to_owned(), Some(path))];
                         changes.extend(drop_library(&s));
-                        s.write(changes, Some(&e));
+                        s.write(changes);
                     }
                     _ => {
                         let changes: Vec<_> = drop_library(&s).into_iter().collect();
-                        let e = e.clone();
                         s.perform(
                             vec![json!({"op": "saveCommitTemplate", "text": ""})],
-                            move |s| s.write(changes, Some(&e)),
+                            move |s| s.write(changes),
                         );
                     }
                 }
@@ -809,7 +808,7 @@ pub(crate) fn commits_page(s: &Rc<RepoSettings>) -> gtk::Box {
                     Choice::File(f) => f,
                     _ => "~".into(),
                 };
-                let (w, e) = (s.weak(), e.clone());
+                let w = s.weak();
                 s.choose_file(
                     &tr!("Message template"),
                     &tr!("Choose a commit message template file"),
@@ -818,7 +817,7 @@ pub(crate) fn commits_page(s: &Rc<RepoSettings>) -> gtk::Box {
                         if let Some(s) = w.upgrade() {
                             let mut changes = vec![(FILE_KEY.to_owned(), Some(path))];
                             changes.extend(drop_library(&s));
-                            s.write(changes, Some(&e));
+                            s.write(changes);
                         }
                     },
                 );
@@ -828,11 +827,11 @@ pub(crate) fn commits_page(s: &Rc<RepoSettings>) -> gtk::Box {
                 if s.local(FILE_KEY).is_some() {
                     changes.push((FILE_KEY.to_owned(), None));
                 }
-                s.write(changes, Some(&e));
+                s.write(changes);
             }
             v if v.starts_with("file:") => {
                 if let Some(c) = drop_library(&s) {
-                    s.write(vec![c], Some(&e));
+                    s.write(vec![c]);
                 }
             }
             _ => {
@@ -852,7 +851,7 @@ pub(crate) fn commits_page(s: &Rc<RepoSettings>) -> gtk::Box {
                 } else if s.local(LIBRARY_KEY).is_some() {
                     changes.push((LIBRARY_KEY.to_owned(), None));
                 }
-                s.write(changes, Some(&e));
+                s.write(changes);
             }
         }
     });
@@ -902,17 +901,16 @@ pub(crate) fn commits_page(s: &Rc<RepoSettings>) -> gtk::Box {
         crate::settings::select("git/commits");
     });
     let make_own = gtk::Button::with_label(&tr!("Edit for This Repository"));
-    let (w, e) = (s.weak(), row.error.clone());
+    let w = s.weak();
     make_own.connect_clicked(move |_| {
         let Some(s) = w.upgrade() else { return };
         let Choice::Shared(name) = template_choice(&s) else {
             return;
         };
         let text = crate::templates::text_of(&name).unwrap_or_default();
-        let e = e.clone();
         s.perform(
             vec![json!({"op": "saveCommitTemplate", "text": text})],
-            move |s| s.write(vec![(LIBRARY_KEY.to_owned(), None)], Some(&e)),
+            move |s| s.write(vec![(LIBRARY_KEY.to_owned(), None)]),
         );
     });
     let shared_buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);

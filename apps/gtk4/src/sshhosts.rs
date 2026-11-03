@@ -1382,7 +1382,7 @@ fn chosen_git_warning(settings: &Rc<RepoSettings>) -> gtk::Box {
             glib::spawn_future_local(async move {
                 let result = run_one(&repo, json!({"op": "setMachineGit"})).await;
                 if let Some(s) = w.upgrade() {
-                    s.show_error(None, result.err().as_deref());
+                    s.show_error(result.err().as_deref());
                     s.load();
                 }
             });

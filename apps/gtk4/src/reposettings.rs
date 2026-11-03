@@ -461,11 +461,13 @@ pub(crate) fn help_label(text: &str) -> gtk::Label {
     l
 }
 
-/// 行の下のエラー（赤。初めは隠す）。
-pub(crate) fn error_label() -> gtk::Label {
+/// ページの下のエラー（赤。2 行まで。初めは隠す。macOS 版の `lineLimit(2)`）。
+fn error_label() -> gtk::Label {
     let l = label("", &["settings-error"]);
     l.set_wrap(true);
     l.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+    l.set_lines(2);
+    l.set_ellipsize(gtk::pango::EllipsizeMode::End);
     l.set_margin_start(8);
     l.set_selectable(true);
     l.set_visible(false);
@@ -621,14 +623,13 @@ impl Picker {
     }
 }
 
-/// 行の部品（質問・欄・↩︎・設定元・ⓘ・説明・警告・エラー）。
+/// 行の部品（質問・欄・↩︎・設定元・ⓘ・説明・警告）。失敗はページの下に出す。
 pub(crate) struct Row {
     pub widget: gtk::Box,
     /// 欄を置く場所。
     pub control: gtk::Box,
     /// 行の下に足す部品（「その他…」の欄など）の置き場所。
     pub below: gtk::Box,
-    pub error: gtk::Label,
     pub warning: gtk::Label,
     pub revert: gtk::Button,
     pub source: gtk::Label,
@@ -862,7 +863,7 @@ impl RepoSettings {
             }
             match result {
                 Ok(loaded) => s.apply(loaded),
-                Err(e) => s.show_error(None, Some(&e)),
+                Err(e) => s.show_error(Some(&e)),
             }
             let after: Vec<AfterLoad> = s.after_load.take();
             for f in after {
@@ -1021,12 +1022,8 @@ impl RepoSettings {
     }
 
     /// この段の値を書き換える（`(キー, 値)`。値が None なら消す）。Undo に 1 段として積む。失敗したら
-    /// `error`（なければページの下）に出す。
-    pub(crate) fn write(
-        self: &Rc<Self>,
-        changes: Vec<(String, Option<String>)>,
-        error: Option<&gtk::Label>,
-    ) {
+    /// ページの下に出す。
+    pub(crate) fn write(self: &Rc<Self>, changes: Vec<(String, Option<String>)>) {
         let changes: Vec<Change> = changes
             .into_iter()
             .map(|(key, new)| Change {
@@ -1039,17 +1036,12 @@ impl RepoSettings {
         if changes.is_empty() {
             return;
         }
-        self.apply_changes(changes, error.cloned(), Record::New);
+        self.apply_changes(changes, Record::New);
     }
 
     /// 書き換えを書く。`record` の向きに記録する（New なら Undo に積んでやり直しを捨てる、Undo ならやり直しに、
     /// Redo なら Undo に）。
-    pub(crate) fn apply_changes(
-        self: &Rc<Self>,
-        changes: Vec<Change>,
-        error: Option<gtk::Label>,
-        record: Record,
-    ) {
+    pub(crate) fn apply_changes(self: &Rc<Self>, changes: Vec<Change>, record: Record) {
         let global = self.level == Level::AllRepositories;
         let mut commands: Vec<Value> = Vec::new();
         for c in &changes {
@@ -1094,9 +1086,9 @@ impl RepoSettings {
                             .push(changes.iter().map(Change::inverse).collect()),
                         Record::Redo => s.undo.borrow_mut().push(changes),
                     }
-                    s.show_error(error.as_ref(), None);
+                    s.show_error(None);
                 }
-                Err(e) => s.show_error(error.as_ref(), Some(e)),
+                Err(e) => s.show_error(Some(e)),
             }
             s.load();
             s.changed();
@@ -1109,7 +1101,7 @@ impl RepoSettings {
             return;
         };
         let inverse = group.iter().rev().map(Change::inverse).collect();
-        self.apply_changes(inverse, None, Record::Undo);
+        self.apply_changes(inverse, Record::Undo);
     }
 
     /// 戻した書き換えをやり直す。
@@ -1117,7 +1109,7 @@ impl RepoSettings {
         let Some(group) = self.redo.borrow_mut().pop() else {
             return;
         };
-        self.apply_changes(group, None, Record::Redo);
+        self.apply_changes(group, Record::Redo);
     }
 
     /// 自分で作った行（git の設定でないもの）の欄と ↩︎ を、確認用の手順から使えるようにする。
@@ -1146,13 +1138,10 @@ impl RepoSettings {
     }
 
     /// エラーを出す（`message` が None なら消す）。`row` がなければページの下に。
-    pub(crate) fn show_error(&self, row: Option<&gtk::Label>, message: Option<&str>) {
-        let target = row.unwrap_or(&self.error);
-        target.set_text(message.unwrap_or_default());
-        target.set_visible(message.is_some());
-        if row.is_some() && message.is_none() {
-            self.error.set_visible(false);
-        }
+    /// 書き換えや操作の失敗をページの下の 1 か所に出す（None なら消す。macOS 版の `model.error`）。
+    pub(crate) fn show_error(&self, message: Option<&str>) {
+        self.error.set_text(message.unwrap_or_default());
+        self.error.set_visible(message.is_some());
     }
 
     /// 命令を順に実行し（リモート・フックなど、設定の書き換えでないもの。Undo には積まない）、読み直す。
@@ -1166,7 +1155,7 @@ impl RepoSettings {
         glib::spawn_future_local(async move {
             let result = run_all(&repo, commands).await;
             let Some(s) = weak.upgrade() else { return };
-            s.show_error(None, result.as_ref().err().map(String::as_str));
+            s.show_error(result.as_ref().err().map(String::as_str));
             // 続きは読み直してから（表の行ができてから。macOS 版の `run` と同じ）。
             if result.is_ok() {
                 s.after_load.borrow_mut().push(Box::new(then));
@@ -1203,7 +1192,7 @@ impl RepoSettings {
                 glib::spawn_future_local(async move {
                     let result = run_one(&repo, command).await;
                     if let Some(s) = weak.upgrade() {
-                        s.show_error(None, result.as_ref().err().map(String::as_str));
+                        s.show_error(result.as_ref().err().map(String::as_str));
                     }
                     finish();
                 });
@@ -1274,15 +1263,12 @@ impl RepoSettings {
         widget.append(&warning);
         let below = gtk::Box::new(gtk::Orientation::Vertical, 4);
         widget.append(&below);
-        let error = error_label();
-        widget.append(&error);
 
         self.controls
             .borrow_mut()
             .push((question.to_owned(), control.clone(), revert.clone()));
         let w = self.weak();
         let k = keys.clone();
-        let e = error.clone();
         revert.connect_clicked(move |_| {
             if let Some(s) = w.upgrade() {
                 let keys: Vec<(String, Option<String>)> = k(&s)
@@ -1290,7 +1276,7 @@ impl RepoSettings {
                     .filter(|key| s.local(key).is_some())
                     .map(|key| (key, None))
                     .collect();
-                s.write(keys, Some(&e));
+                s.write(keys);
             }
         });
         let (rv, src, c, warn) = (
@@ -1326,7 +1312,6 @@ impl RepoSettings {
             widget,
             control,
             below,
-            error,
             warning,
             revert,
             source,
@@ -1410,7 +1395,7 @@ impl RepoSettings {
                 .map_or(v, |(_, l)| l.clone())
         });
         let row = self.row(question, help, fixed_keys(&[key]), describe, disabled);
-        let (w, e) = (self.weak(), row.error.clone());
+        let w = self.weak();
         let picker = Picker::new(move |value| {
             if let Some(s) = w.upgrade()
                 && !s.quiet()
@@ -1419,7 +1404,7 @@ impl RepoSettings {
                     .effective(key)
                     .map_or_else(|| default.to_owned(), |e| normalize(&e.value));
                 if value != current {
-                    s.write(vec![(key.to_owned(), Some(value))], Some(&e));
+                    s.write(vec![(key.to_owned(), Some(value))]);
                 }
             }
         });
@@ -1453,15 +1438,12 @@ impl RepoSettings {
         let switch = gtk::Switch::new();
         switch.set_valign(gtk::Align::Center);
         row.control.append(&switch);
-        let (w, e) = (self.weak(), row.error.clone());
+        let w = self.weak();
         switch.connect_active_notify(move |sw| {
             if let Some(s) = w.upgrade()
                 && !s.quiet()
             {
-                s.write(
-                    vec![(key.to_owned(), Some(sw.is_active().to_string()))],
-                    Some(&e),
-                );
+                s.write(vec![(key.to_owned(), Some(sw.is_active().to_string()))]);
             }
         });
         self.on_refresh(move |s| {
@@ -1482,17 +1464,14 @@ impl RepoSettings {
         entry.set_valign(gtk::Align::Center);
         row.control.append(&entry);
         let commit = {
-            let (w, e) = (self.weak(), row.error.clone());
+            let w = self.weak();
             Rc::new(move |entry: &gtk::Entry| {
                 if let Some(s) = w.upgrade()
                     && !s.quiet()
                 {
                     let value = entry.text().trim().to_owned();
                     if value != s.local(key).unwrap_or_default() {
-                        s.write(
-                            vec![(key.to_owned(), (!value.is_empty()).then_some(value))],
-                            Some(&e),
-                        );
+                        s.write(vec![(key.to_owned(), (!value.is_empty()).then_some(value))]);
                     }
                 }
             })
@@ -1640,7 +1619,7 @@ impl RepoSettings {
             describe,
             None,
         );
-        let (w, e) = (self.weak(), row.error.clone());
+        let w = self.weak();
         let picker = Picker::new(move |m| {
             let Some(s) = w.upgrade() else { return };
             if s.quiet() || m == method(&s) {
@@ -1664,7 +1643,7 @@ impl RepoSettings {
                 }
                 _ => changes.push(("pull.rebase".into(), Some("false".into()))),
             }
-            s.write(changes, Some(&e));
+            s.write(changes);
         });
         row.control.append(&picker.button);
         self.on_refresh(move |s| {
@@ -1739,8 +1718,6 @@ impl RepoSettings {
         buttons.set_halign(gtk::Align::End);
         buttons.append(&revert);
         buttons.append(&save);
-        let error = error_label();
-        error.set_margin_start(0);
 
         // 書きかけかどうか（読んだ中身と比べる）。
         let saved = Rc::new(RefCell::new(String::new()));
@@ -1757,7 +1734,7 @@ impl RepoSettings {
         let d = dirty.clone();
         buffer.connect_changed(move |b| d(b));
         let do_save = {
-            let (w, buffer, e) = (self.weak(), buffer.clone(), error.clone());
+            let (w, buffer) = (self.weak(), buffer.clone());
             Rc::new(move || {
                 let Some(s) = w.upgrade() else { return };
                 let text = buffer
@@ -1769,11 +1746,11 @@ impl RepoSettings {
                     let gitignore = s.state.borrow().gitignore.clone();
                     json!({"op": "saveIgnoreFiles", "gitignore": gitignore, "exclude": text})
                 };
-                let (w, e) = (s.weak(), e.clone());
+                let w = s.weak();
                 glib::spawn_future_local(async move {
                     let Some(s) = w.upgrade() else { return };
                     let result = run_all(&s.repo, vec![command]).await;
-                    s.show_error(Some(&e), result.as_ref().err().map(String::as_str));
+                    s.show_error(result.as_ref().err().map(String::as_str));
                     s.load();
                     s.changed();
                 });
@@ -1814,7 +1791,6 @@ impl RepoSettings {
         column.append(&note);
         column.append(&frame);
         column.append(&buttons);
-        column.append(&error);
         let b = gtk::Box::new(gtk::Orientation::Vertical, 18);
         b.set_margin_top(18);
         b.set_margin_bottom(18);
@@ -1842,16 +1818,13 @@ impl RepoSettings {
         row.info.set_can_focus(false);
         row.revert
             .set_tooltip_text(Some(&tr!("Go back to the detected branch.")));
-        let (w, e) = (self.weak(), row.error.clone());
+        let w = self.weak();
         let picker = Picker::new(move |value| {
             if let Some(s) = w.upgrade()
                 && !s.quiet()
                 && value != s.local(KEY).unwrap_or_default()
             {
-                s.write(
-                    vec![(KEY.to_owned(), (!value.is_empty()).then_some(value))],
-                    Some(&e),
-                );
+                s.write(vec![(KEY.to_owned(), (!value.is_empty()).then_some(value))]);
             }
         });
         row.control.append(&picker.button);
@@ -1974,7 +1947,7 @@ impl RepoSettings {
             describe,
             None,
         );
-        let (w, e) = (self.weak(), row.error.clone());
+        let w = self.weak();
         let picker = Picker::new(move |value| {
             let Some(s) = w.upgrade() else { return };
             if s.quiet() || value == current(&s) {
@@ -1989,7 +1962,7 @@ impl RepoSettings {
                     changes.push(("gpg.format".to_owned(), Some(value)));
                 }
             }
-            s.write(changes, Some(&e));
+            s.write(changes);
         });
         row.control.append(&picker.button);
         self.on_refresh(move |s| {
@@ -2045,17 +2018,14 @@ impl RepoSettings {
         entry.set_margin_start(8);
         row.below.append(&entry);
         let commit = {
-            let (w, e) = (self.weak(), row.error.clone());
+            let w = self.weak();
             move |entry: &gtk::Entry| {
                 let Some(s) = w.upgrade() else { return };
                 entry.set_visible(false);
                 let value = entry.text().trim().to_owned();
                 let current = s.effective(KEY).map(|e| e.value).unwrap_or_default();
                 if value != current {
-                    s.write(
-                        vec![(KEY.to_owned(), (!value.is_empty()).then_some(value))],
-                        Some(&e),
-                    );
+                    s.write(vec![(KEY.to_owned(), (!value.is_empty()).then_some(value))]);
                 }
             }
         };
@@ -2070,7 +2040,7 @@ impl RepoSettings {
             glib::Propagation::Proceed
         });
         entry.add_controller(keys);
-        let (w, e, en) = (self.weak(), row.error.clone(), entry.clone());
+        let (w, en) = (self.weak(), entry.clone());
         let picker = Picker::new(move |value| {
             let Some(s) = w.upgrade() else { return };
             if s.quiet() {
@@ -2095,7 +2065,7 @@ impl RepoSettings {
             {
                 changes.push(("gpg.format".to_owned(), Some(f.to_owned())));
             }
-            s.write(changes, Some(&e));
+            s.write(changes);
         });
         row.control.append(&picker.button);
         let warning = row.warning.clone();
@@ -2159,7 +2129,7 @@ impl RepoSettings {
             Rc::new(move |_, v| label_of(v)),
             None,
         );
-        let (w, e) = (self.weak(), row.error.clone());
+        let w = self.weak();
         let picker = Picker::new(move |value| {
             let Some(s) = w.upgrade() else { return };
             let current = s.effective(KEY).map(|e| e.value).unwrap_or_default();
@@ -2172,20 +2142,20 @@ impl RepoSettings {
                 } else {
                     current
                 };
-                let (w, e) = (s.weak(), e.clone());
+                let w = s.weak();
                 s.choose_file(
                     &tr!("Mailmap file"),
                     &tr!("Choose a mailmap file"),
                     initial,
                     move |path| {
                         if let Some(s) = w.upgrade() {
-                            s.write(vec![(KEY.to_owned(), Some(path))], Some(&e));
+                            s.write(vec![(KEY.to_owned(), Some(path))]);
                         }
                     },
                 );
             } else if value.is_empty() {
                 // 上の段で決めたものを消すことはできないので、ここでは上書きを消す（上の段にあればそれが効く）。
-                s.write(vec![(KEY.to_owned(), None)], Some(&e));
+                s.write(vec![(KEY.to_owned(), None)]);
             }
         });
         row.control.append(&picker.button);

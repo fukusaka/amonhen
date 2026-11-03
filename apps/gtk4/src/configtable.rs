@@ -432,7 +432,7 @@ impl Table {
         // 書けたら書き換えの数が 1 つ増える。そのときだけ出す。
         self.removed
             .replace(removal.then(|| (s.writes() + 1, gone)));
-        s.write(changes, None);
+        s.write(changes);
     }
 
     /// 選んだ行のこの段の値を消す。

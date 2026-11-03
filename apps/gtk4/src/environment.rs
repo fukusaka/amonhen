@@ -285,7 +285,6 @@ impl Table {
                     old: Some(old),
                     new: Some(new),
                 }],
-                None,
                 crate::reposettings::Record::New,
             ),
             None => set_added_text(&new),
