@@ -5,7 +5,7 @@ import AppKit
 /// 含めるか）。右に選んだファイルの差分（行を選んで stage・unstage）。
 /// チェックボックスは index の状態そのもので、FE だけの選択状態は持たない（ターミナルで `git add` しても揃う）。
 final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataSource, NSOutlineViewDelegate,
-    NSTextViewDelegate, NSMenuDelegate, NSSearchFieldDelegate
+    NSTextViewDelegate, NSMenuDelegate, NSSearchFieldDelegate, NSMenuItemValidation
 {
     /// ファイルの右クリック: 作業ツリーの内容の blame（パス）とファイルの履歴（パス）。
     var onBlame: ((String) -> Void)?
@@ -1200,7 +1200,16 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     }
 
     /// Commit ▾ > Commit and Push（⌘⇧↩）: コミットできたら push する（上流がなければ Publish のシートを出す）。
-    @objc private func commitAndPush() { commit(thenPush: true) }
+    @objc private func commitAndPush() {
+        guard canCommit else { return NSSound.beep() }
+        commit(thenPush: true)
+    }
+
+    /// Commit ▾ の Commit and Push は、Commit を押せるときだけ（何も含めていない、メッセージが空なら切る）。
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if item.action == #selector(commitAndPush) { return canCommit }
+        return super.validateUserInterfaceItem(item)
+    }
 
     func commitAndPushFromMenu() { if canCommit { commitAndPush() } }
 

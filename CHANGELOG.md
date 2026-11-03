@@ -185,6 +185,7 @@ becomes the GitHub Release notes.
 - macOS: Find in a diff highlights matches in the file headers' paths too.
 - macOS: diffs scroll sideways as far as their longest line, no more and no less; lines past about 3,000 points were
   cut off.
+- macOS: Commit ▾ > Commit and Push is off when nothing is staged or the message is empty, as Commit is.
 
 ### [0.2.8] - 2026-10-30
 
