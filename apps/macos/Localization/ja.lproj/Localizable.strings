@@ -672,6 +672,7 @@
 "Also lists the merges that changed the file, such as one that resolved a conflict or brought in changes made under an earlier name. Also from the list’s context menu." = "ファイルを変えたマージも並べます（コンフリクトを解いたマージや、前の名前のときの変更を取り込んだマージなど）。一覧の右クリックでも切り替えられます。";
 "No commits changed this file." = "このファイルを変えたコミットはありません";
 "Can’t read the diff" = "差分を読めません";
+"Can’t read the diff: %@" = "差分を読めません: %@";
 
 /* Activity.swift */
 "Commands" = "コマンド";

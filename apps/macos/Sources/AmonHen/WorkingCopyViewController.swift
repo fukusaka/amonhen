@@ -767,9 +767,13 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         unembed()
         Task {
             // HEAD と作業ツリーの 1 本の差分（行ごとのチェック）。表せないときは、選んだ側の差分。
-            let (diff, combined) = await Task.detached(priority: .userInitiated) { () -> (WorkingFileDiff?, Bool) in
-                if let combined = try? status.combinedDiff(of: entry.item) { return (combined, true) }
-                return (try? status.diff(of: entry.item, staged: staged), false)
+            let (diff, combined, failure) = await Task.detached(priority: .userInitiated) { () -> (WorkingFileDiff?, Bool, String?) in
+                if let combined = try? status.combinedDiff(of: entry.item) { return (combined, true, nil) }
+                do {
+                    return (try status.diff(of: entry.item, staged: staged), false, nil)
+                } catch {
+                    return (nil, false, "\(error)")
+                }
             }.value
             guard request == self.request else { return }
             if onlyIfChanged, let diff, let shown = current, shown.item.path == diff.item.path,
@@ -780,7 +784,10 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             selectedKey = (entry.item.path, combined ? false : staged)
             current = diff
             showLineEndings(diff?.lineEndings)
-            if let diff, diff.isBinary {
+            if let failure {
+                // 空の差分にせず、読めなかった理由を出す。
+                diffView.show(nil, message: L("Can’t read the diff: %@", failure))
+            } else if let diff, diff.isBinary {
                 diffView.show(nil, message: L("Binary file"))
             } else {
                 diffView.show(diff, keepScroll: keepScroll)
