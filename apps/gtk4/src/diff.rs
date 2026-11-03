@@ -887,7 +887,8 @@ impl DiffWidget {
         self.select_hunk(target as usize);
     }
 
-    /// `index` 番目の hunk を選び（選べる差分なら、その変更の行）、見えるところへスクロールする。
+    /// `index` 番目の hunk を選び（選べる差分なら、見出しから次の hunk までの行すべて。前後の行も。macOS 版と同じ）、
+    /// 見えるところへスクロールする。
     pub fn select_hunk(&self, index: usize) {
         let hunks = self.hunk_rows();
         let Some(&start) = hunks.get(index) else {
@@ -897,12 +898,8 @@ impl DiffWidget {
         {
             let mut st = self.state();
             st.hunk_cursor = Some(index);
-            if st.marks
-                && let Some(view) = st.view.clone()
-            {
-                st.selection = (start..end)
-                    .filter(|&r| Self::is_change(&view.view.rows[r as usize]))
-                    .collect();
+            if st.marks {
+                st.selection = (start..end).collect();
                 st.anchor = Some(start);
             }
         }
@@ -1262,7 +1259,7 @@ impl DiffWidget {
         }
     }
 
-    /// Ctrl+A: すべての文字を選ぶ（Working Copy の行を選ぶ表示では、すべての変更の行）。
+    /// Ctrl+A: すべての文字を選ぶ（Working Copy の行を選ぶ表示では、すべての行）。
     fn select_all(&self) {
         let marks = {
             let mut st = self.state();
@@ -1271,10 +1268,9 @@ impl DiffWidget {
             let Some(last) = rows.len().checked_sub(1) else {
                 return;
             };
+            // 選べる差分ならすべての行（前後の行も。macOS 版と同じ）。
             if st.marks {
-                st.selection = (0..rows.len() as u32)
-                    .filter(|&r| Self::is_change(&rows[r as usize]))
-                    .collect();
+                st.selection = (0..rows.len() as u32).collect();
                 st.anchor = None;
             } else {
                 let end = view.text(&rows[last]).len() as u32;
