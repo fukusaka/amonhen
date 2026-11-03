@@ -229,7 +229,7 @@ pub fn connect_changed_while(owner: &impl IsA<glib::Object>, f: impl Fn(&str) + 
     WATCHERS.with(|w| w.borrow_mut().push((Some(owner), Rc::new(f))));
 }
 
-/// 項目の下に添える説明。
+/// 項目の下に添える説明（macOS 版の `Note`。項目の名前の左端にそろえる）。
 fn note(text: &str) -> gtk::Label {
     let l = gtk::Label::new(Some(text));
     l.set_xalign(0.0);
@@ -239,54 +239,64 @@ fn note(text: &str) -> gtk::Label {
     l.set_natural_wrap_mode(gtk::NaturalWrapMode::Word);
     l.add_css_class("dim-label");
     l.add_css_class("caption");
-    l.set_margin_start(28);
     l
 }
 
-fn check(key: &'static str, title: &str) -> gtk::CheckButton {
-    let c = gtk::CheckButton::with_label(title);
-    c.set_active(bool(key));
-    c.connect_toggled(move |c| {
-        if c.is_active() != bool(key) {
-            set_bool(key, c.is_active());
+/// 入り切りの行: 名前を左に、スイッチを右に（macOS 版の `.grouped` の Form の Toggle）。`get` で今の値を
+/// 読み、`set` で書く。`key` の設定がほかの所（History の表示のメニューなど）で変わったら合わせる。
+fn switch_row(
+    title: &str,
+    key: &'static str,
+    get: impl Fn() -> bool + 'static,
+    set: impl Fn(bool) + 'static,
+) -> gtk::Box {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    let l = gtk::Label::new(Some(title));
+    l.set_hexpand(true);
+    l.set_xalign(0.0);
+    l.set_wrap(true);
+    l.set_natural_wrap_mode(gtk::NaturalWrapMode::Word);
+    row.append(&l);
+    let switch = gtk::Switch::new();
+    switch.set_valign(gtk::Align::Center);
+    switch.set_active(get());
+    let get = Rc::new(get);
+    let g = get.clone();
+    switch.connect_active_notify(move |s| {
+        if s.is_active() != g() {
+            set(s.is_active());
         }
     });
-    // History の表示のメニューなど、ほかの所で変えたら合わせる。
-    let weak = c.downgrade();
-    connect_changed_while(&c, move |changed| {
+    row.append(&switch);
+    let weak = switch.downgrade();
+    connect_changed_while(&switch, move |changed| {
         if changed == key
-            && let Some(c) = weak.upgrade()
+            && let Some(s) = weak.upgrade()
         {
-            c.set_active(bool(key));
+            s.set_active(get());
         }
     });
-    c
+    row
+}
+
+fn check(key: &'static str, title: &str) -> gtk::Box {
+    switch_row(title, key, move || bool(key), move |on| set_bool(key, on))
 }
 
 /// History の行に出す項目の 1 つ（`bit`）を出すか。
-fn item_check(bit: u32, title: &str) -> gtk::CheckButton {
-    let c = gtk::CheckButton::with_label(title);
-    c.set_active(history_items() & bit != 0);
-    c.connect_toggled(move |c| {
-        let items = history_items();
-        let next = if c.is_active() {
-            items | bit
-        } else {
-            items & !bit
-        };
-        if next != items {
-            set_history_items(next);
-        }
-    });
-    let weak = c.downgrade();
-    connect_changed_while(&c, move |changed| {
-        if changed == HISTORY_ITEMS
-            && let Some(c) = weak.upgrade()
-        {
-            c.set_active(history_items() & bit != 0);
-        }
-    });
-    c
+fn item_check(bit: u32, title: &str) -> gtk::Box {
+    switch_row(
+        title,
+        HISTORY_ITEMS,
+        move || history_items() & bit != 0,
+        move |on| {
+            let items = history_items();
+            let next = if on { items | bit } else { items & !bit };
+            if next != items {
+                set_history_items(next);
+            }
+        },
+    )
 }
 
 /// History の並び順を選ぶ行と、その説明（Settings > Appearance）。
@@ -318,11 +328,9 @@ fn order_row() -> gtk::Box {
     l.set_xalign(0.0);
     row.append(&l);
     row.append(&choice);
-    // 説明は見出しの下にそろえる（ほかの説明はチェックボックスの文字にそろえる）。
     let n = note(&tr!(
         "Topological order keeps a branch’s commits together under the merge that brought them in."
     ));
-    n.set_margin_start(0);
     let b = gtk::Box::new(gtk::Orientation::Vertical, 4);
     b.append(&row);
     b.append(&n);

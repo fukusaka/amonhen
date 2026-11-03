@@ -60,6 +60,7 @@ becomes the GitHub Release notes.
   Minimize (Ctrl+M), Zoom, Repositories, Activity and Bring All to Front, and the menu ends with Quit Amon Hen.
 - The GTK4 app opens Blame and File History as tabs beside the repository tab, with the repository's toolbar, as the
   macOS app does, instead of separate windows.
+- The GTK4 app's Settings show on/off items as switches on the right, as the macOS app does.
 
 - The GTK4 app now needs libadwaita (`libadwaita-1-0` on Ubuntu). Its tabs can be dragged out into a new window on
   Wayland too, and it follows the system's light or dark style.
