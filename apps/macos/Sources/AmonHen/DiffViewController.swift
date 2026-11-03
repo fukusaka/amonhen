@@ -1796,7 +1796,9 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         menu.addItem(ClosureMenuItem(title: collapsedNow ? L("Expand") : L("Collapse")) { [weak self] in self?.toggleCollapsed(file) })
         menu.addItem(ClosureMenuItem(title: L("Toggle Viewed")) { [weak self] in self?.toggleViewed(file) })
         menu.addItem(.separator())
-        if let commit = commitHex {
+        // 消したファイルは、そのコミットにはない（ファイルの一覧の右クリックと同じく Blame を出さない）。
+        let deleted = changes.map { file < $0.items.count && $0.items[file].kind == .deleted } ?? false
+        if let commit = commitHex, !deleted {
             menu.addItem(ClosureMenuItem(title: Titles.blame(at: String(commit.prefix(Titles.shortIDLength)))) { [weak self] in self?.onBlame?(path, commit) })
         }
         menu.addItem(ClosureMenuItem(title: Titles.fileHistory) { [weak self] in self?.onFileHistory?(path) })
