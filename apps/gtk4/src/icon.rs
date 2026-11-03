@@ -139,6 +139,14 @@ pub enum Kind {
     StopCircle,
     /// bolt.horizontal.circle（ステータスバーの切れたつながり）
     BoltCircle,
+    /// checkmark.circle.fill（CI が通った。CI の吹き出しの見出し）
+    CheckCircleFill,
+    /// xmark.circle.fill（CI が失敗した）
+    XCircleFill,
+    /// circle.fill（CI が走っている）
+    CircleFill,
+    /// circle（CI がない）
+    Circle,
 }
 
 mod imp {
@@ -832,6 +840,28 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             let square = gsk::PathBuilder::new();
             square.add_rect(&graphene::Rect::new(5.6, 5.6, 4.8, 4.8));
             fill = Some(square);
+        }
+        Kind::CheckCircleFill | Kind::XCircleFill | Kind::CircleFill => {
+            // 塗った円と、白く抜いた印。
+            let solid = gsk::PathBuilder::new();
+            solid.add_circle(&point(8.0, 8.0), 6.9);
+            fill = Some(solid);
+            let mark = gsk::PathBuilder::new();
+            if kind == Kind::CheckCircleFill {
+                mark.move_to(5.0, 8.2);
+                mark.line_to(7.1, 10.3);
+                mark.line_to(11.0, 5.9);
+                knock = Some(mark);
+            } else if kind == Kind::XCircleFill {
+                mark.move_to(5.7, 5.7);
+                mark.line_to(10.3, 10.3);
+                mark.move_to(10.3, 5.7);
+                mark.line_to(5.7, 10.3);
+                knock = Some(mark);
+            }
+        }
+        Kind::Circle => {
+            p.add_circle(&point(8.0, 8.0), 6.3);
         }
         Kind::BoltCircle => {
             // 円の中に、横向きの稲妻。

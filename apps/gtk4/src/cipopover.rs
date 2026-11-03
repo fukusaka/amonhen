@@ -11,7 +11,7 @@ use amonhen_model::tr;
 use crate::github::{self, Ci, CommitCheck, GitHubRepository};
 
 /// 状態の印（文字と色）の部品。
-fn mark(ci: Ci, cancelled: bool, large: bool) -> gtk::Label {
+fn mark(ci: Ci, cancelled: bool) -> gtk::Label {
     // 取り消しで終わったものは、失敗ではなく止まった印（灰色）。
     let (symbol, css) = if cancelled {
         ("⊘", "dim-label")
@@ -20,10 +20,48 @@ fn mark(ci: Ci, cancelled: bool, large: bool) -> gtk::Label {
     };
     let l = gtk::Label::new(Some(symbol));
     l.add_css_class(css);
-    if large {
-        l.add_css_class("title-3");
-    }
     l
+}
+
+/// 見出しの、18 px の色の付いた記号（macOS 版の `look` の SF Symbols）。
+fn header_icon(ci: Ci) -> gtk::Widget {
+    use crate::icon::{Icon, Kind};
+    let (kind, css) = match ci {
+        Ci::Passing => (Kind::CheckCircleFill, Some("success")),
+        Ci::Failing => (Kind::XCircleFill, Some("error")),
+        Ci::Pending => (Kind::CircleFill, Some("warning")),
+        Ci::None => (Kind::Circle, None),
+    };
+    let icon = Icon::default();
+    icon.set(kind, false);
+    icon.set_pixel_size(18);
+    if let Some(css) = css {
+        icon.add_css_class(css);
+    }
+    icon.upcast()
+}
+
+/// 吹き出しの札とボタンの見た目（1 度だけ入れる）。
+fn install_css() {
+    thread_local! {
+        static DONE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+    if DONE.with(|d| d.replace(true)) {
+        return;
+    }
+    let provider = gtk::CssProvider::new();
+    provider.load_from_string(
+        "label.ci-badge { background-color: alpha(currentColor, 0.15); border-radius: 4px; \
+         padding: 0 4px; opacity: 0.75; }\n\
+         button.ci-open { min-height: 0; padding: 2px 8px; font-size: 0.85em; }",
+    );
+    if let Some(display) = gtk::gdk::Display::default() {
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
 }
 
 thread_local! {
@@ -65,16 +103,19 @@ pub fn show(
         CLOSED.with(|c| c.replace(None));
         return None;
     }
+    install_css();
     let title = gtk::Label::new(Some(&status.label()));
     title.add_css_class("heading");
     title.set_xalign(0.0);
     title.set_hexpand(true);
+    // 短い ID は、薄い色を敷いた角丸の札（macOS 版と同じ）。
     let badge = gtk::Label::new(Some(&sha[..sha.len().min(8)]));
     badge.add_css_class("monospace");
     badge.add_css_class("caption");
-    badge.add_css_class("dim-label");
+    badge.add_css_class("ci-badge");
+    badge.set_valign(gtk::Align::Center);
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    header.append(&mark(status, false, true));
+    header.append(&header_icon(status));
     header.append(&title);
     header.append(&badge);
 
@@ -86,7 +127,9 @@ pub fn show(
 
     let list = gtk::Box::new(gtk::Orientation::Vertical, 4);
 
+    // 小さなボタン（macOS 版の `.small`）。
     let open = gtk::Button::with_label(&tr!("Open on GitHub"));
+    open.add_css_class("ci-open");
     open.set_halign(gtk::Align::End);
     let checks_url = format!("{}/commit/{sha}/checks", repo.web_url());
     open.connect_clicked(move |b| {
@@ -165,7 +208,7 @@ fn fill(note: &gtk::Label, list: &gtk::Box, all: &[CommitCheck]) {
     checks.sort_by(|a, b| (order(a), &a.name).cmp(&(order(b), &b.name)));
     for check in checks {
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        row.append(&mark(check.ci(), check.is_cancelled(), false));
+        row.append(&mark(check.ci(), check.is_cancelled()));
         // 名前が長いときは名前を省略し、印と結果は縮めない。
         // URL があれば、押すとそのログをブラウザで開くリンク。
         let name = gtk::Label::new(None);
