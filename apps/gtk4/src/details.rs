@@ -1872,7 +1872,10 @@ fn linked(text: &str, web: Option<&str>, revs: bool) -> String {
     let e = |s: &str| glib::markup_escape_text(s).to_string();
     let link = |href: &str, label: &str| format!("<a href=\"{}\">{}</a>", e(href), e(label));
     let issues = web.map(|w| {
-        let gitlab = w.to_lowercase().contains("gitlab");
+        // ホストの名前だけで決める（macOS 版の web.host。github.com/me/gitlab-tools は GitHub）。
+        let host = w.split_once("://").map_or(w, |(_, rest)| rest);
+        let host = host.split('/').next().unwrap_or_default();
+        let gitlab = host.to_lowercase().contains("gitlab");
         format!("{w}/{}", if gitlab { "-/issues" } else { "issues" })
     });
     let bytes = text.as_bytes();
@@ -2092,6 +2095,11 @@ mod tests {
         assert_eq!(
             linked("#7", Some("https://gitlab.com/a/b"), false),
             "<a href=\"https://gitlab.com/a/b/-/issues/7\">#7</a>"
+        );
+        // パスに gitlab があっても、ホストが GitHub なら GitHub の形。
+        assert_eq!(
+            linked("#7", Some("https://github.com/me/gitlab-tools"), false),
+            "<a href=\"https://github.com/me/gitlab-tools/issues/7\">#7</a>"
         );
     }
 
