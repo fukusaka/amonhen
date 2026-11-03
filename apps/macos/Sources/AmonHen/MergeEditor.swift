@@ -199,6 +199,7 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
 
         let root = MergeLayoutView(bar: bar, banner: sides.markers == 0 ? withoutMarkersBanner() : nil)
         root.onLayout = { [weak self] in self?.layoutColumns() }
+        root.onKeyEquivalent = { [weak self] event in self?.handleKeyEquivalent(event) ?? false }
         root.frame = NSRect(x: 0, y: 0, width: 1200, height: 700)
         for v in [basePane].compactMap({ $0 }) + panes + [leftBand, rightBand] { root.addSubview(v) }
         basePane?.isHidden = true
@@ -456,6 +457,28 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
         scroll(result, toY: CGFloat(line) * lineHeight + result.textContainerInset.height - clip.bounds.height / 3)
     }
 
+    /// エディタを操作しているか: フォーカスがエディタの中にある（別ウィンドウなら、その窓にいる）。エディタの近道は
+    /// このときだけ効かせる（埋め込みでは、ほかの欄の近道やメニューの ⌥⌘↑↓ を奪わない）。
+    var hasFocus: Bool {
+        guard let window = view.window else { return false }
+        if window.contentViewController === self { return true }
+        guard let responder = window.firstResponder as? NSView else { return false }
+        return responder.isDescendant(of: view)
+    }
+
+    /// エディタの近道: ⌥⌘↑・⌥⌘↓ で前・次のコンフリクト。
+    private func handleKeyEquivalent(_ event: NSEvent) -> Bool {
+        guard hasFocus else { return false }
+        let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        guard modifiers == [.command, .option], let key = event.charactersIgnoringModifiers?.unicodeScalars.first else { return false }
+        switch Int(key.value) {
+        case NSUpArrowFunctionKey: selectPrevious()
+        case NSDownArrowFunctionKey: selectNext()
+        default: return false
+        }
+        return true
+    }
+
     @objc func selectPrevious() { move(by: -1) }
     @objc func selectNext() { move(by: 1) }
 
@@ -709,6 +732,8 @@ private final class MergeLayoutView: NSView {
     private let barHeight: CGFloat = 36
     private let bannerHeight: CGFloat
     var onLayout: (() -> Void)?
+    /// エディタだけの近道（受けたら true）。
+    var onKeyEquivalent: ((NSEvent) -> Bool)?
 
     init(bar: NSView, banner: NSView? = nil) {
         self.bar = bar
@@ -740,6 +765,10 @@ private final class MergeLayoutView: NSView {
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         onLayout?()
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        onKeyEquivalent?(event) == true || super.performKeyEquivalent(with: event)
     }
 }
 
