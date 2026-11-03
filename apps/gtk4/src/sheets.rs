@@ -2537,19 +2537,23 @@ async fn unique_commits(
 /// ブランチを消す前に確かめる。今のブランチにも上流にも取り込まれていないコミットがあれば、それを並べて見せ、
 /// Delete Anyway（`-D`）で消す。どちらも Undo で戻せる。
 pub fn delete_branches(actions: &Rc<Actions>, names: Vec<String>) {
+    // 選んだときの worktree の HEAD と比べ、その名前を書き、そこで消す（`-d` が見る HEAD も同じ worktree）。
+    let Some(target) = Target::current(actions) else {
+        return;
+    };
     let actions = actions.clone();
     glib::spawn_future_local(async move {
-        let Some(repo) = actions.repo() else { return };
         // 調べられなければ、そう知らせて消さない（macOS 版と同じ。数を 0 とみなして `-d` で断られないように）。
-        let unique = match unique_commits(&repo, &names).await {
+        let unique = match unique_commits(&target.repo, &names).await {
             Ok(unique) => unique,
             Err(error) => {
-                return inform(
-                    parent(&actions).as_ref(),
-                    &tr!("Couldn’t check the branches"),
-                    &error,
-                )
-                .await;
+                return target
+                    .inform(
+                        parent(&actions).as_ref(),
+                        &tr!("Couldn’t check the branches"),
+                        &error,
+                    )
+                    .await;
             }
         };
         let unmerged = unique.iter().any(|(_, r)| r.count > 0);
@@ -2570,7 +2574,7 @@ pub fn delete_branches(actions: &Rc<Actions>, names: Vec<String>) {
             message.push(' ');
         }
         message.push_str(&can_undo());
-        let sheet = Sheet::new(parent(&actions).as_ref(), &title, &message);
+        let sheet = target.sheet(parent(&actions).as_ref(), &title, &message);
         if unmerged {
             let lists: Vec<(String, &CommitRange, bool)> = unique
                 .iter()
@@ -2588,13 +2592,15 @@ pub fn delete_branches(actions: &Rc<Actions>, names: Vec<String>) {
         if sheet.run().await != Response::Ok {
             return;
         }
-        actions.perform_sequence(
+        actions.perform_in(
+            target.repo,
             unique
                 .into_iter()
                 .map(
                     |(name, r)| json!({ "op": "deleteBranch", "name": name, "force": r.count > 0 }),
                 )
                 .collect(),
+            |_| {},
         );
     });
 }
