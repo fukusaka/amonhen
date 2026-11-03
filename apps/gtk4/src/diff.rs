@@ -1551,16 +1551,10 @@ impl DiffWidget {
             };
             let path = view.text(row);
             let text = format!("{mark} {path}");
-            let l = layout(&text);
-            let attrs = pango::AttrList::new();
-            let mut bold = pango::AttrInt::new_weight(pango::Weight::Bold);
-            bold.set_start_index((mark.len() + 1) as u32);
-            bold.set_end_index(text.len() as u32);
-            attrs.insert(bold);
-            l.set_attributes(Some(&attrs));
+            // パスはふつうの太さで（行数を太字にする。macOS 版と同じ）。
             return RowText {
                 gutter: None,
-                text: l,
+                text: layout(&text),
             };
         }
         let gutter = (row.kind != DiffRow::HUNK).then(|| {
@@ -1870,11 +1864,23 @@ impl DiffWidget {
             l.set_font_description(st.font.as_ref());
             l
         };
+        // 行数は太字（macOS 版と同じ）。
+        let bold = |text: &str| {
+            let l = layout(text);
+            let attrs = pango::AttrList::new();
+            attrs.insert(pango::AttrInt::new_weight(pango::Weight::Bold));
+            l.set_attributes(Some(&attrs));
+            l
+        };
         // 右から: Viewed、行数。
         let show_viewed = st.on_toggle_viewed.is_some();
         let right = if show_viewed { viewed_x } else { width - 4.0 };
         let counts: Vec<(pango::Layout, gdk::RGBA)> = if row.flags & DiffRow::BINARY != 0 {
-            vec![(layout(&tr!("Binary")), fg)]
+            // 「Binary」は薄い色で（macOS 版と同じ）。
+            vec![(
+                layout(&tr!("Binary")),
+                gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), fg.alpha() * 0.5),
+            )]
         } else {
             let (green, red) = if dark {
                 (
@@ -1888,8 +1894,8 @@ impl DiffWidget {
                 )
             };
             vec![
-                (layout(&format!("+{}", row.new_no)), green),
-                (layout(&format!("−{}", row.old_no)), red),
+                (bold(&format!("+{}", row.new_no)), green),
+                (bold(&format!("−{}", row.old_no)), red),
             ]
         };
         let counts_width: f32 = counts
