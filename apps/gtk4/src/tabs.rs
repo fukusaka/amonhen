@@ -466,11 +466,12 @@ impl RepoWindow {
         bar.set_end_action_widget(Some(&plus));
         // タブはつかんでほかの窓の帯に落とせる。窓の外に落とすと新しい窓になる（macOS 版のタブと同じ。TabView は
         // どの窓のものとも運び合える）。
+        // 大きさは macOS 版の新しい窓と同じ（中身 1440×820。GTK の既定の大きさは見出しの帯を含むので、その分を足す）。
         let window = gtk::ApplicationWindow::builder()
             .application(app)
             .title("Amon Hen")
-            .default_width(1280)
-            .default_height(760)
+            .default_width(1440)
+            .default_height(820 + 46)
             .child(&body)
             .build();
         let id = NEXT_ID.with(|n| n.replace(n.get() + 1));
