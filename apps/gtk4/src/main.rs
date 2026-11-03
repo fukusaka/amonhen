@@ -2960,42 +2960,56 @@ impl Loader {
         });
         self.details
             .show_selection(rows.len(), None, pair, &[], on_pair.clone());
-        // 各コミットの 1 行（短い ID・件名・作者）。
+        // 各コミットの 1 行（短い ID・件名・作者）は、差分を待たずに出す（差分の取り方の説明は、差分を読んでから。
+        // macOS 版と同じ）。
         let ids: Vec<amonhen_model::Oid> = rows
             .iter()
             .filter_map(|&r| history.graph.ids().get(r as usize).copied())
             .collect();
         let count = rows.len();
-        let this = self.clone();
-        let repo_t = repo.clone();
-        self.diff(repo, history, rows, pair, g, move |kind| {
-            let (this, repo_t, ids, on_pair) =
-                (this.clone(), repo_t.clone(), ids.clone(), on_pair.clone());
-            let kind = kind.to_owned();
-            glib::spawn_future_local(async move {
-                let texts = gio::spawn_blocking(move || {
-                    let texts = repo_t.commit_texts(&ids).unwrap_or_default();
-                    let mailmap = repo_t.mailmap();
-                    ids.iter()
-                        .zip(&texts)
-                        .map(|(id, t)| {
-                            (
-                                id.to_string()[..8].to_owned(),
-                                String::from_utf8_lossy(t.subject()).into_owned(),
-                                String::from_utf8_lossy(&t.author(mailmap.as_deref()).name)
-                                    .into_owned(),
-                            )
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .await
-                .unwrap_or_default();
-                if this.generation.get() == g {
-                    this.details
-                        .show_selection(count, Some(&kind), pair, &texts, on_pair);
-                    this.fit();
+        // 届いたもの（差分の取り方、各コミットの 1 行）。どちらが先に届いても、届いた分で見出しを出し直す。
+        type Shown = (Option<String>, Vec<(String, String, String)>);
+        let shown: Rc<std::cell::RefCell<Shown>> = Rc::default();
+        let render = {
+            let (this, shown, on_pair) = (self.clone(), shown.clone(), on_pair.clone());
+            Rc::new(move || {
+                if this.generation.get() != g {
+                    return;
                 }
-            });
+                let (kind, texts) = shown.borrow().clone();
+                this.details
+                    .show_selection(count, kind.as_deref(), pair, &texts, on_pair.clone());
+                this.fit();
+            })
+        };
+        self.pending.set(self.pending.get() + 1);
+        let (this, repo_t, shown_t, render_t) =
+            (self.clone(), repo.clone(), shown.clone(), render.clone());
+        glib::spawn_future_local(async move {
+            let texts = gio::spawn_blocking(move || {
+                let texts = repo_t.commit_texts(&ids).unwrap_or_default();
+                let mailmap = repo_t.mailmap();
+                ids.iter()
+                    .zip(&texts)
+                    .map(|(id, t)| {
+                        (
+                            id.to_string()[..8].to_owned(),
+                            String::from_utf8_lossy(t.subject()).into_owned(),
+                            String::from_utf8_lossy(&t.author(mailmap.as_deref()).name)
+                                .into_owned(),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .await
+            .unwrap_or_default();
+            this.pending.set(this.pending.get() - 1);
+            shown_t.borrow_mut().1 = texts;
+            render_t();
+        });
+        self.diff(repo, history, rows, pair, g, move |kind| {
+            shown.borrow_mut().0 = Some(kind.to_owned());
+            render();
         });
     }
 
