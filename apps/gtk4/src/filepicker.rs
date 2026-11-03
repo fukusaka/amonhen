@@ -410,6 +410,9 @@ struct Picker {
     typed: RefCell<(String, Option<std::time::Instant>)>,
     /// つなげなかったときの「接続を確認」（もう一度つなぐ。macOS 版と同じ）。
     retry: gtk::Button,
+    /// 列の所（列・SSH 先を選ぶ案内・つなげなかったとき）と、つなげなかったときの見出しと訳。
+    area: gtk::Stack,
+    failed: (gtk::Label, gtk::Label),
     spinner: gtk::Spinner,
     /// つないでいる間に、列の所に出す印と言葉。
     connecting: (gtk::Box, gtk::Spinner, gtk::Label),
@@ -598,8 +601,48 @@ impl Picker {
         connecting.append(&connecting_spinner);
         connecting.append(&connecting_label);
         connecting.set_visible(false);
+        // 列の所: 列、SSH 先を選ぶまでの案内（真ん中に）、つなげなかったとき（左上に、訳と「接続を確認」）を
+        // 入れ替える（macOS 版と同じく、列の代わりに出す）。
+        let hint = gtk::Label::new(Some(&tr!("Choose a host to see its folders.")));
+        hint.add_css_class("dim-label");
+        hint.set_halign(gtk::Align::Center);
+        hint.set_valign(gtk::Align::Center);
+        let failed_title = gtk::Label::new(None);
+        failed_title.set_xalign(0.0);
+        failed_title.set_wrap(true);
+        let failed_detail = gtk::Label::new(None);
+        failed_detail.set_xalign(0.0);
+        failed_detail.set_wrap(true);
+        failed_detail.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        failed_detail.set_selectable(true);
+        failed_detail.add_css_class("caption");
+        failed_detail.add_css_class("error");
+        let failed_note = gtk::Label::new(Some(&tr!(
+            "You can still type the path above and choose it."
+        )));
+        failed_note.set_xalign(0.0);
+        failed_note.set_wrap(true);
+        failed_note.add_css_class("caption");
+        failed_note.add_css_class("dim-label");
+        let retry = gtk::Button::with_label(&tr!("Check Connection"));
+        retry.set_halign(gtk::Align::Start);
+        let failed = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        failed.set_halign(gtk::Align::Fill);
+        failed.set_valign(gtk::Align::Start);
+        failed.set_margin_top(8);
+        failed.set_margin_start(8);
+        failed.set_margin_end(8);
+        failed.append(&failed_title);
+        failed.append(&failed_detail);
+        failed.append(&failed_note);
+        failed.append(&retry);
+        let area = gtk::Stack::new();
+        area.set_vexpand(true);
+        area.add_named(&columns_scroll, Some("columns"));
+        area.add_named(&hint, Some("hint"));
+        area.add_named(&failed, Some("failed"));
         let columns_area = gtk::Overlay::new();
-        columns_area.set_child(Some(&columns_scroll));
+        columns_area.set_child(Some(&area));
         columns_area.add_overlay(&connecting);
         content.append(&columns_area);
         let status = gtk::Label::new(None);
@@ -610,10 +653,6 @@ impl Picker {
         status.add_css_class("caption");
         status.set_visible(false);
         content.append(&status);
-        let retry = gtk::Button::with_label(&tr!("Check Connection"));
-        retry.set_halign(gtk::Align::Start);
-        retry.set_visible(false);
-        content.append(&retry);
 
         let hidden = gtk::CheckButton::with_label(&tr!("Show hidden files"));
         let cancel = gtk::Button::with_label(&tr!("Cancel"));
@@ -670,6 +709,8 @@ impl Picker {
             focus_columns: Cell::new(!matches!(source, Source::AnyHost(_))),
             typed: RefCell::default(),
             retry,
+            area,
+            failed: (failed_title, failed_detail),
             spinner,
             connecting: (connecting, connecting_spinner, connecting_label),
             choose,
@@ -857,11 +898,13 @@ impl Picker {
         self.sync(0);
         if host.is_empty() || host.contains('/') || host.contains(char::is_whitespace) {
             self.show_connecting(None);
-            self.set_status(Some(tr!("Choose a host to see its folders.")), false);
+            self.set_status(None, false);
+            self.area.set_visible_child_name("hint");
             self.update_buttons();
             return;
         }
         self.set_status(None, false);
+        self.area.set_visible_child_name("columns");
         self.show_connecting(Some(&host));
         self.update_buttons();
         let through = crate::settings::bool(crate::settings::OPEN_THROUGH_DAEMON);
@@ -886,15 +929,13 @@ impl Picker {
                 }
                 Err(e) => {
                     p.connection_error.replace(Some(e.clone()));
-                    p.set_status(
-                        Some(format!(
-                            "{}\n{e}\n{}",
-                            tr!("Couldn’t connect to {host}", host = p.host.borrow().clone()),
-                            tr!("You can still type the path above and choose it.")
-                        )),
-                        true,
-                    );
-                    p.retry.set_visible(true);
+                    let (title, detail) = &p.failed;
+                    title.set_text(&tr!(
+                        "Couldn’t connect to {host}",
+                        host = p.host.borrow().clone()
+                    ));
+                    detail.set_text(&e);
+                    p.area.set_visible_child_name("failed");
                     p.update_buttons();
                 }
             }
@@ -912,7 +953,6 @@ impl Picker {
     }
 
     fn set_status(&self, text: Option<String>, error: bool) {
-        self.retry.set_visible(false);
         match text {
             Some(t) => {
                 self.status.set_text(&t);
