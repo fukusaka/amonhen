@@ -537,6 +537,7 @@ impl Picker {
                 }
                 let more = gtk::MenuButton::builder().menu_model(&menu).build();
                 row.append(&more);
+                complete_from(&entry, candidates);
             }
             content.append(&row);
             entry
@@ -1819,6 +1820,45 @@ fn debug_snapshot(picker: &Rc<Picker>) {
     });
 }
 
+/// 打った文字 `typed` を頭に持つ最初の候補（大文字小文字は見ない。打ったものより長いものだけ）。
+fn completion<'a>(typed: &str, candidates: &'a [String]) -> Option<&'a str> {
+    if typed.is_empty() {
+        return None;
+    }
+    let lower = typed.to_lowercase();
+    candidates
+        .iter()
+        .find(|c| c.len() > typed.len() && c.to_lowercase().starts_with(&lower))
+        .map(String::as_str)
+}
+
+/// 欄に打つと、候補の残りを足して選んでおく（macOS 版の NSComboBox の completes）。消したときは足さない。
+fn complete_from(entry: &gtk::Entry, candidates: Vec<String>) {
+    let busy = Rc::new(Cell::new(false));
+    let before = Rc::new(Cell::new(entry.text().chars().count()));
+    entry.connect_changed(move |e| {
+        if busy.get() {
+            return;
+        }
+        let text = e.text().to_string();
+        let count = text.chars().count();
+        let grew = count > before.replace(count);
+        if !grew || e.position() != count as i32 {
+            return;
+        }
+        let Some(full) = completion(&text, &candidates) else {
+            return;
+        };
+        // 打ったところはそのまま、残りだけを候補から足す。
+        let rest: String = full.chars().skip(count).collect();
+        busy.set(true);
+        let mut at = count as i32;
+        e.insert_text(&rest, &mut at);
+        busy.set(false);
+        e.select_region(count as i32, -1);
+    });
+}
+
 /// SSH 先の候補: 使ったことのあるもの（先に）と、~/.ssh/config・known_hosts のもの。
 fn host_candidates() -> Vec<String> {
     let mut used: Vec<String> = crate::bookmarks::all_locations()
@@ -1844,6 +1884,20 @@ fn host_candidates() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn completes_a_host_from_the_first_candidate() {
+        let hosts = [
+            "build-box".to_owned(),
+            "Builder".to_owned(),
+            "web".to_owned(),
+        ];
+        assert_eq!(completion("bu", &hosts), Some("build-box"));
+        assert_eq!(completion("BUILDE", &hosts), Some("Builder"));
+        assert_eq!(completion("web", &hosts), None);
+        assert_eq!(completion("", &hosts), None);
+        assert_eq!(completion("x", &hosts), None);
+    }
 
     #[test]
     fn splits_paths_on_unix_and_windows() {
