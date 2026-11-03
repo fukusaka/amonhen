@@ -172,6 +172,8 @@ becomes the GitHub Release notes.
   nothing.
 - macOS: Return no longer confirms removing a remote; Delete is red and Return cancels.
 - macOS: Return no longer confirms forgetting an SSH host with repositories or folders to scan.
+- macOS: opening an open repository through a symbolic link or /tmp instead of /private/tmp brings its tab forward
+  instead of opening a second one.
 
 ### [0.2.8] - 2026-10-30
 

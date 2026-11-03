@@ -270,6 +270,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `replacing` を渡すと、そのタブ（リポジトリのページ、ツールバーの一覧から切り替える前のリポジトリ）の隣に
     /// 開いてから、それを閉じる（そのタブがそのリポジトリに替わる）。`after` を渡すと、そのタブの隣に開く。
     /// 開いた（つなぎ始めた）タブを返す。
+    /// 開いているタブと比べる鍵。手元のパス（`daemon:` 越しのものも）はリンクを解く。SSH 先はそのまま。
+    private static func locationKey(_ location: String) -> String {
+        let daemon = location.hasPrefix("daemon:")
+        let rest = daemon ? String(location.dropFirst("daemon:".count)) : location
+        guard !rest.hasPrefix("ssh://") else { return location }
+        return (daemon ? "daemon:" : "") + WorktreeInfo.canonical(rest)
+    }
+
     @discardableResult
     func open(path: String, debug: Bool = false, inNewWindow: Bool = false, replacing: NSWindow? = nil,
               after: NSWindow? = nil) -> NSWindow? {
@@ -287,8 +295,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var location = RepositoryLocation.isRemote(path) ? path : URL(fileURLWithPath: path).standardizedFileURL.path
         // 共有の daemon 越しに開く設定なら、`daemon:` の場所にする（SSH 先も `daemon:ssh://…`）。
         if Settings.openThroughDaemon, !location.hasPrefix("daemon:") { location = "daemon:" + location }
-        if let existing = windows.first(where: { $0.location == location })?.window
-            ?? connecting.first(where: { $0.location == location })?.window {
+        // 同じリポジトリを別の書き方（リンク、`/tmp` と `/private/tmp`）で開いても、開いているタブに移る。
+        let key = Self.locationKey(location)
+        if let existing = windows.first(where: { Self.locationKey($0.location) == key })?.window
+            ?? connecting.first(where: { Self.locationKey($0.location) == key })?.window {
             existing.makeKeyAndOrderFront(nil)
             return existing
         }
