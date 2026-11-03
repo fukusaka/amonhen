@@ -389,6 +389,7 @@
 "Compare with Previous Version" = "前の版と比べる";
 "Compare the current branch with its version before it was last rewritten (a rebase, History edit, amend or reset), like git range-diff" = "今のブランチを、最後に書き換える（rebase・コミットの編集・amend・reset）前の版と比べます（git range-diff と同じ）";
 "Apply Patch…" = "パッチを当てる…";
+"Apply" = "当てる";
 "Save as Patch…" = "パッチとして保存…";
 "Refresh" = "再読み込み";
 "Reload History, branches and Working Copy (they normally reload on their own when something changes)" = "History・ブランチ・Working Copy を読み直す（ふだんは変化を検知して自動で読み直す）";
