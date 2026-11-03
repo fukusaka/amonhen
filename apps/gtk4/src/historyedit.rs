@@ -795,10 +795,13 @@ impl Mode {
         let generation = self.preview_generation.get() + 1;
         self.preview_generation.set(generation);
         if !self.has_changes() {
+            // 変更をすべて戻したら、前の見込み（コンフリクトの印、積み重ねたブランチの選択）も消す。
             self.preview.set_visible(false);
             self.preview.set_text("");
+            self.move_stacked.set_visible(false);
             if !self.conflicting.borrow().is_empty() {
                 self.conflicting.borrow_mut().clear();
+                self.redraw_rows();
             }
             return;
         }
@@ -894,12 +897,16 @@ impl Mode {
         };
         if changed {
             self.conflicting.replace(marks);
-            // 印を付け直す（要約と見通しは読み直さない）。
-            let n = self.model.n_items();
-            let oids: Vec<String> = self.rows.borrow().iter().map(|r| r.oid.clone()).collect();
-            let refs: Vec<&str> = oids.iter().map(String::as_str).collect();
-            self.model.splice(0, n, &refs);
+            self.redraw_rows();
         }
+    }
+
+    /// 印を付け直す（要約と見通しは読み直さない）。
+    fn redraw_rows(&self) {
+        let n = self.model.n_items();
+        let oids: Vec<String> = self.rows.borrow().iter().map(|r| r.oid.clone()).collect();
+        let refs: Vec<&str> = oids.iter().map(String::as_str).collect();
+        self.model.splice(0, n, &refs);
     }
 
     /// この編集での指定（git の設定と同じなら None）。
