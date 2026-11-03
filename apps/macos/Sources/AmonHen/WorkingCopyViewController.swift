@@ -94,13 +94,22 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     /// 木で見せるときのディレクトリ。子が 1 つのディレクトリだけなら名前をつないで 1 段にする。
     private final class Dir {
         var name: String
+        /// リポジトリの中のパス（畳んだディレクトリを読み直しても畳んだままにするため）。
+        var path: String
         var dirs: [Dir] = []
         var files: [Entry] = []
-        init(name: String) { self.name = name }
+        init(name: String, path: String) {
+            self.name = name
+            self.path = path
+        }
         /// 配下のすべてのファイル。
         var allFiles: [Entry] { files + dirs.flatMap(\.allFiles) }
     }
     private var tree: Dir?
+    /// 木で畳んだディレクトリ（パス）。読み直しても畳んだままにする。
+    private var collapsedDirs: Set<String> = []
+    /// 読み直した木を開いている途中（開いた・畳んだの知らせを、使う人の操作として覚えない）。
+    private var isExpandingTree = false
     private var current: WorkingFileDiff?
     /// 選んでいたファイルと、見せていた側（読み直した後に選び直す）。
     private var selectedKey: (path: String, staged: Bool)?
@@ -542,7 +551,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         entries = query.isEmpty ? allEntries : allEntries.filter { $0.item.path.lowercased().contains(query) }
         tree = showsTree ? Self.makeTree(entries) : nil
         files.reloadData()
-        files.expandItem(nil, expandChildren: true)
+        expandTree(below: tree)
         emptyLabel.stringValue = allEntries.isEmpty ? L("No changes") : L("No matching files")
         emptyLabel.isHidden = !entries.isEmpty
         updateHeader()
@@ -555,9 +564,10 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             let row = files.row(forItem: target)
             let others = IndexSet(kept.filter { $0 !== target }.map { files.row(forItem: $0) }.filter { $0 >= 0 })
             // 差分に出すファイルを最後に足し、選択の起点（selectedRow）にする。途中の選択の変化では差分を替えない。
+            // 畳んだディレクトリの中なら行はない。差分はそのまま出す。
             isRestoringSelection = true
             files.selectRowIndexes(others, byExtendingSelection: false)
-            files.selectRowIndexes([row], byExtendingSelection: !others.isEmpty)
+            files.selectRowIndexes(row >= 0 ? [row] : [], byExtendingSelection: !others.isEmpty)
             isRestoringSelection = false
             let keep = target.item.path == selectedKey?.path
             showDiff(of: target, staged: side(for: target.item), keepScroll: keep)
@@ -607,7 +617,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     /// ファイルをディレクトリの木にする。
     private static func makeTree(_ entries: [Entry]) -> Dir {
-        let root = Dir(name: "")
+        let root = Dir(name: "", path: "")
         for entry in entries {
             var dir = root
             let parts = entry.item.path.split(separator: "/").map(String.init)
@@ -615,7 +625,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
                 if let next = dir.dirs.first(where: { $0.name == part }) {
                     dir = next
                 } else {
-                    let next = Dir(name: part)
+                    let next = Dir(name: part, path: dir.path.isEmpty ? part : dir.path + "/" + part)
                     dir.dirs.append(next)
                     dir = next
                 }
@@ -626,6 +636,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             while dir.files.isEmpty, dir.dirs.count == 1, !dir.name.isEmpty {
                 let only = dir.dirs[0]
                 dir.name += "/" + only.name
+                dir.path = only.path
                 dir.dirs = only.dirs
                 dir.files = only.files
             }
@@ -635,6 +646,20 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         root.dirs.forEach(compact)
         root.dirs.sort { $0.name < $1.name }
         return root
+    }
+
+    /// `dir` の下のディレクトリを、使う人が畳んだもの（とその中）を除いて開く。
+    private func expandTree(below dir: Dir?) {
+        guard let dir else { return }
+        isExpandingTree = true
+        defer { isExpandingTree = false }
+        func expand(_ dir: Dir) {
+            for child in dir.dirs where !collapsedDirs.contains(child.path) {
+                files.expandItem(child)
+                expand(child)
+            }
+        }
+        expand(dir)
     }
 
     @objc private func layoutChanged() {
@@ -1551,6 +1576,18 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             gitignore += pattern + "\n"
             try repository.run(json: Repository.json(["op": "saveIgnoreFiles", "gitignore": gitignore, "exclude": files.exclude]))
         }
+    }
+
+    func outlineViewItemDidCollapse(_ notification: Notification) {
+        guard !isExpandingTree, let dir = notification.userInfo?["NSObject"] as? Dir else { return }
+        collapsedDirs.insert(dir.path)
+    }
+
+    func outlineViewItemDidExpand(_ notification: Notification) {
+        guard !isExpandingTree, let dir = notification.userInfo?["NSObject"] as? Dir else { return }
+        collapsedDirs.remove(dir.path)
+        // 中のディレクトリも、畳んでいなければ開く（開いたことがなければ畳んだままになる）。
+        expandTree(below: dir)
     }
 
     func outlineViewSelectionDidChange(_ notification: Notification) {

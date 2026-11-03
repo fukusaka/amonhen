@@ -167,6 +167,7 @@ becomes the GitHub Release notes.
 - macOS: J and K step through every hunk in History, Stashes and File History diffs; they stopped at the same one.
 - macOS: a merge editor in its own window no longer shows the Open in a Separate Window button, which did nothing
   there.
+- macOS: folders collapsed in Working Copy's tree stay collapsed when the status reloads.
 
 ### [0.2.8] - 2026-10-30
 
