@@ -408,13 +408,13 @@ impl OrderList {
         self.set_steps(None);
     }
 
-    /// `from` 行目を `to` 行目に動かして、知らせる。
-    fn reorder(self: &Rc<Self>, from: usize, to: usize) {
+    /// `from` 行目を `gap` 番目の行の間（0 は先頭の上、行の数は最後の下）に動かして、知らせる。
+    fn reorder(self: &Rc<Self>, from: usize, gap: usize) {
         {
             let mut sources = self.sources.borrow_mut();
-            if from == to || from >= sources.len() || to >= sources.len() {
+            let Some(to) = moved_index(from, gap, sources.len()) else {
                 return;
-            }
+            };
             let s = sources.remove(from);
             sources.insert(to, s);
         }
@@ -425,8 +425,27 @@ impl OrderList {
         }
     }
 
+    /// 落とす先の線を `gap` 番目の行の間に出す（None で消す）。
+    fn show_drop_line(&self, gap: Option<usize>) {
+        let n = self.sources.borrow().len();
+        let mut child = self.list.first_child();
+        let mut i = 0;
+        while let Some(row) = child {
+            row.remove_css_class("drop-above");
+            row.remove_css_class("drop-below");
+            match gap {
+                Some(g) if g == i => row.add_css_class("drop-above"),
+                Some(g) if g == n && i + 1 == n => row.add_css_class("drop-below"),
+                _ => {}
+            }
+            child = row.next_sibling();
+            i += 1;
+        }
+    }
+
     /// 行を作り直す（数は少ない）。
     fn refresh(self: &Rc<Self>) {
+        install_css();
         while let Some(row) = self.list.first_child() {
             self.list.remove(&row);
         }
@@ -466,19 +485,76 @@ impl OrderList {
                 Some(gdk::ContentProvider::for_value(&(i as u32).to_value()))
             });
             row.add_controller(drag);
+            // 行の間に落とす（macOS 版と同じ。行の上半分ならその上、下半分なら下。線で示す）。
             let drop = gtk::DropTarget::new(u32::static_type(), gdk::DragAction::MOVE);
+            let gap_at = {
+                let row = row.downgrade();
+                move |y: f64| {
+                    let h = row.upgrade().map_or(0, |r| r.height());
+                    if y * 2.0 < f64::from(h) { i } else { i + 1 }
+                }
+            };
             let weak = Rc::downgrade(self);
-            drop.connect_drop(move |_, value, _, _| {
+            let gap = gap_at.clone();
+            drop.connect_motion(move |_, _, y| {
+                if let Some(this) = weak.upgrade() {
+                    this.show_drop_line(Some(gap(y)));
+                }
+                gdk::DragAction::MOVE
+            });
+            let weak = Rc::downgrade(self);
+            drop.connect_leave(move |_| {
+                if let Some(this) = weak.upgrade() {
+                    this.show_drop_line(None);
+                }
+            });
+            let weak = Rc::downgrade(self);
+            drop.connect_drop(move |_, value, _, y| {
                 let (Some(this), Ok(from)) = (weak.upgrade(), value.get::<u32>()) else {
                     return false;
                 };
+                let gap = gap_at(y);
                 // 落とした後で作り直す（落とした先の行を、処理の途中で外さない）。
-                glib::idle_add_local_once(move || this.reorder(from as usize, i));
+                glib::idle_add_local_once(move || {
+                    this.show_drop_line(None);
+                    this.reorder(from as usize, gap);
+                });
                 true
             });
             row.add_controller(drop);
             self.list.append(&row);
         }
+    }
+}
+
+/// `from` 行目を `gap` 番目の行の間に動かしたときの、新しい位置（動かないなら None）。
+fn moved_index(from: usize, gap: usize, len: usize) -> Option<usize> {
+    if from >= len || gap > len {
+        return None;
+    }
+    let to = if from < gap { gap - 1 } else { gap };
+    (to != from).then_some(to)
+}
+
+/// 落とす先の線。
+fn install_css() {
+    thread_local! {
+        static DONE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+    if DONE.with(|d| d.replace(true)) {
+        return;
+    }
+    let provider = gtk::CssProvider::new();
+    provider.load_from_string(
+        "row.drop-above { box-shadow: inset 0 2px @accent_color; }\n\
+         row.drop-below { box-shadow: inset 0 -2px @accent_color; }",
+    );
+    if let Some(display) = gdk::Display::default() {
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
     }
 }
 
@@ -503,6 +579,17 @@ mod tests {
             rev: rev.into(),
             kind,
         }
+    }
+
+    #[test]
+    fn moves_between_rows() {
+        // 上に落とす・下に落とす・同じ場所・最後の下。
+        assert_eq!(moved_index(2, 0, 3), Some(0));
+        assert_eq!(moved_index(0, 2, 3), Some(1));
+        assert_eq!(moved_index(1, 1, 3), None);
+        assert_eq!(moved_index(1, 2, 3), None);
+        assert_eq!(moved_index(0, 3, 3), Some(2));
+        assert_eq!(moved_index(0, 4, 3), None);
     }
 
     #[test]
