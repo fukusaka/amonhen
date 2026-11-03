@@ -157,12 +157,15 @@ impl Stashes {
             bar.append(&button);
             buttons.push(button);
         }
-        // worktree が 2 つ以上なら、どの worktree に効くかを右端に出す（macOS 版と同じ）。
+        // worktree が 2 つ以上なら、どの worktree に効くかをボタンの後ろに小さく出す（長ければ真ん中を切る。
+        // macOS 版と同じ）。
         let target = gtk::Label::new(None);
         target.set_hexpand(true);
-        target.set_xalign(1.0);
-        target.set_ellipsize(gtk::pango::EllipsizeMode::Start);
+        target.set_xalign(0.0);
+        target.set_margin_start(6);
+        target.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
         target.add_css_class("dim-label");
+        target.add_css_class("caption");
         bar.append(&target);
         let left = gtk::Box::new(gtk::Orientation::Vertical, 0);
         left.append(&bar);
@@ -669,11 +672,12 @@ pub fn menu(actions: &Rc<Actions>, name: &str, message: Option<&str>) -> Vec<Ite
     items
 }
 
-/// stash を消す前に確かめる（Undo で戻せる）。
+/// stash を消す前に確かめる（Undo で戻せる）。stash はどの worktree にも共通なので、worktree の名前は書かない
+/// （macOS 版と同じ）。
 pub fn confirm_drop(actions: &Rc<Actions>, name: &str, message: Option<&str>) {
     let mut text = message.map(|m| format!("“{m}”\n")).unwrap_or_default();
     text.push_str(&sheets::can_undo());
-    sheets::confirm_then(
+    sheets::confirm_ref_then(
         actions,
         tr!("Drop {name}?", name = name),
         text,
