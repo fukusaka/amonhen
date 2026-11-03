@@ -2335,8 +2335,9 @@ impl Inner {
         let (Some(actions), path) = (this.actions.borrow().clone(), entry.path.clone()) else {
             return;
         };
+        // 確かめるのは題と「元に戻せる・戻せない」だけ（worktree の名前は書かない。macOS 版の `confirm` と同じ）。
         if entry.kind == StatusKind::Untracked {
-            crate::sheets::confirm_then(
+            crate::sheets::confirm_ref_then(
                 &actions,
                 tr!("Delete {path}?", path = path),
                 format!("{} {}", tr!("It’s untracked."), crate::sheets::cant_undo()),
@@ -2345,7 +2346,7 @@ impl Inner {
                 vec![json!({ "op": "deleteUntracked", "paths": [path] })],
             );
         } else {
-            crate::sheets::confirm_then(
+            crate::sheets::confirm_ref_then(
                 &actions,
                 tr!("Discard changes to {path}?", path = path),
                 crate::sheets::can_undo(),
@@ -2961,9 +2962,9 @@ impl Inner {
         };
         match (length, color) {
             (0, _) => self.summary_count.set_text(""),
-            (n, Some(c)) => self.summary_count.set_markup(&format!(
-                "<span foreground=\"{c}\">{n}</span>"
-            )),
+            (n, Some(c)) => self
+                .summary_count
+                .set_markup(&format!("<span foreground=\"{c}\">{n}</span>")),
             (n, None) => self
                 .summary_count
                 .set_markup(&format!("<span alpha=\"45%\">{n}</span>")),
