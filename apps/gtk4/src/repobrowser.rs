@@ -2044,7 +2044,12 @@ impl Browser {
                         if let Some(new) = b.ask(&tr!("Rename Group"), &tr!("Group name"), &n).await
                         {
                             bookmarks::rename_group(&n, &new);
-                            b.set_category(Category::Group(new));
+                            // 選んでいたグループなら新しい名前を選んだままに。ほかを選んでいたらそのまま
+                            // （macOS 版と同じ）。
+                            let selected = *b.category.borrow() == Category::Group(n.clone());
+                            if selected {
+                                b.set_category(Category::Group(new));
+                            }
                             b.reload();
                         }
                     });
