@@ -1744,8 +1744,10 @@ fn build_tab(
     });
     // 見出しのメニュー（主メニューが右端、その左に Undo）。
     let go_to: Rc<dyn Fn(amonhen_model::Oid)> = {
-        let (pages, view, shaper) = (pages.clone(), view.clone(), Rc::downgrade(&shaper));
-        Rc::new(move |id| jump_to(&pages, &view, id, &Rc::new(Cell::new(0)), &shaper))
+        // Go to Parent・Child は History で選ぶだけで、ほかのページを出していても切り替えない（macOS 版と同じ。
+        // Go to HEAD は先に History を出す）。
+        let (view, shaper) = (view.clone(), Rc::downgrade(&shaper));
+        Rc::new(move |id| select_in_history(&view, id, &Rc::new(Cell::new(0)), &shaper))
     };
     let buttons = appmenu::install(appmenu::Parts {
         app: app.clone(),
@@ -2795,6 +2797,17 @@ fn jump_to(
     shaper: &Weak<historydisplay::Shaper>,
 ) {
     pages.set_visible_child_name("history");
+    select_in_history(view, target, pending, shaper);
+}
+
+/// History で `target` のコミットを選ぶ（ページは切り替えない）。今の範囲になければ、`shaper` があれば全ブランチに
+/// 戻して選ぶ（macOS 版の `goTo(id:)`）。
+fn select_in_history(
+    view: &HistoryView,
+    target: amonhen_model::Oid,
+    pending: &Rc<Cell<u32>>,
+    shaper: &Weak<historydisplay::Shaper>,
+) {
     let Some((_, history)) = view.current() else {
         return;
     };
