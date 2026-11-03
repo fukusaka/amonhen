@@ -103,7 +103,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | SSH Hosts > Connection: 探すフォルダー | ✓ | ✓ | n/a | n/a |  |
 | SSH Hosts: ホストのすべてのリポジトリの git のページ | ✓ | ✓ | n/a | n/a |  |
 | SSH Hosts: ホストの Environment Variables（ログインシェルの切り替え） | ✓ | ✓ | n/a | n/a |  |
-| ホスト・この機械の列で選ぶパスのシート | ✓ | ✓ | n/a | n/a | GTK4: 外のエディターは GTK のファイルのダイアログで選ぶ。 |
+| ホスト・この機械の列で選ぶパスのシート | ✓ | ✓ | n/a | n/a |  |
 | Accounts: GitHub（CI の状態・アバター） | ✓ | ✓ | — | n/a |  |
 | Appearance: History の順・1 行・行の項目・アバター | ✓ | ✓ | n/a | n/a |  |
 | Appearance: テーマ・フォント・グラフの色 | — | — | n/a | n/a |  |

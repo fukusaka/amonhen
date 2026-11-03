@@ -158,6 +158,9 @@ pub fn settings_row() -> gtk::Box {
 
     // 項目の値（"" は自動、"\u{1}other" は Other…）。
     let values = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+    // 区切りの線（macOS 版と同じく、自動の下と Other… の上）。
+    let separators = std::rc::Rc::new(std::cell::RefCell::new(Vec::<u32>::new()));
+    crate::settings::separate_items(&dropdown, separators.clone());
     const OTHER: &str = "\u{1}other";
     let fill = {
         let (dropdown, values) = (dropdown.clone(), values.clone());
@@ -177,6 +180,7 @@ pub fn settings_row() -> gtk::Box {
                 items.push((current.clone(), name));
             }
             items.push((OTHER.to_owned(), tr!("Other…")));
+            separators.replace(separators_for(items.len()));
             let titles: Vec<&str> = items.iter().map(|(_, t)| t.as_str()).collect();
             dropdown.set_model(Some(&gtk::StringList::new(&titles)));
             let at = items.iter().position(|(v, _)| *v == current).unwrap_or(0);
@@ -208,25 +212,58 @@ pub fn settings_row() -> gtk::Box {
         });
         let (f, fill) = (f.clone(), fill.clone());
         let parent = d.root().and_downcast::<gtk::Window>();
-        let dialog = gtk::FileDialog::builder()
-            .title(tr!("External Editor"))
-            .accept_label(tr!("Choose"))
-            .build();
-        // 最初に開くフォルダ（Windows は既定のまま）。
-        if cfg!(unix) {
-            dialog.set_initial_folder(Some(&gio::File::for_path("/usr/bin")));
-        }
+        // この機械のプログラムを選ぶシート（macOS 版と同じく、アプリのファイルを選ぶ形。Settings > Git > Programs と同じ）。
+        let current = crate::settings::string(KEY).unwrap_or_default();
+        let initial = if std::path::Path::new(&current).is_absolute() {
+            current
+        } else if cfg!(unix) {
+            "/usr/bin".to_owned()
+        } else {
+            String::new()
+        };
+        let request = crate::filepicker::Request {
+            title: tr!("External Editor"),
+            message: tr!("Choose the app to open files in."),
+            kind: crate::filepicker::Kind::Executable,
+            initial,
+            places: crate::filepicker::local_program_places(),
+            ..Default::default()
+        };
         glib::spawn_future_local(async move {
-            if let Ok(file) = dialog.open_future(parent.as_ref()).await
-                && let Some(path) = file.path()
+            if let Some(chosen) = crate::filepicker::choose(
+                parent.as_ref(),
+                request,
+                crate::filepicker::Source::Local,
+            )
+            .await
             {
-                crate::settings::set_string(KEY, &path.to_string_lossy());
+                crate::settings::set_string(KEY, &chosen.path);
             }
             f.set(true);
             fill();
             f.set(false);
         });
     });
-    row.set_tooltip_text(Some(&tr!("Choose the app to open files in.")));
     row
+}
+
+/// 項目が `count` 個（自動・入っているもの…・Other…）のときの、線を引く位置（自動の下と、Other… の上）。
+fn separators_for(count: usize) -> Vec<u32> {
+    let other = count.saturating_sub(1) as u32;
+    if other > 1 {
+        vec![1, other]
+    } else {
+        vec![other]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn separators_sit_below_automatic_and_above_other() {
+        assert_eq!(separators_for(2), [1]);
+        assert_eq!(separators_for(4), [1, 3]);
+    }
 }

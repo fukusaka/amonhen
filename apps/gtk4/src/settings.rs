@@ -807,3 +807,50 @@ pub fn select(tab: &str) {
         stack.set_visible_child_name(tab);
     }
 }
+
+/// 選ぶ欄の一覧に区切りの線を入れる（macOS 版の Picker の `Divider()`）。`above` の位置の項目の上に線を引く。
+/// 一覧の項目は自前で作るので、選んでいる項目の印（✓）もここで出す。
+pub fn separate_items(dropdown: &gtk::DropDown, above: Rc<RefCell<Vec<u32>>>) {
+    let factory = gtk::SignalListItemFactory::new();
+    factory.connect_setup(|_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let column = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        column.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+        let line = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let label = gtk::Label::new(None);
+        label.set_xalign(0.0);
+        label.set_hexpand(true);
+        line.append(&label);
+        let check = gtk::Image::from_icon_name("object-select-symbolic");
+        item.bind_property("selected", &check, "visible")
+            .sync_create()
+            .build();
+        line.append(&check);
+        column.append(&line);
+        item.set_child(Some(&column));
+    });
+    factory.connect_bind(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let Some(column) = item.child() else { return };
+        let Some(separator) = column.first_child() else {
+            return;
+        };
+        let label = separator
+            .next_sibling()
+            .and_then(|line| line.first_child())
+            .and_downcast::<gtk::Label>();
+        let text = item
+            .item()
+            .and_downcast::<gtk::StringObject>()
+            .map(|s| s.string());
+        if let (Some(label), Some(text)) = (label, text) {
+            label.set_text(&text);
+        }
+        separator.set_visible(above.borrow().contains(&item.position()));
+    });
+    dropdown.set_list_factory(Some(&factory));
+}
