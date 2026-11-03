@@ -1294,7 +1294,9 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         guard control === searchField else { return false }
         switch selector {
         case #selector(NSResponder.insertNewline(_:)) where NSEvent.modifierFlags.contains(.shift):
-            moveSearch(by: -1)
+            // 新しく打った問い合わせなら、まずそれで探す（前の問い合わせの結果の中を動かない）。
+            let query = searchField.stringValue.trimmingCharacters(in: .whitespaces)
+            if query != searchQuery { searchSubmitted() } else { moveSearch(by: -1) }
             return true
         case #selector(NSResponder.cancelOperation(_:)):
             searchField.stringValue = ""

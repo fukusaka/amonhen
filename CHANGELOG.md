@@ -126,6 +126,7 @@ becomes the GitHub Release notes.
   pushing without asking.
 - macOS: Settings > Appearance also follows Highlight Ancestors, Monospaced message, Show Avatars, Stack diffs, File
   tree and Fold Merged Branches when they change from the View menu.
+- macOS: Shift+Return in the History search field searches a newly typed query instead of moving within the old results.
 
 - The GTK4 app's Undo button asks once; it opened the question twice, so one stayed after undoing.
 - A `.mailmap`, or a mailmap setting (`log.mailmap`, `mailmap.file`), changed while the engine was reading the old
