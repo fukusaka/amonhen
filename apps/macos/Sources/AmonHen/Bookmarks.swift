@@ -253,9 +253,16 @@ final class Bookmarks {
 
     // MARK: - スキャン
 
-    /// すべてのフォルダを裏で探し直す。
+    /// 探している間に探し直すよう頼まれた（フォルダを足した・深さを変えた）。終わったらもう一度探す。
+    private var rescanAgain = false
+
+    /// すべてのフォルダを裏で探し直す。探している間に頼まれたら、終わってからもう一度（今の探し方は頼まれる前の
+    /// フォルダ・深さのもの）。
     func rescan() {
-        guard !isScanning else { return }
+        guard !isScanning else {
+            rescanAgain = true
+            return
+        }
         isScanning = true
         onChange?()
         let roots = data.scanRoots
@@ -297,6 +304,10 @@ final class Bookmarks {
             scanErrors = errors
             isScanning = false
             onChange?()
+            if rescanAgain {
+                rescanAgain = false
+                rescan()
+            }
         }
     }
 

@@ -193,6 +193,8 @@ struct State {
     /// スキャンで見つけたリポジトリ（フォルダ → リポジトリの並び）。
     scanned: HashMap<String, Vec<String>>,
     scanning: bool,
+    /// 探している間に探し直すよう頼まれた（フォルダを足した・深さを変えた）。終わったらもう一度探す。
+    rescan_again: bool,
     /// フォルダを探せなかった理由（フォルダ → エラー）。
     scan_errors: HashMap<String, String>,
     /// 行の状態（読めなかったものは None）。
@@ -730,7 +732,15 @@ fn ssh_daemons() -> amonhen_remote::ssh::Daemons {
 
 /// すべてのフォルダを裏で探し直す（SSH 先は時間がかかるので、フォルダごとに並べて探す）。
 pub fn rescan() {
-    if STATE.with(|s| std::mem::replace(&mut s.borrow_mut().scanning, true)) {
+    // 探している間に頼まれたら、終わってからもう一度（今の探し方は頼まれる前のフォルダ・深さのもの）。
+    if STATE.with(|s| {
+        let mut s = s.borrow_mut();
+        let busy = std::mem::replace(&mut s.scanning, true);
+        if busy {
+            s.rescan_again = true;
+        }
+        busy
+    }) {
         return;
     }
     notify(None);
@@ -779,6 +789,9 @@ pub fn rescan() {
             s.scanning = false;
         });
         notify(None);
+        if STATE.with(|s| std::mem::take(&mut s.borrow_mut().rescan_again)) {
+            rescan();
+        }
     });
 }
 
