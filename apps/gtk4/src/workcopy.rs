@@ -700,6 +700,21 @@ impl WorkingCopy {
         }
     }
 
+    /// 覚えている・埋め込んだマージエディタに、保存していない Result の変更がある（閉じる前に確かめる）。
+    pub fn has_unsaved_merge_edits(&self) -> bool {
+        self.inner
+            .editors
+            .borrow()
+            .values()
+            .any(|e| e.has_unsaved_changes())
+            || self
+                .inner
+                .embedded
+                .borrow()
+                .as_ref()
+                .is_some_and(|e| e.has_unsaved_changes())
+    }
+
     /// Amend Last Commit: 直前のコミットを直す（メッセージを入れておく）。
     pub fn amend_last_commit(&self) {
         self.inner.amend.set_active(true);

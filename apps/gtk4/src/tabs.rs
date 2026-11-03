@@ -58,6 +58,10 @@ pub struct Tab {
     /// File History・Blame のタブの、リポジトリのタブに渡すアクションと、その「使えるか」の結び付け（リポジトリの
     /// タブを閉じたら、押せなくする）。
     forwarded: RefCell<Vec<(gio::SimpleAction, glib::Binding)>>,
+    /// 保存していないもの（マージエディタの Result）があるか。あれば、閉じる前に確かめる。
+    unsaved: RefCell<Option<Rc<dyn Fn() -> bool>>>,
+    /// 保存していないものを捨てて閉じると確かめた（閉じ直すときは聞かない）。
+    discard_confirmed: Cell<bool>,
 }
 
 /// File History・Blame のタブの見出しを作る。
@@ -90,6 +94,8 @@ impl Tab {
             heading: RefCell::default(),
             mirror: RefCell::default(),
             forwarded: RefCell::default(),
+            unsaved: RefCell::default(),
+            discard_confirmed: Cell::new(false),
         });
         // 前に出した後で足したアクション（メニューの操作は、タブを窓に置いてから入れる）も窓に入れる。
         let weak = Rc::downgrade(&tab);
@@ -324,6 +330,16 @@ impl Tab {
             }
         });
         self.group.add_action(&recent);
+    }
+
+    /// 保存していないものがあるかを `f` で調べるようにする（あれば、タブ・窓を閉じる前と、終える前に確かめる）。
+    pub fn connect_unsaved(&self, f: impl Fn() -> bool + 'static) {
+        self.unsaved.replace(Some(Rc::new(f)));
+    }
+
+    /// 保存していないものがあり、まだ捨ててよいと確かめていない。
+    fn has_unsaved(&self) -> bool {
+        !self.discard_confirmed.get() && self.unsaved.borrow().as_ref().is_some_and(|f| f())
     }
 
     /// `key`（`repos::normalize` した場所）を開いているタブか（場所は開いた形なので、リンクを解いて比べる）。
@@ -649,8 +665,28 @@ impl RepoWindow {
             Some(target.view.clone())
         });
         let weak = Rc::downgrade(&this);
-        window.connect_close_request(move |_| {
+        window.connect_close_request(move |window| {
             if let Some(this) = weak.upgrade() {
+                // マージエディタの Result を保存していないタブがあれば、それを前に出して確かめる（macOS 版と同じ。
+                // 別の窓のマージエディタを閉じるときと同じ文）。捨ててよければ閉じ直す。
+                let unsaved: Vec<Rc<Tab>> = this
+                    .tabs()
+                    .into_iter()
+                    .filter(|t| t.has_unsaved())
+                    .collect();
+                if let Some(first) = unsaved.first() {
+                    this.select(first);
+                    let window = window.clone();
+                    glib::spawn_future_local(async move {
+                        if crate::merge::confirm_discarding(&window).await {
+                            for tab in &unsaved {
+                                tab.discard_confirmed.set(true);
+                            }
+                            window.close();
+                        }
+                    });
+                    return glib::Propagation::Stop;
+                }
                 // 閉じる窓のタブは、どれも閉じる（裏の糸と見張りを止める）。
                 let tabs: Vec<Rc<Tab>> = this.tabs.borrow_mut().drain(..).collect();
                 for tab in tabs {
@@ -1279,6 +1315,8 @@ pub fn reopen(tab: &Rc<Tab>, location: PathBuf, page: Option<crate::sidebar::Pag
     };
     let position = host.position(tab).map(|n| n as u32 + 1);
     open_in(&app, &host, location, position, page);
+    // 開き直したタブに替えるだけなので聞かない（macOS 版も、つなぎ直すタブは閉じてよいかを聞かずに替える）。
+    tab.discard_confirmed.set(true);
     close_tab(tab);
 }
 
@@ -1335,6 +1373,18 @@ fn teardown(tab: &Rc<Tab>) {
 /// 閉じたことにならない）。
 pub fn close_tab(tab: &Rc<Tab>) {
     let Some(host) = tab.host() else { return };
+    // マージエディタの Result を保存していなければ、捨てて閉じてよいかを確かめる（macOS 版と同じ）。
+    if tab.has_unsaved() {
+        host.select(tab);
+        let (tab, window) = (tab.clone(), host.window.clone());
+        glib::spawn_future_local(async move {
+            if crate::merge::confirm_discarding(&window).await {
+                tab.discard_confirmed.set(true);
+                close_tab(&tab);
+            }
+        });
+        return;
+    }
     if host.tabs.borrow().len() <= 1 {
         let alone = WINDOWS.with(|w| w.borrow().len() <= 1);
         if alone
@@ -1349,6 +1399,29 @@ pub fn close_tab(tab: &Rc<Tab>) {
     detach(&host, tab);
     teardown(tab);
     save();
+}
+
+/// 終える前に、保存していないもの（マージエディタの Result）を捨ててよいかを確かめる（macOS 版と同じく 1 度だけ。
+/// 別の窓のマージエディタも）。なければすぐ true。
+pub async fn confirm_quit() -> bool {
+    let tabs: Vec<Rc<Tab>> = WINDOWS.with(|w| w.borrow().iter().flat_map(|h| h.tabs()).collect());
+    let unsaved: Vec<Rc<Tab>> = tabs.into_iter().filter(|t| t.has_unsaved()).collect();
+    let window: Option<gtk::Window> = match unsaved.first() {
+        Some(tab) => {
+            tab.bring_front();
+            tab.window().map(|w| w.upcast())
+        }
+        None => crate::merge::unsaved_window(),
+    };
+    let Some(window) = window else { return true };
+    window.present();
+    let ok = crate::merge::confirm_discarding(&window).await;
+    if ok {
+        for tab in &unsaved {
+            tab.discard_confirmed.set(true);
+        }
+    }
+    ok
 }
 
 /// `tab` を `host` の窓から外す（閉じない）。

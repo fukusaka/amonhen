@@ -372,6 +372,28 @@ pub fn open_window(workdir: Option<&Path>, path: &str) -> Option<gtk::Window> {
     })
 }
 
+/// 保存していない Result を捨てて閉じてよいかを、`window` のシートで確かめる（赤い「Close Without Saving」。
+/// Return は Cancel。macOS 版と同じ）。別の窓のマージエディタ、リポジトリのタブ・窓を閉じるとき、終えるときに。
+pub async fn confirm_discarding(window: &impl IsA<gtk::Window>) -> bool {
+    let sheet = crate::sheets::Sheet::unnamed(
+        Some(window.upcast_ref()),
+        &tr!("Close without saving?"),
+        &tr!("Your changes to Result are lost."),
+    );
+    sheet.buttons(&tr!("Close Without Saving"), true, None);
+    sheet.run().await == crate::sheets::Response::Ok
+}
+
+/// Result を保存していない、別の窓のマージエディタの窓（終える前に確かめる）。
+pub fn unsaved_window() -> Option<gtk::Window> {
+    KEEP.with(|k| {
+        k.borrow()
+            .iter()
+            .filter(|e| e.has_unsaved_changes())
+            .find_map(|e| e.window.borrow().as_ref().and_then(|w| w.upgrade()))
+    })
+}
+
 /// `path` の両側と Result を裏で読んで、エディタを作る（まだどこにも入れない）。失敗はその理由。
 pub async fn load(
     repo: Arc<Repository>,
@@ -485,14 +507,7 @@ pub fn show_in_window(editor: &Rc<Editor>, parent: &gtk::Window) {
         }
         let window = window.clone();
         glib::spawn_future_local(async move {
-            // 窓のシートで、赤い「Close Without Saving」（Return は Cancel。macOS 版と同じ）。
-            let sheet = crate::sheets::Sheet::unnamed(
-                Some(&window),
-                &tr!("Close without saving?"),
-                &tr!("Your changes to Result are lost."),
-            );
-            sheet.buttons(&tr!("Close Without Saving"), true, None);
-            if sheet.run().await == crate::sheets::Response::Ok {
+            if confirm_discarding(&window).await {
                 window.destroy();
             }
         });

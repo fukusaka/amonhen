@@ -931,6 +931,9 @@ fn build_tab(
 
     // History と Working Copy は、サイドバーで行き来する。
     let working = Rc::new(WorkingCopy::new(pending.clone()));
+    // マージエディタの Result を保存していなければ、タブ・窓を閉じる前と終える前に確かめる（macOS 版と同じ）。
+    let w = Rc::downgrade(&working);
+    tab.connect_unsaved(move || w.upgrade().is_some_and(|w| w.has_unsaved_merge_edits()));
     if let Some(path) = &args.select_path {
         working.select_path(path);
     }
