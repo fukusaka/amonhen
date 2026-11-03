@@ -359,16 +359,13 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
     /// Result を読み直して、残っているコンフリクトと左右の欄との対応を決め、強調し直す。
     private func updateConflicts(initial: Bool = false) {
         let text = result.string
-        let found = (try? repository.info(["op": "conflictRegions", "text": text], as: ConflictRegions.self))?.conflicts ?? []
+        var command: [String: Any] = ["op": "conflictRegions", "text": text]
+        // 最初のどのコンフリクトに当たるか（手で書き換えたものも、前後と片側からコアが結ぶ）。
+        if !initial { command["originals"] = originals.map { [$0.current, $0.incoming] } }
+        let found = (try? repository.info(command, as: ConflictRegions.self))?.conflicts ?? []
         if initial { originals = found.map { ($0.current, $0.incoming) } }
         conflicts = found
-        // 両側の中身が同じ最初のコンフリクトに対応させる（手で直したものは対応がなくなる）。
-        var used = Set<Int>()
-        originalOf = found.map { c in
-            let j = originals.indices.first { !used.contains($0) && originals[$0] == (c.current, c.incoming) }
-            if let j { used.insert(j) }
-            return j
-        }
+        originalOf = initial ? found.indices.map { Optional($0) } : found.map(\.original)
         selected = min(selected, max(0, conflicts.count - 1))
         refresh()
     }

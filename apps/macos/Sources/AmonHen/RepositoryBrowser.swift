@@ -327,7 +327,7 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
                 column.sortDescriptorPrototype = NSSortDescriptor(key: id, ascending: ascending)
                 column.headerToolTip = [
                     "branch": L("Current branch"),
-                    "status": L("Changes n: files with changes (untracked files aren’t counted)\n↑ commits ahead of the upstream · ↓ commits behind it\n✓ no changes and same as the upstream"),
+                    "status": L("Changes n: files with changes\n↑ commits ahead of the upstream · ↓ commits behind it\n✓ no changes and same as the upstream"),
                     "commit": L("Date and subject of the last commit"),
                     "opened": L("When you last opened it in this app (— if never)"),
                 ][id]
@@ -1457,7 +1457,7 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
                 label.textColor = fetchError != nil || !exists ? .systemRed : peek?.changed ?? 0 > 0 ? .systemOrange : .secondaryLabelColor
                 toolTip = fetchError.map { L("Fetch failed: %@", $0) } ?? peek.map {
                     [
-                        $0.changed > 0 ? L("%ld files with changes (untracked files aren’t counted)", $0.changed) : L("No changes"),
+                        $0.changed > 0 ? L("%ld files with changes", $0.changed) : L("No changes"),
                         $0.hasUpstream ? L("%ld ahead of the upstream, %ld behind", $0.ahead, $0.behind) : L("No upstream"),
                     ].joined(separator: "\n")
                 }
@@ -1559,7 +1559,7 @@ final class RepositoryCell: NSTableCellView {
         state.textColor = fetchError != nil ? .systemRed : peek?.changed ?? 0 > 0 ? .systemOrange : .secondaryLabelColor
         toolTip = peek.map {
             [
-                $0.changed > 0 ? L("%ld files with changes (untracked files aren’t counted)", $0.changed) : L("No changes"),
+                $0.changed > 0 ? L("%ld files with changes", $0.changed) : L("No changes"),
                 $0.hasUpstream ? L("%ld ahead of the upstream, %ld behind", $0.ahead, $0.behind) : L("No upstream"),
             ].joined(separator: "\n")
         }

@@ -469,6 +469,8 @@ public struct ConflictRegions: Decodable, Sendable {
         public let lines: [Int]
         public let current: String
         public let incoming: String
+        /// 渡した `originals` の何番目に当たるか（渡さなかったか、わからなければ nil）。
+        public let original: Int?
     }
 
     public let conflicts: [Conflict]

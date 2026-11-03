@@ -629,10 +629,7 @@ fn state_text(location: &str, check: bool) -> (String, &'static str, Option<Stri
     let mut tip = peek.map(|p| {
         [
             if p.changed > 0 {
-                tr!(
-                    "{count} files with changes (untracked files aren’t counted)",
-                    count = p.changed
-                )
+                tr!("{count} files with changes", count = p.changed)
             } else {
                 tr!("No changes")
             },
@@ -1094,7 +1091,7 @@ impl Browser {
             None,
             Some(tr!("Current branch")),
             Some(tr!(
-                "Changes n: files with changes (untracked files aren’t counted)\n↑ commits ahead of the upstream · ↓ commits behind it\n✓ no changes and same as the upstream"
+                "Changes n: files with changes\n↑ commits ahead of the upstream · ↓ commits behind it\n✓ no changes and same as the upstream"
             )),
             Some(tr!("Date and subject of the last commit")),
             Some(tr!("When you last opened it in this app (— if never)")),
