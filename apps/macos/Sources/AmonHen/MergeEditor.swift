@@ -18,7 +18,11 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
     /// 保存して解決済みにした（埋め込んだ側はエディタを外し、ウィンドウは閉じる）。
     var onResolved: (() -> Void)?
     /// 別ウィンドウで開く（埋め込んだときだけ出す）。
-    var onPopOut: (() -> Void)?
+    var onPopOut: (() -> Void)? {
+        // 別の窓に移すと nil になる。ボタンはもう作ってあるので、ここで隠す。
+        didSet { popOutButton?.isHidden = onPopOut == nil }
+    }
+    private weak var popOutButton: NSButton?
 
     private let current = MergeEditorViewController.textView(editable: false)
     private let incoming = MergeEditorViewController.textView(editable: false)
@@ -165,6 +169,7 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
             target: self, action: #selector(popOutClicked))
         popOut.toolTip = L("Open in a Separate Window")
         popOut.isHidden = onPopOut == nil
+        popOutButton = popOut
         let save = NSButton(title: L("Save"), target: self, action: #selector(saveOnly))
         let resolve = NSButton(title: L("Save & Mark Resolved"), target: self, action: #selector(saveAndResolve))
         // ⌘↩ は handleKeyEquivalent で（ボタンに付けると、埋め込みでは Working Copy の Commit の ⌘↩ と取り合う）。
