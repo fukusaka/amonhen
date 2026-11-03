@@ -162,7 +162,7 @@ enum CloneSheet {
                 }
                 if let chosen = read?.branch { branch.selectItem(withTitle: chosen) }
             }
-            let showBranch = bundle.map { !$0.head && !$0.refs.isEmpty } ?? false
+            let showBranch = bundle.map { !$0.head && !$0.refs.isEmpty && $0.prerequisites == 0 } ?? false
             branch.isHidden = !showBranch
             branchLabel.isHidden = !showBranch
             download.isEnabled = bundle == nil

@@ -616,7 +616,10 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
                 }
                 let info = bundle.borrow();
                 if let Some(r) = branch_row.upgrade() {
-                    r.set_visible(info.as_ref().is_some_and(|i| !i.head && !i.refs.is_empty()));
+                    r.set_visible(
+                        info.as_ref()
+                            .is_some_and(|i| !i.head && !i.refs.is_empty() && i.prerequisites == 0),
+                    );
                 }
                 download.set_sensitive(info.is_none());
                 let choice = if info.is_some() {
