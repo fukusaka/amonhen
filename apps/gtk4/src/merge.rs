@@ -440,8 +440,8 @@ pub fn show_in_window(editor: &Rc<Editor>, parent: &gtk::Window) {
     editor.set_on_pop_out(None);
     let window = gtk::Window::builder()
         .title(format!("Merge — {}", editor.path))
-        .default_width(1400)
-        .default_height(800)
+        .default_width(1300)
+        .default_height(820)
         .child(&editor.root)
         .build();
     // リポジトリの窓とは別の窓にする（macOS 版と同じ）。リポジトリの窓を閉じても道連れにしない（道連れだと
@@ -938,8 +938,8 @@ impl Editor {
         }
     }
 
-    /// 開いたとき（作ったあと一度だけ）: 間違えようのないコンフリクトを解き（設定で切れる）、最初のコンフリクトを
-    /// 見せる。
+    /// 開いたとき（作ったあと一度だけ）: 間違えようのないコンフリクトを解く（設定で切れる）。スクロールはしない
+    /// （ファイルの先頭から。macOS 版と同じ）。
     pub fn opened(this: &Rc<Self>) {
         if crate::settings::bool(crate::settings::AUTO_MAGIC_MERGE) {
             let solved = this.apply_magic(MagicRules::Safe);
@@ -950,13 +950,6 @@ impl Editor {
                 ));
             }
         }
-        // 大きさが決まってから見せる。
-        let weak = Rc::downgrade(this);
-        glib::idle_add_local_once(move || {
-            if let Some(this) = weak.upgrade() {
-                this.reveal();
-            }
-        });
         if let Some(choice) = ACCEPT_ONCE.with(|a| a.take()) {
             this.resolve(this.selected.get(), choice);
         }
@@ -1307,23 +1300,29 @@ impl Editor {
 
     /// マーカーの残っていないファイルの案内の帯と、その Mark Resolved のボタン（macOS 版と同じ）。
     fn without_markers_banner(text: &str) -> (gtk::Box, gtk::Button) {
-        let label = gtk::Label::new(Some(&format!("✓ {text}")));
+        // macOS 版と同じく、窓の幅いっぱいの橙の帯（高さ 30）に、橙の ✓ の丸・小さな字の案内・小さな Mark Resolved。
+        let icon = crate::icon::Icon::default();
+        icon.set(crate::icon::Kind::CheckCircle, false);
+        icon.add_css_class("merge-without-markers-icon");
+        icon.set_valign(gtk::Align::Center);
+        let label = gtk::Label::new(Some(text));
+        label.add_css_class("caption");
         label.set_xalign(0.0);
         label.set_hexpand(true);
         label.set_ellipsize(gtk::pango::EllipsizeMode::End);
         label.set_tooltip_text(Some(text));
         let b = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         b.add_css_class("merge-without-markers");
-        b.set_margin_start(6);
-        b.set_margin_end(6);
-        b.set_margin_bottom(6);
+        b.append(&icon);
         b.append(&label);
         let resolve = gtk::Button::with_label(&tr!("Mark Resolved"));
         resolve.set_valign(gtk::Align::Center);
         b.append(&resolve);
         let css = gtk::CssProvider::new();
         css.load_from_string(
-            ".merge-without-markers { background: alpha(#e66100, 0.14); border-radius: 6px; padding: 6px 10px; }",
+            ".merge-without-markers { background: alpha(#e66100, 0.14); min-height: 30px; padding: 0 10px; } \
+             .merge-without-markers-icon { color: #e66100; } \
+             .merge-without-markers button { min-height: 0; padding: 2px 10px; font-size: smaller; }",
         );
         gtk::style_context_add_provider_for_display(
             &b.display(),
