@@ -157,6 +157,8 @@ becomes the GitHub Release notes.
   repository is open, brings its tab forward instead of opening a second one.
 - The GTK4 app's separate merge window saves, marks resolved and asks AI in the worktree it was opened for; after
   selecting another worktree, Save wrote its Result over the same file there.
+- The GTK4 app's Working Copy keeps Amend and the file filter per worktree; Amend ticked in one worktree stayed on in
+  another, so Commit amended that worktree's last commit.
 - Activity no longer says “daemon” twice for a repository opened through the shared daemon, nor “(daemon)” for an
   SSH host connected directly.
 - Saving patches no longer fails with “No such file or directory” when another save runs at the same time in the same

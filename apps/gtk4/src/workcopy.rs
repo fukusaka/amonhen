@@ -126,6 +126,9 @@ struct Inner {
     /// メッセージの入力の補助（下書き・最近のメッセージ・型とトレーラー・fixup!）。
     aids: Rc<crate::commitmsg::MessageAids>,
     amend: gtk::CheckButton,
+    /// worktree ごとの Amend と絞り込み（書き込む先を切り替えたら、前の worktree の分をここに預け、戻ったら戻す。
+    /// macOS 版は worktree ごとに Working Copy がある）。
+    worktree_states: RefCell<HashMap<Option<std::path::PathBuf>, (bool, String)>>,
     commit: gtk::Button,
     /// 件名の文字数。
     summary_count: gtk::Label,
@@ -503,6 +506,7 @@ impl WorkingCopy {
             body,
             aids,
             amend,
+            worktree_states: RefCell::default(),
             commit,
             summary_count,
             message,
@@ -624,11 +628,27 @@ impl WorkingCopy {
 
     pub fn set_repo(&self, repo: Arc<Repository>) {
         let old = self.inner.repo.replace(Some(repo.clone()));
+        let workdir = repo.paths().workdir;
         // 書き込む先の worktree を切り替えた: 前の worktree のマージエディタを外す（作ったものは戻ったときに使う）。
-        if old.is_some_and(|old| old.paths().workdir != repo.paths().workdir) {
+        let moved = old
+            .as_ref()
+            .map(|old| old.paths().workdir)
+            .filter(|old| *old != workdir);
+        if moved.is_some() {
             self.inner.unembed();
         }
         self.inner.aids.set_repo(repo);
+        // Amend と絞り込みも worktree ごと（A で入れた Amend のまま B でコミットすると、B の HEAD を直してしまう）。
+        if let Some(old) = moved {
+            let inner = &self.inner;
+            let (amend, filter) = {
+                let mut states = inner.worktree_states.borrow_mut();
+                states.insert(old, (inner.amend.is_active(), inner.filter.text().into()));
+                states.remove(&workdir).unwrap_or_default()
+            };
+            inner.amend.set_active(amend);
+            inner.filter.set_text(&filter);
+        }
     }
 
     /// 確かめる窓や、知らせに使う。
@@ -2895,10 +2915,21 @@ impl Inner {
                     if let Some(output) = output {
                         hooks_sheet(parent.as_ref(), &tr!("Committed (hooks output)"), &output);
                     }
-                    this.aids.clear_draft();
-                    this.subject.set_text("");
-                    this.body.buffer().set_text("");
-                    this.amend.set_active(false);
+                    let same_worktree =
+                        this.repo().map(|r| r.paths().workdir) == Some(source.paths().workdir);
+                    if same_worktree {
+                        this.aids.clear_draft();
+                        this.subject.set_text("");
+                        this.body.buffer().set_text("");
+                        this.amend.set_active(false);
+                    } else if let Some((amend, _)) = this
+                        .worktree_states
+                        .borrow_mut()
+                        .get_mut(&source.paths().workdir)
+                    {
+                        // コミットしている間にほかの worktree に替えた: その worktree の Amend を戻しておく。
+                        *amend = false;
+                    }
                     if let Some(status) = status {
                         Inner::show_from(&this, &source, status);
                     }
