@@ -210,6 +210,7 @@ becomes the GitHub Release notes.
   change instead of the removal.
 - macOS: undoing or restoring the removal of a key with several values, such as two remote.origin.fetch, puts all of
   them back instead of only the last.
+- macOS: warnings flashed in the status bar show an orange triangle instead of a green one.
 
 ### [0.2.8] - 2026-10-30
 
