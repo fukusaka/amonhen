@@ -392,8 +392,14 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
     private func updatePreview() {
         previewTask?.cancel()
         guard hasChanges else {
+            // 変更をすべて戻したら、前の見込み（コンフリクトの印、積み重ねたブランチの選択）も消す。
             preview.stringValue = ""
             preview.isHidden = true
+            moveStacked.isHidden = true
+            if !conflicting.isEmpty {
+                conflicting = [:]
+                table.reloadData()
+            }
             return
         }
         let edit: [String: Any] = ["kind": "plan", "steps": planSteps()]

@@ -178,6 +178,7 @@ becomes the GitHub Release notes.
 - macOS: dragging a favorite branch while the sidebar is filtered no longer reorders the favorites wrongly.
 - macOS: changing One Line per Commit or History Items keeps several selected commits selected.
 - macOS: dragging one of several selected History rows moves the commit you grabbed, not the newest selected one.
+- macOS: in History's edit mode, undoing every change clears the conflict marks on the rows.
 
 ### [0.2.8] - 2026-10-30
 
