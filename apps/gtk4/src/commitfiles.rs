@@ -484,8 +484,10 @@ pub fn find_in_focused(window: &gtk::Window) -> bool {
 }
 
 /// `window` でフォーカスのある差分の列の検索の帯が開いていれば、次・前の一致へ（Ctrl+G。移ったら true）。
+/// フォーカスが検索の帯の中なら移らない（macOS 版の ⌘G は差分の部品だけが受け、帯の欄からは History の検索の
+/// 一致へ行く）。
 pub fn find_next_in_focused(window: &gtk::Window, step: i32) -> bool {
-    match focused(window).filter(|inner| inner.find.bar.is_visible()) {
+    match focused(window).filter(|inner| inner.find.bar.is_visible() && !in_bar(window, inner)) {
         Some(inner) => {
             Inner::move_match(&inner, step);
             true
@@ -497,13 +499,22 @@ pub fn find_next_in_focused(window: &gtk::Window, step: i32) -> bool {
 /// `window` でフォーカスのある差分の検索の帯が閉じていれば、帯を開いて次・前の一致へ（History を探していない
 /// ときの Ctrl+G。macOS 版の差分の `findNext`）。移ったら true。
 pub fn find_next_opening(window: &gtk::Window, step: i32) -> bool {
-    match focused(window) {
+    match focused(window).filter(|inner| !in_bar(window, inner)) {
         Some(inner) => {
             Inner::move_match(&inner, step);
             true
         }
         None => false,
     }
+}
+
+/// `window` で Ctrl+G が差分の一致に移れるか（フォーカスが差分にあり、検索の帯の中ではない）。
+pub fn find_next_possible(window: &gtk::Window) -> bool {
+    focused(window).is_some_and(|inner| !in_bar(window, &inner))
+}
+
+fn in_bar(window: &gtk::Window, inner: &Inner) -> bool {
+    gtk::prelude::GtkWindowExt::focus(window).is_some_and(|f| f.is_ancestor(&inner.find.bar))
 }
 
 /// `window` で、フォーカスが差分か検索の帯にある差分の列（変更ファイルの一覧は含めない。一覧で Ctrl+F・Ctrl+G を

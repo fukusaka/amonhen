@@ -1,6 +1,7 @@
 //! 差分の中を探す帯（Working Copy・File History・Range Diff の差分。History の差分は `commitfiles` が自分で持つ）。macOS 版は
 //! 検索の帯が差分の部品（`DiffViewController`）にあり、どの差分でも ⌘F で探せる。ここでも、フォーカスが差分の
-//! 中にあれば Ctrl+F でこの帯を開き、Ctrl+G・Ctrl+Shift+G で次・前の一致へ移る。
+//! 中にあれば Ctrl+F でこの帯を開き、Ctrl+G・Ctrl+Shift+G で次・前の一致へ移る（帯の欄からは History の検索の一致へ。
+//! macOS 版と同じ）。
 
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
@@ -40,9 +41,12 @@ pub fn find_in_focused(window: &gtk::Window) -> bool {
     }
 }
 
-/// `window` でフォーカスのある差分の帯が開いていれば、次・前の一致へ（Ctrl+G。移ったら true）。
+/// `window` でフォーカスのある差分の帯が開いていれば、次・前の一致へ（Ctrl+G。移ったら true）。フォーカスが帯の
+/// 中なら移らない（macOS 版の ⌘G は差分の部品だけが受け、帯の欄からは History の検索の一致へ行く）。
 pub fn find_next_in_focused(window: &gtk::Window, step: i32) -> bool {
-    match focused(window).filter(|f| f.0.bar.upgrade().is_some_and(|b| b.is_visible())) {
+    match focused(window)
+        .filter(|f| f.0.bar.upgrade().is_some_and(|b| b.is_visible()) && !f.in_bar(window))
+    {
         Some(find) => {
             find.move_match(step);
             true
@@ -54,13 +58,18 @@ pub fn find_next_in_focused(window: &gtk::Window, step: i32) -> bool {
 /// `window` でフォーカスのある差分の検索の帯が閉じていれば、帯を開いて次・前の一致へ（History を探していない
 /// ときの Ctrl+G。macOS 版の差分の `findNext`）。移ったら true。
 pub fn find_next_opening(window: &gtk::Window, step: i32) -> bool {
-    match focused(window) {
+    match focused(window).filter(|f| !f.in_bar(window)) {
         Some(find) => {
             find.move_match(step);
             true
         }
         None => false,
     }
+}
+
+/// `window` で Ctrl+G が差分の一致に移れるか（フォーカスが差分にあり、検索の帯の中ではない）。
+pub fn find_next_possible(window: &gtk::Window) -> bool {
+    focused(window).is_some_and(|f| !f.in_bar(window))
 }
 
 fn focused(window: &gtk::Window) -> Option<DiffFind> {
@@ -77,6 +86,14 @@ fn focused(window: &gtk::Window) -> Option<DiffFind> {
 }
 
 impl DiffFind {
+    fn in_bar(&self, window: &gtk::Window) -> bool {
+        let focus = gtk::prelude::GtkWindowExt::focus(window);
+        self.0
+            .bar
+            .upgrade()
+            .is_some_and(|bar| focus.is_some_and(|f| f.is_ancestor(&bar)))
+    }
+
     /// `diff` の検索の帯を作る。`area`（差分とこの帯を入れる部品）にフォーカスがあれば Ctrl+F で開く。帯は
     /// 差分の下に置く（History の差分と同じ）。
     pub fn new(diff: &DiffWidget, area: &impl IsA<gtk::Widget>) -> (DiffFind, gtk::Box) {

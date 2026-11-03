@@ -1859,6 +1859,14 @@ fn build_tab(
     search.install(&tab.group);
     // 足した検索のアクションにも、使えるか（開けていないタブでは使えない）を入れる。
     actions.update_facts(|_| {});
+    // Find Next・Find Previous は、History を探したか、フォーカスが差分・History にあるときだけ使える（macOS 版で
+    // ⌘G を受ける部品があるときと同じ）。
+    {
+        let a = actions.clone();
+        search.track_focus(tab.root.upcast_ref(), move |available| {
+            a.update_facts(|f| f.find_next = available);
+        });
+    }
     let order = settings::history_order();
     // 見張りからの変化の知らせ（裏の糸が受ける）。タブを閉じたら、知らせを受ける糸と下の受け手を止める。
     let (changed_tx, changed_rx) = std::sync::mpsc::channel();

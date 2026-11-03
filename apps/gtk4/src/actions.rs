@@ -680,6 +680,9 @@ pub struct Facts {
     /// まだ開けていないタブ（つないでいる途中・つなげなかった）。リポジトリの操作はどれも使えない（macOS 版の
     /// つないでいるタブは、リポジトリの窓でないので、その操作がない）。
     pub unopened: bool,
+    /// Find Next・Find Previous が効く（History を探した、またはフォーカスが差分・History にある。macOS 版で
+    /// ⌘G を受ける部品があるか）。
+    pub find_next: bool,
 }
 
 /// リポジトリを開いていないと使えない、表の操作のメニュー（File・Window・アプリのものは開く前でも使える）。
@@ -691,8 +694,9 @@ const REPOSITORY_MENUS: &[amonhen_commands::Menu] = &[
     amonhen_commands::Menu::Commit,
 ];
 
-/// 表にない、リポジトリを開いていないと使えないタブのアクション。
-const REPOSITORY_ONLY: &[&str] = &["find", "find-next", "find-previous", "search-history"];
+/// 表にない、リポジトリを開いていないと使えないタブのアクション（Find Next・Find Previous は、そのうえ
+/// `Facts::find_next` のときだけ）。
+const REPOSITORY_ONLY: &[&str] = &["find", "search-history"];
 
 /// 状態から、タブのアクション（`win.<id>`）ごとに使えるか（macOS 版の `RepositoryWindow.validate` と同じ）。
 /// ここにないアクションはいつも使える。
@@ -774,6 +778,14 @@ fn apply_facts(group: &glib::WeakRef<gio::SimpleActionGroup>, facts: &Facts) {
             .and_downcast::<gio::SimpleAction>()
         {
             action.set_enabled(!facts.unopened);
+        }
+    }
+    for name in ["find-next", "find-previous"] {
+        if let Some(action) = group
+            .lookup_action(name)
+            .and_downcast::<gio::SimpleAction>()
+        {
+            action.set_enabled(!facts.unopened && facts.find_next);
         }
     }
 }

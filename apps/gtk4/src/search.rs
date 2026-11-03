@@ -37,6 +37,13 @@ struct Inner {
     /// 一致した行（昇順）と、それを探した問い合わせと History の世代。
     matches: RefCell<Rc<Vec<u32>>>,
     searched: RefCell<Option<(String, u64)>>,
+    /// 探した問い合わせが決まった・消えた（Find Next を使えるかを決め直す）。
+    on_find_state: RefCell<Option<Rc<dyn Fn()>>>,
+    /// タブの中で最後にフォーカスがあった部品（メニューや見出しの帯を押してフォーカスが移っても、Find Next は
+    /// その部品に効かせる。macOS 版のメニューは first responder を変えない）。
+    last_focus: RefCell<glib::WeakRef<gtk::Widget>>,
+    /// タブの中身（`last_focus` を覚える範囲）。
+    tab_root: RefCell<glib::WeakRef<gtk::Widget>>,
     generation: Cell<u64>,
     /// 最後に探し始めた問い合わせ（History を読み直したとき、絞り込んだままにするなら探し直す）。
     requested: RefCell<Option<String>>,
@@ -212,6 +219,9 @@ impl Search {
             spinner,
             matches: RefCell::default(),
             searched: RefCell::default(),
+            on_find_state: RefCell::default(),
+            last_focus: RefCell::default(),
+            tab_root: RefCell::default(),
             generation: Cell::new(0),
             requested: RefCell::default(),
             index: Cell::new(None),
@@ -297,6 +307,11 @@ impl Search {
             let action = gio::SimpleAction::new(name, None);
             let (i, bar) = (self.inner.clone(), self.bar.clone());
             action.connect_activate(move |_, _| {
+                // メニューから押してフォーカスがタブの外（メニュー・見出しの帯）にあれば、タブの中で最後にフォーカスが
+                // あった部品に戻してから決める（macOS 版のメニューは first responder を変えない）。
+                if let Some(w) = bar.root().and_downcast::<gtk::Window>() {
+                    i.restore_focus(&w);
+                }
                 // 差分の中を探しているなら、その一致へ。
                 if let Some(w) = bar.root().and_downcast::<gtk::Window>()
                     && (crate::messagefind::find_next_in_focused(&w, step)
@@ -315,7 +330,13 @@ impl Search {
                     {
                         return;
                     }
-                    if bar.is_mapped() {
+                    // History の欄を開くのは、フォーカスが History の中にあるときだけ（macOS 版の History の
+                    // findNext。ほかの所では窓の findNext に行き、History を探していなければ何もしない）。
+                    let in_history = bar
+                        .root()
+                        .and_downcast::<gtk::Window>()
+                        .is_some_and(|w| focus_in_history(&w, &bar));
+                    if bar.is_mapped() && in_history {
                         bar.set_search_mode(true);
                         i.entry.grab_focus();
                     } else if let Some(w) = bar.root().and_downcast::<gtk::Window>() {
@@ -328,6 +349,72 @@ impl Search {
             });
             group.add_action(&action);
         }
+    }
+
+    /// Find Next・Find Previous が効くか（macOS 版で ⌘G を受ける部品があるか）を、変わるたびに `f(効くか)` で
+    /// 知らせる: History を探した、またはフォーカスが差分（検索の帯の欄は除く）か開いた詳細の検索の帯か History の
+    /// 中にある。`root`（タブの中身）が前にある間、窓のフォーカスの移りを見る。フォーカスがタブの外（メニュー・
+    /// 見出しの帯）に移っても、タブの中で最後にフォーカスがあった所で決める。
+    pub fn track_focus(&self, root: &gtk::Widget, f: impl Fn(bool) + 'static) {
+        self.inner.tab_root.replace(root.downgrade());
+        let last = Rc::new(Cell::new(false));
+        // タブの中のフォーカスで決めた分。
+        let by_focus = Rc::new(Cell::new(false));
+        let refresh: Rc<dyn Fn()> = {
+            // 探した状態から呼ばれるので、循環しないよう弱く持つ。
+            let (i, bar, root) = (
+                Rc::downgrade(&self.inner),
+                self.bar.downgrade(),
+                root.downgrade(),
+            );
+            Rc::new(move || {
+                let (Some(root), Some(i), Some(bar)) = (root.upgrade(), i.upgrade(), bar.upgrade())
+                else {
+                    return;
+                };
+                if let Some(window) = root.root().and_downcast::<gtk::Window>()
+                    && let Some(focus) = gtk::prelude::GtkWindowExt::focus(&window)
+                    && (focus == root || focus.is_ancestor(&root))
+                {
+                    i.last_focus.replace(focus.downgrade());
+                    by_focus.set(
+                        crate::messagefind::find_next_possible(&window)
+                            || crate::commitfiles::find_next_possible(&window)
+                            || crate::difffind::find_next_possible(&window)
+                            || (bar.is_mapped() && focus_in_history(&window, &bar)),
+                    );
+                }
+                let available = i.searched.borrow().is_some() || by_focus.get();
+                if last.replace(available) != available {
+                    f(available);
+                }
+            })
+        };
+        let r = refresh.clone();
+        self.inner.on_find_state.replace(Some(Rc::new(move || r())));
+        type Watch = Option<(glib::WeakRef<gtk::Window>, glib::SignalHandlerId)>;
+        let watch: Rc<RefCell<Watch>> = Rc::default();
+        let w = watch.clone();
+        root.connect_map(move |root| {
+            if let Some((window, id)) = w.take()
+                && let Some(window) = window.upgrade()
+            {
+                window.disconnect(id);
+            }
+            if let Some(window) = root.root().and_downcast::<gtk::Window>() {
+                let r = refresh.clone();
+                let id = window.connect_focus_widget_notify(move |_| r());
+                w.replace(Some((window.downgrade(), id)));
+            }
+            refresh();
+        });
+        root.connect_unmap(move |_| {
+            if let Some((window, id)) = watch.take()
+                && let Some(window) = window.upgrade()
+            {
+                window.disconnect(id);
+            }
+        });
     }
 
     /// 新しく読んだ History を出す。行が変わるので、検索の結果は捨てる（問い合わせは欄に残し、Enter で探し直せる。
@@ -395,6 +482,21 @@ impl Search {
 }
 
 impl Inner {
+    /// フォーカスがタブの外にあれば、タブの中で最後にフォーカスがあった部品に戻す。
+    fn restore_focus(&self, window: &gtk::Window) {
+        let Some(root) = self.tab_root.borrow().upgrade() else {
+            return;
+        };
+        let inside = gtk::prelude::GtkWindowExt::focus(window)
+            .is_some_and(|f| f == root || f.is_ancestor(&root));
+        if !inside
+            && let Some(last) = self.last_focus.borrow().upgrade()
+            && last.is_mapped()
+        {
+            last.grab_focus();
+        }
+    }
+
     /// 一致した行を入れ、前・次のボタンを一致があるときだけ押せるようにする。
     fn set_matches(&self, rows: Rc<Vec<u32>>) {
         let any = !rows.is_empty();
@@ -409,6 +511,10 @@ impl Inner {
         let now = searched.as_ref().map(|(q, _)| q.clone());
         self.searched.replace(searched);
         if before != now {
+            let f = self.on_find_state.borrow().clone();
+            if let Some(f) = f {
+                f();
+            }
             let f = self.on_query.borrow().clone();
             if let Some(f) = f {
                 f(now.as_deref());
@@ -891,6 +997,15 @@ fn with_prefix(current: &str, prefix: &str) -> String {
     } else {
         format!("{current} {prefix}")
     }
+}
+
+/// `window` でフォーカスが History の列（検索の欄・表示の帯・一覧。`bar` の親）の中にあるか。
+fn focus_in_history(window: &gtk::Window, bar: &gtk::SearchBar) -> bool {
+    let (Some(focus), Some(column)) = (gtk::prelude::GtkWindowExt::focus(window), bar.parent())
+    else {
+        return false;
+    };
+    focus == column || focus.is_ancestor(&column)
 }
 
 #[cfg(test)]

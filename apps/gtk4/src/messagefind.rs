@@ -58,6 +58,11 @@ pub fn find_next_in_focused(window: &gtk::Window, step: i32) -> bool {
     }
 }
 
+/// `window` で Ctrl+G が詳細の一致に移れるか（帯が開いていて、フォーカスが詳細の中にある）。
+pub fn find_next_possible(window: &gtk::Window) -> bool {
+    focused(window).is_some_and(|f| f.bar.is_visible())
+}
+
 /// `window` で、フォーカスが中にある詳細の帯。
 fn focused(window: &gtk::Window) -> Option<Rc<MessageFind>> {
     let focus = gtk::prelude::GtkWindowExt::focus(window)?;
