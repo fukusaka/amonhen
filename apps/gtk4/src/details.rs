@@ -942,6 +942,14 @@ impl Details {
         self.find.refresh();
     }
 
+    /// 次のコミットを読み始める: 出しているものは届くまで残し、届いた分だけを新しいコミットのものにする
+    /// （`commit_extras` が詳細より先に届いても、前のコミットの詳細には足さない）。
+    pub fn next(&self) {
+        self.end_reword();
+        self.info.replace(None);
+        self.extras.replace(None);
+    }
+
     /// コミットではないもの（Push のシートの「送る変更すべて」など）: 件名と本文だけを出す。
     pub fn show_text(&self, subject: &str, body: &str) {
         self.clear();
@@ -1048,6 +1056,8 @@ impl Details {
 
     /// すぐ読める分を出す（時間のかかる分は、届いたら `show_extras`）。
     pub fn show(&self, info: &Value) {
+        // 複数のコミットの見出しを出していたら、1 つのコミットの見出しに戻す。
+        self.set_selection_mode(false);
         self.info.replace(Some(info.clone()));
         let message = info["message"].as_str().unwrap_or_default();
         let subject = message.trim().split('\n').next().unwrap_or_default();

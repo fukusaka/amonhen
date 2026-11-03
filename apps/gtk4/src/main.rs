@@ -2868,10 +2868,18 @@ struct Loader {
 
 impl Loader {
     fn start(&self) -> u64 {
-        let g = self.generation.get() + 1;
-        self.generation.set(g);
+        let g = self.next();
         self.details.clear();
         self.files.clear();
+        g
+    }
+
+    /// 選び直した（古い結果は捨てる）。出している詳細と差分は、新しいものが届くまでそのまま（1 つのコミットを
+    /// 選んだとき。macOS 版と同じ）。
+    fn next(&self) -> u64 {
+        let g = self.generation.get() + 1;
+        self.generation.set(g);
+        self.details.next();
         self.files.reset_stats();
         g
     }
@@ -2886,7 +2894,7 @@ impl Loader {
         let Some(&id) = history.graph.ids().get(row as usize) else {
             return;
         };
-        let g = self.start();
+        let g = self.next();
         self.pending.set(self.pending.get() + 1);
         let (this, repo_i) = (self.clone(), repo.clone());
         glib::spawn_future_local(async move {
