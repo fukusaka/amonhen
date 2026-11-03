@@ -336,7 +336,8 @@ pub(crate) fn remote_sheet(s: &Rc<RepoSettings>, remote: Option<Remote>) {
         } else {
             tr!("Add Remote")
         };
-        let sheet = Sheet::new(parent.as_ref(), &title, "");
+        // リモート・フック・LFS のパターンは worktree によらないので、worktree の名前は書かない（macOS 版と同じ）。
+        let sheet = Sheet::unnamed(parent.as_ref(), &title, "");
         let name = gtk::Entry::builder()
             .text(remote.as_ref().map_or("origin", |r| r.name.as_str()))
             .hexpand(true)
@@ -1277,7 +1278,7 @@ fn create_hook(s: &Rc<RepoSettings>, table: Rc<Table>) {
     }
     let (w, parent) = (s.weak(), s.window());
     glib::spawn_future_local(async move {
-        let sheet = Sheet::new(
+        let sheet = Sheet::unnamed(
             parent.as_ref(),
             &tr!("Create Hook"),
             &tr!("Puts a #!/bin/sh skeleton in place and makes it executable."),
@@ -1642,7 +1643,7 @@ pub(crate) fn hooks_page(s: &Rc<RepoSettings>) -> gtk::ScrolledWindow {
 fn track_pattern(s: &Rc<RepoSettings>) {
     let (w, parent) = (s.weak(), s.window());
     glib::spawn_future_local(async move {
-        let sheet = Sheet::new(
+        let sheet = Sheet::unnamed(
             parent.as_ref(),
             &tr!("Track Pattern"),
             &tr!("Files matching the pattern are stored in LFS from now on (git lfs track)."),
