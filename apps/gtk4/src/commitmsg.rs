@@ -406,7 +406,10 @@ impl MessageAids {
                 return;
             };
             // 読む間にほかの worktree に替えていたら入れない（その worktree の下書きかテンプレートが入っている）。
-            if !this.is_on(&repo) {
+            // Amend なら入れない: HEAD のメッセージを別に読んで入れる（Amend のまま worktree に戻ったとき、
+            // 先に届いたほうが入って、テンプレートで HEAD のメッセージを書き換えてしまわないように。macOS 版は
+            // worktree ごとの画面が入れた HEAD のメッセージを持ったまま）。
+            if !this.is_on(&repo) || this.amend.is_active() {
                 return;
             }
             let (subject, body) = this.texts();
