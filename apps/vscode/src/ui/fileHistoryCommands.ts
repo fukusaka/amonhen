@@ -15,10 +15,18 @@ interface FileContext {
   oid?: string;
 }
 
-/** `fsPath` を含むリポジトリ（入れ子なら深い方）と、その中のパス（/ 区切り） */
+/**
+ * `fsPath` を含むリポジトリ（入れ子なら深い方）と、その中のパス（/ 区切り）。Windows では大文字小文字を区別しない
+ * （VSCode の Uri はドライブ文字を小文字にするが、git は大文字で返す）
+ */
 function locate(manager: RepositoryManager, fsPath: string): { repo: Repository; path: string } | undefined {
+  const fold = (p: string) => (process.platform === 'win32' ? p.toLowerCase() : p);
+  const file = fold(fsPath);
   const repo = manager.repositories
-    .filter((r) => fsPath === r.root || fsPath.startsWith(r.root.endsWith(sep) ? r.root : r.root + sep))
+    .filter((r) => {
+      const root = fold(r.root);
+      return file === root || file.startsWith(root.endsWith(sep) ? root : root + sep);
+    })
     .sort((a, b) => b.root.length - a.root.length)[0];
   if (!repo) return undefined;
   const path = relative(repo.root, fsPath).split(sep).join('/');
