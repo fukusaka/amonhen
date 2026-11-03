@@ -12,6 +12,7 @@ struct SSHHostsSettings: View {
     @State private var page: HostPage = .connection
     @State private var sessions: [String: HostSession] = [:]
     @State private var appliedOption = false
+    @Environment(\.undoManager) private var undoManager
     /// Places やリポジトリの設定から開くときに選ぶ SSH 先と、あればページ。
     static var pendingHost: (host: String, page: SettingsPage?)?
     static let showHost = Notification.Name("SSHHostsSettings.showHost")
@@ -197,6 +198,9 @@ struct SSHHostsSettings: View {
                             .padding([.horizontal, .bottom])
                         }
                     }
+                    // ほかの設定のページと同じく ⌘Z で戻せるように（SSH 先ごとにモデルが違う）。
+                    .task(id: ObjectIdentifier(model)) { model.undo = undoManager }
+                    .onChange(of: undoManager) { _, now in model.undo = now }
                 case .connecting:
                     ProgressView(L("Connecting to %@…", selected)).padding()
                 case let .failed(reason):
