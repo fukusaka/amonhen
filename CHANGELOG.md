@@ -119,6 +119,8 @@ becomes the GitHub Release notes.
   markers back.
 - macOS: closing a repository window or tab, or quitting, asks before losing unsaved Result edits in a merge editor, as
   the separate merge window does.
+- macOS: with another worktree selected, the window subtitle and the branch switcher's recent list use that worktree's
+  branch.
 
 - The GTK4 app's Undo button asks once; it opened the question twice, so one stayed after undoing.
 - A `.mailmap`, or a mailmap setting (`log.mailmap`, `mailmap.file`), changed while the engine was reading the old

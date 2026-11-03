@@ -635,6 +635,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         pushState = current.map { (Self.isPublished($0), $0.ahead) }
         workingCopy.publishesBranch = !(current.map(Self.isPublished) ?? true)
         if editing === opened, let head = latestRefs?.head { history.head = head }
+        updateSubtitle()
     }
 
     /// サイドバーの worktree の右クリック。
@@ -1537,7 +1538,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                                     published: current.map(Self.isPublished) ?? true)
                 workingCopy.publishesBranch = !(current.map(Self.isPublished) ?? true)
                 toolbar.setBranch(refs.headBranch)
-                if let branch = refs.headBranch { rememberBranch(branch) }
+                // 最近切り替えたブランチには、書き込む先の worktree のブランチを覚える。
+                if let branch = editingBranch { rememberBranch(branch) }
                 updateEditingBranch()
                 updateTabTitle()
             } catch {
@@ -1816,7 +1818,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     private func updateSubtitle() {
         guard !CommandLine.arguments.contains("--show-latency") else { return }
         let shown = window.toolbar?.isVisible == true && window.toolbar?.items.contains { $0.itemIdentifier == .branch } == true
-        window.subtitle = shown ? "" : latestRefs?.headBranch ?? "detached HEAD"
+        // 書き込む先の worktree のブランチ（ほかの worktree を選んでいれば、そのブランチ）。
+        window.subtitle = shown ? "" : editingBranch ?? "detached HEAD"
     }
 
     /// ツールバーに検索欄が出ている。
