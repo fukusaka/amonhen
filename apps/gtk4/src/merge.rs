@@ -429,6 +429,24 @@ pub fn show_in_window(editor: &Rc<Editor>, parent: &gtk::Window) {
     if let Some(app) = parent.application() {
         window.set_application(Some(&app));
     }
+    // Ctrl+W（`win.close`）で閉じ（保存していない Result は下で確かめる）、Ctrl+M（`win.minimize`）でしまう
+    // （macOS 版の閉じられる・しまえる窓の ⌘W・⌘M）。
+    let actions = gio::SimpleActionGroup::new();
+    for (name, minimize) in [("close", false), ("minimize", true)] {
+        let action = gio::SimpleAction::new(name, None);
+        let weak = window.downgrade();
+        action.connect_activate(move |_, _| {
+            if let Some(w) = weak.upgrade() {
+                if minimize {
+                    w.minimize();
+                } else {
+                    w.close();
+                }
+            }
+        });
+        actions.add_action(&action);
+    }
+    window.insert_action_group("win", Some(&actions));
     editor.window.replace(Some(window.downgrade()));
     OPEN.with(|o| {
         let mut o = o.borrow_mut();
