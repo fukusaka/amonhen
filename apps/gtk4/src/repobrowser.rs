@@ -2334,6 +2334,8 @@ impl Browser {
             };
             crate::settings::set_string(LAST_HOST_KEY, &host);
             bookmarks::add(&location, b.selected_group().as_deref());
+            // つなぐ前に Open Recent と「開いた」の列に入れる（つながらなくても残る。macOS 版と同じ）。
+            crate::repos::record(std::path::Path::new(&location));
             b.open_location(&location, true);
         });
     }
