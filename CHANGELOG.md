@@ -110,6 +110,7 @@ becomes the GitHub Release notes.
   while filtering, a renamed group stays selected, Clone doesn't default to an SSH folder, and Activity keeps its place.
 - macOS: opening an added worktree through the shared daemon edits that worktree when its main repository wasn't open
   yet.
+- macOS: Checkout #N, Open on GitHub and the CI marks use the selected worktree and its branch, not the opened one.
 
 - The GTK4 app's Undo button asks once; it opened the question twice, so one stayed after undoing.
 - A `.mailmap`, or a mailmap setting (`log.mailmap`, `mailmap.file`), changed while the engine was reading the old

@@ -607,6 +607,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         changeCount = worktreeChanges[WorktreeInfo.canonical(slot.path)] ?? 0
         showWorktrees()
         updateTabTitle()
+        // CI の印は、書き込む先の worktree のブランチのもの（間を空けて読み直す）。
+        loadGitHub(force: false)
     }
 
     /// ツールバーに、書き込む先の worktree とそのブランチを出す。History とサイドバーの「今のブランチ」も
@@ -1953,7 +1955,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         if !ci { history.ciStatus = [:] }
         guard ci || authors else { return }
         if Settings.gitHubCIDefaultBranch, defaultBranch == nil { defaultBranch = await GitHub.defaultBranch(gitHub) }
-        let branches = Array(Set([latestRefs?.headBranch, Settings.gitHubCIDefaultBranch ? defaultBranch : nil].compactMap { $0 })).sorted()
+        // 今のブランチは、書き込む先の worktree のもの。
+        let branches = Array(Set([editingBranch, Settings.gitHubCIDefaultBranch ? defaultBranch : nil].compactMap { $0 })).sorted()
         do {
             let (statuses, avatars) = try await GitHub.commitStatuses(
                 gitHub, branches: branches, count: Settings.gitHubCICommits, ci: ci, authors: authors)
@@ -1998,9 +2001,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         return items
     }
 
-    /// プルリクエストのブランチをチェックアウトする（gh pr checkout）。手元のリポジトリだけ。
+    /// プルリクエストのブランチをチェックアウトする（gh pr checkout）。手元のリポジトリだけ。書き込む先の worktree で。
     private func checkout(_ pr: PullRequest) {
-        guard let gitHub, isLocal, let dir = repository.workdir else { return NSSound.beep() }
+        guard let gitHub, isLocal, let dir = editing.repository.workdir else { return NSSound.beep() }
         Task { @MainActor in
             guard await actions.confirm(L("Checkout #%ld?", pr.number), message: L("“%@” is checked out as a local branch.", pr.title),
                                         ok: "Checkout") else { return }
@@ -2015,11 +2018,11 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         }
     }
 
-    /// Repository > Open on GitHub: 今のブランチのページを開く。
+    /// Repository > Open on GitHub: 書き込む先の worktree の今のブランチのページを開く。
     @objc func openOnGitHub(_ sender: Any?) {
         guard let gitHub else { return NSSound.beep() }
         var url = gitHub.webURL
-        if let branch = latestRefs?.headBranch { url = url.appendingPathComponent("tree").appendingPathComponent(branch) }
+        if let branch = editingBranch { url = url.appendingPathComponent("tree").appendingPathComponent(branch) }
         NSWorkspace.shared.open(url)
     }
 
