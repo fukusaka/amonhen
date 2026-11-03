@@ -253,6 +253,8 @@ thread_local! {
     /// 確認用の起動（撮る・測る）か、前回のものを開き直している途中: 開いている窓の記録を書き換えない。
     static CHECK_RUN: Cell<bool> = const { Cell::new(false) };
     static RESTORING: Cell<bool> = const { Cell::new(false) };
+    /// エラーのタブの Try Again から開き直している途中（開けなくても、エラーのタブを残す）。
+    static RETRYING: Cell<bool> = const { Cell::new(false) };
 }
 
 /// 確認用の起動（`--snapshot`・`--measure-scroll`）では、開いている窓とタブを覚えない。
@@ -268,6 +270,12 @@ pub fn is_check_run() -> bool {
 /// 前回の窓とタブを開き直している途中か。
 pub fn is_restoring() -> bool {
     RESTORING.with(Cell::get)
+}
+
+/// 開けなかったとき、知らせを出してタブを閉じずに、エラーのタブを残すか（前回のものを開き直しているとき・
+/// エラーのタブの Try Again。macOS 版はどちらも同じタブにエラーを出し直す）。
+pub fn keeps_error_tab() -> bool {
+    is_restoring() || RETRYING.with(Cell::get)
 }
 
 /// 前回の窓とタブを開き直している間は覚えない（終わったら `save` する）。
@@ -969,6 +977,13 @@ pub fn reopen(tab: &Rc<Tab>, location: PathBuf, page: Option<crate::sidebar::Pag
     let position = host.position(tab).map(|n| n as u32 + 1);
     open_in(&app, &host, location, position, page);
     close_tab(tab);
+}
+
+/// エラーのタブの Try Again: [`reopen`] と同じく開き直し、また開けなければエラーのタブを残す（macOS 版と同じ）。
+pub fn retry(tab: &Rc<Tab>, location: PathBuf, page: Option<crate::sidebar::Page>) {
+    RETRYING.with(|r| r.set(true));
+    reopen(tab, location, page);
+    RETRYING.with(|r| r.set(false));
 }
 
 /// ツールバーのリポジトリ名から: `tab` を `location` のリポジトリに切り替える（同じ場所に開き直して、`tab` を閉じる）。

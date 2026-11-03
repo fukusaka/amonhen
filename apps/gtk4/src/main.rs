@@ -1118,7 +1118,7 @@ fn build_tab(
             },
             move || {
                 if let Some(tab) = t2.upgrade() {
-                    tabs::reopen(&tab, location.clone(), page);
+                    tabs::retry(&tab, location.clone(), page);
                 }
             },
         ))
@@ -1923,7 +1923,7 @@ fn build_tab(
     // でも開き直す）。
     let alert_on_failure = !amonhen_remote::location::is_remote(&text)
         && !settings::bool(settings::OPEN_THROUGH_DAEMON)
-        && !tabs::is_restoring()
+        && !tabs::keeps_error_tab()
         && !tabs::is_check_run();
     std::thread::spawn(move || load(path, order, tx, changed_tx, changed_rx));
     glib::spawn_future_local(glib::clone!(
