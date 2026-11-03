@@ -592,15 +592,6 @@ anything does.
   on the context menu (it stops so the changes can be committed in parts).
 
 
-## 7b. Archives
-
-- Commit > Export Archive… exports the selected commit (or HEAD), and so do History's commit menu and the menus of
-  branches, remote branches and tags in the sidebar (`git archive`).
-- A sheet chooses the format (zip, tar.gz or tar; zip by default on macOS, tar.gz on Linux, then the last one used), the
-  top folder inside the archive (`<repository>-<tag, branch or short ID>`, or none) and, if wanted, one folder picked
-  from that commit's tree. `.gitattributes` decides what is left out. In a partial clone it says how many contents
-  are fetched first and asks. Then a save panel chooses the file, and Finder (the file manager) shows it.
-
 ## 7b. Shallow clones
 
 A clone made with `--depth` or `--shallow-since` (in the Clone sheet, Recent history only, 7c) has only the newest
@@ -662,6 +653,15 @@ the sidebar is wider.
 - `amonhen status` adds one line for them (`shallow clone · partial clone (blob:none) · sparse checkout (2
   folders) · git maintenance`), and the core's `repositoryForm`, `fetchAllContents`, `sparseCheckout`,
   `disableSparseCheckout`, `treeFolders` and `maintenance` (`on`) commands are there for `amonhen run`.
+
+## 7d. Archives
+
+- Commit > Export Archive… exports the selected commit (or HEAD), and so do History's commit menu and the menus of
+  branches, remote branches and tags in the sidebar (`git archive`).
+- A sheet chooses the format (zip, tar.gz or tar; zip by default on macOS, tar.gz on Linux, then the last one used), the
+  top folder inside the archive (`<repository>-<tag, branch or short ID>`, or none) and, if wanted, one folder picked
+  from that commit's tree. `.gitattributes` decides what is left out. In a partial clone it says how many contents
+  are fetched first and asks. Then a save panel chooses the file, and Finder (the file manager) shows it.
 
 ## 8. Resolving conflicts (the embedded merge editor)
 

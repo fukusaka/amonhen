@@ -556,15 +556,6 @@ Staged / Unstaged の 2 群をやめ、変更のあるファイルを 1 つの�
 - **merge**。merge の先の first-parent のコミットも並べる。範囲に merge があれば、git の `--rebase-merges` で rebase する: git が merge を含む todo を作り、編集するコミットの命令だけを替えるので、merge と取り込んだ側のコミットはそのまま作り直される。merge の行は「そのまま」だけ、merge をまたいだ並べ替えと、merge のすぐ上のコミットを merge とまとめることはできない。Split は右クリックの別の項目のまま（止めて、分けてコミットできるようにする）。
 
 
-## 7b. アーカイブ
-
-- Commit > Export Archive… で選んでいるコミット（なければ HEAD）を書き出す。History のコミットの右クリックと、
-  サイドバーのブランチ・リモートブランチ・タグの右クリックからもできる（`git archive`）。
-- シートで、形（zip・tar.gz・tar。macOS は zip、Linux は tar.gz から始め、次からは前に選んだもの）、アーカイブの中の
-  先頭のフォルダ（`<リポジトリ>-<タグ・ブランチの名前か短い ID>`。なしにもできる）、必要なら 1 つのフォルダ（その
-  コミットの木から選ぶ）を選ぶ。何を外すかは `.gitattributes` に従う。partial clone なら、先に取ってくる中身の数を
-  出して確かめる。それから保存するファイルを選び、書いたら Finder（ファイルの窓）で見せる。
-
 ## 7b. shallow clone
 
 `--depth` や `--shallow-since` で作った clone（Clone のシートでは「最近の履歴だけ」、7c）は、履歴の新しい部分だけを
@@ -618,6 +609,15 @@ Staged / Unstaged の 2 群をやめ、変更のあるファイルを 1 つの�
 - `amonhen status` はそれらを 1 行で添える（`shallow clone · partial clone（blob:none） · sparse checkout（2
   フォルダ） · git maintenance`）。コアの `repositoryForm`・`fetchAllContents`・`sparseCheckout`・
   `disableSparseCheckout`・`treeFolders`・`maintenance`（`on`）の命令は `amonhen run` で使える。
+
+## 7d. アーカイブ
+
+- Commit > Export Archive… で選んでいるコミット（なければ HEAD）を書き出す。History のコミットの右クリックと、
+  サイドバーのブランチ・リモートブランチ・タグの右クリックからもできる（`git archive`）。
+- シートで、形（zip・tar.gz・tar。macOS は zip、Linux は tar.gz から始め、次からは前に選んだもの）、アーカイブの中の
+  先頭のフォルダ（`<リポジトリ>-<タグ・ブランチの名前か短い ID>`。なしにもできる）、必要なら 1 つのフォルダ（その
+  コミットの木から選ぶ）を選ぶ。何を外すかは `.gitattributes` に従う。partial clone なら、先に取ってくる中身の数を
+  出して確かめる。それから保存するファイルを選び、書いたら Finder（ファイルの窓）で見せる。
 
 ## 8. コンフリクトの解決（埋め込みのマージエディタ）
 
