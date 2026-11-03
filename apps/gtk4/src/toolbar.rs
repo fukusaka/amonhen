@@ -500,11 +500,12 @@ pub fn install(start: &gtk::Box, end: &gtk::Box, given: Given) {
     // Refresh: 押せば読み直し、▾ で History を作り直す（macOS 版と同じ）。
     let refresh = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     refresh.add_css_class("linked");
-    refresh.append(&icon_button(
+    let reload = icon_button(
         icon::Kind::Refresh,
         "win.refresh",
         &tr!("Reload History, branches and Working Copy (Ctrl+R)"),
-    ));
+    );
+    refresh.append(&reload);
     let more = gio::Menu::new();
     crate::menu::append_with_tip(
         &more,
@@ -519,6 +520,18 @@ pub fn install(start: &gtk::Box, end: &gtk::Box, given: Given) {
         .tooltip_text(tr!("Refresh"))
         .build();
     crate::menu::tooltips_on_show(&arrow);
+    // ▾ は Refresh と一緒に押せなくする（リポジトリのページでは、macOS 版と同じく Refresh ごと押せない）。
+    // （アクションがないボタンは、部品の sensitive ではなく状態の印で押せなくなるので、印を見る）。
+    let follow = {
+        let arrow = arrow.downgrade();
+        move |reload: &gtk::Button| {
+            if let Some(arrow) = arrow.upgrade() {
+                arrow.set_sensitive(!reload.state_flags().contains(gtk::StateFlags::INSENSITIVE));
+            }
+        }
+    };
+    follow(&reload);
+    reload.connect_state_flags_changed(move |reload, _| follow(reload));
     refresh.append(&arrow);
     buttons.insert("refresh", refresh.upcast());
     buttons.insert("undo", given.undo.upcast());
