@@ -97,6 +97,15 @@ becomes the GitHub Release notes.
 
 - Adding, renaming and removing remotes and changing their URLs work over SSH and through the shared daemon; they
   failed to reach the engine.
+- macOS merge editor: ⌥⌘↑ and ⌥⌘↓ move between conflicts, ⌘↩ no longer races Commit, a file open in its own window
+  isn't loaded again in Working Copy, and the AI buttons follow the AI setting.
+- macOS: Reset, Cherry-pick, Revert and Apply Patch say which worktree they act on; Remove Worktree counts the changes
+  again before asking; Undo works on the SSH host git settings; Settings keeps up with the History menus.
+- macOS: edit mode no longer rewords a merge row on double-click, Discard File is off for fully staged files, Working
+  Copy says why a diff can't be read, and the Rebase sheet stops "Checking for conflicts…" when the check fails.
+- macOS: Create Pull Request needs a title and base, the Branches count includes stacked-on branches, Stashes updates
+  while filtering, a renamed group stays selected, Clone doesn't default to an SSH folder, and Activity keeps its place.
+
 - The GTK4 app's Undo button asks once; it opened the question twice, so one stayed after undoing.
 - A `.mailmap`, or a mailmap setting (`log.mailmap`, `mailmap.file`), changed while the engine was reading the old
   one could be missed until it changed again; the names now follow it.
