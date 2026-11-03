@@ -177,7 +177,9 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
             // 選んだもののうちいちばん古いものに、ほかをまとめる。1 つだけなら、1 つ古いコミット（そのために読んで
             // ある）にまとめる。
             let indices = oids.compactMap { oid in rows.firstIndex { $0.oid == oid } }.sorted()
-            for i in indices.count == 1 ? indices : Array(indices.dropLast()) { set(.squash, at: i) }
+            for i in indices.count == 1 ? indices : Array(indices.dropLast()) where choices(at: i).contains(.squash) {
+                set(.squash, at: i)
+            }
         case let .drop(oid):
             if let i = rows.firstIndex(where: { $0.oid == oid }) { set(.drop, at: i) }
         case let .move(oid, to):
@@ -189,6 +191,13 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
         update()
     }
 
+    /// 行で選べる操作。いちばん古い行と merge のすぐ上の行は、まとめる相手がない。merge の行は作り直すだけ。
+    private func choices(at row: Int) -> [Action] {
+        if rows[row].merge { return [.pick] }
+        let noOlder = row == rows.count - 1 || rows[row + 1].merge
+        return Action.allCases.filter { !(noOlder && [.squash, .fixup].contains($0)) }
+    }
+
     // MARK: - 一覧
 
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
@@ -198,10 +207,7 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
         let popup = NSPopUpButton(frame: .zero, pullsDown: false)
         popup.controlSize = .small
         popup.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        // いちばん古い行と merge のすぐ上の行は、まとめる相手がない。merge の行は作り直すだけ。
-        let noOlder = row == rows.count - 1 || rows[row + 1].merge
-        let choices: [Action] = r.merge ? [.pick] : Action.allCases.filter { !(noOlder && [.squash, .fixup].contains($0)) }
-        for action in choices {
+        for action in choices(at: row) {
             popup.addItem(withTitle: action.title)
             popup.lastItem?.representedObject = action.rawValue
             popup.lastItem?.toolTip = action.toolTip

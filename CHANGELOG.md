@@ -163,6 +163,7 @@ becomes the GitHub Release notes.
 - Editing the message of an empty commit (made with `git commit --allow-empty`) finishes and keeps the commit; with
   older git (2.23, for example) the rebase stopped on it.
 - macOS: the toolbar search field keeps its text when History reloads after a fetch or commit.
+- macOS: Combine with Older Commit… no longer marks a commit whose parent is a merge for squashing onto the merge.
 
 ### [0.2.8] - 2026-10-30
 
