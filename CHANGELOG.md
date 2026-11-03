@@ -128,6 +128,8 @@ becomes the GitHub Release notes.
   tree and Fold Merged Branches when they change from the View menu.
 - macOS: Shift+Return in the History search field searches a newly typed query instead of moving within the old results.
 - macOS: Combine N Commits… refuses commits off HEAD's first-parent line instead of quietly combining fewer.
+- macOS: picking from Choose from My GitHub Repositories in the Clone sheet updates the sheet at once, as typing a URL
+  does.
 
 - The GTK4 app's Undo button asks once; it opened the question twice, so one stayed after undoing.
 - A `.mailmap`, or a mailmap setting (`log.mailmap`, `mailmap.file`), changed while the engine was reading the old

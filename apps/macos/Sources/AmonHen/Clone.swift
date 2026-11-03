@@ -98,6 +98,8 @@ enum CloneSheet {
                     let item = ClosureMenuItem(title: repo.nameWithOwner) {
                         url.stringValue = repo.url + ".git"
                         name.stringValue = ""
+                        // コードで入れても知らせが来ないので、打ち込んだときと同じく知らせる（bundle の欄などを戻す）。
+                        NotificationCenter.default.post(name: NSControl.textDidChangeNotification, object: url)
                     }
                     mine.menu?.addItem(item)
                 }
