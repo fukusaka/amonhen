@@ -121,14 +121,25 @@ impl Table {
         });
     }
 
-    /// 右クリックで、その行を選んでからメニューを出す。
+    /// 右クリックで、その行を選んでからメニューを出す。行のないところなら、選びを外して同じメニューを出す
+    /// （macOS 版の contextMenu(forSelectionType:) は空の選びに効くので、行に効く項目は押せない）。
     pub fn context_menu(&self, menu: &gio::Menu) {
-        self.context_menu_or(menu, None);
+        self.context_menu_on(menu, Empty::Unselect);
     }
 
-    /// `context_menu` と同じ。行のないところを右クリックしたら `empty` のメニューを出す（なければ出さない。
-    /// macOS 版の、何も選んでいないときのメニュー）。
-    pub fn context_menu_or(&self, menu: &gio::Menu, empty: Option<gio::Menu>) {
+    /// `context_menu` と同じ。行のないところを右クリックしたら `empty` のメニューを出す（macOS 版の、何も
+    /// 選んでいないときのメニュー）。
+    pub fn context_menu_or(&self, menu: &gio::Menu, empty: gio::Menu) {
+        self.context_menu_on(menu, Empty::Menu(empty));
+    }
+
+    /// 行の上でだけメニューを出す（行のないところでは何も出さない。項目がすべて行に効くもので、macOS 版では
+    /// 空のメニューになるとき）。
+    pub fn row_menu(&self, menu: &gio::Menu) {
+        self.context_menu_on(menu, Empty::Nothing);
+    }
+
+    fn context_menu_on(&self, menu: &gio::Menu, empty: Empty) {
         let popover = gtk::PopoverMenu::from_model(Some(menu));
         popover.set_parent(&self.view);
         popover.set_has_arrow(false);
@@ -157,9 +168,13 @@ impl Table {
                 widget = w.parent();
             }
             match &empty {
-                Some(empty) => popover.set_menu_model(Some(if hit { &menu } else { empty })),
-                None if selection.selected_item().is_none() => return,
-                None => {}
+                _ if hit => popover.set_menu_model(Some(&menu)),
+                Empty::Menu(empty) => popover.set_menu_model(Some(empty)),
+                Empty::Unselect => {
+                    selection.set_selected(gtk::INVALID_LIST_POSITION);
+                    popover.set_menu_model(Some(&menu));
+                }
+                Empty::Nothing => return,
             }
             popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
             popover.popup();
@@ -180,6 +195,16 @@ impl Table {
         frame.set_child(Some(&scrolled));
         frame
     }
+}
+
+/// 行のないところを右クリックしたときにすること。
+enum Empty {
+    /// 選びを外して、行のメニューを出す（行に効く項目は押せない）。
+    Unselect,
+    /// このメニューを出す。
+    Menu(gio::Menu),
+    /// 何も出さない。
+    Nothing,
 }
 
 /// 文字の欄の内側の余白。
@@ -1393,7 +1418,7 @@ pub(crate) fn hooks_page(s: &Rc<RepoSettings>) -> gtk::ScrolledWindow {
     // 行のないところでは Create Hook… だけ（macOS 版と同じ）。
     let empty_menu = gio::Menu::new();
     empty_menu.append(Some(&tr!("Create Hook…")), Some("hooks.create"));
-    table.context_menu_or(&menu, Some(empty_menu));
+    table.context_menu_or(&menu, empty_menu);
     let fill_menu = {
         let menu = menu.clone();
         move || {

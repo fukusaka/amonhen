@@ -140,7 +140,8 @@ pub fn section() -> (gtk::Box, gio::SimpleActionGroup) {
     table.connect_selected(move |id| enable(id.is_some()));
     let menu = gio::Menu::new();
     menu.append(Some(&tr!("Edit…")), Some("templates.edit"));
-    table.context_menu(&menu);
+    // 行のないところでは出さない（macOS 版は選びが空ならメニューに項目がない）。
+    table.row_menu(&menu);
     let e = edit.clone();
     table.view.connect_activate(move |_, _| e.activate(None));
 
