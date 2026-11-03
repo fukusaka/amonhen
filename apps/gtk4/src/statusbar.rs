@@ -76,11 +76,16 @@ impl Failure {
         self.command.as_ref()?["op"].as_str()
     }
 
-    /// 帯の見出し。何の操作が失敗したか。
+    /// 帯の見出し。何の操作が失敗したか（呼ぶ側が決めた見出しがあれば、それ）。
     pub fn title(&self) -> String {
-        if let Some(h) = &self.heading {
-            return h.clone();
+        match &self.heading {
+            Some(h) => h.clone(),
+            None => self.op_title(),
         }
+    }
+
+    /// 命令から決める見出し（「詳細」の題。macOS 版の `OperationFailure.title`）。
+    pub fn op_title(&self) -> String {
         match self.op() {
             Some("checkout" | "track" | "detach") => tr!("Couldn’t Checkout"),
             Some("pull") => tr!("Couldn’t Pull"),
@@ -570,16 +575,18 @@ impl StatusBar {
                 .flatten()
                 .collect::<Vec<_>>()
                 .join("\n\n");
-                let (title, parent) = (f.title(), crate::sheets::parent(&a));
+                // 題は命令から決めたもの（帯の見出しを替えていても。macOS 版と同じ）。
+                let (title, parent) = (f.op_title(), crate::sheets::parent(&a));
                 glib::spawn_future_local(async move {
                     crate::sheets::inform(parent.as_ref(), &title, &text).await;
                 });
             });
             children.push(more.upcast());
-            let activity = button("Activity", false);
-            activity.set_action_name(Some("win.activity"));
-            children.push(activity.upcast());
         }
+        // 取り消したときも Activity と Close は出す（Details だけ隠す。macOS 版と同じ）。
+        let activity = button("Activity", false);
+        activity.set_action_name(Some("win.activity"));
+        children.push(activity.upcast());
         let close = button(&tr!("Close"), false);
         let this = Rc::downgrade(self);
         close.connect_clicked(move |_| {
@@ -626,7 +633,7 @@ impl StatusBar {
         detail.set_xalign(0.0);
         detail.set_hexpand(true);
         detail.set_tooltip_text(Some(reason));
-        let b = button(&tr!("Reconnect"), true);
+        let b = button(&tr!("Reconnect"), false);
         b.connect_clicked(move |_| reconnect());
         self.show(
             Row::Connection,
@@ -745,7 +752,25 @@ pub fn reason_detail<'a>(heading: &str, reason: &'a str) -> &'a str {
 
 #[cfg(test)]
 mod tests {
-    use super::reason_detail;
+    use super::{Failure, reason_detail, sequence_title};
+
+    #[test]
+    fn merged_names_read_as_a_list() {
+        let s =
+            serde_json::json!({ "kind": "merge", "branch": "main", "merging": ["a", "b", "c"] });
+        assert_eq!(sequence_title(&s), "Merging a, b, and c into main");
+    }
+
+    #[test]
+    fn details_keep_the_operation_title() {
+        let mut f = Failure::from_reply(
+            &serde_json::json!({ "error": "x" }),
+            Some(serde_json::json!({ "op": "fetch" })),
+        );
+        f.heading = Some("Couldn’t Fetch Automatically".into());
+        assert_eq!(f.title(), "Couldn’t Fetch Automatically");
+        assert_eq!(f.op_title(), "Couldn’t Fetch");
+    }
 
     #[test]
     fn the_reason_does_not_repeat_the_heading() {
