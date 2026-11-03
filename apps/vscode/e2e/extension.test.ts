@@ -7,7 +7,7 @@
  */
 import assert from 'node:assert/strict';
 import childProcess from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import * as vscode from 'vscode';
 import { DaemonClient } from '../src/daemon/client.ts';
@@ -985,6 +985,11 @@ async function settingsFlow(): Promise<void> {
   let sparseCommit = false;
   let hookFile: string | undefined;
   const gitattributes = existsSync(join(root, '.gitattributes')) ? readFileSync(join(root, '.gitattributes'), 'utf8') : undefined;
+  // git lfs track はフック（post-checkout など）を入れ、lfs.repositoryformatversion を書く。残すと、この後の
+  // checkout や rebase のたびに git-lfs が動き、Windows では .git/config を同時に読んだ git が失敗する
+  const hooksDir = join(git('rev-parse', '--git-common-dir').trim().replace(/^(?![\\/]|[A-Za-z]:)/, `${root}/`), 'hooks');
+  const hooksBefore = new Set(existsSync(hooksDir) ? readdirSync(hooksDir) : []);
+  const lfsVersion = config('lfs.repositoryformatversion');
   try {
     let mark = posted.length;
     await vscode.commands.executeCommand('amonhen.showRepositorySettings');
@@ -1115,6 +1120,10 @@ async function settingsFlow(): Promise<void> {
     for (const k of [...keys, 'amonhen.defaultBranch', 'e2e.added']) if (config(k) !== undefined) git('config', '--local', '--unset', k);
     writeFileSync(excludeFile, exclude);
     if (hookFile) rmSync(hookFile, { force: true });
+    if (existsSync(hooksDir)) for (const f of readdirSync(hooksDir)) if (!hooksBefore.has(f)) rmSync(join(hooksDir, f), { force: true });
+    if (lfsVersion === undefined && config('lfs.repositoryformatversion') !== undefined) {
+      git('config', '--local', '--unset', 'lfs.repositoryformatversion');
+    }
     if (gitattributes === undefined) rmSync(join(root, '.gitattributes'), { force: true });
     else writeFileSync(join(root, '.gitattributes'), gitattributes);
     if (!hadGitignore) rmSync(join(root, '.gitignore'), { force: true });
