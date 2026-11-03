@@ -125,6 +125,8 @@ pub struct RangeDiff {
     pair_title: gtk::Label,
     pair_note: gtk::Label,
     pair_diff: DiffWidget,
+    /// 差分の差分の検索の帯。
+    pair_find: crate::difffind::DiffFind,
     /// コミットの中身（History の右の列と同じ）。
     commit: Rc<CommitPane>,
     /// 選び直したら増やし、古い結果を捨てる。
@@ -228,7 +230,13 @@ impl RangeDiff {
         let pair_page = gtk::Box::new(gtk::Orientation::Vertical, 0);
         pair_page.append(&header);
         pair_page.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-        pair_page.append(&pair_scrolled);
+        // 差分の差分の上に検索の帯（Ctrl+F。macOS 版と同じく、どの差分でも探せる）。
+        let pair_area = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        pair_area.set_vexpand(true);
+        let (pair_find, pair_find_bar) = crate::difffind::DiffFind::new(&pair_diff, &pair_area);
+        pair_area.append(&pair_find_bar);
+        pair_area.append(&pair_scrolled);
+        pair_page.append(&pair_area);
 
         let commit = CommitPane::new(pending.clone());
 
@@ -262,6 +270,7 @@ impl RangeDiff {
             pair_title,
             pair_note,
             pair_diff,
+            pair_find,
             commit,
             shown_generation: Rc::default(),
             filling: Cell::new(false),
@@ -673,6 +682,7 @@ impl RangeDiff {
         let lines = pair.diff.clone();
         self.pending.set(self.pending.get() + 1);
         let (pending, weak) = (self.pending.clone(), self.pair_diff.downgrade());
+        let find = self.pair_find.clone();
         let generation = self.shown_generation_ref();
         glib::spawn_future_local(async move {
             let view = gio::spawn_blocking(move || {
@@ -685,6 +695,7 @@ impl RangeDiff {
                 && generation.upgrade().is_some_and(|c| c.get() == g)
             {
                 diff.show_plain(view);
+                find.refresh();
             }
         });
     }

@@ -1,4 +1,4 @@
-//! 差分の中を探す帯（Working Copy・File History の差分。History の差分は `commitfiles` が自分で持つ）。macOS 版は
+//! 差分の中を探す帯（Working Copy・File History・Range Diff の差分。History の差分は `commitfiles` が自分で持つ）。macOS 版は
 //! 検索の帯が差分の部品（`DiffViewController`）にあり、どの差分でも ⌘F で探せる。ここでも、フォーカスが差分の
 //! 中にあれば Ctrl+F でこの帯を開き、Ctrl+G・Ctrl+Shift+G で次・前の一致へ移る。
 
