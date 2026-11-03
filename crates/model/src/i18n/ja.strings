@@ -595,6 +595,8 @@
 "Stop" = "止める";
 "Repositories opened through the daemon get disconnected (Reconnect starts it again)." = "daemon 越しに開いているリポジトリは、つながりが切れる（「つなぎ直す」でまた起動する）";
 "Repository" = "リポジトリ";
+"Time" = "時刻";
+"Content" = "内容";
 "Connections" = "つながり";
 "Watching" = "監視";
 "Search Index" = "検索の索引";

@@ -252,6 +252,80 @@ fn row(cells: &[(&str, i32, &[&str])]) -> gtk::Box {
     line
 }
 
+/// 表の見出しの行（macOS 版の Table の列の見出し）。一覧の上に置き、流れない。行と同じ余白になるよう、一覧と
+/// 同じ ListBox の行に入れる。返す行の部品は、列の幅を合わせ直すのに使う。
+fn column_header(cells: &[(&str, i32)]) -> (gtk::ListBox, gtk::Box) {
+    let cells: Vec<(&str, i32, &[&str])> = cells
+        .iter()
+        .map(|(t, w)| (*t, *w, &["dim-label", "caption-heading"][..]))
+        .collect();
+    let line = row(&cells);
+    let list = gtk::ListBox::new();
+    list.set_selection_mode(gtk::SelectionMode::None);
+    list.append(&line);
+    if let Some(r) = list.row_at_index(0) {
+        r.set_activatable(false);
+    }
+    (list, line)
+}
+
+/// `line` の `index` 番目の列の幅を変える（リポジトリの列は、名前の長さで幅が変わる）。
+fn set_column_width(line: &gtk::Box, index: usize, width: i32) {
+    let mut cell = line.first_child();
+    for _ in 0..index {
+        cell = cell.and_then(|c| c.next_sibling());
+    }
+    if let Some(cell) = cell {
+        cell.set_size_request(width, -1);
+    }
+}
+
+/// 選んでいるものを 1 つだけ押した形で出す、つながったボタン（macOS 版の segmented の Picker）。
+struct Segmented {
+    root: gtk::Box,
+    buttons: Vec<gtk::ToggleButton>,
+}
+
+impl Segmented {
+    fn new(labels: &[&str]) -> Self {
+        let root = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        root.add_css_class("linked");
+        let buttons: Vec<gtk::ToggleButton> = labels
+            .iter()
+            .map(|l| gtk::ToggleButton::with_label(l))
+            .collect();
+        for b in &buttons {
+            if let Some(first) = buttons.first()
+                && b != first
+            {
+                b.set_group(Some(first));
+            }
+            root.append(b);
+        }
+        if let Some(first) = buttons.first() {
+            first.set_active(true);
+        }
+        Self { root, buttons }
+    }
+
+    fn selected(&self) -> usize {
+        self.buttons.iter().position(|b| b.is_active()).unwrap_or(0)
+    }
+
+    /// 選び直したとき（押されて選ばれたものだけで呼ぶ）。
+    fn connect_changed(&self, f: impl Fn() + 'static) {
+        let f = Rc::new(f);
+        for b in &self.buttons {
+            let f = f.clone();
+            b.connect_toggled(move |b| {
+                if b.is_active() {
+                    f();
+                }
+            });
+        }
+    }
+}
+
 /// タブが今見ているリポジトリ（まだつないでいなければ None）。
 pub type CurrentRepo = Rc<dyn Fn() -> Option<Arc<Repository>>>;
 
@@ -509,8 +583,11 @@ impl Activity {
         // Operations: git の起動とコアの命令。
         let ops = gtk::Box::new(gtk::Orientation::Vertical, 8);
         margin(&ops);
-        let kinds =
-            gtk::DropDown::from_strings(&[tr!("All").as_str(), "git", tr!("Commands").as_str()]);
+        let kinds = Rc::new(Segmented::new(&[
+            tr!("All").as_str(),
+            "git",
+            tr!("Commands").as_str(),
+        ]));
         let failures = gtk::CheckButton::with_label(&tr!("Failures Only"));
         let filter = gtk::SearchEntry::builder()
             .placeholder_text(tr!("Filter"))
@@ -518,7 +595,7 @@ impl Activity {
             .build();
         let export = gtk::Button::with_label(&tr!("Export JSON…"));
         let bar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        bar.append(&kinds);
+        bar.append(&kinds.root);
         bar.append(&failures);
         bar.append(&filter);
         bar.append(&export);
@@ -563,7 +640,15 @@ impl Activity {
                 detail.set_text(text.as_deref().unwrap_or_default());
             });
         }
+        let (op_header, op_header_line) = column_header(&[
+            (tr!("Time").as_str(), TIME),
+            ("", 16),
+            (tr!("Repository").as_str(), REPOSITORY),
+            (tr!("Content").as_str(), 0),
+            ("ms", 64),
+        ]);
         ops.append(&bar);
+        ops.append(&op_header);
         ops.append(&scrolled);
         ops.append(&op_detail_scrolled);
         ops.append(&label(
@@ -574,11 +659,12 @@ impl Activity {
         // daemon 越しのリポジトリの記録（裏で 2 秒ごとに読む。macOS 版と同じく、名前はタブの名前）。
         let remote_records: Rc<RefCell<Vec<Value>>> = Rc::default();
         let refresh_ops = {
-            let (op_selected, op_rebuilding, op_detail, op_detail_scrolled) = (
+            let (op_selected, op_rebuilding, op_detail, op_detail_scrolled, op_header_line) = (
                 op_selected.clone(),
                 op_rebuilding.clone(),
                 op_detail.clone(),
                 op_detail_scrolled.clone(),
+                op_header_line.clone(),
             );
             let (op_list, kinds, failures, filter, entries, remote_records) = (
                 op_list.clone(),
@@ -679,6 +765,7 @@ impl Activity {
                     })
                     .collect();
                 let name_width = repository_width(&op_list, &names);
+                set_column_width(&op_header_line, 2, name_width);
                 for (r, name) in shown.into_iter().zip(names) {
                     let ok = r["ok"].as_bool();
                     let label_text = r["label"].as_str().unwrap_or_default();
@@ -768,7 +855,7 @@ impl Activity {
         // 絞り込みを変えたら、すぐに出し直す。
         let refresh_ops = Rc::new(refresh_ops);
         let r = refresh_ops.clone();
-        kinds.connect_selected_notify(move |_| r());
+        kinds.connect_changed(move || r());
         let r = refresh_ops.clone();
         failures.connect_toggled(move |_| r());
         let r = refresh_ops.clone();
@@ -966,6 +1053,12 @@ impl Activity {
         let events = gtk::Box::new(gtk::Orientation::Vertical, 8);
         margin(&events);
         let (scrolled, event_list) = list();
+        let (event_header, event_header_line) = column_header(&[
+            (tr!("Time").as_str(), TIME),
+            (tr!("Repository").as_str(), REPOSITORY),
+            (tr!("Content").as_str(), 0),
+        ]);
+        events.append(&event_header);
         events.append(&scrolled);
         events.append(&label(
             &tr!("File change notices and the reloads they cause (newest first, up to 500)."),
@@ -974,6 +1067,7 @@ impl Activity {
         stack.add_titled(&events, Some("events"), &tr!("Events"));
         let refresh_events = {
             let event_list = event_list.clone();
+            let header_line = event_header_line.clone();
             let last = std::cell::Cell::new(0);
             move || {
                 let items: Vec<(i64, String, String)> =
@@ -984,6 +1078,7 @@ impl Activity {
                 event_list.remove_all();
                 let repos: Vec<&str> = items.iter().map(|(_, repo, _)| repo.as_str()).collect();
                 let name_width = repository_width(&event_list, &repos);
+                set_column_width(&header_line, 1, name_width);
                 for (t, repo, text) in &items {
                     event_list.append(&row(&[
                         (&time(*t), TIME, &["numeric", "dim-label"]),
@@ -1092,7 +1187,10 @@ impl Activity {
         daemon.append(&idle_exit);
         stack.add_titled(&daemon, Some("daemon"), "Daemon");
         let running = Rc::new(std::cell::Cell::new(false));
+        // 0.5 秒ごとの呼び出しの数（4 回に 1 回読む）。起動・停止の後は 0 に戻して、すぐに読ませる。
+        let daemon_tick = Rc::new(std::cell::Cell::new(0u32));
         let refresh_daemon = {
+            let tick = daemon_tick.clone();
             let (state, detail, toggle, repo_list, running, idle_exit) = (
                 state.clone(),
                 detail.clone(),
@@ -1103,7 +1201,6 @@ impl Activity {
             );
             // 2 秒ごとに、前の問い合わせが返ってから（macOS 版と同じ。遅いソケットで積み重ねない）。
             let loading = Rc::new(std::cell::Cell::new(false));
-            let tick = std::cell::Cell::new(0u32);
             let last = Rc::new(std::cell::Cell::new(0));
             move || {
                 tick.set(tick.get() + 1);
@@ -1253,10 +1350,13 @@ impl Activity {
                 });
             }
         };
-        refreshers.push(Box::new(refresh_daemon));
+        let refresh_daemon = Rc::new(refresh_daemon);
+        let r = refresh_daemon.clone();
+        refreshers.push(Box::new(move || r()));
         let w = window.downgrade();
         toggle.connect_clicked(move |_| {
             let (running, engine, w) = (running.get(), engine.clone(), w.clone());
+            let (refresh_daemon, tick) = (refresh_daemon.clone(), daemon_tick.clone());
             glib::spawn_future_local(async move {
                 let result = gio::spawn_blocking(move || {
                     if running {
@@ -1268,6 +1368,9 @@ impl Activity {
                     }
                 })
                 .await;
+                // 2 秒待たずに、すぐに様子を読み直す（macOS 版の loadDaemon(force: true)）。
+                tick.set(0);
+                refresh_daemon();
                 // 起動できなければ知らせる（macOS 版と同じ）。
                 if let Ok(Err(e)) = result {
                     gtk::AlertDialog::builder()
