@@ -1016,6 +1016,11 @@ impl Browser {
                 if kind != Column::Name {
                     title.add_css_class("caption");
                 }
+                // 最後のコミットと開いた日時は薄い文字（ブランチは普通の文字。状態は自分で色を付ける。macOS 版と
+                // 同じ）。
+                if matches!(kind, Column::Commit | Column::Opened) {
+                    title.add_css_class("dim-label");
+                }
                 let cell = gtk::Box::new(gtk::Orientation::Vertical, 1);
                 cell.set_valign(gtk::Align::Center);
                 cell.set_height_request(36);
