@@ -1593,10 +1593,12 @@ fn repository_settings(p: &Rc<Parts>) {
         return;
     };
     // 取得とフォルダのページの操作（取り足す・取り直す・取り出すフォルダを変える）は、Fetch と同じく窓の操作で。
-    let actions = Rc::downgrade(&p.actions);
+    // 見せている worktree で（sparse checkout のフォルダは worktree ごと。後で書き込む先を替えても、ページが
+    // 見せているものに効かせる）。
+    let (actions, target) = (Rc::downgrade(&p.actions), repo.clone());
     let operate: crate::reposettings::Operate =
         Rc::new(move |command, done| match actions.upgrade() {
-            Some(actions) => actions.perform_with(vec![command], move |_| done()),
+            Some(actions) => actions.perform_in(target.clone(), vec![command], move |_| done()),
             None => done(),
         });
     crate::reposettings::show(&slot, repo, &p.location, p.reload.clone(), operate, None);
