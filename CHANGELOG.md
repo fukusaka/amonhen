@@ -766,6 +766,8 @@ First release.
 - Blame, from the same menus, shows which commit last changed each line of the working tree or of a commit's version.
 - With the engine, Branches are arranged as in the app (favorites, the current stack, newest first, Inactive,
   Archived, stacked branches nested), and favorites and archiving are on a branch's menu, shared with the app.
+- Several branches or tags can be selected in the sidebar to merge them in one commit, delete them or add them to
+  favorites or archive them together.
 
 #### Changed
 
@@ -781,6 +783,7 @@ First release.
 
 #### Fixed
 
+- With the engine, deleting a branch that isn't merged now offers Delete Anyway instead of only showing git's error.
 - History no longer stays empty when it is opened while the engine's History is still being read; the view's first
   request for rows made the extension think there were none.
 - Pull on a diverged branch asks for Merge or Rebase for this pull when nothing sets how to pull (`pull.rebase`,

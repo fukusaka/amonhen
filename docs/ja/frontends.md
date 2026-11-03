@@ -26,7 +26,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | stash があるときだけ Stashes の行と数 | ✓ | ✓ | △ | n/a | VSCode: Stashes の節はいつも出る。 |
 | Range Diff を開いているあいだの Range Diff の行 | ✓ | ✓ | — | n/a |  |
 | Branches・Remotes・Tags を絞り込む欄 | ✓ | ✓ | — | n/a |  |
-| ブランチ・タグをいくつも選ぶ | ✓ | ✓ | — | n/a |  |
+| ブランチ・タグをいくつも選ぶ | ✓ | ✓ | ✓ | n/a | VSCode: Merge into Current Branch・Delete Branch・お気に入り・Archive が選んだものすべてに効く。 |
 | Pull Requests・Worktrees は中身があるときだけ出す | ✓ | ✓ | △ | n/a | VSCode: Worktrees だけ（GitHub は入れない）。 |
 
 ## サイドバー

@@ -663,6 +663,7 @@ async function branchArrangeFlow(): Promise<void> {
   };
   const names = ['arr-old', 'arr-a', 'arr-b', 'arr-arch'];
   const head = git('rev-parse', 'HEAD').trim();
+  const current = git('symbolic-ref', '--short', 'HEAD').trim();
   try {
     // 200 日前のコミットだけのブランチ
     const old = new Date(Date.now() - 200 * 86_400_000).toISOString();
@@ -701,7 +702,38 @@ async function branchArrangeFlow(): Promise<void> {
     await vscode.commands.executeCommand('amonhen.branch.removeFromFavorites', node('arr-a'), [node('arr-a'), node('arr-b')]);
     assert.deepEqual([config('branch.arr-a.amonhenPinned'), config('branch.arr-b.amonhenPinned')], [undefined, undefined]);
     await until('お気に入りが消える', () => (sidebar.getTreeItem(node('arr-a')).iconPath as vscode.ThemeIcon).id === 'git-branch');
+
+    // いくつも選んで merge すると 1 つのコミットになり（Undo 1 回で戻る）、まとめて消せる
+    for (const b of ['arr-a', 'arr-b']) {
+      git('switch', '-q', b);
+      writeFileSync(join(root, `${b}.txt`), `${b}\n`);
+      git('add', `${b}.txt`);
+      git('commit', '-q', '-m', b);
+    }
+    git('switch', '-q', current);
+    await settle();
+    const before = git('rev-parse', 'HEAD').trim();
+    await withWindow(
+      {
+        showQuickPick: async (items: readonly vscode.QuickPickItem[]) => items[0],
+        showInformationMessage: async () => undefined,
+      },
+      async () => vscode.commands.executeCommand('amonhen.nav.merge', node('arr-a'), [node('arr-a'), node('arr-b')]),
+    );
+    // HEAD はどちらの祖先でもあるので、git は片方へ fast-forward してから、もう片方を merge する
+    const parents = git('rev-list', '--parents', '-n', '1', 'HEAD').trim().split(' ').slice(1);
+    assert.deepEqual(parents.sort(), [git('rev-parse', 'arr-a').trim(), git('rev-parse', 'arr-b').trim()].sort());
+    await vscode.commands.executeCommand('amonhen.undo');
+    await until('merge の Undo', () => git('rev-parse', 'HEAD').trim() === before);
+    await settle();
+    // 取り込んでいないので、もう一度確かめてから消す
+    const answer = async (message: string) => (/merge されていない/.test(message) ? 'Delete Anyway' : 'Delete');
+    await withWindow({ showWarningMessage: answer }, async () =>
+      vscode.commands.executeCommand('amonhen.nav.delete', node('arr-a'), [node('arr-a'), node('arr-b')]),
+    );
+    assert.equal(git('branch', '--list', 'arr-a', 'arr-b').trim(), '');
   } finally {
+    if (git('symbolic-ref', '--short', 'HEAD').trim() !== current) git('switch', '-q', current);
     for (const b of names) if (git('branch', '--list', b).trim()) git('branch', '-D', b);
     await settle();
   }

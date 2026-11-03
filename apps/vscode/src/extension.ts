@@ -47,6 +47,8 @@ export async function activate(
   const view = vscode.window.createTreeView('amonhen.sidebar', {
     treeDataProvider: sidebar,
     dragAndDropController: dragAndDrop,
+    // ブランチ・タグをいくつも選んで、まとめて merge・削除・お気に入り・アーカイブする
+    canSelectMany: true,
   });
   const show = (target?: ViewName, ref?: string) =>
     MainPanel.show(context.extensionUri, manager, target, ref);
