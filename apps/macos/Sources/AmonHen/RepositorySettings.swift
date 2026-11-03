@@ -134,8 +134,21 @@ final class RepositorySettingsModel {
         run(["op": "saveCommitTemplate", "text": text])
     }
 
-    /// 署名の形式ごとに集めた鍵（`user.email` の鍵を先に）。コアが集める（SSH 先のリポジトリなら SSH 先で）。
-    private(set) var signingKeys: [String: [SigningKey]] = [:]
+    /// 署名の形式ごとに集めた鍵（集めた順）。コアが集める（SSH 先のリポジトリなら SSH 先で）。並びはメール
+    /// アドレスで決めるので、設定を読んだ後でも合うよう、出すときに並べる。
+    private var gatheredKeys: [String: [SigningKey]] = [:]
+
+    /// 署名に使える鍵（形式ごと）。`user.email` の合う鍵を先に（鍵が設定より先に届いても、読み終えた設定で並べる）。
+    var signingKeys: [String: [SigningKey]] {
+        let email = effective("user.email")?.value.lowercased() ?? ""
+        return gatheredKeys.mapValues { keys in
+            keys.sorted { a, b in
+                let am = !email.isEmpty && a.emails.contains { $0.lowercased() == email }
+                let bm = !email.isEmpty && b.emails.contains { $0.lowercased() == email }
+                return am != bm ? am : false
+            }
+        }
+    }
 
     /// `format`（`openpgp`・`ssh`・`x509`）の鍵を集める。集められなければ空。
     func loadSigningKeys(_ format: String) {
@@ -145,12 +158,7 @@ final class RepositorySettingsModel {
             let keys = (try? await Task.detached(priority: .userInitiated) {
                 try repository.info(["op": "signingKeys", "format": format], as: Keys.self)
             }.value)?.keys ?? []
-            let email = effective("user.email")?.value.lowercased() ?? ""
-            signingKeys[format] = keys.sorted { a, b in
-                let am = !email.isEmpty && a.emails.contains { $0.lowercased() == email }
-                let bm = !email.isEmpty && b.emails.contains { $0.lowercased() == email }
-                return am != bm ? am : false
-            }
+            gatheredKeys[format] = keys
         }
     }
 
