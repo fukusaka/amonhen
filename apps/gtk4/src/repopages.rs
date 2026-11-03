@@ -1172,8 +1172,8 @@ fn open_hook(s: &RepoSettings, name: &str, how: &str) {
     });
 }
 
-/// フックをエディタで開くメニュー: 選んだエディタで編集・Edit With（入っているもの）・ファイルの場所。
-fn hook_open_menu() -> gio::Menu {
+/// フックの右クリックのメニュー: 選んだエディタで編集・Edit With（入っているもの）・ファイルの場所（macOS 版と同じ）。
+fn hook_context_menu() -> gio::Menu {
     let menu = gio::Menu::new();
     menu.append(
         Some(&tr!("Edit in {app}", app = crate::editor::chosen_name())),
@@ -1187,6 +1187,17 @@ fn hook_open_menu() -> gio::Menu {
     }
     menu.append_submenu(Some(&tr!("Edit With")), &with);
     menu.append(Some(&tr!("Show in Files")), Some("hooks.reveal"));
+    menu
+}
+
+/// 選んだフックの「〜で編集」ボタンの横のメニュー: 入っているエディタごとの「〜で編集」（macOS 版の Menu と同じ）。
+fn hook_open_menu() -> gio::Menu {
+    let menu = gio::Menu::new();
+    for app in crate::editor::installed() {
+        let item = gio::MenuItem::new(Some(&tr!("Edit in {app}", app = app.name)), None);
+        item.set_action_and_target_value(Some("hooks.edit-with"), Some(&app.id.to_variant()));
+        menu.append_item(&item);
+    }
     menu
 }
 
@@ -1388,7 +1399,7 @@ pub(crate) fn hooks_page(s: &Rc<RepoSettings>) -> gtk::ScrolledWindow {
         move || {
             menu.remove_all();
             if local {
-                let open = hook_open_menu();
+                let open = hook_context_menu();
                 for i in 0..open.n_items() {
                     menu.append_item(&gio::MenuItem::from_model(&open, i));
                 }
@@ -1403,6 +1414,12 @@ pub(crate) fn hooks_page(s: &Rc<RepoSettings>) -> gtk::ScrolledWindow {
     let empty = label("", &["dim-label"]);
     empty.set_wrap(true);
     let frame = table.scrolled(120);
+    // 表はフックの数だけ伸ばす（中でスクロールしない。ページごとスクロールする。macOS 版と同じ）。
+    if let Some(sw) = frame.child().and_downcast::<gtk::ScrolledWindow>() {
+        sw.set_vscrollbar_policy(gtk::PolicyType::Never);
+        sw.set_min_content_height(-1);
+        sw.set_max_content_height(-1);
+    }
     let create_button = gtk::Button::with_label(&tr!("Create Hook…"));
     create_button.set_action_name(Some("hooks.create"));
     create_button.set_tooltip_text(Some(&tr!(
@@ -1616,7 +1633,7 @@ fn track_pattern(s: &Rc<RepoSettings>) {
             .activates_default(true)
             .build();
         sheet.add(&entry);
-        sheet.buttons(&tr!("Track"), false, None);
+        sheet.buttons("OK", false, None);
         if sheet.run().await != Response::Ok {
             return;
         }
