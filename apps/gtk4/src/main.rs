@@ -1218,7 +1218,7 @@ fn build_tab(
             .unwrap_or_else(|| repo.clone());
         let tx = reload_tx.clone();
         std::thread::spawn(move || {
-            reload_history(&repo, &tx);
+            reload_history(&repo, &tx, false);
             reload_status(&editing, &tx);
         });
     });
@@ -2659,9 +2659,9 @@ fn build_tab(
                             );
                         }
                     }
-                    // 読めなかったら、読んでいる途中の一言を消して、エラーを窓の前に出す（つながりが切れたのなら
-                    // ステータスバーが知らせるので出さない。macOS 版と同じ）。
-                    Event::Failed(repo, e) => {
+                    // 読めなかったら、読んでいる途中の一言を消して、エラーを窓の前に出す（開いて最初の読み込みだけ。
+                    // 後の読み直しの失敗と、つながりが切れたとき（ステータスバーが知らせる）は出さない。macOS 版と同じ）。
+                    Event::Failed(repo, e, first) => {
                         spinner.stop();
                         spinner.set_visible(false);
                         status.set_visible(false);
@@ -2673,7 +2673,9 @@ fn build_tab(
                             if let Some(window) = win_of() {
                                 window.close();
                             }
-                        } else if !repo.connection_state().is_some_and(|s| s.closed.is_some()) {
+                        } else if first
+                            && !repo.connection_state().is_some_and(|s| s.closed.is_some())
+                        {
                             gtk::AlertDialog::builder()
                                 .message(&e)
                                 .modal(true)
@@ -3077,8 +3079,8 @@ enum Event {
     Changed(String, String, bool),
     /// Activity の Performance に出す時間（項目、ms）。
     Timing(&'static str, f64),
-    /// History を読めなかった（読んだリポジトリ、エラー）。
-    Failed(Arc<Repository>, String),
+    /// History を読めなかった（読んだリポジトリ、エラー、開いて最初の読み込みか）。
+    Failed(Arc<Repository>, String, bool),
     /// リポジトリを開けた（つながった）。
     Opened,
     /// リポジトリを開けなかった（つなげなかった）。
@@ -3127,8 +3129,9 @@ fn reload_details_info(details: &Rc<Details>, repo: Arc<Repository>) {
     });
 }
 
-/// History と ref を読み直して知らせる（裏のスレッドで呼ぶ）。
-fn reload_history(repo: &Arc<Repository>, tx: &async_channel::Sender<Event>) {
+/// History と ref を読み直して知らせる（裏のスレッドで呼ぶ）。`first` は開いて最初の読み込み（読めなければ
+/// 知らせを出す。後の読み直しの失敗は出さない。macOS 版と同じ）。
+fn reload_history(repo: &Arc<Repository>, tx: &async_channel::Sender<Event>, first: bool) {
     let started = std::time::Instant::now();
     let loaded = repo.load_history();
     let _ = tx.send_blocking(Event::Timing(
@@ -3140,7 +3143,7 @@ fn reload_history(repo: &Arc<Repository>, tx: &async_channel::Sender<Event>) {
             let _ = tx.send_blocking(Event::History(repo.clone(), history));
         }
         Err(e) => {
-            let _ = tx.send_blocking(Event::Failed(repo.clone(), e.to_string()));
+            let _ = tx.send_blocking(Event::Failed(repo.clone(), e.to_string(), first));
         }
     }
     if let Ok(refs) = repo.load_refs() {
@@ -3257,8 +3260,8 @@ fn load(
         });
     }
     let status = |repo: &Arc<Repository>| reload_status(repo, &tx);
-    let reload = |repo: &Arc<Repository>| reload_history(repo, &tx);
-    reload(&repo);
+    let reload = |repo: &Arc<Repository>| reload_history(repo, &tx, false);
+    reload_history(&repo, &tx, true);
     receiving.store(false, std::sync::atomic::Ordering::Relaxed);
     status(&repo);
     // 最後に見た mailmap の指紋（変わったら作者名を出し直す）。
