@@ -761,6 +761,8 @@ First release.
   elsewhere, pruned and removed from the sidebar.
 - With the engine, worktrees are listed under Working Copy with their change counts; selecting one makes it the one
   the extension works on. New Worktree…, Remove Worktree… and Prune Worktrees are in the sidebar and History menus.
+- File History, from a file's right-click or the Command Palette, lists the commits that changed it across renames,
+  with the selected commit's diff of the file beside them. It needs the engine.
 
 #### Changed
 

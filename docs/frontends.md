@@ -249,7 +249,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Find inside the details | ✓ | ✓ | — | n/a |  |
 | All files stacked (sticky headers, collapse, Viewed) | ✓ | ✓ | △ | ✓ | VSCode: Stacked, loaded as they scroll; no collapse or Viewed.<br>CLI: `show`. |
 | Changed files as a tree beside the diff | ✓ | ✓ | △ | n/a | VSCode: A flat list above the diffs. |
-| File header menu (Blame, File History, copy path, open) | ✓ | ✓ | △ | n/a | VSCode: Open in VSCode's diff editor only. |
+| File header menu (Blame, File History, copy path, open) | ✓ | ✓ | △ | n/a | VSCode: File History and Copy Path on the right-click, and Open in VSCode's diff editor; no Blame. |
 | Switch to the single-file diff | ✓ | ✓ | — | n/a |  |
 | Diff of a selection (range squashed, A..B / A...B, scattered) | ✓ | ✓ | — | △ | CLI: `diff <rev> <rev>`. |
 | Actions on a selection (cherry-pick, revert, squash, copy IDs) | ✓ | ✓ | — | △ | CLI: Via `amonhen run`. |
@@ -261,7 +261,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
 | Blame | ✓ | ✓ | — | △ | CLI: Via `amonhen run` (`blame`). |
-| File History | ✓ | ✓ | — | △ | CLI: Via `amonhen run` (`fileHistory`). |
+| File History | ✓ | ✓ | ✓ | △ | VSCode: A page of the main view, opened from the Explorer, an editor tab, the Command Palette or a file in the main view.<br>CLI: Via `amonhen run` (`fileHistory`). |
 | Line history | — | — | — | — |  |
 
 ## 7a. Patches

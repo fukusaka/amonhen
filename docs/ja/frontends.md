@@ -249,7 +249,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | 詳細の中を探す | ✓ | ✓ | — | n/a |  |
 | すべてのファイルを積む（貼り付く見出し・畳む・Viewed） | ✓ | ✓ | △ | ✓ | VSCode: 積んでスクロールで読むが、畳むことも Viewed もない。<br>CLI: `show`。 |
 | 差分の横の、変更したファイルの木 | ✓ | ✓ | △ | n/a | VSCode: 差分の上の平らな一覧。 |
-| ファイルの見出しのメニュー（Blame・File History・パスのコピー・開く） | ✓ | ✓ | △ | n/a | VSCode: VSCode の差分のエディターで開くだけ。 |
+| ファイルの見出しのメニュー（Blame・File History・パスのコピー・開く） | ✓ | ✓ | △ | n/a | VSCode: 右クリックの File History・Copy Path と、VSCode の差分のエディターで開く。Blame はない。 |
 | 1 ファイルずつの差分に切り替える | ✓ | ✓ | — | n/a |  |
 | 選んだものの差分（範囲をまとめる・A..B / A...B・飛び飛び） | ✓ | ✓ | — | △ | CLI: `diff <rev> <rev>`。 |
 | 選んだものの操作（cherry-pick・revert・squash・ID のコピー） | ✓ | ✓ | — | △ | CLI: `amonhen run` から。 |
@@ -261,7 +261,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
 | Blame | ✓ | ✓ | — | △ | CLI: `amonhen run`（`blame`）から。 |
-| File History | ✓ | ✓ | — | △ | CLI: `amonhen run`（`fileHistory`）から。 |
+| File History | ✓ | ✓ | ✓ | △ | VSCode: メインビューのページ。エクスプローラー・エディターのタブ・コマンドパレット・メインビューのファイルから開く。<br>CLI: `amonhen run`（`fileHistory`）から。 |
 | 行の履歴 | — | — | — | — |  |
 
 ## 7a. パッチ

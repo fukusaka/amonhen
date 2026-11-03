@@ -7,6 +7,7 @@ import { registerContentProvider } from './ui/content.ts';
 import { registerRangeDiffCommands } from './ui/rangeDiff.ts';
 import { SidebarDragAndDrop } from './ui/dragDrop.ts';
 import { registerFetchCommand } from './ui/fetchCommand.ts';
+import { registerFileHistoryCommands } from './ui/fileHistoryCommands.ts';
 import { registerHistoryCommands } from './ui/historyCommands.ts';
 import { MainPanel } from './ui/mainPanel.ts';
 import { registerMergeBranchesCommand } from './ui/mergeBranches.ts';
@@ -90,6 +91,7 @@ export async function activate(
     registerReflogCommands(manager),
     registerTagCommands(manager, sidebar),
     registerWorktreeCommands(manager, sidebar),
+    registerFileHistoryCommands(manager, (target) => show(target)),
     // エンジンを使えるときだけ出すもの（Reflog・Reset、タグとリモートのメニュー、worktree）
     vscode.workspace.onDidChangeConfiguration((e) => e.affectsConfiguration('amonhen.daemon') && void updateEngine()),
   );

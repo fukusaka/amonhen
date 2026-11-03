@@ -500,6 +500,65 @@ async function worktreeFlow(): Promise<void> {
   }
 }
 
+/**
+ * ファイルの右クリックの File History で、名前の変更を追ってファイルを変えたコミットが出る。マージも出す・出さないを
+ * 切り替え、行のコミットを History で選ぶ。コアの命令（daemon だけ）
+ */
+async function fileHistoryFlow(): Promise<void> {
+  const panel = await showView('amonhen.showHistory');
+  const start = git('rev-parse', 'HEAD').trim();
+  const commit = (message: string) => git('commit', '-q', '-m', message);
+  try {
+    writeFileSync(join(root, 'fh-a.txt'), 'one\n');
+    git('add', 'fh-a.txt');
+    commit('add fh-a');
+    writeFileSync(join(root, 'fh-a.txt'), 'one\ntwo\n');
+    git('commit', '-q', '-a', '-m', 'change fh-a');
+    git('mv', 'fh-a.txt', 'fh-b.txt');
+    commit('rename fh-a to fh-b');
+    git('commit', '-q', '--allow-empty', '-m', 'not about fh');
+    await vscode.commands.executeCommand('amonhen.refresh');
+
+    // エクスプローラーの右クリック（Uri）から
+    let mark = posted.length;
+    await vscode.commands.executeCommand('amonhen.fileHistory', vscode.Uri.file(join(root, 'fh-b.txt')));
+    const shown = await waitPosted('fileHistory', mark, (m) => m.path === 'fh-b.txt' && m.complete);
+    assert.deepEqual(
+      shown.entries.map((e) => [e.subject, e.path]),
+      [
+        ['rename fh-a to fh-b', 'fh-b.txt'],
+        ['change fh-a', 'fh-a.txt'],
+        ['add fh-a', 'fh-a.txt'],
+      ],
+    );
+    assert.equal(shown.merges, false);
+
+    // 行を選ぶと、そのコミットの詳細（History と同じ）が届く
+    const oldest = shown.entries[2]!;
+    mark = posted.length;
+    await panel.history.handle({ type: 'select', oid: oldest.oid });
+    assert.deepEqual((await waitPosted('details', mark, (m) => m.details.oid === oldest.oid)).details.files.map((f) => f.path), ['fh-a.txt']);
+
+    // マージも出すに切り替えると読み直す
+    mark = posted.length;
+    await panel.fileHistory.handle({ type: 'fileHistoryLoad', merges: true });
+    assert.equal((await waitPosted('fileHistory', mark, (m) => m.complete)).merges, true);
+
+    // ダブルクリックで、そのコミットを History で選ぶ
+    mark = posted.length;
+    await panel.fileHistory.handle({ type: 'fileHistoryReveal', oid: oldest.oid });
+    await waitPosted('reveal', mark);
+
+    // メインビューのファイルの右クリック（リポジトリの中のパス）から
+    mark = posted.length;
+    await vscode.commands.executeCommand('amonhen.fileHistory', { path: 'fh-b.txt' });
+    await waitPosted('fileHistory', mark, (m) => m.path === 'fh-b.txt' && m.entries.length === 3);
+  } finally {
+    git('reset', '-q', '--hard', start);
+    await vscode.commands.executeCommand('amonhen.refresh');
+  }
+}
+
 /** showInputBox の代わり。呼ばれるたびに values を順に返す */
 function inputs(...values: string[]): () => Promise<string | undefined> {
   let i = 0;
@@ -1226,6 +1285,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('lists worktrees under Working Copy, edits, creates, removes and prunes them through the daemon', async () => {
     await worktreeFlow();
+  });
+
+  test('shows a file’s history across a rename through the daemon', async () => {
+    await fileHistoryFlow();
   });
 
   test('drops the selection of a file whose changes went away before its diff is read', async () => {

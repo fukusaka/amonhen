@@ -19,11 +19,17 @@ function withRecorded(text: string, recorded: Person | undefined): Node | string
   return span;
 }
 
+/** ファイルの行と差分の見出しの右クリックメニュー（package.json の webview/context）に渡す情報 */
+function fileContext(oid: string, path: string): string {
+  return JSON.stringify({ webviewSection: 'commitFile', oid, path, preventDefaultContextMenuItems: true });
+}
+
 export interface DetailsPane {
   readonly root: HTMLElement;
   /** 出しているコミット */
   readonly shownOid: string | undefined;
-  show(details: CommitDetails): void;
+  /** `focus` があれば、そのファイルを選んでその差分の位置に移る（File History） */
+  show(details: CommitDetails, focus?: string): void;
   showDiff(oid: string, path: string, diff: FileDiff): void;
   clear(): void;
   /** 次に届いた詳細を、同じコミットでも出し直す */
@@ -39,7 +45,7 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
   let requestedDiffs = new Set<string>();
   let diffObserver: IntersectionObserver | undefined;
 
-  function show(d: CommitDetails): void {
+  function show(d: CommitDetails, focus?: string): void {
     shownOid = d.oid;
     const [subject = '', ...rest] = d.message.replace(/\n+$/, '').split('\n');
     const body = rest.join('\n').replace(/^\n+/, '');
@@ -99,8 +105,12 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
       filesHead.append(all);
     }
     files.append(filesHead);
+    const rows = new Map<string, HTMLElement>();
     for (const f of d.files) {
       const row = el('div', 'file');
+      rows.set(f.path, row);
+      // 右クリックのメニュー（package.json の webview/context）に渡す情報
+      row.dataset.vscodeContext = fileContext(d.oid, f.path);
       row.title = f.origPath ? `${f.origPath} → ${f.path}` : f.path;
       row.append(el('span', `status s-${f.status}`, f.status));
       const slash = f.path.lastIndexOf('/');
@@ -136,6 +146,7 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
       const section = el('section', 'file-diff');
       section.dataset.path = f.path;
       const sectionHead = el('div', 'diff-head');
+      sectionHead.dataset.vscodeContext = fileContext(d.oid, f.path);
       sectionHead.append(el('span', `status s-${f.status}`, f.status));
       sectionHead.append(el('span', 'path', f.origPath ? `${f.origPath} → ${f.path}` : f.path));
       const open = el('button', 'secondary', 'Open');
@@ -153,6 +164,11 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
     parts.push(files, diffs);
     root.replaceChildren(...parts);
     root.scrollTop = 0;
+    const section = focus ? sections.get(focus) : undefined;
+    if (focus && section) {
+      rows.get(focus)?.classList.add('active');
+      section.scrollIntoView({ block: 'start' });
+    }
   }
 
   function showDiff(oid: string, path: string, diff: FileDiff): void {

@@ -270,6 +270,17 @@
         "category": "Amon Hen"
       },
       {
+        "command": "amonhen.fileHistory",
+        "title": "File History",
+        "category": "Amon Hen",
+        "icon": "$(history)"
+      },
+      {
+        "command": "amonhen.fileHistory.copyPath",
+        "title": "Copy Path",
+        "category": "Amon Hen"
+      },
+      {
         "command": "amonhen.skipSequence",
         "title": "Skip",
         "category": "Amon Hen",
@@ -957,6 +968,14 @@
           "when": "amonhen.hasRepository && amonhen.engine"
         },
         {
+          "command": "amonhen.fileHistory",
+          "when": "amonhen.hasRepository && amonhen.engine"
+        },
+        {
+          "command": "amonhen.fileHistory.copyPath",
+          "when": "false"
+        },
+        {
           "command": "amonhen.worktree.prune",
           "when": "amonhen.hasRepository && amonhen.engine"
         }
@@ -1004,7 +1023,7 @@
         },
         {
           "command": "amonhen.history.copyId",
-          "when": "webviewId == 'amonhen.main' && (webviewSection == 'commit' || webviewSection == 'reflog')",
+          "when": "webviewId == 'amonhen.main' && (webviewSection == 'commit' || webviewSection == 'reflog' || webviewSection == 'fileHistory')",
           "group": "9_copy@1"
         },
         {
@@ -1058,12 +1077,39 @@
           "group": "1_show@1"
         },
         {
+          "command": "amonhen.reflog.showInHistory",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'fileHistory'",
+          "group": "1_show@1"
+        },
+        {
+          "command": "amonhen.fileHistory.copyPath",
+          "when": "webviewId == 'amonhen.main' && (webviewSection == 'fileHistory' || webviewSection == 'commitFile' || webviewSection == 'wcFile')",
+          "group": "9_copy@2"
+        },
+        {
+          "command": "amonhen.fileHistory",
+          "when": "webviewId == 'amonhen.main' && (webviewSection == 'commitFile' || webviewSection == 'wcFile') && amonhen.engine",
+          "group": "1_file@1"
+        },
+        {
           "command": "amonhen.reflog.copyName",
           "when": "webviewId == 'amonhen.main' && webviewSection == 'reflog'",
           "group": "9_copy@2"
         }
       ],
+      "editor/title/context": [
+        {
+          "command": "amonhen.fileHistory",
+          "when": "resourceScheme == file && amonhen.hasRepository && amonhen.engine",
+          "group": "7_amonhen@1"
+        }
+      ],
       "explorer/context": [
+        {
+          "command": "amonhen.fileHistory",
+          "when": "!explorerResourceIsFolder && resourceScheme == file && amonhen.hasRepository && amonhen.engine",
+          "group": "7_amonhen@1"
+        },
         {
           "command": "amonhen.applyPatch",
           "when": "amonhen.hasRepository && resourceExtname =~ /^\\.(patch|diff|mbox|eml)$/",
