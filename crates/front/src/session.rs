@@ -208,8 +208,12 @@ impl Session {
                     repo.rebuild_history()?
                 } else if request["fold"] == true {
                     let expanded = oids(request, "expanded")?.unwrap_or_default();
+                    // 畳むのも絞るのも公開している History から作るので、先に最新にする（外でコミットされていると、
+                    // 新しい起点がまだ History になく、何も出ない）。
+                    repo.load_history()?;
                     repo.history_folded(tips.as_deref(), &expanded)?
                 } else if let Some(tips) = &tips {
+                    repo.load_history()?;
                     repo.history_filtered(tips)?
                 } else {
                     // 前回の History（永続キャッシュ）があれば、そこから増えた分だけ読む。
@@ -747,4 +751,73 @@ fn refs_json(refs: &amonhen_model::Refs) -> Value {
             "gone": e.gone,
         })).collect::<Vec<_>>(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    fn git(dir: &Path, args: &[&str]) -> String {
+        amonhen_model::testing::isolate_from_user_settings();
+        let out = amonhen_model::process::command("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap().trim().to_owned()
+    }
+
+    fn commit(dir: &Path, message: &str) -> String {
+        git(
+            dir,
+            &[
+                "-c",
+                "user.name=a",
+                "-c",
+                "user.email=a@example.com",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                message,
+            ],
+        );
+        git(dir, &["rev-parse", "HEAD"])
+    }
+
+    fn rows(session: &Session, request: Value) -> u64 {
+        session.handle(&request, &|| false).unwrap().json["rows"]
+            .as_u64()
+            .unwrap()
+    }
+
+    /// 外でコミットした後でも、その起点で絞った History（VSCode の Current Branch）に出る
+    #[test]
+    fn filtered_history_sees_commits_made_elsewhere() {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "-q"]);
+        let first = commit(dir.path(), "first");
+        let backend = amonhen_backend_gix::GixBackend::open(dir.path()).unwrap();
+        let session = Session::new(Arc::new(Repository::new(backend)));
+        assert_eq!(rows(&session, json!({"op": "history", "tips": [first]})), 1);
+
+        let second = commit(dir.path(), "second");
+        assert_eq!(
+            rows(&session, json!({"op": "history", "tips": [second]})),
+            2
+        );
+        assert_eq!(
+            rows(
+                &session,
+                json!({"op": "history", "tips": [second], "fold": true})
+            ),
+            2
+        );
+    }
 }
