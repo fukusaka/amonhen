@@ -1892,6 +1892,13 @@
 "git maintenance" = "git maintenance";
 "Can’t read the date “{date}”" = "日時「{date}」を読めません";
 "This search needs more than {limit} file contents that aren’t fetched yet. Narrow it with path:, after: or before:, or fetch all contents in Repository Settings." = "この検索には、まだ取っていない中身が {limit} 個より多く要ります。path:・after:・before: で絞るか、リポジトリの設定で中身をすべて取ってください。";
+"Search the Contents?" = "中身を検索しますか？";
+"This search fetches {count} file contents not fetched yet." = "この検索は、まだ取っていない中身を {count} 個取ります。";
+"Too Many Contents to Fetch" = "取る中身が多すぎます";
+"This search needs more than {count} file contents not fetched yet. Narrow it with path:, after: or before:, or fetch all contents in Fetching and Folders." = "この検索には、まだ取っていない中身が {count} 個より多く要ります。path:・after:・before: で絞るか、「取得とフォルダ」で中身をすべて取ってください。";
+"Open Fetching and Folders" = "「取得とフォルダ」を開く";
+"{count} found · {percent}%" = "{count} 件 · {percent}%";
+"after:2026-01-01  before:2026-06-30 (committed after or before a date)" = "after:2026-01-01  before:2026-06-30（その日時より後・前のコミット）";
 
 /* GTK4 の FE: shallow clone の History の帯 */
 "100 Commits" = "100 コミット";
