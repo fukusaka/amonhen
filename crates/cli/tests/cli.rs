@@ -685,8 +685,7 @@ fn shows_mailmap_names_directly_through_the_daemon_and_over_ssh() {
     }
 }
 
-/// パッチを書き出し（format-patch）、mbox を am で、diff を apply で当て、undo で戻す。3 つの開き方のどれでも、
-/// パッチのファイルは手元に置いたまま（SSH 先には中身を送る）。
+/// 書き出したアーカイブは手元に書く（SSH 先からは中身を受け取る）。
 #[cfg(unix)]
 #[test]
 fn exports_an_archive_directly_through_the_daemon_and_over_ssh() {
@@ -739,6 +738,9 @@ fn exports_an_archive_directly_through_the_daemon_and_over_ssh() {
     }
 }
 
+/// パッチを書き出し（format-patch）、mbox を am で、diff を apply で当て、undo で戻す。3 つの開き方のどれでも、
+/// パッチのファイルは手元に置いたまま（SSH 先には中身を送る）。
+#[cfg(unix)]
 #[test]
 fn saves_and_applies_patches_directly_through_the_daemon_and_over_ssh() {
     let tmp = tempfile::tempdir().unwrap();
