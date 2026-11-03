@@ -884,7 +884,7 @@ impl Inner {
             // 文字のコピーは Ctrl+C で（メニューには出さない。macOS 版と同じ）。
             let items = match file {
                 // 見出しの上: 畳む・Viewed・Blame・パスのコピーなど。
-                Some(file) => Inner::menu_items(&this, Some(file), Some(y)),
+                Some(file) => Inner::menu_items(&this, Some(file)),
                 // 差分の行の上: AI でこの hunk を解説だけ（持ち主が作る。macOS 版と同じ）。
                 None => this
                     .file_items
@@ -1051,7 +1051,7 @@ impl Inner {
             Inner::toggle_viewed(this, file);
         }
         if let Some(file) = MENU_ONCE.with(|v| v.take()) {
-            let items = Inner::menu_items(this, Some(file), None);
+            let items = Inner::menu_items(this, Some(file));
             let diff = this.diff.clone();
             // 差分が描かれてから出す。
             glib::idle_add_local_once(move || menu::popup(&diff, 60.0, 10.0, items));
@@ -1247,7 +1247,7 @@ impl Inner {
     /// File History。持ち主が項目を作らない一覧（Stashes など）では、見出しと同じメニュー。
     fn list_menu_items(this: &Rc<Self>, file: usize) -> Vec<Item> {
         let Some(f) = this.file_items.borrow().clone() else {
-            return Inner::menu_items(this, Some(file), None);
+            return Inner::menu_items(this, Some(file));
         };
         let Some(source) = this.source.borrow().clone() else {
             return Vec::new();
@@ -1282,7 +1282,9 @@ impl Inner {
         }
     }
 
-    fn menu_items(this: &Rc<Self>, file: Option<usize>, y: Option<f64>) -> Vec<Item> {
+    /// ファイルの見出し・一覧の右クリックのメニュー（ファイルのメニューだけ。AI でこの hunk を解説は、差分の行の
+    /// 上でだけ出す。macOS 版と同じ）。
+    fn menu_items(this: &Rc<Self>, file: Option<usize>) -> Vec<Item> {
         let Some(source) = this.source.borrow().clone() else {
             return Vec::new();
         };
@@ -1317,7 +1319,7 @@ impl Inner {
         if let Some(f) = this.file_items.borrow().clone() {
             // 消したファイルは、そのコミットにはない（一覧の右クリックと同じく Blame を出さない）。
             let blame = !Inner::deleted(this, &source, file);
-            items.extend(f(&path, y, blame, false));
+            items.extend(f(&path, None, blame, false));
             items.push(Item::Separator);
         }
         let (w, p) = (this.list.downgrade(), path.clone());
