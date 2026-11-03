@@ -675,6 +675,8 @@ pub struct Facts {
     pub local: bool,
     /// origin（なければ最初のリモート）が GitHub（gh があるときだけ調べる）。
     pub github: bool,
+    /// gh が使える（Create Pull Request… に要る。macOS 版の `GitHub.isAvailable`）。
+    pub gh: bool,
     /// まだ開けていないタブ（つないでいる途中・つなげなかった）。リポジトリの操作はどれも使えない（macOS 版の
     /// つないでいるタブは、リポジトリの窓でないので、その操作がない）。
     pub unopened: bool,
@@ -733,7 +735,7 @@ pub fn enabled(f: &Facts) -> Vec<(&'static str, bool)> {
         ("open-in-terminal", f.local),
         ("reveal-in-files", f.local),
         ("open-on-github", f.github),
-        ("create-pull-request", f.github && f.head_branch),
+        ("create-pull-request", f.github && f.gh && f.head_branch),
     ];
     // 開けていないタブでは、リポジトリの操作をどれも使えなくする。
     let opened = !f.unopened;
@@ -975,6 +977,7 @@ mod tests {
         facts.local = false;
         assert!(!of(&facts, "open-in-terminal") && !of(&facts, "reveal-in-files"));
         facts.github = true;
+        facts.gh = true;
         facts.stash = true;
         facts.undo = true;
         facts.patch = true;
@@ -983,6 +986,11 @@ mod tests {
         }
         // プルリクエストは今のブランチから作る。
         facts.head_branch = false;
+        assert!(!of(&facts, "create-pull-request"));
+        assert!(of(&facts, "open-on-github"));
+        // gh がなければ作れない（Open on GitHub はブラウザで開くので使える）。
+        facts.head_branch = true;
+        facts.gh = false;
         assert!(!of(&facts, "create-pull-request"));
         assert!(of(&facts, "open-on-github"));
     }

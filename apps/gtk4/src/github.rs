@@ -708,7 +708,10 @@ impl Loader {
             let github = of(&repo).await;
             this.github.replace(github.clone());
             // Open on GitHub・Create Pull Request… は GitHub のリポジトリだけ（macOS 版と同じ）。
-            this.actions.update_facts(|f| f.github = github.is_some());
+            this.actions.update_facts(|f| {
+                f.github = github.is_some();
+                f.gh = available();
+            });
             let sidebar = this.sidebar.upgrade();
             if let Some(s) = &sidebar {
                 s.set_can_create_pull_request(github.is_some());
