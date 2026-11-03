@@ -177,7 +177,7 @@ pub fn popover(
             name: name.to_owned(),
             message: tag["message"].as_str().unwrap_or_default().to_owned(),
         }),
-        Some(gtk::PositionType::Right),
+        Some(gtk::PositionType::Bottom),
     );
 }
 

@@ -64,7 +64,8 @@ impl Popover {
         let popover = gtk::Popover::new();
         popover.set_child(Some(&content));
         popover.set_parent(anchor);
-        popover.set_position(gtk::PositionType::Right);
+        // 印の下に出す（macOS 版の .maxY と同じ）。
+        popover.set_position(gtk::PositionType::Bottom);
         // 閉じたら外す（次は作り直す）。
         popover.connect_closed(|p| {
             let p = p.clone();
@@ -106,8 +107,13 @@ impl Popover {
 
     /// 次にできることのボタン（最初のものを強調する）。押したら閉じて `f`。
     fn button(&self, label: &str, f: impl Fn() + 'static) {
+        self.button_styled(label, self.buttons.first_child().is_none(), f);
+    }
+
+    /// 次にできることのボタン（`accent` なら強調する）。押したら閉じて `f`。
+    fn button_styled(&self, label: &str, accent: bool, f: impl Fn() + 'static) {
         let b = gtk::Button::with_label(label);
-        if self.buttons.first_child().is_none() {
+        if accent {
             b.add_css_class("suggested-action");
         }
         let p = self.popover.downgrade();
@@ -288,7 +294,7 @@ pub fn branch(
                     count = item.behind
                 )
             };
-            (icon::Kind::Push, None, title, text)
+            (icon::Kind::UpDown, None, title, text)
         }
         _ if editing => (
             icon::Kind::WorkingCopy,
@@ -368,17 +374,17 @@ pub fn branch(
     // worktree が checkout しているなら、その worktree を開くだけ（消せない・ここでは動かせない）。
     if let Some((_, path)) = &other {
         let (a, path) = (actions.clone(), path.clone());
-        p.button(&tr!("Open Worktree"), move || a.edit_worktree(&path));
+        p.button_styled(&tr!("Open Worktree"), true, move || a.edit_worktree(&path));
     } else if !is_head {
         if merged {
             let (a, name) = (actions.clone(), item.name.clone());
-            p.button(&tr!("Delete Branch"), move || {
+            p.button_styled(&tr!("Delete Branch"), true, move || {
                 sheets::delete_branches(&a, vec![name.clone()])
             });
         }
         if !fact.is_some_and(|f| f.archived) {
             let (a, name) = (actions.clone(), item.name.clone());
-            p.button(&tr!("Archive"), move || {
+            p.button_styled(&tr!("Archive"), false, move || {
                 a.perform(json!({
                     "op": "configSet", "key": format!("branch.{name}.amonhenArchived"), "value": "true",
                 }))
@@ -389,8 +395,10 @@ pub fn branch(
     // 作る（push 起因の CI を見てから作る流れ）。
     if let Some(pr) = pull_request {
         let (url, w) = (pr.url.clone(), actions.window());
-        p.button(
+        // 開いているプルリクエストは、ほかのボタンがあってもいつも強調する（macOS 版と同じ）。
+        p.button_styled(
             &tr!("Open Pull Request #{number}", number = pr.number),
+            true,
             move || crate::github::open_uri(w.as_ref().map(|w| w.upcast_ref()), &url),
         );
     } else if known.can_create_pull_request_from(&item.name)

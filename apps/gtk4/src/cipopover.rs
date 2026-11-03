@@ -108,13 +108,10 @@ pub fn show(
     let popover = gtk::Popover::new();
     popover.set_child(Some(&content));
     popover.set_parent(anchor);
-    // History の行の印（位置あり）は下に、サイドバーの行の印は右に（左に切れないよう）。
-    match rect {
-        Some(rect) => {
-            popover.set_position(gtk::PositionType::Bottom);
-            popover.set_pointing_to(Some(&rect));
-        }
-        None => popover.set_position(gtk::PositionType::Right),
+    // 印の下に出す（History の行もサイドバーの行も。macOS 版の .maxY と同じ）。
+    popover.set_position(gtk::PositionType::Bottom);
+    if let Some(rect) = rect {
+        popover.set_pointing_to(Some(&rect));
     }
     // 閉じたら外す（次は作り直す）。閉じたコミットと時刻を覚える。
     let key = sha.to_owned();

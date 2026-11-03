@@ -57,6 +57,8 @@ pub enum Kind {
     Doc,
     /// arrow.left.arrow.right（Range Diff）
     RangeDiff,
+    /// arrow.up.arrow.down（上流より先・遅れ）
+    UpDown,
     /// slider.horizontal.3（History の表示のメニュー）
     Sliders,
     /// location（Go to HEAD）
@@ -527,6 +529,19 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.line_to(14.7, 10.7);
             p.line_to(11.2, 14.2);
             p.close();
+        }
+        Kind::UpDown => {
+            // 上向きの矢印（左）と下向きの矢印（右）。
+            p.move_to(5.5, 13.5);
+            p.line_to(5.5, 3.0);
+            p.move_to(3.0, 5.5);
+            p.line_to(5.5, 3.0);
+            p.line_to(8.0, 5.5);
+            p.move_to(10.5, 2.5);
+            p.line_to(10.5, 13.0);
+            p.move_to(8.0, 10.5);
+            p.line_to(10.5, 13.0);
+            p.line_to(13.0, 10.5);
         }
         Kind::RangeDiff => {
             // 右向きの矢印（上）と左向きの矢印（下）。
