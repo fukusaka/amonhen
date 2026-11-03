@@ -855,9 +855,9 @@ fn drag_out(tile: &gtk::Widget, image: &gtk::Widget, dragged: Dragged) {
 }
 
 /// View > Customize Toolbar…: ツールバーのパレット（macOS 版の NSToolbar のカスタマイズのシート）。窓の見出しの
-/// すぐ下に滑り出させ（見出しは隠さず、落とせるまま）、窓の中身はその下に押し下げる。開いている間は、すべての窓の
-/// ツールバーをドラッグで並べ替えられる（並びはアプリ全体で 1 つ）。ほかの窓で開いていれば、そちらを閉じてこの窓に
-/// 出す（macOS 版でも、シートは開いた窓に付く）。
+/// すぐ下に、中身に重ねて滑り出させる（見出しは隠さず、落とせるまま）。macOS 版のシートと同じく窓の大きさも中身の
+/// 並びも変えず、閉じれば元のとおりに戻る。開いている間は、すべての窓のツールバーをドラッグで並べ替えられる（並びは
+/// アプリ全体で 1 つ）。ほかの窓で開いていれば、そちらを閉じてこの窓に出す（macOS 版でも、シートは開いた窓に付く）。
 pub fn customize(parent: &gtk::Window) {
     if let Some(open) = PALETTE_SHOWN.with(|p| p.borrow().upgrade()) {
         if open
@@ -868,15 +868,16 @@ pub fn customize(parent: &gtk::Window) {
         }
         close_palette(&open);
     }
-    let Some(body) = body_of(parent) else {
+    let Some(overlay) = overlay_of(parent) else {
         return;
     };
     install_css();
     let revealer = gtk::Revealer::builder()
         .transition_type(gtk::RevealerTransitionType::SlideDown)
+        .valign(gtk::Align::Start)
         .child(&palette())
         .build();
-    body.prepend(&revealer);
+    overlay.add_overlay(&revealer);
     // 窓を閉じたら（Done を押さずに）カスタマイズを終える。
     revealer.connect_unrealize(|r| {
         if PALETTE_SHOWN.with(|p| p.borrow().upgrade()).as_ref() == Some(r) {
@@ -889,22 +890,25 @@ pub fn customize(parent: &gtk::Window) {
     revealer.set_reveal_child(true);
 }
 
-/// 窓の中身の縦の箱（パレットをその頭に入れる）。中身が箱でなければ、箱で包む。
-fn body_of(window: &gtk::Window) -> Option<gtk::Box> {
+/// 窓の中身に重ねる層（パレットをそこに載せる）。中身を一度だけ `gtk::Overlay` で包む。重ねた子は大きさの
+/// 見積もりに入らないので、パレットを出しても窓の大きさは変わらない。
+fn overlay_of(window: &gtk::Window) -> Option<gtk::Overlay> {
     let child = window.child()?;
-    if let Some(body) = child
-        .downcast_ref::<gtk::Box>()
-        .filter(|b| b.orientation() == gtk::Orientation::Vertical)
+    if let Some(overlay) = child
+        .downcast_ref::<gtk::Overlay>()
+        .filter(|o| o.widget_name() == OVERLAY_NAME)
     {
-        return Some(body.clone());
+        return Some(overlay.clone());
     }
-    let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let overlay = gtk::Overlay::new();
+    overlay.set_widget_name(OVERLAY_NAME);
     window.set_child(None::<&gtk::Widget>);
-    child.set_vexpand(true);
-    body.append(&child);
-    window.set_child(Some(&body));
-    Some(body)
+    overlay.set_child(Some(&child));
+    window.set_child(Some(&overlay));
+    Some(overlay)
 }
+
+const OVERLAY_NAME: &str = "toolbar-palette-layer";
 
 /// パレットを畳んで外し、カスタマイズを終える。
 fn close_palette(revealer: &gtk::Revealer) {
@@ -914,9 +918,9 @@ fn close_palette(revealer: &gtk::Revealer) {
     // 畳み終えてから外す。
     revealer.connect_child_revealed_notify(|r| {
         if !r.is_child_revealed()
-            && let Some(parent) = r.parent().and_downcast::<gtk::Box>()
+            && let Some(parent) = r.parent().and_downcast::<gtk::Overlay>()
         {
-            parent.remove(r);
+            parent.remove_overlay(r);
         }
     });
 }
