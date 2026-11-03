@@ -366,12 +366,28 @@ final class Actions {
     func pushWithoutAsking() {
         let repository = self.repository
         Task {
-            let status = try? await Task.detached { try repository.loadStatus() }.value
-            guard let branch = status?.branch else { return NSSound.beep() }
-            guard let upstream = status?.upstream else { return publishWithConfirmation(branch: branch) }
-            let behind = await Task.detached {
-                (try? repository.info(["op": "between", "base": "HEAD", "tip": upstream, "limit": 1], as: CommitRange.self))?.count ?? 0
+            // 読めなければ知らせて止める（遅れているかを 0 件とみなして聞かずに送ると、分かれたブランチの push が
+            // 失敗の帯で終わる。Push のシートと同じ）。
+            let read = await Task.detached { () -> Result<(WorkingStatus, Int?), any Error> in
+                do {
+                    let status = try repository.loadStatus()
+                    guard let upstream = status.upstream else { return .success((status, nil)) }
+                    let behind = try repository.info(["op": "between", "base": "HEAD", "tip": upstream, "limit": 1],
+                                                     as: CommitRange.self).count
+                    return .success((status, behind))
+                } catch {
+                    return .failure(error)
+                }
             }.value
+            let status: WorkingStatus, behind: Int?
+            switch read {
+            case let .success(value): (status, behind) = value
+            case let .failure(error):
+                await inform(L("Can’t read the status"), "\(error)")
+                return
+            }
+            guard let branch = status.branch else { return NSSound.beep() }
+            guard status.upstream != nil, let behind else { return publishWithConfirmation(branch: branch) }
             if behind > 0 { return pushWithConfirmation() }
             push(branch: branch, force: false, expect: nil)
         }

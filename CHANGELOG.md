@@ -122,6 +122,8 @@ becomes the GitHub Release notes.
 - macOS: with another worktree selected, the window subtitle and the branch switcher's recent list use that worktree's
   branch.
 - macOS: New Tab from a File History or Blame tab in its own window adds the Repositories tab to that window.
+- macOS: Commit and Push stops with "Can't read the status" when it can't read the branch state, instead of beeping or
+  pushing without asking.
 
 - The GTK4 app's Undo button asks once; it opened the question twice, so one stayed after undoing.
 - A `.mailmap`, or a mailmap setting (`log.mailmap`, `mailmap.file`), changed while the engine was reading the old
