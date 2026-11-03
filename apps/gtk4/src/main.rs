@@ -856,7 +856,7 @@ fn build_tab(
     // History の検索の欄（History の上に出す）。
     let search = Rc::new(search::Search::new(&view));
     let history_column = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    let (history_bar, display_button) = historydisplay::bar();
+    let (history_bar, display_button) = historydisplay::bar(&tab.group);
     history_column.append(&history_bar);
     history_column.append(&search.bar);
     history_column.append(&historydisplay::header(&view));

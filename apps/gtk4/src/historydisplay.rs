@@ -226,7 +226,7 @@ pub fn install_actions(group: &gio::SimpleActionGroup) {
 }
 
 /// History のバー（右端に Go to HEAD と、見せ方のメニューのボタン）と、そのメニューのボタン。
-pub fn bar() -> (gtk::Box, gtk::MenuButton) {
+pub fn bar(group: &gio::SimpleActionGroup) -> (gtk::Box, gtk::MenuButton) {
     let bar = gtk::Box::new(gtk::Orientation::Horizontal, 2);
     bar.set_margin_start(6);
     bar.set_margin_end(6);
@@ -240,7 +240,19 @@ pub fn bar() -> (gtk::Box, gtk::MenuButton) {
     let head = gtk::Button::new();
     head.set_child(Some(&head_icon));
     head.add_css_class("flat");
-    head.set_action_name(Some("win.go-to-head"));
+    // ボタンはいつも押せる。HEAD がなければ（生まれていないブランチ）メニューの項目は押せず、ボタンは鳴らす
+    // （macOS 版と同じ）。
+    let group = group.downgrade();
+    head.connect_clicked(move |head| {
+        let Some(action) = group.upgrade().and_then(|g| g.lookup_action("go-to-head")) else {
+            return;
+        };
+        if action.is_enabled() {
+            action.activate(None);
+        } else {
+            head.error_bell();
+        }
+    });
     head.set_tooltip_text(Some(&tr!("Go to HEAD (Ctrl+Shift+H)")));
     bar.append(&head);
     let model = gio::Menu::new();
