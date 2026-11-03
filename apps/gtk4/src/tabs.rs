@@ -439,10 +439,13 @@ impl RepoWindow {
         }
         let mut sizes = window_sizes();
         for tab in self.tabs() {
-            if !tab.location.is_empty() {
-                let key = crate::repos::normalize(std::path::Path::new(&tab.location));
-                sizes.insert(key, serde_json::json!([width, height]));
-            }
+            // リポジトリのページは 1 つの名前で（macOS 版の Repositories の窓の "RepositoryHome"）。
+            let key = if tab.is_home() {
+                HOME_SIZE.to_owned()
+            } else {
+                crate::repos::normalize(std::path::Path::new(&tab.location))
+            };
+            sizes.insert(key, serde_json::json!([width, height]));
         }
         crate::settings::set_string(WINDOW_SIZES, &serde_json::Value::Object(sizes).to_string());
     }
@@ -508,8 +511,8 @@ impl RepoWindow {
             other.set_titlebar(None::<&gtk::Widget>);
         }
         self.window.set_titlebar(Some(&tab.header));
-        self.window
-            .set_title(Some(&format!("{} — Amon Hen", tab.name)));
+        // 窓の名前はリポジトリの名前だけ（macOS 版と同じ）。
+        self.window.set_title(Some(&tab.name));
         let names: Vec<String> = tab
             .group
             .list_actions()
@@ -698,19 +701,25 @@ fn window_sizes() -> serde_json::Map<String, serde_json::Value> {
         .unwrap_or_default()
 }
 
-/// 窓を作って、`location` を開いたタブを置く。前にその場所の窓を開いていたら、その大きさで（macOS 版と同じ）。
-pub fn new_window_with(app: &gtk::Application, location: PathBuf) -> Rc<RepoWindow> {
-    let host = RepoWindow::new(app);
-    let key = crate::repos::normalize(&location);
-    // 確認用の起動（撮る・計測する）は、いつも同じ大きさで。
+/// リポジトリのページの窓の大きさを覚える名前。
+const HOME_SIZE: &str = "RepositoryHome";
+
+/// 前にその名前（場所）の窓を開いていたら、その大きさにする（確認用の起動は、いつも同じ大きさで）。
+fn restore_size(host: &RepoWindow, key: &str) {
     if !CHECK_RUN.with(Cell::get)
-        && let Some(size) = window_sizes().get(&key).and_then(|v| v.as_array().cloned())
+        && let Some(size) = window_sizes().get(key).and_then(|v| v.as_array().cloned())
         && let [w, h] = size.as_slice()
         && let (Some(w), Some(h)) = (w.as_i64(), h.as_i64())
     {
         host.window
             .set_default_size(w.max(400) as i32, h.max(300) as i32);
     }
+}
+
+/// 窓を作って、`location` を開いたタブを置く。前にその場所の窓を開いていたら、その大きさで（macOS 版と同じ）。
+pub fn new_window_with(app: &gtk::Application, location: PathBuf) -> Rc<RepoWindow> {
+    let host = RepoWindow::new(app);
+    restore_size(&host, &crate::repos::normalize(&location));
     crate::build_tab(
         app,
         &host,
@@ -837,7 +846,11 @@ pub fn show_home(app: &gtk::Application, host: Option<Rc<RepoWindow>>) -> Rc<Rep
         home.front();
         return host.clone();
     }
-    let host = host.unwrap_or_else(|| RepoWindow::new(app));
+    let host = host.unwrap_or_else(|| {
+        let host = RepoWindow::new(app);
+        restore_size(&host, HOME_SIZE);
+        host
+    });
     let tab = Tab::new("Repositories", "", Rc::default());
     let title = gtk::Label::new(Some("Repositories"));
     title.add_css_class("title");
@@ -1262,10 +1275,24 @@ pub fn install_accels(app: &gtk::Application) {
         ("win.new-tab", &["<Control>t"][..]),
         ("win.close-window", &["<Control><Shift>w"][..]),
         ("win.toggle-tab-bar", &["<Control><Shift>t"][..]),
-        ("win.next-tab", &["<Control>Page_Down", "<Control>Tab"][..]),
+        // macOS 版の ⌘⇧] / ⌘⇧[ に当たるものを先に（メニューに出る）。Shift で変わる文字でも受ける。
+        (
+            "win.next-tab",
+            &[
+                "<Control><Shift>bracketright",
+                "<Control>braceright",
+                "<Control>Page_Down",
+                "<Control>Tab",
+            ][..],
+        ),
         (
             "win.previous-tab",
-            &["<Control>Page_Up", "<Control><Shift>Tab"][..],
+            &[
+                "<Control><Shift>bracketleft",
+                "<Control>braceleft",
+                "<Control>Page_Up",
+                "<Control><Shift>Tab",
+            ][..],
         ),
     ] {
         app.set_accels_for_action(action, accels);
