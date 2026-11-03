@@ -130,6 +130,8 @@ becomes the GitHub Release notes.
 - macOS: Combine N Commits… refuses commits off HEAD's first-parent line instead of quietly combining fewer.
 - macOS: picking from Choose from My GitHub Repositories in the Clone sheet updates the sheet at once, as typing a URL
   does.
+- macOS: the path picker says "Choose a host to see its folders." for a host name with a space or "/" instead of showing
+  empty columns.
 
 - The GTK4 app's Undo button asks once; it opened the question twice, so one stayed after undoing.
 - A `.mailmap`, or a mailmap setting (`log.mailmap`, `mailmap.file`), changed while the engine was reading the old
