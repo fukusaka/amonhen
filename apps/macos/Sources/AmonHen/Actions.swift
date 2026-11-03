@@ -229,9 +229,15 @@ final class Actions {
 
     // MARK: - よく使う操作
 
+    /// 題に出す起点: コミットの完全な ID（40・64 桁）は短い ID に（メニューの「New Branch from …」と同じ）。
+    nonisolated static func shownStart(_ rev: String) -> String {
+        let full = (rev.count == 40 || rev.count == 64) && rev.allSatisfy(\.isHexDigit)
+        return full ? String(rev.prefix(Titles.shortIDLength)) : rev
+    }
+
     func newBranch(at start: String) {
         Task { @MainActor in
-            guard let name = await ask(L("New Branch from %@", start), message: L("Name of the branch. It is checked out."),
+            guard let name = await ask(L("New Branch from %@", Self.shownStart(start)), message: L("Name of the branch. It is checked out."),
                                        ok: L("Create")) else { return }
             perform(["op": "createBranch", "name": name, "start": start, "checkout": true])
         }
@@ -247,7 +253,7 @@ final class Actions {
 
     func newTag(at target: String) {
         Task { @MainActor in
-            guard let name = await ask(L("New Tag at %@", target), message: L("Name of the tag."), ok: L("Create")) else { return }
+            guard let name = await ask(L("New Tag at %@", Self.shownStart(target)), message: L("Name of the tag."), ok: L("Create")) else { return }
             perform(["op": "createTag", "name": name, "target": target])
         }
     }
