@@ -940,14 +940,22 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
     }
 
     @objc private func newGroup() {
-        guard let name = ask(L("New Group"), message: L("Group name"), initial: "") else { return }
-        Bookmarks.shared.addGroup(name)
-        category = .group(name)
-        reload()
+        Task { @MainActor in
+            guard let name = await ask(L("New Group"), message: L("Group name"), initial: "") else { return }
+            Bookmarks.shared.addGroup(name)
+            category = .group(name)
+            reload()
+        }
+    }
+
+    /// 窓のシートで聞く（窓がなければアプリ全体で）。
+    private func present(_ alert: NSAlert) async -> NSApplication.ModalResponse {
+        guard let window = view.window else { return alert.runModal() }
+        return await alert.beginSheetModal(for: window)
     }
 
     /// 名前を聞く。Cancel なら nil。空なら nil（`allowEmpty` なら ""。空にして元に戻すとき）。
-    private func ask(_ title: String, message: String, initial: String, allowEmpty: Bool = false) -> String? {
+    private func ask(_ title: String, message: String, initial: String, allowEmpty: Bool = false) async -> String? {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = message
@@ -957,7 +965,7 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         field.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
         alert.accessoryView = field
         alert.window.initialFirstResponder = field
-        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        guard await present(alert) == .alertFirstButtonReturn else { return nil }
         let value = field.stringValue.trimmingCharacters(in: .whitespaces)
         return value.isEmpty && !allowEmpty ? nil : value
     }
@@ -1099,7 +1107,8 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
             alert.informativeText = L("%@\nRemove it from the list?", path)
             alert.addButton(withTitle: L("Remove"))
             alert.addButton(withTitle: L("Cancel"))
-            if alert.runModal() == .alertFirstButtonReturn {
+            Task { @MainActor in
+                guard await present(alert) == .alertFirstButtonReturn else { return }
                 RepositoryList.remove(path)
                 Bookmarks.shared.remove(path)
                 reload()
@@ -1155,20 +1164,20 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
             add(L("Add Local Repository…")) { [weak self] in self?.addRepository() }
             add(L("Add Folder to Scan…")) { [weak self] in self?.addScanFolder() }
         case let .group(name):
-            add(L("Rename…")) { [weak self] in
+            add(L("Rename…")) { [weak self] in Task { @MainActor in
                 // 同じ名前のままなら何もしない（下で元のグループを消すと、グループがなくなる）。
-                guard let new = self?.ask(L("Rename Group"), message: L("Group name"), initial: name), new != name
+                guard let self, let new = await self.ask(L("Rename Group"), message: L("Group name"), initial: name), new != name
                 else { return }
                 let members = Bookmarks.shared.data.items.filter { $0.group == name }.map(\.path)
                 Bookmarks.shared.addGroup(new)
                 for path in members { Bookmarks.shared.move(path, to: new) }
                 Bookmarks.shared.removeGroup(name)
                 // 選んでいたグループなら、新しい名前のグループを選んだままに（「すべて」に戻さない）。
-                if let self, category == .group(name) {
-                    category = .group(new)
-                    reload()
+                if self.category == .group(name) {
+                    self.category = .group(new)
+                    self.reload()
                 }
-            }
+            } }
             add(L("Delete Group")) { Bookmarks.shared.removeGroup(name) }
         case let .scan(path):
             if let error = Bookmarks.shared.scanErrors[path] {
@@ -1227,11 +1236,11 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
             groups.addItem(item)
         }
         groups.addItem(.separator())
-        groups.addItem(ClosureMenuItem(title: L("New Group…")) { [weak self] in
-            guard let name = self?.ask(L("New Group"), message: L("Group name"), initial: "") else { return }
+        groups.addItem(ClosureMenuItem(title: L("New Group…")) { [weak self] in Task { @MainActor in
+            guard let name = await self?.ask(L("New Group"), message: L("Group name"), initial: "") else { return }
             Bookmarks.shared.addGroup(name)
             for p in targets { Bookmarks.shared.move(p, to: name) }
-        })
+        } })
         let groupItem = NSMenuItem(title: L("Group"), action: nil, keyEquivalent: "")
         groupItem.submenu = groups
         menu.addItem(groupItem)
@@ -1248,15 +1257,15 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         let colorItem = NSMenuItem(title: L("Color Label"), action: nil, keyEquivalent: "")
         colorItem.submenu = colors
         menu.addItem(colorItem)
-        add(L("Rename…")) { [weak self] in
+        add(L("Rename…")) { [weak self] in Task { @MainActor in
             let current = Bookmarks.shared.displayName(path)
             // Cancel なら変えない（空にして OK ならフォルダの名前に戻す）。
-            guard let name = self?.ask(
+            guard let name = await self?.ask(
                 L("Rename"), message: L("Name shown in the list (leave empty for the folder name)"), initial: current,
                 allowEmpty: true
             ) else { return }
             Bookmarks.shared.rename(path, to: name.isEmpty ? nil : name)
-        }
+        } }
         if !RepositoryLocation.isRemote(path) {
             menu.addItem(.separator())
             add(L("Show in Finder")) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
