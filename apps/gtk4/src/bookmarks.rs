@@ -656,7 +656,10 @@ pub fn head_branch(location: &str) -> Option<String> {
     let line = head.trim();
     match line.strip_prefix("ref: refs/heads/") {
         Some(branch) => Some(branch.to_owned()),
-        None => Some(format!("detached {}", &line[..line.len().min(8)])),
+        None => Some(format!(
+            "detached {}",
+            line.chars().take(8).collect::<String>()
+        )),
     }
 }
 

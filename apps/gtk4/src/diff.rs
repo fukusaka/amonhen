@@ -1123,7 +1123,7 @@ impl DiffWidget {
         }
         let (_, index, trailing) = layout.xy_to_index((offset * pango::SCALE as f32) as i32, 0);
         let text = view.text(&rows[row]);
-        let mut index = (index.max(0) as usize).min(text.len());
+        let mut index = floor_char_boundary(text, index.max(0) as usize);
         // 文字の後ろ半分なら、その文字の後ろ。
         for _ in 0..trailing {
             index += text[index..].chars().next().map_or(0, char::len_utf8);
@@ -1994,10 +1994,20 @@ fn on_baseline(y: f32, main: &pango::Layout, other: &pango::Layout) -> f32 {
     y + (main.baseline() - other.baseline()) as f32 / pango::SCALE as f32
 }
 
+/// `index` 以下で一番近い文字の境目（`str::floor_char_boundary` は MSRV より新しい）。
+fn floor_char_boundary(text: &str, index: usize) -> usize {
+    let mut i = index.min(text.len());
+    while !text.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
 /// `text` の `index`（バイト位置）の文字を含む単語の範囲（ダブルクリック）。英数字と `_` の並び、空白の並び、
 /// それ以外は 1 文字。
 fn word_range(text: &str, index: usize) -> (usize, usize) {
-    let index = index.min(text.len());
+    // 文字の途中を指していたら、その文字の頭に（Pango の位置がずれても落ちないように）。
+    let index = floor_char_boundary(text, index);
     // 行末なら、その前の文字。
     let at = if index < text.len() {
         index
@@ -2166,5 +2176,8 @@ mod tests {
         assert_eq!(word_range(text, 14), (14, 23));
         assert_eq!(word_range(text, text.len()), (23, 24));
         assert_eq!(word_range("", 0), (0, 0));
+        // 文字の途中を指しても落ちず、その文字の単語に。
+        assert_eq!(word_range(text, 15), (14, 23));
+        assert_eq!(word_range("日本", 100), (0, 6));
     }
 }

@@ -341,7 +341,8 @@ fn root_base(root: &str) -> String {
 
 /// SSH 先のパスの見せ方（`/~/prj` は `~/prj`、Windows の SSH 先の `/C:/src` は `C:/src`）。
 pub(crate) fn remote_title(path: &str) -> String {
-    let rest = &path[path.len().min(1)..];
+    // 頭の 1 文字を除いたもの（多バイト文字で始まる相対パスでも落ちないよう、文字で数える）。
+    let rest = path.chars().next().map_or("", |c| &path[c.len_utf8()..]);
     let b = rest.as_bytes();
     if path.starts_with("/~") || (b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':') {
         rest.to_owned()
@@ -3105,6 +3106,15 @@ pub fn snapshot_when_ready(window: &gtk::Window, png: PathBuf) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn remote_titles_survive_multibyte_paths() {
+        assert_eq!(remote_title("/~/prj"), "~/prj");
+        assert_eq!(remote_title("/C:/src"), "C:/src");
+        assert_eq!(remote_title("/srv/日本"), "/srv/日本");
+        assert_eq!(remote_title("日本/x"), "日本/x");
+        assert_eq!(remote_title(""), "");
+    }
+
     use super::*;
 
     #[test]
