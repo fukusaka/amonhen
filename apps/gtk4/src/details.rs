@@ -1522,11 +1522,26 @@ impl Details {
         )
     }
 
-    /// 出しているメッセージ（複数のコミットを選んでいれば、各コミットの 1 行の一覧）。
+    /// 出しているメッセージ（複数のコミットを選んでいれば、見出しの文すべて: 数、取り方の説明、取り方の
+    /// 切り替え、各コミットの 1 行。macOS 版の `header.string` と同じ）。
     pub fn message(&self) -> String {
         match self.info.borrow().as_ref() {
             Some(info) => str_of(info, "message").to_owned(),
-            None if self.selection.is_visible() => self.selection_lines.text().into(),
+            None if self.selection.is_visible() => {
+                let mut text = format!(
+                    "{}\n{}\n",
+                    self.selection_title.text(),
+                    self.selection_note.text()
+                );
+                if self.pairs.is_visible()
+                    && let Some(links) = self.pairs.first_child().and_downcast::<gtk::Label>()
+                {
+                    text.push_str(&format!("{}\n", links.text()));
+                }
+                text.push('\n');
+                text.push_str(&self.selection_lines.text());
+                text
+            }
             None => {
                 let (subject, body) = (self.subject.text(), self.body.text());
                 if body.is_empty() {
