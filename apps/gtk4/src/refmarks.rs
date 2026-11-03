@@ -360,7 +360,7 @@ pub fn branch(
             (icon::Kind::UpDown, None, title, text)
         }
         _ if editing => (
-            icon::Kind::WorkingCopy,
+            icon::Kind::PencilCircle,
             Some("accent"),
             tr!("Current branch, being edited"),
             tr!(
