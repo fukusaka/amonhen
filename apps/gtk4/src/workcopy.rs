@@ -440,8 +440,9 @@ impl WorkingCopy {
         bar.append(&line_endings);
         bar.append(&sides);
         bar.append(&conflict_buttons);
-        bar.append(&lines);
+        // macOS 版と同じく、捨てる・行を含める の順。
         bar.append(&discard);
+        bar.append(&lines);
         let diff = DiffWidget::default();
         let diff_scrolled = gtk::ScrolledWindow::builder()
             .child(&diff)
@@ -1697,7 +1698,6 @@ impl Inner {
                 cell.detail.set_hexpand(false);
                 cell.counts.set_visible(false);
                 cell.can_discard.set(false);
-                cell.discard.set_visible(false);
                 cell.line.set_tooltip_text(None);
             }
             Row::File {
@@ -1743,8 +1743,6 @@ impl Inner {
                 cell.name.set_hexpand(!flat_parent);
                 fill_counts(&cell.counts, self.stats.borrow().get(&entry.path).copied());
                 cell.can_discard.set(!conflict && entry.is_unstaged());
-                // 捨てられないファイル（すべて含めた・コンフリクト）でも幅は取っておく（行数の位置を揃える）。
-                cell.discard.set_visible(true);
                 // パス（名前を変えたファイルはもとのパス → 今のパス。macOS 版と同じ）。
                 let tip = match &entry.orig_path {
                     Some(orig) => format!("{orig} → {}", entry.path),
@@ -3398,12 +3396,10 @@ fn in_dir(path: &str, dir: &str) -> bool {
         .is_some_and(|rest| rest.starts_with('/'))
 }
 
-/// 行の変更を捨てるボタンを出す・隠す。隠している間は、透明なだけでなくクリックも Tab のフォーカスも受けない
-/// （macOS 版は隠す）。幅は取ったままにして、出し入れで行数の位置が動かないようにする。
+/// 行の変更を捨てるボタンを出す・隠す。隠している間は幅も取らず、行数が右端に寄る（出すと行数が左へずれる。
+/// macOS 版と同じ）。
 fn reveal_discard(discard: &gtk::Button, shown: bool) {
-    discard.set_opacity(if shown { 1.0 } else { 0.0 });
-    discard.set_can_target(shown);
-    discard.set_focusable(shown);
+    discard.set_visible(shown);
 }
 
 /// ファイルをディレクトリの木の順に並べる（macOS 版と同じく、ファイルを持たず子が 1 つだけのディレクトリは
