@@ -8,11 +8,12 @@
 import assert from 'node:assert/strict';
 import childProcess from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import * as vscode from 'vscode';
 import { DaemonClient } from '../src/daemon/client.ts';
 import type { SelectedLine } from '../src/diff/fileDiff.ts';
 import { settingsFile } from '../src/git/choice.ts';
+import { samePath } from '../src/git/worktrees.ts';
 import type { activate } from '../src/extension.ts';
 import type { HostMessage } from '../src/view/protocol.ts';
 
@@ -420,6 +421,79 @@ async function tagsAndRemotesFlow(): Promise<void> {
       // 署名を試していない
     }
     await repo.refresh();
+  }
+}
+
+/**
+ * worktree を作ると Working Copy の下に並び（書き込む先は ✎）、書き込む先がそれになる。変更の数が出て、
+ * 別の worktree が checkout しているブランチに印が付く。メインに戻し、消し、フォルダの消えた worktree を片付ける。
+ * どれもコアの命令（daemon だけ）
+ */
+async function worktreeFlow(): Promise<void> {
+  const sidebar = api.sidebar;
+  const manager = api.manager;
+  const main = manager.repositories.find((r) => samePath(r.root, root))!;
+  const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+  const folder = join(dirname(root), 'repo-e2e-wt');
+  const gone = join(dirname(root), 'repo-e2e-gone');
+  const rows = () => {
+    const wc = sidebar.getChildren().find((n) => n.kind === 'view' && n.view === 'workingCopy')!;
+    return sidebar.getChildren(wc).flatMap((n) => (n.kind === 'cleanWorktrees' ? sidebar.getChildren(n) : [n]));
+  };
+  const row = (path: string) => {
+    const node = rows().find((n) => n.kind === 'worktree' && samePath(n.worktree.path, path));
+    return node && { node, item: sidebar.getTreeItem(node) };
+  };
+  const icon = (item: vscode.TreeItem) => (item.iconPath as vscode.ThemeIcon | undefined)?.id;
+  try {
+    // HEAD から e2e-wt を作り、それを checkout した worktree を書き込む先にする
+    await withWindow({ showInputBox: inputs('e2e-wt', folder) }, async () => vscode.commands.executeCommand('amonhen.worktree.new'));
+    assert.equal(git('-C', folder, 'symbolic-ref', '--short', 'HEAD').trim(), 'e2e-wt');
+    await until('新しい worktree が書き込む先', () => manager.current && samePath(manager.current.root, folder));
+    const editing = await until('✎ の行', () => {
+      const r = row(folder);
+      return r && icon(r.item) === 'edit' && r;
+    });
+    assert.match(String(editing.item.description), /^e2e-wt · no changes/);
+    assert.equal(icon(row(root)!.item), 'home');
+    // メインの作業ツリーが checkout しているブランチに ⌂ が付く
+    const branches = sidebar.getChildren(sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'branches')!);
+    const mainBranch = branches.find((n) => n.kind === 'branch' && n.ref.name === `refs/heads/${branch}`)!;
+    assert.match(String(sidebar.getTreeItem(mainBranch).description), new RegExp(`⌂ ${basename(root)}`));
+
+    // worktree の変更の数が出る
+    writeFileSync(join(folder, 'wt-change.txt'), 'change\n');
+    await vscode.commands.executeCommand('amonhen.refresh');
+    await until('変更の数', () => /1 changed/.test(String(row(folder)?.item.description)));
+
+    // メインに戻す
+    await vscode.commands.executeCommand('amonhen.worktree.edit', row(root)!.node);
+    assert.ok(samePath(manager.current!.root, root));
+    await until('✎ が戻る', () => icon(row(root)!.item) === 'edit');
+
+    // 変更があっても、確かめてから消す（ブランチは残る）
+    await withWindow({ showWarningMessage: async () => 'Remove Worktree' }, async () =>
+      vscode.commands.executeCommand('amonhen.worktree.remove', row(folder)!.node),
+    );
+    assert.equal(existsSync(folder), false);
+    assert.equal(git('branch', '--list', 'e2e-wt').trim(), 'e2e-wt');
+
+    // フォルダの消えた worktree は「folder is gone」と出て、Prune で片付く
+    git('worktree', 'add', '-q', '-b', 'e2e-gone', gone);
+    rmSync(gone, { recursive: true, force: true });
+    await sidebar.worktrees.reload();
+    await until('folder is gone', () => /folder is gone/.test(String(row(gone)?.item.description)));
+    await vscode.commands.executeCommand('amonhen.worktree.prune');
+    await until('片付く', () => !row(gone) && !git('worktree', 'list').includes('repo-e2e-gone'));
+  } finally {
+    manager.select(main);
+    manager.forget(folder);
+    for (const path of [folder, gone]) {
+      if (git('worktree', 'list').includes(basename(path))) git('worktree', 'remove', '--force', path);
+    }
+    git('worktree', 'prune');
+    for (const b of ['e2e-wt', 'e2e-gone']) if (git('branch', '--list', b).trim()) git('branch', '-D', b);
+    await sidebar.worktrees.reload();
   }
 }
 
@@ -1145,6 +1219,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('marks tags by remote and signature, and pushes, replaces and deletes tags and changes remotes through the daemon', async () => {
     await tagsAndRemotesFlow();
+  });
+
+  test('lists worktrees under Working Copy, edits, creates, removes and prunes them through the daemon', async () => {
+    await worktreeFlow();
   });
 
   test('drops the selection of a file whose changes went away before its diff is read', async () => {

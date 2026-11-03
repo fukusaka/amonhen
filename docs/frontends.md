@@ -27,7 +27,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Range Diff row while a range diff is open | ✓ | ✓ | — | n/a |  |
 | Filter field over Branches, Remotes and Tags | ✓ | ✓ | — | n/a |  |
 | Several branches or tags selected at once | ✓ | ✓ | — | n/a |  |
-| Pull Requests and Worktrees shown only when not empty | ✓ | ✓ | — | n/a | VSCode: Neither group exists. |
+| Pull Requests and Worktrees shown only when not empty | ✓ | ✓ | △ | n/a | VSCode: Worktrees only (GitHub is left out). |
 
 ## Sidebar
 
@@ -48,7 +48,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Pull Requests group | ✓ | ✓ | — | — |  |
 | Submodules group (Update, Open in New Window) | ✓ | ✓ | ✓ | ✓ | CLI: `submodule`, `submodule update`. |
 | Submodule marks (not checked out, another commit, changes inside, conflict) and menus: Update… (recursive, remote), Edit URL, Branch to Follow, Remove (optionally .git/modules), Add, Sync URLs | ✓ | ✓ | — | ✓ | CLI: `submodule` (`add`, `remove`, `set-url`, `set-branch`, `sync`). |
-| Worktrees under Working Copy with change counts (✎ ⌂ ⑂) | ✓ | ✓ | — | △ | CLI: `worktree list --changes`. |
+| Worktrees under Working Copy with change counts (✎ ⌂ ⑂) | ✓ | ✓ | ✓ | △ | VSCode: The marks are the rows' icons; a branch another worktree has checked out gets ⌂ or ⑂.<br>CLI: `worktree list --changes`. |
 | Marks for a shallow or partial clone (History) and a sparse checkout (Working Copy) | ✓ | ✓ | — | n/a |  |
 
 ## 1. Tabs and windows
@@ -366,12 +366,12 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| Worktrees with change counts | ✓ | ✓ | — | ✓ | CLI: `worktree list --changes`. |
-| The edited worktree (✎) and switching it | ✓ | ✓ | — | n/a | CLI: Works on the worktree it runs in. |
-| New Worktree… (from a branch or commit) | ✓ | ✓ | — | ✓ |  |
-| Remove Worktree (asks, `--force` with changes) | ✓ | ✓ | — | ✓ |  |
-| Prune worktrees | ✓ | ✓ | — | ✓ |  |
-| A worktree's folder opens its repository with it edited | ✓ | ✓ | — | n/a |  |
+| Worktrees with change counts | ✓ | ✓ | ✓ | ✓ | CLI: `worktree list --changes`. |
+| The edited worktree (✎) and switching it | ✓ | ✓ | ✓ | n/a | VSCode: Switches the repository the extension works on; one outside the workspace isn't added to the Source Control view.<br>CLI: Works on the worktree it runs in. |
+| New Worktree… (from a branch or commit) | ✓ | ✓ | ✓ | ✓ |  |
+| Remove Worktree (asks, `--force` with changes) | ✓ | ✓ | ✓ | ✓ |  |
+| Prune worktrees | ✓ | ✓ | ✓ | ✓ |  |
+| A worktree's folder opens its repository with it edited | ✓ | ✓ | ✓ | n/a | VSCode: Opening the folder works on that worktree, with the others listed. |
 
 ## SSH hosts, shared daemon, askpass
 

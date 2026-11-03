@@ -229,6 +229,47 @@
         "category": "Amon Hen"
       },
       {
+        "command": "amonhen.worktree.new",
+        "title": "New Worktree…",
+        "category": "Amon Hen",
+        "icon": "$(add)"
+      },
+      {
+        "command": "amonhen.worktree.edit",
+        "title": "Edit This Worktree",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.worktree.openInNewWindow",
+        "title": "Open in New Window",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.worktree.reveal",
+        "title": "Reveal in File Manager",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.worktree.openInTerminal",
+        "title": "Open in Terminal",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.worktree.copyPath",
+        "title": "Copy Path",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.worktree.remove",
+        "title": "Remove Worktree…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.worktree.prune",
+        "title": "Prune Worktrees",
+        "category": "Amon Hen"
+      },
+      {
         "command": "amonhen.skipSequence",
         "title": "Skip",
         "category": "Amon Hen",
@@ -479,6 +520,56 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "amonhen.worktree.new",
+          "when": "view == amonhen.sidebar && amonhen.engine && viewItem == view.workingCopy",
+          "group": "1_worktree@1"
+        },
+        {
+          "command": "amonhen.worktree.prune",
+          "when": "view == amonhen.sidebar && amonhen.engine && viewItem == view.workingCopy",
+          "group": "1_worktree@2"
+        },
+        {
+          "command": "amonhen.worktree.edit",
+          "when": "view == amonhen.sidebar && amonhen.engine && viewItem =~ /^worktree(?!.*;(editing|prunable))/",
+          "group": "1_worktree@1"
+        },
+        {
+          "command": "amonhen.worktree.openInNewWindow",
+          "when": "view == amonhen.sidebar && amonhen.engine && viewItem =~ /^worktree(?!.*;prunable)/",
+          "group": "2_open@1"
+        },
+        {
+          "command": "amonhen.worktree.reveal",
+          "when": "view == amonhen.sidebar && amonhen.engine && viewItem =~ /^worktree(?!.*;prunable)/ && !remoteName",
+          "group": "2_open@2"
+        },
+        {
+          "command": "amonhen.worktree.openInTerminal",
+          "when": "view == amonhen.sidebar && amonhen.engine && viewItem =~ /^worktree(?!.*;prunable)/",
+          "group": "2_open@3"
+        },
+        {
+          "command": "amonhen.worktree.copyPath",
+          "when": "view == amonhen.sidebar && amonhen.engine && viewItem =~ /^worktree/",
+          "group": "3_copy@1"
+        },
+        {
+          "command": "amonhen.worktree.remove",
+          "when": "view == amonhen.sidebar && amonhen.engine && viewItem =~ /^worktree(?!.*;(main|prunable))/",
+          "group": "4_worktree@1"
+        },
+        {
+          "command": "amonhen.worktree.prune",
+          "when": "view == amonhen.sidebar && amonhen.engine && viewItem =~ /^worktree.*;prunable/",
+          "group": "4_worktree@2"
+        },
+        {
+          "command": "amonhen.worktree.new",
+          "when": "view == amonhen.sidebar && amonhen.engine && viewItem =~ /^(branch(\\.current)?(;\\w+)?|remoteBranch|tag(;\\w+)*)$/",
+          "group": "4_create@4"
+        },
         {
           "command": "amonhen.remote.add",
           "when": "view == amonhen.sidebar && viewItem == section.remotes && amonhen.engine",
@@ -836,6 +927,38 @@
         {
           "command": "amonhen.remote.add",
           "when": "amonhen.hasRepository && amonhen.engine"
+        },
+        {
+          "command": "amonhen.worktree.edit",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.worktree.openInNewWindow",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.worktree.reveal",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.worktree.openInTerminal",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.worktree.copyPath",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.worktree.remove",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.worktree.new",
+          "when": "amonhen.hasRepository && amonhen.engine"
+        },
+        {
+          "command": "amonhen.worktree.prune",
+          "when": "amonhen.hasRepository && amonhen.engine"
         }
       ],
       "webview/context": [
@@ -923,6 +1046,11 @@
           "command": "amonhen.resetToCommit",
           "when": "webviewId == 'amonhen.main' && (webviewSection == 'commit' || webviewSection == 'reflog') && amonhen.engine",
           "group": "4_checkout@2"
+        },
+        {
+          "command": "amonhen.worktree.new",
+          "when": "webviewId == 'amonhen.main' && (webviewSection == 'commit' || webviewSection == 'reflog') && amonhen.engine",
+          "group": "4_checkout@3"
         },
         {
           "command": "amonhen.reflog.showInHistory",

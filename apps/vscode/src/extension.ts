@@ -20,6 +20,7 @@ import { registerSubmoduleCommands } from './ui/submoduleCommands.ts';
 import { registerSyncCommands } from './ui/syncCommands.ts';
 import { registerTagCommands } from './ui/tagCommands.ts';
 import { registerUndoCommand } from './ui/undoCommand.ts';
+import { registerWorktreeCommands } from './ui/worktreeCommands.ts';
 import type { ViewName } from './view/protocol.ts';
 
 /** 戻り値は結合テストから中身を確かめるためのもの */
@@ -88,7 +89,8 @@ export async function activate(
     registerRangeDiffCommands(manager),
     registerReflogCommands(manager),
     registerTagCommands(manager, sidebar),
-    // エンジンを使えるときだけ出すもの（Reflog・Reset、タグとリモートのメニュー）
+    registerWorktreeCommands(manager, sidebar),
+    // エンジンを使えるときだけ出すもの（Reflog・Reset、タグとリモートのメニュー、worktree）
     vscode.workspace.onDidChangeConfiguration((e) => e.affectsConfiguration('amonhen.daemon') && void updateEngine()),
   );
   void updateEngine();

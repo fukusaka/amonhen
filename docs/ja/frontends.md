@@ -27,7 +27,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | Range Diff を開いているあいだの Range Diff の行 | ✓ | ✓ | — | n/a |  |
 | Branches・Remotes・Tags を絞り込む欄 | ✓ | ✓ | — | n/a |  |
 | ブランチ・タグをいくつも選ぶ | ✓ | ✓ | — | n/a |  |
-| Pull Requests・Worktrees は中身があるときだけ出す | ✓ | ✓ | — | n/a | VSCode: どちらのグループもない。 |
+| Pull Requests・Worktrees は中身があるときだけ出す | ✓ | ✓ | △ | n/a | VSCode: Worktrees だけ（GitHub は入れない）。 |
 
 ## サイドバー
 
@@ -48,7 +48,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | Pull Requests のグループ | ✓ | ✓ | — | — |  |
 | Submodules のグループ（Update・新しい窓で開く） | ✓ | ✓ | ✓ | ✓ | CLI: `submodule`・`submodule update`。 |
 | submodule の印（取り出していない・違うコミット・中の変更・コンフリクト）とメニュー: Update…（中の submodule も・追うブランチの最新）・URL の編集・追うブランチ・外す（.git/modules も消せる）・追加・Sync URLs | ✓ | ✓ | — | ✓ | CLI: `submodule`（`add`・`remove`・`set-url`・`set-branch`・`sync`）。 |
-| Working Copy の下の worktree と変更の数（✎ ⌂ ⑂） | ✓ | ✓ | — | △ | CLI: `worktree list --changes`。 |
+| Working Copy の下の worktree と変更の数（✎ ⌂ ⑂） | ✓ | ✓ | ✓ | △ | VSCode: 印は行のアイコン。ほかの worktree が checkout しているブランチには ⌂ か ⑂ が付く。<br>CLI: `worktree list --changes`。 |
 | shallow clone・partial clone（History）と sparse checkout（Working Copy）の印 | ✓ | ✓ | — | n/a |  |
 
 ## 1. タブと窓
@@ -366,12 +366,12 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| worktree と変更の数 | ✓ | ✓ | — | ✓ | CLI: `worktree list --changes`。 |
-| 書き込む先の worktree（✎）と切り替え | ✓ | ✓ | — | n/a | CLI: 動かした worktree で働く。 |
-| New Worktree…（ブランチ・コミットから） | ✓ | ✓ | — | ✓ |  |
-| Remove Worktree（尋ね、変更があれば `--force`） | ✓ | ✓ | — | ✓ |  |
-| worktree の Prune | ✓ | ✓ | — | ✓ |  |
-| worktree のフォルダーを開くと、そのリポジトリでそれを書き込む先にする | ✓ | ✓ | — | n/a |  |
+| worktree と変更の数 | ✓ | ✓ | ✓ | ✓ | CLI: `worktree list --changes`。 |
+| 書き込む先の worktree（✎）と切り替え | ✓ | ✓ | ✓ | n/a | VSCode: 拡張が働くリポジトリを切り替える。ワークスペースの外のものはソース管理のビューには足さない。<br>CLI: 動かした worktree で働く。 |
+| New Worktree…（ブランチ・コミットから） | ✓ | ✓ | ✓ | ✓ |  |
+| Remove Worktree（尋ね、変更があれば `--force`） | ✓ | ✓ | ✓ | ✓ |  |
+| worktree の Prune | ✓ | ✓ | ✓ | ✓ |  |
+| worktree のフォルダーを開くと、そのリポジトリでそれを書き込む先にする | ✓ | ✓ | ✓ | n/a | VSCode: フォルダーを開くとその worktree で働き、ほかの worktree も並ぶ。 |
 
 ## SSH 先・共有の daemon・askpass
 

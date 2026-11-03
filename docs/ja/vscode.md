@@ -215,7 +215,7 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 
 - [x] 13. Reflog、コミットへの Reset、コミットの Checkout (Detached)
 - [x] 14. タグとリモートのメニュー、タグのリモートの印と署名の印
-- [ ] 15. Worktrees
+- [x] 15. Worktrees
 - [ ] 16. File History
 - [ ] 17. Blame
 - [ ] 18. アプリと同じブランチの並べ方、お気に入り、アーカイブ、複数選択、絞り込み

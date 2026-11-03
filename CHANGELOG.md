@@ -759,6 +759,8 @@ First release.
 - With the engine, tags show what the remotes have (as of the last Fetch) and their signature, and their menu pushes,
   replaces or deletes them on a remote and deletes them here (with Undo). Remotes can be added, renamed, pointed
   elsewhere, pruned and removed from the sidebar.
+- With the engine, worktrees are listed under Working Copy with their change counts; selecting one makes it the one
+  the extension works on. New Worktree…, Remove Worktree… and Prune Worktrees are in the sidebar and History menus.
 
 #### Changed
 

@@ -223,7 +223,7 @@ left out for now: VSCode has its own extensions and settings for them.
 
 - [x] 13. Reflog, Reset to a commit, and Checkout (Detached) of a commit
 - [x] 14. Tag and remote menus, tag marks for remotes and signatures
-- [ ] 15. Worktrees
+- [x] 15. Worktrees
 - [ ] 16. File History
 - [ ] 17. Blame
 - [ ] 18. Branches arranged as in the app, favorites, archived, several selected, filtering

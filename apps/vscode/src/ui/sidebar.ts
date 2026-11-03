@@ -9,11 +9,13 @@ import { splitRemoteRef } from '../git/refs.ts';
 import { signatureExplanation, signatureIcon, signatureLabel, signatureStatus } from '../git/signature.ts';
 import { describeSubmodule } from '../git/status.ts';
 import { tagMark, tagMarkLabel, tagStateText, tagTargets } from '../git/tagRemotes.ts';
+import { samePath, worktreeLayout, worktreeName, type Worktree } from '../git/worktrees.ts';
 import type { RepositoryManager } from '../state/manager.ts';
 import { shortName } from '../state/operations.ts';
 import type { LazySection, Repository, Submodule } from '../state/repository.ts';
 import type { ViewName } from '../view/protocol.ts';
 import { TagMarks } from './tagMarks.ts';
+import { WorktreeList } from './worktreeList.ts';
 
 /**
  * 途中の操作の行の名前（進み具合を除く）。知らせからこの行を指す（知らせは VSCode が 12 秒ほどで通知センターに
@@ -39,7 +41,11 @@ export type Node =
   | { kind: 'remote'; remote: Remote; folder: Folder }
   | { kind: 'tag'; ref: Ref }
   | { kind: 'stash'; stash: Stash }
-  | { kind: 'submodule'; submodule: Submodule; state?: string };
+  | { kind: 'submodule'; submodule: Submodule; state?: string }
+  /** Working Copy の下の worktree */
+  | { kind: 'worktree'; worktree: Worktree }
+  /** 変更のない worktree をまとめる行 */
+  | { kind: 'cleanWorktrees'; worktrees: Worktree[] };
 
 const SECTION_LABELS: Record<RefSection, string> = {
   branches: 'Branches',
@@ -59,6 +65,8 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
   private engine = false;
   /** タグのリモートでの様子と署名 */
   readonly tagMarks = new TagMarks();
+  /** リポジトリの worktree（2 つ以上あるときだけ Working Copy の下に出す） */
+  readonly worktrees = new WorktreeList();
   /** 更新通知で同じノードを指せるよう、セクションのノードは使い回す */
   private readonly sections = new Map<RefSection, Node>(
     (Object.keys(SECTION_LABELS) as RefSection[]).map((s) => [s, { kind: 'section', section: s }]),
@@ -73,6 +81,9 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
       manager.onDidChangeCurrent((r) => this.watch(r)),
       this.tagMarks,
       this.tagMarks.onDidChange(() => this._onDidChangeTreeData.fire(this.sections.get('tags'))),
+      this.worktrees,
+      // Working Copy の行（子が変わる）とブランチの印
+      this.worktrees.onDidChange(() => this._onDidChangeTreeData.fire(undefined)),
     );
     this.watch(manager.current);
   }
@@ -85,6 +96,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
     this.repoListener?.dispose();
     this.updateContext(repository);
     this.tagMarks.setRepository(this.engine ? repository : undefined);
+    this.worktrees.setRepository(this.engine ? repository : undefined);
     this.repoListener = repository?.onDidChange((changed) => {
       if (changed.has('branches')) this.updateContext(repository);
       // Working Copy の変化は、入口の数と途中の merge / rebase に出る
@@ -105,6 +117,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
     if (engine !== this.engine) {
       this.engine = engine;
       this.tagMarks.setRepository(engine ? this.repo : undefined);
+      this.worktrees.setRepository(engine ? this.repo : undefined);
       this._onDidChangeTreeData.fire(undefined);
     }
   }
@@ -146,6 +159,15 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
         return folderChildren(node.folder, node.id, node.remote);
       case 'remote':
         return folderChildren(node.folder, `remote:${node.remote.name}`, node.remote.name);
+      case 'view': {
+        if (node.view !== 'workingCopy') return [];
+        const layout = this.worktreeLayout(repo);
+        const nodes: Node[] = layout.shown.map((worktree) => ({ kind: 'worktree', worktree }));
+        if (layout.clean.length > 0) nodes.push({ kind: 'cleanWorktrees', worktrees: layout.clean });
+        return nodes;
+      }
+      case 'cleanWorktrees':
+        return node.worktrees.map((worktree) => ({ kind: 'worktree', worktree }));
       default:
         return [];
     }
@@ -192,7 +214,8 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
   }
 
   getTreeItem(node: Node): vscode.TreeItem {
-    const state = this.repo?.current;
+    const repo = this.repo;
+    const state = repo?.current;
     switch (node.kind) {
       case 'view': {
         if (node.view === 'workingCopy') {
@@ -202,6 +225,12 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
           item.description = count > 0 ? `${count} changed` : 'clean';
           item.iconPath = new vscode.ThemeIcon('diff');
           item.command = { command: 'amonhen.showWorkingCopy', title: 'Show Working Copy' };
+          item.contextValue = 'view.workingCopy';
+          // worktree が 2 つ以上あれば、その並びを下に出す（書き込む先は ✎）
+          if (repo && this.worktreeLayout(repo).shown.length > 0) {
+            item.collapsibleState = vscode.TreeItemCollapsibleState.Expanded;
+            item.tooltip = `Working Copy of ✎ ${repo.root}`;
+          }
           return item;
         }
         if (node.view === 'reflog') {
@@ -266,8 +295,23 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
         item.iconPath = vscode.ThemeIcon.Folder;
         return item;
       }
-      case 'branch':
-        return branchItem(node);
+      case 'branch': {
+        const other =
+          !node.remote && repo && !node.ref.isHead
+            ? this.worktrees.checkedOutElsewhere(shortName(node.ref.name), repo.root)
+            : undefined;
+        return branchItem(node, other);
+      }
+      case 'worktree':
+        return this.worktreeItem(node.worktree);
+      case 'cleanWorktrees': {
+        const item = new vscode.TreeItem('No changes', vscode.TreeItemCollapsibleState.Collapsed);
+        item.id = 'worktrees:clean';
+        item.description = String(node.worktrees.length);
+        item.tooltip = 'Worktrees without changes';
+        item.iconPath = new vscode.ThemeIcon('check-all');
+        return item;
+      }
       case 'remote': {
         const item = new vscode.TreeItem(node.remote.name, vscode.TreeItemCollapsibleState.Collapsed);
         item.id = `remote:${node.remote.name}`;
@@ -297,6 +341,54 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
         return item;
       }
     }
+  }
+
+  private worktreeLayout(repo: Repository): { shown: Worktree[]; clean: Worktree[] } {
+    if (!this.engine) return { shown: [], clean: [] };
+    return worktreeLayout(
+      this.worktrees.worktrees,
+      (w) => this.worktrees.changes(w),
+      (w) => samePath(w.path, repo.root),
+    );
+  }
+
+  /**
+   * worktree の行。書き込む先（今のリポジトリ）は ✎、メインの作業ツリーは ⌂、追加した worktree は ⑂ のアイコン。
+   * 選ぶと、その worktree を書き込む先にする
+   */
+  private worktreeItem(w: Worktree): vscode.TreeItem {
+    const repo = this.repo;
+    const editing = !!repo && samePath(w.path, repo.root);
+    const item = new vscode.TreeItem(worktreeName(w));
+    item.id = `worktree:${w.path}`;
+    const changes = this.worktrees.changes(w);
+    const parts = [w.branch ?? (w.head ? `detached at ${w.head.slice(0, 8)}` : 'no commits')];
+    if (w.prunable !== null) parts.push('folder is gone');
+    else parts.push(changes > 0 ? `${changes} changed` : 'no changes');
+    if (w.locked !== null) parts.push('locked');
+    item.description = parts.join(' · ');
+    item.iconPath =
+      w.prunable !== null
+        ? new vscode.ThemeIcon('warning', new vscode.ThemeColor('list.warningForeground'))
+        : editing
+          ? new vscode.ThemeIcon('edit')
+          : w.main
+            ? new vscode.ThemeIcon('home')
+            : new vscode.ThemeIcon('repo-forked', new vscode.ThemeColor('charts.green'));
+    item.tooltip = [
+      w.path,
+      w.branch ? `Branch: ${w.branch}` : 'detached HEAD',
+      editing ? 'Editing this worktree' : w.prunable === null ? 'Click to edit this worktree' : undefined,
+      w.locked !== null ? (w.locked ? `Locked: ${w.locked}` : 'Locked') : undefined,
+      w.prunable !== null ? `Its folder is gone (Prune removes it): ${w.prunable}` : undefined,
+    ]
+      .filter((l) => l !== undefined)
+      .join('\n');
+    item.contextValue = `worktree${w.main ? ';main' : ''}${editing ? ';editing' : ''}${w.prunable !== null ? ';prunable' : ''}`;
+    if (!editing && w.prunable === null) {
+      item.command = { command: 'amonhen.worktree.edit', title: 'Edit This Worktree', arguments: [{ kind: 'worktree', worktree: w }] };
+    }
+    return item;
   }
 
   /**
@@ -351,7 +443,8 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
   }
 }
 
-function branchItem(node: Extract<Node, { kind: 'branch' }>): vscode.TreeItem {
+/** `other` はこのブランチを checkout している、書き込む先以外の worktree */
+function branchItem(node: Extract<Node, { kind: 'branch' }>, other?: Worktree): vscode.TreeItem {
   const ref = node.ref;
   const item = new vscode.TreeItem(node.label);
   item.id = node.remote ? `remoteBranch:${ref.name}` : ref.name;
@@ -359,11 +452,14 @@ function branchItem(node: Extract<Node, { kind: 'branch' }>): vscode.TreeItem {
   if (ref.ahead) parts.push(`↑${ref.ahead}`);
   if (ref.behind) parts.push(`↓${ref.behind}`);
   if (ref.gone) parts.push('gone');
+  // ほかの worktree が checkout している（⌂ はメインの作業ツリー、⑂ は追加した worktree）
+  if (other) parts.push(`${other.main ? '⌂' : '⑂'} ${worktreeName(other)}`);
   item.description = parts.join(' ') || undefined;
   item.iconPath = new vscode.ThemeIcon(ref.isHead ? 'check' : 'git-branch');
   const lines = [shortName(ref.name)];
   if (ref.upstream) lines.push(`upstream: ${ref.upstream.replace(/^refs\/remotes\//, '')}`);
   lines.push(`${ref.oid.slice(0, 8)}  ${ref.subject}`);
+  if (other) lines.push(`Checked out in the worktree ${other.path}`);
   item.tooltip = lines.join('\n');
   item.contextValue = node.remote ? 'remoteBranch' : (ref.isHead ? 'branch.current' : 'branch') + syncState(ref);
   // 選ぶと、そのブランチの履歴をメインビューに出す
