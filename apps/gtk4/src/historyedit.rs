@@ -265,6 +265,8 @@ struct Mode {
     original: Vec<String>,
     /// 一覧のモデル（行のコミット ID。並べ替えたら作り直す）。
     model: gtk::StringList,
+    /// 行の選択（macOS 版の表と同じく、クリックで行が選ばれ、矢印キーで動く）。
+    selection: gtk::SingleSelection,
     root: gtk::Box,
     /// ステータスバーに出す行（要約・見通し・Cancel・Apply）。
     bar: gtk::Box,
@@ -311,10 +313,10 @@ impl Mode {
         top.append(&heading);
         top.append(&hint);
         let model = gtk::StringList::new(&[]);
-        let list = gtk::ListView::new(
-            Some(gtk::NoSelection::new(Some(model.clone()))),
-            None::<gtk::ListItemFactory>,
-        );
+        let selection = gtk::SingleSelection::new(Some(model.clone()));
+        selection.set_autoselect(false);
+        selection.set_can_unselect(true);
+        let list = gtk::ListView::new(Some(selection.clone()), None::<gtk::ListItemFactory>);
         list.add_css_class("rich-list");
         let scrolled = gtk::ScrolledWindow::builder()
             .child(&list)
@@ -372,6 +374,7 @@ impl Mode {
             rows: RefCell::new(rows),
             original,
             model,
+            selection,
             root,
             bar,
             summary,
@@ -751,9 +754,7 @@ impl Mode {
 
     /// 一覧と要約を作り直す。
     fn reload(self: &Rc<Self>) {
-        let oids: Vec<String> = self.rows.borrow().iter().map(|r| r.oid.clone()).collect();
-        let refs: Vec<&str> = oids.iter().map(String::as_str).collect();
-        self.model.splice(0, self.model.n_items(), &refs);
+        self.replace_rows();
         self.update_summary();
         self.update_preview();
     }
@@ -903,10 +904,23 @@ impl Mode {
 
     /// 印を付け直す（要約と見通しは読み直さない）。
     fn redraw_rows(&self) {
-        let n = self.model.n_items();
+        self.replace_rows();
+    }
+
+    /// 一覧のモデルを今の行で置き換える。選んでいた行は、並べ替えた後も同じコミットを選んだままにする。
+    fn replace_rows(&self) {
+        let selected = self
+            .selection
+            .selected_item()
+            .and_downcast::<gtk::StringObject>()
+            .map(|o| o.string().to_string());
         let oids: Vec<String> = self.rows.borrow().iter().map(|r| r.oid.clone()).collect();
         let refs: Vec<&str> = oids.iter().map(String::as_str).collect();
-        self.model.splice(0, n, &refs);
+        self.model.splice(0, self.model.n_items(), &refs);
+        let position = selected
+            .and_then(|s| oids.iter().position(|o| *o == s))
+            .map_or(gtk::INVALID_LIST_POSITION, |p| p as u32);
+        self.selection.set_selected(position);
     }
 
     /// この編集での指定（git の設定と同じなら None）。
@@ -948,16 +962,29 @@ impl Mode {
     }
 }
 
-/// Esc で Cancel、Return で Apply Changes（macOS 版のボタンのキー: 窓のどこでも効く）。窓に付け、欄の中の
-/// Return・Esc は欄が先に使う。窓はタブで共有するので、このタブの編集モードの帯が出ている間だけ。
+/// Esc で Cancel、Return で Apply Changes（macOS 版のボタンのキー: 窓のどこでも効く）。窓に付け、捕まえる段階で
+/// 受けるので、行のドロップダウンやチェックボックスに入力があっても先に効く（シートの `return_presses_default` と
+/// 同じ）。文字の欄と、開いたドロップダウンの一覧の中の Return・Esc はそのまま。窓はタブで共有するので、このタブの
+/// 編集モードの帯が出ている間だけ。
 fn window_keys(mode: &Rc<Mode>) -> gtk::EventControllerKey {
     let keys = gtk::EventControllerKey::new();
+    keys.set_propagation_phase(gtk::PropagationPhase::Capture);
     let weak = Rc::downgrade(mode);
-    keys.connect_key_pressed(move |_, key, _, state| {
+    keys.connect_key_pressed(move |c, key, _, state| {
         let Some(m) = weak.upgrade() else {
             return glib::Propagation::Proceed;
         };
-        if !m.bar.is_mapped()
+        let typing = c
+            .widget()
+            .and_downcast::<gtk::Window>()
+            .and_then(|w| GtkWindowExt::focus(&w))
+            .is_some_and(|f| {
+                f.is::<gtk::Text>()
+                    || f.is::<gtk::TextView>()
+                    || f.ancestor(gtk::Popover::static_type()).is_some()
+            });
+        if typing
+            || !m.bar.is_mapped()
             || state.intersects(
                 gdk::ModifierType::CONTROL_MASK
                     | gdk::ModifierType::ALT_MASK
