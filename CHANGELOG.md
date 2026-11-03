@@ -176,6 +176,8 @@ becomes the GitHub Release notes.
 - The GTK4 app keeps each commit, push, discard, stage and confirmed operation in the worktree it started in: Commit
   and Push could push another worktree selected during the commit (or skip its Publish sheet), and Discard, Add to
   .gitignore, Take Current/Incoming, Pull…, Checkout…, Cherry-pick and Undo… could act on the one selected meanwhile.
+- The macOS app shows “Couldn’t Commit” and the hooks output even when you leave Working Copy or select another
+  worktree while the hooks run; they were lost, so a rejected Commit and Push silently didn't push.
 - Selecting worktrees quickly ends on the last one picked, in the macOS and GTK4 apps; one that took longer to open
   could take over after a later pick.
 - Activity no longer says “daemon” twice for a repository opened through the shared daemon, nor “(daemon)” for an

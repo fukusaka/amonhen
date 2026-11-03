@@ -1289,6 +1289,10 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     /// コミットしている途中。
     private var committing = false
 
+    /// コミットの hooks の出力と失敗を出す窓: リポジトリの窓（終えたときに Working Copy が窓にないことがある: hooks の
+    /// 間に History などへ移った・ほかの worktree を選んだ。そのとき `view.window` は nil で、失敗が黙って消える）。
+    private var sheetWindow: NSWindow? { actions?.window ?? view.window }
+
     private func commit(thenPush: Bool) {
         guard !committing else { return NSSound.beep() }
         let text = composedMessage
@@ -1307,7 +1311,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
                 // hooks（pre-commit・commit-msg など）が何か書いていれば見せる。
                 if let output = ActivityRecord.all().last(where: {
                     $0.kind == "git" && $0.label.hasPrefix("git commit") && $0.started >= started && $0.ok == true
-                })?.output, !output.isEmpty, let window = view.window {
+                })?.output, !output.isEmpty, let window = sheetWindow {
                     HookOutputSheet.show(title: L("Committed (hooks output)"), text: output, in: window)
                 }
                 message.string = ""
@@ -1318,7 +1322,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
                 if thenPush { actions?.pushWithoutAsking() }
             } catch {
                 // hooks で止まったときは出力が長いので、読めるシートで出す。
-                if let window = view.window {
+                if let window = sheetWindow {
                     HookOutputSheet.show(title: L("Couldn’t Commit"), text: "\(error)", in: window)
                 }
             }
