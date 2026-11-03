@@ -266,6 +266,15 @@ fn handlers() -> Vec<(&'static str, Handler)> {
             "add-remote",
             Box::new(|p| crate::remotesheet::add(&p.actions)),
         ),
+        // submodule（サイドバーの Submodules の見出しと同じシート。macOS 版と同じ）。
+        (
+            "add-submodule",
+            Box::new(|p| crate::submodulesheet::add(&p.actions)),
+        ),
+        (
+            "update-submodules",
+            Box::new(|p| crate::submodulesheet::update(&p.actions, Vec::new())),
+        ),
         // View
         (
             "show-working-copy",

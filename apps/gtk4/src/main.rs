@@ -66,6 +66,7 @@ mod signature;
 mod sshhosts;
 mod stashes;
 mod statusbar;
+mod submodulesheet;
 mod tabs;
 mod tagsign;
 mod templates;
@@ -1005,6 +1006,8 @@ fn build_tab(
     working.connect_count(move |count| {
         if let Some(sidebar) = weak_sidebar.upgrade() {
             sidebar.set_working_count(count);
+            // submodule の中の変更は ref を変えないので、ここで読み直す（submodule がなければ読まない）。
+            sidebar.reload_submodules();
         }
         // タブの名前の ●。
         if let Some(tab) = t.upgrade() {

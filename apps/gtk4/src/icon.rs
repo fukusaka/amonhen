@@ -97,6 +97,10 @@ pub enum Kind {
     CloudDown,
     /// folder.badge.minus（sparse checkout: 一部のフォルダだけ取り出している）
     FolderMinus,
+    /// circle.dashed（submodule を取り出していない）
+    CircleDashed,
+    /// pencil（submodule の中に変更がある）
+    Pencil,
 }
 
 mod imp {
@@ -485,6 +489,31 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.move_to(6.3, 9.3);
             p.line_to(8.0, 11.0);
             p.line_to(9.7, 9.3);
+        }
+        Kind::CircleDashed => {
+            // 円を 8 つに切った弧（それぞれ短い折れ線）。
+            for i in 0..8 {
+                let a = std::f32::consts::PI * i as f32 / 4.0;
+                for (j, t) in [0.0f32, 0.2, 0.4].into_iter().enumerate() {
+                    let (x, y) = (8.0 + 6.0 * (a + t).cos(), 8.0 + 6.0 * (a + t).sin());
+                    if j == 0 {
+                        p.move_to(x, y);
+                    } else {
+                        p.line_to(x, y);
+                    }
+                }
+            }
+        }
+        Kind::Pencil => {
+            // 斜めの軸と、左下の先。
+            p.move_to(11.0, 2.8);
+            p.line_to(13.2, 5.0);
+            p.line_to(5.5, 12.7);
+            p.line_to(2.6, 13.4);
+            p.line_to(3.3, 10.5);
+            p.close();
+            p.move_to(9.4, 4.4);
+            p.line_to(11.6, 6.6);
         }
         Kind::FolderMinus => {
             p.move_to(2.5, 4.0);

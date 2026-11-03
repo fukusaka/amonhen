@@ -139,12 +139,40 @@ pub fn menu(
             entry.detail.as_deref(),
         )),
         RefKind::Submodule => {
+            // Update は git の既定（記録したコミット、中の submodule には入らない）。Update… で変えられる（macOS 版と同じ）。
             items.push(menu::action(
                 format!("Update {name}"),
                 run(json!({ "op": "updateSubmodules", "paths": [name] })),
             ));
-            let (open, path) = (open_submodule.clone(), name.clone());
-            items.push(menu::action(tr!("Open in New Window"), move || open(&path)));
+            let (a, p) = (actions.clone(), name.clone());
+            items.push(menu::action("Update…", move || {
+                crate::submodulesheet::update(&a, vec![p.clone()])
+            }));
+            let state = known.submodules.get(&name).cloned();
+            if state.as_ref().is_none_or(|s| s.initialized) {
+                let (open, path) = (open_submodule.clone(), name.clone());
+                items.push(menu::action(tr!("Open in New Window"), move || open(&path)));
+            }
+            items.push(Item::Separator);
+            let state = state.unwrap_or_else(|| amonhen_model::SubmoduleState {
+                path: name.clone(),
+                name: name.clone(),
+                initialized: true,
+                ..Default::default()
+            });
+            let (a, s) = (actions.clone(), state.clone());
+            items.push(menu::action(tr!("Edit URL…"), move || {
+                crate::submodulesheet::set_url(&a, &s)
+            }));
+            let (a, s) = (actions.clone(), state.clone());
+            items.push(menu::action(tr!("Branch to Follow…"), move || {
+                crate::submodulesheet::set_branch(&a, &s)
+            }));
+            items.push(Item::Separator);
+            let (a, s) = (actions.clone(), state);
+            items.push(menu::action(tr!("Remove…"), move || {
+                crate::submodulesheet::remove(&a, &s)
+            }));
         }
     }
     items
@@ -179,6 +207,28 @@ fn remote_menu(actions: &Rc<Actions>, data: &Data) -> Vec<Item> {
         return vec![menu::action(tr!("Add Remote…"), move || {
             crate::remotesheet::add(&a)
         })];
+    }
+    // Submodules の見出し（macOS 版と同じ）。
+    if matches!(data.item, sidebar::Item::Group) && data.title == "Submodules" {
+        let a = actions.clone();
+        let all = menu::action("Update All", move || {
+            a.perform(json!({ "op": "updateSubmodules", "paths": [] }))
+        });
+        let a = actions.clone();
+        let update = menu::action("Update Submodules…", move || {
+            crate::submodulesheet::update(&a, Vec::new())
+        });
+        let a = actions.clone();
+        let sync = menu::action("Sync URLs", move || {
+            a.perform(
+                json!({ "op": "changeSubmodule", "change": { "kind": "sync", "recursive": true } }),
+            )
+        });
+        let a = actions.clone();
+        let add = menu::action(tr!("Add Submodule…"), move || {
+            crate::submodulesheet::add(&a)
+        });
+        return vec![all, update, sync, Item::Separator, add];
     }
     Vec::new()
 }
