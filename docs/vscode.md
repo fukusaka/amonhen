@@ -229,6 +229,6 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 18. Branches arranged as in the app, favorites, archived, several selected, filtering
 - [x] 19. Signature marks in History; Go to HEAD, Parent, Child
 - [x] 20. Fetching more of a shallow clone, all contents of a partial clone
-- [ ] 21. The rest of Stashes (Branch…, `--index`, row details, Pop asking first)
+- [x] 21. The rest of Stashes (Branch…, `--index`, row details, Pop asking first)
 - [ ] 22. Undo asking first, and the Undo log
 - [ ] 23. Repository settings

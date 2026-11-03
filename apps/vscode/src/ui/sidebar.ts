@@ -8,6 +8,7 @@ import type { Ref, Remote, Stash } from '../git/refs.ts';
 import { splitRemoteRef } from '../git/refs.ts';
 import { arrangeBranches, type Arranged, type BranchGroupsInfo } from '../git/branchGroups.ts';
 import { signatureExplanation, signatureIcon, signatureLabel, signatureStatus } from '../git/signature.ts';
+import { stashBaseText, stashBranch } from '../git/stash.ts';
 import { describeSubmodule } from '../git/status.ts';
 import { tagMark, tagMarkLabel, tagStateText, tagTargets } from '../git/tagRemotes.ts';
 import { samePath, worktreeLayout, worktreeName, type Worktree } from '../git/worktrees.ts';
@@ -16,6 +17,7 @@ import { shortName } from '../state/operations.ts';
 import type { LazySection, Repository, Submodule } from '../state/repository.ts';
 import type { ViewName } from '../view/protocol.ts';
 import { BranchFacts } from './branchFacts.ts';
+import { StashFacts } from './stashFacts.ts';
 import { TagMarks } from './tagMarks.ts';
 import { WorktreeList } from './worktreeList.ts';
 
@@ -79,6 +81,8 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
   readonly worktrees = new WorktreeList();
   /** ローカルブランチの並べ方のもと（取り込み済み・積んだ土台・お気に入り・アーカイブ） */
   readonly branchFacts = new BranchFacts();
+  /** stash の土台と untracked（エンジンだけ） */
+  readonly stashFacts = new StashFacts();
   /** Branches・Remotes・Tags の絞り込みの言葉（小文字。どれも名前に含むものだけ出す。空なら絞り込まない） */
   private filterWords: string[] = [];
   private readonly _onDidChangeFilter = new vscode.EventEmitter<string>();
@@ -102,6 +106,8 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
       // Working Copy の行（子が変わる）とブランチの印
       this.worktrees.onDidChange(() => this._onDidChangeTreeData.fire(undefined)),
       this.branchFacts,
+      this.stashFacts,
+      this.stashFacts.onDidChange(() => this._onDidChangeTreeData.fire(this.sections.get('stashes'))),
       this.branchFacts.onDidChange(() => this._onDidChangeTreeData.fire(this.sections.get('branches'))),
     );
     this.watch(manager.current);
@@ -117,6 +123,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
     this.tagMarks.setRepository(this.engine ? repository : undefined);
     this.worktrees.setRepository(this.engine ? repository : undefined);
     this.branchFacts.setRepository(this.engine ? repository : undefined);
+    this.stashFacts.setRepository(this.engine ? repository : undefined);
     this.repoListener = repository?.onDidChange((changed) => {
       if (changed.has('branches')) this.updateContext(repository);
       // Working Copy の変化は、入口の数と途中の merge / rebase に出る
@@ -164,6 +171,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
       this.tagMarks.setRepository(engine ? this.repo : undefined);
       this.worktrees.setRepository(engine ? this.repo : undefined);
       this.branchFacts.setRepository(engine ? this.repo : undefined);
+      this.stashFacts.setRepository(engine ? this.repo : undefined);
       this._onDidChangeTreeData.fire(undefined);
     }
   }
@@ -193,7 +201,9 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
         { kind: 'view', view: 'history' },
       ];
       if (state.sequence) nodes.push({ kind: 'sequence', sequence: state.sequence, progress: state.progress });
-      nodes.push(...this.sections.values());
+      // Stashes は stash があるときだけ（アプリと同じ）
+      const stashes = state.status?.stashCount ?? 0;
+      nodes.push(...[...this.sections.values()].filter((n) => n.kind !== 'section' || n.section !== 'stashes' || stashes > 0));
       // Reflog はいつもいちばん下（アプリと同じ）
       if (this.engine) nodes.push({ kind: 'view', view: 'reflog' });
       return nodes;
@@ -410,8 +420,20 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
       case 'stash': {
         const item = new vscode.TreeItem(node.stash.name);
         item.id = `stash:${node.stash.oid}`;
-        item.description = node.stash.subject;
-        item.tooltip = `${node.stash.name}\n${node.stash.subject}`;
+        // アプリの Stashes の行と同じく、作ったときのブランチ・土台と HEAD の離れ具合・untracked を添える
+        const fact = this.engine ? this.stashFacts.get(node.stash.oid) : undefined;
+        const branch = stashBranch(node.stash.subject);
+        const moved = fact && stashBaseText(fact.ahead, fact.behind);
+        item.description = [node.stash.subject, fact?.untracked ? '+ untracked' : undefined].filter(Boolean).join(' · ');
+        item.tooltip = [
+          node.stash.name,
+          node.stash.subject,
+          branch ? `Made on ${branch}` : undefined,
+          fact?.base ? `Base: ${fact.base.slice(0, 8)}${moved ? ` (${moved})` : ' (HEAD is still there)'}` : undefined,
+          fact?.untracked ? 'Includes untracked files' : undefined,
+        ]
+          .filter(Boolean)
+          .join('\n');
         item.iconPath = new vscode.ThemeIcon('archive');
         item.contextValue = 'stash';
         item.command = { command: 'amonhen.stash.show', title: 'Show Stash', arguments: [node] };

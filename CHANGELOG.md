@@ -774,6 +774,8 @@ First release.
   HEAD button and Go to Parent / Go to Child move between commits.
 - With the engine, History shows a shallow clone's boundary and a band to fetch more or all of its history, and a
   partial clone's label fetches all its contents.
+- Stashes shows only while there are stashes, its rows say what the app's do (branch, base against HEAD, untracked),
+  a stash can become a branch, and Pop Latest Stash… asks first.
 
 #### Changed
 

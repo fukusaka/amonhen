@@ -353,6 +353,17 @@
         "category": "Amon Hen"
       },
       {
+        "command": "amonhen.stash.popLatest",
+        "title": "Pop Latest Stash…",
+        "category": "Amon Hen",
+        "icon": "$(git-stash-pop)"
+      },
+      {
+        "command": "amonhen.stash.branch",
+        "title": "Branch…",
+        "category": "Amon Hen"
+      },
+      {
         "command": "amonhen.skipSequence",
         "title": "Skip",
         "category": "Amon Hen",
@@ -613,6 +624,16 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "amonhen.stash.popLatest",
+          "when": "view == amonhen.sidebar && viewItem == section.stashes",
+          "group": "inline@2"
+        },
+        {
+          "command": "amonhen.stash.branch",
+          "when": "view == amonhen.sidebar && viewItem == stash && amonhen.engine",
+          "group": "1_stash@4"
+        },
         {
           "command": "amonhen.branch.addToFavorites",
           "when": "view == amonhen.sidebar && amonhen.engine && viewItem =~ /^branch(\\.current)?(?!.*;pinned)(;\\w+)*$/",
@@ -961,6 +982,10 @@
         },
         {
           "command": "amonhen.stash.drop",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.stash.branch",
           "when": "false"
         },
         {

@@ -23,7 +23,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | --- | :-: | :-: | :-: | :-: | --- |
 | Workspace rows switch the main view (Working Copy, History, Stashes, Reflog…) | ✓ | ✓ | △ | n/a | VSCode: Working Copy, History, Stashes and (with the engine) Reflog; no Conflicts. |
 | Conflicts row with a count while there are conflicts | ✓ | ✓ | △ | n/a | VSCode: A Conflicts group inside the Working Copy view. |
-| Stashes row with a count only when there are stashes | ✓ | ✓ | △ | n/a | VSCode: The Stashes section is always shown. |
+| Stashes row with a count only when there are stashes | ✓ | ✓ | ✓ | n/a | VSCode: The Stashes section. |
 | Range Diff row while a range diff is open | ✓ | ✓ | — | n/a |  |
 | Filter field over Branches, Remotes and Tags | ✓ | ✓ | △ | n/a | VSCode: The filter button on the sidebar's title asks for the words; the matches are listed flat. |
 | Several branches or tags selected at once | ✓ | ✓ | ✓ | n/a | VSCode: Merge into Current Branch, Delete Branch, favorites and Archive act on all of them. |
@@ -151,7 +151,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Rebase sheet drawing before and after | ✓ | ✓ | △ | △ | VSCode: A dialog with the rewrite preview as text.<br>CLI: `rewrite-preview` prints it; the rebase via `amonhen run`. |
 | Stash (message, include untracked) | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Stash: staged only, selected files only | — | — | — | — |  |
-| Pop the latest stash (asks first) | ✓ | ✓ | — | △ | VSCode: Pop per stash row, without asking.<br>CLI: Via `amonhen run`. |
+| Pop the latest stash (asks first) | ✓ | ✓ | ✓ | △ | VSCode: Pop Latest Stash… on the Stashes header and in the Command Palette (a row's Pop doesn't ask).<br>CLI: Via `amonhen run`. |
 | Activity spinner and count | ✓ | ✓ | △ | n/a | VSCode: VSCode's progress notifications. |
 | Refresh and Rebuild History | ✓ | ✓ | △ | △ | VSCode: Refresh only.<br>CLI: `log --rebuild`, `daemon rebuild`. |
 | Undo the last operation (asks, names what it puts back) | ✓ | ✓ | △ | ✓ | VSCode: Undoes without asking.<br>CLI: `undo` (`--peek` to see it first). |
@@ -165,8 +165,8 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
 | Stashes view (list and contents) | ✓ | ✓ | △ | △ | VSCode: Sidebar list; Show Stash opens VSCode's multi-file diff.<br>CLI: Listed by `refs`; `show stash@{n}`. |
-| Stash row details (branch, base against HEAD, untracked) | ✓ | ✓ | △ | △ | VSCode: Name and subject only.<br>CLI: Via `amonhen run` (`stashBases`). |
-| Apply, Pop, Drop… (undoable), Branch… | ✓ | ✓ | △ | △ | VSCode: No Branch… and no `--index`.<br>CLI: Via `amonhen run`. |
+| Stash row details (branch, base against HEAD, untracked) | ✓ | ✓ | ✓ | △ | VSCode: Untracked in the description, the branch and base in the tooltip (with the engine).<br>CLI: Via `amonhen run` (`stashBases`). |
+| Apply, Pop, Drop… (undoable), Branch… | ✓ | ✓ | ✓ | △ | VSCode: Branch… with the engine; Apply and Pop restore the index (`--index`) when they can.<br>CLI: Via `amonhen run`. |
 
 ## 5b. Reflog
 

@@ -23,7 +23,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | --- | :-: | :-: | :-: | :-: | --- |
 | Workspace の行でメインの表示を切り替える（Working Copy・History・Stashes・Reflog…） | ✓ | ✓ | △ | n/a | VSCode: Working Copy・History・Stashes と（エンジンがあれば）Reflog。Conflicts はない。 |
 | コンフリクトがあるあいだ Conflicts の行と数 | ✓ | ✓ | △ | n/a | VSCode: Working Copy の中の Conflicts のグループ。 |
-| stash があるときだけ Stashes の行と数 | ✓ | ✓ | △ | n/a | VSCode: Stashes の節はいつも出る。 |
+| stash があるときだけ Stashes の行と数 | ✓ | ✓ | ✓ | n/a | VSCode: Stashes の節。 |
 | Range Diff を開いているあいだの Range Diff の行 | ✓ | ✓ | — | n/a |  |
 | Branches・Remotes・Tags を絞り込む欄 | ✓ | ✓ | △ | n/a | VSCode: サイドバーの上の絞り込みのボタンで言葉を入れ、合うものを平らに並べる。 |
 | ブランチ・タグをいくつも選ぶ | ✓ | ✓ | ✓ | n/a | VSCode: Merge into Current Branch・Delete Branch・お気に入り・Archive が選んだものすべてに効く。 |
@@ -151,7 +151,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | 前と後を描く Rebase のシート | ✓ | ✓ | △ | △ | VSCode: 書き換えの見込みを文で示すダイアログ。<br>CLI: `rewrite-preview` が出し、rebase は `amonhen run` から。 |
 | Stash（メッセージ・未追跡を含める） | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | Stash: ステージしたものだけ・選んだファイルだけ | — | — | — | — |  |
-| 最新の stash を Pop（先に尋ねる） | ✓ | ✓ | — | △ | VSCode: stash の行ごとに Pop し、尋ねない。<br>CLI: `amonhen run` から。 |
+| 最新の stash を Pop（先に尋ねる） | ✓ | ✓ | ✓ | △ | VSCode: Stashes の見出しとコマンドパレットの Pop Latest Stash…（行の Pop は尋ねない）。<br>CLI: `amonhen run` から。 |
 | Activity のくるくると数 | ✓ | ✓ | △ | n/a | VSCode: VSCode の進み具合の知らせ。 |
 | Refresh と Rebuild History | ✓ | ✓ | △ | △ | VSCode: Refresh だけ。<br>CLI: `log --rebuild`・`daemon rebuild`。 |
 | 直前の操作の Undo（尋ね、何を戻すか示す） | ✓ | ✓ | △ | ✓ | VSCode: 尋ねずに戻す。<br>CLI: `undo`（先に見るなら `--peek`）。 |
@@ -165,8 +165,8 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
 | Stashes の表示（一覧と中身） | ✓ | ✓ | △ | △ | VSCode: サイドバーの一覧で、Show Stash は VSCode の複数ファイルの差分。<br>CLI: `refs` が並べ、`show stash@{n}`。 |
-| stash の行の詳細（ブランチ・HEAD に対する元・未追跡） | ✓ | ✓ | △ | △ | VSCode: 名前と件名だけ。<br>CLI: `amonhen run`（`stashBases`）から。 |
-| Apply・Pop・Drop…（Undo できる）・Branch… | ✓ | ✓ | △ | △ | VSCode: Branch… も `--index` もない。<br>CLI: `amonhen run` から。 |
+| stash の行の詳細（ブランチ・HEAD に対する元・未追跡） | ✓ | ✓ | ✓ | △ | VSCode: 未追跡は行の説明に、ブランチと元はツールチップに（エンジンがあるとき）。<br>CLI: `amonhen run`（`stashBases`）から。 |
+| Apply・Pop・Drop…（Undo できる）・Branch… | ✓ | ✓ | ✓ | △ | VSCode: Branch… はエンジンがあるとき。Apply・Pop はできれば index も戻す（`--index`）。<br>CLI: `amonhen run` から。 |
 
 ## 5b. Reflog
 

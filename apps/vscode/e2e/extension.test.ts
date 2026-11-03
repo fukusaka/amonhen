@@ -854,6 +854,58 @@ async function shallowFlow(): Promise<void> {
   }
 }
 
+/**
+ * Stashes は stash があるときだけ出て、行に作ったときのブランチ・土台と HEAD の離れ具合・untracked が出る。
+ * stash からブランチを作り（git stash branch）、新しい stash を確かめてから pop する（daemon だけ）
+ */
+async function stashFlow(): Promise<void> {
+  const sidebar = api.sidebar;
+  const repo = api.manager.current!;
+  const current = git('symbolic-ref', '--short', 'HEAD').trim();
+  const start = git('rev-parse', 'HEAD').trim();
+  const stashesSection = () => sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'stashes');
+  const file = join(root, 'st.txt');
+  try {
+    await vscode.commands.executeCommand('amonhen.refresh');
+    await until('Stashes がない', () => git('stash', 'list').trim() === '' && !stashesSection());
+    writeFileSync(file, 'untracked\n');
+    git('stash', 'push', '-q', '-u', '-m', 'e2e stash');
+    git('commit', '-q', '--allow-empty', '-m', 'after stash');
+    await vscode.commands.executeCommand('amonhen.refresh');
+    const section = await until('Stashes が出る', () => stashesSection());
+    await repo.want('stashes');
+    const row = await until('stash の行の様子', () => {
+      const node = sidebar.getChildren(section).find((n) => n.kind === 'stash');
+      const item = node && sidebar.getTreeItem(node);
+      return item && /untracked/.test(String(item.description)) && /HEAD has 1 commit since/.test(String(item.tooltip)) && { node, item };
+    });
+    assert.match(String(row.item.tooltip), new RegExp(`Made on ${current}`));
+
+    // stash からブランチを作ると、そこへ checkout して stash を当てて消す
+    await withWindow({ showInputBox: inputs('e2e-stash-br') }, async () =>
+      vscode.commands.executeCommand('amonhen.stash.branch', row.node),
+    );
+    assert.equal(git('symbolic-ref', '--short', 'HEAD').trim(), 'e2e-stash-br');
+    assert.equal(git('rev-parse', 'HEAD').trim(), start);
+    assert.equal(readFileSync(file, 'utf8').replaceAll('\r\n', '\n'), 'untracked\n');
+    assert.equal(git('stash', 'list').trim(), '');
+
+    // 新しい stash を確かめてから pop する
+    git('stash', 'push', '-q', '-u', '-m', 'again');
+    await vscode.commands.executeCommand('amonhen.refresh');
+    await withWindow({ showWarningMessage: async () => 'Pop' }, async () => vscode.commands.executeCommand('amonhen.stash.popLatest'));
+    assert.equal(git('stash', 'list').trim(), '');
+    assert.equal(readFileSync(file, 'utf8').replaceAll('\r\n', '\n'), 'untracked\n');
+  } finally {
+    rmSync(file, { force: true });
+    git('switch', '-q', current);
+    git('reset', '-q', '--hard', start);
+    if (git('branch', '--list', 'e2e-stash-br').trim()) git('branch', '-D', 'e2e-stash-br');
+    while (git('stash', 'list').trim()) git('stash', 'drop', '-q');
+    await vscode.commands.executeCommand('amonhen.refresh');
+  }
+}
+
 /** showInputBox の代わり。呼ばれるたびに values を順に返す */
 function inputs(...values: string[]): () => Promise<string | undefined> {
   let i = 0;
@@ -1601,6 +1653,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('shows a shallow partial clone in History and fetches more of it through the daemon', async () => {
     await shallowFlow();
+  });
+
+  test('shows stash details, branches from a stash and pops the latest through the daemon', async () => {
+    await stashFlow();
   });
 
   test('drops the selection of a file whose changes went away before its diff is read', async () => {
