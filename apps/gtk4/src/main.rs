@@ -3021,7 +3021,8 @@ impl Loader {
         });
     }
 
-    /// 選んだ行の差分を読んで出す。読めたら `then(選び方)` を呼ぶ（`range`・`pair`・`each`）。
+    /// 選んだ行の差分を読んで出す。読めたら `then(選び方)` を呼ぶ（`range`・`pair`・`each`。読めなければ
+    /// `failed`）。
     fn diff(
         self: &Rc<Self>,
         repo: Arc<Repository>,
@@ -3078,6 +3079,8 @@ impl Loader {
                 Ok(Err(e)) => {
                     eprintln!("差分を読めない: {e}");
                     this.files.show_message(&tr!("Couldn’t load the diff"));
+                    // 複数のコミットの見出しも「読めない」にする（macOS 版と同じ）。
+                    then("failed");
                 }
                 Err(_) => {}
             }

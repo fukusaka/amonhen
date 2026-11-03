@@ -170,8 +170,10 @@ impl CommitPane {
         self.generation.set(g);
         self.repo.replace(Some(repo.clone()));
         self.commit.replace(None);
-        self.details.show_text(title, lines);
+        self.details
+            .show_range(title, &tr!("Loading the diff…"), lines);
         crate::fit_details(&self.root, self.details.clone());
+        let (title, lines) = (title.to_owned(), lines.to_owned());
         self.files.clear();
         self.files.reset_stats();
         let key = format!("{}..{tip}", base.map(|b| b.to_string()).unwrap_or_default());
@@ -183,21 +185,37 @@ impl CommitPane {
                 let changes = repo
                     .changes_between(base.as_ref(), &tip)
                     .map_err(|e| e.to_string())?;
-                Prepared::from_changes(repo, changes, &viewed, true)
+                let count = changes.len();
+                Prepared::from_changes(repo, changes, &viewed, true).map(|p| (count, p))
             })
             .await;
             this.pending.set(this.pending.get() - 1);
             if this.generation.get() != g {
                 return;
             }
+            // 見出しの様子も、差分と合わせる（macOS 版と同じ）。
             match result {
-                Ok(Ok(prepared)) => this.files.show(prepared, key),
+                Ok(Ok((count, prepared))) => {
+                    this.details.show_range(
+                        &title,
+                        &tr!("{count} files changed", count = count),
+                        &lines,
+                    );
+                    if count == 0 {
+                        this.files.show_message(&tr!("No changes"));
+                    } else {
+                        this.files.show(prepared, key);
+                    }
+                }
                 Ok(Err(e)) => {
                     eprintln!("差分を読めない: {e}");
+                    this.details
+                        .show_range(&title, &tr!("Couldn’t load the diff"), &lines);
                     this.files.show_message(&tr!("Couldn’t load the diff"));
                 }
                 Err(_) => {}
             }
+            crate::fit_details(&this.root, this.details.clone());
         });
     }
 

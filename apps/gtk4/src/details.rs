@@ -963,12 +963,18 @@ impl Details {
         self.extras.replace(None);
     }
 
-    /// コミットではないもの（Push のシートの「送る変更すべて」など）: 件名と本文だけを出す。
-    pub fn show_text(&self, subject: &str, body: &str) {
+    /// Push のシートの「送る変更すべて」の見出し: `title`、差分の様子 `note`、送るコミットの 1 行ずつ（`lines`）
+    /// （macOS 版の `renderRangeHeader`）。
+    pub fn show_range(&self, title: &str, note: &str, lines: &str) {
         self.clear();
-        self.subject.set_text(subject);
-        self.body.set_text(body);
-        self.body.set_visible(!body.is_empty());
+        self.set_selection_mode(true);
+        self.selection_title.set_text(title);
+        self.selection_note.set_text(note);
+        while let Some(child) = self.pairs.first_child() {
+            self.pairs.remove(&child);
+        }
+        self.pairs.set_visible(false);
+        self.selection_lines.set_text(lines);
         self.find.refresh();
     }
 
@@ -989,7 +995,8 @@ impl Details {
     }
 
     /// 複数のコミットを選んだときの見出し（macOS 版と同じ）: 数、差分の取り方の説明、2 つなら取り方の
-    /// 切り替え、各コミットの 1 行（短い ID・件名・作者）。`kind` は `range`・`pair`・`each`（読む前は None）。
+    /// 切り替え、各コミットの 1 行（短い ID・件名・作者）。`kind` は `range`・`pair`・`each`（読む前は None、
+    /// 読めなければ `failed`）。
     pub fn show_selection(
         &self,
         count: usize,
@@ -1003,6 +1010,7 @@ impl Details {
         self.selection_title
             .set_text(&tr!("{count} commits selected", count = count));
         let note = match (kind, pair) {
+            (Some("failed"), _) => tr!("Couldn’t load the diff"),
             (Some("range"), _) => tr!(
                 "They are consecutive, so this is the diff from the parent of the oldest to the newest (the same as squashing them into one)."
             ),

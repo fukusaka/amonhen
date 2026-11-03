@@ -500,6 +500,7 @@
 "Reverse" = "向きを入れ替える";
 "From the merge-base (A...B)" = "merge-base から（A...B）";
 "{count} commits selected" = "{count} コミットを選んでいます";
+"{count} files changed" = "{count} ファイルが変わります";
 "They are consecutive, so this is the diff from the parent of the oldest to the newest (the same as squashing them into one)." = "続いているので、一番古いものの親から一番新しいものまでの差分（まとめて 1 つにしたのと同じ）";
 "Two non-consecutive commits, so this is the diff from the older to the newer (A..B)." = "続いていない 2 つなので、古いほうから新しいほうまでの差分（A..B）";
 "The diff of the two non-consecutive commits from the newer to the older (reversed)." = "続いていない 2 つの、新しいほうから古いほうまでの差分（向きを入れ替えた）";
