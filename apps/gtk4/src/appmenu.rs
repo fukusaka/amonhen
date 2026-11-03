@@ -71,6 +71,8 @@ pub struct Buttons {
     actions: Rc<Actions>,
     /// リポジトリの名前のボタン（見出しの真ん中か、ツールバーの並びの 1 つ）。
     name: gtk::Widget,
+    /// 開けていない間に外した、リポジトリの名前のボタンのツールチップ（開けたら戻す）。
+    name_tooltip: Rc<RefCell<Option<glib::GString>>>,
     /// History の検索のボタン。
     search: gtk::Widget,
     /// File History・Blame のタブの見出しの Push のアイコン（このタブのものと一緒に替える）。
@@ -86,6 +88,12 @@ impl Buttons {
         self.branch.set_text("—");
         self.branch_button.set_sensitive(false);
         self.repository.set_sensitive(false);
+        // 名前のボタンも押せなくし、「押すと切り替える」のツールチップも外す（macOS 版の `showUnopened`）。
+        if self.name.is_sensitive() {
+            self.name_tooltip.replace(self.name.tooltip_text());
+        }
+        self.name.set_sensitive(false);
+        self.name.set_tooltip_text(None);
     }
 
     /// 今のブランチ、上流との差（↓ 取り込める・↑ 送れる）、stash があるか。
@@ -93,6 +101,12 @@ impl Buttons {
         self.actions.update_facts(|f| f.unopened = false);
         self.branch_button.set_sensitive(true);
         self.repository.set_sensitive(true);
+        if !self.name.is_sensitive() {
+            self.name.set_sensitive(true);
+            if let Some(tooltip) = self.name_tooltip.take() {
+                self.name.set_tooltip_text(Some(&tooltip));
+            }
+        }
         let head = refs.refs.head_branch.as_deref();
         self.branch.set_text(head.unwrap_or("detached"));
         self.branch_button.set_tooltip_text(Some(&tr!(
@@ -758,6 +772,7 @@ pub fn install(parts: Parts) -> Buttons {
         push_icon,
         actions: parts.actions.clone(),
         name,
+        name_tooltip: Rc::default(),
         search: parts.search.clone(),
         mirror_push_icons: Rc::default(),
     }
