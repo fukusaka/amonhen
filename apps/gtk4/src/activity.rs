@@ -623,7 +623,8 @@ impl Activity {
             tr!("Commands").as_str(),
         ]));
         let failures = gtk::CheckButton::with_label(&tr!("Failures Only"));
-        let filter = gtk::SearchEntry::builder()
+        // 素の文字の欄（macOS 版の TextField。打つたびに絞り込む）。
+        let filter = gtk::Entry::builder()
             .placeholder_text(tr!("Filter"))
             .hexpand(true)
             .build();
@@ -912,13 +913,13 @@ impl Activity {
         let r = refresh_ops.clone();
         failures.connect_toggled(move |_| r());
         let r = refresh_ops.clone();
-        filter.connect_search_changed(move |_| r());
+        filter.connect_changed(move |_| r());
         refreshers.push(Box::new(move || refresh_ops()));
         let w = window.downgrade();
         export.connect_clicked(move |_| {
             let Some(window) = w.upgrade() else { return };
+            // 題は付けない（macOS 版の NSSavePanel と同じ）。
             let dialog = gtk::FileDialog::builder()
-                .title(tr!("Export JSON"))
                 .initial_name("amonhen-activity.json")
                 .modal(true)
                 .build();

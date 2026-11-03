@@ -582,7 +582,6 @@
 "git runs and core commands, newest first, up to 1,000 (for repositories through the daemon, also the git it starts). ● means running; fetch, pull, push and clone show their progress and can be canceled." = "git の起動とコアの命令を、新しい順に最大 1000 件（daemon 越しのリポジトリは daemon で起動した git も）。● は実行中で、fetch・pull・push・clone は進み具合を出し、取り消せる。";
 "Operations" = "操作";
 "Cancel Operation" = "取り消す";
-"Export JSON" = "JSON に書き出す";
 "Operations you can Undo (newest first). It stops where another tool has moved a ref." = "Undo できる操作（新しい順）。ほかのツールで ref が動いていると、そこで止まります。";
 "Undo to Here" = "ここまで戻す";
 "Undo this operation." = "この操作を戻す";
