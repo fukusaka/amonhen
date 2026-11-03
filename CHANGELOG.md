@@ -173,8 +173,9 @@ becomes the GitHub Release notes.
   selecting another worktree, Save wrote its Result over the same file there.
 - The GTK4 app's Working Copy keeps Amend and the file filter per worktree; Amend ticked in one worktree stayed on in
   another, so Commit amended that worktree's last commit.
-- The GTK4 app's Working Copy keeps each commit, push, discard and stage in the worktree it started in: Commit and
-  Push could push another worktree selected during the commit, and Discard could act on the old list's file there.
+- The GTK4 app keeps each commit, push, discard, stage and confirmed operation in the worktree it started in: Commit
+  and Push could push another worktree selected during the commit (or skip its Publish sheet), and Discard, Add to
+  .gitignore, Take Current/Incoming, Pull…, Checkout…, Cherry-pick and Undo… could act on the one selected meanwhile.
 - Selecting worktrees quickly ends on the last one picked, in the macOS and GTK4 apps; one that took longer to open
   could take over after a later pick.
 - Activity no longer says “daemon” twice for a repository opened through the shared daemon, nor “(daemon)” for an

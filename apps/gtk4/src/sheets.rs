@@ -1908,10 +1908,13 @@ pub fn checkout(actions: &Rc<Actions>, target: CheckoutTarget) {
     {
         return actions.edit_worktree(&path);
     }
+    // 選んだときの worktree で読み、その名前を書き、そこで切り替える（読んでいる間に書き込む先を替えても）。
+    let Some(target_tree) = Target::current(actions) else {
+        return;
+    };
     let actions = actions.clone();
     glib::spawn_future_local(async move {
-        let Some(repo) = actions.repo() else { return };
-        let r = repo.clone();
+        let r = target_tree.repo.clone();
         let changed = gio::spawn_blocking(move || {
             r.load_status().map_or(0, |s| {
                 s.status
@@ -1956,10 +1959,10 @@ pub fn checkout(actions: &Rc<Actions>, target: CheckoutTarget) {
             .filter(|l| !l.is_empty())
             .collect::<Vec<_>>()
             .join(" ");
-        let sheet = Sheet::new(parent(&actions).as_ref(), &title, &message);
+        let sheet = target_tree.sheet(parent(&actions).as_ref(), &title, &message);
         sheet.buttons("Checkout", false, None);
         if sheet.run().await == Response::Ok {
-            actions.perform(command);
+            actions.perform_in(target_tree.repo, vec![command], |_| {});
         }
     });
 }
@@ -2020,8 +2023,34 @@ pub fn confirm_ref_in(
 ) {
     confirm_sheet(
         actions,
-        Some(repo),
+        Some(Target {
+            repo,
+            worktree: None,
+        }),
         false,
+        title,
+        message,
+        ok,
+        destructive,
+        commands,
+    );
+}
+
+/// [`confirm_then`] と同じで、`target` の worktree の名前を書き、そこで実行する（確かめる前に読んだ worktree に
+/// 効かせる）。
+pub fn confirm_in(
+    actions: &Rc<Actions>,
+    target: Target,
+    title: String,
+    message: String,
+    ok: String,
+    destructive: bool,
+    commands: Vec<Value>,
+) {
+    confirm_sheet(
+        actions,
+        Some(target),
+        true,
         title,
         message,
         ok,
@@ -2033,7 +2062,7 @@ pub fn confirm_ref_in(
 #[allow(clippy::too_many_arguments)]
 fn confirm_sheet(
     actions: &Rc<Actions>,
-    repo: Option<Arc<Repository>>,
+    target: Option<Target>,
     named: bool,
     title: String,
     message: String,
@@ -2044,15 +2073,15 @@ fn confirm_sheet(
     let actions = actions.clone();
     glib::spawn_future_local(async move {
         let parent = parent(&actions);
-        let sheet = if named {
-            Sheet::new(parent.as_ref(), &title, &message)
-        } else {
-            Sheet::unnamed(parent.as_ref(), &title, &message)
+        let sheet = match (&target, named) {
+            (Some(target), true) => target.sheet(parent.as_ref(), &title, &message),
+            (None, true) => Sheet::new(parent.as_ref(), &title, &message),
+            (_, false) => Sheet::unnamed(parent.as_ref(), &title, &message),
         };
         sheet.buttons(&ok, destructive, None);
         if sheet.run().await == Response::Ok {
-            match repo {
-                Some(repo) => actions.perform_in(repo, commands, |_| {}),
+            match target {
+                Some(target) => actions.perform_in(target.repo, commands, |_| {}),
                 None => actions.perform_sequence(commands),
             }
         }
@@ -2091,9 +2120,13 @@ pub fn confirm_integrate(
 
 /// Cherry-pick・Revert の前に確かめる。`commits` は（16 進, merge か）を、実行する順に。
 pub fn pick(actions: &Rc<Actions>, revert: bool, commits: Vec<(String, bool)>) {
+    // 選んだときの worktree のブランチを読み、そこに足す（読んでいる間に書き込む先を替えても）。
+    let Some(target) = Target::current(actions) else {
+        return;
+    };
     let actions = actions.clone();
     glib::spawn_future_local(async move {
-        let Some(repo) = actions.repo() else { return };
+        let repo = target.repo.clone();
         let onto = gio::spawn_blocking(move || repo.load_status().ok()?.status.branch.clone())
             .await
             .ok()
@@ -2125,7 +2158,15 @@ pub fn pick(actions: &Rc<Actions>, revert: bool, commits: Vec<(String, bool)>) {
         let oids: Vec<String> = commits.into_iter().map(|(oid, _)| oid).collect();
         let commands = vec![json!({ "op": op, "oids": oids, "isMerge": merge })];
         let ok = if revert { "Revert" } else { "Cherry-pick" };
-        confirm_then(&actions, title, message, ok.to_owned(), false, commands);
+        confirm_in(
+            &actions,
+            target,
+            title,
+            message,
+            ok.to_owned(),
+            false,
+            commands,
+        );
     });
 }
 
@@ -2155,10 +2196,13 @@ pub fn pop(actions: &Rc<Actions>, name: &str, message: Option<&str>, pop: bool) 
 
 /// Undo の前に、何を戻すかを見せる。
 pub fn undo(actions: &Rc<Actions>) {
+    // 選んだときの worktree の最後の操作を見せ、それを戻す（読んでいる間に書き込む先を替えても）。
+    let Some(target) = Target::current(actions) else {
+        return;
+    };
     let actions = actions.clone();
     glib::spawn_future_local(async move {
-        let Some(repo) = actions.repo() else { return };
-        let peek = run(&repo, json!({ "op": "undoPeek" })).await;
+        let peek = run(&target.repo, json!({ "op": "undoPeek" })).await;
         let Some(label) = peek["label"].as_str() else {
             return beep(&actions);
         };
@@ -2168,14 +2212,14 @@ pub fn undo(actions: &Rc<Actions>) {
             Some("rename") => tr!("Gives the branch its earlier name back."),
             _ => tr!("Returns HEAD and the branches to where they were."),
         };
-        let sheet = Sheet::new(
+        let sheet = target.sheet(
             parent(&actions).as_ref(),
             &tr!("Undo “{label}”?", label = label),
             &what,
         );
         sheet.buttons("Undo", false, None);
         if sheet.run().await == Response::Ok {
-            actions.perform(json!({ "op": "undo" }));
+            actions.perform_in(target.repo, vec![json!({ "op": "undo" })], |_| {});
         }
     });
 }
