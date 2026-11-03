@@ -345,7 +345,9 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
                 }
                 if out.utf8.count > DiffText.limit { break }
             }
-            return (file.map { diff.text(row: $0) } ?? path ?? "", out)
+            // つながらないコミットを並べた差分では、見出しは「パス — 短い ID」。パスだけを渡す。
+            let header = file.map { diff.text(row: $0) }
+            return (header.map { String($0.components(separatedBy: " — ")[0]) } ?? path ?? "", out)
         }
     }
 
