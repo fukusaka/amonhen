@@ -61,6 +61,19 @@ export async function resendDaemonEnvironment(): Promise<void> {
   );
 }
 
+/**
+ * `root` のリポジトリへのつながりを閉じる（worktree を消す前に。Windows では、使っているフォルダーを消せない）。
+ * 次に頼まれたら、また開く
+ */
+export function closeDaemonClient(root: string): void {
+  const fold = (p: string) => (process.platform === 'win32' ? p.toLowerCase() : p);
+  for (const [key, client] of clients) {
+    if (fold(key.slice(key.indexOf('\n') + 1)) !== fold(root)) continue;
+    clients.delete(key);
+    void client.then((c) => c.dispose()).catch(() => undefined);
+  }
+}
+
 export function disposeDaemonClients(): void {
   for (const c of clients.values()) {
     void c.then((client) => client.dispose()).catch(() => undefined);

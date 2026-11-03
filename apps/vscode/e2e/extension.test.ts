@@ -475,7 +475,7 @@ async function worktreeFlow(): Promise<void> {
     await withWindow({ showWarningMessage: async () => 'Remove Worktree' }, async () =>
       vscode.commands.executeCommand('amonhen.worktree.remove', row(folder)!.node),
     );
-    assert.equal(existsSync(folder), false);
+    await until('フォルダーが消える', () => !existsSync(folder) && !git('worktree', 'list').includes('repo-e2e-wt'), 10_000);
     assert.equal(git('branch', '--list', 'e2e-wt').trim(), 'e2e-wt');
 
     // フォルダの消えた worktree は「folder is gone」と出て、Prune で片付く。git が prunable と言うのは 2.31 から
