@@ -104,6 +104,8 @@ pub struct Details {
     pub root: gtk::Box,
     /// 件名・本文・notes を探す帯（macOS 版のメッセージの欄の検索の帯）。
     find: Rc<crate::messagefind::MessageFind>,
+    /// スクロールの外の上の帯（作者・見せ方・右上のボタン）。
+    head: gtk::Box,
     column: gtk::Box,
     /// 上の帯: 作者とコミッターを左右に。
     people: gtk::Box,
@@ -468,12 +470,12 @@ impl Details {
         selection.append(&selection_note);
         selection.append(&pairs);
         selection.append(&selection_lines);
-        // 上の帯: 作者（複数選んだときは選び方の見出し）と、右上のボタン。
+        // 上の帯: 作者と、右上のボタン。スクロールの外に置き、長いメッセージでも見えたままにする（macOS 版の
+        // headerContainer。スクロールするのは見出しの文字だけ）。
         let tools = gtk::Box::new(gtk::Orientation::Horizontal, 2);
         tools.set_valign(gtk::Align::Start);
         let lead = gtk::Box::new(gtk::Orientation::Vertical, 8);
         lead.set_hexpand(true);
-        lead.append(&selection);
         lead.append(&people);
         // 簡潔の 1 行（作者の帯と表の代わり）。
         let brief_avatar = crate::avatars::Avatar::new(16);
@@ -484,7 +486,6 @@ impl Details {
         brief.append(&brief_avatar.root);
         brief.append(&brief_text);
         brief.set_visible(false);
-        lead.append(&brief);
         // 右上の見せ方の切り替え（簡潔・標準・詳細）。Push の確認のように埋め込むときは出さず、標準にする。
         let styles = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         styles.add_css_class("linked");
@@ -501,15 +502,19 @@ impl Details {
         }
         styles.set_visible(false);
         let head = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        head.set_margin_top(10);
+        head.set_margin_start(12);
+        head.set_margin_end(12);
         head.append(&lead);
         head.append(&tools);
         head.append(&styles);
         let column = gtk::Box::new(gtk::Orientation::Vertical, 8);
-        column.set_margin_top(10);
+        column.set_margin_top(8);
         column.set_margin_bottom(10);
         column.set_margin_start(12);
         column.set_margin_end(12);
-        column.append(&head);
+        column.append(&selection);
+        column.append(&brief);
         column.append(&table);
         column.append(&subject);
         column.append(&body);
@@ -547,12 +552,14 @@ impl Details {
         };
         let find = crate::messagefind::MessageFind::new(&root, &scrolled, searched);
         root.append(&find.bar);
+        root.append(&head);
         root.append(&scrolled);
         let reword = Rc::new(Reword::new());
         root.append(&reword.root);
         let details = Self {
             root,
             find,
+            head,
             column,
             people,
             author,
@@ -727,28 +734,30 @@ impl Details {
         self.root
             .insert_action_group("details", Some(&self.actions));
         // 文字の欄の外を右クリックしても、同じメニュー。
-        let click = gtk::GestureClick::new();
-        click.set_button(gtk::gdk::BUTTON_SECONDARY);
-        let (column, menu, info) = (self.column.downgrade(), self.menu.clone(), info);
-        click.connect_pressed(move |_, _, x, y| {
-            let Some(column) = column.upgrade() else {
-                return;
-            };
-            if info.borrow().is_none() {
-                return;
-            }
-            let popover = gtk::PopoverMenu::from_model(Some(&menu));
-            popover.set_has_arrow(false);
-            popover.set_halign(gtk::Align::Start);
-            popover.set_parent(&column);
-            popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
-            popover.connect_closed(|p| {
-                let p = p.clone();
-                glib::idle_add_local_once(move || p.unparent());
+        for area in [&self.head, &self.column] {
+            let click = gtk::GestureClick::new();
+            click.set_button(gtk::gdk::BUTTON_SECONDARY);
+            let (column, menu, info) = (area.downgrade(), self.menu.clone(), info.clone());
+            click.connect_pressed(move |_, _, x, y| {
+                let Some(column) = column.upgrade() else {
+                    return;
+                };
+                if info.borrow().is_none() {
+                    return;
+                }
+                let popover = gtk::PopoverMenu::from_model(Some(&menu));
+                popover.set_has_arrow(false);
+                popover.set_halign(gtk::Align::Start);
+                popover.set_parent(&column);
+                popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+                popover.connect_closed(|p| {
+                    let p = p.clone();
+                    glib::idle_add_local_once(move || p.unparent());
+                });
+                popover.popup();
             });
-            popover.popup();
-        });
-        self.column.add_controller(click);
+            area.add_controller(click);
+        }
         for label in [
             &self.subject,
             &self.body,
@@ -1582,8 +1591,9 @@ impl Details {
 
     /// 幅 `width` で、中身をすべて見せるのに要る高さ。
     pub fn natural_height(&self, width: i32) -> i32 {
+        let (_, head, _, _) = self.head.measure(gtk::Orientation::Vertical, width);
         let (_, natural, _, _) = self.column.measure(gtk::Orientation::Vertical, width);
-        natural
+        head + natural
     }
 }
 
