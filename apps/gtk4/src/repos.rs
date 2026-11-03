@@ -842,14 +842,19 @@ fn progress_window(parent: &gtk::Window, text: &str) -> gtk::Window {
     content.set_margin_end(16);
     content.append(&spinner);
     content.append(&label);
+    // 窓に結び付けず、どの窓も止めない（macOS 版の、画面の中央に出る小さなパネルと同じ。長い clone の間も
+    // ほかの窓を使える）。アプリには入れ、開いた窓を閉じても clone が終わるまではアプリを終えない。
     let window = gtk::Window::builder()
         .title("Clone")
-        .modal(true)
-        .transient_for(parent)
         .deletable(false)
         .resizable(false)
+        .default_width(420)
         .child(&content)
         .build();
+    if let Some(app) = parent.application() {
+        window.set_application(Some(&app));
+    }
+    window.set_display(&WidgetExt::display(parent));
     window.present();
     window
 }
