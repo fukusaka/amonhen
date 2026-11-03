@@ -39,7 +39,10 @@ pub struct Sheet {
     pub heading: gtk::Label,
     pub message: gtk::Label,
     body: gtk::Box,
+    /// 右寄せのボタン（Cancel と既定のもの）。
     buttons: gtk::Box,
+    /// 左端のボタン（Remove… や Other。macOS 版の Spacer の前のもの）。
+    left: gtk::Box,
     tx: async_channel::Sender<Response>,
     rx: async_channel::Receiver<Response>,
 }
@@ -107,14 +110,19 @@ impl Sheet {
         body.append(&label);
         let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         buttons.set_halign(gtk::Align::End);
-        buttons.set_margin_top(6);
+        buttons.set_hexpand(true);
+        let left = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let button_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        button_row.set_margin_top(6);
+        button_row.append(&left);
+        button_row.append(&buttons);
         let content = gtk::Box::new(gtk::Orientation::Vertical, 10);
         content.set_margin_top(18);
         content.set_margin_bottom(18);
         content.set_margin_start(20);
         content.set_margin_end(20);
         content.append(&body);
-        content.append(&buttons);
+        content.append(&button_row);
         let window = gtk::Window::builder()
             .modal(true)
             .resizable(false)
@@ -149,6 +157,7 @@ impl Sheet {
             message: label,
             body,
             buttons,
+            left,
             tx,
             rx,
         }
@@ -194,9 +203,7 @@ impl Sheet {
         if style == Some(Style::Destructive) {
             button.add_css_class("destructive-action");
         }
-        button.set_hexpand(true);
-        button.set_halign(gtk::Align::Start);
-        self.buttons.append(&button);
+        self.left.append(&button);
         button
     }
 
@@ -204,8 +211,8 @@ impl Sheet {
     pub fn buttons(&self, ok: &str, destructive: bool, other: Option<&str>) -> gtk::Button {
         if let Some(other) = other {
             let b = self.button(other, Response::Other, None);
-            b.set_hexpand(true);
-            b.set_halign(gtk::Align::Start);
+            self.buttons.remove(&b);
+            self.left.append(&b);
         }
         self.button(&tr!("Cancel"), Response::Cancel, None);
         self.button(
@@ -224,16 +231,25 @@ impl Sheet {
         self.window.present();
         // 最初の入力がボタンの列に来たら（欄のないシート）、既定のボタンに移す: Return で既定の操作になる（macOS 版の
         // シートと同じ。GTK は並びの最初の Cancel に入力を置くので、そのままだと Return で取り消しになる）。
-        let (w, buttons) = (self.window.downgrade(), self.buttons.downgrade());
+        let (w, buttons, left) = (
+            self.window.downgrade(),
+            self.buttons.downgrade(),
+            self.left.downgrade(),
+        );
         glib::idle_add_local_once(move || {
-            let (Some(w), Some(buttons)) = (w.upgrade(), buttons.upgrade()) else {
+            let (Some(w), Some(buttons), Some(left)) =
+                (w.upgrade(), buttons.upgrade(), left.upgrade())
+            else {
                 return;
             };
             let Some(default) = w.default_widget() else {
                 return;
             };
-            let on_buttons = GtkWindowExt::focus(&w)
-                .is_none_or(|f| f.parent().as_ref() == Some(buttons.upcast_ref()));
+            let on_buttons = GtkWindowExt::focus(&w).is_none_or(|f| {
+                let parent = f.parent();
+                parent.as_ref() == Some(buttons.upcast_ref())
+                    || parent.as_ref() == Some(left.upcast_ref())
+            });
             if on_buttons && default.is_sensitive() {
                 default.grab_focus();
             }
