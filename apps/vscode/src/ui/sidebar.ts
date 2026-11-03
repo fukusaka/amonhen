@@ -315,7 +315,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
         if (node.view === 'settings') {
           const item = new vscode.TreeItem('Repository Settings');
           item.id = 'view:settings';
-          item.tooltip = 'This repository’s git settings (Operations…)';
+          item.tooltip = 'This repository’s git settings (author, operations, remotes…)';
           item.iconPath = new vscode.ThemeIcon('settings-gear');
           item.command = { command: 'amonhen.showRepositorySettings', title: 'Show Repository Settings' };
           return item;
