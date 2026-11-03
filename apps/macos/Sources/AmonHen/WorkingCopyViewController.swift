@@ -929,7 +929,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             ? L("Discard the working tree changes and return to the content of the next commit (the index)")
             : L("Discard the selected lines’ changes from the working tree (included lines are excluded first)")
         let count = stagedCount
-        commitButton.isEnabled = !(count == 0 && amend.state == .off) && !composedMessage.isEmpty
+        // コミットしている間は押せない（2 回目の ⌘↩ が、もう 1 つ git commit を始めないように）。
+        commitButton.isEnabled = !committing && !(count == 0 && amend.state == .off) && !composedMessage.isEmpty
         // ボタンの数や名前が変わると幅が変わるので、並べ直す。
         diffBar?.needsLayout = true
         commitButton.title = amend.state == .on ? "Amend Commit"
@@ -1260,12 +1261,22 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     func commitAndPushFromMenu() { if canCommit { commitAndPush() } }
 
+    /// コミットしている途中。
+    private var committing = false
+
     private func commit(thenPush: Bool) {
+        guard !committing else { return NSSound.beep() }
         let text = composedMessage
         let isAmend = amend.state == .on
         let repository = self.repository
         let started = UInt64(Date().timeIntervalSince1970 * 1000)
+        committing = true
+        updateButtons()
         Task {
+            defer {
+                committing = false
+                updateButtons()
+            }
             do {
                 try await Task.detached(priority: .userInitiated) { try repository.commit(message: text, amend: isAmend) }.value
                 // hooks（pre-commit・commit-msg など）が何か書いていれば見せる。
