@@ -486,6 +486,8 @@ final class SettingsModel {
     func reload() {
         if autoFetchMinutes != Settings.autoFetchMinutes { autoFetchMinutes = Settings.autoFetchMinutes }
         if compactHistoryRows != Settings.compactHistoryRows { compactHistoryRows = Settings.compactHistoryRows }
+        if historyOrder != Settings.historyOrder { historyOrder = Settings.historyOrder }
+        if historyItems != Settings.historyItems { historyItems = Settings.historyItems }
         if highlightAncestors != Settings.highlightAncestors { highlightAncestors = Settings.highlightAncestors }
         if monospacedCommitMessage != Settings.monospacedCommitMessage {
             monospacedCommitMessage = Settings.monospacedCommitMessage
@@ -499,6 +501,7 @@ final class SettingsModel {
         if gitHubAvatarsOnce != Settings.gitHubAvatarsOnce { gitHubAvatarsOnce = Settings.gitHubAvatarsOnce }
         if stackedCommitDiff != Settings.stackedCommitDiff { stackedCommitDiff = Settings.stackedCommitDiff }
         if historyFileTree != Settings.historyFileTree { historyFileTree = Settings.historyFileTree }
+        if fileHistoryMerges != Settings.fileHistoryMerges { fileHistoryMerges = Settings.fileHistoryMerges }
         if autoMagicMerge != Settings.autoMagicMerge { autoMagicMerge = Settings.autoMagicMerge }
         if writeCommitGraph != Settings.writeCommitGraph { writeCommitGraph = Settings.writeCommitGraph }
         if useFSMonitor != Settings.useFSMonitor { useFSMonitor = Settings.useFSMonitor }
@@ -874,6 +877,12 @@ final class SettingsWindowController: NSWindowController {
         window.setContentSize(NSSize(width: 960, height: 720))
         window.setFrameAutosaveName("Settings")
         super.init(window: window)
+        // 開いている間に View・File History のメニューで変えた分も拾う（古い値のまま書き戻さない）。
+        for name in [Notification.Name.historyRowsChanged, .historyOrderChanged, .fileHistoryMergesChanged] {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.model.reload() }
+            }
+        }
     }
 
     required init?(coder: NSCoder) { fatalError() }
