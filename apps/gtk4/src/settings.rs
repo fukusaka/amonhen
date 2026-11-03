@@ -21,6 +21,8 @@ thread_local! {
     static WATCHERS: RefCell<Vec<(Option<glib::WeakRef<glib::Object>>, Watcher)>> =
         RefCell::default();
     static WINDOW: RefCell<glib::WeakRef<gtk::Window>> = RefCell::default();
+    /// 設定の窓のタブの中身（`select` が切り替える）。
+    static STACK: RefCell<glib::WeakRef<gtk::Stack>> = RefCell::default();
     /// Git のタブで、読み終えたら開くページ（`--settings git/programs`）。
     static GIT_PAGE: RefCell<Option<String>> = const { RefCell::new(None) };
     /// Git のタブの中身（読み終えて作ったら。窓が開いている間に `select("git/<page>")` されたらそのページへ）。
@@ -517,7 +519,7 @@ pub fn show(near: &impl IsA<gtk::Widget>) {
     // Git: すべてのリポジトリの段（`--global`）の、Repository Settings と同じページ。git の設定は手元の空の
     // リポジトリ（settings-repo）から読み書きする（macOS 版の `MachineSettings` と同じ）。
     let git = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    git.set_size_request(860, 560);
+    git.set_vexpand(true);
     stack.add_titled(&git, Some("git"), "Git");
     // 読むまでは回る印（macOS 版の ProgressView）。
     let loading = gtk::Spinner::builder()
@@ -725,16 +727,55 @@ pub fn show(near: &impl IsA<gtk::Widget>) {
         &tr!("Performance"),
     );
 
-    let switcher = gtk::StackSwitcher::builder().stack(&stack).build();
+    // 上にアイコン付きのタブ（macOS 版のツールバーのタブ）。窓の大きさはどのタブでも同じで、中身は窓いっぱいに
+    // 広がり、長ければ中でスクロールする（macOS 版と同じく、最小 960×400、初めは 960×720）。
+    // 高さはページごと（短いページはスクロールしない）。
+    stack.set_vhomogeneous(false);
+    let scrolled = gtk::ScrolledWindow::builder()
+        .child(&stack)
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .vexpand(true)
+        .build();
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    content.append(&tab_bar(&stack));
+    content.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+    content.append(&scrolled);
     let header = gtk::HeaderBar::new();
-    header.set_title_widget(Some(&switcher));
     let window = gtk::Window::builder()
         .title(tr!("Settings"))
-        .default_width(660)
-        .child(&stack)
+        .default_width(960)
+        .default_height(720)
+        .child(&content)
         .hide_on_close(true)
         .build();
+    window.set_size_request(960, 400);
     window.set_titlebar(Some(&header));
+    // 窓のタイトルは選んでいるタブの名前（macOS 標準の設定画面と同じ）。
+    let retitle = {
+        let w = window.downgrade();
+        move |stack: &gtk::Stack| {
+            let title = stack
+                .visible_child()
+                .map(|c| stack.page(&c))
+                .and_then(|p| p.title());
+            if let (Some(w), Some(title)) = (w.upgrade(), title) {
+                w.set_title(Some(&title));
+            }
+        }
+    };
+    retitle(&stack);
+    stack.connect_visible_child_notify(retitle);
+    // Ctrl+W で閉じる（アプリの `win.close` の近道を、この窓では閉じることに。macOS 版の ⌘W と同じ）。
+    let actions = gio::SimpleActionGroup::new();
+    let close = gio::SimpleAction::new("close", None);
+    let w = window.downgrade();
+    close.connect_activate(move |_, _| {
+        if let Some(w) = w.upgrade() {
+            w.close();
+        }
+    });
+    actions.add_action(&close);
+    window.insert_action_group("win", Some(&actions));
     window.set_display(&WidgetExt::display(near));
     // 大きさは覚えておく（macOS 版は位置も。GTK では窓の位置はウィンドウマネージャーが決める）。
     if let Some((w, h)) = string(WINDOW_SIZE).as_deref().and_then(parse_size) {
@@ -750,8 +791,75 @@ pub fn show(near: &impl IsA<gtk::Widget>) {
         glib::Propagation::Proceed
     });
     WINDOW.with(|w| w.replace(window.downgrade()));
+    STACK.with(|s| s.replace(stack.downgrade()));
     join_application(&window, near);
     window.present();
+}
+
+/// 設定の窓の上のタブ（アイコンと名前。macOS 版の `tabStyle = .toolbar`）。押すとそのページを出す。
+fn tab_bar(stack: &gtk::Stack) -> gtk::Box {
+    use crate::icon::{Icon, Kind};
+    let bar = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+    bar.set_halign(gtk::Align::Center);
+    bar.set_margin_top(4);
+    bar.set_margin_bottom(4);
+    let icons = [
+        ("general", Kind::Gear),
+        ("git", Kind::Branch),
+        ("ssh-hosts", Kind::Remote),
+        ("accounts", Kind::Person),
+        ("appearance", Kind::Brush),
+        ("diff-merge", Kind::Merge),
+        ("ai", Kind::Sparkles),
+        ("performance", Kind::Speedometer),
+    ];
+    let mut buttons: Vec<(String, gtk::ToggleButton)> = Vec::new();
+    let mut child = stack.first_child();
+    while let Some(c) = child {
+        child = c.next_sibling();
+        let page = stack.page(&c);
+        let Some(name) = page.name() else { continue };
+        let kind = icons
+            .iter()
+            .find(|(n, _)| *n == name.as_str())
+            .map_or(Kind::Gear, |(_, k)| *k);
+        let icon = Icon::default();
+        icon.set(kind, false);
+        icon.set_pixel_size(24);
+        let label = gtk::Label::new(page.title().as_deref());
+        label.add_css_class("caption");
+        let inner = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        inner.append(&icon);
+        inner.append(&label);
+        let button = gtk::ToggleButton::new();
+        button.set_child(Some(&inner));
+        button.add_css_class("flat");
+        button.set_tooltip_text(page.title().as_deref());
+        if let Some((_, first)) = buttons.first() {
+            button.set_group(Some(first));
+        }
+        let (s, n) = (stack.downgrade(), name.to_string());
+        button.connect_toggled(move |b| {
+            if b.is_active()
+                && let Some(s) = s.upgrade()
+            {
+                s.set_visible_child_name(&n);
+            }
+        });
+        bar.append(&button);
+        buttons.push((name.to_string(), button));
+    }
+    let sync = move |stack: &gtk::Stack| {
+        let shown = stack.visible_child_name();
+        for (name, button) in &buttons {
+            if shown.as_deref() == Some(name.as_str()) && !button.is_active() {
+                button.set_active(true);
+            }
+        }
+    };
+    sync(stack);
+    stack.connect_visible_child_notify(sync);
+    bar
 }
 
 /// 出している間はアプリの窓にする: 開いたリポジトリの窓を閉じても、Settings とアプリが続く（macOS 版と同じ）。
@@ -799,11 +907,7 @@ pub fn select(tab: &str) {
         let (host, page) = page.split_once('/').unwrap_or((page, ""));
         crate::sshhosts::select_pending(host, page);
     }
-    if let Some(stack) = WINDOW
-        .with(|w| w.borrow().upgrade())
-        .and_then(|w| w.child())
-        .and_downcast::<gtk::Stack>()
-    {
+    if let Some(stack) = STACK.with(|s| s.borrow().upgrade()) {
         stack.set_visible_child_name(tab);
     }
 }

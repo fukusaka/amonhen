@@ -61,6 +61,12 @@ pub enum Kind {
     UpDown,
     /// folder.fill（パスを選ぶシートのフォルダ）
     FolderFill,
+    /// person.crop.circle（設定の Accounts）
+    Person,
+    /// paintbrush（設定の Appearance）
+    Brush,
+    /// speedometer（設定の Performance）
+    Speedometer,
     /// apple.terminal（パスを選ぶシートの実行ファイル）
     Terminal,
     /// questionmark.square.dashed（パスを選ぶシートの、種類の分からないもの）
@@ -224,7 +230,7 @@ impl Icon {
         self.queue_draw();
     }
 
-    /// 16 でない大きさで描く（macOS 版で大きめの記号を使うところ）。
+    /// 16 でない大きさで描く（形は 16 のものを伸ばす。macOS 版で大きめの記号を使うところ）。
     pub fn set_pixel_size(&self, size: i32) {
         self.imp().size.set(size);
         self.queue_resize();
@@ -418,6 +424,44 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             solid.line_to(2.5, 12.5);
             solid.close();
             fill = Some(solid);
+        }
+        Kind::Person => {
+            // 丸の中の人（頭と肩）。
+            p.add_circle(&point(8.0, 8.0), 6.3);
+            p.add_circle(&point(8.0, 6.6), 2.2);
+            p.move_to(3.9, 12.6);
+            p.svg_arc_to(4.6, 3.6, 0.0, false, true, 12.1, 12.6);
+        }
+        Kind::Brush => {
+            // 斜めの柄と、左下の毛先。
+            p.move_to(13.5, 2.5);
+            p.line_to(7.6, 8.4);
+            p.move_to(7.6, 8.4);
+            p.line_to(9.6, 10.4);
+            p.move_to(6.6, 9.4);
+            p.quad_to(4.2, 9.6, 4.0, 12.0);
+            p.quad_to(3.8, 13.2, 2.6, 13.6);
+            p.quad_to(6.6, 14.4, 8.4, 12.6);
+            p.quad_to(9.0, 11.8, 8.6, 11.4);
+            p.close();
+        }
+        Kind::Speedometer => {
+            // 下の開いた丸と、針と、目盛り。
+            p.move_to(3.4, 12.6);
+            p.svg_arc_to(6.3, 6.3, 0.0, true, true, 12.6, 12.6);
+            p.move_to(8.0, 9.4);
+            p.line_to(10.8, 5.6);
+            for (x0, y0, x1, y1) in [
+                (8.0_f32, 2.6_f32, 8.0_f32, 3.8_f32),
+                (3.0, 7.0, 4.1, 7.4),
+                (13.0, 7.0, 11.9, 7.4),
+            ] {
+                p.move_to(x0, y0);
+                p.line_to(x1, y1);
+            }
+            let hub = gsk::PathBuilder::new();
+            hub.add_circle(&point(8.0, 9.6), 1.1);
+            fill = Some(hub);
         }
         Kind::Terminal => {
             // 角の丸い窓と、中の「>_」。

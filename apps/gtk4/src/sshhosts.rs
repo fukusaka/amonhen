@@ -451,7 +451,7 @@ pub fn reload_shown() {
 impl SshHosts {
     pub fn new() -> Rc<Self> {
         let widget = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        widget.set_size_request(960, 560);
+        widget.set_vexpand(true);
 
         // 左: SSH 先。
         let host_list = gtk::ListBox::new();
