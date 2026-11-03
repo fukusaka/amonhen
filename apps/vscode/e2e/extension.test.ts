@@ -910,6 +910,9 @@ suite('Amon Hen in VSCode', () => {
     const panel = await showView('amonhen.showHistory');
     // 開いたときの読み直しは、記録を始める前に送り終えていることがある
     await panel.history.reset();
+    // Webview は開いた直後に最初の行を頼む。読み直しが HEAD と読み方を決める前に届いても、History は空にならない
+    await until('リポジトリ', () => panel.history.repository);
+    void panel.history.handle({ type: 'more' });
     const rows = await waitPosted('rows', mark, (m) => m.rows.some((r) => r.subject === 'add crlf.txt'));
     const commit = rows.rows.find((r) => r.subject === 'add crlf.txt')!;
     await panel.history.handle({ type: 'select', oid: commit.oid });

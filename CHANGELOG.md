@@ -748,6 +748,8 @@ First release.
 
 #### Fixed
 
+- History no longer stays empty when it is opened while the engine's History is still being read; the view's first
+  request for rows made the extension think there were none.
 - Pull on a diverged branch asks for Merge or Rebase for this pull when nothing sets how to pull (`pull.rebase`,
   `pull.ff`), since git 2.33.1 and later refuse to pull then; it used to merge.
 - Starting a merge, rebase, cherry-pick or revert while another one is stopped no longer reports a conflict; it says
