@@ -399,17 +399,18 @@ impl StatusBar {
 
     /// 終わった操作の一言を、しばらく出して消す。
     pub fn flash(self: &Rc<Self>, text: &str) {
-        self.flash_with("✓", "success", text);
+        self.flash_with(crate::icon::Kind::CheckCircle, "success", text);
     }
 
     /// できなかったことの一言を、警告の印でしばらく出して消す（macOS 版の `flash(_:symbol:)` の
     /// exclamationmark.triangle）。
     pub fn flash_warning(self: &Rc<Self>, text: &str) {
-        self.flash_with("⚠", "warning", text);
+        self.flash_with(crate::icon::Kind::Warning, "warning", text);
     }
 
-    fn flash_with(self: &Rc<Self>, mark: &str, css: &str, text: &str) {
-        let icon = gtk::Label::new(Some(mark));
+    fn flash_with(self: &Rc<Self>, mark: crate::icon::Kind, css: &str, text: &str) {
+        let icon = crate::icon::Icon::default();
+        icon.set(mark, false);
         icon.add_css_class(css);
         let label = gtk::Label::new(Some(text));
         label.add_css_class("dim-label");
@@ -459,6 +460,13 @@ pub fn button(label: &str, suggested: bool) -> gtk::Button {
     b
 }
 
+/// 失敗とつながりの行の小さなボタン（macOS 版の controlSize .small）。
+pub fn small_button(label: &str) -> gtk::Button {
+    let b = button(label, false);
+    b.add_css_class("status-small");
+    b
+}
+
 /// `button` を、見えている間だけ窓の既定のボタン（Return で押す）にする。後ろのタブ・消した行のボタンは外す。
 fn make_default_while_mapped(button: &gtk::Button) {
     button.connect_map(|b| {
@@ -491,7 +499,8 @@ fn install_css() {
          .status-connection { background-color: alpha(@warning_color, 0.10); } \
          label.warning { color: @warning_color; } \
          label.error { color: @error_color; } \
-         label.success { color: @success_color; }",
+         label.success { color: @success_color; } \
+         button.status-small { min-height: 20px; padding: 1px 8px; font-size: smaller; }",
     );
     if let Some(display) = gtk::gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
@@ -508,8 +517,12 @@ impl StatusBar {
     /// ツールチップ。
     pub fn show_failure(self: &Rc<Self>, failure: Failure, actions: &Rc<crate::actions::Actions>) {
         let cancelled = failure.cancelled();
-        let icon = gtk::Label::new(Some(if cancelled { "■" } else { "✕" }));
-        if !cancelled {
+        // macOS 版の xmark.octagon.fill（赤）と stop.circle（薄い色）。
+        let icon = crate::icon::Icon::default();
+        if cancelled {
+            icon.set(crate::icon::Kind::StopCircle, false);
+        } else {
+            icon.set(crate::icon::Kind::XOctagonFill, false);
             icon.add_css_class("error");
         }
         let title = gtk::Label::new(Some(&if cancelled {
@@ -517,7 +530,8 @@ impl StatusBar {
         } else {
             failure.title()
         }));
-        title.add_css_class("heading");
+        // 小さな太字（macOS 版の boldSystemFont(smallSystemFontSize)）。
+        title.add_css_class("caption-heading");
         let detail = gtk::Label::new(Some(&if cancelled {
             String::new()
         } else {
@@ -532,6 +546,7 @@ impl StatusBar {
         if !cancelled {
             for (i, remedy) in failure.remedies().into_iter().enumerate() {
                 let b = button(&remedy.title(), i == 0);
+                b.add_css_class("status-small");
                 let (this, actions, command) = (
                     Rc::downgrade(self),
                     actions.clone(),
@@ -563,7 +578,7 @@ impl StatusBar {
                 });
                 children.push(b.upcast());
             }
-            let more = button(&tr!("Details"), false);
+            let more = small_button(&tr!("Details"));
             let (f, a) = (failure.clone(), actions.clone());
             more.connect_clicked(move |_| {
                 let text = [
@@ -584,10 +599,10 @@ impl StatusBar {
             children.push(more.upcast());
         }
         // 取り消したときも Activity と Close は出す（Details だけ隠す。macOS 版と同じ）。
-        let activity = button("Activity", false);
+        let activity = small_button("Activity");
         activity.set_action_name(Some("win.activity"));
         children.push(activity.upcast());
-        let close = button(&tr!("Close"), false);
+        let close = small_button(&tr!("Close"));
         let this = Rc::downgrade(self);
         close.connect_clicked(move |_| {
             if let Some(this) = this.upgrade() {
@@ -620,11 +635,13 @@ impl StatusBar {
         {
             return;
         }
-        let icon = gtk::Label::new(Some("⚡"));
+        // macOS 版の bolt.horizontal.circle（オレンジ）。
+        let icon = crate::icon::Icon::default();
+        icon.set(crate::icon::Kind::BoltCircle, false);
         icon.add_css_class("warning");
         let heading = tr!("Lost connection to {host}", host = host);
         let title = gtk::Label::new(Some(&heading));
-        title.add_css_class("heading");
+        title.add_css_class("caption-heading");
         let reason = reason_detail(&heading, reason);
         let detail = gtk::Label::new(Some(reason));
         detail.add_css_class("caption");
@@ -633,7 +650,7 @@ impl StatusBar {
         detail.set_xalign(0.0);
         detail.set_hexpand(true);
         detail.set_tooltip_text(Some(reason));
-        let b = button(&tr!("Reconnect"), false);
+        let b = small_button(&tr!("Reconnect"));
         b.connect_clicked(move |_| reconnect());
         self.show(
             Row::Connection,

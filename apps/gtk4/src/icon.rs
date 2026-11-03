@@ -133,6 +133,12 @@ pub enum Kind {
     Pencil,
     /// pencil.and.list.clipboard（History の編集モード）
     EditList,
+    /// xmark.octagon.fill（ステータスバーの失敗）
+    XOctagonFill,
+    /// stop.circle（ステータスバーの取り消した操作）
+    StopCircle,
+    /// bolt.horizontal.circle（ステータスバーの切れたつながり）
+    BoltCircle,
 }
 
 mod imp {
@@ -799,6 +805,46 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.move_to(5.2, 8.2);
             p.line_to(7.2, 10.2);
             p.line_to(10.9, 6.0);
+        }
+        Kind::XOctagonFill => {
+            // 塗った八角形と、白く抜いた ×。
+            let solid = gsk::PathBuilder::new();
+            for i in 0..8 {
+                let a = std::f32::consts::PI * (i as f32 + 0.5) / 4.0;
+                let (x, y) = (8.0 + 6.9 * a.cos(), 8.0 + 6.9 * a.sin());
+                if i == 0 {
+                    solid.move_to(x, y);
+                } else {
+                    solid.line_to(x, y);
+                }
+            }
+            solid.close();
+            let mark = gsk::PathBuilder::new();
+            mark.move_to(5.8, 5.8);
+            mark.line_to(10.2, 10.2);
+            mark.move_to(10.2, 5.8);
+            mark.line_to(5.8, 10.2);
+            fill = Some(solid);
+            knock = Some(mark);
+        }
+        Kind::StopCircle => {
+            p.add_circle(&point(8.0, 8.0), 6.3);
+            let square = gsk::PathBuilder::new();
+            square.add_rect(&graphene::Rect::new(5.6, 5.6, 4.8, 4.8));
+            fill = Some(square);
+        }
+        Kind::BoltCircle => {
+            // 円の中に、横向きの稲妻。
+            p.add_circle(&point(8.0, 8.0), 6.3);
+            let bolt = gsk::PathBuilder::new();
+            bolt.move_to(4.2, 8.6);
+            bolt.line_to(8.6, 5.0);
+            bolt.line_to(8.0, 7.6);
+            bolt.line_to(11.8, 7.4);
+            bolt.line_to(7.4, 11.0);
+            bolt.line_to(8.0, 8.4);
+            bolt.close();
+            fill = Some(bolt);
         }
         Kind::PencilCircle => {
             // 円の中に、小さな鉛筆。
