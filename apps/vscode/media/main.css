@@ -1121,3 +1121,14 @@ button.secondary {
   gap: 6px;
   margin-top: 6px;
 }
+
+.setting-folder {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 12px;
+}
+
+.setting-folder code {
+  flex: 1;
+}

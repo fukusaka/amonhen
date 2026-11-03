@@ -16,7 +16,27 @@ export interface SettingsFacts {
   base?: string;
   /** `.git/info/exclude` の中身 */
   exclude: string;
+  /** コアの `repositoryForm`（Fetching and Folders）。読めなければ undefined */
+  repositoryForm?: RepositoryForm;
 }
+
+export interface RepositoryForm {
+  shallow: boolean;
+  partial: { remote: string; filter: string | null } | null;
+  /** cone mode なら取り出しているフォルダ、そうでなければパターン */
+  sparse: { cone: boolean; folders: string[] } | null;
+  maintenance: boolean;
+  workingTree: boolean;
+  canFetchAllContents: boolean;
+  canSparseCheckout: boolean;
+  canMaintain: boolean;
+}
+
+/** Fetching and Folders のボタン */
+export type FetchingAction =
+  | { action: 'fetchMore' | 'fetchAll' | 'fetchContents' | 'addFolder' | 'checkOutAll' }
+  | { action: 'maintenance'; on: boolean }
+  | { action: 'removeFolder'; folder: string };
 
 export type SettingsHostMessage =
   /** 読んだ設定（`error` は読めなかったわけ） */
@@ -28,4 +48,6 @@ export type SettingsWebviewMessage =
   /** このリポジトリの設定を書く（`value` が null なら消す。上書きをやめて上の値に戻る） */
   | { type: 'settingsSet'; writes: [key: string, value: string | null][] }
   /** `.git/info/exclude` を書く（`.gitignore` はそのまま） */
-  | { type: 'settingsSaveExclude'; exclude: string };
+  | { type: 'settingsSaveExclude'; exclude: string }
+  /** Fetching and Folders のボタン（取得・sparse checkout・maintenance） */
+  | ({ type: 'settingsRun' } & FetchingAction);

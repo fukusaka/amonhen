@@ -160,6 +160,7 @@ export class MainPanel implements vscode.Disposable {
       case 'settingsLoad':
       case 'settingsSet':
       case 'settingsSaveExclude':
+      case 'settingsRun':
         await this.settings.handle(message);
         break;
       default:

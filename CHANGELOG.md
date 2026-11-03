@@ -779,7 +779,8 @@ First release.
 - Undo on the sidebar's title and in the Command Palette says what it puts back and asks first, and Undo History…
   undoes several operations down to the one chosen.
 - With the engine, Repository Settings shows this repository's git settings in the app's pages: Operations,
-  Branches (the default branch) and Working Copy (line endings, the executable bit, `.git/info/exclude`) so far.
+  Branches (the default branch), Working Copy (line endings, the executable bit, `.git/info/exclude`) and Fetching
+  and Folders (fetching more, sparse checkout, git maintenance) so far.
 
 #### Changed
 

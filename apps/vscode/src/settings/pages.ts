@@ -20,7 +20,9 @@ export type SettingRow =
   /** 既定のブランチ（Amon Hen の `amonhen.defaultBranch`。なければ判定したもの） */
   | { kind: 'defaultBranch' }
   /** `.git/info/exclude` の中身を書く欄 */
-  | { kind: 'exclude' };
+  | { kind: 'exclude' }
+  /** リポジトリの形（shallow・partial・sparse・maintenance）に合わせた、取得とフォルダの行（Fetching and Folders） */
+  | { kind: 'fetching' };
 
 /** 使えるのに要る git（無ければ欄を灰色にし、理由を出す） */
 export type Needs = 'updateRefs';
@@ -133,5 +135,10 @@ export const PAGES: SettingPage[] = [
       },
       { title: 'Ignore in this repository only', rows: [{ kind: 'exclude' }] },
     ],
+  },
+  {
+    id: 'fetching',
+    title: 'Fetching and Folders',
+    sections: [{ title: '', rows: [{ kind: 'fetching' }] }],
   },
 ];

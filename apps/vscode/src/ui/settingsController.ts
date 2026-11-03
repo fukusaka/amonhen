@@ -5,7 +5,7 @@
 import * as vscode from 'vscode';
 import { daemonFor } from '../daemon/connection.ts';
 import type { ConfigEntry } from '../settings/model.ts';
-import type { SettingsFacts, SettingsHostMessage, SettingsWebviewMessage } from '../settings/protocol.ts';
+import type { FetchingAction, RepositoryForm, SettingsFacts, SettingsHostMessage, SettingsWebviewMessage } from '../settings/protocol.ts';
 import type { Repository } from '../state/repository.ts';
 import { showError } from './stageCommands.ts';
 
@@ -36,6 +36,33 @@ function formItems(form: Form | undefined): SettingsFacts['form'] {
   }
   if (form.maintenance) items.push({ title: 'git maintenance on', help: 'git maintenance runs for this repository in the background.' });
   return items;
+}
+
+/**
+ * HEAD の木を降りて、取り出すフォルダを 1 つ選んでもらう（アプリのフォルダの木の代わりに QuickPick）。`first` なら
+ * sparse checkout を始めるので、そう言う。リポジトリの中のパス（`/` で始まらない）を返す
+ */
+async function pickFolder(client: NonNullable<Awaited<ReturnType<typeof daemonFor>>>, first: boolean): Promise<string | undefined> {
+  let path = '/';
+  for (;;) {
+    const reply = (await client.call({ op: 'run', command: { op: 'treeFolders', path } })).json;
+    if (reply['ok'] !== true) throw new Error(String(reply['error'] ?? 'Can’t read the folders'));
+    const entries = ((reply['info'] as { entries?: { name: string; kind: string }[] } | undefined)?.entries ?? []).filter((e) => e.kind === 'folder');
+    type Item = vscode.QuickPickItem & { to?: string; use?: boolean };
+    const items: Item[] = [
+      ...(path !== '/' ? [{ label: `$(check) Check out ${path.slice(1)}`, use: true }, { label: '$(arrow-up) ..', to: path.replace(/\/[^/]+$/, '') || '/' }] : []),
+      ...entries.map((e) => ({ label: `$(folder) ${e.name}`, to: `${path === '/' ? '' : path}/${e.name}` })),
+    ];
+    const picked = await vscode.window.showQuickPick(items, {
+      title: first ? 'Check Out Only Some Folders' : 'Check Out One More Folder',
+      placeHolder: first
+        ? 'Only this folder is checked out, with the files at the top. Others are removed from disk until you check them out again.'
+        : `Folders in the latest commit, including ones not checked out (${path})`,
+    });
+    if (!picked) return undefined;
+    if (picked.use) return path.slice(1);
+    path = picked.to!;
+  }
 }
 
 export class SettingsController implements vscode.Disposable {
@@ -69,6 +96,10 @@ export class SettingsController implements vscode.Disposable {
         await this.saveExclude(message.exclude).catch(showError);
         await this.load();
         break;
+      case 'settingsRun':
+        await this.runAction(message).catch(showError);
+        await this.load();
+        break;
     }
   }
 
@@ -92,6 +123,58 @@ export class SettingsController implements vscode.Disposable {
     const files = (await client.call({ op: 'run', command: { op: 'ignoreFiles' } })).json['info'] as { gitignore?: string } | undefined;
     const reply = (await client.call({ op: 'run', command: { op: 'saveIgnoreFiles', gitignore: files?.gitignore ?? '', exclude } })).json;
     if (reply['ok'] !== true) throw new Error(String(reply['error'] ?? 'Can’t save .git/info/exclude'));
+    await repo.refresh();
+  }
+
+  /** Fetching and Folders のボタン。取得は History の帯と同じコマンド、sparse checkout と maintenance はコアで */
+  private async runAction(a: FetchingAction): Promise<void> {
+    const repo = this.repo;
+    const client = repo && (await daemonFor(repo.root));
+    if (!client) throw new Error('Repository Settings needs the Amon Hen engine (amonhen.daemon.enabled)');
+    const run = async (command: Record<string, unknown>, title: string) => {
+      const reply = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title }, async () =>
+        (await client.call({ op: 'run', command })).json,
+      );
+      if (reply['ok'] !== true) throw new Error(String(reply['error'] ?? `${title} failed`));
+    };
+    const form = (await client.call({ op: 'run', command: { op: 'repositoryForm' } })).json['info'] as RepositoryForm | undefined;
+    const folders = form?.sparse?.cone ? form.sparse.folders : [];
+    switch (a.action) {
+      case 'fetchMore':
+        await vscode.commands.executeCommand('amonhen.fetchMoreHistory');
+        return;
+      case 'fetchAll':
+        await vscode.commands.executeCommand('amonhen.fetchAllHistory');
+        return;
+      case 'fetchContents':
+        await vscode.commands.executeCommand('amonhen.fetchAllContents');
+        return;
+      case 'maintenance':
+        await run({ op: 'maintenance', on: a.on }, a.on ? 'Start git maintenance' : 'Stop git maintenance');
+        return;
+      case 'removeFolder':
+        await run({ op: 'sparseCheckout', folders: folders.filter((f) => f !== a.folder) }, `Stop checking out ${a.folder}`);
+        break;
+      case 'addFolder': {
+        const folder = await pickFolder(client, folders.length === 0 && !form?.sparse);
+        if (!folder || folders.includes(folder)) return;
+        await run({ op: 'sparseCheckout', folders: [...folders, folder] }, `Check out ${folder}`);
+        break;
+      }
+      case 'checkOutAll': {
+        const answer = await vscode.window.showWarningMessage(
+          'Check Out All Folders?',
+          {
+            modal: true,
+            detail: 'Every folder is checked out again (git sparse-checkout disable). In a large repository this can take long and use a lot of disk.',
+          },
+          'Check Out All',
+        );
+        if (answer !== 'Check Out All') return;
+        await run({ op: 'disableSparseCheckout' }, 'Check out all folders');
+        break;
+      }
+    }
     await repo.refresh();
   }
 
@@ -129,6 +212,7 @@ export class SettingsController implements vscode.Disposable {
           branches: ((groups?.['branches'] as { name: string }[] | undefined) ?? []).map((b) => b.name).sort(),
           ...(typeof groups?.['base'] === 'string' ? { base: groups['base'] } : {}),
           exclude: String(ignore?.['exclude'] ?? ''),
+          ...(form ? { repositoryForm: form as unknown as RepositoryForm } : {}),
         },
       });
     } catch (err) {

@@ -5,7 +5,7 @@
  */
 import { ConfigView, normalizedBool, pullMethod, pullWrites, type PullMethod } from '../settings/model.ts';
 import { PAGES, type SettingRow } from '../settings/pages.ts';
-import type { SettingsFacts } from '../settings/protocol.ts';
+import type { FetchingAction, SettingsFacts } from '../settings/protocol.ts';
 import type { HostMessage } from '../view/protocol.ts';
 import { el, getState, post, updateState, type View } from './api.ts';
 
@@ -157,6 +157,123 @@ export function createSettingsView(): View {
     return div;
   }
 
+  /** ボタンの行（題・説明と、右にボタン）。`disabled` は要る git の版 */
+  function actionRow(title: string, help: string, controls: HTMLElement[], disabled?: string): HTMLElement {
+    const div = el('div', 'setting-row');
+    const head = el('div', 'setting-head');
+    head.append(el('span', 'setting-question', title), ...controls);
+    div.append(head, el('div', 'setting-help', help));
+    if (disabled) {
+      for (const c of controls) (c as HTMLButtonElement | HTMLInputElement).disabled = true;
+      div.append(el('div', 'setting-warning', `⚠ ${disabled}`));
+    }
+    return div;
+  }
+
+  function button(label: string, action: FetchingAction, title?: string): HTMLButtonElement {
+    const b = el('button', 'secondary', label);
+    if (title) b.title = title;
+    b.addEventListener('click', () => post({ type: 'settingsRun', ...action }));
+    return b;
+  }
+
+  const tooOld = (needed: string) => `Needs git ${needed} or later. This repository’s git is ${facts.gitVersion ?? '?'}.`;
+
+  /** Fetching and Folders（アプリと同じく、リポジトリの形に合わせて History・Contents・Folders・Maintenance） */
+  function fetchingRows(): HTMLElement {
+    const form = facts.repositoryForm;
+    const box = el('div');
+    if (!form) return box;
+    const section = (title: string, ...rows: HTMLElement[]) => {
+      const s = el('section', 'settings-section');
+      s.append(el('h3', '', title), ...rows);
+      box.append(s);
+    };
+    if (form.shallow) {
+      section(
+        'History',
+        actionRow('Older history isn’t fetched (shallow clone)', 'Fetch more of it from the remote, as at the end of History.', [
+          button('Fetch More…', { action: 'fetchMore' }, 'Fetch older commits from the remote (git fetch --deepen)'),
+          button('Fetch All', { action: 'fetchAll' }, 'Fetch the whole history from the remote (git fetch --unshallow)'),
+        ]),
+      );
+    }
+    if (form.partial) {
+      section(
+        'Contents',
+        actionRow(
+          `Contents fetched when needed${form.partial.filter ? ` (${form.partial.filter})` : ''}`,
+          `Diffs, blame and contents: searches fetch what they need from ${form.partial.remote}.`,
+          [button('Fetch All Contents…', { action: 'fetchContents' })],
+          form.canFetchAllContents ? undefined : tooOld('2.36'),
+        ),
+      );
+    }
+    if (form.workingTree) {
+      const sparseOld = form.canSparseCheckout ? undefined : tooOld('2.25');
+      const rows: HTMLElement[] = [];
+      if (form.sparse?.cone) {
+        rows.push(
+          actionRow(
+            form.sparse.folders.length === 0 ? 'Only the files at the top are checked out' : 'Only these folders are checked out',
+            form.sparse.folders.length === 0
+              ? 'Add the folders to check out with +.'
+              : 'Files at the top, and directly in the folders above these, are checked out too.',
+            [button('Check Out All Folders…', { action: 'checkOutAll' })],
+            sparseOld,
+          ),
+        );
+        for (const folder of form.sparse.folders) {
+          const item = el('div', 'setting-folder');
+          const remove = button('−', { action: 'removeFolder', folder }, 'Stop checking out this folder');
+          remove.disabled = !!sparseOld;
+          item.append(el('code', '', folder), remove);
+          rows.push(item);
+        }
+        const add = button('+', { action: 'addFolder' }, 'Check out one more folder');
+        add.disabled = !!sparseOld;
+        rows.push(add);
+      } else if (form.sparse) {
+        rows.push(
+          actionRow(
+            'Only the files matching these patterns are checked out',
+            'The patterns aren’t in cone mode, so Amon Hen doesn’t change them.',
+            [button('Check Out All Folders…', { action: 'checkOutAll' })],
+            sparseOld,
+          ),
+          ...form.sparse.folders.map((p) => el('div', 'setting-folder', p)),
+        );
+      } else {
+        rows.push(
+          actionRow(
+            'All folders are checked out',
+            'In a large repository, you can check out only the folders you work in (sparse checkout).',
+            [button('Check Out Only Some Folders…', { action: 'addFolder' })],
+            sparseOld,
+          ),
+        );
+      }
+      section('Folders', ...rows);
+    }
+    if (!form.shallow && !form.partial && !form.workingTree) {
+      box.append(el('div', 'setting-help', 'This repository has all of its history and contents.'));
+    }
+    const on = el('input');
+    on.type = 'checkbox';
+    on.checked = form.maintenance;
+    on.addEventListener('change', () => post({ type: 'settingsRun', action: 'maintenance', on: on.checked }));
+    section(
+      'Maintenance',
+      actionRow(
+        'Keep this repository maintained in the background',
+        'Every hour git prefetches and writes the commit-graph; it’s set in your global git config and the system’s scheduler (git maintenance).',
+        [on],
+        form.canMaintain ? undefined : tooOld('2.31'),
+      ),
+    );
+    return box;
+  }
+
   function renderRow(r: SettingRow): HTMLElement {
     const disabled =
       'needs' in r && r.needs === 'updateRefs' && !facts.updateRefs
@@ -167,6 +284,8 @@ export function createSettingsView(): View {
         return defaultBranchRow();
       case 'exclude':
         return excludeRow();
+      case 'fetching':
+        return fetchingRows();
       case 'pull': {
         const method = pullMethod(config);
         const decidingKey = config.effective('pull.ff')?.value.toLowerCase() === 'only' ? 'pull.ff' : 'pull.rebase';
@@ -202,7 +321,9 @@ export function createSettingsView(): View {
     if (error) parts.push(el('div', 'setting-warning', error));
     for (const section of page.sections) {
       const s = el('section', 'settings-section');
-      s.append(el('h3', '', section.title), ...section.rows.map(renderRow));
+      // 題のない節は、行が自分で節を分ける（Fetching and Folders）
+      if (section.title) s.append(el('h3', '', section.title));
+      s.append(...section.rows.map(renderRow));
       parts.push(s);
     }
     content.replaceChildren(...parts);

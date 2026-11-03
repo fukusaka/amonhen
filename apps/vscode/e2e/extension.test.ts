@@ -982,6 +982,7 @@ async function settingsFlow(): Promise<void> {
   const excludeFile = join(git('rev-parse', '--absolute-git-dir').trim(), 'info', 'exclude');
   const exclude = existsSync(excludeFile) ? readFileSync(excludeFile, 'utf8') : '';
   const hadGitignore = existsSync(join(root, '.gitignore'));
+  let sparseCommit = false;
   try {
     let mark = posted.length;
     await vscode.commands.executeCommand('amonhen.showRepositorySettings');
@@ -1015,7 +1016,40 @@ async function settingsFlow(): Promise<void> {
     assert.match((await waitPosted('settings', mark)).facts.exclude, /e2e-ignored/);
     assert.match(readFileSync(excludeFile, 'utf8'), /e2e-ignored/);
     assert.equal(existsSync(join(root, '.gitignore')) ? readFileSync(join(root, '.gitignore'), 'utf8') : undefined, gitignore ?? '');
+
+    // Fetching and Folders: HEAD の木からフォルダを選んで sparse checkout にし、すべてに戻す（git 2.25 から）。
+    // maintenance は OS の予定に登録するので、ここでは試さない
+    if (first.facts.repositoryForm?.canSparseCheckout) {
+      mkdirSync(join(root, 'sp-dir'), { recursive: true });
+      writeFileSync(join(root, 'sp-dir', 'a.txt'), 'a\n');
+      writeFileSync(join(root, 'sp-top.txt'), 'top\n');
+      git('add', 'sp-dir', 'sp-top.txt');
+      git('commit', '-q', '-m', 'sparse e2e');
+      sparseCommit = true;
+      const picks = [/sp-dir/, /Check out sp-dir/];
+      mark = posted.length;
+      await withWindow(
+        { showQuickPick: async (items: readonly vscode.QuickPickItem[]) => items.find((i) => picks[0]!.test(i.label) && picks.shift()) },
+        async () => panel.settings.handle({ type: 'settingsRun', action: 'addFolder' }),
+      );
+      const sparse = await waitPosted('settings', mark, (m) => !!m.facts.repositoryForm?.sparse);
+      assert.deepEqual(sparse.facts.repositoryForm?.sparse, { cone: true, folders: ['sp-dir'] });
+      assert.ok(existsSync(join(root, 'sp-dir', 'a.txt')));
+      mark = posted.length;
+      await withWindow({ showWarningMessage: async () => 'Check Out All' }, async () =>
+        panel.settings.handle({ type: 'settingsRun', action: 'checkOutAll' }),
+      );
+      assert.equal((await waitPosted('settings', mark)).facts.repositoryForm?.sparse, null);
+    }
   } finally {
+    if (sparseCommit) {
+      try {
+        git('sparse-checkout', 'disable');
+      } catch {
+        // もうやめている
+      }
+      git('reset', '-q', '--hard', 'HEAD~1');
+    }
     for (const k of [...keys, 'amonhen.defaultBranch']) if (config(k) !== undefined) git('config', '--local', '--unset', k);
     writeFileSync(excludeFile, exclude);
     if (!hadGitignore) rmSync(join(root, '.gitignore'), { force: true });
