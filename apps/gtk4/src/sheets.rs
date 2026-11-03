@@ -2113,10 +2113,14 @@ pub fn confirm_integrate(
     estimate: bool,
     commands: Vec<Value>,
 ) {
+    // 選んだときの worktree の名前を書き、そこで取り込む。
+    let Some(target) = Target::current(actions) else {
+        return;
+    };
     let actions = actions.clone();
     glib::spawn_future_local(async move {
-        let Some(repo) = actions.repo() else { return };
-        let sheet = Sheet::new(parent(&actions).as_ref(), &title, &can_undo());
+        let repo = target.repo.clone();
+        let sheet = target.sheet(parent(&actions).as_ref(), &title, &can_undo());
         let forecast = forecast_label();
         sheet.add(&forecast);
         sheet.buttons(ok, false, None);
@@ -2126,7 +2130,7 @@ pub fn confirm_integrate(
             show_forecast(&label, f.as_ref(), estimate || several);
         });
         if sheet.run().await == Response::Ok {
-            actions.perform_sequence(commands);
+            actions.perform_in(target.repo, commands, |_| {});
         }
     });
 }
@@ -2270,9 +2274,13 @@ fn integrate_sheet(
     rebase: bool,
     chooser: bool,
 ) {
+    // 選んだときの worktree（`current` はそのブランチ）の名前を書き、そこで取り込む。
+    let Some(target) = Target::current(actions) else {
+        return;
+    };
     let (actions, current) = (actions.clone(), current.to_owned());
     glib::spawn_future_local(async move {
-        let Some(repo) = actions.repo() else { return };
+        let repo = target.repo.clone();
         if choices.is_empty() {
             return;
         }
@@ -2287,7 +2295,7 @@ fn integrate_sheet(
             }
         };
         let sheet = if !chooser {
-            Sheet::new(
+            target.sheet(
                 parent(&actions).as_ref(),
                 &title_for(&choices[0].0),
                 &can_undo(),
@@ -2458,7 +2466,7 @@ fn integrate_sheet(
         } else {
             json!({ "op": "merge", "rev": rev })
         };
-        actions.perform(command);
+        actions.perform_in(target.repo, vec![command], |_| {});
     });
 }
 
