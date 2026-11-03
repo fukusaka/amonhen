@@ -952,6 +952,9 @@ fn build_tab(
     pages.add_named(&stashes.root, Some("stashes"));
     // Range Diff（開いている間だけサイドバーに出す）。
     let range_diff = rangediff::RangeDiff::new(&view, pending.clone());
+    // 署名の吹き出しの「検証した場所」は、Stashes・Range Diff の詳細も History と同じ（macOS 版と同じ）。
+    stashes.set_location(&text);
+    range_diff.set_location(&text);
     pages.add_named(&range_diff.root, Some(rangediff::PAGE));
     let sidebar = Rc::new(Sidebar::new());
     sidebar.set_location(&text);
@@ -964,12 +967,14 @@ fn build_tab(
             Rc::downgrade(&sidebar),
             text.clone(),
         );
+        let (st, rd) = (Rc::downgrade(&stashes), Rc::downgrade(&range_diff));
         // History の表がある間だけ見る（閉じたタブの分を残さない）。
         settings::connect_changed_while(&view, move |key| {
             if key != sshhosts::SIGNATURE_BY_HOST {
                 return;
             }
             let (v, d, s, location) = (v.clone(), d.clone(), s.clone(), location.clone());
+            let (st, rd) = (st.clone(), rd.clone());
             // 写し（`sshhosts::load`）は設定を書いた後に作り直すので、それを待つ。
             glib::idle_add_local_once(move || {
                 let (Some(view), Some(details), Some(sidebar)) =
@@ -982,6 +987,12 @@ fn build_tab(
                 };
                 sshhosts::apply_signature_check(&repo, &location);
                 details.set_location(&location);
+                if let Some(stashes) = st.upgrade() {
+                    stashes.set_location(&location);
+                }
+                if let Some(range_diff) = rd.upgrade() {
+                    range_diff.set_location(&location);
+                }
                 // タグの署名の吹き出しの「Checked on」も（macOS 版の `updateSignaturePlace`）。
                 sidebar.set_location(&location);
                 view.forget_signatures();
@@ -1330,6 +1341,22 @@ fn build_tab(
         on_commit.clone(),
     ));
     pages.add_named(&reflog.root, Some("reflog"));
+    // 署名の吹き出しの「検証した場所」は History と同じ（SSH Hosts の設定を変えたら合わせる）。
+    reflog.set_location(&text);
+    {
+        let (r, location) = (Rc::downgrade(&reflog), text.clone());
+        settings::connect_changed_while(&reflog.root, move |key| {
+            if key != sshhosts::SIGNATURE_BY_HOST {
+                return;
+            }
+            let (r, location) = (r.clone(), location.clone());
+            glib::idle_add_local_once(move || {
+                if let Some(reflog) = r.upgrade() {
+                    reflog.set_location(&location);
+                }
+            });
+        });
+    }
     // つなぎ直したタブ: それまでのページを出す（Reflog はページを足してから。Stashes は stash を読んでから、
     // Settings は ref を読んでから）。
     if args.page == Some(Page::Reflog) {

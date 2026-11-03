@@ -1136,7 +1136,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     var onSearch: ((String) -> Void)?
     var onSelectRef: ((String) -> Void)?
     /// 署名をどこで検証しているか（吹き出しに出す。RepositoryWindow が決める）。
-    var signaturePlace = SignaturePlace(local: true, detail: L("The repository is on this Mac"))
+    var signaturePlace = SignaturePlace(local: true, detail: L("the repository is on this Mac"))
     private var signaturePopover: NSPopover?
     /// メッセージを書き直して保存したとき（コミットの ID と新しいメッセージ）。
     var onReword: ((String, String) -> Void)?

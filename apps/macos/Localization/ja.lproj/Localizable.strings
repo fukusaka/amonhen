@@ -574,7 +574,6 @@
 "Next" = "次へ";
 "Explain This Hunk with AI" = "AI でこの hunk を解説";
 "Binary" = "バイナリ";
-"The repository is on this Mac" = "リポジトリがこの Mac にある";
 "Expand Details" = "詳細を広げる";
 "Restore Details" = "詳細を戻す";
 "Expand the commit details to fill the right column (click again to restore)." = "コミットの詳細だけを右の列いっぱいに広げる（もう一度押すと戻す）";

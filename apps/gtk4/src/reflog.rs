@@ -74,6 +74,11 @@ struct Inner {
 }
 
 impl ReflogView {
+    /// 開いたリポジトリの場所（詳細の署名の吹き出しに、検証した場所を出す。History の詳細と同じ）。
+    pub fn set_location(&self, location: &str) {
+        self.inner.pane.details.set_location(location);
+    }
+
     pub fn new(
         actions: Rc<Actions>,
         pending: Rc<Cell<u32>>,

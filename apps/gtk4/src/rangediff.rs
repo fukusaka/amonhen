@@ -141,6 +141,11 @@ pub struct RangeDiff {
 }
 
 impl RangeDiff {
+    /// 開いたリポジトリの場所（詳細の署名の吹き出しに、検証した場所を出す。History の詳細と同じ）。
+    pub fn set_location(&self, location: &str) {
+        self.commit.details.set_location(location);
+    }
+
     pub fn new(view: &HistoryView, pending: Rc<Cell<u32>>) -> Rc<Self> {
         // 左: 範囲、説明、数と Changes Only、組の一覧。
         let entry = gtk::Entry::new();

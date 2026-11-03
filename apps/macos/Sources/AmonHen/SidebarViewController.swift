@@ -137,7 +137,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     /// （コアが ID で覚えているので速い）。
     private var tagSignatures: [String: (status: SignatureStatus?, tag: TagSignature, epoch: Int)] = [:]
     /// 署名を検証した場所（吹き出しに出す。RepositoryWindow が渡す）。
-    var signaturePlace = SignaturePlace(local: true, detail: L("The repository is on this Mac"))
+    var signaturePlace = SignaturePlace(local: true, detail: L("the repository is on this Mac"))
     private var tagSignatureEpoch = 0
     /// 検証する側を変えたら進める（前の結果は捨て、変える前に始めた検証の結果は使わない）。
     private var tagSignatureGeneration = 0

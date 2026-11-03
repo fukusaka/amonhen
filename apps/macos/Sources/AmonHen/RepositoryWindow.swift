@@ -932,7 +932,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         } else {
             SignaturePlace(local: true, detail: L("the repository is on this Mac"))
         }
-        detail.signaturePlace = place
+        // Stashes・Reflog・Range Diff の詳細の吹き出しも、History と同じ場所を言う。
+        for detail in [detail, stashes.detail, reflog.detail, rangeDiff.detail] { detail.signaturePlace = place }
         sidebar.signaturePlace = place
     }
 
