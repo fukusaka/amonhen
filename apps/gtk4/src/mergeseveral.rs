@@ -13,7 +13,7 @@ use gtk::{gdk, glib};
 use serde_json::{Value, json};
 
 use crate::actions::Actions;
-use crate::sheets::{self, Response, Sheet};
+use crate::sheets::{self, Response};
 
 /// 順に、コンフリクトする見込みのファイル（調べられなければ None）。
 type Steps = Option<Vec<Vec<String>>>;
@@ -137,11 +137,15 @@ pub fn confirm(actions: &Rc<Actions>, sources: Vec<Source>, branch: Option<Strin
         }
         return;
     }
+    // 選んだときの worktree（`branch` はそのブランチ）の名前を書き、そこで merge する。
+    let Some(tree) = sheets::Target::current(actions) else {
+        return;
+    };
     let actions = actions.clone();
     glib::spawn_future_local(async move {
-        let Some(repo) = actions.repo() else { return };
+        let repo = tree.repo.clone();
         let target = branch.clone().unwrap_or_else(|| "HEAD".to_owned());
-        let sheet = Sheet::new(
+        let sheet = tree.sheet(
             sheets::parent(&actions).as_ref(),
             &tr!(
                 "Merge {count} into {branch}?",
@@ -275,8 +279,8 @@ pub fn confirm(actions: &Rc<Actions>, sources: Vec<Source>, branch: Option<Strin
         let response = sheet.run().await;
         let revs: Vec<String> = list.sources().into_iter().map(|s| s.rev).collect();
         match response {
-            Response::Ok => merge(&actions, revs, false),
-            Response::Other => merge(&actions, revs, true),
+            Response::Ok => merge(&actions, tree, revs, false),
+            Response::Other => merge(&actions, tree, revs, true),
             Response::Cancel => {}
         }
     });
@@ -313,7 +317,8 @@ async fn predict(
 
 /// `revs` を merge する。1 つのコミットにまとめるのを git が断ったら（何も変わっていない）、1 つずつ merge
 /// するかを尋ねる。
-fn merge(actions: &Rc<Actions>, revs: Vec<String>, one_by_one: bool) {
+/// `tree` の worktree で（断られて尋ねるシートにも、その名前を書く）。
+fn merge(actions: &Rc<Actions>, tree: sheets::Target, revs: Vec<String>, one_by_one: bool) {
     let mut command = json!({ "op": "merge", "rev": revs });
     if one_by_one {
         command["oneByOne"] = json!(true);
@@ -322,13 +327,14 @@ fn merge(actions: &Rc<Actions>, revs: Vec<String>, one_by_one: bool) {
     // 1 つのコミットにまとめるのを断られたら、失敗は知らせずに、1 つずつ merge するかを尋ねる（macOS 版と同じ）。
     let refused =
         move |reply: &Value| !one_by_one && reply["errorKind"].as_str() == Some("octopus");
-    actions.perform_recovering(vec![command], refused, move |reply: &Value| {
+    let repo = tree.repo.clone();
+    actions.perform_recovering_in(repo, vec![command], refused, move |reply: &Value| {
         if !refused(reply) {
             return;
         }
         let a = a.clone();
         glib::spawn_future_local(async move {
-            let sheet = Sheet::new(
+            let sheet = tree.sheet(
                 sheets::parent(&a).as_ref(),
                 &tr!("Can’t Merge Them in One Commit"),
                 &tr!(
@@ -337,7 +343,7 @@ fn merge(actions: &Rc<Actions>, revs: Vec<String>, one_by_one: bool) {
             );
             sheet.buttons(&tr!("Merge One by One"), false, None);
             if sheet.run().await == Response::Ok {
-                merge(&a, revs, true);
+                merge(&a, tree, revs, true);
             }
         });
     });

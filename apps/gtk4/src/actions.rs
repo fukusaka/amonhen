@@ -252,6 +252,17 @@ impl Actions {
         self.perform_on(repo, commands, |_| false, done);
     }
 
+    /// [`Self::perform_recovering`] と同じで、書き込む先の worktree ではなく `repo` で実行する。
+    pub fn perform_recovering_in(
+        self: &Rc<Self>,
+        repo: Arc<Repository>,
+        commands: Vec<Value>,
+        handled: impl FnOnce(&Value) -> bool + 'static,
+        done: impl FnOnce(&Value) + 'static,
+    ) {
+        self.perform_on(repo, commands, handled, done);
+    }
+
     fn perform_on(
         self: &Rc<Self>,
         repo: Arc<Repository>,
