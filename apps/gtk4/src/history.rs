@@ -354,6 +354,9 @@ mod imp {
                             state.contains(gdk::ModifierType::SHIFT_MASK),
                             state.contains(gdk::ModifierType::CONTROL_MASK),
                         );
+                    } else if view.below_rows(y as f32) {
+                        // 最後の行より下: 選択を外し、詳細も消す（macOS 版の表と同じ）。
+                        view.clear_selection();
                     }
                 }
             });
@@ -800,8 +803,9 @@ impl HistoryView {
             st.fonts = None;
         }
         self.configure_adjustments();
+        // 行の高さが変わるので、選んでいる行を表の中ほどに置き直す（macOS 版の `rowStyleChanged`）。
         if let Some(row) = self.selected() {
-            self.scroll_to_row(row);
+            self.center_row(row);
         }
         self.update_lineage();
         self.queue_draw();
@@ -1398,6 +1402,33 @@ impl HistoryView {
         let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
         let row = ((y + scroll) / self.row_height()).floor();
         (row >= 0.0 && (row as u32) < self.row_count()).then_some(row as u32)
+    }
+
+    /// `y` が最後の行より下か（shallow clone の帯の上は除く）。
+    fn below_rows(&self, y: f32) -> bool {
+        let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
+        let end = self.row_count() as f32 * self.row_height();
+        let footer = if self.footer_shown() {
+            FOOTER_HEIGHT
+        } else {
+            0.0
+        };
+        y + scroll >= end + footer
+    }
+
+    /// 何も選んでいない状態にする。
+    fn clear_selection(&self) {
+        {
+            let mut st = self.state();
+            if st.selected.is_none() && st.extra.is_empty() {
+                return;
+            }
+            st.selected = None;
+            st.extra.clear();
+            st.anchor = None;
+        }
+        self.queue_draw();
+        self.notify_selection();
     }
 
     /// 矢印で選ぶ行を動かす。`extend`（Shift）なら起点からの範囲を選ぶ。Page Up・Page Down・Home・End は

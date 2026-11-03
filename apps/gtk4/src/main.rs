@@ -2798,10 +2798,8 @@ fn jump_to(
             return;
         }
         match row {
-            Some(row) => {
-                view.select(row);
-                view.grab_focus();
-            }
+            // 選んで中ほどに置くだけで、キーボードのフォーカスは動かさない（macOS 版と同じ）。
+            Some(row) => view.select(row),
             None => {
                 if let Some(shaper) = shaper.upgrade() {
                     shaper.show_all_selecting(target);
