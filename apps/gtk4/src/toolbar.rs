@@ -356,6 +356,9 @@ pub struct Given {
     pub header: gtk::HeaderBar,
     /// リポジトリの名前（押すとリポジトリの一覧）。
     pub repository: gtk::Widget,
+    /// 見出しの真ん中にいつも出すもの（リポジトリのページの「Repositories」と説明。macOS 版の窓の名前）。なければ
+    /// 真ん中はリポジトリの名前を並びから外したときだけ使う。
+    pub title: Option<gtk::Widget>,
     pub branch: gtk::Button,
     pub pull: gtk::Button,
     pub push: gtk::Button,
@@ -529,6 +532,7 @@ pub fn install(start: &gtk::Box, end: &gtk::Box, given: Given) {
         let (start, end) = (start.downgrade(), end.downgrade());
         let (header, repository) = (given.header.downgrade(), given.repository.clone());
         let placed = placed.clone();
+        let title = given.title.clone();
         move || {
             let (Some(start), Some(end), Some(header)) =
                 (start.upgrade(), end.upgrade(), header.upgrade())
@@ -552,10 +556,10 @@ pub fn install(start: &gtk::Box, end: &gtk::Box, given: Given) {
             let shown = all
                 .iter()
                 .any(|e| matches!(e, Entry::Item { id, shown: true } if id == "repository"));
-            if shown {
-                header.set_title_widget(Some(&center));
-            } else {
-                header.set_title_widget(Some(&repository));
+            match &title {
+                Some(title) => header.set_title_widget(Some(title)),
+                None if shown => header.set_title_widget(Some(&center)),
+                None => header.set_title_widget(Some(&repository)),
             }
             let mut target = (&start, Side::Start);
             let mut now = Vec::new();

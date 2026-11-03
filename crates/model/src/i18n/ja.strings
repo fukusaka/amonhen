@@ -1358,6 +1358,7 @@
 "Bookmark repositories you open" = "開いたリポジトリをブックマークに入れる";
 "Branch" = "ブランチ";
 "Changes {count}" = "変更 {count}";
+"Choose a Repository" = "リポジトリを選ぶ";
 "Choose a repository to open" = "リポジトリを選んで開く";
 "Color Label" = "色ラベル";
 "Couldn’t search: {error}" = "探せませんでした: {error}";

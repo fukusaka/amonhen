@@ -836,22 +836,12 @@ pub fn show_home(app: &gtk::Application, host: Option<Rc<RepoWindow>>) -> Rc<Rep
     titles.set_valign(gtk::Align::Center);
     titles.append(&title);
     titles.append(&subtitle);
-    tab.header.set_title_widget(Some(&titles));
-    // 主メニュー（リポジトリの窓と同じもの。リポジトリへの操作は、このタブにアクションがないので押せない。macOS 版で
-    // Repositories の窓が前にあっても、メニューバーはそのままなのと同じ）。History の表示は設定なので、ここでも変えられる。
+    // 見出しはリポジトリのタブと同じ Repository のメニュー・ツールバー・主メニュー（リポジトリへの操作は、このタブに
+    // アクションがないので押せない。macOS 版で Repositories の窓が前にあっても、メニューバーとツールバーはそのままなの
+    // と同じ）。History の表示は設定なので、ここでも変えられる。
     crate::historydisplay::install_actions(&tab.group);
-    let menu = crate::appmenu::primary_menu(&tab.root);
-    let primary = gtk::MenuButton::builder()
-        .menu_model(&menu)
-        .tooltip_text("Main Menu")
-        .primary(true)
-        .build();
-    if gtk::IconTheme::for_display(&primary.display()).has_icon("open-menu-symbolic") {
-        primary.set_icon_name("open-menu-symbolic");
-    } else {
-        primary.set_label("≡");
-    }
-    tab.header.pack_end(&primary);
+    let primary =
+        crate::appmenu::install_home(&tab.header, &tab.group, &tab.root, titles.upcast_ref());
     // 開くときに、View > Show Tab Bar の名前を合わせる（リポジトリのタブと同じく、帯を出していれば Hide Tab Bar）。
     crate::appmenu::retitle_on_show_with(&primary, |button, model| {
         let Some(window) = button.root().and_downcast::<gtk::ApplicationWindow>() else {

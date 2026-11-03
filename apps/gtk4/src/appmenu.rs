@@ -560,6 +560,7 @@ pub fn install(parts: Parts) -> Buttons {
                 .header
                 .title_widget()
                 .expect("リポジトリの名前のボタン"),
+            title: None,
             branch: branch_button.clone(),
             pull: pull.clone(),
             push: push.clone(),
@@ -598,6 +599,102 @@ pub fn install(parts: Parts) -> Buttons {
         push_icon,
         actions: parts.actions.clone(),
     }
+}
+
+/// リポジトリのページ（リポジトリを開いていないタブ）の見出し: リポジトリのタブと同じ Repository のメニュー・
+/// ツールバー・主メニュー（macOS 版の `RepositoryHomeWindow` は同じ `MainToolbar` を `showNoRepository` で出す。
+/// タブを切り替えてもボタンの位置が動かない）。リポジトリへの操作はこのタブにアクションがないので押せない。
+/// リポジトリの名前は「Choose a Repository」、ブランチは「—」で、どちらも押せない。`title` は見出しの真ん中に出す。
+/// 主メニューのボタンを返す。
+pub fn install_home(
+    header: &gtk::HeaderBar,
+    group: &gio::SimpleActionGroup,
+    anchor: &gtk::Box,
+    title: &gtk::Widget,
+) -> gtk::MenuButton {
+    let repository = gtk::MenuButton::builder()
+        .label("Repository")
+        .menu_model(&repository_menu())
+        .build();
+    if let Some(popover) = repository.popover() {
+        popover.set_halign(gtk::Align::Start);
+    }
+    crate::menu::tooltips_on_show(&repository);
+    header.pack_start(&repository);
+
+    let name = gtk::Label::new(Some(&tr!("Choose a Repository")));
+    name.add_css_class("title");
+    let name_button = gtk::Button::builder()
+        .child(&name)
+        .has_frame(false)
+        .sensitive(false)
+        .build();
+    let branch = gtk::Label::new(Some("—"));
+    let branch_icon = icon::Icon::default();
+    branch_icon.set(icon::Kind::Branch, false);
+    let branch_inner = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    branch_inner.append(&branch_icon);
+    branch_inner.append(&branch);
+    let branch_button = gtk::Button::builder()
+        .child(&branch_inner)
+        .sensitive(false)
+        .build();
+    let (pull, _, _) = count_button(icon::Kind::Pull, "win.pull");
+    let (push, _, _) = count_button(icon::Kind::Push, "win.push");
+    let undo = gtk::Button::new();
+    let undo_icon = icon::Icon::default();
+    undo_icon.set(icon::Kind::Undo, false);
+    undo.set_child(Some(&undo_icon));
+    undo.set_action_name(Some("win.undo"));
+    undo.set_tooltip_text(Some(&tr!("Nothing to Undo")));
+    // History の検索（リポジトリがないので押せない。macOS 版と同じ）。
+    let search = gtk::ToggleButton::new();
+    let search_icon = icon::Icon::default();
+    search_icon.set(icon::Kind::Search, false);
+    search.set_child(Some(&search_icon));
+    search.set_tooltip_text(Some(&tr!("Search History (Ctrl+F)")));
+    search.set_sensitive(false);
+    let toolbar_start = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let toolbar_end = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    header.pack_start(&toolbar_start);
+    crate::toolbar::install(
+        &toolbar_start,
+        &toolbar_end,
+        crate::toolbar::Given {
+            header: header.clone(),
+            repository: name_button.upcast(),
+            title: Some(title.clone()),
+            branch: branch_button,
+            pull,
+            push,
+            undo,
+            search: search.upcast(),
+        },
+    );
+    // View > Customize Toolbar…（macOS 版では、この窓のツールバーからも変えられる）。
+    let customize = gio::SimpleAction::new("customize-toolbar", None);
+    let a = anchor.downgrade();
+    customize.connect_activate(move |_, _| {
+        if let Some(window) = a
+            .upgrade()
+            .and_then(|a| a.root())
+            .and_downcast::<gtk::Window>()
+        {
+            crate::toolbar::customize(&window);
+        }
+    });
+    group.add_action(&customize);
+
+    let primary = gtk::MenuButton::builder()
+        .menu_model(&primary_menu(anchor))
+        .tooltip_text("Main Menu")
+        .primary(true)
+        .build();
+    set_icon(&primary, "open-menu-symbolic", "≡");
+    crate::menu::tooltips_on_show(&primary);
+    header.pack_end(&primary);
+    header.pack_end(&toolbar_end);
+    primary
 }
 
 /// `button` のメニューを開くたびに、項目の名前を今の状態に合わせる（[`Actions::retitle`]）。

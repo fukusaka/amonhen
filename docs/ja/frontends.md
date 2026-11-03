@@ -66,7 +66,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| All・Favorites・Places・グループのあるリポジトリのページ | ✓ | ✓ | n/a | n/a | GTK4: ページの見出しの帯は、リポジトリのツールバーではなく短いメニューだけ。 |
+| All・Favorites・Places・グループのあるリポジトリのページ | ✓ | ✓ | n/a | n/a |  |
 | 手元・SSH のリポジトリを足す | ✓ | ✓ | n/a | n/a |  |
 | この機械の探すフォルダー（深さ・見張り） | △ | △ | n/a | n/a | macOS: 除くものは決まった一覧。<br>GTK4: 除くものは決まった一覧。 |
 | SSH 先の探すフォルダー | ✓ | ✓ | n/a | △ | CLI: `find-repositories` がアプリのために探す。 |
