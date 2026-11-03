@@ -1459,15 +1459,25 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
     let click = gtk::GestureClick::new();
     click.set_button(gtk::gdk::BUTTON_SECONDARY);
     let (v, sel) = (view.clone(), selection.clone());
+    let (e, r, c) = (edit.clone(), remove.clone(), copy.clone());
+    let p = popover.clone();
     click.connect_pressed(move |_, _, x, y| {
         // 押した行が選ばれていなければ、その行だけを選ぶ（どの列を押しても。macOS 版の
         // contextMenu(forSelectionType:) と同じく、その行に効く）。組の見出しなら、キーがないので項目はすべて
-        // 押せない。
-        if let Some(i) = item_at(v.pick(x, y, gtk::PickFlags::DEFAULT))
-            && !sel.is_selected(i)
-        {
-            sel.select_item(i, true);
+        // 押せない。行のないところなら、選んでいる行はそのままで、項目はすべて押せない（macOS 版は空の選択で
+        // メニューを出す。閉じたら戻す）。
+        match item_at(v.pick(x, y, gtk::PickFlags::DEFAULT)) {
+            Some(i) if !sel.is_selected(i) => {
+                sel.select_item(i, true);
+            }
+            Some(_) => {}
+            None => {
+                for a in [&e, &r, &c] {
+                    a.set_enabled(false);
+                }
+            }
         }
+        let popover = &p;
         popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
         popover.popup();
     });
@@ -1590,6 +1600,8 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
         }
     });
 
+    let en = enable.clone();
+    popover.connect_closed(move |_| en());
     let t = table.clone();
     s.on_refresh(move |_| {
         t.rebuild();
