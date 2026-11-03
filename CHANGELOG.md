@@ -175,6 +175,7 @@ becomes the GitHub Release notes.
 - macOS: opening an open repository through a symbolic link or /tmp instead of /private/tmp brings its tab forward
   instead of opening a second one.
 - macOS: New Worktree on an SSH host sends a ~ folder as typed instead of turning it into this Mac's home folder.
+- macOS: dragging a favorite branch while the sidebar is filtered no longer reorders the favorites wrongly.
 
 ### [0.2.8] - 2026-10-30
 

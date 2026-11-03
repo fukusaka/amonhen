@@ -1152,8 +1152,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         proposedChildIndex index: Int
     ) -> NSDragOperation {
         guard let (isLocal, dragged) = draggedBranch(info), let node = item as? Node else { return [] }
-        // お気に入りのブランチは、Branches の直下のお気に入りの間に落として並べ替える。
-        if isLocal, pinnedOrder.contains(dragged), node.title == "Branches", node.item == nil, node.page == nil,
+        // お気に入りのブランチは、Branches の直下のお気に入りの間に落として並べ替える（絞り込み中は、名前順に
+        // 平らに並べていてお気に入りの行がないので、並べ替えない）。
+        if isLocal, filterWords.isEmpty, pinnedOrder.contains(dragged), node.title == "Branches", node.item == nil, node.page == nil,
            index != NSOutlineViewDropOnItemIndex, index <= pinnedOrder.count {
             return .move
         }
@@ -1169,7 +1170,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         _ outlineView: NSOutlineView, acceptDrop info: any NSDraggingInfo, item: Any?, childIndex index: Int
     ) -> Bool {
         guard let actions, let (isLocal, dragged) = draggedBranch(info), let node = item as? Node else { return false }
-        if isLocal, index != NSOutlineViewDropOnItemIndex, let from = pinnedOrder.firstIndex(of: dragged) {
+        if isLocal, filterWords.isEmpty, index != NSOutlineViewDropOnItemIndex, let from = pinnedOrder.firstIndex(of: dragged) {
             var order = pinnedOrder
             order.remove(at: from)
             order.insert(dragged, at: min(index > from ? index - 1 : index, order.count))
