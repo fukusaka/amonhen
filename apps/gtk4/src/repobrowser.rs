@@ -581,7 +581,7 @@ fn row_tip(location: &str) -> Option<String> {
 }
 
 /// 表のセルの部品 `cell` が載っている行の部品（右クリックした行を囲む）。
-fn row_widget(cell: &gtk::Widget) -> Option<gtk::Widget> {
+pub fn row_widget(cell: &gtk::Widget) -> Option<gtk::Widget> {
     let mut widget = cell.parent();
     while let Some(w) = widget {
         if w.css_name() == "row" {

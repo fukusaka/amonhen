@@ -190,19 +190,26 @@ pub fn button(
             let Some(window) = widget.root().and_downcast::<gtk::Window>() else {
                 return;
             };
-            // 選んでいる行の上なら選んだものすべて、そうでなければその行だけを選んで（macOS 版と同じ）。
+            // 選んでいる行の上なら選んだものすべて、そうでなければ選び方は変えずにその行だけ（囲んで示す。macOS 版の
+            // clickedRow と同じ）。
             let mut targets = vec![location.clone()];
+            let mut outlined = None;
             if let Some(s) = s.upgrade()
                 && item.position() != gtk::INVALID_LIST_POSITION
             {
                 if s.is_selected(item.position()) {
                     targets = selected_locations(&s);
                 } else {
-                    s.select_item(item.position(), true);
+                    outlined = repobrowser::row_widget(&widget);
                 }
             }
             let items = repobrowser::row_items(&window, &location, &targets, false, o.clone());
-            menu::popup(&widget, x, y, items);
+            if let Some(popover) = menu::popup_returning(&widget, x, y, items)
+                && let Some(outlined) = outlined
+            {
+                outlined.add_css_class("repo-clicked");
+                popover.connect_closed(move |_| outlined.remove_css_class("repo-clicked"));
+            }
         });
         line.add_controller(click);
         let mut rows = r.borrow_mut();
