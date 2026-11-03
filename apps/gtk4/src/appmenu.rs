@@ -378,6 +378,10 @@ fn handlers() -> Vec<(&'static str, Handler)> {
         ("export-archive", Box::new(export_archive)),
         ("save-bundle", Box::new(save_bundle)),
         (
+            "fetch-bundle",
+            Box::new(|p: &Rc<Parts>| crate::bundle::fetch(&p.actions)),
+        ),
+        (
             "commit-and-push",
             Box::new(|p| {
                 let actions = p.actions.clone();

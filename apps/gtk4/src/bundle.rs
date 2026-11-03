@@ -173,3 +173,101 @@ pub fn save(actions: &Rc<Actions>, refs: Vec<String>, names: Vec<String>, label:
         });
     });
 }
+
+/// Repository › Fetch from Bundle…（macOS 版の `fetchFromBundle`）: bundle のファイルを選び、そのブランチを
+/// `refs/remotes/<名前>/*` に取り込む（タグは取らない）。要るコミットがなければ、そう言って止める。SSH 先の
+/// リポジトリにも、中身を送って取り込む。
+pub fn fetch(actions: &Rc<Actions>) {
+    let actions = actions.clone();
+    glib::spawn_future_local(async move {
+        let Some(repo) = actions.repo() else { return };
+        let parent = sheets::parent(&actions);
+        let filter = gtk::FileFilter::new();
+        filter.set_name(Some("bundle"));
+        filter.add_suffix("bundle");
+        let filters = gio::ListStore::new::<gtk::FileFilter>();
+        filters.append(&filter);
+        let dialog = gtk::FileDialog::builder()
+            .title(tr!("Choose a bundle file (git bundle) to fetch from."))
+            .filters(&filters)
+            .modal(true)
+            .build();
+        let Ok(chosen) = dialog.open_future(parent.as_ref()).await else {
+            return;
+        };
+        let Some(path) = chosen.path() else { return };
+        let file = path.to_string_lossy().into_owned();
+        let check = sheets::run(&repo, json!({ "op": "bundleCheck", "file": file })).await;
+        if check["ok"] != true {
+            let error = check["error"].as_str().unwrap_or_default();
+            actions.alert(&tr!("Can’t Fetch the Bundle"), error).await;
+            return;
+        }
+        let info = &check["info"];
+        let missing = info["missing"].as_u64().unwrap_or(0);
+        if missing > 0 {
+            actions
+                .alert(
+                    &tr!("Can’t Fetch the Bundle"),
+                    &tr!(
+                        "This repository lacks {count} commits the bundle needs (it has only the commits after them).",
+                        count = missing
+                    ),
+                )
+                .await;
+            return;
+        }
+        let branches: Vec<String> = info["refs"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|r| r.as_str()?.strip_prefix("refs/heads/").map(str::to_owned))
+            .collect();
+        if branches.is_empty() {
+            actions
+                .alert(
+                    &tr!("Nothing to Fetch"),
+                    &tr!("The bundle has no branches."),
+                )
+                .await;
+            return;
+        }
+        let mut shown = branches
+            .iter()
+            .take(5)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        if branches.len() > 5 {
+            shown.push_str(", …");
+        }
+        let sheet = Sheet::new(
+            parent.as_ref(),
+            &tr!("Fetch from Bundle"),
+            &tr!(
+                "{file} has {count} branches ({names}). They are fetched under the name below, like a remote’s branches; tags aren’t fetched.",
+                file = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                count = branches.len(),
+                names = shown
+            ),
+        );
+        let name = gtk::Entry::builder()
+            .text(info["name"].as_str().unwrap_or("bundle"))
+            .width_chars(24)
+            .activates_default(true)
+            .build();
+        sheet.add(&sheets::row(&tr!("Name:"), &name));
+        sheet.buttons("Fetch", false, None);
+        if sheet.run().await != Response::Ok {
+            return;
+        }
+        let name = name.text().trim().to_owned();
+        if name.is_empty() {
+            return;
+        }
+        actions.perform(json!({ "op": "fetchBundle", "file": file, "name": name }));
+    });
+}
