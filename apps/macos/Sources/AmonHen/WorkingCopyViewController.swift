@@ -866,7 +866,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         // 選んだ行があれば行を、なければファイルを破棄する。stage 済みの変更は破棄しない。
         discardButton.isHidden = staged || isConflict || selectedKey == nil
         discardButton.title = selected.isEmpty ? "Discard File" : "Discard Lines"
-        discardButton.isEnabled = selectedKey != nil
+        // 作業ツリーに変更がない（すべて stage 済みの）ファイルには、捨てるものがない。
+        discardButton.isEnabled = selectedKey != nil && current?.item.isUnstaged == true
             && !(current?.isCombined == true && selected.contains { current?.isStaged(row: $0) == true })
         discardButton.toolTip = selected.isEmpty
             ? L("Discard the working tree changes and return to the content of the next commit (the index)")
@@ -974,6 +975,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     @objc private func discard() {
         guard let key = selectedKey, !key.staged, let actions else { return }
+        guard current?.item.isUnstaged == true else { return NSSound.beep() }
         let rows = diffView.selectedChangeRows
         if let current, !rows.isEmpty {
             actions.perform { try current.discard(rows: rows) }
