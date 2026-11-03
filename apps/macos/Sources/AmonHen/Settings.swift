@@ -878,7 +878,9 @@ final class SettingsWindowController: NSWindowController {
         window.setFrameAutosaveName("Settings")
         super.init(window: window)
         // 開いている間に View・File History のメニューで変えた分も拾う（古い値のまま書き戻さない）。
-        for name in [Notification.Name.historyRowsChanged, .historyOrderChanged, .fileHistoryMergesChanged] {
+        for name in [Notification.Name.historyRowsChanged, .historyOrderChanged, .fileHistoryMergesChanged,
+                     .highlightAncestorsChanged, .commitMessageStyleChanged, .stackedCommitDiffChanged,
+                     .historyFileTreeChanged, .foldMergedBranchesChanged] {
             NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.model.reload() }
             }
