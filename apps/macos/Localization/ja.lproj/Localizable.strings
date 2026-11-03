@@ -739,7 +739,7 @@
 "Don’t Use (Use My Prompt)" = "使わない（自分のプロンプトを使う）";
 "The prompt variable {{%@}} can’t be used for “%@” (available: %@)" = "プロンプトの変数 {{%@}} は「%@」では使えません（使えるもの: %@）";
 "Use AI in this repository?" = "このリポジトリで AI を使いますか？";
-"Sends to %@: %@\nThis repository’s content (messages and diffs) goes to an external service through the CLI.\nYou can change this later with “Forget Per-Repository Permissions” in Settings > AI." = "%@ に送ります: %@\nこのリポジトリの内容（メッセージ・差分）が、CLI を通じて外部のサービスに送られます。\nあとで Settings > AI の「このリポジトリの許可を消す」で選び直せます。";
+"Sends to %@: %@\nThis repository’s content (messages and diffs) goes to an external service through the CLI.\nYou can change this later with “Forget Per-Repository Permissions” in Settings > AI." = "%@ に送ります: %@\nこのリポジトリの内容（メッセージ・差分）が、CLI を通じて外部のサービスに送られます。\nあとで 設定 > AI の「リポジトリごとの許可を消す」で選び直せます。";
 "Don’t Use in This Repository" = "このリポジトリでは使わない";
 "No AI CLI is selected, or it can’t be found (Settings > AI)." = "AI の CLI が選ばれていないか、見つかりません（Settings > AI）";
 "No AI CLI is selected." = "AI の CLI が選ばれていません";
