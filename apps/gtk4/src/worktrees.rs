@@ -359,6 +359,8 @@ pub struct Worktrees {
     slots: RefCell<Vec<Rc<Slot>>>,
     /// 開いている途中の worktree（重ねて開かない）。
     opening: RefCell<HashSet<String>>,
+    /// 最後に選んだ、開くのを待っている worktree（開くのを待つ間にほかを選んだら、開き終えても切り替えない）。
+    wanted: RefCell<Option<String>>,
     /// 書き込む先を変えた（そのリポジトリ）。
     on_edit: RefCell<Option<EditListener>>,
     /// 見張りの知らせ。
@@ -398,6 +400,7 @@ impl Worktrees {
             editing: RefCell::default(),
             slots: RefCell::default(),
             opening: RefCell::default(),
+            wanted: RefCell::default(),
             on_edit: RefCell::default(),
             notify: RefCell::default(),
             list: RefCell::default(),
@@ -580,6 +583,7 @@ impl Worktrees {
     pub fn edit(self: &Rc<Self>, path: &str) {
         let key = canonical(path, self.remote);
         if key == self.editing_key() {
+            self.wanted.replace(None);
             return;
         }
         if key == self.opened_key() {
@@ -589,6 +593,7 @@ impl Worktrees {
         if let Some(slot) = known {
             return self.activate(Some(slot));
         }
+        self.wanted.replace(Some(key.clone()));
         if !self.opening.borrow_mut().insert(key.clone()) {
             return;
         }
@@ -610,9 +615,14 @@ impl Worktrees {
                 "Worktrees: open one",
                 started.elapsed().as_secs_f64() * 1000.0,
             );
+            // 開く間にほかを選んでいたら、使わない（最後に選んだものにする。macOS 版と同じ）。
+            if this.wanted.borrow().as_deref() != Some(key.as_str()) {
+                return;
+            }
             let repo = match opened {
                 Ok(repo) => repo,
                 Err(e) => {
+                    this.wanted.replace(None);
                     let f = this.on_open_failure.borrow().clone();
                     if let Some(f) = f {
                         f(tr!("Can’t open the worktree"), e);
@@ -636,6 +646,7 @@ impl Worktrees {
 
     /// 書き込む先を `slot`（None なら開いたリポジトリ）にする。開いたままにするのは最近の 3 つまで。
     fn activate(&self, slot: Option<Rc<Slot>>) {
+        self.wanted.replace(None);
         if let Some(slot) = &slot {
             let mut slots = self.slots.borrow_mut();
             slots.retain(|s| s.key != slot.key);
@@ -1016,6 +1027,39 @@ pub fn new_worktree(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 開くのを待つ間にほかを選んだら、開き終えても（ここでは開けなくても）その worktree にしない。
+    #[test]
+    fn the_last_pick_wins() {
+        let context = glib::MainContext::new();
+        context
+            .with_thread_default(|| {
+                let dir = std::env::temp_dir().join(format!("amonhen-pick-{}", std::process::id()));
+                let pending = Rc::new(Cell::new(0));
+                let w = Worktrees::new(&dir.join("a").to_string_lossy(), pending.clone());
+                let failures = Rc::new(Cell::new(0));
+                let f = failures.clone();
+                w.connect_open_failure(move |_, _| f.set(f.get() + 1));
+                let run = || {
+                    while pending.get() > 0 {
+                        context.iteration(true);
+                    }
+                };
+                // B を待つ間に、今の worktree を選び直した: B は開けなくても知らせない（もう選んでいない）。
+                w.edit(&dir.join("b").to_string_lossy());
+                assert!(w.wanted.borrow().is_some());
+                w.edit(&w.editing_key());
+                assert!(w.wanted.borrow().is_none());
+                run();
+                assert_eq!(failures.get(), 0);
+                // B だけを選んだら、開けなかったことを知らせる。
+                w.edit(&dir.join("b").to_string_lossy());
+                run();
+                assert_eq!(failures.get(), 1);
+                assert!(w.wanted.borrow().is_none());
+            })
+            .unwrap();
+    }
 
     #[test]
     fn only_ssh_locations_keep_the_tilde() {

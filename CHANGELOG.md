@@ -175,6 +175,8 @@ becomes the GitHub Release notes.
   another, so Commit amended that worktree's last commit.
 - The GTK4 app's Working Copy keeps each commit, push, discard and stage in the worktree it started in: Commit and
   Push could push another worktree selected during the commit, and Discard could act on the old list's file there.
+- Selecting worktrees quickly ends on the last one picked, in the macOS and GTK4 apps; one that took longer to open
+  could take over after a later pick.
 - Activity no longer says “daemon” twice for a repository opened through the shared daemon, nor “(daemon)” for an
   SSH host connected directly.
 - Saving patches no longer fails with “No such file or directory” when another save runs at the same time in the same

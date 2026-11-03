@@ -418,12 +418,29 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     /// `path` の worktree を書き込む先にする。まだ開いていなければ開く（SSH 先なら同じ接続先の上のパス）。
     func edit(worktree path: String) {
-        if WorktreeInfo.canonical(path) == WorktreeInfo.canonical(editing.path) { return }
+        let key = WorktreeInfo.canonical(path)
+        if key == WorktreeInfo.canonical(editing.path) {
+            wantedSlot = nil
+            return
+        }
+        // 最後に選んだものにする（開くのを待つ間にほかを選んだら、開き終えても切り替えない）。
+        wantedSlot = key
         Task {
             guard let slot = await slot(for: path) else { return }
+            guard wantedSlot == key else {
+                // 使わなかった: 書き込む先にしたことがなければ閉じる（開いたままにする数に入らないので）。
+                if slot !== opened, slot !== editing, !slotOrder.contains(key), slots[key] === slot {
+                    slot.watch = nil
+                    slots[key] = nil
+                }
+                return
+            }
             activate(slot)
         }
     }
+
+    /// 最後に選んだ、開くのを待っている worktree（なければ nil）。
+    private var wantedSlot: String?
 
     /// `path` の worktree の組（なければ開く。開いただけでは書き込む先にしない）。
     private func slot(for path: String) async -> WorktreeSlot? {
@@ -586,6 +603,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     private static let keptSlots = 3
 
     private func activate(_ slot: WorktreeSlot) {
+        wantedSlot = nil
         editing = slot
         defer { loadForm() }
         if slot !== opened {
