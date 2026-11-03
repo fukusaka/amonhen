@@ -920,10 +920,10 @@ fn push_preview(
     paned
 }
 
-/// 知らせる（ボタンは閉じるだけ）。
+/// 知らせる（ボタンは OK だけ。macOS 版の `inform`）。
 pub async fn inform(parent: Option<&gtk::Window>, title: &str, message: &str) {
     let sheet = Sheet::new(parent, title, message);
-    sheet.button(&tr!("Close"), Response::Ok, Some(Style::Suggested));
+    sheet.button("OK", Response::Ok, Some(Style::Suggested));
     sheet.run().await;
 }
 
