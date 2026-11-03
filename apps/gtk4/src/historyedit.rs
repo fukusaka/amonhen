@@ -483,7 +483,6 @@ impl Mode {
                         allowed.iter().position(|a| *a == r.action).unwrap_or(0) as u32
                     );
                     choice.set_sensitive(!r.merge);
-                    choice.set_tooltip_text(Some(&r.action.tip()));
                     filling.set(false);
                     // 件名: 取り消す行は線で消し、まとめる行は薄く、直したメッセージは斜体。
                     subject.set_text(&r.subject());
