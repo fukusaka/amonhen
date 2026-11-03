@@ -640,6 +640,11 @@ impl RepoWindow {
                 .and_downcast::<gtk::ApplicationWindow>()
                 .and_then(|w| w.application())?;
             let target = RepoWindow::new(&app);
+            // 大きさは出た窓のもの（macOS 版のタブの窓は、離れたタブの窓の枠を持ち続ける）。
+            if let Some(window) = view.root().and_downcast::<gtk::Window>() {
+                let (w, h) = window.default_size();
+                target.window.set_default_size(w, h);
+            }
             target.window.present();
             Some(target.view.clone())
         });
@@ -1431,14 +1436,19 @@ fn install_actions(tab: &Rc<Tab>) {
         }
     });
     add("bring-all-to-front", |tab| {
-        let hosts: Vec<Rc<RepoWindow>> = WINDOWS.with(|w| w.borrow().clone());
-        let own = tab.window();
-        for host in hosts.iter().filter(|h| Some(&h.window) != own.as_ref()) {
-            host.window.present();
-        }
-        if let Some(window) = own {
+        // リポジトリの窓だけでなく、Activity・Settings などアプリの窓をみな前に（macOS 版の
+        // `arrangeInFront` と同じ）。
+        let Some(own) = tab.window() else { return };
+        let Some(app) = own.application() else { return };
+        let own: gtk::Window = own.upcast();
+        for window in app
+            .windows()
+            .iter()
+            .filter(|w| w.is_visible() && **w != own)
+        {
             window.present();
         }
+        own.present();
     });
     // Edit の Undo・Redo・Cut・Copy・Paste・Select All: フォーカスのある部品（文字の欄など）のものを使う（macOS 版
     // の標準の項目と同じ。キーは部品がじかに受ける）。メニューを開くとフォーカスはメニューに移るので、その前に
@@ -1494,6 +1504,9 @@ fn install_actions(tab: &Rc<Tab>) {
             return window.error_bell();
         }
         let target = RepoWindow::new(&app);
+        // 大きさは出た窓のもの（macOS 版と同じ）。
+        let (w, h) = window.default_size();
+        target.window.set_default_size(w, h);
         move_tab(tab, &target, true);
         target.window.present();
         save();
