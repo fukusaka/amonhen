@@ -1157,7 +1157,8 @@ fn hooks_directory(s: &RepoSettings) -> Option<std::path::PathBuf> {
     }
     let paths = s.repo.paths();
     match s.state.borrow().hooks_path.as_deref() {
-        None => Some(paths.git_dir.join("hooks")),
+        // git の既定は $GIT_COMMON_DIR/hooks（追加した worktree でも、元のリポジトリの .git の中）。
+        None => Some(paths.common_dir.join("hooks")),
         Some(p) if p.starts_with('/') => Some(p.into()),
         Some(p) if p.starts_with('~') => Some(std::path::PathBuf::from(format!(
             "{}{}",

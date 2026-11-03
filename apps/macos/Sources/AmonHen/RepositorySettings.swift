@@ -1898,7 +1898,10 @@ private struct HooksLFSPage: View {
     private var hooksDirectory: String? {
         guard model.host == nil else { return nil }
         let root = RepositoryLocation.path(model.location)
-        guard let p = model.hooksPath else { return (root as NSString).appendingPathComponent(".git/hooks") }
+        // 既定は $GIT_COMMON_DIR/hooks（追加した worktree の `.git` はファイルなので、その中ではない）。
+        guard let p = model.hooksPath else {
+            return (RepositoryList.commonGitDirectory(of: root) as NSString).appendingPathComponent("hooks")
+        }
         if p.hasPrefix("/") { return p }
         if p.hasPrefix("~") { return (p as NSString).expandingTildeInPath }
         return (root as NSString).appendingPathComponent(p)

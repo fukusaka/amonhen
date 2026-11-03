@@ -154,6 +154,8 @@ becomes the GitHub Release notes.
   the others' lists while their buttons showed the old choice.
 - macOS: Take Current File, Take Incoming File and Mark Resolved leave the diff bar when Working Copy's list empties,
   such as after `git merge --abort`.
+- macOS: Repository Settings > Hooks · LFS opens and edits the hooks of the main repository's `.git` in an added
+  worktree, where git looks for them, instead of a missing `.git/hooks` folder.
 
 - The GTK4 app's Undo button asks once; it opened the question twice, so one stayed after undoing.
 - A `.mailmap`, or a mailmap setting (`log.mailmap`, `mailmap.file`), changed while the engine was reading the old

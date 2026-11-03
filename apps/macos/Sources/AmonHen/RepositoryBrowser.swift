@@ -74,6 +74,24 @@ enum RepositoryList {
 
     nonisolated(unsafe) private static var worktreeMains: [String: String?] = [:]
 
+    /// `path` の作業ツリーの、refs・config・hooks のある .git（git の `$GIT_COMMON_DIR`）。追加した worktree では
+    /// `.git` が `gitdir: <元>/.git/worktrees/<名前>` のファイルで、その `commondir` が元の .git を指す。手元のものだけ。
+    static func commonGitDirectory(of path: String) -> String {
+        var gitDir = (path as NSString).appendingPathComponent(".git")
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: gitDir, isDirectory: &isDirectory), !isDirectory.boolValue,
+           let text = try? String(contentsOfFile: gitDir, encoding: .utf8), text.hasPrefix("gitdir:") {
+            let target = text.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespacesAndNewlines)
+            gitDir = target.hasPrefix("/") ? target : (path as NSString).appendingPathComponent(target)
+        }
+        if let common = try? String(contentsOfFile: (gitDir as NSString).appendingPathComponent("commondir"), encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines), !common.isEmpty {
+            let resolved = common.hasPrefix("/") ? common : (gitDir as NSString).appendingPathComponent(common)
+            return (resolved as NSString).standardizingPath
+        }
+        return gitDir
+    }
+
     /// 今のブランチ。`.git/HEAD` を読むだけで、git は起動しない（一覧を開くたびに数十件を読むため）。
     static func branch(of path: String) -> String? {
         if RepositoryLocation.isRemote(path) { return nil }
