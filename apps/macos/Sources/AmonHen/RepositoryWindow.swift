@@ -769,7 +769,18 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     /// worktree を消す（変更が残っていれば、それも捨てると確かめてから --force）。開いたリポジトリは消せない。
     private func removeWorktree(_ info: WorktreeInfo) {
         guard !info.main, !info.isSame(opened.path) else { return NSSound.beep() }
-        let changes = worktreeChanges[WorktreeInfo.canonical(info.path)] ?? 0
+        // 消すと戻せないので、覚えている数（5 分前のこともある）ではなく、今の数を数えて確かめる。
+        let repository = opened.repository, path = info.path
+        Task {
+            let fresh = try? await Task.detached(priority: .userInitiated) {
+                try repository.info(["op": "worktreeChanges", "paths": [path], "fresh": true], as: WorktreeChangesList.self)
+            }.value
+            let changes = fresh?.worktrees.first?.count ?? worktreeChanges[WorktreeInfo.canonical(path)] ?? 0
+            confirmRemoveWorktree(info, changes: changes)
+        }
+    }
+
+    private func confirmRemoveWorktree(_ info: WorktreeInfo, changes: Int) {
         let alert = NSAlert()
         alert.messageText = L("Remove the worktree “%@”?", info.name)
         alert.informativeText = changes > 0
