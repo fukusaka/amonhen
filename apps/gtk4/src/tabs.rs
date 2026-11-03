@@ -318,9 +318,14 @@ impl Tab {
             tips.push(tr!("{count} commits behind upstream", count = behind));
         }
         let tip = tips.join(&tr!(", "));
+        let renamed = self.title.borrow().0 != title;
         self.title
             .replace((title, (!tip.is_empty()).then_some(tip)));
         self.apply_title();
+        // Move Tab to Window ▸ の名前も印ごと。
+        if renamed {
+            refresh_move_menus();
+        }
     }
 
     /// 書き込む先の worktree の名前（確認のシートに出す）。
@@ -515,6 +520,8 @@ impl RepoWindow {
                 && let Some(tab) = this.tab_of(&page.child())
             {
                 this.show(&tab);
+                // ほかの窓の Move Tab to Window ▸ は、この窓の前のタブの名前で出す。
+                refresh_move_menus();
             }
         });
         view.connect_page_reordered(|_, _, _| save());
@@ -802,7 +809,8 @@ pub fn move_menu(anchor: &impl IsA<gtk::Widget>) -> gio::Menu {
     menu
 }
 
-/// 移す先: 前の窓とは別の窓ごとに 1 つ。その窓で前に出ているタブの名前と、ほかのタブの数で出す（macOS 版と同じ）。
+/// 移す先: 前の窓とは別の窓ごとに 1 つ。その窓で前に出ているタブの名前（●↑↓ の印ごと）と、ほかのタブの数で
+/// 出す。File History・Blame のタブからは、そのリポジトリのタブの窓を先頭に（macOS 版と同じ）。
 fn fill_move_menu(anchor: &glib::WeakRef<gtk::Widget>, menu: &gio::Menu) {
     menu.remove_all();
     let own = anchor
@@ -810,22 +818,34 @@ fn fill_move_menu(anchor: &glib::WeakRef<gtk::Widget>, menu: &gio::Menu) {
         .and_then(|a| a.root())
         .and_downcast::<gtk::ApplicationWindow>()
         .and_then(|w| host_of(&w));
-    let others: Vec<Rc<RepoWindow>> = WINDOWS.with(|w| {
+    let mut others: Vec<Rc<RepoWindow>> = WINDOWS.with(|w| {
         w.borrow()
             .iter()
             .filter(|h| own.as_ref().is_none_or(|o| !Rc::ptr_eq(o, h)))
             .cloned()
             .collect()
     });
+    let home = own
+        .as_ref()
+        .and_then(|o| o.current())
+        .and_then(|t| t.owner())
+        .and_then(|o| o.host());
+    if let Some(home) = home
+        && let Some(i) = others.iter().position(|h| Rc::ptr_eq(h, &home))
+    {
+        let home = others.remove(i);
+        others.insert(0, home);
+    }
     for host in others {
         let Some(shown) = host.current() else {
             continue;
         };
         let n = host.tabs.borrow().len();
+        let name = shown.title.borrow().0.clone();
         let title = if n > 1 {
-            tr!("{name} (+{count})", name = shown.name, count = n - 1)
+            tr!("{name} (+{count})", name = name, count = n - 1)
         } else {
-            shown.name.clone()
+            name
         };
         let item = gio::MenuItem::new(Some(&title), None);
         item.set_action_and_target_value(
@@ -840,8 +860,9 @@ fn fill_move_menu(anchor: &glib::WeakRef<gtk::Widget>, menu: &gio::Menu) {
     }
 }
 
-/// どの Move Tab to Window ▸ も作り直す（部品がなくなったものは外す）。
+/// どの Move Tab to Window ▸ も作り直し（部品がなくなったものは外す）、Window のタブの項目を使えるかを合わせる。
 fn refresh_move_menus() {
+    refresh_window_actions();
     let menus: Vec<(glib::WeakRef<gtk::Widget>, gio::Menu)> = MOVE_MENUS.with(|m| {
         let mut m = m.borrow_mut();
         m.retain(|(a, _)| a.upgrade().is_some());
@@ -1383,6 +1404,32 @@ fn step(tab: &Rc<Tab>, delta: i32) {
         .map_or(0, |p| host.view.page_position(&p));
     let next = (current + delta).rem_euclid(n);
     host.view.set_selected_page(&host.view.nth_page(next));
+}
+
+/// Window の Show Next Tab・Show Previous Tab・Move Tab to New Window はタブが 2 つ以上、Merge All Windows は窓が
+/// 2 つ以上のときだけ使える（macOS 版の AppKit の項目と同じ）。
+fn refresh_window_actions() {
+    let hosts: Vec<Rc<RepoWindow>> = WINDOWS.with(|w| w.borrow().clone());
+    let several_windows = hosts.len() > 1;
+    for host in hosts {
+        let several_tabs = host.tabs.borrow().len() > 1;
+        for tab in host.tabs() {
+            for (name, on) in [
+                ("next-tab", several_tabs),
+                ("previous-tab", several_tabs),
+                ("move-tab-to-new-window", several_tabs),
+                ("merge-all-windows", several_windows),
+            ] {
+                if let Some(action) = tab
+                    .group
+                    .lookup_action(name)
+                    .and_downcast::<gio::SimpleAction>()
+                {
+                    action.set_enabled(on);
+                }
+            }
+        }
+    }
 }
 
 /// `view` の中の、中身が `child` のページ。
