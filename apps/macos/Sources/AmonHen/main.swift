@@ -447,7 +447,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// File > Clone…（⌃⌘C）: clone して、前のウィンドウのタブで開く（ブックマークにも入れる）。
     @objc func cloneRepository(_ sender: Any?) {
-        CloneSheet.show { [weak self] path in
+        CloneSheet.show(in: NSApp.keyWindow ?? NSApp.mainWindow) { [weak self] path in
             Bookmarks.shared.add(path)
             self?.open(path: path)
         }
