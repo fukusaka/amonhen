@@ -306,7 +306,8 @@ fn build(
 
 /// メニューの見た目の直し。GTK のメニューは中身をスクロールの枠に入れていて、その縦のスクロールバーの最小の
 /// 高さ（46）が枠の高さになるので、項目が 1 つだと下が空く。メニューの中では、スクロールバーの最小の高さをなくす。
-/// 等幅の入力欄の説明（プレースホルダー）は、ふつうの字で（等幅だと横に長く、切れる）。
+/// 等幅の入力欄の説明（プレースホルダー）は、ふつうの字で（等幅だと横に長く、切れる）。Quick Open の欄は大きな字
+/// （macOS 版の 17 pt。ふつうの字の 13 pt に対する比）。
 pub fn install_css() {
     let provider = gtk::CssProvider::new();
     provider.load_from_string(
@@ -317,6 +318,7 @@ pub fn install_css() {
          popover.menu button.hint-row { padding: 0 12px; min-height: 30px; font-weight: normal; } \
          popover.menu button.hint-row label { color: @theme_fg_color; opacity: 1; } \
          entry.monospace text placeholder { font-family: sans-serif; } \
+         .quick-open-field { font-size: 1.3em; } \
          .drop-above { box-shadow: inset 0 2px @accent_color; } \
          .drop-below { box-shadow: inset 0 -2px @accent_color; } \
          .drop-above:drop(active), .drop-below:drop(active) { background: none; }",

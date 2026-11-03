@@ -122,6 +122,7 @@ pub fn show_with(parent: Option<&gtk::Window>, open: Open, query: &str) -> gtk::
         "Open a repository (fuzzy search by name or path)"
     )));
     field.set_hexpand(true);
+    field.add_css_class("quick-open-field");
     let model = gtk::StringList::new(&[]);
     let selection = gtk::SingleSelection::new(Some(model.clone()));
     let factory = gtk::SignalListItemFactory::new();
