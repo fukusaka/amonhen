@@ -407,6 +407,8 @@
 "Settings…" = "設定…";
 
 /* GTK4 の FE のメニュー */
+/* 見出しの右端の ≡（GNOME の主メニュー。macOS 版にはない） */
+"Main Menu" = "メインメニュー";
 "New Window" = "新規ウインドウ";
 "Find…" = "検索…";
 "Find Next" = "次を検索";

@@ -575,7 +575,7 @@ pub fn install(parts: Parts) -> Buttons {
 
     let primary = gtk::MenuButton::builder()
         .menu_model(&primary_menu(&parts.anchor))
-        .tooltip_text("Main Menu")
+        .tooltip_text(tr!("Main Menu"))
         .primary(true)
         .build();
     set_icon(&primary, "open-menu-symbolic", "≡");
@@ -687,7 +687,7 @@ pub fn install_home(
 
     let primary = gtk::MenuButton::builder()
         .menu_model(&primary_menu(anchor))
-        .tooltip_text("Main Menu")
+        .tooltip_text(tr!("Main Menu"))
         .primary(true)
         .build();
     set_icon(&primary, "open-menu-symbolic", "≡");
