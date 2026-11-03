@@ -220,6 +220,9 @@ pub struct RepoSettings {
     operate: RefCell<Option<Operate>>,
     /// その操作が走っている（ページのボタンを止める）。
     pub(crate) operating: Cell<bool>,
+    /// 書き込みの列の最後（書き込みは 1 つずつ、頼んだ順に。重なると `.git/config.lock` で失敗する。macOS 版の
+    /// `lastWrite`）。
+    last_write: RefCell<Option<glib::JoinHandle<()>>>,
 }
 
 /// コアの命令を実行し、`info` を返す（失敗ならエラーの文）。
@@ -697,6 +700,7 @@ impl RepoSettings {
             signing_loaded: Cell::new(false),
             controls: RefCell::default(),
             writes: Cell::new(0),
+            last_write: RefCell::default(),
             operate: RefCell::default(),
             operating: Cell::new(false),
         });
@@ -1116,25 +1120,23 @@ impl RepoSettings {
                 }
             }
         }
-        let (repo, weak) = (self.repo.clone(), self.weak());
-        glib::spawn_future_local(async move {
-            let result = run_all(&repo, commands).await;
-            let Some(s) = weak.upgrade() else { return };
+        self.enqueue(commands, move |s, result| {
+            // Undo・Redo は、書けなくても反対の列に積む（その段をなくさない。macOS 版は戻すときに先に積む）。
+            match record {
+                Record::Undo => s
+                    .redo
+                    .borrow_mut()
+                    .push(changes.iter().map(Change::inverse).collect()),
+                Record::Redo => s.undo.borrow_mut().push(changes.clone()),
+                Record::New => {}
+            }
             match &result {
                 Ok(()) => {
                     s.writes.set(s.writes.get() + 1);
-                    // 記録は書けたものだけ（失敗した書き換えを Undo に残さない）。Undo で書いたものは、元に
-                    // 戻した向き（もとの書き換え）をやり直しに積む。
-                    match record {
-                        Record::New => {
-                            s.redo.borrow_mut().clear();
-                            s.undo.borrow_mut().push(changes);
-                        }
-                        Record::Undo => s
-                            .redo
-                            .borrow_mut()
-                            .push(changes.iter().map(Change::inverse).collect()),
-                        Record::Redo => s.undo.borrow_mut().push(changes),
+                    // 新しい書き換えの記録は書けたものだけ（失敗した書き換えを Undo に残さない）。
+                    if record == Record::New {
+                        s.redo.borrow_mut().clear();
+                        s.undo.borrow_mut().push(changes);
                     }
                     s.show_error(None);
                 }
@@ -1187,6 +1189,26 @@ impl RepoSettings {
         }
     }
 
+    /// `commands` を、前の書き込みが終わってから裏で順に実行し、終わったら `done` を呼ぶ（macOS 版の `enqueue`）。
+    pub(crate) fn enqueue(
+        self: &Rc<Self>,
+        commands: Vec<Value>,
+        done: impl FnOnce(&Rc<RepoSettings>, Result<(), String>) + 'static,
+    ) {
+        let previous = self.last_write.take();
+        let (repo, weak) = (self.repo.clone(), self.weak());
+        let handle = glib::spawn_future_local(async move {
+            if let Some(previous) = previous {
+                let _ = previous.await;
+            }
+            let result = run_all(&repo, commands).await;
+            if let Some(s) = weak.upgrade() {
+                done(&s, result);
+            }
+        });
+        self.last_write.replace(Some(handle));
+    }
+
     /// エラーを出す（`message` が None なら消す）。`row` がなければページの下に。
     /// 書き換えや操作の失敗をページの下の 1 か所に出す（None なら消す。macOS 版の `model.error`）。
     pub(crate) fn show_error(&self, message: Option<&str>) {
@@ -1201,10 +1223,7 @@ impl RepoSettings {
         commands: Vec<Value>,
         then: impl FnOnce(&Rc<RepoSettings>) + 'static,
     ) {
-        let (repo, weak) = (self.repo.clone(), self.weak());
-        glib::spawn_future_local(async move {
-            let result = run_all(&repo, commands).await;
-            let Some(s) = weak.upgrade() else { return };
+        self.enqueue(commands, move |s, result| {
             s.show_error(result.as_ref().err().map(String::as_str));
             // 続きは読み直してから（表の行ができてから。macOS 版の `run` と同じ）。
             if result.is_ok() {
@@ -1803,10 +1822,7 @@ impl RepoSettings {
                     let gitignore = s.state.borrow().gitignore.clone();
                     json!({"op": "saveIgnoreFiles", "gitignore": gitignore, "exclude": text})
                 };
-                let w = s.weak();
-                glib::spawn_future_local(async move {
-                    let Some(s) = w.upgrade() else { return };
-                    let result = run_all(&s.repo, vec![command]).await;
+                s.enqueue(vec![command], |s, result| {
                     s.show_error(result.as_ref().err().map(String::as_str));
                     s.load();
                     s.changed();
