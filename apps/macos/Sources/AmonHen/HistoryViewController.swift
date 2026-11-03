@@ -1580,6 +1580,11 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             if root.isFlipped { frame.origin.y = root.bounds.height - frame.maxY }
             context.cgContext.draw(image, in: frame)
         }
+        // 窓の背景は contentView の外にあり、透けているところ（History の上の帯など）は透明のまま残る。下に敷く。
+        root.effectiveAppearance.performAsCurrentDrawingAppearance {
+            NSColor.windowBackgroundColor.setFill()
+            root.bounds.fill(using: .destinationOver)
+        }
         NSGraphicsContext.restoreGraphicsState()
         return rep
     }
