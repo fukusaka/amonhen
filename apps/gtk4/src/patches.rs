@@ -225,10 +225,15 @@ pub fn apply(actions: &Rc<Actions>, mut paths: Vec<PathBuf>) {
         .iter()
         .map(|p| p.to_string_lossy().into_owned())
         .collect();
+    // 選んだときの worktree で当たるかを調べ、その名前とブランチを書き、そこに当てる（調べている間に書き込む先を
+    // 替えても）。
+    let Some(target) = sheets::Target::current(actions) else {
+        return;
+    };
+    let branch = actions.head().unwrap_or_else(|| "HEAD".to_owned());
     let actions = actions.clone();
     glib::spawn_future_local(async move {
-        let Some(repo) = actions.repo() else { return };
-        let reply = sheets::run(&repo, json!({ "op": "readPatch", "paths": paths })).await;
+        let reply = sheets::run(&target.repo, json!({ "op": "readPatch", "paths": paths })).await;
         let summary = &reply["info"];
         let patches = summary["patches"].as_array().cloned().unwrap_or_default();
         let empty = patches
@@ -242,12 +247,19 @@ pub fn apply(actions: &Rc<Actions>, mut paths: Vec<PathBuf>) {
             actions.alert(&tr!("Can’t Read the Patch"), &detail).await;
             return;
         }
-        confirm(&actions, summary, &patches, paths).await;
+        confirm(&actions, &target, &branch, summary, &patches, paths).await;
     });
 }
 
 /// 当てる前の確認: パッチごとの件名・作者・ファイル、当たるか、当て方の選び方。
-async fn confirm(actions: &Rc<Actions>, summary: &Value, patches: &[Value], paths: Vec<String>) {
+async fn confirm(
+    actions: &Rc<Actions>,
+    target: &sheets::Target,
+    branch: &str,
+    summary: &Value,
+    patches: &[Value],
+    paths: Vec<String>,
+) {
     let mailbox = summary["kind"].as_str() == Some("mailbox");
     let names: Vec<String> = paths
         .iter()
@@ -257,7 +269,6 @@ async fn confirm(actions: &Rc<Actions>, summary: &Value, patches: &[Value], path
                 .map_or_else(|| p.clone(), |n| n.to_string_lossy().into_owned())
         })
         .collect();
-    let branch = actions.head().unwrap_or_else(|| "HEAD".to_owned());
     let (title, what) = if mailbox {
         let title = match patches {
             [one] => tr!(
@@ -283,7 +294,7 @@ async fn confirm(actions: &Rc<Actions>, summary: &Value, patches: &[Value], path
             tr!("The changes go into the working tree (git apply)."),
         )
     };
-    let sheet = Sheet::new(
+    let sheet = target.sheet(
         sheets::parent(actions).as_ref(),
         &title,
         &format!("{what} {}", sheets::can_undo()),
@@ -334,14 +345,15 @@ async fn confirm(actions: &Rc<Actions>, summary: &Value, patches: &[Value], path
     if sheet.run().await != Response::Ok {
         return;
     }
-    if mailbox {
-        actions.perform(json!({ "op": "am", "paths": paths, "threeWay": three_way.is_active() }));
+    let command = if mailbox {
+        json!({ "op": "am", "paths": paths, "threeWay": three_way.is_active() })
     } else {
-        actions.perform(json!({
+        json!({
             "op": "applyPatch", "paths": paths,
             "index": index.is_active(), "threeWay": three_way.is_active(),
-        }));
-    }
+        })
+    };
+    actions.perform_in(target.repo.clone(), vec![command], |_| {});
 }
 
 /// 確認のシートの一覧: パッチごとに件名と作者、その下にファイルと増減。
