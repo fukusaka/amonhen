@@ -109,6 +109,8 @@ becomes the GitHub Release notes.
 - The GTK4 app's Undo button asks once; it opened the question twice, so one stayed after undoing.
 - A `.mailmap`, or a mailmap setting (`log.mailmap`, `mailmap.file`), changed while the engine was reading the old
   one could be missed until it changed again; the names now follow it.
+- In the GTK4 app's sheets, Return runs the operation (Pull, Fetch, Publish, Reset…) even when a drop-down or a radio
+  button has the focus, as on macOS; it opened the drop-down or picked the radio instead.
 - With newer GTK (4.24), the GTK4 app's sidebar shows Working Copy's change count and the sparse checkout mark.
 - In the GTK4 app, opening a repository that is already open in a new window, or switching to a worktree whose
   repository is open, brings its tab forward instead of opening a second one.

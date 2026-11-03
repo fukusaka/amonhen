@@ -142,6 +142,7 @@ impl Sheet {
             glib::Propagation::Proceed
         });
         window.add_controller(keys);
+        window.add_controller(return_presses_default(&window));
         Self {
             window,
             heading,
@@ -239,6 +240,45 @@ impl Sheet {
         });
         self.rx.recv().await.unwrap_or(Response::Cancel)
     }
+}
+
+/// Return で、入力がどこにあっても既定のボタンを押す（macOS 版のシートと同じ。GTK のままでは、ドロップダウンや
+/// ラジオに入力があると Return でそれを開く・選ぶだけになる）。文字の欄（自分で既定のボタンに渡すか、改行を入れる）と、
+/// 開いたドロップダウンの一覧の中はそのまま。既定のボタンが押せないときは何もしない。
+pub fn return_presses_default(window: &gtk::Window) -> gtk::EventControllerKey {
+    let keys = gtk::EventControllerKey::new();
+    keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let w = window.downgrade();
+    keys.connect_key_pressed(move |_, key, _, state| {
+        use gtk::gdk::{Key, ModifierType};
+        let Some(w) = w.upgrade() else {
+            return glib::Propagation::Proceed;
+        };
+        if !matches!(key, Key::Return | Key::KP_Enter | Key::ISO_Enter)
+            || state.intersects(
+                ModifierType::CONTROL_MASK | ModifierType::ALT_MASK | ModifierType::SHIFT_MASK,
+            )
+        {
+            return glib::Propagation::Proceed;
+        }
+        let Some(default) = w.default_widget() else {
+            return glib::Propagation::Proceed;
+        };
+        if let Some(focus) = GtkWindowExt::focus(&w)
+            && (focus.is::<gtk::Text>()
+                || focus.is::<gtk::TextView>()
+                || focus.ancestor(gtk::Popover::static_type()).is_some())
+        {
+            return glib::Propagation::Proceed;
+        }
+        if default.is_sensitive() && default.is_visible() {
+            default.activate();
+        } else {
+            w.error_bell();
+        }
+        glib::Propagation::Stop
+    });
+    keys
 }
 
 /// 説明の文の行（小さく、薄く）。`lines` 行分の高さを取っておく（答えが来ても大きさを変えない）。
