@@ -215,11 +215,33 @@ public struct RepositoryPeek: Sendable, Equatable {
 
 extension Repository {
     /// `url` を `dest`（まだないフォルダ）に clone する。`filter`（`blob:none` など）があれば partial clone、`depth`
-    /// があれば最近のその数のコミットだけ、`sparse` なら根のファイルだけを取り出す（git 2.27 から）。時間がかかるので
-    /// 裏のスレッドで呼ぶ。
+    /// があれば最近のその数のコミットだけ、`sparse` なら根のファイルだけを取り出す（git 2.27 から）。`branch` は取り出す
+    /// ブランチ（`-b`。HEAD のない bundle なら、なくても main・master・最初のブランチ）。時間がかかるので裏のスレッドで
+    /// 呼ぶ。
     public static func clone(url: String, to dest: String, filter: String? = nil, depth: Int? = nil,
-                             sparse: Bool = false) throws {
-        if !amonhen_clone(url, dest, filter, UInt32(clamping: max(0, depth ?? 0)), sparse) { throw AmonhenError.last() }
+                             sparse: Bool = false, branch: String? = nil) throws {
+        if !amonhen_clone(url, dest, filter, UInt32(clamping: max(0, depth ?? 0)), sparse, branch) {
+            throw AmonhenError.last()
+        }
+    }
+}
+
+/// bundle のファイルの見出し（git を動かさずに読む）。
+public struct BundleFileInfo: Decodable, Sendable {
+    /// 入っている ref（`refs/heads/main` など。HEAD は除く）。
+    public let refs: [String]
+    /// HEAD が入っている（clone したとき、それを取り出す）。
+    public let head: Bool
+    /// 前提のコミットの数（あれば clone できない）。
+    public let prerequisites: Int
+    /// HEAD がないとき取り出すブランチ（main・master・最初のブランチ）。
+    public let branch: String?
+
+    /// `path` が bundle のファイルなら、その見出し。bundle でなければ nil。
+    public static func read(path: String) -> BundleFileInfo? {
+        guard let out = amonhen_bundle_info(path) else { return nil }
+        defer { amonhen_string_free(out) }
+        return try? JSONDecoder().decode(BundleFileInfo.self, from: Data(String(cString: out).utf8))
     }
 }
 
