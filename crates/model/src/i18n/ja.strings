@@ -1428,7 +1428,7 @@
 "Stop Scanning" = "スキャンをやめる";
 "The engine on the host searches up to 3 levels below the folder." = "SSH 先のエンジンが、フォルダの 3 階層下まで探します。";
 "The status isn’t read until you open it" = "開くまで状態は読みません";
-"This Computer" = "このコンピュータ";
+"This Computer" = "このコンピューター";
 "This removes its {repositories} repositories and {folders} folders to scan from the list. Nothing on the host is touched." = "そのホストのリポジトリ {repositories} 個とスキャンするフォルダ {folders} 個を一覧から外します。ホストの中には触れません。";
 "Red" = "赤";
 "Orange" = "オレンジ";
