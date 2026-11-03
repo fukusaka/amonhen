@@ -1856,6 +1856,7 @@ private struct HooksLFSPage: View {
                         Divider()
                     }
                     Button(L("Create Hook…")) { create() }
+                        .disabled(model.hooks.count == HookEntry.allNames.count)
                 }
                 .frame(height: CGFloat(28 * model.hooks.count + 36))
             }
