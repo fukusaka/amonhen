@@ -8,11 +8,12 @@
 import assert from 'node:assert/strict';
 import childProcess from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import * as vscode from 'vscode';
 import { DaemonClient } from '../src/daemon/client.ts';
 import type { SelectedLine } from '../src/diff/fileDiff.ts';
 import { settingsFile } from '../src/git/choice.ts';
+import { samePath } from '../src/git/worktrees.ts';
 import type { activate } from '../src/extension.ts';
 import type { HostMessage } from '../src/view/protocol.ts';
 
@@ -58,6 +59,9 @@ async function until<T>(
     await new Promise((r) => setTimeout(r, 50));
   }
 }
+
+/** 時間切れのときに添える、直近に出たエラー（操作が失敗した理由） */
+const lastErrors = (): string => errors.slice(-3).map((e) => `エラー「${e}」`).join('、') || 'エラーなし';
 
 /** since 番目より後に Webview に送られた type のメッセージで、match に合う最初のもの */
 function waitPosted<T extends HostMessage['type']>(
@@ -297,6 +301,523 @@ async function rangeDiffFlow(path: 'daemon' | 'git'): Promise<void> {
 }
 
 /**
+ * サイドバーのタグに、リモートでの様子（fetch で読む）と署名の印が出て、右クリックで origin への push・置き換え・
+ * 削除と手元の削除（Undo で戻る）ができる。リモートは追加・名前の変更・URL の変更・prune・削除ができる。
+ * どれもコアの命令（daemon だけ）
+ */
+async function tagsAndRemotesFlow(): Promise<void> {
+  const repo = api.manager.current!;
+  const sidebar = api.sidebar;
+  const origin = git('remote', 'get-url', 'origin').trim();
+  const inOrigin = (...args: string[]) => childProcess.execFileSync('git', args, { cwd: origin, encoding: 'utf8' });
+  const tagsSection = sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'tags')!;
+  await repo.want('tags');
+  const tagItem = (name: string) => {
+    const node = sidebar.getChildren(tagsSection).find((n) => n.kind === 'tag' && n.ref.name === `refs/tags/${name}`);
+    return node && { node, item: sidebar.getTreeItem(node) };
+  };
+  const tagIs = (name: string, what: string, fn: (item: vscode.TreeItem) => boolean) =>
+    until(
+      `${name} が ${what}`,
+      () => {
+        const found = tagItem(name);
+        return found && fn(found.item) && found;
+      },
+      undefined,
+      () => {
+        const item = tagItem(name)?.item;
+        return `${item?.contextValue}「${String(item?.description)}」${errors.slice(-2).join('、')}`;
+      },
+    );
+  const fetch = () => vscode.commands.executeCommand('amonhen.fetch');
+  const tag = 'e2e-tag';
+  const remote = 'e2e-mirror';
+  try {
+    // まだ origin にないタグは「どのリモートにもない」。Push で origin に置く
+    git('tag', tag);
+    await fetch();
+    let found = await tagIs(tag, 'どのリモートにもない', (i) => String(i.description).startsWith('not on any remote'));
+    assert.match(String(found.item.contextValue), /;push/);
+    assert.doesNotMatch(String(found.item.contextValue), /;onRemote/);
+    await vscode.commands.executeCommand('amonhen.tag.push', found.node);
+    assert.equal(inOrigin('rev-parse', tag).trim(), git('rev-parse', tag).trim());
+    found = await tagIs(tag, 'origin にある', (i) => /;onRemote/.test(String(i.contextValue)));
+    assert.doesNotMatch(String(found.item.contextValue), /;push/);
+    assert.equal(found.item.description, git('log', '-1', '--format=%s', tag).trim());
+
+    // origin で同じ名前の別のタグにすると、fetch の後に「違う」と出る。Replace で手元のものに置き換える
+    inOrigin('tag', '-f', tag, `${tag}~1`);
+    await fetch();
+    found = await tagIs(tag, 'origin で違う', (i) => String(i.description).startsWith('different on origin'));
+    assert.match(String(found.item.contextValue), /;replace/);
+    await withWindow({ showWarningMessage: async () => 'Replace' }, async () =>
+      vscode.commands.executeCommand('amonhen.tag.replace', found.node),
+    );
+    assert.equal(inOrigin('rev-parse', tag).trim(), git('rev-parse', tag).trim());
+
+    // origin から消す。手元のものは残る
+    found = await tagIs(tag, '置き換わる', (i) => !String(i.description).startsWith('different'));
+    await withWindow({ showWarningMessage: async () => 'Delete' }, async () =>
+      vscode.commands.executeCommand('amonhen.tag.deleteFromRemote', found.node),
+    );
+    assert.equal(inOrigin('tag', '--list', tag).trim(), '');
+    found = await tagIs(tag, '消えたと分かる', (i) => String(i.description).startsWith('not on any remote'));
+
+    // 手元のタグを消し、Undo で戻す
+    const oid = git('rev-parse', tag).trim();
+    await withWindow({ showWarningMessage: async () => 'Delete', showInformationMessage: async () => undefined }, async () =>
+      vscode.commands.executeCommand('amonhen.tag.delete', found.node),
+    );
+    assert.equal(git('tag', '--list', tag).trim(), '');
+    await vscode.commands.executeCommand('amonhen.undo');
+    await until('タグの Undo', () => git('tag', '--list', tag).trim() === tag);
+    assert.equal(git('rev-parse', tag).trim(), oid);
+
+    // SSH の鍵で署名したタグ（git 2.34 から）は、allowed signers に載っていれば Verified
+    const [major, minor] = git('--version').match(/(\d+)\.(\d+)/)!.slice(1).map(Number) as [number, number];
+    if (major > 2 || (major === 2 && minor >= 34)) {
+      const key = join(dirname(root), 'e2e-signing-key');
+      childProcess.execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-C', 'a@example.com', '-f', key]);
+      const signers = join(dirname(root), 'e2e-allowed-signers');
+      writeFileSync(signers, `a@example.com ${readFileSync(`${key}.pub`, 'utf8')}`);
+      git('-c', 'gpg.format=ssh', '-c', `user.signingkey=${key}`, 'tag', '-s', '-m', 'signed', 'e2e-signed');
+      git('config', 'gpg.ssh.allowedSignersFile', signers);
+      await vscode.commands.executeCommand('amonhen.refresh');
+      const signed = await tagIs('e2e-signed', 'Verified', (i) => (i.iconPath as vscode.ThemeIcon | undefined)?.id === 'verified-filled');
+      assert.match((signed.item.tooltip as vscode.MarkdownString).value, /\*\*Verified\*\* \(ssh\)/);
+      assert.equal((tagItem(tag)!.item.iconPath as vscode.ThemeIcon).id, 'tag');
+    }
+
+    // リモートを足し、名前と URL を変え、prune して、外す
+    await withWindow({ showInputBox: inputs(remote, origin) }, async () => vscode.commands.executeCommand('amonhen.remote.add'));
+    assert.equal(git('remote', 'get-url', remote).trim(), origin);
+    const remoteNode = (name: string) =>
+      until(`リモート ${name}`, async () => {
+        await repo.refresh();
+        const section = sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'remotes')!;
+        return sidebar.getChildren(section).find((n) => n.kind === 'remote' && n.remote.name === name);
+      });
+    await withWindow({ showInputBox: inputs(`${remote}-2`) }, async () =>
+      vscode.commands.executeCommand('amonhen.remote.rename', await remoteNode(remote)),
+    );
+    assert.equal(git('remote', 'get-url', `${remote}-2`).trim(), origin);
+    const url = join(origin, '.git');
+    await withWindow({ showInputBox: inputs(url) }, async () =>
+      vscode.commands.executeCommand('amonhen.remote.editUrl', await remoteNode(`${remote}-2`)),
+    );
+    assert.equal(git('remote', 'get-url', `${remote}-2`).trim(), url);
+    // prune で、リモートで消えたブランチの追跡が消える
+    git('update-ref', `refs/remotes/${remote}-2/gone`, 'HEAD');
+    await vscode.commands.executeCommand('amonhen.remote.prune', await remoteNode(`${remote}-2`));
+    assert.equal(git('for-each-ref', `refs/remotes/${remote}-2/gone`).trim(), '');
+    await withWindow({ showWarningMessage: async () => 'Remove' }, async () =>
+      vscode.commands.executeCommand('amonhen.remote.remove', await remoteNode(`${remote}-2`)),
+    );
+    assert.equal(git('remote').split('\n').includes(`${remote}-2`), false);
+  } finally {
+    for (const t of [tag, 'e2e-signed']) if (git('tag', '--list', t).trim()) git('tag', '-d', t);
+    if (inOrigin('tag', '--list', tag).trim()) inOrigin('tag', '-d', tag);
+    for (const r of [remote, `${remote}-2`]) if (git('remote').split('\n').includes(r)) git('remote', 'remove', r);
+    try {
+      git('config', '--unset', 'gpg.ssh.allowedSignersFile');
+    } catch {
+      // 署名を試していない
+    }
+    await repo.refresh();
+  }
+}
+
+/**
+ * worktree を作ると Working Copy の下に並び（書き込む先は ✎）、書き込む先がそれになる。変更の数が出て、
+ * 別の worktree が checkout しているブランチに印が付く。メインに戻し、消し、フォルダの消えた worktree を片付ける。
+ * どれもコアの命令（daemon だけ）
+ */
+async function worktreeFlow(): Promise<void> {
+  const sidebar = api.sidebar;
+  const manager = api.manager;
+  const main = manager.repositories.find((r) => samePath(r.root, root))!;
+  const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+  const folder = join(dirname(root), 'repo-e2e-wt');
+  const gone = join(dirname(root), 'repo-e2e-gone');
+  const rows = () => {
+    const wc = sidebar.getChildren().find((n) => n.kind === 'view' && n.view === 'workingCopy')!;
+    return sidebar.getChildren(wc).flatMap((n) => (n.kind === 'cleanWorktrees' ? sidebar.getChildren(n) : [n]));
+  };
+  const row = (path: string) => {
+    const node = rows().find((n) => n.kind === 'worktree' && samePath(n.worktree.path, path));
+    return node && { node, item: sidebar.getTreeItem(node) };
+  };
+  const icon = (item: vscode.TreeItem) => (item.iconPath as vscode.ThemeIcon | undefined)?.id;
+  try {
+    // HEAD から e2e-wt を作り、それを checkout した worktree を書き込む先にする
+    await withWindow({ showInputBox: inputs('e2e-wt', folder) }, async () => vscode.commands.executeCommand('amonhen.worktree.new'));
+    assert.equal(git('-C', folder, 'symbolic-ref', '--short', 'HEAD').trim(), 'e2e-wt');
+    await until('新しい worktree が書き込む先', () => manager.current && samePath(manager.current.root, folder));
+    const editing = await until('✎ の行', () => {
+      const r = row(folder);
+      return r && icon(r.item) === 'edit' && r;
+    });
+    assert.match(String(editing.item.description), /^e2e-wt · no changes/);
+    assert.equal(icon(row(root)!.item), 'home');
+    // メインの作業ツリーが checkout しているブランチに ⌂ が付く
+    const branches = sidebar.getChildren(sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'branches')!);
+    const mainBranch = branches.find((n) => n.kind === 'branch' && n.ref.name === `refs/heads/${branch}`)!;
+    assert.match(String(sidebar.getTreeItem(mainBranch).description), new RegExp(`⌂ ${basename(root)}`));
+
+    // worktree の変更の数が出る
+    writeFileSync(join(folder, 'wt-change.txt'), 'change\n');
+    await vscode.commands.executeCommand('amonhen.refresh');
+    await until('変更の数', () => /1 changed/.test(String(row(folder)?.item.description)));
+
+    // メインに戻す
+    await vscode.commands.executeCommand('amonhen.worktree.edit', row(root)!.node);
+    assert.ok(samePath(manager.current!.root, root));
+    await until('✎ が戻る', () => icon(row(root)!.item) === 'edit');
+
+    // 変更があっても、確かめてから消す（ブランチは残る）
+    await withWindow({ showWarningMessage: async () => 'Remove Worktree' }, async () =>
+      vscode.commands.executeCommand('amonhen.worktree.remove', row(folder)!.node),
+    );
+    await until('フォルダーが消える', () => !existsSync(folder) && !git('worktree', 'list').includes('repo-e2e-wt'), 10_000);
+    assert.equal(git('branch', '--list', 'e2e-wt').trim(), 'e2e-wt');
+
+    // フォルダの消えた worktree は「folder is gone」と出て、Prune で片付く。git が prunable と言うのは 2.31 から
+    git('worktree', 'add', '-q', '-b', 'e2e-gone', gone);
+    rmSync(gone, { recursive: true, force: true });
+    const [major, minor] = git('--version').match(/(\d+)\.(\d+)/)!.slice(1).map(Number) as [number, number];
+    if (major > 2 || (major === 2 && minor >= 31)) {
+      await sidebar.worktrees.reload();
+      await until('folder is gone', () => /folder is gone/.test(String(row(gone)?.item.description)));
+    }
+    await vscode.commands.executeCommand('amonhen.worktree.prune');
+    await until('片付く', () => !row(gone) && !git('worktree', 'list').includes('repo-e2e-gone'));
+  } finally {
+    manager.select(main);
+    manager.forget(folder);
+    for (const path of [folder, gone]) {
+      if (git('worktree', 'list').includes(basename(path))) git('worktree', 'remove', '--force', path);
+    }
+    git('worktree', 'prune');
+    for (const b of ['e2e-wt', 'e2e-gone']) if (git('branch', '--list', b).trim()) git('branch', '-D', b);
+    await sidebar.worktrees.reload();
+  }
+}
+
+/**
+ * ファイルの右クリックの File History で、名前の変更を追ってファイルを変えたコミットが出る。マージも出す・出さないを
+ * 切り替え、行のコミットを History で選ぶ。コアの命令（daemon だけ）
+ */
+async function fileHistoryFlow(): Promise<void> {
+  const panel = await showView('amonhen.showHistory');
+  const start = git('rev-parse', 'HEAD').trim();
+  const commit = (message: string) => git('commit', '-q', '-m', message);
+  try {
+    writeFileSync(join(root, 'fh-a.txt'), 'one\n');
+    git('add', 'fh-a.txt');
+    commit('add fh-a');
+    writeFileSync(join(root, 'fh-a.txt'), 'one\ntwo\n');
+    git('commit', '-q', '-a', '-m', 'change fh-a');
+    git('mv', 'fh-a.txt', 'fh-b.txt');
+    commit('rename fh-a to fh-b');
+    git('commit', '-q', '--allow-empty', '-m', 'not about fh');
+    await vscode.commands.executeCommand('amonhen.refresh');
+
+    // エクスプローラーの右クリック（Uri）から
+    let mark = posted.length;
+    await vscode.commands.executeCommand('amonhen.fileHistory', vscode.Uri.file(join(root, 'fh-b.txt')));
+    const shown = await waitPosted('fileHistory', mark, (m) => m.path === 'fh-b.txt' && m.complete);
+    assert.deepEqual(
+      shown.entries.map((e) => [e.subject, e.path]),
+      [
+        ['rename fh-a to fh-b', 'fh-b.txt'],
+        ['change fh-a', 'fh-a.txt'],
+        ['add fh-a', 'fh-a.txt'],
+      ],
+    );
+    assert.equal(shown.merges, false);
+
+    // 行を選ぶと、そのコミットの詳細（History と同じ）が届く
+    const oldest = shown.entries[2]!;
+    mark = posted.length;
+    await panel.history.handle({ type: 'select', oid: oldest.oid });
+    assert.deepEqual((await waitPosted('details', mark, (m) => m.details.oid === oldest.oid)).details.files.map((f) => f.path), ['fh-a.txt']);
+
+    // マージも出すに切り替えると読み直す
+    mark = posted.length;
+    await panel.fileHistory.handle({ type: 'fileHistoryLoad', merges: true });
+    assert.equal((await waitPosted('fileHistory', mark, (m) => m.complete)).merges, true);
+
+    // ダブルクリックで、そのコミットを History で選ぶ
+    mark = posted.length;
+    await panel.fileHistory.handle({ type: 'fileHistoryReveal', oid: oldest.oid });
+    await waitPosted('reveal', mark);
+
+    // メインビューのファイルの右クリック（リポジトリの中のパス）から
+    mark = posted.length;
+    await vscode.commands.executeCommand('amonhen.fileHistory', { path: 'fh-b.txt' });
+    await waitPosted('fileHistory', mark, (m) => m.path === 'fh-b.txt' && m.entries.length === 3);
+  } finally {
+    git('reset', '-q', '--hard', start);
+    await vscode.commands.executeCommand('amonhen.refresh');
+  }
+}
+
+/**
+ * ファイルの右クリックの Blame で、各行を最後に変えたコミットが出る（まだコミットしていない行も）。作業中の変更で
+ * 読み直し、コミットの行からはそのコミットの内容を出し、行のコミットを History で選ぶ。コアの命令（daemon だけ）
+ */
+async function blameFlow(): Promise<void> {
+  const panel = await showView('amonhen.showHistory');
+  const start = git('rev-parse', 'HEAD').trim();
+  const file = join(root, 'bl.txt');
+  try {
+    writeFileSync(file, 'one\ntwo\n');
+    git('add', 'bl.txt');
+    git('commit', '-q', '-m', 'add bl');
+    const first = git('rev-parse', 'HEAD').trim();
+    writeFileSync(file, 'one\nTWO\nthree\n');
+    git('commit', '-q', '-a', '-m', 'change bl');
+    writeFileSync(file, 'one\nTWO\nthree\nfour\n');
+    await vscode.commands.executeCommand('amonhen.refresh');
+
+    // エクスプローラーの右クリック（Uri）から: 作業ツリーの内容
+    let mark = posted.length;
+    await vscode.commands.executeCommand('amonhen.blame', vscode.Uri.file(file));
+    const shown = await waitPosted('blame', mark, (m) => m.path === 'bl.txt' && !m.loading);
+    const by = (m: typeof shown) => m.lines.map((l) => [l.t, /^0+$/.test(m.commits[l.c]!.oid) ? '' : m.commits[l.c]!.summary]);
+    assert.equal(shown.rev, undefined);
+    assert.deepEqual(by(shown), [
+      ['one', 'add bl'],
+      ['TWO', 'change bl'],
+      ['three', 'change bl'],
+      ['four', ''],
+    ]);
+
+    // 作業中の変更で読み直す
+    mark = posted.length;
+    writeFileSync(file, 'one\nTWO\nthree\nfour\nfive\n');
+    await vscode.commands.executeCommand('amonhen.refresh');
+    await waitPosted('blame', mark, (m) => m.lines.length === 5);
+
+    // コミットの行（History の詳細など）から: そのコミットの内容
+    mark = posted.length;
+    await vscode.commands.executeCommand('amonhen.blame', { path: 'bl.txt', oid: first });
+    const old = await waitPosted('blame', mark, (m) => m.rev === first && !m.loading);
+    assert.deepEqual(by(old), [
+      ['one', 'add bl'],
+      ['two', 'add bl'],
+    ]);
+
+    // ダブルクリックで、そのコミットを History で選ぶ
+    mark = posted.length;
+    await panel.blame.handle({ type: 'blameReveal', oid: first });
+    await waitPosted('reveal', mark);
+  } finally {
+    rmSync(file, { force: true });
+    git('reset', '-q', '--hard', start);
+    await vscode.commands.executeCommand('amonhen.refresh');
+  }
+}
+
+/**
+ * エンジンがあれば Branches がアプリと同じ並びになる: 90 日コミットのないブランチは Inactive、アーカイブしたものは
+ * Archived に畳まれ、お気に入りは ★ で上に並ぶ（順を変えられる）。どれも git の設定に書く（daemon だけ）
+ */
+async function branchArrangeFlow(): Promise<void> {
+  // 絞り込み（Branches・Remotes・Tags）も、ここで確かめる
+  const sidebar = api.sidebar;
+  const section = sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'branches')!;
+  /** Branches の中のブランチの名前を、入れ子・グループごとに */
+  const shape = (nodes = sidebar.getChildren(section)): unknown[] =>
+    nodes.map((n) =>
+      n.kind === 'branch'
+        ? n.stack?.length
+          ? [n.label, shape(sidebar.getChildren(n))]
+          : n.label
+        : n.kind === 'branchGroup'
+          ? { [n.key]: shape(sidebar.getChildren(n)) }
+          : n.kind === 'branchFolder'
+            ? { [`${n.label}/`]: shape(sidebar.getChildren(n)) }
+            : n.kind,
+    );
+  const node = (name: string) => {
+    const find = (nodes: ReturnType<typeof sidebar.getChildren>): ReturnType<typeof sidebar.getChildren>[number] | undefined => {
+      for (const n of nodes) {
+        if (n.kind === 'branch' && n.ref.name === `refs/heads/${name}`) return n;
+        const inner = n.kind === 'branch' || n.kind === 'branchGroup' || n.kind === 'branchFolder' ? find(sidebar.getChildren(n)) : undefined;
+        if (inner) return inner;
+      }
+      return undefined;
+    };
+    return find(sidebar.getChildren(section))!;
+  };
+  const config = (key: string) => {
+    try {
+      return git('config', key).trim();
+    } catch {
+      return undefined;
+    }
+  };
+  const settle = async () => {
+    await vscode.commands.executeCommand('amonhen.refresh');
+    await sidebar.branchFacts.reload();
+  };
+  const names = ['arr-old', 'arr-a', 'arr-b', 'arr-arch'];
+  const head = git('rev-parse', 'HEAD').trim();
+  const current = git('symbolic-ref', '--short', 'HEAD').trim();
+  try {
+    // 200 日前のコミットだけのブランチ
+    const old = new Date(Date.now() - 200 * 86_400_000).toISOString();
+    const tree = git('rev-parse', 'HEAD^{tree}').trim();
+    const commit = childProcess
+      .execFileSync('git', ['commit-tree', tree, '-p', head, '-m', 'old work'], {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, GIT_AUTHOR_DATE: old, GIT_COMMITTER_DATE: old },
+      })
+      .trim();
+    git('branch', 'arr-old', commit);
+    for (const b of ['arr-a', 'arr-b', 'arr-arch']) git('branch', b, head);
+    await settle();
+    await until('Inactive', () => JSON.stringify(shape()).includes('{"inactive":["arr-old"'));
+
+    // 絞り込むと、名前にどの言葉も含むものだけが平らに出る（大文字小文字は区別しない）
+    await withWindow({ showInputBox: inputs('ARR- ch') }, async () => vscode.commands.executeCommand('amonhen.filterRefs'));
+    assert.deepEqual(shape(), ['arr-arch']);
+    const remotes = sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'remotes')!;
+    assert.deepEqual(sidebar.getChildren(remotes), []);
+    assert.match(String(sidebar.getTreeItem(section).id), /:filtered$/);
+    await vscode.commands.executeCommand('amonhen.clearRefsFilter');
+    assert.equal(sidebar.filter, '');
+    assert.ok(JSON.stringify(shape()).includes('{"inactive":["arr-old"'));
+
+    // アーカイブすると Archived に移り、戻すと元の場所に戻る
+    await vscode.commands.executeCommand('amonhen.branch.archive', node('arr-arch'));
+    assert.equal(config('branch.arr-arch.amonhenArchived'), 'true');
+    await until('Archived', () => JSON.stringify(shape()).includes('{"archived":["arr-arch"]}'));
+    assert.match(String(sidebar.getTreeItem(node('arr-arch')).contextValue), /;archived/);
+    await vscode.commands.executeCommand('amonhen.branch.unarchive', node('arr-arch'));
+    assert.equal(config('branch.arr-arch.amonhenArchived'), undefined);
+    await until('Archived が消える', () => !JSON.stringify(shape()).includes('archived'));
+
+    // お気に入りは ★ で一番上に、足した順に並び、順を変えられる。いくつも選んでもよい
+    await vscode.commands.executeCommand('amonhen.branch.addToFavorites', node('arr-b'), [node('arr-b'), node('arr-a')]);
+    assert.deepEqual([config('branch.arr-b.amonhenPinned'), config('branch.arr-a.amonhenPinned')], ['1', '2']);
+    await until('お気に入り', () => {
+      const top = shape().slice(0, 2);
+      return JSON.stringify(top) === JSON.stringify(['arr-b', 'arr-a']);
+    });
+    assert.equal((sidebar.getTreeItem(node('arr-a')).iconPath as vscode.ThemeIcon).id, 'star-full');
+    await vscode.commands.executeCommand('amonhen.branch.favoriteUp', node('arr-a'));
+    await until('並べ替え', () => JSON.stringify(shape().slice(0, 2)) === JSON.stringify(['arr-a', 'arr-b']));
+    await vscode.commands.executeCommand('amonhen.branch.removeFromFavorites', node('arr-a'), [node('arr-a'), node('arr-b')]);
+    assert.deepEqual([config('branch.arr-a.amonhenPinned'), config('branch.arr-b.amonhenPinned')], [undefined, undefined]);
+    await until('お気に入りが消える', () => (sidebar.getTreeItem(node('arr-a')).iconPath as vscode.ThemeIcon).id === 'git-branch');
+
+    // いくつも選んで merge すると 1 つのコミットになり（Undo 1 回で戻る）、まとめて消せる
+    for (const b of ['arr-a', 'arr-b']) {
+      git('switch', '-q', b);
+      writeFileSync(join(root, `${b}.txt`), `${b}\n`);
+      git('add', `${b}.txt`);
+      git('commit', '-q', '-m', b);
+    }
+    git('switch', '-q', current);
+    await settle();
+    const before = git('rev-parse', 'HEAD').trim();
+    await withWindow(
+      {
+        showQuickPick: async (items: readonly vscode.QuickPickItem[]) => items[0],
+        showInformationMessage: async () => undefined,
+      },
+      async () => vscode.commands.executeCommand('amonhen.nav.merge', node('arr-a'), [node('arr-a'), node('arr-b')]),
+    );
+    // HEAD はどちらの祖先でもあるので、git は片方へ fast-forward してから、もう片方を merge する
+    const parents = git('rev-list', '--parents', '-n', '1', 'HEAD').trim().split(' ').slice(1);
+    assert.deepEqual(parents.sort(), [git('rev-parse', 'arr-a').trim(), git('rev-parse', 'arr-b').trim()].sort());
+    await vscode.commands.executeCommand('amonhen.undo');
+    await until('merge の Undo', () => git('rev-parse', 'HEAD').trim() === before);
+    await settle();
+    // 取り込んでいないので、もう一度確かめてから消す
+    const answer = async (message: string) => (/merge されていない/.test(message) ? 'Delete Anyway' : 'Delete');
+    await withWindow({ showWarningMessage: answer }, async () =>
+      vscode.commands.executeCommand('amonhen.nav.delete', node('arr-a'), [node('arr-a'), node('arr-b')]),
+    );
+    assert.equal(git('branch', '--list', 'arr-a', 'arr-b').trim(), '');
+  } finally {
+    if (git('symbolic-ref', '--short', 'HEAD').trim() !== current) git('switch', '-q', current);
+    for (const b of names) if (git('branch', '--list', b).trim()) git('branch', '-D', b);
+    await settle();
+  }
+}
+
+/**
+ * History の行に署名の印が出て（SSH の鍵で署名したコミット。git 2.34 から）、詳細に署名と子のコミットが出る。
+ * HEAD・親・子のコミットに移れる。どれもコアの命令（daemon だけ）
+ */
+async function historySignatureFlow(): Promise<void> {
+  const panel = await showView('amonhen.showHistory');
+  const start = git('rev-parse', 'HEAD').trim();
+  const key = join(dirname(root), 'e2e-commit-key');
+  const signers = join(dirname(root), 'e2e-commit-signers');
+  const [major, minor] = git('--version').match(/(\d+)\.(\d+)/)!.slice(1).map(Number) as [number, number];
+  const ssh = major > 2 || (major === 2 && minor >= 34);
+  try {
+    if (ssh) {
+      childProcess.execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-C', 'a@example.com', '-f', key]);
+      writeFileSync(signers, `a@example.com ${readFileSync(`${key}.pub`, 'utf8')}`);
+      git('config', 'gpg.ssh.allowedSignersFile', signers);
+      git('-c', 'gpg.format=ssh', '-c', `user.signingkey=${key}`, 'commit', '-q', '-S', '--allow-empty', '-m', 'signed commit');
+    } else {
+      git('commit', '-q', '--allow-empty', '-m', 'signed commit');
+    }
+    const signed = git('rev-parse', 'HEAD').trim();
+    git('commit', '-q', '--allow-empty', '-m', 'after signed');
+    const after = git('rev-parse', 'HEAD').trim();
+    let mark = posted.length;
+    await vscode.commands.executeCommand('amonhen.refresh');
+    await panel.history.reset();
+    await waitPosted('rows', mark, (m) => m.rows.some((r) => r.oid === signed));
+    if (ssh) {
+      const marks = await waitPosted('signatures', mark, (m) => signed in m.marks);
+      assert.equal(marks.marks[signed]!.kind, 'verified');
+      assert.equal(marks.marks[after], undefined, '署名のないコミットに印はない');
+    }
+
+    // 詳細に署名と子のコミット
+    mark = posted.length;
+    await panel.history.handle({ type: 'select', oid: signed });
+    const extras = (await waitPosted('detailsExtras', mark, (m) => m.extras.oid === signed)).extras;
+    assert.deepEqual(extras.children, [after]);
+    if (ssh) assert.equal(extras.signature?.label, 'Verified');
+
+    // 子・親・HEAD へ移る
+    for (const [to, oid] of [
+      ['child', signed],
+      ['parent', after],
+      ['head', undefined],
+    ] as const) {
+      mark = posted.length;
+      await panel.history.handle({ type: 'goTo', to, ...(oid ? { oid } : {}) });
+      await waitPosted('reveal', mark);
+    }
+  } finally {
+    git('reset', '-q', '--hard', start);
+    try {
+      git('config', '--unset', 'gpg.ssh.allowedSignersFile');
+    } catch {
+      // 署名を試していない
+    }
+    await vscode.commands.executeCommand('amonhen.refresh');
+  }
+}
+
+/** showInputBox の代わり。呼ばれるたびに values を順に返す */
+function inputs(...values: string[]): () => Promise<string | undefined> {
+  let i = 0;
+  return async () => values[i++];
+}
+
+/**
  * Reflog に HEAD の動きが出る。今のブランチを reset（Mixed・Hard）すると、外れたコミットが「どのブランチにもない」と
  * 出て、Undo で戻る。Hard は作業中の変更を先に stash に残す。Reflog の行のコミットを checkout（detached）し、
  * History で見せる。どれもコアの命令（daemon だけ）
@@ -336,6 +857,7 @@ async function reflogFlow(): Promise<void> {
     // Mixed: 外れたコミットの変更は作業ツリーに残り、そのコミットはどのブランチにもなくなる
     mark = posted.length;
     await withWindow(stubs, async () => vscode.commands.executeCommand('amonhen.resetToCommit', { oid: parent }));
+    assert.equal(rev('HEAD'), parent, lastErrors());
     assert.match(asked.at(-1)!.message, new RegExp(`^Reset reflog-e2e to ${parent.slice(0, 8)}( “.*”)?\\?$`));
     assert.deepEqual(asked.at(-1)!.buttons, ['Mixed', 'Soft', 'Hard']);
     assert.equal(rev('HEAD'), parent);
@@ -350,7 +872,7 @@ async function reflogFlow(): Promise<void> {
     writeFileSync(file, 'changed\n');
     answer = 'Hard';
     await withWindow(stubs, async () => vscode.commands.executeCommand('amonhen.resetToCommit', { oid: parent }));
-    assert.equal(rev('HEAD'), parent);
+    assert.equal(rev('HEAD'), parent, lastErrors());
     assert.equal(existsSync(file), false);
     assert.match(git('stash', 'list', '-n', '1', '--format=%s'), /Before reset --hard to [0-9a-f]{8}/);
     await vscode.commands.executeCommand('amonhen.undo');
@@ -372,7 +894,7 @@ async function reflogFlow(): Promise<void> {
 
     // Checkout（detached）と、History で見せる
     await panel.reflog.handle({ type: 'reflogAction', action: 'checkout', oid: parent, selector: 'HEAD@{1}' });
-    assert.equal(rev('HEAD'), parent);
+    assert.equal(rev('HEAD'), parent, lastErrors());
     assert.throws(() => git('symbolic-ref', '-q', 'HEAD'));
     git('switch', '-q', 'reflog-e2e');
     git('reset', '-q', '--hard', lost);
@@ -749,12 +1271,12 @@ async function rewriteFlow(label: string): Promise<void> {
       // 今回だけ積み重ねたブランチも動かして rebase する
       answer = moveStacked('Rebase');
       await vscode.commands.executeCommand('amonhen.nav.rebase', node);
-      await until('rebase', () => rev(`${name('top')}~2`) === rev(name('onto')) && rev(name('top')));
+      await until('rebase', () => rev(`${name('top')}~2`) === rev(name('onto')) && rev(name('top')), undefined, lastErrors);
       const moved = asked.at(-1)!.buttons.length > 1;
       assert.equal(moved, label === 'daemon' && asked.at(-1)!.buttons.includes('Rebase（積み重ねたブランチも動かす）'));
       assert.equal(rev(name('mid')) === rev(`${name('top')}~1`), moved, moved ? 'mid も動く' : 'mid は残る');
       await vscode.commands.executeCommand('amonhen.undo');
-      await until('rebase の Undo', () => rev(name('top')) === before.top && rev(name('mid')) === before.mid);
+      await until('rebase の Undo', () => rev(name('top')) === before.top && rev(name('mid')) === before.mid, undefined, lastErrors);
 
       // History の編集（Drop）。mid の先頭のコミットを取り除く
       await showView('amonhen.showHistory');
@@ -769,11 +1291,11 @@ async function rewriteFlow(label: string): Promise<void> {
       } else {
         assert.deepEqual(drop.buttons, ['Drop']);
       }
-      await until('drop', () => git('log', '-1', '--format=%s', `${name('top')}~1`).trim() === branchSubject(branch) && rev(name('top')));
+      await until('drop', () => git('log', '-1', '--format=%s', `${name('top')}~1`).trim() === branchSubject(branch) && rev(name('top')), undefined, lastErrors);
       const dropMoved = drop.buttons.length > 1;
       assert.equal(rev(name('mid')) !== before.mid, dropMoved, dropMoved ? 'mid も動く' : 'mid は残る');
       await vscode.commands.executeCommand('amonhen.undo');
-      await until('drop の Undo', () => rev(name('top')) === before.top && rev(name('mid')) === before.mid);
+      await until('drop の Undo', () => rev(name('top')) === before.top && rev(name('mid')) === before.mid, undefined, lastErrors);
     });
   } finally {
     git('switch', '-q', branch);
@@ -1008,6 +1530,30 @@ suite('Amon Hen in VSCode', () => {
 
   test('shows the reflog and resets to a commit through the daemon', async () => {
     await reflogFlow();
+  });
+
+  test('marks tags by remote and signature, and pushes, replaces and deletes tags and changes remotes through the daemon', async () => {
+    await tagsAndRemotesFlow();
+  });
+
+  test('lists worktrees under Working Copy, edits, creates, removes and prunes them through the daemon', async () => {
+    await worktreeFlow();
+  });
+
+  test('shows a file’s history across a rename through the daemon', async () => {
+    await fileHistoryFlow();
+  });
+
+  test('blames a file in the working tree and at a commit through the daemon', async () => {
+    await blameFlow();
+  });
+
+  test('arranges branches with favorites, Inactive and Archived through the daemon', async () => {
+    await branchArrangeFlow();
+  });
+
+  test('marks signed commits in History and goes to HEAD, a parent and a child through the daemon', async () => {
+    await historySignatureFlow();
   });
 
   test('drops the selection of a file whose changes went away before its diff is read', async () => {

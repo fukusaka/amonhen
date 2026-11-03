@@ -25,30 +25,30 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Conflicts row with a count while there are conflicts | ✓ | ✓ | △ | n/a | VSCode: A Conflicts group inside the Working Copy view. |
 | Stashes row with a count only when there are stashes | ✓ | ✓ | △ | n/a | VSCode: The Stashes section is always shown. |
 | Range Diff row while a range diff is open | ✓ | ✓ | — | n/a |  |
-| Filter field over Branches, Remotes and Tags | ✓ | ✓ | — | n/a |  |
-| Several branches or tags selected at once | ✓ | ✓ | — | n/a |  |
-| Pull Requests and Worktrees shown only when not empty | ✓ | ✓ | — | n/a | VSCode: Neither group exists. |
+| Filter field over Branches, Remotes and Tags | ✓ | ✓ | △ | n/a | VSCode: The filter button on the sidebar's title asks for the words; the matches are listed flat. |
+| Several branches or tags selected at once | ✓ | ✓ | ✓ | n/a | VSCode: Merge into Current Branch, Delete Branch, favorites and Archive act on all of them. |
+| Pull Requests and Worktrees shown only when not empty | ✓ | ✓ | △ | n/a | VSCode: Worktrees only (GitHub is left out). |
 
 ## Sidebar
 
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| Branches arranged (current, active, inactive, merged, archived, stacked) | ✓ | ✓ | △ | △ | VSCode: A folder tree split on `/` only.<br>CLI: Via `amonhen run` (`branchGroups`). |
-| Favorite branches | ✓ | ✓ | — | — |  |
-| Archived branches | ✓ | ✓ | — | — |  |
-| Favorites reordered by dragging | ✓ | ✓ | — | n/a | GTK4: Dropped on the upper or lower third of a favorite; the middle offers Merge and Rebase. |
+| Branches arranged (current, active, inactive, merged, archived, stacked) | ✓ | ✓ | ✓ | △ | VSCode: With the engine; without it, a folder tree split on `/`.<br>CLI: Via `amonhen run` (`branchGroups`). |
+| Favorite branches | ✓ | ✓ | ✓ | — |  |
+| Archived branches | ✓ | ✓ | ✓ | — |  |
+| Favorites reordered by dragging | ✓ | ✓ | △ | n/a | GTK4: Dropped on the upper or lower third of a favorite; the middle offers Merge and Rebase.<br>VSCode: Move Up and Move Down in Favorites on the menu (a drop on a branch offers Merge and Rebase). |
 | Branch menu: checkout, rename, delete (Delete Anyway when unmerged) | ✓ | ✓ | ✓ | △ | macOS: Set Upstream is only in the Repository menu.<br>GTK4: Set Upstream is only in the Repository menu.<br>CLI: Via `amonhen run`. |
 | Sync a branch that is not checked out (Fast-Forward, Push, Publish) | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Tags listed | ✓ | ✓ | ✓ | ✓ |  |
-| Tag marks for remotes (missing, different) with a popover | ✓ | ✓ | — | △ | CLI: Via `amonhen run` (`tagRemotes`). |
-| Tag signature marks | ✓ | ✓ | — | ✓ | CLI: `refs --verify`. |
-| Tag menu: Push to, Replace on, Delete, Delete from a remote | ✓ | ✓ | — | △ | CLI: Via `amonhen run`. |
+| Tag marks for remotes (missing, different) with a popover | ✓ | ✓ | △ | △ | VSCode: In the row's description, each remote's state in the tooltip (no popover).<br>CLI: Via `amonhen run` (`tagRemotes`). |
+| Tag signature marks | ✓ | ✓ | ✓ | ✓ | VSCode: The row's icon, explained in the tooltip.<br>CLI: `refs --verify`. |
+| Tag menu: Push to, Replace on, Delete, Delete from a remote | ✓ | ✓ | ✓ | △ | VSCode: The remote is chosen in a list when there are several.<br>CLI: Via `amonhen run`. |
 | Remotes with their branches | ✓ | ✓ | ✓ | ✓ |  |
-| Remote menu: Add, Rename, Edit URL, Remove, Prune | ✓ | ✓ | — | △ | CLI: Via `amonhen run`. |
+| Remote menu: Add, Rename, Edit URL, Remove, Prune | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Pull Requests group | ✓ | ✓ | — | — |  |
 | Submodules group (Update, Open in New Window) | ✓ | ✓ | ✓ | ✓ | CLI: `submodule`, `submodule update`. |
 | Submodule marks (not checked out, another commit, changes inside, conflict) and menus: Update… (recursive, remote), Edit URL, Branch to Follow, Remove (optionally .git/modules), Add, Sync URLs | ✓ | ✓ | — | ✓ | CLI: `submodule` (`add`, `remove`, `set-url`, `set-branch`, `sync`). |
-| Worktrees under Working Copy with change counts (✎ ⌂ ⑂) | ✓ | ✓ | — | △ | CLI: `worktree list --changes`. |
+| Worktrees under Working Copy with change counts (✎ ⌂ ⑂) | ✓ | ✓ | ✓ | △ | VSCode: The marks are the rows' icons; a branch another worktree has checked out gets ⌂ or ⑂.<br>CLI: `worktree list --changes`. |
 | Marks for a shallow or partial clone (History) and a sparse checkout (Working Copy) | ✓ | ✓ | — | n/a |  |
 
 ## 1. Tabs and windows
@@ -226,10 +226,10 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Search with match count, next / previous, matching only | ✓ | ✓ | — | △ | CLI: `log <query>` lists the matches. |
 | Display: order, one line, row items, fold merged, highlight ancestors | ✓ | ✓ | △ | △ | VSCode: Only the scope (current, all, a ref).<br>CLI: `--topo-order`, `--fold`. |
 | Avatars | ✓ | ✓ | — | n/a |  |
-| Signature marks on commits | ✓ | ✓ | — | △ | CLI: In `show`. |
+| Signature marks on commits | ✓ | ✓ | ✓ | △ | VSCode: With the engine.<br>CLI: In `show`. |
 | CI status per commit with a checks popover | ✓ | ✓ | — | — |  |
 | Worktree HEAD labels (✎ ⌂ ⑂, change counts) | ✓ | ✓ | — | — |  |
-| Go to HEAD, Parent, Child | ✓ | ✓ | △ | n/a | VSCode: Parent links in the details only. |
+| Go to HEAD, Parent, Child | ✓ | ✓ | ✓ | n/a | VSCode: The HEAD button above History, Go to Parent and Go to Child on a commit's menu, and parent and child links in the details (with the engine). |
 | Go to Ref | — | — | — | n/a |  |
 | Several commits selected (range, two, scattered) | ✓ | ✓ | — | △ | CLI: `diff <rev> <rev>` for two. |
 | History of several selected refs | ✓ | ✓ | — | ✓ | CLI: `log --branch` repeated. |
@@ -249,19 +249,19 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Find inside the details | ✓ | ✓ | — | n/a |  |
 | All files stacked (sticky headers, collapse, Viewed) | ✓ | ✓ | △ | ✓ | VSCode: Stacked, loaded as they scroll; no collapse or Viewed.<br>CLI: `show`. |
 | Changed files as a tree beside the diff | ✓ | ✓ | △ | n/a | VSCode: A flat list above the diffs. |
-| File header menu (Blame, File History, copy path, open) | ✓ | ✓ | △ | n/a | VSCode: Open in VSCode's diff editor only. |
+| File header menu (Blame, File History, copy path, open) | ✓ | ✓ | ✓ | n/a | VSCode: Blame, File History and Copy Path on the right-click; Open in VSCode's diff editor. |
 | Switch to the single-file diff | ✓ | ✓ | — | n/a |  |
 | Diff of a selection (range squashed, A..B / A...B, scattered) | ✓ | ✓ | — | △ | CLI: `diff <rev> <rev>`. |
 | Actions on a selection (cherry-pick, revert, squash, copy IDs) | ✓ | ✓ | — | △ | CLI: Via `amonhen run`. |
-| Signature popover | ✓ | ✓ | — | n/a |  |
+| Signature popover | ✓ | ✓ | △ | n/a | VSCode: A Signature row in the details (status, explanation, signer and key), no popover. |
 | Word highlights and syntax colors | ✓ | ✓ | △ | n/a | VSCode: Words only. |
 
 ## Blame / File History
 
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| Blame | ✓ | ✓ | — | △ | CLI: Via `amonhen run` (`blame`). |
-| File History | ✓ | ✓ | — | △ | CLI: Via `amonhen run` (`fileHistory`). |
+| Blame | ✓ | ✓ | △ | △ | VSCode: A page of the main view, without syntax colours.<br>CLI: Via `amonhen run` (`blame`). |
+| File History | ✓ | ✓ | ✓ | △ | VSCode: A page of the main view, opened from the Explorer, an editor tab, the Command Palette or a file in the main view.<br>CLI: Via `amonhen run` (`fileHistory`). |
 | Line history | — | — | — | — |  |
 
 ## 7a. Patches
@@ -366,12 +366,12 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| Worktrees with change counts | ✓ | ✓ | — | ✓ | CLI: `worktree list --changes`. |
-| The edited worktree (✎) and switching it | ✓ | ✓ | — | n/a | CLI: Works on the worktree it runs in. |
-| New Worktree… (from a branch or commit) | ✓ | ✓ | — | ✓ |  |
-| Remove Worktree (asks, `--force` with changes) | ✓ | ✓ | — | ✓ |  |
-| Prune worktrees | ✓ | ✓ | — | ✓ |  |
-| A worktree's folder opens its repository with it edited | ✓ | ✓ | — | n/a |  |
+| Worktrees with change counts | ✓ | ✓ | ✓ | ✓ | CLI: `worktree list --changes`. |
+| The edited worktree (✎) and switching it | ✓ | ✓ | ✓ | n/a | VSCode: Switches the repository the extension works on; one outside the workspace isn't added to the Source Control view.<br>CLI: Works on the worktree it runs in. |
+| New Worktree… (from a branch or commit) | ✓ | ✓ | ✓ | ✓ |  |
+| Remove Worktree (asks, `--force` with changes) | ✓ | ✓ | ✓ | ✓ |  |
+| Prune worktrees | ✓ | ✓ | ✓ | ✓ |  |
+| A worktree's folder opens its repository with it edited | ✓ | ✓ | ✓ | n/a | VSCode: Opening the folder works on that worktree, with the others listed. |
 
 ## SSH hosts, shared daemon, askpass
 

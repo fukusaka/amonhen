@@ -6,6 +6,7 @@ import { daemonFor, resendDaemonEnvironment } from '../daemon/connection.ts';
 import { withDaemonWrites } from '../daemon/writes.ts';
 import { CliBackend } from '../git/backend.ts';
 import { GitExecutor } from '../git/exec.ts';
+import { samePath } from '../git/worktrees.ts';
 import type { GitApi, GitApiRepository, GitExtension } from './gitApi.ts';
 import { Repository } from './repository.ts';
 
@@ -103,7 +104,8 @@ export class RepositoryManager implements vscode.Disposable {
     }
   }
 
-  private async open(path: string, apiRepo?: GitApiRepository): Promise<void> {
+  /** `daemonChanges` なら、変化を共有の daemon の知らせで聞く（vscode.git が開いていないもの） */
+  private async open(path: string, apiRepo?: GitApiRepository, daemonChanges = false): Promise<void> {
     if (!this.git) {
       return;
     }
@@ -137,6 +139,26 @@ export class RepositoryManager implements vscode.Disposable {
         }),
         { dispose: () => clearTimeout(timer) },
       );
+    } else if (daemonChanges) {
+      let timer: NodeJS.Timeout | undefined;
+      let listener: { dispose(): void } | undefined;
+      let disposed = false;
+      void daemonFor(backend.root)
+        .then((client) => {
+          if (disposed || !client) return;
+          listener = client.onDidChange(() => {
+            clearTimeout(timer);
+            timer = setTimeout(() => void repository.refresh(), DEBOUNCE_MS);
+          });
+        })
+        .catch(() => undefined);
+      entry.disposables.push({
+        dispose: () => {
+          disposed = true;
+          clearTimeout(timer);
+          listener?.dispose();
+        },
+      });
     }
     this.entries.set(backend.root, entry);
     this.log.info(`opened ${backend.root}`);
@@ -158,6 +180,26 @@ export class RepositoryManager implements vscode.Disposable {
     if (this._current === entry.repository) {
       this.select(this.repositories[0]);
     }
+  }
+
+  /**
+   * `path`（worktree など、ワークスペースの外でもよい）のリポジトリを開いて返す。もう開いていればそれを返す。
+   * vscode.git には開かせない（ワークスペースの外のものは SCM に出さない）。変化は共有の daemon の知らせで聞く
+   */
+  async openPath(path: string): Promise<Repository | undefined> {
+    const find = () => this.repositories.find((r) => samePath(r.root, path));
+    if (!find()) await this.open(path, undefined, true);
+    return find();
+  }
+
+  /** `openPath` で開いたリポジトリを閉じる（worktree を消した後）。vscode.git が開いたものは閉じない */
+  forget(path: string): void {
+    const entry = [...this.entries.values()].find((e) => !e.apiRepo && samePath(e.repository.root, path));
+    if (!entry) return;
+    this.entries.delete(entry.repository.root);
+    vscode.Disposable.from(...entry.disposables).dispose();
+    this.updateContext();
+    if (this._current === entry.repository) this.select(this.repositories[0]);
   }
 
   select(repository: Repository | undefined): void {

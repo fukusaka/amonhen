@@ -7,10 +7,12 @@ import { readRows, toRowData } from '../daemon/history.ts';
 import { contentsToFetch, searchesContents, searchHistory } from '../daemon/search.ts';
 import { computeDiff, type FileDiff } from '../diff/fileDiff.ts';
 import { parseCommitObject } from '../git/commitObject.ts';
+import { signatureExplanation, signatureLabel, signatureStatus, type SignatureCheck } from '../git/signature.ts';
 import type { Commit } from '../git/log.ts';
 import { GraphBuilder } from '../history/graph.ts';
 import type {
   CommitDetails,
+  DetailsExtras,
   HistoryHostMessage,
   HistoryWebviewMessage,
   Person,
@@ -18,6 +20,7 @@ import type {
   RowData,
   Scope,
   SearchState,
+  SignatureView,
 } from '../history/protocol.ts';
 import { editableChain, refLabels } from '../history/rows.ts';
 import type { Repository, Section } from '../state/repository.ts';
@@ -128,6 +131,10 @@ export class HistoryController implements vscode.Disposable {
   private readonly details = new Map<string, Omit<CommitDetails, 'refs'>>();
   /** 一度求めたファイルの差分。キーは `oid:path` */
   private readonly diffs = new Map<string, FileDiff>();
+  /** 行の署名の印（null は署名なし）。コミットは変わらないので、読み直しても覚えておく */
+  private readonly signatures = new Map<string, SignatureView | null>();
+  /** 詳細の残り（署名・子のコミット）。子は増えるので、History を読み直したら捨てる */
+  private readonly extras = new Map<string, DetailsExtras>();
   /** 共有の daemon で History を読むとき（設定 `amonhen.daemon.path`）、出している History */
   private daemon: DaemonHistory | undefined;
   /** 一致だけの History を出しているとき、もとの History */
@@ -255,7 +262,81 @@ export class HistoryController implements vscode.Disposable {
       case 'move':
         HistoryController.edits.fire(message);
         break;
+      case 'goTo':
+        await this.goTo(message.to, message.oid).catch(showError);
+        break;
     }
+  }
+
+  /** HEAD・親（最初の親）・子のコミットに移る。子がいくつもあれば選んでもらう */
+  async goTo(to: 'head' | 'parent' | 'child', oid?: string): Promise<void> {
+    let target: string | undefined;
+    if (to === 'head') {
+      target = this.headOid;
+    } else if (oid && to === 'parent') {
+      const client = this.details.has(oid) ? undefined : await this.engine();
+      target = (this.details.get(oid) ?? (client && (await this.daemonDetails(client, oid))))?.parents[0];
+    } else if (oid) {
+      const children = (await this.readExtras(oid))?.children ?? [];
+      if (children.length > 1) {
+        const picked = await vscode.window.showQuickPick(
+          children.map((c) => ({ label: c.slice(0, 8), description: this.known.get(c)?.subject, oid: c })),
+          { placeHolder: 'Child commit' },
+        );
+        target = picked?.oid;
+      } else {
+        target = children[0];
+      }
+    }
+    if (target && !(await this.reveal(target))) {
+      void vscode.window.showInformationMessage(`${target.slice(0, 8)} isn’t in History`);
+    }
+  }
+
+  /** 行の署名を確かめて印を送る（一度確かめたものは覚えている。コアも覚えている） */
+  private async verifyRows(daemon: DaemonHistory, oids: readonly string[]): Promise<void> {
+    const todo = oids.filter((o) => !this.signatures.has(o));
+    if (todo.length === 0) return;
+    const reply = (await daemon.client.call({ op: 'run', command: { op: 'verifySignatures', oids: todo } })).json;
+    if (reply['ok'] !== true) return;
+    const info = reply['info'] as { checks?: (SignatureCheck & { committerEmail?: string })[] } | undefined;
+    const checks = info?.checks ?? [];
+    const marks: Record<string, SignatureView> = {};
+    todo.forEach((oid, i) => {
+      const check = checks[i];
+      const view = check && check.status !== 'N' ? signatureView(check, check.committerEmail ?? '') : null;
+      this.signatures.set(oid, view);
+      if (view) marks[oid] = view;
+    });
+    if (Object.keys(marks).length > 0) this.post({ type: 'signatures', marks });
+  }
+
+  /**
+   * このリポジトリのエンジンへのつながり（使わないなら undefined）。History を読み直している間は `this.daemon` が
+   * ないので、History によらないコアの命令はこちらで頼む
+   */
+  private async engine(): Promise<DaemonClient | undefined> {
+    return this.daemon?.client ?? (this.repo ? await daemonFor(this.repo.root) : undefined);
+  }
+
+  /** 詳細の残り（署名・子のコミット）を読む */
+  private async readExtras(oid: string): Promise<DetailsExtras | undefined> {
+    const cached = this.extras.get(oid);
+    if (cached) return cached;
+    const client = await this.engine();
+    if (!client) return undefined;
+    const reply = (await client.call({ op: 'run', command: { op: 'commitExtras', oid } })).json;
+    if (reply['ok'] !== true) return undefined;
+    const info = reply['info'] as { signature?: SignatureCheck | null; children?: string[] } | undefined;
+    const committer = this.details.get(oid)?.committer.email ?? '';
+    const extras: DetailsExtras = {
+      oid,
+      ...(info?.signature && info.signature.status !== 'N' ? { signature: signatureView(info.signature, committer) } : {}),
+      children: info?.children ?? [],
+    };
+    this.extras.set(oid, extras);
+    if (this.extras.size > DETAILS_CACHE) this.extras.delete(this.extras.keys().next().value!);
+    return extras;
   }
 
   private async sendDetails(oid: string): Promise<void> {
@@ -294,6 +375,10 @@ export class HistoryController implements vscode.Disposable {
       }
     }
     this.post({ type: 'details', details: { ...details, refs: this.labels.get(oid) ?? [] } });
+    // 署名の検証と子のコミットは時間がかかるので、後から送る（エンジンだけ）
+    void this.readExtras(oid)
+      .then((extras) => extras && this.post({ type: 'detailsExtras', extras }))
+      .catch(() => undefined);
   }
 
   /** 共有の daemon で、コミットの詳細と全ファイルの差分を読む（差分は覚えておき、ファイルを選んだときに送る） */
@@ -396,6 +481,7 @@ export class HistoryController implements vscode.Disposable {
 
   private async reload(): Promise<void> {
     const generation = ++this.generation;
+    this.extras.clear();
     this.commits = [];
     this.known.clear();
     this.graph = new GraphBuilder();
@@ -627,6 +713,8 @@ export class HistoryController implements vscode.Disposable {
       showError(err);
     }
     this.post({ type: 'rows', start, rows, done: true, total: daemon.rows });
+    // 届けた行の署名を、裏で確かめて印を送る
+    void this.verifyRows(daemon, rows.map((r) => r.oid)).catch(() => undefined);
   }
 
   private async loadMore(): Promise<void> {
@@ -684,4 +772,18 @@ export class HistoryController implements vscode.Disposable {
     this.searchAbort?.abort();
     this.repoListener?.dispose();
   }
+}
+
+/** 検証の結果を、行と詳細に出す形に。SSH の鍵は指紋が SHA256: で始まる（allowed signers に載っていれば信用している） */
+function signatureView(check: SignatureCheck, committerEmail: string): SignatureView {
+  const kind = check.fingerprint?.startsWith('SHA256:') ? 'ssh' : undefined;
+  const status = signatureStatus(check, committerEmail, kind);
+  return {
+    kind: status.kind,
+    ...(status.trust !== undefined ? { trust: status.trust } : {}),
+    label: signatureLabel(status),
+    explanation: signatureExplanation(status),
+    ...(check.signer ? { signer: check.signer } : {}),
+    ...(check.key ? { key: check.key } : {}),
+  };
 }

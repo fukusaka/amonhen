@@ -27,9 +27,14 @@ export function registerMergeBranchesCommand(manager: RepositoryManager): vscode
   });
 }
 
-async function mergeBranches(repo: Repository): Promise<void> {
+/** `chosen` があれば（サイドバーでいくつも選んだ）、選ぶところを飛ばしてそれを merge する */
+export async function mergeBranches(repo: Repository, chosen?: readonly string[]): Promise<void> {
   const head = (await repo.backend.head()).branch;
   const target = head ? shortName(head) : 'HEAD';
+  if (chosen && chosen.length > 0) {
+    await mergeRevs(repo, [...chosen], head, target);
+    return;
+  }
   const tags = repo.current.tags ?? (await repo.backend.refs(['refs/tags']));
   const refs = [
     ...(repo.current.branches ?? []).filter((r) => r.name !== head),
@@ -47,7 +52,10 @@ async function mergeBranches(repo: Repository): Promise<void> {
   if (!picked || picked.length === 0) {
     return;
   }
-  const revs = picked.map((p) => p.ref);
+  await mergeRevs(repo, picked.map((p) => p.ref), head, target);
+}
+
+async function mergeRevs(repo: Repository, revs: string[], head: string | undefined, target: string): Promise<void> {
   if (revs.length === 1 && head) {
     const [ref = ''] = revs;
     await runAction(repo, {

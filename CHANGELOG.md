@@ -756,6 +756,22 @@ First release.
   reaches; from there a branch, tag, checkout or reset brings them back. It needs the engine.
 - History's commit menu has Checkout (Detached) and Reset Current Branch to Here… (Mixed, Soft or Hard; a hard reset
   stashes uncommitted changes first, and Undo puts the branch back).
+- With the engine, tags show what the remotes have (as of the last Fetch) and their signature, and their menu pushes,
+  replaces or deletes them on a remote and deletes them here (with Undo). Remotes can be added, renamed, pointed
+  elsewhere, pruned and removed from the sidebar.
+- With the engine, worktrees are listed under Working Copy with their change counts; selecting one makes it the one
+  the extension works on. New Worktree…, Remove Worktree… and Prune Worktrees are in the sidebar and History menus.
+- File History, from a file's right-click or the Command Palette, lists the commits that changed it across renames,
+  with the selected commit's diff of the file beside them. It needs the engine.
+- Blame, from the same menus, shows which commit last changed each line of the working tree or of a commit's version.
+- With the engine, Branches are arranged as in the app (favorites, the current stack, newest first, Inactive,
+  Archived, stacked branches nested), and favorites and archiving are on a branch's menu, shared with the app.
+- Several branches or tags can be selected in the sidebar to merge them in one commit, delete them or add them to
+  favorites or archive them together.
+- The filter button on the sidebar's title shows only the branches, remote branches and tags whose names contain the
+  words typed.
+- With the engine, History marks signed commits, the details show the signature and the commit's children, and the
+  HEAD button and Go to Parent / Go to Child move between commits.
 
 #### Changed
 
@@ -771,6 +787,7 @@ First release.
 
 #### Fixed
 
+- With the engine, deleting a branch that isn't merged now offers Delete Anyway instead of only showing git's error.
 - History no longer stays empty when it is opened while the engine's History is still being read; the view's first
   request for rows made the extension think there were none.
 - Pull on a diverged branch asks for Merge or Rebase for this pull when nothing sets how to pull (`pull.rebase`,

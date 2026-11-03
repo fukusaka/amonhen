@@ -1,9 +1,12 @@
 /**
- * メインビュー。Working Copy・History・Reflog のどれかを出す。どれを出すかはサイドバーのナビで選ぶ。
+ * メインビュー。Working Copy・History・Reflog・File History・Blame のどれかを出す。どれを出すかはサイドバーのナビ
+ * （File History・Blame はファイルの右クリック）で選ぶ。
  * どの画面も作っておき、表示だけを切り替えるので、切り替えたときに作り直さない。
  */
 import type { HostMessage, ViewName } from '../view/protocol.ts';
 import { el, getState, post, updateState, type View } from './api.ts';
+import { createBlameView } from './blame.ts';
+import { createFileHistoryView } from './fileHistory.ts';
 import { createHistoryView } from './history.ts';
 import { createReflogView } from './reflog.ts';
 import { createWorkingCopyView } from './workingCopy.ts';
@@ -12,6 +15,8 @@ const views: Record<ViewName, View> = {
   workingCopy: createWorkingCopyView(),
   history: createHistoryView(),
   reflog: createReflogView(),
+  fileHistory: createFileHistoryView(),
+  blame: createBlameView(),
 };
 
 const content = el('div', 'content');

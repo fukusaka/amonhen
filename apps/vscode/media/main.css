@@ -817,3 +817,158 @@ button.secondary {
   opacity: 0.5;
   cursor: default;
 }
+
+/* File History */
+
+.file-history .toolbar .title {
+  font-weight: bold;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-history .toolbar .check {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+.file-history .row.two-line {
+  height: 40px;
+  padding-left: 12px;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 2px;
+}
+
+.file-history .row.two-line > div {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-history .row.two-line .meta {
+  font-size: 0.9em;
+  color: var(--vscode-descriptionForeground);
+}
+
+.file-history .path-head {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  background: var(--vscode-sideBarSectionHeader-background);
+}
+
+.file-history .path-head .dir {
+  font-weight: normal;
+  color: var(--vscode-descriptionForeground);
+}
+
+.file-history .status.error {
+  color: var(--vscode-errorForeground);
+}
+
+/* Blame */
+
+.blame .toolbar .title {
+  font-weight: bold;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.blame .status.error {
+  color: var(--vscode-errorForeground);
+}
+
+.blame-lines {
+  font-family: var(--vscode-editor-font-family);
+  font-size: var(--vscode-editor-font-size);
+}
+
+.blame .row.blame-line {
+  height: 20px;
+  gap: 0;
+  padding-right: 0;
+}
+
+/* 同じコミットのまとまりごとに背景を交互に変える */
+.blame .row.blame-line.odd {
+  background: var(--vscode-editor-inactiveSelectionBackground);
+}
+
+.blame .row.blame-line.selected {
+  background: var(--vscode-editor-selectionHighlightBackground);
+}
+
+.blame .row.blame-line:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.blame .blame-line .info {
+  flex: none;
+  width: 320px;
+  padding: 0 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--vscode-font-family);
+  font-size: 0.9em;
+  color: var(--vscode-disabledForeground);
+}
+
+.blame .blame-line .info.first {
+  color: var(--vscode-descriptionForeground);
+}
+
+.blame .blame-line .number {
+  flex: none;
+  width: 48px;
+  padding-right: 12px;
+  text-align: right;
+  color: var(--vscode-editorLineNumber-foreground);
+}
+
+.blame .blame-line .code {
+  white-space: pre;
+}
+
+/* 署名の印（History の行と詳細） */
+
+.sig {
+  flex: none;
+  margin-right: 4px;
+  font-weight: bold;
+}
+
+.sig.weak {
+  opacity: 0.6;
+}
+
+.sig-good {
+  color: var(--vscode-charts-green);
+}
+
+.sig-warn {
+  color: var(--vscode-charts-yellow);
+}
+
+.sig-old {
+  color: var(--vscode-charts-orange);
+}
+
+.sig-bad {
+  color: var(--vscode-charts-red);
+}
+
+.sig-none {
+  color: var(--vscode-descriptionForeground);
+}

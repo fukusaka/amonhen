@@ -54,6 +54,9 @@ export function registerHistoryCommands(): vscode.Disposable {
     command('amonhen.history.moveDown', (panel, repo, oid) => move(panel, repo, oid, +1)),
     command('amonhen.history.cherryPick', (panel, repo, oid) => applyCommit(panel, repo, oid, 'cherry-pick')),
     command('amonhen.history.revert', (panel, repo, oid) => applyCommit(panel, repo, oid, 'revert')),
+    // 親（最初の親）・子のコミットへ（子がいくつもあれば選ぶ）。エンジンだけ
+    command('amonhen.history.goToParent', (panel, _repo, oid) => panel.goTo('parent', oid)),
+    command('amonhen.history.goToChild', (panel, _repo, oid) => panel.goTo('child', oid)),
     command('amonhen.history.copyId', async (_panel, _repo, oid) => {
       await vscode.env.clipboard.writeText(oid);
       vscode.window.setStatusBarMessage(`$(copy) ${oid.slice(0, 8)}`, 3000);

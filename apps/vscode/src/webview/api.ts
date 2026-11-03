@@ -5,6 +5,8 @@ export interface State {
   view?: ViewName;
   /** History の詳細の幅 */
   detailsWidth?: number;
+  /** File History でマージも出すか */
+  fileHistoryMerges?: boolean;
 }
 
 declare function acquireVsCodeApi(): {
