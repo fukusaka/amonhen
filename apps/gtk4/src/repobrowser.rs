@@ -33,6 +33,9 @@ const SPLIT_KEY: &str = "repositoryPageSplit";
 
 pub type Open = Rc<dyn Fn(PathBuf, crate::tabs::Place)>;
 
+/// 左の一覧のいちばん狭い幅（macOS 版と同じ）。
+const SIDEBAR_MIN: i32 = 200;
+
 /// 左の分類。
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Category {
@@ -889,6 +892,8 @@ impl Browser {
         let left = gtk::Box::new(gtk::Orientation::Vertical, 0);
         left.append(&side_scrolled);
         left.append(&bar);
+        // 左は 200 より狭くしない（macOS 版と同じ）。
+        left.set_size_request(SIDEBAR_MIN, -1);
 
         // 右: 絞り込みと一覧だけ（開くのはダブルクリックと Enter、加えるのは左の ＋ と右クリック）。
         let filter = gtk::SearchEntry::new();
@@ -921,11 +926,11 @@ impl Browser {
         // 左右の境目は覚えておく（macOS 版と同じ）。
         let split = crate::settings::string(SPLIT_KEY)
             .and_then(|s| s.parse::<i32>().ok())
-            .filter(|&p| p >= 120)
-            .unwrap_or(240);
+            .filter(|&p| p >= SIDEBAR_MIN)
+            .unwrap_or(250);
         paned.set_position(split);
         paned.connect_position_notify(|p| {
-            if p.position() >= 120 {
+            if p.position() >= SIDEBAR_MIN {
                 crate::settings::set_string(SPLIT_KEY, &p.position().to_string());
             }
         });
@@ -980,9 +985,9 @@ impl Browser {
     fn build_columns(self: &Rc<Self>) {
         let columns = [
             (Column::Name, "name", tr!("Name"), None),
-            (Column::Branch, "branch", tr!("Branch"), Some(130)),
+            (Column::Branch, "branch", tr!("Branch"), Some(150)),
             (Column::Status, "status", tr!("Status"), Some(100)),
-            (Column::Commit, "commit", tr!("Last Commit"), Some(260)),
+            (Column::Commit, "commit", tr!("Last Commit"), Some(300)),
             (Column::Opened, "opened", tr!("Opened"), Some(100)),
         ];
         let widths: serde_json::Map<String, serde_json::Value> =
