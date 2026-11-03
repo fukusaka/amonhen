@@ -772,6 +772,8 @@ First release.
   words typed.
 - With the engine, History marks signed commits, the details show the signature and the commit's children, and the
   HEAD button and Go to Parent / Go to Child move between commits.
+- With the engine, History shows a shallow clone's boundary and a band to fetch more or all of its history, and a
+  partial clone's label fetches all its contents.
 
 #### Changed
 

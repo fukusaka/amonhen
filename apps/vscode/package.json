@@ -338,6 +338,21 @@
         "category": "Amon Hen"
       },
       {
+        "command": "amonhen.fetchMoreHistory",
+        "title": "Fetch More History…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.fetchAllHistory",
+        "title": "Fetch All History",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.fetchAllContents",
+        "title": "Fetch All Contents…",
+        "category": "Amon Hen"
+      },
+      {
         "command": "amonhen.skipSequence",
         "title": "Skip",
         "category": "Amon Hen",
@@ -1082,6 +1097,18 @@
         },
         {
           "command": "amonhen.blame",
+          "when": "amonhen.hasRepository && amonhen.engine"
+        },
+        {
+          "command": "amonhen.fetchMoreHistory",
+          "when": "amonhen.hasRepository && amonhen.engine"
+        },
+        {
+          "command": "amonhen.fetchAllHistory",
+          "when": "amonhen.hasRepository && amonhen.engine"
+        },
+        {
+          "command": "amonhen.fetchAllContents",
           "when": "amonhen.hasRepository && amonhen.engine"
         },
         {

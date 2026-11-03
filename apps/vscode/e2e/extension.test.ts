@@ -811,6 +811,40 @@ async function historySignatureFlow(): Promise<void> {
   }
 }
 
+/**
+ * shallow で partial な clone を開くと、History に Shallow・Partial の札と境目の印、最後に取り足す帯が出る。
+ * Fetch More History で取り足すと、shallow でなくなる。コアの命令（daemon だけ）
+ */
+async function shallowFlow(): Promise<void> {
+  const manager = api.manager;
+  const main = manager.current!;
+  const origin = git('remote', 'get-url', 'origin').trim();
+  const clone = join(dirname(root), 'shallow-e2e');
+  await showView('amonhen.showHistory');
+  try {
+    childProcess.execFileSync('git', ['-C', origin, 'config', 'uploadpack.allowFilter', 'true']);
+    childProcess.execFileSync('git', ['clone', '-q', '--depth', '1', '--filter=blob:none', `file://${origin.replaceAll('\\', '/')}`, clone]);
+    const repo = (await manager.openPath(clone))!;
+    let mark = posted.length;
+    manager.select(repo);
+    const form = await waitPosted('form', mark, (m) => m.shallow);
+    assert.equal(form.boundary.length, 1, 'the one commit fetched is the boundary');
+    assert.equal(form.partial?.filter, 'blob:none');
+
+    mark = posted.length;
+    await withWindow({ showQuickPick: async (items: readonly vscode.QuickPickItem[]) => items[0] }, async () =>
+      vscode.commands.executeCommand('amonhen.fetchMoreHistory'),
+    );
+    assert.equal(childProcess.execFileSync('git', ['-C', clone, 'rev-parse', '--is-shallow-repository'], { encoding: 'utf8' }).trim(), 'false');
+    await waitPosted('form', mark, (m) => !m.shallow && m.boundary.length === 0);
+  } finally {
+    manager.select(main);
+    manager.forget(clone);
+    rmSync(clone, { recursive: true, force: true });
+    childProcess.execFileSync('git', ['-C', origin, 'config', '--unset', 'uploadpack.allowFilter']);
+  }
+}
+
 /** showInputBox の代わり。呼ばれるたびに values を順に返す */
 function inputs(...values: string[]): () => Promise<string | undefined> {
   let i = 0;
@@ -1554,6 +1588,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('marks signed commits in History and goes to HEAD, a parent and a child through the daemon', async () => {
     await historySignatureFlow();
+  });
+
+  test('shows a shallow partial clone in History and fetches more of it through the daemon', async () => {
+    await shallowFlow();
   });
 
   test('drops the selection of a file whose changes went away before its diff is read', async () => {

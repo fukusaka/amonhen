@@ -49,7 +49,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | Submodules のグループ（Update・新しい窓で開く） | ✓ | ✓ | ✓ | ✓ | CLI: `submodule`・`submodule update`。 |
 | submodule の印（取り出していない・違うコミット・中の変更・コンフリクト）とメニュー: Update…（中の submodule も・追うブランチの最新）・URL の編集・追うブランチ・外す（.git/modules も消せる）・追加・Sync URLs | ✓ | ✓ | — | ✓ | CLI: `submodule`（`add`・`remove`・`set-url`・`set-branch`・`sync`）。 |
 | Working Copy の下の worktree と変更の数（✎ ⌂ ⑂） | ✓ | ✓ | ✓ | △ | VSCode: 印は行のアイコン。ほかの worktree が checkout しているブランチには ⌂ か ⑂ が付く。<br>CLI: `worktree list --changes`。 |
-| shallow clone・partial clone（History）と sparse checkout（Working Copy）の印 | ✓ | ✓ | — | n/a |  |
+| shallow clone・partial clone（History）と sparse checkout（Working Copy）の印 | ✓ | ✓ | △ | n/a | VSCode: History の上の Shallow・Partial（Partial は押すと中身をすべて取る）。sparse の印はない。 |
 
 ## 1. タブと窓
 
@@ -132,8 +132,8 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | Keys and Values（git config の表、Basic / Customized / All、Combined / Levels） | ✓ | ✓ | — | △ | CLI: `amonhen run`（`configList`・`configSet`）から。 |
 | 要る git の版を添えて行を無効にする | ✓ | ✓ | — | n/a |  |
 | git の行にリポジトリの形（shallow・partial・sparse・maintenance） | ✓ | ✓ | — | △ | CLI: `status` が shallow・partial・sparse を添える。 |
-| 取得とフォルダ: shallow clone の履歴を取り足す（数・日付まで・すべて） | ✓ | ✓ | — | △ | CLI: `amonhen run`（`deepen`・`unshallow`）から。 |
-| 取得とフォルダ: partial clone の中身をすべて取る（git 2.36） | ✓ | ✓ | — | △ | CLI: `amonhen run`（`fetchAllContents`）から。 |
+| 取得とフォルダ: shallow clone の履歴を取り足す（数・日付まで・すべて） | ✓ | ✓ | △ | △ | VSCode: コマンドパレットと History の帯の Fetch More History…・Fetch All History。設定のページはない。<br>CLI: `amonhen run`（`deepen`・`unshallow`）から。 |
+| 取得とフォルダ: partial clone の中身をすべて取る（git 2.36） | ✓ | ✓ | △ | △ | VSCode: コマンドパレットと History の Partial の札の Fetch All Contents…。設定のページはない。<br>CLI: `amonhen run`（`fetchAllContents`）から。 |
 | 取得とフォルダ: sparse checkout のフォルダを HEAD の木から選ぶ（git 2.25） | ✓ | ✓ | — | △ | CLI: `amonhen run`（`sparseCheckout`・`treeFolders`）から。 |
 | 取得とフォルダ: git maintenance の切り替え（git 2.31） | ✓ | ✓ | — | △ | CLI: `amonhen run`（`maintenance`）から。 |
 
@@ -239,7 +239,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | 近道: Edit Message…・Combine with Older…・Drop…・Combine N…・コミットのドラッグ | ✓ | ✓ | △ | △ | VSCode: Combine N Commits はない。<br>CLI: `amonhen run` から。 |
 | コミットを分ける | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | 編集でマージを保つ（`--rebase-merges`） | ✓ | ✓ | — | △ | VSCode: 最初のマージで止まる。<br>CLI: `amonhen run` から。 |
-| shallow clone: 終わりの帯で取り足す、境界のコミットの印 | ✓ | ✓ | — | △ | CLI: `log` が履歴の止まる所を添える。取り足すのは `amonhen run` から。 |
+| shallow clone: 終わりの帯で取り足す、境界のコミットの印 | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。<br>CLI: `log` が履歴の止まる所を添える。取り足すのは `amonhen run` から。 |
 
 ## 7. History の右の列
 

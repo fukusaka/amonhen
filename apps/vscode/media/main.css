@@ -972,3 +972,38 @@ button.secondary {
 .sig-none {
   color: var(--vscode-descriptionForeground);
 }
+
+/* shallow clone の帯と境目、リポジトリの形の札 */
+
+.shallow-band {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  color: var(--vscode-descriptionForeground);
+  border-top: 1px dashed var(--vscode-panel-border);
+}
+
+.boundary {
+  flex: none;
+  margin-right: 4px;
+  color: var(--vscode-charts-orange);
+}
+
+.toolbar .chip {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 8px;
+  font-size: 0.85em;
+  color: var(--vscode-badge-foreground);
+  background: var(--vscode-badge-background);
+  border: none;
+}
+
+.toolbar button.chip {
+  cursor: pointer;
+}

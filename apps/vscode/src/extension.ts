@@ -9,6 +9,7 @@ import { registerRangeDiffCommands } from './ui/rangeDiff.ts';
 import { SidebarDragAndDrop } from './ui/dragDrop.ts';
 import { registerFetchCommand } from './ui/fetchCommand.ts';
 import { registerFileToolCommands } from './ui/fileToolCommands.ts';
+import { registerFormCommands } from './ui/formCommands.ts';
 import { registerHistoryCommands } from './ui/historyCommands.ts';
 import { MainPanel } from './ui/mainPanel.ts';
 import { registerMergeBranchesCommand } from './ui/mergeBranches.ts';
@@ -106,6 +107,7 @@ export async function activate(
     registerTagCommands(manager, sidebar),
     registerWorktreeCommands(manager, sidebar),
     registerBranchArrangeCommands(manager, sidebar),
+    registerFormCommands(manager),
     registerFileToolCommands(manager, (target) => show(target)),
     // エンジンを使えるときだけ出すもの（Reflog・Reset、タグとリモートのメニュー、worktree）
     vscode.workspace.onDidChangeConfiguration((e) => e.affectsConfiguration('amonhen.daemon') && void updateEngine()),

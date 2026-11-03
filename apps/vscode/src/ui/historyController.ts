@@ -54,6 +54,8 @@ interface DaemonHistory {
   client: DaemonClient;
   history: unknown;
   rows: number;
+  /** shallow clone の History なら、境目のコミットの行 */
+  boundary?: number[];
 }
 
 /** 昇順の `rows` で、`row` 以上の最初の位置（なければ最後） */
@@ -265,6 +267,11 @@ export class HistoryController implements vscode.Disposable {
       case 'goTo':
         await this.goTo(message.to, message.oid).catch(showError);
         break;
+      case 'fetchForm': {
+        const command = { more: 'amonhen.fetchMoreHistory', all: 'amonhen.fetchAllHistory', contents: 'amonhen.fetchAllContents' };
+        await vscode.commands.executeCommand(command[message.what]);
+        break;
+      }
     }
   }
 
@@ -291,6 +298,16 @@ export class HistoryController implements vscode.Disposable {
     if (target && !(await this.reveal(target))) {
       void vscode.window.showInformationMessage(`${target.slice(0, 8)} isn’t in History`);
     }
+  }
+
+  /** リポジトリの形（shallow の境目・partial clone）を送る */
+  private async sendForm(daemon: DaemonHistory, generation: number): Promise<void> {
+    const reply = (await daemon.client.call({ op: 'run', command: { op: 'repositoryForm' } })).json;
+    if (generation !== this.generation || reply['ok'] !== true) return;
+    const partial = (reply['info'] as { partial?: { remote: string; filter: string } | null } | undefined)?.partial;
+    // 一致だけの History（検索）のときは、帯も境目も出さない
+    const shallow = daemon.boundary !== undefined && !this.base;
+    this.post({ type: 'form', shallow, boundary: shallow ? daemon.boundary! : [], ...(partial ? { partial } : {}) });
   }
 
   /** 行の署名を確かめて印を送る（一度確かめたものは覚えている。コアも覚えている） */
@@ -537,6 +554,7 @@ export class HistoryController implements vscode.Disposable {
       return;
     }
     this.post({ type: 'searchable', searchable: this.daemon !== undefined });
+    if (this.daemon) void this.sendForm(this.daemon, generation).catch(() => undefined);
     this.opening = false;
     await this.loadMore();
     // 探していたら（途中でも）、新しい History で探し直す
@@ -687,7 +705,8 @@ export class HistoryController implements vscode.Disposable {
       tips = [String(resolved.json['text'])];
     }
     const history = await client.call(tips ? { op: 'history', tips } : { op: 'history' });
-    return { client, history: history.json['history'], rows: Number(history.json['rows']) };
+    const boundary = history.json['shallow'] === true ? ((history.json['boundaryRows'] as number[] | undefined) ?? []) : undefined;
+    return { client, history: history.json['history'], rows: Number(history.json['rows']), ...(boundary ? { boundary } : {}) };
   }
 
   /**
