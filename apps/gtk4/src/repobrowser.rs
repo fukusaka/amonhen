@@ -2136,7 +2136,12 @@ impl Browser {
         items.push(menu::action("Clone…", move || b.clone_repository()));
         let b = self.clone();
         items.push(menu::action(tr!("SSH Connection…"), move || {
-            b.add_remote(None)
+            // ホストを選んでいれば、そのホストに決めて開く（macOS 版の ＋ と同じ）。
+            let host = match &*b.category.borrow() {
+                Category::Host(h) => Some(h.clone()),
+                _ => None,
+            };
+            b.add_remote(host.as_deref())
         }));
         items.push(Item::Separator);
         let b = self.clone();
@@ -2234,14 +2239,9 @@ impl Browser {
     /// SSH 先のリポジトリを加えて開く。`host` があれば、そのホストの場所を最初に入れておく。Choose… で、
     /// そのホストのフォルダを列で見て選べる。
     fn add_remote(self: &Rc<Self>, host: Option<&str>) {
-        // ホストの行から（右クリック・ホストを選んでいるときの ＋）なら、接続先は決まっている。ホストの下の
-        // フォルダを選んでいるときは決めない（macOS 版と同じ）。
-        let fixed = host
-            .map(str::to_owned)
-            .or_else(|| match &*self.category.borrow() {
-                Category::Host(h) => Some(h.clone()),
-                _ => None,
-            });
+        // ホストの行から（右クリック・ホストを選んでいるときの ＋）なら、接続先は決まっている。場所の見出しの
+        // 「SSH 接続を追加…」やホストの下のフォルダを選んでいるときは決めない（macOS 版と同じ）。
+        let fixed = host.map(str::to_owned);
         let b = self.clone();
         glib::spawn_future_local(async move {
             let Some((host, path)) = ssh_connection_sheet(&b.window(), fixed).await else {
