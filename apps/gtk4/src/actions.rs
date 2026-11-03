@@ -632,6 +632,8 @@ impl Actions {
             .resizable(false)
             .default_width(380)
             .build();
+        // 見出しの帯は出さない（macOS 版のシートの形。題は中の見出しだけ）。
+        dialog.set_titlebar(Some(&gtk::Box::new(gtk::Orientation::Horizontal, 0)));
         dialog.set_transient_for(parent.as_ref());
         let heading = gtk::Label::new(Some(title));
         heading.add_css_class("title-4");
@@ -675,6 +677,20 @@ impl Actions {
             let _ = tx.try_send(false);
             glib::Propagation::Proceed
         });
+        // Esc で取りやめる（macOS 版のシートと同じ）。
+        let keys = gtk::EventControllerKey::new();
+        keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let w = dialog.downgrade();
+        keys.connect_key_pressed(move |_, key, _, _| {
+            if key == gtk::gdk::Key::Escape
+                && let Some(w) = w.upgrade()
+            {
+                w.close();
+                return glib::Propagation::Stop;
+            }
+            glib::Propagation::Proceed
+        });
+        dialog.add_controller(keys);
         dialog.present();
         focus.grab_focus();
         let answer = rx.recv().await.unwrap_or(false);
