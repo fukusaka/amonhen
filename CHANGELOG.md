@@ -173,6 +173,8 @@ becomes the GitHub Release notes.
   selecting another worktree, Save wrote its Result over the same file there.
 - The GTK4 app's Working Copy keeps Amend and the file filter per worktree; Amend ticked in one worktree stayed on in
   another, so Commit amended that worktree's last commit.
+- The GTK4 app's Working Copy keeps each commit, push, discard and stage in the worktree it started in: Commit and
+  Push could push another worktree selected during the commit, and Discard could act on the old list's file there.
 - Activity no longer says “daemon” twice for a repository opened through the shared daemon, nor “(daemon)” for an
   SSH host connected directly.
 - Saving patches no longer fails with “No such file or directory” when another save runs at the same time in the same

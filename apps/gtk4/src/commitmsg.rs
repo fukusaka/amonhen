@@ -36,6 +36,24 @@ pub fn flush_all() {
     }
 }
 
+/// `repo` の下書きを覚える鍵（worktree ごと）。
+fn draft_key_of(repo: &Repository) -> String {
+    draft_key_for(repo.paths().workdir.as_deref())
+}
+
+fn draft_key_for(workdir: Option<&std::path::Path>) -> String {
+    let place = workdir.map_or_else(|| "remote".to_owned(), |p| p.display().to_string());
+    // KeyFile の鍵に使えない文字を避けるため、16 進にする。
+    let hex: String = place.bytes().map(|b| format!("{b:02x}")).collect();
+    format!("commitDraft.{hex}")
+}
+
+/// 下書きとして覚える中身（どちらも空なら None。鍵ごと消す）。
+fn draft_value(subject: &str, body: &str) -> Option<String> {
+    (!(subject.trim().is_empty() && body.trim().is_empty()))
+        .then(|| json!([subject, body]).to_string())
+}
+
 const TYPES: [&str; 11] = [
     "feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "ci", "chore", "revert",
 ];
@@ -165,13 +183,45 @@ impl MessageAids {
     /// 下書きを覚える鍵（リポジトリごと）。
     fn draft_key(&self) -> Option<String> {
         let repo = self.repo.borrow().clone()?;
-        let place = repo
-            .paths()
-            .workdir
-            .map_or_else(|| "remote".to_owned(), |p| p.display().to_string());
-        // KeyFile の鍵に使えない文字を避けるため、16 進にする。
-        let hex: String = place.bytes().map(|b| format!("{b:02x}")).collect();
-        Some(format!("commitDraft.{hex}"))
+        Some(draft_key_of(&repo))
+    }
+
+    /// 今の入力欄が `repo` の worktree のものか。
+    fn is_on(&self, repo: &Repository) -> bool {
+        self.draft_key().as_deref() == Some(draft_key_of(repo).as_str())
+    }
+
+    /// `repo` の下書きを消す（コミットしている間に、ほかの worktree に替えていたとき。替えたときに預けた
+    /// メッセージは、いまコミットしたもの）。
+    pub fn clear_draft_of(&self, repo: &Repository) {
+        let key = draft_key_of(repo);
+        if self
+            .unsaved_draft
+            .borrow()
+            .as_ref()
+            .is_some_and(|(k, _)| *k == key)
+        {
+            self.unsaved_draft.replace(None);
+        }
+        crate::settings::remove(&key);
+    }
+
+    /// `repo` の下書きを `subject`・`body` にする（AI の提案を、頼んだ worktree に入れる。いまは別の worktree を
+    /// 出しているので、戻ったときに入る）。
+    pub fn store_draft_of(&self, repo: &Repository, subject: &str, body: &str) {
+        let key = draft_key_of(repo);
+        if self
+            .unsaved_draft
+            .borrow()
+            .as_ref()
+            .is_some_and(|(k, _)| *k == key)
+        {
+            self.unsaved_draft.replace(None);
+        }
+        match draft_value(subject, body) {
+            Some(value) => crate::settings::set_string(&key, &value),
+            None => crate::settings::remove(&key),
+        }
     }
 
     fn texts(&self) -> (String, String) {
@@ -205,11 +255,7 @@ impl MessageAids {
         }
         let Some(key) = self.draft_key() else { return };
         let (subject, body) = self.texts();
-        let value = if subject.trim().is_empty() && body.trim().is_empty() {
-            String::new()
-        } else {
-            json!([subject, body]).to_string()
-        };
+        let value = draft_value(&subject, &body).unwrap_or_default();
         let waiting = self.unsaved_draft.replace(Some((key, value))).is_some();
         if waiting {
             return;
@@ -273,6 +319,7 @@ impl MessageAids {
         }
         // 最近のコミット 30 個のメッセージと作者（一覧と Co-authored-by の候補）。
         let w = Rc::downgrade(self);
+        let source = repo.clone();
         glib::spawn_future_local(async move {
             let recent = gio::spawn_blocking(move || {
                 let Some(history) = repo.history() else {
@@ -295,7 +342,8 @@ impl MessageAids {
             })
             .await
             .unwrap_or_default();
-            if let Some(this) = w.upgrade() {
+            // 読む間にほかの worktree に替えていたら捨てる（その worktree の分が別に届く）。
+            if let Some(this) = w.upgrade().filter(|t| t.is_on(&source)) {
                 this.recent.replace(recent);
             }
         });
@@ -357,6 +405,10 @@ impl MessageAids {
             let (Some(this), Some(text)) = (w.upgrade(), text) else {
                 return;
             };
+            // 読む間にほかの worktree に替えていたら入れない（その worktree の下書きかテンプレートが入っている）。
+            if !this.is_on(&repo) {
+                return;
+            }
             let (subject, body) = this.texts();
             if !subject.is_empty() || !body.is_empty() {
                 return;
@@ -653,5 +705,29 @@ impl MessageAids {
 impl Drop for MessageAids {
     fn drop(&mut self) {
         self.flush_draft();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drafts_are_kept_per_worktree() {
+        let a = draft_key_for(Some(std::path::Path::new("/r/a")));
+        let b = draft_key_for(Some(std::path::Path::new("/r/b")));
+        assert_ne!(a, b);
+        assert_eq!(a, format!("commitDraft.{}", "2f722f61"));
+        assert_eq!(draft_key_for(None), "commitDraft.72656d6f7465");
+        // 日本語のパスも KeyFile に使える文字だけに。
+        let ja = draft_key_for(Some(std::path::Path::new("/作業")));
+        assert!(ja.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.'));
+    }
+
+    #[test]
+    fn empty_drafts_are_forgotten() {
+        assert_eq!(draft_value("", " \n"), None);
+        assert_eq!(draft_value("Fix", "").as_deref(), Some(r#"["Fix",""]"#));
+        assert_eq!(draft_value("", "本文").as_deref(), Some(r#"["","本文"]"#));
     }
 }

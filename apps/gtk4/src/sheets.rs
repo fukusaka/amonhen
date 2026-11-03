@@ -1895,7 +1895,16 @@ pub fn confirm_then(
     destructive: bool,
     commands: Vec<Value>,
 ) {
-    confirm_sheet(actions, true, title, message, ok, destructive, commands);
+    confirm_sheet(
+        actions,
+        None,
+        true,
+        title,
+        message,
+        ok,
+        destructive,
+        commands,
+    );
 }
 
 /// [`confirm_then`] と同じで、worktree の名前を書かない（作業ツリーによらない ref・リモートの操作: タグ、
@@ -1908,11 +1917,45 @@ pub fn confirm_ref_then(
     destructive: bool,
     commands: Vec<Value>,
 ) {
-    confirm_sheet(actions, false, title, message, ok, destructive, commands);
+    confirm_sheet(
+        actions,
+        None,
+        false,
+        title,
+        message,
+        ok,
+        destructive,
+        commands,
+    );
 }
 
+/// [`confirm_ref_then`] と同じで、書き込む先の worktree ではなく `repo` で実行する（Working Copy で選んだ
+/// ファイルを捨てる。確かめている間に書き込む先を替えても、そのファイルの worktree に効かせる）。
+pub fn confirm_ref_in(
+    actions: &Rc<Actions>,
+    repo: Arc<Repository>,
+    title: String,
+    message: String,
+    ok: String,
+    destructive: bool,
+    commands: Vec<Value>,
+) {
+    confirm_sheet(
+        actions,
+        Some(repo),
+        false,
+        title,
+        message,
+        ok,
+        destructive,
+        commands,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
 fn confirm_sheet(
     actions: &Rc<Actions>,
+    repo: Option<Arc<Repository>>,
     named: bool,
     title: String,
     message: String,
@@ -1930,7 +1973,10 @@ fn confirm_sheet(
         };
         sheet.buttons(&ok, destructive, None);
         if sheet.run().await == Response::Ok {
-            actions.perform_sequence(commands);
+            match repo {
+                Some(repo) => actions.perform_in(repo, commands, |_| {}),
+                None => actions.perform_sequence(commands),
+            }
         }
     });
 }
@@ -2283,10 +2329,11 @@ fn integrate_sheet(
 
 /// Commit and Push のあとの push: 上流があって先に進んでいなければ、聞かずに送る。上流がない・上流が先に
 /// 進んでいるときは Push のシート（docs/ux.md の「Toolbar」）。
-pub fn push_after_commit(actions: &Rc<Actions>) {
+/// `repo` はコミットしたリポジトリ。コミットしている間に書き込む先の worktree を替えていても、そこを送る（macOS 版は
+/// worktree ごとの `Actions` で送る）。Push のシートは書き込む先に向くので、替えていたら出さない。
+pub fn push_after_commit(actions: &Rc<Actions>, repo: Arc<Repository>) {
     let actions = actions.clone();
     glib::spawn_future_local(async move {
-        let Some(repo) = actions.repo() else { return };
         let Some(state) = sync_state(&actions, &repo, None).await else {
             return;
         };
@@ -2295,12 +2342,22 @@ pub fn push_after_commit(actions: &Rc<Actions>) {
                 let Some((remote, remote_branch)) = upstream.split_once('/') else {
                     return;
                 };
-                actions.perform(json!({
-                    "op": "push", "remote": remote, "branch": branch, "remoteBranch": remote_branch,
-                    "force": false, "setUpstream": false,
-                }));
+                actions.perform_in(
+                    repo,
+                    vec![json!({
+                        "op": "push", "remote": remote, "branch": branch,
+                        "remoteBranch": remote_branch, "force": false, "setUpstream": false,
+                    })],
+                    |_| {},
+                );
             }
-            _ => push(&actions, None, false, None),
+            _ if actions
+                .repo()
+                .is_some_and(|r| r.paths().workdir == repo.paths().workdir) =>
+            {
+                push(&actions, None, false, None)
+            }
+            _ => {}
         }
     });
 }

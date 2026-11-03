@@ -578,8 +578,8 @@ fn handlers() -> Vec<(&'static str, Handler)> {
             "commit-and-push",
             Box::new(|p| {
                 let actions = p.actions.clone();
-                p.working.commit_from_menu(Some(Box::new(move || {
-                    crate::sheets::push_after_commit(&actions)
+                p.working.commit_from_menu(Some(Box::new(move |repo| {
+                    crate::sheets::push_after_commit(&actions, repo)
                 })));
             }),
         ),

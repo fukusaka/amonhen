@@ -391,6 +391,17 @@ impl Actions {
         let Some(repo) = self.repo.borrow().clone() else {
             return;
         };
+        self.perform_work_in(repo, heading, work);
+    }
+
+    /// [`Self::perform_work_titled`] と同じで、書き込む先の worktree ではなく `repo` で行う（Working Copy の
+    /// 操作を、始めたときの worktree に効かせる）。
+    pub fn perform_work_in(
+        self: &Rc<Self>,
+        repo: Arc<Repository>,
+        heading: Option<String>,
+        work: impl FnOnce(&Repository) -> amonhen_model::Result<()> + Send + 'static,
+    ) {
         let this = self.clone();
         crate::activity::begin();
         glib::spawn_future_local(async move {
