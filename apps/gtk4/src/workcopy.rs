@@ -2845,11 +2845,17 @@ impl Inner {
         let unsaved = this.unsaved_editor(&path).is_some();
         // 片側のファイルを取る。別の窓で開いていれば閉じる（Result は捨てると確かめてある・変えていない）。
         let workdir = repo.paths().workdir;
+        // 選んだときの worktree で取る（調べている間に書き込む先を替えても、ほかの worktree の同じパスの
+        // ファイルを置き換えない。macOS 版は worktree ごとに `Actions` がある）。
         let take = {
-            let actions = actions.clone();
+            let (actions, repo) = (actions.clone(), repo.clone());
             move |path: &str| {
                 crate::merge::discard_window(workdir.as_deref(), path);
-                actions.perform(json!({ "op": "takeSide", "path": path, "ours": ours }));
+                actions.perform_in(
+                    repo.clone(),
+                    vec![json!({ "op": "takeSide", "path": path, "ours": ours })],
+                    |_| {},
+                );
             }
         };
         glib::spawn_future_local(async move {
@@ -2914,12 +2920,11 @@ impl Inner {
             crate::merge::Editor::save_and_resolve(&editor);
             return;
         }
-        let weak = Rc::downgrade(this);
         glib::spawn_future_local(async move {
-            let p = path.clone();
+            let (p, r) = (path.clone(), repo.clone());
             let reply: Value = gio::spawn_blocking(move || {
                 let command = json!({ "op": "conflictCount", "path": p });
-                serde_json::from_str(&repo.run_json(&command.to_string())).unwrap_or_default()
+                serde_json::from_str(&r.run_json(&command.to_string())).unwrap_or_default()
             })
             .await
             .unwrap_or_default();
@@ -2939,9 +2944,9 @@ impl Inner {
             {
                 return;
             }
-            if let Some(this) = weak.upgrade() {
-                Inner::perform(&this, move |repo| repo.stage(&[&path]));
-            }
+            // 数えた worktree で解決済みにする（数えている間に書き込む先を替えても、ほかの worktree の同じパスの
+            // ファイルを index に入れない）。
+            actions.perform_work_in(repo, None, move |repo| repo.stage(&[&path]));
         });
     }
 
