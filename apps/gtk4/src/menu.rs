@@ -413,6 +413,12 @@ pub fn tooltips_on_show(button: &gtk::MenuButton) {
     let (Some(popover), Some(model)) = (button.popover(), button.menu_model()) else {
         return;
     };
+    popover_tooltips_on_show(&popover, &model);
+}
+
+/// [`tooltips_on_show`] と同じ。ボタンなしで出す `popover`（中身は `model`）に。
+pub fn popover_tooltips_on_show(popover: &impl IsA<gtk::Widget>, model: &gio::MenuModel) {
+    let model = model.clone();
     popover.connect_map(move |p| {
         let p = p.clone().upcast::<gtk::Widget>();
         let model = model.clone();

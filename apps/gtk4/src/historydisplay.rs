@@ -318,6 +318,8 @@ pub fn header(view: &HistoryView) -> gtk::Widget {
         let model = gio::Menu::new();
         append_sections(&model);
         let popover = gtk::PopoverMenu::from_model(Some(&model));
+        // 項目のツールチップは、バーのボタンのメニューと同じ（macOS 版は同じ `displayMenu()`）。
+        menu::popover_tooltips_on_show(&popover, model.upcast_ref());
         popover.set_has_arrow(false);
         popover.set_halign(gtk::Align::Start);
         popover.set_parent(&area);
