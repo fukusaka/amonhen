@@ -235,8 +235,20 @@ fn shown(path: &str, home: Option<&str>) -> String {
     }
 }
 
+/// 根で始まるパスか（`/`、`C:\`・`C:/`・`C:`、`\\server\share`。`~/x` や相対パスは違う。macOS 版の
+/// `HostPath.isAbsolute`）。
 fn is_absolute(path: &str) -> bool {
-    path.starts_with('/') || path.starts_with('~') || is_windows(path)
+    if path.starts_with('/') {
+        return true;
+    }
+    if let Some(unc) = path.strip_prefix("\\\\") {
+        return unc.split(['\\', '/']).filter(|p| !p.is_empty()).count() >= 2;
+    }
+    let b = path.as_bytes();
+    b.len() >= 2
+        && b[0].is_ascii_alphabetic()
+        && b[1] == b':'
+        && matches!(b.get(2), None | Some(b'\\' | b'/'))
 }
 
 // 読む
@@ -1912,6 +1924,19 @@ fn host_candidates() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn typed_paths_must_start_at_a_root() {
+        assert!(is_absolute("/usr/bin/git"));
+        assert!(is_absolute("C:\\Program Files"));
+        assert!(is_absolute("C:/x"));
+        assert!(is_absolute("C:"));
+        assert!(is_absolute("\\\\server\\share"));
+        assert!(!is_absolute("\\\\server"));
+        assert!(!is_absolute("~/bin/git"));
+        assert!(!is_absolute("bin/git"));
+        assert!(!is_absolute("C:x"));
+    }
 
     #[test]
     fn completes_a_host_from_the_first_candidate() {
