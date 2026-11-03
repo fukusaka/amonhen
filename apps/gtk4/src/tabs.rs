@@ -1316,6 +1316,7 @@ pub fn reopen(tab: &Rc<Tab>, location: PathBuf, page: Option<crate::sidebar::Pag
     let position = host.position(tab).map(|n| n as u32 + 1);
     open_in(&app, &host, location, position, page);
     // 開き直したタブに替えるだけなので聞かない（macOS 版も、つなぎ直すタブは閉じてよいかを聞かずに替える）。
+    // ほかのリポジトリに切り替える [`switch`] は、先に確かめてある。
     tab.discard_confirmed.set(true);
     close_tab(tab);
 }
@@ -1331,9 +1332,23 @@ pub fn retry(tab: &Rc<Tab>, location: PathBuf, page: Option<crate::sidebar::Page
 /// もうどこかのタブで開いていれば、そのタブを前に出す（`tab` は残す。macOS 版と同じ）。追加した worktree で
 /// メインのリポジトリのタブがあれば、それを前に出してその worktree を書き込む先にする（`open` と同じ）。
 pub fn switch(tab: &Rc<Tab>, location: PathBuf) {
-    if !bring_forward(&location) {
-        reopen(tab, location, None);
+    if bring_forward(&location) {
+        return;
     }
+    // `tab` を閉じて替えるので、マージエディタの Result を保存していなければ先に確かめる（閉じる・終えるときと
+    // 同じ。[`reopen`] は聞かずに閉じる）。
+    if tab.has_unsaved()
+        && let Some(window) = tab.window()
+    {
+        let tab = tab.clone();
+        glib::spawn_future_local(async move {
+            if crate::merge::confirm_discarding(&window).await {
+                reopen(&tab, location, None);
+            }
+        });
+        return;
+    }
+    reopen(tab, location, None);
 }
 
 /// 最後に前にあったリポジトリの窓（なければ最初の窓）。

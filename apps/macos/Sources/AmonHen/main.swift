@@ -439,7 +439,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.onOpenRepository = { [weak self] path in self?.open(path: path) }
         // ツールバーのリポジトリ名から開く一覧: 選んだものにこのタブを切り替える（⌘ なら新しいウィンドウ）。
         window.onSwitchRepository = { [weak self, weak window] path, mode in
-            self?.open(path: path, inNewWindow: mode == .newWindow, replacing: mode == .here ? window?.window : nil)
+            guard let self else { return }
+            guard mode == .here, let window else {
+                self.open(path: path, inNewWindow: mode == .newWindow)
+                return
+            }
+            // このタブを替えると閉じるので、保存していない Result があれば先に確かめる（`close()` は
+            // windowShouldClose を通らない。閉じる・終えるときと同じ）。
+            guard window.hasUnsavedMergeEdits, !window.discardConfirmed else {
+                self.open(path: path, replacing: window.window)
+                return
+            }
+            Task { @MainActor in
+                guard await MergeEditorWindowController.confirmDiscarding(in: window.window) else { return }
+                window.discardConfirmed = true
+                self.open(path: path, replacing: window.window)
+                // 開いているタブに移っただけ・開けなかった（このタブは残る）: 次に閉じるときはまた確かめる。
+                if self.windows.contains(where: { $0 === window }) { window.discardConfirmed = false }
+            }
         }
         window.onShowRepositories = { [weak self] in self?.showHome() }
         window.onReconnect = { [weak self, weak window] in
