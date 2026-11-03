@@ -1473,7 +1473,7 @@
 "Applies to every repository on %@ (its ~/.gitconfig). git in a terminal there follows these too." = "%@ のすべてのリポジトリに効きます（そこの ~/.gitconfig）。そこの端末の git も同じ設定に従います。";
 "The engine on %@ runs the git on its PATH." = "%@ のエンジンは、その PATH の git を使います。";
 "The git on %@ runs this repository. Every repository on that host uses it. See it in Settings > SSH Hosts." = "%@ の git がこのリポジトリを動かしています。その SSH 先のすべてのリポジトリが同じものを使います。Settings > SSH ホストで見られます。";
-"chosen in Settings > SSH Hosts" = "Settings > SSH ホストで選択";
+"chosen in Settings > SSH Hosts" = "設定 > SSH ホストで選択";
 "Environment Variables" = "環境変数";
 "Use the login shell’s environment variables" = "ログインシェルの環境変数を使う";
 "Reads the PATH, SSH agent and GIT_* that an app opened from the Finder lacks, for git and ssh." = "Finder から開いたアプリにない PATH・SSH の agent・GIT_* をシェルから読み、git と ssh に渡します。";
