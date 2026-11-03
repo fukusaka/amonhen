@@ -16,17 +16,21 @@ enum RemoteSheet {
             guard let window, let sheet else { return }
             window.endSheet(sheet)
         }
+        model.sheet = sheet
         window.beginSheet(sheet)
     }
 
-    /// リモートを消す前の確認。設定のページ、サイドバー、シートのどこから消しても同じ文言と同じボタン。
-    static func confirmRemove(_ name: String) -> Bool {
+    /// リモートを消す前の確認。設定のページ、サイドバー、シートのどこから消しても同じ文言と同じボタン。`window` の
+    /// シートで聞く（アプリ全体を止めない）。
+    @MainActor
+    static func confirmRemove(_ name: String, in window: NSWindow?) async -> Bool {
         let alert = NSAlert()
         alert.messageText = L("Remove %@?", name)
         alert.informativeText = L("This removes the remote’s settings and its remote-tracking branches (%@/…). The remote repository isn’t touched.", name)
         alert.addButton(withTitle: L("Delete"))
         alert.addButton(withTitle: L("Cancel"))
-        return alert.runModal() == .alertFirstButtonReturn
+        guard let window else { return alert.runModal() == .alertFirstButtonReturn }
+        return await alert.beginSheetModal(for: window) == .alertFirstButtonReturn
     }
 
     /// URL の先が何か: GitHub・GitLab などのサービス、パス、SSH 先、それ以外はホスト名。
@@ -60,6 +64,8 @@ final class RemoteSheetModel {
     let remote: RemoteEntry?
     let perform: ([[String: Any]]) -> Void
     var close: () -> Void = {}
+    /// このシートの窓（消す前の確認をその上に出す）。
+    @ObservationIgnored weak var sheet: NSWindow?
     var name: String
     var fetchUrl: String
     var pushUrl: String
@@ -124,9 +130,12 @@ final class RemoteSheetModel {
     }
 
     func remove() {
-        guard let remote, RemoteSheet.confirmRemove(remote.name) else { return }
-        perform([["op": "changeRemote", "change": ["kind": "remove", "name": remote.name]]])
-        close()
+        guard let remote else { return }
+        Task { @MainActor in
+            guard await RemoteSheet.confirmRemove(remote.name, in: sheet) else { return }
+            perform([["op": "changeRemote", "change": ["kind": "remove", "name": remote.name]]])
+            close()
+        }
     }
 }
 

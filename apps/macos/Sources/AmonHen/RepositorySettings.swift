@@ -432,9 +432,11 @@ private struct RemotesTab: View {
     }
 
     private func remove(_ name: String) {
-        guard RemoteSheet.confirmRemove(name) else { return }
-        model.changeRemote(["kind": "remove", "name": name])
-        selection = nil
+        Task { @MainActor in
+            guard await RemoteSheet.confirmRemove(name, in: NSApp.keyWindow ?? NSApp.mainWindow) else { return }
+            model.changeRemote(["kind": "remove", "name": name])
+            selection = nil
+        }
     }
 }
 

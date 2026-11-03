@@ -647,8 +647,11 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 RemoteSheet.present(in: window, repository: repository, remote: remote) { [weak self] in self?.actions.perform(sequence: $0) }
             }
         case .remove:
-            guard let name, RemoteSheet.confirmRemove(name) else { return }
-            actions.perform(["op": "changeRemote", "change": ["kind": "remove", "name": name]])
+            guard let name else { return }
+            Task { @MainActor in
+                guard await RemoteSheet.confirmRemove(name, in: window) else { return }
+                actions.perform(["op": "changeRemote", "change": ["kind": "remove", "name": name]])
+            }
         }
     }
 
