@@ -113,6 +113,68 @@ pub fn parse(data: &[u8]) -> Vec<Conflict> {
     out
 }
 
+/// 今残っているコンフリクト `found`（両側の中身）が、最初にあったコンフリクト `originals` の何番目に当たるか
+/// （マージエディタで、左右の欄のどのコンフリクトと帯で結ぶか）。わからなければ None。
+///
+/// 両側の中身が同じものを先に結ぶ。手で書き換えたもの（どちらかの側が違う）は、前後の結んだものの間にあって、
+/// まだ結んでいないものと結ぶ。片側が同じものを先に、残りは数が合うときだけ順に（手で解いて消えたものがあると、
+/// どれがどれかわからない）。
+pub fn match_originals(
+    originals: &[(String, String)],
+    found: &[(String, String)],
+) -> Vec<Option<usize>> {
+    let mut used = vec![false; originals.len()];
+    let mut out: Vec<Option<usize>> = found
+        .iter()
+        .map(|c| {
+            let j = (0..originals.len()).find(|&j| !used[j] && originals[j] == *c);
+            if let Some(j) = j {
+                used[j] = true;
+            }
+            j
+        })
+        .collect();
+    let mut i = 0;
+    while i < found.len() {
+        if out[i].is_some() {
+            i += 1;
+            continue;
+        }
+        // 結んだもの同士の間（found の i..end と、originals の lo..hi）。
+        let end = (i..found.len())
+            .find(|&k| out[k].is_some())
+            .unwrap_or(found.len());
+        let lo = out[..i].iter().flatten().max().map_or(0, |&j| j + 1);
+        let hi = out[end..]
+            .iter()
+            .flatten()
+            .min()
+            .copied()
+            .unwrap_or(originals.len());
+        let free = |used: &[bool]| (lo..hi).filter(|&j| !used[j]).collect::<Vec<_>>();
+        for k in i..end {
+            let (current, incoming) = &found[k];
+            if let Some(j) = free(&used)
+                .into_iter()
+                .find(|&j| originals[j].0 == *current || originals[j].1 == *incoming)
+            {
+                used[j] = true;
+                out[k] = Some(j);
+            }
+        }
+        let rest: Vec<usize> = (i..end).filter(|&k| out[k].is_none()).collect();
+        let left = free(&used);
+        if rest.len() == left.len() {
+            for (k, j) in rest.into_iter().zip(left) {
+                used[j] = true;
+                out[k] = Some(j);
+            }
+        }
+        i = end;
+    }
+    out
+}
+
 /// `index` 番目のコンフリクトを `choice` で解決した内容。ほかのコンフリクトはそのまま残す。
 pub fn resolve(data: &[u8], index: usize, choice: Choice) -> Option<Vec<u8>> {
     let ls = lines(data);
@@ -400,6 +462,42 @@ pub fn view(data: Arc<Vec<u8>>, profile: &FrontendProfile) -> DiffView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn matches_conflicts_edited_by_hand_with_the_ones_they_came_from() {
+        let pair = |a: &str, b: &str| (a.to_owned(), b.to_owned());
+        let originals = [pair("a\n", "A\n"), pair("b\n", "B\n"), pair("c\n", "C\n")];
+        assert_eq!(
+            match_originals(&originals, &originals),
+            [Some(0), Some(1), Some(2)]
+        );
+        // 1 つの側を書き換えた（マーカーは残っている）。
+        let edited = [
+            pair("a\n", "A\n"),
+            pair("b\n", "B_EDIT\n"),
+            pair("c\n", "C\n"),
+        ];
+        assert_eq!(
+            match_originals(&originals, &edited),
+            [Some(0), Some(1), Some(2)]
+        );
+        // 両側とも書き換えても、前後と数が合えば順に結ぶ。
+        let both = [pair("a\n", "A\n"), pair("x\n", "X\n"), pair("c\n", "C\n")];
+        assert_eq!(
+            match_originals(&originals, &both),
+            [Some(0), Some(1), Some(2)]
+        );
+        // 1 つめを手で解いて消した。片側が同じなら結ぶ。
+        let gone = [pair("b_EDIT\n", "B\n"), pair("c\n", "C\n")];
+        assert_eq!(match_originals(&originals, &gone), [Some(1), Some(2)]);
+        // 両側とも違って、数も合わなければ、どれかわからない。
+        let unknown = [pair("x\n", "X\n"), pair("c\n", "C\n")];
+        assert_eq!(match_originals(&originals, &unknown), [None, Some(2)]);
+        // 同じ中身のコンフリクトは前から順に。
+        let twice = [pair("s\n", "S\n"), pair("s\n", "S\n")];
+        assert_eq!(match_originals(&twice, &twice), [Some(0), Some(1)]);
+        assert_eq!(match_originals(&twice, &twice[..1]), [Some(0)]);
+    }
 
     #[test]
     fn magic_merge_joins_imports_one_conflict_or_only_safe_rules() {

@@ -99,6 +99,9 @@ becomes the GitHub Release notes.
 
 - Working Copy puts a check box back when staging fails or changes nothing; it kept showing the click.
 
+- The merge editor keeps the bands to Current and Incoming for a conflict edited by hand in Result; they disappeared
+  and its side showed it as resolved.
+
 - Working Copy reloads the shown diff and line counts when an already changed file changes again, and keeps the
   selected lines when the diff is the same.
 - Working Copy keeps several selected files selected when it reloads (after a file is edited elsewhere, for

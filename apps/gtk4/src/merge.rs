@@ -888,20 +888,12 @@ impl Editor {
     /// Result を読み直して、残っているコンフリクトと左右の欄との対応を決め、強調し直す。
     fn update_conflicts(&self) {
         let found = regions(&self.result.text());
-        // 両側の中身が同じ最初のコンフリクトに対応させる（手で直したものは対応がなくなる）。
-        let mut used = vec![false; self.originals.len()];
-        let original_of = found
+        // 最初のどのコンフリクトに当たるか（手で書き換えたものも、前後と片側から結ぶ）。
+        let sides: Vec<_> = found
             .iter()
-            .map(|c| {
-                let j = (0..self.originals.len()).find(|&j| {
-                    !used[j] && self.originals[j] == (c.current.clone(), c.incoming.clone())
-                });
-                if let Some(j) = j {
-                    used[j] = true;
-                }
-                j
-            })
+            .map(|c| (c.current.clone(), c.incoming.clone()))
             .collect();
+        let original_of = conflict::match_originals(&self.originals, &sides);
         let count = found.len();
         self.conflicts.replace(found);
         self.original_of.replace(original_of);

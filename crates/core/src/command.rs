@@ -370,8 +370,11 @@ pub enum Command {
     },
     /// `text` に残っているコンフリクト（`info.conflicts`）。それぞれ、マーカーを含む行範囲 `lines` と、
     /// 両側の中身 `current`・`incoming`（マージエディタの上の欄のどのコンフリクトかを突き合わせる）。
+    /// `originals`（最初にあったコンフリクトの両側の中身 `[current, incoming]` の並び）を渡すと、それぞれが
+    /// その何番目に当たるかを `original` に入れる（手で書き換えたものも結ぶ。わからなければ null）。
     ConflictRegions {
         text: String,
+        originals: Option<Vec<(String, String)>>,
     },
     /// `path` の各行を最後に変えたコミット（`info`: `commits` と、各行の `c`（commits の添字）・`t`（内容））。
     /// `rev` がなければ作業ツリーの内容。
@@ -3190,7 +3193,7 @@ impl Repository {
                     ..Default::default()
                 })
             }
-            Command::ConflictRegions { text } => {
+            Command::ConflictRegions { text, originals } => {
                 let data = text.as_bytes();
                 let ls = crate::conflict::line_ranges(data);
                 let join = |r: &std::ops::Range<usize>| -> String {
@@ -3198,14 +3201,30 @@ impl Repository {
                         .map(|i| String::from_utf8_lossy(&data[ls[i].clone()]))
                         .collect()
                 };
-                let conflicts: Vec<_> = crate::conflict::parse(data)
+                let found: Vec<_> = crate::conflict::parse(data)
                     .iter()
-                    .map(|c| {
-                        serde_json::json!({
-                            "lines": [c.lines.start, c.lines.end],
-                            "current": join(&c.ours),
-                            "incoming": join(&c.theirs),
-                        })
+                    .map(|c| (c.lines.clone(), join(&c.ours), join(&c.theirs)))
+                    .collect();
+                let matched = originals.map(|o| {
+                    let sides: Vec<_> = found
+                        .iter()
+                        .map(|(_, c, i)| (c.clone(), i.clone()))
+                        .collect();
+                    crate::conflict::match_originals(&o, &sides)
+                });
+                let conflicts: Vec<_> = found
+                    .into_iter()
+                    .enumerate()
+                    .map(|(n, (lines, current, incoming))| {
+                        let mut c = serde_json::json!({
+                            "lines": [lines.start, lines.end],
+                            "current": current,
+                            "incoming": incoming,
+                        });
+                        if let Some(m) = &matched {
+                            c["original"] = serde_json::json!(m[n]);
+                        }
+                        c
                     })
                     .collect();
                 Ok(Response {
@@ -6952,6 +6971,13 @@ mod tests {
             (conflict["current"].as_str(), conflict["incoming"].as_str()),
             (Some("MAIN\n"), Some("TOPIC\n"))
         );
+        // 最初のコンフリクトを渡すと、手で書き換えたものもどれに当たるかを返す。
+        let edited = command(serde_json::json!({
+            "op": "conflictRegions",
+            "text": result.replace("TOPIC\n", "TOPIC_EDIT\n"),
+            "originals": [["MAIN\n", "TOPIC\n"]],
+        }));
+        assert_eq!(edited["info"]["conflicts"][0]["original"], 0, "{edited}");
         let both = command(
             serde_json::json!({"op": "resolveText", "text": result, "index": 0, "choice": "both"}),
         );
