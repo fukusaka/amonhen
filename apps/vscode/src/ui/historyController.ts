@@ -1,3 +1,4 @@
+import { probe } from '../probe.ts';
 import { basename } from 'node:path';
 import * as vscode from 'vscode';
 import type { DaemonClient } from '../daemon/client.ts';
@@ -388,6 +389,7 @@ export class HistoryController implements vscode.Disposable {
 
   private async reload(): Promise<void> {
     const generation = ++this.generation;
+    probe(`history reload ${generation} start`);
     this.commits = [];
     this.known.clear();
     this.graph = new GraphBuilder();
@@ -401,13 +403,16 @@ export class HistoryController implements vscode.Disposable {
     }
     try {
       await repo.want('tags');
+      probe(`history reload ${generation} want tags`);
       const head = await repo.backend.head();
+      probe(`history reload ${generation} head`);
       const state = repo.current;
       this.headOid = head.oid;
       this.labels = refLabels(head, state.branches ?? [], state.remoteBranches ?? [], state.tags ?? []);
       this.chain = head.oid
         ? editableChain(await repo.backend.log(['--first-parent', 'HEAD'], 0, EDITABLE_LIMIT))
         : new Map();
+      probe(`history reload ${generation} chain`);
     } catch (err) {
       showError(err);
     }
@@ -419,6 +424,7 @@ export class HistoryController implements vscode.Disposable {
     this.base = undefined;
     try {
       const opened = this.headOid ? await this.openDaemonHistory(repo.root) : undefined;
+      probe(`history reload ${generation} opened (current ${this.generation})`);
       if (generation !== this.generation) {
         return;
       }
@@ -569,6 +575,7 @@ export class HistoryController implements vscode.Disposable {
   /** 共有の daemon で、今の範囲の History を開く（daemon を使わない設定なら undefined） */
   private async openDaemonHistory(root: string): Promise<DaemonHistory | undefined> {
     const client = await daemonFor(root);
+    probe('history daemonFor');
     if (!client) {
       return undefined;
     }
@@ -579,7 +586,9 @@ export class HistoryController implements vscode.Disposable {
       const resolved = await client.call({ op: 'run', command: { op: 'resolveCommit', rev: this.scope.slice('ref:'.length) } });
       tips = [String(resolved.json['text'])];
     }
+    probe('history open ask');
     const history = await client.call(tips ? { op: 'history', tips } : { op: 'history' });
+    probe('history open got');
     return { client, history: history.json['history'], rows: Number(history.json['rows']) };
   }
 
@@ -590,7 +599,9 @@ export class HistoryController implements vscode.Disposable {
   private async loadRange(daemon: DaemonHistory, start: number, count: number): Promise<void> {
     let rows: RowData[] = [];
     try {
+      probe(`history rows ${start}+${count} ask`);
       const reply = await daemon.client.call({ op: 'historyRows', history: daemon.history, start, count });
+      probe(`history rows ${start}+${count} got (same ${daemon === this.daemon})`);
       if (daemon !== this.daemon) {
         return;
       }

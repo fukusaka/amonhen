@@ -3,6 +3,7 @@
  * コアは daemon で動き、ここは命令（JSON）を送って、答え（JSON とレコード）を受け取るだけ。
  * 取り決めはリポジトリのルートの `docs/front.md`。
  */
+import { probe } from '../probe.ts';
 import { execFile, spawn } from 'node:child_process';
 import { connect, type Socket } from 'node:net';
 
@@ -108,14 +109,18 @@ export class DaemonClient {
    * daemon が動いていなければ起動する
    */
   static async open(daemon: string, location: string): Promise<DaemonClient> {
+    probe('client socketPath');
     const path = await socketPath(daemon);
+    probe('client connect');
     const socket = await connectOrLaunch(daemon, path);
+    probe('client hello');
     const name = Buffer.from(`\u0001${location}\u0000${frontEnv()}`, 'utf8');
     const head = Buffer.alloc(4);
     head.writeUInt32LE(name.length, 0);
     socket.write(Buffer.concat([head, name]));
     const client = new DaemonClient(socket);
     const hello = await client.call({ op: 'hello', language });
+    probe('client open done');
     if (hello.json['version'] !== FRONT_VERSION) {
       client.dispose();
       throw new DaemonError(`daemon の窓口の版が違います: ${String(hello.json['version'])}`);
@@ -269,6 +274,7 @@ async function connectOrLaunch(daemon: string, path: string): Promise<Socket> {
   if (first) {
     return first;
   }
+  probe('client launch daemon');
   // Windows では窓を出さない
   spawn(daemon, ['--serve', path], {
     detached: true,

@@ -1,3 +1,4 @@
+import { probe } from '../probe.ts';
 import { randomBytes } from 'node:crypto';
 import { basename } from 'node:path';
 import * as vscode from 'vscode';
@@ -33,6 +34,7 @@ export class MainPanel implements vscode.Disposable {
     if (current) {
       current.panel.reveal();
     } else {
+      probe('panel create');
       const panel = vscode.window.createWebviewPanel('amonhen.main', 'Amon Hen', vscode.ViewColumn.Active, {
         enableScripts: true,
         retainContextWhenHidden: true,
@@ -106,6 +108,7 @@ export class MainPanel implements vscode.Disposable {
   private async onMessage(message: WebviewMessage): Promise<void> {
     switch (message.type) {
       case 'ready':
+        probe('panel ready');
         this.ready = true;
         if (this.pendingView) {
           this.post({ type: 'show', view: this.pendingView });

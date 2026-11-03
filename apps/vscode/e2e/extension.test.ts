@@ -110,6 +110,7 @@ async function showView(command: 'amonhen.showWorkingCopy' | 'amonhen.showHistor
       if (posted.length === 0) {
         console.log(`      Webview の準備: ${((Date.now() - start) / 1000).toFixed(1)}s`);
       }
+      console.log(`[probe] ${new Date().toISOString().slice(11, 23)} posted ${m.type}${m.type === 'rows' ? ` ${m.start}+${m.rows.length}` : ''}`);
       posted.push(m);
       post(m);
     };
@@ -906,6 +907,7 @@ suite('Amon Hen in VSCode', () => {
   });
 
   test('shows History, commit details and diffs through the daemon', async () => {
+    console.log(`[probe] ${new Date().toISOString().slice(11, 23)} test History start`);
     const mark = posted.length;
     const panel = await showView('amonhen.showHistory');
     const rows = await waitPosted('rows', mark, (m) => m.rows.some((r) => r.subject === 'add crlf.txt'));

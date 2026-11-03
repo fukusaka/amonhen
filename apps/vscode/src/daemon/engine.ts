@@ -3,6 +3,7 @@
  * daemon に使うエンジンを決める。どちらもエンジン自身に任せる（`amonhen install`・`amonhen engine`）ので、アプリ・
  * CLI と同じ決まりで、同じ daemon を共有する。vscode に依存しない
  */
+import { probe } from '../probe.ts';
 import { execFile } from 'node:child_process';
 import { access, chmod } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -37,10 +38,14 @@ export async function prepareEngine(binDir: string): Promise<string | undefined>
   }
   // .vsix を展開すると実行の権限が落ちることがある
   await chmod(bundled, 0o755);
+  probe('engine install');
   await run(bundled, ['install', '--quiet']);
+  probe('engine engine');
   const engine = (await run(bundled, ['engine'])).trim() || bundled;
+  probe('engine warm');
   // 置いたばかりのエンジンは、macOS では初めて起動するときに OS の確認で待たされる（1 秒ほど、遅いと数十秒）。
   // History を開くときではなく、ここで済ませておく
   await run(engine, ['--socket']).catch(() => undefined);
+  probe('engine ready');
   return engine;
 }
