@@ -146,6 +146,8 @@ becomes the GitHub Release notes.
 - macOS: the signature popover in the Stashes, Reflog and Range Diff details says where the signature was checked, as
   History's does, including on SSH hosts.
 - macOS: Blame scrolls sideways for long code lines instead of cutting them off with "…".
+- macOS: Working Copy's Description keeps its own ⌘Z steps, so an inserted trailer can be undone and filling the field
+  no longer wipes undo for Summary, the merge editor's Result or Repository Settings.
 
 - The GTK4 app's Undo button asks once; it opened the question twice, so one stayed after undoing.
 - A `.mailmap`, or a mailmap setting (`log.mailmap`, `mailmap.file`), changed while the engine was reading the old

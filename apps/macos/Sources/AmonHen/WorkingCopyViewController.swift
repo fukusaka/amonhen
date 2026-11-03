@@ -1484,7 +1484,13 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         let last = body.components(separatedBy: "\n").last ?? ""
         let lastIsTrailer = last.range(of: #"^[A-Za-z-]+: "#, options: .regularExpression) != nil
         body += body.isEmpty ? line : lastIsTrailer ? "\n" + line : "\n\n" + line
-        message.string = body
+        // 打ったのと同じく ⌘Z で戻せるように、テキスト欄の編集として入れ替える（`string` に入れると Undo を捨てる）。
+        let all = NSRange(location: 0, length: (message.string as NSString).length)
+        if message.shouldChangeText(in: all, replacementString: body) {
+            message.textStorage?.replaceCharacters(
+                in: all, with: NSAttributedString(string: body, attributes: message.typingAttributes))
+            message.didChangeText()
+        }
         updateButtons()
         saveDraft()
     }
@@ -1841,13 +1847,18 @@ final class TitleAndButtonsBar: NSView {
 final class PlaceholderTextView: NSTextView {
     var placeholder = "" { didSet { needsDisplay = true } }
 
+    /// この欄だけの Undo（窓の UndoManager を使うと、下で捨てるときに Summary・埋め込んだマージエディタの Result・
+    /// Repository Settings の取り消しまで消える）。
+    private let ownUndoManager = UndoManager()
+    override var undoManager: UndoManager? { allowsUndo ? ownUndoManager : super.undoManager }
+
     /// コードで中身を入れ替えたら、前に打ったものの Undo は捨てる（入れ替えた後の文に当てると範囲がずれる。
     /// マージエディタの Result と同じ）。
     override var string: String {
         get { super.string }
         set {
             super.string = newValue
-            if allowsUndo { undoManager?.removeAllActions() }
+            if allowsUndo { ownUndoManager.removeAllActions() }
         }
     }
     var guideColumn: Int? { didSet { needsDisplay = true } }
