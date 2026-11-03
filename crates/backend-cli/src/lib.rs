@@ -22,6 +22,7 @@ use std::time::{Duration, Instant};
 
 use amonhen_model::Result;
 
+pub use bundle::{BundleInfo, bundle_default_branch, bundle_info};
 pub use directory::expand_home;
 pub use programs::programs;
 pub use status::parse_status;
@@ -119,6 +120,9 @@ pub struct CloneOptions {
     pub depth: Option<u32>,
     /// `--sparse`: 根のファイルだけを取り出す sparse checkout（cone mode）で始める（git 2.27 から）。
     pub sparse: bool,
+    /// `-b`: 取り出すブランチ（タグなら detached）。bundle から clone するとき、bundle に HEAD がなければ選ばなくても
+    /// main・master・最初のブランチを取り出す（git は何も取り出さない）。
+    pub branch: Option<String>,
 }
 
 /// sparse checkout で始める clone（`git clone --sparse`）が使える git の版。2.25 は URL を渡すと失敗し（2.26 で
@@ -141,6 +145,20 @@ pub fn clone(url: &str, dest: &std::path::Path, options: &CloneOptions) -> Resul
     if options.depth == Some(0) {
         return Err(tr!("The number of commits to fetch must be 1 or more").into());
     }
+    // bundle のファイルから: 前提のコミットがあれば clone できない（git は理由のわからないエラーで止まる）。HEAD が
+    // なければ、取り出すブランチを決めておく。
+    let mut branch = options.branch.clone();
+    if let Some(info) = bundle_info(std::path::Path::new(url)) {
+        if info.prerequisites > 0 {
+            return Err(tr!(
+                "This bundle has only the commits after ones it doesn’t include, so it can’t be cloned. Fetch it into a repository that has them"
+            )
+            .into());
+        }
+        if !info.head && branch.is_none() {
+            branch = bundle_default_branch(&info);
+        }
+    }
     let parent = dest
         .parent()
         .ok_or_else(|| tr!("The clone destination folder is invalid"))?;
@@ -160,6 +178,9 @@ pub fn clone(url: &str, dest: &std::path::Path, options: &CloneOptions) -> Resul
     }
     if options.sparse {
         args.push("--sparse");
+    }
+    if let Some(branch) = &branch {
+        args.extend(["-b", branch]);
     }
     args.extend(["--", url, name]);
     Git::new(parent).write(&args)?;
@@ -1113,6 +1134,56 @@ mod tests {
         git.sparse_checkout(Some(&["a".to_owned()])).unwrap();
         assert!(dest.join("a/f.txt").exists());
         assert!(!dest.join("b").exists());
+    }
+
+    #[test]
+    fn clones_from_a_bundle_checking_out_a_branch_when_it_has_no_head() {
+        let (tmp, git) = repo();
+        for (i, name) in ["a", "b", "c"].iter().enumerate() {
+            std::fs::write(tmp.path().join("f.txt"), format!("{i}\n")).unwrap();
+            git.stage(&["f.txt"]).unwrap();
+            git.commit(name, false).unwrap();
+        }
+        git.write(&["branch", "topic", "HEAD~1"]).unwrap();
+        let out = tempfile::tempdir().unwrap();
+        let file = |name: &str| out.path().join(name);
+        let bundle = |name: &str, revs: &[&str]| {
+            let path = file(name);
+            let mut args = vec!["bundle", "create", path.to_str().unwrap()];
+            args.extend(revs);
+            git.write(&args).unwrap();
+            path
+        };
+        let topic = bundle("topic.bundle", &["topic"]);
+        let info = bundle_info(&topic).unwrap();
+        assert_eq!(info.refs, ["refs/heads/topic"]);
+        assert!(!info.head && info.prerequisites == 0);
+        assert_eq!(bundle_default_branch(&info).as_deref(), Some("topic"));
+        assert!(bundle_info(&tmp.path().join("f.txt")).is_none());
+
+        // HEAD がなくても、ブランチを取り出す（git だけなら何も取り出さない）。
+        clone(
+            topic.to_str().unwrap(),
+            &file("copy"),
+            &CloneOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(file("copy").join("f.txt")).unwrap(),
+            "1\n"
+        );
+
+        // 前提のコミットがある bundle は、わけを言って断る。
+        let range = bundle("range.bundle", &["HEAD", "^HEAD~1"]);
+        assert_eq!(bundle_info(&range).unwrap().prerequisites, 1);
+        let e = clone(
+            range.to_str().unwrap(),
+            &file("no"),
+            &CloneOptions::default(),
+        )
+        .unwrap_err();
+        assert!(e.to_string().contains("can’t be cloned"), "{e}");
+        assert!(!file("no").exists());
     }
 
     #[test]

@@ -1179,16 +1179,29 @@ bool amonhen_activity_cancel(uint64_t seq);
 /**
  * `url` を `dest`（まだないフォルダ）に clone する。`filter`（NULL・空でなければ `--filter`。`blob:none` など）、
  * `depth`（0 でなければ `--depth`）、`sparse`（`--sparse`。根のファイルだけを取り出す。git 2.27 から）で取得する
- * 範囲と取り出すものを決める。失敗したら false（理由は `amonhen_last_error`）。時間がかかるので裏のスレッドで呼ぶ。
+ * 範囲と取り出すものを決め、`branch`（NULL・空でなければ `-b`）で取り出すブランチを決める（`url` が HEAD のない
+ * bundle なら、決めなくても main・master・最初のブランチ）。失敗したら false（理由は `amonhen_last_error`）。
+ * 時間がかかるので裏のスレッドで呼ぶ。
  *
  * # Safety
- * `url` と `dest` は NUL 終端の UTF-8 文字列、`filter` は NULL か NUL 終端の UTF-8 文字列であること。
+ * `url` と `dest` は NUL 終端の UTF-8 文字列、`filter` と `branch` は NULL か NUL 終端の UTF-8 文字列であること。
  */
 bool amonhen_clone(const char *url,
                    const char *dest,
                    const char *filter,
                    uint32_t depth,
-                   bool sparse);
+                   bool sparse,
+                   const char *branch);
+
+/**
+ * `path` が bundle のファイルなら、その見出しの JSON（`refs`: 入っている ref、`head`: HEAD が入っているか、
+ * `prerequisites`: 前提のコミットの数（あれば clone できない）、`branch`: HEAD がないとき取り出すブランチ）。
+ * bundle でなければ NULL。解放は `amonhen_string_free`。
+ *
+ * # Safety
+ * `path` は NUL 終端の UTF-8 文字列であること。
+ */
+char *amonhen_bundle_info(const char *path);
 
 /**
  * `path` のリポジトリの軽い状態（リポジトリの一覧に出す）。行に分けた文字列で、順にブランチ（detached なら
