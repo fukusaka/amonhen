@@ -229,10 +229,11 @@ impl WorkingCopy {
         let commit = gtk::Button::with_label("Commit");
         commit.add_css_class("suggested-action");
         commit.set_tooltip_text(Some(&tr!("Commit the checked files (Ctrl+Return)")));
+        // Commit の横の小さな ▾（枠なし、Commit の色にしない。macOS 版と同じ）。
         let commit_menu = gtk::MenuButton::builder()
             .tooltip_text(tr!("Commit and Push (Ctrl+Shift+Return), Amend"))
             .build();
-        commit_menu.add_css_class("suggested-action");
+        commit_menu.add_css_class("flat");
         let menu = gio::Menu::new();
         menu.append(Some("Commit and Push"), Some("win.commit-and-push"));
         menu.append(Some("Amend Last Commit"), Some("win.amend-last-commit"));
@@ -240,7 +241,6 @@ impl WorkingCopy {
         let aids = crate::commitmsg::MessageAids::new(&subject, &body, &amend);
         aids.install_fixups(&commit_menu, menu);
         let commit_group = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        commit_group.add_css_class("linked");
         commit_group.append(&commit);
         commit_group.append(&commit_menu);
         let commit_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -262,8 +262,8 @@ impl WorkingCopy {
         // macOS 版と同じ sparkles のアイコン。
         let icon = crate::icon::Icon::default();
         icon.set(crate::icon::Kind::Sparkles, false);
+        // 枠のあるボタン（macOS 版と同じ）。
         suggest.set_child(Some(&icon));
-        suggest.add_css_class("flat");
         crate::assist::track(
             &suggest,
             tr!("AI: suggest a commit message from the staged changes"),
@@ -2959,7 +2959,7 @@ impl Inner {
         match (length, color) {
             (0, _) => self.summary_count.set_text(""),
             (n, Some(c)) => self.summary_count.set_markup(&format!(
-                "<span foreground=\"{c}\" weight=\"bold\">{n}</span>"
+                "<span foreground=\"{c}\">{n}</span>"
             )),
             (n, None) => self
                 .summary_count
