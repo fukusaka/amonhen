@@ -2,6 +2,7 @@
 
 pub mod activity;
 mod backend;
+mod bundle_file;
 mod change;
 mod eol;
 mod extras;
@@ -23,6 +24,7 @@ mod text;
 pub mod topo;
 
 pub use backend::{ConnectionState, Delegated, Error, GitBackend, Result};
+pub use bundle_file::{BundleInfo, parse_bundle_header};
 pub use change::{ChangeKind, FileChange};
 pub use eol::{Eol, LineEndings};
 pub use extras::{CommitExtras, FileStat, SignatureCheck, SignatureVerifier, SignerEmail};

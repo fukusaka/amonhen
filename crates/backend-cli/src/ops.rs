@@ -156,7 +156,7 @@ impl Git {
                 .is_err())
     }
 
-    fn git_dir(&self) -> Result<std::path::PathBuf> {
+    pub(crate) fn git_dir(&self) -> Result<std::path::PathBuf> {
         let dir = text(self.read(&["rev-parse", "--absolute-git-dir"])?)?;
         Ok(dir.into())
     }
@@ -987,6 +987,14 @@ impl Operations for Git {
 
     fn bundle_preview(&self, options: &Bundle, limit: usize) -> Result<BundlePreview> {
         self.preview_bundle(options, limit)
+    }
+
+    fn fetch_bundle(&self, bundle: &[u8], name: &str) -> Result<Vec<String>> {
+        self.fetch_bundle_bytes(bundle, name)
+    }
+
+    fn missing_commits(&self, ids: &[String]) -> Result<Vec<String>> {
+        self.missing_commit_ids(ids)
     }
 
     fn am(&self, mbox: &[u8], three_way: Option<bool>) -> Result<Outcome> {

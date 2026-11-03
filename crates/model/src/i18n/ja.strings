@@ -2041,3 +2041,8 @@
 "This bundle has only the commits after ones it doesn’t include, so it can’t be cloned." = "この bundle には、入っていないコミットより後のコミットしかないので、clone できません。";
 "From a bundle file, everything in it is copied." = "bundle のファイルからは、入っているものをすべて写します。";
 "Branch:" = "ブランチ:";
+"“{name}” can’t be used as a name" = "「{name}」は名前に使えません";
+"There is already a remote named “{name}”. Choose another name" = "「{name}」という名前の remote がもうあります。ほかの名前にしてください";
+"The bundle is {size} MB, more than can be sent at once (1 GB). Copy it to where the repository is and fetch it there" = "bundle が {size} MB あり、一度に送れる大きさ（1 GB）を超えています。リポジトリのある所にコピーして、そこで取り込んでください";
+"{file} isn’t a bundle file" = "{file} は bundle のファイルではありません";
+"Couldn’t read {file}: {error}" = "{file} を読めませんでした: {error}";

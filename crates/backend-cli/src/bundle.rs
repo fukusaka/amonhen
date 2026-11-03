@@ -1,6 +1,6 @@
 //! コミットを 1 つのファイルにまとめる（`git bundle create`）。
 
-use amonhen_model::{Bundle, BundlePreview, ContentsToFetch, Oid, OidSet, Result, tr};
+use amonhen_model::{Bundle, BundleInfo, BundlePreview, ContentsToFetch, Oid, OidSet, Result, tr};
 
 use crate::Git;
 
@@ -101,52 +101,60 @@ impl Git {
     }
 }
 
-/// bundle のファイルの見出し（git を動かさずに読む。どの版の git でも同じ形）。
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct BundleInfo {
-    /// 入っている ref（`refs/heads/main` など。HEAD は除く）。
-    pub refs: Vec<String>,
-    /// HEAD が入っている（clone したとき、それを取り出す）。
-    pub head: bool,
-    /// 前提のコミットの数（受け取る側が持っているはずのもの。あれば clone できない）。
-    pub prerequisites: usize,
+impl Git {
+    pub(crate) fn fetch_bundle_bytes(&self, bundle: &[u8], name: &str) -> Result<Vec<String>> {
+        let prefix = format!("refs/remotes/{name}/");
+        if name.is_empty()
+            || name.contains('/')
+            || self
+                .read(&["check-ref-format", &format!("{prefix}x")])
+                .is_err()
+        {
+            return Err(tr!("“{name}” can’t be used as a name", name = name).into());
+        }
+        let remotes = self.read(&["remote"])?;
+        if String::from_utf8_lossy(&remotes).lines().any(|r| r == name) {
+            return Err(tr!(
+                "There is already a remote named “{name}”. Choose another name",
+                name = name
+            )
+            .into());
+        }
+        // SSH 先のエンジンや共有の daemon は 1 つのプロセスで要求を同時に処理するので、呼ぶたびに別のファイルにする。
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = self.git_dir()?.join("amonhen");
+        std::fs::create_dir_all(&dir)?;
+        let file = dir.join(format!("fetch-bundle-{}-{n}.bundle", std::process::id()));
+        std::fs::write(&file, bundle)?;
+        let path = file.to_string_lossy().into_owned();
+        let spec = format!("+refs/heads/*:{prefix}*");
+        let fetched = self.write(&["fetch", "--no-tags", &path, &spec]);
+        let _ = std::fs::remove_file(&file);
+        fetched?;
+        let refs = self.read(&["for-each-ref", "--format=%(refname)", &prefix])?;
+        Ok(String::from_utf8_lossy(&refs)
+            .lines()
+            .map(str::to_owned)
+            .collect())
+    }
+
+    pub(crate) fn missing_commit_ids(&self, ids: &[String]) -> Result<Vec<String>> {
+        Ok(ids
+            .iter()
+            .filter(|id| {
+                self.read(&["rev-parse", "-q", "--verify", &format!("{id}^{{commit}}")])
+                    .is_err()
+            })
+            .cloned()
+            .collect())
+    }
 }
 
-/// `path` が bundle のファイルなら、その見出し。bundle でなければ None。
-///
-/// 形（`git bundle` の v2・v3）: `# v2 git bundle`（v3 なら続けて `@capability` の行）、前提のコミットの
-/// `-<id> <comment>` の行、ref の `<id> <name>` の行、空の行、その後に pack。
+/// `path` が bundle のファイルなら、その見出し（[`amonhen_model::parse_bundle_header`]）。bundle でなければ None。
 pub fn bundle_info(path: &std::path::Path) -> Option<BundleInfo> {
-    use std::io::BufRead;
     let file = std::fs::File::open(path).ok()?;
-    let mut lines = std::io::BufReader::new(file).split(b'\n');
-    let first = lines.next()?.ok()?;
-    if first != b"# v2 git bundle" && first != b"# v3 git bundle" {
-        return None;
-    }
-    let mut info = BundleInfo::default();
-    for line in lines {
-        let line = line.ok()?;
-        let line = String::from_utf8_lossy(&line);
-        let line = line.trim_end_matches('\r');
-        if line.is_empty() {
-            return Some(info);
-        }
-        if line.starts_with('@') {
-            continue;
-        }
-        if line.starts_with('-') {
-            info.prerequisites += 1;
-        } else if let Some((_, name)) = line.split_once(' ') {
-            if name == "HEAD" {
-                info.head = true;
-            } else {
-                info.refs.push(name.to_owned());
-            }
-        }
-    }
-    // 見出しが終わらないうちにファイルが終わった。
-    None
+    amonhen_model::parse_bundle_header(std::io::BufReader::new(file))
 }
 
 /// HEAD のない bundle から clone するとき取り出すブランチ: main、master、なければ最初のブランチ、ブランチがなければ
