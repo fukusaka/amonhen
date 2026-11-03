@@ -737,7 +737,37 @@ impl Details {
             &self.author.text,
             &self.committer.text,
         ] {
+            // キー（Menu・Shift+F10）で開く欄のメニューにも足しておく。
             label.set_extra_menu(Some(&self.menu));
+            // 文字の欄の右クリック: コピーの項目と Edit Message… を先に、その後に文字のコピー（macOS 版の本文の
+            // メニューの順）。GTK の欄のメニューは足した項目を後ろに置くので、自分で出す。
+            let text = gio::Menu::new();
+            text.append(Some(&tr!("Copy")), Some("clipboard.copy"));
+            let label_menu = gio::Menu::new();
+            label_menu.append_section(None, &self.menu);
+            label_menu.append_section(None, &text);
+            let click = gtk::GestureClick::new();
+            click.set_button(gtk::gdk::BUTTON_SECONDARY);
+            click.set_propagation_phase(gtk::PropagationPhase::Capture);
+            let (weak, info) = (label.downgrade(), self.menu_info.clone());
+            click.connect_pressed(move |gesture, _, x, y| {
+                let Some(label) = weak.upgrade() else { return };
+                if info.borrow().is_none() {
+                    return;
+                }
+                gesture.set_state(gtk::EventSequenceState::Claimed);
+                let popover = gtk::PopoverMenu::from_model(Some(&label_menu));
+                popover.set_has_arrow(false);
+                popover.set_halign(gtk::Align::Start);
+                popover.set_parent(&label);
+                popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+                popover.connect_closed(|p| {
+                    let p = p.clone();
+                    glib::idle_add_local_once(move || p.unparent());
+                });
+                popover.popup();
+            });
+            label.add_controller(click);
         }
     }
 
