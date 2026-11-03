@@ -168,12 +168,8 @@ impl RangeDiff {
             }
             l
         };
+        // 1 行で、いつも出す（空でも行を取る。長い失敗の文は末尾を切る。macOS 版と同じ）。
         let summary = small(&["dim-label", "caption"]);
-        // 失敗の文は長いことがあるので、3 行まで折り返す。
-        summary.set_wrap(true);
-        summary.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-        summary.set_lines(3);
-        summary.set_visible(false);
         let counts = small(&["dim-label", "caption"]);
         counts.set_hexpand(true);
         let changes_only = gtk::CheckButton::with_label(&tr!("Changes Only"));
@@ -550,10 +546,9 @@ impl RangeDiff {
         }
     }
 
-    /// 範囲の下の説明（前の版の見つけ方・失敗）。なければ行を詰める。
+    /// 範囲の下の説明（前の版の見つけ方・失敗）。なくても行は残す（macOS 版と同じ）。
     fn set_summary(&self, text: &str) {
         self.summary.set_text(text);
-        self.summary.set_visible(!text.is_empty());
     }
 
     fn show(&self, pairs: Vec<Pair>, ranges: &[String], summary: Option<String>) {
