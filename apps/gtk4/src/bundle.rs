@@ -70,16 +70,25 @@ pub fn save(actions: &Rc<Actions>, refs: Vec<String>, names: Vec<String>, label:
         sheet.add(&sheets::note(&tr!(
             "Whoever receives the bundle needs that commit already."
         )));
+        let save = sheet.buttons(&tr!("Save…"), false, None);
+        // 「後だけ」を選んで基点が空なら、Save… は押せない（黙って全体を保存しない。macOS 版と同じ）。
+        let update_save = {
+            let (save, newer, field) = (save.clone(), newer.clone(), field.clone());
+            Rc::new(move || {
+                save.set_sensitive(!newer.is_active() || !field.text().trim().is_empty());
+            })
+        };
         {
-            let field = field.clone();
+            let (field, update) = (field.clone(), update_save.clone());
             newer.connect_toggled(move |b| {
                 field.set_sensitive(b.is_active());
                 if b.is_active() {
                     field.grab_focus();
                 }
+                update();
             });
         }
-        sheet.buttons(&tr!("Save…"), false, None);
+        field.connect_changed(move |_| update_save());
         if sheet.run().await != Response::Ok {
             return;
         }
