@@ -1132,3 +1132,34 @@ button.secondary {
 .setting-folder code {
   flex: 1;
 }
+
+.settings-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 8px;
+}
+
+.settings-table th,
+.settings-table td {
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  vertical-align: middle;
+}
+
+.settings-table .mono {
+  font-family: var(--vscode-editor-font-family);
+  word-break: break-all;
+}
+
+.settings-table .muted {
+  color: var(--vscode-descriptionForeground);
+}
+
+.settings-actions {
+  white-space: nowrap;
+}
+
+.settings-actions button {
+  margin-left: 4px;
+}

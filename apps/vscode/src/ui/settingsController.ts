@@ -140,6 +140,9 @@ export class SettingsController implements vscode.Disposable {
     const form = (await client.call({ op: 'run', command: { op: 'repositoryForm' } })).json['info'] as RepositoryForm | undefined;
     const folders = form?.sparse?.cone ? form.sparse.folders : [];
     switch (a.action) {
+      case 'remote':
+        await this.remoteAction(client, a.op, a.name);
+        return;
       case 'fetchMore':
         await vscode.commands.executeCommand('amonhen.fetchMoreHistory');
         return;
@@ -178,10 +181,67 @@ export class SettingsController implements vscode.Disposable {
     await repo.refresh();
   }
 
+  /**
+   * Remotes の行のボタン。追加・名前・URL・prune・削除はサイドバーのリモートのメニューと同じコマンド、push の URL と
+   * つながるかの確かめは、ここで（アプリの Remotes のシートの Push URL と Check Connection）
+   */
+  private async remoteAction(
+    client: NonNullable<Awaited<ReturnType<typeof daemonFor>>>,
+    op: 'add' | 'rename' | 'editUrl' | 'editPushUrl' | 'check' | 'prune' | 'remove',
+    name: string | undefined,
+  ): Promise<void> {
+    if (op === 'add') {
+      await vscode.commands.executeCommand('amonhen.remote.add');
+      return;
+    }
+    if (!name) return;
+    const remote = this.repo?.current.remotes?.find((r) => r.name === name);
+    const node = { kind: 'remote', remote: remote ?? { name } };
+    switch (op) {
+      case 'rename':
+      case 'editUrl':
+      case 'prune':
+      case 'remove':
+        await vscode.commands.executeCommand(`amonhen.remote.${op}`, node);
+        return;
+      case 'editPushUrl': {
+        const fetchUrl = remote?.fetchUrl ?? '';
+        const pushUrl = remote?.pushUrl && remote.pushUrl !== fetchUrl ? remote.pushUrl : '';
+        const url = await vscode.window.showInputBox({
+          title: `Push URL of ${name}`,
+          prompt: 'Where Push sends to. Empty to push to the fetch URL.',
+          value: pushUrl,
+          placeHolder: fetchUrl,
+        });
+        if (url === undefined) return;
+        const reply = (
+          await client.call({ op: 'run', command: { op: 'changeRemote', change: { kind: 'setPushUrl', name, url: url.trim() || null } } })
+        ).json;
+        if (reply['ok'] !== true) throw new Error(String(reply['error'] ?? 'Can’t set the push URL'));
+        await this.repo?.refresh();
+        return;
+      }
+      case 'check': {
+        const url = remote?.fetchUrl;
+        if (!url) return;
+        const reply = await vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Notification, title: `Connecting to ${name}…` },
+          async () => (await client.call({ op: 'run', command: { op: 'checkRemote', url } })).json,
+        );
+        if (reply['ok'] !== true) throw new Error(String(reply['error'] ?? `Can’t reach ${name}`));
+        const info = reply['info'] as { branches?: number; tags?: number; head?: string | null } | undefined;
+        void vscode.window.showInformationMessage(
+          `${name}: reachable, ${info?.branches ?? 0} branches, ${info?.tags ?? 0} tags${info?.head ? `, HEAD at ${info.head}` : ''}`,
+        );
+        return;
+      }
+    }
+  }
+
   private async load(): Promise<void> {
     const generation = ++this.generation;
     const repo = this.repo;
-    const empty: SettingsFacts = { updateRefs: true, rerereCache: false, form: [], branches: [], exclude: '' };
+    const empty: SettingsFacts = { updateRefs: true, rerereCache: false, form: [], branches: [], exclude: '', remotes: [] };
     if (!repo) {
       this.post({ type: 'settings', entries: [], facts: empty });
       return;
@@ -193,12 +253,13 @@ export class SettingsController implements vscode.Disposable {
         return;
       }
       const run = async (op: string) => (await client.call({ op: 'run', command: { op } })).json['info'] as Record<string, unknown> | undefined;
-      const [list, version, form, groups, ignore] = await Promise.all([
+      const [list, version, form, groups, ignore, remotes] = await Promise.all([
         run('configList'),
         run('gitVersion'),
         run('repositoryForm'),
         run('branchGroups'),
         run('ignoreFiles'),
+        run('remotes'),
       ]);
       if (generation !== this.generation) return;
       this.post({
@@ -213,6 +274,7 @@ export class SettingsController implements vscode.Disposable {
           ...(typeof groups?.['base'] === 'string' ? { base: groups['base'] } : {}),
           exclude: String(ignore?.['exclude'] ?? ''),
           ...(form ? { repositoryForm: form as unknown as RepositoryForm } : {}),
+          remotes: (remotes?.['remotes'] as SettingsFacts['remotes'] | undefined) ?? [],
         },
       });
     } catch (err) {

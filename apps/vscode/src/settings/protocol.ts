@@ -18,6 +18,8 @@ export interface SettingsFacts {
   exclude: string;
   /** コアの `repositoryForm`（Fetching and Folders）。読めなければ undefined */
   repositoryForm?: RepositoryForm;
+  /** リモート（Remotes） */
+  remotes: { name: string; fetchUrl: string; pushUrl: string }[];
 }
 
 export interface RepositoryForm {
@@ -36,7 +38,9 @@ export interface RepositoryForm {
 export type FetchingAction =
   | { action: 'fetchMore' | 'fetchAll' | 'fetchContents' | 'addFolder' | 'checkOutAll' }
   | { action: 'maintenance'; on: boolean }
-  | { action: 'removeFolder'; folder: string };
+  | { action: 'removeFolder'; folder: string }
+  /** Remotes の行のボタン（add は名前なし） */
+  | { action: 'remote'; op: 'add' | 'rename' | 'editUrl' | 'editPushUrl' | 'check' | 'prune' | 'remove'; name?: string };
 
 export type SettingsHostMessage =
   /** 読んだ設定（`error` は読めなかったわけ） */

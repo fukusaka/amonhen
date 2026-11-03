@@ -3,7 +3,7 @@
  * 扱う git・リポジトリの形、右に選んだページの行。行は、質問とその下の説明、効いている値の欄、このリポジトリが
  * 上書きしている間だけ ↩︎、設定元、ⓘ（キーと値とファイル、上書きしなければ効く値）
  */
-import { ConfigView, normalizedBool, pullMethod, pullWrites, type PullMethod } from '../settings/model.ts';
+import { ConfigView, normalizedBool, pullMethod, pullWrites, remoteKind, type PullMethod } from '../settings/model.ts';
 import { PAGES, type SettingRow } from '../settings/pages.ts';
 import type { FetchingAction, SettingsFacts } from '../settings/protocol.ts';
 import type { HostMessage } from '../view/protocol.ts';
@@ -22,7 +22,7 @@ export function createSettingsView(): View {
 
   let page = PAGES.find((p) => p.id === getState().settingsPage) ?? PAGES[0]!;
   let config = new ConfigView([]);
-  let facts: SettingsFacts = { updateRefs: true, rerereCache: false, form: [], branches: [], exclude: '' };
+  let facts: SettingsFacts = { updateRefs: true, rerereCache: false, form: [], branches: [], exclude: '', remotes: [] };
   /** 書きかけの exclude（読み直しで消さない） */
   let excludeDraft: string | undefined;
   let error: string | undefined;
@@ -274,6 +274,43 @@ export function createSettingsView(): View {
     return box;
   }
 
+  /** Remotes の表（アプリの表と同じ列: Name・URL・Push URL・Points to）。行ごとにボタン */
+  function remotesTable(): HTMLElement {
+    const box = el('div');
+    const table = el('table', 'settings-table');
+    const head = el('tr');
+    for (const h of ['Name', 'URL', 'Push URL', 'Points to', '']) head.append(el('th', '', h));
+    table.append(head);
+    for (const r of facts.remotes) {
+      const tr = el('tr');
+      const same = !r.pushUrl || r.pushUrl === r.fetchUrl;
+      const push = el('td', same ? 'muted' : '', same ? '(same)' : r.pushUrl);
+      const actions = el('td', 'settings-actions');
+      for (const [op, label, title] of [
+        ['editUrl', 'Edit URL…', 'Change the URL fetch and push use'],
+        ['editPushUrl', 'Push URL…', 'Push somewhere other than the fetch URL'],
+        ['check', 'Check', 'Connect and count the remote’s branches and tags (git ls-remote)'],
+        ['prune', 'Prune', 'Remove remote-tracking branches that no longer exist on the remote'],
+        ['rename', 'Rename…', ''],
+        ['remove', 'Remove…', ''],
+      ] as const) {
+        const b = button(label, { action: 'remote', op, name: r.name }, title || undefined);
+        actions.append(b);
+      }
+      tr.append(el('td', '', r.name), el('td', 'mono', r.fetchUrl), push, el('td', 'muted', remoteKind(r.fetchUrl)), actions);
+      table.append(tr);
+    }
+    if (facts.remotes.length === 0) {
+      const tr = el('tr');
+      const td = el('td', 'muted', 'No remotes');
+      td.colSpan = 5;
+      tr.append(td);
+      table.append(tr);
+    }
+    box.append(table, button('Add…', { action: 'remote', op: 'add' }, 'Add a remote'));
+    return box;
+  }
+
   function renderRow(r: SettingRow): HTMLElement {
     const disabled =
       'needs' in r && r.needs === 'updateRefs' && !facts.updateRefs
@@ -286,6 +323,8 @@ export function createSettingsView(): View {
         return excludeRow();
       case 'fetching':
         return fetchingRows();
+      case 'remotes':
+        return remotesTable();
       case 'pull': {
         const method = pullMethod(config);
         const decidingKey = config.effective('pull.ff')?.value.toLowerCase() === 'only' ? 'pull.ff' : 'pull.rebase';

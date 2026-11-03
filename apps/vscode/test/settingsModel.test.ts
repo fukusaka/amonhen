@@ -1,7 +1,7 @@
 /** リポジトリの設定の画面のもと */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { ConfigView, normalizedBool, pullMethod, pullWrites, type ConfigEntry } from '../src/settings/model.ts';
+import { ConfigView, normalizedBool, pullMethod, pullWrites, remoteKind, type ConfigEntry } from '../src/settings/model.ts';
 
 const entry = (key: string, value: string, scope: string): ConfigEntry => ({ key, value, scope, origin: `file:${scope}` });
 
@@ -33,4 +33,14 @@ test('pullMethod and pullWrites follow pull.ff=only first, then pull.rebase', ()
     ['pull.rebase', 'false'],
     ['pull.ff', 'only'],
   ]);
+});
+
+test('remoteKind says where a remote points', () => {
+  assert.equal(remoteKind('git@github.com:owner/repo.git'), 'GitHub');
+  assert.equal(remoteKind('/srv/git/repo.git'), 'A path');
+  assert.equal(remoteKind('C:\\work\\repo'), 'A path');
+  assert.equal(remoteKind('ssh://me@build.example.com/repo.git'), 'SSH host build.example.com');
+  assert.equal(remoteKind('me@build.example.com:repo.git'), 'SSH host build.example.com');
+  assert.equal(remoteKind('https://git.example.org/repo.git'), 'git.example.org');
+  assert.equal(remoteKind(''), '');
 });

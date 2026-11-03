@@ -22,7 +22,9 @@ export type SettingRow =
   /** `.git/info/exclude` の中身を書く欄 */
   | { kind: 'exclude' }
   /** リポジトリの形（shallow・partial・sparse・maintenance）に合わせた、取得とフォルダの行（Fetching and Folders） */
-  | { kind: 'fetching' };
+  | { kind: 'fetching' }
+  /** リモートの表（Add・Edit URL・Push URL・Check・Prune・Rename・Remove） */
+  | { kind: 'remotes' };
 
 /** 使えるのに要る git（無ければ欄を灰色にし、理由を出す） */
 export type Needs = 'updateRefs';
@@ -140,5 +142,10 @@ export const PAGES: SettingPage[] = [
     id: 'fetching',
     title: 'Fetching and Folders',
     sections: [{ title: '', rows: [{ kind: 'fetching' }] }],
+  },
+  {
+    id: 'remotes',
+    title: 'Remotes',
+    sections: [{ title: '', rows: [{ kind: 'remotes' }] }],
   },
 ];

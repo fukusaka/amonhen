@@ -1017,6 +1017,25 @@ async function settingsFlow(): Promise<void> {
     assert.match(readFileSync(excludeFile, 'utf8'), /e2e-ignored/);
     assert.equal(existsSync(join(root, '.gitignore')) ? readFileSync(join(root, '.gitignore'), 'utf8') : undefined, gitignore ?? '');
 
+    // Remotes: origin が表に出る。push の URL を別にして戻し、つながるか確かめる
+    const origin = first.facts.remotes.find((r) => r.name === 'origin');
+    assert.ok(origin, 'origin が Remotes にある');
+    mark = posted.length;
+    await withWindow({ showInputBox: inputs('../push-e2e') }, async () =>
+      panel.settings.handle({ type: 'settingsRun', action: 'remote', op: 'editPushUrl', name: 'origin' }),
+    );
+    assert.equal((await waitPosted('settings', mark)).facts.remotes.find((r) => r.name === 'origin')?.pushUrl, '../push-e2e');
+    assert.equal(config('remote.origin.pushurl'), '../push-e2e');
+    await withWindow({ showInputBox: inputs('') }, async () =>
+      panel.settings.handle({ type: 'settingsRun', action: 'remote', op: 'editPushUrl', name: 'origin' }),
+    );
+    assert.equal(config('remote.origin.pushurl'), undefined);
+    let reached = '';
+    await withWindow({ showInformationMessage: async (m: string) => void (reached = m) }, async () =>
+      panel.settings.handle({ type: 'settingsRun', action: 'remote', op: 'check', name: 'origin' }),
+    );
+    assert.match(reached, /^origin: reachable, \d+ branches/);
+
     // Fetching and Folders: HEAD の木からフォルダを選んで sparse checkout にし、すべてに戻す（git 2.25 から）。
     // maintenance は OS の予定に登録するので、ここでは試さない
     if (first.facts.repositoryForm?.canSparseCheckout) {

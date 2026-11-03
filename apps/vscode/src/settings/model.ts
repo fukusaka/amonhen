@@ -119,3 +119,25 @@ export function pullWrites(config: ConfigView, method: PullMethod): [key: string
   }
   return writes;
 }
+
+/** リモートの URL がどこを指すか（アプリの Remotes の表の「Points to」と同じ言い方） */
+export function remoteKind(url: string): string {
+  const lower = url.toLowerCase();
+  for (const [host, name] of [
+    ['github.com', 'GitHub'],
+    ['gitlab', 'GitLab'],
+    ['bitbucket', 'Bitbucket'],
+    ['codeberg', 'Codeberg'],
+  ] as const) {
+    if (lower.includes(host)) return name;
+  }
+  if (/^(\/|\.\/|\.\.\/|~|file:\/\/)/.test(lower) || /^[a-z]:[\\/]/.test(lower)) return 'A path';
+  const ssh = /^(?:git\+)?ssh:\/\/(?:[^@/]+@)?([^/:]+)/.exec(url);
+  if (ssh) return `SSH host ${ssh[1]}`;
+  // scp の形（user@host:path）
+  const scp = /^(?:[^@/]+@)?([^/:]+):/.exec(url);
+  if (!lower.includes('://') && scp) return `SSH host ${scp[1]}`;
+  const host = /^[a-z][a-z0-9+.-]*:\/\/(?:[^@/]+@)?([^/:]+)/i.exec(url);
+  if (host) return host[1]!;
+  return url ? 'Other' : '';
+}
