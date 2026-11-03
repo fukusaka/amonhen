@@ -1422,6 +1422,10 @@ fn login_shell_rows(session: &Rc<HostSession>) -> gtk::Box {
     n.set_wrap_mode(gtk::pango::WrapMode::WordChar);
     n.set_margin_start(28);
     b.append(&n);
+    // 下の環境変数の表との区切り（macOS 版の Divider）。
+    let line = gtk::Separator::new(gtk::Orientation::Horizontal);
+    line.set_margin_top(6);
+    b.append(&line);
     b
 }
 
