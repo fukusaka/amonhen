@@ -323,6 +323,10 @@ private struct HistoryTab: View {
         }
         .padding()
         .onAppear { model.loadUndoLog() }
+        // リポジトリの窓で操作を終えるたびに読み直す（操作ログが増える・減る）。
+        .onReceive(NotificationCenter.default.publisher(for: .runningOperationsChanged)) { _ in
+            if RunningOperations.count == 0 { model.loadUndoLog() }
+        }
     }
 }
 

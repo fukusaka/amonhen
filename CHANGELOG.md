@@ -194,6 +194,7 @@ becomes the GitHub Release notes.
 - macOS: when the Clone destination already exists, the Clone sheet comes back with what you typed.
 - macOS: Add to Favorites and Remove from Favorites in the Repositories list apply to every selected row, as Fetch,
   Group and Color Label do.
+- macOS: Activity's History tab updates its Undo list after each operation in the repository windows.
 
 ### [0.2.8] - 2026-10-30
 
