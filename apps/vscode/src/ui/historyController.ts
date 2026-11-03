@@ -113,6 +113,11 @@ export class HistoryController implements vscode.Disposable {
   private chain = new Map<string, number>();
   private done = false;
   private loading = false;
+  /**
+   * 読み直しが、daemon と git のどちらで読むかを決めて最初の行を送るまで。その間に Webview が頼む続き（開いた直後に
+   * 頼む最初の行）は、HEAD も読み方もまだ決まっていないので受けない（空の行を送って読み終えたことにしてしまう）
+   */
+  private opening = false;
   /** reset のたびに増やし、古い読み込みの結果を捨てる */
   private generation = 0;
   private headOid: string | undefined;
@@ -397,6 +402,7 @@ export class HistoryController implements vscode.Disposable {
     this.done = false;
     this.loading = false;
     const repo = this.repo;
+    this.opening = repo !== undefined;
     this.post({ type: 'reset', title: repo ? basename(repo.root) : '', scope: this.scope });
     if (!repo) {
       this.post({ type: 'rows', start: 0, rows: [], done: true });
@@ -445,6 +451,7 @@ export class HistoryController implements vscode.Disposable {
       return;
     }
     this.post({ type: 'searchable', searchable: this.daemon !== undefined });
+    this.opening = false;
     await this.loadMore();
     // 探していたら（途中でも）、新しい History で探し直す
     const query = this.searching ?? this.search?.query;
@@ -624,7 +631,7 @@ export class HistoryController implements vscode.Disposable {
 
   private async loadMore(): Promise<void> {
     const repo = this.repo;
-    if (!repo || this.loading || this.done) {
+    if (!repo || this.loading || this.done || this.opening) {
       return;
     }
     if (this.daemon) {
