@@ -456,7 +456,8 @@ pub fn file_history(
     path: &str,
     on_commit: OnCommit,
 ) {
-    // 同じファイルの File History がもう開いていれば、それを読み直す（macOS 版と同じ）。
+    // 同じファイルの File History がもう開いていれば、そのタブで初めから読み直し、いちばん新しいコミットを選ぶ
+    // （macOS 版はタブを新しく開いたものに入れ替える）。
     let key = tool_key("fileHistory", &repo, path, None);
     let heading = tr!("File History — {path} (loading…)", path = path);
     let title = format!("File History — {}", file_name(path));
@@ -464,7 +465,7 @@ pub fn file_history(
         return;
     };
     if let Some(view) = FileHistoryView::of(&tab) {
-        view.reload();
+        view.reopen();
         return;
     }
     let on_commit = via_owner(&tab, on_commit);
@@ -875,6 +876,19 @@ impl FileHistoryView {
     }
 
     /// 初めから読み直す（選んでいたコミットは、まだあれば選んだまま）。
+    /// 開き直す: 選んでいたコミットは残さず、初めから読む（読んだらいちばん新しいコミットを選ぶ）。
+    fn reopen(self: &Rc<Self>) {
+        self.kept.replace(None);
+        self.entries.borrow_mut().clear();
+        self.complete.set(false);
+        self.rows.replace(vec![HistoryRow::Loading]);
+        self.update_model();
+        self.shown.replace(None);
+        self.diff.show_message(&tr!("Loading…"));
+        self.update_title();
+        self.load();
+    }
+
     fn reload(self: &Rc<Self>) {
         let selected = self.selected_oid().or_else(|| self.kept.borrow().clone());
         self.kept.replace(selected);
