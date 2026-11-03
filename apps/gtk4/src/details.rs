@@ -1883,16 +1883,39 @@ fn linked(text: &str, web: Option<&str>, revs: bool) -> String {
     let (mut i, mut plain) = (0, 0);
     while i < text.len() {
         let rest = &text[i..];
-        // URL（空白まで。末尾の句読点と閉じ括弧は含めない）。
-        if rest.starts_with("https://") || rest.starts_with("http://") {
+        // 単語の頭か（www. とメールアドレスは、単語の途中からは取らない）。
+        let word_start = i == 0
+            || !text[..i]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_alphanumeric() || "._%+-/@".contains(c));
+        // URL（空白まで。末尾の句読点と閉じ括弧は含めない）。`www.` で始まるものも（macOS 版の NSDataDetector と
+        // 同じく http:// を付けて開く）。
+        let www = word_start && rest.len() > 4 && rest[..4].eq_ignore_ascii_case("www.");
+        if rest.starts_with("https://") || rest.starts_with("http://") || www {
             let mut end = rest
                 .find(|c: char| c.is_whitespace() || c == '<' || c == '>' || c == '"')
                 .unwrap_or(rest.len());
             while end > 0 && rest[..end].ends_with(['.', ',', ';', ':', '!', '?', ')', '\'']) {
                 end -= 1;
             }
+            if end > 4 || !www {
+                let href = if www {
+                    format!("http://{}", &rest[..end])
+                } else {
+                    rest[..end].to_owned()
+                };
+                out.push_str(&e(&text[plain..i]));
+                out.push_str(&link(&href, &rest[..end]));
+                i += end;
+                plain = i;
+                continue;
+            }
+        }
+        // メールアドレス（mailto: で開く。Signed-off-by などのトレーラーの中も。macOS 版と同じ）。
+        if word_start && let Some(end) = email_at(rest) {
             out.push_str(&e(&text[plain..i]));
-            out.push_str(&link(&rest[..end], &rest[..end]));
+            out.push_str(&link(&format!("mailto:{}", &rest[..end]), &rest[..end]));
             i += end;
             plain = i;
             continue;
@@ -1939,6 +1962,26 @@ fn linked(text: &str, web: Option<&str>, revs: bool) -> String {
     }
     out.push_str(&e(&text[plain..]));
     out
+}
+
+/// `text` の頭にあるメールアドレスの長さ（`名前@ドメイン.tld`。なければ None）。
+fn email_at(text: &str) -> Option<usize> {
+    let local = text
+        .find(|c: char| !(c.is_ascii_alphanumeric() || "._%+-".contains(c)))
+        .unwrap_or(text.len());
+    if local == 0 || !text[local..].starts_with('@') {
+        return None;
+    }
+    let domain = &text[local + 1..];
+    let mut end = domain
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '.' || c == '-'))
+        .unwrap_or(domain.len());
+    while end > 0 && domain[..end].ends_with(['.', '-']) {
+        end -= 1;
+    }
+    let (name, tld) = domain[..end].rsplit_once('.')?;
+    (!name.is_empty() && tld.len() >= 2 && tld.chars().all(|c| c.is_ascii_alphabetic()))
+        .then_some(local + 1 + end)
 }
 
 /// History の検索の問い合わせから、件名と本文で強調する語を取り出す（`author:`・`path:` などは除く。macOS 版の
@@ -2101,6 +2144,20 @@ mod tests {
             linked("#7", Some("https://github.com/me/gitlab-tools"), false),
             "<a href=\"https://github.com/me/gitlab-tools/issues/7\">#7</a>"
         );
+    }
+
+    #[test]
+    fn emails_and_www_hosts_become_links() {
+        assert_eq!(
+            linked("Signed-off-by: A <a.b@c-d.org>", None, false),
+            "Signed-off-by: A &lt;<a href=\"mailto:a.b@c-d.org\">a.b@c-d.org</a>&gt;"
+        );
+        assert_eq!(
+            linked("see www.x.org/p.", None, false),
+            "see <a href=\"http://www.x.org/p\">www.x.org/p</a>."
+        );
+        // ドメインのないもの・単語の途中の www. はリンクにしない。
+        assert_eq!(linked("a@b x.www.y @c.d", None, false), "a@b x.www.y @c.d");
     }
 
     #[test]
