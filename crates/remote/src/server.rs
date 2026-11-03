@@ -565,6 +565,9 @@ fn handle_op(backend: &dyn GitBackend, op: Op, cancel: &AtomicBool) -> Result<Ve
         Op::ConfigKeys => encode(&ops.config_keys()?),
         Op::ConfigSet(key, value) => encode(&ops.config_set(&key, value.as_deref())?),
         Op::ConfigSetGlobal(key, value) => encode(&ops.config_set_global(&key, value.as_deref())?),
+        Op::ConfigSetAll(key, values, global) => {
+            encode(&ops.config_set_all(&key, &values, global)?)
+        }
         Op::GitVersion => encode(&ops.git_version()?),
         Op::RepositoryForm => encode(&ops.repository_form()?),
         Op::SparseCheckout(folders) => encode(&ops.sparse_checkout(folders.as_deref())?),

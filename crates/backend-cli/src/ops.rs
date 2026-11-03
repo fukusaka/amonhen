@@ -1323,6 +1323,15 @@ impl Operations for Git {
         self.config_set_in("--global", key, value)
     }
 
+    fn config_set_all(&self, key: &str, values: &[String], global: bool) -> Result<()> {
+        let scope = if global { "--global" } else { "--local" };
+        self.config_set_in(scope, key, None)?;
+        for v in values {
+            self.write(&["config", scope, "--add", key, v])?;
+        }
+        Ok(())
+    }
+
     fn git_version(&self) -> Result<Option<(u32, u32, u32)>> {
         Ok(crate::git_version())
     }

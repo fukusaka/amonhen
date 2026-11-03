@@ -690,6 +690,12 @@ pub trait Operations: Send + Sync {
         let _ = (key, value);
         Err(crate::tr!("Can’t change the user’s git settings here").into())
     }
+    /// いくつも値を持てる設定（`remote.origin.fetch` など）の、この段（`global` なら global、でなければ local）の
+    /// 値をすべて `values` にする（`git config --unset-all` のあと、`--add` で 1 つずつ。空なら消すだけ）。
+    fn config_set_all(&self, key: &str, values: &[String], global: bool) -> Result<()> {
+        let _ = (key, values, global);
+        Err(crate::tr!("Can’t write several values of a git setting here").into())
+    }
     /// git を動かす機械で使う git（その機械の Amon Hen の設定と環境から決まる。`crate::settings`）。
     fn machine_git(&self) -> Result<MachineGit> {
         Err(crate::tr!("Can’t read Amon Hen’s settings of the machine running git here").into())

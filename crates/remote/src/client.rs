@@ -1181,6 +1181,10 @@ impl Operations for RemoteOperations {
         ))
     }
 
+    fn config_set_all(&self, key: &str, values: &[String], global: bool) -> Result<()> {
+        self.op(Op::ConfigSetAll(key.to_owned(), values.to_vec(), global))
+    }
+
     fn git_version(&self) -> Result<Option<(u32, u32, u32)>> {
         self.op(Op::GitVersion)
     }

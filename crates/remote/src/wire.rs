@@ -366,6 +366,8 @@ pub enum Op {
     ConfigKeys,
     ConfigSet(String, Option<String>),
     ConfigSetGlobal(String, Option<String>),
+    /// キー・値・global か。
+    ConfigSetAll(String, Vec<String>, bool),
     GitVersion,
     /// → `RepositoryForm`
     RepositoryForm,

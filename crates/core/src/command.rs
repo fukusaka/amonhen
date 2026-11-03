@@ -511,12 +511,16 @@ pub enum Command {
         path: String,
     },
     /// 設定を変える。`value` がなければ消す。`scope` が `"global"` なら、git を動かしているユーザー全体の
-    /// 設定（SSH 先のリポジトリなら SSH 先のユーザーのもの）、なければこのリポジトリ（local）。
+    /// 設定（SSH 先のリポジトリなら SSH 先のユーザーのもの）、なければこのリポジトリ（local）。`values` があれば
+    /// `value` の代わりに、その段の値をすべてそれにする（いくつも値を持てる `remote.origin.fetch` などを消した後に
+    /// 戻すとき）。
     ConfigSet {
         key: String,
         value: Option<String>,
         #[serde(default)]
         scope: Option<String>,
+        #[serde(default)]
+        values: Option<Vec<String>>,
     },
     /// git を動かす機械で使う git と、それをどこで決めたか（`info`: `chosen`（その機械の Amon Hen の設定
     /// `settings.json` で選んだもの。なければ null で自動）・`file`・`program`・`source`（`environment`・`settings`・
@@ -3582,11 +3586,21 @@ impl Repository {
                 info: Some(serde_json::to_value(ops.list_directory(&path)?)?),
                 ..Default::default()
             }),
-            Command::ConfigSet { key, value, scope } => {
-                match scope.as_deref() {
-                    None | Some("local") => ops.config_set(&key, value.as_deref())?,
-                    Some("global") => ops.config_set_global(&key, value.as_deref())?,
+            Command::ConfigSet {
+                key,
+                value,
+                scope,
+                values,
+            } => {
+                let global = match scope.as_deref() {
+                    None | Some("local") => false,
+                    Some("global") => true,
                     Some(other) => return Err(tr!("Unknown scope: {scope}", scope = other).into()),
+                };
+                match (values, global) {
+                    (Some(values), _) => ops.config_set_all(&key, &values, global)?,
+                    (None, false) => ops.config_set(&key, value.as_deref())?,
+                    (None, true) => ops.config_set_global(&key, value.as_deref())?,
                 }
                 ok()
             }
@@ -7157,6 +7171,36 @@ mod tests {
                 .iter()
                 .any(|e| e["key"] == "pull.rebase" && e["scope"] == "local")
         );
+
+        // いくつも値を持てる設定は、`values` ですべて書き戻せる（消した後の Undo）。1 つの値で上書きしていても。
+        let fetch = |repo: &Repository| -> Vec<String> {
+            run(repo, r#"{"op":"configList"}"#)["info"]["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|e| e["key"] == "remote.x.fetch" && e["scope"] == "local")
+                .map(|e| e["value"].as_str().unwrap().to_owned())
+                .collect()
+        };
+        assert_eq!(
+            run(
+                &repo,
+                r#"{"op":"configSet","key":"remote.x.fetch","value":"a"}"#
+            )["ok"],
+            true
+        );
+        let r = run(
+            &repo,
+            r#"{"op":"configSet","key":"remote.x.fetch","values":["b","c"]}"#,
+        );
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(fetch(&repo), ["b", "c"]);
+        let r = run(
+            &repo,
+            r#"{"op":"configSet","key":"remote.x.fetch","value":null}"#,
+        );
+        assert_eq!(r["ok"], true, "{r}");
+        assert!(fetch(&repo).is_empty());
 
         // リモートにつないで確かめる: 自分自身を URL にすると、ブランチ 1 つと HEAD が読める。
         let check = run(

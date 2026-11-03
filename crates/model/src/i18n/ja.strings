@@ -307,6 +307,7 @@
 "{operation} in progress: continue or abort it first, then try again" = "{operation} の途中です。Continue か Abort で終えてから、もう一度してください";
 "{rev} merges into {ours} without conflicts" = "{rev} は {ours} にコンフリクトなしでマージできる";
 "Can’t change the user’s git settings here" = "この環境では、ユーザー全体の git の設定を変えられません";
+"Can’t write several values of a git setting here" = "この環境では、git の設定に値をいくつも書けません";
 "Unknown scope: {scope}" = "知らない scope: {scope}";
 "Unknown hook: {name}" = "知らないフック: {name}";
 "There is no hook named {name}" = "{name} というフックはない";
