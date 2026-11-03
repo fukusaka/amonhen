@@ -561,6 +561,8 @@ fn handle_op(backend: &dyn GitBackend, op: Op, cancel: &AtomicBool) -> Result<Ve
         }
         Op::Submodules => encode(&ops.submodules()?),
         Op::ChangeSubmodule(change) => encode(&ops.change_submodule(&change.0)?),
+        Op::Subtrees => encode(&ops.subtrees()?),
+        Op::Subtree(op) => encode(&ops.subtree(&op.0)?),
         Op::ConfigList => encode(&ops.config_list()?),
         Op::ConfigKeys => encode(&ops.config_keys()?),
         Op::ConfigSet(key, value) => encode(&ops.config_set(&key, value.as_deref())?),

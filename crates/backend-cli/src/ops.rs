@@ -28,7 +28,7 @@ fn text(out: Vec<u8>) -> Result<String> {
 impl Git {
     /// merge・rebase などを始める。失敗しても、途中で止まっていればコンフリクトとして扱う。成功しても止まって
     /// いれば Stopped。
-    fn stoppable(&self, args: &[&str], env: &[(&str, &str)]) -> Result<Outcome> {
+    pub(crate) fn stoppable(&self, args: &[&str], env: &[(&str, &str)]) -> Result<Outcome> {
         self.stoppable_with_input(args, env, None)
     }
 
@@ -1251,6 +1251,14 @@ impl Operations for Git {
 
     fn change_submodule(&self, change: &amonhen_model::SubmoduleChange) -> Result<()> {
         self.run_submodule_change(change)
+    }
+
+    fn subtrees(&self) -> Result<amonhen_model::Subtrees> {
+        self.subtree_list()
+    }
+
+    fn subtree(&self, op: &amonhen_model::SubtreeOp) -> Result<Outcome> {
+        self.run_subtree(op)
     }
 
     fn config_list(&self) -> Result<Vec<ConfigEntry>> {

@@ -14,6 +14,7 @@
 //!   amonhen merge-check <rev>…          マージしたらコンフリクトするファイル（作業ツリーには触らない）
 //!   amonhen rewrite-preview <onto>      rebase・History の編集で動くブランチとコンフリクトの見込み
 //!   amonhen submodule [list|add|update|remove|set-url|set-branch|sync]  submodule
+//!   amonhen subtree [list|add|pull|push|split]  subtree
 //!   amonhen clone [--filter=<spec>] [--depth <n>] [--sparse] <url> [<dir>]
 //!   amonhen install / engine           エンジンの置き場所（`install.rs`）
 //!   amonhen daemon [status|start|stop|rebuild]  手元の共有の daemon
@@ -26,6 +27,7 @@ mod open;
 mod patch;
 mod session;
 mod submodule;
+mod subtree;
 mod term;
 mod work;
 
@@ -65,6 +67,7 @@ usage: amonhen [<path>]
        amonhen bundle fetch [--json] <file> [<name>]
        amonhen clone [--filter=<spec>] [--depth <n>] [--sparse] [-b <branch>] [--recurse-submodules] <url> [<dir>]
        amonhen submodule [list [--json] | add [-b <branch>] <url> <path> | update [--recursive] [--remote] [<path>…] | remove [--delete-git-dir] <path> | set-url <path> <url> | set-branch (-b <branch> | --default) <path> | sync [--recursive]]
+       amonhen subtree [list [--json] | add [--squash] <dir> <url> <ref> | pull [--squash | --no-squash] <dir> [<url> <ref>] | push <dir> [<url> <ref>] | split <dir> -b <branch>]
        amonhen daemon [status [--json] | start | stop | rebuild [<path> | ssh://host/path]]
        amonhen install [--quiet] [--no-link] [--force]   (puts the engine in ~/.local/share/amonhen and links ~/.local/bin/amonhen)
        amonhen engine   (the engine to start as the shared daemon)
@@ -120,7 +123,9 @@ clone --recurse-submodules checks out the submodules too.
 submodule lists the submodules with a mark like git submodule status (- not checked out, + at another commit than the
 one recorded, U in conflict) and * when they have changes inside. update checks them out at the recorded commits
 (--remote: at the latest of the branch they follow; --recursive: their submodules too; all of them without <path>).
-remove keeps .git/modules/<name> as git does, unless --delete-git-dir.")
+remove keeps .git/modules/<name> as git does, unless --delete-git-dir.
+subtree needs git subtree, which some builds of git leave out. pull and push without <url> <ref> use the ones used
+last for that folder, and pull squashes if the last pull or add did (--squash and --no-squash choose).")
 }
 
 fn main() -> ExitCode {
@@ -156,6 +161,7 @@ fn main() -> ExitCode {
         Some("archive") => archive::archive(&args[1..]),
         Some("bundle") => bundle::bundle(&args[1..]),
         Some("submodule") => submodule::submodule(&args[1..]),
+        Some("subtree") => subtree::subtree(&args[1..]),
         Some("am") => patch::am(&args[1..]),
         Some("apply") => patch::apply(&args[1..]),
         Some("find-repositories") => find_repositories(&args[1..]),

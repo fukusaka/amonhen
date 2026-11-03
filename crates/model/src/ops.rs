@@ -432,6 +432,74 @@ pub struct SubmoduleUpdate {
     pub remote: bool,
 }
 
+/// subtree（`git subtree` で取り込んだフォルダ。`Operations::subtrees`）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub struct Subtree {
+    /// 取り込んだフォルダ（`git-subtree-dir:`）。
+    pub dir: String,
+    /// 最後に記録した取り込み（`git-subtree-dir:` のある最新のコミット）が squash だった。squash しない Pull は
+    /// 記録を残さないので、Add のときのまま。
+    pub squashed: bool,
+    /// 覚えている Pull の相手（`amonhen.subtree.<dir>.url`・`.ref`）。手元のリポジトリの設定だけ。
+    pub url: Option<String>,
+    #[cfg_attr(feature = "serde", serde(rename = "ref"))]
+    pub ref_: Option<String>,
+    /// 覚えている Push の先の ref（`.pushRef`。URL は Pull と同じ）。
+    pub push_ref: Option<String>,
+    /// 前に選んだ squash（`.squash`。なければ git の既定のオフ）。
+    pub squash: Option<bool>,
+}
+
+/// subtree の一覧（`Operations::subtrees`）。`git subtree` は git の contrib で、入っていない git もある。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Subtrees {
+    /// この機械の git で `git subtree` が使える。
+    pub available: bool,
+    pub subtrees: Vec<Subtree>,
+}
+
+/// subtree の操作（`Operations::subtree`）。Add・Pull・Push の相手は、成功したら覚える。
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(
+        tag = "kind",
+        rename_all = "camelCase",
+        rename_all_fields = "camelCase"
+    )
+)]
+pub enum SubtreeOp {
+    /// `git subtree add --prefix=<dir> [--squash] <url> <ref>`。
+    Add {
+        dir: String,
+        url: String,
+        #[cfg_attr(feature = "serde", serde(rename = "ref"))]
+        ref_: String,
+        squash: bool,
+    },
+    /// `git subtree pull --prefix=<dir> [--squash] <url> <ref>`（merge。コンフリクトすれば止まる）。
+    Pull {
+        dir: String,
+        url: String,
+        #[cfg_attr(feature = "serde", serde(rename = "ref"))]
+        ref_: String,
+        squash: bool,
+    },
+    /// `git subtree push --prefix=<dir> <url> <ref>`。
+    Push {
+        dir: String,
+        url: String,
+        #[cfg_attr(feature = "serde", serde(rename = "ref"))]
+        ref_: String,
+    },
+    /// `git subtree split --prefix=<dir> -b <branch>`: フォルダの履歴だけのブランチを作る。
+    Split { dir: String, branch: String },
+}
+
 /// `git apply` の当て方。既定は git と同じく作業ツリーだけ。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -675,6 +743,9 @@ pub trait Operations: Send + Sync {
     /// submodule の様子（`.gitmodules` にあるもの、場所の順）。
     fn submodules(&self) -> Result<Vec<SubmoduleState>>;
     fn change_submodule(&self, change: &SubmoduleChange) -> Result<()>;
+    /// subtree（HEAD の履歴の `git-subtree-dir:` のうち、HEAD にあるフォルダ。覚えている相手と合わせて）。
+    fn subtrees(&self) -> Result<Subtrees>;
+    fn subtree(&self, op: &SubtreeOp) -> Result<Outcome>;
 
     /// すべての設定と、それぞれがどこで決まっているか（後に出るものほど優先）。
     fn config_list(&self) -> Result<Vec<ConfigEntry>>;

@@ -1162,6 +1162,14 @@ impl Operations for RemoteOperations {
         self.op(Op::ChangeSubmodule(crate::wire::Tagged(change.clone())))
     }
 
+    fn subtrees(&self) -> Result<amonhen_model::Subtrees> {
+        self.op(Op::Subtrees)
+    }
+
+    fn subtree(&self, op: &amonhen_model::SubtreeOp) -> Result<Outcome> {
+        self.op(Op::Subtree(crate::wire::Tagged(op.clone())))
+    }
+
     fn config_list(&self) -> Result<Vec<ConfigEntry>> {
         self.op(Op::ConfigList)
     }

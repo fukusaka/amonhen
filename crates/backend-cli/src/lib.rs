@@ -11,6 +11,7 @@ mod programs;
 mod signing;
 mod status;
 mod submodule;
+mod subtree;
 mod verify;
 
 use amonhen_model::tr;
