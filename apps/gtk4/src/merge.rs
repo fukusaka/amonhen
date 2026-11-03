@@ -273,6 +273,8 @@ pub struct Editor {
     window: RefCell<Option<glib::WeakRef<gtk::Window>>>,
     /// 別の窓で開くボタン（埋め込んだときだけ出す）。
     popout: gtk::Button,
+    /// 別の窓を、解決したか Result を捨てると決めて閉じる（閉じたことを Working Copy に知らせない）。
+    window_done: Cell<bool>,
     /// Current と Result、Result と Incoming の間の帯と、帯の矢印の押せる範囲（x, y, 幅, 高さ, コンフリクト）。
     bands: [gtk::DrawingArea; 2],
     arrows: [RefCell<Vec<Arrow>>; 2],
@@ -320,6 +322,27 @@ thread_local! {
 
 /// 別の窓のマージエディタを解決せずに閉じたときの知らせ（worktree の作業ツリーとパス）。
 type Closed = Rc<dyn Fn(Option<&Path>, &str)>;
+
+/// `workdir` の worktree の `path` を別の窓で開いているエディタ。
+pub fn window_editor(workdir: Option<&Path>, path: &str) -> Option<Rc<Editor>> {
+    KEEP.with(|k| {
+        k.borrow()
+            .iter()
+            .find(|e| e.workdir.as_deref() == workdir && e.path == path)
+            .cloned()
+    })
+}
+
+/// `workdir` の worktree の `path` の別の窓を、聞かずに閉じる（片側のファイルを取って、Result を捨てると確かめた
+/// 後。残しておくと、後で Save したときに取ったファイルを上書きしてしまう。macOS 版と同じ）。
+pub fn discard_window(workdir: Option<&Path>, path: &str) {
+    if let Some(editor) = window_editor(workdir, path) {
+        editor.window_done.set(true);
+    }
+    if let Some(window) = open_window(workdir, path) {
+        window.destroy();
+    }
+}
 
 /// 別の窓のマージエディタを解決せずに閉じたら `f(作業ツリー, パス)` を呼ぶ。
 pub fn connect_window_closed(f: impl Fn(Option<&Path>, &str) + 'static) {
@@ -490,10 +513,10 @@ pub fn show_in_window(editor: &Rc<Editor>, parent: &gtk::Window) {
     });
     // 窓がある間は持っておく（ボタンなどは弱い参照で呼ぶので、持たなければ開いた直後に消える）。
     KEEP.with(|k| k.borrow_mut().push(editor.clone()));
-    let resolved = Rc::new(Cell::new(false));
-    let (weak, r) = (Rc::downgrade(editor), resolved.clone());
+    let weak = Rc::downgrade(editor);
     let key = (editor.workdir.clone(), editor.path.clone());
     window.connect_destroy(move |window| {
+        let done = weak.upgrade().is_none_or(|e| e.window_done.get());
         KEEP.with(|k| {
             k.borrow_mut()
                 .retain(|e| !std::ptr::eq(Rc::as_ptr(e), weak.as_ptr()))
@@ -503,7 +526,7 @@ pub fn show_in_window(editor: &Rc<Editor>, parent: &gtk::Window) {
                 .retain(|(_, w)| w.upgrade().is_some_and(|w| w != *window))
         });
         // 解決せずに閉じたら知らせる（Working Copy が、そのファイルを出していれば埋め込み直す）。
-        if !r.get() {
+        if !done {
             let listeners: Vec<Closed> = CLOSED.with(|c| c.borrow().clone());
             for f in listeners {
                 f(key.0.as_deref(), &key.1);
@@ -512,10 +535,12 @@ pub fn show_in_window(editor: &Rc<Editor>, parent: &gtk::Window) {
     });
     // 解決済みにしたら閉じる（その前に、渡されていた知らせを呼ぶ）。
     let previous = editor.on_resolved.borrow().clone();
-    let w = window.downgrade();
+    let (w, e) = (window.downgrade(), Rc::downgrade(editor));
     editor.set_on_resolved(move || {
         previous();
-        resolved.set(true);
+        if let Some(e) = e.upgrade() {
+            e.window_done.set(true);
+        }
         if let Some(w) = w.upgrade() {
             w.destroy();
         }
@@ -768,6 +793,7 @@ impl Editor {
             root,
             window: RefCell::default(),
             popout: popout.clone(),
+            window_done: Cell::new(false),
             bands,
             arrows: Default::default(),
             actions,

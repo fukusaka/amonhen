@@ -139,6 +139,8 @@ becomes the GitHub Release notes.
 - macOS: the merge editor's Resolve with AI and Explain with AI no longer beep when the AI question is cancelled.
 - macOS: closing a separate merge window without resolving puts the merge editor back in Working Copy if that file is
   shown.
+- macOS: Take Current File, Take Incoming File and Mark Resolved also heed unsaved Result edits in the file's separate
+  merge window, and taking a side closes that window.
 
 - The GTK4 app's Undo button asks once; it opened the question twice, so one stayed after undoing.
 - A `.mailmap`, or a mailmap setting (`log.mailmap`, `mailmap.file`), changed while the engine was reading the old

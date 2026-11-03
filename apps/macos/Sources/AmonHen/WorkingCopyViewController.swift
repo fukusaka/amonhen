@@ -1106,9 +1106,17 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     @objc private func takeTheirsFile() { takeSide(ours: false) }
 
-    /// 下のマージエディタに、このファイルの保存していない Result がある。
+    /// 下のマージエディタか別ウィンドウのマージエディタに、このファイルの保存していない Result がある。
     private func unsavedEditor(for path: String) -> MergeEditorViewController? {
-        embeddedEditor.flatMap { $0.path == path && $0.hasUnsavedChanges ? $0 : nil }
+        let editor = embeddedEditor.flatMap { $0.path == path ? $0 : nil }
+            ?? MergeEditorWindowController.editor(path: path, repository: repository)
+        return editor?.hasUnsavedChanges == true ? editor : nil
+    }
+
+    /// 片側のファイルを取る。別ウィンドウで開いていれば閉じる（Result は捨てると確かめてある・変えていない）。
+    private func performTakeSide(_ path: String, ours: Bool) {
+        MergeEditorWindowController.discard(path: path, repository: repository)
+        actions?.perform(["op": "takeSide", "path": path, "ours": ours])
     }
 
     private func takeSide(ours: Bool) {
@@ -1121,7 +1129,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
                 guard await actions.confirm(
                     ours ? L("Take the current file without saving Result?") : L("Take the incoming file without saving Result?"),
                     message: L("Your changes to Result are lost."), ok: title, destructive: true) else { return }
-                actions.perform(["op": "takeSide", "path": key.path, "ours": ours])
+                performTakeSide(key.path, ours: ours)
             }
             return
         }
@@ -1133,11 +1141,11 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
                     L("Replace the resolved content of %@?", key.path),
                     message: L("No conflict markers are left, so it may already be resolved. It becomes one side’s whole file."),
                     ok: title) else { return }
-                actions.perform(["op": "takeSide", "path": key.path, "ours": ours])
+                performTakeSide(key.path, ours: ours)
             }
             return
         }
-        actions.perform(["op": "takeSide", "path": key.path, "ours": ours])
+        performTakeSide(key.path, ours: ours)
     }
 
     /// マーカーの残っていないコンフリクトのファイルを、まとめて解決済みにする（ウィンドウの帯から）。

@@ -881,6 +881,20 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate {
         open[key(path: path, repository: repository)] != nil
     }
 
+    /// `repository` の `path` を別ウィンドウで開いているエディタ。
+    static func editor(path: String, repository: Repository) -> MergeEditorViewController? {
+        open[key(path: path, repository: repository)]?.editor
+    }
+
+    /// `repository` の `path` の別ウィンドウを、聞かずに閉じる（片側のファイルを取って、Result を捨てると確かめた
+    /// 後。残しておくと、後で Save したときに取ったファイルを上書きしてしまう）。
+    static func discard(path: String, repository: Repository) {
+        guard let controller = open[key(path: path, repository: repository)] else { return }
+        controller.discardConfirmed = true
+        controller.resolved = true
+        controller.close()
+    }
+
     static func show(path: String, repository: Repository, actions: Actions) {
         if let existing = open[key(path: path, repository: repository)] {
             existing.window?.makeKeyAndOrderFront(nil)

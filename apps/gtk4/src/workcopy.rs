@@ -2682,12 +2682,15 @@ impl Inner {
 
     /// Take Current File・Take Incoming File: コンフリクトのファイルを片側のファイルそのものにする。マーカーが
     /// 残っていなければ、解決した内容（rerere・ほかのエディタ）を上書きしてしまうので確かめる（macOS 版と同じ）。
-    /// 下のマージエディタに、`path` の保存していない Result がある。
+    /// 下のマージエディタか別の窓のマージエディタに、`path` の保存していない Result がある。
     fn unsaved_editor(&self, path: &str) -> Option<Rc<crate::merge::Editor>> {
+        let workdir = self.repo().and_then(|r| r.paths().workdir);
         self.embedded
             .borrow()
             .clone()
-            .filter(|e| e.path() == path && e.has_unsaved_changes())
+            .filter(|e| e.path() == path)
+            .or_else(|| crate::merge::window_editor(workdir.as_deref(), path))
+            .filter(|e| e.has_unsaved_changes())
     }
 
     fn take_side(this: &Rc<Self>, ours: bool, title: &'static str) {
@@ -2699,6 +2702,15 @@ impl Inner {
             return;
         };
         let unsaved = this.unsaved_editor(&path).is_some();
+        // 片側のファイルを取る。別の窓で開いていれば閉じる（Result は捨てると確かめてある・変えていない）。
+        let workdir = repo.paths().workdir;
+        let take = {
+            let actions = actions.clone();
+            move |path: &str| {
+                crate::merge::discard_window(workdir.as_deref(), path);
+                actions.perform(json!({ "op": "takeSide", "path": path, "ours": ours }));
+            }
+        };
         glib::spawn_future_local(async move {
             // 保存していない Result は、片側のファイルで上書きされて失われる（git checkout --ours・--theirs と同じく
             // 作業ツリーのファイルを置き換える）。閉じるときと同じく、失うことを確かめる（macOS 版と同じ）。
@@ -2716,7 +2728,7 @@ impl Inner {
                     )
                     .await
                 {
-                    actions.perform(json!({ "op": "takeSide", "path": path, "ours": ours }));
+                    take(&path);
                 }
                 return;
             }
@@ -2742,7 +2754,7 @@ impl Inner {
             {
                 return;
             }
-            actions.perform(json!({ "op": "takeSide", "path": path, "ours": ours }));
+            take(&path);
         });
     }
 
