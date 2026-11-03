@@ -162,8 +162,9 @@ fn choose_other(
 ) {
     let initial = if current.is_empty() {
         found.first().map(|c| c.path.clone()).unwrap_or_else(|| {
+            // SSH 先で何も見つからなければ、その機械のホーム（macOS 版のパスを選ぶシートの go("")）。
             if s.host.is_some() {
-                "/usr/bin".into()
+                "~".into()
             } else {
                 "/usr/local/bin".into()
             }
