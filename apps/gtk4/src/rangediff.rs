@@ -451,7 +451,13 @@ impl RangeDiff {
     pub fn open_previous(self: &Rc<Self>, branch: Option<String>) {
         let Some(repo) = self.repo() else { return };
         let request = self.next_request();
-        self.set_summary(&tr!("Looking for the previous version…"));
+        // 探している間は、前に比べた結果（範囲・数・組）を残さない（別のブランチの結果に見える。macOS 版と同じ）。
+        self.entry.set_text("");
+        self.show(
+            Vec::new(),
+            &[],
+            Some(tr!("Looking for the previous version…")),
+        );
         self.pending.set(self.pending.get() + 1);
         let this = self.clone();
         glib::spawn_future_local(async move {
