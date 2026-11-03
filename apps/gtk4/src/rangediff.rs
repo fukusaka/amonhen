@@ -569,7 +569,11 @@ impl RangeDiff {
         } else {
             [
                 ("same", tr!("{count} same", count = count("same"))),
-                ("changed", tr!("{count} changed", count = count("changed"))),
+                // 鍵は CLI の「変更 {count}」（worktree の変更の数）と分ける。
+                (
+                    "changed",
+                    tr!("{changed} changed", changed = count("changed")),
+                ),
                 ("removed", tr!("{count} removed", count = count("removed"))),
                 ("added", tr!("{count} added", count = count("added"))),
             ]

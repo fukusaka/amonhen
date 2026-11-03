@@ -905,6 +905,7 @@
 "Comparing…" = "比べています…";
 "No commits to compare" = "比べるコミットがありません";
 "{count} same" = "同じ {count}";
+"{changed} changed" = "変わった {changed}";
 "{count} removed" = "消えた {count}";
 "{count} added" = "足された {count}";
 "Choose two versions to compare" = "比べる 2 つの版を選んでください";
