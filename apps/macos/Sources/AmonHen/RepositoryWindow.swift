@@ -1126,7 +1126,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         detail.toolTip = failure.message
         detail.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         // 次の一手（いちばん目立たせるのは最初のもの）。
-        let remedies: [NSButton] = cancelled ? [] : failure.remedies.enumerated().map { i, remedy in
+        let remedies: [NSButton] = cancelled ? [] : failure.remedies(local: isLocal).enumerated().map { i, remedy in
             let button = NSButton(title: remedy.title, target: self, action: #selector(runRemedy(_:)))
             button.tag = i
             if i == 0 { button.bezelColor = .controlAccentColor }
@@ -1176,9 +1176,11 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     }
 
     @objc private func runRemedy(_ sender: NSButton) {
-        guard let failure, failure.remedies.indices.contains(sender.tag) else { return }
+        guard let failure else { return }
+        let remedies = failure.remedies(local: isLocal)
+        guard remedies.indices.contains(sender.tag) else { return }
         hideFailure()
-        switch failure.remedies[sender.tag] {
+        switch remedies[sender.tag] {
         case let .openWorktree(path): edit(worktree: path)
         case .openTerminal: openTerminal(at: editing.path)
         case .retry: if let command = failure.command { actions.perform(command) }

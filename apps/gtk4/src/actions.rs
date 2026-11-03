@@ -150,6 +150,11 @@ impl Actions {
 
     /// 使えるかを決める状態を `f` で変え、タブのアクションに入れる（ref・status・画面が変わるたびに。macOS 版で
     /// メニューを開くたびに `validate` が見るものと同じ）。
+    /// 手元のリポジトリか（daemon・SSH 先でない。端末・ファイルの窓で開ける）。
+    pub fn is_local(&self) -> bool {
+        self.facts.borrow().local
+    }
+
     pub fn update_facts(&self, f: impl FnOnce(&mut Facts)) {
         f(&mut self.facts.borrow_mut());
         apply_facts(&self.group, &self.facts.borrow());

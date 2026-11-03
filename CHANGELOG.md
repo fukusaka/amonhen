@@ -211,6 +211,8 @@ becomes the GitHub Release notes.
 - macOS: undoing or restoring the removal of a key with several values, such as two remote.origin.fetch, puts all of
   them back instead of only the last.
 - macOS: warnings flashed in the status bar show an orange triangle instead of a green one.
+- macOS: an authentication or host key failure in a daemon or SSH repository no longer offers Open in Terminal, which
+  only beeped there.
 
 ### [0.2.8] - 2026-10-30
 

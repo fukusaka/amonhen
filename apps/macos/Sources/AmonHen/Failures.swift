@@ -126,11 +126,12 @@ struct OperationFailure {
         }
     }
 
-    var remedies: [Remedy] {
+    /// 次にできること。端末で開くのは手元のリポジトリ（`local`）だけ（daemon・SSH 先では開けない）。
+    func remedies(local: Bool) -> [Remedy] {
         let retry: [Remedy] = command == nil ? [] : [.retry]
         switch kind {
         case "worktreeInUse": return path.map { [.openWorktree($0)] } ?? []
-        case "auth", "hostKey": return [.openTerminal] + retry
+        case "auth", "hostKey": return (local ? [.openTerminal] : []) + retry
         case "network", "locked": return retry
         case "rejected", "diverged": return [.pull]
         case "localChanges": return [.workingCopy]

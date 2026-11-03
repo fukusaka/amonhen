@@ -194,7 +194,8 @@ impl Failure {
             .map_or(String::new(), |l| l.to_string())
     }
 
-    pub fn remedies(&self) -> Vec<Remedy> {
+    /// 次にできること。端末で開くのは手元のリポジトリ（`local`）だけ（daemon・SSH 先では開けない）。
+    pub fn remedies(&self, local: bool) -> Vec<Remedy> {
         let retry = if self.command.is_some() {
             vec![Remedy::Retry]
         } else {
@@ -206,7 +207,8 @@ impl Failure {
                 .clone()
                 .map(|p| vec![Remedy::OpenWorktree(p)])
                 .unwrap_or_default(),
-            Some("auth" | "hostKey") => [vec![Remedy::OpenTerminal], retry].concat(),
+            Some("auth" | "hostKey") if local => [vec![Remedy::OpenTerminal], retry].concat(),
+            Some("auth" | "hostKey") => retry,
             Some("network" | "locked") => retry,
             Some("rejected" | "diverged") => vec![Remedy::Pull],
             Some("localChanges") => vec![Remedy::WorkingCopy],
@@ -544,7 +546,7 @@ impl StatusBar {
         detail.set_tooltip_text(Some(&failure.message));
         let mut children: Vec<gtk::Widget> = vec![icon.upcast(), title.upcast(), detail.upcast()];
         if !cancelled {
-            for (i, remedy) in failure.remedies().into_iter().enumerate() {
+            for (i, remedy) in failure.remedies(actions.is_local()).into_iter().enumerate() {
                 let b = button(&remedy.title(), i == 0);
                 b.add_css_class("status-small");
                 let (this, actions, command) = (
