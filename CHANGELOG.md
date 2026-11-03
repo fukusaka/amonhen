@@ -206,6 +206,8 @@ becomes the GitHub Release notes.
 - macOS: Repository Settings writes the git settings of one choice in turn (such as Signing's two keys or a Fetch-only
   pull), so the second no longer fails on the config lock and leaves it half applied.
 - macOS: a Repository Settings change that git couldn't write no longer adds an Undo step.
+- macOS: Keys and Values' Restore line goes away after any other settings change, so Restore no longer undoes that
+  change instead of the removal.
 
 ### [0.2.8] - 2026-10-30
 

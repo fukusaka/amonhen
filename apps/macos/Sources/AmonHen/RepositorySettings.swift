@@ -76,8 +76,11 @@ final class RepositorySettingsModel {
     private(set) var detectedBase: String?
     /// git の設定・リモートなどを変えた（画面を読み直す）。
     var onRepositoryChange: (() -> Void)?
-    /// git config の表で「−」などで最後に消したキーと値（表の下の「戻す」の 1 行）。次の書き換えで忘れる。
-    var removedConfig: [(key: String, value: String)] = []
+    /// git config の表で「−」などで最後に消したキーと値（表の下の「戻す」の 1 行）。どのページのものでも、次の
+    /// 書き換えで忘れる（「戻す」がほかの書き換えを戻さないように）。
+    private(set) var removedConfig: [(key: String, value: String)] = []
+    /// その削除の Undo の名前（Undo のいちばん上がこれなら「戻す」は ⌘Z と同じ）。
+    private(set) var removalName: String?
     /// リポジトリの形（shallow clone・partial clone・sparse checkout・maintenance）。このリポジトリの段だけ。
     private(set) var form: RepositoryForm?
     /// 取り足す・取り直す・取り出すフォルダを変える命令を、ウィンドウの操作として動かす（Fetch と同じく、進み具合は
@@ -282,18 +285,36 @@ final class RepositorySettingsModel {
         if pending.isEmpty { DispatchQueue.main.async { [weak self] in self?.flush() } }
         pending += changes
         pendingName = name
-        if let removed { pendingRemoved = removed }
+        pendingRemoved = removed
     }
 
     private func flush() {
-        let changes = pending, name = pendingName, removed = pendingRemoved
+        let changes = pending, name = pendingName, removed = pendingRemoved ?? []
         pending = []
         pendingRemoved = nil
-        if let removed { removedConfig = removed }
+        // 書いている間に「戻す」を押させない（書けたら、消したものなら出し直す）。
+        removedConfig = []
+        removalName = nil
         enqueue(changes.map(command)) { [weak self] ok in
-            guard let self, ok, let undo else { return }
+            guard let self, ok else { return }
+            if !removed.isEmpty {
+                removedConfig = removed
+                removalName = name
+            }
+            guard let undo else { return }
             undo.registerUndo(withTarget: self) { m in m.replay(changes.reversed().map(\.inverse), name: name) }
             undo.setActionName(name)
+        }
+    }
+
+    /// 表の下の「戻す」: 最後の削除を戻す。Undo のいちばん上がその削除なら ⌘Z と同じ（やり直せる）。そうでなければ
+    /// 消した値を書き戻す（ほかの書き換えを戻さない）。
+    func restoreRemoved() {
+        if let undo, undo.canUndo, let removalName, undo.undoActionName == removalName {
+            undo.undo()
+        } else {
+            let back = removedConfig.map { ConfigChange(key: $0.key, old: nil, new: $0.value) }
+            write(back, name: L("Restore"))
         }
     }
 
@@ -302,6 +323,7 @@ final class RepositorySettingsModel {
         undo?.registerUndo(withTarget: self) { m in m.replay(changes.reversed().map(\.inverse), name: name) }
         undo?.setActionName(name)
         removedConfig = []
+        removalName = nil
         enqueue(changes.map(command))
     }
 
@@ -950,14 +972,9 @@ private struct AllSettingsTab: View {
         write(gone, name: gone.count == 1 ? L("Remove %@", gone[0].key) : L("Remove %ld keys", gone.count), showRemoved: true)
     }
 
-    /// 下の 1 行の「戻す」: 最後の削除を 1 段戻す（⌘Z と同じ）。
+    /// 下の 1 行の「戻す」: 最後の削除を戻す。
     private func restore() {
-        if let undo = model.undo, undo.canUndo {
-            undo.undo()
-        } else {
-            let back = model.removedConfig.map { ConfigChange(key: $0.key, old: nil, new: $0.value) }
-            write(back, name: L("Restore"))
-        }
+        model.restoreRemoved()
     }
 
     private typealias ConfigChange = RepositorySettingsModel.ConfigChange
