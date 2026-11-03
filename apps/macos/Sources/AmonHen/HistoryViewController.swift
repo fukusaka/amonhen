@@ -1834,9 +1834,11 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             // 分ける（止めてから Working Copy で分けてコミットする）は、編集モードの外の操作。
             add("Split…") {
                 Task { @MainActor in
+                    // worktree の今のブランチを書き換えるので、Cherry-pick・Revert と同じく、どの worktree かを書く。
                     guard await actions.confirm(L("Split %@?", short),
-                                                message: L("Its changes go back to the working tree; commit them in parts, then Continue.") + " "
-                                                    + Actions.canUndo, ok: "Split") else { return }
+                                                message: actions.sheetMessage(
+                                                    L("Its changes go back to the working tree; commit them in parts, then Continue.") + " "
+                                                        + Actions.canUndo), ok: "Split") else { return }
                     actions.rewrite("Split \(short)", ["kind": "split", "oid": hex])
                 }
             }
