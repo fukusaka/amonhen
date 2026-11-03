@@ -954,10 +954,22 @@ pub fn checkout_pull_request(actions: &Rc<Actions>, pr: &PullRequest) {
 /// Repository > Create Pull Request…: `branch` からプルリクエストを作る。まだ push していない（上流がない・先行
 /// コミットがある）なら、まず Push のシートを出し、送り終えたらそのまま作る。
 pub fn create_pull_request(actions: &Rc<Actions>, branch: String, pushed: bool) {
+    // 選んだときの worktree で読み、送るならその worktree の Push のシートで（読んでいる間に書き込む先を替えても）。
+    if let Some(target) = crate::sheets::Target::current(actions) {
+        create_pull_request_in(actions, target, branch, pushed);
+    }
+}
+
+fn create_pull_request_in(
+    actions: &Rc<Actions>,
+    target: crate::sheets::Target,
+    branch: String,
+    pushed: bool,
+) {
     let actions = actions.clone();
     glib::spawn_future_local(async move {
         let window = crate::sheets::parent(&actions);
-        let Some(repo) = actions.repo() else { return };
+        let repo = target.repo.clone();
         // gh で作るので、gh がなければ作れない。
         if !available() {
             if let Some(w) = &window {
@@ -988,12 +1000,13 @@ pub fn create_pull_request(actions: &Rc<Actions>, branch: String, pushed: bool) 
                 .as_ref()
                 .is_none_or(|i| i.detail.is_none() || i.gone || i.ahead > 0)
         {
-            let (a, b) = (actions.clone(), branch.clone());
-            crate::sheets::push(
+            let (a, b, t) = (actions.clone(), branch.clone(), target.clone());
+            crate::sheets::push_in(
                 &actions,
+                target,
                 Some(branch.clone()),
                 false,
-                Some(Box::new(move || create_pull_request(&a, b, true))),
+                Some(Box::new(move || create_pull_request_in(&a, t, b, true))),
             );
             return;
         }
