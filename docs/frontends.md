@@ -34,9 +34,9 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
 | Branches arranged (current, active, inactive, merged, archived, stacked) | ✓ | ✓ | ✓ | △ | VSCode: With the engine; without it, a folder tree split on `/`.<br>CLI: Via `amonhen run` (`branchGroups`). |
-| Favorite branches | ✓ | ✓ | ✓ | — |  |
-| Archived branches | ✓ | ✓ | ✓ | — |  |
-| Favorites reordered by dragging | ✓ | ✓ | △ | n/a | GTK4: Dropped on the upper or lower third of a favorite; the middle offers Merge and Rebase.<br>VSCode: Move Up and Move Down in Favorites on the menu (a drop on a branch offers Merge and Rebase). |
+| Favorite branches | ✓ | ✓ | ✓ | — | |
+| Archived branches | ✓ | ✓ | ✓ | — | |
+| Favorites reordered by dragging | ✓ | ✓ | △ | n/a | VSCode: Move Up and Move Down in Favorites on the menu (a drop on a branch offers Merge and Rebase). |
 | Branch menu: checkout, rename, delete (Delete Anyway when unmerged) | ✓ | ✓ | ✓ | △ | macOS: Set Upstream is only in the Repository menu.<br>GTK4: Set Upstream is only in the Repository menu.<br>CLI: Via `amonhen run`. |
 | Sync a branch that is not checked out (Fast-Forward, Push, Publish) | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Tags listed | ✓ | ✓ | ✓ | ✓ |  |

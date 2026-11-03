@@ -1315,21 +1315,34 @@ fn setup_row(item: &gtk::ListItem, inner: &Owner, drop_cb: &Rc<RefCell<Option<Dr
     // 落とせない行（Workspace・タグ・名前のフォルダなど）の上では、落とせないことを先に見せる（macOS 版と同じ）。
     // History から運んだコミットは受けない（History の中で並べ替えるもの）。
     target.set_preload(true);
-    let weak = expander.downgrade();
-    target.connect_motion(move |target, _, _| {
-        let accepts = weak
-            .upgrade()
-            .and_then(|e| node_of(&e))
-            .is_some_and(|node| {
-                target
-                    .value()
-                    .and_then(|v| v.get::<String>().ok())
-                    .is_some_and(|d| crate::refops::accepts_drop(&d, &node.data()))
-            });
+    let (weak, owner) = (expander.downgrade(), inner.clone());
+    target.connect_motion(move |target, _, y| {
+        let Some(expander) = weak.upgrade() else {
+            return gtk::gdk::DragAction::empty();
+        };
+        let dragged = target.value().and_then(|v| v.get::<String>().ok());
+        let node = node_of(&expander);
+        let accepts = node
+            .as_ref()
+            .zip(dragged.as_deref())
+            .is_some_and(|(node, d)| crate::refops::accepts_drop(d, &node.data()));
+        // お気に入りの間に落とすところなら、行の上か下に線を引く（macOS 版の表の、行の間に落とす印）。
+        let edge = match (accepts, &node, &dragged, owner.borrow().upgrade()) {
+            (true, Some(node), Some(d), Some(inner)) => {
+                inner.favorite_edge(d, &node.data(), y, expander.height() as f64)
+            }
+            _ => None,
+        };
+        set_drop_line(expander.upcast_ref(), edge);
         if accepts {
             gtk::gdk::DragAction::COPY
         } else {
             gtk::gdk::DragAction::empty()
+        }
+    });
+    target.connect_leave(|target| {
+        if let Some(widget) = target.widget() {
+            set_drop_line(&widget, None);
         }
     });
     let (weak, cb, owner) = (expander.downgrade(), drop_cb.clone(), inner.clone());
@@ -1337,6 +1350,7 @@ fn setup_row(item: &gtk::ListItem, inner: &Owner, drop_cb: &Rc<RefCell<Option<Dr
         let (Some(expander), Ok(dragged)) = (weak.upgrade(), value.get::<String>()) else {
             return false;
         };
+        set_drop_line(expander.upcast_ref(), None);
         if node_of(&expander).is_none_or(|n| !crate::refops::accepts_drop(&dragged, &n.data())) {
             return false;
         }
@@ -1355,6 +1369,17 @@ fn setup_row(item: &gtk::ListItem, inner: &Owner, drop_cb: &Rc<RefCell<Option<Dr
         }
     });
     expander.add_controller(target);
+}
+
+/// 行の上（`Some(true)`）か下（`Some(false)`）に、落とす所の線を引く（None なら消す）。
+fn set_drop_line(row: &gtk::Widget, above: Option<bool>) {
+    row.remove_css_class("drop-above");
+    row.remove_css_class("drop-below");
+    match above {
+        Some(true) => row.add_css_class("drop-above"),
+        Some(false) => row.add_css_class("drop-below"),
+        None => {}
+    }
 }
 
 fn bind_row(item: &gtk::ListItem) {
@@ -1580,22 +1605,32 @@ impl Inner {
         self.rebuild(false);
     }
 
-    /// お気に入りのブランチ `dragged`（`local:<名前>`）を、お気に入りの行 `target` の上端（`y` が高さの 1/3 より上）なら
-    /// その上へ、下端なら下へ動かす（macOS 版の、お気に入りの間に落とす並べ替え）。並べ替えたら true。
-    fn reorder_favorite(&self, dragged: &str, target: &Data, y: f64, height: f64) -> bool {
-        let Some(name) = dragged.strip_prefix("local:") else {
-            return false;
-        };
+    /// お気に入りのブランチ `dragged`（`local:<名前>`）を、お気に入りの行 `target` の上端（`y` が高さの 1/3 より
+    /// 上）・下端に落とすところか。上なら `Some(true)`、下なら `Some(false)`（macOS 版の、お気に入りの間に落とす
+    /// 並べ替え。真ん中は行の上に落とす merge・rebase）。
+    fn favorite_edge(&self, dragged: &str, target: &Data, y: f64, height: f64) -> Option<bool> {
+        let name = dragged.strip_prefix("local:")?;
         let Item::Ref(e) = &target.item else {
-            return false;
+            return None;
         };
         if !target.pinned
             || e.kind != RefKind::Local
-            || (y > height / 3.0 && y < height * 2.0 / 3.0)
+            || !self.pinned.borrow().iter().any(|p| p == name)
         {
-            return false;
+            return None;
         }
-        let Some(order) = reordered(&self.pinned.borrow(), name, &e.name, y <= height / 3.0) else {
+        favorite_edge(y, height)
+    }
+
+    /// お気に入りのブランチを、お気に入りの行の上端・下端に落としたら、その上・下へ動かす。並べ替えたら true。
+    fn reorder_favorite(&self, dragged: &str, target: &Data, y: f64, height: f64) -> bool {
+        let Some(above) = self.favorite_edge(dragged, target, y, height) else {
+            return false;
+        };
+        let (Some(name), Item::Ref(e)) = (dragged.strip_prefix("local:"), &target.item) else {
+            return false;
+        };
+        let Some(order) = reordered(&self.pinned.borrow(), name, &e.name, above) else {
             return false;
         };
         if order != *self.pinned.borrow()
@@ -3014,6 +3049,17 @@ fn filtered_groups(
 }
 
 /// お気に入りの順 `order` で、`name` を `target` の上（`above`）か下へ動かした順。どちらかがなければ None。
+/// 行の高さ `height` の中の `y` が、上の 1/3 なら `Some(true)`、下の 1/3 なら `Some(false)`、真ん中なら None。
+fn favorite_edge(y: f64, height: f64) -> Option<bool> {
+    if y <= height / 3.0 {
+        Some(true)
+    } else if y >= height * 2.0 / 3.0 {
+        Some(false)
+    } else {
+        None
+    }
+}
+
 fn reordered(order: &[String], name: &str, target: &str, above: bool) -> Option<Vec<String>> {
     let from = order.iter().position(|n| n == name)?;
     let at = order.iter().position(|n| n == target)?;
@@ -3161,7 +3207,16 @@ fn pull_request_rows(list: &[PullRequest], refs: Option<&Refs>) -> gio::ListStor
 
 #[cfg(test)]
 mod tests {
-    use super::reordered;
+    use super::{favorite_edge, reordered};
+
+    #[test]
+    fn favorite_edges() {
+        assert_eq!(favorite_edge(0.0, 30.0), Some(true));
+        assert_eq!(favorite_edge(10.0, 30.0), Some(true));
+        assert_eq!(favorite_edge(15.0, 30.0), None);
+        assert_eq!(favorite_edge(20.0, 30.0), Some(false));
+        assert_eq!(favorite_edge(30.0, 30.0), Some(false));
+    }
 
     #[test]
     fn reorders_favorites() {
