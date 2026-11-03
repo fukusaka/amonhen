@@ -336,11 +336,24 @@ async function reflogFlow(): Promise<void> {
     assert.equal(readFileSync(file, 'utf8').replaceAll('\r\n', '\n'), 'reflog\n');
     git('stash', 'drop', '-q');
 
+    // 一覧の上のボタン: どのブランチからも辿れなくなったコミットから、ブランチを作って取り戻す
+    git('reset', '-q', '--hard', parent);
+    mark = posted.length;
+    await panel.reflog.handle({ type: 'reflogLoad' });
+    const unreachable = await reflog(mark, (m) => m.entries.some((e) => e.oid === lost && !e.reachable));
+    const entry = unreachable.entries.find((e) => e.oid === lost)!;
+    await withWindow({ showInputBox: async () => 'reflog-rescue' }, async () =>
+      panel.reflog.handle({ type: 'reflogAction', action: 'newBranch', oid: entry.oid, selector: entry.selector }),
+    );
+    assert.equal(git('symbolic-ref', '--short', 'HEAD').trim(), 'reflog-rescue');
+    assert.equal(rev('HEAD'), lost);
+
     // Checkout（detached）と、History で見せる
-    await vscode.commands.executeCommand('amonhen.checkoutCommit', { oid: parent });
+    await panel.reflog.handle({ type: 'reflogAction', action: 'checkout', oid: parent, selector: 'HEAD@{1}' });
     assert.equal(rev('HEAD'), parent);
     assert.throws(() => git('symbolic-ref', '-q', 'HEAD'));
     git('switch', '-q', 'reflog-e2e');
+    git('reset', '-q', '--hard', lost);
     await vscode.commands.executeCommand('amonhen.refresh');
     mark = posted.length;
     await vscode.commands.executeCommand('amonhen.reflog.showInHistory', { oid: parent });
@@ -348,6 +361,7 @@ async function reflogFlow(): Promise<void> {
   } finally {
     git('switch', '-q', branch);
     git('branch', '-D', 'reflog-e2e');
+    if (git('branch', '--list', 'reflog-rescue')) git('branch', '-D', 'reflog-rescue');
     await vscode.commands.executeCommand('amonhen.refresh');
   }
 }
