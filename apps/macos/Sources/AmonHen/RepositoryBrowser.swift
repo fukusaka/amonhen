@@ -999,14 +999,17 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
     private func removeHost(_ name: String) {
         let paths = paths(in: .host(name))
         let roots = Bookmarks.shared.data.scanRoots.map(\.path).filter { Self.sshHost($0) == name }
-        guard SSHConnectionSheet.confirmRemove(host: name, repositories: paths.count, folders: roots.count) else { return }
-        for path in paths {
-            RepositoryList.remove(path)
-            Bookmarks.shared.remove(path)
+        Task { @MainActor in
+            guard await SSHConnectionSheet.confirmRemove(
+                host: name, repositories: paths.count, folders: roots.count, in: view.window) else { return }
+            for path in paths {
+                RepositoryList.remove(path)
+                Bookmarks.shared.remove(path)
+            }
+            for root in roots { Bookmarks.shared.removeScanRoot(root) }
+            category = .all
+            reload()
         }
-        for root in roots { Bookmarks.shared.removeScanRoot(root) }
-        category = .all
-        reload()
     }
 
     // MARK: - 外す
