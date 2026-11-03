@@ -183,6 +183,8 @@ becomes the GitHub Release notes.
   beeped.
 - macOS: when a commit's changed files can't be read, History says it couldn't load the diff instead of No changes.
 - macOS: Find in a diff highlights matches in the file headers' paths too.
+- macOS: diffs scroll sideways as far as their longest line, no more and no less; lines past about 3,000 points were
+  cut off.
 
 ### [0.2.8] - 2026-10-30
 

@@ -64,6 +64,8 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
     private let numbersWidth: CGFloat = 96
     /// 変更の行の左のチェックボックスの欄（`showsStageChecks` のときだけ）。
     private let checkWidth: CGFloat = 22
+    /// いちばん長い行の幅（横にスクロールできる範囲）。読んだときに文字数から見積もり、描いた行がそれより長ければ広げる。
+    private var textWidth: CGFloat = 0
     private var gutterWidth: CGFloat { numbersWidth + (showsStageChecks ? checkWidth : 0) }
     /// Working Copy の HEAD と作業ツリーの差分か。変更の行と hunk の見出しの左に、次のコミットに含めるかの
     /// チェックボックスを出す。
@@ -179,6 +181,7 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         shaped.removeAll()
         headerGlyphs.removeAll()
         fileRows = diff?.withRows { all in all.indices.filter { all[$0].kind == UInt8(AmonhenDiffRow_FILE) } } ?? []
+        textWidth = diff.map(estimatedTextWidth) ?? 0
         topFile = nil
         selectedRows.removeAll()
         anchorRow = nil
@@ -226,7 +229,20 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
     private func updateDocumentSize() {
         let rows = CGFloat(diff?.rowCount ?? 0)
         let clip = scrollView.contentView.bounds.size
-        document.frame.size = NSSize(width: max(clip.width, 3000), height: max(clip.height, rows * lineHeight))
+        let width = textWidth > 0 ? gutterWidth + 8 + textWidth + 40 : 0
+        document.frame.size = NSSize(width: max(clip.width, width), height: max(clip.height, rows * lineHeight))
+    }
+
+    /// いちばん長い行の幅の見積もり（等幅の文字数から。タブや全角の文字の分は、描いたときに広げる）。
+    private func estimatedTextWidth(of diff: FileDiff) -> CGFloat {
+        let columns = diff.withRows { all in
+            (0..<all.count).reduce(0) { longest, row in
+                // 長さ（ASCII のバイト数か UTF-16 の符号単位の数）は行に書いてある。文字列は作らない。
+                all[row].kind == UInt8(AmonhenDiffRow_FILE) ? longest : max(longest, Int(all[row].text.len_and_kind & 0x7fff_ffff))
+            }
+        }
+        let digit = ("0" as NSString).size(withAttributes: [.font: font as NSFont]).width
+        return CGFloat(columns) * digit
     }
 
     /// 選んだ行のうち、追加・削除の行。
@@ -831,6 +847,11 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
                     renderer.addLine(line, origin: CGPoint(x: right - line.width, y: baseline), color: secondary, scale: scale)
                 }
                 guard let line = shapedLine(row, scale: scale) else { continue }
+                if line.width > textWidth {
+                    // 見積もりより長い行（タブ、全角の文字）。描き終えてから広げる。
+                    textWidth = line.width
+                    DispatchQueue.main.async { [weak self] in self?.updateDocumentSize() }
+                }
                 // 変わった単語を、行の色より濃くする。
                 let strong = r.kind == UInt8(AmonhenDiffRow_ADDED) ? strongAdded : strongRemoved
                 for (x0, x1) in line.spans {
