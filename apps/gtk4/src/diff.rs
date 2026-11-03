@@ -1693,11 +1693,12 @@ impl DiffWidget {
                 DiffRow::ADDED => Some(gdk::RGBA::new(0.2, 0.7, 0.3, 0.16)),
                 DiffRow::REMOVED => Some(gdk::RGBA::new(0.9, 0.25, 0.25, 0.16)),
                 DiffRow::HUNK => Some(gdk::RGBA::new(0.3, 0.5, 0.9, 0.10)),
-                // コンフリクト: Current（自分の側）・Incoming（取り込む側）・共通の祖先・マーカー。
-                DiffRow::OURS => Some(gdk::RGBA::new(0.2, 0.55, 0.9, 0.16)),
-                DiffRow::THEIRS => Some(gdk::RGBA::new(0.6, 0.4, 0.85, 0.16)),
-                DiffRow::BASE => Some(gdk::RGBA::new(0.5, 0.5, 0.5, 0.10)),
-                DiffRow::MARKER => Some(gdk::RGBA::new(0.5, 0.5, 0.5, 0.22)),
+                // コンフリクト: Current（自分の側）は青・Incoming（取り込む側）は緑・共通の祖先は灰色・マーカーは
+                // 橙（macOS 版と同じ）。
+                DiffRow::OURS => Some(gdk::RGBA::new(0.3, 0.5, 0.9, 0.18)),
+                DiffRow::THEIRS => Some(gdk::RGBA::new(0.2, 0.7, 0.3, 0.18)),
+                DiffRow::BASE => Some(gdk::RGBA::new(0.5, 0.5, 0.5, 0.18)),
+                DiffRow::MARKER => Some(gdk::RGBA::new(1.0, 0.58, 0.0, 0.14)),
                 _ => None,
             };
             if let Some(bg) = background {
@@ -1788,7 +1789,8 @@ impl DiffWidget {
                     &graphene::Rect::new(origin + x0, top + 1.0, (x1 - x0).max(2.0), rh - 2.0),
                 );
             }
-            let color = if row.kind == DiffRow::HUNK {
+            // hunk の見出しとコンフリクトのマーカーの文字は薄く（macOS 版と同じ）。
+            let color = if row.kind == DiffRow::HUNK || row.kind == DiffRow::MARKER {
                 &secondary
             } else {
                 &fg
