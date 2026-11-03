@@ -219,6 +219,9 @@ pub struct State {
     on_drag_start: Option<Rc<dyn Fn()>>,
     /// 出す History が替わったときに呼ぶ（密度の帯が求め直す）。
     on_history: Option<Rc<dyn Fn()>>,
+    /// 最後に描いたグラフの列の幅と、それが変わったときに呼ぶもの（列の見出しが合わせる）。
+    graph_width: f32,
+    on_graph_width: Option<Rc<dyn Fn()>>,
     /// 最後に描いたもの（読み直したとき、ここから新しい表示へ溶かす）。
     last_node: Option<gsk::RenderNode>,
     /// 溶かしている途中の前の表示と、始めた時刻。
@@ -1187,6 +1190,21 @@ impl HistoryView {
         self.state().on_menu = Some(Rc::new(f));
     }
 
+    /// 最後に描いたグラフの列の幅（列の見出しの「Message」の位置）。
+    pub fn graph_width(&self) -> f32 {
+        self.state().graph_width
+    }
+
+    /// グラフの列の幅が変わったら `f()` を呼ぶ。
+    pub fn connect_graph_width(&self, f: impl Fn() + 'static) {
+        self.state().on_graph_width = Some(Rc::new(f));
+    }
+
+    /// 列の見出しの「Message」の左端（行の文字と同じく、グラフの右端から少し空ける）。
+    pub fn message_x(&self) -> f32 {
+        self.graph_width() + GRAPH_GAP
+    }
+
     /// `row` のメニュー `popover` を出した。閉じるまで、その行を枠で示す（選んでいない行でも）。
     pub fn mark_menu_row(&self, row: u32, popover: &impl IsA<gtk::Popover>) {
         self.state().menu_row = Some(row);
@@ -1627,6 +1645,17 @@ impl HistoryView {
             st.lanes
                 .update(&history, first..last, max_graph, &st.metrics, true);
             let graph_width = st.lanes.width();
+            if (graph_width - st.graph_width).abs() >= 0.5 {
+                st.graph_width = graph_width;
+                // 描いている間に見出しを描き直させない。次の描画の前に知らせる（ふつうの idle では、History を
+                // 描き続けている間は遅れる）。
+                if let Some(f) = st.on_graph_width.clone() {
+                    glib::idle_add_local_full(glib::Priority::HIGH, move || {
+                        f();
+                        glib::ControlFlow::Break
+                    });
+                }
+            }
             snapshot.push_clip(&graphene::Rect::new(0.0, 0.0, max_graph, height));
             let extents = graph::draw(
                 snapshot,

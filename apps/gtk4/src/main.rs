@@ -857,6 +857,7 @@ fn build_tab(
     let (history_bar, display_button) = historydisplay::bar();
     history_column.append(&history_bar);
     history_column.append(&search.bar);
+    history_column.append(&historydisplay::header(&view));
     history_column.append(&overlay);
     // File History・Blame のタブでツールバーの検索を押したら、このタブに戻って History を探す（macOS 版と同じ）。
     {
@@ -2204,12 +2205,9 @@ fn build_tab(
                                 search.search(query, args.only_matching, pending.clone());
                             }
                             if let Some(row) = args.menu_row.filter(|_| !args.reflog) {
-                                // 複数選んだ行の上なら、選んだまま（まとめての操作のメニュー）。
+                                // 右クリックと同じく、行は選ばない。複数選んだ行の上なら、まとめての操作のメニュー。
                                 let many =
                                     args.select_rows.len() > 1 && args.select_rows.contains(&row);
-                                if !many {
-                                    view.select(row);
-                                }
                                 let rd = range_diff_opener.clone();
                                 pending.set(pending.get() + 1);
                                 let (p, v, a) = (pending.clone(), view.clone(), actions.clone());
@@ -2247,7 +2245,13 @@ fn build_tab(
                                                         eprintln!("メニューの項目がない: {path}");
                                                     }
                                                 }
-                                                None => menu::popup(&v, 380.0, y as f64, items),
+                                                None => {
+                                                    if let Some(popover) = menu::popup_returning(
+                                                        &v, 380.0, y as f64, items,
+                                                    ) {
+                                                        v.mark_menu_row(row, &popover);
+                                                    }
+                                                }
                                             }
                                         }
                                         // 項目が開いたシートが出て、中身を調べ終えるまで待つ。

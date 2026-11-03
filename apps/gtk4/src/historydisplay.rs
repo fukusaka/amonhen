@@ -258,6 +258,71 @@ pub fn bar() -> (gtk::Box, gtk::MenuButton) {
     (bar, button)
 }
 
+/// History の列の見出し（macOS 版の表の見出し: 空のグラフの列と「Message」）。右クリックで見せ方のメニュー
+/// （バーの右端のボタンと同じ）。
+pub fn header(view: &HistoryView) -> gtk::Widget {
+    let area = gtk::DrawingArea::new();
+    area.set_content_height(HEADER_HEIGHT);
+    let title = tr!("Message");
+    let weak = view.downgrade();
+    area.set_draw_func(move |area, cr, width, height| {
+        let Some(view) = weak.upgrade() else { return };
+        let fg = area.color();
+        let (w, h) = (f64::from(width), f64::from(height));
+        let x = f64::from(view.message_x());
+        let ink = |alpha: f64| {
+            cr.set_source_rgba(
+                f64::from(fg.red()),
+                f64::from(fg.green()),
+                f64::from(fg.blue()),
+                alpha,
+            );
+        };
+        // 下の線と、列の仕切り（グラフの列の右端）。
+        ink(0.15);
+        cr.rectangle(0.0, h - 1.0, w, 1.0);
+        cr.rectangle((x - 6.0).round(), 4.0, 1.0, h - 9.0);
+        let _ = cr.fill();
+        let layout = area.create_pango_layout(Some(&title));
+        let mut font = area.pango_context().font_description().unwrap_or_default();
+        font.set_size(font.size() * 85 / 100);
+        layout.set_font_description(Some(&font));
+        let (_, th) = layout.pixel_size();
+        ink(0.7);
+        cr.move_to(x, ((h - f64::from(th)) / 2.0).round());
+        pangocairo::functions::show_layout(cr, &layout);
+    });
+    let weak = area.downgrade();
+    view.connect_graph_width(move || {
+        if let Some(area) = weak.upgrade() {
+            area.queue_draw();
+        }
+    });
+    let click = gtk::GestureClick::new();
+    click.set_button(gtk::gdk::BUTTON_SECONDARY);
+    let weak = area.downgrade();
+    click.connect_pressed(move |_, _, x, y| {
+        let Some(area) = weak.upgrade() else { return };
+        let model = gio::Menu::new();
+        append_sections(&model);
+        let popover = gtk::PopoverMenu::from_model(Some(&model));
+        popover.set_has_arrow(false);
+        popover.set_halign(gtk::Align::Start);
+        popover.set_parent(&area);
+        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+        popover.connect_closed(|p| {
+            let p = p.clone();
+            glib::idle_add_local_once(move || p.unparent());
+        });
+        popover.popup();
+    });
+    area.add_controller(click);
+    area.upcast()
+}
+
+/// 列の見出しの高さ（macOS 版の表の見出しと同じくらい）。
+const HEADER_HEIGHT: i32 = 24;
+
 /// 表示する History を作る: 折りたたむなら、マージ済みブランチを折りたたんだ History（`history_folded`）。
 /// 並び順が変わったらコアに並べ直させる（git は読み直さない）。
 pub struct Shaper {
