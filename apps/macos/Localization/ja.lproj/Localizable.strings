@@ -319,7 +319,6 @@
 
 /* QuickOpen.swift */
 "Open a repository (fuzzy search by name or path)" = "リポジトリを開く（名前・パスであいまいに探す）";
-"⏎ Open in New Window   ⌘⏎ Open in Tab   esc Close" = "⏎ 新しいウィンドウで開く　⌘⏎ タブで開く　esc 閉じる";
 "⏎ Open in Tab   ⌘⏎ Open in New Window   esc Close" = "⏎ タブで開く　⌘⏎ 新しいウィンドウで開く　esc 閉じる";
 
 /* Connecting.swift */
