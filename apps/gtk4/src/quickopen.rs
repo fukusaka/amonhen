@@ -222,8 +222,9 @@ pub fn show_with(parent: Option<&gtk::Window>, open: Open, query: &str) -> gtk::
         .build();
     // 見出しの帯は出さない（macOS 版の浮いた枠の形）。
     window.set_titlebar(Some(&gtk::Box::new(gtk::Orientation::Horizontal, 0)));
+    // 親の窓の上に浮かせるが、塞がない（macOS 版の浮いたパネル。開いたまま親の窓も使える）。
     window.set_transient_for(parent);
-    window.set_modal(parent.is_some());
+    window.set_modal(false);
     if let Some(app) = parent.and_then(|p| p.application()) {
         window.set_application(Some(&app));
     }
@@ -376,8 +377,8 @@ pub fn show_with(parent: Option<&gtk::Window>, open: Open, query: &str) -> gtk::
         glib::Propagation::Stop
     });
     field.add_controller(keys);
-    // ほかの窓に移ったら閉じる（macOS 版の hidesOnDeactivate）。窓から開いたときだけ（起動したときに単独で出した
-    // ものは、閉じると何も残らない）。
+    // ほかのアプリに移ったら閉じる（macOS 版の hidesOnDeactivate。このアプリのほかの窓に移っても閉じない）。窓から
+    // 開いたときだけ（起動したときに単独で出したものは、閉じると何も残らない）。
     window.connect_is_active_notify(|w| {
         if w.transient_for().is_none() {
             return;
@@ -385,7 +386,13 @@ pub fn show_with(parent: Option<&gtk::Window>, open: Open, query: &str) -> gtk::
         if !w.is_active() {
             let w = w.clone();
             glib::idle_add_local_once(move || {
-                if !w.is_active() && gtk::Window::list_toplevels().iter().any(|t| t == &w) {
+                let app_active = w
+                    .application()
+                    .is_some_and(|a| a.windows().iter().any(|x| x.is_active()));
+                if !w.is_active()
+                    && !app_active
+                    && gtk::Window::list_toplevels().iter().any(|t| t == &w)
+                {
                     w.close();
                 }
             });
