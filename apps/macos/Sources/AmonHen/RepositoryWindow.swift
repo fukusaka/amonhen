@@ -969,7 +969,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         var includingOlder = false
         if case let .combine(oids) = preset, oids.count == 1 { includingOlder = true }
         Task { @MainActor in
-            guard let editor = await HistoryEditController.load(actions: actions, from: start, includingOlder: includingOlder) else {
+            // まとめるものに HEAD の first-parent の並びにないものがあれば、黙って減らさずに断る（選んだ数より
+            // 少なくまとめてしまう）。
+            guard let editor = await HistoryEditController.load(actions: actions, from: start, includingOlder: includingOlder),
+                  preset.map({ if case let .combine(oids) = $0 { editor.contains(oids) } else { true } }) ?? true else {
                 statusBar?.flash(L("Only commits on HEAD’s first-parent line can be edited."), symbol: "exclamationmark.triangle")
                 return
             }

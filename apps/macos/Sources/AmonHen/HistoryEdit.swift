@@ -168,6 +168,11 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
         update()
     }
 
+    /// 読んだ行（HEAD から first-parent で辿ったもの）に、`oids` がすべてある。
+    func contains(_ oids: [String]) -> Bool {
+        oids.allSatisfy { oid in rows.contains { $0.oid == oid } }
+    }
+
     /// 最初の変更を入れる（メッセージを直すときは、そのままメッセージの欄を開く）。
     func apply(_ preset: Preset) {
         switch preset {

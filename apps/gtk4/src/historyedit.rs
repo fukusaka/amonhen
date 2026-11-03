@@ -1214,6 +1214,18 @@ impl Opener {
                 ));
                 return;
             };
+            // まとめるものに HEAD の first-parent の並びにないものがあれば、黙って減らさずに断る（選んだ数より少なく
+            // まとめてしまう）。
+            if let Some(Preset::Combine(oids)) = &preset
+                && !oids
+                    .iter()
+                    .all(|o| line[..=end].iter().any(|(l, _)| l == o))
+            {
+                inner.statusbar.flash_warning(&tr!(
+                    "Only commits on HEAD’s first-parent line can be edited."
+                ));
+                return;
+            }
             let chosen: Vec<(String, bool)> = line[..=end].to_vec();
             let rows = gio::spawn_blocking(move || {
                 let ids: Vec<Oid> = chosen
