@@ -1301,10 +1301,20 @@ fn setup_row(item: &gtk::ListItem, inner: &Owner, drop_cb: &Rc<RefCell<Option<Dr
     // ブランチ・タグは運べる。
     let drag = gtk::DragSource::new();
     drag.set_actions(gtk::gdk::DragAction::COPY | gtk::gdk::DragAction::MOVE);
-    let weak = expander.downgrade();
-    drag.connect_prepare(move |_, _, _| {
+    let (weak, grab) = (expander.downgrade(), Rc::new(Cell::new((0, 0))));
+    let at = grab.clone();
+    drag.connect_prepare(move |_, x, y| {
         let value = drag_value(&node_of(&weak.upgrade()?)?.data())?;
+        at.set((x as i32, y as i32));
         Some(gtk::gdk::ContentProvider::for_value(&value.to_value()))
+    });
+    // 運んでいる間は、行の絵を札にする（macOS 版と同じ）。
+    let weak = expander.downgrade();
+    drag.connect_drag_begin(move |source, _| {
+        if let Some(row) = weak.upgrade() {
+            let (x, y) = grab.get();
+            source.set_icon(Some(&gtk::WidgetPaintable::new(Some(&row))), x, y);
+        }
     });
     expander.add_controller(drag);
 
@@ -1334,10 +1344,14 @@ fn setup_row(item: &gtk::ListItem, inner: &Owner, drop_cb: &Rc<RefCell<Option<Dr
             _ => None,
         };
         set_drop_line(expander.upcast_ref(), edge);
-        if accepts {
-            gtk::gdk::DragAction::COPY
-        } else {
-            gtk::gdk::DragAction::empty()
+        // ブランチの上（merge・rebase）とお気に入りの並べ替えは移動、リモートの上（push）は複製の印（macOS 版と同じ）。
+        let onto_branch = node
+            .as_ref()
+            .is_some_and(|n| matches!(&n.data().item, Item::Ref(e) if e.kind == RefKind::Local));
+        match (accepts, edge.is_some() || onto_branch) {
+            (false, _) => gtk::gdk::DragAction::empty(),
+            (true, true) => gtk::gdk::DragAction::MOVE,
+            (true, false) => gtk::gdk::DragAction::COPY,
         }
     });
     target.connect_leave(|target| {
