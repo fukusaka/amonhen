@@ -1305,6 +1305,14 @@ impl HistoryView {
         adj.set_value(mid.clamp(0.0, (adj.upper() - adj.page_size()).max(0.0)));
     }
 
+    /// 先頭の行までスクロールする（範囲・折りたたみを変えて出し直したとき。macOS 版の `resetScroll`）。
+    pub fn scroll_to_top(&self) {
+        self.state().pending_scroll = None;
+        if let Some(adj) = self.vadjustment() {
+            adj.set_value(0.0);
+        }
+    }
+
     /// `row` が見えるようにスクロールする。
     pub fn scroll_to_row(&self, row: u32) {
         let Some(adj) = self.vadjustment() else {

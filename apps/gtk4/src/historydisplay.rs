@@ -428,7 +428,7 @@ impl Shaper {
                 | settings::HIGHLIGHT_ANCESTORS => s.view.set_display(display()),
                 settings::FOLD_MERGED_BRANCHES => {
                     s.expanded.borrow_mut().clear();
-                    s.reshape(None);
+                    s.reshape(None, true);
                 }
                 settings::HISTORY_ORDER => s.reorder(),
                 _ => {}
@@ -454,7 +454,7 @@ impl Shaper {
         if reloaded && shaped {
             self.schedule_reshape();
         } else {
-            self.reshape(None);
+            self.reshape(None, false);
         }
     }
 
@@ -471,7 +471,7 @@ impl Shaper {
             let Some(s) = weak.upgrade() else { return };
             s.reshape_soon.replace(None);
             s.pending.set(s.pending.get() - 1);
-            s.reshape(None);
+            s.reshape(None, false);
         });
         self.reshape_soon.replace(Some(id));
     }
@@ -522,7 +522,7 @@ impl Shaper {
         self.scope.replace(scope);
         self.companions.replace(companions);
         self.update_scope_bar();
-        self.reshape(select);
+        self.reshape(select, true);
     }
 
     /// 全ブランチでなければ全ブランチに戻して `id` を選ぶ（今の範囲にないコミットへ移るとき。macOS 版の
@@ -625,7 +625,9 @@ impl Shaper {
         }
     }
 
-    fn reshape(&self, select: Option<Oid>) {
+    /// 今の範囲と折りたたみで作り直して出す。`reset_scroll` なら先頭の行までスクロールする（範囲・折りたたみを
+    /// 変えたとき。ほかのプログラムの変化で読み直したときは今の位置のまま。macOS 版の `reloadScope`）。
+    fn reshape(&self, select: Option<Oid>, reset_scroll: bool) {
         // すぐ作り直すなら、待っている分は要らない。
         if let Some(id) = self.reshape_soon.take() {
             id.remove();
@@ -641,6 +643,9 @@ impl Shaper {
             self.request.set(self.request.get() + 1);
             self.shaped.replace(None);
             self.search.show_history(repo, full.clone());
+            if reset_scroll {
+                self.view.scroll_to_top();
+            }
             if let Some(id) = select {
                 select_when_found(&self.view, full, id, self.pending.clone());
             }
@@ -655,6 +660,9 @@ impl Shaper {
         let key = (full.generation, expanded.clone(), tips.clone(), fold);
         // 同じ History を同じ形で作っている・作ったなら、そのまま（読み直すたびに同じ History が来る）。
         if select.is_none() && self.shaped.borrow().as_ref() == Some(&key) {
+            if reset_scroll {
+                self.view.scroll_to_top();
+            }
             return;
         }
         self.shaped.replace(Some(key));
@@ -692,6 +700,9 @@ impl Shaper {
                 Ok(Ok(shaped)) => {
                     let row = select.and_then(|id| shaped.row_of(&id));
                     search.show_history(repo, shaped);
+                    if reset_scroll {
+                        view.scroll_to_top();
+                    }
                     if let Some(row) = row {
                         view.select(row);
                     }
@@ -761,7 +772,7 @@ impl Shaper {
                 expanded.insert(id);
             }
         }
-        self.reshape(Some(id));
+        self.reshape(Some(id), true);
     }
 }
 
