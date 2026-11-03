@@ -776,6 +776,8 @@ First release.
   partial clone's label fetches all its contents.
 - Stashes shows only while there are stashes, its rows say what the app's do (branch, base against HEAD, untracked),
   a stash can become a branch, and Pop Latest Stash… asks first.
+- Undo on the sidebar's title and in the Command Palette says what it puts back and asks first, and Undo History…
+  undoes several operations down to the one chosen.
 
 #### Changed
 

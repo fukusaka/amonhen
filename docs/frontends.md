@@ -154,7 +154,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Pop the latest stash (asks first) | ✓ | ✓ | ✓ | △ | VSCode: Pop Latest Stash… on the Stashes header and in the Command Palette (a row's Pop doesn't ask).<br>CLI: Via `amonhen run`. |
 | Activity spinner and count | ✓ | ✓ | △ | n/a | VSCode: VSCode's progress notifications. |
 | Refresh and Rebuild History | ✓ | ✓ | △ | △ | VSCode: Refresh only.<br>CLI: `log --rebuild`, `daemon rebuild`. |
-| Undo the last operation (asks, names what it puts back) | ✓ | ✓ | △ | ✓ | VSCode: Undoes without asking.<br>CLI: `undo` (`--peek` to see it first). |
+| Undo the last operation (asks, names what it puts back) | ✓ | ✓ | ✓ | ✓ | VSCode: The title's Undo and the Command Palette ask; a notification's Undo, pressed right after the operation, doesn't.<br>CLI: `undo` (`--peek` to see it first). |
 | History search with scopes (subject, author, ID, path, contents) | ✓ | ✓ | — | ✓ | GTK4: Scopes come from the query syntax.<br>CLI: `log <query>`. |
 | Ahead/behind badges | ✓ | ✓ | △ | △ | VSCode: On the sidebar's branch rows.<br>CLI: In `status`. |
 | Toolbar customization | ✓ | △ | n/a | n/a | GTK4: View > Customize Toolbar… lists the buttons to show and their order on the left and right of the header bar; the Repository menu, search and the main menu stay put. |
@@ -311,7 +311,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
 | Operations (git commands, output, progress, cancel) | ✓ | ✓ | △ | △ | VSCode: An Output channel log only.<br>CLI: Via `amonhen run` (`remoteActivity`, `cancelActivity`). |
-| History (operation log, Undo to Here) | ✓ | ✓ | — | △ | CLI: `undo --list` shows the log. |
+| History (operation log, Undo to Here) | ✓ | ✓ | △ | △ | VSCode: Undo History… lists the Undo log and undoes down to the chosen one; no other activity.<br>CLI: `undo --list` shows the log. |
 | Performance | ✓ | ✓ | — | n/a |  |
 | Events | ✓ | ✓ | — | n/a |  |
 | Export as JSON | ✓ | ✓ | — | n/a |  |

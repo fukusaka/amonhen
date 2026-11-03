@@ -906,6 +906,64 @@ async function stashFlow(): Promise<void> {
   }
 }
 
+/**
+ * サイドバーの上の Undo は、何を戻すかを見せて確かめてから戻す（やめれば戻さない）。Undo History… は記録を新しい
+ * 順に並べ、選んだところまでまとめて戻す
+ */
+async function undoFlow(): Promise<void> {
+  const sidebar = api.sidebar;
+  const node = (name: string) => {
+    const section = sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'branches')!;
+    const find = (nodes: ReturnType<typeof sidebar.getChildren>): ReturnType<typeof sidebar.getChildren>[number] | undefined => {
+      for (const n of nodes) {
+        if (n.kind === 'branch' && n.ref.name === `refs/heads/${name}`) return n;
+        const inner = n.kind === 'branch' || n.kind === 'branchGroup' || n.kind === 'branchFolder' ? find(sidebar.getChildren(n)) : undefined;
+        if (inner) return inner;
+      }
+      return undefined;
+    };
+    return find(sidebar.getChildren(section));
+  };
+  const names = ['undo-a', 'undo-b'];
+  try {
+    for (const b of names) git('branch', b);
+    await vscode.commands.executeCommand('amonhen.refresh');
+    for (const b of names) {
+      const n = await until(`${b} の行`, () => node(b));
+      await withWindow({ showWarningMessage: async () => 'Delete' }, async () => vscode.commands.executeCommand('amonhen.nav.delete', n));
+    }
+    assert.equal(git('branch', '--list', ...names).trim(), '');
+
+    // やめれば戻さない。尋ねる文に、戻す操作の名前と何を戻すかが出る
+    let asked: { message: string; detail?: string } | undefined;
+    await withWindow(
+      {
+        showWarningMessage: async (message: string, options: vscode.MessageOptions) => {
+          asked = { message, ...(options.detail ? { detail: options.detail } : {}) };
+          return undefined;
+        },
+      },
+      async () => vscode.commands.executeCommand('amonhen.undoWithConfirmation'),
+    );
+    assert.match(String(asked?.message), /^Undo “Delete (branch )?undo-b”\?$/);
+    assert.match(String(asked?.detail), /HEAD and the branches/);
+    assert.equal(git('branch', '--list', ...names).trim(), '');
+
+    // Undo History… で 2 つ目まで戻すと、2 つとも戻る
+    await withWindow(
+      {
+        showQuickPick: async (items: readonly (vscode.QuickPickItem & { count: number })[]) => items.find((i) => i.count === 2),
+        showWarningMessage: async () => 'Undo',
+      },
+      async () => vscode.commands.executeCommand('amonhen.undoHistory'),
+    );
+    assert.deepEqual(git('branch', '--list', '--format=%(refname:short)', ...names).trim().split('\n'), names);
+  } finally {
+    for (const b of names) if (git('branch', '--list', b).trim()) git('branch', '-D', b);
+    await vscode.commands.executeCommand('amonhen.refresh');
+  }
+}
+
 /** showInputBox の代わり。呼ばれるたびに values を順に返す */
 function inputs(...values: string[]): () => Promise<string | undefined> {
   let i = 0;
@@ -1657,6 +1715,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('shows stash details, branches from a stash and pops the latest through the daemon', async () => {
     await stashFlow();
+  });
+
+  test('asks before Undo and undoes several operations from Undo History', async () => {
+    await undoFlow();
   });
 
   test('drops the selection of a file whose changes went away before its diff is read', async () => {

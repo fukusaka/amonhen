@@ -16,7 +16,7 @@ Clicking the Amon Hen icon in the activity bar opens the nav in the sidebar and 
 
 | Item | Description |
 | --- | --- |
-| Title buttons | Fetch (fetch from all remotes), Pull (bring the upstream into the current branch), Push (to the upstream; when the current branch has none, the button is Publish Branch instead: choose the remote and the name there, and it becomes the upstream), Undo. Under `…`: New Branch, Stash Changes, Open Amon Hen, Refresh, Force Push |
+| Title buttons | Fetch (fetch from all remotes), Pull (bring the upstream into the current branch), Push (to the upstream; when the current branch has none, the button is Publish Branch instead: choose the remote and the name there, and it becomes the upstream), Undo… (says what it puts back and asks first). Under `…`: New Branch, Stash Changes, Open Amon Hen, Refresh, Force Push, Undo History… (the operations you can undo, newest first; choosing one undoes it and those after it) |
 | Working Copy | The number of changes. Selecting it shows the Working Copy in the main view |
 | History | The current branch. Selecting it shows the History in the main view |
 | Merge / rebase in progress | A row like "Rebase in progress (2/5)". Continue / Skip / Abort |

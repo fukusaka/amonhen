@@ -16,7 +16,7 @@ VSCode 上で快適に Git を操作するための自分用の拡張。Marketpl
 
 | 項目 | 内容 |
 | --- | --- |
-| タイトルのボタン | Fetch（すべてのリモートから取得）、Pull（現在のブランチに upstream を取り込む）、Push（upstream へ。現在のブランチに upstream が無ければ、ボタンは Publish Branch になり、リモートとそこでの名前を選んで送り、upstream にする）、Undo。`…` の中に New Branch、Stash Changes、Open Amon Hen、Refresh、Force Push |
+| タイトルのボタン | Fetch（すべてのリモートから取得）、Pull（現在のブランチに upstream を取り込む）、Push（upstream へ。現在のブランチに upstream が無ければ、ボタンは Publish Branch になり、リモートとそこでの名前を選んで送り、upstream にする）、Undo…（何を戻すかを見せて確かめる）。`…` の中に New Branch、Stash Changes、Open Amon Hen、Refresh、Force Push、Undo History…（Undo できる操作を新しい順に並べ、選んだものとその後のものを戻す） |
 | Working Copy | 変更の数。選ぶとメインビューに Working Copy を出す |
 | History | 現在のブランチ。選ぶとメインビューに History を出す |
 | merge / rebase の途中 | 「Rebase in progress (2/5)」のような行。Continue / Skip / Abort |

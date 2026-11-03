@@ -222,5 +222,5 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 19. History の署名の印、Go to HEAD・Parent・Child
 - [x] 20. shallow clone の取り足し、partial clone の中身をすべて取る
 - [x] 21. Stashes の残り（Branch…・`--index`・行の詳しい情報・Pop の前の確認）
-- [ ] 22. Undo の前の確認と、Undo の記録の一覧
+- [x] 22. Undo の前の確認と、Undo の記録の一覧
 - [ ] 23. リポジトリの設定

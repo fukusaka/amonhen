@@ -364,6 +364,19 @@
         "category": "Amon Hen"
       },
       {
+        "command": "amonhen.undoWithConfirmation",
+        "title": "Undo…",
+        "category": "Amon Hen",
+        "icon": "$(discard)",
+        "enablement": "amonhen.hasRepository"
+      },
+      {
+        "command": "amonhen.undoHistory",
+        "title": "Undo History…",
+        "category": "Amon Hen",
+        "enablement": "amonhen.hasRepository"
+      },
+      {
         "command": "amonhen.skipSequence",
         "title": "Skip",
         "category": "Amon Hen",
@@ -578,9 +591,14 @@
           "group": "navigation@3"
         },
         {
-          "command": "amonhen.undo",
+          "command": "amonhen.undoWithConfirmation",
           "when": "view == amonhen.sidebar",
           "group": "navigation@4"
+        },
+        {
+          "command": "amonhen.undoHistory",
+          "when": "view == amonhen.sidebar",
+          "group": "2_undo@1"
         },
         {
           "command": "amonhen.selectRepository",
@@ -1123,6 +1141,10 @@
         {
           "command": "amonhen.blame",
           "when": "amonhen.hasRepository && amonhen.engine"
+        },
+        {
+          "command": "amonhen.undo",
+          "when": "false"
         },
         {
           "command": "amonhen.fetchMoreHistory",

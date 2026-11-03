@@ -154,7 +154,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | 最新の stash を Pop（先に尋ねる） | ✓ | ✓ | ✓ | △ | VSCode: Stashes の見出しとコマンドパレットの Pop Latest Stash…（行の Pop は尋ねない）。<br>CLI: `amonhen run` から。 |
 | Activity のくるくると数 | ✓ | ✓ | △ | n/a | VSCode: VSCode の進み具合の知らせ。 |
 | Refresh と Rebuild History | ✓ | ✓ | △ | △ | VSCode: Refresh だけ。<br>CLI: `log --rebuild`・`daemon rebuild`。 |
-| 直前の操作の Undo（尋ね、何を戻すか示す） | ✓ | ✓ | △ | ✓ | VSCode: 尋ねずに戻す。<br>CLI: `undo`（先に見るなら `--peek`）。 |
+| 直前の操作の Undo（尋ね、何を戻すか示す） | ✓ | ✓ | ✓ | ✓ | VSCode: 上の Undo とコマンドパレットは尋ねる。操作の直後に押す知らせの Undo は尋ねない。<br>CLI: `undo`（先に見るなら `--peek`）。 |
 | 範囲付きの History の検索（件名・作者・ID・パス・中身） | ✓ | ✓ | — | ✓ | GTK4: 範囲は検索の書き方で決める。<br>CLI: `log <query>`。 |
 | ahead/behind のバッジ | ✓ | ✓ | △ | △ | VSCode: サイドバーのブランチの行に出る。<br>CLI: `status` に出る。 |
 | ツールバーのカスタマイズ | ✓ | △ | n/a | n/a | GTK4: View > Customize Toolbar… の一覧で、見出しの左と右に出すボタンと順番を決める。Repository のメニュー・検索・主メニューは動かない。 |
@@ -311,7 +311,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
 | Operations（git の命令・出力・進み具合・取り消し） | ✓ | ✓ | △ | △ | VSCode: Output のチャンネルの記録だけ。<br>CLI: `amonhen run`（`remoteActivity`・`cancelActivity`）から。 |
-| History（操作ログ・ここまで戻す） | ✓ | ✓ | — | △ | CLI: `undo --list` が記録を出す。 |
+| History（操作ログ・ここまで戻す） | ✓ | ✓ | △ | △ | VSCode: Undo History… が Undo の記録を並べ、選んだところまで戻す。ほかの Activity はない。<br>CLI: `undo --list` が記録を出す。 |
 | Performance | ✓ | ✓ | — | n/a |  |
 | Events | ✓ | ✓ | — | n/a |  |
 | JSON で書き出す | ✓ | ✓ | — | n/a |  |
