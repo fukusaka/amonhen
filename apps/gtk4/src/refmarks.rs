@@ -15,6 +15,58 @@ use crate::reffacts::TagState;
 use crate::sheets;
 use crate::sidebar::Known;
 
+thread_local! {
+    /// 出している印の吹き出しと、その鍵（`branch:名前` など）。
+    static SHOWN: std::cell::RefCell<Option<(String, glib::WeakRef<gtk::Popover>)>> =
+        const { std::cell::RefCell::new(None) };
+    /// 最後に閉じた印の吹き出しの鍵と、閉じた時刻。
+    static CLOSED: std::cell::RefCell<Option<(String, std::time::Instant)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// 印を押したとき、`key` の吹き出しを出すか。同じ印をもう一度押したら閉じるだけ（出していれば閉じ、押した瞬間に
+/// 閉じた直後の 0.3 秒の間なら何もしない。macOS 版の `statusClosed` と同じ）。
+pub(crate) fn should_show(key: &str) -> bool {
+    let open = SHOWN.with(|s| {
+        s.borrow()
+            .as_ref()
+            .filter(|(k, _)| k == key)
+            .and_then(|(_, p)| p.upgrade())
+            .filter(|p| p.is_visible())
+    });
+    if let Some(open) = open {
+        open.popdown();
+        return false;
+    }
+    let just_closed = CLOSED.with(|c| {
+        c.borrow()
+            .as_ref()
+            .is_some_and(|(k, at)| k == key && at.elapsed() < std::time::Duration::from_millis(300))
+    });
+    if just_closed {
+        CLOSED.with(|c| c.replace(None));
+        return false;
+    }
+    true
+}
+
+/// 出した吹き出し `popover` を `key` の印のものとして覚える（閉じたら時刻を残す）。
+pub(crate) fn remember(popover: &gtk::Popover, key: &str) {
+    SHOWN.with(|s| s.replace(Some((key.to_owned(), popover.downgrade()))));
+    let key = key.to_owned();
+    popover.connect_closed(move |p| {
+        CLOSED.with(|c| c.replace(Some((key.clone(), std::time::Instant::now()))));
+        SHOWN.with(|s| {
+            let mut s = s.borrow_mut();
+            if s.as_ref()
+                .is_some_and(|(_, w)| w.upgrade().as_ref() == Some(p))
+            {
+                *s = None;
+            }
+        });
+    });
+}
+
 /// 見出し（アイコン・題）、説明、「名前: 値」の表、ボタンの吹き出しを `anchor` の下に出す。
 struct Popover {
     popover: gtk::Popover,
@@ -138,6 +190,10 @@ impl Popover {
 /// タグの印（どのリモートにもない・同じ名前の別のタグがあるリモートがある）の詳細。タグはブランチと違って手元に
 /// リモートの写しがないので、どこから分かったか（fetch のときに読んだ）と、リモートごとの様子を出す。
 pub fn tag(actions: &Rc<Actions>, item: &RefEntry, known: &Known, anchor: &gtk::Widget) {
+    let key = format!("tag:{}", item.name);
+    if !should_show(&key) {
+        return;
+    }
     let Some(tags) = &known.tags else { return };
     let Some((kind, title, css)) = tags.mark(&item.name) else {
         return;
@@ -196,7 +252,7 @@ pub fn tag(actions: &Rc<Actions>, item: &RefEntry, known: &Known, anchor: &gtk::
             });
         }
     }
-    p.popup();
+    remember(&p.popup(), &key);
 }
 
 fn date(t: i64) -> String {
@@ -212,7 +268,11 @@ pub fn branch(
     is_head: bool,
     editing: bool,
     anchor: &gtk::Widget,
-) -> gtk::Popover {
+) -> Option<gtk::Popover> {
+    let key = format!("branch:{}", item.name);
+    if !should_show(&key) {
+        return None;
+    }
     // ほかの worktree が checkout している（名前・パス）。
     let other = actions.worktree_using(&item.name);
     let main_worktree = actions.is_main_worktree_branch(&item.name);
@@ -413,6 +473,7 @@ pub fn branch(
         });
     }
     let popover = p.popup();
+    remember(&popover, &key);
     if let (Some(label), Some(repo)) = (forecast, actions.repo()) {
         let name = item.name.clone();
         glib::spawn_future_local(async move {
@@ -431,5 +492,5 @@ pub fn branch(
             }
         });
     }
-    popover
+    Some(popover)
 }

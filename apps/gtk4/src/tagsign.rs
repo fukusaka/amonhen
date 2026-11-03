@@ -165,8 +165,12 @@ pub fn popover(
     tag: &Value,
     place: &crate::signature::Place,
 ) {
+    let key = format!("tag-signature:{name}");
+    if !crate::refmarks::should_show(&key) {
+        return;
+    }
     let check = Some(&tag["signature"]).filter(|s| !s.is_null());
-    crate::signature::show(
+    let popover = crate::signature::show(
         anchor,
         status.into(),
         check,
@@ -179,6 +183,7 @@ pub fn popover(
         }),
         Some(gtk::PositionType::Bottom),
     );
+    crate::refmarks::remember(&popover, &key);
 }
 
 impl From<Status> for crate::signature::Status {

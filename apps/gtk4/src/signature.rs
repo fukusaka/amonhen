@@ -456,7 +456,7 @@ pub fn popover_once() {
 }
 
 /// 署名の詳細の吹き出し。値は選んでコピーできる。`tag` ならタグの署名（タガーと比べ、名前とメッセージを出す）。
-/// `position` は `parent` のどちら側に出すか（None なら GTK の既定）。
+/// `position` は `parent` のどちら側に出すか（None なら GTK の既定）。出した吹き出しを返す。
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn show(
     parent: &gtk::Widget,
@@ -467,7 +467,7 @@ pub(crate) fn show(
     place: &Place,
     tag: Option<&Tag>,
     position: Option<gtk::PositionType>,
-) {
+) -> gtk::Popover {
     install_css();
     // 見出し: 状態の色のアイコンと言葉、右に検証した場所の札（状態の色の文字と薄い地。macOS 版と同じ）。
     let icon = crate::icon::Icon::default();
@@ -653,6 +653,7 @@ pub(crate) fn show(
         gtk::glib::idle_add_local_once(move || p.unparent());
     });
     popover.popup();
+    popover
 }
 
 #[cfg(test)]
