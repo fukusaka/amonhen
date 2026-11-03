@@ -228,6 +228,9 @@ impl WorkingCopy {
         let amend = gtk::CheckButton::with_label("Amend");
         let commit = gtk::Button::with_label("Commit");
         commit.add_css_class("suggested-action");
+        // 押しても入力を取らない（macOS 版の NSButton と同じ。押した後も Summary・Description に入力が残る。取ると、
+        // コミットでメッセージが空になってボタンが押せなくなり、入力がどこにもなくなる）。
+        commit.set_focus_on_click(false);
         commit.set_tooltip_text(Some(&tr!("Commit the checked files (Ctrl+Return)")));
         // Commit の横の小さな ▾（枠なし、Commit の色にしない。macOS 版と同じ）。
         let commit_menu = gtk::MenuButton::builder()
