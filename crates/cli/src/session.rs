@@ -182,7 +182,7 @@ fn now() -> i64 {
         .map_or(0, |d| d.as_secs() as i64)
 }
 
-/// `amonhen clone [--filter=<spec>] [--depth <n>] [--sparse] [-b <branch>] <url> [<dir>]`（`<url>` は bundle の
+/// `amonhen clone [--filter=<spec>] [--depth <n>] [--sparse] [-b <branch>] [--recurse-submodules] <url> [<dir>]`（`<url>` は bundle の
 /// ファイルでもよい）
 pub fn clone(args: &[String]) -> Result<ExitCode> {
     let mut options = amonhen_backend_cli::CloneOptions::default();
@@ -198,6 +198,7 @@ pub fn clone(args: &[String]) -> Result<ExitCode> {
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--sparse" => options.sparse = true,
+            "--recurse-submodules" => options.recurse_submodules = true,
             "--depth" => {
                 let n = iter.next().and_then(|n| n.parse().ok()).ok_or_else(bad)?;
                 options.depth = Some(n);

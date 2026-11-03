@@ -361,7 +361,7 @@ pub enum Op {
         left: String,
         right: String,
     },
-    UpdateSubmodules(Vec<String>),
+    UpdateSubmodules(Vec<String>, amonhen_model::SubmoduleUpdate),
     ConfigList,
     ConfigKeys,
     ConfigSet(String, Option<String>),
@@ -419,6 +419,10 @@ pub enum Op {
     FetchBundle(Bytes, String),
     /// → `Vec<String>`
     MissingCommits(Vec<String>),
+    /// → `Vec<SubmoduleState>`
+    Submodules,
+    /// → `()`
+    ChangeSubmodule(Tagged<amonhen_model::SubmoduleChange>),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -586,5 +590,12 @@ mod tagged {
         assert!(
             matches!(back, Op::ChangeRemote(Tagged(RemoteChange::Remove { name })) if name == "up")
         );
+        let change = amonhen_model::SubmoduleChange::Remove {
+            path: "lib".into(),
+            delete_git_dir: true,
+        };
+        let op = Op::ChangeSubmodule(Tagged(change.clone()));
+        let back: Op = postcard::from_bytes(&postcard::to_allocvec(&op).unwrap()).unwrap();
+        assert!(matches!(back, Op::ChangeSubmodule(Tagged(c)) if c == change));
     }
 }

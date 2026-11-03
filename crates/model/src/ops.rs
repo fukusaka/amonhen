@@ -368,6 +368,70 @@ pub struct BundlePreview {
     pub beyond_shallow: bool,
 }
 
+/// submodule の様子（`Operations::submodules`）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub struct SubmoduleState {
+    /// 作業ツリーでの場所。
+    pub path: String,
+    /// `.gitmodules` の名前（`submodule.<name>.*`。ふつうは場所と同じ）。
+    pub name: String,
+    pub url: Option<String>,
+    /// 追うブランチ（`submodule.<name>.branch`。`update --remote` で進める先）。
+    pub branch: Option<String>,
+    /// 取り出してある（`git submodule status` の `-` でない）。
+    pub initialized: bool,
+    /// 記録したコミットと違うコミットにいる（`+`）。
+    pub moved: bool,
+    /// 中に、コミットしていない変更か untracked のファイルがある。
+    pub changed: bool,
+    /// コンフリクトしている（`U`）。
+    pub conflict: bool,
+}
+
+/// submodule を変える操作（`Operations::change_submodule`）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(
+        tag = "kind",
+        rename_all = "camelCase",
+        rename_all_fields = "camelCase"
+    )
+)]
+pub enum SubmoduleChange {
+    /// `git submodule add [-b <branch>] -- <url> <path>`。
+    Add {
+        url: String,
+        path: String,
+        branch: Option<String>,
+    },
+    /// `git submodule deinit -f` と `git rm -f`。`delete_git_dir` なら `.git/modules/<name>` も消す（git の既定は残す。
+    /// 残せば、submodule の中のまだ push していないものも残る）。
+    Remove { path: String, delete_git_dir: bool },
+    /// URL を変えて写す（`git submodule set-url`、git 2.25 より前は `.gitmodules` を書いて `sync`）。
+    SetUrl { path: String, url: String },
+    /// 追うブランチを変える（`git submodule set-branch`。None なら既定に戻す）。
+    SetBranch {
+        path: String,
+        branch: Option<String>,
+    },
+    /// `.gitmodules` の URL を `.git/config` に写す（`git submodule sync`）。
+    Sync { recursive: bool },
+}
+
+/// submodule の update の仕方。既定は git と同じく、記録したコミットにし、中の submodule には入らない。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct SubmoduleUpdate {
+    /// 中の submodule も（`--recursive`）。
+    pub recursive: bool,
+    /// 記録したコミットではなく、追うブランチのリモートの最新にする（`--remote`）。
+    pub remote: bool,
+}
+
 /// `git apply` の当て方。既定は git と同じく作業ツリーだけ。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -607,7 +671,10 @@ pub trait Operations: Send + Sync {
     fn stash_branch(&self, branch: &str, name: &str) -> Result<Outcome>;
     /// `left` にだけあるコミットと、`right` にだけあるコミットの数（`git rev-list --left-right --count`）。
     fn count_apart(&self, left: &str, right: &str) -> Result<(u32, u32)>;
-    fn update_submodules(&self, paths: &[&str]) -> Result<()>;
+    fn update_submodules(&self, paths: &[&str], options: &SubmoduleUpdate) -> Result<()>;
+    /// submodule の様子（`.gitmodules` にあるもの、場所の順）。
+    fn submodules(&self) -> Result<Vec<SubmoduleState>>;
+    fn change_submodule(&self, change: &SubmoduleChange) -> Result<()>;
 
     /// すべての設定と、それぞれがどこで決まっているか（後に出るものほど優先）。
     fn config_list(&self) -> Result<Vec<ConfigEntry>>;

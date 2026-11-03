@@ -216,11 +216,13 @@ public struct RepositoryPeek: Sendable, Equatable {
 extension Repository {
     /// `url` を `dest`（まだないフォルダ）に clone する。`filter`（`blob:none` など）があれば partial clone、`depth`
     /// があれば最近のその数のコミットだけ、`sparse` なら根のファイルだけを取り出す（git 2.27 から）。`branch` は取り出す
-    /// ブランチ（`-b`。HEAD のない bundle なら、なくても main・master・最初のブランチ）。時間がかかるので裏のスレッドで
-    /// 呼ぶ。
+    /// ブランチ（`-b`。HEAD のない bundle なら、なくても main・master・最初のブランチ）。`recurseSubmodules` なら
+    /// submodule も取り出す。時間がかかるので裏のスレッドで呼ぶ。
     public static func clone(url: String, to dest: String, filter: String? = nil, depth: Int? = nil,
-                             sparse: Bool = false, branch: String? = nil) throws {
-        if !amonhen_clone(url, dest, filter, UInt32(clamping: max(0, depth ?? 0)), sparse, branch) {
+                             sparse: Bool = false, branch: String? = nil,
+                             recurseSubmodules: Bool = false) throws {
+        if !amonhen_clone(url, dest, filter, UInt32(clamping: max(0, depth ?? 0)), sparse, branch,
+                          recurseSubmodules) {
             throw AmonhenError.last()
         }
     }

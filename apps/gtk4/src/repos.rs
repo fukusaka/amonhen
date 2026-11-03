@@ -329,7 +329,7 @@ impl Download {
             filter: (self == Download::ContentsWhenNeeded).then(|| "blob:none".to_owned()),
             depth: (self == Download::RecentHistory).then_some(depth),
             sparse,
-            branch: None,
+            ..Default::default()
         }
     }
 }

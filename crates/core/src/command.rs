@@ -299,8 +299,22 @@ pub enum Command {
     PreviousVersion {
         branch: Option<String>,
     },
+    /// submodule `paths` を取り出し、記録したコミットにする（`git submodule update --init`）。`recursive` なら中の
+    /// submodule も、`remote` なら記録したコミットではなく追うブランチのリモートの最新にする。
     UpdateSubmodules {
         paths: Vec<String>,
+        #[serde(default)]
+        recursive: bool,
+        #[serde(default)]
+        remote: bool,
+    },
+    /// submodule（`info.submodules`: `path`・`name`・`url`・`branch`・`initialized`・`moved`（記録と違うコミット）・
+    /// `changed`（中に変更）・`conflict`）。
+    Submodules,
+    /// submodule を足す・外す・URL や追うブランチを変える・URL を写す（`change.kind`: `add`・`remove`・`setUrl`・
+    /// `setBranch`・`sync`）。
+    ChangeSubmodule {
+        change: amonhen_model::SubmoduleChange,
     },
     Undo,
     /// 次に Undo される操作の名前（`label`）と、何を戻すか（`info.kind`: `refs`・`files`・`stash`・`rename`）。
@@ -3015,9 +3029,23 @@ impl Repository {
                     ..Default::default()
                 })
             }
-            Command::UpdateSubmodules { paths } => {
+            Command::UpdateSubmodules {
+                paths,
+                recursive,
+                remote,
+            } => {
                 let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
-                ops.update_submodules(&paths)?;
+                let options = amonhen_model::SubmoduleUpdate { recursive, remote };
+                ops.update_submodules(&paths, &options)?;
+                ok()
+            }
+            Command::Submodules => Ok(Response {
+                ok: true,
+                info: Some(serde_json::json!({ "submodules": ops.submodules()? })),
+                ..Default::default()
+            }),
+            Command::ChangeSubmodule { change } => {
+                ops.change_submodule(&change)?;
                 ok()
             }
             Command::Undo => {
@@ -6990,6 +7018,102 @@ mod tests {
             r#"{"op":"configSet","key":"pull.rebase","value":"true","scope":"system"}"#,
         );
         assert!(r["error"].as_str().unwrap().contains("system"), "{r}");
+    }
+
+    #[test]
+    fn adds_inspects_changes_and_removes_submodules() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        let lib = tempfile::tempdir().unwrap();
+        git(lib.path(), &["init", "-q", "-b", "main"]);
+        std::fs::write(lib.path().join("l.txt"), "l\n").unwrap();
+        git(lib.path(), &["add", "."]);
+        git(lib.path(), &["commit", "-q", "-m", "lib"]);
+        let url = lib.path().to_str().unwrap().replace('\\', "/");
+        let change = |json: serde_json::Value| {
+            run(
+                &repo,
+                &serde_json::json!({ "op": "changeSubmodule", "change": json }).to_string(),
+            )
+        };
+        let submodules = || run(&repo, r#"{"op":"submodules"}"#)["info"]["submodules"].clone();
+        assert_eq!(submodules(), serde_json::json!([]));
+
+        let r =
+            change(serde_json::json!({ "kind": "add", "url": url, "path": "lib", "branch": null }));
+        assert_eq!(r["ok"], true, "{r}");
+        let list = submodules();
+        assert_eq!(list[0]["path"], "lib");
+        assert_eq!(list[0]["name"], "lib");
+        assert_eq!(list[0]["url"], url.as_str());
+        assert_eq!(
+            (
+                &list[0]["initialized"],
+                &list[0]["moved"],
+                &list[0]["changed"]
+            ),
+            (
+                &serde_json::json!(true),
+                &serde_json::json!(false),
+                &serde_json::json!(false)
+            )
+        );
+        git(dir, &["commit", "-q", "-m", "add lib"]);
+
+        // 中の変更と、記録と違うコミット。
+        std::fs::write(dir.join("lib/new.txt"), "n\n").unwrap();
+        assert_eq!(submodules()[0]["changed"], true);
+        git(&dir.join("lib"), &["config", "user.name", "a"]);
+        git(&dir.join("lib"), &["config", "user.email", "a@example.com"]);
+        git(&dir.join("lib"), &["add", "."]);
+        git(&dir.join("lib"), &["commit", "-q", "-m", "more"]);
+        let list = submodules();
+        assert_eq!(
+            (&list[0]["moved"], &list[0]["changed"]),
+            (&serde_json::json!(true), &serde_json::json!(false))
+        );
+        // update で記録したコミットに戻す。
+        let r = run(&repo, r#"{"op":"updateSubmodules","paths":["lib"]}"#);
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(submodules()[0]["moved"], false);
+
+        let r = change(serde_json::json!({ "kind": "setBranch", "path": "lib", "branch": "main" }));
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(submodules()[0]["branch"], "main");
+        let r = change(serde_json::json!({ "kind": "setBranch", "path": "lib", "branch": null }));
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(submodules()[0]["branch"], serde_json::Value::Null);
+        let r = change(
+            serde_json::json!({ "kind": "setUrl", "path": "lib", "url": "https://example.com/lib.git" }),
+        );
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(submodules()[0]["url"], "https://example.com/lib.git");
+        // .git/config にも写っている。
+        assert_eq!(
+            git(dir, &["config", "submodule.lib.url"]),
+            "https://example.com/lib.git"
+        );
+        let r = change(serde_json::json!({ "kind": "sync", "recursive": true }));
+        assert_eq!(r["ok"], true, "{r}");
+
+        let r =
+            change(serde_json::json!({ "kind": "remove", "path": "nope", "deleteGitDir": false }));
+        assert_eq!(r["ok"], false);
+        // .gitmodules に stage していない変更があれば、何もせずに断る。
+        let r =
+            change(serde_json::json!({ "kind": "remove", "path": "lib", "deleteGitDir": true }));
+        assert!(r["error"].as_str().unwrap().contains(".gitmodules"), "{r}");
+        assert_eq!(submodules()[0]["initialized"], true);
+        git(dir, &["commit", "-q", "-am", "url"]);
+        // 既定は .git/modules を残す。消すと選べば消す。
+        let modules = dir.join(".git/modules/lib");
+        assert!(modules.is_dir());
+        let r =
+            change(serde_json::json!({ "kind": "remove", "path": "lib", "deleteGitDir": true }));
+        assert_eq!(r["ok"], true, "{r}");
+        assert!(!modules.exists());
+        assert!(!dir.join("lib").exists());
+        assert_eq!(submodules(), serde_json::json!([]));
     }
 
     #[test]

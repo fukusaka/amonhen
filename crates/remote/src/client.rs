@@ -1146,8 +1146,20 @@ impl Operations for RemoteOperations {
         })
     }
 
-    fn update_submodules(&self, paths: &[&str]) -> Result<()> {
-        self.op(Op::UpdateSubmodules(owned(paths)))
+    fn update_submodules(
+        &self,
+        paths: &[&str],
+        options: &amonhen_model::SubmoduleUpdate,
+    ) -> Result<()> {
+        self.op(Op::UpdateSubmodules(owned(paths), *options))
+    }
+
+    fn submodules(&self) -> Result<Vec<amonhen_model::SubmoduleState>> {
+        self.op(Op::Submodules)
+    }
+
+    fn change_submodule(&self, change: &amonhen_model::SubmoduleChange) -> Result<()> {
+        self.op(Op::ChangeSubmodule(crate::wire::Tagged(change.clone())))
     }
 
     fn config_list(&self) -> Result<Vec<ConfigEntry>> {
