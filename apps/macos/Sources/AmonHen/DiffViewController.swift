@@ -1636,6 +1636,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             let result = await Task.detached(priority: .userInitiated) { try? history.selectionDiff(rows: rows, pair: pair) }.value
             guard request == self.request else { return }
             guard let (kind, stacked) = result else {
+                renderSelectionHeader(rows: rows, history: history, kind: nil, failed: true)
                 diffView.show(nil, message: L("Couldn’t load the diff"))
                 return
             }
@@ -1676,6 +1677,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             }.value
             guard request == self.request else { return }
             guard let stacked = result else {
+                renderRangeHeader(title: title, lines: lines, note: L("Couldn’t load the diff"))
                 diffView.show(nil, message: L("Couldn’t load the diff"))
                 return
             }
@@ -1705,7 +1707,9 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     }
 
     /// 選んだコミットの数・差分の取り方・各コミットの 1 行。
-    private func renderSelectionHeader(rows: [Int], history: History, kind: SelectionKind?, pair: PairMode = .forward) {
+    /// `kind` が nil なら読んでいる途中（`failed` なら読めなかった）。
+    private func renderSelectionHeader(rows: [Int], history: History, kind: SelectionKind?, pair: PairMode = .forward,
+                                       failed: Bool = false) {
         let sorted = rows.sorted()
         let text = NSMutableAttributedString()
         let title: [NSAttributedString.Key: Any] = [.font: NSFont.boldSystemFont(ofSize: 13), .foregroundColor: NSColor.labelColor]
@@ -1723,7 +1727,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             case .mergeBase: L("The diff of the two non-consecutive commits from their common ancestor to the newer (A...B: only the changes on the newer side).")
             }
         case .each?: L("They are not contiguous, so each commit’s diff is listed file by file (headed by the path and short ID).")
-        case nil: L("Loading the diff…")
+        case nil: failed ? L("Couldn’t load the diff") : L("Loading the diff…")
         }
         text.append(NSAttributedString(string: explanation + "\n", attributes: note))
         if kind == .pair {
