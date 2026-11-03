@@ -252,22 +252,63 @@ final class RepositorySettingsModel {
         entries.last { $0.key.lowercased() == key.lowercased() && $0.scope == "global" }?.value
     }
 
-    /// この段の値を変える。nil か空なら消す（`keepEmpty` なら空の値を書く。広い段の値を打ち消すとき）。`recordUndo`
-    /// なら、前の値に戻す書き換えを Undo に積む（同じ操作で変えたキーはまとめて 1 段。⌘Z の中でまた逆を積むので、
-    /// ⇧⌘Z でやり直せる）。
-    func set(_ key: String, _ value: String?, keepEmpty: Bool = false, recordUndo: Bool = true) {
+    /// この段の値を変える。nil か空なら消す（`keepEmpty` なら空の値を書く。広い段の値を打ち消すとき）。前の値に
+    /// 戻す書き換えを、書けたら Undo に積む（`write`）。
+    func set(_ key: String, _ value: String?, keepEmpty: Bool = false) {
         let value = value?.trimmingCharacters(in: .whitespaces)
         let new = (value?.isEmpty ?? true) && !(keepEmpty && value != nil) ? nil : value
-        if recordUndo, let undo {
-            let old = local(key)
-            if old != new {
-                undo.registerUndo(withTarget: self) { m in m.set(key, old, keepEmpty: old?.isEmpty == true) }
-                undo.setActionName(L("Change %@", key))
-            }
+        write([ConfigChange(key: key, old: local(key), new: new)], name: L("Change %@", key))
+    }
+
+    /// この段の値の書き換え 1 つ（`new` が nil なら消す）。
+    struct ConfigChange {
+        let key: String
+        let old: String?
+        let new: String?
+        var inverse: ConfigChange { ConfigChange(key: key, old: new, new: old) }
+    }
+
+    /// この出来事で頼まれた書き換え（次の出来事でまとめて書く）と、その Undo の名前・表の下に出す消したもの。
+    private var pending: [ConfigChange] = []
+    private var pendingName = ""
+    private var pendingRemoved: [(key: String, value: String)]?
+
+    /// この段の値を書き換える。同じ出来事で頼まれたもの（1 つの選択で変える 2 つのキーなど）はまとめて順に書き、
+    /// すべて書けたら、逆の書き換えを Undo に 1 段として積む（失敗した書き換えは積まない。名前は最後に頼まれたもの）。
+    /// `removed` があれば、表の下の「戻す」の 1 行に出す。
+    func write(_ changes: [ConfigChange], name: String, removed: [(key: String, value: String)]? = nil) {
+        let changes = changes.filter { $0.old != $0.new }
+        guard !changes.isEmpty else { return }
+        if pending.isEmpty { DispatchQueue.main.async { [weak self] in self?.flush() } }
+        pending += changes
+        pendingName = name
+        if let removed { pendingRemoved = removed }
+    }
+
+    private func flush() {
+        let changes = pending, name = pendingName, removed = pendingRemoved
+        pending = []
+        pendingRemoved = nil
+        if let removed { removedConfig = removed }
+        enqueue(changes.map(command)) { [weak self] ok in
+            guard let self, ok, let undo else { return }
+            undo.registerUndo(withTarget: self) { m in m.replay(changes.reversed().map(\.inverse), name: name) }
+            undo.setActionName(name)
         }
-        var command: [String: Any] = ["op": "configSet", "key": key, "value": new.map { $0 as Any } ?? NSNull()]
+    }
+
+    /// ⌘Z・⇧⌘Z: 逆の書き換えを書く。その逆はここで積む（Undo の中で積むので、⇧⌘Z でやり直せる・⌘Z で戻せる）。
+    private func replay(_ changes: [ConfigChange], name: String) {
+        undo?.registerUndo(withTarget: self) { m in m.replay(changes.reversed().map(\.inverse), name: name) }
+        undo?.setActionName(name)
+        removedConfig = []
+        enqueue(changes.map(command))
+    }
+
+    private func command(_ change: ConfigChange) -> [String: Any] {
+        var command: [String: Any] = ["op": "configSet", "key": change.key, "value": change.new.map { $0 as Any } ?? NSNull()]
         if level == .allRepositories { command["scope"] = "global" }
-        run(command)
+        return command
     }
 
     /// ユーザー全体（global。SSH 先のリポジトリなら SSH 先のユーザー）の値を変える。nil か空なら消す。
@@ -919,28 +960,13 @@ private struct AllSettingsTab: View {
         }
     }
 
-    /// このリポジトリの値の書き換え 1 つ（`new` が nil なら消す）。
-    private struct ConfigChange {
-        let key: String
-        let old: String?
-        let new: String?
-        var inverse: ConfigChange { ConfigChange(key: key, old: new, new: old) }
-    }
+    private typealias ConfigChange = RepositorySettingsModel.ConfigChange
 
-    /// 表からの書き換えはすべてここを通す: 書いて、UndoManager に逆の書き換えを登録する。逆の中でまたその逆を
-    /// 登録するので、⌘Z のあと ⇧⌘Z でやり直せる。`showRemoved` なら消したものを下の 1 行に出す（それ以外の
-    /// 書き換えとやり直しでは消す）。
+    /// 表からの書き換えはすべてここを通す（Undo に 1 段として積む）。`showRemoved` なら消したものを下の 1 行に出す
+    /// （それ以外の書き換えとやり直しでは消す）。
     private func write(_ changes: [ConfigChange], name: String, showRemoved: Bool = false) {
-        Self.apply(changes, to: model, name: name, showRemoved: showRemoved)
-    }
-
-    private static func apply(_ changes: [ConfigChange], to model: RepositorySettingsModel, name: String, showRemoved: Bool) {
-        for c in changes { model.set(c.key, c.new, recordUndo: false) }
-        model.removedConfig = showRemoved ? changes.compactMap { c in c.old.map { (key: c.key, value: $0) } } : []
-        model.undo?.registerUndo(withTarget: model) { m in
-            apply(changes.map(\.inverse), to: m, name: name, showRemoved: false)
-        }
-        model.undo?.setActionName(name)
+        model.write(changes, name: name,
+                    removed: showRemoved ? changes.compactMap { c in c.old.map { (key: c.key, value: $0) } } : [])
     }
 
     private func cancelAdding() {
