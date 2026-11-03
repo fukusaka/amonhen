@@ -948,45 +948,62 @@ impl SshHosts {
         let parent = self.widget.root().and_downcast::<gtk::Window>();
         let w = Rc::downgrade(self);
         glib::spawn_future_local(async move {
+            // 候補を打つそばから補い、▾ で一覧から選べる欄（macOS 版の NSComboBox）。
             let entry = gtk::Entry::builder()
                 .activates_default(true)
                 .hexpand(true)
                 .build();
-            let list = gtk::ListBox::new();
             let known = known_hosts();
-            for c in candidates().into_iter().filter(|c| !known.contains(c)) {
-                let row = gtk::ListBoxRow::new();
-                let l = label(&c, &[]);
-                l.set_margin_start(6);
-                l.set_margin_top(2);
-                l.set_margin_bottom(2);
-                row.set_child(Some(&l));
-                row.set_widget_name(&c);
-                list.append(&row);
-            }
-            let e = entry.clone();
-            list.connect_row_selected(move |_, row| {
-                if let Some(row) = row {
-                    e.set_text(&row.widget_name());
+            let names: Vec<String> = candidates()
+                .into_iter()
+                .filter(|c| !known.contains(c))
+                .collect();
+            complete_inline(&entry, names.clone());
+            let field = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+            field.add_css_class("linked");
+            field.append(&entry);
+            if !names.is_empty() {
+                let list = gtk::ListBox::new();
+                list.set_selection_mode(gtk::SelectionMode::None);
+                list.set_activate_on_single_click(true);
+                for c in &names {
+                    let row = gtk::ListBoxRow::new();
+                    let l = label(c, &[]);
+                    l.set_margin_start(6);
+                    l.set_margin_end(6);
+                    l.set_margin_top(2);
+                    l.set_margin_bottom(2);
+                    row.set_child(Some(&l));
+                    row.set_widget_name(c);
+                    list.append(&row);
                 }
-            });
+                let popover = gtk::Popover::new();
+                popover.set_child(Some(
+                    &gtk::ScrolledWindow::builder()
+                        .child(&list)
+                        .max_content_height(12 * 26)
+                        .propagate_natural_height(true)
+                        .hscrollbar_policy(gtk::PolicyType::Never)
+                        .build(),
+                ));
+                let button = gtk::MenuButton::new();
+                button.set_popover(Some(&popover));
+                let (e, p) = (entry.clone(), popover.downgrade());
+                list.connect_row_activated(move |_, row| {
+                    e.set_text(&row.widget_name());
+                    e.set_position(-1);
+                    if let Some(p) = p.upgrade() {
+                        p.popdown();
+                    }
+                });
+                field.append(&button);
+            }
             let sheet = Sheet::new(
                 parent.as_ref(),
                 &tr!("Add an SSH host"),
                 &tr!("Write it as ssh knows it: user@host:port, or a name in ~/.ssh/config."),
             );
-            sheet.add(&entry);
-            if list.first_child().is_some() {
-                sheet.add(
-                    &gtk::ScrolledWindow::builder()
-                        .child(&list)
-                        .min_content_height(160)
-                        .max_content_height(160)
-                        .hscrollbar_policy(gtk::PolicyType::Never)
-                        .has_frame(true)
-                        .build(),
-                );
-            }
+            sheet.add(&field);
             sheet.buttons(&tr!("Add"), false, None);
             if sheet.run().await != Response::Ok {
                 return;
@@ -1408,9 +1425,56 @@ fn login_shell_rows(session: &Rc<HostSession>) -> gtk::Box {
     b
 }
 
+/// 打った文字で始まる候補があれば、残りを補って選んだ状態にする（続けて打てば置き換わる。macOS 版の
+/// NSComboBox の `completes`）。大文字小文字は区別しない。
+fn complete_inline(entry: &gtk::Entry, names: Vec<String>) {
+    let typed_len = Rc::new(Cell::new(0usize));
+    entry.connect_changed(move |e| {
+        let text = e.text().to_string();
+        let len = text.chars().count();
+        let grew = len > typed_len.get();
+        typed_len.set(len);
+        if !grew || text.is_empty() {
+            return;
+        }
+        let Some(hit) = completion(&names, &text) else {
+            return;
+        };
+        // 打った字が入り終えてから（カーソルが動いてから）補う。
+        let (e, typed_len) = (e.clone(), typed_len.clone());
+        glib::idle_add_local_once(move || {
+            if e.text().as_str() != text || e.position() != len as i32 {
+                return;
+            }
+            let full = format!("{text}{}", hit.chars().skip(len).collect::<String>());
+            typed_len.set(full.chars().count());
+            e.set_text(&full);
+            e.select_region(len as i32, -1);
+        });
+    });
+}
+
+/// `typed` で始まる（大文字小文字は区別しない）最初の、より長い候補。
+fn completion(names: &[String], typed: &str) -> Option<String> {
+    let lower = typed.to_lowercase();
+    names
+        .iter()
+        .find(|n| n.chars().count() > typed.chars().count() && n.to_lowercase().starts_with(&lower))
+        .cloned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn completes_hosts_by_prefix_ignoring_case() {
+        let names = vec!["build-1".to_owned(), "Box.example".to_owned()];
+        assert_eq!(completion(&names, "bo").as_deref(), Some("Box.example"));
+        assert_eq!(completion(&names, "bu").as_deref(), Some("build-1"));
+        assert_eq!(completion(&names, "build-1"), None);
+        assert_eq!(completion(&names, "x"), None);
+    }
 
     #[test]
     fn reads_hosts_from_ssh_config_and_known_hosts() {
