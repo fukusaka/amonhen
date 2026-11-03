@@ -409,8 +409,8 @@ impl WorkingCopy {
         let path = gtk::Label::new(None);
         path.set_xalign(0.0);
         path.set_hexpand(true);
-        path.set_ellipsize(gtk::pango::EllipsizeMode::Start);
-        path.add_css_class("heading");
+        // ふつうの太さで、長いパスは真ん中を省く（macOS 版と同じ）。
+        path.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
         let lines = gtk::Button::with_label("Stage Lines");
         let discard = gtk::Button::with_label("Discard File");
         let worktree_side = gtk::ToggleButton::with_label("Unstaged");
@@ -1544,7 +1544,8 @@ impl Inner {
         state.add_css_class("monospace");
         let name = gtk::Label::new(None);
         name.set_xalign(0.0);
-        name.set_ellipsize(gtk::pango::EllipsizeMode::Start);
+        // 長い名前・パスは真ん中を省く（macOS 版と同じ。注記は頭を省く）。
+        name.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
         let detail = gtk::Label::new(None);
         detail.set_xalign(0.0);
         detail.set_ellipsize(gtk::pango::EllipsizeMode::Start);
@@ -2893,8 +2894,11 @@ impl Inner {
         if le.warning() {
             text = format!("⚠︎ {text}");
             self.line_endings.add_css_class("warning");
+            self.line_endings.remove_css_class("dim-label");
         } else {
             self.line_endings.remove_css_class("warning");
+            // 気にしなくてよいときは薄い色で（macOS 版と同じ）。
+            self.line_endings.add_css_class("dim-label");
         }
         self.line_endings.set_text(&text);
         let mut tip = vec![tr!(
