@@ -117,7 +117,12 @@ impl Target {
 
     /// この worktree の名前を書いた確認のシート。
     pub fn sheet(&self, parent: Option<&gtk::Window>, title: &str, message: &str) -> Sheet {
-        Sheet::unnamed(parent, title, &named(self.worktree.as_deref(), message))
+        Sheet::unnamed(parent, title, &self.describe(message))
+    }
+
+    /// シートの説明（この worktree の名前を先頭に。説明を書き直すときも）。
+    pub fn describe(&self, message: &str) -> String {
+        named(self.worktree.as_deref(), message)
     }
 
     /// この worktree の名前を書いて知らせる（[`inform`]）。
@@ -1077,9 +1082,13 @@ fn beep(actions: &Actions) {
 
 /// Fetch の前に、どこから取るかを見せる。リモートがいくつもあれば選べる（最初はすべて）。
 pub fn fetch(actions: &Rc<Actions>) {
+    // 選んだときの worktree のリモートを読み、その名前を書き、そこで取る（読んでいる間に書き込む先を替えても）。
+    let Some(target) = Target::current(actions) else {
+        return;
+    };
     let actions = actions.clone();
     glib::spawn_future_local(async move {
-        let Some(repo) = actions.repo() else { return };
+        let repo = target.repo.clone();
         let remotes: Vec<String> = run(&repo, json!({ "op": "remotes" })).await["info"]["remotes"]
             .as_array()
             .into_iter()
@@ -1148,7 +1157,7 @@ pub fn fetch(actions: &Rc<Actions>) {
             tr!("Fetch?")
         };
         let window = parent(&actions);
-        let sheet = Sheet::new(window.as_ref(), &title, &prune_line(&remotes));
+        let sheet = target.sheet(window.as_ref(), &title, &prune_line(&remotes));
         let mut choices = vec![tr!(
             "All Remotes ({names})",
             names = amonhen_model::i18n::list(&remotes)
@@ -1160,11 +1169,11 @@ pub fn fetch(actions: &Rc<Actions>) {
         crate::settings::separate_items(&from, Rc::new(std::cell::RefCell::new(vec![1])));
         if remotes.len() > 1 {
             sheet.add(&row(&tr!("From:"), &from));
-            let (message, remotes, prune_line, window) = (
+            let (message, remotes, prune_line, target) = (
                 sheet.message.clone(),
                 remotes.clone(),
                 prune_line.clone(),
-                window.clone(),
+                target.clone(),
             );
             from.connect_selected_notify(move |d| {
                 let chosen = match d.selected() {
@@ -1172,7 +1181,7 @@ pub fn fetch(actions: &Rc<Actions>) {
                     i => vec![remotes[i as usize - 1].clone()],
                 };
                 // worktree の行は残す（macOS 版と同じく、説明はシートを出したときと同じ形で書き直す）。
-                let text = with_worktree(window.as_ref(), &prune_line(&chosen));
+                let text = target.describe(&prune_line(&chosen));
                 message.set_text(&text);
                 message.set_visible(!text.is_empty());
             });
@@ -1185,7 +1194,11 @@ pub fn fetch(actions: &Rc<Actions>) {
             0 => None,
             i => remotes.get(i as usize - 1).cloned(),
         };
-        actions.perform(json!({ "op": "fetch", "remote": remote }));
+        actions.perform_in(
+            repo,
+            vec![json!({ "op": "fetch", "remote": remote })],
+            |_| {},
+        );
     });
 }
 
@@ -2581,10 +2594,13 @@ pub fn delete_branches(actions: &Rc<Actions>, names: Vec<String>) {
 /// サイドバーにドラッグしたブランチを、リモートのブランチに送る前に確かめる。送り先が上流なら Push のシート。
 /// `force` なら、そのリモートのブランチが最後の Fetch の時点のコミットのときだけ置き換える。
 pub fn push_to(actions: &Rc<Actions>, branch: &str, target: &str, command: Value, force: bool) {
+    // 選んだときの worktree で読み、そこで送る（上流へなら、その worktree の Push のシート）。
+    let Some(tree) = Target::current(actions) else {
+        return;
+    };
     let (actions, branch, target) = (actions.clone(), branch.to_owned(), target.to_owned());
     glib::spawn_future_local(async move {
-        let Some(repo) = actions.repo() else { return };
-        let r = repo.clone();
+        let r = tree.repo.clone();
         let refs = gio::spawn_blocking(move || r.load_refs().ok())
             .await
             .ok()
@@ -2603,7 +2619,7 @@ pub fn push_to(actions: &Rc<Actions>, branch: &str, target: &str, command: Value
             .as_ref()
             .is_some_and(|l| !l.gone && l.detail.as_deref() == Some(target.as_str()))
         {
-            return push(&actions, Some(branch), force, None);
+            return push_in(&actions, tree, Some(branch), force, None);
         }
         let there = find(amonhen_model::RefKind::Remote, &target).and_then(|e| e.target);
         let title = if force {
@@ -2644,7 +2660,7 @@ pub fn push_to(actions: &Rc<Actions>, branch: &str, target: &str, command: Value
         if force && let Some(t) = there {
             command["expect"] = json!(t.to_string());
         }
-        actions.perform(command);
+        actions.perform_in(tree.repo, vec![command], |_| {});
     });
 }
 
