@@ -76,21 +76,27 @@ fn worktree_name(window: &gtk::Window) -> Option<String> {
     })
 }
 
+/// シートの説明: worktree が 2 つ以上あれば、どの worktree に対する操作かを先頭に書く（説明を書き換えるときも
+/// これを通す）。
+pub fn with_worktree(parent: Option<&gtk::Window>, message: &str) -> String {
+    match parent.and_then(worktree_name) {
+        Some(name) => {
+            let mut text = tr!("In the worktree “{name}”.", name = name);
+            if !message.is_empty() {
+                text.push('\n');
+                text.push_str(message);
+            }
+            text
+        }
+        None => message.to_owned(),
+    }
+}
+
 impl Sheet {
     /// 確認のシート。worktree が 2 つ以上あれば、どの worktree に対する操作かを説明の先頭に書く
     /// （docs/ux.md の「Worktrees」）。
     pub fn new(parent: Option<&gtk::Window>, title: &str, message: &str) -> Self {
-        match parent.and_then(worktree_name) {
-            Some(name) => {
-                let mut text = tr!("In the worktree “{name}”.", name = name);
-                if !message.is_empty() {
-                    text.push('\n');
-                    text.push_str(message);
-                }
-                Self::unnamed(parent, title, &text)
-            }
-            None => Self::unnamed(parent, title, message),
-        }
+        Self::unnamed(parent, title, &with_worktree(parent, message))
     }
 
     /// worktree の名前を書かないシート（worktree そのものの操作など）。
@@ -1095,7 +1101,8 @@ pub fn fetch(actions: &Rc<Actions>) {
         } else {
             tr!("Fetch?")
         };
-        let sheet = Sheet::new(parent(&actions).as_ref(), &title, &prune_line(&remotes));
+        let window = parent(&actions);
+        let sheet = Sheet::new(window.as_ref(), &title, &prune_line(&remotes));
         let mut choices = vec![tr!(
             "All Remotes ({names})",
             names = amonhen_model::i18n::list(&remotes)
@@ -1107,14 +1114,19 @@ pub fn fetch(actions: &Rc<Actions>) {
         crate::settings::separate_items(&from, Rc::new(std::cell::RefCell::new(vec![1])));
         if remotes.len() > 1 {
             sheet.add(&row(&tr!("From:"), &from));
-            let (message, remotes, prune_line) =
-                (sheet.message.clone(), remotes.clone(), prune_line.clone());
+            let (message, remotes, prune_line, window) = (
+                sheet.message.clone(),
+                remotes.clone(),
+                prune_line.clone(),
+                window.clone(),
+            );
             from.connect_selected_notify(move |d| {
                 let chosen = match d.selected() {
                     0 => remotes.clone(),
                     i => vec![remotes[i as usize - 1].clone()],
                 };
-                let text = prune_line(&chosen);
+                // worktree の行は残す（macOS 版と同じく、説明はシートを出したときと同じ形で書き直す）。
+                let text = with_worktree(window.as_ref(), &prune_line(&chosen));
                 message.set_text(&text);
                 message.set_visible(!text.is_empty());
             });

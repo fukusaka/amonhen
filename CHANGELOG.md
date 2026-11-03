@@ -213,6 +213,7 @@ becomes the GitHub Release notes.
 - macOS: warnings flashed in the status bar show an orange triangle instead of a green one.
 - macOS: an authentication or host key failure in a daemon or SSH repository no longer offers Open in Terminal, which
   only beeped there.
+- macOS: changing From: in the Fetch sheet keeps the line naming the worktree.
 
 ### [0.2.8] - 2026-10-30
 

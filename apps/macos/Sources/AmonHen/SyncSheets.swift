@@ -490,9 +490,10 @@ extension Actions {
                 popup.menu?.addItem(.separator())
                 popup.addItems(withTitles: remotes)
                 let chosen = { popup.indexOfSelectedItem == 0 ? remotes : [popup.titleOfSelectedItem ?? ""] }
+                let message = { [weak self] (text: String) in self?.sheetMessage(text) ?? text }
                 target = ClosureTarget { [weak alert] in
-                    // 文の行数が変わったら sheet の高さも合わせ直す。
-                    alert?.informativeText = pruneLine(chosen())
+                    // 文の行数が変わったら sheet の高さも合わせ直す。worktree の行は残す。
+                    alert?.informativeText = message(pruneLine(chosen()))
                     alert?.layout()
                 }
                 popup.target = target
