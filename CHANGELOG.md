@@ -186,6 +186,7 @@ becomes the GitHub Release notes.
 - macOS: diffs scroll sideways as far as their longest line, no more and no less; lines past about 3,000 points were
   cut off.
 - macOS: Commit ▾ > Commit and Push is off when nothing is staged or the message is empty, as Commit is.
+- macOS: Working Copy no longer says No changes before the first status has loaded.
 
 ### [0.2.8] - 2026-10-30
 

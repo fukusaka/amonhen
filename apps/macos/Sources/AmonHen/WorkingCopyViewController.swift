@@ -40,7 +40,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     private let sparseNote = NSButton(title: "", target: nil, action: nil)
     /// パスで一覧を絞り込む。
     private let filterField = NSSearchField()
-    private let emptyLabel = NSTextField(labelWithString: L("No changes"))
+    /// 一覧が空のときの説明。最初の status を読むまでは空（「変更なし」と言わない）。
+    private let emptyLabel = NSTextField(labelWithString: "")
     private var diffBar: TitleAndButtonsBar?
     private let amend = NSButton(checkboxWithTitle: "Amend", target: nil, action: nil)
     private let commitButton = YieldingButton(title: "Commit", target: nil, action: nil)
