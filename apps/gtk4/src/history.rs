@@ -1598,22 +1598,6 @@ impl HistoryView {
             let first = ((scroll_y / rh).floor().max(0.0) as u32).min(count);
             let last = (((scroll_y + height) / rh).ceil() as u32 + 1).min(count);
 
-            // 検索に一致した行の背景（選んでいる行は、選んだ色で上から塗る）。
-            let from = st.matches.partition_point(|&r| r < first);
-            for &row in st.matches[from..].iter().take_while(|&&r| r < last) {
-                let y = row as f32 * rh - scroll_y;
-                let rect = gsk::RoundedRect::from_rect(
-                    graphene::Rect::new(2.0, y + 1.0, width - 4.0, rh - 2.0),
-                    4.0,
-                );
-                let path = gsk::PathBuilder::new();
-                path.add_rounded_rect(&rect);
-                snapshot.append_fill(
-                    &path.to_path(),
-                    gsk::FillRule::Winding,
-                    &gdk::RGBA::new(1.0, 0.8, 0.0, 0.14),
-                );
-            }
             // 選んでいる行の背景。
             let color = if focused {
                 accent
@@ -1703,6 +1687,27 @@ impl HistoryView {
                     .map_or(graph_width + TEXT_INSET, |x| (x + GRAPH_GAP).round())
             };
             let row_end = width - TEXT_INSET;
+            // 検索に一致した行の背景。文字の所だけ（その行のグラフの右端から列の終わりまで）で、選んでいる行には
+            // 塗らない（macOS 版と同じ）。
+            let from = st.matches.partition_point(|&r| r < first);
+            for &row in st.matches[from..].iter().take_while(|&&r| r < last) {
+                if st.selected == Some(row) || st.extra.contains(&row) {
+                    continue;
+                }
+                let y = row as f32 * rh - scroll_y;
+                let start = text_x_of(row);
+                let rect = gsk::RoundedRect::from_rect(
+                    graphene::Rect::new(start - 3.0, y + 1.0, row_end - start + 6.0, rh - 2.0),
+                    4.0,
+                );
+                let path = gsk::PathBuilder::new();
+                path.add_rounded_rect(&rect);
+                snapshot.append_fill(
+                    &path.to_path(),
+                    gsk::FillRule::Winding,
+                    &gdk::RGBA::new(1.0, 0.8, 0.0, 0.14),
+                );
+            }
             let secondary = gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), fg.alpha() * 0.6);
             // 選んだ行の文字は、選択の色の上の文字の色（macOS 版の alternateSelectedControlTextColor）。
             let white = on_accent;
