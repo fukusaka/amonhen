@@ -2545,12 +2545,16 @@ impl Inner {
     }
 }
 
-/// 見出しの下の項目の数（子のない行を数える。リモートはブランチの数。macOS 版の `leafCount`）。
+/// 見出しの下の項目の数（子のない行を数える。リモートはブランチの数。macOS 版の `leafCount`）。ほかのブランチを
+/// 積んだブランチは、それ自身も数える。
 fn leaf_count(store: &gio::ListStore) -> usize {
     (0..store.n_items())
         .filter_map(|i| store.item(i).and_downcast::<Node>())
         .map(|node| match node.children() {
-            Some(children) if children.n_items() > 0 => leaf_count(&children),
+            Some(children) if children.n_items() > 0 => {
+                let own = matches!(node.imp().data.borrow().item, Item::Ref(_));
+                usize::from(own) + leaf_count(&children)
+            }
             _ => 1,
         })
         .sum()
@@ -3307,6 +3311,47 @@ fn pull_request_rows(list: &[PullRequest], refs: Option<&Refs>) -> gio::ListStor
 #[cfg(test)]
 mod tests {
     use super::{favorite_edge, reordered};
+
+    #[test]
+    fn counts_branches_with_branches_stacked_on_them() {
+        use super::{Data, Item, Row, leaf_count, store};
+        use amonhen_model::{RefEntry, RefKind};
+        let branch = |name: &str| Data {
+            title: name.into(),
+            item: Item::Ref(RefEntry {
+                kind: RefKind::Local,
+                name: name.into(),
+                target: None,
+                detail: None,
+                ahead: 0,
+                behind: 0,
+                gone: false,
+            }),
+            ..Data::default()
+        };
+        let folder = |name: &str| Data {
+            title: name.into(),
+            item: Item::Folder,
+            ..Data::default()
+        };
+        // main の上に topic を積み、feature/ フォルダに 2 つ: ブランチは 4 つ（フォルダは数えない）。
+        let rows = vec![
+            Row {
+                data: branch("main"),
+                children: vec![Row::leaf(branch("topic"))],
+                folder: false,
+            },
+            Row {
+                data: folder("feature"),
+                children: vec![
+                    Row::leaf(branch("feature/a")),
+                    Row::leaf(branch("feature/b")),
+                ],
+                folder: true,
+            },
+        ];
+        assert_eq!(leaf_count(&store(rows)), 4);
+    }
 
     #[test]
     fn favorite_edges() {
