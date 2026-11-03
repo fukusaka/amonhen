@@ -1422,15 +1422,21 @@ impl HistoryView {
         rows
     }
 
-    /// 境界のコミットのうち、いちばん古いものの作者の日時（読み込んであるチャンクにあれば。macOS 版の
-    /// `oldestBoundaryDate`）。
+    /// 境界のコミットのうち、いちばん古いものの作者の日時（macOS 版の `oldestBoundaryDate`）。境界の行は表の
+    /// 終わりのほうにあり、まだ読んでいないことが多い。読んでいなければその行だけ読む。
     pub fn oldest_boundary_time(&self) -> Option<i64> {
         let st = self.state();
         st.boundary
             .iter()
-            .filter_map(|&row| {
-                let chunk = st.chunks.get(&(row / CHUNK_ROWS))?;
-                chunk.0.author_times.get(chunk.index(row)).copied()
+            .filter_map(|&row| match st.chunks.get(&(row / CHUNK_ROWS)) {
+                Some(chunk) => chunk.0.author_times.get(chunk.index(row)).copied(),
+                None => {
+                    let (repo, history) = (st.repo.as_ref()?, st.history.as_ref()?);
+                    let chunk = repo
+                        .history_chunk(history, row, 1, &FrontendProfile::GTK)
+                        .ok()?;
+                    chunk.author_times.first().copied()
+                }
             })
             .min()
     }
