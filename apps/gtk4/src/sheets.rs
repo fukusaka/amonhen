@@ -1716,7 +1716,9 @@ pub fn publish(actions: &Rc<Actions>, branch: &str, then: Option<Box<dyn FnOnce(
             .build();
         sheet.add(&row(&tr!("Remote"), &remote));
         sheet.add(&row(&tr!("Name there"), &name));
-        sheet.buttons("Publish", false, None);
+        let publish = sheet.buttons("Publish", false, None);
+        // 名前が空なら押せない（黙って閉じない）。
+        name.connect_changed(move |e| publish.set_sensitive(!e.text().trim().is_empty()));
         if sheet.run().await != Response::Ok {
             return;
         }

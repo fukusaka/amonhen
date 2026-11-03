@@ -676,9 +676,18 @@ extension Actions {
             let alert = makeAlert(L("Publish %@?", branch),
                                   L("This creates the branch on the remote and makes it the upstream (where Pull and Push go from now on)."))
             alert.accessoryView = grid
-            alert.addButton(withTitle: "Publish")
+            let publish = alert.addButton(withTitle: "Publish")
             alert.addButton(withTitle: L("Cancel"))
             alert.window.initialFirstResponder = popup
+            // 名前が空なら押せない（黙って閉じない）。
+            let typing = NotificationCenter.default.addObserver(
+                forName: NSControl.textDidChangeNotification, object: field, queue: .main
+            ) { _ in
+                MainActor.assumeIsolated {
+                    publish.isEnabled = !field.stringValue.trimmingCharacters(in: .whitespaces).isEmpty
+                }
+            }
+            defer { NotificationCenter.default.removeObserver(typing) }
             guard await present(alert) == .alertFirstButtonReturn, let remote = popup.titleOfSelectedItem else { return }
             let remoteBranch = field.stringValue.trimmingCharacters(in: .whitespaces)
             guard !remoteBranch.isEmpty else { return }
