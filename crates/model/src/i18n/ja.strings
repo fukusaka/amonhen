@@ -980,6 +980,7 @@
 "3-way merge where it doesn’t apply" = "当たらないところは 3-way merge にする";
 "Leaves conflicts to resolve in Working Copy instead of stopping (--3way)." = "止まる代わりに、Working Copy で解決するコンフリクトを残します（--3way）。";
 "Stage the changes too (--index)" = "stage もする（--index）";
+"Apply" = "当てる";
 
 /* GTK4: いくつもまとめて merge（octopus） */
 "Merge {count} into {branch}…" = "{count} 個を {branch} に Merge…";

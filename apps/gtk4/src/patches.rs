@@ -336,7 +336,7 @@ async fn confirm(actions: &Rc<Actions>, summary: &Value, patches: &[Value], path
         sheet.add(&index);
     }
     sheet.add(&three_way);
-    sheet.buttons("Apply", false, None);
+    sheet.buttons(&tr!("Apply"), false, None);
     if sheet.run().await != Response::Ok {
         return;
     }
