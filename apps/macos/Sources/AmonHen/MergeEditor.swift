@@ -186,8 +186,11 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
         for b in [aiResolveButton, aiExplainButton] {
             b.bezelStyle = .push
             b.controlSize = .small
-            b.isHidden = !Assistant.isConfigured
         }
+        updateAssistantButtons()
+        // Settings > AI で CLI を選び直したら、開いたままのエディタでも出す・隠す。
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(updateAssistantButtons), name: .assistantChanged, object: nil)
         note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         note.textColor = .secondaryLabelColor
         // 文が長くてもボタンを押し出さないよう、メモの方を切り詰める。
@@ -454,6 +457,10 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
         guard !conflicts.isEmpty, let clip = result.enclosingScrollView?.contentView else { return }
         let line = conflicts[selected].lines[0]
         scroll(result, toY: CGFloat(line) * lineHeight + result.textContainerInset.height - clip.bounds.height / 3)
+    }
+
+    @objc private func updateAssistantButtons() {
+        for b in [aiResolveButton, aiExplainButton] { b.isHidden = !Assistant.isConfigured }
     }
 
     /// エディタを操作しているか: フォーカスがエディタの中にある（別ウィンドウなら、その窓にいる）。エディタの近道は
