@@ -787,6 +787,14 @@ fn push_warnings(
     out
 }
 
+/// 中身を見せる広いシートの大きさ: 親の窓の 85%、少なくとも 820×480（macOS 版の PushSheet と同じ）。
+fn wide_size(parent_width: i32, parent_height: i32) -> (i32, i32) {
+    (
+        (parent_width * 85 / 100).max(820),
+        (parent_height * 85 / 100).max(480),
+    )
+}
+
 /// Push のシートの中身: 左に送るコミット（一番上は「送る変更すべて」。Force Push と分岐では上流から消える
 /// コミットも）、右に選んだものの詳細と差分（History の右の欄と同じ表示。読み取り専用）。
 fn push_preview(
@@ -797,8 +805,10 @@ fn push_preview(
 ) -> gtk::Paned {
     use amonhen_model::Oid;
     // 行: (見出し, 下の行, コミット（なければ送る変更すべて）, 選べない見出しか, 消えるものか)。
+    // 「送る変更すべて（N）」は、行と右の詳細の題の両方に出す（macOS 版の rangeTitle）。
+    let range_title = tr!("All changes to send ({count})", count = outgoing.count);
     let mut rows: Vec<(String, String, Option<String>, bool, bool)> = vec![(
-        tr!("All changes to send ({count})", count = outgoing.count),
+        range_title.clone(),
         tr!("From upstream to HEAD, all files"),
         None,
         false,
@@ -842,12 +852,13 @@ fn push_preview(
         glib::Propagation::Proceed
     });
     list.add_controller(keys);
-    for (title, detail, _, heading, lost) in &rows {
+    for (title, detail, commit, heading, lost) in &rows {
         let b = gtk::Box::new(gtk::Orientation::Vertical, 1);
         let t = gtk::Label::new(Some(title));
         t.set_xalign(0.0);
         t.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        if *heading {
+        // 見出しと「送る変更すべて」は太字（macOS 版と同じ）。
+        if *heading || commit.is_none() {
             t.add_css_class("heading");
         }
         if *lost {
@@ -903,13 +914,9 @@ fn push_preview(
                 .as_ref()
                 .and_then(|(b, t)| Some((Oid::from_hex(b), Oid::from_hex(t)?)))
             {
-                Some((base, tip)) => pane.show_range(
-                    repo.clone(),
-                    base,
-                    tip,
-                    &tr!("All changes to send"),
-                    &range_lines,
-                ),
+                Some((base, tip)) => {
+                    pane.show_range(repo.clone(), base, tip, &range_title, &range_lines)
+                }
                 None => pane.clear(),
             },
         }
@@ -1486,7 +1493,12 @@ pub fn push(
         // 送る範囲があれば、送るコミットとその中身を見せる広いシート。なければ（送るコミットがなく、上流だけが
         // 進んでいる Force Push など）一覧だけの小さなシート（macOS 版と同じ）。
         if range.is_some() {
-            sheet.wide(1100, 720);
+            // 親の窓の 85%（少なくとも 820×480。macOS 版と同じ）。
+            let (width, height) = parent(&actions)
+                .map(|w| (w.width(), w.height()))
+                .unwrap_or_default();
+            let (width, height) = wide_size(width, height);
+            sheet.wide(width, height);
             sheet.add(&push_preview(&repo, &state.outgoing, &lost, range));
         } else {
             sheet.add(&commit_lists(&[
@@ -1502,7 +1514,9 @@ pub fn push(
         if diverged {
             // Cancel・Pull…・Force Push の順。Force Push は Return では押せず、Return は Pull…（macOS 版と同じ）。
             sheet.button(&tr!("Cancel"), Response::Cancel, None);
-            sheet.button("Pull…", Response::Other, Some(Style::Suggested));
+            // Pull… は目立たせないが、Return で押せる（macOS 版の keyEquivalent "\r" の素のボタン）。
+            let pull = sheet.button("Pull…", Response::Other, None);
+            sheet.window.set_default_widget(Some(&pull));
             sheet.button("Force Push", Response::Ok, Some(Style::Destructive));
         } else {
             sheet.buttons(if replace { "Force Push" } else { "Push" }, replace, None);
@@ -2315,6 +2329,13 @@ pub fn push_to(actions: &Rc<Actions>, branch: &str, target: &str, command: Value
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_wide_sheet_is_most_of_the_parent() {
+        assert_eq!(wide_size(1600, 1000), (1360, 850));
+        assert_eq!(wide_size(800, 400), (820, 480));
+        assert_eq!(wide_size(0, 0), (820, 480));
+    }
 
     #[test]
     fn forecast_from_reply() {

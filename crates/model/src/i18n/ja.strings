@@ -879,7 +879,6 @@
 "Commits upstream will lose ({count})" = "上流から消えるコミット（{count}）";
 "Commits to send" = "送るコミット";
 "Commits {upstream} will lose" = "{upstream} から消えるコミット";
-"All changes to send" = "送る変更すべて";
 "You can Undo this (Ctrl+Alt+Z)." = "Undo（Ctrl+Alt+Z）で戻せます。";
 /* GTK4: Range Diff */
 "old...new  or  base old new" = "古い...新しい  または  土台 古い 新しい";
