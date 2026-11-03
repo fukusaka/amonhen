@@ -31,14 +31,21 @@ const ext = vscode.extensions.getExtension<Api>('fukusaka.amonhen')!;
 const root = vscode.workspace.workspaceFolders![0]!.uri.fsPath;
 const spawned: Spawned[] = [];
 const posted: HostMessage[] = [];
+/** 拡張が出したエラーの知らせ */
+const errors: string[] = [];
 let api: Api;
 
 function git(...args: string[]): string {
   return childProcess.execFileSync('git', args, { cwd: root, encoding: 'utf8' });
 }
 
-/** fn が値を返すまで待つ */
-async function until<T>(what: string, fn: () => T | undefined | false | Promise<T | undefined | false>, ms = 20_000): Promise<T> {
+/** fn が値を返すまで待つ。来なければ、seen（そこまでに来たもの）を添えて失敗する */
+async function until<T>(
+  what: string,
+  fn: () => T | undefined | false | Promise<T | undefined | false>,
+  ms = 20_000,
+  seen?: () => string,
+): Promise<T> {
   const start = Date.now();
   for (;;) {
     const value = await fn();
@@ -46,7 +53,7 @@ async function until<T>(what: string, fn: () => T | undefined | false | Promise<
       return value;
     }
     if (Date.now() - start > ms) {
-      throw new Error(`待っても来ません: ${what}`);
+      throw new Error(`待っても来ません: ${what}${seen ? `（来たもの: ${seen()}）` : ''}`);
     }
     await new Promise((r) => setTimeout(r, 50));
   }
@@ -58,8 +65,14 @@ function waitPosted<T extends HostMessage['type']>(
   since: number,
   match: (m: Message<T>) => boolean = () => true,
 ): Promise<Message<T>> {
-  return until(`${type} のメッセージ`, () =>
-    posted.slice(since).find((m): m is Message<T> => m.type === type && match(m as Message<T>)),
+  return until(
+    `${type} のメッセージ`,
+    () => posted.slice(since).find((m): m is Message<T> => m.type === type && match(m as Message<T>)),
+    undefined,
+    () => {
+      const kinds = posted.slice(since).map((m) => (m.type === 'rows' ? `rows[${m.start}+${m.rows.length}]` : m.type));
+      return [kinds.join(', ') || 'なし', ...errors.slice(-3).map((e) => `エラー「${e}」`)].join('、');
+    },
   );
 }
 
@@ -102,6 +115,15 @@ async function showView(command: 'amonhen.showWorkingCopy' | 'amonhen.showHistor
     };
   }
   return panel;
+}
+
+/** 拡張が出すエラーの知らせを記録する（待っても来ないときに添える） */
+function recordErrors(): void {
+  const show = vscode.window.showErrorMessage.bind(vscode.window) as (message: string, ...rest: unknown[]) => Thenable<unknown>;
+  (vscode.window as { showErrorMessage: unknown }).showErrorMessage = (message: string, ...rest: unknown[]) => {
+    errors.push(message);
+    return show(message, ...rest);
+  };
 }
 
 /** daemon の様子（`amonhen daemon status --json`）。動いていなければ undefined */
@@ -861,6 +883,7 @@ async function mergeBranchesFlow(label: string): Promise<void> {
 suite('Amon Hen in VSCode', () => {
   suiteSetup(async () => {
     recordSpawns();
+    recordErrors();
     api = await ext.activate();
   });
 
