@@ -502,7 +502,7 @@ fn add_folder(weak: &std::rc::Weak<RepoSettings>, folders: Vec<String>) {
     };
     let (repo, parent, weak) = (s.repo.clone(), s.window(), weak.clone());
     glib::spawn_future_local(async move {
-        let Some(chosen) = choose_tree_folder(parent.as_ref(), request, repo).await else {
+        let Some(chosen) = choose_tree_folder(parent.as_ref(), request, repo, None).await else {
             return;
         };
         if folders.contains(&chosen) {
@@ -516,14 +516,16 @@ fn add_folder(weak: &std::rc::Weak<RepoSettings>, folders: Vec<String>) {
     });
 }
 
-/// HEAD の木のフォルダを選ぶ（根からの相対パス。取り消したら None）。
+/// `rev`（なければ HEAD）の木のフォルダを選ぶ（根からの相対パス。取り消したら None）。
 pub async fn choose_tree_folder(
     parent: Option<&gtk::Window>,
     request: crate::filepicker::Request,
     repo: Arc<Repository>,
+    rev: Option<String>,
 ) -> Option<String> {
     let chosen =
-        crate::filepicker::choose(parent, request, crate::filepicker::Source::Tree(repo)).await?;
+        crate::filepicker::choose(parent, request, crate::filepicker::Source::Tree(repo, rev))
+            .await?;
     let folder = chosen.path.trim_matches('/').to_owned();
     (!folder.is_empty()).then_some(folder)
 }

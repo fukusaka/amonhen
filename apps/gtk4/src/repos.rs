@@ -744,7 +744,7 @@ async fn choose_folder(parent: &gtk::Window, dest: &Path) {
         ..Default::default()
     };
     let Some(folder) =
-        crate::repoform::choose_tree_folder(Some(parent), request, repo.clone()).await
+        crate::repoform::choose_tree_folder(Some(parent), request, repo.clone(), None).await
     else {
         return;
     };

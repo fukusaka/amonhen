@@ -7,6 +7,7 @@ mod activity;
 mod aiactions;
 mod aisettings;
 mod appmenu;
+mod archive;
 mod askpass;
 mod assist;
 mod avatars;

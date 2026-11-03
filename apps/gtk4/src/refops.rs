@@ -92,6 +92,7 @@ pub fn menu(
             items.extend(favorite_items(actions, &name, known));
             items.push(new_branch(actions, &name));
             items.push(new_tag(actions, &name));
+            items.push(export_archive(actions, "refs/heads/", &name));
             let (r, n) = (range_diff.clone(), name.clone());
             items.push(menu::action(
                 tr!("Compare with Previous Version"),
@@ -119,10 +120,12 @@ pub fn menu(
             rebase(&mut items);
             items.push(Item::Separator);
             items.push(new_branch(actions, &name));
+            items.push(export_archive(actions, "refs/remotes/", &name));
         }
         RefKind::Tag => {
             merge(&mut items);
             items.push(new_branch(actions, &name));
+            items.push(export_archive(actions, "refs/tags/", &name));
             items.push(Item::Separator);
             items.extend(tag_items(actions, std::slice::from_ref(&name), known));
         }
@@ -662,6 +665,14 @@ pub fn ask_rename_branch(actions: &Rc<Actions>, name: &str) {
 }
 
 /// `target` に新しいタグを付ける。
+/// Export Archive…: ref（`kind` は `refs/heads/` など。同じ名前のブランチとタグを取り違えない）の時点を書き出す。
+fn export_archive(actions: &Rc<Actions>, kind: &str, name: &str) -> Item {
+    let (a, rev, label) = (actions.clone(), format!("{kind}{name}"), name.to_owned());
+    menu::action(tr!("Export Archive…"), move || {
+        crate::archive::export(&a, rev.clone(), label.clone())
+    })
+}
+
 pub fn new_tag(actions: &Rc<Actions>, target: &str) -> Item {
     let (a, target) = (actions.clone(), target.to_owned());
     menu::action(tr!("New Tag at {name}…", name = target), move || {

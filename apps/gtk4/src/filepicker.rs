@@ -38,9 +38,9 @@ pub enum Source {
     Connected(String, Arc<Repository>),
     /// SSH 先を選べる（最初のホスト。空でもよい）。
     AnyHost(String),
-    /// リポジトリの HEAD の木のフォルダ（まだ取り出していないものも。sparse checkout で取り出すフォルダ。パスは
-    /// `/` を根にした形。ホームはなく、根は選べない）。
-    Tree(Arc<Repository>),
+    /// リポジトリの木（2 つめの時点、なければ HEAD）のフォルダ（まだ取り出していないものも。sparse checkout で
+    /// 取り出すフォルダや、アーカイブに書き出すフォルダ。パスは `/` を根にした形。ホームはなく、根は選べない）。
+    Tree(Arc<Repository>, Option<String>),
 }
 
 /// 選んだもの: SSH 先（この機械なら空）と、そこでの絶対パス、ホームの下なら `~/…` にしたもの。
@@ -264,8 +264,8 @@ struct Dir {
 enum Reader {
     Local,
     Engine(Arc<Repository>),
-    /// リポジトリの HEAD の木（フォルダだけ）。
-    Tree(Arc<Repository>),
+    /// リポジトリの木（時点、なければ HEAD。フォルダだけ）。
+    Tree(Arc<Repository>, Option<String>),
 }
 
 fn parse(info: &Value) -> Dir {
@@ -316,9 +316,13 @@ fn list(reader: &Reader, path: &str) -> Result<Dir, String> {
             crate::reposettings::call(repo, &json!({ "op": "listDirectory", "path": path }))
                 .map(|info| parse(&info))
         }
-        Reader::Tree(repo) => {
-            crate::reposettings::call(repo, &json!({ "op": "treeFolders", "path": path }))
-                .map(|info| parse(&info))
+        Reader::Tree(repo, rev) => {
+            let rev = rev.as_deref().unwrap_or("HEAD");
+            crate::reposettings::call(
+                repo,
+                &json!({ "op": "treeFolders", "path": path, "rev": rev }),
+            )
+            .map(|info| parse(&info))
         }
     }
 }
@@ -427,7 +431,7 @@ pub async fn choose_several(
     let picker = Picker::new(parent, &request, &source, tx);
     match source {
         Source::Local => picker.use_reader(Reader::Local, ""),
-        Source::Tree(repo) => picker.use_reader(Reader::Tree(repo), ""),
+        Source::Tree(repo, rev) => picker.use_reader(Reader::Tree(repo, rev), ""),
         Source::Connected(host, repo) => picker.use_reader(Reader::Engine(repo), &host),
         Source::Host(host) | Source::AnyHost(host) => picker.connect(&host),
     }
@@ -514,7 +518,7 @@ impl Picker {
         let field = gtk::Entry::new();
         field.set_hexpand(true);
         field.add_css_class("monospace");
-        let tree = matches!(source, Source::Tree(_));
+        let tree = matches!(source, Source::Tree(..));
         field.set_placeholder_text(Some(if tree {
             "/src"
         } else if request.kind == Kind::Executable {
@@ -1518,7 +1522,7 @@ impl Picker {
             return Vec::new();
         };
         // リポジトリの木の根は選べない（すべてのフォルダになる）。
-        let tree_root = matches!(*self.reader.borrow(), Some(Reader::Tree(_))) && last.path == "/";
+        let tree_root = matches!(*self.reader.borrow(), Some(Reader::Tree(..))) && last.path == "/";
         match self.kind {
             Kind::Folder if last.error.is_none() && !tree_root => vec![last.path.clone()],
             Kind::Folder => Vec::new(),

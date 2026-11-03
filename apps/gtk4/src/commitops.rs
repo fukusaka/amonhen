@@ -107,6 +107,19 @@ pub fn menu(
             crate::patches::save(&a, vec![h.clone()]);
         }));
     }
+    let label = widget
+        .downcast_ref::<crate::history::HistoryView>()
+        .map(|view| crate::appmenu::archive_label(&view.ref_names(id)))
+        .unwrap_or_default();
+    let label = if label.is_empty() {
+        short.clone()
+    } else {
+        label
+    };
+    let (a, h) = (actions.clone(), hex.clone());
+    items.push(menu::action(tr!("Export Archive…"), move || {
+        crate::archive::export(&a, h.clone(), label.clone());
+    }));
     items.push(Item::Separator);
     let (w, h) = (widget.clone(), hex);
     items.push(menu::action(tr!("Copy Commit ID"), move || {
