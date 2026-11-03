@@ -665,6 +665,7 @@ async function reflogFlow(): Promise<void> {
     // Mixed: 外れたコミットの変更は作業ツリーに残り、そのコミットはどのブランチにもなくなる
     mark = posted.length;
     await withWindow(stubs, async () => vscode.commands.executeCommand('amonhen.resetToCommit', { oid: parent }));
+    assert.equal(rev('HEAD'), parent, lastErrors());
     assert.match(asked.at(-1)!.message, new RegExp(`^Reset reflog-e2e to ${parent.slice(0, 8)}( “.*”)?\\?$`));
     assert.deepEqual(asked.at(-1)!.buttons, ['Mixed', 'Soft', 'Hard']);
     assert.equal(rev('HEAD'), parent);
@@ -679,7 +680,7 @@ async function reflogFlow(): Promise<void> {
     writeFileSync(file, 'changed\n');
     answer = 'Hard';
     await withWindow(stubs, async () => vscode.commands.executeCommand('amonhen.resetToCommit', { oid: parent }));
-    assert.equal(rev('HEAD'), parent);
+    assert.equal(rev('HEAD'), parent, lastErrors());
     assert.equal(existsSync(file), false);
     assert.match(git('stash', 'list', '-n', '1', '--format=%s'), /Before reset --hard to [0-9a-f]{8}/);
     await vscode.commands.executeCommand('amonhen.undo');
@@ -701,7 +702,7 @@ async function reflogFlow(): Promise<void> {
 
     // Checkout（detached）と、History で見せる
     await panel.reflog.handle({ type: 'reflogAction', action: 'checkout', oid: parent, selector: 'HEAD@{1}' });
-    assert.equal(rev('HEAD'), parent);
+    assert.equal(rev('HEAD'), parent, lastErrors());
     assert.throws(() => git('symbolic-ref', '-q', 'HEAD'));
     git('switch', '-q', 'reflog-e2e');
     git('reset', '-q', '--hard', lost);
