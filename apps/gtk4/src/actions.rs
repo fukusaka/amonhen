@@ -56,13 +56,14 @@ pub struct Actions {
 impl Actions {
     /// `anchor` はタブの中身、`group` はタブのアクション。
     pub fn new(anchor: &impl IsA<gtk::Widget>, group: &gio::SimpleActionGroup) -> Rc<Self> {
-        // 見出しの Undo（メニューの Undo と同じアクション。使えるかはアクションで決まる）。
+        // 見出しの Undo（メニューの Undo と同じアクション。使えるかはアクションで決まり、押すとアクションが確かめて
+        // から戻す。Ctrl+Z は入力欄の取り消しに残す。docs/ux.md の「Menus」）。
         let undo = gtk::Button::new();
         let icon = crate::icon::Icon::default();
         icon.set(crate::icon::Kind::Undo, false);
         undo.set_child(Some(&icon));
         undo.set_action_name(Some("win.undo"));
-        let actions = Rc::new(Self {
+        Rc::new(Self {
             repo: RefCell::default(),
             anchor: anchor.upcast_ref::<gtk::Widget>().downgrade(),
             group: group.downgrade(),
@@ -81,15 +82,7 @@ impl Actions {
             main_worktree_branch: RefCell::default(),
             undo_label: Rc::default(),
             publishes: std::cell::Cell::default(),
-        });
-        // git の Undo は確かめてから（Ctrl+Z は入力欄の取り消しに残す。docs/ux.md の「Menus」）。
-        let weak = Rc::downgrade(&actions);
-        actions.undo.connect_clicked(move |_| {
-            if let Some(actions) = weak.upgrade() {
-                crate::sheets::undo(&actions);
-            }
-        });
-        actions
+        })
     }
 
     pub fn set_repo(&self, repo: Arc<Repository>) {
