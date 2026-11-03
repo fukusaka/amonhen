@@ -452,19 +452,55 @@ fn location_kind(location: &str) -> String {
 pub struct Activity {
     window: gtk::ApplicationWindow,
     stack: gtk::Stack,
+    /// すべてのタブを読み直す。
+    refresh: Rc<dyn Fn()>,
+    /// 0.5 秒ごとの読み直しが動いている。
+    ticking: Rc<std::cell::Cell<bool>>,
 }
 
 impl Activity {
     /// Activity を開く（開いていれば前に出す）。初めて開くときは、History のタブで開いているリポジトリの最初の
-    /// ものを選ぶ。開き直したときは選んでいたものを保つ（macOS 版と同じ）。
+    /// ものを選ぶ。閉じても隠すだけで、開き直したときはタブ・種類や Failures Only・Filter・選んでいた行・
+    /// History のリポジトリを保つ（macOS 版は窓のコントローラーを使い回す）。
     pub fn show(parent: &gtk::ApplicationWindow, engine: std::path::PathBuf) {
-        if let Some(a) = Self::find() {
-            a.window.present();
+        let activity = match OPEN.with(|o| o.borrow().clone()) {
+            Some(a) => a,
+            None => {
+                let a = Self::new(parent, engine);
+                OPEN.with(|o| o.replace(Some(a.clone())));
+                a
+            }
+        };
+        // 出している間はアプリの窓にする（閉じたら外す。Settings と同じ）。
+        if activity.window.application().is_none()
+            && let Some(app) = parent.application()
+        {
+            activity.window.set_application(Some(&app));
+        }
+        activity.window.present();
+        activity.start();
+    }
+
+    /// 読み直し、開いている間は 0.5 秒ごとに読み直す（macOS 版と同じ。daemon の記録と様子は 2 秒ごと。History の
+    /// タブは、見せたときと操作の後に）。
+    fn start(&self) {
+        (self.refresh)();
+        if self.ticking.replace(true) {
             return;
         }
-        let activity = Self::new(parent, engine);
-        OPEN.with(|o| o.replace(Some(activity.clone())));
-        activity.window.present();
+        let (w, refresh, ticking) = (
+            self.window.downgrade(),
+            self.refresh.clone(),
+            self.ticking.clone(),
+        );
+        glib::timeout_add_local(std::time::Duration::from_millis(500), move || {
+            if w.upgrade().is_none_or(|w| !w.is_visible()) {
+                ticking.set(false);
+                return glib::ControlFlow::Break;
+            }
+            refresh();
+            glib::ControlFlow::Continue
+        });
     }
 
     /// 開いている Activity のタブ（`operations` など）を選ぶ。
@@ -493,13 +529,16 @@ impl Activity {
         // アプリの窓にする: Ctrl+Q が効き、リポジトリの窓を閉じても開いている間はアプリが続く（macOS 版と同じ）。
         let mut builder = gtk::ApplicationWindow::builder()
             .title("Activity")
-            .default_width(980)
-            .default_height(640)
+            .default_width(900)
+            .default_height(560)
+            .hide_on_close(true)
             .child(&stack);
         if let Some(app) = parent.application() {
             builder = builder.application(&app);
         }
         let window = builder.build();
+        // macOS 版と同じく、最小 760×460。
+        window.set_size_request(760, 460);
         window.set_titlebar(Some(&header));
         // Ctrl+W（`win.close`）で閉じる（macOS 版の ⌘W）。
         let close = gio::SimpleAction::new("close", None);
@@ -526,6 +565,8 @@ impl Activity {
             if w > 0 && h > 0 {
                 crate::settings::set_string(WINDOW_SIZE, &format!("{w}x{h}"));
             }
+            // 隠すだけなので、アプリの窓から外す（ほかに窓がなければアプリを終える。Settings と同じ）。
+            window.set_application(None::<&gtk::Application>);
             glib::Propagation::Proceed
         });
 
@@ -1479,24 +1520,11 @@ impl Activity {
             });
         });
 
-        // 開いている間は 0.5 秒ごとに読み直す（macOS 版と同じ。daemon の記録と様子は 2 秒ごと。History のタブは、
-        // 見せたときと操作の後に）。
-        let refresh_all = {
-            let refreshers = refreshers;
-            move || {
-                for f in refreshers.iter() {
-                    f();
-                }
+        // すべてのタブを読み直す（出すたびと、出している間は 0.5 秒ごと。`start`）。
+        let refresh_all: Rc<dyn Fn()> = Rc::new(move || {
+            for f in refreshers.iter() {
+                f();
             }
-        };
-        refresh_all();
-        let w = window.downgrade();
-        glib::timeout_add_local(std::time::Duration::from_millis(500), move || {
-            if w.upgrade().is_none_or(|w| !w.is_visible()) {
-                return glib::ControlFlow::Break;
-            }
-            refresh_all();
-            glib::ControlFlow::Continue
         });
         let r = refresh_undo.clone();
         stack.connect_visible_child_name_notify(move |s| {
@@ -1536,7 +1564,12 @@ impl Activity {
         if let Some(f) = on_selected.borrow().clone() {
             f();
         }
-        Self { window, stack }
+        Self {
+            window,
+            stack,
+            refresh: refresh_all,
+            ticking: Rc::default(),
+        }
     }
 }
 
