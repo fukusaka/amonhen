@@ -1396,6 +1396,16 @@ impl DiffWidget {
     /// 差分の中を `query` で探す（大文字・小文字は区別しない）。今の一致は、見えている位置より後の最初のもの。
     /// （今の一致の番号、一致の数）を返す。
     pub fn find(&self, query: &str) -> (Option<usize>, usize) {
+        self.find_with(query, true)
+    }
+
+    /// 出し直した差分で一致を数え直す（今の一致は見えている所から。選びもスクロールもしない。macOS 版の
+    /// `updateMatches(scrollToCurrent: false)`）。（今の一致の番号、一致の数）を返す。
+    pub fn recount(&self, query: &str) -> (Option<usize>, usize) {
+        self.find_with(query, false)
+    }
+
+    fn find_with(&self, query: &str, reveal: bool) -> (Option<usize>, usize) {
         self.state().find = query.to_owned();
         self.refresh_matches();
         let top = self.top_row();
@@ -1406,7 +1416,9 @@ impl DiffWidget {
             st.current_match = current;
             current
         };
-        self.reveal_match();
+        if reveal {
+            self.reveal_match();
+        }
         self.queue_draw();
         (current, self.state().matches.len())
     }

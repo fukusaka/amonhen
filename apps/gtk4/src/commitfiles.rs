@@ -528,8 +528,9 @@ impl CommitDiff {
             previous.set_label("∧");
             next.set_label("∨");
         }
-        previous.set_tooltip_text(Some(&tr!("Previous")));
-        next.set_tooltip_text(Some(&tr!("Next")));
+        // ツールチップは出さず、読み上げの名前だけ（macOS 版と同じ）。
+        previous.update_property(&[gtk::accessible::Property::Label(&tr!("Previous"))]);
+        next.update_property(&[gtk::accessible::Property::Label(&tr!("Next"))]);
         let done = gtk::Button::with_label(&tr!("Done"));
         for b in [&previous, &next, &done] {
             b.add_css_class("flat");
@@ -1044,7 +1045,7 @@ impl Inner {
             Inner::show_find(this);
             this.find.entry.set_text(&query);
         } else if this.find.bar.is_visible() {
-            let (current, count) = this.diff.find(&this.find.entry.text());
+            let (current, count) = this.diff.recount(&this.find.entry.text());
             this.show_count(current, count);
         }
         if let Some(file) = VIEWED_ONCE.with(|v| v.take()) {
@@ -1131,7 +1132,7 @@ impl Inner {
                     this.diff.show(source, view);
                     this.shown_file.set(Some(file));
                     if this.find.bar.is_visible() {
-                        let (current, count) = this.diff.find(&this.find.entry.text());
+                        let (current, count) = this.diff.recount(&this.find.entry.text());
                         this.show_count(current, count);
                     }
                 }
