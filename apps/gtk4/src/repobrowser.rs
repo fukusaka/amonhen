@@ -626,7 +626,11 @@ fn state_text(location: &str, check: bool) -> (String, &'static str, Option<Stri
         "dim-label"
     };
     let text = parts.join("  ");
-    let mut tip = peek.map(|p| {
+    // Fetch に失敗していれば、その訳だけを出す（macOS 版と同じ）。
+    if let Some(e) = fetch_error {
+        return (text, class, Some(tr!("Fetch failed: {error}", error = e)));
+    }
+    let tip = peek.map(|p| {
         [
             if p.changed > 0 {
                 tr!("{count} files with changes", count = p.changed)
@@ -645,13 +649,6 @@ fn state_text(location: &str, check: bool) -> (String, &'static str, Option<Stri
         ]
         .join("\n")
     });
-    if let Some(e) = fetch_error {
-        let head = tr!("Fetch failed: {error}", error = e);
-        tip = Some(match tip {
-            Some(t) => format!("{head}\n{t}"),
-            None => head,
-        });
-    }
     (text, class, tip)
 }
 
@@ -1104,10 +1101,29 @@ impl Browser {
         for (title, tip) in titles.zip(tips) {
             title.set_tooltip_text(tip.as_deref());
         }
-        // 並べ替えを変えたら覚える。
+        // 並べ替えを変えたら覚える。Status・Last Commit・Opened は、初めて押したとき新しい順・多い順にする（名前と
+        // ブランチは昇順。macOS 版の列の `sortDescriptorPrototype` と同じ）。
         if let Some(sorter) = self.view.sorter().and_downcast::<gtk::ColumnViewSorter>() {
-            sorter.connect_changed(|s, _| {
-                if let Some(id) = s.primary_sort_column().and_then(|c| c.id()) {
+            let last = RefCell::new(sorter.primary_sort_column().and_then(|c| c.id()));
+            let view = self.view.downgrade();
+            sorter.connect_changed(move |s, _| {
+                let column = s.primary_sort_column();
+                let id = column.as_ref().and_then(|c| c.id());
+                let switched = *last.borrow() != id;
+                last.replace(id.clone());
+                if switched
+                    && s.primary_sort_order() == gtk::SortType::Ascending
+                    && id.as_deref().is_some_and(descending_first)
+                {
+                    let view = view.clone();
+                    glib::idle_add_local_once(move || {
+                        if let Some(view) = view.upgrade() {
+                            view.sort_by_column(column.as_ref(), gtk::SortType::Descending);
+                        }
+                    });
+                    return;
+                }
+                if let Some(id) = id {
                     crate::settings::set_string(SORT_KEY, &id);
                     crate::settings::set_bool(
                         SORT_ASCENDING_KEY,
@@ -2213,11 +2229,12 @@ impl Browser {
     /// SSH 先のリポジトリを加えて開く。`host` があれば、そのホストの場所を最初に入れておく。Choose… で、
     /// そのホストのフォルダを列で見て選べる。
     fn add_remote(self: &Rc<Self>, host: Option<&str>) {
-        // ホストの行から（右クリック・ホストを選んでいるときの ＋）なら、接続先は決まっている（macOS 版と同じ）。
+        // ホストの行から（右クリック・ホストを選んでいるときの ＋）なら、接続先は決まっている。ホストの下の
+        // フォルダを選んでいるときは決めない（macOS 版と同じ）。
         let fixed = host
             .map(str::to_owned)
             .or_else(|| match &*self.category.borrow() {
-                Category::Host(h) | Category::HostFolder(h, _) => Some(h.clone()),
+                Category::Host(h) => Some(h.clone()),
                 _ => None,
             });
         let b = self.clone();
@@ -2544,9 +2561,12 @@ pub fn found_or_offer_removal(
     glib::spawn_future_local(async move {
         let sheet = Sheet::unnamed(
             Some(&parent),
+            // 名前はフォルダの名前（表示名ではなく。macOS 版と同じ）。
             &tr!(
                 "{name} not found",
-                name = bookmarks::display_name(&location)
+                name = std::path::Path::new(&location)
+                    .file_name()
+                    .map_or(location.clone(), |n| n.to_string_lossy().into_owned())
             ),
             &tr!("{path}\nRemove it from the list?", path = location),
         );
@@ -2914,6 +2934,11 @@ impl SortKeys {
         self.values.borrow_mut().insert(key, value.clone());
         value
     }
+}
+
+/// 見出しを初めて押したとき逆順（新しい順・多い順）に並べる列か。
+fn descending_first(id: &str) -> bool {
+    matches!(id, "status" | "commit" | "opened")
 }
 
 /// 列の並べ替え（同じ値なら名前の順。並びが毎回変わらないように）。

@@ -45,7 +45,7 @@
 "{upstream} not found (Fetch first)" = "{upstream} が見つかりません（先に Fetch してください）";
 "{branch} is already the same as {upstream}" = "{branch} はもう {upstream} と同じです";
 "{branch} and {upstream} have diverged; check out {branch} to merge or rebase" = "{branch} と {upstream} は分かれています。{branch} をチェックアウトして merge か rebase をしてください";
-"{name} not found" = "{name} がない";
+"{name} not found" = "{name} が見つかりません";
 "The stash has no commit" = "stash のコミットがない";
 "Some commits are outside the editable range (not reachable from HEAD, or before a merge)" = "編集できる範囲の外のコミットがあります（HEAD から辿れないか、merge より前）";
 "File not found" = "ファイルがない";
