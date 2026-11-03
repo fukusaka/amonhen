@@ -215,6 +215,11 @@ struct Table {
     effective_column: RefCell<Option<gtk::ColumnViewColumn>>,
     source_column: RefCell<Option<gtk::ColumnViewColumn>>,
     scope_columns: RefCell<Vec<(String, gtk::ColumnViewColumn)>>,
+    /// 見出しの右クリックのメニューで隠した段の列（macOS 版の列のカスタマイズ。覚えない）。
+    hidden: RefCell<HashSet<String>>,
+    /// 段の列を隠すメニュー（Levels のときだけ、キーと段の列の見出しに付ける）。
+    header_menu: gio::Menu,
+    key_column: RefCell<Option<gtk::ColumnViewColumn>>,
     /// 今出している行の中身（同じなら作り直さない。選択・スクロール・編集中のセルをそのまま残す）。
     shown: Cell<Option<u64>>,
     /// 編集中に読み直しが来たら、編集が終わってから作り直す。
@@ -637,12 +642,16 @@ impl Table {
         if let Some(c) = self.source_column.borrow().as_ref() {
             c.set_visible(!levels);
         }
+        if let Some(c) = self.key_column.borrow().as_ref() {
+            c.set_header_menu(levels.then_some(&self.header_menu));
+        }
+        let hidden = self.hidden.borrow();
         for (scope, c) in self.scope_columns.borrow().iter() {
             let shown = match scope.as_str() {
                 "local" | "worktree" => s.level == Level::Repository,
                 _ => true,
             };
-            c.set_visible(levels && shown);
+            c.set_visible(levels && shown && !hidden.contains(scope));
         }
     }
 
@@ -818,6 +827,9 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
         effective_column: RefCell::default(),
         source_column: RefCell::default(),
         scope_columns: RefCell::default(),
+        hidden: RefCell::default(),
+        header_menu: gio::Menu::new(),
+        key_column: RefCell::default(),
         adding: adding.clone(),
         new_key: new_key.clone(),
         new_value: new_value.clone(),
@@ -1146,6 +1158,40 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
             .push(((*scope).to_owned(), column));
     }
     table.effective_column.replace(Some(effective_edit.clone()));
+    // 段の列は、見出しの右クリックのメニューで隠せる: System と Worktree と、このリポジトリの段なら Global
+    // （この段の列は隠せない。macOS 版の列のカスタマイズと同じ）。
+    let column_actions = gio::SimpleActionGroup::new();
+    for (scope, column) in table.scope_columns.borrow().iter() {
+        let hideable = match scope.as_str() {
+            "system" => true,
+            "global" | "worktree" => s.level == Level::Repository,
+            _ => false,
+        };
+        if hideable {
+            let action = gio::SimpleAction::new_stateful(scope, None, &true.to_variant());
+            let (w, sc) = (Rc::downgrade(&table), scope.clone());
+            action.connect_activate(move |a, _| {
+                let Some(t) = w.upgrade() else { return };
+                let on = !a.state().and_then(|v| v.get::<bool>()).unwrap_or(true);
+                a.set_state(&on.to_variant());
+                if on {
+                    t.hidden.borrow_mut().remove(&sc);
+                } else {
+                    t.hidden.borrow_mut().insert(sc.clone());
+                }
+                t.show_columns();
+            });
+            column_actions.add_action(&action);
+            table.header_menu.append(
+                column.title().as_deref(),
+                Some(&format!("configcolumns.{scope}")),
+            );
+        }
+        column.set_header_menu(Some(&table.header_menu));
+    }
+    effective_read.set_header_menu(Some(&table.header_menu));
+    table.key_column.replace(Some(key_column.clone()));
+    view.insert_action_group("configcolumns", Some(&column_actions));
     view.sort_by_column(Some(&key_column), gtk::SortType::Ascending);
 
     // 列の切り替えで、効いている値の書ける列と読むだけの列を入れ替える。
