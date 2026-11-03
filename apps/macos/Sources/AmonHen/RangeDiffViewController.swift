@@ -170,7 +170,9 @@ final class RangeDiffViewController: NSSplitViewController, NSTableViewDataSourc
         request += 1
         let request = self.request
         let repository = self.repository
-        summary.stringValue = L("Looking for the previous version…")
+        // 探している間は、前に比べた結果（数と組）を残さない（別のブランチの結果に見える）。
+        rangesField.stringValue = ""
+        show([], ranges: [], summary: L("Looking for the previous version…"))
         Task {
             let result = await Task.detached(priority: .userInitiated) {
                 Result { try repository.previousVersion(branch: branch) }
