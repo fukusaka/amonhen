@@ -2087,3 +2087,4 @@
 "Unknown subtree command: {command}" = "subtree の知らない命令です: {command}";
 "Give the URL and the ref for {dir}" = "{dir} の URL と ref を渡してください";
 "Merged with conflicts. Resolve them, then commit" = "コンフリクトがあります。解決してからコミットしてください";
+"Add Subtree…" = "subtree を追加…";

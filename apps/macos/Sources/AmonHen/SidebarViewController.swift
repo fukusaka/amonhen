@@ -56,6 +56,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         var stackedOn: String?
         /// お気に入り（Branches の一番上に、決めた順で出す）。
         var isPinned = false
+        /// Subtrees の下の subtree。
+        var subtree: SubtreeInfo?
 
         init(title: String, item: RefItem? = nil, page: Page? = nil, children: [Node] = [], isHead: Bool = false) {
             self.title = title
@@ -353,6 +355,18 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     /// Submodules の組の文脈メニュー（path は nil）と、submodule の行の文脈メニュー。
     enum SubmoduleAction { case add, update, sync, setURL, setBranch, remove }
     var onSubmoduleAction: ((String?, SubmoduleAction) -> Void)?
+    /// Subtrees の組の文脈メニュー（dir は nil）と、subtree の行の文脈メニュー。
+    enum SubtreeAction { case add, pull, push, split }
+    var onSubtreeAction: ((String?, SubtreeAction) -> Void)?
+    /// subtree（`git subtree` で取り込んだフォルダ。git に subtree がなければ空）。
+    private var subtrees: [SubtreeInfo] = []
+
+    func show(subtrees: [SubtreeInfo]) {
+        guard subtrees != self.subtrees else { return }
+        self.subtrees = subtrees
+        rebuild(first: false)
+    }
+
     /// submodule の様子（場所 → 様子。まだ読んでいなければ空）。
     private var submoduleStates: [String: SubmoduleState] = [:]
 
@@ -573,6 +587,12 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         if !tagRoot.children.isEmpty { groups.append(tagRoot) }
         let submodules = items(.submodule).map { Node(title: $0.name, item: $0) }
         if !submodules.isEmpty { groups.append(Node(title: "Submodules", children: submodules)) }
+        let subtreeNodes = subtrees.map { info in
+            let node = Node(title: info.dir)
+            node.subtree = info
+            return node
+        }
+        if !subtreeNodes.isEmpty { groups.append(Node(title: "Subtrees", children: subtreeNodes)) }
 
         // stash は Workspace の History（と Conflicts）の下の 1 行に、数だけ。
         let stashCount = items(.stash).count
@@ -1038,6 +1058,11 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             : node.branchGroup.flatMap(Self.branchGroupHelp)
             ?? node.stackedOn.map { L("Built on %@ (its commits are on top of that branch)", $0) }
             ?? node.item?.detail
+        if let subtree = node.subtree {
+            cell.toolTip = [subtree.url.map { [$0, subtree.ref].compactMap { $0 }.joined(separator: " ") },
+                            subtree.squashed ? L("Squashed when last pulled") : nil]
+                .compactMap { $0 }.joined(separator: "\n")
+        }
         if let submodule {
             cell.toolTip = [submodule.url, submodule.branch.map { L("Follows %@", $0) }].compactMap { $0 }.joined(separator: "\n")
         }
@@ -1125,6 +1150,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         if node.pullRequest != nil { return "arrow.triangle.pull" }
         if node.isCleanWorktrees { return "checkmark.circle" }
         if let w = node.worktree { return node.isHead ? "pencil.circle" : w.main ? "house" : "arrow.triangle.branch" }
+        if node.subtree != nil { return "square.stack.3d.down.right" }
         if node.remote != nil { return "network" }
         if node.isPinned { return "star.fill" }
         if node.stackedOn != nil { return "arrow.turn.down.right" }
@@ -1271,6 +1297,17 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             }
             if node.title == "Remotes" {
                 menu.addItem(ClosureMenuItem(title: L("Add Remote…")) { [weak self] in self?.onRemoteAction?(nil, .add) })
+                return
+            }
+            if let subtree = node.subtree {
+                let dir = subtree.dir
+                menu.addItem(ClosureMenuItem(title: "Pull…") { [weak self] in self?.onSubtreeAction?(dir, .pull) })
+                menu.addItem(ClosureMenuItem(title: "Push…") { [weak self] in self?.onSubtreeAction?(dir, .push) })
+                menu.addItem(ClosureMenuItem(title: "Split…") { [weak self] in self?.onSubtreeAction?(dir, .split) })
+                return
+            }
+            if node.title == "Subtrees" {
+                menu.addItem(ClosureMenuItem(title: L("Add Subtree…")) { [weak self] in self?.onSubtreeAction?(nil, .add) })
                 return
             }
             if node.title == "Submodules" {

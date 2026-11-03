@@ -273,6 +273,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         sidebar.onWorktreeAction = { [weak self] path, action in self?.worktreeAction(path, action) }
         sidebar.onRemoteAction = { [weak self] name, action in self?.remoteAction(name, action) }
         sidebar.onSubmoduleAction = { [weak self] path, action in self?.submoduleAction(path, action) }
+        sidebar.onSubtreeAction = { [weak self] dir, action in self?.subtreeAction(dir, action) }
         // ブランチ・タグを選ぶと、その履歴に絞り込む。
         sidebar.onSelect = { [weak self, weak history, weak detail] item in
             guard let history, let target = item.target else { return }
@@ -690,6 +691,40 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         case .remove: SubmoduleSheet.remove(in: window, submodule: submodule, perform: perform)
         case .add, .update, .sync: break
         }
+    }
+
+    /// 最後に読んだ subtree の一覧（`git subtree` が使えなければ使えないと）。
+    private var subtreeList = SubtreeList(available: false, subtrees: [])
+
+    /// subtree を裏で読み、サイドバーに出す（読んだ HEAD をコアが覚えるので、2 回目からは新しいコミットだけを読む）。
+    private func reloadSubtrees() {
+        let repository = self.repository
+        Task {
+            guard let list = await Task.detached(priority: .utility, operation: {
+                try? repository.info(["op": "subtrees"], as: SubtreeList.self)
+            }).value else { return }
+            subtreeList = list
+            sidebar.show(subtrees: list.subtrees)
+        }
+    }
+
+    private func subtreeAction(_ dir: String?, _ action: SidebarViewController.SubtreeAction) {
+        let perform: ([String: Any]) -> Void = { [weak self] command in
+            self?.actions.perform(command) { [weak self] _ in self?.reloadSubtrees() }
+        }
+        if action == .add { return SubtreeSheet.add(in: window, perform: perform) }
+        guard let dir, let subtree = subtreeList.subtrees.first(where: { $0.dir == dir }) else { return }
+        switch action {
+        case .pull: SubtreeSheet.pullOrPush(false, in: window, subtree: subtree, perform: perform)
+        case .push: SubtreeSheet.pullOrPush(true, in: window, subtree: subtree, perform: perform)
+        case .split: SubtreeSheet.split(in: window, subtree: subtree, perform: perform)
+        case .add: break
+        }
+    }
+
+    /// Repository > Add Subtree…（この機械の git に subtree がなければ押せない）。
+    @objc func addSubtree(_ sender: Any?) {
+        subtreeAction(nil, .add)
     }
 
     /// Repository > Add Submodule…
@@ -1503,6 +1538,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 reloadBranchGroups()
                 reloadTagRemotes()
                 reloadSubmodules()
+                reloadSubtrees()
                 detail.reloadInfo()
                 updateSubtitle()
                 history.head = refs.head
@@ -2273,6 +2309,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         case #selector(popStash(_:)), #selector(showStashes(_:)): return latestStash != nil
         case #selector(undoOperation(_:)): return undoLabel != nil
         case #selector(goToHead(_:)): return latestRefs?.head != nil
+        case #selector(addSubtree(_:)): return subtreeList.available
         case #selector(updateSubmodules(_:)): return latestRefs?.items.contains { $0.kind == .submodule } ?? false
         case #selector(switchBranch(_:)): return latestRefs != nil
         case #selector(renameBranch(_:)), #selector(setUpstream(_:)), #selector(compareWithPreviousVersion(_:)):

@@ -142,6 +142,7 @@ pub static COMMANDS: &[Command] = &[
     command("add-remote", "Add Remote…").localized(),
     command("add-submodule", "Add Submodule…").localized(),
     command("update-submodules", "Update Submodules…"),
+    command("add-subtree", "Add Subtree…").localized(),
     command("create-pull-request", "Create Pull Request…").localized(),
     command("open-on-github", "Open on GitHub").localized(),
     // ブランチ・タグ・worktree
@@ -302,6 +303,7 @@ pub static SECTIONS: &[Section] = &[
             "add-remote",
             "add-submodule",
             "update-submodules",
+            "add-subtree",
         ],
     ),
     section(
