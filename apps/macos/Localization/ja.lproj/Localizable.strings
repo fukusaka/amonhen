@@ -920,7 +920,6 @@
 "Refresh" = "再読み込み";
 "Reload History, branches and Working Copy (⌘R)" = "History・ブランチ・Working Copy を読み直す（⌘R）";
 "Terminal" = "ターミナル";
-"Reveal in Finder" = "Finder で表示";
 
 /* MainMenu.swift */
 "Help" = "ヘルプ";

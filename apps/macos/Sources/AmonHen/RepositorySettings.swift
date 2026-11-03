@@ -1852,7 +1852,7 @@ private struct HooksLFSPage: View {
                         Menu(L("Edit With")) {
                             ForEach(editors) { app in Button(app.name) { edit(name, with: app) } }
                         }
-                        Button(L("Reveal in Finder")) { reveal(name) }
+                        Button(Titles.showInFinder) { reveal(name) }
                         Divider()
                     }
                     Button(L("Create Hook…")) { create() }
