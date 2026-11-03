@@ -120,9 +120,9 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| Settings page (pages, git line, source / ↩︎ / ⓘ per row) | ✓ | ✓ | △ | n/a | VSCode: Repository Settings in the main view (with the engine); Operations, Branches, Working Copy, Fetching and Folders, Remotes, Hooks and LFS, and Keys and Values so far, this repository only. |
+| Settings page (pages, git line, source / ↩︎ / ⓘ per row) | ✓ | ✓ | △ | n/a | VSCode: Repository Settings in the main view (with the engine), this repository only; no Author and Signing page yet. |
 | Author and Signing (signing choice, collected keys, mailmap) | ✓ | ✓ | — | △ | CLI: Via `amonhen run` (`signingKeys`, `configSet`). |
-| Commits: message template (none, shared, own, file) | ✓ | ✓ | — | △ | CLI: Via `amonhen run`. |
+| Commits: message template (none, shared, own, file) | ✓ | ✓ | △ | △ | VSCode: None, this repository's own (edited there) or a file; no shared templates.<br>CLI: Via `amonhen run`. |
 | Branches: default branch override | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Operations: pull, fetch.prune, autostash, updateRefs, conflict style, rerere | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Working Copy: line endings, file mode, `.git/info/exclude` editor | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |

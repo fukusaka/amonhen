@@ -454,6 +454,62 @@ export function createSettingsView(): View {
     return box;
   }
 
+  /** コミットのメッセージのテンプレート（アプリと同じく、なし・このリポジトリ専用・ファイル）と、専用のものの中身 */
+  let templateDraft: string | undefined;
+  function templateRows(): HTMLElement {
+    const box = el('div');
+    const key = 'commit.template';
+    const value = config.effective(key)?.value ?? '';
+    const own = facts.commitTemplate?.path;
+    const isOwn = (p: string) => p === own || /[\\/]amonhen[\\/]commit-template$/.test(p);
+    const current = !value ? '' : isOwn(value) ? 'own' : 'file';
+    const options = [
+      { value: '', label: 'None' },
+      { value: 'own', label: 'This repository’s own' },
+      ...(current === 'file' ? [{ value: 'file', label: `File: ${value}` }] : []),
+      { value: 'pick', label: 'A file…' },
+    ];
+    const control = select(options, current, (v) => {
+      if (v === '') set([[key, null]]);
+      else if (v === 'own') post({ type: 'settingsRun', action: 'templateSave', text: facts.commitTemplate?.text ?? '' });
+      else if (v === 'pick') post({ type: 'settingsRun', action: 'templateFile' });
+    });
+    box.append(row('Message template', 'What the commit message starts with (commit.template).', [key], control, (v) => (isOwn(v) ? 'This repository’s own' : v)));
+    if (current === 'own') {
+      const div = el('div', 'setting-row');
+      const text = el('textarea', 'setting-text');
+      const saved = facts.commitTemplate?.text ?? '';
+      text.value = templateDraft ?? saved;
+      text.rows = 8;
+      text.spellcheck = false;
+      const buttons = el('div', 'setting-buttons');
+      const revert = el('button', 'secondary', 'Revert');
+      const save = el('button', '', 'Save');
+      const update = () => {
+        revert.disabled = text.value === saved;
+        save.disabled = text.value === saved;
+      };
+      text.addEventListener('input', () => {
+        templateDraft = text.value;
+        update();
+      });
+      revert.addEventListener('click', () => {
+        templateDraft = undefined;
+        text.value = saved;
+        update();
+      });
+      save.addEventListener('click', () => {
+        templateDraft = undefined;
+        post({ type: 'settingsRun', action: 'templateSave', text: text.value });
+      });
+      update();
+      buttons.append(revert, save);
+      div.append(el('div', 'setting-help', 'This repository’s template, kept in .git/amonhen/commit-template.'), text, buttons);
+      box.append(div);
+    }
+    return box;
+  }
+
   function renderRow(r: SettingRow): HTMLElement {
     const disabled =
       'needs' in r && r.needs === 'updateRefs' && !facts.updateRefs
@@ -472,6 +528,8 @@ export function createSettingsView(): View {
         return configTable();
       case 'hooks':
         return hooksRows();
+      case 'template':
+        return templateRows();
       case 'pull': {
         const method = pullMethod(config);
         const decidingKey = config.effective('pull.ff')?.value.toLowerCase() === 'only' ? 'pull.ff' : 'pull.rebase';

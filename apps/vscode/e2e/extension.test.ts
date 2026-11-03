@@ -1057,6 +1057,14 @@ async function settingsFlow(): Promise<void> {
     await panel.settings.handle({ type: 'settingsSet', writes: [['e2e.added', null]] });
     assert.equal(config('e2e.added'), undefined);
 
+    // Commits: このリポジトリ専用のテンプレートを書くと commit.template がそれを指し、None で外れる
+    mark = posted.length;
+    await panel.settings.handle({ type: 'settingsRun', action: 'templateSave', text: 'e2e: \n' });
+    const templated = await waitPosted('settings', mark, (m) => m.facts.commitTemplate?.text === 'e2e: \n');
+    assert.equal(config('commit.template'), templated.facts.commitTemplate?.path);
+    await panel.settings.handle({ type: 'settingsSet', writes: [['commit.template', null]] });
+    assert.equal(config('commit.template'), undefined);
+
     // Hooks and LFS: フックを作り（エディタで開く）、実行の許可を外す（Windows では外せない）。LFS は入っていれば
     const hook = join(git('rev-parse', '--git-common-dir').trim().replace(/^(?![\\/]|[A-Za-z]:)/, `${root}/`), 'hooks', 'pre-commit');
     hookFile = hook;
@@ -1117,7 +1125,7 @@ async function settingsFlow(): Promise<void> {
       }
       git('reset', '-q', '--hard', 'HEAD~1');
     }
-    for (const k of [...keys, 'amonhen.defaultBranch', 'e2e.added']) if (config(k) !== undefined) git('config', '--local', '--unset', k);
+    for (const k of [...keys, 'amonhen.defaultBranch', 'e2e.added', 'commit.template']) if (config(k) !== undefined) git('config', '--local', '--unset', k);
     writeFileSync(excludeFile, exclude);
     if (hookFile) rmSync(hookFile, { force: true });
     if (existsSync(hooksDir)) for (const f of readdirSync(hooksDir)) if (!hooksBefore.has(f)) rmSync(join(hooksDir, f), { force: true });

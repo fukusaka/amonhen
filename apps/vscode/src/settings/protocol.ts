@@ -22,6 +22,8 @@ export interface SettingsFacts {
   remotes: { name: string; fetchUrl: string; pushUrl: string }[];
   /** git が知っている設定の名前（Keys and Values の All） */
   knownKeys: string[];
+  /** このリポジトリ専用のテンプレート（`text` はなければ null）と、`commit.template` に書くそのパス */
+  commitTemplate?: { text: string | null; path: string };
   /** コアの `hooksAndLfs`（Hooks and LFS） */
   hooksAndLfs?: {
     hooks: { name: string; enabled: boolean }[];
@@ -57,7 +59,10 @@ export type FetchingAction =
   | { action: 'hookEnabled'; name: string; enabled: boolean }
   | { action: 'hookOpen'; name: string }
   | { action: 'hookCreate' }
-  | { action: 'lfsTrack'; pattern?: string; track: boolean };
+  | { action: 'lfsTrack'; pattern?: string; track: boolean }
+  /** Commits: 専用のテンプレートを書く（commit.template をそれに向ける）・ファイルを選ぶ */
+  | { action: 'templateSave'; text: string }
+  | { action: 'templateFile' };
 
 export type SettingsHostMessage =
   /** 読んだ設定（`error` は読めなかったわけ） */

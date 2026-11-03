@@ -28,7 +28,9 @@ export type SettingRow =
   /** git の設定の表（Keys and Values） */
   | { kind: 'config' }
   /** フックの表と Git LFS（Hooks and LFS） */
-  | { kind: 'hooks' };
+  | { kind: 'hooks' }
+  /** コミットのメッセージのテンプレート（なし・このリポジトリ専用・ファイル）と、専用のものの中身 */
+  | { kind: 'template' };
 
 /** 使えるのに要る git（無ければ欄を灰色にし、理由を出す） */
 export type Needs = 'updateRefs';
@@ -46,6 +48,11 @@ export interface SettingPage {
 
 /** ページの並び（アプリと同じ順。まだ作っていないページは入れない） */
 export const PAGES: SettingPage[] = [
+  {
+    id: 'commits',
+    title: 'Commits',
+    sections: [{ title: 'Message', rows: [{ kind: 'template' }] }],
+  },
   {
     id: 'operations',
     title: 'Operations',

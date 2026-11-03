@@ -144,6 +144,20 @@ export class SettingsController implements vscode.Disposable {
     const form = (await client.call({ op: 'run', command: { op: 'repositoryForm' } })).json['info'] as RepositoryForm | undefined;
     const folders = form?.sparse?.cone ? form.sparse.folders : [];
     switch (a.action) {
+      case 'templateSave':
+        await run({ op: 'saveCommitTemplate', text: a.text }, 'Save the message template');
+        return;
+      case 'templateFile': {
+        const picked = await vscode.window.showOpenDialog({
+          title: 'Message Template',
+          openLabel: 'Use as Template',
+          canSelectMany: false,
+          defaultUri: vscode.Uri.file(repo.root),
+        });
+        if (!picked?.[0]) return;
+        await run({ op: 'configSet', key: 'commit.template', value: picked[0].fsPath }, 'Set the message template');
+        return;
+      }
       case 'hookEnabled':
         await run({ op: 'setHookEnabled', name: a.name, enabled: a.enabled }, a.enabled ? `Enable ${a.name}` : `Disable ${a.name}`);
         return;
@@ -330,7 +344,7 @@ export class SettingsController implements vscode.Disposable {
         return;
       }
       const run = async (op: string) => (await client.call({ op: 'run', command: { op } })).json['info'] as Record<string, unknown> | undefined;
-      const [list, version, form, groups, ignore, remotes, known, hooks] = await Promise.all([
+      const [list, version, form, groups, ignore, remotes, known, hooks, template] = await Promise.all([
         run('configList'),
         run('gitVersion'),
         run('repositoryForm'),
@@ -339,6 +353,7 @@ export class SettingsController implements vscode.Disposable {
         run('remotes'),
         run('configKeys'),
         run('hooksAndLfs'),
+        run('commitTemplate'),
       ]);
       if (generation !== this.generation) return;
       this.post({
@@ -356,6 +371,7 @@ export class SettingsController implements vscode.Disposable {
           remotes: (remotes?.['remotes'] as SettingsFacts['remotes'] | undefined) ?? [],
           knownKeys: (known?.['keys'] as string[] | undefined) ?? [],
           ...(hooks ? { hooksAndLfs: hooks as unknown as NonNullable<SettingsFacts['hooksAndLfs']> } : {}),
+          ...(template ? { commitTemplate: template as unknown as NonNullable<SettingsFacts['commitTemplate']> } : {}),
         },
       });
     } catch (err) {
