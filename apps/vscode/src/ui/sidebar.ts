@@ -6,11 +6,14 @@ import * as vscode from 'vscode';
 import type { Sequence } from '../git/backend.ts';
 import type { Ref, Remote, Stash } from '../git/refs.ts';
 import { splitRemoteRef } from '../git/refs.ts';
+import { signatureExplanation, signatureIcon, signatureLabel, signatureStatus } from '../git/signature.ts';
 import { describeSubmodule } from '../git/status.ts';
+import { tagMark, tagMarkLabel, tagStateText, tagTargets } from '../git/tagRemotes.ts';
 import type { RepositoryManager } from '../state/manager.ts';
 import { shortName } from '../state/operations.ts';
 import type { LazySection, Repository, Submodule } from '../state/repository.ts';
 import type { ViewName } from '../view/protocol.ts';
+import { TagMarks } from './tagMarks.ts';
 
 /**
  * 途中の操作の行の名前（進み具合を除く）。知らせからこの行を指す（知らせは VSCode が 12 秒ほどで通知センターに
@@ -52,8 +55,10 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
   private readonly manager: RepositoryManager;
   private repoListener: vscode.Disposable | undefined;
   private readonly disposables: vscode.Disposable[] = [];
-  /** 共有の daemon のエンジンを使えるか（Reflog はエンジンだけ） */
+  /** 共有の daemon のエンジンを使えるか（Reflog、タグの印とメニューはエンジンだけ） */
   private engine = false;
+  /** タグのリモートでの様子と署名 */
+  readonly tagMarks = new TagMarks();
   /** 更新通知で同じノードを指せるよう、セクションのノードは使い回す */
   private readonly sections = new Map<RefSection, Node>(
     (Object.keys(SECTION_LABELS) as RefSection[]).map((s) => [s, { kind: 'section', section: s }]),
@@ -64,7 +69,11 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
 
   constructor(manager: RepositoryManager) {
     this.manager = manager;
-    this.disposables.push(manager.onDidChangeCurrent((r) => this.watch(r)));
+    this.disposables.push(
+      manager.onDidChangeCurrent((r) => this.watch(r)),
+      this.tagMarks,
+      this.tagMarks.onDidChange(() => this._onDidChangeTreeData.fire(this.sections.get('tags'))),
+    );
     this.watch(manager.current);
   }
 
@@ -75,6 +84,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
   private watch(repository: Repository | undefined): void {
     this.repoListener?.dispose();
     this.updateContext(repository);
+    this.tagMarks.setRepository(this.engine ? repository : undefined);
     this.repoListener = repository?.onDidChange((changed) => {
       if (changed.has('branches')) this.updateContext(repository);
       // Working Copy の変化は、入口の数と途中の merge / rebase に出る
@@ -94,6 +104,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
   setEngine(engine: boolean): void {
     if (engine !== this.engine) {
       this.engine = engine;
+      this.tagMarks.setRepository(engine ? this.repo : undefined);
       this._onDidChangeTreeData.fire(undefined);
     }
   }
@@ -165,6 +176,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
         }));
       }
       case 'tags':
+        if (this.engine) this.tagMarks.want();
         return [...(state.tags ?? [])].sort((a, b) => b.date - a.date).map((ref) => ({ kind: 'tag', ref }));
       case 'stashes':
         return (state.stashes ?? []).map((stash) => ({ kind: 'stash', stash }));
@@ -264,17 +276,8 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
         item.contextValue = 'remote';
         return item;
       }
-      case 'tag': {
-        const name = shortName(node.ref.name);
-        const item = new vscode.TreeItem(name);
-        item.id = node.ref.name;
-        item.description = node.ref.subject;
-        item.tooltip = `${name}\n${(node.ref.peeled ?? node.ref.oid).slice(0, 8)}  ${node.ref.subject}`;
-        item.iconPath = new vscode.ThemeIcon('tag');
-        item.contextValue = 'tag';
-        item.command = { command: 'amonhen.showRef', title: 'Show History', arguments: [node.ref.name] };
-        return item;
-      }
+      case 'tag':
+        return this.tagItem(node.ref);
       case 'stash': {
         const item = new vscode.TreeItem(node.stash.name);
         item.id = `stash:${node.stash.oid}`;
@@ -294,6 +297,51 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
         return item;
       }
     }
+  }
+
+  /**
+   * タグの行。アイコンは署名の様子（アプリの署名の印と同じ形と色）、説明の頭にリモートでの様子（どのリモートにも
+   * ない・同じ名前の別のタグがある）を出し、ツールチップにリモートごとの様子と署名の説明を並べる。右クリックの
+   * Push・Replace・Delete from は、出せるリモートがあるときだけ出す（contextValue の `;push` など）
+   */
+  private tagItem(ref: Ref): vscode.TreeItem {
+    const name = shortName(ref.name);
+    const item = new vscode.TreeItem(name);
+    item.id = ref.name;
+    const remotes = this.engine ? this.tagMarks.remotes : undefined;
+    const mark = remotes && tagMark(remotes, name);
+    item.description = mark ? `${tagMarkLabel(mark)} · ${ref.subject}` : ref.subject;
+    const tooltip = new vscode.MarkdownString(undefined, true);
+    tooltip.appendMarkdown(`**${escape(name)}**\n\n`);
+    tooltip.appendMarkdown(`\`${(ref.peeled ?? ref.oid).slice(0, 8)}\` ${escape(ref.subject)}`);
+    const signed = this.engine ? this.tagMarks.signature(name) : undefined;
+    if (signed) {
+      const status = signatureStatus(signed.signature, signed.taggerEmail ?? '', signed.signed);
+      const icon = signatureIcon(status);
+      const color = icon.color ? new vscode.ThemeColor(icon.color) : undefined;
+      // 確かめ終わるまでは、ふつうのタグのアイコン
+      item.iconPath = new vscode.ThemeIcon(status.kind === 'pending' ? 'tag' : icon.icon, color);
+      const explanation = escape(signatureExplanation(status, true));
+      tooltip.appendMarkdown(`\n\n$(${icon.icon}) **${signatureLabel(status)}** (${signed.signed}) — ${explanation}`);
+      const signer = signed.signature?.signer || signed.signature?.key;
+      if (signer) tooltip.appendMarkdown(`\n\nSigned by ${escape(signer)}`);
+    } else {
+      item.iconPath = new vscode.ThemeIcon('tag');
+    }
+    if (remotes && remotes.remotes.length > 0) {
+      tooltip.appendMarkdown(`\n\n${remotes.remotes.map((r) => escape(tagStateText(remotes, name, r.name))).join('  \n')}`);
+    }
+    item.tooltip = tooltip;
+    let context = 'tag';
+    if (remotes) {
+      const targets = tagTargets(remotes, name);
+      if (targets.push.length > 0) context += ';push';
+      if (targets.replace.length > 0) context += ';replace';
+      if (targets.onRemote.length > 0) context += ';onRemote';
+    }
+    item.contextValue = context;
+    item.command = { command: 'amonhen.showRef', title: 'Show History', arguments: [ref.name] };
+    return item;
   }
 
   dispose(): void {
@@ -361,4 +409,9 @@ function folderChildren(folder: Folder, id: string, remote?: string): Node[] {
     .sort((a, b) => a.name.localeCompare(b.name))
     .map((l) => ({ kind: 'branch', ref: l.ref, label: l.name, remote }));
   return folders.concat(leaves);
+}
+
+/** Markdown の記号を文字のまま出す */
+function escape(text: string): string {
+  return text.replace(/[\\`*_{}[\]()#+\-.!|<>$]/g, '\\$&');
 }

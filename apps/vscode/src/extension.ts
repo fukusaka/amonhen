@@ -74,7 +74,7 @@ export async function activate(
     vscode.commands.registerCommand('amonhen.showReflog', () => show('reflog')),
     vscode.commands.registerCommand('amonhen.showRef', (ref: string) => show('history', ref)),
     registerUndoCommand(manager),
-    registerFetchCommand(manager),
+    registerFetchCommand(manager, () => sidebar.tagMarks.reload()),
     registerSyncCommands(manager),
     registerSequenceCommands(manager),
     registerHistoryCommands(),

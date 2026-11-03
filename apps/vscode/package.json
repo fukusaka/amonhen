@@ -475,12 +475,12 @@
         },
         {
           "command": "amonhen.nav.merge",
-          "when": "view == amonhen.sidebar && viewItem =~ /^(branch(;\\w+)?|remoteBranch|tag)$/",
+          "when": "view == amonhen.sidebar && viewItem =~ /^(branch(;\\w+)?|remoteBranch|tag(;\\w+)*)$/",
           "group": "2_ref@1"
         },
         {
           "command": "amonhen.nav.rebase",
-          "when": "view == amonhen.sidebar && viewItem =~ /^(branch(;\\w+)?|remoteBranch|tag)$/",
+          "when": "view == amonhen.sidebar && viewItem =~ /^(branch(;\\w+)?|remoteBranch|tag(;\\w+)*)$/",
           "group": "2_ref@2"
         },
         {
@@ -490,12 +490,12 @@
         },
         {
           "command": "amonhen.newBranch",
-          "when": "view == amonhen.sidebar && viewItem =~ /^(branch(\\.current)?(;\\w+)?|remoteBranch|tag)$/",
+          "when": "view == amonhen.sidebar && viewItem =~ /^(branch(\\.current)?(;\\w+)?|remoteBranch|tag(;\\w+)*)$/",
           "group": "4_create@1"
         },
         {
           "command": "amonhen.newTag",
-          "when": "view == amonhen.sidebar && viewItem =~ /^(branch(\\.current)?(;\\w+)?|remoteBranch|tag)$/",
+          "when": "view == amonhen.sidebar && viewItem =~ /^(branch(\\.current)?(;\\w+)?|remoteBranch|tag(;\\w+)*)$/",
           "group": "4_create@2"
         },
         {
