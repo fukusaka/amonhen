@@ -63,6 +63,9 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    /// 別ウィンドウの鍵（worktree ごとに別。`MergeEditorWindowController`）。
+    var windowKey: String { MergeEditorWindowController.key(path: path, repository: repository) }
+
     /// Result を保存していない変更があるか。
     var hasUnsavedChanges: Bool { result.string != savedText }
 
@@ -809,14 +812,20 @@ private final class ConflictBand: NSView {
     }
 }
 
-/// マージエディタを別ウィンドウで開く。パスごとに 1 つ。
+/// マージエディタを別ウィンドウで開く。worktree とパスごとに 1 つ（worktree が違えば同じパスでも別のファイル）。
 final class MergeEditorWindowController: NSWindowController, NSWindowDelegate {
     private static var open: [String: MergeEditorWindowController] = [:]
     private let editor: MergeEditorViewController
     private let actions: Actions
 
+    /// `open` の鍵: 作業ツリー（SSH 先などで分からなければリポジトリそのもの）とパス。
+    static func key(path: String, repository: Repository) -> String {
+        let place = repository.workdir ?? "\(ObjectIdentifier(repository).hashValue)"
+        return place + "\0" + path
+    }
+
     static func show(path: String, repository: Repository, actions: Actions) {
-        if let existing = open[path] {
+        if let existing = open[key(path: path, repository: repository)] {
             existing.window?.makeKeyAndOrderFront(nil)
             return
         }
@@ -832,7 +841,7 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate {
     /// 埋め込んでいたエディタを、編集中の内容のまま別ウィンドウに移す。
     static func show(_ editor: MergeEditorViewController, actions: Actions) {
         let controller = MergeEditorWindowController(editor: editor, actions: actions)
-        open[editor.path] = controller
+        open[editor.windowKey] = controller
         controller.showWindow(nil)
     }
 
@@ -878,6 +887,6 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
-        Self.open[editor.path] = nil
+        Self.open[editor.windowKey] = nil
     }
 }
