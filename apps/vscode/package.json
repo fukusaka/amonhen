@@ -316,6 +316,18 @@
         "category": "Amon Hen"
       },
       {
+        "command": "amonhen.filterRefs",
+        "title": "Filter Branches, Remotes and Tags…",
+        "category": "Amon Hen",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "amonhen.clearRefsFilter",
+        "title": "Clear Filter",
+        "category": "Amon Hen",
+        "icon": "$(clear-all)"
+      },
+      {
         "command": "amonhen.skipSequence",
         "title": "Skip",
         "category": "Amon Hen",
@@ -538,6 +550,16 @@
           "command": "amonhen.selectRepository",
           "when": "view == amonhen.sidebar && amonhen.multipleRepositories",
           "group": "navigation@5"
+        },
+        {
+          "command": "amonhen.filterRefs",
+          "when": "view == amonhen.sidebar && !amonhen.refsFiltered",
+          "group": "navigation@6"
+        },
+        {
+          "command": "amonhen.clearRefsFilter",
+          "when": "view == amonhen.sidebar && amonhen.refsFiltered",
+          "group": "navigation@6"
         },
         {
           "command": "amonhen.open",
@@ -1043,6 +1065,14 @@
         {
           "command": "amonhen.blame",
           "when": "amonhen.hasRepository && amonhen.engine"
+        },
+        {
+          "command": "amonhen.filterRefs",
+          "when": "amonhen.hasRepository"
+        },
+        {
+          "command": "amonhen.clearRefsFilter",
+          "when": "amonhen.refsFiltered"
         },
         {
           "command": "amonhen.branch.addToFavorites",

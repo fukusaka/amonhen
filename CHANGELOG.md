@@ -768,6 +768,8 @@ First release.
   Archived, stacked branches nested), and favorites and archiving are on a branch's menu, shared with the app.
 - Several branches or tags can be selected in the sidebar to merge them in one commit, delete them or add them to
   favorites or archive them together.
+- The filter button on the sidebar's title shows only the branches, remote branches and tags whose names contain the
+  words typed.
 
 #### Changed
 

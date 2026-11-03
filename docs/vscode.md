@@ -226,7 +226,7 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 15. Worktrees
 - [x] 16. File History
 - [x] 17. Blame
-- [ ] 18. Branches arranged as in the app, favorites, archived, several selected, filtering
+- [x] 18. Branches arranged as in the app, favorites, archived, several selected, filtering
 - [ ] 19. Signature marks in History; Go to HEAD, Parent, Child
 - [ ] 20. Fetching more of a shallow clone, all contents of a partial clone
 - [ ] 21. The rest of Stashes (Branch…, `--index`, row details, Pop asking first)

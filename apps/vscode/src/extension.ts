@@ -68,6 +68,17 @@ export async function activate(
     sidebar,
     view,
     view.onDidExpandElement((e) => sidebar.onDidExpand(e.element)),
+    // Branches・Remotes・Tags の絞り込み（アプリのサイドバーの上の欄と同じ）。何で絞っているかを上に出す
+    sidebar.onDidChangeFilter((text) => (view.message = text ? `Filter: ${text}` : undefined)),
+    vscode.commands.registerCommand('amonhen.filterRefs', async () => {
+      const text = await vscode.window.showInputBox({
+        title: 'Filter Branches, Remotes and Tags',
+        prompt: 'Shows those whose names contain all the words (empty to show all)',
+        value: sidebar.filter,
+      });
+      if (text !== undefined) sidebar.setFilter(text);
+    }),
+    vscode.commands.registerCommand('amonhen.clearRefsFilter', () => sidebar.setFilter('')),
     // アクティビティバーの Amon Hen を開いたら、メインビューも開く
     view.onDidChangeVisibility((e) => e.visible && manager.current && show()),
     manager.onDidChangeCurrent(updateDescription),

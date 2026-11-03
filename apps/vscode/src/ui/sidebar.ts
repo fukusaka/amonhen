@@ -79,6 +79,11 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
   readonly worktrees = new WorktreeList();
   /** ローカルブランチの並べ方のもと（取り込み済み・積んだ土台・お気に入り・アーカイブ） */
   readonly branchFacts = new BranchFacts();
+  /** Branches・Remotes・Tags の絞り込みの言葉（小文字。どれも名前に含むものだけ出す。空なら絞り込まない） */
+  private filterWords: string[] = [];
+  private readonly _onDidChangeFilter = new vscode.EventEmitter<string>();
+  /** 絞り込みを変えた（空文字なら絞り込みをやめた） */
+  readonly onDidChangeFilter = this._onDidChangeFilter.event;
   /** 更新通知で同じノードを指せるよう、セクションのノードは使い回す */
   private readonly sections = new Map<RefSection, Node>(
     (Object.keys(SECTION_LABELS) as RefSection[]).map((s) => [s, { kind: 'section', section: s }]),
@@ -125,6 +130,31 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
       }
     });
     this._onDidChangeTreeData.fire(undefined);
+  }
+
+  /** 絞り込みの文字列（空白で区切った言葉。大文字小文字は区別しない） */
+  get filter(): string {
+    return this.filterWords.join(' ');
+  }
+
+  setFilter(text: string): void {
+    this.filterWords = text.toLowerCase().split(/\s+/).filter((w) => w);
+    void vscode.commands.executeCommand('setContext', 'amonhen.refsFiltered', this.filterWords.length > 0);
+    // タグは開くまで読まないので、絞り込むなら読む
+    if (this.filterWords.length > 0) void this.repo?.want('tags');
+    this._onDidChangeFilter.fire(this.filter);
+    // 見出しの id が変わる（開いて出す）ので、全体を描き直す
+    this._onDidChangeTreeData.fire(undefined);
+  }
+
+  private matches(name: string): boolean {
+    const lower = name.toLowerCase();
+    return this.filterWords.every((w) => lower.includes(w));
+  }
+
+  /** 開くための親（いちばん上の行しか開かないので、どれも undefined） */
+  getParent(): Node | undefined {
+    return undefined;
   }
 
   /** エンジンを使えるかが分かった・変わった */
@@ -199,6 +229,12 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
     const state = repo.current;
     switch (section) {
       case 'branches':
+        // 絞り込んでいれば、合うものだけを平らに（フォルダや分け方に隠さない）
+        if (this.filterWords.length > 0) {
+          return (state.branches ?? [])
+            .filter((r) => this.matches(shortName(r.name)))
+            .map((ref) => ({ kind: 'branch', ref, label: shortName(ref.name) }));
+        }
         return this.branchChildren(repo);
       case 'remotes': {
         const remotes = state.remotes ?? [];
@@ -208,17 +244,28 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
           // `origin/HEAD` は出さない
           if (ref.symref) continue;
           const split = splitRemoteRef(ref.name, names);
-          if (split) byRemote.get(split.remote)?.push(ref);
+          if (!split || (this.filterWords.length > 0 && !this.matches(shortName(ref.name)))) continue;
+          byRemote.get(split.remote)?.push(ref);
         }
-        return remotes.map((remote) => ({
-          kind: 'remote',
-          remote,
-          folder: buildFolder(byRemote.get(remote.name) ?? [], (r) => r.name.slice(`refs/remotes/${remote.name}/`.length)),
-        }));
+        const filtering = this.filterWords.length > 0;
+        const rest = (remote: string) => (r: Ref) => r.name.slice(`refs/remotes/${remote}/`.length);
+        return remotes
+          .filter((remote) => !filtering || (byRemote.get(remote.name)?.length ?? 0) > 0)
+          .map((remote) => {
+            const refs = byRemote.get(remote.name) ?? [];
+            // 絞り込んでいれば、フォルダに分けずに平らに
+            const folder: Folder = filtering
+              ? { folders: new Map(), leaves: refs.map((ref) => ({ name: rest(remote.name)(ref), ref })) }
+              : buildFolder(refs, rest(remote.name));
+            return { kind: 'remote', remote, folder };
+          });
       }
       case 'tags':
         if (this.engine) this.tagMarks.want();
-        return [...(state.tags ?? [])].sort((a, b) => b.date - a.date).map((ref) => ({ kind: 'tag', ref }));
+        return [...(state.tags ?? [])]
+          .filter((t) => this.filterWords.length === 0 || this.matches(shortName(t.name)))
+          .sort((a, b) => b.date - a.date)
+          .map((ref) => ({ kind: 'tag', ref }));
       case 'stashes':
         return (state.stashes ?? []).map((stash) => ({ kind: 'stash', stash }));
       case 'submodules': {
@@ -295,13 +342,15 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
         return item;
       }
       case 'section': {
+        // 絞り込んでいる間は Branches・Remotes・Tags を開いて出す（id を変えると、畳んでいたものも開く）
+        const filtered = this.filterWords.length > 0 && ['branches', 'remotes', 'tags'].includes(node.section);
         const item = new vscode.TreeItem(
           SECTION_LABELS[node.section],
-          node.section === 'branches'
+          node.section === 'branches' || filtered
             ? vscode.TreeItemCollapsibleState.Expanded
             : vscode.TreeItemCollapsibleState.Collapsed,
         );
-        item.id = `section:${node.section}`;
+        item.id = `section:${node.section}${filtered ? ':filtered' : ''}`;
         item.contextValue = `section.${node.section}`;
         if (node.section === 'stashes' && state?.status?.stashCount) {
           item.description = String(state.status.stashCount);
@@ -345,8 +394,12 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
         return item;
       }
       case 'remote': {
-        const item = new vscode.TreeItem(node.remote.name, vscode.TreeItemCollapsibleState.Collapsed);
-        item.id = `remote:${node.remote.name}`;
+        const filtered = this.filterWords.length > 0;
+        const item = new vscode.TreeItem(
+          node.remote.name,
+          filtered ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed,
+        );
+        item.id = `remote:${node.remote.name}${filtered ? ':filtered' : ''}`;
         item.description = node.remote.fetchUrl;
         item.iconPath = new vscode.ThemeIcon('cloud');
         item.contextValue = 'remote';
@@ -517,6 +570,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
     this.repoListener?.dispose();
     vscode.Disposable.from(...this.disposables).dispose();
     this._onDidChangeTreeData.dispose();
+    this._onDidChangeFilter.dispose();
   }
 }
 

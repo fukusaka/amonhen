@@ -624,6 +624,7 @@ async function blameFlow(): Promise<void> {
  * Archived に畳まれ、お気に入りは ★ で上に並ぶ（順を変えられる）。どれも git の設定に書く（daemon だけ）
  */
 async function branchArrangeFlow(): Promise<void> {
+  // 絞り込み（Branches・Remotes・Tags）も、ここで確かめる
   const sidebar = api.sidebar;
   const section = sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'branches')!;
   /** Branches の中のブランチの名前を、入れ子・グループごとに */
@@ -679,6 +680,16 @@ async function branchArrangeFlow(): Promise<void> {
     for (const b of ['arr-a', 'arr-b', 'arr-arch']) git('branch', b, head);
     await settle();
     await until('Inactive', () => JSON.stringify(shape()).includes('{"inactive":["arr-old"'));
+
+    // 絞り込むと、名前にどの言葉も含むものだけが平らに出る（大文字小文字は区別しない）
+    await withWindow({ showInputBox: inputs('ARR- ch') }, async () => vscode.commands.executeCommand('amonhen.filterRefs'));
+    assert.deepEqual(shape(), ['arr-arch']);
+    const remotes = sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'remotes')!;
+    assert.deepEqual(sidebar.getChildren(remotes), []);
+    assert.match(String(sidebar.getTreeItem(section).id), /:filtered$/);
+    await vscode.commands.executeCommand('amonhen.clearRefsFilter');
+    assert.equal(sidebar.filter, '');
+    assert.ok(JSON.stringify(shape()).includes('{"inactive":["arr-old"'));
 
     // アーカイブすると Archived に移り、戻すと元の場所に戻る
     await vscode.commands.executeCommand('amonhen.branch.archive', node('arr-arch'));
