@@ -464,30 +464,37 @@ enum Assistant {
         try? input.fileHandleForWriting.close()
 
         let reader = output.fileHandleForReading
-        let collected = try await Task.detached(priority: .userInitiated) { () -> (String, String?) in
-            var text = "", final: String?, buffer = Data()
-            func handle(_ line: Data) {
-                guard let json = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { return }
-                if let delta = Self.delta(json, cli: cli) {
-                    text += delta
-                    let snapshot = text
-                    Task { @MainActor in onText(snapshot) }
+        // 取り消したら（パネルを閉じたら）CLI を止める。読み終えるのを待たずに終わり、結果を覚えない。
+        nonisolated(unsafe) let running = process
+        let collected = try await withTaskCancellationHandler {
+            try await Task.detached(priority: .userInitiated) { () -> (String, String?) in
+                var text = "", final: String?, buffer = Data()
+                func handle(_ line: Data) {
+                    guard let json = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { return }
+                    if let delta = Self.delta(json, cli: cli) {
+                        text += delta
+                        let snapshot = text
+                        Task { @MainActor in onText(snapshot) }
+                    }
+                    if let done = Self.finalText(json, cli: cli) { final = done }
                 }
-                if let done = Self.finalText(json, cli: cli) { final = done }
-            }
-            while true {
-                let chunk = reader.availableData
-                if chunk.isEmpty { break }
-                buffer.append(chunk)
-                while let newline = buffer.firstIndex(of: 0x0A) {
-                    handle(buffer[buffer.startIndex..<newline])
-                    buffer.removeSubrange(buffer.startIndex...newline)
+                while true {
+                    let chunk = reader.availableData
+                    if chunk.isEmpty { break }
+                    buffer.append(chunk)
+                    while let newline = buffer.firstIndex(of: 0x0A) {
+                        handle(buffer[buffer.startIndex..<newline])
+                        buffer.removeSubrange(buffer.startIndex...newline)
+                    }
                 }
-            }
-            if !buffer.isEmpty { handle(buffer) }
-            return (text, final)
-        }.value
+                if !buffer.isEmpty { handle(buffer) }
+                return (text, final)
+            }.value
+        } onCancel: {
+            running.terminate()
+        }
         process.waitUntilExit()
+        try Task.checkCancellation()
         let errorText = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
         let result = (collected.1 ?? collected.0).trimmingCharacters(in: .whitespacesAndNewlines)
         guard process.terminationStatus == 0, !result.isEmpty else {
