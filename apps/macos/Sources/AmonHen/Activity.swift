@@ -502,6 +502,8 @@ final class ActivityWindowController: NSWindowController, NSWindowDelegate {
             contentRect: NSRect(x: 0, y: 0, width: 900, height: 560),
             styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "Activity"
+        // 初めは真ん中に。覚えた位置があれば、名前を付けたときにそこへ動く（開くたびに真ん中へ戻さない）。
+        window.center()
         window.setFrameAutosaveName("Activity")
         window.contentViewController = NSHostingController(rootView: ActivityView(model: model))
         super.init(window: window)
@@ -512,7 +514,6 @@ final class ActivityWindowController: NSWindowController, NSWindowDelegate {
 
     func show() {
         model.refresh()
-        if window?.isVisible != true { window?.center() }
         showWindow(nil)
         // 開いている間だけ読み直す（閉じていれば何もしない）。
         timer?.invalidate()
