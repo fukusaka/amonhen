@@ -1094,13 +1094,16 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     }
 
     @objc private func markResolved() {
-        guard let key = selectedKey else { return }
-        struct Count: Decodable { let count: Int }
-        let remaining = (try? repository.info(["op": "conflictCount", "path": key.path], as: Count.self))?.count ?? 0
+        guard let key = selectedKey, let actions else { return }
         let repository = self.repository
         let path = key.path
-        guard remaining > 0, let actions else { return self.actions?.perform { try repository.stage(paths: [path]) } ?? () }
         Task { @MainActor in
+            // 残りのマーカーは裏で数える（SSH 先・daemon 越しでは往復がかかる）。
+            let remaining = await Task.detached(priority: .userInitiated) {
+                struct Count: Decodable { let count: Int }
+                return (try? repository.info(["op": "conflictCount", "path": path], as: Count.self))?.count ?? 0
+            }.value
+            guard remaining > 0 else { return actions.perform { try repository.stage(paths: [path]) } }
             guard await actions.confirm(L("Mark %@ as resolved with %ld conflicts left?", path, remaining),
                                         message: L("The conflict markers stay in the file."), ok: L("Mark Resolved")) else { return }
             actions.perform { try repository.stage(paths: [path]) }
