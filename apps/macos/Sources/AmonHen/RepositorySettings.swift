@@ -163,8 +163,13 @@ final class RepositorySettingsModel {
     /// `$XDG_CONFIG_HOME/git/ignore`、`~/.config/git/ignore`）。コアが決める（SSH 先ならその機械で）。
     private(set) var excludesPath = ""
 
+    /// 読み直しの世代（書き換えのたびに読み直すので、先に始めた読み直しが後から届いても使わない）。
+    private var loadGeneration = 0
+
     func load() {
         let repository = self.repository
+        loadGeneration += 1
+        let generation = loadGeneration
         Task {
             struct Entries: Decodable { let entries: [ConfigEntry] }
             struct Keys: Decodable { let keys: [String] }
@@ -192,6 +197,7 @@ final class RepositorySettingsModel {
                         global ? nil : try? repository.info(["op": "repositoryForm"], as: RepositoryForm.self)
                     )
                 }.value
+                guard generation == loadGeneration else { return }
                 form = f
                 commitTemplate = t.map { ($0.text, $0.path) }
                 gitVersion = v.version
@@ -276,19 +282,34 @@ final class RepositorySettingsModel {
 
     /// いくつかの命令を順に実行する（リモートのシートが組んだもの）。失敗したらそこで止めて、エラーを出す。
     func perform(_ commands: [[String: Any]]) {
+        enqueue(commands)
+    }
+
+    /// 書き込みの列の最後（書き込みは 1 つずつ、頼んだ順に。1 つの選択で変える 2 つのキーを同時に書くと、
+    /// 2 つ目が `.git/config.lock` で失敗して半分だけ変わる）。
+    private var lastWrite: Task<Void, Never>?
+
+    /// `commands` を、前の書き込みが終わってから順に実行する。失敗したらそこで止めて、エラーを出す。終わったら
+    /// 読み直し、`done(書けたか)` を呼ぶ。
+    private func enqueue(_ commands: [[String: Any]], done: ((Bool) -> Void)? = nil) {
         let repository = self.repository
-        Task {
+        let previous = lastWrite
+        lastWrite = Task {
+            await previous?.value
+            var ok = false
             do {
                 for command in commands {
                     let json = try Repository.json(command)
                     try await Task.detached(priority: .userInitiated) { try repository.run(json: json) }.value
                 }
                 error = nil
+                ok = true
             } catch {
                 self.error = "\(error)"
             }
             load()
             onRepositoryChange?()
+            done?(ok)
         }
     }
 
@@ -334,21 +355,7 @@ final class RepositorySettingsModel {
     }
 
     private func run(_ command: [String: Any], then: (() -> Void)? = nil) {
-        let repository = self.repository
-        guard let json = try? Repository.json(command) else { return }
-        Task {
-            var ok = false
-            do {
-                try await Task.detached(priority: .userInitiated) { try repository.run(json: json) }.value
-                error = nil
-                ok = true
-            } catch {
-                self.error = "\(error)"
-            }
-            load()
-            onRepositoryChange?()
-            if ok { then?() }
-        }
+        enqueue([command]) { ok in if ok { then?() } }
     }
 }
 

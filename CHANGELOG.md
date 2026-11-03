@@ -203,6 +203,8 @@ becomes the GitHub Release notes.
 - macOS: with another worktree chosen to work in, Switch Branch… lists the branch checked out in the main worktree and
   no longer offers the current worktree's own branch.
 - macOS: a tab's ↑ and ↓ marks follow the branch of the worktree chosen to work in, like its ● mark.
+- macOS: Repository Settings writes the git settings of one choice in turn (such as Signing's two keys or a Fetch-only
+  pull), so the second no longer fails on the config lock and leaves it half applied.
 
 ### [0.2.8] - 2026-10-30
 
