@@ -1605,10 +1605,22 @@ fn repository_settings(p: &Rc<Parts>) {
 /// ショートカットの一覧（メニューごと。表の操作は表から。リポジトリのページからも使う）。
 pub fn show_shortcuts(parent: &gtk::ApplicationWindow) {
     let accels = accels();
+    // アプリに入れたキーの最初のもの（メニューに出るもの。タブの操作は `tabs::install_accels` が後から入れる）。
+    let app = parent.application();
+    let accel_of = |action: &str| -> Option<String> {
+        app.as_ref()
+            .and_then(|app| app.accels_for_action(action).first().map(|a| a.to_string()))
+            .or_else(|| {
+                accels
+                    .iter()
+                    .find(|(a, _)| a == action)
+                    .map(|(_, k)| k.clone())
+            })
+    };
     let group = |title: &str, items: &[(String, String)]| {
         let group = gtk::ShortcutsGroup::builder().title(title).build();
         for (action, label) in items {
-            if let Some((_, accel)) = accels.iter().find(|(a, _)| a == action) {
+            if let Some(accel) = accel_of(action) {
                 let shortcut = gtk::ShortcutsShortcut::builder()
                     .accelerator(accel.as_str())
                     .title(label.as_str())
@@ -1633,6 +1645,7 @@ pub fn show_shortcuts(parent: &gtk::ApplicationWindow) {
         ("win.new-tab".to_owned(), tr!("New Tab")),
         ("win.new-window".to_owned(), tr!("New Window")),
         ("win.open".to_owned(), tr!("Open…")),
+        ("win.clone".to_owned(), "Clone…".to_owned()),
         ("win.close".to_owned(), tr!("Close")),
         ("app.quit".to_owned(), tr!("Quit Amon Hen")),
     ];
@@ -1651,12 +1664,17 @@ pub fn show_shortcuts(parent: &gtk::ApplicationWindow) {
         ("Repository".to_owned(), Menu::Repository),
         ("Commit".to_owned(), Menu::Commit),
     ] {
-        let items = table(menu);
+        let mut items = table(menu);
+        // View の最後に Show Tab Bar（メニューと同じ）。
+        if menu == Menu::View {
+            items.push(("win.toggle-tab-bar".to_owned(), tr!("Show Tab Bar")));
+        }
         if !items.is_empty() {
             section.add_group(&group(&name, &items));
         }
     }
     let mut window = vec![
+        ("win.minimize".to_owned(), tr!("Minimize")),
         ("win.next-tab".to_owned(), tr!("Show Next Tab")),
         ("win.previous-tab".to_owned(), tr!("Show Previous Tab")),
     ];
