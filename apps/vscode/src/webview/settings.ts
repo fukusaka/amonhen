@@ -530,9 +530,14 @@ export function createSettingsView(): View {
     const input = el('input', 'setting-input');
     input.value = config.local(r.key) ?? '';
     input.placeholder = config.effective(r.key)?.value ?? r.placeholder ?? '';
+    // Enter では keydown と change の両方が来る。書き終わって読み直すまでに 2 回書くと、git の config のロックで
+    // 片方が失敗するので、最後に書いた値と同じなら書かない
+    let written = config.local(r.key) ?? '';
     const commit = () => {
       const value = input.value.trim();
-      if (value !== (config.local(r.key) ?? '')) set([[r.key, value || null]]);
+      if (value === written) return;
+      written = value;
+      set([[r.key, value || null]]);
     };
     input.addEventListener('change', commit);
     input.addEventListener('keydown', (e) => {
