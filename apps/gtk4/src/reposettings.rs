@@ -1698,11 +1698,9 @@ impl RepoSettings {
                 vec!["pull.rebase".into(), "pull.ff".into()]
             }
         });
-        let describe: Describe = Rc::new(|_, v| match v.to_lowercase().as_str() {
-            "only" => tr!("Fast-forward"),
-            v if ["true", "yes", "on", "1", "merges", "interactive"].contains(&v) => tr!("Rebase"),
-            _ => tr!("Merge"),
-        });
+        // ⓘ の「ここで上書きしなければ」は、受け継ぐ値をそのまま（pull.ff と pull.rebase のどちらの値かで意味が
+        // 変わるので、言い換えない。macOS 版の PullMethodRow と同じ）。
+        let describe: Describe = Rc::new(|_, v| v.to_owned());
         let row = self.row(
             &tr!("When pulling, how are the changes brought in?"),
             "",
