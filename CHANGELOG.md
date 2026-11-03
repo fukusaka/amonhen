@@ -86,6 +86,8 @@ becomes the GitHub Release notes.
 #### Fixed
 
 - The GTK4 app's Undo button asks once; it opened the question twice, so one stayed after undoing.
+- A `.mailmap` written while the engine was reading the old one could be missed until it changed again; the names
+  now follow it.
 - With newer GTK (4.24), the GTK4 app's sidebar shows Working Copy's change count and the sparse checkout mark.
 - Activity no longer says “daemon” twice for a repository opened through the shared daemon, nor “(daemon)” for an
   SSH host connected directly.

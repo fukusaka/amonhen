@@ -72,6 +72,9 @@ fn load(from: &Path) -> Result<Loaded> {
         .string("mailmap.blob")
         .map(|s| s.to_str_lossy().into_owned())
         .or_else(|| repo.workdir().is_none().then(|| "HEAD:.mailmap".to_owned()));
+    // 読む前に調べておく。読んだ後に調べると、その間に書き換わったファイルの新しい時刻を、古い中身と一緒に覚えて
+    // しまい、もう読み直さない（読んだ後に変われば、次に調べたときに違うので読み直す）。
+    let stamp = stamp(&repo, &files, blob.as_deref());
     let text = |b: &gix::bstr::BStr| b.to_str_lossy().into_owned();
     let entries = repo
         .open_mailmap()
@@ -84,7 +87,7 @@ fn load(from: &Path) -> Result<Loaded> {
         })
         .collect();
     Ok(Loaded {
-        stamp: stamp(&repo, &files, blob.as_deref()),
+        stamp,
         files,
         blob,
         mailmap: Arc::new(Mailmap::new(enabled, entries)),
