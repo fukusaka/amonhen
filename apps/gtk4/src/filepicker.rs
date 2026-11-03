@@ -624,7 +624,6 @@ impl Picker {
         // 隠しファイルの切り替えの隣に（macOS 版と同じ）。
         let new_folder = request.new_folder.then(|| {
             let b = gtk::Button::with_label(&tr!("New Folder…"));
-            b.set_tooltip_text(Some("Ctrl+Shift+N"));
             buttons.append(&b);
             b
         });
