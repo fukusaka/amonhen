@@ -12,10 +12,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use amonhen_model::{
-    ApplyPatch, CommitGraph, CommitText, ConfigEntry, ConnectionState, Deepen, FileChange,
-    FormatPatch, GitBackend, HeadState, Oid, Operations, Outcome, PatchFile, PullMode, RawCommit,
-    RefUpdate, Refs, RemoteChange, RemoteCheck, RemoteEntry, RepoFiles, RepoPaths, ResetMode,
-    Result, Root, Sequence, SigningKey, Status, WorktreeChange,
+    ApplyPatch, Archive, CommitGraph, CommitText, ConfigEntry, ConnectionState, ContentsToFetch,
+    Deepen, FileChange, FormatPatch, GitBackend, HeadState, Oid, Operations, Outcome, PatchFile,
+    PullMode, RawCommit, RefUpdate, Refs, RemoteChange, RemoteCheck, RemoteEntry, RepoFiles,
+    RepoPaths, ResetMode, Result, Root, Sequence, SigningKey, Status, WorktreeChange,
 };
 use serde::de::DeserializeOwned;
 
@@ -991,6 +991,23 @@ impl Operations for RemoteOperations {
             commits: commits.to_vec(),
             options: options.clone(),
         })
+    }
+
+    fn archive(&self, options: &Archive) -> Result<Vec<u8>> {
+        self.op::<Bytes>(Op::Archive(options.clone())).map(|b| b.0)
+    }
+
+    fn archive_contents_to_fetch(
+        &self,
+        rev: &str,
+        paths: &[String],
+        limit: usize,
+    ) -> Result<ContentsToFetch> {
+        self.op(Op::ArchiveContentsToFetch(
+            rev.to_owned(),
+            paths.to_vec(),
+            limit,
+        ))
     }
 
     fn am(&self, mbox: &[u8], three_way: Option<bool>) -> Result<Outcome> {

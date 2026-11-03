@@ -133,6 +133,26 @@ pub enum Command {
         cover_letter: bool,
         reroll: Option<u32>,
     },
+    /// `rev`（コミット・タグ・ブランチ）の時点のファイルを `format`（`zip`・`tar`・`tar.gz`）にまとめて `file` に書く
+    /// （`git archive`。中身の先頭に `prefix` のフォルダを置き、`paths` があればその下だけ。外すファイルなどは git の
+    /// `.gitattributes` に任せる）。`info.file`・`info.size`。SSH 先や daemon 越しでも、ファイルはこの機械に書く。
+    /// partial clone で手元にない中身は先にまとめて取る（数は `archiveContents` で前もって数える）。
+    Archive {
+        rev: String,
+        format: String,
+        #[serde(default)]
+        prefix: String,
+        #[serde(default)]
+        paths: Vec<String>,
+        file: String,
+    },
+    /// `Archive` の前に取ってくる、partial clone で手元にない中身の数（`info.count`。数えるのをやめたら
+    /// `info.more`）。partial clone でなければ 0。
+    ArchiveContents {
+        rev: String,
+        #[serde(default)]
+        paths: Vec<String>,
+    },
     /// パッチのファイル `paths`（並べた順につなぐ）の中身（`info`: `kind`（`mailbox` なら Am、`diff` なら
     /// ApplyPatch で当てる）・`patches`（subject・author・authorEmail・date・files（path・oldPath・added・removed・
     /// binary・status））・`applies`（今のリポジトリにそのまま当たるか。当たらなければ `error` に git の答え）・
@@ -2581,6 +2601,38 @@ impl Repository {
                 Ok(Response {
                     ok: true,
                     info: Some(serde_json::json!({ "files": written })),
+                    ..Default::default()
+                })
+            }
+            Command::Archive {
+                rev,
+                format,
+                prefix,
+                paths,
+                file,
+            } => {
+                let data = ops.archive(&amonhen_model::Archive {
+                    rev,
+                    format,
+                    prefix,
+                    paths,
+                })?;
+                std::fs::write(&file, &data)?;
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::json!({ "file": file, "size": data.len() })),
+                    ..Default::default()
+                })
+            }
+            Command::ArchiveContents { rev, paths } => {
+                let need = ops.archive_contents_to_fetch(
+                    &rev,
+                    &paths,
+                    crate::repository::CONTENTS_FETCH_LIMIT,
+                )?;
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::json!({ "count": need.ids.len(), "more": need.more })),
                     ..Default::default()
                 })
             }
@@ -6025,6 +6077,146 @@ mod tests {
         assert_eq!(git(dir, &["show", "HEAD~1:b.txt"]), "b2");
         assert_eq!(note(dir, "HEAD~1"), "note b");
         assert_eq!(git(dir, &["status", "--porcelain"]), "");
+    }
+
+    /// tar の中のパス（`tar -t`。Windows にも tar がある）。
+    fn tar_list(file: &std::path::Path, gzip: bool) -> Vec<String> {
+        let out = Process::new("tar")
+            .arg(if gzip { "-tzf" } else { "-tf" })
+            .arg(file)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let mut paths: Vec<String> = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter(|l| !l.ends_with('/'))
+            .map(str::to_owned)
+            .collect();
+        paths.sort();
+        paths
+    }
+
+    #[test]
+    fn exports_a_commit_as_an_archive_with_a_prefix_and_some_folders() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        std::fs::create_dir_all(dir.join("docs")).unwrap();
+        std::fs::write(dir.join("docs/guide.md"), "guide").unwrap();
+        std::fs::write(dir.join(".gitattributes"), "secret.txt export-ignore\n").unwrap();
+        std::fs::write(dir.join("secret.txt"), "s").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-q", "-m", "docs"]);
+        git(dir, &["tag", "-a", "-m", "v1", "v1"]);
+        // 書き出すのはコミットした中身だけ（作業ツリーの変更は入らない）。
+        std::fs::write(dir.join("a.txt"), "changed").unwrap();
+        let out = tempfile::tempdir().unwrap();
+        let export = |json: serde_json::Value| run(&repo, &json.to_string());
+
+        let tar = out.path().join("v1.tar");
+        let r = export(serde_json::json!({
+            "op": "archive", "rev": "v1", "format": "tar", "prefix": "app-1/", "file": tar,
+        }));
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(r["info"]["size"], std::fs::metadata(&tar).unwrap().len());
+        // export-ignore は git のとおりに外れる。
+        assert_eq!(
+            tar_list(&tar, false),
+            ["app-1/.gitattributes", "app-1/a.txt", "app-1/docs/guide.md"]
+        );
+
+        let tgz = out.path().join("docs.tar.gz");
+        let r = export(serde_json::json!({
+            "op": "archive", "rev": "HEAD", "format": "tar.gz", "paths": ["docs"], "file": tgz,
+        }));
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(tar_list(&tgz, true), ["docs/guide.md"]);
+
+        let zip = out.path().join("first.zip");
+        let r = export(serde_json::json!({
+            "op": "archive", "rev": "HEAD~1", "format": "zip", "file": zip,
+        }));
+        assert_eq!(r["ok"], true, "{r}");
+        assert!(std::fs::read(&zip).unwrap().starts_with(b"PK\x03\x04"));
+
+        // 知らない形・ない時点は書かずに断る。
+        let bad = out.path().join("bad");
+        let r = export(serde_json::json!({
+            "op": "archive", "rev": "HEAD", "format": "rar", "file": bad,
+        }));
+        assert_eq!(r["ok"], false, "{r}");
+        let r = export(serde_json::json!({
+            "op": "archive", "rev": "no-such-tag", "format": "zip", "file": bad,
+        }));
+        assert_eq!(r["ok"], false, "{r}");
+        assert!(!bad.exists());
+        // partial clone でなければ取るものはない。
+        let need = run(&repo, r#"{"op":"archiveContents","rev":"HEAD"}"#);
+        assert_eq!(need["info"], serde_json::json!({"count": 0, "more": false}));
+    }
+
+    /// partial clone では、書き出す時点の手元にない中身を数え、書き出す前にまとめて取る（git 2.29 から。それより古い
+    /// git は、git archive が 1 つずつ取る）。
+    #[test]
+    fn counts_and_fetches_the_contents_an_archive_needs_in_a_partial_clone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir(&src).unwrap();
+        git(&src, &["init", "-q"]);
+        std::fs::create_dir_all(src.join("docs")).unwrap();
+        for i in 1..=3 {
+            std::fs::write(src.join("a.txt"), format!("a{i}")).unwrap();
+            std::fs::write(src.join("docs/d.txt"), format!("d{i}")).unwrap();
+            git(&src, &["add", "."]);
+            git(&src, &["commit", "-q", "-m", &format!("c{i}")]);
+        }
+        git(&src, &["config", "uploadpack.allowFilter", "true"]);
+        git(&src, &["config", "uploadpack.allowAnySHA1InWant", "true"]);
+        let path = src.to_str().unwrap().replace('\\', "/");
+        let url = if path.starts_with('/') {
+            format!("file://{path}")
+        } else {
+            format!("file:///{path}")
+        };
+        git(
+            tmp.path(),
+            &["clone", "-q", "--filter=blob:none", &url, "partial"],
+        );
+        let dir = tmp.path().join("partial");
+        let repo = Repository::new(GixBackend::open(&dir).unwrap());
+
+        // 最初のコミットの 2 つの中身は手元にない（いまのコミットのものは取り出したときに取った）。
+        let need = run(&repo, r#"{"op":"archiveContents","rev":"HEAD~2"}"#);
+        assert_eq!(
+            need["info"],
+            serde_json::json!({"count": 2, "more": false}),
+            "{need}"
+        );
+        let need = run(
+            &repo,
+            r#"{"op":"archiveContents","rev":"HEAD~2","paths":["docs"]}"#,
+        );
+        assert_eq!(need["info"]["count"], 1, "{need}");
+        assert_eq!(
+            run(&repo, r#"{"op":"archiveContents","rev":"HEAD"}"#)["info"]["count"],
+            0
+        );
+
+        let file = tmp.path().join("old.tar");
+        let r = run(
+            &repo,
+            &serde_json::json!({"op": "archive", "rev": "HEAD~2", "format": "tar", "file": file})
+                .to_string(),
+        );
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(tar_list(&file, false), ["a.txt", "docs/d.txt"]);
+        assert_eq!(
+            run(&repo, r#"{"op":"archiveContents","rev":"HEAD~2"}"#)["info"]["count"],
+            0
+        );
     }
 
     #[test]

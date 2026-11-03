@@ -332,6 +332,20 @@ pub struct PatchFile {
     pub content: Vec<u8>,
 }
 
+/// `git archive` の書き出し方。中身から外すもの（`export-ignore`）などは git の `.gitattributes` に任せる。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Archive {
+    /// 書き出す時点（コミット・タグ・ブランチ）。
+    pub rev: String,
+    /// `zip`・`tar`・`tar.gz`。
+    pub format: String,
+    /// 中身の先頭に置くフォルダ（`name/` の形。`--prefix`）。空なら置かない。
+    pub prefix: String,
+    /// このフォルダ・ファイルの下だけを書き出す。空なら全体。
+    pub paths: Vec<String>,
+}
+
 /// `git apply` の当て方。既定は git と同じく作業ツリーだけ。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -495,6 +509,17 @@ pub trait Operations: Send + Sync {
 
     /// `commits` を、渡した順にパッチにする（`git format-patch`。マージは git と同じく飛ばす）。
     fn format_patch(&self, commits: &[Oid], options: &FormatPatch) -> Result<Vec<PatchFile>>;
+    /// `options.rev` の時点のファイルを 1 つにまとめた中身（`git archive`）。partial clone で手元にない中身は、git が
+    /// 1 つずつ取りに行かないよう、先にまとめて取ってくる。
+    fn archive(&self, options: &Archive) -> Result<Vec<u8>>;
+    /// `rev` の時点のファイル（`paths` があればその下だけ）のうち、partial clone で手元にない中身。`limit` を超えたら
+    /// 数えるのをやめる。partial clone でなければ空。
+    fn archive_contents_to_fetch(
+        &self,
+        rev: &str,
+        paths: &[String],
+        limit: usize,
+    ) -> Result<ContentsToFetch>;
     /// mbox のパッチを今のブランチにコミットとして当てる（`git am`）。`three_way` が `None` なら git の
     /// `am.threeWay` に任せる。当たらないパッチがあれば、そこで止まる（`Outcome::Conflict`）。
     fn am(&self, mbox: &[u8], three_way: Option<bool>) -> Result<Outcome>;

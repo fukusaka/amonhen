@@ -45,7 +45,7 @@ pub struct Frame {
 }
 
 /// 1 つのフレームの上限（壊れた入力で巨大な領域を取らないため）。
-const MAX_FRAME: u32 = 1 << 30;
+pub(crate) const MAX_FRAME: u32 = 1 << 30;
 /// これより大きな中身は圧縮する（小さな要求・応答は圧縮しても縮まず、遅れが増えるだけ）。
 const COMPRESS_FROM: usize = 16 * 1024;
 const COMPRESSED: u8 = 0x80;

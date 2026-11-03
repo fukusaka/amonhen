@@ -467,6 +467,21 @@ fn handle_op(backend: &dyn GitBackend, op: Op, cancel: &AtomicBool) -> Result<Ve
         Op::PredictMerge { ours, theirs } => encode(&ops.predict_merge(&ours, &theirs)?),
         Op::PredictReplay { onto, picks } => encode(&ops.predict_replay(&onto, &picks)?),
         Op::RangeDiff(ranges, factor) => encode(&ops.range_diff(&ranges, factor)?),
+        Op::Archive(options) => {
+            let data = ops.archive(&options)?;
+            // 答えは 1 つのフレームで送るので、それに収まらなければ送る前に断る（つながりを切らない）。
+            if data.len() as u64 + 4096 > u64::from(frame::MAX_FRAME) {
+                return Err(tr!(
+                    "The archive is {size} MB, more than can be brought here at once (1 GB). Choose a folder to export, or run git archive where the repository is",
+                    size = data.len() >> 20
+                )
+                .into());
+            }
+            encode(&Bytes(data))
+        }
+        Op::ArchiveContentsToFetch(rev, paths, limit) => {
+            encode(&ops.archive_contents_to_fetch(&rev, &paths, limit)?)
+        }
         Op::Resolve(rev) => encode(&ops.resolve(&rev)?),
         Op::Merge(revs) => encode(&ops.merge(&revs)?),
         Op::Rebase { onto, update_refs } => encode(&ops.rebase(&onto, update_refs)?),

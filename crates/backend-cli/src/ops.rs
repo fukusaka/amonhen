@@ -1,8 +1,8 @@
 use amonhen_model::tr;
 use amonhen_model::{
-    ApplyPatch, ConfigEntry, Deepen, FormatPatch, HeadState, Oid, Operations, Outcome, PatchFile,
-    PullMode, RangePair, RefUpdate, RemoteChange, RemoteCheck, RemoteEntry, ResetMode, Result,
-    Sequence, SigningKey, WorktreeChange, WorktreeChanges,
+    ApplyPatch, Archive, ConfigEntry, ContentsToFetch, Deepen, FormatPatch, HeadState, Oid,
+    Operations, Outcome, PatchFile, PullMode, RangePair, RefUpdate, RemoteChange, RemoteCheck,
+    RemoteEntry, ResetMode, Result, Sequence, SigningKey, WorktreeChange, WorktreeChanges,
 };
 
 use crate::Git;
@@ -965,6 +965,19 @@ impl Operations for Git {
         });
         let _ = std::fs::remove_dir_all(&dir);
         result
+    }
+
+    fn archive(&self, options: &Archive) -> Result<Vec<u8>> {
+        self.archive_bytes(options)
+    }
+
+    fn archive_contents_to_fetch(
+        &self,
+        rev: &str,
+        paths: &[String],
+        limit: usize,
+    ) -> Result<ContentsToFetch> {
+        self.archive_missing(rev, paths, limit)
     }
 
     fn am(&self, mbox: &[u8], three_way: Option<bool>) -> Result<Outcome> {

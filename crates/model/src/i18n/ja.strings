@@ -1985,3 +1985,5 @@
 "Only the files at the top are checked out. Choose a folder to check out too; add more later in Settings > Fetching and Folders." = "最上位のファイルだけを取り出しました。ほかに取り出すフォルダを選んでください。後から Settings の「取得とフォルダ」で足せます。";
 "Checking out {folder}…" = "{folder} を取り出しています…";
 "Couldn’t check out {folder}" = "{folder} を取り出せませんでした";
+"Unknown archive format: {format}" = "知らないアーカイブの形です: {format}";
+"The archive is {size} MB, more than can be brought here at once (1 GB). Choose a folder to export, or run git archive where the repository is" = "アーカイブが {size} MB あり、一度に持ってこられる大きさ（1 GB）を超えています。書き出すフォルダを選ぶか、リポジトリのある所で git archive を使ってください";

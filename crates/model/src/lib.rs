@@ -31,10 +31,10 @@ pub use graph::{CommitGraph, CommitGraphBuilder};
 pub use mailmap::{Mailmap, MailmapEntry};
 pub use oid::{Oid, OidMap, OidSet};
 pub use ops::{
-    ApplyPatch, ConfigEntry, ContentsToFetch, Deepen, Directory, DirectoryEntry, FormatPatch,
-    HeadState, LogScope, MachineGit, Operations, Outcome, PartialClone, PatchFile, Program,
-    PullMode, RefUpdate, RemoteChange, RemoteCheck, RemoteEntry, RepositoryForm, ResetMode,
-    Sequence, SigningKey, SparseCheckout, WorktreeChange, WorktreeChanges,
+    ApplyPatch, Archive, ConfigEntry, ContentsToFetch, Deepen, Directory, DirectoryEntry,
+    FormatPatch, HeadState, LogScope, MachineGit, Operations, Outcome, PartialClone, PatchFile,
+    Program, PullMode, RefUpdate, RemoteChange, RemoteCheck, RemoteEntry, RepositoryForm,
+    ResetMode, Sequence, SigningKey, SparseCheckout, WorktreeChange, WorktreeChanges,
 };
 pub use range_diff::{
     RangeCommit, RangePair, RangeStatus, parse_range_diff, rebase_onto, rebase_onto_from_head,
