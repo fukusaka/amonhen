@@ -593,8 +593,10 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
     private var assistantKey: String { repository.workdir ?? "remote" }
 
     @objc private func aiExplain() {
-        guard let texts = selectedConflictTexts(), Assistant.confirm(repository: assistantKey, summary: L("One conflict in %@", path))
-        else { return NSSound.beep() }
+        // 選んだコンフリクトがなければ鳴らす。AI を使うかの問いで断った・使わない設定なら、黙って戻る（Working Copy の
+        // AI のボタンと同じ）。
+        guard let texts = selectedConflictTexts() else { return NSSound.beep() }
+        guard Assistant.confirm(repository: assistantKey, summary: L("One conflict in %@", path)) else { return }
         let path = self.path, workdir = repository.workdir
         AssistantPanel.show(title: L("Conflict Explanation"), over: view.window) { useCache, onText in
             try await Assistant.run(
@@ -613,8 +615,10 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
     }
 
     @objc private func aiResolve() {
-        guard let texts = selectedConflictTexts(), Assistant.confirm(repository: assistantKey, summary: L("One conflict in %@", path))
-        else { return NSSound.beep() }
+        // 選んだコンフリクトがなければ鳴らす。AI を使うかの問いで断った・使わない設定なら、黙って戻る（Working Copy の
+        // AI のボタンと同じ）。
+        guard let texts = selectedConflictTexts() else { return NSSound.beep() }
+        guard Assistant.confirm(repository: assistantKey, summary: L("One conflict in %@", path)) else { return }
         let index = selected
         let original = conflicts[index]
         let path = self.path, workdir = repository.workdir
