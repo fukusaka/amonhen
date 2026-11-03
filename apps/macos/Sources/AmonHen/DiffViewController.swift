@@ -1304,6 +1304,15 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         diffView.fileMenu = { [weak self] file in self?.menuForFile(file) }
         diffView.onToggleViewed = { [weak self] file in self?.toggleViewed(file) }
         diffView.onExplainHunk = { [weak self] path, hunk in self?.explainHunk(path: path, hunk: hunk) }
+        // ⌥J・⌥K（全ファイルを並べていないとき）: 一覧の次・前のファイルへ。
+        diffView.onMoveFile = { [weak self] step in
+            guard let self else { return }
+            let rows = rowOfFile.sorted()
+            let next = (rows.firstIndex(of: files.selectedRow) ?? -1) + step
+            guard rows.indices.contains(next) else { return NSSound.beep() }
+            files.selectRowIndexes([rows[next]], byExtendingSelection: false)
+            files.scrollRowToVisible(rows[next])
+        }
         diffView.onTopFileChange = { [weak self] file in
             guard let self, stacked != nil, file < rowOfFile.count else { return }
             let row = rowOfFile[file]

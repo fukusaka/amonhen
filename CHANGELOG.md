@@ -179,6 +179,8 @@ becomes the GitHub Release notes.
 - macOS: changing One Line per Commit or History Items keeps several selected commits selected.
 - macOS: dragging one of several selected History rows moves the commit you grabbed, not the newest selected one.
 - macOS: in History's edit mode, undoing every change clears the conflict marks on the rows.
+- macOS: ⌥J and ⌥K move to the next or previous file in History's diff when its files aren't stacked; they only
+  beeped.
 
 ### [0.2.8] - 2026-10-30
 
