@@ -2,6 +2,7 @@
  * File History と Blame を開く（エクスプローラー・エディタのタブの右クリック、コマンドパレットは今のエディタの
  * ファイル、メインビューのファイルの右クリック）。ファイルを含むリポジトリに切り替えて、メインビューに出す
  */
+import { realpathSync } from 'node:fs';
 import { relative, sep } from 'node:path';
 import * as vscode from 'vscode';
 import type { RepositoryManager } from '../state/manager.ts';
@@ -29,20 +30,39 @@ function targetOf(
 
 /**
  * `fsPath` を含むリポジトリ（入れ子なら深い方）と、その中のパス（/ 区切り）。Windows では大文字小文字を区別しない
- * （VSCode の Uri はドライブ文字を小文字にするが、git は大文字で返す）
+ * （VSCode の Uri はドライブ文字を小文字にするが、git は大文字で返す）。見つからなければ、シンボリックリンクを
+ * 解いて探し直す（git のリポジトリのパスは解いたもの。macOS の /var → /private/var など）
  */
 function locate(manager: RepositoryManager, fsPath: string): { repo: Repository; path: string } | undefined {
+  return within(manager, fsPath, (p) => p) ?? within(manager, fsPath, real);
+}
+
+function within(
+  manager: RepositoryManager,
+  fsPath: string,
+  resolve: (p: string) => string,
+): { repo: Repository; path: string } | undefined {
   const fold = (p: string) => (process.platform === 'win32' ? p.toLowerCase() : p);
-  const file = fold(fsPath);
-  const repo = manager.repositories
-    .filter((r) => {
-      const root = fold(r.root);
-      return file === root || file.startsWith(root.endsWith(sep) ? root : root + sep);
+  const filePath = resolve(fsPath);
+  const file = fold(filePath);
+  const found = manager.repositories
+    .map((r) => ({ r, root: resolve(r.root) }))
+    .filter(({ root }) => {
+      const folded = fold(root);
+      return file === folded || file.startsWith(folded.endsWith(sep) ? folded : folded + sep);
     })
     .sort((a, b) => b.root.length - a.root.length)[0];
-  if (!repo) return undefined;
-  const path = relative(repo.root, fsPath).split(sep).join('/');
-  return path ? { repo, path } : undefined;
+  if (!found) return undefined;
+  const path = relative(found.root, filePath).split(sep).join('/');
+  return path ? { repo: found.r, path } : undefined;
+}
+
+function real(p: string): string {
+  try {
+    return realpathSync.native(p);
+  } catch {
+    return p;
+  }
 }
 
 export function registerFileToolCommands(
