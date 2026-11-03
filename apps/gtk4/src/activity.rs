@@ -270,11 +270,14 @@ fn column_header(cells: &[(&str, i32)]) -> (gtk::ListBox, gtk::Box) {
     (list, line)
 }
 
-/// Operations の記録の印（daemon のものか、番号。一覧を作り直しても選び直せる）。
+/// Operations の記録の印（どの daemon 越しのリポジトリのものか、番号。一覧を作り直しても選び直せる）。
 fn record_key(r: &Value) -> String {
     format!(
         "{}:{}",
-        r["remote"].as_str().unwrap_or_default(),
+        r["remoteKey"]
+            .as_str()
+            .or(r["remote"].as_str())
+            .unwrap_or_default(),
         r["seq"].as_u64().unwrap_or(0)
     )
 }
@@ -402,6 +405,12 @@ impl Entry {
     /// daemon 越しのリポジトリか（SSH 先・手元の共有の daemon。daemon の記録も読む）。
     fn is_remote(&self) -> bool {
         self.repo.connection_state().is_some()
+    }
+
+    /// daemon の記録を、どのリポジトリのものか見分ける鍵（開いているリポジトリごとに違う。窓の名前は同じことが
+    /// あるので、名前では分けない。macOS 版と同じ）。
+    fn key(&self) -> String {
+        format!("{:p}", Arc::as_ptr(&self.repo))
     }
 
     fn same(&self, other: &Entry) -> bool {
@@ -730,6 +739,7 @@ impl Activity {
                                 .unwrap_or_default()
                             {
                                 r["remote"] = json!(entry.name);
+                                r["remoteKey"] = json!(entry.key());
                                 loaded.push(r);
                             }
                         }
@@ -849,15 +859,15 @@ impl Activity {
                         let cancel = gtk::Button::with_label(&tr!("Cancel Operation"));
                         cancel.add_css_class("activity-small");
                         let seq = r["seq"].as_u64().unwrap_or(0);
-                        let remote = remote.map(str::to_owned);
+                        let remote = remote.and(r["remoteKey"].as_str()).map(str::to_owned);
                         let entries = entries.clone();
                         cancel.connect_clicked(move |_| {
-                            if let Some(name) = &remote {
+                            if let Some(key) = &remote {
                                 // daemon への往復なので、裏の糸で（macOS 版と同じ）。
                                 let repo = entries
                                     .borrow()
                                     .iter()
-                                    .find(|e| e.name == *name)
+                                    .find(|e| e.key() == *key)
                                     .map(|e| e.repo.clone());
                                 if let Some(repo) = repo {
                                     let command = json!({ "op": "cancelActivity", "seq": seq, "remote": true });
