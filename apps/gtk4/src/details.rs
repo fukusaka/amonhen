@@ -60,14 +60,22 @@ impl Person {
         }
     }
 
-    fn show(&self, name: &str, email: &str, time: &str, recorded: Option<String>) {
+    /// `link` なら、名前を押すと History をその人のコミットで絞り込む（[`Details::connect_person`]。History の
+    /// 詳細だけ。ほかではただの文字）。
+    fn show(&self, name: &str, email: &str, time: &str, recorded: Option<String>, link: bool) {
         let e = |s: &str| glib::markup_escape_text(s).to_string();
-        // 名前を押すと、History をその人のコミットで絞り込む（[`Details::connect_person`]）。
+        let shown = if link {
+            format!(
+                "<a href=\"person:{}\" title=\"{}\"><b>{}</b></a>",
+                e(&glib::Uri::escape_string(name, None, false)),
+                e(&tr!("Filter to this person’s commits")),
+                e(name)
+            )
+        } else {
+            format!("<b>{}</b>", e(name))
+        };
         let markup = format!(
-            "<a href=\"person:{}\" title=\"{}\"><b>{}</b></a>  <span size=\"small\" alpha=\"55%\">{}</span>\n<span alpha=\"70%\">{}\n{}</span>",
-            e(&glib::Uri::escape_string(name, None, false)),
-            e(&tr!("Filter to this person’s commits")),
-            e(name),
+            "{shown}  <span size=\"small\" alpha=\"55%\">{}</span>\n<span alpha=\"70%\">{}\n{}</span>",
             e(&self.role),
             e(email),
             e(time)
@@ -1109,11 +1117,14 @@ impl Details {
                 tz => format!("{d} ({tz})"),
             }
         };
+        // 名前を押して絞り込めるのは、History の詳細だけ（ほかではリンクにしない）。
+        let link = self.on_person.borrow().is_some();
         self.author.show(
             str_of(info, "author"),
             str_of(info, "authorEmail"),
             &when("authorTime", "authorTz"),
             recorded("recordedAuthor"),
+            link,
         );
         // 作者とコミッターが同じ人（名前とメールが同じ、記録も同じ）なら、作者だけを出す。
         let same = info["committer"] == info["author"]
@@ -1128,6 +1139,7 @@ impl Details {
                 str_of(info, "committerEmail"),
                 &when("committerTime", "committerTz"),
                 recorded("recordedCommitter"),
+                link,
             );
         }
         self.people.set_homogeneous(!same);
@@ -1205,11 +1217,19 @@ impl Details {
         };
         let author = str_of(info, "author");
         self.brief_avatar.show(author, str_of(info, "authorEmail"));
+        // 名前を押して絞り込めるのは、History の詳細だけ（ほかではリンクにしない）。
+        let shown = if self.on_person.borrow().is_some() {
+            format!(
+                "<a href=\"person:{}\" title=\"{}\"><b>{}</b></a>",
+                esc(&glib::Uri::escape_string(author, None, false)),
+                esc(&tr!("Show only commits by {name}", name = author)),
+                esc(author)
+            )
+        } else {
+            format!("<b>{}</b>", esc(author))
+        };
         let mut markup = format!(
-            "<a href=\"person:{}\" title=\"{}\"><b>{}</b></a>  <span alpha=\"60%\">{}</span>",
-            esc(&glib::Uri::escape_string(author, None, false)),
-            esc(&tr!("Show only commits by {name}", name = author)),
-            esc(author),
+            "{shown}  <span alpha=\"60%\">{}</span>",
             esc(&date(info["authorTime"].as_i64().unwrap_or_default()))
         );
         let refs = strings(&info["refs"]);

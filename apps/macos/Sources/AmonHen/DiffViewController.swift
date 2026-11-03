@@ -1915,6 +1915,8 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         renderer.monospacedBody = Settings.monospacedCommitMessage
         renderer.highlight = CommitHeaderRenderer.highlightTerms(of: searchQuery)
         renderer.linksRefs = onSelectRef != nil
+        renderer.linksAuthor = onSearch != nil
+        peopleStrip.selectable = onSearch != nil
         let text = NSMutableAttributedString(attributedString: renderer.render())
         let showPeople = style != .compact
         // 帯の高さは人によるので、人を入れてから並べる。

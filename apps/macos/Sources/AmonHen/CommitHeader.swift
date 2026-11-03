@@ -68,6 +68,8 @@ struct CommitHeaderRenderer {
     var highlight: [String] = []
     /// ref の名前をリンクにする（押すとその ref の履歴に絞り込む。History の詳細だけ）。
     var linksRefs = true
+    /// 作者の名前をリンクにする（押すとその人のコミットで絞り込む。History の詳細だけ）。
+    var linksAuthor = true
 
 
     init(info: CommitInfo, extras: CommitExtras?, style: CommitHeaderStyle) {
@@ -254,6 +256,7 @@ struct CommitHeaderRenderer {
 
     /// 作者の名前（押すと、その人のコミットで絞り込む）。
     private func authorLink(_ name: String, _ attrs: [NSAttributedString.Key: Any]) {
+        guard linksAuthor else { return add(name, attrs) }
         var link = attrs
         link[.link] = Self.authorScheme + name
         link[.toolTip] = L("Show only commits by %@", name)

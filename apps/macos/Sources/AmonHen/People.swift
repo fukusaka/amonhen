@@ -13,6 +13,10 @@ final class PeopleStrip: NSView {
 
     /// 名前を押したとき（History をその人のコミットで絞り込む）。
     var onSelectPerson: ((String) -> Void)?
+    /// 名前を押せる（絞り込める History の詳細だけ。ほかでは押しても何もしないので、押せる形にしない）。
+    var selectable = true {
+        didSet { for v in [author, committer] { v.selectable = selectable } }
+    }
 
     private let author = PersonView(role: L("Author"))
     private let committer = PersonView(role: L("Committer"))
@@ -120,6 +124,14 @@ private final class PersonView: NSView {
     func updateAvatar() {
         avatar.image = Settings.showAvatars ? Avatars.shared.circle(for: person.1, name: person.0, size: 32) : nil
         avatar.isHidden = !Settings.showAvatars
+    }
+
+    /// 名前を押せる。
+    var selectable = true {
+        didSet {
+            name.action = selectable ? #selector(selectPerson) : nil
+            name.toolTip = selectable ? L("Filter to this person’s commits") : nil
+        }
     }
 
     @objc private func selectPerson() { onSelect?(person.0) }
