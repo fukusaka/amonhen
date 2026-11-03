@@ -1147,18 +1147,17 @@ impl Editor {
         }
         let this = this.clone();
         glib::spawn_future_local(async move {
-            let dialog = gtk::AlertDialog::builder()
-                .message(tr!(
+            // ほかの確認と同じシートで（Return で Mark Resolved、Esc で取り消す。macOS 版と同じ）。
+            let sheet = crate::sheets::Sheet::unnamed(
+                this.parent_window().as_ref(),
+                &tr!(
                     "Mark as resolved with {count} conflicts left?",
                     count = remaining
-                ))
-                .detail(tr!("The conflict markers stay in the file."))
-                .buttons([tr!("Cancel"), tr!("Mark Resolved")])
-                .cancel_button(0)
-                .default_button(1)
-                .modal(true)
-                .build();
-            if dialog.choose_future(this.parent_window().as_ref()).await == Ok(1) {
+                ),
+                &tr!("The conflict markers stay in the file."),
+            );
+            sheet.buttons(&tr!("Mark Resolved"), false, None);
+            if sheet.run().await == crate::sheets::Response::Ok {
                 this.save(true);
             }
         });
