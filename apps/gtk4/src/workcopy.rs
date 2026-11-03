@@ -2034,20 +2034,39 @@ impl Inner {
             Inner::toggle_selected(this);
             return true;
         }
-        let Some(entry) = this.selected_entry() else {
+        if !matches!(key, Key::BackSpace | Key::Delete | Key::KP_Delete) {
             return false;
-        };
-        match key {
-            Key::BackSpace | Key::Delete | Key::KP_Delete => {
-                if entry.kind != StatusKind::Unmerged && entry.is_unstaged() {
-                    Inner::discard_file(this, &entry);
-                } else {
-                    this.list.error_bell();
-                }
-            }
-            _ => return false,
+        }
+        // 一覧で選んだ行のファイル（差分に出しているものではない）。ディレクトリの行や、選んでいなければ音で
+        // 知らせる。コンフリクトは何もしない（macOS 版と同じ）。
+        match this.list_entry() {
+            Some(entry) if entry.kind == StatusKind::Unmerged => {}
+            Some(entry) if entry.is_unstaged() => Inner::discard_file(this, &entry),
+            _ => this.list.error_bell(),
         }
         true
+    }
+
+    /// 一覧で選んだ行のファイル（macOS 版の `selectedRow`）。いくつも選んでいれば差分に出しているファイルの行、
+    /// それが選んだ中になければ最後の行。ディレクトリの行なら None。
+    fn list_entry(&self) -> Option<StatusEntry> {
+        let positions = self.selected_positions();
+        let shown = self.selected.borrow().clone();
+        let row_entries = self.row_entries.borrow();
+        let entries = self.entries.borrow();
+        let entry_at = |at: usize| {
+            row_entries
+                .get(at)
+                .copied()
+                .flatten()
+                .and_then(|i| entries.get(i))
+        };
+        let at = positions
+            .iter()
+            .copied()
+            .find(|&at| entry_at(at).is_some_and(|e| Some(&e.path) == shown.as_ref()))
+            .or_else(|| positions.last().copied())?;
+        entry_at(at).cloned()
     }
 
     /// Space・Enter: 一覧で選んだファイル（コンフリクトを除く）を、すべて含めていれば外し、そうでなければ含める
