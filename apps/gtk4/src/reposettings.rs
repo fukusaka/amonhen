@@ -619,7 +619,6 @@ impl Picker {
         self.action.set_state(&current.to_variant());
         let text = shown.unwrap_or_else(|| current.to_owned());
         self.label.set_text(&text);
-        self.button.set_tooltip_text(Some(&text));
     }
 }
 

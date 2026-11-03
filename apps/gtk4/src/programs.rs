@@ -404,7 +404,6 @@ fn git_row(
     info.set_child(Some(&gtk::Label::new(Some("ⓘ"))));
     info.set_has_frame(false);
     info.set_valign(gtk::Align::Center);
-    info.set_tooltip_text(Some(&tr!("Where the value comes from")));
     info.set_popover(Some(&popover));
     line.append(&info);
     widget.append(&line);

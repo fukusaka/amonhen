@@ -1123,7 +1123,6 @@ fn fill_scan_folders(list: &gtk::ListBox, session: &Rc<HostSession>) {
         });
         line.append(&depth);
         let remove = gtk::Button::from_icon_name("list-remove-symbolic");
-        remove.set_tooltip_text(Some(&tr!("Stop Scanning")));
         remove.add_css_class("flat");
         let (p, l, s) = (root.path.clone(), list.downgrade(), Rc::downgrade(session));
         remove.connect_clicked(move |_| {
@@ -1137,7 +1136,6 @@ fn fill_scan_folders(list: &gtk::ListBox, session: &Rc<HostSession>) {
     }
     let line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     let add = gtk::Button::from_icon_name("list-add-symbolic");
-    add.set_tooltip_text(Some(&tr!("Add a Folder to Scan on {host}", host = host)));
     add.add_css_class("flat");
     let (l, s) = (list.downgrade(), Rc::downgrade(session));
     add.connect_clicked(move |button| {
