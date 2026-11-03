@@ -108,6 +108,8 @@ becomes the GitHub Release notes.
   Copy says why a diff can't be read, and the Rebase sheet stops "Checking for conflicts…" when the check fails.
 - macOS: Create Pull Request needs a title and base, the Branches count includes stacked-on branches, Stashes updates
   while filtering, a renamed group stays selected, Clone doesn't default to an SSH folder, and Activity keeps its place.
+- macOS: opening an added worktree through the shared daemon edits that worktree when its main repository wasn't open
+  yet.
 
 - The GTK4 app's Undo button asks once; it opened the question twice, so one stayed after undoing.
 - A `.mailmap`, or a mailmap setting (`log.mailmap`, `mailmap.file`), changed while the engine was reading the old

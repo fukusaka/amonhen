@@ -289,6 +289,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let key = WorktreeInfo.canonical(main)
             if let window = windows.first(where: { WorktreeInfo.canonical(RepositoryLocation.path($0.location)) == key }) {
                 window.edit(worktree: path)
+            } else if let tab = connecting.first(where: { WorktreeInfo.canonical(RepositoryLocation.path($0.location)) == key }) {
+                // daemon 越しに開くと、まだつないでいるタブ。つないだら、その worktree を書き込む先にする。
+                tab.editWorktree = path
             }
             return opened
         }
@@ -407,6 +410,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let window = try RepositoryWindow(
             location: tab.location, repository: repository, debug: debug, tabWith: tab.window, front: key)
         if let page = tab.page { window.show(page: page) }
+        if let worktree = tab.editWorktree { window.edit(worktree: worktree) }
         if selected, !key { group?.selectedWindow = window.window }
         if lastActiveWindow === tab.window { lastActiveWindow = window.window }
         connecting.removeAll { $0 === tab }
