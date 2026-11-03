@@ -25,6 +25,8 @@ enum SubmoduleSheet {
         let field = NSTextField(string: value)
         field.placeholderString = placeholder
         field.frame.size = NSSize(width: 360, height: 24)
+        // 左寄せの縦の並びに入れても、幅が文字の分に縮まないように。
+        field.widthAnchor.constraint(equalToConstant: 360).isActive = true
         return field
     }
 
