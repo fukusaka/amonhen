@@ -345,6 +345,9 @@ fn location_for(location: &str, path: &str) -> String {
 }
 
 /// 窓の worktree: 一覧と変更の数。
+/// worktree を開けなかったときの知らせ（見出し、理由）。
+type OpenFailure = Rc<dyn Fn(String, String)>;
+
 pub struct Worktrees {
     opened: RefCell<Option<Arc<Repository>>>,
     /// 窓の場所（ほかの worktree を同じつなぎ方で開く）。
@@ -360,6 +363,8 @@ pub struct Worktrees {
     on_edit: RefCell<Option<EditListener>>,
     /// 見張りの知らせ。
     notify: RefCell<Option<Notify>>,
+    /// worktree を開けなかった（見出し、理由。ステータスバーの失敗の帯に出す）。
+    on_open_failure: RefCell<Option<OpenFailure>>,
     list: RefCell<Vec<Info>>,
     counts: RefCell<HashMap<String, usize>>,
     /// ほかの worktree の status の指紋（変わっていなければ画面を変えない）。
@@ -403,6 +408,7 @@ impl Worktrees {
             loading: Cell::new(0),
             on_list: RefCell::default(),
             on_counts: RefCell::default(),
+            on_open_failure: RefCell::default(),
             pending,
         })
     }
@@ -560,6 +566,11 @@ impl Worktrees {
         self.on_edit.replace(Some(Rc::new(f)));
     }
 
+    /// 書き込む先にする worktree を開けなかったら `f(見出し, 理由)` を呼ぶ（macOS 版と同じくステータスバーに）。
+    pub fn connect_open_failure(&self, f: impl Fn(String, String) + 'static) {
+        self.on_open_failure.replace(Some(Rc::new(f)));
+    }
+
     /// 開いた worktree の見張りの知らせを `notify` で送る。
     pub fn set_notify(&self, notify: Notify) {
         self.notify.replace(Some(notify));
@@ -602,12 +613,10 @@ impl Worktrees {
             let repo = match opened {
                 Ok(repo) => repo,
                 Err(e) => {
-                    let window = gtk::Window::list_toplevels()
-                        .into_iter()
-                        .filter_map(|w| w.downcast::<gtk::Window>().ok())
-                        .find(|w| w.is_active());
-                    crate::sheets::inform(window.as_ref(), &tr!("Can’t open the worktree"), &e)
-                        .await;
+                    let f = this.on_open_failure.borrow().clone();
+                    if let Some(f) = f {
+                        f(tr!("Can’t open the worktree"), e);
+                    }
                     return;
                 }
             };

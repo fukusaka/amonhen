@@ -1253,6 +1253,22 @@ fn build_tab(
         );
         view.set_footer(Some(band.upcast_ref()));
     }
+    // 書き込む先にする worktree を開けなかった: ステータスバーの失敗の帯に（macOS 版の showFailure）。
+    let a = Rc::downgrade(&actions);
+    worktrees.connect_open_failure(move |heading, message| {
+        let Some(actions) = a.upgrade() else { return };
+        glib::spawn_future_local(async move {
+            actions
+                .fail(crate::statusbar::Failure {
+                    message,
+                    kind: None,
+                    path: None,
+                    command: None,
+                    heading: Some(heading),
+                })
+                .await;
+        });
+    });
     // 書き込む先にした worktree の見張りの知らせ（裏のスレッドから）。
     let note_tx = tx.clone();
     worktrees.set_notify(Arc::new(move |note| {
