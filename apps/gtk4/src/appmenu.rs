@@ -1397,13 +1397,20 @@ fn set_upstream(p: &Rc<Parts>) {
     });
 }
 
-/// Merge・Rebase の相手の候補: History で選んでいるコミット（あれば先頭）、今のブランチ以外のローカル
+/// Merge・Rebase の相手の候補: History で 1 つだけ選んでいるコミット（あれば先頭）、今のブランチ以外のローカル
 /// ブランチ、リモートブランチ、タグ。
 fn revision_choices(p: &Parts) -> Vec<(String, String)> {
     let mut choices = Vec::new();
     let refs = p.refs.borrow();
     let head = refs.as_ref().and_then(|r| r.refs.head);
-    if let Some(id) = selected_commit(p)
+    // History で 1 つだけ選んでいるコミット（ほかのページを出していても。いくつも選んでいれば出さない。macOS 版の
+    // `selectedCommit` と同じ）。
+    let single = p.view.current().and_then(|(_, history)| {
+        let rows = p.view.selection();
+        let [row] = rows.as_slice() else { return None };
+        history.graph.ids().get(*row as usize).copied()
+    });
+    if let Some(id) = single
         && Some(id) != head
     {
         let hex = id.to_string();
