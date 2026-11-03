@@ -80,6 +80,8 @@ pub fn section() -> (gtk::Box, gio::SimpleActionGroup) {
         let name = all().iter().find(|t| t.id == id).map(title_of);
         l.set_text(&name.unwrap_or_default());
     });
+    // 名前だけの一覧なので見出しは出さない（macOS 版の List と同じ）。
+    table.hide_header();
     let fill = {
         let t = Rc::downgrade(&table);
         move || {

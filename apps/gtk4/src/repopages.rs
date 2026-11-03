@@ -34,6 +34,17 @@ impl Table {
         }
     }
 
+    /// 列の見出しを隠す（macOS 版の、見出しのない List）。
+    pub fn hide_header(&self) {
+        let mut child = self.view.first_child();
+        while let Some(c) = child {
+            if c.css_name() == "header" {
+                c.set_visible(false);
+            }
+            child = c.next_sibling();
+        }
+    }
+
     /// 文字の列。セルの部品の名前は行の id（右クリックで行を見つける）。
     pub fn text_column(
         &self,
