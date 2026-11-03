@@ -1211,20 +1211,20 @@ fn teardown(tab: &Rc<Tab>) {
 }
 
 /// タブを閉じる。窓の最後のタブなら窓を閉じる。ただし、ほかに窓がなくて最後のリポジトリを閉じるときは、終わらずに
-/// リポジトリのページを出す（macOS 版と同じ）。
+/// リポジトリのページを新しい窓で出す（macOS 版と同じく、ページの窓の大きさで。先に出してから閉じるので、最後の窓を
+/// 閉じたことにならない）。
 pub fn close_tab(tab: &Rc<Tab>) {
     let Some(host) = tab.host() else { return };
     if host.tabs.borrow().len() <= 1 {
         let alone = WINDOWS.with(|w| w.borrow().len() <= 1);
-        match tab.window().and_then(|w| w.application()) {
-            Some(app) if alone && !tab.is_home() => {
-                show_home(&app, Some(host.clone()));
-            }
-            _ => {
-                host.window.close();
-                return;
-            }
+        if alone
+            && !tab.is_home()
+            && let Some(app) = tab.window().and_then(|w| w.application())
+        {
+            show_home(&app, None);
         }
+        host.window.close();
+        return;
     }
     detach(&host, tab);
     teardown(tab);

@@ -2626,7 +2626,7 @@ fn build_tab(
                         if let Some(tab) = tab_weak.upgrade() {
                             tabs::close_tab(&tab);
                         }
-                        // 閉じた後に前にある窓（最後のタブならリポジトリのページになった同じ窓）に出す。
+                        // 閉じた後に前にある窓（最後のタブなら、新しく出したリポジトリのページの窓）に出す。
                         let window = tabs::front_window().map(|h| h.window.clone());
                         gtk::AlertDialog::builder()
                             .message(&e)
