@@ -211,7 +211,7 @@ pub fn confirm(actions: &Rc<Actions>, sources: Vec<Source>, branch: Option<Strin
                     } else {
                         tr!(
                             "⚠︎ {names} conflict, and git stops when one before the last conflicts. Merge them one by one instead.",
-                            names = names.join(", ")
+                            names = list_names(&names)
                         )
                     });
                     label.add_css_class("warning");
@@ -482,6 +482,18 @@ impl OrderList {
     }
 }
 
+/// 名前を並べる（macOS 版の `ListFormatter` と同じ: 英語は「a and b」「a, b, and c」、日本語は「a、b、c」）。
+fn list_names(names: &[&str]) -> String {
+    use amonhen_model::i18n::{Lang, current};
+    match (current(), names) {
+        (Lang::Ja, _) => names.join("、"),
+        (Lang::En, [one]) => (*one).to_owned(),
+        (Lang::En, [a, b]) => format!("{a} and {b}"),
+        (Lang::En, [rest @ .., last]) => format!("{}, and {last}", rest.join(", ")),
+        (Lang::En, []) => String::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -491,6 +503,18 @@ mod tests {
             rev: rev.into(),
             kind,
         }
+    }
+
+    #[test]
+    fn lists_names_as_list_formatter_does() {
+        use amonhen_model::i18n::{Lang, with};
+        with(Lang::En, || {
+            assert_eq!(list_names(&["a", "b"]), "a and b");
+            assert_eq!(list_names(&["a", "b", "c"]), "a, b, and c");
+        });
+        with(Lang::Ja, || {
+            assert_eq!(list_names(&["a", "b", "c"]), "a、b、c")
+        });
     }
 
     #[test]
