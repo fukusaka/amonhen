@@ -176,7 +176,8 @@ fn install_css() {
     provider.load_from_string(
         ".activity-success { color: @success_color; } \
          .activity-error { color: @error_color; } \
-         .activity-warning { color: @warning_color; }",
+         .activity-warning { color: @warning_color; } \
+         button.activity-small { min-height: 20px; padding: 1px 8px; font-size: smaller; }",
     );
     if let Some(display) = gtk::gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
@@ -267,6 +268,28 @@ fn column_header(cells: &[(&str, i32)]) -> (gtk::ListBox, gtk::Box) {
         r.set_activatable(false);
     }
     (list, line)
+}
+
+/// Operations の記録の印（daemon のものか、番号。一覧を作り直しても選び直せる）。
+fn record_key(r: &Value) -> String {
+    format!(
+        "{}:{}",
+        r["remote"].as_str().unwrap_or_default(),
+        r["seq"].as_u64().unwrap_or(0)
+    )
+}
+
+/// Operations の詳細: リポジトリ・内容・エラー（macOS 版と同じ）。
+fn record_detail(r: &Value) -> String {
+    let mut text = format!(
+        "{}\n{}",
+        r["repo"].as_str().unwrap_or_default(),
+        r["label"].as_str().unwrap_or_default()
+    );
+    if let Some(e) = r["error"].as_str() {
+        text.push_str(&format!("\n\n{e}"));
+    }
+    text
 }
 
 /// `line` の `index` 番目の列を、頭を切って縮める（パス。終わりが見える）。
@@ -780,19 +803,12 @@ impl Activity {
                 for (r, name) in shown.into_iter().zip(names) {
                     let ok = r["ok"].as_bool();
                     let label_text = r["label"].as_str().unwrap_or_default();
-                    let repo_path = r["repo"].as_str().unwrap_or_default();
                     let mark = match ok {
                         None => ("●", "activity-warning"),
                         Some(true) => ("✓", "activity-success"),
                         Some(false) => ("✗", "activity-error"),
                     };
                     let remote = r["remote"].as_str();
-                    let mut content = label_text.to_owned();
-                    if ok.is_none()
-                        && let Some(p) = r["progress"].as_str()
-                    {
-                        content.push_str(&format!("  {p}"));
-                    }
                     let duration = r["duration"].as_f64().map_or("…".to_owned(), ms);
                     let line = row(&[
                         (
@@ -802,27 +818,46 @@ impl Activity {
                         ),
                         (mark.0, 16, &[mark.1]),
                         (&name, name_width, &[]),
-                        (&content, 0, &[]),
+                        (label_text, 0, &[]),
                         (&duration, 64, &["numeric"]),
                     ]);
-                    let mut tip = format!("{repo_path}\n{label_text}");
-                    if let Some(e) = r["error"].as_str() {
-                        tip.push_str(&format!("\n\n{e}"));
+                    let tip = record_detail(r);
+                    let key = record_key(r);
+                    // 中身の列: 内容（説明は内容だけ）、走っていれば進み具合（小さく薄く）、右寄せの「取り消す」
+                    // （macOS 版と同じ）。
+                    let content_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+                    content_box.set_hexpand(true);
+                    if let Some(content) = line
+                        .first_child()
+                        .and_then(|c| c.next_sibling())
+                        .and_then(|c| c.next_sibling())
+                        .and_then(|c| c.next_sibling())
+                        && let Some(before) = content.prev_sibling()
+                    {
+                        line.remove(&content);
+                        content.set_hexpand(false);
+                        content.set_tooltip_text(Some(label_text));
+                        content_box.append(&content);
+                        line.insert_child_after(&content_box, Some(&before));
                     }
-                    line.set_tooltip_text(Some(&tip));
-                    let key = format!(
-                        "{}:{}",
-                        remote.unwrap_or_default(),
-                        r["seq"].as_u64().unwrap_or(0)
-                    );
+                    if ok.is_none()
+                        && let Some(p) = r["progress"].as_str()
+                    {
+                        let progress = label(p, &["caption", "dim-label"]);
+                        progress.set_ellipsize(gtk::pango::EllipsizeMode::End);
+                        content_box.append(&progress);
+                    }
                     line.set_widget_name(&key);
                     // SAFETY: 鍵 "detail" には、いつも String を入れて String で読む。
                     unsafe { line.set_data("detail", tip.clone()) };
                     let reselect = wanted.as_deref() == Some(key.as_str());
                     // 走っていて取り消せる操作には「取り消す」。
                     if ok.is_none() && r["cancellable"].as_bool() == Some(true) {
+                        let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+                        spacer.set_hexpand(true);
+                        content_box.append(&spacer);
                         let cancel = gtk::Button::with_label(&tr!("Cancel Operation"));
-                        cancel.add_css_class("flat");
+                        cancel.add_css_class("activity-small");
                         let seq = r["seq"].as_u64().unwrap_or(0);
                         let remote = remote.map(str::to_owned);
                         let entries = entries.clone();
@@ -844,7 +879,7 @@ impl Activity {
                                 amonhen_model::activity::cancel(seq);
                             }
                         });
-                        line.append(&cancel);
+                        content_box.append(&cancel);
                     }
                     op_list.append(&line);
                     if reselect
@@ -855,11 +890,18 @@ impl Activity {
                     }
                 }
                 op_rebuilding.set(false);
-                // 選んでいた記録が絞り込みで消えたら、詳細も消す。
-                if op_list.selected_row().is_none() && op_selected.borrow().is_some() {
-                    op_selected.replace(None);
-                    op_detail.set_text("");
-                    op_detail_scrolled.set_visible(false);
+                // 選んでいた記録が絞り込みで隠れても、詳細は出したまま（macOS 版と同じく、すべての記録から探す）。
+                // 記録そのものがなくなったら消す。
+                if op_list.selected_row().is_none() {
+                    let wanted = op_selected.borrow().clone();
+                    match wanted.and_then(|w| records.iter().find(|r| record_key(r) == w)) {
+                        Some(r) => op_detail.set_text(&record_detail(r)),
+                        None => {
+                            op_selected.replace(None);
+                            op_detail.set_text("");
+                            op_detail_scrolled.set_visible(false);
+                        }
+                    }
                 }
             }
         };
@@ -961,7 +1003,8 @@ impl Activity {
                         } else {
                             tr!("Undo to Here")
                         });
-                        button.add_css_class("flat");
+                        // 枠のあるボタン（macOS 版と同じ）。
+                        button.set_valign(gtk::Align::Center);
                         button.set_tooltip_text(Some(&if i == 0 {
                             tr!("Undo this operation.")
                         } else {
