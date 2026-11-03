@@ -806,7 +806,8 @@ fn install_css() {
     provider.load_from_string(
         ".config-editable { padding: 1px 4px; border-radius: 4px; \
            box-shadow: inset 0 0 0 1px transparent; } \
-         .config-editable:hover { background-color: alpha(@theme_base_color, 0.6); \
+         .config-editable:hover, .config-one-selected row:selected .config-editable { \
+           background-color: alpha(@theme_base_color, 0.6); \
            box-shadow: inset 0 0 0 1px alpha(currentColor, 0.35); } \
          .config-entry { min-height: 0; padding-top: 0; padding-bottom: 0; }",
     );
@@ -1576,7 +1577,18 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
     adding.connect_items_changed(move |store, _, _, _| a.set_enabled(store.n_items() == 0));
     enable();
     let en = enable.clone();
-    selection.connect_selection_changed(move |_, _, _| en());
+    // 書けるセルの枠は、マウスが載っているときと、その行だけを選んでいるときに出す（macOS 版と同じ）。
+    let v = view.downgrade();
+    selection.connect_selection_changed(move |sel, _, _| {
+        en();
+        if let Some(v) = v.upgrade() {
+            if sel.selection().size() == 1 {
+                v.add_css_class("config-one-selected");
+            } else {
+                v.remove_css_class("config-one-selected");
+            }
+        }
+    });
 
     let t = table.clone();
     s.on_refresh(move |_| {
