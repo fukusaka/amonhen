@@ -101,6 +101,8 @@ pub enum Kind {
     CircleDashed,
     /// pencil（submodule の中に変更がある）
     Pencil,
+    /// pencil.and.list.clipboard（History の編集モード）
+    EditList,
 }
 
 mod imp {
@@ -483,6 +485,30 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.line_to(10.5, 8.0);
             p.move_to(6.0, 10.5);
             p.line_to(10.5, 10.5);
+        }
+        Kind::EditList => {
+            // クリップボード（上に留め具）と、中の 3 本の行。右下に鉛筆。
+            p.move_to(6.0, 3.0);
+            p.line_to(3.5, 3.0);
+            p.line_to(3.5, 14.0);
+            p.line_to(8.5, 14.0);
+            p.move_to(10.0, 3.0);
+            p.line_to(12.5, 3.0);
+            p.line_to(12.5, 7.5);
+            p.add_rounded_rect(&gsk::RoundedRect::from_rect(
+                graphene::Rect::new(6.0, 1.8, 4.0, 2.4),
+                0.8,
+            ));
+            for y in [6.5, 9.0, 11.5] {
+                p.move_to(5.8, y);
+                p.line_to(if y > 10.0 { 7.5 } else { 10.0 }, y);
+            }
+            p.move_to(9.6, 14.4);
+            p.line_to(9.8, 12.8);
+            p.line_to(13.3, 9.3);
+            p.line_to(14.7, 10.7);
+            p.line_to(11.2, 14.2);
+            p.close();
         }
         Kind::RangeDiff => {
             // 右向きの矢印（上）と左向きの矢印（下）。

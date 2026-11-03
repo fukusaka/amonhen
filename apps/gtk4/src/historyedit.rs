@@ -329,7 +329,7 @@ impl Mode {
 
         // ステータスバーの行。
         let icon = crate::icon::Icon::default();
-        icon.set(crate::icon::Kind::WorkingCopy, true);
+        icon.set(crate::icon::Kind::EditList, true);
         icon.set_valign(gtk::Align::Center);
         let summary = gtk::Label::new(None);
         summary.add_css_class("caption");
@@ -397,30 +397,6 @@ impl Mode {
                 m.apply_clicked();
             }
         });
-        // Esc で Cancel、Return で Apply Changes（macOS 版のボタンのキーと同じ）。欄の中の Return・Esc は欄が使う。
-        for widget in [mode.root.upcast_ref::<gtk::Widget>(), mode.bar.upcast_ref()] {
-            let keys = gtk::EventControllerKey::new();
-            let weak = Rc::downgrade(&mode);
-            keys.connect_key_pressed(move |_, key, _, state| {
-                let Some(m) = weak.upgrade() else {
-                    return glib::Propagation::Proceed;
-                };
-                if state.intersects(
-                    gdk::ModifierType::CONTROL_MASK
-                        | gdk::ModifierType::ALT_MASK
-                        | gdk::ModifierType::SHIFT_MASK,
-                ) {
-                    return glib::Propagation::Proceed;
-                }
-                match key {
-                    gdk::Key::Escape => m.finish(),
-                    gdk::Key::Return | gdk::Key::KP_Enter => m.apply_clicked(),
-                    _ => return glib::Propagation::Proceed,
-                }
-                glib::Propagation::Stop
-            });
-            widget.add_controller(keys);
-        }
         let weak = Rc::downgrade(&mode);
         mode.move_stacked.connect_toggled(move |_| {
             if let Some(m) = weak.upgrade()
@@ -808,7 +784,7 @@ impl Mode {
         } else {
             format!(
                 "{} {}",
-                tr!("Changes: {list}.", list = parts.join(&tr!(", "))),
+                tr!("Changes: {list}.", list = crate::titles::list(&parts)),
                 crate::sheets::can_undo()
             )
         });
@@ -966,6 +942,34 @@ impl Mode {
     }
 }
 
+/// Esc で Cancel、Return で Apply Changes（macOS 版のボタンのキー: 窓のどこでも効く）。窓に付け、欄の中の
+/// Return・Esc は欄が先に使う。窓はタブで共有するので、このタブの編集モードの帯が出ている間だけ。
+fn window_keys(mode: &Rc<Mode>) -> gtk::EventControllerKey {
+    let keys = gtk::EventControllerKey::new();
+    let weak = Rc::downgrade(mode);
+    keys.connect_key_pressed(move |_, key, _, state| {
+        let Some(m) = weak.upgrade() else {
+            return glib::Propagation::Proceed;
+        };
+        if !m.bar.is_mapped()
+            || state.intersects(
+                gdk::ModifierType::CONTROL_MASK
+                    | gdk::ModifierType::ALT_MASK
+                    | gdk::ModifierType::SHIFT_MASK,
+            )
+        {
+            return glib::Propagation::Proceed;
+        }
+        match key {
+            gdk::Key::Escape => m.finish(),
+            gdk::Key::Return | gdk::Key::KP_Enter => m.apply_clicked(),
+            _ => return glib::Propagation::Proceed,
+        }
+        glib::Propagation::Stop
+    });
+    keys
+}
+
 /// 編集モードを開く・閉じる（History の画面と入れ替える）。
 #[derive(Clone)]
 pub struct Opener(Rc<OpenerInner>);
@@ -978,6 +982,8 @@ struct OpenerInner {
     sidebar: Rc<Sidebar>,
     statusbar: Rc<StatusBar>,
     current: RefCell<Option<Rc<Mode>>>,
+    /// 編集モードの間だけ窓に付ける、Esc・Return のキー（窓と、付けたもの）。
+    keys: RefCell<Option<(gtk::Window, gtk::EventControllerKey)>>,
     /// 読んでいる間は 1 つ増やす（`--snapshot` は開き終えるまで待つ）。
     pending: Rc<Cell<u32>>,
 }
@@ -1014,6 +1020,7 @@ impl Opener {
             sidebar,
             statusbar,
             current: RefCell::default(),
+            keys: RefCell::default(),
             pending,
         }))
     }
@@ -1124,6 +1131,11 @@ impl Opener {
             inner.pages.set_visible_child_name("history");
             inner.sidebar.select_page(Page::History);
             inner.statusbar.show(statusbar::Row::Editing, &mode.bar);
+            if let Some(window) = inner.actions.window() {
+                let keys = window_keys(&mode);
+                window.add_controller(keys.clone());
+                inner.keys.replace(Some((window.upcast(), keys)));
+            }
             if let Some(preset) = preset {
                 mode.apply_preset(preset);
             }
@@ -1136,6 +1148,9 @@ impl Opener {
             return;
         };
         inner.statusbar.hide(statusbar::Row::Editing);
+        if let Some((window, keys)) = inner.keys.take() {
+            window.remove_controller(&keys);
+        }
         inner.pages.remove(&mode.root);
         inner.pages.add_named(&inner.history, Some("history"));
         inner.pages.set_visible_child_name("history");

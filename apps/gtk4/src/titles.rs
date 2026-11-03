@@ -91,6 +91,22 @@ pub fn remove_from_list(name: &str) -> String {
     tr!("Remove {name} from List…", name = name)
 }
 
+/// 項目を文として並べる（macOS 版の `ListFormatter`: 英語は「a, b, and c」、日本語は「a、b、c」）。
+pub fn list(parts: &[String]) -> String {
+    list_in(amonhen_model::i18n::current(), parts)
+}
+
+fn list_in(lang: amonhen_model::i18n::Lang, parts: &[String]) -> String {
+    use amonhen_model::i18n::Lang;
+    match (lang, parts) {
+        (_, []) => String::new(),
+        (_, [one]) => one.clone(),
+        (Lang::Ja, _) => parts.join("、"),
+        (Lang::En, [a, b]) => format!("{a} and {b}"),
+        (Lang::En, [head @ .., last]) => format!("{}, and {last}", head.join(", ")),
+    }
+}
+
 /// 日付（地域の書式。macOS 版の DateFormatter の日付と同じく、言語の設定に従う）。
 pub fn date(time: i64) -> String {
     format_time(time, "%x")
@@ -182,5 +198,14 @@ mod tests {
             medium_date(Lang::Ja, 2026, 11, 3, "10:00"),
             "2026/11/03 10:00"
         );
+    }
+
+    #[test]
+    fn lists_join_like_list_formatter() {
+        let parts = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(list_in(Lang::En, &parts(&["a"])), "a");
+        assert_eq!(list_in(Lang::En, &parts(&["a", "b"])), "a and b");
+        assert_eq!(list_in(Lang::En, &parts(&["a", "b", "c"])), "a, b, and c");
+        assert_eq!(list_in(Lang::Ja, &parts(&["a", "b", "c"])), "a、b、c");
     }
 }
