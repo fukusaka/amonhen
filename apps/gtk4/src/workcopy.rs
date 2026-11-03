@@ -30,6 +30,20 @@ type CountCallback = Box<dyn Fn(usize)>;
 /// 書き込む先の worktree を替えても、コミットした worktree を push し、シートにはその名前を書く。macOS 版と同じ）。
 pub type AfterCommit = Box<dyn FnOnce(crate::sheets::Target)>;
 
+/// `.gitignore` の中身に `pattern` の行を足したもの（もうあれば None）。
+fn with_ignore_pattern(gitignore: &str, pattern: &str) -> Option<String> {
+    if gitignore.lines().any(|l| l.trim() == pattern) {
+        return None;
+    }
+    let mut text = gitignore.to_owned();
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    text.push_str(pattern);
+    text.push('\n');
+    Some(text)
+}
+
 /// 同じ worktree か（作業ツリーの場所で比べる）。
 fn same_worktree(a: &Repository, b: Option<&Repository>) -> bool {
     b.is_some_and(|b| a.paths().workdir == b.paths().workdir)
@@ -2642,23 +2656,23 @@ impl Inner {
         let pattern = pattern.to_owned();
         glib::spawn_future_local(async move {
             let files = crate::sheets::run(&repo, json!({ "op": "ignoreFiles" })).await;
-            let mut gitignore = files["info"]["gitignore"]
-                .as_str()
-                .unwrap_or_default()
-                .to_owned();
-            if gitignore.lines().any(|l| l.trim() == pattern) {
+            let Some(gitignore) = with_ignore_pattern(
+                files["info"]["gitignore"].as_str().unwrap_or_default(),
+                &pattern,
+            ) else {
                 return;
-            }
-            if !gitignore.is_empty() && !gitignore.ends_with('\n') {
-                gitignore.push('\n');
-            }
-            gitignore.push_str(&pattern);
-            gitignore.push('\n');
-            actions.perform(json!({
-                "op": "saveIgnoreFiles",
-                "gitignore": gitignore,
-                "exclude": files["info"]["exclude"].as_str().unwrap_or_default(),
-            }));
+            };
+            // 読んだ worktree に書く（読んでいる間に書き込む先を替えても、ほかの worktree の .gitignore を、
+            // 読んだものの写しで上書きしない）。
+            actions.perform_in(
+                repo,
+                vec![json!({
+                    "op": "saveIgnoreFiles",
+                    "gitignore": gitignore,
+                    "exclude": files["info"]["exclude"].as_str().unwrap_or_default(),
+                })],
+                |_| {},
+            );
         });
     }
 
@@ -3737,6 +3751,16 @@ fn tree(entries: &[StatusEntry]) -> Vec<TreeItem> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn adds_an_ignore_pattern_once() {
+        assert_eq!(with_ignore_pattern("", "a.log").as_deref(), Some("a.log\n"));
+        assert_eq!(
+            with_ignore_pattern("build/", "a.log").as_deref(),
+            Some("build/\na.log\n")
+        );
+        assert_eq!(with_ignore_pattern("build/\n a.log \n", "a.log"), None);
+    }
 
     fn entry(kind: StatusKind, path: &str, index: u8, worktree: u8) -> StatusEntry {
         StatusEntry {
