@@ -441,6 +441,8 @@
 "{branch} — click to switch branch (Ctrl+Shift+B)" = "{branch} — 押すとブランチを切り替える（Ctrl+Shift+B）";
 "{count} commits behind upstream (Ctrl+Alt+L)" = "上流より {count} コミット後ろにあります（Ctrl+Alt+L）";
 "Pull (Ctrl+Alt+L)" = "Pull（Ctrl+Alt+L）";
+"Pull — review the incoming commits and how to integrate them first (Ctrl+Alt+L)" = "Pull — 取り込むコミットと取り込み方を確かめてから（Ctrl+Alt+L）";
+"Push — review the commits to send first (Ctrl+Alt+P)" = "Push — 送るコミットを確かめてから（Ctrl+Alt+P）";
 "{count} commits ahead of upstream (Ctrl+Alt+P)" = "上流より {count} コミット先にあります（Ctrl+Alt+P）";
 "Fetch all remotes (Ctrl+Alt+F)" = "すべてのリモートを fetch（Ctrl+Alt+F）";
 "Merge a branch, tag or the selected commit into the current branch (Ctrl+Alt+M)" = "ブランチ・タグ・選んだコミットを今のブランチへ merge（Ctrl+Alt+M）";

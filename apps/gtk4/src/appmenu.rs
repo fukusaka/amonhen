@@ -339,6 +339,16 @@ fn count_button(kind: icon::Kind, action: &str) -> (gtk::Button, gtk::Label, ico
     let button = gtk::Button::new();
     button.set_child(Some(&inner));
     button.set_action_name(Some(action));
+    // ref を読むまで（と Repositories のページ）の説明（macOS 版のツールバーの項目と同じ）。
+    match action {
+        "win.pull" => button.set_tooltip_text(Some(&tr!(
+            "Pull — review the incoming commits and how to integrate them first (Ctrl+Alt+L)"
+        ))),
+        "win.push" => button.set_tooltip_text(Some(&tr!(
+            "Push — review the commits to send first (Ctrl+Alt+P)"
+        ))),
+        _ => {}
+    }
     (button, count, icon)
 }
 
