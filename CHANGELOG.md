@@ -178,6 +178,8 @@ becomes the GitHub Release notes.
   .gitignore, Take Current/Incoming, Fetch…, Pull…, Push…, Checkout…, Merge, Rebase, Cherry-pick, Delete Branch,
   Apply Patch, History's edit mode, Export Archive…, Save as Bundle… and Undo… could act on the one selected
   meanwhile.
+- macOS: Activity > History lists and undoes the operations of the worktree being edited in the window; with another
+  worktree selected, Undo to Here undid that worktree's operations while listing the opened one's.
 - The macOS app shows “Couldn’t Commit” and the hooks output even when you leave Working Copy or select another
   worktree while the hooks run; they were lost, so a rejected Commit and Push silently didn't push.
 - Selecting worktrees quickly ends on the last one picked, in the macOS and GTK4 apps; one that took longer to open

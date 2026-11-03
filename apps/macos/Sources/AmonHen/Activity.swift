@@ -53,7 +53,9 @@ extension Notification.Name {
 /// Activity の画面が読む、開いているリポジトリ（操作ログを読み、戻すため）。
 struct ActivityRepository: Identifiable, Hashable {
     let name: String
+    /// 開いたリポジトリ（窓ごと。daemon の記録を見分ける）。
     let repository: Repository
+    /// 窓で今編集している worktree の Actions（操作ログはこの worktree のものを読み・戻す。GTK4 版と同じ）。
     let actions: Actions
     /// daemon 越しのリポジトリか（SSH 先・手元の共有の daemon。daemon の記録も読む）。
     var isRemote = false
@@ -81,6 +83,8 @@ final class ActivityModel {
     var repositories: [ActivityRepository] = []
     var undoEntries: [(label: String, time: Date)] = []
     var selectedRepository: ActivityRepository?
+    /// `undoEntries` を読んだ worktree の Actions（戻すのも同じ worktree で。読んでいる間に替わってもずれない）。
+    @ObservationIgnored private var undoActions: Actions?
     /// AppDelegate が設定する（開いているリポジトリ）。
     @ObservationIgnored var listRepositories: () -> [ActivityRepository] = { [] }
     /// daemon の記録（リポジトリの鍵 → 記録。窓の名前は同じことがあるので、名前では分けない）。2 秒ごとに読む。
@@ -103,7 +107,12 @@ final class ActivityModel {
         events = EventLog.events
         metrics = PerformanceLog.samples.map { ($0.key, $0.value) }.sorted { $0.name < $1.name }
         repositories = listRepositories()
-        if let selected = selectedRepository, !repositories.contains(selected) { selectedRepository = nil }
+        // 選んでいる窓は新しい値に置き換える（窓で編集する worktree が替わっていれば、その操作ログを読み直す）。
+        if let selected = selectedRepository {
+            let fresh = repositories.first { $0 == selected }
+            selectedRepository = fresh
+            if let fresh, fresh.actions !== selected.actions { loadUndoLog() }
+        }
         if selectedRepository == nil { selectedRepository = repositories.first }
     }
 
@@ -181,19 +190,24 @@ final class ActivityModel {
     }
 
     func loadUndoLog() {
-        guard let repository = selectedRepository?.repository else {
+        guard let actions = selectedRepository?.actions else {
             undoEntries = []
+            undoActions = nil
             return
         }
+        let repository = actions.repository
         Task {
             let log = try? await Task.detached { try repository.info(["op": "undoLog"], as: UndoLogResponse.self) }.value
+            // 後から読み始めた別の worktree の答えを、古い答えで上書きしない。
+            guard selectedRepository?.actions === actions else { return }
             undoEntries = (log?.entries ?? []).map { ($0.label, Date(timeIntervalSince1970: $0.time / 1000)) }
+            undoActions = actions
         }
     }
 
     /// 操作ログの `index` 番目（0 が一番新しい）まで戻す（新しいものから順に Undo する）。
     func undo(through index: Int) {
-        guard let actions = selectedRepository?.actions, index < undoEntries.count else { return }
+        guard let actions = undoActions, index < undoEntries.count else { return }
         let title = index == 0 ? L("Undo “%@”?", undoEntries[0].0) : L("Undo the last %ld operations?", index + 1)
         Task { @MainActor in
             guard await actions.confirm(title, message: L("Returns HEAD and the branches to where they were."), ok: "Undo",
