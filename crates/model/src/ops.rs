@@ -659,9 +659,9 @@ pub trait Operations: Send + Sync {
         let _ = folders;
         Err(crate::tr!("Can’t change the sparse checkout here").into())
     }
-    /// HEAD の木の `path`（根からの相対パス。空なら根）にあるフォルダの名前（名前の順）。
-    fn tree_folders(&self, path: &str) -> Result<Vec<String>> {
-        let _ = path;
+    /// `rev`（コミット・タグ・ブランチ）の木の `path`（根からの相対パス。空なら根）にあるフォルダの名前（名前の順）。
+    fn tree_folders(&self, rev: &str, path: &str) -> Result<Vec<String>> {
+        let _ = (rev, path);
         Err(crate::tr!("Can’t read the tree here").into())
     }
     /// `on` なら `git maintenance start`（ユーザー全体の `maintenance.repo` に登録し、OS の予定がなければ作る）、

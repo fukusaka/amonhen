@@ -1308,8 +1308,8 @@ impl Operations for Git {
         Git::sparse_checkout(self, folders)
     }
 
-    fn tree_folders(&self, path: &str) -> Result<Vec<String>> {
-        Git::tree_folders(self, path)
+    fn tree_folders(&self, rev: &str, path: &str) -> Result<Vec<String>> {
+        Git::tree_folders(self, rev, path)
     }
 
     fn maintenance(&self, on: bool) -> Result<()> {

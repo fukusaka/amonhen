@@ -348,8 +348,8 @@ impl Git {
         Ok(())
     }
 
-    pub(crate) fn tree_folders(&self, path: &str) -> Result<Vec<String>> {
-        let out = self.read(&["ls-tree", "-z", &format!("HEAD:{path}")])?;
+    pub(crate) fn tree_folders(&self, rev: &str, path: &str) -> Result<Vec<String>> {
+        let out = self.read(&["ls-tree", "-z", &format!("{rev}:{path}")])?;
         let mut names: Vec<String> = String::from_utf8_lossy(&out)
             .split('\0')
             .filter_map(|line| {

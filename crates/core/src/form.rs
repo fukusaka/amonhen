@@ -135,10 +135,11 @@ impl Repository {
     pub(crate) fn tree_folders(
         &self,
         ops: &dyn Operations,
+        rev: &str,
         path: &str,
     ) -> Result<serde_json::Value> {
         let path = tree_path(path);
-        let names = ops.tree_folders(&path)?;
+        let names = ops.tree_folders(rev, &path)?;
         let entries: Vec<_> = names
             .into_iter()
             .map(|name| amonhen_model::DirectoryEntry {

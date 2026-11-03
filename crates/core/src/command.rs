@@ -498,10 +498,12 @@ pub enum Command {
     },
     /// sparse checkout をやめて、すべてのフォルダを取り出す（`git sparse-checkout disable`）。
     DisableSparseCheckout,
-    /// HEAD の木の `path`（`/crates` のように `/` から。`/` は根）にあるフォルダ（`info`: `listDirectory` と同じ
-    /// 形。path・home（null）・entries（kind は folder））。sparse checkout で取り出すフォルダを選ぶのに使う。
+    /// `rev`（既定は HEAD）の木の `path`（`/crates` のように `/` から。`/` は根）にあるフォルダ（`info`:
+    /// `listDirectory` と同じ形。path・home（null）・entries（kind は folder））。sparse checkout で取り出すフォルダや、
+    /// アーカイブに書き出すフォルダを選ぶのに使う。
     TreeFolders {
         path: String,
+        rev: Option<String>,
     },
     /// `on` なら、このリポジトリを git maintenance に登録して裏で手入れさせる（`git maintenance start`: ユーザー全体の
     /// `maintenance.repo` に足し、OS の予定がなければ作る）。でなければ登録を外す（`git maintenance unregister`。
@@ -3567,9 +3569,9 @@ impl Repository {
                 self.disable_sparse_checkout(ops)?;
                 ok()
             }
-            Command::TreeFolders { path } => Ok(Response {
+            Command::TreeFolders { path, rev } => Ok(Response {
                 ok: true,
-                info: Some(self.tree_folders(ops, &path)?),
+                info: Some(self.tree_folders(ops, rev.as_deref().unwrap_or("HEAD"), &path)?),
                 ..Default::default()
             }),
             Command::Maintenance { on } => {
@@ -6153,6 +6155,17 @@ mod tests {
         }));
         assert_eq!(r["ok"], false, "{r}");
         assert!(!bad.exists());
+        // 書き出すフォルダは、その時点の木から選ぶ。
+        let folders = |rev: &str| {
+            run(
+                &repo,
+                &serde_json::json!({"op": "treeFolders", "path": "/", "rev": rev}).to_string(),
+            )["info"]["entries"]
+                .as_array()
+                .unwrap()
+                .len()
+        };
+        assert_eq!((folders("v1"), folders("HEAD~1")), (1, 0));
         // partial clone でなければ取るものはない。
         let need = run(&repo, r#"{"op":"archiveContents","rev":"HEAD"}"#);
         assert_eq!(need["info"], serde_json::json!({"count": 0, "more": false}));

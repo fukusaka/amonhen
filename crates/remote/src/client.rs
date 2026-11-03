@@ -1156,8 +1156,8 @@ impl Operations for RemoteOperations {
         self.op(Op::SparseCheckout(folders.map(<[String]>::to_vec)))
     }
 
-    fn tree_folders(&self, path: &str) -> Result<Vec<String>> {
-        self.op(Op::TreeFolders(path.to_owned()))
+    fn tree_folders(&self, rev: &str, path: &str) -> Result<Vec<String>> {
+        self.op(Op::TreeFolders(rev.to_owned(), path.to_owned()))
     }
 
     fn maintenance(&self, on: bool) -> Result<()> {

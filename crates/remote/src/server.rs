@@ -549,7 +549,7 @@ fn handle_op(backend: &dyn GitBackend, op: Op, cancel: &AtomicBool) -> Result<Ve
         Op::GitVersion => encode(&ops.git_version()?),
         Op::RepositoryForm => encode(&ops.repository_form()?),
         Op::SparseCheckout(folders) => encode(&ops.sparse_checkout(folders.as_deref())?),
-        Op::TreeFolders(path) => encode(&ops.tree_folders(&path)?),
+        Op::TreeFolders(rev, path) => encode(&ops.tree_folders(&rev, &path)?),
         Op::Maintenance(on) => encode(&ops.maintenance(on)?),
         Op::Remotes => encode(&ops.remotes()?),
         Op::CheckRemote(url) => encode(&ops.check_remote(&url)?),
