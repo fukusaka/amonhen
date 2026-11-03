@@ -23,8 +23,11 @@ enum SSHConnectionSheet {
         let alert = NSAlert()
         alert.messageText = L("Remove %@?", host)
         alert.informativeText = L("This removes its %ld repositories and %ld folders to scan from the list. Nothing on the host is touched.", repositories, folders)
-        alert.addButton(withTitle: L("Delete"))
-        alert.addButton(withTitle: L("Cancel"))
+        // 戻せないので、赤く、↩ では押せない（↩ は Cancel）。
+        let delete = alert.addButton(withTitle: L("Delete"))
+        delete.hasDestructiveAction = true
+        delete.keyEquivalent = ""
+        alert.addButton(withTitle: L("Cancel")).keyEquivalent = "\r"
         return alert.runModal() == .alertFirstButtonReturn
     }
 

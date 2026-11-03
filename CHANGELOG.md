@@ -171,6 +171,7 @@ becomes the GitHub Release notes.
 - macOS: Revert under the ignore patterns in Repository Settings and Settings > Git puts back the saved text; it did
   nothing.
 - macOS: Return no longer confirms removing a remote; Delete is red and Return cancels.
+- macOS: Return no longer confirms forgetting an SSH host with repositories or folders to scan.
 
 ### [0.2.8] - 2026-10-30
 
