@@ -86,6 +86,8 @@ struct Row {
     path: gtk::Label,
     branch: gtk::Label,
     state: gtk::Label,
+    /// 行の全体（状態の説明を付ける）。
+    line: gtk::Widget,
     location: RefCell<String>,
     /// 読んだブックマーク（候補と一緒に読み直す。行ごとに読まない）。
     data: Rc<RefCell<bookmarks::Data>>,
@@ -97,8 +99,7 @@ impl Row {
         self.name
             .set_markup(&repobrowser::name_markup_in(&self.data.borrow(), &location));
         self.path.set_text(&repobrowser::path_text(&location));
-        self.branch.set_text(&repobrowser::branch_text(&location));
-        repobrowser::show_state(&self.state, &location, false);
+        repobrowser::show_compact(&self.branch, &self.state, &self.line, &location);
     }
 }
 
@@ -167,6 +168,7 @@ pub fn show_with(parent: Option<&gtk::Window>, open: Open, query: &str) -> gtk::
             path,
             branch,
             state,
+            line: line.clone().upcast(),
             location: RefCell::default(),
             data: d.clone(),
         }));

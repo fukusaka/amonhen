@@ -22,6 +22,8 @@ struct Row {
     path: gtk::Label,
     branch: gtk::Label,
     state: gtk::Label,
+    /// 行の全体（状態の説明を付ける）。
+    line: gtk::Widget,
     location: RefCell<String>,
 }
 
@@ -29,11 +31,8 @@ impl Row {
     fn render(&self) {
         let location = self.location.borrow().clone();
         self.name.set_markup(&repobrowser::name_markup(&location));
-        let path = repobrowser::path_text(&location);
-        self.path.set_text(&path);
-        self.path.set_tooltip_text(Some(&path));
-        self.branch.set_text(&repobrowser::branch_text(&location));
-        repobrowser::show_state(&self.state, &location, false);
+        self.path.set_text(&repobrowser::path_text(&location));
+        repobrowser::show_compact(&self.branch, &self.state, &self.line, &location);
     }
 }
 
@@ -169,6 +168,7 @@ pub fn button(
             path,
             branch,
             state,
+            line: line.clone().upcast(),
             location: RefCell::default(),
         });
         // 右クリックで、その行を選んでメニュー（macOS 版と同じ）。

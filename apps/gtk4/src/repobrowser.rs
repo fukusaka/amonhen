@@ -534,6 +534,49 @@ pub fn branch_text(location: &str) -> String {
     }
 }
 
+/// リポジトリの一覧の小さい形（ツールバーの一覧・Quick Open。macOS 版の `RepositoryCell`）の、ブランチと状態を
+/// 出す。SSH 先・daemon 越しはどちらも空、見つからないものは状態も空（名前の下に「見つかりません」と出る）。
+/// 状態の説明（変更のあるファイル・上流との差・Fetch の失敗）は行の全体 `row` に付ける。
+pub fn show_compact(branch: &gtk::Label, state: &gtk::Label, row: &gtk::Widget, location: &str) {
+    install_state_css();
+    state.set_tooltip_text(None);
+    if amonhen_remote::location::is_remote(location) || !bookmarks::is_repository(location) {
+        branch.set_text("");
+        state.set_text("");
+        row.set_tooltip_text(None);
+        return;
+    }
+    branch.set_text(&branch_text(location));
+    let (text, class, _) = state_text(location, false);
+    state.set_text(&text);
+    for c in STATE_CLASSES {
+        if c == class {
+            state.add_css_class(c);
+        } else {
+            state.remove_css_class(c);
+        }
+    }
+    row.set_tooltip_text(row_tip(location).as_deref());
+}
+
+/// 行（名前のセル・小さい一覧の行）の説明: Fetch に失敗していればその訳を先に、変更と上流との差を続ける
+/// （macOS 版の `RepositoryCell` の toolTip）。SSH 先・daemon 越しと見つからないものにはない。
+fn row_tip(location: &str) -> Option<String> {
+    if amonhen_remote::location::is_remote(location) || !bookmarks::is_repository(location) {
+        return None;
+    }
+    let peek = bookmarks::peek(location).map(|p| peek_tip(&p));
+    match bookmarks::fetch_error(location) {
+        Some(e) => Some(
+            std::iter::once(tr!("Fetch failed: {error}", error = e))
+                .chain(peek)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ),
+        None => peek,
+    }
+}
+
 /// 状態の文字の色（CSS のクラス）。選んだ行の上ではテーマの選択の文字の色にする（強調色の地の上でも読める。
 /// macOS 版の強調した行と同じ）。
 const STATE_CLASSES: [&str; 3] = ["repo-state-error", "repo-state-changed", "dim-label"];
@@ -630,26 +673,29 @@ fn state_text(location: &str, check: bool) -> (String, &'static str, Option<Stri
     if let Some(e) = fetch_error {
         return (text, class, Some(tr!("Fetch failed: {error}", error = e)));
     }
-    let tip = peek.map(|p| {
-        [
-            if p.changed > 0 {
-                tr!("{count} files with changes", count = p.changed)
-            } else {
-                tr!("No changes")
-            },
-            if p.upstream {
-                tr!(
-                    "{ahead} ahead of the upstream, {behind} behind",
-                    ahead = p.ahead,
-                    behind = p.behind
-                )
-            } else {
-                tr!("No upstream")
-            },
-        ]
-        .join("\n")
-    });
+    let tip = peek.as_ref().map(peek_tip);
     (text, class, tip)
+}
+
+/// 変更のあるファイルと、上流との差の説明（状態のツールチップ）。
+fn peek_tip(p: &amonhen_backend_cli::Peek) -> String {
+    [
+        if p.changed > 0 {
+            tr!("{count} files with changes", count = p.changed)
+        } else {
+            tr!("No changes")
+        },
+        if p.upstream {
+            tr!(
+                "{ahead} ahead of the upstream, {behind} behind",
+                ahead = p.ahead,
+                behind = p.behind
+            )
+        } else {
+            tr!("No upstream")
+        },
+    ]
+    .join("\n")
 }
 
 /// 最後のコミットの列（いつ — 件名）とツールチップ（件名と日時）。
@@ -702,7 +748,9 @@ impl CellView {
                 self.title
                     .set_markup(&name_markup_in(&keys.data, &location));
                 self.sub.set_text(&path_text(&location));
-                self.title.set_tooltip_text(Some(&location));
+                let tip = row_tip(&location);
+                self.title.set_tooltip_text(tip.as_deref());
+                self.sub.set_tooltip_text(tip.as_deref());
             }
             Column::Branch => self.title.set_text(&branch_text(&location)),
             Column::Status => {
