@@ -1162,9 +1162,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         let s = { (key: String) in command[key] as? String ?? "" }
         let text: String? = switch s("op") {
         case "fetch": L("Fetched")
-        case "pull": L("Pulled into %@", latestRefs?.headBranch ?? "HEAD")
+        case "pull": L("Pulled into %@", editingBranch ?? "HEAD")
         case "push": L("Pushed %@ to %@", s("branch"), "\(s("remote"))/\(s("remoteBranch"))")
-        case "merge": L("Merged into %@", latestRefs?.headBranch ?? "HEAD")
+        case "merge": L("Merged into %@", editingBranch ?? "HEAD")
         case "mergeInto": L("Merged %@ into %@", s("rev"), s("target"))
         case "rebase": L("Rebased onto %@", s("onto"))
         case "checkout": L("Checked out %@", s("branch"))
