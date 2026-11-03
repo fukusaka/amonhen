@@ -456,12 +456,14 @@ impl Inner {
             },
         ));
         items.push(crate::commitops::reset(actions, &hex));
-        // 今の HEAD と比べる（`<hex>...HEAD` の範囲で Range Diff。一番上の行は今の HEAD そのもの）。
+        // 今の HEAD と比べる（Range Diff）。今の HEAD は一番上の行のコミット（Range Diff は開いたリポジトリで動くので、
+        // `HEAD` と書くと、ほかの worktree を選んでいるときに別の HEAD になる。macOS 版と同じ）。
         if row > 0
             && let Some(opener) = self.range_diff.borrow().clone()
+            && let Some(head) = self.entries.borrow().first().map(|e| e.new.clone())
         {
             items.push(Item::Separator);
-            let range = format!("{hex}...HEAD");
+            let range = format!("{hex}...{head}");
             items.push(menu::action(
                 tr!("Compare with Current HEAD (Range Diff)"),
                 move || opener.ranges(vec![range.clone()]),
