@@ -1225,7 +1225,11 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         menu.addItem(.separator())
         add(targets.count > 1 ? L("Fetch (%ld)", targets.count) : "Fetch") { Bookmarks.shared.fetch(targets) }
         menu.addItem(.separator())
-        add(bookmark?.favorite == true ? L("Remove from Favorites") : L("Add to Favorites")) { Bookmarks.shared.toggleFavorite(path) }
+        // 選んだ行すべてを、押した行と逆の側にそろえる（Fetch・Group・Color Label と同じく、選んだ行に効く）。
+        let favorite = bookmark?.favorite != true
+        add(favorite ? L("Add to Favorites") : L("Remove from Favorites")) {
+            for p in targets where (Bookmarks.shared.bookmark(p)?.favorite == true) != favorite { Bookmarks.shared.toggleFavorite(p) }
+        }
         let groups = NSMenu(title: L("Group"))
         let none = ClosureMenuItem(title: L("None")) { for p in targets { Bookmarks.shared.move(p, to: nil) } }
         none.state = bookmark?.group == nil ? .on : .off

@@ -192,6 +192,8 @@ becomes the GitHub Release notes.
   history.
 - macOS: the password and passphrase dialog shows its buttons in the system language instead of always in English.
 - macOS: when the Clone destination already exists, the Clone sheet comes back with what you typed.
+- macOS: Add to Favorites and Remove from Favorites in the Repositories list apply to every selected row, as Fetch,
+  Group and Color Label do.
 
 ### [0.2.8] - 2026-10-30
 
