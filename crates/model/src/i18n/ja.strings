@@ -151,7 +151,7 @@
 "{path} ({how}, {size} MB)" = "{path}（{how}、{size} MB）";
 "{path} ({how})" = "{path}（{how}）";
 "Can’t read {path}: {e}" = "{path} を読めない: {e}";
-"No usable engine on the SSH host ({host}), and sending one is turned off (Settings > SSH Hosts, or AMONHEN_PUSH=0). Install amonhen on the host’s PATH, or set its location with AMONHEN_REMOTE_ENGINE" = "SSH 先（{host}）に使えるエンジンがなく、送り込みは止めてあります（Settings > SSH ホスト、または AMONHEN_PUSH=0）。SSH 先の PATH に amonhen を入れるか、AMONHEN_REMOTE_ENGINE で場所を指定してください";
+"No usable engine on the SSH host ({host}), and sending one is turned off (Settings > SSH Hosts, or AMONHEN_PUSH=0). Install amonhen on the host’s PATH, or set its location with AMONHEN_REMOTE_ENGINE" = "SSH 先（{host}）に使えるエンジンがなく、送り込みは止めてあります（設定 > SSH ホスト、または AMONHEN_PUSH=0）。SSH 先の PATH に amonhen を入れるか、AMONHEN_REMOTE_ENGINE で場所を指定してください";
 "The engine sent to the SSH host ({host}) doesn’t match (sent {sent}, SSH host {got})" = "SSH 先（{host}）に送ったエンジンの中身が合いません（送った {sent}、SSH 先 {got}）";
 "Invalid array size" = "配列の大きさがおかしい";
 "The received History is corrupt" = "受け取った History が壊れている";
@@ -323,8 +323,8 @@
 "It changes how Amon Hen itself works" = "Amon Hen 自身の動きを変えます";
 
 /* SSH 先の設定（Settings > SSH Hosts） */
-"No amonhen on the PATH of the SSH host ({host}). Settings > SSH Hosts chooses the one on the PATH; choose another engine there, or install this build on the host" = "SSH 先（{host}）の PATH に amonhen がありません。Settings > SSH ホストで PATH のものを選んでいます。そこでほかのエンジンを選ぶか、SSH 先にこのビルドを入れてください";
-"The amonhen on the PATH of the SSH host ({host}) is another build ({version}). Settings > SSH Hosts chooses the one on the PATH; choose another engine there, or install this build on the host" = "SSH 先（{host}）の PATH の amonhen は別のビルドです（{version}）。Settings > SSH ホストで PATH のものを選んでいます。そこでほかのエンジンを選ぶか、SSH 先にこのビルドを入れてください";
+"No amonhen on the PATH of the SSH host ({host}). Settings > SSH Hosts chooses the one on the PATH; choose another engine there, or install this build on the host" = "SSH 先（{host}）の PATH に amonhen がありません。設定 > SSH ホストで PATH のものを選んでいます。そこでほかのエンジンを選ぶか、SSH 先にこのビルドを入れてください";
+"The amonhen on the PATH of the SSH host ({host}) is another build ({version}). Settings > SSH Hosts chooses the one on the PATH; choose another engine there, or install this build on the host" = "SSH 先（{host}）の PATH の amonhen は別のビルドです（{version}）。設定 > SSH ホストで PATH のものを選んでいます。そこでほかのエンジンを選ぶか、SSH 先にこのビルドを入れてください";
 "Couldn’t prepare the settings repository at {path}: {error}" = "設定のリポジトリを {path} に用意できませんでした: {error}";
 "The settings repository’s path isn’t UTF-8: {path}" = "設定のリポジトリのパスが UTF-8 ではありません: {path}";
 "Can’t read the excludes file here" = "ここでは無視するパターンのファイルを読めません";
@@ -598,7 +598,7 @@
 "Start" = "起動";
 "File change notices and the reloads they cause (newest first, up to 500)." = "ファイルの変化の知らせと、それによる読み直し（新しい順に最大 500 件）。";
 "Open Repositories" = "開いているリポジトリ";
-"It starts automatically when you open a repository through the daemon (right-click in the repository list, or Settings > Performance)." = "daemon 越しにリポジトリを開くと（リポジトリの一覧の右クリック、または Settings > パフォーマンス）、自動で起動します。";
+"It starts automatically when you open a repository through the daemon (right-click in the repository list, or Settings > Performance)." = "daemon 越しにリポジトリを開くと（リポジトリの一覧の右クリック、または設定 > パフォーマンス）、自動で起動します。";
 "The shared daemon is running" = "共有の daemon は動いています";
 "pid {pid} · version {version} (build {build}) · up {uptime} · connections {connections}" = "pid {pid} · 版 {version}（ビルド {build}） · 動いて {uptime} · つながり {connections}";
 "Stop" = "止める";
@@ -1017,8 +1017,8 @@
 "system-wide" = "システム全体";
 "On" = "オン";
 "Off" = "オフ";
-"The git on {host} runs this repository. Every repository on that host uses it. See it in Settings > SSH Hosts." = "{host} の git がこのリポジトリを動かしています。その SSH 先のすべてのリポジトリが同じものを使います。Settings > SSH ホストで見られます。";
-"This computer’s git runs this repository. Choose it in Settings > Git." = "このコンピューターの git がこのリポジトリを動かしています。Settings > Git で選びます。";
+"The git on {host} runs this repository. Every repository on that host uses it. See it in Settings > SSH Hosts." = "{host} の git がこのリポジトリを動かしています。その SSH 先のすべてのリポジトリが同じものを使います。設定 > SSH ホストで見られます。";
+"This computer’s git runs this repository. Choose it in Settings > Git." = "このコンピューターの git がこのリポジトリを動かしています。設定 > Git で選びます。";
 "This computer" = "このコンピューター";
 "git’s default" = "git の既定";
 "Stop overriding here. The value above takes over." = "ここでの上書きをやめます。上の値が効くようになります。";
@@ -1461,7 +1461,7 @@
 "Select a variable to see its whole value." = "変数を選ぶと、値の全体が出ます。";
 "{name} ({count} places)" = "{name}（{count} か所）";
 "Show" = "表示";
-"git is the one chosen in Settings > Git: {git}" = "git は 設定 > Git で選んだものを使います: {git}";
+"git is the one chosen in Settings > Git: {git}" = "git は設定 > Git で選んだものを使います: {git}";
 "git is the one chosen in Programs: {git}" = "git はプログラムで選んだものを使います: {git}";
 "git used from here" = "ここの git を使う";
 "doesn’t exist" = "ない";
@@ -1641,12 +1641,12 @@
 "Forget Per-Repository Permissions" = "リポジトリごとの許可を消す";
 "Stored in {dir}." = "{dir} に置きます。";
 "Use AI in this repository?" = "このリポジトリで AI を使いますか？";
-"Sends to {cli}: {summary}\nThis repository’s content (messages and diffs) goes to an external service through the CLI.\nYou can change this later with “Forget Per-Repository Permissions” in Settings > AI." = "{cli} に送ります: {summary}\nこのリポジトリの内容（メッセージ・差分）が、CLI を通じて外部のサービスに送られます。\nあとで Settings > AI の「リポジトリごとの許可を消す」で選び直せます。";
+"Sends to {cli}: {summary}\nThis repository’s content (messages and diffs) goes to an external service through the CLI.\nYou can change this later with “Forget Per-Repository Permissions” in Settings > AI." = "{cli} に送ります: {summary}\nこのリポジトリの内容（メッセージ・差分）が、CLI を通じて外部のサービスに送られます。\nあとで設定 > AI の「リポジトリごとの許可を消す」で選び直せます。";
 "Use" = "使う";
 "Don’t Use in This Repository" = "このリポジトリでは使わない";
 "Use the repository’s prompt?" = "リポジトリのプロンプトを使いますか？";
 "Don’t Use (Use My Prompt)" = "使わない（自分のプロンプトを使う）";
-"No AI CLI is selected, or it can’t be found (Settings > AI)." = "AI の CLI が選ばれていないか、見つかりません（Settings > AI）";
+"No AI CLI is selected, or it can’t be found (Settings > AI)." = "AI の CLI が選ばれていないか、見つかりません（設定 > AI）";
 "Regenerate" = "作り直す";
 "Ask again without using the previous result" = "前の結果を使わずに、もう一度頼む";
 "Waiting…" = "待っています…";
@@ -1778,7 +1778,7 @@
 "Verifying the signature." = "署名を検証しています。";
 "{label} — {explanation} (Click for details.)" = "{label} — {explanation}（押すと詳細）";
 "the repository is on this computer" = "リポジトリがこのコンピューターにある";
-"chosen in Settings > SSH Hosts" = "Settings > SSH ホストで選択";
+"chosen in Settings > SSH Hosts" = "設定 > SSH ホストで選択";
 "this computer" = "このコンピューター";
 "{host} (SSH host)" = "{host}（SSH 先）";
 "Checked on {place}" = "{place}で検証";
@@ -1982,7 +1982,7 @@
 "This folder isn’t checked out" = "取り出していないフォルダです";
 "Only some folders are checked out ({count})" = "一部のフォルダだけ取り出し中（{count}）";
 "Only some files are checked out" = "一部のファイルだけ取り出し中";
-"Click to change them in Settings > Fetching and Folders." = "押すと、Settings の「取得とフォルダ」で変えられます。";
+"Click to change them in Settings > Fetching and Folders." = "押すと、設定 > 取得とフォルダで変えられます。";
 
 /* GTK4 の FE: git maintenance への登録 */
 "Maintenance" = "手入れ";
@@ -2007,7 +2007,7 @@
 "Check out only some folders" = "一部のフォルダだけ取り出す";
 "Only the files at the top are checked out; right after the clone, choose a folder to check out." = "最上位のファイルだけを取り出し、clone の後で取り出すフォルダを選びます。";
 "Needs git 2.27 or later. This computer’s git is {version}." = "git 2.27 以降が必要です。このコンピューターの git は {version} です。";
-"Only the files at the top are checked out. Choose a folder to check out too; add more later in Settings > Fetching and Folders." = "最上位のファイルだけを取り出しました。ほかに取り出すフォルダを選んでください。後から Settings の「取得とフォルダ」で足せます。";
+"Only the files at the top are checked out. Choose a folder to check out too; add more later in Settings > Fetching and Folders." = "最上位のファイルだけを取り出しました。ほかに取り出すフォルダを選んでください。後から設定 > 取得とフォルダで足せます。";
 "Checking out {folder}…" = "{folder} を取り出しています…";
 "Couldn’t check out {folder}" = "{folder} を取り出せませんでした";
 "Unknown archive format: {format}" = "知らないアーカイブの形です: {format}";

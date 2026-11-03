@@ -195,6 +195,7 @@ becomes the GitHub Release notes.
 - macOS: Add to Favorites and Remove from Favorites in the Repositories list apply to every selected row, as Fetch,
   Group and Color Label do.
 - macOS: Activity's History tab updates its Undo list after each operation in the repository windows.
+- macOS: Japanese messages that point to a settings page name it as 「設定 > …」, as the menu calls it.
 
 ### [0.2.8] - 2026-10-30
 

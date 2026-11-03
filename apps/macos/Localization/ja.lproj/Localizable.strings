@@ -345,7 +345,7 @@
 "Check out only some folders" = "一部のフォルダだけ取り出す";
 "Only the files at the top are checked out; right after the clone, choose a folder to check out." = "最上位のファイルだけを取り出し、clone の後で取り出すフォルダを選びます。";
 "Needs git 2.27 or later. This Mac’s git is %@." = "git 2.27 以降が必要です。この Mac の git は %@ です。";
-"Only the files at the top are checked out. Choose a folder to check out too; add more later in Settings > Fetching and Folders." = "最上位のファイルだけを取り出しました。ほかに取り出すフォルダを選んでください。後から Settings の「取得とフォルダ」で足せます。";
+"Only the files at the top are checked out. Choose a folder to check out too; add more later in Settings > Fetching and Folders." = "最上位のファイルだけを取り出しました。ほかに取り出すフォルダを選んでください。後から設定 > 取得とフォルダで足せます。";
 "Checking out %@…" = "%@ を取り出しています…";
 "Couldn’t check out %@" = "%@ を取り出せませんでした";
 "Couldn’t clone" = "clone できませんでした";
@@ -392,10 +392,10 @@
 "Track Pattern" = "パターンを追跡";
 "Files matching the pattern are stored in LFS from now on (git lfs track)." = "このパターンに合うファイルを、これから LFS に置きます（git lfs track）。";
 ".git/info/exclude, one pattern per line. Shared patterns go in .gitignore." = ".git/info/exclude。1 行に 1 つ。共有するパターンは .gitignore に書きます。";
-"Shared templates live in Settings > Git and are Amon Hen’s. This repository’s own is a file under .git/amonhen that commit.template points to, so git in a terminal uses it too." = "共有のテンプレートは Settings > Git にあり、Amon Hen のものです。このリポジトリ専用のものは .git/amonhen の下のファイルで、commit.template がそれを指すので、端末の git も使います。";
+"Shared templates live in Settings > Git and are Amon Hen’s. This repository’s own is a file under .git/amonhen that commit.template points to, so git in a terminal uses it too." = "共有のテンプレートは設定 > Git にあり、Amon Hen のものです。このリポジトリ専用のものは .git/amonhen の下のファイルで、commit.template がそれを指すので、端末の git も使います。";
 "Shared" = "共有";
 "This repository’s own" = "このリポジトリ専用";
-"Edit in Settings > Commit…" = "Settings > コミットで編集…";
+"Edit in Settings > Commit…" = "設定 > コミットで編集…";
 "Copy to This Repository" = "このリポジトリ専用に写す";
 "Makes a copy of this template for this repository alone, which git in a terminal uses too." = "このテンプレートの写しをこのリポジトリ専用に作ります。端末の git も使います。";
 "Revert" = "元に戻す";
@@ -506,7 +506,7 @@
 "Untitled" = "名前なし";
 "No templates yet. + adds one." = "テンプレートはまだありません。+ で足します。";
 "Select a template to edit it." = "テンプレートを選ぶと編集できます。";
-"A repository chooses one in its Settings > Commits, or copies it for itself. git in a terminal uses only commit.template, a file." = "リポジトリはその Settings > コミットで 1 つを選ぶか、専用に写します。端末の git が使うのはファイルの commit.template だけです。";
+"A repository chooses one in its Settings > Commits, or copies it for itself. git in a terminal uses only commit.template, a file." = "リポジトリはその設定 > コミットで 1 つを選ぶか、専用に写します。端末の git が使うのはファイルの commit.template だけです。";
 "Default Pull" = "Pull の既定";
 "The choice preselected in the Pull sheet (toolbar and ⌃⌘L). You can change it there each time, or use Repository > Pull With." = "Pull の確認のシートで最初に選ばれている取り込み方（ツールバーと ⌃⌘L）。シートでその都度変えられ、Repository > Pull With でも選べる。";
 "Repository List" = "リポジトリの一覧";
@@ -696,7 +696,7 @@
 "pid %@ · version %@ (build %@) · up %@ · connections %ld" = "pid %@ · 版 %@（ビルド %@） · 動いて %@ · つながり %ld";
 "The shared daemon isn’t running" = "共有の daemon は動いていません";
 "Checking…" = "調べています…";
-"It starts automatically when you open a repository through the daemon (right-click in the repository list, or Settings > Performance)." = "daemon 越しにリポジトリを開くと（リポジトリの一覧の右クリック、または Settings > パフォーマンス）、自動で起動します。";
+"It starts automatically when you open a repository through the daemon (right-click in the repository list, or Settings > Performance)." = "daemon 越しにリポジトリを開くと（リポジトリの一覧の右クリック、または設定 > パフォーマンス）、自動で起動します。";
 "Start" = "起動";
 "Stop" = "止める";
 "Repositories opened through the daemon get disconnected (Reconnect starts it again)." = "daemon 越しに開いているリポジトリは、つながりが切れる（「つなぎ直す」でまた起動する）";
@@ -734,9 +734,9 @@
 "Don’t Use (Use My Prompt)" = "使わない（自分のプロンプトを使う）";
 "The prompt variable {{%@}} can’t be used for “%@” (available: %@)" = "プロンプトの変数 {{%@}} は「%@」では使えません（使えるもの: %@）";
 "Use AI in this repository?" = "このリポジトリで AI を使いますか？";
-"Sends to %@: %@\nThis repository’s content (messages and diffs) goes to an external service through the CLI.\nYou can change this later with “Forget Per-Repository Permissions” in Settings > AI." = "%@ に送ります: %@\nこのリポジトリの内容（メッセージ・差分）が、CLI を通じて外部のサービスに送られます。\nあとで 設定 > AI の「リポジトリごとの許可を消す」で選び直せます。";
+"Sends to %@: %@\nThis repository’s content (messages and diffs) goes to an external service through the CLI.\nYou can change this later with “Forget Per-Repository Permissions” in Settings > AI." = "%@ に送ります: %@\nこのリポジトリの内容（メッセージ・差分）が、CLI を通じて外部のサービスに送られます。\nあとで設定 > AI の「リポジトリごとの許可を消す」で選び直せます。";
 "Don’t Use in This Repository" = "このリポジトリでは使わない";
-"No AI CLI is selected, or it can’t be found (Settings > AI)." = "AI の CLI が選ばれていないか、見つかりません（Settings > AI）";
+"No AI CLI is selected, or it can’t be found (Settings > AI)." = "AI の CLI が選ばれていないか、見つかりません（設定 > AI）";
 "No AI CLI is selected." = "AI の CLI が選ばれていません";
 "%@ failed (exit code %ld)." = "%@ が失敗しました（終了コード %ld）";
 "Regenerate" = "作り直す";
@@ -1336,7 +1336,7 @@
 "CRLF in the working tree, LF in commits" = "作業ツリーは CRLF、コミットは LF";
 "Commits" = "コミット";
 "Follow git’s settings" = "git の設定に従う";
-"For all repositories on this Mac (git config --global rebase.updateRefs; git in a terminal follows it too). A repository can choose differently in its own Settings. Branches stacked under the current one are those whose tips are among the commits a rebase or a History edit rewrites." = "この Mac のすべてのリポジトリに効きます（git config --global の rebase.updateRefs。端末の git も従います）。リポジトリごとに違う値を選ぶには、そのリポジトリの Settings を使います。今のブランチの下に積んだブランチとは、先頭が rebase や History の編集で書き換えるコミットにあるブランチです。";
+"For all repositories on this Mac (git config --global rebase.updateRefs; git in a terminal follows it too). A repository can choose differently in its own Settings. Branches stacked under the current one are those whose tips are among the commits a rebase or a History edit rewrites." = "この Mac のすべてのリポジトリに効きます（git config --global の rebase.updateRefs。端末の git も従います）。リポジトリごとに違う値を選ぶには、そのリポジトリの設定を使います。今のブランチの下に積んだブランチとは、先頭が rebase や History の編集で書き換えるコミットにあるブランチです。";
 "How conflicts are written in files" = "コンフリクトをファイルにどう書くか";
 "Keep as committed" = "コミットのまま";
 "Key for your email" = "メールアドレスの鍵";
@@ -1378,7 +1378,7 @@
 "Go back to the detected branch." = "判定したブランチに戻します。";
 "The git on %@ runs this repository. Every repository on that host uses it." = "%@ の git がこのリポジトリを動かしています。そのホストのすべてのリポジトリが同じ git を使います。";
 "There is no branch named %@, so the detected branch is used." = "%@ というブランチはないので、判定したブランチを使います。";
-"This Mac’s git runs this repository. Choose it in Settings > Git." = "この Mac の git がこのリポジトリを動かしています。Settings > Git で選びます。";
+"This Mac’s git runs this repository. Choose it in Settings > Git." = "この Mac の git がこのリポジトリを動かしています。設定 > Git で選びます。";
 "detected" = "自動で判定";
 "Branches measures the others against it. Detected from origin/HEAD, main or master; choose one when there is none." = "Branches がほかのブランチの基準にします。origin/HEAD・main・master から判定し、どれもなければここで選びます。";
 "With the base (diff3, zdiff3) the merge editor resolves one-sided conflicts by itself. Amon Hen recommends zdiff3." = "元がある形式（diff3・zdiff3）なら、マージエディタが片側だけの変更を自分で解けます。Amon Hen のおすすめは zdiff3 です。";
@@ -1394,7 +1394,7 @@
 "Shares History, the search index, the operation log and SSH connections among the app, the CLI and the VSCode extension; applies to repositories opened from now on. See Daemon in Window > Activity." = "History・検索の索引・操作の記録・SSH 接続を、アプリ・CLI・VSCode 拡張で共有します。これから開くリポジトリに効きます。様子はウィンドウ > Activity の Daemon で。";
 "Gives git, the shared daemon and gh the terminal’s PATH, SSH agent and GIT_* settings, which an app launched from the Finder doesn’t get. Changes apply at the next launch." = "Finder から起動したアプリには届かない端末の PATH・SSH agent・GIT_* を、git・共有の daemon・gh に渡します。変更は次の起動から。";
 "Used wherever Amon Hen opens a file in an editor. Automatic picks the first code editor installed (VS Code, Cursor, Zed, Sublime Text, BBEdit, Nova, TextMate, Fleet, Xcode), or else the default text editor." = "Amon Hen がファイルをエディタで開くところすべてで使います。自動は、入っているコードエディタ（VS Code・Cursor・Zed・Sublime Text・BBEdit・Nova・TextMate・Fleet・Xcode）の最初のもの、なければ既定のテキストエディタです。";
-"A repository chooses one in its Settings > Commits, or copies it for itself." = "リポジトリはその Settings > コミットで 1 つを選ぶか、専用に写します。";
+"A repository chooses one in its Settings > Commits, or copies it for itself." = "リポジトリはその設定 > コミットで 1 つを選ぶか、専用に写します。";
 "The git Amon Hen runs for repositories on this Mac. Repositories opened from now on use it; git in a terminal isn’t affected." = "この Mac のリポジトリに Amon Hen が使う git。これから開くリポジトリに効きます。端末の git は変わりません。";
 "Signs every commit on this Mac unless a repository chooses otherwise." = "この Mac のすべてのコミットに署名します（リポジトリで別に決めていなければ）。";
 "Ignore everywhere" = "どこでも無視する";
@@ -1411,8 +1411,8 @@
 "Back to the git on the PATH." = "PATH の git に戻します。";
 "On the PATH: %@" = "PATH では: %@";
 "Couldn’t prepare the settings repository" = "設定のためのリポジトリを用意できませんでした";
-"Shared templates live in Settings > Commit and are Amon Hen’s. This repository’s own is a file under .git/amonhen that commit.template points to, so git in a terminal uses it too." = "共有のテンプレートは Settings > コミットにあり、Amon Hen のものです。このリポジトリ専用のものは .git/amonhen の下のファイルで、commit.template がそれを指すので、端末の git も使います。";
-"Shared templates live in Settings > Commit and are Amon Hen’s. A file is git’s commit.template, which git in a terminal uses too." = "共有のテンプレートは Settings > コミットにあり、Amon Hen のものです。ファイルは git の commit.template で、端末の git も使います。";
+"Shared templates live in Settings > Commit and are Amon Hen’s. This repository’s own is a file under .git/amonhen that commit.template points to, so git in a terminal uses it too." = "共有のテンプレートは設定 > コミットにあり、Amon Hen のものです。このリポジトリ専用のものは .git/amonhen の下のファイルで、commit.template がそれを指すので、端末の git も使います。";
+"Shared templates live in Settings > Commit and are Amon Hen’s. A file is git’s commit.template, which git in a terminal uses too." = "共有のテンプレートは設定 > コミットにあり、Amon Hen のものです。ファイルは git の commit.template で、端末の git も使います。";
 "Programs" = "プログラム";
 "Keys and Values" = "キーと値";
 "Shared Templates" = "共有のテンプレート";
@@ -1463,7 +1463,7 @@
 "Add an SSH host with +, or open one from Places." = "＋ で SSH 先を加えるか、Places から開きます。";
 "Applies to every repository on %@ (its ~/.gitconfig). git in a terminal there follows these too." = "%@ のすべてのリポジトリに効きます（そこの ~/.gitconfig）。そこの端末の git も同じ設定に従います。";
 "The engine on %@ runs the git on its PATH." = "%@ のエンジンは、その PATH の git を使います。";
-"The git on %@ runs this repository. Every repository on that host uses it. See it in Settings > SSH Hosts." = "%@ の git がこのリポジトリを動かしています。その SSH 先のすべてのリポジトリが同じものを使います。Settings > SSH ホストで見られます。";
+"The git on %@ runs this repository. Every repository on that host uses it. See it in Settings > SSH Hosts." = "%@ の git がこのリポジトリを動かしています。その SSH 先のすべてのリポジトリが同じものを使います。設定 > SSH ホストで見られます。";
 "chosen in Settings > SSH Hosts" = "設定 > SSH ホストで選択";
 "Environment Variables" = "環境変数";
 "Use the login shell’s environment variables" = "ログインシェルの環境変数を使う";
@@ -1478,7 +1478,7 @@
 "git used from here" = "ここの git を使う";
 "doesn’t exist" = "ない";
 "already above" = "上と同じ";
-"git is the one chosen in Settings > Git: %@" = "git は 設定 > Git で選んだものを使います: %@";
+"git is the one chosen in Settings > Git: %@" = "git は設定 > Git で選んだものを使います: %@";
 "Checked variables go to the git and ssh this app runs, through the shared daemon too, but not to SSH hosts. Always passed, when the shell sets them: %@." = "チェックした変数を、このアプリが動かす git と ssh に渡します（共有の daemon 越しも。SSH 先には渡りません）。シェルにあればいつも渡すもの（外せません）: %@。";
 
 /* Settings > SSH Hosts: エンジンと git の選択 */
@@ -1687,7 +1687,7 @@
 "Partial clone: file contents are fetched when needed (%@)" = "partial clone: ファイルの中身は必要なときに取得します（%@）";
 "Only some folders are checked out (%ld)" = "一部のフォルダだけ取り出し中（%ld）";
 "Only some files are checked out" = "一部のファイルだけ取り出し中";
-"Click to change them in Settings > Fetching and Folders." = "押すと、Settings の「取得とフォルダ」で変えられます。";
+"Click to change them in Settings > Fetching and Folders." = "押すと、設定 > 取得とフォルダで変えられます。";
 "This folder isn’t checked out" = "取り出していないフォルダです";
 "Search the Contents?" = "中身を検索しますか？";
 "This search fetches %@ file contents not fetched yet." = "この検索は、まだ取っていない中身を %@ 個取ります。";
