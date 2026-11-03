@@ -146,8 +146,9 @@ fn choices(rows: &[Row], i: usize) -> Vec<Action> {
         .collect()
 }
 
-/// 行ですることの一覧の項目（名前と、選んでいる印。乗せると説明）。
-fn action_items(choice: &gtk::DropDown) -> gtk::SignalListItemFactory {
+/// 行ですることの一覧の項目（名前と、選んでいる印。乗せると説明）。今選んでいる項目をもう一度押したら
+/// `same` を呼ぶ（DropDown は同じ項目では選択の知らせを出さないが、macOS 版のポップアップは出す）。
+fn action_items(choice: &gtk::DropDown, same: Rc<dyn Fn()>) -> gtk::SignalListItemFactory {
     // 印は DropDown で選んでいるものに付ける。開いた一覧の項目の「選んでいる」は、マウスを乗せた項目に付いて回る。
     let chosen = |choice: &glib::WeakRef<gtk::DropDown>, item: &gtk::ListItem| {
         choice
@@ -159,6 +160,7 @@ fn action_items(choice: &gtk::DropDown) -> gtk::SignalListItemFactory {
     // 弱く持つ。
     type Marks = Rc<RefCell<Vec<(glib::WeakRef<gtk::ListItem>, glib::WeakRef<gtk::Image>)>>>;
     let marks: Marks = Rc::default();
+    let choice_weak = choice.downgrade();
     let (weak, m) = (choice.downgrade(), marks.clone());
     choice.connect_selected_notify(move |_| {
         m.borrow_mut().retain(|(item, check)| {
@@ -181,6 +183,19 @@ fn action_items(choice: &gtk::DropDown) -> gtk::SignalListItemFactory {
         row.append(&label);
         row.append(&check);
         item.set_child(Some(&row));
+        // 押したときにまだ選び替わっていないので、押した項目が選んでいるものなら、同じものを選び直した。
+        let click = gtk::GestureClick::new();
+        click.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let (w, it, same) = (choice_weak.clone(), item.downgrade(), same.clone());
+        click.connect_released(move |_, _, _, _| {
+            if let Some(item) = it.upgrade()
+                && chosen(&w, &item)
+            {
+                let same = same.clone();
+                glib::idle_add_local_once(move || same());
+            }
+        });
+        row.add_controller(click);
         let mut marks = marks.borrow_mut();
         marks.retain(|(item, check)| item.upgrade().is_some() && check.upgrade().is_some());
         marks.push((item.downgrade(), check.downgrade()));
@@ -449,8 +464,27 @@ impl Mode {
             texts.append(&subject);
             texts.append(&detail);
             let choice = gtk::DropDown::from_strings(&[]);
+            // Edit Message を選んである行でもう一度 Edit Message を選んだら、メッセージの欄を開き直す（macOS 版と
+            // 同じ）。
+            let same: Rc<dyn Fn()> = {
+                let (w, it) = (Rc::downgrade(&mode), item.downgrade());
+                Rc::new(move || {
+                    let (Some(mode), Some(item)) = (w.upgrade(), it.upgrade()) else {
+                        return;
+                    };
+                    let i = item.position() as usize;
+                    let reword = mode
+                        .rows
+                        .borrow()
+                        .get(i)
+                        .is_some_and(|r| r.action == Action::Reword);
+                    if reword {
+                        mode.edit_message(i);
+                    }
+                })
+            };
             // 開いた一覧の項目ごとに説明（git の言葉）を出す（macOS 版のメニューの項目の説明と同じ）。
-            choice.set_list_factory(Some(&action_items(&choice)));
+            choice.set_list_factory(Some(&action_items(&choice, same)));
             choice.set_valign(gtk::Align::Center);
             choice.set_size_request(290, -1);
             let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
