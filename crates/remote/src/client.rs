@@ -1238,7 +1238,7 @@ impl Operations for RemoteOperations {
     }
 
     fn change_remote(&self, change: &RemoteChange) -> Result<()> {
-        self.op(Op::ChangeRemote(change.clone()))
+        self.op(Op::ChangeRemote(crate::wire::Tagged(change.clone())))
     }
 
     fn worktree_list(&self) -> Result<Vec<u8>> {
