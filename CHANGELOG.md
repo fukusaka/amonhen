@@ -56,6 +56,8 @@ becomes the GitHub Release notes.
   Programs, and its list is divided like the macOS one.
 - The GTK4 app's View > Customize Toolbar… opens a palette under the header bar like the macOS one: drag items onto
   the header bar, drag them off to remove them, or drag the default set. Search is now one of the toolbar items.
+- The GTK4 app opens Blame and File History as tabs beside the repository tab, with the repository's toolbar, as the
+  macOS app does, instead of separate windows.
 
 - The GTK4 app now needs libadwaita (`libadwaita-1-0` on Ubuntu). Its tabs can be dragged out into a new window on
   Wayland too, and it follows the system's light or dark style.

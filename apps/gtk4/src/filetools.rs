@@ -1,4 +1,5 @@
-//! Blame と File History の窓（macOS 版の `FileTools.swift` と同じ）。
+//! Blame と File History のタブ（macOS 版の `FileTools.swift` と同じく、リポジトリのタブの隣に置き、同じツール
+//! バーを付ける）。
 //!
 //! - Blame: ファイルの各行を最後に変えたコミット。同じコミットの行をまとめ、まとまりの 1 行目に ID・作者・日時、
 //!   2 行目に件名を出し、まとまりごとに背景を交互に変える。行をダブルクリックすると、そのコミットを History で選ぶ。
@@ -7,7 +8,8 @@
 //! どちらも行は `GtkListView` で、見えている行の部品しか作らない（大きなファイルでも重くならない）。
 
 use std::cell::{Cell, RefCell};
-use std::rc::Rc;
+use std::collections::HashMap;
+use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
 use amonhen_core::Repository;
@@ -18,6 +20,7 @@ use gtk::{gio, glib};
 use serde_json::{Value, json};
 
 use crate::diff::{DiffWidget, View};
+use crate::tabs::Tab;
 
 /// History でそのコミットを選ぶ。
 pub type OnCommit = Rc<dyn Fn(Oid)>;
@@ -36,12 +39,11 @@ fn date(time: i64) -> String {
 }
 
 thread_local! {
-    /// 開いている Blame・File History の窓（何の窓か → 窓）。
-    static TOOL_WINDOWS: std::cell::RefCell<std::collections::HashMap<String, glib::WeakRef<gtk::Window>>> =
-        std::cell::RefCell::default();
+    /// 開いている Blame・File History のタブ（何のタブか → タブ）。
+    static TOOL_TABS: RefCell<HashMap<String, Weak<Tab>>> = RefCell::default();
 }
 
-/// 何の窓か（同じリポジトリの同じファイル、Blame なら同じコミット。macOS 版のタブの鍵と同じ）。
+/// 何のタブか（同じリポジトリの同じファイル、Blame なら同じコミット。macOS 版のタブの鍵と同じ）。
 fn tool_key(kind: &str, repo: &Arc<Repository>, path: &str, rev: Option<&str>) -> String {
     format!(
         "{kind}\0{}\0{path}\0{}",
@@ -50,29 +52,62 @@ fn tool_key(kind: &str, repo: &Arc<Repository>, path: &str, rev: Option<&str>) -
     )
 }
 
-/// `key` の窓。もう開いていれば、それを前に出して返す（中身は呼んだ側が入れ直す。macOS 版は前のタブを
-/// 読み直したものに入れ替える）。なければ新しく開く。
-fn tool_window(parent: &gtk::ApplicationWindow, key: String, title: &str) -> gtk::Window {
-    let open = TOOL_WINDOWS.with(|w| {
-        let mut w = w.borrow_mut();
-        w.retain(|_, window| window.upgrade().is_some());
-        w.get(&key).and_then(|window| window.upgrade())
+/// `key` のタブ。もう開いていれば、それを前に出して返す（false と。中身は呼んだ側が入れ直す。macOS 版は前の
+/// タブを読み直したものに入れ替える）。なければ、`parent` の窓の前のリポジトリのタブ（File History・Blame の
+/// タブから開いたなら、そのリポジトリのタブ）のものとして作って返す（true と。中身を入れてから [`place`] で置く）。
+fn tool_tab(
+    parent: &gtk::ApplicationWindow,
+    key: String,
+    title: &str,
+    heading: &str,
+) -> Option<(Rc<Tab>, bool)> {
+    let open = TOOL_TABS.with(|t| {
+        let mut t = t.borrow_mut();
+        t.retain(|_, tab| tab.upgrade().is_some_and(|tab| !tab.closed()));
+        t.get(&key).and_then(Weak::upgrade)
     });
-    if let Some(window) = open {
-        window.set_title(Some(title));
-        window.present();
-        return window;
+    if let Some(tab) = open {
+        tab.set_heading(heading);
+        tab.bring_front();
+        return Some((tab, false));
     }
-    let window = gtk::Window::builder()
-        .title(title)
-        .default_width(1100)
-        .default_height(760)
-        .build();
-    window.set_transient_for(Some(parent));
-    window.set_destroy_with_parent(true);
-    TOOL_WINDOWS.with(|w| w.borrow_mut().insert(key, window.downgrade()));
-    window.present();
-    window
+    let front = crate::tabs::host_of(parent)?.current()?;
+    let owner = front.owner().unwrap_or(front);
+    if owner.is_home() {
+        return None;
+    }
+    let tab = Tab::new_tool(&owner, title);
+    tab.set_heading(heading);
+    TOOL_TABS.with(|t| t.borrow_mut().insert(key, Rc::downgrade(&tab)));
+    Some((tab, true))
+}
+
+/// 作った File History・Blame のタブを、リポジトリのタブの右に置く（ツールバーとメニューの操作は、リポジトリの
+/// タブに渡す）。
+fn place(tab: &Rc<Tab>) {
+    tab.forward_actions();
+    crate::tabs::add_tool(tab);
+}
+
+/// タブの中身を `child` にする。
+fn set_content(tab: &Tab, child: &impl IsA<gtk::Widget>) {
+    while let Some(old) = tab.root.first_child() {
+        tab.root.remove(&old);
+    }
+    child.set_vexpand(true);
+    child.set_hexpand(true);
+    tab.root.append(child);
+}
+
+/// History でコミットを選ぶ前に、リポジトリのタブを前に出す（macOS 版と同じ）。
+fn via_owner(tab: &Tab, on_commit: OnCommit) -> OnCommit {
+    let owner = tab.owner().map(|o| Rc::downgrade(&o));
+    Rc::new(move |id| {
+        if let Some(owner) = owner.as_ref().and_then(Weak::upgrade) {
+            owner.bring_front();
+        }
+        on_commit(id);
+    })
 }
 
 /// `path` の blame を、`rev`（なければ作業ツリー）で開く。
@@ -83,22 +118,29 @@ pub fn blame(
     rev: Option<&str>,
     on_commit: OnCommit,
 ) {
-    let mut title = format!("Blame — {path}");
+    let mut heading = format!("Blame — {path}");
     if let Some(rev) = rev {
-        title.push_str(&format!(" @ {}", &rev[..8.min(rev.len())]));
+        heading.push_str(&format!(" @ {}", &rev[..8.min(rev.len())]));
     }
     let key = tool_key("blame", &repo, path, rev);
     let command = json!({ "op": "blame", "path": path, "rev": rev });
-    // 窓は先に出し、読んでいる間は「Loading…」（macOS 版と同じ）。
-    let window = tool_window(parent, key, &title);
-    window.set_child(Some(&note(&tr!("Loading…"))));
+    // タブは先に出し、読んでいる間は「Loading…」（macOS 版と同じ）。
+    let title = format!("Blame — {}", file_name(path));
+    let Some((tab, new)) = tool_tab(parent, key, &title, &heading) else {
+        return;
+    };
+    set_content(&tab, &note(&tr!("Loading…")));
+    if new {
+        place(&tab);
+    }
+    let on_commit = via_owner(&tab, on_commit);
     let path = path.to_owned();
     glib::spawn_future_local(async move {
         let info = gio::spawn_blocking(move || run(&repo, command)).await;
         match info {
             Ok(Ok(info)) => {
                 let spans: Rc<std::cell::RefCell<LineSpans>> = Rc::default();
-                let (model, selection) = show_blame(&window, &info, spans.clone(), on_commit);
+                let (model, selection) = show_blame(&tab, &info, spans.clone(), on_commit);
                 // 構文の色は、行を出してから裏で付ける（読めたら描き直す）。
                 let colored = gio::spawn_blocking(move || blame_syntax(&path, &info)).await;
                 if let Ok(colored) = colored
@@ -111,13 +153,18 @@ pub fn blame(
                     selection.set_selected(selected);
                 }
             }
-            Ok(Err(e)) => window.set_child(Some(&note(&e))),
+            Ok(Err(e)) => set_content(&tab, &note(&e)),
             Err(_) => {}
         }
     });
 }
 
-/// 窓の中身の代わりの知らせ（読んでいる・読めなかった理由）。
+/// パスのファイル名（タブの見出し）。
+fn file_name(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
+}
+
+/// タブの中身の代わりの知らせ（読んでいる・読めなかった理由）。
 fn note(text: &str) -> gtk::Label {
     let note = gtk::Label::new(Some(text));
     note.add_css_class("dim-label");
@@ -191,9 +238,9 @@ struct BlameRow {
     text: String,
 }
 
-/// Blame の行を窓に出す。構文の色（`spans`）は後から入れられるよう、一覧の中身と選択を返す。
+/// Blame の行をタブに出す。構文の色（`spans`）は後から入れられるよう、一覧の中身と選択を返す。
 fn show_blame(
-    window: &gtk::Window,
+    tab: &Tab,
     info: &Value,
     spans: Rc<std::cell::RefCell<LineSpans>>,
     on_commit: OnCommit,
@@ -351,7 +398,7 @@ fn show_blame(
     });
     install_css();
     let scrolled = gtk::ScrolledWindow::builder().child(&list).build();
-    window.set_child(Some(&scrolled));
+    set_content(tab, &scrolled);
     (model, selection)
 }
 
@@ -385,14 +432,20 @@ pub fn file_history(
 ) {
     // 同じファイルの File History がもう開いていれば、それを読み直す（macOS 版と同じ）。
     let key = tool_key("fileHistory", &repo, path, None);
-    let window = tool_window(parent, key, &format!("File History — {path}"));
-    if let Some(view) = FileHistoryView::of(&window) {
+    let heading = tr!("File History — {path} (loading…)", path = path);
+    let title = format!("File History — {}", file_name(path));
+    let Some((tab, new)) = tool_tab(parent, key, &title, &heading) else {
+        return;
+    };
+    if let Some(view) = FileHistoryView::of(&tab) {
         view.reload();
         return;
     }
-    // タブの窓ではないので、Ctrl+F・Ctrl+G は自分で差分の検索の帯に回す。
-    crate::difffind::add_shortcuts(&window);
-    let view = FileHistoryView::new(&window, parent, repo, path.to_owned(), on_commit);
+    let on_commit = via_owner(&tab, on_commit);
+    let view = FileHistoryView::new(&tab, repo, path.to_owned(), on_commit);
+    if new {
+        place(&tab);
+    }
     view.load();
 }
 
@@ -435,16 +488,15 @@ fn history_rows(entries: &[Entry], complete: bool) -> Vec<HistoryRow> {
 }
 
 thread_local! {
-    /// 開いている File History の窓と、その中身。
-    static FILE_HISTORIES: RefCell<Vec<(glib::WeakRef<gtk::Window>, Rc<FileHistoryView>)>> =
+    /// 開いている File History のタブと、その中身。
+    static FILE_HISTORIES: RefCell<Vec<(Weak<Tab>, Rc<FileHistoryView>)>> =
         RefCell::default();
 }
 
-/// File History の窓の中身。読み直しても部品は作り直さず、一覧の中身だけを入れ替える（選んでいたコミットは、
+/// File History のタブの中身。読み直しても部品は作り直さず、一覧の中身だけを入れ替える（選んでいたコミットは、
 /// まだあれば選んだまま）。
 struct FileHistoryView {
-    window: glib::WeakRef<gtk::Window>,
-    parent: glib::WeakRef<gtk::ApplicationWindow>,
+    tab: Weak<Tab>,
     repo: Arc<Repository>,
     path: String,
     on_commit: OnCommit,
@@ -470,22 +522,16 @@ struct FileHistoryView {
 }
 
 impl FileHistoryView {
-    fn of(window: &gtk::Window) -> Option<Rc<Self>> {
+    fn of(tab: &Rc<Tab>) -> Option<Rc<Self>> {
         FILE_HISTORIES.with(|v| {
             v.borrow()
                 .iter()
-                .find(|(w, _)| w.upgrade().as_ref() == Some(window))
+                .find(|(t, _)| t.upgrade().is_some_and(|t| Rc::ptr_eq(&t, tab)))
                 .map(|(_, view)| view.clone())
         })
     }
 
-    fn new(
-        window: &gtk::Window,
-        parent: &gtk::ApplicationWindow,
-        repo: Arc<Repository>,
-        path: String,
-        on_commit: OnCommit,
-    ) -> Rc<Self> {
+    fn new(tab: &Rc<Tab>, repo: Arc<Repository>, path: String, on_commit: OnCommit) -> Rc<Self> {
         let model = gtk::StringList::new(&[]);
         let factory = gtk::SignalListItemFactory::new();
         factory.connect_setup(|_, item| {
@@ -528,12 +574,11 @@ impl FileHistoryView {
         split.set_end_child(Some(&right));
         split.set_resize_start_child(false);
         split.set_position(360);
-        window.set_child(Some(&split));
+        set_content(tab, &split);
         diff.show_message(&tr!("Loading…"));
 
         let view = Rc::new(Self {
-            window: window.downgrade(),
-            parent: parent.downgrade(),
+            tab: Rc::downgrade(tab),
             repo,
             path,
             on_commit,
@@ -552,15 +597,40 @@ impl FileHistoryView {
             diff,
             find,
         });
-        FILE_HISTORIES.with(|v| v.borrow_mut().push((window.downgrade(), view.clone())));
-        // 窓を閉じたら、中身を手放す。
-        window.connect_destroy(|window| {
-            let window = window.clone();
+        FILE_HISTORIES.with(|v| v.borrow_mut().push((Rc::downgrade(tab), view.clone())));
+        // タブを閉じたら、中身を手放す。
+        let t = Rc::downgrade(tab);
+        tab.connect_close(move || {
             FILE_HISTORIES.with(|v| {
                 v.borrow_mut()
-                    .retain(|(w, _)| w.upgrade().is_some_and(|w| w != window))
+                    .retain(|(w, _)| w.upgrade().is_some() && !Weak::ptr_eq(w, &t))
             });
         });
+        // Ctrl+F・Ctrl+G・Ctrl+Shift+G: フォーカスが差分にあれば差分の中を探し、なければリポジトリのタブに切り替えて
+        // History を探す（macOS 版と同じ）。
+        for (name, step) in [("find", 0), ("find-next", 1), ("find-previous", -1)] {
+            let action = gio::SimpleAction::new(name, None);
+            let t = Rc::downgrade(tab);
+            action.connect_activate(move |_, _| {
+                let Some(tab) = t.upgrade() else { return };
+                if let Some(window) = tab.window() {
+                    let window = window.upcast_ref::<gtk::Window>();
+                    let found = if step == 0 {
+                        crate::difffind::find_in_focused(window)
+                    } else {
+                        crate::difffind::find_next_in_focused(window, step)
+                    };
+                    if found {
+                        return;
+                    }
+                }
+                if let Some(owner) = tab.owner() {
+                    owner.bring_front();
+                    owner.group.activate_action(name, None);
+                }
+            });
+            tab.group.add_action(&action);
+        }
         view.update_model();
         view.update_title();
         Self::connect(&view, &factory);
@@ -685,9 +755,9 @@ impl FileHistoryView {
         });
         this.list.add_controller(keys);
         // Show Merge Commits を変えたら（どの窓からでも）、読み直す（macOS 版と同じ）。
-        if let Some(window) = this.window.upgrade() {
+        {
             let weak = Rc::downgrade(this);
-            crate::settings::connect_changed_while(&window, move |key| {
+            crate::settings::connect_changed_while(&this.list, move |key| {
                 let Some(this) = weak.upgrade() else { return };
                 let merges = crate::settings::bool(crate::settings::FILE_HISTORY_MERGES);
                 if key == crate::settings::FILE_HISTORY_MERGES && merges != this.merges.get() {
@@ -734,7 +804,7 @@ impl FileHistoryView {
                     open(id)
                 }));
             }
-            if let Some(parent) = this.parent.upgrade() {
+            if let Some(parent) = this.tab.upgrade().and_then(|t| t.window()) {
                 let (repo, path, oid, oc) = (
                     this.repo.clone(),
                     entry.path.clone(),
@@ -890,7 +960,7 @@ impl FileHistoryView {
     }
 
     fn update_title(&self) {
-        let Some(window) = self.window.upgrade() else {
+        let Some(tab) = self.tab.upgrade() else {
             return;
         };
         let count = self.entries.borrow().len();
@@ -909,7 +979,7 @@ impl FileHistoryView {
                 count = count
             )
         };
-        window.set_title(Some(&title));
+        tab.set_heading(&title);
     }
 
     /// 選んだコミットでの、このファイルの差分（出しているコミットなら読み直さない）。

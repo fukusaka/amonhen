@@ -49,6 +49,12 @@ pub struct Tab {
     on_back: RefCell<Vec<FrontCallback>>,
     /// 書き込む先の worktree の名前（確認のシートに出す。前にあるときに窓に入れる）。
     worktree_name: RefCell<Option<String>>,
+    /// File History・Blame のタブなら、そのリポジトリのタブ（macOS 版の `FileToolWindowController`）。
+    owner: RefCell<Option<Weak<Tab>>>,
+    /// File History・Blame のタブの窓の題（タブの見出しより長い。macOS 版の `heading`）。
+    heading: RefCell<String>,
+    /// このタブの見出しの帯を、File History・Blame のタブに貸しているか（帯のアクションをそのタブのものにしている）。
+    lent: Cell<bool>,
 }
 
 impl Tab {
@@ -74,6 +80,9 @@ impl Tab {
             on_front: RefCell::default(),
             on_back: RefCell::default(),
             worktree_name: RefCell::default(),
+            owner: RefCell::default(),
+            heading: RefCell::default(),
+            lent: Cell::new(false),
         });
         // 前に出した後で足したアクション（メニューの操作は、タブを窓に置いてから入れる）も窓に入れる。
         let weak = Rc::downgrade(&tab);
@@ -138,7 +147,93 @@ impl Tab {
 
     /// リポジトリのページ（リポジトリを開いていないタブ）か。
     pub fn is_home(&self) -> bool {
-        self.location.is_empty()
+        self.location.is_empty() && !self.is_tool()
+    }
+
+    /// File History・Blame のタブ（`owner` のリポジトリのタブの隣に置く。macOS 版と同じく、リポジトリのタブと同じ
+    /// ツールバーを付け、ツールバーとメニューの操作はリポジトリのタブに切り替えてから渡す）。中身は `root` に入れる。
+    /// 次の起動で開き直すタブの記録には入らない（場所を持たない）。
+    pub fn new_tool(owner: &Rc<Tab>, title: &str) -> Rc<Self> {
+        let tab = Self::new(title, "", owner.pending.clone());
+        tab.owner.replace(Some(Rc::downgrade(owner)));
+        tab
+    }
+
+    /// File History・Blame のタブか。
+    pub fn is_tool(&self) -> bool {
+        self.owner.borrow().is_some()
+    }
+
+    /// File History・Blame のタブの、リポジトリのタブ（閉じていれば None）。
+    pub fn owner(&self) -> Option<Rc<Tab>> {
+        self.owner.borrow().as_ref().and_then(Weak::upgrade)
+    }
+
+    /// File History・Blame のタブの窓の題。
+    pub fn set_heading(&self, heading: &str) {
+        self.heading.replace(heading.to_owned());
+        if self.is_shown()
+            && let Some(window) = self.window()
+        {
+            window.set_title(Some(heading));
+        }
+    }
+
+    /// 窓の題。
+    fn window_title(&self) -> String {
+        if self.is_tool() {
+            self.heading.borrow().clone()
+        } else {
+            // 窓の名前はリポジトリの名前だけ（macOS 版と同じ）。
+            self.name.clone()
+        }
+    }
+
+    /// このタブを前に出す（窓も前に）。
+    pub fn bring_front(&self) {
+        if let Some(host) = self.host() {
+            host.select(self);
+            host.window.present();
+        }
+    }
+
+    /// このタブの見出しの帯を、File History・Blame のタブに貸していて、そのタブが前にあるか（ツールバーの
+    /// 検索は、リポジトリのタブに戻ってから探す）。
+    pub fn header_lent(&self) -> bool {
+        self.lent.get()
+            && self
+                .header
+                .root()
+                .and_downcast::<gtk::ApplicationWindow>()
+                .and_then(|w| host_of(&w))
+                .and_then(|h| h.current())
+                .is_some_and(|t| t.owner().is_some_and(|o| std::ptr::eq(&*o, self)))
+    }
+
+    /// File History・Blame のタブで、リポジトリのタブのアクションのうち、このタブにないもの（タブの操作と、
+    /// このタブが自分で持つもの以外）を、リポジトリのタブに切り替えてから渡すものとして入れる（macOS 版の
+    /// `RepositoryForwarder`）。使えるか・状態はリポジトリのタブのものに合わせる。中身のアクションを足してから呼ぶ。
+    pub fn forward_actions(self: &Rc<Self>) {
+        let Some(owner) = self.owner() else { return };
+        for name in owner.group.list_actions() {
+            forward(self, &owner, &name);
+        }
+        // リポジトリのタブが後から足すアクション（メニューの操作は、読み終えてから入る）。
+        let weak = Rc::downgrade(self);
+        let id = owner.group.connect_action_added(None, move |_, name| {
+            if let Some(tool) = weak.upgrade()
+                && let Some(owner) = tool.owner()
+            {
+                forward(&tool, &owner, name);
+            }
+        });
+        let group = owner.group.downgrade();
+        let id = RefCell::new(Some(id));
+        self.connect_close(move || {
+            if let (Some(group), Some(id)) = (group.upgrade(), id.take()) {
+                group.disconnect(id);
+            }
+        });
     }
 
     /// `key`（`repos::normalize` した場所）を開いているタブか（場所は開いた形なので、リンクを解いて比べる）。
@@ -221,6 +316,48 @@ impl Tab {
             crate::sheets::set_worktree_name(window.upcast_ref(), name);
         }
     }
+}
+
+/// `tool` に、`owner` の `name` のアクションを渡すものを入れる（`tool` が同じ名前を持っていれば入れない）。
+fn forward(tool: &Rc<Tab>, owner: &Rc<Tab>, name: &str) {
+    if tool.group.lookup_action(name).is_some() {
+        return;
+    }
+    let Some(original) = owner.group.lookup_action(name) else {
+        return;
+    };
+    let parameter = original.parameter_type();
+    let proxy = match original.state() {
+        Some(state) => gio::SimpleAction::new_stateful(name, parameter.as_deref(), &state),
+        None => gio::SimpleAction::new(name, parameter.as_deref()),
+    };
+    original
+        .bind_property("enabled", &proxy, "enabled")
+        .sync_create()
+        .build();
+    if original.state().is_some() {
+        let p = proxy.downgrade();
+        original.connect_notify_local(Some("state"), move |original, _| {
+            if let (Some(p), Some(state)) = (p.upgrade(), original.state()) {
+                p.set_state(&state);
+            }
+        });
+    }
+    let (o, n) = (Rc::downgrade(owner), name.to_owned());
+    proxy.connect_activate(move |_, parameter| {
+        if let Some(owner) = o.upgrade() {
+            owner.bring_front();
+            owner.group.activate_action(&n, parameter);
+        }
+    });
+    let (o, n) = (Rc::downgrade(owner), name.to_owned());
+    proxy.connect_change_state(move |_, value| {
+        if let (Some(owner), Some(value)) = (o.upgrade(), value) {
+            owner.bring_front();
+            owner.group.change_action_state(&n, value);
+        }
+    });
+    tool.group.add_action(&proxy);
 }
 
 /// リポジトリのタブを並べる窓。
@@ -504,15 +641,40 @@ impl RepoWindow {
                 }
             });
         }
-        // ほかの窓の見出しになっていれば外す（タブを窓の間で移したとき）。
-        if let Some(other) = tab.header.root().and_downcast::<gtk::Window>()
+        // 見出しの帯: File History・Blame のタブは、リポジトリのタブの帯を借りる（同じツールバー。帯のアクションは
+        // このタブのもの）。リポジトリのタブがほかの窓で前に出ていれば、自分の帯（題だけ）。
+        let owner = tab.owner();
+        let header = match &owner {
+            Some(owner) if !owner.is_shown() => {
+                owner.header.insert_action_group("win", Some(&tab.group));
+                owner.lent.set(true);
+                owner.header.clone()
+            }
+            Some(_) => tab.header.clone(),
+            None => {
+                if tab.lent.replace(false) {
+                    tab.header.insert_action_group("win", Some(&tab.group));
+                }
+                tab.header.clone()
+            }
+        };
+        // ほかの窓の見出しになっていれば外す（タブを窓の間で移したとき）。借りていた File History・Blame のタブには、
+        // 自分の帯を付ける。
+        if let Some(other) = header.root().and_downcast::<gtk::Window>()
             && other != *self.window.upcast_ref::<gtk::Window>()
         {
-            other.set_titlebar(None::<&gtk::Widget>);
+            let fallback = other
+                .downcast_ref::<gtk::ApplicationWindow>()
+                .and_then(host_of)
+                .and_then(|h| h.current())
+                .filter(|t| t.is_tool())
+                .map(|t| t.header.clone());
+            other.set_titlebar(fallback.as_ref());
         }
-        self.window.set_titlebar(Some(&tab.header));
-        // 窓の名前はリポジトリの名前だけ（macOS 版と同じ）。
-        self.window.set_title(Some(&tab.name));
+        if self.window.titlebar().as_ref() != Some(header.upcast_ref::<gtk::Widget>()) {
+            self.window.set_titlebar(Some(&header));
+        }
+        self.window.set_title(Some(&tab.window_title()));
         let names: Vec<String> = tab
             .group
             .list_actions()
@@ -532,7 +694,7 @@ impl RepoWindow {
         self.installed.replace(names);
         crate::sheets::set_worktree_name(
             self.window.upcast_ref(),
-            tab.worktree_name.borrow().clone(),
+            owner.as_ref().unwrap_or(tab).worktree_name.borrow().clone(),
         );
         if self.window.is_active() {
             tab.front();
@@ -620,6 +782,22 @@ pub fn add(host: &Rc<RepoWindow>, tab: &Rc<Tab>, select: bool, position: Option<
         host.show(tab);
     }
     save();
+}
+
+/// File History・Blame のタブ `tool` を、リポジトリのタブ（`tool.owner()`）の右に足して前に出す（macOS 版と同じ）。
+/// リポジトリのタブを閉じたら、一緒に閉じる。
+pub fn add_tool(tool: &Rc<Tab>) {
+    let Some(owner) = tool.owner() else { return };
+    let Some(host) = owner.host() else { return };
+    let position = host.position(&owner).map(|p| p as u32 + 1);
+    add(&host, tool, true, position);
+    host.window.present();
+    let t = Rc::downgrade(tool);
+    owner.connect_close(move || {
+        if let Some(tool) = t.upgrade() {
+            close_tab(&tool);
+        }
+    });
 }
 
 /// Window > Move Tab to Window ▸ の中身を作る（`anchor` はメニューを出すタブの部品。その窓は移す先から除く）。

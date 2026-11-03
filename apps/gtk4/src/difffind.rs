@@ -51,32 +51,6 @@ pub fn find_next_in_focused(window: &gtk::Window, step: i32) -> bool {
     }
 }
 
-/// タブの窓でない窓（File History）で、Ctrl+F・Ctrl+G・Ctrl+Shift+G を差分の帯に回す。
-pub fn add_shortcuts(window: &gtk::Window) {
-    let keys = gtk::EventControllerKey::new();
-    keys.set_propagation_phase(gtk::PropagationPhase::Capture);
-    let weak = window.downgrade();
-    keys.connect_key_pressed(move |_, key, _, modifiers| {
-        use gtk::gdk::{Key, ModifierType};
-        let Some(window) = weak.upgrade() else {
-            return glib::Propagation::Proceed;
-        };
-        let ctrl = modifiers.contains(ModifierType::CONTROL_MASK);
-        let shift = modifiers.contains(ModifierType::SHIFT_MASK);
-        let handled = match key.to_lower() {
-            Key::f if ctrl && !shift => find_in_focused(&window),
-            Key::g if ctrl => find_next_in_focused(&window, if shift { -1 } else { 1 }),
-            _ => false,
-        };
-        if handled {
-            glib::Propagation::Stop
-        } else {
-            glib::Propagation::Proceed
-        }
-    });
-    window.add_controller(keys);
-}
-
 fn focused(window: &gtk::Window) -> Option<DiffFind> {
     let focus = gtk::prelude::GtkWindowExt::focus(window)?;
     OPEN.with(|open| {

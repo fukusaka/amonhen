@@ -262,6 +262,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | --- | :-: | :-: | :-: | :-: | --- |
 | Blame | ✓ | ✓ | △ | △ | VSCode: A page of the main view, without syntax colours.<br>CLI: Via `amonhen run` (`blame`). |
 | File History | ✓ | ✓ | ✓ | △ | VSCode: A page of the main view, opened from the Explorer, an editor tab, the Command Palette or a file in the main view.<br>CLI: Via `amonhen run` (`fileHistory`). |
+| Opened as a tab beside the repository tab, with the repository toolbar | ✓ | ✓ | n/a | n/a | GTK4: When the repository tab is in front in another window, the tab gets a title bar without the toolbar. |
 | Line history | — | — | — | — |  |
 
 ## 7a. Patches
