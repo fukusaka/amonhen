@@ -100,6 +100,9 @@ enum CommandTable {
     static let savePatch = Entry(
         id: "save-patch", title: "Save as Patch…", localized: true, key: "", modifiers: [.command],
         toolTip: nil, app: false)
+    static let exportArchive = Entry(
+        id: "export-archive", title: "Export Archive…", localized: true, key: "", modifiers: [.command],
+        toolTip: "Save the files of the selected commit as a zip or tar.gz file, like git archive", app: false)
     static let showWorkingCopy = Entry(
         id: "show-working-copy", title: "Working Copy", localized: false, key: "1", modifiers: [.command],
         toolTip: nil, app: false)
@@ -181,6 +184,6 @@ enum CommandTable {
     ]
     static let commitMenu: [[Entry]] = [
         [commit, commitAndPush, stageAll],
-        [savePatch],
+        [savePatch, exportArchive],
     ]
 }

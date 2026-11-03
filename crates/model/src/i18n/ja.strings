@@ -1989,3 +1989,17 @@
 "The archive is {size} MB, more than can be brought here at once (1 GB). Choose a folder to export, or run git archive where the repository is" = "アーカイブが {size} MB あり、一度に持ってこられる大きさ（1 GB）を超えています。書き出すフォルダを選ぶか、リポジトリのある所で git archive を使ってください";
 "Give one revision" = "時点を 1 つだけ渡してください";
 "Fetching {count}{more} file contents missing from this partial clone…" = "partial clone で手元にない中身を {count}{more} 個取っています…";
+"Export Archive…" = "アーカイブとして書き出す…";
+"Save the files of the selected commit as a zip or tar.gz file, like git archive" = "選んだコミットのファイルを、git archive のように zip・tar.gz のファイルにして保存する";
+"Export Archive" = "アーカイブとして書き出す";
+"The files of this commit, as git archive writes them; .gitattributes decides what is left out (export-ignore)." = "このコミットのファイルを git archive と同じく書き出します。何を外すかは .gitattributes（export-ignore）に従います。";
+"Export…" = "書き出す…";
+"Top folder:" = "先頭のフォルダ:";
+"Folder:" = "フォルダ:";
+"All files" = "すべてのファイル";
+"All Files" = "すべてのファイル";
+"Export One Folder" = "1 つのフォルダだけを書き出す";
+"Folders in this commit." = "このコミットのフォルダです。";
+"Fetch File Contents First?" = "先に中身を取ってきますか？";
+"This is a partial clone: the contents of {count} files in the archive aren’t here yet. They are fetched from the remote in one go before the archive is written." = "partial clone なので、アーカイブに入るファイルのうち {count} 個の中身がまだ手元にありません。書き出す前に、リモートからまとめて取ってきます。";
+"Fetch and Export" = "取ってきて書き出す";

@@ -1711,3 +1711,17 @@
 "Every hour git prefetches and writes the commit-graph; it’s set in your global git config and launchd (git maintenance)." = "git が毎時 prefetch と commit-graph の書き出しをします。git のユーザー全体の設定と launchd に書きます（git maintenance）。";
 "Every hour git prefetches and writes the commit-graph; it’s set in the global git config and the scheduler on %@ (git maintenance)." = "git が毎時 prefetch と commit-graph の書き出しをします。%@ の git のユーザー全体の設定と予定に書きます（git maintenance）。";
 "Couldn’t Change git maintenance" = "git maintenance を変えられませんでした";
+"Export Archive…" = "アーカイブとして書き出す…";
+"Save the files of the selected commit as a zip or tar.gz file, like git archive" = "選んだコミットのファイルを、git archive のように zip・tar.gz のファイルにして保存する";
+"Export Archive" = "アーカイブとして書き出す";
+"The files of this commit, as git archive writes them; .gitattributes decides what is left out (export-ignore)." = "このコミットのファイルを git archive と同じく書き出します。何を外すかは .gitattributes（export-ignore）に従います。";
+"Export…" = "書き出す…";
+"Top folder:" = "先頭のフォルダ:";
+"Folder:" = "フォルダ:";
+"All files" = "すべてのファイル";
+"All Files" = "すべてのファイル";
+"Export One Folder" = "1 つのフォルダだけを書き出す";
+"Folders in this commit." = "このコミットのフォルダです。";
+"Fetch File Contents First?" = "先に中身を取ってきますか？";
+"This is a partial clone: the contents of %@ files in the archive aren’t here yet. They are fetched from the remote in one go before the archive is written." = "partial clone なので、アーカイブに入るファイルのうち %@ 個の中身がまだ手元にありません。書き出す前に、リモートからまとめて取ってきます。";
+"Fetch and Export" = "取ってきて書き出す";

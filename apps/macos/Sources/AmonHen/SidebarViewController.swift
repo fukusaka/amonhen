@@ -1366,6 +1366,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             }
             add(Titles.newBranch(from: name)) { actions.newBranch(at: name) }
             add(Titles.newTag(at: name)) { actions.newTag(at: name) }
+            add(L("Export Archive…")) { actions.exportArchive(rev: "refs/heads/\(name)", label: name) }
             add(L("Compare with Previous Version")) { [weak self] in self?.onCompareWithPrevious?(name) }
             add(L("Rename…")) { actions.renameBranch(name) }
             if name != headBranch {
@@ -1386,9 +1387,11 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             add(Titles.rebase(current, onto: name)) { actions.rebaseWithConfirmation(current, onto: name) }
             menu.addItem(.separator())
             add(Titles.newBranch(from: name)) { actions.newBranch(at: name) }
+            add(L("Export Archive…")) { actions.exportArchive(rev: "refs/remotes/\(name)", label: name) }
         case .tag:
             add(Titles.merge(name, into: current)) { actions.mergeWithConfirmation(name, into: current) }
             add(Titles.newBranch(from: name)) { actions.newBranch(at: name) }
+            add(L("Export Archive…")) { actions.exportArchive(rev: "refs/tags/\(name)", label: name) }
             menu.addItem(.separator())
             addTagItems([name], to: menu, actions: actions)
         case .stash:

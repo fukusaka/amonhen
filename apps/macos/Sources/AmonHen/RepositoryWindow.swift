@@ -1661,6 +1661,15 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         actions.savePatches(oids)
     }
 
+    /// Commit > Export Archive…: History で 1 つ選んだコミット、なければ HEAD。
+    @objc func exportArchive(_ sender: Any?) {
+        if pages?.page == .history, let commit = history.selectedCommitForArchive {
+            actions.exportArchive(rev: commit.hex, label: commit.label)
+        } else {
+            actions.exportArchive(rev: "HEAD", label: actions.currentBranch ?? "HEAD")
+        }
+    }
+
     /// Repository > Apply Patch…。
     @objc func applyPatch(_ sender: Any?) { actions.chooseAndApplyPatches() }
 
