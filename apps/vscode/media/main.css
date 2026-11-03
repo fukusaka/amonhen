@@ -1104,3 +1104,20 @@ button.secondary {
   margin-top: 4px;
   color: var(--vscode-charts-orange);
 }
+
+.setting-text {
+  width: 100%;
+  margin-top: 6px;
+  box-sizing: border-box;
+  font-family: var(--vscode-editor-font-family);
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+}
+
+.setting-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 6px;
+}

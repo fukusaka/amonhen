@@ -22,7 +22,9 @@ export function createSettingsView(): View {
 
   let page = PAGES.find((p) => p.id === getState().settingsPage) ?? PAGES[0]!;
   let config = new ConfigView([]);
-  let facts: SettingsFacts = { updateRefs: true, rerereCache: false, form: [] };
+  let facts: SettingsFacts = { updateRefs: true, rerereCache: false, form: [], branches: [], exclude: '' };
+  /** 書きかけの exclude（読み直しで消さない） */
+  let excludeDraft: string | undefined;
   let error: string | undefined;
 
   const set = (writes: [string, string | null][]) => post({ type: 'settingsSet', writes });
@@ -104,12 +106,67 @@ export function createSettingsView(): View {
     return s;
   }
 
+  /** 既定のブランチ。選ばなければ判定したもの（Branches の並べ方の土台） */
+  function defaultBranchRow(): HTMLElement {
+    const key = 'amonhen.defaultBranch';
+    const chosen = config.local(key);
+    const options = [
+      { value: '', label: chosen ? 'Detected' : `Detected (${facts.base ?? 'none'})` },
+      ...facts.branches.map((b) => ({ value: b, label: b })),
+    ];
+    const control = select(options, chosen ?? '', (v) => set([[key, v || null]]));
+    const div = row('Default branch', 'Branches measures the others against it. Detected from origin/HEAD, main or master; choose one when there is none.', [key], control, (v) => v);
+    if (chosen && !facts.branches.includes(chosen)) {
+      div.append(el('div', 'setting-warning', `⚠ There is no branch named ${chosen}, so the detected branch is used.`));
+    }
+    return div;
+  }
+
+  /** `.git/info/exclude`（1 行に 1 つのパターン）。Revert・Save で */
+  function excludeRow(): HTMLElement {
+    const div = el('div', 'setting-row');
+    div.append(el('div', 'setting-help', '.git/info/exclude, one pattern per line. Shared patterns go in .gitignore.'));
+    const text = el('textarea', 'setting-text');
+    text.value = excludeDraft ?? facts.exclude;
+    text.rows = 10;
+    text.spellcheck = false;
+    const buttons = el('div', 'setting-buttons');
+    const revert = el('button', 'secondary', 'Revert');
+    const save = el('button', '', 'Save');
+    const update = () => {
+      const changed = text.value !== facts.exclude;
+      revert.disabled = !changed;
+      save.disabled = !changed;
+    };
+    text.addEventListener('input', () => {
+      excludeDraft = text.value;
+      update();
+    });
+    revert.addEventListener('click', () => {
+      excludeDraft = undefined;
+      text.value = facts.exclude;
+      update();
+    });
+    save.addEventListener('click', () => {
+      excludeDraft = undefined;
+      post({ type: 'settingsSaveExclude', exclude: text.value });
+    });
+    update();
+    buttons.append(revert, save);
+    div.append(text, buttons);
+    return div;
+  }
+
   function renderRow(r: SettingRow): HTMLElement {
     const disabled =
       'needs' in r && r.needs === 'updateRefs' && !facts.updateRefs
         ? `Needs git 2.38 or later. This repository’s git is ${facts.gitVersion ?? '?'}.`
         : undefined;
     switch (r.kind) {
+      case 'defaultBranch':
+        return defaultBranchRow();
+      case 'exclude':
+        return excludeRow();
       case 'pull': {
         const method = pullMethod(config);
         const decidingKey = config.effective('pull.ff')?.value.toLowerCase() === 'only' ? 'pull.ff' : 'pull.rebase';

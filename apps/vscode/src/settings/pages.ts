@@ -16,7 +16,11 @@ export type SettingRow =
       bool?: boolean;
       needs?: Needs;
     }
-  | { kind: 'pull'; question: string };
+  | { kind: 'pull'; question: string }
+  /** 既定のブランチ（Amon Hen の `amonhen.defaultBranch`。なければ判定したもの） */
+  | { kind: 'defaultBranch' }
+  /** `.git/info/exclude` の中身を書く欄 */
+  | { kind: 'exclude' };
 
 /** 使えるのに要る git（無ければ欄を灰色にし、理由を出す） */
 export type Needs = 'updateRefs';
@@ -99,6 +103,35 @@ export const PAGES: SettingPage[] = [
           },
         ],
       },
+    ],
+  },
+  {
+    id: 'branches',
+    title: 'Branches',
+    sections: [{ title: 'Default branch', rows: [{ kind: 'defaultBranch' }] }],
+  },
+  {
+    id: 'workingCopy',
+    title: 'Working Copy',
+    sections: [
+      {
+        title: 'Files',
+        rows: [
+          {
+            kind: 'choice',
+            question: 'Line endings',
+            key: 'core.autocrlf',
+            options: [
+              { value: 'false', label: 'Keep as committed' },
+              { value: 'true', label: 'CRLF in the working tree, LF in commits' },
+              { value: 'input', label: 'LF in commits, no change on checkout' },
+            ],
+            defaultValue: 'false',
+          },
+          { kind: 'switch', question: 'Track changes to the executable bit', key: 'core.fileMode', defaultOn: true },
+        ],
+      },
+      { title: 'Ignore in this repository only', rows: [{ kind: 'exclude' }] },
     ],
   },
 ];

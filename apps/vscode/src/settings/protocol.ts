@@ -10,6 +10,12 @@ export interface SettingsFacts {
   rerereCache: boolean;
   /** リポジトリの形の一言（shallow clone・partial clone・sparse checkout・maintenance） */
   form: { title: string; help: string }[];
+  /** ローカルブランチ（既定のブランチを選ぶ） */
+  branches: string[];
+  /** 判定した既定のブランチ（origin/HEAD の先、なければ main・master）。選んでいればそれ */
+  base?: string;
+  /** `.git/info/exclude` の中身 */
+  exclude: string;
 }
 
 export type SettingsHostMessage =
@@ -20,4 +26,6 @@ export type SettingsWebviewMessage =
   /** Repository Settings を出した（読み直してもらう） */
   | { type: 'settingsLoad' }
   /** このリポジトリの設定を書く（`value` が null なら消す。上書きをやめて上の値に戻る） */
-  | { type: 'settingsSet'; writes: [key: string, value: string | null][] };
+  | { type: 'settingsSet'; writes: [key: string, value: string | null][] }
+  /** `.git/info/exclude` を書く（`.gitignore` はそのまま） */
+  | { type: 'settingsSaveExclude'; exclude: string };

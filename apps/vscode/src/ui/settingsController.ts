@@ -65,6 +65,10 @@ export class SettingsController implements vscode.Disposable {
         await this.write(message.writes).catch(showError);
         await this.load();
         break;
+      case 'settingsSaveExclude':
+        await this.saveExclude(message.exclude).catch(showError);
+        await this.load();
+        break;
     }
   }
 
@@ -80,10 +84,21 @@ export class SettingsController implements vscode.Disposable {
     await repo.refresh();
   }
 
+  /** `.git/info/exclude` を書く。コアは `.gitignore` も一緒に書くので、今の中身を読んでそのまま渡す */
+  private async saveExclude(exclude: string): Promise<void> {
+    const repo = this.repo;
+    const client = repo && (await daemonFor(repo.root));
+    if (!client) throw new Error('Repository Settings needs the Amon Hen engine (amonhen.daemon.enabled)');
+    const files = (await client.call({ op: 'run', command: { op: 'ignoreFiles' } })).json['info'] as { gitignore?: string } | undefined;
+    const reply = (await client.call({ op: 'run', command: { op: 'saveIgnoreFiles', gitignore: files?.gitignore ?? '', exclude } })).json;
+    if (reply['ok'] !== true) throw new Error(String(reply['error'] ?? 'Can’t save .git/info/exclude'));
+    await repo.refresh();
+  }
+
   private async load(): Promise<void> {
     const generation = ++this.generation;
     const repo = this.repo;
-    const empty: SettingsFacts = { updateRefs: true, rerereCache: false, form: [] };
+    const empty: SettingsFacts = { updateRefs: true, rerereCache: false, form: [], branches: [], exclude: '' };
     if (!repo) {
       this.post({ type: 'settings', entries: [], facts: empty });
       return;
@@ -95,7 +110,13 @@ export class SettingsController implements vscode.Disposable {
         return;
       }
       const run = async (op: string) => (await client.call({ op: 'run', command: { op } })).json['info'] as Record<string, unknown> | undefined;
-      const [list, version, form] = await Promise.all([run('configList'), run('gitVersion'), run('repositoryForm')]);
+      const [list, version, form, groups, ignore] = await Promise.all([
+        run('configList'),
+        run('gitVersion'),
+        run('repositoryForm'),
+        run('branchGroups'),
+        run('ignoreFiles'),
+      ]);
       if (generation !== this.generation) return;
       this.post({
         type: 'settings',
@@ -105,6 +126,9 @@ export class SettingsController implements vscode.Disposable {
           updateRefs: version?.['updateRefs'] !== false,
           rerereCache: version?.['rerereCache'] === true,
           form: formItems(form as Form | undefined),
+          branches: ((groups?.['branches'] as { name: string }[] | undefined) ?? []).map((b) => b.name).sort(),
+          ...(typeof groups?.['base'] === 'string' ? { base: groups['base'] } : {}),
+          exclude: String(ignore?.['exclude'] ?? ''),
         },
       });
     } catch (err) {

@@ -979,6 +979,9 @@ async function settingsFlow(): Promise<void> {
     }
   };
   const keys = ['fetch.prune', 'pull.rebase', 'pull.ff'];
+  const excludeFile = join(git('rev-parse', '--absolute-git-dir').trim(), 'info', 'exclude');
+  const exclude = existsSync(excludeFile) ? readFileSync(excludeFile, 'utf8') : '';
+  const hadGitignore = existsSync(join(root, '.gitignore'));
   try {
     let mark = posted.length;
     await vscode.commands.executeCommand('amonhen.showRepositorySettings');
@@ -998,8 +1001,24 @@ async function settingsFlow(): Promise<void> {
     await panel.settings.handle({ type: 'settingsSet', writes: keys.map((k): [string, null] => [k, null]) });
     await waitPosted('settings', mark);
     assert.deepEqual(keys.map(config), [undefined, undefined, undefined]);
+
+    // Branches: 既定のブランチを選ぶ。Working Copy: .git/info/exclude を書く（.gitignore はそのまま）
+    const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+    assert.ok(first.facts.branches.includes(branch));
+    mark = posted.length;
+    await panel.settings.handle({ type: 'settingsSet', writes: [['amonhen.defaultBranch', branch]] });
+    assert.equal((await waitPosted('settings', mark)).facts.base, branch);
+    assert.equal(config('amonhen.defaultBranch'), branch);
+    const gitignore = existsSync(join(root, '.gitignore')) ? readFileSync(join(root, '.gitignore'), 'utf8') : undefined;
+    mark = posted.length;
+    await panel.settings.handle({ type: 'settingsSaveExclude', exclude: `${exclude}e2e-ignored\n` });
+    assert.match((await waitPosted('settings', mark)).facts.exclude, /e2e-ignored/);
+    assert.match(readFileSync(excludeFile, 'utf8'), /e2e-ignored/);
+    assert.equal(existsSync(join(root, '.gitignore')) ? readFileSync(join(root, '.gitignore'), 'utf8') : undefined, gitignore ?? '');
   } finally {
-    for (const k of keys) if (config(k) !== undefined) git('config', '--local', '--unset', k);
+    for (const k of [...keys, 'amonhen.defaultBranch']) if (config(k) !== undefined) git('config', '--local', '--unset', k);
+    writeFileSync(excludeFile, exclude);
+    if (!hadGitignore) rmSync(join(root, '.gitignore'), { force: true });
   }
 }
 
