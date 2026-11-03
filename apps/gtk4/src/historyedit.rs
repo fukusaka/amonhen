@@ -276,6 +276,9 @@ fn plan_steps(rows: &[Row]) -> Vec<Value> {
 /// 編集モードの中身。
 struct Mode {
     actions: Rc<Actions>,
+    /// 編集を始めた worktree（見通しを読むのも書き換えるのもここ。編集の間に書き込む先を替えても、読んだ
+    /// コミットの並びを、ほかの worktree の HEAD に当てない）。
+    repo: std::sync::Arc<amonhen_core::Repository>,
     rows: RefCell<Vec<Row>>,
     original: Vec<String>,
     /// 一覧のモデル（行のコミット ID。並べ替えたら作り直す）。
@@ -303,7 +306,11 @@ struct Mode {
 }
 
 impl Mode {
-    fn new(actions: Rc<Actions>, rows: Vec<Row>) -> Rc<Self> {
+    fn new(
+        actions: Rc<Actions>,
+        repo: std::sync::Arc<amonhen_core::Repository>,
+        rows: Vec<Row>,
+    ) -> Rc<Self> {
         let original = rows.iter().map(|r| r.oid.clone()).collect();
         let can_reorder = !rows.iter().any(|r| r.merge);
         let heading = gtk::Label::new(Some(&tr!("Edit Commits")));
@@ -388,6 +395,7 @@ impl Mode {
 
         let mode = Rc::new(Self {
             actions,
+            repo,
             rows: RefCell::new(rows),
             original,
             model,
@@ -843,9 +851,7 @@ impl Mode {
             }
             return;
         }
-        let Some(repo) = self.actions.repo() else {
-            return;
-        };
+        let repo = self.repo.clone();
         let mut command = json!({
             "op": "rewritePreview",
             "edit": { "kind": "plan", "steps": plan_steps(&self.rows.borrow()) },
@@ -996,16 +1002,17 @@ impl Mode {
             b.set_sensitive(false);
         }
         let weak = Rc::downgrade(self);
-        self.actions.perform_with(vec![command], move |reply| {
-            let Some(m) = weak.upgrade() else { return };
-            if reply["error"].is_string() || reply.is_null() {
-                for b in &m.buttons {
-                    b.set_sensitive(true);
+        self.actions
+            .perform_in(self.repo.clone(), vec![command], move |reply| {
+                let Some(m) = weak.upgrade() else { return };
+                if reply["error"].is_string() || reply.is_null() {
+                    for b in &m.buttons {
+                        b.set_sensitive(true);
+                    }
+                } else {
+                    m.finish();
                 }
-            } else {
-                m.finish();
-            }
-        });
+            });
     }
 
     fn finish(&self) {
@@ -1227,6 +1234,7 @@ impl Opener {
                 return;
             }
             let chosen: Vec<(String, bool)> = line[..=end].to_vec();
+            let source = repo.clone();
             let rows = gio::spawn_blocking(move || {
                 let ids: Vec<Oid> = chosen
                     .iter()
@@ -1266,7 +1274,7 @@ impl Opener {
             if rows.is_empty() || this.is_open() {
                 return;
             }
-            let mode = Mode::new(inner.actions.clone(), rows);
+            let mode = Mode::new(inner.actions.clone(), source, rows);
             let weak = Rc::downgrade(&this.0);
             mode.on_finish.replace(Some(Rc::new(move || {
                 if let Some(inner) = weak.upgrade() {
