@@ -277,19 +277,26 @@ impl WorkingCopy {
         message.set_visible(false);
 
         // 左の下: 変更のあるファイルの一覧。
-        let all = gtk::CheckButton::with_label(&tr!("Changes"));
+        // 太字の「Changes」と、すぐ右に「含めた数 / 変更の数」、右端に見せ方の切り替え（macOS 版と同じ）。
+        let all = gtk::CheckButton::new();
+        let all_title = gtk::Label::new(Some(&tr!("Changes")));
+        all_title.add_css_class("heading");
+        all.set_child(Some(&all_title));
         all.set_tooltip_text(Some(&tr!(
             "Include or exclude all listed files in the next commit"
         )));
         let count = gtk::Label::new(None);
-        count.set_hexpand(true);
-        count.set_xalign(1.0);
+        count.set_xalign(0.0);
         count.add_css_class("dim-label");
+        count.add_css_class("caption");
         count.add_css_class("numeric");
         count.set_tooltip_text(Some(&tr!("Files in the next commit / changed files")));
         let list_header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         list_header.append(&all);
         list_header.append(&count);
+        let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        spacer.set_hexpand(true);
+        list_header.append(&spacer);
         // 一覧の見せ方の切り替え。
         let layouts = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         layouts.add_css_class("linked");
@@ -334,10 +341,10 @@ impl WorkingCopy {
         let factory = gtk::SignalListItemFactory::new();
         let list = gtk::ListView::new(Some(selection.clone()), Some(factory.clone()));
         list.add_css_class("navigation-sidebar");
+        // 一覧の真ん中に（macOS 版と同じ）。
         let empty = gtk::Label::new(None);
         empty.add_css_class("dim-label");
-        empty.set_margin_top(12);
-        empty.set_valign(gtk::Align::Start);
+        empty.set_valign(gtk::Align::Center);
         empty.set_can_target(false);
         let list_scrolled = gtk::ScrolledWindow::builder()
             .child(&list)
