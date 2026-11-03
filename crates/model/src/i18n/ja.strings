@@ -240,7 +240,7 @@
 "{count} ahead" = "{count} 先";
 "{count} behind" = "{count} 遅れ";
 " ({items})" = "（{items}）";
-", " = "・";
+", " = "、";
 "No changes" = "変更はありません";
 /* GTK4: Working Copy の説明 */
 "Included in the next commit (click to exclude)" = "次のコミットに含める（クリックで外す）";
