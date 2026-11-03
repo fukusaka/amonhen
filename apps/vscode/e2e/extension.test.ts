@@ -60,6 +60,9 @@ async function until<T>(
   }
 }
 
+/** 時間切れのときに添える、直近に出たエラー（操作が失敗した理由） */
+const lastErrors = (): string => errors.slice(-3).map((e) => `エラー「${e}」`).join('、') || 'エラーなし';
+
 /** since 番目より後に Webview に送られた type のメッセージで、match に合う最初のもの */
 function waitPosted<T extends HostMessage['type']>(
   type: T,
@@ -1075,12 +1078,12 @@ async function rewriteFlow(label: string): Promise<void> {
       // 今回だけ積み重ねたブランチも動かして rebase する
       answer = moveStacked('Rebase');
       await vscode.commands.executeCommand('amonhen.nav.rebase', node);
-      await until('rebase', () => rev(`${name('top')}~2`) === rev(name('onto')) && rev(name('top')));
+      await until('rebase', () => rev(`${name('top')}~2`) === rev(name('onto')) && rev(name('top')), undefined, lastErrors);
       const moved = asked.at(-1)!.buttons.length > 1;
       assert.equal(moved, label === 'daemon' && asked.at(-1)!.buttons.includes('Rebase（積み重ねたブランチも動かす）'));
       assert.equal(rev(name('mid')) === rev(`${name('top')}~1`), moved, moved ? 'mid も動く' : 'mid は残る');
       await vscode.commands.executeCommand('amonhen.undo');
-      await until('rebase の Undo', () => rev(name('top')) === before.top && rev(name('mid')) === before.mid);
+      await until('rebase の Undo', () => rev(name('top')) === before.top && rev(name('mid')) === before.mid, undefined, lastErrors);
 
       // History の編集（Drop）。mid の先頭のコミットを取り除く
       await showView('amonhen.showHistory');
@@ -1095,11 +1098,11 @@ async function rewriteFlow(label: string): Promise<void> {
       } else {
         assert.deepEqual(drop.buttons, ['Drop']);
       }
-      await until('drop', () => git('log', '-1', '--format=%s', `${name('top')}~1`).trim() === branchSubject(branch) && rev(name('top')));
+      await until('drop', () => git('log', '-1', '--format=%s', `${name('top')}~1`).trim() === branchSubject(branch) && rev(name('top')), undefined, lastErrors);
       const dropMoved = drop.buttons.length > 1;
       assert.equal(rev(name('mid')) !== before.mid, dropMoved, dropMoved ? 'mid も動く' : 'mid は残る');
       await vscode.commands.executeCommand('amonhen.undo');
-      await until('drop の Undo', () => rev(name('top')) === before.top && rev(name('mid')) === before.mid);
+      await until('drop の Undo', () => rev(name('top')) === before.top && rev(name('mid')) === before.mid, undefined, lastErrors);
     });
   } finally {
     git('switch', '-q', branch);
