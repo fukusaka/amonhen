@@ -499,6 +499,10 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         let selectedTitle = (outline.item(atRow: outline.selectedRow) as? Node).map { ($0.title, $0.page) }
 
         func items(_ kind: RefKind) -> [RefItem] { refs.items.filter { $0.kind == kind } }
+        // stash は Workspace の History（と Conflicts）の下の 1 行に、数だけ（絞り込み中も）。
+        let stashCount = items(.stash).count
+        stashesNode.badge = stashCount > 0 ? "\(stashCount)" : nil
+        workspace.children = workspaceChildren()
         // 絞り込み中は、合うブランチ・タグを名前のまま平らに（フォルダや積み重ねにはしない）、見出しは開いて出す。
         if !filterWords.isEmpty {
             var groups: [Node] = []
@@ -574,10 +578,6 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         let submodules = items(.submodule).map { Node(title: $0.name, item: $0) }
         if !submodules.isEmpty { groups.append(Node(title: "Submodules", children: submodules)) }
 
-        // stash は Workspace の History（と Conflicts）の下の 1 行に、数だけ。
-        let stashCount = items(.stash).count
-        stashesNode.badge = stashCount > 0 ? "\(stashCount)" : nil
-        workspace.children = workspaceChildren()
 
         self.groups = [workspace] + groups
         outline.reloadData()
