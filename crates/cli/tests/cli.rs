@@ -783,6 +783,14 @@ fn saves_a_bundle_directly_through_the_daemon_and_over_ssh() {
         // `-` なら標準出力に。v1 より後だけ。
         let out = env.ok(&["bundle", "create", "-C", at, "-", "v1..main"]);
         assert!(out.starts_with("# v2 git bundle"), "{at}: {out}");
+        // 取り込む（SSH 先にも、中身を送って）。
+        let name = format!("usb{i}");
+        let fetched = env.json(&["bundle", "fetch", "-C", at, "--json", file, &name]);
+        assert_eq!(
+            fetched["refs"],
+            serde_json::json!([format!("refs/remotes/{name}/main")]),
+            "{at}: {fetched}"
+        );
     }
 }
 
