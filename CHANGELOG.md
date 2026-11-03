@@ -197,6 +197,9 @@ becomes the GitHub Release notes.
 - macOS: Activity's History tab updates its Undo list after each operation in the repository windows.
 - macOS: Japanese messages that point to a settings page name it as 「設定 > …」, as the menu calls it.
 - macOS: clearing the sidebar's branch filter closes again the headings that the filter opened.
+- macOS: with another worktree chosen to work in, Repository > New Branch…, New Tag…, Rename Branch…, Set Upstream…,
+  Compare with Previous Version, Create Pull Request… and the Merge…/Rebase… titles use that worktree's branch, not
+  the opened one's.
 
 ### [0.2.8] - 2026-10-30
 

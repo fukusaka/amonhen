@@ -1683,7 +1683,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     }
 
     @objc func mergeIntoCurrent(_ sender: Any?) {
-        let current = latestRefs?.headBranch ?? "HEAD"
+        let current = editingBranch ?? "HEAD"
         Task { @MainActor in
             guard let (rev, _) = await chooseRevision(
                 title: L("Merge into %@", current), message: L("The branch, tag or commit to merge in"), ok: "Merge",
@@ -1693,7 +1693,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     }
 
     @objc func rebaseCurrent(_ sender: Any?) {
-        let current = latestRefs?.headBranch ?? "HEAD"
+        let current = editingBranch ?? "HEAD"
         Task { @MainActor in
             guard let (rev, updateRefs) = await chooseRevision(
                 title: L("Rebase %@", current), message: L("The branch, tag or commit to rebase onto"), ok: "Rebase",
@@ -1704,12 +1704,19 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         }
     }
 
-    /// 新しいブランチ・タグの起点。History で選んでいるコミットがあればそれ、なければ HEAD。
+    /// 新しいブランチ・タグの起点。History で選んでいるコミットがあればそれ、なければ書き込む先の worktree の
+    /// ブランチ（なければその HEAD）。
     private var startPoint: String {
         if pages?.page == .history, let selectedCommit {
             return String(selectedCommit.map { String(format: "%02x", $0) }.joined().prefix(12))
         }
-        return latestRefs?.headBranch ?? "HEAD"
+        return editingBranch ?? "HEAD"
+    }
+
+    /// 書き込む先の worktree のブランチ（ツールバー・サイドバーが今のブランチとして出すもの）。開いたリポジトリを
+    /// 書き込む先にしているなら、ref の一覧の今のブランチ。
+    private var editingBranch: String? {
+        editing === opened ? latestRefs?.headBranch : worktrees.first { $0.isSame(editing.path) }?.branch
     }
 
     @objc func newBranch(_ sender: Any?) { actions.newBranch(at: startPoint) }
@@ -1767,7 +1774,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     @objc func showReflog(_ sender: Any?) { sidebar.select(page: .reflog) }
 
     /// Repository > Compare with Previous Version: 今のブランチを、最後に書き換える前の版と比べる。
-    @objc func compareWithPreviousVersion(_ sender: Any?) { openRangeDiff(previousOf: latestRefs?.headBranch) }
+    @objc func compareWithPreviousVersion(_ sender: Any?) { openRangeDiff(previousOf: editingBranch) }
 
     /// Range Diff を開き、`branch`（nil なら今のブランチ）を最後に書き換える前の版と比べる。
     func openRangeDiff(previousOf branch: String?) {
@@ -1851,13 +1858,13 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     /// Repository > Rename Branch…: 今のブランチの名前を変える。
     @objc func renameBranch(_ sender: Any?) {
-        guard let branch = latestRefs?.headBranch else { return NSSound.beep() }
+        guard let branch = editingBranch else { return NSSound.beep() }
         actions.renameBranch(branch)
     }
 
     /// Repository > Set Upstream…: 今のブランチの上流（pull・push の相手）を、リモートのブランチから選ぶ。
     @objc func setUpstream(_ sender: Any?) {
-        guard let branch = latestRefs?.headBranch else { return NSSound.beep() }
+        guard let branch = editingBranch else { return NSSound.beep() }
         let remotes = (latestRefs?.items ?? []).filter { $0.kind == .remote && !$0.name.hasSuffix("/HEAD") }.map(\.name)
         guard !remotes.isEmpty else { return NSSound.beep() }
         let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 320, height: 26), pullsDown: false)
@@ -2006,7 +2013,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     /// Repository > Create Pull Request…: 今のブランチからプルリクエストを作る。
     @objc func createPullRequest(_ sender: Any?) {
-        guard let branch = latestRefs?.headBranch else { return NSSound.beep() }
+        guard let branch = editingBranch else { return NSSound.beep() }
         createPullRequest(from: branch)
     }
 
@@ -2294,12 +2301,12 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         case #selector(updateSubmodules(_:)): return latestRefs?.items.contains { $0.kind == .submodule } ?? false
         case #selector(switchBranch(_:)): return latestRefs != nil
         case #selector(renameBranch(_:)), #selector(setUpstream(_:)), #selector(compareWithPreviousVersion(_:)):
-            return latestRefs?.headBranch != nil
+            return editingBranch != nil
         case #selector(commitChanges(_:)), #selector(commitAndPush(_:)): return showsWorkingCopy && workingCopy.canCommit
         case #selector(stageAllChanges(_:)): return showsWorkingCopy && workingCopy.canStageAll
         case #selector(openInTerminal(_:)), #selector(revealInFinder(_:)): return isLocal
         case #selector(openOnGitHub(_:)): return gitHub != nil
-        case #selector(createPullRequest(_:)): return gitHub != nil && GitHub.isAvailable && latestRefs?.headBranch != nil
+        case #selector(createPullRequest(_:)): return gitHub != nil && GitHub.isAvailable && editingBranch != nil
         default: return true
         }
     }
