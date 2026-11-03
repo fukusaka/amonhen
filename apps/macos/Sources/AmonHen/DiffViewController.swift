@@ -2272,9 +2272,11 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        guard let index = fileIndex(row: files.clickedRow), let item = changes?.items[index] else { return }
-        let path = item.path
-        if let commit = commitHex, item.kind != .deleted {
+        guard let index = fileIndex(row: files.clickedRow) else { return }
+        // いくつかのコミットを選んでいると `changes` はなく、名前だけ（積み重ねた差分の見出しと同じく File History）。
+        guard let path = changes?.items[index].path ?? stacked?.names[index] else { return }
+        let item = changes?.items[index]
+        if let commit = commitHex, let item, item.kind != .deleted {
             menu.addItem(ClosureMenuItem(title: Titles.blame(at: String(commit.prefix(Titles.shortIDLength)))) { [weak self] in self?.onBlame?(path, commit) })
         }
         menu.addItem(ClosureMenuItem(title: Titles.fileHistory) { [weak self] in self?.onFileHistory?(path) })

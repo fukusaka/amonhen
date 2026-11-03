@@ -159,6 +159,7 @@ becomes the GitHub Release notes.
 - macOS: with another worktree selected, the Merge… and Rebase… chooser leaves out that worktree's branch instead of
   the opened one's.
 - macOS: "Pulled into …" and "Merged into …" in the status bar name the selected worktree's branch.
+- macOS: with several History commits selected, right-clicking a file in the changed-file list offers File History.
 
 - The GTK4 app's Undo button asks once; it opened the question twice, so one stayed after undoing.
 - A `.mailmap`, or a mailmap setting (`log.mailmap`, `mailmap.file`), changed while the engine was reading the old
