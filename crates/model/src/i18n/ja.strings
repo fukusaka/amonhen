@@ -991,7 +991,6 @@
 "Body:" = "本文:";
 "Open in Browser" = "ブラウザで開く";
 "Pull Request Created" = "プルリクエストを作りました";
-"Couldn’t create the pull request" = "プルリクエストを作れませんでした";
 /* GTK4 の FE: リポジトリの設定 */
 "Author and Signing" = "作者と署名";
 "Commits" = "コミット";

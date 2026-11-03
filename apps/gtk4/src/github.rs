@@ -917,7 +917,8 @@ pub fn checkout_pull_request(actions: &Rc<Actions>, pr: &PullRequest) {
             }
             return;
         };
-        let sheet = Sheet::new(
+        // worktree の行は書かない（macOS 版の確認と同じ）。
+        let sheet = Sheet::unnamed(
             window.as_ref(),
             &tr!("Checkout #{number}?", number = pr.number),
             &tr!(
@@ -1009,7 +1010,8 @@ pub fn create_pull_request(actions: &Rc<Actions>, branch: String, pushed: bool) 
             .await
             .unwrap_or_else(|| "main".to_owned());
 
-        let sheet = Sheet::new(
+        // ブランチを名前で渡すので、worktree の行は書かない（macOS 版と同じ）。
+        let sheet = Sheet::unnamed(
             window.as_ref(),
             "Create Pull Request",
             &tr!("From {branch}", branch = branch),
@@ -1079,14 +1081,8 @@ pub fn create_pull_request(actions: &Rc<Actions>, branch: String, pushed: bool) 
                     open_uri(window.as_ref(), &url);
                 }
             }
-            Err(e) => {
-                crate::sheets::inform(
-                    window.as_ref(),
-                    &tr!("Couldn’t create the pull request"),
-                    &e,
-                )
-                .await
-            }
+            // gh の文を見出しにして知らせる（macOS 版の NSAlert(error:)）。
+            Err(e) => crate::sheets::inform(window.as_ref(), &e, "").await,
         }
     });
 }
