@@ -70,6 +70,9 @@ enum CommandTable {
     static let applyPatch = Entry(
         id: "apply-patch", title: "Apply Patch…", localized: true, key: "", modifiers: [.command],
         toolTip: nil, app: false)
+    static let fetchBundle = Entry(
+        id: "fetch-bundle", title: "Fetch from Bundle…", localized: true, key: "", modifiers: [.command],
+        toolTip: "Fetch the branches of a bundle file under a name of their own, as git fetch does", app: false)
     static let saveBundle = Entry(
         id: "save-bundle", title: "Save Repository as Bundle…", localized: true, key: "", modifiers: [.command],
         toolTip: "Save HEAD and every branch and tag in one file that git can clone or fetch from, like git bundle", app: false)
@@ -177,7 +180,7 @@ enum CommandTable {
         [fetch, pull, push, forcePush],
         [newBranch, renameBranch, setUpstream, newTag],
         [newWorktree, pruneWorktrees, addRemote],
-        [merge, rebase, compareWithPrevious, applyPatch, saveBundle],
+        [merge, rebase, compareWithPrevious, applyPatch, saveBundle, fetchBundle],
         [`continue`, skip, abort],
         [stash, popStash],
         [undo],

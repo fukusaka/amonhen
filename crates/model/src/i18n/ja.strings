@@ -2047,3 +2047,13 @@
 "Couldn’t read {file}: {error}" = "{file} を読めませんでした: {error}";
 "Use bundle create or bundle fetch" = "bundle create か bundle fetch を使ってください";
 "This repository lacks {count} commits the bundle needs (it has only the commits after them)" = "bundle に要るコミットのうち {count} 個が、このリポジトリにありません（bundle にはそれより後のコミットしかありません）";
+"Fetch from Bundle…" = "bundle から取り込む…";
+"Fetch the branches of a bundle file under a name of their own, as git fetch does" = "bundle のファイルのブランチを、git fetch のように、それ用の名前の下に取り込む";
+"Fetch from Bundle" = "bundle から取り込む";
+"Choose a bundle file (git bundle) to fetch from." = "取り込む bundle のファイル（git bundle）を選んでください。";
+"Can’t Fetch the Bundle" = "bundle を取り込めません";
+"Nothing to Fetch" = "取り込むものがありません";
+"The bundle has no branches." = "この bundle にはブランチがありません。";
+"Name:" = "名前:";
+"This repository lacks {count} commits the bundle needs (it has only the commits after them)." = "bundle に要るコミットのうち {count} 個が、このリポジトリにありません（bundle にはそれより後のコミットしかありません）。";
+"{file} has {count} branches ({names}). They are fetched under the name below, like a remote’s branches; tags aren’t fetched." = "{file} には {count} 個のブランチ（{names}）があります。remote のブランチのように、下の名前の下に取り込みます。タグは取り込みません。";
