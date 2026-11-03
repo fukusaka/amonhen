@@ -190,6 +190,7 @@ becomes the GitHub Release notes.
 - macOS: Reflog's Compare with Current HEAD compares with the HEAD of the worktree shown, not the opened one.
 - macOS: Save as Bundle's Save… is off while Only commits after: is chosen with an empty field; it quietly saved all
   history.
+- macOS: the password and passphrase dialog shows its buttons in the system language instead of always in English.
 
 ### [0.2.8] - 2026-10-30
 
