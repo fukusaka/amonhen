@@ -145,6 +145,9 @@ impl Popover {
         v.set_wrap_mode(gtk::pango::WrapMode::WordChar);
         v.set_max_width_chars(40);
         v.set_hexpand(true);
+        // 値は選んでコピーできる（macOS 版と同じ）。フォーカスは取らない（取ると開いたときに全体が選ばれる）。
+        v.set_selectable(true);
+        v.set_focusable(false);
         if mono {
             v.add_css_class("monospace");
         }
