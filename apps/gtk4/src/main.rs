@@ -833,10 +833,10 @@ fn build_tab(
     let status = gtk::Label::new(None);
     status.add_css_class("dim-label");
     status.set_visible(false);
-    // daemon・SSH 越しに初めて読むときは、受け取った量と回る印を添える（macOS 版と同じ）。
+    // daemon・SSH 越しに初めて読むときは、受け取った量と回る印を添える（印が上、量がその下。macOS 版と同じ）。
     let spinner = gtk::Spinner::new();
     spinner.set_visible(false);
-    let loading = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let loading = gtk::Box::new(gtk::Orientation::Vertical, 6);
     loading.set_halign(gtk::Align::Center);
     loading.set_valign(gtk::Align::Center);
     loading.append(&spinner);
