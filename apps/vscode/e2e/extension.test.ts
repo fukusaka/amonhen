@@ -297,6 +297,139 @@ async function rangeDiffFlow(path: 'daemon' | 'git'): Promise<void> {
 }
 
 /**
+ * サイドバーのタグに、リモートでの様子（fetch で読む）と署名の印が出て、右クリックで origin への push・置き換え・
+ * 削除と手元の削除（Undo で戻る）ができる。リモートは追加・名前の変更・URL の変更・prune・削除ができる。
+ * どれもコアの命令（daemon だけ）
+ */
+async function tagsAndRemotesFlow(): Promise<void> {
+  const repo = api.manager.current!;
+  const sidebar = api.sidebar;
+  const origin = git('remote', 'get-url', 'origin').trim();
+  const inOrigin = (...args: string[]) => childProcess.execFileSync('git', args, { cwd: origin, encoding: 'utf8' });
+  const tagsSection = sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'tags')!;
+  await repo.want('tags');
+  const tagItem = (name: string) => {
+    const node = sidebar.getChildren(tagsSection).find((n) => n.kind === 'tag' && n.ref.name === `refs/tags/${name}`);
+    return node && { node, item: sidebar.getTreeItem(node) };
+  };
+  const tagIs = (name: string, what: string, fn: (item: vscode.TreeItem) => boolean) =>
+    until(
+      `${name} が ${what}`,
+      () => {
+        const found = tagItem(name);
+        return found && fn(found.item) && found;
+      },
+      undefined,
+      () => {
+        const item = tagItem(name)?.item;
+        return `${item?.contextValue}「${String(item?.description)}」${errors.slice(-2).join('、')}`;
+      },
+    );
+  const fetch = () => vscode.commands.executeCommand('amonhen.fetch');
+  const tag = 'e2e-tag';
+  const remote = 'e2e-mirror';
+  try {
+    // まだ origin にないタグは「どのリモートにもない」。Push で origin に置く
+    git('tag', tag);
+    await fetch();
+    let found = await tagIs(tag, 'どのリモートにもない', (i) => String(i.description).startsWith('not on any remote'));
+    assert.match(String(found.item.contextValue), /;push/);
+    assert.doesNotMatch(String(found.item.contextValue), /;onRemote/);
+    await vscode.commands.executeCommand('amonhen.tag.push', found.node);
+    assert.equal(inOrigin('rev-parse', tag).trim(), git('rev-parse', tag).trim());
+    found = await tagIs(tag, 'origin にある', (i) => /;onRemote/.test(String(i.contextValue)));
+    assert.doesNotMatch(String(found.item.contextValue), /;push/);
+    assert.equal(found.item.description, git('log', '-1', '--format=%s', tag).trim());
+
+    // origin で同じ名前の別のタグにすると、fetch の後に「違う」と出る。Replace で手元のものに置き換える
+    inOrigin('tag', '-f', tag, `${tag}~1`);
+    await fetch();
+    found = await tagIs(tag, 'origin で違う', (i) => String(i.description).startsWith('different on origin'));
+    assert.match(String(found.item.contextValue), /;replace/);
+    await withWindow({ showWarningMessage: async () => 'Replace' }, async () =>
+      vscode.commands.executeCommand('amonhen.tag.replace', found.node),
+    );
+    assert.equal(inOrigin('rev-parse', tag).trim(), git('rev-parse', tag).trim());
+
+    // origin から消す。手元のものは残る
+    found = await tagIs(tag, '置き換わる', (i) => !String(i.description).startsWith('different'));
+    await withWindow({ showWarningMessage: async () => 'Delete' }, async () =>
+      vscode.commands.executeCommand('amonhen.tag.deleteFromRemote', found.node),
+    );
+    assert.equal(inOrigin('tag', '--list', tag).trim(), '');
+    found = await tagIs(tag, '消えたと分かる', (i) => String(i.description).startsWith('not on any remote'));
+
+    // 手元のタグを消し、Undo で戻す
+    const oid = git('rev-parse', tag).trim();
+    await withWindow({ showWarningMessage: async () => 'Delete', showInformationMessage: async () => undefined }, async () =>
+      vscode.commands.executeCommand('amonhen.tag.delete', found.node),
+    );
+    assert.equal(git('tag', '--list', tag).trim(), '');
+    await vscode.commands.executeCommand('amonhen.undo');
+    await until('タグの Undo', () => git('tag', '--list', tag).trim() === tag);
+    assert.equal(git('rev-parse', tag).trim(), oid);
+
+    // SSH の鍵で署名したタグ（git 2.34 から）は、allowed signers に載っていれば Verified
+    const [major, minor] = git('--version').match(/(\d+)\.(\d+)/)!.slice(1).map(Number) as [number, number];
+    if (major > 2 || (major === 2 && minor >= 34)) {
+      const key = join(dirname(root), 'e2e-signing-key');
+      childProcess.execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-C', 'a@example.com', '-f', key]);
+      const signers = join(dirname(root), 'e2e-allowed-signers');
+      writeFileSync(signers, `a@example.com ${readFileSync(`${key}.pub`, 'utf8')}`);
+      git('-c', 'gpg.format=ssh', '-c', `user.signingkey=${key}`, 'tag', '-s', '-m', 'signed', 'e2e-signed');
+      git('config', 'gpg.ssh.allowedSignersFile', signers);
+      await vscode.commands.executeCommand('amonhen.refresh');
+      const signed = await tagIs('e2e-signed', 'Verified', (i) => (i.iconPath as vscode.ThemeIcon | undefined)?.id === 'verified-filled');
+      assert.match((signed.item.tooltip as vscode.MarkdownString).value, /\*\*Verified\*\* \(ssh\)/);
+      assert.equal((tagItem(tag)!.item.iconPath as vscode.ThemeIcon).id, 'tag');
+    }
+
+    // リモートを足し、名前と URL を変え、prune して、外す
+    await withWindow({ showInputBox: inputs(remote, origin) }, async () => vscode.commands.executeCommand('amonhen.remote.add'));
+    assert.equal(git('remote', 'get-url', remote).trim(), origin);
+    const remoteNode = (name: string) =>
+      until(`リモート ${name}`, async () => {
+        await repo.refresh();
+        const section = sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'remotes')!;
+        return sidebar.getChildren(section).find((n) => n.kind === 'remote' && n.remote.name === name);
+      });
+    await withWindow({ showInputBox: inputs(`${remote}-2`) }, async () =>
+      vscode.commands.executeCommand('amonhen.remote.rename', await remoteNode(remote)),
+    );
+    assert.equal(git('remote', 'get-url', `${remote}-2`).trim(), origin);
+    const url = join(origin, '.git');
+    await withWindow({ showInputBox: inputs(url) }, async () =>
+      vscode.commands.executeCommand('amonhen.remote.editUrl', await remoteNode(`${remote}-2`)),
+    );
+    assert.equal(git('remote', 'get-url', `${remote}-2`).trim(), url);
+    // prune で、リモートで消えたブランチの追跡が消える
+    git('update-ref', `refs/remotes/${remote}-2/gone`, 'HEAD');
+    await vscode.commands.executeCommand('amonhen.remote.prune', await remoteNode(`${remote}-2`));
+    assert.equal(git('for-each-ref', `refs/remotes/${remote}-2/gone`).trim(), '');
+    await withWindow({ showWarningMessage: async () => 'Remove' }, async () =>
+      vscode.commands.executeCommand('amonhen.remote.remove', await remoteNode(`${remote}-2`)),
+    );
+    assert.equal(git('remote').split('\n').includes(`${remote}-2`), false);
+  } finally {
+    for (const t of [tag, 'e2e-signed']) if (git('tag', '--list', t).trim()) git('tag', '-d', t);
+    if (inOrigin('tag', '--list', tag).trim()) inOrigin('tag', '-d', tag);
+    for (const r of [remote, `${remote}-2`]) if (git('remote').split('\n').includes(r)) git('remote', 'remove', r);
+    try {
+      git('config', '--unset', 'gpg.ssh.allowedSignersFile');
+    } catch {
+      // 署名を試していない
+    }
+    await repo.refresh();
+  }
+}
+
+/** showInputBox の代わり。呼ばれるたびに values を順に返す */
+function inputs(...values: string[]): () => Promise<string | undefined> {
+  let i = 0;
+  return async () => values[i++];
+}
+
+/**
  * Reflog に HEAD の動きが出る。今のブランチを reset（Mixed・Hard）すると、外れたコミットが「どのブランチにもない」と
  * 出て、Undo で戻る。Hard は作業中の変更を先に stash に残す。Reflog の行のコミットを checkout（detached）し、
  * History で見せる。どれもコアの命令（daemon だけ）
@@ -1008,6 +1141,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('shows the reflog and resets to a commit through the daemon', async () => {
     await reflogFlow();
+  });
+
+  test('marks tags by remote and signature, and pushes, replaces and deletes tags and changes remotes through the daemon', async () => {
+    await tagsAndRemotesFlow();
   });
 
   test('drops the selection of a file whose changes went away before its diff is read', async () => {

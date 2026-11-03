@@ -222,7 +222,7 @@ what is still missing). GitHub, AI, Activity beyond the Undo log, the machine-wi
 left out for now: VSCode has its own extensions and settings for them.
 
 - [x] 13. Reflog, Reset to a commit, and Checkout (Detached) of a commit
-- [ ] 14. Tag and remote menus, tag marks for remotes and signatures
+- [x] 14. Tag and remote menus, tag marks for remotes and signatures
 - [ ] 15. Worktrees
 - [ ] 16. File History
 - [ ] 17. Blame

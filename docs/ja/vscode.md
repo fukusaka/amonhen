@@ -214,7 +214,7 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 今は入れない。VSCode にそのための拡張と設定がある。
 
 - [x] 13. Reflog、コミットへの Reset、コミットの Checkout (Detached)
-- [ ] 14. タグとリモートのメニュー、タグのリモートの印と署名の印
+- [x] 14. タグとリモートのメニュー、タグのリモートの印と署名の印
 - [ ] 15. Worktrees
 - [ ] 16. File History
 - [ ] 17. Blame

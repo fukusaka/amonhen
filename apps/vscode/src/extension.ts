@@ -18,6 +18,7 @@ import { SidebarProvider } from './ui/sidebar.ts';
 import { registerStashCommands } from './ui/stashCommands.ts';
 import { registerSubmoduleCommands } from './ui/submoduleCommands.ts';
 import { registerSyncCommands } from './ui/syncCommands.ts';
+import { registerTagCommands } from './ui/tagCommands.ts';
 import { registerUndoCommand } from './ui/undoCommand.ts';
 import type { ViewName } from './view/protocol.ts';
 
@@ -86,7 +87,8 @@ export async function activate(
     registerSubmoduleCommands(manager),
     registerRangeDiffCommands(manager),
     registerReflogCommands(manager),
-    // エンジンを使えるときだけ出すもの（Reflog・Reset）
+    registerTagCommands(manager, sidebar),
+    // エンジンを使えるときだけ出すもの（Reflog・Reset、タグとリモートのメニュー）
     vscode.workspace.onDidChangeConfiguration((e) => e.affectsConfiguration('amonhen.daemon') && void updateEngine()),
   );
   void updateEngine();

@@ -183,6 +183,52 @@
         "category": "Amon Hen"
       },
       {
+        "command": "amonhen.tag.push",
+        "title": "Push Tag",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.tag.replace",
+        "title": "Replace Tag on Remote…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.tag.delete",
+        "title": "Delete Tag…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.tag.deleteFromRemote",
+        "title": "Delete Tag from Remote…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.remote.add",
+        "title": "Add Remote…",
+        "category": "Amon Hen",
+        "icon": "$(add)"
+      },
+      {
+        "command": "amonhen.remote.rename",
+        "title": "Rename…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.remote.editUrl",
+        "title": "Edit URL…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.remote.prune",
+        "title": "Prune",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.remote.remove",
+        "title": "Remove…",
+        "category": "Amon Hen"
+      },
+      {
         "command": "amonhen.skipSequence",
         "title": "Skip",
         "category": "Amon Hen",
@@ -433,6 +479,56 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "amonhen.remote.add",
+          "when": "view == amonhen.sidebar && viewItem == section.remotes && amonhen.engine",
+          "group": "inline"
+        },
+        {
+          "command": "amonhen.remote.add",
+          "when": "view == amonhen.sidebar && viewItem == section.remotes && amonhen.engine",
+          "group": "1_remote@1"
+        },
+        {
+          "command": "amonhen.remote.rename",
+          "when": "view == amonhen.sidebar && viewItem == remote && amonhen.engine",
+          "group": "1_remote@1"
+        },
+        {
+          "command": "amonhen.remote.editUrl",
+          "when": "view == amonhen.sidebar && viewItem == remote && amonhen.engine",
+          "group": "1_remote@2"
+        },
+        {
+          "command": "amonhen.remote.prune",
+          "when": "view == amonhen.sidebar && viewItem == remote && amonhen.engine",
+          "group": "1_remote@3"
+        },
+        {
+          "command": "amonhen.remote.remove",
+          "when": "view == amonhen.sidebar && viewItem == remote && amonhen.engine",
+          "group": "2_remote@1"
+        },
+        {
+          "command": "amonhen.tag.push",
+          "when": "view == amonhen.sidebar && viewItem =~ /^tag(;\\w+)*;push/ && amonhen.engine",
+          "group": "5_tag@1"
+        },
+        {
+          "command": "amonhen.tag.replace",
+          "when": "view == amonhen.sidebar && viewItem =~ /^tag(;\\w+)*;replace/ && amonhen.engine",
+          "group": "5_tag@2"
+        },
+        {
+          "command": "amonhen.tag.delete",
+          "when": "view == amonhen.sidebar && viewItem =~ /^tag(;\\w+)*$/ && amonhen.engine",
+          "group": "6_tag@1"
+        },
+        {
+          "command": "amonhen.tag.deleteFromRemote",
+          "when": "view == amonhen.sidebar && viewItem =~ /^tag(;\\w+)*;onRemote/ && amonhen.engine",
+          "group": "6_tag@2"
+        },
         {
           "command": "amonhen.amRetryThreeWay",
           "when": "view == amonhen.sidebar && viewItem == sequence.am.retry",
@@ -704,6 +800,42 @@
         {
           "command": "amonhen.reflog.copyName",
           "when": "false"
+        },
+        {
+          "command": "amonhen.tag.push",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.tag.replace",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.tag.delete",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.tag.deleteFromRemote",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.remote.rename",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.remote.editUrl",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.remote.prune",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.remote.remove",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.remote.add",
+          "when": "amonhen.hasRepository && amonhen.engine"
         }
       ],
       "webview/context": [

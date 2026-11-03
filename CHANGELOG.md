@@ -756,6 +756,9 @@ First release.
   reaches; from there a branch, tag, checkout or reset brings them back. It needs the engine.
 - History's commit menu has Checkout (Detached) and Reset Current Branch to Here… (Mixed, Soft or Hard; a hard reset
   stashes uncommitted changes first, and Undo puts the branch back).
+- With the engine, tags show what the remotes have (as of the last Fetch) and their signature, and their menu pushes,
+  replaces or deletes them on a remote and deletes them here (with Undo). Remotes can be added, renamed, pointed
+  elsewhere, pruned and removed from the sidebar.
 
 #### Changed
 
