@@ -737,7 +737,15 @@ impl WorkingCopy {
 
     /// Amend Last Commit: 直前のコミットを直す（メッセージを入れておく）。
     pub fn amend_last_commit(&self) {
-        self.inner.amend.set_active(true);
+        let inner = &self.inner;
+        if inner.amend.is_active() {
+            // もう入っていれば toggled が来ないので、ここで直前のメッセージを入れる（macOS 版と同じ）。
+            if inner.message_is_empty() {
+                Inner::fill_head_message(inner);
+            }
+        } else {
+            inner.amend.set_active(true);
+        }
     }
 
     /// Commit メニューの Stage All（コンフリクト以外の、stage していない変更をすべて含める）。
