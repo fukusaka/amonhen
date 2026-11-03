@@ -796,13 +796,15 @@ impl FileHistoryView {
         if let Some(position) = picked
             && let Some(entry) = this.entry_at(position)
         {
-            this.selection.set_selected(position);
+            // 右クリックでは選び直さない（差分はそのまま。macOS 版と同じ）。
             let short = entry.oid[..8.min(entry.oid.len())].to_owned();
             if let Some(id) = Oid::from_hex(&entry.oid) {
                 let open = this.on_commit.clone();
-                items.push(crate::menu::action(tr!("Show in History"), move || {
-                    open(id)
-                }));
+                items.push(crate::menu::keyed(
+                    tr!("Show in History"),
+                    "Return",
+                    move || open(id),
+                ));
             }
             if let Some(parent) = this.tab.upgrade().and_then(|t| t.window()) {
                 let (repo, path, oid, oc) = (
@@ -817,17 +819,21 @@ impl FileHistoryView {
                 ));
             }
             items.push(crate::menu::Item::Separator);
-            for (title, text) in [
-                (tr!("Copy Commit ID"), entry.oid.clone()),
-                (tr!("Copy Short ID"), short.clone()),
-                (tr!("Copy Path"), entry.path.clone()),
+            for (title, accel, text) in [
+                (tr!("Copy Commit ID"), Some("<Control>c"), entry.oid.clone()),
+                (tr!("Copy Short ID"), None, short.clone()),
+                (tr!("Copy Path"), None, entry.path.clone()),
             ] {
                 let l = list.downgrade();
-                items.push(crate::menu::action(title, move || {
+                let copy = move || {
                     if let Some(l) = l.upgrade() {
                         l.clipboard().set_text(&text);
                     }
-                }));
+                };
+                items.push(match accel {
+                    Some(accel) => crate::menu::keyed(title, accel, copy),
+                    None => crate::menu::action(title, copy),
+                });
             }
             items.push(crate::menu::Item::Separator);
         }

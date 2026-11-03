@@ -20,6 +20,13 @@ pub enum Item {
         tip: String,
         f: Box<dyn Fn()>,
     },
+    /// ショートカットを添えた項目（macOS 版の `keyEquivalent`。キーは別のところで効くもので、ここでは見せるだけ）。
+    /// `accel` は GTK の形（`<Control>c`・`Return`）。
+    Keyed {
+        title: String,
+        accel: String,
+        f: Box<dyn Fn()>,
+    },
     /// 押せない項目（説明だけ。macOS 版の `isEnabled = false`）。
     Disabled(String),
     /// 押せない項目で、押せないわけをツールチップに出すもの（macOS 版の `isEnabled = false` と `toolTip`）。
@@ -44,6 +51,15 @@ pub fn disabled_hint(title: impl Into<String>, tip: impl Into<String>) -> Item {
 /// `title` の項目を作る。
 pub fn action(title: impl Into<String>, f: impl Fn() + 'static) -> Item {
     Item::Action(title.into(), Box::new(f))
+}
+
+/// ショートカット `accel`（GTK の形）を添えた `title` の項目を作る。
+pub fn keyed(title: impl Into<String>, accel: &str, f: impl Fn() + 'static) -> Item {
+    Item::Keyed {
+        title: title.into(),
+        accel: accel.to_owned(),
+        f: Box::new(f),
+    }
 }
 
 /// 値を選ぶ項目を作る（`on` なら印を付ける）。
@@ -71,9 +87,10 @@ pub fn titles(items: &[Item]) -> Vec<String> {
     let mut out = Vec::new();
     for i in items {
         match i {
-            Item::Action(title, _) | Item::Choice { title, .. } | Item::Hint { title, .. } => {
-                out.push(title.clone())
-            }
+            Item::Action(title, _)
+            | Item::Choice { title, .. }
+            | Item::Hint { title, .. }
+            | Item::Keyed { title, .. } => out.push(title.clone()),
             Item::Disabled(title) | Item::DisabledHint { title, .. } => {
                 out.push(format!("({title})"))
             }
@@ -91,7 +108,10 @@ pub fn titles(items: &[Item]) -> Vec<String> {
 pub fn activate(items: &[Item], path: &str) -> bool {
     let (first, rest) = path.split_once(" > ").unwrap_or((path, ""));
     items.iter().any(|item| match item {
-        Item::Action(title, f) | Item::Choice { title, f, .. } | Item::Hint { title, f, .. }
+        Item::Action(title, f)
+        | Item::Choice { title, f, .. }
+        | Item::Hint { title, f, .. }
+        | Item::Keyed { title, f, .. }
             if title == first && rest.is_empty() =>
         {
             f();
@@ -105,12 +125,14 @@ pub fn activate(items: &[Item], path: &str) -> bool {
 /// 選ぶ項目のある段の項目（macOS 版のように、印の欄を空けて今の値にだけ ✓ を出す。GTK の印は四角の中の ✓
 /// で、項目の名前に色もアイコンも出せないので、自前の部品にする）。印・色の丸（`dot` が Some のとき、その欄を
 /// 空ける）・名前の順に並べ、押したらメニューを閉じて `f` を呼ぶ。`on` が None なら印の欄を置かない（選ぶ項目の
-/// ない段のツールチップ付きの項目。名前は GTK の項目と同じ位置）。`tip` はツールチップ。
+/// ない段のツールチップ付きの項目。名前は GTK の項目と同じ位置）。`tip` はツールチップ、`accel` は右に添える
+/// ショートカット（GTK の形）。
 fn choice_row(
     title: &str,
     on: Option<bool>,
     dot: Option<Option<&str>>,
     tip: Option<&str>,
+    accel: Option<&str>,
     f: Box<dyn Fn()>,
 ) -> gtk::Widget {
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
@@ -131,6 +153,12 @@ fn choice_row(
     label.set_xalign(0.0);
     label.set_hexpand(true);
     row.append(&label);
+    if let Some((key, mods)) = accel.and_then(gtk::accelerator_parse) {
+        let accel = gtk::Label::new(Some(&gtk::accelerator_get_label(key, mods)));
+        accel.add_css_class("dim-label");
+        accel.set_margin_start(24);
+        row.append(&accel);
+    }
     let button = gtk::Button::builder().child(&row).build();
     button.add_css_class("flat");
     button.add_css_class(if on.is_some() {
@@ -192,8 +220,27 @@ fn build(
                     &section,
                     n,
                     custom,
-                    choice_row(&title, Some(false), dot, None, f),
+                    choice_row(&title, Some(false), dot, None, None, f),
                 );
+            }
+            Item::Keyed { title, accel, f } if choices => {
+                let dot = swatches.then_some(None);
+                add_custom(
+                    &section,
+                    n,
+                    custom,
+                    choice_row(&title, Some(false), dot, None, Some(&accel), f),
+                );
+            }
+            Item::Keyed { title, accel, f } => {
+                let name = format!("item{n}");
+                *n += 1;
+                let action = gio::SimpleAction::new(&name, None);
+                action.connect_activate(move |_, _| f());
+                group.add_action(&action);
+                let item = gio::MenuItem::new(Some(&title), Some(&format!("context.{name}")));
+                item.set_attribute_value("accel", Some(&accel.to_variant()));
+                section.append_item(&item);
             }
             Item::Hint { title, tip, f } => {
                 let (on, dot) = if choices {
@@ -205,7 +252,7 @@ fn build(
                     &section,
                     n,
                     custom,
-                    choice_row(&title, on, dot, Some(&tip), f),
+                    choice_row(&title, on, dot, Some(&tip), None, f),
                 );
             }
             Item::Action(title, f) => {
@@ -227,7 +274,7 @@ fn build(
                     &section,
                     n,
                     custom,
-                    choice_row(&title, Some(on), dot, None, f),
+                    choice_row(&title, Some(on), dot, None, None, f),
                 );
             }
             Item::Disabled(title) => {
@@ -241,7 +288,7 @@ fn build(
                 } else {
                     (None, None)
                 };
-                let row = choice_row(&title, on, dot, Some(&tip), Box::new(|| {}));
+                let row = choice_row(&title, on, dot, Some(&tip), None, Box::new(|| {}));
                 row.set_sensitive(false);
                 add_custom(&section, n, custom, row);
             }
