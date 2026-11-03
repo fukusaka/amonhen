@@ -48,6 +48,8 @@ becomes the GitHub Release notes.
   in conflict, and their menus add, update (optionally recursive or to the branch they follow), change the URL or the
   branch to follow, sync and remove them (keeping `.git/modules` unless asked). The Clone sheet can check them out
   too. `amonhen submodule` and `amonhen clone --recurse-submodules` do the same.
+- Subtrees, when git has `git subtree`: Add Subtree… brings another repository's branch into a folder, and the
+  sidebar's Subtrees group pulls, pushes and splits them, remembering the source and squash. `amonhen subtree` too.
 
 #### Changed
 

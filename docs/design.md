@@ -481,6 +481,20 @@ or split history in ways that are hard to see afterwards.
 - `RemoteChange` and `SubmoduleChange` are internally tagged (`kind`) for the JSON commands, which postcard can't
   read, so they cross the daemon and SSH as JSON strings (`wire::Tagged`).
 
+## Subtrees
+
+- `git subtree` is contrib and some builds of git leave it out, so `{"op":"subtrees"}` first asks whether it is there
+  (`git subtree -h` prints its usage; exit codes differ between versions) and the apps offer subtrees only then.
+- The list comes from HEAD's history: commits with `git-subtree-dir:` (written by add and by squashed pulls; a plain
+  pull's merge has none), newest first, keeping folders HEAD still has (`ls-tree -d`). Reading every commit is slow
+  in a large repository, so the backend keeps the HEAD it read and the folders in `<git dir>/amonhen/subtrees` and
+  next reads only `<old>..HEAD`, or everything again when HEAD no longer descends from it.
+- `{"op":"subtree"}` runs add, pull, push and split. Add and pull are `git subtree add|pull --prefix=<dir>
+  [--squash] -- <url> <ref>`; a pull that conflicts stops like a merge. On success the URL, ref, squash and push ref
+  are remembered in the repository's config (`amonhen.subtree.<dir>.url`, `.ref`, `.squash`, `.pushRef`), so the
+  sheets and `amonhen subtree pull <dir>` start from them; squash is off unless chosen, as in git. Add, pull and
+  split (a new branch) are recorded for Undo.
+
 ## Speed targets and measurement
 
 | Item | Target |
