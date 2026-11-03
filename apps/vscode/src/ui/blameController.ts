@@ -26,13 +26,12 @@ export class BlameController implements vscode.Disposable {
   setRepository(repo: Repository | undefined): void {
     if (repo === this.repo) return;
     this.repoListener?.dispose();
-    const switched = this.repo !== undefined;
     this.repoListener = repo?.onDidChange((changed) => this.onRepositoryChange(changed));
     this.repo = repo;
     this.generation++;
-    // 別のリポジトリに切り替えたら、そのパスは意味がない。開いた直後（Webview の準備の前に頼まれた）なら読む
-    if (switched) this.target = undefined;
-    else if (this.target) void this.load();
+    // 別のリポジトリ（worktree）に切り替えたら、同じパスをそちらで読み直す（前のリポジトリの中身を残さない。
+    // なければそう出る）。開いた直後（Webview の準備の前に頼まれた）なら読む
+    if (this.target) void this.load();
     this.watchFile();
   }
 

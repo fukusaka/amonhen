@@ -31,13 +31,12 @@ export class FileHistoryController implements vscode.Disposable {
     if (repo === this.repo) return;
     this.repoListener?.dispose();
     this.headOid = repo?.current.status?.branch.oid;
-    const switched = this.repo !== undefined;
     this.repoListener = repo?.onDidChange((changed) => this.onRepositoryChange(changed));
     this.repo = repo;
     this.generation++;
-    // 別のリポジトリに切り替えたら、そのパスは意味がない。開いた直後（Webview の準備の前に頼まれた）なら読む
-    if (switched) this.path = undefined;
-    else if (this.path) void this.load();
+    // 別のリポジトリ（worktree）に切り替えたら、同じパスをそちらで読み直す（前のリポジトリの中身を残さない。
+    // なければそう出る）。開いた直後（Webview の準備の前に頼まれた）なら読む
+    if (this.path) void this.load();
   }
 
   /** `path` の履歴を出す */
