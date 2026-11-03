@@ -769,6 +769,8 @@ First release.
   which one is in progress, to continue or abort first.
 - In a History with many branches side by side (git/git, linux), the graph no longer pushes the commit text out of the
   list: lanes with only lines are squeezed and the graph stays within a fixed width, as in the app.
+- With the engine, History on Current Branch no longer goes empty after a commit made outside VSCode (a terminal,
+  another tool); it filtered the engine's previous History, which didn't have the new commit yet.
 
 #### Fixed
 
