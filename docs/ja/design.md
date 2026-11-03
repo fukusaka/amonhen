@@ -424,8 +424,15 @@ rebase と History の編集（reword・squash・fixup・drop・edit・split・m
     足すと根のコミットも残るが、それは数えない）。取得した範囲の中の基点からなら作れる。
   - partial clone では、git は手元にない中身を 1 つずつ取りに行く。手元にないものを数え
     （`rev-list --objects --missing=print`）、アプリが確かめ、アーカイブと同じく先にまとめて取る。
-- いくつかのブランチだけの bundle には HEAD がないので、git は clone しても何も取り出さない。bundle からの clone は
-  次の段で、取り出すブランチを選ぶ。`bundle create -` も上のこともすべて git 2.23 にある。
+- bundle のファイルからの clone は `git clone <file>`（Clone のシートと `amonhen clone` は、ファイルを URL として
+  受け取る）。バックエンドは bundle の見出しを git を使わずに読む（`bundle_info`: `# v2`・`# v3 git bundle`、`@` の
+  capability、`-<id>` の前提のコミット、`<id> <ref>` の ref、空の行、その後に pack）:
+  - いくつかのブランチだけの bundle には HEAD がなく、git は clone しても何も取り出さないので、選ばなければ `-b` で
+    main・master・最初のブランチを取り出す。
+  - 前提のコミットがある bundle は clone できない（git は「remote transport reported error」で止まる）ので、わけを
+    言って断る。
+  - bundle では git は `--filter` と `--depth` を無視するので、シートでは取得する範囲を選べなくする。
+- `bundle create -`・`clone -b` も、上のこともすべて git 2.23 にある。
 
 ## 速度目標と計測
 
