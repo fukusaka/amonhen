@@ -1160,6 +1160,11 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
                 Bookmarks.shared.addGroup(new)
                 for path in members { Bookmarks.shared.move(path, to: new) }
                 Bookmarks.shared.removeGroup(name)
+                // 選んでいたグループなら、新しい名前のグループを選んだままに（「すべて」に戻さない）。
+                if let self, category == .group(name) {
+                    category = .group(new)
+                    reload()
+                }
             }
             add(L("Delete Group")) { Bookmarks.shared.removeGroup(name) }
         case let .scan(path):
