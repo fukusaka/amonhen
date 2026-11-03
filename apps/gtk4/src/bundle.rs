@@ -130,14 +130,14 @@ pub fn save(actions: &Rc<Actions>, refs: Vec<String>, names: Vec<String>, label:
                 "This is a partial clone: the contents of {count} files in the bundle aren’t here yet. They are fetched from the remote in one go before the bundle is written.",
                 count = count
             );
-            if !actions
-                .confirm(
-                    &tr!("Fetch File Contents First?"),
-                    &message,
-                    &tr!("Fetch and Save"),
-                )
-                .await
-            {
+            // 窓のシートで（ほかの確かめるシートと同じ形。macOS 版と同じ）。
+            let sheet = Sheet::unnamed(
+                parent.as_ref(),
+                &tr!("Fetch File Contents First?"),
+                &message,
+            );
+            sheet.buttons(&tr!("Fetch and Save"), false, None);
+            if sheet.run().await != Response::Ok {
                 return;
             }
         }

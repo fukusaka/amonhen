@@ -130,14 +130,14 @@ pub fn export(actions: &Rc<Actions>, rev: String, label: String) {
                 "This is a partial clone: the contents of {count} files in the archive aren’t here yet. They are fetched from the remote in one go before the archive is written.",
                 count = count
             );
-            if !actions
-                .confirm(
-                    &tr!("Fetch File Contents First?"),
-                    &message,
-                    &tr!("Fetch and Export"),
-                )
-                .await
-            {
+            // 窓のシートで（ほかの確かめるシートと同じ形。macOS 版と同じ）。
+            let sheet = Sheet::unnamed(
+                parent.as_ref(),
+                &tr!("Fetch File Contents First?"),
+                &message,
+            );
+            sheet.buttons(&tr!("Fetch and Export"), false, None);
+            if sheet.run().await != Response::Ok {
                 return;
             }
         }
