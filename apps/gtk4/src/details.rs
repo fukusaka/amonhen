@@ -1899,7 +1899,9 @@ fn linked(text: &str, web: Option<&str>, revs: bool) -> String {
                 .is_some_and(|c| c.is_alphanumeric() || "._%+-/@".contains(c));
         // URL（空白まで。末尾の句読点と閉じ括弧は含めない）。`www.` で始まるものも（macOS 版の NSDataDetector と
         // 同じく http:// を付けて開く）。
-        let www = word_start && rest.len() > 4 && rest[..4].eq_ignore_ascii_case("www.");
+        // 4 バイト目が多バイト文字の途中でも落ちないよう、バイト列で比べる。
+        let www =
+            word_start && rest.len() > 4 && rest.as_bytes()[..4].eq_ignore_ascii_case(b"www.");
         if rest.starts_with("https://") || rest.starts_with("http://") || www {
             let mut end = rest
                 .find(|c: char| c.is_whitespace() || c == '<' || c == '>' || c == '"')
@@ -2185,6 +2187,32 @@ mod tests {
             "<a href=\"https://x.org/1a2b3c4d\">https://x.org/1a2b3c4d</a>"
         );
         assert_eq!(linked("1a2b3c4d", None, false), "1a2b3c4d");
+    }
+
+    #[test]
+    fn multibyte_text_does_not_break_links() {
+        // 4 バイト目が多バイト文字の途中に来る文（頭・空白の後・トレーラー）でも落ちない。
+        assert_eq!(linked("日本語の本文", None, true), "日本語の本文");
+        assert_eq!(linked("x ab日本 #1", None, true), "x ab日本 #1");
+        assert_eq!(
+            linked("Co-authored-by: 山田 <yamada@example.org>", None, true),
+            "Co-authored-by: 山田 &lt;<a href=\"mailto:yamada@example.org\">\
+             yamada@example.org</a>&gt;"
+        );
+        assert_eq!(
+            linked("修正 www.例.jp と https://x.org/日本 を参照。", None, false),
+            "修正 <a href=\"http://www.例.jp\">www.例.jp</a> と \
+             <a href=\"https://x.org/日本\">https://x.org/日本</a> を参照。"
+        );
+        assert_eq!(
+            linked(
+                "直した #12。deadbeef も",
+                Some("https://github.com/a/b"),
+                true
+            ),
+            "直した <a href=\"https://github.com/a/b/issues/12\">#12</a>。\
+             <a href=\"rev:deadbeef\">deadbeef</a> も"
+        );
     }
 
     #[test]
