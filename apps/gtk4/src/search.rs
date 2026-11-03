@@ -2,6 +2,7 @@
 //! 欄を出す（GNOME の検索バー）。Enter で探し、一致した行を塗って件数を出し、選んでいる行より後の最初の一致を
 //! 選ぶ。同じ問い合わせなら Enter で次へ、Shift+Enter で前へ（Ctrl+G・Ctrl+Shift+G でも）。書き方はコアの
 //! `query`（`author:`・`subject:`・`commit:`・`path:`・`contents:`・`after:`・`before:`、AND・OR・括弧）。
+//! 欄の左の ▾ のメニューで、作者・パス・内容・日時で探す書き方を入れる（macOS 版と同じ）。
 //! partial clone で中身を探す前は、手元にない中身の数を出して断る。探している間は、分かった分から塗って件数と
 //! 進み具合を出す（macOS 版と同じ）。
 //! 一致したコミットだけを出す切り替え（macOS 版と同じ）を入れると、一致したものだけの History
@@ -70,16 +71,46 @@ impl Search {
         // 書き方が分かるように、欄の中と吹き出しに説明を出す（macOS 版と同じ）。
         let entry = gtk::SearchEntry::builder()
             .placeholder_text(tr!("Search (author:, path:, contents: also work)"))
-            .tooltip_text(format!(
-                "{}\n{}",
-                tr!(
-                    "Words match the subject, author and ID. Spaces mean AND, “or” means OR, and parentheses group.\nauthor:name  subject:text  commit:ID  path:path  contents:\"diff text\"\nExample: path:fs/ (author:linus or author:greg)"
-                ),
-                // macOS 版は ▾ のメニューで入れる日時の書き方（GTK 版には ▾ がないので、ここで知らせる）。
-                tr!("after:2026-01-01  before:2026-06-30 (committed after or before a date)")
+            .tooltip_text(tr!(
+                "Words match the subject, author and ID. Spaces mean AND, “or” means OR, and parentheses group.\nauthor:name  subject:text  commit:ID  path:path  contents:\"diff text\"\nExample: path:fs/ (author:linus or author:greg)"
             ))
             .hexpand(true)
             .build();
+        // ▾: 作者・パス・内容・日時で探す書き方を入れる（macOS 版の検索の欄の ▾ のメニューと同じ）。
+        let scopes = gio::Menu::new();
+        for (title, prefix) in SCOPES {
+            scopes.append(
+                Some(&amonhen_model::i18n::translate(title)),
+                Some(&gio::Action::print_detailed_name(
+                    "search.insert-prefix",
+                    Some(&prefix.to_variant()),
+                )),
+            );
+        }
+        let scope_icon = crate::icon::Icon::default();
+        scope_icon.set(crate::icon::Kind::Search, false);
+        let scope = gtk::MenuButton::builder()
+            .menu_model(&scopes)
+            .child(&scope_icon)
+            .always_show_arrow(true)
+            .build();
+        let insert = gio::SimpleAction::new("insert-prefix", Some(glib::VariantTy::STRING));
+        let e = entry.clone();
+        insert.connect_activate(move |_, prefix| {
+            let Some(prefix) = prefix.and_then(|p| p.str()) else {
+                return;
+            };
+            e.set_text(&with_prefix(&e.text(), prefix));
+            e.grab_focus();
+            e.set_position(-1);
+        });
+        let search_actions = gio::SimpleActionGroup::new();
+        search_actions.add_action(&insert);
+        let field = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        field.add_css_class("linked");
+        field.set_hexpand(true);
+        field.append(&scope);
+        field.append(&entry);
         let count = gtk::Label::new(None);
         count.add_css_class("dim-label");
         count.add_css_class("numeric");
@@ -105,7 +136,8 @@ impl Search {
         only.set_sensitive(false);
         steps.append(&only);
         let line = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        line.append(&entry);
+        line.insert_action_group("search", Some(&search_actions));
+        line.append(&field);
         line.append(&spinner);
         line.append(&count);
         line.append(&steps);
@@ -786,9 +818,44 @@ fn grouped(n: usize) -> String {
     out
 }
 
+/// 検索の欄の ▾ のメニュー（題と入れる書き方。macOS 版と同じ順）。
+const SCOPES: [(&str, &str); 5] = [
+    ("Search by Author (author:)", "author:"),
+    ("Search by Path (path:)", "path:"),
+    ("Search by Contents (contents:)", "contents:"),
+    ("Committed After (after:)", "after:"),
+    ("Committed Before (before:)", "before:"),
+];
+
+/// 欄の `current` に書き方 `prefix` を足したもの（空なら `prefix` だけ、あれば空白で区切って後ろに。macOS 版と同じ）。
+fn with_prefix(current: &str, prefix: &str) -> String {
+    let current = current.trim();
+    if current.is_empty() {
+        prefix.to_string()
+    } else {
+        format!("{current} {prefix}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{count_text, grouped, searches_contents};
+    use super::{SCOPES, count_text, grouped, searches_contents, with_prefix};
+
+    #[test]
+    fn inserts_a_scope_prefix() {
+        assert_eq!(with_prefix("", "author:"), "author:");
+        assert_eq!(with_prefix("  ", "path:"), "path:");
+        assert_eq!(with_prefix(" fix ", "after:"), "fix after:");
+    }
+
+    #[test]
+    fn scope_titles_are_translated() {
+        amonhen_model::i18n::with(amonhen_model::i18n::Lang::Ja, || {
+            for (title, _) in SCOPES {
+                assert_ne!(amonhen_model::i18n::translate(title), title);
+            }
+        });
+    }
 
     #[test]
     fn finds_a_contents_search() {

@@ -1897,7 +1897,11 @@
 "This search needs more than {count} file contents not fetched yet. Narrow it with path:, after: or before:, or fetch all contents in Fetching and Folders." = "この検索には、まだ取っていない中身が {count} 個より多く要ります。path:・after:・before: で絞るか、「取得とフォルダ」で中身をすべて取ってください。";
 "Open Fetching and Folders" = "「取得とフォルダ」を開く";
 "{count} found · {percent}%" = "{count} 件 · {percent}%";
-"after:2026-01-01  before:2026-06-30 (committed after or before a date)" = "after:2026-01-01  before:2026-06-30（その日時より後・前のコミット）";
+"Search by Author (author:)" = "作者で探す（author:）";
+"Search by Path (path:)" = "パスで探す（path:）";
+"Search by Contents (contents:)" = "内容で探す（contents:）";
+"Committed After (after:)" = "この日時より後（after:）";
+"Committed Before (before:)" = "この日時より前（before:）";
 
 /* GTK4 の FE: shallow clone の History の帯 */
 "100 Commits" = "100 コミット";
