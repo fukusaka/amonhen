@@ -1,7 +1,9 @@
 //! History の検索（macOS 版のツールバーの検索の欄と同じ）。見出しの検索のボタンか Ctrl+F で、History の上に
 //! 欄を出す（GNOME の検索バー）。Enter で探し、一致した行を塗って件数を出し、選んでいる行より後の最初の一致を
 //! 選ぶ。同じ問い合わせなら Enter で次へ、Shift+Enter で前へ（Ctrl+G・Ctrl+Shift+G でも）。書き方はコアの
-//! `query`（`author:`・`subject:`・`commit:`・`path:`・`contents:`、AND・OR・括弧）。
+//! `query`（`author:`・`subject:`・`commit:`・`path:`・`contents:`・`after:`・`before:`、AND・OR・括弧）。
+//! partial clone で中身を探す前は、手元にない中身の数を出して断る。探している間は、分かった分から塗って件数と
+//! 進み具合を出す（macOS 版と同じ）。
 //! 一致したコミットだけを出す切り替え（macOS 版と同じ）を入れると、一致したものだけの History
 //! （`history_matching`。間を飛ばして親につなぐ）に替える。探すのはいつも元の History。
 
@@ -57,6 +59,10 @@ struct Inner {
     next: gtk::Button,
     /// 探した問い合わせが決まった・消えたとき（詳細の欄で一致を強調する）。
     on_query: RefCell<Option<OnQuery>>,
+    /// partial clone か（中身を探す前に、取る中身の数を出して断る）。リポジトリの形をまだ読んでいなければ None。
+    partial: Cell<Option<bool>>,
+    /// Repository Settings の「取得とフォルダ」を開く（中身の検索に要る中身が多すぎるとき）。
+    on_show_fetching: RefCell<Option<Rc<dyn Fn()>>>,
 }
 
 impl Search {
@@ -64,8 +70,13 @@ impl Search {
         // 書き方が分かるように、欄の中と吹き出しに説明を出す（macOS 版と同じ）。
         let entry = gtk::SearchEntry::builder()
             .placeholder_text(tr!("Search (author:, path:, contents: also work)"))
-            .tooltip_text(tr!(
-                "Words match the subject, author and ID. Spaces mean AND, “or” means OR, and parentheses group.\nauthor:name  subject:text  commit:ID  path:path  contents:\"diff text\"\nExample: path:fs/ (author:linus or author:greg)"
+            .tooltip_text(format!(
+                "{}\n{}",
+                tr!(
+                    "Words match the subject, author and ID. Spaces mean AND, “or” means OR, and parentheses group.\nauthor:name  subject:text  commit:ID  path:path  contents:\"diff text\"\nExample: path:fs/ (author:linus or author:greg)"
+                ),
+                // macOS 版は ▾ のメニューで入れる日時の書き方（GTK 版には ▾ がないので、ここで知らせる）。
+                tr!("after:2026-01-01  before:2026-06-30 (committed after or before a date)")
             ))
             .hexpand(true)
             .build();
@@ -132,6 +143,8 @@ impl Search {
             previous: previous.clone(),
             next: next.clone(),
             on_query: RefCell::default(),
+            partial: Cell::new(None),
+            on_show_fetching: RefCell::default(),
         });
         inner.set_matches(Rc::default());
         let i = inner.clone();
@@ -260,6 +273,16 @@ impl Search {
         self.inner.view.show(repo, history);
         // 走っている検索・絞り込みは古い History のものなので捨てる。
         self.inner.clear();
+    }
+
+    /// partial clone か（リポジトリの形を読んだとき）。
+    pub fn set_partial(&self, partial: bool) {
+        self.inner.partial.set(Some(partial));
+    }
+
+    /// 中身の検索に要る中身が多すぎるとき、「取得とフォルダ」を開くもの（macOS 版の `onShowFetchingSettings`）。
+    pub fn connect_show_fetching(&self, f: impl Fn() + 'static) {
+        self.inner.on_show_fetching.replace(Some(Rc::new(f)));
     }
 
     /// 探した問い合わせが決まった・消えたら `f(問い合わせ)` を呼ぶ（macOS 版の `onSearchChanged`）。
@@ -419,9 +442,128 @@ impl Inner {
             .is_some_and(|(q, g)| *q == query && Some(*g) == generation);
         if same {
             this.step(step);
+        } else if this.partial.get() != Some(false) && searches_contents(&query) {
+            Self::confirm_contents(this, query, step.signum());
         } else {
             Self::run(this, query, step.signum());
         }
+    }
+
+    /// partial clone で中身を探す前に、取る中身の数を数えて断る。上限を超えるなら探さず、絞るか中身をすべて取るよう
+    /// 頼む（macOS 版の `confirmContentsSearch`）。
+    fn confirm_contents(this: &Rc<Self>, query: String, step: i32) {
+        let Some((repo, history)) = this.base.borrow().clone() else {
+            return;
+        };
+        let generation = this.generation.get() + 1;
+        this.generation.set(generation);
+        this.count.set_text("");
+        this.count.set_tooltip_text(None);
+        this.spinner.set_visible(true);
+        this.spinner.start();
+        let (q, counted) = (query.clone(), history.clone());
+        let weak = Rc::downgrade(this);
+        glib::spawn_future_local(async move {
+            // リポジトリの形をまだ読んでいなければ（開いてすぐの検索・`--search`）、ここで読む。
+            let partial = match weak.upgrade().and_then(|this| this.partial.get()) {
+                Some(partial) => partial,
+                None => crate::repoform::load(&repo)
+                    .await
+                    .is_some_and(|form| form.partial.is_some()),
+            };
+            if !partial {
+                if let Some(this) = weak.upgrade()
+                    && this.generation.get() == generation
+                {
+                    Self::run(&this, query, step);
+                }
+                return;
+            }
+            let need = gio::spawn_blocking(move || {
+                repo.count_contents_to_fetch(&counted, &q)
+                    .map_err(|e| e.to_string())
+            })
+            .await;
+            let Some(this) = weak.upgrade() else { return };
+            let current = this
+                .base
+                .borrow()
+                .as_ref()
+                .is_some_and(|(_, h)| Arc::ptr_eq(h, &history));
+            if this.generation.get() != generation || !current {
+                return;
+            }
+            this.spinner.stop();
+            this.spinner.set_visible(false);
+            let need = match need {
+                Ok(Ok(need)) => need,
+                Ok(Err(e)) => {
+                    this.count.set_text(&e);
+                    this.count.set_tooltip_text(Some(&e));
+                    this.done_pending();
+                    return;
+                }
+                Err(_) => {
+                    this.done_pending();
+                    return;
+                }
+            };
+            let Some(need) = need else {
+                Self::run(&this, query, step);
+                return;
+            };
+            // `--search` では、尋ねている窓を撮れるように、窓を出してから終わりにする。
+            {
+                let weak = Rc::downgrade(&this);
+                glib::timeout_add_local_once(std::time::Duration::from_millis(500), move || {
+                    if let Some(this) = weak.upgrade() {
+                        this.done_pending();
+                    }
+                });
+            }
+            let window = this.entry.root().and_downcast::<gtk::Window>();
+            let count = grouped(need.count);
+            if need.more {
+                let dialog = gtk::AlertDialog::builder()
+                    .message(tr!("Too Many Contents to Fetch"))
+                    .detail(tr!(
+                        "This search needs more than {count} file contents not fetched yet. Narrow it with path:, after: or before:, or fetch all contents in Fetching and Folders.",
+                        count = count
+                    ))
+                    .buttons([tr!("Cancel").as_str(), &tr!("Open Fetching and Folders")])
+                    .cancel_button(0)
+                    .default_button(1)
+                    .modal(true)
+                    .build();
+                if dialog.choose_future(window.as_ref()).await == Ok(1)
+                    && let Some(f) = this.on_show_fetching.borrow().clone()
+                {
+                    f();
+                }
+                return;
+            }
+            let dialog = gtk::AlertDialog::builder()
+                .message(tr!("Search the Contents?"))
+                .detail(tr!(
+                    "This search fetches {count} file contents not fetched yet.",
+                    count = count
+                ))
+                .buttons([tr!("Cancel").as_str(), &tr!("Search")])
+                .cancel_button(0)
+                .default_button(1)
+                .modal(true)
+                .build();
+            let chosen = dialog.choose_future(window.as_ref()).await == Ok(1);
+            // 尋ねている間に History が替わったら探さない（macOS 版と同じ）。
+            let current = this
+                .base
+                .borrow()
+                .as_ref()
+                .is_some_and(|(_, h)| Arc::ptr_eq(h, &history));
+            if chosen && current && this.generation.get() == generation {
+                Self::run(&this, query, step);
+            }
+        });
     }
 
     /// 裏で探す（すべてのコミットを読むので、linux では初回に 1 秒ほど）。`step` が 0 なら選び直さない。
@@ -439,6 +581,28 @@ impl Inner {
         let snapshot_generation = history.generation;
         let q = query.clone();
         let searched = history.clone();
+        // 内容の検索は大きな履歴では数分かかるので、分かった分から塗り、件数と進み具合を出す（macOS 版と同じ）。
+        {
+            let (weak, repo) = (Rc::downgrade(this), repo.clone());
+            glib::timeout_add_local(std::time::Duration::from_millis(300), move || {
+                let Some(this) = weak.upgrade() else {
+                    return glib::ControlFlow::Break;
+                };
+                if this.generation.get() != generation || !this.spinner.is_visible() {
+                    return glib::ControlFlow::Break;
+                }
+                let (rows, done) = repo.search_partial();
+                if done > 0.0 || !rows.is_empty() {
+                    this.count.set_text(&tr!(
+                        "{count} found · {percent}%",
+                        count = rows.len(),
+                        percent = (done * 100.0) as u32
+                    ));
+                    this.view.set_matches(Rc::new(rows));
+                }
+                glib::ControlFlow::Continue
+            });
+        }
         let weak = Rc::downgrade(this);
         glib::spawn_future_local(async move {
             // 前の検索はやめさせる（コアは新しい検索を始めると古いものを止める）。
@@ -496,6 +660,13 @@ impl Inner {
                 p.set(p.get() - 1);
             }
         });
+    }
+
+    /// `--search` の終わり（`pending` を 1 つ減らす）。
+    fn done_pending(&self) {
+        if let Some(p) = self.pending.take() {
+            p.set(p.get() - 1);
+        }
     }
 
     /// 新しく探したとき: 選んでいる行から下で、いちばん近い一致（選んでいる行が一致ならそれ）を選ぶ。なければ
@@ -588,9 +759,54 @@ fn count_text(index: Option<usize>, total: usize) -> String {
     }
 }
 
+/// 問い合わせに `contents:`（`content:`）があるか（引用の中の語も数えるが、尋ねすぎるだけ。macOS 版の
+/// `searchesContents`）。
+fn searches_contents(query: &str) -> bool {
+    let lower = query.to_lowercase();
+    ["contents:", "content:"].iter().any(|key| {
+        lower.match_indices(key).any(|(at, _)| {
+            let before = lower[..at].chars().next_back();
+            let after = lower[at + key.len()..].chars().next();
+            before.is_none_or(|c| c.is_whitespace() || c == '(')
+                && after.is_some_and(|c| !c.is_whitespace())
+        })
+    })
+}
+
+/// 3 桁ごとに区切った数（macOS 版の `NumberFormatter` の `.decimal`）。
+fn grouped(n: usize) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
-    use super::count_text;
+    use super::{count_text, grouped, searches_contents};
+
+    #[test]
+    fn finds_a_contents_search() {
+        assert!(searches_contents("contents:foo"));
+        assert!(searches_contents("author:a (content:bar)"));
+        assert!(searches_contents("Contents:x"));
+        assert!(!searches_contents("contents: foo"));
+        assert!(!searches_contents("mycontents:foo"));
+        assert!(!searches_contents("path:fs/"));
+    }
+
+    #[test]
+    fn groups_digits() {
+        assert_eq!(grouped(7), "7");
+        assert_eq!(grouped(1234), "1,234");
+        assert_eq!(grouped(50000), "50,000");
+        assert_eq!(grouped(1234567), "1,234,567");
+    }
 
     #[test]
     fn count_shows_position_or_no_matches() {

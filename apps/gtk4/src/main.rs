@@ -1245,11 +1245,12 @@ fn build_tab(
     // （macOS 版の `loadForm`。shallow の境界は fetch で、partial clone と sparse checkout は設定で変わるので、
     // History を読み直すたびと、書き込む先を変えたとき）。
     let load_form: Rc<dyn Fn()> = {
-        let (sb, a, wc, cd) = (
+        let (sb, a, wc, cd, se) = (
             sidebar.clone(),
             Rc::downgrade(&actions),
             working.clone(),
             commit_diff.clone(),
+            search.clone(),
         );
         let generation = Rc::new(Cell::new(0u64));
         Rc::new(move || {
@@ -1258,12 +1259,19 @@ fn build_tab(
             };
             let request = generation.get() + 1;
             generation.set(request);
-            let (sb, wc, cd, generation) = (sb.clone(), wc.clone(), cd.clone(), generation.clone());
+            let (sb, wc, cd, se, generation) = (
+                sb.clone(),
+                wc.clone(),
+                cd.clone(),
+                se.clone(),
+                generation.clone(),
+            );
             glib::spawn_future_local(async move {
                 let Some(form) = repoform::load(&repo).await else {
                     return;
                 };
                 if generation.get() == request {
+                    se.set_partial(form.partial.is_some());
                     sb.set_repository_form(&form);
                     wc.set_sparse(form.sparse.as_ref());
                     cd.set_sparse(form.sparse.clone());
@@ -1321,6 +1329,15 @@ fn build_tab(
     {
         let (p, slot) = (pages.downgrade(), settings_slot.downgrade());
         working.connect_show_folders(move || {
+            let (Some(pages), Some(slot)) = (p.upgrade(), slot.upgrade()) else {
+                return;
+            };
+            let _ = WidgetExt::activate_action(&pages, "win.repository-settings", None);
+            reposettings::select(&slot, "fetching");
+        });
+        // 中身の検索に要る中身が多すぎるときも同じページを開く（macOS 版と同じ）。
+        let (p, slot) = (pages.downgrade(), settings_slot.downgrade());
+        search.connect_show_fetching(move || {
             let (Some(pages), Some(slot)) = (p.upgrade(), slot.upgrade()) else {
                 return;
             };

@@ -92,6 +92,9 @@ pub struct Data {
     pub badge_css: Option<&'static str>,
     /// タグの署名の印（右端の印の先頭。見えている行を出すときに、確かめた結果から入れる）。
     pub signature: Option<Mark>,
+    /// `marks` の終わりのいくつかが、リポジトリの形の印（添え物なので、名前が切れるほど狭ければ出さない。
+    /// macOS 版と同じ）。
+    pub optional_marks: usize,
 }
 
 mod node_imp {
@@ -739,7 +742,7 @@ impl Sidebar {
             })
             .unwrap_or_default();
         let node = &self.inner.working;
-        let data = with_marks(
+        let data = with_form_marks(
             Data {
                 marks: Vec::new(),
                 tooltip: None,
@@ -748,8 +751,12 @@ impl Sidebar {
             marks,
         );
         node.imp().data.replace(data);
-        // History の行は作り直すときに印を付ける（Working Copy の行も描き直す）。
+        // History の行は作り直すときに印を付ける。Working Copy の行は同じ項目のままなので、入れ直して描き直させる。
         self.inner.rebuild(false);
+        let workspace = self.inner.root.item(0).and_downcast::<Node>();
+        if let Some(store) = workspace.and_then(|w| w.children()) {
+            self.inner.replace_keeping(&store, 0, node);
+        }
     }
 
     /// リポジトリの worktree と変更の数を出す。並びが変われば作り直し、数だけなら行を描き直す。
@@ -1016,6 +1023,78 @@ mod name_first {
         (min, nat)
     }
 
+    /// 印を横に並べる（間は 2）。与えられた幅が足りなければ、添え物の印（[`super::OPTIONAL_MARK`]）を外に出す
+    /// （いちばん狭い幅は、添え物の印を除いた幅）。
+    mod drop_optional {
+        use super::*;
+
+        const SPACING: i32 = 2;
+
+        fn optional(c: &gtk::Widget) -> bool {
+            c.has_css_class(crate::sidebar::OPTIONAL_MARK)
+        }
+
+        fn row_width<'a>(kids: impl Iterator<Item = &'a gtk::Widget>) -> i32 {
+            let widths: Vec<i32> = kids.map(|c| width(c).1).collect();
+            widths.iter().sum::<i32>() + SPACING * (widths.len() as i32 - 1).max(0)
+        }
+
+        glib::wrapper! {
+            pub struct DropOptional(ObjectSubclass<Imp>) @extends gtk::LayoutManager;
+        }
+
+        #[derive(Default)]
+        pub struct Imp;
+
+        #[glib::object_subclass]
+        impl ObjectSubclass for Imp {
+            const NAME: &'static str = "AmonhenDropOptionalLayout";
+            type Type = DropOptional;
+            type ParentType = gtk::LayoutManager;
+        }
+
+        impl ObjectImpl for Imp {}
+
+        impl LayoutManagerImpl for Imp {
+            fn measure(
+                &self,
+                widget: &gtk::Widget,
+                orientation: gtk::Orientation,
+                _for_size: i32,
+            ) -> (i32, i32, i32, i32) {
+                let kids = children(widget);
+                if orientation == gtk::Orientation::Vertical {
+                    let (min, nat) = kids.iter().fold((0, 0), |(min, nat), c| {
+                        let (m, n, _, _) = c.measure(gtk::Orientation::Vertical, -1);
+                        (min.max(m), nat.max(n))
+                    });
+                    return (min, nat, -1, -1);
+                }
+                let nat = row_width(kids.iter());
+                let min = row_width(kids.iter().filter(|c| !optional(c)));
+                (min, nat, -1, -1)
+            }
+
+            fn allocate(&self, widget: &gtk::Widget, width_: i32, height: i32, baseline: i32) {
+                let kids = children(widget);
+                let drop = width_ < row_width(kids.iter());
+                let mut x = 0;
+                for c in &kids {
+                    let w = width(c).1;
+                    // 外に出す印は、右の端の先に置く（見えない）。
+                    let at = if drop && optional(c) { width_ } else { x };
+                    let t = gtk::gsk::Transform::new()
+                        .translate(&gtk::graphene::Point::new(at as f32, 0.0));
+                    c.allocate(w, height, baseline, Some(t));
+                    if !(drop && optional(c)) {
+                        x += w + SPACING;
+                    }
+                }
+            }
+        }
+    }
+    pub use drop_optional::DropOptional;
+
     glib::wrapper! {
         pub struct NameFirst(ObjectSubclass<Imp>) @extends gtk::LayoutManager;
     }
@@ -1059,21 +1138,29 @@ mod name_first {
             let kids = children(widget);
             let n = kids.len();
             let mut x = 0;
+            let compact = std::cell::Cell::new(false);
             for (i, c) in kids.iter().enumerate() {
                 let (min, nat) = width(c);
                 let rest: i32 = kids[i + 1..].iter().map(|k| width(k).1 + GAP).sum();
+                // 添え物の印を外したときの幅。
+                let rest_min: i32 = kids[i + 1..].iter().map(|k| width(k).0 + GAP).sum();
                 let w = match i {
                     // アイコン。
                     0 if n > 1 => nat,
-                    // 名前: 後ろの印が入るなら、その分を残す。入らなければ印は外に出す。
+                    // 名前: 後ろの印が入るなら、その分を残す。添え物の印を外せば入るなら、そうする。どちらも
+                    // 入らなければ印は外に出す。
                     1 => {
                         let room = width_ - x;
                         if nat + rest <= room {
                             room - rest
+                        } else if nat + rest_min <= room {
+                            compact.set(true);
+                            room - rest_min
                         } else {
                             room.max(min)
                         }
                     }
+                    _ if compact.get() => min,
                     _ => nat,
                 };
                 let at =
@@ -1084,6 +1171,9 @@ mod name_first {
         }
     }
 }
+
+/// 添え物の印（リポジトリの形の印）の CSS のクラス。行が狭ければ [`name_first::DropOptional`] が外に出す。
+const OPTIONAL_MARK: &str = "optional-mark";
 
 /// 行の部品から届く Inner。
 type Owner = Rc<RefCell<std::rc::Weak<Inner>>>;
@@ -1101,6 +1191,9 @@ fn setup_row(item: &gtk::ListItem, inner: &Owner, drop_cb: &Rc<RefCell<Option<Dr
     for _ in 0..2 {
         marks.append(&Icon::default());
     }
+    // 名前が切れるほど狭ければ、リポジトリの形の印だけを外に出す（数などは残す）。
+    marks.set_layout_manager(Some(glib::Object::new::<name_first::DropOptional>()));
+    marks.set_overflow(gtk::Overflow::Hidden);
     let badge = gtk::Label::new(None);
     badge.add_css_class("dim-label");
     badge.add_css_class("caption");
@@ -1328,6 +1421,8 @@ fn bind_row(item: &gtk::ListItem) {
     title.set_attributes(Some(&attrs));
     let mut child = marks.first_child();
     let mut i = 0;
+    let shown_marks = data.signature.iter().count() + data.marks.len();
+    let first_optional = shown_marks - data.optional_marks.min(data.marks.len());
     while let Some(w) = child {
         child = w.next_sibling();
         let Ok(mark_icon) = w.downcast::<Icon>() else {
@@ -1335,6 +1430,11 @@ fn bind_row(item: &gtk::ListItem) {
         };
         for css in ["warning", "success", "error", "caution"] {
             mark_icon.remove_css_class(css);
+        }
+        if i >= first_optional && i < shown_marks {
+            mark_icon.add_css_class(OPTIONAL_MARK);
+        } else {
+            mark_icon.remove_css_class(OPTIONAL_MARK);
         }
         match data.signature.iter().chain(&data.marks).nth(i) {
             Some(mark) => {
@@ -1974,7 +2074,7 @@ impl Inner {
 
         let refs = self.refs.borrow().clone();
         let history = Node::new(
-            with_marks(
+            with_form_marks(
                 Data {
                     title: "History".into(),
                     key: "page/history".into(),
@@ -2209,7 +2309,9 @@ impl Inner {
         }
         let selected: Vec<String> = self.selected_nodes().iter().map(|n| n.data().key).collect();
         self.rebuilding.set(true);
-        store.splice(at, 1, std::slice::from_ref(node));
+        // 同じ項目への入れ替え（splice）では、GTK は行を作り直さない（4.24 など）。外してから入れ直す。
+        store.remove(at);
+        store.insert(at, node);
         let mut i = 0;
         while i < self.model.n_items() {
             if let Some(row) = self.model.row(i)
@@ -2874,6 +2976,15 @@ fn with_marks(mut data: Data, marks: Vec<Mark>) -> Data {
     data.tooltip = Some(lines.join("\n"));
     data.marks = marks;
     data
+}
+
+/// リポジトリの形の印を付けた行（名前が切れるほど狭ければ、その印は出さない）。
+fn with_form_marks(data: Data, marks: Vec<Mark>) -> Data {
+    let optional_marks = marks.len();
+    Data {
+        optional_marks,
+        ..with_marks(data, marks)
+    }
 }
 
 /// ref が指すコミット（History で選ぶ）。
