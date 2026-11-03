@@ -13,6 +13,7 @@ mod assist;
 mod avatars;
 mod bookmarks;
 mod branchswitcher;
+mod bundle;
 mod cipopover;
 mod commitfiles;
 mod commitmsg;

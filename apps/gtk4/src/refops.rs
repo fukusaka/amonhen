@@ -93,6 +93,7 @@ pub fn menu(
             items.push(new_branch(actions, &name));
             items.push(new_tag(actions, &name));
             items.push(export_archive(actions, "refs/heads/", &name));
+            items.push(save_bundle(actions, entry.kind, &name));
             let (r, n) = (range_diff.clone(), name.clone());
             items.push(menu::action(
                 tr!("Compare with Previous Version"),
@@ -121,11 +122,13 @@ pub fn menu(
             items.push(Item::Separator);
             items.push(new_branch(actions, &name));
             items.push(export_archive(actions, "refs/remotes/", &name));
+            items.push(save_bundle(actions, entry.kind, &name));
         }
         RefKind::Tag => {
             merge(&mut items);
             items.push(new_branch(actions, &name));
             items.push(export_archive(actions, "refs/tags/", &name));
+            items.push(save_bundle(actions, entry.kind, &name));
             items.push(Item::Separator);
             items.extend(tag_items(actions, std::slice::from_ref(&name), known));
         }
@@ -290,6 +293,19 @@ fn several(actions: &Rc<Actions>, known: &Known, head: Option<&str>) -> Vec<Item
             })
         })
         .collect();
+    // ブランチ・タグだけなら、まとめて bundle に。
+    let refs: Vec<String> = selected
+        .iter()
+        .filter_map(|e| crate::bundle::full_ref(e.kind, &e.name))
+        .collect();
+    if refs.len() == selected.len() {
+        let (a, names) = (actions.clone(), names.clone());
+        let label = names.first().cloned().unwrap_or_default();
+        items.push(menu::action(
+            tr!("Save {count} as Bundle…", count = refs.len()),
+            move || crate::bundle::save(&a, refs.clone(), names.clone(), label.clone()),
+        ));
+    }
     if sources.len() > 1 {
         let branch = head.map(str::to_owned);
         let title = tr!(
@@ -670,6 +686,15 @@ fn export_archive(actions: &Rc<Actions>, kind: &str, name: &str) -> Item {
     let (a, rev, label) = (actions.clone(), format!("{kind}{name}"), name.to_owned());
     menu::action(tr!("Export Archive…"), move || {
         crate::archive::export(&a, rev.clone(), label.clone())
+    })
+}
+
+/// Save as Bundle…: 1 つのブランチ・リモートブランチ・タグを bundle に。
+fn save_bundle(actions: &Rc<Actions>, kind: RefKind, name: &str) -> Item {
+    let (a, label) = (actions.clone(), name.to_owned());
+    let refs: Vec<String> = crate::bundle::full_ref(kind, name).into_iter().collect();
+    menu::action(tr!("Save as Bundle…"), move || {
+        crate::bundle::save(&a, refs.clone(), vec![label.clone()], label.clone())
     })
 }
 

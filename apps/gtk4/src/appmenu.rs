@@ -376,6 +376,7 @@ fn handlers() -> Vec<(&'static str, Handler)> {
         ("commit", Box::new(|p| p.working.commit_from_menu(None))),
         ("save-patch", Box::new(save_patch)),
         ("export-archive", Box::new(export_archive)),
+        ("save-bundle", Box::new(save_bundle)),
         (
             "commit-and-push",
             Box::new(|p| {
@@ -919,6 +920,11 @@ fn export_archive(p: &Rc<Parts>) {
             head_branch(p).unwrap_or_else(|| "HEAD".into()),
         ),
     }
+}
+
+/// Repository › Save Repository as Bundle…: HEAD とすべてのブランチ・タグ。
+fn save_bundle(p: &Rc<Parts>) {
+    crate::bundle::save(&p.actions, Vec::new(), Vec::new(), "all".into());
 }
 
 /// アーカイブの既定の名前: コミットを指すタグ（なければブランチ）の名前。どれもなければ空。

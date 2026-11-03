@@ -179,7 +179,7 @@ pub fn export(actions: &Rc<Actions>, rev: String, label: String) {
 }
 
 /// ファイル名と先頭のフォルダに使える名前（`/` と空白などは `-` に。macOS 版の `archiveName` と同じ）。
-fn file_name(text: &str) -> String {
+pub fn file_name(text: &str) -> String {
     let mut out = String::new();
     for c in text.chars() {
         if c.is_alphanumeric() || matches!(c, '.' | '_' | '-') {

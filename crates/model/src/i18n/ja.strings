@@ -2022,3 +2022,8 @@
 "Fetch and Save" = "取ってきて保存";
 "Nothing to Save" = "保存するものがありません";
 "Can’t Save the Bundle" = "bundle を保存できません";
+"Save {count} as Bundle…" = "{count} 個を bundle として保存…";
+"{what}, in one file that git can clone or fetch from (git bundle)." = "{what} を、git が clone や fetch できる 1 つのファイルに保存します（git bundle）。";
+"This is a partial clone: the contents of {count} files in the bundle aren’t here yet. They are fetched from the remote in one go before the bundle is written." = "partial clone なので、bundle に入るファイルのうち {count} 個の中身がまだ手元にありません。書き出す前に、リモートからまとめて取ってきます。";
+"There are no commits to put in the bundle." = "bundle に入れるコミットがありません。";
+"This shallow clone doesn’t have all the history the bundle needs. Fetch more history, or choose a newer base." = "この shallow clone には、bundle に要る履歴がそろっていません。履歴を取り足すか、もっと新しい基点を選んでください。";
