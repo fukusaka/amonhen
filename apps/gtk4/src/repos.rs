@@ -264,7 +264,7 @@ fn fill(menu: &gio::Menu) {
 }
 
 /// `~`・`~/…` をホームの下のパスにする。
-fn expand_tilde(text: &str) -> PathBuf {
+pub fn expand_tilde(text: &str) -> PathBuf {
     if text == "~" {
         return glib::home_dir();
     }

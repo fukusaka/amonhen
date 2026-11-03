@@ -326,6 +326,11 @@ fn watch(
     }
 }
 
+/// 窓の場所が SSH 先か（`ssh://…`、`daemon:ssh://…`）。手元の `daemon:/path` は違う。
+fn on_ssh(location: &str) -> bool {
+    location.starts_with("ssh://") || location.starts_with("daemon:ssh://")
+}
+
 /// 窓の場所（手元のパス、`daemon:…`、`ssh://…`）の、パスを `path` に替えたもの。
 fn location_for(location: &str, path: &str) -> String {
     if let Some(rest) = location.strip_prefix("ssh://") {
@@ -930,7 +935,8 @@ pub fn new_worktree(
         .unwrap_or_default();
     let (parent, repo_name) = base.rsplit_once('/').unwrap_or(("", base.as_str()));
     let (parent, repo_name) = (parent.to_owned(), repo_name.to_owned());
-    let remote = worktrees.remote;
+    // ~ はこの機械のホーム。SSH 先のパスはそのまま送る（手元の daemon 越しなら、この機械のパス。macOS 版と同じ）。
+    let on_ssh = on_ssh(&worktrees.location);
     let actions = actions.clone();
     glib::spawn_future_local(async move {
         let sheet = Sheet::unnamed(
@@ -981,12 +987,10 @@ pub fn new_worktree(
                 .map(|t| t.to_string())
                 .unwrap_or_default();
         }
-        // ~ は手元のホーム（SSH 先のパスはそのまま）。
-        if !remote
-            && let Some(rest) = path.strip_prefix("~/")
-            && let Some(home) = std::env::var_os("HOME")
-        {
-            path = format!("{}/{rest}", home.to_string_lossy());
+        if !on_ssh {
+            path = crate::repos::expand_tilde(&path)
+                .to_string_lossy()
+                .into_owned();
         }
         let a = actions.clone();
         actions.perform_with(
@@ -1003,6 +1007,14 @@ pub fn new_worktree(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_ssh_locations_keep_the_tilde() {
+        assert!(!on_ssh("/home/me/repo"));
+        assert!(!on_ssh("daemon:/home/me/repo"));
+        assert!(on_ssh("ssh://host/repo"));
+        assert!(on_ssh("daemon:ssh://host/repo"));
+    }
 
     fn info(path: &str) -> Info {
         Info {
