@@ -875,7 +875,11 @@ impl Browser {
             .hscrollbar_policy(gtk::PolicyType::Never)
             .vexpand(true)
             .build();
-        let add = gtk::Button::with_label(&format!("＋ {}", tr!("Add")));
+        // ＋ の印と「Add」（macOS 版の、枠のないプルダウン）。
+        let add_content = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        add_content.append(&gtk::Image::from_icon_name("list-add-symbolic"));
+        add_content.append(&gtk::Label::new(Some(&tr!("Add"))));
+        let add = gtk::Button::builder().child(&add_content).build();
         add.add_css_class("flat");
         add.set_tooltip_text(Some(&tr!(
             "Add repositories, SSH connections, groups and folders to scan"
