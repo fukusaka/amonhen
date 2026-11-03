@@ -55,6 +55,9 @@ pub struct Tab {
     heading: RefCell<String>,
     /// File History・Blame のタブの見出しに、このタブと同じツールバーを作る（macOS 版の `MainToolbar.mirror()`）。
     mirror: RefCell<Option<Mirror>>,
+    /// File History・Blame のタブの、リポジトリのタブに渡すアクションと、その「使えるか」の結び付け（リポジトリの
+    /// タブを閉じたら、押せなくする）。
+    forwarded: RefCell<Vec<(gio::SimpleAction, glib::Binding)>>,
 }
 
 /// File History・Blame のタブの見出しを作る。
@@ -86,6 +89,7 @@ impl Tab {
             owner: RefCell::default(),
             heading: RefCell::default(),
             mirror: RefCell::default(),
+            forwarded: RefCell::default(),
         });
         // 前に出した後で足したアクション（メニューの操作は、タブを窓に置いてから入れる）も窓に入れる。
         let weak = Rc::downgrade(&tab);
@@ -178,7 +182,11 @@ impl Tab {
 
     /// File History・Blame のタブの、リポジトリのタブ（閉じていれば None）。
     pub fn owner(&self) -> Option<Rc<Tab>> {
-        self.owner.borrow().as_ref().and_then(Weak::upgrade)
+        self.owner
+            .borrow()
+            .as_ref()
+            .and_then(Weak::upgrade)
+            .filter(|o| !o.closed())
     }
 
     /// File History・Blame のタブの窓の題。
@@ -231,6 +239,15 @@ impl Tab {
         self.connect_close(move || {
             if let (Some(group), Some(id)) = (group.upgrade(), id.take()) {
                 group.disconnect(id);
+            }
+        });
+        // リポジトリのタブを閉じても、このタブは残す（macOS 版と同じ）。渡す先がないので、渡すものは押せなくする。
+        let weak = Rc::downgrade(self);
+        owner.connect_close(move || {
+            let Some(tool) = weak.upgrade() else { return };
+            for (proxy, binding) in tool.forwarded.borrow_mut().drain(..) {
+                binding.unbind();
+                proxy.set_enabled(false);
             }
         });
     }
@@ -330,10 +347,11 @@ fn forward(tool: &Rc<Tab>, owner: &Rc<Tab>, name: &str) {
         Some(state) => gio::SimpleAction::new_stateful(name, parameter.as_deref(), &state),
         None => gio::SimpleAction::new(name, parameter.as_deref()),
     };
-    original
+    let binding = original
         .bind_property("enabled", &proxy, "enabled")
         .sync_create()
         .build();
+    tool.forwarded.borrow_mut().push((proxy.clone(), binding));
     if original.state().is_some() {
         let p = proxy.downgrade();
         original.connect_notify_local(Some("state"), move |original, _| {
@@ -764,19 +782,13 @@ pub fn add(host: &Rc<RepoWindow>, tab: &Rc<Tab>, select: bool, position: Option<
 }
 
 /// File History・Blame のタブ `tool` を、リポジトリのタブ（`tool.owner()`）の右に足して前に出す（macOS 版と同じ）。
-/// リポジトリのタブを閉じたら、一緒に閉じる。
+/// リポジトリのタブを閉じても残す（macOS 版と同じ）。
 pub fn add_tool(tool: &Rc<Tab>) {
     let Some(owner) = tool.owner() else { return };
     let Some(host) = owner.host() else { return };
     let position = host.position(&owner).map(|p| p as u32 + 1);
     add(&host, tool, true, position);
     host.window.present();
-    let t = Rc::downgrade(tool);
-    owner.connect_close(move || {
-        if let Some(tool) = t.upgrade() {
-            close_tab(&tool);
-        }
-    });
 }
 
 /// Window > Move Tab to Window ▸ の中身を作る（`anchor` はメニューを出すタブの部品。その窓は移す先から除く）。

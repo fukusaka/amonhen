@@ -72,7 +72,12 @@ fn tool_tab(
         return Some((tab, false));
     }
     let front = crate::tabs::host_of(parent)?.current()?;
-    let owner = front.owner().unwrap_or(front);
+    // リポジトリのタブを閉じた後の File History・Blame のタブからは開かない（macOS 版と同じ）。
+    let owner = if front.is_tool() {
+        front.owner()?
+    } else {
+        front
+    };
     if owner.is_home() {
         return None;
     }
@@ -102,11 +107,16 @@ fn set_content(tab: &Tab, child: &impl IsA<gtk::Widget>) {
 /// History でコミットを選ぶ前に、リポジトリのタブを前に出す（macOS 版と同じ）。
 fn via_owner(tab: &Tab, on_commit: OnCommit) -> OnCommit {
     let owner = tab.owner().map(|o| Rc::downgrade(&o));
+    // リポジトリのタブを閉じた後は、選ぶ先がない（macOS 版と同じく何もしない）。
     Rc::new(move |id| {
-        if let Some(owner) = owner.as_ref().and_then(Weak::upgrade) {
+        if let Some(owner) = owner
+            .as_ref()
+            .and_then(Weak::upgrade)
+            .filter(|o| !o.closed())
+        {
             owner.bring_front();
+            on_commit(id);
         }
-        on_commit(id);
     })
 }
 
