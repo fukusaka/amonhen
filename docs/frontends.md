@@ -157,7 +157,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Undo the last operation (asks, names what it puts back) | ✓ | ✓ | ✓ | ✓ | VSCode: The title's Undo and the Command Palette ask; a notification's Undo, pressed right after the operation, doesn't.<br>CLI: `undo` (`--peek` to see it first). |
 | History search with scopes (subject, author, ID, path, contents) | ✓ | ✓ | — | ✓ | CLI: `log <query>`. |
 | Ahead/behind badges | ✓ | ✓ | △ | △ | VSCode: On the sidebar's branch rows.<br>CLI: In `status`. |
-| Toolbar customization | ✓ | ✓ | n/a | n/a | GTK4: The palette works like NSToolbar's, with no Show (icon/text) choice since the header bar shows icons; the Repository menu and the main menu take the menu bar's place and stay put. |
+| Toolbar customization | ✓ | ✓ | n/a | n/a | GTK4: The palette works like NSToolbar's and slides down under the header bar like its sheet, with no Show (icon/text) choice since the header bar shows icons; the Repository menu and the main menu take the menu bar's place and stay put. |
 | Network git stopped after 120 s of silence | ✓ | ✓ | — | ✓ | VSCode: Not in the extension's own git layer. |
 
 ## 5a. Stashes

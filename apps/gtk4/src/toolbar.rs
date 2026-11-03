@@ -1,5 +1,5 @@
 //! 見出しのツールバーのボタンの並び（macOS 版の `MainToolbar` と、NSToolbar のカスタマイズ）。View > Customize
-//! Toolbar… でパレットの窓を出し、出している間は見出しのボタンを押す代わりにドラッグで並べ替える: パレットの項目を
+//! Toolbar… で見出しの下にパレットを出し、出している間は見出しのボタンを押す代わりにドラッグで並べ替える: パレットの項目を
 //! 見出しにドラッグして足し、見出しの項目を外にドラッグして外し、既定のセットをドラッグして元に戻す（macOS 版と同じ）。
 //! 見出しの左（Repository のメニューの右）と右（主メニューの左）に分けて並べ、境目は伸縮するスペース（macOS 版の
 //! flexibleSpace。見出しには 1 つだけ）。間にスペースを入れられる。並びはアプリ全体で 1 つ（設定の
@@ -630,8 +630,8 @@ type Refill = Rc<dyn Fn()>;
 type Placed = Rc<RefCell<Vec<(Side, gtk::Widget, usize)>>>;
 
 thread_local! {
-    /// パレットの窓（開いている間はカスタマイズ中）。
-    static WINDOW: RefCell<glib::WeakRef<gtk::Window>> = RefCell::default();
+    /// 窓に出しているパレット（開いている間はカスタマイズ中）。
+    static PALETTE_SHOWN: RefCell<glib::WeakRef<gtk::Revealer>> = RefCell::default();
     static CUSTOMIZING: Cell<bool> = const { Cell::new(false) };
     /// 作ったツールバー（見出しがなくなったら外す）と、入れ直すもの。
     static TOOLBARS: RefCell<Vec<(glib::WeakRef<gtk::HeaderBar>, Refill)>> = RefCell::default();
@@ -757,6 +757,9 @@ fn install_css() {
          .toolbar-space { min-width: 20px; border-radius: 4px; border: 1px dashed alpha(currentColor, 0.45); } \
          .toolbar-palette-tile { padding: 6px; border-radius: 6px; } \
          .toolbar-palette-tile:hover { background: alpha(currentColor, 0.06); } \
+         .toolbar-palette { padding: 14px 18px; background: @window_bg_color; \
+           border-bottom: 1px solid alpha(currentColor, 0.15); \
+           box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12); } \
          .toolbar-default-set { padding: 8px; border-radius: 6px; border: 1px solid alpha(currentColor, 0.15); }",
     );
     if let Some(display) = gdk::Display::default() {
@@ -851,14 +854,75 @@ fn drag_out(tile: &gtk::Widget, image: &gtk::Widget, dragged: Dragged) {
     tile.add_controller(source);
 }
 
-/// View > Customize Toolbar…: ツールバーのパレット（macOS 版の NSToolbar のカスタマイズのシート）。開いていれば
-/// 前に出す。開いている間は、すべての窓のツールバーをドラッグで並べ替えられる。
+/// View > Customize Toolbar…: ツールバーのパレット（macOS 版の NSToolbar のカスタマイズのシート）。窓の見出しの
+/// すぐ下に滑り出させ（見出しは隠さず、落とせるまま）、窓の中身はその下に押し下げる。開いている間は、すべての窓の
+/// ツールバーをドラッグで並べ替えられる（並びはアプリ全体で 1 つ）。ほかの窓で開いていれば、そちらを閉じてこの窓に
+/// 出す（macOS 版でも、シートは開いた窓に付く）。
 pub fn customize(parent: &gtk::Window) {
-    if let Some(w) = WINDOW.with(|w| w.borrow().upgrade()) {
-        w.present();
-        return;
+    if let Some(open) = PALETTE_SHOWN.with(|p| p.borrow().upgrade()) {
+        if open
+            .root()
+            .is_some_and(|r| r == *parent.upcast_ref::<gtk::Root>())
+        {
+            return;
+        }
+        close_palette(&open);
     }
+    let Some(body) = body_of(parent) else {
+        return;
+    };
     install_css();
+    let revealer = gtk::Revealer::builder()
+        .transition_type(gtk::RevealerTransitionType::SlideDown)
+        .child(&palette())
+        .build();
+    body.prepend(&revealer);
+    // 窓を閉じたら（Done を押さずに）カスタマイズを終える。
+    revealer.connect_unrealize(|r| {
+        if PALETTE_SHOWN.with(|p| p.borrow().upgrade()).as_ref() == Some(r) {
+            PALETTE_SHOWN.with(|p| p.replace(glib::WeakRef::new()));
+            set_customizing(false);
+        }
+    });
+    PALETTE_SHOWN.with(|p| p.replace(revealer.downgrade()));
+    set_customizing(true);
+    revealer.set_reveal_child(true);
+}
+
+/// 窓の中身の縦の箱（パレットをその頭に入れる）。中身が箱でなければ、箱で包む。
+fn body_of(window: &gtk::Window) -> Option<gtk::Box> {
+    let child = window.child()?;
+    if let Some(body) = child
+        .downcast_ref::<gtk::Box>()
+        .filter(|b| b.orientation() == gtk::Orientation::Vertical)
+    {
+        return Some(body.clone());
+    }
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    window.set_child(None::<&gtk::Widget>);
+    child.set_vexpand(true);
+    body.append(&child);
+    window.set_child(Some(&body));
+    Some(body)
+}
+
+/// パレットを畳んで外し、カスタマイズを終える。
+fn close_palette(revealer: &gtk::Revealer) {
+    PALETTE_SHOWN.with(|p| p.replace(glib::WeakRef::new()));
+    set_customizing(false);
+    revealer.set_reveal_child(false);
+    // 畳み終えてから外す。
+    revealer.connect_child_revealed_notify(|r| {
+        if !r.is_child_revealed()
+            && let Some(parent) = r.parent().and_downcast::<gtk::Box>()
+        {
+            parent.remove(r);
+        }
+    });
+}
+
+/// パレットの中身: 足せる項目・既定のセット・Done。
+fn palette() -> gtk::Widget {
     let caption = |text: &str| {
         let l = gtk::Label::new(Some(text));
         l.set_xalign(0.0);
@@ -914,30 +978,27 @@ pub fn customize(parent: &gtk::Window) {
     ));
     note.add_css_class("dim-label");
     note.add_css_class("caption");
+    note.set_hexpand(true);
     let done = gtk::Button::with_label(&tr!("Done"));
     done.add_css_class("suggested-action");
     done.set_halign(gtk::Align::End);
+    done.connect_clicked(|b| {
+        if let Some(r) = b.ancestor(gtk::Revealer::static_type()).and_downcast() {
+            close_palette(&r);
+        }
+    });
+    let bottom = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    bottom.append(&note);
+    bottom.append(&done);
 
     let column = gtk::Box::new(gtk::Orientation::Vertical, 12);
-    column.set_margin_top(18);
-    column.set_margin_bottom(18);
-    column.set_margin_start(18);
-    column.set_margin_end(18);
+    column.add_css_class("toolbar-palette");
     column.append(&caption(&tr!("Drag your favorite items into the toolbar…")));
     column.append(&items);
     column.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
     column.append(&caption(&tr!("…or drag the default set into the toolbar.")));
     column.append(&set_scroll);
-    column.append(&note);
-    column.append(&done);
-    let window = gtk::Window::builder()
-        .title(tr!("Customize Toolbar"))
-        .default_width(880)
-        .child(&column)
-        .transient_for(parent)
-        .destroy_with_parent(true)
-        .build();
-    window.set_titlebar(Some(&gtk::HeaderBar::new()));
+    column.append(&bottom);
     // 見出しの項目をパレットに落としたら外す（macOS 版と同じ）。
     let target = gtk::DropTarget::new(Dragged::static_type(), gdk::DragAction::MOVE);
     target.connect_drop(|_, value, _, _| {
@@ -946,20 +1007,24 @@ pub fn customize(parent: &gtk::Window) {
         }
         true
     });
-    window.add_controller(target);
-    let w = window.downgrade();
-    done.connect_clicked(move |_| {
-        if let Some(w) = w.upgrade() {
-            w.close();
+    column.add_controller(target);
+    // Esc でも閉じる（パレットにフォーカスがあるとき）。
+    let keys = gtk::EventControllerKey::new();
+    keys.connect_key_pressed(|k, key, _, _| {
+        if key != gdk::Key::Escape {
+            return glib::Propagation::Proceed;
         }
+        if let Some(r) = k
+            .widget()
+            .and_then(|w| w.ancestor(gtk::Revealer::static_type()))
+            .and_downcast()
+        {
+            close_palette(&r);
+        }
+        glib::Propagation::Stop
     });
-    window.connect_close_request(|_| {
-        set_customizing(false);
-        glib::Propagation::Proceed
-    });
-    WINDOW.with(|w| w.replace(window.downgrade()));
-    set_customizing(true);
-    window.present();
+    column.add_controller(keys);
+    column.upcast()
 }
 
 #[cfg(test)]
