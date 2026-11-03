@@ -117,6 +117,8 @@ becomes the GitHub Release notes.
 - macOS: the Reflog and Range Diff details no longer offer Edit Message…, which dropped the message on Save.
 - macOS: a conflicted file fixed in another editor reloads in its unedited merge editor, so Save doesn't write the old
   markers back.
+- macOS: closing a repository window or tab, or quitting, asks before losing unsaved Result edits in a merge editor, as
+  the separate merge window does.
 
 - The GTK4 app's Undo button asks once; it opened the question twice, so one stayed after undoing.
 - A `.mailmap`, or a mailmap setting (`log.mailmap`, `mailmap.file`), changed while the engine was reading the old

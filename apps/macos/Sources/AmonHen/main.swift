@@ -153,6 +153,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static let isCheckRun = ["--snapshot", "--measure-scroll", "--log-scroll", "--measure-select"].contains { CommandLine.arguments.contains($0) }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // マージエディタの Result を保存していなければ、捨てて終えてよいかを確かめる（別ウィンドウのマージエディタを
+        // 閉じるときと同じ文。終えるときはウィンドウに閉じてよいかを聞かないので、ここで 1 度だけ聞く）。
+        let unsaved = windows.first { $0.hasUnsavedMergeEdits && !$0.discardConfirmed }?.window
+            ?? MergeEditorWindowController.unsavedWindow
+        if let unsaved {
+            unsaved.makeKeyAndOrderFront(nil)
+            Task { @MainActor in
+                let ok = await MergeEditorWindowController.confirmDiscarding(in: unsaved)
+                if ok {
+                    saveOpenWindows()
+                    isTerminating = true
+                }
+                sender.reply(toApplicationShouldTerminate: ok)
+            }
+            return .terminateLater
+        }
         // タブの並べ替えやウィンドウへの切り出しは知らせがないので、終わる前に記録し直す。
         saveOpenWindows()
         isTerminating = true

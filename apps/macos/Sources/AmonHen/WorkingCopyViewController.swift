@@ -866,6 +866,11 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         showDiff(of: entry, staged: sideControl.selectedSegment == 1)
     }
 
+    /// 埋め込んだ・覚えているマージエディタに、保存していない Result の変更がある（閉じる前に確かめる）。
+    var hasUnsavedMergeEdits: Bool {
+        mergeEditors.values.contains { $0.hasUnsavedChanges } || embeddedEditor?.hasUnsavedChanges == true
+    }
+
     /// 右の欄の差分の代わりに、マージエディタを出す。
     private func embed(_ editor: MergeEditorViewController) {
         guard embeddedEditor !== editor, let rightView, let rightController else { return }

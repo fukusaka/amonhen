@@ -2326,6 +2326,26 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         }
     }
 
+    /// どれかの worktree の Working Copy のマージエディタに、保存していない Result の変更がある。
+    var hasUnsavedMergeEdits: Bool {
+        ([opened] + Array(slots.values)).contains { $0.workingCopy.hasUnsavedMergeEdits }
+    }
+
+    /// 保存していない Result を捨てて閉じると確かめた（閉じ直すときは聞かない）。
+    var discardConfirmed = false
+
+    /// 埋め込んだマージエディタの Result を保存していなければ、捨てて閉じてよいかを確かめる（別ウィンドウの
+    /// マージエディタと同じ。確かめたら閉じ直す）。
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard hasUnsavedMergeEdits, !discardConfirmed else { return true }
+        Task { @MainActor in
+            guard await MergeEditorWindowController.confirmDiscarding(in: sender) else { return }
+            discardConfirmed = true
+            sender.performClose(nil)
+        }
+        return false
+    }
+
     func windowWillClose(_ notification: Notification) {
         autoFetchTimer?.invalidate()
         countsTimer?.invalidate()

@@ -922,6 +922,25 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate {
     /// 保存していない変更があれば、捨てて閉じてよいかをシートで確かめる（確かめたら閉じ直す）。
     private var discardConfirmed = false
 
+    /// Result を保存していない、別ウィンドウのマージエディタのウィンドウ（終える前に確かめる）。
+    static var unsavedWindow: NSWindow? {
+        open.values.first { $0.editor.hasUnsavedChanges }?.window
+    }
+
+    /// 保存していない Result を捨てて閉じてよいかを、`window` のシートで確かめる（別ウィンドウのマージエディタを
+    /// 閉じるときと同じ文とボタン。戻せないので赤く、↩ は Cancel）。
+    @MainActor
+    static func confirmDiscarding(in window: NSWindow) async -> Bool {
+        let alert = NSAlert()
+        alert.messageText = L("Close without saving?")
+        alert.informativeText = L("Your changes to Result are lost.")
+        let close = alert.addButton(withTitle: L("Close Without Saving"))
+        close.hasDestructiveAction = true
+        close.keyEquivalent = ""
+        alert.addButton(withTitle: L("Cancel")).keyEquivalent = "\r"
+        return await alert.beginSheetModal(for: window) == .alertFirstButtonReturn
+    }
+
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         guard editor.hasUnsavedChanges, !discardConfirmed else { return true }
         Task { @MainActor in
