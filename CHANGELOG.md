@@ -188,6 +188,8 @@ becomes the GitHub Release notes.
 - macOS: Commit ▾ > Commit and Push is off when nothing is staged or the message is empty, as Commit is.
 - macOS: Working Copy no longer says No changes before the first status has loaded.
 - macOS: Reflog's Compare with Current HEAD compares with the HEAD of the worktree shown, not the opened one.
+- macOS: Save as Bundle's Save… is off while Only commits after: is chosen with an empty field; it quietly saved all
+  history.
 
 ### [0.2.8] - 2026-10-30
 

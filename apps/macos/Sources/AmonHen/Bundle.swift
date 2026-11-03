@@ -81,7 +81,7 @@ extension Actions {
         alert.messageText = L("Save as Bundle")
         let what = names.isEmpty ? L("HEAD and all branches and tags") : names.joined(separator: ", ")
         alert.informativeText = L("%@, in one file that git can clone or fetch from (git bundle).", what)
-        alert.addButton(withTitle: L("Save…"))
+        let save = alert.addButton(withTitle: L("Save…"))
         alert.addButton(withTitle: L("Cancel"))
         let everything = NSButton(radioButtonWithTitle: L("All history"), target: nil, action: nil)
         let newer = NSButton(radioButtonWithTitle: L("Only commits after:"), target: nil, action: nil)
@@ -93,10 +93,19 @@ extension Actions {
         let note = NSTextField(wrappingLabelWithString: L("Whoever receives the bundle needs that commit already."))
         note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         note.textColor = .secondaryLabelColor
+        // 「後だけ」を選んで基点が空なら、Save… は押せない（黙って全体を保存しない）。
+        let updateSave = ClosureTarget {
+            save.isEnabled = newer.state != .on || !field.stringValue.trimmingCharacters(in: .whitespaces).isEmpty
+        }
         let toggle = ClosureTarget { [weak alert] in
             field.isEnabled = newer.state == .on
             if field.isEnabled { alert?.window.makeFirstResponder(field) }
+            updateSave.fire()
         }
+        let typing = NotificationCenter.default.addObserver(
+            forName: NSControl.textDidChangeNotification, object: field, queue: .main
+        ) { _ in MainActor.assumeIsolated { updateSave.fire() } }
+        defer { NotificationCenter.default.removeObserver(typing) }
         for b in [everything, newer] {
             b.target = toggle
             b.action = #selector(ClosureTarget.fire)
