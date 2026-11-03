@@ -758,7 +758,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             guard !name.isEmpty else { return NSSound.beep() }
             var path = folder.stringValue.trimmingCharacters(in: .whitespaces)
             if path.isEmpty { path = folder.placeholderString ?? "" }
-            path = (path as NSString).expandingTildeInPath
+            // ~ はこの Mac のホーム。SSH 先のパスはそのまま送る（手元の daemon 越しなら、この Mac のパス）。
+            let onSSH = location.hasPrefix("ssh://") || location.hasPrefix("daemon:ssh://")
+            if !onSSH { path = (path as NSString).expandingTildeInPath }
             opened.actions.perform(["op": "worktreeAdd", "path": path, "newBranch": name, "start": start]) { [weak self] _ in
                 self?.reloadWorktrees()
                 self?.edit(worktree: path)

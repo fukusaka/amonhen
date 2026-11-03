@@ -174,6 +174,7 @@ becomes the GitHub Release notes.
 - macOS: Return no longer confirms forgetting an SSH host with repositories or folders to scan.
 - macOS: opening an open repository through a symbolic link or /tmp instead of /private/tmp brings its tab forward
   instead of opening a second one.
+- macOS: New Worktree on an SSH host sends a ~ folder as typed instead of turning it into this Mac's home folder.
 
 ### [0.2.8] - 2026-10-30
 
