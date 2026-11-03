@@ -734,24 +734,27 @@ fn find_open(location: &std::path::Path) -> Option<(Rc<RepoWindow>, Rc<Tab>)> {
     })
 }
 
-/// リポジトリを開く。`place` が `Tab` なら最後に前にあった窓の新しいタブ（なければ新しい窓）に。すでに開いて
-/// いればそのタブを前に出す。`NewWindow` なら、開いていても新しい窓に開く（File > New Window）。
-pub fn open(app: &gtk::Application, location: PathBuf, place: Place) {
-    if place == Place::NewWindow {
-        new_window_with(app, location);
-        return;
+/// `location` を開いているタブがあれば、それを前に出して true。追加した worktree のフォルダーなら、メインの
+/// リポジトリのタブを前に出してその worktree を書き込む先にする（なければ、開くときにメインのリポジトリに替える。
+/// `build_tab`）。
+fn bring_forward(location: &std::path::Path) -> bool {
+    let Some((host, tab)) = find_open(location) else {
+        return false;
+    };
+    host.select(&tab);
+    host.window.present();
+    if crate::repos::main_of_worktree(location).is_some() {
+        let path = location.to_string_lossy().into_owned();
+        tab.group
+            .activate_action("edit-worktree", Some(&path.to_variant()));
     }
-    // 追加した worktree のフォルダー: メインのリポジトリのタブがあれば、それを前に出してその worktree を書き込む
-    // 先にする（なければ、開くときにメインのリポジトリに替える。`build_tab`）。
-    let worktree = crate::repos::main_of_worktree(&location);
-    if let Some((host, tab)) = find_open(&location) {
-        host.select(&tab);
-        host.window.present();
-        if worktree.is_some() {
-            let path = location.to_string_lossy().into_owned();
-            tab.group
-                .activate_action("edit-worktree", Some(&path.to_variant()));
-        }
+    true
+}
+
+/// リポジトリを開く。`place` が `Tab` なら最後に前にあった窓の新しいタブ（なければ新しい窓）に、`NewWindow` なら
+/// 新しい窓に。どちらでも、すでに開いていればそのタブを前に出す（macOS 版の `open(path:inNewWindow:)` と同じ）。
+pub fn open(app: &gtk::Application, location: PathBuf, place: Place) {
+    if bring_forward(&location) {
         return;
     }
     match (place, front_window()) {
@@ -969,24 +972,11 @@ pub fn reopen(tab: &Rc<Tab>, location: PathBuf, page: Option<crate::sidebar::Pag
 }
 
 /// ツールバーのリポジトリ名から: `tab` を `location` のリポジトリに切り替える（同じ場所に開き直して、`tab` を閉じる）。
-/// もうどこかのタブで開いていれば、そのタブを前に出す（`tab` は残す。macOS 版と同じ）。
+/// もうどこかのタブで開いていれば、そのタブを前に出す（`tab` は残す。macOS 版と同じ）。追加した worktree で
+/// メインのリポジトリのタブがあれば、それを前に出してその worktree を書き込む先にする（`open` と同じ）。
 pub fn switch(tab: &Rc<Tab>, location: PathBuf) {
-    let key = crate::repos::normalize(&crate::repos::through_daemon(&location));
-    let existing = WINDOWS.with(|w| {
-        w.borrow().iter().find_map(|h| {
-            h.tabs
-                .borrow()
-                .iter()
-                .find(|t| t.is_at(&key))
-                .map(|t| (h.clone(), t.clone()))
-        })
-    });
-    match existing {
-        Some((host, t)) => {
-            host.select(&t);
-            host.window.present();
-        }
-        None => reopen(tab, location, None),
+    if !bring_forward(&location) {
+        reopen(tab, location, None);
     }
 }
 

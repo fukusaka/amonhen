@@ -99,6 +99,8 @@ becomes the GitHub Release notes.
 - A `.mailmap`, or a mailmap setting (`log.mailmap`, `mailmap.file`), changed while the engine was reading the old
   one could be missed until it changed again; the names now follow it.
 - With newer GTK (4.24), the GTK4 app's sidebar shows Working Copy's change count and the sparse checkout mark.
+- In the GTK4 app, opening a repository that is already open in a new window, or switching to a worktree whose
+  repository is open, brings its tab forward instead of opening a second one.
 - Activity no longer says “daemon” twice for a repository opened through the shared daemon, nor “(daemon)” for an
   SSH host connected directly.
 - Saving patches no longer fails with “No such file or directory” when another save runs at the same time in the same
