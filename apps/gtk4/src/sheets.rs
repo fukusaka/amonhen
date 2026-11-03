@@ -1987,11 +1987,12 @@ pub fn pick(actions: &Rc<Actions>, revert: bool, commits: Vec<(String, bool)>) {
             },
             can_undo()
         );
+        // 1 つの命令で（git cherry-pick A B C と同じく、コンフリクトで止まったら残りは git が覚えていて、Continue・
+        // Skip で続く。1 つずつ実行すると、止まったところで残りが黙って落ちる）。
         let op = if revert { "revert" } else { "cherryPick" };
-        let commands = commits
-            .into_iter()
-            .map(|(oid, merge)| json!({ "op": op, "oid": oid, "isMerge": merge }))
-            .collect();
+        let merge = commits.iter().any(|(_, merge)| *merge);
+        let oids: Vec<String> = commits.into_iter().map(|(oid, _)| oid).collect();
+        let commands = vec![json!({ "op": op, "oids": oids, "isMerge": merge })];
         let ok = if revert { "Revert" } else { "Cherry-pick" };
         confirm_then(&actions, title, message, ok.to_owned(), false, commands);
     });

@@ -221,6 +221,9 @@ becomes the GitHub Release notes.
 - macOS: History's edit mode stays open with your plan when Apply Changes fails, and closes once the rewrite has run.
 - macOS: with unsaved edits in the merge editor under Working Copy, Mark Resolved saves Result first, and Take Current
   File or Take Incoming File asks before losing them.
+- Cherry-pick and Revert of several commits run as one git cherry-pick or git revert: when one stops on a conflict,
+  Continue and Skip go on with the rest, and Abort goes back to before the first, as in git; the rest were silently
+  dropped.
 
 ### [0.2.8] - 2026-10-30
 

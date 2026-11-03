@@ -113,12 +113,24 @@ pub enum Command {
         #[serde(default)]
         update_refs: Option<bool>,
     },
+    /// `oid` か、いくつもなら `oids`（渡した順に、1 回の `git cherry-pick A B C` で）。コンフリクトで止まったら、
+    /// 残りは git が覚えていて Continue・Skip で続き、Abort なら全体を始める前に戻す（git と同じ）。`is_merge` は
+    /// どれかが merge（`-m 1`）。
     CherryPick {
+        #[serde(default)]
         oid: String,
+        #[serde(default)]
+        oids: Vec<String>,
+        #[serde(default)]
         is_merge: bool,
     },
+    /// `CherryPick` と同じ形。
     Revert {
+        #[serde(default)]
         oid: String,
+        #[serde(default)]
+        oids: Vec<String>,
+        #[serde(default)]
         is_merge: bool,
     },
     /// コミット `oids` を、渡した順（古い順に渡す）にパッチにする（`git format-patch`。マージは git と同じく
@@ -837,6 +849,18 @@ fn tag_objects<'a>(
 
 fn oid(hex: &str) -> Result<Oid> {
     Oid::from_hex(hex).ok_or_else(|| tr!("Can’t read the commit ID: {hex}", hex = hex).into())
+}
+
+/// Cherry-pick・Revert のコミット（`oids` があればそれ、なければ `oid`）と、Undo の名前に出す言い方（1 つなら
+/// 短い ID、いくつもなら数）。
+fn picked(one: String, many: Vec<String>) -> Result<(Vec<Oid>, String)> {
+    let hexes = if many.is_empty() { vec![one] } else { many };
+    let ids = hexes.iter().map(|h| oid(h)).collect::<Result<Vec<_>>>()?;
+    let what = match hexes.as_slice() {
+        [one] => one[..one.len().min(8)].to_owned(),
+        _ => format!("{} commits", hexes.len()),
+    };
+    Ok((ids, what))
 }
 
 /// `git am` が止まったパッチを 3-way で当て直したときに、その番号（`rebase-apply/next`）を書いておくファイル。
@@ -2592,25 +2616,33 @@ impl Repository {
                     ..Default::default()
                 })
             }
-            Command::CherryPick { oid: o, is_merge } => {
-                let id = oid(&o)?;
+            Command::CherryPick {
+                oid: o,
+                oids,
+                is_merge,
+            } => {
+                let (ids, what) = picked(o, oids)?;
                 done(undo.record(
                     ops,
-                    &format!("Cherry-pick {}", &o[..o.len().min(8)]),
+                    &format!("Cherry-pick {what}"),
                     &[],
                     false,
-                    || ops.cherry_pick(&id, is_merge),
+                    || ops.cherry_pick(&ids, is_merge),
                     not_done,
                 )?)
             }
-            Command::Revert { oid: o, is_merge } => {
-                let id = oid(&o)?;
+            Command::Revert {
+                oid: o,
+                oids,
+                is_merge,
+            } => {
+                let (ids, what) = picked(o, oids)?;
                 done(undo.record(
                     ops,
-                    &format!("Revert {}", &o[..o.len().min(8)]),
+                    &format!("Revert {what}"),
                     &[],
                     false,
-                    || ops.revert(&id, is_merge),
+                    || ops.revert(&ids, is_merge),
                     not_done,
                 )?)
             }
@@ -5682,6 +5714,42 @@ mod tests {
             .lines()
             .map(str::to_owned)
             .collect()
+    }
+
+    /// いくつものコミットの Cherry-pick は 1 回の git cherry-pick で、コンフリクトで止まっても残りは失われず、
+    /// Continue で続く（git cherry-pick A B C と同じ）。Revert も同じ形。
+    #[test]
+    fn picks_several_commits_and_continues_after_a_conflict() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        git(dir, &["checkout", "-q", "-b", "side"]);
+        let b = commit_file(dir, "b.txt", "b");
+        std::fs::write(dir.join("a.txt"), "side\n").unwrap();
+        git(dir, &["commit", "-q", "-am", "conflicting"]);
+        let c = git(dir, &["rev-parse", "HEAD"]);
+        let d = commit_file(dir, "d.txt", "d");
+        git(dir, &["checkout", "-q", "main"]);
+        std::fs::write(dir.join("a.txt"), "main\n").unwrap();
+        git(dir, &["commit", "-q", "-am", "main change"]);
+
+        let pick = serde_json::json!({"op": "cherryPick", "oids": [b, c, d]});
+        let r = run(&repo, &pick.to_string());
+        assert_eq!(r["outcome"], "conflict", "{r}");
+        assert_eq!(log(dir), ["b", "main change", "first"]);
+        std::fs::write(dir.join("a.txt"), "both\n").unwrap();
+        git(dir, &["add", "a.txt"]);
+        let r = run(&repo, r#"{"op":"continue"}"#);
+        assert_eq!(r["outcome"], "done", "{r}");
+        assert_eq!(log(dir), ["d", "conflicting", "b", "main change", "first"]);
+
+        // Revert も渡した順に（新しいものから戻す）。
+        let d = git(dir, &["rev-parse", "HEAD"]);
+        let b = git(dir, &["rev-parse", "HEAD~2"]);
+        let revert = serde_json::json!({"op": "revert", "oids": [d, b]});
+        let r = run(&repo, &revert.to_string());
+        assert_eq!(r["outcome"], "done", "{r}");
+        assert_eq!(log(dir)[..2], ["Revert \"b\"", "Revert \"d\""]);
+        assert!(!dir.join("b.txt").exists() && !dir.join("d.txt").exists());
     }
 
     fn commit_file(dir: &std::path::Path, name: &str, subject: &str) -> String {

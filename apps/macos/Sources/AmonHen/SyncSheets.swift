@@ -551,7 +551,10 @@ extension Actions {
             let title = revert ? L("Revert %@ on %@?", what, onto) : L("Cherry-pick %@ onto %@?", what, onto)
             let message = (revert ? L("Adds commits that undo them.") : L("Adds copies of them.")) + " " + Self.canUndo
             guard await confirm(title, message: sheetMessage(message), ok: revert ? "Revert" : "Cherry-pick") else { return }
-            perform(sequence: commits.map { ["op": revert ? "revert" : "cherryPick", "oid": $0.hex, "isMerge": $0.isMerge] })
+            // 1 つの命令で（git cherry-pick A B C と同じく、コンフリクトで止まったら残りは git が覚えていて、Continue・
+            // Skip で続く。1 つずつ実行すると、止まったところで残りが黙って落ちる）。
+            perform(["op": revert ? "revert" : "cherryPick", "oids": commits.map(\.hex),
+                     "isMerge": commits.contains(where: \.isMerge)])
         }
     }
 

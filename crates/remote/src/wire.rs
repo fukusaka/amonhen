@@ -288,11 +288,11 @@ pub enum Op {
         update_refs: Option<bool>,
     },
     CherryPick {
-        oid: Oid,
+        oids: Vec<Oid>,
         is_merge: bool,
     },
     Revert {
-        oid: Oid,
+        oids: Vec<Oid>,
         is_merge: bool,
     },
     RebaseTodo {
