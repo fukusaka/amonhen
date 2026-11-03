@@ -2,7 +2,7 @@
 //! 欄を出す（GNOME の検索バー）。Enter で探し、一致した行を塗って件数を出し、選んでいる行より後の最初の一致を
 //! 選ぶ。同じ問い合わせなら Enter で次へ、Shift+Enter で前へ（Ctrl+G・Ctrl+Shift+G でも）。書き方はコアの
 //! `query`（`author:`・`subject:`・`commit:`・`path:`・`contents:`・`after:`・`before:`、AND・OR・括弧）。
-//! 欄の左の ▾ のメニューで、作者・パス・内容・日時で探す書き方を入れる（macOS 版と同じ）。
+//! 欄の中の虫眼鏡（▾ 付き）のメニューで、作者・パス・内容・日時で探す書き方を入れる（macOS 版と同じ）。
 //! partial clone で中身を探す前は、手元にない中身の数を出して断る。探している間は、分かった分から塗って件数と
 //! 進み具合を出す（macOS 版と同じ）。
 //! 一致したコミットだけを出す切り替え（macOS 版と同じ）を入れると、一致したものだけの History
@@ -66,6 +66,43 @@ struct Inner {
     on_show_fetching: RefCell<Option<Rc<dyn Fn()>>>,
 }
 
+/// `entry` の虫眼鏡を `button` に替える: 欄の虫眼鏡を隠し、空けた欄の左にボタンを重ねる（欄そのものは
+/// GtkSearchEntry のまま。Esc・入力の待ち・消すボタンはそのまま働く）。
+fn put_in_field(entry: &gtk::SearchEntry, button: &impl IsA<gtk::Widget>) -> gtk::Overlay {
+    if let Some(icon) = entry.first_child().and_downcast::<gtk::Image>() {
+        icon.set_visible(false);
+    }
+    entry.add_css_class("scoped");
+    button.set_halign(gtk::Align::Start);
+    button.set_valign(gtk::Align::Center);
+    button.set_margin_start(4);
+    let overlay = gtk::Overlay::builder().child(entry).hexpand(true).build();
+    overlay.add_overlay(button);
+    overlay
+}
+
+/// 欄の中のボタンの見た目（一度だけ入れる）。
+fn install_css() {
+    thread_local! {
+        static DONE: Cell<bool> = const { Cell::new(false) };
+    }
+    if DONE.with(|d| d.replace(true)) {
+        return;
+    }
+    let provider = gtk::CssProvider::new();
+    provider.load_from_string(
+        "entry.search.scoped { padding-left: 34px; } \
+         menubutton.search-scope > button { min-height: 0; min-width: 0; padding: 2px 4px; }",
+    );
+    if let Some(display) = gdk::Display::default() {
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
+}
+
 impl Search {
     pub fn new(view: &HistoryView) -> Self {
         // 書き方が分かるように、欄の中と吹き出しに説明を出す（macOS 版と同じ）。
@@ -87,13 +124,30 @@ impl Search {
                 )),
             );
         }
+        // 欄の虫眼鏡を ▾ 付きのボタンに替える（NSSearchField と同じく、欄の中の虫眼鏡は 1 つ）。
         let scope_icon = crate::icon::Icon::default();
         scope_icon.set(crate::icon::Kind::Search, false);
+        let arrow: gtk::Widget =
+            if gtk::IconTheme::for_display(&view.display()).has_icon("pan-down-symbolic") {
+                let arrow = gtk::Image::from_icon_name("pan-down-symbolic");
+                arrow.set_pixel_size(8);
+                arrow.upcast()
+            } else {
+                let arrow = gtk::Label::new(Some("▾"));
+                arrow.add_css_class("caption");
+                arrow.upcast()
+            };
+        let scope_inner = gtk::Box::new(gtk::Orientation::Horizontal, 1);
+        scope_inner.append(&scope_icon);
+        scope_inner.append(&arrow);
         let scope = gtk::MenuButton::builder()
             .menu_model(&scopes)
-            .child(&scope_icon)
-            .always_show_arrow(true)
+            .child(&scope_inner)
+            .has_frame(false)
             .build();
+        scope.add_css_class("search-scope");
+        install_css();
+        let field = put_in_field(&entry, &scope);
         let insert = gio::SimpleAction::new("insert-prefix", Some(glib::VariantTy::STRING));
         let e = entry.clone();
         insert.connect_activate(move |_, prefix| {
@@ -106,11 +160,6 @@ impl Search {
         });
         let search_actions = gio::SimpleActionGroup::new();
         search_actions.add_action(&insert);
-        let field = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        field.add_css_class("linked");
-        field.set_hexpand(true);
-        field.append(&scope);
-        field.append(&entry);
         let count = gtk::Label::new(None);
         count.add_css_class("dim-label");
         count.add_css_class("numeric");
