@@ -293,15 +293,13 @@ fn file_rows(
     let file = |i: usize, name: String, depth: usize| {
         let diff = &source.0.files[i].1;
         let change = changes.map(|c| &c[i]);
-        let mark = match change {
-            Some(change) => kind_mark(change.kind),
-            // 変更ファイルがわからない差分（stash など）は、中身の有無から。
-            None if diff.old.is_empty() && !diff.new.is_empty() => "A",
-            None if diff.new.is_empty() && !diff.old.is_empty() => "D",
-            None => "M",
-        };
+        // 変更ファイルがわからない差分（複数のコミットを選んだとき）は、名前だけ（種類も行数も出さない。macOS 版と
+        // 同じ）。
+        let mark = change.map_or("", |c| kind_mark(c.kind));
         // 選んだファイルだけを読む元では、行数は `commit_extras` の数（届くまではわからない）。
-        let counts = if source.1.is_some() {
+        let counts = if change.is_none() {
+            Counts::Unknown
+        } else if source.1.is_some() {
             match stats.get(path_of(source.0.files[i].0.as_str())) {
                 Some((None, None)) => Counts::Binary,
                 Some(&(added, removed)) => Counts::Lines(added.unwrap_or(0), removed.unwrap_or(0)),
@@ -811,7 +809,11 @@ impl Inner {
                 name.set_text(&row.name);
                 name.set_ellipsize(gtk::pango::EllipsizeMode::Start);
             } else {
-                name.set_text(&format!("{}  {}", row.mark, row.name));
+                name.set_text(&if row.mark.is_empty() {
+                    row.name.clone()
+                } else {
+                    format!("{}  {}", row.mark, row.name)
+                });
                 name.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
             }
             name.set_tooltip_text(Some(&row.tip));
