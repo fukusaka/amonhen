@@ -282,7 +282,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| 帯でつないだ 3 つの列（Current / Result / Incoming） | ✓ | ✓ | n/a | n/a | VSCode: VSCode 自身の 3-way のマージエディター。 |
+| 帯でつないだ 3 つの列（Current / Result / Incoming） | ✓ | ✓ | n/a | n/a | GTK4: Working Copy の欄が狭くて 1 段に入らないときは、ボタンの並びを 2 段に折る。<br>VSCode: VSCode 自身の 3-way のマージエディター。 |
 | Show Base | ✓ | ✓ | n/a | n/a |  |
 | Magic Merge（ファイルを開いたときの確かな規則も） | ✓ | ✓ | — | ✓ | CLI: `merge-file`（git の mergetool にも）。 |
 | 直せる Result とコンフリクトごとの Undo | ✓ | ✓ | n/a | n/a |  |

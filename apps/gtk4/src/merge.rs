@@ -301,7 +301,6 @@ pub struct Editor {
     buttons: Vec<gtk::Button>,
     accept_base: Option<gtk::Button>,
     /// AI の解消・解説のボタン（コンフリクトがあり、AI を使えるときだけ押せる）。
-    ai_buttons: Vec<gtk::Button>,
     on_resolved: RefCell<Rc<dyn Fn()>>,
     /// 別の窓で開く（埋め込んだ側が決める）。
     on_pop_out: RefCell<Option<Rc<dyn Fn()>>>,
@@ -412,6 +411,28 @@ pub async fn load(
         result,
         without_markers,
     ))
+}
+
+/// 操作の帯を 1 段に並べるのに要る幅（2 つの段の部品の自然な幅と間。知らせは切り詰められるので最小の幅で数える）。
+fn one_row_width(top: &gtk::Box, bottom: &gtk::Box) -> i32 {
+    let mut width = 20;
+    let mut count = 0;
+    for row in [top, bottom] {
+        let mut child = row.first_child();
+        while let Some(w) = child {
+            if w.is_visible() {
+                let (min, natural, _, _) = w.measure(gtk::Orientation::Horizontal, -1);
+                width += if w.is::<gtk::Label>() && w.has_css_class("dim-label") {
+                    min
+                } else {
+                    natural
+                };
+                count += 1;
+            }
+            child = w.next_sibling();
+        }
+    }
+    width + 6 * (count - 1).max(0)
 }
 
 /// エディタを（編集中の内容のまま）別の窓に入れて出す。埋め込んでいた側は、先に外しておく。
@@ -556,7 +577,6 @@ impl Editor {
         let note = gtk::Label::new(None);
         note.add_css_class("dim-label");
         note.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        note.set_hexpand(true);
         note.set_xalign(0.0);
         let mut accepts = vec![
             ("Accept Current", Choice::Ours),
@@ -578,8 +598,8 @@ impl Editor {
         let base_toggle = gtk::CheckButton::with_label("Base");
         base_toggle.set_tooltip_text(Some(&tr!("Show the common ancestor on the left.")));
         base_toggle.set_visible(has_base);
+        // Save にはキーも説明もない（macOS 版と同じ）。
         let save = gtk::Button::with_label(&tr!("Save"));
-        save.set_tooltip_text(Some(&tr!("Save (Ctrl+S)")));
         let resolve = gtk::Button::with_label(&tr!("Save & Mark Resolved"));
         resolve.add_css_class("suggested-action");
         resolve.set_tooltip_text(Some(&tr!("Save and mark as resolved (Ctrl+Return).")));
@@ -595,33 +615,95 @@ impl Editor {
         popout.set_tooltip_text(Some(&tr!("Open in a Separate Window")));
         popout.set_visible(false);
 
-        // 操作の帯は 2 段（Working Copy の右に埋め込んでも収まるように）: 上にコンフリクトの選択と解決、下に
-        // Magic Merge・AI・知らせと保存。
+        // 操作の帯は 1 段（macOS 版と同じ並び）: 位置・∧ ∨・Magic Merge・AI・知らせ・Accept…・Base、右に
+        // 別の窓・Save・Save & Mark Resolved。Working Copy の右に埋め込んで 1 段に入りきらないときだけ、2 段に
+        // 折る（上にコンフリクトの選択と解決、下に Magic Merge・AI・知らせと保存）。
+        let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        spacer.set_hexpand(true);
+        let widget = |w: &dyn AsRef<gtk::Widget>| w.as_ref().clone();
+        let mut first: Vec<gtk::Widget> = vec![widget(&position), widget(&previous), widget(&next)];
+        let mut second: Vec<gtk::Widget> = vec![
+            widget(&magic),
+            widget(&ai_resolve),
+            widget(&ai_explain),
+            widget(&note),
+        ];
+        let accepts_and_base: Vec<gtk::Widget> = accept_buttons
+            .iter()
+            .map(|(b, _)| widget(b))
+            .chain([widget(&base_toggle)])
+            .collect();
+        let tail = [
+            widget(&spacer),
+            widget(&popout),
+            widget(&save),
+            widget(&resolve),
+        ];
+        // 1 段: 位置・∧ ∨・Magic Merge・AI・知らせ・Accept…・Base・（空き）・別の窓・Save・Save & Mark Resolved。
+        let wide: Vec<gtk::Widget> = first
+            .iter()
+            .chain(&second)
+            .chain(&accepts_and_base)
+            .chain(&tail)
+            .cloned()
+            .collect();
+        first.extend(accepts_and_base);
+        second.extend(tail);
         let row = || {
             let b = gtk::Box::new(gtk::Orientation::Horizontal, 6);
             b.set_margin_start(10);
             b.set_margin_end(10);
+            b.set_margin_top(6);
             b
         };
         let top = row();
-        top.set_margin_top(6);
-        top.append(&position);
-        top.append(&previous);
-        top.append(&next);
-        for (b, _) in &accept_buttons {
-            top.append(b);
-        }
-        top.append(&base_toggle);
         let bottom = row();
-        bottom.set_margin_top(6);
         bottom.set_margin_bottom(6);
-        bottom.append(&magic);
-        bottom.append(&ai_resolve);
-        bottom.append(&ai_explain);
-        bottom.append(&note);
-        bottom.append(&popout);
-        bottom.append(&save);
-        bottom.append(&resolve);
+        let bar = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        bar.append(&top);
+        bar.append(&bottom);
+        let arrange = {
+            let (top, bottom) = (top.clone(), bottom.clone());
+            move |one_row: bool| {
+                for w in wide.iter() {
+                    if let Some(parent) = w.parent().and_downcast::<gtk::Box>() {
+                        parent.remove(w);
+                    }
+                }
+                if one_row {
+                    for w in &wide {
+                        top.append(w);
+                    }
+                    top.set_margin_bottom(6);
+                } else {
+                    for w in &first {
+                        top.append(w);
+                    }
+                    for w in &second {
+                        bottom.append(w);
+                    }
+                    top.set_margin_bottom(0);
+                }
+                bottom.set_visible(!one_row);
+            }
+        };
+        arrange(true);
+        // 幅を見る部品（高さなし）。幅が変わったら、1 段に入るか比べて並べ直す。
+        let probe = gtk::DrawingArea::new();
+        probe.set_hexpand(true);
+        {
+            let (top, bottom) = (top.clone(), bottom.clone());
+            let one_row = Rc::new(Cell::new(true));
+            probe.connect_resize(move |_, width, _| {
+                let needed = one_row_width(&top, &bottom);
+                let fits = width >= needed;
+                if fits != one_row.get() {
+                    one_row.set(fits);
+                    let arrange = arrange.clone();
+                    glib::idle_add_local_once(move || arrange(fits));
+                }
+            });
+        }
 
         // 列: Base（出すとき）・Current と帯・Result・帯と Incoming（同じ幅に分ける）。
         let columns = gtk::Box::new(gtk::Orientation::Horizontal, 0);
@@ -648,9 +730,17 @@ impl Editor {
             Self::band_column(&bands[1]).upcast_ref(),
             incoming.root.upcast_ref(),
         ));
+        // 1 段の帯の幅で窓（Working Copy の欄）を広げないよう、帯は幅を求めない枠に入れる（入りきらなければ
+        // 上の `probe` が 2 段に折る）。
+        let bar = gtk::ScrolledWindow::builder()
+            .child(&bar)
+            .hscrollbar_policy(gtk::PolicyType::External)
+            .vscrollbar_policy(gtk::PolicyType::Never)
+            .propagate_natural_height(true)
+            .build();
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        root.append(&top);
-        root.append(&bottom);
+        root.append(&probe);
+        root.append(&bar);
         // マーカーの残っていないファイル（rerere が解決を当てた、ほかのエディタで直した）の案内。
         let banner_resolve = without_markers.as_ref().map(|text| {
             let (banner, button) = Self::without_markers_banner(text);
@@ -715,22 +805,10 @@ impl Editor {
             note,
             buttons,
             accept_base,
-            ai_buttons: vec![ai_resolve.clone(), ai_explain.clone()],
             on_resolved: RefCell::new(Rc::new(|| {})),
             on_pop_out: RefCell::default(),
         });
         this.update_conflicts();
-        // AI の設定が変わると `assist::track` がボタンを押せるようにするので、その後でコンフリクトの有無に
-        // 合わせ直す（残っていなければ押せない）。エディタがなくなったら外す。
-        let weak = Rc::downgrade(&this);
-        crate::settings::connect_changed_while(&this.root, move |key| {
-            if (key == crate::assist::ASSISTANT || key.starts_with("assistantPath."))
-                && let Some(this) = weak.upgrade()
-            {
-                this.refresh();
-            }
-        });
-
         let weak = Rc::downgrade(&this);
         let with = move |f: fn(&Rc<Self>)| {
             let weak = weak.clone();
@@ -783,7 +861,7 @@ impl Editor {
             }
         });
 
-        // キー: Ctrl+Alt+↑↓ でコンフリクトの間を移り、Ctrl+S で保存、Ctrl+Return で保存して解決済みにする。
+        // キー: Ctrl+Alt+↑↓ でコンフリクトの間を移り、Ctrl+Return で保存して解決済みにする。
         // エディタの中にフォーカスがあるときだけ（埋め込んだ Working Copy では、外の Ctrl+Return はコミット）。
         // Result の欄より先に受ける。
         let keys = gtk::ShortcutController::new();
@@ -800,7 +878,6 @@ impl Editor {
         };
         add("<Control><Alt>Up", Box::new(with(|t| t.step(-1))));
         add("<Control><Alt>Down", Box::new(with(|t| t.step(1))));
-        add("<Control>s", Box::new(with(|t| t.save(false))));
         add("<Control>Return", Box::new(with(Self::save_and_resolve)));
         this.root.add_controller(keys);
 
@@ -917,9 +994,6 @@ impl Editor {
         });
         for b in &self.buttons {
             b.set_sensitive(!conflicts.is_empty());
-        }
-        for b in &self.ai_buttons {
-            b.set_sensitive(!conflicts.is_empty() && crate::assist::is_ready());
         }
         // 共通の祖先は、対応のわかるコンフリクトでだけ選べる。
         if let Some(b) = &self.accept_base {
