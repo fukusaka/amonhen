@@ -58,17 +58,17 @@ enum FilePicker {
         model.useLocal()
     }
 
-    /// リポジトリの HEAD の木のフォルダを選ぶ（まだ取り出していないフォルダも。sparse checkout で取り出すフォルダ）。
-    /// パスは `/` を根にした形（`/crates/core`）で、選んだものを根からの相対パスにして `done` に渡す。根は選べない。
-    /// 取り消したら nil。
-    static func presentTree(title: String, message: String, repository: Repository, initial: String = "/",
-                            in window: NSWindow? = nil, done: @escaping (String?) -> Void) {
+    /// リポジトリの木（`rev` の時点、nil なら HEAD）のフォルダを選ぶ（まだ取り出していないフォルダも。sparse checkout
+    /// で取り出すフォルダや、アーカイブに書き出すフォルダ）。パスは `/` を根にした形（`/crates/core`）で、選んだものを
+    /// 根からの相対パスにして `done` に渡す。根は選べない。取り消したら nil。
+    static func presentTree(title: String, message: String, repository: Repository, rev: String? = nil,
+                            initial: String = "/", in window: NSWindow? = nil, done: @escaping (String?) -> Void) {
         let model = FilePickerModel(kind: .folder, hosts: nil, initial: initial)
         show(model, title: title, message: message, height: 460, in: window) { paths in
             let path = paths?.first.map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "/")) }
             done(path?.isEmpty == false ? path : nil)
         }
-        model.useTree(repository)
+        model.useTree(repository, rev: rev)
     }
 
     private static func show(_ model: FilePickerModel, title: String, message: String, height: CGFloat,
@@ -131,8 +131,8 @@ final class FilePickerModel {
     nonisolated enum Reader: @unchecked Sendable {
         case engine(Repository)
         case local
-        /// リポジトリの HEAD の木（フォルダだけ。パスは `/` を根にした形）。
-        case tree(Repository)
+        /// リポジトリの木（`rev` の時点、nil なら HEAD。フォルダだけ。パスは `/` を根にした形）。
+        case tree(Repository, rev: String?)
     }
 
     let kind: FilePicker.Kind
@@ -195,10 +195,10 @@ final class FilePickerModel {
         go(initial, orHome: true)
     }
 
-    /// リポジトリの HEAD の木を読む。
-    func useTree(_ repository: Repository) {
+    /// リポジトリの木（`rev` の時点、nil なら HEAD）を読む。
+    func useTree(_ repository: Repository, rev: String? = nil) {
         host = ""
-        reader = .tree(repository)
+        reader = .tree(repository, rev: rev)
         go(initial, orHome: true)
     }
 
@@ -250,8 +250,8 @@ final class FilePickerModel {
             try repository.info(["op": "listDirectory", "path": path], as: FolderContents.self)
         case .local:
             try JSONDecoder().decode(FolderContents.self, from: LocalFolders.listJSON(path))
-        case let .tree(repository):
-            try repository.info(["op": "treeFolders", "path": path], as: FolderContents.self)
+        case let .tree(repository, rev):
+            try repository.info(["op": "treeFolders", "path": path, "rev": rev ?? "HEAD"], as: FolderContents.self)
         }
     }
 

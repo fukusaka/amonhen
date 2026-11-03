@@ -1725,6 +1725,20 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     }
 
     /// 選んだコミットを古い順に（Commit › Save as Patch…）。マージを含む・選んでいなければ nil。
+    /// アーカイブの既定の名前: コミットを指すタグ（なければブランチ）の名前、どれもなければ短い ID。
+    func archiveLabel(_ id: Data) -> String {
+        let labels = (refLabels[id] ?? []).filter { !$0.worktree }
+        let label = labels.first { $0.kind == .tag } ?? labels.first { $0.kind == .local }
+        return label?.name ?? String(id.map { String(format: "%02x", $0) }.joined().prefix(Titles.shortIDLength))
+    }
+
+    /// Commit > Export Archive…: 選んでいるコミット（1 つだけのとき）。なければ nil（HEAD を書き出す）。
+    var selectedCommitForArchive: (hex: String, label: String)? {
+        guard let history, tableView.selectedRowIndexes.count == 1, let row = tableView.selectedRowIndexes.first,
+              let id = history.commitID(row: row) else { return nil }
+        return (id.map { String(format: "%02x", $0) }.joined(), archiveLabel(id))
+    }
+
     var selectedCommitsForPatch: [String]? {
         guard let history else { return nil }
         let rows = tableView.selectedRowIndexes.sorted()
@@ -1789,6 +1803,9 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             menu.addItem(NSMenuItem(title: L("Save as Patch…"), action: nil, keyEquivalent: ""))
         } else {
             add(L("Save as Patch…")) { actions.savePatches([hex]) }
+        }
+        add(L("Export Archive…")) { [weak self] in
+            actions.exportArchive(rev: hex, label: self?.archiveLabel(id) ?? short)
         }
         menu.addItem(.separator())
         add(Titles.copyCommitID) {

@@ -92,6 +92,8 @@ pub fn menu(
             items.extend(favorite_items(actions, &name, known));
             items.push(new_branch(actions, &name));
             items.push(new_tag(actions, &name));
+            items.push(export_archive(actions, "refs/heads/", &name));
+            items.push(save_bundle(actions, entry.kind, &name));
             let (r, n) = (range_diff.clone(), name.clone());
             items.push(menu::action(
                 tr!("Compare with Previous Version"),
@@ -119,10 +121,14 @@ pub fn menu(
             rebase(&mut items);
             items.push(Item::Separator);
             items.push(new_branch(actions, &name));
+            items.push(export_archive(actions, "refs/remotes/", &name));
+            items.push(save_bundle(actions, entry.kind, &name));
         }
         RefKind::Tag => {
             merge(&mut items);
             items.push(new_branch(actions, &name));
+            items.push(export_archive(actions, "refs/tags/", &name));
+            items.push(save_bundle(actions, entry.kind, &name));
             items.push(Item::Separator);
             items.extend(tag_items(actions, std::slice::from_ref(&name), known));
         }
@@ -287,6 +293,19 @@ fn several(actions: &Rc<Actions>, known: &Known, head: Option<&str>) -> Vec<Item
             })
         })
         .collect();
+    // ブランチ・タグだけなら、まとめて bundle に。
+    let refs: Vec<String> = selected
+        .iter()
+        .filter_map(|e| crate::bundle::full_ref(e.kind, &e.name))
+        .collect();
+    if refs.len() == selected.len() {
+        let (a, names) = (actions.clone(), names.clone());
+        let label = names.first().cloned().unwrap_or_default();
+        items.push(menu::action(
+            tr!("Save {count} as Bundle…", count = refs.len()),
+            move || crate::bundle::save(&a, refs.clone(), names.clone(), label.clone()),
+        ));
+    }
     if sources.len() > 1 {
         let branch = head.map(str::to_owned);
         let title = tr!(
@@ -662,6 +681,23 @@ pub fn ask_rename_branch(actions: &Rc<Actions>, name: &str) {
 }
 
 /// `target` に新しいタグを付ける。
+/// Export Archive…: ref（`kind` は `refs/heads/` など。同じ名前のブランチとタグを取り違えない）の時点を書き出す。
+fn export_archive(actions: &Rc<Actions>, kind: &str, name: &str) -> Item {
+    let (a, rev, label) = (actions.clone(), format!("{kind}{name}"), name.to_owned());
+    menu::action(tr!("Export Archive…"), move || {
+        crate::archive::export(&a, rev.clone(), label.clone())
+    })
+}
+
+/// Save as Bundle…: 1 つのブランチ・リモートブランチ・タグを bundle に。
+fn save_bundle(actions: &Rc<Actions>, kind: RefKind, name: &str) -> Item {
+    let (a, label) = (actions.clone(), name.to_owned());
+    let refs: Vec<String> = crate::bundle::full_ref(kind, name).into_iter().collect();
+    menu::action(tr!("Save as Bundle…"), move || {
+        crate::bundle::save(&a, refs.clone(), vec![label.clone()], label.clone())
+    })
+}
+
 pub fn new_tag(actions: &Rc<Actions>, target: &str) -> Item {
     let (a, target) = (actions.clone(), target.to_owned());
     menu::action(tr!("New Tag at {name}…", name = target), move || {

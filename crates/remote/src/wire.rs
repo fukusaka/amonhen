@@ -7,8 +7,8 @@ use std::sync::Arc;
 use amonhen_layout::{Pod, Slab};
 use amonhen_model::search::TextTerm;
 use amonhen_model::{
-    ApplyPatch, CommitGraph, CommitText, Deepen, FormatPatch, HeadState, Oid, PullMode, RefUpdate,
-    RemoteChange, ResetMode, Result, Root, Sequence, WorktreeChange,
+    ApplyPatch, Archive, Bundle, CommitGraph, CommitText, Deepen, FormatPatch, HeadState, Oid,
+    PullMode, RefUpdate, RemoteChange, ResetMode, Result, Root, Sequence, WorktreeChange,
 };
 use serde::{Deserialize, Serialize};
 
@@ -346,7 +346,7 @@ pub enum Op {
     /// → `()`（None なら sparse checkout をやめる）
     SparseCheckout(Option<Vec<String>>),
     /// → `Vec<String>`（HEAD の木のそのパスにあるフォルダ）
-    TreeFolders(String),
+    TreeFolders(String, String),
     /// → `()`（true なら `git maintenance start`、false なら `unregister`）
     Maintenance(bool),
     Remotes,
@@ -381,6 +381,14 @@ pub enum Op {
     WorktreeChanges(Vec<String>, bool),
     /// → `Vec<RangePair>`
     RangeDiff(Vec<String>, Option<u32>),
+    /// → `Bytes`（`git archive` の中身）
+    Archive(Archive),
+    /// → `ContentsToFetch`（時点, パス, 数える上限）
+    ArchiveContentsToFetch(String, Vec<String>, usize),
+    /// → `Bytes`（`git bundle create -` の中身）
+    Bundle(Bundle),
+    /// → `BundlePreview`（入れるもの, 中身を数える上限）
+    BundlePreview(Bundle, usize),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

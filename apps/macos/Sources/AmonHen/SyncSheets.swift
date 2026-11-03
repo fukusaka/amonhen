@@ -877,7 +877,7 @@ extension Actions {
     }
 
     @MainActor
-    private func inform(_ title: String, _ message: String) async {
+    func inform(_ title: String, _ message: String) async {
         let alert = makeAlert(title, message)
         alert.addButton(withTitle: "OK")
         _ = await present(alert)

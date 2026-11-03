@@ -332,6 +332,42 @@ pub struct PatchFile {
     pub content: Vec<u8>,
 }
 
+/// `git archive` の書き出し方。中身から外すもの（`export-ignore`）などは git の `.gitattributes` に任せる。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Archive {
+    /// 書き出す時点（コミット・タグ・ブランチ）。
+    pub rev: String,
+    /// `zip`・`tar`・`tar.gz`。
+    pub format: String,
+    /// 中身の先頭に置くフォルダ（`name/` の形。`--prefix`）。空なら置かない。
+    pub prefix: String,
+    /// このフォルダ・ファイルの下だけを書き出す。空なら全体。
+    pub paths: Vec<String>,
+}
+
+/// `git bundle create` に入れるもの。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Bundle {
+    /// 入れる ref（`refs/heads/main`・`refs/tags/v1` など）。空なら HEAD とすべてのブランチ・タグ。
+    pub refs: Vec<String>,
+    /// 受け取る側が持っているはずのコミット（ここまでは入れない。`^<base>`）。空なら履歴全体。
+    pub bases: Vec<String>,
+}
+
+/// bundle を作る前に見せること（`Operations::bundle_preview`）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct BundlePreview {
+    /// 入るコミットの数（0 なら作れない）。
+    pub commits: usize,
+    /// partial clone で手元にない、入る中身（作る前にまとめて取る）。
+    pub contents: ContentsToFetch,
+    /// shallow clone で、取っていない履歴まで要る（作ると、clone できない bundle になる）。
+    pub beyond_shallow: bool,
+}
+
 /// `git apply` の当て方。既定は git と同じく作業ツリーだけ。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -495,6 +531,23 @@ pub trait Operations: Send + Sync {
 
     /// `commits` を、渡した順にパッチにする（`git format-patch`。マージは git と同じく飛ばす）。
     fn format_patch(&self, commits: &[Oid], options: &FormatPatch) -> Result<Vec<PatchFile>>;
+    /// `options.rev` の時点のファイルを 1 つにまとめた中身（`git archive`）。partial clone で手元にない中身は、git が
+    /// 1 つずつ取りに行かないよう、先にまとめて取ってくる。
+    fn archive(&self, options: &Archive) -> Result<Vec<u8>>;
+    /// `rev` の時点のファイル（`paths` があればその下だけ）のうち、partial clone で手元にない中身。`limit` を超えたら
+    /// 数えるのをやめる。partial clone でなければ空。
+    fn archive_contents_to_fetch(
+        &self,
+        rev: &str,
+        paths: &[String],
+        limit: usize,
+    ) -> Result<ContentsToFetch>;
+    /// `options` のコミットを 1 つのファイルにまとめた中身（`git bundle create -`）。shallow clone で取っていない履歴まで
+    /// 要るなら断る（git は作れてしまうが、clone できない）。partial clone で手元にない中身は先にまとめて取る。
+    fn bundle(&self, options: &Bundle) -> Result<Vec<u8>>;
+    /// `options` の bundle に入るコミットの数と、取ってくる中身、shallow clone で作れないか。`limit` を超えたら中身を
+    /// 数えるのをやめる。
+    fn bundle_preview(&self, options: &Bundle, limit: usize) -> Result<BundlePreview>;
     /// mbox のパッチを今のブランチにコミットとして当てる（`git am`）。`three_way` が `None` なら git の
     /// `am.threeWay` に任せる。当たらないパッチがあれば、そこで止まる（`Outcome::Conflict`）。
     fn am(&self, mbox: &[u8], three_way: Option<bool>) -> Result<Outcome>;
@@ -634,9 +687,9 @@ pub trait Operations: Send + Sync {
         let _ = folders;
         Err(crate::tr!("Can’t change the sparse checkout here").into())
     }
-    /// HEAD の木の `path`（根からの相対パス。空なら根）にあるフォルダの名前（名前の順）。
-    fn tree_folders(&self, path: &str) -> Result<Vec<String>> {
-        let _ = path;
+    /// `rev`（コミット・タグ・ブランチ）の木の `path`（根からの相対パス。空なら根）にあるフォルダの名前（名前の順）。
+    fn tree_folders(&self, rev: &str, path: &str) -> Result<Vec<String>> {
+        let _ = (rev, path);
         Err(crate::tr!("Can’t read the tree here").into())
     }
     /// `on` なら `git maintenance start`（ユーザー全体の `maintenance.repo` に登録し、OS の予定がなければ作る）、

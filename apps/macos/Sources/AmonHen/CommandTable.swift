@@ -70,6 +70,9 @@ enum CommandTable {
     static let applyPatch = Entry(
         id: "apply-patch", title: "Apply Patch…", localized: true, key: "", modifiers: [.command],
         toolTip: nil, app: false)
+    static let saveBundle = Entry(
+        id: "save-bundle", title: "Save Repository as Bundle…", localized: true, key: "", modifiers: [.command],
+        toolTip: "Save HEAD and every branch and tag in one file that git can clone or fetch from, like git bundle", app: false)
     static let `continue` = Entry(
         id: "continue", title: "Continue", localized: false, key: "", modifiers: [.command],
         toolTip: nil, app: false)
@@ -100,6 +103,9 @@ enum CommandTable {
     static let savePatch = Entry(
         id: "save-patch", title: "Save as Patch…", localized: true, key: "", modifiers: [.command],
         toolTip: nil, app: false)
+    static let exportArchive = Entry(
+        id: "export-archive", title: "Export Archive…", localized: true, key: "", modifiers: [.command],
+        toolTip: "Save the files of the selected commit as a zip or tar.gz file, like git archive", app: false)
     static let showWorkingCopy = Entry(
         id: "show-working-copy", title: "Working Copy", localized: false, key: "1", modifiers: [.command],
         toolTip: nil, app: false)
@@ -171,7 +177,7 @@ enum CommandTable {
         [fetch, pull, push, forcePush],
         [newBranch, renameBranch, setUpstream, newTag],
         [newWorktree, pruneWorktrees, addRemote],
-        [merge, rebase, compareWithPrevious, applyPatch],
+        [merge, rebase, compareWithPrevious, applyPatch, saveBundle],
         [`continue`, skip, abort],
         [stash, popStash],
         [undo],
@@ -181,6 +187,6 @@ enum CommandTable {
     ]
     static let commitMenu: [[Entry]] = [
         [commit, commitAndPush, stageAll],
-        [savePatch],
+        [savePatch, exportArchive],
     ]
 }

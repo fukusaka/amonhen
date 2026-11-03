@@ -399,6 +399,34 @@ rebase と History の編集（reword・squash・fixup・drop・edit・split・m
 - format-patch にはコミットを `--no-walk=unsorted` と `--max-count` で渡す（format-patch は逆の順に書き出すので逆に
   して渡す。数を渡さないと、コミットが 1 つのときに `<rev>..HEAD` の意味になる）。どれも git 2.23 にある。
 
+## アーカイブ
+
+- コミットのファイルを書き出すのは `git archive`（zip・tar・tar.gz、`--prefix` とパス）。`.gitattributes`
+  （`export-ignore`・`export-subst`）や `tar.<format>.command` は git と同じに効く。tar.gz は git 2.38 から git
+  自身の gzip、それより前は `gzip` コマンドを使う。zip と tar はほかに何も要らない。どれも git 2.23 にある。
+- パッチと同じく、ファイルはコアが動く機械に書く: バックエンドは `git archive` の中身（標準出力）を返し、コアが
+  書く（`{"op":"archive"}`）。daemon 越しや SSH 先では中身を 1 つのフレームで返すので、1 GB を超えるアーカイブは
+  送る前に断り、フォルダを選ぶか、リポジトリのある所で git archive を使うよう言う。
+- partial clone では、`git archive` は手元にない中身を 1 つずつ取りに行く。バックエンドが先に取らずに数え
+  （`rev-list --objects --missing=print --no-walk <rev>` でそのコミットの木の手元にない blob、`ls-tree -r` で選んだ
+  フォルダに絞る）、アプリが取る前に確かめ（`{"op":"archiveContents"}`。50,000 まで数える）、バックエンドがまとめて
+  取る（`fetch --filter=blob:none --stdin`。差分のときと同じ。git 2.29 から。それより前は git が 1 つずつ取る）。
+- 書き出すフォルダは、書き出すコミットの木から選ぶ（`{"op":"treeFolders","rev":…}`。sparse checkout と同じ選ぶ窓）。
+
+## bundle
+
+- コミットを 1 つのファイルにまとめるのは `git bundle create - <refs> ^<bases>`（ref を渡さなければ HEAD・`--branches`・
+  `--tags`）。git はそのファイルから clone や fetch ができる。アーカイブと同じく、バックエンドは中身を返し、コアが
+  自分の機械に書く（`{"op":"bundle"}`）。daemon 越しや SSH 先では、1 GB を超えれば送る前に断る。
+- `{"op":"bundlePreview"}` はコミットを数え（`rev-list`）、書く前に次を見る:
+  - shallow clone では、git は範囲が shallow の境に届く bundle も書き、`git bundle verify` は完全と言うが、clone
+    できない（「Failed to traverse parents」）。範囲のコミットが `.git/shallow` にあり、親を持つなら断る（根まで取り
+    足すと根のコミットも残るが、それは数えない）。取得した範囲の中の基点からなら作れる。
+  - partial clone では、git は手元にない中身を 1 つずつ取りに行く。手元にないものを数え
+    （`rev-list --objects --missing=print`）、アプリが確かめ、アーカイブと同じく先にまとめて取る。
+- いくつかのブランチだけの bundle には HEAD がないので、git は clone しても何も取り出さない。bundle からの clone は
+  次の段で、取り出すブランチを選ぶ。`bundle create -` も上のこともすべて git 2.23 にある。
+
 ## 速度目標と計測
 
 | 項目 | 目標 |

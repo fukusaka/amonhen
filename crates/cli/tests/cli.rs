@@ -685,6 +685,107 @@ fn shows_mailmap_names_directly_through_the_daemon_and_over_ssh() {
     }
 }
 
+/// 書き出したアーカイブは手元に書く（SSH 先からは中身を受け取る）。
+#[cfg(unix)]
+#[test]
+fn exports_an_archive_directly_through_the_daemon_and_over_ssh() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir_all(repo.join("docs")).unwrap();
+    git(&repo, &["init", "-q"]);
+    git(&repo, &["config", "user.name", "a"]);
+    git(&repo, &["config", "user.email", "a@example.com"]);
+    std::fs::write(repo.join("a.txt"), "a\n").unwrap();
+    std::fs::write(repo.join("docs/guide.md"), "guide\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "first"]);
+    let env = Env::new(tmp.path());
+    let repo = repo.canonicalize().unwrap();
+    let path = repo.to_str().unwrap().to_owned();
+    for (i, at) in [
+        path.clone(),
+        format!("daemon:{path}"),
+        format!("ssh://dev{path}"),
+    ]
+    .iter()
+    .enumerate()
+    {
+        let at = at.as_str();
+        // 形はファイル名から。書くのはこの機械のファイル（SSH 先でも）。
+        let zip = tmp.path().join(format!("app-{i}.zip"));
+        let written = env.json(&[
+            "archive",
+            "-C",
+            at,
+            "--json",
+            "--prefix",
+            "app/",
+            "-o",
+            zip.to_str().unwrap(),
+        ]);
+        assert_eq!(
+            written["size"],
+            std::fs::metadata(&zip).unwrap().len(),
+            "{at}: {written}"
+        );
+        assert!(std::fs::read(&zip).unwrap().starts_with(b"PK"), "{at}");
+        // 出力を選ばなければ標準出力に tar。`--` の後はパス。
+        let tar = env.ok(&["archive", "-C", at, "HEAD", "--", "docs"]);
+        assert!(
+            tar.contains("docs/guide.md") && !tar.contains("a.txt"),
+            "{at}"
+        );
+    }
+}
+
+/// bundle は手元に書く（SSH 先からは中身を受け取る）。git がそのまま clone できる。
+#[cfg(unix)]
+#[test]
+fn saves_a_bundle_directly_through_the_daemon_and_over_ssh() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "-q"]);
+    git(&repo, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    git(&repo, &["config", "user.name", "a"]);
+    git(&repo, &["config", "user.email", "a@example.com"]);
+    commit(&repo, "a.txt", "first");
+    git(&repo, &["tag", "v1"]);
+    commit(&repo, "b.txt", "second");
+    let env = Env::new(tmp.path());
+    let repo = repo.canonicalize().unwrap();
+    let path = repo.to_str().unwrap().to_owned();
+    for (i, at) in [
+        path.clone(),
+        format!("daemon:{path}"),
+        format!("ssh://dev{path}"),
+    ]
+    .iter()
+    .enumerate()
+    {
+        let at = at.as_str();
+        let file = tmp.path().join(format!("all-{i}.bundle"));
+        let file = file.to_str().unwrap();
+        let written = env.json(&["bundle", "create", "-C", at, "--json", file, "--all"]);
+        assert_eq!(written["commits"], 2, "{at}: {written}");
+        git(tmp.path(), &["clone", "-q", file, &format!("copy-{i}")]);
+        let copy = tmp.path().join(format!("copy-{i}"));
+        let log = Command::new("git")
+            .current_dir(&copy)
+            .args(["log", "--format=%s"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&log.stdout),
+            "second\nfirst\n",
+            "{at}"
+        );
+        // `-` なら標準出力に。v1 より後だけ。
+        let out = env.ok(&["bundle", "create", "-C", at, "-", "v1..main"]);
+        assert!(out.starts_with("# v2 git bundle"), "{at}: {out}");
+    }
+}
+
 /// パッチを書き出し（format-patch）、mbox を am で、diff を apply で当て、undo で戻す。3 つの開き方のどれでも、
 /// パッチのファイルは手元に置いたまま（SSH 先には中身を送る）。
 #[cfg(unix)]

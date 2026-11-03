@@ -269,6 +269,8 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Save as Patch (per commit or mbox, cover letter, -v) | ✓ | ✓ | △ | ✓ | VSCode: No `-v`.<br>CLI: `format-patch`. |
 | Apply Patch (am / apply, preview, 3-way, --index) | ✓ | ✓ | ✓ | ✓ | CLI: `am`, `apply` (`--check`). |
 | Drop patch files on the window | ✓ | ✓ | △ | n/a | VSCode: From the Explorer's context menu. |
+| Export Archive (zip / tar.gz / tar, top folder, one folder) | ✓ | ✓ | — | ✓ | CLI: `archive`. |
+| Save as Bundle (all, some refs, after a base) | ✓ | ✓ | — | ✓ | CLI: `bundle create`. |
 | Stopped `am` with Retry with 3-Way, Skip, Abort, Continue | ✓ | ✓ | ✓ | ✓ | VSCode: In a sidebar row.<br>CLI: `am --continue / --skip / --abort / --retry-3way`. |
 
 ## 8. Merge editor

@@ -17,6 +17,8 @@
 //!   amonhen install / engine           エンジンの置き場所（`install.rs`）
 //!   amonhen daemon [status|start|stop|rebuild]  手元の共有の daemon
 
+mod archive;
+mod bundle;
 mod graph;
 mod install;
 mod open;
@@ -56,6 +58,8 @@ usage: amonhen [<path>]
        amonhen format-patch [-o <dir> | --mbox <file> | --stdout] [--cover-letter] [-v <n>] [-<n>] [<rev> | <from>..<to>]
        amonhen am [--3way | --no-3way] [--check] <file>… | --continue | --skip | --abort | --retry-3way
        amonhen apply [--index] [--3way] [--check] <file>…
+       amonhen archive [--format zip|tar|tar.gz] [--prefix <dir>/] [-o <file>] [<rev>] [-- <path>…]
+       amonhen bundle create [--json] <file> (--all | <ref>… [^<base>…] | <base>..<ref>)
        amonhen clone [--filter=<spec>] [--depth <n>] [--sparse] <url> [<dir>]
        amonhen daemon [status [--json] | start | stop | rebuild [<path> | ssh://host/path]]
        amonhen install [--quiet] [--no-link] [--force]   (puts the engine in ~/.local/share/amonhen and links ~/.local/bin/amonhen)
@@ -95,6 +99,12 @@ first parents: <rev> alone means <rev>..HEAD, and -<n> the last n commits. am ap
 applies a diff to the worktree (--index stages it too); both can be undone with undo. --check shows what the patches
 change and whether they apply. When am stops at a patch that doesn't apply, --retry-3way merges it with conflicts to
 resolve.
+archive writes the files of <rev> (HEAD by default) as git archive does, to -o <file> or the standard output, in the
+format named by --format or by the file name (tar otherwise); .gitattributes decides what is left out. In a partial
+clone the missing contents are fetched first, in one go.
+bundle create writes commits into one file that git can clone or fetch from (- for the standard output): --all for HEAD
+and every branch and tag, or the refs given, leaving out what <base> already has. A shallow clone refuses a bundle that
+needs history it hasn't fetched.
 clone --filter=blob:none fetches file contents only when they're needed (a partial clone), --depth <n> only the latest
 n commits (a shallow clone), and --sparse checks out only the top-level files (git 2.27 or later; choose folders with
 run '{\"op\":\"sparseCheckout\",\"folders\":[\"<dir>\"]}').")
@@ -130,6 +140,8 @@ fn main() -> ExitCode {
         Some("rewrite-preview") => work::rewrite_preview(&args[1..]),
         Some("range-diff") => work::range_diff(&args[1..]),
         Some("format-patch") => patch::format_patch(&args[1..]),
+        Some("archive") => archive::archive(&args[1..]),
+        Some("bundle") => bundle::bundle(&args[1..]),
         Some("am") => patch::am(&args[1..]),
         Some("apply") => patch::apply(&args[1..]),
         Some("find-repositories") => find_repositories(&args[1..]),

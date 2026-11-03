@@ -161,6 +161,9 @@ pub static COMMANDS: &[Command] = &[
         .localized()
         .tip("Compare the current branch with its version before it was last rewritten (a rebase, History edit, amend or reset), like git range-diff"),
     command("apply-patch", "Apply Patch…").localized(),
+    command("save-bundle", "Save Repository as Bundle…")
+        .localized()
+        .tip("Save HEAD and every branch and tag in one file that git can clone or fetch from, like git bundle"),
     command("continue", "Continue"),
     command("skip", "Skip"),
     command("abort", "Abort"),
@@ -172,6 +175,9 @@ pub static COMMANDS: &[Command] = &[
     command("commit-and-push", "Commit and Push").key("Primary+Shift+Return"),
     command("stage-all", "Stage All"),
     command("save-patch", "Save as Patch…").localized(),
+    command("export-archive", "Export Archive…")
+        .localized()
+        .tip("Save the files of the selected commit as a zip or tar.gz file, like git archive"),
     // 画面・移動
     command("show-working-copy", "Working Copy").key("Primary+1"),
     command("show-history", "History").key("Primary+2"),
@@ -289,7 +295,13 @@ pub static SECTIONS: &[Section] = &[
     ),
     section(
         Menu::Repository,
-        &["merge", "rebase", "compare-with-previous", "apply-patch"],
+        &[
+            "merge",
+            "rebase",
+            "compare-with-previous",
+            "apply-patch",
+            "save-bundle",
+        ],
     ),
     section(Menu::Repository, &["continue", "skip", "abort"]),
     section(Menu::Repository, &["stash", "pop-stash"]),
@@ -298,7 +310,7 @@ pub static SECTIONS: &[Section] = &[
     section(Menu::Repository, &["create-pull-request", "open-on-github"]),
     section(Menu::Repository, &["open-in-terminal", "reveal-in-files"]),
     section(Menu::Commit, &["commit", "commit-and-push", "stage-all"]),
-    section(Menu::Commit, &["save-patch"]),
+    section(Menu::Commit, &["save-patch", "export-archive"]),
     section(Menu::Window, &["repositories", "activity"]),
 ];
 

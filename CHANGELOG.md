@@ -36,6 +36,10 @@ becomes the GitHub Release notes.
 - The Clone sheet chooses what to download (everything, file contents when needed, or recent history only) and can
   check out only some folders, picked right after the clone (git 2.27). `amonhen clone` takes `--filter`, `--depth`
   and `--sparse`.
+- Export Archive… writes a commit's files as a zip, tar.gz or tar file (`git archive`), optionally with a top folder
+  and only one folder, from the Commit menu, History and the sidebar's branches and tags. `amonhen archive` does the same.
+- Save as Bundle… writes branches and tags, or the whole repository, into one file that git can clone or fetch from
+  (`git bundle`), optionally only the commits after a base. `amonhen bundle create` does the same.
 
 #### Changed
 

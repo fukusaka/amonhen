@@ -1273,6 +1273,13 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                     actions.mergeSeveralWithConfirmation(sources, into: current)
                 }
             }
+            // ブランチ・タグだけなら、まとめて bundle に。
+            let refs = selected.compactMap(Self.fullRef)
+            if refs.count == selected.count {
+                add(L("Save %ld as Bundle…", refs.count)) {
+                    actions.saveBundle(refs: refs, names: selected.map(\.name), label: selected[0].name)
+                }
+            }
             let locals = selected.filter { $0.kind == .local }.map(\.name)
             if locals.count == selected.count {
                 menu.addItem(.separator())
@@ -1366,6 +1373,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             }
             add(Titles.newBranch(from: name)) { actions.newBranch(at: name) }
             add(Titles.newTag(at: name)) { actions.newTag(at: name) }
+            add(L("Export Archive…")) { actions.exportArchive(rev: "refs/heads/\(name)", label: name) }
+            add(L("Save as Bundle…")) { actions.saveBundle(refs: ["refs/heads/\(name)"], names: [name], label: name) }
             add(L("Compare with Previous Version")) { [weak self] in self?.onCompareWithPrevious?(name) }
             add(L("Rename…")) { actions.renameBranch(name) }
             if name != headBranch {
@@ -1386,9 +1395,13 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             add(Titles.rebase(current, onto: name)) { actions.rebaseWithConfirmation(current, onto: name) }
             menu.addItem(.separator())
             add(Titles.newBranch(from: name)) { actions.newBranch(at: name) }
+            add(L("Export Archive…")) { actions.exportArchive(rev: "refs/remotes/\(name)", label: name) }
+            add(L("Save as Bundle…")) { actions.saveBundle(refs: ["refs/remotes/\(name)"], names: [name], label: name) }
         case .tag:
             add(Titles.merge(name, into: current)) { actions.mergeWithConfirmation(name, into: current) }
             add(Titles.newBranch(from: name)) { actions.newBranch(at: name) }
+            add(L("Export Archive…")) { actions.exportArchive(rev: "refs/tags/\(name)", label: name) }
+            add(L("Save as Bundle…")) { actions.saveBundle(refs: ["refs/tags/\(name)"], names: [name], label: name) }
             menu.addItem(.separator())
             addTagItems([name], to: menu, actions: actions)
         case .stash:
@@ -1397,6 +1410,16 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         case .submodule:
             add("Update \(name)") { actions.perform(["op": "updateSubmodules", "paths": [name]]) }
             add(L("Open in New Window")) { [weak self] in self?.onOpenSubmodule?(name) }
+        }
+    }
+
+    /// bundle に入れる、行の ref の名前（ブランチ・リモートブランチ・タグ）。ほかの行は nil。
+    nonisolated static func fullRef(_ item: RefItem) -> String? {
+        switch item.kind {
+        case .local: "refs/heads/\(item.name)"
+        case .remote: "refs/remotes/\(item.name)"
+        case .tag: "refs/tags/\(item.name)"
+        default: nil
         }
     }
 

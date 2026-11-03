@@ -417,6 +417,38 @@ or split history in ways that are hard to see afterwards.
 - format-patch is given the commits with `--no-walk=unsorted` and `--max-count` (in reverse, since it writes them in
   reverse; without a count, one commit would mean `<rev>..HEAD`), all in git 2.23.
 
+## Archives
+
+- Exporting a commit's files is `git archive` (zip, tar or tar.gz, with `--prefix` and paths), so `.gitattributes`
+  (`export-ignore`, `export-subst`) and `tar.<format>.command` work as in git. tar.gz uses git's own gzip from git
+  2.38 and the `gzip` command before; zip and tar need nothing else. All of it is in git 2.23.
+- As with patches, the file is written on the machine that runs the core: the backend returns the bytes of
+  `git archive` (its standard output), and the core writes them (`{"op":"archive"}`). Through the daemon and over SSH
+  the bytes come back in one frame, so an archive over 1 GB is refused before it is sent, saying to choose a folder or
+  run git archive there.
+- In a partial clone `git archive` fetches every missing content one at a time. The backend counts them first without
+  fetching (`rev-list --objects --missing=print --no-walk <rev>` gives the missing blobs of that commit's tree;
+  `ls-tree -r` narrows them to the chosen folders), the app asks before fetching (`{"op":"archiveContents"}`, up to
+  50,000), and the backend fetches them in one go (`fetch --filter=blob:none --stdin`, as for diffs; from git 2.29,
+  and before that git fetches them one by one).
+- The folder to export is chosen from the exported commit's tree (`{"op":"treeFolders","rev":…}`, the same chooser as
+  sparse checkout).
+
+## Bundles
+
+- Saving commits in one file is `git bundle create - <refs> ^<bases>` (HEAD, `--branches` and `--tags` when no refs
+  are given); git can clone or fetch from the file. As with archives, the backend returns the bytes and the core writes
+  the file on its own machine (`{"op":"bundle"}`), and over 1 GB is refused before sending through the daemon or SSH.
+- `{"op":"bundlePreview"}` counts the commits (`rev-list`), and before writing:
+  - In a shallow clone, git writes a bundle whose commits reach the shallow boundary, and `git bundle verify` even
+    calls it complete, but it can't be cloned ("Failed to traverse parents"). The core refuses when a commit in the
+    range is in `.git/shallow` and has parents (a root kept there after deepening to the start doesn't count); a base
+    inside the fetched history works.
+  - In a partial clone git fetches each missing content one at a time. The missing ones are counted
+    (`rev-list --objects --missing=print`), the app asks, and they are fetched in one go first, as for archives.
+- A bundle of a few branches has no HEAD, so git clones it without checking anything out; cloning from a bundle is the
+  next step and picks the branch. `bundle create -` and all of the above are in git 2.23.
+
 ## Speed targets and measurement
 
 | Item | Target |

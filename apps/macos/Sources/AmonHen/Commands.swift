@@ -72,6 +72,8 @@ enum Commands {
     static let commitAndPush = Command(CommandTable.commitAndPush, action: #selector(RepositoryWindow.commitAndPush(_:)))
     static let stageAll = Command(CommandTable.stageAll, action: #selector(RepositoryWindow.stageAllChanges(_:)))
     static let savePatch = Command(CommandTable.savePatch, action: #selector(RepositoryWindow.savePatch(_:)))
+    static let exportArchive = Command(CommandTable.exportArchive, action: #selector(RepositoryWindow.exportArchive(_:)))
+    static let saveBundle = Command(CommandTable.saveBundle, action: #selector(RepositoryWindow.saveBundle(_:)))
     static let showWorkingCopy = Command(CommandTable.showWorkingCopy, action: #selector(RepositoryWindow.showWorkingCopy(_:)))
     static let showHistory = Command(CommandTable.showHistory, action: #selector(RepositoryWindow.showHistory(_:)))
     static let showStashes = Command(CommandTable.showStashes, action: #selector(RepositoryWindow.showStashes(_:)))
@@ -121,6 +123,8 @@ enum Commands {
         commitAndPush,
         stageAll,
         savePatch,
+        exportArchive,
+        saveBundle,
         showWorkingCopy,
         showHistory,
         showStashes,

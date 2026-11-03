@@ -375,6 +375,8 @@ fn handlers() -> Vec<(&'static str, Handler)> {
         // Commit
         ("commit", Box::new(|p| p.working.commit_from_menu(None))),
         ("save-patch", Box::new(save_patch)),
+        ("export-archive", Box::new(export_archive)),
+        ("save-bundle", Box::new(save_bundle)),
         (
             "commit-and-push",
             Box::new(|p| {
@@ -896,6 +898,43 @@ fn save_patch(p: &Rc<Parts>) {
         Some(oids) => crate::patches::save(&p.actions, oids),
         None => p.window().error_bell(),
     }
+}
+
+/// Commit › Export Archive…: History で 1 つ選んだコミット、なければ HEAD（macOS 版と同じ）。
+fn export_archive(p: &Rc<Parts>) {
+    let one = p.view.selection().len() == 1;
+    let history = p.pages.visible_child_name().as_deref() == Some("history");
+    match selected_commit(p).filter(|_| one && history) {
+        Some(id) => {
+            let label = archive_label(&p.view.ref_names(&id));
+            let label = if label.is_empty() {
+                id.to_string()[..8].to_owned()
+            } else {
+                label
+            };
+            crate::archive::export(&p.actions, id.to_string(), label);
+        }
+        None => crate::archive::export(
+            &p.actions,
+            "HEAD".into(),
+            head_branch(p).unwrap_or_else(|| "HEAD".into()),
+        ),
+    }
+}
+
+/// Repository › Save Repository as Bundle…: HEAD とすべてのブランチ・タグ。
+fn save_bundle(p: &Rc<Parts>) {
+    crate::bundle::save(&p.actions, Vec::new(), Vec::new(), "all".into());
+}
+
+/// アーカイブの既定の名前: コミットを指すタグ（なければブランチ）の名前。どれもなければ空。
+pub fn archive_label(names: &[(String, RefKind)]) -> String {
+    names
+        .iter()
+        .find(|(_, k)| *k == RefKind::Tag)
+        .or_else(|| names.iter().find(|(_, k)| *k == RefKind::Local))
+        .map(|(n, _)| n.clone())
+        .unwrap_or_default()
 }
 
 /// Save as Patch… にする、History で選んだコミット（古い順）。History を出していない、選んでいない、merge を

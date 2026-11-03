@@ -12,10 +12,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use amonhen_model::{
-    ApplyPatch, CommitGraph, CommitText, ConfigEntry, ConnectionState, Deepen, FileChange,
-    FormatPatch, GitBackend, HeadState, Oid, Operations, Outcome, PatchFile, PullMode, RawCommit,
-    RefUpdate, Refs, RemoteChange, RemoteCheck, RemoteEntry, RepoFiles, RepoPaths, ResetMode,
-    Result, Root, Sequence, SigningKey, Status, WorktreeChange,
+    ApplyPatch, Archive, Bundle, BundlePreview, CommitGraph, CommitText, ConfigEntry,
+    ConnectionState, ContentsToFetch, Deepen, FileChange, FormatPatch, GitBackend, HeadState, Oid,
+    Operations, Outcome, PatchFile, PullMode, RawCommit, RefUpdate, Refs, RemoteChange,
+    RemoteCheck, RemoteEntry, RepoFiles, RepoPaths, ResetMode, Result, Root, Sequence, SigningKey,
+    Status, WorktreeChange,
 };
 use serde::de::DeserializeOwned;
 
@@ -993,6 +994,31 @@ impl Operations for RemoteOperations {
         })
     }
 
+    fn archive(&self, options: &Archive) -> Result<Vec<u8>> {
+        self.op::<Bytes>(Op::Archive(options.clone())).map(|b| b.0)
+    }
+
+    fn archive_contents_to_fetch(
+        &self,
+        rev: &str,
+        paths: &[String],
+        limit: usize,
+    ) -> Result<ContentsToFetch> {
+        self.op(Op::ArchiveContentsToFetch(
+            rev.to_owned(),
+            paths.to_vec(),
+            limit,
+        ))
+    }
+
+    fn bundle(&self, options: &Bundle) -> Result<Vec<u8>> {
+        self.op::<Bytes>(Op::Bundle(options.clone())).map(|b| b.0)
+    }
+
+    fn bundle_preview(&self, options: &Bundle, limit: usize) -> Result<BundlePreview> {
+        self.op(Op::BundlePreview(options.clone(), limit))
+    }
+
     fn am(&self, mbox: &[u8], three_way: Option<bool>) -> Result<Outcome> {
         self.op(Op::Am {
             mbox: Bytes(mbox.to_vec()),
@@ -1139,8 +1165,8 @@ impl Operations for RemoteOperations {
         self.op(Op::SparseCheckout(folders.map(<[String]>::to_vec)))
     }
 
-    fn tree_folders(&self, path: &str) -> Result<Vec<String>> {
-        self.op(Op::TreeFolders(path.to_owned()))
+    fn tree_folders(&self, rev: &str, path: &str) -> Result<Vec<String>> {
+        self.op(Op::TreeFolders(rev.to_owned(), path.to_owned()))
     }
 
     fn maintenance(&self, on: bool) -> Result<()> {
