@@ -2386,7 +2386,7 @@ impl Browser {
                     folders = roots.len()
                 ),
             );
-            sheet.buttons(&tr!("Delete"), false, None);
+            sheet.buttons(&tr!("Delete"), true, None);
             if sheet.run().await != Response::Ok {
                 return;
             }
