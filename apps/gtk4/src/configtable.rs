@@ -173,6 +173,27 @@ fn value_markup(value: &str) -> String {
         .join("\n")
 }
 
+/// セルの部品に、その行の `ListItem` を覚えさせる（右クリックした行をどの列からでも探せるように）。
+const LIST_ITEM: &str = "amonhen-list-item";
+
+fn remember_item(child: &impl IsA<gtk::Widget>, item: &gtk::ListItem) {
+    // SAFETY: この鍵には `WeakRef<ListItem>` だけを入れ、`item_at` で同じ型で読む。
+    unsafe { child.set_data(LIST_ITEM, item.downgrade()) };
+}
+
+/// 部品 `widget`（とその親）が載っている行の位置。
+fn item_at(mut widget: Option<gtk::Widget>) -> Option<u32> {
+    while let Some(w) = widget {
+        // SAFETY: `remember_item` が入れた型と同じ。
+        if let Some(item) = unsafe { w.data::<glib::WeakRef<gtk::ListItem>>(LIST_ITEM) } {
+            let item = unsafe { item.as_ref() }.upgrade()?;
+            return Some(item.position()).filter(|&p| p != gtk::INVALID_LIST_POSITION);
+        }
+        widget = w.parent();
+    }
+    None
+}
+
 fn row_of(object: &glib::Object) -> Option<Row> {
     let object = match object.downcast_ref::<gtk::TreeListRow>() {
         Some(r) => r.item()?,
@@ -922,6 +943,7 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
         let l = label("", &[]);
         l.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
         expander.set_child(Some(&l));
+        remember_item(&expander, item);
         item.set_child(Some(&expander));
     });
     // キーの列は、キーが切れずに収まる幅まで広げる（上限まで。GTK の文字は macOS 版より大きい）。
@@ -993,6 +1015,7 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
                 return;
             };
             let cell = EditCell::new(&table);
+            remember_item(&cell.stack, item);
             item.set_child(Some(&cell.stack));
             table.all_cells.borrow_mut().push(Rc::downgrade(&cell));
             // セルは部品が消えるまで持つ。
@@ -1089,6 +1112,7 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
             if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
                 let l = label("", &[]);
                 l.set_ellipsize(gtk::pango::EllipsizeMode::End);
+                remember_item(&l, item);
                 item.set_child(Some(&l));
             }
         });
@@ -1433,30 +1457,15 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
     popover.set_halign(gtk::Align::Start);
     let click = gtk::GestureClick::new();
     click.set_button(gtk::gdk::BUTTON_SECONDARY);
-    let (v, sel, sm, t) = (
-        view.clone(),
-        selection.clone(),
-        sort_model.clone(),
-        table.clone(),
-    );
+    let (v, sel) = (view.clone(), selection.clone());
     click.connect_pressed(move |_, _, x, y| {
-        // 押した行が選ばれていなければ、その行だけを選ぶ（セルの部品から行を探す）。
-        let mut widget = v.pick(x, y, gtk::PickFlags::DEFAULT);
-        while let Some(w) = widget {
-            if let Some(cell) = t.cell_of(&w) {
-                let key = cell.key.borrow().clone();
-                let n = sm.n_items();
-                if let Some(i) = (0..n).find(|i| {
-                    sm.item(*i)
-                        .and_then(|o| row_of(&o))
-                        .is_some_and(|r| r.key == key && !r.group)
-                }) && !sel.is_selected(i)
-                {
-                    sel.select_item(i, true);
-                }
-                break;
-            }
-            widget = w.parent();
+        // 押した行が選ばれていなければ、その行だけを選ぶ（どの列を押しても。macOS 版の
+        // contextMenu(forSelectionType:) と同じく、その行に効く）。組の見出しなら、キーがないので項目はすべて
+        // 押せない。
+        if let Some(i) = item_at(v.pick(x, y, gtk::PickFlags::DEFAULT))
+            && !sel.is_selected(i)
+        {
+            sel.select_item(i, true);
         }
         popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
         popover.popup();
