@@ -2184,13 +2184,16 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         title: String, message: String, ok: String, forecast: Forecast? = nil
     ) async -> (rev: String, updateRefs: Bool?)? {
         var choices: [(title: String, rev: String)] = []
-        if let selectedCommit, selectedCommit != latestRefs?.head {
+        // 今のブランチは書き込む先の worktree のもの（ほかの worktree を書き込む先にしていても、そのブランチ自身を
+        // 出さず、開いた worktree のブランチは出す）。
+        let refs = editingRefs
+        if let selectedCommit, selectedCommit != refs?.head {
             let hex = selectedCommit.map { String(format: "%02x", $0) }.joined()
             choices.append((L("Selected Commit %@", String(hex.prefix(8))), hex))
         }
-        let items = latestRefs?.items ?? []
+        let items = refs?.items ?? []
         for kind in [RefKind.local, .remote, .tag] {
-            for item in items where item.kind == kind && item.name != latestRefs?.headBranch {
+            for item in items where item.kind == kind && item.name != refs?.headBranch {
                 choices.append((item.name, item.name))
             }
         }

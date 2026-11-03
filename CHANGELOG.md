@@ -156,6 +156,8 @@ becomes the GitHub Release notes.
   such as after `git merge --abort`.
 - macOS: Repository Settings > Hooks · LFS opens and edits the hooks of the main repository's `.git` in an added
   worktree, where git looks for them, instead of a missing `.git/hooks` folder.
+- macOS: with another worktree selected, the Merge… and Rebase… chooser leaves out that worktree's branch instead of
+  the opened one's.
 
 - The GTK4 app's Undo button asks once; it opened the question twice, so one stayed after undoing.
 - A `.mailmap`, or a mailmap setting (`log.mailmap`, `mailmap.file`), changed while the engine was reading the old
