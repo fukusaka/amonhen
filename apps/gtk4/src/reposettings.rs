@@ -798,6 +798,21 @@ impl RepoSettings {
                 "environment" => crate::environment::page(&this),
                 _ => continue,
             };
+            // 署名の鍵は、Author のページを出すたびに集め直す（後で作った鍵も出す。macOS 版のページの `.task`）。
+            // 初めて読むときは、設定を読み終えてから（メールアドレスの合う鍵を先にするため）。
+            if name == "author" {
+                let w = Rc::downgrade(&this);
+                child.connect_map(move |_| {
+                    if let Some(s) = w.upgrade()
+                        && s.state.borrow().loaded
+                    {
+                        s.signing_loaded.set(true);
+                        for f in SIGNING_FORMATS {
+                            s.load_signing_keys(f);
+                        }
+                    }
+                });
+            }
             stack.add_titled(&child, Some(name), &page_title(name));
         }
 
