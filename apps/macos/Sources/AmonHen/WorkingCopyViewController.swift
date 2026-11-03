@@ -538,9 +538,20 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             guard let read else { return }
             let states = Dictionary(read.files.map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a })
             guard states != conflictStates else { return }
+            let old = conflictStates
             conflictStates = states
             files.reloadData(forRowIndexes: IndexSet(integersIn: 0..<files.numberOfRows), columnIndexes: [0])
             notifySequence()
+            // ほかで書き換えたファイル（マーカーの数が変わった）のマージエディタは、手を付けていなければ読み直す。
+            // 前の中身のまま Save すると、ほかでした解決をマーカー付きの中身で上書きしてしまう。
+            for (path, state) in states where old[path].map({ $0 != state }) ?? false {
+                guard let editor = mergeEditors[path], !editor.hasUnsavedChanges else { continue }
+                mergeEditors[path] = nil
+                if embeddedEditor === editor, let entry = entries.first(where: { $0.item.path == path }) {
+                    unembed()
+                    showDiff(of: entry, staged: side(for: entry.item))
+                }
+            }
         }
     }
 
