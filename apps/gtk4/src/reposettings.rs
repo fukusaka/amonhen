@@ -1505,9 +1505,16 @@ impl RepoSettings {
         let en = entry.clone();
         focus.connect_leave(move |_| commit(&en));
         entry.add_controller(focus);
+        // 欄を書き直すのは、最初と、git の設定の値が変わったときだけ（macOS 版と同じ。読み直しのたびに書き直すと、
+        // 署名の鍵やプログラムの一覧が届いて読み直したときに、打ちかけの文字が消える）。
+        let stored: RefCell<Option<String>> = RefCell::default();
         self.on_refresh(move |s| {
             entry.set_placeholder_text(s.effective(key).map(|e| e.value).as_deref());
             let local = s.local(key).unwrap_or_default();
+            if stored.borrow().as_deref() == Some(local.as_str()) {
+                return;
+            }
+            stored.replace(Some(local.clone()));
             if entry.text() != local {
                 entry.set_text(&local);
             }
