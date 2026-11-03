@@ -1719,6 +1719,14 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         editing === opened ? latestRefs?.headBranch : worktrees.first { $0.isSame(editing.path) }?.branch
     }
 
+    /// ref の一覧の今のブランチと HEAD を、書き込む先の worktree のものにしたもの（ブランチの切り替えが、ほかの
+    /// worktree が checkout しているブランチを出し、書き込む先のブランチを出さないように）。
+    private var editingRefs: Refs? {
+        guard let refs = latestRefs, editing !== opened, let info = worktrees.first(where: { $0.isSame(editing.path) })
+        else { return latestRefs }
+        return refs.with(headBranch: info.branch, head: info.head.flatMap { Data(hex: $0) })
+    }
+
     @objc func newBranch(_ sender: Any?) { actions.newBranch(at: startPoint) }
     @objc func newTag(_ sender: Any?) { actions.newTag(at: startPoint) }
 
@@ -1835,7 +1843,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     /// Navigate > Switch Branch…（⌘⇧B）・ツールバーのブランチ。
     @objc func switchBranch(_ sender: Any?) {
-        guard let refs = latestRefs else { return NSSound.beep() }
+        guard let refs = editingRefs else { return NSSound.beep() }
         let recent = UserDefaults.standard.stringArray(forKey: recentBranchesKey) ?? []
         let inUse = Dictionary(
             worktrees.filter { $0.branch != nil && !$0.isSame(editing.path) }.map { ($0.branch!, $0.name) },

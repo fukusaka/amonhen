@@ -200,6 +200,8 @@ becomes the GitHub Release notes.
 - macOS: with another worktree chosen to work in, Repository > New Branch…, New Tag…, Rename Branch…, Set Upstream…,
   Compare with Previous Version, Create Pull Request… and the Merge…/Rebase… titles use that worktree's branch, not
   the opened one's.
+- macOS: with another worktree chosen to work in, Switch Branch… lists the branch checked out in the main worktree and
+  no longer offers the current worktree's own branch.
 
 ### [0.2.8] - 2026-10-30
 
