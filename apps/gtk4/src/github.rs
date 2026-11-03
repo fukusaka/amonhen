@@ -1035,7 +1035,17 @@ pub fn create_pull_request(actions: &Rc<Actions>, branch: String, pushed: bool) 
         sheet.add(&row("base:", &base_field));
         sheet.add(&row(&tr!("Body:"), &body_scrolled));
         sheet.add(&row("", &draft));
-        sheet.buttons(&tr!("Create"), false, None);
+        let create = sheet.buttons(&tr!("Create"), false, None);
+        // 題と base が空の間は Create を押せない（押してもシートと打った文を黙って捨てないように。macOS 版と同じ）。
+        let update = {
+            let (create, t, b) = (create.clone(), title_field.clone(), base_field.clone());
+            move || create.set_sensitive(!t.text().trim().is_empty() && !b.text().trim().is_empty())
+        };
+        update();
+        for field in [&title_field, &base_field] {
+            let update = update.clone();
+            field.connect_changed(move |_| update());
+        }
         if sheet.run().await != Response::Ok {
             return;
         }
