@@ -149,6 +149,8 @@ struct Inner {
     /// 戻っても、編集中の Result を保つ）と、埋め込んでいるもの。
     editors: RefCell<HashMap<EditorKey, Rc<crate::merge::Editor>>>,
     embedded: RefCell<Option<Rc<crate::merge::Editor>>>,
+    /// 埋め込んだマージエディタにフォーカスがある（[`crate::actions::Facts::merge_focused`]）。
+    merge_focused: Cell<bool>,
     /// 改行を変換している・改行が混ざっているファイルの印（普段のファイルでは出さない）。
     line_endings: gtk::Label,
     /// 選んでいるファイル。
@@ -517,6 +519,7 @@ impl WorkingCopy {
             merge_holder,
             editors: RefCell::default(),
             embedded: RefCell::default(),
+            merge_focused: Cell::new(false),
             line_endings,
             selected: RefCell::default(),
             current: RefCell::default(),
@@ -784,6 +787,16 @@ impl Inner {
                 Inner::rebuild_list(&this);
             }
         });
+        // 埋め込んだマージエディタにフォーカスがある間は、Ctrl+Return をエディタに渡す（Commit を止める）。
+        let focus = gtk::EventControllerFocus::new();
+        let weak = Rc::downgrade(this);
+        focus.connect_contains_focus_notify(move |focus| {
+            if let Some(this) = weak.upgrade() {
+                this.merge_focused.set(focus.contains_focus());
+                this.update_buttons();
+            }
+        });
+        this.merge_holder.add_controller(focus);
         // Esc で絞り込みを消す（macOS 版の検索欄と同じ）。
         this.filter.connect_stop_search(|entry| entry.set_text(""));
         let weak = Rc::downgrade(this);
@@ -2986,9 +2999,11 @@ impl Inner {
                 .borrow()
                 .iter()
                 .any(|e| e.kind != StatusKind::Unmerged && e.is_unstaged());
+            let merge_focused = self.merge_focused.get();
             actions.update_facts(|f| {
                 f.can_commit = can_commit;
                 f.can_stage_all = can_stage_all;
+                f.merge_focused = merge_focused;
             });
         }
         // 件名の文字数（空なら出さない）。
