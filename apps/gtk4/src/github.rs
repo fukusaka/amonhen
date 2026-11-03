@@ -1016,8 +1016,19 @@ pub fn create_pull_request(actions: &Rc<Actions>, branch: String, pushed: bool) 
             "Create Pull Request",
             &tr!("From {branch}", branch = branch),
         );
-        let title_field = gtk::Entry::builder().text(&title).hexpand(true).build();
-        let base_field = gtk::Entry::builder().text(&base).hexpand(true).build();
+        // NSAlert の欄と同じく、Return で Create を押す。
+        let title_field = gtk::Entry::builder()
+            .text(&title)
+            .placeholder_text(tr!("Title"))
+            .activates_default(true)
+            .hexpand(true)
+            .build();
+        let base_field = gtk::Entry::builder()
+            .text(&base)
+            .placeholder_text("main")
+            .activates_default(true)
+            .hexpand(true)
+            .build();
         let body_view = gtk::TextView::builder()
             .wrap_mode(gtk::WrapMode::WordChar)
             .left_margin(4)
@@ -1080,7 +1091,7 @@ pub fn create_pull_request(actions: &Rc<Actions>, branch: String, pushed: bool) 
         match result {
             Ok(url) => {
                 // 済んだことの知らせなので、閉じるボタンは Close（macOS 版と同じ）。
-                let sheet = Sheet::new(window.as_ref(), &tr!("Pull Request Created"), &url);
+                let sheet = Sheet::unnamed(window.as_ref(), &tr!("Pull Request Created"), &url);
                 sheet.button(&tr!("Close"), Response::Cancel, None);
                 sheet.button(
                     &tr!("Open in Browser"),

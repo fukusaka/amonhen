@@ -988,6 +988,7 @@
 "Create" = "作成";
 "Create as Draft" = "Draft として作る";
 "Title:" = "タイトル:";
+"Title" = "タイトル";
 "Body:" = "本文:";
 "Open in Browser" = "ブラウザで開く";
 "Pull Request Created" = "プルリクエストを作りました";
