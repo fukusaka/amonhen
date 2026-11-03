@@ -323,8 +323,8 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
 | Menus from the shared command table (`crates/commands`) | ✓ | ✓ | — | n/a | VSCode: Declared in package.json. |
-| Every command reachable without a menu bar (≡) | ✓ | ✓ | △ | n/a | VSCode: Command Palette and context menus. |
-| Keyboard shortcuts | ✓ | ✓ | — | n/a | VSCode: No keybindings contributed. |
+| Every command reachable without a menu bar (≡) | ✓ | ✓ | △ | n/a | GTK4: The ≡ menu holds the menu bar's File, Edit, View, Navigate, Commit and Window menus with macOS's items and order (Edit's Undo, Cut, Copy… act on the focused field), then Settings…, About and Quit.<br>VSCode: Command Palette and context menus. |
+| Keyboard shortcuts | ✓ | ✓ | — | n/a | GTK4: Keys that Linux desktops or other commands take differ: Show Sidebar is F9, Filter Branches Ctrl+Alt+Shift+F, Go to Parent / Child Alt+Down / Up, and New Tag has none (Ctrl+Alt+T opens a terminal).<br>VSCode: No keybindings contributed. |
 | Context menus with the menu's names | ✓ | ✓ | △ | n/a | VSCode: Names differ from the apps. |
 | Keyboard shortcuts window | — | ✓ | n/a | n/a | macOS: macOS's App Shortcuts change them instead. |
 

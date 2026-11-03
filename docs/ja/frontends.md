@@ -323,8 +323,8 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
 | 共有の操作の表（`crates/commands`）から作るメニュー | ✓ | ✓ | — | n/a | VSCode: package.json に書く。 |
-| メニューバーなしで全部の操作に届く（≡） | ✓ | ✓ | △ | n/a | VSCode: コマンドパレットとコンテキストメニュー。 |
-| キーボードの近道 | ✓ | ✓ | — | n/a | VSCode: キーの割り当てを出していない。 |
+| メニューバーなしで全部の操作に届く（≡） | ✓ | ✓ | △ | n/a | GTK4: ≡ のメニューに、メニューバーの File・Edit・View・Navigate・Commit・Window を macOS と同じ項目と並びで置き（Edit の取り消す・カット・コピーなどはフォーカスのある欄に効く）、その後に設定…・Amon Hen について・終了。<br>VSCode: コマンドパレットとコンテキストメニュー。 |
+| キーボードの近道 | ✓ | ✓ | — | n/a | GTK4: Linux のデスクトップやほかの操作が使うキーは違う: サイドバーを表示は F9、ブランチを絞り込むは Ctrl+Alt+Shift+F、親へ・子へは Alt+Down・Up、New Tag にはない（Ctrl+Alt+T は端末を開く）。<br>VSCode: キーの割り当てを出していない。 |
 | メニューと同じ名前のコンテキストメニュー | ✓ | ✓ | △ | n/a | VSCode: 名前がアプリと違う。 |
 | キーボードの近道の窓 | — | ✓ | n/a | n/a | macOS: 代わりに macOS の App Shortcuts で変える。 |
 

@@ -362,7 +362,7 @@ const FE_ACCELS: &[(&str, &str)] = &[
     ("win.open", "<Control>o"),
     ("win.clone", "<Control><Alt>c"),
     ("win.close", "<Control>w"),
-    ("win.close-window", "<Control><Shift>w"),
+    ("win.minimize", "<Control>m"),
     ("win.find", "<Control>f"),
     ("win.find-next", "<Control>g"),
     ("win.find-previous", "<Control><Shift>g"),
@@ -699,6 +699,14 @@ pub fn install(parts: Parts) -> Buttons {
         p.sidebar.root.set_visible(shown);
     });
     window.add_action(&sidebar);
+    let toggle = gio::SimpleAction::new("toggle-sidebar", None);
+    let group = parts.group.downgrade();
+    toggle.connect_activate(move |_, _| {
+        if let Some(group) = group.upgrade() {
+            group.activate_action("show-sidebar", None);
+        }
+    });
+    window.add_action(&toggle);
 
     install_app(&parts.app);
 
@@ -769,6 +777,24 @@ pub fn install(parts: Parts) -> Buttons {
         retitle_on_show(button, &parts.actions);
         crate::menu::tooltips_on_show(button);
     }
+    // View > Show Sidebar は、出していれば Hide Sidebar（macOS 版と同じ）。
+    let group = parts.group.downgrade();
+    retitle_on_show_with(&primary, move |_, model| {
+        let Some(group) = group.upgrade() else { return };
+        let shown = group
+            .action_state("show-sidebar")
+            .and_then(|s| s.get::<bool>())
+            .unwrap_or(true);
+        crate::menu::retitle(model, &|action| {
+            (action == "win.toggle-sidebar").then(|| {
+                if shown {
+                    tr!("Hide Sidebar")
+                } else {
+                    tr!("Show Sidebar")
+                }
+            })
+        });
+    });
     parts.header.pack_end(&toolbar_end);
     Buttons {
         repository,
@@ -956,6 +982,17 @@ fn table_sections(menu: Menu) -> gio::Menu {
         for c in section.iter().filter(|c| !PENDING.contains(&c.id)) {
             // 表の説明は項目のツールチップに（macOS 版と同じ）。
             let tip = c.tooltip.map(amonhen_model::i18n::translate);
+            // Show Sidebar は、印を付けずに名前を Hide Sidebar・Show Sidebar と替える（macOS 版と同じ）。状態を持つ
+            // `win.show-sidebar`（ツールバーの切り替えのボタン）は印が付くので、状態のない方を出し、キーは名前の
+            // 横に出すだけ（受けるのは `win.show-sidebar`）。
+            if c.id == "show-sidebar" {
+                let item = gio::MenuItem::new(Some(&title(c)), Some("win.toggle-sidebar"));
+                if let Some(accel) = c.gtk_accel() {
+                    item.set_attribute_value("accel", Some(&accel.to_variant()));
+                }
+                items.append_item(&item);
+                continue;
+            }
             crate::menu::append_with_tip(
                 &items,
                 &title(c),
@@ -973,8 +1010,7 @@ fn table_sections(menu: Menu) -> gio::Menu {
 pub fn primary_menu(anchor: &gtk::Box) -> gio::Menu {
     let menu = gio::Menu::new();
     let submenus = gio::Menu::new();
-    // File: New Tab・New Window・Open…・Quick Open…・Clone…・Open Recent ▸ | Close・Close Window（macOS 版と同じ
-    // 並び。Close Window は GNOME の分）。
+    // File: New Tab・New Window・Open…・Quick Open…・Clone…・Open Recent ▸ | Close（macOS 版と同じ並び）。
     let file = gio::Menu::new();
     let first = menu_of(&[
         Some((&tr!("New Tab"), "win.new-tab")),
@@ -992,28 +1028,45 @@ pub fn primary_menu(anchor: &gtk::Box) -> gio::Menu {
         first.append_submenu(Some(&tr!("Open Recent")), &crate::repos::recent_menu());
         file.append_section(None, &first);
     }
-    file.append_section(
-        None,
-        &menu_of(&[
-            Some((&tr!("Close"), "win.close")),
-            Some((&tr!("Close Window"), "win.close-window")),
-        ]),
-    );
+    file.append_section(None, &menu_of(&[Some((&tr!("Close"), "win.close"))]));
     submenus.append_submenu(Some(&tr!("File")), &file);
-    // Edit: Find…・Find Next・Find Previous（History の検索か、フォーカスのある差分の中）と、表の Find in
-    // History…（macOS 版と同じ。Undo・Cut などは GTK の部品のもの）。
-    let edit = menu_of(&[
+    // Edit: Undo・Redo | Cut・Copy・Paste・Select All（文字の欄などフォーカスのある部品のもの。キーは部品が受けるので
+    // 名前の横に出すだけ）| Find…・Find Next・Find Previous（History の検索か、フォーカスのある差分の中）と、表の
+    // Find in History…（macOS 版と同じ）。
+    let edit = gio::Menu::new();
+    for group in [
+        &[
+            (tr!("Undo"), "win.edit-undo", "<Control>z"),
+            (tr!("Redo"), "win.edit-redo", "<Control><Shift>z"),
+        ][..],
+        &[
+            (tr!("Cut"), "win.edit-cut", "<Control>x"),
+            (tr!("Copy"), "win.edit-copy", "<Control>c"),
+            (tr!("Paste"), "win.edit-paste", "<Control>v"),
+            (tr!("Select All"), "win.edit-select-all", "<Control>a"),
+        ][..],
+    ] {
+        let section = gio::Menu::new();
+        for (label, action, accel) in group {
+            let item = gio::MenuItem::new(Some(label), Some(action));
+            item.set_attribute_value("accel", Some(&accel.to_variant()));
+            section.append_item(&item);
+        }
+        edit.append_section(None, &section);
+    }
+    let find = menu_of(&[
         Some((&tr!("Find…"), "win.find")),
         Some((&tr!("Find Next"), "win.find-next")),
         Some((&tr!("Find Previous"), "win.find-previous")),
     ]);
-    if let Some(first) = edit
+    if let Some(first) = find
         .item_link(0, gio::MENU_LINK_SECTION)
         .and_downcast::<gio::Menu>()
     {
         for c in amonhen_commands::menu(Menu::Edit).into_iter().flatten() {
             first.append(Some(&title(c)), Some(&format!("win.{}", c.id)));
         }
+        edit.append_section(None, &first);
     }
     submenus.append_submenu(Some(&tr!("Edit")), &edit);
     for (name, part) in [
@@ -1025,11 +1078,17 @@ pub fn primary_menu(anchor: &gtk::Box) -> gio::Menu {
         // View は History の表示のメニューも兼ねる（docs/ux.md の 11）。
         if part == Menu::View {
             // タブが 1 つの窓でもタブの帯を出す（タブをつかんで、ほかの窓の帯に落とせる）。名前は開くときに
-            // Hide にする（macOS 版と同じ）。
-            items.append_section(
-                None,
-                &menu_of(&[Some((&tr!("Show Tab Bar"), "win.toggle-tab-bar"))]),
-            );
+            // Hide にする。Show Sidebar と同じ区切りに（macOS 版と同じ）。
+            match items
+                .item_link(items.n_items().max(1) - 1, gio::MENU_LINK_SECTION)
+                .and_downcast::<gio::Menu>()
+            {
+                Some(last) => last.append(Some(&tr!("Show Tab Bar")), Some("win.toggle-tab-bar")),
+                None => items.append_section(
+                    None,
+                    &menu_of(&[Some((&tr!("Show Tab Bar"), "win.toggle-tab-bar"))]),
+                ),
+            }
             crate::historydisplay::append_sections(&items);
             // ツールバーの並び（macOS 版の View > Customize Toolbar…）。
             items.append_section(
@@ -1041,42 +1100,53 @@ pub fn primary_menu(anchor: &gtk::Box) -> gio::Menu {
             submenus.append_submenu(Some(&name), &items);
         }
     }
-    // Window: タブ（複数のリポジトリを 1 つの窓で扱う。macOS 版の Window のメニューと同じ項目）。
-    submenus.append_submenu(
-        Some(&tr!("Window")),
-        &menu_of(&[
-            Some((&tr!("Show Next Tab"), "win.next-tab")),
-            Some((&tr!("Show Previous Tab"), "win.previous-tab")),
-            None,
-            Some((&tr!("Move Tab to New Window"), "win.move-tab-to-new-window")),
-            Some((&tr!("Merge All Windows"), "win.merge-all-windows")),
-        ]),
-    );
+    // Window: Minimize・Zoom | タブ（複数のリポジトリを 1 つの窓で扱う）| Repositories・Activity | Bring All to
+    // Front（macOS 版の Window のメニューと同じ並び）。
+    let window = gio::Menu::new();
+    let section = gio::Menu::new();
+    section.append(Some(&tr!("Minimize")), Some("win.minimize"));
+    section.append(Some(&tr!("Zoom")), Some("win.zoom"));
+    window.append_section(None, &section);
+    let tabs = menu_of(&[
+        Some((&tr!("Show Next Tab"), "win.next-tab")),
+        Some((&tr!("Show Previous Tab"), "win.previous-tab")),
+        Some((&tr!("Move Tab to New Window"), "win.move-tab-to-new-window")),
+        Some((&tr!("Merge All Windows"), "win.merge-all-windows")),
+    ]);
     // Move Tab to Window ▸（ほかの窓ごとに 1 つ。macOS 版と同じく Merge All Windows の後）。
-    if let Some(window) = submenus
-        .item_link(submenus.n_items() - 1, gio::MENU_LINK_SUBMENU)
+    if let Some(section) = tabs
+        .item_link(0, gio::MENU_LINK_SECTION)
         .and_downcast::<gio::Menu>()
-        && let Some(section) = window
-            .item_link(window.n_items() - 1, gio::MENU_LINK_SECTION)
-            .and_downcast::<gio::Menu>()
     {
         section.append_submenu(
             Some(&tr!("Move Tab to Window")),
             &crate::tabs::move_menu(anchor),
         );
+        window.append_section(None, &section);
     }
+    let pages = gio::Menu::new();
+    for c in amonhen_commands::menu(Menu::Window).into_iter().flatten() {
+        if !PENDING.contains(&c.id) {
+            pages.append(Some(&title(c)), Some(&format!("win.{}", c.id)));
+        }
+    }
+    window.append_section(None, &pages);
+    window.append_section(
+        None,
+        &menu_of(&[Some((&tr!("Bring All to Front"), "win.bring-all-to-front"))]),
+    );
+    submenus.append_submenu(Some(&tr!("Window")), &window);
     menu.append_section(None, &submenus);
     let app = gio::Menu::new();
-    for part in [Menu::App, Menu::Window] {
-        for c in amonhen_commands::menu(part).into_iter().flatten() {
-            if !PENDING.contains(&c.id) {
-                app.append(Some(&title(c)), Some(&format!("win.{}", c.id)));
-            }
+    for c in amonhen_commands::menu(Menu::App).into_iter().flatten() {
+        if !PENDING.contains(&c.id) {
+            app.append(Some(&title(c)), Some(&format!("win.{}", c.id)));
         }
     }
     app.append(Some(&tr!("Keyboard Shortcuts")), Some("win.shortcuts"));
     app.append(Some(&tr!("About Amon Hen")), Some("win.about"));
     menu.append_section(None, &app);
+    menu.append_section(None, &menu_of(&[Some((&tr!("Quit Amon Hen"), "app.quit"))]));
     menu
 }
 
@@ -1118,8 +1188,15 @@ fn print_menu(app: &gtk::Application, model: &gio::MenuModel, path: &str) {
             Some(target) => format!("{action}({})", target.print(true)),
             None => action.clone(),
         };
-        let accels = app.accels_for_action(&detailed).join(" ");
-        let command = action.strip_prefix("win.").and_then(amonhen_commands::find);
+        // キーを受けない項目は、名前の横に出すだけのキー（`accel` の属性）。
+        let accels = match app.accels_for_action(&detailed).join(" ") {
+            a if a.is_empty() => string(i, "accel"),
+            a => a,
+        };
+        let command = match action.as_str() {
+            "win.toggle-sidebar" => amonhen_commands::find("show-sidebar"),
+            a => a.strip_prefix("win.").and_then(amonhen_commands::find),
+        };
         let tooltip = command
             .and_then(|c| c.tooltip)
             .map(|t| amonhen_model::i18n::translate(t).into_owned())
@@ -1548,8 +1625,7 @@ pub fn show_shortcuts(parent: &gtk::ApplicationWindow) {
         ("win.new-window".to_owned(), tr!("New Window")),
         ("win.open".to_owned(), tr!("Open…")),
         ("win.close".to_owned(), tr!("Close")),
-        ("win.close-window".to_owned(), tr!("Close Window")),
-        ("app.quit".to_owned(), tr!("Quit")),
+        ("app.quit".to_owned(), tr!("Quit Amon Hen")),
     ];
     file.extend(table(Menu::File));
     section.add_group(&group(&tr!("File"), &file));

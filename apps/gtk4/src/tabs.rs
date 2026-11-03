@@ -398,6 +398,8 @@ pub struct RepoWindow {
     shown: RefCell<Weak<Tab>>,
     /// タブが 1 つでもタブの帯を出す（View > Show Tab Bar。帯のタブをつかんでほかの窓に移せる。macOS 版と同じ）。
     tab_bar: Cell<bool>,
+    /// 最後にフォーカスのあった、メニューの外の部品（Edit の Copy などを渡す先）。
+    last_focus: RefCell<glib::WeakRef<gtk::Widget>>,
 }
 
 thread_local! {
@@ -490,6 +492,16 @@ impl RepoWindow {
             installed: RefCell::default(),
             shown: RefCell::default(),
             tab_bar: Cell::new(false),
+            last_focus: RefCell::default(),
+        });
+        let weak = Rc::downgrade(&this);
+        window.connect_focus_widget_notify(move |window| {
+            if let Some(this) = weak.upgrade()
+                && let Some(focus) = GtkWindowExt::focus(window)
+                && focus.ancestor(gtk::Popover::static_type()).is_none()
+            {
+                this.last_focus.replace(focus.downgrade());
+            }
         });
         WINDOWS.with(|w| w.borrow_mut().push(this.clone()));
         // 窓の大きさは、そのリポジトリごとに覚える（macOS 版の窓の frame と同じ。GNOME では位置は決められない
@@ -621,6 +633,14 @@ impl RepoWindow {
     }
 
     /// 前のタブ。
+    /// Edit の項目を渡す部品: 今フォーカスのある部品か、メニューを開いていればその前のもの。
+    fn edit_focus(&self) -> Option<gtk::Widget> {
+        GtkWindowExt::focus(&self.window)
+            .filter(|f| f.ancestor(gtk::Popover::static_type()).is_none())
+            .or_else(|| self.last_focus.borrow().upgrade())
+            .filter(|f| f.root().as_ref() == Some(self.window.upcast_ref::<gtk::Root>()))
+    }
+
     pub fn current(&self) -> Option<Rc<Tab>> {
         let page = self.view.selected_page()?;
         self.tab_of(&page.child())
@@ -1321,11 +1341,62 @@ fn install_actions(tab: &Rc<Tab>) {
     // File > Close（Ctrl+W）: タブを閉じる（最後のタブなら窓を閉じる。最後のリポジトリならリポジトリのページを出す。
     // macOS 版と同じ）。
     add("close", close_tab);
-    add("close-window", |tab| {
+    // Window > Minimize（Ctrl+M）・Zoom・Bring All to Front（macOS 版と同じ）。
+    add("minimize", |tab| {
         if let Some(window) = tab.window() {
-            window.close();
+            window.minimize();
         }
     });
+    add("zoom", |tab| {
+        if let Some(window) = tab.window() {
+            if window.is_maximized() {
+                window.unmaximize();
+            } else {
+                window.maximize();
+            }
+        }
+    });
+    add("bring-all-to-front", |tab| {
+        let hosts: Vec<Rc<RepoWindow>> = WINDOWS.with(|w| w.borrow().clone());
+        let own = tab.window();
+        for host in hosts.iter().filter(|h| Some(&h.window) != own.as_ref()) {
+            host.window.present();
+        }
+        if let Some(window) = own {
+            window.present();
+        }
+    });
+    // Edit の Undo・Redo・Cut・Copy・Paste・Select All: フォーカスのある部品（文字の欄など）のものを使う（macOS 版
+    // の標準の項目と同じ。キーは部品がじかに受ける）。メニューを開くとフォーカスはメニューに移るので、その前に
+    // フォーカスのあった部品へ。
+    for (name, targets) in [
+        ("edit-undo", &["text.undo"][..]),
+        ("edit-redo", &["text.redo"][..]),
+        ("edit-cut", &["clipboard.cut"][..]),
+        ("edit-copy", &["clipboard.copy"][..]),
+        ("edit-paste", &["clipboard.paste"][..]),
+        (
+            "edit-select-all",
+            &["selection.select-all", "list.select-all"][..],
+        ),
+    ] {
+        let action = gio::SimpleAction::new(name, None);
+        let weak = Rc::downgrade(tab);
+        action.connect_activate(move |_, _| {
+            let Some(tab) = weak.upgrade() else { return };
+            let Some(window) = tab.window() else { return };
+            let target = tab.host().and_then(|h| h.edit_focus());
+            let done = target.is_some_and(|t| {
+                targets
+                    .iter()
+                    .any(|a| WidgetExt::activate_action(&t, a, None).is_ok())
+            });
+            if !done {
+                window.error_bell();
+            }
+        });
+        tab.group.add_action(&action);
+    }
     // View > Show Tab Bar（Ctrl+Shift+T）: タブが 1 つでも帯を出す・隠す。
     add("toggle-tab-bar", |tab| {
         let Some(host) = tab.host() else { return };
@@ -1491,7 +1562,6 @@ fn save() {
 pub fn install_accels(app: &gtk::Application) {
     for (action, accels) in [
         ("win.new-tab", &["<Control>t"][..]),
-        ("win.close-window", &["<Control><Shift>w"][..]),
         ("win.toggle-tab-bar", &["<Control><Shift>t"][..]),
         // macOS 版の ⌘⇧] / ⌘⇧[ に当たるものを先に（メニューに出る）。Shift で変わる文字でも受ける。
         (

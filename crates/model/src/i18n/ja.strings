@@ -421,7 +421,16 @@
 "Navigate" = "移動";
 "Keyboard Shortcuts" = "キーボードショートカット";
 "About Amon Hen" = "Amon Hen について";
-"Quit" = "終了";
+"Quit Amon Hen" = "Amon Hen を終了";
+"Undo" = "取り消す";
+"Redo" = "やり直す";
+"Cut" = "カット";
+"Paste" = "ペースト";
+"Select All" = "すべてを選択";
+"Minimize" = "最小化";
+"Zoom" = "拡大／縮小";
+"Bring All to Front" = "すべてを手前に移動";
+"Hide Sidebar" = "サイドバーを隠す";
 "Window" = "ウインドウ";
 "Show in Files" = "ファイルで表示";
 
@@ -1674,7 +1683,6 @@
 "Close Tab" = "タブを閉じる";
 "New Tab" = "新規タブ";
 "New Tab (Ctrl+T)" = "新規タブ（Ctrl+T）";
-"Close Window" = "ウインドウを閉じる";
 "Show Next Tab" = "次のタブを表示";
 "Show Previous Tab" = "前のタブを表示";
 "Move Tab to New Window" = "タブを新規ウインドウに移動";
