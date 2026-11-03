@@ -167,8 +167,7 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
         popOut.isHidden = onPopOut == nil
         let save = NSButton(title: L("Save"), target: self, action: #selector(saveOnly))
         let resolve = NSButton(title: L("Save & Mark Resolved"), target: self, action: #selector(saveAndResolve))
-        resolve.keyEquivalent = "\r"
-        resolve.keyEquivalentModifierMask = .command
+        // ⌘↩ は handleKeyEquivalent で（ボタンに付けると、埋め込みでは Working Copy の Commit の ⌘↩ と取り合う）。
         resolve.toolTip = L("Save and mark as resolved (⌘↩).")
         for b in [previousButton, nextButton, magicButton] + acceptButtons + [popOut, save, resolve] {
             b.bezelStyle = .push
@@ -466,14 +465,15 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
         return responder.isDescendant(of: view)
     }
 
-    /// エディタの近道: ⌥⌘↑・⌥⌘↓ で前・次のコンフリクト。
+    /// エディタの近道: ⌥⌘↑・⌥⌘↓ で前・次のコンフリクト、⌘↩ で保存して解決済みに。
     private func handleKeyEquivalent(_ event: NSEvent) -> Bool {
         guard hasFocus else { return false }
         let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
-        guard modifiers == [.command, .option], let key = event.charactersIgnoringModifiers?.unicodeScalars.first else { return false }
-        switch Int(key.value) {
-        case NSUpArrowFunctionKey: selectPrevious()
-        case NSDownArrowFunctionKey: selectNext()
+        guard let key = event.charactersIgnoringModifiers?.unicodeScalars.first else { return false }
+        switch (modifiers, Int(key.value)) {
+        case ([.command, .option], NSUpArrowFunctionKey): selectPrevious()
+        case ([.command, .option], NSDownArrowFunctionKey): selectNext()
+        case (.command, 0x0d), (.command, 0x03): saveAndResolve()
         default: return false
         }
         return true

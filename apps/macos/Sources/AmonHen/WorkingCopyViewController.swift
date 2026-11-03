@@ -43,7 +43,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     private let emptyLabel = NSTextField(labelWithString: L("No changes"))
     private var diffBar: TitleAndButtonsBar?
     private let amend = NSButton(checkboxWithTitle: "Amend", target: nil, action: nil)
-    private let commitButton = NSButton(title: "Commit", target: nil, action: nil)
+    private let commitButton = YieldingButton(title: "Commit", target: nil, action: nil)
     private let suggestButton = NSButton(title: "", target: nil, action: nil)
     /// 過去のメッセージの一覧・型や Co-authored-by の挿入・Commit の続き（Commit and Push など）。
     private let historyButton = NSPopUpButton(frame: .zero, pullsDown: true)
@@ -156,6 +156,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         commitButton.action = #selector(commitClicked)
         commitButton.keyEquivalent = "\r"
         commitButton.keyEquivalentModifierMask = .command
+        // 埋め込んだマージエディタを操作している間の ⌘↩ は、エディタの Save & Mark Resolved。
+        commitButton.yieldsKeyEquivalent = { [weak self] in self?.embeddedEditor?.hasFocus == true }
         commitButton.toolTip = L("Commit the checked files (⌘↩)")
         amend.target = self
         amend.action = #selector(toggleAmend)
@@ -1823,5 +1825,15 @@ final class MessageSplitDelegate: NSObject, NSSplitViewDelegate {
 
     func splitView(_ splitView: NSSplitView, shouldAdjustSizeOfSubview view: NSView) -> Bool {
         view !== splitView.arrangedSubviews.first
+    }
+}
+
+/// 近道（keyEquivalent）を、条件が合う間だけほかに譲るボタン。
+private final class YieldingButton: NSButton {
+    var yieldsKeyEquivalent: (() -> Bool)?
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if yieldsKeyEquivalent?() == true { return false }
+        return super.performKeyEquivalent(with: event)
     }
 }
