@@ -468,7 +468,7 @@ impl Actions {
     }
 
     /// 失敗をステータスバーに（つないでいなければ、要点・次の一手・git の文を並べた知らせで。macOS 版の `fail`）。
-    async fn fail(&self, failure: crate::statusbar::Failure) {
+    pub async fn fail(&self, failure: crate::statusbar::Failure) {
         let on_failure = self.on_failure.borrow().clone();
         match on_failure {
             Some(f) => f(failure),

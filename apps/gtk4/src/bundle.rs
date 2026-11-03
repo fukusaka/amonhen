@@ -44,7 +44,8 @@ pub fn save(actions: &Rc<Actions>, refs: Vec<String>, names: Vec<String>, label:
         } else {
             names.join(", ")
         };
-        let sheet = Sheet::new(
+        // ref を書き出すだけで作業ツリーによらないので、worktree の名前は書かない（macOS 版と同じ）。
+        let sheet = Sheet::unnamed(
             parent.as_ref(),
             &tr!("Save as Bundle"),
             &tr!(
@@ -88,36 +89,34 @@ pub fn save(actions: &Rc<Actions>, refs: Vec<String>, names: Vec<String>, label:
         } else {
             Vec::new()
         };
-        let preview = sheets::run(
-            &repo,
-            json!({ "op": "bundlePreview", "refs": refs, "bases": bases }),
-        )
-        .await;
+        let command = json!({ "op": "bundlePreview", "refs": refs, "bases": bases });
+        let preview = sheets::run(&repo, command.clone()).await;
         if preview["ok"] != true {
-            let error = preview["error"].as_str().unwrap_or_default();
-            actions.alert(&tr!("Can’t Save the Bundle"), error).await;
+            // 読めなかった（基点が見つからないなど）: ほかの操作の失敗と同じく、ステータスバーに（macOS 版と同じ）。
+            let failure = crate::statusbar::Failure::from_reply(&preview, Some(command));
+            actions.fail(failure).await;
             return;
         }
         let info = &preview["info"];
         let commits = info["commits"].as_u64().unwrap_or(0);
         if commits == 0 {
-            actions
-                .alert(
-                    &tr!("Nothing to Save"),
-                    &tr!("There are no commits to put in the bundle."),
-                )
-                .await;
+            inform(
+                parent.as_ref(),
+                &tr!("Nothing to Save"),
+                &tr!("There are no commits to put in the bundle."),
+            )
+            .await;
             return;
         }
         if info["beyondShallow"] == true {
-            actions
-                .alert(
-                    &tr!("Can’t Save the Bundle"),
-                    &tr!(
-                        "This shallow clone doesn’t have all the history the bundle needs. Fetch more history, or choose a newer base."
-                    ),
-                )
-                .await;
+            inform(
+                parent.as_ref(),
+                &tr!("Can’t Save the Bundle"),
+                &tr!(
+                    "This shallow clone doesn’t have all the history the bundle needs. Fetch more history, or choose a newer base."
+                ),
+            )
+            .await;
             return;
         }
         let contents = info["contents"].as_u64().unwrap_or(0);
@@ -147,8 +146,9 @@ pub fn save(actions: &Rc<Actions>, refs: Vec<String>, names: Vec<String>, label:
         filter.add_suffix("bundle");
         let filters = gio::ListStore::new::<gtk::FileFilter>();
         filters.append(&filter);
+        // 入るコミットの数は、保存する場所を選ぶ窓の題に（macOS 版は保存パネルの説明に出す）。
         let dialog = gtk::FileDialog::builder()
-            .title(tr!("Save as Bundle"))
+            .title(tr!("{count} commits", count = commits))
             .initial_name(format!("{name}.bundle"))
             .filters(&filters)
             .modal(true)
@@ -161,8 +161,11 @@ pub fn save(actions: &Rc<Actions>, refs: Vec<String>, names: Vec<String>, label:
             "op": "bundle", "refs": refs, "bases": bases, "file": path.to_string_lossy(),
         });
         let a = actions.clone();
-        actions.perform_with(vec![command], move |_| {
-            // 書いたファイルを、ファイルの窓で見せる。
+        actions.perform_with(vec![command], move |reply| {
+            // 書けたら、そのファイルをファイルの窓で見せる（失敗は知らせだけ。macOS 版と同じ）。
+            if reply["ok"].as_bool() != Some(true) {
+                return;
+            }
             let launcher = gtk::FileLauncher::new(Some(&gio::File::for_path(&path)));
             let window = a.window();
             glib::spawn_future_local(async move {
@@ -270,4 +273,11 @@ pub fn fetch(actions: &Rc<Actions>) {
         }
         actions.perform(json!({ "op": "fetchBundle", "file": file, "name": name }));
     });
+}
+
+/// 知らせる（macOS 版の `inform` と同じく、窓のシートで「OK」だけ。どの worktree かも書く）。
+async fn inform(parent: Option<&gtk::Window>, title: &str, message: &str) {
+    let sheet = Sheet::new(parent, title, message);
+    sheet.button("OK", Response::Ok, Some(sheets::Style::Suggested));
+    sheet.run().await;
 }
