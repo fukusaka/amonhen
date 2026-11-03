@@ -251,10 +251,7 @@ pub fn sequence_title(s: &Value) -> String {
     let from = s["merging"]
         .as_array()
         .map(|a| {
-            a.iter()
-                .filter_map(|v| v.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
+            amonhen_model::i18n::list(&a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
         })
         .or_else(|| get("from"));
     let onto = get("onto").or(from);
@@ -661,9 +658,11 @@ impl StatusBar {
             return;
         }
         self.sequence_shown.replace(Some(shown));
-        let icon = gtk::Label::new(Some("⇄"));
+        // macOS 版の arrow.triangle.merge（オレンジ、18 pt）。
+        let icon = crate::icon::Icon::default();
+        icon.set(crate::icon::Kind::Merge, false);
         icon.add_css_class("warning");
-        icon.add_css_class("title-3");
+        icon.set_pixel_size(18);
         let title = gtk::Label::new(Some(&sequence_title(s)));
         title.add_css_class("heading");
         title.set_xalign(0.0);
@@ -708,7 +707,7 @@ impl StatusBar {
             && s["retried"].as_bool() != Some(true)
             && s["empty"].as_bool() != Some(true);
         if retry {
-            let b = button(&tr!("Retry with 3-Way Merge"), true);
+            let b = button(&tr!("Retry with 3-Way Merge"), false);
             let a = actions.clone();
             b.connect_clicked(move |_| a.perform(serde_json::json!({ "op": "amThreeWay" })));
             children.push(b.upcast());

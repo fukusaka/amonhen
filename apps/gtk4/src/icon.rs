@@ -111,6 +111,8 @@ mod imp {
         pub kind: Cell<Kind>,
         /// 文字の色ではなく強調の色で描く（チェックアウト中のブランチ）。
         pub accent: Cell<bool>,
+        /// 描く大きさ（0 なら 16）。形は 16×16 で決めて、拡げて描く。
+        pub size: Cell<i32>,
     }
 
     #[glib::object_subclass]
@@ -131,7 +133,8 @@ mod imp {
 
     impl WidgetImpl for Icon {
         fn measure(&self, _: gtk::Orientation, _: i32) -> (i32, i32, i32, i32) {
-            (SIZE, SIZE, -1, -1)
+            let size = self.size();
+            (size, size, -1, -1)
         }
 
         fn snapshot(&self, snapshot: &gtk::Snapshot) {
@@ -152,7 +155,25 @@ mod imp {
             } else {
                 gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), fg.alpha() * 0.7)
             };
-            draw(snapshot, self.kind.get(), &color);
+            let size = self.size();
+            if size != SIZE {
+                let scale = size as f32 / SIZE as f32;
+                snapshot.save();
+                snapshot.scale(scale, scale);
+                draw(snapshot, self.kind.get(), &color);
+                snapshot.restore();
+            } else {
+                draw(snapshot, self.kind.get(), &color);
+            }
+        }
+    }
+
+    impl Icon {
+        fn size(&self) -> i32 {
+            match self.size.get() {
+                0 => SIZE,
+                n => n,
+            }
         }
     }
 }
@@ -175,6 +196,12 @@ impl Icon {
         self.imp().accent.set(accent);
         self.set_visible(kind != Kind::None);
         self.queue_draw();
+    }
+
+    /// 16 でない大きさで描く（macOS 版で大きめの記号を使うところ）。
+    pub fn set_pixel_size(&self, size: i32) {
+        self.imp().size.set(size);
+        self.queue_resize();
     }
 }
 
