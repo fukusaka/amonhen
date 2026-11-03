@@ -1069,6 +1069,9 @@ fn set_expanded_deep(row: &gtk::TreeListRow, open: bool, deep: bool) {
     }
 }
 
+/// 変更のない worktree をまとめる行（「変更なし N」）の鍵。
+const CLEAN_WORKTREES_KEY: &str = "worktrees/clean";
+
 /// Conflicts の行の鍵（選んだら最初のコンフリクトのファイルを開く）。
 pub const CONFLICTS_KEY: &str = "page/conflicts";
 
@@ -1523,8 +1526,10 @@ fn bind_row(item: &gtk::ListItem) {
     } else {
         badge.add_css_class("dim-label");
     }
-    for css in ["heading", "dim-label"] {
-        if group {
+    // 見出しは太く薄く、変更のない worktree をまとめる行は薄く（macOS 版と同じ）。
+    let dim = group || data.key == CLEAN_WORKTREES_KEY;
+    for (css, on) in [("heading", group), ("dim-label", dim)] {
+        if on {
             title.add_css_class(css);
         } else {
             title.remove_css_class(css);
@@ -2316,7 +2321,7 @@ impl Inner {
                 store.append(&Node::new(
                     Data {
                         title: tr!("No changes"),
-                        key: "worktrees/clean".into(),
+                        key: CLEAN_WORKTREES_KEY.into(),
                         item: Item::Folder,
                         icon: icon::Kind::CheckCircle,
                         badge: clean.len().to_string(),
@@ -2640,8 +2645,9 @@ fn worktree_data(w: &crate::worktrees::Info, view: &crate::worktrees::View) -> D
         title: w.name.clone(),
         key: format!("worktree/{}", w.key),
         item: Item::Worktree(w.clone()),
+        // 書き込む先は、Working Copy の行の鉛筆と分けて丸で囲む（macOS 版の pencil.circle）。
         icon: if editing {
-            icon::Kind::WorkingCopy
+            icon::Kind::PencilCircle
         } else if w.main {
             icon::Kind::House
         } else {

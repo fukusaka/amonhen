@@ -241,7 +241,7 @@
 "{count} behind" = "{count} 遅れ";
 " ({items})" = "（{items}）";
 ", " = "、";
-"No changes" = "変更はありません";
+"No changes" = "変更なし";
 /* GTK4: Working Copy の説明 */
 "Included in the next commit (click to exclude)" = "次のコミットに含める（クリックで外す）";
 "Only some lines are included (click to include all)" = "一部の行だけ含める（クリックですべて含める）";

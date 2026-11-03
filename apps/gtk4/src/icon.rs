@@ -81,6 +81,8 @@ pub enum Kind {
     Activity,
     /// plus.circle（ブランチの切り替えで、新しいブランチを作る行）
     PlusCircle,
+    /// pencil.circle（書き込む先の worktree）
+    PencilCircle,
     /// checkmark.seal（署名を確かめた。署名の印）
     Seal,
     /// xmark.seal（不正な署名・失効した鍵）
@@ -684,6 +686,16 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.move_to(5.2, 8.2);
             p.line_to(7.2, 10.2);
             p.line_to(10.9, 6.0);
+        }
+        Kind::PencilCircle => {
+            // 円の中に、小さな鉛筆。
+            p.add_circle(&point(8.0, 8.0), 6.3);
+            p.move_to(5.2, 10.8);
+            p.line_to(5.2, 9.4);
+            p.line_to(9.4, 5.2);
+            p.line_to(10.8, 6.6);
+            p.line_to(6.6, 10.8);
+            p.close();
         }
         Kind::PlusCircle => {
             p.add_circle(&point(8.0, 8.0), 6.3);
