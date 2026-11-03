@@ -61,9 +61,13 @@ final class FocusTableView: NSTableView {
     /// 行の印（CI など）の上で押した。true を返せば行を選ばない（吹き出しを出す）。点は表の座標。
     var onClickMark: ((Int, NSPoint) -> Bool)?
 
+    /// 最後に押した行（いくつか選んだ行の 1 つをドラッグしたとき、つかんだ行だけを動かすため）。
+    private(set) var mouseDownRow = -1
+
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         let row = row(at: point)
+        mouseDownRow = row
         if row >= 0, onClickMark?(row, point) == true { return }
         super.mouseDown(with: event)
     }
@@ -391,7 +395,9 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         tableView.dataSource = self
         tableView.delegate = self
         tableView.dragLabel = { [weak self] rows in
-            guard let row = rows.first, let chunk = self?.chunks[row / Self.chunkRows] else { return nil }
+            guard let self else { return nil }
+            let grabbed = tableView.mouseDownRow
+            guard let row = rows.contains(grabbed) ? grabbed : rows.first, let chunk = chunks[row / Self.chunkRows] else { return nil }
             return chunk.subject(row: row)
         }
         tableView.onFocusChange = { [weak self] in
@@ -1899,6 +1905,9 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     }
 
     func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> (any NSPasteboardWriting)? {
+        // いくつか選んだ行の 1 つをつかんだら、つかんだ行だけを動かす（落とす側は 1 つのコミットしか読まない）。
+        let grabbed = self.tableView.mouseDownRow
+        if grabbed >= 0, row != grabbed, tableView.selectedRowIndexes.contains(grabbed) { return nil }
         guard let id = history?.commitID(row: row) else { return nil }
         let item = NSPasteboardItem()
         item.setString(id.map { String(format: "%02x", $0) }.joined(), forType: .commitID)

@@ -177,6 +177,7 @@ becomes the GitHub Release notes.
 - macOS: New Worktree on an SSH host sends a ~ folder as typed instead of turning it into this Mac's home folder.
 - macOS: dragging a favorite branch while the sidebar is filtered no longer reorders the favorites wrongly.
 - macOS: changing One Line per Commit or History Items keeps several selected commits selected.
+- macOS: dragging one of several selected History rows moves the commit you grabbed, not the newest selected one.
 
 ### [0.2.8] - 2026-10-30
 
