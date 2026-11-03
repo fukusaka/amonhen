@@ -627,6 +627,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         editing.actions.currentBranch = branch
         let current = latestRefs?.items.first { $0.kind == .local && $0.name == branch }
         toolbar.setTracking(ahead: current?.ahead ?? 0, behind: current?.behind ?? 0, published: current.map(Self.isPublished) ?? true)
+        // タブの名前の ↑↓ も、● と同じく書き込む先の worktree のもの。
+        tracking = (current?.ahead ?? 0, current?.behind ?? 0)
+        updateTabTitle()
         pushState = current.map { (Self.isPublished($0), $0.ahead) }
         workingCopy.publishesBranch = !(current.map(Self.isPublished) ?? true)
         if editing === opened, let head = latestRefs?.head { history.head = head }
@@ -1531,7 +1534,6 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 workingCopy.publishesBranch = !(current.map(Self.isPublished) ?? true)
                 toolbar.setBranch(refs.headBranch)
                 if let branch = refs.headBranch { rememberBranch(branch) }
-                tracking = (current?.ahead ?? 0, current?.behind ?? 0)
                 updateEditingBranch()
                 updateTabTitle()
             } catch {

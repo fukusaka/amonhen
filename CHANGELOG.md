@@ -202,6 +202,7 @@ becomes the GitHub Release notes.
   the opened one's.
 - macOS: with another worktree chosen to work in, Switch Branch… lists the branch checked out in the main worktree and
   no longer offers the current worktree's own branch.
+- macOS: a tab's ↑ and ↓ marks follow the branch of the worktree chosen to work in, like its ● mark.
 
 ### [0.2.8] - 2026-10-30
 
