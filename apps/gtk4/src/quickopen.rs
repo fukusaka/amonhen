@@ -377,26 +377,18 @@ pub fn show_with(parent: Option<&gtk::Window>, open: Open, query: &str) -> gtk::
         glib::Propagation::Stop
     });
     field.add_controller(keys);
-    // ほかのアプリに移ったら閉じる（macOS 版の hidesOnDeactivate。このアプリのほかの窓に移っても閉じない）。窓から
-    // 開いたときだけ（起動したときに単独で出したものは、閉じると何も残らない）。
+    // 前の窓でなくなったら閉じる（macOS 版の windowDidResignKey。親やこのアプリのほかの窓を押しても、ほかの
+    // アプリに移っても）。窓から開いたときだけ（起動したときに単独で出したものは、閉じると何も残らない）。
     window.connect_is_active_notify(|w| {
-        if w.transient_for().is_none() {
+        if w.transient_for().is_none() || w.is_active() {
             return;
         }
-        if !w.is_active() {
-            let w = w.clone();
-            glib::idle_add_local_once(move || {
-                let app_active = w
-                    .application()
-                    .is_some_and(|a| a.windows().iter().any(|x| x.is_active()));
-                if !w.is_active()
-                    && !app_active
-                    && gtk::Window::list_toplevels().iter().any(|t| t == &w)
-                {
-                    w.close();
-                }
-            });
-        }
+        let w = w.clone();
+        glib::idle_add_local_once(move || {
+            if !w.is_active() && gtk::Window::list_toplevels().iter().any(|t| t == &w) {
+                w.close();
+            }
+        });
     });
     window.present();
     field.grab_focus();
