@@ -219,6 +219,8 @@ becomes the GitHub Release notes.
   bundle mode.
 - macOS: adding a folder to scan or changing its Search Depth while a scan runs takes effect when that scan ends.
 - macOS: History's edit mode stays open with your plan when Apply Changes fails, and closes once the rewrite has run.
+- macOS: with unsaved edits in the merge editor under Working Copy, Mark Resolved saves Result first, and Take Current
+  File or Take Incoming File asks before losing them.
 
 ### [0.2.8] - 2026-10-30
 

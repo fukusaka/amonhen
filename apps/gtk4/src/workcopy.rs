@@ -2638,6 +2638,14 @@ impl Inner {
 
     /// Take Current File・Take Incoming File: コンフリクトのファイルを片側のファイルそのものにする。マーカーが
     /// 残っていなければ、解決した内容（rerere・ほかのエディタ）を上書きしてしまうので確かめる（macOS 版と同じ）。
+    /// 下のマージエディタに、`path` の保存していない Result がある。
+    fn unsaved_editor(&self, path: &str) -> Option<Rc<crate::merge::Editor>> {
+        self.embedded
+            .borrow()
+            .clone()
+            .filter(|e| e.path() == path && e.has_unsaved_changes())
+    }
+
     fn take_side(this: &Rc<Self>, ours: bool, title: &'static str) {
         let (Some(path), Some(actions), Some(repo)) = (
             this.selected.borrow().clone(),
@@ -2646,7 +2654,28 @@ impl Inner {
         ) else {
             return;
         };
+        let unsaved = this.unsaved_editor(&path).is_some();
         glib::spawn_future_local(async move {
+            // 保存していない Result は、片側のファイルで上書きされて失われる（git checkout --ours・--theirs と同じく
+            // 作業ツリーのファイルを置き換える）。閉じるときと同じく、失うことを確かめる（macOS 版と同じ）。
+            if unsaved {
+                let question = if ours {
+                    tr!("Take the current file without saving Result?")
+                } else {
+                    tr!("Take the incoming file without saving Result?")
+                };
+                if actions
+                    .confirm_destructive(
+                        &question,
+                        &tr!("Your changes to Result are lost."),
+                        &amonhen_model::i18n::translate(title),
+                    )
+                    .await
+                {
+                    actions.perform(json!({ "op": "takeSide", "path": path, "ours": ours }));
+                }
+                return;
+            }
             // 内容のコンフリクトのファイルだけが載る（消した・足したの食い違いは載らないので、確かめない）。
             let files = crate::sheets::run(&repo, json!({ "op": "conflictFiles" })).await;
             let resolved = files["info"]["files"]
@@ -2682,6 +2711,12 @@ impl Inner {
         ) else {
             return;
         };
+        // 保存していない Result があれば、エディタの Mark Resolved と同じく保存してから解決済みにする（git が解決済みに
+        // するのは作業ツリーのファイルなので、Result の変更を書いてから。残りのコンフリクトは Result で数える）。
+        if let Some(editor) = this.unsaved_editor(&path) {
+            crate::merge::Editor::save_and_resolve(&editor);
+            return;
+        }
         let weak = Rc::downgrade(this);
         glib::spawn_future_local(async move {
             let p = path.clone();

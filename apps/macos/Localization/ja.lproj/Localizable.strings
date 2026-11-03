@@ -195,6 +195,8 @@
 "The conflict markers stay in the file." = "コンフリクトのマーカーはファイルに残ります。";
 "Close without saving?" = "保存せずに閉じますか？";
 "Your changes to Result are lost." = "Result への変更は失われます。";
+"Take the current file without saving Result?" = "Result を保存せずに、手元のファイルを使いますか？";
+"Take the incoming file without saving Result?" = "Result を保存せずに、取り込む側のファイルを使いますか？";
 "Created where the stash was made, checked out, and the stash applied there (then dropped)." = "stash を作ったコミットにブランチを作って切り替え、そこに stash を戻します（戻せたら stash は消します）。";
 "It’s untracked." = "untracked のファイルです。";
 "Discard changes to %@?" = "%@ の変更を捨てますか？";

@@ -1157,7 +1157,9 @@ impl Editor {
         solved
     }
 
-    fn save_and_resolve(this: &Rc<Self>) {
+    /// Mark Resolved: Result を保存してから解決済みにする（コンフリクトが残っていれば確かめる）。Working Copy の帯の
+    /// Mark Resolved も、保存していない Result があればこれを使う。
+    pub fn save_and_resolve(this: &Rc<Self>) {
         let remaining = this.conflicts.borrow().len();
         if remaining == 0 {
             this.save(true);

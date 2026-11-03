@@ -718,7 +718,9 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
         return stack
     }
 
-    @objc private func saveAndResolve() {
+    /// Mark Resolved: Result を保存してから解決済みにする（コンフリクトが残っていれば確かめる）。Working Copy の帯の
+    /// Mark Resolved も、保存していない Result があればこれを使う。
+    @objc func saveAndResolve() {
         guard !conflicts.isEmpty else { return save(stage: true) }
         Task { @MainActor in
             guard await actions.confirm(

@@ -1069,8 +1069,25 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     @objc private func takeTheirsFile() { takeSide(ours: false) }
 
+    /// 下のマージエディタに、このファイルの保存していない Result がある。
+    private func unsavedEditor(for path: String) -> MergeEditorViewController? {
+        embeddedEditor.flatMap { $0.path == path && $0.hasUnsavedChanges ? $0 : nil }
+    }
+
     private func takeSide(ours: Bool) {
         guard let key = selectedKey, let actions else { return }
+        // 保存していない Result は、片側のファイルで上書きされて失われる（git checkout --ours・--theirs と同じく
+        // 作業ツリーのファイルを置き換える）。閉じるときと同じく、失うことを確かめる。
+        if unsavedEditor(for: key.path) != nil {
+            let title = ours ? L("Take Current File") : L("Take Incoming File")
+            Task { @MainActor in
+                guard await actions.confirm(
+                    ours ? L("Take the current file without saving Result?") : L("Take the incoming file without saving Result?"),
+                    message: L("Your changes to Result are lost."), ok: title, destructive: true) else { return }
+                actions.perform(["op": "takeSide", "path": key.path, "ours": ours])
+            }
+            return
+        }
         // マーカーが残っていなければ、解決した内容（rerere・ほかのエディタ）を片側で上書きしてしまう。
         if conflictStates[key.path]?.markers == 0 {
             let title = ours ? L("Take Current File") : L("Take Incoming File")
@@ -1096,6 +1113,9 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     @objc private func markResolved() {
         guard let key = selectedKey, let actions else { return }
+        // 保存していない Result があれば、エディタの Mark Resolved と同じく保存してから解決済みにする（git が解決済みに
+        // するのは作業ツリーのファイルなので、Result の変更を書いてから。残りのコンフリクトは Result で数える）。
+        if let editor = unsavedEditor(for: key.path) { return editor.saveAndResolve() }
         let repository = self.repository
         let path = key.path
         Task { @MainActor in

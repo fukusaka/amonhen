@@ -511,6 +511,15 @@ impl Actions {
         sheet.run().await == crate::sheets::Response::Ok
     }
 
+    /// 戻せないことの前に確かめる（赤いボタン、Return は Cancel。macOS 版の `confirm(destructive: true)`）。
+    pub async fn confirm_destructive(&self, title: &str, message: &str, ok: &str) -> bool {
+        let parent = self.window();
+        let sheet =
+            crate::sheets::Sheet::unnamed(parent.as_ref().map(|w| w.upcast_ref()), title, message);
+        sheet.buttons(ok, true, None);
+        sheet.run().await == crate::sheets::Response::Ok
+    }
+
     /// 文字を入れてもらう（macOS 版の `ask`）。キャンセルか空なら None。
     pub async fn ask(&self, title: &str, message: &str, initial: &str, ok: &str) -> Option<String> {
         self.ask_with(title, message, initial, ok, None)

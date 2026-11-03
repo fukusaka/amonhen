@@ -570,6 +570,8 @@
 "Save and mark as resolved (Ctrl+Return)." = "保存して解決済みにする（Ctrl+Return）";
 "Close without saving?" = "保存せずに閉じますか？";
 "Your changes to Result are lost." = "Result への変更は失われます。";
+"Take the current file without saving Result?" = "Result を保存せずに、手元のファイルを使いますか？";
+"Take the incoming file without saving Result?" = "Result を保存せずに、取り込む側のファイルを使いますか？";
 "Close Without Saving" = "保存せずに閉じる";
 "Resolved {count} when opened (Ctrl+Z to undo)." = "開いたときに {count} 個を解きました（Ctrl+Z で戻せる）";
 "No conflicts" = "コンフリクトなし";
