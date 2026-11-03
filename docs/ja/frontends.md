@@ -226,10 +226,10 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | 一致の数・次 / 前・一致だけの検索 | ✓ | ✓ | — | △ | CLI: `log <query>` が一致を並べる。 |
 | 表示: 順・1 行・行の項目・マージ済みを畳む・祖先を目立たせる | ✓ | ✓ | △ | △ | VSCode: 範囲（今・すべて・ref）だけ。<br>CLI: `--topo-order`・`--fold`。 |
 | アバター | ✓ | ✓ | — | n/a |  |
-| コミットの署名の印 | ✓ | ✓ | — | △ | CLI: `show` に出る。 |
+| コミットの署名の印 | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。<br>CLI: `show` に出る。 |
 | コミットごとの CI の状態とポップオーバー | ✓ | ✓ | — | — |  |
 | worktree の HEAD のラベル（✎ ⌂ ⑂・変更の数） | ✓ | ✓ | — | — |  |
-| Go to HEAD・Parent・Child | ✓ | ✓ | △ | n/a | VSCode: 詳細の親へのリンクだけ。 |
+| Go to HEAD・Parent・Child | ✓ | ✓ | ✓ | n/a | VSCode: History の上の HEAD のボタン、コミットのメニューの Go to Parent・Go to Child、詳細の親と子へのリンク（エンジンがあるとき）。 |
 | Go to Ref | — | — | — | n/a |  |
 | いくつものコミットを選ぶ（範囲・2 つ・飛び飛び） | ✓ | ✓ | — | △ | CLI: 2 つは `diff <rev> <rev>`。 |
 | 選んだいくつもの ref の History | ✓ | ✓ | — | ✓ | CLI: `log --branch` を重ねる。 |
@@ -253,7 +253,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | 1 ファイルずつの差分に切り替える | ✓ | ✓ | — | n/a |  |
 | 選んだものの差分（範囲をまとめる・A..B / A...B・飛び飛び） | ✓ | ✓ | — | △ | CLI: `diff <rev> <rev>`。 |
 | 選んだものの操作（cherry-pick・revert・squash・ID のコピー） | ✓ | ✓ | — | △ | CLI: `amonhen run` から。 |
-| 署名のポップオーバー | ✓ | ✓ | — | n/a |  |
+| 署名のポップオーバー | ✓ | ✓ | △ | n/a | VSCode: 詳細の Signature の行（様子・説明・署名した人と鍵）。ポップオーバーはない。 |
 | 単語の強調と構文の色 | ✓ | ✓ | △ | n/a | VSCode: 単語だけ。 |
 
 ## Blame・File History

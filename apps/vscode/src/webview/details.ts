@@ -3,9 +3,10 @@
  * 差分を出す。差分は画面に入ったものから順に拡張ホストに求める
  */
 import type { FileDiff } from '../diff/fileDiff.ts';
-import type { CommitDetails, Person } from '../history/protocol.ts';
+import type { CommitDetails, DetailsExtras, Person } from '../history/protocol.ts';
 import { el, formatDate, getState, post, updateState } from './api.ts';
 import { renderDiffBody } from './diffView.ts';
+import { signatureMark } from './signature.ts';
 
 /** mailmap で置き換えた人。記録と違えば、記録されたものを下に小さく添える */
 function withRecorded(text: string, recorded: Person | undefined): Node | string {
@@ -31,6 +32,8 @@ export interface DetailsPane {
   /** `focus` があれば、そのファイルを選んでその差分の位置に移る（File History） */
   show(details: CommitDetails, focus?: string): void;
   showDiff(oid: string, path: string, diff: FileDiff): void;
+  /** 詳細の残り（署名・子のコミット）。出しているコミットのものなら足す */
+  showExtras(extras: DetailsExtras): void;
   clear(): void;
   /** 次に届いた詳細を、同じコミットでも出し直す */
   forget(): void;
@@ -44,6 +47,30 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
   let sections = new Map<string, HTMLElement>();
   let requestedDiffs = new Set<string>();
   let diffObserver: IntersectionObserver | undefined;
+  /** 出している詳細の作者などの並び（後から署名・子のコミットを足す） */
+  let meta: HTMLElement | undefined;
+
+  /** コミットの ID の並び（onParent があれば押すとその行に移る） */
+  function commitLinks(oids: readonly string[]): HTMLElement {
+    const span = el('span');
+    for (const p of oids) {
+      if (onParent) {
+        const link = el('a', 'parent', p.slice(0, 8));
+        link.href = '#';
+        link.title = p;
+        link.addEventListener('click', (e) => {
+          e.preventDefault();
+          onParent(p);
+        });
+        span.append(link, ' ');
+      } else {
+        const code = el('code', 'parent', p.slice(0, 8));
+        code.title = p;
+        span.append(code, ' ');
+      }
+    }
+    return span;
+  }
 
   function show(d: CommitDetails, focus?: string): void {
     shownOid = d.oid;
@@ -56,11 +83,12 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
     }
     head.append(el('span', '', subject));
 
-    const meta = el('dl', 'meta');
+    const list = el('dl', 'meta');
+    meta = list;
     const add = (label: string, value: Node | string) => {
       const dd = el('dd');
       dd.append(value);
-      meta.append(el('dt', '', label), dd);
+      list.append(el('dt', '', label), dd);
     };
     add('Author', withRecorded(`${d.author.name} <${d.author.email}>`, d.recordedAuthor));
     add('Date', formatDate(d.author.date));
@@ -69,24 +97,7 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
     }
     add('Commit', el('code', '', d.oid));
     if (d.parents.length > 0) {
-      const parents = el('span');
-      for (const p of d.parents) {
-        if (onParent) {
-          const link = el('a', 'parent', p.slice(0, 8));
-          link.href = '#';
-          link.title = p;
-          link.addEventListener('click', (e) => {
-            e.preventDefault();
-            onParent(p);
-          });
-          parents.append(link, ' ');
-        } else {
-          const code = el('code', 'parent', p.slice(0, 8));
-          code.title = p;
-          parents.append(code, ' ');
-        }
-      }
-      add(d.parents.length > 1 ? 'Parents' : 'Parent', parents);
+      add(d.parents.length > 1 ? 'Parents' : 'Parent', commitLinks(d.parents));
     }
 
     const files = el('div', 'files');
@@ -159,7 +170,7 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
       diffObserver.observe(section);
     }
 
-    const parts: Node[] = [head, meta];
+    const parts: Node[] = [head, list];
     if (body) parts.push(el('pre', 'body', body));
     parts.push(files, diffs);
     root.replaceChildren(...parts);
@@ -179,8 +190,28 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
     section.replaceChildren(section.firstElementChild!, ...renderDiffBody(diff));
   }
 
+  function showExtras(extras: DetailsExtras): void {
+    if (extras.oid !== shownOid || !meta || meta.querySelector('.extras')) return;
+    const add = (label: string, value: Node) => {
+      const dd = el('dd', 'extras');
+      dd.append(value);
+      meta!.append(el('dt', 'extras', label), dd);
+    };
+    const s = extras.signature;
+    if (s) {
+      // アプリの署名の吹き出しの中身（言葉・説明・署名した人と鍵）
+      const value = el('span', 'signature');
+      value.append(signatureMark(s), ` ${s.label}`);
+      const note = el('span', 'recorded', [s.explanation, s.signer && `Signed by ${s.signer}`, s.key && `Key ${s.key}`].filter(Boolean).join(' · '));
+      value.append(note);
+      add('Signature', value);
+    }
+    if (extras.children.length > 0) add(extras.children.length > 1 ? 'Children' : 'Child', commitLinks(extras.children));
+  }
+
   function clear(): void {
     shownOid = undefined;
+    meta = undefined;
     root.replaceChildren(el('div', 'empty', 'コミットを選ぶと、ここに詳細が出ます'));
   }
 
@@ -192,6 +223,7 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
     },
     show,
     showDiff,
+    showExtras,
     clear,
     forget() {
       shownOid = undefined;

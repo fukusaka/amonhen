@@ -328,6 +328,16 @@
         "icon": "$(clear-all)"
       },
       {
+        "command": "amonhen.history.goToParent",
+        "title": "Go to Parent",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.history.goToChild",
+        "title": "Go to Child",
+        "category": "Amon Hen"
+      },
+      {
         "command": "amonhen.skipSequence",
         "title": "Skip",
         "category": "Amon Hen",
@@ -875,6 +885,14 @@
           "when": "false"
         },
         {
+          "command": "amonhen.history.goToParent",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.history.goToChild",
+          "when": "false"
+        },
+        {
           "command": "amonhen.skipSequence",
           "when": "amonhen.hasRepository"
         },
@@ -1104,6 +1122,16 @@
         }
       ],
       "webview/context": [
+        {
+          "command": "amonhen.history.goToParent",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commit' && amonhen.engine",
+          "group": "0_goto@1"
+        },
+        {
+          "command": "amonhen.history.goToChild",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commit' && amonhen.engine",
+          "group": "0_goto@2"
+        },
         {
           "command": "amonhen.history.reword",
           "when": "webviewId == 'amonhen.main' && webviewSection == 'commit' && commitEditable",

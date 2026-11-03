@@ -770,6 +770,8 @@ First release.
   favorites or archive them together.
 - The filter button on the sidebar's title shows only the branches, remote branches and tags whose names contain the
   words typed.
+- With the engine, History marks signed commits, the details show the signature and the commit's children, and the
+  HEAD button and Go to Parent / Go to Child move between commits.
 
 #### Changed
 

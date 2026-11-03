@@ -226,10 +226,10 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Search with match count, next / previous, matching only | ✓ | ✓ | — | △ | CLI: `log <query>` lists the matches. |
 | Display: order, one line, row items, fold merged, highlight ancestors | ✓ | ✓ | △ | △ | VSCode: Only the scope (current, all, a ref).<br>CLI: `--topo-order`, `--fold`. |
 | Avatars | ✓ | ✓ | — | n/a |  |
-| Signature marks on commits | ✓ | ✓ | — | △ | CLI: In `show`. |
+| Signature marks on commits | ✓ | ✓ | ✓ | △ | VSCode: With the engine.<br>CLI: In `show`. |
 | CI status per commit with a checks popover | ✓ | ✓ | — | — |  |
 | Worktree HEAD labels (✎ ⌂ ⑂, change counts) | ✓ | ✓ | — | — |  |
-| Go to HEAD, Parent, Child | ✓ | ✓ | △ | n/a | VSCode: Parent links in the details only. |
+| Go to HEAD, Parent, Child | ✓ | ✓ | ✓ | n/a | VSCode: The HEAD button above History, Go to Parent and Go to Child on a commit's menu, and parent and child links in the details (with the engine). |
 | Go to Ref | — | — | — | n/a |  |
 | Several commits selected (range, two, scattered) | ✓ | ✓ | — | △ | CLI: `diff <rev> <rev>` for two. |
 | History of several selected refs | ✓ | ✓ | — | ✓ | CLI: `log --branch` repeated. |
@@ -253,7 +253,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Switch to the single-file diff | ✓ | ✓ | — | n/a |  |
 | Diff of a selection (range squashed, A..B / A...B, scattered) | ✓ | ✓ | — | △ | CLI: `diff <rev> <rev>`. |
 | Actions on a selection (cherry-pick, revert, squash, copy IDs) | ✓ | ✓ | — | △ | CLI: Via `amonhen run`. |
-| Signature popover | ✓ | ✓ | — | n/a |  |
+| Signature popover | ✓ | ✓ | △ | n/a | VSCode: A Signature row in the details (status, explanation, signer and key), no popover. |
 | Word highlights and syntax colors | ✓ | ✓ | △ | n/a | VSCode: Words only. |
 
 ## Blame / File History

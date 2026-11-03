@@ -5,10 +5,11 @@
  * ところのまだない行をまとめて要求する（離れた行へもすぐ移れる）。
  */
 import { type LaneMetrics, lanePositions } from '../history/lanes.ts';
-import type { MessageEdit, RowData, Scope, SearchState } from '../history/protocol.ts';
+import type { MessageEdit, RowData, Scope, SearchState, SignatureView } from '../history/protocol.ts';
 import type { HostMessage } from '../view/protocol.ts';
 import { el, formatDate, post, type View } from './api.ts';
 import { attachSplitter, createDetailsPane } from './details.ts';
+import { signatureMark } from './signature.ts';
 
 const ROW_HEIGHT = 24;
 const LANE_WIDTH = 14;
@@ -92,7 +93,13 @@ export function createHistoryView(): View {
   matchingOnlyLabel.title = 'Show only the matching commits';
   search.append(searchInput, searchCount, previousMatch, nextMatch, matchingOnlyLabel);
   const status = el('span', 'status');
-  toolbar.append(scopeSelect, search, status);
+  // 今の HEAD のコミットへ（アプリの Go to HEAD）
+  const goHead = el('button', 'secondary', 'HEAD');
+  goHead.title = 'Go to HEAD';
+  goHead.addEventListener('click', () => post({ type: 'goTo', to: 'head' }));
+  // History の行を探すのは daemon だけ
+  goHead.hidden = true;
+  toolbar.append(scopeSelect, search, goHead, status);
   const body = el('div', 'split');
   const list = el('div', 'list');
   list.tabIndex = 0;
@@ -107,6 +114,8 @@ export function createHistoryView(): View {
   body.append(list, splitter, details.root);
   root.append(toolbar, body);
 
+  /** 行の署名の印（コミット → 見せ方。署名のないものは入らない） */
+  const signatures = new Map<string, SignatureView>();
   /** 行。daemon の History では行の数だけの長さで、まだ届いていない行は空 */
   let rows: (RowData | undefined)[] = [];
   /** daemon の History（行の数が分かっていて、飛び飛びに頼む） */
@@ -203,6 +212,8 @@ export function createHistoryView(): View {
       badge.textContent = ref.name;
       text.append(badge);
     }
+    const signed = signatures.get(row.oid);
+    if (signed) text.append(signatureMark(signed));
     const subject = document.createElement('span');
     subject.className = 'subject';
     subject.textContent = row.subject;
@@ -600,6 +611,7 @@ export function createHistoryView(): View {
         break;
       case 'searchable':
         search.hidden = !message.searchable;
+        goHead.hidden = !message.searchable;
         break;
       case 'search':
         onSearchState(message.state);
@@ -610,6 +622,12 @@ export function createHistoryView(): View {
       case 'details':
         if (message.details.oid === rows[selected]?.oid) details.show(message.details);
         return;
+      case 'detailsExtras':
+        details.showExtras(message.extras);
+        return;
+      case 'signatures':
+        for (const [oid, view] of Object.entries(message.marks)) signatures.set(oid, view);
+        break;
       case 'commitDiff':
         details.showDiff(message.oid, message.path, message.diff);
         return;

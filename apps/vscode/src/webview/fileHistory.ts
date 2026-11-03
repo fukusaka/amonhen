@@ -183,6 +183,9 @@ export function createFileHistoryView(): View {
       case 'commitDiff':
         details.showDiff(message.oid, message.path, message.diff);
         break;
+      case 'detailsExtras':
+        details.showExtras(message.extras);
+        break;
     }
   }
 

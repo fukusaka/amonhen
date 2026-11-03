@@ -750,6 +750,67 @@ async function branchArrangeFlow(): Promise<void> {
   }
 }
 
+/**
+ * History の行に署名の印が出て（SSH の鍵で署名したコミット。git 2.34 から）、詳細に署名と子のコミットが出る。
+ * HEAD・親・子のコミットに移れる。どれもコアの命令（daemon だけ）
+ */
+async function historySignatureFlow(): Promise<void> {
+  const panel = await showView('amonhen.showHistory');
+  const start = git('rev-parse', 'HEAD').trim();
+  const key = join(dirname(root), 'e2e-commit-key');
+  const signers = join(dirname(root), 'e2e-commit-signers');
+  const [major, minor] = git('--version').match(/(\d+)\.(\d+)/)!.slice(1).map(Number) as [number, number];
+  const ssh = major > 2 || (major === 2 && minor >= 34);
+  try {
+    if (ssh) {
+      childProcess.execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-C', 'a@example.com', '-f', key]);
+      writeFileSync(signers, `a@example.com ${readFileSync(`${key}.pub`, 'utf8')}`);
+      git('config', 'gpg.ssh.allowedSignersFile', signers);
+      git('-c', 'gpg.format=ssh', '-c', `user.signingkey=${key}`, 'commit', '-q', '-S', '--allow-empty', '-m', 'signed commit');
+    } else {
+      git('commit', '-q', '--allow-empty', '-m', 'signed commit');
+    }
+    const signed = git('rev-parse', 'HEAD').trim();
+    git('commit', '-q', '--allow-empty', '-m', 'after signed');
+    const after = git('rev-parse', 'HEAD').trim();
+    let mark = posted.length;
+    await vscode.commands.executeCommand('amonhen.refresh');
+    await panel.history.reset();
+    await waitPosted('rows', mark, (m) => m.rows.some((r) => r.oid === signed));
+    if (ssh) {
+      const marks = await waitPosted('signatures', mark, (m) => signed in m.marks);
+      assert.equal(marks.marks[signed]!.kind, 'verified');
+      assert.equal(marks.marks[after], undefined, '署名のないコミットに印はない');
+    }
+
+    // 詳細に署名と子のコミット
+    mark = posted.length;
+    await panel.history.handle({ type: 'select', oid: signed });
+    const extras = (await waitPosted('detailsExtras', mark, (m) => m.extras.oid === signed)).extras;
+    assert.deepEqual(extras.children, [after]);
+    if (ssh) assert.equal(extras.signature?.label, 'Verified');
+
+    // 子・親・HEAD へ移る
+    for (const [to, oid] of [
+      ['child', signed],
+      ['parent', after],
+      ['head', undefined],
+    ] as const) {
+      mark = posted.length;
+      await panel.history.handle({ type: 'goTo', to, ...(oid ? { oid } : {}) });
+      await waitPosted('reveal', mark);
+    }
+  } finally {
+    git('reset', '-q', '--hard', start);
+    try {
+      git('config', '--unset', 'gpg.ssh.allowedSignersFile');
+    } catch {
+      // 署名を試していない
+    }
+    await vscode.commands.executeCommand('amonhen.refresh');
+  }
+}
+
 /** showInputBox の代わり。呼ばれるたびに values を順に返す */
 function inputs(...values: string[]): () => Promise<string | undefined> {
   let i = 0;
@@ -1489,6 +1550,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('arranges branches with favorites, Inactive and Archived through the daemon', async () => {
     await branchArrangeFlow();
+  });
+
+  test('marks signed commits in History and goes to HEAD, a parent and a child through the daemon', async () => {
+    await historySignatureFlow();
   });
 
   test('drops the selection of a file whose changes went away before its diff is read', async () => {

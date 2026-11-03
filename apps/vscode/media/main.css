@@ -940,3 +940,35 @@ button.secondary {
 .blame .blame-line .code {
   white-space: pre;
 }
+
+/* 署名の印（History の行と詳細） */
+
+.sig {
+  flex: none;
+  margin-right: 4px;
+  font-weight: bold;
+}
+
+.sig.weak {
+  opacity: 0.6;
+}
+
+.sig-good {
+  color: var(--vscode-charts-green);
+}
+
+.sig-warn {
+  color: var(--vscode-charts-yellow);
+}
+
+.sig-old {
+  color: var(--vscode-charts-orange);
+}
+
+.sig-bad {
+  color: var(--vscode-charts-red);
+}
+
+.sig-none {
+  color: var(--vscode-descriptionForeground);
+}
