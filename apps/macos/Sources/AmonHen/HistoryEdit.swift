@@ -402,6 +402,9 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
                 configuredUpdateRefs = state.configured
                 moveStacked.state = state.configured ? .on : .off
                 moveStacked.isEnabled = state.available
+                // 選べない理由を添える（Rebase のシートと同じ）。
+                moveStacked.toolTip = state.available ? L("For this edit only (git’s update-ref). Starts from rebase.updateRefs.")
+                    : L("Moving stacked branches needs git 2.38 or newer.")
             }
             // 積み重ねたブランチがあるときだけ選ばせる。
             moveStacked.isHidden = answer.map { $0.moving.isEmpty && !$0.staying.contains { $0.reason == "setting" || $0.reason == "off" } } ?? true
