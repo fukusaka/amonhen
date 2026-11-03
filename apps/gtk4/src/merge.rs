@@ -83,8 +83,9 @@ impl Pane {
     fn new(title: &str, editable: bool, color: &str) -> Self {
         let label = gtk::Label::new(Some(title));
         label.set_xalign(0.0);
-        label.add_css_class("heading");
-        label.add_css_class("caption");
+        // 小さな太字で、薄く（macOS 版と同じ）。
+        label.add_css_class("caption-heading");
+        label.add_css_class("dim-label");
         label.set_ellipsize(gtk::pango::EllipsizeMode::End);
         label.set_margin_start(6);
         let view = gtk::TextView::builder()
@@ -466,15 +467,14 @@ pub fn show_in_window(editor: &Rc<Editor>, parent: &gtk::Window) {
         }
         let window = window.clone();
         glib::spawn_future_local(async move {
-            let dialog = gtk::AlertDialog::builder()
-                .message(tr!("Close without saving?"))
-                .detail(tr!("Your changes to Result are lost."))
-                .buttons([tr!("Cancel"), tr!("Close Without Saving")])
-                .cancel_button(0)
-                .default_button(0)
-                .modal(true)
-                .build();
-            if dialog.choose_future(Some(&window)).await == Ok(1) {
+            // 窓のシートで、赤い「Close Without Saving」（Return は Cancel。macOS 版と同じ）。
+            let sheet = crate::sheets::Sheet::unnamed(
+                Some(&window),
+                &tr!("Close without saving?"),
+                &tr!("Your changes to Result are lost."),
+            );
+            sheet.buttons(&tr!("Close Without Saving"), true, None);
+            if sheet.run().await == crate::sheets::Response::Ok {
                 window.destroy();
             }
         });
@@ -579,7 +579,7 @@ impl Editor {
         // Save にはキーも説明もない（macOS 版と同じ）。
         let save = gtk::Button::with_label(&tr!("Save"));
         let resolve = gtk::Button::with_label(&tr!("Save & Mark Resolved"));
-        resolve.add_css_class("suggested-action");
+        // 色は付けない（macOS 版と同じ、ふつうのボタン。Ctrl+Return はエディタのキーで）。
         resolve.set_tooltip_text(Some(&tr!("Save and mark as resolved (Ctrl+Return).")));
 
         // テーマにアイコンがなければ（macOS の GTK など）、文字にする。
@@ -806,6 +806,7 @@ impl Editor {
         add("<Control><Alt>Up", Box::new(with(|t| t.step(-1))));
         add("<Control><Alt>Down", Box::new(with(|t| t.step(1))));
         add("<Control>Return", Box::new(with(Self::save_and_resolve)));
+        add("<Control>KP_Enter", Box::new(with(Self::save_and_resolve)));
         this.root.add_controller(keys);
 
         // Result を書き換えたら、少し待ってからコンフリクトを読み直す。
