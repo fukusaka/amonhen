@@ -327,6 +327,12 @@ final class RepositorySettingsModel {
 
     var ignoreChanged: Bool { (gitignore, exclude) != savedIgnore }
 
+    /// Revert: 保存してある中身に戻してから読み直す（load は、書き換えていない欄だけを読んだ中身にする）。
+    func revertIgnore() {
+        (gitignore, exclude) = savedIgnore
+        load()
+    }
+
     private func run(_ command: [String: Any], then: (() -> Void)? = nil) {
         let repository = self.repository
         guard let json = try? Repository.json(command) else { return }
@@ -1765,7 +1771,7 @@ private struct WorkingCopyPage: View {
                         .frame(height: max(160, geometry.size.height - 330))
                     HStack {
                         Spacer()
-                        Button(L("Revert")) { model.load() }.disabled(!model.ignoreChanged)
+                        Button(L("Revert")) { model.revertIgnore() }.disabled(!model.ignoreChanged)
                         Button(L("Save")) { model.saveIgnore() }.disabled(!model.ignoreChanged).keyboardShortcut("s")
                     }
                 }

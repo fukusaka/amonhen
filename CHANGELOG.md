@@ -168,6 +168,8 @@ becomes the GitHub Release notes.
 - macOS: a merge editor in its own window no longer shows the Open in a Separate Window button, which did nothing
   there.
 - macOS: folders collapsed in Working Copy's tree stay collapsed when the status reloads.
+- macOS: Revert under the ignore patterns in Repository Settings and Settings > Git puts back the saved text; it did
+  nothing.
 
 ### [0.2.8] - 2026-10-30
 
