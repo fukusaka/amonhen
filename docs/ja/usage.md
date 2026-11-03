@@ -14,6 +14,7 @@
 - History: グラフ付きの一覧（件名とブランチ・タグのラベル、その下に作者・日時・ID）。右クリックでコミットの編集（Edit Message・Squash・Fixup・Edit・Split・Drop）、cherry-pick・revert、パッチとして保存（Save as Patch…。いくつか選べばひと続きに）、ブランチ・タグの作成。ドラッグで並べ替え。上部で All Branches / Current Branch / 選んだ ref を切り替える。⌘F でコミットを検索（Enter・⌘G で次へ、⇧Enter・⇧⌘G で前へ。一致したコミットだけを出すこともできる）。
 - Range Diff: ローカルブランチの右クリックの「前の版と比べる」（または Repository > 前の版と比べる）で、最後の rebase・コミットの編集・amend の前の版と比べる（`git range-diff` と同じ）: = 同じ、! 変わった（2 つのパッチの差分つき）、< 消えた、> 足された。History で選んだ 2 つのコミットや Reflog の行とも比べられる。
 - パッチ: Repository > Apply Patch…、または .patch・.diff・.mbox・.eml のファイルをウィンドウにドロップすると、何を変えるかとそのまま当たるかを見せてから、メールの形のパッチはコミットとして（`git am`）、diff は作業ツリーに（`git apply`）当てる。am がパッチで止まったら、ツールバーの下の帯に理由と、3-way merge で当て直す・Continue・Skip・Abort が出る。どちらも Undo で戻せる。CLI には `amonhen format-patch`・`amonhen am`・`amonhen apply` がある。
+- アーカイブ: Commit > Export Archive…、または History のコミットやサイドバーのブランチ・タグの右クリックの Export Archive… で、そのコミットのファイルを zip・tar.gz・tar のファイルに書き出す（`git archive`。何を外すかは `.gitattributes` に従う）。1 つのフォルダだけにもできる。CLI では `amonhen archive`。
 - 差分: ドラッグで文字を選んで ⌘C、⌘F で検索。構文の色付けは表示の後に裏で付く。
 - History の検索の構文: 語は件名・作者・ID から探す。空白で区切ると AND、`or` で OR、括弧でまとめる。`author:` `subject:` `commit:` `path:` `contents:"..."`（例: `path:fs/ (author:linus or author:greg)`）。作者は、mailmap で置き換えた名前とコミットに記録された名前のどちらでも合う。
 - 人はリポジトリの mailmap（`.mailmap`・`mailmap.file`）の名前とメールで出す（`git log` と同じ）。記録と違えば、詳細では記録された名前とメールを下に添える。切るのは git の `log.mailmap` で、リポジトリの設定の「作者と署名」（すべてのリポジトリなら Settings > Git）に mailmap のファイルと一緒にある。どちらを変えても、History を作り直さずに名前を出し直す。Blame は git と同じく、いつも mailmap で置き換える。

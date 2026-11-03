@@ -399,6 +399,20 @@ rebase と History の編集（reword・squash・fixup・drop・edit・split・m
 - format-patch にはコミットを `--no-walk=unsorted` と `--max-count` で渡す（format-patch は逆の順に書き出すので逆に
   して渡す。数を渡さないと、コミットが 1 つのときに `<rev>..HEAD` の意味になる）。どれも git 2.23 にある。
 
+## アーカイブ
+
+- コミットのファイルを書き出すのは `git archive`（zip・tar・tar.gz、`--prefix` とパス）。`.gitattributes`
+  （`export-ignore`・`export-subst`）や `tar.<format>.command` は git と同じに効く。tar.gz は git 2.38 から git
+  自身の gzip、それより前は `gzip` コマンドを使う。zip と tar はほかに何も要らない。どれも git 2.23 にある。
+- パッチと同じく、ファイルはコアが動く機械に書く: バックエンドは `git archive` の中身（標準出力）を返し、コアが
+  書く（`{"op":"archive"}`）。daemon 越しや SSH 先では中身を 1 つのフレームで返すので、1 GB を超えるアーカイブは
+  送る前に断り、フォルダを選ぶか、リポジトリのある所で git archive を使うよう言う。
+- partial clone では、`git archive` は手元にない中身を 1 つずつ取りに行く。バックエンドが先に取らずに数え
+  （`rev-list --objects --missing=print --no-walk <rev>` でそのコミットの木の手元にない blob、`ls-tree -r` で選んだ
+  フォルダに絞る）、アプリが取る前に確かめ（`{"op":"archiveContents"}`。50,000 まで数える）、バックエンドがまとめて
+  取る（`fetch --filter=blob:none --stdin`。差分のときと同じ。git 2.29 から。それより前は git が 1 つずつ取る）。
+- 書き出すフォルダは、書き出すコミットの木から選ぶ（`{"op":"treeFolders","rev":…}`。sparse checkout と同じ選ぶ窓）。
+
 ## 速度目標と計測
 
 | 項目 | 目標 |
