@@ -1250,9 +1250,10 @@ fn head_branch(p: &Parts) -> Option<String> {
     p.refs.borrow().as_ref()?.refs.head_branch.clone()
 }
 
-/// History で選んでいるコミット（History を出しているときだけ）。
+/// History で 1 つだけ選んでいるコミット（History を出しているときだけ。いくつか選んでいれば None。macOS 版の
+/// selectedCommit と同じ）。
 fn selected_commit(p: &Parts) -> Option<Oid> {
-    if p.pages.visible_child_name().as_deref() != Some("history") {
+    if p.pages.visible_child_name().as_deref() != Some("history") || p.view.selection().len() != 1 {
         return None;
     }
     let (_, history) = p.view.current()?;
