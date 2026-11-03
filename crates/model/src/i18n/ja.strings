@@ -552,7 +552,6 @@
 "Accept Base" = "Base を採用";
 "Show the common ancestor on the left." = "共通の祖先を左端に出す";
 "Save" = "保存";
-"Save (Ctrl+S)" = "保存する（Ctrl+S）";
 "Save & Mark Resolved" = "保存して解決済みにする";
 "Save and mark as resolved (Ctrl+Return)." = "保存して解決済みにする（Ctrl+Return）";
 "Close without saving?" = "保存せずに閉じますか？";
@@ -934,7 +933,6 @@
 
 /* GTK4 の FE: Clone と Open Recent */
 "Open Recent" = "最近使った項目を開く";
-"https://github.com/owner/repo.git or git@host:owner/repo.git" = "https://github.com/owner/repo.git や git@host:owner/repo.git";
 "Choose…" = "選ぶ…";
 "Taken from the URL" = "URL から決める";
 "Choose from My GitHub Repositories" = "自分の GitHub のリポジトリから選ぶ";
