@@ -497,18 +497,13 @@ impl Actions {
         let _ = dialog.choose_future(window.as_ref()).await;
     }
 
-    /// 取り消せない操作の前に確かめる。
+    /// 実行の前に確かめる（macOS 版の `confirm`。ほかの確認と同じシートで）。
     pub async fn confirm(&self, title: &str, message: &str, ok: &str) -> bool {
-        let dialog = gtk::AlertDialog::builder()
-            .message(title)
-            .detail(message)
-            .buttons([tr!("Cancel").as_str(), ok])
-            .cancel_button(0)
-            .default_button(1)
-            .modal(true)
-            .build();
-        let window = self.window();
-        dialog.choose_future(window.as_ref()).await == Ok(1)
+        let parent = self.window();
+        let sheet =
+            crate::sheets::Sheet::unnamed(parent.as_ref().map(|w| w.upcast_ref()), title, message);
+        sheet.buttons(ok, false, None);
+        sheet.run().await == crate::sheets::Response::Ok
     }
 
     /// 文字を入れてもらう（macOS 版の `ask`）。キャンセルか空なら None。
@@ -616,7 +611,8 @@ impl Actions {
             .map(|(_, value)| value.clone())
     }
 
-    /// macOS 版の確認の窓（見出し・説明・部品・ボタン）に当たる窓を出す。`ok` を押したら true。
+    /// macOS 版の確認の窓（見出し・説明・部品・ボタン）に当たるシートを出す。`ok` を押したら true。ほかの確認と
+    /// 同じシート（[`Sheet`]）なので、見た目と Return・Esc の扱いも同じ。
     async fn run_dialog(
         &self,
         title: &str,
@@ -626,76 +622,13 @@ impl Actions {
         ok: &str,
     ) -> bool {
         let parent = self.window();
-        let dialog = gtk::Window::builder()
-            .title(title)
-            .modal(true)
-            .resizable(false)
-            .default_width(380)
-            .build();
-        // 見出しの帯は出さない（macOS 版のシートの形。題は中の見出しだけ）。
-        dialog.set_titlebar(Some(&gtk::Box::new(gtk::Orientation::Horizontal, 0)));
-        dialog.set_transient_for(parent.as_ref());
-        let heading = gtk::Label::new(Some(title));
-        heading.add_css_class("title-4");
-        heading.set_xalign(0.0);
-        heading.set_wrap(true);
-        let column = gtk::Box::new(gtk::Orientation::Vertical, 10);
-        column.set_margin_top(16);
-        column.set_margin_bottom(16);
-        column.set_margin_start(16);
-        column.set_margin_end(16);
-        column.append(&heading);
-        if !message.is_empty() {
-            let detail = gtk::Label::new(Some(message));
-            detail.set_xalign(0.0);
-            detail.set_wrap(true);
-            column.append(&detail);
-        }
-        column.append(content);
-        let cancel = gtk::Button::with_label(&tr!("Cancel"));
-        let accept = gtk::Button::with_label(ok);
-        accept.add_css_class("suggested-action");
-        let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        buttons.set_halign(gtk::Align::End);
-        buttons.set_margin_top(4);
-        buttons.append(&cancel);
-        buttons.append(&accept);
-        column.append(&buttons);
-        dialog.set_child(Some(&column));
-        dialog.set_default_widget(Some(&accept));
-
-        let (tx, rx) = async_channel::bounded::<bool>(1);
-        let t = tx.clone();
-        accept.connect_clicked(move |_| {
-            let _ = t.try_send(true);
-        });
-        let t = tx.clone();
-        cancel.connect_clicked(move |_| {
-            let _ = t.try_send(false);
-        });
-        dialog.connect_close_request(move |_| {
-            let _ = tx.try_send(false);
-            glib::Propagation::Proceed
-        });
-        // Esc で取りやめる（macOS 版のシートと同じ）。
-        let keys = gtk::EventControllerKey::new();
-        keys.set_propagation_phase(gtk::PropagationPhase::Capture);
-        let w = dialog.downgrade();
-        keys.connect_key_pressed(move |_, key, _, _| {
-            if key == gtk::gdk::Key::Escape
-                && let Some(w) = w.upgrade()
-            {
-                w.close();
-                return glib::Propagation::Stop;
-            }
-            glib::Propagation::Proceed
-        });
-        dialog.add_controller(keys);
-        dialog.present();
+        let sheet =
+            crate::sheets::Sheet::unnamed(parent.as_ref().map(|w| w.upcast_ref()), title, message);
+        sheet.add(content);
+        sheet.buttons(ok, false, None);
+        sheet.window.present();
         focus.grab_focus();
-        let answer = rx.recv().await.unwrap_or(false);
-        dialog.destroy();
-        answer
+        sheet.run().await == crate::sheets::Response::Ok
     }
 }
 

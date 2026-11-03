@@ -341,7 +341,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| リモート・HEAD を動かす・消す操作の前のシート | ✓ | ✓ | △ | n/a | GTK4: macOS と同じく、入力がどこにあっても（ドロップダウンやラジオでも）Return で既定のボタンを押す。<br>VSCode: 消す・書き換える・Reset のときだけで、Fetch・Pull・Push・Merge・Checkout にはない。 |
+| リモート・HEAD を動かす・消す操作の前のシート | ✓ | ✓ | △ | n/a | GTK4: 名前を入れるものもすべての確認も同じシート。macOS と同じく、入力がどこにあっても（ドロップダウンやラジオでも）Return で既定のボタンを押す。<br>VSCode: 消す・書き換える・Reset のときだけで、Fetch・Pull・Push・Merge・Checkout にはない。 |
 | git の操作の Undo（`undo.json`） | ✓ | ✓ | ✓ | ✓ |  |
 | 押せない部品はツールチップで理由を言う | ✓ | ✓ | — | n/a |  |
 
