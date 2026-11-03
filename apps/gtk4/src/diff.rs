@@ -1680,6 +1680,13 @@ impl DiffWidget {
                 self.draw_header(snapshot, st, &view, index, top, width, viewed_x, false);
                 continue;
             }
+            // 選んだ行は行番号の欄だけを選んだ色で塗り、行の追加・削除の色はそのまま見せる（macOS 版と同じ）。
+            if st.selection.contains(&index) {
+                snapshot.append_color(
+                    &gdk::RGBA::new(0.21, 0.52, 0.89, 0.35),
+                    &graphene::Rect::new(0.0, top, (text_x - 6.0).max(0.0), rh),
+                );
+            }
             let background = match row.kind {
                 DiffRow::ADDED => Some(gdk::RGBA::new(0.2, 0.7, 0.3, 0.16)),
                 DiffRow::REMOVED => Some(gdk::RGBA::new(0.9, 0.25, 0.25, 0.16)),
@@ -1697,12 +1704,6 @@ impl DiffWidget {
             let line = &st.rows[&index];
             let (_, h) = line.text.pixel_size();
             let y = top + ((rh - h as f32) / 2.0).round();
-            if st.selection.contains(&index) {
-                snapshot.append_color(
-                    &gdk::RGBA::new(0.21, 0.52, 0.89, 0.28),
-                    &graphene::Rect::new(0.0, top, width, rh),
-                );
-            }
             // 変更の行と hunk の見出しのチェックボックス。hunk は中の変更がすべて含まれていれば ✓、一部なら −
             // （macOS 版と同じ）。
             if st.checks {
