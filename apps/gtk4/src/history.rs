@@ -130,15 +130,6 @@ fn signature_color(status: Option<Status>, fg: &gdk::RGBA) -> gdk::RGBA {
     }
 }
 
-/// 行の署名の丸を塗りつぶすか（macOS 版の SF Symbols の `.fill`: 強い信用の Verified、失効・不正な署名）。
-/// そのほか（marginal の信用・信用していない鍵・署名者の不一致・期限切れ・鍵なし・未検証）は縁だけ。
-fn signature_filled(status: Option<Status>) -> bool {
-    matches!(
-        status,
-        Some(Status::Verified(3..) | Status::Revoked | Status::Bad)
-    )
-}
-
 /// `verifySignatures` の答えの 1 件から状態を決める（コアがコミッターのメールを添える。macOS 版と同じ）。
 fn signature_status(check: &serde_json::Value) -> Status {
     let signer = check["signer"].as_str().unwrap_or_default();
@@ -1839,15 +1830,13 @@ impl HistoryView {
                     } else {
                         signature_color(mark, &fg)
                     };
-                    // 状態のアイコン（吹き出しの見出しと同じ形）。塗りつぶしは強い信用（と、はっきり悪いもの）、
-                    // 縁だけは弱い信用やそれ以外（macOS 版の SF Symbols の `.fill` と縁だけの違い）。
+                    // 状態ごとの印（macOS 版の `symbol`。サイドバーのタグの印・吹き出しの見出しと同じ形）。
                     crate::icon::draw_at(
                         snapshot,
                         mark.map_or(crate::icon::Kind::Seal, Status::icon),
                         &color,
                         graphene::Point::new(cx, cy),
                         11.0,
-                        signature_filled(mark),
                     );
                 }
             }

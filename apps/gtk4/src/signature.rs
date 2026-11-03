@@ -154,14 +154,20 @@ impl Status {
         }
     }
 
-    /// 吹き出しの見出しのアイコン（macOS 版の `symbol` に近い形）。
+    /// 状態の印（History の行と吹き出しの見出し。macOS 版の `symbol` と同じく状態ごとに形を変え、信用度も形で
+    /// 分かる: 塗った seal は強い信用、縁だけは弱い信用。サイドバーのタグの印と同じ記号）。
     pub(crate) fn icon(self) -> crate::icon::Kind {
         use crate::icon::Kind;
         match self {
-            Self::Verified(_) | Self::Untrusted | Self::Pending => Kind::Seal,
-            Self::SignerMismatch | Self::NoKey | Self::Unsupported => Kind::Question,
-            Self::Expired => Kind::History,
-            Self::Revoked | Self::Bad => Kind::SealCross,
+            Self::Verified(trust) if trust >= 3 => Kind::SealFill,
+            Self::Verified(_) | Self::Pending => Kind::Seal,
+            Self::Untrusted => Kind::Shield,
+            Self::SignerMismatch => Kind::PersonQuestion,
+            Self::Expired => Kind::ClockAlert,
+            Self::Revoked => Kind::ShieldAlertFill,
+            Self::Bad => Kind::SealCrossFill,
+            Self::NoKey => Kind::Question,
+            Self::Unsupported => Kind::ExclamationCircle,
         }
     }
 

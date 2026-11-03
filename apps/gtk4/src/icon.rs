@@ -276,15 +276,13 @@ fn seal_mark(p: &gsk::PathBuilder, cross: bool) {
     }
 }
 
-/// `kind` を `center` を中心に `size` px の大きさで描く（表の中など、部品でない所に描くとき）。`filled` なら
-/// 塗りつぶした形（SF Symbols の `.fill`。seal は中の印を抜く。ほかは縁だけのまま）。
+/// `kind` を `center` を中心に `size` px の大きさで描く（表の中など、部品でない所に描くとき）。
 pub fn draw_at(
     snapshot: &gtk::Snapshot,
     kind: Kind,
     color: &gdk::RGBA,
     center: graphene::Point,
     size: f32,
-    filled: bool,
 ) {
     snapshot.save();
     snapshot.translate(&graphene::Point::new(
@@ -293,23 +291,7 @@ pub fn draw_at(
     ));
     let scale = size / SIZE as f32;
     snapshot.scale(scale, scale);
-    if filled && matches!(kind, Kind::Seal | Kind::SealCross) {
-        // 中の印の形を抜いて、縁の中を塗る。
-        snapshot.push_mask(gsk::MaskMode::InvertedAlpha);
-        let mark = gsk::PathBuilder::new();
-        seal_mark(&mark, kind == Kind::SealCross);
-        let stroke = gsk::Stroke::new(1.6);
-        stroke.set_line_cap(gsk::LineCap::Round);
-        stroke.set_line_join(gsk::LineJoin::Round);
-        snapshot.append_stroke(&mark.to_path(), &stroke, &gdk::RGBA::BLACK);
-        snapshot.pop();
-        let outline = gsk::PathBuilder::new();
-        seal_outline(&outline);
-        snapshot.append_fill(&outline.to_path(), gsk::FillRule::Winding, color);
-        snapshot.pop();
-    } else {
-        draw(snapshot, kind, color);
-    }
+    draw(snapshot, kind, color);
     snapshot.restore();
 }
 
