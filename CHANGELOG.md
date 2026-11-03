@@ -176,7 +176,8 @@ becomes the GitHub Release notes.
 - The GTK4 app keeps each commit, push, discard, stage and confirmed operation in the worktree it started in: Commit
   and Push could push another worktree selected during the commit (or skip its Publish sheet), and Discard, Add to
   .gitignore, Take Current/Incoming, Fetch…, Pull…, Push…, Checkout…, Merge, Rebase, Cherry-pick, Delete Branch,
-  Apply Patch, History's edit mode and Undo… could act on the one selected meanwhile.
+  Apply Patch, History's edit mode, Export Archive…, Save as Bundle… and Undo… could act on the one selected
+  meanwhile.
 - The macOS app shows “Couldn’t Commit” and the hooks output even when you leave Working Copy or select another
   worktree while the hooks run; they were lost, so a rejected Commit and Push silently didn't push.
 - Selecting worktrees quickly ends on the last one picked, in the macOS and GTK4 apps; one that took longer to open

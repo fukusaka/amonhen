@@ -27,7 +27,11 @@ pub fn full_ref(kind: RefKind, name: &str) -> Option<String> {
 pub fn save(actions: &Rc<Actions>, refs: Vec<String>, names: Vec<String>, label: String) {
     let actions = actions.clone();
     glib::spawn_future_local(async move {
-        let Some(repo) = actions.repo() else { return };
+        // 読む・知らせる・書く先は、始めたときの worktree（macOS 版と同じ）。
+        let Some(target) = sheets::Target::current(&actions) else {
+            return;
+        };
+        let repo = target.repo.clone();
         let parent = sheets::parent(&actions);
         let base = repo
             .paths()
@@ -109,16 +113,18 @@ pub fn save(actions: &Rc<Actions>, refs: Vec<String>, names: Vec<String>, label:
         let info = &preview["info"];
         let commits = info["commits"].as_u64().unwrap_or(0);
         if commits == 0 {
-            inform(
-                parent.as_ref(),
-                &tr!("Nothing to Save"),
-                &tr!("There are no commits to put in the bundle."),
-            )
-            .await;
+            target
+                .inform(
+                    parent.as_ref(),
+                    &tr!("Nothing to Save"),
+                    &tr!("There are no commits to put in the bundle."),
+                )
+                .await;
             return;
         }
         if info["beyondShallow"] == true {
-            inform(
+            target
+                .inform(
                 parent.as_ref(),
                 &tr!("Can’t Save the Bundle"),
                 &tr!(
@@ -170,7 +176,7 @@ pub fn save(actions: &Rc<Actions>, refs: Vec<String>, names: Vec<String>, label:
             "op": "bundle", "refs": refs, "bases": bases, "file": path.to_string_lossy(),
         });
         let a = actions.clone();
-        actions.perform_with(vec![command], move |reply| {
+        actions.perform_in(repo, vec![command], move |reply| {
             // 書けたら、そのファイルをファイルの窓で見せる（失敗は知らせだけ。macOS 版と同じ）。
             if reply["ok"].as_bool() != Some(true) {
                 return;
@@ -282,11 +288,4 @@ pub fn fetch(actions: &Rc<Actions>) {
         }
         actions.perform(json!({ "op": "fetchBundle", "file": file, "name": name }));
     });
-}
-
-/// 知らせる（macOS 版の `inform` と同じく、窓のシートで「OK」だけ。どの worktree かも書く）。
-async fn inform(parent: Option<&gtk::Window>, title: &str, message: &str) {
-    let sheet = Sheet::new(parent, title, message);
-    sheet.button("OK", Response::Ok, Some(sheets::Style::Suggested));
-    sheet.run().await;
 }

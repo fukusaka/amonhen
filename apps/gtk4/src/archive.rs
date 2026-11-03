@@ -165,8 +165,9 @@ pub fn export(actions: &Rc<Actions>, rev: String, label: String) {
             "paths": paths,
             "file": path.to_string_lossy(),
         });
+        // 読んだ worktree に書く（途中で編集する worktree が替わっても、名前と中身がずれない。macOS 版と同じ）。
         let a = actions.clone();
-        actions.perform_with(vec![command], move |reply| {
+        actions.perform_in(repo, vec![command], move |reply| {
             // 書けたら、そのファイルをファイルの窓で見せる（失敗は知らせだけ。macOS 版と同じ）。
             if reply["ok"].as_bool() != Some(true) {
                 return;
