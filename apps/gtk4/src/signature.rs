@@ -155,7 +155,7 @@ impl Status {
     }
 
     /// 吹き出しの見出しのアイコン（macOS 版の `symbol` に近い形）。
-    fn icon(self) -> crate::icon::Kind {
+    pub(crate) fn icon(self) -> crate::icon::Kind {
         use crate::icon::Kind;
         match self {
             Self::Verified(_) | Self::Untrusted | Self::Pending => Kind::Seal,

@@ -215,6 +215,72 @@ fn cloud(p: &gsk::PathBuilder) {
     p.close();
 }
 
+/// seal の縁（ぎざぎざの丸、12 の山）。
+fn seal_outline(p: &gsk::PathBuilder) {
+    for i in 0..=24 {
+        let a = std::f32::consts::PI * i as f32 / 12.0;
+        let r = if i % 2 == 0 { 6.6 } else { 5.5 };
+        let (x, y) = (8.0 + r * a.cos(), 8.0 + r * a.sin());
+        if i == 0 {
+            p.move_to(x, y);
+        } else {
+            p.line_to(x, y);
+        }
+    }
+    p.close();
+}
+
+/// seal の中の印（チェックか ×）。
+fn seal_mark(p: &gsk::PathBuilder, cross: bool) {
+    if cross {
+        p.move_to(6.0, 6.0);
+        p.line_to(10.0, 10.0);
+        p.move_to(10.0, 6.0);
+        p.line_to(6.0, 10.0);
+    } else {
+        p.move_to(5.4, 8.1);
+        p.line_to(7.2, 9.9);
+        p.line_to(10.6, 6.2);
+    }
+}
+
+/// `kind` を `center` を中心に `size` px の大きさで描く（表の中など、部品でない所に描くとき）。`filled` なら
+/// 塗りつぶした形（SF Symbols の `.fill`。seal は中の印を抜く。ほかは縁だけのまま）。
+pub fn draw_at(
+    snapshot: &gtk::Snapshot,
+    kind: Kind,
+    color: &gdk::RGBA,
+    center: graphene::Point,
+    size: f32,
+    filled: bool,
+) {
+    snapshot.save();
+    snapshot.translate(&graphene::Point::new(
+        center.x() - size / 2.0,
+        center.y() - size / 2.0,
+    ));
+    let scale = size / SIZE as f32;
+    snapshot.scale(scale, scale);
+    if filled && matches!(kind, Kind::Seal | Kind::SealCross) {
+        // 中の印の形を抜いて、縁の中を塗る。
+        snapshot.push_mask(gsk::MaskMode::InvertedAlpha);
+        let mark = gsk::PathBuilder::new();
+        seal_mark(&mark, kind == Kind::SealCross);
+        let stroke = gsk::Stroke::new(1.6);
+        stroke.set_line_cap(gsk::LineCap::Round);
+        stroke.set_line_join(gsk::LineJoin::Round);
+        snapshot.append_stroke(&mark.to_path(), &stroke, &gdk::RGBA::BLACK);
+        snapshot.pop();
+        let outline = gsk::PathBuilder::new();
+        seal_outline(&outline);
+        snapshot.append_fill(&outline.to_path(), gsk::FillRule::Winding, color);
+        snapshot.pop();
+    } else {
+        draw(snapshot, kind, color);
+    }
+    snapshot.restore();
+}
+
 /// 16×16 の中に描く。
 fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
     let p = gsk::PathBuilder::new();
@@ -634,26 +700,8 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
         }
         Kind::Seal | Kind::SealCross => {
             // 縁がぎざぎざの丸（12 の山）と、中にチェックか ×。
-            for i in 0..=24 {
-                let a = std::f32::consts::PI * i as f32 / 12.0;
-                let r = if i % 2 == 0 { 6.6 } else { 5.5 };
-                let (x, y) = (8.0 + r * a.cos(), 8.0 + r * a.sin());
-                if i == 0 {
-                    p.move_to(x, y);
-                } else {
-                    p.line_to(x, y);
-                }
-            }
-            if kind == Kind::Seal {
-                p.move_to(5.4, 8.1);
-                p.line_to(7.2, 9.9);
-                p.line_to(10.6, 6.2);
-            } else {
-                p.move_to(6.0, 6.0);
-                p.line_to(10.0, 10.0);
-                p.move_to(10.0, 6.0);
-                p.line_to(6.0, 10.0);
-            }
+            seal_outline(&p);
+            seal_mark(&p, kind == Kind::SealCross);
         }
         Kind::Question => {
             p.add_circle(&point(8.0, 8.0), 6.3);

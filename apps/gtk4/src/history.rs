@@ -1839,16 +1839,16 @@ impl HistoryView {
                     } else {
                         signature_color(mark, &fg)
                     };
-                    // 塗りつぶしは強い信用（と、はっきり悪いもの）、縁だけは弱い信用やそれ以外（macOS 版の
-                    // アイコンの塗りつぶしと縁だけの違い）。
-                    let path = gsk::PathBuilder::new();
-                    if signature_filled(mark) {
-                        path.add_circle(&graphene::Point::new(cx, cy), 3.5);
-                        snapshot.append_fill(&path.to_path(), gsk::FillRule::Winding, &color);
-                    } else {
-                        path.add_circle(&graphene::Point::new(cx, cy), 3.0);
-                        snapshot.append_stroke(&path.to_path(), &gsk::Stroke::new(1.3), &color);
-                    }
+                    // 状態のアイコン（吹き出しの見出しと同じ形）。塗りつぶしは強い信用（と、はっきり悪いもの）、
+                    // 縁だけは弱い信用やそれ以外（macOS 版の SF Symbols の `.fill` と縁だけの違い）。
+                    crate::icon::draw_at(
+                        snapshot,
+                        mark.map_or(crate::icon::Kind::Seal, Status::icon),
+                        &color,
+                        graphene::Point::new(cx, cy),
+                        11.0,
+                        signature_filled(mark),
+                    );
                 }
             }
         }
