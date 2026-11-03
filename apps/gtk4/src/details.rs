@@ -554,6 +554,8 @@ impl Details {
         let searched = {
             let fixed = [selection_title.clone(), selection_note.clone()];
             let (lines, table) = (selection_lines.clone(), table.clone());
+            // 簡潔の 1 行（作者・日時・ref・親。macOS 版では見出しの文字の欄にある）。
+            let brief_line = brief_text.clone();
             let message = [
                 subject.clone(),
                 body.clone(),
@@ -563,13 +565,19 @@ impl Details {
             move || {
                 let mut labels: Vec<gtk::Label> = fixed.to_vec();
                 labels.push(lines.clone());
-                let mut child = table.first_child();
-                while let Some(c) = child {
-                    child = c.next_sibling();
-                    if let Ok(label) = c.downcast::<gtk::Label>() {
-                        labels.push(label);
+                labels.push(brief_line.clone());
+                // 表の欄。署名・タグの印のように部品でできた欄も、その中の文字を（macOS 版では文字の行）。
+                fn collect(widget: &gtk::Widget, labels: &mut Vec<gtk::Label>) {
+                    let mut child = widget.first_child();
+                    while let Some(c) = child {
+                        child = c.next_sibling();
+                        match c.downcast::<gtk::Label>() {
+                            Ok(label) => labels.push(label),
+                            Err(other) => collect(&other, labels),
+                        }
                     }
                 }
+                collect(table.upcast_ref(), &mut labels);
                 labels.extend(message.iter().cloned());
                 labels
             }
