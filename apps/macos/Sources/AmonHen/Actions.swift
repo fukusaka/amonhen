@@ -208,10 +208,21 @@ final class Actions {
     }
 
     /// `updateRefs` は、積み重ねたブランチを一緒に動かすかのこの操作だけの指定（nil なら git の設定のとおり）。
-    func rewrite(_ label: String, _ edit: [String: Any], updateRefs: Bool? = nil) {
+    /// `failed` を渡すと、書き換えられなかったときに（失敗を知らせた後で）呼ぶ。`completion` は書き換えたとき
+    /// （途中で止まったときも）。
+    func rewrite(_ label: String, _ edit: [String: Any], updateRefs: Bool? = nil,
+                 completion: ((CommandResult) -> Void)? = nil, failed: (() -> Void)? = nil) {
         var command: [String: Any] = ["op": "rewrite", "label": label, "edit": edit]
         if let updateRefs { command["updateRefs"] = updateRefs }
-        perform(command)
+        var recover: (@MainActor (OperationFailure) async -> Bool)?
+        if let failed {
+            // 失敗はいつもどおり知らせる（false）。
+            recover = { _ in
+                failed()
+                return false
+            }
+        }
+        perform(command, completion: completion, recover: recover)
     }
 
     /// 編集できるコミット（新しい順）。

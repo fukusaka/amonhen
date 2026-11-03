@@ -218,6 +218,7 @@ becomes the GitHub Release notes.
 - macOS: after the Clone sheet comes back because the destination exists, typing a bundle path still switches it to
   bundle mode.
 - macOS: adding a folder to scan or changing its Search Depth while a scan runs takes effect when that scan ends.
+- macOS: History's edit mode stays open with your plan when Apply Changes fails, and closes once the rewrite has run.
 
 ### [0.2.8] - 2026-10-30
 

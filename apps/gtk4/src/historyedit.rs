@@ -273,6 +273,8 @@ struct Mode {
     summary: gtk::Label,
     preview: gtk::Label,
     move_stacked: gtk::CheckButton,
+    /// 帯の Cancel と Apply Changes（書き換えている間は押せない）。
+    buttons: [gtk::Button; 2],
     /// git の設定（`rebase.updateRefs`）と、この編集で選び直したか。
     configured_update_refs: Cell<Option<bool>>,
     touched_update_refs: Cell<bool>,
@@ -380,6 +382,7 @@ impl Mode {
             summary,
             preview,
             move_stacked,
+            buttons: [cancel.clone(), apply.clone()],
             configured_update_refs: Cell::new(None),
             touched_update_refs: Cell::new(false),
             syncing_update_refs: Cell::new(false),
@@ -933,9 +936,14 @@ impl Mode {
         (on != configured).then_some(on)
     }
 
-    fn apply_clicked(&self) {
+    /// 書き換えが終わってから編集モードを閉じる。書き換えられなければ（失敗はステータスバーに出し）編集モードと
+    /// 選んだものを残す（閉じてしまうと、組んだ手順がすべて消える）。途中で止まったら（コンフリクト・edit）閉じる。
+    fn apply_clicked(self: &Rc<Self>) {
         if !self.has_changes() {
             self.finish();
+            return;
+        }
+        if self.buttons.iter().any(|b| !b.is_sensitive()) {
             return;
         }
         let (count, steps) = {
@@ -950,8 +958,20 @@ impl Mode {
         if let Some(on) = self.update_refs() {
             command["updateRefs"] = json!(on);
         }
-        self.actions.perform(command);
-        self.finish();
+        for b in &self.buttons {
+            b.set_sensitive(false);
+        }
+        let weak = Rc::downgrade(self);
+        self.actions.perform_with(vec![command], move |reply| {
+            let Some(m) = weak.upgrade() else { return };
+            if reply["error"].is_string() || reply.is_null() {
+                for b in &m.buttons {
+                    b.set_sensitive(true);
+                }
+            } else {
+                m.finish();
+            }
+        });
     }
 
     fn finish(&self) {
@@ -994,7 +1014,9 @@ fn window_keys(mode: &Rc<Mode>) -> gtk::EventControllerKey {
             return glib::Propagation::Proceed;
         }
         match key {
-            gdk::Key::Escape => m.finish(),
+            // 書き換えている間は Cancel も押せない。
+            gdk::Key::Escape if m.buttons[0].is_sensitive() => m.finish(),
+            gdk::Key::Escape => {}
             gdk::Key::Return | gdk::Key::KP_Enter => m.apply_clicked(),
             _ => return glib::Propagation::Proceed,
         }

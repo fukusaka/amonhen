@@ -366,6 +366,7 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
         cancel.keyEquivalent = "\u{1b}"
         let apply = NSButton(title: L("Apply Changes"), target: self, action: #selector(applyClicked))
         apply.keyEquivalent = "\r"
+        barButtons = [cancel, apply]
         return StatusBarController.row([icon, texts, NSView(), moveStacked, cancel, apply], height: 34,
                                        tint: NSColor.controlAccentColor.withAlphaComponent(0.08))
     }
@@ -457,14 +458,23 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
         return steps
     }
 
+    /// 帯の Cancel と Apply Changes（書き換えている間は押せない）。
+    private var barButtons: [NSButton] = []
+
+    /// 書き換えが終わってから編集モードを閉じる。書き換えられなければ（失敗を知らせて）編集モードと選んだものを
+    /// 残す（閉じてしまうと、組んだ手順がすべて消える）。途中で止まったら（コンフリクト・edit）閉じる。
     @objc private func applyClicked() {
         guard hasChanges else {
             onFinish?(false)
             return
         }
+        guard barButtons.allSatisfy(\.isEnabled) else { return }
         let steps = planSteps()
-        actions.rewrite(L("Edit %ld Commits", rows.count), ["kind": "plan", "steps": steps], updateRefs: updateRefs)
-        onFinish?(true)
+        barButtons.forEach { $0.isEnabled = false }
+        actions.rewrite(
+            L("Edit %ld Commits", rows.count), ["kind": "plan", "steps": steps], updateRefs: updateRefs,
+            completion: { [weak self] _ in self?.onFinish?(true) },
+            failed: { [weak self] in self?.barButtons.forEach { $0.isEnabled = true } })
     }
 }
 
