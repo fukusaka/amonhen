@@ -479,6 +479,19 @@ fn handle_op(backend: &dyn GitBackend, op: Op, cancel: &AtomicBool) -> Result<Ve
             }
             encode(&Bytes(data))
         }
+        Op::Bundle(options) => {
+            let data = ops.bundle(&options)?;
+            // 答えは 1 つのフレームで送るので、それに収まらなければ送る前に断る（つながりを切らない）。
+            if data.len() as u64 + 4096 > u64::from(frame::MAX_FRAME) {
+                return Err(tr!(
+                    "The bundle is {size} MB, more than can be brought here at once (1 GB). Leave out older history (choose a base), or run git bundle where the repository is",
+                    size = data.len() >> 20
+                )
+                .into());
+            }
+            encode(&Bytes(data))
+        }
+        Op::BundlePreview(options, limit) => encode(&ops.bundle_preview(&options, limit)?),
         Op::ArchiveContentsToFetch(rev, paths, limit) => {
             encode(&ops.archive_contents_to_fetch(&rev, &paths, limit)?)
         }

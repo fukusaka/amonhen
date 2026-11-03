@@ -7,8 +7,8 @@ use std::sync::Arc;
 use amonhen_layout::{Pod, Slab};
 use amonhen_model::search::TextTerm;
 use amonhen_model::{
-    ApplyPatch, Archive, CommitGraph, CommitText, Deepen, FormatPatch, HeadState, Oid, PullMode,
-    RefUpdate, RemoteChange, ResetMode, Result, Root, Sequence, WorktreeChange,
+    ApplyPatch, Archive, Bundle, CommitGraph, CommitText, Deepen, FormatPatch, HeadState, Oid,
+    PullMode, RefUpdate, RemoteChange, ResetMode, Result, Root, Sequence, WorktreeChange,
 };
 use serde::{Deserialize, Serialize};
 
@@ -385,6 +385,10 @@ pub enum Op {
     Archive(Archive),
     /// → `ContentsToFetch`（時点, パス, 数える上限）
     ArchiveContentsToFetch(String, Vec<String>, usize),
+    /// → `Bytes`（`git bundle create -` の中身）
+    Bundle(Bundle),
+    /// → `BundlePreview`（入れるもの, 中身を数える上限）
+    BundlePreview(Bundle, usize),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

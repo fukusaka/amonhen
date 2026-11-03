@@ -12,10 +12,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use amonhen_model::{
-    ApplyPatch, Archive, CommitGraph, CommitText, ConfigEntry, ConnectionState, ContentsToFetch,
-    Deepen, FileChange, FormatPatch, GitBackend, HeadState, Oid, Operations, Outcome, PatchFile,
-    PullMode, RawCommit, RefUpdate, Refs, RemoteChange, RemoteCheck, RemoteEntry, RepoFiles,
-    RepoPaths, ResetMode, Result, Root, Sequence, SigningKey, Status, WorktreeChange,
+    ApplyPatch, Archive, Bundle, BundlePreview, CommitGraph, CommitText, ConfigEntry,
+    ConnectionState, ContentsToFetch, Deepen, FileChange, FormatPatch, GitBackend, HeadState, Oid,
+    Operations, Outcome, PatchFile, PullMode, RawCommit, RefUpdate, Refs, RemoteChange,
+    RemoteCheck, RemoteEntry, RepoFiles, RepoPaths, ResetMode, Result, Root, Sequence, SigningKey,
+    Status, WorktreeChange,
 };
 use serde::de::DeserializeOwned;
 
@@ -1008,6 +1009,14 @@ impl Operations for RemoteOperations {
             paths.to_vec(),
             limit,
         ))
+    }
+
+    fn bundle(&self, options: &Bundle) -> Result<Vec<u8>> {
+        self.op::<Bytes>(Op::Bundle(options.clone())).map(|b| b.0)
+    }
+
+    fn bundle_preview(&self, options: &Bundle, limit: usize) -> Result<BundlePreview> {
+        self.op(Op::BundlePreview(options.clone(), limit))
     }
 
     fn am(&self, mbox: &[u8], three_way: Option<bool>) -> Result<Outcome> {

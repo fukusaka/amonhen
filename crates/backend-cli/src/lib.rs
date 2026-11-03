@@ -2,6 +2,7 @@
 //! git 本体に任せる。読み取りでも、git の仕組み（untracked cache・fsmonitor）が効く status はここ。
 
 mod archive;
+mod bundle;
 mod directory;
 mod extras;
 mod form;

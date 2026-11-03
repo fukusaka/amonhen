@@ -153,6 +153,25 @@ pub enum Command {
         #[serde(default)]
         paths: Vec<String>,
     },
+    /// `refs`（`refs/heads/main` など。空なら HEAD とすべてのブランチ・タグ）のコミットを 1 つのファイルにまとめて
+    /// `file` に書く（`git bundle create`）。`bases` があれば、受け取る側が持っているはずのそのコミットまでは入れない
+    /// （`^<base>`）。`info.file`・`info.size`。SSH 先や daemon 越しでも、ファイルはこの機械に書く。shallow clone で
+    /// 取っていない履歴まで要るなら断る。partial clone で手元にない中身は先にまとめて取る。
+    Bundle {
+        #[serde(default)]
+        refs: Vec<String>,
+        #[serde(default)]
+        bases: Vec<String>,
+        file: String,
+    },
+    /// `Bundle` の前に見せること（`info.commits`: 入るコミットの数、`info.contents`・`info.more`: partial clone で
+    /// 先に取る中身の数、`info.beyondShallow`: shallow clone で作れない）。
+    BundlePreview {
+        #[serde(default)]
+        refs: Vec<String>,
+        #[serde(default)]
+        bases: Vec<String>,
+    },
     /// パッチのファイル `paths`（並べた順につなぐ）の中身（`info`: `kind`（`mailbox` なら Am、`diff` なら
     /// ApplyPatch で当てる）・`patches`（subject・author・authorEmail・date・files（path・oldPath・added・removed・
     /// binary・status））・`applies`（今のリポジトリにそのまま当たるか。当たらなければ `error` に git の答え）・
@@ -2636,6 +2655,32 @@ impl Repository {
                 Ok(Response {
                     ok: true,
                     info: Some(serde_json::json!({ "count": need.ids.len(), "more": need.more })),
+                    ..Default::default()
+                })
+            }
+            Command::Bundle { refs, bases, file } => {
+                let data = ops.bundle(&amonhen_model::Bundle { refs, bases })?;
+                std::fs::write(&file, &data)
+                    .map_err(|e| tr!("Couldn’t write {file}: {error}", file = file, error = e))?;
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::json!({ "file": file, "size": data.len() })),
+                    ..Default::default()
+                })
+            }
+            Command::BundlePreview { refs, bases } => {
+                let preview = ops.bundle_preview(
+                    &amonhen_model::Bundle { refs, bases },
+                    crate::repository::CONTENTS_FETCH_LIMIT,
+                )?;
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::json!({
+                        "commits": preview.commits,
+                        "contents": preview.contents.ids.len(),
+                        "more": preview.contents.more,
+                        "beyondShallow": preview.beyond_shallow,
+                    })),
                     ..Default::default()
                 })
             }
@@ -6236,6 +6281,151 @@ mod tests {
         assert_eq!(
             run(&repo, r#"{"op":"archiveContents","rev":"HEAD~2"}"#)["info"]["count"],
             0
+        );
+    }
+
+    /// `file://` の URL（Windows は file:///C:/…）。
+    fn file_url_of(path: &std::path::Path) -> String {
+        let path = path.to_str().unwrap().replace('\\', "/");
+        if path.starts_with('/') {
+            format!("file://{path}")
+        } else {
+            format!("file:///{path}")
+        }
+    }
+
+    #[test]
+    fn saves_commits_as_a_bundle_that_git_can_clone_or_fetch() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        commit_file(dir, "b.txt", "second");
+        git(dir, &["tag", "v1"]);
+        commit_file(dir, "c.txt", "third");
+        git(dir, &["branch", "topic", "HEAD~1"]);
+        let out = tempfile::tempdir().unwrap();
+        let run_json = |json: serde_json::Value| run(&repo, &json.to_string());
+
+        // すべて（HEAD とブランチ・タグ）。そのまま clone できる。
+        let all = out.path().join("all.bundle");
+        let preview = run_json(serde_json::json!({"op": "bundlePreview"}));
+        assert_eq!(preview["info"]["commits"], 3, "{preview}");
+        assert_eq!(preview["info"]["beyondShallow"], false);
+        let r = run_json(serde_json::json!({"op": "bundle", "file": all}));
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(r["info"]["size"], std::fs::metadata(&all).unwrap().len());
+        git(out.path(), &["clone", "-q", all.to_str().unwrap(), "copy"]);
+        assert_eq!(
+            git(&out.path().join("copy"), &["log", "--format=%s"]),
+            "third\nsecond\nfirst"
+        );
+
+        // v1 より後だけ。v1 を持っているリポジトリなら取り込める。
+        let newer = out.path().join("newer.bundle");
+        let refs = serde_json::json!(["refs/heads/main"]);
+        let preview =
+            run_json(serde_json::json!({"op": "bundlePreview", "refs": refs, "bases": ["v1"]}));
+        assert_eq!(preview["info"]["commits"], 1, "{preview}");
+        let r = run_json(
+            serde_json::json!({"op": "bundle", "refs": refs, "bases": ["v1"], "file": newer}),
+        );
+        assert_eq!(r["ok"], true, "{r}");
+        let copy = out.path().join("copy");
+        git(&copy, &["reset", "-q", "--hard", "HEAD~1"]);
+        git(
+            &copy,
+            &[
+                "fetch",
+                "-q",
+                newer.to_str().unwrap(),
+                "main:refs/remotes/b/main",
+            ],
+        );
+        assert_eq!(git(&copy, &["log", "-1", "--format=%s", "b/main"]), "third");
+
+        // 入るコミットがなければ作らない。
+        let empty = out.path().join("empty.bundle");
+        let r = run_json(
+            serde_json::json!({"op": "bundle", "refs": ["refs/tags/v1"], "bases": ["v1"], "file": empty}),
+        );
+        assert_eq!(r["ok"], false, "{r}");
+        assert!(!empty.exists());
+    }
+
+    /// shallow clone から、取っていない履歴まで要る bundle は作らない（git は作れてしまうが、clone できない）。
+    #[test]
+    fn refuses_a_bundle_that_needs_history_a_shallow_clone_lacks() {
+        let (src_tmp, _) = setup();
+        let src = src_tmp.path();
+        commit_file(src, "b.txt", "second");
+        commit_file(src, "c.txt", "third");
+        commit_file(src, "d.txt", "fourth");
+        let tmp = tempfile::tempdir().unwrap();
+        git(
+            tmp.path(),
+            &["clone", "-q", "--depth", "2", &file_url_of(src), "shallow"],
+        );
+        let dir = tmp.path().join("shallow");
+        let repo = Repository::new(GixBackend::open(&dir).unwrap());
+        let file = tmp.path().join("x.bundle");
+        let preview = run(&repo, r#"{"op":"bundlePreview"}"#);
+        assert_eq!(preview["info"]["beyondShallow"], true, "{preview}");
+        let r = run(
+            &repo,
+            &serde_json::json!({"op": "bundle", "file": file}).to_string(),
+        );
+        assert_eq!(r["ok"], false, "{r}");
+        assert!(!file.exists());
+        // 取得した範囲の中の基点からなら作れる。
+        let r = run(
+            &repo,
+            &serde_json::json!({"op": "bundle", "refs": ["HEAD"], "bases": ["HEAD~1"], "file": file})
+                .to_string(),
+        );
+        assert_eq!(r["ok"], true, "{r}");
+    }
+
+    /// partial clone では、入る中身のうち手元にないものを数え、作る前にまとめて取る（git 2.29 から。それより古い
+    /// git は、git bundle が 1 つずつ取る）。
+    #[test]
+    fn counts_and_fetches_the_contents_a_bundle_needs_in_a_partial_clone() {
+        let (src_tmp, _) = setup();
+        let src = src_tmp.path();
+        for i in 2..=3 {
+            std::fs::write(src.join("a.txt"), format!("{i}")).unwrap();
+            git(src, &["commit", "-q", "-am", &format!("c{i}")]);
+        }
+        git(src, &["config", "uploadpack.allowFilter", "true"]);
+        git(src, &["config", "uploadpack.allowAnySHA1InWant", "true"]);
+        let tmp = tempfile::tempdir().unwrap();
+        git(
+            tmp.path(),
+            &[
+                "clone",
+                "-q",
+                "--filter=blob:none",
+                &file_url_of(src),
+                "partial",
+            ],
+        );
+        let dir = tmp.path().join("partial");
+        let repo = Repository::new(GixBackend::open(&dir).unwrap());
+        // 前の 2 つの版の a.txt が手元にない。
+        let preview = run(&repo, r#"{"op":"bundlePreview"}"#);
+        assert_eq!(preview["info"]["contents"], 2, "{preview}");
+        let file = tmp.path().join("all.bundle");
+        let r = run(
+            &repo,
+            &serde_json::json!({"op": "bundle", "file": file}).to_string(),
+        );
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(
+            run(&repo, r#"{"op":"bundlePreview"}"#)["info"]["contents"],
+            0
+        );
+        git(tmp.path(), &["clone", "-q", file.to_str().unwrap(), "copy"]);
+        assert_eq!(
+            git(&tmp.path().join("copy"), &["show", "HEAD~2:a.txt"]),
+            "1\n2\n3"
         );
     }
 
