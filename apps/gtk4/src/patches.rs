@@ -186,23 +186,48 @@ pub fn choose_and_apply(actions: &Rc<Actions>) {
     });
 }
 
-/// 窓にパッチのファイルを落としたら当てる（すべてがパッチの拡張子のときだけ受け取る）。
+/// 窓にパッチのファイルを落としたら当てる（すべてがパッチの拡張子のときだけ受け取る）。macOS 版と同じく、パッチで
+/// ないものが混じっているときや merge などの途中では、ドラッグしている間から受けない（コピーの印を出さない）。
 pub fn install_drop(widget: &impl IsA<gtk::Widget>, actions: &Rc<Actions>) {
     let target = gtk::DropTarget::new(gdk::FileList::static_type(), gdk::DragAction::COPY);
+    // ドラッグの間にファイルを読んで、パッチかを確かめる。
+    target.set_preload(true);
+    let a = Rc::downgrade(actions);
+    let takes = move |value: Option<&glib::Value>| -> Option<Vec<PathBuf>> {
+        let actions = a.upgrade()?;
+        // merge などの途中では当てない（Apply Patch… と同じ。macOS 版と同じ）。
+        if actions.in_sequence() {
+            return None;
+        }
+        let list = value?.get::<gdk::FileList>().ok()?;
+        let paths: Vec<PathBuf> = list.files().iter().filter_map(|f| f.path()).collect();
+        patch_files(paths)
+    };
+    let a = Rc::downgrade(actions);
+    target.connect_accept(move |_, _| a.upgrade().is_some_and(|a| !a.in_sequence()));
+    // 読めた中身がパッチでなければ、その場で断る。
+    let t = takes.clone();
+    target.connect_value_notify(move |target| {
+        if let Some(value) = target.value()
+            && t(Some(&value)).is_none()
+        {
+            target.reject();
+        }
+    });
     let a = Rc::downgrade(actions);
     target.connect_drop(move |_, value, _, _| {
-        let (Some(actions), Ok(list)) = (a.upgrade(), value.get::<gdk::FileList>()) else {
+        let (Some(actions), Some(paths)) = (a.upgrade(), takes(Some(value))) else {
             return false;
         };
-        let paths: Vec<PathBuf> = list.files().iter().filter_map(|f| f.path()).collect();
-        // merge などの途中では当てない（Apply Patch… と同じ。macOS 版と同じ）。
-        if paths.is_empty() || !paths.iter().all(|p| is_patch(p)) || actions.in_sequence() {
-            return false;
-        }
         apply(&actions, paths);
         true
     });
     widget.add_controller(target);
+}
+
+/// 落とされたファイルがすべてパッチなら、そのパス（1 つもない・ほかのものが混じっていれば None）。
+fn patch_files(paths: Vec<PathBuf>) -> Option<Vec<PathBuf>> {
+    (!paths.is_empty() && paths.iter().all(|p| is_patch(p))).then_some(paths)
 }
 
 /// パッチのファイルを読んで、何を変えるかと当たるかを見せてから当てる。名前の順につなぐ（0001-… から）。
@@ -431,6 +456,14 @@ fn natural(a: &str, b: &str) -> std::cmp::Ordering {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn takes_a_drop_only_when_every_file_is_a_patch() {
+        let p = |names: &[&str]| names.iter().map(PathBuf::from).collect::<Vec<_>>();
+        assert!(patch_files(p(&["a.patch", "b.DIFF", "c.mbox", "d.eml"])).is_some());
+        assert!(patch_files(p(&["a.patch", "notes.txt"])).is_none());
+        assert!(patch_files(Vec::new()).is_none());
+    }
 
     #[test]
     fn names_the_mbox_like_format_patch() {
