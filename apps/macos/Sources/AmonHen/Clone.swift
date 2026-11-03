@@ -37,10 +37,12 @@ enum CloneSheet {
         }
     }
 
-    /// 置き場所の初期値: 前に clone した場所、なければスキャンするフォルダの最初、なければホーム。
+    /// 置き場所の初期値: 前に clone した場所、なければスキャンするフォルダの最初（手元のもの。SSH 先のフォルダには
+    /// clone できない）、なければホーム。
     private static var defaultFolder: String {
         UserDefaults.standard.string(forKey: folderKey)
-            ?? Bookmarks.shared.data.scanRoots.first?.path
+            ?? Bookmarks.shared.data.scanRoots.first { RepositoryBrowser.sshHost($0.path) == nil }
+                .map { RepositoryBrowser.localPath($0.path) }
             ?? NSHomeDirectory()
     }
 
