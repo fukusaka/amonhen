@@ -129,7 +129,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Remotes: table and sheet with a connection check | ✓ | ✓ | △ | △ | VSCode: The table with a row of buttons (Edit URL…, Push URL…, Check, Prune, Rename…, Remove…) and Add…; the values are asked in input boxes, not a sheet.<br>CLI: Via `amonhen run`. |
 | Hooks: table, Enabled switch, script, Create Hook… | ✓ | ✓ | ✓ | △ | VSCode: Open opens the script in VSCode's editor.<br>CLI: Via `amonhen run`. |
 | LFS: installed, patterns, Track Pattern…, file count | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
-| Keys and Values (git config table, Basic / Customized / All, Combined / Levels) | ✓ | △ | △ | △ | GTK4: + asks for the key and value in fields under the table, not in a new row of the table.<br>VSCode: Basic / Customized / All and search, with the value in effect and its source; values are edited in an input box; no Levels columns.<br>CLI: Via `amonhen run` (`configList`, `configSet`). |
+| Keys and Values (git config table, Basic / Customized / All, Combined / Levels) | ✓ | ✓ | △ | △ | VSCode: Basic / Customized / All and search, with the value in effect and its source; values are edited in an input box; no Levels columns.<br>CLI: Via `amonhen run` (`configList`, `configSet`). |
 | Rows disabled with the git version needed | ✓ | ✓ | ✓ | n/a | |
 | Repository's form on the git line (shallow, partial, sparse, maintenance) | ✓ | ✓ | ✓ | △ | CLI: `status` notes shallow, partial and sparse repositories. |
 | Fetching and Folders: fetch more of a shallow clone (a count, up to a date, all) | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run` (`deepen`, `unshallow`). |
