@@ -182,6 +182,7 @@ becomes the GitHub Release notes.
 - macOS: ⌥J and ⌥K move to the next or previous file in History's diff when its files aren't stacked; they only
   beeped.
 - macOS: when a commit's changed files can't be read, History says it couldn't load the diff instead of No changes.
+- macOS: Find in a diff highlights matches in the file headers' paths too.
 
 ### [0.2.8] - 2026-10-30
 

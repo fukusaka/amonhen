@@ -780,8 +780,9 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         let textRange = orderedSelection
         // 見えている行の一致（番号つき）。
         var matchesByRow: [Int: [(Int, Range<Int>)]] = [:]
-        if !matches.isEmpty {
-            // 一致は行の順に並んでいるので、見えている最初の行を二分探索する。
+        func collectMatches(_ rows: Range<Int>) {
+            guard !matches.isEmpty else { return }
+            // 一致は行の順に並んでいるので、最初の行を二分探索する。
             var lo = 0, hi = matches.count
             while lo < hi {
                 let mid = (lo + hi) / 2
@@ -793,6 +794,8 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
                 i += 1
             }
         }
+        collectMatches(rows)
+        let matchColors = (match: matchColor, current: currentMatchColor)
         diff.withRows { all in
             for row in rows {
                 let r = all[row]
@@ -813,7 +816,7 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
                 let baseline = top + 2 + ascent
                 // コンフリクトの表示では old_no はコンフリクトの番号なので、行番号は new_no だけ出す。
                 if r.kind == UInt8(AmonhenDiffRow_FILE) {
-                    drawFileHeader(row: row, all: all, top: top, scale: scale)
+                    drawFileHeader(row: row, all: all, top: top, scale: scale, matches: matchesByRow[row] ?? [], colors: matchColors)
                     continue
                 }
                 if showsStageChecks {
@@ -858,7 +861,9 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
             }
             // 見出しの行が上に隠れたファイルは、見出しを上に張り付かせる。
             if let (file, top) = stickyHeader(origin: origin) {
-                drawFileHeader(row: fileRows[file], all: all, top: top, scale: scale)
+                let row = fileRows[file]
+                if matchesByRow[row] == nil { collectMatches(row..<row + 1) }
+                drawFileHeader(row: row, all: all, top: top, scale: scale, matches: matchesByRow[row] ?? [], colors: matchColors)
             }
         }
         if !fileRows.isEmpty {
@@ -873,8 +878,10 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
 
 extension DiffViewController {
     /// ファイルの見出しの行: 畳む・開くの印、パス、追加・削除の行数、Viewed のチェックボックス。横にはスクロールしない。
+    /// `matches` は検索で見つけたパスの中の一致（番号と範囲）。
     fileprivate func drawFileHeader(
-        row: Int, all: UnsafeBufferPointer<AmonhenDiffRow>, top: CGFloat, scale: CGFloat
+        row: Int, all: UnsafeBufferPointer<AmonhenDiffRow>, top: CGFloat, scale: CGFloat,
+        matches: [(Int, Range<Int>)], colors: (match: SIMD4<Float>, current: SIMD4<Float>)
     ) {
         let r = all[row]
         let width = textView.bounds.width
@@ -911,6 +918,12 @@ extension DiffViewController {
         // パスは行数の手前までに収める（長ければ、はみ出た分を帯の色で隠す）。
         if let line = shapedLine(row, scale: scale) {
             let textBaseline = top + 2 + CTFontGetAscent(font)
+            for (i, m) in matches {
+                let x0 = line.offset(of: m.lowerBound), x1 = line.offset(of: m.upperBound)
+                renderer.addRect(
+                    CGRect(x: 24 + x0, y: top + 1, width: max(2, x1 - x0), height: lineHeight - 2),
+                    color: i == currentMatch ? colors.current : colors.match)
+            }
             renderer.addLine(line, origin: CGPoint(x: 24, y: textBaseline), color: NSColor.labelColor.rgba, scale: scale)
             if 24 + line.width > countsX - 8 {
                 renderer.addRect(
