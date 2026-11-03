@@ -183,9 +183,17 @@ impl MessageAids {
     }
 
     fn set_texts(&self, subject: &str, body: &str) {
+        self.fill(subject, Some(body));
+    }
+
+    /// プログラムから件名（と、`body` があれば本文）を入れる。下書きには覚えない（Amend で入れた HEAD の
+    /// メッセージ・fixup!・squash!・AI の提案。打ったときだけ覚える。macOS 版と同じ）。
+    pub fn fill(&self, subject: &str, body: Option<&str>) {
         self.quiet.set(true);
         self.subject.set_text(subject);
-        self.body.buffer().set_text(body);
+        if let Some(body) = body {
+            self.body.buffer().set_text(body);
+        }
         self.quiet.set(false);
     }
 
@@ -572,10 +580,7 @@ impl MessageAids {
                     return;
                 };
                 // fixup! は件名だけ（元のメッセージを残す）、squash! は本文に書き足せる。
-                this.subject.set_text(&format!("{prefix}{subject}"));
-                if !keep_body {
-                    this.body.buffer().set_text("");
-                }
+                this.fill(&format!("{prefix}{subject}"), (!keep_body).then_some(""));
                 this.amend.set_active(false);
                 if keep_body {
                     this.body.grab_focus();

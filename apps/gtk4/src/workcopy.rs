@@ -1118,8 +1118,7 @@ impl Inner {
                 let Some(this) = weak.upgrade() else { return };
                 let text = text.trim();
                 let (subject, body) = text.split_once('\n').unwrap_or((text, ""));
-                this.subject.set_text(subject.trim());
-                this.body.buffer().set_text(body.trim());
+                this.aids.fill(subject.trim(), Some(body.trim()));
                 this.update_buttons();
             });
             let p = parent.clone();
@@ -2868,8 +2867,7 @@ impl Inner {
             }
             let message = reply["text"].as_str().unwrap_or_default().trim();
             let (subject, body) = message.split_once('\n').unwrap_or((message, ""));
-            this.subject.set_text(subject.trim());
-            this.body.buffer().set_text(body.trim());
+            this.aids.fill(subject.trim(), Some(body.trim()));
             this.update_buttons();
         });
     }
