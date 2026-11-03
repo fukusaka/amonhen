@@ -63,6 +63,8 @@ impl Actions {
         icon.set(crate::icon::Kind::Undo, false);
         undo.set_child(Some(&icon));
         undo.set_action_name(Some("win.undo"));
+        // つないでいる・開けなかったタブでも説明を出す（macOS 版はツールバーを作るときに setUndo(nil)）。
+        undo.set_tooltip_text(Some(&tr!("Nothing to Undo")));
         Rc::new(Self {
             repo: RefCell::default(),
             anchor: anchor.upcast_ref::<gtk::Widget>().downgrade(),
