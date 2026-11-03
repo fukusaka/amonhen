@@ -2560,6 +2560,20 @@ fn leaf_count(store: &gio::ListStore) -> usize {
         .sum()
 }
 
+/// 今のブランチ（書き込む先のもの）の数の前に ✎ を添える。お気に入りに出した積んだブランチの ↳ はその前に残す
+/// （macOS 版は ✎ を足してから ↳ を足すので「↳ ✎ ↑1」。ここでは ↳ が先に付いている）。
+fn with_pencil(badge: &str) -> String {
+    let (stacked, rest) = match badge.strip_prefix('↳') {
+        Some(rest) => ("↳ ", rest.trim_start()),
+        None => ("", badge),
+    };
+    if rest.is_empty() {
+        format!("{stacked}✎")
+    } else {
+        format!("{stacked}✎ {rest}")
+    }
+}
+
 /// ブランチの行の worktree の印: ほかの worktree が checkout しているもの（git はここでは checkout させない）は、
 /// 右端に ⌂（メインの作業ツリー）か ⑂（追加した worktree。アイコンと一緒に緑）を出し、worktree の名前は
 /// ツールチップに（ブランチ名を隠さない）。今のブランチ（書き込む先のもの）には ✎ を添える。
@@ -2594,11 +2608,7 @@ fn mark_worktree_branches(store: &gio::ListStore, view: &crate::worktrees::View)
             data.mark_click = true;
             data.green = !w.main;
         } else if data.head {
-            data.badge = if data.badge.is_empty() {
-                "✎".to_owned()
-            } else {
-                format!("✎ {}", data.badge)
-            };
+            data.badge = with_pencil(&data.badge);
             // 押すと、書き込む先のブランチであることの吹き出し（macOS 版と同じ）。
             data.editing = true;
             data.mark_click = true;
@@ -3310,7 +3320,15 @@ fn pull_request_rows(list: &[PullRequest], refs: Option<&Refs>) -> gio::ListStor
 
 #[cfg(test)]
 mod tests {
-    use super::{favorite_edge, reordered};
+    use super::{favorite_edge, reordered, with_pencil};
+
+    #[test]
+    fn puts_the_pencil_after_the_stacked_mark() {
+        assert_eq!(with_pencil(""), "✎");
+        assert_eq!(with_pencil("↑1"), "✎ ↑1");
+        assert_eq!(with_pencil("↳"), "↳ ✎");
+        assert_eq!(with_pencil("↳ ↑1"), "↳ ✎ ↑1");
+    }
 
     #[test]
     fn counts_branches_with_branches_stacked_on_them() {
