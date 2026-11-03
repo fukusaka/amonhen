@@ -541,11 +541,11 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
                     let at = match at {
                         Some(at) => at,
                         None => {
-                            // 数の順に入れる。
+                            // 並びの最後（Other… の区切りのすぐ上）に入れる（macOS 版と同じ）。
                             let at = {
                                 let mut list = depths.borrow_mut();
-                                let at = list.partition_point(|&x| x < commits);
-                                list.insert(at, commits);
+                                let at = list.len();
+                                list.push(commits);
                                 other_at.replace(vec![list.len() as u32]);
                                 at
                             };
