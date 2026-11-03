@@ -264,9 +264,7 @@ final class Actions {
         Task { @MainActor in
             let short = String(target.prefix(8))
             let name = currentBranch ?? "HEAD"
-            let alert = NSAlert()
-            alert.messageText = L("Reset %@ to %@?", name, short)
-            alert.informativeText = L("Commits taken off stay in Reflog.") + " " + Self.canUndo
+            let alert = makeAlert(L("Reset %@ to %@?", name, short), L("Commits taken off stay in Reflog.") + " " + Self.canUndo)
             alert.addButton(withTitle: "Reset")
             alert.addButton(withTitle: L("Cancel"))
             let modes: [(String, String)] = [

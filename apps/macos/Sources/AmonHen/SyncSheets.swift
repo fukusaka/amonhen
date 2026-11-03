@@ -543,7 +543,7 @@ extension Actions {
             let onto = currentBranch ?? "HEAD"
             let title = revert ? L("Revert %@ on %@?", what, onto) : L("Cherry-pick %@ onto %@?", what, onto)
             let message = (revert ? L("Adds commits that undo them.") : L("Adds copies of them.")) + " " + Self.canUndo
-            guard await confirm(title, message: message, ok: revert ? "Revert" : "Cherry-pick") else { return }
+            guard await confirm(title, message: sheetMessage(message), ok: revert ? "Revert" : "Cherry-pick") else { return }
             perform(sequence: commits.map { ["op": revert ? "revert" : "cherryPick", "oid": $0.hex, "isMerge": $0.isMerge] })
         }
     }
@@ -727,7 +727,7 @@ extension Actions {
     }
 
     /// シートの説明文（worktree が 2 つ以上なら、どの worktree かを先頭に）。
-    private func sheetMessage(_ message: String) -> String {
+    func sheetMessage(_ message: String) -> String {
         worktreeName.map { L("In the worktree “%@”.", $0) + (message.isEmpty ? "" : "\n" + message) } ?? message
     }
 
@@ -866,7 +866,7 @@ extension Actions {
         let alert = NSAlert()
         alert.messageText = title
         // worktree が 2 つ以上あれば、どの worktree に対する操作かを書く（docs/ux.md の「Worktrees」）。
-        alert.informativeText = worktreeName.map { L("In the worktree “%@”.", $0) + (message.isEmpty ? "" : "\n" + message) } ?? message
+        alert.informativeText = sheetMessage(message)
         return alert
     }
 
