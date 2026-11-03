@@ -245,7 +245,7 @@ final class Actions {
 
     func renameBranch(_ name: String) {
         Task { @MainActor in
-            guard let to = await ask(L("Rename %@", name), message: L("New name of the branch."), initial: name, ok: "Rename"),
+            guard let to = await ask(L("Rename %@", name), message: L("New name of the branch."), initial: name, ok: L("Rename")),
                   to != name else { return }
             perform(["op": "renameBranch", "from": name, "to": to])
         }
