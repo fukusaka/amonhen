@@ -416,6 +416,8 @@ struct Inner {
     pending: Rc<Cell<u32>>,
     current_repo: CurrentRepo,
     file_items: RefCell<Option<FileItems>>,
+    /// sparse checkout なら、その様子（取り出していないフォルダのファイルは、ディスクにないので開けない）。
+    sparse: RefCell<Option<crate::repoform::Sparse>>,
     find: FindBar,
     /// 出しているコミットの変更ファイル（`Prepared::changes`）。
     changes: RefCell<Option<Arc<Vec<FileChange>>>>,
@@ -568,6 +570,7 @@ impl CommitDiff {
             pending,
             current_repo,
             file_items: RefCell::default(),
+            sparse: RefCell::default(),
             find: FindBar { bar, entry, count },
             changes: RefCell::default(),
         });
@@ -608,6 +611,11 @@ impl CommitDiff {
     /// 用意した差分を出す。`key` は Viewed を覚える鍵。
     pub fn show(&self, prepared: Prepared, key: String) {
         Inner::show(&self.inner, prepared, key);
+    }
+
+    /// sparse checkout の様子（ファイルのメニューで、取り出していないフォルダのファイルを開けないわけを添える）。
+    pub fn set_sparse(&self, sparse: Option<crate::repoform::Sparse>) {
+        self.inner.sparse.replace(sparse);
     }
 
     /// 変更ファイルの右クリックのメニューに足す項目（Blame・File History など）を作る
@@ -1262,11 +1270,29 @@ impl Inner {
             }
         }));
         // 手元のリポジトリのファイルがあれば、ファイルマネージャーとほかのアプリで開ける。
-        let local = (this.current_repo)()
+        let workdir = (this.current_repo)()
             .filter(|r| r.connection_state().is_none())
-            .and_then(|r| r.paths().workdir)
+            .and_then(|r| r.paths().workdir);
+        let local = workdir
+            .as_ref()
             .map(|w| w.join(&path))
             .filter(|p| p.exists());
+        let unchecked = workdir.is_some()
+            && local.is_none()
+            && this
+                .sparse
+                .borrow()
+                .as_ref()
+                .is_some_and(|s| !s.contains(&path));
+        if unchecked {
+            // sparse checkout で取り出していないフォルダのファイル。項目は出すが、押せないわけを添える（macOS 版と同じ）。
+            for title in [tr!("Show in Files"), tr!("Open with Default App")] {
+                items.push(menu::disabled_hint(
+                    title,
+                    tr!("This folder isn’t checked out"),
+                ));
+            }
+        }
         if let Some(full) = local {
             let file = gio::File::for_path(&full);
             let (w, f) = (this.list.downgrade(), file.clone());

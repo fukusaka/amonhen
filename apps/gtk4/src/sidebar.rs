@@ -342,6 +342,8 @@ struct Inner {
     filter: RefCell<Vec<String>>,
     /// 絞り込む前に開いていた項目（絞り込みをやめたら戻す）。絞り込んでいる間だけ Some。
     unfiltered: RefCell<Option<HashSet<String>>>,
+    /// リポジトリの形（History の行に shallow clone・partial clone、Working Copy の行に sparse checkout の印）。
+    form: RefCell<Option<crate::repoform::Form>>,
     /// リポジトリの worktree（2 つ以上あるときだけ Working Copy の下に並べる）。
     worktrees: RefCell<crate::worktrees::View>,
     /// Working Copy の下に worktree を並べている（並べ始めたら Working Copy を開く）。
@@ -492,6 +494,7 @@ impl Sidebar {
             verify_timer: RefCell::default(),
             debug_signature: RefCell::default(),
             signature_place: RefCell::default(),
+            form: RefCell::default(),
         });
         inner.anchor.borrow().set(Some(scrolled.upcast_ref()));
         owner.replace(Rc::downgrade(&inner));
@@ -716,6 +719,37 @@ impl Sidebar {
         if let Some(store) = workspace.and_then(|w| w.children()) {
             self.inner.replace_keeping(&store, 0, node);
         }
+    }
+
+    /// リポジトリの形を出す（History の行に shallow clone・partial clone、Working Copy の行に sparse checkout の印）。
+    pub fn set_repository_form(&self, form: &crate::repoform::Form) {
+        if self.inner.form.borrow().as_ref() == Some(form) {
+            return;
+        }
+        self.inner.form.replace(Some(form.clone()));
+        let marks = form
+            .sparse
+            .as_ref()
+            .map(|s| {
+                vec![Mark {
+                    icon: icon::Kind::FolderMinus,
+                    tooltip: s.help(),
+                    css: None,
+                }]
+            })
+            .unwrap_or_default();
+        let node = &self.inner.working;
+        let data = with_marks(
+            Data {
+                marks: Vec::new(),
+                tooltip: None,
+                ..node.data()
+            },
+            marks,
+        );
+        node.imp().data.replace(data);
+        // History の行は作り直すときに印を付ける（Working Copy の行も描き直す）。
+        self.inner.rebuild(false);
     }
 
     /// リポジトリの worktree と変更の数を出す。並びが変われば作り直し、数だけなら行を描き直す。
@@ -1940,13 +1974,20 @@ impl Inner {
 
         let refs = self.refs.borrow().clone();
         let history = Node::new(
-            Data {
-                title: "History".into(),
-                key: "page/history".into(),
-                item: Item::Page(Page::History),
-                icon: icon::Kind::History,
-                ..Data::default()
-            },
+            with_marks(
+                Data {
+                    title: "History".into(),
+                    key: "page/history".into(),
+                    item: Item::Page(Page::History),
+                    icon: icon::Kind::History,
+                    ..Data::default()
+                },
+                self.form
+                    .borrow()
+                    .as_ref()
+                    .map(history_marks)
+                    .unwrap_or_default(),
+            ),
             None,
         );
         // いつも Workspace の最後に出す。選ぶと Reflog の画面を開く。
@@ -2798,6 +2839,41 @@ fn finish_tag(data: &mut Data, tags: Option<&TagRemotes>, remotes: &[String]) {
     if !lines.is_empty() {
         data.tooltip = Some(lines.join("\n"));
     }
+}
+
+/// History の行の右端の、リポジトリの形の印（macOS 版の `formMarks`）。
+fn history_marks(form: &crate::repoform::Form) -> Vec<Mark> {
+    let mut marks = Vec::new();
+    if form.shallow {
+        marks.push(Mark {
+            icon: icon::Kind::Scissors,
+            tooltip: tr!("Shallow clone: older history isn’t fetched"),
+            css: None,
+        });
+    }
+    if let Some(partial) = &form.partial {
+        marks.push(Mark {
+            icon: icon::Kind::CloudDown,
+            tooltip: tr!(
+                "Partial clone: file contents are fetched when needed ({filter})",
+                filter = partial.filter.as_deref().unwrap_or("?")
+            ),
+            css: None,
+        });
+    }
+    marks
+}
+
+/// 印を付けた行（印の意味は行のツールチップに。ほかのツールチップがあればその後に）。
+fn with_marks(mut data: Data, marks: Vec<Mark>) -> Data {
+    if marks.is_empty() {
+        return data;
+    }
+    let mut lines: Vec<String> = marks.iter().map(|m| m.tooltip.clone()).collect();
+    lines.extend(data.tooltip.take());
+    data.tooltip = Some(lines.join("\n"));
+    data.marks = marks;
+    data
 }
 
 /// ref が指すコミット（History で選ぶ）。

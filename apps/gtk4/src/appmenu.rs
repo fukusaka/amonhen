@@ -1166,7 +1166,14 @@ fn repository_settings(p: &Rc<Parts>) {
     let Some(slot) = p.pages.child_by_name("settings").and_downcast::<gtk::Box>() else {
         return;
     };
-    crate::reposettings::show(&slot, repo, &p.location, p.reload.clone(), None);
+    // 取得とフォルダのページの操作（取り足す・取り直す・取り出すフォルダを変える）は、Fetch と同じく窓の操作で。
+    let actions = Rc::downgrade(&p.actions);
+    let operate: crate::reposettings::Operate =
+        Rc::new(move |command, done| match actions.upgrade() {
+            Some(actions) => actions.perform_with(vec![command], move |_| done()),
+            None => done(),
+        });
+    crate::reposettings::show(&slot, repo, &p.location, p.reload.clone(), operate, None);
     show_page(p, Page::Settings);
 }
 

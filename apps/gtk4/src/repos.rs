@@ -281,7 +281,74 @@ fn name_from_url(url: &str) -> String {
     last.strip_suffix(".git").unwrap_or(last).to_owned()
 }
 
+/// 取得する範囲（macOS 版の `CloneSheet.Download`）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Download {
+    /// すべて（ふつうの `git clone`）。
+    Everything,
+    /// ファイルの中身は必要なときに取る（`--filter=blob:none`）。
+    ContentsWhenNeeded,
+    /// 最近の履歴だけ（`--depth`）。
+    RecentHistory,
+}
+
+impl Download {
+    const ALL: [Download; 3] = [
+        Download::Everything,
+        Download::ContentsWhenNeeded,
+        Download::RecentHistory,
+    ];
+
+    fn title(self) -> String {
+        match self {
+            Download::Everything => tr!("Everything"),
+            Download::ContentsWhenNeeded => tr!("File contents when needed"),
+            Download::RecentHistory => tr!("Recent history only"),
+        }
+    }
+
+    /// 選んだものの 1 文の説明。
+    fn help(self) -> String {
+        match self {
+            Download::Everything => {
+                tr!("The whole history and the contents of every file, as git does by default.")
+            }
+            Download::ContentsWhenNeeded => tr!(
+                "Good for large repositories: file contents are fetched when a diff or file needs them."
+            ),
+            Download::RecentHistory => {
+                tr!("Older history can be fetched later from the end of History.")
+            }
+        }
+    }
+
+    /// clone の選び方（`depth` は最近の履歴だけのときのコミットの数）。
+    fn options(self, depth: u32, sparse: bool) -> amonhen_backend_cli::CloneOptions {
+        amonhen_backend_cli::CloneOptions {
+            filter: (self == Download::ContentsWhenNeeded).then(|| "blob:none".to_owned()),
+            depth: (self == Download::RecentHistory).then_some(depth),
+            sparse,
+        }
+    }
+}
+
+/// `git clone --sparse` が使える git の版。
+const SPARSE_VERSION: (u32, u32) = (2, 27);
+
+/// 選んだものの説明（小さく、薄く。選び直して文の長さが変わっても、シートの高さが変わらないよう 2 行分を取っておく）。
+fn clone_help() -> gtk::Label {
+    let label = crate::sheets::note("");
+    label.set_hexpand(true);
+    label.set_lines(2);
+    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    label.set_height_request(34);
+    label.set_valign(gtk::Align::Start);
+    label
+}
+
 /// File > Clone…: URL（gh があれば自分の GitHub のリポジトリからも選べる）と置き場所を決めて clone し、開く。
+/// 取得する範囲（すべて・ファイルの中身は必要なときに・最近の履歴だけ）と、一部のフォルダだけを取り出すかも選べる
+/// （docs/ux.md の「Clone」）。既定は git と同じく、すべてを取得してすべてを取り出す。
 pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
     let parent = parent.clone();
     glib::spawn_future_local(async move {
@@ -380,6 +447,169 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
         }
         sheet.add(&row(&tr!("Location:"), &location));
         sheet.add(&row(&tr!("Folder Name:"), &name));
+        // 取得する範囲と、最近の履歴だけなら何コミットか（既定は 100）。下に選んだものの説明。
+        let titles: Vec<String> = Download::ALL.iter().map(|d| d.title()).collect();
+        let refs: Vec<&str> = titles.iter().map(String::as_str).collect();
+        let download = gtk::DropDown::from_strings(&refs);
+        // 1（いちばん新しいコミットだけ）・決まった数・「その他…」（好きな数を尋ねる。決めた数は項目にして選ぶ）。
+        let depths: Rc<std::cell::RefCell<Vec<u32>>> = Rc::new(std::cell::RefCell::new(
+            std::iter::once(1)
+                .chain(crate::shallow::more_choices().into_iter().map(|c| c.1))
+                .collect(),
+        ));
+        let depth_titles = gtk::StringList::new(&[]);
+        for &d in depths.borrow().iter() {
+            depth_titles.append(&crate::shallow::commits_title(d));
+        }
+        depth_titles.append(&tr!("Other…"));
+        let depth = gtk::DropDown::new(Some(depth_titles.clone()), gtk::Expression::NONE);
+        depth.set_selected(1);
+        let depth_chosen = Rc::new(std::cell::Cell::new(100u32));
+        {
+            let (depths, chosen, titles, w) = (
+                depths.clone(),
+                depth_chosen.clone(),
+                depth_titles.clone(),
+                sheet.window.downgrade(),
+            );
+            depth.connect_selected_notify(move |d| {
+                let i = d.selected() as usize;
+                let count = depths.borrow().len();
+                if i < count {
+                    chosen.set(depths.borrow()[i]);
+                    return;
+                }
+                // 「その他…」: 選び直しを戻してから尋ねる。
+                let back = depths
+                    .borrow()
+                    .iter()
+                    .position(|&x| x == chosen.get())
+                    .unwrap_or(0);
+                d.set_selected(back as u32);
+                let (d, depths, chosen, titles, w) = (
+                    d.clone(),
+                    depths.clone(),
+                    chosen.clone(),
+                    titles.clone(),
+                    w.clone(),
+                );
+                glib::spawn_future_local(async move {
+                    let Some(commits) = crate::shallow::ask_count(
+                        w.upgrade().as_ref(),
+                        &tr!("Recent History"),
+                        &tr!("How many recent commits to fetch (git clone --depth)."),
+                        &tr!("Choose"),
+                        chosen.get(),
+                    )
+                    .await
+                    else {
+                        return;
+                    };
+                    let at = depths.borrow().iter().position(|&x| x == commits);
+                    let at = match at {
+                        Some(at) => at,
+                        None => {
+                            // 数の順に入れる。
+                            let at = {
+                                let mut list = depths.borrow_mut();
+                                let at = list.partition_point(|&x| x < commits);
+                                list.insert(at, commits);
+                                at
+                            };
+                            // 項目を足すと選んでいる項目の知らせが来る（数の並びを読む）ので、借りを返してから。
+                            titles.splice(at as u32, 0, &[&crate::shallow::commits_title(commits)]);
+                            at
+                        }
+                    };
+                    chosen.set(commits);
+                    d.set_selected(at as u32);
+                });
+            });
+        }
+        let download_line = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        download_line.append(&download);
+        download_line.append(&depth);
+        sheet.add(&row(&tr!("Download:"), &download_line));
+        let download_help = clone_help();
+        sheet.add(&row("", &download_help));
+        // 一部のフォルダだけ取り出す（git 2.27 から）。下に説明か、使えなければ ⚠ と理由。
+        let sparse = gtk::CheckButton::with_label(&tr!("Check out only some folders"));
+        sheet.add(&row("", &sparse));
+        let sparse_help = clone_help();
+        sheet.add(&row("", &sparse_help));
+        let sparse_unavailable: Rc<std::cell::RefCell<Option<String>>> = Rc::default();
+        let update: Rc<dyn Fn()> = {
+            let (download, depth, download_help, sparse, sparse_help, unavailable) = (
+                download.downgrade(),
+                depth.downgrade(),
+                download_help.downgrade(),
+                sparse.downgrade(),
+                sparse_help.downgrade(),
+                sparse_unavailable.clone(),
+            );
+            Rc::new(move || {
+                let (Some(download), Some(depth), Some(dh), Some(sparse), Some(sh)) = (
+                    download.upgrade(),
+                    depth.upgrade(),
+                    download_help.upgrade(),
+                    sparse.upgrade(),
+                    sparse_help.upgrade(),
+                ) else {
+                    return;
+                };
+                let choice = Download::ALL[(download.selected() as usize).min(2)];
+                depth.set_visible(choice == Download::RecentHistory);
+                dh.set_text(&choice.help());
+                match unavailable.borrow().as_deref() {
+                    Some(reason) => {
+                        sparse.set_sensitive(false);
+                        sparse.set_active(false);
+                        sh.set_text(&format!("⚠ {reason}"));
+                        sh.remove_css_class("dim-label");
+                        sh.add_css_class("warning");
+                    }
+                    None => {
+                        sparse.set_sensitive(true);
+                        sh.set_text(&tr!("Only the files at the top are checked out; right after the clone, choose a folder to check out."));
+                        sh.remove_css_class("warning");
+                        sh.add_css_class("dim-label");
+                    }
+                }
+            })
+        };
+        let u = update.clone();
+        download.connect_selected_notify(move |_| u());
+        // 見た目の確認用の起動（`AMONHEN_CLONE_SHEET=history,sparse` など）では、その選び方で出す。
+        let preset = std::env::var("AMONHEN_CLONE_SHEET").unwrap_or_default();
+        if preset.contains("contents") {
+            download.set_selected(1);
+        }
+        if preset.contains("history") {
+            download.set_selected(2);
+        }
+        if preset.contains("sparse") {
+            sparse.set_active(true);
+        }
+        update();
+        // この機械の git の版を裏で読み、古ければ止める（読めなければ使えるとみなす。clone のときに確かめる）。
+        {
+            let (unavailable, update) = (sparse_unavailable.clone(), update.clone());
+            glib::spawn_future_local(async move {
+                let version = gio::spawn_blocking(amonhen_backend_cli::git_version)
+                    .await
+                    .ok()
+                    .flatten();
+                if let Some((a, b, c)) = version
+                    && (a, b) < SPARSE_VERSION
+                {
+                    unavailable.replace(Some(tr!(
+                        "Needs git 2.27 or later. This computer’s git is {version}.",
+                        version = format!("{a}.{b}.{c}")
+                    )));
+                    update();
+                }
+            });
+        }
         // 置き場所はアプリの列で選ぶシートで（フォルダを作れる。macOS 版の `chooseLocation`）。
         let (f, w) = (folder.downgrade(), sheet.window.downgrade());
         choose.connect_clicked(move |_| {
@@ -430,14 +660,19 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
             return;
         }
         crate::settings::set_string(CLONE_FOLDER, &parent_dir.to_string_lossy());
-        run(&parent, source, dest, open).await;
+        let choice = Download::ALL[(download.selected() as usize).min(2)];
+        let options = choice.options(
+            depth_chosen.get(),
+            sparse.is_sensitive() && sparse.is_active(),
+        );
+        run(&parent, source, dest, options, open).await;
     });
 }
 
-/// clone している間は、進み具合の小さな窓を出す。
-async fn run(parent: &gtk::Window, url: String, dest: PathBuf, open: Rc<dyn Fn(PathBuf)>) {
+/// 進み具合の小さな窓。
+fn progress_window(parent: &gtk::Window, text: &str) -> gtk::Window {
     let spinner = gtk::Spinner::builder().spinning(true).build();
-    let label = gtk::Label::new(Some(&tr!("Cloning {url}…", url = url)));
+    let label = gtk::Label::new(Some(text));
     label.set_wrap(true);
     let content = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     content.set_margin_top(16);
@@ -455,28 +690,100 @@ async fn run(parent: &gtk::Window, url: String, dest: PathBuf, open: Rc<dyn Fn(P
         .child(&content)
         .build();
     window.present();
+    window
+}
+
+/// clone している間は、進み具合の小さな窓を出す。`options.sparse` なら、clone の後で取り出すフォルダを選んで
+/// もらってから開く（取り消したら根のファイルだけのまま。フォルダは Settings の「取得とフォルダ」で足せる）。
+async fn run(
+    parent: &gtk::Window,
+    url: String,
+    dest: PathBuf,
+    options: amonhen_backend_cli::CloneOptions,
+    open: Rc<dyn Fn(PathBuf)>,
+) {
+    let window = progress_window(parent, &tr!("Cloning {url}…", url = url));
     let d = dest.clone();
+    let sparse = options.sparse;
     // 走っている操作に数える（Activity の印が回る。macOS 版と同じ）。
     crate::activity::begin();
     let result = gio::spawn_blocking(move || {
-        // 取得する範囲を選ぶシートは GTK4 版にはまだないので、git の既定（すべて取得する）で。
-        amonhen_backend_cli::clone(&url, &d, &Default::default()).map_err(|e| e.to_string())
+        amonhen_backend_cli::clone(&url, &d, &options).map_err(|e| e.to_string())
     })
     .await
     .unwrap_or_else(|_| Err(String::new()));
     crate::activity::end();
     window.destroy();
     match result {
-        Ok(()) => open(dest),
+        Ok(()) => {
+            if sparse {
+                choose_folder(parent, &dest).await;
+            }
+            open(dest)
+        }
         Err(e) => {
             crate::sheets::inform(Some(parent), &tr!("Couldn’t clone"), &e).await;
         }
     }
 }
 
+/// 根のファイルだけを取り出した clone で、取り出すフォルダを HEAD の木から選び（取得とフォルダのページと同じ
+/// シート）、取り出す。取り消しても、失敗しても戻る。
+async fn choose_folder(parent: &gtk::Window, dest: &Path) {
+    let Ok(backend) = amonhen_backend_gix::GixBackend::open(dest) else {
+        return;
+    };
+    let repo = std::sync::Arc::new(amonhen_core::Repository::new(backend));
+    let request = crate::filepicker::Request {
+        title: tr!("Check Out Only Some Folders"),
+        message: tr!(
+            "Only the files at the top are checked out. Choose a folder to check out too; add more later in Settings > Fetching and Folders."
+        ),
+        kind: crate::filepicker::Kind::Folder,
+        initial: "/".into(),
+        ..Default::default()
+    };
+    let Some(folder) =
+        crate::repoform::choose_tree_folder(Some(parent), request, repo.clone()).await
+    else {
+        return;
+    };
+    let window = progress_window(parent, &tr!("Checking out {folder}…", folder = folder));
+    crate::activity::begin();
+    let result = crate::reposettings::run_one(
+        &repo,
+        serde_json::json!({ "op": "sparseCheckout", "folders": [folder] }),
+    )
+    .await;
+    crate::activity::end();
+    window.destroy();
+    if let Err(e) = result {
+        crate::sheets::inform(
+            Some(parent),
+            &tr!("Couldn’t check out {folder}", folder = folder),
+            &e,
+        )
+        .await;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{main_of_worktree, with_daemon};
+
+    #[test]
+    fn clones_with_what_was_chosen_to_download() {
+        use super::Download;
+        let o = Download::Everything.options(100, false);
+        assert_eq!((o.filter, o.depth, o.sparse), (None, None, false));
+        let o = Download::ContentsWhenNeeded.options(100, true);
+        assert_eq!(
+            (o.filter.as_deref(), o.depth, o.sparse),
+            (Some("blob:none"), None, true)
+        );
+        let o = Download::RecentHistory.options(250, false);
+        assert_eq!((o.filter, o.depth), (None, Some(250)));
+    }
 
     #[test]
     fn opens_through_the_daemon_in_the_daemon_form() {

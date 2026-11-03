@@ -91,6 +91,8 @@ pub(crate) struct State {
     pub commit_template: Option<(Option<String>, String)>,
     /// 署名の形式ごとに集めた鍵（`user.email` の鍵が先）。
     signing_keys: HashMap<String, Vec<SigningKey>>,
+    /// リポジトリの形（shallow clone・partial clone・sparse checkout・maintenance）。このリポジトリの段だけ。
+    pub form: Option<crate::repoform::Form>,
     pub loaded: bool,
 }
 
@@ -128,6 +130,9 @@ pub(crate) enum Record {
 }
 
 type Refresher = Rc<dyn Fn(&Rc<RepoSettings>)>;
+/// 取得とフォルダのページの操作を、窓の操作として動かす（Fetch と同じく、進み具合はツールバーと Activity、失敗は
+/// ステータスバー）。終わったら（失敗しても）2 つ目の閉包を呼んでもらう。
+pub type Operate = Rc<dyn Fn(Value, Box<dyn FnOnce()>)>;
 type AfterLoad = Box<dyn FnOnce(&Rc<RepoSettings>)>;
 
 /// ページ（macOS 版の `SettingsPage`）。名前は `--repository-settings <page>` でも使う。
@@ -137,6 +142,7 @@ pub const PAGES: &[&str] = &[
     "operations",
     "branches",
     "workingCopy",
+    "fetching",
     "remotes",
     "hooks",
     "config",
@@ -149,6 +155,7 @@ pub(crate) fn page_title(page: &str) -> String {
         "operations" => tr!("Operations"),
         "branches" => tr!("Branches"),
         "workingCopy" => "Working Copy".into(),
+        "fetching" => tr!("Fetching and Folders"),
         "remotes" => tr!("Remotes"),
         "hooks" => "Hooks · LFS".into(),
         "config" => tr!("Keys and Values"),
@@ -203,6 +210,10 @@ pub struct RepoSettings {
     writes: Cell<u64>,
     /// 行の質問と、その欄・↩︎（確認用の `AMONHEN_SETTINGS_SCRIPT` が使う）。
     controls: RefCell<Vec<(String, gtk::Box, gtk::Button)>>,
+    /// 取得とフォルダのページの操作を窓の操作として動かすもの（なければ、ここで実行してページの下に失敗を出す）。
+    operate: RefCell<Option<Operate>>,
+    /// その操作が走っている（ページのボタンを止める）。
+    pub(crate) operating: Cell<bool>,
 }
 
 /// コアの命令を実行し、`info` を返す（失敗ならエラーの文）。
@@ -248,6 +259,7 @@ struct Loaded {
     version: Value,
     groups: Option<Value>,
     template: Option<Value>,
+    form: Option<Value>,
 }
 
 fn strings(v: &Value) -> Vec<String> {
@@ -328,6 +340,9 @@ impl Loaded {
             version: call(repo, &json!({"op": "gitVersion"}))?,
             groups: call(repo, &json!({"op": "branchGroups"})).ok(),
             template: call(repo, &json!({"op": "commitTemplate"})).ok(),
+            form: (!global)
+                .then(|| call(repo, &json!({"op": "repositoryForm"})).ok())
+                .flatten(),
         })
     }
 }
@@ -676,6 +691,8 @@ impl RepoSettings {
             signing_loaded: Cell::new(false),
             controls: RefCell::default(),
             writes: Cell::new(0),
+            operate: RefCell::default(),
+            operating: Cell::new(false),
         });
 
         // 左: ページの一覧と、その下にこのリポジトリを動かしている git。
@@ -712,6 +729,12 @@ impl RepoSettings {
                 crate::settings::select(&page);
             });
             left.append(&git);
+            // リポジトリの形（shallow clone・partial clone など）。押すと、それを扱うページへ。
+            let form_items = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            form_items.set_margin_start(6);
+            form_items.set_margin_end(6);
+            form_items.set_margin_bottom(6);
+            left.append(&form_items);
             this.on_refresh(move |s| {
                 let st = s.state.borrow();
                 let machine = s.host.clone().unwrap_or_else(|| tr!("This computer"));
@@ -719,6 +742,28 @@ impl RepoSettings {
                     "git {} · {machine}",
                     st.git_version.as_deref().unwrap_or("?")
                 ));
+                while let Some(child) = form_items.first_child() {
+                    form_items.remove(&child);
+                }
+                let items = st.form.as_ref().map(|f| f.items()).unwrap_or_default();
+                form_items.set_visible(!items.is_empty());
+                for (title, help) in items {
+                    let item = gtk::Button::new();
+                    item.add_css_class("flat");
+                    let l = label(&title, &["dim-label", "caption"]);
+                    l.set_ellipsize(gtk::pango::EllipsizeMode::End);
+                    // 長い言い方でも、左の列を広げない（切って出し、全体はツールチップに）。
+                    l.set_max_width_chars(20);
+                    item.set_child(Some(&l));
+                    item.set_tooltip_text(Some(&help));
+                    let w = s.weak();
+                    item.connect_clicked(move |_| {
+                        if let Some(s) = w.upgrade() {
+                            s.select("fetching");
+                        }
+                    });
+                    form_items.append(&item);
+                }
             });
         }
         widget.append(&left);
@@ -735,6 +780,7 @@ impl RepoSettings {
                 "operations" => this.operations_page().upcast(),
                 "branches" => this.branches_page().upcast(),
                 "workingCopy" => this.working_copy_page().upcast(),
+                "fetching" => crate::repoform::fetching_page(&this).upcast(),
                 "remotes" => crate::repopages::remotes_page(&this).upcast(),
                 "hooks" => crate::repopages::hooks_page(&this).upcast(),
                 "config" => crate::configtable::page(&this).upcast(),
@@ -869,6 +915,7 @@ impl RepoSettings {
                 .groups
                 .as_ref()
                 .and_then(|g| g["base"].as_str().map(str::to_owned));
+            st.form = l.form.map(|f| crate::repoform::Form::from_info(&f));
             st.commit_template = l.template.map(|t| {
                 (
                     t["text"].as_str().map(str::to_owned),
@@ -1127,6 +1174,41 @@ impl RepoSettings {
             s.load();
             s.changed();
         });
+    }
+
+    /// 取得とフォルダのページの操作を、窓の操作として動かすようにする。
+    pub fn connect_operation(&self, f: Operate) {
+        self.operate.replace(Some(f));
+    }
+
+    /// 取得とフォルダのページの操作を動かし（同時には 1 つだけ）、終わったら読み直す。
+    pub(crate) fn run_operation(self: &Rc<Self>, command: Value) {
+        if self.operating.replace(true) {
+            return;
+        }
+        self.refresh();
+        let weak = self.weak();
+        let finish: Box<dyn FnOnce()> = Box::new(move || {
+            if let Some(s) = weak.upgrade() {
+                s.operating.set(false);
+                s.load();
+                s.changed();
+            }
+        });
+        let operate = self.operate.borrow().clone();
+        match operate {
+            Some(operate) => operate(command, finish),
+            None => {
+                let (repo, weak) = (self.repo.clone(), self.weak());
+                glib::spawn_future_local(async move {
+                    let result = run_one(&repo, command).await;
+                    if let Some(s) = weak.upgrade() {
+                        s.show_error(None, result.as_ref().err().map(String::as_str));
+                    }
+                    finish();
+                });
+            }
+        }
     }
 
     /// 部品の窓（シートの親）。
@@ -2420,6 +2502,7 @@ pub fn show(
     repo: Arc<Repository>,
     location: &str,
     on_change: Rc<dyn Fn()>,
+    operate: Operate,
     page: Option<&str>,
 ) {
     let Some(open) = open_of(slot) else { return };
@@ -2433,6 +2516,7 @@ pub fn show(
     }
     let settings = RepoSettings::new(repo, location, Level::Repository);
     settings.connect_change(move || on_change());
+    settings.connect_operation(operate);
     if let Some(page) = page {
         settings.select(page);
     }
