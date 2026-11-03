@@ -2465,15 +2465,22 @@ pub fn row_items(
     };
     items.push(menu::action(title, move || bookmarks::fetch(&t)));
     items.push(Item::Separator);
-    let p = path.to_owned();
-    let favorite = bookmark.as_ref().is_some_and(|b| b.favorite);
+    // 選んだ行すべてを、押した行と逆の側にそろえる（Fetch・Group・Color Label と同じく、選んだ行に効く。macOS 版と同じ）。
+    let t = targets.to_vec();
+    let favorite = !bookmark.as_ref().is_some_and(|b| b.favorite);
     items.push(menu::action(
         if favorite {
-            tr!("Remove from Favorites")
-        } else {
             tr!("Add to Favorites")
+        } else {
+            tr!("Remove from Favorites")
         },
-        move || bookmarks::toggle_favorite(&p),
+        move || {
+            for p in &t {
+                if bookmarks::bookmark(p).is_some_and(|b| b.favorite) != favorite {
+                    bookmarks::toggle_favorite(p);
+                }
+            }
+        },
     ));
     let mut groups = Vec::new();
     let t = targets.to_vec();
