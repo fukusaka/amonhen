@@ -207,9 +207,18 @@ impl Search {
         icon.set(crate::icon::Kind::Search, false);
         toggle.set_child(Some(&icon));
         toggle.set_tooltip_text(Some(&tr!("Search History (Ctrl+F)")));
+        // ボタンを切っても、欄が見えていない（ほかの画面にいる）ときは欄を閉じない。`install` の clicked が History に
+        // 移る（閉じると問い合わせ・一致・絞り込みが消える。macOS 版の検索欄はそのまま History で探す）。
         bar.bind_property("search-mode-enabled", &toggle, "active")
             .bidirectional()
             .sync_create()
+            .transform_from(|binding, active: bool| {
+                let shown = binding.source().is_some_and(|bar| {
+                    bar.downcast_ref::<gtk::Widget>()
+                        .is_some_and(|b| b.is_mapped())
+                });
+                (active || shown).then_some(active)
+            })
             .build();
 
         let inner = Rc::new(Inner {
@@ -296,11 +305,13 @@ impl Search {
             self.bar.clone(),
             self.inner.entry.clone(),
         );
-        self.toggle.connect_clicked(move |_| {
+        self.toggle.connect_clicked(move |toggle| {
             if !bar.is_mapped()
-                && !bar.is_search_mode()
+                && !toggle.is_active()
                 && let Some(group) = g.upgrade()
             {
+                // 欄は開いたまま（上の bind_property が閉じない）。ボタンを戻して History に移る。
+                toggle.set_active(true);
                 bar.set_search_mode(true);
                 group.activate_action("show-history", None);
                 entry.grab_focus();
