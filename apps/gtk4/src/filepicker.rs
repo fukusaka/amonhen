@@ -1470,8 +1470,21 @@ impl Picker {
             p.select(index, name);
         });
         // ダブルクリック・Enter: その行が選べるものなら、それを選んで決める（フォルダを選ぶときは、そのフォルダ）。
-        // 選べないが開くフォルダなら中に入る。薄いもの（選べず、開きもしない）では何もしない（macOS 版と同じ。
-        // 開いているフォルダで決めてしまわない）。
+        // 選べないが開くフォルダなら、Enter では中に入り、ダブルクリックでは何もしない（1 回目の押しで開いている。
+        // 中の最初のものを選ぶと、そのまま決められてしまう）。薄いもの（選べず、開きもしない）では何もしない
+        // （macOS 版と同じ。開いているフォルダで決めてしまわない）。
+        let double = Rc::new(Cell::new(false));
+        let clicks = gtk::GestureClick::new();
+        clicks.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let d = double.clone();
+        clicks.connect_pressed(move |_, n, _, _| {
+            if n >= 2 {
+                d.set(true);
+                let d = d.clone();
+                glib::idle_add_local_once(move || d.set(false));
+            }
+        });
+        list.add_controller(clicks);
         let (s, w) = (shown.clone(), Rc::downgrade(self));
         list.connect_activate(move |_, position| {
             let Some(p) = w.upgrade() else { return };
@@ -1488,7 +1501,7 @@ impl Picker {
                     p.select(index, Some(entry.name.clone()));
                 }
                 p.finish();
-            } else if p.opens(&entry) {
+            } else if p.opens(&entry) && !double.get() {
                 p.enter(index);
             }
         });
