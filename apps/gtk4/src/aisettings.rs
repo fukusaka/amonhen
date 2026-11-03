@@ -113,13 +113,8 @@ pub fn page() -> gtk::Widget {
             });
         }
     });
-    let scrolled = gtk::ScrolledWindow::builder()
-        .child(&column)
-        .hscrollbar_policy(gtk::PolicyType::Never)
-        .propagate_natural_height(true)
-        .max_content_height(640)
-        .build();
-    scrolled.upcast()
+    // スクロールは設定の窓のもの（macOS 版と同じく、ページ全体が窓と一緒にスクロールする）。
+    column.upcast()
 }
 
 /// 選んだ CLI の場所・モデル・言語。
