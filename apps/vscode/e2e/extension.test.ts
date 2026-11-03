@@ -478,11 +478,14 @@ async function worktreeFlow(): Promise<void> {
     assert.equal(existsSync(folder), false);
     assert.equal(git('branch', '--list', 'e2e-wt').trim(), 'e2e-wt');
 
-    // フォルダの消えた worktree は「folder is gone」と出て、Prune で片付く
+    // フォルダの消えた worktree は「folder is gone」と出て、Prune で片付く。git が prunable と言うのは 2.31 から
     git('worktree', 'add', '-q', '-b', 'e2e-gone', gone);
     rmSync(gone, { recursive: true, force: true });
-    await sidebar.worktrees.reload();
-    await until('folder is gone', () => /folder is gone/.test(String(row(gone)?.item.description)));
+    const [major, minor] = git('--version').match(/(\d+)\.(\d+)/)!.slice(1).map(Number) as [number, number];
+    if (major > 2 || (major === 2 && minor >= 31)) {
+      await sidebar.worktrees.reload();
+      await until('folder is gone', () => /folder is gone/.test(String(row(gone)?.item.description)));
+    }
     await vscode.commands.executeCommand('amonhen.worktree.prune');
     await until('片付く', () => !row(gone) && !git('worktree', 'list').includes('repo-e2e-gone'));
   } finally {
