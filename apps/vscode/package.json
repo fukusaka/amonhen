@@ -276,6 +276,11 @@
         "icon": "$(history)"
       },
       {
+        "command": "amonhen.blame",
+        "title": "Blame",
+        "category": "Amon Hen"
+      },
+      {
         "command": "amonhen.fileHistory.copyPath",
         "title": "Copy Path",
         "category": "Amon Hen"
@@ -976,6 +981,10 @@
           "when": "false"
         },
         {
+          "command": "amonhen.blame",
+          "when": "amonhen.hasRepository && amonhen.engine"
+        },
+        {
           "command": "amonhen.worktree.prune",
           "when": "amonhen.hasRepository && amonhen.engine"
         }
@@ -1023,7 +1032,7 @@
         },
         {
           "command": "amonhen.history.copyId",
-          "when": "webviewId == 'amonhen.main' && (webviewSection == 'commit' || webviewSection == 'reflog' || webviewSection == 'fileHistory')",
+          "when": "webviewId == 'amonhen.main' && (webviewSection == 'commit' || webviewSection == 'reflog' || webviewSection == 'fileHistory' || webviewSection == 'blame')",
           "group": "9_copy@1"
         },
         {
@@ -1078,8 +1087,13 @@
         },
         {
           "command": "amonhen.reflog.showInHistory",
-          "when": "webviewId == 'amonhen.main' && webviewSection == 'fileHistory'",
+          "when": "webviewId == 'amonhen.main' && (webviewSection == 'fileHistory' || webviewSection == 'blame')",
           "group": "1_show@1"
+        },
+        {
+          "command": "amonhen.blame",
+          "when": "webviewId == 'amonhen.main' && (webviewSection == 'commitFile' || webviewSection == 'wcFile' || webviewSection == 'fileHistory') && amonhen.engine",
+          "group": "1_file@2"
         },
         {
           "command": "amonhen.fileHistory.copyPath",
@@ -1088,7 +1102,7 @@
         },
         {
           "command": "amonhen.fileHistory",
-          "when": "webviewId == 'amonhen.main' && (webviewSection == 'commitFile' || webviewSection == 'wcFile') && amonhen.engine",
+          "when": "webviewId == 'amonhen.main' && (webviewSection == 'commitFile' || webviewSection == 'wcFile' || webviewSection == 'blame') && amonhen.engine",
           "group": "1_file@1"
         },
         {
@@ -1102,6 +1116,11 @@
           "command": "amonhen.fileHistory",
           "when": "resourceScheme == file && amonhen.hasRepository && amonhen.engine",
           "group": "7_amonhen@1"
+        },
+        {
+          "command": "amonhen.blame",
+          "when": "resourceScheme == file && amonhen.hasRepository && amonhen.engine",
+          "group": "7_amonhen@2"
         }
       ],
       "explorer/context": [
@@ -1109,6 +1128,11 @@
           "command": "amonhen.fileHistory",
           "when": "!explorerResourceIsFolder && resourceScheme == file && amonhen.hasRepository && amonhen.engine",
           "group": "7_amonhen@1"
+        },
+        {
+          "command": "amonhen.blame",
+          "when": "!explorerResourceIsFolder && resourceScheme == file && amonhen.hasRepository && amonhen.engine",
+          "group": "7_amonhen@2"
         },
         {
           "command": "amonhen.applyPatch",

@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import type { RepositoryManager } from '../state/manager.ts';
 import type { Repository } from '../state/repository.ts';
 import type { HostMessage, ViewName, WebviewMessage } from '../view/protocol.ts';
+import { BlameController } from './blameController.ts';
 import { FileHistoryController } from './fileHistoryController.ts';
 import { HistoryController } from './historyController.ts';
 import { ReflogController } from './reflogController.ts';
@@ -21,6 +22,7 @@ export class MainPanel implements vscode.Disposable {
   readonly workingCopy: WorkingCopyController;
   readonly reflog: ReflogController;
   readonly fileHistory: FileHistoryController;
+  readonly blame: BlameController;
   private readonly panel: vscode.WebviewPanel;
   private readonly manager: RepositoryManager;
   private readonly disposables: vscode.Disposable[] = [];
@@ -67,6 +69,7 @@ export class MainPanel implements vscode.Disposable {
     this.workingCopy = new WorkingCopyController((m) => this.post(m));
     this.reflog = new ReflogController((m) => this.post(m));
     this.fileHistory = new FileHistoryController((m) => this.post(m));
+    this.blame = new BlameController((m) => this.post(m));
     panel.iconPath = vscode.Uri.joinPath(extensionUri, 'media', 'amonhen.svg');
     panel.webview.html = html(panel.webview, extensionUri);
     this.disposables.push(
@@ -74,6 +77,7 @@ export class MainPanel implements vscode.Disposable {
       this.workingCopy,
       this.reflog,
       this.fileHistory,
+      this.blame,
       panel.onDidDispose(() => this.dispose()),
       panel.webview.onDidReceiveMessage((m: WebviewMessage) => void this.onMessage(m).catch(showError)),
       manager.onDidChangeCurrent((r) => this.watch(r)),
@@ -105,6 +109,7 @@ export class MainPanel implements vscode.Disposable {
       this.workingCopy.setRepository(repo);
       this.reflog.setRepository(repo);
       this.fileHistory.setRepository(repo);
+      this.blame.setRepository(repo);
     }
   }
 
@@ -120,6 +125,7 @@ export class MainPanel implements vscode.Disposable {
         this.workingCopy.setRepository(this.repo);
         this.reflog.setRepository(this.repo);
         this.fileHistory.setRepository(this.repo);
+        this.blame.setRepository(this.repo);
         break;
       case 'view':
         break;
@@ -140,6 +146,10 @@ export class MainPanel implements vscode.Disposable {
       case 'fileHistoryLoad':
       case 'fileHistoryReveal':
         await this.fileHistory.handle(message);
+        break;
+      case 'blameLoad':
+      case 'blameReveal':
+        await this.blame.handle(message);
         break;
       default:
         await this.history.handle(message);

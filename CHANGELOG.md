@@ -763,6 +763,7 @@ First release.
   the extension works on. New Worktree…, Remove Worktree… and Prune Worktrees are in the sidebar and History menus.
 - File History, from a file's right-click or the Command Palette, lists the commits that changed it across renames,
   with the selected commit's diff of the file beside them. It needs the engine.
+- Blame, from the same menus, shows which commit last changed each line of the working tree or of a commit's version.
 
 #### Changed
 

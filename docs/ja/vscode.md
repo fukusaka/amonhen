@@ -217,7 +217,7 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 14. タグとリモートのメニュー、タグのリモートの印と署名の印
 - [x] 15. Worktrees
 - [x] 16. File History
-- [ ] 17. Blame
+- [x] 17. Blame
 - [ ] 18. アプリと同じブランチの並べ方、お気に入り、アーカイブ、複数選択、絞り込み
 - [ ] 19. History の署名の印、Go to HEAD・Parent・Child
 - [ ] 20. shallow clone の取り足し、partial clone の中身をすべて取る

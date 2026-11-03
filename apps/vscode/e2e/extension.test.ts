@@ -559,6 +559,63 @@ async function fileHistoryFlow(): Promise<void> {
   }
 }
 
+/**
+ * ファイルの右クリックの Blame で、各行を最後に変えたコミットが出る（まだコミットしていない行も）。作業中の変更で
+ * 読み直し、コミットの行からはそのコミットの内容を出し、行のコミットを History で選ぶ。コアの命令（daemon だけ）
+ */
+async function blameFlow(): Promise<void> {
+  const panel = await showView('amonhen.showHistory');
+  const start = git('rev-parse', 'HEAD').trim();
+  const file = join(root, 'bl.txt');
+  try {
+    writeFileSync(file, 'one\ntwo\n');
+    git('add', 'bl.txt');
+    git('commit', '-q', '-m', 'add bl');
+    const first = git('rev-parse', 'HEAD').trim();
+    writeFileSync(file, 'one\nTWO\nthree\n');
+    git('commit', '-q', '-a', '-m', 'change bl');
+    writeFileSync(file, 'one\nTWO\nthree\nfour\n');
+    await vscode.commands.executeCommand('amonhen.refresh');
+
+    // エクスプローラーの右クリック（Uri）から: 作業ツリーの内容
+    let mark = posted.length;
+    await vscode.commands.executeCommand('amonhen.blame', vscode.Uri.file(file));
+    const shown = await waitPosted('blame', mark, (m) => m.path === 'bl.txt' && !m.loading);
+    const by = (m: typeof shown) => m.lines.map((l) => [l.t, /^0+$/.test(m.commits[l.c]!.oid) ? '' : m.commits[l.c]!.summary]);
+    assert.equal(shown.rev, undefined);
+    assert.deepEqual(by(shown), [
+      ['one', 'add bl'],
+      ['TWO', 'change bl'],
+      ['three', 'change bl'],
+      ['four', ''],
+    ]);
+
+    // 作業中の変更で読み直す
+    mark = posted.length;
+    writeFileSync(file, 'one\nTWO\nthree\nfour\nfive\n');
+    await vscode.commands.executeCommand('amonhen.refresh');
+    await waitPosted('blame', mark, (m) => m.lines.length === 5);
+
+    // コミットの行（History の詳細など）から: そのコミットの内容
+    mark = posted.length;
+    await vscode.commands.executeCommand('amonhen.blame', { path: 'bl.txt', oid: first });
+    const old = await waitPosted('blame', mark, (m) => m.rev === first && !m.loading);
+    assert.deepEqual(by(old), [
+      ['one', 'add bl'],
+      ['two', 'add bl'],
+    ]);
+
+    // ダブルクリックで、そのコミットを History で選ぶ
+    mark = posted.length;
+    await panel.blame.handle({ type: 'blameReveal', oid: first });
+    await waitPosted('reveal', mark);
+  } finally {
+    rmSync(file, { force: true });
+    git('reset', '-q', '--hard', start);
+    await vscode.commands.executeCommand('amonhen.refresh');
+  }
+}
+
 /** showInputBox の代わり。呼ばれるたびに values を順に返す */
 function inputs(...values: string[]): () => Promise<string | undefined> {
   let i = 0;
@@ -1289,6 +1346,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('shows a file’s history across a rename through the daemon', async () => {
     await fileHistoryFlow();
+  });
+
+  test('blames a file in the working tree and at a commit through the daemon', async () => {
+    await blameFlow();
   });
 
   test('drops the selection of a file whose changes went away before its diff is read', async () => {
