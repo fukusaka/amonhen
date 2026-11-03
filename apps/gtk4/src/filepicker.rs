@@ -252,6 +252,28 @@ struct Entry {
     repository: bool,
 }
 
+/// 列の行のアイコン（種類, 強調の色か, 緑か）。macOS 版の `icon(_:)` と同じ分け方。
+fn entry_icon(e: &Entry) -> (crate::icon::Kind, bool, bool) {
+    use crate::icon::Kind;
+    if e.repository {
+        (Kind::Branch, false, true)
+    } else if e.folder {
+        (Kind::FolderFill, true, false)
+    } else if e.file {
+        (
+            if e.executable {
+                Kind::Terminal
+            } else {
+                Kind::Doc
+            },
+            false,
+            false,
+        )
+    } else {
+        (Kind::QuestionSquare, false, false)
+    }
+}
+
 /// フォルダの中身。
 struct Dir {
     path: String,
@@ -389,6 +411,8 @@ struct Picker {
     /// つなげなかったときの「接続を確認」（もう一度つなぐ。macOS 版と同じ）。
     retry: gtk::Button,
     spinner: gtk::Spinner,
+    /// つないでいる間に、列の所に出す印と言葉。
+    connecting: (gtk::Box, gtk::Spinner, gtk::Label),
     choose: gtk::Button,
     views: RefCell<Vec<Rc<ColumnView>>>,
     columns: RefCell<Vec<Column>>,
@@ -526,7 +550,11 @@ impl Picker {
         } else {
             "~/prj"
         }));
-        let home_button = gtk::Button::with_label("~");
+        // ホームは家のアイコン（macOS 版と同じ）。
+        let home_button = gtk::Button::new();
+        let house = crate::icon::Icon::default();
+        house.set(crate::icon::Kind::House, false);
+        home_button.set_child(Some(&house));
         home_button.set_tooltip_text(Some(&tr!("Home folder")));
         // リポジトリの木にはホームがない。
         home_button.set_visible(!tree);
@@ -560,7 +588,20 @@ impl Picker {
             .hexpand(true)
             .build();
         columns_scroll.add_css_class("frame");
-        content.append(&columns_scroll);
+        // つないでいる間は、列の所の真ん中に回る印と「〜につないでいます…」（macOS 版の ProgressView）。
+        let connecting_spinner = gtk::Spinner::new();
+        let connecting_label = gtk::Label::new(None);
+        connecting_label.add_css_class("dim-label");
+        let connecting = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        connecting.set_halign(gtk::Align::Center);
+        connecting.set_valign(gtk::Align::Center);
+        connecting.append(&connecting_spinner);
+        connecting.append(&connecting_label);
+        connecting.set_visible(false);
+        let columns_area = gtk::Overlay::new();
+        columns_area.set_child(Some(&columns_scroll));
+        columns_area.add_overlay(&connecting);
+        content.append(&columns_area);
         let status = gtk::Label::new(None);
         status.set_xalign(0.0);
         status.set_wrap(true);
@@ -631,6 +672,7 @@ impl Picker {
             typed: RefCell::default(),
             retry,
             spinner,
+            connecting: (connecting, connecting_spinner, connecting_label),
             choose,
             views: RefCell::default(),
             columns: RefCell::default(),
@@ -815,12 +857,13 @@ impl Picker {
         self.columns.borrow_mut().clear();
         self.sync(0);
         if host.is_empty() || host.contains('/') || host.contains(char::is_whitespace) {
+            self.show_connecting(None);
             self.set_status(Some(tr!("Choose a host to see its folders.")), false);
             self.update_buttons();
             return;
         }
-        self.set_status(Some(tr!("Connecting to {host}…", host = host)), false);
-        self.spinner.set_spinning(true);
+        self.set_status(None, false);
+        self.show_connecting(Some(&host));
         self.update_buttons();
         let through = crate::settings::bool(crate::settings::OPEN_THROUGH_DAEMON);
         let location = format!("{}ssh://{host}", if through { "daemon:" } else { "" });
@@ -833,7 +876,7 @@ impl Picker {
             if p.attempt.get() != attempt {
                 return;
             }
-            p.spinner.set_spinning(false);
+            p.show_connecting(None);
             match result {
                 Ok(repo) => {
                     p.set_status(None, false);
@@ -857,6 +900,16 @@ impl Picker {
                 }
             }
         });
+    }
+
+    /// つないでいる間の印を `host` で出す（None なら消す）。
+    fn show_connecting(&self, host: Option<&str>) {
+        let (area, spinner, label) = &self.connecting;
+        if let Some(host) = host {
+            label.set_text(&tr!("Connecting to {host}…", host = host));
+        }
+        area.set_visible(host.is_some());
+        spinner.set_spinning(host.is_some());
     }
 
     fn set_status(&self, text: Option<String>, error: bool) {
@@ -1221,10 +1274,22 @@ impl Picker {
             name.set_xalign(0.0);
             name.set_hexpand(true);
             name.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+            name.set_hexpand(false);
+            // 種類のアイコン・名前・リンクの印・（開けるなら）右端の ›（macOS 版と同じ並び）。
+            let kind = crate::icon::Icon::default();
+            let link = gtk::Label::new(Some("↱"));
+            link.add_css_class("dim-label");
+            link.add_css_class("caption");
+            link.set_tooltip_text(Some(&tr!("Symbolic link")));
+            let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+            spacer.set_hexpand(true);
             let mark = gtk::Label::new(None);
             mark.add_css_class("dim-label");
-            let line = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+            let line = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+            line.append(&kind);
             line.append(&name);
+            line.append(&link);
+            line.append(&spacer);
             line.append(&mark);
             item.set_child(Some(&line));
             // いくつも選べるなら、Ctrl+クリックで選んだものに足す・外す（macOS 版の ⌘ クリック）。行の選びより先に受ける。
@@ -1250,8 +1315,16 @@ impl Picker {
             let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
             let Some(p) = w.upgrade() else { return };
             let Some(line) = item.child() else { return };
-            let (Some(name), Some(mark)) = (
-                line.first_child().and_downcast::<gtk::Label>(),
+            let kind = line.first_child().and_downcast::<crate::icon::Icon>();
+            let name = kind
+                .as_ref()
+                .and_then(|k| k.next_sibling())
+                .and_downcast::<gtk::Label>();
+            let link = name.as_ref().and_then(|n| n.next_sibling());
+            let (Some(kind), Some(name), Some(link), Some(mark)) = (
+                kind,
+                name,
+                link,
                 line.last_child().and_downcast::<gtk::Label>(),
             ) else {
                 return;
@@ -1273,21 +1346,23 @@ impl Picker {
             } else {
                 line.remove_css_class("picker-marked");
             }
-            name.set_markup(&if e.repository {
-                format!("<span foreground=\"#26a269\">{text}</span>")
-            } else if !usable {
+            name.set_markup(&if !usable {
                 format!("<span fgalpha=\"45%\">{text}</span>")
             } else {
                 text.to_string()
             });
-            let mut marks = String::new();
-            if e.link {
-                marks.push('↪');
+            // リポジトリは緑、フォルダは強調の色、ほかは薄く（macOS 版と同じ）。
+            let (icon, accent, green) = entry_icon(&e);
+            kind.set(icon, accent);
+            if green {
+                kind.add_css_class("success");
+            } else {
+                kind.remove_css_class("success");
             }
-            if p.opens(&e) {
-                marks.push('›');
-            }
-            mark.set_text(&marks);
+            kind.set_tooltip_text(e.repository.then(|| tr!("Git repository")).as_deref());
+            kind.set_opacity(if usable { 1.0 } else { 0.6 });
+            link.set_visible(e.link);
+            mark.set_text(if p.opens(&e) { "›" } else { "" });
             let tip = [
                 e.repository.then(|| tr!("Git repository")),
                 e.link.then(|| tr!("Symbolic link")),

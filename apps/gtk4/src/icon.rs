@@ -59,6 +59,12 @@ pub enum Kind {
     RangeDiff,
     /// arrow.up.arrow.down（上流より先・遅れ）
     UpDown,
+    /// folder.fill（パスを選ぶシートのフォルダ）
+    FolderFill,
+    /// apple.terminal（パスを選ぶシートの実行ファイル）
+    Terminal,
+    /// questionmark.square.dashed（パスを選ぶシートの、種類の分からないもの）
+    QuestionSquare,
     /// slider.horizontal.3（History の表示のメニュー）
     Sliders,
     /// location（Go to HEAD）
@@ -401,6 +407,51 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.line_to(13.5, 12.5);
             p.line_to(2.5, 12.5);
             p.close();
+        }
+        Kind::FolderFill => {
+            let solid = gsk::PathBuilder::new();
+            solid.move_to(2.5, 4.0);
+            solid.line_to(6.5, 4.0);
+            solid.line_to(8.0, 5.5);
+            solid.line_to(13.5, 5.5);
+            solid.line_to(13.5, 12.5);
+            solid.line_to(2.5, 12.5);
+            solid.close();
+            fill = Some(solid);
+        }
+        Kind::Terminal => {
+            // 角の丸い窓と、中の「>_」。
+            p.add_rounded_rect(&gsk::RoundedRect::from_rect(
+                graphene::Rect::new(2.0, 3.0, 12.0, 10.0),
+                1.8,
+            ));
+            p.move_to(4.6, 6.0);
+            p.line_to(6.6, 8.0);
+            p.line_to(4.6, 10.0);
+            p.move_to(8.0, 10.2);
+            p.line_to(11.0, 10.2);
+        }
+        Kind::QuestionSquare => {
+            // 点線の四角（辺ごとに 2 本）と、中の「?」。
+            for (x0, y0, x1, y1) in [
+                (3.0_f32, 2.5_f32, 7.0_f32, 2.5_f32),
+                (9.0, 2.5, 13.0, 2.5),
+                (13.5, 3.0, 13.5, 7.0),
+                (13.5, 9.0, 13.5, 13.0),
+                (13.0, 13.5, 9.0, 13.5),
+                (7.0, 13.5, 3.0, 13.5),
+                (2.5, 13.0, 2.5, 9.0),
+                (2.5, 7.0, 2.5, 3.0),
+            ] {
+                p.move_to(x0, y0);
+                p.line_to(x1, y1);
+            }
+            p.move_to(6.4, 6.6);
+            p.svg_arc_to(1.7, 1.7, 0.0, true, true, 8.5, 8.3);
+            p.line_to(8.0, 9.2);
+            let dot = gsk::PathBuilder::new();
+            dot.add_circle(&point(8.0, 11.2), 0.75);
+            fill = Some(dot);
         }
         Kind::Fetch | Kind::Pull | Kind::Push => {
             p.add_circle(&point(8.0, 8.0), 6.3);
