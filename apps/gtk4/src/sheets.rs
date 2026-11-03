@@ -45,6 +45,8 @@ pub struct Sheet {
     left: gtk::Box,
     tx: async_channel::Sender<Response>,
     rx: async_channel::Receiver<Response>,
+    /// 答えた後も窓を壊さずに隠す（[`Sheet::reusable`]）。
+    reuse: Rc<std::cell::Cell<bool>>,
 }
 
 thread_local! {
@@ -160,7 +162,15 @@ impl Sheet {
             left,
             tx,
             rx,
+            reuse: Rc::default(),
         }
+    }
+
+    /// 答えた後も窓を隠すだけにして、[`Sheet::ask`] でもう一度出せるようにする（入れたものを残して聞き直す。
+    /// 終えたら呼ぶ側が `window.destroy()` する）。
+    pub fn reusable(&self) {
+        self.reuse.set(true);
+        self.window.set_hide_on_close(true);
     }
 
     /// 大きさを変えられる、広いシートにする（中身を見せるもの。Push のシートなど）。
@@ -186,11 +196,15 @@ impl Sheet {
             Some(Style::Destructive) => button.add_css_class("destructive-action"),
             None => {}
         }
-        let (tx, w) = (self.tx.clone(), self.window.downgrade());
+        let (tx, w, reuse) = (self.tx.clone(), self.window.downgrade(), self.reuse.clone());
         button.connect_clicked(move |_| {
             let _ = tx.try_send(response);
             if let Some(w) = w.upgrade() {
-                w.destroy();
+                if reuse.get() {
+                    w.set_visible(false);
+                } else {
+                    w.destroy();
+                }
             }
         });
         self.buttons.append(&button);
@@ -228,6 +242,11 @@ impl Sheet {
 
     /// 出して、答えを待つ。
     pub async fn run(self) -> Response {
+        self.ask().await
+    }
+
+    /// 出して、答えを待つ（[`Sheet::reusable`] なら、答えた後にもう一度呼べる）。
+    pub async fn ask(&self) -> Response {
         self.window.present();
         // 最初の入力がボタンの列に来たら（欄のないシート）、既定のボタンに移す: Return で既定の操作になる（macOS 版の
         // シートと同じ。GTK は並びの最初の Cancel に入力を置くので、そのままだと Return で取り消しになる）。

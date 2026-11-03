@@ -769,38 +769,46 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
         });
         sheet.buttons("Clone", false, None);
         url.grab_focus();
-        if sheet.run().await != Response::Ok {
-            return;
-        }
-        update();
-        let from_bundle = bundle.borrow().is_some();
-        let mut source = url.text().trim().to_owned();
-        if from_bundle {
-            source = expand_tilde(&source).to_string_lossy().into_owned();
-        }
-        let folder_name = match name.text().trim() {
-            "" => name_from_url(&source),
-            n => n.to_owned(),
+        // 置き場所がもうあれば、そう言ってからシートに戻る（入れたものは残す。macOS 版と同じ）。
+        sheet.reusable();
+        let (source, from_bundle, parent_dir, dest) = loop {
+            if sheet.ask().await != Response::Ok {
+                sheet.window.destroy();
+                return;
+            }
+            update();
+            let from_bundle = bundle.borrow().is_some();
+            let mut source = url.text().trim().to_owned();
+            if from_bundle {
+                source = expand_tilde(&source).to_string_lossy().into_owned();
+            }
+            let folder_name = match name.text().trim() {
+                "" => name_from_url(&source),
+                n => n.to_owned(),
+            };
+            let parent_dir = folder.text().trim().to_owned();
+            if source.is_empty() || folder_name.is_empty() || parent_dir.is_empty() {
+                sheet.window.destroy();
+                parent.error_bell();
+                return;
+            }
+            let parent_dir = expand_tilde(&parent_dir);
+            let dest = parent_dir.join(&folder_name);
+            if dest.exists() {
+                crate::sheets::inform(
+                    Some(&parent),
+                    &tr!(
+                        "{path} already exists",
+                        path = crate::bookmarks::tilde(&dest.to_string_lossy())
+                    ),
+                    &tr!("Choose a different name or location."),
+                )
+                .await;
+                continue;
+            }
+            break (source, from_bundle, parent_dir, dest);
         };
-        let parent_dir = folder.text().trim().to_owned();
-        if source.is_empty() || folder_name.is_empty() || parent_dir.is_empty() {
-            parent.error_bell();
-            return;
-        }
-        let parent_dir = expand_tilde(&parent_dir);
-        let dest = parent_dir.join(&folder_name);
-        if dest.exists() {
-            crate::sheets::inform(
-                Some(&parent),
-                &tr!(
-                    "{path} already exists",
-                    path = crate::bookmarks::tilde(&dest.to_string_lossy())
-                ),
-                &tr!("Choose a different name or location."),
-            )
-            .await;
-            return;
-        }
+        sheet.window.destroy();
         crate::settings::set_string(CLONE_FOLDER, &parent_dir.to_string_lossy());
         let choice = if from_bundle {
             Download::Everything
