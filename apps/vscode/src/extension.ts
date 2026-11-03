@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { setDaemonLanguage } from './daemon/client.ts';
 import { daemonPath, disposeDaemonClients, initDaemon } from './daemon/connection.ts';
 import { RepositoryManager } from './state/manager.ts';
+import { registerBranchArrangeCommands } from './ui/branchArrangeCommands.ts';
 import { registerBranchCommands } from './ui/branchCommands.ts';
 import { registerContentProvider } from './ui/content.ts';
 import { registerRangeDiffCommands } from './ui/rangeDiff.ts';
@@ -91,6 +92,7 @@ export async function activate(
     registerReflogCommands(manager),
     registerTagCommands(manager, sidebar),
     registerWorktreeCommands(manager, sidebar),
+    registerBranchArrangeCommands(manager, sidebar),
     registerFileToolCommands(manager, (target) => show(target)),
     // エンジンを使えるときだけ出すもの（Reflog・Reset、タグとリモートのメニュー、worktree）
     vscode.workspace.onDidChangeConfiguration((e) => e.affectsConfiguration('amonhen.daemon') && void updateEngine()),

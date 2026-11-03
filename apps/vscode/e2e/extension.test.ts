@@ -619,6 +619,94 @@ async function blameFlow(): Promise<void> {
   }
 }
 
+/**
+ * エンジンがあれば Branches がアプリと同じ並びになる: 90 日コミットのないブランチは Inactive、アーカイブしたものは
+ * Archived に畳まれ、お気に入りは ★ で上に並ぶ（順を変えられる）。どれも git の設定に書く（daemon だけ）
+ */
+async function branchArrangeFlow(): Promise<void> {
+  const sidebar = api.sidebar;
+  const section = sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'branches')!;
+  /** Branches の中のブランチの名前を、入れ子・グループごとに */
+  const shape = (nodes = sidebar.getChildren(section)): unknown[] =>
+    nodes.map((n) =>
+      n.kind === 'branch'
+        ? n.stack?.length
+          ? [n.label, shape(sidebar.getChildren(n))]
+          : n.label
+        : n.kind === 'branchGroup'
+          ? { [n.key]: shape(sidebar.getChildren(n)) }
+          : n.kind === 'branchFolder'
+            ? { [`${n.label}/`]: shape(sidebar.getChildren(n)) }
+            : n.kind,
+    );
+  const node = (name: string) => {
+    const find = (nodes: ReturnType<typeof sidebar.getChildren>): ReturnType<typeof sidebar.getChildren>[number] | undefined => {
+      for (const n of nodes) {
+        if (n.kind === 'branch' && n.ref.name === `refs/heads/${name}`) return n;
+        const inner = n.kind === 'branch' || n.kind === 'branchGroup' || n.kind === 'branchFolder' ? find(sidebar.getChildren(n)) : undefined;
+        if (inner) return inner;
+      }
+      return undefined;
+    };
+    return find(sidebar.getChildren(section))!;
+  };
+  const config = (key: string) => {
+    try {
+      return git('config', key).trim();
+    } catch {
+      return undefined;
+    }
+  };
+  const settle = async () => {
+    await vscode.commands.executeCommand('amonhen.refresh');
+    await sidebar.branchFacts.reload();
+  };
+  const names = ['arr-old', 'arr-a', 'arr-b', 'arr-arch'];
+  const head = git('rev-parse', 'HEAD').trim();
+  try {
+    // 200 日前のコミットだけのブランチ
+    const old = new Date(Date.now() - 200 * 86_400_000).toISOString();
+    const tree = git('rev-parse', 'HEAD^{tree}').trim();
+    const commit = childProcess
+      .execFileSync('git', ['commit-tree', tree, '-p', head, '-m', 'old work'], {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, GIT_AUTHOR_DATE: old, GIT_COMMITTER_DATE: old },
+      })
+      .trim();
+    git('branch', 'arr-old', commit);
+    for (const b of ['arr-a', 'arr-b', 'arr-arch']) git('branch', b, head);
+    await settle();
+    await until('Inactive', () => JSON.stringify(shape()).includes('{"inactive":["arr-old"'));
+
+    // アーカイブすると Archived に移り、戻すと元の場所に戻る
+    await vscode.commands.executeCommand('amonhen.branch.archive', node('arr-arch'));
+    assert.equal(config('branch.arr-arch.amonhenArchived'), 'true');
+    await until('Archived', () => JSON.stringify(shape()).includes('{"archived":["arr-arch"]}'));
+    assert.match(String(sidebar.getTreeItem(node('arr-arch')).contextValue), /;archived/);
+    await vscode.commands.executeCommand('amonhen.branch.unarchive', node('arr-arch'));
+    assert.equal(config('branch.arr-arch.amonhenArchived'), undefined);
+    await until('Archived が消える', () => !JSON.stringify(shape()).includes('archived'));
+
+    // お気に入りは ★ で一番上に、足した順に並び、順を変えられる。いくつも選んでもよい
+    await vscode.commands.executeCommand('amonhen.branch.addToFavorites', node('arr-b'), [node('arr-b'), node('arr-a')]);
+    assert.deepEqual([config('branch.arr-b.amonhenPinned'), config('branch.arr-a.amonhenPinned')], ['1', '2']);
+    await until('お気に入り', () => {
+      const top = shape().slice(0, 2);
+      return JSON.stringify(top) === JSON.stringify(['arr-b', 'arr-a']);
+    });
+    assert.equal((sidebar.getTreeItem(node('arr-a')).iconPath as vscode.ThemeIcon).id, 'star-full');
+    await vscode.commands.executeCommand('amonhen.branch.favoriteUp', node('arr-a'));
+    await until('並べ替え', () => JSON.stringify(shape().slice(0, 2)) === JSON.stringify(['arr-a', 'arr-b']));
+    await vscode.commands.executeCommand('amonhen.branch.removeFromFavorites', node('arr-a'), [node('arr-a'), node('arr-b')]);
+    assert.deepEqual([config('branch.arr-a.amonhenPinned'), config('branch.arr-b.amonhenPinned')], [undefined, undefined]);
+    await until('お気に入りが消える', () => (sidebar.getTreeItem(node('arr-a')).iconPath as vscode.ThemeIcon).id === 'git-branch');
+  } finally {
+    for (const b of names) if (git('branch', '--list', b).trim()) git('branch', '-D', b);
+    await settle();
+  }
+}
+
 /** showInputBox の代わり。呼ばれるたびに values を順に返す */
 function inputs(...values: string[]): () => Promise<string | undefined> {
   let i = 0;
@@ -1354,6 +1442,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('blames a file in the working tree and at a commit through the daemon', async () => {
     await blameFlow();
+  });
+
+  test('arranges branches with favorites, Inactive and Archived through the daemon', async () => {
+    await branchArrangeFlow();
   });
 
   test('drops the selection of a file whose changes went away before its diff is read', async () => {

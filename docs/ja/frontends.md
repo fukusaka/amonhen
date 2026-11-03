@@ -33,10 +33,10 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| Branches の並び（今のもの・活発・止まった・マージ済み・アーカイブ・積み重ね） | ✓ | ✓ | △ | △ | VSCode: `/` で分けたフォルダーの木だけ。<br>CLI: `amonhen run`（`branchGroups`）から。 |
-| お気に入りのブランチ | ✓ | ✓ | — | — |  |
-| ブランチのアーカイブ | ✓ | ✓ | — | — |  |
-| お気に入りをドラッグで並べ替える | ✓ | ✓ | — | n/a | GTK4: お気に入りの行の上 3 分の 1 か下 3 分の 1 に落とす。真ん中なら Merge・Rebase。 |
+| Branches の並び（今のもの・活発・止まった・マージ済み・アーカイブ・積み重ね） | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。なければ `/` で分けたフォルダーの木。<br>CLI: `amonhen run`（`branchGroups`）から。 |
+| お気に入りのブランチ | ✓ | ✓ | ✓ | — |  |
+| ブランチのアーカイブ | ✓ | ✓ | ✓ | — |  |
+| お気に入りをドラッグで並べ替える | ✓ | ✓ | △ | n/a | GTK4: お気に入りの行の上 3 分の 1 か下 3 分の 1 に落とす。真ん中なら Merge・Rebase。<br>VSCode: メニューの Move Up・Move Down in Favorites（ブランチに落とすと Merge・Rebase）。 |
 | ブランチのメニュー: checkout・名前の変更・削除（未マージは Delete Anyway） | ✓ | ✓ | ✓ | △ | macOS: Set Upstream は Repository メニューだけ。<br>GTK4: Set Upstream は Repository メニューだけ。<br>CLI: `amonhen run` から。 |
 | checkout していないブランチの同期（Fast-Forward・Push・Publish） | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | タグの一覧 | ✓ | ✓ | ✓ | ✓ |  |

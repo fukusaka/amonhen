@@ -764,6 +764,8 @@ First release.
 - File History, from a file's right-click or the Command Palette, lists the commits that changed it across renames,
   with the selected commit's diff of the file beside them. It needs the engine.
 - Blame, from the same menus, shows which commit last changed each line of the working tree or of a commit's version.
+- With the engine, Branches are arranged as in the app (favorites, the current stack, newest first, Inactive,
+  Archived, stacked branches nested), and favorites and archiving are on a branch's menu, shared with the app.
 
 #### Changed
 
