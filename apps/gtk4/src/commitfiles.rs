@@ -881,9 +881,8 @@ impl Inner {
         let weak = Rc::downgrade(this);
         this.diff.connect_file_menu(move |file, path, x, y| {
             let Some(this) = weak.upgrade() else { return };
-            // 文字を選んでいれば、先頭に Copy。
-            let mut items = this.diff.copy_items();
-            items.extend(match file {
+            // 文字のコピーは Ctrl+C で（メニューには出さない。macOS 版と同じ）。
+            let items = match file {
                 // 見出しの上: 畳む・Viewed・Blame・パスのコピーなど。
                 Some(file) => Inner::menu_items(&this, Some(file), Some(y)),
                 // 差分の行の上: AI でこの hunk を解説だけ（持ち主が作る。macOS 版と同じ）。
@@ -893,7 +892,7 @@ impl Inner {
                     .clone()
                     .map(|f| f(path, Some(y), true, true))
                     .unwrap_or_default(),
-            });
+            };
             // AI がなく文字も選んでいなければ、メニューは出さない（macOS 版と同じ）。
             if !items.is_empty() {
                 menu::popup(&this.diff, x, y, items);
@@ -904,16 +903,15 @@ impl Inner {
         let weak = Rc::downgrade(this);
         this.diff.connect_row_menu(move |_, x, y| {
             let Some(this) = weak.upgrade() else { return };
-            let mut items = this.diff.copy_items();
-            if let Some(path) = this.single_path() {
-                items.extend(
+            let items = this
+                .single_path()
+                .and_then(|path| {
                     this.file_items
                         .borrow()
                         .clone()
                         .map(|f| f(&path, Some(y), true, true))
-                        .unwrap_or_default(),
-                );
-            }
+                })
+                .unwrap_or_default();
             if !items.is_empty() {
                 menu::popup(&this.diff, x, y, items);
             }

@@ -820,12 +820,11 @@ impl Inner {
                 this.update_buttons();
             }
         });
-        // 差分の行の右クリック: 選んだ行のコピー、AI でこの hunk を解説。
+        // 差分の行の右クリック: AI でこの hunk を解説だけ（コピーは Ctrl+C。macOS 版と同じ）。
         let weak = Rc::downgrade(this);
         this.diff.connect_row_menu(move |row, x, y| {
             let Some(this) = weak.upgrade() else { return };
-            let mut items = this.diff.copy_items();
-            items.extend(this.hunk_item(row));
+            let items: Vec<_> = this.hunk_item(row).into_iter().collect();
             if !items.is_empty() {
                 crate::menu::popup(&this.diff, x, y, items);
             }

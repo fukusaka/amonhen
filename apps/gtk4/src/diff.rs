@@ -667,13 +667,8 @@ impl DiffWidget {
             rows_f(index as usize, x, y);
             return;
         }
+        // 右クリックのメニューを持ち主が作らない差分では、何も出さない（コピーは Ctrl+C。macOS 版と同じ）。
         let (Some(view), Some(f)) = (view, f) else {
-            // 右クリックのメニューを持ち主が作らない差分では、Copy だけ。
-            let mut items = self.copy_items();
-            if !items.is_empty() {
-                items.pop();
-                crate::menu::popup(self, x, y, items);
-            }
             return;
         };
         if index < 0.0 {
@@ -1265,22 +1260,6 @@ impl DiffWidget {
             }
             None => false,
         }
-    }
-
-    /// 右クリックのメニューの先頭に置く Copy（文字か行を選んでいるときだけ）。
-    pub fn copy_items(&self) -> Vec<crate::menu::Item> {
-        if self.selected_text().is_none() {
-            return Vec::new();
-        }
-        let weak = self.downgrade();
-        vec![
-            crate::menu::action(tr!("Copy"), move || {
-                if let Some(view) = weak.upgrade() {
-                    view.copy_selection();
-                }
-            }),
-            crate::menu::Item::Separator,
-        ]
     }
 
     /// Ctrl+A: すべての文字を選ぶ（Working Copy の行を選ぶ表示では、すべての変更の行）。
