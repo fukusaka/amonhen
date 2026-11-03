@@ -360,8 +360,8 @@ struct OrderList {
     on_reorder: RefCell<Option<Rc<dyn Fn()>>>,
 }
 
-/// 一覧の 1 行の高さ（6 行を超えるときだけスクロールする）。
-const ROW_HEIGHT: i32 = 34;
+/// 一覧の 1 行の高さ（6 行を超えるときだけスクロールする。macOS 版の 20 pt の行と、行の間の 2 pt）。
+const ROW_HEIGHT: i32 = 22;
 
 impl OrderList {
     fn new(sources: Vec<Source>) -> Rc<Self> {
@@ -451,18 +451,21 @@ impl OrderList {
         }
         let steps = self.steps.borrow().clone();
         for (i, source) in self.sources.borrow().iter().enumerate() {
+            // 名前の列（250）と見込みの列（残り）。macOS 版の表と同じ。
             let line = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-            line.set_margin_start(8);
-            line.set_margin_end(8);
-            line.set_height_request(ROW_HEIGHT - 6);
+            line.set_margin_start(6);
+            line.set_margin_end(6);
+            line.set_height_request(ROW_HEIGHT);
             let name = gtk::Label::new(Some(&format!("{}. {}", i + 1, source.rev)));
             name.set_xalign(0.0);
-            name.set_hexpand(true);
+            name.set_size_request(250 - 12, -1);
+            name.set_max_width_chars(1);
             name.set_ellipsize(gtk::pango::EllipsizeMode::End);
             line.append(&name);
             let forecast = gtk::Label::new(None);
-            forecast.set_xalign(1.0);
-            forecast.set_max_width_chars(24);
+            forecast.set_xalign(0.0);
+            forecast.set_hexpand(true);
+            forecast.set_max_width_chars(1);
             forecast.set_ellipsize(gtk::pango::EllipsizeMode::End);
             if let Some(files) = steps.as_ref().and_then(|s| s.get(i)) {
                 if files.is_empty() {
@@ -478,6 +481,11 @@ impl OrderList {
             let row = gtk::ListBoxRow::new();
             row.set_child(Some(&line));
             row.set_activatable(false);
+            // 行は詰めて、1 行おきに地の色を変える（macOS 版の `usesAlternatingRowBackgroundColors`）。
+            row.add_css_class("merge-order");
+            if i % 2 == 1 {
+                row.add_css_class("alternate");
+            }
             // ドラッグで並べ替える（持ち上げた行の番号を運ぶ）。
             let drag = gtk::DragSource::new();
             drag.set_actions(gdk::DragAction::MOVE);
@@ -546,7 +554,9 @@ fn install_css() {
     }
     let provider = gtk::CssProvider::new();
     provider.load_from_string(
-        "row.drop-above { box-shadow: inset 0 2px @accent_color; }\n\
+        "row.merge-order { min-height: 0; padding: 0; }\n\
+         row.merge-order.alternate { background-color: alpha(currentColor, 0.04); }\n\
+         row.drop-above { box-shadow: inset 0 2px @accent_color; }\n\
          row.drop-below { box-shadow: inset 0 -2px @accent_color; }",
     );
     if let Some(display) = gdk::Display::default() {
