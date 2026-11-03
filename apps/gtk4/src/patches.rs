@@ -239,13 +239,7 @@ pub fn apply(actions: &Rc<Actions>, mut paths: Vec<PathBuf>) {
                 Some(e) => e.to_owned(),
                 None => tr!("There are no changes in the patch."),
             };
-            let dialog = gtk::AlertDialog::builder()
-                .message(tr!("Can’t Read the Patch"))
-                .detail(detail)
-                .modal(true)
-                .build();
-            let window = actions.window();
-            let _ = dialog.choose_future(window.as_ref()).await;
+            actions.alert(&tr!("Can’t Read the Patch"), &detail).await;
             return;
         }
         confirm(&actions, summary, &patches, paths).await;

@@ -943,7 +943,7 @@ pub fn checkout_pull_request(actions: &Rc<Actions>, pr: &PullRequest) {
         .unwrap_or_else(|_| Err(String::new()));
         crate::activity::end();
         if let Err(e) = result {
-            crate::sheets::inform(window.as_ref(), &e, "").await;
+            crate::sheets::alert(window.as_ref(), &e, "").await;
         }
         // View > Refresh と同じく、プルリクエストと CI も間を空けずに読み直す（macOS 版の `refreshRepository`）。
         actions.reload();
@@ -1108,7 +1108,7 @@ pub fn create_pull_request(actions: &Rc<Actions>, branch: String, pushed: bool) 
                 }
             }
             // gh の文を見出しにして知らせる（macOS 版の NSAlert(error:)）。
-            Err(e) => crate::sheets::inform(window.as_ref(), &e, "").await,
+            Err(e) => crate::sheets::alert(window.as_ref(), &e, "").await,
         }
     });
 }

@@ -1017,6 +1017,13 @@ pub async fn inform(parent: Option<&gtk::Window>, title: &str, message: &str) {
     sheet.run().await;
 }
 
+/// 知らせる（ボタンは OK だけで、worktree は書かない。macOS 版の `NSAlert` を窓のシートで出すものと同じ）。
+pub async fn alert(parent: Option<&gtk::Window>, title: &str, message: &str) {
+    let sheet = Sheet::unnamed(parent, title, message);
+    sheet.button("OK", Response::Ok, Some(Style::Suggested));
+    sheet.run().await;
+}
+
 /// 確認の窓の親（操作の窓）。
 pub fn parent(actions: &Actions) -> Option<gtk::Window> {
     actions.window().map(|w| w.upcast())
