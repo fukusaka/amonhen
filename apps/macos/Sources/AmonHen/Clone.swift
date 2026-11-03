@@ -248,29 +248,45 @@ enum CloneSheet {
         alert.accessoryView = grid
         alert.window.initialFirstResponder = url
         // 窓のシートで聞く（ほかの窓は止めない）。閉じたら、選んだもので clone を始める。
-        let ended = { (response: NSApplication.ModalResponse) in
-            _ = (chooser, changed, depthTarget, bundleChooser)
-            NotificationCenter.default.removeObserver(typed)
-            guard response == .alertFirstButtonReturn else { return }
-            start()
+        func present() {
+            if let window { alert.beginSheetModal(for: window, completionHandler: ended) } else { ended(alert.runModal()) }
         }
-        if let window { alert.beginSheetModal(for: window, completionHandler: ended) } else { ended(alert.runModal()) }
+        func ended(_ response: NSApplication.ModalResponse) {
+            guard response == .alertFirstButtonReturn, !startOrAskAgain() else {
+                _ = (chooser, changed, depthTarget, bundleChooser)
+                NotificationCenter.default.removeObserver(typed)
+                return
+            }
+        }
+        present()
 
-        func start() {
+        /// clone を始める。置き場所がもうあれば、そう言ってからシートに戻り（入れたものは残す）、true を返す。
+        func startOrAskAgain() -> Bool {
             update()
             var source = url.stringValue.trimmingCharacters(in: .whitespaces)
             if bundle != nil { source = (source as NSString).expandingTildeInPath }
             let folderName = name.stringValue.trimmingCharacters(in: .whitespaces).isEmpty
                 ? Self.name(fromURL: source) : name.stringValue.trimmingCharacters(in: .whitespaces)
             let parent = (folder.stringValue.trimmingCharacters(in: .whitespaces) as NSString).expandingTildeInPath
-            guard !source.isEmpty, !folderName.isEmpty, !parent.isEmpty else { return NSSound.beep() }
+            guard !source.isEmpty, !folderName.isEmpty, !parent.isEmpty else {
+                NSSound.beep()
+                return false
+            }
             let dest = (parent as NSString).appendingPathComponent(folderName)
             if FileManager.default.fileExists(atPath: dest) {
                 let exists = NSAlert()
                 exists.messageText = L("%@ already exists", (dest as NSString).abbreviatingWithTildeInPath)
                 exists.informativeText = L("Choose a different name or location.")
-                exists.runModal()
-                return
+                // 閉じ終えたシートの後に出し、閉じたら Clone のシートに戻る。
+                DispatchQueue.main.async {
+                    if let window {
+                        exists.beginSheetModal(for: window) { _ in DispatchQueue.main.async { present() } }
+                    } else {
+                        exists.runModal()
+                        present()
+                    }
+                }
+                return true
             }
             UserDefaults.standard.set(parent, forKey: folderKey)
             let choice = bundle == nil ? (Download(rawValue: download.indexOfSelectedItem) ?? .everything) : .everything
@@ -279,6 +295,7 @@ enum CloneSheet {
                 sparse: sparse.isEnabled && sparse.state == .on,
                 branch: branch.isHidden ? nil : branch.titleOfSelectedItem, submodules: submodules.state == .on,
                 onCloned: onCloned)
+            return false
         }
     }
 

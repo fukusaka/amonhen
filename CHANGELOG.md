@@ -191,6 +191,7 @@ becomes the GitHub Release notes.
 - macOS: Save as Bundle's Save… is off while Only commits after: is chosen with an empty field; it quietly saved all
   history.
 - macOS: the password and passphrase dialog shows its buttons in the system language instead of always in English.
+- macOS: when the Clone destination already exists, the Clone sheet comes back with what you typed.
 
 ### [0.2.8] - 2026-10-30
 
