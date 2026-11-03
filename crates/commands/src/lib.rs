@@ -140,6 +140,8 @@ pub static COMMANDS: &[Command] = &[
     command("force-push", "Force Push…"),
     command("set-upstream", "Set Upstream…").localized(),
     command("add-remote", "Add Remote…").localized(),
+    command("add-submodule", "Add Submodule…").localized(),
+    command("update-submodules", "Update Submodules…"),
     command("create-pull-request", "Create Pull Request…").localized(),
     command("open-on-github", "Open on GitHub").localized(),
     // ブランチ・タグ・worktree
@@ -294,7 +296,13 @@ pub static SECTIONS: &[Section] = &[
     ),
     section(
         Menu::Repository,
-        &["new-worktree", "prune-worktrees", "add-remote"],
+        &[
+            "new-worktree",
+            "prune-worktrees",
+            "add-remote",
+            "add-submodule",
+            "update-submodules",
+        ],
     ),
     section(
         Menu::Repository,

@@ -2060,3 +2060,4 @@
 "Stage or discard the changes to .gitmodules first" = ".gitmodules の変更を先に stage するか取り消してください";
 "{path} isn’t a submodule" = "{path} は submodule ではありません";
 "Unknown submodule command: {command}" = "submodule の知らない命令です: {command}";
+"Add Submodule…" = "submodule を追加…";

@@ -272,6 +272,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         sidebar.onSelectWorktree = { [weak self] path in self?.edit(worktree: path) }
         sidebar.onWorktreeAction = { [weak self] path, action in self?.worktreeAction(path, action) }
         sidebar.onRemoteAction = { [weak self] name, action in self?.remoteAction(name, action) }
+        sidebar.onSubmoduleAction = { [weak self] path, action in self?.submoduleAction(path, action) }
         // ブランチ・タグを選ぶと、その履歴に絞り込む。
         sidebar.onSelect = { [weak self, weak history, weak detail] item in
             guard let history, let target = item.target else { return }
@@ -340,6 +341,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             guard slot === editing else { return }
             changeCount = count
             updateTabTitle()
+            reloadSubmodules()
         }
         slot.workingCopy.onBlame = { [weak self, weak slot] path in self?.openBlame(path: path, rev: nil, in: slot?.repository) }
         slot.workingCopy.issueCandidates = { [weak self] in await self?.issueCandidates() ?? [] }
@@ -653,6 +655,51 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     /// Repository > Add Remote…（サイドバーと設定のページと同じシート）。
     @objc func addRemote(_ sender: Any?) {
         remoteAction(nil, .add)
+    }
+
+    /// 最後に読んだ submodule の様子。
+    private var submodules: [SubmoduleState] = []
+
+    /// submodule の様子を裏で読み、サイドバーに出す（submodule がなければ読まない）。
+    private func reloadSubmodules() {
+        guard latestRefs?.items.contains(where: { $0.kind == .submodule }) == true || !submodules.isEmpty else { return }
+        let repository = self.repository
+        Task {
+            nonisolated struct Submodules: Decodable, Sendable { let submodules: [SubmoduleState] }
+            guard let list = await Task.detached(priority: .utility, operation: {
+                try? repository.info(["op": "submodules"], as: Submodules.self)
+            }).value?.submodules else { return }
+            submodules = list
+            sidebar.show(submodules: list)
+        }
+    }
+
+    private func submoduleAction(_ path: String?, _ action: SidebarViewController.SubmoduleAction) {
+        let perform: ([String: Any]) -> Void = { [weak self] command in
+            self?.actions.perform(command) { [weak self] _ in self?.reloadSubmodules() }
+        }
+        if action == .add { return SubmoduleSheet.add(in: window, perform: perform) }
+        if action == .update { return SubmoduleSheet.update(in: window, paths: path.map { [$0] } ?? [], perform: perform) }
+        if action == .sync { return perform(["op": "changeSubmodule", "change": ["kind": "sync", "recursive": true]]) }
+        guard let path else { return }
+        let submodule = submodules.first { $0.path == path }
+            ?? SubmoduleState(path: path, name: path, url: nil, branch: nil, initialized: true, moved: false, changed: false, conflict: false)
+        switch action {
+        case .setURL: SubmoduleSheet.setURL(in: window, submodule: submodule, perform: perform)
+        case .setBranch: SubmoduleSheet.setBranch(in: window, submodule: submodule, perform: perform)
+        case .remove: SubmoduleSheet.remove(in: window, submodule: submodule, perform: perform)
+        case .add, .update, .sync: break
+        }
+    }
+
+    /// Repository > Add Submodule…
+    @objc func addSubmodule(_ sender: Any?) {
+        submoduleAction(nil, .add)
+    }
+
+    /// Repository > Update Submodules…（すべての submodule を、選び方を決めて）。
+    @objc func updateSubmodules(_ sender: Any?) {
+        submoduleAction(nil, .update)
     }
 
     private func worktreeAction(_ path: String, _ action: SidebarViewController.WorktreeAction) {
@@ -1455,6 +1502,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 }
                 reloadBranchGroups()
                 reloadTagRemotes()
+                reloadSubmodules()
                 detail.reloadInfo()
                 updateSubtitle()
                 history.head = refs.head
@@ -2225,6 +2273,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         case #selector(popStash(_:)), #selector(showStashes(_:)): return latestStash != nil
         case #selector(undoOperation(_:)): return undoLabel != nil
         case #selector(goToHead(_:)): return latestRefs?.head != nil
+        case #selector(updateSubmodules(_:)): return latestRefs?.items.contains { $0.kind == .submodule } ?? false
         case #selector(switchBranch(_:)): return latestRefs != nil
         case #selector(renameBranch(_:)), #selector(setUpstream(_:)), #selector(compareWithPreviousVersion(_:)):
             return latestRefs?.headBranch != nil

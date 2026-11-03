@@ -145,6 +145,8 @@ enum CloneSheet {
         let sparse = NSButton(checkboxWithTitle: L("Check out only some folders"), target: nil, action: nil)
         let sparseHelp = helpLabel()
         var sparseUnavailable: String?
+        // submodule も取り出す（git の既定は取り出さない。あとからサイドバーの Submodules で取り出せる）。
+        let submodules = NSButton(checkboxWithTitle: L("Check out submodules too"), target: nil, action: nil)
         // bundle のファイルなら: 取得する範囲は選べない（git は中身をすべて写す）。HEAD がなければ取り出すブランチを選ぶ。
         let branch = NSPopUpButton(frame: .zero, pullsDown: false)
         let branchLabel = NSTextField(labelWithString: L("Branch:"))
@@ -214,6 +216,7 @@ enum CloneSheet {
         if preset.contains("contents") { download.selectItem(at: Download.contentsWhenNeeded.rawValue) }
         if preset.contains("history") { download.selectItem(at: Download.recentHistory.rawValue) }
         if preset.contains("sparse") { sparse.state = .on }
+        if preset.contains("submodules") { submodules.state = .on }
         update()
         // この Mac の git の版を裏で読み、古ければ止める（読めなければ使えるとみなす。clone のときにコアが確かめる）。
         Task {
@@ -230,6 +233,7 @@ enum CloneSheet {
             [NSGridCell.emptyContentView, downloadHelp],
             [NSGridCell.emptyContentView, sparse],
             [NSGridCell.emptyContentView, sparseHelp],
+            [NSGridCell.emptyContentView, submodules],
         ]
         let grid = NSGridView(views: rows)
         grid.column(at: 0).xPlacement = .trailing
@@ -263,7 +267,8 @@ enum CloneSheet {
         run(url: source, dest: dest, filter: choice == .contentsWhenNeeded ? "blob:none" : nil,
             depth: choice == .recentHistory ? depth.selectedTag() : nil,
             sparse: sparse.isEnabled && sparse.state == .on,
-            branch: branch.isHidden ? nil : branch.titleOfSelectedItem, onCloned: onCloned)
+            branch: branch.isHidden ? nil : branch.titleOfSelectedItem, submodules: submodules.state == .on,
+            onCloned: onCloned)
     }
 
     /// 選んだものの説明（小さく、薄く。2 行まで折り返す）。
@@ -286,14 +291,15 @@ enum CloneSheet {
     /// clone している間は、進み具合の小さなウィンドウを出す。`sparse` なら、clone の後で取り出すフォルダを選んで
     /// もらってから開く（取り消したら根のファイルだけのまま。フォルダは Settings の「取得とフォルダ」で足せる）。
     private static func run(url: String, dest: String, filter: String?, depth: Int?, sparse: Bool, branch: String?,
-                            onCloned: @escaping (String) -> Void) {
+                            submodules: Bool, onCloned: @escaping (String) -> Void) {
         let panel = progressPanel(L("Cloning %@…", url))
         RunningOperations.begin()
         Task {
             defer { RunningOperations.end() }
             do {
                 try await Task.detached(priority: .userInitiated) {
-                    try Repository.clone(url: url, to: dest, filter: filter, depth: depth, sparse: sparse, branch: branch)
+                    try Repository.clone(url: url, to: dest, filter: filter, depth: depth, sparse: sparse, branch: branch,
+                                         recurseSubmodules: submodules)
                 }.value
                 panel.close()
                 if sparse {
