@@ -60,6 +60,7 @@ usage: amonhen [<path>]
        amonhen apply [--index] [--3way] [--check] <file>…
        amonhen archive [--format zip|tar|tar.gz] [--prefix <dir>/] [-o <file>] [<rev>] [-- <path>…]
        amonhen bundle create [--json] <file> (--all | <ref>… [^<base>…] | <base>..<ref>)
+       amonhen bundle fetch [--json] <file> [<name>]
        amonhen clone [--filter=<spec>] [--depth <n>] [--sparse] [-b <branch>] <url> [<dir>]
        amonhen daemon [status [--json] | start | stop | rebuild [<path> | ssh://host/path]]
        amonhen install [--quiet] [--no-link] [--force]   (puts the engine in ~/.local/share/amonhen and links ~/.local/bin/amonhen)
@@ -105,6 +106,8 @@ clone the missing contents are fetched first, in one go.
 bundle create writes commits into one file that git can clone or fetch from (- for the standard output): --all for HEAD
 and every branch and tag, or the refs given, leaving out what <base> already has. A shallow clone refuses a bundle that
 needs history it hasn't fetched.
+bundle fetch puts the branches of a bundle under refs/remotes/<name>/ (the name is taken from the file otherwise),
+over SSH too; it says so when the repository lacks commits the bundle needs.
 clone --filter=blob:none fetches file contents only when they're needed (a partial clone), --depth <n> only the latest
 n commits (a shallow clone), and --sparse checks out only the top-level files (git 2.27 or later; choose folders with
 run '{\"op\":\"sparseCheckout\",\"folders\":[\"<dir>\"]}').

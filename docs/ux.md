@@ -673,6 +673,9 @@ the sidebar is wider.
 - Cloning: the Clone sheet's URL takes a bundle file (typed, or Choose Bundle…). The Download choice is off for a
   bundle, a bundle without HEAD shows Branch: to choose what to check out, and a bundle of only the commits after
   others is marked as one that can't be cloned.
+- Fetching: Repository > Fetch from Bundle… picks a bundle file, lists its branches and asks the name to fetch them
+  under (`refs/remotes/<name>/*`, from the file name by default; not an existing remote's). Tags aren't fetched. A
+  repository that lacks the commits the bundle builds on stops with the reason.
 
 ## 8. Resolving conflicts (the embedded merge editor)
 

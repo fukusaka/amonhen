@@ -161,6 +161,9 @@ pub static COMMANDS: &[Command] = &[
         .localized()
         .tip("Compare the current branch with its version before it was last rewritten (a rebase, History edit, amend or reset), like git range-diff"),
     command("apply-patch", "Apply Patch…").localized(),
+    command("fetch-bundle", "Fetch from Bundle…")
+        .localized()
+        .tip("Fetch the branches of a bundle file under a name of their own, as git fetch does"),
     command("save-bundle", "Save Repository as Bundle…")
         .localized()
         .tip("Save HEAD and every branch and tag in one file that git can clone or fetch from, like git bundle"),
@@ -301,6 +304,7 @@ pub static SECTIONS: &[Section] = &[
             "compare-with-previous",
             "apply-patch",
             "save-bundle",
+            "fetch-bundle",
         ],
     ),
     section(Menu::Repository, &["continue", "skip", "abort"]),

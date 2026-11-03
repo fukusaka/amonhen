@@ -172,6 +172,18 @@ pub enum Command {
         #[serde(default)]
         bases: Vec<String>,
     },
+    /// bundle のファイル `file`（この機械のもの）の見出しと、取り込めるか（`info.refs`: 入っているブランチ・タグ、
+    /// `info.head`、`info.prerequisites`: 前提のコミットの数、`info.missing`: そのうちこのリポジトリにないものの数、
+    /// `info.name`: 取り込む名前の候補（ファイルの名前から））。bundle でなければ断る。
+    BundleCheck {
+        file: String,
+    },
+    /// bundle のファイル `file`（この機械のもの）のブランチを `refs/remotes/<name>/*` に取り込む（`git fetch`。
+    /// タグは取らない）。SSH 先や daemon 越しでも、中身を送って取り込む。`info.refs`: 取り込んだ ref。
+    FetchBundle {
+        file: String,
+        name: String,
+    },
     /// パッチのファイル `paths`（並べた順につなぐ）の中身（`info`: `kind`（`mailbox` なら Am、`diff` なら
     /// ApplyPatch で当てる）・`patches`（subject・author・authorEmail・date・files（path・oldPath・added・removed・
     /// binary・status））・`applies`（今のリポジトリにそのまま当たるか。当たらなければ `error` に git の答え）・
@@ -2681,6 +2693,51 @@ impl Repository {
                         "more": preview.contents.more,
                         "beyondShallow": preview.beyond_shallow,
                     })),
+                    ..Default::default()
+                })
+            }
+            Command::BundleCheck { file } => {
+                let path = std::path::Path::new(&file);
+                let info = std::fs::File::open(path)
+                    .ok()
+                    .and_then(|f| amonhen_model::parse_bundle_header(std::io::BufReader::new(f)))
+                    .ok_or_else(|| tr!("{file} isn’t a bundle file", file = file))?;
+                let missing = ops.missing_commits(&info.prerequisite_ids)?;
+                let stem = path
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let name: String = stem
+                    .chars()
+                    .map(|c| {
+                        if c.is_alphanumeric() || matches!(c, '-' | '_' | '.') {
+                            c
+                        } else {
+                            '-'
+                        }
+                    })
+                    .collect::<String>()
+                    .trim_matches(|c| c == '-' || c == '.')
+                    .to_owned();
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::json!({
+                        "refs": info.refs,
+                        "head": info.head,
+                        "prerequisites": info.prerequisites,
+                        "missing": missing.len(),
+                        "name": if name.is_empty() { "bundle".to_owned() } else { name },
+                    })),
+                    ..Default::default()
+                })
+            }
+            Command::FetchBundle { file, name } => {
+                let data = std::fs::read(&file)
+                    .map_err(|e| tr!("Couldn’t read {file}: {error}", file = file, error = e))?;
+                let refs = ops.fetch_bundle(&data, name.trim())?;
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::json!({ "refs": refs })),
                     ..Default::default()
                 })
             }
@@ -6427,6 +6484,73 @@ mod tests {
             git(&tmp.path().join("copy"), &["show", "HEAD~2:a.txt"]),
             "1\n2\n3"
         );
+    }
+
+    #[test]
+    fn fetches_the_branches_of_a_bundle_under_a_name_of_its_own() {
+        let (src_tmp, src_repo) = setup();
+        let src = src_tmp.path();
+        commit_file(src, "b.txt", "second");
+        git(src, &["tag", "v1"]);
+        commit_file(src, "c.txt", "third");
+        let out = tempfile::tempdir().unwrap();
+        let file = out.path().join("from-usb.bundle");
+        let r = run(
+            &src_repo,
+            &serde_json::json!({"op": "bundle", "refs": ["refs/heads/main"], "bases": ["v1"], "file": file})
+                .to_string(),
+        );
+        assert_eq!(r["ok"], true, "{r}");
+        // v1 まで持っているリポジトリ（clone して main を v1 に戻した）。
+        git(out.path(), &["clone", "-q", src.to_str().unwrap(), "old"]);
+        let old = out.path().join("old");
+        git(&old, &["reset", "-q", "--hard", "v1"]);
+        let repo = Repository::new(GixBackend::open(&old).unwrap());
+        let call = |json: serde_json::Value| run(&repo, &json.to_string());
+        let check = call(serde_json::json!({"op": "bundleCheck", "file": file}));
+        assert_eq!(
+            check["info"]["refs"],
+            serde_json::json!(["refs/heads/main"]),
+            "{check}"
+        );
+        assert_eq!(check["info"]["prerequisites"], 1);
+        assert_eq!(check["info"]["missing"], 0);
+        assert_eq!(check["info"]["name"], "from-usb");
+
+        let r = call(serde_json::json!({"op": "fetchBundle", "file": file, "name": "usb"}));
+        assert_eq!(
+            r["info"]["refs"],
+            serde_json::json!(["refs/remotes/usb/main"]),
+            "{r}"
+        );
+        assert_eq!(
+            git(&old, &["log", "-1", "--format=%s", "usb/main"]),
+            "third"
+        );
+        // 使えない名前や、remote と同じ名前は断る（その remote の追跡ブランチを書き換えない）。
+        for name in ["origin", "a b", "", "x/y"] {
+            let r = call(serde_json::json!({"op": "fetchBundle", "file": file, "name": name}));
+            assert_eq!(r["ok"], false, "{name}: {r}");
+        }
+
+        // 前提のコミットを持っていないリポジトリ。
+        let (_empty_tmp, empty) = setup();
+        let check = run(
+            &empty,
+            &serde_json::json!({"op": "bundleCheck", "file": file}).to_string(),
+        );
+        assert_eq!(check["info"]["missing"], 1, "{check}");
+        let r = run(
+            &empty,
+            &serde_json::json!({"op": "fetchBundle", "file": file, "name": "usb"}).to_string(),
+        );
+        assert_eq!(r["ok"], false, "{r}");
+        // bundle でないファイル。
+        let r = run(
+            &empty,
+            &serde_json::json!({"op": "bundleCheck", "file": old.join("a.txt")}).to_string(),
+        );
+        assert_eq!(r["ok"], false, "{r}");
     }
 
     #[test]

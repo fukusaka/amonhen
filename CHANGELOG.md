@@ -42,6 +42,8 @@ becomes the GitHub Release notes.
   (`git bundle`), optionally only the commits after a base. `amonhen bundle create` does the same.
 - The Clone sheet clones from a bundle file (typed, or Choose Bundle…), choosing the branch to check out when the
   bundle has no HEAD. `amonhen clone` takes a bundle file and `-b`.
+- Fetch from Bundle… puts a bundle's branches under a name of their own, like a remote's, also into a repository on an
+  SSH host. `amonhen bundle fetch` does the same.
 
 #### Changed
 

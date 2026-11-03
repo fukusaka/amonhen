@@ -1675,6 +1675,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         actions.saveBundle(refs: [], names: [], label: "all")
     }
 
+    /// Repository > Fetch from Bundle…。
+    @objc func fetchBundle(_ sender: Any?) { actions.fetchFromBundle() }
+
     /// Repository > Apply Patch…。
     @objc func applyPatch(_ sender: Any?) { actions.chooseAndApplyPatches() }
 

@@ -1019,6 +1019,22 @@ impl Operations for RemoteOperations {
         self.op(Op::BundlePreview(options.clone(), limit))
     }
 
+    fn fetch_bundle(&self, bundle: &[u8], name: &str) -> Result<Vec<String>> {
+        // 要求は 1 つのフレームで送るので、それに収まらなければ送る前に断る（つながりを切らない）。
+        if bundle.len() as u64 + 4096 > u64::from(crate::frame::MAX_FRAME) {
+            return Err(tr!(
+                "The bundle is {size} MB, more than can be sent at once (1 GB). Copy it to where the repository is and fetch it there",
+                size = bundle.len() >> 20
+            )
+            .into());
+        }
+        self.op(Op::FetchBundle(Bytes(bundle.to_vec()), name.to_owned()))
+    }
+
+    fn missing_commits(&self, ids: &[String]) -> Result<Vec<String>> {
+        self.op(Op::MissingCommits(ids.to_vec()))
+    }
+
     fn am(&self, mbox: &[u8], three_way: Option<bool>) -> Result<Outcome> {
         self.op(Op::Am {
             mbox: Bytes(mbox.to_vec()),

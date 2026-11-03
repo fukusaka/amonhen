@@ -1748,3 +1748,13 @@
 "This bundle has only the commits after ones it doesn’t include, so it can’t be cloned." = "この bundle には、入っていないコミットより後のコミットしかないので、clone できません。";
 "From a bundle file, everything in it is copied." = "bundle のファイルからは、入っているものをすべて写します。";
 "Branch:" = "ブランチ:";
+"Fetch from Bundle…" = "bundle から取り込む…";
+"Fetch the branches of a bundle file under a name of their own, as git fetch does" = "bundle のファイルのブランチを、git fetch のように、それ用の名前の下に取り込む";
+"Fetch from Bundle" = "bundle から取り込む";
+"Choose a bundle file (git bundle) to fetch from." = "取り込む bundle のファイル（git bundle）を選んでください。";
+"Can’t Fetch the Bundle" = "bundle を取り込めません";
+"Nothing to Fetch" = "取り込むものがありません";
+"The bundle has no branches." = "この bundle にはブランチがありません。";
+"Name:" = "名前:";
+"This repository lacks %ld commits the bundle needs (it has only the commits after them)." = "bundle に要るコミットのうち %ld 個が、このリポジトリにありません（bundle にはそれより後のコミットしかありません）。";
+"%@ has %ld branches (%@). They are fetched under the name below, like a remote’s branches; tags aren’t fetched." = "%1$@ には %2$ld 個のブランチ（%3$@）があります。remote のブランチのように、下の名前の下に取り込みます。タグは取り込みません。";

@@ -548,6 +548,11 @@ pub trait Operations: Send + Sync {
     /// `options` の bundle に入るコミットの数と、取ってくる中身、shallow clone で作れないか。`limit` を超えたら中身を
     /// 数えるのをやめる。
     fn bundle_preview(&self, options: &Bundle, limit: usize) -> Result<BundlePreview>;
+    /// bundle の中身 `bundle` のブランチを `refs/remotes/<name>/*` に取り込む（`git fetch <bundle>`。タグは取らない）。
+    /// 取り込んだ ref（`refs/remotes/<name>/main` など）。`name` が使えない名前か、同じ名前の remote があれば断る。
+    fn fetch_bundle(&self, bundle: &[u8], name: &str) -> Result<Vec<String>>;
+    /// `ids`（16 進）のうち、このリポジトリにないコミット。
+    fn missing_commits(&self, ids: &[String]) -> Result<Vec<String>>;
     /// mbox のパッチを今のブランチにコミットとして当てる（`git am`）。`three_way` が `None` なら git の
     /// `am.threeWay` に任せる。当たらないパッチがあれば、そこで止まる（`Outcome::Conflict`）。
     fn am(&self, mbox: &[u8], three_way: Option<bool>) -> Result<Outcome>;

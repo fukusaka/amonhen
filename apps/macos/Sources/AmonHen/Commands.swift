@@ -74,6 +74,7 @@ enum Commands {
     static let savePatch = Command(CommandTable.savePatch, action: #selector(RepositoryWindow.savePatch(_:)))
     static let exportArchive = Command(CommandTable.exportArchive, action: #selector(RepositoryWindow.exportArchive(_:)))
     static let saveBundle = Command(CommandTable.saveBundle, action: #selector(RepositoryWindow.saveBundle(_:)))
+    static let fetchBundle = Command(CommandTable.fetchBundle, action: #selector(RepositoryWindow.fetchBundle(_:)))
     static let showWorkingCopy = Command(CommandTable.showWorkingCopy, action: #selector(RepositoryWindow.showWorkingCopy(_:)))
     static let showHistory = Command(CommandTable.showHistory, action: #selector(RepositoryWindow.showHistory(_:)))
     static let showStashes = Command(CommandTable.showStashes, action: #selector(RepositoryWindow.showStashes(_:)))
@@ -125,6 +126,7 @@ enum Commands {
         savePatch,
         exportArchive,
         saveBundle,
+        fetchBundle,
         showWorkingCopy,
         showHistory,
         showStashes,

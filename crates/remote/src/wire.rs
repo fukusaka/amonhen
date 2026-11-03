@@ -389,6 +389,10 @@ pub enum Op {
     Bundle(Bundle),
     /// → `BundlePreview`（入れるもの, 中身を数える上限）
     BundlePreview(Bundle, usize),
+    /// → `Vec<String>`（bundle の中身, 取り込む名前）
+    FetchBundle(Bytes, String),
+    /// → `Vec<String>`
+    MissingCommits(Vec<String>),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

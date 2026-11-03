@@ -27,8 +27,17 @@ fn split_revs(revs: &[String]) -> (Vec<String>, Vec<String>) {
 
 /// `amonhen bundle`。
 pub fn bundle(args: &[String]) -> Result<ExitCode> {
-    if args.first().map(String::as_str) != Some("create") {
-        return Err(format!("{}\n\n{}", tr!("Only bundle create is supported"), usage()).into());
+    match args.first().map(String::as_str) {
+        Some("create") => {}
+        Some("fetch") => return fetch(&args[1..]),
+        _ => {
+            return Err(format!(
+                "{}\n\n{}",
+                tr!("Use bundle create or bundle fetch"),
+                usage()
+            )
+            .into());
+        }
     }
     let mut dir = PathBuf::from(".");
     let mut json_out = false;
@@ -112,6 +121,64 @@ pub fn bundle(args: &[String]) -> Result<ExitCode> {
         let mut info = r["info"].clone();
         info["commits"] = preview["info"]["commits"].clone();
         println!("{info}");
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `amonhen bundle fetch [--json] <file> [<name>]`: bundle のブランチを `refs/remotes/<name>/*` に取り込む（name の
+/// 既定はファイルの名前から）。SSH 先のリポジトリにも、中身を送って取り込む。
+fn fetch(args: &[String]) -> Result<ExitCode> {
+    let mut dir = PathBuf::from(".");
+    let mut json_out = false;
+    let mut rest: Vec<String> = Vec::new();
+    let mut a = Args::new(args);
+    while let Some(arg) = a.rest.next() {
+        match arg.as_str() {
+            "-C" => dir = PathBuf::from(a.value("-C")?),
+            "--json" => json_out = true,
+            s if s.starts_with('-') && s.len() > 1 => {
+                return Err(format!(
+                    "{}\n\n{}",
+                    tr!("Unknown option: {option}", option = s),
+                    usage()
+                )
+                .into());
+            }
+            _ => rest.push(arg.clone()),
+        }
+    }
+    let (file, name) = match &rest[..] {
+        [file] => (file, None),
+        [file, name] => (file, Some(name.clone())),
+        _ => return Err(format!("{}\n\n{}", tr!("Give the bundle file"), usage()).into()),
+    };
+    let file = std::path::absolute(file)?.to_string_lossy().into_owned();
+    let front = open_repository(&dir)?;
+    let check = command(&*front, json!({"op": "bundleCheck", "file": file}))?;
+    let missing = check["info"]["missing"].as_u64().unwrap_or(0);
+    if missing > 0 {
+        return Err(tr!(
+            "This repository lacks {count} commits the bundle needs (it has only the commits after them)",
+            count = missing
+        )
+        .into());
+    }
+    let name = name.unwrap_or_else(|| {
+        check["info"]["name"]
+            .as_str()
+            .unwrap_or("bundle")
+            .to_owned()
+    });
+    let r = command(
+        &*front,
+        json!({"op": "fetchBundle", "file": file, "name": name}),
+    )?;
+    if json_out {
+        println!("{}", r["info"]);
+    } else {
+        for r in r["info"]["refs"].as_array().into_iter().flatten() {
+            println!("{}", r.as_str().unwrap_or_default());
+        }
     }
     Ok(ExitCode::SUCCESS)
 }

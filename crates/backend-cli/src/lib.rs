@@ -22,7 +22,8 @@ use std::time::{Duration, Instant};
 
 use amonhen_model::Result;
 
-pub use bundle::{BundleInfo, bundle_default_branch, bundle_info};
+pub use amonhen_model::BundleInfo;
+pub use bundle::{bundle_default_branch, bundle_info};
 pub use directory::expand_home;
 pub use programs::programs;
 pub use status::parse_status;

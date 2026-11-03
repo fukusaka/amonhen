@@ -114,3 +114,69 @@ extension Actions {
         return newer.state == .on && !base.isEmpty ? .some(base) : .some(nil)
     }
 }
+
+/// `bundleCheck` の答え。
+nonisolated private struct BundleCheck: Decodable, Sendable {
+    let refs: [String]
+    let missing: Int
+    let name: String
+}
+
+extension Actions {
+    /// Repository > Fetch from Bundle…: bundle のファイルを選び、そのブランチを `refs/remotes/<名前>/*` に取り込む
+    /// （タグは取らない）。要るコミットがなければ、そう言って止める。SSH 先のリポジトリにも、中身を送って取り込む。
+    func fetchFromBundle() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "bundle") ?? .data]
+        panel.canChooseDirectories = false
+        panel.message = L("Choose a bundle file (git bundle) to fetch from.")
+        guard panel.runModal() == .OK, let file = panel.url?.path else { return }
+        let repository = self.repository
+        Task {
+            let command: [String: Any] = ["op": "bundleCheck", "file": file]
+            let json: String
+            do { json = try Repository.json(command) } catch { return }
+            let checked = await Task.detached { Result { try repository.info(json: json, as: BundleCheck.self) } }.value
+            let check: BundleCheck
+            switch checked {
+            case let .success(c): check = c
+            case let .failure(error):
+                await fail(OperationFailure(error, command: command))
+                return
+            }
+            if check.missing > 0 {
+                await inform(L("Can’t Fetch the Bundle"),
+                             L("This repository lacks %ld commits the bundle needs (it has only the commits after them).", check.missing))
+                return
+            }
+            let branches = check.refs.filter { $0.hasPrefix("refs/heads/") }.map { String($0.dropFirst(11)) }
+            if branches.isEmpty {
+                await inform(L("Nothing to Fetch"), L("The bundle has no branches."))
+                return
+            }
+            guard let name = await askBundleName(file: file, branches: branches, suggested: check.name) else { return }
+            perform(["op": "fetchBundle", "file": file, "name": name])
+        }
+    }
+
+    /// 取り込む名前を尋ねる。キャンセルなら nil。
+    @MainActor
+    private func askBundleName(file: String, branches: [String], suggested: String) async -> String? {
+        let alert = NSAlert()
+        alert.messageText = L("Fetch from Bundle")
+        let shown = branches.prefix(5).joined(separator: ", ") + (branches.count > 5 ? ", …" : "")
+        alert.informativeText = L("%@ has %ld branches (%@). They are fetched under the name below, like a remote’s branches; tags aren’t fetched.",
+                                  (file as NSString).lastPathComponent, branches.count, shown)
+        alert.addButton(withTitle: L("Fetch"))
+        alert.addButton(withTitle: L("Cancel"))
+        let field = NSTextField(string: suggested)
+        field.widthAnchor.constraint(equalToConstant: 220).isActive = true
+        let row = NSStackView(views: [NSTextField(labelWithString: L("Name:")), field])
+        row.frame = NSRect(x: 0, y: 0, width: 300, height: 24)
+        alert.accessoryView = row
+        alert.window.initialFirstResponder = field
+        guard await present(alert) == .alertFirstButtonReturn else { return nil }
+        let name = field.stringValue.trimmingCharacters(in: .whitespaces)
+        return name.isEmpty ? nil : name
+    }
+}

@@ -492,6 +492,8 @@ fn handle_op(backend: &dyn GitBackend, op: Op, cancel: &AtomicBool) -> Result<Ve
             encode(&Bytes(data))
         }
         Op::BundlePreview(options, limit) => encode(&ops.bundle_preview(&options, limit)?),
+        Op::FetchBundle(bundle, name) => encode(&ops.fetch_bundle(&bundle.0, &name)?),
+        Op::MissingCommits(ids) => encode(&ops.missing_commits(&ids)?),
         Op::ArchiveContentsToFetch(rev, paths, limit) => {
             encode(&ops.archive_contents_to_fetch(&rev, &paths, limit)?)
         }
