@@ -282,7 +282,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| Three columns with bands (Current / Result / Incoming) | ✓ | ✓ | n/a | n/a | GTK4: The button row folds into two rows when Working Copy's pane is too narrow for one.<br>VSCode: VSCode's own 3-way merge editor. |
+| Three columns with bands (Current / Result / Incoming) | ✓ | ✓ | n/a | n/a | VSCode: VSCode's own 3-way merge editor. |
 | Show Base | ✓ | ✓ | n/a | n/a |  |
 | Magic Merge (and the safe rules when a file opens) | ✓ | ✓ | — | ✓ | CLI: `merge-file` (also as git's mergetool). |
 | Editable Result with undo per conflict | ✓ | ✓ | n/a | n/a |  |
