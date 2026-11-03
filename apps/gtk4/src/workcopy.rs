@@ -784,6 +784,8 @@ impl Inner {
                 Inner::rebuild_list(&this);
             }
         });
+        // Esc で絞り込みを消す（macOS 版の検索欄と同じ）。
+        this.filter.connect_stop_search(|entry| entry.set_text(""));
         let weak = Rc::downgrade(this);
         this.diff.connect_mark(move |rows| {
             let Some(this) = weak.upgrade() else { return };
