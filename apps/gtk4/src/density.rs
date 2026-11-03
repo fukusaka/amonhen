@@ -30,6 +30,8 @@ pub fn strip(view: &HistoryView) -> gtk::DrawingArea {
     area.set_tooltip_text(Some(&tr!(
         "Commit frequency (left) and branch activity (right). Click to jump there."
     )));
+    // 窓の地の色で塗ってから描く（macOS 版と同じ）。
+    area.add_css_class("background");
     let state: Rc<RefCell<State>> = Rc::default();
     let weak = view.downgrade();
     let st = state.clone();

@@ -36,8 +36,8 @@ const CI_SPACE: f32 = 18.0;
 const CHUNK_ROWS: u32 = 256;
 /// 持っておくチャンクの数（見えている所に近いものから）。
 const KEPT_CHUNKS: usize = 24;
-/// グラフの列の幅の上限。
-const GRAPH_WIDTH: f32 = 160.0;
+/// グラフの列の幅の上限（macOS 版の `GraphRenderer.Metrics.maxWidth`）。
+const GRAPH_WIDTH: f32 = 120.0;
 /// 文字の列の左右の余白。
 const TEXT_INSET: f32 = 8.0;
 /// 行ごとのグラフの右端と、件名などの間（macOS 版の `graphGap`）。
@@ -1649,8 +1649,8 @@ impl HistoryView {
             }
 
             // グラフ。列は見えているレーンの分だけ取り、スクロールで見えるレーンが変われば伸び縮みする（macOS 版と
-            // 同じ）。使えるのは上限まで（狭い窓では幅の 4 割まで）。
-            let max_graph = GRAPH_WIDTH.min(width * 0.4).max(40.0);
+            // 同じ）。使えるのは上限まで。
+            let max_graph = GRAPH_WIDTH;
             st.lanes
                 .update(&history, first..last, max_graph, &st.metrics, true);
             let graph_width = st.lanes.width();
@@ -1888,12 +1888,12 @@ impl HistoryView {
             parts.push(chunk.text(chunk.0.author_names[i]).to_owned());
         }
         if shown & items::DATE != 0 {
-            // 地域の書式（1 行では日付だけ。macOS 版と同じ）。
+            // 地域の書式（1 行では短い日付だけ、2 行では .medium の日付と時刻。macOS 版と同じ）。
             let time = chunk.0.author_times[i];
             parts.push(if compact {
                 crate::titles::date(time)
             } else {
-                crate::titles::date_time(time, false)
+                crate::titles::medium_date_time(time)
             });
         }
         if shown & items::ID != 0 {
@@ -2112,8 +2112,13 @@ fn label_colors(
     if label.worktree && label.head {
         return (gdk::RGBA::new(r, g, b, 0.85), gdk::RGBA::WHITE);
     }
+    // ほかの worktree が checkout しているブランチは、worktree の札より少し薄い（macOS 版と同じ）。
     if label.worktree || label.elsewhere {
-        let alpha = if selected { 0.45 } else { 0.25 };
+        let alpha = match (selected, label.worktree) {
+            (true, _) => 0.45,
+            (false, true) => 0.25,
+            (false, false) => 0.22,
+        };
         return (gdk::RGBA::new(r, g, b, alpha), ink);
     }
     let (r, g, b) = match label.kind {
