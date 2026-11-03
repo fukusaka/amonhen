@@ -38,13 +38,25 @@ pub struct CommitPane {
 
 impl CommitPane {
     pub fn new(pending: Rc<Cell<u32>>) -> Rc<Self> {
+        Self::build(pending, false)
+    }
+
+    /// Push のシートの右の欄（macOS 版の `isPreview`）: 見せ方は標準のままで切り替えを出さず（覚えている見せ方も
+    /// 変えない）、詳細を広げるボタンと AI の翻訳・解説も出さない。
+    pub fn preview(pending: Rc<Cell<u32>>) -> Rc<Self> {
+        Self::build(pending, true)
+    }
+
+    fn build(pending: Rc<Cell<u32>>, preview: bool) -> Rc<Self> {
         Rc::new_cyclic(|weak: &std::rc::Weak<Self>| {
             let current: crate::aiactions::CurrentRepo = {
                 let weak = weak.clone();
                 Rc::new(move || weak.upgrade().and_then(|p| p.repo.borrow().clone()))
             };
             let details = Rc::new(Details::new());
-            details.show_style_switch();
+            if !preview {
+                details.show_style_switch();
+            }
             let files = Rc::new(CommitDiff::new(pending.clone(), current.clone()));
             let root = gtk::Paned::new(gtk::Orientation::Vertical);
             root.set_start_child(Some(&details.root));
@@ -52,9 +64,13 @@ impl CommitPane {
             root.set_resize_start_child(false);
             root.set_position(170);
             // AI の翻訳・解説と、差分の中の検索・詳細を広げるボタン（詳細の右上。History と同じ）。
-            crate::aiactions::details(&details, files.diff(), current);
+            if !preview {
+                crate::aiactions::details(&details, files.diff(), current);
+            }
             details.tools.append(&files.find_button());
-            details.tools.append(&files.expand_button());
+            if !preview {
+                details.tools.append(&files.expand_button());
+            }
             // 変更ファイルの右クリック: AI でこの hunk を解説、Blame（コミットのときだけ）・File History。
             let (w, dw, dt) = (weak.clone(), files.diff().downgrade(), details.clone());
             files.connect_file_items(move |path, y, can_blame, hunk_only| {

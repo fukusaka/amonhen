@@ -963,7 +963,7 @@ fn push_preview(
         .build();
     // 右: 選んだものの詳細と、変更ファイルの一覧と差分（History の右の欄と同じ部品。macOS 版の
     // `CommitDetailViewController`）。
-    let pane = crate::commitpane::CommitPane::new(Rc::default());
+    let pane = crate::commitpane::CommitPane::preview(Rc::default());
     let paned = gtk::Paned::new(gtk::Orientation::Horizontal);
     paned.set_start_child(Some(&left));
     paned.set_end_child(Some(&pane.root));
