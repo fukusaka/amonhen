@@ -738,6 +738,12 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             current = nil
             showLineEndings(nil)
             updateButtons()
+            // 別ウィンドウで開いていれば、もう 1 つ作らずにそう案内する（Result が 2 つになって食い違わないように）。
+            if MergeEditorWindowController.isOpen(path: path, repository: repository) {
+                unembed()
+                diffView.show(nil, message: L("The merge editor is open in a separate window"))
+                return
+            }
             if let editor = mergeEditors[path] {
                 embed(editor)
                 return

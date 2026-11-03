@@ -824,6 +824,11 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate {
         return place + "\0" + path
     }
 
+    /// `repository` の `path` のマージエディタを別ウィンドウで開いているか。
+    static func isOpen(path: String, repository: Repository) -> Bool {
+        open[key(path: path, repository: repository)] != nil
+    }
+
     static func show(path: String, repository: Repository, actions: Actions) {
         if let existing = open[key(path: path, repository: repository)] {
             existing.window?.makeKeyAndOrderFront(nil)
