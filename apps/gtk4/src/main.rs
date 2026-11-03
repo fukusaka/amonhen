@@ -3335,6 +3335,13 @@ fn after_first_show(
                         Err(e) => eprintln!("撮れない: {e}"),
                     }
                     window.close();
+                    // Settings・Activity の窓はどの窓のものでもないので、残すとアプリが終わらない。
+                    for other in [settings::window(), activity::Activity::window()]
+                        .into_iter()
+                        .flatten()
+                    {
+                        other.close();
+                    }
                     glib::ControlFlow::Break
                 }
             ),
