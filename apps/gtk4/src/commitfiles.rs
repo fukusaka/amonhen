@@ -723,9 +723,6 @@ impl Inner {
             let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
                 return;
             };
-            let mark = gtk::Label::new(None);
-            mark.set_width_chars(2);
-            mark.add_css_class("monospace");
             let icon = crate::icon::Icon::default();
             icon.set(crate::icon::Kind::Folder, false);
             let name = gtk::Label::new(None);
@@ -739,7 +736,6 @@ impl Inner {
             line.set_margin_top(2);
             line.set_margin_bottom(2);
             line.set_margin_end(6);
-            line.append(&mark);
             line.append(&icon);
             line.append(&name);
             line.append(&counts);
@@ -785,28 +781,24 @@ impl Inner {
                 }
                 out
             };
-            let [mark, icon, name, counts] = &children[..] else {
+            let [icon, name, counts] = &children[..] else {
                 return;
             };
-            let (mark, name, counts) = (
-                mark.downcast_ref::<gtk::Label>().expect("mark"),
+            let (name, counts) = (
                 name.downcast_ref::<gtk::Label>().expect("name"),
                 counts.downcast_ref::<gtk::Label>().expect("counts"),
             );
             line.set_margin_start(6 + (row.depth * 14) as i32);
             let folder = row.file.is_none();
             icon.set_visible(folder);
-            mark.set_visible(!folder);
-            mark.set_text(row.mark);
-            for css in ["success", "error", "warning"] {
-                mark.remove_css_class(css);
+            // 種類はパスの前にふつうの文字で（macOS 版と同じ）。長いパスは真ん中を、フォルダは頭を省く。
+            if folder {
+                name.set_text(&row.name);
+                name.set_ellipsize(gtk::pango::EllipsizeMode::Start);
+            } else {
+                name.set_text(&format!("{}  {}", row.mark, row.name));
+                name.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
             }
-            mark.add_css_class(match row.mark {
-                "A" => "success",
-                "D" => "error",
-                _ => "warning",
-            });
-            name.set_text(&row.name);
             name.set_tooltip_text(Some(&row.tip));
             // 行数（0 の側は出さない）。バイナリは「Binary」（macOS 版と同じ）。
             match row.counts {
