@@ -1550,7 +1550,13 @@ pub fn push(
             }
             None => (Vec::new(), 0),
         };
-        for warning in push_warnings(&upstream, &state.outgoing, &added, binaries) {
+        // 送る範囲がなければ（送るものがない Force Push など）、注意は出さない（macOS 版と同じ）。
+        let warnings = if range.is_some() {
+            push_warnings(&upstream, &state.outgoing, &added, binaries)
+        } else {
+            Vec::new()
+        };
+        for warning in warnings {
             let l = note(&format!("⚠︎ {warning}"));
             l.remove_css_class("dim-label");
             l.add_css_class("warning");
