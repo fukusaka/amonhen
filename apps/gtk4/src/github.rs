@@ -945,7 +945,9 @@ pub fn checkout_pull_request(actions: &Rc<Actions>, pr: &PullRequest) {
         if let Err(e) = result {
             crate::sheets::inform(window.as_ref(), &e, "").await;
         }
+        // View > Refresh と同じく、プルリクエストと CI も間を空けずに読み直す（macOS 版の `refreshRepository`）。
         actions.reload();
+        reload(&actions);
     });
 }
 
