@@ -561,6 +561,7 @@ impl Sidebar {
             });
         inner.rebuild(true);
         add_type_select(&list, &inner);
+        add_fold_keys(&list, &inner);
 
         // 絞り込みの欄は一覧の上に。打つたびに絞り込む（Esc で消す）。
         let filter = gtk::SearchEntry::new();
@@ -988,6 +989,84 @@ fn add_type_select(list: &gtk::ListView, inner: &Rc<Inner>) {
         glib::Propagation::Stop
     });
     list.add_controller(keys);
+}
+
+/// ←・→ で、選んだ行を閉じる・開く（macOS 版の NSOutlineView と同じ）。閉じた行（と葉）で ← を押すと、親の行が
+/// 選べるならそこへ移る。⌥（Alt）を添えると、下の行もまとめて閉じる・開く。
+fn add_fold_keys(list: &gtk::ListView, inner: &Rc<Inner>) {
+    let keys = gtk::EventControllerKey::new();
+    // 一覧の部品が先に ←・→ を使ってしまわないよう、先に受ける。
+    keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let (weak, view) = (Rc::downgrade(inner), list.downgrade());
+    keys.connect_key_pressed(move |_, key, _, state| {
+        use gtk::gdk::{Key, ModifierType};
+        let open = match key {
+            Key::Left | Key::KP_Left => false,
+            Key::Right | Key::KP_Right => true,
+            _ => return glib::Propagation::Proceed,
+        };
+        let (Some(inner), Some(view)) = (weak.upgrade(), view.upgrade()) else {
+            return glib::Propagation::Proceed;
+        };
+        if state.intersects(
+            ModifierType::CONTROL_MASK | ModifierType::SHIFT_MASK | ModifierType::SUPER_MASK,
+        ) {
+            return glib::Propagation::Proceed;
+        }
+        let all = state.contains(ModifierType::ALT_MASK);
+        let n = inner.model.n_items();
+        let selected: Vec<u32> = (0..n).filter(|&i| inner.selection.is_selected(i)).collect();
+        let rows: Vec<gtk::TreeListRow> = selected
+            .iter()
+            .filter_map(|&i| inner.model.row(i))
+            .collect();
+        let foldable: Vec<&gtk::TreeListRow> = rows
+            .iter()
+            .filter(|r| r.is_expandable() && r.is_expanded() != open)
+            .collect();
+        if !foldable.is_empty() {
+            for row in foldable {
+                set_expanded_deep(row, open, all);
+            }
+        } else if !open
+            && let [row] = rows.as_slice()
+            && let Some(parent) = row.parent()
+            && parent
+                .item()
+                .and_downcast::<Node>()
+                .is_some_and(|n| !matches!(n.data().item, Item::Group | Item::Folder))
+        {
+            let i = parent.position();
+            view.scroll_to(i, gtk::ListScrollFlags::FOCUS, None);
+            inner.selection.select_item(i, true);
+        }
+        glib::Propagation::Stop
+    });
+    list.add_controller(keys);
+}
+
+/// `row` を開く・閉じる。`deep` なら下の行もまとめて。
+fn set_expanded_deep(row: &gtk::TreeListRow, open: bool, deep: bool) {
+    if deep && !open {
+        // 閉じる前に下を閉じる（閉じた後では子の行が取れない）。
+        let mut i = 0;
+        while let Some(child) = row.child_row(i) {
+            if child.is_expandable() {
+                set_expanded_deep(&child, false, true);
+            }
+            i += 1;
+        }
+    }
+    row.set_expanded(open);
+    if deep && open {
+        let mut i = 0;
+        while let Some(child) = row.child_row(i) {
+            if child.is_expandable() {
+                set_expanded_deep(&child, true, true);
+            }
+            i += 1;
+        }
+    }
 }
 
 /// Conflicts の行の鍵（選んだら最初のコンフリクトのファイルを開く）。
