@@ -7025,7 +7025,8 @@ mod tests {
         let (tmp, repo) = setup();
         let dir = tmp.path();
         let lib = tempfile::tempdir().unwrap();
-        git(lib.path(), &["init", "-q", "-b", "main"]);
+        git(lib.path(), &["init", "-q"]);
+        git(lib.path(), &["symbolic-ref", "HEAD", "refs/heads/main"]);
         std::fs::write(lib.path().join("l.txt"), "l\n").unwrap();
         git(lib.path(), &["add", "."]);
         git(lib.path(), &["commit", "-q", "-m", "lib"]);
