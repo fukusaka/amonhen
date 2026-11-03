@@ -1406,7 +1406,8 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             }, at: i)
         }
         menu.insertItem(.separator(), at: items.count)
-        if extras?.headDistance != nil, info.parents.count <= 1 {
+        // 書き直すのは History の詳細だけ（`onReword` があるもの。Reflog・Range Diff では保存先がない）。
+        if onReword != nil, extras?.headDistance != nil, info.parents.count <= 1 {
             menu.insertItem(ClosureMenuItem(title: L("Edit Message…")) { [weak self] in self?.beginReword() }, at: items.count + 1)
             menu.insertItem(.separator(), at: items.count + 2)
         }

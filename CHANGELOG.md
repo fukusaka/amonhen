@@ -114,6 +114,7 @@ becomes the GitHub Release notes.
 - macOS: Quick Open keeps the row picked with the arrow keys while row details load, so Return opens that repository.
 - macOS: a repository whose status can't be read (such as a worktree whose main repository was removed) is no longer
   read again and again while it is listed.
+- macOS: the Reflog and Range Diff details no longer offer Edit Message…, which dropped the message on Save.
 
 - The GTK4 app's Undo button asks once; it opened the question twice, so one stayed after undoing.
 - A `.mailmap`, or a mailmap setting (`log.mailmap`, `mailmap.file`), changed while the engine was reading the old
