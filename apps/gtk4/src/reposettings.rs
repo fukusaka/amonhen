@@ -1735,7 +1735,6 @@ impl RepoSettings {
         frame.set_child(Some(&scrolled));
         let revert = gtk::Button::with_label(&tr!("Revert"));
         let save = gtk::Button::with_label(&tr!("Save"));
-        save.add_css_class("suggested-action");
         let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         buttons.set_halign(gtk::Align::End);
         buttons.append(&revert);
