@@ -997,6 +997,13 @@ pub fn parent(actions: &Actions) -> Option<gtk::Window> {
     actions.window().map(|w| w.upcast())
 }
 
+/// することがないとき（macOS 版の `NSSound.beep()`）。
+fn beep(actions: &Actions) {
+    if let Some(w) = actions.window() {
+        w.error_bell();
+    }
+}
+
 /// Fetch の前に、どこから取るかを見せる。リモートがいくつもあれば選べる（最初はすべて）。
 pub fn fetch(actions: &Rc<Actions>) {
     let actions = actions.clone();
@@ -1009,7 +1016,7 @@ pub fn fetch(actions: &Rc<Actions>) {
             .filter_map(|r| r["name"].as_str().map(str::to_owned))
             .collect();
         if remotes.is_empty() {
-            return;
+            return beep(&actions);
         }
         let config = run(&repo, json!({ "op": "configList" })).await;
         let entries: Vec<(String, String)> = config["info"]["entries"]
@@ -1176,7 +1183,7 @@ pub fn pull(actions: &Rc<Actions>, mode: &str) {
             return;
         };
         let Some(branch) = state.branch.clone() else {
-            return;
+            return beep(&actions);
         };
         // 上流がなければ、取り込み元を選ぶ（同じ名前のリモートのブランチを先に）。
         let mut sources: Vec<String> = Vec::new();
@@ -1439,7 +1446,7 @@ pub fn push(
             return;
         };
         let Some(branch) = state.branch.clone() else {
-            return;
+            return beep(&actions);
         };
         let Some(upstream) = state.upstream.clone() else {
             return publish(&actions, &branch, then);
@@ -1447,7 +1454,7 @@ pub fn push(
         let (outgoing, incoming) = (state.outgoing.count, state.incoming.count);
         let diverged = !force && incoming > 0;
         if !(force || diverged || outgoing > 0) || (diverged && outgoing == 0) {
-            return;
+            return beep(&actions);
         }
         let (title, message) = if diverged {
             (
@@ -1982,7 +1989,7 @@ pub fn undo(actions: &Rc<Actions>) {
         let Some(repo) = actions.repo() else { return };
         let peek = run(&repo, json!({ "op": "undoPeek" })).await;
         let Some(label) = peek["label"].as_str() else {
-            return;
+            return beep(&actions);
         };
         let what = match peek["info"]["kind"].as_str() {
             Some("files") => tr!("Puts the files back as they were. HEAD and the index stay."),
