@@ -781,3 +781,39 @@ button.secondary {
   display: flex;
   gap: 6px;
 }
+
+/* Reflog */
+
+.reflog .toolbar .title {
+  font-weight: bold;
+}
+
+.reflog .row {
+  padding-left: 12px;
+}
+
+.reflog .selector {
+  flex: none;
+  width: 80px;
+  font-family: var(--vscode-editor-font-family);
+  color: var(--vscode-descriptionForeground);
+}
+
+.reflog .text .subject {
+  margin-left: 8px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.reflog .unreachable {
+  flex: none;
+  color: var(--vscode-charts-orange);
+}
+
+.reflog .status.error {
+  color: var(--vscode-errorForeground);
+}
+
+.reflog .toolbar button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

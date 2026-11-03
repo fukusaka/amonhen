@@ -31,14 +31,21 @@ const ext = vscode.extensions.getExtension<Api>('fukusaka.amonhen')!;
 const root = vscode.workspace.workspaceFolders![0]!.uri.fsPath;
 const spawned: Spawned[] = [];
 const posted: HostMessage[] = [];
+/** 拡張が出したエラーの知らせ */
+const errors: string[] = [];
 let api: Api;
 
 function git(...args: string[]): string {
   return childProcess.execFileSync('git', args, { cwd: root, encoding: 'utf8' });
 }
 
-/** fn が値を返すまで待つ */
-async function until<T>(what: string, fn: () => T | undefined | false | Promise<T | undefined | false>, ms = 20_000): Promise<T> {
+/** fn が値を返すまで待つ。来なければ、seen（そこまでに来たもの）を添えて失敗する */
+async function until<T>(
+  what: string,
+  fn: () => T | undefined | false | Promise<T | undefined | false>,
+  ms = 20_000,
+  seen?: () => string,
+): Promise<T> {
   const start = Date.now();
   for (;;) {
     const value = await fn();
@@ -46,7 +53,7 @@ async function until<T>(what: string, fn: () => T | undefined | false | Promise<
       return value;
     }
     if (Date.now() - start > ms) {
-      throw new Error(`待っても来ません: ${what}`);
+      throw new Error(`待っても来ません: ${what}${seen ? `（来たもの: ${seen()}）` : ''}`);
     }
     await new Promise((r) => setTimeout(r, 50));
   }
@@ -58,8 +65,14 @@ function waitPosted<T extends HostMessage['type']>(
   since: number,
   match: (m: Message<T>) => boolean = () => true,
 ): Promise<Message<T>> {
-  return until(`${type} のメッセージ`, () =>
-    posted.slice(since).find((m): m is Message<T> => m.type === type && match(m as Message<T>)),
+  return until(
+    `${type} のメッセージ`,
+    () => posted.slice(since).find((m): m is Message<T> => m.type === type && match(m as Message<T>)),
+    undefined,
+    () => {
+      const kinds = posted.slice(since).map((m) => (m.type === 'rows' ? `rows[${m.start}+${m.rows.length}]` : m.type));
+      return [kinds.join(', ') || 'なし', ...errors.slice(-3).map((e) => `エラー「${e}」`)].join('、');
+    },
   );
 }
 
@@ -86,7 +99,7 @@ function recordSpawns(): void {
   }
 }
 
-async function showView(command: 'amonhen.showWorkingCopy' | 'amonhen.showHistory') {
+async function showView(command: 'amonhen.showWorkingCopy' | 'amonhen.showHistory' | 'amonhen.showReflog') {
   const start = Date.now();
   await vscode.commands.executeCommand(command);
   const panel = await until('メインビュー', () => api.panel());
@@ -102,6 +115,15 @@ async function showView(command: 'amonhen.showWorkingCopy' | 'amonhen.showHistor
     };
   }
   return panel;
+}
+
+/** 拡張が出すエラーの知らせを記録する（待っても来ないときに添える） */
+function recordErrors(): void {
+  const show = vscode.window.showErrorMessage.bind(vscode.window) as (message: string, ...rest: unknown[]) => Thenable<unknown>;
+  (vscode.window as { showErrorMessage: unknown }).showErrorMessage = (message: string, ...rest: unknown[]) => {
+    errors.push(message);
+    return show(message, ...rest);
+  };
 }
 
 /** daemon の様子（`amonhen daemon status --json`）。動いていなければ undefined */
@@ -271,6 +293,98 @@ async function rangeDiffFlow(path: 'daemon' | 'git'): Promise<void> {
   } finally {
     await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
     git('branch', '-D', branch);
+  }
+}
+
+/**
+ * Reflog に HEAD の動きが出る。今のブランチを reset（Mixed・Hard）すると、外れたコミットが「どのブランチにもない」と
+ * 出て、Undo で戻る。Hard は作業中の変更を先に stash に残す。Reflog の行のコミットを checkout（detached）し、
+ * History で見せる。どれもコアの命令（daemon だけ）
+ */
+async function reflogFlow(): Promise<void> {
+  const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+  const rev = (r: string) => git('rev-parse', r).trim();
+  const file = join(root, 'reflog-e2e.txt');
+  git('switch', '-q', '-c', 'reflog-e2e');
+  writeFileSync(file, 'reflog\n');
+  git('add', 'reflog-e2e.txt');
+  git('commit', '-q', '-m', 'reflog e2e');
+  const lost = rev('HEAD');
+  const parent = rev('HEAD^');
+  await vscode.commands.executeCommand('amonhen.refresh');
+  const reflog = (since: number, match: (m: Message<'reflog'>) => boolean) => waitPosted('reflog', since, match);
+  let answer = 'Mixed';
+  const asked: { message: string; buttons: string[] }[] = [];
+  const stubs = {
+    showWarningMessage: async (message: string, ...rest: unknown[]) => {
+      const options = rest[0] as { modal?: boolean } | undefined;
+      if (!options?.modal) return undefined;
+      asked.push({ message, buttons: rest.slice(1) as string[] });
+      return answer;
+    },
+    showInformationMessage: async () => undefined,
+  };
+  try {
+    let mark = posted.length;
+    const panel = await showView('amonhen.showReflog');
+    await panel.reflog.handle({ type: 'reflogLoad' });
+    const first = await reflog(mark, (m) => m.entries[0]?.oid === lost);
+    assert.equal(first.entries[0]!.selector, 'HEAD@{0}');
+    assert.equal(first.entries[0]!.message, 'commit: reflog e2e');
+    assert.ok(first.entries[0]!.reachable);
+
+    // Mixed: 外れたコミットの変更は作業ツリーに残り、そのコミットはどのブランチにもなくなる
+    mark = posted.length;
+    await withWindow(stubs, async () => vscode.commands.executeCommand('amonhen.resetToCommit', { oid: parent }));
+    assert.match(asked.at(-1)!.message, new RegExp(`^Reset reflog-e2e to ${parent.slice(0, 8)}( “.*”)?\\?$`));
+    assert.deepEqual(asked.at(-1)!.buttons, ['Mixed', 'Soft', 'Hard']);
+    assert.equal(rev('HEAD'), parent);
+    assert.equal(git('status', '--porcelain', '--', 'reflog-e2e.txt'), '?? reflog-e2e.txt\n');
+    const after = await reflog(mark, (m) => m.entries[0]?.oid === parent);
+    assert.equal(after.entries.find((e) => e.oid === lost)?.reachable, false);
+    await vscode.commands.executeCommand('amonhen.undo');
+    assert.equal(rev('HEAD'), lost);
+    assert.equal(git('status', '--porcelain'), '');
+
+    // Hard: 作業中の変更を stash に残してから、作業ツリーもそのコミットに合わせる
+    writeFileSync(file, 'changed\n');
+    answer = 'Hard';
+    await withWindow(stubs, async () => vscode.commands.executeCommand('amonhen.resetToCommit', { oid: parent }));
+    assert.equal(rev('HEAD'), parent);
+    assert.equal(existsSync(file), false);
+    assert.match(git('stash', 'list', '-n', '1', '--format=%s'), /Before reset --hard to [0-9a-f]{8}/);
+    await vscode.commands.executeCommand('amonhen.undo');
+    assert.equal(rev('HEAD'), lost);
+    assert.equal(readFileSync(file, 'utf8').replaceAll('\r\n', '\n'), 'reflog\n');
+    git('stash', 'drop', '-q');
+
+    // 一覧の上のボタン: どのブランチからも辿れなくなったコミットから、ブランチを作って取り戻す
+    git('reset', '-q', '--hard', parent);
+    mark = posted.length;
+    await panel.reflog.handle({ type: 'reflogLoad' });
+    const unreachable = await reflog(mark, (m) => m.entries.some((e) => e.oid === lost && !e.reachable));
+    const entry = unreachable.entries.find((e) => e.oid === lost)!;
+    await withWindow({ showInputBox: async () => 'reflog-rescue' }, async () =>
+      panel.reflog.handle({ type: 'reflogAction', action: 'newBranch', oid: entry.oid, selector: entry.selector }),
+    );
+    assert.equal(git('symbolic-ref', '--short', 'HEAD').trim(), 'reflog-rescue');
+    assert.equal(rev('HEAD'), lost);
+
+    // Checkout（detached）と、History で見せる
+    await panel.reflog.handle({ type: 'reflogAction', action: 'checkout', oid: parent, selector: 'HEAD@{1}' });
+    assert.equal(rev('HEAD'), parent);
+    assert.throws(() => git('symbolic-ref', '-q', 'HEAD'));
+    git('switch', '-q', 'reflog-e2e');
+    git('reset', '-q', '--hard', lost);
+    await vscode.commands.executeCommand('amonhen.refresh');
+    mark = posted.length;
+    await vscode.commands.executeCommand('amonhen.reflog.showInHistory', { oid: parent });
+    await waitPosted('reveal', mark);
+  } finally {
+    git('switch', '-q', branch);
+    git('branch', '-D', 'reflog-e2e');
+    if (git('branch', '--list', 'reflog-rescue')) git('branch', '-D', 'reflog-rescue');
+    await vscode.commands.executeCommand('amonhen.refresh');
   }
 }
 
@@ -769,6 +883,7 @@ async function mergeBranchesFlow(label: string): Promise<void> {
 suite('Amon Hen in VSCode', () => {
   suiteSetup(async () => {
     recordSpawns();
+    recordErrors();
     api = await ext.activate();
   });
 
@@ -785,6 +900,9 @@ suite('Amon Hen in VSCode', () => {
       process.platform === 'win32' ? join(data, 'bin', 'amonhen.exe') : join(process.env['HOME']!, '.local', 'bin', 'amonhen');
     // install は current を書いてから CLI を写す（Windows では写すのに時間がかかる）
     await until(`${link} がある`, () => existsSync(link));
+    // エンジンの用意（置いたエンジンを一度起動する。macOS では OS の確認で数十秒かかることがある）が済むと、
+    // サイドバーに Reflog が出る。後のテストがこの待ちを負わないよう、ここで待つ
+    await until('サイドバーの Reflog', () => api.sidebar.getChildren().some((n) => n.kind === 'view' && n.view === 'reflog'), 50_000);
   });
 
   test('shows History, commit details and diffs through the daemon', async () => {
@@ -885,6 +1003,10 @@ suite('Amon Hen in VSCode', () => {
     await editFlow('daemon');
   });
 
+  test('shows the reflog and resets to a commit through the daemon', async () => {
+    await reflogFlow();
+  });
+
   test('drops the selection of a file whose changes went away before its diff is read', async () => {
     const panel = await showView('amonhen.showWorkingCopy');
     const path = join(root, FILE);
@@ -956,6 +1078,11 @@ suite('Amon Hen in VSCode', () => {
     await waitPosted('searchable', mark, (m) => !m.searchable);
     const rows = await waitPosted('rows', mark);
     assert.equal(rows.total, undefined);
+  });
+
+  test('has no Reflog on the git execution layer', async () => {
+    const reflogRow = () => api.sidebar.getChildren().some((n) => n.kind === 'view' && n.view === 'reflog');
+    await until('Reflog の行が消える', () => !reflogRow());
   });
 
   test('shows names from the mailmap on the git execution layer', async () => {

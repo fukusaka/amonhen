@@ -4,12 +4,11 @@
  * git で読むときは、末尾に近づいたら次のページを要求する。daemon の History は行の数が分かっているので、見えている
  * ところのまだない行をまとめて要求する（離れた行へもすぐ移れる）。
  */
-import type { FileDiff } from '../diff/fileDiff.ts';
 import { type LaneMetrics, lanePositions } from '../history/lanes.ts';
-import type { CommitDetails, MessageEdit, Person, RowData, Scope, SearchState } from '../history/protocol.ts';
+import type { MessageEdit, RowData, Scope, SearchState } from '../history/protocol.ts';
 import type { HostMessage } from '../view/protocol.ts';
-import { el, formatDate, getState, post, updateState, type View } from './api.ts';
-import { renderDiffBody } from './diffView.ts';
+import { el, formatDate, post, type View } from './api.ts';
+import { attachSplitter, createDetailsPane } from './details.ts';
 
 const ROW_HEIGHT = 24;
 const LANE_WIDTH = 14;
@@ -45,18 +44,6 @@ const PALETTE = [
 interface GraphColumn {
   width: number;
   centers: readonly number[];
-}
-
-/** mailmap で置き換えた人。記録と違えば、記録されたものを下に小さく添える */
-function withRecorded(text: string, recorded: Person | undefined): Node | string {
-  if (!recorded) {
-    return text;
-  }
-  const span = el('span', '', text);
-  const note = el('span', 'recorded', `Recorded: ${recorded.name} <${recorded.email}>`);
-  note.title = 'The name and email recorded in the commit. The mailmap shows them as above.';
-  span.append(note);
-  return span;
 }
 
 export function createHistoryView(): View {
@@ -113,8 +100,11 @@ export function createHistoryView(): View {
   list.append(spacer);
   const splitter = el('div', 'splitter');
   splitter.setAttribute('role', 'separator');
-  const detailsPane = el('aside', 'details');
-  body.append(list, splitter, detailsPane);
+  const details = createDetailsPane((oid) => {
+    const index = rows.findIndex((r) => r?.oid === oid);
+    if (index >= 0) select(index, true);
+  });
+  body.append(list, splitter, details.root);
   root.append(toolbar, body);
 
   /** 行。daemon の History では行の数だけの長さで、まだ届いていない行は空 */
@@ -267,7 +257,6 @@ export function createHistoryView(): View {
   }
 
   let selectTimer = 0;
-  let shownOid: string | undefined;
   /** History を切り替えたあと、最初の行が届いたら選んだ行を見せる */
   let revealOnRows = false;
 
@@ -434,7 +423,7 @@ export function createHistoryView(): View {
   /** 選択が落ち着いてから詳細を求める。矢印キーを押し続けても要求が溜まらないように */
   function requestDetails(): void {
     const oid = rows[selected]?.oid;
-    if (!oid || oid === shownOid) {
+    if (!oid || oid === details.shownOid) {
       return;
     }
     if (searchState?.query) showSearchCount();
@@ -442,158 +431,7 @@ export function createHistoryView(): View {
     selectTimer = window.setTimeout(() => post({ type: 'select', oid }), 60);
   }
 
-  /** 詳細に並べたファイルごとの差分の場所 */
-  let sections = new Map<string, HTMLElement>();
-  let requestedDiffs = new Set<string>();
-  let diffObserver: IntersectionObserver | undefined;
-
-  function showDetails(d: CommitDetails): void {
-    if (d.oid !== rows[selected]?.oid) {
-      return;
-    }
-    shownOid = d.oid;
-    const [subject = '', ...rest] = d.message.replace(/\n+$/, '').split('\n');
-    const body = rest.join('\n').replace(/^\n+/, '');
-
-    const head = el('div', 'subject');
-    for (const ref of d.refs) {
-      head.append(el('span', `ref ${ref.kind}${ref.current ? ' current' : ''}`, ref.name));
-    }
-    head.append(el('span', '', subject));
-
-    const meta = el('dl', 'meta');
-    const add = (label: string, value: Node | string) => {
-      const dd = el('dd');
-      dd.append(value);
-      meta.append(el('dt', '', label), dd);
-    };
-    add('Author', withRecorded(`${d.author.name} <${d.author.email}>`, d.recordedAuthor));
-    add('Date', formatDate(d.author.date));
-    if (d.committer.name !== d.author.name || d.committer.date !== d.author.date) {
-      add('Committer', withRecorded(`${d.committer.name}  ${formatDate(d.committer.date)}`, d.recordedCommitter));
-    }
-    add('Commit', el('code', '', d.oid));
-    if (d.parents.length > 0) {
-      const parents = el('span');
-      for (const p of d.parents) {
-        const link = el('a', 'parent', p.slice(0, 8));
-        link.href = '#';
-        link.title = p;
-        link.addEventListener('click', (e) => {
-          e.preventDefault();
-          const index = rows.findIndex((r) => r?.oid === p);
-          if (index >= 0) select(index, true);
-        });
-        parents.append(link, ' ');
-      }
-      add(d.parents.length > 1 ? 'Parents' : 'Parent', parents);
-    }
-
-    const files = el('div', 'files');
-    const filesHead = el('div', 'files-head');
-    const count = d.files.length;
-    filesHead.append(
-      el(
-        'span',
-        '',
-        `${count} file${count === 1 ? '' : 's'} changed${d.parents.length > 1 ? '（最初の親との差分）' : ''}`,
-      ),
-    );
-    if (count > 0) {
-      const all = el('button', 'secondary', 'Open All');
-      all.addEventListener('click', () => post({ type: 'open', oid: d.oid }));
-      filesHead.append(all);
-    }
-    files.append(filesHead);
-    for (const f of d.files) {
-      const row = el('div', 'file');
-      row.title = f.origPath ? `${f.origPath} → ${f.path}` : f.path;
-      row.append(el('span', `status s-${f.status}`, f.status));
-      const slash = f.path.lastIndexOf('/');
-      row.append(el('span', 'name', f.path.slice(slash + 1)));
-      if (slash >= 0) row.append(el('span', 'dir', f.path.slice(0, slash)));
-      // その差分の位置へ移る
-      row.addEventListener('click', () => {
-        for (const other of files.querySelectorAll('.file.active')) other.classList.remove('active');
-        row.classList.add('active');
-        sections.get(f.path)?.scrollIntoView({ block: 'start' });
-      });
-      files.append(row);
-    }
-
-    // ファイルごとの差分。画面に入ったものから順に求める
-    diffObserver?.disconnect();
-    diffObserver = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          const path = (entry.target as HTMLElement).dataset.path!;
-          if (entry.isIntersecting && !requestedDiffs.has(path)) {
-            requestedDiffs.add(path);
-            post({ type: 'commitDiff', oid: d.oid, path });
-          }
-        }
-      },
-      { root: detailsPane, rootMargin: '200px' },
-    );
-    requestedDiffs = new Set();
-    sections = new Map();
-    const diffs = el('div', 'commit-diffs');
-    for (const f of d.files) {
-      const section = el('section', 'file-diff');
-      section.dataset.path = f.path;
-      const sectionHead = el('div', 'diff-head');
-      sectionHead.append(el('span', `status s-${f.status}`, f.status));
-      sectionHead.append(el('span', 'path', f.origPath ? `${f.origPath} → ${f.path}` : f.path));
-      const open = el('button', 'secondary', 'Open');
-      open.title = 'エディタで差分を開く';
-      open.addEventListener('click', () => post({ type: 'openFile', oid: d.oid, path: f.path }));
-      sectionHead.append(open);
-      section.append(sectionHead, el('div', 'empty', '読み込み中…'));
-      diffs.append(section);
-      sections.set(f.path, section);
-      diffObserver.observe(section);
-    }
-
-    const parts: Node[] = [head, meta];
-    if (body) parts.push(el('pre', 'body', body));
-    parts.push(files, diffs);
-    detailsPane.replaceChildren(...parts);
-    detailsPane.scrollTop = 0;
-  }
-
-  function showCommitDiff(oid: string, path: string, diff: FileDiff): void {
-    const section = sections.get(path);
-    if (oid !== shownOid || !section) {
-      return;
-    }
-    section.replaceChildren(section.firstElementChild!, ...renderDiffBody(diff));
-  }
-
-  function clearDetails(): void {
-    shownOid = undefined;
-    detailsPane.replaceChildren(el('div', 'empty', 'コミットを選ぶと、ここに詳細が出ます'));
-  }
-
-  // 左右の境目をドラッグして、詳細の幅を変える。幅は覚えておく
-  function setDetailsWidth(width: number): void {
-    const max = Math.max(240, body.clientWidth - 240);
-    const clamped = Math.min(max, Math.max(240, width));
-    detailsPane.style.width = `${clamped}px`;
-    updateState({ detailsWidth: clamped });
-  }
-  splitter.addEventListener('mousedown', (e) => {
-    e.preventDefault();
-    const onMove = (m: MouseEvent) => setDetailsWidth(body.getBoundingClientRect().right - m.clientX);
-    const onUp = () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-      document.body.classList.remove('resizing');
-      scheduleRender();
-    };
-    document.body.classList.add('resizing');
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-  });
+  attachSplitter(body, splitter, details.root, scheduleRender);
 
   function rowIndex(event: Event): number | undefined {
     const row = (event.target as HTMLElement).closest<HTMLElement>('.row');
@@ -727,11 +565,11 @@ export function createHistoryView(): View {
         if (message.select !== undefined) {
           // 一致だけの History との切り替え: 同じコミットを選んだまま、行が届いたら詳細を出し直す
           selected = message.select;
-          shownOid = undefined;
+          details.forget();
           revealOnRows = true;
         } else {
           selected = -1;
-          clearDetails();
+          details.clear();
           list.scrollTop = 0;
         }
         break;
@@ -757,6 +595,9 @@ export function createHistoryView(): View {
         }
         requestDetails();
         break;
+      case 'reveal':
+        select(message.row, true);
+        break;
       case 'searchable':
         search.hidden = !message.searchable;
         break;
@@ -767,10 +608,10 @@ export function createHistoryView(): View {
         root.classList.toggle('busy', message.busy);
         break;
       case 'details':
-        showDetails(message.details);
+        if (message.details.oid === rows[selected]?.oid) details.show(message.details);
         return;
       case 'commitDiff':
-        showCommitDiff(message.oid, message.path, message.diff);
+        details.showDiff(message.oid, message.path, message.diff);
         return;
       case 'editMessage':
         editMessage(message.oid, message.kind, message.title, message.message);
@@ -782,9 +623,6 @@ export function createHistoryView(): View {
   }
 
   resolveColors();
-  clearDetails();
-  const savedWidth = getState().detailsWidth;
-  if (savedWidth) detailsPane.style.width = `${savedWidth}px`;
 
   return {
     root,

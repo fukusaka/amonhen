@@ -38,5 +38,9 @@ export async function prepareEngine(binDir: string): Promise<string | undefined>
   // .vsix を展開すると実行の権限が落ちることがある
   await chmod(bundled, 0o755);
   await run(bundled, ['install', '--quiet']);
-  return (await run(bundled, ['engine'])).trim() || bundled;
+  const engine = (await run(bundled, ['engine'])).trim() || bundled;
+  // 置いたばかりのエンジンは、macOS では初めて起動するときに OS の確認で待たされる（1 秒ほど、遅いと数十秒）。
+  // History を開くときではなく、ここで済ませておく
+  await run(engine, ['--socket']).catch(() => undefined);
+  return engine;
 }

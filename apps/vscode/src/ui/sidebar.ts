@@ -1,5 +1,5 @@
 /**
- * サイドバーのナビ。Working Copy と History の入口、途中で止まっている merge / rebase、
+ * サイドバーのナビ。Working Copy・History・Reflog の入口、途中で止まっている merge / rebase、
  * ブランチ・リモート・タグ・stash・サブモジュールを出す。中身はメインビューに出す。
  */
 import * as vscode from 'vscode';
@@ -52,6 +52,8 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
   private readonly manager: RepositoryManager;
   private repoListener: vscode.Disposable | undefined;
   private readonly disposables: vscode.Disposable[] = [];
+  /** 共有の daemon のエンジンを使えるか（Reflog はエンジンだけ） */
+  private engine = false;
   /** 更新通知で同じノードを指せるよう、セクションのノードは使い回す */
   private readonly sections = new Map<RefSection, Node>(
     (Object.keys(SECTION_LABELS) as RefSection[]).map((s) => [s, { kind: 'section', section: s }]),
@@ -88,6 +90,14 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
     this._onDidChangeTreeData.fire(undefined);
   }
 
+  /** エンジンを使えるかが分かった・変わった */
+  setEngine(engine: boolean): void {
+    if (engine !== this.engine) {
+      this.engine = engine;
+      this._onDidChangeTreeData.fire(undefined);
+    }
+  }
+
   /** 今のブランチに upstream が無ければ、ナビの上の Push を Publish にする */
   private updateContext(repository: Repository | undefined): void {
     const head = repository?.current.branches?.find((b) => b.isHead);
@@ -113,7 +123,10 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
         { kind: 'view', view: 'history' },
       ];
       if (state.sequence) nodes.push({ kind: 'sequence', sequence: state.sequence, progress: state.progress });
-      return nodes.concat([...this.sections.values()]);
+      nodes.push(...this.sections.values());
+      // Reflog はいつもいちばん下（アプリと同じ）
+      if (this.engine) nodes.push({ kind: 'view', view: 'reflog' });
+      return nodes;
     }
     switch (node.kind) {
       case 'section':
@@ -177,6 +190,14 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
           item.description = count > 0 ? `${count} changed` : 'clean';
           item.iconPath = new vscode.ThemeIcon('diff');
           item.command = { command: 'amonhen.showWorkingCopy', title: 'Show Working Copy' };
+          return item;
+        }
+        if (node.view === 'reflog') {
+          const item = new vscode.TreeItem('Reflog');
+          item.id = 'view:reflog';
+          item.tooltip = 'Every place HEAD has been, including commits no branch reaches any more';
+          item.iconPath = new vscode.ThemeIcon('list-ordered');
+          item.command = { command: 'amonhen.showReflog', title: 'Show Reflog' };
           return item;
         }
         const item = new vscode.TreeItem('History');

@@ -117,6 +117,8 @@ export class HistoryController implements vscode.Disposable {
   private generation = 0;
   private headOid: string | undefined;
   private resetTimer: NodeJS.Timeout | undefined;
+  /** 最後に始めた読み直し */
+  private resetting: Promise<void> = Promise.resolve();
   /** 一度取ったコミットの詳細。コミットの内容は変わらないので、ref のラベル以外はそのまま使える */
   private readonly details = new Map<string, Omit<CommitDetails, 'refs'>>();
   /** 一度求めたファイルの差分。キーは `oid:path` */
@@ -188,7 +190,10 @@ export class HistoryController implements vscode.Disposable {
     const headMoved = this.readingRefs === 0 && headOid !== undefined && headOid !== this.headOid;
     if (refsChanged || changed.has('mailmap') || headMoved) {
       clearTimeout(this.resetTimer);
-      this.resetTimer = setTimeout(() => void this.reset(), 100);
+      this.resetTimer = setTimeout(() => {
+        this.resetTimer = undefined;
+        void this.reset();
+      }, 100);
     }
   }
 
@@ -224,7 +229,18 @@ export class HistoryController implements vscode.Disposable {
         break;
       }
       case 'open': {
-        const commit = this.commit(message.oid);
+        // History にないコミット（Reflog の、どのブランチからも辿れないもの）は、出した詳細から
+        const details = this.details.get(message.oid);
+        const commit =
+          this.commit(message.oid) ??
+          (details && {
+            oid: details.oid,
+            parents: details.parents,
+            author: details.author.name,
+            email: details.author.email,
+            date: details.author.date,
+            subject: details.message.split('\n', 1)[0] ?? '',
+          });
         if (this.repo && commit) {
           await openCommitChanges(this.repo, commit).catch(showError);
         }
@@ -326,8 +342,54 @@ export class HistoryController implements vscode.Disposable {
     this.post({ type: 'commitDiff', oid, path, diff });
   }
 
+  /**
+   * oid のコミットを選んで見せる（Reflog の Show in History）。今の範囲になければ All Branches にして探す。
+   * 共有の daemon の History だけ。見つかったか返す（一致だけの History で、一致しなければ見つからない）
+   */
+  async reveal(oid: string): Promise<boolean> {
+    const rowOf = async (): Promise<number | undefined> => {
+      const shown = this.daemon;
+      if (!shown) return undefined;
+      const row = (await shown.client.call({ op: 'historyRowOf', history: shown.history, id: oid })).json['row'];
+      return typeof row === 'number' ? row : undefined;
+    };
+    await this.settled();
+    let row = await rowOf();
+    if (row === undefined && this.scope !== 'all') {
+      this.scope = 'all';
+      void this.reset();
+      await this.settled();
+      row = await rowOf();
+    }
+    if (row === undefined) return false;
+    this.post({ type: 'reveal', row });
+    return true;
+  }
+
+  /**
+   * 読み直しが終わるまで待つ。HEAD やブランチが動いた直後で読み直しを待たせていれば、今すぐ読み直す。
+   * 待つ間に次の読み直しが始まれば、それも待つ
+   */
+  private async settled(): Promise<void> {
+    if (this.resetTimer !== undefined) {
+      clearTimeout(this.resetTimer);
+      this.resetTimer = undefined;
+      void this.reset();
+    }
+    let generation: number;
+    do {
+      generation = this.generation;
+      await this.resetting.catch(() => undefined);
+    } while (generation !== this.generation);
+  }
+
   /** 最初から読み直す */
-  async reset(): Promise<void> {
+  reset(): Promise<void> {
+    this.resetting = this.reload();
+    return this.resetting;
+  }
+
+  private async reload(): Promise<void> {
     const generation = ++this.generation;
     this.commits = [];
     this.known.clear();

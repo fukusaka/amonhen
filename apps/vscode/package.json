@@ -99,6 +99,13 @@
         "enablement": "amonhen.hasRepository"
       },
       {
+        "command": "amonhen.showReflog",
+        "title": "Show Reflog",
+        "category": "Amon Hen",
+        "icon": "$(list-ordered)",
+        "enablement": "amonhen.hasRepository && amonhen.engine"
+      },
+      {
         "command": "amonhen.continueSequence",
         "title": "Continue",
         "category": "Amon Hen",
@@ -153,6 +160,26 @@
       {
         "command": "amonhen.history.copyId",
         "title": "Copy Commit ID",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.checkoutCommit",
+        "title": "Checkout (Detached)",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.resetToCommit",
+        "title": "Reset Current Branch to Here…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.reflog.showInHistory",
+        "title": "Show in History",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.reflog.copyName",
+        "title": "Copy Name",
         "category": "Amon Hen"
       },
       {
@@ -657,6 +684,26 @@
         {
           "command": "amonhen.amRetryThreeWay",
           "when": "false"
+        },
+        {
+          "command": "amonhen.showReflog",
+          "when": "amonhen.hasRepository && amonhen.engine"
+        },
+        {
+          "command": "amonhen.checkoutCommit",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.resetToCommit",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.reflog.showInHistory",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.reflog.copyName",
+          "when": "false"
         }
       ],
       "webview/context": [
@@ -702,17 +749,17 @@
         },
         {
           "command": "amonhen.history.copyId",
-          "when": "webviewId == 'amonhen.main' && webviewSection == 'commit'",
+          "when": "webviewId == 'amonhen.main' && (webviewSection == 'commit' || webviewSection == 'reflog')",
           "group": "9_copy@1"
         },
         {
           "command": "amonhen.newBranch",
-          "when": "webviewId == 'amonhen.main' && webviewSection == 'commit'",
+          "when": "webviewId == 'amonhen.main' && (webviewSection == 'commit' || webviewSection == 'reflog')",
           "group": "8_create@1"
         },
         {
           "command": "amonhen.newTag",
-          "when": "webviewId == 'amonhen.main' && webviewSection == 'commit'",
+          "when": "webviewId == 'amonhen.main' && (webviewSection == 'commit' || webviewSection == 'reflog')",
           "group": "8_create@2"
         },
         {
@@ -734,6 +781,26 @@
           "command": "amonhen.history.savePatches",
           "when": "webviewId == 'amonhen.main' && webviewSection == 'commit'",
           "group": "6_patch@2"
+        },
+        {
+          "command": "amonhen.checkoutCommit",
+          "when": "webviewId == 'amonhen.main' && (webviewSection == 'commit' || webviewSection == 'reflog')",
+          "group": "4_checkout@1"
+        },
+        {
+          "command": "amonhen.resetToCommit",
+          "when": "webviewId == 'amonhen.main' && (webviewSection == 'commit' || webviewSection == 'reflog') && amonhen.engine",
+          "group": "4_checkout@2"
+        },
+        {
+          "command": "amonhen.reflog.showInHistory",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'reflog' && reflogReachable",
+          "group": "1_show@1"
+        },
+        {
+          "command": "amonhen.reflog.copyName",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'reflog'",
+          "group": "9_copy@2"
         }
       ],
       "explorer/context": [

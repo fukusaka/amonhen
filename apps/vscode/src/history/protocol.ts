@@ -75,6 +75,8 @@ export type HistoryHostMessage =
   /** `total` があれば daemon の History で、行は `range` で頼んだところだけ届く（`done` は常に true） */
   | { type: 'rows'; start: number; rows: RowData[]; done: boolean; total?: number }
   /** 検索できるか（daemon の History のときだけ） */
+  /** その行を選んで見せる（Reflog の Show in History） */
+  | { type: 'reveal'; row: number }
   | { type: 'searchable'; searchable: boolean }
   | { type: 'search'; state: SearchState }
   | { type: 'busy'; busy: boolean }

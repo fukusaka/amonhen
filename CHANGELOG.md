@@ -727,6 +727,10 @@ First release.
   how many file contents it will fetch.
 - Merge Branches… in the Command Palette merges several branches or tags in one commit, as `git merge a b c` does,
   showing the conflicts expected for each first; it offers to merge them one by one when git couldn't.
+- Reflog, at the bottom of the sidebar, lists where HEAD has been with each entry's commit, marking commits no branch
+  reaches; from there a branch, tag, checkout or reset brings them back. It needs the engine.
+- History's commit menu has Checkout (Detached) and Reset Current Branch to Here… (Mixed, Soft or Hard; a hard reset
+  stashes uncommitted changes first, and Undo puts the branch back).
 
 #### Changed
 
@@ -737,6 +741,8 @@ First release.
   the pre-commit and commit-msg hooks as git does. Lines starting with `#` are still kept.
 - The conflict notice names the sidebar row whose Continue and Abort to use, since VSCode moves the notice to the
   notification center after a few seconds.
+- On macOS, opening History for the first time after the engine is installed or updated no longer waits for the OS
+  to check the new engine; the extension starts it once in the background at startup.
 
 #### Fixed
 

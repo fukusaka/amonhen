@@ -21,7 +21,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| Workspace rows switch the main view (Working Copy, History, Stashes, Reflog…) | ✓ | ✓ | △ | n/a | VSCode: Working Copy, History and Stashes only; no Reflog or Conflicts. |
+| Workspace rows switch the main view (Working Copy, History, Stashes, Reflog…) | ✓ | ✓ | △ | n/a | VSCode: Working Copy, History, Stashes and (with the engine) Reflog; no Conflicts. |
 | Conflicts row with a count while there are conflicts | ✓ | ✓ | △ | n/a | VSCode: A Conflicts group inside the Working Copy view. |
 | Stashes row with a count only when there are stashes | ✓ | ✓ | △ | n/a | VSCode: The Stashes section is always shown. |
 | Range Diff row while a range diff is open | ✓ | ✓ | — | n/a |  |
@@ -170,14 +170,14 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| Reflog view with "not on any branch" | ✓ | ✓ | — | △ | CLI: Via `amonhen run`. |
-| Reflog actions (New Branch, Checkout, New Tag, Reset, Show in History, Copy) | ✓ | ✓ | — | △ | CLI: Via `amonhen run`. |
+| Reflog view with "not on any branch" | ✓ | ✓ | ✓ | △ | VSCode: With the engine only.<br>CLI: Via `amonhen run`. |
+| Reflog actions (New Branch, Checkout, New Tag, Reset, Show in History, Copy) | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 
 ## 5c. Reset
 
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| Reset to a commit (Soft / Mixed / Hard, Hard stashes first, undoable) | ✓ | ✓ | — | △ | CLI: Via `amonhen run`. |
+| Reset to a commit (Soft / Mixed / Hard, Hard stashes first, undoable) | ✓ | ✓ | ✓ | △ | VSCode: With the engine only.<br>CLI: Via `amonhen run`. |
 
 ## 5d. Range Diff
 
@@ -231,7 +231,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Go to Ref | — | — | — | n/a |  |
 | Several commits selected (range, two, scattered) | ✓ | ✓ | — | △ | CLI: `diff <rev> <rev>` for two. |
 | History of several selected refs | ✓ | ✓ | — | ✓ | CLI: `log --branch` repeated. |
-| Commit menu: checkout, new branch or tag, cherry-pick, revert, copy ID | ✓ | ✓ | △ | △ | VSCode: No checkout of a commit.<br>CLI: Via `amonhen run`. |
+| Commit menu: checkout, new branch or tag, cherry-pick, revert, copy ID | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Edit mode (keep, reword, squash, fixup, drop, edit; drag to reorder) | ✓ | ✓ | △ | △ | VSCode: One commit at a time, no plan of several steps.<br>CLI: Via `amonhen run`. |
 | Rewrite preview (stacked and pushed branches, expected conflicts) | ✓ | ✓ | △ | ✓ | VSCode: Through the daemon and for the current branch only.<br>CLI: `rewrite-preview`. |
 | Shortcuts: Edit Message…, Combine with Older…, Drop…, Combine N…, drag a commit | ✓ | ✓ | △ | △ | VSCode: No Combine N Commits.<br>CLI: Via `amonhen run`. |
@@ -334,7 +334,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| A sheet before remote, HEAD-moving and deleting operations | ✓ | ✓ | △ | n/a | VSCode: Deleting and rewriting only; not Fetch, Pull, Push, Merge or Checkout. |
+| A sheet before remote, HEAD-moving and deleting operations | ✓ | ✓ | △ | n/a | VSCode: Deleting, rewriting and Reset only; not Fetch, Pull, Push, Merge or Checkout. |
 | Undo of git operations (`undo.json`) | ✓ | ✓ | ✓ | ✓ |  |
 | Disabled controls say why in their tooltip | ✓ | ✓ | — | n/a |  |
 

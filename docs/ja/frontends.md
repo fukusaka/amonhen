@@ -21,7 +21,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| Workspace の行でメインの表示を切り替える（Working Copy・History・Stashes・Reflog…） | ✓ | ✓ | △ | n/a | VSCode: Working Copy・History・Stashes だけで、Reflog・Conflicts はない。 |
+| Workspace の行でメインの表示を切り替える（Working Copy・History・Stashes・Reflog…） | ✓ | ✓ | △ | n/a | VSCode: Working Copy・History・Stashes と（エンジンがあれば）Reflog。Conflicts はない。 |
 | コンフリクトがあるあいだ Conflicts の行と数 | ✓ | ✓ | △ | n/a | VSCode: Working Copy の中の Conflicts のグループ。 |
 | stash があるときだけ Stashes の行と数 | ✓ | ✓ | △ | n/a | VSCode: Stashes の節はいつも出る。 |
 | Range Diff を開いているあいだの Range Diff の行 | ✓ | ✓ | — | n/a |  |
@@ -170,14 +170,14 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| 「どのブランチにもない」の付いた Reflog の表示 | ✓ | ✓ | — | △ | CLI: `amonhen run` から。 |
-| Reflog の操作（New Branch・Checkout・New Tag・Reset・Show in History・Copy） | ✓ | ✓ | — | △ | CLI: `amonhen run` から。 |
+| 「どのブランチにもない」の付いた Reflog の表示 | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるときだけ。<br>CLI: `amonhen run` から。 |
+| Reflog の操作（New Branch・Checkout・New Tag・Reset・Show in History・Copy） | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 
 ## 5c. Reset
 
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| コミットへ Reset（Soft / Mixed / Hard、Hard は先に stash、Undo できる） | ✓ | ✓ | — | △ | CLI: `amonhen run` から。 |
+| コミットへ Reset（Soft / Mixed / Hard、Hard は先に stash、Undo できる） | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるときだけ。<br>CLI: `amonhen run` から。 |
 
 ## 5d. Range Diff
 
@@ -231,7 +231,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | Go to Ref | — | — | — | n/a |  |
 | いくつものコミットを選ぶ（範囲・2 つ・飛び飛び） | ✓ | ✓ | — | △ | CLI: 2 つは `diff <rev> <rev>`。 |
 | 選んだいくつもの ref の History | ✓ | ✓ | — | ✓ | CLI: `log --branch` を重ねる。 |
-| コミットのメニュー: checkout・新しいブランチやタグ・cherry-pick・revert・ID のコピー | ✓ | ✓ | △ | △ | VSCode: コミットの checkout はない。<br>CLI: `amonhen run` から。 |
+| コミットのメニュー: checkout・新しいブランチやタグ・cherry-pick・revert・ID のコピー | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | 編集モード（keep・reword・squash・fixup・drop・edit、ドラッグで並べ替え） | ✓ | ✓ | △ | △ | VSCode: 1 つずつで、いくつもの段の計画はない。<br>CLI: `amonhen run` から。 |
 | 書き換えの見込み（積み重ね・push 済みのブランチ、コンフリクトの見込み） | ✓ | ✓ | △ | ✓ | VSCode: daemon 越しで、今のブランチだけ。<br>CLI: `rewrite-preview`。 |
 | 近道: Edit Message…・Combine with Older…・Drop…・Combine N…・コミットのドラッグ | ✓ | ✓ | △ | △ | VSCode: Combine N Commits はない。<br>CLI: `amonhen run` から。 |
@@ -334,7 +334,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| リモート・HEAD を動かす・消す操作の前のシート | ✓ | ✓ | △ | n/a | VSCode: 消す・書き換えるときだけで、Fetch・Pull・Push・Merge・Checkout にはない。 |
+| リモート・HEAD を動かす・消す操作の前のシート | ✓ | ✓ | △ | n/a | VSCode: 消す・書き換える・Reset のときだけで、Fetch・Pull・Push・Merge・Checkout にはない。 |
 | git の操作の Undo（`undo.json`） | ✓ | ✓ | ✓ | ✓ |  |
 | 押せない部品はツールチップで理由を言う | ✓ | ✓ | — | n/a |  |
 

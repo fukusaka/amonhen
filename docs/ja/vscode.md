@@ -72,6 +72,15 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
 - Range Diff（ローカルブランチの Compare with Previous Version と、パレットの Range Diff…）は、`git range-diff` の形の
   読み取り専用の `amonhen:` の文書を出す。エンジンではコアの `previousVersion`・`rangeDiff` を使い、git 実行層では
   ブランチの reflog（`git log -g`）を読んで `git range-diff` を自分で動かす。
+- エンジンのあとに足した機能は、エンジンだけで作る（`run` でコアの命令を使う）。エンジンがなければ、その行とコマンドは
+  出さない（コンテキストキー `amonhen.engine`）。
+- サイドバーのいちばん下の Reflog は、メインビューのページを開く。左に HEAD の reflog（コアの `reflog`）、右に選んだ行の
+  コミットを History と同じ詳細の欄に出す。どの ref からも辿れない行には「not on any branch」と付ける。ボタンと右クリック
+  から、そこにブランチ・タグを作る、checkout する（detached）、そこへ reset する、History で見せる（今の範囲になければ
+  All Branches にする。`historyRowOf`）、ID・名前をコピーする。HEAD が動いたら読み直す。
+- Reset Current Branch to Here…（History のコミットのメニューと Reflog）は、Mixed・Soft・Hard をモーダルで選んでもらい、
+  コアの `reset` を使う。コアは hard の前に作業中の変更を stash に残し、Undo を記録する。Checkout (Detached) はどちらの
+  経路でも動く。
 
 ## 必須要素の実装方針
 
@@ -199,3 +208,19 @@ UI を 1 つの Webview にまとめる（「UI を 1 つの Webview にまと�
 
 - [ ] 12. History・差分・Working Copy・書き込みを共有の daemon で行う。
   [design.md](design.md) の 18 で進める
+
+macOS アプリに追いつく（1 つの機能を 1 つの pull request で、エンジンを使って。まだ足りないものは
+[frontends.md](frontends.md) にある）。GitHub・AI・Undo の記録のほかの Activity・機械全体の git の設定・日本語化は、
+今は入れない。VSCode にそのための拡張と設定がある。
+
+- [x] 13. Reflog、コミットへの Reset、コミットの Checkout (Detached)
+- [ ] 14. タグとリモートのメニュー、タグのリモートの印と署名の印
+- [ ] 15. Worktrees
+- [ ] 16. File History
+- [ ] 17. Blame
+- [ ] 18. アプリと同じブランチの並べ方、お気に入り、アーカイブ、複数選択、絞り込み
+- [ ] 19. History の署名の印、Go to HEAD・Parent・Child
+- [ ] 20. shallow clone の取り足し、partial clone の中身をすべて取る
+- [ ] 21. Stashes の残り（Branch…・`--index`・行の詳しい情報・Pop の前の確認）
+- [ ] 22. Undo の前の確認と、Undo の記録の一覧
+- [ ] 23. リポジトリの設定

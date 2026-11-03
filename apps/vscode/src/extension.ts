@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { setDaemonLanguage } from './daemon/client.ts';
-import { disposeDaemonClients, initDaemon } from './daemon/connection.ts';
+import { daemonPath, disposeDaemonClients, initDaemon } from './daemon/connection.ts';
 import { RepositoryManager } from './state/manager.ts';
 import { registerBranchCommands } from './ui/branchCommands.ts';
 import { registerContentProvider } from './ui/content.ts';
@@ -12,12 +12,14 @@ import { MainPanel } from './ui/mainPanel.ts';
 import { registerMergeBranchesCommand } from './ui/mergeBranches.ts';
 import { registerNavCommands } from './ui/navCommands.ts';
 import { registerPatchCommands } from './ui/patchCommands.ts';
+import { registerReflogCommands } from './ui/reflogCommands.ts';
 import { registerSequenceCommands } from './ui/sequenceCommands.ts';
 import { SidebarProvider } from './ui/sidebar.ts';
 import { registerStashCommands } from './ui/stashCommands.ts';
 import { registerSubmoduleCommands } from './ui/submoduleCommands.ts';
 import { registerSyncCommands } from './ui/syncCommands.ts';
 import { registerUndoCommand } from './ui/undoCommand.ts';
+import type { ViewName } from './view/protocol.ts';
 
 /** 戻り値は結合テストから中身を確かめるためのもの */
 export async function activate(
@@ -42,9 +44,14 @@ export async function activate(
     treeDataProvider: sidebar,
     dragAndDropController: dragAndDrop,
   });
-  const show = (target?: 'workingCopy' | 'history', ref?: string) =>
+  const show = (target?: ViewName, ref?: string) =>
     MainPanel.show(context.extensionUri, manager, target, ref);
 
+  const updateEngine = async () => {
+    const engine = !!(await daemonPath().catch(() => undefined));
+    sidebar.setEngine(engine);
+    void vscode.commands.executeCommand('setContext', 'amonhen.engine', engine);
+  };
   const updateDescription = () => {
     view.description = manager.repositories.length > 1 ? manager.current?.root.split(/[\\/]/).pop() : undefined;
   };
@@ -64,6 +71,7 @@ export async function activate(
     vscode.commands.registerCommand('amonhen.open', () => show()),
     vscode.commands.registerCommand('amonhen.showWorkingCopy', () => show('workingCopy')),
     vscode.commands.registerCommand('amonhen.showHistory', () => show('history')),
+    vscode.commands.registerCommand('amonhen.showReflog', () => show('reflog')),
     vscode.commands.registerCommand('amonhen.showRef', (ref: string) => show('history', ref)),
     registerUndoCommand(manager),
     registerFetchCommand(manager),
@@ -77,7 +85,11 @@ export async function activate(
     registerStashCommands(manager),
     registerSubmoduleCommands(manager),
     registerRangeDiffCommands(manager),
+    registerReflogCommands(manager),
+    // エンジンを使えるときだけ出すもの（Reflog・Reset）
+    vscode.workspace.onDidChangeConfiguration((e) => e.affectsConfiguration('amonhen.daemon') && void updateEngine()),
   );
+  void updateEngine();
 
   await manager.initialize();
   updateDescription();

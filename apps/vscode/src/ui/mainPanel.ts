@@ -5,11 +5,12 @@ import type { RepositoryManager } from '../state/manager.ts';
 import type { Repository } from '../state/repository.ts';
 import type { HostMessage, ViewName, WebviewMessage } from '../view/protocol.ts';
 import { HistoryController } from './historyController.ts';
+import { ReflogController } from './reflogController.ts';
 import { showError } from './stageCommands.ts';
 import { WorkingCopyController } from './workingCopyController.ts';
 
 /**
- * メインビュー。エディタ領域の 1 つの Webview に、Working Copy か History を出す。
+ * メインビュー。エディタ領域の 1 つの Webview に、Working Copy・History・Reflog を出す。
  * どちらを出すかはサイドバーのナビで選ぶ。こちらは画面ごとのコントローラーにメッセージを振り分ける。
  */
 export class MainPanel implements vscode.Disposable {
@@ -17,6 +18,7 @@ export class MainPanel implements vscode.Disposable {
 
   readonly history: HistoryController;
   readonly workingCopy: WorkingCopyController;
+  readonly reflog: ReflogController;
   private readonly panel: vscode.WebviewPanel;
   private readonly manager: RepositoryManager;
   private readonly disposables: vscode.Disposable[] = [];
@@ -61,11 +63,13 @@ export class MainPanel implements vscode.Disposable {
     this.manager = manager;
     this.history = new HistoryController((m) => this.post(m));
     this.workingCopy = new WorkingCopyController((m) => this.post(m));
+    this.reflog = new ReflogController((m) => this.post(m));
     panel.iconPath = vscode.Uri.joinPath(extensionUri, 'media', 'amonhen.svg');
     panel.webview.html = html(panel.webview, extensionUri);
     this.disposables.push(
       this.history,
       this.workingCopy,
+      this.reflog,
       panel.onDidDispose(() => this.dispose()),
       panel.webview.onDidReceiveMessage((m: WebviewMessage) => void this.onMessage(m).catch(showError)),
       manager.onDidChangeCurrent((r) => this.watch(r)),
@@ -95,6 +99,7 @@ export class MainPanel implements vscode.Disposable {
     if (this.ready) {
       this.history.setRepository(repo);
       this.workingCopy.setRepository(repo);
+      this.reflog.setRepository(repo);
     }
   }
 
@@ -108,6 +113,7 @@ export class MainPanel implements vscode.Disposable {
         }
         this.history.setRepository(this.repo);
         this.workingCopy.setRepository(this.repo);
+        this.reflog.setRepository(this.repo);
         break;
       case 'view':
         break;
@@ -120,6 +126,10 @@ export class MainPanel implements vscode.Disposable {
       case 'wcOpenFile':
       case 'wcResolve':
         await this.workingCopy.handle(message);
+        break;
+      case 'reflogLoad':
+      case 'reflogAction':
+        await this.reflog.handle(message);
         break;
       default:
         await this.history.handle(message);
