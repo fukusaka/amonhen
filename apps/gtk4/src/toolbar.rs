@@ -1,31 +1,35 @@
-//! 見出しのツールバーのボタンの並び（macOS 版の `MainToolbar` のカスタマイズ）。どのボタンを出すかと順番を、
-//! View > Customize Toolbar… の窓で決める（GNOME の見出しには並べ替えの仕組みがないので、一覧で上下に動かす）。
-//! 見出しの左（Repository のメニューの右）と右（主メニューの左）に分けて並べ、間に空きを入れられる。
-//! 並びはアプリ全体で 1 つ（設定の `toolbarItemsV2`）で、変えるとすべての窓のタブに効く。
+//! 見出しのツールバーのボタンの並び（macOS 版の `MainToolbar` と、NSToolbar のカスタマイズ）。View > Customize
+//! Toolbar… でパレットの窓を出し、出している間は見出しのボタンを押す代わりにドラッグで並べ替える: パレットの項目を
+//! 見出しにドラッグして足し、見出しの項目を外にドラッグして外し、既定のセットをドラッグして元に戻す（macOS 版と同じ）。
+//! 見出しの左（Repository のメニューの右）と右（主メニューの左）に分けて並べ、境目は伸縮するスペース（macOS 版の
+//! flexibleSpace。見出しには 1 つだけ）。間にスペースを入れられる。並びはアプリ全体で 1 つ（設定の
+//! `toolbarItemsV3`）で、変えるとすべての窓のタブに効く。
 //!
-//! Repository のメニュー・検索・主メニュー（≡）は動かさない。リポジトリの名前は並びの 1 つで、並びから外すと
-//! 見出しの真ん中に出す。
+//! Repository のメニューと主メニュー（≡）は、macOS 版のメニューバーの代わりなので動かさない。リポジトリの名前は
+//! 並びの 1 つで、並びから外すと見出しの真ん中に出す。
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
 use amonhen_model::tr;
 use gtk::prelude::*;
-use gtk::{gio, glib};
+use gtk::{gdk, gio, glib};
 
 use crate::icon;
 
 /// 設定の鍵。並びを `,` でつなぐ（出さないものは `-` を前に付ける）。既定の並びを変えたら名前を変える（macOS 版の
 /// ツールバーの名前と同じく、前に保存した並びに新しいボタンが出てこないため）。
-const KEY: &str = "toolbarItemsV2";
-/// 空き（いくつでも入れられる）。
+const KEY: &str = "toolbarItemsV3";
+/// 前の版の鍵（検索がまだ並びになかった）。読むときに検索を右の終わりに足す。
+const KEY_V2: &str = "toolbarItemsV2";
+/// スペース（いくつでも入れられる）。
 const SPACE: &str = "space";
-/// ここから右は見出しの右に並べる。
+/// 伸縮するスペース。ここから右は見出しの右に並べる。
 const SPLIT: &str = "|";
 
 /// macOS 版の既定の並び（サイドバーの切り替え・Repositories・リポジトリの名前・Branch・Fetch・Pull・Push、
-/// Merge・Rebase、Stash・Pop、右に Activity・Refresh・Undo）。
+/// Merge・Rebase、Stash・Pop、右に Activity・Refresh・Undo・検索）。
 const DEFAULT: &[&str] = &[
     "sidebar",
     "repositories",
@@ -44,9 +48,33 @@ const DEFAULT: &[&str] = &[
     "activity",
     "refresh",
     "undo",
+    "search",
 ];
 /// 既定では出さないボタン（macOS 版のツールバーに足せるもの）。
 const OPTIONAL: &[&str] = &["new-branch", "terminal", "files"];
+/// パレットの並び（macOS 版の `toolbarAllowedItemIdentifiers` の順。≡ は動かさないので除く）。
+const PALETTE: &[&str] = &[
+    "sidebar",
+    "repositories",
+    "repository",
+    "branch",
+    "search",
+    "fetch",
+    "pull",
+    "push",
+    "merge",
+    "rebase",
+    "stash",
+    "pop",
+    "new-branch",
+    "activity",
+    "refresh",
+    "undo",
+    "terminal",
+    "files",
+    SPACE,
+    SPLIT,
+];
 
 /// 並びの 1 つ。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -56,12 +84,14 @@ enum Entry {
     Split,
 }
 
-/// ボタンの名前（一覧に出す。操作の名前は英語のまま）。
+/// パレットに出す名前（macOS 版の paletteLabel。操作の名前は英語のまま）。
 fn name(id: &str) -> String {
     match id {
         "sidebar" => tr!("Show Sidebar"),
         "repository" => "Repository".to_owned(),
-        "branch" => "Branch".to_owned(),
+        // macOS 版と同じく、新しいブランチも「Branch」（印で見分ける）。
+        "branch" | "new-branch" => "Branch".to_owned(),
+        "search" => tr!("Search"),
         "fetch" => "Fetch".to_owned(),
         "pull" => "Pull".to_owned(),
         "push" => "Push".to_owned(),
@@ -69,13 +99,14 @@ fn name(id: &str) -> String {
         "rebase" => "Rebase".to_owned(),
         "stash" => "Stash".to_owned(),
         "pop" => "Pop".to_owned(),
-        "new-branch" => "New Branch".to_owned(),
         "repositories" => "Repositories".to_owned(),
-        "terminal" => tr!("Open in Terminal"),
-        "files" => tr!("Show in Files"),
+        "terminal" => tr!("Terminal"),
+        "files" => tr!("Files"),
         "activity" => "Activity".to_owned(),
         "refresh" => tr!("Refresh"),
         "undo" => "Undo".to_owned(),
+        SPACE => tr!("Space"),
+        SPLIT => tr!("Flexible Space"),
         _ => id.to_owned(),
     }
 }
@@ -162,7 +193,157 @@ pub fn shows(id: &str) -> bool {
 pub const ITEMS_KEY: &str = KEY;
 
 fn entries() -> Vec<Entry> {
-    crate::settings::string(KEY).map_or_else(default_entries, |s| parse(&s))
+    if let Some(s) = crate::settings::string(KEY) {
+        return parse(&s);
+    }
+    crate::settings::string(KEY_V2).map_or_else(default_entries, |s| from_v2(&s))
+}
+
+/// 前の版の並びを読む（並べたものはそのままに、検索を右の終わりに足す。前の版では検索はそこに決まっていた）。
+fn from_v2(text: &str) -> Vec<Entry> {
+    let mut all = parse(text);
+    all.retain(|e| !matches!(e, Entry::Item { id, .. } if id == "search"));
+    insert_at(
+        &mut all,
+        Side::End,
+        usize::MAX,
+        Entry::Item {
+            id: "search".to_owned(),
+            shown: true,
+        },
+    );
+    all
+}
+
+/// 見出しの左か右か。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Side {
+    Start,
+    End,
+}
+
+/// ドラッグしているもの（パレット・見出しから、見出し・パレットへ）。
+#[derive(Clone, Debug, PartialEq, Eq, glib::Boxed)]
+#[boxed_type(name = "AmonhenToolbarDrag")]
+enum Dragged {
+    /// 見出しにある `n` 番目の並び。
+    Move(usize),
+    /// パレットの項目（ボタン・スペース・伸縮するスペース）。
+    Add(String),
+    /// 既定のセット。
+    Default,
+}
+
+/// `side` に出ているもの（出すボタンとスペース）の、並びの中の位置。
+fn shown_on(all: &[Entry], side: Side) -> Vec<usize> {
+    let split = all
+        .iter()
+        .position(|e| *e == Entry::Split)
+        .unwrap_or(all.len());
+    all.iter()
+        .enumerate()
+        .filter(|(i, e)| {
+            (side == Side::Start) == (*i < split)
+                && matches!(e, Entry::Space | Entry::Item { shown: true, .. })
+        })
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// `side` の `slot` 番目（出ているものの中の位置。多すぎれば終わり）に `entry` を入れる。
+fn insert_at(all: &mut Vec<Entry>, side: Side, slot: usize, entry: Entry) {
+    let shown = shown_on(all, side);
+    let split = all
+        .iter()
+        .position(|e| *e == Entry::Split)
+        .unwrap_or(all.len());
+    let at = match (shown.get(slot), shown.last(), side) {
+        (Some(&i), _, _) => i,
+        (None, Some(&last), _) => last + 1,
+        (None, None, Side::Start) => 0,
+        (None, None, Side::End) => (split + 1).min(all.len()),
+    };
+    all.insert(at, entry);
+}
+
+/// `dragged` を `side` の `slot` 番目に落としたあとの並び。
+fn dropped(all: &[Entry], dragged: &Dragged, side: Side, slot: usize) -> Vec<Entry> {
+    let mut all = all.to_vec();
+    // 同じ側の前から動かすなら、取り除いた分だけ詰める。
+    let take = |all: &mut Vec<Entry>, index: usize, slot: usize| -> usize {
+        let before = shown_on(all, side).iter().take(slot).any(|&i| i == index);
+        all.remove(index);
+        if before { slot - 1 } else { slot }
+    };
+    match dragged {
+        Dragged::Default => return default_entries(),
+        Dragged::Move(index) => {
+            let Some(entry) = all.get(*index).cloned() else {
+                return all;
+            };
+            if entry == Entry::Split {
+                return all;
+            }
+            let slot = take(&mut all, *index, slot);
+            insert_at(&mut all, side, slot, entry);
+        }
+        Dragged::Add(id) if id == SPACE => insert_at(&mut all, side, slot, Entry::Space),
+        Dragged::Add(id) if id == SPLIT => {
+            // 左右の出ているものを通して数え、その前に境目を移す。
+            let starts = shown_on(&all, Side::Start).len();
+            let at = if side == Side::Start {
+                slot.min(starts)
+            } else {
+                starts + slot
+            };
+            all.retain(|e| *e != Entry::Split);
+            // 境目がなければ、出ているものはみな左に数える。
+            let combined = shown_on(&all, Side::Start);
+            match combined.get(at) {
+                Some(&i) => all.insert(i, Entry::Split),
+                None => {
+                    // 出ているものの終わりの後（出していないものより前）に。
+                    let after = combined.last().map_or(0, |&i| i + 1);
+                    all.insert(after, Entry::Split);
+                }
+            }
+        }
+        Dragged::Add(id) => {
+            if !known(id) {
+                return all;
+            }
+            let mut slot = slot;
+            if let Some(index) = all
+                .iter()
+                .position(|e| matches!(e, Entry::Item { id: i, .. } if i == id))
+            {
+                slot = take(&mut all, index, slot);
+            }
+            insert_at(
+                &mut all,
+                side,
+                slot,
+                Entry::Item {
+                    id: id.clone(),
+                    shown: true,
+                },
+            );
+        }
+    }
+    all
+}
+
+/// 見出しの外にドラッグして外したあとの並び（スペースは消し、ボタンは出さないものにする）。
+fn removed(all: &[Entry], index: usize) -> Vec<Entry> {
+    let mut all = all.to_vec();
+    match all.get_mut(index) {
+        Some(Entry::Space) => {
+            all.remove(index);
+        }
+        Some(Entry::Item { shown, .. }) => *shown = false,
+        _ => {}
+    }
+    all
 }
 
 fn save(entries: &[Entry]) {
@@ -179,6 +360,8 @@ pub struct Given {
     pub pull: gtk::Button,
     pub push: gtk::Button,
     pub undo: gtk::Button,
+    /// History の検索のボタン（macOS 版の検索欄）。
+    pub search: gtk::Widget,
 }
 
 fn icon_button(kind: icon::Kind, action: &str, tip: &str) -> gtk::Button {
@@ -336,24 +519,37 @@ pub fn install(start: &gtk::Box, end: &gtk::Box, given: Given) {
     refresh.append(&arrow);
     buttons.insert("refresh", refresh.upcast());
     buttons.insert("undo", given.undo.upcast());
+    buttons.insert("search", given.search.clone());
 
     // リポジトリの名前を並べるときの、見出しの真ん中（空けておく。窓の名前を重ねて出さない）。
     let center = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    // 見出しに入れた部品と、その並びの中の位置（カスタマイズの間、どれをドラッグしたかを見分ける）。
+    let placed: Placed = Rc::default();
     let fill = {
         let (start, end) = (start.downgrade(), end.downgrade());
         let (header, repository) = (given.header.downgrade(), given.repository.clone());
+        let placed = placed.clone();
         move || {
             let (Some(start), Some(end), Some(header)) =
                 (start.upgrade(), end.upgrade(), header.upgrade())
             else {
                 return;
             };
+            let customizing = customizing();
             for b in [&start, &end] {
                 while let Some(child) = b.first_child() {
+                    child.set_can_target(true);
                     b.remove(&child);
                 }
+                // カスタマイズの間は、空でも落とせるよう幅を取り、枠を出す。
+                if customizing {
+                    b.add_css_class("toolbar-customizing");
+                } else {
+                    b.remove_css_class("toolbar-customizing");
+                }
             }
-            let shown = entries()
+            let all = entries();
+            let shown = all
                 .iter()
                 .any(|e| matches!(e, Entry::Item { id, shown: true } if id == "repository"));
             if shown {
@@ -361,230 +557,392 @@ pub fn install(start: &gtk::Box, end: &gtk::Box, given: Given) {
             } else {
                 header.set_title_widget(Some(&repository));
             }
-            let mut target = &start;
-            for entry in entries() {
-                match entry {
-                    Entry::Split => target = &end,
+            let mut target = (&start, Side::Start);
+            let mut now = Vec::new();
+            for (index, entry) in all.iter().enumerate() {
+                let widget = match entry {
+                    Entry::Split => {
+                        target = (&end, Side::End);
+                        continue;
+                    }
                     Entry::Space => {
                         let space = gtk::Box::new(gtk::Orientation::Horizontal, 0);
                         space.set_width_request(8);
-                        target.append(&space);
-                    }
-                    Entry::Item { id, shown: true } => {
-                        if let Some(w) = buttons.get(id.as_str()) {
-                            target.append(w);
+                        if customizing {
+                            space.add_css_class("toolbar-space");
                         }
+                        space.upcast()
                     }
-                    Entry::Item { shown: false, .. } => {}
-                }
+                    Entry::Item { id, shown: true } => match buttons.get(id.as_str()) {
+                        Some(w) => w.clone(),
+                        None => continue,
+                    },
+                    Entry::Item { shown: false, .. } => continue,
+                };
+                // カスタマイズの間は押せない（見出しの箱がドラッグを受ける）。
+                widget.set_can_target(!customizing);
+                target.0.append(&widget);
+                now.push((target.1, widget, index));
             }
+            placed.replace(now);
         }
     };
     fill();
+    let fill = Rc::new(fill);
+    for (b, side) in [(start, Side::Start), (end, Side::End)] {
+        drag_from(b, side, &placed);
+        drop_on(b.upcast_ref(), Some(side), &placed);
+    }
+    // 見出しの隙間（真ん中など）に落としたら、近い側の端に入れる。
+    drop_on(given.header.upcast_ref(), None, &placed);
     // タブの見出しがある間だけ見る（閉じたタブのボタンを持ち続けない）。
+    let f = fill.clone();
     crate::settings::connect_changed_while(&given.header, move |key| {
         if key == KEY {
-            fill();
+            f();
         }
     });
+    let header = given.header.downgrade();
+    TOOLBARS.with(|t| t.borrow_mut().push((header, Rc::new(move || fill()))));
 }
+
+/// ツールバーを入れ直すもの。
+type Refill = Rc<dyn Fn()>;
+
+/// 見出しに入れた部品と、その側・並びの中の位置。
+type Placed = Rc<RefCell<Vec<(Side, gtk::Widget, usize)>>>;
 
 thread_local! {
+    /// パレットの窓（開いている間はカスタマイズ中）。
     static WINDOW: RefCell<glib::WeakRef<gtk::Window>> = RefCell::default();
+    static CUSTOMIZING: Cell<bool> = const { Cell::new(false) };
+    /// 作ったツールバー（見出しがなくなったら外す）と、入れ直すもの。
+    static TOOLBARS: RefCell<Vec<(glib::WeakRef<gtk::HeaderBar>, Refill)>> = RefCell::default();
 }
 
-/// View > Customize Toolbar…: どのボタンを出すかと順番を決める窓（開いていれば前に出す）。
+fn customizing() -> bool {
+    CUSTOMIZING.with(Cell::get)
+}
+
+/// カスタマイズを始める・終える（すべての窓のツールバーを入れ直す）。
+fn set_customizing(on: bool) {
+    CUSTOMIZING.with(|c| c.set(on));
+    let fills: Vec<Refill> = TOOLBARS.with(|t| {
+        let mut t = t.borrow_mut();
+        t.retain(|(h, _)| h.upgrade().is_some());
+        t.iter().map(|(_, f)| f.clone()).collect()
+    });
+    for f in fills {
+        f();
+    }
+}
+
+/// `b` の中の `x` にある部品（`placed` の 1 つ）と、その左端。
+fn placed_at(
+    b: &gtk::Widget,
+    placed: &Placed,
+    side: Side,
+    x: f64,
+) -> Option<(gtk::Widget, usize, f64)> {
+    placed
+        .borrow()
+        .iter()
+        .filter(|(s, ..)| *s == side)
+        .find_map(|(_, w, index)| {
+            let r = w.compute_bounds(b)?;
+            let (left, right) = (f64::from(r.x()), f64::from(r.x() + r.width()));
+            (x >= left && x < right).then(|| (w.clone(), *index, left))
+        })
+}
+
+/// `b` の `x` に落としたときの位置（出ているものの中で、真ん中が `x` より左にあるものの数）。
+fn slot_at(b: &gtk::Widget, placed: &Placed, side: Side, x: f64) -> usize {
+    placed
+        .borrow()
+        .iter()
+        .filter(|(s, ..)| *s == side)
+        .filter(|(_, w, _)| {
+            w.compute_bounds(b)
+                .is_some_and(|r| f64::from(r.x() + r.width() / 2.0) < x)
+        })
+        .count()
+}
+
+/// カスタマイズの間、見出しの項目をドラッグできるようにする。見出しの外（パレットでもなく、落とせる所でもない所）
+/// に落としたら外す（macOS 版と同じ）。
+fn drag_from(b: &gtk::Box, side: Side, placed: &Placed) {
+    let source = gtk::DragSource::new();
+    source.set_actions(gdk::DragAction::MOVE);
+    let dragging = Rc::new(Cell::new(None::<usize>));
+    let (w, p, d) = (b.downgrade(), placed.clone(), dragging.clone());
+    source.connect_prepare(move |source, x, y| {
+        if !customizing() {
+            return None;
+        }
+        let b = w.upgrade()?;
+        let (widget, index, left) = placed_at(b.upcast_ref(), &p, side, x)?;
+        d.set(Some(index));
+        let paintable = gtk::WidgetPaintable::new(Some(&widget));
+        source.set_icon(Some(&paintable), (x - left) as i32, y as i32);
+        Some(gdk::ContentProvider::for_value(
+            &Dragged::Move(index).to_value(),
+        ))
+    });
+    source.connect_drag_cancel(move |_, _, reason| {
+        let Some(index) = dragging.take() else {
+            return false;
+        };
+        if reason != gdk::DragCancelReason::NoTarget {
+            return false;
+        }
+        save(&removed(&entries(), index));
+        true
+    });
+    b.add_controller(source);
+}
+
+/// `w` に落とせるようにする。`side` がなければ見出しの隙間で、`x` が真ん中より左なら左の終わり、右なら右の初め。
+fn drop_on(w: &gtk::Widget, side: Option<Side>, placed: &Placed) {
+    let target = gtk::DropTarget::new(
+        Dragged::static_type(),
+        gdk::DragAction::MOVE | gdk::DragAction::COPY,
+    );
+    let p = placed.clone();
+    target.connect_accept(|_, _| customizing());
+    target.connect_drop(move |target, value, x, _| {
+        let (Ok(dragged), Some(w)) = (value.get::<Dragged>(), target.widget()) else {
+            return false;
+        };
+        let (side, slot) = match side {
+            Some(side) => (side, slot_at(&w, &p, side, x)),
+            None if x < f64::from(w.width()) / 2.0 => (Side::Start, usize::MAX),
+            None => (Side::End, 0),
+        };
+        save(&dropped(&entries(), &dragged, side, slot));
+        true
+    });
+    w.add_controller(target);
+}
+
+/// カスタマイズの見た目（一度だけ入れる）。
+fn install_css() {
+    thread_local! {
+        static DONE: Cell<bool> = const { Cell::new(false) };
+    }
+    if DONE.with(|d| d.replace(true)) {
+        return;
+    }
+    let provider = gtk::CssProvider::new();
+    provider.load_from_string(
+        ".toolbar-customizing { min-width: 40px; min-height: 30px; border-radius: 6px; \
+           outline: 1px dashed alpha(currentColor, 0.35); outline-offset: 2px; } \
+         .toolbar-customizing:drop(active) { background: alpha(@theme_selected_bg_color, 0.25); } \
+         .toolbar-space { min-width: 20px; border-radius: 4px; border: 1px dashed alpha(currentColor, 0.45); } \
+         .toolbar-palette-tile { padding: 6px; border-radius: 6px; } \
+         .toolbar-palette-tile:hover { background: alpha(currentColor, 0.06); } \
+         .toolbar-default-set { padding: 8px; border-radius: 6px; border: 1px solid alpha(currentColor, 0.15); }",
+    );
+    if let Some(display) = gdk::Display::default() {
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
+}
+
+/// パレットに出す項目の形（押せない、見出しのボタンと同じ見た目）。
+fn preview(id: &str) -> gtk::Widget {
+    if id == SPACE || id == SPLIT {
+        let space = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        space.add_css_class("toolbar-space");
+        space.set_size_request(if id == SPLIT { 64 } else { 20 }, 30);
+        space.set_halign(gtk::Align::Center);
+        space.set_valign(gtk::Align::Center);
+        return space.upcast();
+    }
+    let kind = match id {
+        "sidebar" => Some(icon::Kind::Sidebar),
+        "branch" | "new-branch" => Some(icon::Kind::Branch),
+        "search" => Some(icon::Kind::Search),
+        "fetch" => Some(icon::Kind::Fetch),
+        "pull" => Some(icon::Kind::Pull),
+        "push" => Some(icon::Kind::Push),
+        "merge" => Some(icon::Kind::Merge),
+        "rebase" => Some(icon::Kind::Rebase),
+        "stash" => Some(icon::Kind::StashPush),
+        "pop" => Some(icon::Kind::StashPop),
+        "files" => Some(icon::Kind::Folder),
+        "activity" => Some(icon::Kind::Activity),
+        "refresh" => Some(icon::Kind::Refresh),
+        "undo" => Some(icon::Kind::Undo),
+        _ => None,
+    };
+    let button = gtk::Button::new();
+    match (kind, id) {
+        (Some(kind), _) => {
+            let icon = icon::Icon::default();
+            icon.set(kind, false);
+            if id == "new-branch" {
+                let inner = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+                inner.append(&icon);
+                inner.append(&gtk::Label::new(Some("+")));
+                button.set_child(Some(&inner));
+            } else {
+                button.set_child(Some(&icon));
+            }
+        }
+        (None, "repositories") => set_icon_or_label(&button, "view-grid-symbolic", "Repositories"),
+        (None, "terminal") => {
+            set_icon_or_label(&button, "utilities-terminal-symbolic", &tr!("Terminal"));
+        }
+        // リポジトリの名前。
+        _ => {
+            let label = gtk::Label::new(Some("Repository"));
+            label.add_css_class("heading");
+            button.set_child(Some(&label));
+        }
+    }
+    button.set_can_target(false);
+    button.set_focusable(false);
+    button.set_halign(gtk::Align::Center);
+    button.set_valign(gtk::Align::Center);
+    button.upcast()
+}
+
+fn set_icon_or_label(button: &gtk::Button, icon_name: &str, label: &str) {
+    if gdk::Display::default().is_some_and(|d| gtk::IconTheme::for_display(&d).has_icon(icon_name))
+    {
+        button.set_icon_name(icon_name);
+    } else {
+        button.set_label(label);
+    }
+}
+
+/// パレットからドラッグできるようにする（`w` の見た目をドラッグの絵に）。
+fn drag_out(tile: &gtk::Widget, image: &gtk::Widget, dragged: Dragged) {
+    let source = gtk::DragSource::new();
+    source.set_actions(gdk::DragAction::COPY);
+    let image = image.downgrade();
+    source.connect_prepare(move |source, _, _| {
+        if let Some(image) = image.upgrade() {
+            let paintable = gtk::WidgetPaintable::new(Some(&image));
+            source.set_icon(Some(&paintable), image.width() / 2, image.height() / 2);
+        }
+        Some(gdk::ContentProvider::for_value(&dragged.to_value()))
+    });
+    tile.add_controller(source);
+}
+
+/// View > Customize Toolbar…: ツールバーのパレット（macOS 版の NSToolbar のカスタマイズのシート）。開いていれば
+/// 前に出す。開いている間は、すべての窓のツールバーをドラッグで並べ替えられる。
 pub fn customize(parent: &gtk::Window) {
     if let Some(w) = WINDOW.with(|w| w.borrow().upgrade()) {
         w.present();
         return;
     }
-    let list = gtk::ListBox::new();
-    list.set_selection_mode(gtk::SelectionMode::None);
-    list.add_css_class("boxed-list");
-    refill(&list);
-    let refill = {
-        let list = list.downgrade();
-        Rc::new(move || {
-            if let Some(list) = list.upgrade() {
-                refill(&list);
-            }
-        })
+    install_css();
+    let caption = |text: &str| {
+        let l = gtk::Label::new(Some(text));
+        l.set_xalign(0.0);
+        l.set_wrap(true);
+        l
     };
 
-    let add_space = gtk::Button::with_label(&tr!("Add Space"));
-    add_space.connect_clicked({
-        let refill = refill.clone();
-        move |_| {
-            let mut all = entries();
-            // 左の終わり（右との境目の前）に足す。
-            let at = all
-                .iter()
-                .position(|e| *e == Entry::Split)
-                .unwrap_or(all.len());
-            all.insert(at, Entry::Space);
-            save(&all);
-            refill();
-        }
-    });
-    let restore = gtk::Button::with_label(&tr!("Restore Default"));
-    restore.connect_clicked({
-        let refill = refill.clone();
-        move |_| {
-            save(&default_entries());
-            refill();
-        }
-    });
-    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    buttons.append(&add_space);
-    let gap = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    gap.set_hexpand(true);
-    buttons.append(&gap);
-    buttons.append(&restore);
+    // 足せる項目（見出しにあるものも出す。ドラッグすれば、その位置に移る）。
+    let items = gtk::FlowBox::builder()
+        .selection_mode(gtk::SelectionMode::None)
+        .homogeneous(true)
+        .min_children_per_line(4)
+        .max_children_per_line(10)
+        .row_spacing(6)
+        .column_spacing(6)
+        .build();
+    for id in PALETTE {
+        let image = preview(id);
+        let label = gtk::Label::new(Some(&name(id)));
+        label.add_css_class("caption");
+        label.set_wrap(true);
+        label.set_justify(gtk::Justification::Center);
+        label.set_max_width_chars(12);
+        let tile = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        tile.add_css_class("toolbar-palette-tile");
+        tile.set_size_request(-1, 64);
+        tile.append(&image);
+        tile.append(&label);
+        drag_out(tile.upcast_ref(), &image, Dragged::Add((*id).to_owned()));
+        items.append(&tile);
+    }
 
-    let note = gtk::Label::new(Some(&tr!(
-        "The Repository menu, search and the main menu stay where they are."
-    )));
-    note.set_xalign(0.0);
-    note.set_wrap(true);
+    // 既定のセット（ひとまとまりでドラッグする）。
+    let set = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    set.add_css_class("toolbar-default-set");
+    for entry in default_entries() {
+        let id = match &entry {
+            Entry::Item { id, shown: true } => id.as_str(),
+            Entry::Space => SPACE,
+            Entry::Split => SPLIT,
+            Entry::Item { shown: false, .. } => continue,
+        };
+        set.append(&preview(id));
+    }
+    let set_scroll = gtk::ScrolledWindow::builder()
+        .child(&set)
+        .vscrollbar_policy(gtk::PolicyType::Never)
+        .build();
+    drag_out(set_scroll.upcast_ref(), set.upcast_ref(), Dragged::Default);
+
+    let note = caption(&tr!(
+        "The Repository menu and the main menu stay where they are."
+    ));
     note.add_css_class("dim-label");
     note.add_css_class("caption");
+    let done = gtk::Button::with_label(&tr!("Done"));
+    done.add_css_class("suggested-action");
+    done.set_halign(gtk::Align::End);
 
     let column = gtk::Box::new(gtk::Orientation::Vertical, 12);
     column.set_margin_top(18);
     column.set_margin_bottom(18);
     column.set_margin_start(18);
     column.set_margin_end(18);
-    column.append(&list);
+    column.append(&caption(&tr!("Drag your favorite items into the toolbar…")));
+    column.append(&items);
+    column.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+    column.append(&caption(&tr!("…or drag the default set into the toolbar.")));
+    column.append(&set_scroll);
     column.append(&note);
-    column.append(&buttons);
-    let scrolled = gtk::ScrolledWindow::builder()
-        .child(&column)
-        .hscrollbar_policy(gtk::PolicyType::Never)
-        .propagate_natural_height(true)
-        .max_content_height(720)
-        .build();
+    column.append(&done);
     let window = gtk::Window::builder()
         .title(tr!("Customize Toolbar"))
-        .default_width(440)
-        .child(&scrolled)
+        .default_width(880)
+        .child(&column)
         .transient_for(parent)
         .destroy_with_parent(true)
         .build();
     window.set_titlebar(Some(&gtk::HeaderBar::new()));
-    WINDOW.with(|w| w.replace(window.downgrade()));
-    window.present();
-}
-
-/// 一覧を今の並びで作り直す。
-fn refill(list: &gtk::ListBox) {
-    while let Some(row) = list.first_child() {
-        list.remove(&row);
-    }
-    let all = entries();
-    list.append(&heading_row(&tr!("Left of the header bar")));
-    for (i, entry) in all.iter().enumerate() {
-        list.append(&entry_row(&all, i, entry, list.downgrade()));
-    }
-}
-
-/// 一覧の見出しの行（見出しの左・右）。
-fn heading_row(title: &str) -> gtk::ListBoxRow {
-    let label = gtk::Label::new(Some(title));
-    label.set_xalign(0.0);
-    label.add_css_class("heading");
-    label.set_margin_top(8);
-    label.set_margin_bottom(8);
-    label.set_margin_start(12);
-    let row = gtk::ListBoxRow::new();
-    row.set_child(Some(&label));
-    row.set_activatable(false);
-    row
-}
-
-/// 並びの 1 行: 出すか（空きは外す）、名前、上下に動かす。
-fn entry_row(
-    all: &[Entry],
-    index: usize,
-    entry: &Entry,
-    list: glib::WeakRef<gtk::ListBox>,
-) -> gtk::ListBoxRow {
-    // 変えたら保存し（ツールバーは設定の知らせで並べ直す）、一覧を作り直す（押したボタンの外から）。
-    let changed = Rc::new(move |all: Vec<Entry>| {
-        save(&all);
-        let list = list.clone();
-        glib::idle_add_local_once(move || {
-            if let Some(list) = list.upgrade() {
-                refill(&list);
-            }
-        });
+    // 見出しの項目をパレットに落としたら外す（macOS 版と同じ）。
+    let target = gtk::DropTarget::new(Dragged::static_type(), gdk::DragAction::MOVE);
+    target.connect_drop(|_, value, _, _| {
+        if let Ok(Dragged::Move(index)) = value.get::<Dragged>() {
+            save(&removed(&entries(), index));
+        }
+        true
     });
-    if *entry == Entry::Split {
-        // 境目は見出しとして出す（ボタンを上下に動かして越えさせる）。
-        return heading_row(&tr!("Right of the header bar"));
-    }
-    let b = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    b.set_margin_top(4);
-    b.set_margin_bottom(4);
-    b.set_margin_start(12);
-    b.set_margin_end(8);
-    match entry {
-        Entry::Item { id, shown } => {
-            let check = gtk::CheckButton::with_label(&name(id));
-            check.set_active(*shown);
-            check.set_hexpand(true);
-            let (all, changed) = (all.to_vec(), changed.clone());
-            check.connect_toggled(move |c| {
-                let mut all = all.clone();
-                if let Entry::Item { shown, .. } = &mut all[index] {
-                    *shown = c.is_active();
-                }
-                changed(all);
-            });
-            b.append(&check);
+    window.add_controller(target);
+    let w = window.downgrade();
+    done.connect_clicked(move |_| {
+        if let Some(w) = w.upgrade() {
+            w.close();
         }
-        Entry::Space => {
-            let label = gtk::Label::new(Some(&tr!("Space")));
-            label.set_xalign(0.0);
-            label.set_hexpand(true);
-            label.set_margin_start(28);
-            label.add_css_class("dim-label");
-            b.append(&label);
-            let remove = gtk::Button::with_label("−");
-            remove.add_css_class("flat");
-            remove.set_tooltip_text(Some(&tr!("Remove")));
-            let (all, changed) = (all.to_vec(), changed.clone());
-            remove.connect_clicked(move |_| {
-                let mut all = all.clone();
-                all.remove(index);
-                changed(all);
-            });
-            b.append(&remove);
-        }
-        Entry::Split => {}
-    }
-    for (label, tip, step) in [("↑", tr!("Move Up"), -1isize), ("↓", tr!("Move Down"), 1)] {
-        let button = gtk::Button::with_label(label);
-        button.add_css_class("flat");
-        button.set_tooltip_text(Some(&tip));
-        let to = index as isize + step;
-        let possible = to >= 0 && (to as usize) < all.len();
-        button.set_sensitive(possible);
-        let (all, changed) = (all.to_vec(), changed.clone());
-        button.connect_clicked(move |_| {
-            if !possible {
-                return;
-            }
-            let mut all = all.clone();
-            all.swap(index, to as usize);
-            changed(all);
-        });
-        b.append(&button);
-    }
-    let row = gtk::ListBoxRow::new();
-    row.set_child(Some(&b));
-    row.set_activatable(false);
-    row
+    });
+    window.connect_close_request(|_| {
+        set_customizing(false);
+        glib::Propagation::Proceed
+    });
+    WINDOW.with(|w| w.replace(window.downgrade()));
+    set_customizing(true);
+    window.present();
 }
 
 #[cfg(test)]
@@ -630,5 +988,105 @@ mod tests {
             })
             .collect();
         assert_eq!(ids, ["sidebar", "repositories", "repository", "branch"]);
+    }
+
+    /// 見出しに出ている並び（左と右）。
+    fn shown(all: &[Entry]) -> (Vec<String>, Vec<String>) {
+        let ids = |side| {
+            shown_on(all, side)
+                .into_iter()
+                .map(|i| match &all[i] {
+                    Entry::Item { id, .. } => id.clone(),
+                    _ => SPACE.to_owned(),
+                })
+                .collect::<Vec<_>>()
+        };
+        (ids(Side::Start), ids(Side::End))
+    }
+
+    #[test]
+    fn dropping_from_the_palette_adds_or_moves() {
+        let all = parse("fetch,pull,|,undo");
+        // 足す（左の 1 番目）。
+        let (l, r) = shown(&dropped(
+            &all,
+            &Dragged::Add("terminal".into()),
+            Side::Start,
+            1,
+        ));
+        assert_eq!(l, ["fetch", "terminal", "pull"]);
+        assert_eq!(r, ["undo"]);
+        // 見出しにあるものは、そこから移る。
+        let (l, r) = shown(&dropped(&all, &Dragged::Add("fetch".into()), Side::End, 1));
+        assert_eq!(l, ["pull"]);
+        assert_eq!(r, ["undo", "fetch"]);
+        // スペースはいくつでも。
+        let (l, _) = shown(&dropped(&all, &Dragged::Add(SPACE.into()), Side::Start, 0));
+        assert_eq!(l, [SPACE, "fetch", "pull"]);
+        // 知らないものは入れない。
+        assert_eq!(
+            dropped(&all, &Dragged::Add("x".into()), Side::Start, 0),
+            all
+        );
+        // 既定のセット。
+        assert_eq!(
+            dropped(&all, &Dragged::Default, Side::End, 0),
+            default_entries()
+        );
+    }
+
+    #[test]
+    fn moving_within_the_toolbar_counts_the_slot_without_the_item() {
+        let all = parse("fetch,pull,push,|,undo");
+        // fetch を pull と push の間（出ているものの 2 番目の前）へ。
+        let (l, _) = shown(&dropped(&all, &Dragged::Move(0), Side::Start, 2));
+        assert_eq!(l, ["pull", "fetch", "push"]);
+        // 右の初めへ。
+        let (l, r) = shown(&dropped(&all, &Dragged::Move(2), Side::End, 0));
+        assert_eq!(l, ["fetch", "pull"]);
+        assert_eq!(r, ["push", "undo"]);
+        // 終わりより先は終わりに。空の側にも入る。
+        let empty = parse("fetch,|");
+        let (l, r) = shown(&dropped(&empty, &Dragged::Move(0), Side::End, usize::MAX));
+        assert!(l.is_empty());
+        assert_eq!(r, ["fetch"]);
+    }
+
+    #[test]
+    fn the_flexible_space_moves_the_split() {
+        let all = parse("fetch,pull,|,undo");
+        let (l, r) = shown(&dropped(&all, &Dragged::Add(SPLIT.into()), Side::Start, 1));
+        assert_eq!(l, ["fetch"]);
+        assert_eq!(r, ["pull", "undo"]);
+        let (l, r) = shown(&dropped(&all, &Dragged::Add(SPLIT.into()), Side::End, 1));
+        assert_eq!(l, ["fetch", "pull", "undo"]);
+        assert!(r.is_empty());
+        let moved = dropped(&all, &Dragged::Add(SPLIT.into()), Side::Start, 0);
+        assert_eq!(moved.iter().filter(|e| **e == Entry::Split).count(), 1);
+    }
+
+    #[test]
+    fn dragging_out_removes() {
+        let all = parse("fetch,space,pull,|");
+        let (l, _) = shown(&removed(&all, 1));
+        assert_eq!(l, ["fetch", "pull"]);
+        let after = removed(&all, 0);
+        assert_eq!(shown(&after).0, [SPACE, "pull"]);
+        // 外したボタンは、出さないものとして残る（パレットからまた足せる）。
+        assert!(after.contains(&Entry::Item {
+            id: "fetch".into(),
+            shown: false
+        }));
+        // 境目は外せない。
+        assert_eq!(removed(&all, 3), all);
+    }
+
+    #[test]
+    fn the_old_order_gets_search_at_the_right_end() {
+        let (l, r) = shown(&from_v2("fetch,|,refresh,-undo"));
+        assert_eq!(l, ["fetch"]);
+        assert_eq!(r, ["refresh", "search"]);
+        let (_, r) = shown(&default_entries());
+        assert_eq!(r, ["activity", "refresh", "undo", "search"]);
     }
 }

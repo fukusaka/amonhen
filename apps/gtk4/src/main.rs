@@ -1753,6 +1753,7 @@ fn build_tab(
         location: text.clone(),
         worktrees: worktrees.clone(),
         details: Rc::downgrade(&details),
+        search: search.toggle.clone().upcast(),
     });
     // つながるまでは、ブランチを「—」にして押せなくする（macOS 版と同じ）。
     if amonhen_remote::location::is_remote(&text) {
@@ -1841,7 +1842,6 @@ fn build_tab(
     search.install(&tab.group);
     // 足した検索のアクションにも、使えるか（開けていないタブでは使えない）を入れる。
     actions.update_facts(|_| {});
-    header.pack_end(&search.toggle);
     let order = settings::history_order();
     // 見張りからの変化の知らせ（裏の糸が受ける）。タブを閉じたら、知らせを受ける糸と下の受け手を止める。
     let (changed_tx, changed_rx) = std::sync::mpsc::channel();

@@ -51,6 +51,8 @@ pub struct Parts {
     pub worktrees: Rc<crate::worktrees::Worktrees>,
     /// History のコミットの詳細（Go to Parent・Go to Child はその親・子へ）。
     pub details: std::rc::Weak<crate::details::Details>,
+    /// History の検索のボタン（ツールバーの並びの 1 つ）。
+    pub search: gtk::Widget,
 }
 
 /// 見出しのメニューとツールバーのボタン（`--open-menu` で開く、ref を読んだら数を出す）。
@@ -529,7 +531,7 @@ pub fn install(parts: Parts) -> Buttons {
     parts.header.pack_start(&repository);
 
     // ツールバー（macOS 版の既定の並び: Branch・Fetch・Pull・Push、Merge・Rebase、Stash・Pop、
-    // 右に Activity・Refresh・Undo）。
+    // 右に Activity・Refresh・Undo・検索）。
     let branch = gtk::Label::new(Some("…"));
     let branch_icon = icon::Icon::default();
     branch_icon.set(icon::Kind::Branch, false);
@@ -562,6 +564,7 @@ pub fn install(parts: Parts) -> Buttons {
             pull: pull.clone(),
             push: push.clone(),
             undo: parts.actions.undo.clone(),
+            search: parts.search.clone(),
         },
     );
     let customize = gio::SimpleAction::new("customize-toolbar", None);
@@ -575,7 +578,7 @@ pub fn install(parts: Parts) -> Buttons {
         .primary(true)
         .build();
     set_icon(&primary, "open-menu-symbolic", "≡");
-    // 右端から: 主メニュー、ツールバーの右の並び（既定は Activity・Refresh・Undo）。
+    // 右端から: 主メニュー、ツールバーの右の並び（既定は Activity・Refresh・Undo・検索）。
     parts.header.pack_end(&primary);
     // 開くときに、状態で変わる項目の名前（Publish…・Undo <操作>…）を合わせる。
     for button in [&repository, &primary] {

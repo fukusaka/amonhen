@@ -1819,13 +1819,12 @@
 /* GTK4: ツールバーのカスタマイズ（View > Customize Toolbar…） */
 "Customize Toolbar…" = "ツールバーをカスタマイズ…";
 "Customize Toolbar" = "ツールバーのカスタマイズ";
-"Left of the header bar" = "見出しの左";
-"Right of the header bar" = "見出しの右";
-"Add Space" = "空きを足す";
-"Space" = "空き";
-"Move Up" = "上へ";
-"Move Down" = "下へ";
-"The Repository menu, search and the main menu stay where they are." = "Repository のメニュー・検索・主メニューは動かない。";
+"Drag your favorite items into the toolbar…" = "よく使う項目をツールバーにドラッグしてください…";
+"…or drag the default set into the toolbar." = "…またはデフォルトセットをツールバーにドラッグしてください。";
+"Space" = "スペース";
+"Flexible Space" = "フレキシブルスペース";
+"Files" = "ファイル";
+"The Repository menu and the main menu stay where they are." = "Repository のメニューと主メニューは動かない。";
 "New branch from HEAD (Ctrl+Alt+B)" = "HEAD から新しいブランチ（Ctrl+Alt+B）";
 "Show the Repositories page (Ctrl+Shift+R)" = "リポジトリのページに切り替える（Ctrl+Shift+R）";
 "Terminal" = "ターミナル";

@@ -54,6 +54,8 @@ becomes the GitHub Release notes.
 - On Linux, `amonhen open` (and `amonhen <path>`) opens the repository in the GTK4 app, as a tab of the running app.
 - In the GTK4 app, Settings > General > External Editor chooses another program with the same column picker as
   Programs, and its list is divided like the macOS one.
+- The GTK4 app's View > Customize Toolbar… opens a palette like the macOS one: drag items onto the header bar, drag
+  them off to remove them, or drag the default set. Search is now one of the toolbar items.
 
 - The GTK4 app now needs libadwaita (`libadwaita-1-0` on Ubuntu). Its tabs can be dragged out into a new window on
   Wayland too, and it follows the system's light or dark style.
