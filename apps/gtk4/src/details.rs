@@ -236,6 +236,9 @@ enum Style {
 /// 見せ方を覚える鍵（macOS 版と同じ名前）。
 const STYLE_KEY: &str = "commitHeaderStyle";
 
+/// 詳細の欄を広げるボタン（⤢）の部品の名前。
+pub const EXPAND_BUTTON: &str = "expand-details";
+
 impl Style {
     const ALL: [Style; 3] = [Style::Brief, Style::Standard, Style::Full];
 
@@ -631,6 +634,16 @@ impl Details {
                     return;
                 }
                 style.save();
+                // 広げたままだと高さを合わせられないので、先に変更ファイルと差分を戻す（macOS 版と同じ）。
+                let mut child = d.tools.first_child();
+                while let Some(c) = child {
+                    child = c.next_sibling();
+                    if c.widget_name() == EXPAND_BUTTON
+                        && let Some(b) = c.downcast_ref::<gtk::ToggleButton>()
+                    {
+                        b.set_active(false);
+                    }
+                }
                 d.set_style(style);
                 // 右の列の境目を、中身の高さに合わせ直す。
                 if let Some(paned) = d.root.parent().and_downcast::<gtk::Paned>() {

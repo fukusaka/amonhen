@@ -698,6 +698,8 @@ impl CommitDiff {
         let label = gtk::Label::new(None);
         label.set_markup("<span size=\"large\">⤢</span>");
         let button = gtk::ToggleButton::new();
+        // 詳細の見せ方を変えたときに戻せるように（`Details::show_style_switch`）。
+        button.set_widget_name(crate::details::EXPAND_BUTTON);
         button.set_child(Some(&label));
         button.add_css_class("flat");
         button.add_css_class("image-button");
