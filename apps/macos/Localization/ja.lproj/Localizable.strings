@@ -20,7 +20,6 @@
 "Commits to send" = "送るコミット";
 "Commits %@ will lose" = "%@ から消えるコミット";
 "Nothing to push" = "送るコミットはありません";
-"Commits only on %@" = "%@ にだけあるコミット";
 "Push %ld commits to %@?" = "%1$ld コミットを %2$@ に push しますか？";
 "Set Upstream…" = "上流を設定…";
 "Pull %ld commits from %@?" = "%2$@ から %1$ld コミット取り込みますか？";
@@ -322,7 +321,6 @@
 "⏎ Open in Tab   ⌘⏎ Open in New Window   esc Close" = "⏎ タブで開く　⌘⏎ 新しいウィンドウで開く　esc 閉じる";
 
 /* Connecting.swift */
-"Connecting to %@…" = "%@ に接続しています…";
 "Couldn’t open %@" = "%@ を開けませんでした";
 "Close Tab" = "タブを閉じる";
 
@@ -335,7 +333,6 @@
 "Choose from My GitHub Repositories" = "自分の GitHub のリポジトリから選ぶ";
 "Loading…" = "読んでいます…";
 "None found" = "見つかりません";
-"%@ already exists" = "%@ はもうあります";
 "Choose a different name or location." = "別の名前か置き場所にしてください。";
 "Cloning %@…" = "%@ を clone しています…";
 "Download:" = "取得する範囲:";
@@ -500,7 +497,6 @@
 "A path" = "パス";
 "SSH host %@" = "SSH 先 %@";
 "Other" = "その他";
-"Check Connection" = "接続を確かめる";
 "Connecting…" = "つないでいます…";
 "Reachable: %ld branches, %ld tags" = "つながりました: ブランチ %ld、タグ %ld";
 ", HEAD at %@" = "、HEAD は %@";
@@ -552,7 +548,6 @@
 "Prompts by Purpose" = "プロンプト（用途ごと）";
 "Variables: %@" = "変数: %@";
 "Customized" = "書き換え済み";
-"Edit…" = "編集…";
 "Restore Default" = "既定に戻す";
 "Try" = "試す";
 "%@ (Try with Sample)" = "%@（見本で試す）";
@@ -768,7 +763,6 @@
 "Filter to this person’s commits" = "この人のコミットで絞り込む";
 
 /* main.swift */
-"Couldn’t connect to %@" = "%@ に接続できませんでした";
 
 /* Actions.swift */
 "There are conflicts" = "コンフリクトがあります";
@@ -1233,7 +1227,6 @@
 "No checks on this commit." = "このコミットにチェックはありません。";
 "%ld checks" = "%ld 件のチェック";
 "Couldn’t read the checks: %@" = "チェックを読めません: %@";
-"Open on GitHub" = "GitHub で開く";
 "passed" = "成功";
 "failed" = "失敗";
 "cancelled" = "取り消し";
@@ -1357,7 +1350,6 @@
 "Needs git 2.38 or later. This repository’s git is %@%@." = "git 2.38 以降が必要です。このリポジトリの git は %@%@ です。";
 "Nothing is set anywhere, so git’s own default applies." = "どこにも書かれていないので、git 自身の既定が効いています。";
 "On" = "オン";
-"Off" = "オフ";
 "Rebase" = "rebase する";
 "Remotes" = "リモート";
 "Remove remote-tracking branches deleted on the remote" = "リモートで消えたブランチを片づける";
@@ -1448,7 +1440,6 @@
 "Connection" = "接続";
 "State" = "状態";
 "Check Connection" = "接続を確認";
-"Connecting…" = "つないでいます…";
 "Connecting to %@…" = "%@ につないでいます…";
 "Couldn’t connect to %@" = "%@ につなげませんでした";
 "unreachable" = "つながらない";
