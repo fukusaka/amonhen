@@ -57,7 +57,7 @@ pub fn edit(actions: &Rc<Actions>, name: &str) {
     });
 }
 
-/// リモートを消す前に確かめる（取り消せないが、リモートのリポジトリには触らないので赤くしない。macOS 版と同じ）。
+/// リモートを消す前に確かめる（取り消せないので Delete は赤く、Return は Cancel。macOS 版と同じ）。
 pub fn confirm_remove(actions: &Rc<Actions>, name: &str) {
     let (actions, name) = (actions.clone(), name.to_owned());
     glib::spawn_future_local(async move {
@@ -68,8 +68,8 @@ pub fn confirm_remove(actions: &Rc<Actions>, name: &str) {
 }
 
 /// `parent` の上で、リモート `name` を消してよいか確かめる（リモートは worktree によらないので、worktree の名前は
-/// 書かない。macOS 版と同じ）。
-async fn ask_remove(parent: Option<&gtk::Window>, name: &str) -> bool {
+/// 書かない。macOS 版と同じ）。設定のページ、サイドバー、シートのどこから消しても同じ文言と同じボタン。
+pub async fn ask_remove(parent: Option<&gtk::Window>, name: &str) -> bool {
     let sheet = Sheet::unnamed(
         parent,
         &tr!("Remove {name}?", name = name),
@@ -78,7 +78,7 @@ async fn ask_remove(parent: Option<&gtk::Window>, name: &str) -> bool {
             name = name
         ),
     );
-    sheet.buttons(&tr!("Delete"), false, None);
+    sheet.buttons(&tr!("Delete"), true, None);
     sheet.run().await == Response::Ok
 }
 

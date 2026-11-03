@@ -302,25 +302,11 @@ pub(crate) fn remote_kind(url: &str) -> String {
     }
 }
 
-/// リモートを消す前の確認（設定のページ、シートのどこから消しても同じ文言と同じボタン）。
-async fn confirm_remove(parent: Option<&gtk::Window>, name: &str) -> bool {
-    let sheet = Sheet::new(
-        parent,
-        &tr!("Remove {name}?", name = name),
-        &tr!(
-            "This removes the remote’s settings and its remote-tracking branches ({name}/…). The remote repository isn’t touched.",
-            name = name
-        ),
-    );
-    sheet.buttons(&tr!("Delete"), true, None);
-    sheet.run().await == Response::Ok
-}
-
 fn remove_remote(s: &Rc<RepoSettings>, name: String) {
     let w = s.weak();
     let parent = s.window();
     glib::spawn_future_local(async move {
-        if confirm_remove(parent.as_ref(), &name).await
+        if crate::remotesheet::ask_remove(parent.as_ref(), &name).await
             && let Some(s) = w.upgrade()
         {
             s.perform(
@@ -414,7 +400,7 @@ pub(crate) fn remote_sheet(s: &Rc<RepoSettings>, remote: Option<Remote>) {
                     let Some(window) = window.upgrade() else {
                         return;
                     };
-                    if confirm_remove(Some(&window), &name).await {
+                    if crate::remotesheet::ask_remove(Some(&window), &name).await {
                         window.close();
                         if let Some(s) = w.upgrade() {
                             s.perform(
