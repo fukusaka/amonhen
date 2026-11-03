@@ -148,7 +148,9 @@ impl Status {
     fn css(self) -> Option<&'static str> {
         match self {
             Self::Verified(_) => Some("success"),
-            Self::Untrusted | Self::SignerMismatch | Self::Expired => Some("warning"),
+            // 鍵の信用度が決まっていない・署名者が違うは黄色、期限切れはオレンジ（macOS 版と同じ）。
+            Self::Untrusted | Self::SignerMismatch => Some("caution"),
+            Self::Expired => Some("warning"),
             Self::Revoked | Self::Bad => Some("error"),
             Self::NoKey | Self::Unsupported | Self::Pending => Some("dim-label"),
         }
@@ -303,6 +305,7 @@ pub fn row(
     place: Place,
     tag: Option<Tag>,
 ) -> gtk::Widget {
+    install_css();
     let label = gtk::Label::new(Some(status.label()));
     label.set_xalign(0.0);
     label.add_css_class("caption");
@@ -378,7 +381,8 @@ fn install_css() {
     let provider = gtk::CssProvider::new();
     provider.load_from_string(
         ".signature-badge { border-radius: 4px; padding: 1px 5px; font-weight: 500; \
-         background-color: alpha(currentColor, 0.15); }",
+         background-color: alpha(currentColor, 0.15); } \
+         .caution { color: rgb(217, 173, 0); }",
     );
     if let Some(display) = gtk::gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
@@ -531,7 +535,7 @@ pub(crate) fn show(
                     "Listed on the key ({email}), but that user ID isn’t confirmed",
                     email = email
                 ),
-                Some("warning"),
+                Some("caution"),
                 false,
             )),
             CommitterMatch::Mismatched => rows.push((
