@@ -36,6 +36,8 @@ impl Person {
         text.set_wrap_mode(gtk::pango::WrapMode::WordChar);
         text.set_selectable(true);
         text.add_css_class("caption");
+        // 名前のリンクは文字の色のまま（macOS 版は labelColor）。
+        text.add_css_class(VALUE_LINKS);
         let recorded = gtk::Label::new(None);
         recorded.set_xalign(0.0);
         recorded.set_wrap(true);
@@ -363,6 +365,27 @@ fn commit_link(hex: &str, length: usize) -> String {
     )
 }
 
+/// リンクを文字の色のままにする値の欄（Branches・Pushed・人の名前。macOS 版はリンクの色を付けない）。
+const VALUE_LINKS: &str = "amonhen-value-links";
+
+fn install_css() {
+    thread_local! {
+        static DONE: StdCell<bool> = const { StdCell::new(false) };
+    }
+    if DONE.with(|d| d.replace(true)) {
+        return;
+    }
+    let provider = gtk::CssProvider::new();
+    provider.load_from_string(&format!("label.{VALUE_LINKS} link {{ color: inherit; }}"));
+    if let Some(display) = gtk::gdk::Display::default() {
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
+}
+
 /// ref の名前を並べたリンク（押すと、その ref の履歴に絞り込む）。
 fn ref_links(names: &[String]) -> String {
     names
@@ -419,6 +442,7 @@ impl Details {
     }
 
     pub fn new() -> Self {
+        install_css();
         let label = |css: &[&str]| {
             let l = gtk::Label::new(None);
             l.set_xalign(0.0);
@@ -1371,7 +1395,14 @@ impl Details {
         }
         let refs = strings(&info["refs"]);
         if !refs.is_empty() {
-            rows.push(("Refs".into(), refs_cell(&refs)));
+            // ref は太字の青（macOS 版の refAttrs）。Branches・Pushed は文字の色（下の VALUE_LINKS）。
+            rows.push((
+                "Refs".into(),
+                match refs_cell(&refs) {
+                    Cell::Markup(m) => Cell::Markup(format!("<b>{m}</b>")),
+                    other => other,
+                },
+            ));
         }
         // このコミットを指すタグ: 名前・タガーと日時・件名と署名の印（軽量タグは名前だけ）。時間のかかる分で届く。
         if let Some(extras) = extras {
@@ -1513,6 +1544,9 @@ impl Details {
                 || title.starts_with("Child")
             {
                 cell.add_css_class("monospace");
+            }
+            if title == "Branches" || title == "Pushed" {
+                cell.add_css_class(VALUE_LINKS);
             }
             self.table.attach(&cell, 1, i as i32, 1, 1);
         }
