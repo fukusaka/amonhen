@@ -658,6 +658,25 @@ pub enum Command {
     },
     /// フォルダがなくなった worktree の記録を片付ける（`git worktree prune`）。
     WorktreePrune,
+    /// `path` の worktree をロックする（`git worktree lock`。prune・remove・move で消されない）。`reason` は理由。
+    WorktreeLock {
+        path: String,
+        reason: Option<String>,
+    },
+    WorktreeUnlock {
+        path: String,
+    },
+    /// `path` の worktree のフォルダを `to` に移す（`git worktree move`）。
+    WorktreeMove {
+        path: String,
+        to: String,
+    },
+    /// 手で移した worktree とリポジトリのつながりを直す（`git worktree repair`、git 2.29 から）。`paths` は移した
+    /// worktree の今の場所（空なら記録にある場所だけ）。
+    WorktreeRepair {
+        #[serde(default)]
+        paths: Vec<String>,
+    },
     /// `.gitignore`（作業ツリーの直下）と `.git/info/exclude` の中身（`info.gitignore`・`info.exclude`）。
     IgnoreFiles,
     /// フックの実行の許可を付ける・外す（`enabled`）。フックの置き場所は `hooksAndLfs` と同じ。
@@ -4041,6 +4060,22 @@ impl Repository {
                 ops.change_worktree(&amonhen_model::WorktreeChange::Prune)?;
                 ok()
             }
+            Command::WorktreeLock { path, reason } => {
+                ops.change_worktree(&amonhen_model::WorktreeChange::Lock { path, reason })?;
+                ok()
+            }
+            Command::WorktreeUnlock { path } => {
+                ops.change_worktree(&amonhen_model::WorktreeChange::Unlock { path })?;
+                ok()
+            }
+            Command::WorktreeMove { path, to } => {
+                ops.change_worktree(&amonhen_model::WorktreeChange::Move { path, to })?;
+                ok()
+            }
+            Command::WorktreeRepair { paths } => {
+                ops.change_worktree(&amonhen_model::WorktreeChange::Repair { paths })?;
+                ok()
+            }
             Command::IgnoreFiles => {
                 let files = self.backend().files();
                 let read = |root, path| -> Result<String> {
@@ -7180,6 +7215,61 @@ mod tests {
             r#"{"op":"configSet","key":"pull.rebase","value":"true","scope":"system"}"#,
         );
         assert!(r["error"].as_str().unwrap().contains("system"), "{r}");
+    }
+
+    #[test]
+    fn locks_moves_and_repairs_worktrees() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        let other = tempfile::tempdir().unwrap();
+        let wt = other.path().join("wt").to_str().unwrap().replace('\\', "/");
+        let moved = other
+            .path()
+            .join("moved")
+            .to_str()
+            .unwrap()
+            .replace('\\', "/");
+        let cmd = |json: serde_json::Value| run(&repo, &json.to_string());
+        let r = cmd(serde_json::json!({ "op": "worktreeAdd", "path": wt, "newBranch": "side" }));
+        assert_eq!(r["ok"], true, "{r}");
+        let list = || git(dir, &["worktree", "list", "--porcelain"]);
+        let r =
+            cmd(serde_json::json!({ "op": "worktreeLock", "path": wt, "reason": "on a USB disk" }));
+        assert_eq!(r["ok"], true, "{r}");
+        // 古い git の `worktree list --porcelain` は理由を出さないので、git が書くファイルを見る。
+        let locked = dir.join(".git/worktrees/wt/locked");
+        assert_eq!(
+            std::fs::read_to_string(&locked).unwrap().trim(),
+            "on a USB disk"
+        );
+        // ロックしていると git は移さない。
+        let r = cmd(serde_json::json!({ "op": "worktreeMove", "path": wt, "to": moved }));
+        assert_eq!(r["ok"], false);
+        let r = cmd(serde_json::json!({ "op": "worktreeUnlock", "path": wt }));
+        assert_eq!(r["ok"], true, "{r}");
+        assert!(!locked.exists());
+        let r = cmd(serde_json::json!({ "op": "worktreeMove", "path": wt, "to": moved }));
+        assert_eq!(r["ok"], true, "{r}");
+        assert!(std::path::Path::new(&moved).join("a.txt").exists());
+        // 手で戻すと、つながりが切れる。repair に今の場所を渡すと直る（git 2.29 から）。
+        std::fs::rename(&moved, &wt).unwrap();
+        let r = cmd(serde_json::json!({ "op": "worktreeRepair", "paths": [wt] }));
+        if r["ok"] == true {
+            assert!(
+                list().contains(&format!("worktree {wt}")) || list().contains("wt\n"),
+                "{}",
+                list()
+            );
+            assert_eq!(
+                git(
+                    std::path::Path::new(&wt),
+                    &["rev-parse", "--abbrev-ref", "HEAD"]
+                ),
+                "side"
+            );
+        } else {
+            assert!(r["error"].as_str().unwrap().contains("2.29"), "{r}");
+        }
     }
 
     #[test]

@@ -25,6 +25,9 @@ fn text(out: Vec<u8>) -> Result<String> {
     Ok(String::from_utf8(out)?.trim().to_owned())
 }
 
+/// 手で移した worktree のつながりを直す（`git worktree repair`）が使える git の版。
+const WORKTREE_REPAIR: (u32, u32) = (2, 29);
+
 /// stage した変更だけを stash する（`git stash push --staged`）が使える git の版。
 const STASH_STAGED: (u32, u32) = (2, 35);
 
@@ -1640,6 +1643,31 @@ impl Operations for Git {
                 args
             }
             WorktreeChange::Prune => vec!["worktree", "prune"],
+            WorktreeChange::Lock { path, reason } => {
+                let mut args = vec!["worktree", "lock"];
+                if let Some(reason) = reason.as_deref().filter(|r| !r.is_empty()) {
+                    args.extend(["--reason", reason]);
+                }
+                args.extend(["--", path]);
+                args
+            }
+            WorktreeChange::Unlock { path } => vec!["worktree", "unlock", "--", path],
+            WorktreeChange::Move { path, to } => vec!["worktree", "move", "--", path, to],
+            WorktreeChange::Repair { paths } => {
+                if let Some((a, b, c)) = crate::git_version()
+                    && (a, b) < WORKTREE_REPAIR
+                {
+                    return Err(tr!(
+                        "Needs git {needed} or later. This machine’s git is {version}.",
+                        needed = format!("{}.{}", WORKTREE_REPAIR.0, WORKTREE_REPAIR.1),
+                        version = format!("{a}.{b}.{c}"),
+                    )
+                    .into());
+                }
+                let mut args = vec!["worktree", "repair", "--"];
+                args.extend(paths.iter().map(String::as_str));
+                args
+            }
         };
         self.write(&args).map(drop)
     }

@@ -55,7 +55,7 @@ usage: amonhen [<path>]
        amonhen run [<json>…]
        amonhen watch [--json]
        amonhen undo [--list | --peek]
-       amonhen worktree [list [--changes] [--json] | add <path> [<start>] [-b <branch>] | remove [--force] <path> | prune]
+       amonhen worktree [list [--changes] [--json] | add <path> [<start>] [-b <branch>] | remove [--force] <path> | prune | lock [--reason <text>] <path> | unlock <path> | move <path> <new-path> | repair [<path>…]]
        amonhen merge-file [--all] [--check] <file>…
        amonhen merge-check [--into <branch>] [--json] <rev>…
        amonhen rewrite-preview [--update-refs | --no-update-refs] [--json] (<onto> | --edit <json>)
@@ -671,12 +671,14 @@ fn worktree(args: &[String]) -> Result<ExitCode> {
     let mut force = false;
     let mut changes = false;
     let mut branch: Option<String> = None;
+    let mut reason: Option<String> = None;
     let mut words: Vec<String> = Vec::new();
     let mut a = Args::new(args);
     while let Some(arg) = a.rest.next() {
         match arg.as_str() {
             "-C" => dir = PathBuf::from(a.value("-C")?),
             "--json" => json = true,
+            "--reason" => reason = Some(a.value("--reason")?.to_owned()),
             "--force" | "-f" => force = true,
             "--changes" => changes = true,
             "-b" => branch = Some(a.value("-b")?.to_owned()),
@@ -783,6 +785,45 @@ fn worktree(args: &[String]) -> Result<ExitCode> {
         }
         "prune" => {
             command(&*front, serde_json::json!({"op": "worktreePrune"}))?;
+        }
+        "lock" | "unlock" => {
+            let Some(path) = words.get(1) else {
+                return Err(format!("{}\n\n{}", tr!("Give the worktree"), usage()).into());
+            };
+            let op = if words[0] == "lock" {
+                "worktreeLock"
+            } else {
+                "worktreeUnlock"
+            };
+            command(
+                &*front,
+                serde_json::json!({"op": op, "path": absolute(path), "reason": reason}),
+            )?;
+        }
+        "move" => {
+            let (Some(path), Some(to)) = (words.get(1), words.get(2)) else {
+                return Err(format!(
+                    "{}\n\n{}",
+                    tr!("Give the worktree and the folder to move it to"),
+                    usage()
+                )
+                .into());
+            };
+            command(
+                &*front,
+                serde_json::json!({"op": "worktreeMove", "path": absolute(path), "to": absolute(to)}),
+            )?;
+            println!(
+                "{}",
+                tr!("Moved the worktree to {path}", path = absolute(to))
+            );
+        }
+        "repair" => {
+            let paths: Vec<String> = words[1..].iter().map(|p| absolute(p)).collect();
+            command(
+                &*front,
+                serde_json::json!({"op": "worktreeRepair", "paths": paths}),
+            )?;
         }
         other => {
             return Err(format!(

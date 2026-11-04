@@ -223,9 +223,30 @@ pub enum WorktreeChange {
         new_branch: Option<String>,
     },
     /// `path` の worktree を消す。`force` なら変更が残っていても・ロックしていても消す（`--force` を 2 回）。
-    Remove { path: String, force: bool },
+    Remove {
+        path: String,
+        force: bool,
+    },
     /// フォルダがなくなった worktree の記録を片付ける。
     Prune,
+    /// `path` の worktree をロックする（prune・remove・move で消されないように。`reason` は理由）。
+    Lock {
+        path: String,
+        reason: Option<String>,
+    },
+    Unlock {
+        path: String,
+    },
+    /// `path` の worktree を `to` に移す（`git worktree move`）。
+    Move {
+        path: String,
+        to: String,
+    },
+    /// worktree とリポジトリのつながりを直す（`git worktree repair`。git 2.29 から）。`paths` は手で移した worktree の
+    /// 今の場所（空なら、記録にある場所のつながりだけ）。
+    Repair {
+        paths: Vec<String>,
+    },
 }
 
 /// ほかの worktree の変更の数（`Operations::worktree_changes`）。
