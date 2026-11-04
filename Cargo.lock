@@ -42,6 +42,7 @@ dependencies = [
  "amonhen-model",
  "amonhen-watch",
  "libc",
+ "serde_json",
  "tempfile",
 ]
 

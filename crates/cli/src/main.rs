@@ -136,6 +136,13 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     // エンジンは 1 つの実行ファイルで、daemon としての起動（`--serve`・`--stdio`・`--socket`、または `amonhend` と
     // いう名前）なら daemon になる。
+    // git が status の fsmonitor の hook として起動した（Linux・BSD。エンジン自身が Watchman に聞く）。隠した命令。
+    if args.first().map(String::as_str) == Some("fsmonitor-watchman") {
+        return ExitCode::from(amonhen_backend_cli::fsmonitor_watchman_hook(&args[1..]) as u8);
+    }
+    // Linux・BSD の fsmonitor の hook は、このエンジン自身。
+    #[cfg(all(unix, not(target_os = "macos")))]
+    amonhen_backend_cli::set_fsmonitor_engine(std::env::current_exe().ok());
     if amonhen_daemon::is_daemon(&argv0, &args) {
         return ExitCode::from(amonhen_daemon::run(&args) as u8);
     }

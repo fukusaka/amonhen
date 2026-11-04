@@ -1196,3 +1196,77 @@ fn chooses_the_git_again_when_the_chosen_one_is_missing() {
     let set = run(r#"{"op":"configSet","key":"amonhen.check","value":"1"}"#);
     assert!(set.contains(r#""ok":true"#), "{set}");
 }
+
+/// git の status が、エンジンを fsmonitor の hook（`amonhen fsmonitor-watchman`）にして、偽の watchman が変わったと
+/// 答えたファイルだけを調べる（Linux・BSD の fsmonitor。本物の Watchman は使わない）。
+#[cfg(unix)]
+#[test]
+fn status_asks_watchman_through_the_engine_hook() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("repo");
+    std::fs::create_dir(&dir).unwrap();
+    git(&dir, &["init", "-q"]);
+    git(&dir, &["config", "user.name", "a"]);
+    git(&dir, &["config", "user.email", "a@example.com"]);
+    std::fs::write(dir.join("b.txt"), "b").unwrap();
+    commit(&dir, "a.txt", "a");
+
+    // 偽の watchman: 命令を `requests` に足し、`answer` の中身を答える。
+    let bin = tmp.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    let answer = tmp.path().join("answer");
+    let watchman = bin.join("watchman");
+    std::fs::write(
+        &watchman,
+        format!(
+            "#!/bin/sh\ncat >> '{}'\necho >> '{0}'\ncat '{}'\n",
+            tmp.path().join("requests").display(),
+            answer.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&watchman, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = std::env::join_paths(
+        std::iter::once(bin.clone())
+            .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    let hook = format!(
+        "core.fsmonitor='{}' fsmonitor-watchman",
+        env!("CARGO_BIN_EXE_amonhen")
+    );
+    let status = |args: &[&str]| {
+        let out = Command::new("git")
+            .current_dir(&dir)
+            .env("PATH", &path)
+            .args(["-c", &hook, "-c", "core.fsmonitorHookVersion=2"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+        String::from_utf8(out.stdout).unwrap()
+    };
+
+    // 初めは Watchman も初めて（すべて調べ直す）。index に fsmonitor の印と clock が残る。
+    std::fs::write(
+        &answer,
+        r#"{"clock":"c:1:1","is_fresh_instance":true,"files":[]}"#,
+    )
+    .unwrap();
+    status(&["update-index", "--fsmonitor"]);
+    assert_eq!(status(&["status", "--porcelain"]), "");
+
+    // 両方を変えても、watchman が a.txt だけを答えれば、git は a.txt だけを調べる（hook を使った証し）。
+    std::fs::write(dir.join("a.txt"), "changed a").unwrap();
+    std::fs::write(dir.join("b.txt"), "changed b").unwrap();
+    std::fs::write(
+        &answer,
+        r#"{"clock":"c:1:2","is_fresh_instance":false,"files":["a.txt"]}"#,
+    )
+    .unwrap();
+    assert_eq!(status(&["status", "--porcelain"]), " M a.txt\n");
+    // 前に返した clock からの変化を聞いた。
+    let requests = std::fs::read_to_string(tmp.path().join("requests")).unwrap();
+    assert!(requests.contains(r#""since":"c:1:1""#), "{requests}");
+}
