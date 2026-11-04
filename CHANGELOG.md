@@ -28,6 +28,7 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- The macOS app shows commit details in the Standard style on first launch, as intended, instead of Brief.
 - macOS merge editor: ⌥⌘↑ and ⌥⌘↓ move between conflicts, ⌘↩ no longer races Commit, a file open in its own window
   isn't loaded again in Working Copy, and the AI buttons follow the AI setting.
 - macOS: Reset, Cherry-pick, Revert and Apply Patch say which worktree they act on; Remove Worktree counts the changes
