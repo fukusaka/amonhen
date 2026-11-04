@@ -1022,8 +1022,8 @@ fn build_tab(
     let (weak_sidebar, w) = (Rc::downgrade(&sidebar), Rc::downgrade(&worktrees));
     let t = Rc::downgrade(&tab);
     working.connect_count(move |count| {
+        // Working Copy の行には数を出さない（macOS 版と同じ。数は worktree の行だけ）。
         if let Some(sidebar) = weak_sidebar.upgrade() {
-            sidebar.set_working_count(count);
             // submodule の中の変更は ref を変えないので、ここで読み直す（submodule がなければ読まない）。
             sidebar.reload_submodules();
         }
