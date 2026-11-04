@@ -1099,6 +1099,9 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     /// ファイルの右クリック: blame（パス、コミット）とファイルの履歴（パス）。
     var onBlame: ((String, String) -> Void)?
     var onFileHistory: ((String) -> Void)?
+    /// ファイルの右クリック: 作業ツリーのファイルを、このコミットの版（`before` ならその前の版）に戻す。`paths` は
+    /// 戻すパス（名前を変えたファイルを前の版に戻すときは、元の名前と今の名前）、`rev` はその版。
+    var onRestore: ((_ path: String, _ paths: [String], _ rev: String, _ before: Bool) -> Void)?
     /// 表示しているコミット（40 桁）。stash のときは nil（blame の起点にしない）。
     private var commitHex: String?
     /// コミットを選んでから最初のファイルの差分を出すまでを測る（`--measure-select`）。
@@ -1865,6 +1868,9 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             menu.addItem(ClosureMenuItem(title: Titles.blame(at: String(commit.prefix(Titles.shortIDLength)))) { [weak self] in self?.onBlame?(path, commit) })
         }
         menu.addItem(ClosureMenuItem(title: Titles.fileHistory) { [weak self] in self?.onFileHistory?(path) })
+        if let item = changes.flatMap({ file < $0.items.count ? $0.items[file] : nil }) {
+            addRestoreItems(to: menu, item: item)
+        }
         menu.addItem(.separator())
         menu.addItem(ClosureMenuItem(title: L("Copy Path")) {
             NSPasteboard.general.clearContents()
@@ -2280,6 +2286,24 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             menu.addItem(ClosureMenuItem(title: Titles.blame(at: String(commit.prefix(Titles.shortIDLength)))) { [weak self] in self?.onBlame?(path, commit) })
         }
         menu.addItem(ClosureMenuItem(title: Titles.fileHistory) { [weak self] in self?.onFileHistory?(path) })
+        if let item { addRestoreItems(to: menu, item: item) }
+    }
+
+    /// 作業ツリーのファイルを、このコミットの版か、その前の版に戻す（`git restore --source`）。このコミットで消した
+    /// ファイルは、このコミットの版にはない。前の版に戻すと、このコミットで足したファイルは消え、名前を変えたファイルは
+    /// 元の名前に戻る。
+    private func addRestoreItems(to menu: NSMenu, item: FileChangeItem) {
+        guard let commit = commitHex, onRestore != nil, !item.isSubmodule else { return }
+        menu.addItem(.separator())
+        if item.kind != .deleted {
+            menu.addItem(ClosureMenuItem(title: L("Restore This Version…")) { [weak self] in
+                self?.onRestore?(item.path, [item.path], commit, false)
+            })
+        }
+        let paths = [item.oldPath, item.path].compactMap { $0 }
+        menu.addItem(ClosureMenuItem(title: L("Restore Version Before This Commit…")) { [weak self] in
+            self?.onRestore?(item.path, paths, commit + "^", true)
+        })
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {

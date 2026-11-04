@@ -261,8 +261,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         sidebar.onCompareWithPrevious = { [weak self] branch in self?.openRangeDiff(previousOf: branch) }
         reflog.detail.onSelectCommit = { hex in Data(hex: hex).map(showInHistory) }
         reflog.detail.onBlame = { [weak self] path, commit in self?.openBlame(path: path, rev: commit) }
+        reflog.detail.onRestore = { [weak self] path, paths, rev, before in self?.restore(path, paths, rev: rev, before: before) }
         reflog.detail.onFileHistory = { [weak self] path in self?.openFileHistory(path: path) }
         detail.onBlame = { [weak self] path, commit in self?.openBlame(path: path, rev: commit) }
+        detail.onRestore = { [weak self] path, paths, rev, before in self?.restore(path, paths, rev: rev, before: before) }
         detail.onFileHistory = { [weak self] path in self?.openFileHistory(path: path) }
         sidebar.onSelectConflicts = { [weak self] in self?.workingCopy.selectFirstConflict() }
         sidebar.onCheckoutPullRequest = { [weak self] pr in self?.checkout(pr) }
@@ -1687,12 +1689,24 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         showFileTool(tool, key: "blame \(path) \(rev ?? "") \(ObjectIdentifier(repository).hashValue)")
     }
 
+    /// 書き込む先の worktree の作業ツリーのファイルを、別のコミットの版に戻す（History・Reflog・File History から）。
+    private func restore(_ path: String, _ paths: [String], rev: String, before: Bool) {
+        RestoreSheet.ask(in: window, path: path, paths: paths, rev: rev, before: before) { [weak self] command in
+            self?.actions.perform(command)
+        }
+    }
+
     private func openFileHistory(path: String, in repository: Repository? = nil) {
         let repository = repository ?? editing.repository
         let tool = FileHistoryViewController(
             path: path, repository: repository, renderer: textRenderer,
             onSelectCommit: { [weak self] id in self?.reveal(commit: id) },
             onBlame: { [weak self] path, commit in self?.openBlame(path: path, rev: commit, in: repository) })
+        // 作業ツリーのファイルが同じ名前の版だけ（名前を変える前の版を戻すと、元の名前のファイルができてしまう）。
+        tool.onRestore = { [weak self] entryPath, commit in
+            guard entryPath == path else { return nil }
+            return { self?.restore(path, [path], rev: commit, before: false) }
+        }
         showFileTool(tool, key: "fileHistory \(path) \(ObjectIdentifier(repository).hashValue)")
     }
 

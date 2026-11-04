@@ -392,6 +392,9 @@ final class FileHistoryViewController: FileToolViewController, NSTableViewDataSo
         @objc func copy(_ sender: Any?) { onCopy?() }
     }
 
+    /// 一覧の右クリックの「この版に戻す…」（パスとコミットから、戻す処理。出さないなら nil）。
+    var onRestore: ((_ path: String, _ commit: String) -> (() -> Void)?)?
+
     init(
         path: String, repository: Repository, renderer: TextRenderer,
         onSelectCommit: @escaping (Data) -> Void, onBlame: @escaping (_ path: String, _ commit: String) -> Void
@@ -568,6 +571,9 @@ final class FileHistoryViewController: FileToolViewController, NSTableViewDataSo
             let short = String(entry.oid.prefix(8))
             add(L("Show in History"), key: "\r") { [weak self] in self?.showInHistory(entry) }
             add(Titles.blame(at: short)) { [weak self] in self?.onBlame(entry.path, entry.oid) }
+            if let restore = onRestore?(entry.path, entry.oid) {
+                add(L("Restore This Version…"), restore)
+            }
             menu.addItem(.separator())
             add(Titles.copyCommitID, key: "c") { [weak self] in self?.copy(entry.oid) }
             add(Titles.copyShortID) { [weak self] in self?.copy(short) }
