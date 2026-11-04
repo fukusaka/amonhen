@@ -1956,10 +1956,15 @@ impl Inner {
             if inner.loading_subtrees.get() == token
                 && let Ok(list) =
                     serde_json::from_value::<amonhen_model::Subtrees>(reply["info"].clone())
-                && Some(&list) != inner.subtrees.borrow().as_ref()
             {
-                inner.subtrees.replace(Some(list));
-                inner.rebuild(false);
+                // Add Subtree… は、git に git subtree があるときだけ押せる（macOS 版と同じ）。
+                if let Some(actions) = inner.actions.borrow().as_ref() {
+                    actions.update_facts(|f| f.subtree = list.available);
+                }
+                if Some(&list) != inner.subtrees.borrow().as_ref() {
+                    inner.subtrees.replace(Some(list));
+                    inner.rebuild(false);
+                }
             }
             inner.run_debug();
         });

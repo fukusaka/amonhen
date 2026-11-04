@@ -47,18 +47,8 @@ fn fields(sheet: &Sheet, widgets: &[&gtk::Widget]) {
 /// Add Subtree…: 別のリポジトリの ref を、このリポジトリのフォルダに取り込む。squash の既定は git と同じくオフ。
 pub fn add(actions: &Rc<Actions>) {
     let actions = actions.clone();
+    // この機械の git に subtree がなければ、メニューを押せない（`actions::enabled`。macOS 版と同じ）。
     glib::spawn_future_local(async move {
-        // この機械の git に subtree がなければ、シートを出さずにそう言う（macOS 版はメニューを押せなくする）。
-        let Some(repo) = actions.repo() else { return };
-        if sheets::run(&repo, json!({ "op": "subtrees" })).await["info"]["available"] != true {
-            let parent = sheets::parent(&actions);
-            return sheets::inform(
-                parent.as_ref(),
-                &tr!("Add Subtree"),
-                &tr!("This machine’s git has no git subtree"),
-            )
-            .await;
-        }
         let sheet = Sheet::new(
             sheets::parent(&actions).as_ref(),
             &tr!("Add Subtree"),

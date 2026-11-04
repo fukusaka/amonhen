@@ -722,6 +722,8 @@ pub struct Facts {
     pub stash: bool,
     /// submodule がある（Update Submodules… に要る）。
     pub submodules: bool,
+    /// この機械の git に git subtree がある（Add Subtree… に要る。macOS 版の `subtreeList.available`）。
+    pub subtree: bool,
     /// 途中の操作（`sequence` の `kind`: merge・rebase・cherry-pick・revert・am）。
     pub sequence: Option<String>,
     /// 取り消せる操作がある。
@@ -795,6 +797,7 @@ pub fn enabled(f: &Facts) -> Vec<(&'static str, bool)> {
         ("pop-stash", f.stash),
         ("show-stashes", f.stash),
         ("update-submodules", f.submodules),
+        ("add-subtree", f.subtree),
         ("undo", f.undo),
         ("go-to-head", f.head),
         ("switch-branch", f.refs),
@@ -1052,6 +1055,14 @@ mod tests {
         assert!(of(&facts, "add-submodule"));
         facts.submodules = true;
         assert!(of(&facts, "update-submodules"));
+    }
+
+    #[test]
+    fn add_subtree_needs_git_subtree() {
+        let mut facts = idle();
+        assert!(!of(&facts, "add-subtree"));
+        facts.subtree = true;
+        assert!(of(&facts, "add-subtree"));
     }
 
     #[test]
