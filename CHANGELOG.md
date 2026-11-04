@@ -34,6 +34,8 @@ becomes the GitHub Release notes.
 
 - The GTK4 app's subtree sheets name the worktree they act on and add, pull, push or split there, even when another
   worktree is selected while the sheet is open.
+- macOS: the subtree sheets name the worktree they act on and run there, not in the worktree selected after the
+  sheet opened.
 - The GTK4 app's automatic external editor falls back to a text editor, never a word processor such as LibreOffice Writer.
 - The macOS app shows commit details in the Standard style on first launch, as intended, instead of Brief.
 - macOS merge editor: ⌥⌘↑ and ⌥⌘↓ move between conflicts, ⌘↩ no longer races Commit, a file open in its own window

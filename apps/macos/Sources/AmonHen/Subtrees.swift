@@ -19,6 +19,7 @@ nonisolated struct SubtreeList: Decodable, Sendable {
 }
 
 /// subtree の Add・Pull・Push・Split のシート（NSAlert）。答えをコアの `subtree` の命令にして `perform` に渡す。
+/// `actions`（選んだときの worktree のもの）の worktree の名前を書く（docs/ux.md の「Worktrees」）。
 @MainActor
 enum SubtreeSheet {
     private static func field(_ value: String, placeholder: String) -> NSTextField {
@@ -49,10 +50,10 @@ enum SubtreeSheet {
     }
 
     /// Add Subtree…: 別のリポジトリの ref を、このリポジトリのフォルダに取り込む。squash の既定は git と同じくオフ。
-    static func add(in window: NSWindow, perform: @escaping ([String: Any]) -> Void) {
+    static func add(in window: NSWindow, actions: Actions, perform: @escaping ([String: Any]) -> Void) {
         let alert = NSAlert()
         alert.messageText = L("Add Subtree")
-        alert.informativeText = L("Brings another repository’s branch into a folder of this one as a commit (git subtree add). Pull and Push later use the same repository and branch.")
+        alert.informativeText = actions.sheetMessage(L("Brings another repository’s branch into a folder of this one as a commit (git subtree add). Pull and Push later use the same repository and branch."))
         let url = field("", placeholder: L("Repository URL"))
         let ref = field("", placeholder: L("Branch or tag"))
         let dir = field("", placeholder: L("Folder"))
@@ -80,12 +81,12 @@ enum SubtreeSheet {
     }
 
     /// Pull…（`push` なら Push…）: 前に使った相手を入れておく。Pull の squash は前の選び方。
-    static func pullOrPush(_ push: Bool, in window: NSWindow, subtree: SubtreeInfo, perform: @escaping ([String: Any]) -> Void) {
+    static func pullOrPush(_ push: Bool, in window: NSWindow, actions: Actions, subtree: SubtreeInfo, perform: @escaping ([String: Any]) -> Void) {
         let alert = NSAlert()
         alert.messageText = push ? "Push \(subtree.dir)" : "Pull \(subtree.dir)"
-        alert.informativeText = push
+        alert.informativeText = actions.sheetMessage(push
             ? L("Sends the commits that changed this folder to the repository’s branch, as that repository’s own history (git subtree push).")
-            : L("Merges the repository’s branch into this folder (git subtree pull). Conflicts stop it like a merge.")
+            : L("Merges the repository’s branch into this folder (git subtree pull). Conflicts stop it like a merge."))
         let url = field(subtree.url ?? "", placeholder: L("Repository URL"))
         let ref = field((push ? subtree.pushRef ?? subtree.ref : subtree.ref) ?? "", placeholder: L("Branch or tag"))
         let squash = squashBox(subtree.squash ?? false)
@@ -104,10 +105,10 @@ enum SubtreeSheet {
     }
 
     /// Split…: このフォルダの履歴だけのブランチを作る。
-    static func split(in window: NSWindow, subtree: SubtreeInfo, perform: @escaping ([String: Any]) -> Void) {
+    static func split(in window: NSWindow, actions: Actions, subtree: SubtreeInfo, perform: @escaping ([String: Any]) -> Void) {
         let alert = NSAlert()
         alert.messageText = "Split \(subtree.dir)"
-        alert.informativeText = L("Creates a branch with only the history of this folder, its files at the top (git subtree split).")
+        alert.informativeText = actions.sheetMessage(L("Creates a branch with only the history of this folder, its files at the top (git subtree split)."))
         let name = (subtree.dir as NSString).lastPathComponent
         let branch = field("", placeholder: "\(name)-split")
         alert.accessoryView = branch

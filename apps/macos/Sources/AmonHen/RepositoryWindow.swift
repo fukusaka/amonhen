@@ -749,15 +749,17 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     }
 
     private func subtreeAction(_ dir: String?, _ action: SidebarViewController.SubtreeAction) {
+        // 選んだときの worktree で実行する（シートを出している間に書き込む先が替わっても）。
+        let actions = self.actions
         let perform: ([String: Any]) -> Void = { [weak self] command in
-            self?.actions.perform(command) { [weak self] _ in self?.reloadSubtrees() }
+            actions.perform(command) { [weak self] _ in self?.reloadSubtrees() }
         }
-        if action == .add { return SubtreeSheet.add(in: window, perform: perform) }
+        if action == .add { return SubtreeSheet.add(in: window, actions: actions, perform: perform) }
         guard let dir, let subtree = subtreeList.subtrees.first(where: { $0.dir == dir }) else { return }
         switch action {
-        case .pull: SubtreeSheet.pullOrPush(false, in: window, subtree: subtree, perform: perform)
-        case .push: SubtreeSheet.pullOrPush(true, in: window, subtree: subtree, perform: perform)
-        case .split: SubtreeSheet.split(in: window, subtree: subtree, perform: perform)
+        case .pull: SubtreeSheet.pullOrPush(false, in: window, actions: actions, subtree: subtree, perform: perform)
+        case .push: SubtreeSheet.pullOrPush(true, in: window, actions: actions, subtree: subtree, perform: perform)
+        case .split: SubtreeSheet.split(in: window, actions: actions, subtree: subtree, perform: perform)
         case .add: break
         }
     }
