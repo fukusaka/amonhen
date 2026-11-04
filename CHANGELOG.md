@@ -18,6 +18,8 @@ becomes the GitHub Release notes.
 
 - macOS: the submodule sheets say which worktree they act on, and run there even if another worktree is selected
   meanwhile.
+- macOS: with another worktree selected, the Submodules marks and Open in New Window follow that worktree, not the
+  opened one.
 
 ### [0.2.9] - 2026-11-04
 
