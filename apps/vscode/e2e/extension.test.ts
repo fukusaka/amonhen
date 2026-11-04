@@ -7,7 +7,7 @@
  */
 import assert from 'node:assert/strict';
 import childProcess from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import * as vscode from 'vscode';
 import { DaemonClient } from '../src/daemon/client.ts';
@@ -851,6 +851,151 @@ async function shallowFlow(): Promise<void> {
       // 後で消える
     }
     childProcess.execFileSync('git', ['-C', origin, 'config', '--unset', 'uploadpack.allowFilter']);
+  }
+}
+
+/**
+ * Submodules の行に印と URL・追うブランチが出る。Add Submodule… で足し、追うブランチと URL を変え、Update… で追う
+ * ブランチの最新にし（違うコミットの印）、Remove… で外す（.git/modules は残す）。コアの命令（daemon だけ）
+ */
+async function submoduleFlow(): Promise<void> {
+  const sidebar = api.sidebar;
+  const repo = api.manager.current!;
+  const start = git('rev-parse', 'HEAD').trim();
+  const lib = join(dirname(root), 'sm-lib');
+  const moved = join(dirname(root), 'sm-lib-moved');
+  const path = 'vendor/sm-lib';
+  const gitDir = git('rev-parse', '--absolute-git-dir').trim();
+  const libGit = (...args: string[]) => childProcess.execFileSync('git', ['-C', lib, ...args], { encoding: 'utf8' });
+  const url = (p: string) => `file://${p.replaceAll('\\', '/')}`;
+  const section = () => sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'submodules')!;
+  const row = () => sidebar.getChildren(section()).find((n) => n.kind === 'submodule' && n.submodule.path === path);
+  const gitmodules = (key: string) => {
+    try {
+      return git('config', '--file', '.gitmodules', `submodule.${path}.${key}`).trim();
+    } catch {
+      return undefined;
+    }
+  };
+  // git 2.38.1 から、submodule の clone は file の URL を断る（試験の HOME の設定で許す）
+  git('config', '--global', 'protocol.file.allow', 'always');
+  childProcess.execFileSync('git', ['init', '-q', lib]);
+  libGit('symbolic-ref', 'HEAD', 'refs/heads/main');
+  libGit('-c', 'user.name=a', '-c', 'user.email=a@example.com', 'commit', '-q', '--allow-empty', '-m', 'lib one');
+  try {
+    // Submodules を開く（開くまでは読まない）
+    sidebar.onDidExpand(section());
+    await withWindow({ showInputBox: inputs(url(lib), path, '') }, async () => vscode.commands.executeCommand('amonhen.submodules.add'));
+    assert.equal(gitmodules('url'), url(lib));
+    await until('submodule の行', () => row());
+    const fact = await until('取り出してある', () => sidebar.submoduleFacts.get(path)?.initialized && sidebar.submoduleFacts.get(path));
+    assert.equal(fact.url, url(lib));
+    assert.equal(sidebar.getTreeItem(row()!).description, undefined);
+    assert.match(String(sidebar.getTreeItem(row()!).tooltip), /Follows the recorded commit/);
+
+    // 追うブランチと URL を変える
+    await withWindow({ showInputBox: inputs('main') }, async () => vscode.commands.executeCommand('amonhen.submodule.setBranch', row()));
+    assert.equal(gitmodules('branch'), 'main');
+    cpSync(lib, moved, { recursive: true });
+    await withWindow({ showInputBox: inputs(url(moved)) }, async () => vscode.commands.executeCommand('amonhen.submodule.editUrl', row()));
+    assert.equal(gitmodules('url'), url(moved));
+    assert.equal(git('config', `submodule.${path}.url`).trim(), url(moved));
+
+    // 追うブランチの最新にすると、記録と違うコミットになる
+    childProcess.execFileSync('git', ['-C', moved, '-c', 'user.name=a', '-c', 'user.email=a@example.com', 'commit', '-q', '--allow-empty', '-m', 'lib two']);
+    await withWindow(
+      { showQuickPick: async (items: readonly (vscode.QuickPickItem & { key: string })[]) => items.filter((i) => i.key === 'remote') },
+      async () => vscode.commands.executeCommand('amonhen.submodule.updateWith', row()),
+    );
+    assert.equal(git('-C', path, 'log', '-1', '--format=%s').trim(), 'lib two');
+    await until('違うコミットの印', () => /another commit/.test(String(sidebar.getTreeItem(row()!).description)));
+
+    // 外す。.git/modules は残す（git の既定）。.gitmodules の変更が stage されていないと、git rm が断る
+    git('add', '.gitmodules');
+    await withWindow({ showWarningMessage: async () => 'Remove' }, async () => vscode.commands.executeCommand('amonhen.submodule.remove', row()));
+    assert.equal(gitmodules('url'), undefined, lastErrors());
+    assert.ok(!existsSync(join(root, path)));
+    assert.ok(existsSync(join(gitDir, 'modules', path)));
+    await until('行が消える', () => !row());
+  } finally {
+    git('reset', '-q', '--hard', start);
+    rmSync(join(root, 'vendor'), { recursive: true, force: true });
+    rmSync(join(gitDir, 'modules'), { recursive: true, force: true });
+    try {
+      git('config', '--remove-section', `submodule.${path}`);
+    } catch {
+      // ない
+    }
+    git('config', '--global', '--unset', 'protocol.file.allow');
+    for (const p of [lib, moved]) rmSync(p, { recursive: true, force: true });
+    await repo.refresh();
+  }
+}
+
+/**
+ * git に git subtree があれば Subtrees が出る。Add Subtree… で取り込み、相手を覚え、Pull… で新しいコミットを取り込み、
+ * Split… でフォルダの履歴だけのブランチを作り、Push… で相手に送る。コアの命令（daemon だけ）
+ */
+async function subtreeFlow(): Promise<void> {
+  const sidebar = api.sidebar;
+  const repo = api.manager.current!;
+  const facts = sidebar.subtreeFacts;
+  await facts.reload();
+  if (!facts.available) return;
+  const start = git('rev-parse', 'HEAD').trim();
+  const lib = join(dirname(root), 'st-lib');
+  const dir = 'vendor/st-lib';
+  const libGit = (...args: string[]) =>
+    childProcess.execFileSync('git', ['-C', lib, '-c', 'user.name=a', '-c', 'user.email=a@example.com', ...args], { encoding: 'utf8' });
+  const url = `file://${lib.replaceAll('\\', '/')}`;
+  const quiet = { showInformationMessage: async () => undefined };
+  const keepHistory = { showQuickPick: async (items: readonly (vscode.QuickPickItem & { squash: boolean })[]) => items.find((i) => !i.squash) };
+  childProcess.execFileSync('git', ['init', '-q', lib]);
+  libGit('symbolic-ref', 'HEAD', 'refs/heads/main');
+  writeFileSync(join(lib, 'one.txt'), 'one\n');
+  libGit('add', 'one.txt');
+  libGit('commit', '-q', '-m', 'lib one');
+  try {
+    const section = () => sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'subtrees');
+    assert.ok(section(), 'git subtree があれば Subtrees が出る');
+    await withWindow({ ...quiet, ...keepHistory, showInputBox: inputs(url, 'main', dir) }, async () =>
+      vscode.commands.executeCommand('amonhen.subtrees.add'),
+    );
+    assert.ok(existsSync(join(root, dir, 'one.txt')));
+    const added = await until('覚えた相手', () => facts.get(dir)?.url === url && facts.get(dir));
+    assert.equal(added.ref, 'main');
+    const row = () => sidebar.getChildren(section()!).find((n) => n.kind === 'subtree' && n.subtree.dir === dir)!;
+    assert.match(String(sidebar.getTreeItem(row()).tooltip), /From .*st-lib \(main\)/);
+
+    // 相手の新しいコミットを取り込む
+    writeFileSync(join(lib, 'two.txt'), 'two\n');
+    libGit('add', 'two.txt');
+    libGit('commit', '-q', '-m', 'lib two');
+    await withWindow({ ...quiet, ...keepHistory, showInputBox: inputs(url, 'main') }, async () =>
+      vscode.commands.executeCommand('amonhen.subtree.pull', row()),
+    );
+    assert.ok(existsSync(join(root, dir, 'two.txt')));
+
+    // フォルダの履歴だけのブランチ
+    await withWindow({ ...quiet, showInputBox: inputs('st-split') }, async () => vscode.commands.executeCommand('amonhen.subtree.split', row()));
+    assert.equal(git('show', 'st-split:two.txt').replaceAll('\r\n', '\n'), 'two\n');
+
+    // 相手の別のブランチに送る
+    await withWindow({ ...quiet, showInputBox: inputs(url, 'from-repo') }, async () => vscode.commands.executeCommand('amonhen.subtree.push', row()));
+    assert.equal(libGit('rev-parse', 'from-repo').trim(), git('rev-parse', 'st-split').trim());
+    await until('Push の先を覚える', () => facts.get(dir)?.pushRef === 'from-repo');
+  } finally {
+    git('reset', '-q', '--hard', start);
+    if (git('branch', '--list', 'st-split').trim()) git('branch', '-q', '-D', 'st-split');
+    try {
+      git('config', '--remove-section', `amonhen.subtree.${dir}`);
+    } catch {
+      // 覚えていない
+    }
+    rmSync(join(root, 'vendor'), { recursive: true, force: true });
+    rmSync(lib, { recursive: true, force: true });
+    await repo.refresh();
+    await facts.reload();
   }
 }
 
@@ -1897,6 +2042,14 @@ suite('Amon Hen in VSCode', () => {
 
   test('shows a shallow partial clone in History and fetches more of it through the daemon', async () => {
     await shallowFlow();
+  });
+
+  test('adds, changes, updates and removes a submodule through the daemon', async () => {
+    await submoduleFlow();
+  });
+
+  test('adds, pulls, splits and pushes a subtree through the daemon', async () => {
+    await subtreeFlow();
   });
 
   test('shows stash details, branches from a stash and pops the latest through the daemon', async () => {

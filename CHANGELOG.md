@@ -922,6 +922,21 @@ First release.
 
 ## VSCode extension
 
+### Unreleased
+
+#### Added
+
+- With the engine, submodules show the app's marks and the URL and branch they follow, and can be added, updated
+  (nested ones, or to the branch followed), pointed elsewhere, synced and removed (keeping `.git/modules` unless asked).
+- With the engine and a git that has `git subtree`, a Subtrees group lists the folders added with it; Add Subtree…,
+  Pull…, Push… and Split… start from the repository, branch and squash used last.
+
+#### Fixed
+
+- A folder opened through a symbolic link (macOS's `/var`, for one) selects its own repository at startup rather
+  than one of its submodules.
+- An expanded Submodules, Tags or Stashes group is read again after switching repositories, rather than staying empty.
+
 ### [0.2.5] - 2026-11-04
 
 History gains the app's search, Reflog, File History and Blame, and with the engine the sidebar arranges branches,

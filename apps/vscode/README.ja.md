@@ -38,7 +38,8 @@ VSCode 上で快適に Git を操作するための自分用の拡張。Marketpl
 - Stashes の節は stash があるときだけ出る。その見出しの `+` で、作業中の変更を stash する（untracked のファイルを含めるかを選べる）。stash を選ぶと中身を複数ファイル diff で開き、右クリックで Apply / Pop / Drop（Undo で戻せる）。Apply と Pop は stage していた状態も戻す。エンジンがあるとき、stash の行には untracked のファイルを含むかが付き、ツールチップに作ったときのブランチと、土台から HEAD がどれだけ動いたかが出る。Branch… はその土台にブランチを作って stash を当て、見出しの Pop Latest Stash… は確かめてから最新の stash を pop する。
 - Reflog は HEAD の reflog を新しい順に並べ、右に選んだ行のコミットを出す。どのブランチからも辿れなくなったコミット（reset・rebase・amend で外れたもの）には「not on any branch」と付く。一覧の上の New Branch…・Checkout と、右クリック（New Tag・Reset Current Branch to Here…・Show in History・Copy Commit ID・Copy Name）で取り戻せる。
 - History のコミットの右クリックにも Checkout (Detached) と、エンジンがあれば Reset Current Branch to Here… がある。`git reset` と同じに Mixed・Soft・Hard を選ぶ。Hard は先に作業中の変更を stash に残し、Undo でブランチを戻せる。
-- Submodules は右クリックで Update（初期化して記録されているコミットに合わせる）と、別のウィンドウで開く。
+- Submodules は右クリックで Update（初期化して記録されているコミットに合わせる）と、別のウィンドウで開く。エンジンがあれば、行にアプリと同じ印（取り出していない・違うコミット・中の変更・コンフリクト）と URL・追うブランチが出て、メニューに Update…（中の submodule も・追うブランチの最新）・Edit URL…・Branch to Follow…・Remove… も並ぶ。グループには Update All・Update Submodules…・Sync URLs・Add Submodule…。
+- エンジンがあり、git に `git subtree` があれば、`git subtree` で取り込んだフォルダが Subtrees に並ぶ。Add Subtree… でリポジトリのブランチをフォルダに取り込み、subtree の右クリックで Pull…（ブランチをフォルダに merge）・Push…（フォルダのコミットをブランチに送る）・Split…（フォルダの履歴だけのブランチ）。相手・ブランチ・squash は前に使ったものから始まる。
 - 複数のリポジトリを開いているときは、タイトルのボタンで切り替える。
 
 ### ドラッグ＆ドロップ

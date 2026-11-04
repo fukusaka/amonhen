@@ -62,7 +62,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Remote menu: Add, Rename, Edit URL, Remove, Prune | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Pull Requests group | ✓ | ✓ | — | — |  |
 | Submodules group (Update, Open in New Window) | ✓ | ✓ | ✓ | ✓ | CLI: `submodule`, `submodule update`. |
-| Submodule marks (not checked out, another commit, changes inside, conflict) and menus: Update… (recursive, remote), Edit URL, Branch to Follow, Remove (optionally .git/modules), Add, Sync URLs | ✓ | ✓ | — | ✓ | CLI: `submodule` (`add`, `remove`, `set-url`, `set-branch`, `sync`). |
+| Submodule marks (not checked out, another commit, changes inside, conflict) and menus: Update… (recursive, remote), Edit URL, Branch to Follow, Remove (optionally .git/modules), Add, Sync URLs | ✓ | ✓ | ✓ | ✓ | VSCode: Remove asks with two buttons: keep `.git/modules` or delete it too.<br>CLI: `submodule` (`add`, `remove`, `set-url`, `set-branch`, `sync`). |
 | Worktrees under Working Copy with change counts (✎ ⌂ ⑂) | ✓ | ✓ | ✓ | △ | VSCode: The marks are the rows' icons; a branch another worktree has checked out gets ⌂ or ⑂.<br>CLI: `worktree list --changes`. |
 | Marks for a shallow or partial clone (History) and a sparse checkout (Working Copy) | ✓ | ✓ | △ | n/a | VSCode: Shallow and Partial above History (Partial fetches all contents when clicked); no sparse mark. |
 
@@ -94,9 +94,9 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Quick Open (fuzzy search) | ✓ | ✓ | n/a | n/a |  |
 | Repository name in the toolbar switches the repository | ✓ | ✓ | △ | n/a | VSCode: Select Repository picks among workspace repositories. |
 | Clone (choosing from your own GitHub repositories) | ✓ | ✓ | n/a | △ | VSCode: VSCode's own Git: Clone.<br>CLI: `clone <url>` only. |
-| Clone: what to download (everything, contents when needed, recent history) and only some folders | ✓ | ✓ | — | ✓ | CLI: `clone --filter`, `--depth`, `--sparse`. |
-| Subtrees group (shown when git has git subtree): Add, Pull, Push, Split, remembering the source and squash | ✓ | ✓ | — | ✓ | CLI: `subtree`. |
-| Clone: check out submodules too | ✓ | ✓ | — | ✓ | CLI: `clone --recurse-submodules`. |
+| Clone: what to download (everything, contents when needed, recent history) and only some folders | ✓ | ✓ | n/a | ✓ | VSCode: VSCode's own Git: Clone.<br>CLI: `clone --filter`, `--depth`, `--sparse`. |
+| Subtrees group (shown when git has git subtree): Add, Pull, Push, Split, remembering the source and squash | ✓ | ✓ | ✓ | ✓ | VSCode: The values are asked in input boxes and the squash in a list, not a sheet.<br>CLI: `subtree`. |
+| Clone: check out submodules too | ✓ | ✓ | n/a | ✓ | VSCode: VSCode's own Git: Clone.<br>CLI: `clone --recurse-submodules`. |
 | Init a new repository | — | — | n/a | — | macOS: Listed in docs/ux.md's File menu but not built. |
 
 ## 3. Settings

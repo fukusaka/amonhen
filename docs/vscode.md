@@ -232,3 +232,5 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 21. The rest of Stashes (Branch…, `--index`, row details, Pop asking first)
 - [x] 22. Undo asking first, and the Undo log
 - [x] 23. Repository settings
+- [x] 24. Submodules: marks, Update…, Edit URL…, Branch to Follow…, Remove…, Update All, Sync URLs, Add Submodule…
+- [x] 25. Subtrees: Add, Pull, Push, Split

@@ -20,6 +20,7 @@ import { registerSequenceCommands } from './ui/sequenceCommands.ts';
 import { SidebarProvider } from './ui/sidebar.ts';
 import { registerStashCommands } from './ui/stashCommands.ts';
 import { registerSubmoduleCommands } from './ui/submoduleCommands.ts';
+import { registerSubtreeCommands } from './ui/subtreeCommands.ts';
 import { registerSyncCommands } from './ui/syncCommands.ts';
 import { registerTagCommands } from './ui/tagCommands.ts';
 import { registerUndoCommand } from './ui/undoCommand.ts';
@@ -69,6 +70,7 @@ export async function activate(
     sidebar,
     view,
     view.onDidExpandElement((e) => sidebar.onDidExpand(e.element)),
+    view.onDidCollapseElement((e) => sidebar.onDidCollapse(e.element)),
     // Branches・Remotes・Tags の絞り込み（アプリのサイドバーの上の欄と同じ）。何で絞っているかを上に出す
     sidebar.onDidChangeFilter((text) => (view.message = text ? `Filter: ${text}` : undefined)),
     vscode.commands.registerCommand('amonhen.filterRefs', async () => {
@@ -102,7 +104,8 @@ export async function activate(
     registerMergeBranchesCommand(manager),
     registerBranchCommands(manager),
     registerStashCommands(manager),
-    registerSubmoduleCommands(manager),
+    registerSubmoduleCommands(manager, sidebar),
+    registerSubtreeCommands(manager, sidebar),
     registerRangeDiffCommands(manager),
     registerReflogCommands(manager),
     registerTagCommands(manager, sidebar),

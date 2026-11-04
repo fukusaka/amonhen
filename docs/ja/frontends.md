@@ -62,7 +62,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | リモートのメニュー: 追加・名前の変更・URL の変更・削除・Prune | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | Pull Requests のグループ | ✓ | ✓ | — | — |  |
 | Submodules のグループ（Update・新しい窓で開く） | ✓ | ✓ | ✓ | ✓ | CLI: `submodule`・`submodule update`。 |
-| submodule の印（取り出していない・違うコミット・中の変更・コンフリクト）とメニュー: Update…（中の submodule も・追うブランチの最新）・URL の編集・追うブランチ・外す（.git/modules も消せる）・追加・Sync URLs | ✓ | ✓ | — | ✓ | CLI: `submodule`（`add`・`remove`・`set-url`・`set-branch`・`sync`）。 |
+| submodule の印（取り出していない・違うコミット・中の変更・コンフリクト）とメニュー: Update…（中の submodule も・追うブランチの最新）・URL の編集・追うブランチ・外す（.git/modules も消せる）・追加・Sync URLs | ✓ | ✓ | ✓ | ✓ | VSCode: Remove は 2 つのボタンで、.git/modules を残すか一緒に消すかを聞く。<br>CLI: `submodule`（`add`・`remove`・`set-url`・`set-branch`・`sync`）。 |
 | Working Copy の下の worktree と変更の数（✎ ⌂ ⑂） | ✓ | ✓ | ✓ | △ | VSCode: 印は行のアイコン。ほかの worktree が checkout しているブランチには ⌂ か ⑂ が付く。<br>CLI: `worktree list --changes`。 |
 | shallow clone・partial clone（History）と sparse checkout（Working Copy）の印 | ✓ | ✓ | △ | n/a | VSCode: History の上の Shallow・Partial（Partial は押すと中身をすべて取る）。sparse の印はない。 |
 
@@ -94,9 +94,9 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Quick Open（あいまい検索） | ✓ | ✓ | n/a | n/a |  |
 | ツールバーのリポジトリ名で切り替える | ✓ | ✓ | △ | n/a | VSCode: Select Repository でワークスペースのリポジトリから選ぶ。 |
 | Clone（自分の GitHub のリポジトリから選ぶ） | ✓ | ✓ | n/a | △ | VSCode: VSCode 自身の Git: Clone。<br>CLI: `clone <url>` だけ。 |
-| Clone: 取得する範囲（すべて・中身は必要なときに・最近の履歴）と、一部のフォルダだけ | ✓ | ✓ | — | ✓ | CLI: `clone --filter`・`--depth`・`--sparse`。 |
-| Subtrees のグループ（git に git subtree があるとき）: 追加・Pull・Push・Split、相手と squash を覚える | ✓ | ✓ | — | ✓ | CLI: `subtree`。 |
-| Clone: submodule も取り出す | ✓ | ✓ | — | ✓ | CLI: `clone --recurse-submodules`。 |
+| Clone: 取得する範囲（すべて・中身は必要なときに・最近の履歴）と、一部のフォルダだけ | ✓ | ✓ | n/a | ✓ | VSCode: VSCode の Git: Clone が代わり。<br>CLI: `clone --filter`・`--depth`・`--sparse`。 |
+| Subtrees のグループ（git に git subtree があるとき）: 追加・Pull・Push・Split、相手と squash を覚える | ✓ | ✓ | ✓ | ✓ | VSCode: 値は入力欄、squash は一覧で聞く（シートではない）。<br>CLI: `subtree`。 |
+| Clone: submodule も取り出す | ✓ | ✓ | n/a | ✓ | VSCode: VSCode の Git: Clone が代わり。<br>CLI: `clone --recurse-submodules`。 |
 | 新しいリポジトリの Init | — | — | n/a | — | macOS: docs/ux.md の File メニューにあるが、作っていない。 |
 
 ## 3. Settings
