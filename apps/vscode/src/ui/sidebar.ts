@@ -10,6 +10,7 @@ import { arrangeBranches, type Arranged, type BranchGroupsInfo } from '../git/br
 import { signatureExplanation, signatureIcon, signatureLabel, signatureStatus } from '../git/signature.ts';
 import { stashBaseText, stashBranch } from '../git/stash.ts';
 import { describeSubmodule } from '../git/status.ts';
+import { submoduleMarks, submoduleTooltip } from '../git/submodules.ts';
 import { tagMark, tagMarkLabel, tagStateText, tagTargets } from '../git/tagRemotes.ts';
 import { samePath, worktreeLayout, worktreeName, type Worktree } from '../git/worktrees.ts';
 import type { RepositoryManager } from '../state/manager.ts';
@@ -18,6 +19,7 @@ import type { LazySection, Repository, Submodule } from '../state/repository.ts'
 import type { ViewName } from '../view/protocol.ts';
 import { BranchFacts } from './branchFacts.ts';
 import { StashFacts } from './stashFacts.ts';
+import { SubmoduleFacts } from './submoduleFacts.ts';
 import { TagMarks } from './tagMarks.ts';
 import { WorktreeList } from './worktreeList.ts';
 
@@ -83,6 +85,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
   readonly branchFacts = new BranchFacts();
   /** stash の土台と untracked（エンジンだけ） */
   readonly stashFacts = new StashFacts();
+  readonly submoduleFacts = new SubmoduleFacts();
   /** Branches・Remotes・Tags の絞り込みの言葉（小文字。どれも名前に含むものだけ出す。空なら絞り込まない） */
   private filterWords: string[] = [];
   private readonly _onDidChangeFilter = new vscode.EventEmitter<string>();
@@ -108,6 +111,8 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
       this.branchFacts,
       this.stashFacts,
       this.stashFacts.onDidChange(() => this._onDidChangeTreeData.fire(this.sections.get('stashes'))),
+      this.submoduleFacts,
+      this.submoduleFacts.onDidChange(() => this._onDidChangeTreeData.fire(this.sections.get('submodules'))),
       this.branchFacts.onDidChange(() => this._onDidChangeTreeData.fire(this.sections.get('branches'))),
     );
     this.watch(manager.current);
@@ -124,6 +129,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
     this.worktrees.setRepository(this.engine ? repository : undefined);
     this.branchFacts.setRepository(this.engine ? repository : undefined);
     this.stashFacts.setRepository(this.engine ? repository : undefined);
+    this.submoduleFacts.setRepository(this.engine ? repository : undefined);
     this.repoListener = repository?.onDidChange((changed) => {
       if (changed.has('branches')) this.updateContext(repository);
       // Working Copy の変化は、入口の数と途中の merge / rebase に出る
@@ -173,6 +179,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
       this.worktrees.setRepository(engine ? this.repo : undefined);
       this.branchFacts.setRepository(engine ? this.repo : undefined);
       this.stashFacts.setRepository(engine ? this.repo : undefined);
+      this.submoduleFacts.setRepository(engine ? this.repo : undefined);
       this._onDidChangeTreeData.fire(undefined);
     }
   }
@@ -453,8 +460,19 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
       case 'submodule': {
         const item = new vscode.TreeItem(node.submodule.path);
         item.id = `submodule:${node.submodule.path}`;
-        item.description = node.submodule.initialized ? node.state : 'not initialized';
-        item.iconPath = new vscode.ThemeIcon('file-submodule');
+        // エンジンがあれば、アプリと同じ印（取り出していない・違うコミット・中の変更・コンフリクト）と URL・追うブランチ
+        const fact = this.engine ? this.submoduleFacts.get(node.submodule.path) : undefined;
+        if (fact) {
+          item.description = submoduleMarks(fact).join(' · ') || undefined;
+          item.tooltip = submoduleTooltip(fact);
+        } else {
+          item.description = node.submodule.initialized ? node.state : 'not initialized';
+        }
+        const off = fact ? !fact.initialized : !node.submodule.initialized;
+        item.iconPath = new vscode.ThemeIcon(
+          fact?.conflict ? 'warning' : 'file-submodule',
+          off ? new vscode.ThemeColor('disabledForeground') : undefined,
+        );
         item.contextValue = 'submodule';
         return item;
       }
