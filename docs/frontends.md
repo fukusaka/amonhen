@@ -80,7 +80,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Repository name in the toolbar switches the repository | ✓ | ✓ | △ | n/a | VSCode: Select Repository picks among workspace repositories. |
 | Clone (choosing from your own GitHub repositories) | ✓ | ✓ | n/a | △ | VSCode: VSCode's own Git: Clone.<br>CLI: `clone <url>` only. |
 | Clone: what to download (everything, contents when needed, recent history) and only some folders | ✓ | ✓ | n/a | ✓ | VSCode: VSCode's own Git: Clone.<br>CLI: `clone --filter`, `--depth`, `--sparse`. |
-| Subtrees group (shown when git has git subtree): Add, Pull, Push, Split, remembering the source and squash | ✓ | ✓ | — | ✓ | CLI: `subtree`. |
+| Subtrees group (shown when git has git subtree): Add, Pull, Push, Split, remembering the source and squash | ✓ | ✓ | ✓ | ✓ | VSCode: The values are asked in input boxes and the squash in a list, not a sheet.<br>CLI: `subtree`. |
 | Clone: check out submodules too | ✓ | ✓ | n/a | ✓ | VSCode: VSCode's own Git: Clone.<br>CLI: `clone --recurse-submodules`. |
 | Init a new repository | — | — | n/a | — | macOS: Listed in docs/ux.md's File menu but not built. |
 

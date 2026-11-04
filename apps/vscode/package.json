@@ -614,6 +614,27 @@
         "title": "Add Submodule…",
         "category": "Amon Hen",
         "icon": "$(add)"
+      },
+      {
+        "command": "amonhen.subtrees.add",
+        "title": "Add Subtree…",
+        "category": "Amon Hen",
+        "icon": "$(add)"
+      },
+      {
+        "command": "amonhen.subtree.pull",
+        "title": "Pull into Subtree…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.subtree.push",
+        "title": "Push Subtree…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.subtree.split",
+        "title": "Split Subtree…",
+        "category": "Amon Hen"
       }
     ],
     "menus": {
@@ -984,6 +1005,31 @@
           "command": "amonhen.submodules.add",
           "when": "view == amonhen.sidebar && amonhen.engine && viewItem == section.submodules",
           "group": "2_submodules@1"
+        },
+        {
+          "command": "amonhen.subtrees.add",
+          "when": "view == amonhen.sidebar && amonhen.engine && amonhen.subtrees && viewItem == section.subtrees",
+          "group": "inline"
+        },
+        {
+          "command": "amonhen.subtrees.add",
+          "when": "view == amonhen.sidebar && amonhen.engine && amonhen.subtrees && viewItem == section.subtrees",
+          "group": "1_subtrees@1"
+        },
+        {
+          "command": "amonhen.subtree.pull",
+          "when": "view == amonhen.sidebar && amonhen.engine && amonhen.subtrees && viewItem == subtree",
+          "group": "1_subtree@1"
+        },
+        {
+          "command": "amonhen.subtree.push",
+          "when": "view == amonhen.sidebar && amonhen.engine && amonhen.subtrees && viewItem == subtree",
+          "group": "1_subtree@2"
+        },
+        {
+          "command": "amonhen.subtree.split",
+          "when": "view == amonhen.sidebar && amonhen.engine && amonhen.subtrees && viewItem == subtree",
+          "group": "1_subtree@3"
         }
       ],
       "commandPalette": [
@@ -1150,6 +1196,22 @@
         {
           "command": "amonhen.submodules.add",
           "when": "amonhen.hasRepository && amonhen.engine"
+        },
+        {
+          "command": "amonhen.subtrees.add",
+          "when": "amonhen.hasRepository && amonhen.engine && amonhen.subtrees"
+        },
+        {
+          "command": "amonhen.subtree.pull",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.subtree.push",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.subtree.split",
+          "when": "false"
         },
         {
           "command": "amonhen.compareWithPrevious",

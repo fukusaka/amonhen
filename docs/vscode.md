@@ -233,4 +233,4 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 22. Undo asking first, and the Undo log
 - [x] 23. Repository settings
 - [x] 24. Submodules: marks, Update…, Edit URL…, Branch to Follow…, Remove…, Update All, Sync URLs, Add Submodule…
-- [ ] 25. Subtrees: Add, Pull, Push, Split
+- [x] 25. Subtrees: Add, Pull, Push, Split

@@ -933,6 +933,73 @@ async function submoduleFlow(): Promise<void> {
 }
 
 /**
+ * git に git subtree があれば Subtrees が出る。Add Subtree… で取り込み、相手を覚え、Pull… で新しいコミットを取り込み、
+ * Split… でフォルダの履歴だけのブランチを作り、Push… で相手に送る。コアの命令（daemon だけ）
+ */
+async function subtreeFlow(): Promise<void> {
+  const sidebar = api.sidebar;
+  const repo = api.manager.current!;
+  const facts = sidebar.subtreeFacts;
+  await facts.reload();
+  if (!facts.available) return;
+  const start = git('rev-parse', 'HEAD').trim();
+  const lib = join(dirname(root), 'st-lib');
+  const dir = 'vendor/st-lib';
+  const libGit = (...args: string[]) =>
+    childProcess.execFileSync('git', ['-C', lib, '-c', 'user.name=a', '-c', 'user.email=a@example.com', ...args], { encoding: 'utf8' });
+  const url = `file://${lib.replaceAll('\\', '/')}`;
+  const quiet = { showInformationMessage: async () => undefined };
+  const keepHistory = { showQuickPick: async (items: readonly (vscode.QuickPickItem & { squash: boolean })[]) => items.find((i) => !i.squash) };
+  childProcess.execFileSync('git', ['init', '-q', lib]);
+  libGit('symbolic-ref', 'HEAD', 'refs/heads/main');
+  writeFileSync(join(lib, 'one.txt'), 'one\n');
+  libGit('add', 'one.txt');
+  libGit('commit', '-q', '-m', 'lib one');
+  try {
+    const section = () => sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'subtrees');
+    assert.ok(section(), 'git subtree があれば Subtrees が出る');
+    await withWindow({ ...quiet, ...keepHistory, showInputBox: inputs(url, 'main', dir) }, async () =>
+      vscode.commands.executeCommand('amonhen.subtrees.add'),
+    );
+    assert.ok(existsSync(join(root, dir, 'one.txt')));
+    const added = await until('覚えた相手', () => facts.get(dir)?.url === url && facts.get(dir));
+    assert.equal(added.ref, 'main');
+    const row = () => sidebar.getChildren(section()!).find((n) => n.kind === 'subtree' && n.subtree.dir === dir)!;
+    assert.match(String(sidebar.getTreeItem(row()).tooltip), /From .*st-lib \(main\)/);
+
+    // 相手の新しいコミットを取り込む
+    writeFileSync(join(lib, 'two.txt'), 'two\n');
+    libGit('add', 'two.txt');
+    libGit('commit', '-q', '-m', 'lib two');
+    await withWindow({ ...quiet, ...keepHistory, showInputBox: inputs(url, 'main') }, async () =>
+      vscode.commands.executeCommand('amonhen.subtree.pull', row()),
+    );
+    assert.ok(existsSync(join(root, dir, 'two.txt')));
+
+    // フォルダの履歴だけのブランチ
+    await withWindow({ ...quiet, showInputBox: inputs('st-split') }, async () => vscode.commands.executeCommand('amonhen.subtree.split', row()));
+    assert.equal(git('show', 'st-split:two.txt').replaceAll('\r\n', '\n'), 'two\n');
+
+    // 相手の別のブランチに送る
+    await withWindow({ ...quiet, showInputBox: inputs(url, 'from-repo') }, async () => vscode.commands.executeCommand('amonhen.subtree.push', row()));
+    assert.equal(libGit('rev-parse', 'from-repo').trim(), git('rev-parse', 'st-split').trim());
+    await until('Push の先を覚える', () => facts.get(dir)?.pushRef === 'from-repo');
+  } finally {
+    git('reset', '-q', '--hard', start);
+    if (git('branch', '--list', 'st-split').trim()) git('branch', '-q', '-D', 'st-split');
+    try {
+      git('config', '--remove-section', `amonhen.subtree.${dir}`);
+    } catch {
+      // 覚えていない
+    }
+    rmSync(join(root, 'vendor'), { recursive: true, force: true });
+    rmSync(lib, { recursive: true, force: true });
+    await repo.refresh();
+    await facts.reload();
+  }
+}
+
+/**
  * Stashes は stash があるときだけ出て、行に作ったときのブランチ・土台と HEAD の離れ具合・untracked が出る。
  * stash からブランチを作り（git stash branch）、新しい stash を確かめてから pop する（daemon だけ）
  */
@@ -1979,6 +2046,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('adds, changes, updates and removes a submodule through the daemon', async () => {
     await submoduleFlow();
+  });
+
+  test('adds, pulls, splits and pushes a subtree through the daemon', async () => {
+    await subtreeFlow();
   });
 
   test('shows stash details, branches from a stash and pops the latest through the daemon', async () => {

@@ -912,6 +912,8 @@ First release.
 
 - With the engine, submodules show the app's marks and the URL and branch they follow, and can be added, updated
   (nested ones, or to the branch followed), pointed elsewhere, synced and removed (keeping `.git/modules` unless asked).
+- With the engine and a git that has `git subtree`, a Subtrees group lists the folders added with it; Add Subtree…,
+  Pull…, Push… and Split… start from the repository, branch and squash used last.
 
 #### Fixed
 

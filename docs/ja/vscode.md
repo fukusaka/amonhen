@@ -225,4 +225,4 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 22. Undo の前の確認と、Undo の記録の一覧
 - [x] 23. リポジトリの設定
 - [x] 24. submodule: 印・Update…・URL の編集・追うブランチ・外す・Update All・Sync URLs・Add Submodule…
-- [ ] 25. subtree: Add・Pull・Push・Split
+- [x] 25. subtree: Add・Pull・Push・Split
