@@ -748,7 +748,11 @@ First release.
 
 ## VSCode extension
 
-### Unreleased
+### [0.2.5] - 2026-11-04
+
+History gains the app's search, Reflog, File History and Blame, and with the engine the sidebar arranges branches,
+tags, remotes and worktrees as the app does. Rebases and History edits ask first and say which stacked branches move,
+and Repository Settings shows the app's pages of git settings.
 
 #### Added
 
