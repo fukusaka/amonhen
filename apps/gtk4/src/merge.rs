@@ -629,9 +629,9 @@ impl Editor {
         let position = gtk::Label::new(None);
         position.add_css_class("numeric");
         let previous = gtk::Button::from_icon_name("go-up-symbolic");
-        previous.set_tooltip_text(Some(&tr!("Previous Conflict (Ctrl+Alt+↑)")));
+        previous.set_tooltip_text(Some(&tr!("Previous Conflict (Alt+↑)")));
         let next = gtk::Button::from_icon_name("go-down-symbolic");
-        next.set_tooltip_text(Some(&tr!("Next Conflict (Ctrl+Alt+↓)")));
+        next.set_tooltip_text(Some(&tr!("Next Conflict (Alt+↓)")));
         let magic = gtk::Button::with_label("✨ Magic Merge");
         magic.set_tooltip_text(Some(&tr!(
             "Resolve all conflicts that fixed rules can solve: both sides are the same, only one side changed (diff3), only whitespace differs, or different words on the same line changed (diff3). You can Undo it."
@@ -886,7 +886,7 @@ impl Editor {
             }
         });
 
-        // キー: Ctrl+Alt+↑↓ でコンフリクトの間を移り、Ctrl+Return で保存して解決済みにする。
+        // キー: Alt+↑↓ でコンフリクトの間を移り（macOS 版の ⌥⌘↑↓。Ctrl+Alt+↑↓ は GNOME がワークスペースの切り替えに使う）、Ctrl+Return で保存して解決済みにする。
         // エディタの中にフォーカスがあるときだけ（埋め込んだ Working Copy では、外の Ctrl+Return はコミット）。
         // Result の欄より先に受ける。
         let keys = gtk::ShortcutController::new();
@@ -901,8 +901,8 @@ impl Editor {
                 })),
             ));
         };
-        add("<Control><Alt>Up", Box::new(with(|t| t.step(-1))));
-        add("<Control><Alt>Down", Box::new(with(|t| t.step(1))));
+        add("<Alt>Up", Box::new(with(|t| t.step(-1))));
+        add("<Alt>Down", Box::new(with(|t| t.step(1))));
         add("<Control>Return", Box::new(with(Self::save_and_resolve)));
         add("<Control>KP_Enter", Box::new(with(Self::save_and_resolve)));
         this.root.add_controller(keys);

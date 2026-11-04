@@ -557,8 +557,8 @@
 "Result (editable)" = "Result（結果、編集できる）";
 "Incoming (being merged in)" = "Incoming（取り込む側）";
 "Base (common ancestor)" = "Base（共通の祖先）";
-"Previous Conflict (Ctrl+Alt+↑)" = "前のコンフリクト（Ctrl+Alt+↑）";
-"Next Conflict (Ctrl+Alt+↓)" = "次のコンフリクト（Ctrl+Alt+↓）";
+"Previous Conflict (Alt+↑)" = "前のコンフリクト（Alt+↑）";
+"Next Conflict (Alt+↓)" = "次のコンフリクト（Alt+↓）";
 "Resolve all conflicts that fixed rules can solve: both sides are the same, only one side changed (diff3), only whitespace differs, or different words on the same line changed (diff3). You can Undo it." = "決まった規則で解けるコンフリクトをまとめて解く: 両側が同じ、片側だけが変えた（diff3）、空白だけが違う、同じ行の別々の単語を変えた（diff3）。Undo で戻せる";
 "Accept Current" = "Current を採用";
 "Accept Incoming" = "Incoming を採用";
