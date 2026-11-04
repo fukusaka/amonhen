@@ -17,6 +17,20 @@ The menu commands themselves are not listed one by one: every front end takes th
 
 This table is kept by hand. Update it in the same change that adds, removes or changes a feature in any front end.
 
+## Platform differences between the macOS and GTK4 apps
+
+The GTK4 app aims to behave like the macOS app. These are the only intended differences; each follows the platform, mostly the [GNOME HIG](https://developer.gnome.org/hig/):
+
+- The app quits when its last window closes.
+- No import of the login shell's environment (Linux sessions already carry it).
+- No fsmonitor on Linux and the BSDs, where git has no fsmonitor--daemon.
+- No Apple Intelligence; Claude Code and Codex only.
+- Files (the desktop's file manager) instead of Finder; external editors are found by their desktop entries.
+- The header bar shows icons only, with tooltips; toolbar customization has no icon/text choice.
+- History search is GNOME's search bar: a toggle in the header bar and Ctrl+F reveal a bar above History.
+- Destructive confirmations: Cancel comes first and takes Return and Esc, and the destructive button is red; Cancel isn't highlighted.
+- Keyboard shortcuts that GNOME takes are moved or left out (see Keyboard shortcuts below).
+- “This Computer”, the package manager and systemd/cron in place of “This Mac”, Homebrew and launchd.
 
 ## Overall layout
 
