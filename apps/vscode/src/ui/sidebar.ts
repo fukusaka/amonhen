@@ -11,6 +11,7 @@ import { signatureExplanation, signatureIcon, signatureLabel, signatureStatus } 
 import { stashBaseText, stashBranch } from '../git/stash.ts';
 import { describeSubmodule } from '../git/status.ts';
 import { submoduleMarks, submoduleTooltip } from '../git/submodules.ts';
+import { subtreeTooltip, type Subtree } from '../git/subtrees.ts';
 import { tagMark, tagMarkLabel, tagStateText, tagTargets } from '../git/tagRemotes.ts';
 import { samePath, worktreeLayout, worktreeName, type Worktree } from '../git/worktrees.ts';
 import type { RepositoryManager } from '../state/manager.ts';
@@ -20,6 +21,7 @@ import type { ViewName } from '../view/protocol.ts';
 import { BranchFacts } from './branchFacts.ts';
 import { StashFacts } from './stashFacts.ts';
 import { SubmoduleFacts } from './submoduleFacts.ts';
+import { SubtreeFacts } from './subtreeFacts.ts';
 import { TagMarks } from './tagMarks.ts';
 import { WorktreeList } from './worktreeList.ts';
 
@@ -31,7 +33,7 @@ export function sequenceRowName(sequence: Sequence): string {
   return sequence === 'am' ? 'Applying patches' : `${sequence[0]!.toUpperCase()}${sequence.slice(1)} in progress`;
 }
 
-type RefSection = 'branches' | 'remotes' | 'tags' | 'stashes' | 'submodules';
+type RefSection = 'branches' | 'remotes' | 'tags' | 'stashes' | 'submodules' | 'subtrees';
 
 interface Folder {
   folders: Map<string, Folder>;
@@ -56,6 +58,7 @@ export type Node =
   | { kind: 'tag'; ref: Ref }
   | { kind: 'stash'; stash: Stash }
   | { kind: 'submodule'; submodule: Submodule; state?: string }
+  | { kind: 'subtree'; subtree: Subtree }
   /** Working Copy の下の worktree */
   | { kind: 'worktree'; worktree: Worktree }
   /** 変更のない worktree をまとめる行 */
@@ -67,6 +70,7 @@ const SECTION_LABELS: Record<RefSection, string> = {
   tags: 'Tags',
   stashes: 'Stashes',
   submodules: 'Submodules',
+  subtrees: 'Subtrees',
 };
 
 const LAZY: ReadonlySet<RefSection> = new Set<LazySection>(['tags', 'stashes', 'submodules']);
@@ -86,6 +90,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
   /** stash の土台と untracked（エンジンだけ） */
   readonly stashFacts = new StashFacts();
   readonly submoduleFacts = new SubmoduleFacts();
+  readonly subtreeFacts = new SubtreeFacts();
   /** Branches・Remotes・Tags の絞り込みの言葉（小文字。どれも名前に含むものだけ出す。空なら絞り込まない） */
   private filterWords: string[] = [];
   private readonly _onDidChangeFilter = new vscode.EventEmitter<string>();
@@ -115,6 +120,9 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
       this.stashFacts.onDidChange(() => this._onDidChangeTreeData.fire(this.sections.get('stashes'))),
       this.submoduleFacts,
       this.submoduleFacts.onDidChange(() => this._onDidChangeTreeData.fire(this.sections.get('submodules'))),
+      this.subtreeFacts,
+      // Subtrees は git subtree があるときだけ出すので、いちばん上から描き直す
+      this.subtreeFacts.onDidChange(() => this._onDidChangeTreeData.fire(undefined)),
       this.branchFacts.onDidChange(() => this._onDidChangeTreeData.fire(this.sections.get('branches'))),
     );
     this.watch(manager.current);
@@ -134,6 +142,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
     this.branchFacts.setRepository(this.engine ? repository : undefined);
     this.stashFacts.setRepository(this.engine ? repository : undefined);
     this.submoduleFacts.setRepository(this.engine ? repository : undefined);
+    this.subtreeFacts.setRepository(this.engine ? repository : undefined);
     this.repoListener = repository?.onDidChange((changed) => {
       if (changed.has('branches')) this.updateContext(repository);
       // Working Copy の変化は、入口の数と途中の merge / rebase に出る
@@ -184,6 +193,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
       this.branchFacts.setRepository(engine ? this.repo : undefined);
       this.stashFacts.setRepository(engine ? this.repo : undefined);
       this.submoduleFacts.setRepository(engine ? this.repo : undefined);
+      this.subtreeFacts.setRepository(engine ? this.repo : undefined);
       this._onDidChangeTreeData.fire(undefined);
     }
   }
@@ -222,7 +232,11 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
       // 一覧も読んでおく（git stash list は軽い）
       if (!state.stashes) void repo.want('stashes');
       const stashes = Math.max(state.status?.stashCount ?? 0, state.stashes?.length ?? 0);
-      nodes.push(...[...this.sections.values()].filter((n) => n.kind !== 'section' || n.section !== 'stashes' || stashes > 0));
+      // Subtrees はこの機械の git に git subtree があるときだけ（アプリと同じ。エンジンで調べる）
+      const hidden = (n: Node) =>
+        n.kind === 'section' &&
+        ((n.section === 'stashes' && stashes === 0) || (n.section === 'subtrees' && !(this.engine && this.subtreeFacts.available)));
+      nodes.push(...[...this.sections.values()].filter((n) => !hidden(n)));
       // Reflog はいつもいちばん下（アプリと同じ）
       if (this.engine) nodes.push({ kind: 'view', view: 'reflog' }, { kind: 'view', view: 'settings' });
       return nodes;
@@ -297,6 +311,8 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
           .map((ref) => ({ kind: 'tag', ref }));
       case 'stashes':
         return (state.stashes ?? []).map((stash) => ({ kind: 'stash', stash }));
+      case 'subtrees':
+        return this.subtreeFacts.subtrees.map((subtree) => ({ kind: 'subtree', subtree }));
       case 'submodules': {
         const entries = new Map((state.status?.entries ?? []).map((e) => [e.path, e]));
         return (state.submodules ?? []).map((submodule) => ({
@@ -483,6 +499,15 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
           off ? new vscode.ThemeColor('disabledForeground') : undefined,
         );
         item.contextValue = 'submodule';
+        return item;
+      }
+      case 'subtree': {
+        const item = new vscode.TreeItem(node.subtree.dir);
+        item.id = `subtree:${node.subtree.dir}`;
+        item.description = node.subtree.squashed ? 'squashed' : undefined;
+        item.tooltip = subtreeTooltip(node.subtree);
+        item.iconPath = new vscode.ThemeIcon('folder-library');
+        item.contextValue = 'subtree';
         return item;
       }
     }
