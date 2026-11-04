@@ -7,6 +7,13 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
+### Unreleased
+
+#### Added
+
+- Subtrees, when git has `git subtree`: Add Subtree… brings another repository's branch into a folder, and the
+  sidebar's Subtrees group pulls, pushes and splits them, remembering the source and squash. `amonhen subtree` too.
+
 ### [0.2.9] - 2026-11-04
 
 The GTK4 app for Linux catches up with the macOS app, and large repositories are supported: shallow, partial and
@@ -53,8 +60,6 @@ confirmation and History edit now asks in one sheet that shows what moves and wh
   in conflict, and their menus add, update (optionally recursive or to the branch they follow), change the URL or the
   branch to follow, sync and remove them (keeping `.git/modules` unless asked). The Clone sheet can check them out
   too. `amonhen submodule` and `amonhen clone --recurse-submodules` do the same.
-- Subtrees, when git has `git subtree`: Add Subtree… brings another repository's branch into a folder, and the
-  sidebar's Subtrees group pulls, pushes and splits them, remembering the source and squash. `amonhen subtree` too.
 
 #### Changed
 
