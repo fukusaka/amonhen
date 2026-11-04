@@ -69,6 +69,7 @@ export async function activate(
     sidebar,
     view,
     view.onDidExpandElement((e) => sidebar.onDidExpand(e.element)),
+    view.onDidCollapseElement((e) => sidebar.onDidCollapse(e.element)),
     // Branches・Remotes・Tags の絞り込み（アプリのサイドバーの上の欄と同じ）。何で絞っているかを上に出す
     sidebar.onDidChangeFilter((text) => (view.message = text ? `Filter: ${text}` : undefined)),
     vscode.commands.registerCommand('amonhen.filterRefs', async () => {

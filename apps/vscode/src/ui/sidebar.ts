@@ -91,6 +91,8 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
   private readonly _onDidChangeFilter = new vscode.EventEmitter<string>();
   /** 絞り込みを変えた（空文字なら絞り込みをやめた） */
   readonly onDidChangeFilter = this._onDidChangeFilter.event;
+  /** 開いている遅延セクション */
+  private readonly expanded = new Set<LazySection>();
   /** 更新通知で同じノードを指せるよう、セクションのノードは使い回す */
   private readonly sections = new Map<RefSection, Node>(
     (Object.keys(SECTION_LABELS) as RefSection[]).map((s) => [s, { kind: 'section', section: s }]),
@@ -124,6 +126,8 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
 
   private watch(repository: Repository | undefined): void {
     this.repoListener?.dispose();
+    // 開いたままの遅延セクションは、切り替えた先のリポジトリでも読む（開き直すまで空のままにしない）
+    for (const section of this.expanded) void repository?.want(section);
     this.updateContext(repository);
     this.tagMarks.setRepository(this.engine ? repository : undefined);
     this.worktrees.setRepository(this.engine ? repository : undefined);
@@ -193,8 +197,13 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
   /** 遅延セクションが展開されたら取得を始める */
   onDidExpand(node: Node): void {
     if (node.kind === 'section' && LAZY.has(node.section)) {
+      this.expanded.add(node.section as LazySection);
       void this.repo?.want(node.section as LazySection);
     }
+  }
+
+  onDidCollapse(node: Node): void {
+    if (node.kind === 'section') this.expanded.delete(node.section as LazySection);
   }
 
   getChildren(node?: Node): Node[] {
