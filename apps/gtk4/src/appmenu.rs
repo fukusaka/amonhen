@@ -170,6 +170,11 @@ impl Buttons {
             f.head_branch = head.is_some();
             f.tracking = entry.map(|e| (published, e.ahead));
             f.stash = refs.refs.entries.iter().any(|e| e.kind == RefKind::Stash);
+            f.submodules = refs
+                .refs
+                .entries
+                .iter()
+                .any(|e| e.kind == RefKind::Submodule);
         });
     }
 }
