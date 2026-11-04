@@ -196,9 +196,14 @@ pub fn save(actions: &Rc<Actions>, refs: Vec<String>, names: Vec<String>, label:
 /// `refs/remotes/<名前>/*` に取り込む（タグは取らない）。要るコミットがなければ、そう言って止める。SSH 先の
 /// リポジトリにも、中身を送って取り込む。
 pub fn fetch(actions: &Rc<Actions>) {
+    // 読む・知らせる・取り込む先は、選んだときの worktree（ファイルを選んでいる間に書き込む先を替えても。
+    // macOS 版は worktree ごとの Actions で同じ）。
+    let Some(target) = sheets::Target::current(actions) else {
+        return;
+    };
     let actions = actions.clone();
     glib::spawn_future_local(async move {
-        let Some(repo) = actions.repo() else { return };
+        let repo = target.repo.clone();
         let parent = sheets::parent(&actions);
         let filter = gtk::FileFilter::new();
         filter.set_name(Some("bundle"));
@@ -215,17 +220,20 @@ pub fn fetch(actions: &Rc<Actions>) {
         };
         let Some(path) = chosen.path() else { return };
         let file = path.to_string_lossy().into_owned();
-        let check = sheets::run(&repo, json!({ "op": "bundleCheck", "file": file })).await;
+        let command = json!({ "op": "bundleCheck", "file": file });
+        let check = sheets::run(&repo, command.clone()).await;
         if check["ok"] != true {
-            let error = check["error"].as_str().unwrap_or_default();
-            actions.alert(&tr!("Can’t Fetch the Bundle"), error).await;
+            // 読めなかった（bundle でないなど）: ほかの操作の失敗と同じく、ステータスバーに（macOS 版と同じ）。
+            let failure = crate::statusbar::Failure::from_reply(&check, Some(command));
+            actions.fail(failure).await;
             return;
         }
         let info = &check["info"];
         let missing = info["missing"].as_u64().unwrap_or(0);
         if missing > 0 {
-            actions
-                .alert(
+            target
+                .inform(
+                    parent.as_ref(),
                     &tr!("Can’t Fetch the Bundle"),
                     &tr!(
                         "This repository lacks {count} commits the bundle needs (it has only the commits after them).",
@@ -242,8 +250,9 @@ pub fn fetch(actions: &Rc<Actions>) {
             .filter_map(|r| r.as_str()?.strip_prefix("refs/heads/").map(str::to_owned))
             .collect();
         if branches.is_empty() {
-            actions
-                .alert(
+            target
+                .inform(
+                    parent.as_ref(),
                     &tr!("Nothing to Fetch"),
                     &tr!("The bundle has no branches."),
                 )
@@ -259,7 +268,7 @@ pub fn fetch(actions: &Rc<Actions>) {
         if branches.len() > 5 {
             shown.push_str(", …");
         }
-        let sheet = Sheet::new(
+        let sheet = target.sheet(
             parent.as_ref(),
             &tr!("Fetch from Bundle"),
             &tr!(
@@ -279,6 +288,8 @@ pub fn fetch(actions: &Rc<Actions>) {
             .build();
         sheet.add(&sheets::row(&tr!("Name:"), &name));
         sheet.buttons("Fetch", false, None);
+        // 名前の欄から始める（macOS 版と同じ）。
+        name.grab_focus();
         if sheet.run().await != Response::Ok {
             return;
         }
@@ -286,6 +297,10 @@ pub fn fetch(actions: &Rc<Actions>) {
         if name.is_empty() {
             return;
         }
-        actions.perform(json!({ "op": "fetchBundle", "file": file, "name": name }));
+        actions.perform_in(
+            repo,
+            vec![json!({ "op": "fetchBundle", "file": file, "name": name })],
+            |_| {},
+        );
     });
 }

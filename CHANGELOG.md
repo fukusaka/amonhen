@@ -188,8 +188,8 @@ confirmation and History edit now asks in one sheet that shows what moves and wh
 - The GTK4 app keeps each commit, push, discard, stage and confirmed operation in the worktree it started in: Commit
   and Push could push another worktree selected during the commit (or skip its Publish sheet), and Discard, Add to
   .gitignore, Take Current/Incoming, Fetch…, Pull…, Push…, Checkout…, Merge, Rebase, Cherry-pick, Delete Branch,
-  Apply Patch, History's edit mode, Export Archive…, Save as Bundle…, the submodule sheets and Undo… could act on the
-  one selected meanwhile.
+  Apply Patch, History's edit mode, Export Archive…, Save as Bundle…, Fetch from Bundle…, the submodule sheets and
+  Undo… could act on the one selected meanwhile.
 - macOS: Activity > History lists and undoes the operations of the worktree being edited in the window; with another
   worktree selected, Undo to Here undid that worktree's operations while listing the opened one's.
 - The macOS app shows “Couldn’t Commit” and the hooks output even when you leave Working Copy or select another
