@@ -106,7 +106,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | General: bookmark opened repositories | ✓ | ✓ | n/a | n/a |  |
 | General: reopen at launch, tab or window by default | — | — | n/a | n/a | macOS: Always reopens; no switch.<br>GTK4: Always reopens; no switch. |
 | General: fetch automatically | ✓ | ✓ | — | n/a |  |
-| General: external editor | ✓ | ✓ | n/a | n/a | GTK4: Code editors are found by their desktop entries; Other… takes a program. |
+| General: external editor | ✓ | ✓ | n/a | n/a | GTK4: Code editors are found by their desktop entries, in the macOS order; the fallback is a text editor, never an office app; Other… takes a program. |
 | General: terminal and diff tool | — | — | n/a | n/a |  |
 | Git: machine-wide pages (Author and Signing, Commits, Operations, Working Copy, Keys and Values) | ✓ | ✓ | — | △ | CLI: Via `amonhen run`. |
 | Git > Commits: shared message template library | ✓ | ✓ | — | — |  |

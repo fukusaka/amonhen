@@ -1,5 +1,6 @@
 //! 外部のエディタ（macOS 版の `ExternalEditor`）。アプリのどこから「エディタで開く」ときも、Settings > General で
-//! 選んだものを使う。選んでいなければ、入っているコードエディタのうち最初のもの、それもなければテキストの既定のアプリ。
+//! 選んだものを使う。選んでいなければ、入っているコードエディタのうち最初のもの、それもなければテキストエディタ
+//! （テキストの既定のアプリか、テキストを開けるアプリのうち、ワープロなどのオフィスのアプリでないもの）。
 //! 設定（`gtk.ini` の `externalEditor`）には、アプリの desktop の ID（`code.desktop` など）か、Other… で選んだ
 //! 実行ファイルのパスを置く。
 
@@ -10,18 +11,23 @@ use gtk::{gdk, gio, glib};
 /// 設定の鍵（macOS 版の UserDefaults と同じ）。
 pub const KEY: &str = "externalEditor";
 
-/// 知っているコードエディタ（この順に探す。desktop の ID と名前。Flatpak の ID も）。
+/// 知っているコードエディタ（この順に探す。macOS 版の `known` と同じ順。desktop の ID と名前。Flatpak・Snap の
+/// ID も）。
 const KNOWN: &[(&str, &str)] = &[
     ("code.desktop", "VS Code"),
     ("com.visualstudio.code.desktop", "VS Code"),
+    ("code_code.desktop", "VS Code"),
     ("code-insiders.desktop", "VS Code Insiders"),
+    ("code-insiders_code-insiders.desktop", "VS Code Insiders"),
     ("cursor.desktop", "Cursor"),
     ("dev.zed.Zed.desktop", "Zed"),
     ("zed.desktop", "Zed"),
     ("sublime_text.desktop", "Sublime Text"),
     ("com.sublimetext.three.desktop", "Sublime Text"),
+    ("sublime-text_subl.desktop", "Sublime Text"),
     ("codium.desktop", "VSCodium"),
     ("com.vscodium.codium.desktop", "VSCodium"),
+    ("codium_codium.desktop", "VSCodium"),
     ("jetbrains-fleet.desktop", "Fleet"),
     ("org.kde.kate.desktop", "Kate"),
     ("org.gnome.Builder.desktop", "Builder"),
@@ -36,7 +42,7 @@ pub struct App {
     info: gio::AppInfo,
 }
 
-/// 入っているコードエディタ（KNOWN の順）。最後にテキストの既定のアプリ。
+/// 入っているコードエディタ（KNOWN の順）。最後にテキストエディタ（macOS 版の既定のテキストエディタ）。
 pub fn installed() -> Vec<App> {
     let all = gio::AppInfo::all();
     let mut apps: Vec<App> = Vec::new();
@@ -51,7 +57,7 @@ pub fn installed() -> Vec<App> {
             });
         }
     }
-    if let Some(info) = gio::AppInfo::default_for_type("text/plain", false)
+    if let Some(info) = text_editor()
         && let Some(id) = info.id()
         && !apps.iter().any(|a| a.id == id.as_str())
     {
@@ -62,6 +68,63 @@ pub fn installed() -> Vec<App> {
         });
     }
     apps
+}
+
+/// テキストエディタ: テキストの既定のアプリ、次にテキストを開けるアプリの順で、テキストエディタのもの。ワープロ
+/// などのオフィスのアプリ（Ubuntu ではテキストの既定が LibreOffice Writer のことがある）は選ばない。
+fn text_editor() -> Option<gio::AppInfo> {
+    gio::AppInfo::default_for_type("text/plain", false)
+        .into_iter()
+        .chain(gio::AppInfo::all_for_type("text/plain"))
+        .find(|info| {
+            let id = info.id().map(|id| id.to_string()).unwrap_or_default();
+            is_text_editor(&id, categories(&id).as_deref())
+        })
+}
+
+/// desktop の ID のファイルの `Categories`（XDG のデータの場所の `applications` から探す）。desktop のファイルの
+/// ない OS や、見つからなければ None。
+fn categories(id: &str) -> Option<String> {
+    if id.is_empty() {
+        return None;
+    }
+    std::iter::once(glib::user_data_dir())
+        .chain(glib::system_data_dirs())
+        .map(|dir| dir.join("applications").join(id))
+        .find(|path| path.is_file())
+        .and_then(|path| {
+            let file = glib::KeyFile::new();
+            file.load_from_file(&path, glib::KeyFileFlags::NONE).ok()?;
+            Some(
+                file.string("Desktop Entry", "Categories")
+                    .map_or_else(|_| String::new(), |c| c.to_string()),
+            )
+        })
+}
+
+/// テキストエディタとして使えるか。オフィスのアプリは使わない。`categories` が分かれば `TextEditor` のものだけ。
+/// 分からなければ（desktop のファイルのない OS）、オフィスのアプリでなければ使う。
+fn is_text_editor(id: &str, categories: Option<&str>) -> bool {
+    const OFFICE_IDS: [&str; 6] = [
+        "libreoffice",
+        "openoffice",
+        "onlyoffice",
+        "abiword",
+        "calligra",
+        "wps-office",
+    ];
+    const OFFICE_CATEGORIES: [&str; 4] = ["Office", "WordProcessor", "Spreadsheet", "Presentation"];
+    let lower = id.to_lowercase();
+    if OFFICE_IDS.iter().any(|o| lower.contains(o)) {
+        return false;
+    }
+    match categories {
+        Some(c) => {
+            let c: Vec<&str> = c.split(';').map(str::trim).collect();
+            !c.iter().any(|x| OFFICE_CATEGORIES.contains(x)) && c.contains(&"TextEditor")
+        }
+        None => true,
+    }
 }
 
 /// 自動で選ばれるもの（入っているコードエディタの先頭）。
@@ -268,6 +331,32 @@ fn separators_for(count: usize) -> Vec<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn office_apps_are_never_the_text_editor() {
+        assert!(!is_text_editor(
+            "libreoffice-writer.desktop",
+            Some("Office;WordProcessor;X-Red-Hat-Base;")
+        ));
+        assert!(!is_text_editor(
+            "org.libreoffice.LibreOffice.writer.desktop",
+            None
+        ));
+        assert!(!is_text_editor(
+            "abiword.desktop",
+            Some("TextEditor;Office;")
+        ));
+        assert!(is_text_editor(
+            "org.gnome.TextEditor.desktop",
+            Some("GNOME;GTK;Utility;TextEditor;")
+        ));
+        assert!(!is_text_editor(
+            "org.gnome.Nautilus.desktop",
+            Some("GNOME;Utility;Core;")
+        ));
+        // desktop のファイルのない OS（Windows のメモ帳など）。
+        assert!(is_text_editor("notepad.exe", None));
+    }
 
     #[test]
     fn separators_sit_below_automatic_and_above_other() {
