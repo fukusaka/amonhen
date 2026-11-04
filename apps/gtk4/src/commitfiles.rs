@@ -393,6 +393,8 @@ fn file_rows(
 /// 変更ファイルの右クリックのメニューに足す項目を作る（パス、差分の中の位置 y。一覧からなら None。Blame を
 /// 出すか）。
 type FileItems = Rc<dyn Fn(&str, Option<f64>, bool, bool) -> Vec<Item>>;
+/// 変更ファイルの右クリックの「この版に戻す…」など（そのファイルの変更から作る）。
+type RestoreItems = Rc<dyn Fn(&amonhen_model::FileChange) -> Vec<Item>>;
 
 pub struct CommitDiff {
     pub root: gtk::Box,
@@ -427,6 +429,7 @@ struct Inner {
     pending: Rc<Cell<u32>>,
     current_repo: CurrentRepo,
     file_items: RefCell<Option<FileItems>>,
+    restore_items: RefCell<Option<RestoreItems>>,
     /// sparse checkout なら、その様子（取り出していないフォルダのファイルは、ディスクにないので開けない）。
     sparse: RefCell<Option<crate::repoform::Sparse>>,
     find: FindBar,
@@ -613,6 +616,7 @@ impl CommitDiff {
             pending,
             current_repo,
             file_items: RefCell::default(),
+            restore_items: RefCell::default(),
             sparse: RefCell::default(),
             find: FindBar { bar, entry, count },
             changes: RefCell::default(),
@@ -702,6 +706,15 @@ impl CommitDiff {
         f: impl Fn(&str, Option<f64>, bool, bool) -> Vec<Item> + 'static,
     ) {
         self.inner.file_items.replace(Some(Rc::new(f)));
+    }
+
+    /// 変更ファイルの右クリックに足す、作業ツリーのファイルを戻す項目（`f(そのファイルの変更)`）。コミットを
+    /// 出しているときだけ呼ぶ。
+    pub fn connect_restore_items(
+        &self,
+        f: impl Fn(&amonhen_model::FileChange) -> Vec<Item> + 'static,
+    ) {
+        self.inner.restore_items.replace(Some(Rc::new(f)));
     }
 
     /// 詳細の欄だけを右の列いっぱいに広げるボタン（⤢。変更ファイルと差分を隠す。もう一度押すと戻す）。
@@ -1306,12 +1319,41 @@ impl Inner {
         let Some((name, _)) = source.0.files.get(file) else {
             return Vec::new();
         };
-        f(
+        let mut items = f(
             path_of(name),
             None,
             !Inner::deleted(this, &source, file),
             false,
-        )
+        );
+        items.extend(Inner::restore(this, &source, file));
+        items
+    }
+
+    /// `file` 番目のファイルの変更（読み終えていなければ None）。
+    fn change(this: &Rc<Self>, source: &Source, file: usize) -> Option<amonhen_model::FileChange> {
+        let changes = this.changes.borrow().clone();
+        source
+            .1
+            .as_ref()
+            .map(|lazy| lazy.changes.as_slice())
+            .or(changes.as_deref().map(Vec::as_slice))
+            .filter(|c| c.len() == source.0.files.len())
+            .map(|c| c[file].clone())
+    }
+
+    /// 作業ツリーのファイルを戻す項目（区切りを先に。持ち主がつないでいなければ、ない）。
+    fn restore(this: &Rc<Self>, source: &Source, file: usize) -> Vec<Item> {
+        let Some(f) = this.restore_items.borrow().clone() else {
+            return Vec::new();
+        };
+        let Some(change) = Inner::change(this, source, file) else {
+            return Vec::new();
+        };
+        let items = f(&change);
+        if items.is_empty() {
+            return items;
+        }
+        std::iter::once(Item::Separator).chain(items).collect()
     }
 
     /// `file` 番目のファイルをそのコミットで消したか（消したファイルには Blame を出さない）。
@@ -1371,6 +1413,7 @@ impl Inner {
             // 消したファイルは、そのコミットにはない（一覧の右クリックと同じく Blame を出さない）。
             let blame = !Inner::deleted(this, &source, file);
             items.extend(f(&path, None, blame, false));
+            items.extend(Inner::restore(this, &source, file));
             items.push(Item::Separator);
         }
         let (w, p) = (this.list.downgrade(), path.clone());

@@ -2124,3 +2124,9 @@
 "Give the files to restore" = "戻すファイルを渡してください";
 "Give the commit to restore from with --source" = "どのコミットの版にするかを --source で渡してください";
 "Restored {count} files from {rev} (amonhen undo brings the working tree files back)" = "{count} 個のファイルを {rev} の版にしました（amonhen undo で作業ツリーのファイルが戻ります）";
+"Restore This Version…" = "この版に戻す…";
+"Restore Version Before This Commit…" = "このコミットの前の版に戻す…";
+"Restore {path} as It Was Before {commit}?" = "{path} を {commit} の前の版に戻しますか？";
+"Restore {path} as It Is in {commit}?" = "{path} を {commit} の版に戻しますか？";
+"Replaces the file in the working tree with that version (git restore); a file that version doesn’t have is deleted. Undo brings back the file as it is now." = "作業ツリーのファイルを、その版に置き換えます（git restore）。その版にないファイルは消します。Undo で今のファイルに戻ります。";
+"Stage it too" = "stage もする";
