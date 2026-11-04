@@ -622,6 +622,13 @@ impl Sidebar {
                 inner.load_facts();
             }
         });
+        // subtree は HEAD の履歴から探すので、書き込む先の worktree を替えたら読み直す（macOS 版と同じ）。
+        let weak = Rc::downgrade(&self.inner);
+        actions.connect_repo_changed(move || {
+            if let Some(inner) = weak.upgrade() {
+                inner.load_subtrees();
+            }
+        });
         self.inner.actions.replace(Some(actions));
     }
 
