@@ -861,11 +861,32 @@ pub fn menu(
     if !info.main {
         items.push(Item::Separator);
         if info.prunable.is_some() {
+            // フォルダを手で移したなら、つながりを直せる（git worktree repair。macOS 版と同じ）。
+            let (a, w, info) = (actions.clone(), worktrees.clone(), info.clone());
+            items.push(menu::action(tr!("Locate Moved Folder…"), move || {
+                locate(&a, &w, &info)
+            }));
             let a = actions.clone();
             items.push(menu::action(tr!("Prune Worktrees"), move || {
                 a.perform(json!({ "op": "worktreePrune" }))
             }));
         } else {
+            // ロックしていると、git は prune・remove・move で消したり移したりしない。
+            if info.locked.is_some() {
+                let (a, w, p) = (actions.clone(), worktrees.clone(), path.clone());
+                items.push(menu::action(tr!("Unlock"), move || {
+                    let w = w.clone();
+                    a.perform_then(
+                        vec![json!({ "op": "worktreeUnlock", "path": p })],
+                        move || w.reload_list(),
+                    )
+                }));
+            } else {
+                let (a, w, i) = (actions.clone(), worktrees.clone(), info.clone());
+                items.push(menu::action(tr!("Lock…"), move || lock(&a, &w, &i)));
+                let (a, w, i) = (actions.clone(), worktrees.clone(), info.clone());
+                items.push(menu::action(tr!("Move…"), move || move_to(&a, &w, &i)));
+            }
             let (a, w, info) = (actions.clone(), worktrees.clone(), info.clone());
             items.push(menu::action(tr!("Remove Worktree…"), move || {
                 remove(&a, &w, &info)
@@ -873,6 +894,146 @@ pub fn menu(
         }
     }
     items
+}
+
+/// worktree をロックする（git が prune・remove・move で消したり移したりしない）。理由は git の記録に残る。
+fn lock(actions: &Rc<crate::actions::Actions>, worktrees: &Rc<Worktrees>, info: &Info) {
+    use crate::sheets::{Response, Sheet};
+    let (actions, worktrees, info) = (actions.clone(), worktrees.clone(), info.clone());
+    glib::spawn_future_local(async move {
+        let sheet = Sheet::unnamed(
+            crate::sheets::parent(&actions).as_ref(),
+            &tr!("Lock the Worktree “{name}”?", name = &info.name),
+            &tr!(
+                "git then won’t prune, remove or move it, for example while it is on a disk that isn’t always connected (git worktree lock)."
+            ),
+        );
+        let reason = gtk::Entry::new();
+        reason.set_placeholder_text(Some(&tr!("Reason (optional)")));
+        reason.set_activates_default(true);
+        sheet.add(&reason);
+        sheet.buttons(&tr!("Lock"), false, None);
+        reason.grab_focus();
+        if sheet.run().await != Response::Ok {
+            return;
+        }
+        let text = reason.text().trim().to_owned();
+        actions.perform_then(
+            vec![json!({ "op": "worktreeLock", "path": info.path, "reason": (!text.is_empty()).then_some(text) })],
+            move || worktrees.reload_list(),
+        );
+    });
+}
+
+/// worktree のフォルダを移す（git worktree move）。
+fn move_to(actions: &Rc<crate::actions::Actions>, worktrees: &Rc<Worktrees>, info: &Info) {
+    let (a, w, info2) = (actions.clone(), worktrees.clone(), info.clone());
+    ask_folder(
+        actions,
+        worktrees,
+        tr!("Move the Worktree “{name}”", name = &info.name),
+        tr!("Moves the folder and tells git where it is now (git worktree move)."),
+        info.path.clone(),
+        tr!("Move"),
+        move |to| {
+            // 書き込む先の worktree を移すなら、先に開いたリポジトリの worktree に戻す（macOS 版と同じ）。
+            if info2.key == w.editing_key()
+                && let Some(main) = w.list.borrow().iter().find(|i| i.current)
+            {
+                a.edit_worktree(&main.path);
+            }
+            let w = w.clone();
+            a.perform_then(
+                vec![json!({ "op": "worktreeMove", "path": info2.path, "to": to })],
+                move || w.reload_list(),
+            );
+        },
+    );
+}
+
+/// フォルダが見つからない worktree: 手で移した先を教えて、つながりを直す（git worktree repair。git 2.29 から）。
+fn locate(actions: &Rc<crate::actions::Actions>, worktrees: &Rc<Worktrees>, info: &Info) {
+    let (a, w) = (actions.clone(), worktrees.clone());
+    ask_folder(
+        actions,
+        worktrees,
+        tr!("Locate the Worktree “{name}”", name = &info.name),
+        tr!(
+            "If you moved its folder yourself, give where it is now, and git reconnects it (git worktree repair)."
+        ),
+        info.path.clone(),
+        tr!("Reconnect"),
+        move |to| {
+            let w = w.clone();
+            a.perform_then(
+                vec![json!({ "op": "worktreeRepair", "paths": [to] })],
+                move || w.reload_list(),
+            );
+        },
+    );
+}
+
+/// フォルダのパスを聞く（手元のリポジトリなら Choose… で選べる。macOS 版と同じ）。
+fn ask_folder(
+    actions: &Rc<crate::actions::Actions>,
+    worktrees: &Rc<Worktrees>,
+    title: String,
+    message: String,
+    initial: String,
+    button: String,
+    done: impl Fn(String) + 'static,
+) {
+    use crate::sheets::{Response, Sheet};
+    let (actions, remote) = (actions.clone(), worktrees.remote);
+    glib::spawn_future_local(async move {
+        let sheet = Sheet::unnamed(crate::sheets::parent(&actions).as_ref(), &title, &message);
+        let field = gtk::Entry::new();
+        field.set_text(&initial);
+        field.set_hexpand(true);
+        field.set_activates_default(true);
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        row.append(&field);
+        if !remote {
+            let choose = gtk::Button::with_label(&tr!("Choose…"));
+            let (f, w, t) = (field.downgrade(), sheet.window.downgrade(), title.clone());
+            choose.connect_clicked(move |_| {
+                let (f, w) = (f.clone(), w.upgrade());
+                let request = crate::filepicker::Request {
+                    title: t.clone(),
+                    kind: crate::filepicker::Kind::Folder,
+                    initial: f
+                        .upgrade()
+                        .map(|f| f.text().to_string())
+                        .unwrap_or_default(),
+                    new_folder: true,
+                    ..Default::default()
+                };
+                glib::spawn_future_local(async move {
+                    if let Some(chosen) = crate::filepicker::choose(
+                        w.as_ref().map(|w| w.upcast_ref()),
+                        request,
+                        crate::filepicker::Source::Local,
+                    )
+                    .await
+                        && let Some(f) = f.upgrade()
+                    {
+                        f.set_text(&chosen.path);
+                    }
+                });
+            });
+            row.append(&choose);
+        }
+        sheet.add(&row);
+        sheet.buttons(&button, false, None);
+        field.grab_focus();
+        if sheet.run().await != Response::Ok {
+            return;
+        }
+        let path = field.text().trim().to_owned();
+        if !path.is_empty() {
+            done(path);
+        }
+    });
 }
 
 /// worktree を消す（`git worktree remove`）。変更が残っていれば、それもフォルダと一緒に消えると確かめてから
