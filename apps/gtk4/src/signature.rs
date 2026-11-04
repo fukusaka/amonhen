@@ -148,20 +148,28 @@ impl Status {
     fn css(self) -> Option<&'static str> {
         match self {
             Self::Verified(_) => Some("success"),
-            Self::Untrusted | Self::SignerMismatch | Self::Expired => Some("warning"),
+            // 鍵の信用度が決まっていない・署名者が違うは黄色、期限切れはオレンジ（macOS 版と同じ）。
+            Self::Untrusted | Self::SignerMismatch => Some("caution"),
+            Self::Expired => Some("warning"),
             Self::Revoked | Self::Bad => Some("error"),
             Self::NoKey | Self::Unsupported | Self::Pending => Some("dim-label"),
         }
     }
 
-    /// 吹き出しの見出しのアイコン（macOS 版の `symbol` に近い形）。
-    fn icon(self) -> crate::icon::Kind {
+    /// 状態の印（History の行と吹き出しの見出し。macOS 版の `symbol` と同じく状態ごとに形を変え、信用度も形で
+    /// 分かる: 塗った seal は強い信用、縁だけは弱い信用。サイドバーのタグの印と同じ記号）。
+    pub(crate) fn icon(self) -> crate::icon::Kind {
         use crate::icon::Kind;
         match self {
-            Self::Verified(_) | Self::Untrusted | Self::Pending => Kind::Seal,
-            Self::SignerMismatch | Self::NoKey | Self::Unsupported => Kind::Question,
-            Self::Expired => Kind::History,
-            Self::Revoked | Self::Bad => Kind::SealCross,
+            Self::Verified(trust) if trust >= 3 => Kind::SealFill,
+            Self::Verified(_) | Self::Pending => Kind::Seal,
+            Self::Untrusted => Kind::Shield,
+            Self::SignerMismatch => Kind::PersonQuestion,
+            Self::Expired => Kind::ClockAlert,
+            Self::Revoked => Kind::ShieldAlertFill,
+            Self::Bad => Kind::SealCrossFill,
+            Self::NoKey => Kind::Question,
+            Self::Unsupported => Kind::ExclamationCircle,
         }
     }
 
@@ -297,6 +305,7 @@ pub fn row(
     place: Place,
     tag: Option<Tag>,
 ) -> gtk::Widget {
+    install_css();
     let label = gtk::Label::new(Some(status.label()));
     label.set_xalign(0.0);
     label.add_css_class("caption");
@@ -372,7 +381,8 @@ fn install_css() {
     let provider = gtk::CssProvider::new();
     provider.load_from_string(
         ".signature-badge { border-radius: 4px; padding: 1px 5px; font-weight: 500; \
-         background-color: alpha(currentColor, 0.15); }",
+         background-color: alpha(currentColor, 0.15); } \
+         .caution { color: rgb(217, 173, 0); }",
     );
     if let Some(display) = gtk::gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
@@ -450,7 +460,7 @@ pub fn popover_once() {
 }
 
 /// 署名の詳細の吹き出し。値は選んでコピーできる。`tag` ならタグの署名（タガーと比べ、名前とメッセージを出す）。
-/// `position` は `parent` のどちら側に出すか（None なら GTK の既定）。
+/// `position` は `parent` のどちら側に出すか（None なら GTK の既定）。出した吹き出しを返す。
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn show(
     parent: &gtk::Widget,
@@ -461,7 +471,7 @@ pub(crate) fn show(
     place: &Place,
     tag: Option<&Tag>,
     position: Option<gtk::PositionType>,
-) {
+) -> gtk::Popover {
     install_css();
     // 見出し: 状態の色のアイコンと言葉、右に検証した場所の札（状態の色の文字と薄い地。macOS 版と同じ）。
     let icon = crate::icon::Icon::default();
@@ -525,7 +535,7 @@ pub(crate) fn show(
                     "Listed on the key ({email}), but that user ID isn’t confirmed",
                     email = email
                 ),
-                Some("warning"),
+                Some("caution"),
                 false,
             )),
             CommitterMatch::Mismatched => rows.push((
@@ -647,6 +657,7 @@ pub(crate) fn show(
         gtk::glib::idle_add_local_once(move || p.unparent());
     });
     popover.popup();
+    popover
 }
 
 #[cfg(test)]

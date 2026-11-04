@@ -170,7 +170,9 @@ final class RangeDiffViewController: NSSplitViewController, NSTableViewDataSourc
         request += 1
         let request = self.request
         let repository = self.repository
-        summary.stringValue = L("Looking for the previous version…")
+        // 探している間は、前に比べた結果（数と組）を残さない（別のブランチの結果に見える）。
+        rangesField.stringValue = ""
+        show([], ranges: [], summary: L("Looking for the previous version…"))
         Task {
             let result = await Task.detached(priority: .userInitiated) {
                 Result { try repository.previousVersion(branch: branch) }
@@ -209,9 +211,10 @@ final class RangeDiffViewController: NSSplitViewController, NSTableViewDataSourc
         }
     }
 
-    /// 40 桁の ID は短くして入力欄に出す（そのまま比べ直せる長さに）。
+    /// 40 桁の ID は短くして入力欄に出す（そのまま比べ直せる長さに）。ちょうど 40 桁の並びだけ（SHA-256 の 64 桁の
+    /// 途中を切ると、ない ID になる）。
     private static func short(_ range: String) -> String {
-        range.replacing(/[0-9a-f]{40}/) { String($0.output.prefix(12)) }
+        range.replacing(/[0-9a-f]+/) { $0.output.count == 40 ? String($0.output.prefix(12)) : String($0.output) }
     }
 
     @objc private func compare() {

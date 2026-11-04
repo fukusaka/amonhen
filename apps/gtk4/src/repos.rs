@@ -264,7 +264,7 @@ fn fill(menu: &gio::Menu) {
 }
 
 /// `~`・`~/…` をホームの下のパスにする。
-fn expand_tilde(text: &str) -> PathBuf {
+pub fn expand_tilde(text: &str) -> PathBuf {
     if text == "~" {
         return glib::home_dir();
     }
@@ -399,11 +399,39 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
         sheet.add(&row("URL:", &url_line));
         // gh があれば、自分のリポジトリから選べる（読み終えたら一覧に入れる）。
         if crate::github::available() {
-            let mine = gtk::DropDown::from_strings(&[&tr!("Choose from My GitHub Repositories")]);
+            // 読み終えるまでは「読み込み中…」（macOS 版と同じ）。macOS 版のプルダウンと同じく、選んだ後も見出しに
+            // 戻す（URL を書き直した後に選んだ名前が残らず、同じものをもう一度選べる）。
+            let mine = gtk::DropDown::from_strings(&[
+                &tr!("Choose from My GitHub Repositories"),
+                &tr!("Loading…"),
+            ]);
             sheet.add(&row("", &mine));
-            let (mine_w, url_w, name_w) = (mine.downgrade(), url.downgrade(), name.downgrade());
+            let repos: Rc<std::cell::RefCell<Vec<(String, String)>>> = Rc::default();
+            {
+                let (repos, url_w, name_w) = (repos.clone(), url.downgrade(), name.downgrade());
+                mine.connect_selected_notify(move |d| {
+                    let i = d.selected() as usize;
+                    if i == 0 {
+                        return;
+                    }
+                    let picked = repos.borrow().get(i - 1).cloned();
+                    // 選んでいる最中に選び直さず、一息おいて見出しに戻す。
+                    let weak = d.downgrade();
+                    glib::idle_add_local_once(move || {
+                        if let Some(d) = weak.upgrade() {
+                            d.set_selected(0);
+                        }
+                    });
+                    let Some((_, link)) = picked else { return };
+                    if let (Some(url), Some(name)) = (url_w.upgrade(), name_w.upgrade()) {
+                        url.set_text(&format!("{link}.git"));
+                        name.set_text("");
+                    }
+                });
+            }
+            let mine_w = mine.downgrade();
             glib::spawn_future_local(async move {
-                let repos = gio::spawn_blocking(|| {
+                let found = gio::spawn_blocking(|| {
                     let out = crate::github::gh_command()?
                         .args([
                             "repo",
@@ -434,22 +462,14 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
                 .unwrap_or_default();
                 let Some(mine) = mine_w.upgrade() else { return };
                 let mut titles = vec![tr!("Choose from My GitHub Repositories")];
-                if repos.is_empty() {
+                if found.is_empty() {
                     titles.push(tr!("None found"));
                 }
-                titles.extend(repos.iter().map(|r| r.0.clone()));
+                titles.extend(found.iter().map(|r| r.0.clone()));
+                repos.replace(found);
                 let refs: Vec<&str> = titles.iter().map(String::as_str).collect();
                 mine.set_model(Some(&gtk::StringList::new(&refs)));
-                mine.connect_selected_notify(move |d| {
-                    let i = d.selected() as usize;
-                    if i == 0 || repos.is_empty() {
-                        return;
-                    }
-                    if let (Some(url), Some(name)) = (url_w.upgrade(), name_w.upgrade()) {
-                        url.set_text(&format!("{}.git", repos[i - 1].1));
-                        name.set_text("");
-                    }
-                });
+                mine.set_selected(0);
             });
         }
         sheet.add(&row(&tr!("Location:"), &location));
@@ -470,6 +490,9 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
         }
         depth_titles.append(&tr!("Other…"));
         let depth = gtk::DropDown::new(Some(depth_titles.clone()), gtk::Expression::NONE);
+        // 「その他…」の上に区切りの線（macOS 版と同じ）。
+        let other_at = Rc::new(std::cell::RefCell::new(vec![depths.borrow().len() as u32]));
+        crate::settings::separate_items(&depth, other_at.clone());
         depth.set_selected(1);
         let depth_chosen = Rc::new(std::cell::Cell::new(100u32));
         {
@@ -479,6 +502,7 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
                 depth_titles.clone(),
                 sheet.window.downgrade(),
             );
+            let other_at = other_at.clone();
             depth.connect_selected_notify(move |d| {
                 let i = d.selected() as usize;
                 let count = depths.borrow().len();
@@ -493,12 +517,13 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
                     .position(|&x| x == chosen.get())
                     .unwrap_or(0);
                 d.set_selected(back as u32);
-                let (d, depths, chosen, titles, w) = (
+                let (d, depths, chosen, titles, w, other_at) = (
                     d.clone(),
                     depths.clone(),
                     chosen.clone(),
                     titles.clone(),
                     w.clone(),
+                    other_at.clone(),
                 );
                 glib::spawn_future_local(async move {
                     let Some(commits) = crate::shallow::ask_count(
@@ -516,11 +541,12 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
                     let at = match at {
                         Some(at) => at,
                         None => {
-                            // 数の順に入れる。
+                            // 並びの最後（Other… の区切りのすぐ上）に入れる（macOS 版と同じ）。
                             let at = {
                                 let mut list = depths.borrow_mut();
-                                let at = list.partition_point(|&x| x < commits);
-                                list.insert(at, commits);
+                                let at = list.len();
+                                list.push(commits);
+                                other_at.replace(vec![list.len() as u32]);
                                 at
                             };
                             // 項目を足すと選んでいる項目の知らせが来る（数の並びを読む）ので、借りを返してから。
@@ -749,35 +775,46 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
         });
         sheet.buttons("Clone", false, None);
         url.grab_focus();
-        if sheet.run().await != Response::Ok {
-            return;
-        }
-        update();
-        let from_bundle = bundle.borrow().is_some();
-        let mut source = url.text().trim().to_owned();
-        if from_bundle {
-            source = expand_tilde(&source).to_string_lossy().into_owned();
-        }
-        let folder_name = match name.text().trim() {
-            "" => name_from_url(&source),
-            n => n.to_owned(),
+        // 置き場所がもうあれば、そう言ってからシートに戻る（入れたものは残す。macOS 版と同じ）。
+        sheet.reusable();
+        let (source, from_bundle, parent_dir, dest) = loop {
+            if sheet.ask().await != Response::Ok {
+                sheet.window.destroy();
+                return;
+            }
+            update();
+            let from_bundle = bundle.borrow().is_some();
+            let mut source = url.text().trim().to_owned();
+            if from_bundle {
+                source = expand_tilde(&source).to_string_lossy().into_owned();
+            }
+            let folder_name = match name.text().trim() {
+                "" => name_from_url(&source),
+                n => n.to_owned(),
+            };
+            let parent_dir = folder.text().trim().to_owned();
+            if source.is_empty() || folder_name.is_empty() || parent_dir.is_empty() {
+                sheet.window.destroy();
+                parent.error_bell();
+                return;
+            }
+            let parent_dir = expand_tilde(&parent_dir);
+            let dest = parent_dir.join(&folder_name);
+            if dest.exists() {
+                crate::sheets::inform(
+                    Some(&parent),
+                    &tr!(
+                        "{path} already exists",
+                        path = crate::bookmarks::tilde(&dest.to_string_lossy())
+                    ),
+                    &tr!("Choose a different name or location."),
+                )
+                .await;
+                continue;
+            }
+            break (source, from_bundle, parent_dir, dest);
         };
-        let parent_dir = folder.text().trim().to_owned();
-        if source.is_empty() || folder_name.is_empty() || parent_dir.is_empty() {
-            parent.error_bell();
-            return;
-        }
-        let parent_dir = expand_tilde(&parent_dir);
-        let dest = parent_dir.join(&folder_name);
-        if dest.exists() {
-            crate::sheets::inform(
-                Some(&parent),
-                &tr!("{path} already exists", path = dest.display()),
-                &tr!("Choose a different name or location."),
-            )
-            .await;
-            return;
-        }
+        sheet.window.destroy();
         crate::settings::set_string(CLONE_FOLDER, &parent_dir.to_string_lossy());
         let choice = if from_bundle {
             Download::Everything
@@ -811,14 +848,19 @@ fn progress_window(parent: &gtk::Window, text: &str) -> gtk::Window {
     content.set_margin_end(16);
     content.append(&spinner);
     content.append(&label);
+    // 窓に結び付けず、どの窓も止めない（macOS 版の、画面の中央に出る小さなパネルと同じ。長い clone の間も
+    // ほかの窓を使える）。アプリには入れ、開いた窓を閉じても clone が終わるまではアプリを終えない。
     let window = gtk::Window::builder()
         .title("Clone")
-        .modal(true)
-        .transient_for(parent)
         .deletable(false)
         .resizable(false)
+        .default_width(420)
         .child(&content)
         .build();
+    if let Some(app) = parent.application() {
+        window.set_application(Some(&app));
+    }
+    window.set_display(&WidgetExt::display(parent));
     window.present();
     window
 }

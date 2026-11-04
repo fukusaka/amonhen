@@ -21,6 +21,8 @@ thread_local! {
     static WATCHERS: RefCell<Vec<(Option<glib::WeakRef<glib::Object>>, Watcher)>> =
         RefCell::default();
     static WINDOW: RefCell<glib::WeakRef<gtk::Window>> = RefCell::default();
+    /// 設定の窓のタブの中身（`select` が切り替える）。
+    static STACK: RefCell<glib::WeakRef<gtk::Stack>> = RefCell::default();
     /// Git のタブで、読み終えたら開くページ（`--settings git/programs`）。
     static GIT_PAGE: RefCell<Option<String>> = const { RefCell::new(None) };
     /// Git のタブの中身（読み終えて作ったら。窓が開いている間に `select("git/<page>")` されたらそのページへ）。
@@ -227,7 +229,7 @@ pub fn connect_changed_while(owner: &impl IsA<glib::Object>, f: impl Fn(&str) + 
     WATCHERS.with(|w| w.borrow_mut().push((Some(owner), Rc::new(f))));
 }
 
-/// 項目の下に添える説明。
+/// 項目の下に添える説明（macOS 版の `Note`。項目の名前の左端にそろえる）。
 fn note(text: &str) -> gtk::Label {
     let l = gtk::Label::new(Some(text));
     l.set_xalign(0.0);
@@ -237,54 +239,64 @@ fn note(text: &str) -> gtk::Label {
     l.set_natural_wrap_mode(gtk::NaturalWrapMode::Word);
     l.add_css_class("dim-label");
     l.add_css_class("caption");
-    l.set_margin_start(28);
     l
 }
 
-fn check(key: &'static str, title: &str) -> gtk::CheckButton {
-    let c = gtk::CheckButton::with_label(title);
-    c.set_active(bool(key));
-    c.connect_toggled(move |c| {
-        if c.is_active() != bool(key) {
-            set_bool(key, c.is_active());
+/// 入り切りの行: 名前を左に、スイッチを右に（macOS 版の `.grouped` の Form の Toggle）。`get` で今の値を
+/// 読み、`set` で書く。`key` の設定がほかの所（History の表示のメニューなど）で変わったら合わせる。
+fn switch_row(
+    title: &str,
+    key: &'static str,
+    get: impl Fn() -> bool + 'static,
+    set: impl Fn(bool) + 'static,
+) -> gtk::Box {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    let l = gtk::Label::new(Some(title));
+    l.set_hexpand(true);
+    l.set_xalign(0.0);
+    l.set_wrap(true);
+    l.set_natural_wrap_mode(gtk::NaturalWrapMode::Word);
+    row.append(&l);
+    let switch = gtk::Switch::new();
+    switch.set_valign(gtk::Align::Center);
+    switch.set_active(get());
+    let get = Rc::new(get);
+    let g = get.clone();
+    switch.connect_active_notify(move |s| {
+        if s.is_active() != g() {
+            set(s.is_active());
         }
     });
-    // History の表示のメニューなど、ほかの所で変えたら合わせる。
-    let weak = c.downgrade();
-    connect_changed_while(&c, move |changed| {
+    row.append(&switch);
+    let weak = switch.downgrade();
+    connect_changed_while(&switch, move |changed| {
         if changed == key
-            && let Some(c) = weak.upgrade()
+            && let Some(s) = weak.upgrade()
         {
-            c.set_active(bool(key));
+            s.set_active(get());
         }
     });
-    c
+    row
+}
+
+fn check(key: &'static str, title: &str) -> gtk::Box {
+    switch_row(title, key, move || bool(key), move |on| set_bool(key, on))
 }
 
 /// History の行に出す項目の 1 つ（`bit`）を出すか。
-fn item_check(bit: u32, title: &str) -> gtk::CheckButton {
-    let c = gtk::CheckButton::with_label(title);
-    c.set_active(history_items() & bit != 0);
-    c.connect_toggled(move |c| {
-        let items = history_items();
-        let next = if c.is_active() {
-            items | bit
-        } else {
-            items & !bit
-        };
-        if next != items {
-            set_history_items(next);
-        }
-    });
-    let weak = c.downgrade();
-    connect_changed_while(&c, move |changed| {
-        if changed == HISTORY_ITEMS
-            && let Some(c) = weak.upgrade()
-        {
-            c.set_active(history_items() & bit != 0);
-        }
-    });
-    c
+fn item_check(bit: u32, title: &str) -> gtk::Box {
+    switch_row(
+        title,
+        HISTORY_ITEMS,
+        move || history_items() & bit != 0,
+        move |on| {
+            let items = history_items();
+            let next = if on { items | bit } else { items & !bit };
+            if next != items {
+                set_history_items(next);
+            }
+        },
+    )
 }
 
 /// History の並び順を選ぶ行と、その説明（Settings > Appearance）。
@@ -316,11 +328,9 @@ fn order_row() -> gtk::Box {
     l.set_xalign(0.0);
     row.append(&l);
     row.append(&choice);
-    // 説明は見出しの下にそろえる（ほかの説明はチェックボックスの文字にそろえる）。
     let n = note(&tr!(
         "Topological order keeps a branch’s commits together under the merge that brought them in."
     ));
-    n.set_margin_start(0);
     let b = gtk::Box::new(gtk::Orientation::Vertical, 4);
     b.append(&row);
     b.append(&n);
@@ -517,7 +527,7 @@ pub fn show(near: &impl IsA<gtk::Widget>) {
     // Git: すべてのリポジトリの段（`--global`）の、Repository Settings と同じページ。git の設定は手元の空の
     // リポジトリ（settings-repo）から読み書きする（macOS 版の `MachineSettings` と同じ）。
     let git = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    git.set_size_request(860, 560);
+    git.set_vexpand(true);
     stack.add_titled(&git, Some("git"), "Git");
     // 読むまでは回る印（macOS 版の ProgressView）。
     let loading = gtk::Spinner::builder()
@@ -725,16 +735,55 @@ pub fn show(near: &impl IsA<gtk::Widget>) {
         &tr!("Performance"),
     );
 
-    let switcher = gtk::StackSwitcher::builder().stack(&stack).build();
+    // 上にアイコン付きのタブ（macOS 版のツールバーのタブ）。窓の大きさはどのタブでも同じで、中身は窓いっぱいに
+    // 広がり、長ければ中でスクロールする（macOS 版と同じく、最小 960×400、初めは 960×720）。
+    // 高さはページごと（短いページはスクロールしない）。
+    stack.set_vhomogeneous(false);
+    let scrolled = gtk::ScrolledWindow::builder()
+        .child(&stack)
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .vexpand(true)
+        .build();
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    content.append(&tab_bar(&stack));
+    content.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+    content.append(&scrolled);
     let header = gtk::HeaderBar::new();
-    header.set_title_widget(Some(&switcher));
     let window = gtk::Window::builder()
         .title(tr!("Settings"))
-        .default_width(660)
-        .child(&stack)
+        .default_width(960)
+        .default_height(720)
+        .child(&content)
         .hide_on_close(true)
         .build();
+    window.set_size_request(960, 400);
     window.set_titlebar(Some(&header));
+    // 窓のタイトルは選んでいるタブの名前（macOS 標準の設定画面と同じ）。
+    let retitle = {
+        let w = window.downgrade();
+        move |stack: &gtk::Stack| {
+            let title = stack
+                .visible_child()
+                .map(|c| stack.page(&c))
+                .and_then(|p| p.title());
+            if let (Some(w), Some(title)) = (w.upgrade(), title) {
+                w.set_title(Some(&title));
+            }
+        }
+    };
+    retitle(&stack);
+    stack.connect_visible_child_notify(retitle);
+    // Ctrl+W で閉じる（アプリの `win.close` の近道を、この窓では閉じることに。macOS 版の ⌘W と同じ）。
+    let actions = gio::SimpleActionGroup::new();
+    let close = gio::SimpleAction::new("close", None);
+    let w = window.downgrade();
+    close.connect_activate(move |_, _| {
+        if let Some(w) = w.upgrade() {
+            w.close();
+        }
+    });
+    actions.add_action(&close);
+    window.insert_action_group("win", Some(&actions));
     window.set_display(&WidgetExt::display(near));
     // 大きさは覚えておく（macOS 版は位置も。GTK では窓の位置はウィンドウマネージャーが決める）。
     if let Some((w, h)) = string(WINDOW_SIZE).as_deref().and_then(parse_size) {
@@ -750,8 +799,75 @@ pub fn show(near: &impl IsA<gtk::Widget>) {
         glib::Propagation::Proceed
     });
     WINDOW.with(|w| w.replace(window.downgrade()));
+    STACK.with(|s| s.replace(stack.downgrade()));
     join_application(&window, near);
     window.present();
+}
+
+/// 設定の窓の上のタブ（アイコンと名前。macOS 版の `tabStyle = .toolbar`）。押すとそのページを出す。
+fn tab_bar(stack: &gtk::Stack) -> gtk::Box {
+    use crate::icon::{Icon, Kind};
+    let bar = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+    bar.set_halign(gtk::Align::Center);
+    bar.set_margin_top(4);
+    bar.set_margin_bottom(4);
+    let icons = [
+        ("general", Kind::Gear),
+        ("git", Kind::Branch),
+        ("ssh-hosts", Kind::Remote),
+        ("accounts", Kind::Person),
+        ("appearance", Kind::Brush),
+        ("diff-merge", Kind::Merge),
+        ("ai", Kind::Sparkles),
+        ("performance", Kind::Speedometer),
+    ];
+    let mut buttons: Vec<(String, gtk::ToggleButton)> = Vec::new();
+    let mut child = stack.first_child();
+    while let Some(c) = child {
+        child = c.next_sibling();
+        let page = stack.page(&c);
+        let Some(name) = page.name() else { continue };
+        let kind = icons
+            .iter()
+            .find(|(n, _)| *n == name.as_str())
+            .map_or(Kind::Gear, |(_, k)| *k);
+        let icon = Icon::default();
+        icon.set(kind, false);
+        icon.set_pixel_size(24);
+        let label = gtk::Label::new(page.title().as_deref());
+        label.add_css_class("caption");
+        let inner = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        inner.append(&icon);
+        inner.append(&label);
+        let button = gtk::ToggleButton::new();
+        button.set_child(Some(&inner));
+        button.add_css_class("flat");
+        button.set_tooltip_text(page.title().as_deref());
+        if let Some((_, first)) = buttons.first() {
+            button.set_group(Some(first));
+        }
+        let (s, n) = (stack.downgrade(), name.to_string());
+        button.connect_toggled(move |b| {
+            if b.is_active()
+                && let Some(s) = s.upgrade()
+            {
+                s.set_visible_child_name(&n);
+            }
+        });
+        bar.append(&button);
+        buttons.push((name.to_string(), button));
+    }
+    let sync = move |stack: &gtk::Stack| {
+        let shown = stack.visible_child_name();
+        for (name, button) in &buttons {
+            if shown.as_deref() == Some(name.as_str()) && !button.is_active() {
+                button.set_active(true);
+            }
+        }
+    };
+    sync(stack);
+    stack.connect_visible_child_notify(sync);
+    bar
 }
 
 /// 出している間はアプリの窓にする: 開いたリポジトリの窓を閉じても、Settings とアプリが続く（macOS 版と同じ）。
@@ -799,11 +915,54 @@ pub fn select(tab: &str) {
         let (host, page) = page.split_once('/').unwrap_or((page, ""));
         crate::sshhosts::select_pending(host, page);
     }
-    if let Some(stack) = WINDOW
-        .with(|w| w.borrow().upgrade())
-        .and_then(|w| w.child())
-        .and_downcast::<gtk::Stack>()
-    {
+    if let Some(stack) = STACK.with(|s| s.borrow().upgrade()) {
         stack.set_visible_child_name(tab);
     }
+}
+
+/// 選ぶ欄の一覧に区切りの線を入れる（macOS 版の Picker の `Divider()`）。`above` の位置の項目の上に線を引く。
+/// 一覧の項目は自前で作るので、選んでいる項目の印（✓）もここで出す。
+pub fn separate_items(dropdown: &gtk::DropDown, above: Rc<RefCell<Vec<u32>>>) {
+    let factory = gtk::SignalListItemFactory::new();
+    factory.connect_setup(|_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let column = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        column.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+        let line = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let label = gtk::Label::new(None);
+        label.set_xalign(0.0);
+        label.set_hexpand(true);
+        line.append(&label);
+        let check = gtk::Image::from_icon_name("object-select-symbolic");
+        item.bind_property("selected", &check, "visible")
+            .sync_create()
+            .build();
+        line.append(&check);
+        column.append(&line);
+        item.set_child(Some(&column));
+    });
+    factory.connect_bind(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let Some(column) = item.child() else { return };
+        let Some(separator) = column.first_child() else {
+            return;
+        };
+        let label = separator
+            .next_sibling()
+            .and_then(|line| line.first_child())
+            .and_downcast::<gtk::Label>();
+        let text = item
+            .item()
+            .and_downcast::<gtk::StringObject>()
+            .map(|s| s.string());
+        if let (Some(label), Some(text)) = (label, text) {
+            label.set_text(&text);
+        }
+        separator.set_visible(above.borrow().contains(&item.position()));
+    });
+    dropdown.set_list_factory(Some(&factory));
 }

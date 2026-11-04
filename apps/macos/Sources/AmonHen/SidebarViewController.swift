@@ -139,7 +139,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     /// （コアが ID で覚えているので速い）。
     private var tagSignatures: [String: (status: SignatureStatus?, tag: TagSignature, epoch: Int)] = [:]
     /// 署名を検証した場所（吹き出しに出す。RepositoryWindow が渡す）。
-    var signaturePlace = SignaturePlace(local: true, detail: L("The repository is on this Mac"))
+    var signaturePlace = SignaturePlace(local: true, detail: L("the repository is on this Mac"))
     private var tagSignatureEpoch = 0
     /// 検証する側を変えたら進める（前の結果は捨て、変える前に始めた検証の結果は使わない）。
     private var tagSignatureGeneration = 0
@@ -232,6 +232,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private let filterField = NSSearchField()
     /// 絞り込みの語（空白で区切る。小文字。名前がすべてを含む行だけ出す）。空なら絞り込まない。
     private var filterWords: [String] = []
+    /// 絞り込みを始める前に開いていた見出し（絞り込みが開いた見出しは覚えず、やめたらこの開き方に戻す）。
+    private var unfilteredExpanded: Set<String>?
 
     override func loadView() {
         let column = NSTableColumn(identifier: .init("name"))
@@ -506,13 +508,24 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         // 今のブランチは、書き込む先の worktree のもの（worktree が 1 つなら開いたリポジトリの HEAD）。
         headBranch = editingInfo.map(\.branch) ?? refs.headBranch
         let head = headBranch
-        let expanded = Set(groups.filter { outline.isItemExpanded($0) }.map(\.title))
+        var expanded = Set(groups.filter { outline.isItemExpanded($0) }.map(\.title))
+        // 絞り込んでいる間に開いた見出しは覚えない（絞り込みをやめたら、前の開き方に戻す）。
+        if filterWords.isEmpty {
+            if let before = unfilteredExpanded { expanded = before }
+            unfilteredExpanded = nil
+        } else if unfilteredExpanded == nil {
+            unfilteredExpanded = expanded
+        }
         // Workspace と Working Copy は、畳んであれば畳んだまま（初めは開く）。
         let workspaceOpen = first || expanded.contains(workspace.title)
         let workingCopyOpen = isWorkingCopyOpen
         let selectedTitle = (outline.item(atRow: outline.selectedRow) as? Node).map { ($0.title, $0.page) }
 
         func items(_ kind: RefKind) -> [RefItem] { refs.items.filter { $0.kind == kind } }
+        // stash は Workspace の History（と Conflicts）の下の 1 行に、数だけ（絞り込み中も）。
+        let stashCount = items(.stash).count
+        stashesNode.badge = stashCount > 0 ? "\(stashCount)" : nil
+        workspace.children = workspaceChildren()
         // 絞り込み中は、合うブランチ・タグを名前のまま平らに（フォルダや積み重ねにはしない）、見出しは開いて出す。
         if !filterWords.isEmpty {
             var groups: [Node] = []
@@ -594,10 +607,6 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
         if !subtreeNodes.isEmpty { groups.append(Node(title: "Subtrees", children: subtreeNodes)) }
 
-        // stash は Workspace の History（と Conflicts）の下の 1 行に、数だけ。
-        let stashCount = items(.stash).count
-        stashesNode.badge = stashCount > 0 ? "\(stashCount)" : nil
-        workspace.children = workspaceChildren()
 
         self.groups = [workspace] + groups
         outline.reloadData()
@@ -884,9 +893,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         (item as? Node).map { $0.item != nil || $0.page != nil || $0.pullRequest != nil || $0.worktree != nil } ?? false
     }
 
-    /// 見出しの下の項目の数（リモートはブランチの数）。
+    /// 見出しの下の項目の数（リモートはブランチの数）。ほかのブランチを積んだブランチは、それ自身も数える。
     private static func leafCount(_ node: Node) -> Int {
-        node.children.isEmpty ? 1 : node.children.reduce(0) { $0 + leafCount($1) }
+        node.children.isEmpty ? 1 : (node.item != nil ? 1 : 0) + node.children.reduce(0) { $0 + leafCount($1) }
     }
 
     @objc private func outlineClicked() {
@@ -1178,8 +1187,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         proposedChildIndex index: Int
     ) -> NSDragOperation {
         guard let (isLocal, dragged) = draggedBranch(info), let node = item as? Node else { return [] }
-        // お気に入りのブランチは、Branches の直下のお気に入りの間に落として並べ替える。
-        if isLocal, pinnedOrder.contains(dragged), node.title == "Branches", node.item == nil, node.page == nil,
+        // お気に入りのブランチは、Branches の直下のお気に入りの間に落として並べ替える（絞り込み中は、名前順に
+        // 平らに並べていてお気に入りの行がないので、並べ替えない）。
+        if isLocal, filterWords.isEmpty, pinnedOrder.contains(dragged), node.title == "Branches", node.item == nil, node.page == nil,
            index != NSOutlineViewDropOnItemIndex, index <= pinnedOrder.count {
             return .move
         }
@@ -1195,7 +1205,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         _ outlineView: NSOutlineView, acceptDrop info: any NSDraggingInfo, item: Any?, childIndex index: Int
     ) -> Bool {
         guard let actions, let (isLocal, dragged) = draggedBranch(info), let node = item as? Node else { return false }
-        if isLocal, index != NSOutlineViewDropOnItemIndex, let from = pinnedOrder.firstIndex(of: dragged) {
+        if isLocal, filterWords.isEmpty, index != NSOutlineViewDropOnItemIndex, let from = pinnedOrder.firstIndex(of: dragged) {
             var order = pinnedOrder
             order.remove(at: from)
             order.insert(dragged, at: min(index > from ? index - 1 : index, order.count))

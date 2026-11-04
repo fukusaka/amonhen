@@ -16,6 +16,8 @@ final class ConnectingTab: NSObject, NSWindowDelegate {
     var onRetry: (() -> Void)?
     /// つないだら出すページ（つなぎ直すときの、それまで出していたページ）。
     var page: SidebarViewController.Page?
+    /// つないだら書き込む先にする worktree（追加した worktree を開いたとき）。
+    var editWorktree: String?
     /// 閉じられた（AppDelegate が手放す）。リポジトリのタブに替わったとき（`finish`）は呼ばない。
     var onClose: (() -> Void)?
 

@@ -66,6 +66,10 @@ struct CommitHeaderRenderer {
     var monospacedBody = true
     /// 件名と本文の中で強調する語（History の検索の語）。
     var highlight: [String] = []
+    /// ref の名前をリンクにする（押すとその ref の履歴に絞り込む。History の詳細だけ）。
+    var linksRefs = true
+    /// 作者の名前をリンクにする（押すとその人のコミットで絞り込む。History の詳細だけ）。
+    var linksAuthor = true
 
 
     init(info: CommitInfo, extras: CommitExtras?, style: CommitHeaderStyle) {
@@ -252,6 +256,7 @@ struct CommitHeaderRenderer {
 
     /// 作者の名前（押すと、その人のコミットで絞り込む）。
     private func authorLink(_ name: String, _ attrs: [NSAttributedString.Key: Any]) {
+        guard linksAuthor else { return add(name, attrs) }
         var link = attrs
         link[.link] = Self.authorScheme + name
         link[.toolTip] = L("Show only commits by %@", name)
@@ -262,6 +267,11 @@ struct CommitHeaderRenderer {
     private func refLinks(_ names: [String], _ attrs: [NSAttributedString.Key: Any]) {
         for (i, name) in names.enumerated() {
             if i > 0 { add(", ", attrs) }
+            // 絞り込めない（History でない）ところでは、ただの文字。
+            guard linksRefs else {
+                add(name, attrs)
+                continue
+            }
             var link = attrs
             link[.link] = Self.refScheme + name
             link[.toolTip] = L("Show only the history of %@", name)

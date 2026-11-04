@@ -45,6 +45,10 @@ final class Bookmarks {
     /// 一覧の行に出す状態（読んだもの）。
     private var peeks: [String: RepositoryPeek] = [:]
     private var peeking = Set<String>()
+    /// 読めなかった行と、その時刻（すぐには読み直さない）。
+    private var peekFailures: [String: Date] = [:]
+    /// 読めなかった行を読み直すまでの間。
+    private static let peekRetry: TimeInterval = 2
     /// 中身・スキャンの結果・行の状態が変わった（一覧を描き直す）。
     var onChange: (() -> Void)?
     /// 行の状態（peek・fetch の結果）が変わった。一覧はその行だけ描き直す（全部作り直すとスクロールが戻る）。
@@ -253,9 +257,16 @@ final class Bookmarks {
 
     // MARK: - スキャン
 
-    /// すべてのフォルダを裏で探し直す。
+    /// 探している間に探し直すよう頼まれた（フォルダを足した・深さを変えた）。終わったらもう一度探す。
+    private var rescanAgain = false
+
+    /// すべてのフォルダを裏で探し直す。探している間に頼まれたら、終わってからもう一度（今の探し方は頼まれる前の
+    /// フォルダ・深さのもの）。
     func rescan() {
-        guard !isScanning else { return }
+        guard !isScanning else {
+            rescanAgain = true
+            return
+        }
         isScanning = true
         onChange?()
         let roots = data.scanRoots
@@ -297,6 +308,10 @@ final class Bookmarks {
             scanErrors = errors
             isScanning = false
             onChange?()
+            if rescanAgain {
+                rescanAgain = false
+                rescan()
+            }
         }
     }
 
@@ -331,11 +346,19 @@ final class Bookmarks {
     func peek(_ path: String) -> RepositoryPeek? {
         if let cached = peeks[path] { return cached }
         guard !RepositoryLocation.isRemote(path), !peeking.contains(path), RepositoryList.isRepository(path) else { return nil }
+        // 読めなかったものは、少し間を置いてから読み直す（描くたびに読み直し続けない）。
+        if let failed = peekFailures[path], Date().timeIntervalSince(failed) < Self.peekRetry { return nil }
         peeking.insert(path)
         Task {
             let peek = await Self.peekQueue.run { RepositoryPeek.read(path: path) }
             peeking.remove(path)
-            if let peek { peeks[path] = peek }
+            // 読めなかったら知らせない（知らせると行を描き直し、また読みに行く。行は読む前と同じに見える）。
+            guard let peek else {
+                peekFailures[path] = Date()
+                return
+            }
+            peeks[path] = peek
+            peekFailures[path] = nil
             onRowChange?(path)
         }
         return nil
@@ -449,6 +472,7 @@ final class Bookmarks {
     /// 一覧を開き直したら、状態を読み直す。
     func forgetPeeks() {
         peeks.removeAll()
+        peekFailures.removeAll()
     }
 
     /// git を同時に起動しすぎないよう、行の状態は 4 つずつ読む。

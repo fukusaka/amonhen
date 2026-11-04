@@ -26,6 +26,48 @@ use crate::diff::{DiffWidget, View};
 
 type CountCallback = Box<dyn Fn(usize)>;
 
+/// コミットできた後にすること（Commit and Push の push）。コミットした worktree（リポジトリと名前）を渡す（その間に
+/// 書き込む先の worktree を替えても、コミットした worktree を push し、シートにはその名前を書く。macOS 版と同じ）。
+pub type AfterCommit = Box<dyn FnOnce(crate::sheets::Target)>;
+
+/// `.gitignore` の中身に `pattern` の行を足したもの（もうあれば None）。
+fn with_ignore_pattern(gitignore: &str, pattern: &str) -> Option<String> {
+    if gitignore.lines().any(|l| l.trim() == pattern) {
+        return None;
+    }
+    let mut text = gitignore.to_owned();
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    text.push_str(pattern);
+    text.push('\n');
+    Some(text)
+}
+
+/// 同じ worktree か（作業ツリーの場所で比べる）。
+fn same_worktree(a: &Repository, b: Option<&Repository>) -> bool {
+    b.is_some_and(|b| a.paths().workdir == b.paths().workdir)
+}
+
+/// コミットしている途中の worktree（作業ツリーの場所）。
+#[derive(Default)]
+struct Committing(std::collections::HashSet<Option<std::path::PathBuf>>);
+
+impl Committing {
+    /// 始める。もうその worktree でコミットしている途中なら false。
+    fn start(&mut self, workdir: Option<std::path::PathBuf>) -> bool {
+        self.0.insert(workdir)
+    }
+
+    fn finish(&mut self, workdir: &Option<std::path::PathBuf>) {
+        self.0.remove(workdir);
+    }
+
+    fn contains(&self, workdir: &Option<std::path::PathBuf>) -> bool {
+        self.0.contains(workdir)
+    }
+}
+
 thread_local! {
     /// 確認用に押したことにするキー（`--keys`）。
     static KEYS: RefCell<std::collections::VecDeque<String>> = RefCell::default();
@@ -126,7 +168,13 @@ struct Inner {
     /// メッセージの入力の補助（下書き・最近のメッセージ・型とトレーラー・fixup!）。
     aids: Rc<crate::commitmsg::MessageAids>,
     amend: gtk::CheckButton,
+    /// worktree ごとの Amend と絞り込み（書き込む先を切り替えたら、前の worktree の分をここに預け、戻ったら戻す。
+    /// macOS 版は worktree ごとに Working Copy がある）。
+    worktree_states: RefCell<HashMap<Option<std::path::PathBuf>, (bool, String)>>,
     commit: gtk::Button,
+    /// コミットしている途中の worktree（2 回目の Ctrl+Return で、もう 1 つ git commit を始めない。worktree ごと
+    /// なので、A の hooks を待つ間に B ではコミットできる。macOS 版は worktree ごとに Working Copy がある）。
+    committing: RefCell<Committing>,
     /// 件名の文字数。
     summary_count: gtk::Label,
     message: gtk::Label,
@@ -149,6 +197,8 @@ struct Inner {
     /// 戻っても、編集中の Result を保つ）と、埋め込んでいるもの。
     editors: RefCell<HashMap<EditorKey, Rc<crate::merge::Editor>>>,
     embedded: RefCell<Option<Rc<crate::merge::Editor>>>,
+    /// 埋め込んだマージエディタにフォーカスがある（[`crate::actions::Facts::merge_focused`]）。
+    merge_focused: Cell<bool>,
     /// 改行を変換している・改行が混ざっているファイルの印（普段のファイルでは出さない）。
     line_endings: gtk::Label,
     /// 選んでいるファイル。
@@ -228,11 +278,15 @@ impl WorkingCopy {
         let amend = gtk::CheckButton::with_label("Amend");
         let commit = gtk::Button::with_label("Commit");
         commit.add_css_class("suggested-action");
+        // 押しても入力を取らない（macOS 版の NSButton と同じ。押した後も Summary・Description に入力が残る。取ると、
+        // コミットでメッセージが空になってボタンが押せなくなり、入力がどこにもなくなる）。
+        commit.set_focus_on_click(false);
         commit.set_tooltip_text(Some(&tr!("Commit the checked files (Ctrl+Return)")));
+        // Commit の横の小さな ▾（枠なし、Commit の色にしない。macOS 版と同じ）。
         let commit_menu = gtk::MenuButton::builder()
             .tooltip_text(tr!("Commit and Push (Ctrl+Shift+Return), Amend"))
             .build();
-        commit_menu.add_css_class("suggested-action");
+        commit_menu.add_css_class("flat");
         let menu = gio::Menu::new();
         menu.append(Some("Commit and Push"), Some("win.commit-and-push"));
         menu.append(Some("Amend Last Commit"), Some("win.amend-last-commit"));
@@ -240,7 +294,6 @@ impl WorkingCopy {
         let aids = crate::commitmsg::MessageAids::new(&subject, &body, &amend);
         aids.install_fixups(&commit_menu, menu);
         let commit_group = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        commit_group.add_css_class("linked");
         commit_group.append(&commit);
         commit_group.append(&commit_menu);
         let commit_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -262,8 +315,8 @@ impl WorkingCopy {
         // macOS 版と同じ sparkles のアイコン。
         let icon = crate::icon::Icon::default();
         icon.set(crate::icon::Kind::Sparkles, false);
+        // 枠のあるボタン（macOS 版と同じ）。
         suggest.set_child(Some(&icon));
-        suggest.add_css_class("flat");
         crate::assist::track(
             &suggest,
             tr!("AI: suggest a commit message from the staged changes"),
@@ -277,19 +330,26 @@ impl WorkingCopy {
         message.set_visible(false);
 
         // 左の下: 変更のあるファイルの一覧。
-        let all = gtk::CheckButton::with_label(&tr!("Changes"));
+        // 太字の「Changes」と、すぐ右に「含めた数 / 変更の数」、右端に見せ方の切り替え（macOS 版と同じ）。
+        let all = gtk::CheckButton::new();
+        let all_title = gtk::Label::new(Some(&tr!("Changes")));
+        all_title.add_css_class("heading");
+        all.set_child(Some(&all_title));
         all.set_tooltip_text(Some(&tr!(
             "Include or exclude all listed files in the next commit"
         )));
         let count = gtk::Label::new(None);
-        count.set_hexpand(true);
-        count.set_xalign(1.0);
+        count.set_xalign(0.0);
         count.add_css_class("dim-label");
+        count.add_css_class("caption");
         count.add_css_class("numeric");
         count.set_tooltip_text(Some(&tr!("Files in the next commit / changed files")));
         let list_header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         list_header.append(&all);
         list_header.append(&count);
+        let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        spacer.set_hexpand(true);
+        list_header.append(&spacer);
         // 一覧の見せ方の切り替え。
         let layouts = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         layouts.add_css_class("linked");
@@ -334,10 +394,10 @@ impl WorkingCopy {
         let factory = gtk::SignalListItemFactory::new();
         let list = gtk::ListView::new(Some(selection.clone()), Some(factory.clone()));
         list.add_css_class("navigation-sidebar");
+        // 一覧の真ん中に（macOS 版と同じ）。
         let empty = gtk::Label::new(None);
         empty.add_css_class("dim-label");
-        empty.set_margin_top(12);
-        empty.set_valign(gtk::Align::Start);
+        empty.set_valign(gtk::Align::Center);
         empty.set_can_target(false);
         let list_scrolled = gtk::ScrolledWindow::builder()
             .child(&list)
@@ -402,8 +462,8 @@ impl WorkingCopy {
         let path = gtk::Label::new(None);
         path.set_xalign(0.0);
         path.set_hexpand(true);
-        path.set_ellipsize(gtk::pango::EllipsizeMode::Start);
-        path.add_css_class("heading");
+        // ふつうの太さで、長いパスは真ん中を省く（macOS 版と同じ）。
+        path.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
         let lines = gtk::Button::with_label("Stage Lines");
         let discard = gtk::Button::with_label("Discard File");
         let worktree_side = gtk::ToggleButton::with_label("Unstaged");
@@ -433,8 +493,9 @@ impl WorkingCopy {
         bar.append(&line_endings);
         bar.append(&sides);
         bar.append(&conflict_buttons);
-        bar.append(&lines);
+        // macOS 版と同じく、捨てる・行を含める の順。
         bar.append(&discard);
+        bar.append(&lines);
         let diff = DiffWidget::default();
         let diff_scrolled = gtk::ScrolledWindow::builder()
             .child(&diff)
@@ -490,7 +551,9 @@ impl WorkingCopy {
             body,
             aids,
             amend,
+            worktree_states: RefCell::default(),
             commit,
+            committing: RefCell::default(),
             summary_count,
             message,
             diff,
@@ -506,6 +569,7 @@ impl WorkingCopy {
             merge_holder,
             editors: RefCell::default(),
             embedded: RefCell::default(),
+            merge_focused: Cell::new(false),
             line_endings,
             selected: RefCell::default(),
             current: RefCell::default(),
@@ -610,11 +674,36 @@ impl WorkingCopy {
 
     pub fn set_repo(&self, repo: Arc<Repository>) {
         let old = self.inner.repo.replace(Some(repo.clone()));
+        let workdir = repo.paths().workdir;
         // 書き込む先の worktree を切り替えた: 前の worktree のマージエディタを外す（作ったものは戻ったときに使う）。
-        if old.is_some_and(|old| old.paths().workdir != repo.paths().workdir) {
+        let moved = old
+            .as_ref()
+            .map(|old| old.paths().workdir)
+            .filter(|old| *old != workdir);
+        if moved.is_some() {
             self.inner.unembed();
+            // 前の worktree の一覧・差分・コンフリクトの帯は、すぐ外す（新しい status が届くまでの間に、前の
+            // worktree のファイルを捨てる・含めると、同じパスの今の worktree のファイルに効いてしまう）。
+            Inner::forget_status(&self.inner);
         }
         self.inner.aids.set_repo(repo);
+        // Amend と絞り込みも worktree ごと（A で入れた Amend のまま B でコミットすると、B の HEAD を直してしまう）。
+        if let Some(old) = moved {
+            let inner = &self.inner;
+            let (amend, filter) = {
+                let mut states = inner.worktree_states.borrow_mut();
+                states.insert(old, (inner.amend.is_active(), inner.filter.text().into()));
+                states.remove(&workdir).unwrap_or_default()
+            };
+            inner.amend.set_active(amend);
+            inner.filter.set_text(&filter);
+            // Amend のまま戻ってきて、メッセージが空なら HEAD のメッセージを入れる（入れる前に替えていたとき。
+            // Amend が前の worktree でも入っていれば toggled が来ない）。
+            if amend && inner.message_is_empty() {
+                Inner::fill_head_message(inner);
+            }
+            inner.update_buttons();
+        }
     }
 
     /// 確かめる窓や、知らせに使う。
@@ -680,15 +769,38 @@ impl WorkingCopy {
     }
 
     /// Commit メニューの Commit（コミットできるときだけ）。`then` はコミットできた後に呼ぶ。
-    pub fn commit_from_menu(&self, then: Option<Box<dyn FnOnce()>>) {
+    pub fn commit_from_menu(&self, then: Option<AfterCommit>) {
         if self.inner.commit.is_sensitive() {
             Inner::commit(&self.inner, then);
         }
     }
 
+    /// 覚えている・埋め込んだマージエディタに、保存していない Result の変更がある（閉じる前に確かめる）。
+    pub fn has_unsaved_merge_edits(&self) -> bool {
+        self.inner
+            .editors
+            .borrow()
+            .values()
+            .any(|e| e.has_unsaved_changes())
+            || self
+                .inner
+                .embedded
+                .borrow()
+                .as_ref()
+                .is_some_and(|e| e.has_unsaved_changes())
+    }
+
     /// Amend Last Commit: 直前のコミットを直す（メッセージを入れておく）。
     pub fn amend_last_commit(&self) {
-        self.inner.amend.set_active(true);
+        let inner = &self.inner;
+        if inner.amend.is_active() {
+            // もう入っていれば toggled が来ないので、ここで直前のメッセージを入れる（macOS 版と同じ）。
+            if inner.message_is_empty() {
+                Inner::fill_head_message(inner);
+            }
+        } else {
+            inner.amend.set_active(true);
+        }
     }
 
     /// Commit メニューの Stage All（コンフリクト以外の、stage していない変更をすべて含める）。
@@ -773,6 +885,35 @@ impl Inner {
                 Inner::rebuild_list(&this);
             }
         });
+        // 別の窓のマージエディタを解決せずに閉じた: そのファイルを出していれば（「別の窓で開いている」の案内の
+        // まま）、ここに埋め込み直す（同じ行を押し直しても何も起きないので。macOS 版と同じ）。
+        let weak = Rc::downgrade(this);
+        crate::merge::connect_window_closed(move |workdir, path| {
+            let Some(this) = weak.upgrade() else {
+                return false;
+            };
+            let same_worktree = this.repo().and_then(|r| r.paths().workdir).as_deref() == workdir;
+            if same_worktree
+                && this.embedded.borrow().is_none()
+                && this.conflict_buttons.is_visible()
+                && this.selected.borrow().as_deref() == Some(path)
+            {
+                Inner::show_conflict(&this, path, this.generation.get());
+            }
+            true
+        });
+        // 埋め込んだマージエディタにフォーカスがある間は、Ctrl+Return をエディタに渡す（Commit を止める）。
+        let focus = gtk::EventControllerFocus::new();
+        let weak = Rc::downgrade(this);
+        focus.connect_contains_focus_notify(move |focus| {
+            if let Some(this) = weak.upgrade() {
+                this.merge_focused.set(focus.contains_focus());
+                this.update_buttons();
+            }
+        });
+        this.merge_holder.add_controller(focus);
+        // Esc で絞り込みを消す（macOS 版の検索欄と同じ）。
+        this.filter.connect_stop_search(|entry| entry.set_text(""));
         let weak = Rc::downgrade(this);
         this.diff.connect_mark(move |rows| {
             let Some(this) = weak.upgrade() else { return };
@@ -820,12 +961,11 @@ impl Inner {
                 this.update_buttons();
             }
         });
-        // 差分の行の右クリック: 選んだ行のコピー、AI でこの hunk を解説。
+        // 差分の行の右クリック: AI でこの hunk を解説だけ（コピーは Ctrl+C。macOS 版と同じ）。
         let weak = Rc::downgrade(this);
         this.diff.connect_row_menu(move |row, x, y| {
             let Some(this) = weak.upgrade() else { return };
-            let mut items = this.diff.copy_items();
-            items.extend(this.hunk_item(row));
+            let items: Vec<_> = this.hunk_item(row).into_iter().collect();
             if !items.is_empty() {
                 crate::menu::popup(&this.diff, x, y, items);
             }
@@ -963,6 +1103,37 @@ impl Inner {
 
     fn repo(&self) -> Option<Arc<Repository>> {
         self.repo.borrow().clone()
+    }
+
+    /// 今も `source` の worktree を出しているか（裏で始めた仕事が終わったとき、その間に替えていないか）。
+    fn is_on(&self, source: &Repository) -> bool {
+        same_worktree(source, self.repo().as_deref())
+    }
+
+    /// 今の worktree でコミットしている途中か。
+    fn is_committing(&self) -> bool {
+        let workdir = self.repo().and_then(|r| r.paths().workdir);
+        self.committing.borrow().contains(&workdir)
+    }
+
+    /// 出している status を捨てる（書き込む先の worktree を替えたとき）。一覧・差分・コンフリクトの帯を空にし、
+    /// 読んでいる途中の差分も捨てる。選んでいたパスは覚えておく（新しい status で同じパスを選ぶ）。
+    fn forget_status(this: &Rc<Self>) {
+        let selected = this.selected.borrow().clone();
+        this.status.replace(None);
+        this.all_entries.borrow_mut().clear();
+        this.stats.borrow_mut().clear();
+        this.conflict_states.borrow_mut().clear();
+        this.generation.set(this.generation.get() + 1);
+        Inner::rebuild_list(this);
+        this.sides.set_visible(false);
+        this.show_line_endings(None);
+        // 読み込むまでは「No changes」と言わない。
+        this.empty.set_visible(false);
+        this.diff.clear();
+        this.find.refresh();
+        this.selected.replace(selected);
+        this.update_buttons();
     }
 
     /// 文字の位置（Summary か Description）の、カーソルの前の 1 文字（文字の数え方の位置と、その文字）。
@@ -1107,13 +1278,20 @@ impl Inner {
             if !crate::assist::confirm(parent.as_ref(), &key, &summary).await {
                 return;
             }
+            // 提案を頼んだ worktree に入れる（窓を開いたまま書き込む先を替えたら、その worktree の下書きに。
+            // macOS 版は頼んだ Working Copy に入れる）。
+            let source = repo.clone();
             let on_use: Rc<dyn Fn(&str)> = Rc::new(move |text: &str| {
                 let Some(this) = weak.upgrade() else { return };
                 let text = text.trim();
                 let (subject, body) = text.split_once('\n').unwrap_or((text, ""));
-                this.subject.set_text(subject.trim());
-                this.body.buffer().set_text(body.trim());
-                this.update_buttons();
+                if this.is_on(&source) {
+                    this.aids.fill(subject.trim(), Some(body.trim()));
+                    this.update_buttons();
+                } else {
+                    this.aids
+                        .store_draft_of(&source, subject.trim(), body.trim());
+                }
             });
             let p = parent.clone();
             crate::assist::panel(
@@ -1228,7 +1406,8 @@ impl Inner {
 
     /// 絞り込みに合うファイルで一覧を作り直し、選んでいたファイルを選び直す（なければ最初のもの）。
     fn rebuild_list(this: &Rc<Self>) {
-        let filter = this.filter.text().to_lowercase();
+        // 前後の空白は除いて比べる（macOS 版と同じ）。
+        let filter = this.filter.text().trim().to_lowercase();
         let entries: Vec<StatusEntry> = this
             .all_entries
             .borrow()
@@ -1376,6 +1555,10 @@ impl Inner {
             this.selected.replace(None);
             this.current.replace(None);
             this.path.set_text("");
+            // 選んでいたコンフリクトがなくなった（merge --abort など）: 解決のボタンとマージエディタも外す。
+            this.conflict_buttons.set_visible(false);
+            this.unembed();
+            this.update_buttons();
             // 変更がひとつもなければその旨（macOS 版と同じ）。
             if this.all_entries.borrow().is_empty() {
                 this.diff.show_message(&tr!("No changes"));
@@ -1537,7 +1720,8 @@ impl Inner {
         state.add_css_class("monospace");
         let name = gtk::Label::new(None);
         name.set_xalign(0.0);
-        name.set_ellipsize(gtk::pango::EllipsizeMode::Start);
+        // 長い名前・パスは真ん中を省く（macOS 版と同じ。注記は頭を省く）。
+        name.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
         let detail = gtk::Label::new(None);
         detail.set_xalign(0.0);
         detail.set_ellipsize(gtk::pango::EllipsizeMode::Start);
@@ -1691,7 +1875,6 @@ impl Inner {
                 cell.detail.set_hexpand(false);
                 cell.counts.set_visible(false);
                 cell.can_discard.set(false);
-                cell.discard.set_visible(false);
                 cell.line.set_tooltip_text(None);
             }
             Row::File {
@@ -1737,8 +1920,6 @@ impl Inner {
                 cell.name.set_hexpand(!flat_parent);
                 fill_counts(&cell.counts, self.stats.borrow().get(&entry.path).copied());
                 cell.can_discard.set(!conflict && entry.is_unstaged());
-                // 捨てられないファイル（すべて含めた・コンフリクト）でも幅は取っておく（行数の位置を揃える）。
-                cell.discard.set_visible(true);
                 // パス（名前を変えたファイルはもとのパス → 今のパス。macOS 版と同じ）。
                 let tip = match &entry.orig_path {
                     Some(orig) => format!("{orig} → {}", entry.path),
@@ -1781,6 +1962,7 @@ impl Inner {
     /// ファイルごとの行数を裏で読み、一覧に出す（数がなくても一覧は先に出す）。
     fn load_stats(this: &Rc<Self>) {
         let Some(repo) = this.repo() else { return };
+        let source = repo.clone();
         let weak = Rc::downgrade(this);
         glib::spawn_future_local(async move {
             let reply: Value = gio::spawn_blocking(move || {
@@ -1788,7 +1970,9 @@ impl Inner {
             })
             .await
             .unwrap_or_default();
-            let Some(this) = weak.upgrade() else { return };
+            let Some(this) = weak.upgrade().filter(|t| t.is_on(&source)) else {
+                return;
+            };
             let stats = reply["info"]["stats"]
                 .as_array()
                 .into_iter()
@@ -1824,6 +2008,9 @@ impl Inner {
             let Some(files) = reply["info"]["files"].as_array() else {
                 return;
             };
+            if weak.upgrade().is_some_and(|t| !t.is_on(&repo)) {
+                return;
+            }
             let states: HashMap<String, ConflictState> = files
                 .iter()
                 .filter_map(|f| {
@@ -2035,20 +2222,39 @@ impl Inner {
             Inner::toggle_selected(this);
             return true;
         }
-        let Some(entry) = this.selected_entry() else {
+        if !matches!(key, Key::BackSpace | Key::Delete | Key::KP_Delete) {
             return false;
-        };
-        match key {
-            Key::BackSpace | Key::Delete | Key::KP_Delete => {
-                if entry.kind != StatusKind::Unmerged && entry.is_unstaged() {
-                    Inner::discard_file(this, &entry);
-                } else {
-                    this.list.error_bell();
-                }
-            }
-            _ => return false,
+        }
+        // 一覧で選んだ行のファイル（差分に出しているものではない）。ディレクトリの行や、選んでいなければ音で
+        // 知らせる。コンフリクトは何もしない（macOS 版と同じ）。
+        match this.list_entry() {
+            Some(entry) if entry.kind == StatusKind::Unmerged => {}
+            Some(entry) if entry.is_unstaged() => Inner::discard_file(this, &entry),
+            _ => this.list.error_bell(),
         }
         true
+    }
+
+    /// 一覧で選んだ行のファイル（macOS 版の `selectedRow`）。いくつも選んでいれば差分に出しているファイルの行、
+    /// それが選んだ中になければ最後の行。ディレクトリの行なら None。
+    fn list_entry(&self) -> Option<StatusEntry> {
+        let positions = self.selected_positions();
+        let shown = self.selected.borrow().clone();
+        let row_entries = self.row_entries.borrow();
+        let entries = self.entries.borrow();
+        let entry_at = |at: usize| {
+            row_entries
+                .get(at)
+                .copied()
+                .flatten()
+                .and_then(|i| entries.get(i))
+        };
+        let at = positions
+            .iter()
+            .copied()
+            .find(|&at| entry_at(at).is_some_and(|e| Some(&e.path) == shown.as_ref()))
+            .or_else(|| positions.last().copied())?;
+        entry_at(at).cloned()
     }
 
     /// Space・Enter: 一覧で選んだファイル（コンフリクトを除く）を、すべて含めていれば外し、そうでなければ含める
@@ -2308,12 +2514,18 @@ impl Inner {
     /// 一覧の行のボタン: 1 ファイルの変更を捨てる（確かめてから）。作業ツリーを index の内容に戻すので、
     /// 含めている分は残る。untracked のファイルは消す。
     fn discard_file(this: &Rc<Self>, entry: &StatusEntry) {
-        let (Some(actions), path) = (this.actions.borrow().clone(), entry.path.clone()) else {
+        let (Some(actions), Some(repo), path) = (
+            this.actions.borrow().clone(),
+            this.repo(),
+            entry.path.clone(),
+        ) else {
             return;
         };
+        // 確かめるのは題と「元に戻せる・戻せない」だけ（worktree の名前は書かない。macOS 版の `confirm` と同じ）。
         if entry.kind == StatusKind::Untracked {
-            crate::sheets::confirm_then(
+            crate::sheets::confirm_ref_in(
                 &actions,
+                repo,
                 tr!("Delete {path}?", path = path),
                 format!("{} {}", tr!("It’s untracked."), crate::sheets::cant_undo()),
                 tr!("Delete"),
@@ -2321,8 +2533,9 @@ impl Inner {
                 vec![json!({ "op": "deleteUntracked", "paths": [path] })],
             );
         } else {
-            crate::sheets::confirm_then(
+            crate::sheets::confirm_ref_in(
                 &actions,
+                repo,
                 tr!("Discard changes to {path}?", path = path),
                 crate::sheets::can_undo(),
                 "Discard".to_owned(),
@@ -2443,23 +2656,23 @@ impl Inner {
         let pattern = pattern.to_owned();
         glib::spawn_future_local(async move {
             let files = crate::sheets::run(&repo, json!({ "op": "ignoreFiles" })).await;
-            let mut gitignore = files["info"]["gitignore"]
-                .as_str()
-                .unwrap_or_default()
-                .to_owned();
-            if gitignore.lines().any(|l| l.trim() == pattern) {
+            let Some(gitignore) = with_ignore_pattern(
+                files["info"]["gitignore"].as_str().unwrap_or_default(),
+                &pattern,
+            ) else {
                 return;
-            }
-            if !gitignore.is_empty() && !gitignore.ends_with('\n') {
-                gitignore.push('\n');
-            }
-            gitignore.push_str(&pattern);
-            gitignore.push('\n');
-            actions.perform(json!({
-                "op": "saveIgnoreFiles",
-                "gitignore": gitignore,
-                "exclude": files["info"]["exclude"].as_str().unwrap_or_default(),
-            }));
+            };
+            // 読んだ worktree に書く（読んでいる間に書き込む先を替えても、ほかの worktree の .gitignore を、
+            // 読んだものの写しで上書きしない）。
+            actions.perform_in(
+                repo,
+                vec![json!({
+                    "op": "saveIgnoreFiles",
+                    "gitignore": gitignore,
+                    "exclude": files["info"]["exclude"].as_str().unwrap_or_default(),
+                })],
+                |_| {},
+            );
         });
     }
 
@@ -2610,6 +2823,17 @@ impl Inner {
 
     /// Take Current File・Take Incoming File: コンフリクトのファイルを片側のファイルそのものにする。マーカーが
     /// 残っていなければ、解決した内容（rerere・ほかのエディタ）を上書きしてしまうので確かめる（macOS 版と同じ）。
+    /// 下のマージエディタか別の窓のマージエディタに、`path` の保存していない Result がある。
+    fn unsaved_editor(&self, path: &str) -> Option<Rc<crate::merge::Editor>> {
+        let workdir = self.repo().and_then(|r| r.paths().workdir);
+        self.embedded
+            .borrow()
+            .clone()
+            .filter(|e| e.path() == path)
+            .or_else(|| crate::merge::window_editor(workdir.as_deref(), path))
+            .filter(|e| e.has_unsaved_changes())
+    }
+
     fn take_side(this: &Rc<Self>, ours: bool, title: &'static str) {
         let (Some(path), Some(actions), Some(repo)) = (
             this.selected.borrow().clone(),
@@ -2618,7 +2842,43 @@ impl Inner {
         ) else {
             return;
         };
+        let unsaved = this.unsaved_editor(&path).is_some();
+        // 片側のファイルを取る。別の窓で開いていれば閉じる（Result は捨てると確かめてある・変えていない）。
+        let workdir = repo.paths().workdir;
+        // 選んだときの worktree で取る（調べている間に書き込む先を替えても、ほかの worktree の同じパスの
+        // ファイルを置き換えない。macOS 版は worktree ごとに `Actions` がある）。
+        let take = {
+            let (actions, repo) = (actions.clone(), repo.clone());
+            move |path: &str| {
+                crate::merge::discard_window(workdir.as_deref(), path);
+                actions.perform_in(
+                    repo.clone(),
+                    vec![json!({ "op": "takeSide", "path": path, "ours": ours })],
+                    |_| {},
+                );
+            }
+        };
         glib::spawn_future_local(async move {
+            // 保存していない Result は、片側のファイルで上書きされて失われる（git checkout --ours・--theirs と同じく
+            // 作業ツリーのファイルを置き換える）。閉じるときと同じく、失うことを確かめる（macOS 版と同じ）。
+            if unsaved {
+                let question = if ours {
+                    tr!("Take the current file without saving Result?")
+                } else {
+                    tr!("Take the incoming file without saving Result?")
+                };
+                if actions
+                    .confirm_destructive(
+                        &question,
+                        &tr!("Your changes to Result are lost."),
+                        &amonhen_model::i18n::translate(title),
+                    )
+                    .await
+                {
+                    take(&path);
+                }
+                return;
+            }
             // 内容のコンフリクトのファイルだけが載る（消した・足したの食い違いは載らないので、確かめない）。
             let files = crate::sheets::run(&repo, json!({ "op": "conflictFiles" })).await;
             let resolved = files["info"]["files"]
@@ -2641,7 +2901,7 @@ impl Inner {
             {
                 return;
             }
-            actions.perform(json!({ "op": "takeSide", "path": path, "ours": ours }));
+            take(&path);
         });
     }
 
@@ -2654,12 +2914,17 @@ impl Inner {
         ) else {
             return;
         };
-        let weak = Rc::downgrade(this);
+        // 保存していない Result があれば、エディタの Mark Resolved と同じく保存してから解決済みにする（git が解決済みに
+        // するのは作業ツリーのファイルなので、Result の変更を書いてから。残りのコンフリクトは Result で数える）。
+        if let Some(editor) = this.unsaved_editor(&path) {
+            crate::merge::Editor::save_and_resolve(&editor);
+            return;
+        }
         glib::spawn_future_local(async move {
-            let p = path.clone();
+            let (p, r) = (path.clone(), repo.clone());
             let reply: Value = gio::spawn_blocking(move || {
                 let command = json!({ "op": "conflictCount", "path": p });
-                serde_json::from_str(&repo.run_json(&command.to_string())).unwrap_or_default()
+                serde_json::from_str(&r.run_json(&command.to_string())).unwrap_or_default()
             })
             .await
             .unwrap_or_default();
@@ -2679,9 +2944,9 @@ impl Inner {
             {
                 return;
             }
-            if let Some(this) = weak.upgrade() {
-                Inner::perform(&this, move |repo| repo.stage(&[&path]));
-            }
+            // 数えた worktree で解決済みにする（数えている間に書き込む先を替えても、ほかの worktree の同じパスの
+            // ファイルを index に入れない）。
+            actions.perform_work_in(repo, None, move |repo| repo.stage(&[&path]));
         });
     }
 
@@ -2729,21 +2994,35 @@ impl Inner {
         this: &Rc<Self>,
         op: impl FnOnce(&Repository) -> amonhen_model::Result<()> + Send + 'static,
     ) {
-        let actions = this.actions.borrow().clone();
+        let (actions, Some(repo)) = (this.actions.borrow().clone(), this.repo()) else {
+            return;
+        };
         match actions {
-            Some(actions) => actions.perform_work(op),
+            Some(actions) => actions.perform_work_in(repo, None, op),
             None => Inner::run(this, op),
         }
     }
 
     /// コミットする。できたら `then` を呼ぶ（Commit and Push の push）。
-    fn commit(this: &Rc<Self>, then: Option<Box<dyn FnOnce()>>) {
+    fn commit(this: &Rc<Self>, then: Option<AfterCommit>) {
+        let Some(repo) = this.repo() else { return };
+        let workdir = repo.paths().workdir;
+        if !this.committing.borrow_mut().start(workdir.clone()) {
+            this.list.error_bell();
+            return;
+        }
         let message = this.composed_message();
         let amend = this.amend.is_active();
         let weak = Rc::downgrade(this);
-        let Some(repo) = this.repo() else { return };
-        this.commit.set_sensitive(false);
+        this.update_buttons();
         let source = repo.clone();
+        // Commit and Push のシートに書く、コミットする worktree の名前（コミットしている間に替えても）。
+        let worktree = this
+            .list
+            .root()
+            .and_downcast::<gtk::Window>()
+            .as_ref()
+            .and_then(crate::sheets::worktree_name);
         this.message.set_visible(false);
         // hooks の出力を探すため、始めた時刻（Activity の記録と同じ UNIX 時刻のミリ秒）を覚えておく。
         let started = std::time::SystemTime::now()
@@ -2758,6 +3037,7 @@ impl Inner {
             })
             .await;
             let Some(this) = weak.upgrade() else { return };
+            this.committing.borrow_mut().finish(&workdir);
             let parent = this.list.root().and_downcast::<gtk::Window>();
             match result {
                 Ok((Ok(()), status)) => {
@@ -2776,15 +3056,30 @@ impl Inner {
                     if let Some(output) = output {
                         hooks_sheet(parent.as_ref(), &tr!("Committed (hooks output)"), &output);
                     }
-                    this.aids.clear_draft();
-                    this.subject.set_text("");
-                    this.body.buffer().set_text("");
-                    this.amend.set_active(false);
+                    if this.is_on(&source) {
+                        this.aids.clear_draft();
+                        this.subject.set_text("");
+                        this.body.buffer().set_text("");
+                        this.amend.set_active(false);
+                    } else {
+                        // コミットしている間にほかの worktree に替えた: その worktree の下書き（替えたときに預けた、
+                        // いまコミットしたメッセージ）を消し、Amend を戻しておく。戻ったときに同じメッセージで
+                        // もう一度コミットできてしまわないように。
+                        this.aids.clear_draft_of(&source);
+                        if let Some((amend, _)) =
+                            this.worktree_states.borrow_mut().get_mut(&workdir)
+                        {
+                            *amend = false;
+                        }
+                    }
                     if let Some(status) = status {
                         Inner::show_from(&this, &source, status);
                     }
                     if let Some(then) = then {
-                        then();
+                        then(crate::sheets::Target {
+                            repo: source.clone(),
+                            worktree,
+                        });
                     }
                 }
                 // hooks で止まったときは出力が長いので、読めるシートで出す。
@@ -2829,6 +3124,7 @@ impl Inner {
     /// Summary と Description のどちらかに書いてあれば入れない（macOS 版と同じ）。
     fn fill_head_message(this: &Rc<Self>) {
         let Some(repo) = this.repo() else { return };
+        let source = repo.clone();
         let weak = Rc::downgrade(this);
         glib::spawn_future_local(async move {
             let reply: Value = gio::spawn_blocking(move || {
@@ -2838,13 +3134,14 @@ impl Inner {
             .await
             .unwrap_or_default();
             let Some(this) = weak.upgrade() else { return };
-            if !this.message_is_empty() || !this.amend.is_active() {
+            // 読む間にほかの worktree に替えていたら入れない（その worktree の HEAD のメッセージではない。戻ったら
+            // 読み直す）。
+            if !this.is_on(&source) || !this.message_is_empty() || !this.amend.is_active() {
                 return;
             }
             let message = reply["text"].as_str().unwrap_or_default().trim();
             let (subject, body) = message.split_once('\n').unwrap_or((message, ""));
-            this.subject.set_text(subject.trim());
-            this.body.buffer().set_text(body.trim());
+            this.aids.fill(subject.trim(), Some(body.trim()));
             this.update_buttons();
         });
     }
@@ -2870,8 +3167,11 @@ impl Inner {
         if le.warning() {
             text = format!("⚠︎ {text}");
             self.line_endings.add_css_class("warning");
+            self.line_endings.remove_css_class("dim-label");
         } else {
             self.line_endings.remove_css_class("warning");
+            // 気にしなくてよいときは薄い色で（macOS 版と同じ）。
+            self.line_endings.add_css_class("dim-label");
         }
         self.line_endings.set_text(&text);
         let mut tip = vec![tr!(
@@ -2902,7 +3202,7 @@ impl Inner {
         let staged = staged_files > 0;
         let has_message = !self.composed_message().is_empty();
         let amend = self.amend.is_active();
-        let can_commit = has_message && (staged || amend);
+        let can_commit = !self.is_committing() && has_message && (staged || amend);
         self.commit.set_sensitive(can_commit);
         // 含めるファイルの数も出す（macOS 版と同じ）。
         let label = match (amend, staged_files) {
@@ -2919,9 +3219,11 @@ impl Inner {
                 .borrow()
                 .iter()
                 .any(|e| e.kind != StatusKind::Unmerged && e.is_unstaged());
+            let merge_focused = self.merge_focused.get();
             actions.update_facts(|f| {
                 f.can_commit = can_commit;
                 f.can_stage_all = can_stage_all;
+                f.merge_focused = merge_focused;
             });
         }
         // 件名の文字数（空なら出さない）。
@@ -2935,9 +3237,9 @@ impl Inner {
         };
         match (length, color) {
             (0, _) => self.summary_count.set_text(""),
-            (n, Some(c)) => self.summary_count.set_markup(&format!(
-                "<span foreground=\"{c}\" weight=\"bold\">{n}</span>"
-            )),
+            (n, Some(c)) => self
+                .summary_count
+                .set_markup(&format!("<span foreground=\"{c}\">{n}</span>")),
             (n, None) => self
                 .summary_count
                 .set_markup(&format!("<span alpha=\"45%\">{n}</span>")),
@@ -3373,12 +3675,10 @@ fn in_dir(path: &str, dir: &str) -> bool {
         .is_some_and(|rest| rest.starts_with('/'))
 }
 
-/// 行の変更を捨てるボタンを出す・隠す。隠している間は、透明なだけでなくクリックも Tab のフォーカスも受けない
-/// （macOS 版は隠す）。幅は取ったままにして、出し入れで行数の位置が動かないようにする。
+/// 行の変更を捨てるボタンを出す・隠す。隠している間は幅も取らず、行数が右端に寄る（出すと行数が左へずれる。
+/// macOS 版と同じ）。
 fn reveal_discard(discard: &gtk::Button, shown: bool) {
-    discard.set_opacity(if shown { 1.0 } else { 0.0 });
-    discard.set_can_target(shown);
-    discard.set_focusable(shown);
+    discard.set_visible(shown);
 }
 
 /// ファイルをディレクトリの木の順に並べる（macOS 版と同じく、ファイルを持たず子が 1 つだけのディレクトリは
@@ -3456,6 +3756,16 @@ fn tree(entries: &[StatusEntry]) -> Vec<TreeItem> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn adds_an_ignore_pattern_once() {
+        assert_eq!(with_ignore_pattern("", "a.log").as_deref(), Some("a.log\n"));
+        assert_eq!(
+            with_ignore_pattern("build/", "a.log").as_deref(),
+            Some("build/\na.log\n")
+        );
+        assert_eq!(with_ignore_pattern("build/\n a.log \n", "a.log"), None);
+    }
 
     fn entry(kind: StatusKind, path: &str, index: u8, worktree: u8) -> StatusEntry {
         StatusEntry {
@@ -3636,6 +3946,23 @@ mod tests {
     }
 
     /// 状態の文字は macOS 版と同じ: untracked は U、コンフリクトは ⚠、作業ツリーの側を先に見る。
+    #[test]
+    fn committing_is_per_worktree() {
+        let (a, b) = (
+            Some(std::path::PathBuf::from("/r/a")),
+            Some(std::path::PathBuf::from("/r/b")),
+        );
+        let mut c = Committing::default();
+        assert!(c.start(a.clone()));
+        // A の hooks を待つ間に、A でもう一度は始めないが、B では始められる。
+        assert!(!c.start(a.clone()));
+        assert!(c.contains(&a) && !c.contains(&b));
+        assert!(c.start(b.clone()));
+        c.finish(&a);
+        assert!(!c.contains(&a) && c.contains(&b));
+        assert!(c.start(a.clone()));
+    }
+
     #[test]
     fn state_letters_follow_macos() {
         let letter = |e: StatusEntry| state_letter(&e).0;

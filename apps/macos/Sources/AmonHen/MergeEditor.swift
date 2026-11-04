@@ -18,7 +18,11 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
     /// 保存して解決済みにした（埋め込んだ側はエディタを外し、ウィンドウは閉じる）。
     var onResolved: (() -> Void)?
     /// 別ウィンドウで開く（埋め込んだときだけ出す）。
-    var onPopOut: (() -> Void)?
+    var onPopOut: (() -> Void)? {
+        // 別の窓に移すと nil になる。ボタンはもう作ってあるので、ここで隠す。
+        didSet { popOutButton?.isHidden = onPopOut == nil }
+    }
+    private weak var popOutButton: NSButton?
 
     private let current = MergeEditorViewController.textView(editable: false)
     private let incoming = MergeEditorViewController.textView(editable: false)
@@ -62,6 +66,9 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    /// 別ウィンドウの鍵（worktree ごとに別。`MergeEditorWindowController`）。
+    var windowKey: String { MergeEditorWindowController.key(path: path, repository: repository) }
 
     /// Result を保存していない変更があるか。
     var hasUnsavedChanges: Bool { result.string != savedText }
@@ -162,10 +169,10 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
             target: self, action: #selector(popOutClicked))
         popOut.toolTip = L("Open in a Separate Window")
         popOut.isHidden = onPopOut == nil
+        popOutButton = popOut
         let save = NSButton(title: L("Save"), target: self, action: #selector(saveOnly))
         let resolve = NSButton(title: L("Save & Mark Resolved"), target: self, action: #selector(saveAndResolve))
-        resolve.keyEquivalent = "\r"
-        resolve.keyEquivalentModifierMask = .command
+        // ⌘↩ は handleKeyEquivalent で（ボタンに付けると、埋め込みでは Working Copy の Commit の ⌘↩ と取り合う）。
         resolve.toolTip = L("Save and mark as resolved (⌘↩).")
         for b in [previousButton, nextButton, magicButton] + acceptButtons + [popOut, save, resolve] {
             b.bezelStyle = .push
@@ -184,8 +191,11 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
         for b in [aiResolveButton, aiExplainButton] {
             b.bezelStyle = .push
             b.controlSize = .small
-            b.isHidden = !Assistant.isConfigured
         }
+        updateAssistantButtons()
+        // Settings > AI で CLI を選び直したら、開いたままのエディタでも出す・隠す。
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(updateAssistantButtons), name: .assistantChanged, object: nil)
         note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         note.textColor = .secondaryLabelColor
         // 文が長くてもボタンを押し出さないよう、メモの方を切り詰める。
@@ -196,6 +206,7 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
 
         let root = MergeLayoutView(bar: bar, banner: sides.markers == 0 ? withoutMarkersBanner() : nil)
         root.onLayout = { [weak self] in self?.layoutColumns() }
+        root.onKeyEquivalent = { [weak self] event in self?.handleKeyEquivalent(event) ?? false }
         root.frame = NSRect(x: 0, y: 0, width: 1200, height: 700)
         for v in [basePane].compactMap({ $0 }) + panes + [leftBand, rightBand] { root.addSubview(v) }
         basePane?.isHidden = true
@@ -453,6 +464,33 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
         scroll(result, toY: CGFloat(line) * lineHeight + result.textContainerInset.height - clip.bounds.height / 3)
     }
 
+    @objc private func updateAssistantButtons() {
+        for b in [aiResolveButton, aiExplainButton] { b.isHidden = !Assistant.isConfigured }
+    }
+
+    /// エディタを操作しているか: フォーカスがエディタの中にある（別ウィンドウなら、その窓にいる）。エディタの近道は
+    /// このときだけ効かせる（埋め込みでは、ほかの欄の近道やメニューの ⌥⌘↑↓ を奪わない）。
+    var hasFocus: Bool {
+        guard let window = view.window else { return false }
+        if window.contentViewController === self { return true }
+        guard let responder = window.firstResponder as? NSView else { return false }
+        return responder.isDescendant(of: view)
+    }
+
+    /// エディタの近道: ⌥⌘↑・⌥⌘↓ で前・次のコンフリクト、⌘↩ で保存して解決済みに。
+    private func handleKeyEquivalent(_ event: NSEvent) -> Bool {
+        guard hasFocus else { return false }
+        let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        guard let key = event.charactersIgnoringModifiers?.unicodeScalars.first else { return false }
+        switch (modifiers, Int(key.value)) {
+        case ([.command, .option], NSUpArrowFunctionKey): selectPrevious()
+        case ([.command, .option], NSDownArrowFunctionKey): selectNext()
+        case (.command, 0x0d), (.command, 0x03): saveAndResolve()
+        default: return false
+        }
+        return true
+    }
+
     @objc func selectPrevious() { move(by: -1) }
     @objc func selectNext() { move(by: 1) }
 
@@ -555,8 +593,10 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
     private var assistantKey: String { repository.workdir ?? "remote" }
 
     @objc private func aiExplain() {
-        guard let texts = selectedConflictTexts(), Assistant.confirm(repository: assistantKey, summary: L("One conflict in %@", path))
-        else { return NSSound.beep() }
+        // 選んだコンフリクトがなければ鳴らす。AI を使うかの問いで断った・使わない設定なら、黙って戻る（Working Copy の
+        // AI のボタンと同じ）。
+        guard let texts = selectedConflictTexts() else { return NSSound.beep() }
+        guard Assistant.confirm(repository: assistantKey, summary: L("One conflict in %@", path)) else { return }
         let path = self.path, workdir = repository.workdir
         AssistantPanel.show(title: L("Conflict Explanation"), over: view.window) { useCache, onText in
             try await Assistant.run(
@@ -575,8 +615,10 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
     }
 
     @objc private func aiResolve() {
-        guard let texts = selectedConflictTexts(), Assistant.confirm(repository: assistantKey, summary: L("One conflict in %@", path))
-        else { return NSSound.beep() }
+        // 選んだコンフリクトがなければ鳴らす。AI を使うかの問いで断った・使わない設定なら、黙って戻る（Working Copy の
+        // AI のボタンと同じ）。
+        guard let texts = selectedConflictTexts() else { return NSSound.beep() }
+        guard Assistant.confirm(repository: assistantKey, summary: L("One conflict in %@", path)) else { return }
         let index = selected
         let original = conflicts[index]
         let path = self.path, workdir = repository.workdir
@@ -680,7 +722,9 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
         return stack
     }
 
-    @objc private func saveAndResolve() {
+    /// Mark Resolved: Result を保存してから解決済みにする（コンフリクトが残っていれば確かめる）。Working Copy の帯の
+    /// Mark Resolved も、保存していない Result があればこれを使う。
+    @objc func saveAndResolve() {
         guard !conflicts.isEmpty else { return save(stage: true) }
         Task { @MainActor in
             guard await actions.confirm(
@@ -706,6 +750,8 @@ private final class MergeLayoutView: NSView {
     private let barHeight: CGFloat = 36
     private let bannerHeight: CGFloat
     var onLayout: (() -> Void)?
+    /// エディタだけの近道（受けたら true）。
+    var onKeyEquivalent: ((NSEvent) -> Bool)?
 
     init(bar: NSView, banner: NSView? = nil) {
         self.bar = bar
@@ -737,6 +783,10 @@ private final class MergeLayoutView: NSView {
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         onLayout?()
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        onKeyEquivalent?(event) == true || super.performKeyEquivalent(with: event)
     }
 }
 
@@ -809,14 +859,44 @@ private final class ConflictBand: NSView {
     }
 }
 
-/// マージエディタを別ウィンドウで開く。パスごとに 1 つ。
+extension Notification.Name {
+    /// 別ウィンドウのマージエディタを、解決せずに閉じた（`userInfo["key"]` はその `windowKey`）。
+    static let mergeWindowClosed = Notification.Name("mergeWindowClosed")
+}
+
+/// マージエディタを別ウィンドウで開く。worktree とパスごとに 1 つ（worktree が違えば同じパスでも別のファイル）。
 final class MergeEditorWindowController: NSWindowController, NSWindowDelegate {
     private static var open: [String: MergeEditorWindowController] = [:]
     private let editor: MergeEditorViewController
     private let actions: Actions
 
+    /// `open` の鍵: 作業ツリー（SSH 先などで分からなければリポジトリそのもの）とパス。
+    static func key(path: String, repository: Repository) -> String {
+        let place = repository.workdir ?? "\(ObjectIdentifier(repository).hashValue)"
+        return place + "\0" + path
+    }
+
+    /// `repository` の `path` のマージエディタを別ウィンドウで開いているか。
+    static func isOpen(path: String, repository: Repository) -> Bool {
+        open[key(path: path, repository: repository)] != nil
+    }
+
+    /// `repository` の `path` を別ウィンドウで開いているエディタ。
+    static func editor(path: String, repository: Repository) -> MergeEditorViewController? {
+        open[key(path: path, repository: repository)]?.editor
+    }
+
+    /// `repository` の `path` の別ウィンドウを、聞かずに閉じる（片側のファイルを取って、Result を捨てると確かめた
+    /// 後。残しておくと、後で Save したときに取ったファイルを上書きしてしまう）。
+    static func discard(path: String, repository: Repository) {
+        guard let controller = open[key(path: path, repository: repository)] else { return }
+        controller.discardConfirmed = true
+        controller.resolved = true
+        controller.close()
+    }
+
     static func show(path: String, repository: Repository, actions: Actions) {
-        if let existing = open[path] {
+        if let existing = open[key(path: path, repository: repository)] {
             existing.window?.makeKeyAndOrderFront(nil)
             return
         }
@@ -832,7 +912,7 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate {
     /// 埋め込んでいたエディタを、編集中の内容のまま別ウィンドウに移す。
     static func show(_ editor: MergeEditorViewController, actions: Actions) {
         let controller = MergeEditorWindowController(editor: editor, actions: actions)
-        open[editor.path] = controller
+        open[editor.windowKey] = controller
         controller.showWindow(nil)
     }
 
@@ -853,7 +933,10 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate {
         window.title = "Merge — \(editor.path)"
         super.init(window: window)
         editor.onPopOut = nil
-        editor.onResolved = { [weak self] in self?.close() }
+        editor.onResolved = { [weak self] in
+            self?.resolved = true
+            self?.close()
+        }
         window.contentViewController = editor
         window.setContentSize(NSSize(width: 1300, height: 820))
         window.center()
@@ -864,6 +947,25 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate {
 
     /// 保存していない変更があれば、捨てて閉じてよいかをシートで確かめる（確かめたら閉じ直す）。
     private var discardConfirmed = false
+
+    /// Result を保存していない、別ウィンドウのマージエディタのウィンドウ（終える前に確かめる）。
+    static var unsavedWindow: NSWindow? {
+        open.values.first { $0.editor.hasUnsavedChanges }?.window
+    }
+
+    /// 保存していない Result を捨てて閉じてよいかを、`window` のシートで確かめる（別ウィンドウのマージエディタを
+    /// 閉じるときと同じ文とボタン。戻せないので赤く、↩ は Cancel）。
+    @MainActor
+    static func confirmDiscarding(in window: NSWindow) async -> Bool {
+        let alert = NSAlert()
+        alert.messageText = L("Close without saving?")
+        alert.informativeText = L("Your changes to Result are lost.")
+        let close = alert.addButton(withTitle: L("Close Without Saving"))
+        close.hasDestructiveAction = true
+        close.keyEquivalent = ""
+        alert.addButton(withTitle: L("Cancel")).keyEquivalent = "\r"
+        return await alert.beginSheetModal(for: window) == .alertFirstButtonReturn
+    }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         guard editor.hasUnsavedChanges, !discardConfirmed else { return true }
@@ -877,7 +979,14 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate {
         return false
     }
 
+    /// 解決済みにして閉じた。
+    private var resolved = false
+
     func windowWillClose(_ notification: Notification) {
-        Self.open[editor.path] = nil
+        Self.open[editor.windowKey] = nil
+        // 解決せずに閉じたら知らせる（Working Copy が、そのファイルを出していれば埋め込み直す）。
+        if !resolved {
+            NotificationCenter.default.post(name: .mergeWindowClosed, object: nil, userInfo: ["key": editor.windowKey])
+        }
     }
 }

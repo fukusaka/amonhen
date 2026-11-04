@@ -37,10 +37,12 @@ enum CloneSheet {
         }
     }
 
-    /// 置き場所の初期値: 前に clone した場所、なければスキャンするフォルダの最初、なければホーム。
+    /// 置き場所の初期値: 前に clone した場所、なければスキャンするフォルダの最初（手元のもの。SSH 先のフォルダには
+    /// clone できない）、なければホーム。
     private static var defaultFolder: String {
         UserDefaults.standard.string(forKey: folderKey)
-            ?? Bookmarks.shared.data.scanRoots.first?.path
+            ?? Bookmarks.shared.data.scanRoots.first { RepositoryBrowser.sshHost($0.path) == nil }
+                .map { RepositoryBrowser.localPath($0.path) }
             ?? NSHomeDirectory()
     }
 
@@ -54,7 +56,8 @@ enum CloneSheet {
         return last
     }
 
-    static func show(onCloned: @escaping (String) -> Void) {
+    /// `window` のシートで聞く（なければアプリ全体で）。
+    static func show(in window: NSWindow?, onCloned: @escaping (String) -> Void) {
         let url = NSTextField(string: "")
         url.placeholderString = L("https://github.com/owner/repo.git, git@host:owner/repo.git or a bundle file")
         // bundle のファイルを選ぶ（URL の欄にパスを入れる）。
@@ -95,6 +98,8 @@ enum CloneSheet {
                     let item = ClosureMenuItem(title: repo.nameWithOwner) {
                         url.stringValue = repo.url + ".git"
                         name.stringValue = ""
+                        // コードで入れても知らせが来ないので、打ち込んだときと同じく知らせる（bundle の欄などを戻す）。
+                        NotificationCenter.default.post(name: NSControl.textDidChangeNotification, object: url)
                     }
                     mine.menu?.addItem(item)
                 }
@@ -196,7 +201,6 @@ enum CloneSheet {
         nonisolated(unsafe) let refresh = update
         let typed = NotificationCenter.default.addObserver(forName: NSControl.textDidChangeNotification, object: url,
                                                           queue: .main) { _ in MainActor.assumeIsolated { refresh() } }
-        defer { NotificationCenter.default.removeObserver(typed) }
         let bundleChooser = ClosureTarget { [weak alert] in
             let panel = NSOpenPanel()
             panel.allowedContentTypes = [UTType(filenameExtension: "bundle") ?? .data]
@@ -245,30 +249,56 @@ enum CloneSheet {
         alert.addButton(withTitle: L("Cancel"))
         alert.accessoryView = grid
         alert.window.initialFirstResponder = url
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        _ = (chooser, changed, depthTarget, bundleChooser)
-        update()
-        var source = url.stringValue.trimmingCharacters(in: .whitespaces)
-        if bundle != nil { source = (source as NSString).expandingTildeInPath }
-        let folderName = name.stringValue.trimmingCharacters(in: .whitespaces).isEmpty
-            ? Self.name(fromURL: source) : name.stringValue.trimmingCharacters(in: .whitespaces)
-        let parent = (folder.stringValue.trimmingCharacters(in: .whitespaces) as NSString).expandingTildeInPath
-        guard !source.isEmpty, !folderName.isEmpty, !parent.isEmpty else { return NSSound.beep() }
-        let dest = (parent as NSString).appendingPathComponent(folderName)
-        if FileManager.default.fileExists(atPath: dest) {
-            let exists = NSAlert()
-            exists.messageText = L("%@ already exists", (dest as NSString).abbreviatingWithTildeInPath)
-            exists.informativeText = L("Choose a different name or location.")
-            exists.runModal()
-            return
+        // 窓のシートで聞く（ほかの窓は止めない）。閉じたら、選んだもので clone を始める。
+        func present() {
+            if let window { alert.beginSheetModal(for: window, completionHandler: ended) } else { ended(alert.runModal()) }
         }
-        UserDefaults.standard.set(parent, forKey: folderKey)
-        let choice = bundle == nil ? (Download(rawValue: download.indexOfSelectedItem) ?? .everything) : .everything
-        run(url: source, dest: dest, filter: choice == .contentsWhenNeeded ? "blob:none" : nil,
-            depth: choice == .recentHistory ? depth.selectedTag() : nil,
-            sparse: sparse.isEnabled && sparse.state == .on,
-            branch: branch.isHidden ? nil : branch.titleOfSelectedItem, submodules: submodules.state == .on,
-            onCloned: onCloned)
+        func ended(_ response: NSApplication.ModalResponse) {
+            // シートに戻るときは、URL の欄の見張りとボタンの相手を残す（bundle のパスを打てば切り替わるように）。
+            if response == .alertFirstButtonReturn, startOrAskAgain() { return }
+            // 閉じ終えた（取り消した・clone を始めた）ら片づける。
+            _ = (chooser, changed, depthTarget, bundleChooser)
+            NotificationCenter.default.removeObserver(typed)
+        }
+        present()
+
+        /// clone を始める。置き場所がもうあれば、そう言ってからシートに戻り（入れたものは残す）、true を返す。
+        func startOrAskAgain() -> Bool {
+            update()
+            var source = url.stringValue.trimmingCharacters(in: .whitespaces)
+            if bundle != nil { source = (source as NSString).expandingTildeInPath }
+            let folderName = name.stringValue.trimmingCharacters(in: .whitespaces).isEmpty
+                ? Self.name(fromURL: source) : name.stringValue.trimmingCharacters(in: .whitespaces)
+            let parent = (folder.stringValue.trimmingCharacters(in: .whitespaces) as NSString).expandingTildeInPath
+            guard !source.isEmpty, !folderName.isEmpty, !parent.isEmpty else {
+                NSSound.beep()
+                return false
+            }
+            let dest = (parent as NSString).appendingPathComponent(folderName)
+            if FileManager.default.fileExists(atPath: dest) {
+                let exists = NSAlert()
+                exists.messageText = L("%@ already exists", (dest as NSString).abbreviatingWithTildeInPath)
+                exists.informativeText = L("Choose a different name or location.")
+                // 閉じ終えたシートの後に出し、閉じたら Clone のシートに戻る。
+                DispatchQueue.main.async {
+                    if let window {
+                        exists.beginSheetModal(for: window) { _ in DispatchQueue.main.async { present() } }
+                    } else {
+                        exists.runModal()
+                        present()
+                    }
+                }
+                return true
+            }
+            UserDefaults.standard.set(parent, forKey: folderKey)
+            let choice = bundle == nil ? (Download(rawValue: download.indexOfSelectedItem) ?? .everything) : .everything
+            run(url: source, dest: dest, filter: choice == .contentsWhenNeeded ? "blob:none" : nil,
+                depth: choice == .recentHistory ? depth.selectedTag() : nil,
+                sparse: sparse.isEnabled && sparse.state == .on,
+                branch: branch.isHidden ? nil : branch.titleOfSelectedItem, submodules: submodules.state == .on,
+                onCloned: onCloned)
+            return false
+        }
     }
 
     /// 選んだものの説明（小さく、薄く。2 行まで折り返す）。

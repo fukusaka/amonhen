@@ -568,6 +568,7 @@ impl Sidebar {
             });
         inner.rebuild(true);
         add_type_select(&list, &inner);
+        add_fold_keys(&list, &inner);
 
         // 絞り込みの欄は一覧の上に。打つたびに絞り込む（Esc で消す）。
         let filter = gtk::SearchEntry::new();
@@ -997,6 +998,87 @@ fn add_type_select(list: &gtk::ListView, inner: &Rc<Inner>) {
     list.add_controller(keys);
 }
 
+/// ←・→ で、選んだ行を閉じる・開く（macOS 版の NSOutlineView と同じ）。閉じた行（と葉）で ← を押すと、親の行が
+/// 選べるならそこへ移る。⌥（Alt）を添えると、下の行もまとめて閉じる・開く。
+fn add_fold_keys(list: &gtk::ListView, inner: &Rc<Inner>) {
+    let keys = gtk::EventControllerKey::new();
+    // 一覧の部品が先に ←・→ を使ってしまわないよう、先に受ける。
+    keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let (weak, view) = (Rc::downgrade(inner), list.downgrade());
+    keys.connect_key_pressed(move |_, key, _, state| {
+        use gtk::gdk::{Key, ModifierType};
+        let open = match key {
+            Key::Left | Key::KP_Left => false,
+            Key::Right | Key::KP_Right => true,
+            _ => return glib::Propagation::Proceed,
+        };
+        let (Some(inner), Some(view)) = (weak.upgrade(), view.upgrade()) else {
+            return glib::Propagation::Proceed;
+        };
+        if state.intersects(
+            ModifierType::CONTROL_MASK | ModifierType::SHIFT_MASK | ModifierType::SUPER_MASK,
+        ) {
+            return glib::Propagation::Proceed;
+        }
+        let all = state.contains(ModifierType::ALT_MASK);
+        let n = inner.model.n_items();
+        let selected: Vec<u32> = (0..n).filter(|&i| inner.selection.is_selected(i)).collect();
+        let rows: Vec<gtk::TreeListRow> = selected
+            .iter()
+            .filter_map(|&i| inner.model.row(i))
+            .collect();
+        let foldable: Vec<&gtk::TreeListRow> = rows
+            .iter()
+            .filter(|r| r.is_expandable() && r.is_expanded() != open)
+            .collect();
+        if !foldable.is_empty() {
+            for row in foldable {
+                set_expanded_deep(row, open, all);
+            }
+        } else if !open
+            && let [row] = rows.as_slice()
+            && let Some(parent) = row.parent()
+            && parent
+                .item()
+                .and_downcast::<Node>()
+                .is_some_and(|n| !matches!(n.data().item, Item::Group | Item::Folder))
+        {
+            let i = parent.position();
+            view.scroll_to(i, gtk::ListScrollFlags::FOCUS, None);
+            inner.selection.select_item(i, true);
+        }
+        glib::Propagation::Stop
+    });
+    list.add_controller(keys);
+}
+
+/// `row` を開く・閉じる。`deep` なら下の行もまとめて。
+fn set_expanded_deep(row: &gtk::TreeListRow, open: bool, deep: bool) {
+    if deep && !open {
+        // 閉じる前に下を閉じる（閉じた後では子の行が取れない）。
+        let mut i = 0;
+        while let Some(child) = row.child_row(i) {
+            if child.is_expandable() {
+                set_expanded_deep(&child, false, true);
+            }
+            i += 1;
+        }
+    }
+    row.set_expanded(open);
+    if deep && open {
+        let mut i = 0;
+        while let Some(child) = row.child_row(i) {
+            if child.is_expandable() {
+                set_expanded_deep(&child, true, true);
+            }
+            i += 1;
+        }
+    }
+}
+
+/// 変更のない worktree をまとめる行（「変更なし N」）の鍵。
+const CLEAN_WORKTREES_KEY: &str = "worktrees/clean";
+
 /// Conflicts の行の鍵（選んだら最初のコンフリクトのファイルを開く）。
 pub const CONFLICTS_KEY: &str = "page/conflicts";
 
@@ -1308,10 +1390,20 @@ fn setup_row(item: &gtk::ListItem, inner: &Owner, drop_cb: &Rc<RefCell<Option<Dr
     // ブランチ・タグは運べる。
     let drag = gtk::DragSource::new();
     drag.set_actions(gtk::gdk::DragAction::COPY | gtk::gdk::DragAction::MOVE);
-    let weak = expander.downgrade();
-    drag.connect_prepare(move |_, _, _| {
+    let (weak, grab) = (expander.downgrade(), Rc::new(Cell::new((0, 0))));
+    let at = grab.clone();
+    drag.connect_prepare(move |_, x, y| {
         let value = drag_value(&node_of(&weak.upgrade()?)?.data())?;
+        at.set((x as i32, y as i32));
         Some(gtk::gdk::ContentProvider::for_value(&value.to_value()))
+    });
+    // 運んでいる間は、行の絵を札にする（macOS 版と同じ）。
+    let weak = expander.downgrade();
+    drag.connect_drag_begin(move |source, _| {
+        if let Some(row) = weak.upgrade() {
+            let (x, y) = grab.get();
+            source.set_icon(Some(&gtk::WidgetPaintable::new(Some(&row))), x, y);
+        }
     });
     expander.add_controller(drag);
 
@@ -1322,21 +1414,38 @@ fn setup_row(item: &gtk::ListItem, inner: &Owner, drop_cb: &Rc<RefCell<Option<Dr
     // 落とせない行（Workspace・タグ・名前のフォルダなど）の上では、落とせないことを先に見せる（macOS 版と同じ）。
     // History から運んだコミットは受けない（History の中で並べ替えるもの）。
     target.set_preload(true);
-    let weak = expander.downgrade();
-    target.connect_motion(move |target, _, _| {
-        let accepts = weak
-            .upgrade()
-            .and_then(|e| node_of(&e))
-            .is_some_and(|node| {
-                target
-                    .value()
-                    .and_then(|v| v.get::<String>().ok())
-                    .is_some_and(|d| crate::refops::accepts_drop(&d, &node.data()))
-            });
-        if accepts {
-            gtk::gdk::DragAction::COPY
-        } else {
-            gtk::gdk::DragAction::empty()
+    let (weak, owner) = (expander.downgrade(), inner.clone());
+    target.connect_motion(move |target, _, y| {
+        let Some(expander) = weak.upgrade() else {
+            return gtk::gdk::DragAction::empty();
+        };
+        let dragged = target.value().and_then(|v| v.get::<String>().ok());
+        let node = node_of(&expander);
+        let accepts = node
+            .as_ref()
+            .zip(dragged.as_deref())
+            .is_some_and(|(node, d)| crate::refops::accepts_drop(d, &node.data()));
+        // お気に入りの間に落とすところなら、行の上か下に線を引く（macOS 版の表の、行の間に落とす印）。
+        let edge = match (accepts, &node, &dragged, owner.borrow().upgrade()) {
+            (true, Some(node), Some(d), Some(inner)) => {
+                inner.favorite_edge(d, &node.data(), y, expander.height() as f64)
+            }
+            _ => None,
+        };
+        set_drop_line(expander.upcast_ref(), edge);
+        // ブランチの上（merge・rebase）とお気に入りの並べ替えは移動、リモートの上（push）は複製の印（macOS 版と同じ）。
+        let onto_branch = node
+            .as_ref()
+            .is_some_and(|n| matches!(&n.data().item, Item::Ref(e) if e.kind == RefKind::Local));
+        match (accepts, edge.is_some() || onto_branch) {
+            (false, _) => gtk::gdk::DragAction::empty(),
+            (true, true) => gtk::gdk::DragAction::MOVE,
+            (true, false) => gtk::gdk::DragAction::COPY,
+        }
+    });
+    target.connect_leave(|target| {
+        if let Some(widget) = target.widget() {
+            set_drop_line(&widget, None);
         }
     });
     let (weak, cb, owner) = (expander.downgrade(), drop_cb.clone(), inner.clone());
@@ -1344,6 +1453,7 @@ fn setup_row(item: &gtk::ListItem, inner: &Owner, drop_cb: &Rc<RefCell<Option<Dr
         let (Some(expander), Ok(dragged)) = (weak.upgrade(), value.get::<String>()) else {
             return false;
         };
+        set_drop_line(expander.upcast_ref(), None);
         if node_of(&expander).is_none_or(|n| !crate::refops::accepts_drop(&dragged, &n.data())) {
             return false;
         }
@@ -1362,6 +1472,17 @@ fn setup_row(item: &gtk::ListItem, inner: &Owner, drop_cb: &Rc<RefCell<Option<Dr
         }
     });
     expander.add_controller(target);
+}
+
+/// 行の上（`Some(true)`）か下（`Some(false)`）に、落とす所の線を引く（None なら消す）。
+fn set_drop_line(row: &gtk::Widget, above: Option<bool>) {
+    row.remove_css_class("drop-above");
+    row.remove_css_class("drop-below");
+    match above {
+        Some(true) => row.add_css_class("drop-above"),
+        Some(false) => row.add_css_class("drop-below"),
+        None => {}
+    }
 }
 
 fn bind_row(item: &gtk::ListItem) {
@@ -1412,8 +1533,10 @@ fn bind_row(item: &gtk::ListItem) {
     } else {
         badge.add_css_class("dim-label");
     }
-    for css in ["heading", "dim-label"] {
-        if group {
+    // 見出しは太く薄く、変更のない worktree をまとめる行は薄く（macOS 版と同じ）。
+    let dim = group || data.key == CLEAN_WORKTREES_KEY;
+    for (css, on) in [("heading", group), ("dim-label", dim)] {
+        if on {
             title.add_css_class(css);
         } else {
             title.remove_css_class(css);
@@ -1587,22 +1710,32 @@ impl Inner {
         self.rebuild(false);
     }
 
-    /// お気に入りのブランチ `dragged`（`local:<名前>`）を、お気に入りの行 `target` の上端（`y` が高さの 1/3 より上）なら
-    /// その上へ、下端なら下へ動かす（macOS 版の、お気に入りの間に落とす並べ替え）。並べ替えたら true。
-    fn reorder_favorite(&self, dragged: &str, target: &Data, y: f64, height: f64) -> bool {
-        let Some(name) = dragged.strip_prefix("local:") else {
-            return false;
-        };
+    /// お気に入りのブランチ `dragged`（`local:<名前>`）を、お気に入りの行 `target` の上端（`y` が高さの 1/3 より
+    /// 上）・下端に落とすところか。上なら `Some(true)`、下なら `Some(false)`（macOS 版の、お気に入りの間に落とす
+    /// 並べ替え。真ん中は行の上に落とす merge・rebase）。
+    fn favorite_edge(&self, dragged: &str, target: &Data, y: f64, height: f64) -> Option<bool> {
+        let name = dragged.strip_prefix("local:")?;
         let Item::Ref(e) = &target.item else {
-            return false;
+            return None;
         };
         if !target.pinned
             || e.kind != RefKind::Local
-            || (y > height / 3.0 && y < height * 2.0 / 3.0)
+            || !self.pinned.borrow().iter().any(|p| p == name)
         {
-            return false;
+            return None;
         }
-        let Some(order) = reordered(&self.pinned.borrow(), name, &e.name, y <= height / 3.0) else {
+        favorite_edge(y, height)
+    }
+
+    /// お気に入りのブランチを、お気に入りの行の上端・下端に落としたら、その上・下へ動かす。並べ替えたら true。
+    fn reorder_favorite(&self, dragged: &str, target: &Data, y: f64, height: f64) -> bool {
+        let Some(above) = self.favorite_edge(dragged, target, y, height) else {
+            return false;
+        };
+        let (Some(name), Item::Ref(e)) = (dragged.strip_prefix("local:"), &target.item) else {
+            return false;
+        };
+        let Some(order) = reordered(&self.pinned.borrow(), name, &e.name, above) else {
             return false;
         };
         if order != *self.pinned.borrow()
@@ -2221,7 +2354,7 @@ impl Inner {
                 store.append(&Node::new(
                     Data {
                         title: tr!("No changes"),
-                        key: "worktrees/clean".into(),
+                        key: CLEAN_WORKTREES_KEY.into(),
                         item: Item::Folder,
                         icon: icon::Kind::CheckCircle,
                         badge: clean.len().to_string(),
@@ -2446,15 +2579,33 @@ impl Inner {
     }
 }
 
-/// 見出しの下の項目の数（子のない行を数える。リモートはブランチの数。macOS 版の `leafCount`）。
+/// 見出しの下の項目の数（子のない行を数える。リモートはブランチの数。macOS 版の `leafCount`）。ほかのブランチを
+/// 積んだブランチは、それ自身も数える。
 fn leaf_count(store: &gio::ListStore) -> usize {
     (0..store.n_items())
         .filter_map(|i| store.item(i).and_downcast::<Node>())
         .map(|node| match node.children() {
-            Some(children) if children.n_items() > 0 => leaf_count(&children),
+            Some(children) if children.n_items() > 0 => {
+                let own = matches!(node.imp().data.borrow().item, Item::Ref(_));
+                usize::from(own) + leaf_count(&children)
+            }
             _ => 1,
         })
         .sum()
+}
+
+/// 今のブランチ（書き込む先のもの）の数の前に ✎ を添える。お気に入りに出した積んだブランチの ↳ はその前に残す
+/// （macOS 版は ✎ を足してから ↳ を足すので「↳ ✎ ↑1」。ここでは ↳ が先に付いている）。
+fn with_pencil(badge: &str) -> String {
+    let (stacked, rest) = match badge.strip_prefix('↳') {
+        Some(rest) => ("↳ ", rest.trim_start()),
+        None => ("", badge),
+    };
+    if rest.is_empty() {
+        format!("{stacked}✎")
+    } else {
+        format!("{stacked}✎ {rest}")
+    }
 }
 
 /// ブランチの行の worktree の印: ほかの worktree が checkout しているもの（git はここでは checkout させない）は、
@@ -2491,11 +2642,7 @@ fn mark_worktree_branches(store: &gio::ListStore, view: &crate::worktrees::View)
             data.mark_click = true;
             data.green = !w.main;
         } else if data.head {
-            data.badge = if data.badge.is_empty() {
-                "✎".to_owned()
-            } else {
-                format!("✎ {}", data.badge)
-            };
+            data.badge = with_pencil(&data.badge);
             // 押すと、書き込む先のブランチであることの吹き出し（macOS 版と同じ）。
             data.editing = true;
             data.mark_click = true;
@@ -2546,8 +2693,9 @@ fn worktree_data(w: &crate::worktrees::Info, view: &crate::worktrees::View) -> D
         title: w.name.clone(),
         key: format!("worktree/{}", w.key),
         item: Item::Worktree(w.clone()),
+        // 書き込む先は、Working Copy の行の鉛筆と分けて丸で囲む（macOS 版の pencil.circle）。
         icon: if editing {
-            icon::Kind::WorkingCopy
+            icon::Kind::PencilCircle
         } else if w.main {
             icon::Kind::House
         } else {
@@ -3074,6 +3222,17 @@ fn filtered_groups(
 }
 
 /// お気に入りの順 `order` で、`name` を `target` の上（`above`）か下へ動かした順。どちらかがなければ None。
+/// 行の高さ `height` の中の `y` が、上の 1/3 なら `Some(true)`、下の 1/3 なら `Some(false)`、真ん中なら None。
+fn favorite_edge(y: f64, height: f64) -> Option<bool> {
+    if y <= height / 3.0 {
+        Some(true)
+    } else if y >= height * 2.0 / 3.0 {
+        Some(false)
+    } else {
+        None
+    }
+}
+
 fn reordered(order: &[String], name: &str, target: &str, above: bool) -> Option<Vec<String>> {
     let from = order.iter().position(|n| n == name)?;
     let at = order.iter().position(|n| n == target)?;
@@ -3221,7 +3380,65 @@ fn pull_request_rows(list: &[PullRequest], refs: Option<&Refs>) -> gio::ListStor
 
 #[cfg(test)]
 mod tests {
-    use super::reordered;
+    use super::{favorite_edge, reordered, with_pencil};
+
+    #[test]
+    fn puts_the_pencil_after_the_stacked_mark() {
+        assert_eq!(with_pencil(""), "✎");
+        assert_eq!(with_pencil("↑1"), "✎ ↑1");
+        assert_eq!(with_pencil("↳"), "↳ ✎");
+        assert_eq!(with_pencil("↳ ↑1"), "↳ ✎ ↑1");
+    }
+
+    #[test]
+    fn counts_branches_with_branches_stacked_on_them() {
+        use super::{Data, Item, Row, leaf_count, store};
+        use amonhen_model::{RefEntry, RefKind};
+        let branch = |name: &str| Data {
+            title: name.into(),
+            item: Item::Ref(RefEntry {
+                kind: RefKind::Local,
+                name: name.into(),
+                target: None,
+                detail: None,
+                ahead: 0,
+                behind: 0,
+                gone: false,
+            }),
+            ..Data::default()
+        };
+        let folder = |name: &str| Data {
+            title: name.into(),
+            item: Item::Folder,
+            ..Data::default()
+        };
+        // main の上に topic を積み、feature/ フォルダに 2 つ: ブランチは 4 つ（フォルダは数えない）。
+        let rows = vec![
+            Row {
+                data: branch("main"),
+                children: vec![Row::leaf(branch("topic"))],
+                folder: false,
+            },
+            Row {
+                data: folder("feature"),
+                children: vec![
+                    Row::leaf(branch("feature/a")),
+                    Row::leaf(branch("feature/b")),
+                ],
+                folder: true,
+            },
+        ];
+        assert_eq!(leaf_count(&store(rows)), 4);
+    }
+
+    #[test]
+    fn favorite_edges() {
+        assert_eq!(favorite_edge(0.0, 30.0), Some(true));
+        assert_eq!(favorite_edge(10.0, 30.0), Some(true));
+        assert_eq!(favorite_edge(15.0, 30.0), None);
+        assert_eq!(favorite_edge(20.0, 30.0), Some(false));
+        assert_eq!(favorite_edge(30.0, 30.0), Some(false));
+    }
 
     #[test]
     fn reorders_favorites() {

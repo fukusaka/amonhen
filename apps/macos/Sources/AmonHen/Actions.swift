@@ -208,10 +208,21 @@ final class Actions {
     }
 
     /// `updateRefs` は、積み重ねたブランチを一緒に動かすかのこの操作だけの指定（nil なら git の設定のとおり）。
-    func rewrite(_ label: String, _ edit: [String: Any], updateRefs: Bool? = nil) {
+    /// `failed` を渡すと、書き換えられなかったときに（失敗を知らせた後で）呼ぶ。`completion` は書き換えたとき
+    /// （途中で止まったときも）。
+    func rewrite(_ label: String, _ edit: [String: Any], updateRefs: Bool? = nil,
+                 completion: ((CommandResult) -> Void)? = nil, failed: (() -> Void)? = nil) {
         var command: [String: Any] = ["op": "rewrite", "label": label, "edit": edit]
         if let updateRefs { command["updateRefs"] = updateRefs }
-        perform(command)
+        var recover: (@MainActor (OperationFailure) async -> Bool)?
+        if let failed {
+            // 失敗はいつもどおり知らせる（false）。
+            recover = { _ in
+                failed()
+                return false
+            }
+        }
+        perform(command, completion: completion, recover: recover)
     }
 
     /// 編集できるコミット（新しい順）。
@@ -229,9 +240,15 @@ final class Actions {
 
     // MARK: - よく使う操作
 
+    /// 題に出す起点: コミットの完全な ID（40・64 桁）は短い ID に（メニューの「New Branch from …」と同じ）。
+    nonisolated static func shownStart(_ rev: String) -> String {
+        let full = (rev.count == 40 || rev.count == 64) && rev.allSatisfy(\.isHexDigit)
+        return full ? String(rev.prefix(Titles.shortIDLength)) : rev
+    }
+
     func newBranch(at start: String) {
         Task { @MainActor in
-            guard let name = await ask(L("New Branch from %@", start), message: L("Name of the branch. It is checked out."),
+            guard let name = await ask(L("New Branch from %@", Self.shownStart(start)), message: L("Name of the branch. It is checked out."),
                                        ok: L("Create")) else { return }
             perform(["op": "createBranch", "name": name, "start": start, "checkout": true])
         }
@@ -239,7 +256,7 @@ final class Actions {
 
     func renameBranch(_ name: String) {
         Task { @MainActor in
-            guard let to = await ask(L("Rename %@", name), message: L("New name of the branch."), initial: name, ok: "Rename"),
+            guard let to = await ask(L("Rename %@", name), message: L("New name of the branch."), initial: name, ok: L("Rename")),
                   to != name else { return }
             perform(["op": "renameBranch", "from": name, "to": to])
         }
@@ -247,7 +264,7 @@ final class Actions {
 
     func newTag(at target: String) {
         Task { @MainActor in
-            guard let name = await ask(L("New Tag at %@", target), message: L("Name of the tag."), ok: L("Create")) else { return }
+            guard let name = await ask(L("New Tag at %@", Self.shownStart(target)), message: L("Name of the tag."), ok: L("Create")) else { return }
             perform(["op": "createTag", "name": name, "target": target])
         }
     }
@@ -264,9 +281,7 @@ final class Actions {
         Task { @MainActor in
             let short = String(target.prefix(8))
             let name = currentBranch ?? "HEAD"
-            let alert = NSAlert()
-            alert.messageText = L("Reset %@ to %@?", name, short)
-            alert.informativeText = L("Commits taken off stay in Reflog.") + " " + Self.canUndo
+            let alert = makeAlert(L("Reset %@ to %@?", name, short), L("Commits taken off stay in Reflog.") + " " + Self.canUndo)
             alert.addButton(withTitle: "Reset")
             alert.addButton(withTitle: L("Cancel"))
             let modes: [(String, String)] = [
@@ -351,12 +366,28 @@ final class Actions {
     func pushWithoutAsking() {
         let repository = self.repository
         Task {
-            let status = try? await Task.detached { try repository.loadStatus() }.value
-            guard let branch = status?.branch else { return NSSound.beep() }
-            guard let upstream = status?.upstream else { return publishWithConfirmation(branch: branch) }
-            let behind = await Task.detached {
-                (try? repository.info(["op": "between", "base": "HEAD", "tip": upstream, "limit": 1], as: CommitRange.self))?.count ?? 0
+            // 読めなければ知らせて止める（遅れているかを 0 件とみなして聞かずに送ると、分かれたブランチの push が
+            // 失敗の帯で終わる。Push のシートと同じ）。
+            let read = await Task.detached { () -> Result<(WorkingStatus, Int?), any Error> in
+                do {
+                    let status = try repository.loadStatus()
+                    guard let upstream = status.upstream else { return .success((status, nil)) }
+                    let behind = try repository.info(["op": "between", "base": "HEAD", "tip": upstream, "limit": 1],
+                                                     as: CommitRange.self).count
+                    return .success((status, behind))
+                } catch {
+                    return .failure(error)
+                }
             }.value
+            let status: WorkingStatus, behind: Int?
+            switch read {
+            case let .success(value): (status, behind) = value
+            case let .failure(error):
+                await inform(L("Can’t read the status"), "\(error)")
+                return
+            }
+            guard let branch = status.branch else { return NSSound.beep() }
+            guard status.upstream != nil, let behind else { return publishWithConfirmation(branch: branch) }
             if behind > 0 { return pushWithConfirmation() }
             push(branch: branch, force: false, expect: nil)
         }

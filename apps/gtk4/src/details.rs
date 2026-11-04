@@ -36,6 +36,8 @@ impl Person {
         text.set_wrap_mode(gtk::pango::WrapMode::WordChar);
         text.set_selectable(true);
         text.add_css_class("caption");
+        // 名前のリンクは文字の色のまま（macOS 版は labelColor）。
+        text.add_css_class(VALUE_LINKS);
         let recorded = gtk::Label::new(None);
         recorded.set_xalign(0.0);
         recorded.set_wrap(true);
@@ -60,14 +62,22 @@ impl Person {
         }
     }
 
-    fn show(&self, name: &str, email: &str, time: &str, recorded: Option<String>) {
+    /// `link` なら、名前を押すと History をその人のコミットで絞り込む（[`Details::connect_person`]。History の
+    /// 詳細だけ。ほかではただの文字）。
+    fn show(&self, name: &str, email: &str, time: &str, recorded: Option<String>, link: bool) {
         let e = |s: &str| glib::markup_escape_text(s).to_string();
-        // 名前を押すと、History をその人のコミットで絞り込む（[`Details::connect_person`]）。
+        let shown = if link {
+            format!(
+                "<a href=\"person:{}\" title=\"{}\"><b>{}</b></a>",
+                e(&glib::Uri::escape_string(name, None, false)),
+                e(&tr!("Filter to this person’s commits")),
+                e(name)
+            )
+        } else {
+            format!("<b>{}</b>", e(name))
+        };
         let markup = format!(
-            "<a href=\"person:{}\" title=\"{}\"><b>{}</b></a>  <span size=\"small\" alpha=\"55%\">{}</span>\n<span alpha=\"70%\">{}\n{}</span>",
-            e(&glib::Uri::escape_string(name, None, false)),
-            e(&tr!("Filter to this person’s commits")),
-            e(name),
+            "{shown}  <span size=\"small\" alpha=\"55%\">{}</span>\n<span alpha=\"70%\">{}\n{}</span>",
             e(&self.role),
             e(email),
             e(time)
@@ -96,6 +106,8 @@ pub struct Details {
     pub root: gtk::Box,
     /// 件名・本文・notes を探す帯（macOS 版のメッセージの欄の検索の帯）。
     find: Rc<crate::messagefind::MessageFind>,
+    /// スクロールの外の上の帯（作者・見せ方・右上のボタン）。
+    head: gtk::Box,
     column: gtk::Box,
     /// 上の帯: 作者とコミッターを左右に。
     people: gtk::Box,
@@ -236,6 +248,9 @@ enum Style {
 /// 見せ方を覚える鍵（macOS 版と同じ名前）。
 const STYLE_KEY: &str = "commitHeaderStyle";
 
+/// 詳細の欄を広げるボタン（⤢）の部品の名前。
+pub const EXPAND_BUTTON: &str = "expand-details";
+
 impl Style {
     const ALL: [Style; 3] = [Style::Brief, Style::Standard, Style::Full];
 
@@ -350,6 +365,27 @@ fn commit_link(hex: &str, length: usize) -> String {
     )
 }
 
+/// リンクを文字の色のままにする値の欄（Branches・Pushed・人の名前。macOS 版はリンクの色を付けない）。
+const VALUE_LINKS: &str = "amonhen-value-links";
+
+fn install_css() {
+    thread_local! {
+        static DONE: StdCell<bool> = const { StdCell::new(false) };
+    }
+    if DONE.with(|d| d.replace(true)) {
+        return;
+    }
+    let provider = gtk::CssProvider::new();
+    provider.load_from_string(&format!("label.{VALUE_LINKS} link {{ color: inherit; }}"));
+    if let Some(display) = gtk::gdk::Display::default() {
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
+}
+
 /// ref の名前を並べたリンク（押すと、その ref の履歴に絞り込む）。
 fn ref_links(names: &[String]) -> String {
     names
@@ -406,6 +442,7 @@ impl Details {
     }
 
     pub fn new() -> Self {
+        install_css();
         let label = |css: &[&str]| {
             let l = gtk::Label::new(None);
             l.set_xalign(0.0);
@@ -457,12 +494,12 @@ impl Details {
         selection.append(&selection_note);
         selection.append(&pairs);
         selection.append(&selection_lines);
-        // 上の帯: 作者（複数選んだときは選び方の見出し）と、右上のボタン。
+        // 上の帯: 作者と、右上のボタン。スクロールの外に置き、長いメッセージでも見えたままにする（macOS 版の
+        // headerContainer。スクロールするのは見出しの文字だけ）。
         let tools = gtk::Box::new(gtk::Orientation::Horizontal, 2);
         tools.set_valign(gtk::Align::Start);
         let lead = gtk::Box::new(gtk::Orientation::Vertical, 8);
         lead.set_hexpand(true);
-        lead.append(&selection);
         lead.append(&people);
         // 簡潔の 1 行（作者の帯と表の代わり）。
         let brief_avatar = crate::avatars::Avatar::new(16);
@@ -473,7 +510,6 @@ impl Details {
         brief.append(&brief_avatar.root);
         brief.append(&brief_text);
         brief.set_visible(false);
-        lead.append(&brief);
         // 右上の見せ方の切り替え（簡潔・標準・詳細）。Push の確認のように埋め込むときは出さず、標準にする。
         let styles = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         styles.add_css_class("linked");
@@ -490,15 +526,19 @@ impl Details {
         }
         styles.set_visible(false);
         let head = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        head.set_margin_top(10);
+        head.set_margin_start(12);
+        head.set_margin_end(12);
         head.append(&lead);
         head.append(&tools);
         head.append(&styles);
         let column = gtk::Box::new(gtk::Orientation::Vertical, 8);
-        column.set_margin_top(10);
+        column.set_margin_top(8);
         column.set_margin_bottom(10);
         column.set_margin_start(12);
         column.set_margin_end(12);
-        column.append(&head);
+        column.append(&selection);
+        column.append(&brief);
         column.append(&table);
         column.append(&subject);
         column.append(&body);
@@ -514,6 +554,8 @@ impl Details {
         let searched = {
             let fixed = [selection_title.clone(), selection_note.clone()];
             let (lines, table) = (selection_lines.clone(), table.clone());
+            // 簡潔の 1 行（作者・日時・ref・親。macOS 版では見出しの文字の欄にある）。
+            let brief_line = brief_text.clone();
             let message = [
                 subject.clone(),
                 body.clone(),
@@ -523,25 +565,33 @@ impl Details {
             move || {
                 let mut labels: Vec<gtk::Label> = fixed.to_vec();
                 labels.push(lines.clone());
-                let mut child = table.first_child();
-                while let Some(c) = child {
-                    child = c.next_sibling();
-                    if let Ok(label) = c.downcast::<gtk::Label>() {
-                        labels.push(label);
+                labels.push(brief_line.clone());
+                // 表の欄。署名・タグの印のように部品でできた欄も、その中の文字を（macOS 版では文字の行）。
+                fn collect(widget: &gtk::Widget, labels: &mut Vec<gtk::Label>) {
+                    let mut child = widget.first_child();
+                    while let Some(c) = child {
+                        child = c.next_sibling();
+                        match c.downcast::<gtk::Label>() {
+                            Ok(label) => labels.push(label),
+                            Err(other) => collect(&other, labels),
+                        }
                     }
                 }
+                collect(table.upcast_ref(), &mut labels);
                 labels.extend(message.iter().cloned());
                 labels
             }
         };
         let find = crate::messagefind::MessageFind::new(&root, &scrolled, searched);
         root.append(&find.bar);
+        root.append(&head);
         root.append(&scrolled);
         let reword = Rc::new(Reword::new());
         root.append(&reword.root);
         let details = Self {
             root,
             find,
+            head,
             column,
             people,
             author,
@@ -631,6 +681,16 @@ impl Details {
                     return;
                 }
                 style.save();
+                // 広げたままだと高さを合わせられないので、先に変更ファイルと差分を戻す（macOS 版と同じ）。
+                let mut child = d.tools.first_child();
+                while let Some(c) = child {
+                    child = c.next_sibling();
+                    if c.widget_name() == EXPAND_BUTTON
+                        && let Some(b) = c.downcast_ref::<gtk::ToggleButton>()
+                    {
+                        b.set_active(false);
+                    }
+                }
                 d.set_style(style);
                 // 右の列の境目を、中身の高さに合わせ直す。
                 if let Some(paned) = d.root.parent().and_downcast::<gtk::Paned>() {
@@ -706,28 +766,30 @@ impl Details {
         self.root
             .insert_action_group("details", Some(&self.actions));
         // 文字の欄の外を右クリックしても、同じメニュー。
-        let click = gtk::GestureClick::new();
-        click.set_button(gtk::gdk::BUTTON_SECONDARY);
-        let (column, menu, info) = (self.column.downgrade(), self.menu.clone(), info);
-        click.connect_pressed(move |_, _, x, y| {
-            let Some(column) = column.upgrade() else {
-                return;
-            };
-            if info.borrow().is_none() {
-                return;
-            }
-            let popover = gtk::PopoverMenu::from_model(Some(&menu));
-            popover.set_has_arrow(false);
-            popover.set_halign(gtk::Align::Start);
-            popover.set_parent(&column);
-            popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
-            popover.connect_closed(|p| {
-                let p = p.clone();
-                glib::idle_add_local_once(move || p.unparent());
+        for area in [&self.head, &self.column] {
+            let click = gtk::GestureClick::new();
+            click.set_button(gtk::gdk::BUTTON_SECONDARY);
+            let (column, menu, info) = (area.downgrade(), self.menu.clone(), info.clone());
+            click.connect_pressed(move |_, _, x, y| {
+                let Some(column) = column.upgrade() else {
+                    return;
+                };
+                if info.borrow().is_none() {
+                    return;
+                }
+                let popover = gtk::PopoverMenu::from_model(Some(&menu));
+                popover.set_has_arrow(false);
+                popover.set_halign(gtk::Align::Start);
+                popover.set_parent(&column);
+                popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+                popover.connect_closed(|p| {
+                    let p = p.clone();
+                    glib::idle_add_local_once(move || p.unparent());
+                });
+                popover.popup();
             });
-            popover.popup();
-        });
-        self.column.add_controller(click);
+            area.add_controller(click);
+        }
         for label in [
             &self.subject,
             &self.body,
@@ -737,8 +799,42 @@ impl Details {
             &self.author.text,
             &self.committer.text,
         ] {
-            label.set_extra_menu(Some(&self.menu));
+            self.copy_first_menu(label);
         }
+    }
+
+    /// 文字の欄の右クリック: コピーの項目と Edit Message… を先に、その後に文字のコピー（macOS 版の見出しは
+    /// 全体が 1 つの文字の欄なので、表の値も本文も同じ順）。GTK の欄のメニューは足した項目を後ろに置くので、自分で出す。
+    fn copy_first_menu(&self, label: &gtk::Label) {
+        // キー（Menu・Shift+F10）で開く欄のメニューにも足しておく。
+        label.set_extra_menu(Some(&self.menu));
+        let text = gio::Menu::new();
+        text.append(Some(&tr!("Copy")), Some("clipboard.copy"));
+        let label_menu = gio::Menu::new();
+        label_menu.append_section(None, &self.menu);
+        label_menu.append_section(None, &text);
+        let click = gtk::GestureClick::new();
+        click.set_button(gtk::gdk::BUTTON_SECONDARY);
+        click.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let (weak, info) = (label.downgrade(), self.menu_info.clone());
+        click.connect_pressed(move |gesture, _, x, y| {
+            let Some(label) = weak.upgrade() else { return };
+            if info.borrow().is_none() {
+                return;
+            }
+            gesture.set_state(gtk::EventSequenceState::Claimed);
+            let popover = gtk::PopoverMenu::from_model(Some(&label_menu));
+            popover.set_has_arrow(false);
+            popover.set_halign(gtk::Align::Start);
+            popover.set_parent(&label);
+            popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+            popover.connect_closed(|p| {
+                let p = p.clone();
+                glib::idle_add_local_once(move || p.unparent());
+            });
+            popover.popup();
+        });
+        label.add_controller(click);
     }
 
     /// 右クリックのメニューの項目を、出しているコミットに合わせる。Edit Message… は、HEAD から辿れる merge でない
@@ -908,12 +1004,26 @@ impl Details {
         self.find.refresh();
     }
 
-    /// コミットではないもの（Push のシートの「送る変更すべて」など）: 件名と本文だけを出す。
-    pub fn show_text(&self, subject: &str, body: &str) {
+    /// 次のコミットを読み始める: 出しているものは届くまで残し、届いた分だけを新しいコミットのものにする
+    /// （`commit_extras` が詳細より先に届いても、前のコミットの詳細には足さない）。
+    pub fn next(&self) {
+        self.end_reword();
+        self.info.replace(None);
+        self.extras.replace(None);
+    }
+
+    /// Push のシートの「送る変更すべて」の見出し: `title`、差分の様子 `note`、送るコミットの 1 行ずつ（`lines`）
+    /// （macOS 版の `renderRangeHeader`）。
+    pub fn show_range(&self, title: &str, note: &str, lines: &str) {
         self.clear();
-        self.subject.set_text(subject);
-        self.body.set_text(body);
-        self.body.set_visible(!body.is_empty());
+        self.set_selection_mode(true);
+        self.selection_title.set_text(title);
+        self.selection_note.set_text(note);
+        while let Some(child) = self.pairs.first_child() {
+            self.pairs.remove(&child);
+        }
+        self.pairs.set_visible(false);
+        self.selection_lines.set_text(lines);
         self.find.refresh();
     }
 
@@ -934,7 +1044,8 @@ impl Details {
     }
 
     /// 複数のコミットを選んだときの見出し（macOS 版と同じ）: 数、差分の取り方の説明、2 つなら取り方の
-    /// 切り替え、各コミットの 1 行（短い ID・件名・作者）。`kind` は `range`・`pair`・`each`（読む前は None）。
+    /// 切り替え、各コミットの 1 行（短い ID・件名・作者）。`kind` は `range`・`pair`・`each`（読む前は None、
+    /// 読めなければ `failed`）。
     pub fn show_selection(
         &self,
         count: usize,
@@ -948,6 +1059,7 @@ impl Details {
         self.selection_title
             .set_text(&tr!("{count} commits selected", count = count));
         let note = match (kind, pair) {
+            (Some("failed"), _) => tr!("Couldn’t load the diff"),
             (Some("range"), _) => tr!(
                 "They are consecutive, so this is the diff from the parent of the oldest to the newest (the same as squashing them into one)."
             ),
@@ -971,17 +1083,38 @@ impl Details {
         }
         self.pairs.set_visible(kind == Some("pair"));
         if kind == Some("pair") {
-            for (mode, title) in PAIRS {
-                if mode == pair {
-                    continue;
+            // 取り方の切り替えは、説明の下の文中のリンク（macOS 版と同じ。押すと読み直す）。
+            let modes: Vec<(usize, PairMode, &str)> = PAIRS
+                .into_iter()
+                .enumerate()
+                .filter(|(_, (mode, _))| *mode != pair)
+                .map(|(i, (mode, title))| (i, mode, title))
+                .collect();
+            let markup: Vec<String> = modes
+                .iter()
+                .map(|(i, _, title)| {
+                    format!(
+                        "<a href=\"pair:{i}\">{}</a>",
+                        glib::markup_escape_text(&amonhen_model::i18n::translate(title))
+                    )
+                })
+                .collect();
+            let links = gtk::Label::new(None);
+            links.set_markup(&markup.join("　"));
+            links.set_xalign(0.0);
+            links.add_css_class("caption");
+            let f = on_pair.clone();
+            links.connect_activate_link(move |_, uri| {
+                if let Some(&(_, mode, _)) = uri
+                    .strip_prefix("pair:")
+                    .and_then(|i| i.parse::<usize>().ok())
+                    .and_then(|i| modes.iter().find(|(n, _, _)| *n == i))
+                {
+                    f(mode);
                 }
-                let button = gtk::Button::with_label(&amonhen_model::i18n::translate(title));
-                button.add_css_class("flat");
-                button.add_css_class("caption");
-                let f = on_pair.clone();
-                button.connect_clicked(move |_| f(mode));
-                self.pairs.append(&button);
-            }
+                glib::Propagation::Stop
+            });
+            self.pairs.append(&links);
         }
         let text: Vec<String> = lines
             .iter()
@@ -993,6 +1126,8 @@ impl Details {
 
     /// すぐ読める分を出す（時間のかかる分は、届いたら `show_extras`）。
     pub fn show(&self, info: &Value) {
+        // 複数のコミットの見出しを出していたら、1 つのコミットの見出しに戻す。
+        self.set_selection_mode(false);
         self.info.replace(Some(info.clone()));
         let message = info["message"].as_str().unwrap_or_default();
         let subject = message.trim().split('\n').next().unwrap_or_default();
@@ -1023,11 +1158,14 @@ impl Details {
                 tz => format!("{d} ({tz})"),
             }
         };
+        // 名前を押して絞り込めるのは、History の詳細だけ（ほかではリンクにしない）。
+        let link = self.on_person.borrow().is_some();
         self.author.show(
             str_of(info, "author"),
             str_of(info, "authorEmail"),
             &when("authorTime", "authorTz"),
             recorded("recordedAuthor"),
+            link,
         );
         // 作者とコミッターが同じ人（名前とメールが同じ、記録も同じ）なら、作者だけを出す。
         let same = info["committer"] == info["author"]
@@ -1042,6 +1180,7 @@ impl Details {
                 str_of(info, "committerEmail"),
                 &when("committerTime", "committerTz"),
                 recorded("recordedCommitter"),
+                link,
             );
         }
         self.people.set_homogeneous(!same);
@@ -1119,11 +1258,19 @@ impl Details {
         };
         let author = str_of(info, "author");
         self.brief_avatar.show(author, str_of(info, "authorEmail"));
+        // 名前を押して絞り込めるのは、History の詳細だけ（ほかではリンクにしない）。
+        let shown = if self.on_person.borrow().is_some() {
+            format!(
+                "<a href=\"person:{}\" title=\"{}\"><b>{}</b></a>",
+                esc(&glib::Uri::escape_string(author, None, false)),
+                esc(&tr!("Show only commits by {name}", name = author)),
+                esc(author)
+            )
+        } else {
+            format!("<b>{}</b>", esc(author))
+        };
         let mut markup = format!(
-            "<a href=\"person:{}\" title=\"{}\"><b>{}</b></a>  <span alpha=\"60%\">{}</span>",
-            esc(&glib::Uri::escape_string(author, None, false)),
-            esc(&tr!("Show only commits by {name}", name = author)),
-            esc(author),
+            "{shown}  <span alpha=\"60%\">{}</span>",
             esc(&date(info["authorTime"].as_i64().unwrap_or_default()))
         );
         let refs = strings(&info["refs"]);
@@ -1202,8 +1349,11 @@ impl Details {
                 Cell::Text(list.join(", "))
             }
         };
-        let mut rows: Vec<(String, Cell)> =
-            vec![("Commit".into(), Cell::Text(str_of(info, "oid").into()))];
+        // コミット ID は等幅で薄く（macOS 版の `mono`）。
+        let mut rows: Vec<(String, Cell)> = vec![(
+            "Commit".into(),
+            Cell::Styled(str_of(info, "oid").into(), "dim-label"),
+        )];
         let parents = strings(&info["parents"]);
         if !parents.is_empty() {
             let title = if parents.len() > 1 {
@@ -1231,7 +1381,7 @@ impl Details {
                 rows.push((title.into(), ids(&children)));
             }
             if let Some(rev) = extras["headRev"].as_str().filter(|r| !r.is_empty()) {
-                rows.push(("Rev".into(), Cell::Text(rev.into())));
+                rows.push(("Rev".into(), Cell::Styled(rev.into(), "dim-label")));
             }
         }
         // 署名（押すと吹き出しで詳細）。
@@ -1253,7 +1403,14 @@ impl Details {
         }
         let refs = strings(&info["refs"]);
         if !refs.is_empty() {
-            rows.push(("Refs".into(), refs_cell(&refs)));
+            // ref は太字の青（macOS 版の refAttrs）。Branches・Pushed は文字の色（下の VALUE_LINKS）。
+            rows.push((
+                "Refs".into(),
+                match refs_cell(&refs) {
+                    Cell::Markup(m) => Cell::Markup(format!("<b>{m}</b>")),
+                    other => other,
+                },
+            ));
         }
         // このコミットを指すタグ: 名前・タガーと日時・件名と署名の印（軽量タグは名前だけ）。時間のかかる分で届く。
         if let Some(extras) = extras {
@@ -1389,8 +1546,15 @@ impl Details {
                 }
                 Cell::Markup(m) => self.cell_label(&m, true),
             };
-            if title == "Commit" || title.starts_with("Parent") || title.starts_with("Child") {
+            if title == "Commit"
+                || title == "Rev"
+                || title.starts_with("Parent")
+                || title.starts_with("Child")
+            {
                 cell.add_css_class("monospace");
+            }
+            if title == "Branches" || title == "Pushed" {
+                cell.add_css_class(VALUE_LINKS);
             }
             self.table.attach(&cell, 1, i as i32, 1, 1);
         }
@@ -1412,7 +1576,7 @@ impl Details {
         cell.set_selectable(true);
         cell.set_hexpand(true);
         cell.add_css_class("caption");
-        cell.set_extra_menu(Some(&self.menu));
+        self.copy_first_menu(&cell);
         cell
     }
 
@@ -1436,11 +1600,26 @@ impl Details {
         )
     }
 
-    /// 出しているメッセージ（複数のコミットを選んでいれば、各コミットの 1 行の一覧）。
+    /// 出しているメッセージ（複数のコミットを選んでいれば、見出しの文すべて: 数、取り方の説明、取り方の
+    /// 切り替え、各コミットの 1 行。macOS 版の `header.string` と同じ）。
     pub fn message(&self) -> String {
         match self.info.borrow().as_ref() {
             Some(info) => str_of(info, "message").to_owned(),
-            None if self.selection.is_visible() => self.selection_lines.text().into(),
+            None if self.selection.is_visible() => {
+                let mut text = format!(
+                    "{}\n{}\n",
+                    self.selection_title.text(),
+                    self.selection_note.text()
+                );
+                if self.pairs.is_visible()
+                    && let Some(links) = self.pairs.first_child().and_downcast::<gtk::Label>()
+                {
+                    text.push_str(&format!("{}\n", links.text()));
+                }
+                text.push('\n');
+                text.push_str(&self.selection_lines.text());
+                text
+            }
             None => {
                 let (subject, body) = (self.subject.text(), self.body.text());
                 if body.is_empty() {
@@ -1454,8 +1633,9 @@ impl Details {
 
     /// 幅 `width` で、中身をすべて見せるのに要る高さ。
     pub fn natural_height(&self, width: i32) -> i32 {
+        let (_, head, _, _) = self.head.measure(gtk::Orientation::Vertical, width);
         let (_, natural, _, _) = self.column.measure(gtk::Orientation::Vertical, width);
-        natural
+        head + natural
     }
 }
 
@@ -1700,7 +1880,10 @@ fn linked(text: &str, web: Option<&str>, revs: bool) -> String {
     let e = |s: &str| glib::markup_escape_text(s).to_string();
     let link = |href: &str, label: &str| format!("<a href=\"{}\">{}</a>", e(href), e(label));
     let issues = web.map(|w| {
-        let gitlab = w.to_lowercase().contains("gitlab");
+        // ホストの名前だけで決める（macOS 版の web.host。github.com/me/gitlab-tools は GitHub）。
+        let host = w.split_once("://").map_or(w, |(_, rest)| rest);
+        let host = host.split('/').next().unwrap_or_default();
+        let gitlab = host.to_lowercase().contains("gitlab");
         format!("{w}/{}", if gitlab { "-/issues" } else { "issues" })
     });
     let bytes = text.as_bytes();
@@ -1708,16 +1891,41 @@ fn linked(text: &str, web: Option<&str>, revs: bool) -> String {
     let (mut i, mut plain) = (0, 0);
     while i < text.len() {
         let rest = &text[i..];
-        // URL（空白まで。末尾の句読点と閉じ括弧は含めない）。
-        if rest.starts_with("https://") || rest.starts_with("http://") {
+        // 単語の頭か（www. とメールアドレスは、単語の途中からは取らない）。
+        let word_start = i == 0
+            || !text[..i]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_alphanumeric() || "._%+-/@".contains(c));
+        // URL（空白まで。末尾の句読点と閉じ括弧は含めない）。`www.` で始まるものも（macOS 版の NSDataDetector と
+        // 同じく http:// を付けて開く）。
+        // 4 バイト目が多バイト文字の途中でも落ちないよう、バイト列で比べる。
+        let www =
+            word_start && rest.len() > 4 && rest.as_bytes()[..4].eq_ignore_ascii_case(b"www.");
+        if rest.starts_with("https://") || rest.starts_with("http://") || www {
             let mut end = rest
                 .find(|c: char| c.is_whitespace() || c == '<' || c == '>' || c == '"')
                 .unwrap_or(rest.len());
             while end > 0 && rest[..end].ends_with(['.', ',', ';', ':', '!', '?', ')', '\'']) {
                 end -= 1;
             }
+            if end > 4 || !www {
+                let href = if www {
+                    format!("http://{}", &rest[..end])
+                } else {
+                    rest[..end].to_owned()
+                };
+                out.push_str(&e(&text[plain..i]));
+                out.push_str(&link(&href, &rest[..end]));
+                i += end;
+                plain = i;
+                continue;
+            }
+        }
+        // メールアドレス（mailto: で開く。Signed-off-by などのトレーラーの中も。macOS 版と同じ）。
+        if word_start && let Some(end) = email_at(rest) {
             out.push_str(&e(&text[plain..i]));
-            out.push_str(&link(&rest[..end], &rest[..end]));
+            out.push_str(&link(&format!("mailto:{}", &rest[..end]), &rest[..end]));
             i += end;
             plain = i;
             continue;
@@ -1764,6 +1972,26 @@ fn linked(text: &str, web: Option<&str>, revs: bool) -> String {
     }
     out.push_str(&e(&text[plain..]));
     out
+}
+
+/// `text` の頭にあるメールアドレスの長さ（`名前@ドメイン.tld`。なければ None）。
+fn email_at(text: &str) -> Option<usize> {
+    let local = text
+        .find(|c: char| !(c.is_ascii_alphanumeric() || "._%+-".contains(c)))
+        .unwrap_or(text.len());
+    if local == 0 || !text[local..].starts_with('@') {
+        return None;
+    }
+    let domain = &text[local + 1..];
+    let mut end = domain
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '.' || c == '-'))
+        .unwrap_or(domain.len());
+    while end > 0 && domain[..end].ends_with(['.', '-']) {
+        end -= 1;
+    }
+    let (name, tld) = domain[..end].rsplit_once('.')?;
+    (!name.is_empty() && tld.len() >= 2 && tld.chars().all(|c| c.is_ascii_alphabetic()))
+        .then_some(local + 1 + end)
 }
 
 /// History の検索の問い合わせから、件名と本文で強調する語を取り出す（`author:`・`path:` などは除く。macOS 版の
@@ -1921,6 +2149,25 @@ mod tests {
             linked("#7", Some("https://gitlab.com/a/b"), false),
             "<a href=\"https://gitlab.com/a/b/-/issues/7\">#7</a>"
         );
+        // パスに gitlab があっても、ホストが GitHub なら GitHub の形。
+        assert_eq!(
+            linked("#7", Some("https://github.com/me/gitlab-tools"), false),
+            "<a href=\"https://github.com/me/gitlab-tools/issues/7\">#7</a>"
+        );
+    }
+
+    #[test]
+    fn emails_and_www_hosts_become_links() {
+        assert_eq!(
+            linked("Signed-off-by: A <a.b@c-d.org>", None, false),
+            "Signed-off-by: A &lt;<a href=\"mailto:a.b@c-d.org\">a.b@c-d.org</a>&gt;"
+        );
+        assert_eq!(
+            linked("see www.x.org/p.", None, false),
+            "see <a href=\"http://www.x.org/p\">www.x.org/p</a>."
+        );
+        // ドメインのないもの・単語の途中の www. はリンクにしない。
+        assert_eq!(linked("a@b x.www.y @c.d", None, false), "a@b x.www.y @c.d");
     }
 
     #[test]
@@ -1940,6 +2187,32 @@ mod tests {
             "<a href=\"https://x.org/1a2b3c4d\">https://x.org/1a2b3c4d</a>"
         );
         assert_eq!(linked("1a2b3c4d", None, false), "1a2b3c4d");
+    }
+
+    #[test]
+    fn multibyte_text_does_not_break_links() {
+        // 4 バイト目が多バイト文字の途中に来る文（頭・空白の後・トレーラー）でも落ちない。
+        assert_eq!(linked("日本語の本文", None, true), "日本語の本文");
+        assert_eq!(linked("x ab日本 #1", None, true), "x ab日本 #1");
+        assert_eq!(
+            linked("Co-authored-by: 山田 <yamada@example.org>", None, true),
+            "Co-authored-by: 山田 &lt;<a href=\"mailto:yamada@example.org\">\
+             yamada@example.org</a>&gt;"
+        );
+        assert_eq!(
+            linked("修正 www.例.jp と https://x.org/日本 を参照。", None, false),
+            "修正 <a href=\"http://www.例.jp\">www.例.jp</a> と \
+             <a href=\"https://x.org/日本\">https://x.org/日本</a> を参照。"
+        );
+        assert_eq!(
+            linked(
+                "直した #12。deadbeef も",
+                Some("https://github.com/a/b"),
+                true
+            ),
+            "直した <a href=\"https://github.com/a/b/issues/12\">#12</a>。\
+             <a href=\"rev:deadbeef\">deadbeef</a> も"
+        );
     }
 
     #[test]

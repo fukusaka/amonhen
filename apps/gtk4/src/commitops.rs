@@ -81,9 +81,15 @@ pub fn menu(
                     tr!("Its changes go back to the working tree; commit them in parts, then Continue."),
                     crate::sheets::can_undo()
                 );
-                if a.confirm(&tr!("Split {commit}?", commit = s), &message, "Split")
-                    .await
-                {
+                // worktree の今のブランチを書き換えるので、Cherry-pick・Revert と同じく、どの worktree かを書く
+                // （macOS 版と同じ）。
+                let sheet = crate::sheets::Sheet::new(
+                    crate::sheets::parent(&a).as_ref(),
+                    &tr!("Split {commit}?", commit = s),
+                    &message,
+                );
+                sheet.buttons("Split", false, None);
+                if sheet.run().await == crate::sheets::Response::Ok {
                     a.rewrite(&format!("Split {s}"), json!({ "kind": "split", "oid": h }));
                 }
             });

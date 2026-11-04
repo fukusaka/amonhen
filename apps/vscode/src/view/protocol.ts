@@ -1,10 +1,13 @@
 /** メインビュー（エディタ領域の 1 つの Webview）と拡張ホストの間のメッセージと、ナビのドラッグ＆ドロップの型 */
+import type { BlameHostMessage, BlameWebviewMessage } from '../blame/protocol.ts';
+import type { FileHistoryHostMessage, FileHistoryWebviewMessage } from '../fileHistory/protocol.ts';
 import type { HistoryHostMessage, HistoryWebviewMessage } from '../history/protocol.ts';
 import type { ReflogHostMessage, ReflogWebviewMessage } from '../reflog/protocol.ts';
+import type { SettingsHostMessage, SettingsWebviewMessage } from '../settings/protocol.ts';
 import type { WorkingCopyHostMessage, WorkingCopyWebviewMessage } from '../workingCopy/protocol.ts';
 
 /** メインビューに出す画面 */
-export type ViewName = 'workingCopy' | 'history' | 'reflog';
+export type ViewName = 'workingCopy' | 'history' | 'reflog' | 'fileHistory' | 'blame' | 'settings';
 
 /** ドラッグしたもの。tag とリモートブランチは local でない */
 export interface DragSource {
@@ -23,6 +26,9 @@ export type HostMessage =
   | HistoryHostMessage
   | WorkingCopyHostMessage
   | ReflogHostMessage
+  | FileHistoryHostMessage
+  | BlameHostMessage
+  | SettingsHostMessage
   /** 指定した画面に切り替える */
   | { type: 'show'; view: ViewName };
 
@@ -30,6 +36,9 @@ export type WebviewMessage =
   | HistoryWebviewMessage
   | WorkingCopyWebviewMessage
   | ReflogWebviewMessage
+  | FileHistoryWebviewMessage
+  | BlameWebviewMessage
+  | SettingsWebviewMessage
   /** Webview の準備ができた */
   | { type: 'ready' }
   /** 画面を切り替えた */

@@ -129,11 +129,13 @@ impl Lanes {
         // 約 0.15 秒で近づく指数的な動き。
         let k = (dt * 18.0).min(1.0);
         let mut moving = false;
+        // 列は、広がるときはレーンと同じ速さで（点が列からはみ出ないように）、狭まるときはゆっくり（スクロール中に
+        // レーンの数が行き来しても、文字が左右に揺れないように。macOS 版と同じ）。
         let d = self.target_width - self.current_width;
         if d.abs() < 0.05 {
             self.current_width = self.target_width;
         } else {
-            self.current_width += d * k;
+            self.current_width += d * if d > 0.0 { k } else { (dt * 4.0).min(1.0) };
             moving = true;
         }
         for (c, t) in self.current.iter_mut().zip(&self.target) {
@@ -314,7 +316,7 @@ pub fn draw(
                 .entry((n.color % PALETTE.len() as u16, dimmed))
                 .or_default();
             for y in unfetched_stub(m) {
-                dots.add_circle(&graphene::Point::new(p.x(), p.y() + y), 0.6);
+                dots.add_circle(&graphene::Point::new(p.x(), p.y() + y), 1.1);
             }
         }
     }

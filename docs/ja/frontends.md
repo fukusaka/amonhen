@@ -23,33 +23,33 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | --- | :-: | :-: | :-: | :-: | --- |
 | Workspace の行でメインの表示を切り替える（Working Copy・History・Stashes・Reflog…） | ✓ | ✓ | △ | n/a | VSCode: Working Copy・History・Stashes と（エンジンがあれば）Reflog。Conflicts はない。 |
 | コンフリクトがあるあいだ Conflicts の行と数 | ✓ | ✓ | △ | n/a | VSCode: Working Copy の中の Conflicts のグループ。 |
-| stash があるときだけ Stashes の行と数 | ✓ | ✓ | △ | n/a | VSCode: Stashes の節はいつも出る。 |
+| stash があるときだけ Stashes の行と数 | ✓ | ✓ | ✓ | n/a | VSCode: Stashes の節。 |
 | Range Diff を開いているあいだの Range Diff の行 | ✓ | ✓ | — | n/a |  |
-| Branches・Remotes・Tags を絞り込む欄 | ✓ | ✓ | — | n/a |  |
-| ブランチ・タグをいくつも選ぶ | ✓ | ✓ | — | n/a |  |
-| Pull Requests・Worktrees は中身があるときだけ出す | ✓ | ✓ | — | n/a | VSCode: どちらのグループもない。 |
+| Branches・Remotes・Tags を絞り込む欄 | ✓ | ✓ | △ | n/a | VSCode: サイドバーの上の絞り込みのボタンで言葉を入れ、合うものを平らに並べる。 |
+| ブランチ・タグをいくつも選ぶ | ✓ | ✓ | ✓ | n/a | VSCode: Merge into Current Branch・Delete Branch・お気に入り・Archive が選んだものすべてに効く。 |
+| Pull Requests・Worktrees は中身があるときだけ出す | ✓ | ✓ | △ | n/a | VSCode: Worktrees だけ（GitHub は入れない）。 |
 
 ## サイドバー
 
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| Branches の並び（今のもの・活発・止まった・マージ済み・アーカイブ・積み重ね） | ✓ | ✓ | △ | △ | VSCode: `/` で分けたフォルダーの木だけ。<br>CLI: `amonhen run`（`branchGroups`）から。 |
-| お気に入りのブランチ | ✓ | ✓ | — | — |  |
-| ブランチのアーカイブ | ✓ | ✓ | — | — |  |
-| お気に入りをドラッグで並べ替える | ✓ | ✓ | — | n/a | GTK4: お気に入りの行の上 3 分の 1 か下 3 分の 1 に落とす。真ん中なら Merge・Rebase。 |
+| Branches の並び（今のもの・活発・止まった・マージ済み・アーカイブ・積み重ね） | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。なければ `/` で分けたフォルダーの木。<br>CLI: `amonhen run`（`branchGroups`）から。 |
+| お気に入りのブランチ | ✓ | ✓ | ✓ | — | |
+| ブランチのアーカイブ | ✓ | ✓ | ✓ | — | |
+| お気に入りをドラッグで並べ替える | ✓ | ✓ | △ | n/a | VSCode: メニューの Move Up・Move Down in Favorites（ブランチに落とすと Merge・Rebase）。 |
 | ブランチのメニュー: checkout・名前の変更・削除（未マージは Delete Anyway） | ✓ | ✓ | ✓ | △ | macOS: Set Upstream は Repository メニューだけ。<br>GTK4: Set Upstream は Repository メニューだけ。<br>CLI: `amonhen run` から。 |
 | checkout していないブランチの同期（Fast-Forward・Push・Publish） | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | タグの一覧 | ✓ | ✓ | ✓ | ✓ |  |
-| タグのリモートの印（ない・違う）とポップオーバー | ✓ | ✓ | — | △ | CLI: `amonhen run`（`tagRemotes`）から。 |
-| タグの署名の印 | ✓ | ✓ | — | ✓ | CLI: `refs --verify`。 |
-| タグのメニュー: Push to・Replace on・削除・リモートから削除 | ✓ | ✓ | — | △ | CLI: `amonhen run` から。 |
+| タグのリモートの印（ない・違う）とポップオーバー | ✓ | ✓ | △ | △ | VSCode: 行の説明に出し、リモートごとの様子はツールチップに（ポップオーバーはない）。<br>CLI: `amonhen run`（`tagRemotes`）から。 |
+| タグの署名の印 | ✓ | ✓ | ✓ | ✓ | VSCode: 行のアイコンで、説明はツールチップに。<br>CLI: `refs --verify`。 |
+| タグのメニュー: Push to・Replace on・削除・リモートから削除 | ✓ | ✓ | ✓ | △ | VSCode: リモートがいくつもあれば一覧で選ぶ。<br>CLI: `amonhen run` から。 |
 | リモートとそのブランチ | ✓ | ✓ | ✓ | ✓ |  |
-| リモートのメニュー: 追加・名前の変更・URL の変更・削除・Prune | ✓ | ✓ | — | △ | CLI: `amonhen run` から。 |
+| リモートのメニュー: 追加・名前の変更・URL の変更・削除・Prune | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | Pull Requests のグループ | ✓ | ✓ | — | — |  |
 | Submodules のグループ（Update・新しい窓で開く） | ✓ | ✓ | ✓ | ✓ | CLI: `submodule`・`submodule update`。 |
 | submodule の印（取り出していない・違うコミット・中の変更・コンフリクト）とメニュー: Update…（中の submodule も・追うブランチの最新）・URL の編集・追うブランチ・外す（.git/modules も消せる）・追加・Sync URLs | ✓ | ✓ | — | ✓ | CLI: `submodule`（`add`・`remove`・`set-url`・`set-branch`・`sync`）。 |
-| Working Copy の下の worktree と変更の数（✎ ⌂ ⑂） | ✓ | ✓ | — | △ | CLI: `worktree list --changes`。 |
-| shallow clone・partial clone（History）と sparse checkout（Working Copy）の印 | ✓ | ✓ | — | n/a |  |
+| Working Copy の下の worktree と変更の数（✎ ⌂ ⑂） | ✓ | ✓ | ✓ | △ | VSCode: 印は行のアイコン。ほかの worktree が checkout しているブランチには ⌂ か ⑂ が付く。<br>CLI: `worktree list --changes`。 |
+| shallow clone・partial clone（History）と sparse checkout（Working Copy）の印 | ✓ | ✓ | △ | n/a | VSCode: History の上の Shallow・Partial（Partial は押すと中身をすべて取る）。sparse の印はない。 |
 
 ## 1. タブと窓
 
@@ -66,7 +66,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| All・Favorites・Places・グループのあるリポジトリのページ | ✓ | ✓ | n/a | n/a | GTK4: ページの見出しの帯は、リポジトリのツールバーではなく短いメニューだけ。 |
+| All・Favorites・Places・グループのあるリポジトリのページ | ✓ | ✓ | n/a | n/a |  |
 | 手元・SSH のリポジトリを足す | ✓ | ✓ | n/a | n/a |  |
 | この機械の探すフォルダー（深さ・見張り） | △ | △ | n/a | n/a | macOS: 除くものは決まった一覧。<br>GTK4: 除くものは決まった一覧。 |
 | SSH 先の探すフォルダー | ✓ | ✓ | n/a | △ | CLI: `find-repositories` がアプリのために探す。 |
@@ -104,7 +104,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | SSH Hosts > Connection: 探すフォルダー | ✓ | ✓ | n/a | n/a |  |
 | SSH Hosts: ホストのすべてのリポジトリの git のページ | ✓ | ✓ | n/a | n/a |  |
 | SSH Hosts: ホストの Environment Variables（ログインシェルの切り替え） | ✓ | ✓ | n/a | n/a |  |
-| ホスト・この機械の列で選ぶパスのシート | ✓ | ✓ | n/a | n/a | GTK4: 外のエディターは GTK のファイルのダイアログで選ぶ。 |
+| ホスト・この機械の列で選ぶパスのシート | ✓ | ✓ | n/a | n/a |  |
 | Accounts: GitHub（CI の状態・アバター） | ✓ | ✓ | — | n/a |  |
 | Appearance: History の順・1 行・行の項目・アバター | ✓ | ✓ | n/a | n/a |  |
 | Appearance: テーマ・フォント・グラフの色 | — | — | n/a | n/a |  |
@@ -121,22 +121,22 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| 設定のページ（ページの一覧・git の行・行ごとの出どころ・↩︎・ⓘ） | ✓ | ✓ | — | n/a |  |
-| Author and Signing（署名の選択・集めた鍵・mailmap） | ✓ | ✓ | — | △ | CLI: `amonhen run`（`signingKeys`・`configSet`）から。 |
-| Commits: メッセージのテンプレート（なし・共有・独自・ファイル） | ✓ | ✓ | — | △ | CLI: `amonhen run` から。 |
-| Branches: 既定のブランチを選ぶ | ✓ | ✓ | — | △ | CLI: `amonhen run` から。 |
-| Operations: pull・fetch.prune・autostash・updateRefs・コンフリクトの書き方・rerere | ✓ | ✓ | — | △ | CLI: `amonhen run` から。 |
-| Working Copy: 改行・実行ビット・`.git/info/exclude` の編集 | ✓ | ✓ | — | △ | CLI: `amonhen run` から。 |
-| Remotes: 表と、つながるか確かめるシート | ✓ | ✓ | — | △ | CLI: `amonhen run` から。 |
-| Hooks: 表・Enabled・スクリプト・Create Hook… | ✓ | ✓ | — | △ | CLI: `amonhen run` から。 |
-| LFS: 入っているか・パターン・Track Pattern…・ファイルの数 | ✓ | ✓ | — | △ | CLI: `amonhen run` から。 |
-| Keys and Values（git config の表、Basic / Customized / All、Combined / Levels） | ✓ | ✓ | — | △ | CLI: `amonhen run`（`configList`・`configSet`）から。 |
-| 要る git の版を添えて行を無効にする | ✓ | ✓ | — | n/a |  |
-| git の行にリポジトリの形（shallow・partial・sparse・maintenance） | ✓ | ✓ | — | △ | CLI: `status` が shallow・partial・sparse を添える。 |
-| 取得とフォルダ: shallow clone の履歴を取り足す（数・日付まで・すべて） | ✓ | ✓ | — | △ | CLI: `amonhen run`（`deepen`・`unshallow`）から。 |
-| 取得とフォルダ: partial clone の中身をすべて取る（git 2.36） | ✓ | ✓ | — | △ | CLI: `amonhen run`（`fetchAllContents`）から。 |
-| 取得とフォルダ: sparse checkout のフォルダを HEAD の木から選ぶ（git 2.25） | ✓ | ✓ | — | △ | CLI: `amonhen run`（`sparseCheckout`・`treeFolders`）から。 |
-| 取得とフォルダ: git maintenance の切り替え（git 2.31） | ✓ | ✓ | — | △ | CLI: `amonhen run`（`maintenance`）から。 |
+| 設定のページ（ページの一覧・git の行・行ごとの出どころ・↩︎・ⓘ） | ✓ | ✓ | △ | n/a | VSCode: メインビューの Repository Settings（エンジンがあるとき）で、このリポジトリの設定だけ。 |
+| Author and Signing（署名の選択・集めた鍵・mailmap） | ✓ | ✓ | ✓ | △ | VSCode: 鍵は今の形式のものだけを集める。<br>CLI: `amonhen run`（`signingKeys`・`configSet`）から。 |
+| Commits: メッセージのテンプレート（なし・共有・独自・ファイル） | ✓ | ✓ | △ | △ | VSCode: なし・このリポジトリ専用（その場で書く）・ファイル。共有のテンプレートはない。<br>CLI: `amonhen run` から。 |
+| Branches: 既定のブランチを選ぶ | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
+| Operations: pull・fetch.prune・autostash・updateRefs・コンフリクトの書き方・rerere | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
+| Working Copy: 改行・実行ビット・`.git/info/exclude` の編集 | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
+| Remotes: 表と、つながるか確かめるシート | ✓ | ✓ | △ | △ | VSCode: 表と行ごとのボタン（Edit URL…・Push URL…・Check・Prune・Rename…・Remove…）と Add…。値はシートでなく入力欄で聞く。<br>CLI: `amonhen run` から。 |
+| Hooks: 表・Enabled・スクリプト・Create Hook… | ✓ | ✓ | ✓ | △ | VSCode: Open で VSCode のエディターにスクリプトを開く。<br>CLI: `amonhen run` から。 |
+| LFS: 入っているか・パターン・Track Pattern…・ファイルの数 | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
+| Keys and Values（git config の表、Basic / Customized / All、Combined / Levels） | ✓ | ✓ | △ | △ | VSCode: Basic / Customized / All と検索、効いている値と設定元。値は入力欄で変える。Levels の列はない。<br>CLI: `amonhen run`（`configList`・`configSet`）から。 |
+| 要る git の版を添えて行を無効にする | ✓ | ✓ | ✓ | n/a | |
+| git の行にリポジトリの形（shallow・partial・sparse・maintenance） | ✓ | ✓ | ✓ | △ | CLI: `status` が shallow・partial・sparse を添える。 |
+| 取得とフォルダ: shallow clone の履歴を取り足す（数・日付まで・すべて） | ✓ | ✓ | ✓ | △ | CLI: `amonhen run`（`deepen`・`unshallow`）から。 |
+| 取得とフォルダ: partial clone の中身をすべて取る（git 2.36） | ✓ | ✓ | ✓ | △ | CLI: `amonhen run`（`fetchAllContents`）から。 |
+| 取得とフォルダ: sparse checkout のフォルダを HEAD の木から選ぶ（git 2.25） | ✓ | ✓ | ✓ | △ | VSCode: フォルダは HEAD の木を一覧でたどって選ぶ。<br>CLI: `amonhen run`（`sparseCheckout`・`treeFolders`）から。 |
+| 取得とフォルダ: git maintenance の切り替え（git 2.31） | ✓ | ✓ | ✓ | △ | CLI: `amonhen run`（`maintenance`）から。 |
 
 ## 5. ツールバー
 
@@ -152,13 +152,13 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | 前と後を描く Rebase のシート | ✓ | ✓ | △ | △ | VSCode: 書き換えの見込みを文で示すダイアログ。<br>CLI: `rewrite-preview` が出し、rebase は `amonhen run` から。 |
 | Stash（メッセージ・未追跡を含める） | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | Stash: ステージしたものだけ・選んだファイルだけ | — | — | — | — |  |
-| 最新の stash を Pop（先に尋ねる） | ✓ | ✓ | — | △ | VSCode: stash の行ごとに Pop し、尋ねない。<br>CLI: `amonhen run` から。 |
+| 最新の stash を Pop（先に尋ねる） | ✓ | ✓ | ✓ | △ | VSCode: Stashes の見出しとコマンドパレットの Pop Latest Stash…（行の Pop は尋ねない）。<br>CLI: `amonhen run` から。 |
 | Activity のくるくると数 | ✓ | ✓ | △ | n/a | VSCode: VSCode の進み具合の知らせ。 |
 | Refresh と Rebuild History | ✓ | ✓ | △ | △ | VSCode: Refresh だけ。<br>CLI: `log --rebuild`・`daemon rebuild`。 |
-| 直前の操作の Undo（尋ね、何を戻すか示す） | ✓ | ✓ | △ | ✓ | VSCode: 尋ねずに戻す。<br>CLI: `undo`（先に見るなら `--peek`）。 |
-| 範囲付きの History の検索（件名・作者・ID・パス・中身） | ✓ | ✓ | — | ✓ | GTK4: 範囲は検索の書き方で決める。<br>CLI: `log <query>`。 |
+| 直前の操作の Undo（尋ね、何を戻すか示す） | ✓ | ✓ | ✓ | ✓ | VSCode: 上の Undo とコマンドパレットは尋ねる。操作の直後に押す知らせの Undo は尋ねない。<br>CLI: `undo`（先に見るなら `--peek`）。 |
+| 範囲付きの History の検索（件名・作者・ID・パス・中身） | ✓ | ✓ | — | ✓ | CLI: `log <query>`。 |
 | ahead/behind のバッジ | ✓ | ✓ | △ | △ | VSCode: サイドバーのブランチの行に出る。<br>CLI: `status` に出る。 |
-| ツールバーのカスタマイズ | ✓ | △ | n/a | n/a | GTK4: View > Customize Toolbar… の一覧で、見出しの左と右に出すボタンと順番を決める。Repository のメニュー・検索・主メニューは動かない。 |
+| ツールバーのカスタマイズ | ✓ | ✓ | n/a | n/a | GTK4: パレットは NSToolbar と同じ使い方で、シートと同じく見出しの下に中身に重ねて出し、窓の大きさは変えない。見出しはアイコンだけなので、表示（アイコンと文字）は選ばない。Repository のメニューと主メニューはメニューバーの代わりなので動かない。 |
 | 120 秒黙った network の git を止める | ✓ | ✓ | — | ✓ | VSCode: 拡張自身の git 実行層にはない。 |
 
 ## 5a. Stashes
@@ -166,8 +166,8 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
 | Stashes の表示（一覧と中身） | ✓ | ✓ | △ | △ | VSCode: サイドバーの一覧で、Show Stash は VSCode の複数ファイルの差分。<br>CLI: `refs` が並べ、`show stash@{n}`。 |
-| stash の行の詳細（ブランチ・HEAD に対する元・未追跡） | ✓ | ✓ | △ | △ | VSCode: 名前と件名だけ。<br>CLI: `amonhen run`（`stashBases`）から。 |
-| Apply・Pop・Drop…（Undo できる）・Branch… | ✓ | ✓ | △ | △ | VSCode: Branch… も `--index` もない。<br>CLI: `amonhen run` から。 |
+| stash の行の詳細（ブランチ・HEAD に対する元・未追跡） | ✓ | ✓ | ✓ | △ | VSCode: 未追跡は行の説明に、ブランチと元はツールチップに（エンジンがあるとき）。<br>CLI: `amonhen run`（`stashBases`）から。 |
+| Apply・Pop・Drop…（Undo できる）・Branch… | ✓ | ✓ | ✓ | △ | VSCode: Branch… はエンジンがあるとき。Apply・Pop はできれば index も戻す（`--index`）。<br>CLI: `amonhen run` から。 |
 
 ## 5b. Reflog
 
@@ -227,10 +227,10 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | 一致の数・次 / 前・一致だけの検索 | ✓ | ✓ | — | △ | CLI: `log <query>` が一致を並べる。 |
 | 表示: 順・1 行・行の項目・マージ済みを畳む・祖先を目立たせる | ✓ | ✓ | △ | △ | VSCode: 範囲（今・すべて・ref）だけ。<br>CLI: `--topo-order`・`--fold`。 |
 | アバター | ✓ | ✓ | — | n/a |  |
-| コミットの署名の印 | ✓ | ✓ | — | △ | CLI: `show` に出る。 |
+| コミットの署名の印 | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。<br>CLI: `show` に出る。 |
 | コミットごとの CI の状態とポップオーバー | ✓ | ✓ | — | — |  |
 | worktree の HEAD のラベル（✎ ⌂ ⑂・変更の数） | ✓ | ✓ | — | — |  |
-| Go to HEAD・Parent・Child | ✓ | ✓ | △ | n/a | VSCode: 詳細の親へのリンクだけ。 |
+| Go to HEAD・Parent・Child | ✓ | ✓ | ✓ | n/a | VSCode: History の上の HEAD のボタン、コミットのメニューの Go to Parent・Go to Child、詳細の親と子へのリンク（エンジンがあるとき）。 |
 | Go to Ref | — | — | — | n/a |  |
 | いくつものコミットを選ぶ（範囲・2 つ・飛び飛び） | ✓ | ✓ | — | △ | CLI: 2 つは `diff <rev> <rev>`。 |
 | 選んだいくつもの ref の History | ✓ | ✓ | — | ✓ | CLI: `log --branch` を重ねる。 |
@@ -240,7 +240,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | 近道: Edit Message…・Combine with Older…・Drop…・Combine N…・コミットのドラッグ | ✓ | ✓ | △ | △ | VSCode: Combine N Commits はない。<br>CLI: `amonhen run` から。 |
 | コミットを分ける | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | 編集でマージを保つ（`--rebase-merges`） | ✓ | ✓ | — | △ | VSCode: 最初のマージで止まる。<br>CLI: `amonhen run` から。 |
-| shallow clone: 終わりの帯で取り足す、境界のコミットの印 | ✓ | ✓ | — | △ | CLI: `log` が履歴の止まる所を添える。取り足すのは `amonhen run` から。 |
+| shallow clone: 終わりの帯で取り足す、境界のコミットの印 | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。<br>CLI: `log` が履歴の止まる所を添える。取り足すのは `amonhen run` から。 |
 
 ## 7. History の右の列
 
@@ -250,19 +250,20 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | 詳細の中を探す | ✓ | ✓ | — | n/a |  |
 | すべてのファイルを積む（貼り付く見出し・畳む・Viewed） | ✓ | ✓ | △ | ✓ | VSCode: 積んでスクロールで読むが、畳むことも Viewed もない。<br>CLI: `show`。 |
 | 差分の横の、変更したファイルの木 | ✓ | ✓ | △ | n/a | VSCode: 差分の上の平らな一覧。 |
-| ファイルの見出しのメニュー（Blame・File History・パスのコピー・開く） | ✓ | ✓ | △ | n/a | VSCode: VSCode の差分のエディターで開くだけ。 |
+| ファイルの見出しのメニュー（Blame・File History・パスのコピー・開く） | ✓ | ✓ | ✓ | n/a | VSCode: 右クリックの Blame・File History・Copy Path と、VSCode の差分のエディターで開く。 |
 | 1 ファイルずつの差分に切り替える | ✓ | ✓ | — | n/a |  |
 | 選んだものの差分（範囲をまとめる・A..B / A...B・飛び飛び） | ✓ | ✓ | — | △ | CLI: `diff <rev> <rev>`。 |
 | 選んだものの操作（cherry-pick・revert・squash・ID のコピー） | ✓ | ✓ | — | △ | CLI: `amonhen run` から。 |
-| 署名のポップオーバー | ✓ | ✓ | — | n/a |  |
+| 署名のポップオーバー | ✓ | ✓ | △ | n/a | VSCode: 詳細の Signature の行（様子・説明・署名した人と鍵）。ポップオーバーはない。 |
 | 単語の強調と構文の色 | ✓ | ✓ | △ | n/a | VSCode: 単語だけ。 |
 
 ## Blame・File History
 
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| Blame | ✓ | ✓ | — | △ | CLI: `amonhen run`（`blame`）から。 |
-| File History | ✓ | ✓ | — | △ | CLI: `amonhen run`（`fileHistory`）から。 |
+| Blame | ✓ | ✓ | △ | △ | VSCode: メインビューのページ。構文の色はない。<br>CLI: `amonhen run`（`blame`）から。 |
+| File History | ✓ | ✓ | ✓ | △ | VSCode: メインビューのページ。エクスプローラー・エディターのタブ・コマンドパレット・メインビューのファイルから開く。<br>CLI: `amonhen run`（`fileHistory`）から。 |
+| リポジトリのタブの隣のタブに、リポジトリのツールバー付きで開く | ✓ | ✓ | n/a | n/a | GTK4: リポジトリのタブがほかの窓で前に出ているときは、ツールバーのない題だけの帯になる。 |
 | 行の履歴 | — | — | — | — |  |
 
 ## 7a. パッチ
@@ -312,7 +313,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
 | Operations（git の命令・出力・進み具合・取り消し） | ✓ | ✓ | △ | △ | VSCode: Output のチャンネルの記録だけ。<br>CLI: `amonhen run`（`remoteActivity`・`cancelActivity`）から。 |
-| History（操作ログ・ここまで戻す） | ✓ | ✓ | — | △ | CLI: `undo --list` が記録を出す。 |
+| History（操作ログ・ここまで戻す） | ✓ | ✓ | △ | △ | VSCode: Undo History… が Undo の記録を並べ、選んだところまで戻す。ほかの Activity はない。<br>CLI: `undo --list` が記録を出す。 |
 | Performance | ✓ | ✓ | — | n/a |  |
 | Events | ✓ | ✓ | — | n/a |  |
 | JSON で書き出す | ✓ | ✓ | — | n/a |  |
@@ -323,8 +324,8 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
 | 共有の操作の表（`crates/commands`）から作るメニュー | ✓ | ✓ | — | n/a | VSCode: package.json に書く。 |
-| メニューバーなしで全部の操作に届く（≡） | ✓ | ✓ | △ | n/a | VSCode: コマンドパレットとコンテキストメニュー。 |
-| キーボードの近道 | ✓ | ✓ | — | n/a | VSCode: キーの割り当てを出していない。 |
+| メニューバーなしで全部の操作に届く（≡） | ✓ | ✓ | △ | n/a | GTK4: ≡ のメニューに、メニューバーの File・Edit・View・Navigate・Commit・Window を macOS と同じ項目と並びで置き（Edit の取り消す・カット・コピーなどはフォーカスのある欄に効く）、その後に設定…・Amon Hen について・終了。<br>VSCode: コマンドパレットとコンテキストメニュー。 |
+| キーボードの近道 | ✓ | ✓ | — | n/a | GTK4: Linux のデスクトップやほかの操作が使うキーは違う: サイドバーを表示は F9、ブランチを絞り込むは Ctrl+Alt+Shift+F、親へ・子へは Alt+Down・Up、New Tag にはない（Ctrl+Alt+T は端末を開く）。<br>VSCode: キーの割り当てを出していない。 |
 | メニューと同じ名前のコンテキストメニュー | ✓ | ✓ | △ | n/a | VSCode: 名前がアプリと違う。 |
 | キーボードの近道の窓 | — | ✓ | n/a | n/a | macOS: 代わりに macOS の App Shortcuts で変える。 |
 
@@ -341,7 +342,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| リモート・HEAD を動かす・消す操作の前のシート | ✓ | ✓ | △ | n/a | VSCode: 消す・書き換える・Reset のときだけで、Fetch・Pull・Push・Merge・Checkout にはない。 |
+| リモート・HEAD を動かす・消す操作の前のシート | ✓ | ✓ | △ | n/a | GTK4: 名前を入れるものもすべての確認も同じシート。macOS と同じく、入力がどこにあっても（ドロップダウンやラジオでも）Return で既定のボタンを押す。<br>VSCode: 消す・書き換える・Reset のときだけで、Fetch・Pull・Push・Merge・Checkout にはない。 |
 | git の操作の Undo（`undo.json`） | ✓ | ✓ | ✓ | ✓ |  |
 | 押せない部品はツールチップで理由を言う | ✓ | ✓ | — | n/a |  |
 
@@ -367,12 +368,12 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| worktree と変更の数 | ✓ | ✓ | — | ✓ | CLI: `worktree list --changes`。 |
-| 書き込む先の worktree（✎）と切り替え | ✓ | ✓ | — | n/a | CLI: 動かした worktree で働く。 |
-| New Worktree…（ブランチ・コミットから） | ✓ | ✓ | — | ✓ |  |
-| Remove Worktree（尋ね、変更があれば `--force`） | ✓ | ✓ | — | ✓ |  |
-| worktree の Prune | ✓ | ✓ | — | ✓ |  |
-| worktree のフォルダーを開くと、そのリポジトリでそれを書き込む先にする | ✓ | ✓ | — | n/a |  |
+| worktree と変更の数 | ✓ | ✓ | ✓ | ✓ | CLI: `worktree list --changes`。 |
+| 書き込む先の worktree（✎）と切り替え | ✓ | ✓ | ✓ | n/a | VSCode: 拡張が働くリポジトリを切り替える。ワークスペースの外のものはソース管理のビューには足さない。<br>CLI: 動かした worktree で働く。 |
+| New Worktree…（ブランチ・コミットから） | ✓ | ✓ | ✓ | ✓ |  |
+| Remove Worktree（尋ね、変更があれば `--force`） | ✓ | ✓ | ✓ | ✓ |  |
+| worktree の Prune | ✓ | ✓ | ✓ | ✓ |  |
+| worktree のフォルダーを開くと、そのリポジトリでそれを書き込む先にする | ✓ | ✓ | ✓ | n/a | VSCode: フォルダーを開くとその worktree で働き、ほかの worktree も並ぶ。 |
 
 ## SSH 先・共有の daemon・askpass
 

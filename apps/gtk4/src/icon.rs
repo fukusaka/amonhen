@@ -57,6 +57,20 @@ pub enum Kind {
     Doc,
     /// arrow.left.arrow.right（Range Diff）
     RangeDiff,
+    /// arrow.up.arrow.down（上流より先・遅れ）
+    UpDown,
+    /// folder.fill（パスを選ぶシートのフォルダ）
+    FolderFill,
+    /// person.crop.circle（設定の Accounts）
+    Person,
+    /// paintbrush（設定の Appearance）
+    Brush,
+    /// speedometer（設定の Performance）
+    Speedometer,
+    /// apple.terminal（パスを選ぶシートの実行ファイル）
+    Terminal,
+    /// questionmark.square.dashed（パスを選ぶシートの、種類の分からないもの）
+    QuestionSquare,
     /// slider.horizontal.3（History の表示のメニュー）
     Sliders,
     /// location（Go to HEAD）
@@ -81,12 +95,28 @@ pub enum Kind {
     Activity,
     /// plus.circle（ブランチの切り替えで、新しいブランチを作る行）
     PlusCircle,
+    /// pencil.circle（書き込む先の worktree）
+    PencilCircle,
     /// checkmark.seal（署名を確かめた。署名の印）
     Seal,
     /// xmark.seal（不正な署名・失効した鍵）
     SealCross,
     /// questionmark.circle（鍵がない・確かめられない・署名者が違う）
     Question,
+    /// checkmark.seal.fill（署名を確かめ、鍵を強く信用している）
+    SealFill,
+    /// xmark.seal.fill（不正な署名）
+    SealCrossFill,
+    /// checkmark.shield（署名は正しいが、鍵の信用度が決まっていない）
+    Shield,
+    /// exclamationmark.shield.fill（失効した鍵）
+    ShieldAlertFill,
+    /// person.crop.circle.badge.questionmark（署名した人がタガーと違う）
+    PersonQuestion,
+    /// clock.badge.exclamationmark（期限の切れた鍵）
+    ClockAlert,
+    /// exclamationmark.circle（この git では確かめられない）
+    ExclamationCircle,
     /// sparkles（AI の解説・提案）
     Sparkles,
     /// character.bubble（AI の翻訳）
@@ -101,6 +131,26 @@ pub enum Kind {
     CircleDashed,
     /// pencil（submodule の中に変更がある）
     Pencil,
+    /// pencil.and.list.clipboard（History の編集モード）
+    EditList,
+    /// xmark.octagon.fill（ステータスバーの失敗）
+    XOctagonFill,
+    /// stop.circle（ステータスバーの取り消した操作）
+    StopCircle,
+    /// bolt.horizontal.circle（ステータスバーの切れたつながり）
+    BoltCircle,
+    /// checkmark.circle.fill（CI が通った。CI の吹き出しの見出し）
+    CheckCircleFill,
+    /// xmark.circle.fill（CI が失敗した）
+    XCircleFill,
+    /// circle.fill（CI が走っている）
+    CircleFill,
+    /// circle（CI がない）
+    Circle,
+    /// arrow.up.left.and.arrow.down.right（詳細を広げる）
+    Expand,
+    /// arrow.down.right.and.arrow.up.left（広げた詳細を戻す）
+    Restore,
 }
 
 mod imp {
@@ -111,6 +161,8 @@ mod imp {
         pub kind: Cell<Kind>,
         /// 文字の色ではなく強調の色で描く（チェックアウト中のブランチ）。
         pub accent: Cell<bool>,
+        /// 描く大きさ（0 なら 16）。形は 16×16 で決めて、拡げて描く。
+        pub size: Cell<i32>,
     }
 
     #[glib::object_subclass]
@@ -131,7 +183,8 @@ mod imp {
 
     impl WidgetImpl for Icon {
         fn measure(&self, _: gtk::Orientation, _: i32) -> (i32, i32, i32, i32) {
-            (SIZE, SIZE, -1, -1)
+            let size = self.size();
+            (size, size, -1, -1)
         }
 
         fn snapshot(&self, snapshot: &gtk::Snapshot) {
@@ -152,7 +205,25 @@ mod imp {
             } else {
                 gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), fg.alpha() * 0.7)
             };
-            draw(snapshot, self.kind.get(), &color);
+            let size = self.size();
+            if size != SIZE {
+                let scale = size as f32 / SIZE as f32;
+                snapshot.save();
+                snapshot.scale(scale, scale);
+                draw(snapshot, self.kind.get(), &color);
+                snapshot.restore();
+            } else {
+                draw(snapshot, self.kind.get(), &color);
+            }
+        }
+    }
+
+    impl Icon {
+        fn size(&self) -> i32 {
+            match self.size.get() {
+                0 => SIZE,
+                n => n,
+            }
         }
     }
 }
@@ -176,6 +247,17 @@ impl Icon {
         self.set_visible(kind != Kind::None);
         self.queue_draw();
     }
+
+    /// 描いている形。
+    pub fn kind(&self) -> Kind {
+        self.imp().kind.get()
+    }
+
+    /// 16 でない大きさで描く（形は 16 のものを伸ばす。macOS 版で大きめの記号を使うところ）。
+    pub fn set_pixel_size(&self, size: i32) {
+        self.imp().size.set(size);
+        self.queue_resize();
+    }
 }
 
 /// 雲の輪郭（icloud）。
@@ -188,11 +270,61 @@ fn cloud(p: &gsk::PathBuilder) {
     p.close();
 }
 
+/// seal の縁（ぎざぎざの丸、12 の山）。
+fn seal_outline(p: &gsk::PathBuilder) {
+    for i in 0..=24 {
+        let a = std::f32::consts::PI * i as f32 / 12.0;
+        let r = if i % 2 == 0 { 6.6 } else { 5.5 };
+        let (x, y) = (8.0 + r * a.cos(), 8.0 + r * a.sin());
+        if i == 0 {
+            p.move_to(x, y);
+        } else {
+            p.line_to(x, y);
+        }
+    }
+    p.close();
+}
+
+/// seal の中の印（チェックか ×）。
+fn seal_mark(p: &gsk::PathBuilder, cross: bool) {
+    if cross {
+        p.move_to(6.0, 6.0);
+        p.line_to(10.0, 10.0);
+        p.move_to(10.0, 6.0);
+        p.line_to(6.0, 10.0);
+    } else {
+        p.move_to(5.4, 8.1);
+        p.line_to(7.2, 9.9);
+        p.line_to(10.6, 6.2);
+    }
+}
+
+/// `kind` を `center` を中心に `size` px の大きさで描く（表の中など、部品でない所に描くとき）。
+pub fn draw_at(
+    snapshot: &gtk::Snapshot,
+    kind: Kind,
+    color: &gdk::RGBA,
+    center: graphene::Point,
+    size: f32,
+) {
+    snapshot.save();
+    snapshot.translate(&graphene::Point::new(
+        center.x() - size / 2.0,
+        center.y() - size / 2.0,
+    ));
+    let scale = size / SIZE as f32;
+    snapshot.scale(scale, scale);
+    draw(snapshot, kind, color);
+    snapshot.restore();
+}
+
 /// 16×16 の中に描く。
 fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
     let p = gsk::PathBuilder::new();
     let point = |x: f32, y: f32| graphene::Point::new(x, y);
     let mut fill = None;
+    // 塗りから抜く線（白抜きの印。macOS 版の .fill の記号の中の印）。
+    let mut knock: Option<gsk::PathBuilder> = None;
     match kind {
         Kind::None => return,
         Kind::WorkingCopy => {
@@ -286,6 +418,89 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.line_to(13.5, 12.5);
             p.line_to(2.5, 12.5);
             p.close();
+        }
+        Kind::FolderFill => {
+            let solid = gsk::PathBuilder::new();
+            solid.move_to(2.5, 4.0);
+            solid.line_to(6.5, 4.0);
+            solid.line_to(8.0, 5.5);
+            solid.line_to(13.5, 5.5);
+            solid.line_to(13.5, 12.5);
+            solid.line_to(2.5, 12.5);
+            solid.close();
+            fill = Some(solid);
+        }
+        Kind::Person => {
+            // 丸の中の人（頭と肩）。
+            p.add_circle(&point(8.0, 8.0), 6.3);
+            p.add_circle(&point(8.0, 6.6), 2.2);
+            p.move_to(3.9, 12.6);
+            p.svg_arc_to(4.6, 3.6, 0.0, false, true, 12.1, 12.6);
+        }
+        Kind::Brush => {
+            // 斜めの柄と、左下の毛先。
+            p.move_to(13.5, 2.5);
+            p.line_to(7.6, 8.4);
+            p.move_to(7.6, 8.4);
+            p.line_to(9.6, 10.4);
+            p.move_to(6.6, 9.4);
+            p.quad_to(4.2, 9.6, 4.0, 12.0);
+            p.quad_to(3.8, 13.2, 2.6, 13.6);
+            p.quad_to(6.6, 14.4, 8.4, 12.6);
+            p.quad_to(9.0, 11.8, 8.6, 11.4);
+            p.close();
+        }
+        Kind::Speedometer => {
+            // 下の開いた丸と、針と、目盛り。
+            p.move_to(3.4, 12.6);
+            p.svg_arc_to(6.3, 6.3, 0.0, true, true, 12.6, 12.6);
+            p.move_to(8.0, 9.4);
+            p.line_to(10.8, 5.6);
+            for (x0, y0, x1, y1) in [
+                (8.0_f32, 2.6_f32, 8.0_f32, 3.8_f32),
+                (3.0, 7.0, 4.1, 7.4),
+                (13.0, 7.0, 11.9, 7.4),
+            ] {
+                p.move_to(x0, y0);
+                p.line_to(x1, y1);
+            }
+            let hub = gsk::PathBuilder::new();
+            hub.add_circle(&point(8.0, 9.6), 1.1);
+            fill = Some(hub);
+        }
+        Kind::Terminal => {
+            // 角の丸い窓と、中の「>_」。
+            p.add_rounded_rect(&gsk::RoundedRect::from_rect(
+                graphene::Rect::new(2.0, 3.0, 12.0, 10.0),
+                1.8,
+            ));
+            p.move_to(4.6, 6.0);
+            p.line_to(6.6, 8.0);
+            p.line_to(4.6, 10.0);
+            p.move_to(8.0, 10.2);
+            p.line_to(11.0, 10.2);
+        }
+        Kind::QuestionSquare => {
+            // 点線の四角（辺ごとに 2 本）と、中の「?」。
+            for (x0, y0, x1, y1) in [
+                (3.0_f32, 2.5_f32, 7.0_f32, 2.5_f32),
+                (9.0, 2.5, 13.0, 2.5),
+                (13.5, 3.0, 13.5, 7.0),
+                (13.5, 9.0, 13.5, 13.0),
+                (13.0, 13.5, 9.0, 13.5),
+                (7.0, 13.5, 3.0, 13.5),
+                (2.5, 13.0, 2.5, 9.0),
+                (2.5, 7.0, 2.5, 3.0),
+            ] {
+                p.move_to(x0, y0);
+                p.line_to(x1, y1);
+            }
+            p.move_to(6.4, 6.6);
+            p.svg_arc_to(1.7, 1.7, 0.0, true, true, 8.5, 8.3);
+            p.line_to(8.0, 9.2);
+            let dot = gsk::PathBuilder::new();
+            dot.add_circle(&point(8.0, 11.2), 0.75);
+            fill = Some(dot);
         }
         Kind::Fetch | Kind::Pull | Kind::Push => {
             p.add_circle(&point(8.0, 8.0), 6.3);
@@ -390,6 +605,43 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.line_to(10.5, 8.0);
             p.move_to(6.0, 10.5);
             p.line_to(10.5, 10.5);
+        }
+        Kind::EditList => {
+            // クリップボード（上に留め具）と、中の 3 本の行。右下に鉛筆。
+            p.move_to(6.0, 3.0);
+            p.line_to(3.5, 3.0);
+            p.line_to(3.5, 14.0);
+            p.line_to(8.5, 14.0);
+            p.move_to(10.0, 3.0);
+            p.line_to(12.5, 3.0);
+            p.line_to(12.5, 7.5);
+            p.add_rounded_rect(&gsk::RoundedRect::from_rect(
+                graphene::Rect::new(6.0, 1.8, 4.0, 2.4),
+                0.8,
+            ));
+            for y in [6.5, 9.0, 11.5] {
+                p.move_to(5.8, y);
+                p.line_to(if y > 10.0 { 7.5 } else { 10.0 }, y);
+            }
+            p.move_to(9.6, 14.4);
+            p.line_to(9.8, 12.8);
+            p.line_to(13.3, 9.3);
+            p.line_to(14.7, 10.7);
+            p.line_to(11.2, 14.2);
+            p.close();
+        }
+        Kind::UpDown => {
+            // 上向きの矢印（左）と下向きの矢印（右）。
+            p.move_to(5.5, 13.5);
+            p.line_to(5.5, 3.0);
+            p.move_to(3.0, 5.5);
+            p.line_to(5.5, 3.0);
+            p.line_to(8.0, 5.5);
+            p.move_to(10.5, 2.5);
+            p.line_to(10.5, 13.0);
+            p.move_to(8.0, 10.5);
+            p.line_to(10.5, 13.0);
+            p.line_to(13.0, 10.5);
         }
         Kind::RangeDiff => {
             // 右向きの矢印（上）と左向きの矢印（下）。
@@ -566,6 +818,104 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.line_to(7.2, 10.2);
             p.line_to(10.9, 6.0);
         }
+        Kind::XOctagonFill => {
+            // 塗った八角形と、白く抜いた ×。
+            let solid = gsk::PathBuilder::new();
+            for i in 0..8 {
+                let a = std::f32::consts::PI * (i as f32 + 0.5) / 4.0;
+                let (x, y) = (8.0 + 6.9 * a.cos(), 8.0 + 6.9 * a.sin());
+                if i == 0 {
+                    solid.move_to(x, y);
+                } else {
+                    solid.line_to(x, y);
+                }
+            }
+            solid.close();
+            let mark = gsk::PathBuilder::new();
+            mark.move_to(5.8, 5.8);
+            mark.line_to(10.2, 10.2);
+            mark.move_to(10.2, 5.8);
+            mark.line_to(5.8, 10.2);
+            fill = Some(solid);
+            knock = Some(mark);
+        }
+        Kind::StopCircle => {
+            p.add_circle(&point(8.0, 8.0), 6.3);
+            let square = gsk::PathBuilder::new();
+            square.add_rect(&graphene::Rect::new(5.6, 5.6, 4.8, 4.8));
+            fill = Some(square);
+        }
+        Kind::CheckCircleFill | Kind::XCircleFill | Kind::CircleFill => {
+            // 塗った円と、白く抜いた印。
+            let solid = gsk::PathBuilder::new();
+            solid.add_circle(&point(8.0, 8.0), 6.9);
+            fill = Some(solid);
+            let mark = gsk::PathBuilder::new();
+            if kind == Kind::CheckCircleFill {
+                mark.move_to(5.0, 8.2);
+                mark.line_to(7.1, 10.3);
+                mark.line_to(11.0, 5.9);
+                knock = Some(mark);
+            } else if kind == Kind::XCircleFill {
+                mark.move_to(5.7, 5.7);
+                mark.line_to(10.3, 10.3);
+                mark.move_to(10.3, 5.7);
+                mark.line_to(5.7, 10.3);
+                knock = Some(mark);
+            }
+        }
+        Kind::Circle => {
+            p.add_circle(&point(8.0, 8.0), 6.3);
+        }
+        Kind::Expand => {
+            // 左上と右下の角へ向かう矢印。
+            p.move_to(7.0, 7.0);
+            p.line_to(2.5, 2.5);
+            p.move_to(2.5, 7.0);
+            p.line_to(2.5, 2.5);
+            p.line_to(7.0, 2.5);
+            p.move_to(9.0, 9.0);
+            p.line_to(13.5, 13.5);
+            p.move_to(13.5, 9.0);
+            p.line_to(13.5, 13.5);
+            p.line_to(9.0, 13.5);
+        }
+        Kind::Restore => {
+            // 角から真ん中へ向かう矢印。
+            p.move_to(2.5, 2.5);
+            p.line_to(7.0, 7.0);
+            p.move_to(2.5, 7.0);
+            p.line_to(7.0, 7.0);
+            p.line_to(7.0, 2.5);
+            p.move_to(13.5, 13.5);
+            p.line_to(9.0, 9.0);
+            p.move_to(13.5, 9.0);
+            p.line_to(9.0, 9.0);
+            p.line_to(9.0, 13.5);
+        }
+        Kind::BoltCircle => {
+            // 円の中に、横向きの稲妻。
+            p.add_circle(&point(8.0, 8.0), 6.3);
+            let bolt = gsk::PathBuilder::new();
+            bolt.move_to(4.2, 8.6);
+            bolt.line_to(8.6, 5.0);
+            bolt.line_to(8.0, 7.6);
+            bolt.line_to(11.8, 7.4);
+            bolt.line_to(7.4, 11.0);
+            bolt.line_to(8.0, 8.4);
+            bolt.close();
+            fill = Some(bolt);
+        }
+        Kind::PencilCircle => {
+            // 円の中に、小さな鉛筆。
+            p.add_circle(&point(8.0, 8.0), 6.3);
+            p.move_to(5.2, 10.8);
+            p.line_to(5.2, 9.4);
+            p.line_to(9.4, 5.2);
+            p.line_to(10.8, 6.6);
+            p.line_to(6.6, 10.8);
+            p.close();
+        }
         Kind::PlusCircle => {
             p.add_circle(&point(8.0, 8.0), 6.3);
             p.move_to(8.0, 5.0);
@@ -607,26 +957,69 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
         }
         Kind::Seal | Kind::SealCross => {
             // 縁がぎざぎざの丸（12 の山）と、中にチェックか ×。
-            for i in 0..=24 {
-                let a = std::f32::consts::PI * i as f32 / 12.0;
-                let r = if i % 2 == 0 { 6.6 } else { 5.5 };
-                let (x, y) = (8.0 + r * a.cos(), 8.0 + r * a.sin());
-                if i == 0 {
-                    p.move_to(x, y);
-                } else {
-                    p.line_to(x, y);
-                }
-            }
-            if kind == Kind::Seal {
-                p.move_to(5.4, 8.1);
-                p.line_to(7.2, 9.9);
-                p.line_to(10.6, 6.2);
-            } else {
-                p.move_to(6.0, 6.0);
-                p.line_to(10.0, 10.0);
-                p.move_to(10.0, 6.0);
-                p.line_to(6.0, 10.0);
-            }
+            seal_outline(&p);
+            seal_mark(&p, kind == Kind::SealCross);
+        }
+        Kind::SealFill | Kind::SealCrossFill => {
+            // 塗ったぎざぎざの丸と、白く抜いたチェックか ×。
+            let solid = gsk::PathBuilder::new();
+            seal_outline(&solid);
+            let mark = gsk::PathBuilder::new();
+            seal_mark(&mark, kind == Kind::SealCrossFill);
+            fill = Some(solid);
+            knock = Some(mark);
+        }
+        Kind::Shield => {
+            shield(&p);
+            p.move_to(5.6, 8.0);
+            p.line_to(7.4, 9.8);
+            p.line_to(10.4, 6.4);
+        }
+        Kind::ShieldAlertFill => {
+            let solid = gsk::PathBuilder::new();
+            shield(&solid);
+            let mark = gsk::PathBuilder::new();
+            mark.move_to(8.0, 5.0);
+            mark.line_to(8.0, 8.6);
+            mark.move_to(8.0, 11.0);
+            mark.line_to(8.0, 11.1);
+            fill = Some(solid);
+            knock = Some(mark);
+        }
+        Kind::PersonQuestion => {
+            // 丸の中の人（頭と肩）と、右下の小さな「?」。
+            p.move_to(12.6, 6.0);
+            p.svg_arc_to(6.0, 6.0, 0.0, true, false, 7.0, 13.9);
+            p.add_circle(&point(7.0, 6.2), 1.9);
+            p.move_to(3.4, 11.8);
+            p.svg_arc_to(4.0, 3.2, 0.0, false, true, 9.6, 9.8);
+            p.move_to(11.0, 9.6);
+            p.svg_arc_to(1.6, 1.6, 0.0, true, true, 13.2, 11.3);
+            p.line_to(12.6, 12.0);
+            let dot = gsk::PathBuilder::new();
+            dot.add_circle(&point(12.6, 14.2), 0.75);
+            fill = Some(dot);
+        }
+        Kind::ClockAlert => {
+            // 時計（右上を開ける）と、右の「!」。
+            p.move_to(11.0, 3.1);
+            p.svg_arc_to(5.6, 5.6, 0.0, true, false, 11.9, 12.2);
+            p.move_to(7.4, 5.2);
+            p.line_to(7.4, 8.4);
+            p.line_to(9.4, 9.6);
+            p.move_to(14.0, 3.0);
+            p.line_to(14.0, 8.6);
+            let dot = gsk::PathBuilder::new();
+            dot.add_circle(&point(14.0, 11.6), 0.8);
+            fill = Some(dot);
+        }
+        Kind::ExclamationCircle => {
+            p.add_circle(&point(8.0, 8.0), 6.3);
+            p.move_to(8.0, 4.6);
+            p.line_to(8.0, 8.8);
+            let dot = gsk::PathBuilder::new();
+            dot.add_circle(&point(8.0, 11.4), 0.8);
+            fill = Some(dot);
         }
         Kind::Question => {
             p.add_circle(&point(8.0, 8.0), 6.3);
@@ -683,7 +1076,30 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
     stroke.set_line_cap(gsk::LineCap::Round);
     stroke.set_line_join(gsk::LineJoin::Round);
     snapshot.append_stroke(&p.to_path(), &stroke, color);
-    if let Some(f) = fill {
-        snapshot.append_fill(&f.to_path(), gsk::FillRule::Winding, color);
+    match (fill, knock) {
+        (Some(f), Some(k)) => {
+            // 先に抜く線を印（mask）にして、塗りをその外だけに描く。
+            snapshot.push_mask(gsk::MaskMode::InvertedAlpha);
+            let wide = gsk::Stroke::new(1.6);
+            wide.set_line_cap(gsk::LineCap::Round);
+            wide.set_line_join(gsk::LineJoin::Round);
+            snapshot.append_stroke(&k.to_path(), &wide, color);
+            snapshot.pop();
+            snapshot.append_fill(&f.to_path(), gsk::FillRule::Winding, color);
+            snapshot.pop();
+        }
+        (Some(f), None) => snapshot.append_fill(&f.to_path(), gsk::FillRule::Winding, color),
+        _ => {}
     }
+}
+
+/// 盾の形（上が平ら、下がとがる）。
+fn shield(p: &gsk::PathBuilder) {
+    p.move_to(8.0, 1.8);
+    p.line_to(13.2, 3.8);
+    p.line_to(13.2, 7.6);
+    p.quad_to(13.2, 12.2, 8.0, 14.4);
+    p.quad_to(2.8, 12.2, 2.8, 7.6);
+    p.line_to(2.8, 3.8);
+    p.close();
 }

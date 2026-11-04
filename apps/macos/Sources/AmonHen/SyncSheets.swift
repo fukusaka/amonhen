@@ -187,8 +187,14 @@ extension Actions {
                     (L("Commits to send"), outgoing, false),
                     (L("Commits %@ will lose", upstream), force || diverged ? incoming : .empty, true),
                 ])
-                alert.addButton(withTitle: ok).hasDestructiveAction = force || diverged
-                alert.addButton(withTitle: L("Cancel"))
+                let okButton = alert.addButton(withTitle: ok)
+                let cancel = alert.addButton(withTitle: L("Cancel"))
+                // Force Push は戻せない（赤く、↩ では押せない。PushSheet と同じ）。
+                if force || diverged {
+                    okButton.hasDestructiveAction = true
+                    okButton.keyEquivalent = ""
+                    cancel.keyEquivalent = "\r"
+                }
                 if diverged { alert.addButton(withTitle: "Pull…") }
                 choice = switch await present(alert) {
                 case .alertFirstButtonReturn: .ok
@@ -484,9 +490,10 @@ extension Actions {
                 popup.menu?.addItem(.separator())
                 popup.addItems(withTitles: remotes)
                 let chosen = { popup.indexOfSelectedItem == 0 ? remotes : [popup.titleOfSelectedItem ?? ""] }
+                let message = { [weak self] (text: String) in self?.sheetMessage(text) ?? text }
                 target = ClosureTarget { [weak alert] in
-                    // 文の行数が変わったら sheet の高さも合わせ直す。
-                    alert?.informativeText = pruneLine(chosen())
+                    // 文の行数が変わったら sheet の高さも合わせ直す。worktree の行は残す。
+                    alert?.informativeText = message(pruneLine(chosen()))
                     alert?.layout()
                 }
                 popup.target = target
@@ -543,8 +550,11 @@ extension Actions {
             let onto = currentBranch ?? "HEAD"
             let title = revert ? L("Revert %@ on %@?", what, onto) : L("Cherry-pick %@ onto %@?", what, onto)
             let message = (revert ? L("Adds commits that undo them.") : L("Adds copies of them.")) + " " + Self.canUndo
-            guard await confirm(title, message: message, ok: revert ? "Revert" : "Cherry-pick") else { return }
-            perform(sequence: commits.map { ["op": revert ? "revert" : "cherryPick", "oid": $0.hex, "isMerge": $0.isMerge] })
+            guard await confirm(title, message: sheetMessage(message), ok: revert ? "Revert" : "Cherry-pick") else { return }
+            // 1 つの命令で（git cherry-pick A B C と同じく、コンフリクトで止まったら残りは git が覚えていて、Continue・
+            // Skip で続く。1 つずつ実行すると、止まったところで残りが黙って落ちる）。
+            perform(["op": revert ? "revert" : "cherryPick", "oids": commits.map(\.hex),
+                     "isMerge": commits.contains(where: \.isMerge)])
         }
     }
 
@@ -669,9 +679,18 @@ extension Actions {
             let alert = makeAlert(L("Publish %@?", branch),
                                   L("This creates the branch on the remote and makes it the upstream (where Pull and Push go from now on)."))
             alert.accessoryView = grid
-            alert.addButton(withTitle: "Publish")
+            let publish = alert.addButton(withTitle: "Publish")
             alert.addButton(withTitle: L("Cancel"))
             alert.window.initialFirstResponder = popup
+            // 名前が空なら押せない（黙って閉じない）。
+            let typing = NotificationCenter.default.addObserver(
+                forName: NSControl.textDidChangeNotification, object: field, queue: .main
+            ) { _ in
+                MainActor.assumeIsolated {
+                    publish.isEnabled = !field.stringValue.trimmingCharacters(in: .whitespaces).isEmpty
+                }
+            }
+            defer { NotificationCenter.default.removeObserver(typing) }
             guard await present(alert) == .alertFirstButtonReturn, let remote = popup.titleOfSelectedItem else { return }
             let remoteBranch = field.stringValue.trimmingCharacters(in: .whitespaces)
             guard !remoteBranch.isEmpty else { return }
@@ -727,7 +746,7 @@ extension Actions {
     }
 
     /// シートの説明文（worktree が 2 つ以上なら、どの worktree かを先頭に）。
-    private func sheetMessage(_ message: String) -> String {
+    func sheetMessage(_ message: String) -> String {
         worktreeName.map { L("In the worktree “%@”.", $0) + (message.isEmpty ? "" : "\n" + message) } ?? message
     }
 
@@ -866,7 +885,7 @@ extension Actions {
         let alert = NSAlert()
         alert.messageText = title
         // worktree が 2 つ以上あれば、どの worktree に対する操作かを書く（docs/ux.md の「Worktrees」）。
-        alert.informativeText = worktreeName.map { L("In the worktree “%@”.", $0) + (message.isEmpty ? "" : "\n" + message) } ?? message
+        alert.informativeText = sheetMessage(message)
         return alert
     }
 

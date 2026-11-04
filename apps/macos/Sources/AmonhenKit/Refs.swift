@@ -27,6 +27,11 @@ public struct Refs: Sendable {
     /// HEAD のコミット（20 バイト）。
     public var head: Data?
     public let items: [RefItem]
+
+    /// 今のブランチと HEAD を替えたもの（書き込む先の worktree のものにする。GTK の `Worktrees::adjust`）。
+    public func with(headBranch: String?, head: Data?) -> Refs {
+        Refs(generation: generation, headBranch: headBranch, head: head, items: items)
+    }
 }
 
 extension Repository {

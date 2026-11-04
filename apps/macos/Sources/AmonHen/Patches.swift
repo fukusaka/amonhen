@@ -155,6 +155,7 @@ extension Actions {
             alert.messageText = names.count == 1 ? L("Apply %@?", names[0]) : L("Apply %ld Patches?", names.count)
             alert.informativeText = L("The changes go into the working tree (git apply).") + " " + Self.canUndo
         }
+        alert.informativeText = sheetMessage(alert.informativeText)
         alert.addButton(withTitle: L("Apply"))
         alert.addButton(withTitle: L("Cancel"))
 

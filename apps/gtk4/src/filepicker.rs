@@ -235,8 +235,20 @@ fn shown(path: &str, home: Option<&str>) -> String {
     }
 }
 
+/// 根で始まるパスか（`/`、`C:\`・`C:/`・`C:`、`\\server\share`。`~/x` や相対パスは違う。macOS 版の
+/// `HostPath.isAbsolute`）。
 fn is_absolute(path: &str) -> bool {
-    path.starts_with('/') || path.starts_with('~') || is_windows(path)
+    if path.starts_with('/') {
+        return true;
+    }
+    if let Some(unc) = path.strip_prefix("\\\\") {
+        return unc.split(['\\', '/']).filter(|p| !p.is_empty()).count() >= 2;
+    }
+    let b = path.as_bytes();
+    b.len() >= 2
+        && b[0].is_ascii_alphabetic()
+        && b[1] == b':'
+        && matches!(b.get(2), None | Some(b'\\' | b'/'))
 }
 
 // 読む
@@ -250,6 +262,28 @@ struct Entry {
     link: bool,
     executable: bool,
     repository: bool,
+}
+
+/// 列の行のアイコン（種類, 強調の色か, 緑か）。macOS 版の `icon(_:)` と同じ分け方。
+fn entry_icon(e: &Entry) -> (crate::icon::Kind, bool, bool) {
+    use crate::icon::Kind;
+    if e.repository {
+        (Kind::Branch, false, true)
+    } else if e.folder {
+        (Kind::FolderFill, true, false)
+    } else if e.file {
+        (
+            if e.executable {
+                Kind::Terminal
+            } else {
+                Kind::Doc
+            },
+            false,
+            false,
+        )
+    } else {
+        (Kind::QuestionSquare, false, false)
+    }
 }
 
 /// フォルダの中身。
@@ -382,13 +416,23 @@ struct Picker {
     /// 列を足した後、幅が決まったら最後の列まで送る（足した直後はまだ幅が変わっていない）。
     reveal_pending: Cell<bool>,
     status: gtk::Label,
-    /// 最初に列ができたら、列にキーボードを移す（macOS 版と同じく、始めは列で選ぶ。SSH 先を選べるときは欄のまま）。
+    /// 列ができたら、列にキーボードを移す（macOS 版と同じく、始めは列で選ぶ。SSH 先を選べるときは、つないで列が
+    /// 出るたび。パスの欄に打ち込んでいれば欄のまま）。
     focus_columns: Cell<bool>,
+    /// パスの欄に打ち込んだ（macOS 版の `typing`。選んだものを欄に出すのは数えない）。
+    typing: Cell<bool>,
+    /// 選んだものを欄に出している間（打ち込んだことにしない）。
+    setting_field: Cell<bool>,
     /// 列で打った名前と、最後に打った時刻（1 秒あけば打ち直し。macOS 版の `typeSelect`）。
     typed: RefCell<(String, Option<std::time::Instant>)>,
     /// つなげなかったときの「接続を確認」（もう一度つなぐ。macOS 版と同じ）。
     retry: gtk::Button,
+    /// 列の所（列・SSH 先を選ぶ案内・つなげなかったとき）と、つなげなかったときの見出しと訳。
+    area: gtk::Stack,
+    failed: (gtk::Label, gtk::Label),
     spinner: gtk::Spinner,
+    /// つないでいる間に、列の所に出す印と言葉。
+    connecting: (gtk::Box, gtk::Spinner, gtk::Label),
     choose: gtk::Button,
     views: RefCell<Vec<Rc<ColumnView>>>,
     columns: RefCell<Vec<Column>>,
@@ -510,6 +554,7 @@ impl Picker {
                 }
                 let more = gtk::MenuButton::builder().menu_model(&menu).build();
                 row.append(&more);
+                complete_from(&entry, candidates);
             }
             content.append(&row);
             entry
@@ -526,7 +571,11 @@ impl Picker {
         } else {
             "~/prj"
         }));
-        let home_button = gtk::Button::with_label("~");
+        // ホームは家のアイコン（macOS 版と同じ）。
+        let home_button = gtk::Button::new();
+        let house = crate::icon::Icon::default();
+        house.set(crate::icon::Kind::House, false);
+        home_button.set_child(Some(&house));
         home_button.set_tooltip_text(Some(&tr!("Home folder")));
         // リポジトリの木にはホームがない。
         home_button.set_visible(!tree);
@@ -560,7 +609,60 @@ impl Picker {
             .hexpand(true)
             .build();
         columns_scroll.add_css_class("frame");
-        content.append(&columns_scroll);
+        // つないでいる間は、列の所の真ん中に回る印と「〜につないでいます…」（macOS 版の ProgressView）。
+        let connecting_spinner = gtk::Spinner::new();
+        let connecting_label = gtk::Label::new(None);
+        connecting_label.add_css_class("dim-label");
+        let connecting = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        connecting.set_halign(gtk::Align::Center);
+        connecting.set_valign(gtk::Align::Center);
+        connecting.append(&connecting_spinner);
+        connecting.append(&connecting_label);
+        connecting.set_visible(false);
+        // 列の所: 列、SSH 先を選ぶまでの案内（真ん中に）、つなげなかったとき（左上に、訳と「接続を確認」）を
+        // 入れ替える（macOS 版と同じく、列の代わりに出す）。
+        let hint = gtk::Label::new(Some(&tr!("Choose a host to see its folders.")));
+        hint.add_css_class("dim-label");
+        hint.set_halign(gtk::Align::Center);
+        hint.set_valign(gtk::Align::Center);
+        let failed_title = gtk::Label::new(None);
+        failed_title.set_xalign(0.0);
+        failed_title.set_wrap(true);
+        let failed_detail = gtk::Label::new(None);
+        failed_detail.set_xalign(0.0);
+        failed_detail.set_wrap(true);
+        failed_detail.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        failed_detail.set_selectable(true);
+        failed_detail.add_css_class("caption");
+        failed_detail.add_css_class("error");
+        let failed_note = gtk::Label::new(Some(&tr!(
+            "You can still type the path above and choose it."
+        )));
+        failed_note.set_xalign(0.0);
+        failed_note.set_wrap(true);
+        failed_note.add_css_class("caption");
+        failed_note.add_css_class("dim-label");
+        let retry = gtk::Button::with_label(&tr!("Check Connection"));
+        retry.set_halign(gtk::Align::Start);
+        let failed = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        failed.set_halign(gtk::Align::Fill);
+        failed.set_valign(gtk::Align::Start);
+        failed.set_margin_top(8);
+        failed.set_margin_start(8);
+        failed.set_margin_end(8);
+        failed.append(&failed_title);
+        failed.append(&failed_detail);
+        failed.append(&failed_note);
+        failed.append(&retry);
+        let area = gtk::Stack::new();
+        area.set_vexpand(true);
+        area.add_named(&columns_scroll, Some("columns"));
+        area.add_named(&hint, Some("hint"));
+        area.add_named(&failed, Some("failed"));
+        let columns_area = gtk::Overlay::new();
+        columns_area.set_child(Some(&area));
+        columns_area.add_overlay(&connecting);
+        content.append(&columns_area);
         let status = gtk::Label::new(None);
         status.set_xalign(0.0);
         status.set_wrap(true);
@@ -569,10 +671,6 @@ impl Picker {
         status.add_css_class("caption");
         status.set_visible(false);
         content.append(&status);
-        let retry = gtk::Button::with_label(&tr!("Check Connection"));
-        retry.set_halign(gtk::Align::Start);
-        retry.set_visible(false);
-        content.append(&retry);
 
         let hidden = gtk::CheckButton::with_label(&tr!("Show hidden files"));
         let cancel = gtk::Button::with_label(&tr!("Cancel"));
@@ -583,7 +681,6 @@ impl Picker {
         // 隠しファイルの切り替えの隣に（macOS 版と同じ）。
         let new_folder = request.new_folder.then(|| {
             let b = gtk::Button::with_label(&tr!("New Folder…"));
-            b.set_tooltip_text(Some("Ctrl+Shift+N"));
             buttons.append(&b);
             b
         });
@@ -627,10 +724,15 @@ impl Picker {
             columns_scroll,
             reveal_pending: Cell::new(false),
             status,
-            focus_columns: Cell::new(!matches!(source, Source::AnyHost(_))),
+            focus_columns: Cell::new(true),
+            typing: Cell::new(false),
+            setting_field: Cell::new(false),
             typed: RefCell::default(),
             retry,
+            area,
+            failed: (failed_title, failed_detail),
             spinner,
+            connecting: (connecting, connecting_spinner, connecting_label),
             choose,
             views: RefCell::default(),
             columns: RefCell::default(),
@@ -711,6 +813,9 @@ impl Picker {
         let w = Rc::downgrade(self);
         self.field.connect_changed(move |_| {
             if let Some(p) = w.upgrade() {
+                if !p.setting_field.get() {
+                    p.typing.set(true);
+                }
                 p.update_buttons();
             }
         });
@@ -813,14 +918,19 @@ impl Picker {
         self.reader.replace(None);
         self.connection_error.replace(None);
         self.columns.borrow_mut().clear();
+        // つないで列が出たら、列に移す（macOS 版は列の部品が出るたび）。
+        self.focus_columns.set(true);
         self.sync(0);
         if host.is_empty() || host.contains('/') || host.contains(char::is_whitespace) {
-            self.set_status(Some(tr!("Choose a host to see its folders.")), false);
+            self.show_connecting(None);
+            self.set_status(None, false);
+            self.area.set_visible_child_name("hint");
             self.update_buttons();
             return;
         }
-        self.set_status(Some(tr!("Connecting to {host}…", host = host)), false);
-        self.spinner.set_spinning(true);
+        self.set_status(None, false);
+        self.area.set_visible_child_name("columns");
+        self.show_connecting(Some(&host));
         self.update_buttons();
         let through = crate::settings::bool(crate::settings::OPEN_THROUGH_DAEMON);
         let location = format!("{}ssh://{host}", if through { "daemon:" } else { "" });
@@ -833,7 +943,7 @@ impl Picker {
             if p.attempt.get() != attempt {
                 return;
             }
-            p.spinner.set_spinning(false);
+            p.show_connecting(None);
             match result {
                 Ok(repo) => {
                     p.set_status(None, false);
@@ -844,23 +954,30 @@ impl Picker {
                 }
                 Err(e) => {
                     p.connection_error.replace(Some(e.clone()));
-                    p.set_status(
-                        Some(format!(
-                            "{}\n{e}\n{}",
-                            tr!("Couldn’t connect to {host}", host = p.host.borrow().clone()),
-                            tr!("You can still type the path above and choose it.")
-                        )),
-                        true,
-                    );
-                    p.retry.set_visible(true);
+                    let (title, detail) = &p.failed;
+                    title.set_text(&tr!(
+                        "Couldn’t connect to {host}",
+                        host = p.host.borrow().clone()
+                    ));
+                    detail.set_text(&e);
+                    p.area.set_visible_child_name("failed");
                     p.update_buttons();
                 }
             }
         });
     }
 
+    /// つないでいる間の印を `host` で出す（None なら消す）。
+    fn show_connecting(&self, host: Option<&str>) {
+        let (area, spinner, label) = &self.connecting;
+        if let Some(host) = host {
+            label.set_text(&tr!("Connecting to {host}…", host = host));
+        }
+        area.set_visible(host.is_some());
+        spinner.set_spinning(host.is_some());
+    }
+
     fn set_status(&self, text: Option<String>, error: bool) {
-        self.retry.set_visible(false);
         match text {
             Some(t) => {
                 self.status.set_text(&t);
@@ -1201,6 +1318,7 @@ impl Picker {
         self.update_buttons();
         if count > 0
             && self.focus_columns.replace(false)
+            && !self.typing.get()
             && let Some(view) = self.views.borrow().last()
         {
             view.list.grab_focus();
@@ -1221,10 +1339,22 @@ impl Picker {
             name.set_xalign(0.0);
             name.set_hexpand(true);
             name.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+            name.set_hexpand(false);
+            // 種類のアイコン・名前・リンクの印・（開けるなら）右端の ›（macOS 版と同じ並び）。
+            let kind = crate::icon::Icon::default();
+            let link = gtk::Label::new(Some("↱"));
+            link.add_css_class("dim-label");
+            link.add_css_class("caption");
+            link.set_tooltip_text(Some(&tr!("Symbolic link")));
+            let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+            spacer.set_hexpand(true);
             let mark = gtk::Label::new(None);
             mark.add_css_class("dim-label");
-            let line = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+            let line = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+            line.append(&kind);
             line.append(&name);
+            line.append(&link);
+            line.append(&spacer);
             line.append(&mark);
             item.set_child(Some(&line));
             // いくつも選べるなら、Ctrl+クリックで選んだものに足す・外す（macOS 版の ⌘ クリック）。行の選びより先に受ける。
@@ -1250,8 +1380,16 @@ impl Picker {
             let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
             let Some(p) = w.upgrade() else { return };
             let Some(line) = item.child() else { return };
-            let (Some(name), Some(mark)) = (
-                line.first_child().and_downcast::<gtk::Label>(),
+            let kind = line.first_child().and_downcast::<crate::icon::Icon>();
+            let name = kind
+                .as_ref()
+                .and_then(|k| k.next_sibling())
+                .and_downcast::<gtk::Label>();
+            let link = name.as_ref().and_then(|n| n.next_sibling());
+            let (Some(kind), Some(name), Some(link), Some(mark)) = (
+                kind,
+                name,
+                link,
                 line.last_child().and_downcast::<gtk::Label>(),
             ) else {
                 return;
@@ -1273,21 +1411,23 @@ impl Picker {
             } else {
                 line.remove_css_class("picker-marked");
             }
-            name.set_markup(&if e.repository {
-                format!("<span foreground=\"#26a269\">{text}</span>")
-            } else if !usable {
+            name.set_markup(&if !usable {
                 format!("<span fgalpha=\"45%\">{text}</span>")
             } else {
                 text.to_string()
             });
-            let mut marks = String::new();
-            if e.link {
-                marks.push('↪');
+            // リポジトリは緑、フォルダは強調の色、ほかは薄く（macOS 版と同じ）。
+            let (icon, accent, green) = entry_icon(&e);
+            kind.set(icon, accent);
+            if green {
+                kind.add_css_class("success");
+            } else {
+                kind.remove_css_class("success");
             }
-            if p.opens(&e) {
-                marks.push('›');
-            }
-            mark.set_text(&marks);
+            kind.set_tooltip_text(e.repository.then(|| tr!("Git repository")).as_deref());
+            kind.set_opacity(if usable { 1.0 } else { 0.6 });
+            link.set_visible(e.link);
+            mark.set_text(if p.opens(&e) { "›" } else { "" });
             let tip = [
                 e.repository.then(|| tr!("Git repository")),
                 e.link.then(|| tr!("Symbolic link")),
@@ -1342,8 +1482,21 @@ impl Picker {
             p.select(index, name);
         });
         // ダブルクリック・Enter: その行が選べるものなら、それを選んで決める（フォルダを選ぶときは、そのフォルダ）。
-        // 選べないが開くフォルダなら中に入る。薄いもの（選べず、開きもしない）では何もしない（macOS 版と同じ。
-        // 開いているフォルダで決めてしまわない）。
+        // 選べないが開くフォルダなら、Enter では中に入り、ダブルクリックでは何もしない（1 回目の押しで開いている。
+        // 中の最初のものを選ぶと、そのまま決められてしまう）。薄いもの（選べず、開きもしない）では何もしない
+        // （macOS 版と同じ。開いているフォルダで決めてしまわない）。
+        let double = Rc::new(Cell::new(false));
+        let clicks = gtk::GestureClick::new();
+        clicks.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let d = double.clone();
+        clicks.connect_pressed(move |_, n, _, _| {
+            if n >= 2 {
+                d.set(true);
+                let d = d.clone();
+                glib::idle_add_local_once(move || d.set(false));
+            }
+        });
+        list.add_controller(clicks);
         let (s, w) = (shown.clone(), Rc::downgrade(self));
         list.connect_activate(move |_, position| {
             let Some(p) = w.upgrade() else { return };
@@ -1360,7 +1513,7 @@ impl Picker {
                     p.select(index, Some(entry.name.clone()));
                 }
                 p.finish();
-            } else if p.opens(&entry) {
+            } else if p.opens(&entry) && !double.get() {
                 p.enter(index);
             }
         });
@@ -1664,7 +1817,9 @@ impl Picker {
                 .map_or_else(|| last.path.clone(), |s| join(&last.path, s));
             shown(&path, self.home.borrow().as_deref())
         };
+        self.setting_field.set(true);
         self.field.set_text(&text);
+        self.setting_field.set(false);
         self.field.set_position(-1);
         self.update_buttons();
     }
@@ -1705,6 +1860,45 @@ fn debug_snapshot(picker: &Rc<Picker>) {
     });
 }
 
+/// 打った文字 `typed` を頭に持つ最初の候補（大文字小文字は見ない。打ったものより長いものだけ）。
+fn completion<'a>(typed: &str, candidates: &'a [String]) -> Option<&'a str> {
+    if typed.is_empty() {
+        return None;
+    }
+    let lower = typed.to_lowercase();
+    candidates
+        .iter()
+        .find(|c| c.len() > typed.len() && c.to_lowercase().starts_with(&lower))
+        .map(String::as_str)
+}
+
+/// 欄に打つと、候補の残りを足して選んでおく（macOS 版の NSComboBox の completes）。消したときは足さない。
+fn complete_from(entry: &gtk::Entry, candidates: Vec<String>) {
+    let busy = Rc::new(Cell::new(false));
+    let before = Rc::new(Cell::new(entry.text().chars().count()));
+    entry.connect_changed(move |e| {
+        if busy.get() {
+            return;
+        }
+        let text = e.text().to_string();
+        let count = text.chars().count();
+        let grew = count > before.replace(count);
+        if !grew || e.position() != count as i32 {
+            return;
+        }
+        let Some(full) = completion(&text, &candidates) else {
+            return;
+        };
+        // 打ったところはそのまま、残りだけを候補から足す。
+        let rest: String = full.chars().skip(count).collect();
+        busy.set(true);
+        let mut at = count as i32;
+        e.insert_text(&rest, &mut at);
+        busy.set(false);
+        e.select_region(count as i32, -1);
+    });
+}
+
 /// SSH 先の候補: 使ったことのあるもの（先に）と、~/.ssh/config・known_hosts のもの。
 fn host_candidates() -> Vec<String> {
     let mut used: Vec<String> = crate::bookmarks::all_locations()
@@ -1730,6 +1924,33 @@ fn host_candidates() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn typed_paths_must_start_at_a_root() {
+        assert!(is_absolute("/usr/bin/git"));
+        assert!(is_absolute("C:\\Program Files"));
+        assert!(is_absolute("C:/x"));
+        assert!(is_absolute("C:"));
+        assert!(is_absolute("\\\\server\\share"));
+        assert!(!is_absolute("\\\\server"));
+        assert!(!is_absolute("~/bin/git"));
+        assert!(!is_absolute("bin/git"));
+        assert!(!is_absolute("C:x"));
+    }
+
+    #[test]
+    fn completes_a_host_from_the_first_candidate() {
+        let hosts = [
+            "build-box".to_owned(),
+            "Builder".to_owned(),
+            "web".to_owned(),
+        ];
+        assert_eq!(completion("bu", &hosts), Some("build-box"));
+        assert_eq!(completion("BUILDE", &hosts), Some("Builder"));
+        assert_eq!(completion("web", &hosts), None);
+        assert_eq!(completion("", &hosts), None);
+        assert_eq!(completion("x", &hosts), None);
+    }
 
     #[test]
     fn splits_paths_on_unix_and_windows() {

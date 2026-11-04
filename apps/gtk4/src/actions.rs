@@ -63,6 +63,8 @@ impl Actions {
         icon.set(crate::icon::Kind::Undo, false);
         undo.set_child(Some(&icon));
         undo.set_action_name(Some("win.undo"));
+        // つないでいる・開けなかったタブでも説明を出す（macOS 版はツールバーを作るときに setUndo(nil)）。
+        undo.set_tooltip_text(Some(&tr!("Nothing to Undo")));
         Rc::new(Self {
             repo: RefCell::default(),
             anchor: anchor.upcast_ref::<gtk::Widget>().downgrade(),
@@ -150,6 +152,11 @@ impl Actions {
 
     /// 使えるかを決める状態を `f` で変え、タブのアクションに入れる（ref・status・画面が変わるたびに。macOS 版で
     /// メニューを開くたびに `validate` が見るものと同じ）。
+    /// 手元のリポジトリか（daemon・SSH 先でない。端末・ファイルの窓で開ける）。
+    pub fn is_local(&self) -> bool {
+        self.facts.borrow().local
+    }
+
     pub fn update_facts(&self, f: impl FnOnce(&mut Facts)) {
         f(&mut self.facts.borrow_mut());
         apply_facts(&self.group, &self.facts.borrow());
@@ -231,6 +238,38 @@ impl Actions {
             done(&Value::Null);
             return;
         };
+        self.perform_on(repo, commands, handled, done);
+    }
+
+    /// [`Self::perform_with`] と同じで、書き込む先の worktree ではなく `repo` で実行する（別の窓のマージエディタ
+    /// は、開いた worktree に書く。後で書き込む先を替えても。macOS 版は worktree ごとに `Actions` がある）。
+    pub fn perform_in(
+        self: &Rc<Self>,
+        repo: Arc<Repository>,
+        commands: Vec<Value>,
+        done: impl FnOnce(&Value) + 'static,
+    ) {
+        self.perform_on(repo, commands, |_| false, done);
+    }
+
+    /// [`Self::perform_recovering`] と同じで、書き込む先の worktree ではなく `repo` で実行する。
+    pub fn perform_recovering_in(
+        self: &Rc<Self>,
+        repo: Arc<Repository>,
+        commands: Vec<Value>,
+        handled: impl FnOnce(&Value) -> bool + 'static,
+        done: impl FnOnce(&Value) + 'static,
+    ) {
+        self.perform_on(repo, commands, handled, done);
+    }
+
+    fn perform_on(
+        self: &Rc<Self>,
+        repo: Arc<Repository>,
+        commands: Vec<Value>,
+        handled: impl FnOnce(&Value) -> bool + 'static,
+        done: impl FnOnce(&Value) + 'static,
+    ) {
         let this = self.clone();
         crate::activity::begin();
         glib::spawn_future_local(async move {
@@ -363,6 +402,17 @@ impl Actions {
         let Some(repo) = self.repo.borrow().clone() else {
             return;
         };
+        self.perform_work_in(repo, heading, work);
+    }
+
+    /// [`Self::perform_work_titled`] と同じで、書き込む先の worktree ではなく `repo` で行う（Working Copy の
+    /// 操作を、始めたときの worktree に効かせる）。
+    pub fn perform_work_in(
+        self: &Rc<Self>,
+        repo: Arc<Repository>,
+        heading: Option<String>,
+        work: impl FnOnce(&Repository) -> amonhen_model::Result<()> + Send + 'static,
+    ) {
         let this = self.clone();
         crate::activity::begin();
         glib::spawn_future_local(async move {
@@ -468,7 +518,7 @@ impl Actions {
     }
 
     /// 失敗をステータスバーに（つないでいなければ、要点・次の一手・git の文を並べた知らせで。macOS 版の `fail`）。
-    async fn fail(&self, failure: crate::statusbar::Failure) {
+    pub async fn fail(&self, failure: crate::statusbar::Failure) {
         let on_failure = self.on_failure.borrow().clone();
         match on_failure {
             Some(f) => f(failure),
@@ -487,28 +537,34 @@ impl Actions {
         }
     }
 
+    /// 知らせる（ボタンは OK だけの、ほかの確認と同じシート。macOS 版の `alert` と同じく、worktree は書かない）。
     pub async fn alert(&self, title: &str, message: &str) {
-        let dialog = gtk::AlertDialog::builder()
-            .message(title)
-            .detail(message)
-            .modal(true)
-            .build();
-        let window = self.window();
-        let _ = dialog.choose_future(window.as_ref()).await;
+        let parent: Option<gtk::Window> = self.window().map(|w| w.upcast());
+        let sheet = crate::sheets::Sheet::unnamed(parent.as_ref(), title, message);
+        sheet.button(
+            "OK",
+            crate::sheets::Response::Ok,
+            Some(crate::sheets::Style::Suggested),
+        );
+        sheet.run().await;
     }
 
-    /// 取り消せない操作の前に確かめる。
+    /// 実行の前に確かめる（macOS 版の `confirm`。ほかの確認と同じシートで）。
     pub async fn confirm(&self, title: &str, message: &str, ok: &str) -> bool {
-        let dialog = gtk::AlertDialog::builder()
-            .message(title)
-            .detail(message)
-            .buttons([tr!("Cancel").as_str(), ok])
-            .cancel_button(0)
-            .default_button(1)
-            .modal(true)
-            .build();
-        let window = self.window();
-        dialog.choose_future(window.as_ref()).await == Ok(1)
+        let parent = self.window();
+        let sheet =
+            crate::sheets::Sheet::unnamed(parent.as_ref().map(|w| w.upcast_ref()), title, message);
+        sheet.buttons(ok, false, None);
+        sheet.run().await == crate::sheets::Response::Ok
+    }
+
+    /// 戻せないことの前に確かめる（赤いボタン、Return は Cancel。macOS 版の `confirm(destructive: true)`）。
+    pub async fn confirm_destructive(&self, title: &str, message: &str, ok: &str) -> bool {
+        let parent = self.window();
+        let sheet =
+            crate::sheets::Sheet::unnamed(parent.as_ref().map(|w| w.upcast_ref()), title, message);
+        sheet.buttons(ok, true, None);
+        sheet.run().await == crate::sheets::Response::Ok
     }
 
     /// 文字を入れてもらう（macOS 版の `ask`）。キャンセルか空なら None。
@@ -616,7 +672,8 @@ impl Actions {
             .map(|(_, value)| value.clone())
     }
 
-    /// macOS 版の確認の窓（見出し・説明・部品・ボタン）に当たる窓を出す。`ok` を押したら true。
+    /// macOS 版の確認の窓（見出し・説明・部品・ボタン）に当たるシートを出す。`ok` を押したら true。ほかの確認と
+    /// 同じシート（[`Sheet`]）なので、見た目と Return・Esc の扱いも同じ。
     async fn run_dialog(
         &self,
         title: &str,
@@ -626,65 +683,18 @@ impl Actions {
         ok: &str,
     ) -> bool {
         let parent = self.window();
-        let dialog = gtk::Window::builder()
-            .title(title)
-            .modal(true)
-            .resizable(false)
-            .default_width(380)
-            .build();
-        dialog.set_transient_for(parent.as_ref());
-        let heading = gtk::Label::new(Some(title));
-        heading.add_css_class("title-4");
-        heading.set_xalign(0.0);
-        heading.set_wrap(true);
-        let column = gtk::Box::new(gtk::Orientation::Vertical, 10);
-        column.set_margin_top(16);
-        column.set_margin_bottom(16);
-        column.set_margin_start(16);
-        column.set_margin_end(16);
-        column.append(&heading);
-        if !message.is_empty() {
-            let detail = gtk::Label::new(Some(message));
-            detail.set_xalign(0.0);
-            detail.set_wrap(true);
-            column.append(&detail);
-        }
-        column.append(content);
-        let cancel = gtk::Button::with_label(&tr!("Cancel"));
-        let accept = gtk::Button::with_label(ok);
-        accept.add_css_class("suggested-action");
-        let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        buttons.set_halign(gtk::Align::End);
-        buttons.set_margin_top(4);
-        buttons.append(&cancel);
-        buttons.append(&accept);
-        column.append(&buttons);
-        dialog.set_child(Some(&column));
-        dialog.set_default_widget(Some(&accept));
-
-        let (tx, rx) = async_channel::bounded::<bool>(1);
-        let t = tx.clone();
-        accept.connect_clicked(move |_| {
-            let _ = t.try_send(true);
-        });
-        let t = tx.clone();
-        cancel.connect_clicked(move |_| {
-            let _ = t.try_send(false);
-        });
-        dialog.connect_close_request(move |_| {
-            let _ = tx.try_send(false);
-            glib::Propagation::Proceed
-        });
-        dialog.present();
+        let sheet =
+            crate::sheets::Sheet::unnamed(parent.as_ref().map(|w| w.upcast_ref()), title, message);
+        sheet.add(content);
+        sheet.buttons(ok, false, None);
+        sheet.window.present();
         focus.grab_focus();
-        let answer = rx.recv().await.unwrap_or(false);
-        dialog.destroy();
-        answer
+        sheet.run().await == crate::sheets::Response::Ok
     }
 }
 
-/// 1 つずつの merge がコンフリクトで止まったときの、まだ merge していないもの（`info.remaining`。`, ` で
-/// つなぐ）。止まっていない・残りがなければ None。
+/// 1 つずつの merge がコンフリクトで止まったときの、まだ merge していないもの（`info.remaining`。今の言語の
+/// 並べ方でつなぐ）。止まっていない・残りがなければ None。
 fn not_merged_yet(reply: &Value) -> Option<String> {
     if reply["error"].is_string() || reply["outcome"].as_str() != Some("conflict") {
         return None;
@@ -694,7 +704,7 @@ fn not_merged_yet(reply: &Value) -> Option<String> {
         .iter()
         .filter_map(Value::as_str)
         .collect();
-    (!names.is_empty()).then(|| names.join(", "))
+    (!names.is_empty()).then(|| amonhen_model::i18n::list(&names))
 }
 
 /// メニューの項目とツールバーのボタンを使えるかを決める、タブの状態（macOS 版の `validate` が見るもの）。
@@ -718,6 +728,10 @@ pub struct Facts {
     pub working_copy: bool,
     /// Working Copy の Commit を押せる。
     pub can_commit: bool,
+    /// 埋め込んだマージエディタにフォーカスがある（Ctrl+Return はエディタの Save & Mark Resolved。アプリの
+    /// ショートカットは部品より先に受けるので、その間は Commit を止めて、キーをエディタに渡す。macOS 版でも
+    /// ⌘↩ はエディタが先に受ける）。
+    pub merge_focused: bool,
     /// コンフリクト以外に、stage していない変更がある。
     pub can_stage_all: bool,
     /// History を出していて、パッチにできるコミット（merge でないもの）だけを選んでいる。
@@ -726,9 +740,14 @@ pub struct Facts {
     pub local: bool,
     /// origin（なければ最初のリモート）が GitHub（gh があるときだけ調べる）。
     pub github: bool,
+    /// gh が使える（Create Pull Request… に要る。macOS 版の `GitHub.isAvailable`）。
+    pub gh: bool,
     /// まだ開けていないタブ（つないでいる途中・つなげなかった）。リポジトリの操作はどれも使えない（macOS 版の
     /// つないでいるタブは、リポジトリの窓でないので、その操作がない）。
     pub unopened: bool,
+    /// Find Next・Find Previous が効く（History を探した、またはフォーカスが差分・History にある。macOS 版で
+    /// ⌘G を受ける部品があるか）。
+    pub find_next: bool,
 }
 
 /// リポジトリを開いていないと使えない、表の操作のメニュー（File・Window・アプリのものは開く前でも使える）。
@@ -740,8 +759,9 @@ const REPOSITORY_MENUS: &[amonhen_commands::Menu] = &[
     amonhen_commands::Menu::Commit,
 ];
 
-/// 表にない、リポジトリを開いていないと使えないタブのアクション。
-const REPOSITORY_ONLY: &[&str] = &["find", "find-next", "find-previous", "search-history"];
+/// 表にない、リポジトリを開いていないと使えないタブのアクション（Find Next・Find Previous は、そのうえ
+/// `Facts::find_next` のときだけ）。
+const REPOSITORY_ONLY: &[&str] = &["find", "search-history"];
 
 /// 状態から、タブのアクション（`win.<id>`）ごとに使えるか（macOS 版の `RepositoryWindow.validate` と同じ）。
 /// ここにないアクションはいつも使える。
@@ -778,13 +798,13 @@ pub fn enabled(f: &Facts) -> Vec<(&'static str, bool)> {
         ("rename-branch", f.head_branch),
         ("set-upstream", f.head_branch),
         ("compare-with-previous", f.head_branch),
-        ("commit", commit),
+        ("commit", commit && !f.merge_focused),
         ("commit-and-push", commit),
         ("stage-all", f.working_copy && f.can_stage_all),
         ("open-in-terminal", f.local),
         ("reveal-in-files", f.local),
         ("open-on-github", f.github),
-        ("create-pull-request", f.github && f.head_branch),
+        ("create-pull-request", f.github && f.gh && f.head_branch),
     ];
     // 開けていないタブでは、リポジトリの操作をどれも使えなくする。
     let opened = !f.unopened;
@@ -825,6 +845,14 @@ fn apply_facts(group: &glib::WeakRef<gio::SimpleActionGroup>, facts: &Facts) {
             action.set_enabled(!facts.unopened);
         }
     }
+    for name in ["find-next", "find-previous"] {
+        if let Some(action) = group
+            .lookup_action(name)
+            .and_downcast::<gio::SimpleAction>()
+        {
+            action.set_enabled(!facts.unopened && facts.find_next);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -858,7 +886,7 @@ mod tests {
             reply(
                 json!({ "ok": true, "outcome": "conflict", "info": { "remaining": ["b", "c"] } })
             ),
-            Some("b, c".into())
+            Some("b and c".into())
         );
         assert_eq!(reply(json!({ "ok": true, "outcome": "conflict" })), None);
         assert_eq!(
@@ -1001,6 +1029,11 @@ mod tests {
         for name in ["commit", "commit-and-push", "stage-all"] {
             assert!(of(&facts, name), "{name}");
         }
+        // マージエディタの中では、Ctrl+Return をエディタに渡す。
+        facts.merge_focused = true;
+        assert!(!of(&facts, "commit"));
+        assert!(of(&facts, "commit-and-push"));
+        facts.merge_focused = false;
         facts.can_commit = false;
         facts.can_stage_all = false;
         for name in ["commit", "commit-and-push", "stage-all"] {
@@ -1026,6 +1059,7 @@ mod tests {
         facts.local = false;
         assert!(!of(&facts, "open-in-terminal") && !of(&facts, "reveal-in-files"));
         facts.github = true;
+        facts.gh = true;
         facts.stash = true;
         facts.undo = true;
         facts.patch = true;
@@ -1034,6 +1068,11 @@ mod tests {
         }
         // プルリクエストは今のブランチから作る。
         facts.head_branch = false;
+        assert!(!of(&facts, "create-pull-request"));
+        assert!(of(&facts, "open-on-github"));
+        // gh がなければ作れない（Open on GitHub はブラウザで開くので使える）。
+        facts.head_branch = true;
+        facts.gh = false;
         assert!(!of(&facts, "create-pull-request"));
         assert!(of(&facts, "open-on-github"));
     }

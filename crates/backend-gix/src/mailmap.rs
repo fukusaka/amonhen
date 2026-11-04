@@ -42,11 +42,9 @@ fn stamp(repo: &gix::Repository, files: &[PathBuf], blob: Option<&str>) -> Stamp
     }
 }
 
-/// 設定を読み直すため、開き直す（開いたままのリポジトリの設定は、開いたときのもの）。
-fn load(from: &Path) -> Result<Loaded> {
-    let repo = gix::ThreadSafeRepository::discover(from)?.to_thread_local();
+/// 読むもと: 変わったかを調べるファイルと、中身を読む blob の指定。
+fn sources(repo: &gix::Repository) -> (Vec<PathBuf>, Option<String>) {
     let config = repo.config_snapshot();
-    let enabled = config.boolean("log.mailmap").unwrap_or(true);
     let mut files: Vec<PathBuf> = Vec::new();
     if let Some(workdir) = repo.workdir() {
         files.push(workdir.join(".mailmap"));
@@ -72,6 +70,34 @@ fn load(from: &Path) -> Result<Loaded> {
         .string("mailmap.blob")
         .map(|s| s.to_str_lossy().into_owned())
         .or_else(|| repo.workdir().is_none().then(|| "HEAD:.mailmap".to_owned()));
+    (files, blob)
+}
+
+/// 設定を読み直すため、開き直す（開いたままのリポジトリの設定は、開いたときのもの）。
+fn load(from: &Path) -> Result<Loaded> {
+    let open = || -> Result<gix::Repository> {
+        Ok(gix::ThreadSafeRepository::discover(from)?.to_thread_local())
+    };
+    let mut repo = open()?;
+    let (mut files, mut blob) = sources(&repo);
+    // 調べてから読む。読んだ後に調べると、その間に書き換わったファイルの新しい時刻を、古い中身と一緒に覚えて
+    // しまい、もう読み直さない（読んだ後に変われば、次に調べたときに違うので読み直す）。設定（log.mailmap など）も
+    // 中身のうちなので、調べた後に開き直して読む。開き直して読むもとが変わっていれば（mailmap.file を足したなど）、
+    // そのもとで調べ直す。
+    let mut stamp = stamp(&repo, &files, blob.as_deref());
+    for _ in 0..3 {
+        repo = open()?;
+        let now = sources(&repo);
+        if now == (files.clone(), blob.clone()) {
+            break;
+        }
+        (files, blob) = now;
+        stamp = self::stamp(&repo, &files, blob.as_deref());
+    }
+    let enabled = repo
+        .config_snapshot()
+        .boolean("log.mailmap")
+        .unwrap_or(true);
     let text = |b: &gix::bstr::BStr| b.to_str_lossy().into_owned();
     let entries = repo
         .open_mailmap()
@@ -84,7 +110,7 @@ fn load(from: &Path) -> Result<Loaded> {
         })
         .collect();
     Ok(Loaded {
-        stamp: stamp(&repo, &files, blob.as_deref()),
+        stamp,
         files,
         blob,
         mailmap: Arc::new(Mailmap::new(enabled, entries)),

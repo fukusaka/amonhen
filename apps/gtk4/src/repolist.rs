@@ -22,6 +22,8 @@ struct Row {
     path: gtk::Label,
     branch: gtk::Label,
     state: gtk::Label,
+    /// 行の全体（状態の説明を付ける）。
+    line: gtk::Widget,
     location: RefCell<String>,
 }
 
@@ -29,11 +31,8 @@ impl Row {
     fn render(&self) {
         let location = self.location.borrow().clone();
         self.name.set_markup(&repobrowser::name_markup(&location));
-        let path = repobrowser::path_text(&location);
-        self.path.set_text(&path);
-        self.path.set_tooltip_text(Some(&path));
-        self.branch.set_text(&repobrowser::branch_text(&location));
-        repobrowser::show_state(&self.state, &location, false);
+        self.path.set_text(&repobrowser::path_text(&location));
+        repobrowser::show_compact(&self.branch, &self.state, &self.line, &location);
     }
 }
 
@@ -169,6 +168,7 @@ pub fn button(
             path,
             branch,
             state,
+            line: line.clone().upcast(),
             location: RefCell::default(),
         });
         // 右クリックで、その行を選んでメニュー（macOS 版と同じ）。
@@ -190,19 +190,26 @@ pub fn button(
             let Some(window) = widget.root().and_downcast::<gtk::Window>() else {
                 return;
             };
-            // 選んでいる行の上なら選んだものすべて、そうでなければその行だけを選んで（macOS 版と同じ）。
+            // 選んでいる行の上なら選んだものすべて、そうでなければ選び方は変えずにその行だけ（囲んで示す。macOS 版の
+            // clickedRow と同じ）。
             let mut targets = vec![location.clone()];
+            let mut outlined = None;
             if let Some(s) = s.upgrade()
                 && item.position() != gtk::INVALID_LIST_POSITION
             {
                 if s.is_selected(item.position()) {
                     targets = selected_locations(&s);
                 } else {
-                    s.select_item(item.position(), true);
+                    outlined = repobrowser::row_widget(&widget);
                 }
             }
             let items = repobrowser::row_items(&window, &location, &targets, false, o.clone());
-            menu::popup(&widget, x, y, items);
+            if let Some(popover) = menu::popup_returning(&widget, x, y, items)
+                && let Some(outlined) = outlined
+            {
+                outlined.add_css_class("repo-clicked");
+                popover.connect_closed(move |_| outlined.remove_css_class("repo-clicked"));
+            }
         });
         line.add_controller(click);
         let mut rows = r.borrow_mut();
@@ -260,19 +267,50 @@ pub fn button(
     content.append(&bottom);
     popover.set_child(Some(&content));
 
+    // 作り直す。`keep` なら（ブックマーク・スキャンの変化）、絞り込んでいなければ選んでいた行とスクロールの位置を
+    // 保つ（macOS 版の `reloadTable`）。そうでなければ先頭を選ぶ。
     let update = {
-        let (model, selection, filter) = (model.clone(), selection.clone(), filter.clone());
-        Rc::new(move || {
-            let shown = ordered(&filter.text());
+        let (model, selection, filter, scrolled) = (
+            model.clone(),
+            selection.clone(),
+            filter.clone(),
+            scrolled.clone(),
+        );
+        Rc::new(move |keep: bool| {
+            let query = filter.text();
+            let keep = keep && query.trim().is_empty();
+            let selected: std::collections::HashSet<String> = if keep {
+                selected_locations(&selection).into_iter().collect()
+            } else {
+                Default::default()
+            };
+            let top = scrolled.vadjustment().value();
+            let shown = ordered(&query);
             let refs: Vec<&str> = shown.iter().map(String::as_str).collect();
             model.splice(0, model.n_items(), &refs);
-            if !shown.is_empty() {
+            let rows: Vec<u32> = shown
+                .iter()
+                .enumerate()
+                .filter(|(_, l)| selected.contains(*l))
+                .map(|(i, _)| i as u32)
+                .collect();
+            if !rows.is_empty() {
+                selection.unselect_all();
+                for row in rows {
+                    selection.select_item(row, false);
+                }
+            } else if !shown.is_empty() {
                 selection.select_item(0, true);
+            }
+            if keep {
+                // 行を作り直した後に、元の位置へ。
+                let adjustment = scrolled.vadjustment();
+                glib::idle_add_local_once(move || adjustment.set_value(top));
             }
         })
     };
     let u = update.clone();
-    filter.connect_search_changed(move |_| u());
+    filter.connect_search_changed(move |_| u(false));
     // 出すたびに読み直す（ブックマーク・スキャンの結果・行の状態が変わったら、出している間は描き直す）。
     let (u, f, sc) = (update.clone(), filter.clone(), scanning.clone());
     let (r, p) = (rows.clone(), popover.downgrade());
@@ -286,7 +324,10 @@ pub fn button(
         bookmarks::refresh();
         bookmarks::forget_peeks();
         bookmarks::rescan();
-        u();
+        // 始めた知らせは聞き手を足す前に出ているので、ここで出す（macOS 版はすぐ知らせが来て回る）。
+        sc.set_visible(bookmarks::is_scanning());
+        sc.set_spinning(bookmarks::is_scanning());
+        u(false);
         f.grab_focus();
         let (u, sc, r, p) = (u.clone(), sc.clone(), r.clone(), p.clone());
         bookmarks::connect(move |path| {
@@ -304,7 +345,7 @@ pub fn button(
                 None => {
                     sc.set_visible(bookmarks::is_scanning());
                     sc.set_spinning(bookmarks::is_scanning());
-                    u();
+                    u(true);
                 }
             }
             true

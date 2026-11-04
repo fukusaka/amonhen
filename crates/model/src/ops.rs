@@ -640,8 +640,12 @@ pub trait Operations: Send + Sync {
     /// 今のブランチを `onto` へ載せ直す。`update_refs` は、積み重ねたブランチを一緒に動かすかのこの操作だけの指定
     /// （`--update-refs`・`--no-update-refs`、git 2.38 から）。`None` なら git の `rebase.updateRefs` のとおり。
     fn rebase(&self, onto: &str, update_refs: Option<bool>) -> Result<Outcome>;
-    fn cherry_pick(&self, oid: &Oid, is_merge: bool) -> Result<Outcome>;
-    fn revert(&self, oid: &Oid, is_merge: bool) -> Result<Outcome>;
+    /// `git cherry-pick oids…`（渡した順に）。`is_merge` なら `-m 1`（どれかが merge のとき。git 2.21 から merge で
+    /// ないコミットにも付けられる）。いくつもなら、コンフリクトで止まったときの残りは git が覚えていて、
+    /// `continue_sequence`・`skip_sequence` で続く（`git cherry-pick A B C` と同じ）。
+    fn cherry_pick(&self, oids: &[Oid], is_merge: bool) -> Result<Outcome>;
+    /// `git revert --no-edit oids…`（[`Self::cherry_pick`] と同じ）。
+    fn revert(&self, oids: &[Oid], is_merge: bool) -> Result<Outcome>;
     /// 用意した todo で非対話の rebase を行う（コミットの編集）。`base` が `None` なら `--root`。`message` は、
     /// todo の `reword`・`squash` で git が開くエディタに書かせるメッセージのファイル。
     /// 対話的な rebase を、用意した todo で行う。`rebase_merges` なら `--rebase-merges` で merge を作り直し、
@@ -760,6 +764,12 @@ pub trait Operations: Send + Sync {
     fn config_set_global(&self, key: &str, value: Option<&str>) -> Result<()> {
         let _ = (key, value);
         Err(crate::tr!("Can’t change the user’s git settings here").into())
+    }
+    /// いくつも値を持てる設定（`remote.origin.fetch` など）の、この段（`global` なら global、でなければ local）の
+    /// 値をすべて `values` にする（`git config --unset-all` のあと、`--add` で 1 つずつ。空なら消すだけ）。
+    fn config_set_all(&self, key: &str, values: &[String], global: bool) -> Result<()> {
+        let _ = (key, values, global);
+        Err(crate::tr!("Can’t write several values of a git setting here").into())
     }
     /// git を動かす機械で使う git（その機械の Amon Hen の設定と環境から決まる。`crate::settings`）。
     fn machine_git(&self) -> Result<MachineGit> {

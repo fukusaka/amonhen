@@ -536,7 +536,9 @@ public struct ActivityRecord: Decodable, Sendable, Identifiable, Hashable {
     public let output: String?
     /// SSH 先の daemon の記録なら、そのリポジトリの名前（手元の記録なら nil）。
     public var remote: String?
-    public var id: String { "\(remote ?? ""):\(seq)" }
+    /// daemon の記録なら、どのリポジトリのものかを見分ける鍵（同じ名前のリポジトリがいくつあっても分ける）。
+    public var remoteKey: String?
+    public var id: String { "\(remoteKey ?? remote ?? ""):\(seq)" }
 
     enum CodingKeys: String, CodingKey {
         case seq, kind, repo, label, started, duration, ok, error, progress, cancellable, output

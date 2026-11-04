@@ -276,7 +276,7 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
                                                   #selector(RepositoryWindow.openInTerminal(_:)), L("Open in Terminal"))
         case .finder:
             (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), "Finder", "folder",
-                                                  #selector(RepositoryWindow.revealInFinder(_:)), L("Reveal in Finder"))
+                                                  #selector(RepositoryWindow.revealInFinder(_:)), Titles.showInFinder)
         default:
             return nil
         }

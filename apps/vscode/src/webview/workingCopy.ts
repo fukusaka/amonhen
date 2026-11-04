@@ -90,6 +90,8 @@ export function createWorkingCopyView(): View {
     const row = el('div', 'wc-file');
     if (selected?.group === f.group && selected.path === f.path) row.classList.add('selected');
     row.title = f.origPath ? `${f.origPath} → ${f.path}` : f.path;
+    // Webview の右クリックメニュー（package.json の webview/context）に渡す情報
+    row.dataset.vscodeContext = JSON.stringify({ webviewSection: 'wcFile', path: f.path, preventDefaultContextMenuItems: true });
     const slash = f.path.lastIndexOf('/');
     if (f.markers === 0) {
       // マーカーが残っていない。解決できていそうなことを印と短い注記で示す

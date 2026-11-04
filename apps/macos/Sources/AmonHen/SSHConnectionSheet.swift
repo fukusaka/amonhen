@@ -18,14 +18,20 @@ enum SSHConnectionSheet {
         window.beginSheet(sheet)
     }
 
-    /// 接続先を一覧から外す前の確認（リポジトリと、スキャンするフォルダの数を言う）。リモートの削除と同じ形。
-    static func confirmRemove(host: String, repositories: Int, folders: Int) -> Bool {
+    /// 接続先を一覧から外す前の確認（リポジトリと、スキャンするフォルダの数を言う）。リモートの削除と同じ形で、
+    /// `window` のシートで聞く（アプリ全体を止めない）。
+    @MainActor
+    static func confirmRemove(host: String, repositories: Int, folders: Int, in window: NSWindow?) async -> Bool {
         let alert = NSAlert()
         alert.messageText = L("Remove %@?", host)
         alert.informativeText = L("This removes its %ld repositories and %ld folders to scan from the list. Nothing on the host is touched.", repositories, folders)
-        alert.addButton(withTitle: L("Delete"))
-        alert.addButton(withTitle: L("Cancel"))
-        return alert.runModal() == .alertFirstButtonReturn
+        // 戻せないので、赤く、↩ では押せない（↩ は Cancel）。
+        let delete = alert.addButton(withTitle: L("Delete"))
+        delete.hasDestructiveAction = true
+        delete.keyEquivalent = ""
+        alert.addButton(withTitle: L("Cancel")).keyEquivalent = "\r"
+        guard let window else { return alert.runModal() == .alertFirstButtonReturn }
+        return await alert.beginSheetModal(for: window) == .alertFirstButtonReturn
     }
 
     /// `host` につないで、git の版とエンジン（`amonhen`）の有無を読む。パスワードを聞くホストにはつながない（BatchMode）。

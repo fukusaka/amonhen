@@ -76,11 +76,16 @@ impl Failure {
         self.command.as_ref()?["op"].as_str()
     }
 
-    /// 帯の見出し。何の操作が失敗したか。
+    /// 帯の見出し。何の操作が失敗したか（呼ぶ側が決めた見出しがあれば、それ）。
     pub fn title(&self) -> String {
-        if let Some(h) = &self.heading {
-            return h.clone();
+        match &self.heading {
+            Some(h) => h.clone(),
+            None => self.op_title(),
         }
+    }
+
+    /// 命令から決める見出し（「詳細」の題。macOS 版の `OperationFailure.title`）。
+    pub fn op_title(&self) -> String {
         match self.op() {
             Some("checkout" | "track" | "detach") => tr!("Couldn’t Checkout"),
             Some("pull") => tr!("Couldn’t Pull"),
@@ -189,7 +194,8 @@ impl Failure {
             .map_or(String::new(), |l| l.to_string())
     }
 
-    pub fn remedies(&self) -> Vec<Remedy> {
+    /// 次にできること。端末で開くのは手元のリポジトリ（`local`）だけ（daemon・SSH 先では開けない）。
+    pub fn remedies(&self, local: bool) -> Vec<Remedy> {
         let retry = if self.command.is_some() {
             vec![Remedy::Retry]
         } else {
@@ -201,7 +207,8 @@ impl Failure {
                 .clone()
                 .map(|p| vec![Remedy::OpenWorktree(p)])
                 .unwrap_or_default(),
-            Some("auth" | "hostKey") => [vec![Remedy::OpenTerminal], retry].concat(),
+            Some("auth" | "hostKey") if local => [vec![Remedy::OpenTerminal], retry].concat(),
+            Some("auth" | "hostKey") => retry,
             Some("network" | "locked") => retry,
             Some("rejected" | "diverged") => vec![Remedy::Pull],
             Some("localChanges") => vec![Remedy::WorkingCopy],
@@ -251,10 +258,7 @@ pub fn sequence_title(s: &Value) -> String {
     let from = s["merging"]
         .as_array()
         .map(|a| {
-            a.iter()
-                .filter_map(|v| v.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
+            amonhen_model::i18n::list(&a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
         })
         .or_else(|| get("from"));
     let onto = get("onto").or(from);
@@ -397,17 +401,18 @@ impl StatusBar {
 
     /// 終わった操作の一言を、しばらく出して消す。
     pub fn flash(self: &Rc<Self>, text: &str) {
-        self.flash_with("✓", "success", text);
+        self.flash_with(crate::icon::Kind::CheckCircle, "success", text);
     }
 
     /// できなかったことの一言を、警告の印でしばらく出して消す（macOS 版の `flash(_:symbol:)` の
     /// exclamationmark.triangle）。
     pub fn flash_warning(self: &Rc<Self>, text: &str) {
-        self.flash_with("⚠", "warning", text);
+        self.flash_with(crate::icon::Kind::Warning, "warning", text);
     }
 
-    fn flash_with(self: &Rc<Self>, mark: &str, css: &str, text: &str) {
-        let icon = gtk::Label::new(Some(mark));
+    fn flash_with(self: &Rc<Self>, mark: crate::icon::Kind, css: &str, text: &str) {
+        let icon = crate::icon::Icon::default();
+        icon.set(mark, false);
         icon.add_css_class(css);
         let label = gtk::Label::new(Some(text));
         label.add_css_class("dim-label");
@@ -457,6 +462,13 @@ pub fn button(label: &str, suggested: bool) -> gtk::Button {
     b
 }
 
+/// 失敗とつながりの行の小さなボタン（macOS 版の controlSize .small）。
+pub fn small_button(label: &str) -> gtk::Button {
+    let b = button(label, false);
+    b.add_css_class("status-small");
+    b
+}
+
 /// `button` を、見えている間だけ窓の既定のボタン（Return で押す）にする。後ろのタブ・消した行のボタンは外す。
 fn make_default_while_mapped(button: &gtk::Button) {
     button.connect_map(|b| {
@@ -489,7 +501,8 @@ fn install_css() {
          .status-connection { background-color: alpha(@warning_color, 0.10); } \
          label.warning { color: @warning_color; } \
          label.error { color: @error_color; } \
-         label.success { color: @success_color; }",
+         label.success { color: @success_color; } \
+         button.status-small { min-height: 20px; padding: 1px 8px; font-size: smaller; }",
     );
     if let Some(display) = gtk::gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
@@ -506,8 +519,12 @@ impl StatusBar {
     /// ツールチップ。
     pub fn show_failure(self: &Rc<Self>, failure: Failure, actions: &Rc<crate::actions::Actions>) {
         let cancelled = failure.cancelled();
-        let icon = gtk::Label::new(Some(if cancelled { "■" } else { "✕" }));
-        if !cancelled {
+        // macOS 版の xmark.octagon.fill（赤）と stop.circle（薄い色）。
+        let icon = crate::icon::Icon::default();
+        if cancelled {
+            icon.set(crate::icon::Kind::StopCircle, false);
+        } else {
+            icon.set(crate::icon::Kind::XOctagonFill, false);
             icon.add_css_class("error");
         }
         let title = gtk::Label::new(Some(&if cancelled {
@@ -515,7 +532,8 @@ impl StatusBar {
         } else {
             failure.title()
         }));
-        title.add_css_class("heading");
+        // 小さな太字（macOS 版の boldSystemFont(smallSystemFontSize)）。
+        title.add_css_class("caption-heading");
         let detail = gtk::Label::new(Some(&if cancelled {
             String::new()
         } else {
@@ -528,8 +546,9 @@ impl StatusBar {
         detail.set_tooltip_text(Some(&failure.message));
         let mut children: Vec<gtk::Widget> = vec![icon.upcast(), title.upcast(), detail.upcast()];
         if !cancelled {
-            for (i, remedy) in failure.remedies().into_iter().enumerate() {
+            for (i, remedy) in failure.remedies(actions.is_local()).into_iter().enumerate() {
                 let b = button(&remedy.title(), i == 0);
+                b.add_css_class("status-small");
                 let (this, actions, command) = (
                     Rc::downgrade(self),
                     actions.clone(),
@@ -561,7 +580,7 @@ impl StatusBar {
                 });
                 children.push(b.upcast());
             }
-            let more = button(&tr!("Details"), false);
+            let more = small_button(&tr!("Details"));
             let (f, a) = (failure.clone(), actions.clone());
             more.connect_clicked(move |_| {
                 let text = [
@@ -573,17 +592,19 @@ impl StatusBar {
                 .flatten()
                 .collect::<Vec<_>>()
                 .join("\n\n");
-                let (title, parent) = (f.title(), crate::sheets::parent(&a));
+                // 題は命令から決めたもの（帯の見出しを替えていても。macOS 版と同じ）。
+                let (title, parent) = (f.op_title(), crate::sheets::parent(&a));
                 glib::spawn_future_local(async move {
                     crate::sheets::inform(parent.as_ref(), &title, &text).await;
                 });
             });
             children.push(more.upcast());
-            let activity = button("Activity", false);
-            activity.set_action_name(Some("win.activity"));
-            children.push(activity.upcast());
         }
-        let close = button(&tr!("Close"), false);
+        // 取り消したときも Activity と Close は出す（Details だけ隠す。macOS 版と同じ）。
+        let activity = small_button("Activity");
+        activity.set_action_name(Some("win.activity"));
+        children.push(activity.upcast());
+        let close = small_button(&tr!("Close"));
         let this = Rc::downgrade(self);
         close.connect_clicked(move |_| {
             if let Some(this) = this.upgrade() {
@@ -616,11 +637,13 @@ impl StatusBar {
         {
             return;
         }
-        let icon = gtk::Label::new(Some("⚡"));
+        // macOS 版の bolt.horizontal.circle（オレンジ）。
+        let icon = crate::icon::Icon::default();
+        icon.set(crate::icon::Kind::BoltCircle, false);
         icon.add_css_class("warning");
         let heading = tr!("Lost connection to {host}", host = host);
         let title = gtk::Label::new(Some(&heading));
-        title.add_css_class("heading");
+        title.add_css_class("caption-heading");
         let reason = reason_detail(&heading, reason);
         let detail = gtk::Label::new(Some(reason));
         detail.add_css_class("caption");
@@ -629,7 +652,7 @@ impl StatusBar {
         detail.set_xalign(0.0);
         detail.set_hexpand(true);
         detail.set_tooltip_text(Some(reason));
-        let b = button(&tr!("Reconnect"), true);
+        let b = small_button(&tr!("Reconnect"));
         b.connect_clicked(move |_| reconnect());
         self.show(
             Row::Connection,
@@ -661,9 +684,11 @@ impl StatusBar {
             return;
         }
         self.sequence_shown.replace(Some(shown));
-        let icon = gtk::Label::new(Some("⇄"));
+        // macOS 版の arrow.triangle.merge（オレンジ、18 pt）。
+        let icon = crate::icon::Icon::default();
+        icon.set(crate::icon::Kind::Merge, false);
         icon.add_css_class("warning");
-        icon.add_css_class("title-3");
+        icon.set_pixel_size(18);
         let title = gtk::Label::new(Some(&sequence_title(s)));
         title.add_css_class("heading");
         title.set_xalign(0.0);
@@ -708,7 +733,7 @@ impl StatusBar {
             && s["retried"].as_bool() != Some(true)
             && s["empty"].as_bool() != Some(true);
         if retry {
-            let b = button(&tr!("Retry with 3-Way Merge"), true);
+            let b = button(&tr!("Retry with 3-Way Merge"), false);
             let a = actions.clone();
             b.connect_clicked(move |_| a.perform(serde_json::json!({ "op": "amThreeWay" })));
             children.push(b.upcast());
@@ -746,7 +771,25 @@ pub fn reason_detail<'a>(heading: &str, reason: &'a str) -> &'a str {
 
 #[cfg(test)]
 mod tests {
-    use super::reason_detail;
+    use super::{Failure, reason_detail, sequence_title};
+
+    #[test]
+    fn merged_names_read_as_a_list() {
+        let s =
+            serde_json::json!({ "kind": "merge", "branch": "main", "merging": ["a", "b", "c"] });
+        assert_eq!(sequence_title(&s), "Merging a, b, and c into main");
+    }
+
+    #[test]
+    fn details_keep_the_operation_title() {
+        let mut f = Failure::from_reply(
+            &serde_json::json!({ "error": "x" }),
+            Some(serde_json::json!({ "op": "fetch" })),
+        );
+        f.heading = Some("Couldn’t Fetch Automatically".into());
+        assert_eq!(f.title(), "Couldn’t Fetch Automatically");
+        assert_eq!(f.op_title(), "Couldn’t Fetch");
+    }
 
     #[test]
     fn the_reason_does_not_repeat_the_heading() {

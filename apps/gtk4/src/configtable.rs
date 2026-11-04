@@ -4,7 +4,7 @@
 //! このリポジトリ・この worktree）の値。効いている段の値は太字。行はキーのドットで開閉できる組にする（section、
 //! その下に subsection。初めはすべて開いている）。書ける列（このリポジトリ。すべてのリポジトリの段ならすべての
 //! リポジトリ。Combined なら効いている値）は、マウスを載せると欄の枠が出て、1 回のクリックで編集する。空にすると
-//! その段から消す。「+」でキーと値を足し、「−」と Delete で選んだキーを消す。表からの書き換えは Ctrl+Z／
+//! その段から消す。「+」で表の最後にキーと値の欄だけの行を出して足し、「−」と Delete で選んだキーを消す。表からの書き換えは Ctrl+Z／
 //! Ctrl+Shift+Z で何段でも行き来でき、最後の削除は下の 1 行にも出て、その「戻す」は 1 段の Ctrl+Z と同じ。
 //! 上の切り替えは Xcode の語のまま（訳さない）で、アプリ全体で覚える: 行は Basic／Customized／All、列は
 //! Combined／Levels。
@@ -65,6 +65,8 @@ struct Row {
     /// 組（section か subsection）の見出しの行。
     group: bool,
     children: Vec<Row>,
+    /// 「+」で足している途中の行（表の最後に、キーと値の欄だけ。macOS 版の `newRowID`）。
+    new: bool,
 }
 
 /// キーの 3 つの部分。`section.name` か `section.subsection.name` で、subsection にはドットが入りうる
@@ -171,6 +173,27 @@ fn value_markup(value: &str) -> String {
         .join("\n")
 }
 
+/// セルの部品に、その行の `ListItem` を覚えさせる（右クリックした行をどの列からでも探せるように）。
+const LIST_ITEM: &str = "amonhen-list-item";
+
+fn remember_item(child: &impl IsA<gtk::Widget>, item: &gtk::ListItem) {
+    // SAFETY: この鍵には `WeakRef<ListItem>` だけを入れ、`item_at` で同じ型で読む。
+    unsafe { child.set_data(LIST_ITEM, item.downgrade()) };
+}
+
+/// 部品 `widget`（とその親）が載っている行の位置。
+fn item_at(mut widget: Option<gtk::Widget>) -> Option<u32> {
+    while let Some(w) = widget {
+        // SAFETY: `remember_item` が入れた型と同じ。
+        if let Some(item) = unsafe { w.data::<glib::WeakRef<gtk::ListItem>>(LIST_ITEM) } {
+            let item = unsafe { item.as_ref() }.upgrade()?;
+            return Some(item.position()).filter(|&p| p != gtk::INVALID_LIST_POSITION);
+        }
+        widget = w.parent();
+    }
+    None
+}
+
 fn row_of(object: &glib::Object) -> Option<Row> {
     let object = match object.downcast_ref::<gtk::TreeListRow>() {
         Some(r) => r.item()?,
@@ -215,14 +238,22 @@ struct Table {
     effective_column: RefCell<Option<gtk::ColumnViewColumn>>,
     source_column: RefCell<Option<gtk::ColumnViewColumn>>,
     scope_columns: RefCell<Vec<(String, gtk::ColumnViewColumn)>>,
+    /// 見出しの右クリックのメニューで隠した段の列（macOS 版の列のカスタマイズ。覚えない）。
+    hidden: RefCell<HashSet<String>>,
+    /// 段の列を隠すメニュー（Levels のときだけ、キーと段の列の見出しに付ける）。
+    header_menu: gio::Menu,
+    key_column: RefCell<Option<gtk::ColumnViewColumn>>,
     /// 今出している行の中身（同じなら作り直さない。選択・スクロール・編集中のセルをそのまま残す）。
     shown: Cell<Option<u64>>,
     /// 編集中に読み直しが来たら、編集が終わってから作り直す。
     pending: Cell<bool>,
-    /// 足している途中の行。
-    adding: gtk::Box,
+    /// 足している途中の行（あれば 1 つ。並べ替えに関係なく表の最後に出す）。
+    adding: gio::ListStore,
+    /// 足している途中の行のキーと値の欄（その行のセルに入れる）。
     new_key: gtk::Entry,
     new_value: gtk::Entry,
+    /// 足したキー（読み直して行ができたら選ぶ。macOS 版と同じ）。
+    added: RefCell<Option<String>>,
 }
 
 /// 書けるセル: ふだんは文字だけ（マウスを載せると欄の枠）。1 回のクリックで欄になり、Return か離れたら書く。
@@ -401,7 +432,7 @@ impl Table {
         // 書けたら書き換えの数が 1 つ増える。そのときだけ出す。
         self.removed
             .replace(removal.then(|| (s.writes() + 1, gone)));
-        s.write(changes, None);
+        s.write(changes);
     }
 
     /// 選んだ行のこの段の値を消す。
@@ -470,13 +501,19 @@ impl Table {
         }
     }
 
-    /// 編集中のセルがあるか。
+    /// 編集中のセル（か、足している途中の行）があるか。
     fn editing(&self) -> bool {
-        self.all_cells
-            .borrow()
-            .iter()
-            .filter_map(Weak::upgrade)
-            .any(|c| c.editing.get())
+        self.is_adding()
+            || self
+                .all_cells
+                .borrow()
+                .iter()
+                .filter_map(Weak::upgrade)
+                .any(|c| c.editing.get())
+    }
+
+    fn is_adding(&self) -> bool {
+        self.adding.n_items() > 0
     }
 
     /// 出す行を作り直す（切り替え・検索・読み直しのたび）。開閉の状態・選んだキー・スクロールの位置は残す
@@ -622,6 +659,11 @@ impl Table {
                 }
             }
         }
+        // 足したキーを選ぶ。
+        if let Some(key) = self.added.take() {
+            self.selection.unselect_all();
+            self.select_key(&key);
+        }
         // スクロールの位置を戻す（中身の高さが決まってから）。
         if let Some((adjustment, value)) = scroll {
             adjustment.set_value(value);
@@ -637,12 +679,16 @@ impl Table {
         if let Some(c) = self.source_column.borrow().as_ref() {
             c.set_visible(!levels);
         }
+        if let Some(c) = self.key_column.borrow().as_ref() {
+            c.set_header_menu(levels.then_some(&self.header_menu));
+        }
+        let hidden = self.hidden.borrow();
         for (scope, c) in self.scope_columns.borrow().iter() {
             let shown = match scope.as_str() {
                 "local" | "worktree" => s.level == Level::Repository,
                 _ => true,
             };
-            c.set_visible(levels && shown);
+            c.set_visible(levels && shown && !hidden.contains(scope));
         }
     }
 
@@ -687,24 +733,63 @@ impl Table {
         }
     }
 
-    /// 「+」: 表の下にキーと値の欄を出す（キーと値がそろわないまま離れたら消える）。
-    fn begin_adding(&self) {
+    /// 「+」: 表の最後に、キーと値の欄だけの行を出す（キーと値がそろわないまま離れたら消える。macOS 版と同じ）。
+    fn begin_adding(self: &Rc<Self>) {
+        if self.is_adding() {
+            return;
+        }
         self.new_key.set_text("");
         self.new_value.set_text("");
-        self.adding.set_visible(true);
-        self.new_key.grab_focus();
+        self.adding.append(&glib::BoxedAnyObject::new(Row {
+            new: true,
+            ..Default::default()
+        }));
+        // 足している行を選び、見えるところへ出して、キーの欄に入る（欄はその行を出したときにセルに入る）。
+        let last = self.sort_model.n_items();
+        self.selection.select_item(last, true);
+        self.view
+            .scroll_to(last, None, gtk::ListScrollFlags::NONE, None);
+        Self::focus_new_key(Rc::downgrade(self), 20);
     }
 
+    /// 足している行のキーの欄に入る（行のセルができるまで、少し待ちながら試す）。
+    fn focus_new_key(table: Weak<Self>, tries: u32) {
+        glib::idle_add_local_once(move || {
+            let Some(t) = table.upgrade() else { return };
+            if !t.is_adding() {
+                return;
+            }
+            if t.new_key.is_mapped() {
+                t.new_key.grab_focus();
+            } else if tries > 0 {
+                Self::focus_new_key(table, tries - 1);
+            }
+        });
+    }
+
+    /// 足している行を消す（書かない）。
+    fn cancel_adding(&self) {
+        if self.is_adding() {
+            self.adding.remove_all();
+            self.view.grab_focus();
+            if self.pending.replace(false) {
+                self.rebuild();
+            }
+        }
+    }
+
+    /// 足している行を書く。キーと値がそろっていなければ、行を消すだけ。
     fn commit_adding(&self) {
-        if !self.adding.is_visible() {
+        if !self.is_adding() {
             return;
         }
         let key = self.new_key.text().trim().to_owned();
         let value = self.new_value.text().trim().to_owned();
-        self.adding.set_visible(false);
+        self.cancel_adding();
         if key.is_empty() || value.is_empty() {
             return;
         }
+        self.added.replace(Some(key.clone()));
         self.write(vec![(key, Some(value))], false);
     }
 }
@@ -721,7 +806,8 @@ fn install_css() {
     provider.load_from_string(
         ".config-editable { padding: 1px 4px; border-radius: 4px; \
            box-shadow: inset 0 0 0 1px transparent; } \
-         .config-editable:hover { background-color: alpha(@theme_base_color, 0.6); \
+         .config-editable:hover, .config-one-selected row:selected .config-editable { \
+           background-color: alpha(@theme_base_color, 0.6); \
            box-shadow: inset 0 0 0 1px alpha(currentColor, 0.35); } \
          .config-entry { min-height: 0; padding-top: 0; padding-bottom: 0; }",
     );
@@ -775,7 +861,13 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
         .unwrap_or_else(|| "levels".into());
 
     let sort_model = gtk::SortListModel::new(None::<gio::ListModel>, None::<gtk::Sorter>);
-    let selection = gtk::MultiSelection::new(Some(sort_model.clone()));
+    // 足している途中の行は、並べた行の後ろにつなぐ（並べ替えても最後。macOS 版と同じ）。
+    let adding = gio::ListStore::new::<glib::BoxedAnyObject>();
+    let adding_rows = gtk::TreeListModel::new(adding.clone(), false, false, |_| None);
+    let parts = gio::ListStore::new::<gio::ListModel>();
+    parts.append(&sort_model);
+    parts.append(&adding_rows);
+    let selection = gtk::MultiSelection::new(Some(gtk::FlattenListModel::new(Some(parts))));
     let view = gtk::ColumnView::new(Some(selection.clone()));
     view.set_show_row_separators(true);
     view.set_show_column_separators(true);
@@ -794,10 +886,9 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
         .placeholder_text(tr!("Value"))
         .hexpand(true)
         .build();
-    let adding = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    adding.append(&new_key);
-    adding.append(&new_value);
-    adding.set_visible(false);
+    for entry in [&new_key, &new_value] {
+        entry.add_css_class("config-entry");
+    }
 
     let table = Rc::new(Table {
         settings: s.weak(),
@@ -818,9 +909,13 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
         effective_column: RefCell::default(),
         source_column: RefCell::default(),
         scope_columns: RefCell::default(),
+        hidden: RefCell::default(),
+        header_menu: gio::Menu::new(),
+        key_column: RefCell::default(),
         adding: adding.clone(),
         new_key: new_key.clone(),
         new_value: new_value.clone(),
+        added: RefCell::default(),
     });
 
     // 列の並べ替え（組の見出しはキーで並べる）。
@@ -849,11 +944,13 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
         let l = label("", &[]);
         l.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
         expander.set_child(Some(&l));
+        remember_item(&expander, item);
         item.set_child(Some(&expander));
     });
     // キーの列は、キーが切れずに収まる幅まで広げる（上限まで。GTK の文字は macOS 版より大きい）。
     let key_col: Rc<glib::WeakRef<gtk::ColumnViewColumn>> = Rc::default();
     let kc = key_col.clone();
+    let kt = Rc::downgrade(&table);
     factory.connect_bind(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -868,6 +965,21 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
         let Some(row) = tree_row.item().and_then(|o| row_of(&o)) else {
             return;
         };
+        // 足している行はキーの欄。ほかの行は文字（欄を貸していたセルには、文字を戻す）。
+        if row.new {
+            if let Some(t) = kt.upgrade() {
+                if let Some(other) = t.new_key.parent().and_downcast::<gtk::TreeExpander>() {
+                    other.set_child(None::<&gtk::Widget>);
+                }
+                expander.set_child(Some(&t.new_key));
+            }
+            return;
+        }
+        if !expander.child().is_some_and(|c| c.is::<gtk::Label>()) {
+            let l = label("", &[]);
+            l.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+            expander.set_child(Some(&l));
+        }
         if let Some(l) = expander.child().and_downcast::<gtk::Label>() {
             if row.group {
                 l.set_markup(&format!("<b>{}</b>", glib::markup_escape_text(&row.label)));
@@ -904,6 +1016,7 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
                 return;
             };
             let cell = EditCell::new(&table);
+            remember_item(&cell.stack, item);
             item.set_child(Some(&cell.stack));
             table.all_cells.borrow_mut().push(Rc::downgrade(&cell));
             // セルは部品が消えるまで持つ。
@@ -934,7 +1047,23 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
             };
             let Some(s) = table.settings() else { return };
             cell.end();
-            if row.group {
+            // 足している行は値の欄（出している方の書ける列に。Combined なら効いている値、Levels ならこの段）。
+            let levels = table.columns_mode.borrow().as_str() == "levels";
+            if row.new && combined != levels {
+                cell.key.replace(String::new());
+                cell.stack.set_visible(true);
+                cell.stack.set_tooltip_text(None);
+                if let Some(other) = table.new_value.parent().and_downcast::<gtk::Stack>() {
+                    other.remove(&table.new_value);
+                }
+                cell.stack.add_named(&table.new_value, Some("new"));
+                cell.stack.set_visible_child_name("new");
+                return;
+            }
+            if let Some(entry) = cell.stack.child_by_name("new") {
+                cell.stack.remove(&entry);
+            }
+            if row.group || row.new {
                 cell.key.replace(String::new());
                 cell.text.set_text("");
                 cell.stack.set_visible(false);
@@ -984,6 +1113,7 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
             if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
                 let l = label("", &[]);
                 l.set_ellipsize(gtk::pango::EllipsizeMode::End);
+                remember_item(&l, item);
                 item.set_child(Some(&l));
             }
         });
@@ -1000,7 +1130,7 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
             ) else {
                 return;
             };
-            if row.group {
+            if row.group || row.new {
                 l.set_text("");
                 l.set_tooltip_text(None);
                 return;
@@ -1146,6 +1276,40 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
             .push(((*scope).to_owned(), column));
     }
     table.effective_column.replace(Some(effective_edit.clone()));
+    // 段の列は、見出しの右クリックのメニューで隠せる: System と Worktree と、このリポジトリの段なら Global
+    // （この段の列は隠せない。macOS 版の列のカスタマイズと同じ）。
+    let column_actions = gio::SimpleActionGroup::new();
+    for (scope, column) in table.scope_columns.borrow().iter() {
+        let hideable = match scope.as_str() {
+            "system" => true,
+            "global" | "worktree" => s.level == Level::Repository,
+            _ => false,
+        };
+        if hideable {
+            let action = gio::SimpleAction::new_stateful(scope, None, &true.to_variant());
+            let (w, sc) = (Rc::downgrade(&table), scope.clone());
+            action.connect_activate(move |a, _| {
+                let Some(t) = w.upgrade() else { return };
+                let on = !a.state().and_then(|v| v.get::<bool>()).unwrap_or(true);
+                a.set_state(&on.to_variant());
+                if on {
+                    t.hidden.borrow_mut().remove(&sc);
+                } else {
+                    t.hidden.borrow_mut().insert(sc.clone());
+                }
+                t.show_columns();
+            });
+            column_actions.add_action(&action);
+            table.header_menu.append(
+                column.title().as_deref(),
+                Some(&format!("configcolumns.{scope}")),
+            );
+        }
+        column.set_header_menu(Some(&table.header_menu));
+    }
+    effective_read.set_header_menu(Some(&table.header_menu));
+    table.key_column.replace(Some(key_column.clone()));
+    view.insert_action_group("configcolumns", Some(&column_actions));
     view.sort_by_column(Some(&key_column), gtk::SortType::Ascending);
 
     // 列の切り替えで、効いている値の書ける列と読むだけの列を入れ替える。
@@ -1191,6 +1355,8 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
         &[("combined", "Combined"), ("levels", "Levels")],
         &columns_mode,
         move |m| {
+            // 足している途中なら、先に書く（値の欄は書ける列のセルにある）。
+            t.commit_adding();
             crate::settings::set_string(COLUMNS_KEY, m);
             t.columns_mode.replace(m.to_owned());
             se();
@@ -1292,31 +1458,26 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
     popover.set_halign(gtk::Align::Start);
     let click = gtk::GestureClick::new();
     click.set_button(gtk::gdk::BUTTON_SECONDARY);
-    let (v, sel, sm, t) = (
-        view.clone(),
-        selection.clone(),
-        sort_model.clone(),
-        table.clone(),
-    );
+    let (v, sel) = (view.clone(), selection.clone());
+    let (e, r, c) = (edit.clone(), remove.clone(), copy.clone());
+    let p = popover.clone();
     click.connect_pressed(move |_, _, x, y| {
-        // 押した行が選ばれていなければ、その行だけを選ぶ（セルの部品から行を探す）。
-        let mut widget = v.pick(x, y, gtk::PickFlags::DEFAULT);
-        while let Some(w) = widget {
-            if let Some(cell) = t.cell_of(&w) {
-                let key = cell.key.borrow().clone();
-                let n = sm.n_items();
-                if let Some(i) = (0..n).find(|i| {
-                    sm.item(*i)
-                        .and_then(|o| row_of(&o))
-                        .is_some_and(|r| r.key == key && !r.group)
-                }) && !sel.is_selected(i)
-                {
-                    sel.select_item(i, true);
-                }
-                break;
+        // 押した行が選ばれていなければ、その行だけを選ぶ（どの列を押しても。macOS 版の
+        // contextMenu(forSelectionType:) と同じく、その行に効く）。組の見出しなら、キーがないので項目はすべて
+        // 押せない。行のないところなら、選んでいる行はそのままで、項目はすべて押せない（macOS 版は空の選択で
+        // メニューを出す。閉じたら戻す）。
+        match item_at(v.pick(x, y, gtk::PickFlags::DEFAULT)) {
+            Some(i) if !sel.is_selected(i) => {
+                sel.select_item(i, true);
             }
-            widget = w.parent();
+            Some(_) => {}
+            None => {
+                for a in [&e, &r, &c] {
+                    a.set_enabled(false);
+                }
+            }
         }
+        let popover = &p;
         popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
         popover.popup();
     });
@@ -1343,10 +1504,12 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
     new_value.connect_activate(move |_| t.commit_adding());
     for entry in [&new_key, &new_value] {
         let keys = gtk::EventControllerKey::new();
-        let a = adding.clone();
+        let t = Rc::downgrade(&table);
         keys.connect_key_pressed(move |_, key, _, _| {
             if key == gtk::gdk::Key::Escape {
-                a.set_visible(false);
+                if let Some(t) = t.upgrade() {
+                    t.cancel_adding();
+                }
                 return glib::Propagation::Stop;
             }
             glib::Propagation::Proceed
@@ -1421,11 +1584,24 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
     };
     // 足している途中は + を押せない（macOS 版と同じ）。
     let a = add.clone();
-    adding.connect_visible_notify(move |w| a.set_enabled(!w.is_visible()));
+    adding.connect_items_changed(move |store, _, _, _| a.set_enabled(store.n_items() == 0));
     enable();
     let en = enable.clone();
-    selection.connect_selection_changed(move |_, _, _| en());
+    // 書けるセルの枠は、マウスが載っているときと、その行だけを選んでいるときに出す（macOS 版と同じ）。
+    let v = view.downgrade();
+    selection.connect_selection_changed(move |sel, _, _| {
+        en();
+        if let Some(v) = v.upgrade() {
+            if sel.selection().size() == 1 {
+                v.add_css_class("config-one-selected");
+            } else {
+                v.remove_css_class("config-one-selected");
+            }
+        }
+    });
 
+    let en = enable.clone();
+    popover.connect_closed(move |_| en());
     let t = table.clone();
     s.on_refresh(move |_| {
         t.rebuild();
@@ -1439,7 +1615,6 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
     page.set_margin_end(20);
     page.append(&top);
     page.append(&frame);
-    page.append(&adding);
     page.append(&bottom);
     page.insert_action_group("config", Some(&group));
     page

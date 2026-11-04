@@ -596,7 +596,8 @@ struct FilePickerView: View {
                     Button(L("Check Connection")) { model.connect(model.host) }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            } else if model.host.isEmpty, !model.isLocal, !model.isTree {
+            } else if model.reader == nil {
+                // SSH 先を選んでいない・使えない名前（空白や / を含む）で、つないでいない。
                 Text(L("Choose a host to see its folders."))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)

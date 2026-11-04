@@ -53,13 +53,17 @@ extension Notification.Name {
 /// Activity の画面が読む、開いているリポジトリ（操作ログを読み、戻すため）。
 struct ActivityRepository: Identifiable, Hashable {
     let name: String
+    /// 開いたリポジトリ（窓ごと。daemon の記録を見分ける）。
     let repository: Repository
+    /// 窓で今編集している worktree の Actions（操作ログはこの worktree のものを読み・戻す。GTK4 版と同じ）。
     let actions: Actions
     /// daemon 越しのリポジトリか（SSH 先・手元の共有の daemon。daemon の記録も読む）。
     var isRemote = false
     /// 開いた場所（手元のパス、`daemon:/path`、`ssh://host/path`）。
     var location = ""
     var id: ObjectIdentifier { ObjectIdentifier(repository) }
+    /// daemon の記録を、どのリポジトリのものか見分ける鍵（開いているリポジトリごとに違う）。
+    var key: String { String(describing: ObjectIdentifier(repository)) }
     static func == (a: Self, b: Self) -> Bool { a.id == b.id }
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
@@ -79,9 +83,11 @@ final class ActivityModel {
     var repositories: [ActivityRepository] = []
     var undoEntries: [(label: String, time: Date)] = []
     var selectedRepository: ActivityRepository?
+    /// `undoEntries` を読んだ worktree の Actions（戻すのも同じ worktree で。読んでいる間に替わってもずれない）。
+    @ObservationIgnored private var undoActions: Actions?
     /// AppDelegate が設定する（開いているリポジトリ）。
     @ObservationIgnored var listRepositories: () -> [ActivityRepository] = { [] }
-    /// daemon の記録（リポジトリの名前 → 記録）。2 秒ごとに読む。
+    /// daemon の記録（リポジトリの鍵 → 記録。窓の名前は同じことがあるので、名前では分けない）。2 秒ごとに読む。
     @ObservationIgnored private var remoteRecords: [String: [ActivityRecord]] = [:]
     @ObservationIgnored private var remoteLoadedAt = Date.distantPast
     @ObservationIgnored private var loadingRemote = false
@@ -101,7 +107,12 @@ final class ActivityModel {
         events = EventLog.events
         metrics = PerformanceLog.samples.map { ($0.key, $0.value) }.sorted { $0.name < $1.name }
         repositories = listRepositories()
-        if let selected = selectedRepository, !repositories.contains(selected) { selectedRepository = nil }
+        // 選んでいる窓は新しい値に置き換える（窓で編集する worktree が替わっていれば、その操作ログを読み直す）。
+        if let selected = selectedRepository {
+            let fresh = repositories.first { $0 == selected }
+            selectedRepository = fresh
+            if let fresh, fresh.actions !== selected.actions { loadUndoLog() }
+        }
         if selectedRepository == nil { selectedRepository = repositories.first }
     }
 
@@ -121,7 +132,13 @@ final class ActivityModel {
                 if let records = try? await Task.detached(priority: .utility, operation: {
                     try repository.info(["op": "remoteActivity"], as: Records.self).records
                 }).value {
-                    loaded[entry.name] = records.map { var r = $0; r.remote = entry.name; return r }
+                    let key = entry.key
+                    loaded[key] = records.map {
+                        var r = $0
+                        r.remote = entry.name
+                        r.remoteKey = key
+                        return r
+                    }
                 }
             }
             remoteRecords = loaded
@@ -163,29 +180,34 @@ final class ActivityModel {
 
     /// 走っている操作を取り消す（daemon の記録なら daemon に頼む）。
     func cancel(_ record: ActivityRecord) {
-        guard let name = record.remote else {
+        guard let key = record.remoteKey else {
             ActivityRecord.cancel(seq: record.seq)
             return
         }
-        guard let repository = repositories.first(where: { $0.name == name })?.repository else { return }
+        guard let repository = repositories.first(where: { $0.key == key })?.repository else { return }
         let seq = record.seq
         Task.detached { _ = try? repository.run(["op": "cancelActivity", "seq": seq, "remote": true]) }
     }
 
     func loadUndoLog() {
-        guard let repository = selectedRepository?.repository else {
+        guard let actions = selectedRepository?.actions else {
             undoEntries = []
+            undoActions = nil
             return
         }
+        let repository = actions.repository
         Task {
             let log = try? await Task.detached { try repository.info(["op": "undoLog"], as: UndoLogResponse.self) }.value
+            // 後から読み始めた別の worktree の答えを、古い答えで上書きしない。
+            guard selectedRepository?.actions === actions else { return }
             undoEntries = (log?.entries ?? []).map { ($0.label, Date(timeIntervalSince1970: $0.time / 1000)) }
+            undoActions = actions
         }
     }
 
     /// 操作ログの `index` 番目（0 が一番新しい）まで戻す（新しいものから順に Undo する）。
     func undo(through index: Int) {
-        guard let actions = selectedRepository?.actions, index < undoEntries.count else { return }
+        guard let actions = undoActions, index < undoEntries.count else { return }
         let title = index == 0 ? L("Undo “%@”?", undoEntries[0].0) : L("Undo the last %ld operations?", index + 1)
         Task { @MainActor in
             guard await actions.confirm(title, message: L("Returns HEAD and the branches to where they were."), ok: "Undo",
@@ -323,6 +345,10 @@ private struct HistoryTab: View {
         }
         .padding()
         .onAppear { model.loadUndoLog() }
+        // リポジトリの窓で操作を終えるたびに読み直す（操作ログが増える・減る）。
+        .onReceive(NotificationCenter.default.publisher(for: .runningOperationsChanged)) { _ in
+            if RunningOperations.count == 0 { model.loadUndoLog() }
+        }
     }
 }
 
@@ -502,6 +528,8 @@ final class ActivityWindowController: NSWindowController, NSWindowDelegate {
             contentRect: NSRect(x: 0, y: 0, width: 900, height: 560),
             styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "Activity"
+        // 初めは真ん中に。覚えた位置があれば、名前を付けたときにそこへ動く（開くたびに真ん中へ戻さない）。
+        window.center()
         window.setFrameAutosaveName("Activity")
         window.contentViewController = NSHostingController(rootView: ActivityView(model: model))
         super.init(window: window)
@@ -512,7 +540,6 @@ final class ActivityWindowController: NSWindowController, NSWindowDelegate {
 
     func show() {
         model.refresh()
-        if window?.isVisible != true { window?.center() }
         showWindow(nil)
         // 開いている間だけ読み直す（閉じていれば何もしない）。
         timer?.invalidate()

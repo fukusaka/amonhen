@@ -183,8 +183,22 @@ final class BlameViewController: FileToolViewController, NSTableViewDataSource, 
         }
         self.blame = blame
         message.isHidden = true
+        fitCodeColumn(blame)
         table.reloadData()
         colorSyntax(blame)
+    }
+
+    /// コードの列を、いちばん長い行が入る幅より狭くしない（長い行を「…」で切らず、横にスクロールして読む）。
+    /// 最後の列なので、広い窓では窓の幅まで広がる。
+    private func fitCodeColumn(_ blame: Blame) {
+        guard let column = table.tableColumn(withIdentifier: .init("code")) else { return }
+        let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        // 等幅なので、文字の多い行ほど広い（タブは 4 文字ほどに数えて選び、測るときは既定のタブ位置で）。
+        func columns(_ text: String) -> Int { text.reduce(0) { $0 + ($1 == "\t" ? 4 : 1) } }
+        let longest = blame.lines.max { columns($0.t) < columns($1.t) }?.t ?? ""
+        let width = ceil(NSAttributedString(string: longest, attributes: [.font: font]).size().width) + 12
+        column.minWidth = max(100, width)
+        if column.width < column.minWidth { column.width = column.minWidth }
     }
 
     /// 行をつないだ文章を裏で解析し、構文の色を付ける（差分と同じ色）。

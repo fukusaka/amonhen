@@ -103,6 +103,9 @@ console.log(`VSCode: ${((performance.now() - start) / 1000).toFixed(1)}s`);
 
 // daemon を止めてから消す。Windows では、どこかのプロセスが掴んだままだと消せない（EPERM）
 spawnSync(engine, ['daemon', 'stop'], { env: { ...process.env, ...env }, stdio: 'inherit' });
+// Repository Settings の署名の鍵を集めると gpg が gpg-agent を起こし、一時ディレクトリの HOME を掴んだまま残る
+// （Windows では消せない）。gpg がなければ何もしない
+spawnSync('gpgconf', ['--kill', 'all'], { env: { ...process.env, ...env }, stdio: 'ignore' });
 let removed = true;
 try {
   rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });

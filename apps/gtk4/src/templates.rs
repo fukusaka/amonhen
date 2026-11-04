@@ -80,6 +80,8 @@ pub fn section() -> (gtk::Box, gio::SimpleActionGroup) {
         let name = all().iter().find(|t| t.id == id).map(title_of);
         l.set_text(&name.unwrap_or_default());
     });
+    // 名前だけの一覧なので見出しは出さない（macOS 版の List と同じ）。
+    table.hide_header();
     let fill = {
         let t = Rc::downgrade(&table);
         move || {
@@ -140,7 +142,8 @@ pub fn section() -> (gtk::Box, gio::SimpleActionGroup) {
     table.connect_selected(move |id| enable(id.is_some()));
     let menu = gio::Menu::new();
     menu.append(Some(&tr!("Edit…")), Some("templates.edit"));
-    table.context_menu(&menu);
+    // 行のないところでは出さない（macOS 版は選びが空ならメニューに項目がない）。
+    table.row_menu(&menu);
     let e = edit.clone();
     table.view.connect_activate(move |_, _| e.activate(None));
 
@@ -173,14 +176,14 @@ pub fn section() -> (gtk::Box, gio::SimpleActionGroup) {
     (column, group)
 }
 
-/// テンプレートの名前と本文を書くシート（Done で閉じる。書いたものはそのまま残す）。
+/// テンプレートの名前と本文を書くシート（見出しはない。書くたびに残し、Done で閉じる。macOS 版と同じ）。
 fn edit_sheet(anchor: &gtk::Widget, id: String) {
     let Some(template) = all().into_iter().find(|t| t.id == id) else {
         return;
     };
     let parent = anchor.root().and_downcast::<gtk::Window>();
     glib::spawn_future_local(async move {
-        let sheet = Sheet::unnamed(parent.as_ref(), &tr!("Shared Templates"), "");
+        let sheet = Sheet::unnamed(parent.as_ref(), "", "");
         let name = gtk::Entry::builder()
             .text(&template.name)
             .placeholder_text(tr!("Name"))
@@ -207,17 +210,19 @@ fn edit_sheet(anchor: &gtk::Widget, id: String) {
             Some(crate::sheets::Style::Suggested),
         );
         let (n, b) = (name.clone(), text.buffer());
-        let id2 = id.clone();
-        let write = move || {
+        let write = Rc::new(move || {
             let mut list = all();
-            if let Some(t) = list.iter_mut().find(|t| t.id == id2) {
+            if let Some(t) = list.iter_mut().find(|t| t.id == id) {
                 t.name = n.text().to_string();
                 t.text = b.text(&b.start_iter(), &b.end_iter(), false).to_string();
                 save(&list);
             }
-        };
-        // 閉じ方によらず（Done・Esc）、書いたものを残す（macOS 版はその場で書く）。
+        });
+        // 書くたびに残す（一覧の名前もすぐ変わる）。
+        let w = write.clone();
+        name.connect_changed(move |_| w());
+        let w = write.clone();
+        text.buffer().connect_changed(move |_| w());
         let _ = sheet.run().await;
-        write();
     });
 }

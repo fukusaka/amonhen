@@ -7,6 +7,7 @@ import type { Repository } from '../state/repository.ts';
 import { rebaseAction, runAction } from './dragDrop.ts';
 import type { Node } from './sidebar.ts';
 import { showError } from './stageCommands.ts';
+import { mergeBranches } from './mergeBranches.ts';
 import { publish } from './syncCommands.ts';
 
 /** ブランチ・リモートブランチ・タグのノードから ref を取り出す */
@@ -23,21 +24,40 @@ export function registerNavCommands(manager: RepositoryManager): vscode.Disposab
         await fn(repo, ref, (await repo.backend.head()).branch);
       }
     });
+  /** いくつも選んでいれば、選んだものすべて（右クリックした行を含む） */
+  const several = (
+    id: string,
+    one: (repo: Repository, ref: string, head: string | undefined) => Promise<void>,
+    many: (repo: Repository, refs: string[]) => Promise<void>,
+  ) =>
+    vscode.commands.registerCommand(id, async (node?: Node, selected?: Node[]) => {
+      const repo = manager.current;
+      const nodes = selected && selected.length > 1 ? selected : node ? [node] : [];
+      const refs = nodes.map(refOf).filter((r) => r !== undefined);
+      if (!repo || refs.length === 0) return;
+      if (refs.length > 1) await many(repo, refs);
+      else await one(repo, refs[0]!, (await repo.backend.head()).branch);
+    });
 
   return vscode.Disposable.from(
     command('amonhen.nav.checkout', (repo, ref) => checkoutRef(repo, ref)),
-    command('amonhen.nav.merge', async (repo, ref, head) => {
-      if (!head) return;
-      await runAction(repo, {
-        label: `$(git-merge) Merge ${shortName(ref)} into ${shortName(head)}`,
-        run: () => mergeInto(repo.backend, repo.undo, ref, head),
-      });
-    }),
+    several(
+      'amonhen.nav.merge',
+      async (repo, ref, head) => {
+        if (!head) return;
+        await runAction(repo, {
+          label: `$(git-merge) Merge ${shortName(ref)} into ${shortName(head)}`,
+          run: () => mergeInto(repo.backend, repo.undo, ref, head),
+        });
+      },
+      // いくつも選んだら、Merge Branches… と同じく 1 つのコミットで（コンフリクトの見込みを見せてから）
+      (repo, refs) => mergeBranches(repo, refs),
+    ),
     command('amonhen.nav.rebase', async (repo, ref, head) => {
       if (!head) return;
       await runAction(repo, rebaseAction(repo, head, ref));
     }),
-    command('amonhen.nav.delete', (repo, ref) => deleteBranch(repo, ref)),
+    several('amonhen.nav.delete', (repo, ref) => deleteBranch(repo, ref), (repo, refs) => deleteBranches(repo, refs)),
     // チェックアウトしていないブランチを upstream と合わせる（最後の Fetch の時点）
     command('amonhen.nav.fastForward', async (repo, ref) => {
       await runAction(repo, {
@@ -84,6 +104,47 @@ export async function checkoutRef(repo: Repository, ref: string): Promise<void> 
 }
 
 /** ブランチを削除する。Undo で戻せる。merge されていなければ、もう一度確かめてから消す */
+/** 取り込んでいないので git が消すのを断った（git 実行層なら GitError、daemon ならコアのエラーの文に git の文が入る） */
+function notMerged(err: unknown): boolean {
+  const text = err instanceof GitError ? err.stderr : err instanceof Error ? err.message : '';
+  return /not fully merged/.test(text);
+}
+
+/** いくつものブランチを、まとめて確かめてから消す。取り込んでいないものは、もう一度確かめて消す */
+async function deleteBranches(repo: Repository, refs: string[]): Promise<void> {
+  const names = refs.map(shortName);
+  const choice = await vscode.window.showWarningMessage(
+    `${names.length} 個のブランチを削除しますか？`,
+    { modal: true, detail: `${names.join('\n')}\n\nUndo で戻せます（1 回で 1 個）。` },
+    'Delete',
+  );
+  if (choice !== 'Delete') return;
+  const remove = (ref: string, force: boolean) =>
+    repo.undo.record(`Delete ${shortName(ref)}`, [ref], 'keep', () => repo.backend.deleteBranch(shortName(ref), force));
+  const unmerged: string[] = [];
+  try {
+    for (const ref of refs) {
+      try {
+        await remove(ref, false);
+      } catch (err) {
+        if (!notMerged(err)) throw err;
+        unmerged.push(ref);
+      }
+    }
+    if (unmerged.length === 0) return;
+    const force = await vscode.window.showWarningMessage(
+      `${unmerged.map(shortName).join('、')} は merge されていないコミットを含んでいます。削除しますか？`,
+      { modal: true, detail: 'Undo で戻せます。' },
+      'Delete Anyway',
+    );
+    if (force === 'Delete Anyway') for (const ref of unmerged) await remove(ref, true);
+  } catch (err) {
+    showError(err);
+  } finally {
+    await repo.refresh();
+  }
+}
+
 async function deleteBranch(repo: Repository, ref: string): Promise<void> {
   const name = shortName(ref);
   const choice = await vscode.window.showWarningMessage(
@@ -97,7 +158,7 @@ async function deleteBranch(repo: Repository, ref: string): Promise<void> {
   try {
     await remove(false);
   } catch (err) {
-    if (!(err instanceof GitError) || !/not fully merged/.test(err.stderr)) {
+    if (!notMerged(err)) {
       showError(err);
       return;
     }

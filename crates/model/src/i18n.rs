@@ -217,6 +217,18 @@ pub fn is_cancelled(message: &str) -> bool {
     message == "Cancelled" || japanese().get("Cancelled").is_some_and(|ja| ja == message)
 }
 
+/// 名前の並びを、今の言語の書き方でつなぐ（macOS の `ListFormatter`）。英語は「a, b, and c」（2 つなら
+/// 「a and b」）、日本語は「a、b、c」。
+pub fn list<S: AsRef<str>>(parts: &[S]) -> String {
+    let parts: Vec<&str> = parts.iter().map(AsRef::as_ref).collect();
+    match (current(), parts.as_slice()) {
+        (Lang::Ja, _) => parts.join("、"),
+        (Lang::En, [] | [_]) => parts.concat(),
+        (Lang::En, [a, b]) => format!("{a} and {b}"),
+        (Lang::En, [rest @ .., last]) => format!("{}, and {last}", rest.join(", ")),
+    }
+}
+
 /// 利用者に見せる文を、今の言語で作る。`tr!("Text")`、`tr!("Text {name}", name = value)`。
 #[macro_export]
 macro_rules! tr {
@@ -234,6 +246,15 @@ macro_rules! tr {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lists_names_like_list_formatter() {
+        assert_eq!(list::<&str>(&[]), "");
+        assert_eq!(list(&["a"]), "a");
+        assert_eq!(list(&["a", "b"]), "a and b");
+        assert_eq!(list(&["a", "b", "c"]), "a, b, and c");
+        with(Lang::Ja, || assert_eq!(list(&["a", "b", "c"]), "a、b、c"));
+    }
 
     #[test]
     fn translates_by_language_and_fills_named_values() {

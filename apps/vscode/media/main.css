@@ -817,3 +817,366 @@ button.secondary {
   opacity: 0.5;
   cursor: default;
 }
+
+/* File History */
+
+.file-history .toolbar .title {
+  font-weight: bold;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-history .toolbar .check {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+.file-history .row.two-line {
+  height: 40px;
+  padding-left: 12px;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 2px;
+}
+
+.file-history .row.two-line > div {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-history .row.two-line .meta {
+  font-size: 0.9em;
+  color: var(--vscode-descriptionForeground);
+}
+
+.file-history .path-head {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  background: var(--vscode-sideBarSectionHeader-background);
+}
+
+.file-history .path-head .dir {
+  font-weight: normal;
+  color: var(--vscode-descriptionForeground);
+}
+
+.file-history .status.error {
+  color: var(--vscode-errorForeground);
+}
+
+/* Blame */
+
+.blame .toolbar .title {
+  font-weight: bold;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.blame .status.error {
+  color: var(--vscode-errorForeground);
+}
+
+.blame-lines {
+  font-family: var(--vscode-editor-font-family);
+  font-size: var(--vscode-editor-font-size);
+}
+
+.blame .row.blame-line {
+  height: 20px;
+  gap: 0;
+  padding-right: 0;
+}
+
+/* 同じコミットのまとまりごとに背景を交互に変える */
+.blame .row.blame-line.odd {
+  background: var(--vscode-editor-inactiveSelectionBackground);
+}
+
+.blame .row.blame-line.selected {
+  background: var(--vscode-editor-selectionHighlightBackground);
+}
+
+.blame .row.blame-line:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.blame .blame-line .info {
+  flex: none;
+  width: 320px;
+  padding: 0 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--vscode-font-family);
+  font-size: 0.9em;
+  color: var(--vscode-disabledForeground);
+}
+
+.blame .blame-line .info.first {
+  color: var(--vscode-descriptionForeground);
+}
+
+.blame .blame-line .number {
+  flex: none;
+  width: 48px;
+  padding-right: 12px;
+  text-align: right;
+  color: var(--vscode-editorLineNumber-foreground);
+}
+
+.blame .blame-line .code {
+  white-space: pre;
+}
+
+/* 署名の印（History の行と詳細） */
+
+.sig {
+  flex: none;
+  margin-right: 4px;
+  font-weight: bold;
+}
+
+.sig.weak {
+  opacity: 0.6;
+}
+
+.sig-good {
+  color: var(--vscode-charts-green);
+}
+
+.sig-warn {
+  color: var(--vscode-charts-yellow);
+}
+
+.sig-old {
+  color: var(--vscode-charts-orange);
+}
+
+.sig-bad {
+  color: var(--vscode-charts-red);
+}
+
+.sig-none {
+  color: var(--vscode-descriptionForeground);
+}
+
+/* shallow clone の帯と境目、リポジトリの形の札 */
+
+.shallow-band {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  color: var(--vscode-descriptionForeground);
+  border-top: 1px dashed var(--vscode-panel-border);
+}
+
+.boundary {
+  flex: none;
+  margin-right: 4px;
+  color: var(--vscode-charts-orange);
+}
+
+.toolbar .chip {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 8px;
+  font-size: 0.85em;
+  color: var(--vscode-badge-foreground);
+  background: var(--vscode-badge-background);
+  border: none;
+}
+
+.toolbar button.chip {
+  cursor: pointer;
+}
+
+/* Repository Settings */
+
+.view.settings.active {
+  flex-direction: row;
+}
+
+.settings-nav {
+  flex: none;
+  width: 200px;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--vscode-panel-border);
+  padding: 8px 0;
+}
+
+.settings-pages {
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-page {
+  text-align: left;
+  padding: 4px 16px;
+  border: none;
+  background: none;
+  color: var(--vscode-foreground);
+  cursor: pointer;
+}
+
+.settings-page:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.settings-page.selected {
+  background: var(--vscode-list-activeSelectionBackground);
+  color: var(--vscode-list-activeSelectionForeground);
+}
+
+.settings-git {
+  margin-top: 12px;
+  padding: 0 16px;
+  font-size: 0.85em;
+  color: var(--vscode-descriptionForeground);
+}
+
+.settings-content {
+  flex: 1;
+  overflow: auto;
+  padding: 8px 24px 24px;
+}
+
+.settings-section h3 {
+  margin: 20px 0 6px;
+  font-size: 1em;
+}
+
+.setting-row {
+  padding: 8px 12px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 4px;
+  margin-bottom: 6px;
+}
+
+.setting-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.setting-question {
+  flex: 1;
+}
+
+.setting-source {
+  flex: none;
+  width: 120px;
+  text-align: right;
+  font-size: 0.85em;
+  color: var(--vscode-descriptionForeground);
+}
+
+.setting-info {
+  flex: none;
+  cursor: default;
+  color: var(--vscode-descriptionForeground);
+}
+
+.setting-help {
+  margin-top: 4px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.setting-warning {
+  margin-top: 4px;
+  color: var(--vscode-charts-orange);
+}
+
+.setting-text {
+  width: 100%;
+  margin-top: 6px;
+  box-sizing: border-box;
+  font-family: var(--vscode-editor-font-family);
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+}
+
+.setting-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.setting-folder {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 12px;
+}
+
+.setting-folder code {
+  flex: 1;
+}
+
+.settings-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 8px;
+}
+
+.settings-table th,
+.settings-table td {
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  vertical-align: middle;
+}
+
+.settings-table .mono {
+  font-family: var(--vscode-editor-font-family);
+  word-break: break-all;
+  /* 狭いときにボタンの列に押されて 1 文字幅にならないように */
+  min-width: 12em;
+}
+
+.settings-table .muted {
+  color: var(--vscode-descriptionForeground);
+}
+
+.settings-actions button {
+  margin: 2px 0 2px 4px;
+  white-space: nowrap;
+}
+
+.settings-config-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 8px 0;
+}
+
+.settings-config-bar input[type='search'] {
+  flex: 1;
+}
+
+.setting-input {
+  width: 260px;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+}

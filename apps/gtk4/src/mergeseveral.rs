@@ -13,7 +13,7 @@ use gtk::{gdk, glib};
 use serde_json::{Value, json};
 
 use crate::actions::Actions;
-use crate::sheets::{self, Response, Sheet};
+use crate::sheets::{self, Response};
 
 /// 順に、コンフリクトする見込みのファイル（調べられなければ None）。
 type Steps = Option<Vec<Vec<String>>>;
@@ -137,11 +137,15 @@ pub fn confirm(actions: &Rc<Actions>, sources: Vec<Source>, branch: Option<Strin
         }
         return;
     }
+    // 選んだときの worktree（`branch` はそのブランチ）の名前を書き、そこで merge する。
+    let Some(tree) = sheets::Target::current(actions) else {
+        return;
+    };
     let actions = actions.clone();
     glib::spawn_future_local(async move {
-        let Some(repo) = actions.repo() else { return };
+        let repo = tree.repo.clone();
         let target = branch.clone().unwrap_or_else(|| "HEAD".to_owned());
-        let sheet = Sheet::new(
+        let sheet = tree.sheet(
             sheets::parent(&actions).as_ref(),
             &tr!(
                 "Merge {count} into {branch}?",
@@ -211,7 +215,7 @@ pub fn confirm(actions: &Rc<Actions>, sources: Vec<Source>, branch: Option<Strin
                     } else {
                         tr!(
                             "⚠︎ {names} conflict, and git stops when one before the last conflicts. Merge them one by one instead.",
-                            names = names.join(", ")
+                            names = list_names(&names)
                         )
                     });
                     label.add_css_class("warning");
@@ -275,8 +279,8 @@ pub fn confirm(actions: &Rc<Actions>, sources: Vec<Source>, branch: Option<Strin
         let response = sheet.run().await;
         let revs: Vec<String> = list.sources().into_iter().map(|s| s.rev).collect();
         match response {
-            Response::Ok => merge(&actions, revs, false),
-            Response::Other => merge(&actions, revs, true),
+            Response::Ok => merge(&actions, tree, revs, false),
+            Response::Other => merge(&actions, tree, revs, true),
             Response::Cancel => {}
         }
     });
@@ -313,7 +317,8 @@ async fn predict(
 
 /// `revs` を merge する。1 つのコミットにまとめるのを git が断ったら（何も変わっていない）、1 つずつ merge
 /// するかを尋ねる。
-fn merge(actions: &Rc<Actions>, revs: Vec<String>, one_by_one: bool) {
+/// `tree` の worktree で（断られて尋ねるシートにも、その名前を書く）。
+fn merge(actions: &Rc<Actions>, tree: sheets::Target, revs: Vec<String>, one_by_one: bool) {
     let mut command = json!({ "op": "merge", "rev": revs });
     if one_by_one {
         command["oneByOne"] = json!(true);
@@ -322,13 +327,14 @@ fn merge(actions: &Rc<Actions>, revs: Vec<String>, one_by_one: bool) {
     // 1 つのコミットにまとめるのを断られたら、失敗は知らせずに、1 つずつ merge するかを尋ねる（macOS 版と同じ）。
     let refused =
         move |reply: &Value| !one_by_one && reply["errorKind"].as_str() == Some("octopus");
-    actions.perform_recovering(vec![command], refused, move |reply: &Value| {
+    let repo = tree.repo.clone();
+    actions.perform_recovering_in(repo, vec![command], refused, move |reply: &Value| {
         if !refused(reply) {
             return;
         }
         let a = a.clone();
         glib::spawn_future_local(async move {
-            let sheet = Sheet::new(
+            let sheet = tree.sheet(
                 sheets::parent(&a).as_ref(),
                 &tr!("Can’t Merge Them in One Commit"),
                 &tr!(
@@ -337,7 +343,7 @@ fn merge(actions: &Rc<Actions>, revs: Vec<String>, one_by_one: bool) {
             );
             sheet.buttons(&tr!("Merge One by One"), false, None);
             if sheet.run().await == Response::Ok {
-                merge(&a, revs, true);
+                merge(&a, tree, revs, true);
             }
         });
     });
@@ -360,8 +366,8 @@ struct OrderList {
     on_reorder: RefCell<Option<Rc<dyn Fn()>>>,
 }
 
-/// 一覧の 1 行の高さ（6 行を超えるときだけスクロールする）。
-const ROW_HEIGHT: i32 = 34;
+/// 一覧の 1 行の高さ（6 行を超えるときだけスクロールする。macOS 版の 20 pt の行と、行の間の 2 pt）。
+const ROW_HEIGHT: i32 = 22;
 
 impl OrderList {
     fn new(sources: Vec<Source>) -> Rc<Self> {
@@ -408,13 +414,13 @@ impl OrderList {
         self.set_steps(None);
     }
 
-    /// `from` 行目を `to` 行目に動かして、知らせる。
-    fn reorder(self: &Rc<Self>, from: usize, to: usize) {
+    /// `from` 行目を `gap` 番目の行の間（0 は先頭の上、行の数は最後の下）に動かして、知らせる。
+    fn reorder(self: &Rc<Self>, from: usize, gap: usize) {
         {
             let mut sources = self.sources.borrow_mut();
-            if from == to || from >= sources.len() || to >= sources.len() {
+            let Some(to) = moved_index(from, gap, sources.len()) else {
                 return;
-            }
+            };
             let s = sources.remove(from);
             sources.insert(to, s);
         }
@@ -425,25 +431,47 @@ impl OrderList {
         }
     }
 
+    /// 落とす先の線を `gap` 番目の行の間に出す（None で消す）。
+    fn show_drop_line(&self, gap: Option<usize>) {
+        let n = self.sources.borrow().len();
+        let mut child = self.list.first_child();
+        let mut i = 0;
+        while let Some(row) = child {
+            row.remove_css_class("drop-above");
+            row.remove_css_class("drop-below");
+            match gap {
+                Some(g) if g == i => row.add_css_class("drop-above"),
+                Some(g) if g == n && i + 1 == n => row.add_css_class("drop-below"),
+                _ => {}
+            }
+            child = row.next_sibling();
+            i += 1;
+        }
+    }
+
     /// 行を作り直す（数は少ない）。
     fn refresh(self: &Rc<Self>) {
+        install_css();
         while let Some(row) = self.list.first_child() {
             self.list.remove(&row);
         }
         let steps = self.steps.borrow().clone();
         for (i, source) in self.sources.borrow().iter().enumerate() {
+            // 名前の列（250）と見込みの列（残り）。macOS 版の表と同じ。
             let line = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-            line.set_margin_start(8);
-            line.set_margin_end(8);
-            line.set_height_request(ROW_HEIGHT - 6);
+            line.set_margin_start(6);
+            line.set_margin_end(6);
+            line.set_height_request(ROW_HEIGHT);
             let name = gtk::Label::new(Some(&format!("{}. {}", i + 1, source.rev)));
             name.set_xalign(0.0);
-            name.set_hexpand(true);
+            name.set_size_request(250 - 12, -1);
+            name.set_max_width_chars(1);
             name.set_ellipsize(gtk::pango::EllipsizeMode::End);
             line.append(&name);
             let forecast = gtk::Label::new(None);
-            forecast.set_xalign(1.0);
-            forecast.set_max_width_chars(24);
+            forecast.set_xalign(0.0);
+            forecast.set_hexpand(true);
+            forecast.set_max_width_chars(1);
             forecast.set_ellipsize(gtk::pango::EllipsizeMode::End);
             if let Some(files) = steps.as_ref().and_then(|s| s.get(i)) {
                 if files.is_empty() {
@@ -459,6 +487,11 @@ impl OrderList {
             let row = gtk::ListBoxRow::new();
             row.set_child(Some(&line));
             row.set_activatable(false);
+            // 行は詰めて、1 行おきに地の色を変える（macOS 版の `usesAlternatingRowBackgroundColors`）。
+            row.add_css_class("merge-order");
+            if i % 2 == 1 {
+                row.add_css_class("alternate");
+            }
             // ドラッグで並べ替える（持ち上げた行の番号を運ぶ）。
             let drag = gtk::DragSource::new();
             drag.set_actions(gdk::DragAction::MOVE);
@@ -466,19 +499,90 @@ impl OrderList {
                 Some(gdk::ContentProvider::for_value(&(i as u32).to_value()))
             });
             row.add_controller(drag);
+            // 行の間に落とす（macOS 版と同じ。行の上半分ならその上、下半分なら下。線で示す）。
             let drop = gtk::DropTarget::new(u32::static_type(), gdk::DragAction::MOVE);
+            let gap_at = {
+                let row = row.downgrade();
+                move |y: f64| {
+                    let h = row.upgrade().map_or(0, |r| r.height());
+                    if y * 2.0 < f64::from(h) { i } else { i + 1 }
+                }
+            };
             let weak = Rc::downgrade(self);
-            drop.connect_drop(move |_, value, _, _| {
+            let gap = gap_at.clone();
+            drop.connect_motion(move |_, _, y| {
+                if let Some(this) = weak.upgrade() {
+                    this.show_drop_line(Some(gap(y)));
+                }
+                gdk::DragAction::MOVE
+            });
+            let weak = Rc::downgrade(self);
+            drop.connect_leave(move |_| {
+                if let Some(this) = weak.upgrade() {
+                    this.show_drop_line(None);
+                }
+            });
+            let weak = Rc::downgrade(self);
+            drop.connect_drop(move |_, value, _, y| {
                 let (Some(this), Ok(from)) = (weak.upgrade(), value.get::<u32>()) else {
                     return false;
                 };
+                let gap = gap_at(y);
                 // 落とした後で作り直す（落とした先の行を、処理の途中で外さない）。
-                glib::idle_add_local_once(move || this.reorder(from as usize, i));
+                glib::idle_add_local_once(move || {
+                    this.show_drop_line(None);
+                    this.reorder(from as usize, gap);
+                });
                 true
             });
             row.add_controller(drop);
             self.list.append(&row);
         }
+    }
+}
+
+/// `from` 行目を `gap` 番目の行の間に動かしたときの、新しい位置（動かないなら None）。
+fn moved_index(from: usize, gap: usize, len: usize) -> Option<usize> {
+    if from >= len || gap > len {
+        return None;
+    }
+    let to = if from < gap { gap - 1 } else { gap };
+    (to != from).then_some(to)
+}
+
+/// 落とす先の線。
+fn install_css() {
+    thread_local! {
+        static DONE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+    if DONE.with(|d| d.replace(true)) {
+        return;
+    }
+    let provider = gtk::CssProvider::new();
+    provider.load_from_string(
+        "row.merge-order { min-height: 0; padding: 0; }\n\
+         row.merge-order.alternate { background-color: alpha(currentColor, 0.04); }\n\
+         row.drop-above { box-shadow: inset 0 2px @accent_color; }\n\
+         row.drop-below { box-shadow: inset 0 -2px @accent_color; }",
+    );
+    if let Some(display) = gdk::Display::default() {
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
+}
+
+/// 名前を並べる（macOS 版の `ListFormatter` と同じ: 英語は「a and b」「a, b, and c」、日本語は「a、b、c」）。
+fn list_names(names: &[&str]) -> String {
+    use amonhen_model::i18n::{Lang, current};
+    match (current(), names) {
+        (Lang::Ja, _) => names.join("、"),
+        (Lang::En, [one]) => (*one).to_owned(),
+        (Lang::En, [a, b]) => format!("{a} and {b}"),
+        (Lang::En, [rest @ .., last]) => format!("{}, and {last}", rest.join(", ")),
+        (Lang::En, []) => String::new(),
     }
 }
 
@@ -491,6 +595,29 @@ mod tests {
             rev: rev.into(),
             kind,
         }
+    }
+
+    #[test]
+    fn moves_between_rows() {
+        // 上に落とす・下に落とす・同じ場所・最後の下。
+        assert_eq!(moved_index(2, 0, 3), Some(0));
+        assert_eq!(moved_index(0, 2, 3), Some(1));
+        assert_eq!(moved_index(1, 1, 3), None);
+        assert_eq!(moved_index(1, 2, 3), None);
+        assert_eq!(moved_index(0, 3, 3), Some(2));
+        assert_eq!(moved_index(0, 4, 3), None);
+    }
+
+    #[test]
+    fn lists_names_as_list_formatter_does() {
+        use amonhen_model::i18n::{Lang, with};
+        with(Lang::En, || {
+            assert_eq!(list_names(&["a", "b"]), "a and b");
+            assert_eq!(list_names(&["a", "b", "c"]), "a, b, and c");
+        });
+        with(Lang::Ja, || {
+            assert_eq!(list_names(&["a", "b", "c"]), "a、b、c")
+        });
     }
 
     #[test]

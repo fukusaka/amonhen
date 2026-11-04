@@ -2,6 +2,7 @@
 import type { Signature } from '../git/commitObject.ts';
 import type { FileDiff } from '../diff/fileDiff.ts';
 import type { FileChange } from '../git/log.ts';
+import type { SignatureKind } from '../git/signature.ts';
 import type { GraphRow } from './graph.ts';
 
 /** 履歴の範囲。現在のブランチ、すべて、または `ref:refs/heads/x` のような 1 つの ref */
@@ -83,7 +84,37 @@ export type HistoryHostMessage =
   | { type: 'details'; details: CommitDetails }
   /** コミットの中の 1 ファイルの差分（最初の親との差分） */
   | { type: 'commitDiff'; oid: string; path: string; diff: FileDiff }
-  | { type: 'editMessage'; oid: string; kind: MessageEdit; title: string; message: string };
+  | { type: 'editMessage'; oid: string; kind: MessageEdit; title: string; message: string }
+  /** 行の署名の印（届いた行の分。署名のないコミットは含まない） */
+  | { type: 'signatures'; marks: Record<string, SignatureView> }
+  /** 詳細の残り（署名・子のコミット） */
+  | { type: 'detailsExtras'; extras: DetailsExtras }
+  /**
+   * リポジトリの形（エンジンだけ）。`shallow` なら History の最後に取り足す帯を出し、`boundary` の行（shallow の
+   * 境目のコミット）に印を付ける。`partial` は partial clone の promisor の remote と filter
+   */
+  | { type: 'form'; shallow: boolean; boundary: number[]; partial?: { remote: string; filter: string } };
+
+/** 署名の見せ方（アプリの SignatureStatus。形と色は Webview が kind から決める） */
+export interface SignatureView {
+  kind: SignatureKind;
+  /** 信用度の段階（verified のとき。3 は強い信用） */
+  trust?: number;
+  label: string;
+  explanation: string;
+  /** 署名した人・鍵（分かれば） */
+  signer?: string;
+  key?: string;
+}
+
+/** コミットの詳細のうち時間のかかる分（コアの `commitExtras`）。署名と子のコミット */
+export interface DetailsExtras {
+  oid: string;
+  /** 署名がなければ undefined */
+  signature?: SignatureView;
+  /** そのコミットを親に持つコミット */
+  children: string[];
+}
 
 export type HistoryWebviewMessage =
   | { type: 'more' }
@@ -102,4 +133,8 @@ export type HistoryWebviewMessage =
   | { type: 'scope'; scope: Scope }
   | { type: 'saveMessage'; oid: string; kind: MessageEdit; message: string }
   /** 編集できる範囲の中で、新しい順の to 番目に動かす */
-  | { type: 'move'; oid: string; to: number };
+  | { type: 'move'; oid: string; to: number }
+  /** HEAD・親・子のコミットに移る（`oid` は今選んでいるコミット） */
+  | { type: 'goTo'; to: 'head' | 'parent' | 'child'; oid?: string }
+  /** shallow clone の履歴を取り足す・すべて取る、partial clone の中身をすべて取る（帯と札のボタン） */
+  | { type: 'fetchForm'; what: 'more' | 'all' | 'contents' };

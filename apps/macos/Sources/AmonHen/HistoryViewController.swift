@@ -61,9 +61,13 @@ final class FocusTableView: NSTableView {
     /// 行の印（CI など）の上で押した。true を返せば行を選ばない（吹き出しを出す）。点は表の座標。
     var onClickMark: ((Int, NSPoint) -> Bool)?
 
+    /// 最後に押した行（いくつか選んだ行の 1 つをドラッグしたとき、つかんだ行だけを動かすため）。
+    private(set) var mouseDownRow = -1
+
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         let row = row(at: point)
+        mouseDownRow = row
         if row >= 0, onClickMark?(row, point) == true { return }
         super.mouseDown(with: event)
     }
@@ -391,7 +395,9 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         tableView.dataSource = self
         tableView.delegate = self
         tableView.dragLabel = { [weak self] rows in
-            guard let row = rows.first, let chunk = self?.chunks[row / Self.chunkRows] else { return nil }
+            guard let self else { return nil }
+            let grabbed = tableView.mouseDownRow
+            guard let row = rows.contains(grabbed) ? grabbed : rows.first, let chunk = chunks[row / Self.chunkRows] else { return nil }
             return chunk.subject(row: row)
         }
         tableView.onFocusChange = { [weak self] in
@@ -744,6 +750,11 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     /// `row` を選び、表の中ほどに見えるようにする。
     func select(row: Int) {
         tableView.selectRowIndexes([row], byExtendingSelection: false)
+        scrollToCenter(row: row)
+    }
+
+    /// `row` を真ん中あたりに出す（選択は変えない）。
+    private func scrollToCenter(row: Int) {
         let clip = scrollView.contentView
         let rect = tableView.rect(ofRow: row)
         // 上端はヘッダーの分だけ負になる（表の 0 行目がヘッダーのすぐ下に来る位置）。
@@ -945,7 +956,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     }
 
     @objc private func rowStyleChanged() {
-        // 見ていたコミットが同じ位置に来るように、選んだ行を見える位置に戻す。
+        // 見ていたコミットが同じ位置に来るように、選んだ行を見える位置に戻す（いくつか選んでいれば、選んだまま）。
         let selected = tableView.selectedRow
         applyRowStyle()
         rowText.removeAll()
@@ -954,7 +965,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         chunks.removeAll()
         loadingChunks.removeAll()
         tableView.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<tableView.numberOfRows))
-        if selected >= 0 { select(row: selected) }
+        if selected >= 0 { scrollToCenter(row: selected) }
         layoutGraphView()
     }
 
@@ -1283,7 +1294,9 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         guard control === searchField else { return false }
         switch selector {
         case #selector(NSResponder.insertNewline(_:)) where NSEvent.modifierFlags.contains(.shift):
-            moveSearch(by: -1)
+            // 新しく打った問い合わせなら、まずそれで探す（前の問い合わせの結果の中を動かない）。
+            let query = searchField.stringValue.trimmingCharacters(in: .whitespaces)
+            if query != searchQuery { searchSubmitted() } else { moveSearch(by: -1) }
             return true
         case #selector(NSResponder.cancelOperation(_:)):
             searchField.stringValue = ""
@@ -1453,6 +1466,9 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     /// History で探しているか（一致がなくても、問い合わせがあれば true）。
     var hasSearch: Bool { searchQuery != nil }
 
+    /// 検索欄に書いてある問い合わせ。History を読み直して結果を捨てても残る（Enter で探し直せる）。
+    var searchText: String { searchField.stringValue.trimmingCharacters(in: .whitespaces) }
+
     /// 検索で一致したコミットの次・前へ（⌘G・⌘⇧G、ツールバーの検索欄の ⇧↩）。探していなければ false。
     @discardableResult
     func moveToMatch(by step: Int) -> Bool {
@@ -1574,13 +1590,44 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         }
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = context
+        drawGlassContents(in: root, context: context)
         for (image, view) in overlays {
             var frame = root.convert(view.bounds, from: view)
             if root.isFlipped { frame.origin.y = root.bounds.height - frame.maxY }
             context.cgContext.draw(image, in: frame)
         }
+        // 窓の背景は contentView の外にあり、透けているところ（History の上の帯など）は透明のまま残る。下に敷く。
+        root.effectiveAppearance.performAsCurrentDrawingAppearance {
+            NSColor.windowBackgroundColor.setFill()
+            root.bounds.fill(using: .destinationOver)
+        }
         NSGraphicsContext.restoreGraphicsState()
         return rep
+    }
+
+    /// macOS 26 の Liquid Glass（サイドバーなど）は中身をレイヤーの下に置くので、`cacheDisplay` では白く抜ける。
+    /// ガラスの形を窓の背景の色で塗り、中身を別に描いて重ねる。
+    private func drawGlassContents(in root: NSView, context: NSGraphicsContext) {
+        guard #available(macOS 26.0, *) else { return }
+        func visit(_ view: NSView) {
+            guard !view.isHidden else { return }
+            guard let glass = view as? NSGlassEffectView else { return view.subviews.forEach(visit) }
+            guard let content = glass.contentView,
+                  let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds) else { return }
+            content.cacheDisplay(in: content.bounds, to: rep)
+            func frame(of view: NSView) -> NSRect {
+                var frame = root.convert(view.bounds, from: view)
+                if root.isFlipped { frame.origin.y = root.bounds.height - frame.maxY }
+                return frame
+            }
+            let shape = frame(of: glass)
+            root.effectiveAppearance.performAsCurrentDrawingAppearance {
+                NSColor.windowBackgroundColor.setFill()
+                NSBezierPath(roundedRect: shape, xRadius: glass.cornerRadius, yRadius: glass.cornerRadius).fill()
+            }
+            if let image = rep.cgImage { context.cgContext.draw(image, in: frame(of: content)) }
+        }
+        visit(root)
     }
 
     // MARK: - 表のデータ
@@ -1789,9 +1836,11 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             // 分ける（止めてから Working Copy で分けてコミットする）は、編集モードの外の操作。
             add("Split…") {
                 Task { @MainActor in
+                    // worktree の今のブランチを書き換えるので、Cherry-pick・Revert と同じく、どの worktree かを書く。
                     guard await actions.confirm(L("Split %@?", short),
-                                                message: L("Its changes go back to the working tree; commit them in parts, then Continue.") + " "
-                                                    + Actions.canUndo, ok: "Split") else { return }
+                                                message: actions.sheetMessage(
+                                                    L("Its changes go back to the working tree; commit them in parts, then Continue.") + " "
+                                                        + Actions.canUndo), ok: "Split") else { return }
                     actions.rewrite("Split \(short)", ["kind": "split", "oid": hex])
                 }
             }
@@ -1860,6 +1909,9 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     }
 
     func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> (any NSPasteboardWriting)? {
+        // いくつか選んだ行の 1 つをつかんだら、つかんだ行だけを動かす（落とす側は 1 つのコミットしか読まない）。
+        let grabbed = self.tableView.mouseDownRow
+        if grabbed >= 0, row != grabbed, tableView.selectedRowIndexes.contains(grabbed) { return nil }
         guard let id = history?.commitID(row: row) else { return nil }
         let item = NSPasteboardItem()
         item.setString(id.map { String(format: "%02x", $0) }.joined(), forType: .commitID)

@@ -182,8 +182,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         }
         history.onShowFetchingSettings = { [weak self] in self?.showFetchingSettings() }
         history.onSearchChanged = { [weak self] query in
-            self?.detail.searchQuery = query
-            self?.toolbar.setSearch(query)
+            guard let self else { return }
+            detail.searchQuery = query
+            // 読み直しで結果を捨てても問い合わせは残すので、ツールバーの欄は History の欄に合わせる。
+            toolbar.setSearch(query ?? history.searchText)
         }
         toolbar.onSearch = { [weak self] query in
             guard let self else { return }
@@ -417,12 +419,29 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     /// `path` の worktree を書き込む先にする。まだ開いていなければ開く（SSH 先なら同じ接続先の上のパス）。
     func edit(worktree path: String) {
-        if WorktreeInfo.canonical(path) == WorktreeInfo.canonical(editing.path) { return }
+        let key = WorktreeInfo.canonical(path)
+        if key == WorktreeInfo.canonical(editing.path) {
+            wantedSlot = nil
+            return
+        }
+        // 最後に選んだものにする（開くのを待つ間にほかを選んだら、開き終えても切り替えない）。
+        wantedSlot = key
         Task {
             guard let slot = await slot(for: path) else { return }
+            guard wantedSlot == key else {
+                // 使わなかった: 書き込む先にしたことがなければ閉じる（開いたままにする数に入らないので）。
+                if slot !== opened, slot !== editing, !slotOrder.contains(key), slots[key] === slot {
+                    slot.watch = nil
+                    slots[key] = nil
+                }
+                return
+            }
             activate(slot)
         }
     }
+
+    /// 最後に選んだ、開くのを待っている worktree（なければ nil）。
+    private var wantedSlot: String?
 
     /// `path` の worktree の組（なければ開く。開いただけでは書き込む先にしない）。
     private func slot(for path: String) async -> WorktreeSlot? {
@@ -585,6 +604,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     private static let keptSlots = 3
 
     private func activate(_ slot: WorktreeSlot) {
+        wantedSlot = nil
         editing = slot
         defer { loadForm() }
         if slot !== opened {
@@ -606,6 +626,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         changeCount = worktreeChanges[WorktreeInfo.canonical(slot.path)] ?? 0
         showWorktrees()
         updateTabTitle()
+        // CI の印は、書き込む先の worktree のブランチのもの（間を空けて読み直す）。
+        loadGitHub(force: false)
     }
 
     /// ツールバーに、書き込む先の worktree とそのブランチを出す。History とサイドバーの「今のブランチ」も
@@ -626,9 +648,13 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         editing.actions.currentBranch = branch
         let current = latestRefs?.items.first { $0.kind == .local && $0.name == branch }
         toolbar.setTracking(ahead: current?.ahead ?? 0, behind: current?.behind ?? 0, published: current.map(Self.isPublished) ?? true)
+        // タブの名前の ↑↓ も、● と同じく書き込む先の worktree のもの。
+        tracking = (current?.ahead ?? 0, current?.behind ?? 0)
+        updateTabTitle()
         pushState = current.map { (Self.isPublished($0), $0.ahead) }
         workingCopy.publishesBranch = !(current.map(Self.isPublished) ?? true)
         if editing === opened, let head = latestRefs?.head { history.head = head }
+        updateSubtitle()
     }
 
     /// サイドバーの worktree の右クリック。
@@ -648,8 +674,11 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 RemoteSheet.present(in: window, repository: repository, remote: remote) { [weak self] in self?.actions.perform(sequence: $0) }
             }
         case .remove:
-            guard let name, RemoteSheet.confirmRemove(name) else { return }
-            actions.perform(["op": "changeRemote", "change": ["kind": "remove", "name": name]])
+            guard let name else { return }
+            Task { @MainActor in
+                guard await RemoteSheet.confirmRemove(name, in: window) else { return }
+                actions.perform(["op": "changeRemote", "change": ["kind": "remove", "name": name]])
+            }
         }
     }
 
@@ -788,7 +817,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             guard !name.isEmpty else { return NSSound.beep() }
             var path = folder.stringValue.trimmingCharacters(in: .whitespaces)
             if path.isEmpty { path = folder.placeholderString ?? "" }
-            path = (path as NSString).expandingTildeInPath
+            // ~ はこの Mac のホーム。SSH 先のパスはそのまま送る（手元の daemon 越しなら、この Mac のパス）。
+            let onSSH = location.hasPrefix("ssh://") || location.hasPrefix("daemon:ssh://")
+            if !onSSH { path = (path as NSString).expandingTildeInPath }
             opened.actions.perform(["op": "worktreeAdd", "path": path, "newBranch": name, "start": start]) { [weak self] _ in
                 self?.reloadWorktrees()
                 self?.edit(worktree: path)
@@ -804,7 +835,18 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     /// worktree を消す（変更が残っていれば、それも捨てると確かめてから --force）。開いたリポジトリは消せない。
     private func removeWorktree(_ info: WorktreeInfo) {
         guard !info.main, !info.isSame(opened.path) else { return NSSound.beep() }
-        let changes = worktreeChanges[WorktreeInfo.canonical(info.path)] ?? 0
+        // 消すと戻せないので、覚えている数（5 分前のこともある）ではなく、今の数を数えて確かめる。
+        let repository = opened.repository, path = info.path
+        Task {
+            let fresh = try? await Task.detached(priority: .userInitiated) {
+                try repository.info(["op": "worktreeChanges", "paths": [path], "fresh": true], as: WorktreeChangesList.self)
+            }.value
+            let changes = fresh?.worktrees.first?.count ?? worktreeChanges[WorktreeInfo.canonical(path)] ?? 0
+            confirmRemoveWorktree(info, changes: changes)
+        }
+    }
+
+    private func confirmRemoveWorktree(_ info: WorktreeInfo, changes: Int) {
         let alert = NSAlert()
         alert.messageText = L("Remove the worktree “%@”?", info.name)
         alert.informativeText = changes > 0
@@ -943,7 +985,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         } else {
             SignaturePlace(local: true, detail: L("the repository is on this Mac"))
         }
-        detail.signaturePlace = place
+        // Stashes・Reflog・Range Diff の詳細の吹き出しも、History と同じ場所を言う。
+        for detail in [detail, stashes.detail, reflog.detail, rangeDiff.detail] { detail.signaturePlace = place }
         sidebar.signaturePlace = place
     }
 
@@ -980,7 +1023,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         var includingOlder = false
         if case let .combine(oids) = preset, oids.count == 1 { includingOlder = true }
         Task { @MainActor in
-            guard let editor = await HistoryEditController.load(actions: actions, from: start, includingOlder: includingOlder) else {
+            // まとめるものに HEAD の first-parent の並びにないものがあれば、黙って減らさずに断る（選んだ数より
+            // 少なくまとめてしまう）。
+            guard let editor = await HistoryEditController.load(actions: actions, from: start, includingOlder: includingOlder),
+                  preset.map({ if case let .combine(oids) = $0 { editor.contains(oids) } else { true } }) ?? true else {
                 statusBar?.flash(L("Only commits on HEAD’s first-parent line can be edited."), symbol: "exclamationmark.triangle")
                 return
             }
@@ -1140,7 +1186,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         detail.toolTip = failure.message
         detail.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         // 次の一手（いちばん目立たせるのは最初のもの）。
-        let remedies: [NSButton] = cancelled ? [] : failure.remedies.enumerated().map { i, remedy in
+        let remedies: [NSButton] = cancelled ? [] : failure.remedies(local: isLocal).enumerated().map { i, remedy in
             let button = NSButton(title: remedy.title, target: self, action: #selector(runRemedy(_:)))
             button.tag = i
             if i == 0 { button.bezelColor = .controlAccentColor }
@@ -1169,9 +1215,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         let s = { (key: String) in command[key] as? String ?? "" }
         let text: String? = switch s("op") {
         case "fetch": L("Fetched")
-        case "pull": L("Pulled into %@", latestRefs?.headBranch ?? "HEAD")
+        case "pull": L("Pulled into %@", editingBranch ?? "HEAD")
         case "push": L("Pushed %@ to %@", s("branch"), "\(s("remote"))/\(s("remoteBranch"))")
-        case "merge": L("Merged into %@", latestRefs?.headBranch ?? "HEAD")
+        case "merge": L("Merged into %@", editingBranch ?? "HEAD")
         case "mergeInto": L("Merged %@ into %@", s("rev"), s("target"))
         case "rebase": L("Rebased onto %@", s("onto"))
         case "checkout": L("Checked out %@", s("branch"))
@@ -1190,9 +1236,11 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     }
 
     @objc private func runRemedy(_ sender: NSButton) {
-        guard let failure, failure.remedies.indices.contains(sender.tag) else { return }
+        guard let failure else { return }
+        let remedies = failure.remedies(local: isLocal)
+        guard remedies.indices.contains(sender.tag) else { return }
         hideFailure()
-        switch failure.remedies[sender.tag] {
+        switch remedies[sender.tag] {
         case let .openWorktree(path): edit(worktree: path)
         case .openTerminal: openTerminal(at: editing.path)
         case .retry: if let command = failure.command { actions.perform(command) }
@@ -1548,8 +1596,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                                     published: current.map(Self.isPublished) ?? true)
                 workingCopy.publishesBranch = !(current.map(Self.isPublished) ?? true)
                 toolbar.setBranch(refs.headBranch)
-                if let branch = refs.headBranch { rememberBranch(branch) }
-                tracking = (current?.ahead ?? 0, current?.behind ?? 0)
+                // 最近切り替えたブランチには、書き込む先の worktree のブランチを覚える。
+                if let branch = editingBranch { rememberBranch(branch) }
                 updateEditingBranch()
                 updateTabTitle()
             } catch {
@@ -1701,7 +1749,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     }
 
     @objc func mergeIntoCurrent(_ sender: Any?) {
-        let current = latestRefs?.headBranch ?? "HEAD"
+        let current = editingBranch ?? "HEAD"
         Task { @MainActor in
             guard let (rev, _) = await chooseRevision(
                 title: L("Merge into %@", current), message: L("The branch, tag or commit to merge in"), ok: "Merge",
@@ -1711,7 +1759,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     }
 
     @objc func rebaseCurrent(_ sender: Any?) {
-        let current = latestRefs?.headBranch ?? "HEAD"
+        let current = editingBranch ?? "HEAD"
         Task { @MainActor in
             guard let (rev, updateRefs) = await chooseRevision(
                 title: L("Rebase %@", current), message: L("The branch, tag or commit to rebase onto"), ok: "Rebase",
@@ -1722,12 +1770,27 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         }
     }
 
-    /// 新しいブランチ・タグの起点。History で選んでいるコミットがあればそれ、なければ HEAD。
+    /// 新しいブランチ・タグの起点。History で選んでいるコミットがあればそれ、なければ書き込む先の worktree の
+    /// ブランチ（なければその HEAD）。
     private var startPoint: String {
         if pages?.page == .history, let selectedCommit {
             return String(selectedCommit.map { String(format: "%02x", $0) }.joined().prefix(12))
         }
-        return latestRefs?.headBranch ?? "HEAD"
+        return editingBranch ?? "HEAD"
+    }
+
+    /// 書き込む先の worktree のブランチ（ツールバー・サイドバーが今のブランチとして出すもの）。開いたリポジトリを
+    /// 書き込む先にしているなら、ref の一覧の今のブランチ。
+    private var editingBranch: String? {
+        editing === opened ? latestRefs?.headBranch : worktrees.first { $0.isSame(editing.path) }?.branch
+    }
+
+    /// ref の一覧の今のブランチと HEAD を、書き込む先の worktree のものにしたもの（ブランチの切り替えが、ほかの
+    /// worktree が checkout しているブランチを出し、書き込む先のブランチを出さないように）。
+    private var editingRefs: Refs? {
+        guard let refs = latestRefs, editing !== opened, let info = worktrees.first(where: { $0.isSame(editing.path) })
+        else { return latestRefs }
+        return refs.with(headBranch: info.branch, head: info.head.flatMap { Data(hex: $0) })
     }
 
     @objc func newBranch(_ sender: Any?) { actions.newBranch(at: startPoint) }
@@ -1785,7 +1848,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     @objc func showReflog(_ sender: Any?) { sidebar.select(page: .reflog) }
 
     /// Repository > Compare with Previous Version: 今のブランチを、最後に書き換える前の版と比べる。
-    @objc func compareWithPreviousVersion(_ sender: Any?) { openRangeDiff(previousOf: latestRefs?.headBranch) }
+    @objc func compareWithPreviousVersion(_ sender: Any?) { openRangeDiff(previousOf: editingBranch) }
 
     /// Range Diff を開き、`branch`（nil なら今のブランチ）を最後に書き換える前の版と比べる。
     func openRangeDiff(previousOf branch: String?) {
@@ -1813,7 +1876,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     private func updateSubtitle() {
         guard !CommandLine.arguments.contains("--show-latency") else { return }
         let shown = window.toolbar?.isVisible == true && window.toolbar?.items.contains { $0.itemIdentifier == .branch } == true
-        window.subtitle = shown ? "" : latestRefs?.headBranch ?? "detached HEAD"
+        // 書き込む先の worktree のブランチ（ほかの worktree を選んでいれば、そのブランチ）。
+        window.subtitle = shown ? "" : editingBranch ?? "detached HEAD"
     }
 
     /// ツールバーに検索欄が出ている。
@@ -1846,7 +1910,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     /// Navigate > Switch Branch…（⌘⇧B）・ツールバーのブランチ。
     @objc func switchBranch(_ sender: Any?) {
-        guard let refs = latestRefs else { return NSSound.beep() }
+        guard let refs = editingRefs else { return NSSound.beep() }
         let recent = UserDefaults.standard.stringArray(forKey: recentBranchesKey) ?? []
         let inUse = Dictionary(
             worktrees.filter { $0.branch != nil && !$0.isSame(editing.path) }.map { ($0.branch!, $0.name) },
@@ -1869,13 +1933,13 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     /// Repository > Rename Branch…: 今のブランチの名前を変える。
     @objc func renameBranch(_ sender: Any?) {
-        guard let branch = latestRefs?.headBranch else { return NSSound.beep() }
+        guard let branch = editingBranch else { return NSSound.beep() }
         actions.renameBranch(branch)
     }
 
     /// Repository > Set Upstream…: 今のブランチの上流（pull・push の相手）を、リモートのブランチから選ぶ。
     @objc func setUpstream(_ sender: Any?) {
-        guard let branch = latestRefs?.headBranch else { return NSSound.beep() }
+        guard let branch = editingBranch else { return NSSound.beep() }
         let remotes = (latestRefs?.items ?? []).filter { $0.kind == .remote && !$0.name.hasSuffix("/HEAD") }.map(\.name)
         guard !remotes.isEmpty else { return NSSound.beep() }
         let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 320, height: 26), pullsDown: false)
@@ -1952,7 +2016,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         if !ci { history.ciStatus = [:] }
         guard ci || authors else { return }
         if Settings.gitHubCIDefaultBranch, defaultBranch == nil { defaultBranch = await GitHub.defaultBranch(gitHub) }
-        let branches = Array(Set([latestRefs?.headBranch, Settings.gitHubCIDefaultBranch ? defaultBranch : nil].compactMap { $0 })).sorted()
+        // 今のブランチは、書き込む先の worktree のもの。
+        let branches = Array(Set([editingBranch, Settings.gitHubCIDefaultBranch ? defaultBranch : nil].compactMap { $0 })).sorted()
         do {
             let (statuses, avatars) = try await GitHub.commitStatuses(
                 gitHub, branches: branches, count: Settings.gitHubCICommits, ci: ci, authors: authors)
@@ -1997,9 +2062,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         return items
     }
 
-    /// プルリクエストのブランチをチェックアウトする（gh pr checkout）。手元のリポジトリだけ。
+    /// プルリクエストのブランチをチェックアウトする（gh pr checkout）。手元のリポジトリだけ。書き込む先の worktree で。
     private func checkout(_ pr: PullRequest) {
-        guard let gitHub, isLocal, let dir = repository.workdir else { return NSSound.beep() }
+        guard let gitHub, isLocal, let dir = editing.repository.workdir else { return NSSound.beep() }
         Task { @MainActor in
             guard await actions.confirm(L("Checkout #%ld?", pr.number), message: L("“%@” is checked out as a local branch.", pr.title),
                                         ok: "Checkout") else { return }
@@ -2014,17 +2079,17 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         }
     }
 
-    /// Repository > Open on GitHub: 今のブランチのページを開く。
+    /// Repository > Open on GitHub: 書き込む先の worktree の今のブランチのページを開く。
     @objc func openOnGitHub(_ sender: Any?) {
         guard let gitHub else { return NSSound.beep() }
         var url = gitHub.webURL
-        if let branch = latestRefs?.headBranch { url = url.appendingPathComponent("tree").appendingPathComponent(branch) }
+        if let branch = editingBranch { url = url.appendingPathComponent("tree").appendingPathComponent(branch) }
         NSWorkspace.shared.open(url)
     }
 
     /// Repository > Create Pull Request…: 今のブランチからプルリクエストを作る。
     @objc func createPullRequest(_ sender: Any?) {
-        guard let branch = latestRefs?.headBranch else { return NSSound.beep() }
+        guard let branch = editingBranch else { return NSSound.beep() }
         createPullRequest(from: branch)
     }
 
@@ -2173,13 +2238,16 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         title: String, message: String, ok: String, forecast: Forecast? = nil
     ) async -> (rev: String, updateRefs: Bool?)? {
         var choices: [(title: String, rev: String)] = []
-        if let selectedCommit, selectedCommit != latestRefs?.head {
+        // 今のブランチは書き込む先の worktree のもの（ほかの worktree を書き込む先にしていても、そのブランチ自身を
+        // 出さず、開いた worktree のブランチは出す）。
+        let refs = editingRefs
+        if let selectedCommit, selectedCommit != refs?.head {
             let hex = selectedCommit.map { String(format: "%02x", $0) }.joined()
             choices.append((L("Selected Commit %@", String(hex.prefix(8))), hex))
         }
-        let items = latestRefs?.items ?? []
+        let items = refs?.items ?? []
         for kind in [RefKind.local, .remote, .tag] {
-            for item in items where item.kind == kind && item.name != latestRefs?.headBranch {
+            for item in items where item.kind == kind && item.name != refs?.headBranch {
                 choices.append((item.name, item.name))
             }
         }
@@ -2313,14 +2381,34 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         case #selector(updateSubmodules(_:)): return latestRefs?.items.contains { $0.kind == .submodule } ?? false
         case #selector(switchBranch(_:)): return latestRefs != nil
         case #selector(renameBranch(_:)), #selector(setUpstream(_:)), #selector(compareWithPreviousVersion(_:)):
-            return latestRefs?.headBranch != nil
+            return editingBranch != nil
         case #selector(commitChanges(_:)), #selector(commitAndPush(_:)): return showsWorkingCopy && workingCopy.canCommit
         case #selector(stageAllChanges(_:)): return showsWorkingCopy && workingCopy.canStageAll
         case #selector(openInTerminal(_:)), #selector(revealInFinder(_:)): return isLocal
         case #selector(openOnGitHub(_:)): return gitHub != nil
-        case #selector(createPullRequest(_:)): return gitHub != nil && GitHub.isAvailable && latestRefs?.headBranch != nil
+        case #selector(createPullRequest(_:)): return gitHub != nil && GitHub.isAvailable && editingBranch != nil
         default: return true
         }
+    }
+
+    /// どれかの worktree の Working Copy のマージエディタに、保存していない Result の変更がある。
+    var hasUnsavedMergeEdits: Bool {
+        ([opened] + Array(slots.values)).contains { $0.workingCopy.hasUnsavedMergeEdits }
+    }
+
+    /// 保存していない Result を捨てて閉じると確かめた（閉じ直すときは聞かない）。
+    var discardConfirmed = false
+
+    /// 埋め込んだマージエディタの Result を保存していなければ、捨てて閉じてよいかを確かめる（別ウィンドウの
+    /// マージエディタと同じ。確かめたら閉じ直す）。
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard hasUnsavedMergeEdits, !discardConfirmed else { return true }
+        Task { @MainActor in
+            guard await MergeEditorWindowController.confirmDiscarding(in: sender) else { return }
+            discardConfirmed = true
+            sender.performClose(nil)
+        }
+        return false
     }
 
     func windowWillClose(_ notification: Notification) {

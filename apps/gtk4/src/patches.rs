@@ -43,7 +43,8 @@ pub fn save(actions: &Rc<Actions>, oids: Vec<String>) {
         } else {
             tr!("Save {count} Commits as Patches", count = n)
         };
-        let sheet = Sheet::new(
+        // コミットを書き出すだけで作業ツリーによらないので、worktree の名前は書かない（macOS 版と同じ）。
+        let sheet = Sheet::unnamed(
             parent.as_ref(),
             &title,
             &tr!("Numbering, recipients and sign-offs follow git’s format.* settings."),
@@ -155,22 +156,9 @@ fn file_name(subject: &str) -> String {
 pub fn choose_and_apply(actions: &Rc<Actions>) {
     let actions = actions.clone();
     glib::spawn_future_local(async move {
-        let patches = gtk::FileFilter::new();
-        patches.set_name(Some(&tr!(
-            "Choose patch files (.patch, .diff, .mbox, .eml)."
-        )));
-        for e in EXTENSIONS {
-            patches.add_suffix(e);
-        }
-        let all = gtk::FileFilter::new();
-        all.set_name(Some("*"));
-        all.add_pattern("*");
-        let filters = gio::ListStore::new::<gtk::FileFilter>();
-        filters.append(&patches);
-        filters.append(&all);
+        // どのファイルも選べる（macOS 版と同じく絞らない）。選んでほしいものは、macOS 版の説明の文を題に。
         let dialog = gtk::FileDialog::builder()
-            .title(tr!("Apply Patch…").trim_end_matches('…'))
-            .filters(&filters)
+            .title(tr!("Choose patch files (.patch, .diff, .mbox, .eml)."))
             .modal(true)
             .build();
         let parent = sheets::parent(&actions);
@@ -186,23 +174,48 @@ pub fn choose_and_apply(actions: &Rc<Actions>) {
     });
 }
 
-/// 窓にパッチのファイルを落としたら当てる（すべてがパッチの拡張子のときだけ受け取る）。
+/// 窓にパッチのファイルを落としたら当てる（すべてがパッチの拡張子のときだけ受け取る）。macOS 版と同じく、パッチで
+/// ないものが混じっているときや merge などの途中では、ドラッグしている間から受けない（コピーの印を出さない）。
 pub fn install_drop(widget: &impl IsA<gtk::Widget>, actions: &Rc<Actions>) {
     let target = gtk::DropTarget::new(gdk::FileList::static_type(), gdk::DragAction::COPY);
+    // ドラッグの間にファイルを読んで、パッチかを確かめる。
+    target.set_preload(true);
+    let a = Rc::downgrade(actions);
+    let takes = move |value: Option<&glib::Value>| -> Option<Vec<PathBuf>> {
+        let actions = a.upgrade()?;
+        // merge などの途中では当てない（Apply Patch… と同じ。macOS 版と同じ）。
+        if actions.in_sequence() {
+            return None;
+        }
+        let list = value?.get::<gdk::FileList>().ok()?;
+        let paths: Vec<PathBuf> = list.files().iter().filter_map(|f| f.path()).collect();
+        patch_files(paths)
+    };
+    let a = Rc::downgrade(actions);
+    target.connect_accept(move |_, _| a.upgrade().is_some_and(|a| !a.in_sequence()));
+    // 読めた中身がパッチでなければ、その場で断る。
+    let t = takes.clone();
+    target.connect_value_notify(move |target| {
+        if let Some(value) = target.value()
+            && t(Some(&value)).is_none()
+        {
+            target.reject();
+        }
+    });
     let a = Rc::downgrade(actions);
     target.connect_drop(move |_, value, _, _| {
-        let (Some(actions), Ok(list)) = (a.upgrade(), value.get::<gdk::FileList>()) else {
+        let (Some(actions), Some(paths)) = (a.upgrade(), takes(Some(value))) else {
             return false;
         };
-        let paths: Vec<PathBuf> = list.files().iter().filter_map(|f| f.path()).collect();
-        // merge などの途中では当てない（Apply Patch… と同じ。macOS 版と同じ）。
-        if paths.is_empty() || !paths.iter().all(|p| is_patch(p)) || actions.in_sequence() {
-            return false;
-        }
         apply(&actions, paths);
         true
     });
     widget.add_controller(target);
+}
+
+/// 落とされたファイルがすべてパッチなら、そのパス（1 つもない・ほかのものが混じっていれば None）。
+fn patch_files(paths: Vec<PathBuf>) -> Option<Vec<PathBuf>> {
+    (!paths.is_empty() && paths.iter().all(|p| is_patch(p))).then_some(paths)
 }
 
 /// パッチのファイルを読んで、何を変えるかと当たるかを見せてから当てる。名前の順につなぐ（0001-… から）。
@@ -212,10 +225,15 @@ pub fn apply(actions: &Rc<Actions>, mut paths: Vec<PathBuf>) {
         .iter()
         .map(|p| p.to_string_lossy().into_owned())
         .collect();
+    // 選んだときの worktree で当たるかを調べ、その名前とブランチを書き、そこに当てる（調べている間に書き込む先を
+    // 替えても）。
+    let Some(target) = sheets::Target::current(actions) else {
+        return;
+    };
+    let branch = actions.head().unwrap_or_else(|| "HEAD".to_owned());
     let actions = actions.clone();
     glib::spawn_future_local(async move {
-        let Some(repo) = actions.repo() else { return };
-        let reply = sheets::run(&repo, json!({ "op": "readPatch", "paths": paths })).await;
+        let reply = sheets::run(&target.repo, json!({ "op": "readPatch", "paths": paths })).await;
         let summary = &reply["info"];
         let patches = summary["patches"].as_array().cloned().unwrap_or_default();
         let empty = patches
@@ -226,21 +244,22 @@ pub fn apply(actions: &Rc<Actions>, mut paths: Vec<PathBuf>) {
                 Some(e) => e.to_owned(),
                 None => tr!("There are no changes in the patch."),
             };
-            let dialog = gtk::AlertDialog::builder()
-                .message(tr!("Can’t Read the Patch"))
-                .detail(detail)
-                .modal(true)
-                .build();
-            let window = actions.window();
-            let _ = dialog.choose_future(window.as_ref()).await;
+            actions.alert(&tr!("Can’t Read the Patch"), &detail).await;
             return;
         }
-        confirm(&actions, summary, &patches, paths).await;
+        confirm(&actions, &target, &branch, summary, &patches, paths).await;
     });
 }
 
 /// 当てる前の確認: パッチごとの件名・作者・ファイル、当たるか、当て方の選び方。
-async fn confirm(actions: &Rc<Actions>, summary: &Value, patches: &[Value], paths: Vec<String>) {
+async fn confirm(
+    actions: &Rc<Actions>,
+    target: &sheets::Target,
+    branch: &str,
+    summary: &Value,
+    patches: &[Value],
+    paths: Vec<String>,
+) {
     let mailbox = summary["kind"].as_str() == Some("mailbox");
     let names: Vec<String> = paths
         .iter()
@@ -250,7 +269,6 @@ async fn confirm(actions: &Rc<Actions>, summary: &Value, patches: &[Value], path
                 .map_or_else(|| p.clone(), |n| n.to_string_lossy().into_owned())
         })
         .collect();
-    let branch = actions.head().unwrap_or_else(|| "HEAD".to_owned());
     let (title, what) = if mailbox {
         let title = match patches {
             [one] => tr!(
@@ -276,7 +294,7 @@ async fn confirm(actions: &Rc<Actions>, summary: &Value, patches: &[Value], path
             tr!("The changes go into the working tree (git apply)."),
         )
     };
-    let sheet = Sheet::new(
+    let sheet = target.sheet(
         sheets::parent(actions).as_ref(),
         &title,
         &format!("{what} {}", sheets::can_undo()),
@@ -323,18 +341,19 @@ async fn confirm(actions: &Rc<Actions>, summary: &Value, patches: &[Value], path
         sheet.add(&index);
     }
     sheet.add(&three_way);
-    sheet.buttons("Apply", false, None);
+    sheet.buttons(&tr!("Apply"), false, None);
     if sheet.run().await != Response::Ok {
         return;
     }
-    if mailbox {
-        actions.perform(json!({ "op": "am", "paths": paths, "threeWay": three_way.is_active() }));
+    let command = if mailbox {
+        json!({ "op": "am", "paths": paths, "threeWay": three_way.is_active() })
     } else {
-        actions.perform(json!({
+        json!({
             "op": "applyPatch", "paths": paths,
             "index": index.is_active(), "threeWay": three_way.is_active(),
-        }));
-    }
+        })
+    };
+    actions.perform_in(target.repo.clone(), vec![command], |_| {});
 }
 
 /// 確認のシートの一覧: パッチごとに件名と作者、その下にファイルと増減。
@@ -399,8 +418,8 @@ fn first_line(text: &str) -> String {
         .to_owned()
 }
 
-/// 数字を数として比べる（`2.patch` が `10.patch` より前。Finder の並びと同じ考え）。
-fn natural(a: &str, b: &str) -> std::cmp::Ordering {
+/// 数字を数として比べる（`2.patch` が `10.patch` より前。Finder の並び、macOS 版の localizedStandardCompare と同じ考え）。
+pub(crate) fn natural(a: &str, b: &str) -> std::cmp::Ordering {
     fn chunks(s: &str) -> Vec<(bool, String)> {
         let mut out: Vec<(bool, String)> = Vec::new();
         for c in s.chars() {
@@ -431,6 +450,21 @@ fn natural(a: &str, b: &str) -> std::cmp::Ordering {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn orders_names_like_finder() {
+        let mut names = vec!["prj10", "Prj2", "prj1", "w10", "w2"];
+        names.sort_by(|a, b| natural(a, b));
+        assert_eq!(names, ["prj1", "Prj2", "prj10", "w2", "w10"]);
+    }
+
+    #[test]
+    fn takes_a_drop_only_when_every_file_is_a_patch() {
+        let p = |names: &[&str]| names.iter().map(PathBuf::from).collect::<Vec<_>>();
+        assert!(patch_files(p(&["a.patch", "b.DIFF", "c.mbox", "d.eml"])).is_some());
+        assert!(patch_files(p(&["a.patch", "notes.txt"])).is_none());
+        assert!(patch_files(Vec::new()).is_none());
+    }
 
     #[test]
     fn names_the_mbox_like_format_patch() {

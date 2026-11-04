@@ -5,12 +5,15 @@
  * ところのまだない行をまとめて要求する（離れた行へもすぐ移れる）。
  */
 import { type LaneMetrics, lanePositions } from '../history/lanes.ts';
-import type { MessageEdit, RowData, Scope, SearchState } from '../history/protocol.ts';
+import type { MessageEdit, RowData, Scope, SearchState, SignatureView } from '../history/protocol.ts';
 import type { HostMessage } from '../view/protocol.ts';
 import { el, formatDate, post, type View } from './api.ts';
 import { attachSplitter, createDetailsPane } from './details.ts';
+import { signatureMark } from './signature.ts';
 
 const ROW_HEIGHT = 24;
+/** shallow clone の帯の高さ */
+const BAND_HEIGHT = 36;
 const LANE_WIDTH = 14;
 /** グラフの列の幅の上限。線が多い履歴でも、文字を押し出さない（アプリと同じ） */
 const GRAPH_MAX_WIDTH = 120;
@@ -92,7 +95,32 @@ export function createHistoryView(): View {
   matchingOnlyLabel.title = 'Show only the matching commits';
   search.append(searchInput, searchCount, previousMatch, nextMatch, matchingOnlyLabel);
   const status = el('span', 'status');
-  toolbar.append(scopeSelect, search, status);
+  // 今の HEAD のコミットへ（アプリの Go to HEAD）
+  const goHead = el('button', 'secondary', 'HEAD');
+  goHead.title = 'Go to HEAD';
+  goHead.addEventListener('click', () => post({ type: 'goTo', to: 'head' }));
+  // History の行を探すのは daemon だけ
+  goHead.hidden = true;
+  // リポジトリの形の札（shallow clone・partial clone。partial は押すと中身をすべて取る）
+  const shallowChip = el('span', 'chip', 'Shallow');
+  shallowChip.title = 'A shallow clone: older history isn’t fetched';
+  shallowChip.hidden = true;
+  const partialChip = el('button', 'chip', 'Partial');
+  partialChip.hidden = true;
+  partialChip.addEventListener('click', () => post({ type: 'fetchForm', what: 'contents' }));
+  toolbar.append(scopeSelect, search, goHead, shallowChip, partialChip, status);
+  // shallow clone の History の最後の行の下の帯（取得していない古い履歴を取り足す）
+  const band = el('div', 'shallow-band');
+  const bandMore = el('button', 'secondary', 'Fetch More…');
+  bandMore.title = 'Fetch older commits from the remote (git fetch --deepen)';
+  bandMore.addEventListener('click', () => post({ type: 'fetchForm', what: 'more' }));
+  const bandAll = el('button', 'secondary', 'Fetch All');
+  bandAll.title = 'Fetch the whole history from the remote (git fetch --unshallow)';
+  bandAll.addEventListener('click', () => post({ type: 'fetchForm', what: 'all' }));
+  band.append(el('span', '', 'Older history isn’t fetched (shallow clone)'), bandMore, bandAll);
+  /** shallow の境目のコミットの行 */
+  let boundary = new Set<number>();
+  let shallow = false;
   const body = el('div', 'split');
   const list = el('div', 'list');
   list.tabIndex = 0;
@@ -107,6 +135,8 @@ export function createHistoryView(): View {
   body.append(list, splitter, details.root);
   root.append(toolbar, body);
 
+  /** 行の署名の印（コミット → 見せ方。署名のないものは入らない） */
+  const signatures = new Map<string, SignatureView>();
   /** 行。daemon の History では行の数だけの長さで、まだ届いていない行は空 */
   let rows: (RowData | undefined)[] = [];
   /** daemon の History（行の数が分かっていて、飛び飛びに頼む） */
@@ -139,7 +169,8 @@ export function createHistoryView(): View {
   }
 
   function render(): void {
-    spacer.style.height = `${rows.length * ROW_HEIGHT}px`;
+    const bandShown = shallow && done;
+    spacer.style.height = `${rows.length * ROW_HEIGHT + (bandShown ? BAND_HEIGHT : 0)}px`;
     const first = Math.max(0, Math.floor(list.scrollTop / ROW_HEIGHT) - OVERSCAN);
     const last = Math.min(rows.length, Math.ceil((list.scrollTop + list.clientHeight) / ROW_HEIGHT) + OVERSCAN);
     // レーンは描く範囲に合わせて並べ（点のあるレーンは広く、線だけのレーンは細く）、列は上限までに収める。
@@ -165,6 +196,10 @@ export function createHistoryView(): View {
           post({ type: 'range', start: chunk, count: CHUNK });
         }
       }
+    }
+    if (bandShown) {
+      band.style.top = `${rows.length * ROW_HEIGHT}px`;
+      elements.push(band);
     }
     spacer.replaceChildren(...elements);
 
@@ -203,6 +238,15 @@ export function createHistoryView(): View {
       badge.textContent = ref.name;
       text.append(badge);
     }
+    if (boundary.has(index)) {
+      const cut = document.createElement('span');
+      cut.className = 'boundary';
+      cut.textContent = '⋯';
+      cut.title = 'History stops here: its parents aren’t fetched (shallow clone)';
+      text.append(cut);
+    }
+    const signed = signatures.get(row.oid);
+    if (signed) text.append(signatureMark(signed));
     const subject = document.createElement('span');
     subject.className = 'subject';
     subject.textContent = row.subject;
@@ -555,6 +599,9 @@ export function createHistoryView(): View {
   function onMessage(message: HostMessage): void {
     switch (message.type) {
       case 'reset':
+        // 形はこの後の form で送り直す（一致だけの History なら送らない）
+        shallow = false;
+        boundary = new Set();
         rows = [];
         sparse = false;
         pendingChunks = new Set();
@@ -600,6 +647,7 @@ export function createHistoryView(): View {
         break;
       case 'searchable':
         search.hidden = !message.searchable;
+        goHead.hidden = !message.searchable;
         break;
       case 'search':
         onSearchState(message.state);
@@ -610,6 +658,21 @@ export function createHistoryView(): View {
       case 'details':
         if (message.details.oid === rows[selected]?.oid) details.show(message.details);
         return;
+      case 'detailsExtras':
+        details.showExtras(message.extras);
+        return;
+      case 'form':
+        shallow = message.shallow;
+        boundary = new Set(message.boundary);
+        shallowChip.hidden = !message.shallow;
+        partialChip.hidden = !message.partial;
+        if (message.partial) {
+          partialChip.title = `A partial clone (${message.partial.filter} from ${message.partial.remote}): contents are fetched when needed. Click to fetch all of them.`;
+        }
+        break;
+      case 'signatures':
+        for (const [oid, view] of Object.entries(message.marks)) signatures.set(oid, view);
+        break;
       case 'commitDiff':
         details.showDiff(message.oid, message.path, message.diff);
         return;

@@ -667,13 +667,8 @@ impl DiffWidget {
             rows_f(index as usize, x, y);
             return;
         }
+        // 右クリックのメニューを持ち主が作らない差分では、何も出さない（コピーは Ctrl+C。macOS 版と同じ）。
         let (Some(view), Some(f)) = (view, f) else {
-            // 右クリックのメニューを持ち主が作らない差分では、Copy だけ。
-            let mut items = self.copy_items();
-            if !items.is_empty() {
-                items.pop();
-                crate::menu::popup(self, x, y, items);
-            }
             return;
         };
         if index < 0.0 {
@@ -892,7 +887,8 @@ impl DiffWidget {
         self.select_hunk(target as usize);
     }
 
-    /// `index` 番目の hunk を選び（選べる差分なら、その変更の行）、見えるところへスクロールする。
+    /// `index` 番目の hunk を選び（選べる差分なら、見出しから次の hunk までの行すべて。前後の行も。macOS 版と同じ）、
+    /// 見えるところへスクロールする。
     pub fn select_hunk(&self, index: usize) {
         let hunks = self.hunk_rows();
         let Some(&start) = hunks.get(index) else {
@@ -902,12 +898,8 @@ impl DiffWidget {
         {
             let mut st = self.state();
             st.hunk_cursor = Some(index);
-            if st.marks
-                && let Some(view) = st.view.clone()
-            {
-                st.selection = (start..end)
-                    .filter(|&r| Self::is_change(&view.view.rows[r as usize]))
-                    .collect();
+            if st.marks {
+                st.selection = (start..end).collect();
                 st.anchor = Some(start);
             }
         }
@@ -1131,7 +1123,7 @@ impl DiffWidget {
         }
         let (_, index, trailing) = layout.xy_to_index((offset * pango::SCALE as f32) as i32, 0);
         let text = view.text(&rows[row]);
-        let mut index = (index.max(0) as usize).min(text.len());
+        let mut index = floor_char_boundary(text, index.max(0) as usize);
         // 文字の後ろ半分なら、その文字の後ろ。
         for _ in 0..trailing {
             index += text[index..].chars().next().map_or(0, char::len_utf8);
@@ -1267,23 +1259,7 @@ impl DiffWidget {
         }
     }
 
-    /// 右クリックのメニューの先頭に置く Copy（文字か行を選んでいるときだけ）。
-    pub fn copy_items(&self) -> Vec<crate::menu::Item> {
-        if self.selected_text().is_none() {
-            return Vec::new();
-        }
-        let weak = self.downgrade();
-        vec![
-            crate::menu::action(tr!("Copy"), move || {
-                if let Some(view) = weak.upgrade() {
-                    view.copy_selection();
-                }
-            }),
-            crate::menu::Item::Separator,
-        ]
-    }
-
-    /// Ctrl+A: すべての文字を選ぶ（Working Copy の行を選ぶ表示では、すべての変更の行）。
+    /// Ctrl+A: すべての文字を選ぶ（Working Copy の行を選ぶ表示では、すべての行）。
     fn select_all(&self) {
         let marks = {
             let mut st = self.state();
@@ -1292,10 +1268,9 @@ impl DiffWidget {
             let Some(last) = rows.len().checked_sub(1) else {
                 return;
             };
+            // 選べる差分ならすべての行（前後の行も。macOS 版と同じ）。
             if st.marks {
-                st.selection = (0..rows.len() as u32)
-                    .filter(|&r| Self::is_change(&rows[r as usize]))
-                    .collect();
+                st.selection = (0..rows.len() as u32).collect();
                 st.anchor = None;
             } else {
                 let end = view.text(&rows[last]).len() as u32;
@@ -1417,6 +1392,16 @@ impl DiffWidget {
     /// 差分の中を `query` で探す（大文字・小文字は区別しない）。今の一致は、見えている位置より後の最初のもの。
     /// （今の一致の番号、一致の数）を返す。
     pub fn find(&self, query: &str) -> (Option<usize>, usize) {
+        self.find_with(query, true)
+    }
+
+    /// 出し直した差分で一致を数え直す（今の一致は見えている所から。選びもスクロールもしない。macOS 版の
+    /// `updateMatches(scrollToCurrent: false)`）。（今の一致の番号、一致の数）を返す。
+    pub fn recount(&self, query: &str) -> (Option<usize>, usize) {
+        self.find_with(query, false)
+    }
+
+    fn find_with(&self, query: &str, reveal: bool) -> (Option<usize>, usize) {
         self.state().find = query.to_owned();
         self.refresh_matches();
         let top = self.top_row();
@@ -1427,7 +1412,9 @@ impl DiffWidget {
             st.current_match = current;
             current
         };
-        self.reveal_match();
+        if reveal {
+            self.reveal_match();
+        }
         self.queue_draw();
         (current, self.state().matches.len())
     }
@@ -1564,16 +1551,10 @@ impl DiffWidget {
             };
             let path = view.text(row);
             let text = format!("{mark} {path}");
-            let l = layout(&text);
-            let attrs = pango::AttrList::new();
-            let mut bold = pango::AttrInt::new_weight(pango::Weight::Bold);
-            bold.set_start_index((mark.len() + 1) as u32);
-            bold.set_end_index(text.len() as u32);
-            attrs.insert(bold);
-            l.set_attributes(Some(&attrs));
+            // パスはふつうの太さで（行数を太字にする。macOS 版と同じ）。
             return RowText {
                 gutter: None,
-                text: l,
+                text: layout(&text),
             };
         }
         let gutter = (row.kind != DiffRow::HUNK).then(|| {
@@ -1701,15 +1682,23 @@ impl DiffWidget {
                 self.draw_header(snapshot, st, &view, index, top, width, viewed_x, false);
                 continue;
             }
+            // 選んだ行は行番号の欄だけを選んだ色で塗り、行の追加・削除の色はそのまま見せる（macOS 版と同じ）。
+            if st.selection.contains(&index) {
+                snapshot.append_color(
+                    &gdk::RGBA::new(0.21, 0.52, 0.89, 0.35),
+                    &graphene::Rect::new(0.0, top, (text_x - 6.0).max(0.0), rh),
+                );
+            }
             let background = match row.kind {
                 DiffRow::ADDED => Some(gdk::RGBA::new(0.2, 0.7, 0.3, 0.16)),
                 DiffRow::REMOVED => Some(gdk::RGBA::new(0.9, 0.25, 0.25, 0.16)),
                 DiffRow::HUNK => Some(gdk::RGBA::new(0.3, 0.5, 0.9, 0.10)),
-                // コンフリクト: Current（自分の側）・Incoming（取り込む側）・共通の祖先・マーカー。
-                DiffRow::OURS => Some(gdk::RGBA::new(0.2, 0.55, 0.9, 0.16)),
-                DiffRow::THEIRS => Some(gdk::RGBA::new(0.6, 0.4, 0.85, 0.16)),
-                DiffRow::BASE => Some(gdk::RGBA::new(0.5, 0.5, 0.5, 0.10)),
-                DiffRow::MARKER => Some(gdk::RGBA::new(0.5, 0.5, 0.5, 0.22)),
+                // コンフリクト: Current（自分の側）は青・Incoming（取り込む側）は緑・共通の祖先は灰色・マーカーは
+                // 橙（macOS 版と同じ）。
+                DiffRow::OURS => Some(gdk::RGBA::new(0.3, 0.5, 0.9, 0.18)),
+                DiffRow::THEIRS => Some(gdk::RGBA::new(0.2, 0.7, 0.3, 0.18)),
+                DiffRow::BASE => Some(gdk::RGBA::new(0.5, 0.5, 0.5, 0.18)),
+                DiffRow::MARKER => Some(gdk::RGBA::new(1.0, 0.58, 0.0, 0.14)),
                 _ => None,
             };
             if let Some(bg) = background {
@@ -1718,12 +1707,6 @@ impl DiffWidget {
             let line = &st.rows[&index];
             let (_, h) = line.text.pixel_size();
             let y = top + ((rh - h as f32) / 2.0).round();
-            if st.selection.contains(&index) {
-                snapshot.append_color(
-                    &gdk::RGBA::new(0.21, 0.52, 0.89, 0.28),
-                    &graphene::Rect::new(0.0, top, width, rh),
-                );
-            }
             // 変更の行と hunk の見出しのチェックボックス。hunk は中の変更がすべて含まれていれば ✓、一部なら −
             // （macOS 版と同じ）。
             if st.checks {
@@ -1806,7 +1789,8 @@ impl DiffWidget {
                     &graphene::Rect::new(origin + x0, top + 1.0, (x1 - x0).max(2.0), rh - 2.0),
                 );
             }
-            let color = if row.kind == DiffRow::HUNK {
+            // hunk の見出しとコンフリクトのマーカーの文字は薄く（macOS 版と同じ）。
+            let color = if row.kind == DiffRow::HUNK || row.kind == DiffRow::MARKER {
                 &secondary
             } else {
                 &fg
@@ -1882,11 +1866,23 @@ impl DiffWidget {
             l.set_font_description(st.font.as_ref());
             l
         };
+        // 行数は太字（macOS 版と同じ）。
+        let bold = |text: &str| {
+            let l = layout(text);
+            let attrs = pango::AttrList::new();
+            attrs.insert(pango::AttrInt::new_weight(pango::Weight::Bold));
+            l.set_attributes(Some(&attrs));
+            l
+        };
         // 右から: Viewed、行数。
         let show_viewed = st.on_toggle_viewed.is_some();
         let right = if show_viewed { viewed_x } else { width - 4.0 };
         let counts: Vec<(pango::Layout, gdk::RGBA)> = if row.flags & DiffRow::BINARY != 0 {
-            vec![(layout(&tr!("Binary")), fg)]
+            // 「Binary」は薄い色で（macOS 版と同じ）。
+            vec![(
+                layout(&tr!("Binary")),
+                gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), fg.alpha() * 0.5),
+            )]
         } else {
             let (green, red) = if dark {
                 (
@@ -1900,8 +1896,8 @@ impl DiffWidget {
                 )
             };
             vec![
-                (layout(&format!("+{}", row.new_no)), green),
-                (layout(&format!("−{}", row.old_no)), red),
+                (bold(&format!("+{}", row.new_no)), green),
+                (bold(&format!("−{}", row.old_no)), red),
             ]
         };
         let counts_width: f32 = counts
@@ -1998,10 +1994,20 @@ fn on_baseline(y: f32, main: &pango::Layout, other: &pango::Layout) -> f32 {
     y + (main.baseline() - other.baseline()) as f32 / pango::SCALE as f32
 }
 
+/// `index` 以下で一番近い文字の境目（`str::floor_char_boundary` は MSRV より新しい）。
+fn floor_char_boundary(text: &str, index: usize) -> usize {
+    let mut i = index.min(text.len());
+    while !text.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
 /// `text` の `index`（バイト位置）の文字を含む単語の範囲（ダブルクリック）。英数字と `_` の並び、空白の並び、
 /// それ以外は 1 文字。
 fn word_range(text: &str, index: usize) -> (usize, usize) {
-    let index = index.min(text.len());
+    // 文字の途中を指していたら、その文字の頭に（Pango の位置がずれても落ちないように）。
+    let index = floor_char_boundary(text, index);
     // 行末なら、その前の文字。
     let at = if index < text.len() {
         index
@@ -2170,5 +2176,8 @@ mod tests {
         assert_eq!(word_range(text, 14), (14, 23));
         assert_eq!(word_range(text, text.len()), (23, 24));
         assert_eq!(word_range("", 0), (0, 0));
+        // 文字の途中を指しても落ちず、その文字の単語に。
+        assert_eq!(word_range(text, 15), (14, 23));
+        assert_eq!(word_range("日本", 100), (0, 6));
     }
 }

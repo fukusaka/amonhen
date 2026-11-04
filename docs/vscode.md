@@ -222,13 +222,13 @@ what is still missing). GitHub, AI, Activity beyond the Undo log, the machine-wi
 left out for now: VSCode has its own extensions and settings for them.
 
 - [x] 13. Reflog, Reset to a commit, and Checkout (Detached) of a commit
-- [ ] 14. Tag and remote menus, tag marks for remotes and signatures
-- [ ] 15. Worktrees
-- [ ] 16. File History
-- [ ] 17. Blame
-- [ ] 18. Branches arranged as in the app, favorites, archived, several selected, filtering
-- [ ] 19. Signature marks in History; Go to HEAD, Parent, Child
-- [ ] 20. Fetching more of a shallow clone, all contents of a partial clone
-- [ ] 21. The rest of Stashes (Branch…, `--index`, row details, Pop asking first)
-- [ ] 22. Undo asking first, and the Undo log
-- [ ] 23. Repository settings
+- [x] 14. Tag and remote menus, tag marks for remotes and signatures
+- [x] 15. Worktrees
+- [x] 16. File History
+- [x] 17. Blame
+- [x] 18. Branches arranged as in the app, favorites, archived, several selected, filtering
+- [x] 19. Signature marks in History; Go to HEAD, Parent, Child
+- [x] 20. Fetching more of a shallow clone, all contents of a partial clone
+- [x] 21. The rest of Stashes (Branch…, `--index`, row details, Pop asking first)
+- [x] 22. Undo asking first, and the Undo log
+- [x] 23. Repository settings

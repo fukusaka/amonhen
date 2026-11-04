@@ -1,7 +1,9 @@
 /** Stash の保存・適用・pop・削除と、中身の表示 */
 import { join } from 'node:path';
 import * as vscode from 'vscode';
+import { daemonFor } from '../daemon/connection.ts';
 import { parseCommitObject } from '../git/commitObject.ts';
+import { stashBranch } from '../git/stash.ts';
 import type { RepositoryManager } from '../state/manager.ts';
 import type { Repository } from '../state/repository.ts';
 import { gitUri } from './uri.ts';
@@ -57,6 +59,43 @@ export function registerStashCommands(manager: RepositoryManager): vscode.Dispos
       }
     }),
     onStash('amonhen.stash.show', (repo, node) => showStash(repo, node)),
+    // 新しい stash を先に確かめてから pop する（アプリの Pop。ツールバーの代わりに Stashes の見出しとコマンドパレット）
+    vscode.commands.registerCommand(
+      'amonhen.stash.popLatest',
+      withRepo(async (repo) => {
+        await repo.want('stashes');
+        const latest = repo.current.stashes?.[0];
+        if (!latest) {
+          void vscode.window.showInformationMessage('There are no stashes');
+          return;
+        }
+        const answer = await vscode.window.showWarningMessage(
+          `Pop ${latest.name} (${latest.subject})?`,
+          { modal: true, detail: 'Applies it to the working tree and removes it from the list. If it conflicts, the stash stays.' },
+          'Pop',
+        );
+        if (answer === 'Pop') await apply(repo, { kind: 'stash', stash: latest }, true);
+      }),
+    ),
+    // stash を作ったときの HEAD からブランチを作り、そこで stash を当てて消す（git stash branch。エンジンだけ）
+    onStash('amonhen.stash.branch', async (repo, node) => {
+      const client = await daemonFor(repo.root);
+      if (!client) throw new Error('Branch from a stash needs the Amon Hen engine (amonhen.daemon.enabled)');
+      const taken = new Set((repo.current.branches ?? []).map((b) => b.name.replace(/^refs\/heads\//, '')));
+      const suggested = stashBranch(node.stash.subject);
+      const branch = (
+        await vscode.window.showInputBox({
+          title: `New Branch from ${node.stash.name}`,
+          prompt: 'Creates a branch at the commit the stash was made on, checks it out, and applies and drops the stash there',
+          value: suggested && !taken.has(suggested) ? suggested : '',
+          validateInput: (v) => (!v.trim() ? 'Enter a branch name' : taken.has(v.trim()) ? `${v.trim()} already exists` : undefined),
+        })
+      )?.trim();
+      if (!branch) return;
+      const reply = (await client.call({ op: 'run', command: { op: 'stashBranch', name: node.stash.name, branch } })).json;
+      if (reply['ok'] !== true) throw new Error(String(reply['error'] ?? 'Can’t create the branch'));
+      vscode.window.setStatusBarMessage(`$(git-branch) ${branch}`, 5000);
+    }),
   );
 }
 

@@ -74,6 +74,11 @@ export class UndoLog {
     return (await this.load()).at(-1);
   }
 
+  /** Undo できる操作（新しい順） */
+  async list(): Promise<UndoEntry[]> {
+    return [...(await this.load())].reverse();
+  }
+
   /**
    * fn を実行し、成功して ref が動いたら記録する。fn が失敗したときは記録しない。
    * - skip が true を返したら記録しない（コンフリクトで止まったときなど。戻すのは abort の役目）

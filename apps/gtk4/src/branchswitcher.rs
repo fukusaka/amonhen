@@ -246,7 +246,8 @@ pub fn show(
         .default_height(400)
         .child(&content)
         .transient_for(parent)
-        .modal(true)
+        // 浮いた枠で、元の窓は止めない（macOS 版の NSPanel）。元の窓を押すと前でなくなり、閉じる（下）。
+        .modal(false)
         .build();
     // 見出しの帯は出さない（macOS 版の浮いた枠の形）。
     window.set_titlebar(Some(&gtk::Box::new(gtk::Orientation::Horizontal, 0)));

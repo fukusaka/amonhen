@@ -105,6 +105,20 @@ pub fn run(prompt: &str) -> i32 {
         m.quit();
         glib::Propagation::Proceed
     });
+    // Esc でキャンセル（ほかの入力の窓と同じ）。
+    let keys = gtk::EventControllerKey::new();
+    keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let c = cancel.downgrade();
+    keys.connect_key_pressed(move |_, key, _, _| {
+        if key == gtk::gdk::Key::Escape
+            && let Some(c) = c.upgrade()
+        {
+            c.emit_clicked();
+            return glib::Propagation::Stop;
+        }
+        glib::Propagation::Proceed
+    });
+    window.add_controller(keys);
     window.present();
     entry.grab_focus();
     main.run();

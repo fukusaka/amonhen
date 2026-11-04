@@ -45,7 +45,7 @@
 "{upstream} not found (Fetch first)" = "{upstream} が見つかりません（先に Fetch してください）";
 "{branch} is already the same as {upstream}" = "{branch} はもう {upstream} と同じです";
 "{branch} and {upstream} have diverged; check out {branch} to merge or rebase" = "{branch} と {upstream} は分かれています。{branch} をチェックアウトして merge か rebase をしてください";
-"{name} not found" = "{name} がない";
+"{name} not found" = "{name} が見つかりません";
 "The stash has no commit" = "stash のコミットがない";
 "Some commits are outside the editable range (not reachable from HEAD, or before a merge)" = "編集できる範囲の外のコミットがあります（HEAD から辿れないか、merge より前）";
 "File not found" = "ファイルがない";
@@ -151,7 +151,7 @@
 "{path} ({how}, {size} MB)" = "{path}（{how}、{size} MB）";
 "{path} ({how})" = "{path}（{how}）";
 "Can’t read {path}: {e}" = "{path} を読めない: {e}";
-"No usable engine on the SSH host ({host}), and sending one is turned off (Settings > SSH Hosts, or AMONHEN_PUSH=0). Install amonhen on the host’s PATH, or set its location with AMONHEN_REMOTE_ENGINE" = "SSH 先（{host}）に使えるエンジンがなく、送り込みは止めてあります（Settings > SSH ホスト、または AMONHEN_PUSH=0）。SSH 先の PATH に amonhen を入れるか、AMONHEN_REMOTE_ENGINE で場所を指定してください";
+"No usable engine on the SSH host ({host}), and sending one is turned off (Settings > SSH Hosts, or AMONHEN_PUSH=0). Install amonhen on the host’s PATH, or set its location with AMONHEN_REMOTE_ENGINE" = "SSH 先（{host}）に使えるエンジンがなく、送り込みは止めてあります（設定 > SSH ホスト、または AMONHEN_PUSH=0）。SSH 先の PATH に amonhen を入れるか、AMONHEN_REMOTE_ENGINE で場所を指定してください";
 "The engine sent to the SSH host ({host}) doesn’t match (sent {sent}, SSH host {got})" = "SSH 先（{host}）に送ったエンジンの中身が合いません（送った {sent}、SSH 先 {got}）";
 "Invalid array size" = "配列の大きさがおかしい";
 "The received History is corrupt" = "受け取った History が壊れている";
@@ -240,8 +240,8 @@
 "{count} ahead" = "{count} 先";
 "{count} behind" = "{count} 遅れ";
 " ({items})" = "（{items}）";
-", " = "・";
-"No changes" = "変更はありません";
+", " = "、";
+"No changes" = "変更なし";
 /* GTK4: Working Copy の説明 */
 "Included in the next commit (click to exclude)" = "次のコミットに含める（クリックで外す）";
 "Only some lines are included (click to include all)" = "一部の行だけ含める（クリックですべて含める）";
@@ -256,7 +256,7 @@
 "no conflict markers" = "マーカーなし";
 "Commit not in History: {id}" = "History にないコミット: {id}";
 "Give one or two commits" = "コミットは 1 つか 2 つです";
-"Binary file" = "バイナリのファイル";
+"Binary file" = "バイナリファイル";
 "line endings: working tree {worktree}, git {index}, checkout {checkout}" = "改行: 作業ツリー {worktree}、git {index}、checkout {checkout}";
 "mixed" = "混在";
 "Commit not found: {rev}" = "コミットが見つかりません: {rev}";
@@ -307,6 +307,7 @@
 "{operation} in progress: continue or abort it first, then try again" = "{operation} の途中です。Continue か Abort で終えてから、もう一度してください";
 "{rev} merges into {ours} without conflicts" = "{rev} は {ours} にコンフリクトなしでマージできる";
 "Can’t change the user’s git settings here" = "この環境では、ユーザー全体の git の設定を変えられません";
+"Can’t write several values of a git setting here" = "この環境では、git の設定に値をいくつも書けません";
 "Unknown scope: {scope}" = "知らない scope: {scope}";
 "Unknown hook: {name}" = "知らないフック: {name}";
 "There is no hook named {name}" = "{name} というフックはない";
@@ -323,8 +324,8 @@
 "It changes how Amon Hen itself works" = "Amon Hen 自身の動きを変えます";
 
 /* SSH 先の設定（Settings > SSH Hosts） */
-"No amonhen on the PATH of the SSH host ({host}). Settings > SSH Hosts chooses the one on the PATH; choose another engine there, or install this build on the host" = "SSH 先（{host}）の PATH に amonhen がありません。Settings > SSH ホストで PATH のものを選んでいます。そこでほかのエンジンを選ぶか、SSH 先にこのビルドを入れてください";
-"The amonhen on the PATH of the SSH host ({host}) is another build ({version}). Settings > SSH Hosts chooses the one on the PATH; choose another engine there, or install this build on the host" = "SSH 先（{host}）の PATH の amonhen は別のビルドです（{version}）。Settings > SSH ホストで PATH のものを選んでいます。そこでほかのエンジンを選ぶか、SSH 先にこのビルドを入れてください";
+"No amonhen on the PATH of the SSH host ({host}). Settings > SSH Hosts chooses the one on the PATH; choose another engine there, or install this build on the host" = "SSH 先（{host}）の PATH に amonhen がありません。設定 > SSH ホストで PATH のものを選んでいます。そこでほかのエンジンを選ぶか、SSH 先にこのビルドを入れてください";
+"The amonhen on the PATH of the SSH host ({host}) is another build ({version}). Settings > SSH Hosts chooses the one on the PATH; choose another engine there, or install this build on the host" = "SSH 先（{host}）の PATH の amonhen は別のビルドです（{version}）。設定 > SSH ホストで PATH のものを選んでいます。そこでほかのエンジンを選ぶか、SSH 先にこのビルドを入れてください";
 "Couldn’t prepare the settings repository at {path}: {error}" = "設定のリポジトリを {path} に用意できませんでした: {error}";
 "The settings repository’s path isn’t UTF-8: {path}" = "設定のリポジトリのパスが UTF-8 ではありません: {path}";
 "Can’t read the excludes file here" = "ここでは無視するパターンのファイルを読めません";
@@ -389,6 +390,7 @@
 "Compare with Previous Version" = "前の版と比べる";
 "Compare the current branch with its version before it was last rewritten (a rebase, History edit, amend or reset), like git range-diff" = "今のブランチを、最後に書き換える（rebase・コミットの編集・amend・reset）前の版と比べます（git range-diff と同じ）";
 "Apply Patch…" = "パッチを当てる…";
+"Apply" = "当てる";
 "Save as Patch…" = "パッチとして保存…";
 "Refresh" = "再読み込み";
 "Reload History, branches and Working Copy (they normally reload on their own when something changes)" = "History・ブランチ・Working Copy を読み直す（ふだんは変化を検知して自動で読み直す）";
@@ -407,6 +409,8 @@
 "Settings…" = "設定…";
 
 /* GTK4 の FE のメニュー */
+/* 見出しの右端の ≡（GNOME の主メニュー。macOS 版にはない） */
+"Main Menu" = "メインメニュー";
 "New Window" = "新規ウインドウ";
 "Find…" = "検索…";
 "Find Next" = "次を検索";
@@ -419,12 +423,20 @@
 "Navigate" = "移動";
 "Keyboard Shortcuts" = "キーボードショートカット";
 "About Amon Hen" = "Amon Hen について";
-"Quit" = "終了";
+"Quit Amon Hen" = "Amon Hen を終了";
+"Undo" = "取り消す";
+"Redo" = "やり直す";
+"Cut" = "カット";
+"Paste" = "ペースト";
+"Select All" = "すべてを選択";
+"Minimize" = "最小化";
+"Zoom" = "拡大／縮小";
+"Bring All to Front" = "すべてを手前に移動";
+"Hide Sidebar" = "サイドバーを隠す";
 "Window" = "ウインドウ";
 "Show in Files" = "ファイルで表示";
 
 /* GTK4 の FE */
-"Loading History…" = "History を読み込んでいます…";
 "Loading History… {size} received" = "History を読み込んでいます… {size} 受信";
 "Commit frequency (left) and branch activity (right). Click to jump there." = "コミットの頻度（左）とブランチの活動量（右）。押すとそこへ飛ぶ";
 "The mailmap changed. Showing the names again." = "mailmap が変わったので、名前を出し直しました。";
@@ -432,7 +444,6 @@
 "Blame at {commit}" = "{commit} の時点で Blame";
 "Load diff" = "差分の読み込み";
 "Reload History" = "History の読み直し";
-"Can’t read History: {e}" = "History を読めない: {e}";
 "Reload status" = "status の読み直し";
 "working tree" = "作業ツリー";
 "Changed: {what}" = "変化: {what}";
@@ -441,6 +452,8 @@
 "{branch} — click to switch branch (Ctrl+Shift+B)" = "{branch} — 押すとブランチを切り替える（Ctrl+Shift+B）";
 "{count} commits behind upstream (Ctrl+Alt+L)" = "上流より {count} コミット後ろにあります（Ctrl+Alt+L）";
 "Pull (Ctrl+Alt+L)" = "Pull（Ctrl+Alt+L）";
+"Pull — review the incoming commits and how to integrate them first (Ctrl+Alt+L)" = "Pull — 取り込むコミットと取り込み方を確かめてから（Ctrl+Alt+L）";
+"Push — review the commits to send first (Ctrl+Alt+P)" = "Push — 送るコミットを確かめてから（Ctrl+Alt+P）";
 "{count} commits ahead of upstream (Ctrl+Alt+P)" = "上流より {count} コミット先にあります（Ctrl+Alt+P）";
 "Fetch all remotes (Ctrl+Alt+F)" = "すべてのリモートを fetch（Ctrl+Alt+F）";
 "Merge a branch, tag or the selected commit into the current branch (Ctrl+Alt+M)" = "ブランチ・タグ・選んだコミットを今のブランチへ merge（Ctrl+Alt+M）";
@@ -488,6 +501,7 @@
 "Reverse" = "向きを入れ替える";
 "From the merge-base (A...B)" = "merge-base から（A...B）";
 "{count} commits selected" = "{count} コミットを選んでいます";
+"{count} files changed" = "{count} ファイルが変わります";
 "They are consecutive, so this is the diff from the parent of the oldest to the newest (the same as squashing them into one)." = "続いているので、一番古いものの親から一番新しいものまでの差分（まとめて 1 つにしたのと同じ）";
 "Two non-consecutive commits, so this is the diff from the older to the newer (A..B)." = "続いていない 2 つなので、古いほうから新しいほうまでの差分（A..B）";
 "The diff of the two non-consecutive commits from the newer to the older (reversed)." = "続いていない 2 つの、新しいほうから古いほうまでの差分（向きを入れ替えた）";
@@ -529,7 +543,7 @@
 "Take Current File" = "手元のファイルを使う";
 "Take Incoming File" = "取り込む側のファイルを使う";
 "Mark Resolved" = "解決済みにする";
-"Can’t read the diff: {e}" = "差分を読めない: {e}";
+"Can’t read the diff: {e}" = "差分を読めません: {e}";
 "Delete {path}?" = "{path} を削除しますか？";
 "It’s untracked." = "untracked のファイルです。";
 "This can’t be undone." = "元に戻せません。";
@@ -552,11 +566,12 @@
 "Accept Base" = "Base を採用";
 "Show the common ancestor on the left." = "共通の祖先を左端に出す";
 "Save" = "保存";
-"Save (Ctrl+S)" = "保存する（Ctrl+S）";
 "Save & Mark Resolved" = "保存して解決済みにする";
 "Save and mark as resolved (Ctrl+Return)." = "保存して解決済みにする（Ctrl+Return）";
 "Close without saving?" = "保存せずに閉じますか？";
 "Your changes to Result are lost." = "Result への変更は失われます。";
+"Take the current file without saving Result?" = "Result を保存せずに、手元のファイルを使いますか？";
+"Take the incoming file without saving Result?" = "Result を保存せずに、取り込む側のファイルを使いますか？";
 "Close Without Saving" = "保存せずに閉じる";
 "Resolved {count} when opened (Ctrl+Z to undo)." = "開いたときに {count} 個を解きました（Ctrl+Z で戻せる）";
 "No conflicts" = "コンフリクトなし";
@@ -572,7 +587,6 @@
 "git runs and core commands, newest first, up to 1,000 (for repositories through the daemon, also the git it starts). ● means running; fetch, pull, push and clone show their progress and can be canceled." = "git の起動とコアの命令を、新しい順に最大 1000 件（daemon 越しのリポジトリは daemon で起動した git も）。● は実行中で、fetch・pull・push・clone は進み具合を出し、取り消せる。";
 "Operations" = "操作";
 "Cancel Operation" = "取り消す";
-"Export JSON" = "JSON に書き出す";
 "Operations you can Undo (newest first). It stops where another tool has moved a ref." = "Undo できる操作（新しい順）。ほかのツールで ref が動いていると、そこで止まります。";
 "Undo to Here" = "ここまで戻す";
 "Undo this operation." = "この操作を戻す";
@@ -587,12 +601,14 @@
 "Start" = "起動";
 "File change notices and the reloads they cause (newest first, up to 500)." = "ファイルの変化の知らせと、それによる読み直し（新しい順に最大 500 件）。";
 "Open Repositories" = "開いているリポジトリ";
-"It starts automatically when you open a repository through the daemon (right-click in the repository list, or Settings > Performance)." = "daemon 越しにリポジトリを開くと（リポジトリの一覧の右クリック、または Settings > パフォーマンス）、自動で起動します。";
+"It starts automatically when you open a repository through the daemon (right-click in the repository list, or Settings > Performance)." = "daemon 越しにリポジトリを開くと（リポジトリの一覧の右クリック、または設定 > パフォーマンス）、自動で起動します。";
 "The shared daemon is running" = "共有の daemon は動いています";
-"pid {pid} · version {version} (build {build}) · up {uptime} · connections {connections}\n{socket}" = "pid {pid} · 版 {version}（ビルド {build}） · 動いて {uptime} · つながり {connections}\n{socket}";
+"pid {pid} · version {version} (build {build}) · up {uptime} · connections {connections}" = "pid {pid} · 版 {version}（ビルド {build}） · 動いて {uptime} · つながり {connections}";
 "Stop" = "止める";
 "Repositories opened through the daemon get disconnected (Reconnect starts it again)." = "daemon 越しに開いているリポジトリは、つながりが切れる（「つなぎ直す」でまた起動する）";
 "Repository" = "リポジトリ";
+"Time" = "時刻";
+"Content" = "内容";
 "Connections" = "つながり";
 "Watching" = "監視";
 "Search Index" = "検索の索引";
@@ -609,7 +625,6 @@
 "Shared daemon → SSH host" = "共有の daemon → SSH 先";
 "Local shared daemon" = "手元の共有の daemon";
 "The daemon exits after {duration} with no connections. From a terminal, run amonhen daemon status to see it." = "daemon はだれもつながらなくなって {duration}たつと終わる。端末からは amonhen daemon status で見られる。";
-"Couldn’t start the shared daemon" = "共有の daemon を起動できませんでした";
 "Yes" = "あり";
 "Resolve unambiguous conflicts when the merge editor opens" = "マージエディタを開いたときに、間違えようのないコンフリクトを解く";
 "Commit Details" = "コミットの詳細";
@@ -704,8 +719,10 @@
 "Undo the last {count} operations?" = "直近の {count} 個の操作を Undo しますか？";
 "Rebase {target} onto {rev}?" = "{target} を {rev} の上に Rebase しますか？";
 "Merge {rev} into {target}?" = "{rev} を {target} に Merge しますか？";
-"Onto:" = "載せ先:";
-"Merge:" = "取り込むもの:";
+"Merge into {name}" = "{name} に merge する";
+"The branch, tag or commit to merge in" = "取り込むブランチ・タグ・コミット";
+"Rebase {name}" = "{name} を rebase する";
+"The branch, tag or commit to rebase onto" = "上に載せる先のブランチ・タグ・コミット";
 "Delete {name}?" = "{name} を削除しますか？";
 "Delete {count} branches?" = "{count} 本のブランチを削除しますか？";
 "Some commits are on no other branch; they go with the branch." = "どのブランチにもないコミットがあります。ブランチと一緒に消えます。";
@@ -750,8 +767,8 @@
 "Uncommitted changes would be overwritten. Commit or stash them first." = "コミットしていない変更を上書きしてしまいます。先にコミットするか stash してください。";
 "Another git command is running in this repository, or one stopped and left a lock file." = "このリポジトリでほかの git が動いているか、止まった git がロックファイルを残しています。";
 "This branch has no upstream to pull from or push to." = "このブランチには、Pull・Push する上流がありません。";
-"The remote refused the password, token or SSH key. If a dialog asked for a password or passphrase, check what you typed (GitHub needs a token, not the account password). To stop being asked, store the credentials with a credential helper (for example `gh auth setup-git` or `git config --global credential.helper libsecret`), or add the SSH key to the agent (`ssh-add`). Settings > Git > Programs shows which git the app uses, and Settings > Git > Environment Variables whether the SSH agent is there." = "リモートがパスワード・トークン・SSH の鍵を受け付けませんでした。パスワードやパスフレーズを聞かれたなら、入れたものを確かめてください（GitHub はアカウントのパスワードではなくトークンが要ります）。聞かれないようにするには、資格情報を credential helper に覚えさせるか（`gh auth setup-git` や `git config --global credential.helper libsecret` など）、SSH の鍵を agent に入れてください（`ssh-add`）。アプリが使う git は設定 > Git > プログラムで、SSH の agent があるかは設定 > Git > 環境変数で分かります。";
-"Connect once in a terminal (for example `ssh -T git@github.com`) and confirm the host key, then try again." = "一度端末でつないで（`ssh -T git@github.com` など）ホストの鍵を確かめてから、もう一度試してください。";
+"The remote refused the password, token or SSH key. If a dialog asked for a password or passphrase, check what you typed (GitHub needs a token, not the account password). To stop being asked, store the credentials with a credential helper (for example `gh auth setup-git` or `git config --global credential.helper libsecret`), or add the SSH key to the agent (`ssh-add`). Settings > Git > Programs shows which git the app uses, and Settings > Git > Environment Variables whether the SSH agent is there." = "リモートがパスワード・トークン・SSH の鍵を受け付けませんでした。ダイアログでパスワードやパスフレーズを入れたなら、入力を確かめてください（GitHub はアカウントのパスワードではなくトークンです）。毎回聞かれないようにするには、credential helper に資格情報を保存する（例: `gh auth setup-git`、`git config --global credential.helper libsecret`）、SSH の鍵を agent に入れてください（`ssh-add`）。アプリが使う git は設定 > Git > プログラムで、SSH の agent があるかは設定 > Git > 環境変数で分かります。";
+"Connect once in a terminal (for example `ssh -T git@github.com`) and confirm the host key, then try again." = "端末で一度つないで（例: `ssh -T git@github.com`）ホスト鍵を確かめてから、もう一度試してください。";
 "If no other git command is running, delete the lock file and try again:\n{path}" = "ほかの git が動いていなければ、ロックファイルを消してからもう一度試してください:\n{path}";
 "Pull with Merge or Rebase instead of Fast-Forward Only." = "Fast-Forward Only ではなく、Merge か Rebase で Pull してください。";
 "Fetched" = "Fetch しました";
@@ -849,9 +866,10 @@
 "at HEAD" = "HEAD と同じ";
 "{count} behind HEAD" = "HEAD から {count} 個後ろ";
 "with untracked files" = "untracked のファイルを含む";
-"now" = "今";
+"{count} sec. ago" = "{count} 秒前";
 "{count} min. ago" = "{count} 分前";
 "{count} hr. ago" = "{count} 時間前";
+"{count} day ago" = "{count} 日前";
 "{count} days ago" = "{count} 日前";
 "{count} wk. ago" = "{count} 週間前";
 "{count} mo. ago" = "{count} か月前";
@@ -877,7 +895,6 @@
 "Commits upstream will lose ({count})" = "上流から消えるコミット（{count}）";
 "Commits to send" = "送るコミット";
 "Commits {upstream} will lose" = "{upstream} から消えるコミット";
-"All changes to send" = "送る変更すべて";
 "You can Undo this (Ctrl+Alt+Z)." = "Undo（Ctrl+Alt+Z）で戻せます。";
 /* GTK4: Range Diff */
 "old...new  or  base old new" = "古い...新しい  または  土台 古い 新しい";
@@ -892,6 +909,7 @@
 "Comparing…" = "比べています…";
 "No commits to compare" = "比べるコミットがありません";
 "{count} same" = "同じ {count}";
+"{changed} changed" = "変わった {changed}";
 "{count} removed" = "消えた {count}";
 "{count} added" = "足された {count}";
 "Choose two versions to compare" = "比べる 2 つの版を選んでください";
@@ -933,7 +951,6 @@
 
 /* GTK4 の FE: Clone と Open Recent */
 "Open Recent" = "最近使った項目を開く";
-"https://github.com/owner/repo.git or git@host:owner/repo.git" = "https://github.com/owner/repo.git や git@host:owner/repo.git";
 "Choose…" = "選ぶ…";
 "Taken from the URL" = "URL から決める";
 "Choose from My GitHub Repositories" = "自分の GitHub のリポジトリから選ぶ";
@@ -969,6 +986,7 @@
 "3-way merge where it doesn’t apply" = "当たらないところは 3-way merge にする";
 "Leaves conflicts to resolve in Working Copy instead of stopping (--3way)." = "止まる代わりに、Working Copy で解決するコンフリクトを残します（--3way）。";
 "Stage the changes too (--index)" = "stage もする（--index）";
+"Apply" = "当てる";
 
 /* GTK4: いくつもまとめて merge（octopus） */
 "Merge {count} into {branch}…" = "{count} 個を {branch} に Merge…";
@@ -987,10 +1005,10 @@
 "Create" = "作成";
 "Create as Draft" = "Draft として作る";
 "Title:" = "タイトル:";
+"Title" = "タイトル";
 "Body:" = "本文:";
 "Open in Browser" = "ブラウザで開く";
 "Pull Request Created" = "プルリクエストを作りました";
-"Couldn’t create the pull request" = "プルリクエストを作れませんでした";
 /* GTK4 の FE: リポジトリの設定 */
 "Author and Signing" = "作者と署名";
 "Commits" = "コミット";
@@ -1002,7 +1020,7 @@
 "system-wide" = "システム全体";
 "On" = "オン";
 "Off" = "オフ";
-"The git on {host} runs this repository. Every repository on that host uses it. See it in Settings > SSH Hosts." = "{host} の git がこのリポジトリを動かしています。そのホストのすべてのリポジトリが同じ git を使います。設定 > SSH ホストで見られます。";
+"The git on {host} runs this repository. Every repository on that host uses it. See it in Settings > SSH Hosts." = "{host} の git がこのリポジトリを動かしています。その SSH 先のすべてのリポジトリが同じものを使います。設定 > SSH ホストで見られます。";
 "This computer’s git runs this repository. Choose it in Settings > Git." = "このコンピューターの git がこのリポジトリを動かしています。設定 > Git で選びます。";
 "This computer" = "このコンピューター";
 "git’s default" = "git の既定";
@@ -1358,6 +1376,7 @@
 "Bookmark repositories you open" = "開いたリポジトリをブックマークに入れる";
 "Branch" = "ブランチ";
 "Changes {count}" = "変更 {count}";
+"Choose a Repository" = "リポジトリを選ぶ";
 "Choose a repository to open" = "リポジトリを選んで開く";
 "Color Label" = "色ラベル";
 "Couldn’t search: {error}" = "探せませんでした: {error}";
@@ -1413,7 +1432,7 @@
 "Stop Scanning" = "スキャンをやめる";
 "The engine on the host searches up to 3 levels below the folder." = "SSH 先のエンジンが、フォルダの 3 階層下まで探します。";
 "The status isn’t read until you open it" = "開くまで状態は読みません";
-"This Computer" = "このコンピュータ";
+"This Computer" = "このコンピューター";
 "This removes its {repositories} repositories and {folders} folders to scan from the list. Nothing on the host is touched." = "そのホストのリポジトリ {repositories} 個とスキャンするフォルダ {folders} 個を一覧から外します。ホストの中には触れません。";
 "Red" = "赤";
 "Orange" = "オレンジ";
@@ -1445,7 +1464,7 @@
 "Select a variable to see its whole value." = "変数を選ぶと、値の全体が出ます。";
 "{name} ({count} places)" = "{name}（{count} か所）";
 "Show" = "表示";
-"git is the one chosen in Settings > Git: {git}" = "git は 設定 > Git で選んだものを使います: {git}";
+"git is the one chosen in Settings > Git: {git}" = "git は設定 > Git で選んだものを使います: {git}";
 "git is the one chosen in Programs: {git}" = "git はプログラムで選んだものを使います: {git}";
 "git used from here" = "ここの git を使う";
 "doesn’t exist" = "ない";
@@ -1625,7 +1644,7 @@
 "Forget Per-Repository Permissions" = "リポジトリごとの許可を消す";
 "Stored in {dir}." = "{dir} に置きます。";
 "Use AI in this repository?" = "このリポジトリで AI を使いますか？";
-"Sends to {cli}: {summary}\nThis repository’s content (messages and diffs) goes to an external service through the CLI.\nYou can change this later with “Forget Per-Repository Permissions” in Settings > AI." = "{cli} に送ります: {summary}\nこのリポジトリの内容（メッセージ・差分）が、CLI を通じて外部のサービスに送られます。\nあとで 設定 > AI の「リポジトリごとの許可を消す」で選び直せます。";
+"Sends to {cli}: {summary}\nThis repository’s content (messages and diffs) goes to an external service through the CLI.\nYou can change this later with “Forget Per-Repository Permissions” in Settings > AI." = "{cli} に送ります: {summary}\nこのリポジトリの内容（メッセージ・差分）が、CLI を通じて外部のサービスに送られます。\nあとで設定 > AI の「リポジトリごとの許可を消す」で選び直せます。";
 "Use" = "使う";
 "Don’t Use in This Repository" = "このリポジトリでは使わない";
 "Use the repository’s prompt?" = "リポジトリのプロンプトを使いますか？";
@@ -1637,7 +1656,7 @@
 "Receiving…" = "受け取っています…";
 "Done ({model})" = "できました（{model}）";
 "Collapse" = "畳む";
-"Expand" = "広げる";
+"Expand" = "開く";
 "AI: Translate the message." = "AI: メッセージを翻訳する";
 "AI: Explain this commit (or the combined diff of the selected commits)." = "AI: このコミット（複数選んでいればまとめた差分）を解説する";
 "The message ({count} characters)" = "メッセージ {count} 文字";
@@ -1670,7 +1689,6 @@
 "Close Tab" = "タブを閉じる";
 "New Tab" = "新規タブ";
 "New Tab (Ctrl+T)" = "新規タブ（Ctrl+T）";
-"Close Window" = "ウインドウを閉じる";
 "Show Next Tab" = "次のタブを表示";
 "Show Previous Tab" = "前のタブを表示";
 "Move Tab to New Window" = "タブを新規ウインドウに移動";
@@ -1791,6 +1809,8 @@
 "never (not trusted)" = "never（信用しない）";
 "{trust} (trust not set)" = "{trust}（信用度が決まっていない）";
 "Expand the commit details to fill the right column (click again to restore)." = "コミットの詳細だけを右の列いっぱいに広げる（もう一度押すと戻す）";
+"Expand Details" = "詳細を広げる";
+"Restore Details" = "詳細を戻す";
 
 /* GTK4: History の範囲 */
 "All Branches" = "すべてのブランチ";
@@ -1819,13 +1839,12 @@
 /* GTK4: ツールバーのカスタマイズ（View > Customize Toolbar…） */
 "Customize Toolbar…" = "ツールバーをカスタマイズ…";
 "Customize Toolbar" = "ツールバーのカスタマイズ";
-"Left of the header bar" = "見出しの左";
-"Right of the header bar" = "見出しの右";
-"Add Space" = "空きを足す";
-"Space" = "空き";
-"Move Up" = "上へ";
-"Move Down" = "下へ";
-"The Repository menu, search and the main menu stay where they are." = "Repository のメニュー・検索・主メニューは動かない。";
+"Drag your favorite items into the toolbar…" = "よく使う項目をツールバーにドラッグしてください…";
+"…or drag the default set into the toolbar." = "…またはデフォルトセットをツールバーにドラッグしてください。";
+"Space" = "スペース";
+"Flexible Space" = "フレキシブルスペース";
+"Files" = "ファイル";
+"The Repository menu and the main menu stay where they are." = "Repository のメニューと主メニューは動かない。";
 "New branch from HEAD (Ctrl+Alt+B)" = "HEAD から新しいブランチ（Ctrl+Alt+B）";
 "Show the Repositories page (Ctrl+Shift+R)" = "リポジトリのページに切り替える（Ctrl+Shift+R）";
 "Terminal" = "ターミナル";
@@ -1898,7 +1917,11 @@
 "This search needs more than {count} file contents not fetched yet. Narrow it with path:, after: or before:, or fetch all contents in Fetching and Folders." = "この検索には、まだ取っていない中身が {count} 個より多く要ります。path:・after:・before: で絞るか、「取得とフォルダ」で中身をすべて取ってください。";
 "Open Fetching and Folders" = "「取得とフォルダ」を開く";
 "{count} found · {percent}%" = "{count} 件 · {percent}%";
-"after:2026-01-01  before:2026-06-30 (committed after or before a date)" = "after:2026-01-01  before:2026-06-30（その日時より後・前のコミット）";
+"Search by Author (author:)" = "作者で探す（author:）";
+"Search by Path (path:)" = "パスで探す（path:）";
+"Search by Contents (contents:)" = "内容で探す（contents:）";
+"Committed After (after:)" = "この日時より後（after:）";
+"Committed Before (before:)" = "この日時より前（before:）";
 
 /* GTK4 の FE: shallow clone の History の帯 */
 "100 Commits" = "100 コミット";
@@ -1964,7 +1987,7 @@
 "This folder isn’t checked out" = "取り出していないフォルダです";
 "Only some folders are checked out ({count})" = "一部のフォルダだけ取り出し中（{count}）";
 "Only some files are checked out" = "一部のファイルだけ取り出し中";
-"Click to change them in Settings > Fetching and Folders." = "押すと、Settings の「取得とフォルダ」で変えられます。";
+"Click to change them in Settings > Fetching and Folders." = "押すと、設定 > 取得とフォルダで変えられます。";
 
 /* GTK4 の FE: git maintenance への登録 */
 "Maintenance" = "手入れ";
@@ -1989,7 +2012,7 @@
 "Check out only some folders" = "一部のフォルダだけ取り出す";
 "Only the files at the top are checked out; right after the clone, choose a folder to check out." = "最上位のファイルだけを取り出し、clone の後で取り出すフォルダを選びます。";
 "Needs git 2.27 or later. This computer’s git is {version}." = "git 2.27 以降が必要です。このコンピューターの git は {version} です。";
-"Only the files at the top are checked out. Choose a folder to check out too; add more later in Settings > Fetching and Folders." = "最上位のファイルだけを取り出しました。ほかに取り出すフォルダを選んでください。後から Settings の「取得とフォルダ」で足せます。";
+"Only the files at the top are checked out. Choose a folder to check out too; add more later in Settings > Fetching and Folders." = "最上位のファイルだけを取り出しました。ほかに取り出すフォルダを選んでください。後から設定 > 取得とフォルダで足せます。";
 "Checking out {folder}…" = "{folder} を取り出しています…";
 "Couldn’t check out {folder}" = "{folder} を取り出せませんでした";
 "Unknown archive format: {format}" = "知らないアーカイブの形です: {format}";

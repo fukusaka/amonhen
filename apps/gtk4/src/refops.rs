@@ -365,6 +365,18 @@ fn several(actions: &Rc<Actions>, known: &Known, head: Option<&str>) -> Vec<Item
             })
         })
         .collect();
+    if sources.len() > 1 {
+        let branch = head.map(str::to_owned);
+        let title = tr!(
+            "Merge {count} into {branch}…",
+            count = sources.len(),
+            branch = head.unwrap_or("HEAD")
+        );
+        let a = actions.clone();
+        items.push(menu::action(title, move || {
+            crate::mergeseveral::confirm(&a, sources.clone(), branch.clone());
+        }));
+    }
     // ブランチ・タグだけなら、まとめて bundle に。
     let refs: Vec<String> = selected
         .iter()
@@ -377,18 +389,6 @@ fn several(actions: &Rc<Actions>, known: &Known, head: Option<&str>) -> Vec<Item
             tr!("Save {count} as Bundle…", count = refs.len()),
             move || crate::bundle::save(&a, refs.clone(), names.clone(), label.clone()),
         ));
-    }
-    if sources.len() > 1 {
-        let branch = head.map(str::to_owned);
-        let title = tr!(
-            "Merge {count} into {branch}…",
-            count = sources.len(),
-            branch = head.unwrap_or("HEAD")
-        );
-        let a = actions.clone();
-        items.push(menu::action(title, move || {
-            crate::mergeseveral::confirm(&a, sources.clone(), branch.clone());
-        }));
     }
     let locals: Vec<String> = selected
         .iter()
@@ -712,9 +712,15 @@ fn favorite_items(actions: &Rc<Actions>, name: &str, known: &Known) -> Vec<Item>
 /// `start` から新しいブランチを作って切り替える。
 pub fn new_branch(actions: &Rc<Actions>, start: &str) -> Item {
     let (a, start) = (actions.clone(), start.to_owned());
-    menu::action(tr!("New Branch from {name}…", name = start), move || {
-        ask_new_branch(&a, &start);
-    })
+    menu::action(
+        tr!(
+            "New Branch from {name}…",
+            name = crate::titles::shown_start(&start)
+        ),
+        move || {
+            ask_new_branch(&a, &start);
+        },
+    )
 }
 
 /// `start` から作るブランチの名前を聞いて、作って切り替える（文言は macOS 版と同じ）。
@@ -722,7 +728,10 @@ pub fn ask_new_branch(actions: &Rc<Actions>, start: &str) {
     let (a, start) = (actions.clone(), start.to_owned());
     glib::spawn_future_local(async move {
         // 見出し・説明・ボタンは macOS 版と同じ。
-        let title = tr!("New Branch from {name}", name = start);
+        let title = tr!(
+            "New Branch from {name}",
+            name = crate::titles::shown_start(&start)
+        );
         let message = tr!("Name of the branch. It is checked out.");
         if let Some(name) = a.ask(&title, &message, "", &tr!("Create")).await {
             a.perform(
@@ -752,7 +761,6 @@ pub fn ask_rename_branch(actions: &Rc<Actions>, name: &str) {
     });
 }
 
-/// `target` に新しいタグを付ける。
 /// Export Archive…: ref（`kind` は `refs/heads/` など。同じ名前のブランチとタグを取り違えない）の時点を書き出す。
 fn export_archive(actions: &Rc<Actions>, kind: &str, name: &str) -> Item {
     let (a, rev, label) = (actions.clone(), format!("{kind}{name}"), name.to_owned());
@@ -770,17 +778,27 @@ fn save_bundle(actions: &Rc<Actions>, kind: RefKind, name: &str) -> Item {
     })
 }
 
+/// `target` に新しいタグを付ける。
 pub fn new_tag(actions: &Rc<Actions>, target: &str) -> Item {
     let (a, target) = (actions.clone(), target.to_owned());
-    menu::action(tr!("New Tag at {name}…", name = target), move || {
-        ask_new_tag(&a, &target);
-    })
+    menu::action(
+        tr!(
+            "New Tag at {name}…",
+            name = crate::titles::shown_start(&target)
+        ),
+        move || {
+            ask_new_tag(&a, &target);
+        },
+    )
 }
 
 pub fn ask_new_tag(actions: &Rc<Actions>, target: &str) {
     let (a, target) = (actions.clone(), target.to_owned());
     glib::spawn_future_local(async move {
-        let title = tr!("New Tag at {name}", name = target);
+        let title = tr!(
+            "New Tag at {name}",
+            name = crate::titles::shown_start(&target)
+        );
         if let Some(name) = a
             .ask(&title, &tr!("Name of the tag."), "", &tr!("Create"))
             .await
@@ -810,8 +828,22 @@ pub fn accepts_drop(dragged: &str, target: &Data) -> bool {
 }
 
 /// ドラッグ＆ドロップ: ブランチの上なら merge・rebase、リモート（かリモートブランチ）の上なら push。
-/// `dragged` は `local:<名前>` か `other:<名前>`。
+/// `dragged` は `local:<名前>` か `other:<名前>`。最後に区切りと「キャンセル」を置く（macOS 版と同じ）。
 pub fn drop_menu(
+    actions: &Rc<Actions>,
+    dragged: &str,
+    target: &Data,
+    head: Option<&str>,
+) -> Vec<Item> {
+    let mut items = drop_items(actions, dragged, target, head);
+    if !items.is_empty() {
+        items.push(Item::Separator);
+        items.push(menu::action(tr!("Cancel"), || {}));
+    }
+    items
+}
+
+fn drop_items(
     actions: &Rc<Actions>,
     dragged: &str,
     target: &Data,

@@ -49,7 +49,23 @@ pub struct Tab {
     on_back: RefCell<Vec<FrontCallback>>,
     /// 書き込む先の worktree の名前（確認のシートに出す。前にあるときに窓に入れる）。
     worktree_name: RefCell<Option<String>>,
+    /// File History・Blame のタブなら、そのリポジトリのタブ（macOS 版の `FileToolWindowController`）。
+    owner: RefCell<Option<Weak<Tab>>>,
+    /// File History・Blame のタブの窓の題（タブの見出しより長い。macOS 版の `heading`）。
+    heading: RefCell<String>,
+    /// File History・Blame のタブの見出しに、このタブと同じツールバーを作る（macOS 版の `MainToolbar.mirror()`）。
+    mirror: RefCell<Option<Mirror>>,
+    /// File History・Blame のタブの、リポジトリのタブに渡すアクションと、その「使えるか」の結び付け（リポジトリの
+    /// タブを閉じたら、押せなくする）。
+    forwarded: RefCell<Vec<(gio::SimpleAction, glib::Binding)>>,
+    /// 保存していないもの（マージエディタの Result）があるか。あれば、閉じる前に確かめる。
+    unsaved: RefCell<Option<Rc<dyn Fn() -> bool>>>,
+    /// 保存していないものを捨てて閉じると確かめた（閉じ直すときは聞かない）。
+    discard_confirmed: Cell<bool>,
 }
+
+/// File History・Blame のタブの見出しを作る。
+type Mirror = Rc<dyn Fn(&Rc<Tab>)>;
 
 impl Tab {
     pub fn new(name: &str, location: &str, pending: Rc<Cell<u32>>) -> Rc<Self> {
@@ -74,6 +90,12 @@ impl Tab {
             on_front: RefCell::default(),
             on_back: RefCell::default(),
             worktree_name: RefCell::default(),
+            owner: RefCell::default(),
+            heading: RefCell::default(),
+            mirror: RefCell::default(),
+            forwarded: RefCell::default(),
+            unsaved: RefCell::default(),
+            discard_confirmed: Cell::new(false),
         });
         // 前に出した後で足したアクション（メニューの操作は、タブを窓に置いてから入れる）も窓に入れる。
         let weak = Rc::downgrade(&tab);
@@ -138,7 +160,186 @@ impl Tab {
 
     /// リポジトリのページ（リポジトリを開いていないタブ）か。
     pub fn is_home(&self) -> bool {
-        self.location.is_empty()
+        self.location.is_empty() && !self.is_tool()
+    }
+
+    /// File History・Blame のタブ（`owner` のリポジトリのタブの隣に置く。macOS 版と同じく、リポジトリのタブと同じ
+    /// ツールバーを自分の見出しに付け、ツールバーとメニューの操作はリポジトリのタブに切り替えてから渡す）。中身は
+    /// `root` に入れる。次の起動で開き直すタブの記録には入らない（場所を持たない）。
+    pub fn new_tool(owner: &Rc<Tab>, title: &str) -> Rc<Self> {
+        let tab = Self::new(title, "", owner.pending.clone());
+        tab.owner.replace(Some(Rc::downgrade(owner)));
+        let mirror = owner.mirror.borrow().clone();
+        if let Some(mirror) = mirror {
+            mirror(&tab);
+        }
+        tab
+    }
+
+    /// File History・Blame のタブの見出しに、このタブと同じツールバーを作る `f` を置く。
+    pub fn set_mirror(&self, f: impl Fn(&Rc<Tab>) + 'static) {
+        self.mirror.replace(Some(Rc::new(f)));
+    }
+
+    /// File History・Blame のタブか。
+    pub fn is_tool(&self) -> bool {
+        self.owner.borrow().is_some()
+    }
+
+    /// File History・Blame のタブの、リポジトリのタブ（閉じていれば None）。
+    pub fn owner(&self) -> Option<Rc<Tab>> {
+        self.owner
+            .borrow()
+            .as_ref()
+            .and_then(Weak::upgrade)
+            .filter(|o| !o.closed())
+    }
+
+    /// File History・Blame のタブの窓の題。
+    pub fn set_heading(&self, heading: &str) {
+        self.heading.replace(heading.to_owned());
+        if self.is_shown()
+            && let Some(window) = self.window()
+        {
+            window.set_title(Some(heading));
+        }
+    }
+
+    /// 窓の題。
+    fn window_title(&self) -> String {
+        if self.is_tool() {
+            self.heading.borrow().clone()
+        } else {
+            // 窓の名前はリポジトリの名前だけ（macOS 版と同じ）。
+            self.name.clone()
+        }
+    }
+
+    /// このタブを前に出す（窓も前に）。
+    pub fn bring_front(&self) {
+        if let Some(host) = self.host() {
+            host.select(self);
+            host.window.present();
+        }
+    }
+
+    /// File History・Blame のタブで、リポジトリのタブのアクションのうち、このタブにないもの（タブの操作と、
+    /// このタブが自分で持つもの以外）を、リポジトリのタブに切り替えてから渡すものとして入れる（macOS 版の
+    /// `RepositoryForwarder`）。使えるか・状態はリポジトリのタブのものに合わせる。中身のアクションを足してから呼ぶ。
+    pub fn forward_actions(self: &Rc<Self>) {
+        let Some(owner) = self.owner() else { return };
+        self.add_app_actions();
+        for name in owner.group.list_actions() {
+            forward(self, &owner, &name);
+        }
+        // リポジトリのタブが後から足すアクション（メニューの操作は、読み終えてから入る）。
+        let weak = Rc::downgrade(self);
+        let id = owner.group.connect_action_added(None, move |_, name| {
+            if let Some(tool) = weak.upgrade()
+                && let Some(owner) = tool.owner()
+            {
+                forward(&tool, &owner, name);
+            }
+        });
+        let group = owner.group.downgrade();
+        let id = RefCell::new(Some(id));
+        self.connect_close(move || {
+            if let (Some(group), Some(id)) = (group.upgrade(), id.take()) {
+                group.disconnect(id);
+            }
+        });
+        // リポジトリのタブを閉じても、このタブは残す（macOS 版と同じ）。渡す先がないので、渡すものは押せなくする。
+        let weak = Rc::downgrade(self);
+        owner.connect_close(move || {
+            let Some(tool) = weak.upgrade() else { return };
+            for (proxy, binding) in tool.forwarded.borrow_mut().drain(..) {
+                binding.unbind();
+                proxy.set_enabled(false);
+            }
+        });
+    }
+
+    /// File History・Blame のタブで、アプリの操作（New Window・Open…・Clone…・Quick Open…・Open Recent・
+    /// Repositories・Activity・Settings…・Keyboard Shortcuts・About）を、リポジトリのタブに渡さずにこのタブで
+    /// 行うものとして入れる。リポジトリのタブを閉じても使え、リポジトリのタブを前に出さない（macOS 版ではこれらは
+    /// `AppDelegate` に行き、`RepositoryForwarder` を通らない）。
+    fn add_app_actions(self: &Rc<Self>) {
+        type F = fn(&Rc<Tab>, &gtk::ApplicationWindow, &gtk::Application);
+        let actions: [(&str, F); 9] = [
+            ("new-window", |_, _, app| {
+                show_home(app, None);
+            }),
+            ("open", |tab, _, app| {
+                show_home(app, tab.host());
+            }),
+            ("repositories", |tab, _, app| {
+                show_home(app, tab.host());
+            }),
+            ("clone", |_, window, app| {
+                let a = app.clone();
+                crate::repos::clone(
+                    window.upcast_ref(),
+                    Rc::new(move |path| {
+                        // clone したものはブックマークにも入れる（リポジトリのタブと同じ）。
+                        crate::bookmarks::add(&path.to_string_lossy(), None);
+                        self::open(&a, path, Place::Tab)
+                    }),
+                )
+            }),
+            ("quick-open", |_, window, app| {
+                let a = app.clone();
+                crate::quickopen::show(
+                    Some(window.upcast_ref()),
+                    Rc::new(move |location, place| self::open(&a, location, place)),
+                );
+            }),
+            ("activity", |_, window, _| {
+                crate::activity::Activity::show(window, crate::engine());
+            }),
+            ("settings", |_, window, _| crate::settings::show(window)),
+            ("shortcuts", |_, window, _| {
+                crate::appmenu::show_shortcuts(window)
+            }),
+            ("about", |_, window, _| crate::appmenu::show_about(window)),
+        ];
+        for (name, f) in actions {
+            let action = gio::SimpleAction::new(name, None);
+            let t = Rc::downgrade(self);
+            action.connect_activate(move |_, _| {
+                let Some(tab) = t.upgrade() else { return };
+                let Some(window) = tab.window() else { return };
+                let Some(app) = window.application() else {
+                    return;
+                };
+                f(&tab, &window, &app);
+            });
+            self.group.add_action(&action);
+        }
+        let recent = gio::SimpleAction::new("open-recent", Some(glib::VariantTy::STRING));
+        let t = Rc::downgrade(self);
+        recent.connect_activate(move |_, value| {
+            let Some(app) = t
+                .upgrade()
+                .and_then(|t| t.window())
+                .and_then(|w| w.application())
+            else {
+                return;
+            };
+            if let Some(location) = value.and_then(|v| v.get::<String>()) {
+                self::open(&app, PathBuf::from(location), Place::Tab);
+            }
+        });
+        self.group.add_action(&recent);
+    }
+
+    /// 保存していないものがあるかを `f` で調べるようにする（あれば、タブ・窓を閉じる前と、終える前に確かめる）。
+    pub fn connect_unsaved(&self, f: impl Fn() -> bool + 'static) {
+        self.unsaved.replace(Some(Rc::new(f)));
+    }
+
+    /// 保存していないものがあり、まだ捨ててよいと確かめていない。
+    fn has_unsaved(&self) -> bool {
+        !self.discard_confirmed.get() && self.unsaved.borrow().as_ref().is_some_and(|f| f())
     }
 
     /// `key`（`repos::normalize` した場所）を開いているタブか（場所は開いた形なので、リンクを解いて比べる）。
@@ -207,9 +408,14 @@ impl Tab {
             tips.push(tr!("{count} commits behind upstream", count = behind));
         }
         let tip = tips.join(&tr!(", "));
+        let renamed = self.title.borrow().0 != title;
         self.title
             .replace((title, (!tip.is_empty()).then_some(tip)));
         self.apply_title();
+        // Move Tab to Window ▸ の名前も印ごと。
+        if renamed {
+            refresh_move_menus();
+        }
     }
 
     /// 書き込む先の worktree の名前（確認のシートに出す）。
@@ -221,6 +427,49 @@ impl Tab {
             crate::sheets::set_worktree_name(window.upcast_ref(), name);
         }
     }
+}
+
+/// `tool` に、`owner` の `name` のアクションを渡すものを入れる（`tool` が同じ名前を持っていれば入れない）。
+fn forward(tool: &Rc<Tab>, owner: &Rc<Tab>, name: &str) {
+    if tool.group.lookup_action(name).is_some() {
+        return;
+    }
+    let Some(original) = owner.group.lookup_action(name) else {
+        return;
+    };
+    let parameter = original.parameter_type();
+    let proxy = match original.state() {
+        Some(state) => gio::SimpleAction::new_stateful(name, parameter.as_deref(), &state),
+        None => gio::SimpleAction::new(name, parameter.as_deref()),
+    };
+    let binding = original
+        .bind_property("enabled", &proxy, "enabled")
+        .sync_create()
+        .build();
+    tool.forwarded.borrow_mut().push((proxy.clone(), binding));
+    if original.state().is_some() {
+        let p = proxy.downgrade();
+        original.connect_notify_local(Some("state"), move |original, _| {
+            if let (Some(p), Some(state)) = (p.upgrade(), original.state()) {
+                p.set_state(&state);
+            }
+        });
+    }
+    let (o, n) = (Rc::downgrade(owner), name.to_owned());
+    proxy.connect_activate(move |_, parameter| {
+        if let Some(owner) = o.upgrade() {
+            owner.bring_front();
+            owner.group.activate_action(&n, parameter);
+        }
+    });
+    let (o, n) = (Rc::downgrade(owner), name.to_owned());
+    proxy.connect_change_state(move |_, value| {
+        if let (Some(owner), Some(value)) = (o.upgrade(), value) {
+            owner.bring_front();
+            owner.group.change_action_state(&n, value);
+        }
+    });
+    tool.group.add_action(&proxy);
 }
 
 /// リポジトリのタブを並べる窓。
@@ -239,6 +488,8 @@ pub struct RepoWindow {
     shown: RefCell<Weak<Tab>>,
     /// タブが 1 つでもタブの帯を出す（View > Show Tab Bar。帯のタブをつかんでほかの窓に移せる。macOS 版と同じ）。
     tab_bar: Cell<bool>,
+    /// 最後にフォーカスのあった、メニューの外の部品（Edit の Copy などを渡す先）。
+    last_focus: RefCell<glib::WeakRef<gtk::Widget>>,
 }
 
 thread_local! {
@@ -253,6 +504,8 @@ thread_local! {
     /// 確認用の起動（撮る・測る）か、前回のものを開き直している途中: 開いている窓の記録を書き換えない。
     static CHECK_RUN: Cell<bool> = const { Cell::new(false) };
     static RESTORING: Cell<bool> = const { Cell::new(false) };
+    /// エラーのタブの Try Again から開き直している途中（開けなくても、エラーのタブを残す）。
+    static RETRYING: Cell<bool> = const { Cell::new(false) };
 }
 
 /// 確認用の起動（`--snapshot`・`--measure-scroll`）では、開いている窓とタブを覚えない。
@@ -268,6 +521,12 @@ pub fn is_check_run() -> bool {
 /// 前回の窓とタブを開き直している途中か。
 pub fn is_restoring() -> bool {
     RESTORING.with(Cell::get)
+}
+
+/// 開けなかったとき、知らせを出してタブを閉じずに、エラーのタブを残すか（前回のものを開き直しているとき・
+/// エラーのタブの Try Again。macOS 版はどちらも同じタブにエラーを出し直す）。
+pub fn keeps_error_tab() -> bool {
+    is_restoring() || RETRYING.with(Cell::get)
 }
 
 /// 前回の窓とタブを開き直している間は覚えない（終わったら `save` する）。
@@ -304,11 +563,12 @@ impl RepoWindow {
         bar.set_end_action_widget(Some(&plus));
         // タブはつかんでほかの窓の帯に落とせる。窓の外に落とすと新しい窓になる（macOS 版のタブと同じ。TabView は
         // どの窓のものとも運び合える）。
+        // 大きさは macOS 版の新しい窓と同じ（中身 1440×820。GTK の既定の大きさは見出しの帯を含むので、その分を足す）。
         let window = gtk::ApplicationWindow::builder()
             .application(app)
             .title("Amon Hen")
-            .default_width(1280)
-            .default_height(760)
+            .default_width(1440)
+            .default_height(820 + 46)
             .child(&body)
             .build();
         let id = NEXT_ID.with(|n| n.replace(n.get() + 1));
@@ -322,6 +582,16 @@ impl RepoWindow {
             installed: RefCell::default(),
             shown: RefCell::default(),
             tab_bar: Cell::new(false),
+            last_focus: RefCell::default(),
+        });
+        let weak = Rc::downgrade(&this);
+        window.connect_focus_widget_notify(move |window| {
+            if let Some(this) = weak.upgrade()
+                && let Some(focus) = GtkWindowExt::focus(window)
+                && focus.ancestor(gtk::Popover::static_type()).is_none()
+            {
+                this.last_focus.replace(focus.downgrade());
+            }
         });
         WINDOWS.with(|w| w.borrow_mut().push(this.clone()));
         // 窓の大きさは、そのリポジトリごとに覚える（macOS 版の窓の frame と同じ。GNOME では位置は決められない
@@ -352,6 +622,8 @@ impl RepoWindow {
                 && let Some(tab) = this.tab_of(&page.child())
             {
                 this.show(&tab);
+                // ほかの窓の Move Tab to Window ▸ は、この窓の前のタブの名前で出す。
+                refresh_move_menus();
             }
         });
         view.connect_page_reordered(|_, _, _| save());
@@ -384,12 +656,37 @@ impl RepoWindow {
                 .and_downcast::<gtk::ApplicationWindow>()
                 .and_then(|w| w.application())?;
             let target = RepoWindow::new(&app);
+            // 大きさは出た窓のもの（macOS 版のタブの窓は、離れたタブの窓の枠を持ち続ける）。
+            if let Some(window) = view.root().and_downcast::<gtk::Window>() {
+                let (w, h) = window.default_size();
+                target.window.set_default_size(w, h);
+            }
             target.window.present();
             Some(target.view.clone())
         });
         let weak = Rc::downgrade(&this);
-        window.connect_close_request(move |_| {
+        window.connect_close_request(move |window| {
             if let Some(this) = weak.upgrade() {
+                // マージエディタの Result を保存していないタブがあれば、それを前に出して確かめる（macOS 版と同じ。
+                // 別の窓のマージエディタを閉じるときと同じ文）。捨ててよければ閉じ直す。
+                let unsaved: Vec<Rc<Tab>> = this
+                    .tabs()
+                    .into_iter()
+                    .filter(|t| t.has_unsaved())
+                    .collect();
+                if let Some(first) = unsaved.first() {
+                    this.select(first);
+                    let window = window.clone();
+                    glib::spawn_future_local(async move {
+                        if crate::merge::confirm_discarding(&window).await {
+                            for tab in &unsaved {
+                                tab.discard_confirmed.set(true);
+                            }
+                            window.close();
+                        }
+                    });
+                    return glib::Propagation::Stop;
+                }
                 // 閉じる窓のタブは、どれも閉じる（裏の糸と見張りを止める）。
                 let tabs: Vec<Rc<Tab>> = this.tabs.borrow_mut().drain(..).collect();
                 for tab in tabs {
@@ -431,10 +728,13 @@ impl RepoWindow {
         }
         let mut sizes = window_sizes();
         for tab in self.tabs() {
-            if !tab.location.is_empty() {
-                let key = crate::repos::normalize(std::path::Path::new(&tab.location));
-                sizes.insert(key, serde_json::json!([width, height]));
-            }
+            // リポジトリのページは 1 つの名前で（macOS 版の Repositories の窓の "RepositoryHome"）。
+            let key = if tab.is_home() {
+                HOME_SIZE.to_owned()
+            } else {
+                crate::repos::normalize(std::path::Path::new(&tab.location))
+            };
+            sizes.insert(key, serde_json::json!([width, height]));
         }
         crate::settings::set_string(WINDOW_SIZES, &serde_json::Value::Object(sizes).to_string());
     }
@@ -448,6 +748,14 @@ impl RepoWindow {
     }
 
     /// 前のタブ。
+    /// Edit の項目を渡す部品: 今フォーカスのある部品か、メニューを開いていればその前のもの。
+    fn edit_focus(&self) -> Option<gtk::Widget> {
+        GtkWindowExt::focus(&self.window)
+            .filter(|f| f.ancestor(gtk::Popover::static_type()).is_none())
+            .or_else(|| self.last_focus.borrow().upgrade())
+            .filter(|f| f.root().as_ref() == Some(self.window.upcast_ref::<gtk::Root>()))
+    }
+
     pub fn current(&self) -> Option<Rc<Tab>> {
         let page = self.view.selected_page()?;
         self.tab_of(&page.child())
@@ -493,15 +801,20 @@ impl RepoWindow {
                 }
             });
         }
+        // 見出しの帯: タブごとに持つ（File History・Blame のタブは、リポジトリのタブと同じツールバーを自分の帯に
+        // 作ってある。macOS 版と同じく、リポジトリのタブがほかの窓で前にあっても使える）。
+        let owner = tab.owner();
+        let header = tab.header.clone();
         // ほかの窓の見出しになっていれば外す（タブを窓の間で移したとき）。
-        if let Some(other) = tab.header.root().and_downcast::<gtk::Window>()
+        if let Some(other) = header.root().and_downcast::<gtk::Window>()
             && other != *self.window.upcast_ref::<gtk::Window>()
         {
             other.set_titlebar(None::<&gtk::Widget>);
         }
-        self.window.set_titlebar(Some(&tab.header));
-        self.window
-            .set_title(Some(&format!("{} — Amon Hen", tab.name)));
+        if self.window.titlebar().as_ref() != Some(header.upcast_ref::<gtk::Widget>()) {
+            self.window.set_titlebar(Some(&header));
+        }
+        self.window.set_title(Some(&tab.window_title()));
         let names: Vec<String> = tab
             .group
             .list_actions()
@@ -521,7 +834,7 @@ impl RepoWindow {
         self.installed.replace(names);
         crate::sheets::set_worktree_name(
             self.window.upcast_ref(),
-            tab.worktree_name.borrow().clone(),
+            owner.as_ref().unwrap_or(tab).worktree_name.borrow().clone(),
         );
         if self.window.is_active() {
             tab.front();
@@ -611,6 +924,16 @@ pub fn add(host: &Rc<RepoWindow>, tab: &Rc<Tab>, select: bool, position: Option<
     save();
 }
 
+/// File History・Blame のタブ `tool` を、リポジトリのタブ（`tool.owner()`）の右に足して前に出す（macOS 版と同じ）。
+/// リポジトリのタブを閉じても残す（macOS 版と同じ）。
+pub fn add_tool(tool: &Rc<Tab>) {
+    let Some(owner) = tool.owner() else { return };
+    let Some(host) = owner.host() else { return };
+    let position = host.position(&owner).map(|p| p as u32 + 1);
+    add(&host, tool, true, position);
+    host.window.present();
+}
+
 /// Window > Move Tab to Window ▸ の中身を作る（`anchor` はメニューを出すタブの部品。その窓は移す先から除く）。
 /// 窓とタブが変わるたびに作り直す。
 pub fn move_menu(anchor: &impl IsA<gtk::Widget>) -> gio::Menu {
@@ -621,7 +944,8 @@ pub fn move_menu(anchor: &impl IsA<gtk::Widget>) -> gio::Menu {
     menu
 }
 
-/// 移す先: 前の窓とは別の窓ごとに 1 つ。その窓で前に出ているタブの名前と、ほかのタブの数で出す（macOS 版と同じ）。
+/// 移す先: 前の窓とは別の窓ごとに 1 つ。その窓で前に出ているタブの名前（●↑↓ の印ごと）と、ほかのタブの数で
+/// 出す。File History・Blame のタブからは、そのリポジトリのタブの窓を先頭に（macOS 版と同じ）。
 fn fill_move_menu(anchor: &glib::WeakRef<gtk::Widget>, menu: &gio::Menu) {
     menu.remove_all();
     let own = anchor
@@ -629,22 +953,34 @@ fn fill_move_menu(anchor: &glib::WeakRef<gtk::Widget>, menu: &gio::Menu) {
         .and_then(|a| a.root())
         .and_downcast::<gtk::ApplicationWindow>()
         .and_then(|w| host_of(&w));
-    let others: Vec<Rc<RepoWindow>> = WINDOWS.with(|w| {
+    let mut others: Vec<Rc<RepoWindow>> = WINDOWS.with(|w| {
         w.borrow()
             .iter()
             .filter(|h| own.as_ref().is_none_or(|o| !Rc::ptr_eq(o, h)))
             .cloned()
             .collect()
     });
+    let home = own
+        .as_ref()
+        .and_then(|o| o.current())
+        .and_then(|t| t.owner())
+        .and_then(|o| o.host());
+    if let Some(home) = home
+        && let Some(i) = others.iter().position(|h| Rc::ptr_eq(h, &home))
+    {
+        let home = others.remove(i);
+        others.insert(0, home);
+    }
     for host in others {
         let Some(shown) = host.current() else {
             continue;
         };
         let n = host.tabs.borrow().len();
+        let name = shown.title.borrow().0.clone();
         let title = if n > 1 {
-            tr!("{name} (+{count})", name = shown.name, count = n - 1)
+            tr!("{name} (+{count})", name = name, count = n - 1)
         } else {
-            shown.name.clone()
+            name
         };
         let item = gio::MenuItem::new(Some(&title), None);
         item.set_action_and_target_value(
@@ -659,8 +995,9 @@ fn fill_move_menu(anchor: &glib::WeakRef<gtk::Widget>, menu: &gio::Menu) {
     }
 }
 
-/// どの Move Tab to Window ▸ も作り直す（部品がなくなったものは外す）。
+/// どの Move Tab to Window ▸ も作り直し（部品がなくなったものは外す）、Window のタブの項目を使えるかを合わせる。
 fn refresh_move_menus() {
+    refresh_window_actions();
     let menus: Vec<(glib::WeakRef<gtk::Widget>, gio::Menu)> = MOVE_MENUS.with(|m| {
         let mut m = m.borrow_mut();
         m.retain(|(a, _)| a.upgrade().is_some());
@@ -690,19 +1027,25 @@ fn window_sizes() -> serde_json::Map<String, serde_json::Value> {
         .unwrap_or_default()
 }
 
-/// 窓を作って、`location` を開いたタブを置く。前にその場所の窓を開いていたら、その大きさで（macOS 版と同じ）。
-pub fn new_window_with(app: &gtk::Application, location: PathBuf) -> Rc<RepoWindow> {
-    let host = RepoWindow::new(app);
-    let key = crate::repos::normalize(&location);
-    // 確認用の起動（撮る・計測する）は、いつも同じ大きさで。
+/// リポジトリのページの窓の大きさを覚える名前。
+const HOME_SIZE: &str = "RepositoryHome";
+
+/// 前にその名前（場所）の窓を開いていたら、その大きさにする（確認用の起動は、いつも同じ大きさで）。
+fn restore_size(host: &RepoWindow, key: &str) {
     if !CHECK_RUN.with(Cell::get)
-        && let Some(size) = window_sizes().get(&key).and_then(|v| v.as_array().cloned())
+        && let Some(size) = window_sizes().get(key).and_then(|v| v.as_array().cloned())
         && let [w, h] = size.as_slice()
         && let (Some(w), Some(h)) = (w.as_i64(), h.as_i64())
     {
         host.window
             .set_default_size(w.max(400) as i32, h.max(300) as i32);
     }
+}
+
+/// 窓を作って、`location` を開いたタブを置く。前にその場所の窓を開いていたら、その大きさで（macOS 版と同じ）。
+pub fn new_window_with(app: &gtk::Application, location: PathBuf) -> Rc<RepoWindow> {
+    let host = RepoWindow::new(app);
+    restore_size(&host, &crate::repos::normalize(&location));
     crate::build_tab(
         app,
         &host,
@@ -734,24 +1077,27 @@ fn find_open(location: &std::path::Path) -> Option<(Rc<RepoWindow>, Rc<Tab>)> {
     })
 }
 
-/// リポジトリを開く。`place` が `Tab` なら最後に前にあった窓の新しいタブ（なければ新しい窓）に。すでに開いて
-/// いればそのタブを前に出す。`NewWindow` なら、開いていても新しい窓に開く（File > New Window）。
-pub fn open(app: &gtk::Application, location: PathBuf, place: Place) {
-    if place == Place::NewWindow {
-        new_window_with(app, location);
-        return;
+/// `location` を開いているタブがあれば、それを前に出して true。追加した worktree のフォルダーなら、メインの
+/// リポジトリのタブを前に出してその worktree を書き込む先にする（なければ、開くときにメインのリポジトリに替える。
+/// `build_tab`）。
+fn bring_forward(location: &std::path::Path) -> bool {
+    let Some((host, tab)) = find_open(location) else {
+        return false;
+    };
+    host.select(&tab);
+    host.window.present();
+    if crate::repos::main_of_worktree(location).is_some() {
+        let path = location.to_string_lossy().into_owned();
+        tab.group
+            .activate_action("edit-worktree", Some(&path.to_variant()));
     }
-    // 追加した worktree のフォルダー: メインのリポジトリのタブがあれば、それを前に出してその worktree を書き込む
-    // 先にする（なければ、開くときにメインのリポジトリに替える。`build_tab`）。
-    let worktree = crate::repos::main_of_worktree(&location);
-    if let Some((host, tab)) = find_open(&location) {
-        host.select(&tab);
-        host.window.present();
-        if worktree.is_some() {
-            let path = location.to_string_lossy().into_owned();
-            tab.group
-                .activate_action("edit-worktree", Some(&path.to_variant()));
-        }
+    true
+}
+
+/// リポジトリを開く。`place` が `Tab` なら最後に前にあった窓の新しいタブ（なければ新しい窓）に、`NewWindow` なら
+/// 新しい窓に。どちらでも、すでに開いていればそのタブを前に出す（macOS 版の `open(path:inNewWindow:)` と同じ）。
+pub fn open(app: &gtk::Application, location: PathBuf, place: Place) {
+    if bring_forward(&location) {
         return;
     }
     match (place, front_window()) {
@@ -826,7 +1172,11 @@ pub fn show_home(app: &gtk::Application, host: Option<Rc<RepoWindow>>) -> Rc<Rep
         home.front();
         return host.clone();
     }
-    let host = host.unwrap_or_else(|| RepoWindow::new(app));
+    let host = host.unwrap_or_else(|| {
+        let host = RepoWindow::new(app);
+        restore_size(&host, HOME_SIZE);
+        host
+    });
     let tab = Tab::new("Repositories", "", Rc::default());
     let title = gtk::Label::new(Some("Repositories"));
     title.add_css_class("title");
@@ -836,22 +1186,12 @@ pub fn show_home(app: &gtk::Application, host: Option<Rc<RepoWindow>>) -> Rc<Rep
     titles.set_valign(gtk::Align::Center);
     titles.append(&title);
     titles.append(&subtitle);
-    tab.header.set_title_widget(Some(&titles));
-    // 主メニュー（リポジトリの窓と同じもの。リポジトリへの操作は、このタブにアクションがないので押せない。macOS 版で
-    // Repositories の窓が前にあっても、メニューバーはそのままなのと同じ）。History の表示は設定なので、ここでも変えられる。
+    // 見出しはリポジトリのタブと同じ Repository のメニュー・ツールバー・主メニュー（リポジトリへの操作は、このタブに
+    // アクションがないので押せない。macOS 版で Repositories の窓が前にあっても、メニューバーとツールバーはそのままなの
+    // と同じ）。History の表示は設定なので、ここでも変えられる。
     crate::historydisplay::install_actions(&tab.group);
-    let menu = crate::appmenu::primary_menu(&tab.root);
-    let primary = gtk::MenuButton::builder()
-        .menu_model(&menu)
-        .tooltip_text("Main Menu")
-        .primary(true)
-        .build();
-    if gtk::IconTheme::for_display(&primary.display()).has_icon("open-menu-symbolic") {
-        primary.set_icon_name("open-menu-symbolic");
-    } else {
-        primary.set_label("≡");
-    }
-    tab.header.pack_end(&primary);
+    let primary =
+        crate::appmenu::install_home(&tab.header, &tab.group, &tab.root, titles.upcast_ref());
     // 開くときに、View > Show Tab Bar の名前を合わせる（リポジトリのタブと同じく、帯を出していれば Hide Tab Bar）。
     crate::appmenu::retitle_on_show_with(&primary, |button, model| {
         let Some(window) = button.root().and_downcast::<gtk::ApplicationWindow>() else {
@@ -923,7 +1263,7 @@ pub fn show_home(app: &gtk::Application, host: Option<Rc<RepoWindow>>) -> Rc<Rep
     let t = Rc::downgrade(&tab);
     activity.connect_activate(move |_, _| {
         if let Some(window) = t.upgrade().and_then(|t| t.window()) {
-            crate::activity::Activity::show(&window, None, crate::engine());
+            crate::activity::Activity::show(&window, crate::engine());
         }
     });
     tab.group.add_action(&activity);
@@ -975,29 +1315,40 @@ pub fn reopen(tab: &Rc<Tab>, location: PathBuf, page: Option<crate::sidebar::Pag
     };
     let position = host.position(tab).map(|n| n as u32 + 1);
     open_in(&app, &host, location, position, page);
+    // 開き直したタブに替えるだけなので聞かない（macOS 版も、つなぎ直すタブは閉じてよいかを聞かずに替える）。
+    // ほかのリポジトリに切り替える [`switch`] は、先に確かめてある。
+    tab.discard_confirmed.set(true);
     close_tab(tab);
 }
 
+/// エラーのタブの Try Again: [`reopen`] と同じく開き直し、また開けなければエラーのタブを残す（macOS 版と同じ）。
+pub fn retry(tab: &Rc<Tab>, location: PathBuf, page: Option<crate::sidebar::Page>) {
+    RETRYING.with(|r| r.set(true));
+    reopen(tab, location, page);
+    RETRYING.with(|r| r.set(false));
+}
+
 /// ツールバーのリポジトリ名から: `tab` を `location` のリポジトリに切り替える（同じ場所に開き直して、`tab` を閉じる）。
-/// もうどこかのタブで開いていれば、そのタブを前に出す（`tab` は残す。macOS 版と同じ）。
+/// もうどこかのタブで開いていれば、そのタブを前に出す（`tab` は残す。macOS 版と同じ）。追加した worktree で
+/// メインのリポジトリのタブがあれば、それを前に出してその worktree を書き込む先にする（`open` と同じ）。
 pub fn switch(tab: &Rc<Tab>, location: PathBuf) {
-    let key = crate::repos::normalize(&crate::repos::through_daemon(&location));
-    let existing = WINDOWS.with(|w| {
-        w.borrow().iter().find_map(|h| {
-            h.tabs
-                .borrow()
-                .iter()
-                .find(|t| t.is_at(&key))
-                .map(|t| (h.clone(), t.clone()))
-        })
-    });
-    match existing {
-        Some((host, t)) => {
-            host.select(&t);
-            host.window.present();
-        }
-        None => reopen(tab, location, None),
+    if bring_forward(&location) {
+        return;
     }
+    // `tab` を閉じて替えるので、マージエディタの Result を保存していなければ先に確かめる（閉じる・終えるときと
+    // 同じ。[`reopen`] は聞かずに閉じる）。
+    if tab.has_unsaved()
+        && let Some(window) = tab.window()
+    {
+        let tab = tab.clone();
+        glib::spawn_future_local(async move {
+            if crate::merge::confirm_discarding(&window).await {
+                reopen(&tab, location, None);
+            }
+        });
+        return;
+    }
+    reopen(tab, location, None);
 }
 
 /// 最後に前にあったリポジトリの窓（なければ最初の窓）。
@@ -1026,30 +1377,66 @@ fn teardown(tab: &Rc<Tab>) {
         f();
     }
     tab.on_front.borrow_mut().clear();
+    tab.mirror.replace(None);
     for name in tab.group.list_actions() {
         tab.group.remove_action(&name);
     }
 }
 
 /// タブを閉じる。窓の最後のタブなら窓を閉じる。ただし、ほかに窓がなくて最後のリポジトリを閉じるときは、終わらずに
-/// リポジトリのページを出す（macOS 版と同じ）。
+/// リポジトリのページを新しい窓で出す（macOS 版と同じく、ページの窓の大きさで。先に出してから閉じるので、最後の窓を
+/// 閉じたことにならない）。
 pub fn close_tab(tab: &Rc<Tab>) {
     let Some(host) = tab.host() else { return };
+    // マージエディタの Result を保存していなければ、捨てて閉じてよいかを確かめる（macOS 版と同じ）。
+    if tab.has_unsaved() {
+        host.select(tab);
+        let (tab, window) = (tab.clone(), host.window.clone());
+        glib::spawn_future_local(async move {
+            if crate::merge::confirm_discarding(&window).await {
+                tab.discard_confirmed.set(true);
+                close_tab(&tab);
+            }
+        });
+        return;
+    }
     if host.tabs.borrow().len() <= 1 {
         let alone = WINDOWS.with(|w| w.borrow().len() <= 1);
-        match tab.window().and_then(|w| w.application()) {
-            Some(app) if alone && !tab.is_home() => {
-                show_home(&app, Some(host.clone()));
-            }
-            _ => {
-                host.window.close();
-                return;
-            }
+        if alone
+            && !tab.is_home()
+            && let Some(app) = tab.window().and_then(|w| w.application())
+        {
+            show_home(&app, None);
         }
+        host.window.close();
+        return;
     }
     detach(&host, tab);
     teardown(tab);
     save();
+}
+
+/// 終える前に、保存していないもの（マージエディタの Result）を捨ててよいかを確かめる（macOS 版と同じく 1 度だけ。
+/// 別の窓のマージエディタも）。なければすぐ true。
+pub async fn confirm_quit() -> bool {
+    let tabs: Vec<Rc<Tab>> = WINDOWS.with(|w| w.borrow().iter().flat_map(|h| h.tabs()).collect());
+    let unsaved: Vec<Rc<Tab>> = tabs.into_iter().filter(|t| t.has_unsaved()).collect();
+    let window: Option<gtk::Window> = match unsaved.first() {
+        Some(tab) => {
+            tab.bring_front();
+            tab.window().map(|w| w.upcast())
+        }
+        None => crate::merge::unsaved_window(),
+    };
+    let Some(window) = window else { return true };
+    window.present();
+    let ok = crate::merge::confirm_discarding(&window).await;
+    if ok {
+        for tab in &unsaved {
+            tab.discard_confirmed.set(true);
+        }
+    }
+    ok
 }
 
 /// `tab` を `host` の窓から外す（閉じない）。
@@ -1121,11 +1508,68 @@ fn install_actions(tab: &Rc<Tab>) {
     // File > Close（Ctrl+W）: タブを閉じる（最後のタブなら窓を閉じる。最後のリポジトリならリポジトリのページを出す。
     // macOS 版と同じ）。
     add("close", close_tab);
-    add("close-window", |tab| {
+    // Window > Minimize（Ctrl+M）・Zoom・Bring All to Front（macOS 版と同じ）。
+    add("minimize", |tab| {
         if let Some(window) = tab.window() {
-            window.close();
+            window.minimize();
         }
     });
+    add("zoom", |tab| {
+        if let Some(window) = tab.window() {
+            if window.is_maximized() {
+                window.unmaximize();
+            } else {
+                window.maximize();
+            }
+        }
+    });
+    add("bring-all-to-front", |tab| {
+        // リポジトリの窓だけでなく、Activity・Settings などアプリの窓をみな前に（macOS 版の
+        // `arrangeInFront` と同じ）。
+        let Some(own) = tab.window() else { return };
+        let Some(app) = own.application() else { return };
+        let own: gtk::Window = own.upcast();
+        for window in app
+            .windows()
+            .iter()
+            .filter(|w| w.is_visible() && **w != own)
+        {
+            window.present();
+        }
+        own.present();
+    });
+    // Edit の Undo・Redo・Cut・Copy・Paste・Select All: フォーカスのある部品（文字の欄など）のものを使う（macOS 版
+    // の標準の項目と同じ。キーは部品がじかに受ける）。メニューを開くとフォーカスはメニューに移るので、その前に
+    // フォーカスのあった部品へ。
+    for (name, targets) in [
+        // Repository Settings のページでは、欄の外なら設定の書き換えの Undo・やり直し。
+        ("edit-undo", &["text.undo", "reposettings.undo"][..]),
+        ("edit-redo", &["text.redo", "reposettings.redo"][..]),
+        ("edit-cut", &["clipboard.cut"][..]),
+        ("edit-copy", &["clipboard.copy"][..]),
+        ("edit-paste", &["clipboard.paste"][..]),
+        (
+            "edit-select-all",
+            &["selection.select-all", "list.select-all"][..],
+        ),
+    ] {
+        let action = gio::SimpleAction::new(name, None);
+        let weak = Rc::downgrade(tab);
+        action.connect_activate(move |_, _| {
+            let Some(tab) = weak.upgrade() else { return };
+            let Some(window) = tab.window() else { return };
+            let target = tab.host().and_then(|h| h.edit_focus());
+            let done = target.is_some_and(|t| {
+                targets
+                    .iter()
+                    .any(|a| WidgetExt::activate_action(&t, a, None).is_ok())
+            });
+            if !done {
+                window.error_bell();
+            }
+        });
+        tab.group.add_action(&action);
+    }
     // View > Show Tab Bar（Ctrl+Shift+T）: タブが 1 つでも帯を出す・隠す。
     add("toggle-tab-bar", |tab| {
         let Some(host) = tab.host() else { return };
@@ -1148,6 +1592,9 @@ fn install_actions(tab: &Rc<Tab>) {
             return window.error_bell();
         }
         let target = RepoWindow::new(&app);
+        // 大きさは出た窓のもの（macOS 版と同じ）。
+        let (w, h) = window.default_size();
+        target.window.set_default_size(w, h);
         move_tab(tab, &target, true);
         target.window.present();
         save();
@@ -1204,6 +1651,32 @@ fn step(tab: &Rc<Tab>, delta: i32) {
         .map_or(0, |p| host.view.page_position(&p));
     let next = (current + delta).rem_euclid(n);
     host.view.set_selected_page(&host.view.nth_page(next));
+}
+
+/// Window の Show Next Tab・Show Previous Tab・Move Tab to New Window はタブが 2 つ以上、Merge All Windows は窓が
+/// 2 つ以上のときだけ使える（macOS 版の AppKit の項目と同じ）。
+fn refresh_window_actions() {
+    let hosts: Vec<Rc<RepoWindow>> = WINDOWS.with(|w| w.borrow().clone());
+    let several_windows = hosts.len() > 1;
+    for host in hosts {
+        let several_tabs = host.tabs.borrow().len() > 1;
+        for tab in host.tabs() {
+            for (name, on) in [
+                ("next-tab", several_tabs),
+                ("previous-tab", several_tabs),
+                ("move-tab-to-new-window", several_tabs),
+                ("merge-all-windows", several_windows),
+            ] {
+                if let Some(action) = tab
+                    .group
+                    .lookup_action(name)
+                    .and_downcast::<gio::SimpleAction>()
+                {
+                    action.set_enabled(on);
+                }
+            }
+        }
+    }
 }
 
 /// `view` の中の、中身が `child` のページ。
@@ -1265,12 +1738,25 @@ fn save() {
 pub fn install_accels(app: &gtk::Application) {
     for (action, accels) in [
         ("win.new-tab", &["<Control>t"][..]),
-        ("win.close-window", &["<Control><Shift>w"][..]),
         ("win.toggle-tab-bar", &["<Control><Shift>t"][..]),
-        ("win.next-tab", &["<Control>Page_Down", "<Control>Tab"][..]),
+        // macOS 版の ⌘⇧] / ⌘⇧[ に当たるものを先に（メニューに出る）。Shift で変わる文字でも受ける。
+        (
+            "win.next-tab",
+            &[
+                "<Control><Shift>bracketright",
+                "<Control>braceright",
+                "<Control>Page_Down",
+                "<Control>Tab",
+            ][..],
+        ),
         (
             "win.previous-tab",
-            &["<Control>Page_Up", "<Control><Shift>Tab"][..],
+            &[
+                "<Control><Shift>bracketleft",
+                "<Control>braceleft",
+                "<Control>Page_Up",
+                "<Control><Shift>Tab",
+            ][..],
         ),
     ] {
         app.set_accels_for_action(action, accels);

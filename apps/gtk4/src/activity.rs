@@ -176,7 +176,8 @@ fn install_css() {
     provider.load_from_string(
         ".activity-success { color: @success_color; } \
          .activity-error { color: @error_color; } \
-         .activity-warning { color: @warning_color; }",
+         .activity-warning { color: @warning_color; } \
+         button.activity-small { min-height: 20px; padding: 1px 8px; font-size: smaller; }",
     );
     if let Some(display) = gtk::gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
@@ -252,11 +253,119 @@ fn row(cells: &[(&str, i32, &[&str])]) -> gtk::Box {
     line
 }
 
+/// 表の見出しの行（macOS 版の Table の列の見出し）。一覧の上に置き、流れない。行と同じ余白になるよう、一覧と
+/// 同じ ListBox の行に入れる。返す行の部品は、列の幅を合わせ直すのに使う。
+fn column_header(cells: &[(&str, i32)]) -> (gtk::ListBox, gtk::Box) {
+    let cells: Vec<(&str, i32, &[&str])> = cells
+        .iter()
+        .map(|(t, w)| (*t, *w, &["dim-label", "caption-heading"][..]))
+        .collect();
+    let line = row(&cells);
+    let list = gtk::ListBox::new();
+    list.set_selection_mode(gtk::SelectionMode::None);
+    list.append(&line);
+    if let Some(r) = list.row_at_index(0) {
+        r.set_activatable(false);
+    }
+    (list, line)
+}
+
+/// Operations の記録の印（どの daemon 越しのリポジトリのものか、番号。一覧を作り直しても選び直せる）。
+fn record_key(r: &Value) -> String {
+    format!(
+        "{}:{}",
+        r["remoteKey"]
+            .as_str()
+            .or(r["remote"].as_str())
+            .unwrap_or_default(),
+        r["seq"].as_u64().unwrap_or(0)
+    )
+}
+
+/// Operations の詳細: リポジトリ・内容・エラー（macOS 版と同じ）。
+fn record_detail(r: &Value) -> String {
+    let mut text = format!(
+        "{}\n{}",
+        r["repo"].as_str().unwrap_or_default(),
+        r["label"].as_str().unwrap_or_default()
+    );
+    if let Some(e) = r["error"].as_str() {
+        text.push_str(&format!("\n\n{e}"));
+    }
+    text
+}
+
+/// `line` の `index` 番目の列を、頭を切って縮める（パス。終わりが見える）。
+fn ellipsize_start(line: &gtk::Box, index: usize) {
+    let mut cell = line.first_child();
+    for _ in 0..index {
+        cell = cell.and_then(|c| c.next_sibling());
+    }
+    if let Some(l) = cell.and_downcast::<gtk::Label>() {
+        l.set_ellipsize(gtk::pango::EllipsizeMode::Start);
+    }
+}
+
+/// `line` の `index` 番目の列の幅を変える（リポジトリの列は、名前の長さで幅が変わる）。
+fn set_column_width(line: &gtk::Box, index: usize, width: i32) {
+    let mut cell = line.first_child();
+    for _ in 0..index {
+        cell = cell.and_then(|c| c.next_sibling());
+    }
+    if let Some(cell) = cell {
+        cell.set_size_request(width, -1);
+    }
+}
+
+/// 選んでいるものを 1 つだけ押した形で出す、つながったボタン（macOS 版の segmented の Picker）。
+struct Segmented {
+    root: gtk::Box,
+    buttons: Vec<gtk::ToggleButton>,
+}
+
+impl Segmented {
+    fn new(labels: &[&str]) -> Self {
+        let root = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        root.add_css_class("linked");
+        let buttons: Vec<gtk::ToggleButton> = labels
+            .iter()
+            .map(|l| gtk::ToggleButton::with_label(l))
+            .collect();
+        for b in &buttons {
+            if let Some(first) = buttons.first()
+                && b != first
+            {
+                b.set_group(Some(first));
+            }
+            root.append(b);
+        }
+        if let Some(first) = buttons.first() {
+            first.set_active(true);
+        }
+        Self { root, buttons }
+    }
+
+    fn selected(&self) -> usize {
+        self.buttons.iter().position(|b| b.is_active()).unwrap_or(0)
+    }
+
+    /// 選び直したとき（押されて選ばれたものだけで呼ぶ）。
+    fn connect_changed(&self, f: impl Fn() + 'static) {
+        let f = Rc::new(f);
+        for b in &self.buttons {
+            let f = f.clone();
+            b.connect_toggled(move |b| {
+                if b.is_active() {
+                    f();
+                }
+            });
+        }
+    }
+}
+
 /// タブが今見ているリポジトリ（まだつないでいなければ None）。
 pub type CurrentRepo = Rc<dyn Fn() -> Option<Arc<Repository>>>;
 
-/// History のタブで、このリポジトリを選ぶ。
-type Choose = Rc<dyn Fn(&Arc<Repository>)>;
 /// 選び直したとき（あとで入れる）。
 type Hook = Rc<RefCell<Option<Rc<dyn Fn()>>>>;
 /// Daemon のタブの「このアプリのつながり」の 1 行（名前・場所・切れた理由・送受信量・SSH 先のエンジン）。
@@ -298,6 +407,12 @@ impl Entry {
         self.repo.connection_state().is_some()
     }
 
+    /// daemon の記録を、どのリポジトリのものか見分ける鍵（開いているリポジトリごとに違う。窓の名前は同じことが
+    /// あるので、名前では分けない。macOS 版と同じ）。
+    fn key(&self) -> String {
+        format!("{:p}", Arc::as_ptr(&self.repo))
+    }
+
     fn same(&self, other: &Entry) -> bool {
         Arc::ptr_eq(&self.repo, &other.repo) && Rc::ptr_eq(&self.actions, &other.actions)
     }
@@ -337,28 +452,55 @@ fn location_kind(location: &str) -> String {
 pub struct Activity {
     window: gtk::ApplicationWindow,
     stack: gtk::Stack,
-    /// History のタブで、このリポジトリを選ぶ（一覧にあれば）。
-    choose: Choose,
+    /// すべてのタブを読み直す。
+    refresh: Rc<dyn Fn()>,
+    /// 0.5 秒ごとの読み直しが動いている。
+    ticking: Rc<std::cell::Cell<bool>>,
 }
 
 impl Activity {
-    /// Activity を開く（開いていれば前に出す）。初めて開くときは、History のタブで `repo`（開いた窓の前の
-    /// タブのもの）を選ぶ。開き直したときは選んでいたものを保つ（macOS 版と同じ）。
-    pub fn show(
-        parent: &gtk::ApplicationWindow,
-        repo: Option<Arc<Repository>>,
-        engine: std::path::PathBuf,
-    ) {
-        if let Some(a) = Self::find() {
-            a.window.present();
+    /// Activity を開く（開いていれば前に出す）。初めて開くときは、History のタブで開いているリポジトリの最初の
+    /// ものを選ぶ。閉じても隠すだけで、開き直したときはタブ・種類や Failures Only・Filter・選んでいた行・
+    /// History のリポジトリを保つ（macOS 版は窓のコントローラーを使い回す）。
+    pub fn show(parent: &gtk::ApplicationWindow, engine: std::path::PathBuf) {
+        let activity = match OPEN.with(|o| o.borrow().clone()) {
+            Some(a) => a,
+            None => {
+                let a = Self::new(parent, engine);
+                OPEN.with(|o| o.replace(Some(a.clone())));
+                a
+            }
+        };
+        // 出している間はアプリの窓にする（閉じたら外す。Settings と同じ）。
+        if activity.window.application().is_none()
+            && let Some(app) = parent.application()
+        {
+            activity.window.set_application(Some(&app));
+        }
+        activity.window.present();
+        activity.start();
+    }
+
+    /// 読み直し、開いている間は 0.5 秒ごとに読み直す（macOS 版と同じ。daemon の記録と様子は 2 秒ごと。History の
+    /// タブは、見せたときと操作の後に）。
+    fn start(&self) {
+        (self.refresh)();
+        if self.ticking.replace(true) {
             return;
         }
-        let activity = Self::new(parent, engine);
-        if let Some(repo) = &repo {
-            (activity.choose)(repo);
-        }
-        OPEN.with(|o| o.replace(Some(activity.clone())));
-        activity.window.present();
+        let (w, refresh, ticking) = (
+            self.window.downgrade(),
+            self.refresh.clone(),
+            self.ticking.clone(),
+        );
+        glib::timeout_add_local(std::time::Duration::from_millis(500), move || {
+            if w.upgrade().is_none_or(|w| !w.is_visible()) {
+                ticking.set(false);
+                return glib::ControlFlow::Break;
+            }
+            refresh();
+            glib::ControlFlow::Continue
+        });
     }
 
     /// 開いている Activity のタブ（`operations` など）を選ぶ。
@@ -387,13 +529,16 @@ impl Activity {
         // アプリの窓にする: Ctrl+Q が効き、リポジトリの窓を閉じても開いている間はアプリが続く（macOS 版と同じ）。
         let mut builder = gtk::ApplicationWindow::builder()
             .title("Activity")
-            .default_width(980)
-            .default_height(640)
+            .default_width(900)
+            .default_height(560)
+            .hide_on_close(true)
             .child(&stack);
         if let Some(app) = parent.application() {
             builder = builder.application(&app);
         }
         let window = builder.build();
+        // macOS 版と同じく、最小 760×460。
+        window.set_size_request(760, 460);
         window.set_titlebar(Some(&header));
         // Ctrl+W（`win.close`）で閉じる（macOS 版の ⌘W）。
         let close = gio::SimpleAction::new("close", None);
@@ -420,6 +565,8 @@ impl Activity {
             if w > 0 && h > 0 {
                 crate::settings::set_string(WINDOW_SIZE, &format!("{w}x{h}"));
             }
+            // 隠すだけなので、アプリの窓から外す（ほかに窓がなければアプリを終える。Settings と同じ）。
+            window.set_application(None::<&gtk::Application>);
             glib::Propagation::Proceed
         });
 
@@ -509,16 +656,20 @@ impl Activity {
         // Operations: git の起動とコアの命令。
         let ops = gtk::Box::new(gtk::Orientation::Vertical, 8);
         margin(&ops);
-        let kinds =
-            gtk::DropDown::from_strings(&[tr!("All").as_str(), "git", tr!("Commands").as_str()]);
+        let kinds = Rc::new(Segmented::new(&[
+            tr!("All").as_str(),
+            "git",
+            tr!("Commands").as_str(),
+        ]));
         let failures = gtk::CheckButton::with_label(&tr!("Failures Only"));
-        let filter = gtk::SearchEntry::builder()
+        // 素の文字の欄（macOS 版の TextField。打つたびに絞り込む）。
+        let filter = gtk::Entry::builder()
             .placeholder_text(tr!("Filter"))
             .hexpand(true)
             .build();
         let export = gtk::Button::with_label(&tr!("Export JSON…"));
         let bar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        bar.append(&kinds);
+        bar.append(&kinds.root);
         bar.append(&failures);
         bar.append(&filter);
         bar.append(&export);
@@ -563,7 +714,15 @@ impl Activity {
                 detail.set_text(text.as_deref().unwrap_or_default());
             });
         }
+        let (op_header, op_header_line) = column_header(&[
+            (tr!("Time").as_str(), TIME),
+            ("", 16),
+            (tr!("Repository").as_str(), REPOSITORY),
+            (tr!("Content").as_str(), 0),
+            ("ms", 64),
+        ]);
         ops.append(&bar);
+        ops.append(&op_header);
         ops.append(&scrolled);
         ops.append(&op_detail_scrolled);
         ops.append(&label(
@@ -574,11 +733,12 @@ impl Activity {
         // daemon 越しのリポジトリの記録（裏で 2 秒ごとに読む。macOS 版と同じく、名前はタブの名前）。
         let remote_records: Rc<RefCell<Vec<Value>>> = Rc::default();
         let refresh_ops = {
-            let (op_selected, op_rebuilding, op_detail, op_detail_scrolled) = (
+            let (op_selected, op_rebuilding, op_detail, op_detail_scrolled, op_header_line) = (
                 op_selected.clone(),
                 op_rebuilding.clone(),
                 op_detail.clone(),
                 op_detail_scrolled.clone(),
+                op_header_line.clone(),
             );
             let (op_list, kinds, failures, filter, entries, remote_records) = (
                 op_list.clone(),
@@ -620,6 +780,7 @@ impl Activity {
                                 .unwrap_or_default()
                             {
                                 r["remote"] = json!(entry.name);
+                                r["remoteKey"] = json!(entry.key());
                                 loaded.push(r);
                             }
                         }
@@ -679,22 +840,16 @@ impl Activity {
                     })
                     .collect();
                 let name_width = repository_width(&op_list, &names);
+                set_column_width(&op_header_line, 2, name_width);
                 for (r, name) in shown.into_iter().zip(names) {
                     let ok = r["ok"].as_bool();
                     let label_text = r["label"].as_str().unwrap_or_default();
-                    let repo_path = r["repo"].as_str().unwrap_or_default();
                     let mark = match ok {
                         None => ("●", "activity-warning"),
                         Some(true) => ("✓", "activity-success"),
                         Some(false) => ("✗", "activity-error"),
                     };
                     let remote = r["remote"].as_str();
-                    let mut content = label_text.to_owned();
-                    if ok.is_none()
-                        && let Some(p) = r["progress"].as_str()
-                    {
-                        content.push_str(&format!("  {p}"));
-                    }
                     let duration = r["duration"].as_f64().map_or("…".to_owned(), ms);
                     let line = row(&[
                         (
@@ -704,37 +859,56 @@ impl Activity {
                         ),
                         (mark.0, 16, &[mark.1]),
                         (&name, name_width, &[]),
-                        (&content, 0, &[]),
+                        (label_text, 0, &[]),
                         (&duration, 64, &["numeric"]),
                     ]);
-                    let mut tip = format!("{repo_path}\n{label_text}");
-                    if let Some(e) = r["error"].as_str() {
-                        tip.push_str(&format!("\n\n{e}"));
+                    let tip = record_detail(r);
+                    let key = record_key(r);
+                    // 中身の列: 内容（説明は内容だけ）、走っていれば進み具合（小さく薄く）、右寄せの「取り消す」
+                    // （macOS 版と同じ）。
+                    let content_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+                    content_box.set_hexpand(true);
+                    if let Some(content) = line
+                        .first_child()
+                        .and_then(|c| c.next_sibling())
+                        .and_then(|c| c.next_sibling())
+                        .and_then(|c| c.next_sibling())
+                        && let Some(before) = content.prev_sibling()
+                    {
+                        line.remove(&content);
+                        content.set_hexpand(false);
+                        content.set_tooltip_text(Some(label_text));
+                        content_box.append(&content);
+                        line.insert_child_after(&content_box, Some(&before));
                     }
-                    line.set_tooltip_text(Some(&tip));
-                    let key = format!(
-                        "{}:{}",
-                        remote.unwrap_or_default(),
-                        r["seq"].as_u64().unwrap_or(0)
-                    );
+                    if ok.is_none()
+                        && let Some(p) = r["progress"].as_str()
+                    {
+                        let progress = label(p, &["caption", "dim-label"]);
+                        progress.set_ellipsize(gtk::pango::EllipsizeMode::End);
+                        content_box.append(&progress);
+                    }
                     line.set_widget_name(&key);
                     // SAFETY: 鍵 "detail" には、いつも String を入れて String で読む。
                     unsafe { line.set_data("detail", tip.clone()) };
                     let reselect = wanted.as_deref() == Some(key.as_str());
                     // 走っていて取り消せる操作には「取り消す」。
                     if ok.is_none() && r["cancellable"].as_bool() == Some(true) {
+                        let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+                        spacer.set_hexpand(true);
+                        content_box.append(&spacer);
                         let cancel = gtk::Button::with_label(&tr!("Cancel Operation"));
-                        cancel.add_css_class("flat");
+                        cancel.add_css_class("activity-small");
                         let seq = r["seq"].as_u64().unwrap_or(0);
-                        let remote = remote.map(str::to_owned);
+                        let remote = remote.and(r["remoteKey"].as_str()).map(str::to_owned);
                         let entries = entries.clone();
                         cancel.connect_clicked(move |_| {
-                            if let Some(name) = &remote {
+                            if let Some(key) = &remote {
                                 // daemon への往復なので、裏の糸で（macOS 版と同じ）。
                                 let repo = entries
                                     .borrow()
                                     .iter()
-                                    .find(|e| e.name == *name)
+                                    .find(|e| e.key() == *key)
                                     .map(|e| e.repo.clone());
                                 if let Some(repo) = repo {
                                     let command = json!({ "op": "cancelActivity", "seq": seq, "remote": true });
@@ -746,7 +920,7 @@ impl Activity {
                                 amonhen_model::activity::cancel(seq);
                             }
                         });
-                        line.append(&cancel);
+                        content_box.append(&cancel);
                     }
                     op_list.append(&line);
                     if reselect
@@ -757,28 +931,35 @@ impl Activity {
                     }
                 }
                 op_rebuilding.set(false);
-                // 選んでいた記録が絞り込みで消えたら、詳細も消す。
-                if op_list.selected_row().is_none() && op_selected.borrow().is_some() {
-                    op_selected.replace(None);
-                    op_detail.set_text("");
-                    op_detail_scrolled.set_visible(false);
+                // 選んでいた記録が絞り込みで隠れても、詳細は出したまま（macOS 版と同じく、すべての記録から探す）。
+                // 記録そのものがなくなったら消す。
+                if op_list.selected_row().is_none() {
+                    let wanted = op_selected.borrow().clone();
+                    match wanted.and_then(|w| records.iter().find(|r| record_key(r) == w)) {
+                        Some(r) => op_detail.set_text(&record_detail(r)),
+                        None => {
+                            op_selected.replace(None);
+                            op_detail.set_text("");
+                            op_detail_scrolled.set_visible(false);
+                        }
+                    }
                 }
             }
         };
         // 絞り込みを変えたら、すぐに出し直す。
         let refresh_ops = Rc::new(refresh_ops);
         let r = refresh_ops.clone();
-        kinds.connect_selected_notify(move |_| r());
+        kinds.connect_changed(move || r());
         let r = refresh_ops.clone();
         failures.connect_toggled(move |_| r());
         let r = refresh_ops.clone();
-        filter.connect_search_changed(move |_| r());
+        filter.connect_changed(move |_| r());
         refreshers.push(Box::new(move || refresh_ops()));
         let w = window.downgrade();
         export.connect_clicked(move |_| {
             let Some(window) = w.upgrade() else { return };
+            // 題は付けない（macOS 版の NSSavePanel と同じ）。
             let dialog = gtk::FileDialog::builder()
-                .title(tr!("Export JSON"))
                 .initial_name("amonhen-activity.json")
                 .modal(true)
                 .build();
@@ -830,9 +1011,9 @@ impl Activity {
                 let repo = actions.repo().unwrap_or_else(|| entry.repo.clone());
                 let (undo_list, selected, w) = (undo_list.clone(), selected.clone(), w.clone());
                 glib::spawn_future_local(async move {
+                    let r = repo.clone();
                     let reply: Value = gio::spawn_blocking(move || {
-                        serde_json::from_str(&repo.run_json(r#"{"op":"undoLog"}"#))
-                            .unwrap_or_default()
+                        serde_json::from_str(&r.run_json(r#"{"op":"undoLog"}"#)).unwrap_or_default()
                     })
                     .await
                     .unwrap_or_default();
@@ -863,7 +1044,8 @@ impl Activity {
                         } else {
                             tr!("Undo to Here")
                         });
-                        button.add_css_class("flat");
+                        // 枠のあるボタン（macOS 版と同じ）。
+                        button.set_valign(gtk::Align::Center);
                         button.set_tooltip_text(Some(&if i == 0 {
                             tr!("Undo this operation.")
                         } else {
@@ -872,7 +1054,8 @@ impl Activity {
                                 count = i + 1
                             )
                         }));
-                        let (a, w) = (actions.clone(), w.clone());
+                        // 読んだ worktree の記録を戻す（読み直すまでの間に書き込む先を替えても）。
+                        let (a, w, repo) = (actions.clone(), w.clone(), repo.clone());
                         let title = if i == 0 {
                             tr!(
                                 "Undo “{label}”?",
@@ -883,7 +1066,8 @@ impl Activity {
                         };
                         // 戻す前に確かめる（macOS 版と同じ）。
                         button.connect_clicked(move |_| {
-                            let (a, w, title) = (a.clone(), w.clone(), title.clone());
+                            let (a, w, title, repo) =
+                                (a.clone(), w.clone(), title.clone(), repo.clone());
                             glib::spawn_future_local(async move {
                                 let sheet = crate::sheets::Sheet::new(
                                     w.upgrade().map(|w| w.upcast::<gtk::Window>()).as_ref(),
@@ -892,7 +1076,11 @@ impl Activity {
                                 );
                                 sheet.buttons("Undo", false, None);
                                 if sheet.run().await == crate::sheets::Response::Ok {
-                                    a.perform_sequence(vec![json!({ "op": "undo" }); i + 1]);
+                                    a.perform_in(
+                                        repo,
+                                        vec![json!({ "op": "undo" }); i + 1],
+                                        |_| {},
+                                    );
                                 }
                             });
                         });
@@ -908,6 +1096,16 @@ impl Activity {
         let perf = gtk::Box::new(gtk::Orientation::Vertical, 8);
         margin(&perf);
         let (scrolled, perf_list) = list();
+        // 列の見出しは一覧の上に置き、流れない（macOS 版の表と同じ）。
+        let (perf_header, _) = column_header(&[
+            (tr!("Item").as_str(), 0),
+            (tr!("Count").as_str(), 60),
+            ("p50 ms", 70),
+            ("p95 ms", 70),
+            (tr!("Max ms").as_str(), 70),
+            (tr!("Last ms").as_str(), 70),
+        ]);
+        perf.append(&perf_header);
         perf.append(&scrolled);
         perf.append(&label(
             &tr!("The last 500 of each since the app started. Orange when p95 exceeds twice a frame (16.7 ms)."),
@@ -929,14 +1127,6 @@ impl Activity {
                 }
                 let mut metrics = metrics;
                 perf_list.remove_all();
-                perf_list.append(&row(&[
-                    (&tr!("Item"), 0, &["dim-label"]),
-                    (&tr!("Count"), 60, &["dim-label"]),
-                    ("p50 ms", 70, &["dim-label"]),
-                    ("p95 ms", 70, &["dim-label"]),
-                    (&tr!("Max ms"), 70, &["dim-label"]),
-                    (&tr!("Last ms"), 70, &["dim-label"]),
-                ]));
                 metrics.sort_by(|a, b| a.0.cmp(&b.0));
                 for (name, values) in metrics {
                     let last = *values.last().unwrap_or(&0.0);
@@ -966,6 +1156,12 @@ impl Activity {
         let events = gtk::Box::new(gtk::Orientation::Vertical, 8);
         margin(&events);
         let (scrolled, event_list) = list();
+        let (event_header, event_header_line) = column_header(&[
+            (tr!("Time").as_str(), TIME),
+            (tr!("Repository").as_str(), REPOSITORY),
+            (tr!("Content").as_str(), 0),
+        ]);
+        events.append(&event_header);
         events.append(&scrolled);
         events.append(&label(
             &tr!("File change notices and the reloads they cause (newest first, up to 500)."),
@@ -974,6 +1170,7 @@ impl Activity {
         stack.add_titled(&events, Some("events"), &tr!("Events"));
         let refresh_events = {
             let event_list = event_list.clone();
+            let header_line = event_header_line.clone();
             let last = std::cell::Cell::new(0);
             move || {
                 let items: Vec<(i64, String, String)> =
@@ -984,6 +1181,7 @@ impl Activity {
                 event_list.remove_all();
                 let repos: Vec<&str> = items.iter().map(|(_, repo, _)| repo.as_str()).collect();
                 let name_width = repository_width(&event_list, &repos);
+                set_column_width(&header_line, 1, name_width);
                 for (t, repo, text) in &items {
                     event_list.append(&row(&[
                         (&time(*t), TIME, &["numeric", "dim-label"]),
@@ -998,22 +1196,46 @@ impl Activity {
         // Daemon: 共有の daemon の様子と、起動・停止。
         let daemon = gtk::Box::new(gtk::Orientation::Vertical, 8);
         margin(&daemon);
-        let state = label(&tr!("Checking…"), &["heading"]);
-        let detail = label("", &["caption", "numeric"]);
-        // 選べるのは動いているときの pid・ソケットの行だけ（macOS 版と同じ）。選べるラベルは最初のフォーカスを取って
-        // 全体を選んだ形で出るので、フォーカスは取らない（マウスで選んでコピーはできる）。
-        selectable(&detail, false);
+        // 見出しの前の丸: 動いていれば塗った緑、そうでなければ（調べている間も）白抜きの薄い色（macOS 版の
+        // circle.fill・circle の Label）。
+        let state_mark = label("○", &["heading", "dim-label"]);
+        let state = label(&tr!("Checking…"), &["heading", "dim-label"]);
+        let state_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        state_row.append(&state_mark);
+        state_row.append(&state);
+        // 動いていなければ（調べている間も）、ひとりでに起動することの説明。動いていれば pid などの行。
+        let not_running = tr!(
+            "It starts automatically when you open a repository through the daemon (right-click in the repository list, or Settings > Performance)."
+        );
+        let detail = label(&not_running, &["caption", "dim-label"]);
+        detail.set_wrap(true);
+        // 選べるのは動いているときのソケットの行だけ（macOS 版と同じ）。選べるラベルは最初のフォーカスを取って全体を
+        // 選んだ形で出るので、フォーカスは取らない（マウスで選んでコピーはできる）。
+        let socket = label("", &["caption", "dim-label"]);
+        selectable(&socket, true);
+        socket.set_visible(false);
         let toggle = gtk::Button::with_label(&tr!("Start"));
         let top = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         let texts = gtk::Box::new(gtk::Orientation::Vertical, 2);
         texts.set_hexpand(true);
-        texts.append(&state);
+        texts.append(&state_row);
         texts.append(&detail);
+        texts.append(&socket);
         top.append(&texts);
         top.append(&toggle);
         let (scrolled, repo_list) = list();
         daemon.append(&top);
         daemon.append(&label(&tr!("Open Repositories"), &["heading"]));
+        // 列の見出しは一覧の上に置き、流れない。daemon が動いていなくても出す（macOS 版の表と同じ）。
+        let (repo_header, _) = column_header(&[
+            (tr!("Repository").as_str(), 0),
+            ("SSH", 150),
+            (tr!("Connections").as_str(), 150),
+            ("History", 70),
+            (tr!("Watching").as_str(), 70),
+            (tr!("Search Index").as_str(), 170),
+        ]);
+        daemon.append(&repo_header);
         daemon.append(&scrolled);
         // このアプリから daemon 越しに開いているリポジトリ（macOS 版と同じ列）。
         let (scrolled, conn_list) = list();
@@ -1022,6 +1244,14 @@ impl Activity {
             &tr!("This App’s Connections to the Daemon"),
             &["heading"],
         ));
+        let (conn_header, _) = column_header(&[
+            (tr!("Repository").as_str(), 0),
+            (tr!("Location").as_str(), 190),
+            (tr!("Status").as_str(), 110),
+            (tr!("Sent · Received").as_str(), 160),
+            (tr!("Engine on the SSH Host").as_str(), 240),
+        ]);
+        daemon.append(&conn_header);
         daemon.append(&scrolled);
         {
             let (conn_list, entries) = (conn_list.clone(), entries.clone());
@@ -1045,13 +1275,6 @@ impl Activity {
                     return;
                 }
                 conn_list.remove_all();
-                conn_list.append(&row(&[
-                    (&tr!("Repository"), 0, &["dim-label"]),
-                    (&tr!("Location"), 190, &["dim-label"]),
-                    (&tr!("Status"), 110, &["dim-label"]),
-                    (&tr!("Sent · Received"), 160, &["dim-label"]),
-                    (&tr!("Engine on the SSH Host"), 240, &["dim-label"]),
-                ]));
                 for (name, kind, closed, traffic, engine) in rows {
                     let (status, status_css): (String, &[&str]) = match &closed {
                         Some(_) => (tr!("Disconnected"), &["activity-error"]),
@@ -1070,6 +1293,8 @@ impl Activity {
                         (&traffic, 160, &["numeric"]),
                         (engine_text, 240, &["dim-label"]),
                     ]);
+                    // エンジンのパスは頭を切る（macOS 版と同じ）。
+                    ellipsize_start(&line, 4);
                     // 切れた理由と、SSH 先のエンジンの全文は説明に。
                     let mut cell = line.first_child();
                     let mut i = 0;
@@ -1092,7 +1317,10 @@ impl Activity {
         daemon.append(&idle_exit);
         stack.add_titled(&daemon, Some("daemon"), "Daemon");
         let running = Rc::new(std::cell::Cell::new(false));
+        // 0.5 秒ごとの呼び出しの数（4 回に 1 回読む）。起動・停止の後は 0 に戻して、すぐに読ませる。
+        let daemon_tick = Rc::new(std::cell::Cell::new(0u32));
         let refresh_daemon = {
+            let tick = daemon_tick.clone();
             let (state, detail, toggle, repo_list, running, idle_exit) = (
                 state.clone(),
                 detail.clone(),
@@ -1101,9 +1329,10 @@ impl Activity {
                 running.clone(),
                 idle_exit.clone(),
             );
+            let (state_mark, socket, not_running) =
+                (state_mark.clone(), socket.clone(), not_running.clone());
             // 2 秒ごとに、前の問い合わせが返ってから（macOS 版と同じ。遅いソケットで積み重ねない）。
             let loading = Rc::new(std::cell::Cell::new(false));
-            let tick = std::cell::Cell::new(0u32);
             let last = Rc::new(std::cell::Cell::new(0));
             move || {
                 tick.set(tick.get() + 1);
@@ -1121,6 +1350,8 @@ impl Activity {
                     last.clone(),
                     idle_exit.clone(),
                 );
+                let (state_mark, socket, not_running) =
+                    (state_mark.clone(), socket.clone(), not_running.clone());
                 glib::spawn_future_local(async move {
                     let status = gio::spawn_blocking(|| {
                         amonhen_remote::local::control("status")
@@ -1148,25 +1379,42 @@ impl Activity {
                     if !same_repos {
                         repo_list.remove_all();
                     }
+                    let shown = status.is_some();
+                    state_mark.set_text(if shown { "●" } else { "○" });
+                    for l in [&state_mark, &state] {
+                        if shown {
+                            l.remove_css_class("dim-label");
+                            l.add_css_class("activity-success");
+                        } else {
+                            l.remove_css_class("activity-success");
+                            l.add_css_class("dim-label");
+                        }
+                    }
+                    if shown {
+                        detail.remove_css_class("dim-label");
+                        detail.add_css_class("numeric");
+                    } else {
+                        detail.remove_css_class("numeric");
+                        detail.add_css_class("dim-label");
+                    }
+                    socket.set_visible(shown);
                     let Some(d) = status else {
                         state.set_text(&tr!("The shared daemon isn’t running"));
-                        selectable(&detail, false);
-                        detail.set_text(&tr!("It starts automatically when you open a repository through the daemon (right-click in the repository list, or Settings > Performance)."));
+                        detail.set_text(&not_running);
                         toggle.set_label(&tr!("Start"));
                         toggle.set_tooltip_text(None);
                         return;
                     };
                     state.set_text(&tr!("The shared daemon is running"));
-                    selectable(&detail, true);
                     detail.set_text(&tr!(
-                        "pid {pid} · version {version} (build {build}) · up {uptime} · connections {connections}\n{socket}",
+                        "pid {pid} · version {version} (build {build}) · up {uptime} · connections {connections}",
                         pid = d["pid"],
                         version = d["version"].as_str().unwrap_or_default(),
                         build = d["build"].as_str().unwrap_or_default(),
                         uptime = duration(d["uptimeMs"].as_u64().unwrap_or(0)),
                         connections = d["connections"],
-                        socket = d["socket"].as_str().unwrap_or_default(),
                     ));
+                    socket.set_text(d["socket"].as_str().unwrap_or_default());
                     toggle.set_label(&tr!("Stop"));
                     toggle.set_tooltip_text(Some(&tr!(
                         "Repositories opened through the daemon get disconnected (Reconnect starts it again)."
@@ -1174,15 +1422,6 @@ impl Activity {
                     if same_repos {
                         return;
                     }
-                    // 列の見出し（macOS 版の表と同じ列）。
-                    repo_list.append(&row(&[
-                        (&tr!("Repository"), 0, &["dim-label"]),
-                        ("SSH", 150, &["dim-label"]),
-                        (&tr!("Connections"), 150, &["dim-label"]),
-                        ("History", 70, &["dim-label"]),
-                        (&tr!("Watching"), 70, &["dim-label"]),
-                        (&tr!("Search Index"), 170, &["dim-label"]),
-                    ]));
                     for r in d["repos"].as_array().into_iter().flatten() {
                         let yes = |key: &str| {
                             if r[key].as_bool() == Some(true) {
@@ -1243,6 +1482,8 @@ impl Activity {
                             (&index, 170, &["numeric"]),
                         ]);
                         line.set_tooltip_text(Some(path));
+                        // パスは頭を切る（終わりの名前が見える。macOS 版と同じ）。
+                        ellipsize_start(&line, 0);
                         if let (Some(tip), Some(cell)) =
                             (ssh_tip, line.first_child().and_then(|c| c.next_sibling()))
                         {
@@ -1253,10 +1494,13 @@ impl Activity {
                 });
             }
         };
-        refreshers.push(Box::new(refresh_daemon));
+        let refresh_daemon = Rc::new(refresh_daemon);
+        let r = refresh_daemon.clone();
+        refreshers.push(Box::new(move || r()));
         let w = window.downgrade();
         toggle.connect_clicked(move |_| {
             let (running, engine, w) = (running.get(), engine.clone(), w.clone());
+            let (refresh_daemon, tick) = (refresh_daemon.clone(), daemon_tick.clone());
             glib::spawn_future_local(async move {
                 let result = gio::spawn_blocking(move || {
                     if running {
@@ -1268,11 +1512,13 @@ impl Activity {
                     }
                 })
                 .await;
-                // 起動できなければ知らせる（macOS 版と同じ）。
+                // 2 秒待たずに、すぐに様子を読み直す（macOS 版の loadDaemon(force: true)）。
+                tick.set(0);
+                refresh_daemon();
+                // 起動できなければ、エラーの文そのものを見出しにして知らせる（macOS 版の NSAlert(error:)）。
                 if let Ok(Err(e)) = result {
                     gtk::AlertDialog::builder()
-                        .message(tr!("Couldn’t start the shared daemon"))
-                        .detail(e)
+                        .message(e)
                         .modal(true)
                         .build()
                         .show(w.upgrade().as_ref());
@@ -1280,24 +1526,11 @@ impl Activity {
             });
         });
 
-        // 開いている間は 0.5 秒ごとに読み直す（macOS 版と同じ。daemon の記録と様子は 2 秒ごと。History のタブは、
-        // 見せたときと操作の後に）。
-        let refresh_all = {
-            let refreshers = refreshers;
-            move || {
-                for f in refreshers.iter() {
-                    f();
-                }
+        // すべてのタブを読み直す（出すたびと、出している間は 0.5 秒ごと。`start`）。
+        let refresh_all: Rc<dyn Fn()> = Rc::new(move || {
+            for f in refreshers.iter() {
+                f();
             }
-        };
-        refresh_all();
-        let w = window.downgrade();
-        glib::timeout_add_local(std::time::Duration::from_millis(500), move || {
-            if w.upgrade().is_none_or(|w| !w.is_visible()) {
-                return glib::ControlFlow::Break;
-            }
-            refresh_all();
-            glib::ControlFlow::Continue
         });
         let r = refresh_undo.clone();
         stack.connect_visible_child_name_notify(move |s| {
@@ -1337,24 +1570,11 @@ impl Activity {
         if let Some(f) = on_selected.borrow().clone() {
             f();
         }
-        // 開いた窓の前のタブのリポジトリを選ぶ（一覧になければそのまま）。
-        let choose: Choose = {
-            let (entries, repo_choice) = (entries.clone(), repo_choice.clone());
-            Rc::new(move |repo: &Arc<Repository>| {
-                refresh_repos();
-                let index = entries
-                    .borrow()
-                    .iter()
-                    .position(|e| Arc::ptr_eq(&e.repo, repo));
-                if let Some(i) = index {
-                    repo_choice.set_selected(i as u32);
-                }
-            })
-        };
         Self {
             window,
             stack,
-            choose,
+            refresh: refresh_all,
+            ticking: Rc::default(),
         }
     }
 }

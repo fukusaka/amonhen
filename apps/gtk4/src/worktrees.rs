@@ -326,6 +326,11 @@ fn watch(
     }
 }
 
+/// 窓の場所が SSH 先か（`ssh://…`、`daemon:ssh://…`）。手元の `daemon:/path` は違う。
+fn on_ssh(location: &str) -> bool {
+    location.starts_with("ssh://") || location.starts_with("daemon:ssh://")
+}
+
 /// 窓の場所（手元のパス、`daemon:…`、`ssh://…`）の、パスを `path` に替えたもの。
 fn location_for(location: &str, path: &str) -> String {
     if let Some(rest) = location.strip_prefix("ssh://") {
@@ -340,6 +345,9 @@ fn location_for(location: &str, path: &str) -> String {
 }
 
 /// 窓の worktree: 一覧と変更の数。
+/// worktree を開けなかったときの知らせ（見出し、理由）。
+type OpenFailure = Rc<dyn Fn(String, String)>;
+
 pub struct Worktrees {
     opened: RefCell<Option<Arc<Repository>>>,
     /// 窓の場所（ほかの worktree を同じつなぎ方で開く）。
@@ -351,10 +359,14 @@ pub struct Worktrees {
     slots: RefCell<Vec<Rc<Slot>>>,
     /// 開いている途中の worktree（重ねて開かない）。
     opening: RefCell<HashSet<String>>,
+    /// 最後に選んだ、開くのを待っている worktree（開くのを待つ間にほかを選んだら、開き終えても切り替えない）。
+    wanted: RefCell<Option<String>>,
     /// 書き込む先を変えた（そのリポジトリ）。
     on_edit: RefCell<Option<EditListener>>,
     /// 見張りの知らせ。
     notify: RefCell<Option<Notify>>,
+    /// worktree を開けなかった（見出し、理由。ステータスバーの失敗の帯に出す）。
+    on_open_failure: RefCell<Option<OpenFailure>>,
     list: RefCell<Vec<Info>>,
     counts: RefCell<HashMap<String, usize>>,
     /// ほかの worktree の status の指紋（変わっていなければ画面を変えない）。
@@ -388,6 +400,7 @@ impl Worktrees {
             editing: RefCell::default(),
             slots: RefCell::default(),
             opening: RefCell::default(),
+            wanted: RefCell::default(),
             on_edit: RefCell::default(),
             notify: RefCell::default(),
             list: RefCell::default(),
@@ -398,6 +411,7 @@ impl Worktrees {
             loading: Cell::new(0),
             on_list: RefCell::default(),
             on_counts: RefCell::default(),
+            on_open_failure: RefCell::default(),
             pending,
         })
     }
@@ -555,6 +569,11 @@ impl Worktrees {
         self.on_edit.replace(Some(Rc::new(f)));
     }
 
+    /// 書き込む先にする worktree を開けなかったら `f(見出し, 理由)` を呼ぶ（macOS 版と同じくステータスバーに）。
+    pub fn connect_open_failure(&self, f: impl Fn(String, String) + 'static) {
+        self.on_open_failure.replace(Some(Rc::new(f)));
+    }
+
     /// 開いた worktree の見張りの知らせを `notify` で送る。
     pub fn set_notify(&self, notify: Notify) {
         self.notify.replace(Some(notify));
@@ -564,6 +583,7 @@ impl Worktrees {
     pub fn edit(self: &Rc<Self>, path: &str) {
         let key = canonical(path, self.remote);
         if key == self.editing_key() {
+            self.wanted.replace(None);
             return;
         }
         if key == self.opened_key() {
@@ -573,6 +593,7 @@ impl Worktrees {
         if let Some(slot) = known {
             return self.activate(Some(slot));
         }
+        self.wanted.replace(Some(key.clone()));
         if !self.opening.borrow_mut().insert(key.clone()) {
             return;
         }
@@ -594,15 +615,18 @@ impl Worktrees {
                 "Worktrees: open one",
                 started.elapsed().as_secs_f64() * 1000.0,
             );
+            // 開く間にほかを選んでいたら、使わない（最後に選んだものにする。macOS 版と同じ）。
+            if this.wanted.borrow().as_deref() != Some(key.as_str()) {
+                return;
+            }
             let repo = match opened {
                 Ok(repo) => repo,
                 Err(e) => {
-                    let window = gtk::Window::list_toplevels()
-                        .into_iter()
-                        .filter_map(|w| w.downcast::<gtk::Window>().ok())
-                        .find(|w| w.is_active());
-                    crate::sheets::inform(window.as_ref(), &tr!("Can’t open the worktree"), &e)
-                        .await;
+                    this.wanted.replace(None);
+                    let f = this.on_open_failure.borrow().clone();
+                    if let Some(f) = f {
+                        f(tr!("Can’t open the worktree"), e);
+                    }
                     return;
                 }
             };
@@ -622,6 +646,7 @@ impl Worktrees {
 
     /// 書き込む先を `slot`（None なら開いたリポジトリ）にする。開いたままにするのは最近の 3 つまで。
     fn activate(&self, slot: Option<Rc<Slot>>) {
+        self.wanted.replace(None);
         if let Some(slot) = &slot {
             let mut slots = self.slots.borrow_mut();
             slots.retain(|s| s.key != slot.key);
@@ -930,7 +955,8 @@ pub fn new_worktree(
         .unwrap_or_default();
     let (parent, repo_name) = base.rsplit_once('/').unwrap_or(("", base.as_str()));
     let (parent, repo_name) = (parent.to_owned(), repo_name.to_owned());
-    let remote = worktrees.remote;
+    // ~ はこの機械のホーム。SSH 先のパスはそのまま送る（手元の daemon 越しなら、この機械のパス。macOS 版と同じ）。
+    let on_ssh = on_ssh(&worktrees.location);
     let actions = actions.clone();
     glib::spawn_future_local(async move {
         let sheet = Sheet::unnamed(
@@ -981,12 +1007,10 @@ pub fn new_worktree(
                 .map(|t| t.to_string())
                 .unwrap_or_default();
         }
-        // ~ は手元のホーム（SSH 先のパスはそのまま）。
-        if !remote
-            && let Some(rest) = path.strip_prefix("~/")
-            && let Some(home) = std::env::var_os("HOME")
-        {
-            path = format!("{}/{rest}", home.to_string_lossy());
+        if !on_ssh {
+            path = crate::repos::expand_tilde(&path)
+                .to_string_lossy()
+                .into_owned();
         }
         let a = actions.clone();
         actions.perform_with(
@@ -1003,6 +1027,47 @@ pub fn new_worktree(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 開くのを待つ間にほかを選んだら、開き終えても（ここでは開けなくても）その worktree にしない。
+    #[test]
+    fn the_last_pick_wins() {
+        let context = glib::MainContext::new();
+        context
+            .with_thread_default(|| {
+                let dir = std::env::temp_dir().join(format!("amonhen-pick-{}", std::process::id()));
+                let pending = Rc::new(Cell::new(0));
+                let w = Worktrees::new(&dir.join("a").to_string_lossy(), pending.clone());
+                let failures = Rc::new(Cell::new(0));
+                let f = failures.clone();
+                w.connect_open_failure(move |_, _| f.set(f.get() + 1));
+                let run = || {
+                    while pending.get() > 0 {
+                        context.iteration(true);
+                    }
+                };
+                // B を待つ間に、今の worktree を選び直した: B は開けなくても知らせない（もう選んでいない）。
+                w.edit(&dir.join("b").to_string_lossy());
+                assert!(w.wanted.borrow().is_some());
+                w.edit(&w.editing_key());
+                assert!(w.wanted.borrow().is_none());
+                run();
+                assert_eq!(failures.get(), 0);
+                // B だけを選んだら、開けなかったことを知らせる。
+                w.edit(&dir.join("b").to_string_lossy());
+                run();
+                assert_eq!(failures.get(), 1);
+                assert!(w.wanted.borrow().is_none());
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn only_ssh_locations_keep_the_tilde() {
+        assert!(!on_ssh("/home/me/repo"));
+        assert!(!on_ssh("daemon:/home/me/repo"));
+        assert!(on_ssh("ssh://host/repo"));
+        assert!(on_ssh("daemon:ssh://host/repo"));
+    }
 
     fn info(path: &str) -> Info {
         Info {
