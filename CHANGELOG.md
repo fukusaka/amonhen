@@ -966,6 +966,9 @@ and Repository Settings shows the app's pages of git settings.
 
 #### Fixed
 
+- A folder opened through a symbolic link (macOS's `/var`, for one) selects its own repository at startup rather
+  than one of its submodules.
+- An expanded Submodules, Tags or Stashes group is read again after switching repositories, rather than staying empty.
 - With the engine, deleting a branch that isn't merged now offers Delete Anyway instead of only showing git's error.
 - History no longer stays empty when it is opened while the engine's History is still being read; the view's first
   request for rows made the extension think there were none.
