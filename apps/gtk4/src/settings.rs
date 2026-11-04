@@ -434,26 +434,18 @@ fn accounts() -> gtk::Box {
     )])
 }
 
+/// 見出しと、枠で囲んだ行の一覧（macOS 版の `.grouped` の Form の Section。説明も 1 行として中に入る）。
 fn section(title: Option<&str>, items: &[gtk::Widget]) -> gtk::Box {
-    let b = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    if let Some(title) = title {
-        let l = gtk::Label::new(Some(title));
-        l.set_xalign(0.0);
-        l.add_css_class("heading");
-        b.append(&l);
-    }
-    for w in items {
-        b.append(w);
-    }
-    b
+    crate::reposettings::section(title, items)
 }
 
 fn page(sections: &[gtk::Box]) -> gtk::Box {
+    // 余白は Git のタブのページ（`reposettings::page`）と同じ。
     let b = gtk::Box::new(gtk::Orientation::Vertical, 18);
     b.set_margin_top(18);
     b.set_margin_bottom(18);
-    b.set_margin_start(24);
-    b.set_margin_end(24);
+    b.set_margin_start(20);
+    b.set_margin_end(20);
     for s in sections {
         b.append(s);
     }
@@ -474,6 +466,7 @@ pub fn show(near: &impl IsA<gtk::Widget>) {
         w.present();
         return;
     }
+    crate::reposettings::install_css();
     let stack = gtk::Stack::new();
 
     // General

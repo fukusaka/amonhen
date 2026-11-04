@@ -426,8 +426,8 @@ pub(crate) fn save_shortcut(save: &gtk::Button, f: impl Fn() + 'static) -> gtk::
     shortcuts
 }
 
-/// 色（テーマの色を使う）。
-fn install_css() {
+/// 色（テーマの色を使う）と、枠で囲んだ行の余白（アプリの Settings の節も使う）。
+pub(crate) fn install_css() {
     thread_local! {
         static DONE: Cell<bool> = const { Cell::new(false) };
     }
