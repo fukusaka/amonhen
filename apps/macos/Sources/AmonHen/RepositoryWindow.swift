@@ -705,19 +705,23 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     }
 
     private func submoduleAction(_ path: String?, _ action: SidebarViewController.SubmoduleAction) {
+        // 選んだときの worktree で実行する（シートを出している間に書き込む先が替わっても）。
+        let actions = self.actions
         let perform: ([String: Any]) -> Void = { [weak self] command in
-            self?.actions.perform(command) { [weak self] _ in self?.reloadSubmodules() }
+            actions.perform(command) { [weak self] _ in self?.reloadSubmodules() }
         }
-        if action == .add { return SubmoduleSheet.add(in: window, perform: perform) }
-        if action == .update { return SubmoduleSheet.update(in: window, paths: path.map { [$0] } ?? [], perform: perform) }
+        if action == .add { return SubmoduleSheet.add(in: window, actions: actions, perform: perform) }
+        if action == .update {
+            return SubmoduleSheet.update(in: window, actions: actions, paths: path.map { [$0] } ?? [], perform: perform)
+        }
         if action == .sync { return perform(["op": "changeSubmodule", "change": ["kind": "sync", "recursive": true]]) }
         guard let path else { return }
         let submodule = submodules.first { $0.path == path }
             ?? SubmoduleState(path: path, name: path, url: nil, branch: nil, initialized: true, moved: false, changed: false, conflict: false)
         switch action {
-        case .setURL: SubmoduleSheet.setURL(in: window, submodule: submodule, perform: perform)
-        case .setBranch: SubmoduleSheet.setBranch(in: window, submodule: submodule, perform: perform)
-        case .remove: SubmoduleSheet.remove(in: window, submodule: submodule, perform: perform)
+        case .setURL: SubmoduleSheet.setURL(in: window, actions: actions, submodule: submodule, perform: perform)
+        case .setBranch: SubmoduleSheet.setBranch(in: window, actions: actions, submodule: submodule, perform: perform)
+        case .remove: SubmoduleSheet.remove(in: window, actions: actions, submodule: submodule, perform: perform)
         case .add, .update, .sync: break
         }
     }
