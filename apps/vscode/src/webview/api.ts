@@ -7,6 +7,8 @@ export interface State {
   detailsWidth?: number;
   /** File History でマージも出すか */
   fileHistoryMerges?: boolean;
+  /** Repository Settings で出しているページ */
+  settingsPage?: string;
 }
 
 declare function acquireVsCodeApi(): {

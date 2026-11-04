@@ -23,7 +23,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | --- | :-: | :-: | :-: | :-: | --- |
 | Workspace rows switch the main view (Working Copy, History, Stashes, Reflog…) | ✓ | ✓ | △ | n/a | VSCode: Working Copy, History, Stashes and (with the engine) Reflog; no Conflicts. |
 | Conflicts row with a count while there are conflicts | ✓ | ✓ | △ | n/a | VSCode: A Conflicts group inside the Working Copy view. |
-| Stashes row with a count only when there are stashes | ✓ | ✓ | △ | n/a | VSCode: The Stashes section is always shown. |
+| Stashes row with a count only when there are stashes | ✓ | ✓ | ✓ | n/a | VSCode: The Stashes section. |
 | Range Diff row while a range diff is open | ✓ | ✓ | — | n/a |  |
 | Filter field over Branches, Remotes and Tags | ✓ | ✓ | △ | n/a | VSCode: The filter button on the sidebar's title asks for the words; the matches are listed flat. |
 | Several branches or tags selected at once | ✓ | ✓ | ✓ | n/a | VSCode: Merge into Current Branch, Delete Branch, favorites and Archive act on all of them. |
@@ -49,7 +49,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Submodules group (Update, Open in New Window) | ✓ | ✓ | ✓ | ✓ | CLI: `submodule`, `submodule update`. |
 | Submodule marks (not checked out, another commit, changes inside, conflict) and menus: Update… (recursive, remote), Edit URL, Branch to Follow, Remove (optionally .git/modules), Add, Sync URLs | ✓ | ✓ | — | ✓ | CLI: `submodule` (`add`, `remove`, `set-url`, `set-branch`, `sync`). |
 | Worktrees under Working Copy with change counts (✎ ⌂ ⑂) | ✓ | ✓ | ✓ | △ | VSCode: The marks are the rows' icons; a branch another worktree has checked out gets ⌂ or ⑂.<br>CLI: `worktree list --changes`. |
-| Marks for a shallow or partial clone (History) and a sparse checkout (Working Copy) | ✓ | ✓ | — | n/a |  |
+| Marks for a shallow or partial clone (History) and a sparse checkout (Working Copy) | ✓ | ✓ | △ | n/a | VSCode: Shallow and Partial above History (Partial fetches all contents when clicked); no sparse mark. |
 
 ## 1. Tabs and windows
 
@@ -120,22 +120,22 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| Settings page (pages, git line, source / ↩︎ / ⓘ per row) | ✓ | ✓ | — | n/a |  |
-| Author and Signing (signing choice, collected keys, mailmap) | ✓ | ✓ | — | △ | CLI: Via `amonhen run` (`signingKeys`, `configSet`). |
-| Commits: message template (none, shared, own, file) | ✓ | ✓ | — | △ | CLI: Via `amonhen run`. |
-| Branches: default branch override | ✓ | ✓ | — | △ | CLI: Via `amonhen run`. |
-| Operations: pull, fetch.prune, autostash, updateRefs, conflict style, rerere | ✓ | ✓ | — | △ | CLI: Via `amonhen run`. |
-| Working Copy: line endings, file mode, `.git/info/exclude` editor | ✓ | ✓ | — | △ | CLI: Via `amonhen run`. |
-| Remotes: table and sheet with a connection check | ✓ | ✓ | — | △ | CLI: Via `amonhen run`. |
-| Hooks: table, Enabled switch, script, Create Hook… | ✓ | ✓ | — | △ | CLI: Via `amonhen run`. |
-| LFS: installed, patterns, Track Pattern…, file count | ✓ | ✓ | — | △ | CLI: Via `amonhen run`. |
-| Keys and Values (git config table, Basic / Customized / All, Combined / Levels) | ✓ | ✓ | — | △ | CLI: Via `amonhen run` (`configList`, `configSet`). |
-| Rows disabled with the git version needed | ✓ | ✓ | — | n/a |  |
-| Repository's form on the git line (shallow, partial, sparse, maintenance) | ✓ | ✓ | — | △ | CLI: `status` notes shallow, partial and sparse repositories. |
-| Fetching and Folders: fetch more of a shallow clone (a count, up to a date, all) | ✓ | ✓ | — | △ | CLI: Via `amonhen run` (`deepen`, `unshallow`). |
-| Fetching and Folders: fetch all contents of a partial clone (git 2.36) | ✓ | ✓ | — | △ | CLI: Via `amonhen run` (`fetchAllContents`). |
-| Fetching and Folders: folders of a sparse checkout picked from HEAD's tree (git 2.25) | ✓ | ✓ | — | △ | CLI: Via `amonhen run` (`sparseCheckout`, `treeFolders`). |
-| Fetching and Folders: git maintenance switch (git 2.31) | ✓ | ✓ | — | △ | CLI: Via `amonhen run` (`maintenance`). |
+| Settings page (pages, git line, source / ↩︎ / ⓘ per row) | ✓ | ✓ | △ | n/a | VSCode: Repository Settings in the main view (with the engine), this repository only. |
+| Author and Signing (signing choice, collected keys, mailmap) | ✓ | ✓ | ✓ | △ | VSCode: Keys are collected for the current format only.<br>CLI: Via `amonhen run` (`signingKeys`, `configSet`). |
+| Commits: message template (none, shared, own, file) | ✓ | ✓ | △ | △ | VSCode: None, this repository's own (edited there) or a file; no shared templates.<br>CLI: Via `amonhen run`. |
+| Branches: default branch override | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
+| Operations: pull, fetch.prune, autostash, updateRefs, conflict style, rerere | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
+| Working Copy: line endings, file mode, `.git/info/exclude` editor | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
+| Remotes: table and sheet with a connection check | ✓ | ✓ | △ | △ | VSCode: The table with a row of buttons (Edit URL…, Push URL…, Check, Prune, Rename…, Remove…) and Add…; the values are asked in input boxes, not a sheet.<br>CLI: Via `amonhen run`. |
+| Hooks: table, Enabled switch, script, Create Hook… | ✓ | ✓ | ✓ | △ | VSCode: Open opens the script in VSCode's editor.<br>CLI: Via `amonhen run`. |
+| LFS: installed, patterns, Track Pattern…, file count | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
+| Keys and Values (git config table, Basic / Customized / All, Combined / Levels) | ✓ | ✓ | △ | △ | VSCode: Basic / Customized / All and search, with the value in effect and its source; values are edited in an input box; no Levels columns.<br>CLI: Via `amonhen run` (`configList`, `configSet`). |
+| Rows disabled with the git version needed | ✓ | ✓ | ✓ | n/a |  |
+| Repository's form on the git line (shallow, partial, sparse, maintenance) | ✓ | ✓ | ✓ | △ | CLI: `status` notes shallow, partial and sparse repositories. |
+| Fetching and Folders: fetch more of a shallow clone (a count, up to a date, all) | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run` (`deepen`, `unshallow`). |
+| Fetching and Folders: fetch all contents of a partial clone (git 2.36) | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run` (`fetchAllContents`). |
+| Fetching and Folders: folders of a sparse checkout picked from HEAD's tree (git 2.25) | ✓ | ✓ | ✓ | △ | VSCode: The folder is picked by walking HEAD's tree in a list.<br>CLI: Via `amonhen run` (`sparseCheckout`, `treeFolders`). |
+| Fetching and Folders: git maintenance switch (git 2.31) | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run` (`maintenance`). |
 
 ## 5. Toolbar
 
@@ -151,10 +151,10 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Rebase sheet drawing before and after | ✓ | ✓ | △ | △ | VSCode: A dialog with the rewrite preview as text.<br>CLI: `rewrite-preview` prints it; the rebase via `amonhen run`. |
 | Stash (message, include untracked) | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Stash: staged only, selected files only | — | — | — | — |  |
-| Pop the latest stash (asks first) | ✓ | ✓ | — | △ | VSCode: Pop per stash row, without asking.<br>CLI: Via `amonhen run`. |
+| Pop the latest stash (asks first) | ✓ | ✓ | ✓ | △ | VSCode: Pop Latest Stash… on the Stashes header and in the Command Palette (a row's Pop doesn't ask).<br>CLI: Via `amonhen run`. |
 | Activity spinner and count | ✓ | ✓ | △ | n/a | VSCode: VSCode's progress notifications. |
 | Refresh and Rebuild History | ✓ | ✓ | △ | △ | VSCode: Refresh only.<br>CLI: `log --rebuild`, `daemon rebuild`. |
-| Undo the last operation (asks, names what it puts back) | ✓ | ✓ | △ | ✓ | VSCode: Undoes without asking.<br>CLI: `undo` (`--peek` to see it first). |
+| Undo the last operation (asks, names what it puts back) | ✓ | ✓ | ✓ | ✓ | VSCode: The title's Undo and the Command Palette ask; a notification's Undo, pressed right after the operation, doesn't.<br>CLI: `undo` (`--peek` to see it first). |
 | History search with scopes (subject, author, ID, path, contents) | ✓ | ✓ | — | ✓ | GTK4: Scopes come from the query syntax.<br>CLI: `log <query>`. |
 | Ahead/behind badges | ✓ | ✓ | △ | △ | VSCode: On the sidebar's branch rows.<br>CLI: In `status`. |
 | Toolbar customization | ✓ | △ | n/a | n/a | GTK4: View > Customize Toolbar… lists the buttons to show and their order on the left and right of the header bar; the Repository menu, search and the main menu stay put. |
@@ -165,8 +165,8 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
 | Stashes view (list and contents) | ✓ | ✓ | △ | △ | VSCode: Sidebar list; Show Stash opens VSCode's multi-file diff.<br>CLI: Listed by `refs`; `show stash@{n}`. |
-| Stash row details (branch, base against HEAD, untracked) | ✓ | ✓ | △ | △ | VSCode: Name and subject only.<br>CLI: Via `amonhen run` (`stashBases`). |
-| Apply, Pop, Drop… (undoable), Branch… | ✓ | ✓ | △ | △ | VSCode: No Branch… and no `--index`.<br>CLI: Via `amonhen run`. |
+| Stash row details (branch, base against HEAD, untracked) | ✓ | ✓ | ✓ | △ | VSCode: Untracked in the description, the branch and base in the tooltip (with the engine).<br>CLI: Via `amonhen run` (`stashBases`). |
+| Apply, Pop, Drop… (undoable), Branch… | ✓ | ✓ | ✓ | △ | VSCode: Branch… with the engine; Apply and Pop restore the index (`--index`) when they can.<br>CLI: Via `amonhen run`. |
 
 ## 5b. Reflog
 
@@ -239,7 +239,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Shortcuts: Edit Message…, Combine with Older…, Drop…, Combine N…, drag a commit | ✓ | ✓ | △ | △ | VSCode: No Combine N Commits.<br>CLI: Via `amonhen run`. |
 | Split a commit | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Merges kept when editing (`--rebase-merges`) | ✓ | ✓ | — | △ | VSCode: Stops at the first merge.<br>CLI: Via `amonhen run`. |
-| Shallow clone: band at the end to fetch more, boundary commits marked | ✓ | ✓ | — | △ | CLI: `log` notes where the history stops; fetching more via `amonhen run`. |
+| Shallow clone: band at the end to fetch more, boundary commits marked | ✓ | ✓ | ✓ | △ | VSCode: With the engine.<br>CLI: `log` notes where the history stops; fetching more via `amonhen run`. |
 
 ## 7. History's right column
 
@@ -311,7 +311,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
 | Operations (git commands, output, progress, cancel) | ✓ | ✓ | △ | △ | VSCode: An Output channel log only.<br>CLI: Via `amonhen run` (`remoteActivity`, `cancelActivity`). |
-| History (operation log, Undo to Here) | ✓ | ✓ | — | △ | CLI: `undo --list` shows the log. |
+| History (operation log, Undo to Here) | ✓ | ✓ | △ | △ | VSCode: Undo History… lists the Undo log and undoes down to the chosen one; no other activity.<br>CLI: `undo --list` shows the log. |
 | Performance | ✓ | ✓ | — | n/a |  |
 | Events | ✓ | ✓ | — | n/a |  |
 | Export as JSON | ✓ | ✓ | — | n/a |  |

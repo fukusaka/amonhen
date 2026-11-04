@@ -9,6 +9,7 @@ import { registerRangeDiffCommands } from './ui/rangeDiff.ts';
 import { SidebarDragAndDrop } from './ui/dragDrop.ts';
 import { registerFetchCommand } from './ui/fetchCommand.ts';
 import { registerFileToolCommands } from './ui/fileToolCommands.ts';
+import { registerFormCommands } from './ui/formCommands.ts';
 import { registerHistoryCommands } from './ui/historyCommands.ts';
 import { MainPanel } from './ui/mainPanel.ts';
 import { registerMergeBranchesCommand } from './ui/mergeBranches.ts';
@@ -89,6 +90,7 @@ export async function activate(
     vscode.commands.registerCommand('amonhen.showWorkingCopy', () => show('workingCopy')),
     vscode.commands.registerCommand('amonhen.showHistory', () => show('history')),
     vscode.commands.registerCommand('amonhen.showReflog', () => show('reflog')),
+    vscode.commands.registerCommand('amonhen.showRepositorySettings', () => show('settings')),
     vscode.commands.registerCommand('amonhen.showRef', (ref: string) => show('history', ref)),
     registerUndoCommand(manager),
     registerFetchCommand(manager, () => sidebar.tagMarks.reload()),
@@ -106,6 +108,7 @@ export async function activate(
     registerTagCommands(manager, sidebar),
     registerWorktreeCommands(manager, sidebar),
     registerBranchArrangeCommands(manager, sidebar),
+    registerFormCommands(manager),
     registerFileToolCommands(manager, (target) => show(target)),
     // エンジンを使えるときだけ出すもの（Reflog・Reset、タグとリモートのメニュー、worktree）
     vscode.workspace.onDidChangeConfiguration((e) => e.affectsConfiguration('amonhen.daemon') && void updateEngine()),

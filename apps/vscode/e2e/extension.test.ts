@@ -7,7 +7,7 @@
  */
 import assert from 'node:assert/strict';
 import childProcess from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import * as vscode from 'vscode';
 import { DaemonClient } from '../src/daemon/client.ts';
@@ -811,6 +811,345 @@ async function historySignatureFlow(): Promise<void> {
   }
 }
 
+/**
+ * shallow で partial な clone を開くと、History に Shallow・Partial の札と境目の印、最後に取り足す帯が出る。
+ * Fetch More History で取り足すと、shallow でなくなる。コアの命令（daemon だけ）
+ */
+async function shallowFlow(): Promise<void> {
+  const manager = api.manager;
+  const main = manager.current!;
+  const origin = git('remote', 'get-url', 'origin').trim();
+  const clone = join(dirname(root), 'shallow-e2e');
+  await showView('amonhen.showHistory');
+  try {
+    // partial clone の中身をすべて取るのは git 2.36 から（古い git では shallow だけを確かめる）
+    const [major, minor] = git('--version').match(/(\d+)\.(\d+)/)!.slice(1).map(Number) as [number, number];
+    const partial = major > 2 || (major === 2 && minor >= 36);
+    childProcess.execFileSync('git', ['-C', origin, 'config', 'uploadpack.allowFilter', 'true']);
+    const url = `file://${origin.replaceAll('\\', '/')}`;
+    childProcess.execFileSync('git', ['clone', '-q', '--depth', '1', ...(partial ? ['--filter=blob:none'] : []), url, clone]);
+    const repo = (await manager.openPath(clone))!;
+    let mark = posted.length;
+    manager.select(repo);
+    const form = await waitPosted('form', mark, (m) => m.shallow);
+    assert.equal(form.boundary.length, 1, 'the one commit fetched is the boundary');
+    if (partial) assert.equal(form.partial?.filter, 'blob:none');
+
+    mark = posted.length;
+    await withWindow({ showQuickPick: async (items: readonly vscode.QuickPickItem[]) => items[0] }, async () =>
+      vscode.commands.executeCommand('amonhen.fetchMoreHistory'),
+    );
+    assert.equal(childProcess.execFileSync('git', ['-C', clone, 'rev-parse', '--is-shallow-repository'], { encoding: 'utf8' }).trim(), 'false');
+    await waitPosted('form', mark, (m) => !m.shallow && m.boundary.length === 0);
+  } finally {
+    manager.select(main);
+    manager.forget(clone);
+    // Windows では daemon がまだ見張っていて消せないことがある（e2e の一時ディレクトリごと、終わりに消える）
+    try {
+      rmSync(clone, { recursive: true, force: true });
+    } catch {
+      // 後で消える
+    }
+    childProcess.execFileSync('git', ['-C', origin, 'config', '--unset', 'uploadpack.allowFilter']);
+  }
+}
+
+/**
+ * Stashes は stash があるときだけ出て、行に作ったときのブランチ・土台と HEAD の離れ具合・untracked が出る。
+ * stash からブランチを作り（git stash branch）、新しい stash を確かめてから pop する（daemon だけ）
+ */
+async function stashFlow(): Promise<void> {
+  const sidebar = api.sidebar;
+  const repo = api.manager.current!;
+  const current = git('symbolic-ref', '--short', 'HEAD').trim();
+  const start = git('rev-parse', 'HEAD').trim();
+  const stashesSection = () => sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'stashes');
+  const file = join(root, 'st.txt');
+  try {
+    await vscode.commands.executeCommand('amonhen.refresh');
+    await until('Stashes がない', () => git('stash', 'list').trim() === '' && !stashesSection());
+    writeFileSync(file, 'untracked\n');
+    git('stash', 'push', '-q', '-u', '-m', 'e2e stash');
+    git('commit', '-q', '--allow-empty', '-m', 'after stash');
+    await vscode.commands.executeCommand('amonhen.refresh');
+    const section = await until('Stashes が出る', () => stashesSection());
+    await repo.want('stashes');
+    const row = await until('stash の行の様子', () => {
+      const node = sidebar.getChildren(section).find((n) => n.kind === 'stash');
+      const item = node && sidebar.getTreeItem(node);
+      return item && /untracked/.test(String(item.description)) && /HEAD has 1 commit since/.test(String(item.tooltip)) && { node, item };
+    });
+    assert.match(String(row.item.tooltip), new RegExp(`Made on ${current}`));
+
+    // stash からブランチを作ると、そこへ checkout して stash を当てて消す
+    await withWindow({ showInputBox: inputs('e2e-stash-br') }, async () =>
+      vscode.commands.executeCommand('amonhen.stash.branch', row.node),
+    );
+    assert.equal(git('symbolic-ref', '--short', 'HEAD').trim(), 'e2e-stash-br');
+    assert.equal(git('rev-parse', 'HEAD').trim(), start);
+    assert.equal(readFileSync(file, 'utf8').replaceAll('\r\n', '\n'), 'untracked\n');
+    assert.equal(git('stash', 'list').trim(), '');
+
+    // 新しい stash を確かめてから pop する
+    git('stash', 'push', '-q', '-u', '-m', 'again');
+    await vscode.commands.executeCommand('amonhen.refresh');
+    await withWindow({ showWarningMessage: async () => 'Pop' }, async () => vscode.commands.executeCommand('amonhen.stash.popLatest'));
+    assert.equal(git('stash', 'list').trim(), '');
+    assert.equal(readFileSync(file, 'utf8').replaceAll('\r\n', '\n'), 'untracked\n');
+  } finally {
+    rmSync(file, { force: true });
+    git('switch', '-q', current);
+    git('reset', '-q', '--hard', start);
+    if (git('branch', '--list', 'e2e-stash-br').trim()) git('branch', '-D', 'e2e-stash-br');
+    while (git('stash', 'list').trim()) git('stash', 'drop', '-q');
+    await vscode.commands.executeCommand('amonhen.refresh');
+  }
+}
+
+/**
+ * サイドバーの上の Undo は、何を戻すかを見せて確かめてから戻す（やめれば戻さない）。Undo History… は記録を新しい
+ * 順に並べ、選んだところまでまとめて戻す
+ */
+async function undoFlow(): Promise<void> {
+  const sidebar = api.sidebar;
+  const node = (name: string) => {
+    const section = sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'branches')!;
+    const find = (nodes: ReturnType<typeof sidebar.getChildren>): ReturnType<typeof sidebar.getChildren>[number] | undefined => {
+      for (const n of nodes) {
+        if (n.kind === 'branch' && n.ref.name === `refs/heads/${name}`) return n;
+        const inner = n.kind === 'branch' || n.kind === 'branchGroup' || n.kind === 'branchFolder' ? find(sidebar.getChildren(n)) : undefined;
+        if (inner) return inner;
+      }
+      return undefined;
+    };
+    return find(sidebar.getChildren(section));
+  };
+  const names = ['undo-a', 'undo-b'];
+  try {
+    for (const b of names) git('branch', b);
+    await vscode.commands.executeCommand('amonhen.refresh');
+    for (const b of names) {
+      const n = await until(`${b} の行`, () => node(b));
+      await withWindow({ showWarningMessage: async () => 'Delete' }, async () => vscode.commands.executeCommand('amonhen.nav.delete', n));
+    }
+    assert.equal(git('branch', '--list', ...names).trim(), '');
+
+    // やめれば戻さない。尋ねる文に、戻す操作の名前と何を戻すかが出る
+    let asked: { message: string; detail?: string } | undefined;
+    await withWindow(
+      {
+        showWarningMessage: async (message: string, options: vscode.MessageOptions) => {
+          asked = { message, ...(options.detail ? { detail: options.detail } : {}) };
+          return undefined;
+        },
+      },
+      async () => vscode.commands.executeCommand('amonhen.undoWithConfirmation'),
+    );
+    assert.match(String(asked?.message), /^Undo “Delete (branch )?undo-b”\?$/);
+    assert.match(String(asked?.detail), /HEAD and the branches/);
+    assert.equal(git('branch', '--list', ...names).trim(), '');
+
+    // Undo History… で 2 つ目まで戻すと、2 つとも戻る
+    await withWindow(
+      {
+        showQuickPick: async (items: readonly (vscode.QuickPickItem & { count: number })[]) => items.find((i) => i.count === 2),
+        showWarningMessage: async () => 'Undo',
+      },
+      async () => vscode.commands.executeCommand('amonhen.undoHistory'),
+    );
+    assert.deepEqual(git('branch', '--list', '--format=%(refname:short)', ...names).trim().split('\n'), names);
+  } finally {
+    for (const b of names) if (git('branch', '--list', b).trim()) git('branch', '-D', b);
+    await vscode.commands.executeCommand('amonhen.refresh');
+  }
+}
+
+/**
+ * Repository Settings に、このリポジトリの git の設定（どこで決まっているか付き）と git の版が出て、行の値を
+ * このリポジトリの設定に書き、↩︎ で上書きをやめる（daemon だけ）
+ */
+async function settingsFlow(): Promise<void> {
+  await showView('amonhen.showHistory');
+  const panel = api.panel()!;
+  const config = (key: string) => {
+    try {
+      return git('config', '--local', key).trim();
+    } catch {
+      return undefined;
+    }
+  };
+  const keys = ['fetch.prune', 'pull.rebase', 'pull.ff'];
+  const excludeFile = join(git('rev-parse', '--absolute-git-dir').trim(), 'info', 'exclude');
+  const exclude = existsSync(excludeFile) ? readFileSync(excludeFile, 'utf8') : '';
+  const hadGitignore = existsSync(join(root, '.gitignore'));
+  let sparseCommit = false;
+  let hookFile: string | undefined;
+  const gitattributes = existsSync(join(root, '.gitattributes')) ? readFileSync(join(root, '.gitattributes'), 'utf8') : undefined;
+  // git lfs track はフック（post-checkout など）を入れ、lfs.repositoryformatversion を書く。残すと、この後の
+  // checkout や rebase のたびに git-lfs が動き、Windows では .git/config を同時に読んだ git が失敗する
+  const hooksDir = join(git('rev-parse', '--git-common-dir').trim().replace(/^(?![\\/]|[A-Za-z]:)/, `${root}/`), 'hooks');
+  const hooksBefore = new Set(existsSync(hooksDir) ? readdirSync(hooksDir) : []);
+  const lfsVersion = config('lfs.repositoryformatversion');
+  try {
+    let mark = posted.length;
+    await vscode.commands.executeCommand('amonhen.showRepositorySettings');
+    await panel.settings.handle({ type: 'settingsLoad' });
+    const first = await waitPosted('settings', mark, (m) => m.entries.length > 0);
+    assert.match(String(first.facts.gitVersion), /^\d+\.\d+/);
+    assert.ok(first.entries.some((e) => e.key === 'user.email' && e.scope === 'local'));
+
+    mark = posted.length;
+    await panel.settings.handle({ type: 'settingsSet', writes: [['fetch.prune', 'true'], ['pull.rebase', 'false'], ['pull.ff', 'only']] });
+    const written = await waitPosted('settings', mark);
+    assert.deepEqual(keys.map(config), ['true', 'false', 'only']);
+    assert.ok(written.entries.some((e) => e.key === 'pull.ff' && e.value === 'only' && e.scope === 'local'));
+
+    // ↩︎（上書きをやめる）
+    mark = posted.length;
+    await panel.settings.handle({ type: 'settingsSet', writes: keys.map((k): [string, null] => [k, null]) });
+    await waitPosted('settings', mark);
+    assert.deepEqual(keys.map(config), [undefined, undefined, undefined]);
+
+    // Branches: 既定のブランチを選ぶ。Working Copy: .git/info/exclude を書く（.gitignore はそのまま）
+    const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+    assert.ok(first.facts.branches.includes(branch));
+    mark = posted.length;
+    await panel.settings.handle({ type: 'settingsSet', writes: [['amonhen.defaultBranch', branch]] });
+    assert.equal((await waitPosted('settings', mark)).facts.base, branch);
+    assert.equal(config('amonhen.defaultBranch'), branch);
+    const gitignore = existsSync(join(root, '.gitignore')) ? readFileSync(join(root, '.gitignore'), 'utf8') : undefined;
+    mark = posted.length;
+    await panel.settings.handle({ type: 'settingsSaveExclude', exclude: `${exclude}e2e-ignored\n` });
+    assert.match((await waitPosted('settings', mark)).facts.exclude, /e2e-ignored/);
+    assert.match(readFileSync(excludeFile, 'utf8'), /e2e-ignored/);
+    assert.equal(existsSync(join(root, '.gitignore')) ? readFileSync(join(root, '.gitignore'), 'utf8') : undefined, gitignore ?? '');
+
+    // Remotes: origin が表に出る。push の URL を別にして戻し、つながるか確かめる
+    const origin = first.facts.remotes.find((r) => r.name === 'origin');
+    assert.ok(origin, 'origin が Remotes にある');
+    mark = posted.length;
+    await withWindow({ showInputBox: inputs('../push-e2e') }, async () =>
+      panel.settings.handle({ type: 'settingsRun', action: 'remote', op: 'editPushUrl', name: 'origin' }),
+    );
+    assert.equal((await waitPosted('settings', mark)).facts.remotes.find((r) => r.name === 'origin')?.pushUrl, '../push-e2e');
+    assert.equal(config('remote.origin.pushurl'), '../push-e2e');
+    await withWindow({ showInputBox: inputs('') }, async () =>
+      panel.settings.handle({ type: 'settingsRun', action: 'remote', op: 'editPushUrl', name: 'origin' }),
+    );
+    assert.equal(config('remote.origin.pushurl'), undefined);
+    let reached = '';
+    await withWindow({ showInformationMessage: async (m: string) => void (reached = m) }, async () =>
+      panel.settings.handle({ type: 'settingsRun', action: 'remote', op: 'check', name: 'origin' }),
+    );
+    assert.match(reached, /^origin: reachable, \d+ branches/);
+
+    // Keys and Values: キーを足し、値を変え、消す。git が知っている名前も届く
+    assert.ok(first.facts.knownKeys.includes('core.autocrlf'));
+    mark = posted.length;
+    await withWindow({ showInputBox: inputs('e2e.added', 'one') }, async () =>
+      panel.settings.handle({ type: 'settingsRun', action: 'configEdit' }),
+    );
+    await waitPosted('settings', mark, (m) => m.entries.some((e) => e.key === 'e2e.added' && e.value === 'one'));
+    await withWindow({ showInputBox: inputs('two') }, async () =>
+      panel.settings.handle({ type: 'settingsRun', action: 'configEdit', key: 'e2e.added' }),
+    );
+    assert.equal(config('e2e.added'), 'two');
+    await panel.settings.handle({ type: 'settingsSet', writes: [['e2e.added', null]] });
+    assert.equal(config('e2e.added'), undefined);
+
+    // Author and Signing: 名前を上書きし、SSH で署名するにすると、その形式の鍵を集める（e2e の HOME には鍵がない）
+    mark = posted.length;
+    await panel.settings.handle({ type: 'settingsSet', writes: [['user.name', 'E2E Author'], ['commit.gpgsign', 'true'], ['gpg.format', 'ssh']] });
+    const signing = await waitPosted('settings', mark);
+    assert.deepEqual(['user.name', 'commit.gpgsign', 'gpg.format'].map(config), ['E2E Author', 'true', 'ssh']);
+    assert.ok(Array.isArray(signing.facts.signingKeys));
+    await panel.settings.handle({ type: 'settingsSet', writes: [['user.name', 'a'], ['commit.gpgsign', null], ['gpg.format', null]] });
+    assert.equal(config('user.name'), 'a');
+
+    // Commits: このリポジトリ専用のテンプレートを書くと commit.template がそれを指し、None で外れる
+    mark = posted.length;
+    await panel.settings.handle({ type: 'settingsRun', action: 'templateSave', text: 'e2e: \n' });
+    const templated = await waitPosted('settings', mark, (m) => m.facts.commitTemplate?.text === 'e2e: \n');
+    assert.equal(config('commit.template'), templated.facts.commitTemplate?.path);
+    await panel.settings.handle({ type: 'settingsSet', writes: [['commit.template', null]] });
+    assert.equal(config('commit.template'), undefined);
+
+    // Hooks and LFS: フックを作り（エディタで開く）、実行の許可を外す（Windows では外せない）。LFS は入っていれば
+    const hook = join(git('rev-parse', '--git-common-dir').trim().replace(/^(?![\\/]|[A-Za-z]:)/, `${root}/`), 'hooks', 'pre-commit');
+    hookFile = hook;
+    mark = posted.length;
+    await withWindow(
+      { showQuickPick: async (items: readonly vscode.QuickPickItem[]) => items.find((i) => i.label === 'pre-commit') },
+      async () => panel.settings.handle({ type: 'settingsRun', action: 'hookCreate' }),
+    );
+    const created = await waitPosted('settings', mark, (m) => !!m.facts.hooksAndLfs?.hooks.some((h) => h.name === 'pre-commit'));
+    assert.ok(existsSync(hook));
+    assert.equal(vscode.window.activeTextEditor?.document.uri.fsPath.toLowerCase(), hook.toLowerCase());
+    await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+    if (process.platform !== 'win32') {
+      mark = posted.length;
+      await panel.settings.handle({ type: 'settingsRun', action: 'hookEnabled', name: 'pre-commit', enabled: false });
+      const off = await waitPosted('settings', mark);
+      assert.equal(off.facts.hooksAndLfs?.hooks.find((h) => h.name === 'pre-commit')?.enabled, false);
+    }
+    if (created.facts.hooksAndLfs?.lfs) {
+      mark = posted.length;
+      await panel.settings.handle({ type: 'settingsRun', action: 'lfsTrack', pattern: '*.e2e-bin', track: true });
+      assert.ok((await waitPosted('settings', mark)).facts.hooksAndLfs?.lfsPatterns.includes('*.e2e-bin'));
+      mark = posted.length;
+      await panel.settings.handle({ type: 'settingsRun', action: 'lfsTrack', pattern: '*.e2e-bin', track: false });
+      assert.ok(!(await waitPosted('settings', mark)).facts.hooksAndLfs?.lfsPatterns.includes('*.e2e-bin'));
+    }
+
+    // Fetching and Folders: HEAD の木からフォルダを選んで sparse checkout にし、すべてに戻す（git 2.25 から）。
+    // maintenance は OS の予定に登録するので、ここでは試さない
+    if (first.facts.repositoryForm?.canSparseCheckout) {
+      mkdirSync(join(root, 'sp-dir'), { recursive: true });
+      writeFileSync(join(root, 'sp-dir', 'a.txt'), 'a\n');
+      writeFileSync(join(root, 'sp-top.txt'), 'top\n');
+      git('add', 'sp-dir', 'sp-top.txt');
+      git('commit', '-q', '-m', 'sparse e2e');
+      sparseCommit = true;
+      const picks = [/sp-dir/, /Check out sp-dir/];
+      mark = posted.length;
+      await withWindow(
+        { showQuickPick: async (items: readonly vscode.QuickPickItem[]) => items.find((i) => picks[0]!.test(i.label) && picks.shift()) },
+        async () => panel.settings.handle({ type: 'settingsRun', action: 'addFolder' }),
+      );
+      const sparse = await waitPosted('settings', mark, (m) => !!m.facts.repositoryForm?.sparse);
+      assert.deepEqual(sparse.facts.repositoryForm?.sparse, { cone: true, folders: ['sp-dir'] });
+      assert.ok(existsSync(join(root, 'sp-dir', 'a.txt')));
+      mark = posted.length;
+      await withWindow({ showWarningMessage: async () => 'Check Out All' }, async () =>
+        panel.settings.handle({ type: 'settingsRun', action: 'checkOutAll' }),
+      );
+      assert.equal((await waitPosted('settings', mark)).facts.repositoryForm?.sparse, null);
+    }
+  } finally {
+    if (sparseCommit) {
+      try {
+        git('sparse-checkout', 'disable');
+      } catch {
+        // もうやめている
+      }
+      git('reset', '-q', '--hard', 'HEAD~1');
+    }
+    for (const k of [...keys, 'amonhen.defaultBranch', 'e2e.added', 'commit.template', 'commit.gpgsign', 'gpg.format']) {
+      if (config(k) !== undefined) git('config', '--local', '--unset', k);
+    }
+    git('config', '--local', 'user.name', 'a');
+    writeFileSync(excludeFile, exclude);
+    if (hookFile) rmSync(hookFile, { force: true });
+    if (existsSync(hooksDir)) for (const f of readdirSync(hooksDir)) if (!hooksBefore.has(f)) rmSync(join(hooksDir, f), { force: true });
+    if (lfsVersion === undefined && config('lfs.repositoryformatversion') !== undefined) {
+      git('config', '--local', '--unset', 'lfs.repositoryformatversion');
+    }
+    if (gitattributes === undefined) rmSync(join(root, '.gitattributes'), { force: true });
+    else writeFileSync(join(root, '.gitattributes'), gitattributes);
+    if (!hadGitignore) rmSync(join(root, '.gitignore'), { force: true });
+  }
+}
+
 /** showInputBox の代わり。呼ばれるたびに values を順に返す */
 function inputs(...values: string[]): () => Promise<string | undefined> {
   let i = 0;
@@ -1554,6 +1893,22 @@ suite('Amon Hen in VSCode', () => {
 
   test('marks signed commits in History and goes to HEAD, a parent and a child through the daemon', async () => {
     await historySignatureFlow();
+  });
+
+  test('shows a shallow partial clone in History and fetches more of it through the daemon', async () => {
+    await shallowFlow();
+  });
+
+  test('shows stash details, branches from a stash and pops the latest through the daemon', async () => {
+    await stashFlow();
+  });
+
+  test('asks before Undo and undoes several operations from Undo History', async () => {
+    await undoFlow();
+  });
+
+  test('shows and writes this repository’s settings through the daemon', async () => {
+    await settingsFlow();
   });
 
   test('drops the selection of a file whose changes went away before its diff is read', async () => {

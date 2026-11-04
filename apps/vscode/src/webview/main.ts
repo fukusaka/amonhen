@@ -9,6 +9,7 @@ import { createBlameView } from './blame.ts';
 import { createFileHistoryView } from './fileHistory.ts';
 import { createHistoryView } from './history.ts';
 import { createReflogView } from './reflog.ts';
+import { createSettingsView } from './settings.ts';
 import { createWorkingCopyView } from './workingCopy.ts';
 
 const views: Record<ViewName, View> = {
@@ -17,6 +18,7 @@ const views: Record<ViewName, View> = {
   reflog: createReflogView(),
   fileHistory: createFileHistoryView(),
   blame: createBlameView(),
+  settings: createSettingsView(),
 };
 
 const content = el('div', 'content');

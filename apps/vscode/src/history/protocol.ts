@@ -88,7 +88,12 @@ export type HistoryHostMessage =
   /** 行の署名の印（届いた行の分。署名のないコミットは含まない） */
   | { type: 'signatures'; marks: Record<string, SignatureView> }
   /** 詳細の残り（署名・子のコミット） */
-  | { type: 'detailsExtras'; extras: DetailsExtras };
+  | { type: 'detailsExtras'; extras: DetailsExtras }
+  /**
+   * リポジトリの形（エンジンだけ）。`shallow` なら History の最後に取り足す帯を出し、`boundary` の行（shallow の
+   * 境目のコミット）に印を付ける。`partial` は partial clone の promisor の remote と filter
+   */
+  | { type: 'form'; shallow: boolean; boundary: number[]; partial?: { remote: string; filter: string } };
 
 /** 署名の見せ方（アプリの SignatureStatus。形と色は Webview が kind から決める） */
 export interface SignatureView {
@@ -130,4 +135,6 @@ export type HistoryWebviewMessage =
   /** 編集できる範囲の中で、新しい順の to 番目に動かす */
   | { type: 'move'; oid: string; to: number }
   /** HEAD・親・子のコミットに移る（`oid` は今選んでいるコミット） */
-  | { type: 'goTo'; to: 'head' | 'parent' | 'child'; oid?: string };
+  | { type: 'goTo'; to: 'head' | 'parent' | 'child'; oid?: string }
+  /** shallow clone の履歴を取り足す・すべて取る、partial clone の中身をすべて取る（帯と札のボタン） */
+  | { type: 'fetchForm'; what: 'more' | 'all' | 'contents' };

@@ -8,6 +8,7 @@ import { BlameController } from './blameController.ts';
 import { FileHistoryController } from './fileHistoryController.ts';
 import { HistoryController } from './historyController.ts';
 import { ReflogController } from './reflogController.ts';
+import { SettingsController } from './settingsController.ts';
 import { showError } from './stageCommands.ts';
 import { WorkingCopyController } from './workingCopyController.ts';
 
@@ -23,6 +24,7 @@ export class MainPanel implements vscode.Disposable {
   readonly reflog: ReflogController;
   readonly fileHistory: FileHistoryController;
   readonly blame: BlameController;
+  readonly settings: SettingsController;
   private readonly panel: vscode.WebviewPanel;
   private readonly manager: RepositoryManager;
   private readonly disposables: vscode.Disposable[] = [];
@@ -70,6 +72,7 @@ export class MainPanel implements vscode.Disposable {
     this.reflog = new ReflogController((m) => this.post(m));
     this.fileHistory = new FileHistoryController((m) => this.post(m));
     this.blame = new BlameController((m) => this.post(m));
+    this.settings = new SettingsController((m) => this.post(m));
     panel.iconPath = vscode.Uri.joinPath(extensionUri, 'media', 'amonhen.svg');
     panel.webview.html = html(panel.webview, extensionUri);
     this.disposables.push(
@@ -78,6 +81,7 @@ export class MainPanel implements vscode.Disposable {
       this.reflog,
       this.fileHistory,
       this.blame,
+      this.settings,
       panel.onDidDispose(() => this.dispose()),
       panel.webview.onDidReceiveMessage((m: WebviewMessage) => void this.onMessage(m).catch(showError)),
       manager.onDidChangeCurrent((r) => this.watch(r)),
@@ -110,6 +114,7 @@ export class MainPanel implements vscode.Disposable {
       this.reflog.setRepository(repo);
       this.fileHistory.setRepository(repo);
       this.blame.setRepository(repo);
+      this.settings.setRepository(repo);
     }
   }
 
@@ -126,6 +131,7 @@ export class MainPanel implements vscode.Disposable {
         this.reflog.setRepository(this.repo);
         this.fileHistory.setRepository(this.repo);
         this.blame.setRepository(this.repo);
+        this.settings.setRepository(this.repo);
         break;
       case 'view':
         break;
@@ -150,6 +156,12 @@ export class MainPanel implements vscode.Disposable {
       case 'blameLoad':
       case 'blameReveal':
         await this.blame.handle(message);
+        break;
+      case 'settingsLoad':
+      case 'settingsSet':
+      case 'settingsSaveExclude':
+      case 'settingsRun':
+        await this.settings.handle(message);
         break;
       default:
         await this.history.handle(message);
