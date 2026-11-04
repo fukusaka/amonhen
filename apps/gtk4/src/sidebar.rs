@@ -3152,7 +3152,7 @@ fn groups_of(
                 title: s.dir.clone(),
                 key: format!("Subtree/{}", s.dir),
                 item: Item::Subtree(s.clone()),
-                icon: icon::Kind::Folder,
+                icon: icon::Kind::Subtree,
                 tooltip: (!lines.is_empty()).then(|| lines.join("\n")),
                 ..Data::default()
             },

@@ -22,6 +22,8 @@ pub enum Kind {
     Tag,
     Stash,
     Submodule,
+    /// square.stack.3d.down.right（subtree）
+    Subtree,
     Folder,
     /// arrow.down.circle
     Fetch,
@@ -409,6 +411,15 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.line_to(13.5, 6.5);
             p.move_to(6.5, 9.0);
             p.line_to(9.5, 9.0);
+        }
+        Kind::Subtree => {
+            // 手前の四角と、右下に重なる 2 枚の縁。
+            p.add_rect(&graphene::Rect::new(2.0, 2.0, 7.5, 7.5));
+            for d in [2.25f32, 4.5] {
+                p.move_to(2.0 + d, 9.5 + d);
+                p.line_to(9.5 + d, 9.5 + d);
+                p.line_to(9.5 + d, 2.0 + d);
+            }
         }
         Kind::Folder => {
             p.move_to(2.5, 4.0);
