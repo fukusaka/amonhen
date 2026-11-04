@@ -626,6 +626,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         slot.actions.refreshUndo()
         slot.workingCopy.refresh()
         reloadSubmodules()
+        reloadSubtrees()
         changeCount = worktreeChanges[WorktreeInfo.canonical(slot.path)] ?? 0
         showWorktrees()
         updateTabTitle()
@@ -737,12 +738,16 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     private var subtreeList = SubtreeList(available: false, subtrees: [])
 
     /// subtree を裏で読み、サイドバーに出す（読んだ HEAD をコアが覚えるので、2 回目からは新しいコミットだけを読む）。
+    /// subtree は HEAD の履歴から探し、Pull・Push・Split もその HEAD で行うので、書き込む先の worktree で読む。
     private func reloadSubtrees() {
-        let repository = self.repository
+        let slot = editing
+        let repository = slot.repository
         Task {
             guard let list = await Task.detached(priority: .utility, operation: {
                 try? repository.info(["op": "subtrees"], as: SubtreeList.self)
             }).value else { return }
+            // 読んでいる間にほかの worktree を選んだら、その worktree の分は読み直しに任せる。
+            guard slot === editing else { return }
             subtreeList = list
             sidebar.show(subtrees: list.subtrees)
         }
