@@ -183,6 +183,17 @@ mod tests {
         let path = dir.join("watchman");
         std::fs::write(&path, script).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // 書いたばかりのファイルは、並んで走るほかの試験が子プロセスを作った瞬間にその子へ書き込みの記述子が渡り、
+        // Linux では実行すると「Text file busy」で断られることがある（respond は断られると全部を調べ直すと答える
+        // ので、試験が違う答えで落ちる）。実行できるようになるまで待つ（引数が違うので、何もせずに終わる）。
+        let runnable = (0..20).any(|_| match amonhen_model::process::command(&path).status() {
+            Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                false
+            }
+            _ => true,
+        });
+        assert!(runnable, "still busy after retries");
         path
     }
 
