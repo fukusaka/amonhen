@@ -17,7 +17,7 @@ becomes the GitHub Release notes.
 #### Fixed
 
 - macOS: the submodule sheets say which worktree they act on, and run there even if another worktree is selected
-  meanwhile.
+  meanwhile; Fetch from Bundle names the worktree as Fetch… does.
 - macOS: with another worktree selected, the Submodules marks and Open in New Window follow that worktree, not the
   opened one.
 
