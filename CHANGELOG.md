@@ -7,7 +7,12 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
-### Unreleased
+### [0.2.9] - 2026-11-04
+
+The GTK4 app for Linux catches up with the macOS app, and large repositories are supported: shallow, partial and
+sparse clones, background maintenance, and History searches that fetch only what they need. Several branches merge in
+one commit, commits are exported as archives or bundles, submodules are managed from the sidebar, and every
+confirmation and History edit now asks in one sheet that shows what moves and what will conflict.
 
 #### Added
 
