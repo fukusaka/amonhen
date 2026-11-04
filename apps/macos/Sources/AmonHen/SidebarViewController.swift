@@ -347,7 +347,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private var worktreeChanges: [String: Int] = [:]
     /// worktree を選んだ（書き込む先にする）。
     var onSelectWorktree: ((String) -> Void)?
-    enum WorktreeAction { case reveal, terminal, remove, prune }
+    enum WorktreeAction { case reveal, terminal, remove, prune, lock, unlock, move, locate }
     var onWorktreeAction: ((String, WorktreeAction) -> Void)?
     /// worktree のフォルダがこの Mac にあるか（SSH 先・daemon 越しなら、Finder・ターミナルでは開けないので出さない）。
     var worktreesAreLocal = true
@@ -1277,8 +1277,17 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             if !w.main {
                 menu.addItem(.separator())
                 if w.prunable != nil {
+                    // フォルダを手で移したなら、つながりを直せる（git worktree repair）。
+                    menu.addItem(ClosureMenuItem(title: L("Locate Moved Folder…")) { [weak self] in self?.onWorktreeAction?(path, .locate) })
                     menu.addItem(ClosureMenuItem(title: L("Prune Worktrees")) { [weak self] in self?.onWorktreeAction?(path, .prune) })
                 } else {
+                    // ロックしていると、git は prune・remove・move で消したり移したりしない。
+                    if w.locked != nil {
+                        menu.addItem(ClosureMenuItem(title: L("Unlock")) { [weak self] in self?.onWorktreeAction?(path, .unlock) })
+                    } else {
+                        menu.addItem(ClosureMenuItem(title: L("Lock…")) { [weak self] in self?.onWorktreeAction?(path, .lock) })
+                        menu.addItem(ClosureMenuItem(title: L("Move…")) { [weak self] in self?.onWorktreeAction?(path, .move) })
+                    }
                     menu.addItem(ClosureMenuItem(title: L("Remove Worktree…")) { [weak self] in self?.onWorktreeAction?(path, .remove) })
                 }
             }
