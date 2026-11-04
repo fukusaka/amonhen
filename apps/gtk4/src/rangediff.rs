@@ -125,6 +125,8 @@ pub struct RangeDiff {
     pair_title: gtk::Label,
     pair_note: gtk::Label,
     pair_diff: DiffWidget,
+    /// 差分の差分の検索の帯。
+    pair_find: crate::difffind::DiffFind,
     /// コミットの中身（History の右の列と同じ）。
     commit: Rc<CommitPane>,
     /// 選び直したら増やし、古い結果を捨てる。
@@ -139,6 +141,11 @@ pub struct RangeDiff {
 }
 
 impl RangeDiff {
+    /// 開いたリポジトリの場所（詳細の署名の吹き出しに、検証した場所を出す。History の詳細と同じ）。
+    pub fn set_location(&self, location: &str) {
+        self.commit.details.set_location(location);
+    }
+
     pub fn new(view: &HistoryView, pending: Rc<Cell<u32>>) -> Rc<Self> {
         // 左: 範囲、説明、数と Changes Only、組の一覧。
         let entry = gtk::Entry::new();
@@ -166,12 +173,8 @@ impl RangeDiff {
             }
             l
         };
+        // 1 行で、いつも出す（空でも行を取る。長い失敗の文は末尾を切る。macOS 版と同じ）。
         let summary = small(&["dim-label", "caption"]);
-        // 失敗の文は長いことがあるので、3 行まで折り返す。
-        summary.set_wrap(true);
-        summary.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-        summary.set_lines(3);
-        summary.set_visible(false);
         let counts = small(&["dim-label", "caption"]);
         counts.set_hexpand(true);
         let changes_only = gtk::CheckButton::with_label(&tr!("Changes Only"));
@@ -228,7 +231,13 @@ impl RangeDiff {
         let pair_page = gtk::Box::new(gtk::Orientation::Vertical, 0);
         pair_page.append(&header);
         pair_page.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-        pair_page.append(&pair_scrolled);
+        // 差分の差分の上に検索の帯（Ctrl+F。macOS 版と同じく、どの差分でも探せる）。
+        let pair_area = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        pair_area.set_vexpand(true);
+        let (pair_find, pair_find_bar) = crate::difffind::DiffFind::new(&pair_diff, &pair_area);
+        pair_area.append(&pair_find_bar);
+        pair_area.append(&pair_scrolled);
+        pair_page.append(&pair_area);
 
         let commit = CommitPane::new(pending.clone());
 
@@ -262,6 +271,7 @@ impl RangeDiff {
             pair_title,
             pair_note,
             pair_diff,
+            pair_find,
             commit,
             shown_generation: Rc::default(),
             filling: Cell::new(false),
@@ -437,6 +447,11 @@ impl RangeDiff {
         self.on_close.replace(Some(Rc::new(f)));
     }
 
+    /// 組のコミットの Blame・File History を開くリポジトリ（書き込む先の worktree）。比べるのは開いたリポジトリのまま。
+    pub fn set_tools_repo(&self, repo: Arc<Repository>) {
+        self.commit.set_tools_repo(repo);
+    }
+
     fn repo(&self) -> Option<Arc<Repository>> {
         self.view.upgrade()?.current().map(|(r, _)| r)
     }
@@ -451,7 +466,13 @@ impl RangeDiff {
     pub fn open_previous(self: &Rc<Self>, branch: Option<String>) {
         let Some(repo) = self.repo() else { return };
         let request = self.next_request();
-        self.set_summary(&tr!("Looking for the previous version…"));
+        // 探している間は、前に比べた結果（範囲・数・組）を残さない（別のブランチの結果に見える。macOS 版と同じ）。
+        self.entry.set_text("");
+        self.show(
+            Vec::new(),
+            &[],
+            Some(tr!("Looking for the previous version…")),
+        );
         self.pending.set(self.pending.get() + 1);
         let this = self.clone();
         glib::spawn_future_local(async move {
@@ -535,10 +556,9 @@ impl RangeDiff {
         }
     }
 
-    /// 範囲の下の説明（前の版の見つけ方・失敗）。なければ行を詰める。
+    /// 範囲の下の説明（前の版の見つけ方・失敗）。なくても行は残す（macOS 版と同じ）。
     fn set_summary(&self, text: &str) {
         self.summary.set_text(text);
-        self.summary.set_visible(!text.is_empty());
     }
 
     fn show(&self, pairs: Vec<Pair>, ranges: &[String], summary: Option<String>) {
@@ -554,7 +574,11 @@ impl RangeDiff {
         } else {
             [
                 ("same", tr!("{count} same", count = count("same"))),
-                ("changed", tr!("{count} changed", count = count("changed"))),
+                // 鍵は CLI の「変更 {count}」（worktree の変更の数）と分ける。
+                (
+                    "changed",
+                    tr!("{changed} changed", changed = count("changed")),
+                ),
                 ("removed", tr!("{count} removed", count = count("removed"))),
                 ("added", tr!("{count} added", count = count("added"))),
             ]
@@ -667,6 +691,7 @@ impl RangeDiff {
         let lines = pair.diff.clone();
         self.pending.set(self.pending.get() + 1);
         let (pending, weak) = (self.pending.clone(), self.pair_diff.downgrade());
+        let find = self.pair_find.clone();
         let generation = self.shown_generation_ref();
         glib::spawn_future_local(async move {
             let view = gio::spawn_blocking(move || {
@@ -679,6 +704,7 @@ impl RangeDiff {
                 && generation.upgrade().is_some_and(|c| c.get() == g)
             {
                 diff.show_plain(view);
+                find.refresh();
             }
         });
     }

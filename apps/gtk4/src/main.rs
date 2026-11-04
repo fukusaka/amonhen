@@ -829,12 +829,14 @@ fn build_tab(
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vexpand(true)
         .build();
-    let status = gtk::Label::new(Some(&tr!("Loading History…")));
+    // 手元で初めて読むときは何も出さない。daemon・SSH 越しのときだけ、受け取った量を出す（macOS 版と同じ）。
+    let status = gtk::Label::new(None);
     status.add_css_class("dim-label");
-    // daemon・SSH 越しに初めて読むときは、受け取った量と回る印を添える（macOS 版と同じ）。
+    status.set_visible(false);
+    // daemon・SSH 越しに初めて読むときは、受け取った量と回る印を添える（印が上、量がその下。macOS 版と同じ）。
     let spinner = gtk::Spinner::new();
     spinner.set_visible(false);
-    let loading = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let loading = gtk::Box::new(gtk::Orientation::Vertical, 6);
     loading.set_halign(gtk::Align::Center);
     loading.set_valign(gtk::Align::Center);
     loading.append(&spinner);
@@ -854,9 +856,10 @@ fn build_tab(
     // History の検索の欄（History の上に出す）。
     let search = Rc::new(search::Search::new(&view));
     let history_column = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    let (history_bar, display_button) = historydisplay::bar();
+    let (history_bar, display_button) = historydisplay::bar(&tab.group);
     history_column.append(&history_bar);
     history_column.append(&search.bar);
+    history_column.append(&historydisplay::header(&view));
     history_column.append(&overlay);
 
     // 右の列: 選んだコミットの詳細と差分。
@@ -928,6 +931,9 @@ fn build_tab(
 
     // History と Working Copy は、サイドバーで行き来する。
     let working = Rc::new(WorkingCopy::new(pending.clone()));
+    // マージエディタの Result を保存していなければ、タブ・窓を閉じる前と終える前に確かめる（macOS 版と同じ）。
+    let w = Rc::downgrade(&working);
+    tab.connect_unsaved(move || w.upgrade().is_some_and(|w| w.has_unsaved_merge_edits()));
     if let Some(path) = &args.select_path {
         working.select_path(path);
     }
@@ -946,6 +952,9 @@ fn build_tab(
     pages.add_named(&stashes.root, Some("stashes"));
     // Range Diff（開いている間だけサイドバーに出す）。
     let range_diff = rangediff::RangeDiff::new(&view, pending.clone());
+    // 署名の吹き出しの「検証した場所」は、Stashes・Range Diff の詳細も History と同じ（macOS 版と同じ）。
+    stashes.set_location(&text);
+    range_diff.set_location(&text);
     pages.add_named(&range_diff.root, Some(rangediff::PAGE));
     let sidebar = Rc::new(Sidebar::new());
     sidebar.set_location(&text);
@@ -958,12 +967,14 @@ fn build_tab(
             Rc::downgrade(&sidebar),
             text.clone(),
         );
+        let (st, rd) = (Rc::downgrade(&stashes), Rc::downgrade(&range_diff));
         // History の表がある間だけ見る（閉じたタブの分を残さない）。
         settings::connect_changed_while(&view, move |key| {
             if key != sshhosts::SIGNATURE_BY_HOST {
                 return;
             }
             let (v, d, s, location) = (v.clone(), d.clone(), s.clone(), location.clone());
+            let (st, rd) = (st.clone(), rd.clone());
             // 写し（`sshhosts::load`）は設定を書いた後に作り直すので、それを待つ。
             glib::idle_add_local_once(move || {
                 let (Some(view), Some(details), Some(sidebar)) =
@@ -976,6 +987,12 @@ fn build_tab(
                 };
                 sshhosts::apply_signature_check(&repo, &location);
                 details.set_location(&location);
+                if let Some(stashes) = st.upgrade() {
+                    stashes.set_location(&location);
+                }
+                if let Some(range_diff) = rd.upgrade() {
+                    range_diff.set_location(&location);
+                }
                 // タグの署名の吹き出しの「Checked on」も（macOS 版の `updateSignaturePlace`）。
                 sidebar.set_location(&location);
                 view.forget_signatures();
@@ -1118,7 +1135,7 @@ fn build_tab(
             },
             move || {
                 if let Some(tab) = t2.upgrade() {
-                    tabs::reopen(&tab, location.clone(), page);
+                    tabs::retry(&tab, location.clone(), page);
                 }
             },
         ))
@@ -1215,7 +1232,7 @@ fn build_tab(
             .unwrap_or_else(|| repo.clone());
         let tx = reload_tx.clone();
         std::thread::spawn(move || {
-            reload_history(&repo, &tx);
+            reload_history(&repo, &tx, false);
             reload_status(&editing, &tx);
         });
     });
@@ -1236,6 +1253,22 @@ fn build_tab(
         );
         view.set_footer(Some(band.upcast_ref()));
     }
+    // 書き込む先にする worktree を開けなかった: ステータスバーの失敗の帯に（macOS 版の showFailure）。
+    let a = Rc::downgrade(&actions);
+    worktrees.connect_open_failure(move |heading, message| {
+        let Some(actions) = a.upgrade() else { return };
+        glib::spawn_future_local(async move {
+            actions
+                .fail(crate::statusbar::Failure {
+                    message,
+                    kind: None,
+                    path: None,
+                    command: None,
+                    heading: Some(heading),
+                })
+                .await;
+        });
+    });
     // 書き込む先にした worktree の見張りの知らせ（裏のスレッドから）。
     let note_tx = tx.clone();
     worktrees.set_notify(Arc::new(move |note| {
@@ -1291,9 +1324,13 @@ fn build_tab(
         actions.clone(),
         tx.clone(),
     );
+    let rd = Rc::downgrade(&range_diff);
     worktrees.connect_edit(move |repo| {
         wc.set_repo(repo.clone());
         st.set_repo(repo.clone());
+        if let Some(rd) = rd.upgrade() {
+            rd.set_tools_repo(repo.clone());
+        }
         a.set_repo(repo.clone());
         if let Some(reflog) = rf.borrow().as_ref() {
             reflog.set_repo(repo.clone());
@@ -1320,6 +1357,22 @@ fn build_tab(
         on_commit.clone(),
     ));
     pages.add_named(&reflog.root, Some("reflog"));
+    // 署名の吹き出しの「検証した場所」は History と同じ（SSH Hosts の設定を変えたら合わせる）。
+    reflog.set_location(&text);
+    {
+        let (r, location) = (Rc::downgrade(&reflog), text.clone());
+        settings::connect_changed_while(&reflog.root, move |key| {
+            if key != sshhosts::SIGNATURE_BY_HOST {
+                return;
+            }
+            let (r, location) = (r.clone(), location.clone());
+            glib::idle_add_local_once(move || {
+                if let Some(reflog) = r.upgrade() {
+                    reflog.set_location(&location);
+                }
+            });
+        });
+    }
     // つなぎ直したタブ: それまでのページを出す（Reflog はページを足してから。Stashes は stash を読んでから、
     // Settings は ref を読んでから）。
     if args.page == Some(Page::Reflog) {
@@ -1352,6 +1405,7 @@ fn build_tab(
     reflog.set_range_diff(range_diff_opener.clone());
     let (v, w, oc) = (view.downgrade(), win_of.clone(), on_commit.clone());
     let (dw, dt) = (diff.downgrade(), details.clone());
+    let wt = Rc::downgrade(&worktrees);
     commit_diff.connect_file_items(move |path, y, can_blame, hunk_only| {
         let (Some(view), Some(window)) = (v.upgrade(), w()) else {
             return Vec::new();
@@ -1374,6 +1428,8 @@ fn build_tab(
             items.retain(|i| !matches!(i, menu::Item::Separator));
             return items;
         }
+        // Blame・File History は書き込む先の worktree で開く（File History の起点はその HEAD。macOS 版と同じ）。
+        let repo = wt.upgrade().and_then(|w| w.editing_repo()).unwrap_or(repo);
         // 1 つのコミットを選んでいるときだけ、そのコミットでの blame（一覧の消したファイルにはない）。
         if can_blame
             && let [row] = view.selection()[..]
@@ -1511,7 +1567,9 @@ fn build_tab(
                 items.extend(commitops::menu(&a, &history, row, view.upcast_ref(), &eo));
                 items
             };
-            menu::popup(&view, x, y, items);
+            if let Some(popover) = menu::popup_returning(&view, x, y, items) {
+                view.mark_menu_row(row, &popover);
+            }
         }
     });
     // 最後に読んだ ref（メニューにはチェックアウト中のブランチや最新の stash が要る）。
@@ -1732,8 +1790,10 @@ fn build_tab(
     });
     // 見出しのメニュー（主メニューが右端、その左に Undo）。
     let go_to: Rc<dyn Fn(amonhen_model::Oid)> = {
-        let (pages, view, shaper) = (pages.clone(), view.clone(), Rc::downgrade(&shaper));
-        Rc::new(move |id| jump_to(&pages, &view, id, &Rc::new(Cell::new(0)), &shaper))
+        // Go to Parent・Child は History で選ぶだけで、ほかのページを出していても切り替えない（macOS 版と同じ。
+        // Go to HEAD は先に History を出す）。
+        let (view, shaper) = (view.clone(), Rc::downgrade(&shaper));
+        Rc::new(move |id| select_in_history(&view, id, &Rc::new(Cell::new(0)), &shaper))
     };
     let buttons = appmenu::install(appmenu::Parts {
         app: app.clone(),
@@ -1753,7 +1813,13 @@ fn build_tab(
         location: text.clone(),
         worktrees: worktrees.clone(),
         details: Rc::downgrade(&details),
+        search: search.toggle.clone().upcast(),
     });
+    // File History・Blame のタブの見出しに、このタブと同じツールバーを作る（macOS 版の `MainToolbar.mirror()`）。
+    {
+        let b = buttons.clone();
+        tab.set_mirror(move |tool| b.mirror(tool));
+    }
     // つながるまでは、ブランチを「—」にして押せなくする（macOS 版と同じ）。
     if amonhen_remote::location::is_remote(&text) {
         buttons.show_unopened();
@@ -1841,7 +1907,14 @@ fn build_tab(
     search.install(&tab.group);
     // 足した検索のアクションにも、使えるか（開けていないタブでは使えない）を入れる。
     actions.update_facts(|_| {});
-    header.pack_end(&search.toggle);
+    // Find Next・Find Previous は、History を探したか、フォーカスが差分・History にあるときだけ使える（macOS 版で
+    // ⌘G を受ける部品があるときと同じ）。
+    {
+        let a = actions.clone();
+        search.track_focus(tab.root.upcast_ref(), move |available| {
+            a.update_facts(|f| f.find_next = available);
+        });
+    }
     let order = settings::history_order();
     // 見張りからの変化の知らせ（裏の糸が受ける）。タブを閉じたら、知らせを受ける糸と下の受け手を止める。
     let (changed_tx, changed_rx) = std::sync::mpsc::channel();
@@ -1923,7 +1996,7 @@ fn build_tab(
     // でも開き直す）。
     let alert_on_failure = !amonhen_remote::location::is_remote(&text)
         && !settings::bool(settings::OPEN_THROUGH_DAEMON)
-        && !tabs::is_restoring()
+        && !tabs::keeps_error_tab()
         && !tabs::is_check_run();
     std::thread::spawn(move || load(path, order, tx, changed_tx, changed_rx));
     glib::spawn_future_local(glib::clone!(
@@ -1951,6 +2024,7 @@ fn build_tab(
                         working.set_repo(editing.clone());
                         stashes.set_repo(editing.clone());
                         reflog.set_repo(editing.clone());
+                        range_diff.set_tools_repo(editing.clone());
                         actions.set_repo(editing);
                         load_form();
                         // ref を先に読んでいたら、ここで GitHub から読み始める。
@@ -2155,8 +2229,7 @@ fn build_tab(
                                 );
                             }
                             if let Some(tab) = &args.activity {
-                                let repo = view.current().map(|(r, _)| r);
-                                activity::Activity::show(&window, repo, engine());
+                                activity::Activity::show(&window, engine());
                                 activity::Activity::select(tab);
                                 pending.set(pending.get() + 1);
                                 let p = pending.clone();
@@ -2189,12 +2262,9 @@ fn build_tab(
                                 search.search(query, args.only_matching, pending.clone());
                             }
                             if let Some(row) = args.menu_row.filter(|_| !args.reflog) {
-                                // 複数選んだ行の上なら、選んだまま（まとめての操作のメニュー）。
+                                // 右クリックと同じく、行は選ばない。複数選んだ行の上なら、まとめての操作のメニュー。
                                 let many =
                                     args.select_rows.len() > 1 && args.select_rows.contains(&row);
-                                if !many {
-                                    view.select(row);
-                                }
                                 let rd = range_diff_opener.clone();
                                 pending.set(pending.get() + 1);
                                 let (p, v, a) = (pending.clone(), view.clone(), actions.clone());
@@ -2232,7 +2302,13 @@ fn build_tab(
                                                         eprintln!("メニューの項目がない: {path}");
                                                     }
                                                 }
-                                                None => menu::popup(&v, 380.0, y as f64, items),
+                                                None => {
+                                                    if let Some(popover) = menu::popup_returning(
+                                                        &v, 380.0, y as f64, items,
+                                                    ) {
+                                                        v.mark_menu_row(row, &popover);
+                                                    }
+                                                }
                                             }
                                         }
                                         // 項目が開いたシートが出て、中身を調べ終えるまで待つ。
@@ -2575,11 +2651,12 @@ fn build_tab(
                     Event::Reload => reload(),
                     // まだ何も出せていない間だけ（キャッシュがあれば差分だけで済み、すぐ終わる）。
                     Event::Received(bytes) => {
-                        if view.current().is_none() && status.is_visible() {
+                        if view.current().is_none() {
                             status.set_text(&tr!(
                                 "Loading History… {size} received",
                                 size = glib::format_size(bytes)
                             ));
+                            status.set_visible(true);
                             spinner.set_visible(true);
                             spinner.start();
                         }
@@ -2612,7 +2689,7 @@ fn build_tab(
                         if let Some(tab) = tab_weak.upgrade() {
                             tabs::close_tab(&tab);
                         }
-                        // 閉じた後に前にある窓（最後のタブならリポジトリのページになった同じ窓）に出す。
+                        // 閉じた後に前にある窓（最後のタブなら、新しく出したリポジトリのページの窓）に出す。
                         let window = tabs::front_window().map(|h| h.window.clone());
                         gtk::AlertDialog::builder()
                             .message(&e)
@@ -2646,18 +2723,28 @@ fn build_tab(
                             );
                         }
                     }
-                    Event::Failed(e) => {
+                    // 読めなかったら、読んでいる途中の一言を消して、エラーを窓の前に出す（開いて最初の読み込みだけ。
+                    // 後の読み直しの失敗と、つながりが切れたとき（ステータスバーが知らせる）は出さない。macOS 版と同じ）。
+                    Event::Failed(repo, e, first) => {
                         spinner.stop();
                         spinner.set_visible(false);
-                        status.set_text(&e);
-                        status.set_visible(true);
-                        if (args.snapshot.is_some()
+                        status.set_visible(false);
+                        if args.snapshot.is_some()
                             || args.measure_scroll
-                            || args.measure_select.is_some())
-                            && let Some(window) = win_of()
+                            || args.measure_select.is_some()
                         {
                             eprintln!("{e}");
-                            window.close();
+                            if let Some(window) = win_of() {
+                                window.close();
+                            }
+                        } else if first
+                            && !repo.connection_state().is_some_and(|s| s.closed.is_some())
+                        {
+                            gtk::AlertDialog::builder()
+                                .message(&e)
+                                .modal(true)
+                                .build()
+                                .show(win_of().as_ref());
                         }
                     }
                 }
@@ -2756,6 +2843,17 @@ fn jump_to(
     shaper: &Weak<historydisplay::Shaper>,
 ) {
     pages.set_visible_child_name("history");
+    select_in_history(view, target, pending, shaper);
+}
+
+/// History で `target` のコミットを選ぶ（ページは切り替えない）。今の範囲になければ、`shaper` があれば全ブランチに
+/// 戻して選ぶ（macOS 版の `goTo(id:)`）。
+fn select_in_history(
+    view: &HistoryView,
+    target: amonhen_model::Oid,
+    pending: &Rc<Cell<u32>>,
+    shaper: &Weak<historydisplay::Shaper>,
+) {
     let Some((_, history)) = view.current() else {
         return;
     };
@@ -2775,10 +2873,8 @@ fn jump_to(
             return;
         }
         match row {
-            Some(row) => {
-                view.select(row);
-                view.grab_focus();
-            }
+            // 選んで中ほどに置くだけで、キーボードのフォーカスは動かさない（macOS 版と同じ）。
+            Some(row) => view.select(row),
             None => {
                 if let Some(shaper) = shaper.upgrade() {
                     shaper.show_all_selecting(target);
@@ -2820,7 +2916,13 @@ fn connect_selection(
             return;
         };
         match rows {
-            [] => {}
+            // 選んだ行を外して何も選んでいない（Ctrl で外した）: 詳細を消して「コミットを選ぶと…」（macOS 版と同じ）。
+            [] => {
+                loader.start();
+                loader
+                    .files
+                    .show_message(&tr!("Select a commit to see its changes."));
+            }
             [row] => loader.one(repo, history, *row),
             _ => loader.many(repo, history, rows.to_vec(), PairMode::Forward),
         }
@@ -2841,10 +2943,19 @@ struct Loader {
 
 impl Loader {
     fn start(&self) -> u64 {
-        let g = self.generation.get() + 1;
-        self.generation.set(g);
+        let g = self.next();
         self.details.clear();
         self.files.clear();
+        g
+    }
+
+    /// 選び直した（古い結果は捨てる）。出している詳細と差分は、新しいものが届くまでそのまま（1 つのコミットを
+    /// 選んだとき。macOS 版と同じ）。
+    fn next(&self) -> u64 {
+        let g = self.generation.get() + 1;
+        self.generation.set(g);
+        self.details.next();
+        self.files.reset_stats();
         g
     }
 
@@ -2858,7 +2969,7 @@ impl Loader {
         let Some(&id) = history.graph.ids().get(row as usize) else {
             return;
         };
-        let g = self.start();
+        let g = self.next();
         self.pending.set(self.pending.get() + 1);
         let (this, repo_i) = (self.clone(), repo.clone());
         glib::spawn_future_local(async move {
@@ -2895,6 +3006,7 @@ impl Loader {
                 Ok(Ok(extras)) => {
                     // 詳細より先に届いたら、詳細が出たときに足す。
                     this.details.show_extras(&extras);
+                    this.files.set_stats(&extras);
                     this.fit();
                 }
                 Ok(Err(e)) => eprintln!("コミットの詳細を読めない: {e}"),
@@ -2923,46 +3035,61 @@ impl Loader {
         });
         self.details
             .show_selection(rows.len(), None, pair, &[], on_pair.clone());
-        // 各コミットの 1 行（短い ID・件名・作者）。
+        // 各コミットの 1 行（短い ID・件名・作者）は、差分を待たずに出す（差分の取り方の説明は、差分を読んでから。
+        // macOS 版と同じ）。
         let ids: Vec<amonhen_model::Oid> = rows
             .iter()
             .filter_map(|&r| history.graph.ids().get(r as usize).copied())
             .collect();
         let count = rows.len();
-        let this = self.clone();
-        let repo_t = repo.clone();
-        self.diff(repo, history, rows, pair, g, move |kind| {
-            let (this, repo_t, ids, on_pair) =
-                (this.clone(), repo_t.clone(), ids.clone(), on_pair.clone());
-            let kind = kind.to_owned();
-            glib::spawn_future_local(async move {
-                let texts = gio::spawn_blocking(move || {
-                    let texts = repo_t.commit_texts(&ids).unwrap_or_default();
-                    let mailmap = repo_t.mailmap();
-                    ids.iter()
-                        .zip(&texts)
-                        .map(|(id, t)| {
-                            (
-                                id.to_string()[..8].to_owned(),
-                                String::from_utf8_lossy(t.subject()).into_owned(),
-                                String::from_utf8_lossy(&t.author(mailmap.as_deref()).name)
-                                    .into_owned(),
-                            )
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .await
-                .unwrap_or_default();
-                if this.generation.get() == g {
-                    this.details
-                        .show_selection(count, Some(&kind), pair, &texts, on_pair);
-                    this.fit();
+        // 届いたもの（差分の取り方、各コミットの 1 行）。どちらが先に届いても、届いた分で見出しを出し直す。
+        type Shown = (Option<String>, Vec<(String, String, String)>);
+        let shown: Rc<std::cell::RefCell<Shown>> = Rc::default();
+        let render = {
+            let (this, shown, on_pair) = (self.clone(), shown.clone(), on_pair.clone());
+            Rc::new(move || {
+                if this.generation.get() != g {
+                    return;
                 }
-            });
+                let (kind, texts) = shown.borrow().clone();
+                this.details
+                    .show_selection(count, kind.as_deref(), pair, &texts, on_pair.clone());
+                this.fit();
+            })
+        };
+        self.pending.set(self.pending.get() + 1);
+        let (this, repo_t, shown_t, render_t) =
+            (self.clone(), repo.clone(), shown.clone(), render.clone());
+        glib::spawn_future_local(async move {
+            let texts = gio::spawn_blocking(move || {
+                let texts = repo_t.commit_texts(&ids).unwrap_or_default();
+                let mailmap = repo_t.mailmap();
+                ids.iter()
+                    .zip(&texts)
+                    .map(|(id, t)| {
+                        (
+                            id.to_string()[..8].to_owned(),
+                            String::from_utf8_lossy(t.subject()).into_owned(),
+                            String::from_utf8_lossy(&t.author(mailmap.as_deref()).name)
+                                .into_owned(),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .await
+            .unwrap_or_default();
+            this.pending.set(this.pending.get() - 1);
+            shown_t.borrow_mut().1 = texts;
+            render_t();
+        });
+        self.diff(repo, history, rows, pair, g, move |kind| {
+            shown.borrow_mut().0 = Some(kind.to_owned());
+            render();
         });
     }
 
-    /// 選んだ行の差分を読んで出す。読めたら `then(選び方)` を呼ぶ（`range`・`pair`・`each`）。
+    /// 選んだ行の差分を読んで出す。読めたら `then(選び方)` を呼ぶ（`range`・`pair`・`each`。読めなければ
+    /// `failed`）。
     fn diff(
         self: &Rc<Self>,
         repo: Arc<Repository>,
@@ -3019,6 +3146,8 @@ impl Loader {
                 Ok(Err(e)) => {
                     eprintln!("差分を読めない: {e}");
                     this.files.show_message(&tr!("Couldn’t load the diff"));
+                    // 複数のコミットの見出しも「読めない」にする（macOS 版と同じ）。
+                    then("failed");
                 }
                 Err(_) => {}
             }
@@ -3048,7 +3177,8 @@ enum Event {
     Changed(String, String, bool),
     /// Activity の Performance に出す時間（項目、ms）。
     Timing(&'static str, f64),
-    Failed(String),
+    /// History を読めなかった（読んだリポジトリ、エラー、開いて最初の読み込みか）。
+    Failed(Arc<Repository>, String, bool),
     /// リポジトリを開けた（つながった）。
     Opened,
     /// リポジトリを開けなかった（つなげなかった）。
@@ -3097,8 +3227,9 @@ fn reload_details_info(details: &Rc<Details>, repo: Arc<Repository>) {
     });
 }
 
-/// History と ref を読み直して知らせる（裏のスレッドで呼ぶ）。
-fn reload_history(repo: &Arc<Repository>, tx: &async_channel::Sender<Event>) {
+/// History と ref を読み直して知らせる（裏のスレッドで呼ぶ）。`first` は開いて最初の読み込み（読めなければ
+/// 知らせを出す。後の読み直しの失敗は出さない。macOS 版と同じ）。
+fn reload_history(repo: &Arc<Repository>, tx: &async_channel::Sender<Event>, first: bool) {
     let started = std::time::Instant::now();
     let loaded = repo.load_history();
     let _ = tx.send_blocking(Event::Timing(
@@ -3110,7 +3241,7 @@ fn reload_history(repo: &Arc<Repository>, tx: &async_channel::Sender<Event>) {
             let _ = tx.send_blocking(Event::History(repo.clone(), history));
         }
         Err(e) => {
-            let _ = tx.send_blocking(Event::Failed(tr!("Can’t read History: {e}", e = e)));
+            let _ = tx.send_blocking(Event::Failed(repo.clone(), e.to_string(), first));
         }
     }
     if let Ok(refs) = repo.load_refs() {
@@ -3227,8 +3358,8 @@ fn load(
         });
     }
     let status = |repo: &Arc<Repository>| reload_status(repo, &tx);
-    let reload = |repo: &Arc<Repository>| reload_history(repo, &tx);
-    reload(&repo);
+    let reload = |repo: &Arc<Repository>| reload_history(repo, &tx, false);
+    reload_history(&repo, &tx, true);
     receiving.store(false, std::sync::atomic::Ordering::Relaxed);
     status(&repo);
     // 最後に見た mailmap の指紋（変わったら作者名を出し直す）。

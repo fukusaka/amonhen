@@ -83,8 +83,9 @@ impl Pane {
     fn new(title: &str, editable: bool, color: &str) -> Self {
         let label = gtk::Label::new(Some(title));
         label.set_xalign(0.0);
-        label.add_css_class("heading");
-        label.add_css_class("caption");
+        // 小さな太字で、薄く（macOS 版と同じ）。
+        label.add_css_class("caption-heading");
+        label.add_css_class("dim-label");
         label.set_ellipsize(gtk::pango::EllipsizeMode::End);
         label.set_margin_start(6);
         let view = gtk::TextView::builder()
@@ -272,10 +273,14 @@ pub struct Editor {
     window: RefCell<Option<glib::WeakRef<gtk::Window>>>,
     /// 別の窓で開くボタン（埋め込んだときだけ出す）。
     popout: gtk::Button,
+    /// 別の窓を、解決したか Result を捨てると決めて閉じる（閉じたことを Working Copy に知らせない）。
+    window_done: Cell<bool>,
     /// Current と Result、Result と Incoming の間の帯と、帯の矢印の押せる範囲（x, y, 幅, 高さ, コンフリクト）。
     bands: [gtk::DrawingArea; 2],
     arrows: [RefCell<Vec<Arrow>>; 2],
     actions: Rc<Actions>,
+    /// 開いた worktree のリポジトリ。保存・AI はここに対して行う（タブが書き込む先の worktree を後で替えても）。
+    repo: Arc<Repository>,
     /// コンフリクトのある worktree の作業ツリー（同じパスでも、worktree が違えば別のエディタ）。
     workdir: Option<PathBuf>,
     path: String,
@@ -301,7 +306,6 @@ pub struct Editor {
     buttons: Vec<gtk::Button>,
     accept_base: Option<gtk::Button>,
     /// AI の解消・解説のボタン（コンフリクトがあり、AI を使えるときだけ押せる）。
-    ai_buttons: Vec<gtk::Button>,
     on_resolved: RefCell<Rc<dyn Fn()>>,
     /// 別の窓で開く（埋め込んだ側が決める）。
     on_pop_out: RefCell<Option<Rc<dyn Fn()>>>,
@@ -314,6 +318,52 @@ thread_local! {
     static ACCEPT_ONCE: Cell<Option<Choice>> = const { Cell::new(None) };
     /// 開いているマージエディタ（窓を閉じたら外す）。
     static KEEP: RefCell<Vec<Rc<Editor>>> = RefCell::default();
+    /// 別の窓を解決せずに閉じたときの知らせ先。
+    static CLOSED: RefCell<Vec<Closed>> = RefCell::default();
+}
+
+/// 別の窓のマージエディタを解決せずに閉じたときの知らせ（worktree の作業ツリーとパス）。false を返したら外す
+/// （知らせ先がもうない）。
+type Closed = Rc<dyn Fn(Option<&Path>, &str) -> bool>;
+
+/// `workdir` の worktree の `path` を別の窓で開いているエディタ。
+pub fn window_editor(workdir: Option<&Path>, path: &str) -> Option<Rc<Editor>> {
+    KEEP.with(|k| {
+        k.borrow()
+            .iter()
+            .find(|e| e.workdir.as_deref() == workdir && e.path == path)
+            .cloned()
+    })
+}
+
+/// `workdir` の worktree の `path` の別の窓を、聞かずに閉じる（片側のファイルを取って、Result を捨てると確かめた
+/// 後。残しておくと、後で Save したときに取ったファイルを上書きしてしまう。macOS 版と同じ）。
+pub fn discard_window(workdir: Option<&Path>, path: &str) {
+    if let Some(editor) = window_editor(workdir, path) {
+        editor.window_done.set(true);
+    }
+    if let Some(window) = open_window(workdir, path) {
+        window.destroy();
+    }
+}
+
+/// 別の窓のマージエディタを解決せずに閉じたら `f(作業ツリー, パス)` を呼ぶ。`f` が false を返したら（知らせ先の
+/// Working Copy がなくなった）、それからは呼ばない。
+pub fn connect_window_closed(f: impl Fn(Option<&Path>, &str) -> bool + 'static) {
+    CLOSED.with(|c| c.borrow_mut().push(Rc::new(f)));
+}
+
+/// 別の窓を解決せずに閉じたことを知らせ、知らせ先がなくなったものを外す。
+fn notify_closed(workdir: Option<&Path>, path: &str) {
+    let listeners: Vec<Closed> = CLOSED.with(|c| c.borrow().clone());
+    let gone: Vec<Closed> = listeners
+        .into_iter()
+        .filter(|f| !f(workdir, path))
+        .collect();
+    CLOSED.with(|c| {
+        c.borrow_mut()
+            .retain(|f| !gone.iter().any(|g| Rc::ptr_eq(f, g)))
+    });
 }
 
 /// 次に開いたとき、最初のコンフリクトを `choice`（`ours`・`theirs`・`both`・`base`）で解く（確認用）。
@@ -372,6 +422,28 @@ pub fn open_window(workdir: Option<&Path>, path: &str) -> Option<gtk::Window> {
     })
 }
 
+/// 保存していない Result を捨てて閉じてよいかを、`window` のシートで確かめる（赤い「Close Without Saving」。
+/// Return は Cancel。macOS 版と同じ）。別の窓のマージエディタ、リポジトリのタブ・窓を閉じるとき、終えるときに。
+pub async fn confirm_discarding(window: &impl IsA<gtk::Window>) -> bool {
+    let sheet = crate::sheets::Sheet::unnamed(
+        Some(window.upcast_ref()),
+        &tr!("Close without saving?"),
+        &tr!("Your changes to Result are lost."),
+    );
+    sheet.buttons(&tr!("Close Without Saving"), true, None);
+    sheet.run().await == crate::sheets::Response::Ok
+}
+
+/// Result を保存していない、別の窓のマージエディタの窓（終える前に確かめる）。
+pub fn unsaved_window() -> Option<gtk::Window> {
+    KEEP.with(|k| {
+        k.borrow()
+            .iter()
+            .filter(|e| e.has_unsaved_changes())
+            .find_map(|e| e.window.borrow().as_ref().and_then(|w| w.upgrade()))
+    })
+}
+
 /// `path` の両側と Result を裏で読んで、エディタを作る（まだどこにも入れない）。失敗はその理由。
 pub async fn load(
     repo: Arc<Repository>,
@@ -379,7 +451,7 @@ pub async fn load(
     path: &str,
 ) -> Result<Rc<Editor>, String> {
     let p = path.to_owned();
-    let workdir = repo.paths().workdir;
+    let opened = repo.clone();
     let reply: Value = gio::spawn_blocking(move || {
         let command = json!({ "op": "mergeSides", "path": p });
         serde_json::from_str(&repo.run_json(&command.to_string())).unwrap_or_default()
@@ -406,7 +478,7 @@ pub async fn load(
     });
     Ok(Editor::new(
         actions,
-        workdir,
+        opened,
         path,
         sides,
         result,
@@ -419,8 +491,8 @@ pub fn show_in_window(editor: &Rc<Editor>, parent: &gtk::Window) {
     editor.set_on_pop_out(None);
     let window = gtk::Window::builder()
         .title(format!("Merge — {}", editor.path))
-        .default_width(1400)
-        .default_height(800)
+        .default_width(1300)
+        .default_height(820)
         .child(&editor.root)
         .build();
     // リポジトリの窓とは別の窓にする（macOS 版と同じ）。リポジトリの窓を閉じても道連れにしない（道連れだと
@@ -429,6 +501,24 @@ pub fn show_in_window(editor: &Rc<Editor>, parent: &gtk::Window) {
     if let Some(app) = parent.application() {
         window.set_application(Some(&app));
     }
+    // Ctrl+W（`win.close`）で閉じ（保存していない Result は下で確かめる）、Ctrl+M（`win.minimize`）でしまう
+    // （macOS 版の閉じられる・しまえる窓の ⌘W・⌘M）。
+    let actions = gio::SimpleActionGroup::new();
+    for (name, minimize) in [("close", false), ("minimize", true)] {
+        let action = gio::SimpleAction::new(name, None);
+        let weak = window.downgrade();
+        action.connect_activate(move |_, _| {
+            if let Some(w) = weak.upgrade() {
+                if minimize {
+                    w.minimize();
+                } else {
+                    w.close();
+                }
+            }
+        });
+        actions.add_action(&action);
+    }
+    window.insert_action_group("win", Some(&actions));
     editor.window.replace(Some(window.downgrade()));
     OPEN.with(|o| {
         let mut o = o.borrow_mut();
@@ -441,17 +531,30 @@ pub fn show_in_window(editor: &Rc<Editor>, parent: &gtk::Window) {
     // 窓がある間は持っておく（ボタンなどは弱い参照で呼ぶので、持たなければ開いた直後に消える）。
     KEEP.with(|k| k.borrow_mut().push(editor.clone()));
     let weak = Rc::downgrade(editor);
-    window.connect_destroy(move |_| {
+    let key = (editor.workdir.clone(), editor.path.clone());
+    window.connect_destroy(move |window| {
+        let done = weak.upgrade().is_none_or(|e| e.window_done.get());
         KEEP.with(|k| {
             k.borrow_mut()
                 .retain(|e| !std::ptr::eq(Rc::as_ptr(e), weak.as_ptr()))
         });
+        OPEN.with(|o| {
+            o.borrow_mut()
+                .retain(|(_, w)| w.upgrade().is_some_and(|w| w != *window))
+        });
+        // 解決せずに閉じたら知らせる（Working Copy が、そのファイルを出していれば埋め込み直す）。
+        if !done {
+            notify_closed(key.0.as_deref(), &key.1);
+        }
     });
     // 解決済みにしたら閉じる（その前に、渡されていた知らせを呼ぶ）。
     let previous = editor.on_resolved.borrow().clone();
-    let w = window.downgrade();
+    let (w, e) = (window.downgrade(), Rc::downgrade(editor));
     editor.set_on_resolved(move || {
         previous();
+        if let Some(e) = e.upgrade() {
+            e.window_done.set(true);
+        }
         if let Some(w) = w.upgrade() {
             w.destroy();
         }
@@ -467,15 +570,7 @@ pub fn show_in_window(editor: &Rc<Editor>, parent: &gtk::Window) {
         }
         let window = window.clone();
         glib::spawn_future_local(async move {
-            let dialog = gtk::AlertDialog::builder()
-                .message(tr!("Close without saving?"))
-                .detail(tr!("Your changes to Result are lost."))
-                .buttons([tr!("Cancel"), tr!("Close Without Saving")])
-                .cancel_button(0)
-                .default_button(0)
-                .modal(true)
-                .build();
-            if dialog.choose_future(Some(&window)).await == Ok(1) {
+            if confirm_discarding(&window).await {
                 window.destroy();
             }
         });
@@ -519,7 +614,7 @@ impl Editor {
 impl Editor {
     fn new(
         actions: Rc<Actions>,
-        workdir: Option<PathBuf>,
+        repo: Arc<Repository>,
         path: &str,
         sides: [Option<Side>; 3],
         result: String,
@@ -556,7 +651,6 @@ impl Editor {
         let note = gtk::Label::new(None);
         note.add_css_class("dim-label");
         note.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        note.set_hexpand(true);
         note.set_xalign(0.0);
         let mut accepts = vec![
             ("Accept Current", Choice::Ours),
@@ -578,10 +672,10 @@ impl Editor {
         let base_toggle = gtk::CheckButton::with_label("Base");
         base_toggle.set_tooltip_text(Some(&tr!("Show the common ancestor on the left.")));
         base_toggle.set_visible(has_base);
+        // Save にはキーも説明もない（macOS 版と同じ）。
         let save = gtk::Button::with_label(&tr!("Save"));
-        save.set_tooltip_text(Some(&tr!("Save (Ctrl+S)")));
         let resolve = gtk::Button::with_label(&tr!("Save & Mark Resolved"));
-        resolve.add_css_class("suggested-action");
+        // 色は付けない（macOS 版と同じ、ふつうのボタン。Ctrl+Return はエディタのキーで）。
         resolve.set_tooltip_text(Some(&tr!("Save and mark as resolved (Ctrl+Return).")));
 
         // テーマにアイコンがなければ（macOS の GTK など）、文字にする。
@@ -595,33 +689,45 @@ impl Editor {
         popout.set_tooltip_text(Some(&tr!("Open in a Separate Window")));
         popout.set_visible(false);
 
-        // 操作の帯は 2 段（Working Copy の右に埋め込んでも収まるように）: 上にコンフリクトの選択と解決、下に
-        // Magic Merge・AI・知らせと保存。
-        let row = || {
-            let b = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-            b.set_margin_start(10);
-            b.set_margin_end(10);
-            b
-        };
-        let top = row();
-        top.set_margin_top(6);
-        top.append(&position);
-        top.append(&previous);
-        top.append(&next);
-        for (b, _) in &accept_buttons {
-            top.append(b);
+        // 操作の帯は 1 段（macOS 版と同じ並び）: 位置・∧ ∨・Magic Merge・AI・知らせ・Accept…・Base、右に
+        // 別の窓・Save・Save & Mark Resolved。狭いときも折らずに 1 段のまま、先に知らせを、次にボタンの名前を
+        // 切り詰める（macOS 版の NSStackView は幅に合わせて、押し縮めに弱い順に切り詰める）。
+        for button in [&magic, &ai_resolve, &ai_explain, &save, &resolve]
+            .into_iter()
+            .chain(accept_buttons.iter().map(|(b, _)| b))
+        {
+            if let Some(label) = button.child().and_downcast::<gtk::Label>() {
+                label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            }
         }
-        top.append(&base_toggle);
-        let bottom = row();
-        bottom.set_margin_top(6);
-        bottom.set_margin_bottom(6);
-        bottom.append(&magic);
-        bottom.append(&ai_resolve);
-        bottom.append(&ai_explain);
-        bottom.append(&note);
-        bottom.append(&popout);
-        bottom.append(&save);
-        bottom.append(&resolve);
+        let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        spacer.set_hexpand(true);
+        let bar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        bar.set_margin_start(10);
+        bar.set_margin_end(10);
+        bar.set_margin_top(6);
+        bar.set_margin_bottom(6);
+        let widget = |w: &dyn AsRef<gtk::Widget>| w.as_ref().clone();
+        for w in [
+            widget(&position),
+            widget(&previous),
+            widget(&next),
+            widget(&magic),
+            widget(&ai_resolve),
+            widget(&ai_explain),
+            widget(&note),
+        ]
+        .into_iter()
+        .chain(accept_buttons.iter().map(|(b, _)| widget(b)))
+        .chain([
+            widget(&base_toggle),
+            widget(&spacer),
+            widget(&popout),
+            widget(&save),
+            widget(&resolve),
+        ]) {
+            bar.append(&w);
+        }
 
         // 列: Base（出すとき）・Current と帯・Result・帯と Incoming（同じ幅に分ける）。
         let columns = gtk::Box::new(gtk::Orientation::Horizontal, 0);
@@ -648,9 +754,16 @@ impl Editor {
             Self::band_column(&bands[1]).upcast_ref(),
             incoming.root.upcast_ref(),
         ));
+        // 切り詰めても入りきらないほど狭ければ、帯の右を切る（帯の幅で窓・Working Copy の欄を広げない。macOS 版も
+        // 帯の外は出さない）。
+        let bar = gtk::ScrolledWindow::builder()
+            .child(&bar)
+            .hscrollbar_policy(gtk::PolicyType::External)
+            .vscrollbar_policy(gtk::PolicyType::Never)
+            .propagate_natural_height(true)
+            .build();
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        root.append(&top);
-        root.append(&bottom);
+        root.append(&bar);
         // マーカーの残っていないファイル（rerere が解決を当てた、ほかのエディタで直した）の案内。
         let banner_resolve = without_markers.as_ref().map(|text| {
             let (banner, button) = Self::without_markers_banner(text);
@@ -694,10 +807,12 @@ impl Editor {
             root,
             window: RefCell::default(),
             popout: popout.clone(),
+            window_done: Cell::new(false),
             bands,
             arrows: Default::default(),
             actions,
-            workdir,
+            workdir: repo.paths().workdir,
+            repo,
             path: path.to_owned(),
             current,
             result: result_pane,
@@ -715,22 +830,10 @@ impl Editor {
             note,
             buttons,
             accept_base,
-            ai_buttons: vec![ai_resolve.clone(), ai_explain.clone()],
             on_resolved: RefCell::new(Rc::new(|| {})),
             on_pop_out: RefCell::default(),
         });
         this.update_conflicts();
-        // AI の設定が変わると `assist::track` がボタンを押せるようにするので、その後でコンフリクトの有無に
-        // 合わせ直す（残っていなければ押せない）。エディタがなくなったら外す。
-        let weak = Rc::downgrade(&this);
-        crate::settings::connect_changed_while(&this.root, move |key| {
-            if (key == crate::assist::ASSISTANT || key.starts_with("assistantPath."))
-                && let Some(this) = weak.upgrade()
-            {
-                this.refresh();
-            }
-        });
-
         let weak = Rc::downgrade(&this);
         let with = move |f: fn(&Rc<Self>)| {
             let weak = weak.clone();
@@ -783,7 +886,7 @@ impl Editor {
             }
         });
 
-        // キー: Ctrl+Alt+↑↓ でコンフリクトの間を移り、Ctrl+S で保存、Ctrl+Return で保存して解決済みにする。
+        // キー: Ctrl+Alt+↑↓ でコンフリクトの間を移り、Ctrl+Return で保存して解決済みにする。
         // エディタの中にフォーカスがあるときだけ（埋め込んだ Working Copy では、外の Ctrl+Return はコミット）。
         // Result の欄より先に受ける。
         let keys = gtk::ShortcutController::new();
@@ -800,8 +903,8 @@ impl Editor {
         };
         add("<Control><Alt>Up", Box::new(with(|t| t.step(-1))));
         add("<Control><Alt>Down", Box::new(with(|t| t.step(1))));
-        add("<Control>s", Box::new(with(|t| t.save(false))));
         add("<Control>Return", Box::new(with(Self::save_and_resolve)));
+        add("<Control>KP_Enter", Box::new(with(Self::save_and_resolve)));
         this.root.add_controller(keys);
 
         // Result を書き換えたら、少し待ってからコンフリクトを読み直す。
@@ -861,8 +964,8 @@ impl Editor {
         }
     }
 
-    /// 開いたとき（作ったあと一度だけ）: 間違えようのないコンフリクトを解き（設定で切れる）、最初のコンフリクトを
-    /// 見せる。
+    /// 開いたとき（作ったあと一度だけ）: 間違えようのないコンフリクトを解く（設定で切れる）。スクロールはしない
+    /// （ファイルの先頭から。macOS 版と同じ）。
     pub fn opened(this: &Rc<Self>) {
         if crate::settings::bool(crate::settings::AUTO_MAGIC_MERGE) {
             let solved = this.apply_magic(MagicRules::Safe);
@@ -873,13 +976,6 @@ impl Editor {
                 ));
             }
         }
-        // 大きさが決まってから見せる。
-        let weak = Rc::downgrade(this);
-        glib::idle_add_local_once(move || {
-            if let Some(this) = weak.upgrade() {
-                this.reveal();
-            }
-        });
         if let Some(choice) = ACCEPT_ONCE.with(|a| a.take()) {
             this.resolve(this.selected.get(), choice);
         }
@@ -917,9 +1013,6 @@ impl Editor {
         });
         for b in &self.buttons {
             b.set_sensitive(!conflicts.is_empty());
-        }
-        for b in &self.ai_buttons {
-            b.set_sensitive(!conflicts.is_empty() && crate::assist::is_ready());
         }
         // 共通の祖先は、対応のわかるコンフリクトでだけ選べる。
         if let Some(b) = &self.accept_base {
@@ -1144,7 +1237,9 @@ impl Editor {
         solved
     }
 
-    fn save_and_resolve(this: &Rc<Self>) {
+    /// Mark Resolved: Result を保存してから解決済みにする（コンフリクトが残っていれば確かめる）。Working Copy の帯の
+    /// Mark Resolved も、保存していない Result があればこれを使う。
+    pub fn save_and_resolve(this: &Rc<Self>) {
         let remaining = this.conflicts.borrow().len();
         if remaining == 0 {
             this.save(true);
@@ -1152,18 +1247,17 @@ impl Editor {
         }
         let this = this.clone();
         glib::spawn_future_local(async move {
-            let dialog = gtk::AlertDialog::builder()
-                .message(tr!(
+            // ほかの確認と同じシートで（Return で Mark Resolved、Esc で取り消す。macOS 版と同じ）。
+            let sheet = crate::sheets::Sheet::unnamed(
+                this.parent_window().as_ref(),
+                &tr!(
                     "Mark as resolved with {count} conflicts left?",
                     count = remaining
-                ))
-                .detail(tr!("The conflict markers stay in the file."))
-                .buttons([tr!("Cancel"), tr!("Mark Resolved")])
-                .cancel_button(0)
-                .default_button(1)
-                .modal(true)
-                .build();
-            if dialog.choose_future(this.parent_window().as_ref()).await == Ok(1) {
+                ),
+                &tr!("The conflict markers stay in the file."),
+            );
+            sheet.buttons(&tr!("Mark Resolved"), false, None);
+            if sheet.run().await == crate::sheets::Response::Ok {
                 this.save(true);
             }
         });
@@ -1174,17 +1268,18 @@ impl Editor {
         let text = self.result.text();
         let command = json!({ "op": "saveMerge", "path": self.path, "text": text, "stage": stage });
         let weak = Rc::downgrade(self);
-        self.actions.perform_with(vec![command], move |reply| {
-            let Some(this) = weak.upgrade() else { return };
-            if reply["ok"].as_bool() != Some(true) {
-                return;
-            }
-            this.saved.replace(text);
-            if stage {
-                let f = this.on_resolved.borrow().clone();
-                f();
-            }
-        });
+        self.actions
+            .perform_in(self.repo.clone(), vec![command], move |reply| {
+                let Some(this) = weak.upgrade() else { return };
+                if reply["ok"].as_bool() != Some(true) {
+                    return;
+                }
+                this.saved.replace(text);
+                if stage {
+                    let f = this.on_resolved.borrow().clone();
+                    f();
+                }
+            });
     }
 }
 
@@ -1233,23 +1328,29 @@ impl Editor {
 
     /// マーカーの残っていないファイルの案内の帯と、その Mark Resolved のボタン（macOS 版と同じ）。
     fn without_markers_banner(text: &str) -> (gtk::Box, gtk::Button) {
-        let label = gtk::Label::new(Some(&format!("✓ {text}")));
+        // macOS 版と同じく、窓の幅いっぱいの橙の帯（高さ 30）に、橙の ✓ の丸・小さな字の案内・小さな Mark Resolved。
+        let icon = crate::icon::Icon::default();
+        icon.set(crate::icon::Kind::CheckCircle, false);
+        icon.add_css_class("merge-without-markers-icon");
+        icon.set_valign(gtk::Align::Center);
+        let label = gtk::Label::new(Some(text));
+        label.add_css_class("caption");
         label.set_xalign(0.0);
         label.set_hexpand(true);
         label.set_ellipsize(gtk::pango::EllipsizeMode::End);
         label.set_tooltip_text(Some(text));
         let b = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         b.add_css_class("merge-without-markers");
-        b.set_margin_start(6);
-        b.set_margin_end(6);
-        b.set_margin_bottom(6);
+        b.append(&icon);
         b.append(&label);
         let resolve = gtk::Button::with_label(&tr!("Mark Resolved"));
         resolve.set_valign(gtk::Align::Center);
         b.append(&resolve);
         let css = gtk::CssProvider::new();
         css.load_from_string(
-            ".merge-without-markers { background: alpha(#e66100, 0.14); border-radius: 6px; padding: 6px 10px; }",
+            ".merge-without-markers { background: alpha(#e66100, 0.14); min-height: 30px; padding: 0 10px; } \
+             .merge-without-markers-icon { color: #e66100; } \
+             .merge-without-markers button { min-height: 0; padding: 2px 10px; font-size: smaller; }",
         );
         gtk::style_context_add_provider_for_display(
             &b.display(),
@@ -1437,7 +1538,7 @@ impl Editor {
     }
 
     fn workdir(&self) -> Option<std::path::PathBuf> {
-        self.actions.repo().and_then(|r| r.paths().workdir)
+        self.workdir.clone()
     }
 
     fn ai_variables(&self, c: &Region, base: String) -> amonhen_assist::Variables {
@@ -1600,6 +1701,26 @@ mod tests {
             kind,
             _pad: [0; 3],
         }
+    }
+
+    /// 知らせ先がなくなった（false を返した）ものは、次からは呼ばない（タブを閉じても残り続けない）。
+    #[test]
+    fn drops_closed_listeners_that_are_gone() {
+        let calls = Rc::new(Cell::new(0));
+        let alive = Rc::new(());
+        let (c, a) = (calls.clone(), Rc::downgrade(&alive));
+        connect_window_closed(move |_, _| {
+            c.set(c.get() + 1);
+            a.upgrade().is_some()
+        });
+        notify_closed(None, "a");
+        assert_eq!(calls.get(), 1);
+        drop(alive);
+        notify_closed(None, "a");
+        assert_eq!(calls.get(), 2);
+        notify_closed(None, "a");
+        assert_eq!(calls.get(), 2);
+        assert_eq!(CLOSED.with(|c| c.borrow().len()), 0);
     }
 
     /// UTF-16 の位置を文字の位置に直す（😀 は UTF-16 で 2、文字では 1）。

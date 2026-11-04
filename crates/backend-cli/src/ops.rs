@@ -266,6 +266,17 @@ fn renamed_from(out: &[u8], path: &str) -> Option<String> {
 
 impl Git {
     /// `scope`（`--local`・`--global`）の設定を変える。`value` が None なら消す。
+    /// cherry-pick・revert を、`oids` を渡した順に 1 回の git で（止まったら残りは git の sequencer が覚える）。
+    fn pick(&self, command: &[&str], oids: &[Oid], is_merge: bool) -> Result<Outcome> {
+        let hexes: Vec<String> = oids.iter().map(hex).collect();
+        let mut args: Vec<&str> = command.to_vec();
+        if is_merge {
+            args.extend(["-m", "1"]);
+        }
+        args.extend(hexes.iter().map(String::as_str));
+        self.stoppable(&args, &[])
+    }
+
     fn config_set_in(&self, scope: &str, key: &str, value: Option<&str>) -> Result<()> {
         match value {
             Some(v) => self.write(&["config", scope, key, v]).map(drop),
@@ -744,22 +755,12 @@ impl Operations for Git {
         self.stoppable(&args, &[])
     }
 
-    fn cherry_pick(&self, oid: &Oid, is_merge: bool) -> Result<Outcome> {
-        let oid = hex(oid);
-        if is_merge {
-            self.stoppable(&["cherry-pick", "-m", "1", &oid], &[])
-        } else {
-            self.stoppable(&["cherry-pick", &oid], &[])
-        }
+    fn cherry_pick(&self, oids: &[Oid], is_merge: bool) -> Result<Outcome> {
+        self.pick(&["cherry-pick"], oids, is_merge)
     }
 
-    fn revert(&self, oid: &Oid, is_merge: bool) -> Result<Outcome> {
-        let oid = hex(oid);
-        if is_merge {
-            self.stoppable(&["revert", "--no-edit", "-m", "1", &oid], &[])
-        } else {
-            self.stoppable(&["revert", "--no-edit", &oid], &[])
-        }
+    fn revert(&self, oids: &[Oid], is_merge: bool) -> Result<Outcome> {
+        self.pick(&["revert", "--no-edit"], oids, is_merge)
     }
 
     fn rebase_todo(
@@ -1321,6 +1322,15 @@ impl Operations for Git {
 
     fn config_set_global(&self, key: &str, value: Option<&str>) -> Result<()> {
         self.config_set_in("--global", key, value)
+    }
+
+    fn config_set_all(&self, key: &str, values: &[String], global: bool) -> Result<()> {
+        let scope = if global { "--global" } else { "--local" };
+        self.config_set_in(scope, key, None)?;
+        for v in values {
+            self.write(&["config", scope, "--add", key, v])?;
+        }
+        Ok(())
     }
 
     fn git_version(&self) -> Result<Option<(u32, u32, u32)>> {

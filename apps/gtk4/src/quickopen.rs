@@ -86,6 +86,8 @@ struct Row {
     path: gtk::Label,
     branch: gtk::Label,
     state: gtk::Label,
+    /// 行の全体（状態の説明を付ける）。
+    line: gtk::Widget,
     location: RefCell<String>,
     /// 読んだブックマーク（候補と一緒に読み直す。行ごとに読まない）。
     data: Rc<RefCell<bookmarks::Data>>,
@@ -97,8 +99,7 @@ impl Row {
         self.name
             .set_markup(&repobrowser::name_markup_in(&self.data.borrow(), &location));
         self.path.set_text(&repobrowser::path_text(&location));
-        self.branch.set_text(&repobrowser::branch_text(&location));
-        repobrowser::show_state(&self.state, &location, false);
+        repobrowser::show_compact(&self.branch, &self.state, &self.line, &location);
     }
 }
 
@@ -121,6 +122,7 @@ pub fn show_with(parent: Option<&gtk::Window>, open: Open, query: &str) -> gtk::
         "Open a repository (fuzzy search by name or path)"
     )));
     field.set_hexpand(true);
+    field.add_css_class("quick-open-field");
     let model = gtk::StringList::new(&[]);
     let selection = gtk::SingleSelection::new(Some(model.clone()));
     let factory = gtk::SignalListItemFactory::new();
@@ -167,6 +169,7 @@ pub fn show_with(parent: Option<&gtk::Window>, open: Open, query: &str) -> gtk::
             path,
             branch,
             state,
+            line: line.clone().upcast(),
             location: RefCell::default(),
             data: d.clone(),
         }));
@@ -222,8 +225,9 @@ pub fn show_with(parent: Option<&gtk::Window>, open: Open, query: &str) -> gtk::
         .build();
     // 見出しの帯は出さない（macOS 版の浮いた枠の形）。
     window.set_titlebar(Some(&gtk::Box::new(gtk::Orientation::Horizontal, 0)));
+    // 親の窓の上に浮かせるが、塞がない（macOS 版の浮いたパネル。開いたまま親の窓も使える）。
     window.set_transient_for(parent);
-    window.set_modal(parent.is_some());
+    window.set_modal(false);
     if let Some(app) = parent.and_then(|p| p.application()) {
         window.set_application(Some(&app));
     }
@@ -376,20 +380,18 @@ pub fn show_with(parent: Option<&gtk::Window>, open: Open, query: &str) -> gtk::
         glib::Propagation::Stop
     });
     field.add_controller(keys);
-    // ほかの窓に移ったら閉じる（macOS 版の hidesOnDeactivate）。窓から開いたときだけ（起動したときに単独で出した
-    // ものは、閉じると何も残らない）。
+    // 前の窓でなくなったら閉じる（macOS 版の windowDidResignKey。親やこのアプリのほかの窓を押しても、ほかの
+    // アプリに移っても）。窓から開いたときだけ（起動したときに単独で出したものは、閉じると何も残らない）。
     window.connect_is_active_notify(|w| {
-        if w.transient_for().is_none() {
+        if w.transient_for().is_none() || w.is_active() {
             return;
         }
-        if !w.is_active() {
-            let w = w.clone();
-            glib::idle_add_local_once(move || {
-                if !w.is_active() && gtk::Window::list_toplevels().iter().any(|t| t == &w) {
-                    w.close();
-                }
-            });
-        }
+        let w = w.clone();
+        glib::idle_add_local_once(move || {
+            if !w.is_active() && gtk::Window::list_toplevels().iter().any(|t| t == &w) {
+                w.close();
+            }
+        });
     });
     window.present();
     field.grab_focus();

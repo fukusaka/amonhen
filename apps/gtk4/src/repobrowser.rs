@@ -33,6 +33,9 @@ const SPLIT_KEY: &str = "repositoryPageSplit";
 
 pub type Open = Rc<dyn Fn(PathBuf, crate::tabs::Place)>;
 
+/// 左の一覧のいちばん狭い幅（macOS 版と同じ）。
+const SIDEBAR_MIN: i32 = 200;
+
 /// 左の分類。
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Category {
@@ -338,7 +341,8 @@ fn root_base(root: &str) -> String {
 
 /// SSH 先のパスの見せ方（`/~/prj` は `~/prj`、Windows の SSH 先の `/C:/src` は `C:/src`）。
 pub(crate) fn remote_title(path: &str) -> String {
-    let rest = &path[path.len().min(1)..];
+    // 頭の 1 文字を除いたもの（多バイト文字で始まる相対パスでも落ちないよう、文字で数える）。
+    let rest = path.chars().next().map_or("", |c| &path[c.len_utf8()..]);
     let b = rest.as_bytes();
     if path.starts_with("/~") || (b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':') {
         rest.to_owned()
@@ -397,7 +401,7 @@ fn folder_tree(
         title: &dyn Fn(&str) -> String,
     ) -> Vec<Node> {
         let mut names: Vec<&String> = node.children.keys().collect();
-        names.sort_by_key(|n| n.to_lowercase());
+        names.sort_by(|a, b| crate::patches::natural(a, b));
         names
             .into_iter()
             .map(|name| {
@@ -534,6 +538,61 @@ pub fn branch_text(location: &str) -> String {
     }
 }
 
+/// リポジトリの一覧の小さい形（ツールバーの一覧・Quick Open。macOS 版の `RepositoryCell`）の、ブランチと状態を
+/// 出す。SSH 先・daemon 越しはどちらも空、見つからないものは状態も空（名前の下に「見つかりません」と出る）。
+/// 状態の説明（変更のあるファイル・上流との差・Fetch の失敗）は行の全体 `row` に付ける。
+pub fn show_compact(branch: &gtk::Label, state: &gtk::Label, row: &gtk::Widget, location: &str) {
+    install_state_css();
+    state.set_tooltip_text(None);
+    if amonhen_remote::location::is_remote(location) || !bookmarks::is_repository(location) {
+        branch.set_text("");
+        state.set_text("");
+        row.set_tooltip_text(None);
+        return;
+    }
+    branch.set_text(&branch_text(location));
+    let (text, class, _) = state_text(location, false);
+    state.set_text(&text);
+    for c in STATE_CLASSES {
+        if c == class {
+            state.add_css_class(c);
+        } else {
+            state.remove_css_class(c);
+        }
+    }
+    row.set_tooltip_text(row_tip(location).as_deref());
+}
+
+/// 行（名前のセル・小さい一覧の行）の説明: Fetch に失敗していればその訳を先に、変更と上流との差を続ける
+/// （macOS 版の `RepositoryCell` の toolTip）。SSH 先・daemon 越しと見つからないものにはない。
+fn row_tip(location: &str) -> Option<String> {
+    if amonhen_remote::location::is_remote(location) || !bookmarks::is_repository(location) {
+        return None;
+    }
+    let peek = bookmarks::peek(location).map(|p| peek_tip(&p));
+    match bookmarks::fetch_error(location) {
+        Some(e) => Some(
+            std::iter::once(tr!("Fetch failed: {error}", error = e))
+                .chain(peek)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ),
+        None => peek,
+    }
+}
+
+/// 表のセルの部品 `cell` が載っている行の部品（右クリックした行を囲む）。
+pub fn row_widget(cell: &gtk::Widget) -> Option<gtk::Widget> {
+    let mut widget = cell.parent();
+    while let Some(w) = widget {
+        if w.css_name() == "row" {
+            return Some(w);
+        }
+        widget = w.parent();
+    }
+    None
+}
+
 /// 状態の文字の色（CSS のクラス）。選んだ行の上ではテーマの選択の文字の色にする（強調色の地の上でも読める。
 /// macOS 版の強調した行と同じ）。
 const STATE_CLASSES: [&str; 3] = ["repo-state-error", "repo-state-changed", "dim-label"];
@@ -564,7 +623,8 @@ fn install_state_css() {
     provider.load_from_string(
         ".repo-state-error { color: #e01b24; } \
          .repo-state-changed { color: #e66100; } \
-         row:selected .repo-state-error, row:selected .repo-state-changed { color: inherit; }",
+         row:selected .repo-state-error, row:selected .repo-state-changed { color: inherit; } \
+         row.repo-clicked { box-shadow: inset 0 0 0 2px @accent_color; }",
     );
     if let Some(display) = gtk::gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
@@ -626,33 +686,33 @@ fn state_text(location: &str, check: bool) -> (String, &'static str, Option<Stri
         "dim-label"
     };
     let text = parts.join("  ");
-    let mut tip = peek.map(|p| {
-        [
-            if p.changed > 0 {
-                tr!("{count} files with changes", count = p.changed)
-            } else {
-                tr!("No changes")
-            },
-            if p.upstream {
-                tr!(
-                    "{ahead} ahead of the upstream, {behind} behind",
-                    ahead = p.ahead,
-                    behind = p.behind
-                )
-            } else {
-                tr!("No upstream")
-            },
-        ]
-        .join("\n")
-    });
+    // Fetch に失敗していれば、その訳だけを出す（macOS 版と同じ）。
     if let Some(e) = fetch_error {
-        let head = tr!("Fetch failed: {error}", error = e);
-        tip = Some(match tip {
-            Some(t) => format!("{head}\n{t}"),
-            None => head,
-        });
+        return (text, class, Some(tr!("Fetch failed: {error}", error = e)));
     }
+    let tip = peek.as_ref().map(peek_tip);
     (text, class, tip)
+}
+
+/// 変更のあるファイルと、上流との差の説明（状態のツールチップ）。
+fn peek_tip(p: &amonhen_backend_cli::Peek) -> String {
+    [
+        if p.changed > 0 {
+            tr!("{count} files with changes", count = p.changed)
+        } else {
+            tr!("No changes")
+        },
+        if p.upstream {
+            tr!(
+                "{ahead} ahead of the upstream, {behind} behind",
+                ahead = p.ahead,
+                behind = p.behind
+            )
+        } else {
+            tr!("No upstream")
+        },
+    ]
+    .join("\n")
 }
 
 /// 最後のコミットの列（いつ — 件名）とツールチップ（件名と日時）。
@@ -705,7 +765,9 @@ impl CellView {
                 self.title
                     .set_markup(&name_markup_in(&keys.data, &location));
                 self.sub.set_text(&path_text(&location));
-                self.title.set_tooltip_text(Some(&location));
+                let tip = row_tip(&location);
+                self.title.set_tooltip_text(tip.as_deref());
+                self.sub.set_tooltip_text(tip.as_deref());
             }
             Column::Branch => self.title.set_text(&branch_text(&location)),
             Column::Status => {
@@ -788,6 +850,9 @@ pub fn page(app: &gtk::Application, open: Open, group: &gio::SimpleActionGroup) 
     bookmarks::forget_peeks();
     bookmarks::rescan();
     browser.reload();
+    // 始めた知らせは聞き手を足す前に出ているので、ここで回す（macOS 版と同じ）。
+    browser.scanning.set_visible(bookmarks::is_scanning());
+    browser.scanning.set_spinning(bookmarks::is_scanning());
     // ページを閉じるまで知らせを受ける。
     let weak = Rc::downgrade(&browser);
     bookmarks::connect(move |path| {
@@ -814,7 +879,11 @@ impl Browser {
             .hscrollbar_policy(gtk::PolicyType::Never)
             .vexpand(true)
             .build();
-        let add = gtk::Button::with_label(&format!("＋ {}", tr!("Add")));
+        // ＋ の印と「Add」（macOS 版の、枠のないプルダウン）。
+        let add_content = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        add_content.append(&gtk::Image::from_icon_name("list-add-symbolic"));
+        add_content.append(&gtk::Label::new(Some(&tr!("Add"))));
+        let add = gtk::Button::builder().child(&add_content).build();
         add.add_css_class("flat");
         add.set_tooltip_text(Some(&tr!(
             "Add repositories, SSH connections, groups and folders to scan"
@@ -831,6 +900,8 @@ impl Browser {
         let left = gtk::Box::new(gtk::Orientation::Vertical, 0);
         left.append(&side_scrolled);
         left.append(&bar);
+        // 左は 200 より狭くしない（macOS 版と同じ）。
+        left.set_size_request(SIDEBAR_MIN, -1);
 
         // 右: 絞り込みと一覧だけ（開くのはダブルクリックと Enter、加えるのは左の ＋ と右クリック）。
         let filter = gtk::SearchEntry::new();
@@ -863,11 +934,11 @@ impl Browser {
         // 左右の境目は覚えておく（macOS 版と同じ）。
         let split = crate::settings::string(SPLIT_KEY)
             .and_then(|s| s.parse::<i32>().ok())
-            .filter(|&p| p >= 120)
-            .unwrap_or(240);
+            .filter(|&p| p >= SIDEBAR_MIN)
+            .unwrap_or(250);
         paned.set_position(split);
         paned.connect_position_notify(|p| {
-            if p.position() >= 120 {
+            if p.position() >= SIDEBAR_MIN {
                 crate::settings::set_string(SPLIT_KEY, &p.position().to_string());
             }
         });
@@ -922,9 +993,9 @@ impl Browser {
     fn build_columns(self: &Rc<Self>) {
         let columns = [
             (Column::Name, "name", tr!("Name"), None),
-            (Column::Branch, "branch", tr!("Branch"), Some(130)),
+            (Column::Branch, "branch", tr!("Branch"), Some(150)),
             (Column::Status, "status", tr!("Status"), Some(100)),
-            (Column::Commit, "commit", tr!("Last Commit"), Some(260)),
+            (Column::Commit, "commit", tr!("Last Commit"), Some(300)),
             (Column::Opened, "opened", tr!("Opened"), Some(100)),
         ];
         let widths: serde_json::Map<String, serde_json::Value> =
@@ -958,6 +1029,11 @@ impl Browser {
                 if kind != Column::Name {
                     title.add_css_class("caption");
                 }
+                // 最後のコミットと開いた日時は薄い文字（ブランチは普通の文字。状態は自分で色を付ける。macOS 版と
+                // 同じ）。
+                if matches!(kind, Column::Commit | Column::Opened) {
+                    title.add_css_class("dim-label");
+                }
                 let cell = gtk::Box::new(gtk::Orientation::Vertical, 1);
                 cell.set_valign(gtk::Align::Center);
                 cell.set_height_request(36);
@@ -965,7 +1041,8 @@ impl Browser {
                 cell.set_margin_end(4);
                 cell.append(&title);
                 cell.append(&sub);
-                // 右クリックで、その行のメニュー（選んでいなければ選ぶ）。
+                // 右クリックで、その行のメニュー。選びは変えない: 選んでいない行なら、その行だけに効き、メニュー
+                // を出している間は行を枠で囲む（macOS 版の clickedRow）。
                 let click = gtk::GestureClick::new();
                 click.set_button(gtk::gdk::BUTTON_SECONDARY);
                 let (w, list_item) = (Rc::downgrade(&b), item.downgrade());
@@ -977,11 +1054,17 @@ impl Browser {
                     if row == gtk::INVALID_LIST_POSITION {
                         return;
                     }
-                    if !b.selection.is_selected(row) {
-                        b.selection.select_item(row, true);
-                    }
-                    if let Some(widget) = gesture.widget() {
-                        menu::popup(&widget, x, y, b.row_menu(row));
+                    let Some(widget) = gesture.widget() else {
+                        return;
+                    };
+                    let outlined = (!b.selection.is_selected(row))
+                        .then(|| row_widget(&widget))
+                        .flatten();
+                    if let Some(popover) = menu::popup_returning(&widget, x, y, b.row_menu(row))
+                        && let Some(outlined) = outlined
+                    {
+                        outlined.add_css_class("repo-clicked");
+                        popover.connect_closed(move |_| outlined.remove_css_class("repo-clicked"));
                     }
                 });
                 cell.add_controller(click);
@@ -1104,10 +1187,29 @@ impl Browser {
         for (title, tip) in titles.zip(tips) {
             title.set_tooltip_text(tip.as_deref());
         }
-        // 並べ替えを変えたら覚える。
+        // 並べ替えを変えたら覚える。Status・Last Commit・Opened は、初めて押したとき新しい順・多い順にする（名前と
+        // ブランチは昇順。macOS 版の列の `sortDescriptorPrototype` と同じ）。
         if let Some(sorter) = self.view.sorter().and_downcast::<gtk::ColumnViewSorter>() {
-            sorter.connect_changed(|s, _| {
-                if let Some(id) = s.primary_sort_column().and_then(|c| c.id()) {
+            let last = RefCell::new(sorter.primary_sort_column().and_then(|c| c.id()));
+            let view = self.view.downgrade();
+            sorter.connect_changed(move |s, _| {
+                let column = s.primary_sort_column();
+                let id = column.as_ref().and_then(|c| c.id());
+                let switched = *last.borrow() != id;
+                last.replace(id.clone());
+                if switched
+                    && s.primary_sort_order() == gtk::SortType::Ascending
+                    && id.as_deref().is_some_and(descending_first)
+                {
+                    let view = view.clone();
+                    glib::idle_add_local_once(move || {
+                        if let Some(view) = view.upgrade() {
+                            view.sort_by_column(column.as_ref(), gtk::SortType::Descending);
+                        }
+                    });
+                    return;
+                }
+                if let Some(id) = id {
                     crate::settings::set_string(SORT_KEY, &id);
                     crate::settings::set_bool(
                         SORT_ASCENDING_KEY,
@@ -2028,7 +2130,12 @@ impl Browser {
                         if let Some(new) = b.ask(&tr!("Rename Group"), &tr!("Group name"), &n).await
                         {
                             bookmarks::rename_group(&n, &new);
-                            b.set_category(Category::Group(new));
+                            // 選んでいたグループなら新しい名前を選んだままに。ほかを選んでいたらそのまま
+                            // （macOS 版と同じ）。
+                            let selected = *b.category.borrow() == Category::Group(n.clone());
+                            if selected {
+                                b.set_category(Category::Group(new));
+                            }
                             b.reload();
                         }
                     });
@@ -2115,7 +2222,12 @@ impl Browser {
         items.push(menu::action("Clone…", move || b.clone_repository()));
         let b = self.clone();
         items.push(menu::action(tr!("SSH Connection…"), move || {
-            b.add_remote(None)
+            // ホストを選んでいれば、そのホストに決めて開く（macOS 版の ＋ と同じ）。
+            let host = match &*b.category.borrow() {
+                Category::Host(h) => Some(h.clone()),
+                _ => None,
+            };
+            b.add_remote(host.as_deref())
         }));
         items.push(Item::Separator);
         let b = self.clone();
@@ -2213,13 +2325,9 @@ impl Browser {
     /// SSH 先のリポジトリを加えて開く。`host` があれば、そのホストの場所を最初に入れておく。Choose… で、
     /// そのホストのフォルダを列で見て選べる。
     fn add_remote(self: &Rc<Self>, host: Option<&str>) {
-        // ホストの行から（右クリック・ホストを選んでいるときの ＋）なら、接続先は決まっている（macOS 版と同じ）。
-        let fixed = host
-            .map(str::to_owned)
-            .or_else(|| match &*self.category.borrow() {
-                Category::Host(h) | Category::HostFolder(h, _) => Some(h.clone()),
-                _ => None,
-            });
+        // ホストの行から（右クリック・ホストを選んでいるときの ＋）なら、接続先は決まっている。場所の見出しの
+        // 「SSH 接続を追加…」やホストの下のフォルダを選んでいるときは決めない（macOS 版と同じ）。
+        let fixed = host.map(str::to_owned);
         let b = self.clone();
         glib::spawn_future_local(async move {
             let Some((host, path)) = ssh_connection_sheet(&b.window(), fixed).await else {
@@ -2230,6 +2338,8 @@ impl Browser {
             };
             crate::settings::set_string(LAST_HOST_KEY, &host);
             bookmarks::add(&location, b.selected_group().as_deref());
+            // つなぐ前に Open Recent と「開いた」の列に入れる（つながらなくても残る。macOS 版と同じ）。
+            crate::repos::record(std::path::Path::new(&location));
             b.open_location(&location, true);
         });
     }
@@ -2282,7 +2392,7 @@ impl Browser {
                     folders = roots.len()
                 ),
             );
-            sheet.buttons(&tr!("Delete"), false, None);
+            sheet.buttons(&tr!("Delete"), true, None);
             if sheet.run().await != Response::Ok {
                 return;
             }
@@ -2361,15 +2471,22 @@ pub fn row_items(
     };
     items.push(menu::action(title, move || bookmarks::fetch(&t)));
     items.push(Item::Separator);
-    let p = path.to_owned();
-    let favorite = bookmark.as_ref().is_some_and(|b| b.favorite);
+    // 選んだ行すべてを、押した行と逆の側にそろえる（Fetch・Group・Color Label と同じく、選んだ行に効く。macOS 版と同じ）。
+    let t = targets.to_vec();
+    let favorite = !bookmark.as_ref().is_some_and(|b| b.favorite);
     items.push(menu::action(
         if favorite {
-            tr!("Remove from Favorites")
-        } else {
             tr!("Add to Favorites")
+        } else {
+            tr!("Remove from Favorites")
         },
-        move || bookmarks::toggle_favorite(&p),
+        move || {
+            for p in &t {
+                if bookmarks::bookmark(p).is_some_and(|b| b.favorite) != favorite {
+                    bookmarks::toggle_favorite(p);
+                }
+            }
+        },
     ));
     let mut groups = Vec::new();
     let t = targets.to_vec();
@@ -2544,9 +2661,12 @@ pub fn found_or_offer_removal(
     glib::spawn_future_local(async move {
         let sheet = Sheet::unnamed(
             Some(&parent),
+            // 名前はフォルダの名前（表示名ではなく。macOS 版と同じ）。
             &tr!(
                 "{name} not found",
-                name = bookmarks::display_name(&location)
+                name = std::path::Path::new(&location)
+                    .file_name()
+                    .map_or(location.clone(), |n| n.to_string_lossy().into_owned())
             ),
             &tr!("{path}\nRemove it from the list?", path = location),
         );
@@ -2916,6 +3036,11 @@ impl SortKeys {
     }
 }
 
+/// 見出しを初めて押したとき逆順（新しい順・多い順）に並べる列か。
+fn descending_first(id: &str) -> bool {
+    matches!(id, "status" | "commit" | "opened")
+}
+
 /// 列の並べ替え（同じ値なら名前の順。並びが毎回変わらないように）。
 fn sorter(
     column: Column,
@@ -2981,6 +3106,15 @@ pub fn snapshot_when_ready(window: &gtk::Window, png: PathBuf) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn remote_titles_survive_multibyte_paths() {
+        assert_eq!(remote_title("/~/prj"), "~/prj");
+        assert_eq!(remote_title("/C:/src"), "C:/src");
+        assert_eq!(remote_title("/srv/日本"), "/srv/日本");
+        assert_eq!(remote_title("日本/x"), "日本/x");
+        assert_eq!(remote_title(""), "");
+    }
+
     use super::*;
 
     #[test]

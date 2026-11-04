@@ -153,6 +153,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static let isCheckRun = ["--snapshot", "--measure-scroll", "--log-scroll", "--measure-select"].contains { CommandLine.arguments.contains($0) }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // マージエディタの Result を保存していなければ、捨てて終えてよいかを確かめる（別ウィンドウのマージエディタを
+        // 閉じるときと同じ文。終えるときはウィンドウに閉じてよいかを聞かないので、ここで 1 度だけ聞く）。
+        let unsaved = windows.first { $0.hasUnsavedMergeEdits && !$0.discardConfirmed }?.window
+            ?? MergeEditorWindowController.unsavedWindow
+        if let unsaved {
+            unsaved.makeKeyAndOrderFront(nil)
+            Task { @MainActor in
+                let ok = await MergeEditorWindowController.confirmDiscarding(in: unsaved)
+                if ok {
+                    saveOpenWindows()
+                    isTerminating = true
+                }
+                sender.reply(toApplicationShouldTerminate: ok)
+            }
+            return .terminateLater
+        }
         // タブの並べ替えやウィンドウへの切り出しは知らせがないので、終わる前に記録し直す。
         saveOpenWindows()
         isTerminating = true
@@ -188,7 +204,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         Bookmarks.shared.onRowChange = { path in
             RepositoryBrowser.rowChanged(path)
-            QuickOpenPanel.shared.refreshIfVisible()
+            QuickOpenPanel.shared.rowChanged(path)
         }
         Bookmarks.shared.watchScanRoots()
         // 引数でリポジトリを渡されたらそれを、なければ前回開いていたものを同じウィンドウ・タブの並びで開く。
@@ -270,6 +286,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `replacing` を渡すと、そのタブ（リポジトリのページ、ツールバーの一覧から切り替える前のリポジトリ）の隣に
     /// 開いてから、それを閉じる（そのタブがそのリポジトリに替わる）。`after` を渡すと、そのタブの隣に開く。
     /// 開いた（つなぎ始めた）タブを返す。
+    /// 開いているタブと比べる鍵。手元のパス（`daemon:` 越しのものも）はリンクを解く。SSH 先はそのまま。
+    private static func locationKey(_ location: String) -> String {
+        let daemon = location.hasPrefix("daemon:")
+        let rest = daemon ? String(location.dropFirst("daemon:".count)) : location
+        guard !rest.hasPrefix("ssh://") else { return location }
+        return (daemon ? "daemon:" : "") + WorktreeInfo.canonical(rest)
+    }
+
     @discardableResult
     func open(path: String, debug: Bool = false, inNewWindow: Bool = false, replacing: NSWindow? = nil,
               after: NSWindow? = nil) -> NSWindow? {
@@ -281,14 +305,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let key = WorktreeInfo.canonical(main)
             if let window = windows.first(where: { WorktreeInfo.canonical(RepositoryLocation.path($0.location)) == key }) {
                 window.edit(worktree: path)
+            } else if let tab = connecting.first(where: { WorktreeInfo.canonical(RepositoryLocation.path($0.location)) == key }) {
+                // daemon 越しに開くと、まだつないでいるタブ。つないだら、その worktree を書き込む先にする。
+                tab.editWorktree = path
             }
             return opened
         }
         var location = RepositoryLocation.isRemote(path) ? path : URL(fileURLWithPath: path).standardizedFileURL.path
         // 共有の daemon 越しに開く設定なら、`daemon:` の場所にする（SSH 先も `daemon:ssh://…`）。
         if Settings.openThroughDaemon, !location.hasPrefix("daemon:") { location = "daemon:" + location }
-        if let existing = windows.first(where: { $0.location == location })?.window
-            ?? connecting.first(where: { $0.location == location })?.window {
+        // 同じリポジトリを別の書き方（リンク、`/tmp` と `/private/tmp`）で開いても、開いているタブに移る。
+        let key = Self.locationKey(location)
+        if let existing = windows.first(where: { Self.locationKey($0.location) == key })?.window
+            ?? connecting.first(where: { Self.locationKey($0.location) == key })?.window {
             existing.makeKeyAndOrderFront(nil)
             return existing
         }
@@ -318,7 +347,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// リポジトリのページを出す。前のウィンドウのタブの並びにもうあれば、それを前に出す。`newWindow` なら
     /// 新しいウィンドウに出す。
-    func showHome(newWindow: Bool = false) {
+    func showHome(newWindow: Bool = false, tabWith explicit: NSWindow? = nil) {
+        let tabTarget = explicit ?? self.tabTarget
         if !newWindow, let target = tabTarget {
             let group = target.tabbedWindows ?? [target]
             if let home = homes.first(where: { h in group.contains { $0 === h.window } }) {
@@ -397,6 +427,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let window = try RepositoryWindow(
             location: tab.location, repository: repository, debug: debug, tabWith: tab.window, front: key)
         if let page = tab.page { window.show(page: page) }
+        if let worktree = tab.editWorktree { window.edit(worktree: worktree) }
         if selected, !key { group?.selectedWindow = window.window }
         if lastActiveWindow === tab.window { lastActiveWindow = window.window }
         connecting.removeAll { $0 === tab }
@@ -408,7 +439,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.onOpenRepository = { [weak self] path in self?.open(path: path) }
         // ツールバーのリポジトリ名から開く一覧: 選んだものにこのタブを切り替える（⌘ なら新しいウィンドウ）。
         window.onSwitchRepository = { [weak self, weak window] path, mode in
-            self?.open(path: path, inNewWindow: mode == .newWindow, replacing: mode == .here ? window?.window : nil)
+            guard let self else { return }
+            guard mode == .here, let window else {
+                self.open(path: path, inNewWindow: mode == .newWindow)
+                return
+            }
+            // このタブを替えると閉じるので、保存していない Result があれば先に確かめる（`close()` は
+            // windowShouldClose を通らない。閉じる・終えるときと同じ）。
+            guard window.hasUnsavedMergeEdits, !window.discardConfirmed else {
+                self.open(path: path, replacing: window.window)
+                return
+            }
+            Task { @MainActor in
+                guard await MergeEditorWindowController.confirmDiscarding(in: window.window) else { return }
+                window.discardConfirmed = true
+                self.open(path: path, replacing: window.window)
+                // 開いているタブに移っただけ・開けなかった（このタブは残る）: 次に閉じるときはまた確かめる。
+                if self.windows.contains(where: { $0 === window }) { window.discardConfirmed = false }
+            }
         }
         window.onShowRepositories = { [weak self] in self?.showHome() }
         window.onReconnect = { [weak self, weak window] in
@@ -432,12 +480,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// File > New Tab（⌘T）・タブバーの「+」: 前のウィンドウに、リポジトリのページのタブを出す。
     @objc func newTab(_ sender: Any?) {
+        // File History・Blame のタブ（`tabTarget` が数えないウィンドウ）が前なら、そのウィンドウのタブの並びに。
+        if let key = NSApp.keyWindow, key.tabbingIdentifier == RepositoryWindow.tabbingIdentifier,
+           !windows.contains(where: { $0.window === key }), !connecting.contains(where: { $0.window === key }),
+           !homes.contains(where: { $0.window === key }) {
+            return showHome(tabWith: key)
+        }
         showHome()
     }
 
     /// File > Clone…（⌃⌘C）: clone して、前のウィンドウのタブで開く（ブックマークにも入れる）。
     @objc func cloneRepository(_ sender: Any?) {
-        CloneSheet.show { [weak self] path in
+        CloneSheet.show(in: NSApp.keyWindow ?? NSApp.mainWindow) { [weak self] path in
             Bookmarks.shared.add(path)
             self?.open(path: path)
         }

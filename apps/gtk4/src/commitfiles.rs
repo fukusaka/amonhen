@@ -15,6 +15,7 @@ use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use crate::worktrees::natural_cmp;
 use amonhen_core::diff::{DiffView, StackedDiff};
 use amonhen_core::{HistorySnapshot, Repository, Selection};
 use amonhen_model::{ChangeKind, FileChange, tr};
@@ -277,7 +278,12 @@ enum Counts {
 
 /// 変更ファイルの一覧の行。木なら、フォルダごとにまとめ（子が 1 つだけのフォルダはつなげる）、各階層でフォルダを
 /// 先に、名前の順に並べる（macOS 版と同じ）。
-fn file_rows(source: &Source, changes: Option<&[FileChange]>, tree: bool) -> Vec<FileRow> {
+fn file_rows(
+    source: &Source,
+    changes: Option<&[FileChange]>,
+    stats: &Stats,
+    tree: bool,
+) -> Vec<FileRow> {
     // 変更の種類ともとのパスは、コミットの変更ファイルから（macOS 版と同じ）。
     let changes = source
         .1
@@ -288,16 +294,18 @@ fn file_rows(source: &Source, changes: Option<&[FileChange]>, tree: bool) -> Vec
     let file = |i: usize, name: String, depth: usize| {
         let diff = &source.0.files[i].1;
         let change = changes.map(|c| &c[i]);
-        let mark = match change {
-            Some(change) => kind_mark(change.kind),
-            // 変更ファイルがわからない差分（stash など）は、中身の有無から。
-            None if diff.old.is_empty() && !diff.new.is_empty() => "A",
-            None if diff.new.is_empty() && !diff.old.is_empty() => "D",
-            None => "M",
-        };
-        // 選んだファイルだけを読む元では、行数はまだわからない。
-        let counts = if source.1.is_some() {
+        // 変更ファイルがわからない差分（複数のコミットを選んだとき）は、名前だけ（種類も行数も出さない。macOS 版と
+        // 同じ）。
+        let mark = change.map_or("", |c| kind_mark(c.kind));
+        // 選んだファイルだけを読む元では、行数は `commit_extras` の数（届くまではわからない）。
+        let counts = if change.is_none() {
             Counts::Unknown
+        } else if source.1.is_some() {
+            match stats.get(path_of(source.0.files[i].0.as_str())) {
+                Some((None, None)) => Counts::Binary,
+                Some(&(added, removed)) => Counts::Lines(added.unwrap_or(0), removed.unwrap_or(0)),
+                None => Counts::Unknown,
+            }
         } else if diff.binary {
             Counts::Binary
         } else {
@@ -351,7 +359,10 @@ fn file_rows(source: &Source, changes: Option<&[FileChange]>, tree: bool) -> Vec
         out: &mut Vec<FileRow>,
         file: &dyn Fn(usize, String, usize) -> FileRow,
     ) {
-        for (name, child) in &folder.folders {
+        // フォルダもファイルも、大文字小文字を区別せず数は数として並べる（macOS 版の localizedStandardCompare）。
+        let mut folders: Vec<_> = folder.folders.iter().collect();
+        folders.sort_by(|a, b| natural_cmp(a.0, b.0).then_with(|| a.0.cmp(b.0)));
+        for (name, child) in folders {
             let (mut label, mut child) = (name.clone(), child);
             while child.files.is_empty() && child.folders.len() == 1 {
                 let (next, grand) = child.folders.iter().next().expect("one");
@@ -369,7 +380,7 @@ fn file_rows(source: &Source, changes: Option<&[FileChange]>, tree: bool) -> Vec
             add(child, depth + 1, out, file);
         }
         let mut files = folder.files.clone();
-        files.sort();
+        files.sort_by(|a, b| natural_cmp(&a.0, &b.0).then_with(|| a.cmp(b)));
         for (name, index) in files {
             out.push(file(index, name, depth));
         }
@@ -421,7 +432,13 @@ struct Inner {
     find: FindBar,
     /// 出しているコミットの変更ファイル（`Prepared::changes`）。
     changes: RefCell<Option<Arc<Vec<FileChange>>>>,
+    /// 出しているコミットのファイルごとの行数（`commit_extras` の `stats`。パス → 追加・削除、両方 None は
+    /// バイナリ）。選んだファイルだけを読むときも、一覧に行数を出す（macOS 版と同じ）。
+    stats: RefCell<Stats>,
 }
+
+/// ファイルごとの行数（パス → 追加・削除。両方 None はバイナリ）。
+type Stats = std::collections::HashMap<String, (Option<u32>, Option<u32>)>;
 
 /// 差分の中を探す帯（差分と一覧の下）。
 struct FindBar {
@@ -467,8 +484,10 @@ pub fn find_in_focused(window: &gtk::Window) -> bool {
 }
 
 /// `window` でフォーカスのある差分の列の検索の帯が開いていれば、次・前の一致へ（Ctrl+G。移ったら true）。
+/// フォーカスが検索の帯の中なら移らない（macOS 版の ⌘G は差分の部品だけが受け、帯の欄からは History の検索の
+/// 一致へ行く）。
 pub fn find_next_in_focused(window: &gtk::Window, step: i32) -> bool {
-    match focused(window).filter(|inner| inner.find.bar.is_visible()) {
+    match focused(window).filter(|inner| inner.find.bar.is_visible() && !in_bar(window, inner)) {
         Some(inner) => {
             Inner::move_match(&inner, step);
             true
@@ -477,7 +496,29 @@ pub fn find_next_in_focused(window: &gtk::Window, step: i32) -> bool {
     }
 }
 
-/// `window` で、フォーカスが中にある差分の列。
+/// `window` でフォーカスのある差分の検索の帯が閉じていれば、帯を開いて次・前の一致へ（History を探していない
+/// ときの Ctrl+G。macOS 版の差分の `findNext`）。移ったら true。
+pub fn find_next_opening(window: &gtk::Window, step: i32) -> bool {
+    match focused(window).filter(|inner| !in_bar(window, inner)) {
+        Some(inner) => {
+            Inner::move_match(&inner, step);
+            true
+        }
+        None => false,
+    }
+}
+
+/// `window` で Ctrl+G が差分の一致に移れるか（フォーカスが差分にあり、検索の帯の中ではない）。
+pub fn find_next_possible(window: &gtk::Window) -> bool {
+    focused(window).is_some_and(|inner| !in_bar(window, &inner))
+}
+
+fn in_bar(window: &gtk::Window, inner: &Inner) -> bool {
+    gtk::prelude::GtkWindowExt::focus(window).is_some_and(|f| f.is_ancestor(&inner.find.bar))
+}
+
+/// `window` で、フォーカスが差分か検索の帯にある差分の列（変更ファイルの一覧は含めない。一覧で Ctrl+F・Ctrl+G を
+/// 押しても差分は探さない。macOS 版と同じ）。
 fn focused(window: &gtk::Window) -> Option<Rc<Inner>> {
     let focus = gtk::prelude::GtkWindowExt::focus(window)?;
     OPEN.with(|open| {
@@ -485,8 +526,9 @@ fn focused(window: &gtk::Window) -> Option<Rc<Inner>> {
         open.retain(|w| w.strong_count() > 0);
         open.iter().filter_map(|w| w.upgrade()).find(|inner| {
             inner.root.is_mapped()
-                && (focus == *inner.root.upcast_ref::<gtk::Widget>()
-                    || focus.is_ancestor(&inner.root))
+                && (focus == *inner.diff.upcast_ref::<gtk::Widget>()
+                    || focus.is_ancestor(&inner.diff)
+                    || focus.is_ancestor(&inner.find.bar))
         })
     })
 }
@@ -513,8 +555,9 @@ impl CommitDiff {
             previous.set_label("∧");
             next.set_label("∨");
         }
-        previous.set_tooltip_text(Some(&tr!("Previous")));
-        next.set_tooltip_text(Some(&tr!("Next")));
+        // ツールチップは出さず、読み上げの名前だけ（macOS 版と同じ）。
+        previous.update_property(&[gtk::accessible::Property::Label(&tr!("Previous"))]);
+        next.update_property(&[gtk::accessible::Property::Label(&tr!("Next"))]);
         let done = gtk::Button::with_label(&tr!("Done"));
         for b in [&previous, &next, &done] {
             b.add_css_class("flat");
@@ -573,6 +616,7 @@ impl CommitDiff {
             sparse: RefCell::default(),
             find: FindBar { bar, entry, count },
             changes: RefCell::default(),
+            stats: RefCell::default(),
         });
         OPEN.with(|open| open.borrow_mut().push(Rc::downgrade(&inner)));
         Inner::setup_factory(&inner, &factory);
@@ -600,6 +644,38 @@ impl CommitDiff {
         inner.syncing.set(false);
         inner.row_of_file.borrow_mut().clear();
         inner.diff.clear();
+    }
+
+    /// 別のコミットを読み始める: 前のコミットの行数を捨てる（`clear` は読んでいる途中にも呼ぶので、そこでは捨てない）。
+    pub fn reset_stats(&self) {
+        self.inner.stats.borrow_mut().clear();
+    }
+
+    /// 出しているコミットの `commit_extras` の答えから、ファイルごとの行数を受け取る。選んだファイルだけを読む
+    /// 一覧なら、行数を出し直す（まとめて並べる一覧は、差分から数えた行数をもう出している）。
+    pub fn set_stats(&self, extras: &serde_json::Value) {
+        let inner = &self.inner;
+        let stats: Stats = extras["stats"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|s| {
+                let count = |k: &str| s[k].as_u64().map(|n| n as u32);
+                Some((
+                    s["path"].as_str()?.to_owned(),
+                    (count("added"), count("removed")),
+                ))
+            })
+            .collect();
+        inner.stats.replace(stats);
+        let lazy = inner
+            .source
+            .borrow()
+            .as_ref()
+            .is_some_and(|source| source.1.is_some());
+        if lazy {
+            Inner::fill_list(inner);
+        }
     }
 
     /// 一覧を消し、差分の代わりに知らせ `text` を出す（「Loading the diff…」など）。
@@ -630,10 +706,22 @@ impl CommitDiff {
 
     /// 詳細の欄だけを右の列いっぱいに広げるボタン（⤢。変更ファイルと差分を隠す。もう一度押すと戻す）。
     pub fn expand_button(&self) -> gtk::ToggleButton {
-        let label = gtk::Label::new(None);
-        label.set_markup("<span size=\"large\">⤢</span>");
+        // 広げている間は、戻す形の矢印と「Restore Details」（macOS 版と同じ）。
+        let icon = crate::icon::Icon::default();
+        let show = |icon: &crate::icon::Icon, button: &gtk::ToggleButton, expanded: bool| {
+            let (kind, name) = if expanded {
+                (crate::icon::Kind::Restore, tr!("Restore Details"))
+            } else {
+                (crate::icon::Kind::Expand, tr!("Expand Details"))
+            };
+            icon.set(kind, false);
+            button.update_property(&[gtk::accessible::Property::Label(&name)]);
+        };
         let button = gtk::ToggleButton::new();
-        button.set_child(Some(&label));
+        // 詳細の見せ方を変えたときに戻せるように（`Details::show_style_switch`）。
+        button.set_widget_name(crate::details::EXPAND_BUTTON);
+        button.set_child(Some(&icon));
+        show(&icon, &button, false);
         button.add_css_class("flat");
         button.add_css_class("image-button");
         button.set_valign(gtk::Align::Start);
@@ -642,6 +730,7 @@ impl CommitDiff {
         )));
         let root = self.root.downgrade();
         button.connect_toggled(move |b| {
+            show(&icon, b, b.is_active());
             if let Some(root) = root.upgrade() {
                 root.set_visible(!b.is_active());
             }
@@ -675,9 +764,6 @@ impl Inner {
             let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
                 return;
             };
-            let mark = gtk::Label::new(None);
-            mark.set_width_chars(2);
-            mark.add_css_class("monospace");
             let icon = crate::icon::Icon::default();
             icon.set(crate::icon::Kind::Folder, false);
             let name = gtk::Label::new(None);
@@ -691,7 +777,6 @@ impl Inner {
             line.set_margin_top(2);
             line.set_margin_bottom(2);
             line.set_margin_end(6);
-            line.append(&mark);
             line.append(&icon);
             line.append(&name);
             line.append(&counts);
@@ -737,28 +822,34 @@ impl Inner {
                 }
                 out
             };
-            let [mark, icon, name, counts] = &children[..] else {
+            let [icon, name, counts] = &children[..] else {
                 return;
             };
-            let (mark, name, counts) = (
-                mark.downcast_ref::<gtk::Label>().expect("mark"),
+            let (name, counts) = (
                 name.downcast_ref::<gtk::Label>().expect("name"),
                 counts.downcast_ref::<gtk::Label>().expect("counts"),
             );
             line.set_margin_start(6 + (row.depth * 14) as i32);
             let folder = row.file.is_none();
             icon.set_visible(folder);
-            mark.set_visible(!folder);
-            mark.set_text(row.mark);
-            for css in ["success", "error", "warning"] {
-                mark.remove_css_class(css);
+            // フォルダの行は薄い色で（macOS 版と同じ）。
+            if folder {
+                line.add_css_class("dim-label");
+            } else {
+                line.remove_css_class("dim-label");
             }
-            mark.add_css_class(match row.mark {
-                "A" => "success",
-                "D" => "error",
-                _ => "warning",
-            });
-            name.set_text(&row.name);
+            // 種類はパスの前にふつうの文字で（macOS 版と同じ）。長いパスは真ん中を、フォルダは頭を省く。
+            if folder {
+                name.set_text(&row.name);
+                name.set_ellipsize(gtk::pango::EllipsizeMode::Start);
+            } else {
+                name.set_text(&if row.mark.is_empty() {
+                    row.name.clone()
+                } else {
+                    format!("{}  {}", row.mark, row.name)
+                });
+                name.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+            }
             name.set_tooltip_text(Some(&row.tip));
             // 行数（0 の側は出さない）。バイナリは「Binary」（macOS 版と同じ）。
             match row.counts {
@@ -841,11 +932,10 @@ impl Inner {
         let weak = Rc::downgrade(this);
         this.diff.connect_file_menu(move |file, path, x, y| {
             let Some(this) = weak.upgrade() else { return };
-            // 文字を選んでいれば、先頭に Copy。
-            let mut items = this.diff.copy_items();
-            items.extend(match file {
+            // 文字のコピーは Ctrl+C で（メニューには出さない。macOS 版と同じ）。
+            let items = match file {
                 // 見出しの上: 畳む・Viewed・Blame・パスのコピーなど。
-                Some(file) => Inner::menu_items(&this, Some(file), Some(y)),
+                Some(file) => Inner::menu_items(&this, Some(file)),
                 // 差分の行の上: AI でこの hunk を解説だけ（持ち主が作る。macOS 版と同じ）。
                 None => this
                     .file_items
@@ -853,7 +943,7 @@ impl Inner {
                     .clone()
                     .map(|f| f(path, Some(y), true, true))
                     .unwrap_or_default(),
-            });
+            };
             // AI がなく文字も選んでいなければ、メニューは出さない（macOS 版と同じ）。
             if !items.is_empty() {
                 menu::popup(&this.diff, x, y, items);
@@ -864,16 +954,15 @@ impl Inner {
         let weak = Rc::downgrade(this);
         this.diff.connect_row_menu(move |_, x, y| {
             let Some(this) = weak.upgrade() else { return };
-            let mut items = this.diff.copy_items();
-            if let Some(path) = this.single_path() {
-                items.extend(
+            let items = this
+                .single_path()
+                .and_then(|path| {
                     this.file_items
                         .borrow()
                         .clone()
                         .map(|f| f(&path, Some(y), true, true))
-                        .unwrap_or_default(),
-                );
-            }
+                })
+                .unwrap_or_default();
             if !items.is_empty() {
                 menu::popup(&this.diff, x, y, items);
             }
@@ -1006,14 +1095,14 @@ impl Inner {
             Inner::show_find(this);
             this.find.entry.set_text(&query);
         } else if this.find.bar.is_visible() {
-            let (current, count) = this.diff.find(&this.find.entry.text());
+            let (current, count) = this.diff.recount(&this.find.entry.text());
             this.show_count(current, count);
         }
         if let Some(file) = VIEWED_ONCE.with(|v| v.take()) {
             Inner::toggle_viewed(this, file);
         }
         if let Some(file) = MENU_ONCE.with(|v| v.take()) {
-            let items = Inner::menu_items(this, Some(file), None);
+            let items = Inner::menu_items(this, Some(file));
             let diff = this.diff.clone();
             // 差分が描かれてから出す。
             glib::idle_add_local_once(move || menu::popup(&diff, 60.0, 10.0, items));
@@ -1035,7 +1124,12 @@ impl Inner {
             return;
         };
         let changes = this.changes.borrow().clone();
-        let rows = file_rows(&source, changes.as_deref().map(Vec::as_slice), file_tree());
+        let rows = file_rows(
+            &source,
+            changes.as_deref().map(Vec::as_slice),
+            &this.stats.borrow(),
+            file_tree(),
+        );
         let mut row_of_file = vec![0; source.0.files.len()];
         for (r, row) in rows.iter().enumerate() {
             if let Some(i) = row.file {
@@ -1088,7 +1182,7 @@ impl Inner {
                     this.diff.show(source, view);
                     this.shown_file.set(Some(file));
                     if this.find.bar.is_visible() {
-                        let (current, count) = this.diff.find(&this.find.entry.text());
+                        let (current, count) = this.diff.recount(&this.find.entry.text());
                         this.show_count(current, count);
                     }
                 }
@@ -1204,13 +1298,26 @@ impl Inner {
     /// File History。持ち主が項目を作らない一覧（Stashes など）では、見出しと同じメニュー。
     fn list_menu_items(this: &Rc<Self>, file: usize) -> Vec<Item> {
         let Some(f) = this.file_items.borrow().clone() else {
-            return Inner::menu_items(this, Some(file), None);
+            return Inner::menu_items(this, Some(file));
         };
         let Some(source) = this.source.borrow().clone() else {
             return Vec::new();
         };
-        let Some((name, diff)) = source.0.files.get(file) else {
+        let Some((name, _)) = source.0.files.get(file) else {
             return Vec::new();
+        };
+        f(
+            path_of(name),
+            None,
+            !Inner::deleted(this, &source, file),
+            false,
+        )
+    }
+
+    /// `file` 番目のファイルをそのコミットで消したか（消したファイルには Blame を出さない）。
+    fn deleted(this: &Rc<Self>, source: &Source, file: usize) -> bool {
+        let Some((_, diff)) = source.0.files.get(file) else {
+            return false;
         };
         let changes = this.changes.borrow().clone();
         let change = source
@@ -1220,14 +1327,15 @@ impl Inner {
             .or(changes.as_deref().map(Vec::as_slice))
             .filter(|c| c.len() == source.0.files.len())
             .map(|c| &c[file]);
-        let deleted = match change {
+        match change {
             Some(change) => change.kind == ChangeKind::Deleted,
             None => diff.new.is_empty() && !diff.old.is_empty(),
-        };
-        f(path_of(name), None, !deleted, false)
+        }
     }
 
-    fn menu_items(this: &Rc<Self>, file: Option<usize>, y: Option<f64>) -> Vec<Item> {
+    /// ファイルの見出し・一覧の右クリックのメニュー（ファイルのメニューだけ。AI でこの hunk を解説は、差分の行の
+    /// 上でだけ出す。macOS 版と同じ）。
+    fn menu_items(this: &Rc<Self>, file: Option<usize>) -> Vec<Item> {
         let Some(source) = this.source.borrow().clone() else {
             return Vec::new();
         };
@@ -1260,7 +1368,9 @@ impl Inner {
             items.push(Item::Separator);
         }
         if let Some(f) = this.file_items.borrow().clone() {
-            items.extend(f(&path, y, true, false));
+            // 消したファイルは、そのコミットにはない（一覧の右クリックと同じく Blame を出さない）。
+            let blame = !Inner::deleted(this, &source, file);
+            items.extend(f(&path, None, blame, false));
             items.push(Item::Separator);
         }
         let (w, p) = (this.list.downgrade(), path.clone());
@@ -1393,6 +1503,30 @@ mod tests {
     }
 
     #[test]
+    fn sorts_the_file_tree_like_finder() {
+        let empty = || {
+            amonhen_core::diff::file_diff(Arc::<Vec<u8>>::default(), Arc::<Vec<u8>>::default(), 0)
+        };
+        let files = [
+            "b/x", "B2/x", "a10/x", "a9/x", "z.txt", "Readme", "file10", "file9",
+        ]
+        .iter()
+        .map(|n| ((*n).to_owned(), empty()))
+        .collect();
+        let source = Source(StackedDiff { files }, None);
+        let names: Vec<String> = file_rows(&source, None, &Stats::default(), true)
+            .into_iter()
+            .map(|r| r.name)
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "a9", "x", "a10", "x", "b", "x", "B2", "x", "file9", "file10", "Readme", "z.txt"
+            ]
+        );
+    }
+
+    #[test]
     fn reads_only_the_first_file_unless_stacked() {
         let dir = std::env::temp_dir().join(format!("amonhen-gtk-lazy-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -1409,7 +1543,7 @@ mod tests {
         assert_eq!(lazy.source.0.files.len(), 3);
         assert!(lazy.source.0.files.iter().all(|(_, d)| d.added == 0));
         assert!(!lazy.view.diff_view().rows.is_empty());
-        let marks: Vec<&str> = file_rows(&lazy.source, None, false)
+        let marks: Vec<&str> = file_rows(&lazy.source, None, &Stats::default(), false)
             .iter()
             .map(|r| r.mark)
             .collect();

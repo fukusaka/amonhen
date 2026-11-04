@@ -935,16 +935,16 @@ impl Operations for RemoteOperations {
         })
     }
 
-    fn cherry_pick(&self, oid: &Oid, is_merge: bool) -> Result<Outcome> {
+    fn cherry_pick(&self, oids: &[Oid], is_merge: bool) -> Result<Outcome> {
         self.op(Op::CherryPick {
-            oid: *oid,
+            oids: oids.to_vec(),
             is_merge,
         })
     }
 
-    fn revert(&self, oid: &Oid, is_merge: bool) -> Result<Outcome> {
+    fn revert(&self, oids: &[Oid], is_merge: bool) -> Result<Outcome> {
         self.op(Op::Revert {
-            oid: *oid,
+            oids: oids.to_vec(),
             is_merge,
         })
     }
@@ -1179,6 +1179,10 @@ impl Operations for RemoteOperations {
             key.to_owned(),
             value.map(str::to_owned),
         ))
+    }
+
+    fn config_set_all(&self, key: &str, values: &[String], global: bool) -> Result<()> {
+        self.op(Op::ConfigSetAll(key.to_owned(), values.to_vec(), global))
     }
 
     fn git_version(&self) -> Result<Option<(u32, u32, u32)>> {

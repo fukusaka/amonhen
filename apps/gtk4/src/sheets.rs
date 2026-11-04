@@ -39,9 +39,14 @@ pub struct Sheet {
     pub heading: gtk::Label,
     pub message: gtk::Label,
     body: gtk::Box,
+    /// 右寄せのボタン（Cancel と既定のもの）。
     buttons: gtk::Box,
+    /// 左端のボタン（Remove… や Other。macOS 版の Spacer の前のもの）。
+    left: gtk::Box,
     tx: async_channel::Sender<Response>,
     rx: async_channel::Receiver<Response>,
+    /// 答えた後も窓を壊さずに隠す（[`Sheet::reusable`]）。
+    reuse: Rc<std::cell::Cell<bool>>,
 }
 
 thread_local! {
@@ -61,7 +66,7 @@ pub fn set_worktree_name(window: &gtk::Window, name: Option<String>) {
     });
 }
 
-fn worktree_name(window: &gtk::Window) -> Option<String> {
+pub fn worktree_name(window: &gtk::Window) -> Option<String> {
     WORKTREE_NAMES.with(|names| {
         names
             .borrow()
@@ -71,21 +76,68 @@ fn worktree_name(window: &gtk::Window) -> Option<String> {
     })
 }
 
+/// シートの説明: worktree が 2 つ以上あれば、どの worktree に対する操作かを先頭に書く（説明を書き換えるときも
+/// これを通す）。
+pub fn with_worktree(parent: Option<&gtk::Window>, message: &str) -> String {
+    named(parent.and_then(worktree_name).as_deref(), message)
+}
+
+/// [`with_worktree`] の、worktree の名前を渡す形（`None` なら書かない）。
+fn named(worktree: Option<&str>, message: &str) -> String {
+    match worktree {
+        Some(name) => {
+            let mut text = tr!("In the worktree “{name}”.", name = name);
+            if !message.is_empty() {
+                text.push('\n');
+                text.push_str(message);
+            }
+            text
+        }
+        None => message.to_owned(),
+    }
+}
+
+/// 操作の相手の worktree: 選んだときに書き込む先だったもの。シートの前に読むもの・シートに書く名前・OK で
+/// 書くものをこれに揃える（読んでいる間やシートを出している間に書き込む先を替えても。macOS 版は worktree ごとに
+/// `Actions` があり、シートはその worktree を書く）。
+#[derive(Clone)]
+pub struct Target {
+    pub repo: Arc<Repository>,
+    /// シートに書く worktree の名前（worktree が 1 つなら None）。
+    pub worktree: Option<String>,
+}
+
+impl Target {
+    /// 今の書き込む先。
+    pub fn current(actions: &Actions) -> Option<Self> {
+        let repo = actions.repo()?;
+        let worktree = parent(actions).as_ref().and_then(worktree_name);
+        Some(Self { repo, worktree })
+    }
+
+    /// この worktree の名前を書いた確認のシート。
+    pub fn sheet(&self, parent: Option<&gtk::Window>, title: &str, message: &str) -> Sheet {
+        Sheet::unnamed(parent, title, &self.describe(message))
+    }
+
+    /// シートの説明（この worktree の名前を先頭に。説明を書き直すときも）。
+    pub fn describe(&self, message: &str) -> String {
+        named(self.worktree.as_deref(), message)
+    }
+
+    /// この worktree の名前を書いて知らせる（[`inform`]）。
+    pub async fn inform(&self, parent: Option<&gtk::Window>, title: &str, message: &str) {
+        let sheet = self.sheet(parent, title, message);
+        sheet.button("OK", Response::Ok, Some(Style::Suggested));
+        sheet.run().await;
+    }
+}
+
 impl Sheet {
     /// 確認のシート。worktree が 2 つ以上あれば、どの worktree に対する操作かを説明の先頭に書く
     /// （docs/ux.md の「Worktrees」）。
     pub fn new(parent: Option<&gtk::Window>, title: &str, message: &str) -> Self {
-        match parent.and_then(worktree_name) {
-            Some(name) => {
-                let mut text = tr!("In the worktree “{name}”.", name = name);
-                if !message.is_empty() {
-                    text.push('\n');
-                    text.push_str(message);
-                }
-                Self::unnamed(parent, title, &text)
-            }
-            None => Self::unnamed(parent, title, message),
-        }
+        Self::unnamed(parent, title, &with_worktree(parent, message))
     }
 
     /// worktree の名前を書かないシート（worktree そのものの操作など）。
@@ -95,6 +147,8 @@ impl Sheet {
         heading.set_wrap(true);
         heading.set_max_width_chars(48);
         heading.set_xalign(0.0);
+        // 見出しのないシート（macOS 版のテンプレートを書くシートなど）。
+        heading.set_visible(!title.is_empty());
         let label = gtk::Label::new(Some(message));
         label.set_wrap(true);
         label.set_max_width_chars(60);
@@ -105,14 +159,19 @@ impl Sheet {
         body.append(&label);
         let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         buttons.set_halign(gtk::Align::End);
-        buttons.set_margin_top(6);
+        buttons.set_hexpand(true);
+        let left = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let button_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        button_row.set_margin_top(6);
+        button_row.append(&left);
+        button_row.append(&buttons);
         let content = gtk::Box::new(gtk::Orientation::Vertical, 10);
         content.set_margin_top(18);
         content.set_margin_bottom(18);
         content.set_margin_start(20);
         content.set_margin_end(20);
         content.append(&body);
-        content.append(&buttons);
+        content.append(&button_row);
         let window = gtk::Window::builder()
             .modal(true)
             .resizable(false)
@@ -140,15 +199,25 @@ impl Sheet {
             glib::Propagation::Proceed
         });
         window.add_controller(keys);
+        window.add_controller(return_presses_default(&window));
         Self {
             window,
             heading,
             message: label,
             body,
             buttons,
+            left,
             tx,
             rx,
+            reuse: Rc::default(),
         }
+    }
+
+    /// 答えた後も窓を隠すだけにして、[`Sheet::ask`] でもう一度出せるようにする（入れたものを残して聞き直す。
+    /// 終えたら呼ぶ側が `window.destroy()` する）。
+    pub fn reusable(&self) {
+        self.reuse.set(true);
+        self.window.set_hide_on_close(true);
     }
 
     /// 大きさを変えられる、広いシートにする（中身を見せるもの。Push のシートなど）。
@@ -174,11 +243,15 @@ impl Sheet {
             Some(Style::Destructive) => button.add_css_class("destructive-action"),
             None => {}
         }
-        let (tx, w) = (self.tx.clone(), self.window.downgrade());
+        let (tx, w, reuse) = (self.tx.clone(), self.window.downgrade(), self.reuse.clone());
         button.connect_clicked(move |_| {
             let _ = tx.try_send(response);
             if let Some(w) = w.upgrade() {
-                w.destroy();
+                if reuse.get() {
+                    w.set_visible(false);
+                } else {
+                    w.destroy();
+                }
             }
         });
         self.buttons.append(&button);
@@ -191,9 +264,7 @@ impl Sheet {
         if style == Some(Style::Destructive) {
             button.add_css_class("destructive-action");
         }
-        button.set_hexpand(true);
-        button.set_halign(gtk::Align::Start);
-        self.buttons.append(&button);
+        self.left.append(&button);
         button
     }
 
@@ -201,8 +272,8 @@ impl Sheet {
     pub fn buttons(&self, ok: &str, destructive: bool, other: Option<&str>) -> gtk::Button {
         if let Some(other) = other {
             let b = self.button(other, Response::Other, None);
-            b.set_hexpand(true);
-            b.set_halign(gtk::Align::Start);
+            self.buttons.remove(&b);
+            self.left.append(&b);
         }
         self.button(&tr!("Cancel"), Response::Cancel, None);
         self.button(
@@ -218,25 +289,78 @@ impl Sheet {
 
     /// 出して、答えを待つ。
     pub async fn run(self) -> Response {
+        self.ask().await
+    }
+
+    /// 出して、答えを待つ（[`Sheet::reusable`] なら、答えた後にもう一度呼べる）。
+    pub async fn ask(&self) -> Response {
         self.window.present();
         // 最初の入力がボタンの列に来たら（欄のないシート）、既定のボタンに移す: Return で既定の操作になる（macOS 版の
         // シートと同じ。GTK は並びの最初の Cancel に入力を置くので、そのままだと Return で取り消しになる）。
-        let (w, buttons) = (self.window.downgrade(), self.buttons.downgrade());
+        let (w, buttons, left) = (
+            self.window.downgrade(),
+            self.buttons.downgrade(),
+            self.left.downgrade(),
+        );
         glib::idle_add_local_once(move || {
-            let (Some(w), Some(buttons)) = (w.upgrade(), buttons.upgrade()) else {
+            let (Some(w), Some(buttons), Some(left)) =
+                (w.upgrade(), buttons.upgrade(), left.upgrade())
+            else {
                 return;
             };
             let Some(default) = w.default_widget() else {
                 return;
             };
-            let on_buttons = GtkWindowExt::focus(&w)
-                .is_none_or(|f| f.parent().as_ref() == Some(buttons.upcast_ref()));
+            let on_buttons = GtkWindowExt::focus(&w).is_none_or(|f| {
+                let parent = f.parent();
+                parent.as_ref() == Some(buttons.upcast_ref())
+                    || parent.as_ref() == Some(left.upcast_ref())
+            });
             if on_buttons && default.is_sensitive() {
                 default.grab_focus();
             }
         });
         self.rx.recv().await.unwrap_or(Response::Cancel)
     }
+}
+
+/// Return で、入力がどこにあっても既定のボタンを押す（macOS 版のシートと同じ。GTK のままでは、ドロップダウンや
+/// ラジオに入力があると Return でそれを開く・選ぶだけになる）。文字の欄（自分で既定のボタンに渡すか、改行を入れる）と、
+/// 開いたドロップダウンの一覧の中はそのまま。既定のボタンが押せないときは何もしない。
+pub fn return_presses_default(window: &gtk::Window) -> gtk::EventControllerKey {
+    let keys = gtk::EventControllerKey::new();
+    keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let w = window.downgrade();
+    keys.connect_key_pressed(move |_, key, _, state| {
+        use gtk::gdk::{Key, ModifierType};
+        let Some(w) = w.upgrade() else {
+            return glib::Propagation::Proceed;
+        };
+        if !matches!(key, Key::Return | Key::KP_Enter | Key::ISO_Enter)
+            || state.intersects(
+                ModifierType::CONTROL_MASK | ModifierType::ALT_MASK | ModifierType::SHIFT_MASK,
+            )
+        {
+            return glib::Propagation::Proceed;
+        }
+        let Some(default) = w.default_widget() else {
+            return glib::Propagation::Proceed;
+        };
+        if let Some(focus) = GtkWindowExt::focus(&w)
+            && (focus.is::<gtk::Text>()
+                || focus.is::<gtk::TextView>()
+                || focus.ancestor(gtk::Popover::static_type()).is_some())
+        {
+            return glib::Propagation::Proceed;
+        }
+        if default.is_sensitive() && default.is_visible() {
+            default.activate();
+        } else {
+            w.error_bell();
+        }
+        glib::Propagation::Stop
+    });
+    keys
 }
 
 /// 説明の文の行（小さく、薄く）。`lines` 行分の高さを取っておく（答えが来ても大きさを変えない）。
@@ -500,10 +624,12 @@ pub fn show_forecast(label: &gtk::Label, forecast: Option<&MergeForecast>, estim
 /// `rewritePreview` の答えを、確認に出す行にする（動く・残るブランチ、push 済み、コンフリクト）。
 pub fn rewrite_lines(info: &Value) -> (Vec<String>, bool) {
     let names = |list: &[Value]| -> String {
-        list.iter()
-            .filter_map(|b| b["name"].as_str())
-            .collect::<Vec<_>>()
-            .join(", ")
+        amonhen_model::i18n::list(
+            &list
+                .iter()
+                .filter_map(|b| b["name"].as_str())
+                .collect::<Vec<_>>(),
+        )
     };
     let moving = info["moving"].as_array().cloned().unwrap_or_default();
     let staying = info["staying"].as_array().cloned().unwrap_or_default();
@@ -554,7 +680,7 @@ pub fn rewrite_lines(info: &Value) -> (Vec<String>, bool) {
             .filter_map(|b| b["name"].as_str().map(str::to_owned)),
     );
     if !pushed.is_empty() {
-        let list = pushed.join(", ");
+        let list = amonhen_model::i18n::list(&pushed);
         out.push(if pushed.len() == 1 {
             tr!(
                 "{names} is pushed, so pushing afterwards needs Force Push.",
@@ -624,9 +750,10 @@ pub struct SyncState {
 /// 切れたときなどに、押しても何も起きないように見えないように）。
 pub async fn sync_state(
     actions: &Actions,
-    repo: &Arc<Repository>,
+    target: &Target,
     branch: Option<String>,
 ) -> Option<SyncState> {
+    let repo = &target.repo;
     let r = repo.clone();
     let b = branch.clone();
     let read = gio::spawn_blocking(move || {
@@ -639,12 +766,13 @@ pub async fn sync_state(
     let (status, refs) = match read {
         Ok(read) => read,
         Err(error) => {
-            inform(
-                parent(actions).as_ref(),
-                &tr!("Can’t read the status"),
-                &error,
-            )
-            .await;
+            target
+                .inform(
+                    parent(actions).as_ref(),
+                    &tr!("Can’t read the status"),
+                    &error,
+                )
+                .await;
             return None;
         }
     };
@@ -698,12 +826,13 @@ pub async fn sync_state(
     let (outgoing, incoming) = match ranges {
         Ok(ranges) => ranges,
         Err(error) => {
-            inform(
-                parent(actions).as_ref(),
-                &tr!("Can’t read the status"),
-                &error,
-            )
-            .await;
+            target
+                .inform(
+                    parent(actions).as_ref(),
+                    &tr!("Can’t read the status"),
+                    &error,
+                )
+                .await;
             return None;
         }
     };
@@ -785,6 +914,14 @@ fn push_warnings(
     out
 }
 
+/// 中身を見せる広いシートの大きさ: 親の窓の 85%、少なくとも 820×480（macOS 版の PushSheet と同じ）。
+fn wide_size(parent_width: i32, parent_height: i32) -> (i32, i32) {
+    (
+        (parent_width * 85 / 100).max(820),
+        (parent_height * 85 / 100).max(480),
+    )
+}
+
 /// Push のシートの中身: 左に送るコミット（一番上は「送る変更すべて」。Force Push と分岐では上流から消える
 /// コミットも）、右に選んだものの詳細と差分（History の右の欄と同じ表示。読み取り専用）。
 fn push_preview(
@@ -795,8 +932,10 @@ fn push_preview(
 ) -> gtk::Paned {
     use amonhen_model::Oid;
     // 行: (見出し, 下の行, コミット（なければ送る変更すべて）, 選べない見出しか, 消えるものか)。
+    // 「送る変更すべて（N）」は、行と右の詳細の題の両方に出す（macOS 版の rangeTitle）。
+    let range_title = tr!("All changes to send ({count})", count = outgoing.count);
     let mut rows: Vec<(String, String, Option<String>, bool, bool)> = vec![(
-        tr!("All changes to send ({count})", count = outgoing.count),
+        range_title.clone(),
         tr!("From upstream to HEAD, all files"),
         None,
         false,
@@ -840,12 +979,13 @@ fn push_preview(
         glib::Propagation::Proceed
     });
     list.add_controller(keys);
-    for (title, detail, _, heading, lost) in &rows {
+    for (title, detail, commit, heading, lost) in &rows {
         let b = gtk::Box::new(gtk::Orientation::Vertical, 1);
         let t = gtk::Label::new(Some(title));
         t.set_xalign(0.0);
         t.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        if *heading {
+        // 見出しと「送る変更すべて」は太字（macOS 版と同じ）。
+        if *heading || commit.is_none() {
             t.add_css_class("heading");
         }
         if *lost {
@@ -873,7 +1013,7 @@ fn push_preview(
         .build();
     // 右: 選んだものの詳細と、変更ファイルの一覧と差分（History の右の欄と同じ部品。macOS 版の
     // `CommitDetailViewController`）。
-    let pane = crate::commitpane::CommitPane::new(Rc::default());
+    let pane = crate::commitpane::CommitPane::preview(Rc::default());
     let paned = gtk::Paned::new(gtk::Orientation::Horizontal);
     paned.set_start_child(Some(&left));
     paned.set_end_child(Some(&pane.root));
@@ -901,13 +1041,9 @@ fn push_preview(
                 .as_ref()
                 .and_then(|(b, t)| Some((Oid::from_hex(b), Oid::from_hex(t)?)))
             {
-                Some((base, tip)) => pane.show_range(
-                    repo.clone(),
-                    base,
-                    tip,
-                    &tr!("All changes to send"),
-                    &range_lines,
-                ),
+                Some((base, tip)) => {
+                    pane.show_range(repo.clone(), base, tip, &range_title, &range_lines)
+                }
                 None => pane.clear(),
             },
         }
@@ -918,10 +1054,17 @@ fn push_preview(
     paned
 }
 
-/// 知らせる（ボタンは閉じるだけ）。
+/// 知らせる（ボタンは OK だけ。macOS 版の `inform`）。
 pub async fn inform(parent: Option<&gtk::Window>, title: &str, message: &str) {
     let sheet = Sheet::new(parent, title, message);
-    sheet.button(&tr!("Close"), Response::Ok, Some(Style::Suggested));
+    sheet.button("OK", Response::Ok, Some(Style::Suggested));
+    sheet.run().await;
+}
+
+/// 知らせる（ボタンは OK だけで、worktree は書かない。macOS 版の `NSAlert` を窓のシートで出すものと同じ）。
+pub async fn alert(parent: Option<&gtk::Window>, title: &str, message: &str) {
+    let sheet = Sheet::unnamed(parent, title, message);
+    sheet.button("OK", Response::Ok, Some(Style::Suggested));
     sheet.run().await;
 }
 
@@ -930,11 +1073,22 @@ pub fn parent(actions: &Actions) -> Option<gtk::Window> {
     actions.window().map(|w| w.upcast())
 }
 
+/// することがないとき（macOS 版の `NSSound.beep()`）。
+fn beep(actions: &Actions) {
+    if let Some(w) = actions.window() {
+        w.error_bell();
+    }
+}
+
 /// Fetch の前に、どこから取るかを見せる。リモートがいくつもあれば選べる（最初はすべて）。
 pub fn fetch(actions: &Rc<Actions>) {
+    // 選んだときの worktree のリモートを読み、その名前を書き、そこで取る（読んでいる間に書き込む先を替えても）。
+    let Some(target) = Target::current(actions) else {
+        return;
+    };
     let actions = actions.clone();
     glib::spawn_future_local(async move {
-        let Some(repo) = actions.repo() else { return };
+        let repo = target.repo.clone();
         let remotes: Vec<String> = run(&repo, json!({ "op": "remotes" })).await["info"]["remotes"]
             .as_array()
             .into_iter()
@@ -942,7 +1096,7 @@ pub fn fetch(actions: &Rc<Actions>) {
             .filter_map(|r| r["name"].as_str().map(str::to_owned))
             .collect();
         if remotes.is_empty() {
-            return;
+            return beep(&actions);
         }
         let config = run(&repo, json!({ "op": "configList" })).await;
         let entries: Vec<(String, String)> = config["info"]["entries"]
@@ -987,17 +1141,13 @@ pub fn fetch(actions: &Rc<Actions>) {
             if names.len() == chosen.len() {
                 tr!(
                     "Remote branches deleted there are removed here too ({settings}).",
-                    settings = keys.join(", ")
+                    settings = amonhen_model::i18n::list(&keys)
                 )
             } else {
                 tr!(
                     "Remote branches deleted on {remotes} are removed here too ({settings}).",
-                    remotes = names
-                        .iter()
-                        .map(|s| s.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    settings = keys.join(", ")
+                    remotes = amonhen_model::i18n::list(&names),
+                    settings = amonhen_model::i18n::list(&keys)
                 )
             }
         };
@@ -1006,21 +1156,32 @@ pub fn fetch(actions: &Rc<Actions>) {
         } else {
             tr!("Fetch?")
         };
-        let sheet = Sheet::new(parent(&actions).as_ref(), &title, &prune_line(&remotes));
-        let mut choices = vec![tr!("All Remotes ({names})", names = remotes.join(", "))];
+        let window = parent(&actions);
+        let sheet = target.sheet(window.as_ref(), &title, &prune_line(&remotes));
+        let mut choices = vec![tr!(
+            "All Remotes ({names})",
+            names = amonhen_model::i18n::list(&remotes)
+        )];
         choices.extend(remotes.iter().cloned());
         let refs: Vec<&str> = choices.iter().map(String::as_str).collect();
         let from = gtk::DropDown::from_strings(&refs);
+        // 「すべてのリモート」の下に区切りの線（macOS 版と同じ）。
+        crate::settings::separate_items(&from, Rc::new(std::cell::RefCell::new(vec![1])));
         if remotes.len() > 1 {
             sheet.add(&row(&tr!("From:"), &from));
-            let (message, remotes, prune_line) =
-                (sheet.message.clone(), remotes.clone(), prune_line.clone());
+            let (message, remotes, prune_line, target) = (
+                sheet.message.clone(),
+                remotes.clone(),
+                prune_line.clone(),
+                target.clone(),
+            );
             from.connect_selected_notify(move |d| {
                 let chosen = match d.selected() {
                     0 => remotes.clone(),
                     i => vec![remotes[i as usize - 1].clone()],
                 };
-                let text = prune_line(&chosen);
+                // worktree の行は残す（macOS 版と同じく、説明はシートを出したときと同じ形で書き直す）。
+                let text = target.describe(&prune_line(&chosen));
                 message.set_text(&text);
                 message.set_visible(!text.is_empty());
             });
@@ -1033,7 +1194,11 @@ pub fn fetch(actions: &Rc<Actions>) {
             0 => None,
             i => remotes.get(i as usize - 1).cloned(),
         };
-        actions.perform(json!({ "op": "fetch", "remote": remote }));
+        actions.perform_in(
+            repo,
+            vec![json!({ "op": "fetch", "remote": remote })],
+            |_| {},
+        );
     });
 }
 
@@ -1101,14 +1266,21 @@ fn pull_mode_factory() -> gtk::SignalListItemFactory {
 /// Pull の前に、取り込むコミットと取り込み方を見せる。上流がなければ、取り込み元のリモートのブランチを選び、それを
 /// 上流にして取り込む。
 pub fn pull(actions: &Rc<Actions>, mode: &str) {
+    if let Some(target) = Target::current(actions) {
+        pull_in(actions, target, mode);
+    }
+}
+
+/// [`pull`] を `target` の worktree で（読むのも、シートに書くのも、取り込むのも）。
+pub fn pull_in(actions: &Rc<Actions>, target: Target, mode: &str) {
     let (actions, mode) = (actions.clone(), mode.to_owned());
     glib::spawn_future_local(async move {
-        let Some(repo) = actions.repo() else { return };
-        let Some(state) = sync_state(&actions, &repo, None).await else {
+        let repo = target.repo.clone();
+        let Some(state) = sync_state(&actions, &target, None).await else {
             return;
         };
         let Some(branch) = state.branch.clone() else {
-            return;
+            return beep(&actions);
         };
         // 上流がなければ、取り込み元を選ぶ（同じ名前のリモートのブランチを先に）。
         let mut sources: Vec<String> = Vec::new();
@@ -1128,12 +1300,13 @@ pub fn pull(actions: &Rc<Actions>, mode: &str) {
             sources = remotes.iter().filter(|n| same(n)).cloned().collect();
             sources.extend(remotes.iter().filter(|n| !same(n)).cloned());
             if sources.is_empty() {
-                inform(
-                    parent(&actions).as_ref(),
-                    &tr!("No remote branch to pull from"),
-                    &tr!("Fetch, or add a remote in Repository Settings."),
-                )
-                .await;
+                target
+                    .inform(
+                        parent(&actions).as_ref(),
+                        &tr!("No remote branch to pull from"),
+                        &tr!("Fetch, or add a remote in Repository Settings."),
+                    )
+                    .await;
                 return;
             }
         }
@@ -1160,7 +1333,7 @@ pub fn pull(actions: &Rc<Actions>, mode: &str) {
             Some(u) => tr!("Pull from {upstream}?", upstream = u),
             None => tr!("Pull into {branch}?", branch = branch),
         };
-        let sheet = Sheet::new(parent(&actions).as_ref(), &title, "");
+        let sheet = target.sheet(parent(&actions).as_ref(), &title, "");
         let source_refs: Vec<&str> = sources.iter().map(String::as_str).collect();
         let source = gtk::DropDown::from_strings(&source_refs);
         if !sources.is_empty() {
@@ -1345,12 +1518,16 @@ pub fn pull(actions: &Rc<Actions>, mode: &str) {
             .and_downcast::<gtk::StringObject>()
             .map(|s| s.string().to_string());
         match (state.upstream.is_none(), picked.as_deref().and_then(|p| p.split_once('/'))) {
-            (true, Some((remote, name))) => actions.perform_sequence(vec![
-                json!({ "op": "configSet", "key": format!("branch.{branch}.remote"), "value": remote }),
-                json!({ "op": "configSet", "key": format!("branch.{branch}.merge"), "value": format!("refs/heads/{name}") }),
-                pull,
-            ]),
-            _ => actions.perform(pull),
+            (true, Some((remote, name))) => actions.perform_in(
+                repo,
+                vec![
+                    json!({ "op": "configSet", "key": format!("branch.{branch}.remote"), "value": remote }),
+                    json!({ "op": "configSet", "key": format!("branch.{branch}.merge"), "value": format!("refs/heads/{name}") }),
+                    pull,
+                ],
+                |_| {},
+            ),
+            _ => actions.perform_in(repo, vec![pull], |_| {}),
         }
     });
 }
@@ -1364,22 +1541,35 @@ pub fn push(
     force: bool,
     then: Option<Box<dyn FnOnce()>>,
 ) {
+    if let Some(target) = Target::current(actions) {
+        push_in(actions, target, branch, force, then);
+    }
+}
+
+/// [`push`] を `target` の worktree で（Commit and Push で、コミットした worktree を送る）。
+pub fn push_in(
+    actions: &Rc<Actions>,
+    target: Target,
+    branch: Option<String>,
+    force: bool,
+    then: Option<Box<dyn FnOnce()>>,
+) {
     let actions = actions.clone();
     glib::spawn_future_local(async move {
-        let Some(repo) = actions.repo() else { return };
-        let Some(state) = sync_state(&actions, &repo, branch).await else {
+        let repo = target.repo.clone();
+        let Some(state) = sync_state(&actions, &target, branch).await else {
             return;
         };
         let Some(branch) = state.branch.clone() else {
-            return;
+            return beep(&actions);
         };
         let Some(upstream) = state.upstream.clone() else {
-            return publish(&actions, &branch, then);
+            return publish_in(&actions, target, &branch, then);
         };
         let (outgoing, incoming) = (state.outgoing.count, state.incoming.count);
         let diverged = !force && incoming > 0;
         if !(force || diverged || outgoing > 0) || (diverged && outgoing == 0) {
-            return;
+            return beep(&actions);
         }
         let (title, message) = if diverged {
             (
@@ -1416,7 +1606,7 @@ pub fn push(
                 String::new(),
             )
         };
-        let sheet = Sheet::new(parent(&actions).as_ref(), &title, &message);
+        let sheet = target.sheet(parent(&actions).as_ref(), &title, &message);
         let lost = if force || diverged {
             state.incoming.clone()
         } else {
@@ -1475,7 +1665,13 @@ pub fn push(
             }
             None => (Vec::new(), 0),
         };
-        for warning in push_warnings(&upstream, &state.outgoing, &added, binaries) {
+        // 送る範囲がなければ（送るものがない Force Push など）、注意は出さない（macOS 版と同じ）。
+        let warnings = if range.is_some() {
+            push_warnings(&upstream, &state.outgoing, &added, binaries)
+        } else {
+            Vec::new()
+        };
+        for warning in warnings {
             let l = note(&format!("⚠︎ {warning}"));
             l.remove_css_class("dim-label");
             l.add_css_class("warning");
@@ -1484,7 +1680,12 @@ pub fn push(
         // 送る範囲があれば、送るコミットとその中身を見せる広いシート。なければ（送るコミットがなく、上流だけが
         // 進んでいる Force Push など）一覧だけの小さなシート（macOS 版と同じ）。
         if range.is_some() {
-            sheet.wide(1100, 720);
+            // 親の窓の 85%（少なくとも 820×480。macOS 版と同じ）。
+            let (width, height) = parent(&actions)
+                .map(|w| (w.width(), w.height()))
+                .unwrap_or_default();
+            let (width, height) = wide_size(width, height);
+            sheet.wide(width, height);
             sheet.add(&push_preview(&repo, &state.outgoing, &lost, range));
         } else {
             sheet.add(&commit_lists(&[
@@ -1500,7 +1701,9 @@ pub fn push(
         if diverged {
             // Cancel・Pull…・Force Push の順。Force Push は Return では押せず、Return は Pull…（macOS 版と同じ）。
             sheet.button(&tr!("Cancel"), Response::Cancel, None);
-            sheet.button("Pull…", Response::Other, Some(Style::Suggested));
+            // Pull… は目立たせないが、Return で押せる（macOS 版の keyEquivalent "\r" の素のボタン）。
+            let pull = sheet.button("Pull…", Response::Other, None);
+            sheet.window.set_default_widget(Some(&pull));
             sheet.button("Force Push", Response::Ok, Some(Style::Destructive));
         } else {
             sheet.buttons(if replace { "Force Push" } else { "Push" }, replace, None);
@@ -1516,7 +1719,7 @@ pub fn push(
                     "force": replace, "expect": if replace { state.upstream_target.clone() } else { None },
                     "setUpstream": false,
                 });
-                actions.perform_with(vec![command], move |reply| {
+                actions.perform_in(repo, vec![command], move |reply| {
                     if reply["ok"].as_bool() == Some(true)
                         && let Some(then) = then
                     {
@@ -1524,7 +1727,7 @@ pub fn push(
                     }
                 });
             }
-            Response::Other => pull(&actions, "git"),
+            Response::Other => pull_in(&actions, target, "git"),
             Response::Cancel => {}
         }
     });
@@ -1532,9 +1735,21 @@ pub fn push(
 
 /// 上流のないブランチを初めて送る（Publish）。送り先のリモートとそこでの名前を選ばせ、送ったらそれを上流にする。
 pub fn publish(actions: &Rc<Actions>, branch: &str, then: Option<Box<dyn FnOnce()>>) {
+    if let Some(target) = Target::current(actions) {
+        publish_in(actions, target, branch, then);
+    }
+}
+
+/// [`publish`] を `target` の worktree で（送ったら、その worktree のブランチの上流にする）。
+pub fn publish_in(
+    actions: &Rc<Actions>,
+    target: Target,
+    branch: &str,
+    then: Option<Box<dyn FnOnce()>>,
+) {
     let (actions, branch) = (actions.clone(), branch.to_owned());
     glib::spawn_future_local(async move {
-        let Some(repo) = actions.repo() else { return };
+        let repo = target.repo.clone();
         let remotes: Vec<String> = run(&repo, json!({ "op": "remotes" })).await["info"]["remotes"]
             .as_array()
             .into_iter()
@@ -1543,12 +1758,13 @@ pub fn publish(actions: &Rc<Actions>, branch: &str, then: Option<Box<dyn FnOnce(
             .collect();
         let window = parent(&actions);
         if remotes.is_empty() {
-            inform(
-                window.as_ref(),
-                &tr!("Can’t Publish"),
-                &tr!("This repository has no remotes. Add one in Repository > Add Remote…."),
-            )
-            .await;
+            target
+                .inform(
+                    window.as_ref(),
+                    &tr!("Can’t Publish"),
+                    &tr!("This repository has no remotes. Add one in Repository > Add Remote…."),
+                )
+                .await;
             return;
         }
         let config = run(&repo, json!({ "op": "configList" })).await;
@@ -1577,7 +1793,7 @@ pub fn publish(actions: &Rc<Actions>, branch: &str, then: Option<Box<dyn FnOnce(
         .into_iter()
         .flatten()
         .find(|r| remotes.contains(r));
-        let sheet = Sheet::new(
+        let sheet = target.sheet(
             window.as_ref(),
             &tr!("Publish {branch}?", branch = branch),
             &tr!(
@@ -1597,7 +1813,9 @@ pub fn publish(actions: &Rc<Actions>, branch: &str, then: Option<Box<dyn FnOnce(
             .build();
         sheet.add(&row(&tr!("Remote"), &remote));
         sheet.add(&row(&tr!("Name there"), &name));
-        sheet.buttons("Publish", false, None);
+        let publish = sheet.buttons("Publish", false, None);
+        // 名前が空なら押せない（黙って閉じない）。
+        name.connect_changed(move |e| publish.set_sensitive(!e.text().trim().is_empty()));
         if sheet.run().await != Response::Ok {
             return;
         }
@@ -1606,7 +1824,7 @@ pub fn publish(actions: &Rc<Actions>, branch: &str, then: Option<Box<dyn FnOnce(
         if remote_branch.is_empty() {
             return;
         }
-        let target = format!("{remote}/{remote_branch}");
+        let there = format!("{remote}/{remote_branch}");
         let r = repo.clone();
         let exists = gio::spawn_blocking(move || r.load_refs().ok())
             .await
@@ -1616,19 +1834,19 @@ pub fn publish(actions: &Rc<Actions>, branch: &str, then: Option<Box<dyn FnOnce(
                 refs.refs
                     .entries
                     .iter()
-                    .any(|i| i.kind == amonhen_model::RefKind::Remote && i.name == target)
+                    .any(|i| i.kind == amonhen_model::RefKind::Remote && i.name == there)
             });
         // その名前のブランチがもうリモートにある（最後の Fetch の時点）。作るのではなく、それを上流にして送る。
         if exists {
-            let outgoing = between(&repo, &target, &branch, 1).await.count;
-            let incoming = between(&repo, &branch, &target, 1).await.count;
+            let outgoing = between(&repo, &there, &branch, 1).await.count;
+            let incoming = between(&repo, &branch, &there, 1).await.count;
             let set_upstream = vec![
                 json!({ "op": "configSet", "key": format!("branch.{branch}.remote"), "value": remote }),
                 json!({ "op": "configSet", "key": format!("branch.{branch}.merge"), "value": format!("refs/heads/{remote_branch}") }),
             ];
-            let title = tr!("{target} already exists", target = target);
+            let title = tr!("{target} already exists", target = there);
             if incoming > 0 {
-                let sheet = Sheet::new(
+                let sheet = target.sheet(
                     window.as_ref(),
                     &title,
                     &tr!(
@@ -1639,11 +1857,11 @@ pub fn publish(actions: &Rc<Actions>, branch: &str, then: Option<Box<dyn FnOnce(
                 );
                 sheet.buttons(&tr!("Set Upstream"), false, None);
                 if sheet.run().await == Response::Ok {
-                    actions.perform_sequence(set_upstream);
+                    actions.perform_in(repo, set_upstream, |_| {});
                 }
                 return;
             }
-            let sheet = Sheet::new(
+            let sheet = target.sheet(
                 window.as_ref(),
                 &title,
                 &if outgoing > 0 {
@@ -1668,7 +1886,8 @@ pub fn publish(actions: &Rc<Actions>, branch: &str, then: Option<Box<dyn FnOnce(
                 return;
             }
         }
-        actions.perform_with(
+        actions.perform_in(
+            repo,
             vec![json!({
                 "op": "push", "remote": remote, "branch": branch, "remoteBranch": remote_branch,
                 "force": false, "setUpstream": true,
@@ -1702,10 +1921,13 @@ pub fn checkout(actions: &Rc<Actions>, target: CheckoutTarget) {
     {
         return actions.edit_worktree(&path);
     }
+    // 選んだときの worktree で読み、その名前を書き、そこで切り替える（読んでいる間に書き込む先を替えても）。
+    let Some(target_tree) = Target::current(actions) else {
+        return;
+    };
     let actions = actions.clone();
     glib::spawn_future_local(async move {
-        let Some(repo) = actions.repo() else { return };
-        let r = repo.clone();
+        let r = target_tree.repo.clone();
         let changed = gio::spawn_blocking(move || {
             r.load_status().map_or(0, |s| {
                 s.status
@@ -1750,10 +1972,10 @@ pub fn checkout(actions: &Rc<Actions>, target: CheckoutTarget) {
             .filter(|l| !l.is_empty())
             .collect::<Vec<_>>()
             .join(" ");
-        let sheet = Sheet::new(parent(&actions).as_ref(), &title, &message);
+        let sheet = target_tree.sheet(parent(&actions).as_ref(), &title, &message);
         sheet.buttons("Checkout", false, None);
         if sheet.run().await == Response::Ok {
-            actions.perform(command);
+            actions.perform_in(target_tree.repo, vec![command], |_| {});
         }
     });
 }
@@ -1767,7 +1989,16 @@ pub fn confirm_then(
     destructive: bool,
     commands: Vec<Value>,
 ) {
-    confirm_sheet(actions, true, title, message, ok, destructive, commands);
+    confirm_sheet(
+        actions,
+        None,
+        true,
+        title,
+        message,
+        ok,
+        destructive,
+        commands,
+    );
 }
 
 /// [`confirm_then`] と同じで、worktree の名前を書かない（作業ツリーによらない ref・リモートの操作: タグ、
@@ -1780,11 +2011,71 @@ pub fn confirm_ref_then(
     destructive: bool,
     commands: Vec<Value>,
 ) {
-    confirm_sheet(actions, false, title, message, ok, destructive, commands);
+    confirm_sheet(
+        actions,
+        None,
+        false,
+        title,
+        message,
+        ok,
+        destructive,
+        commands,
+    );
 }
 
+/// [`confirm_ref_then`] と同じで、書き込む先の worktree ではなく `repo` で実行する（Working Copy で選んだ
+/// ファイルを捨てる。確かめている間に書き込む先を替えても、そのファイルの worktree に効かせる）。
+pub fn confirm_ref_in(
+    actions: &Rc<Actions>,
+    repo: Arc<Repository>,
+    title: String,
+    message: String,
+    ok: String,
+    destructive: bool,
+    commands: Vec<Value>,
+) {
+    confirm_sheet(
+        actions,
+        Some(Target {
+            repo,
+            worktree: None,
+        }),
+        false,
+        title,
+        message,
+        ok,
+        destructive,
+        commands,
+    );
+}
+
+/// [`confirm_then`] と同じで、`target` の worktree の名前を書き、そこで実行する（確かめる前に読んだ worktree に
+/// 効かせる）。
+pub fn confirm_in(
+    actions: &Rc<Actions>,
+    target: Target,
+    title: String,
+    message: String,
+    ok: String,
+    destructive: bool,
+    commands: Vec<Value>,
+) {
+    confirm_sheet(
+        actions,
+        Some(target),
+        true,
+        title,
+        message,
+        ok,
+        destructive,
+        commands,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
 fn confirm_sheet(
     actions: &Rc<Actions>,
+    target: Option<Target>,
     named: bool,
     title: String,
     message: String,
@@ -1795,14 +2086,17 @@ fn confirm_sheet(
     let actions = actions.clone();
     glib::spawn_future_local(async move {
         let parent = parent(&actions);
-        let sheet = if named {
-            Sheet::new(parent.as_ref(), &title, &message)
-        } else {
-            Sheet::unnamed(parent.as_ref(), &title, &message)
+        let sheet = match (&target, named) {
+            (Some(target), true) => target.sheet(parent.as_ref(), &title, &message),
+            (None, true) => Sheet::new(parent.as_ref(), &title, &message),
+            (_, false) => Sheet::unnamed(parent.as_ref(), &title, &message),
         };
         sheet.buttons(&ok, destructive, None);
         if sheet.run().await == Response::Ok {
-            actions.perform_sequence(commands);
+            match target {
+                Some(target) => actions.perform_in(target.repo, commands, |_| {}),
+                None => actions.perform_sequence(commands),
+            }
         }
     });
 }
@@ -1819,10 +2113,14 @@ pub fn confirm_integrate(
     estimate: bool,
     commands: Vec<Value>,
 ) {
+    // 選んだときの worktree の名前を書き、そこで取り込む。
+    let Some(target) = Target::current(actions) else {
+        return;
+    };
     let actions = actions.clone();
     glib::spawn_future_local(async move {
-        let Some(repo) = actions.repo() else { return };
-        let sheet = Sheet::new(parent(&actions).as_ref(), &title, &can_undo());
+        let repo = target.repo.clone();
+        let sheet = target.sheet(parent(&actions).as_ref(), &title, &can_undo());
         let forecast = forecast_label();
         sheet.add(&forecast);
         sheet.buttons(ok, false, None);
@@ -1832,16 +2130,20 @@ pub fn confirm_integrate(
             show_forecast(&label, f.as_ref(), estimate || several);
         });
         if sheet.run().await == Response::Ok {
-            actions.perform_sequence(commands);
+            actions.perform_in(target.repo, commands, |_| {});
         }
     });
 }
 
 /// Cherry-pick・Revert の前に確かめる。`commits` は（16 進, merge か）を、実行する順に。
 pub fn pick(actions: &Rc<Actions>, revert: bool, commits: Vec<(String, bool)>) {
+    // 選んだときの worktree のブランチを読み、そこに足す（読んでいる間に書き込む先を替えても）。
+    let Some(target) = Target::current(actions) else {
+        return;
+    };
     let actions = actions.clone();
     glib::spawn_future_local(async move {
-        let Some(repo) = actions.repo() else { return };
+        let repo = target.repo.clone();
         let onto = gio::spawn_blocking(move || repo.load_status().ok()?.status.branch.clone())
             .await
             .ok()
@@ -1866,13 +2168,22 @@ pub fn pick(actions: &Rc<Actions>, revert: bool, commits: Vec<(String, bool)>) {
             },
             can_undo()
         );
+        // 1 つの命令で（git cherry-pick A B C と同じく、コンフリクトで止まったら残りは git が覚えていて、Continue・
+        // Skip で続く。1 つずつ実行すると、止まったところで残りが黙って落ちる）。
         let op = if revert { "revert" } else { "cherryPick" };
-        let commands = commits
-            .into_iter()
-            .map(|(oid, merge)| json!({ "op": op, "oid": oid, "isMerge": merge }))
-            .collect();
+        let merge = commits.iter().any(|(_, merge)| *merge);
+        let oids: Vec<String> = commits.into_iter().map(|(oid, _)| oid).collect();
+        let commands = vec![json!({ "op": op, "oids": oids, "isMerge": merge })];
         let ok = if revert { "Revert" } else { "Cherry-pick" };
-        confirm_then(&actions, title, message, ok.to_owned(), false, commands);
+        confirm_in(
+            &actions,
+            target,
+            title,
+            message,
+            ok.to_owned(),
+            false,
+            commands,
+        );
     });
 }
 
@@ -1902,12 +2213,15 @@ pub fn pop(actions: &Rc<Actions>, name: &str, message: Option<&str>, pop: bool) 
 
 /// Undo の前に、何を戻すかを見せる。
 pub fn undo(actions: &Rc<Actions>) {
+    // 選んだときの worktree の最後の操作を見せ、それを戻す（読んでいる間に書き込む先を替えても）。
+    let Some(target) = Target::current(actions) else {
+        return;
+    };
     let actions = actions.clone();
     glib::spawn_future_local(async move {
-        let Some(repo) = actions.repo() else { return };
-        let peek = run(&repo, json!({ "op": "undoPeek" })).await;
+        let peek = run(&target.repo, json!({ "op": "undoPeek" })).await;
         let Some(label) = peek["label"].as_str() else {
-            return;
+            return beep(&actions);
         };
         let what = match peek["info"]["kind"].as_str() {
             Some("files") => tr!("Puts the files back as they were. HEAD and the index stay."),
@@ -1915,40 +2229,58 @@ pub fn undo(actions: &Rc<Actions>) {
             Some("rename") => tr!("Gives the branch its earlier name back."),
             _ => tr!("Returns HEAD and the branches to where they were."),
         };
-        let sheet = Sheet::new(
+        let sheet = target.sheet(
             parent(&actions).as_ref(),
             &tr!("Undo “{label}”?", label = label),
             &what,
         );
         sheet.buttons("Undo", false, None);
         if sheet.run().await == Response::Ok {
-            actions.perform(json!({ "op": "undo" }));
+            actions.perform_in(target.repo, vec![json!({ "op": "undo" })], |_| {});
         }
     });
 }
 
 /// 相手の決まった Merge・Rebase の前に確かめる。
 pub fn integrate(actions: &Rc<Actions>, rev: &str, current: &str, rebase: bool) {
-    integrate_choosing(
+    integrate_sheet(
         actions,
         vec![(rev.to_owned(), rev.to_owned())],
         current,
         rebase,
+        false,
     );
 }
 
-/// Merge・Rebase の前に確かめる。`choices`（名前, rev）がいくつもあれば、同じシートで相手を選ぶ（最初のもの
-/// から）。コンフリクトの見込み（rebase なら書き換えの見通し: 一緒に動くブランチ、push 済み、コミットごとの
-/// コンフリクト）を裏で調べて見せ、rebase なら積み重ねたブランチを動かすかをこの操作だけ選べる。
+/// メニューの Merge…・Rebase…: 同じシートで相手を選ぶ（`choices` は名前と rev、最初のものから）。題と説明は
+/// 選ぶ前のもので変わらない（macOS 版の `chooseRevision`）。
 pub fn integrate_choosing(
     actions: &Rc<Actions>,
     choices: Vec<(String, String)>,
     current: &str,
     rebase: bool,
 ) {
+    integrate_sheet(actions, choices, current, rebase, true);
+}
+
+/// Merge・Rebase の前に確かめる。`chooser` なら相手を選ぶシート（題は「X に merge する」、選ぶ欄はいつも出す）、
+/// でなければ決まった相手の問いと Undo の文。コンフリクトの見込み（rebase なら書き換えの見通し: 一緒に動く
+/// ブランチ、push 済み、コミットごとのコンフリクト）を裏で調べて見せ、rebase なら積み重ねたブランチを動かすかを
+/// この操作だけ選べる。
+fn integrate_sheet(
+    actions: &Rc<Actions>,
+    choices: Vec<(String, String)>,
+    current: &str,
+    rebase: bool,
+    chooser: bool,
+) {
+    // 選んだときの worktree（`current` はそのブランチ）の名前を書き、そこで取り込む。
+    let Some(target) = Target::current(actions) else {
+        return;
+    };
     let (actions, current) = (actions.clone(), current.to_owned());
     glib::spawn_future_local(async move {
-        let Some(repo) = actions.repo() else { return };
+        let repo = target.repo.clone();
         if choices.is_empty() {
             return;
         }
@@ -1962,19 +2294,38 @@ pub fn integrate_choosing(
                 }
             }
         };
-        let sheet = Sheet::new(
-            parent(&actions).as_ref(),
-            &title_for(&choices[0].0),
-            &can_undo(),
-        );
+        let sheet = if !chooser {
+            target.sheet(
+                parent(&actions).as_ref(),
+                &title_for(&choices[0].0),
+                &can_undo(),
+            )
+        } else if rebase {
+            Sheet::unnamed(
+                parent(&actions).as_ref(),
+                &tr!("Rebase {name}", name = current),
+                &tr!("The branch, tag or commit to rebase onto"),
+            )
+        } else {
+            Sheet::unnamed(
+                parent(&actions).as_ref(),
+                &tr!("Merge into {name}", name = current),
+                &tr!("The branch, tag or commit to merge in"),
+            )
+        };
         let labels: Vec<&str> = choices.iter().map(|(l, _)| l.as_str()).collect();
         let picker = gtk::DropDown::from_strings(&labels);
+        // 探す欄は、名前で絞り込む式がないと何も絞らない（`Actions::choose` と同じ）。
+        picker.set_expression(Some(gtk::PropertyExpression::new(
+            gtk::StringObject::static_type(),
+            gtk::Expression::NONE,
+            "string",
+        )));
         picker.set_enable_search(true);
-        if choices.len() > 1 {
-            sheet.add(&row(
-                &if rebase { tr!("Onto:") } else { tr!("Merge:") },
-                &picker,
-            ));
+        picker.set_halign(gtk::Align::Start);
+        picker.set_size_request(320, -1);
+        if chooser {
+            sheet.add(&picker);
         }
         // rebase なら、前と後の絵（今のブランチの rebase のとき）。
         let (drawing, set_drawing) = crate::rewritedraw::new();
@@ -2093,7 +2444,9 @@ pub fn integrate_choosing(
             chosen.clone(),
         );
         picker.connect_selected_notify(move |_| {
-            heading.set_text(&title_for(&c().0));
+            if !chooser {
+                heading.set_text(&title_for(&c().0));
+            }
             l();
         });
         if sheet.run().await != Response::Ok {
@@ -2113,30 +2466,36 @@ pub fn integrate_choosing(
         } else {
             json!({ "op": "merge", "rev": rev })
         };
-        actions.perform(command);
+        actions.perform_in(target.repo, vec![command], |_| {});
     });
 }
 
 /// Commit and Push のあとの push: 上流があって先に進んでいなければ、聞かずに送る。上流がない・上流が先に
 /// 進んでいるときは Push のシート（docs/ux.md の「Toolbar」）。
-pub fn push_after_commit(actions: &Rc<Actions>) {
+/// `target` はコミットした worktree。コミットしている間に書き込む先の worktree を替えていても、そこを送り、
+/// シートにはその worktree の名前を書く（macOS 版は worktree ごとの `Actions` で送る）。サイドバーは戻さない。
+pub fn push_after_commit(actions: &Rc<Actions>, target: Target) {
     let actions = actions.clone();
     glib::spawn_future_local(async move {
-        let Some(repo) = actions.repo() else { return };
-        let Some(state) = sync_state(&actions, &repo, None).await else {
+        let Some(state) = sync_state(&actions, &target, None).await else {
             return;
         };
+        let repo = target.repo.clone();
         match (&state.branch, &state.upstream) {
             (Some(branch), Some(upstream)) if state.incoming.count == 0 => {
                 let Some((remote, remote_branch)) = upstream.split_once('/') else {
                     return;
                 };
-                actions.perform(json!({
-                    "op": "push", "remote": remote, "branch": branch, "remoteBranch": remote_branch,
-                    "force": false, "setUpstream": false,
-                }));
+                actions.perform_in(
+                    repo,
+                    vec![json!({
+                        "op": "push", "remote": remote, "branch": branch,
+                        "remoteBranch": remote_branch, "force": false, "setUpstream": false,
+                    })],
+                    |_| {},
+                );
             }
-            _ => push(&actions, None, false, None),
+            _ => push_in(&actions, target, None, false, None),
         }
     });
 }
@@ -2178,19 +2537,23 @@ async fn unique_commits(
 /// ブランチを消す前に確かめる。今のブランチにも上流にも取り込まれていないコミットがあれば、それを並べて見せ、
 /// Delete Anyway（`-D`）で消す。どちらも Undo で戻せる。
 pub fn delete_branches(actions: &Rc<Actions>, names: Vec<String>) {
+    // 選んだときの worktree の HEAD と比べ、その名前を書き、そこで消す（`-d` が見る HEAD も同じ worktree）。
+    let Some(target) = Target::current(actions) else {
+        return;
+    };
     let actions = actions.clone();
     glib::spawn_future_local(async move {
-        let Some(repo) = actions.repo() else { return };
         // 調べられなければ、そう知らせて消さない（macOS 版と同じ。数を 0 とみなして `-d` で断られないように）。
-        let unique = match unique_commits(&repo, &names).await {
+        let unique = match unique_commits(&target.repo, &names).await {
             Ok(unique) => unique,
             Err(error) => {
-                return inform(
-                    parent(&actions).as_ref(),
-                    &tr!("Couldn’t check the branches"),
-                    &error,
-                )
-                .await;
+                return target
+                    .inform(
+                        parent(&actions).as_ref(),
+                        &tr!("Couldn’t check the branches"),
+                        &error,
+                    )
+                    .await;
             }
         };
         let unmerged = unique.iter().any(|(_, r)| r.count > 0);
@@ -2211,7 +2574,7 @@ pub fn delete_branches(actions: &Rc<Actions>, names: Vec<String>) {
             message.push(' ');
         }
         message.push_str(&can_undo());
-        let sheet = Sheet::new(parent(&actions).as_ref(), &title, &message);
+        let sheet = target.sheet(parent(&actions).as_ref(), &title, &message);
         if unmerged {
             let lists: Vec<(String, &CommitRange, bool)> = unique
                 .iter()
@@ -2229,13 +2592,15 @@ pub fn delete_branches(actions: &Rc<Actions>, names: Vec<String>) {
         if sheet.run().await != Response::Ok {
             return;
         }
-        actions.perform_sequence(
+        actions.perform_in(
+            target.repo,
             unique
                 .into_iter()
                 .map(
                     |(name, r)| json!({ "op": "deleteBranch", "name": name, "force": r.count > 0 }),
                 )
                 .collect(),
+            |_| {},
         );
     });
 }
@@ -2243,10 +2608,13 @@ pub fn delete_branches(actions: &Rc<Actions>, names: Vec<String>) {
 /// サイドバーにドラッグしたブランチを、リモートのブランチに送る前に確かめる。送り先が上流なら Push のシート。
 /// `force` なら、そのリモートのブランチが最後の Fetch の時点のコミットのときだけ置き換える。
 pub fn push_to(actions: &Rc<Actions>, branch: &str, target: &str, command: Value, force: bool) {
+    // 選んだときの worktree で読み、そこで送る（上流へなら、その worktree の Push のシート）。
+    let Some(tree) = Target::current(actions) else {
+        return;
+    };
     let (actions, branch, target) = (actions.clone(), branch.to_owned(), target.to_owned());
     glib::spawn_future_local(async move {
-        let Some(repo) = actions.repo() else { return };
-        let r = repo.clone();
+        let r = tree.repo.clone();
         let refs = gio::spawn_blocking(move || r.load_refs().ok())
             .await
             .ok()
@@ -2265,7 +2633,7 @@ pub fn push_to(actions: &Rc<Actions>, branch: &str, target: &str, command: Value
             .as_ref()
             .is_some_and(|l| !l.gone && l.detail.as_deref() == Some(target.as_str()))
         {
-            return push(&actions, Some(branch), force, None);
+            return push_in(&actions, tree, Some(branch), force, None);
         }
         let there = find(amonhen_model::RefKind::Remote, &target).and_then(|e| e.target);
         let title = if force {
@@ -2306,13 +2674,36 @@ pub fn push_to(actions: &Rc<Actions>, branch: &str, target: &str, command: Value
         if force && let Some(t) = there {
             command["expect"] = json!(t.to_string());
         }
-        actions.perform(command);
+        actions.perform_in(tree.repo, vec![command], |_| {});
     });
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn names_the_worktree_it_was_given() {
+        assert_eq!(named(None, "Pushes."), "Pushes.");
+        assert_eq!(named(Some("a"), "Pushes."), "In the worktree “a”.\nPushes.");
+        assert_eq!(named(Some("a"), ""), "In the worktree “a”.");
+    }
+
+    #[test]
+    fn rewrite_lines_list_the_branches() {
+        let info = json!({
+            "moving": [{ "name": "a" }, { "name": "b" }, { "name": "c" }],
+            "staying": [],
+        });
+        assert_eq!(rewrite_lines(&info).0[0], "Also moves a, b, and c.");
+    }
+
+    #[test]
+    fn the_wide_sheet_is_most_of_the_parent() {
+        assert_eq!(wide_size(1600, 1000), (1360, 850));
+        assert_eq!(wide_size(800, 400), (820, 480));
+        assert_eq!(wide_size(0, 0), (820, 480));
+    }
 
     #[test]
     fn forecast_from_reply() {

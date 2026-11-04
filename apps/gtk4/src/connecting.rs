@@ -147,6 +147,8 @@ impl Connecting {
         self.clear();
         let icon = crate::icon::Icon::default();
         icon.set(crate::icon::Kind::Warning, false);
+        // macOS 版の 28 pt の記号（薄い色）。
+        icon.set_pixel_size(32);
         let icon_box = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         icon_box.set_halign(gtk::Align::Center);
         icon_box.append(&icon);

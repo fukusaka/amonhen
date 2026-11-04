@@ -74,6 +74,11 @@ struct Inner {
 }
 
 impl ReflogView {
+    /// 開いたリポジトリの場所（詳細の署名の吹き出しに、検証した場所を出す。History の詳細と同じ）。
+    pub fn set_location(&self, location: &str) {
+        self.inner.pane.details.set_location(location);
+    }
+
     pub fn new(
         actions: Rc<Actions>,
         pending: Rc<Cell<u32>>,
@@ -108,12 +113,15 @@ impl ReflogView {
             .hscrollbar_policy(gtk::PolicyType::Never)
             .vexpand(true)
             .build();
-        // worktree が 2 つ以上なら、どの worktree に効くかを右端に出す（macOS 版と同じ）。
+        // worktree が 2 つ以上なら、どの worktree に効くかをボタンの後ろに小さく出す（長ければ真ん中を切る。
+        // macOS 版と同じ）。
         let target = gtk::Label::new(None);
         target.set_hexpand(true);
-        target.set_xalign(1.0);
-        target.set_ellipsize(gtk::pango::EllipsizeMode::Start);
+        target.set_xalign(0.0);
+        target.set_margin_start(6);
+        target.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
         target.add_css_class("dim-label");
+        target.add_css_class("caption");
         bar.append(&target);
         let left = gtk::Box::new(gtk::Orientation::Vertical, 0);
         left.append(&bar);
@@ -453,12 +461,14 @@ impl Inner {
             },
         ));
         items.push(crate::commitops::reset(actions, &hex));
-        // 今の HEAD と比べる（`<hex>...HEAD` の範囲で Range Diff。一番上の行は今の HEAD そのもの）。
+        // 今の HEAD と比べる（Range Diff）。今の HEAD は一番上の行のコミット（Range Diff は開いたリポジトリで動くので、
+        // `HEAD` と書くと、ほかの worktree を選んでいるときに別の HEAD になる。macOS 版と同じ）。
         if row > 0
             && let Some(opener) = self.range_diff.borrow().clone()
+            && let Some(head) = self.entries.borrow().first().map(|e| e.new.clone())
         {
             items.push(Item::Separator);
-            let range = format!("{hex}...HEAD");
+            let range = format!("{hex}...{head}");
             items.push(menu::action(
                 tr!("Compare with Current HEAD (Range Diff)"),
                 move || opener.ranges(vec![range.clone()]),

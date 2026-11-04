@@ -15,6 +15,58 @@ use crate::reffacts::TagState;
 use crate::sheets;
 use crate::sidebar::Known;
 
+thread_local! {
+    /// 出している印の吹き出しと、その鍵（`branch:名前` など）。
+    static SHOWN: std::cell::RefCell<Option<(String, glib::WeakRef<gtk::Popover>)>> =
+        const { std::cell::RefCell::new(None) };
+    /// 最後に閉じた印の吹き出しの鍵と、閉じた時刻。
+    static CLOSED: std::cell::RefCell<Option<(String, std::time::Instant)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// 印を押したとき、`key` の吹き出しを出すか。同じ印をもう一度押したら閉じるだけ（出していれば閉じ、押した瞬間に
+/// 閉じた直後の 0.3 秒の間なら何もしない。macOS 版の `statusClosed` と同じ）。
+pub(crate) fn should_show(key: &str) -> bool {
+    let open = SHOWN.with(|s| {
+        s.borrow()
+            .as_ref()
+            .filter(|(k, _)| k == key)
+            .and_then(|(_, p)| p.upgrade())
+            .filter(|p| p.is_visible())
+    });
+    if let Some(open) = open {
+        open.popdown();
+        return false;
+    }
+    let just_closed = CLOSED.with(|c| {
+        c.borrow()
+            .as_ref()
+            .is_some_and(|(k, at)| k == key && at.elapsed() < std::time::Duration::from_millis(300))
+    });
+    if just_closed {
+        CLOSED.with(|c| c.replace(None));
+        return false;
+    }
+    true
+}
+
+/// 出した吹き出し `popover` を `key` の印のものとして覚える（閉じたら時刻を残す）。
+pub(crate) fn remember(popover: &gtk::Popover, key: &str) {
+    SHOWN.with(|s| s.replace(Some((key.to_owned(), popover.downgrade()))));
+    let key = key.to_owned();
+    popover.connect_closed(move |p| {
+        CLOSED.with(|c| c.replace(Some((key.clone(), std::time::Instant::now()))));
+        SHOWN.with(|s| {
+            let mut s = s.borrow_mut();
+            if s.as_ref()
+                .is_some_and(|(_, w)| w.upgrade().as_ref() == Some(p))
+            {
+                *s = None;
+            }
+        });
+    });
+}
+
 /// 見出し（アイコン・題）、説明、「名前: 値」の表、ボタンの吹き出しを `anchor` の下に出す。
 struct Popover {
     popover: gtk::Popover,
@@ -64,7 +116,8 @@ impl Popover {
         let popover = gtk::Popover::new();
         popover.set_child(Some(&content));
         popover.set_parent(anchor);
-        popover.set_position(gtk::PositionType::Right);
+        // 印の下に出す（macOS 版の .maxY と同じ）。
+        popover.set_position(gtk::PositionType::Bottom);
         // 閉じたら外す（次は作り直す）。
         popover.connect_closed(|p| {
             let p = p.clone();
@@ -92,6 +145,9 @@ impl Popover {
         v.set_wrap_mode(gtk::pango::WrapMode::WordChar);
         v.set_max_width_chars(40);
         v.set_hexpand(true);
+        // 値は選んでコピーできる（macOS 版と同じ）。フォーカスは取らない（取ると開いたときに全体が選ばれる）。
+        v.set_selectable(true);
+        v.set_focusable(false);
         if mono {
             v.add_css_class("monospace");
         }
@@ -106,8 +162,13 @@ impl Popover {
 
     /// 次にできることのボタン（最初のものを強調する）。押したら閉じて `f`。
     fn button(&self, label: &str, f: impl Fn() + 'static) {
+        self.button_styled(label, self.buttons.first_child().is_none(), f);
+    }
+
+    /// 次にできることのボタン（`accent` なら強調する）。押したら閉じて `f`。
+    fn button_styled(&self, label: &str, accent: bool, f: impl Fn() + 'static) {
         let b = gtk::Button::with_label(label);
-        if self.buttons.first_child().is_none() {
+        if accent {
             b.add_css_class("suggested-action");
         }
         let p = self.popover.downgrade();
@@ -132,6 +193,10 @@ impl Popover {
 /// タグの印（どのリモートにもない・同じ名前の別のタグがあるリモートがある）の詳細。タグはブランチと違って手元に
 /// リモートの写しがないので、どこから分かったか（fetch のときに読んだ）と、リモートごとの様子を出す。
 pub fn tag(actions: &Rc<Actions>, item: &RefEntry, known: &Known, anchor: &gtk::Widget) {
+    let key = format!("tag:{}", item.name);
+    if !should_show(&key) {
+        return;
+    }
     let Some(tags) = &known.tags else { return };
     let Some((kind, title, css)) = tags.mark(&item.name) else {
         return;
@@ -190,7 +255,7 @@ pub fn tag(actions: &Rc<Actions>, item: &RefEntry, known: &Known, anchor: &gtk::
             });
         }
     }
-    p.popup();
+    remember(&p.popup(), &key);
 }
 
 fn date(t: i64) -> String {
@@ -206,7 +271,11 @@ pub fn branch(
     is_head: bool,
     editing: bool,
     anchor: &gtk::Widget,
-) -> gtk::Popover {
+) -> Option<gtk::Popover> {
+    let key = format!("branch:{}", item.name);
+    if !should_show(&key) {
+        return None;
+    }
     // ほかの worktree が checkout している（名前・パス）。
     let other = actions.worktree_using(&item.name);
     let main_worktree = actions.is_main_worktree_branch(&item.name);
@@ -288,10 +357,10 @@ pub fn branch(
                     count = item.behind
                 )
             };
-            (icon::Kind::Push, None, title, text)
+            (icon::Kind::UpDown, None, title, text)
         }
         _ if editing => (
-            icon::Kind::WorkingCopy,
+            icon::Kind::PencilCircle,
             Some("accent"),
             tr!("Current branch, being edited"),
             tr!(
@@ -368,17 +437,17 @@ pub fn branch(
     // worktree が checkout しているなら、その worktree を開くだけ（消せない・ここでは動かせない）。
     if let Some((_, path)) = &other {
         let (a, path) = (actions.clone(), path.clone());
-        p.button(&tr!("Open Worktree"), move || a.edit_worktree(&path));
+        p.button_styled(&tr!("Open Worktree"), true, move || a.edit_worktree(&path));
     } else if !is_head {
         if merged {
             let (a, name) = (actions.clone(), item.name.clone());
-            p.button(&tr!("Delete Branch"), move || {
+            p.button_styled(&tr!("Delete Branch"), true, move || {
                 sheets::delete_branches(&a, vec![name.clone()])
             });
         }
         if !fact.is_some_and(|f| f.archived) {
             let (a, name) = (actions.clone(), item.name.clone());
-            p.button(&tr!("Archive"), move || {
+            p.button_styled(&tr!("Archive"), false, move || {
                 a.perform(json!({
                     "op": "configSet", "key": format!("branch.{name}.amonhenArchived"), "value": "true",
                 }))
@@ -389,8 +458,10 @@ pub fn branch(
     // 作る（push 起因の CI を見てから作る流れ）。
     if let Some(pr) = pull_request {
         let (url, w) = (pr.url.clone(), actions.window());
-        p.button(
+        // 開いているプルリクエストは、ほかのボタンがあってもいつも強調する（macOS 版と同じ）。
+        p.button_styled(
             &tr!("Open Pull Request #{number}", number = pr.number),
+            true,
             move || crate::github::open_uri(w.as_ref().map(|w| w.upcast_ref()), &url),
         );
     } else if known.can_create_pull_request_from(&item.name)
@@ -405,6 +476,7 @@ pub fn branch(
         });
     }
     let popover = p.popup();
+    remember(&popover, &key);
     if let (Some(label), Some(repo)) = (forecast, actions.repo()) {
         let name = item.name.clone();
         glib::spawn_future_local(async move {
@@ -423,5 +495,5 @@ pub fn branch(
             }
         });
     }
-    popover
+    Some(popover)
 }

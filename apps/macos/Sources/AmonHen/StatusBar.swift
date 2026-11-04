@@ -79,10 +79,10 @@ final class StatusBarController: NSViewController {
 
     func isShown(_ row: Row) -> Bool { rows[row] != nil }
 
-    /// 終わった操作の一言を、しばらく出して消す。
+    /// 終わった操作の一言を、しばらく出して消す。印が警告（exclamationmark.triangle）なら警告の色（ほかの帯と同じ橙）、ほかは緑。
     func flash(_ text: String, symbol: String = "checkmark.circle") {
         let icon = NSImageView(image: NSImage(systemSymbolName: symbol, accessibilityDescription: nil) ?? NSImage())
-        icon.contentTintColor = .systemGreen
+        icon.contentTintColor = symbol.hasPrefix("exclamationmark") ? .systemOrange : .systemGreen
         let label = NSTextField(labelWithString: text)
         label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         label.textColor = .secondaryLabelColor

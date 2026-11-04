@@ -235,7 +235,8 @@ pub async fn confirm(parent: Option<&gtk::Window>, key: &str, summary: &str) -> 
         return decided;
     }
     let cli = selected().map_or("", Cli::title);
-    let sheet = crate::sheets::Sheet::new(
+    // worktree の名前は書かない（macOS 版のアプリの確認と同じ）。
+    let sheet = crate::sheets::Sheet::unnamed(
         parent,
         &tr!("Use AI in this repository?"),
         &tr!(
@@ -282,7 +283,8 @@ async fn template(
         return text;
     }
     let shown: String = text.chars().take(1500).collect();
-    let sheet = crate::sheets::Sheet::new(
+    // プロンプトはリポジトリのものなので、worktree の名前は書かない（macOS 版と同じ）。
+    let sheet = crate::sheets::Sheet::unnamed(
         parent,
         &tr!("Use the repository’s prompt?"),
         &format!("{path_text}\n\n{shown}"),

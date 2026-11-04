@@ -24,6 +24,8 @@ pub struct CommitPane {
     files: Rc<CommitDiff>,
     /// 出しているコミットのリポジトリ（変更ファイルのメニュー・AI が使う）。
     repo: RefCell<Option<Arc<Repository>>>,
+    /// Blame・File History を開くリポジトリ（書き込む先の worktree。None なら出しているコミットのリポジトリ）。
+    tools_repo: RefCell<Option<Arc<Repository>>>,
     /// 出しているコミット（stash なら None。Blame はコミットでだけ出す）。
     commit: RefCell<Option<String>>,
     /// 詳細の親・メッセージの中の ID、Blame・File History の行を押したら、History でそのコミットを選ぶ。
@@ -36,13 +38,25 @@ pub struct CommitPane {
 
 impl CommitPane {
     pub fn new(pending: Rc<Cell<u32>>) -> Rc<Self> {
+        Self::build(pending, false)
+    }
+
+    /// Push のシートの右の欄（macOS 版の `isPreview`）: 見せ方は標準のままで切り替えを出さず（覚えている見せ方も
+    /// 変えない）、詳細を広げるボタンと AI の翻訳・解説も出さない。
+    pub fn preview(pending: Rc<Cell<u32>>) -> Rc<Self> {
+        Self::build(pending, true)
+    }
+
+    fn build(pending: Rc<Cell<u32>>, preview: bool) -> Rc<Self> {
         Rc::new_cyclic(|weak: &std::rc::Weak<Self>| {
             let current: crate::aiactions::CurrentRepo = {
                 let weak = weak.clone();
                 Rc::new(move || weak.upgrade().and_then(|p| p.repo.borrow().clone()))
             };
             let details = Rc::new(Details::new());
-            details.show_style_switch();
+            if !preview {
+                details.show_style_switch();
+            }
             let files = Rc::new(CommitDiff::new(pending.clone(), current.clone()));
             let root = gtk::Paned::new(gtk::Orientation::Vertical);
             root.set_start_child(Some(&details.root));
@@ -50,9 +64,13 @@ impl CommitPane {
             root.set_resize_start_child(false);
             root.set_position(170);
             // AI の翻訳・解説と、差分の中の検索・詳細を広げるボタン（詳細の右上。History と同じ）。
-            crate::aiactions::details(&details, files.diff(), current);
+            if !preview {
+                crate::aiactions::details(&details, files.diff(), current);
+            }
             details.tools.append(&files.find_button());
-            details.tools.append(&files.expand_button());
+            if !preview {
+                details.tools.append(&files.expand_button());
+            }
             // 変更ファイルの右クリック: AI でこの hunk を解説、Blame（コミットのときだけ）・File History。
             let (w, dw, dt) = (weak.clone(), files.diff().downgrade(), details.clone());
             files.connect_file_items(move |path, y, can_blame, hunk_only| {
@@ -81,6 +99,8 @@ impl CommitPane {
                     items.retain(|i| !matches!(i, menu::Item::Separator));
                     return items;
                 }
+                // Blame・File History は書き込む先の worktree で開く（File History の起点はその HEAD。macOS 版と同じ）。
+                let repo = pane.tools_repo.borrow().clone().unwrap_or(repo);
                 // 一覧の消したファイルには Blame を出さない（macOS 版と同じ）。
                 if can_blame && let Some(hex) = pane.commit.borrow().clone() {
                     let (repo, window, path, oc) = (
@@ -113,6 +133,7 @@ impl CommitPane {
                 details,
                 files,
                 repo: RefCell::default(),
+                tools_repo: RefCell::default(),
                 commit: RefCell::default(),
                 on_commit: RefCell::default(),
                 pending,
@@ -131,6 +152,11 @@ impl CommitPane {
             f,
             None,
         );
+    }
+
+    /// Blame・File History を開くリポジトリ（書き込む先の worktree）を決める。
+    pub fn set_tools_repo(&self, repo: Arc<Repository>) {
+        self.tools_repo.replace(Some(repo));
     }
 
     fn window(&self) -> Option<gtk::ApplicationWindow> {
@@ -160,9 +186,12 @@ impl CommitPane {
         self.generation.set(g);
         self.repo.replace(Some(repo.clone()));
         self.commit.replace(None);
-        self.details.show_text(title, lines);
+        self.details
+            .show_range(title, &tr!("Loading the diff…"), lines);
         crate::fit_details(&self.root, self.details.clone());
+        let (title, lines) = (title.to_owned(), lines.to_owned());
         self.files.clear();
+        self.files.reset_stats();
         let key = format!("{}..{tip}", base.map(|b| b.to_string()).unwrap_or_default());
         let viewed = commitfiles::viewed_paths(&key);
         self.pending.set(self.pending.get() + 1);
@@ -172,21 +201,37 @@ impl CommitPane {
                 let changes = repo
                     .changes_between(base.as_ref(), &tip)
                     .map_err(|e| e.to_string())?;
-                Prepared::from_changes(repo, changes, &viewed, true)
+                let count = changes.len();
+                Prepared::from_changes(repo, changes, &viewed, true).map(|p| (count, p))
             })
             .await;
             this.pending.set(this.pending.get() - 1);
             if this.generation.get() != g {
                 return;
             }
+            // 見出しの様子も、差分と合わせる（macOS 版と同じ）。
             match result {
-                Ok(Ok(prepared)) => this.files.show(prepared, key),
+                Ok(Ok((count, prepared))) => {
+                    this.details.show_range(
+                        &title,
+                        &tr!("{count} files changed", count = count),
+                        &lines,
+                    );
+                    if count == 0 {
+                        this.files.show_message(&tr!("No changes"));
+                    } else {
+                        this.files.show(prepared, key);
+                    }
+                }
                 Ok(Err(e)) => {
                     eprintln!("差分を読めない: {e}");
+                    this.details
+                        .show_range(&title, &tr!("Couldn’t load the diff"), &lines);
                     this.files.show_message(&tr!("Couldn’t load the diff"));
                 }
                 Err(_) => {}
             }
+            crate::fit_details(&this.root, this.details.clone());
         });
     }
 
@@ -201,6 +246,7 @@ impl CommitPane {
         self.commit.replace((!stash).then(|| hex.clone()));
         self.details.clear();
         self.files.clear();
+        self.files.reset_stats();
         // すぐ読める分を先に、時間のかかる分はその後に。
         for extras in [false, true] {
             if extras && stash {
@@ -223,7 +269,10 @@ impl CommitPane {
                     return;
                 }
                 match value {
-                    Ok(Ok(value)) if extras => this.details.show_extras(&value),
+                    Ok(Ok(value)) if extras => {
+                        this.details.show_extras(&value);
+                        this.files.set_stats(&value);
+                    }
                     Ok(Ok(value)) => this.details.show(&value),
                     Ok(Err(e)) => eprintln!("コミットの詳細を読めない: {e}"),
                     Err(_) => return,

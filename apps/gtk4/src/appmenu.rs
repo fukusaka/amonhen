@@ -51,6 +51,8 @@ pub struct Parts {
     pub worktrees: Rc<crate::worktrees::Worktrees>,
     /// History のコミットの詳細（Go to Parent・Go to Child はその親・子へ）。
     pub details: std::rc::Weak<crate::details::Details>,
+    /// History の検索のボタン（ツールバーの並びの 1 つ）。
+    pub search: gtk::Widget,
 }
 
 /// 見出しのメニューとツールバーのボタン（`--open-menu` で開く、ref を読んだら数を出す）。
@@ -67,6 +69,14 @@ pub struct Buttons {
     /// Push のアイコン（上流がなければ Publish の雲に）。
     push_icon: icon::Icon,
     actions: Rc<Actions>,
+    /// リポジトリの名前のボタン（見出しの真ん中か、ツールバーの並びの 1 つ）。
+    name: gtk::Widget,
+    /// 開けていない間に外した、リポジトリの名前のボタンのツールチップ（開けたら戻す）。
+    name_tooltip: Rc<RefCell<Option<glib::GString>>>,
+    /// History の検索のボタン。
+    search: gtk::Widget,
+    /// File History・Blame のタブの見出しの Push のアイコン（このタブのものと一緒に替える）。
+    mirror_push_icons: Rc<RefCell<Vec<glib::WeakRef<icon::Icon>>>>,
 }
 
 impl Buttons {
@@ -78,6 +88,12 @@ impl Buttons {
         self.branch.set_text("—");
         self.branch_button.set_sensitive(false);
         self.repository.set_sensitive(false);
+        // 名前のボタンも押せなくし、「押すと切り替える」のツールチップも外す（macOS 版の `showUnopened`）。
+        if self.name.is_sensitive() {
+            self.name_tooltip.replace(self.name.tooltip_text());
+        }
+        self.name.set_sensitive(false);
+        self.name.set_tooltip_text(None);
     }
 
     /// 今のブランチ、上流との差（↓ 取り込める・↑ 送れる）、stash があるか。
@@ -85,6 +101,12 @@ impl Buttons {
         self.actions.update_facts(|f| f.unopened = false);
         self.branch_button.set_sensitive(true);
         self.repository.set_sensitive(true);
+        if !self.name.is_sensitive() {
+            self.name.set_sensitive(true);
+            if let Some(tooltip) = self.name_tooltip.take() {
+                self.name.set_tooltip_text(Some(&tooltip));
+            }
+        }
         let head = refs.refs.head_branch.as_deref();
         self.branch.set_text(head.unwrap_or("detached"));
         self.branch_button.set_tooltip_text(Some(&tr!(
@@ -116,14 +138,15 @@ impl Buttons {
         // メニューの Push・Commit and Push は Publish…・Commit and Publish… になる（macOS 版と同じ）。
         self.actions.set_publishes(!published);
         // ツールバーの Push も Publish のアイコン（icloud.and.arrow.up）になる（macOS 版と同じ）。
-        self.push_icon.set(
-            if published {
-                icon::Kind::Push
-            } else {
-                icon::Kind::Publish
-            },
-            false,
-        );
+        let push_kind = if published {
+            icon::Kind::Push
+        } else {
+            icon::Kind::Publish
+        };
+        self.push_icon.set(push_kind, false);
+        self.mirror_push_icons
+            .borrow_mut()
+            .retain(|w| w.upgrade().inspect(|i| i.set(push_kind, false)).is_some());
         // 送るものがなければ押せない。理由はツールチップに（macOS 版と同じ）。
         self.push.set_tooltip_text(Some(&if !published {
             tr!("Publish — choose the remote to create this branch on first (Ctrl+Alt+P)")
@@ -151,6 +174,157 @@ impl Buttons {
     }
 }
 
+impl Buttons {
+    /// File History・Blame のタブ `tool` の見出しに、このタブと同じツールバーを作る（macOS 版の
+    /// `MainToolbar.mirror()`）。ボタンはタブのアクション（リポジトリのタブに渡すもの）を押し、ブランチ名・数・説明・
+    /// 押せるかはこのタブのものに合わせ続ける。リポジトリの名前と検索は、リポジトリのタブに切り替えてから開く。
+    /// リポジトリのタブがほかの窓で前にあっても、閉じた後でも、そのタブに付いたまま。
+    pub fn mirror(&self, tool: &Rc<crate::tabs::Tab>) {
+        let header = &tool.header;
+        let bind = |from: &gtk::Widget, to: &gtk::Widget, names: &[&str]| {
+            for name in names {
+                from.bind_property(name, to, name).sync_create().build();
+            }
+        };
+        let repository = gtk::MenuButton::builder()
+            .label("Repository")
+            .menu_model(&repository_menu())
+            .build();
+        if let Some(popover) = repository.popover() {
+            popover.set_halign(gtk::Align::Start);
+        }
+        retitle_on_show(&repository, &self.actions);
+        crate::menu::tooltips_on_show(&repository);
+        header.pack_start(&repository);
+
+        // リポジトリの名前（下にブランチ名）。押すとリポジトリのタブに切り替えて、一覧を出す。
+        let titles = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        titles.set_valign(gtk::Align::Center);
+        let theirs = self
+            .name
+            .downcast_ref::<gtk::MenuButton>()
+            .and_then(|b| b.child());
+        let mut label = theirs.as_ref().and_then(|t| t.first_child());
+        for css in ["title", "subtitle"] {
+            let mine = gtk::Label::new(None);
+            mine.add_css_class(css);
+            if let Some(l) = &label {
+                bind(l, mine.upcast_ref(), &["label", "visible"]);
+                label = l.next_sibling();
+            }
+            titles.append(&mine);
+        }
+        let name = gtk::Button::builder()
+            .child(&titles)
+            .has_frame(false)
+            .build();
+        bind(
+            &self.name,
+            name.upcast_ref(),
+            &["sensitive", "tooltip-text"],
+        );
+        let (t, theirs) = (Rc::downgrade(tool), self.name.downgrade());
+        name.connect_clicked(move |_| {
+            if let Some(owner) = t.upgrade().and_then(|t| t.owner()) {
+                owner.bring_front();
+                if let Some(button) = theirs.upgrade().and_downcast::<gtk::MenuButton>() {
+                    button.popup();
+                }
+            }
+        });
+
+        let branch = gtk::Label::new(None);
+        bind(self.branch.upcast_ref(), branch.upcast_ref(), &["label"]);
+        let branch_icon = icon::Icon::default();
+        branch_icon.set(icon::Kind::Branch, false);
+        let branch_inner = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        branch_inner.append(&branch_icon);
+        branch_inner.append(&branch);
+        let branch_button = gtk::Button::builder()
+            .child(&branch_inner)
+            .action_name("win.switch-branch")
+            .build();
+        bind(
+            self.branch_button.upcast_ref(),
+            branch_button.upcast_ref(),
+            &["tooltip-text", "sensitive"],
+        );
+        let (pull, pull_count, _) = count_button(icon::Kind::Pull, "win.pull");
+        let (push, push_count, push_icon) = count_button(icon::Kind::Push, "win.push");
+        for (from, to) in [
+            (&self.pull_count, &pull_count),
+            (&self.push_count, &push_count),
+        ] {
+            bind(from.upcast_ref(), to.upcast_ref(), &["label", "visible"]);
+        }
+        for (from, to) in [(&self.pull, &pull), (&self.push, &push)] {
+            bind(from.upcast_ref(), to.upcast_ref(), &["tooltip-text"]);
+        }
+        push_icon.set(self.push_icon.kind(), false);
+        self.mirror_push_icons
+            .borrow_mut()
+            .push(push_icon.downgrade());
+        let undo = gtk::Button::new();
+        let undo_icon = icon::Icon::default();
+        undo_icon.set(icon::Kind::Undo, false);
+        undo.set_child(Some(&undo_icon));
+        undo.set_action_name(Some("win.undo"));
+        bind(
+            self.actions.undo.upcast_ref(),
+            undo.upcast_ref(),
+            &["tooltip-text"],
+        );
+        // History の検索: リポジトリのタブに切り替えて、History で探す（macOS 版と同じ）。
+        let search = gtk::Button::new();
+        let search_icon = icon::Icon::default();
+        search_icon.set(icon::Kind::Search, false);
+        search.set_child(Some(&search_icon));
+        bind(
+            &self.search,
+            search.upcast_ref(),
+            &["tooltip-text", "sensitive"],
+        );
+        let (t, theirs) = (Rc::downgrade(tool), self.search.downgrade());
+        search.connect_clicked(move |_| {
+            let Some(owner) = t.upgrade().and_then(|t| t.owner()) else {
+                return;
+            };
+            owner.bring_front();
+            let _ = WidgetExt::activate_action(&owner.root, "win.show-history", None);
+            if let Some(toggle) = theirs.upgrade().and_downcast::<gtk::ToggleButton>() {
+                toggle.set_active(true);
+            }
+        });
+        let toolbar_start = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let toolbar_end = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        header.pack_start(&toolbar_start);
+        crate::toolbar::install(
+            &toolbar_start,
+            &toolbar_end,
+            crate::toolbar::Given {
+                header: header.clone(),
+                repository: name.upcast(),
+                title: None,
+                branch: branch_button,
+                pull,
+                push,
+                undo,
+                search: search.upcast(),
+            },
+        );
+        let primary = gtk::MenuButton::builder()
+            .menu_model(&primary_menu(&tool.root))
+            .tooltip_text(tr!("Main Menu"))
+            .primary(true)
+            .build();
+        set_icon(&primary, "open-menu-symbolic", "≡");
+        retitle_on_show(&primary, &self.actions);
+        crate::menu::tooltips_on_show(&primary);
+        header.pack_end(&primary);
+        header.pack_end(&toolbar_end);
+    }
+}
+
 /// ▾ 付きのボタン（押すと `action`、▾ で `menu`）。アイコンの横に数を出せる。
 /// 数の付くボタン（Pull・Push。▾ のメニューは付けない: 押すと必ずシートで確かめる。docs/ux.md の「Toolbar」）。
 fn count_button(kind: icon::Kind, action: &str) -> (gtk::Button, gtk::Label, icon::Icon) {
@@ -165,6 +339,16 @@ fn count_button(kind: icon::Kind, action: &str) -> (gtk::Button, gtk::Label, ico
     let button = gtk::Button::new();
     button.set_child(Some(&inner));
     button.set_action_name(Some(action));
+    // ref を読むまで（と Repositories のページ）の説明（macOS 版のツールバーの項目と同じ）。
+    match action {
+        "win.pull" => button.set_tooltip_text(Some(&tr!(
+            "Pull — review the incoming commits and how to integrate them first (Ctrl+Alt+L)"
+        ))),
+        "win.push" => button.set_tooltip_text(Some(&tr!(
+            "Push — review the commits to send first (Ctrl+Alt+P)"
+        ))),
+        _ => {}
+    }
     (button, count, icon)
 }
 
@@ -178,7 +362,7 @@ const FE_ACCELS: &[(&str, &str)] = &[
     ("win.open", "<Control>o"),
     ("win.clone", "<Control><Alt>c"),
     ("win.close", "<Control>w"),
-    ("win.close-window", "<Control><Shift>w"),
+    ("win.minimize", "<Control>m"),
     ("win.find", "<Control>f"),
     ("win.find-next", "<Control>g"),
     ("win.find-previous", "<Control><Shift>g"),
@@ -394,8 +578,8 @@ fn handlers() -> Vec<(&'static str, Handler)> {
             "commit-and-push",
             Box::new(|p| {
                 let actions = p.actions.clone();
-                p.working.commit_from_menu(Some(Box::new(move || {
-                    crate::sheets::push_after_commit(&actions)
+                p.working.commit_from_menu(Some(Box::new(move |target| {
+                    crate::sheets::push_after_commit(&actions, target)
                 })));
             }),
         ),
@@ -411,10 +595,7 @@ fn handlers() -> Vec<(&'static str, Handler)> {
         ("settings", Box::new(|p| crate::settings::show(&p.window()))),
         (
             "activity",
-            Box::new(|p| {
-                let repo = p.view.current().map(|(r, _)| r);
-                crate::activity::Activity::show(&p.window(), repo, crate::engine());
-            }),
+            Box::new(|p| crate::activity::Activity::show(&p.window(), crate::engine())),
         ),
         (
             "repositories",
@@ -447,9 +628,14 @@ pub fn install_app(app: &gtk::Application) {
         let weak = app.downgrade();
         quit.connect_activate(move |_, _| {
             if let Some(app) = weak.upgrade() {
-                // 少し待ってから書く下書きを、終える前に書く。
-                crate::commitmsg::flush_all();
-                app.quit();
+                // マージエディタの Result を保存していなければ、捨ててよいかを確かめてから（macOS 版と同じ）。
+                glib::spawn_future_local(async move {
+                    if crate::tabs::confirm_quit().await {
+                        // 少し待ってから書く下書きを、終える前に書く。
+                        crate::commitmsg::flush_all();
+                        app.quit();
+                    }
+                });
             }
         });
         app.add_action(&quit);
@@ -515,6 +701,14 @@ pub fn install(parts: Parts) -> Buttons {
         p.sidebar.root.set_visible(shown);
     });
     window.add_action(&sidebar);
+    let toggle = gio::SimpleAction::new("toggle-sidebar", None);
+    let group = parts.group.downgrade();
+    toggle.connect_activate(move |_, _| {
+        if let Some(group) = group.upgrade() {
+            group.activate_action("show-sidebar", None);
+        }
+    });
+    window.add_action(&toggle);
 
     install_app(&parts.app);
 
@@ -529,7 +723,7 @@ pub fn install(parts: Parts) -> Buttons {
     parts.header.pack_start(&repository);
 
     // ツールバー（macOS 版の既定の並び: Branch・Fetch・Pull・Push、Merge・Rebase、Stash・Pop、
-    // 右に Activity・Refresh・Undo）。
+    // 右に Activity・Refresh・Undo・検索）。
     let branch = gtk::Label::new(Some("…"));
     let branch_icon = icon::Icon::default();
     branch_icon.set(icon::Kind::Branch, false);
@@ -548,20 +742,23 @@ pub fn install(parts: Parts) -> Buttons {
     let toolbar_start = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     let toolbar_end = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     parts.header.pack_start(&toolbar_start);
+    // リポジトリの名前（main.rs が見出しの真ん中に置いたもの）。
+    let name = parts
+        .header
+        .title_widget()
+        .expect("リポジトリの名前のボタン");
     crate::toolbar::install(
         &toolbar_start,
         &toolbar_end,
         crate::toolbar::Given {
             header: parts.header.clone(),
-            // リポジトリの名前（main.rs が見出しの真ん中に置いたもの）。
-            repository: parts
-                .header
-                .title_widget()
-                .expect("リポジトリの名前のボタン"),
+            repository: name.clone(),
+            title: None,
             branch: branch_button.clone(),
             pull: pull.clone(),
             push: push.clone(),
             undo: parts.actions.undo.clone(),
+            search: parts.search.clone(),
         },
     );
     let customize = gio::SimpleAction::new("customize-toolbar", None);
@@ -571,17 +768,35 @@ pub fn install(parts: Parts) -> Buttons {
 
     let primary = gtk::MenuButton::builder()
         .menu_model(&primary_menu(&parts.anchor))
-        .tooltip_text("Main Menu")
+        .tooltip_text(tr!("Main Menu"))
         .primary(true)
         .build();
     set_icon(&primary, "open-menu-symbolic", "≡");
-    // 右端から: 主メニュー、ツールバーの右の並び（既定は Activity・Refresh・Undo）。
+    // 右端から: 主メニュー、ツールバーの右の並び（既定は Activity・Refresh・Undo・検索）。
     parts.header.pack_end(&primary);
     // 開くときに、状態で変わる項目の名前（Publish…・Undo <操作>…）を合わせる。
     for button in [&repository, &primary] {
         retitle_on_show(button, &parts.actions);
         crate::menu::tooltips_on_show(button);
     }
+    // View > Show Sidebar は、出していれば Hide Sidebar（macOS 版と同じ）。
+    let group = parts.group.downgrade();
+    retitle_on_show_with(&primary, move |_, model| {
+        let Some(group) = group.upgrade() else { return };
+        let shown = group
+            .action_state("show-sidebar")
+            .and_then(|s| s.get::<bool>())
+            .unwrap_or(true);
+        crate::menu::retitle(model, &|action| {
+            (action == "win.toggle-sidebar").then(|| {
+                if shown {
+                    tr!("Hide Sidebar")
+                } else {
+                    tr!("Show Sidebar")
+                }
+            })
+        });
+    });
     parts.header.pack_end(&toolbar_end);
     Buttons {
         repository,
@@ -594,7 +809,107 @@ pub fn install(parts: Parts) -> Buttons {
         push_count,
         push_icon,
         actions: parts.actions.clone(),
+        name,
+        name_tooltip: Rc::default(),
+        search: parts.search.clone(),
+        mirror_push_icons: Rc::default(),
     }
+}
+
+/// リポジトリのページ（リポジトリを開いていないタブ）の見出し: リポジトリのタブと同じ Repository のメニュー・
+/// ツールバー・主メニュー（macOS 版の `RepositoryHomeWindow` は同じ `MainToolbar` を `showNoRepository` で出す。
+/// タブを切り替えてもボタンの位置が動かない）。リポジトリへの操作はこのタブにアクションがないので押せない。
+/// リポジトリの名前は「Choose a Repository」、ブランチは「—」で、どちらも押せない。`title` は見出しの真ん中に出す。
+/// 主メニューのボタンを返す。
+pub fn install_home(
+    header: &gtk::HeaderBar,
+    group: &gio::SimpleActionGroup,
+    anchor: &gtk::Box,
+    title: &gtk::Widget,
+) -> gtk::MenuButton {
+    let repository = gtk::MenuButton::builder()
+        .label("Repository")
+        .menu_model(&repository_menu())
+        .build();
+    if let Some(popover) = repository.popover() {
+        popover.set_halign(gtk::Align::Start);
+    }
+    crate::menu::tooltips_on_show(&repository);
+    header.pack_start(&repository);
+
+    let name = gtk::Label::new(Some(&tr!("Choose a Repository")));
+    name.add_css_class("title");
+    let name_button = gtk::Button::builder()
+        .child(&name)
+        .has_frame(false)
+        .sensitive(false)
+        .build();
+    let branch = gtk::Label::new(Some("—"));
+    let branch_icon = icon::Icon::default();
+    branch_icon.set(icon::Kind::Branch, false);
+    let branch_inner = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    branch_inner.append(&branch_icon);
+    branch_inner.append(&branch);
+    let branch_button = gtk::Button::builder()
+        .child(&branch_inner)
+        .sensitive(false)
+        .build();
+    let (pull, _, _) = count_button(icon::Kind::Pull, "win.pull");
+    let (push, _, _) = count_button(icon::Kind::Push, "win.push");
+    let undo = gtk::Button::new();
+    let undo_icon = icon::Icon::default();
+    undo_icon.set(icon::Kind::Undo, false);
+    undo.set_child(Some(&undo_icon));
+    undo.set_action_name(Some("win.undo"));
+    undo.set_tooltip_text(Some(&tr!("Nothing to Undo")));
+    // History の検索（リポジトリがないので押せない。macOS 版と同じ）。
+    let search = gtk::ToggleButton::new();
+    let search_icon = icon::Icon::default();
+    search_icon.set(icon::Kind::Search, false);
+    search.set_child(Some(&search_icon));
+    search.set_tooltip_text(Some(&tr!("Search History (Ctrl+F)")));
+    search.set_sensitive(false);
+    let toolbar_start = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let toolbar_end = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    header.pack_start(&toolbar_start);
+    crate::toolbar::install(
+        &toolbar_start,
+        &toolbar_end,
+        crate::toolbar::Given {
+            header: header.clone(),
+            repository: name_button.upcast(),
+            title: Some(title.clone()),
+            branch: branch_button,
+            pull,
+            push,
+            undo,
+            search: search.upcast(),
+        },
+    );
+    // View > Customize Toolbar…（macOS 版では、この窓のツールバーからも変えられる）。
+    let customize = gio::SimpleAction::new("customize-toolbar", None);
+    let a = anchor.downgrade();
+    customize.connect_activate(move |_, _| {
+        if let Some(window) = a
+            .upgrade()
+            .and_then(|a| a.root())
+            .and_downcast::<gtk::Window>()
+        {
+            crate::toolbar::customize(&window);
+        }
+    });
+    group.add_action(&customize);
+
+    let primary = gtk::MenuButton::builder()
+        .menu_model(&primary_menu(anchor))
+        .tooltip_text(tr!("Main Menu"))
+        .primary(true)
+        .build();
+    set_icon(&primary, "open-menu-symbolic", "≡");
+    crate::menu::tooltips_on_show(&primary);
+    header.pack_end(&primary);
+    header.pack_end(&toolbar_end);
+    primary
 }
 
 /// `button` のメニューを開くたびに、項目の名前を今の状態に合わせる（[`Actions::retitle`]）。
@@ -669,6 +984,17 @@ fn table_sections(menu: Menu) -> gio::Menu {
         for c in section.iter().filter(|c| !PENDING.contains(&c.id)) {
             // 表の説明は項目のツールチップに（macOS 版と同じ）。
             let tip = c.tooltip.map(amonhen_model::i18n::translate);
+            // Show Sidebar は、印を付けずに名前を Hide Sidebar・Show Sidebar と替える（macOS 版と同じ）。状態を持つ
+            // `win.show-sidebar`（ツールバーの切り替えのボタン）は印が付くので、状態のない方を出し、キーは名前の
+            // 横に出すだけ（受けるのは `win.show-sidebar`）。
+            if c.id == "show-sidebar" {
+                let item = gio::MenuItem::new(Some(&title(c)), Some("win.toggle-sidebar"));
+                if let Some(accel) = c.gtk_accel() {
+                    item.set_attribute_value("accel", Some(&accel.to_variant()));
+                }
+                items.append_item(&item);
+                continue;
+            }
             crate::menu::append_with_tip(
                 &items,
                 &title(c),
@@ -686,8 +1012,7 @@ fn table_sections(menu: Menu) -> gio::Menu {
 pub fn primary_menu(anchor: &gtk::Box) -> gio::Menu {
     let menu = gio::Menu::new();
     let submenus = gio::Menu::new();
-    // File: New Tab・New Window・Open…・Quick Open…・Clone…・Open Recent ▸ | Close・Close Window（macOS 版と同じ
-    // 並び。Close Window は GNOME の分）。
+    // File: New Tab・New Window・Open…・Quick Open…・Clone…・Open Recent ▸ | Close（macOS 版と同じ並び）。
     let file = gio::Menu::new();
     let first = menu_of(&[
         Some((&tr!("New Tab"), "win.new-tab")),
@@ -705,28 +1030,45 @@ pub fn primary_menu(anchor: &gtk::Box) -> gio::Menu {
         first.append_submenu(Some(&tr!("Open Recent")), &crate::repos::recent_menu());
         file.append_section(None, &first);
     }
-    file.append_section(
-        None,
-        &menu_of(&[
-            Some((&tr!("Close"), "win.close")),
-            Some((&tr!("Close Window"), "win.close-window")),
-        ]),
-    );
+    file.append_section(None, &menu_of(&[Some((&tr!("Close"), "win.close"))]));
     submenus.append_submenu(Some(&tr!("File")), &file);
-    // Edit: Find…・Find Next・Find Previous（History の検索か、フォーカスのある差分の中）と、表の Find in
-    // History…（macOS 版と同じ。Undo・Cut などは GTK の部品のもの）。
-    let edit = menu_of(&[
+    // Edit: Undo・Redo | Cut・Copy・Paste・Select All（文字の欄などフォーカスのある部品のもの。キーは部品が受けるので
+    // 名前の横に出すだけ）| Find…・Find Next・Find Previous（History の検索か、フォーカスのある差分の中）と、表の
+    // Find in History…（macOS 版と同じ）。
+    let edit = gio::Menu::new();
+    for group in [
+        &[
+            (tr!("Undo"), "win.edit-undo", "<Control>z"),
+            (tr!("Redo"), "win.edit-redo", "<Control><Shift>z"),
+        ][..],
+        &[
+            (tr!("Cut"), "win.edit-cut", "<Control>x"),
+            (tr!("Copy"), "win.edit-copy", "<Control>c"),
+            (tr!("Paste"), "win.edit-paste", "<Control>v"),
+            (tr!("Select All"), "win.edit-select-all", "<Control>a"),
+        ][..],
+    ] {
+        let section = gio::Menu::new();
+        for (label, action, accel) in group {
+            let item = gio::MenuItem::new(Some(label), Some(action));
+            item.set_attribute_value("accel", Some(&accel.to_variant()));
+            section.append_item(&item);
+        }
+        edit.append_section(None, &section);
+    }
+    let find = menu_of(&[
         Some((&tr!("Find…"), "win.find")),
         Some((&tr!("Find Next"), "win.find-next")),
         Some((&tr!("Find Previous"), "win.find-previous")),
     ]);
-    if let Some(first) = edit
+    if let Some(first) = find
         .item_link(0, gio::MENU_LINK_SECTION)
         .and_downcast::<gio::Menu>()
     {
         for c in amonhen_commands::menu(Menu::Edit).into_iter().flatten() {
             first.append(Some(&title(c)), Some(&format!("win.{}", c.id)));
         }
+        edit.append_section(None, &first);
     }
     submenus.append_submenu(Some(&tr!("Edit")), &edit);
     for (name, part) in [
@@ -738,11 +1080,17 @@ pub fn primary_menu(anchor: &gtk::Box) -> gio::Menu {
         // View は History の表示のメニューも兼ねる（docs/ux.md の 11）。
         if part == Menu::View {
             // タブが 1 つの窓でもタブの帯を出す（タブをつかんで、ほかの窓の帯に落とせる）。名前は開くときに
-            // Hide にする（macOS 版と同じ）。
-            items.append_section(
-                None,
-                &menu_of(&[Some((&tr!("Show Tab Bar"), "win.toggle-tab-bar"))]),
-            );
+            // Hide にする。Show Sidebar と同じ区切りに（macOS 版と同じ）。
+            match items
+                .item_link(items.n_items().max(1) - 1, gio::MENU_LINK_SECTION)
+                .and_downcast::<gio::Menu>()
+            {
+                Some(last) => last.append(Some(&tr!("Show Tab Bar")), Some("win.toggle-tab-bar")),
+                None => items.append_section(
+                    None,
+                    &menu_of(&[Some((&tr!("Show Tab Bar"), "win.toggle-tab-bar"))]),
+                ),
+            }
             crate::historydisplay::append_sections(&items);
             // ツールバーの並び（macOS 版の View > Customize Toolbar…）。
             items.append_section(
@@ -754,42 +1102,53 @@ pub fn primary_menu(anchor: &gtk::Box) -> gio::Menu {
             submenus.append_submenu(Some(&name), &items);
         }
     }
-    // Window: タブ（複数のリポジトリを 1 つの窓で扱う。macOS 版の Window のメニューと同じ項目）。
-    submenus.append_submenu(
-        Some(&tr!("Window")),
-        &menu_of(&[
-            Some((&tr!("Show Next Tab"), "win.next-tab")),
-            Some((&tr!("Show Previous Tab"), "win.previous-tab")),
-            None,
-            Some((&tr!("Move Tab to New Window"), "win.move-tab-to-new-window")),
-            Some((&tr!("Merge All Windows"), "win.merge-all-windows")),
-        ]),
-    );
+    // Window: Minimize・Zoom | タブ（複数のリポジトリを 1 つの窓で扱う）| Repositories・Activity | Bring All to
+    // Front（macOS 版の Window のメニューと同じ並び）。
+    let window = gio::Menu::new();
+    let section = gio::Menu::new();
+    section.append(Some(&tr!("Minimize")), Some("win.minimize"));
+    section.append(Some(&tr!("Zoom")), Some("win.zoom"));
+    window.append_section(None, &section);
+    let tabs = menu_of(&[
+        Some((&tr!("Show Next Tab"), "win.next-tab")),
+        Some((&tr!("Show Previous Tab"), "win.previous-tab")),
+        Some((&tr!("Move Tab to New Window"), "win.move-tab-to-new-window")),
+        Some((&tr!("Merge All Windows"), "win.merge-all-windows")),
+    ]);
     // Move Tab to Window ▸（ほかの窓ごとに 1 つ。macOS 版と同じく Merge All Windows の後）。
-    if let Some(window) = submenus
-        .item_link(submenus.n_items() - 1, gio::MENU_LINK_SUBMENU)
+    if let Some(section) = tabs
+        .item_link(0, gio::MENU_LINK_SECTION)
         .and_downcast::<gio::Menu>()
-        && let Some(section) = window
-            .item_link(window.n_items() - 1, gio::MENU_LINK_SECTION)
-            .and_downcast::<gio::Menu>()
     {
         section.append_submenu(
             Some(&tr!("Move Tab to Window")),
             &crate::tabs::move_menu(anchor),
         );
+        window.append_section(None, &section);
     }
+    let pages = gio::Menu::new();
+    for c in amonhen_commands::menu(Menu::Window).into_iter().flatten() {
+        if !PENDING.contains(&c.id) {
+            pages.append(Some(&title(c)), Some(&format!("win.{}", c.id)));
+        }
+    }
+    window.append_section(None, &pages);
+    window.append_section(
+        None,
+        &menu_of(&[Some((&tr!("Bring All to Front"), "win.bring-all-to-front"))]),
+    );
+    submenus.append_submenu(Some(&tr!("Window")), &window);
     menu.append_section(None, &submenus);
     let app = gio::Menu::new();
-    for part in [Menu::App, Menu::Window] {
-        for c in amonhen_commands::menu(part).into_iter().flatten() {
-            if !PENDING.contains(&c.id) {
-                app.append(Some(&title(c)), Some(&format!("win.{}", c.id)));
-            }
+    for c in amonhen_commands::menu(Menu::App).into_iter().flatten() {
+        if !PENDING.contains(&c.id) {
+            app.append(Some(&title(c)), Some(&format!("win.{}", c.id)));
         }
     }
     app.append(Some(&tr!("Keyboard Shortcuts")), Some("win.shortcuts"));
     app.append(Some(&tr!("About Amon Hen")), Some("win.about"));
     menu.append_section(None, &app);
+    menu.append_section(None, &menu_of(&[Some((&tr!("Quit Amon Hen"), "app.quit"))]));
     menu
 }
 
@@ -831,8 +1190,15 @@ fn print_menu(app: &gtk::Application, model: &gio::MenuModel, path: &str) {
             Some(target) => format!("{action}({})", target.print(true)),
             None => action.clone(),
         };
-        let accels = app.accels_for_action(&detailed).join(" ");
-        let command = action.strip_prefix("win.").and_then(amonhen_commands::find);
+        // キーを受けない項目は、名前の横に出すだけのキー（`accel` の属性）。
+        let accels = match app.accels_for_action(&detailed).join(" ") {
+            a if a.is_empty() => string(i, "accel"),
+            a => a,
+        };
+        let command = match action.as_str() {
+            "win.toggle-sidebar" => amonhen_commands::find("show-sidebar"),
+            a => a.strip_prefix("win.").and_then(amonhen_commands::find),
+        };
         let tooltip = command
             .and_then(|c| c.tooltip)
             .map(|t| amonhen_model::i18n::translate(t).into_owned())
@@ -884,9 +1250,10 @@ fn head_branch(p: &Parts) -> Option<String> {
     p.refs.borrow().as_ref()?.refs.head_branch.clone()
 }
 
-/// History で選んでいるコミット（History を出しているときだけ）。
+/// History で 1 つだけ選んでいるコミット（History を出しているときだけ。いくつか選んでいれば None。macOS 版の
+/// selectedCommit と同じ）。
 fn selected_commit(p: &Parts) -> Option<Oid> {
-    if p.pages.visible_child_name().as_deref() != Some("history") {
+    if p.pages.visible_child_name().as_deref() != Some("history") || p.view.selection().len() != 1 {
         return None;
     }
     let (_, history) = p.view.current()?;
@@ -1036,13 +1403,20 @@ fn set_upstream(p: &Rc<Parts>) {
     });
 }
 
-/// Merge・Rebase の相手の候補: History で選んでいるコミット（あれば先頭）、今のブランチ以外のローカル
+/// Merge・Rebase の相手の候補: History で 1 つだけ選んでいるコミット（あれば先頭）、今のブランチ以外のローカル
 /// ブランチ、リモートブランチ、タグ。
 fn revision_choices(p: &Parts) -> Vec<(String, String)> {
     let mut choices = Vec::new();
     let refs = p.refs.borrow();
     let head = refs.as_ref().and_then(|r| r.refs.head);
-    if let Some(id) = selected_commit(p)
+    // History で 1 つだけ選んでいるコミット（ほかのページを出していても。いくつも選んでいれば出さない。macOS 版の
+    // `selectedCommit` と同じ）。
+    let single = p.view.current().and_then(|(_, history)| {
+        let rows = p.view.selection();
+        let [row] = rows.as_slice() else { return None };
+        history.graph.ids().get(*row as usize).copied()
+    });
+    if let Some(id) = single
         && Some(id) != head
     {
         let hex = id.to_string();
@@ -1219,10 +1593,12 @@ fn repository_settings(p: &Rc<Parts>) {
         return;
     };
     // 取得とフォルダのページの操作（取り足す・取り直す・取り出すフォルダを変える）は、Fetch と同じく窓の操作で。
-    let actions = Rc::downgrade(&p.actions);
+    // 見せている worktree で（sparse checkout のフォルダは worktree ごと。後で書き込む先を替えても、ページが
+    // 見せているものに効かせる）。
+    let (actions, target) = (Rc::downgrade(&p.actions), repo.clone());
     let operate: crate::reposettings::Operate =
         Rc::new(move |command, done| match actions.upgrade() {
-            Some(actions) => actions.perform_with(vec![command], move |_| done()),
+            Some(actions) => actions.perform_in(target.clone(), vec![command], move |_| done()),
             None => done(),
         });
     crate::reposettings::show(&slot, repo, &p.location, p.reload.clone(), operate, None);
@@ -1232,10 +1608,22 @@ fn repository_settings(p: &Rc<Parts>) {
 /// ショートカットの一覧（メニューごと。表の操作は表から。リポジトリのページからも使う）。
 pub fn show_shortcuts(parent: &gtk::ApplicationWindow) {
     let accels = accels();
+    // アプリに入れたキーの最初のもの（メニューに出るもの。タブの操作は `tabs::install_accels` が後から入れる）。
+    let app = parent.application();
+    let accel_of = |action: &str| -> Option<String> {
+        app.as_ref()
+            .and_then(|app| app.accels_for_action(action).first().map(|a| a.to_string()))
+            .or_else(|| {
+                accels
+                    .iter()
+                    .find(|(a, _)| a == action)
+                    .map(|(_, k)| k.clone())
+            })
+    };
     let group = |title: &str, items: &[(String, String)]| {
         let group = gtk::ShortcutsGroup::builder().title(title).build();
         for (action, label) in items {
-            if let Some((_, accel)) = accels.iter().find(|(a, _)| a == action) {
+            if let Some(accel) = accel_of(action) {
                 let shortcut = gtk::ShortcutsShortcut::builder()
                     .accelerator(accel.as_str())
                     .title(label.as_str())
@@ -1260,9 +1648,9 @@ pub fn show_shortcuts(parent: &gtk::ApplicationWindow) {
         ("win.new-tab".to_owned(), tr!("New Tab")),
         ("win.new-window".to_owned(), tr!("New Window")),
         ("win.open".to_owned(), tr!("Open…")),
+        ("win.clone".to_owned(), "Clone…".to_owned()),
         ("win.close".to_owned(), tr!("Close")),
-        ("win.close-window".to_owned(), tr!("Close Window")),
-        ("app.quit".to_owned(), tr!("Quit")),
+        ("app.quit".to_owned(), tr!("Quit Amon Hen")),
     ];
     file.extend(table(Menu::File));
     section.add_group(&group(&tr!("File"), &file));
@@ -1279,12 +1667,17 @@ pub fn show_shortcuts(parent: &gtk::ApplicationWindow) {
         ("Repository".to_owned(), Menu::Repository),
         ("Commit".to_owned(), Menu::Commit),
     ] {
-        let items = table(menu);
+        let mut items = table(menu);
+        // View の最後に Show Tab Bar（メニューと同じ）。
+        if menu == Menu::View {
+            items.push(("win.toggle-tab-bar".to_owned(), tr!("Show Tab Bar")));
+        }
         if !items.is_empty() {
             section.add_group(&group(&name, &items));
         }
     }
     let mut window = vec![
+        ("win.minimize".to_owned(), tr!("Minimize")),
         ("win.next-tab".to_owned(), tr!("Show Next Tab")),
         ("win.previous-tab".to_owned(), tr!("Show Previous Tab")),
     ];

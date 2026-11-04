@@ -226,7 +226,7 @@ pub fn install_actions(group: &gio::SimpleActionGroup) {
 }
 
 /// History のバー（右端に Go to HEAD と、見せ方のメニューのボタン）と、そのメニューのボタン。
-pub fn bar() -> (gtk::Box, gtk::MenuButton) {
+pub fn bar(group: &gio::SimpleActionGroup) -> (gtk::Box, gtk::MenuButton) {
     let bar = gtk::Box::new(gtk::Orientation::Horizontal, 2);
     bar.set_margin_start(6);
     bar.set_margin_end(6);
@@ -240,7 +240,19 @@ pub fn bar() -> (gtk::Box, gtk::MenuButton) {
     let head = gtk::Button::new();
     head.set_child(Some(&head_icon));
     head.add_css_class("flat");
-    head.set_action_name(Some("win.go-to-head"));
+    // ボタンはいつも押せる。HEAD がなければ（生まれていないブランチ）メニューの項目は押せず、ボタンは鳴らす
+    // （macOS 版と同じ）。
+    let group = group.downgrade();
+    head.connect_clicked(move |head| {
+        let Some(action) = group.upgrade().and_then(|g| g.lookup_action("go-to-head")) else {
+            return;
+        };
+        if action.is_enabled() {
+            action.activate(None);
+        } else {
+            head.error_bell();
+        }
+    });
     head.set_tooltip_text(Some(&tr!("Go to HEAD (Ctrl+Shift+H)")));
     bar.append(&head);
     let model = gio::Menu::new();
@@ -257,6 +269,73 @@ pub fn bar() -> (gtk::Box, gtk::MenuButton) {
     bar.append(&button);
     (bar, button)
 }
+
+/// History の列の見出し（macOS 版の表の見出し: 空のグラフの列と「Message」）。右クリックで見せ方のメニュー
+/// （バーの右端のボタンと同じ）。
+pub fn header(view: &HistoryView) -> gtk::Widget {
+    let area = gtk::DrawingArea::new();
+    area.set_content_height(HEADER_HEIGHT);
+    let title = tr!("Message");
+    let weak = view.downgrade();
+    area.set_draw_func(move |area, cr, width, height| {
+        let Some(view) = weak.upgrade() else { return };
+        let fg = area.color();
+        let (w, h) = (f64::from(width), f64::from(height));
+        let x = f64::from(view.message_x());
+        let ink = |alpha: f64| {
+            cr.set_source_rgba(
+                f64::from(fg.red()),
+                f64::from(fg.green()),
+                f64::from(fg.blue()),
+                alpha,
+            );
+        };
+        // 下の線と、列の仕切り（グラフの列の右端）。
+        ink(0.15);
+        cr.rectangle(0.0, h - 1.0, w, 1.0);
+        cr.rectangle((x - 6.0).round(), 4.0, 1.0, h - 9.0);
+        let _ = cr.fill();
+        let layout = area.create_pango_layout(Some(&title));
+        let mut font = area.pango_context().font_description().unwrap_or_default();
+        font.set_size(font.size() * 85 / 100);
+        layout.set_font_description(Some(&font));
+        let (_, th) = layout.pixel_size();
+        ink(0.7);
+        cr.move_to(x, ((h - f64::from(th)) / 2.0).round());
+        pangocairo::functions::show_layout(cr, &layout);
+    });
+    let weak = area.downgrade();
+    view.connect_graph_width(move || {
+        if let Some(area) = weak.upgrade() {
+            area.queue_draw();
+        }
+    });
+    let click = gtk::GestureClick::new();
+    click.set_button(gtk::gdk::BUTTON_SECONDARY);
+    let weak = area.downgrade();
+    click.connect_pressed(move |_, _, x, y| {
+        let Some(area) = weak.upgrade() else { return };
+        let model = gio::Menu::new();
+        append_sections(&model);
+        let popover = gtk::PopoverMenu::from_model(Some(&model));
+        // 項目のツールチップは、バーのボタンのメニューと同じ（macOS 版は同じ `displayMenu()`）。
+        menu::popover_tooltips_on_show(&popover, model.upcast_ref());
+        popover.set_has_arrow(false);
+        popover.set_halign(gtk::Align::Start);
+        popover.set_parent(&area);
+        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+        popover.connect_closed(|p| {
+            let p = p.clone();
+            glib::idle_add_local_once(move || p.unparent());
+        });
+        popover.popup();
+    });
+    area.add_controller(click);
+    area.upcast()
+}
+
+/// 列の見出しの高さ（macOS 版の表の見出しと同じくらい）。
+const HEADER_HEIGHT: i32 = 24;
 
 /// 表示する History を作る: 折りたたむなら、マージ済みブランチを折りたたんだ History（`history_folded`）。
 /// 並び順が変わったらコアに並べ直させる（git は読み直さない）。
@@ -363,7 +442,7 @@ impl Shaper {
                 | settings::HIGHLIGHT_ANCESTORS => s.view.set_display(display()),
                 settings::FOLD_MERGED_BRANCHES => {
                     s.expanded.borrow_mut().clear();
-                    s.reshape(None);
+                    s.reshape(None, true);
                 }
                 settings::HISTORY_ORDER => s.reorder(),
                 _ => {}
@@ -389,7 +468,7 @@ impl Shaper {
         if reloaded && shaped {
             self.schedule_reshape();
         } else {
-            self.reshape(None);
+            self.reshape(None, false);
         }
     }
 
@@ -406,7 +485,7 @@ impl Shaper {
             let Some(s) = weak.upgrade() else { return };
             s.reshape_soon.replace(None);
             s.pending.set(s.pending.get() - 1);
-            s.reshape(None);
+            s.reshape(None, false);
         });
         self.reshape_soon.replace(Some(id));
     }
@@ -457,7 +536,7 @@ impl Shaper {
         self.scope.replace(scope);
         self.companions.replace(companions);
         self.update_scope_bar();
-        self.reshape(select);
+        self.reshape(select, true);
     }
 
     /// 全ブランチでなければ全ブランチに戻して `id` を選ぶ（今の範囲にないコミットへ移るとき。macOS 版の
@@ -560,7 +639,9 @@ impl Shaper {
         }
     }
 
-    fn reshape(&self, select: Option<Oid>) {
+    /// 今の範囲と折りたたみで作り直して出す。`reset_scroll` なら先頭の行までスクロールする（範囲・折りたたみを
+    /// 変えたとき。ほかのプログラムの変化で読み直したときは今の位置のまま。macOS 版の `reloadScope`）。
+    fn reshape(&self, select: Option<Oid>, reset_scroll: bool) {
         // すぐ作り直すなら、待っている分は要らない。
         if let Some(id) = self.reshape_soon.take() {
             id.remove();
@@ -576,6 +657,9 @@ impl Shaper {
             self.request.set(self.request.get() + 1);
             self.shaped.replace(None);
             self.search.show_history(repo, full.clone());
+            if reset_scroll {
+                self.view.scroll_to_top();
+            }
             if let Some(id) = select {
                 select_when_found(&self.view, full, id, self.pending.clone());
             }
@@ -590,6 +674,9 @@ impl Shaper {
         let key = (full.generation, expanded.clone(), tips.clone(), fold);
         // 同じ History を同じ形で作っている・作ったなら、そのまま（読み直すたびに同じ History が来る）。
         if select.is_none() && self.shaped.borrow().as_ref() == Some(&key) {
+            if reset_scroll {
+                self.view.scroll_to_top();
+            }
             return;
         }
         self.shaped.replace(Some(key));
@@ -627,6 +714,9 @@ impl Shaper {
                 Ok(Ok(shaped)) => {
                     let row = select.and_then(|id| shaped.row_of(&id));
                     search.show_history(repo, shaped);
+                    if reset_scroll {
+                        view.scroll_to_top();
+                    }
                     if let Some(row) = row {
                         view.select(row);
                     }
@@ -696,7 +786,7 @@ impl Shaper {
                 expanded.insert(id);
             }
         }
-        self.reshape(Some(id));
+        self.reshape(Some(id), true);
     }
 }
 

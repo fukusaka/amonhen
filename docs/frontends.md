@@ -34,9 +34,9 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
 | Branches arranged (current, active, inactive, merged, archived, stacked) | ✓ | ✓ | ✓ | △ | VSCode: With the engine; without it, a folder tree split on `/`.<br>CLI: Via `amonhen run` (`branchGroups`). |
-| Favorite branches | ✓ | ✓ | ✓ | — |  |
-| Archived branches | ✓ | ✓ | ✓ | — |  |
-| Favorites reordered by dragging | ✓ | ✓ | △ | n/a | GTK4: Dropped on the upper or lower third of a favorite; the middle offers Merge and Rebase.<br>VSCode: Move Up and Move Down in Favorites on the menu (a drop on a branch offers Merge and Rebase). |
+| Favorite branches | ✓ | ✓ | ✓ | — | |
+| Archived branches | ✓ | ✓ | ✓ | — | |
+| Favorites reordered by dragging | ✓ | ✓ | △ | n/a | VSCode: Move Up and Move Down in Favorites on the menu (a drop on a branch offers Merge and Rebase). |
 | Branch menu: checkout, rename, delete (Delete Anyway when unmerged) | ✓ | ✓ | ✓ | △ | macOS: Set Upstream is only in the Repository menu.<br>GTK4: Set Upstream is only in the Repository menu.<br>CLI: Via `amonhen run`. |
 | Sync a branch that is not checked out (Fast-Forward, Push, Publish) | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Tags listed | ✓ | ✓ | ✓ | ✓ |  |
@@ -66,7 +66,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| Repository page with All, Favorites, Places and groups | ✓ | ✓ | n/a | n/a | GTK4: The page's header bar has its own short menu instead of the repository toolbar. |
+| Repository page with All, Favorites, Places and groups | ✓ | ✓ | n/a | n/a |  |
 | Add a local or an SSH repository | ✓ | ✓ | n/a | n/a |  |
 | Folders to scan on this machine (depth, watched) | △ | △ | n/a | n/a | macOS: Excludes are a fixed list.<br>GTK4: Excludes are a fixed list. |
 | Folders to scan on SSH hosts | ✓ | ✓ | n/a | △ | CLI: `find-repositories` does the scan for the apps. |
@@ -103,7 +103,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | SSH Hosts > Connection: folders to scan | ✓ | ✓ | n/a | n/a |  |
 | SSH Hosts: git pages for every repository on the host | ✓ | ✓ | n/a | n/a |  |
 | SSH Hosts: the host's Environment Variables (login shell switch) | ✓ | ✓ | n/a | n/a |  |
-| Path picker in columns for a host or this machine | ✓ | ✓ | n/a | n/a | GTK4: The external editor uses the GTK file dialog. |
+| Path picker in columns for a host or this machine | ✓ | ✓ | n/a | n/a |  |
 | Accounts: GitHub (CI status, avatars) | ✓ | ✓ | — | n/a |  |
 | Appearance: History order, one line, row items, avatars | ✓ | ✓ | n/a | n/a |  |
 | Appearance: theme, fonts, graph colors | — | — | n/a | n/a |  |
@@ -130,7 +130,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Hooks: table, Enabled switch, script, Create Hook… | ✓ | ✓ | ✓ | △ | VSCode: Open opens the script in VSCode's editor.<br>CLI: Via `amonhen run`. |
 | LFS: installed, patterns, Track Pattern…, file count | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Keys and Values (git config table, Basic / Customized / All, Combined / Levels) | ✓ | ✓ | △ | △ | VSCode: Basic / Customized / All and search, with the value in effect and its source; values are edited in an input box; no Levels columns.<br>CLI: Via `amonhen run` (`configList`, `configSet`). |
-| Rows disabled with the git version needed | ✓ | ✓ | ✓ | n/a |  |
+| Rows disabled with the git version needed | ✓ | ✓ | ✓ | n/a | |
 | Repository's form on the git line (shallow, partial, sparse, maintenance) | ✓ | ✓ | ✓ | △ | CLI: `status` notes shallow, partial and sparse repositories. |
 | Fetching and Folders: fetch more of a shallow clone (a count, up to a date, all) | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run` (`deepen`, `unshallow`). |
 | Fetching and Folders: fetch all contents of a partial clone (git 2.36) | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run` (`fetchAllContents`). |
@@ -155,9 +155,9 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Activity spinner and count | ✓ | ✓ | △ | n/a | VSCode: VSCode's progress notifications. |
 | Refresh and Rebuild History | ✓ | ✓ | △ | △ | VSCode: Refresh only.<br>CLI: `log --rebuild`, `daemon rebuild`. |
 | Undo the last operation (asks, names what it puts back) | ✓ | ✓ | ✓ | ✓ | VSCode: The title's Undo and the Command Palette ask; a notification's Undo, pressed right after the operation, doesn't.<br>CLI: `undo` (`--peek` to see it first). |
-| History search with scopes (subject, author, ID, path, contents) | ✓ | ✓ | — | ✓ | GTK4: Scopes come from the query syntax.<br>CLI: `log <query>`. |
+| History search with scopes (subject, author, ID, path, contents) | ✓ | ✓ | — | ✓ | CLI: `log <query>`. |
 | Ahead/behind badges | ✓ | ✓ | △ | △ | VSCode: On the sidebar's branch rows.<br>CLI: In `status`. |
-| Toolbar customization | ✓ | △ | n/a | n/a | GTK4: View > Customize Toolbar… lists the buttons to show and their order on the left and right of the header bar; the Repository menu, search and the main menu stay put. |
+| Toolbar customization | ✓ | ✓ | n/a | n/a | GTK4: The palette works like NSToolbar's and slides down under the header bar over the content like its sheet, without changing the window's size, with no Show (icon/text) choice since the header bar shows icons; the Repository menu and the main menu take the menu bar's place and stay put. |
 | Network git stopped after 120 s of silence | ✓ | ✓ | — | ✓ | VSCode: Not in the extension's own git layer. |
 
 ## 5a. Stashes
@@ -262,6 +262,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | --- | :-: | :-: | :-: | :-: | --- |
 | Blame | ✓ | ✓ | △ | △ | VSCode: A page of the main view, without syntax colours.<br>CLI: Via `amonhen run` (`blame`). |
 | File History | ✓ | ✓ | ✓ | △ | VSCode: A page of the main view, opened from the Explorer, an editor tab, the Command Palette or a file in the main view.<br>CLI: Via `amonhen run` (`fileHistory`). |
+| Opened as a tab beside the repository tab, with the repository toolbar | ✓ | ✓ | n/a | n/a | GTK4: When the repository tab is in front in another window, the tab gets a title bar without the toolbar. |
 | Line history | — | — | — | — |  |
 
 ## 7a. Patches
@@ -322,8 +323,8 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
 | Menus from the shared command table (`crates/commands`) | ✓ | ✓ | — | n/a | VSCode: Declared in package.json. |
-| Every command reachable without a menu bar (≡) | ✓ | ✓ | △ | n/a | VSCode: Command Palette and context menus. |
-| Keyboard shortcuts | ✓ | ✓ | — | n/a | VSCode: No keybindings contributed. |
+| Every command reachable without a menu bar (≡) | ✓ | ✓ | △ | n/a | GTK4: The ≡ menu holds the menu bar's File, Edit, View, Navigate, Commit and Window menus with macOS's items and order (Edit's Undo, Cut, Copy… act on the focused field), then Settings…, About and Quit.<br>VSCode: Command Palette and context menus. |
+| Keyboard shortcuts | ✓ | ✓ | — | n/a | GTK4: Keys that Linux desktops or other commands take differ: Show Sidebar is F9, Filter Branches Ctrl+Alt+Shift+F, Go to Parent / Child Alt+Down / Up, and New Tag has none (Ctrl+Alt+T opens a terminal).<br>VSCode: No keybindings contributed. |
 | Context menus with the menu's names | ✓ | ✓ | △ | n/a | VSCode: Names differ from the apps. |
 | Keyboard shortcuts window | — | ✓ | n/a | n/a | macOS: macOS's App Shortcuts change them instead. |
 
@@ -340,7 +341,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| A sheet before remote, HEAD-moving and deleting operations | ✓ | ✓ | △ | n/a | VSCode: Deleting, rewriting and Reset only; not Fetch, Pull, Push, Merge or Checkout. |
+| A sheet before remote, HEAD-moving and deleting operations | ✓ | ✓ | △ | n/a | GTK4: Name prompts and every confirmation are the same sheet. Return presses the default button wherever the focus is (a drop-down or a radio too), as on macOS.<br>VSCode: Deleting, rewriting and Reset only; not Fetch, Pull, Push, Merge or Checkout. |
 | Undo of git operations (`undo.json`) | ✓ | ✓ | ✓ | ✓ |  |
 | Disabled controls say why in their tooltip | ✓ | ✓ | — | n/a |  |
 

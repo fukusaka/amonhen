@@ -708,7 +708,10 @@ impl Loader {
             let github = of(&repo).await;
             this.github.replace(github.clone());
             // Open on GitHub・Create Pull Request… は GitHub のリポジトリだけ（macOS 版と同じ）。
-            this.actions.update_facts(|f| f.github = github.is_some());
+            this.actions.update_facts(|f| {
+                f.github = github.is_some();
+                f.gh = available();
+            });
             let sidebar = this.sidebar.upgrade();
             if let Some(s) = &sidebar {
                 s.set_can_create_pull_request(github.is_some());
@@ -917,7 +920,8 @@ pub fn checkout_pull_request(actions: &Rc<Actions>, pr: &PullRequest) {
             }
             return;
         };
-        let sheet = Sheet::new(
+        // worktree の行は書かない（macOS 版の確認と同じ）。
+        let sheet = Sheet::unnamed(
             window.as_ref(),
             &tr!("Checkout #{number}?", number = pr.number),
             &tr!(
@@ -939,19 +943,33 @@ pub fn checkout_pull_request(actions: &Rc<Actions>, pr: &PullRequest) {
         .unwrap_or_else(|_| Err(String::new()));
         crate::activity::end();
         if let Err(e) = result {
-            crate::sheets::inform(window.as_ref(), &e, "").await;
+            crate::sheets::alert(window.as_ref(), &e, "").await;
         }
+        // View > Refresh と同じく、プルリクエストと CI も間を空けずに読み直す（macOS 版の `refreshRepository`）。
         actions.reload();
+        reload(&actions);
     });
 }
 
 /// Repository > Create Pull Request…: `branch` からプルリクエストを作る。まだ push していない（上流がない・先行
 /// コミットがある）なら、まず Push のシートを出し、送り終えたらそのまま作る。
 pub fn create_pull_request(actions: &Rc<Actions>, branch: String, pushed: bool) {
+    // 選んだときの worktree で読み、送るならその worktree の Push のシートで（読んでいる間に書き込む先を替えても）。
+    if let Some(target) = crate::sheets::Target::current(actions) {
+        create_pull_request_in(actions, target, branch, pushed);
+    }
+}
+
+fn create_pull_request_in(
+    actions: &Rc<Actions>,
+    target: crate::sheets::Target,
+    branch: String,
+    pushed: bool,
+) {
     let actions = actions.clone();
     glib::spawn_future_local(async move {
         let window = crate::sheets::parent(&actions);
-        let Some(repo) = actions.repo() else { return };
+        let repo = target.repo.clone();
         // gh で作るので、gh がなければ作れない。
         if !available() {
             if let Some(w) = &window {
@@ -982,12 +1000,13 @@ pub fn create_pull_request(actions: &Rc<Actions>, branch: String, pushed: bool) 
                 .as_ref()
                 .is_none_or(|i| i.detail.is_none() || i.gone || i.ahead > 0)
         {
-            let (a, b) = (actions.clone(), branch.clone());
-            crate::sheets::push(
+            let (a, b, t) = (actions.clone(), branch.clone(), target.clone());
+            crate::sheets::push_in(
                 &actions,
+                target,
                 Some(branch.clone()),
                 false,
-                Some(Box::new(move || create_pull_request(&a, b, true))),
+                Some(Box::new(move || create_pull_request_in(&a, t, b, true))),
             );
             return;
         }
@@ -1009,13 +1028,25 @@ pub fn create_pull_request(actions: &Rc<Actions>, branch: String, pushed: bool) 
             .await
             .unwrap_or_else(|| "main".to_owned());
 
-        let sheet = Sheet::new(
+        // ブランチを名前で渡すので、worktree の行は書かない（macOS 版と同じ）。
+        let sheet = Sheet::unnamed(
             window.as_ref(),
             "Create Pull Request",
             &tr!("From {branch}", branch = branch),
         );
-        let title_field = gtk::Entry::builder().text(&title).hexpand(true).build();
-        let base_field = gtk::Entry::builder().text(&base).hexpand(true).build();
+        // NSAlert の欄と同じく、Return で Create を押す。
+        let title_field = gtk::Entry::builder()
+            .text(&title)
+            .placeholder_text(tr!("Title"))
+            .activates_default(true)
+            .hexpand(true)
+            .build();
+        let base_field = gtk::Entry::builder()
+            .text(&base)
+            .placeholder_text("main")
+            .activates_default(true)
+            .hexpand(true)
+            .build();
         let body_view = gtk::TextView::builder()
             .wrap_mode(gtk::WrapMode::WordChar)
             .left_margin(4)
@@ -1033,7 +1064,17 @@ pub fn create_pull_request(actions: &Rc<Actions>, branch: String, pushed: bool) 
         sheet.add(&row("base:", &base_field));
         sheet.add(&row(&tr!("Body:"), &body_scrolled));
         sheet.add(&row("", &draft));
-        sheet.buttons(&tr!("Create"), false, None);
+        let create = sheet.buttons(&tr!("Create"), false, None);
+        // 題と base が空の間は Create を押せない（押してもシートと打った文を黙って捨てないように。macOS 版と同じ）。
+        let update = {
+            let (create, t, b) = (create.clone(), title_field.clone(), base_field.clone());
+            move || create.set_sensitive(!t.text().trim().is_empty() && !b.text().trim().is_empty())
+        };
+        update();
+        for field in [&title_field, &base_field] {
+            let update = update.clone();
+            field.connect_changed(move |_| update());
+        }
         if sheet.run().await != Response::Ok {
             return;
         }
@@ -1068,7 +1109,7 @@ pub fn create_pull_request(actions: &Rc<Actions>, branch: String, pushed: bool) 
         match result {
             Ok(url) => {
                 // 済んだことの知らせなので、閉じるボタンは Close（macOS 版と同じ）。
-                let sheet = Sheet::new(window.as_ref(), &tr!("Pull Request Created"), &url);
+                let sheet = Sheet::unnamed(window.as_ref(), &tr!("Pull Request Created"), &url);
                 sheet.button(&tr!("Close"), Response::Cancel, None);
                 sheet.button(
                     &tr!("Open in Browser"),
@@ -1079,14 +1120,8 @@ pub fn create_pull_request(actions: &Rc<Actions>, branch: String, pushed: bool) 
                     open_uri(window.as_ref(), &url);
                 }
             }
-            Err(e) => {
-                crate::sheets::inform(
-                    window.as_ref(),
-                    &tr!("Couldn’t create the pull request"),
-                    &e,
-                )
-                .await
-            }
+            // gh の文を見出しにして知らせる（macOS 版の NSAlert(error:)）。
+            Err(e) => crate::sheets::alert(window.as_ref(), &e, "").await,
         }
     });
 }

@@ -288,11 +288,11 @@ pub enum Op {
         update_refs: Option<bool>,
     },
     CherryPick {
-        oid: Oid,
+        oids: Vec<Oid>,
         is_merge: bool,
     },
     Revert {
-        oid: Oid,
+        oids: Vec<Oid>,
         is_merge: bool,
     },
     RebaseTodo {
@@ -366,6 +366,8 @@ pub enum Op {
     ConfigKeys,
     ConfigSet(String, Option<String>),
     ConfigSetGlobal(String, Option<String>),
+    /// キー・値・global か。
+    ConfigSetAll(String, Vec<String>, bool),
     GitVersion,
     /// → `RepositoryForm`
     RepositoryForm,

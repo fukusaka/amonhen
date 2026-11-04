@@ -76,8 +76,12 @@ final class RepositorySettingsModel {
     private(set) var detectedBase: String?
     /// git の設定・リモートなどを変えた（画面を読み直す）。
     var onRepositoryChange: (() -> Void)?
-    /// git config の表で「−」などで最後に消したキーと値（表の下の「戻す」の 1 行）。次の書き換えで忘れる。
-    var removedConfig: [(key: String, value: String)] = []
+    /// git config の表で「−」などで最後に消したキーと値（表の下の「戻す」の 1 行）。どのページのものでも、次の
+    /// 書き換えで忘れる（「戻す」がほかの書き換えを戻さないように）。
+    private(set) var removedConfig: [(key: String, value: String)] = []
+    /// その削除の Undo の名前（Undo のいちばん上がこれなら「戻す」は ⌘Z と同じ）と、その書き換え。
+    private(set) var removalName: String?
+    private var removedChanges: [ConfigChange] = []
     /// リポジトリの形（shallow clone・partial clone・sparse checkout・maintenance）。このリポジトリの段だけ。
     private(set) var form: RepositoryForm?
     /// 取り足す・取り直す・取り出すフォルダを変える命令を、ウィンドウの操作として動かす（Fetch と同じく、進み具合は
@@ -130,8 +134,21 @@ final class RepositorySettingsModel {
         run(["op": "saveCommitTemplate", "text": text])
     }
 
-    /// 署名の形式ごとに集めた鍵（`user.email` の鍵を先に）。コアが集める（SSH 先のリポジトリなら SSH 先で）。
-    private(set) var signingKeys: [String: [SigningKey]] = [:]
+    /// 署名の形式ごとに集めた鍵（集めた順）。コアが集める（SSH 先のリポジトリなら SSH 先で）。並びはメール
+    /// アドレスで決めるので、設定を読んだ後でも合うよう、出すときに並べる。
+    private var gatheredKeys: [String: [SigningKey]] = [:]
+
+    /// 署名に使える鍵（形式ごと）。`user.email` の合う鍵を先に（鍵が設定より先に届いても、読み終えた設定で並べる）。
+    var signingKeys: [String: [SigningKey]] {
+        let email = effective("user.email")?.value.lowercased() ?? ""
+        return gatheredKeys.mapValues { keys in
+            keys.sorted { a, b in
+                let am = !email.isEmpty && a.emails.contains { $0.lowercased() == email }
+                let bm = !email.isEmpty && b.emails.contains { $0.lowercased() == email }
+                return am != bm ? am : false
+            }
+        }
+    }
 
     /// `format`（`openpgp`・`ssh`・`x509`）の鍵を集める。集められなければ空。
     func loadSigningKeys(_ format: String) {
@@ -141,12 +158,7 @@ final class RepositorySettingsModel {
             let keys = (try? await Task.detached(priority: .userInitiated) {
                 try repository.info(["op": "signingKeys", "format": format], as: Keys.self)
             }.value)?.keys ?? []
-            let email = effective("user.email")?.value.lowercased() ?? ""
-            signingKeys[format] = keys.sorted { a, b in
-                let am = !email.isEmpty && a.emails.contains { $0.lowercased() == email }
-                let bm = !email.isEmpty && b.emails.contains { $0.lowercased() == email }
-                return am != bm ? am : false
-            }
+            gatheredKeys[format] = keys
         }
     }
 
@@ -163,8 +175,13 @@ final class RepositorySettingsModel {
     /// `$XDG_CONFIG_HOME/git/ignore`、`~/.config/git/ignore`）。コアが決める（SSH 先ならその機械で）。
     private(set) var excludesPath = ""
 
+    /// 読み直しの世代（書き換えのたびに読み直すので、先に始めた読み直しが後から届いても使わない）。
+    private var loadGeneration = 0
+
     func load() {
         let repository = self.repository
+        loadGeneration += 1
+        let generation = loadGeneration
         Task {
             struct Entries: Decodable { let entries: [ConfigEntry] }
             struct Keys: Decodable { let keys: [String] }
@@ -192,6 +209,7 @@ final class RepositorySettingsModel {
                         global ? nil : try? repository.info(["op": "repositoryForm"], as: RepositoryForm.self)
                     )
                 }.value
+                guard generation == loadGeneration else { return }
                 form = f
                 commitTemplate = t.map { ($0.text, $0.path) }
                 gitVersion = v.version
@@ -236,6 +254,11 @@ final class RepositorySettingsModel {
         entries.last { $0.key.lowercased() == key.lowercased() && $0.scope == ownScope }?.value
     }
 
+    /// この段での値すべて（いくつも値を持てるキーなら、書かれている順に）。
+    func localAll(_ key: String) -> [String] {
+        entries.filter { $0.key.lowercased() == key.lowercased() && $0.scope == ownScope }.map(\.value)
+    }
+
     /// この段以外で決まっている値（この段の値を消したときに効く値）。
     func inherited(_ key: String) -> ConfigEntry? {
         entries.last { $0.key.lowercased() == key.lowercased() && $0.scope != ownScope }
@@ -246,22 +269,94 @@ final class RepositorySettingsModel {
         entries.last { $0.key.lowercased() == key.lowercased() && $0.scope == "global" }?.value
     }
 
-    /// この段の値を変える。nil か空なら消す（`keepEmpty` なら空の値を書く。広い段の値を打ち消すとき）。`recordUndo`
-    /// なら、前の値に戻す書き換えを Undo に積む（同じ操作で変えたキーはまとめて 1 段。⌘Z の中でまた逆を積むので、
-    /// ⇧⌘Z でやり直せる）。
-    func set(_ key: String, _ value: String?, keepEmpty: Bool = false, recordUndo: Bool = true) {
+    /// この段の値を変える。nil か空なら消す（`keepEmpty` なら空の値を書く。広い段の値を打ち消すとき）。前の値に
+    /// 戻す書き換えを、書けたら Undo に積む（`write`）。
+    func set(_ key: String, _ value: String?, keepEmpty: Bool = false) {
         let value = value?.trimmingCharacters(in: .whitespaces)
         let new = (value?.isEmpty ?? true) && !(keepEmpty && value != nil) ? nil : value
-        if recordUndo, let undo {
-            let old = local(key)
-            if old != new {
-                undo.registerUndo(withTarget: self) { m in m.set(key, old, keepEmpty: old?.isEmpty == true) }
-                undo.setActionName(L("Change %@", key))
-            }
+        write([ConfigChange(key: key, old: local(key), new: new)], name: L("Change %@", key))
+    }
+
+    /// この段の値の書き換え 1 つ（`new` が nil なら消す）。いくつも値を持てるキー（`remote.origin.fetch` など）に
+    /// 値がいくつもあったときは、`oldAll` にそのすべて（`old` は最後のもの）。戻すときは `newAll` のすべてを書く。
+    struct ConfigChange {
+        let key: String
+        let old: String?
+        let new: String?
+        var oldAll: [String] = []
+        var newAll: [String] = []
+        var inverse: ConfigChange { ConfigChange(key: key, old: new, new: old, oldAll: newAll, newAll: oldAll) }
+    }
+
+    /// この出来事で頼まれた書き換え（次の出来事でまとめて書く）と、その Undo の名前・表の下に出す消したもの。
+    private var pending: [ConfigChange] = []
+    private var pendingName = ""
+    private var pendingRemoved: [(key: String, value: String)]?
+
+    /// この段の値を書き換える。同じ出来事で頼まれたもの（1 つの選択で変える 2 つのキーなど）はまとめて順に書き、
+    /// すべて書けたら、逆の書き換えを Undo に 1 段として積む（失敗した書き換えは積まない。名前は最後に頼まれたもの）。
+    /// `removed` があれば、表の下の「戻す」の 1 行に出す。
+    func write(_ changes: [ConfigChange], name: String, removed: [(key: String, value: String)]? = nil) {
+        let changes = changes.filter { $0.old != $0.new }.map { change in
+            var change = change
+            let all = localAll(change.key)
+            if all.count > 1 { change.oldAll = all }
+            return change
         }
-        var command: [String: Any] = ["op": "configSet", "key": key, "value": new.map { $0 as Any } ?? NSNull()]
+        guard !changes.isEmpty else { return }
+        if pending.isEmpty { DispatchQueue.main.async { [weak self] in self?.flush() } }
+        pending += changes
+        pendingName = name
+        pendingRemoved = removed
+    }
+
+    private func flush() {
+        let changes = pending, name = pendingName, removed = pendingRemoved ?? []
+        pending = []
+        pendingRemoved = nil
+        // 書いている間に「戻す」を押させない（書けたら、消したものなら出し直す）。
+        removedConfig = []
+        removalName = nil
+        removedChanges = []
+        enqueue(changes.map(command)) { [weak self] ok in
+            guard let self, ok else { return }
+            if !removed.isEmpty {
+                removedConfig = removed
+                removalName = name
+                removedChanges = changes
+            }
+            guard let undo else { return }
+            undo.registerUndo(withTarget: self) { m in m.replay(changes.reversed().map(\.inverse), name: name) }
+            undo.setActionName(name)
+        }
+    }
+
+    /// 表の下の「戻す」: 最後の削除を戻す。Undo のいちばん上がその削除なら ⌘Z と同じ（やり直せる）。そうでなければ
+    /// 消した値を書き戻す（ほかの書き換えを戻さない）。
+    func restoreRemoved() {
+        if let undo, undo.canUndo, let removalName, undo.undoActionName == removalName {
+            undo.undo()
+        } else {
+            write(removedChanges.reversed().map(\.inverse), name: L("Restore"))
+        }
+    }
+
+    /// ⌘Z・⇧⌘Z: 逆の書き換えを書く。その逆はここで積む（Undo の中で積むので、⇧⌘Z でやり直せる・⌘Z で戻せる）。
+    private func replay(_ changes: [ConfigChange], name: String) {
+        undo?.registerUndo(withTarget: self) { m in m.replay(changes.reversed().map(\.inverse), name: name) }
+        undo?.setActionName(name)
+        removedConfig = []
+        removalName = nil
+        removedChanges = []
+        enqueue(changes.map(command))
+    }
+
+    private func command(_ change: ConfigChange) -> [String: Any] {
+        var command: [String: Any] = ["op": "configSet", "key": change.key, "value": change.new.map { $0 as Any } ?? NSNull()]
+        // いくつもの値はすべて書き戻す（最後の値だけにしない）。
+        if change.newAll.count > 1 { command["values"] = change.newAll }
         if level == .allRepositories { command["scope"] = "global" }
-        run(command)
+        return command
     }
 
     /// ユーザー全体（global。SSH 先のリポジトリなら SSH 先のユーザー）の値を変える。nil か空なら消す。
@@ -276,19 +371,34 @@ final class RepositorySettingsModel {
 
     /// いくつかの命令を順に実行する（リモートのシートが組んだもの）。失敗したらそこで止めて、エラーを出す。
     func perform(_ commands: [[String: Any]]) {
+        enqueue(commands)
+    }
+
+    /// 書き込みの列の最後（書き込みは 1 つずつ、頼んだ順に。1 つの選択で変える 2 つのキーを同時に書くと、
+    /// 2 つ目が `.git/config.lock` で失敗して半分だけ変わる）。
+    private var lastWrite: Task<Void, Never>?
+
+    /// `commands` を、前の書き込みが終わってから順に実行する。失敗したらそこで止めて、エラーを出す。終わったら
+    /// 読み直し、`done(書けたか)` を呼ぶ。
+    private func enqueue(_ commands: [[String: Any]], done: ((Bool) -> Void)? = nil) {
         let repository = self.repository
-        Task {
+        let previous = lastWrite
+        lastWrite = Task {
+            await previous?.value
+            var ok = false
             do {
                 for command in commands {
                     let json = try Repository.json(command)
                     try await Task.detached(priority: .userInitiated) { try repository.run(json: json) }.value
                 }
                 error = nil
+                ok = true
             } catch {
                 self.error = "\(error)"
             }
             load()
             onRepositoryChange?()
+            done?(ok)
         }
     }
 
@@ -327,22 +437,14 @@ final class RepositorySettingsModel {
 
     var ignoreChanged: Bool { (gitignore, exclude) != savedIgnore }
 
+    /// Revert: 保存してある中身に戻してから読み直す（load は、書き換えていない欄だけを読んだ中身にする）。
+    func revertIgnore() {
+        (gitignore, exclude) = savedIgnore
+        load()
+    }
+
     private func run(_ command: [String: Any], then: (() -> Void)? = nil) {
-        let repository = self.repository
-        guard let json = try? Repository.json(command) else { return }
-        Task {
-            var ok = false
-            do {
-                try await Task.detached(priority: .userInitiated) { try repository.run(json: json) }.value
-                error = nil
-                ok = true
-            } catch {
-                self.error = "\(error)"
-            }
-            load()
-            onRepositoryChange?()
-            if ok { then?() }
-        }
+        enqueue([command]) { ok in if ok { then?() } }
     }
 }
 
@@ -432,9 +534,11 @@ private struct RemotesTab: View {
     }
 
     private func remove(_ name: String) {
-        guard RemoteSheet.confirmRemove(name) else { return }
-        model.changeRemote(["kind": "remove", "name": name])
-        selection = nil
+        Task { @MainActor in
+            guard await RemoteSheet.confirmRemove(name, in: NSApp.keyWindow ?? NSApp.mainWindow) else { return }
+            model.changeRemote(["kind": "remove", "name": name])
+            selection = nil
+        }
     }
 }
 
@@ -894,38 +998,18 @@ private struct AllSettingsTab: View {
         write(gone, name: gone.count == 1 ? L("Remove %@", gone[0].key) : L("Remove %ld keys", gone.count), showRemoved: true)
     }
 
-    /// 下の 1 行の「戻す」: 最後の削除を 1 段戻す（⌘Z と同じ）。
+    /// 下の 1 行の「戻す」: 最後の削除を戻す。
     private func restore() {
-        if let undo = model.undo, undo.canUndo {
-            undo.undo()
-        } else {
-            let back = model.removedConfig.map { ConfigChange(key: $0.key, old: nil, new: $0.value) }
-            write(back, name: L("Restore"))
-        }
+        model.restoreRemoved()
     }
 
-    /// このリポジトリの値の書き換え 1 つ（`new` が nil なら消す）。
-    private struct ConfigChange {
-        let key: String
-        let old: String?
-        let new: String?
-        var inverse: ConfigChange { ConfigChange(key: key, old: new, new: old) }
-    }
+    private typealias ConfigChange = RepositorySettingsModel.ConfigChange
 
-    /// 表からの書き換えはすべてここを通す: 書いて、UndoManager に逆の書き換えを登録する。逆の中でまたその逆を
-    /// 登録するので、⌘Z のあと ⇧⌘Z でやり直せる。`showRemoved` なら消したものを下の 1 行に出す（それ以外の
-    /// 書き換えとやり直しでは消す）。
+    /// 表からの書き換えはすべてここを通す（Undo に 1 段として積む）。`showRemoved` なら消したものを下の 1 行に出す
+    /// （それ以外の書き換えとやり直しでは消す）。
     private func write(_ changes: [ConfigChange], name: String, showRemoved: Bool = false) {
-        Self.apply(changes, to: model, name: name, showRemoved: showRemoved)
-    }
-
-    private static func apply(_ changes: [ConfigChange], to model: RepositorySettingsModel, name: String, showRemoved: Bool) {
-        for c in changes { model.set(c.key, c.new, recordUndo: false) }
-        model.removedConfig = showRemoved ? changes.compactMap { c in c.old.map { (key: c.key, value: $0) } } : []
-        model.undo?.registerUndo(withTarget: model) { m in
-            apply(changes.map(\.inverse), to: m, name: name, showRemoved: false)
-        }
-        model.undo?.setActionName(name)
+        model.write(changes, name: name,
+                    removed: showRemoved ? changes.compactMap { c in c.old.map { (key: c.key, value: $0) } } : [])
     }
 
     private func cancelAdding() {
@@ -1763,7 +1847,7 @@ private struct WorkingCopyPage: View {
                         .frame(height: max(160, geometry.size.height - 330))
                     HStack {
                         Spacer()
-                        Button(L("Revert")) { model.load() }.disabled(!model.ignoreChanged)
+                        Button(L("Revert")) { model.revertIgnore() }.disabled(!model.ignoreChanged)
                         Button(L("Save")) { model.saveIgnore() }.disabled(!model.ignoreChanged).keyboardShortcut("s")
                     }
                 }
@@ -1814,7 +1898,10 @@ private struct HooksLFSPage: View {
     private var hooksDirectory: String? {
         guard model.host == nil else { return nil }
         let root = RepositoryLocation.path(model.location)
-        guard let p = model.hooksPath else { return (root as NSString).appendingPathComponent(".git/hooks") }
+        // 既定は $GIT_COMMON_DIR/hooks（追加した worktree の `.git` はファイルなので、その中ではない）。
+        guard let p = model.hooksPath else {
+            return (RepositoryList.commonGitDirectory(of: root) as NSString).appendingPathComponent("hooks")
+        }
         if p.hasPrefix("/") { return p }
         if p.hasPrefix("~") { return (p as NSString).expandingTildeInPath }
         return (root as NSString).appendingPathComponent(p)
@@ -1844,10 +1931,11 @@ private struct HooksLFSPage: View {
                         Menu(L("Edit With")) {
                             ForEach(editors) { app in Button(app.name) { edit(name, with: app) } }
                         }
-                        Button(L("Reveal in Finder")) { reveal(name) }
+                        Button(Titles.showInFinder) { reveal(name) }
                         Divider()
                     }
                     Button(L("Create Hook…")) { create() }
+                        .disabled(model.hooks.count == HookEntry.allNames.count)
                 }
                 .frame(height: CGFloat(28 * model.hooks.count + 36))
             }
@@ -1964,12 +2052,21 @@ private struct HooksLFSPage: View {
             popup.lastItem?.representedObject = name
         }
         alert.accessoryView = popup
-        guard alert.runModal() == .alertFirstButtonReturn,
-              let name = popup.selectedItem?.representedObject as? String else { return }
-        model.createHook(name) {
-            hookSelection = name
-            edit(name)
+        Task { @MainActor in
+            guard await Self.ask(alert) == .alertFirstButtonReturn,
+                  let name = popup.selectedItem?.representedObject as? String else { return }
+            model.createHook(name) {
+                hookSelection = name
+                edit(name)
+            }
         }
+    }
+
+    /// 設定の窓のシートで聞く（窓がなければアプリ全体で）。
+    @MainActor
+    private static func ask(_ alert: NSAlert) async -> NSApplication.ModalResponse {
+        guard let window = NSApp.keyWindow ?? NSApp.mainWindow else { return alert.runModal() }
+        return await alert.beginSheetModal(for: window)
     }
 
     private func track() {
@@ -1983,9 +2080,11 @@ private struct HooksLFSPage: View {
         field.frame = NSRect(x: 0, y: 0, width: 300, height: 24)
         alert.accessoryView = field
         alert.window.initialFirstResponder = field
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let pattern = field.stringValue.trimmingCharacters(in: .whitespaces)
-        if !pattern.isEmpty { model.lfsTrack(pattern, true) }
+        Task { @MainActor in
+            guard await Self.ask(alert) == .alertFirstButtonReturn else { return }
+            let pattern = field.stringValue.trimmingCharacters(in: .whitespaces)
+            if !pattern.isEmpty { model.lfsTrack(pattern, true) }
+        }
     }
 }
 

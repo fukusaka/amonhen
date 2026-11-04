@@ -162,8 +162,9 @@ fn choose_other(
 ) {
     let initial = if current.is_empty() {
         found.first().map(|c| c.path.clone()).unwrap_or_else(|| {
+            // SSH 先で何も見つからなければ、その機械のホーム（macOS 版のパスを選ぶシートの go("")）。
             if s.host.is_some() {
-                "/usr/bin".into()
+                "~".into()
             } else {
                 "/usr/local/bin".into()
             }
@@ -236,7 +237,7 @@ fn config_row(
     };
     let k: Keys = Rc::new(move |s| vec![key_of(s)]);
     let row = s.row(name, "", k, Rc::new(|_, v| v.to_owned()), None);
-    let (w, e, f) = (s.weak(), row.error.clone(), found.clone());
+    let (w, f) = (s.weak(), found.clone());
     let picker = Picker::new(move |value| {
         let Some(s) = w.upgrade() else { return };
         if s.quiet() {
@@ -246,16 +247,16 @@ fn config_row(
         let current = s.local(&key).unwrap_or_default();
         if value == OTHER {
             let list = f.borrow().get(name).cloned().unwrap_or_default();
-            let (w, e, start) = (s.weak(), e.clone(), current.clone());
+            let (w, start) = (s.weak(), current.clone());
             choose_other(&s, &list, &start, move |path| {
                 if let Some(s) = w.upgrade()
                     && path != current
                 {
-                    s.write(vec![(key, Some(path))], Some(&e));
+                    s.write(vec![(key, Some(path))]);
                 }
             });
         } else if value != current {
-            s.write(vec![(key, (!value.is_empty()).then_some(value))], Some(&e));
+            s.write(vec![(key, (!value.is_empty()).then_some(value))]);
         }
     });
     picker.button.set_size_request(300, -1);
@@ -293,7 +294,6 @@ fn git_row(
     let q = label("git", &[]);
     q.set_hexpand(true);
     line.append(&q);
-    let error = crate::reposettings::error_label();
     let warning = label("", &["settings-warning"]);
     warning.set_wrap(true);
     warning.set_wrap_mode(gtk::pango::WrapMode::WordChar);
@@ -344,7 +344,7 @@ fn git_row(
         })
     };
 
-    let (w, g, f, e) = (s.weak(), git.clone(), found.clone(), error.clone());
+    let (w, g, f) = (s.weak(), git.clone(), found.clone());
     // 使う git を変える。設定の窓の書き換えとして Undo に前の値を積む（Ctrl+Shift+Z でやり直せる。macOS 版と
     // 同じ）。書いたら読み直す（下の `on_refresh`）。
     let set: Rc<dyn Fn(String)> = Rc::new(move |value: String| {
@@ -358,8 +358,8 @@ fn git_row(
                 key: crate::reposettings::MACHINE_GIT.to_owned(),
                 old: Some(old),
                 new: Some(value),
+                ..Default::default()
             }],
-            Some(e.clone()),
             crate::reposettings::Record::New,
         );
     });
@@ -406,12 +406,10 @@ fn git_row(
     info.set_child(Some(&gtk::Label::new(Some("ⓘ"))));
     info.set_has_frame(false);
     info.set_valign(gtk::Align::Center);
-    info.set_tooltip_text(Some(&tr!("Where the value comes from")));
     info.set_popover(Some(&popover));
     line.append(&info);
     widget.append(&line);
     widget.append(&warning);
-    widget.append(&error);
 
     // 書いたあと（Undo・やり直しも）は、使う git を読み直す。
     let seen_writes = std::cell::Cell::new(s.writes());
@@ -428,6 +426,12 @@ fn git_row(
             &[(OTHER.to_owned(), tr!("Other…"))],
             &current,
         );
+        // 使う git のパス（Automatic なら最初の候補。macOS 版と同じ）。
+        picker.button.set_tooltip_text(Some(if current.is_empty() {
+            list.first().map_or("", |c| c.path.as_str())
+        } else {
+            &current
+        }));
         let chosen = !current.is_empty();
         revert.set_opacity(if chosen { 1.0 } else { 0.0 });
         revert.set_can_target(chosen);

@@ -168,6 +168,11 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
         update()
     }
 
+    /// 読んだ行（HEAD から first-parent で辿ったもの）に、`oids` がすべてある。
+    func contains(_ oids: [String]) -> Bool {
+        oids.allSatisfy { oid in rows.contains { $0.oid == oid } }
+    }
+
     /// 最初の変更を入れる（メッセージを直すときは、そのままメッセージの欄を開く）。
     func apply(_ preset: Preset) {
         switch preset {
@@ -177,7 +182,9 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
             // 選んだもののうちいちばん古いものに、ほかをまとめる。1 つだけなら、1 つ古いコミット（そのために読んで
             // ある）にまとめる。
             let indices = oids.compactMap { oid in rows.firstIndex { $0.oid == oid } }.sorted()
-            for i in indices.count == 1 ? indices : Array(indices.dropLast()) { set(.squash, at: i) }
+            for i in indices.count == 1 ? indices : Array(indices.dropLast()) where choices(at: i).contains(.squash) {
+                set(.squash, at: i)
+            }
         case let .drop(oid):
             if let i = rows.firstIndex(where: { $0.oid == oid }) { set(.drop, at: i) }
         case let .move(oid, to):
@@ -189,6 +196,13 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
         update()
     }
 
+    /// 行で選べる操作。いちばん古い行と merge のすぐ上の行は、まとめる相手がない。merge の行は作り直すだけ。
+    private func choices(at row: Int) -> [Action] {
+        if rows[row].merge { return [.pick] }
+        let noOlder = row == rows.count - 1 || rows[row + 1].merge
+        return Action.allCases.filter { !(noOlder && [.squash, .fixup].contains($0)) }
+    }
+
     // MARK: - 一覧
 
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
@@ -198,10 +212,7 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
         let popup = NSPopUpButton(frame: .zero, pullsDown: false)
         popup.controlSize = .small
         popup.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        // いちばん古い行と merge のすぐ上の行は、まとめる相手がない。merge の行は作り直すだけ。
-        let noOlder = row == rows.count - 1 || rows[row + 1].merge
-        let choices: [Action] = r.merge ? [.pick] : Action.allCases.filter { !(noOlder && [.squash, .fixup].contains($0)) }
-        for action in choices {
+        for action in choices(at: row) {
             popup.addItem(withTitle: action.title)
             popup.lastItem?.representedObject = action.rawValue
             popup.lastItem?.toolTip = action.toolTip
@@ -275,6 +286,8 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
 
     /// メッセージの欄を開く。まとめる行なら、まとめたコミットのメッセージ（最初は、まとめるものを古い順につないだもの）。
     private func editMessage(at i: Int) {
+        // merge の行は作り直すだけで、メッセージは変えられない（することの選択と同じ）。
+        guard !rows[i].merge else { return }
         let combining = rows[i].action == .squash
         let initial = rows[i].newMessage ?? (combining ? combinedMessage(endingAt: i) : rows[i].message)
         Task { @MainActor in
@@ -358,6 +371,7 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
         cancel.keyEquivalent = "\u{1b}"
         let apply = NSButton(title: L("Apply Changes"), target: self, action: #selector(applyClicked))
         apply.keyEquivalent = "\r"
+        barButtons = [cancel, apply]
         return StatusBarController.row([icon, texts, NSView(), moveStacked, cancel, apply], height: 34,
                                        tint: NSColor.controlAccentColor.withAlphaComponent(0.08))
     }
@@ -384,8 +398,14 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
     private func updatePreview() {
         previewTask?.cancel()
         guard hasChanges else {
+            // 変更をすべて戻したら、前の見込み（コンフリクトの印、積み重ねたブランチの選択）も消す。
             preview.stringValue = ""
             preview.isHidden = true
+            moveStacked.isHidden = true
+            if !conflicting.isEmpty {
+                conflicting = [:]
+                table.reloadData()
+            }
             return
         }
         let edit: [String: Any] = ["kind": "plan", "steps": planSteps()]
@@ -400,6 +420,9 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
                 configuredUpdateRefs = state.configured
                 moveStacked.state = state.configured ? .on : .off
                 moveStacked.isEnabled = state.available
+                // 選べない理由を添える（Rebase のシートと同じ）。
+                moveStacked.toolTip = state.available ? L("For this edit only (git’s update-ref). Starts from rebase.updateRefs.")
+                    : L("Moving stacked branches needs git 2.38 or newer.")
             }
             // 積み重ねたブランチがあるときだけ選ばせる。
             moveStacked.isHidden = answer.map { $0.moving.isEmpty && !$0.staying.contains { $0.reason == "setting" || $0.reason == "off" } } ?? true
@@ -440,14 +463,23 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
         return steps
     }
 
+    /// 帯の Cancel と Apply Changes（書き換えている間は押せない）。
+    private var barButtons: [NSButton] = []
+
+    /// 書き換えが終わってから編集モードを閉じる。書き換えられなければ（失敗を知らせて）編集モードと選んだものを
+    /// 残す（閉じてしまうと、組んだ手順がすべて消える）。途中で止まったら（コンフリクト・edit）閉じる。
     @objc private func applyClicked() {
         guard hasChanges else {
             onFinish?(false)
             return
         }
+        guard barButtons.allSatisfy(\.isEnabled) else { return }
         let steps = planSteps()
-        actions.rewrite(L("Edit %ld Commits", rows.count), ["kind": "plan", "steps": steps], updateRefs: updateRefs)
-        onFinish?(true)
+        barButtons.forEach { $0.isEnabled = false }
+        actions.rewrite(
+            L("Edit %ld Commits", rows.count), ["kind": "plan", "steps": steps], updateRefs: updateRefs,
+            completion: { [weak self] _ in self?.onFinish?(true) },
+            failed: { [weak self] in self?.barButtons.forEach { $0.isEnabled = true } })
     }
 }
 

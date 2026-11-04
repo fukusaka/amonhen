@@ -15,8 +15,6 @@ final class QuickOpenPanel: NSObject, NSSearchFieldDelegate, NSTableViewDataSour
     private let hint = NSTextField(labelWithString: "")
     private var candidates: [String] = []
     private var shown: [String] = []
-    /// ⏎ を新しいウィンドウにするか（⌘N から開いたとき）。
-    private var preferNewWindow = false
 
     private override init() {
         panel = NSPanel(
@@ -72,15 +70,12 @@ final class QuickOpenPanel: NSObject, NSSearchFieldDelegate, NSTableViewDataSour
     }
 
     /// 出す。`newWindow` なら ⏎ で新しいウィンドウに開く（⌘N）。
-    func show(newWindow: Bool = false) {
-        preferNewWindow = newWindow
+    func show() {
         candidates = Bookmarks.shared.allLocations
         // スキャンの結果がまだなければ探し始める（見つかったら候補に足す）。
         if Bookmarks.shared.scanned.isEmpty, !Bookmarks.shared.data.scanRoots.isEmpty { Bookmarks.shared.rescan() }
         field.stringValue = ""
-        hint.stringValue = newWindow
-            ? L("⏎ Open in New Window   ⌘⏎ Open in Tab   esc Close")
-            : L("⏎ Open in Tab   ⌘⏎ Open in New Window   esc Close")
+        hint.stringValue = L("⏎ Open in Tab   ⌘⏎ Open in New Window   esc Close")
         update()
         if let screen = (NSApp.keyWindow ?? NSApp.mainWindow)?.screen ?? NSScreen.main {
             let frame = screen.visibleFrame
@@ -88,6 +83,13 @@ final class QuickOpenPanel: NSObject, NSSearchFieldDelegate, NSTableViewDataSour
         }
         panel.makeKeyAndOrderFront(nil)
         panel.makeFirstResponder(field)
+    }
+
+    /// 行の状態（ブランチ・変更など）を読めた: その行だけを描き直す（並べ直さず、選んでいる行も動かさない。
+    /// 見えてきた行の読み込みが後から届くので、並べ直すと ↓ で選んだ行が先頭に戻ってしまう）。
+    func rowChanged(_ path: String) {
+        guard panel.isVisible, let row = shown.firstIndex(of: path) else { return }
+        table.reloadData(forRowIndexes: [row], columnIndexes: IndexSet(integersIn: 0..<table.numberOfColumns))
     }
 
     /// ブックマークやスキャンの結果が変わった。
@@ -159,7 +161,7 @@ final class QuickOpenPanel: NSObject, NSSearchFieldDelegate, NSTableViewDataSour
         guard row >= 0, row < shown.count else { return }
         let command = NSApp.currentEvent?.modifierFlags.contains(.command) == true
         panel.orderOut(nil)
-        onOpen?(shown[row], command != preferNewWindow)
+        onOpen?(shown[row], command)
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int { shown.count }

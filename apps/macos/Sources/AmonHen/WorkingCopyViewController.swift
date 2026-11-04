@@ -5,7 +5,7 @@ import AppKit
 /// 含めるか）。右に選んだファイルの差分（行を選んで stage・unstage）。
 /// チェックボックスは index の状態そのもので、FE だけの選択状態は持たない（ターミナルで `git add` しても揃う）。
 final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataSource, NSOutlineViewDelegate,
-    NSTextViewDelegate, NSMenuDelegate, NSSearchFieldDelegate
+    NSTextViewDelegate, NSMenuDelegate, NSSearchFieldDelegate, NSMenuItemValidation
 {
     /// ファイルの右クリック: 作業ツリーの内容の blame（パス）とファイルの履歴（パス）。
     var onBlame: ((String) -> Void)?
@@ -23,12 +23,14 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     private let layoutControl = NSSegmentedControl()
     /// 一覧の見せ方: パスの一覧・ディレクトリの木・ファイル名（親のディレクトリは薄く）。
     private enum Layout: Int { case list, tree, flat }
-    private var layout: Layout {
-        get {
-            if let raw = UserDefaults.standard.object(forKey: "workingCopyLayout") as? Int { return Layout(rawValue: raw) ?? .list }
-            return UserDefaults.standard.bool(forKey: "workingCopyTree") ? .tree : .list
-        }
-        set { UserDefaults.standard.set(newValue.rawValue, forKey: "workingCopyLayout") }
+    /// この Working Copy の見せ方（タブ・worktree ごと。ほかのタブの一覧は、そのボタンと合ったまま変わらない）。
+    /// 変えたら覚えて、次に開く Working Copy の最初の見せ方にする。
+    private var layout: Layout = WorkingCopyViewController.savedLayout {
+        didSet { UserDefaults.standard.set(layout.rawValue, forKey: "workingCopyLayout") }
+    }
+    private static var savedLayout: Layout {
+        if let raw = UserDefaults.standard.object(forKey: "workingCopyLayout") as? Int { return Layout(rawValue: raw) ?? .list }
+        return UserDefaults.standard.bool(forKey: "workingCopyTree") ? .tree : .list
     }
     private var showsTree: Bool { layout == .tree }
     /// ファイルごとの追加・削除の行数（HEAD と作業ツリー。untracked はない）。
@@ -40,10 +42,11 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     private let sparseNote = NSButton(title: "", target: nil, action: nil)
     /// パスで一覧を絞り込む。
     private let filterField = NSSearchField()
-    private let emptyLabel = NSTextField(labelWithString: L("No changes"))
+    /// 一覧が空のときの説明。最初の status を読むまでは空（「変更なし」と言わない）。
+    private let emptyLabel = NSTextField(labelWithString: "")
     private var diffBar: TitleAndButtonsBar?
     private let amend = NSButton(checkboxWithTitle: "Amend", target: nil, action: nil)
-    private let commitButton = NSButton(title: "Commit", target: nil, action: nil)
+    private let commitButton = YieldingButton(title: "Commit", target: nil, action: nil)
     private let suggestButton = NSButton(title: "", target: nil, action: nil)
     /// 過去のメッセージの一覧・型や Co-authored-by の挿入・Commit の続き（Commit and Push など）。
     private let historyButton = NSPopUpButton(frame: .zero, pullsDown: true)
@@ -94,13 +97,22 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     /// 木で見せるときのディレクトリ。子が 1 つのディレクトリだけなら名前をつないで 1 段にする。
     private final class Dir {
         var name: String
+        /// リポジトリの中のパス（畳んだディレクトリを読み直しても畳んだままにするため）。
+        var path: String
         var dirs: [Dir] = []
         var files: [Entry] = []
-        init(name: String) { self.name = name }
+        init(name: String, path: String) {
+            self.name = name
+            self.path = path
+        }
         /// 配下のすべてのファイル。
         var allFiles: [Entry] { files + dirs.flatMap(\.allFiles) }
     }
     private var tree: Dir?
+    /// 木で畳んだディレクトリ（パス）。読み直しても畳んだままにする。
+    private var collapsedDirs: Set<String> = []
+    /// 読み直した木を開いている途中（開いた・畳んだの知らせを、使う人の操作として覚えない）。
+    private var isExpandingTree = false
     private var current: WorkingFileDiff?
     /// 選んでいたファイルと、見せていた側（読み直した後に選び直す）。
     private var selectedKey: (path: String, staged: Bool)?
@@ -129,6 +141,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
         // 左の上: コミットの入力。
         message.isRichText = false
+        // ⌘Z で打ったものを戻せるように（コードで作った NSTextView は既定で戻せない）。
+        message.allowsUndo = true
         message.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         message.isAutomaticQuoteSubstitutionEnabled = false
         message.isAutomaticDashSubstitutionEnabled = false
@@ -156,6 +170,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         commitButton.action = #selector(commitClicked)
         commitButton.keyEquivalent = "\r"
         commitButton.keyEquivalentModifierMask = .command
+        // 埋め込んだマージエディタを操作している間の ⌘↩ は、エディタの Save & Mark Resolved。
+        commitButton.yieldsKeyEquivalent = { [weak self] in self?.embeddedEditor?.hasFocus == true }
         commitButton.toolTip = L("Commit the checked files (⌘↩)")
         amend.target = self
         amend.action = #selector(toggleAmend)
@@ -166,6 +182,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         suggestButton.isHidden = !Assistant.isConfigured
         NotificationCenter.default.addObserver(
             self, selector: #selector(assistantChanged), name: .assistantChanged, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(mergeWindowClosed(_:)), name: .mergeWindowClosed, object: nil)
         for (button, symbol, tip) in [
             (historyButton, "clock.arrow.circlepath", L("Insert the message of a recent commit (⌥↑ and ⌥↓ in the Summary field also work)")),
             (insertButton, "plus.circle", L("Insert a Conventional Commits type, Co-authored-by or Signed-off-by")),
@@ -526,9 +544,20 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             guard let read else { return }
             let states = Dictionary(read.files.map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a })
             guard states != conflictStates else { return }
+            let old = conflictStates
             conflictStates = states
             files.reloadData(forRowIndexes: IndexSet(integersIn: 0..<files.numberOfRows), columnIndexes: [0])
             notifySequence()
+            // ほかで書き換えたファイル（マーカーの数が変わった）のマージエディタは、手を付けていなければ読み直す。
+            // 前の中身のまま Save すると、ほかでした解決をマーカー付きの中身で上書きしてしまう。
+            for (path, state) in states where old[path].map({ $0 != state }) ?? false {
+                guard let editor = mergeEditors[path], !editor.hasUnsavedChanges else { continue }
+                mergeEditors[path] = nil
+                if embeddedEditor === editor, let entry = entries.first(where: { $0.item.path == path }) {
+                    unembed()
+                    showDiff(of: entry, staged: side(for: entry.item))
+                }
+            }
         }
     }
 
@@ -540,7 +569,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         entries = query.isEmpty ? allEntries : allEntries.filter { $0.item.path.lowercased().contains(query) }
         tree = showsTree ? Self.makeTree(entries) : nil
         files.reloadData()
-        files.expandItem(nil, expandChildren: true)
+        expandTree(below: tree)
         emptyLabel.stringValue = allEntries.isEmpty ? L("No changes") : L("No matching files")
         emptyLabel.isHidden = !entries.isEmpty
         updateHeader()
@@ -553,15 +582,18 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             let row = files.row(forItem: target)
             let others = IndexSet(kept.filter { $0 !== target }.map { files.row(forItem: $0) }.filter { $0 >= 0 })
             // 差分に出すファイルを最後に足し、選択の起点（selectedRow）にする。途中の選択の変化では差分を替えない。
+            // 畳んだディレクトリの中なら行はない。差分はそのまま出す。
             isRestoringSelection = true
             files.selectRowIndexes(others, byExtendingSelection: false)
-            files.selectRowIndexes([row], byExtendingSelection: !others.isEmpty)
+            files.selectRowIndexes(row >= 0 ? [row] : [], byExtendingSelection: !others.isEmpty)
             isRestoringSelection = false
             let keep = target.item.path == selectedKey?.path
             showDiff(of: target, staged: side(for: target.item), keepScroll: keep)
         } else {
             current = nil
             selectedKey = nil
+            // 選んでいたコンフリクトがなくなった（merge --abort など）: その解決のボタンも消す。
+            isConflict = false
             diffView.show(nil, message: allEntries.isEmpty ? L("No changes") : "")
             titleLabel.stringValue = ""
             showLineEndings(nil)
@@ -605,7 +637,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     /// ファイルをディレクトリの木にする。
     private static func makeTree(_ entries: [Entry]) -> Dir {
-        let root = Dir(name: "")
+        let root = Dir(name: "", path: "")
         for entry in entries {
             var dir = root
             let parts = entry.item.path.split(separator: "/").map(String.init)
@@ -613,7 +645,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
                 if let next = dir.dirs.first(where: { $0.name == part }) {
                     dir = next
                 } else {
-                    let next = Dir(name: part)
+                    let next = Dir(name: part, path: dir.path.isEmpty ? part : dir.path + "/" + part)
                     dir.dirs.append(next)
                     dir = next
                 }
@@ -624,6 +656,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             while dir.files.isEmpty, dir.dirs.count == 1, !dir.name.isEmpty {
                 let only = dir.dirs[0]
                 dir.name += "/" + only.name
+                dir.path = only.path
                 dir.dirs = only.dirs
                 dir.files = only.files
             }
@@ -633,6 +666,20 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         root.dirs.forEach(compact)
         root.dirs.sort { $0.name < $1.name }
         return root
+    }
+
+    /// `dir` の下のディレクトリを、使う人が畳んだもの（とその中）を除いて開く。
+    private func expandTree(below dir: Dir?) {
+        guard let dir else { return }
+        isExpandingTree = true
+        defer { isExpandingTree = false }
+        func expand(_ dir: Dir) {
+            for child in dir.dirs where !collapsedDirs.contains(child.path) {
+                files.expandItem(child)
+                expand(child)
+            }
+        }
+        expand(dir)
     }
 
     @objc private func layoutChanged() {
@@ -683,11 +730,16 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     // MARK: - fixup! と squash!
 
     /// Commit ▾ の Fixup・Squash の一覧を、最近のコミットで作り直す。
+    /// Fixup・Squash の項目の前の区切りの印。
+    private static let fixupSeparatorTag = 0x6678
+
     private func buildFixupMenus() {
         guard let menu = commitMenuButton.menu else { return }
         for title in ["Fixup Commit For", "Squash Commit For"] {
             if let old = menu.item(withTitle: title) { menu.removeItem(old) }
         }
+        // 前に足した区切りも外す（作り直すたびに区切りが増えないように）。
+        while let old = menu.item(withTag: Self.fixupSeparatorTag) { menu.removeItem(old) }
         var subjects: [String] = []
         for commit in recentCommits {
             let subject = commit.message.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? ""
@@ -697,7 +749,9 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             if subjects.count == 15 { break }
         }
         guard !subjects.isEmpty else { return }
-        menu.addItem(.separator())
+        let separator = NSMenuItem.separator()
+        separator.tag = Self.fixupSeparatorTag
+        menu.addItem(separator)
         for (title, prefix, keepBody) in [("Fixup Commit For", "fixup! ", false), ("Squash Commit For", "squash! ", true)] {
             let sub = NSMenu(title: title)
             for subject in subjects {
@@ -738,6 +792,12 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             current = nil
             showLineEndings(nil)
             updateButtons()
+            // 別ウィンドウで開いていれば、もう 1 つ作らずにそう案内する（Result が 2 つになって食い違わないように）。
+            if MergeEditorWindowController.isOpen(path: path, repository: repository) {
+                unembed()
+                diffView.show(nil, message: L("The merge editor is open in a separate window"))
+                return
+            }
             if let editor = mergeEditors[path] {
                 embed(editor)
                 return
@@ -759,9 +819,13 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         unembed()
         Task {
             // HEAD と作業ツリーの 1 本の差分（行ごとのチェック）。表せないときは、選んだ側の差分。
-            let (diff, combined) = await Task.detached(priority: .userInitiated) { () -> (WorkingFileDiff?, Bool) in
-                if let combined = try? status.combinedDiff(of: entry.item) { return (combined, true) }
-                return (try? status.diff(of: entry.item, staged: staged), false)
+            let (diff, combined, failure) = await Task.detached(priority: .userInitiated) { () -> (WorkingFileDiff?, Bool, String?) in
+                if let combined = try? status.combinedDiff(of: entry.item) { return (combined, true, nil) }
+                do {
+                    return (try status.diff(of: entry.item, staged: staged), false, nil)
+                } catch {
+                    return (nil, false, "\(error)")
+                }
             }.value
             guard request == self.request else { return }
             if onlyIfChanged, let diff, let shown = current, shown.item.path == diff.item.path,
@@ -772,7 +836,10 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             selectedKey = (entry.item.path, combined ? false : staged)
             current = diff
             showLineEndings(diff?.lineEndings)
-            if let diff, diff.isBinary {
+            if let failure {
+                // 空の差分にせず、読めなかった理由を出す。
+                diffView.show(nil, message: L("Can’t read the diff: %@", failure))
+            } else if let diff, diff.isBinary {
                 diffView.show(nil, message: L("Binary file"))
             } else {
                 diffView.show(diff, keepScroll: keepScroll)
@@ -812,6 +879,20 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     @objc private func sideChanged() {
         guard let entry = files.item(atRow: files.selectedRow) as? Entry else { return }
         showDiff(of: entry, staged: sideControl.selectedSegment == 1)
+    }
+
+    /// 埋め込んだ・覚えているマージエディタに、保存していない Result の変更がある（閉じる前に確かめる）。
+    var hasUnsavedMergeEdits: Bool {
+        mergeEditors.values.contains { $0.hasUnsavedChanges } || embeddedEditor?.hasUnsavedChanges == true
+    }
+
+    /// 別ウィンドウのマージエディタを解決せずに閉じた: そのファイルを出していれば（「別のウィンドウで開いている」の
+    /// 案内のまま）、ここに埋め込み直す（同じ行を押し直しても何も起きないので）。
+    @objc private func mergeWindowClosed(_ notification: Notification) {
+        guard isConflict, embeddedEditor == nil, let key = selectedKey,
+              notification.userInfo?["key"] as? String == MergeEditorWindowController.key(path: key.path, repository: repository),
+              let entry = entries.first(where: { $0.item.path == key.path }) else { return }
+        showDiff(of: entry, staged: key.staged)
     }
 
     /// 右の欄の差分の代わりに、マージエディタを出す。
@@ -858,13 +939,15 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         // 選んだ行があれば行を、なければファイルを破棄する。stage 済みの変更は破棄しない。
         discardButton.isHidden = staged || isConflict || selectedKey == nil
         discardButton.title = selected.isEmpty ? "Discard File" : "Discard Lines"
-        discardButton.isEnabled = selectedKey != nil
+        // 作業ツリーに変更がない（すべて stage 済みの）ファイルには、捨てるものがない。
+        discardButton.isEnabled = selectedKey != nil && current?.item.isUnstaged == true
             && !(current?.isCombined == true && selected.contains { current?.isStaged(row: $0) == true })
         discardButton.toolTip = selected.isEmpty
             ? L("Discard the working tree changes and return to the content of the next commit (the index)")
             : L("Discard the selected lines’ changes from the working tree (included lines are excluded first)")
         let count = stagedCount
-        commitButton.isEnabled = !(count == 0 && amend.state == .off) && !composedMessage.isEmpty
+        // コミットしている間は押せない（2 回目の ⌘↩ が、もう 1 つ git commit を始めないように）。
+        commitButton.isEnabled = !committing && !(count == 0 && amend.state == .off) && !composedMessage.isEmpty
         // ボタンの数や名前が変わると幅が変わるので、並べ直す。
         diffBar?.needsLayout = true
         commitButton.title = amend.state == .on ? "Amend Commit"
@@ -966,6 +1049,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     @objc private func discard() {
         guard let key = selectedKey, !key.staged, let actions else { return }
+        guard current?.item.isUnstaged == true else { return NSSound.beep() }
         let rows = diffView.selectedChangeRows
         if let current, !rows.isEmpty {
             actions.perform { try current.discard(rows: rows) }
@@ -1026,8 +1110,33 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     @objc private func takeTheirsFile() { takeSide(ours: false) }
 
+    /// 下のマージエディタか別ウィンドウのマージエディタに、このファイルの保存していない Result がある。
+    private func unsavedEditor(for path: String) -> MergeEditorViewController? {
+        let editor = embeddedEditor.flatMap { $0.path == path ? $0 : nil }
+            ?? MergeEditorWindowController.editor(path: path, repository: repository)
+        return editor?.hasUnsavedChanges == true ? editor : nil
+    }
+
+    /// 片側のファイルを取る。別ウィンドウで開いていれば閉じる（Result は捨てると確かめてある・変えていない）。
+    private func performTakeSide(_ path: String, ours: Bool) {
+        MergeEditorWindowController.discard(path: path, repository: repository)
+        actions?.perform(["op": "takeSide", "path": path, "ours": ours])
+    }
+
     private func takeSide(ours: Bool) {
         guard let key = selectedKey, let actions else { return }
+        // 保存していない Result は、片側のファイルで上書きされて失われる（git checkout --ours・--theirs と同じく
+        // 作業ツリーのファイルを置き換える）。閉じるときと同じく、失うことを確かめる。
+        if unsavedEditor(for: key.path) != nil {
+            let title = ours ? L("Take Current File") : L("Take Incoming File")
+            Task { @MainActor in
+                guard await actions.confirm(
+                    ours ? L("Take the current file without saving Result?") : L("Take the incoming file without saving Result?"),
+                    message: L("Your changes to Result are lost."), ok: title, destructive: true) else { return }
+                performTakeSide(key.path, ours: ours)
+            }
+            return
+        }
         // マーカーが残っていなければ、解決した内容（rerere・ほかのエディタ）を片側で上書きしてしまう。
         if conflictStates[key.path]?.markers == 0 {
             let title = ours ? L("Take Current File") : L("Take Incoming File")
@@ -1036,11 +1145,11 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
                     L("Replace the resolved content of %@?", key.path),
                     message: L("No conflict markers are left, so it may already be resolved. It becomes one side’s whole file."),
                     ok: title) else { return }
-                actions.perform(["op": "takeSide", "path": key.path, "ours": ours])
+                performTakeSide(key.path, ours: ours)
             }
             return
         }
-        actions.perform(["op": "takeSide", "path": key.path, "ours": ours])
+        performTakeSide(key.path, ours: ours)
     }
 
     /// マーカーの残っていないコンフリクトのファイルを、まとめて解決済みにする（ウィンドウの帯から）。
@@ -1052,13 +1161,19 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     }
 
     @objc private func markResolved() {
-        guard let key = selectedKey else { return }
-        struct Count: Decodable { let count: Int }
-        let remaining = (try? repository.info(["op": "conflictCount", "path": key.path], as: Count.self))?.count ?? 0
+        guard let key = selectedKey, let actions else { return }
+        // 保存していない Result があれば、エディタの Mark Resolved と同じく保存してから解決済みにする（git が解決済みに
+        // するのは作業ツリーのファイルなので、Result の変更を書いてから。残りのコンフリクトは Result で数える）。
+        if let editor = unsavedEditor(for: key.path) { return editor.saveAndResolve() }
         let repository = self.repository
         let path = key.path
-        guard remaining > 0, let actions else { return self.actions?.perform { try repository.stage(paths: [path]) } ?? () }
         Task { @MainActor in
+            // 残りのマーカーは裏で数える（SSH 先・daemon 越しでは往復がかかる）。
+            let remaining = await Task.detached(priority: .userInitiated) {
+                struct Count: Decodable { let count: Int }
+                return (try? repository.info(["op": "conflictCount", "path": path], as: Count.self))?.count ?? 0
+            }.value
+            guard remaining > 0 else { return actions.perform { try repository.stage(paths: [path]) } }
             guard await actions.confirm(L("Mark %@ as resolved with %ld conflicts left?", path, remaining),
                                         message: L("The conflict markers stay in the file."), ok: L("Mark Resolved")) else { return }
             actions.perform { try repository.stage(paths: [path]) }
@@ -1158,22 +1273,45 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     }
 
     /// Commit ▾ > Commit and Push（⌘⇧↩）: コミットできたら push する（上流がなければ Publish のシートを出す）。
-    @objc private func commitAndPush() { commit(thenPush: true) }
+    @objc private func commitAndPush() {
+        guard canCommit else { return NSSound.beep() }
+        commit(thenPush: true)
+    }
+
+    /// Commit ▾ の Commit and Push は、Commit を押せるときだけ（何も含めていない、メッセージが空なら切る）。
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if item.action == #selector(commitAndPush) { return canCommit }
+        return super.validateUserInterfaceItem(item)
+    }
 
     func commitAndPushFromMenu() { if canCommit { commitAndPush() } }
 
+    /// コミットしている途中。
+    private var committing = false
+
+    /// コミットの hooks の出力と失敗を出す窓: リポジトリの窓（終えたときに Working Copy が窓にないことがある: hooks の
+    /// 間に History などへ移った・ほかの worktree を選んだ。そのとき `view.window` は nil で、失敗が黙って消える）。
+    private var sheetWindow: NSWindow? { actions?.window ?? view.window }
+
     private func commit(thenPush: Bool) {
+        guard !committing else { return NSSound.beep() }
         let text = composedMessage
         let isAmend = amend.state == .on
         let repository = self.repository
         let started = UInt64(Date().timeIntervalSince1970 * 1000)
+        committing = true
+        updateButtons()
         Task {
+            defer {
+                committing = false
+                updateButtons()
+            }
             do {
                 try await Task.detached(priority: .userInitiated) { try repository.commit(message: text, amend: isAmend) }.value
                 // hooks（pre-commit・commit-msg など）が何か書いていれば見せる。
                 if let output = ActivityRecord.all().last(where: {
                     $0.kind == "git" && $0.label.hasPrefix("git commit") && $0.started >= started && $0.ok == true
-                })?.output, !output.isEmpty, let window = view.window {
+                })?.output, !output.isEmpty, let window = sheetWindow {
                     HookOutputSheet.show(title: L("Committed (hooks output)"), text: output, in: window)
                 }
                 message.string = ""
@@ -1184,7 +1322,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
                 if thenPush { actions?.pushWithoutAsking() }
             } catch {
                 // hooks で止まったときは出力が長いので、読めるシートで出す。
-                if let window = view.window {
+                if let window = sheetWindow {
                     HookOutputSheet.show(title: L("Couldn’t Commit"), text: "\(error)", in: window)
                 }
             }
@@ -1354,7 +1492,13 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         let last = body.components(separatedBy: "\n").last ?? ""
         let lastIsTrailer = last.range(of: #"^[A-Za-z-]+: "#, options: .regularExpression) != nil
         body += body.isEmpty ? line : lastIsTrailer ? "\n" + line : "\n\n" + line
-        message.string = body
+        // 打ったのと同じく ⌘Z で戻せるように、テキスト欄の編集として入れ替える（`string` に入れると Undo を捨てる）。
+        let all = NSRange(location: 0, length: (message.string as NSString).length)
+        if message.shouldChangeText(in: all, replacementString: body) {
+            message.textStorage?.replaceCharacters(
+                in: all, with: NSAttributedString(string: body, attributes: message.typingAttributes))
+            message.didChangeText()
+        }
         updateButtons()
         saveDraft()
     }
@@ -1536,6 +1680,18 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         }
     }
 
+    func outlineViewItemDidCollapse(_ notification: Notification) {
+        guard !isExpandingTree, let dir = notification.userInfo?["NSObject"] as? Dir else { return }
+        collapsedDirs.insert(dir.path)
+    }
+
+    func outlineViewItemDidExpand(_ notification: Notification) {
+        guard !isExpandingTree, let dir = notification.userInfo?["NSObject"] as? Dir else { return }
+        collapsedDirs.remove(dir.path)
+        // 中のディレクトリも、畳んでいなければ開く（開いたことがなければ畳んだままになる）。
+        expandTree(below: dir)
+    }
+
     func outlineViewSelectionDidChange(_ notification: Notification) {
         guard !isRestoringSelection, let entry = files.item(atRow: files.selectedRow) as? Entry else { return }
         if selectedKey?.path == entry.item.path, current != nil || isConflict { return }
@@ -1698,6 +1854,21 @@ final class TitleAndButtonsBar: NSView {
 /// 空のときに薄い案内を出すテキスト欄。`guideColumn` があれば、その桁に目安の縦線を引く（72 桁で改行する慣習）。
 final class PlaceholderTextView: NSTextView {
     var placeholder = "" { didSet { needsDisplay = true } }
+
+    /// この欄だけの Undo（窓の UndoManager を使うと、下で捨てるときに Summary・埋め込んだマージエディタの Result・
+    /// Repository Settings の取り消しまで消える）。
+    private let ownUndoManager = UndoManager()
+    override var undoManager: UndoManager? { allowsUndo ? ownUndoManager : super.undoManager }
+
+    /// コードで中身を入れ替えたら、前に打ったものの Undo は捨てる（入れ替えた後の文に当てると範囲がずれる。
+    /// マージエディタの Result と同じ）。
+    override var string: String {
+        get { super.string }
+        set {
+            super.string = newValue
+            if allowsUndo { ownUndoManager.removeAllActions() }
+        }
+    }
     var guideColumn: Int? { didSet { needsDisplay = true } }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -1817,5 +1988,15 @@ final class MessageSplitDelegate: NSObject, NSSplitViewDelegate {
 
     func splitView(_ splitView: NSSplitView, shouldAdjustSizeOfSubview view: NSView) -> Bool {
         view !== splitView.arrangedSubviews.first
+    }
+}
+
+/// 近道（keyEquivalent）を、条件が合う間だけほかに譲るボタン。
+private final class YieldingButton: NSButton {
+    var yieldsKeyEquivalent: (() -> Bool)?
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if yieldsKeyEquivalent?() == true { return false }
+        return super.performKeyEquivalent(with: event)
     }
 }

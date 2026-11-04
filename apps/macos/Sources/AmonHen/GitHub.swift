@@ -352,7 +352,7 @@ enum CreatePullRequestSheet {
         let alert = NSAlert()
         alert.messageText = "Create Pull Request"
         alert.informativeText = L("From %@", branch)
-        alert.addButton(withTitle: L("Create"))
+        let create = alert.addButton(withTitle: L("Create"))
         alert.addButton(withTitle: L("Cancel"))
         let titleField = NSTextField(string: title)
         titleField.placeholderString = L("Title")
@@ -382,7 +382,18 @@ enum CreatePullRequestSheet {
         grid.frame = NSRect(x: 0, y: 0, width: 540, height: 260)
         alert.accessoryView = grid
         alert.window.initialFirstResponder = titleField
+        // 題と base が空の間は Create を押せない（押してもシートと打った文を黙って捨てないように）。
+        let trimmed = { (field: NSTextField) in field.stringValue.trimmingCharacters(in: .whitespaces) }
+        let update = { create.isEnabled = !trimmed(titleField).isEmpty && !trimmed(baseField).isEmpty }
+        update()
+        nonisolated(unsafe) let refresh = update
+        let observers = [titleField, baseField].map {
+            NotificationCenter.default.addObserver(forName: NSControl.textDidChangeNotification, object: $0, queue: .main) { _ in
+                MainActor.assumeIsolated { refresh() }
+            }
+        }
         alert.beginSheetModal(for: window) { response in
+            observers.forEach(NotificationCenter.default.removeObserver)
             let t = titleField.stringValue.trimmingCharacters(in: .whitespaces)
             let b = baseField.stringValue.trimmingCharacters(in: .whitespaces)
             guard response == .alertFirstButtonReturn, !t.isEmpty, !b.isEmpty else { return completion(nil) }

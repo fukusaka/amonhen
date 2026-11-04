@@ -13,10 +13,10 @@ use serde_json::json;
 use crate::actions::Actions;
 use crate::sheets::{self, Response, Sheet};
 
-/// 書き出せる形（コアの `archive` の `format`）。並びは選ぶ欄の順。
-const FORMATS: &[&str] = &["tar.gz", "zip", "tar"];
+/// 書き出せる形（コアの `archive` の `format`）。並びは選ぶ欄の順で、先頭が既定（macOS 版と同じ）。
+const FORMATS: &[&str] = &["zip", "tar.gz", "tar"];
 
-/// 前の選び方を覚えておく鍵（macOS 版の UserDefaults と同じ）。Linux では tar.gz を既定にする。
+/// 前の選び方を覚えておく鍵（macOS 版の UserDefaults と同じ）。
 const FORMAT: &str = "archiveFormat";
 
 /// `rev` の時点を書き出す。`label` は既定の名前に使う（タグ・ブランチの名前、なければ短い ID）。形・先頭の
@@ -37,7 +37,8 @@ pub fn export(actions: &Rc<Actions>, rev: String, label: String) {
         } else {
             format!("{base}-{label}")
         });
-        let sheet = Sheet::new(
+        // コミットの中身を書き出すだけで作業ツリーによらないので、worktree の名前は書かない（macOS 版と同じ）。
+        let sheet = Sheet::unnamed(
             parent.as_ref(),
             &tr!("Export Archive"),
             &tr!(
@@ -46,7 +47,7 @@ pub fn export(actions: &Rc<Actions>, rev: String, label: String) {
         );
         let format = gtk::DropDown::from_strings(FORMATS);
         let remembered = crate::settings::string(FORMAT).unwrap_or_default();
-        format.set_selected(FORMATS.iter().position(|f| *f == remembered).unwrap_or(0) as u32);
+        format.set_selected(format_index(&remembered) as u32);
         sheet.add(&sheets::row(&tr!("Format:"), &format));
         let top = gtk::Entry::builder()
             .text(&name)
@@ -129,14 +130,14 @@ pub fn export(actions: &Rc<Actions>, rev: String, label: String) {
                 "This is a partial clone: the contents of {count} files in the archive aren’t here yet. They are fetched from the remote in one go before the archive is written.",
                 count = count
             );
-            if !actions
-                .confirm(
-                    &tr!("Fetch File Contents First?"),
-                    &message,
-                    &tr!("Fetch and Export"),
-                )
-                .await
-            {
+            // 窓のシートで（ほかの確かめるシートと同じ形。macOS 版と同じ）。
+            let sheet = Sheet::unnamed(
+                parent.as_ref(),
+                &tr!("Fetch File Contents First?"),
+                &message,
+            );
+            sheet.buttons(&tr!("Fetch and Export"), false, None);
+            if sheet.run().await != Response::Ok {
                 return;
             }
         }
@@ -164,9 +165,13 @@ pub fn export(actions: &Rc<Actions>, rev: String, label: String) {
             "paths": paths,
             "file": path.to_string_lossy(),
         });
+        // 読んだ worktree に書く（途中で編集する worktree が替わっても、名前と中身がずれない。macOS 版と同じ）。
         let a = actions.clone();
-        actions.perform_with(vec![command], move |_| {
-            // 書いたファイルを、ファイルの窓で見せる。
+        actions.perform_in(repo, vec![command], move |reply| {
+            // 書けたら、そのファイルをファイルの窓で見せる（失敗は知らせだけ。macOS 版と同じ）。
+            if reply["ok"].as_bool() != Some(true) {
+                return;
+            }
             let launcher = gtk::FileLauncher::new(Some(&gio::File::for_path(&path)));
             let window = a.window();
             glib::spawn_future_local(async move {
@@ -176,6 +181,11 @@ pub fn export(actions: &Rc<Actions>, rev: String, label: String) {
             });
         });
     });
+}
+
+/// 覚えておいた形の、選ぶ欄の位置（なければ先頭の zip）。
+fn format_index(remembered: &str) -> usize {
+    FORMATS.iter().position(|f| *f == remembered).unwrap_or(0)
 }
 
 /// ファイル名と先頭のフォルダに使える名前（`/` と空白などは `-` に。macOS 版の `archiveName` と同じ）。
@@ -199,6 +209,13 @@ pub fn file_name(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zip_comes_first_and_is_the_default() {
+        assert_eq!(FORMATS, ["zip", "tar.gz", "tar"]);
+        assert_eq!(FORMATS[format_index("")], "zip");
+        assert_eq!(FORMATS[format_index("tar")], "tar");
+    }
 
     #[test]
     fn makes_a_name_for_the_file_and_the_top_folder() {

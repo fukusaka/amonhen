@@ -172,10 +172,12 @@ final class ReflogViewController: NSSplitViewController, NSTableViewDataSource, 
         add(Titles.newTag(at: short)) { actions.newTag(at: hex) }
         add(Titles.checkoutDetached(short)) { actions.checkoutWithConfirmation(.detach(hex)) }
         menu.addItem(actions.resetMenuItem(to: hex))
-        // この時点の HEAD と今の HEAD を、同じ一連のコミットの 2 つの版として比べる。
+        // この時点の HEAD と今の HEAD を、同じ一連のコミットの 2 つの版として比べる。今の HEAD は一番上の行のコミット
+        // （Range Diff は開いたリポジトリで動くので、`HEAD` と書くと、ほかの worktree を選んでいるときに別の HEAD になる）。
         if row > 0 {
+            let head = entries[0].new
             menu.addItem(.separator())
-            add(L("Compare with Current HEAD (Range Diff)")) { [weak self] in self?.onRangeDiff?(["\(hex)...HEAD"]) }
+            add(L("Compare with Current HEAD (Range Diff)")) { [weak self] in self?.onRangeDiff?(["\(hex)...\(head)"]) }
         }
         if entry.reachable, let id = Data(hex: hex) {
             menu.addItem(.separator())

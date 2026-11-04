@@ -24,7 +24,11 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
     private let scrollView = NSScrollView()
     private let document = DiffDocumentView()
     private let textView = GraphView()
-    private var diff: FileDiff?
+    private var diff: FileDiff? {
+        didSet { hunkCursor = nil }
+    }
+    /// J・K で最後に出した hunk の番号（行を選べない差分で、次の J・K をそこから進めるため）。
+    private var hunkCursor: Int?
     /// 行ごとの並べたグリフ。表示し直すまで使い回す。
     private var shaped: [Int: TextRenderer.ShapedLine] = [:]
     private var numberCache: [UInt32: TextRenderer.ShapedLine] = [:]
@@ -60,6 +64,8 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
     private let numbersWidth: CGFloat = 96
     /// 変更の行の左のチェックボックスの欄（`showsStageChecks` のときだけ）。
     private let checkWidth: CGFloat = 22
+    /// いちばん長い行の幅（横にスクロールできる範囲）。読んだときに文字数から見積もり、描いた行がそれより長ければ広げる。
+    private var textWidth: CGFloat = 0
     private var gutterWidth: CGFloat { numbersWidth + (showsStageChecks ? checkWidth : 0) }
     /// Working Copy の HEAD と作業ツリーの差分か。変更の行と hunk の見出しの左に、次のコミットに含めるかの
     /// チェックボックスを出す。
@@ -175,6 +181,7 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         shaped.removeAll()
         headerGlyphs.removeAll()
         fileRows = diff?.withRows { all in all.indices.filter { all[$0].kind == UInt8(AmonhenDiffRow_FILE) } } ?? []
+        textWidth = diff.map(estimatedTextWidth) ?? 0
         topFile = nil
         selectedRows.removeAll()
         anchorRow = nil
@@ -222,7 +229,20 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
     private func updateDocumentSize() {
         let rows = CGFloat(diff?.rowCount ?? 0)
         let clip = scrollView.contentView.bounds.size
-        document.frame.size = NSSize(width: max(clip.width, 3000), height: max(clip.height, rows * lineHeight))
+        let width = textWidth > 0 ? gutterWidth + 8 + textWidth + 40 : 0
+        document.frame.size = NSSize(width: max(clip.width, width), height: max(clip.height, rows * lineHeight))
+    }
+
+    /// いちばん長い行の幅の見積もり（等幅の文字数から。タブや全角の文字の分は、描いたときに広げる）。
+    private func estimatedTextWidth(of diff: FileDiff) -> CGFloat {
+        let columns = diff.withRows { all in
+            (0..<all.count).reduce(0) { longest, row in
+                // 長さ（ASCII のバイト数か UTF-16 の符号単位の数）は行に書いてある。文字列は作らない。
+                all[row].kind == UInt8(AmonhenDiffRow_FILE) ? longest : max(longest, Int(all[row].text.len_and_kind & 0x7fff_ffff))
+            }
+        }
+        let digit = ("0" as NSString).size(withAttributes: [.font: font as NSFont]).width
+        return CGFloat(columns) * digit
     }
 
     /// 選んだ行のうち、追加・削除の行。
@@ -325,7 +345,9 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
                 }
                 if out.utf8.count > DiffText.limit { break }
             }
-            return (file.map { diff.text(row: $0) } ?? path ?? "", out)
+            // つながらないコミットを並べた差分では、見出しは「パス — 短い ID」。パスだけを渡す。
+            let header = file.map { diff.text(row: $0) }
+            return (header.map { String($0.components(separatedBy: " — ")[0]) } ?? path ?? "", out)
         }
     }
 
@@ -355,7 +377,11 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         let hunks = hunkRows
         guard !hunks.isEmpty else { return NSSound.beep() }
         let target: Int
-        if selectedRows.isEmpty {
+        if selectedRows.isEmpty, let hunkCursor {
+            // 選べない差分では、前に J・K で出した hunk から進む（出した hunk は上から 3 分の 1 にあるので、
+            // 見えている一番上から探すと同じ hunk にまた止まる）。
+            target = hunkCursor + step
+        } else if selectedRows.isEmpty {
             // 選んでいなければ、見えている一番上から: J はそこ以降の最初、K はそれより前の最後。
             let top = Int(scrollView.contentView.bounds.origin.y / lineHeight)
             target = step > 0 ? (hunks.firstIndex { $0 >= top } ?? hunks.count) : (hunks.lastIndex { $0 < top } ?? -1)
@@ -372,6 +398,7 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         guard hunks.indices.contains(index) else { return }
         let start = hunks[index]
         let end = index + 1 < hunks.count ? hunks[index + 1] : (diff?.rowCount ?? start + 1)
+        hunkCursor = index
         if isSelectable {
             selectedRows = Set(start..<end)
             anchorRow = start
@@ -771,8 +798,9 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         let textRange = orderedSelection
         // 見えている行の一致（番号つき）。
         var matchesByRow: [Int: [(Int, Range<Int>)]] = [:]
-        if !matches.isEmpty {
-            // 一致は行の順に並んでいるので、見えている最初の行を二分探索する。
+        func collectMatches(_ rows: Range<Int>) {
+            guard !matches.isEmpty else { return }
+            // 一致は行の順に並んでいるので、最初の行を二分探索する。
             var lo = 0, hi = matches.count
             while lo < hi {
                 let mid = (lo + hi) / 2
@@ -784,6 +812,8 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
                 i += 1
             }
         }
+        collectMatches(rows)
+        let matchColors = (match: matchColor, current: currentMatchColor)
         diff.withRows { all in
             for row in rows {
                 let r = all[row]
@@ -804,7 +834,7 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
                 let baseline = top + 2 + ascent
                 // コンフリクトの表示では old_no はコンフリクトの番号なので、行番号は new_no だけ出す。
                 if r.kind == UInt8(AmonhenDiffRow_FILE) {
-                    drawFileHeader(row: row, all: all, top: top, scale: scale)
+                    drawFileHeader(row: row, all: all, top: top, scale: scale, matches: matchesByRow[row] ?? [], colors: matchColors)
                     continue
                 }
                 if showsStageChecks {
@@ -819,6 +849,11 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
                     renderer.addLine(line, origin: CGPoint(x: right - line.width, y: baseline), color: secondary, scale: scale)
                 }
                 guard let line = shapedLine(row, scale: scale) else { continue }
+                if line.width > textWidth {
+                    // 見積もりより長い行（タブ、全角の文字）。描き終えてから広げる。
+                    textWidth = line.width
+                    DispatchQueue.main.async { [weak self] in self?.updateDocumentSize() }
+                }
                 // 変わった単語を、行の色より濃くする。
                 let strong = r.kind == UInt8(AmonhenDiffRow_ADDED) ? strongAdded : strongRemoved
                 for (x0, x1) in line.spans {
@@ -849,7 +884,9 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
             }
             // 見出しの行が上に隠れたファイルは、見出しを上に張り付かせる。
             if let (file, top) = stickyHeader(origin: origin) {
-                drawFileHeader(row: fileRows[file], all: all, top: top, scale: scale)
+                let row = fileRows[file]
+                if matchesByRow[row] == nil { collectMatches(row..<row + 1) }
+                drawFileHeader(row: row, all: all, top: top, scale: scale, matches: matchesByRow[row] ?? [], colors: matchColors)
             }
         }
         if !fileRows.isEmpty {
@@ -864,8 +901,10 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
 
 extension DiffViewController {
     /// ファイルの見出しの行: 畳む・開くの印、パス、追加・削除の行数、Viewed のチェックボックス。横にはスクロールしない。
+    /// `matches` は検索で見つけたパスの中の一致（番号と範囲）。
     fileprivate func drawFileHeader(
-        row: Int, all: UnsafeBufferPointer<AmonhenDiffRow>, top: CGFloat, scale: CGFloat
+        row: Int, all: UnsafeBufferPointer<AmonhenDiffRow>, top: CGFloat, scale: CGFloat,
+        matches: [(Int, Range<Int>)], colors: (match: SIMD4<Float>, current: SIMD4<Float>)
     ) {
         let r = all[row]
         let width = textView.bounds.width
@@ -902,6 +941,12 @@ extension DiffViewController {
         // パスは行数の手前までに収める（長ければ、はみ出た分を帯の色で隠す）。
         if let line = shapedLine(row, scale: scale) {
             let textBaseline = top + 2 + CTFontGetAscent(font)
+            for (i, m) in matches {
+                let x0 = line.offset(of: m.lowerBound), x1 = line.offset(of: m.upperBound)
+                renderer.addRect(
+                    CGRect(x: 24 + x0, y: top + 1, width: max(2, x1 - x0), height: lineHeight - 2),
+                    color: i == currentMatch ? colors.current : colors.match)
+            }
             renderer.addLine(line, origin: CGPoint(x: 24, y: textBaseline), color: NSColor.labelColor.rgba, scale: scale)
             if 24 + line.width > countsX - 8 {
                 renderer.addRect(
@@ -1091,7 +1136,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     var onSearch: ((String) -> Void)?
     var onSelectRef: ((String) -> Void)?
     /// 署名をどこで検証しているか（吹き出しに出す。RepositoryWindow が決める）。
-    var signaturePlace = SignaturePlace(local: true, detail: L("The repository is on this Mac"))
+    var signaturePlace = SignaturePlace(local: true, detail: L("the repository is on this Mac"))
     private var signaturePopover: NSPopover?
     /// メッセージを書き直して保存したとき（コミットの ID と新しいメッセージ）。
     var onReword: ((String, String) -> Void)?
@@ -1295,6 +1340,15 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         diffView.fileMenu = { [weak self] file in self?.menuForFile(file) }
         diffView.onToggleViewed = { [weak self] file in self?.toggleViewed(file) }
         diffView.onExplainHunk = { [weak self] path, hunk in self?.explainHunk(path: path, hunk: hunk) }
+        // ⌥J・⌥K（全ファイルを並べていないとき）: 一覧の次・前のファイルへ。
+        diffView.onMoveFile = { [weak self] step in
+            guard let self else { return }
+            let rows = rowOfFile.sorted()
+            let next = (rows.firstIndex(of: files.selectedRow) ?? -1) + step
+            guard rows.indices.contains(next) else { return NSSound.beep() }
+            files.selectRowIndexes([rows[next]], byExtendingSelection: false)
+            files.scrollRowToVisible(rows[next])
+        }
         diffView.onTopFileChange = { [weak self] file in
             guard let self, stacked != nil, file < rowOfFile.count else { return }
             let row = rowOfFile[file]
@@ -1352,7 +1406,8 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             }, at: i)
         }
         menu.insertItem(.separator(), at: items.count)
-        if extras?.headDistance != nil, info.parents.count <= 1 {
+        // 書き直すのは History の詳細だけ（`onReword` があるもの。Reflog・Range Diff では保存先がない）。
+        if onReword != nil, extras?.headDistance != nil, info.parents.count <= 1 {
             menu.insertItem(ClosureMenuItem(title: L("Edit Message…")) { [weak self] in self?.beginReword() }, at: items.count + 1)
             menu.insertItem(.separator(), at: items.count + 2)
         }
@@ -1574,7 +1629,11 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             self.changes = changes
             self.stacked = stacked
             reloadFiles()
-            if changes?.items.isEmpty ?? true {
+            if changes == nil {
+                // 読めなかった（変更がないのとは違う）。
+                diffView.show(nil, message: L("Couldn’t load the diff"))
+                onDiffShown?()
+            } else if changes?.items.isEmpty ?? true {
                 diffView.show(nil, message: L("No changes"))
                 onDiffShown?()
             } else if let stacked {
@@ -1618,6 +1677,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             let result = await Task.detached(priority: .userInitiated) { try? history.selectionDiff(rows: rows, pair: pair) }.value
             guard request == self.request else { return }
             guard let (kind, stacked) = result else {
+                renderSelectionHeader(rows: rows, history: history, kind: nil, failed: true)
                 diffView.show(nil, message: L("Couldn’t load the diff"))
                 return
             }
@@ -1658,6 +1718,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             }.value
             guard request == self.request else { return }
             guard let stacked = result else {
+                renderRangeHeader(title: title, lines: lines, note: L("Couldn’t load the diff"))
                 diffView.show(nil, message: L("Couldn’t load the diff"))
                 return
             }
@@ -1687,7 +1748,9 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     }
 
     /// 選んだコミットの数・差分の取り方・各コミットの 1 行。
-    private func renderSelectionHeader(rows: [Int], history: History, kind: SelectionKind?, pair: PairMode = .forward) {
+    /// `kind` が nil なら読んでいる途中（`failed` なら読めなかった）。
+    private func renderSelectionHeader(rows: [Int], history: History, kind: SelectionKind?, pair: PairMode = .forward,
+                                       failed: Bool = false) {
         let sorted = rows.sorted()
         let text = NSMutableAttributedString()
         let title: [NSAttributedString.Key: Any] = [.font: NSFont.boldSystemFont(ofSize: 13), .foregroundColor: NSColor.labelColor]
@@ -1705,7 +1768,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             case .mergeBase: L("The diff of the two non-consecutive commits from their common ancestor to the newer (A...B: only the changes on the newer side).")
             }
         case .each?: L("They are not contiguous, so each commit’s diff is listed file by file (headed by the path and short ID).")
-        case nil: L("Loading the diff…")
+        case nil: failed ? L("Couldn’t load the diff") : L("Loading the diff…")
         }
         text.append(NSAttributedString(string: explanation + "\n", attributes: note))
         if kind == .pair {
@@ -1796,7 +1859,9 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         menu.addItem(ClosureMenuItem(title: collapsedNow ? L("Expand") : L("Collapse")) { [weak self] in self?.toggleCollapsed(file) })
         menu.addItem(ClosureMenuItem(title: L("Toggle Viewed")) { [weak self] in self?.toggleViewed(file) })
         menu.addItem(.separator())
-        if let commit = commitHex {
+        // 消したファイルは、そのコミットにはない（ファイルの一覧の右クリックと同じく Blame を出さない）。
+        let deleted = changes.map { file < $0.items.count && $0.items[file].kind == .deleted } ?? false
+        if let commit = commitHex, !deleted {
             menu.addItem(ClosureMenuItem(title: Titles.blame(at: String(commit.prefix(Titles.shortIDLength)))) { [weak self] in self?.onBlame?(path, commit) })
         }
         menu.addItem(ClosureMenuItem(title: Titles.fileHistory) { [weak self] in self?.onFileHistory?(path) })
@@ -1849,6 +1914,9 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         var renderer = CommitHeaderRenderer(info: info, extras: extras, style: style)
         renderer.monospacedBody = Settings.monospacedCommitMessage
         renderer.highlight = CommitHeaderRenderer.highlightTerms(of: searchQuery)
+        renderer.linksRefs = onSelectRef != nil
+        renderer.linksAuthor = onSearch != nil
+        peopleStrip.selectable = onSearch != nil
         let text = NSMutableAttributedString(attributedString: renderer.render())
         let showPeople = style != .compact
         // 帯の高さは人によるので、人を入れてから並べる。
@@ -2204,9 +2272,11 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        guard let index = fileIndex(row: files.clickedRow), let item = changes?.items[index] else { return }
-        let path = item.path
-        if let commit = commitHex, item.kind != .deleted {
+        guard let index = fileIndex(row: files.clickedRow) else { return }
+        // いくつかのコミットを選んでいると `changes` はなく、名前だけ（積み重ねた差分の見出しと同じく File History）。
+        guard let path = changes?.items[index].path ?? stacked?.names[index] else { return }
+        let item = changes?.items[index]
+        if let commit = commitHex, let item, item.kind != .deleted {
             menu.addItem(ClosureMenuItem(title: Titles.blame(at: String(commit.prefix(Titles.shortIDLength)))) { [weak self] in self?.onBlame?(path, commit) })
         }
         menu.addItem(ClosureMenuItem(title: Titles.fileHistory) { [weak self] in self?.onFileHistory?(path) })

@@ -27,7 +27,11 @@ pub fn full_ref(kind: RefKind, name: &str) -> Option<String> {
 pub fn save(actions: &Rc<Actions>, refs: Vec<String>, names: Vec<String>, label: String) {
     let actions = actions.clone();
     glib::spawn_future_local(async move {
-        let Some(repo) = actions.repo() else { return };
+        // 読む・知らせる・書く先は、始めたときの worktree（macOS 版と同じ）。
+        let Some(target) = sheets::Target::current(&actions) else {
+            return;
+        };
+        let repo = target.repo.clone();
         let parent = sheets::parent(&actions);
         let base = repo
             .paths()
@@ -44,7 +48,8 @@ pub fn save(actions: &Rc<Actions>, refs: Vec<String>, names: Vec<String>, label:
         } else {
             names.join(", ")
         };
-        let sheet = Sheet::new(
+        // ref を書き出すだけで作業ツリーによらないので、worktree の名前は書かない（macOS 版と同じ）。
+        let sheet = Sheet::unnamed(
             parent.as_ref(),
             &tr!("Save as Bundle"),
             &tr!(
@@ -69,16 +74,25 @@ pub fn save(actions: &Rc<Actions>, refs: Vec<String>, names: Vec<String>, label:
         sheet.add(&sheets::note(&tr!(
             "Whoever receives the bundle needs that commit already."
         )));
+        let save = sheet.buttons(&tr!("Save…"), false, None);
+        // 「後だけ」を選んで基点が空なら、Save… は押せない（黙って全体を保存しない。macOS 版と同じ）。
+        let update_save = {
+            let (save, newer, field) = (save.clone(), newer.clone(), field.clone());
+            Rc::new(move || {
+                save.set_sensitive(!newer.is_active() || !field.text().trim().is_empty());
+            })
+        };
         {
-            let field = field.clone();
+            let (field, update) = (field.clone(), update_save.clone());
             newer.connect_toggled(move |b| {
                 field.set_sensitive(b.is_active());
                 if b.is_active() {
                     field.grab_focus();
                 }
+                update();
             });
         }
-        sheet.buttons(&tr!("Save…"), false, None);
+        field.connect_changed(move |_| update_save());
         if sheet.run().await != Response::Ok {
             return;
         }
@@ -88,21 +102,20 @@ pub fn save(actions: &Rc<Actions>, refs: Vec<String>, names: Vec<String>, label:
         } else {
             Vec::new()
         };
-        let preview = sheets::run(
-            &repo,
-            json!({ "op": "bundlePreview", "refs": refs, "bases": bases }),
-        )
-        .await;
+        let command = json!({ "op": "bundlePreview", "refs": refs, "bases": bases });
+        let preview = sheets::run(&repo, command.clone()).await;
         if preview["ok"] != true {
-            let error = preview["error"].as_str().unwrap_or_default();
-            actions.alert(&tr!("Can’t Save the Bundle"), error).await;
+            // 読めなかった（基点が見つからないなど）: ほかの操作の失敗と同じく、ステータスバーに（macOS 版と同じ）。
+            let failure = crate::statusbar::Failure::from_reply(&preview, Some(command));
+            actions.fail(failure).await;
             return;
         }
         let info = &preview["info"];
         let commits = info["commits"].as_u64().unwrap_or(0);
         if commits == 0 {
-            actions
-                .alert(
+            target
+                .inform(
+                    parent.as_ref(),
                     &tr!("Nothing to Save"),
                     &tr!("There are no commits to put in the bundle."),
                 )
@@ -110,14 +123,15 @@ pub fn save(actions: &Rc<Actions>, refs: Vec<String>, names: Vec<String>, label:
             return;
         }
         if info["beyondShallow"] == true {
-            actions
-                .alert(
-                    &tr!("Can’t Save the Bundle"),
-                    &tr!(
-                        "This shallow clone doesn’t have all the history the bundle needs. Fetch more history, or choose a newer base."
-                    ),
-                )
-                .await;
+            target
+                .inform(
+                parent.as_ref(),
+                &tr!("Can’t Save the Bundle"),
+                &tr!(
+                    "This shallow clone doesn’t have all the history the bundle needs. Fetch more history, or choose a newer base."
+                ),
+            )
+            .await;
             return;
         }
         let contents = info["contents"].as_u64().unwrap_or(0);
@@ -131,14 +145,14 @@ pub fn save(actions: &Rc<Actions>, refs: Vec<String>, names: Vec<String>, label:
                 "This is a partial clone: the contents of {count} files in the bundle aren’t here yet. They are fetched from the remote in one go before the bundle is written.",
                 count = count
             );
-            if !actions
-                .confirm(
-                    &tr!("Fetch File Contents First?"),
-                    &message,
-                    &tr!("Fetch and Save"),
-                )
-                .await
-            {
+            // 窓のシートで（ほかの確かめるシートと同じ形。macOS 版と同じ）。
+            let sheet = Sheet::unnamed(
+                parent.as_ref(),
+                &tr!("Fetch File Contents First?"),
+                &message,
+            );
+            sheet.buttons(&tr!("Fetch and Save"), false, None);
+            if sheet.run().await != Response::Ok {
                 return;
             }
         }
@@ -147,8 +161,9 @@ pub fn save(actions: &Rc<Actions>, refs: Vec<String>, names: Vec<String>, label:
         filter.add_suffix("bundle");
         let filters = gio::ListStore::new::<gtk::FileFilter>();
         filters.append(&filter);
+        // 入るコミットの数は、保存する場所を選ぶ窓の題に（macOS 版は保存パネルの説明に出す）。
         let dialog = gtk::FileDialog::builder()
-            .title(tr!("Save as Bundle"))
+            .title(tr!("{count} commits", count = commits))
             .initial_name(format!("{name}.bundle"))
             .filters(&filters)
             .modal(true)
@@ -161,8 +176,11 @@ pub fn save(actions: &Rc<Actions>, refs: Vec<String>, names: Vec<String>, label:
             "op": "bundle", "refs": refs, "bases": bases, "file": path.to_string_lossy(),
         });
         let a = actions.clone();
-        actions.perform_with(vec![command], move |_| {
-            // 書いたファイルを、ファイルの窓で見せる。
+        actions.perform_in(repo, vec![command], move |reply| {
+            // 書けたら、そのファイルをファイルの窓で見せる（失敗は知らせだけ。macOS 版と同じ）。
+            if reply["ok"].as_bool() != Some(true) {
+                return;
+            }
             let launcher = gtk::FileLauncher::new(Some(&gio::File::for_path(&path)));
             let window = a.window();
             glib::spawn_future_local(async move {

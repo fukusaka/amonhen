@@ -101,25 +101,25 @@ pub fn page() -> gtk::Widget {
             r();
         }
     });
-    // 外でプロンプトのファイルを書き換えたら、戻ってきたときに読み直す。
-    let r = refresh.clone();
+    // 外でプロンプトのファイルを作ったり消したりしたら、戻ってきたときに「書き換えた」の印を読み直す。作り直すのは
+    // 用途ごとのプロンプトの行だけで、印が変わったときだけ（モデルの名前・言語の欄は作り直さない。macOS 版と
+    // 同じく、打っている途中の欄から入力を取らない）。
+    let p = prompts.downgrade();
     column.connect_realize(move |c| {
         if let Some(window) = c.root().and_downcast::<gtk::Window>() {
-            let r = r.clone();
+            let p = p.clone();
             window.connect_is_active_notify(move |w| {
-                if w.is_active() {
-                    r();
+                if w.is_active()
+                    && let Some(p) = p.upgrade()
+                    && shown_customized(&p) != customized()
+                {
+                    fill_prompts(&p);
                 }
             });
         }
     });
-    let scrolled = gtk::ScrolledWindow::builder()
-        .child(&column)
-        .hscrollbar_policy(gtk::PolicyType::Never)
-        .propagate_natural_height(true)
-        .max_content_height(640)
-        .build();
-    scrolled.upcast()
+    // スクロールは設定の窓のもの（macOS 版と同じく、ページ全体が窓と一緒にスクロールする）。
+    column.upcast()
 }
 
 /// 選んだ CLI の場所・モデル・言語。
@@ -177,6 +177,11 @@ fn fill_details(b: &gtk::Box) {
     let other = ids.len() as u32;
     let refs: Vec<&str> = titles.iter().map(String::as_str).collect();
     let picker = gtk::DropDown::from_strings(&refs);
+    // Other… の上に線（macOS 版の Divider）。
+    crate::settings::separate_items(
+        &picker,
+        std::rc::Rc::new(std::cell::RefCell::new(vec![other])),
+    );
     let custom = !ids.contains(&current);
     picker.set_selected(if custom {
         other
@@ -193,11 +198,17 @@ fn fill_details(b: &gtk::Box) {
     name_row.set_visible(custom);
     b.append(&row(&tr!("Model"), &picker));
     b.append(&name_row);
-    let nr = name_row.downgrade();
+    let (nr, nm) = (name_row.downgrade(), name.downgrade());
     picker.connect_selected_notify(move |d| {
         let i = d.selected();
         if let Some(nr) = nr.upgrade() {
             nr.set_visible(i == other);
+        }
+        // 欄には今のモデルの名前を入れておく（macOS 版は欄が設定そのもの）。
+        if i == other
+            && let Some(nm) = nm.upgrade()
+        {
+            nm.set_text(&assist::model(cli));
         }
         if i != other {
             assist::set_model(cli, &ids[i as usize]);
@@ -221,10 +232,35 @@ fn fill_details(b: &gtk::Box) {
     )));
 }
 
+/// 書き換えた（ファイルのある）用途。
+fn customized() -> Vec<bool> {
+    let store = assist::prompts();
+    Purpose::ALL
+        .into_iter()
+        .map(|p| store.is_customized(p))
+        .collect()
+}
+
+/// 用途ごとのプロンプトの行で出している「書き換えた」の印。
+fn shown_customized(b: &gtk::Box) -> Vec<bool> {
+    // SAFETY: 印は `fill_prompts` が `Vec<bool>` で付けたものだけ。
+    unsafe {
+        b.data::<Vec<bool>>(CUSTOMIZED)
+            .map(|v| v.as_ref().clone())
+            .unwrap_or_default()
+    }
+}
+
+const CUSTOMIZED: &str = "amonhen-customized";
+
 /// 用途ごとのプロンプトの行。
 fn fill_prompts(b: &gtk::Box) {
     while let Some(c) = b.first_child() {
         b.remove(&c);
+    }
+    // SAFETY: 読むのは `shown_customized` だけで、同じ型。
+    unsafe {
+        b.set_data(CUSTOMIZED, customized());
     }
     b.append(&heading(&tr!("Prompts by Purpose")));
     let store = assist::prompts();

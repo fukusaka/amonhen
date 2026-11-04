@@ -74,6 +74,24 @@ enum RepositoryList {
 
     nonisolated(unsafe) private static var worktreeMains: [String: String?] = [:]
 
+    /// `path` の作業ツリーの、refs・config・hooks のある .git（git の `$GIT_COMMON_DIR`）。追加した worktree では
+    /// `.git` が `gitdir: <元>/.git/worktrees/<名前>` のファイルで、その `commondir` が元の .git を指す。手元のものだけ。
+    static func commonGitDirectory(of path: String) -> String {
+        var gitDir = (path as NSString).appendingPathComponent(".git")
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: gitDir, isDirectory: &isDirectory), !isDirectory.boolValue,
+           let text = try? String(contentsOfFile: gitDir, encoding: .utf8), text.hasPrefix("gitdir:") {
+            let target = text.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespacesAndNewlines)
+            gitDir = target.hasPrefix("/") ? target : (path as NSString).appendingPathComponent(target)
+        }
+        if let common = try? String(contentsOfFile: (gitDir as NSString).appendingPathComponent("commondir"), encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines), !common.isEmpty {
+            let resolved = common.hasPrefix("/") ? common : (gitDir as NSString).appendingPathComponent(common)
+            return (resolved as NSString).standardizingPath
+        }
+        return gitDir
+    }
+
     /// 今のブランチ。`.git/HEAD` を読むだけで、git は起動しない（一覧を開くたびに数十件を読むため）。
     static func branch(of path: String) -> String? {
         if RepositoryLocation.isRemote(path) { return nil }
@@ -940,14 +958,22 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
     }
 
     @objc private func newGroup() {
-        guard let name = ask(L("New Group"), message: L("Group name"), initial: "") else { return }
-        Bookmarks.shared.addGroup(name)
-        category = .group(name)
-        reload()
+        Task { @MainActor in
+            guard let name = await ask(L("New Group"), message: L("Group name"), initial: "") else { return }
+            Bookmarks.shared.addGroup(name)
+            category = .group(name)
+            reload()
+        }
+    }
+
+    /// 窓のシートで聞く（窓がなければアプリ全体で）。
+    private func present(_ alert: NSAlert) async -> NSApplication.ModalResponse {
+        guard let window = view.window else { return alert.runModal() }
+        return await alert.beginSheetModal(for: window)
     }
 
     /// 名前を聞く。Cancel なら nil。空なら nil（`allowEmpty` なら ""。空にして元に戻すとき）。
-    private func ask(_ title: String, message: String, initial: String, allowEmpty: Bool = false) -> String? {
+    private func ask(_ title: String, message: String, initial: String, allowEmpty: Bool = false) async -> String? {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = message
@@ -957,7 +983,7 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         field.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
         alert.accessoryView = field
         alert.window.initialFirstResponder = field
-        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        guard await present(alert) == .alertFirstButtonReturn else { return nil }
         let value = field.stringValue.trimmingCharacters(in: .whitespaces)
         return value.isEmpty && !allowEmpty ? nil : value
     }
@@ -999,14 +1025,17 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
     private func removeHost(_ name: String) {
         let paths = paths(in: .host(name))
         let roots = Bookmarks.shared.data.scanRoots.map(\.path).filter { Self.sshHost($0) == name }
-        guard SSHConnectionSheet.confirmRemove(host: name, repositories: paths.count, folders: roots.count) else { return }
-        for path in paths {
-            RepositoryList.remove(path)
-            Bookmarks.shared.remove(path)
+        Task { @MainActor in
+            guard await SSHConnectionSheet.confirmRemove(
+                host: name, repositories: paths.count, folders: roots.count, in: view.window) else { return }
+            for path in paths {
+                RepositoryList.remove(path)
+                Bookmarks.shared.remove(path)
+            }
+            for root in roots { Bookmarks.shared.removeScanRoot(root) }
+            category = .all
+            reload()
         }
-        for root in roots { Bookmarks.shared.removeScanRoot(root) }
-        category = .all
-        reload()
     }
 
     // MARK: - 外す
@@ -1096,7 +1125,8 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
             alert.informativeText = L("%@\nRemove it from the list?", path)
             alert.addButton(withTitle: L("Remove"))
             alert.addButton(withTitle: L("Cancel"))
-            if alert.runModal() == .alertFirstButtonReturn {
+            Task { @MainActor in
+                guard await present(alert) == .alertFirstButtonReturn else { return }
                 RepositoryList.remove(path)
                 Bookmarks.shared.remove(path)
                 reload()
@@ -1152,15 +1182,20 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
             add(L("Add Local Repository…")) { [weak self] in self?.addRepository() }
             add(L("Add Folder to Scan…")) { [weak self] in self?.addScanFolder() }
         case let .group(name):
-            add(L("Rename…")) { [weak self] in
+            add(L("Rename…")) { [weak self] in Task { @MainActor in
                 // 同じ名前のままなら何もしない（下で元のグループを消すと、グループがなくなる）。
-                guard let new = self?.ask(L("Rename Group"), message: L("Group name"), initial: name), new != name
+                guard let self, let new = await self.ask(L("Rename Group"), message: L("Group name"), initial: name), new != name
                 else { return }
                 let members = Bookmarks.shared.data.items.filter { $0.group == name }.map(\.path)
                 Bookmarks.shared.addGroup(new)
                 for path in members { Bookmarks.shared.move(path, to: new) }
                 Bookmarks.shared.removeGroup(name)
-            }
+                // 選んでいたグループなら、新しい名前のグループを選んだままに（「すべて」に戻さない）。
+                if self.category == .group(name) {
+                    self.category = .group(new)
+                    self.reload()
+                }
+            } }
             add(L("Delete Group")) { Bookmarks.shared.removeGroup(name) }
         case let .scan(path):
             if let error = Bookmarks.shared.scanErrors[path] {
@@ -1208,7 +1243,11 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         menu.addItem(.separator())
         add(targets.count > 1 ? L("Fetch (%ld)", targets.count) : "Fetch") { Bookmarks.shared.fetch(targets) }
         menu.addItem(.separator())
-        add(bookmark?.favorite == true ? L("Remove from Favorites") : L("Add to Favorites")) { Bookmarks.shared.toggleFavorite(path) }
+        // 選んだ行すべてを、押した行と逆の側にそろえる（Fetch・Group・Color Label と同じく、選んだ行に効く）。
+        let favorite = bookmark?.favorite != true
+        add(favorite ? L("Add to Favorites") : L("Remove from Favorites")) {
+            for p in targets where (Bookmarks.shared.bookmark(p)?.favorite == true) != favorite { Bookmarks.shared.toggleFavorite(p) }
+        }
         let groups = NSMenu(title: L("Group"))
         let none = ClosureMenuItem(title: L("None")) { for p in targets { Bookmarks.shared.move(p, to: nil) } }
         none.state = bookmark?.group == nil ? .on : .off
@@ -1219,11 +1258,11 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
             groups.addItem(item)
         }
         groups.addItem(.separator())
-        groups.addItem(ClosureMenuItem(title: L("New Group…")) { [weak self] in
-            guard let name = self?.ask(L("New Group"), message: L("Group name"), initial: "") else { return }
+        groups.addItem(ClosureMenuItem(title: L("New Group…")) { [weak self] in Task { @MainActor in
+            guard let name = await self?.ask(L("New Group"), message: L("Group name"), initial: "") else { return }
             Bookmarks.shared.addGroup(name)
             for p in targets { Bookmarks.shared.move(p, to: name) }
-        })
+        } })
         let groupItem = NSMenuItem(title: L("Group"), action: nil, keyEquivalent: "")
         groupItem.submenu = groups
         menu.addItem(groupItem)
@@ -1240,15 +1279,15 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         let colorItem = NSMenuItem(title: L("Color Label"), action: nil, keyEquivalent: "")
         colorItem.submenu = colors
         menu.addItem(colorItem)
-        add(L("Rename…")) { [weak self] in
+        add(L("Rename…")) { [weak self] in Task { @MainActor in
             let current = Bookmarks.shared.displayName(path)
             // Cancel なら変えない（空にして OK ならフォルダの名前に戻す）。
-            guard let name = self?.ask(
+            guard let name = await self?.ask(
                 L("Rename"), message: L("Name shown in the list (leave empty for the folder name)"), initial: current,
                 allowEmpty: true
             ) else { return }
             Bookmarks.shared.rename(path, to: name.isEmpty ? nil : name)
-        }
+        } }
         if !RepositoryLocation.isRemote(path) {
             menu.addItem(.separator())
             add(L("Show in Finder")) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }

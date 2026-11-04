@@ -36,8 +36,8 @@ const CI_SPACE: f32 = 18.0;
 const CHUNK_ROWS: u32 = 256;
 /// 持っておくチャンクの数（見えている所に近いものから）。
 const KEPT_CHUNKS: usize = 24;
-/// グラフの列の幅の上限。
-const GRAPH_WIDTH: f32 = 160.0;
+/// グラフの列の幅の上限（macOS 版の `GraphRenderer.Metrics.maxWidth`）。
+const GRAPH_WIDTH: f32 = 120.0;
 /// 文字の列の左右の余白。
 const TEXT_INSET: f32 = 8.0;
 /// 行ごとのグラフの右端と、件名などの間（macOS 版の `graphGap`）。
@@ -130,15 +130,6 @@ fn signature_color(status: Option<Status>, fg: &gdk::RGBA) -> gdk::RGBA {
     }
 }
 
-/// 行の署名の丸を塗りつぶすか（macOS 版の SF Symbols の `.fill`: 強い信用の Verified、失効・不正な署名）。
-/// そのほか（marginal の信用・信用していない鍵・署名者の不一致・期限切れ・鍵なし・未検証）は縁だけ。
-fn signature_filled(status: Option<Status>) -> bool {
-    matches!(
-        status,
-        Some(Status::Verified(3..) | Status::Revoked | Status::Bad)
-    )
-}
-
 /// `verifySignatures` の答えの 1 件から状態を決める（コアがコミッターのメールを添える。macOS 版と同じ）。
 fn signature_status(check: &serde_json::Value) -> Status {
     let signer = check["signer"].as_str().unwrap_or_default();
@@ -177,6 +168,8 @@ pub struct State {
     on_select: Option<SelectCallback>,
     /// 行を右クリックしたときに呼ぶ（行、x、y）。
     on_menu: Option<MenuCallback>,
+    /// メニューを出している行（選びはせず、枠で示す。macOS 版の `clickedRow`）。
+    menu_row: Option<u32>,
     /// 検索に一致した行（昇順）。薄く塗る。
     matches: Rc<Vec<u32>>,
     lanes: Lanes,
@@ -217,6 +210,9 @@ pub struct State {
     on_drag_start: Option<Rc<dyn Fn()>>,
     /// 出す History が替わったときに呼ぶ（密度の帯が求め直す）。
     on_history: Option<Rc<dyn Fn()>>,
+    /// 最後に描いたグラフの列の幅と、それが変わったときに呼ぶもの（列の見出しが合わせる）。
+    graph_width: f32,
+    on_graph_width: Option<Rc<dyn Fn()>>,
     /// 最後に描いたもの（読み直したとき、ここから新しい表示へ溶かす）。
     last_node: Option<gsk::RenderNode>,
     /// 溶かしている途中の前の表示と、始めた時刻。
@@ -358,12 +354,16 @@ mod imp {
                             state.contains(gdk::ModifierType::SHIFT_MASK),
                             state.contains(gdk::ModifierType::CONTROL_MASK),
                         );
+                    } else if view.below_rows(y as f32) {
+                        // 最後の行より下: 選択を外し、詳細も消す（macOS 版の表と同じ）。
+                        view.clear_selection();
                     }
                 }
             });
             view.add_controller(click);
 
-            // 右クリック: その行を選んで、コミットのメニュー。
+            // 右クリック: その行のコミットのメニュー。選びはせず（詳細はそのまま）、メニューの間は行を枠で示す
+            // （macOS 版の `clickedRow`）。複数選んでいる行の上なら、まとめての操作のメニュー。
             let menu = gtk::GestureClick::new();
             menu.set_button(gdk::BUTTON_SECONDARY);
             let weak = view.downgrade();
@@ -371,10 +371,6 @@ mod imp {
                 let Some(view) = weak.upgrade() else { return };
                 view.grab_focus();
                 if let Some(row) = view.row_at(y as f32) {
-                    // 複数選んでいる行の上なら、選んだまま（まとめての操作のメニュー）。
-                    if !view.selection().contains(&row) {
-                        view.select_visible(row);
-                    }
                     let f = view.state().on_menu.clone();
                     if let Some(f) = f {
                         f(row, x, y);
@@ -756,6 +752,8 @@ impl HistoryView {
             }
             // shallow clone の境界のコミットの行（境界はたいてい数個なので、全行を見ても数 ms）。
             st.boundary = Rc::new(history.boundary_rows().into_iter().collect());
+            // 行の番号が変わるので、メニューの行の枠は外す。
+            st.menu_row = None;
             st.history = Some(history);
             st.chunks.clear();
             st.loading.clear();
@@ -805,8 +803,9 @@ impl HistoryView {
             st.fonts = None;
         }
         self.configure_adjustments();
+        // 行の高さが変わるので、選んでいる行を表の中ほどに置き直す（macOS 版の `rowStyleChanged`）。
         if let Some(row) = self.selected() {
-            self.scroll_to_row(row);
+            self.center_row(row);
         }
         self.update_lineage();
         self.queue_draw();
@@ -1186,6 +1185,38 @@ impl HistoryView {
         self.state().on_menu = Some(Rc::new(f));
     }
 
+    /// 最後に描いたグラフの列の幅（列の見出しの「Message」の位置）。
+    pub fn graph_width(&self) -> f32 {
+        self.state().graph_width
+    }
+
+    /// グラフの列の幅が変わったら `f()` を呼ぶ。
+    pub fn connect_graph_width(&self, f: impl Fn() + 'static) {
+        self.state().on_graph_width = Some(Rc::new(f));
+    }
+
+    /// 列の見出しの「Message」の左端（行の文字と同じく、グラフの右端から少し空ける）。
+    pub fn message_x(&self) -> f32 {
+        self.graph_width() + GRAPH_GAP
+    }
+
+    /// `row` のメニュー `popover` を出した。閉じるまで、その行を枠で示す（選んでいない行でも）。
+    pub fn mark_menu_row(&self, row: u32, popover: &impl IsA<gtk::Popover>) {
+        self.state().menu_row = Some(row);
+        self.queue_draw();
+        let weak = self.downgrade();
+        popover.connect_closed(move |_| {
+            if let Some(view) = weak.upgrade() {
+                let mut st = view.state();
+                if st.menu_row == Some(row) {
+                    st.menu_row = None;
+                    drop(st);
+                    view.queue_draw();
+                }
+            }
+        });
+    }
+
     /// 選んだ行が変わったら `f(選んでいる行、昇順)` を呼ぶ。
     /// GitHub の CI の状態（コミットごと）を替える。変わったら描き直す。
     pub fn set_ci(&self, ci: HashMap<Oid, Ci>) {
@@ -1278,6 +1309,14 @@ impl HistoryView {
         adj.set_value(mid.clamp(0.0, (adj.upper() - adj.page_size()).max(0.0)));
     }
 
+    /// 先頭の行までスクロールする（範囲・折りたたみを変えて出し直したとき。macOS 版の `resetScroll`）。
+    pub fn scroll_to_top(&self) {
+        self.state().pending_scroll = None;
+        if let Some(adj) = self.vadjustment() {
+            adj.set_value(0.0);
+        }
+    }
+
     /// `row` が見えるようにスクロールする。
     pub fn scroll_to_row(&self, row: u32) {
         let Some(adj) = self.vadjustment() else {
@@ -1365,22 +1404,58 @@ impl HistoryView {
         (row >= 0.0 && (row as u32) < self.row_count()).then_some(row as u32)
     }
 
-    /// 矢印などで選ぶ行を動かす。`extend`（Shift）なら起点からの範囲を選ぶ。
+    /// `y` が最後の行より下か（shallow clone の帯の上は除く）。
+    fn below_rows(&self, y: f32) -> bool {
+        let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
+        let end = self.row_count() as f32 * self.row_height();
+        let footer = if self.footer_shown() {
+            FOOTER_HEIGHT
+        } else {
+            0.0
+        };
+        y + scroll >= end + footer
+    }
+
+    /// 何も選んでいない状態にする。
+    fn clear_selection(&self) {
+        {
+            let mut st = self.state();
+            if st.selected.is_none() && st.extra.is_empty() {
+                return;
+            }
+            st.selected = None;
+            st.extra.clear();
+            st.anchor = None;
+        }
+        self.queue_draw();
+        self.notify_selection();
+    }
+
+    /// 矢印で選ぶ行を動かす。`extend`（Shift）なら起点からの範囲を選ぶ。Page Up・Page Down・Home・End は
+    /// 選ばずにスクロールだけ（macOS 版の表と同じ）。
     fn move_selection(&self, key: gdk::Key, extend: bool) -> bool {
         let count = self.row_count();
         if count == 0 {
             return false;
         }
-        let page = self.vadjustment().map_or(1.0, |a| a.page_size()) as f32 / self.row_height();
-        let page = (page.floor() as u32).max(1);
+        if let Some(adj) = self.vadjustment() {
+            let (value, page) = (adj.value(), adj.page_size());
+            let target = match key {
+                gdk::Key::Page_Down => Some(value + page),
+                gdk::Key::Page_Up => Some(value - page),
+                gdk::Key::Home => Some(adj.lower()),
+                gdk::Key::End => Some(adj.upper()),
+                _ => None,
+            };
+            if let Some(target) = target {
+                adj.set_value(target.clamp(adj.lower(), (adj.upper() - page).max(adj.lower())));
+                return true;
+            }
+        }
         let current = self.selected();
         let row = match key {
             gdk::Key::Down => current.map_or(0, |r| (r + 1).min(count - 1)),
             gdk::Key::Up => current.map_or(0, |r| r.saturating_sub(1)),
-            gdk::Key::Page_Down => current.map_or(0, |r| (r + page).min(count - 1)),
-            gdk::Key::Page_Up => current.map_or(0, |r| r.saturating_sub(page)),
-            gdk::Key::Home => 0,
-            gdk::Key::End => count - 1,
             _ => return false,
         };
         if extend {
@@ -1554,22 +1629,6 @@ impl HistoryView {
             let first = ((scroll_y / rh).floor().max(0.0) as u32).min(count);
             let last = (((scroll_y + height) / rh).ceil() as u32 + 1).min(count);
 
-            // 検索に一致した行の背景（選んでいる行は、選んだ色で上から塗る）。
-            let from = st.matches.partition_point(|&r| r < first);
-            for &row in st.matches[from..].iter().take_while(|&&r| r < last) {
-                let y = row as f32 * rh - scroll_y;
-                let rect = gsk::RoundedRect::from_rect(
-                    graphene::Rect::new(2.0, y + 1.0, width - 4.0, rh - 2.0),
-                    4.0,
-                );
-                let path = gsk::PathBuilder::new();
-                path.add_rounded_rect(&rect);
-                snapshot.append_fill(
-                    &path.to_path(),
-                    gsk::FillRule::Winding,
-                    &gdk::RGBA::new(1.0, 0.8, 0.0, 0.14),
-                );
-            }
             // 選んでいる行の背景。
             let color = if focused {
                 accent
@@ -1586,13 +1645,40 @@ impl HistoryView {
                 let y = row as f32 * rh - scroll_y;
                 snapshot.append_color(&color, &graphene::Rect::new(0.0, y, width, rh));
             }
+            // メニューを出している行の枠（macOS 版の表の、右クリックした行の枠）。
+            if let Some(row) = st.menu_row.filter(|r| (first..last).contains(r)) {
+                let y = row as f32 * rh - scroll_y;
+                let rect = gsk::RoundedRect::from_rect(
+                    graphene::Rect::new(1.0, y + 1.0, width - 2.0, rh - 2.0),
+                    4.0,
+                );
+                let path = gsk::PathBuilder::new();
+                path.add_rounded_rect(&rect);
+                let ring = if chosen.contains(&row) && focused {
+                    on_accent
+                } else {
+                    accent
+                };
+                snapshot.append_stroke(&path.to_path(), &gsk::Stroke::new(2.0), &ring);
+            }
 
             // グラフ。列は見えているレーンの分だけ取り、スクロールで見えるレーンが変われば伸び縮みする（macOS 版と
-            // 同じ）。使えるのは上限まで（狭い窓では幅の 4 割まで）。
-            let max_graph = GRAPH_WIDTH.min(width * 0.4).max(40.0);
+            // 同じ）。使えるのは上限まで。
+            let max_graph = GRAPH_WIDTH;
             st.lanes
                 .update(&history, first..last, max_graph, &st.metrics, true);
             let graph_width = st.lanes.width();
+            if (graph_width - st.graph_width).abs() >= 0.5 {
+                st.graph_width = graph_width;
+                // 描いている間に見出しを描き直させない。次の描画の前に知らせる（ふつうの idle では、History を
+                // 描き続けている間は遅れる）。
+                if let Some(f) = st.on_graph_width.clone() {
+                    glib::idle_add_local_full(glib::Priority::HIGH, move || {
+                        f();
+                        glib::ControlFlow::Break
+                    });
+                }
+            }
             snapshot.push_clip(&graphene::Rect::new(0.0, 0.0, max_graph, height));
             let extents = graph::draw(
                 snapshot,
@@ -1632,6 +1718,27 @@ impl HistoryView {
                     .map_or(graph_width + TEXT_INSET, |x| (x + GRAPH_GAP).round())
             };
             let row_end = width - TEXT_INSET;
+            // 検索に一致した行の背景。文字の所だけ（その行のグラフの右端から列の終わりまで）で、選んでいる行には
+            // 塗らない（macOS 版と同じ）。
+            let from = st.matches.partition_point(|&r| r < first);
+            for &row in st.matches[from..].iter().take_while(|&&r| r < last) {
+                if st.selected == Some(row) || st.extra.contains(&row) {
+                    continue;
+                }
+                let y = row as f32 * rh - scroll_y;
+                let start = text_x_of(row);
+                let rect = gsk::RoundedRect::from_rect(
+                    graphene::Rect::new(start - 3.0, y + 1.0, row_end - start + 6.0, rh - 2.0),
+                    4.0,
+                );
+                let path = gsk::PathBuilder::new();
+                path.add_rounded_rect(&rect);
+                snapshot.append_fill(
+                    &path.to_path(),
+                    gsk::FillRule::Winding,
+                    &gdk::RGBA::new(1.0, 0.8, 0.0, 0.14),
+                );
+            }
             let secondary = gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), fg.alpha() * 0.6);
             // 選んだ行の文字は、選択の色の上の文字の色（macOS 版の alternateSelectedControlTextColor）。
             let white = on_accent;
@@ -1767,16 +1874,14 @@ impl HistoryView {
                     } else {
                         signature_color(mark, &fg)
                     };
-                    // 塗りつぶしは強い信用（と、はっきり悪いもの）、縁だけは弱い信用やそれ以外（macOS 版の
-                    // アイコンの塗りつぶしと縁だけの違い）。
-                    let path = gsk::PathBuilder::new();
-                    if signature_filled(mark) {
-                        path.add_circle(&graphene::Point::new(cx, cy), 3.5);
-                        snapshot.append_fill(&path.to_path(), gsk::FillRule::Winding, &color);
-                    } else {
-                        path.add_circle(&graphene::Point::new(cx, cy), 3.0);
-                        snapshot.append_stroke(&path.to_path(), &gsk::Stroke::new(1.3), &color);
-                    }
+                    // 状態ごとの印（macOS 版の `symbol`。サイドバーのタグの印・吹き出しの見出しと同じ形）。
+                    crate::icon::draw_at(
+                        snapshot,
+                        mark.map_or(crate::icon::Kind::Seal, Status::icon),
+                        &color,
+                        graphene::Point::new(cx, cy),
+                        11.0,
+                    );
                 }
             }
         }
@@ -1816,12 +1921,12 @@ impl HistoryView {
             parts.push(chunk.text(chunk.0.author_names[i]).to_owned());
         }
         if shown & items::DATE != 0 {
-            // 地域の書式（1 行では日付だけ。macOS 版と同じ）。
+            // 地域の書式（1 行では短い日付だけ、2 行では .medium の日付と時刻。macOS 版と同じ）。
             let time = chunk.0.author_times[i];
             parts.push(if compact {
                 crate::titles::date(time)
             } else {
-                crate::titles::date_time(time, false)
+                crate::titles::medium_date_time(time)
             });
         }
         if shown & items::ID != 0 {
@@ -2040,8 +2145,13 @@ fn label_colors(
     if label.worktree && label.head {
         return (gdk::RGBA::new(r, g, b, 0.85), gdk::RGBA::WHITE);
     }
+    // ほかの worktree が checkout しているブランチは、worktree の札より少し薄い（macOS 版と同じ）。
     if label.worktree || label.elsewhere {
-        let alpha = if selected { 0.45 } else { 0.25 };
+        let alpha = match (selected, label.worktree) {
+            (true, _) => 0.45,
+            (false, true) => 0.25,
+            (false, false) => 0.22,
+        };
         return (gdk::RGBA::new(r, g, b, alpha), ink);
     }
     let (r, g, b) = match label.kind {

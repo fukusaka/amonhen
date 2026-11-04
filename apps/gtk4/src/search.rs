@@ -2,6 +2,7 @@
 //! 欄を出す（GNOME の検索バー）。Enter で探し、一致した行を塗って件数を出し、選んでいる行より後の最初の一致を
 //! 選ぶ。同じ問い合わせなら Enter で次へ、Shift+Enter で前へ（Ctrl+G・Ctrl+Shift+G でも）。書き方はコアの
 //! `query`（`author:`・`subject:`・`commit:`・`path:`・`contents:`・`after:`・`before:`、AND・OR・括弧）。
+//! 欄の中の虫眼鏡（▾ 付き）のメニューで、作者・パス・内容・日時で探す書き方を入れる（macOS 版と同じ）。
 //! partial clone で中身を探す前は、手元にない中身の数を出して断る。探している間は、分かった分から塗って件数と
 //! 進み具合を出す（macOS 版と同じ）。
 //! 一致したコミットだけを出す切り替え（macOS 版と同じ）を入れると、一致したものだけの History
@@ -36,6 +37,13 @@ struct Inner {
     /// 一致した行（昇順）と、それを探した問い合わせと History の世代。
     matches: RefCell<Rc<Vec<u32>>>,
     searched: RefCell<Option<(String, u64)>>,
+    /// 探した問い合わせが決まった・消えた（Find Next を使えるかを決め直す）。
+    on_find_state: RefCell<Option<Rc<dyn Fn()>>>,
+    /// タブの中で最後にフォーカスがあった部品（メニューや見出しの帯を押してフォーカスが移っても、Find Next は
+    /// その部品に効かせる。macOS 版のメニューは first responder を変えない）。
+    last_focus: RefCell<glib::WeakRef<gtk::Widget>>,
+    /// タブの中身（`last_focus` を覚える範囲）。
+    tab_root: RefCell<glib::WeakRef<gtk::Widget>>,
     generation: Cell<u64>,
     /// 最後に探し始めた問い合わせ（History を読み直したとき、絞り込んだままにするなら探し直す）。
     requested: RefCell<Option<String>>,
@@ -65,21 +73,100 @@ struct Inner {
     on_show_fetching: RefCell<Option<Rc<dyn Fn()>>>,
 }
 
+/// `entry` の虫眼鏡を `button` に替える: 欄の虫眼鏡を隠し、空けた欄の左にボタンを重ねる（欄そのものは
+/// GtkSearchEntry のまま。Esc・入力の待ち・消すボタンはそのまま働く）。
+fn put_in_field(entry: &gtk::SearchEntry, button: &impl IsA<gtk::Widget>) -> gtk::Overlay {
+    if let Some(icon) = entry.first_child().and_downcast::<gtk::Image>() {
+        icon.set_visible(false);
+    }
+    entry.add_css_class("scoped");
+    button.set_halign(gtk::Align::Start);
+    button.set_valign(gtk::Align::Center);
+    button.set_margin_start(4);
+    let overlay = gtk::Overlay::builder().child(entry).hexpand(true).build();
+    overlay.add_overlay(button);
+    overlay
+}
+
+/// 欄の中のボタンの見た目（一度だけ入れる）。
+fn install_css() {
+    thread_local! {
+        static DONE: Cell<bool> = const { Cell::new(false) };
+    }
+    if DONE.with(|d| d.replace(true)) {
+        return;
+    }
+    let provider = gtk::CssProvider::new();
+    provider.load_from_string(
+        "entry.search.scoped { padding-left: 34px; } \
+         menubutton.search-scope > button { min-height: 0; min-width: 0; padding: 2px 4px; }",
+    );
+    if let Some(display) = gdk::Display::default() {
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
+}
+
 impl Search {
     pub fn new(view: &HistoryView) -> Self {
         // 書き方が分かるように、欄の中と吹き出しに説明を出す（macOS 版と同じ）。
         let entry = gtk::SearchEntry::builder()
             .placeholder_text(tr!("Search (author:, path:, contents: also work)"))
-            .tooltip_text(format!(
-                "{}\n{}",
-                tr!(
-                    "Words match the subject, author and ID. Spaces mean AND, “or” means OR, and parentheses group.\nauthor:name  subject:text  commit:ID  path:path  contents:\"diff text\"\nExample: path:fs/ (author:linus or author:greg)"
-                ),
-                // macOS 版は ▾ のメニューで入れる日時の書き方（GTK 版には ▾ がないので、ここで知らせる）。
-                tr!("after:2026-01-01  before:2026-06-30 (committed after or before a date)")
+            .tooltip_text(tr!(
+                "Words match the subject, author and ID. Spaces mean AND, “or” means OR, and parentheses group.\nauthor:name  subject:text  commit:ID  path:path  contents:\"diff text\"\nExample: path:fs/ (author:linus or author:greg)"
             ))
             .hexpand(true)
             .build();
+        // ▾: 作者・パス・内容・日時で探す書き方を入れる（macOS 版の検索の欄の ▾ のメニューと同じ）。
+        let scopes = gio::Menu::new();
+        for (title, prefix) in SCOPES {
+            scopes.append(
+                Some(&amonhen_model::i18n::translate(title)),
+                Some(&gio::Action::print_detailed_name(
+                    "search.insert-prefix",
+                    Some(&prefix.to_variant()),
+                )),
+            );
+        }
+        // 欄の虫眼鏡を ▾ 付きのボタンに替える（NSSearchField と同じく、欄の中の虫眼鏡は 1 つ）。
+        let scope_icon = crate::icon::Icon::default();
+        scope_icon.set(crate::icon::Kind::Search, false);
+        let arrow: gtk::Widget =
+            if gtk::IconTheme::for_display(&view.display()).has_icon("pan-down-symbolic") {
+                let arrow = gtk::Image::from_icon_name("pan-down-symbolic");
+                arrow.set_pixel_size(8);
+                arrow.upcast()
+            } else {
+                let arrow = gtk::Label::new(Some("▾"));
+                arrow.add_css_class("caption");
+                arrow.upcast()
+            };
+        let scope_inner = gtk::Box::new(gtk::Orientation::Horizontal, 1);
+        scope_inner.append(&scope_icon);
+        scope_inner.append(&arrow);
+        let scope = gtk::MenuButton::builder()
+            .menu_model(&scopes)
+            .child(&scope_inner)
+            .has_frame(false)
+            .build();
+        scope.add_css_class("search-scope");
+        install_css();
+        let field = put_in_field(&entry, &scope);
+        let insert = gio::SimpleAction::new("insert-prefix", Some(glib::VariantTy::STRING));
+        let e = entry.clone();
+        insert.connect_activate(move |_, prefix| {
+            let Some(prefix) = prefix.and_then(|p| p.str()) else {
+                return;
+            };
+            e.set_text(&with_prefix(&e.text(), prefix));
+            e.grab_focus();
+            e.set_position(-1);
+        });
+        let search_actions = gio::SimpleActionGroup::new();
+        search_actions.add_action(&insert);
         let count = gtk::Label::new(None);
         count.add_css_class("dim-label");
         count.add_css_class("numeric");
@@ -105,7 +192,8 @@ impl Search {
         only.set_sensitive(false);
         steps.append(&only);
         let line = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        line.append(&entry);
+        line.insert_action_group("search", Some(&search_actions));
+        line.append(&field);
         line.append(&spinner);
         line.append(&count);
         line.append(&steps);
@@ -119,9 +207,18 @@ impl Search {
         icon.set(crate::icon::Kind::Search, false);
         toggle.set_child(Some(&icon));
         toggle.set_tooltip_text(Some(&tr!("Search History (Ctrl+F)")));
+        // ボタンを切っても、欄が見えていない（ほかの画面にいる）ときは欄を閉じない。`install` の clicked が History に
+        // 移る（閉じると問い合わせ・一致・絞り込みが消える。macOS 版の検索欄はそのまま History で探す）。
         bar.bind_property("search-mode-enabled", &toggle, "active")
             .bidirectional()
             .sync_create()
+            .transform_from(|binding, active: bool| {
+                let shown = binding.source().is_some_and(|bar| {
+                    bar.downcast_ref::<gtk::Widget>()
+                        .is_some_and(|b| b.is_mapped())
+                });
+                (active || shown).then_some(active)
+            })
             .build();
 
         let inner = Rc::new(Inner {
@@ -131,6 +228,9 @@ impl Search {
             spinner,
             matches: RefCell::default(),
             searched: RefCell::default(),
+            on_find_state: RefCell::default(),
+            last_focus: RefCell::default(),
+            tab_root: RefCell::default(),
             generation: Cell::new(0),
             requested: RefCell::default(),
             index: Cell::new(None),
@@ -188,8 +288,38 @@ impl Search {
     /// タブのアクション（`win.find`・`win.find-next`・`win.find-previous`）を足す（ショートカットは
     /// `crate::appmenu` が入れる）。
     pub fn install(&self, group: &gio::SimpleActionGroup) {
+        // 見出しの検索のボタン・Ctrl+F で欄を開いたとき、ほかの画面にいれば History に移る（欄は History の上に
+        // しかない。macOS 版の検索欄も History を選んでから探す）。
+        let g = group.downgrade();
+        self.bar.connect_search_mode_enabled_notify(move |bar| {
+            if bar.is_search_mode()
+                && !bar.is_mapped()
+                && let Some(group) = g.upgrade()
+            {
+                group.activate_action("show-history", None);
+            }
+        });
+        // 欄を開いたまま History を離れていれば、押しても閉じずに History に移る。
+        let (g, bar, entry) = (
+            group.downgrade(),
+            self.bar.clone(),
+            self.inner.entry.clone(),
+        );
+        self.toggle.connect_clicked(move |toggle| {
+            if !bar.is_mapped()
+                && !toggle.is_active()
+                && let Some(group) = g.upgrade()
+            {
+                // 欄は開いたまま（上の bind_property が閉じない）。ボタンを戻して History に移る。
+                toggle.set_active(true);
+                bar.set_search_mode(true);
+                group.activate_action("show-history", None);
+                entry.grab_focus();
+            }
+        });
         let find = gio::SimpleAction::new("find", None);
         let (bar, entry) = (self.bar.clone(), self.inner.entry.clone());
+        let g = group.downgrade();
         find.connect_activate(move |_, _| {
             // フォーカスが History の差分にあれば、その差分の中を探す（macOS 版と同じ）。
             if let Some(w) = bar.root().and_downcast::<gtk::Window>()
@@ -198,6 +328,13 @@ impl Search {
                     || crate::difffind::find_in_focused(&w))
             {
                 return;
+            }
+            // もう開いていれば notify が来ないので、ここで History に移る。
+            if bar.is_search_mode()
+                && !bar.is_mapped()
+                && let Some(group) = g.upgrade()
+            {
+                group.activate_action("show-history", None);
             }
             bar.set_search_mode(true);
             entry.grab_focus();
@@ -216,6 +353,11 @@ impl Search {
             let action = gio::SimpleAction::new(name, None);
             let (i, bar) = (self.inner.clone(), self.bar.clone());
             action.connect_activate(move |_, _| {
+                // メニューから押してフォーカスがタブの外（メニュー・見出しの帯）にあれば、タブの中で最後にフォーカスが
+                // あった部品に戻してから決める（macOS 版のメニューは first responder を変えない）。
+                if let Some(w) = bar.root().and_downcast::<gtk::Window>() {
+                    i.restore_focus(&w);
+                }
                 // 差分の中を探しているなら、その一致へ。
                 if let Some(w) = bar.root().and_downcast::<gtk::Window>()
                     && (crate::messagefind::find_next_in_focused(&w, step)
@@ -227,7 +369,21 @@ impl Search {
                 // まだ探していないとき: History を見ていれば欄を開き、ほかの所にいれば鳴らす。探していれば
                 // History に移って次の一致へ（macOS 版の History の moveSearch と、窓の findNext と同じ）。
                 if i.searched.borrow().is_none() {
-                    if bar.is_mapped() {
+                    // 詳細・差分にフォーカスがあれば、その検索の帯を開いて次の一致へ（macOS 版と同じ）。
+                    if let Some(w) = bar.root().and_downcast::<gtk::Window>()
+                        && (crate::messagefind::find_next_opening(&w, step)
+                            || crate::commitfiles::find_next_opening(&w, step)
+                            || crate::difffind::find_next_opening(&w, step))
+                    {
+                        return;
+                    }
+                    // History の欄を開くのは、フォーカスが History の中にあるときだけ（macOS 版の History の
+                    // findNext。ほかの所では窓の findNext に行き、History を探していなければ何もしない）。
+                    let in_history = bar
+                        .root()
+                        .and_downcast::<gtk::Window>()
+                        .is_some_and(|w| focus_in_history(&w, &bar));
+                    if bar.is_mapped() && in_history {
                         bar.set_search_mode(true);
                         i.entry.grab_focus();
                     } else if let Some(w) = bar.root().and_downcast::<gtk::Window>() {
@@ -240,6 +396,72 @@ impl Search {
             });
             group.add_action(&action);
         }
+    }
+
+    /// Find Next・Find Previous が効くか（macOS 版で ⌘G を受ける部品があるか）を、変わるたびに `f(効くか)` で
+    /// 知らせる: History を探した、またはフォーカスが差分（検索の帯の欄は除く）か詳細か History の
+    /// 中にある。`root`（タブの中身）が前にある間、窓のフォーカスの移りを見る。フォーカスがタブの外（メニュー・
+    /// 見出しの帯）に移っても、タブの中で最後にフォーカスがあった所で決める。
+    pub fn track_focus(&self, root: &gtk::Widget, f: impl Fn(bool) + 'static) {
+        self.inner.tab_root.replace(root.downgrade());
+        let last = Rc::new(Cell::new(false));
+        // タブの中のフォーカスで決めた分。
+        let by_focus = Rc::new(Cell::new(false));
+        let refresh: Rc<dyn Fn()> = {
+            // 探した状態から呼ばれるので、循環しないよう弱く持つ。
+            let (i, bar, root) = (
+                Rc::downgrade(&self.inner),
+                self.bar.downgrade(),
+                root.downgrade(),
+            );
+            Rc::new(move || {
+                let (Some(root), Some(i), Some(bar)) = (root.upgrade(), i.upgrade(), bar.upgrade())
+                else {
+                    return;
+                };
+                if let Some(window) = root.root().and_downcast::<gtk::Window>()
+                    && let Some(focus) = gtk::prelude::GtkWindowExt::focus(&window)
+                    && (focus == root || focus.is_ancestor(&root))
+                {
+                    i.last_focus.replace(focus.downgrade());
+                    by_focus.set(
+                        crate::messagefind::find_next_possible(&window)
+                            || crate::commitfiles::find_next_possible(&window)
+                            || crate::difffind::find_next_possible(&window)
+                            || (bar.is_mapped() && focus_in_history(&window, &bar)),
+                    );
+                }
+                let available = i.searched.borrow().is_some() || by_focus.get();
+                if last.replace(available) != available {
+                    f(available);
+                }
+            })
+        };
+        let r = refresh.clone();
+        self.inner.on_find_state.replace(Some(Rc::new(move || r())));
+        type Watch = Option<(glib::WeakRef<gtk::Window>, glib::SignalHandlerId)>;
+        let watch: Rc<RefCell<Watch>> = Rc::default();
+        let w = watch.clone();
+        root.connect_map(move |root| {
+            if let Some((window, id)) = w.take()
+                && let Some(window) = window.upgrade()
+            {
+                window.disconnect(id);
+            }
+            if let Some(window) = root.root().and_downcast::<gtk::Window>() {
+                let r = refresh.clone();
+                let id = window.connect_focus_widget_notify(move |_| r());
+                w.replace(Some((window.downgrade(), id)));
+            }
+            refresh();
+        });
+        root.connect_unmap(move |_| {
+            if let Some((window, id)) = watch.take()
+                && let Some(window) = window.upgrade()
+            {
+                window.disconnect(id);
+            }
+        });
     }
 
     /// 新しく読んだ History を出す。行が変わるので、検索の結果は捨てる（問い合わせは欄に残し、Enter で探し直せる。
@@ -307,6 +529,21 @@ impl Search {
 }
 
 impl Inner {
+    /// フォーカスがタブの外にあれば、タブの中で最後にフォーカスがあった部品に戻す。
+    fn restore_focus(&self, window: &gtk::Window) {
+        let Some(root) = self.tab_root.borrow().upgrade() else {
+            return;
+        };
+        let inside = gtk::prelude::GtkWindowExt::focus(window)
+            .is_some_and(|f| f == root || f.is_ancestor(&root));
+        if !inside
+            && let Some(last) = self.last_focus.borrow().upgrade()
+            && last.is_mapped()
+        {
+            last.grab_focus();
+        }
+    }
+
     /// 一致した行を入れ、前・次のボタンを一致があるときだけ押せるようにする。
     fn set_matches(&self, rows: Rc<Vec<u32>>) {
         let any = !rows.is_empty();
@@ -321,6 +558,10 @@ impl Inner {
         let now = searched.as_ref().map(|(q, _)| q.clone());
         self.searched.replace(searched);
         if before != now {
+            let f = self.on_find_state.borrow().clone();
+            if let Some(f) = f {
+                f();
+            }
             let f = self.on_query.borrow().clone();
             if let Some(f) = f {
                 f(now.as_deref());
@@ -524,36 +765,33 @@ impl Inner {
             let window = this.entry.root().and_downcast::<gtk::Window>();
             let count = grouped(need.count);
             if need.more {
-                let dialog = gtk::AlertDialog::builder()
-                    .message(tr!("Too Many Contents to Fetch"))
-                    .detail(tr!(
+                // ほかの確認と同じシートで（macOS 版と同じ）。
+                let sheet = crate::sheets::Sheet::unnamed(
+                    window.as_ref(),
+                    &tr!("Too Many Contents to Fetch"),
+                    &tr!(
                         "This search needs more than {count} file contents not fetched yet. Narrow it with path:, after: or before:, or fetch all contents in Fetching and Folders.",
                         count = count
-                    ))
-                    .buttons([tr!("Cancel").as_str(), &tr!("Open Fetching and Folders")])
-                    .cancel_button(0)
-                    .default_button(1)
-                    .modal(true)
-                    .build();
-                if dialog.choose_future(window.as_ref()).await == Ok(1)
+                    ),
+                );
+                sheet.buttons(&tr!("Open Fetching and Folders"), false, None);
+                if sheet.run().await == crate::sheets::Response::Ok
                     && let Some(f) = this.on_show_fetching.borrow().clone()
                 {
                     f();
                 }
                 return;
             }
-            let dialog = gtk::AlertDialog::builder()
-                .message(tr!("Search the Contents?"))
-                .detail(tr!(
+            let sheet = crate::sheets::Sheet::unnamed(
+                window.as_ref(),
+                &tr!("Search the Contents?"),
+                &tr!(
                     "This search fetches {count} file contents not fetched yet.",
                     count = count
-                ))
-                .buttons([tr!("Cancel").as_str(), &tr!("Search")])
-                .cancel_button(0)
-                .default_button(1)
-                .modal(true)
-                .build();
-            let chosen = dialog.choose_future(window.as_ref()).await == Ok(1);
+                ),
+            );
+            sheet.buttons(&tr!("Search"), false, None);
+            let chosen = sheet.run().await == crate::sheets::Response::Ok;
             // 尋ねている間に History が替わったら探さない（macOS 版と同じ）。
             let current = this
                 .base
@@ -680,47 +918,25 @@ impl Inner {
         self.update_count();
     }
 
-    /// 選んでいる行から `step` 方向の、次の一致を選ぶ（端では反対の端へ回る）。
+    /// 最後に移った一致から `step` 方向の、次の一致を選ぶ（端では反対の端へ回る）。ほかの行を押して選んでも、
+    /// 移る先は変わらない（macOS 版の `moveSearch` と同じ）。
     fn step(&self, step: i32) {
-        // 一致したものだけを出しているなら、どの行も一致なので隣の行へ。
-        if self.filtered.get() {
-            let count = self.matches.borrow().len() as u32;
-            if count == 0 {
-                self.view.display().beep();
-            }
-            if count > 0 {
-                let row = match self.view.selected() {
-                    Some(r) if step >= 0 => (r + 1) % count,
-                    Some(r) => (r + count - 1) % count,
-                    None => 0,
-                };
-                self.view.select(row);
-            }
-            self.update_count();
-            return;
-        }
-        let matches = self.matches.borrow().clone();
-        if matches.is_empty() {
+        let count = self.matches.borrow().len();
+        if count == 0 {
             // 一致がなければ鳴らす（macOS 版と同じ。探す前なら鳴らさない）。
-            if self.searched.borrow().is_some() {
+            if self.filtered.get() || self.searched.borrow().is_some() {
                 self.view.display().beep();
             }
             self.update_count();
             return;
         }
-        let row = match (self.view.selected(), step >= 0) {
-            (Some(cur), true) => matches
-                .iter()
-                .copied()
-                .find(|&r| r > cur)
-                .unwrap_or(matches[0]),
-            (Some(cur), false) => matches
-                .iter()
-                .rev()
-                .copied()
-                .find(|&r| r < cur)
-                .unwrap_or(*matches.last().unwrap()),
-            (None, _) => matches[0],
+        let index = next_index(self.index.get().filter(|&i| i < count), step, count);
+        self.index.set(Some(index));
+        // 一致したものだけを出しているなら、どの行も一致なので、番目がそのまま行。
+        let row = if self.filtered.get() {
+            index as u32
+        } else {
+            self.matches.borrow()[index]
         };
         self.view.select(row);
         self.update_count();
@@ -748,6 +964,13 @@ impl Inner {
         let index = self.index.get().filter(|&i| i < total);
         self.count.set_text(&count_text(index, total));
     }
+}
+
+/// 一致の `index` 番目から `step` だけ動いた番目（端では反対の端へ。まだどこにも移っていなければ先頭）。
+fn next_index(index: Option<usize>, step: i32, count: usize) -> usize {
+    let count = count as i64;
+    let from = index.map_or(-i64::from(step), |i| i as i64);
+    (from + i64::from(step)).rem_euclid(count) as usize
 }
 
 /// 件数の欄の文字（macOS 版と同じく「N / M」か「No Matches」）。
@@ -786,9 +1009,62 @@ fn grouped(n: usize) -> String {
     out
 }
 
+/// 検索の欄の ▾ のメニュー（題と入れる書き方。macOS 版と同じ順）。
+const SCOPES: [(&str, &str); 5] = [
+    ("Search by Author (author:)", "author:"),
+    ("Search by Path (path:)", "path:"),
+    ("Search by Contents (contents:)", "contents:"),
+    ("Committed After (after:)", "after:"),
+    ("Committed Before (before:)", "before:"),
+];
+
+/// 欄の `current` に書き方 `prefix` を足したもの（空なら `prefix` だけ、あれば空白で区切って後ろに。macOS 版と同じ）。
+fn with_prefix(current: &str, prefix: &str) -> String {
+    let current = current.trim();
+    if current.is_empty() {
+        prefix.to_string()
+    } else {
+        format!("{current} {prefix}")
+    }
+}
+
+/// `window` でフォーカスが History の列（検索の欄・表示の帯・一覧。`bar` の親）の中にあるか。
+fn focus_in_history(window: &gtk::Window, bar: &gtk::SearchBar) -> bool {
+    let (Some(focus), Some(column)) = (gtk::prelude::GtkWindowExt::focus(window), bar.parent())
+    else {
+        return false;
+    };
+    focus == column || focus.is_ancestor(&column)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{count_text, grouped, searches_contents};
+    use super::{SCOPES, count_text, grouped, next_index, searches_contents, with_prefix};
+
+    #[test]
+    fn steps_from_the_last_visited_match() {
+        assert_eq!(next_index(None, 1, 3), 0);
+        assert_eq!(next_index(None, -1, 3), 0);
+        assert_eq!(next_index(Some(0), 1, 3), 1);
+        assert_eq!(next_index(Some(2), 1, 3), 0);
+        assert_eq!(next_index(Some(0), -1, 3), 2);
+    }
+
+    #[test]
+    fn inserts_a_scope_prefix() {
+        assert_eq!(with_prefix("", "author:"), "author:");
+        assert_eq!(with_prefix("  ", "path:"), "path:");
+        assert_eq!(with_prefix(" fix ", "after:"), "fix after:");
+    }
+
+    #[test]
+    fn scope_titles_are_translated() {
+        amonhen_model::i18n::with(amonhen_model::i18n::Lang::Ja, || {
+            for (title, _) in SCOPES {
+                assert_ne!(amonhen_model::i18n::translate(title), title);
+            }
+        });
+    }
 
     #[test]
     fn finds_a_contents_search() {

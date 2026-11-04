@@ -57,6 +57,15 @@ confirmation and History edit now asks in one sheet that shows what moves and wh
 #### Changed
 
 - On Linux, `amonhen open` (and `amonhen <path>`) opens the repository in the GTK4 app, as a tab of the running app.
+- In the GTK4 app, Settings > General > External Editor chooses another program with the same column picker as
+  Programs, and its list is divided like the macOS one.
+- The GTK4 app's View > Customize Toolbar… opens a palette under the header bar like the macOS one: drag items onto
+  the header bar, drag them off to remove them, or drag the default set. Search is now one of the toolbar items.
+- The GTK4 app's ≡ menu follows the macOS menu bar: Edit has Undo, Cut, Copy, Paste and Select All, Window has
+  Minimize (Ctrl+M), Zoom, Repositories, Activity and Bring All to Front, and the menu ends with Quit Amon Hen.
+- The GTK4 app opens Blame and File History as tabs beside the repository tab, with the repository's toolbar, as the
+  macOS app does, instead of separate windows.
+- The GTK4 app's Settings show on/off items as switches on the right, as the macOS app does.
 
 - The GTK4 app now needs libadwaita (`libadwaita-1-0` on Ubuntu). Its tabs can be dragged out into a new window on
   Wayland too, and it follows the system's light or dark style.
@@ -96,10 +105,90 @@ confirmation and History edit now asks in one sheet that shows what moves and wh
 
 - Adding, renaming and removing remotes and changing their URLs work over SSH and through the shared daemon; they
   failed to reach the engine.
+- macOS merge editor: ⌥⌘↑ and ⌥⌘↓ move between conflicts, ⌘↩ no longer races Commit, a file open in its own window
+  isn't loaded again in Working Copy, and the AI buttons follow the AI setting.
+- macOS: Reset, Cherry-pick, Revert and Apply Patch say which worktree they act on; Remove Worktree counts the changes
+  again before asking; Undo works on the SSH host git settings; Settings keeps up with the History menus.
+- macOS: edit mode no longer rewords a merge row on double-click, Discard File is off for fully staged files, Working
+  Copy says why a diff can't be read, and the Rebase sheet stops "Checking for conflicts…" when the check fails.
+- macOS: Create Pull Request needs a title and base, the Branches count includes stacked-on branches, Stashes updates
+  while filtering, a renamed group stays selected, Clone doesn't default to an SSH folder, and Activity keeps its place.
+- macOS: opening an added worktree through the shared daemon edits that worktree when its main repository wasn't open
+  yet.
+- macOS: Checkout #N, Open on GitHub and the CI marks use the selected worktree and its branch, not the opened one.
+- macOS: Quick Open keeps the row picked with the arrow keys while row details load, so Return opens that repository.
+- macOS: a repository whose status can't be read (such as a worktree whose main repository was removed) is no longer
+  read again and again while it is listed.
+- macOS: the Reflog and Range Diff details no longer offer Edit Message…, which dropped the message on Save.
+- macOS: a conflicted file fixed in another editor reloads in its unedited merge editor, so Save doesn't write the old
+  markers back.
+- macOS: closing a repository window or tab, or quitting, asks before losing unsaved Result edits in a merge editor, as
+  the separate merge window does.
+- macOS: with another worktree selected, the window subtitle and the branch switcher's recent list use that worktree's
+  branch.
+- macOS: New Tab from a File History or Blame tab in its own window adds the Repositories tab to that window.
+- macOS: Commit and Push stops with "Can't read the status" when it can't read the branch state, instead of beeping or
+  pushing without asking.
+- macOS: Settings > Appearance also follows Highlight Ancestors, Monospaced message, Show Avatars, Stack diffs, File
+  tree and Fold Merged Branches when they change from the View menu.
+- macOS: Shift+Return in the History search field searches a newly typed query instead of moving within the old results.
+- macOS: Combine N Commits… refuses commits off HEAD's first-parent line instead of quietly combining fewer.
+- macOS: picking from Choose from My GitHub Repositories in the Clone sheet updates the sheet at once, as typing a URL
+  does.
+- macOS: the path picker says "Choose a host to see its folders." for a host name with a space or "/" instead of showing
+  empty columns.
+- macOS: the Commit ▾ menu no longer gains a separator after every commit.
+- macOS: the Commit button is off while a commit runs, so a second ⌘↩ can't start another one.
+- macOS: closing the AI panel stops the claude or codex run, so the activity indicator stops and nothing is cached.
+- macOS: typing in Working Copy's Description field can be undone with ⌘Z.
+- macOS: the merge editor's Resolve with AI and Explain with AI no longer beep when the AI question is cancelled.
+- macOS: closing a separate merge window without resolving puts the merge editor back in Working Copy if that file is
+  shown.
+- macOS: Take Current File, Take Incoming File and Mark Resolved also heed unsaved Result edits in the file's separate
+  merge window, and taking a side closes that window.
+- macOS: the Stashes, Reflog and Range Diff details show ref names as plain text, not links that did nothing.
+- macOS: author and committer names in the Stashes, Reflog and Range Diff details are no longer links that did nothing.
+- macOS: the signature popover in the Stashes, Reflog and Range Diff details says where the signature was checked, as
+  History's does, including on SSH hosts.
+- macOS: Blame scrolls sideways for long code lines instead of cutting them off with "…".
+- macOS: Working Copy's Description keeps its own ⌘Z steps, so an inserted trailer can be undone and filling the field
+  no longer wipes undo for Summary, the merge editor's Result or Repository Settings.
+- macOS: switching a tab to another repository from the toolbar's repository list asks before losing unsaved Result
+  edits in a merge editor, as closing the tab does.
+- macOS: Working Copy's List, Tree and File Name layout belongs to each tab and worktree; changing it in one changed
+  the others' lists while their buttons showed the old choice.
+- macOS: Take Current File, Take Incoming File and Mark Resolved leave the diff bar when Working Copy's list empties,
+  such as after `git merge --abort`.
+- macOS: Repository Settings > Hooks · LFS opens and edits the hooks of the main repository's `.git` in an added
+  worktree, where git looks for them, instead of a missing `.git/hooks` folder.
+- macOS: with another worktree selected, the Merge… and Rebase… chooser leaves out that worktree's branch instead of
+  the opened one's.
+- macOS: "Pulled into …" and "Merged into …" in the status bar name the selected worktree's branch.
+- macOS: with several History commits selected, right-clicking a file in the changed-file list offers File History.
+
 - The GTK4 app's Undo button asks once; it opened the question twice, so one stayed after undoing.
 - A `.mailmap`, or a mailmap setting (`log.mailmap`, `mailmap.file`), changed while the engine was reading the old
   one could be missed until it changed again; the names now follow it.
+- In the GTK4 app's sheets, Return runs the operation (Pull, Fetch, Publish, Reset…) even when a drop-down or a radio
+  button has the focus, as on macOS; it opened the drop-down or picked the radio instead.
 - With newer GTK (4.24), the GTK4 app's sidebar shows Working Copy's change count and the sparse checkout mark.
+- In the GTK4 app, opening a repository that is already open in a new window, or switching to a worktree whose
+  repository is open, brings its tab forward instead of opening a second one.
+- The GTK4 app's separate merge window saves, marks resolved and asks AI in the worktree it was opened for; after
+  selecting another worktree, Save wrote its Result over the same file there.
+- The GTK4 app's Working Copy keeps Amend and the file filter per worktree; Amend ticked in one worktree stayed on in
+  another, so Commit amended that worktree's last commit.
+- The GTK4 app keeps each commit, push, discard, stage and confirmed operation in the worktree it started in: Commit
+  and Push could push another worktree selected during the commit (or skip its Publish sheet), and Discard, Add to
+  .gitignore, Take Current/Incoming, Fetch…, Pull…, Push…, Checkout…, Merge, Rebase, Cherry-pick, Delete Branch,
+  Apply Patch, History's edit mode, Export Archive…, Save as Bundle… and Undo… could act on the one selected
+  meanwhile.
+- macOS: Activity > History lists and undoes the operations of the worktree being edited in the window; with another
+  worktree selected, Undo to Here undid that worktree's operations while listing the opened one's.
+- The macOS app shows “Couldn’t Commit” and the hooks output even when you leave Working Copy or select another
+  worktree while the hooks run; they were lost, so a rejected Commit and Push silently didn't push.
+- Selecting worktrees quickly ends on the last one picked, in the macOS and GTK4 apps; one that took longer to open
+  could take over after a later pick.
 - Activity no longer says “daemon” twice for a repository opened through the shared daemon, nor “(daemon)” for an
   SSH host connected directly.
 - Saving patches no longer fails with “No such file or directory” when another save runs at the same time in the same
@@ -145,6 +234,68 @@ confirmation and History edit now asks in one sheet that shows what moves and wh
   pack, and only about 32 new packs could be read).
 - Editing the message of an empty commit (made with `git commit --allow-empty`) finishes and keeps the commit; with
   older git (2.23, for example) the rebase stopped on it.
+- macOS: the toolbar search field keeps its text when History reloads after a fetch or commit.
+- macOS: Combine with Older Commit… no longer marks a commit whose parent is a merge for squashing onto the merge.
+- macOS: J and K step through every hunk in History, Stashes and File History diffs; they stopped at the same one.
+- macOS: a merge editor in its own window no longer shows the Open in a Separate Window button, which did nothing
+  there.
+- macOS: folders collapsed in Working Copy's tree stay collapsed when the status reloads.
+- macOS: Revert under the ignore patterns in Repository Settings and Settings > Git puts back the saved text; it did
+  nothing.
+- macOS: Return no longer confirms removing a remote; Delete is red and Return cancels.
+- macOS: Return no longer confirms forgetting an SSH host with repositories or folders to scan.
+- macOS: opening an open repository through a symbolic link or /tmp instead of /private/tmp brings its tab forward
+  instead of opening a second one.
+- macOS: New Worktree on an SSH host sends a ~ folder as typed instead of turning it into this Mac's home folder.
+- macOS: dragging a favorite branch while the sidebar is filtered no longer reorders the favorites wrongly.
+- macOS: changing One Line per Commit or History Items keeps several selected commits selected.
+- macOS: dragging one of several selected History rows moves the commit you grabbed, not the newest selected one.
+- macOS: in History's edit mode, undoing every change clears the conflict marks on the rows.
+- macOS: ⌥J and ⌥K move to the next or previous file in History's diff when its files aren't stacked; they only
+  beeped.
+- macOS: when a commit's changed files can't be read, History says it couldn't load the diff instead of No changes.
+- macOS: Find in a diff highlights matches in the file headers' paths too.
+- macOS: diffs scroll sideways as far as their longest line, no more and no less; lines past about 3,000 points were
+  cut off.
+- macOS: Commit ▾ > Commit and Push is off when nothing is staged or the message is empty, as Commit is.
+- macOS: Working Copy no longer says No changes before the first status has loaded.
+- macOS: Reflog's Compare with Current HEAD compares with the HEAD of the worktree shown, not the opened one.
+- macOS: Save as Bundle's Save… is off while Only commits after: is chosen with an empty field; it quietly saved all
+  history.
+- macOS: the password and passphrase dialog shows its buttons in the system language instead of always in English.
+- macOS: when the Clone destination already exists, the Clone sheet comes back with what you typed.
+- macOS: Add to Favorites and Remove from Favorites in the Repositories list apply to every selected row, as Fetch,
+  Group and Color Label do.
+- macOS: Activity's History tab updates its Undo list after each operation in the repository windows.
+- macOS: Japanese messages that point to a settings page name it as 「設定 > …」, as the menu calls it.
+- macOS: clearing the sidebar's branch filter closes again the headings that the filter opened.
+- macOS: with another worktree chosen to work in, Repository > New Branch…, New Tag…, Rename Branch…, Set Upstream…,
+  Compare with Previous Version, Create Pull Request… and the Merge…/Rebase… titles use that worktree's branch, not
+  the opened one's.
+- macOS: with another worktree chosen to work in, Switch Branch… lists the branch checked out in the main worktree and
+  no longer offers the current worktree's own branch.
+- macOS: a tab's ↑ and ↓ marks follow the branch of the worktree chosen to work in, like its ● mark.
+- macOS: Repository Settings writes the git settings of one choice in turn (such as Signing's two keys or a Fetch-only
+  pull), so the second no longer fails on the config lock and leaves it half applied.
+- macOS: a Repository Settings change that git couldn't write no longer adds an Undo step.
+- macOS: Keys and Values' Restore line goes away after any other settings change, so Restore no longer undoes that
+  change instead of the removal.
+- macOS: undoing or restoring the removal of a key with several values, such as two remote.origin.fetch, puts all of
+  them back instead of only the last.
+- macOS: warnings flashed in the status bar show an orange triangle instead of a green one.
+- macOS: an authentication or host key failure in a daemon or SSH repository no longer offers Open in Terminal, which
+  only beeped there.
+- macOS: changing From: in the Fetch sheet keeps the line naming the worktree.
+- macOS: Publish is off while Name there is empty; it closed the sheet and did nothing.
+- macOS: after the Clone sheet comes back because the destination exists, typing a bundle path still switches it to
+  bundle mode.
+- macOS: adding a folder to scan or changing its Search Depth while a scan runs takes effect when that scan ends.
+- macOS: History's edit mode stays open with your plan when Apply Changes fails, and closes once the rewrite has run.
+- macOS: with unsaved edits in the merge editor under Working Copy, Mark Resolved saves Result first, and Take Current
+  File or Take Incoming File asks before losing them.
+- Cherry-pick and Revert of several commits run as one git cherry-pick or git revert: when one stops on a conflict,
+  Continue and Skip go on with the rest, and Abort goes back to before the first, as in git; the rest were silently
+  dropped.
 
 ### [0.2.8] - 2026-10-30
 

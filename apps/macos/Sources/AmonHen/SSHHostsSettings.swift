@@ -12,6 +12,7 @@ struct SSHHostsSettings: View {
     @State private var page: HostPage = .connection
     @State private var sessions: [String: HostSession] = [:]
     @State private var appliedOption = false
+    @Environment(\.undoManager) private var undoManager
     /// Places やリポジトリの設定から開くときに選ぶ SSH 先と、あればページ。
     static var pendingHost: (host: String, page: SettingsPage?)?
     static let showHost = Notification.Name("SSHHostsSettings.showHost")
@@ -132,18 +133,22 @@ struct SSHHostsSettings: View {
         guard let host = selected else { return }
         let paths = Bookmarks.shared.allLocations.filter { Settings.sshHost(of: $0) == host }
         let roots = Bookmarks.shared.data.scanRoots.map(\.path).filter { Settings.sshHost(of: $0) == host }
-        if !paths.isEmpty || !roots.isEmpty {
-            guard SSHConnectionSheet.confirmRemove(host: host, repositories: paths.count, folders: roots.count) else { return }
-            for path in paths {
-                RepositoryList.remove(path)
-                Bookmarks.shared.remove(path)
+        Task { @MainActor in
+            if !paths.isEmpty || !roots.isEmpty {
+                guard await SSHConnectionSheet.confirmRemove(
+                    host: host, repositories: paths.count, folders: roots.count, in: NSApp.keyWindow ?? NSApp.mainWindow)
+                else { return }
+                for path in paths {
+                    RepositoryList.remove(path)
+                    Bookmarks.shared.remove(path)
+                }
+                for root in roots { Bookmarks.shared.removeScanRoot(root) }
             }
-            for root in roots { Bookmarks.shared.removeScanRoot(root) }
+            Settings.sshHosts.removeAll { $0 == host }
+            sessions[host] = nil
+            selected = nil
+            reload()
         }
-        Settings.sshHosts.removeAll { $0 == host }
-        sessions[host] = nil
-        selected = nil
-        reload()
     }
 
     // MARK: - 真ん中: ページ
@@ -197,6 +202,9 @@ struct SSHHostsSettings: View {
                             .padding([.horizontal, .bottom])
                         }
                     }
+                    // ほかの設定のページと同じく ⌘Z で戻せるように（SSH 先ごとにモデルが違う）。
+                    .task(id: ObjectIdentifier(model)) { model.undo = undoManager }
+                    .onChange(of: undoManager) { _, now in model.undo = now }
                 case .connecting:
                     ProgressView(L("Connecting to %@…", selected)).padding()
                 case let .failed(reason):

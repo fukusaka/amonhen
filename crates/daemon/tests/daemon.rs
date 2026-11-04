@@ -106,9 +106,20 @@ fn serves_the_machine_settings_without_a_repository() {
             key: "user.name".to_owned(),
             value: Some("Ada".to_owned()),
             scope: Some("global".to_owned()),
+            values: None,
         })
         .unwrap();
     assert!(set.ok, "{set:?}");
+    // いくつも値を持てる設定も、daemon 越しに書ける。
+    let all = repo
+        .run(Command::ConfigSet {
+            key: "remote.x.fetch".to_owned(),
+            value: None,
+            scope: Some("global".to_owned()),
+            values: Some(vec!["a".to_owned(), "b".to_owned()]),
+        })
+        .unwrap();
+    assert!(all.ok, "{all:?}");
     assert!(data.join("amonhen/settings-repo/.git").is_dir());
     assert!(
         std::fs::read_to_string(&global)
@@ -710,6 +721,7 @@ fn shared_daemon_opens_an_ssh_host_without_a_repository() {
             key: "user.name".to_owned(),
             value: Some("Ada".to_owned()),
             scope: Some("global".to_owned()),
+            values: None,
         })
         .unwrap();
     assert!(set.ok, "{set:?}");

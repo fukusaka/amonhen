@@ -146,8 +146,9 @@ fn choices(rows: &[Row], i: usize) -> Vec<Action> {
         .collect()
 }
 
-/// 行ですることの一覧の項目（名前と、選んでいる印。乗せると説明）。
-fn action_items(choice: &gtk::DropDown) -> gtk::SignalListItemFactory {
+/// 行ですることの一覧の項目（名前と、選んでいる印。乗せると説明）。今選んでいる項目をもう一度押したら
+/// `same` を呼ぶ（DropDown は同じ項目では選択の知らせを出さないが、macOS 版のポップアップは出す）。
+fn action_items(choice: &gtk::DropDown, same: Rc<dyn Fn()>) -> gtk::SignalListItemFactory {
     // 印は DropDown で選んでいるものに付ける。開いた一覧の項目の「選んでいる」は、マウスを乗せた項目に付いて回る。
     let chosen = |choice: &glib::WeakRef<gtk::DropDown>, item: &gtk::ListItem| {
         choice
@@ -159,6 +160,7 @@ fn action_items(choice: &gtk::DropDown) -> gtk::SignalListItemFactory {
     // 弱く持つ。
     type Marks = Rc<RefCell<Vec<(glib::WeakRef<gtk::ListItem>, glib::WeakRef<gtk::Image>)>>>;
     let marks: Marks = Rc::default();
+    let choice_weak = choice.downgrade();
     let (weak, m) = (choice.downgrade(), marks.clone());
     choice.connect_selected_notify(move |_| {
         m.borrow_mut().retain(|(item, check)| {
@@ -181,6 +183,19 @@ fn action_items(choice: &gtk::DropDown) -> gtk::SignalListItemFactory {
         row.append(&label);
         row.append(&check);
         item.set_child(Some(&row));
+        // 押したときにまだ選び替わっていないので、押した項目が選んでいるものなら、同じものを選び直した。
+        let click = gtk::GestureClick::new();
+        click.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let (w, it, same) = (choice_weak.clone(), item.downgrade(), same.clone());
+        click.connect_released(move |_, _, _, _| {
+            if let Some(item) = it.upgrade()
+                && chosen(&w, &item)
+            {
+                let same = same.clone();
+                glib::idle_add_local_once(move || same());
+            }
+        });
+        row.add_controller(click);
         let mut marks = marks.borrow_mut();
         marks.retain(|(item, check)| item.upgrade().is_some() && check.upgrade().is_some());
         marks.push((item.downgrade(), check.downgrade()));
@@ -261,16 +276,23 @@ fn plan_steps(rows: &[Row]) -> Vec<Value> {
 /// 編集モードの中身。
 struct Mode {
     actions: Rc<Actions>,
+    /// 編集を始めた worktree（見通しを読むのも書き換えるのもここ。編集の間に書き込む先を替えても、読んだ
+    /// コミットの並びを、ほかの worktree の HEAD に当てない）。
+    repo: std::sync::Arc<amonhen_core::Repository>,
     rows: RefCell<Vec<Row>>,
     original: Vec<String>,
     /// 一覧のモデル（行のコミット ID。並べ替えたら作り直す）。
     model: gtk::StringList,
+    /// 行の選択（macOS 版の表と同じく、クリックで行が選ばれ、矢印キーで動く）。
+    selection: gtk::SingleSelection,
     root: gtk::Box,
     /// ステータスバーに出す行（要約・見通し・Cancel・Apply）。
     bar: gtk::Box,
     summary: gtk::Label,
     preview: gtk::Label,
     move_stacked: gtk::CheckButton,
+    /// 帯の Cancel と Apply Changes（書き換えている間は押せない）。
+    buttons: [gtk::Button; 2],
     /// git の設定（`rebase.updateRefs`）と、この編集で選び直したか。
     configured_update_refs: Cell<Option<bool>>,
     touched_update_refs: Cell<bool>,
@@ -284,7 +306,11 @@ struct Mode {
 }
 
 impl Mode {
-    fn new(actions: Rc<Actions>, rows: Vec<Row>) -> Rc<Self> {
+    fn new(
+        actions: Rc<Actions>,
+        repo: std::sync::Arc<amonhen_core::Repository>,
+        rows: Vec<Row>,
+    ) -> Rc<Self> {
         let original = rows.iter().map(|r| r.oid.clone()).collect();
         let can_reorder = !rows.iter().any(|r| r.merge);
         let heading = gtk::Label::new(Some(&tr!("Edit Commits")));
@@ -311,10 +337,10 @@ impl Mode {
         top.append(&heading);
         top.append(&hint);
         let model = gtk::StringList::new(&[]);
-        let list = gtk::ListView::new(
-            Some(gtk::NoSelection::new(Some(model.clone()))),
-            None::<gtk::ListItemFactory>,
-        );
+        let selection = gtk::SingleSelection::new(Some(model.clone()));
+        selection.set_autoselect(false);
+        selection.set_can_unselect(true);
+        let list = gtk::ListView::new(Some(selection.clone()), None::<gtk::ListItemFactory>);
         list.add_css_class("rich-list");
         let scrolled = gtk::ScrolledWindow::builder()
             .child(&list)
@@ -329,7 +355,7 @@ impl Mode {
 
         // ステータスバーの行。
         let icon = crate::icon::Icon::default();
-        icon.set(crate::icon::Kind::WorkingCopy, true);
+        icon.set(crate::icon::Kind::EditList, true);
         icon.set_valign(gtk::Align::Center);
         let summary = gtk::Label::new(None);
         summary.add_css_class("caption");
@@ -369,14 +395,17 @@ impl Mode {
 
         let mode = Rc::new(Self {
             actions,
+            repo,
             rows: RefCell::new(rows),
             original,
             model,
+            selection,
             root,
             bar,
             summary,
             preview,
             move_stacked,
+            buttons: [cancel.clone(), apply.clone()],
             configured_update_refs: Cell::new(None),
             touched_update_refs: Cell::new(false),
             syncing_update_refs: Cell::new(false),
@@ -397,30 +426,6 @@ impl Mode {
                 m.apply_clicked();
             }
         });
-        // Esc で Cancel、Return で Apply Changes（macOS 版のボタンのキーと同じ）。欄の中の Return・Esc は欄が使う。
-        for widget in [mode.root.upcast_ref::<gtk::Widget>(), mode.bar.upcast_ref()] {
-            let keys = gtk::EventControllerKey::new();
-            let weak = Rc::downgrade(&mode);
-            keys.connect_key_pressed(move |_, key, _, state| {
-                let Some(m) = weak.upgrade() else {
-                    return glib::Propagation::Proceed;
-                };
-                if state.intersects(
-                    gdk::ModifierType::CONTROL_MASK
-                        | gdk::ModifierType::ALT_MASK
-                        | gdk::ModifierType::SHIFT_MASK,
-                ) {
-                    return glib::Propagation::Proceed;
-                }
-                match key {
-                    gdk::Key::Escape => m.finish(),
-                    gdk::Key::Return | gdk::Key::KP_Enter => m.apply_clicked(),
-                    _ => return glib::Propagation::Proceed,
-                }
-                glib::Propagation::Stop
-            });
-            widget.add_controller(keys);
-        }
         let weak = Rc::downgrade(&mode);
         mode.move_stacked.connect_toggled(move |_| {
             if let Some(m) = weak.upgrade()
@@ -467,8 +472,27 @@ impl Mode {
             texts.append(&subject);
             texts.append(&detail);
             let choice = gtk::DropDown::from_strings(&[]);
+            // Edit Message を選んである行でもう一度 Edit Message を選んだら、メッセージの欄を開き直す（macOS 版と
+            // 同じ）。
+            let same: Rc<dyn Fn()> = {
+                let (w, it) = (Rc::downgrade(&mode), item.downgrade());
+                Rc::new(move || {
+                    let (Some(mode), Some(item)) = (w.upgrade(), it.upgrade()) else {
+                        return;
+                    };
+                    let i = item.position() as usize;
+                    let reword = mode
+                        .rows
+                        .borrow()
+                        .get(i)
+                        .is_some_and(|r| r.action == Action::Reword);
+                    if reword {
+                        mode.edit_message(i);
+                    }
+                })
+            };
             // 開いた一覧の項目ごとに説明（git の言葉）を出す（macOS 版のメニューの項目の説明と同じ）。
-            choice.set_list_factory(Some(&action_items(&choice)));
+            choice.set_list_factory(Some(&action_items(&choice, same)));
             choice.set_valign(gtk::Align::Center);
             choice.set_size_request(290, -1);
             let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -507,7 +531,6 @@ impl Mode {
                         allowed.iter().position(|a| *a == r.action).unwrap_or(0) as u32
                     );
                     choice.set_sensitive(!r.merge);
-                    choice.set_tooltip_text(Some(&r.action.tip()));
                     filling.set(false);
                     // 件名: 取り消す行は線で消し、まとめる行は薄く、直したメッセージは斜体。
                     subject.set_text(&r.subject());
@@ -776,9 +799,7 @@ impl Mode {
 
     /// 一覧と要約を作り直す。
     fn reload(self: &Rc<Self>) {
-        let oids: Vec<String> = self.rows.borrow().iter().map(|r| r.oid.clone()).collect();
-        let refs: Vec<&str> = oids.iter().map(String::as_str).collect();
-        self.model.splice(0, self.model.n_items(), &refs);
+        self.replace_rows();
         self.update_summary();
         self.update_preview();
     }
@@ -808,7 +829,7 @@ impl Mode {
         } else {
             format!(
                 "{} {}",
-                tr!("Changes: {list}.", list = parts.join(&tr!(", "))),
+                tr!("Changes: {list}.", list = crate::titles::list(&parts)),
                 crate::sheets::can_undo()
             )
         });
@@ -820,16 +841,17 @@ impl Mode {
         let generation = self.preview_generation.get() + 1;
         self.preview_generation.set(generation);
         if !self.has_changes() {
+            // 変更をすべて戻したら、前の見込み（コンフリクトの印、積み重ねたブランチの選択）も消す。
             self.preview.set_visible(false);
             self.preview.set_text("");
+            self.move_stacked.set_visible(false);
             if !self.conflicting.borrow().is_empty() {
                 self.conflicting.borrow_mut().clear();
+                self.redraw_rows();
             }
             return;
         }
-        let Some(repo) = self.actions.repo() else {
-            return;
-        };
+        let repo = self.repo.clone();
         let mut command = json!({
             "op": "rewritePreview",
             "edit": { "kind": "plan", "steps": plan_steps(&self.rows.borrow()) },
@@ -919,12 +941,29 @@ impl Mode {
         };
         if changed {
             self.conflicting.replace(marks);
-            // 印を付け直す（要約と見通しは読み直さない）。
-            let n = self.model.n_items();
-            let oids: Vec<String> = self.rows.borrow().iter().map(|r| r.oid.clone()).collect();
-            let refs: Vec<&str> = oids.iter().map(String::as_str).collect();
-            self.model.splice(0, n, &refs);
+            self.redraw_rows();
         }
+    }
+
+    /// 印を付け直す（要約と見通しは読み直さない）。
+    fn redraw_rows(&self) {
+        self.replace_rows();
+    }
+
+    /// 一覧のモデルを今の行で置き換える。選んでいた行は、並べ替えた後も同じコミットを選んだままにする。
+    fn replace_rows(&self) {
+        let selected = self
+            .selection
+            .selected_item()
+            .and_downcast::<gtk::StringObject>()
+            .map(|o| o.string().to_string());
+        let oids: Vec<String> = self.rows.borrow().iter().map(|r| r.oid.clone()).collect();
+        let refs: Vec<&str> = oids.iter().map(String::as_str).collect();
+        self.model.splice(0, self.model.n_items(), &refs);
+        let position = selected
+            .and_then(|s| oids.iter().position(|o| *o == s))
+            .map_or(gtk::INVALID_LIST_POSITION, |p| p as u32);
+        self.selection.set_selected(position);
     }
 
     /// この編集での指定（git の設定と同じなら None）。
@@ -937,9 +976,14 @@ impl Mode {
         (on != configured).then_some(on)
     }
 
-    fn apply_clicked(&self) {
+    /// 書き換えが終わってから編集モードを閉じる。書き換えられなければ（失敗はステータスバーに出し）編集モードと
+    /// 選んだものを残す（閉じてしまうと、組んだ手順がすべて消える）。途中で止まったら（コンフリクト・edit）閉じる。
+    fn apply_clicked(self: &Rc<Self>) {
         if !self.has_changes() {
             self.finish();
+            return;
+        }
+        if self.buttons.iter().any(|b| !b.is_sensitive()) {
             return;
         }
         let (count, steps) = {
@@ -954,14 +998,118 @@ impl Mode {
         if let Some(on) = self.update_refs() {
             command["updateRefs"] = json!(on);
         }
-        self.actions.perform(command);
-        self.finish();
+        for b in &self.buttons {
+            b.set_sensitive(false);
+        }
+        let weak = Rc::downgrade(self);
+        self.actions
+            .perform_in(self.repo.clone(), vec![command], move |reply| {
+                let Some(m) = weak.upgrade() else { return };
+                if reply["error"].is_string() || reply.is_null() {
+                    for b in &m.buttons {
+                        b.set_sensitive(true);
+                    }
+                } else {
+                    m.finish();
+                }
+            });
     }
 
     fn finish(&self) {
         let f = self.on_finish.borrow().clone();
         if let Some(f) = f {
             f();
+        }
+    }
+}
+
+/// Esc で Cancel、Return で Apply Changes（macOS 版のボタンのキー: 窓のどこでも効く）。窓に付け、捕まえる段階で
+/// 受けるので、行のドロップダウンやチェックボックスに入力があっても先に効く（シートの `return_presses_default` と
+/// 同じ）。文字の欄と、開いたドロップダウンの一覧の中の Return・Esc はそのまま。窓はタブで共有するので、このタブの
+/// 編集モードの帯が出ている間だけ。
+fn window_keys(mode: &Rc<Mode>) -> gtk::EventControllerKey {
+    let keys = gtk::EventControllerKey::new();
+    keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let weak = Rc::downgrade(mode);
+    keys.connect_key_pressed(move |c, key, _, state| {
+        let Some(m) = weak.upgrade() else {
+            return glib::Propagation::Proceed;
+        };
+        let typing = c
+            .widget()
+            .and_downcast::<gtk::Window>()
+            .and_then(|w| GtkWindowExt::focus(&w))
+            .is_some_and(|f| {
+                f.is::<gtk::Text>()
+                    || f.is::<gtk::TextView>()
+                    || f.ancestor(gtk::Popover::static_type()).is_some()
+            });
+        if typing
+            || !m.bar.is_mapped()
+            || state.intersects(
+                gdk::ModifierType::CONTROL_MASK
+                    | gdk::ModifierType::ALT_MASK
+                    | gdk::ModifierType::SHIFT_MASK,
+            )
+        {
+            return glib::Propagation::Proceed;
+        }
+        match key {
+            // 書き換えている間は Cancel も押せない。
+            gdk::Key::Escape if m.buttons[0].is_sensitive() => m.finish(),
+            gdk::Key::Escape => {}
+            gdk::Key::Return | gdk::Key::KP_Enter => m.apply_clicked(),
+            _ => return glib::Propagation::Proceed,
+        }
+        glib::Propagation::Stop
+    });
+    keys
+}
+
+/// 編集モードの Esc・Return のキーを、編集モードのある窓に付けておく（タブをほかの窓に移したら、移した先の窓に
+/// 付け替える。macOS 版はタブごとに窓なので、いつもそのタブの窓に効く）。
+struct WindowKeys {
+    keys: gtk::EventControllerKey,
+    /// 今付けている窓。
+    window: Rc<RefCell<Option<gtk::Window>>>,
+    /// 編集モードの部品の窓が替わるのを見ているもの（閉じたら外す）。
+    watch: (gtk::Widget, glib::SignalHandlerId),
+}
+
+impl WindowKeys {
+    fn new(mode: &Rc<Mode>) -> Self {
+        let keys = window_keys(mode);
+        let window: Rc<RefCell<Option<gtk::Window>>> = Rc::default();
+        let follow = {
+            let (keys, window) = (keys.clone(), window.clone());
+            move |widget: &gtk::Widget| {
+                let now = widget.root().and_downcast::<gtk::Window>();
+                if *window.borrow() == now {
+                    return;
+                }
+                if let Some(old) = window.replace(now.clone()) {
+                    old.remove_controller(&keys);
+                }
+                if let Some(now) = now {
+                    now.add_controller(keys.clone());
+                }
+            }
+        };
+        let widget: gtk::Widget = mode.root.clone().upcast();
+        follow(&widget);
+        let id = widget.connect_root_notify(move |w| follow(w));
+        Self {
+            keys,
+            window,
+            watch: (widget, id),
+        }
+    }
+
+    fn remove(self) {
+        let (widget, id) = self.watch;
+        widget.disconnect(id);
+        if let Some(window) = self.window.take() {
+            window.remove_controller(&self.keys);
         }
     }
 }
@@ -978,6 +1126,8 @@ struct OpenerInner {
     sidebar: Rc<Sidebar>,
     statusbar: Rc<StatusBar>,
     current: RefCell<Option<Rc<Mode>>>,
+    /// 編集モードの間だけ窓に付ける、Esc・Return のキー。
+    keys: RefCell<Option<WindowKeys>>,
     /// 読んでいる間は 1 つ増やす（`--snapshot` は開き終えるまで待つ）。
     pending: Rc<Cell<u32>>,
 }
@@ -1014,6 +1164,7 @@ impl Opener {
             sidebar,
             statusbar,
             current: RefCell::default(),
+            keys: RefCell::default(),
             pending,
         }))
     }
@@ -1070,7 +1221,20 @@ impl Opener {
                 ));
                 return;
             };
+            // まとめるものに HEAD の first-parent の並びにないものがあれば、黙って減らさずに断る（選んだ数より少なく
+            // まとめてしまう）。
+            if let Some(Preset::Combine(oids)) = &preset
+                && !oids
+                    .iter()
+                    .all(|o| line[..=end].iter().any(|(l, _)| l == o))
+            {
+                inner.statusbar.flash_warning(&tr!(
+                    "Only commits on HEAD’s first-parent line can be edited."
+                ));
+                return;
+            }
             let chosen: Vec<(String, bool)> = line[..=end].to_vec();
+            let source = repo.clone();
             let rows = gio::spawn_blocking(move || {
                 let ids: Vec<Oid> = chosen
                     .iter()
@@ -1110,7 +1274,7 @@ impl Opener {
             if rows.is_empty() || this.is_open() {
                 return;
             }
-            let mode = Mode::new(inner.actions.clone(), rows);
+            let mode = Mode::new(inner.actions.clone(), source, rows);
             let weak = Rc::downgrade(&this.0);
             mode.on_finish.replace(Some(Rc::new(move || {
                 if let Some(inner) = weak.upgrade() {
@@ -1124,6 +1288,7 @@ impl Opener {
             inner.pages.set_visible_child_name("history");
             inner.sidebar.select_page(Page::History);
             inner.statusbar.show(statusbar::Row::Editing, &mode.bar);
+            inner.keys.replace(Some(WindowKeys::new(&mode)));
             if let Some(preset) = preset {
                 mode.apply_preset(preset);
             }
@@ -1136,6 +1301,9 @@ impl Opener {
             return;
         };
         inner.statusbar.hide(statusbar::Row::Editing);
+        if let Some(keys) = inner.keys.take() {
+            keys.remove();
+        }
         inner.pages.remove(&mode.root);
         inner.pages.add_named(&inner.history, Some("history"));
         inner.pages.set_visible_child_name("history");

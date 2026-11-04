@@ -34,6 +34,17 @@ impl Table {
         }
     }
 
+    /// 列の見出しを隠す（macOS 版の、見出しのない List）。
+    pub fn hide_header(&self) {
+        let mut child = self.view.first_child();
+        while let Some(c) = child {
+            if c.css_name() == "header" {
+                c.set_visible(false);
+            }
+            child = c.next_sibling();
+        }
+    }
+
     /// 文字の列。セルの部品の名前は行の id（右クリックで行を見つける）。
     pub fn text_column(
         &self,
@@ -121,14 +132,25 @@ impl Table {
         });
     }
 
-    /// 右クリックで、その行を選んでからメニューを出す。
+    /// 右クリックで、その行を選んでからメニューを出す。行のないところなら、選びを外して同じメニューを出す
+    /// （macOS 版の contextMenu(forSelectionType:) は空の選びに効くので、行に効く項目は押せない）。
     pub fn context_menu(&self, menu: &gio::Menu) {
-        self.context_menu_or(menu, None);
+        self.context_menu_on(menu, Empty::Unselect);
     }
 
-    /// `context_menu` と同じ。行のないところを右クリックしたら `empty` のメニューを出す（なければ出さない。
-    /// macOS 版の、何も選んでいないときのメニュー）。
-    pub fn context_menu_or(&self, menu: &gio::Menu, empty: Option<gio::Menu>) {
+    /// `context_menu` と同じ。行のないところを右クリックしたら `empty` のメニューを出す（macOS 版の、何も
+    /// 選んでいないときのメニュー）。
+    pub fn context_menu_or(&self, menu: &gio::Menu, empty: gio::Menu) {
+        self.context_menu_on(menu, Empty::Menu(empty));
+    }
+
+    /// 行の上でだけメニューを出す（行のないところでは何も出さない。項目がすべて行に効くもので、macOS 版では
+    /// 空のメニューになるとき）。
+    pub fn row_menu(&self, menu: &gio::Menu) {
+        self.context_menu_on(menu, Empty::Nothing);
+    }
+
+    fn context_menu_on(&self, menu: &gio::Menu, empty: Empty) {
         let popover = gtk::PopoverMenu::from_model(Some(menu));
         popover.set_parent(&self.view);
         popover.set_has_arrow(false);
@@ -157,9 +179,13 @@ impl Table {
                 widget = w.parent();
             }
             match &empty {
-                Some(empty) => popover.set_menu_model(Some(if hit { &menu } else { empty })),
-                None if selection.selected_item().is_none() => return,
-                None => {}
+                _ if hit => popover.set_menu_model(Some(&menu)),
+                Empty::Menu(empty) => popover.set_menu_model(Some(empty)),
+                Empty::Unselect => {
+                    selection.set_selected(gtk::INVALID_LIST_POSITION);
+                    popover.set_menu_model(Some(&menu));
+                }
+                Empty::Nothing => return,
             }
             popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
             popover.popup();
@@ -180,6 +206,16 @@ impl Table {
         frame.set_child(Some(&scrolled));
         frame
     }
+}
+
+/// 行のないところを右クリックしたときにすること。
+enum Empty {
+    /// 選びを外して、行のメニューを出す（行に効く項目は押せない）。
+    Unselect,
+    /// このメニューを出す。
+    Menu(gio::Menu),
+    /// 何も出さない。
+    Nothing,
 }
 
 /// 文字の欄の内側の余白。
@@ -266,25 +302,11 @@ pub(crate) fn remote_kind(url: &str) -> String {
     }
 }
 
-/// リモートを消す前の確認（設定のページ、シートのどこから消しても同じ文言と同じボタン）。
-async fn confirm_remove(parent: Option<&gtk::Window>, name: &str) -> bool {
-    let sheet = Sheet::new(
-        parent,
-        &tr!("Remove {name}?", name = name),
-        &tr!(
-            "This removes the remote’s settings and its remote-tracking branches ({name}/…). The remote repository isn’t touched.",
-            name = name
-        ),
-    );
-    sheet.buttons(&tr!("Delete"), true, None);
-    sheet.run().await == Response::Ok
-}
-
 fn remove_remote(s: &Rc<RepoSettings>, name: String) {
     let w = s.weak();
     let parent = s.window();
     glib::spawn_future_local(async move {
-        if confirm_remove(parent.as_ref(), &name).await
+        if crate::remotesheet::ask_remove(parent.as_ref(), &name).await
             && let Some(s) = w.upgrade()
         {
             s.perform(
@@ -314,7 +336,8 @@ pub(crate) fn remote_sheet(s: &Rc<RepoSettings>, remote: Option<Remote>) {
         } else {
             tr!("Add Remote")
         };
-        let sheet = Sheet::new(parent.as_ref(), &title, "");
+        // リモート・フック・LFS のパターンは worktree によらないので、worktree の名前は書かない（macOS 版と同じ）。
+        let sheet = Sheet::unnamed(parent.as_ref(), &title, "");
         let name = gtk::Entry::builder()
             .text(remote.as_ref().map_or("origin", |r| r.name.as_str()))
             .hexpand(true)
@@ -378,7 +401,7 @@ pub(crate) fn remote_sheet(s: &Rc<RepoSettings>, remote: Option<Remote>) {
                     let Some(window) = window.upgrade() else {
                         return;
                     };
-                    if confirm_remove(Some(&window), &name).await {
+                    if crate::remotesheet::ask_remove(Some(&window), &name).await {
                         window.close();
                         if let Some(s) = w.upgrade() {
                             s.perform(
@@ -748,7 +771,7 @@ pub(crate) fn commits_page(s: &Rc<RepoSettings>) -> gtk::Box {
         }),
         None,
     );
-    let (w, e) = (s.weak(), row.error.clone());
+    let w = s.weak();
     let picker = crate::reposettings::Picker::new(move |value| {
         let Some(s) = w.upgrade() else { return };
         let current = template_choice(&s);
@@ -766,14 +789,13 @@ pub(crate) fn commits_page(s: &Rc<RepoSettings>) -> gtk::Box {
                     Some((Some(_), path)) => {
                         let mut changes = vec![(FILE_KEY.to_owned(), Some(path))];
                         changes.extend(drop_library(&s));
-                        s.write(changes, Some(&e));
+                        s.write(changes);
                     }
                     _ => {
                         let changes: Vec<_> = drop_library(&s).into_iter().collect();
-                        let e = e.clone();
                         s.perform(
                             vec![json!({"op": "saveCommitTemplate", "text": ""})],
-                            move |s| s.write(changes, Some(&e)),
+                            move |s| s.write(changes),
                         );
                     }
                 }
@@ -784,7 +806,7 @@ pub(crate) fn commits_page(s: &Rc<RepoSettings>) -> gtk::Box {
                     Choice::File(f) => f,
                     _ => "~".into(),
                 };
-                let (w, e) = (s.weak(), e.clone());
+                let w = s.weak();
                 s.choose_file(
                     &tr!("Message template"),
                     &tr!("Choose a commit message template file"),
@@ -793,7 +815,7 @@ pub(crate) fn commits_page(s: &Rc<RepoSettings>) -> gtk::Box {
                         if let Some(s) = w.upgrade() {
                             let mut changes = vec![(FILE_KEY.to_owned(), Some(path))];
                             changes.extend(drop_library(&s));
-                            s.write(changes, Some(&e));
+                            s.write(changes);
                         }
                     },
                 );
@@ -803,11 +825,11 @@ pub(crate) fn commits_page(s: &Rc<RepoSettings>) -> gtk::Box {
                 if s.local(FILE_KEY).is_some() {
                     changes.push((FILE_KEY.to_owned(), None));
                 }
-                s.write(changes, Some(&e));
+                s.write(changes);
             }
             v if v.starts_with("file:") => {
                 if let Some(c) = drop_library(&s) {
-                    s.write(vec![c], Some(&e));
+                    s.write(vec![c]);
                 }
             }
             _ => {
@@ -827,7 +849,7 @@ pub(crate) fn commits_page(s: &Rc<RepoSettings>) -> gtk::Box {
                 } else if s.local(LIBRARY_KEY).is_some() {
                     changes.push((LIBRARY_KEY.to_owned(), None));
                 }
-                s.write(changes, Some(&e));
+                s.write(changes);
             }
         }
     });
@@ -846,7 +868,6 @@ pub(crate) fn commits_page(s: &Rc<RepoSettings>) -> gtk::Box {
     frame.set_child(Some(&scrolled));
     let revert = gtk::Button::with_label(&tr!("Revert"));
     let save = gtk::Button::with_label(&tr!("Save"));
-    save.add_css_class("suggested-action");
     let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     buttons.set_halign(gtk::Align::End);
     buttons.append(&revert);
@@ -878,17 +899,16 @@ pub(crate) fn commits_page(s: &Rc<RepoSettings>) -> gtk::Box {
         crate::settings::select("git/commits");
     });
     let make_own = gtk::Button::with_label(&tr!("Edit for This Repository"));
-    let (w, e) = (s.weak(), row.error.clone());
+    let w = s.weak();
     make_own.connect_clicked(move |_| {
         let Some(s) = w.upgrade() else { return };
         let Choice::Shared(name) = template_choice(&s) else {
             return;
         };
         let text = crate::templates::text_of(&name).unwrap_or_default();
-        let e = e.clone();
         s.perform(
             vec![json!({"op": "saveCommitTemplate", "text": text})],
-            move |s| s.write(vec![(LIBRARY_KEY.to_owned(), None)], Some(&e)),
+            move |s| s.write(vec![(LIBRARY_KEY.to_owned(), None)]),
         );
     });
     let shared_buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -1137,7 +1157,8 @@ fn hooks_directory(s: &RepoSettings) -> Option<std::path::PathBuf> {
     }
     let paths = s.repo.paths();
     match s.state.borrow().hooks_path.as_deref() {
-        None => Some(paths.git_dir.join("hooks")),
+        // git の既定は $GIT_COMMON_DIR/hooks（追加した worktree でも、元のリポジトリの .git の中）。
+        None => Some(paths.common_dir.join("hooks")),
         Some(p) if p.starts_with('/') => Some(p.into()),
         Some(p) if p.starts_with('~') => Some(std::path::PathBuf::from(format!(
             "{}{}",
@@ -1172,8 +1193,8 @@ fn open_hook(s: &RepoSettings, name: &str, how: &str) {
     });
 }
 
-/// フックをエディタで開くメニュー: 選んだエディタで編集・Edit With（入っているもの）・ファイルの場所。
-fn hook_open_menu() -> gio::Menu {
+/// フックの右クリックのメニュー: 選んだエディタで編集・Edit With（入っているもの）・ファイルの場所（macOS 版と同じ）。
+fn hook_context_menu() -> gio::Menu {
     let menu = gio::Menu::new();
     menu.append(
         Some(&tr!("Edit in {app}", app = crate::editor::chosen_name())),
@@ -1187,6 +1208,17 @@ fn hook_open_menu() -> gio::Menu {
     }
     menu.append_submenu(Some(&tr!("Edit With")), &with);
     menu.append(Some(&tr!("Show in Files")), Some("hooks.reveal"));
+    menu
+}
+
+/// 選んだフックの「〜で編集」ボタンの横のメニュー: 入っているエディタごとの「〜で編集」（macOS 版の Menu と同じ）。
+fn hook_open_menu() -> gio::Menu {
+    let menu = gio::Menu::new();
+    for app in crate::editor::installed() {
+        let item = gio::MenuItem::new(Some(&tr!("Edit in {app}", app = app.name)), None);
+        item.set_action_and_target_value(Some("hooks.edit-with"), Some(&app.id.to_variant()));
+        menu.append_item(&item);
+    }
     menu
 }
 
@@ -1247,7 +1279,7 @@ fn create_hook(s: &Rc<RepoSettings>, table: Rc<Table>) {
     }
     let (w, parent) = (s.weak(), s.window());
     glib::spawn_future_local(async move {
-        let sheet = Sheet::new(
+        let sheet = Sheet::unnamed(
             parent.as_ref(),
             &tr!("Create Hook"),
             &tr!("Puts a #!/bin/sh skeleton in place and makes it executable."),
@@ -1382,13 +1414,13 @@ pub(crate) fn hooks_page(s: &Rc<RepoSettings>) -> gtk::ScrolledWindow {
     // 行のないところでは Create Hook… だけ（macOS 版と同じ）。
     let empty_menu = gio::Menu::new();
     empty_menu.append(Some(&tr!("Create Hook…")), Some("hooks.create"));
-    table.context_menu_or(&menu, Some(empty_menu));
+    table.context_menu_or(&menu, empty_menu);
     let fill_menu = {
         let menu = menu.clone();
         move || {
             menu.remove_all();
             if local {
-                let open = hook_open_menu();
+                let open = hook_context_menu();
                 for i in 0..open.n_items() {
                     menu.append_item(&gio::MenuItem::from_model(&open, i));
                 }
@@ -1403,6 +1435,12 @@ pub(crate) fn hooks_page(s: &Rc<RepoSettings>) -> gtk::ScrolledWindow {
     let empty = label("", &["dim-label"]);
     empty.set_wrap(true);
     let frame = table.scrolled(120);
+    // 表はフックの数だけ伸ばす（中でスクロールしない。ページごとスクロールする。macOS 版と同じ）。
+    if let Some(sw) = frame.child().and_downcast::<gtk::ScrolledWindow>() {
+        sw.set_vscrollbar_policy(gtk::PolicyType::Never);
+        sw.set_min_content_height(-1);
+        sw.set_max_content_height(-1);
+    }
     let create_button = gtk::Button::with_label(&tr!("Create Hook…"));
     create_button.set_action_name(Some("hooks.create"));
     create_button.set_tooltip_text(Some(&tr!(
@@ -1606,7 +1644,7 @@ pub(crate) fn hooks_page(s: &Rc<RepoSettings>) -> gtk::ScrolledWindow {
 fn track_pattern(s: &Rc<RepoSettings>) {
     let (w, parent) = (s.weak(), s.window());
     glib::spawn_future_local(async move {
-        let sheet = Sheet::new(
+        let sheet = Sheet::unnamed(
             parent.as_ref(),
             &tr!("Track Pattern"),
             &tr!("Files matching the pattern are stored in LFS from now on (git lfs track)."),
@@ -1616,7 +1654,7 @@ fn track_pattern(s: &Rc<RepoSettings>) {
             .activates_default(true)
             .build();
         sheet.add(&entry);
-        sheet.buttons(&tr!("Track"), false, None);
+        sheet.buttons("OK", false, None);
         if sheet.run().await != Response::Ok {
             return;
         }
