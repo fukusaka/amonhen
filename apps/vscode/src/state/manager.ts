@@ -192,9 +192,12 @@ export class RepositoryManager implements vscode.Disposable {
     return find();
   }
 
-  /** `openPath` で開いたリポジトリを閉じる（worktree を消した後）。vscode.git が開いたものは閉じない */
-  forget(path: string): void {
-    const entry = [...this.entries.values()].find((e) => !e.apiRepo && samePath(e.repository.root, path));
+  /**
+   * `openPath` で開いたリポジトリを閉じる（worktree を消した後）。vscode.git が開いたものは閉じない。`evenGit` なら
+   * それも閉じる（submodule を消す前。vscode.git は submodule も開き、消えたら自分で閉じる）
+   */
+  forget(path: string, evenGit = false): void {
+    const entry = [...this.entries.values()].find((e) => (evenGit || !e.apiRepo) && samePath(e.repository.root, path));
     if (!entry) return;
     this.entries.delete(entry.repository.root);
     vscode.Disposable.from(...entry.disposables).dispose();

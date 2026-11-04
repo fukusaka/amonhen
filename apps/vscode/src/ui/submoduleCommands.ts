@@ -123,6 +123,8 @@ export function registerSubmoduleCommands(manager: RepositoryManager, sidebar: S
         drop,
       );
       if (answer !== keep && answer !== drop) return;
+      // 開いていれば閉じる（常駐の cat-file と daemon へのつながり。Windows では、使っているフォルダーを消せない）
+      manager.forget(join(repo.root, path), true);
       await run(
         repo,
         { op: 'changeSubmodule', change: { kind: 'remove', path, deleteGitDir: answer === drop } },

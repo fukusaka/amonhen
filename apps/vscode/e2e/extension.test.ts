@@ -913,7 +913,7 @@ async function submoduleFlow(): Promise<void> {
     // 外す。.git/modules は残す（git の既定）。.gitmodules の変更が stage されていないと、git rm が断る
     git('add', '.gitmodules');
     await withWindow({ showWarningMessage: async () => 'Remove' }, async () => vscode.commands.executeCommand('amonhen.submodule.remove', row()));
-    assert.equal(gitmodules('url'), undefined);
+    assert.equal(gitmodules('url'), undefined, lastErrors());
     assert.ok(!existsSync(join(root, path)));
     assert.ok(existsSync(join(gitDir, 'modules', path)));
     await until('行が消える', () => !row());
