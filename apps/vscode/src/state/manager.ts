@@ -240,9 +240,14 @@ export class RepositoryManager implements vscode.Disposable {
 }
 
 /** ワークスペースのフォルダそのものであるリポジトリを、サブモジュールなどより優先する */
+/**
+ * ワークスペースのフォルダーそのもののリポジトリを、その中の submodule などより先に選ぶ。git のパスはシンボリック
+ * リンクを解いたもの（macOS の /var → /private/var など）なので、揃えて比べる
+ */
 function isPreferred(candidate: string, current: string): boolean {
   const folders = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
-  return folders.includes(candidate) && !folders.includes(current);
+  const isFolder = (p: string) => folders.some((f) => samePath(f, p));
+  return isFolder(candidate) && !isFolder(current);
 }
 
 async function getGitApi(): Promise<GitApi | undefined> {
