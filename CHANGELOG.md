@@ -17,6 +17,8 @@ becomes the GitHub Release notes.
   History's as it is in a commit, optionally staged; Undo brings the file back. `amonhen restore --source` too.
 - The Stash sheet stashes all changes or only the staged ones (git 2.35), can keep the staged changes, and Working
   Copy's file menu has Stash… for the selected files.
+- A worktree's menu locks and unlocks it, moves it, and reconnects one whose folder was moved by hand (git 2.29).
+  `amonhen worktree lock|unlock|move|repair` too.
 - On Linux and the BSDs, Settings > Performance > fsmonitor speeds up status with Watchman when it is installed (git
   2.26 or later); the engine answers git as its fsmonitor hook, and nothing is written to the repository's config.
 

@@ -389,6 +389,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | The edited worktree (✎) and switching it | ✓ | ✓ | ✓ | n/a | VSCode: Switches the repository the extension works on; one outside the workspace isn't added to the Source Control view.<br>CLI: Works on the worktree it runs in. |
 | New Worktree… (from a branch or commit) | ✓ | ✓ | ✓ | ✓ |  |
 | Remove Worktree (asks, `--force` with changes) | ✓ | ✓ | ✓ | ✓ |  |
+| Lock and unlock, move, locate a moved folder (repair) | ✓ | ✓ | — | ✓ | CLI: `worktree lock`, `unlock`, `move`, `repair`. |
 | Prune worktrees | ✓ | ✓ | ✓ | ✓ |  |
 | A worktree's folder opens its repository with it edited | ✓ | ✓ | ✓ | n/a | VSCode: Opening the folder works on that worktree, with the others listed. |
 

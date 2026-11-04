@@ -882,6 +882,7 @@ git の考え方と、アプリが守ること:
   worktree を書き込む先にして開く。CLI は git と同じく実行した worktree に対して働き、`amonhen worktree` は
   `git worktree` と同じ並び（list・add・remove・prune）。
 - New Worktree…（ブランチかコミットから、フォルダを選んで）、Remove Worktree、Prune、Finder で表示、ターミナルで開く。
+- ロック…（理由をつけて。git が prune・削除・移動をしない）とロックを外す、移す…（`git worktree move`）、フォルダが見つからない worktree には 移したフォルダを探す…（今の場所を渡して `git worktree repair`。git 2.29 から）。
 
 ## 実装の順序
 

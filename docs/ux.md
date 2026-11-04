@@ -962,6 +962,7 @@ Viewing mixes them, editing names one:
   worktree edited. The CLI works on the worktree it runs in, as git does; `amonhen worktree` mirrors `git worktree`
   (list, add, remove, prune).
 - New Worktree… (from a branch or commit, folder chosen), Remove Worktree, Prune, Reveal in Finder, Open in Terminal.
+- Lock… (with a reason, so git won't prune, remove or move it) and Unlock, Move… (`git worktree move`), and for a worktree whose folder is missing, Locate Moved Folder… (`git worktree repair` with where it is now, git 2.29).
 
 ## Implementation order
 
