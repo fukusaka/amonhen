@@ -906,6 +906,19 @@ First release.
 
 ## VSCode extension
 
+### Unreleased
+
+#### Added
+
+- With the engine, submodules show the app's marks and the URL and branch they follow, and can be added, updated
+  (nested ones, or to the branch followed), pointed elsewhere, synced and removed (keeping `.git/modules` unless asked).
+
+#### Fixed
+
+- A folder opened through a symbolic link (macOS's `/var`, for one) selects its own repository at startup rather
+  than one of its submodules.
+- An expanded Submodules, Tags or Stashes group is read again after switching repositories, rather than staying empty.
+
 ### [0.2.5] - 2026-11-04
 
 History gains the app's search, Reflog, File History and Blame, and with the engine the sidebar arranges branches,
@@ -949,8 +962,6 @@ and Repository Settings shows the app's pages of git settings.
   Commits (the message template), Operations,
   Branches (the default branch), Working Copy (line endings, the executable bit, `.git/info/exclude`) and Fetching
   and Folders (fetching more, sparse checkout, git maintenance), Remotes, Hooks and LFS, and Keys and Values.
-- With the engine, submodules show the app's marks and the URL and branch they follow, and can be added, updated
-  (nested ones, or to the branch followed), pointed elsewhere, synced and removed (keeping `.git/modules` unless asked).
 
 #### Changed
 
@@ -966,9 +977,6 @@ and Repository Settings shows the app's pages of git settings.
 
 #### Fixed
 
-- A folder opened through a symbolic link (macOS's `/var`, for one) selects its own repository at startup rather
-  than one of its submodules.
-- An expanded Submodules, Tags or Stashes group is read again after switching repositories, rather than staying empty.
 - With the engine, deleting a branch that isn't merged now offers Delete Anyway instead of only showing git's error.
 - History no longer stays empty when it is opened while the engine's History is still being read; the view's first
   request for rows made the extension think there were none.
