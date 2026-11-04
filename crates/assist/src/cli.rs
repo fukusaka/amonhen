@@ -547,6 +547,26 @@ mod tests {
         path
     }
 
+    /// 書いたばかりの偽の CLI は、並んで走るほかの試験が子プロセスを作った瞬間にその子へ書き込みの記述子が渡り、
+    /// Linux では実行すると「Text file busy」で断られることがある。そのときは少し待って実行し直す。
+    #[cfg(unix)]
+    fn stream_fake(
+        cli: &Path,
+        prompt: &str,
+        cancel: &AtomicBool,
+        mut on_text: impl FnMut(&str),
+    ) -> Result<String, String> {
+        for _ in 0..20 {
+            match stream(Cli::Claude, cli, "", prompt, cancel, &mut on_text) {
+                Err(e) if e.contains("os error 26") => {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                other => return other,
+            }
+        }
+        panic!("still busy after retries");
+    }
+
     #[cfg(unix)]
     #[test]
     fn streams_from_a_fake_cli_in_an_empty_directory() {
@@ -562,14 +582,9 @@ mod tests {
             ),
         );
         let mut seen = Vec::new();
-        let out = stream(
-            Cli::Claude,
-            &cli,
-            "",
-            "prompt",
-            &AtomicBool::new(false),
-            |t| seen.push(t.to_owned()),
-        )
+        let out = stream_fake(&cli, "prompt", &AtomicBool::new(false), |t| {
+            seen.push(t.to_owned())
+        })
         .unwrap();
         assert_eq!(out, "キャッシュの当たりを数える");
         assert_eq!(seen.last().unwrap(), &out);
@@ -584,10 +599,10 @@ mod tests {
             dir.path(),
             "cat >/dev/null; echo 'Not logged in' >&2; exit 1",
         );
-        let e = stream(Cli::Claude, &cli, "", "p", &AtomicBool::new(false), |_| {}).unwrap_err();
+        let e = stream_fake(&cli, "p", &AtomicBool::new(false), |_| {}).unwrap_err();
         assert_eq!(e, "Not logged in");
         let cli = fake_cli(dir.path(), "cat >/dev/null; exit 2");
-        let e = stream(Cli::Claude, &cli, "", "p", &AtomicBool::new(false), |_| {}).unwrap_err();
+        let e = stream_fake(&cli, "p", &AtomicBool::new(false), |_| {}).unwrap_err();
         assert!(e.contains("Claude Code") && e.contains('2'), "{e}");
     }
 
@@ -597,7 +612,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cli = fake_cli(dir.path(), "cat >/dev/null; exec sleep 30");
         let started = std::time::Instant::now();
-        let e = stream(Cli::Claude, &cli, "", "p", &AtomicBool::new(true), |_| {}).unwrap_err();
+        let e = stream_fake(&cli, "p", &AtomicBool::new(true), |_| {}).unwrap_err();
         assert!(amonhen_model::i18n::is_cancelled(&e), "{e}");
         assert!(started.elapsed() < std::time::Duration::from_secs(10));
     }
