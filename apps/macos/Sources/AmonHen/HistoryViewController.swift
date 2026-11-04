@@ -1574,13 +1574,44 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         }
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = context
+        drawGlassContents(in: root, context: context)
         for (image, view) in overlays {
             var frame = root.convert(view.bounds, from: view)
             if root.isFlipped { frame.origin.y = root.bounds.height - frame.maxY }
             context.cgContext.draw(image, in: frame)
         }
+        // 窓の背景は contentView の外にあり、透けているところ（History の上の帯など）は透明のまま残る。下に敷く。
+        root.effectiveAppearance.performAsCurrentDrawingAppearance {
+            NSColor.windowBackgroundColor.setFill()
+            root.bounds.fill(using: .destinationOver)
+        }
         NSGraphicsContext.restoreGraphicsState()
         return rep
+    }
+
+    /// macOS 26 の Liquid Glass（サイドバーなど）は中身をレイヤーの下に置くので、`cacheDisplay` では白く抜ける。
+    /// ガラスの形を窓の背景の色で塗り、中身を別に描いて重ねる。
+    private func drawGlassContents(in root: NSView, context: NSGraphicsContext) {
+        guard #available(macOS 26.0, *) else { return }
+        func visit(_ view: NSView) {
+            guard !view.isHidden else { return }
+            guard let glass = view as? NSGlassEffectView else { return view.subviews.forEach(visit) }
+            guard let content = glass.contentView,
+                  let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds) else { return }
+            content.cacheDisplay(in: content.bounds, to: rep)
+            func frame(of view: NSView) -> NSRect {
+                var frame = root.convert(view.bounds, from: view)
+                if root.isFlipped { frame.origin.y = root.bounds.height - frame.maxY }
+                return frame
+            }
+            let shape = frame(of: glass)
+            root.effectiveAppearance.performAsCurrentDrawingAppearance {
+                NSColor.windowBackgroundColor.setFill()
+                NSBezierPath(roundedRect: shape, xRadius: glass.cornerRadius, yRadius: glass.cornerRadius).fill()
+            }
+            if let image = rep.cgImage { context.cgContext.draw(image, in: frame(of: content)) }
+        }
+        visit(root)
     }
 
     // MARK: - 表のデータ
