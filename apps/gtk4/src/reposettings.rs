@@ -505,6 +505,21 @@ pub(crate) fn section(title: Option<&str>, rows: &[gtk::Widget]) -> gtk::Box {
     b
 }
 
+/// macOS 版の `.grouped` の Form の節の幅。窓が広くても、節はこの幅で真ん中に寄せる。
+pub(crate) const FORM_WIDTH: i32 = 704;
+
+/// 節を並べた列（左右の余白 20 を付けた `column`）を、`FORM_WIDTH` までの幅で真ん中に寄せる（macOS 版の
+/// `.grouped` の Form と同じ）。表のページ（リモート・キーと値など）は窓いっぱいのまま（macOS 版の `GroupedPage`）。
+pub(crate) fn form_column(column: &impl IsA<gtk::Widget>) -> adw::Clamp {
+    let width = FORM_WIDTH + column.margin_start() + column.margin_end();
+    adw::Clamp::builder()
+        .maximum_size(width)
+        .tightening_threshold(width)
+        .vexpand(column.vexpands())
+        .child(column)
+        .build()
+}
+
 /// 節を縦に並べたページ（スクロールする）。
 pub(crate) fn page(sections: &[gtk::Box]) -> gtk::ScrolledWindow {
     let b = gtk::Box::new(gtk::Orientation::Vertical, 18);
@@ -516,7 +531,7 @@ pub(crate) fn page(sections: &[gtk::Box]) -> gtk::ScrolledWindow {
         b.append(s);
     }
     gtk::ScrolledWindow::builder()
-        .child(&b)
+        .child(&form_column(&b))
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vexpand(true)
         .build()
@@ -1747,7 +1762,7 @@ impl RepoSettings {
     }
 
     /// 改行・実行の許可と、このリポジトリだけで無視するパターン。
-    fn working_copy_page(self: &Rc<Self>) -> gtk::Box {
+    fn working_copy_page(self: &Rc<Self>) -> adw::Clamp {
         let rows = section(
             None,
             &[
@@ -1885,7 +1900,7 @@ impl RepoSettings {
         b.append(&rows);
         b.append(&column);
         b.add_controller(shortcuts);
-        b
+        form_column(&b)
     }
 
     /// 既定のブランチ（Amon Hen の `amonhen.defaultBranch`。なければ判定したもの）。

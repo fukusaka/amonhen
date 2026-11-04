@@ -146,7 +146,7 @@ pub fn page() -> gtk::Widget {
         }
     });
     // スクロールは設定の窓のもの（macOS 版と同じく、ページ全体が窓と一緒にスクロールする）。
-    column.upcast()
+    crate::reposettings::form_column(&column).upcast()
 }
 
 /// 選んだ CLI の場所・モデル・言語（枠の一覧の 2 行目から。1 行目は使う CLI）。

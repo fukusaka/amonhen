@@ -371,7 +371,7 @@ fn choice_row(
 }
 
 /// Settings > Accounts（macOS 版の `AccountsSettings`）: GitHub から History に読むもの。
-fn accounts() -> gtk::Box {
+fn accounts() -> adw::Clamp {
     const COMMITS: [u32; 3] = [100, 50, 30];
     let ci = check(
         GITHUB_CI_STATUS,
@@ -439,7 +439,7 @@ fn section(title: Option<&str>, items: &[gtk::Widget]) -> gtk::Box {
     crate::reposettings::section(title, items)
 }
 
-fn page(sections: &[gtk::Box]) -> gtk::Box {
+fn page(sections: &[gtk::Box]) -> adw::Clamp {
     // 余白は Git のタブのページ（`reposettings::page`）と同じ。
     let b = gtk::Box::new(gtk::Orientation::Vertical, 18);
     b.set_margin_top(18);
@@ -449,7 +449,7 @@ fn page(sections: &[gtk::Box]) -> gtk::Box {
     for s in sections {
         b.append(s);
     }
-    b
+    crate::reposettings::form_column(&b)
 }
 
 /// 設定の窓を開く（開いていれば前に出す）。窓はアプリに 1 つで、どの窓のものでもない（macOS 版の

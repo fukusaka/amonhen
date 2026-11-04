@@ -25,6 +25,8 @@ becomes the GitHub Release notes.
 - The GTK4 app opens Blame and File History as tabs beside the repository tab, with the repository's toolbar, as the
   macOS app does, instead of separate windows.
 - The GTK4 app's Settings show on/off items as switches on the right, as the macOS app does.
+- The GTK4 app's Settings forms sit in a centred column of the macOS width instead of spanning the window; tables
+  such as Remotes and Keys and Values still use the full width.
 
 #### Fixed
 
