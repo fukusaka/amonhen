@@ -13,6 +13,8 @@ becomes the GitHub Release notes.
 
 - Subtrees, when git has `git subtree`: Add Subtree… brings another repository's branch into a folder, and the
   sidebar's Subtrees group pulls, pushes and splits them, remembering the source and squash. `amonhen subtree` too.
+- On Linux and the BSDs, Settings > Performance > fsmonitor speeds up status with Watchman when it is installed; the
+  engine answers git as its fsmonitor hook, and nothing is written to the repository's config.
 
 #### Changed
 

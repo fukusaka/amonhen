@@ -34,7 +34,7 @@ thread_local! {
 pub const MONOSPACED_COMMIT_MESSAGE: &str = "monospacedCommitMessage";
 pub const WRITE_COMMIT_GRAPH: &str = "writeCommitGraph";
 pub const OPEN_THROUGH_DAEMON: &str = "openThroughDaemon";
-/// 手元のリポジトリの status で git の fsmonitor を使うか（既定は使う。macOS と Windows でだけ効く）。
+/// 手元のリポジトリの status で git の fsmonitor を使うか（既定は使う。Linux・BSD では Watchman があるときだけ効く）。
 pub const USE_FSMONITOR: &str = "useFSMonitor";
 pub const WORKING_COPY_LAYOUT: &str = "workingCopyLayout";
 pub const AUTO_MAGIC_MERGE: &str = "autoMagicMerge";
@@ -170,6 +170,8 @@ pub fn bool(key: &str) -> bool {
 
 /// status で git の fsmonitor を使うかを設定から決め、設定を変えたら合わせる（起動したときに一度呼ぶ）。
 pub fn apply_fsmonitor() {
+    // Linux・BSD では、Watchman に聞く hook として共有の daemon と同じエンジンを git に起動させる。
+    amonhen_backend_cli::set_fsmonitor_engine(crate::fsmonitor_engine());
     amonhen_backend_cli::set_fsmonitor(bool(USE_FSMONITOR));
     connect_changed(|key| {
         if key == USE_FSMONITOR {
@@ -181,8 +183,8 @@ pub fn apply_fsmonitor() {
 /// 設定の窓の大きさの覚え場所。
 const WINDOW_SIZE: &str = "settingsWindowSize";
 
-/// git の `fsmonitor--daemon` を使える OS か（macOS と Windows だけ）。
-const FSMONITOR_AVAILABLE: bool = cfg!(any(target_os = "macos", target_os = "windows"));
+/// git の `fsmonitor--daemon` を使える OS か（macOS と Windows だけ。ほかは Watchman）。
+const FSMONITOR_DAEMON: bool = cfg!(any(target_os = "macos", target_os = "windows"));
 
 pub fn set_bool(key: &str, value: bool) {
     FILE.with(|f| {
@@ -693,14 +695,17 @@ pub fn show(near: &impl IsA<gtk::Widget>) {
     stack.add_titled(&crate::aisettings::page(), Some("ai"), "AI");
 
     // Performance
-    // fsmonitor: git の fsmonitor--daemon のない OS（Linux など）では押せなくし、理由を出す。
+    // fsmonitor: git の fsmonitor--daemon のない OS（Linux・BSD）は Watchman を使う。なければ押せなくし、入れれば
+    // 使えると出す。
     let fsmonitor = check(USE_FSMONITOR, &tr!("Speed up status with fsmonitor"));
-    if !FSMONITOR_AVAILABLE {
+    let fsmonitor_note = if FSMONITOR_DAEMON {
+        tr!("A git fsmonitor--daemon runs for each repository.")
+    } else if amonhen_backend_cli::watchman().is_some() {
+        tr!("Uses Watchman, which watches each repository.")
+    } else {
         fsmonitor.set_sensitive(false);
-        fsmonitor.set_tooltip_text(Some(&tr!(
-            "git’s fsmonitor--daemon runs only on macOS and Windows."
-        )));
-    }
+        tr!("Install Watchman to use it.")
+    };
     stack.add_titled(
         &page(&[
             section(
@@ -712,7 +717,7 @@ pub fn show(near: &impl IsA<gtk::Widget>) {
                     ))
                     .upcast(),
                     fsmonitor.upcast(),
-                    note(&tr!("A git fsmonitor--daemon runs for each repository.")).upcast(),
+                    note(&fsmonitor_note).upcast(),
                 ],
             ),
             section(

@@ -1834,7 +1834,8 @@
 /* GTK4: Settings > Performance の fsmonitor */
 "Speed up status with fsmonitor" = "fsmonitor で status を速くする";
 "A git fsmonitor--daemon runs for each repository." = "リポジトリごとに git fsmonitor--daemon が常駐します。";
-"git’s fsmonitor--daemon runs only on macOS and Windows." = "git の fsmonitor--daemon は macOS と Windows でだけ動きます。";
+"Uses Watchman, which watches each repository." = "Watchman がリポジトリを見張ります。";
+"Install Watchman to use it." = "使うには Watchman を入れてください。";
 
 /* GTK4: ツールバーのカスタマイズ（View > Customize Toolbar…） */
 "Customize Toolbar…" = "ツールバーをカスタマイズ…";
