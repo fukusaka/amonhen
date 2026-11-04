@@ -181,6 +181,28 @@ pub fn menu(
 /// Remotes の見出しとその下のリモート（docs/ux.md の 4.5 のリモート: リポジトリの設定のページと同じ操作）。
 /// 見出しは Add Remote…、リモートは Rename…・Edit URL…（どちらも同じシート）・Prune・Remove…。
 fn remote_menu(actions: &Rc<Actions>, data: &Data) -> Vec<Item> {
+    // subtree と Subtrees の見出し（macOS 版と同じ）。
+    if let sidebar::Item::Subtree(subtree) = &data.item {
+        let item = |title: &str, f: fn(&Rc<Actions>, &amonhen_model::Subtree)| {
+            let (a, s) = (actions.clone(), subtree.clone());
+            menu::action(title, move || f(&a, &s))
+        };
+        return vec![
+            item("Pull…", |a, s| {
+                crate::subtreesheet::pull_or_push(a, s, false)
+            }),
+            item("Push…", |a, s| {
+                crate::subtreesheet::pull_or_push(a, s, true)
+            }),
+            item("Split…", crate::subtreesheet::split),
+        ];
+    }
+    if matches!(data.item, sidebar::Item::Group) && data.title == "Subtrees" {
+        let a = actions.clone();
+        return vec![menu::action(tr!("Add Subtree…"), move || {
+            crate::subtreesheet::add(&a)
+        })];
+    }
     if let Some(remote) = &data.remote {
         let edit = |title: String| {
             let (a, r) = (actions.clone(), remote.clone());

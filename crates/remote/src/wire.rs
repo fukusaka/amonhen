@@ -425,6 +425,10 @@ pub enum Op {
     Submodules,
     /// → `()`
     ChangeSubmodule(Tagged<amonhen_model::SubmoduleChange>),
+    /// → `Subtrees`
+    Subtrees,
+    /// → `Outcome`
+    Subtree(Tagged<amonhen_model::SubtreeOp>),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -689,6 +689,17 @@ the sidebar is wider.
   branch to follow if any). The Repository menu has Add Submodule… and Update Submodules… too.
 - The Clone sheet has "Check out submodules too" (off by default, as in git).
 
+## 7g. Subtrees
+
+- Shown only when this machine's git has `git subtree` (some builds leave it out). The sidebar's Subtrees group lists
+  the folders added with it; the tooltip has the repository and branch used last and whether the last import was
+  squashed.
+- A subtree's menu: Pull… (merge the branch into the folder; conflicts stop like a merge), Push… (send the folder's
+  commits to a branch) and Split… (a new branch with only the folder's history). Pull and Push start from the
+  repository and branch used last, and Pull from the squash chosen last.
+- The group's menu and the Repository menu have Add Subtree… (repository, branch or tag, folder from the URL by
+  default, and Squash, off as in git).
+
 ## 8. Resolving conflicts (the embedded merge editor)
 
 ### Flow

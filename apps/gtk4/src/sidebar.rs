@@ -54,6 +54,8 @@ pub enum Item {
     /// Pull Requests の下のプルリクエストと、そのブランチ（手元にあれば。リモートブランチ、なければローカル
     /// ブランチ）。
     PullRequest(Box<PullRequest>, Option<Box<RefEntry>>),
+    /// Subtrees の下の subtree。
+    Subtree(amonhen_model::Subtree),
 }
 
 /// 行の右端のアイコン（取り込み済み・gone など）。意味はツールチップの先頭に出す。
@@ -326,6 +328,9 @@ struct Inner {
     tags: RefCell<Option<TagRemotes>>,
     /// submodule の様子（場所 → 様子。submodule がなければ読まない）。
     submodules: RefCell<HashMap<String, SubmoduleState>>,
+    /// subtree（まだ読んでいなければ None）。
+    subtrees: RefCell<Option<amonhen_model::Subtrees>>,
+    loading_subtrees: Cell<u64>,
     loading_submodules: Cell<u64>,
     /// お気に入りのブランチ（上から順。作り直すたびに求める）。
     pinned: RefCell<Vec<String>>,
@@ -477,6 +482,8 @@ impl Sidebar {
             groups: RefCell::default(),
             tags: RefCell::default(),
             submodules: RefCell::default(),
+            subtrees: RefCell::default(),
+            loading_subtrees: Cell::new(0),
             loading_submodules: Cell::new(0),
             pinned: RefCell::default(),
             folded: RefCell::default(),
@@ -1945,6 +1952,32 @@ impl Inner {
         self.load_groups();
         self.load_tag_remotes();
         self.load_submodules();
+        self.load_subtrees();
+    }
+
+    /// subtree を裏で読み、変わっていたら作り直す（読んだ HEAD をコアが覚えるので、2 回目からは新しいコミット
+    /// だけを読む）。
+    fn load_subtrees(self: &Rc<Self>) {
+        let Some(reply) = self.ask("subtrees") else {
+            return;
+        };
+        let token = self.loading_subtrees.get() + 1;
+        self.loading_subtrees.set(token);
+        let weak = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let reply = reply.await.unwrap_or_default();
+            let Some(inner) = weak.upgrade() else { return };
+            inner.facts_pending.set(inner.facts_pending.get() - 1);
+            if inner.loading_subtrees.get() == token
+                && let Ok(list) =
+                    serde_json::from_value::<amonhen_model::Subtrees>(reply["info"].clone())
+                && Some(&list) != inner.subtrees.borrow().as_ref()
+            {
+                inner.subtrees.replace(Some(list));
+                inner.rebuild(false);
+            }
+            inner.run_debug();
+        });
     }
 
     /// submodule の様子（取り出してあるか・記録と違うコミットか・中の変更）を裏で読み、変わっていたら作り直す。
@@ -2392,6 +2425,7 @@ impl Inner {
                     tags.as_ref(),
                     &elsewhere,
                     &self.submodules.borrow(),
+                    self.subtrees.borrow().as_ref(),
                 );
                 self.pinned.replace(pinned);
                 groups.extend(built);
@@ -3043,6 +3077,7 @@ fn groups_of(
     tags: Option<&TagRemotes>,
     elsewhere: &HashSet<&str>,
     submodule_states: &HashMap<String, SubmoduleState>,
+    subtrees: Option<&amonhen_model::Subtrees>,
 ) -> (Vec<(&'static str, gio::ListStore)>, Vec<String>) {
     let tag_remotes = tags.map_or_else(
         || branch_remotes(refs),
@@ -3111,6 +3146,31 @@ fn groups_of(
     }
     if submodules.n_items() > 0 {
         groups.push(("Submodules", submodules));
+    }
+    let subtree_rows = gio::ListStore::new::<Node>();
+    for s in subtrees.map(|s| s.subtrees.as_slice()).unwrap_or_default() {
+        let about = [
+            s.url.as_ref().map(|u| match &s.ref_ {
+                Some(r) => format!("{u} {r}"),
+                None => u.clone(),
+            }),
+            s.squashed.then(|| tr!("Squashed when last pulled")),
+        ];
+        let lines: Vec<String> = about.into_iter().flatten().collect();
+        subtree_rows.append(&Node::new(
+            Data {
+                title: s.dir.clone(),
+                key: format!("Subtree/{}", s.dir),
+                item: Item::Subtree(s.clone()),
+                icon: icon::Kind::Folder,
+                tooltip: (!lines.is_empty()).then(|| lines.join("\n")),
+                ..Data::default()
+            },
+            None,
+        ));
+    }
+    if subtree_rows.n_items() > 0 {
+        groups.push(("Subtrees", subtree_rows));
     }
     (groups, pinned)
 }

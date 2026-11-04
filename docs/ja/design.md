@@ -458,6 +458,20 @@ rebase と History の編集（reword・squash・fixup・drop・edit・split・m
 - `RemoteChange`・`SubmoduleChange` は JSON の命令のために中にタグ（`kind`）を持つ形で、postcard では読めないので、
   daemon や SSH 先へは JSON の文字列にして送る（`wire::Tagged`）。
 
+## subtree
+
+- `git subtree` は contrib で、入っていない git もある。なので `{"op":"subtrees"}` はまず使えるかを確かめ
+  （`git subtree -h` が使い方を出すか。終了コードは版でまちまち）、アプリは使えるときだけ subtree を出す。
+- 一覧は HEAD の履歴から読む: `git-subtree-dir:` のあるコミット（add と squash した pull が書く。squash しない pull の
+  merge にはない）を新しい順に、HEAD にまだあるフォルダだけ（`ls-tree -d`）。大きなリポジトリですべてのコミットを
+  読むと遅いので、バックエンドは読んだ HEAD とフォルダを `<git dir>/amonhen/subtrees` に覚え、次は `<前>..HEAD`
+  だけを読む（HEAD が前の HEAD の子孫でなければ読み直す）。
+- `{"op":"subtree"}` は add・pull・push・split。add と pull は `git subtree add|pull --prefix=<dir> [--squash] --
+  <url> <ref>`。pull がコンフリクトすれば merge と同じく止まる。成功したら URL・ref・squash・push の ref をこの
+  リポジトリの設定に覚え（`amonhen.subtree.<dir>.url`・`.ref`・`.squash`・`.pushRef`）、シートと
+  `amonhen subtree pull <dir>` はそこから始める。squash は git と同じく、選ばなければオフ。add・pull・split
+  （新しいブランチ）は Undo できる。
+
 ## 速度目標と計測
 
 | 項目 | 目標 |

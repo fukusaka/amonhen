@@ -7,6 +7,13 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
+### Unreleased
+
+#### Added
+
+- Subtrees, when git has `git subtree`: Add Subtree… brings another repository's branch into a folder, and the
+  sidebar's Subtrees group pulls, pushes and splits them, remembering the source and squash. `amonhen subtree` too.
+
 ### [0.2.9] - 2026-11-04
 
 The GTK4 app for Linux catches up with the macOS app, and large repositories are supported: shallow, partial and

@@ -645,6 +645,16 @@ Staged / Unstaged の 2 群をやめ、変更のあるファイルを 1 つの�
   あれば追うブランチ）。Repository のメニューにも submodule を追加…・Update Submodules… がある。
 - Clone のシートに「submodule も取り出す」（既定はオフ。git と同じ）。
 
+## 7g. subtree
+
+- この機械の git に `git subtree` があるときだけ出す（入っていない git もある）。サイドバーの Subtrees の見出しの下に
+  取り込んだフォルダを並べ、ツールチップに前に使ったリポジトリとブランチ、最後の取り込みが squash だったかを出す。
+- subtree のメニュー: Pull…（ブランチをフォルダに merge。コンフリクトすれば merge と同じく止まる）、Push…
+  （フォルダのコミットをブランチに送る）、Split…（フォルダの履歴だけの新しいブランチ）。Pull・Push は前に使った
+  リポジトリとブランチ、Pull は前に選んだ squash から始める。
+- 見出しのメニューと Repository のメニューに subtree を追加…（リポジトリ、ブランチかタグ、フォルダ（既定は URL
+  から）、squash（git と同じく既定はオフ））。
+
 ## 8. コンフリクトの解決（埋め込みのマージエディタ）
 
 ### 流れ

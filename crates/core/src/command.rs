@@ -328,6 +328,14 @@ pub enum Command {
     ChangeSubmodule {
         change: amonhen_model::SubmoduleChange,
     },
+    /// subtree（`info.available`: この機械の git で `git subtree` が使えるか、`info.subtrees`: `dir`・`squashed`
+    /// （最新の記録が squash）・覚えている `url`・`ref`・`pushRef`・`squash`）。
+    Subtrees,
+    /// subtree の操作（`action.kind`: `add`・`pull`（`dir`・`url`・`ref`・`squash`）、`push`（`dir`・`url`・`ref`）、
+    /// `split`（`dir`・`branch`））。Add・Pull・Split は Undo できる。Pull はコンフリクトすれば止まる。
+    Subtree {
+        action: amonhen_model::SubtreeOp,
+    },
     Undo,
     /// 次に Undo される操作の名前（`label`）と、何を戻すか（`info.kind`: `refs`・`files`・`stash`・`rename`）。
     UndoPeek,
@@ -3083,6 +3091,38 @@ impl Repository {
             Command::ChangeSubmodule { change } => {
                 ops.change_submodule(&change)?;
                 ok()
+            }
+            Command::Subtrees => Ok(Response {
+                ok: true,
+                info: Some(serde_json::to_value(ops.subtrees()?)?),
+                ..Default::default()
+            }),
+            Command::Subtree { action: op } => {
+                use amonhen_model::SubtreeOp;
+                let (label, refs) = match &op {
+                    SubtreeOp::Add { dir, .. } => (format!("Subtree Add {dir}"), Vec::new()),
+                    SubtreeOp::Pull { dir, .. } => (format!("Subtree Pull {dir}"), Vec::new()),
+                    SubtreeOp::Push { .. } => {
+                        ops.subtree(&op)?;
+                        return ok();
+                    }
+                    SubtreeOp::Split { dir, branch } => {
+                        (format!("Subtree Split {dir}"), vec![heads(branch.trim())])
+                    }
+                };
+                let outcome = undo.record(
+                    ops,
+                    &label,
+                    &refs,
+                    false,
+                    || ops.subtree(&op),
+                    |o| *o != Outcome::Done,
+                )?;
+                Ok(Response {
+                    ok: true,
+                    outcome: Some(outcome_name(outcome)),
+                    ..Default::default()
+                })
             }
             Command::Undo => {
                 let label = undo.undo(ops)?;
@@ -7100,6 +7140,92 @@ mod tests {
             r#"{"op":"configSet","key":"pull.rebase","value":"true","scope":"system"}"#,
         );
         assert!(r["error"].as_str().unwrap().contains("system"), "{r}");
+    }
+
+    #[test]
+    fn adds_pulls_pushes_and_splits_subtrees() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        let lib = tempfile::tempdir().unwrap();
+        git(lib.path(), &["init", "-q"]);
+        git(lib.path(), &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        std::fs::write(lib.path().join("l.txt"), "1\n").unwrap();
+        git(lib.path(), &["add", "."]);
+        git(lib.path(), &["commit", "-q", "-m", "lib 1"]);
+        let url = lib.path().to_str().unwrap().replace('\\', "/");
+        let action = |json: serde_json::Value| {
+            run(
+                &repo,
+                &serde_json::json!({ "op": "subtree", "action": json }).to_string(),
+            )
+        };
+        let list = || run(&repo, r#"{"op":"subtrees"}"#)["info"].clone();
+        // git subtree は contrib なので、ない git もある（ソースから作った git など）。
+        if list()["available"] != true {
+            assert_eq!(list()["subtrees"], serde_json::json!([]));
+            let r = action(serde_json::json!({ "kind": "split", "dir": "a", "branch": "b" }));
+            assert!(r["error"].as_str().unwrap().contains("subtree"), "{r}");
+            return;
+        }
+        assert_eq!(list()["subtrees"], serde_json::json!([]));
+        let r = action(
+            serde_json::json!({ "kind": "add", "dir": "vendor/lib", "url": url, "ref": "main", "squash": true }),
+        );
+        assert_eq!(r["ok"], true, "{r}");
+        let subtrees = list()["subtrees"].clone();
+        assert_eq!(subtrees[0]["dir"], "vendor/lib");
+        assert_eq!(subtrees[0]["squashed"], true);
+        assert_eq!(subtrees[0]["url"], url.as_str());
+        assert_eq!(subtrees[0]["ref"], "main");
+        assert_eq!(subtrees[0]["squash"], true);
+        // Undo で Add の前に戻り、一覧からも消える（読んだ HEAD の子孫でなくなったので読み直す）。
+        let before = git(dir, &["rev-parse", "HEAD"]);
+        assert_eq!(run(&repo, r#"{"op":"undo"}"#)["ok"], true);
+        assert_ne!(git(dir, &["rev-parse", "HEAD"]), before);
+        assert_eq!(list()["subtrees"], serde_json::json!([]));
+        let r = action(
+            serde_json::json!({ "kind": "add", "dir": "vendor/lib", "url": url, "ref": "main", "squash": false }),
+        );
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(list()["subtrees"][0]["squashed"], false);
+
+        std::fs::write(lib.path().join("l.txt"), "1\n2\n").unwrap();
+        git(lib.path(), &["commit", "-q", "-am", "lib 2"]);
+        let r = action(
+            serde_json::json!({ "kind": "pull", "dir": "vendor/lib", "url": url, "ref": "main", "squash": false }),
+        );
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("vendor/lib/l.txt")).unwrap(),
+            "1\n2\n"
+        );
+
+        std::fs::write(dir.join("vendor/lib/m.txt"), "mine\n").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-q", "-m", "change in lib"]);
+        let r = action(
+            serde_json::json!({ "kind": "push", "dir": "vendor/lib", "url": url, "ref": "topic" }),
+        );
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(
+            git(lib.path(), &["log", "-1", "--format=%s", "topic"]),
+            "change in lib"
+        );
+        assert_eq!(list()["subtrees"][0]["pushRef"], "topic");
+        let r = action(
+            serde_json::json!({ "kind": "split", "dir": "vendor/lib", "branch": "lib-only" }),
+        );
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(
+            git(dir, &["rev-parse", "lib-only"]),
+            git(lib.path(), &["rev-parse", "topic"])
+        );
+        let r = action(serde_json::json!({ "kind": "split", "dir": "--x", "branch": "y" }));
+        assert_eq!(r["ok"], false);
+        // 消したフォルダは出さない。
+        git(dir, &["rm", "-q", "-r", "vendor/lib"]);
+        git(dir, &["commit", "-q", "-m", "drop lib"]);
+        assert_eq!(list()["subtrees"], serde_json::json!([]));
     }
 
     #[test]
