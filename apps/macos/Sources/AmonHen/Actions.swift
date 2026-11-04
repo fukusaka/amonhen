@@ -311,28 +311,54 @@ final class Actions {
         ClosureMenuItem(title: Titles.reset(currentBranch ?? "HEAD", to: String(target.prefix(Titles.shortIDLength)))) { [weak self] in self?.reset(to: target) }
     }
 
-    /// 作業中の変更を stash する。untracked のファイルを含めるかを選べる。
-    func stash() {
-        Task { @MainActor in await stashSheet() }
+    /// 作業中の変更を stash する。`paths` があれば、そのファイルの変更だけ。何を stash するか（すべて・stage した
+    /// 変更だけ）、stage した変更を残すか、untracked のファイルを含めるかを選べる（既定は git と同じく、追跡している
+    /// ファイルの変更をすべて）。
+    func stash(paths: [String] = []) {
+        Task { @MainActor in await stashSheet(paths: paths) }
     }
 
     @MainActor
-    private func stashSheet() async {
+    private func stashSheet(paths: [String]) async {
         let alert = NSAlert()
-        alert.messageText = "Stash Changes"
+        alert.messageText = paths.isEmpty ? "Stash Changes"
+            : paths.count == 1 ? "Stash Changes in \((paths[0] as NSString).lastPathComponent)" : "Stash Changes in \(paths.count) Files"
         alert.informativeText = L("Message (optional)")
         alert.addButton(withTitle: "Stash")
         alert.addButton(withTitle: L("Cancel"))
-        let field = NSTextField(frame: NSRect(x: 0, y: 30, width: 300, height: 24))
+        let field = NSTextField(string: "")
+        field.widthAnchor.constraint(equalToConstant: 320).isActive = true
+        // 何を: すべての変更か、stage した変更だけ（git 2.35 から。古い git ならコアがわけを言って断る）。
+        let all = NSButton(radioButtonWithTitle: L("All changes"), target: nil, action: nil)
+        let staged = NSButton(radioButtonWithTitle: L("Only the staged changes"), target: nil, action: nil)
+        all.state = .on
+        let keepIndex = NSButton(checkboxWithTitle: L("Keep the staged changes in the working tree (--keep-index)"), target: nil, action: nil)
         let untracked = NSButton(checkboxWithTitle: L("Include untracked files"), target: nil, action: nil)
-        untracked.frame = NSRect(x: 0, y: 0, width: 300, height: 22)
-        let box = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 56))
-        box.addSubview(field)
-        box.addSubview(untracked)
-        alert.accessoryView = box
+        // stage した変更だけのときは、ほかの選び方は git が受けない。
+        let target = ClosureTarget {
+            let onlyStaged = staged.state == .on
+            keepIndex.isEnabled = !onlyStaged
+            untracked.isEnabled = !onlyStaged
+            if onlyStaged { keepIndex.state = .off; untracked.state = .off }
+        }
+        for radio in [all, staged] {
+            radio.target = target
+            radio.action = #selector(ClosureTarget.fire)
+        }
+        let stack = NSStackView(views: [field, all, staged, keepIndex, untracked])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 6
+        stack.frame = NSRect(x: 0, y: 0, width: 320, height: stack.fittingSize.height)
+        alert.accessoryView = stack
         alert.window.initialFirstResponder = field
-        guard await present(alert) == .alertFirstButtonReturn else { return }
-        var command: [String: Any] = ["op": "stashPush", "includeUntracked": untracked.state == .on]
+        let response = await present(alert)
+        withExtendedLifetime(target) {}
+        guard response == .alertFirstButtonReturn else { return }
+        var command: [String: Any] = [
+            "op": "stashPush", "includeUntracked": untracked.state == .on, "keepIndex": keepIndex.state == .on,
+            "staged": staged.state == .on, "paths": paths,
+        ]
         let message = field.stringValue.trimmingCharacters(in: .whitespaces)
         if !message.isEmpty { command["message"] = message }
         perform(command)
