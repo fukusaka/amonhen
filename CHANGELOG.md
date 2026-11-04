@@ -949,6 +949,8 @@ and Repository Settings shows the app's pages of git settings.
   Commits (the message template), Operations,
   Branches (the default branch), Working Copy (line endings, the executable bit, `.git/info/exclude`) and Fetching
   and Folders (fetching more, sparse checkout, git maintenance), Remotes, Hooks and LFS, and Keys and Values.
+- With the engine, submodules show the app's marks and the URL and branch they follow, and can be added, updated
+  (nested ones, or to the branch followed), pointed elsewhere, synced and removed (keeping `.git/modules` unless asked).
 
 #### Changed
 

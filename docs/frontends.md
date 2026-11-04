@@ -47,7 +47,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Remote menu: Add, Rename, Edit URL, Remove, Prune | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Pull Requests group | ✓ | ✓ | — | — |  |
 | Submodules group (Update, Open in New Window) | ✓ | ✓ | ✓ | ✓ | CLI: `submodule`, `submodule update`. |
-| Submodule marks (not checked out, another commit, changes inside, conflict) and menus: Update… (recursive, remote), Edit URL, Branch to Follow, Remove (optionally .git/modules), Add, Sync URLs | ✓ | ✓ | — | ✓ | CLI: `submodule` (`add`, `remove`, `set-url`, `set-branch`, `sync`). |
+| Submodule marks (not checked out, another commit, changes inside, conflict) and menus: Update… (recursive, remote), Edit URL, Branch to Follow, Remove (optionally .git/modules), Add, Sync URLs | ✓ | ✓ | ✓ | ✓ | VSCode: Remove asks with two buttons: keep `.git/modules` or delete it too.<br>CLI: `submodule` (`add`, `remove`, `set-url`, `set-branch`, `sync`). |
 | Worktrees under Working Copy with change counts (✎ ⌂ ⑂) | ✓ | ✓ | ✓ | △ | VSCode: The marks are the rows' icons; a branch another worktree has checked out gets ⌂ or ⑂.<br>CLI: `worktree list --changes`. |
 | Marks for a shallow or partial clone (History) and a sparse checkout (Working Copy) | ✓ | ✓ | △ | n/a | VSCode: Shallow and Partial above History (Partial fetches all contents when clicked); no sparse mark. |
 

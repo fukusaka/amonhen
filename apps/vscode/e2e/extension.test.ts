@@ -7,7 +7,7 @@
  */
 import assert from 'node:assert/strict';
 import childProcess from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import * as vscode from 'vscode';
 import { DaemonClient } from '../src/daemon/client.ts';
@@ -851,6 +851,84 @@ async function shallowFlow(): Promise<void> {
       // 後で消える
     }
     childProcess.execFileSync('git', ['-C', origin, 'config', '--unset', 'uploadpack.allowFilter']);
+  }
+}
+
+/**
+ * Submodules の行に印と URL・追うブランチが出る。Add Submodule… で足し、追うブランチと URL を変え、Update… で追う
+ * ブランチの最新にし（違うコミットの印）、Remove… で外す（.git/modules は残す）。コアの命令（daemon だけ）
+ */
+async function submoduleFlow(): Promise<void> {
+  const sidebar = api.sidebar;
+  const repo = api.manager.current!;
+  const start = git('rev-parse', 'HEAD').trim();
+  const lib = join(dirname(root), 'sm-lib');
+  const moved = join(dirname(root), 'sm-lib-moved');
+  const path = 'vendor/sm-lib';
+  const gitDir = git('rev-parse', '--absolute-git-dir').trim();
+  const libGit = (...args: string[]) => childProcess.execFileSync('git', ['-C', lib, ...args], { encoding: 'utf8' });
+  const url = (p: string) => `file://${p.replaceAll('\\', '/')}`;
+  const section = () => sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'submodules')!;
+  const row = () => sidebar.getChildren(section()).find((n) => n.kind === 'submodule' && n.submodule.path === path);
+  const gitmodules = (key: string) => {
+    try {
+      return git('config', '--file', '.gitmodules', `submodule.${path}.${key}`).trim();
+    } catch {
+      return undefined;
+    }
+  };
+  // git 2.38.1 から、submodule の clone は file の URL を断る（試験の HOME の設定で許す）
+  git('config', '--global', 'protocol.file.allow', 'always');
+  childProcess.execFileSync('git', ['init', '-q', lib]);
+  libGit('symbolic-ref', 'HEAD', 'refs/heads/main');
+  libGit('-c', 'user.name=a', '-c', 'user.email=a@example.com', 'commit', '-q', '--allow-empty', '-m', 'lib one');
+  try {
+    // Submodules を開く（開くまでは読まない）
+    sidebar.onDidExpand(section());
+    await withWindow({ showInputBox: inputs(url(lib), path, '') }, async () => vscode.commands.executeCommand('amonhen.submodules.add'));
+    assert.equal(gitmodules('url'), url(lib));
+    await until('submodule の行', () => row());
+    const fact = await until('取り出してある', () => sidebar.submoduleFacts.get(path)?.initialized && sidebar.submoduleFacts.get(path));
+    assert.equal(fact.url, url(lib));
+    assert.equal(sidebar.getTreeItem(row()!).description, undefined);
+    assert.match(String(sidebar.getTreeItem(row()!).tooltip), /Follows the recorded commit/);
+
+    // 追うブランチと URL を変える
+    await withWindow({ showInputBox: inputs('main') }, async () => vscode.commands.executeCommand('amonhen.submodule.setBranch', row()));
+    assert.equal(gitmodules('branch'), 'main');
+    cpSync(lib, moved, { recursive: true });
+    await withWindow({ showInputBox: inputs(url(moved)) }, async () => vscode.commands.executeCommand('amonhen.submodule.editUrl', row()));
+    assert.equal(gitmodules('url'), url(moved));
+    assert.equal(git('config', `submodule.${path}.url`).trim(), url(moved));
+
+    // 追うブランチの最新にすると、記録と違うコミットになる
+    childProcess.execFileSync('git', ['-C', moved, '-c', 'user.name=a', '-c', 'user.email=a@example.com', 'commit', '-q', '--allow-empty', '-m', 'lib two']);
+    await withWindow(
+      { showQuickPick: async (items: readonly (vscode.QuickPickItem & { key: string })[]) => items.filter((i) => i.key === 'remote') },
+      async () => vscode.commands.executeCommand('amonhen.submodule.updateWith', row()),
+    );
+    assert.equal(git('-C', path, 'log', '-1', '--format=%s').trim(), 'lib two');
+    await until('違うコミットの印', () => /another commit/.test(String(sidebar.getTreeItem(row()!).description)));
+
+    // 外す。.git/modules は残す（git の既定）。.gitmodules の変更が stage されていないと、git rm が断る
+    git('add', '.gitmodules');
+    await withWindow({ showWarningMessage: async () => 'Remove' }, async () => vscode.commands.executeCommand('amonhen.submodule.remove', row()));
+    assert.equal(gitmodules('url'), undefined);
+    assert.ok(!existsSync(join(root, path)));
+    assert.ok(existsSync(join(gitDir, 'modules', path)));
+    await until('行が消える', () => !row());
+  } finally {
+    git('reset', '-q', '--hard', start);
+    rmSync(join(root, 'vendor'), { recursive: true, force: true });
+    rmSync(join(gitDir, 'modules'), { recursive: true, force: true });
+    try {
+      git('config', '--remove-section', `submodule.${path}`);
+    } catch {
+      // ない
+    }
+    git('config', '--global', '--unset', 'protocol.file.allow');
+    for (const p of [lib, moved]) rmSync(p, { recursive: true, force: true });
+    await repo.refresh();
   }
 }
 
@@ -1897,6 +1975,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('shows a shallow partial clone in History and fetches more of it through the daemon', async () => {
     await shallowFlow();
+  });
+
+  test('adds, changes, updates and removes a submodule through the daemon', async () => {
+    await submoduleFlow();
   });
 
   test('shows stash details, branches from a stash and pops the latest through the daemon', async () => {

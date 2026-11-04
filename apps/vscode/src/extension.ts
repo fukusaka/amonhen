@@ -102,7 +102,7 @@ export async function activate(
     registerMergeBranchesCommand(manager),
     registerBranchCommands(manager),
     registerStashCommands(manager),
-    registerSubmoduleCommands(manager),
+    registerSubmoduleCommands(manager, sidebar),
     registerRangeDiffCommands(manager),
     registerReflogCommands(manager),
     registerTagCommands(manager, sidebar),

@@ -572,6 +572,48 @@
         "command": "amonhen.submodule.open",
         "title": "Open Submodule in New Window",
         "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.submodule.updateWith",
+        "title": "Update Submodule…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.submodule.editUrl",
+        "title": "Edit URL…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.submodule.setBranch",
+        "title": "Branch to Follow…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.submodule.remove",
+        "title": "Remove Submodule…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.submodules.updateAll",
+        "title": "Update All Submodules",
+        "category": "Amon Hen",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "amonhen.submodules.update",
+        "title": "Update Submodules…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.submodules.sync",
+        "title": "Sync Submodule URLs",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.submodules.add",
+        "title": "Add Submodule…",
+        "category": "Amon Hen",
+        "icon": "$(add)"
       }
     ],
     "menus": {
@@ -897,6 +939,51 @@
           "command": "amonhen.submodule.open",
           "when": "view == amonhen.sidebar && viewItem == submodule",
           "group": "1_submodule@2"
+        },
+        {
+          "command": "amonhen.submodule.updateWith",
+          "when": "view == amonhen.sidebar && amonhen.engine && viewItem == submodule",
+          "group": "1_submodule@1.5"
+        },
+        {
+          "command": "amonhen.submodule.editUrl",
+          "when": "view == amonhen.sidebar && amonhen.engine && viewItem == submodule",
+          "group": "2_submodule@1"
+        },
+        {
+          "command": "amonhen.submodule.setBranch",
+          "when": "view == amonhen.sidebar && amonhen.engine && viewItem == submodule",
+          "group": "2_submodule@2"
+        },
+        {
+          "command": "amonhen.submodule.remove",
+          "when": "view == amonhen.sidebar && amonhen.engine && viewItem == submodule",
+          "group": "3_submodule@1"
+        },
+        {
+          "command": "amonhen.submodules.add",
+          "when": "view == amonhen.sidebar && amonhen.engine && viewItem == section.submodules",
+          "group": "inline"
+        },
+        {
+          "command": "amonhen.submodules.updateAll",
+          "when": "view == amonhen.sidebar && amonhen.engine && viewItem == section.submodules",
+          "group": "1_submodules@1"
+        },
+        {
+          "command": "amonhen.submodules.update",
+          "when": "view == amonhen.sidebar && amonhen.engine && viewItem == section.submodules",
+          "group": "1_submodules@2"
+        },
+        {
+          "command": "amonhen.submodules.sync",
+          "when": "view == amonhen.sidebar && amonhen.engine && viewItem == section.submodules",
+          "group": "1_submodules@3"
+        },
+        {
+          "command": "amonhen.submodules.add",
+          "when": "view == amonhen.sidebar && amonhen.engine && viewItem == section.submodules",
+          "group": "2_submodules@1"
         }
       ],
       "commandPalette": [
@@ -1031,6 +1118,38 @@
         {
           "command": "amonhen.submodule.open",
           "when": "false"
+        },
+        {
+          "command": "amonhen.submodule.updateWith",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.submodule.editUrl",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.submodule.setBranch",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.submodule.remove",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.submodules.updateAll",
+          "when": "amonhen.hasRepository && amonhen.engine"
+        },
+        {
+          "command": "amonhen.submodules.update",
+          "when": "amonhen.hasRepository && amonhen.engine"
+        },
+        {
+          "command": "amonhen.submodules.sync",
+          "when": "amonhen.hasRepository && amonhen.engine"
+        },
+        {
+          "command": "amonhen.submodules.add",
+          "when": "amonhen.hasRepository && amonhen.engine"
         },
         {
           "command": "amonhen.compareWithPrevious",
