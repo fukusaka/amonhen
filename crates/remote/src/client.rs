@@ -1107,6 +1107,10 @@ impl Operations for RemoteOperations {
         self.op(Op::RestoreWorktree(owned(paths)))
     }
 
+    fn restore_from(&self, rev: &str, paths: &[&str], staged: bool) -> Result<()> {
+        self.op(Op::RestoreFrom(rev.to_owned(), owned(paths), staged))
+    }
+
     fn stash_push(&self, message: Option<&str>, include_untracked: bool) -> Result<()> {
         self.op(Op::StashPush {
             message: message.map(str::to_owned),

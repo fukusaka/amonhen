@@ -266,6 +266,14 @@ pub enum Command {
     Discard {
         paths: Vec<String>,
     },
+    /// 作業ツリーのファイル `paths` を `rev` の版にする（`git restore --source`。`rev` にないファイルは消す）。
+    /// `staged` なら index にも入れる。作業ツリーのファイルは Undo で戻る（index は戻さない）。
+    RestoreFiles {
+        rev: String,
+        paths: Vec<String>,
+        #[serde(default)]
+        staged: bool,
+    },
     StashPush {
         message: Option<String>,
         include_untracked: bool,
@@ -2976,6 +2984,21 @@ impl Repository {
                     many => format!("Discard {} files", many.len()),
                 };
                 undo.record_files(ops, &label, &paths, || ops.restore_worktree(&paths))?;
+                ok()
+            }
+            Command::RestoreFiles { rev, paths, staged } => {
+                if paths.is_empty() {
+                    return Err(tr!("Give the files to restore").into());
+                }
+                let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
+                let short: String = rev.chars().take(7).collect();
+                let label = match paths.as_slice() {
+                    [one] => format!("Restore {one} from {short}"),
+                    many => format!("Restore {} files from {short}", many.len()),
+                };
+                undo.record_files(ops, &label, &paths, || {
+                    ops.restore_from(&rev, &paths, staged)
+                })?;
                 ok()
             }
             Command::StashPush {
@@ -7140,6 +7163,51 @@ mod tests {
             r#"{"op":"configSet","key":"pull.rebase","value":"true","scope":"system"}"#,
         );
         assert!(r["error"].as_str().unwrap().contains("system"), "{r}");
+    }
+
+    #[test]
+    fn restores_files_from_another_commit() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        std::fs::write(dir.join("a.txt"), "changed\n").unwrap();
+        std::fs::write(dir.join("new.txt"), "new\n").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-q", "-m", "second"]);
+        let restore = |json: serde_json::Value| {
+            let mut command = json;
+            command["op"] = "restoreFiles".into();
+            run(&repo, &command.to_string())
+        };
+        // 作業ツリーだけ（git の既定）: index は HEAD のまま。
+        let r = restore(serde_json::json!({ "rev": "HEAD~1", "paths": ["a.txt"] }));
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+            "1\n2\n3\n"
+        );
+        assert_eq!(
+            git(dir, &["status", "--porcelain", "--", "a.txt"]),
+            "M a.txt"
+        );
+        // Undo で作業ツリーのファイルが戻る。
+        assert_eq!(run(&repo, r#"{"op":"undo"}"#)["ok"], true);
+        assert_eq!(
+            std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+            "changed\n"
+        );
+        // index にも入れる。前の版にないファイルは消す。
+        let r = restore(
+            serde_json::json!({ "rev": "HEAD~1", "paths": ["a.txt", "new.txt"], "staged": true }),
+        );
+        assert_eq!(r["ok"], true, "{r}");
+        assert!(!dir.join("new.txt").exists());
+        let status = git(dir, &["status", "--porcelain"]);
+        assert!(
+            status.contains("M  a.txt") && status.contains("D  new.txt"),
+            "{status}"
+        );
+        let r = restore(serde_json::json!({ "rev": "HEAD", "paths": [] }));
+        assert_eq!(r["ok"], false);
     }
 
     #[test]

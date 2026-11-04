@@ -746,6 +746,41 @@ pub fn stage(args: &[String], on: bool) -> Result<ExitCode> {
 
 /// `discard`: 作業ツリーの変更を捨てる（Undo できる）。パスごと、または `--rows` で行ごと（stage していない差分の
 /// 行番号。`amonhen diff --rows` で見る）。
+/// `amonhen restore --source <rev> [--staged] <path>…`: 作業ツリーのファイルを `rev` の版にする（`rev` にない
+/// ファイルは消す）。`--staged` なら index にも。`amonhen undo` で作業ツリーのファイルが戻る。
+pub fn restore(args: &[String]) -> Result<ExitCode> {
+    let (mut c, seen) = common(args, &["--source", "--staged"], &["--source"])?;
+    c.rest.retain(|a| a != "--");
+    let Some(rev) = value(&seen, "--source") else {
+        return Err(format!(
+            "{}\n\n{}",
+            tr!("Give the commit to restore from with --source"),
+            usage()
+        )
+        .into());
+    };
+    if c.rest.is_empty() {
+        return Err(tr!("Give the files").into());
+    }
+    let staged = seen.iter().any(|s| s == "--staged");
+    let front = open_repository(&c.dir)?;
+    command(
+        &*front,
+        json!({"op": "restoreFiles", "rev": rev, "paths": c.rest, "staged": staged}),
+    )?;
+    if !c.json {
+        println!(
+            "{}",
+            tr!(
+                "Restored {count} files from {rev} (amonhen undo brings the working tree files back)",
+                count = c.rest.len(),
+                rev = rev
+            )
+        );
+    }
+    done(&c)
+}
+
 pub fn discard(args: &[String]) -> Result<ExitCode> {
     let (c, seen) = common(args, &["--rows"], &["--rows"])?;
     let front = open_repository(&c.dir)?;
