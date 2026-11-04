@@ -2130,3 +2130,4 @@
 "Restore {path} as It Is in {commit}?" = "{path} を {commit} の版に戻しますか？";
 "Replaces the file in the working tree with that version (git restore); a file that version doesn’t have is deleted. Undo brings back the file as it is now." = "作業ツリーのファイルを、その版に置き換えます（git restore）。その版にないファイルは消します。Undo で今のファイルに戻ります。";
 "Stage it too" = "stage もする";
+"Stashing only the staged changes can't include untracked files or keep the index" = "stage した変更だけを stash するときは、untracked のファイルを含めたり index を残したりできません";

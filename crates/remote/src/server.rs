@@ -563,6 +563,7 @@ fn handle_op(backend: &dyn GitBackend, op: Op, cancel: &AtomicBool) -> Result<Ve
         Op::ChangeSubmodule(change) => encode(&ops.change_submodule(&change.0)?),
         Op::Subtrees => encode(&ops.subtrees()?),
         Op::Subtree(op) => encode(&ops.subtree(&op.0)?),
+        Op::StashPushWith(options) => encode(&ops.stash_push_with(&options)?),
         Op::RestoreFrom(rev, paths, staged) => {
             encode(&ops.restore_from(&rev, &strs(&paths), staged)?)
         }

@@ -25,6 +25,9 @@ fn text(out: Vec<u8>) -> Result<String> {
     Ok(String::from_utf8(out)?.trim().to_owned())
 }
 
+/// stage した変更だけを stash する（`git stash push --staged`）が使える git の版。
+const STASH_STAGED: (u32, u32) = (2, 35);
+
 impl Git {
     /// merge・rebase などを始める。失敗しても、途中で止まっていればコンフリクトとして扱う。成功しても止まって
     /// いれば Stopped。
@@ -1171,6 +1174,45 @@ impl Operations for Git {
         }
         args.push("--");
         args.extend(paths);
+        self.write(&args).map(drop)
+    }
+
+    fn stash_push_with(&self, options: &amonhen_model::StashOptions) -> Result<()> {
+        // git は stage した変更だけ（--staged）と、ほかの選び方を一緒には受けない。わけを言って断る。
+        if options.staged && (options.include_untracked || options.keep_index) {
+            return Err(tr!(
+                "Stashing only the staged changes can't include untracked files or keep the index"
+            )
+            .into());
+        }
+        if options.staged
+            && let Some((a, b, c)) = crate::git_version()
+            && (a, b) < STASH_STAGED
+        {
+            return Err(tr!(
+                "Needs git {needed} or later. This machine’s git is {version}.",
+                needed = format!("{}.{}", STASH_STAGED.0, STASH_STAGED.1),
+                version = format!("{a}.{b}.{c}"),
+            )
+            .into());
+        }
+        let mut args = vec!["stash", "push"];
+        if options.include_untracked {
+            args.push("--include-untracked");
+        }
+        if options.keep_index {
+            args.push("--keep-index");
+        }
+        if options.staged {
+            args.push("--staged");
+        }
+        if let Some(m) = options.message.as_deref().filter(|m| !m.is_empty()) {
+            args.extend(["--message", m]);
+        }
+        if !options.paths.is_empty() {
+            args.push("--");
+            args.extend(options.paths.iter().map(String::as_str));
+        }
         self.write(&args).map(drop)
     }
 

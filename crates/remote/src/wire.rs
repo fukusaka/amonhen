@@ -431,6 +431,8 @@ pub enum Op {
     Subtree(Tagged<amonhen_model::SubtreeOp>),
     /// → `()`
     RestoreFrom(String, Vec<String>, bool),
+    /// → `()`
+    StashPushWith(amonhen_model::StashOptions),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -274,9 +274,17 @@ pub enum Command {
         #[serde(default)]
         staged: bool,
     },
+    /// 作業中の変更を stash する。`keepIndex` なら stage した変更を残し、`staged` なら stage した変更だけ（git 2.35
+    /// から）、`paths` があればそのファイルの変更だけ。
     StashPush {
         message: Option<String>,
         include_untracked: bool,
+        #[serde(default)]
+        keep_index: bool,
+        #[serde(default)]
+        staged: bool,
+        #[serde(default)]
+        paths: Vec<String>,
     },
     StashApply {
         name: String,
@@ -3004,8 +3012,17 @@ impl Repository {
             Command::StashPush {
                 message,
                 include_untracked,
+                keep_index,
+                staged,
+                paths,
             } => {
-                ops.stash_push(message.as_deref(), include_untracked)?;
+                ops.stash_push_with(&amonhen_model::StashOptions {
+                    message,
+                    include_untracked,
+                    keep_index,
+                    staged,
+                    paths,
+                })?;
                 ok()
             }
             Command::StashApply { name, pop } => done(ops.stash_apply(&name, pop)?),
@@ -7163,6 +7180,50 @@ mod tests {
             r#"{"op":"configSet","key":"pull.rebase","value":"true","scope":"system"}"#,
         );
         assert!(r["error"].as_str().unwrap().contains("system"), "{r}");
+    }
+
+    #[test]
+    fn stashes_some_files_the_staged_changes_or_keeps_the_index() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        std::fs::write(dir.join("b.txt"), "b\n").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-q", "-m", "b"]);
+        let stash = |json: serde_json::Value| {
+            let mut command = json;
+            command["op"] = "stashPush".into();
+            command["includeUntracked"] = command
+                .get("includeUntracked")
+                .cloned()
+                .unwrap_or(false.into());
+            run(&repo, &command.to_string())
+        };
+        let status = || git(dir, &["status", "--porcelain"]);
+        // ファイルを選ぶ: ほかのファイルの変更は残る。
+        std::fs::write(dir.join("a.txt"), "A\n").unwrap();
+        std::fs::write(dir.join("b.txt"), "B\n").unwrap();
+        let r = stash(serde_json::json!({ "message": "only a", "paths": ["a.txt"] }));
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(status(), "M b.txt");
+        assert!(git(dir, &["stash", "list"]).contains("only a"));
+        git(dir, &["checkout", "--", "b.txt"]);
+        // index を残す: stage した変更は作業ツリーと index に残る。
+        std::fs::write(dir.join("a.txt"), "staged\n").unwrap();
+        git(dir, &["add", "a.txt"]);
+        std::fs::write(dir.join("b.txt"), "B\n").unwrap();
+        let r = stash(serde_json::json!({ "keepIndex": true }));
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(status(), "M  a.txt");
+        // stage した変更だけ（git 2.35 から）。それより前の git ではわけを言って断る。
+        std::fs::write(dir.join("b.txt"), "B\n").unwrap();
+        let r = stash(serde_json::json!({ "staged": true }));
+        if r["ok"] == true {
+            assert_eq!(status(), "M b.txt");
+        } else {
+            assert!(r["error"].as_str().unwrap().contains("2.35"), "{r}");
+        }
+        let r = stash(serde_json::json!({ "staged": true, "includeUntracked": true }));
+        assert_eq!(r["ok"], false);
     }
 
     #[test]

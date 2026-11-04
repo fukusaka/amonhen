@@ -500,6 +500,21 @@ pub enum SubtreeOp {
     Split { dir: String, branch: String },
 }
 
+/// stash の仕方（`Operations::stash_push_with`）。既定は git と同じく、追跡しているファイルの変更をすべて。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct StashOptions {
+    pub message: Option<String>,
+    /// untracked のファイルも（`--include-untracked`）。
+    pub include_untracked: bool,
+    /// stage した変更を作業ツリーと index に残す（`--keep-index`）。
+    pub keep_index: bool,
+    /// stage した変更だけ（`--staged`、git 2.35 から）。
+    pub staged: bool,
+    /// このファイルの変更だけ（空ならすべて）。
+    pub paths: Vec<String>,
+}
+
 /// `git apply` の当て方。既定は git と同じく作業ツリーだけ。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -736,6 +751,8 @@ pub trait Operations: Send + Sync {
     /// `staged` なら index にも入れる（`--staged --worktree`）。
     fn restore_from(&self, rev: &str, paths: &[&str], staged: bool) -> Result<()>;
     fn stash_push(&self, message: Option<&str>, include_untracked: bool) -> Result<()>;
+    /// 選んだ仕方で stash する（`git stash push`）。
+    fn stash_push_with(&self, options: &StashOptions) -> Result<()>;
     /// stage していた状態も戻す。戻せなければ作業ツリーにだけ当てる。
     fn stash_apply(&self, name: &str, pop: bool) -> Result<Outcome>;
     fn stash_drop(&self, name: &str) -> Result<()>;

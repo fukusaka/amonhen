@@ -1111,6 +1111,10 @@ impl Operations for RemoteOperations {
         self.op(Op::RestoreFrom(rev.to_owned(), owned(paths), staged))
     }
 
+    fn stash_push_with(&self, options: &amonhen_model::StashOptions) -> Result<()> {
+        self.op(Op::StashPushWith(options.clone()))
+    }
+
     fn stash_push(&self, message: Option<&str>, include_untracked: bool) -> Result<()> {
         self.op(Op::StashPush {
             message: message.map(str::to_owned),
