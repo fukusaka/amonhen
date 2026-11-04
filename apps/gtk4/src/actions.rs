@@ -358,24 +358,66 @@ impl Actions {
 
     /// 作業中の変更を stash する（メッセージと、untracked のファイルを含めるかを聞く）。
     pub fn stash(self: &Rc<Self>) {
+        self.stash_paths(Vec::new());
+    }
+
+    /// 作業中の変更を stash する。`paths` があれば、そのファイルの変更だけ。何を stash するか（すべて・stage した
+    /// 変更だけ）、stage した変更を残すか、untracked のファイルを含めるかを選べる（既定は git と同じく、追跡している
+    /// ファイルの変更をすべて。macOS 版と同じ）。
+    pub fn stash_paths(self: &Rc<Self>, paths: Vec<String>) {
         let this = self.clone();
         glib::spawn_future_local(async move {
-            let Some((message, untracked)) = this
-                .ask_with(
-                    "Stash Changes",
-                    &tr!("Message (optional)"),
-                    "",
-                    "Stash",
-                    Some(tr!("Include untracked files").as_str()),
-                )
-                .await
-            else {
-                return;
+            let title = match &paths[..] {
+                [] => "Stash Changes".to_owned(),
+                [one] => format!("Stash Changes in {}", one.rsplit('/').next().unwrap_or(one)),
+                many => format!("Stash Changes in {} Files", many.len()),
             };
-            let message = (!message.is_empty()).then_some(message);
-            this.perform(
-                json!({ "op": "stashPush", "message": message, "includeUntracked": untracked }),
+            let sheet = crate::sheets::Sheet::new(
+                crate::sheets::parent(&this).as_ref(),
+                &title,
+                &tr!("Message (optional)"),
             );
+            let message = gtk::Entry::new();
+            message.set_activates_default(true);
+            let all = gtk::CheckButton::with_label(&tr!("All changes"));
+            let staged = gtk::CheckButton::with_label(&tr!("Only the staged changes"));
+            staged.set_group(Some(&all));
+            all.set_active(true);
+            let keep_index = gtk::CheckButton::with_label(&tr!(
+                "Keep the staged changes in the working tree (--keep-index)"
+            ));
+            let untracked = gtk::CheckButton::with_label(&tr!("Include untracked files"));
+            // stage した変更だけのときは、ほかの選び方は git が受けない。
+            let (k, u) = (keep_index.downgrade(), untracked.downgrade());
+            staged.connect_toggled(move |staged| {
+                for b in [k.upgrade(), u.upgrade()].into_iter().flatten() {
+                    b.set_sensitive(!staged.is_active());
+                    if staged.is_active() {
+                        b.set_active(false);
+                    }
+                }
+            });
+            let fields = gtk::Box::new(gtk::Orientation::Vertical, 6);
+            fields.append(&message);
+            fields.append(&all);
+            fields.append(&staged);
+            fields.append(&keep_index);
+            fields.append(&untracked);
+            sheet.add(&fields);
+            sheet.buttons("Stash", false, None);
+            message.grab_focus();
+            if sheet.run().await != crate::sheets::Response::Ok {
+                return;
+            }
+            let text = message.text().trim().to_owned();
+            this.perform(json!({
+                "op": "stashPush",
+                "message": (!text.is_empty()).then_some(text),
+                "includeUntracked": untracked.is_active(),
+                "keepIndex": keep_index.is_active(),
+                "staged": staged.is_active(),
+                "paths": paths,
+            }));
         });
     }
 

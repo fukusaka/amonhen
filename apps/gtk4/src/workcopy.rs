@@ -2545,6 +2545,16 @@ impl Inner {
         }
     }
 
+    /// 選んでいる行のファイルのパス（上から順）。
+    fn selected_paths(this: &Rc<Self>) -> Vec<String> {
+        let rows = this.row_entries.borrow();
+        let entries = this.entries.borrow();
+        (0..rows.len())
+            .filter(|&p| this.selection.is_selected(p as u32))
+            .filter_map(|p| rows[p].and_then(|i| entries.get(i)).map(|e| e.path.clone()))
+            .collect()
+    }
+
     /// ファイルの行の右クリックのメニュー。
     fn file_menu(this: &Rc<Self>, entry: &StatusEntry) -> Vec<crate::menu::Item> {
         use crate::menu::{Item, action};
@@ -2580,6 +2590,19 @@ impl Inner {
                     }
                 }));
             }
+            // 右クリックした行を含めて選んでいれば、選んだファイルの変更を（macOS 版と同じ）。
+            let selected = Inner::selected_paths(this);
+            let paths = if selected.contains(&path) {
+                selected
+            } else {
+                vec![path.clone()]
+            };
+            let a = this.actions.borrow().clone();
+            items.push(action("Stash…", move || {
+                if let Some(a) = &a {
+                    a.stash_paths(paths.clone());
+                }
+            }));
             items.push(Item::Separator);
         }
         // untracked のファイルにはまだ履歴がない。代わりに .gitignore に足せる（そのパスか、拡張子のパターン）。
