@@ -17,7 +17,8 @@ nonisolated struct SubmoduleState: Decodable, Hashable, Sendable {
 }
 
 /// submodule を足す・取り出す・外す・URL や追うブランチを変えるときの小さなシート（NSAlert）。どれも答えを
-/// コアの命令にして `perform` に渡す。
+/// コアの命令にして `perform` に渡す。submodule は worktree ごとのもの（作業ツリーと index）なので、説明には
+/// `actions`（選んだときの worktree のもの）の worktree の名前を書く（docs/ux.md の「Worktrees」）。
 @MainActor
 enum SubmoduleSheet {
     /// 1 行の入力欄。
@@ -48,10 +49,10 @@ enum SubmoduleSheet {
     }
 
     /// Add Submodule…: URL・場所・追うブランチ（なくてもよい）。
-    static func add(in window: NSWindow, perform: @escaping ([String: Any]) -> Void) {
+    static func add(in window: NSWindow, actions: Actions, perform: @escaping ([String: Any]) -> Void) {
         let alert = NSAlert()
         alert.messageText = L("Add Submodule")
-        alert.informativeText = L("Clones the repository into a folder of this one and records it in .gitmodules (git submodule add). Commit to keep it.")
+        alert.informativeText = actions.sheetMessage(L("Clones the repository into a folder of this one and records it in .gitmodules (git submodule add). Commit to keep it."))
         let url = field("", placeholder: L("Repository URL"))
         let path = field("", placeholder: L("Folder"))
         let branch = field("", placeholder: L("Branch to follow (optional)"))
@@ -81,10 +82,10 @@ enum SubmoduleSheet {
 
     /// Update…: git の既定（記録したコミット、中の submodule には入らない）から変えて取り出す。`paths` が空なら
     /// すべて。
-    static func update(in window: NSWindow, paths: [String], perform: @escaping ([String: Any]) -> Void) {
+    static func update(in window: NSWindow, actions: Actions, paths: [String], perform: @escaping ([String: Any]) -> Void) {
         let alert = NSAlert()
         alert.messageText = paths.count == 1 ? "Update \(paths[0])" : "Update All Submodules"
-        alert.informativeText = L("Checks out the commit recorded in this repository, unless you choose otherwise.")
+        alert.informativeText = actions.sheetMessage(L("Checks out the commit recorded in this repository, unless you choose otherwise."))
         let recursive = NSButton(checkboxWithTitle: L("Also update the submodules inside it (--recursive)"), target: nil, action: nil)
         let remote = NSButton(checkboxWithTitle: L("Use the latest commit of the branch it follows (--remote)"), target: nil, action: nil)
         alert.accessoryView = stack([recursive, remote], height: 48)
@@ -98,10 +99,10 @@ enum SubmoduleSheet {
     }
 
     /// Edit URL…: `.gitmodules` の URL を変え、このリポジトリの設定にも写す。
-    static func setURL(in window: NSWindow, submodule: SubmoduleState, perform: @escaping ([String: Any]) -> Void) {
+    static func setURL(in window: NSWindow, actions: Actions, submodule: SubmoduleState, perform: @escaping ([String: Any]) -> Void) {
         let alert = NSAlert()
         alert.messageText = L("Edit URL of %@", submodule.path)
-        alert.informativeText = L("Changes the URL in .gitmodules and copies it to this repository’s settings (git submodule set-url). Commit .gitmodules to share it.")
+        alert.informativeText = actions.sheetMessage(L("Changes the URL in .gitmodules and copies it to this repository’s settings (git submodule set-url). Commit .gitmodules to share it."))
         let url = field(submodule.url ?? "", placeholder: L("Repository URL"))
         alert.accessoryView = url
         alert.window.initialFirstResponder = url
@@ -116,10 +117,10 @@ enum SubmoduleSheet {
     }
 
     /// Set Branch…: Update で「追うブランチの最新」を選んだときに進める先。空なら既定（リモートの HEAD）。
-    static func setBranch(in window: NSWindow, submodule: SubmoduleState, perform: @escaping ([String: Any]) -> Void) {
+    static func setBranch(in window: NSWindow, actions: Actions, submodule: SubmoduleState, perform: @escaping ([String: Any]) -> Void) {
         let alert = NSAlert()
         alert.messageText = L("Branch to Follow for %@", submodule.path)
-        alert.informativeText = L("Updating with “the latest commit of the branch it follows” moves to this branch’s latest commit. Leave it empty for the remote’s default branch.")
+        alert.informativeText = actions.sheetMessage(L("Updating with “the latest commit of the branch it follows” moves to this branch’s latest commit. Leave it empty for the remote’s default branch."))
         let branch = field(submodule.branch ?? "", placeholder: L("Default branch"))
         alert.accessoryView = branch
         alert.window.initialFirstResponder = branch
@@ -134,10 +135,10 @@ enum SubmoduleSheet {
     }
 
     /// Remove…: 作業ツリーと `.gitmodules` から外す。git の既定どおり `.git/modules/<name>` は残し、消すかは選ぶ。
-    static func remove(in window: NSWindow, submodule: SubmoduleState, perform: @escaping ([String: Any]) -> Void) {
+    static func remove(in window: NSWindow, actions: Actions, submodule: SubmoduleState, perform: @escaping ([String: Any]) -> Void) {
         let alert = NSAlert()
         alert.messageText = L("Remove %@?", submodule.path)
-        alert.informativeText = L("Removes the folder and its entry in .gitmodules, and stages that. Commit to keep it.")
+        alert.informativeText = actions.sheetMessage(L("Removes the folder and its entry in .gitmodules, and stages that. Commit to keep it."))
         let deleteGitDir = NSButton(checkboxWithTitle: L("Also delete its repository data (.git/modules/%@)", submodule.name), target: nil, action: nil)
         let note = NSTextField(wrappingLabelWithString: L("Kept, it brings back the submodule’s commits and stashes when you add it again, including ones not pushed."))
         note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)

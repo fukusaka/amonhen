@@ -731,21 +731,6 @@ impl Sidebar {
         self.inner.can_create_pull_request.set(yes);
     }
 
-    /// Working Copy の変更の数を出す。
-    pub fn set_working_count(&self, count: usize) {
-        let node = &self.inner.working;
-        node.imp().data.borrow_mut().badge = if count > 0 {
-            count.to_string()
-        } else {
-            String::new()
-        };
-        // 行を描き直させる（同じ項目を入れ替える。下の worktree の開き方と選んだ行は戻す）。
-        let workspace = self.inner.root.item(0).and_downcast::<Node>();
-        if let Some(store) = workspace.and_then(|w| w.children()) {
-            self.inner.replace_keeping(&store, 0, node);
-        }
-    }
-
     /// リポジトリの形を出す（History の行に shallow clone・partial clone、Working Copy の行に sparse checkout の印）。
     pub fn set_repository_form(&self, form: &crate::repoform::Form) {
         if self.inner.form.borrow().as_ref() == Some(form) {

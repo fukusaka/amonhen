@@ -17,6 +17,21 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 
 この表は手で保つ。どの FE でも、機能を足す・外す・変えるときは、同じ変更でここも直す。
 
+## macOS と GTK4 のアプリのプラットフォームによる違い
+
+GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わざと違えるのは次だけで、どれもプラットフォーム（おもに [GNOME HIG](https://developer.gnome.org/hig/)）に従う:
+
+- 最後の窓を閉じるとアプリが終わる。
+- ログインシェルの環境変数を読み込まない（Linux のセッションはもう持っている）。
+- Linux と BSD では、Watchman が入っていて git が 2.26 以降なら fsmonitor に使う（git に fsmonitor--daemon がない）。
+- Apple Intelligence はない。Claude Code と Codex だけ。
+- Finder の代わりにデスクトップのファイルマネージャー。外部エディターはデスクトップ項目から探す。
+- ヘッダーバーはアイコンだけ（ツールチップつき）。ツールバーのカスタマイズにアイコン・文字の選択はない。
+- History の検索は GNOME の検索バー: ヘッダーバーの切り替えと Ctrl+F で、History の上にバーを出す。
+- 取り消せない操作の確認: キャンセルが先で Return と Esc はキャンセル、壊すボタンは赤。キャンセルは強調しない。
+- GNOME が使うキーの近道は、ずらすか割り当てない（下の「キーボードの近道」）。
+- 「この Mac」・Homebrew・launchd の代わりに「このコンピューター」・パッケージマネージャー・systemd や cron。
+
 ## 全体の配置
 
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
@@ -91,7 +106,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | General: 開いたリポジトリをブックマークする | ✓ | ✓ | n/a | n/a |  |
 | General: 起動時に開き直す・既定はタブか窓か | — | — | n/a | n/a | macOS: いつも開き直し、切り替えはない。<br>GTK4: いつも開き直し、切り替えはない。 |
 | General: 自動で fetch | ✓ | ✓ | — | n/a |  |
-| General: 外のエディター | ✓ | ✓ | n/a | n/a | GTK4: コードエディターは desktop のエントリーで探す。Other… ではプログラムを選ぶ。 |
+| General: 外のエディター | ✓ | ✓ | n/a | n/a | GTK4: コードエディターは desktop のエントリーで macOS 版と同じ順に探す。なければテキストエディター（オフィスのアプリは選ばない）。Other… ではプログラムを選ぶ。 |
 | General: 端末と diff のツール | — | — | n/a | n/a |  |
 | Git: 機械全体のページ（Author and Signing・Commits・Operations・Working Copy・Keys and Values） | ✓ | ✓ | — | △ | CLI: `amonhen run` から。 |
 | Git > Commits: 共有のメッセージのテンプレート | ✓ | ✓ | — | — |  |
@@ -113,7 +128,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | AI: 使う AI・CLI の場所と版・モデル・言語・リポジトリごとの許可 | ✓ | ✓ | — | n/a | どちらのアプリも CLI のログインの状態は読まない。CLI がなければ、入れてサインインするよう案内する。 |
 | 目的ごとの AI のプロンプト（編集・既定に戻す・試す） | ✓ | ✓ | — | n/a |  |
 | Performance: commit-graph・共有の daemon | ✓ | ✓ | △ | n/a | VSCode: VSCode の設定の `amonhen.daemon.enabled`・`amonhen.daemon.path`。 |
-| Performance: fsmonitor | ✓ | ✓ | — | n/a | GTK4: git に fsmonitor--daemon のない Linux・BSD では押せない。 |
+| Performance: fsmonitor | ✓ | ✓ | — | n/a | GTK4: Linux・BSD では、エンジンを git の fsmonitor の hook（`amonhen fsmonitor-watchman`）にして Watchman を使う。Watchman がないか、git が 2.26 より古い（hook の版 2 がない）と押せない。 |
 | Performance: 永続キャッシュの場所・大きさ・消す | — | — | — | △ | CLI: `log --rebuild`・`daemon rebuild`。 |
 | 設定の変更の Undo・Redo | △ | △ | n/a | n/a | macOS: Git のページとリポジトリの設定だけ。<br>GTK4: Git のページとリポジトリの設定だけ。 |
 
@@ -325,7 +340,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | --- | :-: | :-: | :-: | :-: | --- |
 | 共有の操作の表（`crates/commands`）から作るメニュー | ✓ | ✓ | — | n/a | VSCode: package.json に書く。 |
 | メニューバーなしで全部の操作に届く（≡） | ✓ | ✓ | △ | n/a | GTK4: ≡ のメニューに、メニューバーの File・Edit・View・Navigate・Commit・Window を macOS と同じ項目と並びで置き（Edit の取り消す・カット・コピーなどはフォーカスのある欄に効く）、その後に設定…・Amon Hen について・終了。<br>VSCode: コマンドパレットとコンテキストメニュー。 |
-| キーボードの近道 | ✓ | ✓ | — | n/a | GTK4: Linux のデスクトップやほかの操作が使うキーは違う: サイドバーを表示は F9、ブランチを絞り込むは Ctrl+Alt+Shift+F、親へ・子へは Alt+Down・Up、New Tag にはない（Ctrl+Alt+T は端末を開く）。<br>VSCode: キーの割り当てを出していない。 |
+| キーボードの近道 | ✓ | ✓ | — | n/a | GTK4: Linux のデスクトップやほかの操作が使うキーは違う: サイドバーを表示は F9（GNOME のユーティリティの欄のキー）。ブランチを絞り込む・親へ・子へ・New Tag にはない（GNOME が Ctrl+Alt+矢印と Ctrl+Alt+T を使い、HIG では Alt+Up が別の意味）。マージエディターの前・次のコンフリクトは Alt+Up・Down。<br>VSCode: キーの割り当てを出していない。 |
 | メニューと同じ名前のコンテキストメニュー | ✓ | ✓ | △ | n/a | VSCode: 名前がアプリと違う。 |
 | キーボードの近道の窓 | — | ✓ | n/a | n/a | macOS: 代わりに macOS の App Shortcuts で変える。 |
 

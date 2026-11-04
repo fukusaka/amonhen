@@ -602,6 +602,8 @@ fn prepare_engine() {
         let _ = run(&["install", "--quiet"]);
         if let Some(engine) = run(&["engine"]).filter(|e| !e.is_empty()) {
             let _ = RESOLVED_ENGINE.set(PathBuf::from(engine));
+            // fsmonitor の hook も、選んだエンジンに。
+            amonhen_backend_cli::set_fsmonitor_engine(fsmonitor_engine());
         }
     });
 }
@@ -635,6 +637,16 @@ fn engine() -> PathBuf {
         return current;
     }
     PathBuf::from("amonhen")
+}
+
+/// Linux・BSD の fsmonitor で、Watchman に聞く hook として git に起動させるエンジン（共有の daemon と同じもの）。
+/// 見つからなければ（PATH の `amonhen` しかないときも）None で、fsmonitor を使わない。
+fn fsmonitor_engine() -> Option<PathBuf> {
+    if cfg!(any(target_os = "macos", target_os = "windows")) {
+        return None;
+    }
+    let engine = engine();
+    (engine.is_absolute() && engine.is_file()).then_some(engine)
 }
 
 /// Repositories・Quick Open からリポジトリを開く（前の窓のタブか、新しい窓に）。
@@ -1022,8 +1034,8 @@ fn build_tab(
     let (weak_sidebar, w) = (Rc::downgrade(&sidebar), Rc::downgrade(&worktrees));
     let t = Rc::downgrade(&tab);
     working.connect_count(move |count| {
+        // Working Copy の行には数を出さない（macOS 版と同じ。数は worktree の行だけ）。
         if let Some(sidebar) = weak_sidebar.upgrade() {
-            sidebar.set_working_count(count);
             // submodule の中の変更は ref を変えないので、ここで読み直す（submodule がなければ読まない）。
             sidebar.reload_submodules();
         }

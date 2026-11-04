@@ -298,8 +298,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         let remote = RepositoryLocation.isRemote(location)
         sidebar.worktreesAreLocal = !remote
         sidebar.onOpenSubmodule = { [weak self] path in
-            // サブモジュールは、同じ接続先の上の相対パスとして開く。
-            let full = (root as NSString).appendingPathComponent(path)
+            // サブモジュールは、同じ接続先の上の相対パスとして開く。submodule は worktree ごとに取り出すので、
+            // 書き込む先の worktree の中のものを開く（サイドバーの印もその worktree のもの）。
+            let dir = self?.editing.repository.workdir ?? root
+            let full = (dir as NSString).appendingPathComponent(path)
             self?.onOpenRepository?(remote ? Self.replacingPath(of: self?.location ?? "", with: full) : full)
         }
 
@@ -623,6 +625,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         reflog.actions = slot.actions
         slot.actions.refreshUndo()
         slot.workingCopy.refresh()
+        reloadSubmodules()
         changeCount = worktreeChanges[WorktreeInfo.canonical(slot.path)] ?? 0
         showWorktrees()
         updateTabTitle()
@@ -690,34 +693,42 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     /// 最後に読んだ submodule の様子。
     private var submodules: [SubmoduleState] = []
 
-    /// submodule の様子を裏で読み、サイドバーに出す（submodule がなければ読まない）。
+    /// submodule の様子を裏で読み、サイドバーに出す（submodule がなければ読まない）。取り出してあるか・記録と
+    /// 違うコミットか・中の変更は worktree ごとのものなので、書き込む先の worktree で読む（操作もそこで行う）。
     private func reloadSubmodules() {
         guard latestRefs?.items.contains(where: { $0.kind == .submodule }) == true || !submodules.isEmpty else { return }
-        let repository = self.repository
+        let slot = editing
+        let repository = slot.repository
         Task {
             nonisolated struct Submodules: Decodable, Sendable { let submodules: [SubmoduleState] }
             guard let list = await Task.detached(priority: .utility, operation: {
                 try? repository.info(["op": "submodules"], as: Submodules.self)
             }).value?.submodules else { return }
+            // 読んでいる間にほかの worktree を選んだら、その worktree の分は読み直しに任せる。
+            guard slot === editing else { return }
             submodules = list
             sidebar.show(submodules: list)
         }
     }
 
     private func submoduleAction(_ path: String?, _ action: SidebarViewController.SubmoduleAction) {
+        // 選んだときの worktree で実行する（シートを出している間に書き込む先が替わっても）。
+        let actions = self.actions
         let perform: ([String: Any]) -> Void = { [weak self] command in
-            self?.actions.perform(command) { [weak self] _ in self?.reloadSubmodules() }
+            actions.perform(command) { [weak self] _ in self?.reloadSubmodules() }
         }
-        if action == .add { return SubmoduleSheet.add(in: window, perform: perform) }
-        if action == .update { return SubmoduleSheet.update(in: window, paths: path.map { [$0] } ?? [], perform: perform) }
+        if action == .add { return SubmoduleSheet.add(in: window, actions: actions, perform: perform) }
+        if action == .update {
+            return SubmoduleSheet.update(in: window, actions: actions, paths: path.map { [$0] } ?? [], perform: perform)
+        }
         if action == .sync { return perform(["op": "changeSubmodule", "change": ["kind": "sync", "recursive": true]]) }
         guard let path else { return }
         let submodule = submodules.first { $0.path == path }
             ?? SubmoduleState(path: path, name: path, url: nil, branch: nil, initialized: true, moved: false, changed: false, conflict: false)
         switch action {
-        case .setURL: SubmoduleSheet.setURL(in: window, submodule: submodule, perform: perform)
-        case .setBranch: SubmoduleSheet.setBranch(in: window, submodule: submodule, perform: perform)
-        case .remove: SubmoduleSheet.remove(in: window, submodule: submodule, perform: perform)
+        case .setURL: SubmoduleSheet.setURL(in: window, actions: actions, submodule: submodule, perform: perform)
+        case .setBranch: SubmoduleSheet.setBranch(in: window, actions: actions, submodule: submodule, perform: perform)
+        case .remove: SubmoduleSheet.remove(in: window, actions: actions, submodule: submodule, perform: perform)
         case .add, .update, .sync: break
         }
     }

@@ -1,5 +1,7 @@
 //! submodule を足す・取り出す・外す・URL や追うブランチを変えるシート（macOS 版の `Submodules.swift`）。サイドバー
 //! （Submodules の見出しと submodule の右クリック）と Repository のメニューが使う。どれも答えをコアの命令にする。
+//! submodule は worktree ごとのもの（作業ツリーと index）なので、シートは選んだときの worktree の名前を書き、
+//! 答えもそこで実行する（シートを出している間に書き込む先を替えても）。
 
 use std::rc::Rc;
 
@@ -9,7 +11,7 @@ use gtk::prelude::*;
 use serde_json::{Value, json};
 
 use crate::actions::Actions;
-use crate::sheets::{self, Response, Sheet};
+use crate::sheets::{self, Response, Target};
 
 /// URL の最後の部分から `.git` を除いたもの（git が submodule の場所の既定にするもの）。
 pub fn default_path(url: &str) -> String {
@@ -40,6 +42,11 @@ fn optional(s: String) -> Value {
     if s.is_empty() { Value::Null } else { json!(s) }
 }
 
+/// 選んだときの worktree で `command` を実行する。
+fn perform(actions: &Rc<Actions>, target: Target, command: Value) {
+    actions.perform_in(target.repo, vec![command], |_| {});
+}
+
 fn bell(actions: &Actions) {
     if let Some(window) = actions.window() {
         window.error_bell();
@@ -48,9 +55,12 @@ fn bell(actions: &Actions) {
 
 /// Add Submodule…: URL・場所・追うブランチ（なくてもよい）。
 pub fn add(actions: &Rc<Actions>) {
+    let Some(target) = Target::current(actions) else {
+        return;
+    };
     let actions = actions.clone();
     glib::spawn_future_local(async move {
-        let sheet = Sheet::new(
+        let sheet = target.sheet(
             sheets::parent(&actions).as_ref(),
             &tr!("Add Submodule"),
             &tr!(
@@ -85,22 +95,29 @@ pub fn add(actions: &Rc<Actions>) {
         if u.is_empty() || p.is_empty() {
             return bell(&actions);
         }
-        actions.perform(json!({
-            "op": "changeSubmodule",
-            "change": { "kind": "add", "url": u, "path": p, "branch": optional(text(&branch)) },
-        }));
+        perform(
+            &actions,
+            target,
+            json!({
+                "op": "changeSubmodule",
+                "change": { "kind": "add", "url": u, "path": p, "branch": optional(text(&branch)) },
+            }),
+        );
     });
 }
 
 /// Update…: git の既定（記録したコミット、中の submodule には入らない）から変えて取り出す。`paths` が空ならすべて。
 pub fn update(actions: &Rc<Actions>, paths: Vec<String>) {
+    let Some(target) = Target::current(actions) else {
+        return;
+    };
     let actions = actions.clone();
     glib::spawn_future_local(async move {
         let title = match &paths[..] {
             [path] => format!("Update {path}"),
             _ => "Update All Submodules".to_owned(),
         };
-        let sheet = Sheet::new(
+        let sheet = target.sheet(
             sheets::parent(&actions).as_ref(),
             &title,
             &tr!("Checks out the commit recorded in this repository, unless you choose otherwise."),
@@ -117,20 +134,27 @@ pub fn update(actions: &Rc<Actions>, paths: Vec<String>) {
         if sheet.run().await != Response::Ok {
             return;
         }
-        actions.perform(json!({
-            "op": "updateSubmodules",
-            "paths": paths,
-            "recursive": recursive.is_active(),
-            "remote": remote.is_active(),
-        }));
+        perform(
+            &actions,
+            target,
+            json!({
+                "op": "updateSubmodules",
+                "paths": paths,
+                "recursive": recursive.is_active(),
+                "remote": remote.is_active(),
+            }),
+        );
     });
 }
 
 /// Edit URL…: `.gitmodules` の URL を変え、このリポジトリの設定にも写す。
 pub fn set_url(actions: &Rc<Actions>, submodule: &SubmoduleState) {
+    let Some(target) = Target::current(actions) else {
+        return;
+    };
     let (actions, submodule) = (actions.clone(), submodule.clone());
     glib::spawn_future_local(async move {
-        let sheet = Sheet::new(
+        let sheet = target.sheet(
             sheets::parent(&actions).as_ref(),
             &tr!("Edit URL of {path}", path = &submodule.path),
             &tr!(
@@ -151,18 +175,25 @@ pub fn set_url(actions: &Rc<Actions>, submodule: &SubmoduleState) {
         if u.is_empty() {
             return bell(&actions);
         }
-        actions.perform(json!({
-            "op": "changeSubmodule",
-            "change": { "kind": "setUrl", "path": submodule.path, "url": u },
-        }));
+        perform(
+            &actions,
+            target,
+            json!({
+                "op": "changeSubmodule",
+                "change": { "kind": "setUrl", "path": submodule.path, "url": u },
+            }),
+        );
     });
 }
 
 /// Branch to Follow…: Update で「追うブランチの最新」を選んだときに進める先。空なら既定（リモートの HEAD）。
 pub fn set_branch(actions: &Rc<Actions>, submodule: &SubmoduleState) {
+    let Some(target) = Target::current(actions) else {
+        return;
+    };
     let (actions, submodule) = (actions.clone(), submodule.clone());
     glib::spawn_future_local(async move {
-        let sheet = Sheet::new(
+        let sheet = target.sheet(
             sheets::parent(&actions).as_ref(),
             &tr!("Branch to Follow for {path}", path = &submodule.path),
             &tr!(
@@ -179,18 +210,25 @@ pub fn set_branch(actions: &Rc<Actions>, submodule: &SubmoduleState) {
         if sheet.run().await != Response::Ok {
             return;
         }
-        actions.perform(json!({
-            "op": "changeSubmodule",
-            "change": { "kind": "setBranch", "path": submodule.path, "branch": optional(text(&branch)) },
-        }));
+        perform(
+            &actions,
+            target,
+            json!({
+                "op": "changeSubmodule",
+                "change": { "kind": "setBranch", "path": submodule.path, "branch": optional(text(&branch)) },
+            }),
+        );
     });
 }
 
 /// Remove…: 作業ツリーと `.gitmodules` から外す。git の既定どおり `.git/modules/<name>` は残し、消すかは選ぶ。
 pub fn remove(actions: &Rc<Actions>, submodule: &SubmoduleState) {
+    let Some(target) = Target::current(actions) else {
+        return;
+    };
     let (actions, submodule) = (actions.clone(), submodule.clone());
     glib::spawn_future_local(async move {
-        let sheet = Sheet::new(
+        let sheet = target.sheet(
             sheets::parent(&actions).as_ref(),
             &tr!("Remove {name}?", name = &submodule.path),
             &tr!(
@@ -209,10 +247,14 @@ pub fn remove(actions: &Rc<Actions>, submodule: &SubmoduleState) {
         if sheet.run().await != Response::Ok {
             return;
         }
-        actions.perform(json!({
-            "op": "changeSubmodule",
-            "change": { "kind": "remove", "path": submodule.path, "deleteGitDir": delete_git_dir.is_active() },
-        }));
+        perform(
+            &actions,
+            target,
+            json!({
+                "op": "changeSubmodule",
+                "change": { "kind": "remove", "path": submodule.path, "deleteGitDir": delete_git_dir.is_active() },
+            }),
+        );
     });
 }
 

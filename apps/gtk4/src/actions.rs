@@ -720,6 +720,8 @@ pub struct Facts {
     pub tracking: Option<(bool, u32)>,
     /// stash がある。
     pub stash: bool,
+    /// submodule がある（Update Submodules… に要る）。
+    pub submodules: bool,
     /// 途中の操作（`sequence` の `kind`: merge・rebase・cherry-pick・revert・am）。
     pub sequence: Option<String>,
     /// 取り消せる操作がある。
@@ -792,6 +794,7 @@ pub fn enabled(f: &Facts) -> Vec<(&'static str, bool)> {
         ("rebase", f.refs && idle),
         ("pop-stash", f.stash),
         ("show-stashes", f.stash),
+        ("update-submodules", f.submodules),
         ("undo", f.undo),
         ("go-to-head", f.head),
         ("switch-branch", f.refs),
@@ -1039,6 +1042,16 @@ mod tests {
         for name in ["commit", "commit-and-push", "stage-all"] {
             assert!(!of(&facts, name), "{name}");
         }
+    }
+
+    #[test]
+    fn update_submodules_needs_a_submodule() {
+        let mut facts = idle();
+        assert!(!of(&facts, "update-submodules"));
+        // Add Submodule… はいつも使える。
+        assert!(of(&facts, "add-submodule"));
+        facts.submodules = true;
+        assert!(of(&facts, "update-submodules"));
     }
 
     #[test]

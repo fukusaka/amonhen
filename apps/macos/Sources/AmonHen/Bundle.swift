@@ -174,8 +174,9 @@ extension Actions {
         let alert = NSAlert()
         alert.messageText = L("Fetch from Bundle")
         let shown = branches.prefix(5).joined(separator: ", ") + (branches.count > 5 ? ", …" : "")
-        alert.informativeText = L("%@ has %ld branches (%@). They are fetched under the name below, like a remote’s branches; tags aren’t fetched.",
-                                  (file as NSString).lastPathComponent, branches.count, shown)
+        // Fetch… と同じく、worktree が 2 つ以上なら、どの worktree の操作かを書く。
+        alert.informativeText = sheetMessage(L("%@ has %ld branches (%@). They are fetched under the name below, like a remote’s branches; tags aren’t fetched.",
+                                               (file as NSString).lastPathComponent, branches.count, shown))
         alert.addButton(withTitle: L("Fetch"))
         alert.addButton(withTitle: L("Cancel"))
         let field = NSTextField(string: suggested)

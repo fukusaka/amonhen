@@ -18,8 +18,13 @@ enum CommitHeaderStyle: Int, CaseIterable {
         }
     }
 
+    /// 覚えている見せ方（なければ標準）。`integer(forKey:)` は値がないと 0（簡潔）を返すので、先に有無を見る。
     static var saved: CommitHeaderStyle {
-        get { CommitHeaderStyle(rawValue: UserDefaults.standard.integer(forKey: "commitHeaderStyle")) ?? .standard }
+        get {
+            let defaults = UserDefaults.standard
+            guard defaults.object(forKey: "commitHeaderStyle") != nil else { return .standard }
+            return CommitHeaderStyle(rawValue: defaults.integer(forKey: "commitHeaderStyle")) ?? .standard
+        }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "commitHeaderStyle") }
     }
 }

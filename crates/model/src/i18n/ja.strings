@@ -557,8 +557,8 @@
 "Result (editable)" = "Result（結果、編集できる）";
 "Incoming (being merged in)" = "Incoming（取り込む側）";
 "Base (common ancestor)" = "Base（共通の祖先）";
-"Previous Conflict (Ctrl+Alt+↑)" = "前のコンフリクト（Ctrl+Alt+↑）";
-"Next Conflict (Ctrl+Alt+↓)" = "次のコンフリクト（Ctrl+Alt+↓）";
+"Previous Conflict (Alt+↑)" = "前のコンフリクト（Alt+↑）";
+"Next Conflict (Alt+↓)" = "次のコンフリクト（Alt+↓）";
 "Resolve all conflicts that fixed rules can solve: both sides are the same, only one side changed (diff3), only whitespace differs, or different words on the same line changed (diff3). You can Undo it." = "決まった規則で解けるコンフリクトをまとめて解く: 両側が同じ、片側だけが変えた（diff3）、空白だけが違う、同じ行の別々の単語を変えた（diff3）。Undo で戻せる";
 "Accept Current" = "Current を採用";
 "Accept Incoming" = "Incoming を採用";
@@ -1834,7 +1834,9 @@
 /* GTK4: Settings > Performance の fsmonitor */
 "Speed up status with fsmonitor" = "fsmonitor で status を速くする";
 "A git fsmonitor--daemon runs for each repository." = "リポジトリごとに git fsmonitor--daemon が常駐します。";
-"git’s fsmonitor--daemon runs only on macOS and Windows." = "git の fsmonitor--daemon は macOS と Windows でだけ動きます。";
+"Uses Watchman, which watches each repository." = "Watchman がリポジトリを見張ります。";
+"Install Watchman to use it." = "使うには Watchman を入れてください。";
+"Needs git 2.26 or later to use Watchman." = "Watchman を使うには git 2.26 以降が要ります。";
 
 /* GTK4: ツールバーのカスタマイズ（View > Customize Toolbar…） */
 "Customize Toolbar…" = "ツールバーをカスタマイズ…";

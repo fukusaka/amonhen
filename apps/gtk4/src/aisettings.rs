@@ -33,20 +33,35 @@ fn row(title: &str, widget: &impl IsA<gtk::Widget>) -> gtk::Box {
     b
 }
 
-fn heading(title: &str) -> gtk::Label {
-    let l = gtk::Label::new(Some(title));
-    l.set_xalign(0.0);
-    l.add_css_class("heading");
-    l
+/// 枠で囲んだ行の一覧（macOS 版の `.grouped` の Form の Section。Settings のほかのタブと同じ見た目）。行は
+/// `add` で足す。
+fn boxed_list() -> (gtk::ListBox, gtk::Frame) {
+    let list = gtk::ListBox::new();
+    list.set_selection_mode(gtk::SelectionMode::None);
+    list.set_show_separators(true);
+    list.add_css_class("settings-list");
+    let frame = gtk::Frame::new(None);
+    frame.set_child(Some(&list));
+    (list, frame)
+}
+
+/// 枠の一覧に 1 行足す（隠すときは返した行を隠す。中身だけ隠すと空の行と線が残る）。
+fn add(list: &gtk::ListBox, widget: &impl IsA<gtk::Widget>) -> gtk::ListBoxRow {
+    let row = gtk::ListBoxRow::new();
+    row.set_activatable(false);
+    row.set_child(Some(widget));
+    list.append(&row);
+    row
 }
 
 /// AI のタブの中身。
 pub fn page() -> gtk::Widget {
+    // 余白は Settings のほかのタブと同じ。
     let column = gtk::Box::new(gtk::Orientation::Vertical, 18);
     column.set_margin_top(18);
     column.set_margin_bottom(18);
-    column.set_margin_start(24);
-    column.set_margin_end(24);
+    column.set_margin_start(20);
+    column.set_margin_end(20);
 
     // 使う CLI。
     let choices: Vec<Option<Cli>> = std::iter::once(None)
@@ -64,28 +79,40 @@ pub fn page() -> gtk::Widget {
             .position(|c| *c == assist::selected())
             .unwrap_or(0) as u32,
     );
+    // 1 つ目の節: 使う CLI と、選んだ CLI の場所・モデル・言語（CLI を変えたら 2 行目から作り直す）。枠の下に
+    // 送る前に聞くことの説明（macOS 版の Section の footer）。
     let top = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    top.append(&row(&tr!("AI to use"), &choice));
-    // 選んだ CLI の場所・モデル・言語（CLI を変えたら作り直す）。
-    let details = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    top.append(&details);
+    let (details, frame) = boxed_list();
+    add(&details, &row(&tr!("AI to use"), &choice));
+    top.append(&frame);
+    let footer = note(&tr!(
+        "Asks before sending anything from a repository the first time."
+    ));
+    footer.set_margin_start(8);
+    top.append(&footer);
     column.append(&top);
 
-    // 用途ごとのプロンプト。
-    let prompts = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    // 用途ごとのプロンプト（見出しと枠の節。印が変わったら作り直す）。
+    let prompts = gtk::Box::new(gtk::Orientation::Vertical, 6);
     column.append(&prompts);
 
     let forget = gtk::Button::with_label(&tr!("Forget Per-Repository Permissions"));
     forget.set_halign(gtk::Align::Start);
     forget.connect_clicked(|_| assist::forget_repository_decisions());
-    // 説明は付けない（macOS 版と同じ）。
-    column.append(&forget);
+    // 説明は付けない（macOS 版と同じ）。枠の節に 1 行で。
+    let (list, frame) = boxed_list();
+    add(&list, &forget);
+    column.append(&frame);
 
     let refresh = {
-        let (details, prompts) = (details.downgrade(), prompts.downgrade());
+        let (details, prompts, footer) =
+            (details.downgrade(), prompts.downgrade(), footer.downgrade());
         Rc::new(move || {
             if let Some(d) = details.upgrade() {
                 fill_details(&d);
+            }
+            if let Some(f) = footer.upgrade() {
+                f.set_visible(assist::selected().is_some());
             }
             if let Some(p) = prompts.upgrade() {
                 fill_prompts(&p);
@@ -119,12 +146,12 @@ pub fn page() -> gtk::Widget {
         }
     });
     // スクロールは設定の窓のもの（macOS 版と同じく、ページ全体が窓と一緒にスクロールする）。
-    column.upcast()
+    crate::reposettings::form_column(&column).upcast()
 }
 
-/// 選んだ CLI の場所・モデル・言語。
-fn fill_details(b: &gtk::Box) {
-    while let Some(c) = b.first_child() {
+/// 選んだ CLI の場所・モデル・言語（枠の一覧の 2 行目から。1 行目は使う CLI）。
+fn fill_details(b: &gtk::ListBox) {
+    while let Some(c) = b.row_at_index(1) {
         b.remove(&c);
     }
     let Some(cli) = assist::selected() else {
@@ -134,7 +161,7 @@ fn fill_details(b: &gtk::Box) {
         Some(path) => {
             let l = note(&path.to_string_lossy());
             l.set_selectable(true);
-            b.append(&l);
+            add(b, &l);
             // 版は裏で聞く。
             let weak = l.downgrade();
             glib::spawn_future_local(async move {
@@ -160,7 +187,7 @@ fn fill_details(b: &gtk::Box) {
             ));
             l.remove_css_class("dim-label");
             l.add_css_class("error");
-            b.append(&l);
+            add(b, &l);
         }
     }
 
@@ -193,11 +220,10 @@ fn fill_details(b: &gtk::Box) {
         .text(if custom { current.as_str() } else { "" })
         .hexpand(true)
         .build();
-    let name_row = row(&tr!("Model name"), &name);
     name.set_width_chars(28);
+    add(b, &row(&tr!("Model"), &picker));
+    let name_row = add(b, &row(&tr!("Model name"), &name));
     name_row.set_visible(custom);
-    b.append(&row(&tr!("Model"), &picker));
-    b.append(&name_row);
     let (nr, nm) = (name_row.downgrade(), name.downgrade());
     picker.connect_selected_notify(move |d| {
         let i = d.selected();
@@ -223,13 +249,13 @@ fn fill_details(b: &gtk::Box) {
     language.connect_changed(|e| {
         crate::settings::set_string("assistantLanguage", e.text().trim());
     });
-    b.append(&row(
-        &tr!("Language for translations and explanations"),
-        &language,
-    ));
-    b.append(&note(&tr!(
-        "Asks before sending anything from a repository the first time."
-    )));
+    add(
+        b,
+        &row(
+            &tr!("Language for translations and explanations"),
+            &language,
+        ),
+    );
 }
 
 /// 書き換えた（ファイルのある）用途。
@@ -262,7 +288,12 @@ fn fill_prompts(b: &gtk::Box) {
     unsafe {
         b.set_data(CUSTOMIZED, customized());
     }
-    b.append(&heading(&tr!("Prompts by Purpose")));
+    let heading = gtk::Label::new(Some(&tr!("Prompts by Purpose")));
+    heading.set_xalign(0.0);
+    heading.add_css_class("heading");
+    b.append(&heading);
+    let (list, frame) = boxed_list();
+    b.append(&frame);
     let store = assist::prompts();
     let ready = assist::is_ready();
     for purpose in Purpose::ALL {
@@ -337,13 +368,13 @@ fn fill_prompts(b: &gtk::Box) {
             w.set_valign(gtk::Align::Center);
             line.append(w);
         }
-        b.append(&line);
+        add(&list, &line);
     }
-    // macOS 版と同じ文（置き場所はこの FE のもの）。
-    b.append(&note(&tr!(
-        "Stored in {dir}.",
-        dir = home_relative(&store.dir)
-    )));
+    // macOS 版と同じ文（置き場所はこの FE のもの）。節の中の 1 行。
+    add(
+        &list,
+        &note(&tr!("Stored in {dir}.", dir = home_relative(&store.dir))),
+    );
 }
 
 /// 家のディレクトリの下なら `~/…` にする。

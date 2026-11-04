@@ -13,6 +13,7 @@ mod status;
 mod submodule;
 mod subtree;
 mod verify;
+mod watchman;
 
 use amonhen_model::tr;
 use std::io::Write;
@@ -30,18 +31,62 @@ pub use directory::expand_home;
 pub use programs::programs;
 pub use status::parse_status;
 pub use verify::LocalVerifier;
+pub use watchman::{run_hook as fsmonitor_watchman_hook, watchman};
 
-/// status で git の fsmonitor（`git fsmonitor--daemon`）を使うか。macOS と Windows でだけ効く。
+/// status で git の fsmonitor を使うか。macOS と Windows は `git fsmonitor--daemon`、ほかの Unix（Linux・BSD）は
+/// Watchman（`watchman.rs`）。
 static FSMONITOR: AtomicBool = AtomicBool::new(false);
 
-/// status で fsmonitor を使うかを決める（アプリの設定から呼ぶ）。リポジトリごとに daemon が常駐し、
-/// `.git` にソケットを作る。
+/// Linux・BSD で hook として起動するエンジン（`amonhen`）。決まっていなければ fsmonitor を使わない。
+static FSMONITOR_ENGINE: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+/// git の `fsmonitor--daemon` がある OS か（macOS と Windows）。ほかでは Watchman を使う。
+const FSMONITOR_DAEMON: bool = cfg!(any(target_os = "macos", target_os = "windows"));
+
+/// status で fsmonitor を使うかを決める（アプリの設定から呼ぶ）。macOS と Windows はリポジトリごとに daemon が
+/// 常駐し、`.git` にソケットを作る。Linux・BSD は Watchman がリポジトリを見張る。
 pub fn set_fsmonitor(enabled: bool) {
     FSMONITOR.store(enabled, Ordering::Relaxed);
 }
 
-fn fsmonitor_enabled() -> bool {
-    cfg!(any(target_os = "macos", target_os = "windows")) && FSMONITOR.load(Ordering::Relaxed)
+/// Linux・BSD で、Watchman の hook として git に起動させるエンジン（`amonhen` の実行ファイル）。エンジン自身なら
+/// 自分のパス、コアを取り込んだ FE（GTK4 のアプリ）なら共有の daemon に使うエンジン。
+pub fn set_fsmonitor_engine(engine: Option<PathBuf>) {
+    *FSMONITOR_ENGINE.lock().unwrap() = engine;
+}
+
+/// この OS で fsmonitor を使えるか: macOS と Windows はいつも、Linux・BSD は PATH に `watchman` があり、git が
+/// hook の版 2 を話すとき（git 2.26 から。それより古い git は版 1 しか使わない）。
+pub fn fsmonitor_available() -> bool {
+    FSMONITOR_DAEMON || watchman_usable()
+}
+
+/// Linux・BSD で、Watchman の hook を git に渡せるか。
+fn watchman_usable() -> bool {
+    watchman::watchman().is_some() && git_at_least(2, 26)
+}
+
+/// status に足す `-c` の設定（fsmonitor を使わなければ空）。Linux・BSD では hook をこの起動にだけ渡し、リポジトリの
+/// 設定には書かない。
+fn fsmonitor_config() -> Vec<String> {
+    if !FSMONITOR.load(Ordering::Relaxed) {
+        return Vec::new();
+    }
+    if FSMONITOR_DAEMON {
+        return vec!["-c".into(), "core.fsmonitor=true".into()];
+    }
+    if !watchman_usable() {
+        return Vec::new();
+    }
+    let Some(engine) = FSMONITOR_ENGINE.lock().unwrap().clone() else {
+        return Vec::new();
+    };
+    vec![
+        "-c".into(),
+        format!("core.fsmonitor={}", watchman::hook_command(&engine)),
+        "-c".into(),
+        format!("core.fsmonitorHookVersion={}", watchman::HOOK_VERSION),
+    ]
 }
 
 /// status の結果（untracked cache・fsmonitor の状態）を index に書き残す間隔。ふだんの status は
@@ -823,15 +868,14 @@ impl Git {
     pub fn status(&self) -> Result<amonhen_model::Status> {
         // 追跡していないファイルを探した結果をディレクトリごとに覚えておく（untracked cache）。
         // `--untracked-files=all` と設定が揃っていないとキャッシュを使わないので、両方を渡す。
+        let fsmonitor = fsmonitor_config();
         let mut args = vec![
             "-c",
             "core.untrackedCache=true",
             "-c",
             "status.showUntrackedFiles=all",
         ];
-        if fsmonitor_enabled() {
-            args.extend(["-c", "core.fsmonitor=true"]);
-        }
+        args.extend(fsmonitor.iter().map(String::as_str));
         args.extend([
             "status",
             "--porcelain=v2",

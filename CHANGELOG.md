@@ -13,57 +13,11 @@ becomes the GitHub Release notes.
 
 - Subtrees, when git has `git subtree`: Add Subtree… brings another repository's branch into a folder, and the
   sidebar's Subtrees group pulls, pushes and splits them, remembering the source and squash. `amonhen subtree` too.
-
-### [0.2.9] - 2026-11-04
-
-The GTK4 app for Linux catches up with the macOS app, and large repositories are supported: shallow, partial and
-sparse clones, background maintenance, and History searches that fetch only what they need. Several branches merge in
-one commit, commits are exported as archives or bundles, submodules are managed from the sidebar, and every
-confirmation and History edit now asks in one sheet that shows what moves and what will conflict.
-
-#### Added
-
-- The GTK4 app for Linux catches up with the macOS app: tabs, worktrees, the Repositories window and Quick Open,
-  Repository Settings and the machine settings (Programs, Environment Variables, SSH Hosts), Stashes, Reflog, Range
-  Diff, patches, History's edit mode, GitHub (CI marks, avatars, pull requests), AI, and large repositories
-  (shallow, partial and sparse clones, git maintenance, the Clone sheet's choices). `docs/frontends.md` lists what
-  each front end has.
-
-- Several branches, tags or commits selected in the sidebar or History merge in one commit, as `git merge a b c` does,
-  from a sheet showing their order and the conflicts expected for each; it offers to merge them one by one when git
-  couldn't. `amonhen merge-check a b c` checks the same.
-- In a shallow clone, History ends with a band to fetch any number of older commits, up to a date, or all of it, and
-  boundary commits are marked as having parents not fetched. `amonhen log` notes where the history stops.
-- Repository Settings has a Fetching and Folders page: fetch more of a shallow clone, fetch all contents of a partial
-  clone (git 2.36), and choose the folders of a sparse checkout from HEAD's tree (git 2.25). The git line, the
-  sidebar and Working Copy show when a repository is shallow, partial, sparse or registered for maintenance.
-- In a partial clone, a History search with `contents:` says how many contents it will fetch and fetches them in one
-  go (git 2.29); past 50,000 it asks to narrow the search or fetch all contents. `amonhen status` notes shallow,
-  partial and sparse repositories.
-- The History search takes `after:` and `before:` (a date or `"1 year ago"`), and `contents:` with `path:` looks
-  only at that path's changes. A `contents:` search shows the matches and its progress as it goes.
-- Fetching and Folders has a switch to keep the repository maintained in the background (`git maintenance start`,
-  git 2.31); the app then leaves writing the commit-graph to it. Turning it off lets git's automatic maintenance
-  run again.
-- The Clone sheet chooses what to download (everything, file contents when needed, or recent history only) and can
-  check out only some folders, picked right after the clone (git 2.27). `amonhen clone` takes `--filter`, `--depth`
-  and `--sparse`.
-- Export Archive… writes a commit's files as a zip, tar.gz or tar file (`git archive`), optionally with a top folder
-  and only one folder, from the Commit menu, History and the sidebar's branches and tags. `amonhen archive` does the same.
-- Save as Bundle… writes branches and tags, or the whole repository, into one file that git can clone or fetch from
-  (`git bundle`), optionally only the commits after a base. `amonhen bundle create` does the same.
-- The Clone sheet clones from a bundle file (typed, or Choose Bundle…), choosing the branch to check out when the
-  bundle has no HEAD. `amonhen clone` takes a bundle file and `-b`.
-- Fetch from Bundle… puts a bundle's branches under a name of their own, like a remote's, also into a repository on an
-  SSH host. `amonhen bundle fetch` does the same.
-- Submodules: the sidebar marks those not checked out, at another commit than the one recorded, with changes inside or
-  in conflict, and their menus add, update (optionally recursive or to the branch they follow), change the URL or the
-  branch to follow, sync and remove them (keeping `.git/modules` unless asked). The Clone sheet can check them out
-  too. `amonhen submodule` and `amonhen clone --recurse-submodules` do the same.
+- On Linux and the BSDs, Settings > Performance > fsmonitor speeds up status with Watchman when it is installed (git
+  2.26 or later); the engine answers git as its fsmonitor hook, and nothing is written to the repository's config.
 
 #### Changed
 
-- On Linux, `amonhen open` (and `amonhen <path>`) opens the repository in the GTK4 app, as a tab of the running app.
 - In the GTK4 app, Settings > General > External Editor chooses another program with the same column picker as
   Programs, and its list is divided like the macOS one.
 - The GTK4 app's View > Customize Toolbar… opens a palette under the header bar like the macOS one: drag items onto
@@ -73,45 +27,13 @@ confirmation and History edit now asks in one sheet that shows what moves and wh
 - The GTK4 app opens Blame and File History as tabs beside the repository tab, with the repository's toolbar, as the
   macOS app does, instead of separate windows.
 - The GTK4 app's Settings show on/off items as switches on the right, as the macOS app does.
-
-- The GTK4 app now needs libadwaita (`libadwaita-1-0` on Ubuntu). Its tabs can be dragged out into a new window on
-  Wayland too, and it follows the system's light or dark style.
-
-- The Fetch sheet chooses the remote: all of them, as before, or one. The core's `fetch` takes the remote too.
-
-- History's edit mode and the Rebase sheets say which stacked branches move with the rewrite or stay and why, which
-  are pushed and will need Force Push, and which commits are expected to conflict (git 2.40 for the forecast). The
-  Rebase sheets draw the branch before and after, and "Also move the stacked branches" decides for that rebase or
-  edit only. `amonhen rewrite-preview` prints the same.
-
-- Push and Pull each confirm in one sheet: a diverged Push offers Pull… or Force Push there, and Pull with no upstream
-  picks the remote branch there. Repository > Pull With is gone, and Create Pull Request goes on after its push.
-- Force Push replaces the remote branch only if it is still at the commit the sheet showed, so commits fetched in the
-  background are not lost unseen.
-- Push is disabled when there is nothing to send, and a conflict opens Working Copy at the first conflicted file
-  instead of an alert.
-- Every confirmation is a sheet on the window, and an operation asks the same way from the toolbar, a context menu
-  or a drag. Fetch, Checkout, Cherry-pick, Revert, Apply and a sidebar Merge or Rebase now ask first; Reset picks
-  Soft, Mixed or Hard in its sheet.
-- The menu bar and context menus use one name per operation (New Branch from, 8-character short IDs, translated
-  Checkout, Merge and Push items). The View menu is History's display menu, now with the commit detail toggles.
-- Everything in the menu bar is also in the window: a sidebar toggle and a More menu (≡) in the toolbar, Rebuild
-  History under Refresh, Go to HEAD in History's bar and a find button above the diff.
-- Commits are edited in History's edit mode: choose Keep, Edit Message, Combine with Older, Drop or Stop to Change
-  Files for each commit and drag them into order, then Apply Changes runs it all as one rebase with one Undo. It also
-  reaches past merges, which are recreated as they were (git's `--rebase-merges`).
-- The in-progress, failure and connection bars moved to a status bar at the bottom of the window, which also says what
-  a finished operation did. A failure clears once a later operation succeeds.
-- Working Copy's file context menu stages, discards, copies the path and opens the file.
-- Deleting several branches offers Delete Anyway for those with commits nowhere else. Only what can't be undone has a
-  red button, and failures read "Couldn't …".
-- Edit Message and Squash use git's own `reword` and `squash`, so notes follow `notes.rewrite.*` as in git, and
-  Edit Message runs the pre-commit and commit-msg hooks as git does. Lines starting with `#` are still kept.
+- The GTK4 app's Settings forms sit in a centred column of the macOS width instead of spanning the window; tables
+  such as Remotes and Keys and Values still use the full width.
 
 #### Fixed
 
-- Adding, renaming and removing remotes and changing their URLs work over SSH and through the shared daemon; they
-  failed to reach the engine.
+- The GTK4 app's automatic external editor falls back to a text editor, never a word processor such as LibreOffice Writer.
+- The macOS app shows commit details in the Standard style on first launch, as intended, instead of Brief.
 - macOS merge editor: ⌥⌘↑ and ⌥⌘↓ move between conflicts, ⌘↩ no longer races Commit, a file open in its own window
   isn't loaded again in Working Copy, and the AI buttons follow the AI setting.
 - macOS: Reset, Cherry-pick, Revert and Apply Patch say which worktree they act on; Remove Worktree counts the changes
@@ -172,13 +94,8 @@ confirmation and History edit now asks in one sheet that shows what moves and wh
   the opened one's.
 - macOS: "Pulled into …" and "Merged into …" in the status bar name the selected worktree's branch.
 - macOS: with several History commits selected, right-clicking a file in the changed-file list offers File History.
-
-- The GTK4 app's Undo button asks once; it opened the question twice, so one stayed after undoing.
-- A `.mailmap`, or a mailmap setting (`log.mailmap`, `mailmap.file`), changed while the engine was reading the old
-  one could be missed until it changed again; the names now follow it.
 - In the GTK4 app's sheets, Return runs the operation (Pull, Fetch, Publish, Reset…) even when a drop-down or a radio
   button has the focus, as on macOS; it opened the drop-down or picked the radio instead.
-- With newer GTK (4.24), the GTK4 app's sidebar shows Working Copy's change count and the sparse checkout mark.
 - In the GTK4 app, opening a repository that is already open in a new window, or switching to a worktree whose
   repository is open, brings its tab forward instead of opening a second one.
 - The GTK4 app's separate merge window saves, marks resolved and asks AI in the worktree it was opened for; after
@@ -188,59 +105,14 @@ confirmation and History edit now asks in one sheet that shows what moves and wh
 - The GTK4 app keeps each commit, push, discard, stage and confirmed operation in the worktree it started in: Commit
   and Push could push another worktree selected during the commit (or skip its Publish sheet), and Discard, Add to
   .gitignore, Take Current/Incoming, Fetch…, Pull…, Push…, Checkout…, Merge, Rebase, Cherry-pick, Delete Branch,
-  Apply Patch, History's edit mode, Export Archive…, Save as Bundle… and Undo… could act on the one selected
-  meanwhile.
+  Apply Patch, History's edit mode, Export Archive…, Save as Bundle…, Fetch from Bundle…, the submodule sheets and
+  Undo… could act on the one selected meanwhile.
 - macOS: Activity > History lists and undoes the operations of the worktree being edited in the window; with another
   worktree selected, Undo to Here undid that worktree's operations while listing the opened one's.
 - The macOS app shows “Couldn’t Commit” and the hooks output even when you leave Working Copy or select another
   worktree while the hooks run; they were lost, so a rejected Commit and Push silently didn't push.
 - Selecting worktrees quickly ends on the last one picked, in the macOS and GTK4 apps; one that took longer to open
   could take over after a later pick.
-- Activity no longer says “daemon” twice for a repository opened through the shared daemon, nor “(daemon)” for an
-  SSH host connected directly.
-- Saving patches no longer fails with “No such file or directory” when another save runs at the same time in the same
-  repository over SSH or through the shared daemon.
-- When nothing sets how to pull (`pull.rebase`, `pull.ff`) and the branch has diverged, the Pull sheet says git won't
-  pull (git 2.33.1 and later refuse) and asks for Merge or Rebase for this pull, instead of promising a merge that then
-  failed. No settings are written.
-
-- Errors from an SSH host opened through the shared daemon are in the language of the app or CLI that asked, not the
-  daemon's. So are the SSH host engine and why a connection was lost, in Activity and `amonhen daemon status`.
-- A lost connection to an SSH host names that host instead of "the daemon", and the bar no longer repeats it.
-- Reconnecting after a lost connection shows the page that was open, not History.
-- With "Open repositories through the shared daemon" on, Repositories and Open Recent list a repository once, not
-  again as `daemon:…`.
-
-- `amonhen diff` with a name that is neither a commit nor a file in the working tree stops with an error, as git does,
-  instead of printing an empty diff. Paths after `--` are taken as paths.
-
-- A repository over SSH or through the shared daemon no longer stops answering when it changes just as its mailmap is
-  checked; the connection waited forever for an answer it had stopped reading.
-
-- Combine with Older Commit… on a single commit in History marks it in the edit mode; it opened with nothing marked.
-
-- Working Copy puts a check box back when staging fails or changes nothing; it kept showing the click.
-
-- The merge editor keeps the bands to Current and Incoming for a conflict edited by hand in Result; they disappeared
-  and its side showed it as resolved.
-- The change count in Repositories and the toolbar's repository list includes new files, as Working Copy does; it
-  left them out.
-
-- Working Copy reloads the shown diff and line counts when an already changed file changes again, and keeps the
-  selected lines when the diff is the same.
-- Working Copy keeps several selected files selected when it reloads (after a file is edited elsewhere, for
-  example), dropping only those no longer listed; it went back to one file.
-- History opens in a shallow clone: it stopped with "Commit … not found" at the boundary, and now ends there as
-  `git log` does. After `git fetch --deepen` or `--unshallow`, History is read again with the older commits.
-- Starting a merge, rebase, cherry-pick, revert, pull or patch while another one is stopped no longer reports a
-  conflict; it says which one is in progress, to continue or abort first.
-- Error messages show what went wrong: the macOS app showed only "AmonhenError error 1" (a locked index, for
-  example), and a git command that failed without a message showed a raw exit status; it now names the command, its
-  exit code, or the branch or commit that doesn't exist.
-- Diffs no longer come up empty after many fetches while a repository stays open (each partial clone fetch adds a
-  pack, and only about 32 new packs could be read).
-- Editing the message of an empty commit (made with `git commit --allow-empty`) finishes and keeps the commit; with
-  older git (2.23, for example) the rebase stopped on it.
 - macOS: the toolbar search field keeps its text when History reloads after a fetch or commit.
 - macOS: Combine with Older Commit… no longer marks a commit whose parent is a merge for squashing onto the merge.
 - macOS: J and K step through every hunk in History, Stashes and File History diffs; they stopped at the same one.
@@ -303,6 +175,150 @@ confirmation and History edit now asks in one sheet that shows what moves and wh
 - Cherry-pick and Revert of several commits run as one git cherry-pick or git revert: when one stops on a conflict,
   Continue and Skip go on with the rest, and Abort goes back to before the first, as in git; the rest were silently
   dropped.
+- macOS: the submodule sheets say which worktree they act on, and run there even if another worktree is selected
+  meanwhile; Fetch from Bundle names the worktree as Fetch… does.
+- macOS: with another worktree selected, the Submodules marks and Open in New Window follow that worktree, not the
+  opened one.
+
+### [0.2.9] - 2026-11-04
+
+The GTK4 app for Linux catches up with the macOS app, and large repositories are supported: shallow, partial and
+sparse clones, background maintenance, and History searches that fetch only what they need. Several branches merge in
+one commit, commits are exported as archives or bundles, submodules are managed from the sidebar, and every
+confirmation and History edit now asks in one sheet that shows what moves and what will conflict.
+
+#### Added
+
+- The GTK4 app for Linux catches up with the macOS app: tabs, worktrees, the Repositories window and Quick Open,
+  Repository Settings and the machine settings (Programs, Environment Variables, SSH Hosts), Stashes, Reflog, Range
+  Diff, patches, History's edit mode, GitHub (CI marks, avatars, pull requests), AI, and large repositories
+  (shallow, partial and sparse clones, git maintenance, the Clone sheet's choices). `docs/frontends.md` lists what
+  each front end has.
+
+- Several branches, tags or commits selected in the sidebar or History merge in one commit, as `git merge a b c` does,
+  from a sheet showing their order and the conflicts expected for each; it offers to merge them one by one when git
+  couldn't. `amonhen merge-check a b c` checks the same.
+- In a shallow clone, History ends with a band to fetch any number of older commits, up to a date, or all of it, and
+  boundary commits are marked as having parents not fetched. `amonhen log` notes where the history stops.
+- Repository Settings has a Fetching and Folders page: fetch more of a shallow clone, fetch all contents of a partial
+  clone (git 2.36), and choose the folders of a sparse checkout from HEAD's tree (git 2.25). The git line, the
+  sidebar and Working Copy show when a repository is shallow, partial, sparse or registered for maintenance.
+- In a partial clone, a History search with `contents:` says how many contents it will fetch and fetches them in one
+  go (git 2.29); past 50,000 it asks to narrow the search or fetch all contents. `amonhen status` notes shallow,
+  partial and sparse repositories.
+- The History search takes `after:` and `before:` (a date or `"1 year ago"`), and `contents:` with `path:` looks
+  only at that path's changes. A `contents:` search shows the matches and its progress as it goes.
+- Fetching and Folders has a switch to keep the repository maintained in the background (`git maintenance start`,
+  git 2.31); the app then leaves writing the commit-graph to it. Turning it off lets git's automatic maintenance
+  run again.
+- The Clone sheet chooses what to download (everything, file contents when needed, or recent history only) and can
+  check out only some folders, picked right after the clone (git 2.27). `amonhen clone` takes `--filter`, `--depth`
+  and `--sparse`.
+- Export Archive… writes a commit's files as a zip, tar.gz or tar file (`git archive`), optionally with a top folder
+  and only one folder, from the Commit menu, History and the sidebar's branches and tags. `amonhen archive` does the same.
+- Save as Bundle… writes branches and tags, or the whole repository, into one file that git can clone or fetch from
+  (`git bundle`), optionally only the commits after a base. `amonhen bundle create` does the same.
+- The Clone sheet clones from a bundle file (typed, or Choose Bundle…), choosing the branch to check out when the
+  bundle has no HEAD. `amonhen clone` takes a bundle file and `-b`.
+- Fetch from Bundle… puts a bundle's branches under a name of their own, like a remote's, also into a repository on an
+  SSH host. `amonhen bundle fetch` does the same.
+- Submodules: the sidebar marks those not checked out, at another commit than the one recorded, with changes inside or
+  in conflict, and their menus add, update (optionally recursive or to the branch they follow), change the URL or the
+  branch to follow, sync and remove them (keeping `.git/modules` unless asked). The Clone sheet can check them out
+  too. `amonhen submodule` and `amonhen clone --recurse-submodules` do the same.
+
+#### Changed
+
+- On Linux, `amonhen open` (and `amonhen <path>`) opens the repository in the GTK4 app, as a tab of the running app.
+
+- The GTK4 app now needs libadwaita (`libadwaita-1-0` on Ubuntu). Its tabs can be dragged out into a new window on
+  Wayland too, and it follows the system's light or dark style.
+
+- The Fetch sheet chooses the remote: all of them, as before, or one. The core's `fetch` takes the remote too.
+
+- History's edit mode and the Rebase sheets say which stacked branches move with the rewrite or stay and why, which
+  are pushed and will need Force Push, and which commits are expected to conflict (git 2.40 for the forecast). The
+  Rebase sheets draw the branch before and after, and "Also move the stacked branches" decides for that rebase or
+  edit only. `amonhen rewrite-preview` prints the same.
+
+- Push and Pull each confirm in one sheet: a diverged Push offers Pull… or Force Push there, and Pull with no upstream
+  picks the remote branch there. Repository > Pull With is gone, and Create Pull Request goes on after its push.
+- Force Push replaces the remote branch only if it is still at the commit the sheet showed, so commits fetched in the
+  background are not lost unseen.
+- Push is disabled when there is nothing to send, and a conflict opens Working Copy at the first conflicted file
+  instead of an alert.
+- Every confirmation is a sheet on the window, and an operation asks the same way from the toolbar, a context menu
+  or a drag. Fetch, Checkout, Cherry-pick, Revert, Apply and a sidebar Merge or Rebase now ask first; Reset picks
+  Soft, Mixed or Hard in its sheet.
+- The menu bar and context menus use one name per operation (New Branch from, 8-character short IDs, translated
+  Checkout, Merge and Push items). The View menu is History's display menu, now with the commit detail toggles.
+- Everything in the menu bar is also in the window: a sidebar toggle and a More menu (≡) in the toolbar, Rebuild
+  History under Refresh, Go to HEAD in History's bar and a find button above the diff.
+- Commits are edited in History's edit mode: choose Keep, Edit Message, Combine with Older, Drop or Stop to Change
+  Files for each commit and drag them into order, then Apply Changes runs it all as one rebase with one Undo. It also
+  reaches past merges, which are recreated as they were (git's `--rebase-merges`).
+- The in-progress, failure and connection bars moved to a status bar at the bottom of the window, which also says what
+  a finished operation did. A failure clears once a later operation succeeds.
+- Working Copy's file context menu stages, discards, copies the path and opens the file.
+- Deleting several branches offers Delete Anyway for those with commits nowhere else. Only what can't be undone has a
+  red button, and failures read "Couldn't …".
+- Edit Message and Squash use git's own `reword` and `squash`, so notes follow `notes.rewrite.*` as in git, and
+  Edit Message runs the pre-commit and commit-msg hooks as git does. Lines starting with `#` are still kept.
+
+#### Fixed
+
+- Adding, renaming and removing remotes and changing their URLs work over SSH and through the shared daemon; they
+  failed to reach the engine.
+
+- The GTK4 app's Undo button asks once; it opened the question twice, so one stayed after undoing.
+- A `.mailmap`, or a mailmap setting (`log.mailmap`, `mailmap.file`), changed while the engine was reading the old
+  one could be missed until it changed again; the names now follow it.
+- With newer GTK (4.24), the GTK4 app's sidebar shows Working Copy's change count and the sparse checkout mark.
+- Activity no longer says “daemon” twice for a repository opened through the shared daemon, nor “(daemon)” for an
+  SSH host connected directly.
+- Saving patches no longer fails with “No such file or directory” when another save runs at the same time in the same
+  repository over SSH or through the shared daemon.
+- When nothing sets how to pull (`pull.rebase`, `pull.ff`) and the branch has diverged, the Pull sheet says git won't
+  pull (git 2.33.1 and later refuse) and asks for Merge or Rebase for this pull, instead of promising a merge that then
+  failed. No settings are written.
+
+- Errors from an SSH host opened through the shared daemon are in the language of the app or CLI that asked, not the
+  daemon's. So are the SSH host engine and why a connection was lost, in Activity and `amonhen daemon status`.
+- A lost connection to an SSH host names that host instead of "the daemon", and the bar no longer repeats it.
+- Reconnecting after a lost connection shows the page that was open, not History.
+- With "Open repositories through the shared daemon" on, Repositories and Open Recent list a repository once, not
+  again as `daemon:…`.
+
+- `amonhen diff` with a name that is neither a commit nor a file in the working tree stops with an error, as git does,
+  instead of printing an empty diff. Paths after `--` are taken as paths.
+
+- A repository over SSH or through the shared daemon no longer stops answering when it changes just as its mailmap is
+  checked; the connection waited forever for an answer it had stopped reading.
+
+- Combine with Older Commit… on a single commit in History marks it in the edit mode; it opened with nothing marked.
+
+- Working Copy puts a check box back when staging fails or changes nothing; it kept showing the click.
+
+- The merge editor keeps the bands to Current and Incoming for a conflict edited by hand in Result; they disappeared
+  and its side showed it as resolved.
+- The change count in Repositories and the toolbar's repository list includes new files, as Working Copy does; it
+  left them out.
+
+- Working Copy reloads the shown diff and line counts when an already changed file changes again, and keeps the
+  selected lines when the diff is the same.
+- Working Copy keeps several selected files selected when it reloads (after a file is edited elsewhere, for
+  example), dropping only those no longer listed; it went back to one file.
+- History opens in a shallow clone: it stopped with "Commit … not found" at the boundary, and now ends there as
+  `git log` does. After `git fetch --deepen` or `--unshallow`, History is read again with the older commits.
+- Starting a merge, rebase, cherry-pick, revert, pull or patch while another one is stopped no longer reports a
+  conflict; it says which one is in progress, to continue or abort first.
+- Error messages show what went wrong: the macOS app showed only "AmonhenError error 1" (a locked index, for
+  example), and a git command that failed without a message showed a raw exit status; it now names the command, its
+  exit code, or the branch or commit that doesn't exist.
+- Diffs no longer come up empty after many fetches while a repository stays open (each partial clone fetch adds a
+  pack, and only about 32 new packs could be read).
+- Editing the message of an empty commit (made with `git commit --allow-empty`) finishes and keeps the commit; with
+  older git (2.23, for example) the rebase stopped on it.
 
 ### [0.2.8] - 2026-10-30
 

@@ -732,7 +732,7 @@ fn choice_value(c: &Choice) -> String {
 /// 名前。Amon Hen のコミット欄だけが使う）／このリポジトリ専用（`<git dir>/amonhen/commit-template` に置き、git の
 /// `commit.template` を向ける。端末の git も使う）／ファイル…（`commit.template`）。専用のものはその下で書き、
 /// 共有のもの・ファイルは中身を見せる。すべてのリポジトリの段（Settings > Git）では、共有のテンプレートの一覧も。
-pub(crate) fn commits_page(s: &Rc<RepoSettings>) -> gtk::Box {
+pub(crate) fn commits_page(s: &Rc<RepoSettings>) -> adw::Clamp {
     let label_of = |s: &RepoSettings, value: &str| -> String {
         if value == "own" {
             return tr!("This repository’s own");
@@ -1076,7 +1076,8 @@ pub(crate) fn commits_page(s: &Rc<RepoSettings>) -> gtk::Box {
     let page = table_page(&[column.upcast_ref()]);
     page.insert_action_group("templates", library.as_ref());
     page.add_controller(shortcuts);
-    page
+    // 表があっても Form のページ（macOS 版の CommitsPage は `.grouped` の Form）。
+    crate::reposettings::form_column(&page)
 }
 
 /// ファイルのテンプレートの場所（`~` はホーム、相対パスは作業ツリーから）。

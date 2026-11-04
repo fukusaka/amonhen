@@ -17,6 +17,21 @@ The menu commands themselves are not listed one by one: every front end takes th
 
 This table is kept by hand. Update it in the same change that adds, removes or changes a feature in any front end.
 
+## Platform differences between the macOS and GTK4 apps
+
+The GTK4 app aims to behave like the macOS app. These are the only intended differences; each follows the platform, mostly the [GNOME HIG](https://developer.gnome.org/hig/):
+
+- The app quits when its last window closes.
+- No import of the login shell's environment (Linux sessions already carry it).
+- On Linux and the BSDs, fsmonitor uses Watchman when installed, with git 2.26 or later (git has no fsmonitor--daemon there).
+- No Apple Intelligence; Claude Code and Codex only.
+- Files (the desktop's file manager) instead of Finder; external editors are found by their desktop entries.
+- The header bar shows icons only, with tooltips; toolbar customization has no icon/text choice.
+- History search is GNOME's search bar: a toggle in the header bar and Ctrl+F reveal a bar above History.
+- Destructive confirmations: Cancel comes first and takes Return and Esc, and the destructive button is red; Cancel isn't highlighted.
+- Keyboard shortcuts that GNOME takes are moved or left out (see Keyboard shortcuts below).
+- “This Computer”, the package manager and systemd/cron in place of “This Mac”, Homebrew and launchd.
+
 ## Overall layout
 
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
@@ -91,7 +106,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | General: bookmark opened repositories | ✓ | ✓ | n/a | n/a |  |
 | General: reopen at launch, tab or window by default | — | — | n/a | n/a | macOS: Always reopens; no switch.<br>GTK4: Always reopens; no switch. |
 | General: fetch automatically | ✓ | ✓ | — | n/a |  |
-| General: external editor | ✓ | ✓ | n/a | n/a | GTK4: Code editors are found by their desktop entries; Other… takes a program. |
+| General: external editor | ✓ | ✓ | n/a | n/a | GTK4: Code editors are found by their desktop entries, in the macOS order; the fallback is a text editor, never an office app; Other… takes a program. |
 | General: terminal and diff tool | — | — | n/a | n/a |  |
 | Git: machine-wide pages (Author and Signing, Commits, Operations, Working Copy, Keys and Values) | ✓ | ✓ | — | △ | CLI: Via `amonhen run`. |
 | Git > Commits: shared message template library | ✓ | ✓ | — | — |  |
@@ -113,7 +128,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | AI: backend, CLI location and version, model, language, per-repository permission | ✓ | ✓ | — | n/a | Neither app reads the CLI's login state; a missing CLI says to install it and sign in. |
 | AI prompts per purpose (edit, Restore Default, Try) | ✓ | ✓ | — | n/a |  |
 | Performance: commit-graph, shared daemon | ✓ | ✓ | △ | n/a | VSCode: `amonhen.daemon.enabled` and `amonhen.daemon.path` as VSCode settings. |
-| Performance: fsmonitor | ✓ | ✓ | — | n/a | GTK4: Disabled on Linux and the BSDs, where git has no fsmonitor--daemon. |
+| Performance: fsmonitor | ✓ | ✓ | — | n/a | GTK4: On Linux and the BSDs, uses Watchman through the engine as git's fsmonitor hook (`amonhen fsmonitor-watchman`); disabled when Watchman isn't installed or git is older than 2.26 (hook protocol 2). |
 | Performance: persistent cache location, size, clearing | — | — | — | △ | CLI: `log --rebuild`, `daemon rebuild`. |
 | Undo / Redo of settings changes | △ | △ | n/a | n/a | macOS: Git pages and repository settings only.<br>GTK4: Git pages and repository settings only. |
 
@@ -325,7 +340,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | --- | :-: | :-: | :-: | :-: | --- |
 | Menus from the shared command table (`crates/commands`) | ✓ | ✓ | — | n/a | VSCode: Declared in package.json. |
 | Every command reachable without a menu bar (≡) | ✓ | ✓ | △ | n/a | GTK4: The ≡ menu holds the menu bar's File, Edit, View, Navigate, Commit and Window menus with macOS's items and order (Edit's Undo, Cut, Copy… act on the focused field), then Settings…, About and Quit.<br>VSCode: Command Palette and context menus. |
-| Keyboard shortcuts | ✓ | ✓ | — | n/a | GTK4: Keys that Linux desktops or other commands take differ: Show Sidebar is F9, Filter Branches Ctrl+Alt+Shift+F, Go to Parent / Child Alt+Down / Up, and New Tag has none (Ctrl+Alt+T opens a terminal).<br>VSCode: No keybindings contributed. |
+| Keyboard shortcuts | ✓ | ✓ | — | n/a | GTK4: Keys that Linux desktops or other commands take differ: Show Sidebar is F9 (GNOME's utility pane key); Filter Branches, Go to Parent / Child and New Tag have none (GNOME takes Ctrl+Alt+arrows and Ctrl+Alt+T, and the HIG gives Alt+Up another meaning); the merge editor's previous / next conflict is Alt+Up / Down.<br>VSCode: No keybindings contributed. |
 | Context menus with the menu's names | ✓ | ✓ | △ | n/a | VSCode: Names differ from the apps. |
 | Keyboard shortcuts window | — | ✓ | n/a | n/a | macOS: macOS's App Shortcuts change them instead. |
 

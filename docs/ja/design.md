@@ -632,7 +632,7 @@ Working Copy の status（`crates/core/examples/status.rs`、2 回目以降）:
 
 - 時間の大半は追跡していないファイルを探すこと（linux で 373 ms）。untracked cache は `status.showUntrackedFiles` が `--untracked-files=all` と揃っていないと使われないので、両方を渡す。
 - ふだんの status は index のロックを取らない（利用者の git と奪い合わない）ので、キャッシュは書き残されない。初回と、その後は 60 秒に 1 回だけ書き残す。
-- fsmonitor は macOS と Windows だけで、リポジトリごとに `git fsmonitor--daemon` が常駐する。アプリの設定で切れる（既定は使う）。
+- fsmonitor は、macOS と Windows ではリポジトリごとに常駐する `git fsmonitor--daemon`。それのない Linux・BSD では、Watchman が入っていればそれを使う: `git status` のその起動にだけ、エンジン（`amonhen fsmonitor-watchman`。git の hook の取り決めの版 2）を `core.fsmonitor` として渡す（リポジトリの設定には書かない）。アプリの設定で切れる（既定は使う）。
 - 読み直しは重ねて走らせない。途中で変化の知らせが来たら、終わってから 1 回だけ読み直す。
 
 祖先の強調（`crates/core/src/lineage.rs`、`crates/core/examples/lineage.rs`）:

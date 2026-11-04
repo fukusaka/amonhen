@@ -457,7 +457,7 @@ impl SshHosts {
         let host_list = gtk::ListBox::new();
         host_list.add_css_class("navigation-sidebar");
         let left = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        left.set_size_request(160, -1);
+        left.set_size_request(150, -1);
         left.append(
             &gtk::ScrolledWindow::builder()
                 .child(&host_list)
@@ -501,7 +501,7 @@ impl SshHosts {
             page_list.append(&row);
         }
         let middle = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        middle.set_size_request(180, -1);
+        middle.set_size_request(170, -1);
         middle.append(
             &gtk::ScrolledWindow::builder()
                 .child(&page_list)

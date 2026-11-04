@@ -205,18 +205,18 @@ pub static COMMANDS: &[Command] = &[
     command("filter-branches", "Filter Branches…")
         .localized()
         .key("Primary+Alt+F")
-        .gtk(Gtk::Key("Primary+Alt+Shift+F")),
+        .gtk(Gtk::None),
     command("go-to-head", "Go to HEAD")
         .localized()
         .key("Primary+Shift+H"),
     command("go-to-parent", "Go to Parent")
         .localized()
         .key("Primary+Alt+Down")
-        .gtk(Gtk::Key("Alt+Down")),
+        .gtk(Gtk::None),
     command("go-to-child", "Go to Child")
         .localized()
         .key("Primary+Alt+Up")
-        .gtk(Gtk::Key("Alt+Up")),
+        .gtk(Gtk::None),
     command("find-in-history", "Find in History…")
         .localized()
         .key("Primary+Shift+F"),

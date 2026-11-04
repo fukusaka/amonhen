@@ -34,7 +34,7 @@ thread_local! {
 pub const MONOSPACED_COMMIT_MESSAGE: &str = "monospacedCommitMessage";
 pub const WRITE_COMMIT_GRAPH: &str = "writeCommitGraph";
 pub const OPEN_THROUGH_DAEMON: &str = "openThroughDaemon";
-/// 手元のリポジトリの status で git の fsmonitor を使うか（既定は使う。macOS と Windows でだけ効く）。
+/// 手元のリポジトリの status で git の fsmonitor を使うか（既定は使う。Linux・BSD では Watchman があるときだけ効く）。
 pub const USE_FSMONITOR: &str = "useFSMonitor";
 pub const WORKING_COPY_LAYOUT: &str = "workingCopyLayout";
 pub const AUTO_MAGIC_MERGE: &str = "autoMagicMerge";
@@ -170,6 +170,8 @@ pub fn bool(key: &str) -> bool {
 
 /// status で git の fsmonitor を使うかを設定から決め、設定を変えたら合わせる（起動したときに一度呼ぶ）。
 pub fn apply_fsmonitor() {
+    // Linux・BSD では、Watchman に聞く hook として共有の daemon と同じエンジンを git に起動させる。
+    amonhen_backend_cli::set_fsmonitor_engine(crate::fsmonitor_engine());
     amonhen_backend_cli::set_fsmonitor(bool(USE_FSMONITOR));
     connect_changed(|key| {
         if key == USE_FSMONITOR {
@@ -181,8 +183,8 @@ pub fn apply_fsmonitor() {
 /// 設定の窓の大きさの覚え場所。
 const WINDOW_SIZE: &str = "settingsWindowSize";
 
-/// git の `fsmonitor--daemon` を使える OS か（macOS と Windows だけ）。
-const FSMONITOR_AVAILABLE: bool = cfg!(any(target_os = "macos", target_os = "windows"));
+/// git の `fsmonitor--daemon` を使える OS か（macOS と Windows だけ。ほかは Watchman）。
+const FSMONITOR_DAEMON: bool = cfg!(any(target_os = "macos", target_os = "windows"));
 
 pub fn set_bool(key: &str, value: bool) {
     FILE.with(|f| {
@@ -371,7 +373,7 @@ fn choice_row(
 }
 
 /// Settings > Accounts（macOS 版の `AccountsSettings`）: GitHub から History に読むもの。
-fn accounts() -> gtk::Box {
+fn accounts() -> adw::Clamp {
     const COMMITS: [u32; 3] = [100, 50, 30];
     let ci = check(
         GITHUB_CI_STATUS,
@@ -434,30 +436,22 @@ fn accounts() -> gtk::Box {
     )])
 }
 
+/// 見出しと、枠で囲んだ行の一覧（macOS 版の `.grouped` の Form の Section。説明も 1 行として中に入る）。
 fn section(title: Option<&str>, items: &[gtk::Widget]) -> gtk::Box {
-    let b = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    if let Some(title) = title {
-        let l = gtk::Label::new(Some(title));
-        l.set_xalign(0.0);
-        l.add_css_class("heading");
-        b.append(&l);
-    }
-    for w in items {
-        b.append(w);
-    }
-    b
+    crate::reposettings::section(title, items)
 }
 
-fn page(sections: &[gtk::Box]) -> gtk::Box {
+fn page(sections: &[gtk::Box]) -> adw::Clamp {
+    // 余白は Git のタブのページ（`reposettings::page`）と同じ。
     let b = gtk::Box::new(gtk::Orientation::Vertical, 18);
     b.set_margin_top(18);
     b.set_margin_bottom(18);
-    b.set_margin_start(24);
-    b.set_margin_end(24);
+    b.set_margin_start(20);
+    b.set_margin_end(20);
     for s in sections {
         b.append(s);
     }
-    b
+    crate::reposettings::form_column(&b)
 }
 
 /// 設定の窓を開く（開いていれば前に出す）。窓はアプリに 1 つで、どの窓のものでもない（macOS 版の
@@ -474,6 +468,7 @@ pub fn show(near: &impl IsA<gtk::Widget>) {
         w.present();
         return;
     }
+    crate::reposettings::install_css();
     let stack = gtk::Stack::new();
 
     // General
@@ -700,14 +695,21 @@ pub fn show(near: &impl IsA<gtk::Widget>) {
     stack.add_titled(&crate::aisettings::page(), Some("ai"), "AI");
 
     // Performance
-    // fsmonitor: git の fsmonitor--daemon のない OS（Linux など）では押せなくし、理由を出す。
+    // fsmonitor: git の fsmonitor--daemon のない OS（Linux・BSD）は Watchman を使う。なければ押せなくし、入れれば
+    // 使えると出す。
     let fsmonitor = check(USE_FSMONITOR, &tr!("Speed up status with fsmonitor"));
-    if !FSMONITOR_AVAILABLE {
+    let fsmonitor_note = if FSMONITOR_DAEMON {
+        tr!("A git fsmonitor--daemon runs for each repository.")
+    } else if amonhen_backend_cli::fsmonitor_available() {
+        tr!("Uses Watchman, which watches each repository.")
+    } else if amonhen_backend_cli::watchman().is_some() {
+        // Watchman はあるが、git が hook の版 2 を話さない（2.26 より前）。
         fsmonitor.set_sensitive(false);
-        fsmonitor.set_tooltip_text(Some(&tr!(
-            "git’s fsmonitor--daemon runs only on macOS and Windows."
-        )));
-    }
+        tr!("Needs git 2.26 or later to use Watchman.")
+    } else {
+        fsmonitor.set_sensitive(false);
+        tr!("Install Watchman to use it.")
+    };
     stack.add_titled(
         &page(&[
             section(
@@ -719,7 +721,7 @@ pub fn show(near: &impl IsA<gtk::Widget>) {
                     ))
                     .upcast(),
                     fsmonitor.upcast(),
-                    note(&tr!("A git fsmonitor--daemon runs for each repository.")).upcast(),
+                    note(&fsmonitor_note).upcast(),
                 ],
             ),
             section(
