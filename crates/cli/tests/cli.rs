@@ -1203,6 +1203,10 @@ fn chooses_the_git_again_when_the_chosen_one_is_missing() {
 #[test]
 fn status_asks_watchman_through_the_engine_hook() {
     use std::os::unix::fs::PermissionsExt;
+    // hook の版 2（token で聞き直す）は git 2.26 から。古い git ではアプリも Watchman を使わない。
+    if amonhen_backend_cli::git_version().is_some_and(|(a, b, _)| (a, b) < (2, 26)) {
+        return;
+    }
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("repo");
     std::fs::create_dir(&dir).unwrap();

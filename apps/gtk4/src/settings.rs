@@ -700,8 +700,12 @@ pub fn show(near: &impl IsA<gtk::Widget>) {
     let fsmonitor = check(USE_FSMONITOR, &tr!("Speed up status with fsmonitor"));
     let fsmonitor_note = if FSMONITOR_DAEMON {
         tr!("A git fsmonitor--daemon runs for each repository.")
-    } else if amonhen_backend_cli::watchman().is_some() {
+    } else if amonhen_backend_cli::fsmonitor_available() {
         tr!("Uses Watchman, which watches each repository.")
+    } else if amonhen_backend_cli::watchman().is_some() {
+        // Watchman はあるが、git が hook の版 2 を話さない（2.26 より前）。
+        fsmonitor.set_sensitive(false);
+        tr!("Needs git 2.26 or later to use Watchman.")
     } else {
         fsmonitor.set_sensitive(false);
         tr!("Install Watchman to use it.")

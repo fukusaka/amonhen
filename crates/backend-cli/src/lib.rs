@@ -55,9 +55,15 @@ pub fn set_fsmonitor_engine(engine: Option<PathBuf>) {
     *FSMONITOR_ENGINE.lock().unwrap() = engine;
 }
 
-/// この OS で fsmonitor を使えるか: macOS と Windows はいつも、Linux・BSD は PATH に `watchman` があるとき。
+/// この OS で fsmonitor を使えるか: macOS と Windows はいつも、Linux・BSD は PATH に `watchman` があり、git が
+/// hook の版 2 を話すとき（git 2.26 から。それより古い git は版 1 しか使わない）。
 pub fn fsmonitor_available() -> bool {
-    FSMONITOR_DAEMON || watchman::watchman().is_some()
+    FSMONITOR_DAEMON || watchman_usable()
+}
+
+/// Linux・BSD で、Watchman の hook を git に渡せるか。
+fn watchman_usable() -> bool {
+    watchman::watchman().is_some() && git_at_least(2, 26)
 }
 
 /// status に足す `-c` の設定（fsmonitor を使わなければ空）。Linux・BSD では hook をこの起動にだけ渡し、リポジトリの
@@ -69,7 +75,7 @@ fn fsmonitor_config() -> Vec<String> {
     if FSMONITOR_DAEMON {
         return vec!["-c".into(), "core.fsmonitor=true".into()];
     }
-    if watchman::watchman().is_none() {
+    if !watchman_usable() {
         return Vec::new();
     }
     let Some(engine) = FSMONITOR_ENGINE.lock().unwrap().clone() else {

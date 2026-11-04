@@ -23,7 +23,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 
 - 最後の窓を閉じるとアプリが終わる。
 - ログインシェルの環境変数を読み込まない（Linux のセッションはもう持っている）。
-- Linux と BSD では、Watchman が入っていれば fsmonitor に使う（git に fsmonitor--daemon がない）。
+- Linux と BSD では、Watchman が入っていて git が 2.26 以降なら fsmonitor に使う（git に fsmonitor--daemon がない）。
 - Apple Intelligence はない。Claude Code と Codex だけ。
 - Finder の代わりにデスクトップのファイルマネージャー。外部エディターはデスクトップ項目から探す。
 - ヘッダーバーはアイコンだけ（ツールチップつき）。ツールバーのカスタマイズにアイコン・文字の選択はない。
@@ -128,7 +128,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | AI: 使う AI・CLI の場所と版・モデル・言語・リポジトリごとの許可 | ✓ | ✓ | — | n/a | どちらのアプリも CLI のログインの状態は読まない。CLI がなければ、入れてサインインするよう案内する。 |
 | 目的ごとの AI のプロンプト（編集・既定に戻す・試す） | ✓ | ✓ | — | n/a |  |
 | Performance: commit-graph・共有の daemon | ✓ | ✓ | △ | n/a | VSCode: VSCode の設定の `amonhen.daemon.enabled`・`amonhen.daemon.path`。 |
-| Performance: fsmonitor | ✓ | ✓ | — | n/a | GTK4: Linux・BSD では、エンジンを git の fsmonitor の hook（`amonhen fsmonitor-watchman`）にして Watchman を使う。Watchman がなければ押せない。 |
+| Performance: fsmonitor | ✓ | ✓ | — | n/a | GTK4: Linux・BSD では、エンジンを git の fsmonitor の hook（`amonhen fsmonitor-watchman`）にして Watchman を使う。Watchman がないか、git が 2.26 より古い（hook の版 2 がない）と押せない。 |
 | Performance: 永続キャッシュの場所・大きさ・消す | — | — | — | △ | CLI: `log --rebuild`・`daemon rebuild`。 |
 | 設定の変更の Undo・Redo | △ | △ | n/a | n/a | macOS: Git のページとリポジトリの設定だけ。<br>GTK4: Git のページとリポジトリの設定だけ。 |
 

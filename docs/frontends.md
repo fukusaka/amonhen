@@ -23,7 +23,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 - The app quits when its last window closes.
 - No import of the login shell's environment (Linux sessions already carry it).
-- On Linux and the BSDs, fsmonitor uses Watchman when installed (git has no fsmonitor--daemon there).
+- On Linux and the BSDs, fsmonitor uses Watchman when installed, with git 2.26 or later (git has no fsmonitor--daemon there).
 - No Apple Intelligence; Claude Code and Codex only.
 - Files (the desktop's file manager) instead of Finder; external editors are found by their desktop entries.
 - The header bar shows icons only, with tooltips; toolbar customization has no icon/text choice.
@@ -128,7 +128,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | AI: backend, CLI location and version, model, language, per-repository permission | ✓ | ✓ | — | n/a | Neither app reads the CLI's login state; a missing CLI says to install it and sign in. |
 | AI prompts per purpose (edit, Restore Default, Try) | ✓ | ✓ | — | n/a |  |
 | Performance: commit-graph, shared daemon | ✓ | ✓ | △ | n/a | VSCode: `amonhen.daemon.enabled` and `amonhen.daemon.path` as VSCode settings. |
-| Performance: fsmonitor | ✓ | ✓ | — | n/a | GTK4: On Linux and the BSDs, uses Watchman through the engine as git's fsmonitor hook (`amonhen fsmonitor-watchman`); disabled when Watchman isn't installed. |
+| Performance: fsmonitor | ✓ | ✓ | — | n/a | GTK4: On Linux and the BSDs, uses Watchman through the engine as git's fsmonitor hook (`amonhen fsmonitor-watchman`); disabled when Watchman isn't installed or git is older than 2.26 (hook protocol 2). |
 | Performance: persistent cache location, size, clearing | — | — | — | △ | CLI: `log --rebuild`, `daemon rebuild`. |
 | Undo / Redo of settings changes | △ | △ | n/a | n/a | macOS: Git pages and repository settings only.<br>GTK4: Git pages and repository settings only. |
 
