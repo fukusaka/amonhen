@@ -1168,6 +1168,33 @@ impl Operations for Git {
         self.write(&args).map(drop)
     }
 
+    fn ignored_files(&self) -> Result<Vec<String>> {
+        // 消す前に何を消すかを見せるので、git clean 自身に聞く（-X の決め方をまねない）。文は英語で読む。
+        let mut cmd = self.command(&["-c", "core.quotePath=false", "clean", "-n", "-d", "-X"]);
+        cmd.env("LC_ALL", "C").env("GIT_OPTIONAL_LOCKS", "0");
+        let out = cmd.output()?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr)
+                .trim()
+                .to_owned()
+                .into());
+        }
+        Ok(String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter_map(|l| l.strip_prefix("Would remove "))
+            .map(|p| p.trim_matches('"').to_owned())
+            .collect())
+    }
+
+    fn delete_ignored(&self, paths: &[&str]) -> Result<()> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let mut args = vec!["clean", "-f", "-d", "-X", "--"];
+        args.extend(paths);
+        self.write(&args).map(drop)
+    }
+
     fn rerere_forget(&self, path: &str) -> Result<()> {
         self.write(&["rerere", "forget", "--", path])?;
         // rerere.autoUpdate で stage していれば、index のコンフリクトも戻してから取り出し直す。

@@ -78,6 +78,12 @@ pub enum Command {
     },
     /// rerere が覚えたすべての解決を消す（`.git/rr-cache`。Undo では戻せない）。`info.count`: 消した数。
     ForgetAllResolutions,
+    /// ignore されたファイルとフォルダ（`info.paths`。`git clean -n -d -X`）。
+    IgnoredFiles,
+    /// ignore されたファイル `paths` を消す（`git clean -f -d -X`。Undo では戻せない）。
+    DeleteIgnored {
+        paths: Vec<String>,
+    },
     RenameBranch {
         from: String,
         to: String,
@@ -2465,6 +2471,16 @@ impl Repository {
                     &[&path],
                     || ops.rerere_forget(&path),
                 )?;
+                ok()
+            }
+            Command::IgnoredFiles => Ok(Response {
+                ok: true,
+                info: Some(serde_json::json!({ "paths": ops.ignored_files()? })),
+                ..Default::default()
+            }),
+            Command::DeleteIgnored { paths } => {
+                let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
+                ops.delete_ignored(&paths)?;
                 ok()
             }
             Command::ForgetAllResolutions => Ok(Response {
@@ -7246,6 +7262,41 @@ mod tests {
             r#"{"op":"configSet","key":"pull.rebase","value":"true","scope":"system"}"#,
         );
         assert!(r["error"].as_str().unwrap().contains("system"), "{r}");
+    }
+
+    #[test]
+    fn lists_and_deletes_ignored_files() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        std::fs::write(dir.join(".gitignore"), "target/\n*.log\n").unwrap();
+        git(dir, &["add", ".gitignore"]);
+        git(dir, &["commit", "-q", "-m", "ignore"]);
+        std::fs::create_dir_all(dir.join("target/debug")).unwrap();
+        std::fs::write(dir.join("target/debug/bin"), "b").unwrap();
+        std::fs::write(dir.join("a.log"), "l").unwrap();
+        std::fs::write(dir.join("new file.log"), "l").unwrap();
+        std::fs::write(dir.join("untracked.txt"), "u").unwrap();
+        let list = || {
+            let r = run(&repo, r#"{"op":"ignoredFiles"}"#);
+            let mut paths: Vec<String> = r["info"]["paths"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|p| p.as_str().unwrap().to_owned())
+                .collect();
+            paths.sort();
+            paths
+        };
+        // フォルダは 1 つにまとめ、untracked（ignore されていない）ものは入らない。
+        assert_eq!(list(), ["a.log", "new file.log", "target/"]);
+        let r = run(
+            &repo,
+            r#"{"op":"deleteIgnored","paths":["target/","a.log"]}"#,
+        );
+        assert_eq!(r["ok"], true, "{r}");
+        assert!(!dir.join("target").exists() && !dir.join("a.log").exists());
+        assert!(dir.join("untracked.txt").exists());
+        assert_eq!(list(), ["new file.log"]);
     }
 
     #[test]

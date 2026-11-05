@@ -1111,6 +1111,14 @@ impl Operations for RemoteOperations {
         self.op(Op::RestoreFrom(rev.to_owned(), owned(paths), staged))
     }
 
+    fn ignored_files(&self) -> Result<Vec<String>> {
+        self.op(Op::IgnoredFiles)
+    }
+
+    fn delete_ignored(&self, paths: &[&str]) -> Result<()> {
+        self.op(Op::DeleteIgnored(owned(paths)))
+    }
+
     fn rerere_forget(&self, path: &str) -> Result<()> {
         self.op(Op::RerereForget(path.to_owned()))
     }

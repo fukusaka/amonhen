@@ -784,6 +784,10 @@ pub trait Operations: Send + Sync {
     fn rerere_forget(&self, path: &str) -> Result<()>;
     /// rerere が覚えたすべての解決を消す（`.git/rr-cache`）。消した数を返す。
     fn rerere_forget_all(&self) -> Result<usize>;
+    /// ignore されたファイルとフォルダ（`git clean -n -d -X` が消すもの。中身がすべて ignore されたフォルダは 1 つ）。
+    fn ignored_files(&self) -> Result<Vec<String>>;
+    /// ignore されたファイル `paths` を消す（`git clean -f -d -X`。git の記録にないので戻せない）。
+    fn delete_ignored(&self, paths: &[&str]) -> Result<()>;
     /// 作業ツリーの `paths` を `rev` の版にする（`git restore --source=<rev>`。`rev` にないファイルは消す）。
     /// `staged` なら index にも入れる（`--staged --worktree`）。
     fn restore_from(&self, rev: &str, paths: &[&str], staged: bool) -> Result<()>;

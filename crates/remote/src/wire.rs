@@ -439,6 +439,10 @@ pub enum Op {
     RerereForget(String),
     /// → `usize`
     RerereForgetAll,
+    /// → `Vec<String>`
+    IgnoredFiles,
+    /// → `()`
+    DeleteIgnored(Vec<String>),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
