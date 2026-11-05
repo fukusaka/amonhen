@@ -955,6 +955,8 @@ First release.
   Pull…, Push… and Split… start from the repository, branch and squash used last.
 - With the engine, a file's right-click in History's details has Restore This Version… and Restore the Version
   Before…, which put that version in the working tree (and the index if chosen); Undo takes the file back.
+- With the engine, Stash can take only the staged changes (git 2.35) or keep them staged, and a Working Copy
+  file's right-click has Stash… for that file alone.
 
 #### Fixed
 

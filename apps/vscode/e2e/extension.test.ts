@@ -1059,6 +1059,66 @@ async function restoreFlow(): Promise<void> {
 }
 
 /**
+ * Stash… で stage したものだけ（git 2.35 から）・stage した変更を残して stash し、Working Copy のファイルの Stash… で
+ * そのファイルだけを stash する。コアの命令（daemon だけ）
+ */
+async function stashOptionsFlow(): Promise<void> {
+  const repo = api.manager.current!;
+  const [major, minor] = git('--version').match(/(\d+)\.(\d+)/)!.slice(1).map(Number) as [number, number];
+  const a = join(root, 'so-a.txt');
+  const b = join(root, 'so-b.txt');
+  const start = git('rev-parse', 'HEAD').trim();
+  writeFileSync(a, 'a\n');
+  writeFileSync(b, 'b\n');
+  git('add', 'so-a.txt', 'so-b.txt');
+  git('commit', '-q', '-m', 'stash options');
+  const pick = (label: string) => ({
+    showQuickPick: async (items: readonly vscode.QuickPickItem[]) => items.find((i) => i.label === label),
+    showInputBox: inputs(''),
+  });
+  try {
+    // stage した変更を残す: a（stage）も b（stage していない）も stash に入り、a の stage は残る
+    writeFileSync(a, 'a2\n');
+    writeFileSync(b, 'b2\n');
+    git('add', 'so-a.txt');
+    await repo.refresh();
+    await withWindow(pick('Stash, Keeping the Staged Changes'), async () => vscode.commands.executeCommand('amonhen.stash'));
+    assert.equal(git('diff', '--cached', '--name-only').trim(), 'so-a.txt', lastErrors());
+    assert.equal(git('diff', '--name-only').trim(), '');
+    assert.equal(git('stash', 'list').trim().split('\n').length, 1);
+    git('reset', '-q', '--hard');
+    git('stash', 'drop', '-q');
+
+    if (major > 2 || (major === 2 && minor >= 35)) {
+      // stage したものだけ: b の変更は作業ツリーに残る
+      writeFileSync(a, 'a3\n');
+      writeFileSync(b, 'b3\n');
+      git('add', 'so-a.txt');
+      await repo.refresh();
+      await withWindow(pick('Stash Only the Staged Changes'), async () => vscode.commands.executeCommand('amonhen.stash'));
+      assert.equal(git('diff', '--cached', '--name-only').trim(), '', lastErrors());
+      assert.equal(git('diff', '--name-only').trim(), 'so-b.txt');
+      assert.equal(git('stash', 'show', '--name-only').trim(), 'so-a.txt');
+      git('reset', '-q', '--hard');
+      git('stash', 'drop', '-q');
+    }
+
+    // ファイルを選んで: b だけを stash する
+    writeFileSync(a, 'a4\n');
+    writeFileSync(b, 'b4\n');
+    await repo.refresh();
+    await withWindow({ showInputBox: inputs('only b') }, async () => vscode.commands.executeCommand('amonhen.stash.files', { path: 'so-b.txt' }));
+    assert.equal(git('diff', '--name-only').trim(), 'so-a.txt', lastErrors());
+    assert.equal(git('stash', 'show', '--name-only').trim(), 'so-b.txt');
+  } finally {
+    git('reset', '-q', '--hard', start);
+    while (git('stash', 'list').trim()) git('stash', 'drop', '-q');
+    for (const p of [a, b]) rmSync(p, { force: true });
+    await repo.refresh();
+  }
+}
+
+/**
  * Stashes は stash があるときだけ出て、行に作ったときのブランチ・土台と HEAD の離れ具合・untracked が出る。
  * stash からブランチを作り（git stash branch）、新しい stash を確かめてから pop する（daemon だけ）
  */
@@ -2113,6 +2173,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('restores a file to the version before a commit through the daemon', async () => {
     await restoreFlow();
+  });
+
+  test('stashes only the staged changes, keeping them, or one file through the daemon', async () => {
+    await stashOptionsFlow();
   });
 
   test('shows stash details, branches from a stash and pops the latest through the daemon', async () => {

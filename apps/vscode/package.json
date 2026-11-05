@@ -369,6 +369,11 @@
         "icon": "$(git-stash-pop)"
       },
       {
+        "command": "amonhen.stash.files",
+        "title": "Stash…",
+        "category": "Amon Hen"
+      },
+      {
         "command": "amonhen.stash.branch",
         "title": "Branch…",
         "category": "Amon Hen"
@@ -1402,6 +1407,10 @@
         {
           "command": "amonhen.restoreFile.versionBefore",
           "when": "false"
+        },
+        {
+          "command": "amonhen.stash.files",
+          "when": "false"
         }
       ],
       "webview/context": [
@@ -1544,6 +1553,11 @@
           "command": "amonhen.restoreFile.versionBefore",
           "when": "webviewId == 'amonhen.main' && webviewSection == 'commitFile' && amonhen.engine",
           "group": "2_restore@2"
+        },
+        {
+          "command": "amonhen.stash.files",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcConflict && amonhen.engine",
+          "group": "2_stash@1"
         }
       ],
       "editor/title/context": [

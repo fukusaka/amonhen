@@ -6,6 +6,7 @@ import { parseCommitObject } from '../git/commitObject.ts';
 import { stashBranch } from '../git/stash.ts';
 import type { RepositoryManager } from '../state/manager.ts';
 import type { Repository } from '../state/repository.ts';
+import { runEngine } from './engine.ts';
 import { gitUri } from './uri.ts';
 import type { Node } from './sidebar.ts';
 import { showError } from './stageCommands.ts';
@@ -33,19 +34,52 @@ export function registerStashCommands(manager: RepositoryManager): vscode.Dispos
     vscode.commands.registerCommand(
       'amonhen.stash',
       withRepo(async (repo) => {
-        const kind = await vscode.window.showQuickPick(
-          [
-            { label: 'Stash Changes', includeUntracked: false },
-            { label: 'Stash Changes Including Untracked Files', includeUntracked: true },
-          ],
-          { placeHolder: 'stash する変更' },
-        );
+        // エンジンがあれば、アプリと同じく stage したものだけ（git 2.35 から）と、stage した変更を残すのも選べる
+        const engine = !!(await daemonFor(repo.root).catch(() => undefined));
+        const kinds: { label: string; detail?: string; includeUntracked: boolean; staged?: boolean; keepIndex?: boolean }[] = [
+          { label: 'Stash Changes', includeUntracked: false },
+          { label: 'Stash Changes Including Untracked Files', includeUntracked: true },
+        ];
+        if (engine) {
+          kinds.push(
+            { label: 'Stash Only the Staged Changes', detail: 'git stash --staged (git 2.35 and later)', includeUntracked: false, staged: true },
+            { label: 'Stash, Keeping the Staged Changes', detail: 'git stash --keep-index', includeUntracked: false, keepIndex: true },
+          );
+        }
+        const kind = await vscode.window.showQuickPick(kinds, { placeHolder: 'stash する変更' });
         if (!kind) return;
         const message = await vscode.window.showInputBox({ title: 'Stash', prompt: 'メッセージ（空でもよい）' });
         if (message === undefined) return;
+        if (kind.staged || kind.keepIndex) {
+          await runEngine(
+            repo,
+            { op: 'stashPush', message: message.trim() || null, includeUntracked: false, staged: !!kind.staged, keepIndex: !!kind.keepIndex },
+            'Stash',
+          );
+          return;
+        }
         await repo.backend.stashPush({ message: message.trim() || undefined, includeUntracked: kind.includeUntracked });
       }),
     ),
+    // Working Copy のファイルの右クリック: そのファイルの変更だけを stash する（エンジンだけ）
+    vscode.commands.registerCommand('amonhen.stash.files', async (ctx?: { path?: string }) => {
+      const repo = manager.current;
+      if (!repo || !ctx?.path) return;
+      const message = await vscode.window.showInputBox({ title: `Stash ${ctx.path}`, prompt: 'Message (optional)' });
+      if (message === undefined) return;
+      const untracked = (repo.current.status?.entries ?? []).some((e) => e.path === ctx.path && e.kind === 'untracked');
+      try {
+        await runEngine(
+          repo,
+          { op: 'stashPush', message: message.trim() || null, includeUntracked: untracked, paths: [ctx.path] },
+          `Stash ${ctx.path}`,
+        );
+      } catch (err) {
+        showError(err);
+      } finally {
+        await repo.refresh();
+      }
+    }),
     onStash('amonhen.stash.apply', (repo, node) => apply(repo, node, false)),
     onStash('amonhen.stash.pop', (repo, node) => apply(repo, node, true)),
     onStash('amonhen.stash.drop', async (repo, node) => {
