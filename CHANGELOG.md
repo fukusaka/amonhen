@@ -24,6 +24,7 @@ becomes the GitHub Release notes.
   all recorded resolutions.
 - Submodules can move their repository data into `.git/modules` and run a command in each one
   (`amonhen submodule absorb|foreach`).
+- Repository > Delete Ignored Files… lists the files `.gitignore` covers (build output and the like) and deletes them.
 - On Linux and the BSDs, Settings > Performance > fsmonitor speeds up status with Watchman when it is installed (git
   2.26 or later); the engine answers git as its fsmonitor hook, and nothing is written to the repository's config.
 
