@@ -387,6 +387,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         rightItem.minimumThickness = 300
         addSplitViewItem(rightItem)
         updateButtons()
+        // 開く前に裏で読んだ status でコンフリクトのファイルを選んでいたら、そのとき読んだマージエディタをここで出す。
+        if let key = selectedKey, let editor = mergeEditors[key.path] { embed(editor) }
     }
 
     func overlays() -> [(CGImage, NSView)] {
