@@ -965,6 +965,8 @@ First release.
   come back), and Repository Settings > Operations has Forget All… for the remembered resolutions.
 - With the engine, New Orphan Branch… (Command Palette, the Branches group's right-click) switches to a branch with
   no history, empty or keeping the current files staged.
+- With the engine, Delete Ignored Files… (Command Palette, Working Copy's right-click) lists what `git clean -X` would
+  delete, folders as one entry, and deletes the ones kept chosen after asking.
 
 #### Fixed
 

@@ -1316,6 +1316,42 @@ async function orphanFlow(): Promise<void> {
 }
 
 /**
+ * Delete Ignored Files… は git clean -X が消すもの（フォルダは 1 つ）を先に見せ、選んだものだけを消す。ignore されて
+ * いないファイルは残る。コアの命令（daemon だけ）
+ */
+async function deleteIgnoredFlow(): Promise<void> {
+  const repo = api.manager.current!;
+  const exclude = join(git('rev-parse', '--absolute-git-dir').trim(), 'info', 'exclude');
+  const before = existsSync(exclude) ? readFileSync(exclude, 'utf8') : '';
+  const files = ['di-a.log', 'di-b.log', 'di-build/out.bin', 'di-keep.txt'];
+  writeFileSync(exclude, `${before}\n*.log\ndi-build/\n`);
+  mkdirSync(join(root, 'di-build'), { recursive: true });
+  for (const f of files) writeFileSync(join(root, f), 'x\n');
+  let listed: string[] = [];
+  try {
+    await withWindow(
+      {
+        showQuickPick: async (items: readonly vscode.QuickPickItem[]) => {
+          listed = items.map((i) => i.label);
+          return items.filter((i) => i.label !== 'di-b.log');
+        },
+        showWarningMessage: async () => 'Delete',
+      },
+      async () => vscode.commands.executeCommand('amonhen.deleteIgnored'),
+    );
+    assert.deepEqual(listed.sort(), ['di-a.log', 'di-b.log', 'di-build/'], lastErrors());
+    assert.ok(!existsSync(join(root, 'di-a.log')) && !existsSync(join(root, 'di-build')), lastErrors());
+    assert.ok(existsSync(join(root, 'di-b.log')), '選ばなかったものは残る');
+    assert.ok(existsSync(join(root, 'di-keep.txt')), 'ignore されていないものは残る');
+  } finally {
+    writeFileSync(exclude, before);
+    for (const f of files) rmSync(join(root, f), { force: true });
+    rmSync(join(root, 'di-build'), { recursive: true, force: true });
+    await repo.refresh();
+  }
+}
+
+/**
  * Stashes は stash があるときだけ出て、行に作ったときのブランチ・土台と HEAD の離れ具合・untracked が出る。
  * stash からブランチを作り（git stash branch）、新しい stash を確かめてから pop する（daemon だけ）
  */
@@ -2390,6 +2426,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('creates an orphan branch, empty or keeping the files, through the daemon', async () => {
     await orphanFlow();
+  });
+
+  test('lists ignored files and deletes the ones chosen through the daemon', async () => {
+    await deleteIgnoredFlow();
   });
 
   test('shows stash details, branches from a stash and pops the latest through the daemon', async () => {

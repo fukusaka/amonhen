@@ -326,6 +326,11 @@
         "category": "Amon Hen"
       },
       {
+        "command": "amonhen.deleteIgnored",
+        "title": "Delete Ignored Files…",
+        "category": "Amon Hen"
+      },
+      {
         "command": "amonhen.branch.addToFavorites",
         "title": "Add to Favorites",
         "category": "Amon Hen"
@@ -1120,6 +1125,11 @@
           "command": "amonhen.branch.newOrphan",
           "when": "view == amonhen.sidebar && amonhen.engine && viewItem == section.branches",
           "group": "1_branches@1"
+        },
+        {
+          "command": "amonhen.deleteIgnored",
+          "when": "view == amonhen.sidebar && amonhen.engine && viewItem == view.workingCopy",
+          "group": "9_clean@1"
         }
       ],
       "commandPalette": [
@@ -1517,6 +1527,10 @@
         },
         {
           "command": "amonhen.branch.newOrphan",
+          "when": "amonhen.hasRepository && amonhen.engine"
+        },
+        {
+          "command": "amonhen.deleteIgnored",
           "when": "amonhen.hasRepository && amonhen.engine"
         }
       ],
