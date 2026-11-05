@@ -714,7 +714,9 @@ fn spawn_streaming(
             let _ = child.wait();
             return Err(amonhen_model::i18n::cancelled().into());
         }
-        let silent = started.elapsed().as_millis() as u64 - heard.load(Ordering::Relaxed);
+        // 読むスレッドは、ここで時刻を測った後にもっと新しい時刻を書きうる（そのときは黙っていない）。
+        let silent =
+            (started.elapsed().as_millis() as u64).saturating_sub(heard.load(Ordering::Relaxed));
         let limit = network_silence();
         if silent > limit.as_millis() as u64 {
             kill_tree(&mut child);
