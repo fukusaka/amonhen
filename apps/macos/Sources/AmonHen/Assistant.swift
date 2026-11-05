@@ -467,8 +467,8 @@ enum Assistant {
         // 取り消したら（パネルを閉じたら）CLI を止める。読み終えるのを待たずに終わり、結果を覚えない。
         nonisolated(unsafe) let running = process
         let collected = try await withTaskCancellationHandler {
-            try await Task.detached(priority: .userInitiated) { () -> (String, String?) in
-                var text = "", final: String?, buffer = Data()
+            try await Task.detached(priority: .userInitiated) { () -> (String, String?, String?) in
+                var text = "", final: String?, failure: String?, buffer = Data()
                 func handle(_ line: Data) {
                     guard let json = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { return }
                     if let delta = Self.delta(json, cli: cli) {
@@ -477,6 +477,7 @@ enum Assistant {
                         Task { @MainActor in onText(snapshot) }
                     }
                     if let done = Self.finalText(json, cli: cli) { final = done }
+                    if let error = Self.errorText(json, cli: cli) { failure = error }
                 }
                 while true {
                     let chunk = reader.availableData
@@ -488,7 +489,7 @@ enum Assistant {
                     }
                 }
                 if !buffer.isEmpty { handle(buffer) }
-                return (text, final)
+                return (text, final, failure)
             }.value
         } onCancel: {
             running.terminate()
@@ -498,6 +499,10 @@ enum Assistant {
         let errorText = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
         let result = (collected.1 ?? collected.0).trimmingCharacters(in: .whitespacesAndNewlines)
         guard process.terminationStatus == 0, !result.isEmpty else {
+            // CLI が出力の JSON に書いた失敗の文言（ログインしていない、など）を、stderr・終了コードより先に出す。
+            if let failure = collected.2?.trimmingCharacters(in: .whitespacesAndNewlines), !failure.isEmpty {
+                throw Failure(description: failure)
+            }
             throw Failure(description: errorText.isEmpty ? L("%@ failed (exit code %ld).", cli.title, Int(process.terminationStatus)) : errorText)
         }
         onText(result)
@@ -521,7 +526,8 @@ enum Assistant {
     nonisolated private static func finalText(_ json: [String: Any], cli: AssistantCLI) -> String? {
         switch cli {
         case .claude:
-            guard json["type"] as? String == "result" else { return nil }
+            // 失敗の result は答えにしない（終了コードが 0 でも、覚えて見せないよう）。
+            guard json["type"] as? String == "result", json["is_error"] as? Bool != true else { return nil }
             return json["result"] as? String
         case .codex:
             if let item = json["item"] as? [String: Any], (item["type"] as? String)?.contains("message") == true {
@@ -531,6 +537,30 @@ enum Assistant {
                 return msg["message"] as? String
             }
             return nil
+        case .none, .apple:
+            return nil
+        }
+    }
+
+    /// CLI が出した失敗の文言。Claude Code は `is_error` の `result`（なければ `errors`、`subtype`）、
+    /// Codex は `error`・`turn.failed`（古い版は `msg` の `error`）。`amonhen-assist` の `Assistant::error` と同じ。
+    nonisolated private static func errorText(_ json: [String: Any], cli: AssistantCLI) -> String? {
+        switch cli {
+        case .claude:
+            guard json["type"] as? String == "result", json["is_error"] as? Bool == true else { return nil }
+            if let result = json["result"] as? String, !result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return result
+            }
+            if let errors = json["errors"] as? [String], !errors.isEmpty { return errors.joined(separator: "\n") }
+            return json["subtype"] as? String
+        case .codex:
+            switch json["type"] as? String {
+            case "error": return json["message"] as? String
+            case "turn.failed": return (json["error"] as? [String: Any])?["message"] as? String
+            default:
+                guard let msg = json["msg"] as? [String: Any], msg["type"] as? String == "error" else { return nil }
+                return msg["message"] as? String
+            }
         case .none, .apple:
             return nil
         }
