@@ -1821,3 +1821,11 @@
 "Name of the branch" = "ブランチの名前";
 "Keep the current files, staged for the first commit" = "今のファイルを残す（stage したまま最初のコミットに）";
 
+/* rerere forget */
+"Forget This Resolution" = "この解決を忘れる";
+"Forgets what git rerere recorded for this file and brings its conflict back (git rerere forget). Undo brings back the file as it is now." = "git rerere がこのファイルについて覚えた解決を忘れ、コンフリクトのある形に戻します（git rerere forget）。Undo で今のファイルに戻ります。";
+"Forget All Recorded Resolutions…" = "覚えた解決をすべて忘れる…";
+"Forget All Recorded Resolutions?" = "覚えた解決をすべて忘れますか？";
+"git rerere then no longer reuses the resolutions it recorded in this repository." = "このリポジトリで git rerere が覚えた解決を、もう使わなくなります。";
+"Forget All" = "すべて忘れる";
+

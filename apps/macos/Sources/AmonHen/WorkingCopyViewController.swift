@@ -912,6 +912,15 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             if embeddedEditor === editor { unembed() }
             mergeEditors[editor.path] = nil
         }
+        editor.onReload = { [weak self, weak editor] in
+            guard let self, let editor else { return }
+            if embeddedEditor === editor { unembed() }
+            mergeEditors[editor.path] = nil
+            if let key = selectedKey, key.path == editor.path,
+               let entry = entries.first(where: { $0.item.path == key.path }) {
+                showDiff(of: entry, staged: key.staged)
+            }
+        }
         rightController.addChild(editor)
         rightView.content = editor.view
         embeddedEditor = editor
