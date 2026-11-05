@@ -157,6 +157,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
+| 履歴のない新しいブランチ（空から・ファイルを残して） | ✓ | ✓ | — | △ | CLI: `amonhen run`（`createOrphanBranch`）から。 |
 | ブランチの切り替え（あいまい検索・最近・追跡・新しいブランチ） | ✓ | ✓ | △ | △ | VSCode: サイドバーからの Checkout と New Branch… だけ。<br>CLI: `amonhen run` から。 |
 | Fetch のシート（すべてか 1 つのリモート、prune を示す） | ✓ | ✓ | △ | △ | VSCode: シートなしで、すべてを prune 付きですぐ fetch。<br>CLI: `amonhen run` から。 |
 | Pull のシート（コミット・merge / rebase / ff-only・なければ上流） | ✓ | ✓ | △ | △ | VSCode: シートも選択もなく、上流をマージする。<br>CLI: `amonhen run` から。 |

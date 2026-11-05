@@ -777,7 +777,7 @@ Window > Activity（⌥⌘A）。ツールバーのスピナーからも開く�
 | Edit | 標準（Undo・Redo はテキストの取り消し）、Find ⌘F、Find in History ⌘⇧F、Find Next / Previous ⌘G / ⌘⇧G |
 | View | Working Copy ⌘1、History ⌘2、Conflicts ⌘3、Stashes ⌘4、Reflog ⌘5、Refresh ⌘R、Show Sidebar ⌃⌘S、Diff: Unified / Split ⌥⌘D、Ignore Whitespace、Wrap Lines、Font Size ⌘+ / ⌘−、History の表示（1 行、History Items ▸ でブランチとタグ・作者・日時・コミット ID・署名・CI の状態を出すか選ぶ、History Order ▸ 日付順 / トポロジー順（どちらも History の上のバーの右端のボタンと、ヘッダーの右クリックでも。そのメニューには 1 行表示・Fold Merged Branches・Highlight Ancestors もある。Settings > Appearance でも）、アバター、祖先の強調）、Commit Details: Compact / Standard / Detailed |
 | Navigate | Go to HEAD ⌘⇧H、Go to Ref… ⌘⇧J、Go to Parent / Child ⌥⌘↓ / ⌥⌘↑、Next / Previous Hunk、Next / Previous File、Next Conflict |
-| Repository | Fetch ⌃⌘F、Pull ⌃⌘L、Push ⌃⌘P、Stash ⌥⌘S、Pop ⌥⌘⇧S、New Branch… ⌥⌘B、New Tag… ⌥⌘T、Merge… ⌥⌘M、Rebase… ⌥⌘R、Interactive Rebase…、Apply Patch…、Continue / Skip / Abort、Undo（操作名） ⌥⌘Z、Repository Settings ⌘;、Open in Terminal、Reveal in Finder、Open in Editor、Open on GitHub |
+| Repository | Fetch ⌃⌘F、Pull ⌃⌘L、Push ⌃⌘P、Stash ⌥⌘S、Pop ⌥⌘⇧S、New Branch… ⌥⌘B、履歴のない新しいブランチ…（空から（`git switch --orphan`）、または今のファイルを stage したまま残す（`git checkout --orphan`））、New Tag… ⌥⌘T、Merge… ⌥⌘M、Rebase… ⌥⌘R、Interactive Rebase…、Apply Patch…、Continue / Skip / Abort、Undo（操作名） ⌥⌘Z、Repository Settings ⌘;、Open in Terminal、Reveal in Finder、Open in Editor、Open on GitHub |
 | Commit | Commit ⌘↩、Commit and Push ⌘⇧↩、Amend ⌥⌘↩、Include All、Exclude All、Toggle Selection（Space）、Discard…、Cherry-pick、Revert、Reword…、Save as Patch… |
 | Window | 標準（最小化・タブ・すべてのウィンドウを結合）、Repositories ⌘⇧R、Activity ⌥⌘A |
 | Help | ショートカットの一覧、ログの場所を開く |
