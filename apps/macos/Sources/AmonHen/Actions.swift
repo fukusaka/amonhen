@@ -254,6 +254,31 @@ final class Actions {
         }
     }
 
+    /// 履歴のない新しいブランチに切り替える（gh-pages など）。既定は git switch --orphan と同じく空から。今のファイルを
+    /// 残せば（git checkout --orphan）、stage したまま最初のコミットの材料になる。ブランチは最初のコミットでできる。
+    func newOrphanBranch() {
+        Task { @MainActor in
+            let alert = makeAlert(L("New Orphan Branch"), L("A branch with no history. It is checked out, and is created by its first commit."))
+            let name = NSTextField(string: "")
+            name.placeholderString = L("Name of the branch")
+            name.widthAnchor.constraint(equalToConstant: 320).isActive = true
+            let keep = NSButton(checkboxWithTitle: L("Keep the current files, staged for the first commit"), target: nil, action: nil)
+            let stack = NSStackView(views: [name, keep])
+            stack.orientation = .vertical
+            stack.alignment = .leading
+            stack.spacing = 8
+            stack.frame = NSRect(x: 0, y: 0, width: 320, height: stack.fittingSize.height)
+            alert.accessoryView = stack
+            alert.window.initialFirstResponder = name
+            alert.addButton(withTitle: L("Create"))
+            alert.addButton(withTitle: L("Cancel"))
+            guard await present(alert) == .alertFirstButtonReturn else { return }
+            let branch = name.stringValue.trimmingCharacters(in: .whitespaces)
+            guard !branch.isEmpty else { return NSSound.beep() }
+            perform(["op": "createOrphanBranch", "name": branch, "keepFiles": keep.state == .on])
+        }
+    }
+
     func renameBranch(_ name: String) {
         Task { @MainActor in
             guard let to = await ask(L("Rename %@", name), message: L("New name of the branch."), initial: name, ok: L("Rename")),

@@ -55,6 +55,9 @@ enum CommandTable {
     static let newBranch = Entry(
         id: "new-branch", title: "New Branch…", localized: false, key: "b", modifiers: [.command, .option],
         toolTip: nil, app: false)
+    static let newOrphanBranch = Entry(
+        id: "new-orphan-branch", title: "New Orphan Branch…", localized: true, key: "", modifiers: [.command],
+        toolTip: nil, app: false)
     static let renameBranch = Entry(
         id: "rename-branch", title: "Rename Branch…", localized: true, key: "", modifiers: [.command],
         toolTip: nil, app: false)
@@ -187,7 +190,7 @@ enum CommandTable {
     ]
     static let repositoryMenu: [[Entry]] = [
         [fetch, pull, push, forcePush],
-        [newBranch, renameBranch, setUpstream, newTag],
+        [newBranch, newOrphanBranch, renameBranch, setUpstream, newTag],
         [newWorktree, pruneWorktrees, addRemote, addSubmodule, updateSubmodules, addSubtree],
         [merge, rebase, compareWithPrevious, applyPatch, saveBundle, fetchBundle],
         [`continue`, skip, abort],

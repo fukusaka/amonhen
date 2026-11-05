@@ -1900,6 +1900,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     }
 
     @objc func newBranch(_ sender: Any?) { actions.newBranch(at: startPoint) }
+    @objc func newOrphanBranch(_ sender: Any?) { actions.newOrphanBranch() }
     @objc func newTag(_ sender: Any?) { actions.newTag(at: startPoint) }
 
     @objc func continueSequence(_ sender: Any?) { actions.perform(["op": "continue"]) }

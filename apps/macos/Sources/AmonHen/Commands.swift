@@ -57,6 +57,7 @@ enum Commands {
     static let openOnGitHub = Command(CommandTable.openOnGithub, action: #selector(RepositoryWindow.openOnGitHub(_:)))
     static let switchBranch = Command(CommandTable.switchBranch, action: #selector(RepositoryWindow.switchBranch(_:)))
     static let newBranch = Command(CommandTable.newBranch, action: #selector(RepositoryWindow.newBranch(_:)))
+    static let newOrphanBranch = Command(CommandTable.newOrphanBranch, action: #selector(RepositoryWindow.newOrphanBranch(_:)))
     static let renameBranch = Command(CommandTable.renameBranch, action: #selector(RepositoryWindow.renameBranch(_:)))
     static let newTag = Command(CommandTable.newTag, action: #selector(RepositoryWindow.newTag(_:)))
     static let newWorktree = Command(CommandTable.newWorktree, action: #selector(RepositoryWindow.newWorktree(_:)))
@@ -112,6 +113,7 @@ enum Commands {
         openOnGitHub,
         switchBranch,
         newBranch,
+        newOrphanBranch,
         renameBranch,
         newTag,
         newWorktree,

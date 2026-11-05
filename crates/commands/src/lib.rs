@@ -150,6 +150,7 @@ pub static COMMANDS: &[Command] = &[
         .localized()
         .key("Primary+Shift+B"),
     command("new-branch", "New Branch…").key("Primary+Alt+B"),
+    command("new-orphan-branch", "New Orphan Branch…").localized(),
     command("rename-branch", "Rename Branch…").localized(),
     // Ctrl+Alt+T は、Ubuntu などで端末を開くキー。
     command("new-tag", "New Tag…")
@@ -293,7 +294,13 @@ pub static SECTIONS: &[Section] = &[
     section(Menu::Repository, &["fetch", "pull", "push", "force-push"]),
     section(
         Menu::Repository,
-        &["new-branch", "rename-branch", "set-upstream", "new-tag"],
+        &[
+            "new-branch",
+            "new-orphan-branch",
+            "rename-branch",
+            "set-upstream",
+            "new-tag",
+        ],
     ),
     section(
         Menu::Repository,
