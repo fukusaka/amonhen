@@ -1111,6 +1111,14 @@ impl Operations for RemoteOperations {
         self.op(Op::RestoreFrom(rev.to_owned(), owned(paths), staged))
     }
 
+    fn rerere_forget(&self, path: &str) -> Result<()> {
+        self.op(Op::RerereForget(path.to_owned()))
+    }
+
+    fn rerere_forget_all(&self) -> Result<usize> {
+        self.op(Op::RerereForgetAll)
+    }
+
     fn orphan_branch(&self, name: &str, keep_files: bool) -> Result<()> {
         self.op(Op::OrphanBranch(name.to_owned(), keep_files))
     }

@@ -435,6 +435,10 @@ pub enum Op {
     StashPushWith(amonhen_model::StashOptions),
     /// → `()`
     OrphanBranch(String, bool),
+    /// → `()`
+    RerereForget(String),
+    /// → `usize`
+    RerereForgetAll,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -1168,6 +1168,24 @@ impl Operations for Git {
         self.write(&args).map(drop)
     }
 
+    fn rerere_forget(&self, path: &str) -> Result<()> {
+        self.write(&["rerere", "forget", "--", path])?;
+        // rerere.autoUpdate で stage していれば、index のコンフリクトも戻してから取り出し直す。
+        if self.read(&["ls-files", "-u", "--", path])?.is_empty() {
+            self.write(&["update-index", "--unresolve", "--", path])?;
+        }
+        self.write(&["checkout", "-m", "--", path]).map(drop)
+    }
+
+    fn rerere_forget_all(&self) -> Result<usize> {
+        let cache = self.git_dir()?.join("rr-cache");
+        let count = std::fs::read_dir(&cache).map(|d| d.count()).unwrap_or(0);
+        if cache.exists() {
+            std::fs::remove_dir_all(&cache)?;
+        }
+        Ok(count)
+    }
+
     fn orphan_branch(&self, name: &str, keep_files: bool) -> Result<()> {
         if name.trim().is_empty() || name.starts_with('-') {
             return Err(tr!("Not a valid branch name: {name}", name = name).into());

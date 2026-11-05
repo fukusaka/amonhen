@@ -72,6 +72,12 @@ pub enum Command {
         #[serde(default)]
         keep_files: bool,
     },
+    /// rerere が当てた `path` の解決を忘れ、コンフリクトのある形に戻す（作業ツリーのファイルは Undo で戻る）。
+    ForgetResolution {
+        path: String,
+    },
+    /// rerere が覚えたすべての解決を消す（`.git/rr-cache`。Undo では戻せない）。`info.count`: 消した数。
+    ForgetAllResolutions,
     RenameBranch {
         from: String,
         to: String,
@@ -2452,6 +2458,20 @@ impl Repository {
                 ops.switch_branch(&branch)?;
                 ok()
             }
+            Command::ForgetResolution { path } => {
+                undo.record_files(
+                    ops,
+                    &format!("Forget Resolution of {path}"),
+                    &[&path],
+                    || ops.rerere_forget(&path),
+                )?;
+                ok()
+            }
+            Command::ForgetAllResolutions => Ok(Response {
+                ok: true,
+                info: Some(serde_json::json!({ "count": ops.rerere_forget_all()? })),
+                ..Default::default()
+            }),
             Command::CreateOrphanBranch { name, keep_files } => {
                 ops.orphan_branch(name.trim(), keep_files)?;
                 ok()
@@ -7226,6 +7246,55 @@ mod tests {
             r#"{"op":"configSet","key":"pull.rebase","value":"true","scope":"system"}"#,
         );
         assert!(r["error"].as_str().unwrap().contains("system"), "{r}");
+    }
+
+    #[test]
+    fn forgets_a_resolution_rerere_applied() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        git(dir, &["config", "rerere.enabled", "true"]);
+        git(dir, &["checkout", "-q", "-b", "topic"]);
+        std::fs::write(dir.join("a.txt"), "topic\n").unwrap();
+        git(dir, &["commit", "-q", "-am", "topic"]);
+        git(dir, &["checkout", "-q", "main"]);
+        std::fs::write(dir.join("a.txt"), "main\n").unwrap();
+        git(dir, &["commit", "-q", "-am", "main"]);
+        // 一度解決して rerere に覚えさせ、merge をやり直すと rerere がその解決を当てる。
+        let _ = Process::new("git")
+            .args(["merge", "topic"])
+            .current_dir(dir)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .output();
+        std::fs::write(dir.join("a.txt"), "resolved\n").unwrap();
+        git(dir, &["add", "a.txt"]);
+        git(dir, &["commit", "-q", "-m", "merge"]);
+        git(dir, &["reset", "-q", "--hard", "HEAD~1"]);
+        let _ = Process::new("git")
+            .args(["merge", "topic"])
+            .current_dir(dir)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .output();
+        assert_eq!(
+            std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+            "resolved\n"
+        );
+        let r = run(&repo, r#"{"op":"forgetResolution","path":"a.txt"}"#);
+        assert_eq!(r["ok"], true, "{r}");
+        assert!(
+            std::fs::read_to_string(dir.join("a.txt"))
+                .unwrap()
+                .contains("<<<<<<<")
+        );
+        // Undo で、rerere が当てた形のファイルに戻る。
+        assert_eq!(run(&repo, r#"{"op":"undo"}"#)["ok"], true);
+        assert_eq!(
+            std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+            "resolved\n"
+        );
+        let r = run(&repo, r#"{"op":"forgetAllResolutions"}"#);
+        assert_eq!(r["ok"], true, "{r}");
+        assert!(r["info"]["count"].as_u64().unwrap() >= 1, "{r}");
+        assert!(!dir.join(".git/rr-cache").exists());
     }
 
     #[test]

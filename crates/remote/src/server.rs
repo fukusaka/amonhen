@@ -565,6 +565,8 @@ fn handle_op(backend: &dyn GitBackend, op: Op, cancel: &AtomicBool) -> Result<Ve
         Op::Subtree(op) => encode(&ops.subtree(&op.0)?),
         Op::StashPushWith(options) => encode(&ops.stash_push_with(&options)?),
         Op::OrphanBranch(name, keep_files) => encode(&ops.orphan_branch(&name, keep_files)?),
+        Op::RerereForget(path) => encode(&ops.rerere_forget(&path)?),
+        Op::RerereForgetAll => encode(&ops.rerere_forget_all()?),
         Op::RestoreFrom(rev, paths, staged) => {
             encode(&ops.restore_from(&rev, &strs(&paths), staged)?)
         }

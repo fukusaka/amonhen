@@ -771,6 +771,11 @@ pub trait Operations: Send + Sync {
     /// 履歴のない新しいブランチ `name` に切り替える（最初のコミットまで、ブランチはまだない）。`keep_files` なら
     /// 今のファイルを stage したまま残す（`git checkout --orphan`）、でなければ空から（`git switch --orphan`）。
     fn orphan_branch(&self, name: &str, keep_files: bool) -> Result<()>;
+    /// rerere が覚えた `path` の解決を忘れ、作業ツリーのファイルをコンフリクトのある形に戻す（`git rerere forget` と
+    /// `git checkout -m`。`rerere.autoUpdate` で stage 済みなら、先に index もコンフリクトに戻す）。
+    fn rerere_forget(&self, path: &str) -> Result<()>;
+    /// rerere が覚えたすべての解決を消す（`.git/rr-cache`）。消した数を返す。
+    fn rerere_forget_all(&self) -> Result<usize>;
     /// 作業ツリーの `paths` を `rev` の版にする（`git restore --source=<rev>`。`rev` にないファイルは消す）。
     /// `staged` なら index にも入れる（`--staged --worktree`）。
     fn restore_from(&self, rev: &str, paths: &[&str], staged: bool) -> Result<()>;
