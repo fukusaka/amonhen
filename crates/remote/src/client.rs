@@ -1111,6 +1111,10 @@ impl Operations for RemoteOperations {
         self.op(Op::RestoreFrom(rev.to_owned(), owned(paths), staged))
     }
 
+    fn orphan_branch(&self, name: &str, keep_files: bool) -> Result<()> {
+        self.op(Op::OrphanBranch(name.to_owned(), keep_files))
+    }
+
     fn stash_push_with(&self, options: &amonhen_model::StashOptions) -> Result<()> {
         self.op(Op::StashPushWith(options.clone()))
     }

@@ -433,6 +433,8 @@ pub enum Op {
     RestoreFrom(String, Vec<String>, bool),
     /// → `()`
     StashPushWith(amonhen_model::StashOptions),
+    /// → `()`
+    OrphanBranch(String, bool),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -1168,6 +1168,14 @@ impl Operations for Git {
         self.write(&args).map(drop)
     }
 
+    fn orphan_branch(&self, name: &str, keep_files: bool) -> Result<()> {
+        if name.trim().is_empty() || name.starts_with('-') {
+            return Err(tr!("Not a valid branch name: {name}", name = name).into());
+        }
+        let command = if keep_files { "checkout" } else { "switch" };
+        self.write(&[command, "--orphan", name]).map(drop)
+    }
+
     fn restore_from(&self, rev: &str, paths: &[&str], staged: bool) -> Result<()> {
         // `--source=` に付けて渡すので、`-` で始まる rev もオプションと取り違えない。
         let source = format!("--source={rev}");

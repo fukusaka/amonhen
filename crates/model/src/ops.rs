@@ -768,6 +768,9 @@ pub trait Operations: Send + Sync {
 
     /// 作業ツリーのファイルを index の内容に戻す（変更の破棄）。
     fn restore_worktree(&self, paths: &[&str]) -> Result<()>;
+    /// 履歴のない新しいブランチ `name` に切り替える（最初のコミットまで、ブランチはまだない）。`keep_files` なら
+    /// 今のファイルを stage したまま残す（`git checkout --orphan`）、でなければ空から（`git switch --orphan`）。
+    fn orphan_branch(&self, name: &str, keep_files: bool) -> Result<()>;
     /// 作業ツリーの `paths` を `rev` の版にする（`git restore --source=<rev>`。`rev` にないファイルは消す）。
     /// `staged` なら index にも入れる（`--staged --worktree`）。
     fn restore_from(&self, rev: &str, paths: &[&str], staged: bool) -> Result<()>;

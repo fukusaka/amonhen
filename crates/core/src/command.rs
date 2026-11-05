@@ -65,6 +65,13 @@ pub enum Command {
         name: String,
         force: bool,
     },
+    /// 履歴のない新しいブランチ `name` に切り替える。`keepFiles` なら今のファイルを stage したまま残す
+    /// （`git checkout --orphan`）、でなければ空から（`git switch --orphan`。作業中の変更があれば git が断る）。
+    CreateOrphanBranch {
+        name: String,
+        #[serde(default)]
+        keep_files: bool,
+    },
     RenameBranch {
         from: String,
         to: String,
@@ -2443,6 +2450,10 @@ impl Repository {
         match command {
             Command::Checkout { branch } => {
                 ops.switch_branch(&branch)?;
+                ok()
+            }
+            Command::CreateOrphanBranch { name, keep_files } => {
+                ops.orphan_branch(name.trim(), keep_files)?;
                 ok()
             }
             Command::Track { remote_branch } => {
@@ -7215,6 +7226,31 @@ mod tests {
             r#"{"op":"configSet","key":"pull.rebase","value":"true","scope":"system"}"#,
         );
         assert!(r["error"].as_str().unwrap().contains("system"), "{r}");
+    }
+
+    #[test]
+    fn starts_orphan_branches_empty_or_with_the_files() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        let orphan = |json: serde_json::Value| {
+            let mut command = json;
+            command["op"] = "createOrphanBranch".into();
+            run(&repo, &command.to_string())
+        };
+        // 空から（git switch --orphan）: 追跡していたファイルは作業ツリーから消え、ブランチはまだない。
+        let r = orphan(serde_json::json!({ "name": "pages" }));
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(git(dir, &["symbolic-ref", "HEAD"]), "refs/heads/pages");
+        assert!(!dir.join("a.txt").exists());
+        assert_eq!(git(dir, &["branch", "--list", "pages"]), "");
+        git(dir, &["switch", "-q", "main"]);
+        // 今のファイルを残す（git checkout --orphan）: stage したまま。
+        let r = orphan(serde_json::json!({ "name": "fresh", "keepFiles": true }));
+        assert_eq!(r["ok"], true, "{r}");
+        assert!(dir.join("a.txt").exists());
+        assert_eq!(git(dir, &["status", "--porcelain"]), "A  a.txt");
+        let r = orphan(serde_json::json!({ "name": "-x" }));
+        assert_eq!(r["ok"], false);
     }
 
     #[test]
