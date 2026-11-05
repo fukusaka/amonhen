@@ -1845,6 +1845,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     @objc func forcePush(_ sender: Any?) { actions.pushWithConfirmation(force: true) }
 
     @objc func stashChanges(_ sender: Any?) { actions.stash() }
+    @objc func deleteIgnoredFiles(_ sender: Any?) { actions.deleteIgnoredFiles() }
 
     /// 最新の stash（`stash@{0}`）を戻して消す。
     @objc func popStash(_ sender: Any?) {

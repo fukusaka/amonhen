@@ -103,6 +103,9 @@ enum CommandTable {
     static let popStash = Entry(
         id: "pop-stash", title: "Pop…", localized: false, key: "s", modifiers: [.command, .option, .shift],
         toolTip: nil, app: false)
+    static let deleteIgnoredFiles = Entry(
+        id: "delete-ignored-files", title: "Delete Ignored Files…", localized: true, key: "", modifiers: [.command],
+        toolTip: nil, app: false)
     static let undo = Entry(
         id: "undo", title: "Undo…", localized: false, key: "z", modifiers: [.command, .option],
         toolTip: nil, app: false)
@@ -194,7 +197,7 @@ enum CommandTable {
         [newWorktree, pruneWorktrees, addRemote, addSubmodule, updateSubmodules, addSubtree],
         [merge, rebase, compareWithPrevious, applyPatch, saveBundle, fetchBundle],
         [`continue`, skip, abort],
-        [stash, popStash],
+        [stash, popStash, deleteIgnoredFiles],
         [undo],
         [repositorySettings],
         [createPullRequest, openOnGithub],

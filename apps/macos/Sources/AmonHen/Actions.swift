@@ -336,6 +336,47 @@ final class Actions {
         ClosureMenuItem(title: Titles.reset(currentBranch ?? "HEAD", to: String(target.prefix(Titles.shortIDLength)))) { [weak self] in self?.reset(to: target) }
     }
 
+    /// ignore されたファイル（ビルドの出力など）を消す（git clean -X）。消すものを先に一覧で見せる。git の記録に
+    /// ないので戻せない（赤いボタン）。
+    func deleteIgnoredFiles() {
+        let repository = self.repository
+        Task { @MainActor in
+            nonisolated struct Ignored: Decodable, Sendable { let paths: [String] }
+            let paths: [String]
+            do {
+                paths = try await Task.detached(priority: .userInitiated) {
+                    try repository.info(["op": "ignoredFiles"], as: Ignored.self)
+                }.value.paths
+            } catch {
+                NSAlert(error: error).runModal()
+                return
+            }
+            let alert = makeAlert(paths.isEmpty ? L("No Ignored Files") : L("Delete %ld Ignored Items?", paths.count),
+                                  paths.isEmpty ? L("Nothing in the working tree matches .gitignore.")
+                                      : L("These are removed from the working tree (git clean -X); folders go with everything in them.") + " " + Self.cantUndo)
+            if paths.isEmpty {
+                alert.addButton(withTitle: "OK")
+                _ = await present(alert)
+                return
+            }
+            let list = NSTextView(frame: NSRect(x: 0, y: 0, width: 380, height: 160))
+            list.string = paths.joined(separator: "\n")
+            list.isEditable = false
+            list.font = .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+            let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 380, height: 160))
+            scroll.documentView = list
+            scroll.hasVerticalScroller = true
+            scroll.borderType = .bezelBorder
+            alert.accessoryView = scroll
+            let delete = alert.addButton(withTitle: L("Delete"))
+            delete.hasDestructiveAction = true
+            delete.keyEquivalent = ""
+            alert.addButton(withTitle: L("Cancel")).keyEquivalent = "\r"
+            guard await present(alert) == .alertFirstButtonReturn else { return }
+            perform(["op": "deleteIgnored", "paths": paths])
+        }
+    }
+
     /// 作業中の変更を stash する。`paths` があれば、そのファイルの変更だけ。何を stash するか（すべて・stage した
     /// 変更だけ）、stage した変更を残すか、untracked のファイルを含めるかを選べる（既定は git と同じく、追跡している
     /// ファイルの変更をすべて）。

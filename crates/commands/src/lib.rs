@@ -176,6 +176,7 @@ pub static COMMANDS: &[Command] = &[
     command("abort", "Abort"),
     command("stash", "Stash…").key("Primary+Alt+S"),
     command("pop-stash", "Pop…").key("Primary+Alt+Shift+S"),
+    command("delete-ignored-files", "Delete Ignored Files…").localized(),
     command("undo", "Undo…").key("Primary+Alt+Z"),
     // コミット
     command("commit", "Commit").key("Primary+Return"),
@@ -325,7 +326,10 @@ pub static SECTIONS: &[Section] = &[
         ],
     ),
     section(Menu::Repository, &["continue", "skip", "abort"]),
-    section(Menu::Repository, &["stash", "pop-stash"]),
+    section(
+        Menu::Repository,
+        &["stash", "pop-stash", "delete-ignored-files"],
+    ),
     section(Menu::Repository, &["undo"]),
     section(Menu::Repository, &["repository-settings"]),
     section(Menu::Repository, &["create-pull-request", "open-on-github"]),
