@@ -48,6 +48,8 @@ becomes the GitHub Release notes.
   while filtering, a renamed group stays selected, Clone doesn't default to an SSH folder, and Activity keeps its place.
 - macOS: opening an added worktree through the shared daemon edits that worktree when its main repository wasn't open
   yet.
+- macOS: a conflicted file shows the merge editor in Working Copy even when Working Copy hadn't been opened yet in that
+  window.
 - macOS: Checkout #N, Open on GitHub and the CI marks use the selected worktree and its branch, not the opened one.
 - macOS: Quick Open keeps the row picked with the arrow keys while row details load, so Return opens that repository.
 - macOS: a repository whose status can't be read (such as a worktree whose main repository was removed) is no longer
