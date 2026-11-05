@@ -1829,3 +1829,11 @@
 "git rerere then no longer reuses the resolutions it recorded in this repository." = "このリポジトリで git rerere が覚えた解決を、もう使わなくなります。";
 "Forget All" = "すべて忘れる";
 
+/* submodule absorb, foreach */
+"Run in Each Submodule…" = "それぞれの submodule で動かす…";
+"Run in Each Submodule" = "それぞれの submodule で動かす";
+"Runs the command with the shell in each submodule’s folder (git submodule foreach). Its output is in Activity." = "それぞれの submodule のフォルダで、命令をシェルで動かします（git submodule foreach）。出力は Activity にあります。";
+"Command" = "命令";
+"Also in the submodules inside them (--recursive)" = "中の submodule でも（--recursive）";
+"Run" = "動かす";
+"Move Repository Data into .git/modules" = "リポジトリのデータを .git/modules に移す";

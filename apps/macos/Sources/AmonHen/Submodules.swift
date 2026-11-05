@@ -9,6 +9,8 @@ nonisolated struct SubmoduleState: Decodable, Hashable, Sendable {
     let branch: String?
     /// 取り出してある。
     let initialized: Bool
+    /// 中のリポジトリのデータを自分のフォルダに持っている（`.git/modules` に移せる）。
+    var ownGitDir: Bool? = nil
     /// 記録したコミットと違うコミットにいる。
     let moved: Bool
     /// 中に、コミットしていない変更か untracked のファイルがある。
@@ -131,6 +133,26 @@ enum SubmoduleSheet {
             let b = branch.stringValue.trimmingCharacters(in: .whitespaces)
             perform(["op": "changeSubmodule",
                      "change": ["kind": "setBranch", "path": submodule.path, "branch": b.isEmpty ? NSNull() : b] as [String: Any]])
+        }
+    }
+
+    /// Run in Each Submodule…: それぞれの submodule の中で、シェルで命令を動かす（git submodule foreach）。出力は
+    /// Activity に残る。
+    static func foreach(in window: NSWindow, actions: Actions, perform: @escaping ([String: Any]) -> Void) {
+        let alert = NSAlert()
+        alert.messageText = L("Run in Each Submodule")
+        alert.informativeText = actions.sheetMessage(L("Runs the command with the shell in each submodule’s folder (git submodule foreach). Its output is in Activity."))
+        let command = field("", placeholder: L("Command"))
+        let recursive = NSButton(checkboxWithTitle: L("Also in the submodules inside them (--recursive)"), target: nil, action: nil)
+        alert.accessoryView = stack([command, recursive], height: 56)
+        alert.window.initialFirstResponder = command
+        alert.addButton(withTitle: L("Run"))
+        alert.addButton(withTitle: L("Cancel"))
+        alert.beginSheetModal(for: window) { response in
+            guard response == .alertFirstButtonReturn else { return }
+            let c = command.stringValue.trimmingCharacters(in: .whitespaces)
+            guard !c.isEmpty else { return NSSound.beep() }
+            perform(["op": "changeSubmodule", "change": ["kind": "foreach", "command": c, "recursive": recursive.state == .on]])
         }
     }
 

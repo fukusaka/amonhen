@@ -724,6 +724,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             return SubmoduleSheet.update(in: window, actions: actions, paths: path.map { [$0] } ?? [], perform: perform)
         }
         if action == .sync { return perform(["op": "changeSubmodule", "change": ["kind": "sync", "recursive": true]]) }
+        if action == .foreach { return SubmoduleSheet.foreach(in: window, actions: actions, perform: perform) }
         guard let path else { return }
         let submodule = submodules.first { $0.path == path }
             ?? SubmoduleState(path: path, name: path, url: nil, branch: nil, initialized: true, moved: false, changed: false, conflict: false)
@@ -731,7 +732,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         case .setURL: SubmoduleSheet.setURL(in: window, actions: actions, submodule: submodule, perform: perform)
         case .setBranch: SubmoduleSheet.setBranch(in: window, actions: actions, submodule: submodule, perform: perform)
         case .remove: SubmoduleSheet.remove(in: window, actions: actions, submodule: submodule, perform: perform)
-        case .add, .update, .sync: break
+        case .absorb: perform(["op": "changeSubmodule", "change": ["kind": "absorb", "paths": [path]]])
+        case .add, .update, .sync, .foreach: break
         }
     }
 

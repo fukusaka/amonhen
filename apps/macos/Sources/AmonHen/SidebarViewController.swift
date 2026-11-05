@@ -355,7 +355,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     enum RemoteAction { case add, edit, remove }
     var onRemoteAction: ((String?, RemoteAction) -> Void)?
     /// Submodules の組の文脈メニュー（path は nil）と、submodule の行の文脈メニュー。
-    enum SubmoduleAction { case add, update, sync, setURL, setBranch, remove }
+    enum SubmoduleAction { case add, update, sync, setURL, setBranch, remove, absorb, foreach }
     var onSubmoduleAction: ((String?, SubmoduleAction) -> Void)?
     /// Subtrees の組の文脈メニュー（dir は nil）と、subtree の行の文脈メニュー。
     enum SubtreeAction { case add, pull, push, split }
@@ -1333,6 +1333,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 menu.addItem(ClosureMenuItem(title: "Update All") { actions.perform(["op": "updateSubmodules", "paths": [String]()]) })
                 menu.addItem(ClosureMenuItem(title: "Update Submodules…") { [weak self] in self?.onSubmoduleAction?(nil, .update) })
                 menu.addItem(ClosureMenuItem(title: "Sync URLs") { [weak self] in self?.onSubmoduleAction?(nil, .sync) })
+                menu.addItem(ClosureMenuItem(title: L("Run in Each Submodule…")) { [weak self] in self?.onSubmoduleAction?(nil, .foreach) })
                 menu.addItem(.separator())
                 menu.addItem(ClosureMenuItem(title: L("Add Submodule…")) { [weak self] in self?.onSubmoduleAction?(nil, .add) })
                 return
@@ -1511,6 +1512,10 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             menu.addItem(.separator())
             add(L("Edit URL…")) { [weak self] in self?.onSubmoduleAction?(name, .setURL) }
             add(L("Branch to Follow…")) { [weak self] in self?.onSubmoduleAction?(name, .setBranch) }
+            // 自分のフォルダにリポジトリのデータを持っていれば（手で clone して足したなど）、.git/modules に移せる。
+            if submoduleStates[name]?.ownGitDir == true {
+                add(L("Move Repository Data into .git/modules")) { [weak self] in self?.onSubmoduleAction?(name, .absorb) }
+            }
             menu.addItem(.separator())
             add(L("Remove…")) { [weak self] in self?.onSubmoduleAction?(name, .remove) }
         }
