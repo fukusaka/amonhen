@@ -49,6 +49,7 @@ usage: amonhen [<path>]
        amonhen stage [--rows <rows>] <path>… | --all
        amonhen unstage [--rows <rows>] <path>… | --all
        amonhen discard [--rows <rows>] <path>…
+       amonhen restore --source <rev> [--staged] <path>…
        amonhen commit -m <message> [--amend]
        amonhen refs [--verify] [--json]
        amonhen run [<json>…]
@@ -84,6 +85,8 @@ History (if they connect along first-parent, from the older one's parent to the 
 --rows prints diff line numbers. The --rows <rows> of stage and unstage (like 3,5-9) are diff --combined line numbers,
 and discard's --rows are diff (unstaged) line numbers; only the changes on those lines are touched. discard and commit
 can be undone with undo.
+restore puts files as they are in <rev> into the working tree (and the index with --staged); a file <rev> lacks is
+deleted. undo brings the working tree files back.
 run takes commands like {\"op\":\"checkout\",\"branch\":\"main\"} (the core's command.rs). Each answer is one line of JSON.
 log --rebuild and daemon rebuild throw away the History cache and build it again (the shared daemon's too).
 merge-file applies only the rules that can't go wrong by default (--all for every rule). If conflicts remain the exit
@@ -184,6 +187,7 @@ fn main() -> ExitCode {
         Some("stage" | "add") => work::stage(&args[1..], true),
         Some("unstage") => work::stage(&args[1..], false),
         Some("discard") => work::discard(&args[1..]),
+        Some("restore") => work::restore(&args[1..]),
         Some("commit") => work::commit(&args[1..]),
         Some("refs" | "branch") => work::refs(&args[1..]),
         // サブコマンドでなければ、開く場所とみなす（`amonhen .`）。

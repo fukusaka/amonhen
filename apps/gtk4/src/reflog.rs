@@ -131,6 +131,7 @@ impl ReflogView {
         // 右の列: History の詳細と同じ欄（詳細と、変更ファイルと差分）。
         let pane = CommitPane::new(pending.clone());
         pane.clear();
+        pane.connect_restore(&actions);
 
         let root = gtk::Paned::new(gtk::Orientation::Horizontal);
         root.set_start_child(Some(&left));

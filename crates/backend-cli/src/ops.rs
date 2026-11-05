@@ -1162,6 +1162,18 @@ impl Operations for Git {
         self.write(&args).map(drop)
     }
 
+    fn restore_from(&self, rev: &str, paths: &[&str], staged: bool) -> Result<()> {
+        // `--source=` に付けて渡すので、`-` で始まる rev もオプションと取り違えない。
+        let source = format!("--source={rev}");
+        let mut args = vec!["restore", &source];
+        if staged {
+            args.extend(["--staged", "--worktree"]);
+        }
+        args.push("--");
+        args.extend(paths);
+        self.write(&args).map(drop)
+    }
+
     fn stash_push(&self, message: Option<&str>, include_untracked: bool) -> Result<()> {
         let mut args = vec!["stash", "push"];
         if include_untracked {

@@ -1784,3 +1784,11 @@
 "Sends the commits that changed this folder to the repository’s branch, as that repository’s own history (git subtree push)." = "このフォルダを変えたコミットを、そのリポジトリの履歴にしてブランチに送ります（git subtree push）。";
 "Squash its history into one commit (--squash)" = "履歴を 1 つのコミットにまとめる（--squash）";
 "Squashed when last pulled" = "最後の取り込みは squash";
+
+/* restore from a commit */
+"Restore This Version…" = "この版に戻す…";
+"Restore Version Before This Commit…" = "このコミットの前の版に戻す…";
+"Restore %@ as It Was Before %@?" = "%1$@ を %2$@ の前の版に戻しますか？";
+"Restore %@ as It Is in %@?" = "%1$@ を %2$@ の版に戻しますか？";
+"Replaces the file in the working tree with that version (git restore); a file that version doesn’t have is deleted. Undo brings back the file as it is now." = "作業ツリーのファイルを、その版に置き換えます（git restore）。その版にないファイルは消します。Undo で今のファイルに戻ります。";
+"Stage it too" = "stage もする";

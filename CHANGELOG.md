@@ -13,6 +13,8 @@ becomes the GitHub Release notes.
 
 - Subtrees, when git has `git subtree`: Add Subtree… brings another repository's branch into a folder, and the
   sidebar's Subtrees group pulls, pushes and splits them, remembering the source and squash. `amonhen subtree` too.
+- A changed file's menu in History and Reflog restores it as it is in that commit or as it was before, and File
+  History's as it is in a commit, optionally staged; Undo brings the file back. `amonhen restore --source` too.
 - On Linux and the BSDs, Settings > Performance > fsmonitor speeds up status with Watchman when it is installed (git
   2.26 or later); the engine answers git as its fsmonitor hook, and nothing is written to the repository's config.
 

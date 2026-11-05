@@ -429,6 +429,8 @@ pub enum Op {
     Subtrees,
     /// → `Outcome`
     Subtree(Tagged<amonhen_model::SubtreeOp>),
+    /// → `()`
+    RestoreFrom(String, Vec<String>, bool),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

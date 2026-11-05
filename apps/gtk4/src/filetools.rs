@@ -450,11 +450,15 @@ fn install_css() {
 /// `path` を変えたコミットと、それぞれでの差分の窓を開く。merge のコミットを出すかは Settings の
 /// `fileHistoryMerges`（右クリックの Show Merge Commits で切り替え、開いているほかの File History も読み直す）。
 /// 窓は先に出し、新しい 100 コミットを読んだら出して、残りを読み続ける（macOS 版と同じ）。
+/// File History の一覧の右クリックの「この版に戻す…」（`f(パス, コミット)`。作業ツリーのファイルを戻す）。
+pub type Restore = Rc<dyn Fn(&str, &str)>;
+
 pub fn file_history(
     parent: &gtk::ApplicationWindow,
     repo: Arc<Repository>,
     path: &str,
     on_commit: OnCommit,
+    restore: Option<Restore>,
 ) {
     // 同じファイルの File History がもう開いていれば、そのタブで初めから読み直し、いちばん新しいコミットを選ぶ
     // （macOS 版はタブを新しく開いたものに入れ替える）。
@@ -470,6 +474,7 @@ pub fn file_history(
     }
     let on_commit = via_owner(&tab, on_commit);
     let view = FileHistoryView::new(&tab, repo, path.to_owned(), on_commit);
+    view.restore.replace(restore);
     if new {
         place(&tab);
     }
@@ -527,6 +532,7 @@ struct FileHistoryView {
     repo: Arc<Repository>,
     path: String,
     on_commit: OnCommit,
+    restore: RefCell<Option<Restore>>,
     /// merge のコミットも出しているか（Settings の File History）。
     merges: Cell<bool>,
     entries: RefCell<Vec<Entry>>,
@@ -609,6 +615,7 @@ impl FileHistoryView {
             repo,
             path,
             on_commit,
+            restore: RefCell::default(),
             merges: Cell::new(crate::settings::bool(crate::settings::FILE_HISTORY_MERGES)),
             entries: RefCell::default(),
             rows: RefCell::new(vec![HistoryRow::Loading]),
@@ -843,6 +850,17 @@ impl FileHistoryView {
                 items.push(crate::menu::action(
                     tr!("Blame at {id}", id = short),
                     move || blame(&parent, repo.clone(), &path, Some(&oid), oc.clone()),
+                ));
+            }
+            // 作業ツリーのファイルと同じ名前の版だけ（名前を変える前の版を戻すと、元の名前のファイルができてしまう。
+            // macOS 版と同じ）。
+            if entry.path == this.path
+                && let Some(restore) = this.restore.borrow().clone()
+            {
+                let (path, oid) = (entry.path.clone(), entry.oid.clone());
+                items.push(crate::menu::action(
+                    tr!("Restore This Version…"),
+                    move || restore(&path, &oid),
                 ));
             }
             items.push(crate::menu::Item::Separator);
