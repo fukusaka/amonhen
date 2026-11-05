@@ -147,6 +147,58 @@ pub fn update(actions: &Rc<Actions>, paths: Vec<String>) {
     });
 }
 
+/// Run in Each Submodule…: それぞれの submodule の中で、シェルで命令を動かす（git submodule foreach）。出力は
+/// Activity に残る（macOS 版と同じ）。
+pub fn foreach(actions: &Rc<Actions>) {
+    let Some(target) = Target::current(actions) else {
+        return;
+    };
+    let actions = actions.clone();
+    glib::spawn_future_local(async move {
+        let sheet = target.sheet(
+            sheets::parent(&actions).as_ref(),
+            &tr!("Run in Each Submodule"),
+            &tr!(
+                "Runs the command with the shell in each submodule’s folder (git submodule foreach). Its output is in Activity."
+            ),
+        );
+        let command = entry("", &tr!("Command"));
+        let recursive =
+            gtk::CheckButton::with_label(&tr!("Also in the submodules inside them (--recursive)"));
+        sheet.add(&command);
+        sheet.add(&recursive);
+        sheet.buttons(&tr!("Run"), false, None);
+        command.grab_focus();
+        if sheet.run().await != Response::Ok {
+            return;
+        }
+        let c = text(&command);
+        if c.is_empty() {
+            return bell(&actions);
+        }
+        perform(
+            &actions,
+            target,
+            json!({
+                "op": "changeSubmodule",
+                "change": { "kind": "foreach", "command": c, "recursive": recursive.is_active() },
+            }),
+        );
+    });
+}
+
+/// 中のリポジトリのデータを `.git/modules` に移す（git submodule absorbgitdirs）。確かめずに（戻す必要がない）。
+pub fn absorb(actions: &Rc<Actions>, path: &str) {
+    let Some(target) = Target::current(actions) else {
+        return;
+    };
+    perform(
+        actions,
+        target,
+        json!({ "op": "changeSubmodule", "change": { "kind": "absorb", "paths": [path] } }),
+    );
+}
+
 /// Edit URL…: `.gitmodules` の URL を変え、このリポジトリの設定にも写す。
 pub fn set_url(actions: &Rc<Actions>, submodule: &SubmoduleState) {
     let Some(target) = Target::current(actions) else {
