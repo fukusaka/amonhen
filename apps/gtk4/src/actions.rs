@@ -357,6 +357,44 @@ impl Actions {
     }
 
     /// 作業中の変更を stash する（メッセージと、untracked のファイルを含めるかを聞く）。
+    /// 履歴のない新しいブランチに切り替える（gh-pages など）。既定は git switch --orphan と同じく空から。今のファイルを
+    /// 残せば（git checkout --orphan）、stage したまま最初のコミットの材料になる（macOS 版と同じ）。
+    pub fn new_orphan_branch(self: &Rc<Self>) {
+        let this = self.clone();
+        glib::spawn_future_local(async move {
+            let sheet = crate::sheets::Sheet::new(
+                crate::sheets::parent(&this).as_ref(),
+                &tr!("New Orphan Branch"),
+                &tr!(
+                    "A branch with no history. It is checked out, and is created by its first commit."
+                ),
+            );
+            let name = gtk::Entry::new();
+            name.set_placeholder_text(Some(&tr!("Name of the branch")));
+            name.set_activates_default(true);
+            let keep = gtk::CheckButton::with_label(&tr!(
+                "Keep the current files, staged for the first commit"
+            ));
+            let fields = gtk::Box::new(gtk::Orientation::Vertical, 8);
+            fields.append(&name);
+            fields.append(&keep);
+            sheet.add(&fields);
+            sheet.buttons(&tr!("Create"), false, None);
+            name.grab_focus();
+            if sheet.run().await != crate::sheets::Response::Ok {
+                return;
+            }
+            let branch = name.text().trim().to_owned();
+            if branch.is_empty() {
+                if let Some(window) = this.window() {
+                    window.error_bell();
+                }
+                return;
+            }
+            this.perform(json!({ "op": "createOrphanBranch", "name": branch, "keepFiles": keep.is_active() }));
+        });
+    }
+
     pub fn stash(self: &Rc<Self>) {
         self.stash_paths(Vec::new());
     }

@@ -528,6 +528,11 @@ fn handlers() -> Vec<(&'static str, Handler)> {
             "new-branch",
             Box::new(|p| refops::ask_new_branch(&p.actions, &start_point(p))),
         ),
+        // 履歴のない新しいブランチ（macOS 版と同じシート）。
+        (
+            "new-orphan-branch",
+            Box::new(|p| p.actions.new_orphan_branch()),
+        ),
         ("rename-branch", Box::new(rename_branch)),
         (
             "new-worktree",

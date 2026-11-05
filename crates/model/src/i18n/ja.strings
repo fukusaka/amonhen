@@ -2151,3 +2151,8 @@
 "Locate the Worktree “{name}”" = "worktree「{name}」を探す";
 "If you moved its folder yourself, give where it is now, and git reconnects it (git worktree repair)." = "フォルダを手で移したなら、今の場所を入れると git がつなぎ直します（git worktree repair）。";
 "Not a valid branch name: {name}" = "ブランチの名前にできません: {name}";
+"New Orphan Branch…" = "履歴のない新しいブランチ…";
+"New Orphan Branch" = "履歴のない新しいブランチ";
+"A branch with no history. It is checked out, and is created by its first commit." = "履歴のないブランチです。切り替えたあと、最初のコミットでブランチができます。";
+"Name of the branch" = "ブランチの名前";
+"Keep the current files, staged for the first commit" = "今のファイルを残す（stage したまま最初のコミットに）";
