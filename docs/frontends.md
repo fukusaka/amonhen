@@ -142,7 +142,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Commits: message template (none, shared, own, file) | ✓ | ✓ | △ | △ | VSCode: None, this repository's own (edited there) or a file; no shared templates.<br>CLI: Via `amonhen run`. |
 | Branches: default branch override | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Operations: pull, fetch.prune, autostash, updateRefs, conflict style, rerere | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
-| rerere: forget one resolution (merge editor), forget all (Repository Settings) | ✓ | ✓ | — | △ | CLI: Via `amonhen run` (`forgetResolution`, `forgetAllResolutions`). |
+| rerere: forget one resolution (merge editor), forget all (Repository Settings) | ✓ | ✓ | ✓ | △ | VSCode: Forget Resolution on a Working Copy conflict that rerere resolved (VSCode's merge editor is its own); Forget All… under Repository Settings > Operations.<br>CLI: Via `amonhen run` (`forgetResolution`, `forgetAllResolutions`). |
 | Working Copy: line endings, file mode, `.git/info/exclude` editor | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Remotes: table and sheet with a connection check | ✓ | ✓ | ✓ | △ | VSCode: The table with a row of buttons (Edit URL…, Push URL…, Check, Prune, Rename…, Remove…) and Add…; the values are asked in input boxes, not a sheet.<br>CLI: Via `amonhen run`. |
 | Hooks: table, Enabled switch, script, Create Hook… | ✓ | ✓ | ✓ | △ | VSCode: Open opens the script in VSCode's editor.<br>CLI: Via `amonhen run`. |

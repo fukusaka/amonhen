@@ -316,6 +316,11 @@
         "category": "Amon Hen"
       },
       {
+        "command": "amonhen.forgetResolution",
+        "title": "Forget Resolution",
+        "category": "Amon Hen"
+      },
+      {
         "command": "amonhen.branch.addToFavorites",
         "title": "Add to Favorites",
         "category": "Amon Hen"
@@ -1495,6 +1500,10 @@
         {
           "command": "amonhen.submodules.foreach",
           "when": "amonhen.hasRepository && amonhen.engine"
+        },
+        {
+          "command": "amonhen.forgetResolution",
+          "when": "false"
         }
       ],
       "webview/context": [
@@ -1642,6 +1651,11 @@
           "command": "amonhen.stash.files",
           "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcConflict && amonhen.engine",
           "group": "2_stash@1"
+        },
+        {
+          "command": "amonhen.forgetResolution",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && wcRerere && amonhen.engine",
+          "group": "2_conflict@1"
         }
       ],
       "editor/title/context": [

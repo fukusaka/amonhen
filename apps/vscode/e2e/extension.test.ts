@@ -1230,6 +1230,62 @@ async function submoduleMoreFlow(): Promise<void> {
 }
 
 /**
+ * rerere が当てた解決を Forget Resolution で忘れると、コンフリクトのマーカーが戻る。Repository Settings の
+ * Forget All… で、覚えた解決をすべて消す。コアの命令（daemon だけ）
+ */
+async function rerereForgetFlow(): Promise<void> {
+  const panel = await showView('amonhen.showWorkingCopy');
+  const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+  const gitDir = git('rev-parse', '--absolute-git-dir').trim();
+  const file = join(root, 'rf.txt');
+  const side = (name: string) => {
+    writeFileSync(file, `1\n${name}\n3\n`);
+    git('add', 'rf.txt');
+    git('commit', '-q', '-m', `rf ${name}`);
+  };
+  const merge = () => assert.throws(() => childProcess.execFileSync('git', ['merge', '-q', 'rf-theirs'], { cwd: root, stdio: 'ignore' }));
+  git('config', 'rerere.enabled', 'true');
+  git('switch', '-q', '-c', 'rf-ours');
+  side('ours');
+  git('switch', '-q', '-c', 'rf-theirs', 'HEAD~');
+  side('theirs');
+  git('switch', '-q', 'rf-ours');
+  try {
+    merge();
+    writeFileSync(file, '1\nboth\n3\n');
+    git('rerere');
+    git('merge', '--abort');
+    merge();
+    assert.equal(readFileSync(file, 'utf8'), '1\nboth\n3\n', 'rerere が当てる');
+    await vscode.commands.executeCommand('amonhen.forgetResolution', { path: 'rf.txt' });
+    assert.match(readFileSync(file, 'utf8'), /^<<<<<<< /m, lastErrors());
+    git('merge', '--abort');
+
+    // 覚えた解決をすべて忘れる（もう一度覚えさせてから）
+    merge();
+    writeFileSync(file, '1\nboth\n3\n');
+    git('rerere');
+    git('merge', '--abort');
+    assert.ok(readdirSync(join(gitDir, 'rr-cache')).length > 0);
+    await withWindow({ showWarningMessage: async () => 'Forget All' }, async () =>
+      panel.settings.handle({ type: 'settingsRun', action: 'forgetAllResolutions' }),
+    );
+    assert.equal(existsSync(join(gitDir, 'rr-cache')) ? readdirSync(join(gitDir, 'rr-cache')).length : 0, 0, lastErrors());
+  } finally {
+    try {
+      git('merge', '--abort');
+    } catch {
+      // もうやめている
+    }
+    git('switch', '-q', branch);
+    git('branch', '-q', '-D', 'rf-ours', 'rf-theirs');
+    git('config', '--unset', 'rerere.enabled');
+    rmSync(join(gitDir, 'rr-cache'), { recursive: true, force: true });
+    await vscode.commands.executeCommand('amonhen.refresh');
+  }
+}
+
+/**
  * Stashes は stash があるときだけ出て、行に作ったときのブランチ・土台と HEAD の離れ具合・untracked が出る。
  * stash からブランチを作り（git stash branch）、新しい stash を確かめてから pop する（daemon だけ）
  */
@@ -2296,6 +2352,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('moves a submodule’s repository data into .git/modules and runs a command in each through the daemon', async () => {
     await submoduleMoreFlow();
+  });
+
+  test('forgets one rerere resolution and all of them through the daemon', async () => {
+    await rerereForgetFlow();
   });
 
   test('shows stash details, branches from a stash and pops the latest through the daemon', async () => {

@@ -160,6 +160,20 @@ export class SettingsController implements vscode.Disposable {
         await run({ op: 'configSet', key: 'mailmap.file', value: picked[0].fsPath }, 'Set the mailmap file');
         return;
       }
+      // rerere が覚えた解決をすべて消す（戻せないので確かめる）
+      case 'forgetAllResolutions': {
+        const answer = await vscode.window.showWarningMessage(
+          'Forget every remembered conflict resolution?',
+          { modal: true, detail: 'git forgets the resolutions in .git/rr-cache. Undo can’t bring them back.' },
+          'Forget All',
+        );
+        if (answer !== 'Forget All') return;
+        const reply = (await client.call({ op: 'run', command: { op: 'forgetAllResolutions' } })).json;
+        if (reply['ok'] !== true) throw new Error(String(reply['error'] ?? 'Forgetting the resolutions failed'));
+        const count = Number((reply['info'] as { count?: number } | undefined)?.count ?? 0);
+        vscode.window.setStatusBarMessage(`$(check) Forgot ${count} resolution${count === 1 ? '' : 's'}`, 5000);
+        return;
+      }
       case 'templateSave':
         await run({ op: 'saveCommitTemplate', text: a.text }, 'Save the message template');
         return;

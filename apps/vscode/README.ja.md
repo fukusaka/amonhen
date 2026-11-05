@@ -68,6 +68,7 @@ VSCode 上で快適に Git を操作するための自分用の拡張。Marketpl
 - Changes のファイルは、一覧の ↺、Discard File、Discard Hunk、Discard N Lines で変更を破棄できる。untracked のファイルは消す。破棄した内容は Undo で戻せる。
 - コミット欄は Summary と Description（複数行）。Amend にすると直前のコミットのメッセージが入る。`⌘Enter` / `Ctrl+Enter` でもコミットできる。
 - コンフリクトしたファイルでは、Open in Merge Editor（標準の 3-way マージエディタ）、Accept Current、Accept Incoming、Mark as Resolved を選べる。片側で削除されたファイルも Accept で解決できる。解決済みにするとき、マーカーが残っていれば確認する。マーカーの残っていないファイル（git の rerere が前の解決を当てた、ほかのエディタで直した）は ✓ と「マーカーなし」か「rerere」を出して Mark as Resolved を先に勧め、Conflicts の見出しからまとめて解決済みにできる。そうしたファイルで Accept を選ぶと、解決した内容を置き換える前に確認する。
+- エンジンがあるとき、rerere が解決したコンフリクトのファイルの右クリックに Forget Resolution があり、コンフリクトのマーカーに戻す（Undo でファイルは戻る）。Repository Settings > Operations の Forget All… で、覚えた解決をすべて忘れる。
 
 ### History
 

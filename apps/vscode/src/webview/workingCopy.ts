@@ -96,6 +96,8 @@ export function createWorkingCopyView(): View {
       path: f.path,
       // コンフリクトのファイル（Stash… を出さない）
       ...(f.group === 'conflicts' ? { wcConflict: true } : {}),
+      // rerere が解決を当てたコンフリクトのファイル（Forget Resolution を出す）
+      ...(f.group === 'conflicts' && f.rerere ? { wcRerere: true } : {}),
       preventDefaultContextMenuItems: true,
     });
     const slash = f.path.lastIndexOf('/');

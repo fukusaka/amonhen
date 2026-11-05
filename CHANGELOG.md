@@ -961,6 +961,8 @@ First release.
   Locate Moved Folder… (git 2.29).
 - With the engine, a submodule cloned by hand before it was added has Move Repository Data into .git/modules, and
   the Submodules group has Run in Each Submodule… (`git submodule foreach`).
+- With the engine, a conflict rerere resolved has Forget Resolution on its Working Copy right-click (the markers
+  come back), and Repository Settings > Operations has Forget All… for the remembered resolutions.
 
 #### Fixed
 
