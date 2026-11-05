@@ -2771,6 +2771,14 @@ impl Inner {
             crate::merge::show_in_window(&editor, &window);
             this.embed_message(&tr!("The merge editor is open in a separate window"));
         })));
+        // rerere の解決を忘れたら、読み直して埋め込み直す（ファイルがコンフリクトのある形に戻った）。
+        let (weak, k, p) = (Rc::downgrade(this), key.clone(), editor.path().to_owned());
+        editor.set_on_reload(Some(Rc::new(move || {
+            let Some(this) = weak.upgrade() else { return };
+            this.unembed();
+            this.editors.borrow_mut().remove(&k);
+            Inner::show_conflict(&this, &p, this.generation.get());
+        })));
         // 保存して解決済みにしたら外す（status を読み直すと、普段の差分になる）。
         let weak = Rc::downgrade(this);
         let e = Rc::downgrade(editor);

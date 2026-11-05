@@ -309,6 +309,8 @@ pub struct Editor {
     on_resolved: RefCell<Rc<dyn Fn()>>,
     /// 別の窓で開く（埋め込んだ側が決める）。
     on_pop_out: RefCell<Option<Rc<dyn Fn()>>>,
+    /// rerere が当てた解決を忘れ、ファイルがコンフリクトのある形に戻った（読み直す。埋め込んだ側が決める）。
+    on_reload: RefCell<Option<Rc<dyn Fn()>>>,
 }
 
 thread_local! {
@@ -483,6 +485,7 @@ pub async fn load(
         sides,
         result,
         without_markers,
+        info["rerere"].as_bool() == Some(true),
     ))
 }
 
@@ -595,6 +598,10 @@ impl Editor {
     }
 
     /// 保存して解決済みにしたときの知らせ。
+    pub fn set_on_reload(&self, f: Option<Rc<dyn Fn()>>) {
+        self.on_reload.replace(f);
+    }
+
     pub fn set_on_resolved(&self, f: impl Fn() + 'static) {
         self.on_resolved.replace(Rc::new(f));
     }
@@ -619,6 +626,7 @@ impl Editor {
         sides: [Option<Side>; 3],
         result: String,
         without_markers: Option<String>,
+        rerere: bool,
     ) -> Rc<Self> {
         let current = Pane::new(&tr!("Current (your branch)"), false, "#3584e4");
         let result_pane = Pane::new(&tr!("Result (editable)"), true, "#e01b24");
@@ -765,8 +773,19 @@ impl Editor {
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
         root.append(&bar);
         // マーカーの残っていないファイル（rerere が解決を当てた、ほかのエディタで直した）の案内。
+        let mut banner_forget = None;
         let banner_resolve = without_markers.as_ref().map(|text| {
             let (banner, button) = Self::without_markers_banner(text);
+            // rerere が当てた解決が違っていれば、忘れてコンフリクトからやり直せる（Undo でこの形に戻る。macOS 版と同じ）。
+            if rerere {
+                let forget = gtk::Button::with_label(&tr!("Forget This Resolution"));
+                forget.set_valign(gtk::Align::Center);
+                forget.set_tooltip_text(Some(&tr!(
+                    "Forgets what git rerere recorded for this file and brings its conflict back (git rerere forget). Undo brings back the file as it is now."
+                )));
+                banner.insert_child_after(&forget, banner.last_child().and_then(|c| c.prev_sibling()).as_ref());
+                banner_forget = Some(forget);
+            }
             root.append(&banner);
             button
         });
@@ -831,6 +850,7 @@ impl Editor {
             buttons,
             accept_base,
             on_resolved: RefCell::new(Rc::new(|| {})),
+            on_reload: RefCell::default(),
             on_pop_out: RefCell::default(),
         });
         this.update_conflicts();
@@ -876,6 +896,21 @@ impl Editor {
         if let Some(button) = banner_resolve {
             let f = with(Self::save_and_resolve);
             button.connect_clicked(move |_| f());
+        }
+        if let Some(button) = banner_forget {
+            let weak = Rc::downgrade(&this);
+            button.connect_clicked(move |_| {
+                let Some(this) = weak.upgrade() else { return };
+                let reload = this.on_reload.borrow().clone();
+                this.actions.perform_then(
+                    vec![serde_json::json!({ "op": "forgetResolution", "path": this.path })],
+                    move || {
+                        if let Some(f) = &reload {
+                            f();
+                        }
+                    },
+                );
+            });
         }
 
         let weak = Rc::downgrade(&this);
