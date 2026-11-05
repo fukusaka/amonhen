@@ -286,6 +286,16 @@
         "category": "Amon Hen"
       },
       {
+        "command": "amonhen.restoreFile.thisVersion",
+        "title": "Restore This Version…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.restoreFile.versionBefore",
+        "title": "Restore the Version Before…",
+        "category": "Amon Hen"
+      },
+      {
         "command": "amonhen.branch.addToFavorites",
         "title": "Add to Favorites",
         "category": "Amon Hen"
@@ -1384,6 +1394,14 @@
         {
           "command": "amonhen.worktree.prune",
           "when": "amonhen.hasRepository && amonhen.engine"
+        },
+        {
+          "command": "amonhen.restoreFile.thisVersion",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.restoreFile.versionBefore",
+          "when": "false"
         }
       ],
       "webview/context": [
@@ -1516,6 +1534,16 @@
           "command": "amonhen.reflog.copyName",
           "when": "webviewId == 'amonhen.main' && webviewSection == 'reflog'",
           "group": "9_copy@2"
+        },
+        {
+          "command": "amonhen.restoreFile.thisVersion",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commitFile' && amonhen.engine",
+          "group": "2_restore@1"
+        },
+        {
+          "command": "amonhen.restoreFile.versionBefore",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commitFile' && amonhen.engine",
+          "group": "2_restore@2"
         }
       ],
       "editor/title/context": [

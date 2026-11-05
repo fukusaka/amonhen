@@ -953,6 +953,8 @@ First release.
   (nested ones, or to the branch followed), pointed elsewhere, synced and removed (keeping `.git/modules` unless asked).
 - With the engine and a git that has `git subtree`, a Subtrees group lists the folders added with it; Add Subtree…,
   Pull…, Push… and Split… start from the repository, branch and squash used last.
+- With the engine, a file's right-click in History's details has Restore This Version… and Restore the Version
+  Before…, which put that version in the working tree (and the index if chosen); Undo takes the file back.
 
 #### Fixed
 

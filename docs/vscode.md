@@ -234,3 +234,4 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 23. Repository settings
 - [x] 24. Submodules: marks, Update…, Edit URL…, Branch to Follow…, Remove…, Update All, Sync URLs, Add Submodule…
 - [x] 25. Subtrees: Add, Pull, Push, Split
+- [x] 26. Restoring a file to a commit's version, or the one before

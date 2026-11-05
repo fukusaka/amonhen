@@ -1022,6 +1022,43 @@ async function subtreeFlow(): Promise<void> {
 }
 
 /**
+ * History のファイルの Restore the Version Before… で、作業ツリーのファイルを 1 つ前の版にし、Undo で戻す。
+ * Restore and Stage は index にも入れる。コアの命令（daemon だけ）
+ */
+async function restoreFlow(): Promise<void> {
+  const repo = api.manager.current!;
+  const start = git('rev-parse', 'HEAD').trim();
+  const path = join(root, 'restore-e2e.txt');
+  const read = () => readFileSync(path, 'utf8').replaceAll('\r\n', '\n');
+  writeFileSync(path, 'one\n');
+  git('add', 'restore-e2e.txt');
+  git('commit', '-q', '-m', 'restore one');
+  writeFileSync(path, 'two\n');
+  git('commit', '-q', '-am', 'restore two');
+  const head = git('rev-parse', 'HEAD').trim();
+  try {
+    await repo.refresh();
+    await withWindow({ showWarningMessage: async () => 'Restore' }, async () =>
+      vscode.commands.executeCommand('amonhen.restoreFile.versionBefore', { oid: head, path: 'restore-e2e.txt' }),
+    );
+    assert.equal(read(), 'one\n', lastErrors());
+    assert.equal(git('diff', '--cached', '--name-only').trim(), '', 'Restore は index に入れない');
+    await withWindow({ showWarningMessage: async () => 'Undo' }, async () => vscode.commands.executeCommand('amonhen.undo'));
+    assert.equal(read(), 'two\n');
+
+    // この版（HEAD）に戻すのは何も変えない。1 つ前の版を stage まで
+    await withWindow({ showWarningMessage: async () => 'Restore and Stage' }, async () =>
+      vscode.commands.executeCommand('amonhen.restoreFile.versionBefore', { oid: head, path: 'restore-e2e.txt' }),
+    );
+    assert.equal(git('diff', '--cached', '--name-only').trim(), 'restore-e2e.txt');
+  } finally {
+    git('reset', '-q', '--hard', start);
+    rmSync(path, { force: true });
+    await repo.refresh();
+  }
+}
+
+/**
  * Stashes は stash があるときだけ出て、行に作ったときのブランチ・土台と HEAD の離れ具合・untracked が出る。
  * stash からブランチを作り（git stash branch）、新しい stash を確かめてから pop する（daemon だけ）
  */
@@ -2072,6 +2109,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('adds, pulls, splits and pushes a subtree through the daemon', async () => {
     await subtreeFlow();
+  });
+
+  test('restores a file to the version before a commit through the daemon', async () => {
+    await restoreFlow();
   });
 
   test('shows stash details, branches from a stash and pops the latest through the daemon', async () => {

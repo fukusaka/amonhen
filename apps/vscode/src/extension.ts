@@ -19,6 +19,7 @@ import { registerReflogCommands } from './ui/reflogCommands.ts';
 import { registerSequenceCommands } from './ui/sequenceCommands.ts';
 import { SidebarProvider } from './ui/sidebar.ts';
 import { registerStashCommands } from './ui/stashCommands.ts';
+import { registerRestoreCommands } from './ui/restoreCommands.ts';
 import { registerSubmoduleCommands } from './ui/submoduleCommands.ts';
 import { registerSubtreeCommands } from './ui/subtreeCommands.ts';
 import { registerSyncCommands } from './ui/syncCommands.ts';
@@ -104,6 +105,7 @@ export async function activate(
     registerMergeBranchesCommand(manager),
     registerBranchCommands(manager),
     registerStashCommands(manager),
+    registerRestoreCommands(manager),
     registerSubmoduleCommands(manager, sidebar),
     registerSubtreeCommands(manager, sidebar),
     registerRangeDiffCommands(manager),
