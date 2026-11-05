@@ -555,6 +555,10 @@ fn handlers() -> Vec<(&'static str, Handler)> {
         ("skip", run(json!({ "op": "skip" }))),
         ("abort", run(json!({ "op": "abort" }))),
         ("stash", Box::new(|p| p.actions.stash())),
+        (
+            "delete-ignored-files",
+            Box::new(|p| p.actions.delete_ignored_files()),
+        ),
         ("pop-stash", Box::new(pop_stash)),
         ("undo", Box::new(|p| crate::sheets::undo(&p.actions))),
         (

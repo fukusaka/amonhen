@@ -2170,3 +2170,8 @@
 "Also in the submodules inside them (--recursive)" = "中の submodule でも（--recursive）";
 "Run" = "動かす";
 "Move Repository Data into .git/modules" = "リポジトリのデータを .git/modules に移す";
+"Delete Ignored Files…" = "ignore されたファイルを消す…";
+"No Ignored Files" = "ignore されたファイルはありません";
+"Delete {count} Ignored Items?" = "ignore された {count} 個を消しますか？";
+"Nothing in the working tree matches .gitignore." = "作業ツリーに .gitignore に当たるものはありません。";
+"These are removed from the working tree (git clean -X); folders go with everything in them." = "これらを作業ツリーから消します（git clean -X）。フォルダは中身ごと消えます。";

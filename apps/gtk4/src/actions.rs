@@ -395,6 +395,67 @@ impl Actions {
         });
     }
 
+    /// ignore されたファイル（ビルドの出力など）を消す（git clean -X）。消すものを先に一覧で見せる。git の記録に
+    /// ないので戻せない（赤いボタン。macOS 版と同じ）。
+    pub fn delete_ignored_files(self: &Rc<Self>) {
+        let Some(repo) = self.repo() else { return };
+        let this = self.clone();
+        glib::spawn_future_local(async move {
+            let reply = crate::sheets::run(&repo, json!({ "op": "ignoredFiles" })).await;
+            let parent = crate::sheets::parent(&this);
+            if let Some(error) = reply["error"].as_str() {
+                return crate::sheets::inform(
+                    parent.as_ref(),
+                    &tr!("Delete Ignored Files…"),
+                    error,
+                )
+                .await;
+            }
+            let paths: Vec<String> = reply["info"]["paths"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|p| p.as_str().map(str::to_owned))
+                .collect();
+            if paths.is_empty() {
+                return crate::sheets::inform(
+                    parent.as_ref(),
+                    &tr!("No Ignored Files"),
+                    &tr!("Nothing in the working tree matches .gitignore."),
+                )
+                .await;
+            }
+            let sheet = crate::sheets::Sheet::new(
+                parent.as_ref(),
+                &tr!("Delete {count} Ignored Items?", count = paths.len()),
+                &format!(
+                    "{} {}",
+                    tr!(
+                        "These are removed from the working tree (git clean -X); folders go with everything in them."
+                    ),
+                    crate::sheets::cant_undo()
+                ),
+            );
+            let list = gtk::Label::new(Some(&paths.join("\n")));
+            list.set_xalign(0.0);
+            list.set_yalign(0.0);
+            list.add_css_class("monospace");
+            list.set_selectable(true);
+            let scrolled = gtk::ScrolledWindow::builder()
+                .child(&list)
+                .min_content_height(160)
+                .max_content_height(160)
+                .min_content_width(380)
+                .build();
+            scrolled.add_css_class("frame");
+            sheet.add(&scrolled);
+            sheet.buttons(&tr!("Delete"), true, None);
+            if sheet.run().await == crate::sheets::Response::Ok {
+                this.perform(json!({ "op": "deleteIgnored", "paths": paths }));
+            }
+        });
+    }
+
     pub fn stash(self: &Rc<Self>) {
         self.stash_paths(Vec::new());
     }
