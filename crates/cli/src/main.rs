@@ -67,7 +67,7 @@ usage: amonhen [<path>]
        amonhen bundle create [--json] <file> (--all | <ref>… [^<base>…] | <base>..<ref>)
        amonhen bundle fetch [--json] <file> [<name>]
        amonhen clone [--filter=<spec>] [--depth <n>] [--sparse] [-b <branch>] [--recurse-submodules] <url> [<dir>]
-       amonhen submodule [list [--json] | add [-b <branch>] <url> <path> | update [--recursive] [--remote] [<path>…] | remove [--delete-git-dir] <path> | set-url <path> <url> | set-branch (-b <branch> | --default) <path> | sync [--recursive]]
+       amonhen submodule [list [--json] | add [-b <branch>] <url> <path> | update [--recursive] [--remote] [<path>…] | remove [--delete-git-dir] <path> | set-url <path> <url> | set-branch (-b <branch> | --default) <path> | sync [--recursive] | absorb [<path>…] | foreach [--recursive] <command>]
        amonhen subtree [list [--json] | add [--squash] <dir> <url> <ref> | pull [--squash | --no-squash] <dir> [<url> <ref>] | push <dir> [<url> <ref>] | split <dir> -b <branch>]
        amonhen daemon [status [--json] | start | stop | rebuild [<path> | ssh://host/path]]
        amonhen install [--quiet] [--no-link] [--force]   (puts the engine in ~/.local/share/amonhen and links ~/.local/bin/amonhen)

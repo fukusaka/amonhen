@@ -7553,6 +7553,45 @@ mod tests {
     }
 
     #[test]
+    fn absorbs_submodule_git_dirs_and_runs_commands_in_each() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        // 自分の .git フォルダを持つ submodule（手で clone したものを足す）。
+        let lib = tempfile::tempdir().unwrap();
+        git(lib.path(), &["init", "-q"]);
+        git(lib.path(), &["commit", "-q", "--allow-empty", "-m", "lib"]);
+        let url = lib.path().to_str().unwrap().replace('\\', "/");
+        git(dir, &["clone", "-q", &url, "lib"]);
+        git(dir, &["submodule", "add", "-q", &url, "lib"]);
+        let state = || run(&repo, r#"{"op":"submodules"}"#)["info"]["submodules"][0].clone();
+        assert_eq!(state()["ownGitDir"], true, "{}", state());
+        let change = |json: serde_json::Value| {
+            run(
+                &repo,
+                &serde_json::json!({ "op": "changeSubmodule", "change": json }).to_string(),
+            )
+        };
+        let r = change(serde_json::json!({ "kind": "absorb", "paths": ["lib"] }));
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(state()["ownGitDir"], false);
+        assert!(dir.join(".git/modules/lib").is_dir());
+        assert!(dir.join("lib/.git").is_file());
+        let r = change(
+            serde_json::json!({ "kind": "foreach", "command": "git log -1 --format=%s > ran.txt", "recursive": false }),
+        );
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("lib/ran.txt"))
+                .unwrap()
+                .trim(),
+            "lib"
+        );
+        let r =
+            change(serde_json::json!({ "kind": "foreach", "command": " ", "recursive": false }));
+        assert_eq!(r["ok"], false);
+    }
+
+    #[test]
     fn adds_inspects_changes_and_removes_submodules() {
         let (tmp, repo) = setup();
         let dir = tmp.path();

@@ -403,6 +403,10 @@ pub struct SubmoduleState {
     pub branch: Option<String>,
     /// 取り出してある（`git submodule status` の `-` でない）。
     pub initialized: bool,
+    /// 中のリポジトリのデータを自分のフォルダに持っている（`<path>/.git` がフォルダ。`absorbgitdirs` で
+    /// `.git/modules` に移せる）。
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub own_git_dir: bool,
     /// 記録したコミットと違うコミットにいる（`+`）。
     pub moved: bool,
     /// 中に、コミットしていない変更か untracked のファイルがある。
@@ -441,6 +445,10 @@ pub enum SubmoduleChange {
     },
     /// `.gitmodules` の URL を `.git/config` に写す（`git submodule sync`）。
     Sync { recursive: bool },
+    /// 中のリポジトリのデータを `.git/modules` に移す（`git submodule absorbgitdirs`。`paths` が空ならすべて）。
+    Absorb { paths: Vec<String> },
+    /// それぞれの submodule の中で `command` を動かす（`git submodule foreach`、シェルで）。
+    Foreach { command: String, recursive: bool },
 }
 
 /// submodule の update の仕方。既定は git と同じく、記録したコミットにし、中の submodule には入らない。
