@@ -599,7 +599,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
     ]
       .filter((l) => l !== undefined)
       .join('\n');
-    item.contextValue = `worktree${w.main ? ';main' : ''}${editing ? ';editing' : ''}${w.prunable !== null ? ';prunable' : ''}`;
+    item.contextValue = `worktree${w.main ? ';main' : ''}${editing ? ';editing' : ''}${w.prunable !== null ? ';prunable' : ''}${w.locked !== null ? ';locked' : ''}`;
     if (!editing && w.prunable === null) {
       item.command = { command: 'amonhen.worktree.edit', title: 'Edit This Worktree', arguments: [{ kind: 'worktree', worktree: w }] };
     }

@@ -107,6 +107,50 @@ export function registerWorktreeCommands(manager: RepositoryManager, sidebar: Si
       await run(from, { op: 'worktreeRemove', path: w.path, force: changes > 0 || w.locked !== null }, `Remove worktree ${worktreeName(w)}`);
       await sidebar.worktrees.reload();
     }),
+    // ロックすると、git は prune・remove・move で消さない（理由は書いても書かなくてもよい）
+    command('amonhen.worktree.lock', async (w, repo) => {
+      const reason = await vscode.window.showInputBox({
+        title: `Lock ${worktreeName(w)}`,
+        prompt: 'Reason (optional). A locked worktree isn’t pruned, removed or moved',
+      });
+      if (reason === undefined) return;
+      await run(repo, { op: 'worktreeLock', path: w.path, reason: reason.trim() || null }, `Lock ${worktreeName(w)}`);
+      await sidebar.worktrees.reload();
+    }),
+    command('amonhen.worktree.unlock', async (w, repo) => {
+      await run(repo, { op: 'worktreeUnlock', path: w.path }, `Unlock ${worktreeName(w)}`);
+      await sidebar.worktrees.reload();
+    }),
+    // フォルダを移す（git worktree move）。開いていれば閉じてから（Windows では、使っているフォルダーを移せない）
+    command('amonhen.worktree.move', async (w, repo) => {
+      const to = (
+        await vscode.window.showInputBox({
+          title: `Move ${worktreeName(w)}`,
+          prompt: 'New folder',
+          value: w.path,
+          validateInput: (v) => (!v.trim() ? 'Enter a folder' : samePath(v.trim(), w.path) ? 'Choose another folder' : undefined),
+        })
+      )?.trim();
+      if (!to) return;
+      const opened = manager.repositories.find((r) => samePath(r.root, w.path));
+      await manager.forget(w.path);
+      if (opened) closeDaemonClient(opened.root);
+      await run(repo, { op: 'worktreeMove', path: w.path, to }, `Move ${worktreeName(w)}`);
+      await sidebar.worktrees.reload();
+    }),
+    // 手で移した worktree の、今の場所を教える（git worktree repair、git 2.29 から）
+    command('amonhen.worktree.repair', async (w, repo) => {
+      const picked = await vscode.window.showOpenDialog({
+        title: `Where is ${worktreeName(w)} now?`,
+        canSelectFiles: false,
+        canSelectFolders: true,
+        openLabel: 'Locate',
+        defaultUri: vscode.Uri.file(dirname(w.path)),
+      });
+      if (!picked?.[0]) return;
+      await run(repo, { op: 'worktreeRepair', paths: [picked[0].fsPath] }, `Locate ${worktreeName(w)}`);
+      await sidebar.worktrees.reload();
+    }),
     vscode.commands.registerCommand('amonhen.worktree.prune', async () => {
       const repo = manager.current;
       if (!repo) return;

@@ -228,3 +228,4 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 25. subtree: Add・Pull・Push・Split
 - [x] 26. ファイルをコミットの版・その前の版に戻す
 - [x] 27. stage した変更だけ・stage した変更を残して・1 つのファイルだけ stash する
+- [x] 28. worktree のロックと解除・移動・移したフォルダを探す

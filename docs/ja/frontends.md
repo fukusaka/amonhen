@@ -393,7 +393,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 書き込む先の worktree（✎）と切り替え | ✓ | ✓ | ✓ | n/a | VSCode: 拡張が働くリポジトリを切り替える。ワークスペースの外のものはソース管理のビューには足さない。<br>CLI: 動かした worktree で働く。 |
 | New Worktree…（ブランチ・コミットから） | ✓ | ✓ | ✓ | ✓ |  |
 | Remove Worktree（尋ね、変更があれば `--force`） | ✓ | ✓ | ✓ | ✓ |  |
-| ロックと解除・移動・移したフォルダを探す（repair） | ✓ | ✓ | — | ✓ | CLI: `worktree lock`・`unlock`・`move`・`repair`。 |
+| ロックと解除・移動・移したフォルダを探す（repair） | ✓ | ✓ | ✓ | ✓ | VSCode: worktree の右クリックから。書き込む先の worktree は、ほかに切り替えてから移す。<br>CLI: `worktree lock`・`unlock`・`move`・`repair`。 |
 | worktree の Prune | ✓ | ✓ | ✓ | ✓ |  |
 | worktree のフォルダーを開くと、そのリポジトリでそれを書き込む先にする | ✓ | ✓ | ✓ | n/a | VSCode: フォルダーを開くとその worktree で働き、ほかの worktree も並ぶ。 |
 

@@ -7,7 +7,7 @@
  */
 import assert from 'node:assert/strict';
 import childProcess from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import * as vscode from 'vscode';
 import { DaemonClient } from '../src/daemon/client.ts';
@@ -1119,6 +1119,68 @@ async function stashOptionsFlow(): Promise<void> {
 }
 
 /**
+ * worktree をロックし（理由つき）、外し、別のフォルダに移し、手で移したものの今の場所を教える（repair は git 2.29
+ * から）。コアの命令（daemon だけ）
+ */
+async function worktreeMoreFlow(): Promise<void> {
+  const sidebar = api.sidebar;
+  const repo = api.manager.current!;
+  const folder = join(dirname(root), 'wt-more-a');
+  const moved = join(dirname(root), 'wt-more-b');
+  const byHand = join(dirname(root), 'wt-more-c');
+  const [major, minor] = git('--version').match(/(\d+)\.(\d+)/)!.slice(1).map(Number) as [number, number];
+  const node = async (path: string) => {
+    await sidebar.worktrees.reload();
+    const worktree = await until(`worktree ${path}`, () => sidebar.worktrees.worktrees.find((w) => samePath(w.path, path)));
+    return { kind: 'worktree', worktree };
+  };
+  const porcelain = () => git('worktree', 'list', '--porcelain');
+  git('worktree', 'add', '-q', '-b', 'wt-more', folder);
+  try {
+    // ロックは git dir の locked に理由を書く（`worktree list` が locked を出すのは git 2.31 から）
+    const locked = join(git('-C', folder, 'rev-parse', '--absolute-git-dir').trim(), 'locked');
+    await withWindow({ showInputBox: inputs('keep it') }, async () => vscode.commands.executeCommand('amonhen.worktree.lock', await node(folder)));
+    assert.equal(existsSync(locked) && readFileSync(locked, 'utf8').trim(), 'keep it', lastErrors());
+    await vscode.commands.executeCommand('amonhen.worktree.unlock', await node(folder));
+    assert.ok(!existsSync(locked), lastErrors());
+
+    await withWindow({ showInputBox: inputs(moved) }, async () => vscode.commands.executeCommand('amonhen.worktree.move', await node(folder)));
+    assert.ok(existsSync(moved) && !existsSync(folder), lastErrors());
+    assert.match(porcelain().replaceAll('\\', '/'), new RegExp(basename(moved)));
+
+    if (major > 2 || (major === 2 && minor >= 29)) {
+      // 手で移すと、git は場所を見失う。今の場所を教えると直る
+      renameSync(moved, byHand);
+      await withWindow({ showOpenDialog: async () => [vscode.Uri.file(byHand)] }, async () =>
+        vscode.commands.executeCommand('amonhen.worktree.repair', await node(moved)),
+      );
+      assert.match(porcelain().replaceAll('\\', '/'), new RegExp(basename(byHand)), lastErrors());
+      assert.equal(git('-C', byHand, 'symbolic-ref', '--short', 'HEAD').trim(), 'wt-more');
+    }
+  } finally {
+    for (const p of [folder, moved, byHand]) {
+      if (existsSync(p)) {
+        try {
+          // 途中で落ちたときはロックが残っている
+          git('worktree', 'unlock', p);
+        } catch {
+          // ロックしていなければ git が断る
+        }
+        try {
+          git('worktree', 'remove', '--force', p);
+        } catch {
+          rmSync(p, { recursive: true, force: true });
+        }
+      }
+    }
+    git('worktree', 'prune');
+    if (git('branch', '--list', 'wt-more').trim()) git('branch', '-q', '-D', 'wt-more');
+    await sidebar.worktrees.reload();
+    await repo.refresh();
+  }
+}
+
+/**
  * Stashes は stash があるときだけ出て、行に作ったときのブランチ・土台と HEAD の離れ具合・untracked が出る。
  * stash からブランチを作り（git stash branch）、新しい stash を確かめてから pop する（daemon だけ）
  */
@@ -2177,6 +2239,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('stashes only the staged changes, keeping them, or one file through the daemon', async () => {
     await stashOptionsFlow();
+  });
+
+  test('locks, unlocks, moves and locates a moved worktree through the daemon', async () => {
+    await worktreeMoreFlow();
   });
 
   test('shows stash details, branches from a stash and pops the latest through the daemon', async () => {

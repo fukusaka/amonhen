@@ -270,6 +270,26 @@
         "category": "Amon Hen"
       },
       {
+        "command": "amonhen.worktree.lock",
+        "title": "Lock Worktree…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.worktree.unlock",
+        "title": "Unlock Worktree",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.worktree.move",
+        "title": "Move Worktree…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.worktree.repair",
+        "title": "Locate Moved Folder…",
+        "category": "Amon Hen"
+      },
+      {
         "command": "amonhen.fileHistory",
         "title": "File History",
         "category": "Amon Hen",
@@ -1045,6 +1065,26 @@
           "command": "amonhen.subtree.split",
           "when": "view == amonhen.sidebar && amonhen.engine && amonhen.subtrees && viewItem == subtree",
           "group": "1_subtree@3"
+        },
+        {
+          "command": "amonhen.worktree.lock",
+          "when": "view == amonhen.sidebar && amonhen.engine && viewItem =~ /^worktree(?!.*;(main|prunable|locked))/",
+          "group": "4_worktree@3"
+        },
+        {
+          "command": "amonhen.worktree.unlock",
+          "when": "view == amonhen.sidebar && amonhen.engine && viewItem =~ /^worktree.*;locked/",
+          "group": "4_worktree@3"
+        },
+        {
+          "command": "amonhen.worktree.move",
+          "when": "view == amonhen.sidebar && amonhen.engine && viewItem =~ /^worktree(?!.*;(main|prunable|locked|editing))/",
+          "group": "4_worktree@4"
+        },
+        {
+          "command": "amonhen.worktree.repair",
+          "when": "view == amonhen.sidebar && amonhen.engine && viewItem =~ /^worktree.*;prunable/",
+          "group": "4_worktree@1"
         }
       ],
       "commandPalette": [
@@ -1410,6 +1450,22 @@
         },
         {
           "command": "amonhen.stash.files",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.worktree.lock",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.worktree.unlock",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.worktree.move",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.worktree.repair",
           "when": "false"
         }
       ],
