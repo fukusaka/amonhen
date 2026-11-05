@@ -440,7 +440,6 @@ impl Actions {
             list.set_xalign(0.0);
             list.set_yalign(0.0);
             list.add_css_class("monospace");
-            list.set_selectable(true);
             let scrolled = gtk::ScrolledWindow::builder()
                 .child(&list)
                 .min_content_height(160)
