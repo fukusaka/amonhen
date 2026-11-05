@@ -131,6 +131,32 @@ export function registerSubmoduleCommands(manager: RepositoryManager, sidebar: S
         `Remove ${path}`,
       );
     }),
+    // 中のリポジトリのデータを .git/modules に移す（git submodule absorbgitdirs）
+    onRow('amonhen.submodule.absorb', (repo, path) =>
+      run(repo, { op: 'changeSubmodule', change: { kind: 'absorb', paths: [path] } }, `Move the repository data of ${path}`),
+    ),
+    // それぞれの submodule の中でシェルの命令を動かす（git submodule foreach）。出力は出せない（コアは成否だけを返す）
+    onRepo('amonhen.submodules.foreach', async (repo) => {
+      const command = (
+        await vscode.window.showInputBox({
+          title: 'Run in Each Submodule',
+          prompt: 'Shell command to run in each submodule’s folder (git submodule foreach)',
+          placeHolder: 'git switch main',
+          validateInput: (v) => (v.trim() ? undefined : 'Enter a command'),
+        })
+      )?.trim();
+      if (!command) return;
+      const depth = await vscode.window.showQuickPick(
+        [
+          { label: 'These Submodules', recursive: false },
+          { label: 'Also the Submodules Inside', detail: '--recursive', recursive: true },
+        ],
+        { title: 'Run in Each Submodule' },
+      );
+      if (!depth) return;
+      await run(repo, { op: 'changeSubmodule', change: { kind: 'foreach', command, recursive: depth.recursive } }, `Run ${command}`);
+      vscode.window.setStatusBarMessage(`$(check) Ran ${command} in each submodule`, 5000);
+    }),
     onRepo('amonhen.submodules.updateAll', (repo) => run(repo, { op: 'updateSubmodules', paths: [] }, 'Update all submodules')),
     onRepo('amonhen.submodules.update', async (repo) => {
       const paths = (repo.current.submodules ?? []).map((s) => s.path);

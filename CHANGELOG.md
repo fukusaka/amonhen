@@ -959,6 +959,8 @@ First release.
   file's right-click has Stash… for that file alone.
 - With the engine, a worktree's right-click has Lock…, Unlock and Move…, and a worktree whose folder is gone has
   Locate Moved Folder… (git 2.29).
+- With the engine, a submodule cloned by hand before it was added has Move Repository Data into .git/modules, and
+  the Submodules group has Run in Each Submodule… (`git submodule foreach`).
 
 #### Fixed
 

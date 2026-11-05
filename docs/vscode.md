@@ -237,3 +237,4 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 26. Restoring a file to a commit's version, or the one before
 - [x] 27. Stashing only the staged changes, keeping them, or one file
 - [x] 28. Locking, unlocking, moving and locating a moved worktree
+- [x] 29. Moving a submodule's repository data into .git/modules, running a command in each submodule

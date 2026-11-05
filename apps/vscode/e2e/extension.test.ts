@@ -7,7 +7,7 @@
  */
 import assert from 'node:assert/strict';
 import childProcess from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import * as vscode from 'vscode';
 import { DaemonClient } from '../src/daemon/client.ts';
@@ -1181,6 +1181,55 @@ async function worktreeMoreFlow(): Promise<void> {
 }
 
 /**
+ * 手で clone してから足した submodule は、データを自分のフォルダに持つ。Move Repository Data into .git/modules で
+ * 移し、Run in Each Submodule… でそれぞれの中で命令を動かす。コアの命令（daemon だけ）
+ */
+async function submoduleMoreFlow(): Promise<void> {
+  const sidebar = api.sidebar;
+  const repo = api.manager.current!;
+  const start = git('rev-parse', 'HEAD').trim();
+  const lib = join(dirname(root), 'smm-lib');
+  const path = 'vendor/smm-lib';
+  const gitDir = git('rev-parse', '--absolute-git-dir').trim();
+  git('config', '--global', 'protocol.file.allow', 'always');
+  childProcess.execFileSync('git', ['init', '-q', lib]);
+  childProcess.execFileSync('git', ['-C', lib, '-c', 'user.name=a', '-c', 'user.email=a@example.com', 'commit', '-q', '--allow-empty', '-m', 'lib']);
+  try {
+    // 手で clone してから足す（データはその中に残る）
+    git('clone', '-q', `file://${lib.replaceAll('\\', '/')}`, path);
+    git('submodule', 'add', '-q', `file://${lib.replaceAll('\\', '/')}`, path);
+    const section = sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'submodules')!;
+    sidebar.onDidExpand(section);
+    await repo.refresh();
+    await sidebar.submoduleFacts.reload();
+    await until('自分のフォルダにデータ', () => sidebar.submoduleFacts.get(path)?.ownGitDir);
+    const row = await until('submodule の行', () => sidebar.getChildren(section).find((n) => n.kind === 'submodule' && n.submodule.path === path));
+    assert.match(String(sidebar.getTreeItem(row).contextValue), /;ownGitDir/);
+    await vscode.commands.executeCommand('amonhen.submodule.absorb', row);
+    assert.ok(existsSync(join(gitDir, 'modules', path)), lastErrors());
+    assert.ok(statSync(join(root, path, '.git')).isFile(), '.git はファイル（gitdir: の指し先）になる');
+
+    await withWindow(
+      { showInputBox: inputs('git tag foreach-e2e'), showQuickPick: async (items: readonly vscode.QuickPickItem[]) => items[0] },
+      async () => vscode.commands.executeCommand('amonhen.submodules.foreach'),
+    );
+    assert.equal(git('-C', path, 'tag', '--list', 'foreach-e2e').trim(), 'foreach-e2e', lastErrors());
+  } finally {
+    git('reset', '-q', '--hard', start);
+    rmSync(join(root, 'vendor'), { recursive: true, force: true });
+    rmSync(join(gitDir, 'modules'), { recursive: true, force: true });
+    try {
+      git('config', '--remove-section', `submodule.${path}`);
+    } catch {
+      // ない
+    }
+    git('config', '--global', '--unset', 'protocol.file.allow');
+    rmSync(lib, { recursive: true, force: true });
+    await repo.refresh();
+  }
+}
+
+/**
  * Stashes は stash があるときだけ出て、行に作ったときのブランチ・土台と HEAD の離れ具合・untracked が出る。
  * stash からブランチを作り（git stash branch）、新しい stash を確かめてから pop する（daemon だけ）
  */
@@ -2243,6 +2292,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('locks, unlocks, moves and locates a moved worktree through the daemon', async () => {
     await worktreeMoreFlow();
+  });
+
+  test('moves a submodule’s repository data into .git/modules and runs a command in each through the daemon', async () => {
+    await submoduleMoreFlow();
   });
 
   test('shows stash details, branches from a stash and pops the latest through the daemon', async () => {
