@@ -22,6 +22,8 @@ becomes the GitHub Release notes.
 - Repository > New Orphan Branch… starts a branch with no history, empty or keeping the current files staged.
 - The merge editor forgets a resolution rerere applied and brings the conflict back, and Repository Settings forgets
   all recorded resolutions.
+- Submodules can move their repository data into `.git/modules` and run a command in each one
+  (`amonhen submodule absorb|foreach`).
 - On Linux and the BSDs, Settings > Performance > fsmonitor speeds up status with Watchman when it is installed (git
   2.26 or later); the engine answers git as its fsmonitor hook, and nothing is written to the repository's config.
 

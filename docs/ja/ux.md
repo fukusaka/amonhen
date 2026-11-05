@@ -643,6 +643,9 @@ Staged / Unstaged の 2 群をやめ、変更のあるファイルを 1 つの�
   push していないコミットも戻る）。
 - 見出しのメニュー: Update All、Update Submodules…、Sync URLs、submodule を追加…（URL、フォルダ（既定は URL から）、
   あれば追うブランチ）。Repository のメニューにも submodule を追加…・Update Submodules… がある。
+- 自分のフォルダにリポジトリのデータを持つ submodule（手で clone して足したもの）には、リポジトリのデータを
+  .git/modules に移す（`git submodule absorbgitdirs`）。見出しのメニューに それぞれの submodule で動かす…（それぞれの
+  フォルダでシェルの命令を。選べば `--recursive`。出力は Activity に）。
 - Clone のシートに「submodule も取り出す」（既定はオフ。git と同じ）。
 
 ## 7g. subtree

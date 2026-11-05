@@ -687,6 +687,9 @@ the sidebar is wider.
   (off: kept, as git does, so adding it again brings back commits not pushed).
 - The group's menu: Update All, Update Submodules…, Sync URLs and Add Submodule… (URL, folder from the URL by default,
   branch to follow if any). The Repository menu has Add Submodule… and Update Submodules… too.
+- A submodule that keeps its repository data in its own folder (cloned by hand, then added) has Move Repository Data
+  into .git/modules (`git submodule absorbgitdirs`). The group's menu has Run in Each Submodule… (a shell command in
+  each one's folder, `--recursive` if chosen; the output is in Activity).
 - The Clone sheet has "Check out submodules too" (off by default, as in git).
 
 ## 7g. Subtrees
