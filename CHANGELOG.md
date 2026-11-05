@@ -963,6 +963,8 @@ First release.
   the Submodules group has Run in Each Submodule… (`git submodule foreach`).
 - With the engine, a conflict rerere resolved has Forget Resolution on its Working Copy right-click (the markers
   come back), and Repository Settings > Operations has Forget All… for the remembered resolutions.
+- With the engine, New Orphan Branch… (Command Palette, the Branches group's right-click) switches to a branch with
+  no history, empty or keeping the current files staged.
 
 #### Fixed
 

@@ -239,3 +239,4 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 28. Locking, unlocking, moving and locating a moved worktree
 - [x] 29. Moving a submodule's repository data into .git/modules, running a command in each submodule
 - [x] 30. Forgetting a rerere resolution, or all of them
+- [x] 31. A new orphan branch, empty or keeping the files

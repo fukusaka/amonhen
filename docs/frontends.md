@@ -159,7 +159,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| New Orphan Branch (empty, or keeping the files) | ✓ | ✓ | — | △ | CLI: Via `amonhen run` (`createOrphanBranch`). |
+| New Orphan Branch (empty, or keeping the files) | ✓ | ✓ | ✓ | △ | VSCode: The Command Palette and the Branches group's right-click.<br>CLI: Via `amonhen run` (`createOrphanBranch`). |
 | Branch switcher (fuzzy search, recent, tracking or new branch) | ✓ | ✓ | △ | △ | VSCode: Checkout from the sidebar and New Branch… only.<br>CLI: Via `amonhen run`. |
 | Fetch sheet (all or one remote, prune shown) | ✓ | ✓ | △ | △ | VSCode: Fetches all with prune at once, without a sheet.<br>CLI: Via `amonhen run`. |
 | Pull sheet (commits, merge / rebase / ff-only, upstream when missing) | ✓ | ✓ | △ | △ | VSCode: Merges the upstream without a sheet or choice.<br>CLI: Via `amonhen run`. |

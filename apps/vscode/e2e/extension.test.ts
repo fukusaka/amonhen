@@ -1286,6 +1286,36 @@ async function rerereForgetFlow(): Promise<void> {
 }
 
 /**
+ * New Orphan Branch… で履歴のないブランチに切り替える。Keep the Files なら今のファイルが stage されて残り、Start Empty
+ * なら何もない。コアの命令（daemon だけ）
+ */
+async function orphanFlow(): Promise<void> {
+  const repo = api.manager.current!;
+  const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+  const pick = (name: string, label: string) => ({
+    showInputBox: inputs(name),
+    showQuickPick: async (items: readonly vscode.QuickPickItem[]) => items.find((i) => i.label === label),
+  });
+  const unborn = () => assert.throws(() => git('rev-parse', '-q', '--verify', 'HEAD'), 'まだコミットがない');
+  try {
+    await withWindow(pick('orphan-keep', 'Keep the Files'), async () => vscode.commands.executeCommand('amonhen.branch.newOrphan'));
+    assert.equal(git('symbolic-ref', '--short', 'HEAD').trim(), 'orphan-keep', lastErrors());
+    unborn();
+    assert.ok(git('diff', '--cached', '--name-only').includes(FILE), '今のファイルは stage されて残る');
+    git('reset', '-q');
+    git('switch', '-q', '-f', branch);
+
+    await withWindow(pick('orphan-empty', 'Start Empty'), async () => vscode.commands.executeCommand('amonhen.branch.newOrphan'));
+    assert.equal(git('symbolic-ref', '--short', 'HEAD').trim(), 'orphan-empty', lastErrors());
+    unborn();
+    assert.equal(git('ls-files').trim(), '', '空から始まる');
+  } finally {
+    git('switch', '-q', '-f', branch);
+    await repo.refresh();
+  }
+}
+
+/**
  * Stashes は stash があるときだけ出て、行に作ったときのブランチ・土台と HEAD の離れ具合・untracked が出る。
  * stash からブランチを作り（git stash branch）、新しい stash を確かめてから pop する（daemon だけ）
  */
@@ -2356,6 +2386,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('forgets one rerere resolution and all of them through the daemon', async () => {
     await rerereForgetFlow();
+  });
+
+  test('creates an orphan branch, empty or keeping the files, through the daemon', async () => {
+    await orphanFlow();
   });
 
   test('shows stash details, branches from a stash and pops the latest through the daemon', async () => {

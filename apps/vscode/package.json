@@ -321,6 +321,11 @@
         "category": "Amon Hen"
       },
       {
+        "command": "amonhen.branch.newOrphan",
+        "title": "New Orphan Branch…",
+        "category": "Amon Hen"
+      },
+      {
         "command": "amonhen.branch.addToFavorites",
         "title": "Add to Favorites",
         "category": "Amon Hen"
@@ -1110,6 +1115,11 @@
           "command": "amonhen.submodules.foreach",
           "when": "view == amonhen.sidebar && amonhen.engine && viewItem == section.submodules",
           "group": "1_submodules@4"
+        },
+        {
+          "command": "amonhen.branch.newOrphan",
+          "when": "view == amonhen.sidebar && amonhen.engine && viewItem == section.branches",
+          "group": "1_branches@1"
         }
       ],
       "commandPalette": [
@@ -1504,6 +1514,10 @@
         {
           "command": "amonhen.forgetResolution",
           "when": "false"
+        },
+        {
+          "command": "amonhen.branch.newOrphan",
+          "when": "amonhen.hasRepository && amonhen.engine"
         }
       ],
       "webview/context": [
