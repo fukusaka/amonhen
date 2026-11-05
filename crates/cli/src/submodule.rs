@@ -1,4 +1,5 @@
-//! `amonhen submodule`: submodule の一覧と、足す・取り出す・外す・URL や追うブランチを変える（`git submodule`）。
+//! `amonhen submodule`: submodule の一覧と、足す・取り出す・外す・URL や追うブランチを変える・中のリポジトリの
+//! データを `.git/modules` に移す・それぞれの中で命令を動かす（`git submodule`）。
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -70,6 +71,10 @@ pub fn submodule(args: &[String]) -> Result<ExitCode> {
             Some(json!({"kind": "setBranch", "path": path, "branch": branch}))
         }
         ("sync", []) => Some(json!({"kind": "sync", "recursive": recursive})),
+        ("absorb", paths) => Some(json!({"kind": "absorb", "paths": paths})),
+        ("foreach", words) if !words.is_empty() => {
+            Some(json!({"kind": "foreach", "command": words.join(" "), "recursive": recursive}))
+        }
         _ => return Err(bad()),
     };
     let front = open_repository(&dir)?;

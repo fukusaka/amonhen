@@ -17,6 +17,8 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
     private let actions: Actions
     /// 保存して解決済みにした（埋め込んだ側はエディタを外し、ウィンドウは閉じる）。
     var onResolved: (() -> Void)?
+    /// rerere が当てた解決を忘れ、ファイルがコンフリクトのある形に戻った（読み直す）。
+    var onReload: (() -> Void)?
     /// 別ウィンドウで開く（埋め込んだときだけ出す）。
     var onPopOut: (() -> Void)? {
         // 別の窓に移すと nil になる。ボタンはもう作ってあるので、ここで隠す。
@@ -714,12 +716,26 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
         let resolve = NSButton(title: L("Mark Resolved"), target: self, action: #selector(saveAndResolve))
         resolve.bezelStyle = .push
         resolve.controlSize = .small
-        let stack = NSStackView(views: [icon, text, NSView(), resolve])
+        var views: [NSView] = [icon, text, NSView()]
+        // rerere が当てた解決が違っていれば、忘れてコンフリクトからやり直せる（Undo でこの形に戻る）。
+        if sides.rerere {
+            let forget = NSButton(title: L("Forget This Resolution"), target: self, action: #selector(forgetResolution))
+            forget.bezelStyle = .push
+            forget.controlSize = .small
+            forget.toolTip = L("Forgets what git rerere recorded for this file and brings its conflict back (git rerere forget). Undo brings back the file as it is now.")
+            views.append(forget)
+        }
+        views.append(resolve)
+        let stack = NSStackView(views: views)
         stack.spacing = 6
         stack.edgeInsets = NSEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
         stack.wantsLayer = true
         stack.layer?.backgroundColor = NSColor.systemOrange.withAlphaComponent(0.14).cgColor
         return stack
+    }
+
+    @objc private func forgetResolution() {
+        actions.perform(["op": "forgetResolution", "path": path]) { [weak self] _ in self?.onReload?() }
     }
 
     /// Mark Resolved: Result を保存してから解決済みにする（コンフリクトが残っていれば確かめる）。Working Copy の帯の

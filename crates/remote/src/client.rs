@@ -1111,6 +1111,30 @@ impl Operations for RemoteOperations {
         self.op(Op::RestoreFrom(rev.to_owned(), owned(paths), staged))
     }
 
+    fn ignored_files(&self) -> Result<Vec<String>> {
+        self.op(Op::IgnoredFiles)
+    }
+
+    fn delete_ignored(&self, paths: &[&str]) -> Result<()> {
+        self.op(Op::DeleteIgnored(owned(paths)))
+    }
+
+    fn rerere_forget(&self, path: &str) -> Result<()> {
+        self.op(Op::RerereForget(path.to_owned()))
+    }
+
+    fn rerere_forget_all(&self) -> Result<usize> {
+        self.op(Op::RerereForgetAll)
+    }
+
+    fn orphan_branch(&self, name: &str, keep_files: bool) -> Result<()> {
+        self.op(Op::OrphanBranch(name.to_owned(), keep_files))
+    }
+
+    fn stash_push_with(&self, options: &amonhen_model::StashOptions) -> Result<()> {
+        self.op(Op::StashPushWith(options.clone()))
+    }
+
     fn stash_push(&self, message: Option<&str>, include_untracked: bool) -> Result<()> {
         self.op(Op::StashPush {
             message: message.map(str::to_owned),

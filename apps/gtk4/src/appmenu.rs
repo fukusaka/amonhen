@@ -528,6 +528,11 @@ fn handlers() -> Vec<(&'static str, Handler)> {
             "new-branch",
             Box::new(|p| refops::ask_new_branch(&p.actions, &start_point(p))),
         ),
+        // 履歴のない新しいブランチ（macOS 版と同じシート）。
+        (
+            "new-orphan-branch",
+            Box::new(|p| p.actions.new_orphan_branch()),
+        ),
         ("rename-branch", Box::new(rename_branch)),
         (
             "new-worktree",
@@ -550,6 +555,10 @@ fn handlers() -> Vec<(&'static str, Handler)> {
         ("skip", run(json!({ "op": "skip" }))),
         ("abort", run(json!({ "op": "abort" }))),
         ("stash", Box::new(|p| p.actions.stash())),
+        (
+            "delete-ignored-files",
+            Box::new(|p| p.actions.delete_ignored_files()),
+        ),
         ("pop-stash", Box::new(pop_stash)),
         ("undo", Box::new(|p| crate::sheets::undo(&p.actions))),
         (

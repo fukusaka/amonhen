@@ -63,6 +63,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Pull Requests group | ✓ | ✓ | — | — |  |
 | Submodules group (Update, Open in New Window) | ✓ | ✓ | ✓ | ✓ | CLI: `submodule`, `submodule update`. |
 | Submodule marks (not checked out, another commit, changes inside, conflict) and menus: Update… (recursive, remote), Edit URL, Branch to Follow, Remove (optionally .git/modules), Add, Sync URLs | ✓ | ✓ | ✓ | ✓ | VSCode: Remove asks with two buttons: keep `.git/modules` or delete it too.<br>CLI: `submodule` (`add`, `remove`, `set-url`, `set-branch`, `sync`). |
+| Submodules: move repository data into .git/modules, run a command in each | ✓ | ✓ | — | ✓ | CLI: `submodule absorb`, `submodule foreach`. |
 | Worktrees under Working Copy with change counts (✎ ⌂ ⑂) | ✓ | ✓ | ✓ | △ | VSCode: The marks are the rows' icons; a branch another worktree has checked out gets ⌂ or ⑂.<br>CLI: `worktree list --changes`. |
 | Marks for a shallow or partial clone (History) and a sparse checkout (Working Copy) | ✓ | ✓ | △ | n/a | VSCode: Shallow and Partial above History (Partial fetches all contents when clicked); no sparse mark. |
 
@@ -141,6 +142,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Commits: message template (none, shared, own, file) | ✓ | ✓ | △ | △ | VSCode: None, this repository's own (edited there) or a file; no shared templates.<br>CLI: Via `amonhen run`. |
 | Branches: default branch override | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Operations: pull, fetch.prune, autostash, updateRefs, conflict style, rerere | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
+| rerere: forget one resolution (merge editor), forget all (Repository Settings) | ✓ | ✓ | — | △ | CLI: Via `amonhen run` (`forgetResolution`, `forgetAllResolutions`). |
 | Working Copy: line endings, file mode, `.git/info/exclude` editor | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Remotes: table and sheet with a connection check | ✓ | ✓ | ✓ | △ | VSCode: The table with a row of buttons (Edit URL…, Push URL…, Check, Prune, Rename…, Remove…) and Add…; the values are asked in input boxes, not a sheet.<br>CLI: Via `amonhen run`. |
 | Hooks: table, Enabled switch, script, Create Hook… | ✓ | ✓ | ✓ | △ | VSCode: Open opens the script in VSCode's editor.<br>CLI: Via `amonhen run`. |
@@ -157,6 +159,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
+| New Orphan Branch (empty, or keeping the files) | ✓ | ✓ | — | △ | CLI: Via `amonhen run` (`createOrphanBranch`). |
 | Branch switcher (fuzzy search, recent, tracking or new branch) | ✓ | ✓ | △ | △ | VSCode: Checkout from the sidebar and New Branch… only.<br>CLI: Via `amonhen run`. |
 | Fetch sheet (all or one remote, prune shown) | ✓ | ✓ | △ | △ | VSCode: Fetches all with prune at once, without a sheet.<br>CLI: Via `amonhen run`. |
 | Pull sheet (commits, merge / rebase / ff-only, upstream when missing) | ✓ | ✓ | △ | △ | VSCode: Merges the upstream without a sheet or choice.<br>CLI: Via `amonhen run`. |
@@ -166,6 +169,8 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Octopus merge of several (order, expected conflicts) | ✓ | ✓ | ✓ | △ | CLI: `merge-check` checks; the merge via `amonhen run`. |
 | Rebase sheet drawing before and after | ✓ | ✓ | △ | △ | VSCode: A dialog with the rewrite preview as text.<br>CLI: `rewrite-preview` prints it; the rebase via `amonhen run`. |
 | Stash (message, include untracked) | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
+| Stash: only the staged changes, keep the index, selected files | ✓ | ✓ | — | △ | CLI: Via `amonhen run` (`stashPush` with `staged`, `keepIndex`, `paths`). |
+| Delete ignored files (listed first) | ✓ | ✓ | — | △ | CLI: Via `amonhen run` (`ignoredFiles`, `deleteIgnored`). |
 | Stash: staged only, selected files only | — | — | — | — |  |
 | Pop the latest stash (asks first) | ✓ | ✓ | ✓ | △ | VSCode: Pop Latest Stash… on the Stashes header and in the Command Palette (a row's Pop doesn't ask).<br>CLI: Via `amonhen run`. |
 | Activity spinner and count | ✓ | ✓ | ✓ | n/a | VSCode: VSCode's progress notifications. |
@@ -388,6 +393,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | The edited worktree (✎) and switching it | ✓ | ✓ | ✓ | n/a | VSCode: Switches the repository the extension works on; one outside the workspace isn't added to the Source Control view.<br>CLI: Works on the worktree it runs in. |
 | New Worktree… (from a branch or commit) | ✓ | ✓ | ✓ | ✓ |  |
 | Remove Worktree (asks, `--force` with changes) | ✓ | ✓ | ✓ | ✓ |  |
+| Lock and unlock, move, locate a moved folder (repair) | ✓ | ✓ | — | ✓ | CLI: `worktree lock`, `unlock`, `move`, `repair`. |
 | Prune worktrees | ✓ | ✓ | ✓ | ✓ |  |
 | A worktree's folder opens its repository with it edited | ✓ | ✓ | ✓ | n/a | VSCode: Opening the folder works on that worktree, with the others listed. |
 

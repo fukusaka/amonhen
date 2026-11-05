@@ -357,25 +357,165 @@ impl Actions {
     }
 
     /// 作業中の変更を stash する（メッセージと、untracked のファイルを含めるかを聞く）。
-    pub fn stash(self: &Rc<Self>) {
+    /// 履歴のない新しいブランチに切り替える（gh-pages など）。既定は git switch --orphan と同じく空から。今のファイルを
+    /// 残せば（git checkout --orphan）、stage したまま最初のコミットの材料になる（macOS 版と同じ）。
+    pub fn new_orphan_branch(self: &Rc<Self>) {
         let this = self.clone();
         glib::spawn_future_local(async move {
-            let Some((message, untracked)) = this
-                .ask_with(
-                    "Stash Changes",
-                    &tr!("Message (optional)"),
-                    "",
-                    "Stash",
-                    Some(tr!("Include untracked files").as_str()),
-                )
-                .await
-            else {
-                return;
-            };
-            let message = (!message.is_empty()).then_some(message);
-            this.perform(
-                json!({ "op": "stashPush", "message": message, "includeUntracked": untracked }),
+            let sheet = crate::sheets::Sheet::new(
+                crate::sheets::parent(&this).as_ref(),
+                &tr!("New Orphan Branch"),
+                &tr!(
+                    "A branch with no history. It is checked out, and is created by its first commit."
+                ),
             );
+            let name = gtk::Entry::new();
+            name.set_placeholder_text(Some(&tr!("Name of the branch")));
+            name.set_activates_default(true);
+            let keep = gtk::CheckButton::with_label(&tr!(
+                "Keep the current files, staged for the first commit"
+            ));
+            let fields = gtk::Box::new(gtk::Orientation::Vertical, 8);
+            fields.append(&name);
+            fields.append(&keep);
+            sheet.add(&fields);
+            sheet.buttons(&tr!("Create"), false, None);
+            name.grab_focus();
+            if sheet.run().await != crate::sheets::Response::Ok {
+                return;
+            }
+            let branch = name.text().trim().to_owned();
+            if branch.is_empty() {
+                if let Some(window) = this.window() {
+                    window.error_bell();
+                }
+                return;
+            }
+            this.perform(json!({ "op": "createOrphanBranch", "name": branch, "keepFiles": keep.is_active() }));
+        });
+    }
+
+    /// ignore されたファイル（ビルドの出力など）を消す（git clean -X）。消すものを先に一覧で見せる。git の記録に
+    /// ないので戻せない（赤いボタン。macOS 版と同じ）。
+    pub fn delete_ignored_files(self: &Rc<Self>) {
+        let Some(repo) = self.repo() else { return };
+        let this = self.clone();
+        glib::spawn_future_local(async move {
+            let reply = crate::sheets::run(&repo, json!({ "op": "ignoredFiles" })).await;
+            let parent = crate::sheets::parent(&this);
+            if let Some(error) = reply["error"].as_str() {
+                return crate::sheets::inform(
+                    parent.as_ref(),
+                    &tr!("Delete Ignored Files…"),
+                    error,
+                )
+                .await;
+            }
+            let paths: Vec<String> = reply["info"]["paths"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|p| p.as_str().map(str::to_owned))
+                .collect();
+            if paths.is_empty() {
+                return crate::sheets::inform(
+                    parent.as_ref(),
+                    &tr!("No Ignored Files"),
+                    &tr!("Nothing in the working tree matches .gitignore."),
+                )
+                .await;
+            }
+            let sheet = crate::sheets::Sheet::new(
+                parent.as_ref(),
+                &tr!("Delete {count} Ignored Items?", count = paths.len()),
+                &format!(
+                    "{} {}",
+                    tr!(
+                        "These are removed from the working tree (git clean -X); folders go with everything in them."
+                    ),
+                    crate::sheets::cant_undo()
+                ),
+            );
+            let list = gtk::Label::new(Some(&paths.join("\n")));
+            list.set_xalign(0.0);
+            list.set_yalign(0.0);
+            list.add_css_class("monospace");
+            let scrolled = gtk::ScrolledWindow::builder()
+                .child(&list)
+                .min_content_height(160)
+                .max_content_height(160)
+                .min_content_width(380)
+                .build();
+            scrolled.add_css_class("frame");
+            sheet.add(&scrolled);
+            sheet.buttons(&tr!("Delete"), true, None);
+            if sheet.run().await == crate::sheets::Response::Ok {
+                this.perform(json!({ "op": "deleteIgnored", "paths": paths }));
+            }
+        });
+    }
+
+    pub fn stash(self: &Rc<Self>) {
+        self.stash_paths(Vec::new());
+    }
+
+    /// 作業中の変更を stash する。`paths` があれば、そのファイルの変更だけ。何を stash するか（すべて・stage した
+    /// 変更だけ）、stage した変更を残すか、untracked のファイルを含めるかを選べる（既定は git と同じく、追跡している
+    /// ファイルの変更をすべて。macOS 版と同じ）。
+    pub fn stash_paths(self: &Rc<Self>, paths: Vec<String>) {
+        let this = self.clone();
+        glib::spawn_future_local(async move {
+            let title = match &paths[..] {
+                [] => "Stash Changes".to_owned(),
+                [one] => format!("Stash Changes in {}", one.rsplit('/').next().unwrap_or(one)),
+                many => format!("Stash Changes in {} Files", many.len()),
+            };
+            let sheet = crate::sheets::Sheet::new(
+                crate::sheets::parent(&this).as_ref(),
+                &title,
+                &tr!("Message (optional)"),
+            );
+            let message = gtk::Entry::new();
+            message.set_activates_default(true);
+            let all = gtk::CheckButton::with_label(&tr!("All changes"));
+            let staged = gtk::CheckButton::with_label(&tr!("Only the staged changes"));
+            staged.set_group(Some(&all));
+            all.set_active(true);
+            let keep_index = gtk::CheckButton::with_label(&tr!(
+                "Keep the staged changes in the working tree (--keep-index)"
+            ));
+            let untracked = gtk::CheckButton::with_label(&tr!("Include untracked files"));
+            // stage した変更だけのときは、ほかの選び方は git が受けない。
+            let (k, u) = (keep_index.downgrade(), untracked.downgrade());
+            staged.connect_toggled(move |staged| {
+                for b in [k.upgrade(), u.upgrade()].into_iter().flatten() {
+                    b.set_sensitive(!staged.is_active());
+                    if staged.is_active() {
+                        b.set_active(false);
+                    }
+                }
+            });
+            let fields = gtk::Box::new(gtk::Orientation::Vertical, 6);
+            fields.append(&message);
+            fields.append(&all);
+            fields.append(&staged);
+            fields.append(&keep_index);
+            fields.append(&untracked);
+            sheet.add(&fields);
+            sheet.buttons("Stash", false, None);
+            message.grab_focus();
+            if sheet.run().await != crate::sheets::Response::Ok {
+                return;
+            }
+            let text = message.text().trim().to_owned();
+            this.perform(json!({
+                "op": "stashPush",
+                "message": (!text.is_empty()).then_some(text),
+                "includeUntracked": untracked.is_active(),
+                "keepIndex": keep_index.is_active(),
+                "staged": staged.is_active(),
+                "paths": paths,
+            }));
         });
     }
 

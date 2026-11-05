@@ -2545,6 +2545,16 @@ impl Inner {
         }
     }
 
+    /// 選んでいる行のファイルのパス（上から順）。
+    fn selected_paths(this: &Rc<Self>) -> Vec<String> {
+        let rows = this.row_entries.borrow();
+        let entries = this.entries.borrow();
+        (0..rows.len())
+            .filter(|&p| this.selection.is_selected(p as u32))
+            .filter_map(|p| rows[p].and_then(|i| entries.get(i)).map(|e| e.path.clone()))
+            .collect()
+    }
+
     /// ファイルの行の右クリックのメニュー。
     fn file_menu(this: &Rc<Self>, entry: &StatusEntry) -> Vec<crate::menu::Item> {
         use crate::menu::{Item, action};
@@ -2580,6 +2590,19 @@ impl Inner {
                     }
                 }));
             }
+            // 右クリックした行を含めて選んでいれば、選んだファイルの変更を（macOS 版と同じ）。
+            let selected = Inner::selected_paths(this);
+            let paths = if selected.contains(&path) {
+                selected
+            } else {
+                vec![path.clone()]
+            };
+            let a = this.actions.borrow().clone();
+            items.push(action("Stash…", move || {
+                if let Some(a) = &a {
+                    a.stash_paths(paths.clone());
+                }
+            }));
             items.push(Item::Separator);
         }
         // untracked のファイルにはまだ履歴がない。代わりに .gitignore に足せる（そのパスか、拡張子のパターン）。
@@ -2747,6 +2770,14 @@ impl Inner {
             this.editors.borrow_mut().remove(&k);
             crate::merge::show_in_window(&editor, &window);
             this.embed_message(&tr!("The merge editor is open in a separate window"));
+        })));
+        // rerere の解決を忘れたら、読み直して埋め込み直す（ファイルがコンフリクトのある形に戻った）。
+        let (weak, k, p) = (Rc::downgrade(this), key.clone(), editor.path().to_owned());
+        editor.set_on_reload(Some(Rc::new(move || {
+            let Some(this) = weak.upgrade() else { return };
+            this.unembed();
+            this.editors.borrow_mut().remove(&k);
+            Inner::show_conflict(&this, &p, this.generation.get());
         })));
         // 保存して解決済みにしたら外す（status を読み直すと、普段の差分になる）。
         let weak = Rc::downgrade(this);

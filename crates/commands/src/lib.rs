@@ -150,6 +150,7 @@ pub static COMMANDS: &[Command] = &[
         .localized()
         .key("Primary+Shift+B"),
     command("new-branch", "New Branch…").key("Primary+Alt+B"),
+    command("new-orphan-branch", "New Orphan Branch…").localized(),
     command("rename-branch", "Rename Branch…").localized(),
     // Ctrl+Alt+T は、Ubuntu などで端末を開くキー。
     command("new-tag", "New Tag…")
@@ -175,6 +176,7 @@ pub static COMMANDS: &[Command] = &[
     command("abort", "Abort"),
     command("stash", "Stash…").key("Primary+Alt+S"),
     command("pop-stash", "Pop…").key("Primary+Alt+Shift+S"),
+    command("delete-ignored-files", "Delete Ignored Files…").localized(),
     command("undo", "Undo…").key("Primary+Alt+Z"),
     // コミット
     command("commit", "Commit").key("Primary+Return"),
@@ -293,7 +295,13 @@ pub static SECTIONS: &[Section] = &[
     section(Menu::Repository, &["fetch", "pull", "push", "force-push"]),
     section(
         Menu::Repository,
-        &["new-branch", "rename-branch", "set-upstream", "new-tag"],
+        &[
+            "new-branch",
+            "new-orphan-branch",
+            "rename-branch",
+            "set-upstream",
+            "new-tag",
+        ],
     ),
     section(
         Menu::Repository,
@@ -318,7 +326,10 @@ pub static SECTIONS: &[Section] = &[
         ],
     ),
     section(Menu::Repository, &["continue", "skip", "abort"]),
-    section(Menu::Repository, &["stash", "pop-stash"]),
+    section(
+        Menu::Repository,
+        &["stash", "pop-stash", "delete-ignored-files"],
+    ),
     section(Menu::Repository, &["undo"]),
     section(Menu::Repository, &["repository-settings"]),
     section(Menu::Repository, &["create-pull-request", "open-on-github"]),

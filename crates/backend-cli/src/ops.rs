@@ -25,6 +25,12 @@ fn text(out: Vec<u8>) -> Result<String> {
     Ok(String::from_utf8(out)?.trim().to_owned())
 }
 
+/// 手で移した worktree のつながりを直す（`git worktree repair`）が使える git の版。
+const WORKTREE_REPAIR: (u32, u32) = (2, 29);
+
+/// stage した変更だけを stash する（`git stash push --staged`）が使える git の版。
+const STASH_STAGED: (u32, u32) = (2, 35);
+
 impl Git {
     /// merge・rebase などを始める。失敗しても、途中で止まっていればコンフリクトとして扱う。成功しても止まって
     /// いれば Stopped。
@@ -1162,6 +1168,59 @@ impl Operations for Git {
         self.write(&args).map(drop)
     }
 
+    fn ignored_files(&self) -> Result<Vec<String>> {
+        // 消す前に何を消すかを見せるので、git clean 自身に聞く（-X の決め方をまねない）。文は英語で読む。
+        let mut cmd = self.command(&["-c", "core.quotePath=false", "clean", "-n", "-d", "-X"]);
+        cmd.env("LC_ALL", "C").env("GIT_OPTIONAL_LOCKS", "0");
+        let out = cmd.output()?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr)
+                .trim()
+                .to_owned()
+                .into());
+        }
+        Ok(String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter_map(|l| l.strip_prefix("Would remove "))
+            .map(|p| p.trim_matches('"').to_owned())
+            .collect())
+    }
+
+    fn delete_ignored(&self, paths: &[&str]) -> Result<()> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let mut args = vec!["clean", "-f", "-d", "-X", "--"];
+        args.extend(paths);
+        self.write(&args).map(drop)
+    }
+
+    fn rerere_forget(&self, path: &str) -> Result<()> {
+        self.write(&["rerere", "forget", "--", path])?;
+        // rerere.autoUpdate で stage していれば、index のコンフリクトも戻してから取り出し直す。
+        if self.read(&["ls-files", "-u", "--", path])?.is_empty() {
+            self.write(&["update-index", "--unresolve", "--", path])?;
+        }
+        self.write(&["checkout", "-m", "--", path]).map(drop)
+    }
+
+    fn rerere_forget_all(&self) -> Result<usize> {
+        let cache = self.git_dir()?.join("rr-cache");
+        let count = std::fs::read_dir(&cache).map(|d| d.count()).unwrap_or(0);
+        if cache.exists() {
+            std::fs::remove_dir_all(&cache)?;
+        }
+        Ok(count)
+    }
+
+    fn orphan_branch(&self, name: &str, keep_files: bool) -> Result<()> {
+        if name.trim().is_empty() || name.starts_with('-') {
+            return Err(tr!("Not a valid branch name: {name}", name = name).into());
+        }
+        let command = if keep_files { "checkout" } else { "switch" };
+        self.write(&[command, "--orphan", name]).map(drop)
+    }
+
     fn restore_from(&self, rev: &str, paths: &[&str], staged: bool) -> Result<()> {
         // `--source=` に付けて渡すので、`-` で始まる rev もオプションと取り違えない。
         let source = format!("--source={rev}");
@@ -1171,6 +1230,45 @@ impl Operations for Git {
         }
         args.push("--");
         args.extend(paths);
+        self.write(&args).map(drop)
+    }
+
+    fn stash_push_with(&self, options: &amonhen_model::StashOptions) -> Result<()> {
+        // git は stage した変更だけ（--staged）と、ほかの選び方を一緒には受けない。わけを言って断る。
+        if options.staged && (options.include_untracked || options.keep_index) {
+            return Err(tr!(
+                "Stashing only the staged changes can't include untracked files or keep the index"
+            )
+            .into());
+        }
+        if options.staged
+            && let Some((a, b, c)) = crate::git_version()
+            && (a, b) < STASH_STAGED
+        {
+            return Err(tr!(
+                "Needs git {needed} or later. This machine’s git is {version}.",
+                needed = format!("{}.{}", STASH_STAGED.0, STASH_STAGED.1),
+                version = format!("{a}.{b}.{c}"),
+            )
+            .into());
+        }
+        let mut args = vec!["stash", "push"];
+        if options.include_untracked {
+            args.push("--include-untracked");
+        }
+        if options.keep_index {
+            args.push("--keep-index");
+        }
+        if options.staged {
+            args.push("--staged");
+        }
+        if let Some(m) = options.message.as_deref().filter(|m| !m.is_empty()) {
+            args.extend(["--message", m]);
+        }
+        if !options.paths.is_empty() {
+            args.push("--");
+            args.extend(options.paths.iter().map(String::as_str));
+        }
         self.write(&args).map(drop)
     }
 
@@ -1598,6 +1696,31 @@ impl Operations for Git {
                 args
             }
             WorktreeChange::Prune => vec!["worktree", "prune"],
+            WorktreeChange::Lock { path, reason } => {
+                let mut args = vec!["worktree", "lock"];
+                if let Some(reason) = reason.as_deref().filter(|r| !r.is_empty()) {
+                    args.extend(["--reason", reason]);
+                }
+                args.extend(["--", path]);
+                args
+            }
+            WorktreeChange::Unlock { path } => vec!["worktree", "unlock", "--", path],
+            WorktreeChange::Move { path, to } => vec!["worktree", "move", "--", path, to],
+            WorktreeChange::Repair { paths } => {
+                if let Some((a, b, c)) = crate::git_version()
+                    && (a, b) < WORKTREE_REPAIR
+                {
+                    return Err(tr!(
+                        "Needs git {needed} or later. This machine’s git is {version}.",
+                        needed = format!("{}.{}", WORKTREE_REPAIR.0, WORKTREE_REPAIR.1),
+                        version = format!("{a}.{b}.{c}"),
+                    )
+                    .into());
+                }
+                let mut args = vec!["worktree", "repair", "--"];
+                args.extend(paths.iter().map(String::as_str));
+                args
+            }
         };
         self.write(&args).map(drop)
     }

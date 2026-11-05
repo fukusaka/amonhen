@@ -1680,9 +1680,41 @@ impl RepoSettings {
                         off,
                         None,
                     ),
+                    self.forget_resolutions_row(),
                 ],
             ),
         ])
+    }
+
+    /// 覚えた解決をすべて忘れる（rr-cache を消す。戻せない）。覚えたものがあるときだけ出す（macOS 版と同じ）。
+    fn forget_resolutions_row(self: &Rc<Self>) -> gtk::Widget {
+        let button = gtk::Button::with_label(&tr!("Forget All Recorded Resolutions…"));
+        button.set_halign(gtk::Align::End);
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        row.append(&button);
+        button.set_hexpand(true);
+        let weak = Rc::downgrade(self);
+        button.connect_clicked(move |_| {
+            let Some(this) = weak.upgrade() else { return };
+            glib::spawn_future_local(async move {
+                let sheet = crate::sheets::Sheet::unnamed(
+                    this.window().as_ref(),
+                    &tr!("Forget All Recorded Resolutions?"),
+                    &format!(
+                        "{} {}",
+                        tr!("git rerere then no longer reuses the resolutions it recorded in this repository."),
+                        crate::sheets::cant_undo()
+                    ),
+                );
+                sheet.buttons(&tr!("Forget All"), true, None);
+                if sheet.run().await == crate::sheets::Response::Ok {
+                    this.perform(vec![json!({ "op": "forgetAllResolutions" })], |_| {});
+                }
+            });
+        });
+        let r = row.clone();
+        self.on_refresh(move |s| r.set_visible(s.state.borrow().rerere_cache));
+        row.upcast()
     }
 
     /// pull のとき、どう取り込むか。`pull.rebase` と `pull.ff` の 2 つで決まる（コアの `syncDefaults` と同じ読み方）。

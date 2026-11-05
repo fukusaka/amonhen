@@ -1792,3 +1792,55 @@
 "Restore %@ as It Is in %@?" = "%1$@ を %2$@ の版に戻しますか？";
 "Replaces the file in the working tree with that version (git restore); a file that version doesn’t have is deleted. Undo brings back the file as it is now." = "作業ツリーのファイルを、その版に置き換えます（git restore）。その版にないファイルは消します。Undo で今のファイルに戻ります。";
 "Stage it too" = "stage もする";
+
+/* stash options */
+"All changes" = "すべての変更";
+"Only the staged changes" = "stage した変更だけ";
+"Keep the staged changes in the working tree (--keep-index)" = "stage した変更は作業ツリーにも残す（--keep-index）";
+
+/* worktree lock, move, repair */
+"Locate Moved Folder…" = "移したフォルダを探す…";
+"Unlock" = "ロックを外す";
+"Lock…" = "ロック…";
+"Move…" = "移す…";
+"Lock the Worktree “%@”?" = "worktree「%@」をロックしますか？";
+"git then won’t prune, remove or move it, for example while it is on a disk that isn’t always connected (git worktree lock)." = "git が prune・削除・移動をしなくなります。いつもはつないでいないディスクに置いているときなどに使います（git worktree lock）。";
+"Reason (optional)" = "理由（なくてもよい）";
+"Lock" = "ロック";
+"Move the Worktree “%@”" = "worktree「%@」を移す";
+"Moves the folder and tells git where it is now (git worktree move)." = "フォルダを移し、git にも今の場所を伝えます（git worktree move）。";
+"Move" = "移す";
+"Locate the Worktree “%@”" = "worktree「%@」を探す";
+"If you moved its folder yourself, give where it is now, and git reconnects it (git worktree repair)." = "フォルダを手で移したなら、今の場所を入れると git がつなぎ直します（git worktree repair）。";
+"Reconnect" = "つなぎ直す";
+
+/* orphan branch */
+"New Orphan Branch…" = "履歴のない新しいブランチ…";
+"New Orphan Branch" = "履歴のない新しいブランチ";
+"A branch with no history. It is checked out, and is created by its first commit." = "履歴のないブランチです。切り替えたあと、最初のコミットでブランチができます。";
+"Name of the branch" = "ブランチの名前";
+"Keep the current files, staged for the first commit" = "今のファイルを残す（stage したまま最初のコミットに）";
+
+/* rerere forget */
+"Forget This Resolution" = "この解決を忘れる";
+"Forgets what git rerere recorded for this file and brings its conflict back (git rerere forget). Undo brings back the file as it is now." = "git rerere がこのファイルについて覚えた解決を忘れ、コンフリクトのある形に戻します（git rerere forget）。Undo で今のファイルに戻ります。";
+"Forget All Recorded Resolutions…" = "覚えた解決をすべて忘れる…";
+"Forget All Recorded Resolutions?" = "覚えた解決をすべて忘れますか？";
+"git rerere then no longer reuses the resolutions it recorded in this repository." = "このリポジトリで git rerere が覚えた解決を、もう使わなくなります。";
+"Forget All" = "すべて忘れる";
+
+/* submodule absorb, foreach */
+"Run in Each Submodule…" = "それぞれの submodule で動かす…";
+"Run in Each Submodule" = "それぞれの submodule で動かす";
+"Runs the command with the shell in each submodule’s folder (git submodule foreach). Its output is in Activity." = "それぞれの submodule のフォルダで、命令をシェルで動かします（git submodule foreach）。出力は Activity にあります。";
+"Command" = "命令";
+"Also in the submodules inside them (--recursive)" = "中の submodule でも（--recursive）";
+"Run" = "動かす";
+"Move Repository Data into .git/modules" = "リポジトリのデータを .git/modules に移す";
+
+/* delete ignored files */
+"Delete Ignored Files…" = "ignore されたファイルを消す…";
+"No Ignored Files" = "ignore されたファイルはありません";
+"Delete %ld Ignored Items?" = "ignore された %ld 個を消しますか？";
+"Nothing in the working tree matches .gitignore." = "作業ツリーに .gitignore に当たるものはありません。";
+"These are removed from the working tree (git clean -X); folders go with everything in them." = "これらを作業ツリーから消します（git clean -X）。フォルダは中身ごと消えます。";

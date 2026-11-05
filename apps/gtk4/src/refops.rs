@@ -168,6 +168,14 @@ pub fn menu(
             items.push(menu::action(tr!("Branch to Follow…"), move || {
                 crate::submodulesheet::set_branch(&a, &s)
             }));
+            // 自分のフォルダにリポジトリのデータを持っていれば、.git/modules に移せる（macOS 版と同じ）。
+            if state.own_git_dir {
+                let (a, p) = (actions.clone(), state.path.clone());
+                items.push(menu::action(
+                    tr!("Move Repository Data into .git/modules"),
+                    move || crate::submodulesheet::absorb(&a, &p),
+                ));
+            }
             items.push(Item::Separator);
             let (a, s) = (actions.clone(), state);
             items.push(menu::action(tr!("Remove…"), move || {
@@ -247,10 +255,14 @@ fn remote_menu(actions: &Rc<Actions>, data: &Data) -> Vec<Item> {
             )
         });
         let a = actions.clone();
+        let foreach = menu::action(tr!("Run in Each Submodule…"), move || {
+            crate::submodulesheet::foreach(&a)
+        });
+        let a = actions.clone();
         let add = menu::action(tr!("Add Submodule…"), move || {
             crate::submodulesheet::add(&a)
         });
-        return vec![all, update, sync, Item::Separator, add];
+        return vec![all, update, sync, foreach, Item::Separator, add];
     }
     Vec::new()
 }

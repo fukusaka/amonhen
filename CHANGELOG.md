@@ -15,6 +15,16 @@ becomes the GitHub Release notes.
   sidebar's Subtrees group pulls, pushes and splits them, remembering the source and squash. `amonhen subtree` too.
 - A changed file's menu in History and Reflog restores it as it is in that commit or as it was before, and File
   History's as it is in a commit, optionally staged; Undo brings the file back. `amonhen restore --source` too.
+- The Stash sheet stashes all changes or only the staged ones (git 2.35), can keep the staged changes, and Working
+  Copy's file menu has Stash… for the selected files.
+- A worktree's menu locks and unlocks it, moves it, and reconnects one whose folder was moved by hand (git 2.29).
+  `amonhen worktree lock|unlock|move|repair` too.
+- Repository > New Orphan Branch… starts a branch with no history, empty or keeping the current files staged.
+- The merge editor forgets a resolution rerere applied and brings the conflict back, and Repository Settings forgets
+  all recorded resolutions.
+- Submodules can move their repository data into `.git/modules` and run a command in each one
+  (`amonhen submodule absorb|foreach`).
+- Repository > Delete Ignored Files… lists the files `.gitignore` covers (build output and the like) and deletes them.
 - On Linux and the BSDs, Settings > Performance > fsmonitor speeds up status with Watchman when it is installed (git
   2.26 or later); the engine answers git as its fsmonitor hook, and nothing is written to the repository's config.
 

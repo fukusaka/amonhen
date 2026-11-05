@@ -724,6 +724,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             return SubmoduleSheet.update(in: window, actions: actions, paths: path.map { [$0] } ?? [], perform: perform)
         }
         if action == .sync { return perform(["op": "changeSubmodule", "change": ["kind": "sync", "recursive": true]]) }
+        if action == .foreach { return SubmoduleSheet.foreach(in: window, actions: actions, perform: perform) }
         guard let path else { return }
         let submodule = submodules.first { $0.path == path }
             ?? SubmoduleState(path: path, name: path, url: nil, branch: nil, initialized: true, moved: false, changed: false, conflict: false)
@@ -731,7 +732,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         case .setURL: SubmoduleSheet.setURL(in: window, actions: actions, submodule: submodule, perform: perform)
         case .setBranch: SubmoduleSheet.setBranch(in: window, actions: actions, submodule: submodule, perform: perform)
         case .remove: SubmoduleSheet.remove(in: window, actions: actions, submodule: submodule, perform: perform)
-        case .add, .update, .sync: break
+        case .absorb: perform(["op": "changeSubmodule", "change": ["kind": "absorb", "paths": [path]]])
+        case .add, .update, .sync, .foreach: break
         }
     }
 
@@ -790,6 +792,87 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             removeWorktree(info)
         case .prune:
             opened.actions.perform(["op": "worktreePrune"])
+        case .lock:
+            lockWorktree(info)
+        case .unlock:
+            opened.actions.perform(["op": "worktreeUnlock", "path": path]) { [weak self] _ in self?.reloadWorktrees() }
+        case .move:
+            moveWorktree(info)
+        case .locate:
+            locateWorktree(info)
+        }
+    }
+
+    /// worktree をロックする（git が prune・remove・move で消したり移したりしない）。理由は git の記録に残る。
+    private func lockWorktree(_ info: WorktreeInfo) {
+        let alert = NSAlert()
+        alert.messageText = L("Lock the Worktree “%@”?", info.name)
+        alert.informativeText = L("git then won’t prune, remove or move it, for example while it is on a disk that isn’t always connected (git worktree lock).")
+        let reason = NSTextField(string: "")
+        reason.placeholderString = L("Reason (optional)")
+        reason.frame.size = NSSize(width: 320, height: 24)
+        alert.accessoryView = reason
+        alert.window.initialFirstResponder = reason
+        alert.addButton(withTitle: L("Lock"))
+        alert.addButton(withTitle: L("Cancel"))
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self, response == .alertFirstButtonReturn else { return }
+            let text = reason.stringValue.trimmingCharacters(in: .whitespaces)
+            opened.actions.perform(["op": "worktreeLock", "path": info.path, "reason": text.isEmpty ? NSNull() : text] as [String: Any]) { [weak self] _ in
+                self?.reloadWorktrees()
+            }
+        }
+    }
+
+    /// worktree のフォルダを移す（git worktree move。git の記録も一緒に直す）。手元のリポジトリなら置き場所を選べる。
+    private func moveWorktree(_ info: WorktreeInfo) {
+        askFolder(title: L("Move the Worktree “%@”", info.name),
+                  message: L("Moves the folder and tells git where it is now (git worktree move)."),
+                  initial: info.path, button: L("Move")) { [weak self] to in
+            guard let self else { return }
+            if info.isSame(editing.path) { activate(opened) }
+            opened.actions.perform(["op": "worktreeMove", "path": info.path, "to": to]) { [weak self] _ in self?.reloadWorktrees() }
+        }
+    }
+
+    /// フォルダが見つからない worktree: 手で移した先を教えて、つながりを直す（git worktree repair。git 2.29 から）。
+    private func locateWorktree(_ info: WorktreeInfo) {
+        askFolder(title: L("Locate the Worktree “%@”", info.name),
+                  message: L("If you moved its folder yourself, give where it is now, and git reconnects it (git worktree repair)."),
+                  initial: info.path, button: L("Reconnect")) { [weak self] to in
+            self?.opened.actions.perform(["op": "worktreeRepair", "paths": [to]]) { [weak self] _ in self?.reloadWorktrees() }
+        }
+    }
+
+    /// フォルダのパスを聞く（手元のリポジトリなら Choose… で選べる）。
+    private func askFolder(title: String, message: String, initial: String, button: String, done: @escaping (String) -> Void) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        let field = NSTextField(string: initial)
+        field.widthAnchor.constraint(equalToConstant: 360).isActive = true
+        var views: [NSView] = [field]
+        let chooser = ClosureTarget {
+            FilePicker.presentLocal(title: title, message: message, kind: .folder, initial: field.stringValue,
+                                    canCreateFolders: true, in: alert.window) { field.stringValue = $0?.first ?? field.stringValue }
+        }
+        if isLocal {
+            let choose = NSButton(title: L("Choose…"), target: chooser, action: #selector(ClosureTarget.fire))
+            views.append(choose)
+        }
+        let stack = NSStackView(views: views)
+        stack.orientation = .horizontal
+        stack.spacing = 8
+        stack.frame = NSRect(x: 0, y: 0, width: 460, height: 26)
+        alert.accessoryView = stack
+        alert.window.initialFirstResponder = field
+        alert.addButton(withTitle: button)
+        alert.addButton(withTitle: L("Cancel"))
+        alert.beginSheetModal(for: window) { response in
+            withExtendedLifetime(chooser) {}
+            let path = (field.stringValue.trimmingCharacters(in: .whitespaces) as NSString).expandingTildeInPath
+            guard response == .alertFirstButtonReturn, !path.isEmpty else { return }
+            done(path)
         }
     }
 
@@ -1762,6 +1845,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     @objc func forcePush(_ sender: Any?) { actions.pushWithConfirmation(force: true) }
 
     @objc func stashChanges(_ sender: Any?) { actions.stash() }
+    @objc func deleteIgnoredFiles(_ sender: Any?) { actions.deleteIgnoredFiles() }
 
     /// 最新の stash（`stash@{0}`）を戻して消す。
     @objc func popStash(_ sender: Any?) {
@@ -1819,6 +1903,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     }
 
     @objc func newBranch(_ sender: Any?) { actions.newBranch(at: startPoint) }
+    @objc func newOrphanBranch(_ sender: Any?) { actions.newOrphanBranch() }
     @objc func newTag(_ sender: Any?) { actions.newTag(at: startPoint) }
 
     @objc func continueSequence(_ sender: Any?) { actions.perform(["op": "continue"]) }

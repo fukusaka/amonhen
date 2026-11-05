@@ -254,6 +254,31 @@ final class Actions {
         }
     }
 
+    /// 履歴のない新しいブランチに切り替える（gh-pages など）。既定は git switch --orphan と同じく空から。今のファイルを
+    /// 残せば（git checkout --orphan）、stage したまま最初のコミットの材料になる。ブランチは最初のコミットでできる。
+    func newOrphanBranch() {
+        Task { @MainActor in
+            let alert = makeAlert(L("New Orphan Branch"), L("A branch with no history. It is checked out, and is created by its first commit."))
+            let name = NSTextField(string: "")
+            name.placeholderString = L("Name of the branch")
+            name.widthAnchor.constraint(equalToConstant: 320).isActive = true
+            let keep = NSButton(checkboxWithTitle: L("Keep the current files, staged for the first commit"), target: nil, action: nil)
+            let stack = NSStackView(views: [name, keep])
+            stack.orientation = .vertical
+            stack.alignment = .leading
+            stack.spacing = 8
+            stack.frame = NSRect(x: 0, y: 0, width: 320, height: stack.fittingSize.height)
+            alert.accessoryView = stack
+            alert.window.initialFirstResponder = name
+            alert.addButton(withTitle: L("Create"))
+            alert.addButton(withTitle: L("Cancel"))
+            guard await present(alert) == .alertFirstButtonReturn else { return }
+            let branch = name.stringValue.trimmingCharacters(in: .whitespaces)
+            guard !branch.isEmpty else { return NSSound.beep() }
+            perform(["op": "createOrphanBranch", "name": branch, "keepFiles": keep.state == .on])
+        }
+    }
+
     func renameBranch(_ name: String) {
         Task { @MainActor in
             guard let to = await ask(L("Rename %@", name), message: L("New name of the branch."), initial: name, ok: L("Rename")),
@@ -311,28 +336,95 @@ final class Actions {
         ClosureMenuItem(title: Titles.reset(currentBranch ?? "HEAD", to: String(target.prefix(Titles.shortIDLength)))) { [weak self] in self?.reset(to: target) }
     }
 
-    /// 作業中の変更を stash する。untracked のファイルを含めるかを選べる。
-    func stash() {
-        Task { @MainActor in await stashSheet() }
+    /// ignore されたファイル（ビルドの出力など）を消す（git clean -X）。消すものを先に一覧で見せる。git の記録に
+    /// ないので戻せない（赤いボタン）。
+    func deleteIgnoredFiles() {
+        let repository = self.repository
+        Task { @MainActor in
+            nonisolated struct Ignored: Decodable, Sendable { let paths: [String] }
+            let paths: [String]
+            do {
+                paths = try await Task.detached(priority: .userInitiated) {
+                    try repository.info(["op": "ignoredFiles"], as: Ignored.self)
+                }.value.paths
+            } catch {
+                NSAlert(error: error).runModal()
+                return
+            }
+            let alert = makeAlert(paths.isEmpty ? L("No Ignored Files") : L("Delete %ld Ignored Items?", paths.count),
+                                  paths.isEmpty ? L("Nothing in the working tree matches .gitignore.")
+                                      : L("These are removed from the working tree (git clean -X); folders go with everything in them.") + " " + Self.cantUndo)
+            if paths.isEmpty {
+                alert.addButton(withTitle: "OK")
+                _ = await present(alert)
+                return
+            }
+            let list = NSTextView(frame: NSRect(x: 0, y: 0, width: 380, height: 160))
+            list.string = paths.joined(separator: "\n")
+            list.isEditable = false
+            list.font = .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+            let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 380, height: 160))
+            scroll.documentView = list
+            scroll.hasVerticalScroller = true
+            scroll.borderType = .bezelBorder
+            alert.accessoryView = scroll
+            let delete = alert.addButton(withTitle: L("Delete"))
+            delete.hasDestructiveAction = true
+            delete.keyEquivalent = ""
+            alert.addButton(withTitle: L("Cancel")).keyEquivalent = "\r"
+            guard await present(alert) == .alertFirstButtonReturn else { return }
+            perform(["op": "deleteIgnored", "paths": paths])
+        }
+    }
+
+    /// 作業中の変更を stash する。`paths` があれば、そのファイルの変更だけ。何を stash するか（すべて・stage した
+    /// 変更だけ）、stage した変更を残すか、untracked のファイルを含めるかを選べる（既定は git と同じく、追跡している
+    /// ファイルの変更をすべて）。
+    func stash(paths: [String] = []) {
+        Task { @MainActor in await stashSheet(paths: paths) }
     }
 
     @MainActor
-    private func stashSheet() async {
+    private func stashSheet(paths: [String]) async {
         let alert = NSAlert()
-        alert.messageText = "Stash Changes"
+        alert.messageText = paths.isEmpty ? "Stash Changes"
+            : paths.count == 1 ? "Stash Changes in \((paths[0] as NSString).lastPathComponent)" : "Stash Changes in \(paths.count) Files"
         alert.informativeText = L("Message (optional)")
         alert.addButton(withTitle: "Stash")
         alert.addButton(withTitle: L("Cancel"))
-        let field = NSTextField(frame: NSRect(x: 0, y: 30, width: 300, height: 24))
+        let field = NSTextField(string: "")
+        field.widthAnchor.constraint(equalToConstant: 320).isActive = true
+        // 何を: すべての変更か、stage した変更だけ（git 2.35 から。古い git ならコアがわけを言って断る）。
+        let all = NSButton(radioButtonWithTitle: L("All changes"), target: nil, action: nil)
+        let staged = NSButton(radioButtonWithTitle: L("Only the staged changes"), target: nil, action: nil)
+        all.state = .on
+        let keepIndex = NSButton(checkboxWithTitle: L("Keep the staged changes in the working tree (--keep-index)"), target: nil, action: nil)
         let untracked = NSButton(checkboxWithTitle: L("Include untracked files"), target: nil, action: nil)
-        untracked.frame = NSRect(x: 0, y: 0, width: 300, height: 22)
-        let box = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 56))
-        box.addSubview(field)
-        box.addSubview(untracked)
-        alert.accessoryView = box
+        // stage した変更だけのときは、ほかの選び方は git が受けない。
+        let target = ClosureTarget {
+            let onlyStaged = staged.state == .on
+            keepIndex.isEnabled = !onlyStaged
+            untracked.isEnabled = !onlyStaged
+            if onlyStaged { keepIndex.state = .off; untracked.state = .off }
+        }
+        for radio in [all, staged] {
+            radio.target = target
+            radio.action = #selector(ClosureTarget.fire)
+        }
+        let stack = NSStackView(views: [field, all, staged, keepIndex, untracked])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 6
+        stack.frame = NSRect(x: 0, y: 0, width: 320, height: stack.fittingSize.height)
+        alert.accessoryView = stack
         alert.window.initialFirstResponder = field
-        guard await present(alert) == .alertFirstButtonReturn else { return }
-        var command: [String: Any] = ["op": "stashPush", "includeUntracked": untracked.state == .on]
+        let response = await present(alert)
+        withExtendedLifetime(target) {}
+        guard response == .alertFirstButtonReturn else { return }
+        var command: [String: Any] = [
+            "op": "stashPush", "includeUntracked": untracked.state == .on, "keepIndex": keepIndex.state == .on,
+            "staged": staged.state == .on, "paths": paths,
+        ]
         let message = field.stringValue.trimmingCharacters(in: .whitespaces)
         if !message.isEmpty { command["message"] = message }
         perform(command)

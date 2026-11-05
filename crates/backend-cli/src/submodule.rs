@@ -78,7 +78,9 @@ impl Git {
         // `git submodule status` は使わない: index のロックを取ることがあり、裏で読むと同時に動く `submodule add`
         // などの `git add` とぶつかる。取り出してあるか（status の `-` でない）は、場所に `.git` があるかで見る。
         for s in &mut states {
-            s.initialized = self.workdir.join(&s.path).join(".git").exists();
+            let git = self.workdir.join(&s.path).join(".git");
+            s.initialized = git.exists();
+            s.own_git_dir = git.is_dir();
         }
         // ロックを取らない status の行から: `S<C><M><U>`（C は記録と違うコミット、M は追跡しているファイルの変更、
         // U は untracked のファイル）と、コンフリクトの `u` の行。
@@ -176,6 +178,22 @@ impl Git {
                 None => self.write(&["submodule", "set-branch", "--default", "--", path]),
             }
             .map(drop),
+            SubmoduleChange::Absorb { paths } => {
+                let mut args = vec!["submodule", "absorbgitdirs", "--"];
+                args.extend(paths.iter().map(String::as_str));
+                self.write(&args).map(drop)
+            }
+            SubmoduleChange::Foreach { command, recursive } => {
+                if command.trim().is_empty() {
+                    return Err(tr!("Give the command to run").into());
+                }
+                let mut args = vec!["submodule", "foreach"];
+                if *recursive {
+                    args.push("--recursive");
+                }
+                args.push(command);
+                self.write(&args).map(drop)
+            }
             SubmoduleChange::Sync { recursive } => {
                 let mut args = vec!["submodule", "sync"];
                 if *recursive {

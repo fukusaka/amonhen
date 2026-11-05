@@ -431,6 +431,18 @@ pub enum Op {
     Subtree(Tagged<amonhen_model::SubtreeOp>),
     /// → `()`
     RestoreFrom(String, Vec<String>, bool),
+    /// → `()`
+    StashPushWith(amonhen_model::StashOptions),
+    /// → `()`
+    OrphanBranch(String, bool),
+    /// → `()`
+    RerereForget(String),
+    /// → `usize`
+    RerereForgetAll,
+    /// → `Vec<String>`
+    IgnoredFiles,
+    /// → `()`
+    DeleteIgnored(Vec<String>),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
