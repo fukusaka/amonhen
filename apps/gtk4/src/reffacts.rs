@@ -25,6 +25,8 @@ pub struct Branch {
     pub archived: bool,
     /// お気に入りの順位（`branch.<name>.amonhenPinned`。小さいほど上）。
     pub pinned: Option<i64>,
+    /// 取り込んでいないが、今の先端を head にして squash・rebase でマージされたプルリクエストの番号。
+    pub pull_request: Option<u64>,
 }
 
 /// `branchGroups` の答え。
@@ -50,6 +52,7 @@ impl BranchGroups {
                     parent: b["parent"].as_str().map(str::to_owned),
                     archived: b["archived"].as_bool().unwrap_or(false),
                     pinned: b["pinned"].as_i64(),
+                    pull_request: b["pullRequest"].as_u64(),
                 };
                 Some((name, branch))
             })
@@ -64,9 +67,11 @@ impl BranchGroups {
         self.branches.get(name)
     }
 
-    /// 既定のブランチに取り込み済み（先端が同じ、作ったばかりのものは除く）。
+    /// 既定のブランチに取り込み済み（先端が同じ、作ったばかりのものは除く）か、squash・rebase でマージされた
+    /// プルリクエストのブランチ。
     pub fn is_merged(&self, name: &str) -> bool {
-        self.get(name).is_some_and(|b| b.merged && !b.at_base)
+        self.get(name)
+            .is_some_and(|b| (b.merged && !b.at_base) || b.pull_request.is_some())
     }
 
     pub fn is_archived(&self, name: &str) -> bool {

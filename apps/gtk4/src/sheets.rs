@@ -2542,9 +2542,19 @@ pub fn delete_branches(actions: &Rc<Actions>, names: Vec<String>) {
         return;
     };
     let actions = actions.clone();
+    // プルリクエストでマージされたもの（中身は既定のブランチにある）は、コミットを並べずに -D で消す（macOS 版と同じ）。
+    let by_pull_request: Vec<(String, u64)> = names
+        .iter()
+        .filter_map(|n| Some((n.clone(), actions.merged_by_pull_request(n)?)))
+        .collect();
+    let others: Vec<String> = names
+        .iter()
+        .filter(|n| actions.merged_by_pull_request(n).is_none())
+        .cloned()
+        .collect();
     glib::spawn_future_local(async move {
         // 調べられなければ、そう知らせて消さない（macOS 版と同じ。数を 0 とみなして `-d` で断られないように）。
-        let unique = match unique_commits(&target.repo, &names).await {
+        let unique = match unique_commits(&target.repo, &others).await {
             Ok(unique) => unique,
             Err(error) => {
                 return target
@@ -2567,6 +2577,24 @@ pub fn delete_branches(actions: &Rc<Actions>, names: Vec<String>) {
         } else {
             format!("{}\n", names.join(", "))
         };
+        match &by_pull_request[..] {
+            [] => {}
+            [(_, number)] if names.len() == 1 => {
+                message.push_str(&tr!(
+                    "Pull request #{number} merged its changes.",
+                    number = number
+                ));
+                message.push(' ');
+            }
+            list => {
+                let merged: Vec<String> = list.iter().map(|(n, p)| format!("{n} (#{p})")).collect();
+                message.push_str(&tr!(
+                    "Merged by pull request: {branches}",
+                    branches = merged.join(", ")
+                ));
+                message.push(' ');
+            }
+        }
         if unmerged {
             message.push_str(&tr!(
                 "Some commits are on no other branch; they go with the branch."
@@ -2598,6 +2626,11 @@ pub fn delete_branches(actions: &Rc<Actions>, names: Vec<String>) {
                 .into_iter()
                 .map(
                     |(name, r)| json!({ "op": "deleteBranch", "name": name, "force": r.count > 0 }),
+                )
+                .chain(
+                    by_pull_request.into_iter().map(
+                        |(name, _)| json!({ "op": "deleteBranch", "name": name, "force": true }),
+                    ),
                 )
                 .collect(),
             |_| {},

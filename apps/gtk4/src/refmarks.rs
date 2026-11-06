@@ -280,7 +280,8 @@ pub fn branch(
     let other = actions.worktree_using(&item.name);
     let main_worktree = actions.is_main_worktree_branch(&item.name);
     let fact = known.groups.as_ref().and_then(|g| g.get(&item.name));
-    let merged = fact.is_some_and(|f| f.merged && !f.at_base);
+    let pull_request = fact.and_then(|f| f.pull_request);
+    let merged = fact.is_some_and(|f| f.merged && !f.at_base) || pull_request.is_some();
     let base = known
         .groups
         .as_ref()
@@ -289,6 +290,16 @@ pub fn branch(
     let upstream = item.detail.clone().unwrap_or_default();
     // 見出し: いちばん大事な状態。
     let (kind, css, title, text) = match (merged, item.gone) {
+        _ if let Some(number) = pull_request => (
+            icon::Kind::Merge,
+            Some("success"),
+            tr!("Merged by pull request #{number}", number = number),
+            tr!(
+                "Pull request #{number} was merged into {base} by squash or rebase with this branch’s tip as its head (read from GitHub). Its commits were rewritten on the way, so they aren’t in the local history, but their changes are. It is safe to delete.",
+                number = number,
+                base = base
+            ),
+        ),
         (true, true) => (
             icon::Kind::Merge,
             Some("success"),
