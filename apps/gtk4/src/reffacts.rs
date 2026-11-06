@@ -77,6 +77,17 @@ impl BranchGroups {
     pub fn base_name(&self) -> &str {
         self.base.as_deref().unwrap_or("main")
     }
+
+    /// 既定のブランチの、手元のブランチとしての名前（`base` は `origin/main` のようにリモートのものもある。手元の
+    /// ブランチならそのまま、リモートのものならリモートの名前を外す。macOS 版と同じ）。
+    pub fn local_base(&self) -> Option<&str> {
+        let base = self.base.as_deref()?;
+        Some(if self.branches.contains_key(base) {
+            base
+        } else {
+            base.split_once('/').map_or(base, |(_, b)| b)
+        })
+    }
 }
 /// タグの、リモート 1 つでの様子。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -200,5 +211,35 @@ pub fn tag_state_text(tags: Option<&TagRemotes>, tag: &str, remote: &str) -> Str
             )
         }
         _ => tr!("{remote}: doesn’t have it", remote = remote),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_default_branch_is_named_as_a_local_branch() {
+        let groups = |base: &str, locals: &[&str]| BranchGroups {
+            base: Some(base.to_owned()),
+            branches: locals
+                .iter()
+                .map(|n| {
+                    let branch = Branch {
+                        name: (*n).to_owned(),
+                        ..Branch::default()
+                    };
+                    ((*n).to_owned(), branch)
+                })
+                .collect(),
+        };
+        assert_eq!(groups("origin/main", &["main"]).local_base(), Some("main"));
+        assert_eq!(groups("main", &["main"]).local_base(), Some("main"));
+        // 手元のブランチの名前に / があっても、そのまま。
+        assert_eq!(
+            groups("team/trunk", &["team/trunk"]).local_base(),
+            Some("team/trunk")
+        );
+        assert_eq!(BranchGroups::default().local_base(), None);
     }
 }

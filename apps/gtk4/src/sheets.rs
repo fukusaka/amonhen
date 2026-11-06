@@ -2609,9 +2609,21 @@ pub fn delete_branches(actions: &Rc<Actions>, names: Vec<String>) {
 /// `force` なら、そのリモートのブランチが最後の Fetch の時点のコミットのときだけ置き換える。
 pub fn push_to(actions: &Rc<Actions>, branch: &str, target: &str, command: Value, force: bool) {
     // 選んだときの worktree で読み、そこで送る（上流へなら、その worktree の Push のシート）。
-    let Some(tree) = Target::current(actions) else {
-        return;
-    };
+    if let Some(tree) = Target::current(actions) {
+        push_to_in(actions, tree, branch, target, command, force, None);
+    }
+}
+
+/// [`push_to`] を `tree` の worktree で。送り終えたら `then`（fork へ送ってからの Create Pull Request の続き）。
+pub fn push_to_in(
+    actions: &Rc<Actions>,
+    tree: Target,
+    branch: &str,
+    target: &str,
+    command: Value,
+    force: bool,
+    then: Option<Box<dyn FnOnce()>>,
+) {
     let (actions, branch, target) = (actions.clone(), branch.to_owned(), target.to_owned());
     glib::spawn_future_local(async move {
         let r = tree.repo.clone();
@@ -2633,7 +2645,7 @@ pub fn push_to(actions: &Rc<Actions>, branch: &str, target: &str, command: Value
             .as_ref()
             .is_some_and(|l| !l.gone && l.detail.as_deref() == Some(target.as_str()))
         {
-            return push_in(&actions, tree, Some(branch), force, None);
+            return push_in(&actions, tree, Some(branch), force, then);
         }
         let there = find(amonhen_model::RefKind::Remote, &target).and_then(|e| e.target);
         let title = if force {
@@ -2674,7 +2686,13 @@ pub fn push_to(actions: &Rc<Actions>, branch: &str, target: &str, command: Value
         if force && let Some(t) = there {
             command["expect"] = json!(t.to_string());
         }
-        actions.perform_in(tree.repo, vec![command], |_| {});
+        actions.perform_in(tree.repo, vec![command], move |reply| {
+            if reply["ok"].as_bool() == Some(true)
+                && let Some(then) = then
+            {
+                then();
+            }
+        });
     });
 }
 
