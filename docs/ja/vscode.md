@@ -226,3 +226,10 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 23. リポジトリの設定
 - [x] 24. submodule: 印・Update…・URL の編集・追うブランチ・外す・Update All・Sync URLs・Add Submodule…
 - [x] 25. subtree: Add・Pull・Push・Split
+- [x] 26. ファイルをコミットの版・その前の版に戻す
+- [x] 27. stage した変更だけ・stage した変更を残して・1 つのファイルだけ stash する
+- [x] 28. worktree のロックと解除・移動・移したフォルダを探す
+- [x] 29. submodule のデータを .git/modules に移す・それぞれの submodule で命令を動かす
+- [x] 30. rerere の解決を忘れる・すべて忘れる
+- [x] 31. 履歴のない新しいブランチ（空から・ファイルを残して）
+- [x] 32. ignore されたファイルを一覧してから消す

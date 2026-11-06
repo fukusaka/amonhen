@@ -26,6 +26,7 @@ VSCode 上で快適に Git を操作するための自分用の拡張。Marketpl
 
 - ブランチ・リモートブランチ・タグを選ぶと、メインビューの History にその履歴が出る。
 - ブランチ・タグの右クリックで Checkout（リモートブランチなら追跡するローカルブランチを作って切り替える）、チェックアウトしていないローカルブランチなら Fast-Forward to Upstream（upstream より後ろにだけあるとき。最後の Fetch の時点。ほかの worktree でチェックアウト中のものは除く）か Push to Upstream（先にだけあるとき）、upstream の無いローカルブランチなら Publish Branch、Merge into Current Branch、Rebase Current Branch onto This、Rename Branch、Delete Branch、New Branch（そこから作って切り替える）、New Tag（メッセージを入れれば annotated tag）。作成と削除は Undo で戻せる。
+- エンジンがあるとき、New Orphan Branch…（コマンドパレット、Branches のグループの右クリック）で履歴のないブランチに切り替える。Start Empty（`git switch --orphan`）か、今のファイルを最初のコミットのために stage して残す Keep the Files（`git checkout --orphan`）。
 - ローカルブランチの右クリックの Compare with Previous Version で、最後の rebase・amend の前の版（reflog から）と比べ、`git range-diff` と同じ形の読み取り専用の文書に出す。パレットの「Amon Hen: Range Diff…」では、好きな 2 つの範囲を比べる。
 - エンジンがあるとき、Repository Settings（サイドバーの下）にこのリポジトリの git の設定がアプリと同じページで出る。行には効いている値、このリポジトリが上書きしている間の ↩︎、設定元、ⓘ（キー・ファイル・上書きしなければ効く値）があり、git の行にリポジトリを動かす git と形（shallow・partial・sparse・maintenance）が出る。Author and Signing に名前・メール・署名（OpenPGP・SSH・X.509。見つかった鍵から選ぶ）・mailmap、Commits にメッセージのテンプレート（なし・このリポジトリ専用（その場で書く）・ファイル）、Operations に Pull の取り込み方・fetch.prune・rebase.autoStash・rebase.updateRefs（git 2.38）・コンフリクトの書き方・rerere、Branches にほかのブランチを測る既定のブランチ、Working Copy に改行・実行ビット・`.git/info/exclude`、Fetching and Folders に shallow clone の取り足し・partial clone の全取得、一部のフォルダだけを取り出す（HEAD の木から選ぶ。sparse checkout、git 2.25）・すべてに戻す、git maintenance の切り替え（git 2.31）、Remotes にリモートの一覧（URL と指す先）と、URL の変更・fetch と別の push の URL・prune・つながるかの確かめ・名前の変更・削除・追加、Hooks and LFS にフックの一覧（いつ動くか・有効か。エディターで開く・雛形から作る）と Git LFS のパターン・ファイルの数、Keys and Values に git の設定の表（ページの行が聞くキー・このリポジトリで決めているキー・git が読むキーすべて。検索できる）と、効いている値・設定元、このリポジトリでのキーの変更・削除・追加がある。
 - エンジンがあるとき、shallow clone の History には Shallow の札が付き、履歴が止まるコミットに ⋯ の印、最後に Fetch More…（100・1,000・10,000 コミット、ほかの数、日付まで）・Fetch All の帯が出る。partial clone には Partial の札が付き、押すと確かめてから取らずにおいた中身をすべて取る（git 2.36 から）。同じものはコマンドパレットにもある。
@@ -33,12 +34,17 @@ VSCode 上で快適に Git を操作するための自分用の拡張。Marketpl
 - エンジンがあるとき、Branches はアプリと同じ並びになる。お気に入り（★。Move Up・Move Down in Favorites で決めた順）、今のブランチ（その積み重ねの根元ごと）と既定のブランチ、ほかは新しい順（`/` の名前はフォルダー、既定のブランチに取り込み済みなら「merged」）、畳んだ Inactive（90 日コミットがない）と Archived。ほかのブランチの上に積んだブランチは、その下に入れ子で出る。Add to Favorites・Archive はブランチのメニューにあり、git の設定に書くのでアプリと共有する。サイドバーの上の絞り込みのボタンで言葉を入れると、名前にどれも含むブランチ・リモートブランチ・タグだけを出す（Clear Filter で戻る）。ブランチ・タグをいくつも選ぶ（⇧・⌘ を押してクリック）と、今のブランチに 1 つのコミットで merge する、まとめて消す、まとめてお気に入り・アーカイブにする、ができる。
 - エンジンがあるとき、File History（エクスプローラー・エディターのタブ・メインビューのファイルの右クリック、コマンドパレットなら今のエディターのファイル）は、ファイルを変えたコミットを名前の変更も追って並べ（前の名前ごとに見出しを挟む）、選んだコミットの詳細をそのファイルの位置で開く。Merge Commits でマージも出す。ダブルクリックか Enter でそのコミットを History で選び、右クリックで Show in History・Copy Commit ID・Copy Path。
 - エンジンがあるとき、Blame（同じメニューから）は各行を最後に変えたコミットを出し、同じコミットの行をまとめて ID・作者・日時・件名を付ける。まだコミットしていない行はそう出す。コミットのファイル（History の詳細・File History）からならそのコミットの内容を、ほかは作業ツリーの内容を出し、書き換えると読み直す。行をダブルクリックすると、そのコミットを History で選ぶ。
+- エンジンがあるとき、History の詳細のファイルの右クリックに Restore This Version…・Restore the Version Before… も並ぶ。作業ツリーのファイルをその版にし（その版になければ消す）、Restore and Stage なら index にも入れる。作業ツリーのファイルは Undo で戻る。
 - エンジンがあり worktree が 2 つ以上あるとき、Working Copy の下に変更の数と並ぶ。書き込む先（拡張が働くリポジトリ）は鉛筆、メインは家のアイコンで、変更のないものは No changes にまとまる。選ぶとそれを書き込む先にする。右クリックで Open in New Window・Reveal in File Manager・Open in Terminal・Copy Path・Remove Worktree…（先に尋ね、変更が消えるならそう言う）。New Worktree…（Working Copy・ブランチ・タグ、History のコミットから）はブランチと、メインの隣のフォルダーを作って書き込む先にする。Prune Worktrees はフォルダーの消えたものを片付ける。ほかの worktree が checkout しているブランチには ⌂ か ⑂ が付く。
+- エンジンがあるとき、worktree の右クリックに Lock…（理由は任意。git が prune・remove・move で消さない）・Unlock・Move…（`git worktree move`。書き込む先のものは除く）も並び、フォルダのなくなった worktree には Locate Moved Folder…（`git worktree repair`。git 2.29 から）がある。
 - エンジンがあるとき、タグにリモートでの様子（最後の Fetch の時点で、どのリモートにもない「not on any remote」、同じ名前の別のタグがある「different on」）と署名の印（アイコン。説明はツールチップ）が付く。タグの右クリックで Push Tag（まだないリモートへ）・Replace Tag on Remote…・Delete Tag…（Undo で戻せる）・Delete Tag from Remote…、リモートの右クリックで Rename…・Edit URL…・Prune・Remove…、Remotes の見出しの `+` でリモートを足せる。
 - Stashes の節は stash があるときだけ出る。その見出しの `+` で、作業中の変更を stash する（untracked のファイルを含めるかを選べる）。stash を選ぶと中身を複数ファイル diff で開き、右クリックで Apply / Pop / Drop（Undo で戻せる）。Apply と Pop は stage していた状態も戻す。エンジンがあるとき、stash の行には untracked のファイルを含むかが付き、ツールチップに作ったときのブランチと、土台から HEAD がどれだけ動いたかが出る。Branch… はその土台にブランチを作って stash を当て、見出しの Pop Latest Stash… は確かめてから最新の stash を pop する。
+- エンジンがあるとき、Stash には Stash Only the Staged Changes（git 2.35 から）と Stash, Keeping the Staged Changes（`--keep-index`）も並び、Working Copy のファイルの右クリックにそのファイルだけの Stash… がある。
 - Reflog は HEAD の reflog を新しい順に並べ、右に選んだ行のコミットを出す。どのブランチからも辿れなくなったコミット（reset・rebase・amend で外れたもの）には「not on any branch」と付く。一覧の上の New Branch…・Checkout と、右クリック（New Tag・Reset Current Branch to Here…・Show in History・Copy Commit ID・Copy Name）で取り戻せる。
 - History のコミットの右クリックにも Checkout (Detached) と、エンジンがあれば Reset Current Branch to Here… がある。`git reset` と同じに Mixed・Soft・Hard を選ぶ。Hard は先に作業中の変更を stash に残し、Undo でブランチを戻せる。
 - Submodules は右クリックで Update（初期化して記録されているコミットに合わせる）と、別のウィンドウで開く。エンジンがあれば、行にアプリと同じ印（取り出していない・違うコミット・中の変更・コンフリクト）と URL・追うブランチが出て、メニューに Update…（中の submodule も・追うブランチの最新）・Edit URL…・Branch to Follow…・Remove… も並ぶ。グループには Update All・Update Submodules…・Sync URLs・Add Submodule…。
+- エンジンがあるとき、Delete Ignored Files…（コマンドパレット、Working Copy の右クリック）は `git clean -X` が消すもの（フォルダは 1 つ）を一覧し、選んだままのものを確かめてから消す。Undo では戻せない。
+- 自分のフォルダにデータを持つ submodule（手で clone してから足したもの）には Move Repository Data into .git/modules（`git submodule absorbgitdirs`）があり、Submodules のグループには Run in Each Submodule…（それぞれのフォルダでシェルの命令を動かす。中の submodule でも選べる。知らせるのは成否だけ）がある。
 - エンジンがあり、git に `git subtree` があれば、`git subtree` で取り込んだフォルダが Subtrees に並ぶ。Add Subtree… でリポジトリのブランチをフォルダに取り込み、subtree の右クリックで Pull…（ブランチをフォルダに merge）・Push…（フォルダのコミットをブランチに送る）・Split…（フォルダの履歴だけのブランチ）。相手・ブランチ・squash は前に使ったものから始まる。
 - 複数のリポジトリを開いているときは、タイトルのボタンで切り替える。
 
@@ -64,6 +70,7 @@ VSCode 上で快適に Git を操作するための自分用の拡張。Marketpl
 - Changes のファイルは、一覧の ↺、Discard File、Discard Hunk、Discard N Lines で変更を破棄できる。untracked のファイルは消す。破棄した内容は Undo で戻せる。
 - コミット欄は Summary と Description（複数行）。Amend にすると直前のコミットのメッセージが入る。`⌘Enter` / `Ctrl+Enter` でもコミットできる。
 - コンフリクトしたファイルでは、Open in Merge Editor（標準の 3-way マージエディタ）、Accept Current、Accept Incoming、Mark as Resolved を選べる。片側で削除されたファイルも Accept で解決できる。解決済みにするとき、マーカーが残っていれば確認する。マーカーの残っていないファイル（git の rerere が前の解決を当てた、ほかのエディタで直した）は ✓ と「マーカーなし」か「rerere」を出して Mark as Resolved を先に勧め、Conflicts の見出しからまとめて解決済みにできる。そうしたファイルで Accept を選ぶと、解決した内容を置き換える前に確認する。
+- エンジンがあるとき、rerere が解決したコンフリクトのファイルの右クリックに Forget Resolution があり、コンフリクトのマーカーに戻す（Undo でファイルは戻る）。Repository Settings > Operations の Forget All… で、覚えた解決をすべて忘れる。
 
 ### History
 

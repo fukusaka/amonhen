@@ -7,7 +7,7 @@
  */
 import assert from 'node:assert/strict';
 import childProcess from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import * as vscode from 'vscode';
 import { DaemonClient } from '../src/daemon/client.ts';
@@ -1018,6 +1018,336 @@ async function subtreeFlow(): Promise<void> {
     rmSync(lib, { recursive: true, force: true });
     await repo.refresh();
     await facts.reload();
+  }
+}
+
+/**
+ * History のファイルの Restore the Version Before… で、作業ツリーのファイルを 1 つ前の版にし、Undo で戻す。
+ * Restore and Stage は index にも入れる。コアの命令（daemon だけ）
+ */
+async function restoreFlow(): Promise<void> {
+  const repo = api.manager.current!;
+  const start = git('rev-parse', 'HEAD').trim();
+  const path = join(root, 'restore-e2e.txt');
+  const read = () => readFileSync(path, 'utf8').replaceAll('\r\n', '\n');
+  writeFileSync(path, 'one\n');
+  git('add', 'restore-e2e.txt');
+  git('commit', '-q', '-m', 'restore one');
+  writeFileSync(path, 'two\n');
+  git('commit', '-q', '-am', 'restore two');
+  const head = git('rev-parse', 'HEAD').trim();
+  try {
+    await repo.refresh();
+    await withWindow({ showWarningMessage: async () => 'Restore' }, async () =>
+      vscode.commands.executeCommand('amonhen.restoreFile.versionBefore', { oid: head, path: 'restore-e2e.txt' }),
+    );
+    assert.equal(read(), 'one\n', lastErrors());
+    assert.equal(git('diff', '--cached', '--name-only').trim(), '', 'Restore は index に入れない');
+    await withWindow({ showWarningMessage: async () => 'Undo' }, async () => vscode.commands.executeCommand('amonhen.undo'));
+    assert.equal(read(), 'two\n');
+
+    // この版（HEAD）に戻すのは何も変えない。1 つ前の版を stage まで
+    await withWindow({ showWarningMessage: async () => 'Restore and Stage' }, async () =>
+      vscode.commands.executeCommand('amonhen.restoreFile.versionBefore', { oid: head, path: 'restore-e2e.txt' }),
+    );
+    assert.equal(git('diff', '--cached', '--name-only').trim(), 'restore-e2e.txt');
+  } finally {
+    git('reset', '-q', '--hard', start);
+    rmSync(path, { force: true });
+    await repo.refresh();
+  }
+}
+
+/**
+ * Stash… で stage したものだけ（git 2.35 から）・stage した変更を残して stash し、Working Copy のファイルの Stash… で
+ * そのファイルだけを stash する。コアの命令（daemon だけ）
+ */
+async function stashOptionsFlow(): Promise<void> {
+  const repo = api.manager.current!;
+  const [major, minor] = git('--version').match(/(\d+)\.(\d+)/)!.slice(1).map(Number) as [number, number];
+  const a = join(root, 'so-a.txt');
+  const b = join(root, 'so-b.txt');
+  const start = git('rev-parse', 'HEAD').trim();
+  writeFileSync(a, 'a\n');
+  writeFileSync(b, 'b\n');
+  git('add', 'so-a.txt', 'so-b.txt');
+  git('commit', '-q', '-m', 'stash options');
+  const pick = (label: string) => ({
+    showQuickPick: async (items: readonly vscode.QuickPickItem[]) => items.find((i) => i.label === label),
+    showInputBox: inputs(''),
+  });
+  try {
+    // stage した変更を残す: a（stage）も b（stage していない）も stash に入り、a の stage は残る
+    writeFileSync(a, 'a2\n');
+    writeFileSync(b, 'b2\n');
+    git('add', 'so-a.txt');
+    await repo.refresh();
+    await withWindow(pick('Stash, Keeping the Staged Changes'), async () => vscode.commands.executeCommand('amonhen.stash'));
+    assert.equal(git('diff', '--cached', '--name-only').trim(), 'so-a.txt', lastErrors());
+    assert.equal(git('diff', '--name-only').trim(), '');
+    assert.equal(git('stash', 'list').trim().split('\n').length, 1);
+    git('reset', '-q', '--hard');
+    git('stash', 'drop', '-q');
+
+    if (major > 2 || (major === 2 && minor >= 35)) {
+      // stage したものだけ: b の変更は作業ツリーに残る
+      writeFileSync(a, 'a3\n');
+      writeFileSync(b, 'b3\n');
+      git('add', 'so-a.txt');
+      await repo.refresh();
+      await withWindow(pick('Stash Only the Staged Changes'), async () => vscode.commands.executeCommand('amonhen.stash'));
+      assert.equal(git('diff', '--cached', '--name-only').trim(), '', lastErrors());
+      assert.equal(git('diff', '--name-only').trim(), 'so-b.txt');
+      assert.equal(git('stash', 'show', '--name-only').trim(), 'so-a.txt');
+      git('reset', '-q', '--hard');
+      git('stash', 'drop', '-q');
+    }
+
+    // ファイルを選んで: b だけを stash する
+    writeFileSync(a, 'a4\n');
+    writeFileSync(b, 'b4\n');
+    await repo.refresh();
+    await withWindow({ showInputBox: inputs('only b') }, async () => vscode.commands.executeCommand('amonhen.stash.files', { path: 'so-b.txt' }));
+    assert.equal(git('diff', '--name-only').trim(), 'so-a.txt', lastErrors());
+    assert.equal(git('stash', 'show', '--name-only').trim(), 'so-b.txt');
+  } finally {
+    git('reset', '-q', '--hard', start);
+    while (git('stash', 'list').trim()) git('stash', 'drop', '-q');
+    for (const p of [a, b]) rmSync(p, { force: true });
+    await repo.refresh();
+  }
+}
+
+/**
+ * worktree をロックし（理由つき）、外し、別のフォルダに移し、手で移したものの今の場所を教える（repair は git 2.29
+ * から）。コアの命令（daemon だけ）
+ */
+async function worktreeMoreFlow(): Promise<void> {
+  const sidebar = api.sidebar;
+  const repo = api.manager.current!;
+  const folder = join(dirname(root), 'wt-more-a');
+  const moved = join(dirname(root), 'wt-more-b');
+  const byHand = join(dirname(root), 'wt-more-c');
+  const [major, minor] = git('--version').match(/(\d+)\.(\d+)/)!.slice(1).map(Number) as [number, number];
+  const node = async (path: string) => {
+    await sidebar.worktrees.reload();
+    const worktree = await until(`worktree ${path}`, () => sidebar.worktrees.worktrees.find((w) => samePath(w.path, path)));
+    return { kind: 'worktree', worktree };
+  };
+  const porcelain = () => git('worktree', 'list', '--porcelain');
+  git('worktree', 'add', '-q', '-b', 'wt-more', folder);
+  try {
+    // ロックは git dir の locked に理由を書く（`worktree list` が locked を出すのは git 2.31 から）
+    const locked = join(git('-C', folder, 'rev-parse', '--absolute-git-dir').trim(), 'locked');
+    await withWindow({ showInputBox: inputs('keep it') }, async () => vscode.commands.executeCommand('amonhen.worktree.lock', await node(folder)));
+    assert.equal(existsSync(locked) && readFileSync(locked, 'utf8').trim(), 'keep it', lastErrors());
+    await vscode.commands.executeCommand('amonhen.worktree.unlock', await node(folder));
+    assert.ok(!existsSync(locked), lastErrors());
+
+    await withWindow({ showInputBox: inputs(moved) }, async () => vscode.commands.executeCommand('amonhen.worktree.move', await node(folder)));
+    assert.ok(existsSync(moved) && !existsSync(folder), lastErrors());
+    assert.match(porcelain().replaceAll('\\', '/'), new RegExp(basename(moved)));
+
+    if (major > 2 || (major === 2 && minor >= 29)) {
+      // 手で移すと、git は場所を見失う。今の場所を教えると直る
+      renameSync(moved, byHand);
+      await withWindow({ showOpenDialog: async () => [vscode.Uri.file(byHand)] }, async () =>
+        vscode.commands.executeCommand('amonhen.worktree.repair', await node(moved)),
+      );
+      assert.match(porcelain().replaceAll('\\', '/'), new RegExp(basename(byHand)), lastErrors());
+      assert.equal(git('-C', byHand, 'symbolic-ref', '--short', 'HEAD').trim(), 'wt-more');
+    }
+  } finally {
+    for (const p of [folder, moved, byHand]) {
+      if (existsSync(p)) {
+        try {
+          // 途中で落ちたときはロックが残っている
+          git('worktree', 'unlock', p);
+        } catch {
+          // ロックしていなければ git が断る
+        }
+        try {
+          git('worktree', 'remove', '--force', p);
+        } catch {
+          rmSync(p, { recursive: true, force: true });
+        }
+      }
+    }
+    git('worktree', 'prune');
+    if (git('branch', '--list', 'wt-more').trim()) git('branch', '-q', '-D', 'wt-more');
+    await sidebar.worktrees.reload();
+    await repo.refresh();
+  }
+}
+
+/**
+ * 手で clone してから足した submodule は、データを自分のフォルダに持つ。Move Repository Data into .git/modules で
+ * 移し、Run in Each Submodule… でそれぞれの中で命令を動かす。コアの命令（daemon だけ）
+ */
+async function submoduleMoreFlow(): Promise<void> {
+  const sidebar = api.sidebar;
+  const repo = api.manager.current!;
+  const start = git('rev-parse', 'HEAD').trim();
+  const lib = join(dirname(root), 'smm-lib');
+  const path = 'vendor/smm-lib';
+  const gitDir = git('rev-parse', '--absolute-git-dir').trim();
+  git('config', '--global', 'protocol.file.allow', 'always');
+  childProcess.execFileSync('git', ['init', '-q', lib]);
+  childProcess.execFileSync('git', ['-C', lib, '-c', 'user.name=a', '-c', 'user.email=a@example.com', 'commit', '-q', '--allow-empty', '-m', 'lib']);
+  try {
+    // 手で clone してから足す（データはその中に残る）
+    git('clone', '-q', `file://${lib.replaceAll('\\', '/')}`, path);
+    git('submodule', 'add', '-q', `file://${lib.replaceAll('\\', '/')}`, path);
+    const section = sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'submodules')!;
+    sidebar.onDidExpand(section);
+    await repo.refresh();
+    await sidebar.submoduleFacts.reload();
+    await until('自分のフォルダにデータ', () => sidebar.submoduleFacts.get(path)?.ownGitDir);
+    const row = await until('submodule の行', () => sidebar.getChildren(section).find((n) => n.kind === 'submodule' && n.submodule.path === path));
+    assert.match(String(sidebar.getTreeItem(row).contextValue), /;ownGitDir/);
+    await vscode.commands.executeCommand('amonhen.submodule.absorb', row);
+    assert.ok(existsSync(join(gitDir, 'modules', path)), lastErrors());
+    assert.ok(statSync(join(root, path, '.git')).isFile(), '.git はファイル（gitdir: の指し先）になる');
+
+    await withWindow(
+      { showInputBox: inputs('git tag foreach-e2e'), showQuickPick: async (items: readonly vscode.QuickPickItem[]) => items[0] },
+      async () => vscode.commands.executeCommand('amonhen.submodules.foreach'),
+    );
+    assert.equal(git('-C', path, 'tag', '--list', 'foreach-e2e').trim(), 'foreach-e2e', lastErrors());
+  } finally {
+    git('reset', '-q', '--hard', start);
+    rmSync(join(root, 'vendor'), { recursive: true, force: true });
+    rmSync(join(gitDir, 'modules'), { recursive: true, force: true });
+    try {
+      git('config', '--remove-section', `submodule.${path}`);
+    } catch {
+      // ない
+    }
+    git('config', '--global', '--unset', 'protocol.file.allow');
+    rmSync(lib, { recursive: true, force: true });
+    await repo.refresh();
+  }
+}
+
+/**
+ * rerere が当てた解決を Forget Resolution で忘れると、コンフリクトのマーカーが戻る。Repository Settings の
+ * Forget All… で、覚えた解決をすべて消す。コアの命令（daemon だけ）
+ */
+async function rerereForgetFlow(): Promise<void> {
+  const panel = await showView('amonhen.showWorkingCopy');
+  const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+  const gitDir = git('rev-parse', '--absolute-git-dir').trim();
+  const file = join(root, 'rf.txt');
+  const side = (name: string) => {
+    writeFileSync(file, `1\n${name}\n3\n`);
+    git('add', 'rf.txt');
+    git('commit', '-q', '-m', `rf ${name}`);
+  };
+  const merge = () => assert.throws(() => childProcess.execFileSync('git', ['merge', '-q', 'rf-theirs'], { cwd: root, stdio: 'ignore' }));
+  git('config', 'rerere.enabled', 'true');
+  git('switch', '-q', '-c', 'rf-ours');
+  side('ours');
+  git('switch', '-q', '-c', 'rf-theirs', 'HEAD~');
+  side('theirs');
+  git('switch', '-q', 'rf-ours');
+  try {
+    merge();
+    writeFileSync(file, '1\nboth\n3\n');
+    git('rerere');
+    git('merge', '--abort');
+    merge();
+    assert.equal(readFileSync(file, 'utf8'), '1\nboth\n3\n', 'rerere が当てる');
+    await vscode.commands.executeCommand('amonhen.forgetResolution', { path: 'rf.txt' });
+    assert.match(readFileSync(file, 'utf8'), /^<<<<<<< /m, lastErrors());
+    git('merge', '--abort');
+
+    // 覚えた解決をすべて忘れる（もう一度覚えさせてから）
+    merge();
+    writeFileSync(file, '1\nboth\n3\n');
+    git('rerere');
+    git('merge', '--abort');
+    assert.ok(readdirSync(join(gitDir, 'rr-cache')).length > 0);
+    await withWindow({ showWarningMessage: async () => 'Forget All' }, async () =>
+      panel.settings.handle({ type: 'settingsRun', action: 'forgetAllResolutions' }),
+    );
+    assert.equal(existsSync(join(gitDir, 'rr-cache')) ? readdirSync(join(gitDir, 'rr-cache')).length : 0, 0, lastErrors());
+  } finally {
+    try {
+      git('merge', '--abort');
+    } catch {
+      // もうやめている
+    }
+    git('switch', '-q', branch);
+    git('branch', '-q', '-D', 'rf-ours', 'rf-theirs');
+    git('config', '--unset', 'rerere.enabled');
+    rmSync(join(gitDir, 'rr-cache'), { recursive: true, force: true });
+    await vscode.commands.executeCommand('amonhen.refresh');
+  }
+}
+
+/**
+ * New Orphan Branch… で履歴のないブランチに切り替える。Keep the Files なら今のファイルが stage されて残り、Start Empty
+ * なら何もない。コアの命令（daemon だけ）
+ */
+async function orphanFlow(): Promise<void> {
+  const repo = api.manager.current!;
+  const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+  const pick = (name: string, label: string) => ({
+    showInputBox: inputs(name),
+    showQuickPick: async (items: readonly vscode.QuickPickItem[]) => items.find((i) => i.label === label),
+  });
+  const unborn = () => assert.throws(() => git('rev-parse', '-q', '--verify', 'HEAD'), 'まだコミットがない');
+  try {
+    await withWindow(pick('orphan-keep', 'Keep the Files'), async () => vscode.commands.executeCommand('amonhen.branch.newOrphan'));
+    assert.equal(git('symbolic-ref', '--short', 'HEAD').trim(), 'orphan-keep', lastErrors());
+    unborn();
+    assert.ok(git('diff', '--cached', '--name-only').includes(FILE), '今のファイルは stage されて残る');
+    git('reset', '-q');
+    git('switch', '-q', '-f', branch);
+
+    await withWindow(pick('orphan-empty', 'Start Empty'), async () => vscode.commands.executeCommand('amonhen.branch.newOrphan'));
+    assert.equal(git('symbolic-ref', '--short', 'HEAD').trim(), 'orphan-empty', lastErrors());
+    unborn();
+    assert.equal(git('ls-files').trim(), '', '空から始まる');
+  } finally {
+    git('switch', '-q', '-f', branch);
+    await repo.refresh();
+  }
+}
+
+/**
+ * Delete Ignored Files… は git clean -X が消すもの（フォルダは 1 つ）を先に見せ、選んだものだけを消す。ignore されて
+ * いないファイルは残る。コアの命令（daemon だけ）
+ */
+async function deleteIgnoredFlow(): Promise<void> {
+  const repo = api.manager.current!;
+  const exclude = join(git('rev-parse', '--absolute-git-dir').trim(), 'info', 'exclude');
+  const before = existsSync(exclude) ? readFileSync(exclude, 'utf8') : '';
+  const files = ['di-a.log', 'di-b.log', 'di-build/out.bin', 'di-keep.txt'];
+  writeFileSync(exclude, `${before}\n*.log\ndi-build/\n`);
+  mkdirSync(join(root, 'di-build'), { recursive: true });
+  for (const f of files) writeFileSync(join(root, f), 'x\n');
+  let listed: string[] = [];
+  try {
+    await withWindow(
+      {
+        showQuickPick: async (items: readonly vscode.QuickPickItem[]) => {
+          listed = items.map((i) => i.label);
+          return items.filter((i) => i.label !== 'di-b.log');
+        },
+        showWarningMessage: async () => 'Delete',
+      },
+      async () => vscode.commands.executeCommand('amonhen.deleteIgnored'),
+    );
+    assert.deepEqual(listed.sort(), ['di-a.log', 'di-b.log', 'di-build/'], lastErrors());
+    assert.ok(!existsSync(join(root, 'di-a.log')) && !existsSync(join(root, 'di-build')), lastErrors());
+    assert.ok(existsSync(join(root, 'di-b.log')), '選ばなかったものは残る');
+    assert.ok(existsSync(join(root, 'di-keep.txt')), 'ignore されていないものは残る');
+  } finally {
+    writeFileSync(exclude, before);
+    for (const f of files) rmSync(join(root, f), { force: true });
+    rmSync(join(root, 'di-build'), { recursive: true, force: true });
+    await repo.refresh();
   }
 }
 
@@ -2072,6 +2402,34 @@ suite('Amon Hen in VSCode', () => {
 
   test('adds, pulls, splits and pushes a subtree through the daemon', async () => {
     await subtreeFlow();
+  });
+
+  test('restores a file to the version before a commit through the daemon', async () => {
+    await restoreFlow();
+  });
+
+  test('stashes only the staged changes, keeping them, or one file through the daemon', async () => {
+    await stashOptionsFlow();
+  });
+
+  test('locks, unlocks, moves and locates a moved worktree through the daemon', async () => {
+    await worktreeMoreFlow();
+  });
+
+  test('moves a submodule’s repository data into .git/modules and runs a command in each through the daemon', async () => {
+    await submoduleMoreFlow();
+  });
+
+  test('forgets one rerere resolution and all of them through the daemon', async () => {
+    await rerereForgetFlow();
+  });
+
+  test('creates an orphan branch, empty or keeping the files, through the daemon', async () => {
+    await orphanFlow();
+  });
+
+  test('lists ignored files and deletes the ones chosen through the daemon', async () => {
+    await deleteIgnoredFlow();
   });
 
   test('shows stash details, branches from a stash and pops the latest through the daemon', async () => {

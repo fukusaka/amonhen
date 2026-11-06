@@ -17,6 +17,8 @@ export interface SubmoduleFact {
   /** 中に変更がある */
   changed: boolean;
   conflict: boolean;
+  /** 中のリポジトリのデータを自分のフォルダに持っている（手で clone してから足したもの。`.git/modules` に移せる） */
+  ownGitDir?: boolean;
 }
 
 /** 行の右に出す印（アプリと同じ順: 取り出していない・違うコミット・中の変更・コンフリクト） */

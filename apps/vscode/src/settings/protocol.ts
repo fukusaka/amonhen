@@ -67,7 +67,9 @@ export type FetchingAction =
   | { action: 'templateFile' }
   /** Author and Signing: 一覧にない鍵を入れる・mailmap のファイルを選ぶ */
   | { action: 'signingKeyOther' }
-  | { action: 'mailmapFile' };
+  | { action: 'mailmapFile' }
+  /** Operations: rerere が覚えた解決をすべて忘れる */
+  | { action: 'forgetAllResolutions' };
 
 export type SettingsHostMessage =
   /** 読んだ設定（`error` は読めなかったわけ） */

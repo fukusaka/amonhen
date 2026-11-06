@@ -17,6 +17,8 @@ export type SettingRow =
       needs?: Needs;
     }
   | { kind: 'pull'; question: string }
+  /** rerere が覚えた解決（すべて忘れる） */
+  | { kind: 'rerereCache' }
   /** 既定のブランチ（Amon Hen の `amonhen.defaultBranch`。なければ判定したもの） */
   | { kind: 'defaultBranch' }
   /** `.git/info/exclude` の中身を書く欄 */
@@ -150,6 +152,7 @@ export const PAGES: SettingPage[] = [
             key: 'rerere.autoUpdate',
             defaultOn: false,
           },
+          { kind: 'rerereCache' },
         ],
       },
     ],

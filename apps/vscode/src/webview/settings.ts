@@ -624,6 +624,12 @@ export function createSettingsView(): View {
         return signingKeyRow();
       case 'mailmapFile':
         return mailmapFileRow();
+      case 'rerereCache':
+        return actionRow(
+          facts.rerereCache ? 'Resolutions remembered' : 'No resolutions remembered',
+          'Forget All makes git forget every resolution it remembered (.git/rr-cache). Undo can’t bring them back.',
+          facts.rerereCache ? [button('Forget All…', { action: 'forgetAllResolutions' })] : [],
+        );
       case 'pull': {
         const method = pullMethod(config);
         const decidingKey = config.effective('pull.ff')?.value.toLowerCase() === 'only' ? 'pull.ff' : 'pull.rebase';

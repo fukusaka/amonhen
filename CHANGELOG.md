@@ -953,6 +953,20 @@ First release.
   (nested ones, or to the branch followed), pointed elsewhere, synced and removed (keeping `.git/modules` unless asked).
 - With the engine and a git that has `git subtree`, a Subtrees group lists the folders added with it; Add Subtree…,
   Pull…, Push… and Split… start from the repository, branch and squash used last.
+- With the engine, a file's right-click in History's details has Restore This Version… and Restore the Version
+  Before…, which put that version in the working tree (and the index if chosen); Undo takes the file back.
+- With the engine, Stash can take only the staged changes (git 2.35) or keep them staged, and a Working Copy
+  file's right-click has Stash… for that file alone.
+- With the engine, a worktree's right-click has Lock…, Unlock and Move…, and a worktree whose folder is gone has
+  Locate Moved Folder… (git 2.29).
+- With the engine, a submodule cloned by hand before it was added has Move Repository Data into .git/modules, and
+  the Submodules group has Run in Each Submodule… (`git submodule foreach`).
+- With the engine, a conflict rerere resolved has Forget Resolution on its Working Copy right-click (the markers
+  come back), and Repository Settings > Operations has Forget All… for the remembered resolutions.
+- With the engine, New Orphan Branch… (Command Palette, the Branches group's right-click) switches to a branch with
+  no history, empty or keeping the current files staged.
+- With the engine, Delete Ignored Files… (Command Palette, Working Copy's right-click) lists what `git clean -X` would
+  delete, folders as one entry, and deletes the ones kept chosen after asking.
 
 #### Fixed
 

@@ -270,6 +270,26 @@
         "category": "Amon Hen"
       },
       {
+        "command": "amonhen.worktree.lock",
+        "title": "Lock Worktree…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.worktree.unlock",
+        "title": "Unlock Worktree",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.worktree.move",
+        "title": "Move Worktree…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.worktree.repair",
+        "title": "Locate Moved Folder…",
+        "category": "Amon Hen"
+      },
+      {
         "command": "amonhen.fileHistory",
         "title": "File History",
         "category": "Amon Hen",
@@ -283,6 +303,31 @@
       {
         "command": "amonhen.fileHistory.copyPath",
         "title": "Copy Path",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.restoreFile.thisVersion",
+        "title": "Restore This Version…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.restoreFile.versionBefore",
+        "title": "Restore the Version Before…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.forgetResolution",
+        "title": "Forget Resolution",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.branch.newOrphan",
+        "title": "New Orphan Branch…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.deleteIgnored",
+        "title": "Delete Ignored Files…",
         "category": "Amon Hen"
       },
       {
@@ -357,6 +402,11 @@
         "title": "Pop Latest Stash…",
         "category": "Amon Hen",
         "icon": "$(git-stash-pop)"
+      },
+      {
+        "command": "amonhen.stash.files",
+        "title": "Stash…",
+        "category": "Amon Hen"
       },
       {
         "command": "amonhen.stash.branch",
@@ -614,6 +664,16 @@
         "title": "Add Submodule…",
         "category": "Amon Hen",
         "icon": "$(add)"
+      },
+      {
+        "command": "amonhen.submodule.absorb",
+        "title": "Move Repository Data into .git/modules",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.submodules.foreach",
+        "title": "Run in Each Submodule…",
+        "category": "Amon Hen"
       },
       {
         "command": "amonhen.subtrees.add",
@@ -948,37 +1008,37 @@
         },
         {
           "command": "amonhen.submodule.update",
-          "when": "view == amonhen.sidebar && viewItem == submodule",
+          "when": "view == amonhen.sidebar && viewItem =~ /^submodule/",
           "group": "inline"
         },
         {
           "command": "amonhen.submodule.update",
-          "when": "view == amonhen.sidebar && viewItem == submodule",
+          "when": "view == amonhen.sidebar && viewItem =~ /^submodule/",
           "group": "1_submodule@1"
         },
         {
           "command": "amonhen.submodule.open",
-          "when": "view == amonhen.sidebar && viewItem == submodule",
+          "when": "view == amonhen.sidebar && viewItem =~ /^submodule/",
           "group": "1_submodule@2"
         },
         {
           "command": "amonhen.submodule.updateWith",
-          "when": "view == amonhen.sidebar && amonhen.engine && viewItem == submodule",
+          "when": "view == amonhen.sidebar && amonhen.engine && viewItem =~ /^submodule/",
           "group": "1_submodule@1.5"
         },
         {
           "command": "amonhen.submodule.editUrl",
-          "when": "view == amonhen.sidebar && amonhen.engine && viewItem == submodule",
+          "when": "view == amonhen.sidebar && amonhen.engine && viewItem =~ /^submodule/",
           "group": "2_submodule@1"
         },
         {
           "command": "amonhen.submodule.setBranch",
-          "when": "view == amonhen.sidebar && amonhen.engine && viewItem == submodule",
+          "when": "view == amonhen.sidebar && amonhen.engine && viewItem =~ /^submodule/",
           "group": "2_submodule@2"
         },
         {
           "command": "amonhen.submodule.remove",
-          "when": "view == amonhen.sidebar && amonhen.engine && viewItem == submodule",
+          "when": "view == amonhen.sidebar && amonhen.engine && viewItem =~ /^submodule/",
           "group": "3_submodule@1"
         },
         {
@@ -1030,6 +1090,46 @@
           "command": "amonhen.subtree.split",
           "when": "view == amonhen.sidebar && amonhen.engine && amonhen.subtrees && viewItem == subtree",
           "group": "1_subtree@3"
+        },
+        {
+          "command": "amonhen.worktree.lock",
+          "when": "view == amonhen.sidebar && amonhen.engine && viewItem =~ /^worktree(?!.*;(main|prunable|locked))/",
+          "group": "4_worktree@3"
+        },
+        {
+          "command": "amonhen.worktree.unlock",
+          "when": "view == amonhen.sidebar && amonhen.engine && viewItem =~ /^worktree.*;locked/",
+          "group": "4_worktree@3"
+        },
+        {
+          "command": "amonhen.worktree.move",
+          "when": "view == amonhen.sidebar && amonhen.engine && viewItem =~ /^worktree(?!.*;(main|prunable|locked|editing))/",
+          "group": "4_worktree@4"
+        },
+        {
+          "command": "amonhen.worktree.repair",
+          "when": "view == amonhen.sidebar && amonhen.engine && viewItem =~ /^worktree.*;prunable/",
+          "group": "4_worktree@1"
+        },
+        {
+          "command": "amonhen.submodule.absorb",
+          "when": "view == amonhen.sidebar && amonhen.engine && viewItem =~ /^submodule.*;ownGitDir/",
+          "group": "2_submodule@3"
+        },
+        {
+          "command": "amonhen.submodules.foreach",
+          "when": "view == amonhen.sidebar && amonhen.engine && viewItem == section.submodules",
+          "group": "1_submodules@4"
+        },
+        {
+          "command": "amonhen.branch.newOrphan",
+          "when": "view == amonhen.sidebar && amonhen.engine && viewItem == section.branches",
+          "group": "1_branches@1"
+        },
+        {
+          "command": "amonhen.deleteIgnored",
+          "when": "view == amonhen.sidebar && amonhen.engine && viewItem == view.workingCopy",
+          "group": "9_clean@1"
         }
       ],
       "commandPalette": [
@@ -1384,6 +1484,54 @@
         {
           "command": "amonhen.worktree.prune",
           "when": "amonhen.hasRepository && amonhen.engine"
+        },
+        {
+          "command": "amonhen.restoreFile.thisVersion",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.restoreFile.versionBefore",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.stash.files",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.worktree.lock",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.worktree.unlock",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.worktree.move",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.worktree.repair",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.submodule.absorb",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.submodules.foreach",
+          "when": "amonhen.hasRepository && amonhen.engine"
+        },
+        {
+          "command": "amonhen.forgetResolution",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.branch.newOrphan",
+          "when": "amonhen.hasRepository && amonhen.engine"
+        },
+        {
+          "command": "amonhen.deleteIgnored",
+          "when": "amonhen.hasRepository && amonhen.engine"
         }
       ],
       "webview/context": [
@@ -1516,6 +1664,26 @@
           "command": "amonhen.reflog.copyName",
           "when": "webviewId == 'amonhen.main' && webviewSection == 'reflog'",
           "group": "9_copy@2"
+        },
+        {
+          "command": "amonhen.restoreFile.thisVersion",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commitFile' && amonhen.engine",
+          "group": "2_restore@1"
+        },
+        {
+          "command": "amonhen.restoreFile.versionBefore",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commitFile' && amonhen.engine",
+          "group": "2_restore@2"
+        },
+        {
+          "command": "amonhen.stash.files",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcConflict && amonhen.engine",
+          "group": "2_stash@1"
+        },
+        {
+          "command": "amonhen.forgetResolution",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && wcRerere && amonhen.engine",
+          "group": "2_conflict@1"
         }
       ],
       "editor/title/context": [
