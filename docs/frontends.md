@@ -375,7 +375,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | --- | :-: | :-: | :-: | :-: | --- |
 | GitHub through `gh` | ✓ | ✓ | — | — |  |
 | Pull Requests (CI, draft, review; check out, open, copy URL) | ✓ | ✓ | — | — |  |
-| Create Pull Request (base, draft) | ✓ | ✓ | — | — | macOS: The base is typed (the default branch at first).<br>GTK4: The base is typed (the default branch at first). |
+| Create Pull Request (base, draft) | ✓ | ✓ | — | — | macOS: The base is typed (the default branch at first). From a fork, to its parent.<br>GTK4: The base is typed (the default branch at first). From a fork, to its parent. |
 | Branch status popover (CI, pull request) | ✓ | ✓ | — | — |  |
 | Open on GitHub | ✓ | ✓ | — | — |  |
 | `#123` links in messages | ✓ | ✓ | — | — |  |

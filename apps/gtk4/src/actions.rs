@@ -175,6 +175,11 @@ impl Actions {
         apply_facts(&self.group, &self.facts.borrow());
     }
 
+    /// 既定のブランチの、手元のブランチとしての名前（サイドバーが読んでいれば）。
+    pub fn default_branch(&self) -> Option<String> {
+        self.facts.borrow().default_branch.clone()
+    }
+
     /// タブのある窓。
     pub fn window(&self) -> Option<gtk::ApplicationWindow> {
         self.anchor.upgrade()?.root().and_downcast()
@@ -480,7 +485,9 @@ impl Actions {
             if crate::github::available()
                 && let Some(github) = crate::github::of(&repo).await
             {
-                match crate::github::merged_pull_requests(&github).await {
+                // fork なら、元のリポジトリでその fork から出したもの。
+                let target = crate::github::pull_request_target(&github).await;
+                match crate::github::merged_pull_requests(&target).await {
                     Ok(list) => pull_requests = list,
                     Err(e) => {
                         note = Some(tr!(
@@ -1012,6 +1019,10 @@ pub struct Facts {
     pub head: bool,
     /// ブランチを checkout している（detached HEAD でない）。
     pub head_branch: bool,
+    /// 今のブランチの名前（detached HEAD なら None）。
+    pub head_name: Option<String>,
+    /// 既定のブランチの、手元のブランチとしての名前（サイドバーが読んでいれば）。
+    pub default_branch: Option<String>,
     /// 今のブランチの（上流に送れるか、上流より先にあるコミットの数）。ブランチの項目がなければ None。
     pub tracking: Option<(bool, u32)>,
     /// stash がある。
@@ -1042,6 +1053,8 @@ pub struct Facts {
     pub github: bool,
     /// gh が使える（Create Pull Request… に要る。macOS 版の `GitHub.isAvailable`）。
     pub gh: bool,
+    /// origin が fork で、プルリクエストを元のリポジトリへ出す（既定のブランチからも出せる）。
+    pub github_fork: bool,
     /// まだ開けていないタブ（つないでいる途中・つなげなかった）。リポジトリの操作はどれも使えない（macOS 版の
     /// つないでいるタブは、リポジトリの窓でないので、その操作がない）。
     pub unopened: bool,
@@ -1106,7 +1119,14 @@ pub fn enabled(f: &Facts) -> Vec<(&'static str, bool)> {
         ("open-in-terminal", f.local),
         ("reveal-in-files", f.local),
         ("open-on-github", f.github),
-        ("create-pull-request", f.github && f.gh && f.head_branch),
+        // 既定のブランチからは作らない（fork から元のリポジトリへ出すときを除く。macOS 版と同じ）。
+        (
+            "create-pull-request",
+            f.github
+                && f.gh
+                && f.head_branch
+                && (f.github_fork || f.default_branch.is_none() || f.head_name != f.default_branch),
+        ),
     ];
     // 開けていないタブでは、リポジトリの操作をどれも使えなくする。
     let opened = !f.unopened;
@@ -1395,5 +1415,15 @@ mod tests {
         facts.gh = false;
         assert!(!of(&facts, "create-pull-request"));
         assert!(of(&facts, "open-on-github"));
+        // 既定のブランチからは作らない。fork なら元のリポジトリへ出せる。
+        facts.gh = true;
+        facts.head_name = Some("main".to_owned());
+        facts.default_branch = Some("main".to_owned());
+        assert!(!of(&facts, "create-pull-request"));
+        facts.github_fork = true;
+        assert!(of(&facts, "create-pull-request"));
+        facts.github_fork = false;
+        facts.head_name = Some("topic".to_owned());
+        assert!(of(&facts, "create-pull-request"));
     }
 }

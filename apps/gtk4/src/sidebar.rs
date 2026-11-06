@@ -250,6 +250,8 @@ pub struct Known {
     pub pull_requests: Vec<PullRequest>,
     /// プルリクエストを作れる（GitHub のリポジトリで gh が使える）。
     pub can_create_pull_request: bool,
+    /// origin が fork で、プルリクエストを元のリポジトリへ出す（既定のブランチからも出せる）。
+    pub fork: bool,
     /// submodule の様子（場所 → 様子。まだ読んでいなければ空）。
     pub submodules: HashMap<String, SubmoduleState>,
 }
@@ -262,11 +264,11 @@ impl Known {
             .find(|p| p.head_ref_name == branch)
     }
 
-    /// `branch` からプルリクエストを作れるか（既定のブランチからは作らない。比べるのは名前そのもの。macOS 版と
-    /// 同じ）。
+    /// `branch` からプルリクエストを作れるか（既定のブランチからは作らない。fork から元のリポジトリへ出すときを除く。
+    /// macOS 版と同じ）。
     pub fn can_create_pull_request_from(&self, branch: &str) -> bool {
-        let base = self.groups.as_ref().and_then(|g| g.base.as_deref());
-        self.can_create_pull_request && base != Some(branch)
+        let base = self.groups.as_ref().and_then(BranchGroups::local_base);
+        self.can_create_pull_request && (self.fork || base != Some(branch))
     }
 }
 
@@ -368,6 +370,7 @@ struct Inner {
     /// 開いているプルリクエスト（あれば Pull Requests の見出しを出す）。
     pull_requests: RefCell<Vec<PullRequest>>,
     can_create_pull_request: Cell<bool>,
+    fork: Cell<bool>,
     /// Pull Requests の見出しをまだ出していない（初めて出すときは開いておく）。
     pull_requests_first: Cell<bool>,
     /// タグの署名の検証の結果（名前 → 状態と、吹き出しに出す中身と、確かめたときの refs の番号）。refs が
@@ -507,6 +510,7 @@ impl Sidebar {
             working_children: Cell::new(false),
             pull_requests: RefCell::default(),
             can_create_pull_request: Cell::new(false),
+            fork: Cell::new(false),
             pull_requests_first: Cell::new(true),
             tag_signatures: RefCell::default(),
             tag_epoch: Cell::new(0),
@@ -747,8 +751,9 @@ impl Sidebar {
     }
 
     /// プルリクエストを作れるか（ブランチのメニューと吹き出しに出す）。
-    pub fn set_can_create_pull_request(&self, yes: bool) {
+    pub fn set_can_create_pull_request(&self, yes: bool, fork: bool) {
         self.inner.can_create_pull_request.set(yes);
+        self.inner.fork.set(fork);
     }
 
     /// リポジトリの形を出す（History の行に shallow clone・partial clone、Working Copy の行に sparse checkout の印）。
@@ -1640,6 +1645,7 @@ impl Inner {
                 .map_or_else(Vec::new, branch_remotes),
             pull_requests: self.pull_requests.borrow().clone(),
             can_create_pull_request: self.can_create_pull_request.get(),
+            fork: self.fork.get(),
             submodules: self.submodules.borrow().clone(),
         }
     }
@@ -1941,9 +1947,10 @@ impl Inner {
             }
             // CI の印（History の行の印と同じ吹き出し）。
             Item::PullRequest(pr, _) => {
-                if let (Some(sha), Some(github)) =
-                    (&pr.head_ref_oid, crate::github::github_of(&actions))
-                {
+                if let (Some(sha), Some(github)) = (
+                    &pr.head_ref_oid,
+                    crate::github::target_of(&actions).map(|t| t.repo),
+                ) {
                     crate::cipopover::show(anchor, None, pr.ci(), sha, github);
                 }
             }
@@ -2066,6 +2073,11 @@ impl Inner {
                                 .filter_map(|b| Some((b.name.clone(), b.pull_request?)))
                                 .collect(),
                         );
+                    }
+                    // Repository > Create Pull Request… は既定のブランチでは押せない。
+                    if let (Some(actions), Some(g)) = (inner.actions.borrow().as_ref(), &groups) {
+                        let base = g.local_base().map(str::to_owned);
+                        actions.update_facts(|f| f.default_branch = base);
                     }
                     inner.groups.replace(groups);
                     inner.rebuild(false);
@@ -2779,7 +2791,7 @@ fn ref_data(
     if let Some(groups) = groups
         && groups.is_merged(&e.name)
         && !is_head
-        && Some(e.name.as_str()) != groups.base.as_deref()
+        && Some(e.name.as_str()) != groups.local_base()
     {
         // squash・rebase でマージされたプルリクエストのブランチも、同じ印で（意味はツールチップ）。
         let tooltip = match groups.get(&e.name).and_then(|b| b.pull_request) {
@@ -3496,8 +3508,16 @@ mod tests {
         };
         assert!(!known(Some("main")).can_create_pull_request_from("main"));
         assert!(known(Some("main")).can_create_pull_request_from("topic"));
-        // 比べるのは名前そのもの（macOS 版と同じ）。既定のブランチが分からなければ、どれからでも。
-        assert!(known(Some("origin/main")).can_create_pull_request_from("main"));
+        // 既定のブランチがリモートのもの（origin/main）でも、手元の main からは作らない。
+        assert!(!known(Some("origin/main")).can_create_pull_request_from("main"));
+        assert!(known(Some("origin/main")).can_create_pull_request_from("topic"));
+        // fork なら、元のリポジトリへ既定のブランチからも出せる。
+        let fork = Known {
+            fork: true,
+            ..known(Some("origin/main"))
+        };
+        assert!(fork.can_create_pull_request_from("main"));
+        // 既定のブランチが分からなければ、どれからでも。
         assert!(known(None).can_create_pull_request_from("main"));
         assert!(!Known::default().can_create_pull_request_from("topic"));
     }
