@@ -11,6 +11,8 @@ becomes the GitHub Release notes.
 
 #### Added
 
+- A branch merged by a GitHub pull request (squash or rebase) gets the merged mark in the sidebar, says "Merged by
+  pull request #123" in its popover, and is deleted with a plain confirmation naming the pull request.
 - Clean Up Branches… (Repository menu and the Branches heading) lists the branches merged into the default branch,
   merged by a GitHub pull request (squash or rebase), or whose upstream is gone, and deletes the checked ones; one
   Undo brings them all back.

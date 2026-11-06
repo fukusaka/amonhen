@@ -52,6 +52,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Favorite branches | ✓ | ✓ | ✓ | — | |
 | Archived branches | ✓ | ✓ | ✓ | — | |
 | Clean Up Branches (merged, merged by a pull request, upstream gone; one Undo) | ✓ | ✓ | — | △ | CLI: Via `amonhen run` (`branchCleanup`, `deleteBranches`); merged pull requests are read by the apps with gh. |
+| Merged-by-pull-request mark on a branch (squash or rebase on GitHub) | ✓ | ✓ | — | △ | CLI: Via `amonhen run` (`branchGroups` with `pullRequests`); the apps read merged pull requests with gh. |
 | Favorites reordered by dragging | ✓ | ✓ | ✓ | n/a | VSCode: Move Up and Move Down in Favorites on the menu (a drop on a branch offers Merge and Rebase). |
 | Branch menu: checkout, rename, delete (Delete Anyway when unmerged) | ✓ | ✓ | ✓ | △ | macOS: Set Upstream is only in the Repository menu.<br>GTK4: Set Upstream is only in the Repository menu.<br>CLI: Via `amonhen run`. |
 | Sync a branch that is not checked out (Fast-Forward, Push, Publish) | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |

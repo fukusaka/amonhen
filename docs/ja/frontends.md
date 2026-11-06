@@ -52,6 +52,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | お気に入りのブランチ | ✓ | ✓ | ✓ | — | |
 | ブランチのアーカイブ | ✓ | ✓ | ✓ | — | |
 | ブランチを片付ける（取り込み済み・PR でマージ済み・上流が消えた。Undo 1 回） | ✓ | ✓ | — | △ | CLI: `amonhen run`（`branchCleanup`・`deleteBranches`）から。マージ済みの PR はアプリが gh で読む。 |
+| PR でマージ済みのブランチの印（GitHub で squash・rebase） | ✓ | ✓ | — | △ | CLI: `amonhen run`（`pullRequests` を渡した `branchGroups`）から。マージ済みの PR はアプリが gh で読む。 |
 | お気に入りをドラッグで並べ替える | ✓ | ✓ | ✓ | n/a | VSCode: メニューの Move Up・Move Down in Favorites（ブランチに落とすと Merge・Rebase）。 |
 | ブランチのメニュー: checkout・名前の変更・削除（未マージは Delete Anyway） | ✓ | ✓ | ✓ | △ | macOS: Set Upstream は Repository メニューだけ。<br>GTK4: Set Upstream は Repository メニューだけ。<br>CLI: `amonhen run` から。 |
 | checkout していないブランチの同期（Fast-Forward・Push・Publish） | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
