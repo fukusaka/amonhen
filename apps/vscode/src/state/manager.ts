@@ -194,17 +194,19 @@ export class RepositoryManager implements vscode.Disposable {
 
   /**
    * `openPath` で開いたリポジトリを閉じる（worktree を消した後）。vscode.git が開いたものは閉じない。`evenGit` なら
-   * それも閉じる（submodule を消す前。vscode.git は submodule も開き、消えたら自分で閉じる）
+   * それも閉じる（submodule を消す前。vscode.git は submodule も開き、消えたら自分で閉じる）。返す Promise は、常駐の
+   * git が終わったら解決する（Windows では、それまでフォルダーを消せない。消す前に待つ）
    */
-  forget(path: string, evenGit = false): void {
+  async forget(path: string, evenGit = false): Promise<void> {
     const entry = [...this.entries.values()].find((e) => (evenGit || !e.apiRepo) && samePath(e.repository.root, path));
     if (!entry) return;
     this.entries.delete(entry.repository.root);
-    vscode.Disposable.from(...entry.disposables).dispose();
+    const stopped = Promise.all(entry.disposables.map((d) => d.dispose() as unknown));
     // daemon へのつながりも閉じる（Windows では、daemon が使っているフォルダーを消せない）
     closeDaemonClient(entry.repository.root);
     this.updateContext();
     if (this._current === entry.repository) this.select(this.repositories[0]);
+    await stopped;
   }
 
   select(repository: Repository | undefined): void {

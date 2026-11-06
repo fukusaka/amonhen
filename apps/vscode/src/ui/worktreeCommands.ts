@@ -102,7 +102,7 @@ export function registerWorktreeCommands(manager: RepositoryManager, sidebar: Si
       }
       // 開いていれば閉じる（git の常駐の cat-file と daemon へのつながり。Windows では、使っているフォルダーを消せない）
       const opened = manager.repositories.find((r) => samePath(r.root, w.path));
-      manager.forget(w.path);
+      await manager.forget(w.path);
       if (opened) closeDaemonClient(opened.root);
       await run(from, { op: 'worktreeRemove', path: w.path, force: changes > 0 || w.locked !== null }, `Remove worktree ${worktreeName(w)}`);
       await sidebar.worktrees.reload();

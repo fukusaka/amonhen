@@ -515,7 +515,7 @@ async function worktreeFlow(): Promise<void> {
     await until('片付く', () => !row(gone) && !git('worktree', 'list').includes('repo-e2e-gone'));
   } finally {
     manager.select(main);
-    manager.forget(folder);
+    await manager.forget(folder);
     for (const path of [folder, gone, late]) {
       if (git('worktree', 'list').includes(basename(path))) git('worktree', 'remove', '--force', path);
     }
@@ -865,7 +865,7 @@ async function shallowFlow(): Promise<void> {
     await waitPosted('form', mark, (m) => !m.shallow && m.boundary.length === 0);
   } finally {
     manager.select(main);
-    manager.forget(clone);
+    await manager.forget(clone);
     // Windows では daemon がまだ見張っていて消せないことがある（e2e の一時ディレクトリごと、終わりに消える）
     try {
       rmSync(clone, { recursive: true, force: true });
