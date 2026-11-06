@@ -1352,6 +1352,66 @@ async function deleteIgnoredFlow(): Promise<void> {
 }
 
 /**
+ * Clean Up Branches… は、既定のブランチに取り込んだもの（チェック済み）と上流が消えたもの（チェックなし）を理由ごとに
+ * 並べ、選んだものをまとめて消す。Undo 1 回で、設定（上流）ごと戻る。コアの命令（daemon だけ）
+ */
+async function branchCleanupFlow(): Promise<void> {
+  const repo = api.manager.current!;
+  const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+  const start = git('rev-parse', 'HEAD').trim();
+  const commit = (name: string) => {
+    writeFileSync(join(root, `${name}.txt`), `${name}\n`);
+    git('add', `${name}.txt`);
+    git('commit', '-q', '-m', name);
+  };
+  let listed: vscode.QuickPickItem[] = [];
+  try {
+    // 取り込んだもの
+    git('switch', '-q', '-c', 'cu-merged');
+    commit('cu-merged');
+    git('switch', '-q', branch);
+    git('merge', '-q', '--no-ff', '--no-edit', 'cu-merged');
+    // 上流が消えたもの（取り込んでいない。自分のコミットごと消える）
+    git('remote', 'add', 'cu-remote', root);
+    git('switch', '-q', '-c', 'cu-gone');
+    commit('cu-gone');
+    git('config', 'branch.cu-gone.remote', 'cu-remote');
+    git('config', 'branch.cu-gone.merge', 'refs/heads/cu-gone');
+    git('switch', '-q', branch);
+    await repo.refresh();
+
+    await withWindow(
+      {
+        showQuickPick: async (items: readonly vscode.QuickPickItem[]) => {
+          listed = [...items];
+          return items.filter((i) => i.kind !== vscode.QuickPickItemKind.Separator);
+        },
+      },
+      async () => vscode.commands.executeCommand('amonhen.branches.cleanUp'),
+    );
+    const item = (label: string) => listed.find((i) => i.label === label && i.kind !== vscode.QuickPickItemKind.Separator);
+    assert.equal(item('cu-merged')?.picked, true, lastErrors());
+    assert.equal(item('cu-gone')?.picked, false, '上流が消えたものはチェックしない');
+    assert.ok(!item(branch), '今のブランチは並ばない');
+    assert.deepEqual(
+      listed.filter((i) => i.kind === vscode.QuickPickItemKind.Separator).map((i) => i.label),
+      [`Merged into ${branch}`, 'Upstream gone, not merged (their own commits go with them)'],
+    );
+    assert.equal(git('branch', '--list', 'cu-merged', 'cu-gone').trim(), '', lastErrors());
+
+    // Undo 1 回で両方が、上流の設定ごと戻る
+    await vscode.commands.executeCommand('amonhen.undo');
+    await until('Undo で戻る', () => git('branch', '--list', 'cu-merged', 'cu-gone').split('\n').filter(Boolean).length === 2);
+    assert.equal(git('config', 'branch.cu-gone.remote').trim(), 'cu-remote');
+  } finally {
+    for (const b of ['cu-merged', 'cu-gone']) if (git('branch', '--list', b).trim()) git('branch', '-q', '-D', b);
+    if (git('remote').split('\n').includes('cu-remote')) git('remote', 'remove', 'cu-remote');
+    git('reset', '-q', '--keep', start);
+    await repo.refresh();
+  }
+}
+
+/**
  * Stashes は stash があるときだけ出て、行に作ったときのブランチ・土台と HEAD の離れ具合・untracked が出る。
  * stash からブランチを作り（git stash branch）、新しい stash を確かめてから pop する（daemon だけ）
  */
@@ -2430,6 +2490,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('lists ignored files and deletes the ones chosen through the daemon', async () => {
     await deleteIgnoredFlow();
+  });
+
+  test('cleans up merged branches and ones whose upstream is gone, with one Undo, through the daemon', async () => {
+    await branchCleanupFlow();
   });
 
   test('shows stash details, branches from a stash and pops the latest through the daemon', async () => {

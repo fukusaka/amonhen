@@ -326,6 +326,11 @@
         "category": "Amon Hen"
       },
       {
+        "command": "amonhen.branches.cleanUp",
+        "title": "Clean Up Branches…",
+        "category": "Amon Hen"
+      },
+      {
         "command": "amonhen.deleteIgnored",
         "title": "Delete Ignored Files…",
         "category": "Amon Hen"
@@ -1127,6 +1132,11 @@
           "group": "1_branches@1"
         },
         {
+          "command": "amonhen.branches.cleanUp",
+          "when": "view == amonhen.sidebar && amonhen.engine && viewItem == section.branches",
+          "group": "1_branches@2"
+        },
+        {
           "command": "amonhen.deleteIgnored",
           "when": "view == amonhen.sidebar && amonhen.engine && viewItem == view.workingCopy",
           "group": "9_clean@1"
@@ -1531,6 +1541,10 @@
         },
         {
           "command": "amonhen.deleteIgnored",
+          "when": "amonhen.hasRepository && amonhen.engine"
+        },
+        {
+          "command": "amonhen.branches.cleanUp",
           "when": "amonhen.hasRepository && amonhen.engine"
         }
       ],

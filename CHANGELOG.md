@@ -953,6 +953,8 @@ First release.
 
 #### Added
 
+- Clean Up Branches… lists branches merged into the default branch, merged by a pull request on GitHub, or whose
+  upstream is gone, and deletes the checked ones; one Undo brings them back (with the engine).
 - With the engine, submodules show the app's marks and the URL and branch they follow, and can be added, updated
   (nested ones, or to the branch followed), pointed elsewhere, synced and removed (keeping `.git/modules` unless asked).
 - With the engine and a git that has `git subtree`, a Subtrees group lists the folders added with it; Add Subtree…,
