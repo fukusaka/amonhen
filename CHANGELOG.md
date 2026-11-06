@@ -28,6 +28,8 @@ becomes the GitHub Release notes.
 - Submodules can move their repository data into `.git/modules` and run a command in each one
   (`amonhen submodule absorb|foreach`).
 - Repository > Delete Ignored Files… lists the files `.gitignore` covers (build output and the like) and deletes them.
+- When origin is a fork on GitHub, both apps create pull requests on its parent, from any branch including the
+  default one; the branch is pushed to the fork first, and Pull Requests lists the ones opened from the fork.
 - On Linux and the BSDs, Settings > Performance > fsmonitor speeds up status with Watchman when it is installed (git
   2.26 or later); the engine answers git as its fsmonitor hook, and nothing is written to the repository's config.
 
@@ -47,6 +49,8 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- Create Pull Request… is no longer offered on the default branch, and the default branch no longer shows the
+  "Merged into" mark, when the default branch is a remote one such as `origin/main`.
 - Undo of deleting a branch brings back its upstream and its archived and favorite marks, which git removes with it.
 - The GTK4 app's subtree sheets name the worktree they act on and add, pull, push or split there, even when another
   worktree is selected while the sheet is open.

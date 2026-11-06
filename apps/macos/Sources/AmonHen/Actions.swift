@@ -399,7 +399,8 @@ final class Actions {
             var note: String?
             if let gitHub, GitHub.isAvailable {
                 do {
-                    merged = try await GitHub.mergedPullRequests(gitHub)
+                    // fork なら、元のリポジトリでその fork から出したもの。
+                    merged = try await GitHub.mergedPullRequests(GitHub.pullRequestTarget(gitHub))
                 } catch {
                     note = L("Couldn’t read the merged pull requests: %@", "\(error)")
                 }

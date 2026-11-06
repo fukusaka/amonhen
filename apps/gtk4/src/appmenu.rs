@@ -168,6 +168,7 @@ impl Buttons {
             f.refs = true;
             f.head = refs.refs.head.is_some();
             f.head_branch = head.is_some();
+            f.head_name = head.map(str::to_owned);
             f.tracking = entry.map(|e| (published, e.ahead));
             f.stash = refs.refs.entries.iter().any(|e| e.kind == RefKind::Stash);
             f.submodules = refs
