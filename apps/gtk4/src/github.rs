@@ -446,6 +446,33 @@ pub async fn pull_requests(repo: &GitHubRepository) -> Result<Vec<PullRequest>, 
         .collect())
 }
 
+/// マージされたプルリクエスト（新しい順、最大 200 件）を、コアの `branchCleanup` の `pullRequests` の形で。squash・
+/// rebase で取り込んだブランチを見分ける（macOS 版と同じ）。
+pub async fn merged_pull_requests(repo: &GitHubRepository) -> Result<Vec<Value>, String> {
+    let args = [
+        "pr",
+        "list",
+        "-R",
+        &repo.slug(),
+        "--state",
+        "merged",
+        "--limit",
+        "200",
+        "--json",
+        "number,headRefName,headRefOid",
+    ]
+    .map(str::to_owned)
+    .to_vec();
+    let out = gh_async(args, None).await?;
+    let list: Value = serde_json::from_str(&out).map_err(|e| e.to_string())?;
+    Ok(list
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|p| serde_json::json!({ "number": p["number"], "branch": p["headRefName"], "oid": p["headRefOid"] }))
+        .collect())
+}
+
 /// 既定のブランチ（プルリクエストの base の初期値）。
 pub async fn default_branch(repo: &GitHubRepository) -> Option<String> {
     let args = [
