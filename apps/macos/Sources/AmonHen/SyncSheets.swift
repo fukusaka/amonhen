@@ -842,12 +842,15 @@ extension Actions {
     /// Delete Anyway で消す（1 本だけ断られて途中で止まることがない）。
     func deleteBranchesWithConfirmation(_ names: [String]) {
         let repository = self.repository
+        // プルリクエストでマージされたもの（中身は既定のブランチにある）は、コミットを並べずに -D で消す。
+        let byPullRequest = names.compactMap { name in mergedByPullRequest[name].map { (name, $0) } }
+        let others = names.filter { mergedByPullRequest[$0] == nil }
         Task { @MainActor in
             // それぞれのブランチにしかないコミット。git と同じく、今のブランチか上流のどちらかに取り込まれていれば消せる。
             let result = await Task.detached { () -> Result<[(String, CommitRange)], Error> in
                 Result {
                     let refs = try repository.loadRefs()
-                    return try names.map { name in
+                    return try others.map { name in
                         func only(_ base: String) throws -> CommitRange {
                             try repository.info(["op": "between", "base": base, "tip": name, "limit": 30], as: CommitRange.self)
                         }
@@ -868,7 +871,9 @@ extension Actions {
             let unmerged = unique.filter { $0.1.count > 0 }
             let title = names.count == 1 ? L("Delete %@?", names[0]) : L("Delete %ld branches?", names.count)
             let list = names.count == 1 ? "" : names.joined(separator: ", ") + "\n"
-            let message = list + (unmerged.isEmpty ? "" : L("Some commits are on no other branch; they go with the branch.") + " ") + Self.canUndo
+            let merged = byPullRequest.map { names.count == 1 ? L("Pull request #%ld merged its changes.", $0.1) : "\($0.0) (#\($0.1))" }
+            let prNote = merged.isEmpty ? "" : (names.count == 1 ? merged[0] : L("Merged by pull request: %@", merged.joined(separator: ", "))) + " "
+            let message = list + prNote + (unmerged.isEmpty ? "" : L("Some commits are on no other branch; they go with the branch.") + " ") + Self.canUndo
             let alert = makeAlert(title, message)
             if !unmerged.isEmpty {
                 alert.accessoryView = Self.commitLists(unmerged.map { (L("Commits only on %@", $0.0), $0.1, true) })
@@ -876,7 +881,8 @@ extension Actions {
             alert.addButton(withTitle: unmerged.isEmpty ? L("Delete") : L("Delete Anyway"))
             alert.addButton(withTitle: L("Cancel"))
             guard await present(alert) == .alertFirstButtonReturn else { return }
-            perform(sequence: unique.map { ["op": "deleteBranch", "name": $0.0, "force": $0.1.count > 0] })
+            perform(sequence: unique.map { ["op": "deleteBranch", "name": $0.0, "force": $0.1.count > 0] }
+                + byPullRequest.map { ["op": "deleteBranch", "name": $0.0, "force": true] })
         }
     }
 

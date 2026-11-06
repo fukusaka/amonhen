@@ -335,6 +335,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         guard branchGroups != self.branchGroups else { return }
         self.branchGroups = branchGroups
         branchFacts = Dictionary(branchGroups.branches.map { ($0.name, $0) }, uniquingKeysWith: { a, _ in a })
+        actions?.mergedByPullRequest = branchGroups.branches.reduce(into: [:]) { $0[$1.name] = $1.pullRequest }
         rebuild(first: false)
     }
     private var pullRequests: [PullRequest] = []
@@ -1027,9 +1028,12 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             }
             // 取り込み済み（既定のブランチの先端と同じ、作ったばかりのものは除く）と gone は、文字でなくアイコンで
             // （行の右端。意味はツールチップ）。
-            let merged = branchFacts[item.name].map { $0.merged && !$0.atBase } ?? false
+            // squash・rebase でマージされたプルリクエストのブランチも、取り込み済みと同じ印で（意味はツールチップ）。
+            let pullRequest = branchFacts[item.name]?.pullRequest
+            let merged = branchFacts[item.name].map { ($0.merged && !$0.atBase) || $0.pullRequest != nil } ?? false
                 && !node.isHead && item.name != branchGroups?.base
-            marks = [merged ? ("arrow.triangle.merge", L("Merged into %@", branchGroups?.base ?? "main"), .secondaryLabelColor) : nil,
+            let mergedTip = pullRequest.map { L("Merged by pull request #%ld", $0) } ?? L("Merged into %@", branchGroups?.base ?? "main")
+            marks = [merged ? ("arrow.triangle.merge", mergedTip, .secondaryLabelColor) : nil,
                      item.gone ? ("icloud.slash", L("Its upstream %@ no longer exists on the remote", item.detail ?? ""), .secondaryLabelColor) : nil]
                 .compactMap { $0 }
             // worktree が 2 つ以上なら、今のブランチ（書き込む先のもの）に ✎ を添える。
