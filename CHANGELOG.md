@@ -58,6 +58,8 @@ becomes the GitHub Release notes.
 - Fetch, Pull and Push no longer stop now and then with "Stopped after 120 seconds without a response" while git is
   still answering; measuring the silence could wrap around when output arrived at that moment.
 - The GTK4 app's automatic external editor falls back to a text editor, never a word processor such as LibreOffice Writer.
+- When the AI CLI fails, both apps show its reason, such as "Not logged in", instead of only the exit code, and never
+  take a failure that exits with code 0 as the answer.
 - The macOS app shows commit details in the Standard style on first launch, as intended, instead of Brief.
 - macOS merge editor: ⌥⌘↑ and ⌥⌘↓ move between conflicts, ⌘↩ no longer races Commit, a file open in its own window
   isn't loaded again in Working Copy, and the AI buttons follow the AI setting.

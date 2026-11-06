@@ -18,6 +18,8 @@ pub trait Assistant: Sync {
     fn delta(&self, event: &Value) -> Option<String>;
     /// 最後の全文。
     fn final_text(&self, event: &Value) -> Option<String>;
+    /// CLI が出した失敗の文言（ログインしていない、など。CLI はこれを stderr ではなく出力の JSON に書く）。
+    fn error(&self, event: &Value) -> Option<String>;
 }
 
 /// Claude Code（`claude -p --output-format stream-json`）。
@@ -56,10 +58,29 @@ impl Assistant for ClaudeCode {
     }
 
     fn final_text(&self, event: &Value) -> Option<String> {
-        if event["type"] != "result" {
+        // 失敗の result は答えにしない（終了コードが 0 でも、覚えて見せないよう）。
+        if event["type"] != "result" || event["is_error"] == true {
             return None;
         }
         event["result"].as_str().map(str::to_owned)
+    }
+
+    fn error(&self, event: &Value) -> Option<String> {
+        if event["type"] != "result" || event["is_error"] != true {
+            return None;
+        }
+        let errors: Vec<&str> = event["errors"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect();
+        event["result"]
+            .as_str()
+            .filter(|s| !s.trim().is_empty())
+            .map(str::to_owned)
+            .or_else(|| (!errors.is_empty()).then(|| errors.join("\n")))
+            .or_else(|| event["subtype"].as_str().map(str::to_owned))
     }
 }
 
@@ -100,6 +121,16 @@ impl Assistant for Codex {
             return msg["message"].as_str().map(str::to_owned);
         }
         None
+    }
+
+    fn error(&self, event: &Value) -> Option<String> {
+        let text = match event["type"].as_str() {
+            Some("error") => &event["message"],
+            Some("turn.failed") => &event["error"]["message"],
+            _ if event["msg"]["type"] == "error" => &event["msg"]["message"],
+            _ => return None,
+        };
+        text.as_str().map(str::to_owned)
     }
 }
 
@@ -248,6 +279,8 @@ pub struct Parser<'a> {
     pub text: String,
     /// 最後の全文（届いていれば）。
     pub final_text: Option<String>,
+    /// 最後に届いた失敗の文言。
+    pub error: Option<String>,
 }
 
 impl<'a> Parser<'a> {
@@ -257,6 +290,7 @@ impl<'a> Parser<'a> {
             buffer: Vec::new(),
             text: String::new(),
             final_text: None,
+            error: None,
         }
     }
 
@@ -283,6 +317,9 @@ impl<'a> Parser<'a> {
         };
         if let Some(done) = self.assistant.final_text(&event) {
             self.final_text = Some(done);
+        }
+        if let Some(error) = self.assistant.error(&event) {
+            self.error = Some(error);
         }
         match self.assistant.delta(&event) {
             Some(delta) => {
@@ -382,15 +419,19 @@ pub fn stream(
     let result = parser.result();
     if !status.success() || result.is_empty() {
         let error_text = error_text.trim();
-        return Err(if error_text.is_empty() {
-            tr!(
-                "{cli} failed (exit code {code}).",
-                cli = cli.title(),
-                code = status.code().unwrap_or(-1)
-            )
-        } else {
-            error_text.to_owned()
-        });
+        return Err(
+            if let Some(error) = parser.error.filter(|e| !e.trim().is_empty()) {
+                error.trim().to_owned()
+            } else if error_text.is_empty() {
+                tr!(
+                    "{cli} failed (exit code {code}).",
+                    cli = cli.title(),
+                    code = status.code().unwrap_or(-1)
+                )
+            } else {
+                error_text.to_owned()
+            },
+        );
     }
     on_text(&result);
     Ok(result)
@@ -492,6 +533,53 @@ mod tests {
         p.push(br#"{"id":"0","msg":{"type":"agent_message","message":"old"}}"#);
         p.finish();
         assert_eq!(p.result(), "old");
+    }
+
+    /// ログインしていない Claude Code 2.x の行（縮めたもの。終了コードは 1、stderr は空）。
+    const CLAUDE_NOT_LOGGED_IN: &str = r#"{"type":"system","subtype":"init","session_id":"s","tools":[]}
+{"type":"assistant","message":{"model":"<synthetic>","content":[{"type":"text","text":"Not logged in · Please run /login"}]},"error":"authentication_failed","session_id":"s"}
+{"type":"result","subtype":"success","is_error":true,"result":"Not logged in · Please run /login","session_id":"s"}
+"#;
+
+    #[test]
+    fn claude_reports_a_failed_result_as_an_error_not_an_answer() {
+        let mut p = Parser::new(&ClaudeCode);
+        p.push(CLAUDE_NOT_LOGGED_IN.as_bytes());
+        p.finish();
+        assert_eq!(p.result(), "");
+        assert_eq!(
+            p.error.as_deref(),
+            Some("Not logged in · Please run /login")
+        );
+        // 文言がなければ errors、それもなければ subtype。
+        let mut p = Parser::new(&ClaudeCode);
+        p.push(br#"{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["a","b"]}"#);
+        p.finish();
+        assert_eq!(p.error.as_deref(), Some("a\nb"));
+        let mut p = Parser::new(&ClaudeCode);
+        p.push(br#"{"type":"result","subtype":"error_max_turns","is_error":true}"#);
+        p.finish();
+        assert_eq!(p.error.as_deref(), Some("error_max_turns"));
+    }
+
+    #[test]
+    fn codex_reports_its_error_events() {
+        let mut p = Parser::new(&Codex);
+        p.push(
+            br#"{"type":"error","message":"Reconnecting... 1/5"}
+{"type":"turn.failed","error":{"message":"unexpected status 401 Unauthorized"}}
+"#,
+        );
+        p.finish();
+        assert_eq!(p.result(), "");
+        assert_eq!(
+            p.error.as_deref(),
+            Some("unexpected status 401 Unauthorized")
+        );
+        let mut p = Parser::new(&Codex);
+        p.push(br#"{"id":"0","msg":{"type":"error","message":"old error"}}"#);
+        p.finish();
+        assert_eq!(p.error.as_deref(), Some("old error"));
     }
 
     #[test]
@@ -601,6 +689,17 @@ mod tests {
         );
         let e = stream_fake(&cli, "p", &AtomicBool::new(false), |_| {}).unwrap_err();
         assert_eq!(e, "Not logged in");
+        // CLI が出力の JSON に書いた失敗の文言を、終了コードより先に出す（終了コードが 0 でも失敗）。
+        let lines = dir.path().join("lines");
+        std::fs::write(&lines, CLAUDE_NOT_LOGGED_IN).unwrap();
+        for code in [1, 0] {
+            let cli = fake_cli(
+                dir.path(),
+                &format!("cat >/dev/null; cat '{}'; exit {code}", lines.display()),
+            );
+            let e = stream_fake(&cli, "p", &AtomicBool::new(false), |_| {}).unwrap_err();
+            assert_eq!(e, "Not logged in · Please run /login");
+        }
         let cli = fake_cli(dir.path(), "cat >/dev/null; exit 2");
         let e = stream_fake(&cli, "p", &AtomicBool::new(false), |_| {}).unwrap_err();
         assert!(e.contains("Claude Code") && e.contains('2'), "{e}");
