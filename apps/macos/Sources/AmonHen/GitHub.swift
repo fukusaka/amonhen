@@ -11,6 +11,12 @@ struct GitHubRepository: Equatable, Sendable {
     var slug: String { host == "github.com" ? "\(owner)/\(name)" : "\(host)/\(owner)/\(name)" }
     var webURL: URL { URL(string: "https://\(host)/\(owner)/\(name)")! }
 
+    init(host: String, owner: String, name: String) {
+        self.host = host
+        self.owner = owner
+        self.name = name
+    }
+
     /// `https://github.com/o/r.git`・`git@github.com:o/r.git`・`ssh://git@github.com/o/r` を読む。ホストの名前に
     /// "github" を含むものだけ（GitHub Enterprise を含む）。
     init?(remoteURL url: String) {
@@ -41,11 +47,34 @@ struct GitHubRepository: Equatable, Sendable {
     }
 }
 
+/// プルリクエストを出す先。origin が GitHub の fork なら、その元のリポジトリ（`forkOwner` は fork の持ち主。
+/// head は `持ち主:ブランチ` の形で渡し、一覧はその fork から出したものだけにする）。fork でなければ origin。
+struct PullRequestTarget: Equatable, Sendable {
+    let repo: GitHubRepository
+    let forkOwner: String?
+
+    /// fork から元のリポジトリへ出す。既定のブランチ（fork の main など）からも出せる。
+    var isFork: Bool { forkOwner != nil }
+
+    /// `gh pr create --head` に渡す形。
+    func head(_ branch: String) -> String { forkOwner.map { "\($0):\(branch)" } ?? branch }
+
+    /// 一覧のうち、この先に出したもの（fork なら、その fork から出したものだけ）。
+    func mine<T>(_ list: [T], owner: (T) -> String?) -> [T] {
+        guard let forkOwner else { return list }
+        return list.filter { owner($0)?.lowercased() == forkOwner.lowercased() }
+    }
+}
+
+/// head のリポジトリの持ち主（`gh pr list --json headRepositoryOwner`）。
+struct RepositoryOwner: Decodable, Sendable, Hashable { let login: String }
+
 /// マージされたプルリクエスト（`gh pr list --state merged --json`）。`headRefOid` はマージしたときの head。
 struct MergedPullRequest: Decodable, Sendable {
     let number: Int
     let headRefName: String
     let headRefOid: String
+    let headRepositoryOwner: RepositoryOwner?
 }
 
 /// プルリクエスト（`gh pr list --json`）。
@@ -69,6 +98,8 @@ struct PullRequest: Decodable, Sendable, Hashable {
     let statusCheckRollup: [Check]?
     /// head のコミット ID（CI の吹き出しで、そのコミットのチェックを読む）。
     let headRefOid: String?
+    /// head のリポジトリの持ち主（fork から出したものを見分ける。fork のときだけ読む）。
+    let headRepositoryOwner: RepositoryOwner?
 
     enum CI { case passing, failing, pending, none }
 
@@ -204,22 +235,65 @@ enum GitHub {
         }.value
     }
 
-    /// 開いているプルリクエスト（新しい順、最大 50 件）。
-    static func pullRequests(_ repo: GitHubRepository) async throws -> [PullRequest] {
-        let data = try await run([
-            "pr", "list", "-R", repo.slug, "--state", "open", "--limit", "50",
-            "--json", "number,title,url,headRefName,baseRefName,isDraft,author,reviewDecision,statusCheckRollup,headRefOid",
-        ])
-        return try JSONDecoder().decode([PullRequest].self, from: data)
+    /// `repo` が fork なら、その元のリポジトリ（fork でなければ nil）。読めなければ投げる。
+    static func parent(_ repo: GitHubRepository) async throws -> GitHubRepository? {
+        parent(from: try await run(["repo", "view", repo.slug, "--json", "parent"]), host: repo.host)
     }
 
-    /// マージされたプルリクエスト（新しい順、最大 200 件）。squash・rebase で取り込んだブランチを見分ける（コアの
-    /// `branchCleanup` の `pullRequests`）。
-    static func mergedPullRequests(_ repo: GitHubRepository) async throws -> [MergedPullRequest] {
+    /// `gh repo view --json parent` の答えから、元のリポジトリ（同じホスト）。
+    static func parent(from data: Data, host: String) -> GitHubRepository? {
+        struct View: Decodable {
+            struct Parent: Decodable { let name: String; let owner: RepositoryOwner }
+            let parent: Parent?
+        }
+        guard let parent = (try? JSONDecoder().decode(View.self, from: data))?.parent else { return nil }
+        return GitHubRepository(host: host, owner: parent.owner.login, name: parent.name)
+    }
+
+    /// 読めた fork の元（slug → 元。fork でなければ nil）。読めなかったものは覚えない（次にまた読む）。
+    @MainActor private static var parents: [String: GitHubRepository?] = [:]
+
+    /// `origin` のリポジトリからプルリクエストを出す先（fork なら元のリポジトリ）。
+    @MainActor static func pullRequestTarget(_ origin: GitHubRepository) async -> PullRequestTarget {
+        let parent: GitHubRepository?
+        if let known = parents[origin.slug] {
+            parent = known
+        } else if let read = try? await Self.parent(origin) {
+            parents[origin.slug] = .some(read)
+            parent = read
+        } else {
+            parent = nil
+        }
+        guard let parent else { return PullRequestTarget(repo: origin, forkOwner: nil) }
+        return PullRequestTarget(repo: parent, forkOwner: origin.owner)
+    }
+
+    /// `pr list` の、fork のときの引数（その fork の持ち主が出したものに絞り、head の持ち主も読む）。元のリポジトリの
+    /// 新しいものから数えると、ほかの人のプルリクエストで埋まるので、作者で絞ってから数える。
+    private static func forkArguments(_ target: PullRequestTarget) -> (args: [String], field: String) {
+        guard let owner = target.forkOwner else { return ([], "") }
+        return (["--author", owner], ",headRepositoryOwner")
+    }
+
+    /// 開いているプルリクエスト（新しい順、最大 50 件。fork なら、その fork から出したもの）。
+    static func pullRequests(_ target: PullRequestTarget) async throws -> [PullRequest] {
+        let fork = forkArguments(target)
         let data = try await run([
-            "pr", "list", "-R", repo.slug, "--state", "merged", "--limit", "200", "--json", "number,headRefName,headRefOid",
-        ])
-        return try JSONDecoder().decode([MergedPullRequest].self, from: data)
+            "pr", "list", "-R", target.repo.slug, "--state", "open", "--limit", "50",
+            "--json", "number,title,url,headRefName,baseRefName,isDraft,author,reviewDecision,statusCheckRollup,headRefOid" + fork.field,
+        ] + fork.args)
+        return target.mine(try JSONDecoder().decode([PullRequest].self, from: data)) { $0.headRepositoryOwner?.login }
+    }
+
+    /// マージされたプルリクエスト（新しい順、最大 200 件。fork なら、その fork から出したもの）。squash・rebase で
+    /// 取り込んだブランチを見分ける（コアの `branchCleanup` の `pullRequests`）。
+    static func mergedPullRequests(_ target: PullRequestTarget) async throws -> [MergedPullRequest] {
+        let fork = forkArguments(target)
+        let data = try await run([
+            "pr", "list", "-R", target.repo.slug, "--state", "merged", "--limit", "200",
+            "--json", "number,headRefName,headRefOid" + fork.field,
+        ] + fork.args)
+        return target.mine(try JSONDecoder().decode([MergedPullRequest].self, from: data)) { $0.headRepositoryOwner?.login }
     }
 
     /// 開いている Issue（新しい順、最大 30 件）。コミットのメッセージの #123 の候補。

@@ -374,7 +374,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | --- | :-: | :-: | :-: | :-: | --- |
 | `gh` を通す GitHub | ✓ | ✓ | — | — |  |
 | Pull Requests（CI・draft・レビュー、checkout・開く・URL のコピー） | ✓ | ✓ | — | — |  |
-| Create Pull Request（base・draft） | ✓ | ✓ | — | — | macOS: base は打ち込む（最初は既定のブランチ）。<br>GTK4: base は打ち込む（最初は既定のブランチ）。 |
+| Create Pull Request（base・draft） | ✓ | ✓ | — | — | macOS: base は打ち込む（最初は既定のブランチ）。fork からは元のリポジトリへ。<br>GTK4: base は打ち込む（最初は既定のブランチ）。fork からは元のリポジトリへ。 |
 | ブランチの状態のポップオーバー（CI・プルリクエスト） | ✓ | ✓ | — | — |  |
 | Open on GitHub | ✓ | ✓ | — | — |  |
 | メッセージの `#123` のリンク | ✓ | ✓ | — | — |  |

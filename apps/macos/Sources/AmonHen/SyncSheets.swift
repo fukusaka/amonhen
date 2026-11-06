@@ -426,15 +426,17 @@ extension Actions {
     }
 
     /// サイドバーにドラッグしたブランチを、上流でないリモートのブランチに送る前に確かめる。上流なら Push のシート。
-    /// `force` なら、そのリモートのブランチが最後の Fetch の時点のコミットのときだけ置き換える。
-    func pushWithConfirmation(branch: String, remote: String, remoteBranch: String, force: Bool, setUpstream: Bool) {
+    /// `force` なら、そのリモートのブランチが最後の Fetch の時点のコミットのときだけ置き換える。送り終えたら `then`
+    /// （fork へ送ってからの Create Pull Request の続き）。
+    func pushWithConfirmation(branch: String, remote: String, remoteBranch: String, force: Bool, setUpstream: Bool,
+                              then: (() -> Void)? = nil) {
         let repository = self.repository
         Task { @MainActor in
             let refs = await Task.detached { try? repository.loadRefs() }.value
             let target = "\(remote)/\(remoteBranch)"
             let local = refs?.items.first { $0.kind == .local && $0.name == branch }
             if local?.detail == target, local?.gone == false {
-                return pushWithConfirmation(branch: branch, force: force)
+                return pushWithConfirmation(branch: branch, force: force, then: then)
             }
             let there = refs?.items.first { $0.kind == .remote && $0.name == target }?.target
                 .map { $0.map { String(format: "%02x", $0) }.joined() }
@@ -445,7 +447,7 @@ extension Actions {
             var command: [String: Any] = ["op": "push", "remote": remote, "branch": branch, "remoteBranch": remoteBranch,
                                           "force": force, "setUpstream": setUpstream]
             if force, let there { command["expect"] = there }
-            perform(command)
+            perform(command) { _ in then?() }
         }
     }
 
