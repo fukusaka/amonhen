@@ -1,15 +1,17 @@
 //! subtree の Add・Pull・Push・Split のシート（macOS 版の `Subtrees.swift`）。サイドバー（Subtrees の見出しと
 //! subtree の右クリック）と Repository のメニューが使う。答えをコアの `subtree` の命令にする。
+//! 取り込み・送り出し・分けるのは書き込む先の worktree（HEAD とその作業ツリー）なので、シートは選んだときの
+//! worktree の名前を書き、答えもそこで実行する（シートを出している間に書き込む先を替えても）。
 
 use std::rc::Rc;
 
 use amonhen_model::{Subtree, tr};
 use gtk::glib;
 use gtk::prelude::*;
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::actions::Actions;
-use crate::sheets::{self, Response, Sheet};
+use crate::sheets::{self, Response, Sheet, Target};
 
 fn entry(value: &str, placeholder: &str) -> gtk::Entry {
     let e = gtk::Entry::new();
@@ -30,6 +32,11 @@ fn squash_box(on: bool) -> gtk::CheckButton {
     b
 }
 
+/// 選んだときの worktree で `command` を実行する。
+fn perform(actions: &Rc<Actions>, target: Target, command: Value) {
+    actions.perform_in(target.repo, vec![command], |_| {});
+}
+
 fn bell(actions: &Actions) {
     if let Some(window) = actions.window() {
         window.error_bell();
@@ -46,20 +53,13 @@ fn fields(sheet: &Sheet, widgets: &[&gtk::Widget]) {
 
 /// Add Subtree…: 別のリポジトリの ref を、このリポジトリのフォルダに取り込む。squash の既定は git と同じくオフ。
 pub fn add(actions: &Rc<Actions>) {
+    let Some(target) = Target::current(actions) else {
+        return;
+    };
     let actions = actions.clone();
+    // この機械の git に subtree がなければ、メニューを押せない（`actions::enabled`。macOS 版と同じ）。
     glib::spawn_future_local(async move {
-        // この機械の git に subtree がなければ、シートを出さずにそう言う（macOS 版はメニューを押せなくする）。
-        let Some(repo) = actions.repo() else { return };
-        if sheets::run(&repo, json!({ "op": "subtrees" })).await["info"]["available"] != true {
-            let parent = sheets::parent(&actions);
-            return sheets::inform(
-                parent.as_ref(),
-                &tr!("Add Subtree"),
-                &tr!("This machine’s git has no git subtree"),
-            )
-            .await;
-        }
-        let sheet = Sheet::new(
+        let sheet = target.sheet(
             sheets::parent(&actions).as_ref(),
             &tr!("Add Subtree"),
             &tr!(
@@ -99,15 +99,22 @@ pub fn add(actions: &Rc<Actions>) {
         if u.is_empty() || r.is_empty() || d.is_empty() {
             return bell(&actions);
         }
-        actions.perform(json!({
-            "op": "subtree",
-            "action": { "kind": "add", "dir": d, "url": u, "ref": r, "squash": squash.is_active() },
-        }));
+        perform(
+            &actions,
+            target,
+            json!({
+                "op": "subtree",
+                "action": { "kind": "add", "dir": d, "url": u, "ref": r, "squash": squash.is_active() },
+            }),
+        );
     });
 }
 
 /// Pull…（`push` なら Push…）: 前に使った相手を入れておく。Pull の squash は前の選び方。
 pub fn pull_or_push(actions: &Rc<Actions>, subtree: &Subtree, push: bool) {
+    let Some(target) = Target::current(actions) else {
+        return;
+    };
     let (actions, subtree) = (actions.clone(), subtree.clone());
     glib::spawn_future_local(async move {
         let (title, message) = if push {
@@ -125,7 +132,7 @@ pub fn pull_or_push(actions: &Rc<Actions>, subtree: &Subtree, push: bool) {
                 ),
             )
         };
-        let sheet = Sheet::new(sheets::parent(&actions).as_ref(), &title, &message);
+        let sheet = target.sheet(sheets::parent(&actions).as_ref(), &title, &message);
         let url = entry(
             subtree.url.as_deref().unwrap_or_default(),
             &tr!("Repository URL"),
@@ -165,15 +172,22 @@ pub fn pull_or_push(actions: &Rc<Actions>, subtree: &Subtree, push: bool) {
         if !push {
             action["squash"] = json!(squash.is_active());
         }
-        actions.perform(json!({ "op": "subtree", "action": action }));
+        perform(
+            &actions,
+            target,
+            json!({ "op": "subtree", "action": action }),
+        );
     });
 }
 
 /// Split…: このフォルダの履歴だけのブランチを作る。
 pub fn split(actions: &Rc<Actions>, subtree: &Subtree) {
+    let Some(target) = Target::current(actions) else {
+        return;
+    };
     let (actions, subtree) = (actions.clone(), subtree.clone());
     glib::spawn_future_local(async move {
-        let sheet = Sheet::new(
+        let sheet = target.sheet(
             sheets::parent(&actions).as_ref(),
             &format!("Split {}", subtree.dir),
             &tr!(
@@ -193,9 +207,13 @@ pub fn split(actions: &Rc<Actions>, subtree: &Subtree) {
         if b.is_empty() {
             b = hint;
         }
-        actions.perform(json!({
-            "op": "subtree",
-            "action": { "kind": "split", "dir": subtree.dir, "branch": b },
-        }));
+        perform(
+            &actions,
+            target,
+            json!({
+                "op": "subtree",
+                "action": { "kind": "split", "dir": subtree.dir, "branch": b },
+            }),
+        );
     });
 }

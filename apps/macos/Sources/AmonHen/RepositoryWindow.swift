@@ -628,6 +628,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         slot.actions.refreshUndo()
         slot.workingCopy.refresh()
         reloadSubmodules()
+        reloadSubtrees()
         changeCount = worktreeChanges[WorktreeInfo.canonical(slot.path)] ?? 0
         showWorktrees()
         updateTabTitle()
@@ -741,27 +742,33 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     private var subtreeList = SubtreeList(available: false, subtrees: [])
 
     /// subtree を裏で読み、サイドバーに出す（読んだ HEAD をコアが覚えるので、2 回目からは新しいコミットだけを読む）。
+    /// subtree は HEAD の履歴から探し、Pull・Push・Split もその HEAD で行うので、書き込む先の worktree で読む。
     private func reloadSubtrees() {
-        let repository = self.repository
+        let slot = editing
+        let repository = slot.repository
         Task {
             guard let list = await Task.detached(priority: .utility, operation: {
                 try? repository.info(["op": "subtrees"], as: SubtreeList.self)
             }).value else { return }
+            // 読んでいる間にほかの worktree を選んだら、その worktree の分は読み直しに任せる。
+            guard slot === editing else { return }
             subtreeList = list
             sidebar.show(subtrees: list.subtrees)
         }
     }
 
     private func subtreeAction(_ dir: String?, _ action: SidebarViewController.SubtreeAction) {
+        // 選んだときの worktree で実行する（シートを出している間に書き込む先が替わっても）。
+        let actions = self.actions
         let perform: ([String: Any]) -> Void = { [weak self] command in
-            self?.actions.perform(command) { [weak self] _ in self?.reloadSubtrees() }
+            actions.perform(command) { [weak self] _ in self?.reloadSubtrees() }
         }
-        if action == .add { return SubtreeSheet.add(in: window, perform: perform) }
+        if action == .add { return SubtreeSheet.add(in: window, actions: actions, perform: perform) }
         guard let dir, let subtree = subtreeList.subtrees.first(where: { $0.dir == dir }) else { return }
         switch action {
-        case .pull: SubtreeSheet.pullOrPush(false, in: window, subtree: subtree, perform: perform)
-        case .push: SubtreeSheet.pullOrPush(true, in: window, subtree: subtree, perform: perform)
-        case .split: SubtreeSheet.split(in: window, subtree: subtree, perform: perform)
+        case .pull: SubtreeSheet.pullOrPush(false, in: window, actions: actions, subtree: subtree, perform: perform)
+        case .push: SubtreeSheet.pullOrPush(true, in: window, actions: actions, subtree: subtree, perform: perform)
+        case .split: SubtreeSheet.split(in: window, actions: actions, subtree: subtree, perform: perform)
         case .add: break
         }
     }

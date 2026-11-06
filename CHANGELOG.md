@@ -44,6 +44,11 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- The GTK4 app's subtree sheets name the worktree they act on and add, pull, push or split there, even when another
+  worktree is selected while the sheet is open.
+- macOS: the subtree sheets name the worktree they act on and run there, not in the worktree selected after the
+  sheet opened.
+- macOS: the sidebar's Subtrees group lists the subtrees of the selected worktree's HEAD, not the opened one's.
 - Working Copy no longer fails with "Is a directory" when an untracked repository sits inside the working tree; its
   diff is empty, as for a submodule.
 - Fetch, Pull and Push no longer stop now and then with "Stopped after 120 seconds without a response" while git is
