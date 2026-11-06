@@ -77,7 +77,8 @@ export function registerWorktreeCommands(manager: RepositoryManager, sidebar: Si
     // 変更が残っていれば、それも捨てると確かめてから --force（ロックしたものも）。ブランチは残る
     command('amonhen.worktree.remove', async (w, repo) => {
       if (w.main) return;
-      const changes = sidebar.worktrees.changes(w);
+      // 消すと戻せないので、覚えている数ではなく、今の数を数えて確かめる
+      const changes = await sidebar.worktrees.freshChanges(w);
       const answer = await vscode.window.showWarningMessage(
         `Remove the worktree “${worktreeName(w)}”?`,
         {

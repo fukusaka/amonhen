@@ -439,6 +439,7 @@ async function worktreeFlow(): Promise<void> {
   const branch = git('symbolic-ref', '--short', 'HEAD').trim();
   const folder = join(dirname(root), 'repo-e2e-wt');
   const gone = join(dirname(root), 'repo-e2e-gone');
+  const late = join(dirname(root), 'repo-e2e-late');
   const rows = () => {
     const wc = sidebar.getChildren().find((n) => n.kind === 'view' && n.view === 'workingCopy')!;
     return sidebar.getChildren(wc).flatMap((n) => (n.kind === 'cleanWorktrees' ? sidebar.getChildren(n) : [n]));
@@ -478,8 +479,29 @@ async function worktreeFlow(): Promise<void> {
     await withWindow({ showWarningMessage: async () => 'Remove Worktree' }, async () =>
       vscode.commands.executeCommand('amonhen.worktree.remove', row(folder)!.node),
     );
-    await until('フォルダーが消える', () => !existsSync(folder) && !git('worktree', 'list').includes('repo-e2e-wt'), 10_000);
+    await until('フォルダーが消える', () => !existsSync(folder) && !git('worktree', 'list').includes('repo-e2e-wt'), 10_000, lastErrors);
     assert.equal(git('branch', '--list', 'e2e-wt').trim(), 'e2e-wt');
+
+    // メインの側の変更の数は古いことがある（変更のない worktree は、HEAD か index が変わるまで数え直さない）。消す前に
+    // 数え直し、後から足したファイルがあれば、それも消すと確かめる
+    git('worktree', 'add', '-q', '-b', 'e2e-late', late);
+    git('-C', late, 'commit', '-q', '--allow-empty', '-m', 'e2e-late');
+    await new Promise((r) => setTimeout(r, 1000));
+    await sidebar.worktrees.reload();
+    await until('後から足す worktree', () => row(late));
+    writeFileSync(join(late, 'late.txt'), 'late\n');
+    let detail = '';
+    await withWindow(
+      {
+        showWarningMessage: async (_message: string, options: vscode.MessageOptions) => {
+          detail = String(options.detail);
+          return 'Remove Worktree';
+        },
+      },
+      async () => vscode.commands.executeCommand('amonhen.worktree.remove', row(late)!.node),
+    );
+    assert.match(detail, /uncommitted changes in 1 files/);
+    await until('後から足したファイルごと消える', () => !existsSync(late) && !git('worktree', 'list').includes('repo-e2e-late'), 10_000, lastErrors);
 
     // フォルダの消えた worktree は「folder is gone」と出て、Prune で片付く。git が prunable と言うのは 2.31 から
     git('worktree', 'add', '-q', '-b', 'e2e-gone', gone);
@@ -494,11 +516,11 @@ async function worktreeFlow(): Promise<void> {
   } finally {
     manager.select(main);
     manager.forget(folder);
-    for (const path of [folder, gone]) {
+    for (const path of [folder, gone, late]) {
       if (git('worktree', 'list').includes(basename(path))) git('worktree', 'remove', '--force', path);
     }
     git('worktree', 'prune');
-    for (const b of ['e2e-wt', 'e2e-gone']) if (git('branch', '--list', b).trim()) git('branch', '-D', b);
+    for (const b of ['e2e-wt', 'e2e-gone', 'e2e-late']) if (git('branch', '--list', b).trim()) git('branch', '-D', b);
     await sidebar.worktrees.reload();
   }
 }
