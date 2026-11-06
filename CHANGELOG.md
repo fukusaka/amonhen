@@ -44,6 +44,8 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- Working Copy no longer fails with "Is a directory" when an untracked repository sits inside the working tree; its
+  diff is empty, as for a submodule.
 - Fetch, Pull and Push no longer stop now and then with "Stopped after 120 seconds without a response" while git is
   still answering; measuring the silence could wrap around when output arrived at that moment.
 - The GTK4 app's automatic external editor falls back to a text editor, never a word processor such as LibreOffice Writer.
