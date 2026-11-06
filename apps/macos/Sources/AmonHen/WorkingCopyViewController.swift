@@ -387,6 +387,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         rightItem.minimumThickness = 300
         addSplitViewItem(rightItem)
         updateButtons()
+        // 開く前に裏で読んだ status でコンフリクトのファイルを選んでいたら、そのとき読んだマージエディタをここで出す。
+        if let key = selectedKey, let editor = mergeEditors[key.path] { embed(editor) }
     }
 
     func overlays() -> [(CGImage, NSView)] {
@@ -911,6 +913,15 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             guard let self, let editor else { return }
             if embeddedEditor === editor { unembed() }
             mergeEditors[editor.path] = nil
+        }
+        editor.onReload = { [weak self, weak editor] in
+            guard let self, let editor else { return }
+            if embeddedEditor === editor { unembed() }
+            mergeEditors[editor.path] = nil
+            if let key = selectedKey, key.path == editor.path,
+               let entry = entries.first(where: { $0.item.path == key.path }) {
+                showDiff(of: entry, staged: key.staged)
+            }
         }
         rightController.addChild(editor)
         rightView.content = editor.view
@@ -1638,6 +1649,10 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             } else if entry.item.isUnstaged {
                 add("Discard…") { [weak self] in self?.discardFile(entry) }
             }
+            // 右クリックした行を含めて選んでいれば、選んだファイルの変更を。
+            let selected = files.selectedRowIndexes.contains(files.clickedRow)
+                ? files.selectedRowIndexes.compactMap { (files.item(atRow: $0) as? Entry)?.item.path } : [path]
+            add("Stash…") { [weak self] in self?.actions?.stash(paths: selected) }
             menu.addItem(.separator())
         }
         // untracked のファイルにはまだ履歴がない。代わりに .gitignore に足せる（そのパスか、拡張子のパターン）。

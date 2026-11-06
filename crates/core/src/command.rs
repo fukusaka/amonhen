@@ -65,6 +65,25 @@ pub enum Command {
         name: String,
         force: bool,
     },
+    /// 履歴のない新しいブランチ `name` に切り替える。`keepFiles` なら今のファイルを stage したまま残す
+    /// （`git checkout --orphan`）、でなければ空から（`git switch --orphan`。作業中の変更があれば git が断る）。
+    CreateOrphanBranch {
+        name: String,
+        #[serde(default)]
+        keep_files: bool,
+    },
+    /// rerere が当てた `path` の解決を忘れ、コンフリクトのある形に戻す（作業ツリーのファイルは Undo で戻る）。
+    ForgetResolution {
+        path: String,
+    },
+    /// rerere が覚えたすべての解決を消す（`.git/rr-cache`。Undo では戻せない）。`info.count`: 消した数。
+    ForgetAllResolutions,
+    /// ignore されたファイルとフォルダ（`info.paths`。`git clean -n -d -X`）。
+    IgnoredFiles,
+    /// ignore されたファイル `paths` を消す（`git clean -f -d -X`。Undo では戻せない）。
+    DeleteIgnored {
+        paths: Vec<String>,
+    },
     RenameBranch {
         from: String,
         to: String,
@@ -266,9 +285,25 @@ pub enum Command {
     Discard {
         paths: Vec<String>,
     },
+    /// 作業ツリーのファイル `paths` を `rev` の版にする（`git restore --source`。`rev` にないファイルは消す）。
+    /// `staged` なら index にも入れる。作業ツリーのファイルは Undo で戻る（index は戻さない）。
+    RestoreFiles {
+        rev: String,
+        paths: Vec<String>,
+        #[serde(default)]
+        staged: bool,
+    },
+    /// 作業中の変更を stash する。`keepIndex` なら stage した変更を残し、`staged` なら stage した変更だけ（git 2.35
+    /// から）、`paths` があればそのファイルの変更だけ。
     StashPush {
         message: Option<String>,
         include_untracked: bool,
+        #[serde(default)]
+        keep_index: bool,
+        #[serde(default)]
+        staged: bool,
+        #[serde(default)]
+        paths: Vec<String>,
     },
     StashApply {
         name: String,
@@ -642,6 +677,25 @@ pub enum Command {
     },
     /// フォルダがなくなった worktree の記録を片付ける（`git worktree prune`）。
     WorktreePrune,
+    /// `path` の worktree をロックする（`git worktree lock`。prune・remove・move で消されない）。`reason` は理由。
+    WorktreeLock {
+        path: String,
+        reason: Option<String>,
+    },
+    WorktreeUnlock {
+        path: String,
+    },
+    /// `path` の worktree のフォルダを `to` に移す（`git worktree move`）。
+    WorktreeMove {
+        path: String,
+        to: String,
+    },
+    /// 手で移した worktree とリポジトリのつながりを直す（`git worktree repair`、git 2.29 から）。`paths` は移した
+    /// worktree の今の場所（空なら記録にある場所だけ）。
+    WorktreeRepair {
+        #[serde(default)]
+        paths: Vec<String>,
+    },
     /// `.gitignore`（作業ツリーの直下）と `.git/info/exclude` の中身（`info.gitignore`・`info.exclude`）。
     IgnoreFiles,
     /// フックの実行の許可を付ける・外す（`enabled`）。フックの置き場所は `hooksAndLfs` と同じ。
@@ -2410,6 +2464,34 @@ impl Repository {
                 ops.switch_branch(&branch)?;
                 ok()
             }
+            Command::ForgetResolution { path } => {
+                undo.record_files(
+                    ops,
+                    &format!("Forget Resolution of {path}"),
+                    &[&path],
+                    || ops.rerere_forget(&path),
+                )?;
+                ok()
+            }
+            Command::IgnoredFiles => Ok(Response {
+                ok: true,
+                info: Some(serde_json::json!({ "paths": ops.ignored_files()? })),
+                ..Default::default()
+            }),
+            Command::DeleteIgnored { paths } => {
+                let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
+                ops.delete_ignored(&paths)?;
+                ok()
+            }
+            Command::ForgetAllResolutions => Ok(Response {
+                ok: true,
+                info: Some(serde_json::json!({ "count": ops.rerere_forget_all()? })),
+                ..Default::default()
+            }),
+            Command::CreateOrphanBranch { name, keep_files } => {
+                ops.orphan_branch(name.trim(), keep_files)?;
+                ok()
+            }
             Command::Track { remote_branch } => {
                 ops.track_branch(&remote_branch)?;
                 ok()
@@ -2978,11 +3060,35 @@ impl Repository {
                 undo.record_files(ops, &label, &paths, || ops.restore_worktree(&paths))?;
                 ok()
             }
+            Command::RestoreFiles { rev, paths, staged } => {
+                if paths.is_empty() {
+                    return Err(tr!("Give the files to restore").into());
+                }
+                let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
+                let short: String = rev.chars().take(7).collect();
+                let label = match paths.as_slice() {
+                    [one] => format!("Restore {one} from {short}"),
+                    many => format!("Restore {} files from {short}", many.len()),
+                };
+                undo.record_files(ops, &label, &paths, || {
+                    ops.restore_from(&rev, &paths, staged)
+                })?;
+                ok()
+            }
             Command::StashPush {
                 message,
                 include_untracked,
+                keep_index,
+                staged,
+                paths,
             } => {
-                ops.stash_push(message.as_deref(), include_untracked)?;
+                ops.stash_push_with(&amonhen_model::StashOptions {
+                    message,
+                    include_untracked,
+                    keep_index,
+                    staged,
+                    paths,
+                })?;
                 ok()
             }
             Command::StashApply { name, pop } => done(ops.stash_apply(&name, pop)?),
@@ -3999,6 +4105,22 @@ impl Repository {
             }
             Command::WorktreePrune => {
                 ops.change_worktree(&amonhen_model::WorktreeChange::Prune)?;
+                ok()
+            }
+            Command::WorktreeLock { path, reason } => {
+                ops.change_worktree(&amonhen_model::WorktreeChange::Lock { path, reason })?;
+                ok()
+            }
+            Command::WorktreeUnlock { path } => {
+                ops.change_worktree(&amonhen_model::WorktreeChange::Unlock { path })?;
+                ok()
+            }
+            Command::WorktreeMove { path, to } => {
+                ops.change_worktree(&amonhen_model::WorktreeChange::Move { path, to })?;
+                ok()
+            }
+            Command::WorktreeRepair { paths } => {
+                ops.change_worktree(&amonhen_model::WorktreeChange::Repair { paths })?;
                 ok()
             }
             Command::IgnoreFiles => {
@@ -7143,6 +7265,259 @@ mod tests {
     }
 
     #[test]
+    fn lists_and_deletes_ignored_files() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        std::fs::write(dir.join(".gitignore"), "target/\n*.log\n").unwrap();
+        git(dir, &["add", ".gitignore"]);
+        git(dir, &["commit", "-q", "-m", "ignore"]);
+        std::fs::create_dir_all(dir.join("target/debug")).unwrap();
+        std::fs::write(dir.join("target/debug/bin"), "b").unwrap();
+        std::fs::write(dir.join("a.log"), "l").unwrap();
+        std::fs::write(dir.join("new file.log"), "l").unwrap();
+        std::fs::write(dir.join("untracked.txt"), "u").unwrap();
+        let list = || {
+            let r = run(&repo, r#"{"op":"ignoredFiles"}"#);
+            let mut paths: Vec<String> = r["info"]["paths"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|p| p.as_str().unwrap().to_owned())
+                .collect();
+            paths.sort();
+            paths
+        };
+        // フォルダは 1 つにまとめ、untracked（ignore されていない）ものは入らない。
+        assert_eq!(list(), ["a.log", "new file.log", "target/"]);
+        let r = run(
+            &repo,
+            r#"{"op":"deleteIgnored","paths":["target/","a.log"]}"#,
+        );
+        assert_eq!(r["ok"], true, "{r}");
+        assert!(!dir.join("target").exists() && !dir.join("a.log").exists());
+        assert!(dir.join("untracked.txt").exists());
+        assert_eq!(list(), ["new file.log"]);
+    }
+
+    #[test]
+    fn forgets_a_resolution_rerere_applied() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        git(dir, &["config", "rerere.enabled", "true"]);
+        git(dir, &["checkout", "-q", "-b", "topic"]);
+        std::fs::write(dir.join("a.txt"), "topic\n").unwrap();
+        git(dir, &["commit", "-q", "-am", "topic"]);
+        git(dir, &["checkout", "-q", "main"]);
+        std::fs::write(dir.join("a.txt"), "main\n").unwrap();
+        git(dir, &["commit", "-q", "-am", "main"]);
+        // 一度解決して rerere に覚えさせ、merge をやり直すと rerere がその解決を当てる。
+        let _ = Process::new("git")
+            .args(["merge", "topic"])
+            .current_dir(dir)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .output();
+        std::fs::write(dir.join("a.txt"), "resolved\n").unwrap();
+        git(dir, &["add", "a.txt"]);
+        git(dir, &["commit", "-q", "-m", "merge"]);
+        git(dir, &["reset", "-q", "--hard", "HEAD~1"]);
+        let _ = Process::new("git")
+            .args(["merge", "topic"])
+            .current_dir(dir)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .output();
+        assert_eq!(
+            std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+            "resolved\n"
+        );
+        let r = run(&repo, r#"{"op":"forgetResolution","path":"a.txt"}"#);
+        assert_eq!(r["ok"], true, "{r}");
+        assert!(
+            std::fs::read_to_string(dir.join("a.txt"))
+                .unwrap()
+                .contains("<<<<<<<")
+        );
+        // Undo で、rerere が当てた形のファイルに戻る。
+        assert_eq!(run(&repo, r#"{"op":"undo"}"#)["ok"], true);
+        assert_eq!(
+            std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+            "resolved\n"
+        );
+        let r = run(&repo, r#"{"op":"forgetAllResolutions"}"#);
+        assert_eq!(r["ok"], true, "{r}");
+        assert!(r["info"]["count"].as_u64().unwrap() >= 1, "{r}");
+        assert!(!dir.join(".git/rr-cache").exists());
+    }
+
+    #[test]
+    fn starts_orphan_branches_empty_or_with_the_files() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        let orphan = |json: serde_json::Value| {
+            let mut command = json;
+            command["op"] = "createOrphanBranch".into();
+            run(&repo, &command.to_string())
+        };
+        // 空から（git switch --orphan）: 追跡していたファイルは作業ツリーから消え、ブランチはまだない。
+        let r = orphan(serde_json::json!({ "name": "pages" }));
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(git(dir, &["symbolic-ref", "HEAD"]), "refs/heads/pages");
+        assert!(!dir.join("a.txt").exists());
+        assert_eq!(git(dir, &["branch", "--list", "pages"]), "");
+        git(dir, &["switch", "-q", "main"]);
+        // 今のファイルを残す（git checkout --orphan）: stage したまま。
+        let r = orphan(serde_json::json!({ "name": "fresh", "keepFiles": true }));
+        assert_eq!(r["ok"], true, "{r}");
+        assert!(dir.join("a.txt").exists());
+        assert_eq!(git(dir, &["status", "--porcelain"]), "A  a.txt");
+        let r = orphan(serde_json::json!({ "name": "-x" }));
+        assert_eq!(r["ok"], false);
+    }
+
+    #[test]
+    fn locks_moves_and_repairs_worktrees() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        let other = tempfile::tempdir().unwrap();
+        let wt = other.path().join("wt").to_str().unwrap().replace('\\', "/");
+        let moved = other
+            .path()
+            .join("moved")
+            .to_str()
+            .unwrap()
+            .replace('\\', "/");
+        let cmd = |json: serde_json::Value| run(&repo, &json.to_string());
+        let r = cmd(serde_json::json!({ "op": "worktreeAdd", "path": wt, "newBranch": "side" }));
+        assert_eq!(r["ok"], true, "{r}");
+        let list = || git(dir, &["worktree", "list", "--porcelain"]);
+        let r =
+            cmd(serde_json::json!({ "op": "worktreeLock", "path": wt, "reason": "on a USB disk" }));
+        assert_eq!(r["ok"], true, "{r}");
+        // 古い git の `worktree list --porcelain` は理由を出さないので、git が書くファイルを見る。
+        let locked = dir.join(".git/worktrees/wt/locked");
+        assert_eq!(
+            std::fs::read_to_string(&locked).unwrap().trim(),
+            "on a USB disk"
+        );
+        // ロックしていると git は移さない。
+        let r = cmd(serde_json::json!({ "op": "worktreeMove", "path": wt, "to": moved }));
+        assert_eq!(r["ok"], false);
+        let r = cmd(serde_json::json!({ "op": "worktreeUnlock", "path": wt }));
+        assert_eq!(r["ok"], true, "{r}");
+        assert!(!locked.exists());
+        let r = cmd(serde_json::json!({ "op": "worktreeMove", "path": wt, "to": moved }));
+        assert_eq!(r["ok"], true, "{r}");
+        assert!(std::path::Path::new(&moved).join("a.txt").exists());
+        // 手で戻すと、つながりが切れる。repair に今の場所を渡すと直る（git 2.29 から）。
+        std::fs::rename(&moved, &wt).unwrap();
+        let r = cmd(serde_json::json!({ "op": "worktreeRepair", "paths": [wt] }));
+        if r["ok"] == true {
+            assert!(
+                list().contains(&format!("worktree {wt}")) || list().contains("wt\n"),
+                "{}",
+                list()
+            );
+            assert_eq!(
+                git(
+                    std::path::Path::new(&wt),
+                    &["rev-parse", "--abbrev-ref", "HEAD"]
+                ),
+                "side"
+            );
+        } else {
+            assert!(r["error"].as_str().unwrap().contains("2.29"), "{r}");
+        }
+    }
+
+    #[test]
+    fn stashes_some_files_the_staged_changes_or_keeps_the_index() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        std::fs::write(dir.join("b.txt"), "b\n").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-q", "-m", "b"]);
+        let stash = |json: serde_json::Value| {
+            let mut command = json;
+            command["op"] = "stashPush".into();
+            command["includeUntracked"] = command
+                .get("includeUntracked")
+                .cloned()
+                .unwrap_or(false.into());
+            run(&repo, &command.to_string())
+        };
+        let status = || git(dir, &["status", "--porcelain"]);
+        // ファイルを選ぶ: ほかのファイルの変更は残る。
+        std::fs::write(dir.join("a.txt"), "A\n").unwrap();
+        std::fs::write(dir.join("b.txt"), "B\n").unwrap();
+        let r = stash(serde_json::json!({ "message": "only a", "paths": ["a.txt"] }));
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(status(), "M b.txt");
+        assert!(git(dir, &["stash", "list"]).contains("only a"));
+        git(dir, &["checkout", "--", "b.txt"]);
+        // index を残す: stage した変更は作業ツリーと index に残る。
+        std::fs::write(dir.join("a.txt"), "staged\n").unwrap();
+        git(dir, &["add", "a.txt"]);
+        std::fs::write(dir.join("b.txt"), "B\n").unwrap();
+        let r = stash(serde_json::json!({ "keepIndex": true }));
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(status(), "M  a.txt");
+        // stage した変更だけ（git 2.35 から）。それより前の git ではわけを言って断る。
+        std::fs::write(dir.join("b.txt"), "B\n").unwrap();
+        let r = stash(serde_json::json!({ "staged": true }));
+        if r["ok"] == true {
+            assert_eq!(status(), "M b.txt");
+        } else {
+            assert!(r["error"].as_str().unwrap().contains("2.35"), "{r}");
+        }
+        let r = stash(serde_json::json!({ "staged": true, "includeUntracked": true }));
+        assert_eq!(r["ok"], false);
+    }
+
+    #[test]
+    fn restores_files_from_another_commit() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        std::fs::write(dir.join("a.txt"), "changed\n").unwrap();
+        std::fs::write(dir.join("new.txt"), "new\n").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-q", "-m", "second"]);
+        let restore = |json: serde_json::Value| {
+            let mut command = json;
+            command["op"] = "restoreFiles".into();
+            run(&repo, &command.to_string())
+        };
+        // 作業ツリーだけ（git の既定）: index は HEAD のまま。
+        let r = restore(serde_json::json!({ "rev": "HEAD~1", "paths": ["a.txt"] }));
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+            "1\n2\n3\n"
+        );
+        assert_eq!(
+            git(dir, &["status", "--porcelain", "--", "a.txt"]),
+            "M a.txt"
+        );
+        // Undo で作業ツリーのファイルが戻る。
+        assert_eq!(run(&repo, r#"{"op":"undo"}"#)["ok"], true);
+        assert_eq!(
+            std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+            "changed\n"
+        );
+        // index にも入れる。前の版にないファイルは消す。
+        let r = restore(
+            serde_json::json!({ "rev": "HEAD~1", "paths": ["a.txt", "new.txt"], "staged": true }),
+        );
+        assert_eq!(r["ok"], true, "{r}");
+        assert!(!dir.join("new.txt").exists());
+        let status = git(dir, &["status", "--porcelain"]);
+        assert!(
+            status.contains("M  a.txt") && status.contains("D  new.txt"),
+            "{status}"
+        );
+        let r = restore(serde_json::json!({ "rev": "HEAD", "paths": [] }));
+        assert_eq!(r["ok"], false);
+    }
+
+    #[test]
     fn adds_pulls_pushes_and_splits_subtrees() {
         let (tmp, repo) = setup();
         let dir = tmp.path();
@@ -7226,6 +7601,45 @@ mod tests {
         git(dir, &["rm", "-q", "-r", "vendor/lib"]);
         git(dir, &["commit", "-q", "-m", "drop lib"]);
         assert_eq!(list()["subtrees"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn absorbs_submodule_git_dirs_and_runs_commands_in_each() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        // 自分の .git フォルダを持つ submodule（手で clone したものを足す）。
+        let lib = tempfile::tempdir().unwrap();
+        git(lib.path(), &["init", "-q"]);
+        git(lib.path(), &["commit", "-q", "--allow-empty", "-m", "lib"]);
+        let url = lib.path().to_str().unwrap().replace('\\', "/");
+        git(dir, &["clone", "-q", &url, "lib"]);
+        git(dir, &["submodule", "add", "-q", &url, "lib"]);
+        let state = || run(&repo, r#"{"op":"submodules"}"#)["info"]["submodules"][0].clone();
+        assert_eq!(state()["ownGitDir"], true, "{}", state());
+        let change = |json: serde_json::Value| {
+            run(
+                &repo,
+                &serde_json::json!({ "op": "changeSubmodule", "change": json }).to_string(),
+            )
+        };
+        let r = change(serde_json::json!({ "kind": "absorb", "paths": ["lib"] }));
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(state()["ownGitDir"], false);
+        assert!(dir.join(".git/modules/lib").is_dir());
+        assert!(dir.join("lib/.git").is_file());
+        let r = change(
+            serde_json::json!({ "kind": "foreach", "command": "git log -1 --format=%s > ran.txt", "recursive": false }),
+        );
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("lib/ran.txt"))
+                .unwrap()
+                .trim(),
+            "lib"
+        );
+        let r =
+            change(serde_json::json!({ "kind": "foreach", "command": " ", "recursive": false }));
+        assert_eq!(r["ok"], false);
     }
 
     #[test]

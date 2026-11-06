@@ -347,7 +347,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private var worktreeChanges: [String: Int] = [:]
     /// worktree を選んだ（書き込む先にする）。
     var onSelectWorktree: ((String) -> Void)?
-    enum WorktreeAction { case reveal, terminal, remove, prune }
+    enum WorktreeAction { case reveal, terminal, remove, prune, lock, unlock, move, locate }
     var onWorktreeAction: ((String, WorktreeAction) -> Void)?
     /// worktree のフォルダがこの Mac にあるか（SSH 先・daemon 越しなら、Finder・ターミナルでは開けないので出さない）。
     var worktreesAreLocal = true
@@ -355,7 +355,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     enum RemoteAction { case add, edit, remove }
     var onRemoteAction: ((String?, RemoteAction) -> Void)?
     /// Submodules の組の文脈メニュー（path は nil）と、submodule の行の文脈メニュー。
-    enum SubmoduleAction { case add, update, sync, setURL, setBranch, remove }
+    enum SubmoduleAction { case add, update, sync, setURL, setBranch, remove, absorb, foreach }
     var onSubmoduleAction: ((String?, SubmoduleAction) -> Void)?
     /// Subtrees の組の文脈メニュー（dir は nil）と、subtree の行の文脈メニュー。
     enum SubtreeAction { case add, pull, push, split }
@@ -1277,8 +1277,17 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             if !w.main {
                 menu.addItem(.separator())
                 if w.prunable != nil {
+                    // フォルダを手で移したなら、つながりを直せる（git worktree repair）。
+                    menu.addItem(ClosureMenuItem(title: L("Locate Moved Folder…")) { [weak self] in self?.onWorktreeAction?(path, .locate) })
                     menu.addItem(ClosureMenuItem(title: L("Prune Worktrees")) { [weak self] in self?.onWorktreeAction?(path, .prune) })
                 } else {
+                    // ロックしていると、git は prune・remove・move で消したり移したりしない。
+                    if w.locked != nil {
+                        menu.addItem(ClosureMenuItem(title: L("Unlock")) { [weak self] in self?.onWorktreeAction?(path, .unlock) })
+                    } else {
+                        menu.addItem(ClosureMenuItem(title: L("Lock…")) { [weak self] in self?.onWorktreeAction?(path, .lock) })
+                        menu.addItem(ClosureMenuItem(title: L("Move…")) { [weak self] in self?.onWorktreeAction?(path, .move) })
+                    }
                     menu.addItem(ClosureMenuItem(title: L("Remove Worktree…")) { [weak self] in self?.onWorktreeAction?(path, .remove) })
                 }
             }
@@ -1324,6 +1333,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 menu.addItem(ClosureMenuItem(title: "Update All") { actions.perform(["op": "updateSubmodules", "paths": [String]()]) })
                 menu.addItem(ClosureMenuItem(title: "Update Submodules…") { [weak self] in self?.onSubmoduleAction?(nil, .update) })
                 menu.addItem(ClosureMenuItem(title: "Sync URLs") { [weak self] in self?.onSubmoduleAction?(nil, .sync) })
+                menu.addItem(ClosureMenuItem(title: L("Run in Each Submodule…")) { [weak self] in self?.onSubmoduleAction?(nil, .foreach) })
                 menu.addItem(.separator())
                 menu.addItem(ClosureMenuItem(title: L("Add Submodule…")) { [weak self] in self?.onSubmoduleAction?(nil, .add) })
                 return
@@ -1502,6 +1512,10 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             menu.addItem(.separator())
             add(L("Edit URL…")) { [weak self] in self?.onSubmoduleAction?(name, .setURL) }
             add(L("Branch to Follow…")) { [weak self] in self?.onSubmoduleAction?(name, .setBranch) }
+            // 自分のフォルダにリポジトリのデータを持っていれば（手で clone して足したなど）、.git/modules に移せる。
+            if submoduleStates[name]?.ownGitDir == true {
+                add(L("Move Repository Data into .git/modules")) { [weak self] in self?.onSubmoduleAction?(name, .absorb) }
+            }
             menu.addItem(.separator())
             add(L("Remove…")) { [weak self] in self?.onSubmoduleAction?(name, .remove) }
         }

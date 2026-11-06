@@ -55,6 +55,9 @@ enum CommandTable {
     static let newBranch = Entry(
         id: "new-branch", title: "New Branch…", localized: false, key: "b", modifiers: [.command, .option],
         toolTip: nil, app: false)
+    static let newOrphanBranch = Entry(
+        id: "new-orphan-branch", title: "New Orphan Branch…", localized: true, key: "", modifiers: [.command],
+        toolTip: nil, app: false)
     static let renameBranch = Entry(
         id: "rename-branch", title: "Rename Branch…", localized: true, key: "", modifiers: [.command],
         toolTip: nil, app: false)
@@ -99,6 +102,9 @@ enum CommandTable {
         toolTip: nil, app: false)
     static let popStash = Entry(
         id: "pop-stash", title: "Pop…", localized: false, key: "s", modifiers: [.command, .option, .shift],
+        toolTip: nil, app: false)
+    static let deleteIgnoredFiles = Entry(
+        id: "delete-ignored-files", title: "Delete Ignored Files…", localized: true, key: "", modifiers: [.command],
         toolTip: nil, app: false)
     static let undo = Entry(
         id: "undo", title: "Undo…", localized: false, key: "z", modifiers: [.command, .option],
@@ -187,11 +193,11 @@ enum CommandTable {
     ]
     static let repositoryMenu: [[Entry]] = [
         [fetch, pull, push, forcePush],
-        [newBranch, renameBranch, setUpstream, newTag],
+        [newBranch, newOrphanBranch, renameBranch, setUpstream, newTag],
         [newWorktree, pruneWorktrees, addRemote, addSubmodule, updateSubmodules, addSubtree],
         [merge, rebase, compareWithPrevious, applyPatch, saveBundle, fetchBundle],
         [`continue`, skip, abort],
-        [stash, popStash],
+        [stash, popStash, deleteIgnoredFiles],
         [undo],
         [repositorySettings],
         [createPullRequest, openOnGithub],

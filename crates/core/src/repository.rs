@@ -1091,7 +1091,7 @@ impl Repository {
         } else {
             let worktree = match entry.worktree {
                 b'D' => Arc::default(),
-                _ if entry.submodule => Arc::default(),
+                _ if entry.submodule || entry.is_directory() => Arc::default(),
                 _ => self.backend.worktree_file(&entry.path)?,
             };
             let index = blob(&entry.index_id)?;
@@ -1111,9 +1111,9 @@ impl Repository {
     }
 
     /// 作業ツリーのファイルの改行（`git ls-files --eol` と同じ見方）。差分は git に入れる形どうしで比べるので、
-    /// 改行の変換や混ざった改行は差分に出ない。サブモジュール・消したファイルでは None。
+    /// 改行の変換や混ざった改行は差分に出ない。サブモジュール・ディレクトリ・消したファイルでは None。
     fn line_endings(&self, entry: &StatusEntry, index: &[u8]) -> Result<Option<LineEndings>> {
-        if entry.submodule || entry.worktree == b'D' {
+        if entry.submodule || entry.is_directory() || entry.worktree == b'D' {
             return Ok(None);
         }
         let Some(raw) = self
@@ -1143,13 +1143,16 @@ impl Repository {
 
     /// Working Copy の 1 ファイルの、HEAD と作業ツリーの差分。変更の行ごとに、index に入っているか
     /// （次のコミットに含めるか）を `DiffRow::STAGED` で示す。index がその形で表せないとき・サブモジュール・
-    /// バイナリ・コンフリクトでは None（FE は stage 済みと作業ツリーの差分を分けて見せる）。
+    /// ディレクトリ・バイナリ・コンフリクトでは None（FE は stage 済みと作業ツリーの差分を分けて見せる）。
     pub fn working_diff_combined(
         &self,
         entry: &StatusEntry,
         profile: &FrontendProfile,
     ) -> Result<Option<WorkingDiff>> {
-        if entry.submodule || entry.kind == amonhen_model::StatusKind::Unmerged {
+        if entry.submodule
+            || entry.is_directory()
+            || entry.kind == amonhen_model::StatusKind::Unmerged
+        {
             return Ok(None);
         }
         let blob = |id: &Option<Oid>| -> Result<Arc<Vec<u8>>> {
@@ -2270,6 +2273,34 @@ mod tests {
         repo.stage(&["a.txt"]).unwrap();
         repo.commit("change a", false).unwrap();
         assert!(repo.load_status().unwrap().status.entries.is_empty());
+    }
+
+    #[test]
+    fn diffs_an_untracked_nested_repository_as_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        git(dir, &["init", "-q"]);
+        git(dir, &["commit", "-q", "--allow-empty", "-m", "first"]);
+        // 追跡していない入れ子のリポジトリは、ディレクトリのまま status に出る。
+        let nested = dir.join("vendor/lib");
+        std::fs::create_dir_all(&nested).unwrap();
+        git(&nested, &["init", "-q"]);
+        std::fs::write(nested.join("f.txt"), "x\n").unwrap();
+
+        let repo = Repository::new(GixBackend::open(dir).unwrap());
+        let status = repo.load_status().unwrap();
+        let entry = &status.status.entries[0];
+        assert_eq!(entry.path, "vendor/lib/");
+        let diff = repo
+            .working_diff(entry, false, &FrontendProfile::MACOS)
+            .unwrap();
+        assert!(diff.view.rows.is_empty());
+        assert!(diff.line_endings.is_none());
+        assert!(
+            repo.working_diff_combined(entry, &FrontendProfile::MACOS)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

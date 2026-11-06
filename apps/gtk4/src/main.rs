@@ -56,6 +56,7 @@ mod repolist;
 mod repopages;
 mod repos;
 mod reposettings;
+mod restoresheet;
 mod rewritedraw;
 mod search;
 mod settings;
@@ -1418,6 +1419,26 @@ fn build_tab(
     reflog.set_range_diff(range_diff_opener.clone());
     let (v, w, oc) = (view.downgrade(), win_of.clone(), on_commit.clone());
     let (dw, dt) = (diff.downgrade(), details.clone());
+    // 作業ツリーのファイルを、選んでいる 1 つのコミットの版（その前の版）に戻す（macOS 版と同じ）。
+    let (rv, ra) = (view.downgrade(), Rc::downgrade(&actions));
+    commit_diff.connect_restore_items(move |change| {
+        let (Some(view), Some(actions)) = (rv.upgrade(), ra.upgrade()) else {
+            return Vec::new();
+        };
+        let Some((_, history)) = view.current() else {
+            return Vec::new();
+        };
+        match view.selection()[..] {
+            [row] => history
+                .graph
+                .ids()
+                .get(row as usize)
+                .map(|id| restoresheet::items(&actions, &id.to_string(), change))
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        }
+    });
+    let ra = Rc::downgrade(&actions);
     let wt = Rc::downgrade(&worktrees);
     commit_diff.connect_file_items(move |path, y, can_blame, hunk_only| {
         let (Some(view), Some(window)) = (v.upgrade(), w()) else {
@@ -1458,9 +1479,9 @@ fn build_tab(
                 },
             ));
         }
-        let (window, path, oc) = (window.clone(), path.to_owned(), oc.clone());
+        let (window, path, oc, ra) = (window.clone(), path.to_owned(), oc.clone(), ra.clone());
         items.push(menu::action("File History", move || {
-            filetools::file_history(&window, repo.clone(), &path, oc.clone());
+            filetools::file_history(&window, repo.clone(), &path, oc.clone(), restorer(&ra));
         }));
         items
     });
@@ -1486,8 +1507,9 @@ fn build_tab(
         }
         if can_history {
             let (window, path, oc) = (window.clone(), path.to_owned(), oc.clone());
+            let restore = restorer(&Rc::downgrade(&actions));
             items.push(menu::action("File History", move || {
-                filetools::file_history(&window, repo.clone(), &path, oc.clone());
+                filetools::file_history(&window, repo.clone(), &path, oc.clone(), restore.clone());
             }));
         }
         items
@@ -2259,7 +2281,7 @@ fn build_tab(
                                         filetools::blame(&window, repo, path, None, oc)
                                     }
                                     (_, Some(path)) => {
-                                        filetools::file_history(&window, repo, path, oc)
+                                        filetools::file_history(&window, repo, path, oc, None)
                                     }
                                     _ => {}
                                 }
@@ -3604,6 +3626,16 @@ fn snapshot(window: &gtk::Window, png: &Path) -> Result<(), String> {
         Some(&graphene::Rect::new(0.0, 0.0, w * scale, h * scale)),
     );
     texture.save_to_png(png).map_err(|e| e.to_string())
+}
+
+/// File History の「この版に戻す…」: 作業ツリーのファイルを、そのコミットの版に戻す（macOS 版と同じ）。
+fn restorer(actions: &std::rc::Weak<Actions>) -> Option<filetools::Restore> {
+    let a = actions.clone();
+    Some(Rc::new(move |path: &str, commit: &str| {
+        if let Some(actions) = a.upgrade() {
+            restoresheet::ask(&actions, path, vec![path.to_owned()], commit, false);
+        }
+    }))
 }
 
 #[cfg(test)]

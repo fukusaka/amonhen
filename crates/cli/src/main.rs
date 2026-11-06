@@ -49,12 +49,13 @@ usage: amonhen [<path>]
        amonhen stage [--rows <rows>] <path>… | --all
        amonhen unstage [--rows <rows>] <path>… | --all
        amonhen discard [--rows <rows>] <path>…
+       amonhen restore --source <rev> [--staged] <path>…
        amonhen commit -m <message> [--amend]
        amonhen refs [--verify] [--json]
        amonhen run [<json>…]
        amonhen watch [--json]
        amonhen undo [--list | --peek]
-       amonhen worktree [list [--changes] [--json] | add <path> [<start>] [-b <branch>] | remove [--force] <path> | prune]
+       amonhen worktree [list [--changes] [--json] | add <path> [<start>] [-b <branch>] | remove [--force] <path> | prune | lock [--reason <text>] <path> | unlock <path> | move <path> <new-path> | repair [<path>…]]
        amonhen merge-file [--all] [--check] <file>…
        amonhen merge-check [--into <branch>] [--json] <rev>…
        amonhen rewrite-preview [--update-refs | --no-update-refs] [--json] (<onto> | --edit <json>)
@@ -66,7 +67,7 @@ usage: amonhen [<path>]
        amonhen bundle create [--json] <file> (--all | <ref>… [^<base>…] | <base>..<ref>)
        amonhen bundle fetch [--json] <file> [<name>]
        amonhen clone [--filter=<spec>] [--depth <n>] [--sparse] [-b <branch>] [--recurse-submodules] <url> [<dir>]
-       amonhen submodule [list [--json] | add [-b <branch>] <url> <path> | update [--recursive] [--remote] [<path>…] | remove [--delete-git-dir] <path> | set-url <path> <url> | set-branch (-b <branch> | --default) <path> | sync [--recursive]]
+       amonhen submodule [list [--json] | add [-b <branch>] <url> <path> | update [--recursive] [--remote] [<path>…] | remove [--delete-git-dir] <path> | set-url <path> <url> | set-branch (-b <branch> | --default) <path> | sync [--recursive] | absorb [<path>…] | foreach [--recursive] <command>]
        amonhen subtree [list [--json] | add [--squash] <dir> <url> <ref> | pull [--squash | --no-squash] <dir> [<url> <ref>] | push <dir> [<url> <ref>] | split <dir> -b <branch>]
        amonhen daemon [status [--json] | start | stop | rebuild [<path> | ssh://host/path]]
        amonhen install [--quiet] [--no-link] [--force]   (puts the engine in ~/.local/share/amonhen and links ~/.local/bin/amonhen)
@@ -84,6 +85,8 @@ History (if they connect along first-parent, from the older one's parent to the 
 --rows prints diff line numbers. The --rows <rows> of stage and unstage (like 3,5-9) are diff --combined line numbers,
 and discard's --rows are diff (unstaged) line numbers; only the changes on those lines are touched. discard and commit
 can be undone with undo.
+restore puts files as they are in <rev> into the working tree (and the index with --staged); a file <rev> lacks is
+deleted. undo brings the working tree files back.
 run takes commands like {\"op\":\"checkout\",\"branch\":\"main\"} (the core's command.rs). Each answer is one line of JSON.
 log --rebuild and daemon rebuild throw away the History cache and build it again (the shared daemon's too).
 merge-file applies only the rules that can't go wrong by default (--all for every rule). If conflicts remain the exit
@@ -184,6 +187,7 @@ fn main() -> ExitCode {
         Some("stage" | "add") => work::stage(&args[1..], true),
         Some("unstage") => work::stage(&args[1..], false),
         Some("discard") => work::discard(&args[1..]),
+        Some("restore") => work::restore(&args[1..]),
         Some("commit") => work::commit(&args[1..]),
         Some("refs" | "branch") => work::refs(&args[1..]),
         // サブコマンドでなければ、開く場所とみなす（`amonhen .`）。
@@ -667,12 +671,14 @@ fn worktree(args: &[String]) -> Result<ExitCode> {
     let mut force = false;
     let mut changes = false;
     let mut branch: Option<String> = None;
+    let mut reason: Option<String> = None;
     let mut words: Vec<String> = Vec::new();
     let mut a = Args::new(args);
     while let Some(arg) = a.rest.next() {
         match arg.as_str() {
             "-C" => dir = PathBuf::from(a.value("-C")?),
             "--json" => json = true,
+            "--reason" => reason = Some(a.value("--reason")?.to_owned()),
             "--force" | "-f" => force = true,
             "--changes" => changes = true,
             "-b" => branch = Some(a.value("-b")?.to_owned()),
@@ -779,6 +785,45 @@ fn worktree(args: &[String]) -> Result<ExitCode> {
         }
         "prune" => {
             command(&*front, serde_json::json!({"op": "worktreePrune"}))?;
+        }
+        "lock" | "unlock" => {
+            let Some(path) = words.get(1) else {
+                return Err(format!("{}\n\n{}", tr!("Give the worktree"), usage()).into());
+            };
+            let op = if words[0] == "lock" {
+                "worktreeLock"
+            } else {
+                "worktreeUnlock"
+            };
+            command(
+                &*front,
+                serde_json::json!({"op": op, "path": absolute(path), "reason": reason}),
+            )?;
+        }
+        "move" => {
+            let (Some(path), Some(to)) = (words.get(1), words.get(2)) else {
+                return Err(format!(
+                    "{}\n\n{}",
+                    tr!("Give the worktree and the folder to move it to"),
+                    usage()
+                )
+                .into());
+            };
+            command(
+                &*front,
+                serde_json::json!({"op": "worktreeMove", "path": absolute(path), "to": absolute(to)}),
+            )?;
+            println!(
+                "{}",
+                tr!("Moved the worktree to {path}", path = absolute(to))
+            );
+        }
+        "repair" => {
+            let paths: Vec<String> = words[1..].iter().map(|p| absolute(p)).collect();
+            command(
+                &*front,
+                serde_json::json!({"op": "worktreeRepair", "paths": paths}),
+            )?;
         }
         other => {
             return Err(format!(

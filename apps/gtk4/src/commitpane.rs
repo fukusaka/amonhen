@@ -124,7 +124,13 @@ impl CommitPane {
                 }
                 let path = path.to_owned();
                 items.push(menu::action("File History", move || {
-                    crate::filetools::file_history(&window, repo.clone(), &path, on_commit.clone());
+                    crate::filetools::file_history(
+                        &window,
+                        repo.clone(),
+                        &path,
+                        on_commit.clone(),
+                        None,
+                    );
                 }));
                 items
             });
@@ -144,6 +150,21 @@ impl CommitPane {
 
     /// 詳細の親・子・メッセージの中の ID と、Blame・File History の窓の行を押したら `f(ID)` を呼ぶ（History で
     /// そのコミットを選ぶ。macOS 版の `detail.onSelectCommit`）。
+    /// 変更ファイルの右クリックに、作業ツリーのファイルをこのコミットの版（その前の版）に戻す項目を出す（コミットを
+    /// 出しているときだけ。stash は出さない）。
+    pub fn connect_restore(self: &Rc<Self>, actions: &Rc<crate::actions::Actions>) {
+        let (w, a) = (Rc::downgrade(self), Rc::downgrade(actions));
+        self.files.connect_restore_items(move |change| {
+            let (Some(pane), Some(actions)) = (w.upgrade(), a.upgrade()) else {
+                return Vec::new();
+            };
+            match pane.commit.borrow().as_deref() {
+                Some(hex) => crate::restoresheet::items(&actions, hex, change),
+                None => Vec::new(),
+            }
+        });
+    }
+
     pub fn connect_select_commit(self: &Rc<Self>, f: OnCommit) {
         self.on_commit.replace(Some(f.clone()));
         let weak = Rc::downgrade(self);

@@ -43,6 +43,11 @@ impl StatusEntry {
     pub fn is_unstaged(&self) -> bool {
         self.worktree != b'.'
     }
+
+    /// untracked の入れ子のリポジトリのように、ディレクトリのまま出る項目か（パスが `/` で終わる）。
+    pub fn is_directory(&self) -> bool {
+        self.path.ends_with('/')
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

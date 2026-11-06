@@ -13,6 +13,18 @@ becomes the GitHub Release notes.
 
 - Subtrees, when git has `git subtree`: Add Subtree… brings another repository's branch into a folder, and the
   sidebar's Subtrees group pulls, pushes and splits them, remembering the source and squash. `amonhen subtree` too.
+- A changed file's menu in History and Reflog restores it as it is in that commit or as it was before, and File
+  History's as it is in a commit, optionally staged; Undo brings the file back. `amonhen restore --source` too.
+- The Stash sheet stashes all changes or only the staged ones (git 2.35), can keep the staged changes, and Working
+  Copy's file menu has Stash… for the selected files.
+- A worktree's menu locks and unlocks it, moves it, and reconnects one whose folder was moved by hand (git 2.29).
+  `amonhen worktree lock|unlock|move|repair` too.
+- Repository > New Orphan Branch… starts a branch with no history, empty or keeping the current files staged.
+- The merge editor forgets a resolution rerere applied and brings the conflict back, and Repository Settings forgets
+  all recorded resolutions.
+- Submodules can move their repository data into `.git/modules` and run a command in each one
+  (`amonhen submodule absorb|foreach`).
+- Repository > Delete Ignored Files… lists the files `.gitignore` covers (build output and the like) and deletes them.
 - On Linux and the BSDs, Settings > Performance > fsmonitor speeds up status with Watchman when it is installed (git
   2.26 or later); the engine answers git as its fsmonitor hook, and nothing is written to the repository's config.
 
@@ -37,6 +49,10 @@ becomes the GitHub Release notes.
 - macOS: the subtree sheets name the worktree they act on and run there, not in the worktree selected after the
   sheet opened.
 - macOS: the sidebar's Subtrees group lists the subtrees of the selected worktree's HEAD, not the opened one's.
+- Working Copy no longer fails with "Is a directory" when an untracked repository sits inside the working tree; its
+  diff is empty, as for a submodule.
+- Fetch, Pull and Push no longer stop now and then with "Stopped after 120 seconds without a response" while git is
+  still answering; measuring the silence could wrap around when output arrived at that moment.
 - The GTK4 app's automatic external editor falls back to a text editor, never a word processor such as LibreOffice Writer.
 - The macOS app shows commit details in the Standard style on first launch, as intended, instead of Brief.
 - macOS merge editor: ⌥⌘↑ and ⌥⌘↓ move between conflicts, ⌘↩ no longer races Commit, a file open in its own window
@@ -49,6 +65,8 @@ becomes the GitHub Release notes.
   while filtering, a renamed group stays selected, Clone doesn't default to an SSH folder, and Activity keeps its place.
 - macOS: opening an added worktree through the shared daemon edits that worktree when its main repository wasn't open
   yet.
+- macOS: a conflicted file shows the merge editor in Working Copy even when Working Copy hadn't been opened yet in that
+  window.
 - macOS: Checkout #N, Open on GitHub and the CI marks use the selected worktree and its branch, not the opened one.
 - macOS: Quick Open keeps the row picked with the arrow keys while row details load, so Return opens that repository.
 - macOS: a repository whose status can't be read (such as a worktree whose main repository was removed) is no longer

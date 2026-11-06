@@ -223,9 +223,30 @@ pub enum WorktreeChange {
         new_branch: Option<String>,
     },
     /// `path` の worktree を消す。`force` なら変更が残っていても・ロックしていても消す（`--force` を 2 回）。
-    Remove { path: String, force: bool },
+    Remove {
+        path: String,
+        force: bool,
+    },
     /// フォルダがなくなった worktree の記録を片付ける。
     Prune,
+    /// `path` の worktree をロックする（prune・remove・move で消されないように。`reason` は理由）。
+    Lock {
+        path: String,
+        reason: Option<String>,
+    },
+    Unlock {
+        path: String,
+    },
+    /// `path` の worktree を `to` に移す（`git worktree move`）。
+    Move {
+        path: String,
+        to: String,
+    },
+    /// worktree とリポジトリのつながりを直す（`git worktree repair`。git 2.29 から）。`paths` は手で移した worktree の
+    /// 今の場所（空なら、記録にある場所のつながりだけ）。
+    Repair {
+        paths: Vec<String>,
+    },
 }
 
 /// ほかの worktree の変更の数（`Operations::worktree_changes`）。
@@ -382,6 +403,10 @@ pub struct SubmoduleState {
     pub branch: Option<String>,
     /// 取り出してある（`git submodule status` の `-` でない）。
     pub initialized: bool,
+    /// 中のリポジトリのデータを自分のフォルダに持っている（`<path>/.git` がフォルダ。`absorbgitdirs` で
+    /// `.git/modules` に移せる）。
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub own_git_dir: bool,
     /// 記録したコミットと違うコミットにいる（`+`）。
     pub moved: bool,
     /// 中に、コミットしていない変更か untracked のファイルがある。
@@ -420,6 +445,10 @@ pub enum SubmoduleChange {
     },
     /// `.gitmodules` の URL を `.git/config` に写す（`git submodule sync`）。
     Sync { recursive: bool },
+    /// 中のリポジトリのデータを `.git/modules` に移す（`git submodule absorbgitdirs`。`paths` が空ならすべて）。
+    Absorb { paths: Vec<String> },
+    /// それぞれの submodule の中で `command` を動かす（`git submodule foreach`、シェルで）。
+    Foreach { command: String, recursive: bool },
 }
 
 /// submodule の update の仕方。既定は git と同じく、記録したコミットにし、中の submodule には入らない。
@@ -498,6 +527,21 @@ pub enum SubtreeOp {
     },
     /// `git subtree split --prefix=<dir> -b <branch>`: フォルダの履歴だけのブランチを作る。
     Split { dir: String, branch: String },
+}
+
+/// stash の仕方（`Operations::stash_push_with`）。既定は git と同じく、追跡しているファイルの変更をすべて。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct StashOptions {
+    pub message: Option<String>,
+    /// untracked のファイルも（`--include-untracked`）。
+    pub include_untracked: bool,
+    /// stage した変更を作業ツリーと index に残す（`--keep-index`）。
+    pub keep_index: bool,
+    /// stage した変更だけ（`--staged`、git 2.35 から）。
+    pub staged: bool,
+    /// このファイルの変更だけ（空ならすべて）。
+    pub paths: Vec<String>,
 }
 
 /// `git apply` の当て方。既定は git と同じく作業ツリーだけ。
@@ -732,7 +776,24 @@ pub trait Operations: Send + Sync {
 
     /// 作業ツリーのファイルを index の内容に戻す（変更の破棄）。
     fn restore_worktree(&self, paths: &[&str]) -> Result<()>;
+    /// 履歴のない新しいブランチ `name` に切り替える（最初のコミットまで、ブランチはまだない）。`keep_files` なら
+    /// 今のファイルを stage したまま残す（`git checkout --orphan`）、でなければ空から（`git switch --orphan`）。
+    fn orphan_branch(&self, name: &str, keep_files: bool) -> Result<()>;
+    /// rerere が覚えた `path` の解決を忘れ、作業ツリーのファイルをコンフリクトのある形に戻す（`git rerere forget` と
+    /// `git checkout -m`。`rerere.autoUpdate` で stage 済みなら、先に index もコンフリクトに戻す）。
+    fn rerere_forget(&self, path: &str) -> Result<()>;
+    /// rerere が覚えたすべての解決を消す（`.git/rr-cache`）。消した数を返す。
+    fn rerere_forget_all(&self) -> Result<usize>;
+    /// ignore されたファイルとフォルダ（`git clean -n -d -X` が消すもの。中身がすべて ignore されたフォルダは 1 つ）。
+    fn ignored_files(&self) -> Result<Vec<String>>;
+    /// ignore されたファイル `paths` を消す（`git clean -f -d -X`。git の記録にないので戻せない）。
+    fn delete_ignored(&self, paths: &[&str]) -> Result<()>;
+    /// 作業ツリーの `paths` を `rev` の版にする（`git restore --source=<rev>`。`rev` にないファイルは消す）。
+    /// `staged` なら index にも入れる（`--staged --worktree`）。
+    fn restore_from(&self, rev: &str, paths: &[&str], staged: bool) -> Result<()>;
     fn stash_push(&self, message: Option<&str>, include_untracked: bool) -> Result<()>;
+    /// 選んだ仕方で stash する（`git stash push`）。
+    fn stash_push_with(&self, options: &StashOptions) -> Result<()>;
     /// stage していた状態も戻す。戻せなければ作業ツリーにだけ当てる。
     fn stash_apply(&self, name: &str, pop: bool) -> Result<Outcome>;
     fn stash_drop(&self, name: &str) -> Result<()>;

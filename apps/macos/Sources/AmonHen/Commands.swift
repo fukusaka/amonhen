@@ -57,6 +57,7 @@ enum Commands {
     static let openOnGitHub = Command(CommandTable.openOnGithub, action: #selector(RepositoryWindow.openOnGitHub(_:)))
     static let switchBranch = Command(CommandTable.switchBranch, action: #selector(RepositoryWindow.switchBranch(_:)))
     static let newBranch = Command(CommandTable.newBranch, action: #selector(RepositoryWindow.newBranch(_:)))
+    static let newOrphanBranch = Command(CommandTable.newOrphanBranch, action: #selector(RepositoryWindow.newOrphanBranch(_:)))
     static let renameBranch = Command(CommandTable.renameBranch, action: #selector(RepositoryWindow.renameBranch(_:)))
     static let newTag = Command(CommandTable.newTag, action: #selector(RepositoryWindow.newTag(_:)))
     static let newWorktree = Command(CommandTable.newWorktree, action: #selector(RepositoryWindow.newWorktree(_:)))
@@ -69,6 +70,7 @@ enum Commands {
     static let skipSequence = Command(CommandTable.skip, action: #selector(RepositoryWindow.skipSequence(_:)))
     static let abortSequence = Command(CommandTable.abort, action: #selector(RepositoryWindow.abortSequence(_:)))
     static let stash = Command(CommandTable.stash, action: #selector(RepositoryWindow.stashChanges(_:)))
+    static let deleteIgnoredFiles = Command(CommandTable.deleteIgnoredFiles, action: #selector(RepositoryWindow.deleteIgnoredFiles(_:)))
     static let popStash = Command(CommandTable.popStash, action: #selector(RepositoryWindow.popStash(_:)))
     static let undo = Command(CommandTable.undo, action: #selector(RepositoryWindow.undoOperation(_:)))
     static let commit = Command(CommandTable.commit, action: #selector(RepositoryWindow.commitChanges(_:)))
@@ -112,6 +114,7 @@ enum Commands {
         openOnGitHub,
         switchBranch,
         newBranch,
+        newOrphanBranch,
         renameBranch,
         newTag,
         newWorktree,
@@ -124,6 +127,7 @@ enum Commands {
         skipSequence,
         abortSequence,
         stash,
+        deleteIgnoredFiles,
         popStash,
         undo,
         commit,

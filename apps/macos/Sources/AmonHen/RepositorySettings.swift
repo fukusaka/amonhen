@@ -1817,6 +1817,21 @@ private struct OperationsPage: View {
                           key: "rerere.enabled", defaultOn: model.rerereCache)
                 SwitchRow(model: model, question: L("Stage files resolved that way"), help: L("Only while the switch above is on."),
                           key: "rerere.autoUpdate", defaultOn: false)
+                // 覚えた解決が違っていたときに、まとめて忘れる（rr-cache を消す。戻せない）。
+                if model.rerereCache {
+                    HStack {
+                        Spacer()
+                        Button(L("Forget All Recorded Resolutions…")) {
+                            let alert = NSAlert()
+                            alert.messageText = L("Forget All Recorded Resolutions?")
+                            alert.informativeText = L("git rerere then no longer reuses the resolutions it recorded in this repository.") + " " + Actions.cantUndo
+                            let forget = alert.addButton(withTitle: L("Forget All"))
+                            forget.hasDestructiveAction = true
+                            alert.addButton(withTitle: L("Cancel"))
+                            if alert.runModal() == .alertFirstButtonReturn { model.perform([["op": "forgetAllResolutions"]]) }
+                        }
+                    }
+                }
             }
         }
         .formStyle(.grouped)
