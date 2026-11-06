@@ -47,6 +47,8 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- The GTK4 sidebar shortens a long branch name to keep its marks (merged, upstream gone), as the macOS app does,
+  instead of hiding the marks.
 - Undo of deleting a branch brings back its upstream and its archived and favorite marks, which git removes with it.
 - The GTK4 app's subtree sheets name the worktree they act on and add, pull, push or split there, even when another
   worktree is selected while the sheet is open.
