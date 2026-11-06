@@ -31,6 +31,22 @@ export class WorktreeList implements vscode.Disposable {
     return this.counts.get(canonical(w.path)) ?? 0;
   }
 
+  /**
+   * 今の変更の数（覚えている数ではなく、数え直す）。覚えている数は古いことがある（変更のない worktree は HEAD か
+   * index が変わるまで数え直さないので、後から足したファイルは数に入らない）。数えられなければ覚えている数
+   */
+  async freshChanges(w: Worktree): Promise<number> {
+    const client = this.repo && (await daemonFor(this.repo.root).catch(() => undefined));
+    if (!client) return this.changes(w);
+    try {
+      const reply = (await client.call({ op: 'run', command: { op: 'worktreeChanges', paths: [w.path], fresh: true } })).json;
+      const count = (reply['info'] as { worktrees?: { count: number | null }[] } | undefined)?.worktrees?.[0]?.count;
+      return count ?? this.changes(w);
+    } catch {
+      return this.changes(w);
+    }
+  }
+
   /** `branch` を checkout している、`except`（書き込む先）以外の worktree */
   checkedOutElsewhere(branch: string, except: string): Worktree | undefined {
     if (this.list.length < 2) return undefined;

@@ -300,10 +300,11 @@ export class Repository implements vscode.Disposable {
     }
   }
 
-  dispose(): void {
+  /** 返す Promise は、常駐の git が終わったら解決する（Windows では、それまで作業ディレクトリを消せない） */
+  dispose(): Promise<void> {
     this._onDidChange.dispose();
     this._onDidChangeContents.dispose();
-    this.backend.dispose();
+    return this.backend.dispose();
   }
 }
 

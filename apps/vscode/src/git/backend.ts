@@ -253,7 +253,8 @@ export interface RepositoryBackend {
   mailmapFile(): Promise<string | undefined>;
   /** 名前とメールを mailmap で置き換えたもの（log.mailmap が false なら記録のまま）。同じ順 */
   mapPeople(people: readonly { name: string; email: string }[]): Promise<{ name: string; email: string }[]>;
-  dispose(): void;
+  /** 常駐の git を終わらせる。返す Promise は終わったら解決する（作業ディレクトリを消す前に待つ） */
+  dispose(): Promise<void>;
 }
 
 async function exists(path: string): Promise<boolean> {

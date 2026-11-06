@@ -956,6 +956,8 @@ First release.
 
 #### Fixed
 
+- Remove Worktree counts the worktree's changes again before asking, so files added since the last count are
+  mentioned and removed with it, as in the app; before, git could refuse and leave the folder.
 - A folder opened through a symbolic link (macOS's `/var`, for one) selects its own repository at startup rather
   than one of its submodules.
 - An expanded Submodules, Tags or Stashes group is read again after switching repositories, rather than staying empty.
