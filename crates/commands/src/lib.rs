@@ -151,6 +151,9 @@ pub static COMMANDS: &[Command] = &[
         .key("Primary+Shift+B"),
     command("new-branch", "New Branch…").key("Primary+Alt+B"),
     command("new-orphan-branch", "New Orphan Branch…").localized(),
+    command("clean-up-branches", "Clean Up Branches…")
+        .localized()
+        .tip("Delete the branches merged into the default branch, merged by a pull request, or whose upstream is gone"),
     command("rename-branch", "Rename Branch…").localized(),
     // Ctrl+Alt+T は、Ubuntu などで端末を開くキー。
     command("new-tag", "New Tag…")
@@ -300,6 +303,7 @@ pub static SECTIONS: &[Section] = &[
             "new-orphan-branch",
             "rename-branch",
             "set-upstream",
+            "clean-up-branches",
             "new-tag",
         ],
     ),

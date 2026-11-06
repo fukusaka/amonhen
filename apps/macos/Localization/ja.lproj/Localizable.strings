@@ -1844,3 +1844,14 @@
 "Delete %ld Ignored Items?" = "ignore された %ld 個を消しますか？";
 "Nothing in the working tree matches .gitignore." = "作業ツリーに .gitignore に当たるものはありません。";
 "These are removed from the working tree (git clean -X); folders go with everything in them." = "これらを作業ツリーから消します（git clean -X）。フォルダは中身ごと消えます。";
+"Clean Up Branches…" = "ブランチを片付ける…";
+"Delete the branches merged into the default branch, merged by a pull request, or whose upstream is gone" = "既定のブランチに取り込み済み・プルリクエストでマージ済み・上流が消えたブランチを削除する";
+"Couldn’t read the merged pull requests: %@" = "マージされたプルリクエストを読めませんでした: %@";
+"No Branches to Clean Up" = "片付けるブランチはありません";
+"No branch is merged into %@, merged by a pull request, or left without its upstream." = "%@ に取り込み済みのもの、プルリクエストでマージ済みのもの、上流が消えたものはありません。";
+"Clean Up Branches" = "ブランチを片付ける";
+"Delete the checked branches. The current branch, favorites and branches used by a worktree aren’t listed." = "チェックしたブランチを削除します。今のブランチ・お気に入り・worktree で使っているブランチは並べません。";
+"Merged by a pull request (squash or rebase)" = "プルリクエストでマージ済み（squash・rebase）";
+"Upstream gone, not merged (their own commits go with them)" = "上流が消えた・取り込んでいない（そのブランチだけのコミットも消えます）";
+"Delete 1 Branch" = "1 本のブランチを削除";
+"Delete %ld Branches" = "%ld 本のブランチを削除";
