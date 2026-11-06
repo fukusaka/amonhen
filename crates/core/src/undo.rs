@@ -63,6 +63,14 @@ struct RenameBackup {
     to: String,
 }
 
+/// 消したブランチの設定（`branch.<name>.*`。上流・アーカイブ・お気に入りなど）。`git branch -d` は ref と一緒に
+/// 設定も消すので、Undo で ref を戻したあとに書き戻す。いくつも値を持てる項目もあるので、値は並びのまま。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct ConfigBackup {
+    key: String,
+    values: Vec<String>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum Mode {
@@ -86,6 +94,8 @@ struct Entry {
     stash: Option<StashBackup>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     rename: Option<RenameBackup>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    config: Vec<ConfigBackup>,
 }
 
 impl Entry {
@@ -248,6 +258,51 @@ impl UndoLog {
         self.record_mode(ops, label, &[], mode, f, |_| false)
     }
 
+    /// ローカルブランチ `names`（短い名前）を消す `f` を実行し、記録する。消す前の `branch.<name>.*` の設定
+    /// （このリポジトリの段）も記録し、Undo で ref を戻したあとに書き戻す。`f` の答えが Some（途中で失敗した）でも、
+    /// 消せた分は記録する。
+    pub fn record_branch_delete<E>(
+        &self,
+        ops: &dyn Operations,
+        label: &str,
+        names: &[&str],
+        f: impl FnOnce() -> Result<Option<E>>,
+    ) -> Result<Option<E>> {
+        let prefixes: Vec<String> = names.iter().map(|n| format!("branch.{n}.")).collect();
+        let mut config: Vec<ConfigBackup> = Vec::new();
+        for e in ops.config_list()? {
+            // 節（branch）と変数の名前は git が小文字にするが、ブランチの名前は大文字小文字を区別する。
+            if e.scope != "local" || !prefixes.iter().any(|p| e.key.starts_with(p.as_str())) {
+                continue;
+            }
+            match config.iter_mut().find(|c| c.key == e.key) {
+                Some(c) => c.values.push(e.value),
+                None => config.push(ConfigBackup {
+                    key: e.key,
+                    values: vec![e.value],
+                }),
+            }
+        }
+        let refs: Vec<String> = names.iter().map(|n| format!("refs/heads/{n}")).collect();
+        let before = Self::snapshot(ops, &refs)?;
+        let result = f()?;
+        let after = Self::snapshot(ops, &refs)?;
+        if !before.same(&after) {
+            self.push(Entry {
+                label: label.to_owned(),
+                time: now_ms(),
+                mode: Mode::Keep,
+                before,
+                after,
+                files: None,
+                stash: None,
+                rename: None,
+                config,
+            })?;
+        }
+        Ok(result)
+    }
+
     fn record_mode<T>(
         &self,
         ops: &dyn Operations,
@@ -279,6 +334,7 @@ impl UndoLog {
                 files: None,
                 stash: None,
                 rename: None,
+                config: Vec::new(),
             })?;
         }
         Ok(result)
@@ -336,6 +392,7 @@ impl UndoLog {
                 files: None,
                 stash: None,
                 rename: None,
+                config: Vec::new(),
             })?;
         }
         Ok(result)
@@ -376,6 +433,7 @@ impl UndoLog {
                 files: None,
                 stash: None,
                 rename: None,
+                config: Vec::new(),
             })?;
         }
         self.files.remove(Root::GitDir, PENDING_FILE)?;
@@ -424,6 +482,7 @@ impl UndoLog {
                 files: Some(files),
                 stash: None,
                 rename: None,
+                config: Vec::new(),
             })?;
         }
         Ok(result)
@@ -451,6 +510,7 @@ impl UndoLog {
                 message: message.to_owned(),
             }),
             rename: None,
+            config: Vec::new(),
         })
     }
 
@@ -478,6 +538,7 @@ impl UndoLog {
                 from: from.to_owned(),
                 to: to.to_owned(),
             }),
+            config: Vec::new(),
         })
     }
 
@@ -508,6 +569,10 @@ impl UndoLog {
                 return Err(UndoConflict(entry.label.clone()).into());
             }
             self.undo_refs(ops, &entry)?;
+            // 消したブランチの設定を書き戻す（git は ref と一緒に消している）。
+            for c in &entry.config {
+                ops.config_set_all(&c.key, &c.values, false)?;
+            }
         }
         entries.pop();
         self.save(&entries)?;

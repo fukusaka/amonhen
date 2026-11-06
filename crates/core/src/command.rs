@@ -2669,35 +2669,29 @@ impl Repository {
                 ok()
             }
             Command::DeleteBranch { name, force } => {
-                undo.record(
+                let error = undo.record_branch_delete(
                     ops,
                     &format!("Delete branch {name}"),
-                    &[heads(&name)],
-                    false,
-                    || ops.delete_branch(&name, force),
-                    |_| false,
+                    &[&name],
+                    || Ok(ops.delete_branch(&name, force).err()),
                 )?;
+                if let Some(e) = error {
+                    return Err(e);
+                }
                 ok()
             }
             Command::DeleteBranches { branches } => {
-                let names: Vec<String> = branches.iter().map(|b| heads(&b.name)).collect();
+                let names: Vec<&str> = branches.iter().map(|b| b.name.as_str()).collect();
                 let label = match &branches[..] {
                     [one] => format!("Delete branch {}", one.name),
                     many => format!("Delete {} branches", many.len()),
                 };
                 // 途中で失敗しても、消せた分は記録してからエラーを返す。
-                let error = undo.record(
-                    ops,
-                    &label,
-                    &names,
-                    false,
-                    || {
-                        Ok(branches
-                            .iter()
-                            .find_map(|b| ops.delete_branch(&b.name, b.force).err()))
-                    },
-                    |_| false,
-                )?;
+                let error = undo.record_branch_delete(ops, &label, &names, || {
+                    Ok(branches
+                        .iter()
+                        .find_map(|b| ops.delete_branch(&b.name, b.force).err()))
+                })?;
                 if let Some(e) = error {
                     return Err(e);
                 }
@@ -7574,16 +7568,36 @@ mod tests {
             .find(|b| b["name"] == "squashed")
             .unwrap();
         assert_eq!(squashed["pullRequest"], 7);
-        // まとめて消し、1 回の Undo でまとめて戻る。
-        let before = (tip("done"), tip("squashed"));
+        // まとめて消し、1 回の Undo でまとめて戻る。git が一緒に消す `branch.<name>.*` の設定（上流・アーカイブ）も戻る。
+        git(dir, &["config", "branch.done.amonhenArchived", "true"]);
+        let before = (tip("done"), tip("squashed"), tip("lost"));
         let r = run(
             &repo,
-            r#"{"op":"deleteBranches","branches":[{"name":"done"},{"name":"squashed","force":true}]}"#,
+            r#"{"op":"deleteBranches","branches":[{"name":"done"},{"name":"squashed","force":true},{"name":"lost","force":true}]}"#,
         );
         assert_eq!(r["ok"], true, "{r}");
-        assert_eq!(git(dir, &["branch", "--list", "done", "squashed"]), "");
+        assert_eq!(
+            git(dir, &["branch", "--list", "done", "squashed", "lost"]),
+            ""
+        );
+        let config = git(dir, &["config", "--list", "--local"]);
+        assert!(
+            !config.contains("branch.lost.") && !config.contains("branch.done."),
+            "{config}"
+        );
         assert_eq!(run(&repo, r#"{"op":"undo"}"#)["ok"], true);
-        assert_eq!((tip("done"), tip("squashed")), before);
+        assert_eq!((tip("done"), tip("squashed"), tip("lost")), before);
+        assert_eq!(git(dir, &["config", "branch.lost.remote"]), "origin");
+        assert_eq!(
+            git(dir, &["config", "branch.lost.merge"]),
+            "refs/heads/lost"
+        );
+        assert_eq!(git(dir, &["config", "branch.done.amonhenArchived"]), "true");
+        // 1 本だけ消すときも同じ。
+        let r = run(&repo, r#"{"op":"deleteBranch","name":"lost","force":true}"#);
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(run(&repo, r#"{"op":"undo"}"#)["ok"], true);
+        assert_eq!(git(dir, &["config", "branch.lost.remote"]), "origin");
         // 取り込んでいないものは -d では消えず、それより前に消せた分は記録してある。
         let r = run(
             &repo,
