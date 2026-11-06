@@ -11,6 +11,9 @@ becomes the GitHub Release notes.
 
 #### Added
 
+- Clean Up Branches… (Repository menu and the Branches heading) lists the branches merged into the default branch,
+  merged by a GitHub pull request (squash or rebase), or whose upstream is gone, and deletes the checked ones; one
+  Undo brings them all back.
 - Subtrees, when git has `git subtree`: Add Subtree… brings another repository's branch into a folder, and the
   sidebar's Subtrees group pulls, pushes and splits them, remembering the source and squash. `amonhen subtree` too.
 - A changed file's menu in History and Reflog restores it as it is in that commit or as it was before, and File
@@ -44,6 +47,7 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- Undo of deleting a branch brings back its upstream and its archived and favorite marks, which git removes with it.
 - The GTK4 app's subtree sheets name the worktree they act on and add, pull, push or split there, even when another
   worktree is selected while the sheet is open.
 - macOS: the subtree sheets name the worktree they act on and run there, not in the worktree selected after the

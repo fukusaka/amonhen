@@ -377,6 +377,117 @@ final class Actions {
         }
     }
 
+    /// 片付けてよいブランチ（既定のブランチに取り込み済み・プルリクエストでマージ済み・上流が消えた）を並べ、選んだ
+    /// ものをまとめて消す（Undo は 1 回でまとめて戻す）。GitHub のリポジトリなら、マージされたプルリクエストを gh で
+    /// 読み、squash・rebase で取り込んだものも見分ける。上流が消えただけのものは選ばずに置く。
+    func cleanUpBranches(gitHub: GitHubRepository?) {
+        let repository = self.repository
+        Task { @MainActor in
+            nonisolated struct Cleanup: Decodable, Sendable {
+                nonisolated struct Branch: Decodable, Sendable {
+                    let name: String
+                    let reason: String
+                    let force: Bool
+                    let checked: Bool
+                    let pullRequest: Int?
+                    let upstream: String?
+                }
+                let base: String?
+                let branches: [Branch]
+            }
+            var merged: [MergedPullRequest] = []
+            var note: String?
+            if let gitHub, GitHub.isAvailable {
+                do {
+                    merged = try await GitHub.mergedPullRequests(gitHub)
+                } catch {
+                    note = L("Couldn’t read the merged pull requests: %@", "\(error)")
+                }
+            }
+            let pullRequests = merged
+            let cleanup: Cleanup
+            do {
+                cleanup = try await Task.detached(priority: .userInitiated) {
+                    let prs = pullRequests.map { ["number": $0.number, "branch": $0.headRefName, "oid": $0.headRefOid] as [String: Any] }
+                    return try repository.info(["op": "branchCleanup", "pullRequests": prs], as: Cleanup.self)
+                }.value
+            } catch {
+                NSAlert(error: error).runModal()
+                return
+            }
+            let base = cleanup.base ?? "main"
+            if cleanup.branches.isEmpty {
+                let alert = makeAlert(L("No Branches to Clean Up"),
+                                      L("No branch is merged into %@, merged by a pull request, or left without its upstream.", base)
+                                          + (note.map { "\n\n" + $0 } ?? ""))
+                alert.addButton(withTitle: "OK")
+                _ = await present(alert)
+                return
+            }
+            let alert = makeAlert(L("Clean Up Branches"),
+                                  L("Delete the checked branches. The current branch, favorites and branches used by a worktree aren’t listed.")
+                                      + " " + Self.canUndo + (note.map { "\n\n" + $0 } ?? ""))
+            let delete = alert.addButton(withTitle: "")
+            alert.addButton(withTitle: L("Cancel"))
+            // 理由ごとに見出しを付けて並べる。
+            let groups: [(String, String)] = [
+                ("merged", L("Merged into %@", base)),
+                ("pullRequest", L("Merged by a pull request (squash or rebase)")),
+                ("gone", L("Upstream gone, not merged (their own commits go with them)")),
+            ]
+            var boxes: [(NSButton, Cleanup.Branch)] = []
+            let stack = NSStackView()
+            stack.orientation = .vertical
+            stack.alignment = .leading
+            stack.spacing = 4
+            for (reason, title) in groups {
+                let branches = cleanup.branches.filter { $0.reason == reason }
+                guard !branches.isEmpty else { continue }
+                let heading = NSTextField(labelWithString: title)
+                heading.font = .boldSystemFont(ofSize: NSFont.smallSystemFontSize)
+                heading.textColor = .secondaryLabelColor
+                if !boxes.isEmpty { stack.setCustomSpacing(10, after: stack.arrangedSubviews.last!) }
+                stack.addArrangedSubview(heading)
+                for branch in branches {
+                    var title = branch.name
+                    if let number = branch.pullRequest { title += "  #\(number)" }
+                    if reason == "gone", let upstream = branch.upstream { title += "  (\(upstream))" }
+                    let box = NSButton(checkboxWithTitle: title, target: nil, action: nil)
+                    box.state = branch.checked ? .on : .off
+                    stack.addArrangedSubview(box)
+                    boxes.append((box, branch))
+                }
+            }
+            let update = {
+                let count = boxes.filter { $0.0.state == .on }.count
+                delete.title = count == 1 ? L("Delete 1 Branch") : L("Delete %ld Branches", count)
+                delete.isEnabled = count > 0
+            }
+            let target = ClosureTarget(update)
+            for (box, _) in boxes {
+                box.target = target
+                box.action = #selector(ClosureTarget.fire)
+            }
+            update()
+            let height = min(stack.fittingSize.height, 280)
+            let width = max(stack.fittingSize.width, 380)
+            stack.frame = NSRect(x: 0, y: 0, width: width, height: stack.fittingSize.height)
+            let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+            let flipped = FlippedView(frame: stack.frame)
+            flipped.addSubview(stack)
+            scroll.documentView = flipped
+            scroll.hasVerticalScroller = stack.fittingSize.height > height
+            scroll.drawsBackground = false
+            alert.accessoryView = scroll
+            let response = await present(alert)
+            withExtendedLifetime(target) {}
+            guard response == .alertFirstButtonReturn else { return }
+            let chosen = boxes.filter { $0.0.state == .on }.map { ["name": $0.1.name, "force": $0.1.force] as [String: Any] }
+            guard !chosen.isEmpty else { return }
+            perform(["op": "deleteBranches", "branches": chosen])
+        }
+    }
+
     /// 作業中の変更を stash する。`paths` があれば、そのファイルの変更だけ。何を stash するか（すべて・stage した
     /// 変更だけ）、stage した変更を残すか、untracked のファイルを含めるかを選べる（既定は git と同じく、追跡している
     /// ファイルの変更をすべて）。

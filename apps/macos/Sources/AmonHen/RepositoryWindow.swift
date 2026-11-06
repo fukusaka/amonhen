@@ -277,6 +277,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         sidebar.onWorktreeAction = { [weak self] path, action in self?.worktreeAction(path, action) }
         sidebar.onRemoteAction = { [weak self] name, action in self?.remoteAction(name, action) }
         sidebar.onSubmoduleAction = { [weak self] path, action in self?.submoduleAction(path, action) }
+        sidebar.onCleanUpBranches = { [weak self] in self?.cleanUpBranches(nil) }
         sidebar.onSubtreeAction = { [weak self] dir, action in self?.subtreeAction(dir, action) }
         // ブランチ・タグを選ぶと、その履歴に絞り込む。
         sidebar.onSelect = { [weak self, weak history, weak detail] item in
@@ -1853,6 +1854,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     @objc func stashChanges(_ sender: Any?) { actions.stash() }
     @objc func deleteIgnoredFiles(_ sender: Any?) { actions.deleteIgnoredFiles() }
+    @objc func cleanUpBranches(_ sender: Any?) { actions.cleanUpBranches(gitHub: gitHub) }
 
     /// 最新の stash（`stash@{0}`）を戻して消す。
     @objc func popStash(_ sender: Any?) {

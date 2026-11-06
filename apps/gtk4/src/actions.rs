@@ -455,6 +455,149 @@ impl Actions {
         });
     }
 
+    /// 片付けてよいブランチ（既定のブランチに取り込み済み・プルリクエストでマージ済み・上流が消えた）を並べ、選んだ
+    /// ものをまとめて消す（Undo は 1 回でまとめて戻す）。GitHub のリポジトリなら、マージされたプルリクエストを gh で
+    /// 読み、squash・rebase で取り込んだものも見分ける。上流が消えただけのものは選ばずに置く（macOS 版と同じ）。
+    pub fn clean_up_branches(self: &Rc<Self>) {
+        let Some(repo) = self.repo() else { return };
+        let this = self.clone();
+        glib::spawn_future_local(async move {
+            let mut note = None;
+            let mut pull_requests = Vec::new();
+            if crate::github::available()
+                && let Some(github) = crate::github::of(&repo).await
+            {
+                match crate::github::merged_pull_requests(&github).await {
+                    Ok(list) => pull_requests = list,
+                    Err(e) => {
+                        note = Some(tr!(
+                            "Couldn’t read the merged pull requests: {error}",
+                            error = e
+                        ))
+                    }
+                }
+            }
+            let reply = crate::sheets::run(
+                &repo,
+                json!({ "op": "branchCleanup", "pullRequests": pull_requests }),
+            )
+            .await;
+            let parent = crate::sheets::parent(&this);
+            if let Some(error) = reply["error"].as_str() {
+                return crate::sheets::inform(parent.as_ref(), &tr!("Clean Up Branches"), error)
+                    .await;
+            }
+            let info = &reply["info"];
+            let base = info["base"].as_str().unwrap_or("main").to_owned();
+            let branches: Vec<Value> = info["branches"].as_array().cloned().unwrap_or_default();
+            let note = note.map(|n| format!("\n\n{n}")).unwrap_or_default();
+            if branches.is_empty() {
+                return crate::sheets::inform(
+                    parent.as_ref(),
+                    &tr!("No Branches to Clean Up"),
+                    &(tr!(
+                        "No branch is merged into {base}, merged by a pull request, or left without its upstream.",
+                        base = base
+                    ) + &note),
+                )
+                .await;
+            }
+            let sheet = crate::sheets::Sheet::new(
+                parent.as_ref(),
+                &tr!("Clean Up Branches"),
+                &format!(
+                    "{} {}{note}",
+                    tr!(
+                        "Delete the checked branches. The current branch, favorites and branches used by a worktree aren’t listed."
+                    ),
+                    crate::sheets::can_undo()
+                ),
+            );
+            // 理由ごとに見出しを付けて並べる。
+            let list = gtk::Box::new(gtk::Orientation::Vertical, 2);
+            let mut boxes: Vec<(gtk::CheckButton, Value)> = Vec::new();
+            for (reason, title) in [
+                ("merged", tr!("Merged into {base}", base = base)),
+                (
+                    "pullRequest",
+                    tr!("Merged by a pull request (squash or rebase)"),
+                ),
+                (
+                    "gone",
+                    tr!("Upstream gone, not merged (their own commits go with them)"),
+                ),
+            ] {
+                let group: Vec<&Value> =
+                    branches.iter().filter(|b| b["reason"] == reason).collect();
+                if group.is_empty() {
+                    continue;
+                }
+                let heading = gtk::Label::new(Some(&title));
+                heading.set_xalign(0.0);
+                heading.add_css_class("dim-label");
+                heading.add_css_class("caption-heading");
+                if !boxes.is_empty() {
+                    heading.set_margin_top(8);
+                }
+                list.append(&heading);
+                for b in group {
+                    let mut label = b["name"].as_str().unwrap_or_default().to_owned();
+                    if let Some(n) = b["pullRequest"].as_u64() {
+                        label.push_str(&format!("  #{n}"));
+                    }
+                    if reason == "gone"
+                        && let Some(u) = b["upstream"].as_str()
+                    {
+                        label.push_str(&format!("  ({u})"));
+                    }
+                    let check = gtk::CheckButton::with_label(&label);
+                    check.set_active(b["checked"] == true);
+                    list.append(&check);
+                    boxes.push((check, b.clone()));
+                }
+            }
+            let scrolled = gtk::ScrolledWindow::builder()
+                .child(&list)
+                .propagate_natural_height(true)
+                .max_content_height(280)
+                .min_content_width(380)
+                .hscrollbar_policy(gtk::PolicyType::Never)
+                .build();
+            sheet.add(&scrolled);
+            // Undo で戻せるので、赤くしない（赤は元に戻せないものだけ）。
+            let ok = sheet.buttons(&tr!("Delete"), false, None);
+            let boxes = Rc::new(boxes);
+            let update = {
+                let (boxes, ok) = (boxes.clone(), ok.clone());
+                move || {
+                    let count = boxes.iter().filter(|(c, _)| c.is_active()).count();
+                    ok.set_label(&if count == 1 {
+                        tr!("Delete 1 Branch")
+                    } else {
+                        tr!("Delete {count} Branches", count = count)
+                    });
+                    ok.set_sensitive(count > 0);
+                }
+            };
+            update();
+            for (check, _) in boxes.iter() {
+                let update = update.clone();
+                check.connect_toggled(move |_| update());
+            }
+            if sheet.run().await != crate::sheets::Response::Ok {
+                return;
+            }
+            let chosen: Vec<Value> = boxes
+                .iter()
+                .filter(|(c, _)| c.is_active())
+                .map(|(_, b)| json!({ "name": b["name"], "force": b["force"] }))
+                .collect();
+            if !chosen.is_empty() {
+                this.perform(json!({ "op": "deleteBranches", "branches": chosen }));
+            }
+        });
+    }
+
     pub fn stash(self: &Rc<Self>) {
         self.stash_paths(Vec::new());
     }

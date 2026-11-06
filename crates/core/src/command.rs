@@ -88,6 +88,19 @@ pub enum Command {
         from: String,
         to: String,
     },
+    /// 片付けてよいローカルブランチ（`info.branches`。シート「Clean Up Branches…」）。`reason` は `merged`（既定の
+    /// ブランチに取り込み済み）・`pullRequest`（`pullRequests` の PR が、今の先端を head にしてマージされた。squash・
+    /// rebase で取り込んだもの）・`gone`（上流が消えた）。`force` なら `git branch -D` が要る。`checked` は最初に選んで
+    /// おくか（`gone` だけのものは選ばない）。今のブランチ・お気に入り・ほかの worktree で使っているもの・既定の
+    /// ブランチと、既定のブランチの先端で作ってまだコミットしていないものは入れない。`info.base`: 既定のブランチ。
+    BranchCleanup {
+        #[serde(default)]
+        pull_requests: Vec<MergedPullRequest>,
+    },
+    /// ローカルブランチ `branches` をまとめて消す（Undo は 1 回でまとめて戻す）。途中で失敗しても、消せた分は記録する。
+    DeleteBranches {
+        branches: Vec<BranchToDelete>,
+    },
     CreateTag {
         name: String,
         target: String,
@@ -831,6 +844,22 @@ impl Repository {
     }
 }
 
+/// マージされた PR（FE が GitHub から読む）。`branch` は head のブランチの名前、`oid` はマージしたときの head。
+#[derive(Clone, Debug, Deserialize)]
+pub struct MergedPullRequest {
+    pub number: u64,
+    pub branch: String,
+    pub oid: String,
+}
+
+/// `Command::DeleteBranches` で消すブランチ。`force` なら取り込んでいなくても消す（`git branch -D`）。
+#[derive(Clone, Debug, Deserialize)]
+pub struct BranchToDelete {
+    pub name: String,
+    #[serde(default)]
+    pub force: bool,
+}
+
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Response {
@@ -1025,6 +1054,93 @@ impl Repository {
             info: (!remaining.is_empty()).then(|| serde_json::json!({ "remaining": remaining })),
             ..Default::default()
         })
+    }
+
+    /// `Command::BranchCleanup` の答え。
+    fn branch_cleanup(&self, pull_requests: &[MergedPullRequest]) -> Result<serde_json::Value> {
+        let groups = self.branch_groups()?;
+        let refs = self.refs()?;
+        let entries = &refs.refs.entries;
+        let base = groups["base"].as_str();
+        // チェックアウトしているブランチ（この worktree もほかの worktree も。git も消させない）。
+        let mut checked_out: std::collections::HashSet<String> = self
+            .backend()
+            .operations()?
+            .worktree_list()
+            .map(|list| {
+                crate::worktree::parse(&list, self.paths().workdir.as_deref())
+                    .into_iter()
+                    .filter_map(|w| w.branch)
+                    .collect()
+            })
+            .unwrap_or_default();
+        checked_out.extend(refs.refs.head_branch.clone());
+        // 既定のブランチの先端にあるもののうち、作ってからコミットしていないもの（reflog で作った点が先端のまま。
+        // 読めなければそう見なす）。fast-forward で取り込んだものは、作った点が先端より前にあるので片付けてよい。
+        let at_base: Vec<&str> = groups["branches"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|b| b["atBase"] == true)
+            .filter_map(|b| b["name"].as_str())
+            .collect();
+        let fresh: std::collections::HashSet<&str> = at_base
+            .iter()
+            .zip(self.backend().branch_created_at(&at_base)?)
+            .filter(|(name, created)| {
+                let tip = entries
+                    .iter()
+                    .find(|e| e.kind == RefKind::Local && e.name == **name)
+                    .and_then(|e| e.target);
+                created.is_none() || *created == tip
+            })
+            .map(|(name, _)| *name)
+            .collect();
+        let mut found = Vec::new();
+        for b in groups["branches"].as_array().into_iter().flatten() {
+            let Some(name) = b["name"].as_str() else {
+                continue;
+            };
+            let Some(entry) = entries
+                .iter()
+                .find(|e| e.kind == RefKind::Local && e.name == name)
+            else {
+                continue;
+            };
+            // 既定のブランチ（手元のものと、上流が既定のブランチのもの）・お気に入り・作ったばかりのものは残す。
+            if checked_out.contains(name)
+                || Some(name) == base
+                || (base.is_some() && entry.detail.as_deref() == base)
+                || !b["pinned"].is_null()
+                || fresh.contains(name)
+            {
+                continue;
+            }
+            let tip = entry.target.map(|t| t.to_string());
+            let pr = pull_requests
+                .iter()
+                .find(|p| p.branch == name && tip.as_deref() == Some(p.oid.as_str()));
+            let (reason, force, checked) = if b["merged"] == true {
+                ("merged", false, true)
+            } else if pr.is_some() {
+                ("pullRequest", true, true)
+            } else if entry.gone {
+                ("gone", true, false)
+            } else {
+                continue;
+            };
+            found.push(serde_json::json!({
+                "name": name,
+                "reason": reason,
+                "force": force,
+                "checked": checked,
+                "pullRequest": if reason == "pullRequest" { pr.map(|p| p.number) } else { None },
+                "gone": entry.gone,
+                "upstream": entry.detail,
+                "time": b["time"],
+            }));
+        }
+        Ok(serde_json::json!({ "base": base, "branches": found }))
     }
 
     /// `Command::BranchGroups` の答え。
@@ -2553,14 +2669,32 @@ impl Repository {
                 ok()
             }
             Command::DeleteBranch { name, force } => {
-                undo.record(
+                let error = undo.record_branch_delete(
                     ops,
                     &format!("Delete branch {name}"),
-                    &[heads(&name)],
-                    false,
-                    || ops.delete_branch(&name, force),
-                    |_| false,
+                    &[&name],
+                    || Ok(ops.delete_branch(&name, force).err()),
                 )?;
+                if let Some(e) = error {
+                    return Err(e);
+                }
+                ok()
+            }
+            Command::DeleteBranches { branches } => {
+                let names: Vec<&str> = branches.iter().map(|b| b.name.as_str()).collect();
+                let label = match &branches[..] {
+                    [one] => format!("Delete branch {}", one.name),
+                    many => format!("Delete {} branches", many.len()),
+                };
+                // 途中で失敗しても、消せた分は記録してからエラーを返す。
+                let error = undo.record_branch_delete(ops, &label, &names, || {
+                    Ok(branches
+                        .iter()
+                        .find_map(|b| ops.delete_branch(&b.name, b.force).err()))
+                })?;
+                if let Some(e) = error {
+                    return Err(e);
+                }
                 ok()
             }
             Command::RenameBranch { from, to } => {
@@ -3276,6 +3410,11 @@ impl Repository {
                     ..Default::default()
                 })
             }
+            Command::BranchCleanup { pull_requests } => Ok(Response {
+                ok: true,
+                info: Some(self.branch_cleanup(&pull_requests)?),
+                ..Default::default()
+            }),
             Command::BranchGroups => Ok(Response {
                 ok: true,
                 info: Some(self.branch_groups()?),
@@ -7346,6 +7485,128 @@ mod tests {
         assert_eq!(r["ok"], true, "{r}");
         assert!(r["info"]["count"].as_u64().unwrap() >= 1, "{r}");
         assert!(!dir.join(".git/rr-cache").exists());
+    }
+
+    #[test]
+    fn lists_branches_to_clean_up_and_deletes_them_at_once() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        let commit_on = |branch: &str, file: &str| {
+            git(dir, &["switch", "-q", "-c", branch, "main"]);
+            std::fs::write(dir.join(file), branch).unwrap();
+            git(dir, &["add", "."]);
+            git(dir, &["commit", "-q", "-m", branch]);
+            git(dir, &["switch", "-q", "main"]);
+        };
+        // 取り込み済み・squash でマージした PR・PR とは先端が違う・上流が消えた・お気に入り・ほかの worktree で使っている。
+        commit_on("done", "d.txt");
+        git(dir, &["merge", "-q", "--ff-only", "done"]);
+        commit_on("squashed", "s.txt");
+        commit_on("moved", "m.txt");
+        commit_on("lost", "l.txt");
+        git(dir, &["config", "remote.origin.url", "/nowhere"]);
+        git(
+            dir,
+            &[
+                "config",
+                "remote.origin.fetch",
+                "+refs/heads/*:refs/remotes/origin/*",
+            ],
+        );
+        git(dir, &["config", "branch.lost.remote", "origin"]);
+        git(dir, &["config", "branch.lost.merge", "refs/heads/lost"]);
+        git(dir, &["branch", "fav", "done"]);
+        git(dir, &["config", "branch.fav.amonhenPinned", "1"]);
+        git(dir, &["branch", "used", "done"]);
+        let wt = tempfile::tempdir().unwrap();
+        let wt_path = wt.path().join("wt");
+        git(
+            dir,
+            &["worktree", "add", "-q", wt_path.to_str().unwrap(), "used"],
+        );
+        // 作ったばかり（既定のブランチの先端）。
+        git(dir, &["branch", "fresh", "main"]);
+        let tip = |b: &str| git(dir, &["rev-parse", b]);
+        let prs = serde_json::json!([
+            { "number": 7, "branch": "squashed", "oid": tip("squashed") },
+            { "number": 8, "branch": "moved", "oid": tip("main") },
+        ]);
+        let r = run(
+            &repo,
+            &serde_json::json!({ "op": "branchCleanup", "pullRequests": prs }).to_string(),
+        );
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(r["info"]["base"], "main");
+        let found: Vec<(String, String, bool, bool)> = r["info"]["branches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|b| {
+                (
+                    b["name"].as_str().unwrap().to_owned(),
+                    b["reason"].as_str().unwrap().to_owned(),
+                    b["force"].as_bool().unwrap(),
+                    b["checked"].as_bool().unwrap(),
+                )
+            })
+            .collect();
+        let mut found = found;
+        found.sort();
+        let owned = |n: &str, r: &str, f, c| (n.to_owned(), r.to_owned(), f, c);
+        assert_eq!(
+            found,
+            vec![
+                owned("done", "merged", false, true),
+                owned("lost", "gone", true, false),
+                owned("squashed", "pullRequest", true, true),
+            ]
+        );
+        let squashed = r["info"]["branches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|b| b["name"] == "squashed")
+            .unwrap();
+        assert_eq!(squashed["pullRequest"], 7);
+        // まとめて消し、1 回の Undo でまとめて戻る。git が一緒に消す `branch.<name>.*` の設定（上流・アーカイブ）も戻る。
+        git(dir, &["config", "branch.done.amonhenArchived", "true"]);
+        let before = (tip("done"), tip("squashed"), tip("lost"));
+        let r = run(
+            &repo,
+            r#"{"op":"deleteBranches","branches":[{"name":"done"},{"name":"squashed","force":true},{"name":"lost","force":true}]}"#,
+        );
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(
+            git(dir, &["branch", "--list", "done", "squashed", "lost"]),
+            ""
+        );
+        let config = git(dir, &["config", "--list", "--local"]);
+        assert!(
+            !config.contains("branch.lost.") && !config.contains("branch.done."),
+            "{config}"
+        );
+        assert_eq!(run(&repo, r#"{"op":"undo"}"#)["ok"], true);
+        assert_eq!((tip("done"), tip("squashed"), tip("lost")), before);
+        assert_eq!(git(dir, &["config", "branch.lost.remote"]), "origin");
+        assert_eq!(
+            git(dir, &["config", "branch.lost.merge"]),
+            "refs/heads/lost"
+        );
+        assert_eq!(git(dir, &["config", "branch.done.amonhenArchived"]), "true");
+        // 1 本だけ消すときも同じ。
+        let r = run(&repo, r#"{"op":"deleteBranch","name":"lost","force":true}"#);
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(run(&repo, r#"{"op":"undo"}"#)["ok"], true);
+        assert_eq!(git(dir, &["config", "branch.lost.remote"]), "origin");
+        // 取り込んでいないものは -d では消えず、それより前に消せた分は記録してある。
+        let r = run(
+            &repo,
+            r#"{"op":"deleteBranches","branches":[{"name":"done"},{"name":"moved"}]}"#,
+        );
+        assert_eq!(r["ok"], false, "{r}");
+        assert_eq!(git(dir, &["branch", "--list", "done"]), "");
+        assert_eq!(run(&repo, r#"{"op":"undo"}"#)["ok"], true);
+        assert_eq!(tip("done"), before.0);
     }
 
     #[test]

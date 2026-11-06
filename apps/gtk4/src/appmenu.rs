@@ -559,6 +559,10 @@ fn handlers() -> Vec<(&'static str, Handler)> {
             "delete-ignored-files",
             Box::new(|p| p.actions.delete_ignored_files()),
         ),
+        (
+            "clean-up-branches",
+            Box::new(|p| p.actions.clean_up_branches()),
+        ),
         ("pop-stash", Box::new(pop_stash)),
         ("undo", Box::new(|p| crate::sheets::undo(&p.actions))),
         (

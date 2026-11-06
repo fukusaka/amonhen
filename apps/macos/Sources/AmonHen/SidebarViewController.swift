@@ -360,6 +360,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     /// Subtrees の組の文脈メニュー（dir は nil）と、subtree の行の文脈メニュー。
     enum SubtreeAction { case add, pull, push, split }
     var onSubtreeAction: ((String?, SubtreeAction) -> Void)?
+    /// Branches の組の「Clean Up Branches…」。
+    var onCleanUpBranches: (() -> Void)?
     /// subtree（`git subtree` で取り込んだフォルダ。git に subtree がなければ空）。
     private var subtrees: [SubtreeInfo] = []
 
@@ -1323,6 +1325,10 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 menu.addItem(ClosureMenuItem(title: "Pull…") { [weak self] in self?.onSubtreeAction?(dir, .pull) })
                 menu.addItem(ClosureMenuItem(title: "Push…") { [weak self] in self?.onSubtreeAction?(dir, .push) })
                 menu.addItem(ClosureMenuItem(title: "Split…") { [weak self] in self?.onSubtreeAction?(dir, .split) })
+                return
+            }
+            if node.title == "Branches", node.branchGroup == nil {
+                menu.addItem(ClosureMenuItem(title: L("Clean Up Branches…")) { [weak self] in self?.onCleanUpBranches?() })
                 return
             }
             if node.title == "Subtrees" {

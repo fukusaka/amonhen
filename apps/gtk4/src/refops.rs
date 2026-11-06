@@ -232,6 +232,12 @@ fn remote_menu(actions: &Rc<Actions>, data: &Data) -> Vec<Item> {
             remove,
         ];
     }
+    if matches!(data.item, sidebar::Item::Group) && data.title == "Branches" {
+        let a = actions.clone();
+        return vec![menu::action(tr!("Clean Up Branches…"), move || {
+            a.clean_up_branches()
+        })];
+    }
     if matches!(data.item, sidebar::Item::Group) && data.title == "Remotes" {
         let a = actions.clone();
         return vec![menu::action(tr!("Add Remote…"), move || {

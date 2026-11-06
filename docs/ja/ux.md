@@ -326,7 +326,7 @@ SSH 先のリポジトリでは、「すべてのリポジトリ」は SSH 先�
 | | Pop | stash の名前とメッセージを見せて確かめてから、最新を pop | —（選んで apply・pop するのは Stashes） |
 | 状態 | Activity | 実行中の操作の数とスピナー。押すと Activity | — |
 | | Refresh | status・ref・History を読み直す（⌘R） | 作業ツリーを全部読み直す（fsmonitor と status のキャッシュを使わない）、永続キャッシュを捨てて History を作り直す |
-| | Undo | 操作の名前と何を戻すか（HEAD とブランチ・ファイル・stash・ブランチの名前）を見せて確かめてから戻す | —（操作ログは Activity） |
+| | Undo | 操作の名前と何を戻すか（HEAD とブランチ・ファイル・stash・ブランチの名前）を見せて確かめてから戻す。消したブランチは設定（上流・アーカイブ・お気に入り）ごと戻る | —（操作ログは Activity） |
 | 検索 | 検索欄（`NSSearchToolbarItem`） | ⌘F で History の検索、⌘⇧F で範囲つき | 件名・本文 / 作者 / ID / パス / 内容（pickaxe）/ 日時（`after:`・`before:`）の切り替え |
 
 - 今のブランチに上流がない（そのリモートブランチが消えた）ときは、Push を Publish と見せ（ツールバー・Repository メニュー・Commit and Publish）、送り先のリモートを `branch.<name>.pushRemote`・`remote.pushDefault`・リモートが 1 つならそれ・origin の順で選んだ状態から選ばせ、そこでの名前も決めさせる。送ったものが上流になる。そのリモートブランチがもうあれば、そう伝えて代わりにそれを上流にする（ブランチにないコミットがあれば、先に Pull するよう伝える）。
@@ -780,7 +780,7 @@ Window > Activity（⌥⌘A）。ツールバーのスピナーからも開く�
 | Edit | 標準（Undo・Redo はテキストの取り消し）、Find ⌘F、Find in History ⌘⇧F、Find Next / Previous ⌘G / ⌘⇧G |
 | View | Working Copy ⌘1、History ⌘2、Conflicts ⌘3、Stashes ⌘4、Reflog ⌘5、Refresh ⌘R、Show Sidebar ⌃⌘S、Diff: Unified / Split ⌥⌘D、Ignore Whitespace、Wrap Lines、Font Size ⌘+ / ⌘−、History の表示（1 行、History Items ▸ でブランチとタグ・作者・日時・コミット ID・署名・CI の状態を出すか選ぶ、History Order ▸ 日付順 / トポロジー順（どちらも History の上のバーの右端のボタンと、ヘッダーの右クリックでも。そのメニューには 1 行表示・Fold Merged Branches・Highlight Ancestors もある。Settings > Appearance でも）、アバター、祖先の強調）、Commit Details: Compact / Standard / Detailed |
 | Navigate | Go to HEAD ⌘⇧H、Go to Ref… ⌘⇧J、Go to Parent / Child ⌥⌘↓ / ⌥⌘↑、Next / Previous Hunk、Next / Previous File、Next Conflict |
-| Repository | Fetch ⌃⌘F、Pull ⌃⌘L、Push ⌃⌘P、Stash ⌥⌘S、Pop ⌥⌘⇧S、ignore されたファイルを消す…（`git clean -X` が消すものを一覧で見せ（フォルダは 1 つに）、赤いボタンで消す）、New Branch… ⌥⌘B、履歴のない新しいブランチ…（空から（`git switch --orphan`）、または今のファイルを stage したまま残す（`git checkout --orphan`））、New Tag… ⌥⌘T、Merge… ⌥⌘M、Rebase… ⌥⌘R、Interactive Rebase…、Apply Patch…、Continue / Skip / Abort、Undo（操作名） ⌥⌘Z、Repository Settings ⌘;、Open in Terminal、Reveal in Finder、Open in Editor、Open on GitHub |
+| Repository | Fetch ⌃⌘F、Pull ⌃⌘L、Push ⌃⌘P、Stash ⌥⌘S、Pop ⌥⌘⇧S、ignore されたファイルを消す…（`git clean -X` が消すものを一覧で見せ（フォルダは 1 つに）、赤いボタンで消す）、New Branch… ⌥⌘B、履歴のない新しいブランチ…（空から（`git switch --orphan`）、または今のファイルを stage したまま残す（`git checkout --orphan`））、ブランチを片付ける…（既定のブランチに取り込み済みのもの、GitHub の PR でマージ済みのもの、上流が消えたものを、理由ごとの見出しの下に並べた 1 つのシート。上流が消えただけのものは選ばずに置く。Branches の見出しのメニューからも。Undo 1 回）、New Tag… ⌥⌘T、Merge… ⌥⌘M、Rebase… ⌥⌘R、Interactive Rebase…、Apply Patch…、Continue / Skip / Abort、Undo（操作名） ⌥⌘Z、Repository Settings ⌘;、Open in Terminal、Reveal in Finder、Open in Editor、Open on GitHub |
 | Commit | Commit ⌘↩、Commit and Push ⌘⇧↩、Amend ⌥⌘↩、Include All、Exclude All、Toggle Selection（Space）、Discard…、Cherry-pick、Revert、Reword…、Save as Patch… |
 | Window | 標準（最小化・タブ・すべてのウィンドウを結合）、Repositories ⌘⇧R、Activity ⌥⌘A |
 | Help | ショートカットの一覧、ログの場所を開く |

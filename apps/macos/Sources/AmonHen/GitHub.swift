@@ -41,6 +41,13 @@ struct GitHubRepository: Equatable, Sendable {
     }
 }
 
+/// マージされたプルリクエスト（`gh pr list --state merged --json`）。`headRefOid` はマージしたときの head。
+struct MergedPullRequest: Decodable, Sendable {
+    let number: Int
+    let headRefName: String
+    let headRefOid: String
+}
+
 /// プルリクエスト（`gh pr list --json`）。
 struct PullRequest: Decodable, Sendable, Hashable {
     struct Author: Decodable, Sendable, Hashable { let login: String }
@@ -204,6 +211,15 @@ enum GitHub {
             "--json", "number,title,url,headRefName,baseRefName,isDraft,author,reviewDecision,statusCheckRollup,headRefOid",
         ])
         return try JSONDecoder().decode([PullRequest].self, from: data)
+    }
+
+    /// マージされたプルリクエスト（新しい順、最大 200 件）。squash・rebase で取り込んだブランチを見分ける（コアの
+    /// `branchCleanup` の `pullRequests`）。
+    static func mergedPullRequests(_ repo: GitHubRepository) async throws -> [MergedPullRequest] {
+        let data = try await run([
+            "pr", "list", "-R", repo.slug, "--state", "merged", "--limit", "200", "--json", "number,headRefName,headRefOid",
+        ])
+        return try JSONDecoder().decode([MergedPullRequest].self, from: data)
     }
 
     /// 開いている Issue（新しい順、最大 30 件）。コミットのメッセージの #123 の候補。
