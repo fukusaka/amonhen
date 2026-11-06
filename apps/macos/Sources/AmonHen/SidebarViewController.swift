@@ -24,6 +24,23 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     var onCreatePullRequest: ((String) -> Void)?
     /// GitHub のリポジトリで gh が使える（プルリクエストを作れる）。
     var canCreatePullRequest = false
+    /// origin が fork で、プルリクエストを元のリポジトリへ出す（既定のブランチからも出せる）。
+    var createsPullRequestsFromDefaultBranch = false
+
+    /// `branch` からプルリクエストを作れるか。既定のブランチからは作らない（fork から元のリポジトリへ出すときを除く）。
+    func canCreatePullRequest(from branch: String) -> Bool {
+        canCreatePullRequest && (createsPullRequestsFromDefaultBranch || branch != defaultBranchName)
+    }
+
+    /// 既定のブランチの、手元のブランチとしての名前（コアの `base` は `origin/main` のようにリモートのものもある）。
+    var defaultBranchName: String? {
+        branchGroups?.base.map { Self.localName(ofBase: $0, locals: Set(branchFacts.keys)) }
+    }
+
+    /// `base` が手元のブランチならそのまま、リモートのもの（`origin/main`）ならリモートの名前を外したもの。
+    nonisolated static func localName(ofBase base: String, locals: Set<String>) -> String {
+        locals.contains(base) ? base : String(base.split(separator: "/", maxSplits: 1).last ?? "")
+    }
     /// プルリクエストの行の右端の CI の印を押した（詳細の吹き出しを、その印の下に）。
     var onClickPullRequestCI: ((PullRequest, NSView) -> Void)?
 
@@ -642,9 +659,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private func branchesNode(_ locals: [RefItem], head: String?, folders: (String, [RefItem]) -> Node) -> Node {
         guard let groups = branchGroups else { return folders("Branches", locals) }
         let facts = Dictionary(groups.branches.map { ($0.name, $0) }, uniquingKeysWith: { a, _ in a })
-        let baseName = groups.base.map { name in
-            locals.contains { $0.name == name } ? name : String(name.split(separator: "/", maxSplits: 1).last ?? "")
-        }
+        let baseName = groups.base.map { Self.localName(ofBase: $0, locals: Set(locals.map(\.name))) }
         let now = Int64(Date().timeIntervalSince1970)
         func newest(_ a: RefItem, _ b: RefItem) -> Bool { (facts[a.name]?.time ?? 0) > (facts[b.name]?.time ?? 0) }
         func isArchived(_ item: RefItem) -> Bool { facts[item.name]?.archived == true }
@@ -753,7 +768,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         facts.otherWorktree = otherWorktree
         facts.editing = editing
         facts.pullRequest = openPullRequest(for: item.name)
-        facts.canCreatePullRequest = canCreatePullRequest && item.name != branchGroups?.base
+        facts.canCreatePullRequest = canCreatePullRequest(from: item.name)
         if let base = branchGroups?.base, let actions {
             facts.predictMergeIntoBase = { [weak actions] in await actions?.predictMerge(ours: base, theirs: item.name) }
         }
@@ -1028,7 +1043,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             // 取り込み済み（既定のブランチの先端と同じ、作ったばかりのものは除く）と gone は、文字でなくアイコンで
             // （行の右端。意味はツールチップ）。
             let merged = branchFacts[item.name].map { $0.merged && !$0.atBase } ?? false
-                && !node.isHead && item.name != branchGroups?.base
+                && !node.isHead && item.name != defaultBranchName
             marks = [merged ? ("arrow.triangle.merge", L("Merged into %@", branchGroups?.base ?? "main"), .secondaryLabelColor) : nil,
                      item.gone ? ("icloud.slash", L("Its upstream %@ no longer exists on the remote", item.detail ?? ""), .secondaryLabelColor) : nil]
                 .compactMap { $0 }
@@ -1481,8 +1496,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             if name != headBranch {
                 add(L("Delete %@…", name)) { actions.deleteBranchWithConfirmation(item) }
             }
-            // プルリクエスト: 既定のブランチ以外から。開いているものがあれば作らずにそれを開く。
-            if canCreatePullRequest, name != branchGroups?.base {
+            // プルリクエスト: 既定のブランチ以外から（fork なら既定のブランチからも）。開いているものがあれば作らずに
+            // それを開く。
+            if canCreatePullRequest(from: name) {
                 menu.addItem(.separator())
                 if let pr = openPullRequest(for: name) {
                     add(L("Open Pull Request #%ld", pr.number)) { if let url = URL(string: pr.url) { NSWorkspace.shared.open(url) } }

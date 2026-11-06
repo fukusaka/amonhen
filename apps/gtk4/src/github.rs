@@ -112,13 +112,128 @@ pub fn gh_command() -> Option<std::process::Command> {
 
 /// リポジトリの GitHub（origin、なければ最初のリモート）。
 pub async fn of(repo: &Arc<Repository>) -> Option<GitHubRepository> {
+    of_remote(repo).await.map(|(_, github)| github)
+}
+
+/// [`of`] と、そのリモートの名前（fork のとき、プルリクエストのブランチをここへ送る）。
+async fn of_remote(repo: &Arc<Repository>) -> Option<(String, GitHubRepository)> {
     let reply = crate::sheets::run(repo, json!({ "op": "remotes" })).await;
     let remotes = reply["info"]["remotes"].as_array()?.clone();
     let remote = remotes
         .iter()
         .find(|r| r["name"].as_str() == Some("origin"))
         .or(remotes.first())?;
-    GitHubRepository::parse(remote["fetchUrl"].as_str()?)
+    let github = GitHubRepository::parse(remote["fetchUrl"].as_str()?)?;
+    Some((remote["name"].as_str()?.to_owned(), github))
+}
+
+/// プルリクエストを出す先。origin が GitHub の fork なら、その元のリポジトリ（`fork_owner` は fork の持ち主。
+/// head は `持ち主:ブランチ` の形で渡し、一覧はその fork から出したものだけにする）。fork でなければ origin。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PullRequestTarget {
+    pub repo: GitHubRepository,
+    pub fork_owner: Option<String>,
+}
+
+impl PullRequestTarget {
+    /// fork から元のリポジトリへ出す。既定のブランチ（fork の main など）からも出せる。
+    pub fn is_fork(&self) -> bool {
+        self.fork_owner.is_some()
+    }
+
+    /// `gh pr create --head` に渡す形。
+    pub fn head(&self, branch: &str) -> String {
+        match &self.fork_owner {
+            Some(owner) => format!("{owner}:{branch}"),
+            None => branch.to_owned(),
+        }
+    }
+
+    /// `pr list` の答えのうち、この先に出したもの（fork なら、その fork から出したものだけ）。
+    fn mine(&self, list: Vec<Value>) -> Vec<Value> {
+        let Some(owner) = &self.fork_owner else {
+            return list;
+        };
+        list.into_iter()
+            .filter(|p| {
+                p["headRepositoryOwner"]["login"]
+                    .as_str()
+                    .is_some_and(|o| o.eq_ignore_ascii_case(owner))
+            })
+            .collect()
+    }
+
+    /// `pr list` の、fork のときの引数（その fork の持ち主が出したものに絞り、head の持ち主も読む）。元のリポジトリの
+    /// 新しいものから数えると、ほかの人のプルリクエストで埋まるので、作者で絞ってから数える。
+    fn list_args(&self, state: &str, limit: &str, fields: &str) -> Vec<String> {
+        let mut fields = fields.to_owned();
+        let mut args = [
+            "pr",
+            "list",
+            "-R",
+            &self.repo.slug(),
+            "--state",
+            state,
+            "--limit",
+            limit,
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        if let Some(owner) = &self.fork_owner {
+            fields.push_str(",headRepositoryOwner");
+            args.extend(["--author".to_owned(), owner.clone()]);
+        }
+        args.extend(["--json".to_owned(), fields]);
+        args
+    }
+}
+
+/// `gh repo view --json parent` の答えから、元のリポジトリ（同じホスト。fork でなければ None）。
+fn parent_from(view: &Value, host: &str) -> Option<GitHubRepository> {
+    let parent = &view["parent"];
+    Some(GitHubRepository {
+        host: host.to_owned(),
+        owner: parent["owner"]["login"].as_str()?.to_owned(),
+        name: parent["name"].as_str()?.to_owned(),
+    })
+}
+
+thread_local! {
+    /// 読めた fork の元（slug → 元。fork でなければ None）。読めなかったものは覚えない（次にまた読む）。
+    static PARENTS: RefCell<HashMap<String, Option<GitHubRepository>>> = RefCell::default();
+}
+
+/// `origin` のリポジトリからプルリクエストを出す先（fork なら元のリポジトリ。macOS 版と同じ）。
+pub async fn pull_request_target(origin: &GitHubRepository) -> PullRequestTarget {
+    let slug = origin.slug();
+    let known = PARENTS.with(|p| p.borrow().get(&slug).cloned());
+    let parent = match known {
+        Some(parent) => parent,
+        None => {
+            let args = ["repo", "view", &slug, "--json", "parent"]
+                .map(str::to_owned)
+                .to_vec();
+            let read = gh_async(args, None)
+                .await
+                .ok()
+                .and_then(|out| serde_json::from_str::<Value>(&out).ok())
+                .map(|view| parent_from(&view, &origin.host));
+            if let Some(parent) = &read {
+                PARENTS.with(|p| p.borrow_mut().insert(slug, parent.clone()));
+            }
+            read.flatten()
+        }
+    };
+    match parent {
+        Some(repo) => PullRequestTarget {
+            repo,
+            fork_owner: Some(origin.owner.clone()),
+        },
+        None => PullRequestTarget {
+            repo: origin.clone(),
+            fork_owner: None,
+        },
+    }
 }
 
 pub fn open_uri(window: Option<&gtk::Window>, uri: &str) {
@@ -420,55 +535,31 @@ impl CommitCheck {
     }
 }
 
-/// 開いているプルリクエスト（新しい順、最大 50 件）。
-pub async fn pull_requests(repo: &GitHubRepository) -> Result<Vec<PullRequest>, String> {
-    let args = [
-        "pr",
-        "list",
-        "-R",
-        &repo.slug(),
-        "--state",
+/// 開いているプルリクエスト（新しい順、最大 50 件。fork なら、その fork から出したもの）。
+pub async fn pull_requests(target: &PullRequestTarget) -> Result<Vec<PullRequest>, String> {
+    let args = target.list_args(
         "open",
-        "--limit",
         "50",
-        "--json",
         "number,title,url,headRefName,baseRefName,isDraft,author,reviewDecision,statusCheckRollup,headRefOid",
-    ]
-    .map(str::to_owned)
-    .to_vec();
+    );
     let out = gh_async(args, None).await?;
     let list: Value = serde_json::from_str(&out).map_err(|e| e.to_string())?;
-    Ok(list
-        .as_array()
-        .into_iter()
-        .flatten()
+    Ok(target
+        .mine(list.as_array().cloned().unwrap_or_default())
+        .iter()
         .filter_map(PullRequest::from)
         .collect())
 }
 
-/// マージされたプルリクエスト（新しい順、最大 200 件）を、コアの `branchCleanup` の `pullRequests` の形で。squash・
-/// rebase で取り込んだブランチを見分ける（macOS 版と同じ）。
-pub async fn merged_pull_requests(repo: &GitHubRepository) -> Result<Vec<Value>, String> {
-    let args = [
-        "pr",
-        "list",
-        "-R",
-        &repo.slug(),
-        "--state",
-        "merged",
-        "--limit",
-        "200",
-        "--json",
-        "number,headRefName,headRefOid",
-    ]
-    .map(str::to_owned)
-    .to_vec();
+/// マージされたプルリクエスト（新しい順、最大 200 件。fork なら、その fork から出したもの）を、コアの
+/// `branchCleanup` の `pullRequests` の形で。squash・rebase で取り込んだブランチを見分ける（macOS 版と同じ）。
+pub async fn merged_pull_requests(target: &PullRequestTarget) -> Result<Vec<Value>, String> {
+    let args = target.list_args("merged", "200", "number,headRefName,headRefOid");
     let out = gh_async(args, None).await?;
     let list: Value = serde_json::from_str(&out).map_err(|e| e.to_string())?;
-    Ok(list
-        .as_array()
-        .into_iter()
-        .flatten()
+    Ok(target
+        .mine(list.as_array().cloned().unwrap_or_default())
+        .iter()
         .map(|p| serde_json::json!({ "number": p["number"], "branch": p["headRefName"], "oid": p["headRefOid"] }))
         .collect())
 }
@@ -649,6 +740,8 @@ pub struct Loader {
     view: glib::WeakRef<crate::history::HistoryView>,
     sidebar: std::rc::Weak<crate::sidebar::Sidebar>,
     github: RefCell<Option<GitHubRepository>>,
+    /// プルリクエストを出す先（`github` が fork なら元のリポジトリ）。
+    target: RefCell<Option<PullRequestTarget>>,
     loaded_at: Cell<Option<Instant>>,
     default_branch: RefCell<Option<String>>,
     /// この窓で GitHub のアバターの URL を読んだか。
@@ -675,6 +768,7 @@ impl Loader {
             view: view.downgrade(),
             sidebar: Rc::downgrade(sidebar),
             github: RefCell::default(),
+            target: RefCell::default(),
             loaded_at: Cell::new(None),
             default_branch: RefCell::default(),
             avatars_loaded: Cell::new(false),
@@ -712,6 +806,10 @@ impl Loader {
         self.github.borrow().clone()
     }
 
+    pub fn target(&self) -> Option<PullRequestTarget> {
+        self.target.borrow().clone()
+    }
+
     /// GitHub のリポジトリを判定し、開いているプルリクエストを読んでサイドバーに出し、CI の状態とアバターを読む。
     /// `force` でなければ、前に読んでから 30 秒は読まない。
     pub fn load(self: &Rc<Self>, force: bool) {
@@ -734,23 +832,30 @@ impl Loader {
         glib::spawn_future_local(async move {
             let github = of(&repo).await;
             this.github.replace(github.clone());
+            let target = match &github {
+                Some(github) => Some(pull_request_target(github).await),
+                None => None,
+            };
+            this.target.replace(target.clone());
+            let fork = target.as_ref().is_some_and(PullRequestTarget::is_fork);
             // Open on GitHub・Create Pull Request… は GitHub のリポジトリだけ（macOS 版と同じ）。
             this.actions.update_facts(|f| {
                 f.github = github.is_some();
+                f.github_fork = fork;
                 f.gh = available();
             });
             let sidebar = this.sidebar.upgrade();
             if let Some(s) = &sidebar {
-                s.set_can_create_pull_request(github.is_some());
+                s.set_can_create_pull_request(github.is_some(), fork);
             }
-            let Some(github) = github else {
+            let (Some(github), Some(target)) = (github, target) else {
                 if let Some(s) = &sidebar {
                     s.show_pull_requests(Vec::new());
                 }
                 return;
             };
             let name = repo_name(&repo);
-            match pull_requests(&github).await {
+            match pull_requests(&target).await {
                 Ok(list) => {
                     if let Some(s) = this.sidebar.upgrade() {
                         s.show_pull_requests(list);
@@ -842,10 +947,11 @@ thread_local! {
 /// コミットのメッセージの #123 の候補: 開いている Issue（30 件）と PR（「PR: 」を付けて）を、番号の大きい順に。
 /// 5 分は覚えておく（macOS 版と同じ）。GitHub のリポジトリでなければ空。
 pub async fn issue_candidates(actions: &Rc<Actions>) -> Vec<(u64, String)> {
-    let Some(github) = github_of(actions).filter(|_| available()) else {
+    // fork なら、Issue とプルリクエストは元のリポジトリのもの。
+    let Some(target) = target_of(actions).filter(|_| available()) else {
         return Vec::new();
     };
-    let slug = github.slug();
+    let slug = target.repo.slug();
     let cached = ISSUES.with(|i| {
         i.borrow()
             .get(&slug)
@@ -878,7 +984,7 @@ pub async fn issue_candidates(actions: &Rc<Actions>) -> Vec<(u64, String)> {
         .flatten()
         .filter_map(|i| Some((i["number"].as_u64()?, i["title"].as_str()?.to_owned())))
         .collect();
-    let pulls = pull_requests(&github).await.unwrap_or_default();
+    let pulls = pull_requests(&target).await.unwrap_or_default();
     let mut items: Vec<(u64, String)> = issues
         .into_iter()
         .chain(
@@ -895,9 +1001,9 @@ pub async fn issue_candidates(actions: &Rc<Actions>) -> Vec<(u64, String)> {
     items
 }
 
-/// `actions` の窓の GitHub のリポジトリ（読んでいれば）。
-pub fn github_of(actions: &Rc<Actions>) -> Option<GitHubRepository> {
-    loader_of(actions).and_then(|l| l.github())
+/// `actions` の窓のプルリクエストを出す先（読んでいれば。fork なら元のリポジトリ）。
+pub fn target_of(actions: &Rc<Actions>) -> Option<PullRequestTarget> {
+    loader_of(actions).and_then(|l| l.target())
 }
 
 fn repo_name(repo: &Repository) -> String {
@@ -936,7 +1042,7 @@ pub fn checkout_pull_request(actions: &Rc<Actions>, pr: &PullRequest) {
     let pr = pr.clone();
     glib::spawn_future_local(async move {
         let window = crate::sheets::parent(&actions);
-        let github = github_of(&actions);
+        let github = target_of(&actions).map(|t| t.repo);
         let dir = actions
             .repo()
             .filter(|r| r.connection_state().is_none())
@@ -979,7 +1085,9 @@ pub fn checkout_pull_request(actions: &Rc<Actions>, pr: &PullRequest) {
 }
 
 /// Repository > Create Pull Request…: `branch` からプルリクエストを作る。まだ push していない（上流がない・先行
-/// コミットがある）なら、まず Push のシートを出し、送り終えたらそのまま作る。
+/// コミットがある）なら、まず Push のシートを出し、送り終えたらそのまま作る。origin が fork なら元のリポジトリへ
+/// 出す。そのときは既定のブランチからも出せ、送る先は上流でなく fork の同じ名前のブランチ（手元と同じコミットで
+/// なければ、まずそこへ送る。macOS 版と同じ）。
 pub fn create_pull_request(actions: &Rc<Actions>, branch: String, pushed: bool) {
     // 選んだときの worktree で読み、送るならその worktree の Push のシートで（読んでいる間に書き込む先を替えても）。
     if let Some(target) = crate::sheets::Target::current(actions) {
@@ -1004,12 +1112,20 @@ fn create_pull_request_in(
             }
             return;
         }
-        let (Some(github), Some(dir)) = (of(&repo).await, repo.paths().workdir) else {
+        let (Some((remote, github)), Some(dir)) = (of_remote(&repo).await, repo.paths().workdir)
+        else {
             if let Some(w) = &window {
                 w.error_bell();
             }
             return;
         };
+        let to = pull_request_target(&github).await;
+        if !to.is_fork() && actions.default_branch().as_deref() == Some(branch.as_str()) {
+            if let Some(w) = &window {
+                w.error_bell();
+            }
+            return;
+        }
         let r = repo.clone();
         let refs = gio::spawn_blocking(move || r.load_refs().ok())
             .await
@@ -1022,19 +1138,41 @@ fn create_pull_request_in(
                 .find(|e| e.kind == amonhen_model::RefKind::Local && e.name == branch)
                 .cloned()
         });
-        if !pushed
+        let again = {
+            let (a, b, t) = (actions.clone(), branch.clone(), target.clone());
+            Box::new(move || create_pull_request_in(&a, t, b, true))
+        };
+        if to.is_fork() {
+            let there = format!("{remote}/{branch}");
+            let pushed_there = refs.as_ref().is_some_and(|r| {
+                r.refs.entries.iter().any(|e| {
+                    e.kind == amonhen_model::RefKind::Remote
+                        && e.name == there
+                        && e.target == item.as_ref().and_then(|i| i.target)
+                })
+            });
+            if !pushed && item.is_some() && !pushed_there {
+                let command = json!({
+                    "op": "push", "remote": remote, "branch": branch, "remoteBranch": branch,
+                    "force": false, "setUpstream": item.as_ref().is_some_and(|i| i.detail.is_none()),
+                });
+                crate::sheets::push_to_in(
+                    &actions,
+                    target,
+                    &branch,
+                    &there,
+                    command,
+                    false,
+                    Some(again),
+                );
+                return;
+            }
+        } else if !pushed
             && item
                 .as_ref()
                 .is_none_or(|i| i.detail.is_none() || i.gone || i.ahead > 0)
         {
-            let (a, b, t) = (actions.clone(), branch.clone(), target.clone());
-            crate::sheets::push_in(
-                &actions,
-                target,
-                Some(branch.clone()),
-                false,
-                Some(Box::new(move || create_pull_request_in(&a, t, b, true))),
-            );
+            crate::sheets::push_in(&actions, target, Some(branch.clone()), false, Some(again));
             return;
         }
         // タイトルと本文は、ブランチの先頭のコミットのメッセージから。
@@ -1050,8 +1188,8 @@ fn create_pull_request_in(
         // メッセージが空なら、タイトルも空のまま（macOS 版と同じ。空のタイトルでは作らない）。
         let (title, body) = message.split_once('\n').unwrap_or((&message, ""));
         let (title, body) = (title.to_owned(), body.trim().to_owned());
-        let slug = github.slug();
-        let base = default_branch(&github)
+        let slug = to.repo.slug();
+        let base = default_branch(&to.repo)
             .await
             .unwrap_or_else(|| "main".to_owned());
 
@@ -1113,7 +1251,7 @@ fn create_pull_request_in(
         let b = body_view.buffer();
         let body = b.text(&b.start_iter(), &b.end_iter(), false).to_string();
         let draft = draft.is_active();
-        let head = branch.clone();
+        let head = to.head(&branch);
         // 作っている間は、ツールバーの Activity の印を回す（macOS 版と同じ）。
         crate::activity::begin();
         let result = gio::spawn_blocking(move || {
@@ -1156,6 +1294,47 @@ fn create_pull_request_in(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_fork_sends_pull_requests_to_its_parent() {
+        let view = json!({ "parent": { "name": "tool", "owner": { "login": "upstream" } } });
+        let parent = parent_from(&view, "github.com").unwrap();
+        assert_eq!(parent.slug(), "upstream/tool");
+        assert_eq!(parent_from(&json!({ "parent": null }), "github.com"), None);
+
+        let fork = PullRequestTarget {
+            repo: parent,
+            fork_owner: Some("me".to_owned()),
+        };
+        assert_eq!(fork.head("main"), "me:main");
+        let args = fork.list_args("open", "50", "number");
+        assert_eq!(
+            args[args.len() - 4..],
+            ["--author", "me", "--json", "number,headRepositoryOwner"].map(str::to_owned)
+        );
+        let list = vec![
+            json!({ "number": 1, "headRepositoryOwner": { "login": "Me" } }),
+            json!({ "number": 2, "headRepositoryOwner": { "login": "someone" } }),
+        ];
+        let mine: Vec<_> = fork
+            .mine(list.clone())
+            .iter()
+            .map(|p| p["number"].clone())
+            .collect();
+        assert_eq!(mine, [json!(1)]);
+
+        let origin = PullRequestTarget {
+            repo: GitHubRepository::parse("git@github.com:me/tool.git").unwrap(),
+            fork_owner: None,
+        };
+        assert_eq!(origin.head("topic"), "topic");
+        assert_eq!(origin.mine(list).len(), 2);
+        assert!(
+            !origin
+                .list_args("open", "50", "number")
+                .contains(&"--author".to_owned())
+        );
+    }
 
     #[test]
     fn parses_github_remotes() {
