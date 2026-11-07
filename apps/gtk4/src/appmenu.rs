@@ -569,8 +569,12 @@ fn handlers() -> Vec<(&'static str, Handler)> {
         (
             "rebuild-history",
             Box::new(|p| {
+                // 出している History のリポジトリで（書き込む先の worktree は別の Repository を持つ）。
+                let Some((repo, _)) = p.view.current() else {
+                    return;
+                };
                 p.actions
-                    .perform_work_titled(Some(tr!("Couldn’t Rebuild History")), |repo| {
+                    .perform_work_in(repo, Some(tr!("Couldn’t Rebuild History")), |repo| {
                         repo.rebuild_history().map(|_| ())
                     });
             }),
