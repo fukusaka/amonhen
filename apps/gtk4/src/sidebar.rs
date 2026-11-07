@@ -1526,8 +1526,11 @@ fn bind_row(item: &gtk::ListItem) {
         .expect("badge");
     let data = node.data();
     let group = matches!(data.item, Item::Group);
-    // 見出しと名前のフォルダ（No changes も）は選べない。選ぶと、出している画面の行の選択が外れる。
-    item.set_selectable(!matches!(data.item, Item::Group | Item::Folder));
+    // 見出しと名前のフォルダ（No changes も）と subtree は選べない。選ぶと、出している画面の行の選択が外れる。
+    item.set_selectable(!matches!(
+        data.item,
+        Item::Group | Item::Folder | Item::Subtree(_)
+    ));
     icon.set(data.icon, data.head);
     for w in [icon.upcast_ref::<gtk::Widget>(), badge.upcast_ref()] {
         if data.green {
