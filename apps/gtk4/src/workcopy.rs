@@ -8,7 +8,7 @@
 //! コンフリクトのファイルは、差分の代わりにマージエディタ（`merge.rs`）を埋め込み、上にファイルごとの解決のボタンを出す。
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -196,9 +196,9 @@ struct Inner {
     /// 作ったマージエディタ（worktree とパスごと。ファイルを選び直しても、書き込む先の worktree を切り替えて
     /// 戻っても、編集中の Result を保つ）と、埋め込んでいるもの。
     editors: RefCell<HashMap<EditorKey, Rc<crate::merge::Editor>>>,
+    /// 開いたときの自動の解決を済ませたファイル。
+    auto_magic_done: RefCell<HashSet<EditorKey>>,
     embedded: RefCell<Option<Rc<crate::merge::Editor>>>,
-    /// 埋め込んだマージエディタにフォーカスがある（[`crate::actions::Facts::merge_focused`]）。
-    merge_focused: Cell<bool>,
     /// 改行を変換している・改行が混ざっているファイルの印（普段のファイルでは出さない）。
     line_endings: gtk::Label,
     /// 選んでいるファイル。
@@ -568,8 +568,8 @@ impl WorkingCopy {
             right_stack,
             merge_holder,
             editors: RefCell::default(),
+            auto_magic_done: RefCell::default(),
             embedded: RefCell::default(),
-            merge_focused: Cell::new(false),
             line_endings,
             selected: RefCell::default(),
             current: RefCell::default(),
@@ -911,14 +911,26 @@ impl Inner {
             }
             true
         });
-        // 埋め込んだマージエディタにフォーカスがある間は、Ctrl+Return をエディタに渡す（Commit を止める）。
+        // 埋め込んだマージエディタにフォーカスがある間は、Ctrl+Return をエディタに渡す（Commit のキーだけを外す。
+        // メニューの項目は使えるまま。macOS 版と同じ）。
         let focus = gtk::EventControllerFocus::new();
         let weak = Rc::downgrade(this);
         focus.connect_contains_focus_notify(move |focus| {
-            if let Some(this) = weak.upgrade() {
-                this.merge_focused.set(focus.contains_focus());
-                this.update_buttons();
-            }
+            let Some(app) = weak
+                .upgrade()
+                .and_then(|this| this.list.root())
+                .and_downcast::<gtk::Window>()
+                .and_then(|w| w.application())
+            else {
+                return;
+            };
+            let key = amonhen_commands::COMMANDS
+                .iter()
+                .find(|c| c.id == "commit")
+                .and_then(|c| c.gtk_accel())
+                .filter(|_| !focus.contains_focus());
+            let keys: Vec<&str> = key.as_deref().into_iter().collect();
+            app.set_accels_for_action("win.commit", &keys);
         });
         this.merge_holder.add_controller(focus);
         // Esc で絞り込みを消す（macOS 版の検索欄と同じ）。
@@ -2392,7 +2404,9 @@ impl Inner {
             let result = gio::spawn_blocking(move || {
                 let profile = FrontendProfile::GTK;
                 // 1 本の差分で表せなければ、選んだ側（片側にしか変更がなければその側）。
-                let mut working = match repo.working_diff_combined(&entry, &profile)? {
+                // 1 本の差分で表せない・読めないときは、選んだ側の差分（macOS 版と同じ）。
+                let mut working = match repo.working_diff_combined(&entry, &profile).ok().flatten()
+                {
                     Some(d) => d,
                     None => {
                         let staged = if entry.is_staged() && entry.is_unstaged() {
@@ -2619,10 +2633,14 @@ impl Inner {
             }));
             items.push(Item::Separator);
         }
+        // 消したファイル（`git rm` なら index の側に D が付く）は開けない。
+        let exists = entry.worktree != b'D' && entry.index != b'D';
         // untracked のファイルにはまだ履歴がない。代わりに .gitignore に足せる（そのパスか、拡張子のパターン）。
         if untracked {
             let mut patterns = vec![path.clone()];
-            if let Some((_, ext)) = name.rsplit_once('.')
+            // `.env` のように名前だけのものに拡張子はない（macOS 版と同じ）。
+            if let Some((stem, ext)) = name.rsplit_once('.')
+                && !stem.is_empty()
                 && !ext.is_empty()
             {
                 patterns.push(format!("*.{ext}"));
@@ -2639,7 +2657,7 @@ impl Inner {
                 ));
             }
         } else if let Some(f) = this.on_file_menu.borrow().as_ref() {
-            items.extend(f(&path, entry.worktree != b'D', true));
+            items.extend(f(&path, exists, true));
         }
         items.push(Item::Separator);
         let (w, p) = (this.list.downgrade(), path.clone());
@@ -2654,7 +2672,7 @@ impl Inner {
             .filter(|r| r.connection_state().is_none())
             .and_then(|r| r.paths().workdir);
         if let Some(workdir) = local
-            && entry.worktree != b'D'
+            && exists
         {
             let file = gio::File::for_path(workdir.join(&path));
             let (w, f) = (this.list.downgrade(), file.clone());
@@ -2760,9 +2778,12 @@ impl Inner {
             }
             match loaded {
                 Ok(editor) => {
+                    // 開いたときの自動の解決は、コンフリクトの間に 1 回だけ（読み直したエディタで、Undo で戻したものを
+                    // また解かない。macOS 版と同じ）。
+                    let first = this.auto_magic_done.borrow_mut().insert(key.clone());
                     this.editors.borrow_mut().insert(key, editor.clone());
                     Inner::embed(&this, &editor);
-                    crate::merge::Editor::opened(&editor);
+                    crate::merge::Editor::opened(&editor, first);
                 }
                 Err(e) => this.embed_message(&tr!("Can’t read: {error}", error = e)),
             }
@@ -2884,6 +2905,9 @@ impl Inner {
         self.editors
             .borrow_mut()
             .retain(|(w, path), _| *w != workdir || conflicted.contains(path));
+        self.auto_magic_done
+            .borrow_mut()
+            .retain(|(w, path)| *w != workdir || conflicted.contains(path));
         let stale = self
             .embedded
             .borrow()
@@ -3317,11 +3341,9 @@ impl Inner {
                 .borrow()
                 .iter()
                 .any(|e| e.kind != StatusKind::Unmerged && e.is_unstaged());
-            let merge_focused = self.merge_focused.get();
             actions.update_facts(|f| {
                 f.can_commit = can_commit;
                 f.can_stage_all = can_stage_all;
-                f.merge_focused = merge_focused;
             });
         }
         // 件名の文字数（空なら出さない）。
@@ -3832,7 +3854,8 @@ fn tree(entries: &[StatusEntry]) -> Vec<TreeItem> {
             total.add(inside);
         }
         let mut files = dir.files.clone();
-        files.sort_by(|&a, &b| entries[a].path.cmp(&entries[b].path));
+        // コンフリクトを先に（macOS 版と同じ）。
+        files.sort_by_key(|&i| (entries[i].kind != StatusKind::Unmerged, &entries[i].path));
         for index in files {
             let e = &entries[index];
             if e.kind != StatusKind::Unmerged {
@@ -3880,7 +3903,7 @@ mod tests {
     }
 
     /// 木のディレクトリのチェックは、中の（コンフリクト以外の）ファイルを数える。子が 1 つのディレクトリは
-    /// つなぎ、ディレクトリはファイルより先。
+    /// つなぎ、ディレクトリはファイルより先、コンフリクトはほかのファイルより先。
     #[test]
     fn tree_counts_files_inside_each_directory() {
         let entries = [
@@ -3909,9 +3932,9 @@ mod tests {
                 "0 src/ 3:1:2",
                 "1 src/deep/x/ 1:0:0",
                 "2 src/deep/x/y.rs",
+                "1 src/c.rs",
                 "1 src/a.rs",
                 "1 src/b.rs",
-                "1 src/c.rs",
                 "0 top.txt",
             ]
         );

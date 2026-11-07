@@ -170,6 +170,8 @@ pub struct State {
     on_menu: Option<MenuCallback>,
     /// メニューを出している行（選びはせず、枠で示す。macOS 版の `clickedRow`）。
     menu_row: Option<u32>,
+    /// 次に出す History で選ぶコミット（[`HistoryView::select_commit`]）。
+    wanted: Option<Oid>,
     /// 検索に一致した行（昇順）。薄く塗る。
     matches: Rc<Vec<u32>>,
     lanes: Lanes,
@@ -337,8 +339,12 @@ mod imp {
             }
             self.state.borrow_mut().accent = Some(probes);
 
+            // いくつか選んでいる行を押しただけでは、選びを変えない。離したときに 1 行にする（ドラッグならそのまま。
+            // macOS 版の表と同じ）。
+            let on_release: Rc<Cell<Option<u32>>> = Rc::default();
             let click = gtk::GestureClick::new();
             let weak = view.downgrade();
+            let later = on_release.clone();
             click.connect_pressed(move |gesture, _, x, y| {
                 if let Some(view) = weak.upgrade() {
                     view.grab_focus();
@@ -349,17 +355,40 @@ mod imp {
                     if let Some(row) = view.row_at(y as f32) {
                         // Ctrl で 1 行ずつ足す・外す、Shift で範囲（macOS の ⌘・⇧ と同じ）。
                         let state = gesture.current_event_state();
-                        view.select_with(
-                            row,
+                        let (shift, ctrl) = (
                             state.contains(gdk::ModifierType::SHIFT_MASK),
                             state.contains(gdk::ModifierType::CONTROL_MASK),
                         );
+                        if !shift && !ctrl && view.in_multiple_selection(row) {
+                            later.set(Some(row));
+                            return;
+                        }
+                        view.select_with(row, shift, ctrl);
                     } else if view.below_rows(y as f32) {
                         // 最後の行より下: 選択を外し、詳細も消す（macOS 版の表と同じ）。
                         view.clear_selection();
                     }
                 }
             });
+            // Edit の Select All（キーは下の `keys`）。
+            let group = gio::SimpleActionGroup::new();
+            let action = gio::SimpleAction::new("select-all", None);
+            let weak = view.downgrade();
+            action.connect_activate(move |_, _| {
+                if let Some(view) = weak.upgrade() {
+                    view.select_all();
+                }
+            });
+            group.add_action(&action);
+            view.insert_action_group("selection", Some(&group));
+            let (weak, later) = (view.downgrade(), on_release.clone());
+            click.connect_released(move |_, _, _, _| {
+                if let (Some(view), Some(row)) = (weak.upgrade(), later.take()) {
+                    view.select_with(row, false, false);
+                }
+            });
+            // ドラッグになったら離しても選び直さない。
+            click.connect_stopped(move |_| on_release.set(None));
             view.add_controller(click);
 
             // 右クリック: その行のコミットのメニュー。選びはせず（詳細はそのまま）、メニューの間は行を枠で示す
@@ -739,6 +768,12 @@ impl HistoryView {
             st.anchor = anchor.and_then(|id| history.row_of(&id));
             let mut changed =
                 st.selected.is_none() != selected.is_none() || st.extra.len() != extra.len();
+            if let Some(row) = st.wanted.take().and_then(|id| history.row_of(&id)) {
+                st.selected = Some(row);
+                st.extra.clear();
+                st.anchor = Some(row);
+                changed = true;
+            }
             // 最後に選んだコミットが消えたら（ほかのプログラムが rebase・amend した）、残りのうち最後のものに
             // する。何も残らなければ先頭（いちばん新しいコミット）を選ぶ（macOS 版と同じ。表示の位置は動かさない）。
             if selected.is_some() && st.selected.is_none() {
@@ -793,18 +828,24 @@ impl HistoryView {
 
     /// 行の見せ方を替える（1 行・項目・祖先の強調）。
     pub fn set_display(&self, display: Display) {
-        {
+        // 祖先の強調だけなら、行の高さは変わらないので動かさない（macOS 版と同じ）。
+        let recenter = {
             let mut st = self.state();
             if st.display == display {
                 return;
             }
+            let recenter = Display {
+                highlight_ancestors: st.display.highlight_ancestors,
+                ..display
+            } != st.display;
             st.display = display;
             st.rows.clear();
             st.fonts = None;
-        }
+            recenter
+        };
         self.configure_adjustments();
         // 行の高さが変わるので、選んでいる行を表の中ほどに置き直す（macOS 版の `rowStyleChanged`）。
-        if let Some(row) = self.selected() {
+        if recenter && let Some(row) = self.selected() {
             self.center_row(row);
         }
         self.update_lineage();
@@ -1048,6 +1089,15 @@ impl HistoryView {
         self.select_row(row, true);
     }
 
+    /// コミット `id` を選ぶ。今の History になければ、次に出す History で選ぶ（絞り込みを作り直している間）。
+    pub fn select_commit(&self, id: Oid) {
+        let row = self.current().and_then(|(_, history)| history.row_of(&id));
+        match row {
+            Some(row) => self.select(row),
+            None => self.state().wanted = Some(id),
+        }
+    }
+
     /// `row` だけを選び、見えるところまでだけスクロールする（クリック・矢印のキー）。
     fn select_visible(&self, row: u32) {
         self.select_row(row, false);
@@ -1074,6 +1124,12 @@ impl HistoryView {
     }
 
     /// クリックで選ぶ。`shift` なら起点からの範囲、`ctrl` なら 1 行ずつ足す・外す。
+    /// `row` が、いくつか選んでいるうちの 1 つか。
+    fn in_multiple_selection(&self, row: u32) -> bool {
+        let st = self.state();
+        !st.extra.is_empty() && (st.selected == Some(row) || st.extra.contains(&row))
+    }
+
     pub fn select_with(&self, row: u32, shift: bool, ctrl: bool) {
         {
             let mut st = self.state();

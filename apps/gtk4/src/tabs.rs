@@ -229,6 +229,15 @@ impl Tab {
     pub fn forward_actions(self: &Rc<Self>) {
         let Some(owner) = self.owner() else { return };
         self.add_app_actions();
+        // ツールバーはこのタブにもあるので、切り替えずにここで変える（リポジトリのタブを閉じた後も。macOS 版と同じ）。
+        let customize = gio::SimpleAction::new("customize-toolbar", None);
+        let weak = Rc::downgrade(self);
+        customize.connect_activate(move |_, _| {
+            if let Some(window) = weak.upgrade().and_then(|t| t.window()) {
+                crate::toolbar::customize(window.upcast_ref());
+            }
+        });
+        self.group.add_action(&customize);
         for name in owner.group.list_actions() {
             forward(self, &owner, &name);
         }
@@ -472,6 +481,111 @@ fn forward(tool: &Rc<Tab>, owner: &Rc<Tab>, name: &str) {
     tool.group.add_action(&proxy);
 }
 
+/// Repository Settings のページの部品の名前（フォーカスがその中かを見分ける）。
+pub const REPO_SETTINGS_NAME: &str = "repository-settings";
+
+/// Edit の項目のアクション（[`edit_abilities`] と同じ順）。
+const EDIT_ACTIONS: [&str; 6] = [
+    "edit-undo",
+    "edit-redo",
+    "edit-cut",
+    "edit-copy",
+    "edit-paste",
+    "edit-select-all",
+];
+
+/// Repository Settings のページを出した・隠した（欄の外でも Undo・やり直しが効く）。
+pub fn settings_page_shown(page: &gtk::Widget, shown: bool) {
+    let Some(root) = page.root() else { return };
+    let host = WINDOWS.with(|w| {
+        w.borrow()
+            .iter()
+            .find(|h| h.window.upcast_ref::<gtk::Root>() == &root)
+            .cloned()
+    });
+    if let Some(host) = host {
+        host.settings_page.replace(if shown {
+            page.downgrade()
+        } else {
+            glib::WeakRef::new()
+        });
+        host.update_edit_actions();
+    }
+}
+
+/// メニューの部品か（開くとフォーカスが移る。Edit の項目の相手はその前にフォーカスのあった部品）。
+fn is_menu_part(focus: &gtk::Widget) -> bool {
+    focus.is::<gtk::MenuButton>()
+        || focus.ancestor(gtk::Popover::static_type()).is_some()
+        || focus.ancestor(gtk::MenuButton::static_type()).is_some()
+}
+
+/// `focus` にできる Edit の項目（[`EDIT_ACTIONS`] と同じ順）。
+fn edit_abilities(focus: &gtk::Widget) -> [bool; 6] {
+    let mut settings = focus.parent();
+    let in_settings = loop {
+        match settings {
+            Some(w) if w.widget_name() == REPO_SETTINGS_NAME => break true,
+            Some(w) => settings = w.parent(),
+            None => break false,
+        }
+    };
+    if let Some(text) = focus.downcast_ref::<gtk::Text>() {
+        let (editable, selected) = (text.is_editable(), text.selection_bounds().is_some());
+        return [
+            editable,
+            editable,
+            editable && selected,
+            selected,
+            editable,
+            true,
+        ];
+    }
+    if let Some(text) = focus.downcast_ref::<gtk::TextView>() {
+        let buffer = text.buffer();
+        let (editable, selected) = (text.is_editable(), buffer.has_selection());
+        return [
+            editable && buffer.can_undo(),
+            editable && buffer.can_redo(),
+            editable && selected,
+            selected,
+            editable,
+            true,
+        ];
+    }
+    let select_all = if let Some(label) = focus.downcast_ref::<gtk::Label>() {
+        if label.selection_bounds().is_some() {
+            return [false, false, false, true, false, true];
+        }
+        label.is_selectable()
+    } else if let Some(diff) = focus.downcast_ref::<crate::diff::DiffWidget>() {
+        return [
+            in_settings,
+            in_settings,
+            false,
+            diff.selected_text().is_some(),
+            false,
+            true,
+        ];
+    } else {
+        focus.is::<crate::history::HistoryView>()
+            || [
+                focus
+                    .ancestor(gtk::ListView::static_type())
+                    .and_downcast::<gtk::ListView>()
+                    .and_then(|l| l.model()),
+                focus
+                    .ancestor(gtk::ColumnView::static_type())
+                    .and_downcast::<gtk::ColumnView>()
+                    .and_then(|c| c.model()),
+            ]
+            .iter()
+            .flatten()
+            .any(|m| m.is::<gtk::MultiSelection>())
+    };
+    [in_settings, in_settings, false, false, false, select_all]
+}
+
 /// リポジトリのタブを並べる窓。
 pub struct RepoWindow {
     pub window: gtk::ApplicationWindow,
@@ -489,6 +603,8 @@ pub struct RepoWindow {
     /// タブが 1 つでもタブの帯を出す（View > Show Tab Bar。帯のタブをつかんでほかの窓に移せる。macOS 版と同じ）。
     tab_bar: Cell<bool>,
     /// 最後にフォーカスのあった、メニューの外の部品（Edit の Copy などを渡す先）。
+    /// 出している Repository Settings のページ。
+    settings_page: RefCell<glib::WeakRef<gtk::Widget>>,
     last_focus: RefCell<glib::WeakRef<gtk::Widget>>,
 }
 
@@ -583,15 +699,17 @@ impl RepoWindow {
             shown: RefCell::default(),
             tab_bar: Cell::new(false),
             last_focus: RefCell::default(),
+            settings_page: RefCell::default(),
         });
         let weak = Rc::downgrade(&this);
         window.connect_focus_widget_notify(move |window| {
-            if let Some(this) = weak.upgrade()
-                && let Some(focus) = GtkWindowExt::focus(window)
-                && focus.ancestor(gtk::Popover::static_type()).is_none()
+            let Some(this) = weak.upgrade() else { return };
+            if let Some(focus) = GtkWindowExt::focus(window)
+                && !is_menu_part(&focus)
             {
                 this.last_focus.replace(focus.downgrade());
             }
+            this.update_edit_actions();
         });
         WINDOWS.with(|w| w.borrow_mut().push(this.clone()));
         // 窓の大きさは、そのリポジトリごとに覚える（macOS 版の窓の frame と同じ。GNOME では位置は決められない
@@ -751,9 +869,37 @@ impl RepoWindow {
     /// Edit の項目を渡す部品: 今フォーカスのある部品か、メニューを開いていればその前のもの。
     fn edit_focus(&self) -> Option<gtk::Widget> {
         GtkWindowExt::focus(&self.window)
-            .filter(|f| f.ancestor(gtk::Popover::static_type()).is_none())
+            .filter(|f| !is_menu_part(f))
             .or_else(|| self.last_focus.borrow().upgrade())
             .filter(|f| f.root().as_ref() == Some(self.window.upcast_ref::<gtk::Root>()))
+    }
+
+    /// Edit の項目を、フォーカスのある部品にできるものだけ押せるようにする（macOS 版の標準の項目と同じ。メニューを
+    /// 開くとフォーカスが動くので、そのときの状態になる。押せなくてもキーは部品がじかに受ける）。
+    fn update_edit_actions(&self) {
+        let mut can = self
+            .edit_focus()
+            .map_or([false; EDIT_ACTIONS.len()], |f| edit_abilities(&f));
+        // Repository Settings のページでは、欄の外でも設定の書き換えの Undo・やり直し。
+        if self.settings_page.borrow().upgrade().is_some()
+            && !self
+                .edit_focus()
+                .is_some_and(|f| f.is::<gtk::Text>() || f.is::<gtk::TextView>())
+        {
+            can[0] = true;
+            can[1] = true;
+        }
+        for tab in self.tabs() {
+            for (name, can) in EDIT_ACTIONS.iter().zip(can) {
+                if let Some(action) = tab
+                    .group
+                    .lookup_action(name)
+                    .and_downcast::<gio::SimpleAction>()
+                {
+                    action.set_enabled(can);
+                }
+            }
+        }
     }
 
     pub fn current(&self) -> Option<Rc<Tab>> {
@@ -1400,13 +1546,22 @@ pub fn close_tab(tab: &Rc<Tab>) {
         });
         return;
     }
+    // 最後のリポジトリを閉じたら、File History・Blame のタブが残っていても Repositories を出す（macOS 版と同じ）。
+    let only_tools = !tab.is_home()
+        && !tab.is_tool()
+        && WINDOWS.with(|w| {
+            w.borrow()
+                .iter()
+                .flat_map(|h| h.tabs())
+                .all(|t| Rc::ptr_eq(&t, tab) || t.is_tool())
+        });
+    let app = tab.window().and_then(|w| w.application());
     if host.tabs.borrow().len() <= 1 {
         let alone = WINDOWS.with(|w| w.borrow().len() <= 1);
-        if alone
-            && !tab.is_home()
-            && let Some(app) = tab.window().and_then(|w| w.application())
+        if ((alone && !tab.is_home()) || only_tools)
+            && let Some(app) = &app
         {
-            show_home(&app, None);
+            show_home(app, None);
         }
         host.window.close();
         return;
@@ -1414,6 +1569,9 @@ pub fn close_tab(tab: &Rc<Tab>) {
     detach(&host, tab);
     teardown(tab);
     save();
+    if only_tools && let Some(app) = &app {
+        show_home(app, None);
+    }
 }
 
 /// 終える前に、保存していないもの（マージエディタの Result）を捨ててよいかを確かめる（macOS 版と同じく 1 度だけ。
@@ -1559,7 +1717,8 @@ fn install_actions(tab: &Rc<Tab>) {
             let Some(tab) = weak.upgrade() else { return };
             let Some(window) = tab.window() else { return };
             let target = tab.host().and_then(|h| h.edit_focus());
-            let done = target.is_some_and(|t| {
+            let settings = tab.host().and_then(|h| h.settings_page.borrow().upgrade());
+            let done = target.into_iter().chain(settings).any(|t| {
                 targets
                     .iter()
                     .any(|a| WidgetExt::activate_action(&t, a, None).is_ok())

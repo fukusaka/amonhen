@@ -353,6 +353,7 @@ struct Inner {
     on_drop: Rc<RefCell<Option<DropCallback>>>,
     /// 作り直している間は、選択の変化を知らせない。
     rebuilding: Cell<bool>,
+    scrolled: gtk::ScrolledWindow,
     /// 分け方を読んだら一度だけ行う確認（`--sidebar-menu`・`--sidebar-mark`）。
     debug: RefCell<Option<Debug>>,
     /// サイドバーの部品（確認用のメニューと吹き出しを出す先）。
@@ -502,6 +503,7 @@ impl Sidebar {
             on_menu,
             on_drop,
             rebuilding: Cell::new(false),
+            scrolled: scrolled.clone(),
             debug: RefCell::default(),
             anchor: RefCell::default(),
             filter: RefCell::default(),
@@ -1526,8 +1528,11 @@ fn bind_row(item: &gtk::ListItem) {
         .expect("badge");
     let data = node.data();
     let group = matches!(data.item, Item::Group);
-    // 見出しと名前のフォルダ（No changes も）は選べない。選ぶと、出している画面の行の選択が外れる。
-    item.set_selectable(!matches!(data.item, Item::Group | Item::Folder));
+    // 見出しと名前のフォルダ（No changes も）と subtree は選べない。選ぶと、出している画面の行の選択が外れる。
+    item.set_selectable(!matches!(
+        data.item,
+        Item::Group | Item::Folder | Item::Subtree(_)
+    ));
     icon.set(data.icon, data.head);
     for w in [icon.upcast_ref::<gtk::Widget>(), badge.upcast_ref()] {
         if data.green {
@@ -2512,7 +2517,11 @@ impl Inner {
                 )
             })
             .collect();
+        // 作り直してもスクロールの位置を残す（行がいったんなくなるので、先頭に戻ってしまう。macOS 版と同じ）。
+        let scroll = self.scrolled.vadjustment();
+        let value = scroll.value();
         self.root.splice(0, self.root.n_items(), &nodes);
+        glib::idle_add_local_once(move || scroll.set_value(value));
 
         // 見出しは、最初は Workspace と Branches だけを開いておく（macOS 版と同じ）。あとは前に開いていたものを開く
         // （開くと子の行が後ろに増える）。積んだブランチのある行は、畳んだもののほかは開く。

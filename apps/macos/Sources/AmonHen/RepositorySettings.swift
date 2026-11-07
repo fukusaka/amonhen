@@ -91,6 +91,8 @@ final class RepositorySettingsModel {
     private(set) var operationRunning = false
     /// 外から開くように頼まれたページ（`show(_:)`）と、頼まれた回数（同じページを続けて頼まれても開く）。
     private(set) var requestedPage: SettingsPage?
+    /// 出しているページ（worktree を替えて画面を作り直しても、同じページを出す）。
+    var shownPage: SettingsPage?
     private(set) var pageRequests = 0
 
     /// `page` を開く（画面が出ていれば、すぐ切り替わる）。
@@ -2171,6 +2173,7 @@ struct RepositorySettingsView: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear { model.undo = undoManager }
         .onChange(of: undoManager) { _, now in model.undo = now }
+        .onChange(of: page) { model.shownPage = page }
         .onAppear { if let p = model.requestedPage { page = p } }
         .onChange(of: model.pageRequests) { if let p = model.requestedPage { page = p } }
         .onReceive(NotificationCenter.default.publisher(for: GitSettings.showPage)) { note in
@@ -2206,9 +2209,10 @@ struct SettingsPageContent: View {
 final class RepositorySettingsPage: NSHostingController<AnyView> {
     let model: RepositorySettingsModel
 
-    init(repository: Repository, location: String) {
+    init(repository: Repository, location: String, page: SettingsPage? = nil) {
         model = RepositorySettingsModel(repository: repository, location: location)
-        let page = AppDelegate.option("--settings-page").flatMap(SettingsPage.init) ?? .author
+        let page = page ?? AppDelegate.option("--settings-page").flatMap(SettingsPage.init) ?? .author
+        model.shownPage = page
         super.init(rootView: AnyView(RepositorySettingsView(model: model, page: page)))
     }
 

@@ -155,6 +155,10 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     /// 確かめたときの refs の番号。refs が変わったら（タグを付け直したかもしれない）、見えている行から確かめ直す
     /// （コアが ID で覚えているので速い）。
     private var tagSignatures: [String: (status: SignatureStatus?, tag: TagSignature, epoch: Int)] = [:]
+    /// 確かめられなかったタグと、そのときの ref の代（ref が変わるまで確かめ直さない）。
+    private var tagSignaturesFailed: [String: Int] = [:]
+    /// 作り直した後に選び直している間（選んだ知らせで History を絞り直さない）。
+    private var reselecting = false
     /// 署名を検証した場所（吹き出しに出す。RepositoryWindow が渡す）。
     var signaturePlace = SignaturePlace(local: true, detail: L("the repository is on this Mac"))
     private var tagSignatureEpoch = 0
@@ -178,7 +182,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     /// ときは、確かめる予定に入れる（見えている行だけが呼ぶので、見えているタグだけを確かめる）。
     private func tagSignatureMark(_ name: String) -> (String, String, NSColor)? {
         let known = tagSignatures[name]
-        if known?.epoch != tagSignatureEpoch { verifyTagsSoon(name) }
+        if known?.epoch != tagSignatureEpoch, tagSignaturesFailed[name] != tagSignatureEpoch { verifyTagsSoon(name) }
         guard let status = known?.status else { return nil }
         return (status.symbol, "\(status.label) — \(status.explanation(tag: true))", status.color)
     }
@@ -208,6 +212,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                         (try? repository.tagSignatures(batch)) ?? []
                     }.value
                     guard generation == tagSignatureGeneration else { return }
+                    // 確かめられなかったものは、ref が変わるまで確かめ直さない（描き直しのたびに git を動かさない）。
+                    let answered = Set(found.map(\.name))
+                    for name in batch where !answered.contains(name) { tagSignaturesFailed[name] = epoch }
                     for tag in found {
                         let status = tag.signed.map { kind in
                             tag.signature.map {
@@ -540,6 +547,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         let workspaceOpen = first || expanded.contains(workspace.title)
         let workingCopyOpen = isWorkingCopyOpen
         let selectedTitle = (outline.item(atRow: outline.selectedRow) as? Node).map { ($0.title, $0.page) }
+        let selectedRefs = outline.selectedRowIndexes.compactMap { (outline.item(atRow: $0) as? Node)?.item }
 
         func items(_ kind: RefKind) -> [RefItem] { refs.items.filter { $0.kind == kind } }
         // stash は Workspace の History（と Conflicts）の下の 1 行に、数だけ（絞り込み中も）。
@@ -563,6 +571,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             if workingCopyOpen { outline.expandItem(workingCopyNode) }
             groups.forEach { outline.expandItem($0) }
             if let (_, page) = selectedTitle, let page { select(page: page) }
+            reselect(selectedRefs)
             return
         }
         var groups: [Node] = []
@@ -643,6 +652,24 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         expandFolders()
         // 作り直す前に選んでいた Working Copy・History を選び直す。
         if let (_, page) = selectedTitle, let page { select(page: page) }
+        reselect(selectedRefs)
+    }
+
+    /// 作り直す前に選んでいたブランチ・タグを選び直す（History はそれに絞ったままなので、知らせない）。
+    private func reselect(_ refs: [RefItem]) {
+        guard !refs.isEmpty else { return }
+        var rows = IndexSet()
+        for ref in refs {
+            let row = (0..<outline.numberOfRows).first {
+                guard let item = (outline.item(atRow: $0) as? Node)?.item else { return false }
+                return item.kind == ref.kind && item.name == ref.name
+            }
+            if let row { rows.insert(row) }
+        }
+        guard !rows.isEmpty else { return }
+        reselecting = true
+        outline.selectRowIndexes(rows, byExtendingSelection: false)
+        reselecting = false
     }
 
     /// Inactive とみなす日数（最後のコミットからこれだけ経ったブランチ）。
@@ -1210,7 +1237,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         guard let (isLocal, dragged) = draggedBranch(info), let node = item as? Node else { return [] }
         // お気に入りのブランチは、Branches の直下のお気に入りの間に落として並べ替える（絞り込み中は、名前順に
         // 平らに並べていてお気に入りの行がないので、並べ替えない）。
-        if isLocal, filterWords.isEmpty, pinnedOrder.contains(dragged), node.title == "Branches", node.item == nil, node.page == nil,
+        if isLocal, filterWords.isEmpty, pinnedOrder.contains(dragged), node.title == "Branches", groups.contains(where: { $0 === node }),
            index != NSOutlineViewDropOnItemIndex, index <= pinnedOrder.count {
             return .move
         }
@@ -1327,6 +1354,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
         // Remotes の組とその下のリモート（docs/ux.md の 4.5 のリモート: 設定のページと同じ操作をここにも）。
         if let actions, let node = outline.item(atRow: outline.clickedRow) as? Node, node.item == nil, node.worktree == nil {
+            // 見出しそのもの（`Remotes/x` のようなブランチのフォルダは、同じ名前でも見出しではない）。
+            let isGroup = groups.contains { $0 === node }
             if let remote = node.remote {
                 menu.addItem(ClosureMenuItem(title: L("Rename…")) { [weak self] in self?.onRemoteAction?(remote, .edit) })
                 menu.addItem(ClosureMenuItem(title: L("Edit URL…")) { [weak self] in self?.onRemoteAction?(remote, .edit) })
@@ -1335,7 +1364,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 menu.addItem(ClosureMenuItem(title: L("Remove…")) { [weak self] in self?.onRemoteAction?(remote, .remove) })
                 return
             }
-            if node.title == "Remotes" {
+            if isGroup, node.title == "Remotes" {
                 menu.addItem(ClosureMenuItem(title: L("Add Remote…")) { [weak self] in self?.onRemoteAction?(nil, .add) })
                 return
             }
@@ -1346,15 +1375,15 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 menu.addItem(ClosureMenuItem(title: "Split…") { [weak self] in self?.onSubtreeAction?(dir, .split) })
                 return
             }
-            if node.title == "Branches", node.branchGroup == nil {
+            if isGroup, node.title == "Branches", node.branchGroup == nil {
                 menu.addItem(ClosureMenuItem(title: L("Clean Up Branches…")) { [weak self] in self?.onCleanUpBranches?() })
                 return
             }
-            if node.title == "Subtrees" {
+            if isGroup, node.title == "Subtrees" {
                 menu.addItem(ClosureMenuItem(title: L("Add Subtree…")) { [weak self] in self?.onSubtreeAction?(nil, .add) })
                 return
             }
-            if node.title == "Submodules" {
+            if isGroup, node.title == "Submodules" {
                 menu.addItem(ClosureMenuItem(title: "Update All") { actions.perform(["op": "updateSubmodules", "paths": [String]()]) })
                 menu.addItem(ClosureMenuItem(title: "Update Submodules…") { [weak self] in self?.onSubmoduleAction?(nil, .update) })
                 menu.addItem(ClosureMenuItem(title: "Sync URLs") { [weak self] in self?.onSubmoduleAction?(nil, .sync) })
@@ -1712,6 +1741,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     }
 
     func outlineViewSelectionDidChange(_ notification: Notification) {
+        guard !reselecting else { return }
         // ブランチ・タグを複数選んだら、それぞれから辿れる履歴をまとめて出す。
         if outline.selectedRowIndexes.count > 1 {
             let selected = outline.selectedRowIndexes.compactMap { (outline.item(atRow: $0) as? Node)?.item }

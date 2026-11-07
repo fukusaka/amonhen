@@ -397,7 +397,7 @@ pub fn open(
             Ok(editor) => {
                 editor.set_on_resolved(on_resolved);
                 show_in_window(&editor, &parent);
-                Editor::opened(&editor);
+                Editor::opened(&editor, true);
             }
             Err(error) => {
                 let dialog = gtk::AlertDialog::builder()
@@ -614,7 +614,7 @@ fn adopt_in_window(
                     window.set_child(Some(&next.root));
                     KEEP.with(|k| k.borrow_mut().retain(|e| !Rc::ptr_eq(e, &editor)));
                     adopt_in_window(&next, &window, &current);
-                    Editor::opened(&next);
+                    Editor::opened(&next, true);
                 }
                 Err(error) => {
                     crate::sheets::alert(Some(&window), &error, "").await;
@@ -928,7 +928,18 @@ impl Editor {
         let weak = Rc::downgrade(&this);
         base_toggle.connect_toggled(move |b| {
             if let Some(this) = weak.upgrade() {
-                this.base.root.set_visible(b.is_active());
+                let shown = b.is_active();
+                this.base.root.set_visible(shown);
+                if shown {
+                    // 隠れている間はスクロールできないので、大きさが決まってから Result に揃える（macOS 版は
+                    // 隠れていても揃っている）。
+                    let weak = Rc::downgrade(&this);
+                    glib::timeout_add_local_once(std::time::Duration::from_millis(30), move || {
+                        if let Some(this) = weak.upgrade() {
+                            this.scrolled(3);
+                        }
+                    });
+                }
             }
         });
         let f = with(|t| t.save(false));
@@ -1047,8 +1058,8 @@ impl Editor {
 
     /// 開いたとき（作ったあと一度だけ）: 間違えようのないコンフリクトを解く（設定で切れる）。スクロールはしない
     /// （ファイルの先頭から。macOS 版と同じ）。
-    pub fn opened(this: &Rc<Self>) {
-        if crate::settings::bool(crate::settings::AUTO_MAGIC_MERGE) {
+    pub fn opened(this: &Rc<Self>, auto_magic: bool) {
+        if auto_magic && crate::settings::bool(crate::settings::AUTO_MAGIC_MERGE) {
             let solved = this.apply_magic(MagicRules::Safe);
             if solved > 0 {
                 this.note.set_text(&tr!(

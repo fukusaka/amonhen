@@ -1041,10 +1041,6 @@ pub struct Facts {
     pub working_copy: bool,
     /// Working Copy の Commit を押せる。
     pub can_commit: bool,
-    /// 埋め込んだマージエディタにフォーカスがある（Ctrl+Return はエディタの Save & Mark Resolved。アプリの
-    /// ショートカットは部品より先に受けるので、その間は Commit を止めて、キーをエディタに渡す。macOS 版でも
-    /// ⌘↩ はエディタが先に受ける）。
-    pub merge_focused: bool,
     /// コンフリクト以外に、stage していない変更がある。
     pub can_stage_all: bool,
     /// History を出していて、パッチにできるコミット（merge でないもの）だけを選んでいる。
@@ -1115,7 +1111,7 @@ pub fn enabled(f: &Facts) -> Vec<(&'static str, bool)> {
         ("rename-branch", f.head_branch),
         ("set-upstream", f.head_branch),
         ("compare-with-previous", f.head_branch),
-        ("commit", commit && !f.merge_focused),
+        ("commit", commit),
         ("commit-and-push", commit),
         ("stage-all", f.working_copy && f.can_stage_all),
         ("open-in-terminal", f.local),
@@ -1353,11 +1349,6 @@ mod tests {
         for name in ["commit", "commit-and-push", "stage-all"] {
             assert!(of(&facts, name), "{name}");
         }
-        // マージエディタの中では、Ctrl+Return をエディタに渡す。
-        facts.merge_focused = true;
-        assert!(!of(&facts, "commit"));
-        assert!(of(&facts, "commit-and-push"));
-        facts.merge_focused = false;
         facts.can_commit = false;
         facts.can_stage_all = false;
         for name in ["commit", "commit-and-push", "stage-all"] {

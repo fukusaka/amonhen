@@ -712,7 +712,14 @@ impl Shaper {
                 // 使った）と空になる。空にはせず今の表示を残し、ref を読み直して付け替えたときに出し直す。
                 Ok(Ok(shaped)) if shaped.graph.is_empty() && whole > 0 => {}
                 Ok(Ok(shaped)) => {
-                    let row = select.and_then(|id| shaped.row_of(&id));
+                    // 絞り込み中は、出ているのは探し直した後の History なので、行の番号でなくコミットで選ぶ。
+                    let filtered = search.is_filtered();
+                    if filtered && let Some(id) = select {
+                        view.select_commit(id);
+                    }
+                    let row = select
+                        .filter(|_| !filtered)
+                        .and_then(|id| shaped.row_of(&id));
                     search.show_history(repo, shaped);
                     if reset_scroll {
                         view.scroll_to_top();

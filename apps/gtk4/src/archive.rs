@@ -53,6 +53,7 @@ pub fn export(actions: &Rc<Actions>, rev: String, label: String) {
             .text(&name)
             .placeholder_text(tr!("None"))
             .width_chars(28)
+            .activates_default(true)
             .build();
         sheet.add(&sheets::row(&tr!("Top folder:"), &top));
         // 書き出すフォルダ（選ばなければ全体）。その時点の木から選ぶ。

@@ -626,7 +626,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         }
         pages?.replace(.workingCopy, with: slot.workingCopy)
         // リポジトリの設定も書き込む先の worktree のもの（読むのと操作の先を揃える。sparse checkout は worktree ごと）。
-        settings = RepositorySettingsPage(repository: slot.repository, location: location)
+        settings = RepositorySettingsPage(repository: slot.repository, location: location, page: settings.model.shownPage)
         connectSettings()
         pages?.replace(.settings, with: settings)
         // プルリクエストでマージ済みのブランチは、リポジトリで共通（分け方が同じなら読み直さない）。
@@ -906,7 +906,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         // 下で開いたリポジトリから作るので、書き込む先の HEAD は ID で渡す。
         var start = startPoint
         if start == "HEAD", editing !== opened, let head = editingRefs?.head {
-            start = head.map { String(format: "%02x", $0) }.joined()
+            start = String(head.map { String(format: "%02x", $0) }.joined().prefix(12))
         }
         let base = opened.path
         let alert = NSAlert()
@@ -2567,7 +2567,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         // 送るものがなければ押せない（理由はツールバーのツールチップ）。上流のないブランチは Publish。
         case #selector(push(_:)): return pushState.map { !$0.published || $0.ahead > 0 } ?? false
         case #selector(forcePush(_:)): return pushState?.published ?? false
-        case #selector(pull(_:)): return latestRefs?.headBranch != nil && sequence == nil
+        case #selector(pull(_:)): return editingBranch != nil && sequence == nil
         case #selector(mergeIntoCurrent(_:)), #selector(rebaseCurrent(_:)): return latestRefs != nil && sequence == nil
         case #selector(popStash(_:)), #selector(showStashes(_:)): return latestStash != nil
         case #selector(undoOperation(_:)): return undoLabel != nil

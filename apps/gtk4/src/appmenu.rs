@@ -537,7 +537,16 @@ fn handlers() -> Vec<(&'static str, Handler)> {
         ("rename-branch", Box::new(rename_branch)),
         (
             "new-worktree",
-            Box::new(|p| crate::worktrees::new_worktree(&p.actions, &p.worktrees, start_point(p))),
+            Box::new(|p| {
+                // 下で開いたリポジトリから作るので、書き込む先の HEAD は ID で渡す。
+                let mut start = start_point(p);
+                if start == "HEAD"
+                    && let Some(head) = p.refs.borrow().as_ref().and_then(|r| r.refs.head)
+                {
+                    start = head.to_string()[..12].to_owned();
+                }
+                crate::worktrees::new_worktree(&p.actions, &p.worktrees, start);
+            }),
         ),
         ("prune-worktrees", run(json!({ "op": "worktreePrune" }))),
         ("set-upstream", Box::new(set_upstream)),

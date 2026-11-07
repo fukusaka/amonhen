@@ -1207,32 +1207,36 @@ pub fn new_worktree(
                 .into_owned();
         }
         let (a, w, branch) = (actions.clone(), worktrees.clone(), name.clone());
-        actions.perform_with(
-            vec![json!({ "op": "worktreeAdd", "path": path, "newBranch": name, "start": start })],
-            move |reply| {
-                if reply["ok"].as_bool() != Some(true) {
-                    return;
+        // 開いたリポジトリで（相対パスはいつも同じ所から。macOS 版と同じ）。
+        let command =
+            vec![json!({ "op": "worktreeAdd", "path": path, "newBranch": name, "start": start })];
+        let done = move |reply: &serde_json::Value| {
+            if reply["ok"].as_bool() != Some(true) {
+                return;
+            }
+            if !path.starts_with('~') {
+                return a.edit_worktree(&path);
+            }
+            // SSH 先の `~` はそこのホーム。実際のパスは、作ったブランチの worktree で分かる。
+            let Some(repo) = w.opened() else { return };
+            let a = a.clone();
+            let branch = branch.clone();
+            glib::spawn_future_local(async move {
+                let reply = crate::sheets::run(&repo, json!({ "op": "worktrees" })).await;
+                let made = reply["info"]["worktrees"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .find(|w| w["branch"].as_str() == Some(branch.as_str()));
+                if let Some(path) = made.and_then(|w| w["path"].as_str()) {
+                    a.edit_worktree(path);
                 }
-                if !path.starts_with('~') {
-                    return a.edit_worktree(&path);
-                }
-                // SSH 先の `~` はそこのホーム。実際のパスは、作ったブランチの worktree で分かる。
-                let Some(repo) = w.opened() else { return };
-                let a = a.clone();
-                let branch = branch.clone();
-                glib::spawn_future_local(async move {
-                    let reply = crate::sheets::run(&repo, json!({ "op": "worktrees" })).await;
-                    let made = reply["info"]["worktrees"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .find(|w| w["branch"].as_str() == Some(branch.as_str()));
-                    if let Some(path) = made.and_then(|w| w["path"].as_str()) {
-                        a.edit_worktree(path);
-                    }
-                });
-            },
-        );
+            });
+        };
+        match worktrees.opened() {
+            Some(repo) => actions.perform_in(repo, command, done),
+            None => actions.perform_with(command, done),
+        }
     });
 }
 

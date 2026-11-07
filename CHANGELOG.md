@@ -55,6 +55,20 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- The merge editor's safe rules run once per conflict, so saving no longer reapplies what Undo took back.
+- Rows that only look consecutive in a filtered History are no longer treated as a range, and a binary conflict no
+  longer counts as resolved without markers.
+- macOS: choosing a branch while History shows only matches selects its commit, and selected branches stay highlighted
+  through a sidebar refresh.
+- macOS: Pull's enabled state follows the worktree being edited, and Repository Settings keeps its section when
+  switching worktree.
+- macOS: the merge editor no longer blocks while computing conflicts through the shared daemon.
+- macOS: a failing tag signature check no longer repeats, a branch folder named like a sidebar group no longer gets
+  that group's menu, and a `git rm`'d file no longer offers Blame or open items.
+- GTK4: the toolbar takes several flexible spaces, Repositories columns can be reordered, and Edit menu items follow
+  what the focused widget can do.
+- GTK4: scan folders notice `git init` and a removed `.git`, and the sidebar keeps its scroll position on a refresh.
+- GTK4: smaller differences from macOS in History, Working Copy, the commit message aids and the merge editor.
 - A file that isn't UTF-8 no longer opens in the merge editor, whose save replaced its invalid bytes; take one side
   instead, which keeps the bytes.
 - Mark N Without Markers Resolved saves unsaved Result edits first instead of dropping them.

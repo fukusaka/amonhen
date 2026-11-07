@@ -57,10 +57,15 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
     private var reparse: DispatchWorkItem?
     /// ほかの欄をスクロールで揃えている間（揃えた結果の通知で揃え返さない）。
     private var syncing = false
+    /// 開いたときのコンフリクト（裏で読んである）。
+    private let initialRegions: [ConflictRegions.Conflict]
+    /// 読み直しの番号（読んでいる間に次の読み直しが来たら、前のは捨てる）。
+    private var conflictsRequest = 0
 
-    init(path: String, sides: MergeSides, repository: Repository, actions: Actions) {
+    init(path: String, sides: MergeSides, regions: [ConflictRegions.Conflict], repository: Repository, actions: Actions) {
         self.path = path
         self.sides = sides
+        initialRegions = regions
         self.repository = repository
         self.actions = actions
         savedText = sides.result
@@ -77,10 +82,13 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
 
     /// `path` の中身を読んでエディタを作る（裏で読む）。
     static func load(path: String, repository: Repository, actions: Actions) async throws -> MergeEditorViewController {
-        let sides = try await Task.detached(priority: .userInitiated) {
-            try repository.info(["op": "mergeSides", "path": path], as: MergeSides.self)
+        // 最初のコンフリクトも裏で読む（daemon 越しでは往復がかかる）。
+        let (sides, regions) = try await Task.detached(priority: .userInitiated) {
+            let sides = try repository.info(["op": "mergeSides", "path": path], as: MergeSides.self)
+            let regions = try? repository.info(["op": "conflictRegions", "text": sides.result], as: ConflictRegions.self)
+            return (sides, regions?.conflicts ?? [])
         }.value
-        return MergeEditorViewController(path: path, sides: sides, repository: repository, actions: actions)
+        return MergeEditorViewController(path: path, sides: sides, regions: regions, repository: repository, actions: actions)
     }
 
     /// 同じファイルを読み直したエディタ。
@@ -227,11 +235,13 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
         current.string = sides.current?.text ?? ""
         incoming.string = sides.incoming?.text ?? ""
         base.string = sides.base?.text ?? ""
-        updateConflicts(initial: true)
+        originals = initialRegions.map { ($0.current, $0.incoming) }
+        show(conflicts: initialRegions, initial: true)
         for text in [current, incoming, base, result] { colorSyntax(text) }
     }
 
-    private var autoApplied = false
+    /// 開いたときの自動の解決はもう済んだ（読み直したエディタでは、Undo で戻したものをまた解かない）。
+    var autoApplied = false
 
     override func viewDidAppear() {
         super.viewDidAppear()
@@ -240,8 +250,8 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
         guard !autoApplied else { return }
         autoApplied = true
         guard Settings.autoMagicMerge else { return }
-        let solved = applyMagic(safe: true)
-        if solved > 0 {
+        applyMagic(safe: true) { [weak self] solved in
+            guard let self, solved > 0 else { return }
             colorSyntax(result)
             note.stringValue = L("Resolved %ld when opened (⌘Z to undo).", solved)
         }
@@ -375,13 +385,26 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
     // MARK: - コンフリクト
 
     /// Result を読み直して、残っているコンフリクトと左右の欄との対応を決め、強調し直す。
-    private func updateConflicts(initial: Bool = false) {
-        let text = result.string
-        var command: [String: Any] = ["op": "conflictRegions", "text": text]
+    /// 裏で読む（daemon 越しでは Result 全体を送って往復する）。読み終えたら `then`。
+    private func updateConflicts(then: (() -> Void)? = nil) {
         // 最初のどのコンフリクトに当たるか（手で書き換えたものも、前後と片側からコアが結ぶ）。
-        if !initial { command["originals"] = originals.map { [$0.current, $0.incoming] } }
-        let found = (try? repository.info(command, as: ConflictRegions.self))?.conflicts ?? []
-        if initial { originals = found.map { ($0.current, $0.incoming) } }
+        let command: [String: Any] = ["op": "conflictRegions", "text": result.string,
+                                      "originals": originals.map { [$0.current, $0.incoming] }]
+        guard let json = try? Repository.json(command) else { return }
+        let repository = self.repository
+        conflictsRequest += 1
+        let request = conflictsRequest
+        Task { [weak self] in
+            let found = await Task.detached(priority: .userInitiated) {
+                (try? repository.info(json: json, as: ConflictRegions.self))?.conflicts ?? []
+            }.value
+            guard let self, request == conflictsRequest else { return }
+            show(conflicts: found, initial: false)
+            then?()
+        }
+    }
+
+    private func show(conflicts found: [ConflictRegions.Conflict], initial: Bool) {
         conflicts = found
         originalOf = initial ? found.indices.map { Optional($0) } : found.map(\.original)
         selected = min(selected, max(0, conflicts.count - 1))
@@ -522,49 +545,71 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
     private func resolve(_ index: Int, _ choice: String) {
         guard index < conflicts.count else { return }
         let old = result.string
-        do {
-            guard let text = try repository.run(["op": "resolveText", "text": old, "index": index, "choice": choice]).text
-            else { return }
-            selected = index
-            replace(old: old, with: text)
-        } catch {
-            NSAlert(error: error).runModal()
-            return
+        guard let json = try? Repository.json(["op": "resolveText", "text": old, "index": index, "choice": choice]) else { return }
+        let repository = self.repository
+        Task { [weak self] in
+            // 裏で計算する（daemon 越しでは Result 全体を送って往復する）。
+            let answer = await Task.detached(priority: .userInitiated) {
+                Result { try repository.run(json: json).text }
+            }.value
+            // 読んでいる間に Result が変わったら、番号も中身も古いので当てない。
+            guard let self, result.string == old else { return }
+            switch answer {
+            case let .success(text):
+                guard let text else { return }
+                selected = index
+                replace(old: old, with: text)
+                updateConflicts { [weak self] in self?.reveal() }
+            case let .failure(error):
+                NSAlert(error: error).runModal()
+            }
         }
-        updateConflicts()
-        reveal()
     }
 
     /// ✨ Magic Merge: 決まった規則で解けるコンフリクトをまとめて解く（Undo でまとめて戻せる）。
     @objc private func magicMerge() {
-        let solved = applyMagic(safe: false)
-        note.stringValue = solved == 0 ? L("Nothing to resolve") : L("Resolved %ld (⌘Z undoes them one at a time).", solved)
-        if solved > 0 { reveal() }
+        applyMagic(safe: false) { [weak self] solved in
+            guard let self else { return }
+            note.stringValue = solved == 0 ? L("Nothing to resolve") : L("Resolved %ld (⌘Z undoes them one at a time).", solved)
+        }
     }
 
     /// Magic Merge をコンフリクト 1 つずつかける（それぞれ別の Undo にする）。後ろから解くので、前の番号は変わらない。
-    /// `safe` なら、間違えようのない規則（両側が同じ、片側だけが変えた）だけ。解いた数を返す。
-    @discardableResult
-    private func applyMagic(safe: Bool) -> Int {
-        struct Info: Decodable { let text: String; let resolved: Int }
-        guard let undo = result.undoManager else { return 0 }
-        let wasGrouping = undo.groupsByEvent
-        undo.groupsByEvent = false
-        defer { undo.groupsByEvent = wasGrouping }
-        var solved = 0
-        for index in conflicts.indices.reversed() {
-            let old = result.string
-            guard let info = try? repository.info(
-                ["op": "magicMerge", "text": old, "safe": safe, "index": index], as: Info.self),
-                info.resolved > 0 else { continue }
-            undo.beginUndoGrouping()
-            replace(old: old, with: info.text)
-            undo.setActionName(safe ? L("Magic Merge (on open)") : "Magic Merge")
-            undo.endUndoGrouping()
-            solved += 1
+    /// `safe` なら、間違えようのない規則（両側が同じ、片側だけが変えた）だけ。計算は裏で（daemon 越しでは Result 全体を
+    /// 送って往復する）。解いた数を `done` に渡す。
+    private func applyMagic(safe: Bool, done: @escaping (Int) -> Void) {
+        nonisolated struct Info: Decodable { let text: String; let resolved: Int }
+        let start = result.string, repository = self.repository
+        let indices = Array(conflicts.indices.reversed())
+        Task { [weak self] in
+            // 1 つ解くごとの Result。
+            let steps: [String] = await Task.detached(priority: .userInitiated) {
+                var text = start
+                var steps: [String] = []
+                for index in indices {
+                    guard let json = try? Repository.json(["op": "magicMerge", "text": text, "safe": safe, "index": index]),
+                          let info = try? repository.info(json: json, as: Info.self),
+                          info.resolved > 0 else { continue }
+                    text = info.text
+                    steps.append(text)
+                }
+                return steps
+            }.value
+            // 読んでいる間に Result が変わったら、古いので当てない。
+            guard let self, let undo = result.undoManager, result.string == start else { return done(0) }
+            let wasGrouping = undo.groupsByEvent
+            undo.groupsByEvent = false
+            defer { undo.groupsByEvent = wasGrouping }
+            for step in steps {
+                let old = result.string
+                undo.beginUndoGrouping()
+                replace(old: old, with: step)
+                undo.setActionName(safe ? L("Magic Merge (on open)") : "Magic Merge")
+                undo.endUndoGrouping()
+            }
+            done(steps.count)
+            if !steps.isEmpty { updateConflicts { [weak self] in if !safe { self?.reveal() } } }
         }
-        if solved > 0 { updateConflicts() }
-        return solved
     }
 
     private func replace(old: String, with new: String) {
