@@ -65,6 +65,7 @@ pub fn save(actions: &Rc<Actions>, refs: Vec<String>, names: Vec<String>, label:
             .placeholder_text(tr!("Tag, branch or commit"))
             .width_chars(24)
             .sensitive(false)
+            .activates_default(true)
             .build();
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         row.append(&newer);
