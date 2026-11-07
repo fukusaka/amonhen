@@ -64,7 +64,9 @@ enum RepositoryList {
            let text = try? String(contentsOfFile: dotGit, encoding: .utf8), text.hasPrefix("gitdir:") {
             let target = text.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespacesAndNewlines)
             let gitDir = target.hasPrefix("/") ? target : (path as NSString).appendingPathComponent(target)
-            if let range = gitDir.range(of: "/.git/worktrees/") {
+            // 追加した worktree の中の submodule は `<名前>/modules/…` を指す別のリポジトリ。
+            if let range = gitDir.range(of: "/.git/worktrees/"),
+               !gitDir[range.upperBound...].trimmingCharacters(in: CharacterSet(charactersIn: "/")).contains("/") {
                 main = String(gitDir[..<range.lowerBound])
             }
         }
