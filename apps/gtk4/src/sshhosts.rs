@@ -1044,7 +1044,7 @@ impl SshHosts {
                         folders = roots.len()
                     ),
                 );
-                sheet.buttons(&tr!("Delete"), true, None);
+                sheet.buttons(&tr!("Remove"), true, None);
                 if sheet.run().await != Response::Ok {
                     return;
                 }

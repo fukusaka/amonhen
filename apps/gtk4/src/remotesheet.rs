@@ -78,7 +78,7 @@ pub async fn ask_remove(parent: Option<&gtk::Window>, name: &str) -> bool {
             name = name
         ),
     );
-    sheet.buttons(&tr!("Delete"), true, None);
+    sheet.buttons(&tr!("Remove"), true, None);
     sheet.run().await == Response::Ok
 }
 

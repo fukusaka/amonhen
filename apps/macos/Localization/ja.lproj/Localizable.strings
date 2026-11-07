@@ -263,7 +263,7 @@
 "Remove from Group" = "グループから外す";
 "%@ not found" = "%@ が見つかりません";
 "%@\nRemove it from the list?" = "%@\n一覧から外しますか？";
-"Remove" = "外す";
+"Remove" = "削除";
 "Add Local Repository…" = "手元のリポジトリを加える…";
 "Add SSH Connection…" = "SSH 接続を加える…";
 "Fetch All (%ld)" = "すべて Fetch（%ld）";
@@ -272,7 +272,7 @@
 "Add Folder to Scan…" = "スキャンするフォルダを加える…";
 "Rename…" = "名前を変更…";
 "Rename Group" = "グループの名前を変える";
-"Delete Group" = "グループを消す";
+"Delete Group" = "グループを削除";
 "Couldn’t search: %@" = "探せませんでした: %@";
 "Search Depth" = "探す深さ";
 "Search Again" = "探し直す";
@@ -445,7 +445,7 @@
 "New name" = "新しい名前";
 "Edit URL" = "URL を編集";
 "URL for %@" = "%@ の URL";
-"Remove %@?" = "%@ を消しますか？";
+"Remove %@?" = "%@ を削除しますか？";
 "This removes the remote’s settings and its remote-tracking branches (%@/…). The remote repository isn’t touched." = "リモートの設定と、追跡しているリモートブランチ（%@/…）が消えます。リモートのリポジトリには触れません。";
 ".gitignore (at the top of the working tree; committed and shared)" = ".gitignore（作業ツリーの直下。コミットして共有する）";
 ".git/info/exclude (this repository only; not shared)" = ".git/info/exclude（このリポジトリだけ。共有しない）";
@@ -1092,9 +1092,9 @@
 "Locked: %@" = "ロック中: %@";
 "New Worktree" = "New Worktree";
 "Prune Worktrees" = "Prune Worktrees";
-"Remove Worktree" = "Remove Worktree";
-"Remove Worktree…" = "Remove Worktree…";
-"Remove the worktree “%@”?" = "worktree「%@」を消しますか？";
+"Remove Worktree" = "削除";
+"Remove Worktree…" = "削除…";
+"Remove the worktree “%@”?" = "worktree「%@」を削除しますか？";
 "Removes the folder %@. The branch stays." = "フォルダ %@ を消します。ブランチは残ります。";
 "detached HEAD" = "detached HEAD";
 "locked" = "ロック中";
@@ -1139,7 +1139,7 @@
 "%@ (deleted on the remote)" = "%@（リモートで消されています）";
 "%ld ahead" = "%ld 先";
 "%ld behind" = "%ld 遅れ";
-"Delete Branch" = "ブランチを消す";
+"Delete Branch" = "ブランチを削除";
 "Checked out in the worktree “%@”" = "worktree「%@」でチェックアウト中";
 "Git lets a branch be checked out in only one worktree, so it can’t be checked out here. Open that worktree to work on it (its folder: %@)." = "git はブランチを 1 つの worktree でしかチェックアウトさせないので、ここではチェックアウトできません。作業するならその worktree を開いてください（フォルダ: %@）。";
 "Diverged from %@" = "%@ と分かれています";
@@ -1839,9 +1839,9 @@
 "Move Repository Data into .git/modules" = "リポジトリのデータを .git/modules に移す";
 
 /* delete ignored files */
-"Delete Ignored Files…" = "ignore されたファイルを消す…";
+"Delete Ignored Files…" = "ignore されたファイルを削除…";
 "No Ignored Files" = "ignore されたファイルはありません";
-"Delete %ld Ignored Items?" = "ignore された %ld 個を消しますか？";
+"Delete %ld Ignored Items?" = "ignore された %ld 個を削除しますか？";
 "Nothing in the working tree matches .gitignore." = "作業ツリーに .gitignore に当たるものはありません。";
 "These are removed from the working tree (git clean -X); folders go with everything in them." = "これらを作業ツリーから消します（git clean -X）。フォルダは中身ごと消えます。";
 "Clean Up Branches…" = "ブランチを片付ける…";

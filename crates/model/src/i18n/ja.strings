@@ -1087,7 +1087,7 @@
 "A path" = "パス";
 "SSH host {host}" = "SSH 先 {host}";
 "Other" = "その他";
-"Remove {name}?" = "{name} を消しますか？";
+"Remove {name}?" = "{name} を削除しますか？";
 "This removes the remote’s settings and its remote-tracking branches ({name}/…). The remote repository isn’t touched." = "リモートの設定と、追跡しているリモートブランチ（{name}/…）が消えます。リモートのリポジトリには触れません。";
 "Edit Remote" = "リモートを編集";
 "Same as the fetch URL" = "fetch と同じ";
@@ -1132,7 +1132,7 @@
 "No LFS patterns in .gitattributes." = ".gitattributes に LFS で扱うパターンはない";
 "Pattern" = "パターン";
 "Track Pattern…" = "パターンを追跡…";
-"Remove" = "外す";
+"Remove" = "削除";
 "core.hooksPath ({path}) is outside the working tree, so its contents can’t be shown." = "core.hooksPath（{path}）は作業ツリーの外なので、中を見られない";
 "No hooks. .sample files aren’t counted." = "フックはありません。.sample のファイルは数えません。";
 "Location: {path}" = "場所: {path}";
@@ -1265,7 +1265,7 @@
 "Built on" = "土台";
 "Merged into" = "取り込み先";
 "Merging into {base}" = "{base} への merge";
-"Delete Branch" = "ブランチを消す";
+"Delete Branch" = "ブランチを削除";
 "Archive" = "アーカイブ";
 "Unarchive" = "アーカイブから戻す";
 "Branches with no new commit for 90 days. Folded." = "90 日以上新しいコミットがないブランチ。畳んでおきます。";
@@ -1328,7 +1328,7 @@
 "Remove…" = "削除…";
 "Rename…" = "名前を変更…";
 "Edit URL…" = "URL を編集…";
-"Remove {name}?" = "{name} を消しますか？";
+"Remove {name}?" = "{name} を削除しますか？";
 "This removes the remote’s settings and its remote-tracking branches ({name}/…). The remote repository isn’t touched." = "リモートの設定と、追跡しているリモートブランチ（{name}/…）が消えます。リモートのリポジトリには触れません。";
 "A path" = "パス";
 "SSH host {host}" = "SSH 先 {host}";
@@ -1380,7 +1380,7 @@
 "Choose a repository to open" = "リポジトリを選んで開く";
 "Color Label" = "色ラベル";
 "Couldn’t search: {error}" = "探せませんでした: {error}";
-"Delete Group" = "グループを消す";
+"Delete Group" = "グループを削除";
 "Favorites" = "お気に入り";
 "Fetch ({count})" = "Fetch（{count}）";
 "Fetch All ({count})" = "すべて Fetch（{count}）";
@@ -1415,8 +1415,8 @@
 "Share History, the search index and the operation log with the CLI and others" = "History・検索の索引・操作の記録を CLI などと共有する";
 "Opened" = "開いた日時";
 "Places" = "場所";
-"Remove" = "外す";
-"Remove {host}?" = "{host} を消しますか？";
+"Remove" = "削除";
+"Remove {host}?" = "{host} を削除しますか？";
 "Remove {name} from List…" = "{name} を一覧から外す…";
 "Remove from Favorites" = "お気に入りから外す";
 "Remove from Group" = "グループから外す";
@@ -1502,7 +1502,7 @@
 "Signatures of commits in repositories on this host are checked with these." = "この SSH 先のリポジトリのコミットの署名を、これで検証します。";
 "Write it as ssh knows it: user@host:port, or a name in ~/.ssh/config." = "ssh が知っている名前で書きます: user@host:port か、~/.ssh/config の名前。";
 "Add" = "追加";
-"Remove {host}?" = "{host} を消しますか？";
+"Remove {host}?" = "{host} を削除しますか？";
 "This removes its {repositories} repositories and {folders} folders to scan from the list. Nothing on the host is touched." = "そのホストのリポジトリ {repositories} 個とスキャンするフォルダ {folders} 個を一覧から外します。ホストの中には触れません。";
 "Engine on {host}" = "{host} のエンジン";
 "Choose amonhen on the host. It must be this build." = "SSH 先の amonhen を選びます。このビルドのものである必要があります。";
@@ -1550,9 +1550,9 @@
 "Branch name" = "ブランチの名前";
 "Folder" = "フォルダ";
 "Edit This Worktree" = "この worktree を編集";
-"Remove Worktree" = "Remove Worktree";
-"Remove Worktree…" = "Remove Worktree…";
-"Remove the worktree “{name}”?" = "worktree「{name}」を消しますか？";
+"Remove Worktree" = "削除";
+"Remove Worktree…" = "削除…";
+"Remove the worktree “{name}”?" = "worktree「{name}」を削除しますか？";
 "{path} has uncommitted changes in {count} files. They are lost with the folder. The branch stays." = "{path} には、コミットしていない変更が {count} ファイルあります。フォルダと一緒に失われます。ブランチは残ります。";
 "Removes the folder {path}. The branch stays." = "フォルダ {path} を消します。ブランチは残ります。";
 
@@ -2170,9 +2170,9 @@
 "Also in the submodules inside them (--recursive)" = "中の submodule でも（--recursive）";
 "Run" = "動かす";
 "Move Repository Data into .git/modules" = "リポジトリのデータを .git/modules に移す";
-"Delete Ignored Files…" = "ignore されたファイルを消す…";
+"Delete Ignored Files…" = "ignore されたファイルを削除…";
 "No Ignored Files" = "ignore されたファイルはありません";
-"Delete {count} Ignored Items?" = "ignore された {count} 個を消しますか？";
+"Delete {count} Ignored Items?" = "ignore された {count} 個を削除しますか？";
 "Nothing in the working tree matches .gitignore." = "作業ツリーに .gitignore に当たるものはありません。";
 "These are removed from the working tree (git clean -X); folders go with everything in them." = "これらを作業ツリーから消します（git clean -X）。フォルダは中身ごと消えます。";
 "Clean Up Branches…" = "ブランチを片付ける…";

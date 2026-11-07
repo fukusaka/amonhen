@@ -26,7 +26,7 @@ enum SSHConnectionSheet {
         alert.messageText = L("Remove %@?", host)
         alert.informativeText = L("This removes its %ld repositories and %ld folders to scan from the list. Nothing on the host is touched.", repositories, folders)
         // 戻せないので、赤く、↩ では押せない（↩ は Cancel）。
-        let delete = alert.addButton(withTitle: L("Delete"))
+        let delete = alert.addButton(withTitle: L("Remove"))
         delete.hasDestructiveAction = true
         delete.keyEquivalent = ""
         alert.addButton(withTitle: L("Cancel")).keyEquivalent = "\r"
