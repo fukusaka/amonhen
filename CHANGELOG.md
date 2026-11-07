@@ -52,6 +52,7 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- Create Pull Request… works for a repository on an SSH host.
 - A submodule inside an added worktree opens as itself, not as the main repository.
 - In the GTK4 app, the sidebar opens a submodule from the worktree being edited, and Forget This Resolution in a
   separate merge window stays in its own worktree.

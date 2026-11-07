@@ -1650,9 +1650,11 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
                 add("Discard…") { [weak self] in self?.discardFile(entry) }
             }
             // 右クリックした行を含めて選んでいれば、選んだファイルの変更を。
-            let selected = files.selectedRowIndexes.contains(files.clickedRow)
-                ? files.selectedRowIndexes.compactMap { (files.item(atRow: $0) as? Entry)?.item.path } : [path]
-            add("Stash…") { [weak self] in self?.actions?.stash(paths: selected) }
+            let chosen = files.selectedRowIndexes.contains(files.clickedRow)
+                ? files.selectedRowIndexes.compactMap { files.item(atRow: $0) as? Entry } : [entry]
+            let selected = chosen.map(\.item.path)
+            let hasUntracked = chosen.contains { $0.item.kind == .untracked }
+            add("Stash…") { [weak self] in self?.actions?.stash(paths: selected, untrackedChosen: hasUntracked) }
             menu.addItem(.separator())
         }
         // untracked のファイルにはまだ履歴がない。代わりに .gitignore に足せる（そのパスか、拡張子のパターン）。

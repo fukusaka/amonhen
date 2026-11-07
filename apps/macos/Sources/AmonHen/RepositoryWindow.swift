@@ -834,6 +834,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     /// worktree のフォルダを移す（git worktree move。git の記録も一緒に直す）。手元のリポジトリなら置き場所を選べる。
     private func moveWorktree(_ info: WorktreeInfo) {
+        // 開いたリポジトリは移せない（窓が古いパスを指したままになる。`removeWorktree` と同じ）。
+        guard !info.isSame(opened.path) else { return NSSound.beep() }
         askFolder(title: L("Move the Worktree “%@”", info.name),
                   message: L("Moves the folder and tells git where it is now (git worktree move)."),
                   initial: info.path, button: L("Move")) { [weak self] to in
@@ -2273,8 +2275,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 Task {
                     defer { RunningOperations.end() }
                     do {
+                        // SSH 先のパスは手元にないので、そこでは gh を起動しない（送り先は -R と --head で決まる）。
                         let url = try await GitHub.createPullRequest(
-                            in: dir, repo: target.repo, head: target.head(branch), title: answer.title, body: answer.body, base: answer.base,
+                            in: self.isLocal ? dir : nil, repo: target.repo, head: target.head(branch), title: answer.title, body: answer.body, base: answer.base,
                             draft: answer.draft)
                         let done = NSAlert()
                         done.messageText = L("Pull Request Created")

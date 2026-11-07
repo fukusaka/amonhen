@@ -632,13 +632,13 @@ impl Actions {
     }
 
     pub fn stash(self: &Rc<Self>) {
-        self.stash_paths(Vec::new());
+        self.stash_paths(Vec::new(), false);
     }
 
     /// 作業中の変更を stash する。`paths` があれば、そのファイルの変更だけ。何を stash するか（すべて・stage した
     /// 変更だけ）、stage した変更を残すか、untracked のファイルを含めるかを選べる（既定は git と同じく、追跡している
     /// ファイルの変更をすべて。macOS 版と同じ）。
-    pub fn stash_paths(self: &Rc<Self>, paths: Vec<String>) {
+    pub fn stash_paths(self: &Rc<Self>, paths: Vec<String>, untracked_chosen: bool) {
         let this = self.clone();
         glib::spawn_future_local(async move {
             let title = match &paths[..] {
@@ -661,6 +661,8 @@ impl Actions {
                 "Keep the staged changes in the working tree (--keep-index)"
             ));
             let untracked = gtk::CheckButton::with_label(&tr!("Include untracked files"));
+            // 選んだファイルに untracked があれば、最初から含める（含めないと git が断る。macOS 版と同じ）。
+            untracked.set_active(untracked_chosen);
             // stage した変更だけのときは、ほかの選び方は git が受けない。
             let (k, u) = (keep_index.downgrade(), untracked.downgrade());
             staged.connect_toggled(move |staged| {

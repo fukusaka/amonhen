@@ -495,12 +495,12 @@ final class Actions {
     /// 作業中の変更を stash する。`paths` があれば、そのファイルの変更だけ。何を stash するか（すべて・stage した
     /// 変更だけ）、stage した変更を残すか、untracked のファイルを含めるかを選べる（既定は git と同じく、追跡している
     /// ファイルの変更をすべて）。
-    func stash(paths: [String] = []) {
-        Task { @MainActor in await stashSheet(paths: paths) }
+    func stash(paths: [String] = [], untrackedChosen: Bool = false) {
+        Task { @MainActor in await stashSheet(paths: paths, untrackedChosen: untrackedChosen) }
     }
 
     @MainActor
-    private func stashSheet(paths: [String]) async {
+    private func stashSheet(paths: [String], untrackedChosen: Bool) async {
         let alert = NSAlert()
         alert.messageText = paths.isEmpty ? "Stash Changes"
             : paths.count == 1 ? "Stash Changes in \((paths[0] as NSString).lastPathComponent)" : "Stash Changes in \(paths.count) Files"
@@ -515,6 +515,8 @@ final class Actions {
         all.state = .on
         let keepIndex = NSButton(checkboxWithTitle: L("Keep the staged changes in the working tree (--keep-index)"), target: nil, action: nil)
         let untracked = NSButton(checkboxWithTitle: L("Include untracked files"), target: nil, action: nil)
+        // 選んだファイルに untracked があれば、最初から含める（含めないと git が断る）。
+        untracked.state = untrackedChosen ? .on : .off
         // stage した変更だけのときは、ほかの選び方は git が受けない。
         let target = ClosureTarget {
             let onlyStaged = staged.state == .on

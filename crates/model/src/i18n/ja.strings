@@ -2190,3 +2190,5 @@
 "Pull request #{number} was merged into {base} by squash or rebase with this branch’s tip as its head (read from GitHub). Its commits were rewritten on the way, so they aren’t in the local history, but their changes are. It is safe to delete." = "プルリクエスト #{number} が、このブランチの先端を head にして、squash か rebase で {base} にマージされました（GitHub から読みました）。そのときにコミットが書き換えられたので手元の履歴にはありませんが、中身は入っています。消してかまいません。";
 "Pull request #{number} merged its changes." = "プルリクエスト #{number} で中身は取り込み済みです。";
 "Merged by pull request: {branches}" = "プルリクエストでマージ済み: {branches}";
+"“{name}” wasn’t deleted: git only deletes a branch merged into the current branch or its upstream. Switch to the branch it’s merged into and try again." = "「{name}」は消していません: git が消すのは、今のブランチか上流に取り込んだブランチだけです。取り込んだ先のブランチに切り替えて、やり直してください。";
+"Already deleted: {count}." = "消したもの: {count} 本。";

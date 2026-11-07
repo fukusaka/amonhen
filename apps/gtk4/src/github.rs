@@ -1138,6 +1138,8 @@ fn create_pull_request_in(
             }
             return;
         };
+        // SSH 先のパスは手元にないので、そこでは gh を起動しない（送り先は -R と --head で決まる）。
+        let dir = repo.connection_state().is_none().then_some(dir);
         let to = pull_request_target(&github).await;
         if !to.is_fork() && actions.default_branch().as_deref() == Some(branch.as_str()) {
             if let Some(w) = &window {
@@ -1281,7 +1283,7 @@ fn create_pull_request_in(
             if draft {
                 args.push("--draft");
             }
-            gh(&args, Some(&dir))
+            gh(&args, dir.as_deref())
         })
         .await
         .unwrap_or_else(|_| Err(String::new()));

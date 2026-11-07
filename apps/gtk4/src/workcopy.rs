@@ -2597,10 +2597,15 @@ impl Inner {
             } else {
                 vec![path.clone()]
             };
+            let has_untracked = this
+                .entries
+                .borrow()
+                .iter()
+                .any(|e| e.kind == StatusKind::Untracked && paths.contains(&e.path));
             let a = this.actions.borrow().clone();
             items.push(action("Stash…", move || {
                 if let Some(a) = &a {
-                    a.stash_paths(paths.clone());
+                    a.stash_paths(paths.clone(), has_untracked);
                 }
             }));
             items.push(Item::Separator);

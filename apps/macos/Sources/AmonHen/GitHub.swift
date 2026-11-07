@@ -315,7 +315,7 @@ enum GitHub {
 
     /// `head` のブランチからプルリクエストを作り、その URL を返す。そのブランチを push してあること。
     static func createPullRequest(
-        in dir: String, repo: GitHubRepository, head: String, title: String, body: String, base: String, draft: Bool
+        in dir: String?, repo: GitHubRepository, head: String, title: String, body: String, base: String, draft: Bool
     ) async throws -> String {
         var args = ["pr", "create", "-R", repo.slug, "--head", head, "--title", title, "--body", body, "--base", base]
         if draft { args.append("--draft") }
