@@ -34,6 +34,7 @@ export class WorkingCopyController implements vscode.Disposable {
   private head: { oid: string; message: string } | undefined;
 
   /** 最近のコミット（新しい順） */
+  private factsReading = 0;
   private recent: { message: string; author: string; email: string }[] = [];
 
   constructor(post: (message: WorkingCopyHostMessage) => void) {
@@ -104,12 +105,15 @@ export class WorkingCopyController implements vscode.Disposable {
   private async sendEngineFacts(repo: Repository): Promise<void> {
     const client = await daemonFor(repo.root);
     if (!client) return;
+    // 読む間に次の読み直しが始まっていれば、古い答えで上書きしない
+    const reading = ++this.factsReading;
     const reply = await client.call({ op: 'run', command: { op: 'workingStats' } });
+    if (reading !== this.factsReading) return;
     const info = reply.json['info'] as { stats?: FileStat[] } | undefined;
     if (repo === this.repo) this.post({ type: 'wcStats', stats: info?.stats ?? [] });
     const form = await client.call({ op: 'run', command: { op: 'repositoryForm' } });
     const sparse = (form.json['info'] as { sparse?: { cone: boolean; folders: string[] } | null } | undefined)?.sparse;
-    if (repo === this.repo) this.post({ type: 'wcSparse', sparse: sparse ?? null });
+    if (repo === this.repo && reading === this.factsReading) this.post({ type: 'wcSparse', sparse: sparse ?? null });
   }
 
   /** 最近のコミット 30 個を読む（一覧と ⌥↑・⌥↓ のため） */

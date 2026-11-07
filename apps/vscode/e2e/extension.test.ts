@@ -5,6 +5,7 @@
  * メインビューの Webview が送るメッセージを拡張ホストに直接入れ、拡張ホストが Webview に送るメッセージと git の様子を
  * 確かめる。テストは上から順に、前のテストの結果を引き継いで進む
  */
+import type { FileStat } from '../src/workingCopy/protocol.ts';
 import assert from 'node:assert/strict';
 import childProcess from 'node:child_process';
 import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -2925,9 +2926,9 @@ suite('Amon Hen in VSCode', () => {
       writeFileSync(file, 'one\nchanged\nthree\n');
       const mark = posted.length;
       panel.workingCopy.setRepository(panel.repository);
-      const { stats } = await waitPosted('wcStats', mark, (m) => m.stats.some((s) => s.path === 'wc-stat.txt'));
-      const stat = stats.find((s) => s.path === 'wc-stat.txt')!;
-      assert.deepEqual([stat.added, stat.removed], [2, 1]);
+      // コミットの前に読み始めた分が先に届くことがあるので、合うものを待つ
+      const stat = (s: FileStat) => s.path === 'wc-stat.txt' && s.added === 2 && s.removed === 1;
+      await waitPosted('wcStats', mark, (m) => m.stats.some(stat));
     } finally {
       git('reset', '-q', '--hard', 'HEAD~1');
       await vscode.commands.executeCommand('amonhen.refresh');
