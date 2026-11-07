@@ -194,6 +194,8 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
             b.controlSize = .small
         }
         position.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+        // 狭い窓でも読める（「コンフリクト 1 / 3」が先に詰められて消えないように）。ボタンより先に縮めない。
+        position.setContentCompressionResistancePriority(.defaultHigh + 1, for: .horizontal)
         let bar = NSStackView(
             views: [position, previousButton, nextButton, magicButton, aiResolveButton, aiExplainButton, note] + acceptButtons
                 + [baseToggle, NSView(), popOut, save, resolve])
