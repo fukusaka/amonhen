@@ -28,6 +28,9 @@ pub struct HistorySnapshot {
     pub layout: GraphLayout,
     /// マージ済みブランチを折りたたんだ History なら、行ごとの隠したコミットの数（そうでなければ空）。
     pub folded: Vec<u32>,
+    /// 一致したコミットだけの History（`Repository::history_matching`）なら、行ごとの本当の最初の親（グラフの親は
+    /// 次に一致したコミットに替わっている）。そうでなければ空。
+    first_parents: Vec<Option<Oid>>,
     /// コミット ID から行への索引。次に読み直すとき、既知のコミットで走査を止めるのに使う。
     rows: OnceLock<OidMap<u32>>,
 }
@@ -102,8 +105,10 @@ pub enum Selection {
 }
 
 impl Selection {
-    /// `rows`（History の行。0 が一番新しい）の選び方。
-    pub fn of(graph: &CommitGraph, rows: &[u32]) -> Result<Self> {
+    /// `rows`（History の行。0 が一番新しい）の選び方。つながりは本当の最初の親で見る（一致したコミットだけの
+    /// History の行は、隣でも間のコミットが隠れていることがある）。
+    pub fn of(snapshot: &HistorySnapshot, rows: &[u32]) -> Result<Self> {
+        let graph = &snapshot.graph;
         let mut rows = rows.to_vec();
         rows.sort_unstable();
         rows.dedup();
@@ -114,10 +119,13 @@ impl Selection {
             return Err(tr!("Row out of range").into());
         }
         let id = |r: u32| graph.ids()[r as usize];
-        let first_parent = |r: u32| graph.parents(r as usize).first().copied();
-        if rows.windows(2).all(|w| first_parent(w[0]) == Some(w[1])) {
+        let first_parent = |r: u32| snapshot.first_parent(r as usize);
+        if rows
+            .windows(2)
+            .all(|w| first_parent(w[0]) == Some(id(w[1])))
+        {
             return Ok(Selection::Range {
-                base: first_parent(oldest).map(id),
+                base: first_parent(oldest),
                 tip: id(newest),
                 count: rows.len(),
             });
@@ -139,6 +147,18 @@ pub struct RefsSnapshot {
 }
 
 impl HistorySnapshot {
+    /// 行 `row` のコミットの、本当の最初の親。
+    fn first_parent(&self, row: usize) -> Option<Oid> {
+        match self.first_parents.get(row) {
+            Some(parent) => *parent,
+            None => self
+                .graph
+                .parents(row)
+                .first()
+                .map(|&p| self.graph.ids()[p as usize]),
+        }
+    }
+
     /// スクロールバーに描く密度。行を `buckets` 個の区間に分け、区間ごとに [コミットの頻度, ブランチの活動量]
     /// をそれぞれ 0〜1 で返す。頻度は時間あたりのコミット数（対数で縮める）、活動量は区間の中で点のあるレーンの数。
     /// どちらも、いちばん少ない区間を 0、多い区間を 1 にする。
@@ -548,6 +568,7 @@ impl Repository {
             graph,
             layout,
             folded: Vec::new(),
+            first_parents: Vec::new(),
             rows: OnceLock::new(),
         });
         self.history.store(Some(snapshot.clone()));
@@ -750,6 +771,7 @@ impl Repository {
             graph,
             layout,
             folded,
+            first_parents: Vec::new(),
             rows: OnceLock::new(),
         }))
     }
@@ -772,6 +794,10 @@ impl Repository {
                 *k = true;
             }
         }
+        let first_parents = (0..snapshot.graph.len())
+            .filter(|&r| keep[r])
+            .map(|r| snapshot.first_parent(r))
+            .collect();
         let graph = snapshot.graph.retain_linked(&keep);
         let head_row = snapshot
             .head
@@ -786,6 +812,7 @@ impl Repository {
             graph,
             layout,
             folded: Vec::new(),
+            first_parents,
             rows: OnceLock::new(),
         })
     }
@@ -912,16 +939,13 @@ impl Repository {
         rows: &[u32],
         pair: PairMode,
     ) -> Result<(Selection, diff::StackedDiff)> {
-        let selection = Selection::of(&snapshot.graph, rows)?;
+        let selection = Selection::of(snapshot, rows)?;
         let stacked = match &selection {
             Selection::Pair { from, to } if pair == PairMode::Reverse => {
                 self.stacked_diff(&self.backend.changes_between(Some(to), from)?)?
             }
             Selection::Pair { to, .. } if pair == PairMode::MergeBase => {
-                let mut sorted = rows.to_vec();
-                sorted.sort_unstable();
-                let base = merge_base(&snapshot.graph, sorted[0], sorted[1])
-                    .map(|r| snapshot.graph.ids()[r as usize]);
+                let base = self.selection_merge_base(snapshot, rows);
                 self.stacked_diff(&self.backend.changes_between(base.as_ref(), to)?)?
             }
             Selection::Range { base, tip, .. } => {
@@ -946,6 +970,25 @@ impl Repository {
             }
         };
         Ok((selection, stacked))
+    }
+
+    /// 選んだ 2 行の分岐点。一致したコミットだけの History のグラフでは親が替わっているので、読み込んだ元の History で
+    /// 求める。
+    fn selection_merge_base(&self, snapshot: &HistorySnapshot, rows: &[u32]) -> Option<Oid> {
+        let mut sorted = rows.to_vec();
+        sorted.sort_unstable();
+        let (a, b) = (*sorted.first()?, *sorted.get(1)?);
+        if !snapshot.first_parents.is_empty()
+            && let Some(full) = self.history()
+        {
+            let ids = snapshot.graph.ids();
+            let (a, b) = (
+                full.row_of(&ids[a as usize])?,
+                full.row_of(&ids[b as usize])?,
+            );
+            return merge_base(&full.graph, a, b).map(|r| full.graph.ids()[r as usize]);
+        }
+        merge_base(&snapshot.graph, a, b).map(|r| snapshot.graph.ids()[r as usize])
     }
 
     /// 手元の共有の daemon のコアに任せる（つないでいなければ `None`）。答えと、大きなバイト列（`parts`）を返す。
@@ -2485,6 +2528,32 @@ mod tests {
         let names = paths(&stacked);
         assert_eq!(names.len(), 3);
         assert!(names.iter().all(|n| n.starts_with("a.txt — ")));
+
+        // 一致したコミットだけの History（c4・c2・c1）: 隣の行でも c3 が間に隠れていれば続いていない。
+        let filtered = repo.history_matching(&history, &[0, 2, 3]);
+        let (selection, stacked) = repo
+            .selection_diff(&filtered, &[0, 1], PairMode::Forward)
+            .unwrap();
+        assert!(matches!(selection, Selection::Pair { .. }));
+        assert_eq!(paths(&stacked), ["a.txt", "b.txt"]);
+        // 本当に続いている c2・c1 は Range で、元は c1 の親（なし）。
+        let (selection, _) = repo
+            .selection_diff(&filtered, &[1, 2], PairMode::Forward)
+            .unwrap();
+        assert!(matches!(
+            selection,
+            Selection::Range {
+                base: None,
+                count: 2,
+                ..
+            }
+        ));
+        // c4 だけの History の c4 の元は、隠れた c3。
+        let only = repo.history_matching(&history, &[0]);
+        let (selection, stacked) = repo.selection_diff(&only, &[0], PairMode::Forward).unwrap();
+        let c3 = history.graph.ids()[1];
+        assert!(matches!(selection, Selection::Range { base: Some(b), .. } if b == c3));
+        assert_eq!(paths(&stacked), ["a.txt"]);
     }
 
     #[test]
