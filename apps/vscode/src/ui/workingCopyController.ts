@@ -107,6 +107,9 @@ export class WorkingCopyController implements vscode.Disposable {
     const reply = await client.call({ op: 'run', command: { op: 'workingStats' } });
     const info = reply.json['info'] as { stats?: FileStat[] } | undefined;
     if (repo === this.repo) this.post({ type: 'wcStats', stats: info?.stats ?? [] });
+    const form = await client.call({ op: 'run', command: { op: 'repositoryForm' } });
+    const sparse = (form.json['info'] as { sparse?: { cone: boolean; folders: string[] } | null } | undefined)?.sparse;
+    if (repo === this.repo) this.post({ type: 'wcSparse', sparse: sparse ?? null });
   }
 
   /** 最近のコミット 30 個を読む（一覧と ⌥↑・⌥↓ のため） */
@@ -288,6 +291,10 @@ export class WorkingCopyController implements vscode.Disposable {
     }
     if (message.type === 'wcDraft') {
       await setCommitDraft(repo.root, { summary: message.summary, body: message.body });
+      return;
+    }
+    if (message.type === 'wcShowFolders') {
+      await vscode.commands.executeCommand('amonhen.showRepositorySettings');
       return;
     }
     if (message.type === 'wcPickRecent') {

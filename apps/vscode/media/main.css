@@ -473,6 +473,19 @@ button.secondary {
   border-right: 1px solid var(--vscode-panel-border);
 }
 
+.wc-sparse {
+  padding: 4px 12px;
+  text-align: left;
+  font-size: 0.9em;
+  color: var(--vscode-descriptionForeground);
+  background: transparent;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.wc-sparse[hidden] {
+  display: none;
+}
+
 .wc-tools {
   display: flex;
   align-items: center;

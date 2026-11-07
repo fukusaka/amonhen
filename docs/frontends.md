@@ -220,8 +220,8 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | One checkbox list (☑ ▣ ☐, header and folder checks) | ✓ | ✓ | ✓ | n/a | VSCode: Separate Staged and Changes groups. |
 | List / Tree / Flat | ✓ | ✓ | ✓ | n/a |  |
 | Filter on paths | ✓ | ✓ | ✓ | n/a |  |
-| Per-row +/− counts and Discard on hover | ✓ | ✓ | △ | △ | VSCode: No line counts.<br>CLI: `diff --stat`. |
-| Space toggles, ⌫ discards | ✓ | ✓ | △ | n/a | VSCode: Space toggles; no ⌫. |
+| Per-row +/− counts and Discard on hover | ✓ | ✓ | ✓ | △ | VSCode: Counts need the engine.<br>CLI: `diff --stat`. |
+| Space toggles, ⌫ discards | ✓ | ✓ | ✓ | n/a |  |
 | Commit box on top with 50/72 counter and body guide | ✓ | ✓ | △ | n/a | VSCode: The box stays under the list. A description line over 72 is counted instead of a guide. |
 | Draft per repository, starting from the template | ✓ | ✓ | ✓ | n/a | VSCode: `commit.template` only, not the shared template library. |
 | Recent messages (⌥↑ / ⌥↓, list) | ✓ | ✓ | ✓ | n/a |  |
@@ -232,13 +232,13 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Hooks output sheet | ✓ | ✓ | ✓ | n/a |  |
 | Reason shown when Commit is disabled | — | — | △ | n/a | VSCode: A warning when committing is blocked. |
 | Combined HEAD → working tree diff with line and hunk checks | ✓ | ✓ | △ | ✓ | VSCode: Line staging on separate unstaged and staged diffs.<br>CLI: `diff --combined`, `stage --rows`. |
-| Range selection in the gutter, J/K and ⌥J/⌥K | ✓ | ✓ | △ | n/a | VSCode: No J/K keys. |
+| Range selection in the gutter, J/K and ⌥J/⌥K | ✓ | ✓ | ✓ | n/a |  |
 | Unstaged / Staged switch for files that can't be overlaid | ✓ | ✓ | n/a | ✓ | VSCode: Always shown separately.<br>CLI: `diff --staged`. |
 | Diff options (unified/split, whitespace, context, wrap) | — | — | — | n/a |  |
 | Discard lines, hunks and files (undoable) | ✓ | ✓ | ✓ | ✓ | CLI: `discard --rows`. |
-| Add to .gitignore | ✓ | ✓ | — | n/a |  |
+| Add to .gitignore | ✓ | ✓ | ✓ | n/a |  |
 | Conflicted files open the merge editor | ✓ | ✓ | ✓ | n/a | macOS, GTK4: A file that isn't UTF-8 doesn't open in it; take one side.<br>VSCode: Opens VSCode's merge editor. |
-| Note above the list when only some folders are checked out | ✓ | ✓ | — | △ | CLI: `status` notes a sparse checkout. |
+| Note above the list when only some folders are checked out | ✓ | ✓ | ✓ | △ | CLI: `status` notes a sparse checkout. |
 
 ## History
 

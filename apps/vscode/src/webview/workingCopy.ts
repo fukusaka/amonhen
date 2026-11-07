@@ -87,7 +87,11 @@ export function createWorkingCopyView(): View {
     });
     layoutButtons.append(button);
   }
-  side.append(tools, fileList, commitBox);
+  // sparse checkout なら、一覧の上にそう出す（取り出していないフォルダのファイルは変更に出ない）
+  const sparseNote = el('button', 'wc-sparse');
+  sparseNote.hidden = true;
+  sparseNote.addEventListener('click', () => post({ type: 'wcShowFolders' }));
+  side.append(sparseNote, tools, fileList, commitBox);
 
   let files: Change[] = [];
   let lastMessage = '';
@@ -651,6 +655,15 @@ export function createWorkingCopyView(): View {
       case 'wcStats':
         stats = new Map(m.stats.map((s) => [s.path, s]));
         renderFiles();
+        break;
+      case 'wcSparse':
+        sparseNote.hidden = !m.sparse;
+        if (m.sparse) {
+          sparseNote.textContent = m.sparse.cone
+            ? `Only some folders are checked out (${m.sparse.folders.length})`
+            : 'Only some files are checked out';
+          sparseNote.title = `${m.sparse.folders.join('\n')}\nClick to change them in Repository Settings`;
+        }
         break;
       case 'wcInsertType':
         replaceField(subject, withType(subject.value, m.commitType));

@@ -33,6 +33,8 @@ export type WorkingCopyHostMessage =
   | { type: 'wcCommitOutput'; title: string; text: string }
   /** ファイルごとの追加・削除の行数（HEAD と作業ツリー。エンジンのあるときだけ） */
   | { type: 'wcStats'; stats: FileStat[] }
+  /** 一部のフォルダだけ取り出しているときの知らせ（ふつうは null） */
+  | { type: 'wcSparse'; sparse: { cone: boolean; folders: string[] } | null }
   | { type: 'wcCommitted' };
 
 export type WorkingCopyWebviewMessage =
@@ -43,6 +45,8 @@ export type WorkingCopyWebviewMessage =
   | ({ type: 'wcDraft' } & MessageParts)
   /** 最近のメッセージの一覧を出す */
   | { type: 'wcPickRecent' }
+  /** 取り出すフォルダを変える画面を開く */
+  | { type: 'wcShowFolders' }
   /** 型やトレーラーの一覧を出す */
   | { type: 'wcPickInsert' }
   | { type: 'wcStageFiles'; op: 'stage' | 'unstage'; files: { group: ChangeGroup; path: string }[] }

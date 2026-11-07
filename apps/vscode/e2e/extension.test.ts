@@ -2934,6 +2934,33 @@ suite('Amon Hen in VSCode', () => {
     }
   });
 
+  test('adds a file to .gitignore, and notes a sparse checkout, through the daemon', async () => {
+    const panel = await showView('amonhen.showWorkingCopy');
+    const gitignore = join(root, '.gitignore');
+    const had = existsSync(gitignore) ? readFileSync(gitignore) : undefined;
+    const quickPick = vscode.window.showQuickPick;
+    (vscode.window as { showQuickPick: unknown }).showQuickPick = async (items: string[]) => items[1];
+    try {
+      await vscode.commands.executeCommand('amonhen.addToGitignore', { path: 'dir/new.ignored-e2e' });
+      assert.match(readFileSync(gitignore, 'utf8'), /^\*\.ignored-e2e$/m);
+      await vscode.commands.executeCommand('amonhen.addToGitignore', { path: 'other.ignored-e2e' });
+      assert.equal(readFileSync(gitignore, 'utf8').match(/\*\.ignored-e2e/g)?.length, 1);
+      let mark = posted.length;
+      panel.workingCopy.setRepository(panel.repository);
+      assert.equal((await waitPosted('wcSparse', mark)).sparse, null);
+      git('sparse-checkout', 'set', '--cone', 'e2e-only-folder');
+      mark = posted.length;
+      panel.workingCopy.setRepository(panel.repository);
+      assert.deepEqual((await waitPosted('wcSparse', mark, (m) => m.sparse !== null)).sparse?.folders, ['e2e-only-folder']);
+    } finally {
+      (vscode.window as { showQuickPick: unknown }).showQuickPick = quickPick;
+      git('sparse-checkout', 'disable');
+      if (had) writeFileSync(gitignore, had);
+      else rmSync(gitignore, { force: true });
+      await vscode.commands.executeCommand('amonhen.refresh');
+    }
+  });
+
   test('drops the selection of a file whose changes went away before its diff is read', async () => {
     const panel = await showView('amonhen.showWorkingCopy');
     const path = join(root, FILE);

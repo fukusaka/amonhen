@@ -1027,6 +1027,8 @@ First release.
 
 #### Added
 
+- Working Copy shows line counts per file, discards with ⌫, moves with J/K and ⌥J/⌥K, adds untracked files to
+  `.gitignore`, and notes a sparse checkout above the list.
 - Commit's ▾ adds Commit and Push (⌘⇧↩), Amend Last Commit, and Fixup and Squash Commit For. What hooks wrote, and why a
   commit failed, open in a readable sheet.
 - The commit box counts the summary's length, keeps a draft per repository, starts from `commit.template`, brings back
