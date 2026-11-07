@@ -160,7 +160,7 @@ enum SubmoduleSheet {
     static func remove(in window: NSWindow, actions: Actions, submodule: SubmoduleState, perform: @escaping ([String: Any]) -> Void) {
         let alert = NSAlert()
         alert.messageText = L("Remove %@?", submodule.path)
-        alert.informativeText = actions.sheetMessage(L("Removes the folder and its entry in .gitmodules, and stages that. Commit to keep it."))
+        alert.informativeText = actions.sheetMessage(L("Removes the folder and its entry in .gitmodules, and stages that. Commit to keep it.") + " " + Actions.cantUndo)
         let deleteGitDir = NSButton(checkboxWithTitle: L("Also delete its repository data (.git/modules/%@)", submodule.name), target: nil, action: nil)
         let note = NSTextField(wrappingLabelWithString: L("Kept, it brings back the submodule’s commits and stashes when you add it again, including ones not pushed."))
         note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)

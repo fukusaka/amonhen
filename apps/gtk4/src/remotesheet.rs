@@ -73,9 +73,13 @@ pub async fn ask_remove(parent: Option<&gtk::Window>, name: &str) -> bool {
     let sheet = Sheet::unnamed(
         parent,
         &tr!("Remove {name}?", name = name),
-        &tr!(
-            "This removes the remote’s settings and its remote-tracking branches ({name}/…). The remote repository isn’t touched.",
-            name = name
+        &format!(
+            "{} {}",
+            tr!(
+                "This removes the remote’s settings and its remote-tracking branches ({name}/…). The remote repository isn’t touched.",
+                name = name
+            ),
+            sheets::cant_undo()
         ),
     );
     sheet.buttons(&tr!("Remove"), true, None);

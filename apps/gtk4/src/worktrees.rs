@@ -1107,9 +1107,13 @@ async fn confirm_remove(
             crate::sheets::cant_undo()
         )
     } else {
-        tr!(
-            "Removes the folder {path}. The branch stays.",
-            path = &info.path
+        format!(
+            "{} {}",
+            tr!(
+                "Removes the folder {path}. The branch stays.",
+                path = &info.path
+            ),
+            crate::sheets::cant_undo()
         )
     };
     let sheet = Sheet::unnamed(

@@ -648,7 +648,10 @@ impl Actions {
         glib::spawn_future_local(async move {
             let title = match &paths[..] {
                 [] => tr!("Stash Changes"),
-                [one] => tr!("Stash Changes in {name}", name = one.rsplit('/').next().unwrap_or(one)),
+                [one] => tr!(
+                    "Stash Changes in {name}",
+                    name = one.rsplit('/').next().unwrap_or(one)
+                ),
                 many => tr!("Stash Changes in {count} Files", count = many.len()),
             };
             let sheet = crate::sheets::Sheet::new(
