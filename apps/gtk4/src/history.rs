@@ -793,18 +793,24 @@ impl HistoryView {
 
     /// 行の見せ方を替える（1 行・項目・祖先の強調）。
     pub fn set_display(&self, display: Display) {
-        {
+        // 祖先の強調だけなら、行の高さは変わらないので動かさない（macOS 版と同じ）。
+        let recenter = {
             let mut st = self.state();
             if st.display == display {
                 return;
             }
+            let recenter = Display {
+                highlight_ancestors: st.display.highlight_ancestors,
+                ..display
+            } != st.display;
             st.display = display;
             st.rows.clear();
             st.fonts = None;
-        }
+            recenter
+        };
         self.configure_adjustments();
         // 行の高さが変わるので、選んでいる行を表の中ほどに置き直す（macOS 版の `rowStyleChanged`）。
-        if let Some(row) = self.selected() {
+        if recenter && let Some(row) = self.selected() {
             self.center_row(row);
         }
         self.update_lineage();
