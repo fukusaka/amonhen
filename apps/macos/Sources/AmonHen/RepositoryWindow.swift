@@ -626,7 +626,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         }
         pages?.replace(.workingCopy, with: slot.workingCopy)
         // リポジトリの設定も書き込む先の worktree のもの（読むのと操作の先を揃える。sparse checkout は worktree ごと）。
-        settings = RepositorySettingsPage(repository: slot.repository, location: location)
+        settings = RepositorySettingsPage(repository: slot.repository, location: location, page: settings.model.shownPage)
         connectSettings()
         pages?.replace(.settings, with: settings)
         // プルリクエストでマージ済みのブランチは、リポジトリで共通（分け方が同じなら読み直さない）。
