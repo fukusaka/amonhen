@@ -8627,15 +8627,15 @@ mod tests {
         };
         write("a.png", b"\x89PNG\0\xff base", "base png");
         write("sjis.txt", b"\x82\xa0 base\n", "base sjis");
-        write("nul.dat", b"a\0 base", "base nul");
+        write("zero.dat", b"a\0 base", "base nul");
         git(dir, &["switch", "-q", "-c", "topic"]);
         write("a.png", b"\x89PNG\0\xff topic", "topic png");
         write("sjis.txt", b"\x82\xa0 topic\n", "topic sjis");
-        write("nul.dat", b"a\0 topic", "topic nul");
+        write("zero.dat", b"a\0 topic", "topic nul");
         git(dir, &["switch", "-q", "-"]);
         write("a.png", b"\x89PNG\0\xff main", "main png");
         write("sjis.txt", b"\x82\xa0 main\n", "main sjis");
-        write("nul.dat", b"a\0 main", "main nul");
+        write("zero.dat", b"a\0 main", "main nul");
         assert_eq!(
             run(&repo, r#"{"op":"merge","rev":"topic"}"#)["outcome"],
             "conflict"
@@ -8648,7 +8648,7 @@ mod tests {
             serde_json::json!([{"path": "sjis.txt", "markers": 1, "rerere": false}]),
             "{files}"
         );
-        for path in ["a.png", "sjis.txt", "nul.dat"] {
+        for path in ["a.png", "sjis.txt", "zero.dat"] {
             let command = serde_json::json!({ "op": "mergeSides", "path": path }).to_string();
             let sides = run(&repo, &command);
             assert!(
