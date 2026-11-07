@@ -22,9 +22,12 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
     /// 別ウィンドウで開く（埋め込んだときだけ出す）。
     var onPopOut: (() -> Void)? {
         // 別の窓に移すと nil になる。ボタンはもう作ってあるので、ここで隠す。
-        didSet { popOutButton?.isHidden = onPopOut == nil }
+        didSet { refitBar() }
     }
     private weak var popOutButton: NSButton?
+    private weak var barStack: NSStackView?
+    /// `fitBar` が合わせた帯の幅。
+    private var fittedWidth: CGFloat = -1
 
     private let current = MergeEditorViewController.textView(editable: false)
     private let incoming = MergeEditorViewController.textView(editable: false)
@@ -220,9 +223,13 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
         note.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)
         bar.spacing = 6
         bar.edgeInsets = NSEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
+        barStack = bar
 
         let root = MergeLayoutView(bar: bar, banner: sides.markers == 0 ? withoutMarkersBanner() : nil)
-        root.onLayout = { [weak self] in self?.layoutColumns() }
+        root.onLayout = { [weak self] in
+            self?.layoutColumns()
+            self?.fitBar()
+        }
         root.onKeyEquivalent = { [weak self] event in self?.handleKeyEquivalent(event) ?? false }
         root.frame = NSRect(x: 0, y: 0, width: 1200, height: 700)
         for v in [basePane].compactMap({ $0 }) + panes + [leftBand, rightBand] { root.addSubview(v) }
@@ -256,6 +263,7 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
             guard let self, solved > 0 else { return }
             colorSyntax(result)
             note.stringValue = L("Resolved %ld when opened (⌘Z to undo).", solved)
+            refitBar()
         }
     }
 
@@ -498,6 +506,35 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
 
     @objc private func updateAssistantButtons() {
         for b in [aiResolveButton, aiExplainButton] { b.isHidden = !Assistant.isConfigured }
+        refitBar()
+    }
+
+    /// 帯の幅が足りなければ、押し潰さずに後回しのものから隠す（位置・∧ ∨・Save・Mark Resolved は残す。知らせは先に
+    /// 切り詰まるので、幅に数えるのは少しだけ）。
+    private func fitBar() {
+        // 帯の幅は制約で後から決まるので、エディタの幅で見る（帯と同じ幅になる）。
+        guard let bar = barStack, let width = viewIfLoaded?.bounds.width, width != fittedWidth else { return }
+        fittedWidth = width
+        var wanted: [(NSView, Bool)] = [(aiExplainButton, Assistant.isConfigured), (aiResolveButton, Assistant.isConfigured)]
+        if let popOutButton { wanted.append((popOutButton, onPopOut != nil)) }
+        wanted += [(magicButton, true), (baseToggle, sides.base != nil)]
+        wanted += acceptButtons.map { ($0, true) }
+        for (view, show) in wanted { view.isHidden = !show }
+        // 要る幅は足し上げる（`fittingSize` は知らせの全文を数える。知らせはいつ出ても切り詰まるので、少しだけ数える）。
+        func needed() -> CGFloat {
+            let shown = bar.arrangedSubviews.filter { !$0.isHidden && !($0 === note && note.stringValue.isEmpty) }
+            let widths = shown.map { $0 === note ? 40 : max(0, $0.intrinsicContentSize.width) }
+            return widths.reduce(0, +) + bar.spacing * CGFloat(max(0, shown.count - 1)) + bar.edgeInsets.left + bar.edgeInsets.right
+        }
+        for (view, show) in wanted where show && needed() > width {
+            view.isHidden = true
+        }
+    }
+
+    /// 帯に出すものが変わった: 幅に合わせ直す。
+    private func refitBar() {
+        fittedWidth = -1
+        fitBar()
     }
 
     /// エディタを操作しているか: フォーカスがエディタの中にある（別ウィンドウなら、その窓にいる）。エディタの近道は
@@ -573,6 +610,7 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
         applyMagic(safe: false) { [weak self] solved in
             guard let self else { return }
             note.stringValue = solved == 0 ? L("Nothing to resolve") : L("Resolved %ld (⌘Z undoes them one at a time).", solved)
+            refitBar()
         }
     }
 
@@ -713,6 +751,7 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
         replace(old: old, with: lines.joined(separator: "\n"))
         updateConflicts()
         note.stringValue = L("Put in the AI’s suggestion (⌘Z to undo).")
+        refitBar()
     }
 
     // MARK: - 編集と選択
