@@ -201,7 +201,8 @@ impl Buttons {
         }
         retitle_on_show(&repository, &self.actions);
         crate::menu::tooltips_on_show(&repository);
-        header.pack_start(&repository);
+        let bar = crate::toolbar::Bar::new(header);
+        bar.lead.append(&repository);
 
         // リポジトリの名前（下にブランチ名）。押すとリポジトリのタブに切り替えて、一覧を出す。
         let titles = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -301,14 +302,9 @@ impl Buttons {
                 toggle.set_active(true);
             }
         });
-        let toolbar_start = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        let toolbar_end = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        header.pack_start(&toolbar_start);
         crate::toolbar::install(
-            &toolbar_start,
-            &toolbar_end,
+            &bar.items,
             crate::toolbar::Given {
-                header: header.clone(),
                 repository: name.upcast(),
                 title: None,
                 branch: branch_button,
@@ -326,8 +322,7 @@ impl Buttons {
         set_icon(&primary, "open-menu-symbolic", "≡");
         retitle_on_show(&primary, &self.actions);
         crate::menu::tooltips_on_show(&primary);
-        header.pack_end(&primary);
-        header.pack_end(&toolbar_end);
+        bar.trail.append(&primary);
     }
 }
 
@@ -757,7 +752,13 @@ pub fn install(parts: Parts) -> Buttons {
     if let Some(popover) = repository.popover() {
         popover.set_halign(gtk::Align::Start);
     }
-    parts.header.pack_start(&repository);
+    // リポジトリの名前（main.rs が見出しの真ん中に置いたもの）。
+    let name = parts
+        .header
+        .title_widget()
+        .expect("リポジトリの名前のボタン");
+    let bar = crate::toolbar::Bar::new(&parts.header);
+    bar.lead.append(&repository);
 
     // ツールバー（macOS 版の既定の並び: Branch・Fetch・Pull・Push、Merge・Rebase、Stash・Pop、
     // 右に Activity・Refresh・Undo・検索）。
@@ -775,20 +776,10 @@ pub fn install(parts: Parts) -> Buttons {
         .build();
     let (pull, pull_count, _) = count_button(icon::Kind::Pull, "win.pull");
     let (push, push_count, push_icon) = count_button(icon::Kind::Push, "win.push");
-    // ボタンの並びは View > Customize Toolbar… で変えられる（`toolbar.rs`）。左はここ、右は主メニューの左。
-    let toolbar_start = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    let toolbar_end = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    parts.header.pack_start(&toolbar_start);
-    // リポジトリの名前（main.rs が見出しの真ん中に置いたもの）。
-    let name = parts
-        .header
-        .title_widget()
-        .expect("リポジトリの名前のボタン");
+    // ボタンの並びは View > Customize Toolbar… で変えられる（`toolbar.rs`）。
     crate::toolbar::install(
-        &toolbar_start,
-        &toolbar_end,
+        &bar.items,
         crate::toolbar::Given {
-            header: parts.header.clone(),
             repository: name.clone(),
             title: None,
             branch: branch_button.clone(),
@@ -809,8 +800,7 @@ pub fn install(parts: Parts) -> Buttons {
         .primary(true)
         .build();
     set_icon(&primary, "open-menu-symbolic", "≡");
-    // 右端から: 主メニュー、ツールバーの右の並び（既定は Activity・Refresh・Undo・検索）。
-    parts.header.pack_end(&primary);
+    bar.trail.append(&primary);
     // 開くときに、状態で変わる項目の名前（Publish…・Undo <操作>…）を合わせる。
     for button in [&repository, &primary] {
         retitle_on_show(button, &parts.actions);
@@ -834,7 +824,6 @@ pub fn install(parts: Parts) -> Buttons {
             })
         });
     });
-    parts.header.pack_end(&toolbar_end);
     Buttons {
         repository,
         primary,
@@ -872,7 +861,8 @@ pub fn install_home(
         popover.set_halign(gtk::Align::Start);
     }
     crate::menu::tooltips_on_show(&repository);
-    header.pack_start(&repository);
+    let bar = crate::toolbar::Bar::new(header);
+    bar.lead.append(&repository);
 
     let name = gtk::Label::new(Some(&tr!("Choose a Repository")));
     name.add_css_class("title");
@@ -906,14 +896,9 @@ pub fn install_home(
     search.set_child(Some(&search_icon));
     search.set_tooltip_text(Some(&tr!("Search History (Ctrl+F)")));
     search.set_sensitive(false);
-    let toolbar_start = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    let toolbar_end = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    header.pack_start(&toolbar_start);
     crate::toolbar::install(
-        &toolbar_start,
-        &toolbar_end,
+        &bar.items,
         crate::toolbar::Given {
-            header: header.clone(),
             repository: name_button.upcast(),
             title: Some(title.clone()),
             branch: branch_button,
@@ -944,8 +929,7 @@ pub fn install_home(
         .build();
     set_icon(&primary, "open-menu-symbolic", "≡");
     crate::menu::tooltips_on_show(&primary);
-    header.pack_end(&primary);
-    header.pack_end(&toolbar_end);
+    bar.trail.append(&primary);
     primary
 }
 
