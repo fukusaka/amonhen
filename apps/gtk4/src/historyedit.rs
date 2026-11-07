@@ -1233,6 +1233,20 @@ impl Opener {
                 ));
                 return;
             }
+            // 隣り合っていなければ断る（一致したコミットだけの History では、間のコミットが隠れている）。
+            if let Some(Preset::Combine(oids)) = &preset {
+                let mut at: Vec<usize> = oids
+                    .iter()
+                    .filter_map(|o| line.iter().position(|(l, _)| l == o))
+                    .collect();
+                at.sort_unstable();
+                if at.windows(2).any(|w| w[1] != w[0] + 1) {
+                    inner
+                        .statusbar
+                        .flash_warning(&tr!("Only commits next to each other can be combined."));
+                    return;
+                }
+            }
             let chosen: Vec<(String, bool)> = line[..=end].to_vec();
             let source = repo.clone();
             let rows = gio::spawn_blocking(move || {

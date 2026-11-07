@@ -173,6 +173,12 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
         oids.allSatisfy { oid in rows.contains { $0.oid == oid } }
     }
 
+    /// `oids` が並びで隣り合っている（一致したコミットだけの History では、間のコミットが隠れている）。
+    func areAdjacent(_ oids: [String]) -> Bool {
+        let at = oids.compactMap { oid in rows.firstIndex { $0.oid == oid } }.sorted()
+        return zip(at, at.dropFirst()).allSatisfy { $1 == $0 + 1 }
+    }
+
     /// 最初の変更を入れる（メッセージを直すときは、そのままメッセージの欄を開く）。
     func apply(_ preset: Preset) {
         switch preset {

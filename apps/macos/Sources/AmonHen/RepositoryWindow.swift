@@ -1159,6 +1159,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 statusBar?.flash(L("Only commits on HEAD’s first-parent line can be edited."), symbol: "exclamationmark.triangle")
                 return
             }
+            if case let .combine(oids) = preset, !editor.areAdjacent(oids) {
+                statusBar?.flash(L("Only commits next to each other can be combined."), symbol: "exclamationmark.triangle")
+                return
+            }
             commitEditor = editor
             editor.onFinish = { [weak self] _ in self?.endEditingCommits() }
             pages?.replace(.history, with: editor)

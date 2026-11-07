@@ -1239,6 +1239,7 @@
 "Changes: {list}." = "変更: {list}。";
 "Edit {count} Commits" = "{count} コミットを編集";
 "Only commits on HEAD’s first-parent line can be edited." = "編集できるのは、HEAD から最初の親をたどったコミットです。";
+"Only commits next to each other can be combined." = "まとめられるのは、隣り合ったコミットだけです。";
 "Combine with Older Commit…" = "1 つ古いコミットとまとめる…";
 "Edit Commits from Here…" = "ここからコミットを編集…";
 "Its changes go back to the working tree; commit them in parts, then Continue." = "変更を作業ツリーに戻します。分けてコミットしてから Continue してください。";
