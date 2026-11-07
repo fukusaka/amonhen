@@ -758,6 +758,10 @@ impl WorkingCopy {
 
     /// 次に status が届いたとき、`path` を選ぶ。
     pub fn select_path(&self, path: &str) {
+        // その 1 行だけにする（作り直しが前の選びを残さないように。macOS 版と同じ）。
+        self.inner.rebuilding.set(true);
+        self.inner.selection.unselect_all();
+        self.inner.rebuilding.set(false);
         self.inner.selected.replace(Some(path.to_owned()));
     }
 
