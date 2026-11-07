@@ -199,7 +199,7 @@
 "Take the incoming file without saving Result?" = "Result を保存せずに、取り込む側のファイルを使いますか？";
 "Created where the stash was made, checked out, and the stash applied there (then dropped)." = "stash を作ったコミットにブランチを作って切り替え、そこに stash を戻します（戻せたら stash は消します）。";
 "It’s untracked." = "untracked のファイルです。";
-"Discard changes to %@?" = "%@ の変更を捨てますか？";
+"Discard changes to %@?" = "%@ の変更を Discard しますか？";
 "No conflict markers are left, so it may already be resolved. It becomes one side’s whole file." = "マーカーが残っていないので、もう解決しているかもしれません。片側のファイルそのものになります。";
 "Mark %@ as resolved with %ld conflicts left?" = "%1$@ にコンフリクトが %2$ld 残っていますが、解決済みにしますか？";
 "Commits to pull" = "取り込むコミット";
@@ -211,7 +211,7 @@
 "Can’t check for conflicts ahead (needs git 2.38 or newer)." = "前もってコンフリクトを調べられません（git 2.38 以降が必要です）。";
 "Couldn’t check for conflicts." = "コンフリクトを調べられませんでした。";
 "Merging into %@" = "%@ への merge";
-"Pop %@?" = "%@ を戻して消しますか？";
+"Pop %@?" = "%@ を Pop しますか？";
 "Nothing to Undo" = "Undo できる操作はありません";
 "Undo “%@”?" = "「%@」を戻しますか？";
 "Can’t read the status" = "状態を読めません";
@@ -993,7 +993,7 @@
 "Copy Commit ID" = "コミット ID をコピー";
 "Show %ld Merged Commits" = "取り込んだ %ld コミットを表示";
 "Fold Merged Commits" = "取り込んだコミットをたたむ";
-"Drop %@?" = "%@ を取り除きますか？";
+"Drop %@?" = "%@ を Drop しますか？";
 "%ld folded" = "%ld 件を折りたたみ";
 
 /* CommitHeader.swift */
@@ -1859,3 +1859,4 @@
 "Pull request #%1$ld was merged into %2$@ by squash or rebase with this branch’s tip as its head (read from GitHub). Its commits were rewritten on the way, so they aren’t in the local history, but their changes are. It is safe to delete." = "プルリクエスト #%1$ld が、このブランチの先端を head にして、squash か rebase で %2$@ にマージされました（GitHub から読みました）。そのときにコミットが書き換えられたので手元の履歴にはありませんが、中身は入っています。消してかまいません。";
 "Pull request #%ld merged its changes." = "プルリクエスト #%ld で中身は取り込み済みです。";
 "Merged by pull request: %@" = "プルリクエストでマージ済み: %@";
+"Apply the stash %@?" = "%@ を Apply しますか？";

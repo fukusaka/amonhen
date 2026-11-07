@@ -568,7 +568,7 @@ extension Actions {
         Task { @MainActor in
             let what = pop ? L("Applies it to the working tree and removes it from the list.")
                 : L("Applies it to the working tree. It stays in the list.")
-            let alert = makeAlert(pop ? L("Pop %@?", name) : L("Apply %@?", name),
+            let alert = makeAlert(pop ? L("Pop %@?", name) : L("Apply the stash %@?", name),
                                   (message.map { "“\($0)”\n" } ?? "") + what + " " + Self.canUndo)
             alert.addButton(withTitle: pop ? "Pop" : "Apply")
             alert.addButton(withTitle: L("Cancel"))

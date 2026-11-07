@@ -548,7 +548,7 @@
 "It’s untracked." = "untracked のファイルです。";
 "This can’t be undone." = "元に戻せません。";
 "Delete" = "削除";
-"Discard changes to {path}?" = "{path} の変更を捨てますか？";
+"Discard changes to {path}?" = "{path} の変更を Discard しますか？";
 "Discard" = "捨てる";
 "Mark {path} as resolved with {count} conflicts left?" = "{path} にコンフリクトが {count} 残っていますが、解決済みにしますか？";
 "The conflict markers stay in the file." = "コンフリクトのマーカーはファイルに残ります。";
@@ -709,7 +709,7 @@
 "Adds copies of them." = "その写しのコミットを足します。";
 "Applies it to the working tree and removes it from the list." = "作業ツリーに戻し、一覧から消します。";
 "Applies it to the working tree. It stays in the list." = "作業ツリーに戻します。一覧には残ります。";
-"Pop {name}?" = "{name} を戻して消しますか？";
+"Pop {name}?" = "{name} を Pop しますか？";
 "Apply {name}?" = "{name} を当てますか？";
 "Puts the files back as they were. HEAD and the index stay." = "ファイルを元に戻します。HEAD と index はそのままです。";
 "Brings back the dropped stash." = "Drop した stash を戻します。";
@@ -809,7 +809,7 @@
 "Mark the conflicted files that have no conflict markers left as resolved (rerere or another editor resolved them)." = "マーカーの残っていないコンフリクトのファイルを解決済みにします（rerere やほかのエディタで解決したもの）。";
 "Retry with 3-Way Merge" = "3-way merge で当て直す";
 "Drop {name}…" = "{name} を drop…";
-"Drop {name}?" = "{name} を取り除きますか？";
+"Drop {name}?" = "{name} を Drop しますか？";
 "Cherry-pick {count} Commits…" = "{count} コミットを Cherry-pick…";
 "Revert {count} Commits…" = "{count} コミットを Revert…";
 
@@ -2192,3 +2192,4 @@
 "Merged by pull request: {branches}" = "プルリクエストでマージ済み: {branches}";
 "“{name}” wasn’t deleted: git only deletes a branch merged into the current branch or its upstream. Switch to the branch it’s merged into and try again." = "「{name}」は消していません: git が消すのは、今のブランチか上流に取り込んだブランチだけです。取り込んだ先のブランチに切り替えて、やり直してください。";
 "Already deleted: {count}." = "消したもの: {count} 本。";
+"Apply the stash {name}?" = "{name} を Apply しますか？";
