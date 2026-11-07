@@ -73,6 +73,8 @@ pub struct MessageAids {
     before_recall: RefCell<Option<(String, String)>>,
     /// 下書きを覚えないでいる間（中身を入れ替えているとき）。
     quiet: Cell<bool>,
+    /// 離れた worktree の欄の中身（鍵は下書きと同じ）。
+    fields: RefCell<std::collections::HashMap<String, (String, String)>>,
     /// まだ書いていない下書き（鍵と中身）。打つたびに設定のファイルを書かないよう、少し待ってまとめて書く。
     unsaved_draft: RefCell<Option<(String, String)>>,
 }
@@ -114,6 +116,7 @@ impl MessageAids {
             cursor: Cell::new(-1),
             before_recall: RefCell::default(),
             quiet: Cell::new(false),
+            fields: RefCell::default(),
             unsaved_draft: RefCell::default(),
         });
         OPEN.with(|o| {
@@ -312,10 +315,21 @@ impl MessageAids {
         if first {
             self.restore_draft_or_template();
         } else if self.draft_key() != before {
+            // worktree ごとの欄を残す（AI の提案・fixup!・呼び戻したメッセージは下書きにならない。テンプレートも、
+            // コミットで空にした欄に戻さない。macOS 版は worktree ごとに欄を持つ）。
+            if let Some(before) = before {
+                self.fields.borrow_mut().insert(before, self.texts());
+            }
             self.set_texts("", "");
             self.cursor.set(-1);
             self.before_recall.replace(None);
-            self.restore_draft_or_template();
+            let kept = self
+                .draft_key()
+                .and_then(|key| self.fields.borrow().get(&key).cloned());
+            match kept {
+                Some((subject, body)) => self.set_texts(&subject, &body),
+                None => self.restore_draft_or_template(),
+            }
         }
         // 最近のコミット 30 個のメッセージと作者（一覧と Co-authored-by の候補）。
         let w = Rc::downgrade(self);

@@ -1239,6 +1239,7 @@
 "Changes: {list}." = "変更: {list}。";
 "Edit {count} Commits" = "{count} コミットを編集";
 "Only commits on HEAD’s first-parent line can be edited." = "編集できるのは、HEAD から最初の親をたどったコミットです。";
+"Only commits next to each other can be combined." = "まとめられるのは、隣り合ったコミットだけです。";
 "Combine with Older Commit…" = "1 つ古いコミットとまとめる…";
 "Edit Commits from Here…" = "ここからコミットを編集…";
 "Its changes go back to the working tree; commit them in parts, then Continue." = "変更を作業ツリーに戻します。分けてコミットしてから Continue してください。";
@@ -1830,6 +1831,7 @@
 "Open in a Separate Window" = "別ウィンドウで開く";
 "The merge editor is open in a separate window" = "マージエディタを別ウィンドウで開いています";
 "Can’t read: {error}" = "読めません: {error}";
+"It isn’t UTF-8 text, so it can’t be edited here. Use Take Current File or Take Incoming File." = "UTF-8 のテキストではないので、ここでは編集できません。「手元のファイルを使う」か「取り込む側のファイルを使う」を選んでください。";
 
 /* GTK4: Settings > Performance の fsmonitor */
 "Speed up status with fsmonitor" = "fsmonitor で status を速くする";

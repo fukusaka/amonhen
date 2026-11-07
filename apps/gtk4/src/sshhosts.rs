@@ -300,6 +300,19 @@ struct HostSession {
 }
 
 impl HostSession {
+    /// 接続のページが出している、状態から決まる中身（同じなら作り直さない）。
+    fn connection_key(&self) -> String {
+        let settings = self.settings();
+        let settings = settings.as_ref().map(|s| s.state.borrow());
+        format!(
+            "{:?}|{}|{:?}|{:?}",
+            self.engine.borrow(),
+            self.through_daemon.get(),
+            settings.as_ref().map(|s| s.git_version.clone()),
+            settings.as_ref().map(|s| s.loaded),
+        )
+    }
+
     fn new(host: &str) -> Rc<Self> {
         Rc::new(Self {
             host: host.to_owned(),
@@ -416,6 +429,8 @@ pub struct SshHosts {
     selected: RefCell<Option<String>>,
     /// 選んだページ（`connection` か Settings > Git のページの名前）。
     page: RefCell<String>,
+    /// 出している接続のページの中身（[`HostSession::connection_key`]）。
+    connection_key: RefCell<Option<String>>,
     sessions: RefCell<HashMap<String, Rc<HostSession>>>,
     host_list: gtk::ListBox,
     page_list: gtk::ListBox,
@@ -530,6 +545,7 @@ impl SshHosts {
             hosts: RefCell::default(),
             selected: RefCell::default(),
             page: RefCell::new("connection".into()),
+            connection_key: RefCell::default(),
             sessions: RefCell::default(),
             host_list,
             page_list,
@@ -682,11 +698,15 @@ impl SshHosts {
         if state {
             self.fill_hosts();
         }
-        if self.selected.borrow().as_deref() == Some(host)
-            && (state || *self.page.borrow() == "connection")
-        {
+        let selected = self.selected.borrow().as_deref() == Some(host);
+        // 接続のページは、出すものが変わったときだけ作り直す（読み直しのたびだと、開いたメニューが閉じ、スクロールが
+        // 先頭に戻る）。
+        let stale = selected
+            && *self.page.borrow() == "connection"
+            && self.connection_key.borrow().as_ref() != Some(&self.session(host).connection_key());
+        if selected && (state || stale) {
             self.render();
-        } else if self.selected.borrow().as_deref() == Some(host) {
+        } else if selected {
             self.update_footer(host);
         }
     }
@@ -723,6 +743,7 @@ impl SshHosts {
         self.update_footer(&host);
         let page = self.page.borrow().clone();
         if page == "connection" {
+            self.connection_key.replace(Some(session.connection_key()));
             self.content.append(&self.connection_page(&session));
             return;
         }

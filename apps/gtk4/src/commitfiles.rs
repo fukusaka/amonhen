@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use crate::worktrees::natural_cmp;
 use amonhen_core::diff::{DiffView, StackedDiff};
-use amonhen_core::{HistorySnapshot, Repository, Selection};
+use amonhen_core::{HistorySnapshot, Repository};
 use amonhen_model::{ChangeKind, FileChange, tr};
 use amonhen_projection::FrontendProfile;
 use gtk::prelude::*;
@@ -141,14 +141,11 @@ impl Prepared {
         viewed: &HashSet<String>,
         all: bool,
     ) -> Result<Self, String> {
-        let Selection::Range { base, tip, .. } =
-            Selection::of(&history.graph, &[row]).map_err(|e| e.to_string())?
-        else {
+        // 本当の親と比べる（「一致したコミットだけ」の History では、親が次に一致したコミットに替わっている）。
+        let Some(id) = history.graph.ids().get(row as usize) else {
             return Err(tr!("No commit selected"));
         };
-        let changes = repo
-            .changes_between(base.as_ref(), &tip)
-            .map_err(|e| e.to_string())?;
+        let changes = repo.commit_changes(id).map_err(|e| e.to_string())?;
         Self::from_changes(repo.clone(), changes, viewed, all)
     }
 
@@ -1098,6 +1095,10 @@ impl Inner {
         this.single.set(single.is_some());
         this.shown_file.set(single);
         this.source.replace(Some(source.clone()));
+        // 前のコミットのファイルの番号を持ち越さない（一覧の選びが、出している差分とずれる）。
+        this.syncing.set(true);
+        this.store.remove_all();
+        this.syncing.set(false);
         Inner::fill_list(this);
         match single {
             Some(_) => this.diff.show(source, view),

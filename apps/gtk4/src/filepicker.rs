@@ -1531,6 +1531,15 @@ impl Picker {
             match key {
                 gtk::gdk::Key::Right => p.enter(index),
                 gtk::gdk::Key::Left => p.back(index),
+                // 選べるものなら選ぶ。選べなければ、選んでいるフォルダに入る（行がなくても開いているフォルダを選べる。
+                // macOS 版と同じ）。
+                gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter if plain => {
+                    if p.chosen().is_some() {
+                        p.finish();
+                    } else {
+                        p.enter(index);
+                    }
+                }
                 // ↑↓ は選べるもの・開くものだけを渡る（ListView のままだと薄い行に止まる。macOS 版と同じ）。
                 gtk::gdk::Key::Up | gtk::gdk::Key::KP_Up if plain => p.step(index, -1),
                 gtk::gdk::Key::Down | gtk::gdk::Key::KP_Down if plain => p.step(index, 1),

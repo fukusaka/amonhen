@@ -697,7 +697,21 @@ fn launch(app: &gtk::Application, args: &Args) {
             None
         }
     } else {
-        build_window(app, args.clone());
+        // 場所を渡して起動しても、前回の窓とタブを開き直してから、そのタブを足す（macOS 版と同じ。開き直さないと、
+        // 前回の並びをこの 1 つで上書きしてしまう）。
+        // 確認用のフラグつきの起動は、そのタブだけ。
+        let restore = if check || std::env::args().skip(1).any(|a| a.starts_with("--")) {
+            Vec::new()
+        } else {
+            repos::restorable()
+        };
+        match args.path.clone() {
+            Some(location) if !restore.is_empty() => {
+                tabs::restore(app, restore);
+                tabs::open(app, repos::top_of(&location), tabs::Place::Tab);
+            }
+            _ => build_window(app, args.clone()),
+        }
         None
     };
     // 確認用: リポジトリのページで、窓のアクションを（`--action`）。
@@ -1922,23 +1936,21 @@ fn build_tab(
         }
     });
     // ほかの場所（ブランチのメニュー、ステータスバー）から worktree を書き込む先にする。
+    let w = Rc::downgrade(&working);
+    statusbar.connect_mark_without(move |paths| {
+        if let Some(working) = w.upgrade() {
+            working.mark_without_markers(paths);
+        }
+    });
     let edit_action = gio::SimpleAction::new("edit-worktree", Some(glib::VariantTy::STRING));
-    let (w, p, s) = (
-        Rc::downgrade(&worktrees),
-        pages.downgrade(),
-        sidebar.clone(),
-    );
+    let w = Rc::downgrade(&worktrees);
     edit_action.connect_activate(move |_, value| {
-        let (Some(worktrees), Some(pages), Some(path)) = (
-            w.upgrade(),
-            p.upgrade(),
-            value.and_then(|v| v.get::<String>()),
-        ) else {
+        let (Some(worktrees), Some(path)) = (w.upgrade(), value.and_then(|v| v.get::<String>()))
+        else {
             return;
         };
+        // 今の画面のまま（macOS 版と同じ）。
         worktrees.edit(&path);
-        pages.set_visible_child_name("working");
-        s.select_page(Page::WorkingCopy);
     });
     tab.group.add_action(&edit_action);
     // GitHub（プルリクエスト・CI の状態・アバター）。ref を読むたびに読み直す（30 秒は空ける）。
@@ -2657,9 +2669,18 @@ fn build_tab(
                                 .min();
                             if let Some(path) = first {
                                 working.select_path(&path);
+                                // 同じ中身を別のスナップショットとして渡す（見張りが先に同じものを届けていても、
+                                // 選んだファイルを選び直す）。
+                                working.show(Arc::new(amonhen_core::StatusSnapshot {
+                                    generation: snapshot.generation,
+                                    status: snapshot.status.clone(),
+                                }));
+                            } else {
+                                working.show(snapshot);
                             }
+                        } else {
+                            working.show(snapshot);
                         }
-                        working.show(snapshot);
                         if let Some(path) = &args.print_file_menu
                             && let Some(titles) = working.file_menu_titles(path)
                         {

@@ -751,8 +751,17 @@ impl WorkingCopy {
         }
     }
 
+    /// マーカーの残っていないコンフリクトのファイルを、まとめて解決済みにする（帯から）。
+    pub fn mark_without_markers(&self, paths: Vec<String>) {
+        self.inner.mark_without_markers(paths);
+    }
+
     /// 次に status が届いたとき、`path` を選ぶ。
     pub fn select_path(&self, path: &str) {
+        // その 1 行だけにする（作り直しが前の選びを残さないように。macOS 版と同じ）。
+        self.inner.rebuilding.set(true);
+        self.inner.selection.unselect_all();
+        self.inner.rebuilding.set(false);
         self.inner.selected.replace(Some(path.to_owned()));
     }
 
@@ -2684,10 +2693,25 @@ impl Inner {
         let pattern = pattern.to_owned();
         glib::spawn_future_local(async move {
             let files = crate::sheets::run(&repo, json!({ "op": "ignoreFiles" })).await;
-            let Some(gitignore) = with_ignore_pattern(
-                files["info"]["gitignore"].as_str().unwrap_or_default(),
-                &pattern,
+            // 読めなければ書かない（空として書くと、.gitignore と info/exclude の中身を失う。macOS 版と同じ）。
+            let (Some(current), Some(exclude)) = (
+                files["info"]["gitignore"].as_str(),
+                files["info"]["exclude"].as_str(),
             ) else {
+                actions
+                    .fail(crate::statusbar::Failure {
+                        message: files["error"]
+                            .as_str()
+                            .map_or_else(|| tr!("The operation failed"), str::to_owned),
+                        kind: None,
+                        path: None,
+                        command: None,
+                        heading: None,
+                    })
+                    .await;
+                return;
+            };
+            let Some(gitignore) = with_ignore_pattern(current, &pattern) else {
                 return;
             };
             // 読んだ worktree に書く（読んでいる間に書き込む先を替えても、ほかの worktree の .gitignore を、
@@ -2697,7 +2721,7 @@ impl Inner {
                 vec![json!({
                     "op": "saveIgnoreFiles",
                     "gitignore": gitignore,
-                    "exclude": files["info"]["exclude"].as_str().unwrap_or_default(),
+                    "exclude": exclude,
                 })],
                 |_| {},
             );
@@ -2872,6 +2896,31 @@ impl Inner {
 
     /// Take Current File・Take Incoming File: コンフリクトのファイルを片側のファイルそのものにする。マーカーが
     /// 残っていなければ、解決した内容（rerere・ほかのエディタ）を上書きしてしまうので確かめる（macOS 版と同じ）。
+    /// マーカーの残っていないコンフリクトのファイルを、まとめて解決済みにする（帯から）。保存していない Result は、
+    /// 保存してから解決済みにする（Mark Resolved と同じ。黙って捨てない）。
+    fn mark_without_markers(&self, paths: Vec<String>) {
+        let (Some(actions), Some(repo)) = (self.actions.borrow().clone(), self.repo()) else {
+            return;
+        };
+        let paths: Vec<String> = paths
+            .into_iter()
+            .filter(|path| match self.unsaved_editor(path) {
+                Some(editor) => {
+                    crate::merge::Editor::save_and_resolve(&editor);
+                    false
+                }
+                None => true,
+            })
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        actions.perform_work_in(repo, None, move |repo| {
+            let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
+            repo.stage(&refs)
+        });
+    }
+
     /// 下のマージエディタか別の窓のマージエディタに、`path` の保存していない Result がある。
     fn unsaved_editor(&self, path: &str) -> Option<Rc<crate::merge::Editor>> {
         let workdir = self.repo().and_then(|r| r.paths().workdir);

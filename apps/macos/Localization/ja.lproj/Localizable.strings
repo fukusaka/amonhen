@@ -99,6 +99,7 @@
 "Split %@?" = "%@ を分けますか？";
 "Its changes go back to the working tree; commit them in parts, then Continue." = "変更を作業ツリーに戻します。分けてコミットしてから Continue してください。";
 "Only commits on HEAD’s first-parent line can be edited." = "編集できるのは、HEAD から最初の親をたどったコミットです。";
+"Only commits next to each other can be combined." = "まとめられるのは、隣り合ったコミットだけです。";
 "Fetched" = "Fetch しました";
 "Pulled into %@" = "%@ に Pull しました";
 "Pushed %@ to %@" = "%1$@ を %2$@ に Push しました";

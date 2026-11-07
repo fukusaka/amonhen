@@ -47,7 +47,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     /// Range Diff の画面（同じ一連のコミットの 2 つの版の比べ合わせ）。開いている間だけサイドバーに出す。
     private let rangeDiff: RangeDiffViewController
     /// リポジトリの設定の画面（サイドバーの Workspace の Settings）。
-    private let settings: RepositorySettingsPage
+    private var settings: RepositorySettingsPage
     private var actions: Actions { editing.actions }
     private let toolbar: MainToolbar
     private var watch: RepositoryWatch?
@@ -318,16 +318,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         history.actions = actions
         stashes.actions = actions
         reflog.actions = actions
-        // git の設定・リモートを変えたら、読み直す。
-        settings.model.onRepositoryChange = { [weak self] in self?.refreshRepository(nil) }
-        // 取得とフォルダのページの操作（取り足す・取り直す・取り出すフォルダを変える）は、Fetch と同じくウィンドウの操作で。
-        settings.model.performOperation = { [weak self] command, done in
-            guard let actions = self?.actions else { return done() }
-            actions.perform(command, completion: { _ in done() }, recover: { _ in
-                done()
-                return false
-            })
-        }
+        connectSettings()
         loadForm()
         window.toolbar = toolbar.toolbar
         toolbar.setRepository(window.title)
@@ -608,6 +599,19 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     private var slotOrder: [String] = []
     private static let keptSlots = 3
 
+    private func connectSettings() {
+        // git の設定・リモートを変えたら、読み直す。
+        settings.model.onRepositoryChange = { [weak self] in self?.refreshRepository(nil) }
+        // 取得とフォルダのページの操作（取り足す・取り直す・取り出すフォルダを変える）は、Fetch と同じくウィンドウの操作で。
+        settings.model.performOperation = { [weak self] command, done in
+            guard let actions = self?.actions else { return done() }
+            actions.perform(command, completion: { _ in done() }, recover: { _ in
+                done()
+                return false
+            })
+        }
+    }
+
     private func activate(_ slot: WorktreeSlot) {
         wantedSlot = nil
         editing = slot
@@ -621,6 +625,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             }
         }
         pages?.replace(.workingCopy, with: slot.workingCopy)
+        // リポジトリの設定も書き込む先の worktree のもの（読むのと操作の先を揃える。sparse checkout は worktree ごと）。
+        settings = RepositorySettingsPage(repository: slot.repository, location: location)
+        connectSettings()
+        pages?.replace(.settings, with: settings)
         // プルリクエストでマージ済みのブランチは、リポジトリで共通（分け方が同じなら読み直さない）。
         slot.actions.mergedByPullRequest = sidebar.actions?.mergedByPullRequest ?? [:]
         sidebar.actions = slot.actions
@@ -895,7 +903,11 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     /// Repository > New Worktree…: ブランチを作り、それを checkout した worktree を作って、書き込む先にする。
     @objc func newWorktree(_ sender: Any?) {
-        let start = startPoint
+        // 下で開いたリポジトリから作るので、書き込む先の HEAD は ID で渡す。
+        var start = startPoint
+        if start == "HEAD", editing !== opened, let head = editingRefs?.head {
+            start = head.map { String(format: "%02x", $0) }.joined()
+        }
         let base = opened.path
         let alert = NSAlert()
         alert.messageText = L("New Worktree")
@@ -1157,6 +1169,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             guard let editor = await HistoryEditController.load(actions: actions, from: start, includingOlder: includingOlder),
                   preset.map({ if case let .combine(oids) = $0 { editor.contains(oids) } else { true } }) ?? true else {
                 statusBar?.flash(L("Only commits on HEAD’s first-parent line can be edited."), symbol: "exclamationmark.triangle")
+                return
+            }
+            if case let .combine(oids) = preset, !editor.areAdjacent(oids) {
+                statusBar?.flash(L("Only commits next to each other can be combined."), symbol: "exclamationmark.triangle")
                 return
             }
             commitEditor = editor
@@ -2110,7 +2126,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     }
 
     @objc func goToHead(_ sender: Any?) {
-        guard let head = latestRefs?.head else { return NSSound.beep() }
+        guard let head = editingRefs?.head else { return NSSound.beep() }
         sidebar.select(page: .history)
         goTo(id: head)
     }
