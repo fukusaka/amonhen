@@ -416,18 +416,15 @@ impl Actions {
     /// ignore されたファイル（ビルドの出力など）を消す（git clean -X）。消すものを先に一覧で見せる。git の記録に
     /// ないので戻せない（赤いボタン。macOS 版と同じ）。
     pub fn delete_ignored_files(self: &Rc<Self>) {
-        let Some(repo) = self.repo() else { return };
+        let Some(target) = crate::sheets::Target::current(self) else {
+            return;
+        };
         let this = self.clone();
         glib::spawn_future_local(async move {
-            let reply = crate::sheets::run(&repo, json!({ "op": "ignoredFiles" })).await;
+            let reply = crate::sheets::run(&target.repo, json!({ "op": "ignoredFiles" })).await;
             let parent = crate::sheets::parent(&this);
             if let Some(error) = reply["error"].as_str() {
-                return crate::sheets::inform(
-                    parent.as_ref(),
-                    &tr!("Delete Ignored Files…"),
-                    error,
-                )
-                .await;
+                return crate::sheets::alert(parent.as_ref(), error, "").await;
             }
             let paths: Vec<String> = reply["info"]["paths"]
                 .as_array()
@@ -436,14 +433,15 @@ impl Actions {
                 .filter_map(|p| p.as_str().map(str::to_owned))
                 .collect();
             if paths.is_empty() {
-                return crate::sheets::inform(
-                    parent.as_ref(),
-                    &tr!("No Ignored Files"),
-                    &tr!("Nothing in the working tree matches .gitignore."),
-                )
-                .await;
+                return target
+                    .inform(
+                        parent.as_ref(),
+                        &tr!("No Ignored Files"),
+                        &tr!("Nothing in the working tree matches .gitignore."),
+                    )
+                    .await;
             }
-            let sheet = crate::sheets::Sheet::new(
+            let sheet = target.sheet(
                 parent.as_ref(),
                 &tr!("Delete {count} Ignored Items?", count = paths.len()),
                 &format!(
@@ -454,12 +452,16 @@ impl Actions {
                     crate::sheets::cant_undo()
                 ),
             );
-            let list = gtk::Label::new(Some(&paths.join("\n")));
-            list.set_xalign(0.0);
-            list.set_yalign(0.0);
-            list.add_css_class("monospace");
+            // パスを選んで写せる（長いパスは折り返す。macOS 版と同じ）。ラベルだと、開いたときに全体が選ばれる。
+            let list = gtk::TextView::new();
+            list.set_editable(false);
+            list.set_cursor_visible(false);
+            list.set_monospace(true);
+            list.set_wrap_mode(gtk::WrapMode::WordChar);
+            list.buffer().set_text(&paths.join("\n"));
             let scrolled = gtk::ScrolledWindow::builder()
                 .child(&list)
+                .hscrollbar_policy(gtk::PolicyType::Never)
                 .min_content_height(160)
                 .max_content_height(160)
                 .min_content_width(380)
@@ -468,7 +470,11 @@ impl Actions {
             sheet.add(&scrolled);
             sheet.buttons(&tr!("Delete"), true, None);
             if sheet.run().await == crate::sheets::Response::Ok {
-                this.perform(json!({ "op": "deleteIgnored", "paths": paths }));
+                this.perform_in(
+                    target.repo.clone(),
+                    vec![json!({ "op": "deleteIgnored", "paths": paths })],
+                    |_| {},
+                );
             }
         });
     }
@@ -477,9 +483,12 @@ impl Actions {
     /// ものをまとめて消す（Undo は 1 回でまとめて戻す）。GitHub のリポジトリなら、マージされたプルリクエストを gh で
     /// 読み、squash・rebase で取り込んだものも見分ける。上流が消えただけのものは選ばずに置く（macOS 版と同じ）。
     pub fn clean_up_branches(self: &Rc<Self>) {
-        let Some(repo) = self.repo() else { return };
+        let Some(target) = crate::sheets::Target::current(self) else {
+            return;
+        };
         let this = self.clone();
         glib::spawn_future_local(async move {
+            let repo = target.repo.clone();
             let mut note = None;
             let mut pull_requests = Vec::new();
             if crate::github::available()
@@ -504,25 +513,25 @@ impl Actions {
             .await;
             let parent = crate::sheets::parent(&this);
             if let Some(error) = reply["error"].as_str() {
-                return crate::sheets::inform(parent.as_ref(), &tr!("Clean Up Branches"), error)
-                    .await;
+                return crate::sheets::alert(parent.as_ref(), error, "").await;
             }
             let info = &reply["info"];
             let base = info["base"].as_str().unwrap_or("main").to_owned();
             let branches: Vec<Value> = info["branches"].as_array().cloned().unwrap_or_default();
             let note = note.map(|n| format!("\n\n{n}")).unwrap_or_default();
             if branches.is_empty() {
-                return crate::sheets::inform(
-                    parent.as_ref(),
-                    &tr!("No Branches to Clean Up"),
-                    &(tr!(
-                        "No branch is merged into {base}, merged by a pull request, or left without its upstream.",
-                        base = base
-                    ) + &note),
-                )
-                .await;
+                return target
+                    .inform(
+                        parent.as_ref(),
+                        &tr!("No Branches to Clean Up"),
+                        &(tr!(
+                            "No branch is merged into {base}, merged by a pull request, or left without its upstream.",
+                            base = base
+                        ) + &note),
+                    )
+                    .await;
             }
-            let sheet = crate::sheets::Sheet::new(
+            let sheet = target.sheet(
                 parent.as_ref(),
                 &tr!("Clean Up Branches"),
                 &format!(
@@ -613,7 +622,11 @@ impl Actions {
                 .map(|(_, b)| json!({ "name": b["name"], "force": b["force"] }))
                 .collect();
             if !chosen.is_empty() {
-                this.perform(json!({ "op": "deleteBranches", "branches": chosen }));
+                this.perform_in(
+                    target.repo.clone(),
+                    vec![json!({ "op": "deleteBranches", "branches": chosen })],
+                    |_| {},
+                );
             }
         });
     }
