@@ -10,7 +10,7 @@ import { daemonFor } from '../daemon/connection.ts';
 import { changedRows, readWorkingDiff, selectedRows, type DaemonDiff } from '../daemon/diff.ts';
 import { applyDiffSelection, computeDiff, type ComputedDiff } from '../diff/fileDiff.ts';
 import { discardFiles, discardLines } from '../state/discard.ts';
-import { COMMIT_TYPES, templateMessage, type MessageParts } from '../workingCopy/commitMessage.ts';
+import { COMMIT_TYPES, fixupSubjects, templateMessage, type MessageParts } from '../workingCopy/commitMessage.ts';
 import type { WorkingCopyHostMessage, WorkingCopyWebviewMessage } from '../workingCopy/protocol.ts';
 import { commitStaged } from './commit.ts';
 import { openConflict } from './diff.ts';
@@ -126,9 +126,24 @@ export class WorkingCopyController implements vscode.Disposable {
     const publishes = !repo.current.status?.branch.upstream;
     const push = { label: publishes ? 'Commit and Publish…' : 'Commit and Push', description: '⌘⇧↩' };
     const startAmend = { label: 'Amend Last Commit' };
-    const picked = await vscode.window.showQuickPick([...(canCommit ? [push] : []), startAmend], {
-      placeHolder: 'Commit',
-    });
+    const subjects = fixupSubjects(this.recent.map((c) => c.message));
+    const fixup = {
+      label: 'Fixup Commit For…',
+      detail: 'Commit as a fixup! of the chosen commit (combine later with rebase -i --autosquash)',
+    };
+    const squash = {
+      label: 'Squash Commit For…',
+      detail: 'Commit as a squash! of the chosen commit (its message is added when combined)',
+    };
+    const picked = await vscode.window.showQuickPick(
+      [...(canCommit ? [push] : []), startAmend, ...(subjects.length > 0 ? [fixup, squash] : [])],
+      { placeHolder: 'Commit' },
+    );
+    if (picked === fixup || picked === squash) {
+      const subject = await vscode.window.showQuickPick(subjects, { placeHolder: picked.label });
+      if (subject) this.post({ type: 'wcStartFixup', kind: picked === fixup ? 'fixup' : 'squash', subject });
+      return;
+    }
     if (picked === push) {
       await this.commit(repo, message, amend, true);
     } else if (picked === startAmend) {

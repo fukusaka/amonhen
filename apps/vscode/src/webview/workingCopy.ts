@@ -580,6 +580,14 @@ export function createWorkingCopyView(): View {
         amend.checked = true;
         amendChanged();
         break;
+      case 'wcStartFixup':
+        // fixup! は件名だけ（元のメッセージを残す）、squash! は本文に書き足せる
+        amend.checked = false;
+        replaceField(subject, `${m.kind}! ${m.subject}`);
+        if (m.kind === 'fixup') replaceField(body, '');
+        (m.kind === 'fixup' ? subject : body).focus();
+        updateCommitButton();
+        break;
       case 'wcInsertType':
         replaceField(subject, withType(subject.value, m.commitType));
         subject.focus();

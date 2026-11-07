@@ -21,6 +21,8 @@ export type WorkingCopyHostMessage =
   | { type: 'wcInsertTrailer'; line: string }
   /** Amend を入れて、直前のメッセージを入れる */
   | { type: 'wcStartAmend' }
+  /** `fixup! 件名`・`squash! 件名` のコミットを書き始める */
+  | { type: 'wcStartFixup'; kind: 'fixup' | 'squash'; subject: string }
   | { type: 'wcCommitted' };
 
 export type WorkingCopyWebviewMessage =

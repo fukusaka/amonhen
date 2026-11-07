@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   addTrailer,
+  fixupSubjects,
   lengthLevel,
   longestLine,
   messageLength,
@@ -46,4 +47,10 @@ test('a trailer goes last, once', () => {
   assert.equal(addTrailer('Body text\n', me), `Body text\n\n${me}`);
   assert.equal(addTrailer(`Body\n\n${me}`, other), `Body\n\n${me}\n${other}`);
   assert.equal(addTrailer(`Body\n\n${me}`, me), `Body\n\n${me}`);
+});
+
+test('fixup targets skip fixups, squashes and repeats, and stop at 15', () => {
+  assert.deepEqual(fixupSubjects(['Two\n\nbody', 'fixup! One', 'squash! One', 'One', 'Two', '']), ['Two', 'One']);
+  const many = Array.from({ length: 20 }, (_, i) => `c${i}`);
+  assert.deepEqual(fixupSubjects(many), many.slice(0, 15));
 });

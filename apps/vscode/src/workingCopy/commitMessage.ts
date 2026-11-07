@@ -54,3 +54,15 @@ export function addTrailer(body: string, line: string): string {
   const last = text.split('\n').pop()!;
   return `${text}${/^[A-Za-z-]+: /.test(last) ? '\n' : '\n\n'}${line}`;
 }
+
+/** `fixup!`・`squash!` を付けられる件名（新しい順に重ねず 15 個。`rebase --autosquash` は元の件名で探す） */
+export function fixupSubjects(messages: readonly string[]): string[] {
+  const subjects: string[] = [];
+  for (const message of messages) {
+    const subject = message.split('\n')[0]!;
+    if (!subject || /^(fixup|squash)! /.test(subject) || subjects.includes(subject)) continue;
+    subjects.push(subject);
+    if (subjects.length === 15) break;
+  }
+  return subjects;
+}
