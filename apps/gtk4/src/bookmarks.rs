@@ -799,9 +799,9 @@ pub fn rescan() {
     });
 }
 
-/// 探し直したフォルダ `dirs`（手元のスキャンするフォルダの、探す深さまでの、リポジトリでないフォルダ）を見張り、
-/// 中でフォルダが増えた・消えたら探し直す（macOS 版の `watchScanRoots`。知らせは 1 秒まとめる）。見つけた
-/// リポジトリの中の変化（ビルドなど）は見ない。
+/// 探し直したフォルダ `dirs`（手元のスキャンするフォルダの、探す深さまでのフォルダと、見つけたリポジトリ）を見張り、
+/// 中でフォルダが増えた・消えた、`.git` ができた・消えたら探し直す（macOS 版の `watchScanRoots`。知らせは 1 秒
+/// まとめる）。見つけたリポジトリの中の変化（ビルドなど）は見ない。
 /// 手元のスキャンするフォルダを見張る（探しはしない。起動したときと、フォルダを外したとき。macOS 版の
 /// `watchScanRoots`）。見張る先（探す深さまでのフォルダ）は裏で集める。探し直すと、そのとき見張り直す。
 pub fn watch_scan_roots() {
@@ -826,6 +826,21 @@ pub fn watch_scan_roots() {
     });
 }
 
+/// スキャンするフォルダの中の `path` の変化が、リポジトリの増減かもしれないか。
+fn scan_change_matters(path: &Path) -> bool {
+    let name = path.file_name().map(|n| n.to_string_lossy());
+    // `git init`・`.git` を消した。
+    if name.as_deref() == Some(".git") {
+        return true;
+    }
+    // 見つけたリポジトリの中の、ほかの変化は増減ではない。
+    if path.parent().is_some_and(|p| p.join(".git").exists()) {
+        return false;
+    }
+    // 隠しフォルダと、今あるファイル（フォルダでないもの）の出入りも増減ではない。
+    !name.is_some_and(|n| n.starts_with('.')) && (path.is_dir() || !path.exists())
+}
+
 fn watch_dirs(dirs: &[PathBuf]) {
     // 前の見張りを止めてから（同じフォルダを二重に見ない）。
     STATE.with(|s| s.borrow_mut().watch = None);
@@ -834,13 +849,7 @@ fn watch_dirs(dirs: &[PathBuf]) {
     }
     let (tx, rx) = async_channel::unbounded::<()>();
     let watch = amonhen_watch::DirsWatch::new(dirs, move |paths| {
-        // 隠しフォルダ（`.git` など）と、今あるファイル（フォルダでないもの）の出入りは、リポジトリの増減ではない。
-        let relevant = paths.iter().any(|p| {
-            let hidden = p
-                .file_name()
-                .is_some_and(|n| n.to_string_lossy().starts_with('.'));
-            !hidden && (p.is_dir() || !p.exists())
-        });
+        let relevant = paths.iter().any(|p| scan_change_matters(p));
         if relevant {
             let _ = tx.send_blocking(());
         }
@@ -907,6 +916,8 @@ fn scan_local_with_dirs(root: &ScanRoot) -> (Vec<String>, Vec<PathBuf>) {
     ) {
         if dir.join(".git").exists() {
             found.push(dir.to_string_lossy().into_owned());
+            // 中は見ない。見張るのは `.git` が消えたときのため。
+            dirs.push(dir.to_owned());
             return;
         }
         if depth == 0 {
@@ -1101,6 +1112,21 @@ fn pump() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_scan_folder_notices_git_appearing_and_going() {
+        let dir = std::env::temp_dir().join(format!("amonhen-scan-git-{}", std::process::id()));
+        let repo = dir.join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        assert!(scan_change_matters(&repo.join(".git")));
+        assert!(!scan_change_matters(&repo.join("src")));
+        assert!(!scan_change_matters(&repo.join("gone.txt")));
+        assert!(scan_change_matters(&dir.join("repo")));
+        assert!(!scan_change_matters(&dir.join(".hidden")));
+        assert!(scan_change_matters(&dir.join("gone")));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn reads_and_writes_the_macos_shape() {
