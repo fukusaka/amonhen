@@ -623,9 +623,18 @@ impl Inner {
             this.update_count();
             return;
         }
+        // 一致がなければ、元の History のまま（空にしない。macOS 版と同じ）。
+        let rows = this.matches.borrow().clone();
+        if rows.is_empty() {
+            if this.filtered.replace(false) {
+                this.view.set_matching_only(false);
+                this.view.show(repo, base);
+            }
+            this.update_count();
+            return;
+        }
         // 一致したコミットだけ（すべて一致なので塗らない）。作るのは linux の 25 万件で 50 ms ほどで、
         // History の大きさに比例するので裏で作る（macOS 版と同じ）。
-        let rows = this.matches.borrow().clone();
         this.filter_started.set(generation);
         let weak = Rc::downgrade(this);
         glib::spawn_future_local(async move {
