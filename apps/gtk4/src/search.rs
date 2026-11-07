@@ -467,6 +467,11 @@ impl Search {
         });
     }
 
+    /// 一致したコミットだけを出しているか。
+    pub fn is_filtered(&self) -> bool {
+        self.inner.filtered.get()
+    }
+
     /// 新しく読んだ History を出す。行が変わるので、検索の結果は捨てる（問い合わせは欄に残し、Enter で探し直せる。
     /// macOS 版と同じ）。一致したコミットだけを出しているなら、新しい History で探し直して絞り込んだままにする
     /// （それまでは今の絞り込みを出しておく。macOS 版の `showBase` と同じ）。

@@ -170,6 +170,8 @@ pub struct State {
     on_menu: Option<MenuCallback>,
     /// メニューを出している行（選びはせず、枠で示す。macOS 版の `clickedRow`）。
     menu_row: Option<u32>,
+    /// 次に出す History で選ぶコミット（[`HistoryView::select_commit`]）。
+    wanted: Option<Oid>,
     /// 検索に一致した行（昇順）。薄く塗る。
     matches: Rc<Vec<u32>>,
     lanes: Lanes,
@@ -755,6 +757,12 @@ impl HistoryView {
             st.anchor = anchor.and_then(|id| history.row_of(&id));
             let mut changed =
                 st.selected.is_none() != selected.is_none() || st.extra.len() != extra.len();
+            if let Some(row) = st.wanted.take().and_then(|id| history.row_of(&id)) {
+                st.selected = Some(row);
+                st.extra.clear();
+                st.anchor = Some(row);
+                changed = true;
+            }
             // 最後に選んだコミットが消えたら（ほかのプログラムが rebase・amend した）、残りのうち最後のものに
             // する。何も残らなければ先頭（いちばん新しいコミット）を選ぶ（macOS 版と同じ。表示の位置は動かさない）。
             if selected.is_some() && st.selected.is_none() {
@@ -1068,6 +1076,15 @@ impl HistoryView {
     /// macOS 版の `select(row:)` と同じ）。
     pub fn select(&self, row: u32) {
         self.select_row(row, true);
+    }
+
+    /// コミット `id` を選ぶ。今の History になければ、次に出す History で選ぶ（絞り込みを作り直している間）。
+    pub fn select_commit(&self, id: Oid) {
+        let row = self.current().and_then(|(_, history)| history.row_of(&id));
+        match row {
+            Some(row) => self.select(row),
+            None => self.state().wanted = Some(id),
+        }
     }
 
     /// `row` だけを選び、見えるところまでだけスクロールする（クリック・矢印のキー）。
