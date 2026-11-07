@@ -25,6 +25,7 @@ import type {
   SignatureView,
 } from '../history/protocol.ts';
 import { editableChain, refLabels } from '../history/rows.ts';
+import { scopeRefs } from '../history/scope.ts';
 import type { Repository, Section } from '../state/repository.ts';
 import { openCommitChanges, openCommitFile } from './commitChanges.ts';
 import { showError } from './stageCommands.ts';
@@ -167,7 +168,7 @@ export class HistoryController implements vscode.Disposable {
    * ref の履歴を出していたときだけ現在のブランチに戻す（All Branches は保つ）
    */
   showScope(scope: Scope | undefined): void {
-    const next = scope ?? (this.scope.startsWith('ref:') ? 'head' : this.scope);
+    const next = scope ?? (scopeRefs(this.scope) ? 'head' : this.scope);
     if (next !== this.scope) {
       this.scope = next;
       void this.reset();
@@ -801,9 +802,14 @@ export class HistoryController implements vscode.Disposable {
     let tips: string[] | undefined;
     if (this.scope === 'head') {
       tips = [this.headOid!];
-    } else if (this.scope.startsWith('ref:')) {
-      const resolved = await client.call({ op: 'run', command: { op: 'resolveCommit', rev: this.scope.slice('ref:'.length) } });
-      tips = [String(resolved.json['text'])];
+    } else {
+      const refs = scopeRefs(this.scope);
+      if (refs) {
+        const resolved = await Promise.all(
+          refs.map((rev) => client.call({ op: 'run', command: { op: 'resolveCommit', rev } })),
+        );
+        tips = resolved.map((r) => String(r.json['text']));
+      }
     }
     const history = await client.call(tips ? { op: 'history', tips } : { op: 'history' });
     const boundary = history.json['shallow'] === true ? ((history.json['boundaryRows'] as number[] | undefined) ?? []) : undefined;
@@ -851,9 +857,7 @@ export class HistoryController implements vscode.Disposable {
     const revs =
       this.scope === 'all'
         ? ['HEAD', '--branches', '--remotes', '--tags']
-        : this.scope.startsWith('ref:')
-          ? [this.scope.slice('ref:'.length)]
-          : ['HEAD'];
+        : (scopeRefs(this.scope) ?? ['HEAD']);
     let page: Commit[] = [];
     try {
       page = this.headOid ? await repo.backend.log(revs, this.commits.length, PAGE) : [];

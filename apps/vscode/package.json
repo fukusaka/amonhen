@@ -543,6 +543,11 @@
         "enablement": "amonhen.hasRepository"
       },
       {
+        "command": "amonhen.showRefs",
+        "title": "Show History of Selected",
+        "category": "Amon Hen"
+      },
+      {
         "command": "amonhen.showRef",
         "title": "Show History of Ref",
         "category": "Amon Hen"
@@ -900,6 +905,11 @@
           "command": "amonhen.worktree.prune",
           "when": "view == amonhen.sidebar && amonhen.engine && viewItem =~ /^worktree.*;prunable/",
           "group": "4_worktree@2"
+        },
+        {
+          "command": "amonhen.showRefs",
+          "when": "view == amonhen.sidebar && viewItem =~ /^(branch(\\.current)?(;\\w+)*|remoteBranch|tag(;\\w+)*)$/ && listMultiSelection",
+          "group": "1_navigation@1"
         },
         {
           "command": "amonhen.worktree.new",
@@ -1573,6 +1583,10 @@
         },
         {
           "command": "amonhen.addToGitignore",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.showRefs",
           "when": "false"
         },
         {

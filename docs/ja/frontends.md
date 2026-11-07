@@ -255,7 +255,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Go to HEAD・Parent・Child | ✓ | ✓ | ✓ | n/a | VSCode: History の上の HEAD のボタン、コミットのメニューの Go to Parent・Go to Child、詳細の親と子へのリンク（エンジンがあるとき）。 |
 | Go to Ref | — | — | — | n/a |  |
 | いくつものコミットを選ぶ（範囲・2 つ・飛び飛び） | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。<br>CLI: 2 つは `diff <rev> <rev>`。 |
-| 選んだいくつもの ref の History | ✓ | ✓ | — | ✓ | CLI: `log --branch` を重ねる。 |
+| 選んだいくつもの ref の History | ✓ | ✓ | ✓ | ✓ | CLI: `log --branch` を重ねる。 |
 | コミットのメニュー: checkout・新しいブランチやタグ・cherry-pick・revert・ID のコピー | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | 編集モード（keep・reword・squash・fixup・drop・edit、ドラッグで並べ替え） | ✓ | ✓ | △ | △ | VSCode: 1 つずつで、いくつもの段の計画はない。<br>CLI: `amonhen run` から。 |
 | 書き換えの見込み（積み重ね・push 済みのブランチ、コンフリクトの見込み） | ✓ | ✓ | △ | ✓ | VSCode: daemon 越しで、今のブランチだけ。<br>CLI: `rewrite-preview`。 |

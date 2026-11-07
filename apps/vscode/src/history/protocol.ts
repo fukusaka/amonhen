@@ -6,7 +6,7 @@ import type { SignatureKind } from '../git/signature.ts';
 import type { GraphRow } from './graph.ts';
 
 /** 履歴の範囲。現在のブランチ、すべて、または `ref:refs/heads/x` のような 1 つの ref */
-export type Scope = 'head' | 'all' | `ref:${string}`;
+export type Scope = 'head' | 'all' | `ref:${string}` | `refs:${string}`;
 
 export interface RefLabel {
   name: string;

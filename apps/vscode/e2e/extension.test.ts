@@ -2690,6 +2690,37 @@ suite('Amon Hen in VSCode', () => {
     assert.equal((await waitPosted('rows', at, (m) => m.start === 1)).rows.length, 1);
   });
 
+  test('shows the History of several selected refs through the daemon', async () => {
+    const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+    const start = git('rev-parse', 'HEAD').trim();
+    const make = (name: string) => {
+      git('switch', '-q', '-c', name, start);
+      git('commit', '-q', '--allow-empty', '-m', name);
+    };
+    make('several-a');
+    make('several-b');
+    make('several-c');
+    git('switch', '-q', branch);
+    try {
+      await vscode.commands.executeCommand('amonhen.refresh');
+      const mark = posted.length;
+      const node = (name: string) => ({ ref: { name: `refs/heads/${name}` } });
+      await vscode.commands.executeCommand('amonhen.showRefs', node('several-a'), [node('several-a'), node('several-b')]);
+      const { scope } = await waitPosted('reset', mark, (m) => m.scope.startsWith('refs:'));
+      assert.equal(scope, 'refs:refs/heads/several-a\nrefs/heads/several-b');
+      const { rows } = await waitPosted('rows', mark, (m) => m.rows.some((r) => r.subject === 'several-a'));
+      const subjects = rows.map((r) => r.subject);
+      assert.ok(subjects.includes('several-b'), subjects.join(', '));
+      assert.ok(!subjects.includes('several-c'), subjects.join(', '));
+    } finally {
+      await showView('amonhen.showHistory');
+      await vscode.commands.executeCommand('amonhen.showHistory');
+      api.panel()?.history.showScope('head');
+      git('branch', '-q', '-D', 'several-a', 'several-b', 'several-c');
+      await vscode.commands.executeCommand('amonhen.refresh');
+    }
+  });
+
   test('shows names from the mailmap through the daemon and reloads them when it changes', async () => {
     await mailmapFlow();
   });

@@ -255,7 +255,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Go to HEAD, Parent, Child | ✓ | ✓ | ✓ | n/a | VSCode: The HEAD button above History, Go to Parent and Go to Child on a commit's menu, and parent and child links in the details (with the engine). |
 | Go to Ref | — | — | — | n/a |  |
 | Several commits selected (range, two, scattered) | ✓ | ✓ | ✓ | △ | VSCode: With the engine.<br>CLI: `diff <rev> <rev>` for two. |
-| History of several selected refs | ✓ | ✓ | — | ✓ | CLI: `log --branch` repeated. |
+| History of several selected refs | ✓ | ✓ | ✓ | ✓ | CLI: `log --branch` repeated. |
 | Commit menu: checkout, new branch or tag, cherry-pick, revert, copy ID | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Edit mode (keep, reword, squash, fixup, drop, edit; drag to reorder) | ✓ | ✓ | △ | △ | VSCode: One commit at a time, no plan of several steps.<br>CLI: Via `amonhen run`. |
 | Rewrite preview (stacked and pushed branches, expected conflicts) | ✓ | ✓ | △ | ✓ | VSCode: Through the daemon and for the current branch only.<br>CLI: `rewrite-preview`. |

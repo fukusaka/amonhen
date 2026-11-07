@@ -8,6 +8,7 @@ import { type LaneMetrics, lanePositions } from '../history/lanes.ts';
 import type { MessageEdit, PairMode, RowData, Scope, SearchState, SignatureView } from '../history/protocol.ts';
 import { extendTo, isContiguous, singleRow, toggleRow, type RowSelection } from '../history/selection.ts';
 import type { HostMessage } from '../view/protocol.ts';
+import { scopeRefs, scopeTitle } from '../history/scope.ts';
 import { el, formatDate, post, type View } from './api.ts';
 import { attachSplitter, createDetailsPane } from './details.ts';
 import { signatureMark } from './signature.ts';
@@ -66,9 +67,9 @@ export function createHistoryView(): View {
   // ナビでブランチなどを選んだときは、その ref の選択肢を足す
   const refOption = el('option');
   function setScope(scope: Scope): void {
-    if (scope.startsWith('ref:')) {
+    if (scopeRefs(scope)) {
       refOption.value = scope;
-      refOption.textContent = scope.slice('ref:'.length).replace(/^refs\/(heads|remotes|tags)\//, '');
+      refOption.textContent = scopeTitle(scope);
       if (!refOption.parentElement) scopeSelect.append(refOption);
     } else {
       refOption.remove();
