@@ -61,8 +61,12 @@ export function withDaemonWrites(
     createTag: via('createTag', async (c, name: string, target: string, message?: string) =>
       void (await run(c, { op: 'createTag', name, target, message: message ?? null }, true)),
     ),
-    cherryPick: via('cherryPick', async (c, oid: string, isMerge: boolean) => outcome(await run(c, { op: 'cherryPick', oid, isMerge }, true))),
-    revert: via('revert', async (c, oid: string, isMerge: boolean) => outcome(await run(c, { op: 'revert', oid, isMerge }, true))),
+    cherryPick: via('cherryPick', async (c, oid: string | readonly string[], isMerge: boolean) =>
+      outcome(await run(c, { op: 'cherryPick', oids: [oid].flat(), isMerge }, true)),
+    ),
+    revert: via('revert', async (c, oid: string | readonly string[], isMerge: boolean) =>
+      outcome(await run(c, { op: 'revert', oids: [oid].flat(), isMerge }, true)),
+    ),
     merge: via('merge', async (c, rev: string | readonly string[]) =>
       outcome(await run(c, { op: 'merge', rev: typeof rev === 'string' ? rev : [...rev] }, true)) as MergeResult,
     ),

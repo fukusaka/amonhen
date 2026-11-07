@@ -5,7 +5,8 @@
  * ところのまだない行をまとめて要求する（離れた行へもすぐ移れる）。
  */
 import { type LaneMetrics, lanePositions } from '../history/lanes.ts';
-import type { MessageEdit, RowData, Scope, SearchState, SignatureView } from '../history/protocol.ts';
+import type { MessageEdit, PairMode, RowData, Scope, SearchState, SignatureView } from '../history/protocol.ts';
+import { extendTo, isContiguous, singleRow, toggleRow, type RowSelection } from '../history/selection.ts';
 import type { HostMessage } from '../view/protocol.ts';
 import { el, formatDate, post, type View } from './api.ts';
 import { attachSplitter, createDetailsPane } from './details.ts';
@@ -212,18 +213,22 @@ export function createHistoryView(): View {
 
   function renderRow(row: RowData, index: number, graph: GraphColumn): HTMLElement {
     const el = document.createElement('div');
-    el.className = index === selected ? 'row selected' : 'row';
+    el.className = isSelected(index) ? 'row selected' : 'row';
     if (matchSet.has(index)) el.classList.add('match');
     el.style.top = `${index * ROW_HEIGHT}px`;
     el.dataset.index = String(index);
     // Webview の右クリックメニュー（package.json の webview/context）に渡す情報
-    el.dataset.vscodeContext = JSON.stringify({
-      webviewSection: 'commit',
-      oid: row.oid,
-      commitEditable: row.editable,
-      commitCanSquash: row.canSquash,
-      preventDefaultContextMenuItems: true,
-    });
+    el.dataset.vscodeContext = JSON.stringify(
+      marked.size > 1 && marked.has(index)
+        ? { webviewSection: 'commits', oid: row.oid, ...markedContext, preventDefaultContextMenuItems: true }
+        : {
+            webviewSection: 'commit',
+            oid: row.oid,
+            commitEditable: row.editable,
+            commitCanSquash: row.canSquash,
+            preventDefaultContextMenuItems: true,
+          },
+    );
     // 編集できるコミットはドラッグで並べ替えられる
     if (row.editable) {
       el.draggable = true;
@@ -304,26 +309,75 @@ export function createHistoryView(): View {
   /** History を切り替えたあと、最初の行が届いたら選んだ行を見せる */
   let revealOnRows = false;
 
+  /** いくつも選んだ行（2 行以上のときだけ。1 行なら `selected`）。エンジンの History でだけ選べる */
+  let marked: ReadonlySet<number> = new Set();
+  let anchor = -1;
+  let markedContext: Record<string, boolean> = {};
+  let selectionToken = 0;
+  let multiSelectable = false;
+
+  function isSelected(index: number): boolean {
+    return marked.size > 1 ? marked.has(index) : index === selected;
+  }
+
+  function currentSelection(): RowSelection {
+    return marked.size > 1 ? { focus: selected, anchor, rows: marked } : singleRow(Math.max(0, selected));
+  }
+
+  /** ⌘・Ctrl-クリック、⇧-クリック、⇧+矢印の後 */
+  function applySelection(next: RowSelection, reveal: boolean): void {
+    if (next.rows.size <= 1) {
+      select(next.focus, reveal);
+      return;
+    }
+    selected = next.focus;
+    anchor = next.anchor;
+    marked = next.rows;
+    const shown = [...marked].map((r) => rows[r]);
+    markedContext = {
+      // 読んでいない行があれば、続いているか・編集できるかはコアに確かめてもらう
+      commitsCanCombine: isContiguous(marked) && shown.every((r) => !r || r.editable),
+      commitsAreTwo: marked.size === 2,
+    };
+    requestSelection('forward');
+    if (reveal) revealRow(next.focus);
+    scheduleRender();
+  }
+
+  function requestSelection(pair: PairMode): void {
+    clearTimeout(selectTimer);
+    const token = ++selectionToken;
+    details.showSelection({ count: marked.size });
+    selectTimer = window.setTimeout(() => post({ type: 'selectRows', token, rows: [...marked], pair }), 60);
+  }
+
   function select(index: number, reveal: boolean): void {
     if (index < 0 || index >= rows.length) {
       return;
     }
+    if (marked.size > 1) {
+      marked = new Set();
+      selectionToken++;
+    }
+    anchor = index;
     selected = index;
     requestDetails();
-    if (reveal) {
-      const top = index * ROW_HEIGHT;
-      const far = top + ROW_HEIGHT < list.scrollTop - list.clientHeight || top > list.scrollTop + 2 * list.clientHeight;
-      if (far) {
-        // 離れた行（検索の一致など）は、真ん中に出す
-        spacer.style.height = `${rows.length * ROW_HEIGHT}px`;
-        list.scrollTop = top - (list.clientHeight - ROW_HEIGHT) / 2;
-      } else if (top < list.scrollTop) {
-        list.scrollTop = top;
-      } else if (top + ROW_HEIGHT > list.scrollTop + list.clientHeight) {
-        list.scrollTop = top + ROW_HEIGHT - list.clientHeight;
-      }
-    }
+    if (reveal) revealRow(index);
     scheduleRender();
+  }
+
+  function revealRow(index: number): void {
+    const top = index * ROW_HEIGHT;
+    const far = top + ROW_HEIGHT < list.scrollTop - list.clientHeight || top > list.scrollTop + 2 * list.clientHeight;
+    if (far) {
+      // 離れた行（検索の一致など）は、真ん中に出す
+      spacer.style.height = `${rows.length * ROW_HEIGHT}px`;
+      list.scrollTop = top - (list.clientHeight - ROW_HEIGHT) / 2;
+    } else if (top < list.scrollTop) {
+      list.scrollTop = top;
+    } else if (top + ROW_HEIGHT > list.scrollTop + list.clientHeight) {
+      list.scrollTop = top + ROW_HEIGHT - list.clientHeight;
+    }
   }
 
   /** 一致した行（一致だけの History では、すべての行） */
@@ -411,7 +465,7 @@ export function createHistoryView(): View {
   }
 
   /** メッセージの編集欄。保存は Ctrl/Cmd+Enter、取り消しは Esc */
-  function editMessage(oid: string, kind: MessageEdit, title: string, message: string): void {
+  function editMessage(oid: string, last: string | undefined, kind: MessageEdit, title: string, message: string): void {
     const overlay = document.createElement('div');
     overlay.className = 'overlay';
     const box = document.createElement('div');
@@ -448,7 +502,7 @@ export function createHistoryView(): View {
         textarea.focus();
         return;
       }
-      post({ type: 'saveMessage', oid, kind, message: textarea.value });
+      post({ type: 'saveMessage', oid, last, kind, message: textarea.value });
       close();
     };
     save.addEventListener('click', submit);
@@ -486,7 +540,19 @@ export function createHistoryView(): View {
   window.addEventListener('resize', scheduleRender);
   list.addEventListener('mousedown', (e) => {
     const index = rowIndex(e);
-    if (index !== undefined) select(index, false);
+    if (index === undefined) return;
+    const mac = navigator.platform.startsWith('Mac');
+    // 右クリック（Mac の Ctrl-クリックも）は、選んだ行の上なら選んだまま
+    if (e.button !== 0 || (mac && e.ctrlKey)) {
+      if (!isSelected(index)) select(index, false);
+    } else if (multiSelectable && (mac ? e.metaKey : e.ctrlKey)) {
+      applySelection(toggleRow(currentSelection(), index), false);
+    } else if (multiSelectable && e.shiftKey) {
+      e.preventDefault();
+      applySelection(extendTo(currentSelection(), index), false);
+    } else {
+      select(index, false);
+    }
   });
   list.addEventListener('dblclick', (e) => {
     const index = rowIndex(e);
@@ -497,7 +563,12 @@ export function createHistoryView(): View {
     const moves: Record<string, number> = { ArrowDown: 1, ArrowUp: -1, PageDown: page, PageUp: -page };
     if (e.key in moves) {
       e.preventDefault();
-      select(Math.min(rows.length - 1, Math.max(0, selected + moves[e.key]!)), true);
+      const to = Math.min(rows.length - 1, Math.max(0, selected + moves[e.key]!));
+      if (multiSelectable && e.shiftKey && selected >= 0) {
+        applySelection(extendTo(currentSelection(), to), true);
+      } else {
+        select(to, true);
+      }
     } else if (e.key === 'Enter' && rows[selected]) {
       post({ type: 'open', oid: rows[selected]!.oid });
     } else if (e.key === 'F3' && searchState?.query) {
@@ -608,6 +679,8 @@ export function createHistoryView(): View {
         done = false;
         requested = true;
         matchSet = new Set();
+        marked = new Set();
+        selectionToken++;
         setScope(message.scope);
         if (message.select !== undefined) {
           // 一致だけの History との切り替え: 同じコミットを選んだまま、行が届いたら詳細を出し直す
@@ -647,6 +720,7 @@ export function createHistoryView(): View {
         break;
       case 'searchable':
         search.hidden = !message.searchable;
+        multiSelectable = message.searchable;
         goHead.hidden = !message.searchable;
         break;
       case 'search':
@@ -656,7 +730,7 @@ export function createHistoryView(): View {
         root.classList.toggle('busy', message.busy);
         break;
       case 'details':
-        if (message.details.oid === rows[selected]?.oid) details.show(message.details);
+        if (marked.size <= 1 && message.details.oid === rows[selected]?.oid) details.show(message.details);
         return;
       case 'detailsExtras':
         details.showExtras(message.extras);
@@ -673,11 +747,22 @@ export function createHistoryView(): View {
       case 'signatures':
         for (const [oid, view] of Object.entries(message.marks)) signatures.set(oid, view);
         break;
+      case 'selection':
+        if (message.token === selectionToken && marked.size > 1) {
+          details.showSelection({
+            count: marked.size,
+            view: message.view,
+            error: message.error,
+            onPair: requestSelection,
+            onCommit: (row) => select(row, true),
+          });
+        }
+        return;
       case 'commitDiff':
         details.showDiff(message.oid, message.path, message.diff);
         return;
       case 'editMessage':
-        editMessage(message.oid, message.kind, message.title, message.message);
+        editMessage(message.oid, message.last, message.kind, message.title, message.message);
         return;
       default:
         return;

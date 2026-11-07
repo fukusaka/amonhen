@@ -7,6 +7,7 @@ import type { Repository } from '../state/repository.ts';
 import type { Node } from './sidebar.ts';
 import { showError } from './stageCommands.ts';
 import { rangeDiffUri } from './uri.ts';
+import { MainPanel } from './mainPanel.ts';
 
 /** 共有の daemon のコアの命令（使えなければ undefined） */
 async function runInCore(repo: Repository, command: Record<string, unknown>): Promise<Record<string, unknown> | undefined> {
@@ -60,6 +61,14 @@ export function registerRangeDiffCommands(manager: RepositoryManager): vscode.Di
       if (!repo) return;
       const branch = target && 'kind' in target && target.kind === 'branch' && !target.remote ? target.ref.name : undefined;
       await compareWithPrevious(repo, branch).catch(showError);
+    }),
+    // 2 つ選んだコミットを、それぞれを先端とする 2 つの版として比べる（rebase の前と後など）
+    vscode.commands.registerCommand('amonhen.history.selection.rangeDiff', async () => {
+      const panel = MainPanel.active?.history;
+      const repo = panel?.repository;
+      if (!panel || !repo) return;
+      const [newer, older] = await panel.selectedCommits();
+      if (newer && older) await open(repo, [`${older.oid}...${newer.oid}`], 'Range Diff').catch(showError);
     }),
     vscode.commands.registerCommand('amonhen.rangeDiff', async () => {
       const repo = manager.current;

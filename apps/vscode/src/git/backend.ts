@@ -119,9 +119,10 @@ export interface RepositoryBackend {
   /** ブランチ名として使えるか。使えなければ git の説明を返す */
   checkBranchName(name: string): Promise<string | undefined>;
   /** コミットを現在のブランチに当てる。merge コミットなら最初の親との差分を当てる */
-  cherryPick(oid: string, isMerge: boolean): Promise<RebaseResult>;
+  /** いくつもなら 1 回の git cherry-pick で（止まったら残りは git が覚えていて、Continue で続く） */
+  cherryPick(oid: string | readonly string[], isMerge: boolean): Promise<RebaseResult>;
   /** コミットを打ち消すコミットを作る。merge コミットなら最初の親の側に戻す */
-  revert(oid: string, isMerge: boolean): Promise<RebaseResult>;
+  revert(oid: string | readonly string[], isMerge: boolean): Promise<RebaseResult>;
   /** サブモジュールを初期化し、記録されているコミットに合わせる */
   updateSubmodules(paths: readonly string[]): Promise<void>;
   /** 作業中の変更を stash に保存する */
@@ -378,12 +379,12 @@ export class CliBackend implements RepositoryBackend {
     }
   }
 
-  cherryPick(oid: string, isMerge: boolean): Promise<RebaseResult> {
-    return this.stoppable(isMerge ? ['cherry-pick', '-m', '1', oid] : ['cherry-pick', oid]);
+  cherryPick(oid: string | readonly string[], isMerge: boolean): Promise<RebaseResult> {
+    return this.stoppable(['cherry-pick', ...(isMerge ? ['-m', '1'] : []), ...[oid].flat()]);
   }
 
-  revert(oid: string, isMerge: boolean): Promise<RebaseResult> {
-    return this.stoppable(isMerge ? ['revert', '--no-edit', '-m', '1', oid] : ['revert', '--no-edit', oid]);
+  revert(oid: string | readonly string[], isMerge: boolean): Promise<RebaseResult> {
+    return this.stoppable(['revert', '--no-edit', ...(isMerge ? ['-m', '1'] : []), ...[oid].flat()]);
   }
 
   async updateSubmodules(paths: readonly string[]): Promise<void> {

@@ -11,6 +11,8 @@ export type HistoryEdit =
   | { kind: 'squash'; oid: string; message: string }
   /** oid を親にまとめ、親のメッセージを残す */
   | { kind: 'fixup'; oid: string }
+  /** oid（いちばん古い）から last（いちばん新しい）までを 1 つにまとめる。コアだけ（エンジンを使う複数選択から） */
+  | { kind: 'squashRange'; oid: string; last: string; message: string }
   | { kind: 'drop'; oid: string }
   /** oid を当てたところで止まる（git の edit）。続けるとき、stage した変更は oid に amend される */
   | { kind: 'edit'; oid: string }
@@ -32,6 +34,9 @@ export interface RebasePlan {
 
 /** chain は HEAD から first-parent で辿ったコミット（新しい順）。間に merge が無いこと */
 export function planRebase(chain: readonly Commit[], edit: HistoryEdit): RebasePlan {
+  if (edit.kind === 'squashRange') {
+    throw new Error('Combining commits needs the engine');
+  }
   // 古い順にする
   let seq = [...chain].reverse();
   const index = seq.findIndex((c) => c.oid === edit.oid);

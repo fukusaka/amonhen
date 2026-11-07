@@ -177,7 +177,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Activity spinner and count | ✓ | ✓ | ✓ | n/a | VSCode: VSCode's progress notifications. |
 | Refresh and Rebuild History | ✓ | ✓ | △ | △ | VSCode: Refresh only.<br>CLI: `log --rebuild`, `daemon rebuild`. |
 | Undo the last operation (asks, names what it puts back) | ✓ | ✓ | ✓ | ✓ | VSCode: The title's Undo and the Command Palette ask; a notification's Undo, pressed right after the operation, doesn't.<br>CLI: `undo` (`--peek` to see it first). |
-| History search with scopes (subject, author, ID, path, contents) | ✓ | ✓ | — | ✓ | CLI: `log <query>`. |
+| History search with scopes (subject, author, ID, path, contents) | ✓ | ✓ | ✓ | ✓ | VSCode: With the engine.<br>CLI: `log <query>`. |
 | Ahead/behind badges | ✓ | ✓ | ✓ | △ | VSCode: On the sidebar's branch rows.<br>CLI: In `status`. |
 | Toolbar customization | ✓ | ✓ | n/a | n/a | GTK4: The palette works like NSToolbar's and slides down under the header bar over the content like its sheet, without changing the window's size, with no Show (icon/text) choice since the header bar shows icons; the Repository menu and the main menu take the menu bar's place and stay put. |
 | Network git stopped after 120 s of silence | ✓ | ✓ | — | ✓ | VSCode: Not in the extension's own git layer. |
@@ -245,7 +245,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | --- | :-: | :-: | :-: | :-: | --- |
 | Graph with branch and tag labels | ✓ | ✓ | ✓ | ✓ | CLI: `log`. |
 | Huge histories in chunks with the persistent cache | ✓ | ✓ | ✓ | ✓ |  |
-| Search with match count, next / previous, matching only | ✓ | ✓ | — | △ | CLI: `log <query>` lists the matches. |
+| Search with match count, next / previous, matching only | ✓ | ✓ | ✓ | △ | VSCode: With the engine.<br>CLI: `log <query>` lists the matches. |
 | Display: order, one line, row items, fold merged, highlight ancestors | ✓ | ✓ | △ | △ | VSCode: Only the scope (current, all, a ref).<br>CLI: `--topo-order`, `--fold`. |
 | Avatars | ✓ | ✓ | — | n/a |  |
 | Signature marks on commits | ✓ | ✓ | ✓ | △ | VSCode: With the engine.<br>CLI: In `show`. |
@@ -253,7 +253,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Worktree HEAD labels (✎ ⌂ ⑂, change counts) | ✓ | ✓ | — | — |  |
 | Go to HEAD, Parent, Child | ✓ | ✓ | ✓ | n/a | VSCode: The HEAD button above History, Go to Parent and Go to Child on a commit's menu, and parent and child links in the details (with the engine). |
 | Go to Ref | — | — | — | n/a |  |
-| Several commits selected (range, two, scattered) | ✓ | ✓ | — | △ | CLI: `diff <rev> <rev>` for two. |
+| Several commits selected (range, two, scattered) | ✓ | ✓ | ✓ | △ | VSCode: With the engine.<br>CLI: `diff <rev> <rev>` for two. |
 | History of several selected refs | ✓ | ✓ | — | ✓ | CLI: `log --branch` repeated. |
 | Commit menu: checkout, new branch or tag, cherry-pick, revert, copy ID | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Edit mode (keep, reword, squash, fixup, drop, edit; drag to reorder) | ✓ | ✓ | △ | △ | VSCode: One commit at a time, no plan of several steps.<br>CLI: Via `amonhen run`. |
@@ -273,8 +273,8 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Changed files as a tree beside the diff | ✓ | ✓ | △ | n/a | VSCode: A flat list above the diffs. |
 | File header menu (Blame, File History, copy path, open) | ✓ | ✓ | ✓ | n/a | VSCode: Blame, File History and Copy Path on the right-click; Open in VSCode's diff editor. |
 | Switch to the single-file diff | ✓ | ✓ | — | n/a |  |
-| Diff of a selection (range squashed, A..B / A...B, scattered) | ✓ | ✓ | — | △ | CLI: `diff <rev> <rev>`. |
-| Actions on a selection (cherry-pick, revert, squash, copy IDs) | ✓ | ✓ | — | △ | CLI: Via `amonhen run`. |
+| Diff of a selection (range squashed, A..B / A...B, scattered) | ✓ | ✓ | ✓ | △ | VSCode: With the engine.<br>CLI: `diff <rev> <rev>`. |
+| Actions on a selection (cherry-pick, revert, squash, copy IDs) | ✓ | ✓ | ✓ | △ | VSCode: With the engine.<br>CLI: Via `amonhen run`. |
 | Signature popover | ✓ | ✓ | ✓ | n/a | VSCode: A Signature row in the details (status, explanation, signer and key), no popover. |
 | Word highlights and syntax colors | ✓ | ✓ | △ | n/a | VSCode: Words only. |
 

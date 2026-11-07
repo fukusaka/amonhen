@@ -32,6 +32,18 @@ export function registerPatchCommands(manager: RepositoryManager): vscode.Dispos
   return vscode.Disposable.from(
     vscode.commands.registerCommand('amonhen.history.savePatch', save(false)),
     vscode.commands.registerCommand('amonhen.history.savePatches', save(true)),
+    vscode.commands.registerCommand('amonhen.history.selection.savePatches', async () => {
+      const panel = MainPanel.active?.history;
+      const repo = panel?.repository;
+      if (!panel || !repo) return;
+      const commits = await panel.selectedCommits();
+      // マージはパッチにできない（git format-patch は飛ばす）
+      if (commits.some((c) => c.parents.length > 1)) {
+        void vscode.window.showWarningMessage('A merge can’t be saved as a patch. Leave the merges out of the selection.');
+        return;
+      }
+      if (commits.length > 1) await savePatches(repo, commits.map((c) => c.oid).reverse());
+    }),
     vscode.commands.registerCommand('amonhen.applyPatch', async (uri?: vscode.Uri, uris?: vscode.Uri[]) => {
       const repo = manager.current;
       if (!repo) return;

@@ -1518,6 +1518,146 @@ async function pullRequestMarkFlow(): Promise<void> {
  * Stashes は stash があるときだけ出て、行に作ったときのブランチ・土台と HEAD の離れ具合・untracked が出る。
  * stash からブランチを作り（git stash branch）、新しい stash を確かめてから pop する（daemon だけ）
  */
+async function historySelectionFlow(): Promise<void> {
+  const repo = api.manager.current!;
+  const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+  const panel = await showView('amonhen.showHistory');
+  const warning = vscode.window.showWarningMessage;
+  const information = vscode.window.showInformationMessage;
+  const subjects = (n: number) => git('log', `-${n}`, '--format=%s').trim().split('\n');
+  // ref や HEAD の変化を知ると History を読み直し、選んだ行は消える。読み直しが落ち着くまで待つ
+  const settled = async () => {
+    for (;;) {
+      const mark = posted.length;
+      await new Promise((r) => setTimeout(r, 800));
+      if (!posted.slice(mark).some((m) => m.type === 'reset' || m.type === 'rows' || m.type === 'details')) return;
+    }
+  };
+  const read = async (names: string[]) => {
+    await settled();
+    const mark = posted.length;
+    await panel.history.reset();
+    await waitPosted('searchable', mark, (m) => m.searchable);
+    const { rows } = await waitPosted('rows', mark, (m) => m.total !== undefined);
+    // Webview が最初の行を選び終えるまで待つ（1 行を選ぶと、いくつも選んだ状態は消える）
+    await waitPosted('details', mark);
+    await settled();
+    return names.map((name) => {
+      const row = rows.findIndex((r) => r.subject === name);
+      assert.ok(row >= 0, `${name} in ${rows.map((r) => r.subject).join(', ')}`);
+      return row;
+    });
+  };
+  const select = async (token: number, rows: number[], pair: 'forward' | 'reverse' | 'mergeBase' = 'forward') => {
+    const mark = posted.length;
+    await panel.history.handle({ type: 'selectRows', token, rows, pair });
+    const answer = await waitPosted('selection', mark, (m) => m.token === token);
+    assert.ok(answer.view, answer.error);
+    return answer.view;
+  };
+  try {
+    const base = git('rev-parse', 'HEAD').trim();
+    git('switch', '-q', '-c', 'sel-base');
+    for (const name of ['s1', 's2', 's3', 's4']) {
+      writeFileSync(join(root, `${name}.txt`), `${name}\n`);
+      git('add', `${name}.txt`);
+      git('commit', '-q', '-m', name);
+    }
+    await vscode.commands.executeCommand('amonhen.refresh');
+    const [s1, s2, s3, s4] = await read(['s1', 's2', 's3', 's4']) as [number, number, number, number];
+
+    // 続いた行は 1 つにまとめた差分
+    const range = await select(1, [s4, s3]);
+    assert.equal(range.kind, 'range');
+    assert.deepEqual(range.files.map((f) => f.path).sort(), ['s3.txt', 's4.txt']);
+    assert.deepEqual(range.commits.map((c) => c.subject), ['s4', 's3']);
+    const mark = posted.length;
+    await panel.history.handle({ type: 'commitDiff', oid: range.key, path: 's3.txt' });
+    const { diff } = await waitPosted('commitDiff', mark, (m) => m.oid === range.key);
+    assert.ok(diff.hunks.some((h) => h.lines.some((l) => l.kind === '+' && l.text === 's3')), JSON.stringify(diff));
+
+    // 離れた 2 つは取り方を選べる。逆にすると足した行が消した行になる
+    const pair = await select(2, [s4, s1]);
+    assert.equal(pair.kind, 'pair');
+    assert.ok(pair.files.some((f) => f.path === 's4.txt' && f.added === 1), JSON.stringify(pair.files));
+    const reverse = await select(3, [s4, s1], 'reverse');
+    assert.ok(reverse.files.some((f) => f.path === 's4.txt' && f.removed === 1), JSON.stringify(reverse.files));
+    assert.equal((await select(4, [s4, s1], 'mergeBase')).kind, 'pair');
+
+    // 離れた 3 つ以上はコミットごと
+    const each = await select(5, [s4, s2, s1]);
+    assert.equal(each.kind, 'each');
+    assert.equal(each.files.length, 3);
+
+    // ID はまとめてコピーできる（新しい順）
+    await select(6, [s4, s2]);
+    await vscode.commands.executeCommand('amonhen.history.selection.copyIds');
+    assert.equal(await vscode.env.clipboard.readText(), [git('rev-parse', 'sel-base').trim(), git('rev-parse', 'sel-base~2').trim()].join('\n'));
+
+    // 2 つは範囲の差分と同じ窓口で比べられる
+    await select(7, [s4, s2]);
+    await vscode.commands.executeCommand('amonhen.history.selection.rangeDiff');
+    await until('Range Diff のタブ', () => /Range Diff/.test(vscode.window.tabGroups.activeTabGroup.activeTab?.label ?? '') || undefined);
+    await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+
+    // 選んだコミットを、古い順に 1 回で cherry-pick する
+    const prompts: string[] = [];
+    // 終わりの知らせ（Undo のボタンつき）は、閉じるまで待たされる
+    (vscode.window as { showInformationMessage: unknown }).showInformationMessage = async () => undefined;
+    (vscode.window as { showWarningMessage: unknown }).showWarningMessage = async (title: string, _options: unknown, ...items: unknown[]) => {
+      prompts.push(title);
+      return items[0];
+    };
+    git('switch', '-q', '-c', 'sel-target', base);
+    await vscode.commands.executeCommand('amonhen.refresh');
+    await panel.history.handle({ type: 'scope', scope: 'all' });
+    const again = await read(['s1', 's2', 's3', 's4']) as [number, number, number, number];
+    await select(8, [again[3], again[1]]);
+    await vscode.commands.executeCommand('amonhen.history.selection.cherryPick');
+    assert.ok(prompts.some((p) => p === 'Cherry-pick 2 commits onto sel-target?'), prompts.join(' / '));
+    assert.deepEqual(subjects(2), ['s4', 's2']);
+    // 履歴には 1 回の操作として残り、Undo で戻る
+    await repo.refresh();
+    await vscode.commands.executeCommand('amonhen.undo');
+    await until('Undo した HEAD', () => git('rev-parse', 'HEAD').trim() === base || undefined);
+
+    // 新しい順に Revert する
+    git('switch', '-q', 'sel-base');
+    await vscode.commands.executeCommand('amonhen.refresh');
+    const onBase = await read(['s3', 's4']) as [number, number];
+    await select(9, onBase);
+    await vscode.commands.executeCommand('amonhen.history.selection.revert');
+    assert.deepEqual(subjects(2), ['Revert "s3"', 'Revert "s4"']);
+    git('reset', '-q', '--hard', 'HEAD~2');
+    await vscode.commands.executeCommand('amonhen.refresh');
+
+    // 続いたコミットを、メッセージを編集して 1 つにする
+    const combine = await read(['s3', 's4']) as [number, number];
+    await select(10, combine);
+    const before = git('rev-parse', 'HEAD~2').trim();
+    const edit = posted.length;
+    await vscode.commands.executeCommand('amonhen.history.selection.combine');
+    const opened = await waitPosted('editMessage', edit, (m) => m.kind === 'combine');
+    assert.equal(opened.message, 's3\n\ns4');
+    assert.equal(opened.oid, git('rev-parse', 'HEAD~1').trim());
+    assert.equal(opened.last, git('rev-parse', 'HEAD').trim());
+    await panel.history.handle({ type: 'saveMessage', oid: opened.oid, last: opened.last, kind: 'combine', message: 's3 and s4' });
+    await until('まとめたコミット', () => git('log', '-1', '--format=%s').trim() === 's3 and s4' || undefined);
+    assert.equal(git('rev-parse', 'HEAD~1').trim(), before);
+
+  } finally {
+    (vscode.window as { showWarningMessage: unknown }).showWarningMessage = warning;
+    (vscode.window as { showInformationMessage: unknown }).showInformationMessage = information;
+    await panel.history.handle({ type: 'scope', scope: 'head' });
+    git('switch', '-q', branch);
+    for (const name of ['sel-base', 'sel-target']) {
+      if (git('branch', '--list', name).trim()) git('branch', '-q', '-D', name);
+    }
+    await vscode.commands.executeCommand('amonhen.refresh');
+    await repo.refresh();
+  }
+}
+
 async function stashFlow(): Promise<void> {
   const sidebar = api.sidebar;
   const repo = api.manager.current!;
@@ -2454,6 +2594,10 @@ suite('Amon Hen in VSCode', () => {
       status.repos.some((r) => r.path.toLowerCase() === root.toLowerCase()),
       `daemon が ${root} を開いている: ${JSON.stringify(status.repos.map((r) => r.path))}`,
     );
+  });
+
+  test('selects several commits in History: their diff and the actions on them, through the daemon', async () => {
+    await historySelectionFlow();
   });
 
   test('searches History through the daemon, and shows only the matches keeping the selection', async () => {

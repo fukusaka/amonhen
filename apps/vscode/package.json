@@ -598,6 +598,41 @@
         "category": "Amon Hen"
       },
       {
+        "command": "amonhen.history.selection.cherryPick",
+        "title": "Cherry-pick Selected Commits…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.history.selection.revert",
+        "title": "Revert Selected Commits…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.history.selection.savePatches",
+        "title": "Save Selected Commits as Patches…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.history.selection.combine",
+        "title": "Combine Selected Commits…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.history.selection.merge",
+        "title": "Merge Selected Commits into Current Branch…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.history.selection.rangeDiff",
+        "title": "Compare as Two Versions (Range Diff)",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.history.selection.copyIds",
+        "title": "Copy Commit IDs",
+        "category": "Amon Hen"
+      },
+      {
         "command": "amonhen.history.cherryPick",
         "title": "Cherry-pick onto Current Branch",
         "category": "Amon Hen"
@@ -1260,6 +1295,34 @@
           "when": "false"
         },
         {
+          "command": "amonhen.history.selection.cherryPick",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.history.selection.revert",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.history.selection.savePatches",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.history.selection.combine",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.history.selection.merge",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.history.selection.rangeDiff",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.history.selection.copyIds",
+          "when": "false"
+        },
+        {
           "command": "amonhen.history.cherryPick",
           "when": "false"
         },
@@ -1613,6 +1676,41 @@
           "command": "amonhen.newTag",
           "when": "webviewId == 'amonhen.main' && (webviewSection == 'commit' || webviewSection == 'reflog')",
           "group": "8_create@2"
+        },
+        {
+          "command": "amonhen.history.selection.cherryPick",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commits'",
+          "group": "5_apply@1"
+        },
+        {
+          "command": "amonhen.history.selection.revert",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commits'",
+          "group": "5_apply@2"
+        },
+        {
+          "command": "amonhen.history.selection.savePatches",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commits'",
+          "group": "6_patch@1"
+        },
+        {
+          "command": "amonhen.history.selection.combine",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commits' && commitsCanCombine",
+          "group": "3_edit@1"
+        },
+        {
+          "command": "amonhen.history.selection.merge",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commits'",
+          "group": "7_merge@1"
+        },
+        {
+          "command": "amonhen.history.selection.rangeDiff",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commits' && commitsAreTwo",
+          "group": "7_merge@2"
+        },
+        {
+          "command": "amonhen.history.selection.copyIds",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commits'",
+          "group": "9_copy@1"
         },
         {
           "command": "amonhen.history.cherryPick",
