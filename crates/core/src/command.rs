@@ -857,6 +857,30 @@ pub struct MergedPullRequest {
     pub oid: String,
 }
 
+/// `git branch -d` が断った文に、わけと次の一手を添える（取り込んだ先が今のブランチでも上流でもなければ断る。Clean Up
+/// Branches は既定のブランチで見分けるので、別のブランチから実行すると起きる）。ほかの失敗は、そのまま。
+fn explain_refused_delete(
+    name: &str,
+    deleted: usize,
+    error: amonhen_model::Error,
+) -> amonhen_model::Error {
+    if !error.to_string().contains("not fully merged") {
+        return error;
+    }
+    let reason = tr!(
+        "“{name}” wasn’t deleted: git only deletes a branch merged into the current branch or its upstream. Switch to the branch it’s merged into and try again.",
+        name = name
+    );
+    match deleted {
+        0 => reason.into(),
+        _ => format!(
+            "{reason} {}",
+            tr!("Already deleted: {count}.", count = deleted)
+        )
+        .into(),
+    }
+}
+
 /// `Command::DeleteBranches` で消すブランチ。`force` なら取り込んでいなくても消す（`git branch -D`）。
 #[derive(Clone, Debug, Deserialize)]
 pub struct BranchToDelete {
@@ -2700,9 +2724,10 @@ impl Repository {
                 };
                 // 途中で失敗しても、消せた分は記録してからエラーを返す。
                 let error = undo.record_branch_delete(ops, &label, &names, || {
-                    Ok(branches
-                        .iter()
-                        .find_map(|b| ops.delete_branch(&b.name, b.force).err()))
+                    Ok(branches.iter().enumerate().find_map(|(deleted, b)| {
+                        let error = ops.delete_branch(&b.name, b.force).err()?;
+                        Some(explain_refused_delete(&b.name, deleted, error))
+                    }))
                 })?;
                 if let Some(e) = error {
                     return Err(e);
@@ -7661,6 +7686,11 @@ mod tests {
             r#"{"op":"deleteBranches","branches":[{"name":"done"},{"name":"moved"}]}"#,
         );
         assert_eq!(r["ok"], false, "{r}");
+        let error = r["error"].as_str().unwrap();
+        assert!(
+            error.contains("“moved”") && error.contains("deleted: 1"),
+            "{r}"
+        );
         assert_eq!(git(dir, &["branch", "--list", "done"]), "");
         assert_eq!(run(&repo, r#"{"op":"undo"}"#)["ok"], true);
         assert_eq!(tip("done"), before.0);
