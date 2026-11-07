@@ -54,8 +54,10 @@ export function createWorkingCopyView(): View {
   const insertButton = el('button', 'link', 'Insert…');
   insertButton.title = 'Insert a Conventional Commits type, Co-authored-by or Signed-off-by';
   insertButton.addEventListener('click', () => post({ type: 'wcPickInsert' }));
-  commitRow.append(amendLabel, recentButton, insertButton, lengthLabel, commitButton);
-  commitBox.append(subject, body, commitRow);
+  const commitTools = el('div', 'commit-tools');
+  commitTools.append(recentButton, insertButton, lengthLabel);
+  commitRow.append(amendLabel, commitButton);
+  commitBox.append(subject, body, commitTools, commitRow);
 
   // 一覧の絞り込みと見せ方
   const tools = el('div', 'wc-tools');
