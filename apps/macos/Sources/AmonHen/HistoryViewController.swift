@@ -623,7 +623,12 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             // 空になる。空にはせず今の表示を残し、ref を読み直して起点を付け替えたときに出し直す。
             guard let next, next.rowCount > 0 || repository.latestHistory()?.rowCount == 0 else { return }
             showBase(next, resetScroll: resetScroll)
-            if let commit, let row = next.row(of: commit) { select(row: row) }
+            if baseHistory != nil {
+                // 探し直している間は今の絞り込みが出ている。選ぶのは、新しい絞り込みを出してから（行番号は別の History のもの）。
+                selectAfterSearch = commit
+            } else if let commit, let row = next.row(of: commit) {
+                select(row: row)
+            }
         }
     }
 
@@ -733,6 +738,15 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             let same = compact == Settings.oneLineHistoryRows && items == Settings.historyItems
             show(next, resetScroll: resetScroll, preloaded: same ? loaded : [])
         }
+    }
+
+    /// 探し直して出した History で選ぶコミット（範囲を替えたとき）。
+    private var selectAfterSearch: Data?
+
+    private func selectWanted(in history: History) {
+        guard let id = selectAfterSearch else { return }
+        selectAfterSearch = nil
+        if let row = history.row(of: id) { select(row: row) }
     }
 
     /// 元になる History を出す。一致したコミットだけを出しているなら、新しい History で探し直して絞り込み直す
@@ -1407,6 +1421,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
                 self.searchSpinner.stopAnimation(nil)
                 self.searchCount.stringValue = "\(error)"
                 self.searchCount.toolTip = "\(error)"
+                self.selectAfterSearch = nil
                 return
             }
             if matchOnly, !rows.isEmpty {
@@ -1417,6 +1432,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
                 // 選んでいたコミットは、絞り込んだ History でも選んだままにする（`show` が ID で選び直す）。
                 self.baseHistory = base
                 self.show(filtered)
+                self.selectWanted(in: filtered)
                 self.searchQuery = query
                 self.searchRows = Array(0..<filtered.rowCount)
                 // 全部の行が一致なので、行に一致の色は付けない。
@@ -1426,6 +1442,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
                 if let original = self.baseHistory {
                     self.baseHistory = nil
                     self.show(original)
+                    self.selectWanted(in: original)
                 }
                 self.searchQuery = query
                 self.searchRows = rows
