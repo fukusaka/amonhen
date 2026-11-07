@@ -1027,6 +1027,8 @@ First release.
 
 #### Added
 
+- Commit's ▾ adds Commit and Push (⌘⇧↩), Amend Last Commit, and Fixup and Squash Commit For. What hooks wrote, and why a
+  commit failed, open in a readable sheet.
 - The commit box counts the summary's length, keeps a draft per repository, starts from `commit.template`, brings back
   recent messages (⌥↑ and ⌥↓ too) and inserts Conventional types, Co-authored-by and Signed-off-by.
 - Working Copy's file list filters on paths and shows paths, a folder tree (folders stage and unstage together) or

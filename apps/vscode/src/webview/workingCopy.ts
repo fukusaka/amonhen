@@ -548,6 +548,27 @@ export function createWorkingCopyView(): View {
   }
   amend.addEventListener('change', amendChanged);
 
+  /** コミットの hooks の出力や失敗の理由を、長くても読めるように出す */
+  function showCommitOutput(title: string, text: string): void {
+    const overlay = el('div', 'overlay');
+    const sheet = el('div', 'editor commit-output');
+    const close = el('button', undefined, 'Close');
+    const row = el('div', 'buttons');
+    row.append(close);
+    sheet.append(el('div', 'title', title), el('pre', undefined, text), row);
+    overlay.append(sheet);
+    const dismiss = () => {
+      overlay.remove();
+      subject.focus();
+    };
+    close.addEventListener('click', dismiss);
+    overlay.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') dismiss();
+    });
+    root.append(overlay);
+    close.focus();
+  }
+
   function onMessage(m: HostMessage): void {
     switch (m.type) {
       case 'wcFiles':
@@ -587,6 +608,9 @@ export function createWorkingCopyView(): View {
         if (m.kind === 'fixup') replaceField(body, '');
         (m.kind === 'fixup' ? subject : body).focus();
         updateCommitButton();
+        break;
+      case 'wcCommitOutput':
+        showCommitOutput(m.title, m.text);
         break;
       case 'wcInsertType':
         replaceField(subject, withType(subject.value, m.commitType));

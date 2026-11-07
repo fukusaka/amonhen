@@ -115,9 +115,13 @@ export class WorkingCopyController implements vscode.Disposable {
   }
 
   private async commit(repo: Repository, message: string, amend: boolean, push: boolean): Promise<void> {
-    if (!(await commitStaged(repo, message, amend))) return;
+    const result = await commitStaged(repo, message, amend);
+    if (result.error) this.post({ type: 'wcCommitOutput', title: 'Couldn’t Commit', text: result.error });
+    if (!result.committed) return;
     await setCommitDraft(repo.root, undefined);
     this.post({ type: 'wcCommitted' });
+    const output = result.output?.trim();
+    if (output) this.post({ type: 'wcCommitOutput', title: 'Committed (hooks output)', text: output });
     if (push) await vscode.commands.executeCommand('amonhen.push');
   }
 

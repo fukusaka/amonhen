@@ -69,7 +69,7 @@ History and diffs are held by number (`history`, `diff`). Even if History is ref
 | `stage`, `unstage` | paths | | |
 | `stageRows` | diff, rows, stage? (for a combined diff; false to unstage) | | |
 | `discardRows` | diff, rows (lines of an unstaged diff) | | |
-| `commit` | message, amend? | | |
+| `commit` | message, amend? | output (what hooks wrote) | |
 | `run` | command (a command of `crates/core/src/command.rs`: checkout, merge, rebase, fetch, push, stash, undo, blame, settings and more) | that command's reply (ok, error and others) | |
 | `connection` | | sent, received, closed (the SSH host connection; null if local) | |
 

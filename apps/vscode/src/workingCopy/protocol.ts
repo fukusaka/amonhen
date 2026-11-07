@@ -23,6 +23,8 @@ export type WorkingCopyHostMessage =
   | { type: 'wcStartAmend' }
   /** `fixup! 件名`・`squash! 件名` のコミットを書き始める */
   | { type: 'wcStartFixup'; kind: 'fixup' | 'squash'; subject: string }
+  /** コミットの hooks の出力や、失敗の理由 */
+  | { type: 'wcCommitOutput'; title: string; text: string }
   | { type: 'wcCommitted' };
 
 export type WorkingCopyWebviewMessage =

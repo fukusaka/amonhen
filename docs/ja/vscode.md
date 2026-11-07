@@ -235,3 +235,4 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 32. ignore されたファイルを一覧してから消す
 - [x] 33. Working Copy: パスでの絞り込み、パス・木・ファイル名の見せ方
 - [x] 34. コミット欄: 件名の長さ、下書きとテンプレート、過去のメッセージ、型とトレーラー
+- [x] 35. Commit and Push、Fixup・Squash Commit For、hooks の出力

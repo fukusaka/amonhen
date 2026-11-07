@@ -409,8 +409,15 @@ impl Session {
                 Reply::json(json!({}))
             }
             "commit" => {
+                let before = last_commit_record(&commit_records(repo)).map(|r| r["seq"].clone());
                 repo.commit(str_arg(request, "message")?, request["amend"] == true)?;
-                Reply::json(json!({}))
+                // hooks が書いたもの（アプリは Activity の記録から読む。FE はそれを持たないので返事に載せる）
+                let records = commit_records(repo);
+                let output = last_commit_record(&records)
+                    .filter(|r| before.as_ref() != Some(&r["seq"]) && r["ok"] == true)
+                    .and_then(|r| r["output"].as_str())
+                    .unwrap_or_default();
+                Reply::json(json!({ "output": output }))
             }
 
             // コアの命令（`run_json`）をそのまま。
@@ -753,6 +760,26 @@ fn refs_json(refs: &amonhen_model::Refs) -> Value {
     })
 }
 
+/// Activity の記録: git を動かしている側のもの（SSH 先なら daemon、手元ならこのプロセス）。
+fn commit_records(repo: &Repository) -> Vec<Value> {
+    let remote: Value =
+        serde_json::from_str(&repo.run_json(r#"{"op":"remoteActivity"}"#)).unwrap_or_default();
+    match remote["info"]["records"].as_array() {
+        Some(records) if !records.is_empty() => records.clone(),
+        _ => serde_json::from_str(&amonhen_core::activity_json()).unwrap_or_default(),
+    }
+}
+
+/// いちばん新しい `git commit` の記録。
+fn last_commit_record(records: &[Value]) -> Option<&Value> {
+    records.iter().rev().find(|r| {
+        r["kind"] == "git"
+            && r["label"]
+                .as_str()
+                .is_some_and(|l| l.starts_with("git commit"))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -795,6 +822,40 @@ mod tests {
         session.handle(&request, &|| false).unwrap().json["rows"]
             .as_u64()
             .unwrap()
+    }
+
+    /// コミットの返事に hooks の出力が載る
+    #[test]
+    fn commit_replies_with_what_the_hooks_wrote() {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "-q"]);
+        commit(dir.path(), "first");
+        git(dir.path(), &["config", "user.name", "a"]);
+        git(dir.path(), &["config", "user.email", "a@example.com"]);
+        let backend = amonhen_backend_gix::GixBackend::open(dir.path()).unwrap();
+        let session = Session::new(Arc::new(Repository::new(backend)));
+        let reply = |message: &str| {
+            std::fs::write(dir.path().join("f"), message).unwrap();
+            git(dir.path(), &["add", "f"]);
+            let request = json!({"op": "commit", "message": message});
+            session.handle(&request, &|| false).unwrap().json
+        };
+        assert_eq!(reply("no hook")["output"].as_str().unwrap().trim(), "");
+
+        let hook = dir.path().join(".git/hooks/pre-commit");
+        std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
+        std::fs::write(&hook, "#!/bin/sh\necho said by the hook\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        assert!(
+            reply("with a hook")["output"]
+                .as_str()
+                .unwrap()
+                .contains("said by the hook")
+        );
     }
 
     /// 外でコミットした後でも、その起点で絞った History（VSCode の Current Branch）に出る

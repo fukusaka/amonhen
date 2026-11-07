@@ -7,8 +7,8 @@
  */
 import assert from 'node:assert/strict';
 import childProcess from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
 import * as vscode from 'vscode';
 import { DaemonClient } from '../src/daemon/client.ts';
 import type { SelectedLine } from '../src/diff/fileDiff.ts';
@@ -2873,6 +2873,44 @@ suite('Amon Hen in VSCode', () => {
       git('branch', '-q', '-D', 'wc-push-branch');
       git('remote', 'remove', 'wc-push');
       rmSync(bare, { recursive: true, force: true });
+      await vscode.commands.executeCommand('amonhen.refresh');
+    }
+  });
+
+  test('shows what the hooks wrote when committing, and why a commit failed', async () => {
+    const panel = await showView('amonhen.showWorkingCopy');
+    const hooks = git('rev-parse', '--git-path', 'hooks').trim();
+    const hook = resolve(root, hooks, 'pre-commit');
+    mkdirSync(dirname(hook), { recursive: true });
+    const start = git('rev-parse', 'HEAD').trim();
+    const stage = async (name: string) => {
+      writeFileSync(join(root, name), `${name}\n`);
+      git('add', name);
+      const mark = posted.length;
+      await vscode.commands.executeCommand('amonhen.refresh');
+      await waitPosted('wcFiles', mark, (m) => m.files.some((f) => f.group === 'staged' && f.path === name));
+    };
+    try {
+      await stage('hook-ok.txt');
+      // 前の試験のファイルが残っていれば、書くだけでは実行できるようにならない
+      writeFileSync(hook, '#!/bin/sh\necho said by the hook\n');
+      chmodSync(hook, 0o755);
+      let at = posted.length;
+      await panel.workingCopy.handle({ type: 'wcCommit', message: 'with a hook\n', amend: false });
+      const said = await waitPosted('wcCommitOutput', at);
+      assert.equal(said.title, 'Committed (hooks output)');
+      assert.match(said.text, /said by the hook/);
+      await stage('hook-no.txt');
+      writeFileSync(hook, '#!/bin/sh\necho refused by the hook\nexit 1\n');
+      at = posted.length;
+      await panel.workingCopy.handle({ type: 'wcCommit', message: 'stopped by a hook\n', amend: false });
+      const failed = await waitPosted('wcCommitOutput', at);
+      assert.equal(failed.title, 'Couldn’t Commit');
+      assert.match(failed.text, /refused by the hook/);
+      assert.ok(!posted.slice(at).some((m) => m.type === 'wcCommitted'));
+    } finally {
+      rmSync(hook, { force: true });
+      git('reset', '-q', '--hard', start);
       await vscode.commands.executeCommand('amonhen.refresh');
     }
   });

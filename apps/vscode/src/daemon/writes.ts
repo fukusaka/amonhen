@@ -140,8 +140,9 @@ export function withDaemonWrites(
       void (await run(c, { op: 'push', remote, branch, remoteBranch, force: !!opts?.force, setUpstream: !!opts?.setUpstream }, false)),
     ),
     commit: via('commit', async (c, message: string, opts?: { amend?: boolean }) => {
-      await c.call({ op: 'commit', message, amend: !!opts?.amend });
+      const reply = await c.call({ op: 'commit', message, amend: !!opts?.amend });
       markRecorded();
+      return String(reply.json['output'] ?? '');
     }),
     stage: via('stage', async (c, paths: readonly string[]) => void (await c.call({ op: 'stage', paths }))),
     unstage: via('unstage', async (c, paths: readonly string[]) => void (await c.call({ op: 'unstage', paths }))),
