@@ -16,11 +16,11 @@
 "Set Upstream" = "上流にする";
 "This pushes %ld commits to it and makes it the upstream." = "そこに %ld コミットを push し、上流にします。";
 "It is the same as %@. This makes it the upstream." = "%@ と同じです。上流にします。";
-"Force push %@?" = "%@ を force push しますか？";
+"Force push %@?" = "%@ を Force Push しますか？";
 "Commits to send" = "送るコミット";
 "Commits %@ will lose" = "%@ から消えるコミット";
 "Nothing to push" = "送るコミットはありません";
-"Push %ld commits to %@?" = "%1$ld コミットを %2$@ に push しますか？";
+"Push %ld commits to %@?" = "%1$ld コミットを %2$@ に Push しますか？";
 "Set Upstream…" = "上流を設定…";
 "Pull %ld commits from %@?" = "%2$@ から %1$ld コミット取り込みますか？";
 "Pull from %@?" = "%@ から Pull しますか？";
@@ -869,9 +869,9 @@
 "Changed: %@" = "変化: %@";
 " (background tab: the working tree waits until the tab comes to the front)" = "（裏のタブ: 作業ツリーは前に出るまで待つ）";
 "Couldn’t Rebuild History" = "History を作り直せませんでした";
-"Merge into %@" = "%@ に merge する";
+"Merge into %@" = "%@ に Merge";
 "The branch, tag or commit to merge in" = "取り込むブランチ・タグ・コミット";
-"Rebase %@" = "%@ を rebase する";
+"Rebase %@" = "%@ を Rebase";
 "The branch, tag or commit to rebase onto" = "上に載せる先のブランチ・タグ・コミット";
 "Upstream of %@" = "%@ の上流";
 "The remote branch that Pull brings in from and Push sends to." = "pull で取り込み、push で送るリモートのブランチ";
@@ -1211,7 +1211,7 @@
 "Delete %@…" = "%@ を削除…";
 "Delete Anyway" = "それでも削除";
 "Commits only on %@" = "%@ にしかないコミット";
-"Drop %@…" = "%@ を drop…";
+"Drop %@…" = "%@ を Drop…";
 
 // Push のシート（送るコミットと中身、注意）
 "All changes to send (%ld)" = "送る変更すべて（%ld）";
@@ -1291,7 +1291,7 @@
 "Show in History" = "History で見る";
 
 // Reset（History と Reflog の右クリック）
-"Reset %@ to %@?" = "%@ を %@ に reset しますか？";
+"Reset %@ to %@?" = "%@ を %@ に Reset しますか？";
 
 // タグの push と削除（サイドバーの Tags の右クリック）
 "Push %ld Tags to %@" = "%ld 個のタグを %@ に Push";
@@ -1615,9 +1615,9 @@
 "%@ doesn’t apply. Retry it with a 3-way merge to resolve conflicts, apply it by hand and Continue, or Skip it." = "%@ が当たりません。3-way merge で当て直してコンフリクトを解決するか、手で当てて Continue するか、Skip してください。";
 
 /* MergeSeveralSheet.swift */
-"Merge %ld into %@?" = "%1$ld 個を %2$@ に merge しますか？";
+"Merge %ld into %@?" = "%1$ld 個を %2$@ に Merge しますか？";
 "This makes one merge commit with all of them as parents, as git merge does with several branches. Drag to change the order. Undo puts it back." = "すべてを親とする merge のコミットを 1 つ作ります（git merge にいくつものブランチを渡したときと同じ）。順はドラッグで変えられます。Undo で戻せます。";
-"Merge One by One" = "1 つずつ merge";
+"Merge One by One" = "1 つずつ Merge";
 "⚠︎ %@ conflicts, and git stops when one before the last conflicts. Put it last to resolve the conflicts in this merge, or merge them one by one." = "⚠︎ %@ がコンフリクトします。最後より前のものがコンフリクトすると git は止まります。最後に回せば、この merge でコンフリクトを解けます。1 つずつ merge することもできます。";
 "⚠︎ %@ conflict, and git stops when one before the last conflicts. Merge them one by one instead." = "⚠︎ %@ がコンフリクトします。最後より前のものがコンフリクトすると git は止まるので、1 つずつ merge してください。";
 "Put %@ Last" = "%@ を最後に回す";

@@ -471,7 +471,7 @@
 "Add Remote" = "リモートを追加";
 "Open" = "開く";
 "The operation failed" = "操作に失敗しました";
-"Force push {branch}?" = "{branch} を force push しますか？";
+"Force push {branch}?" = "{branch} を Force Push しますか？";
 "Message (optional)" = "メッセージ（空でもよい）";
 "Description (optional)" = "Description（任意）";
 "Include untracked files" = "untracked のファイルも含める";
@@ -687,7 +687,7 @@
 "Pull them first, or force push to replace them. Force Push can’t be undone." = "先に Pull するか、Force Push で置き換えます。Force Push は元に戻せません。";
 "{upstream} loses {count} commits. This can’t be undone." = "{upstream} から {count} コミットが消えます。元に戻せません。";
 "It fails if {upstream} has moved since you last fetched." = "最後の Fetch のあとに {upstream} が動いていれば、失敗します。";
-"Push {count} commits to {upstream}?" = "{count} コミットを {upstream} に push しますか？";
+"Push {count} commits to {upstream}?" = "{count} コミットを {upstream} に Push しますか？";
 "Can’t Publish" = "Publish できません";
 "This repository has no remotes. Add one in Repository > Add Remote…." = "このリポジトリにはリモートがありません。Repository > リモートを追加… で足してください。";
 "Publish {branch}?" = "{branch} を Publish しますか？";
@@ -719,9 +719,9 @@
 "Undo the last {count} operations?" = "直近の {count} 個の操作を Undo しますか？";
 "Rebase {target} onto {rev}?" = "{target} を {rev} の上に Rebase しますか？";
 "Merge {rev} into {target}?" = "{rev} を {target} に Merge しますか？";
-"Merge into {name}" = "{name} に merge する";
+"Merge into {name}" = "{name} に Merge";
 "The branch, tag or commit to merge in" = "取り込むブランチ・タグ・コミット";
-"Rebase {name}" = "{name} を rebase する";
+"Rebase {name}" = "{name} を Rebase";
 "The branch, tag or commit to rebase onto" = "上に載せる先のブランチ・タグ・コミット";
 "Delete {name}?" = "{name} を削除しますか？";
 "Delete {count} branches?" = "{count} 本のブランチを削除しますか？";
@@ -808,7 +808,7 @@
 "Mark {count} Without Markers Resolved" = "マーカーのない {count} ファイルを解決済みにする";
 "Mark the conflicted files that have no conflict markers left as resolved (rerere or another editor resolved them)." = "マーカーの残っていないコンフリクトのファイルを解決済みにします（rerere やほかのエディタで解決したもの）。";
 "Retry with 3-Way Merge" = "3-way merge で当て直す";
-"Drop {name}…" = "{name} を drop…";
+"Drop {name}…" = "{name} を Drop…";
 "Drop {name}?" = "{name} を Drop しますか？";
 "Cherry-pick {count} Commits…" = "{count} コミットを Cherry-pick…";
 "Revert {count} Commits…" = "{count} コミットを Revert…";
@@ -925,7 +925,7 @@
 "Compare as Two Versions (Range Diff)" = "2 つの版として比べる（Range Diff）";
 /* GTK4: Reset（History と Reflog の右クリック） */
 "Reset {branch} to {id}…" = "{branch} を {id} に Reset…";
-"Reset {branch} to {id}?" = "{branch} を {id} に reset しますか？";
+"Reset {branch} to {id}?" = "{branch} を {id} に Reset しますか？";
 "Soft: keep the changes staged" = "Soft: 変更は stage したまま残す";
 "Mixed: keep the changes in the working tree" = "Mixed: 変更は作業ツリーに残す";
 "Hard: match the commit (uncommitted changes are stashed first)" = "Hard: コミットに合わせる（作業中の変更は先に stash する）";
@@ -990,9 +990,9 @@
 
 /* GTK4: いくつもまとめて merge（octopus） */
 "Merge {count} into {branch}…" = "{count} 個を {branch} に Merge…";
-"Merge {count} into {branch}?" = "{count} 個を {branch} に merge しますか？";
+"Merge {count} into {branch}?" = "{count} 個を {branch} に Merge しますか？";
 "This makes one merge commit with all of them as parents, as git merge does with several branches. Drag to change the order. Undo puts it back." = "すべてを親とする merge のコミットを 1 つ作ります（git merge にいくつものブランチを渡したときと同じ）。順はドラッグで変えられます。Undo で戻せます。";
-"Merge One by One" = "1 つずつ merge";
+"Merge One by One" = "1 つずつ Merge";
 "⚠︎ {name} conflicts, and git stops when one before the last conflicts. Put it last to resolve the conflicts in this merge, or merge them one by one." = "⚠︎ {name} がコンフリクトします。最後より前のものがコンフリクトすると git は止まります。最後に回せば、この merge でコンフリクトを解けます。1 つずつ merge することもできます。";
 "⚠︎ {names} conflict, and git stops when one before the last conflicts. Merge them one by one instead." = "⚠︎ {names} がコンフリクトします。最後より前のものがコンフリクトすると git は止まるので、1 つずつ merge してください。";
 "Put {name} Last" = "{name} を最後に回す";
