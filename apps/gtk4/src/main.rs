@@ -2663,9 +2663,18 @@ fn build_tab(
                                 .min();
                             if let Some(path) = first {
                                 working.select_path(&path);
+                                // 同じ中身を別のスナップショットとして渡す（見張りが先に同じものを届けていても、
+                                // 選んだファイルを選び直す）。
+                                working.show(Arc::new(amonhen_core::StatusSnapshot {
+                                    generation: snapshot.generation,
+                                    status: snapshot.status.clone(),
+                                }));
+                            } else {
+                                working.show(snapshot);
                             }
+                        } else {
+                            working.show(snapshot);
                         }
-                        working.show(snapshot);
                         if let Some(path) = &args.print_file_menu
                             && let Some(titles) = working.file_menu_titles(path)
                         {
