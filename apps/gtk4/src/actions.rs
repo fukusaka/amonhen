@@ -458,7 +458,12 @@ impl Actions {
             list.set_cursor_visible(false);
             list.set_monospace(true);
             list.set_wrap_mode(gtk::WrapMode::WordChar);
-            list.buffer().set_text(&paths.join("\n"));
+            let text = list.buffer();
+            text.set_text(&paths.join("\n"));
+            // 折り返したところに、パスにない「-」を足さない。
+            let tag = gtk::TextTag::builder().insert_hyphens(false).build();
+            text.tag_table().add(&tag);
+            text.apply_tag(&tag, &text.start_iter(), &text.end_iter());
             let scrolled = gtk::ScrolledWindow::builder()
                 .child(&list)
                 .hscrollbar_policy(gtk::PolicyType::Never)
