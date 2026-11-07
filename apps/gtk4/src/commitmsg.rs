@@ -611,6 +611,11 @@ impl MessageAids {
         buffer.delete(&mut start, &mut end);
         buffer.insert(&mut start, &text);
         buffer.end_user_action();
+        // 閉じたメニューのボタンに入力を残さない（続けて打つ・Undo できるように）。
+        let body = self.body.clone();
+        glib::idle_add_local_once(move || {
+            body.grab_focus();
+        });
     }
 
     fn add_sign_off(self: &Rc<Self>) {
