@@ -1,4 +1,6 @@
-import { join } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join, resolve } from 'node:path';
 import * as vscode from 'vscode';
 import { parseCommitObject } from '../git/commitObject.ts';
 import { groupChanges, type Change, type ChangeGroup } from '../state/changes.ts';
@@ -8,10 +10,11 @@ import { daemonFor } from '../daemon/connection.ts';
 import { changedRows, readWorkingDiff, selectedRows, type DaemonDiff } from '../daemon/diff.ts';
 import { applyDiffSelection, computeDiff, type ComputedDiff } from '../diff/fileDiff.ts';
 import { discardFiles, discardLines } from '../state/discard.ts';
+import { templateMessage, type MessageParts } from '../workingCopy/commitMessage.ts';
 import type { WorkingCopyHostMessage, WorkingCopyWebviewMessage } from '../workingCopy/protocol.ts';
 import { commitStaged } from './commit.ts';
 import { openConflict } from './diff.ts';
-import { fileLayout, setFileLayout } from './preferences.ts';
+import { commitDraft, fileLayout, setCommitDraft, setFileLayout } from './preferences.ts';
 import { acceptConflicts, indexMode, showError, stageChanges } from './stageCommands.ts';
 
 /**
@@ -43,6 +46,14 @@ export class WorkingCopyController implements vscode.Disposable {
         ]
       : [];
     this.schedule();
+    void this.sendMessage(repo).catch(showError);
+  }
+
+  /** コミット欄の中身を送る。下書きがなければ `commit.template` のファイル（`#` の行は除く） */
+  private async sendMessage(repo: Repository | undefined): Promise<void> {
+    const draft = repo && commitDraft(repo.root);
+    const parts = draft ?? (repo ? await commitTemplate(repo) : undefined) ?? { summary: '', body: '' };
+    if (repo === this.repo) this.post({ type: 'wcMessage', ...parts });
   }
 
   /** 変更が続けて来てもまとめて 1 回送る */
@@ -165,6 +176,10 @@ export class WorkingCopyController implements vscode.Disposable {
     if (!repo) {
       return;
     }
+    if (message.type === 'wcDraft') {
+      await setCommitDraft(repo.root, { summary: message.summary, body: message.body });
+      return;
+    }
     const find = (group: ChangeGroup, path: string) => this.files.find((f) => f.group === group && f.path === path);
     switch (message.type) {
       case 'wcSelect':
@@ -220,6 +235,7 @@ export class WorkingCopyController implements vscode.Disposable {
       }
       case 'wcCommit':
         if (await commitStaged(repo, message.message, message.amend)) {
+          await setCommitDraft(repo.root, undefined);
           this.post({ type: 'wcCommitted' });
         }
         break;
@@ -332,5 +348,17 @@ export class WorkingCopyController implements vscode.Disposable {
   dispose(): void {
     clearTimeout(this.timer);
     vscode.Disposable.from(...this.listeners).dispose();
+  }
+}
+
+/** `commit.template` のファイルの中身。相対パスはリポジトリから（git と同じ） */
+async function commitTemplate(repo: Repository): Promise<MessageParts | undefined> {
+  const path = await repo.backend.config('commit.template');
+  if (!path) return undefined;
+  const file = path === '~' || path.startsWith('~/') ? join(homedir(), path.slice(1)) : resolve(repo.root, path);
+  try {
+    return templateMessage(await readFile(file, 'utf8'));
+  } catch {
+    return undefined;
   }
 }
