@@ -2567,7 +2567,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         // 送るものがなければ押せない（理由はツールバーのツールチップ）。上流のないブランチは Publish。
         case #selector(push(_:)): return pushState.map { !$0.published || $0.ahead > 0 } ?? false
         case #selector(forcePush(_:)): return pushState?.published ?? false
-        case #selector(pull(_:)): return latestRefs?.headBranch != nil && sequence == nil
+        case #selector(pull(_:)): return editingBranch != nil && sequence == nil
         case #selector(mergeIntoCurrent(_:)), #selector(rebaseCurrent(_:)): return latestRefs != nil && sequence == nil
         case #selector(popStash(_:)), #selector(showStashes(_:)): return latestStash != nil
         case #selector(undoOperation(_:)): return undoLabel != nil
