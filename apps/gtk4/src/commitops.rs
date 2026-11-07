@@ -336,7 +336,11 @@ pub fn move_by_drop(
     id: amonhen_model::Oid,
     row: u32,
 ) {
-    let Some((repo, history)) = view.current() else {
+    let Some((_, history)) = view.current() else {
+        return;
+    };
+    // 動かすのは書き込む先の worktree の並び（ドラッグを始めたときと同じ）。
+    let Some(repo) = actions.repo() else {
         return;
     };
     let ids = history.graph.ids();
