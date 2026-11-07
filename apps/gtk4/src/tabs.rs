@@ -494,6 +494,25 @@ const EDIT_ACTIONS: [&str; 6] = [
     "edit-select-all",
 ];
 
+/// Repository Settings のページを出した・隠した（欄の外でも Undo・やり直しが効く）。
+pub fn settings_page_shown(page: &gtk::Widget, shown: bool) {
+    let Some(root) = page.root() else { return };
+    let host = WINDOWS.with(|w| {
+        w.borrow()
+            .iter()
+            .find(|h| h.window.upcast_ref::<gtk::Root>() == &root)
+            .cloned()
+    });
+    if let Some(host) = host {
+        host.settings_page.replace(if shown {
+            page.downgrade()
+        } else {
+            glib::WeakRef::new()
+        });
+        host.update_edit_actions();
+    }
+}
+
 /// メニューの部品か（開くとフォーカスが移る。Edit の項目の相手はその前にフォーカスのあった部品）。
 fn is_menu_part(focus: &gtk::Widget) -> bool {
     focus.is::<gtk::MenuButton>()
@@ -584,6 +603,8 @@ pub struct RepoWindow {
     /// タブが 1 つでもタブの帯を出す（View > Show Tab Bar。帯のタブをつかんでほかの窓に移せる。macOS 版と同じ）。
     tab_bar: Cell<bool>,
     /// 最後にフォーカスのあった、メニューの外の部品（Edit の Copy などを渡す先）。
+    /// 出している Repository Settings のページ。
+    settings_page: RefCell<glib::WeakRef<gtk::Widget>>,
     last_focus: RefCell<glib::WeakRef<gtk::Widget>>,
 }
 
@@ -678,6 +699,7 @@ impl RepoWindow {
             shown: RefCell::default(),
             tab_bar: Cell::new(false),
             last_focus: RefCell::default(),
+            settings_page: RefCell::default(),
         });
         let weak = Rc::downgrade(&this);
         window.connect_focus_widget_notify(move |window| {
@@ -855,9 +877,18 @@ impl RepoWindow {
     /// Edit の項目を、フォーカスのある部品にできるものだけ押せるようにする（macOS 版の標準の項目と同じ。メニューを
     /// 開くとフォーカスが動くので、そのときの状態になる。押せなくてもキーは部品がじかに受ける）。
     fn update_edit_actions(&self) {
-        let can = self
+        let mut can = self
             .edit_focus()
             .map_or([false; EDIT_ACTIONS.len()], |f| edit_abilities(&f));
+        // Repository Settings のページでは、欄の外でも設定の書き換えの Undo・やり直し。
+        if self.settings_page.borrow().upgrade().is_some()
+            && !self
+                .edit_focus()
+                .is_some_and(|f| f.is::<gtk::Text>() || f.is::<gtk::TextView>())
+        {
+            can[0] = true;
+            can[1] = true;
+        }
         for tab in self.tabs() {
             for (name, can) in EDIT_ACTIONS.iter().zip(can) {
                 if let Some(action) = tab
@@ -1686,7 +1717,8 @@ fn install_actions(tab: &Rc<Tab>) {
             let Some(tab) = weak.upgrade() else { return };
             let Some(window) = tab.window() else { return };
             let target = tab.host().and_then(|h| h.edit_focus());
-            let done = target.is_some_and(|t| {
+            let settings = tab.host().and_then(|h| h.settings_page.borrow().upgrade());
+            let done = target.into_iter().chain(settings).any(|t| {
                 targets
                     .iter()
                     .any(|a| WidgetExt::activate_action(&t, a, None).is_ok())

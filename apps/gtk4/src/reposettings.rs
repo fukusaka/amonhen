@@ -852,7 +852,11 @@ impl RepoSettings {
                 })),
             ));
         }
+        // スイッチを押してもフォーカスは移らないので、ページの外にフォーカスがあっても効かせる（文字の欄が先に受ける）。
+        shortcuts.set_scope(gtk::ShortcutScope::Global);
         widget.add_controller(shortcuts);
+        widget.connect_map(|w| crate::tabs::settings_page_shown(w.upcast_ref(), true));
+        widget.connect_unmap(|w| crate::tabs::settings_page_shown(w.upcast_ref(), false));
         // Edit > Undo・Redo からも（macOS 版は窓の UndoManager。欄にフォーカスがあれば欄の Undo が先。
         // `tabs` の edit-undo・edit-redo がフォーカスのある部品からたどる）。戻すものがなければ鳴らす。
         let group = gio::SimpleActionGroup::new();
