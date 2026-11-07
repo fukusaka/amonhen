@@ -697,7 +697,21 @@ fn launch(app: &gtk::Application, args: &Args) {
             None
         }
     } else {
-        build_window(app, args.clone());
+        // 場所を渡して起動しても、前回の窓とタブを開き直してから、そのタブを足す（macOS 版と同じ。開き直さないと、
+        // 前回の並びをこの 1 つで上書きしてしまう）。
+        // 確認用のフラグつきの起動は、そのタブだけ。
+        let restore = if check || std::env::args().skip(1).any(|a| a.starts_with("--")) {
+            Vec::new()
+        } else {
+            repos::restorable()
+        };
+        match args.path.clone() {
+            Some(location) if !restore.is_empty() => {
+                tabs::restore(app, restore);
+                tabs::open(app, repos::top_of(&location), tabs::Place::Tab);
+            }
+            _ => build_window(app, args.clone()),
+        }
         None
     };
     // 確認用: リポジトリのページで、窓のアクションを（`--action`）。
