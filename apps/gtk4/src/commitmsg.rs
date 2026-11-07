@@ -601,7 +601,13 @@ impl MessageAids {
         } else {
             format!("{body}\n\n{line}")
         };
-        self.body.buffer().set_text(&text);
+        // 1 回の Undo で戻す（`set_text` は Undo の履歴を消す）。
+        let buffer = self.body.buffer();
+        buffer.begin_user_action();
+        let (mut start, mut end) = buffer.bounds();
+        buffer.delete(&mut start, &mut end);
+        buffer.insert(&mut start, &text);
+        buffer.end_user_action();
     }
 
     fn add_sign_off(self: &Rc<Self>) {
