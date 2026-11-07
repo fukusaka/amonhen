@@ -662,13 +662,21 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
 /** 分け方から分かる、行の印とメニューの出し分け */
 interface BranchFlags {
   merged: boolean;
+  /** プルリクエストで取り込んだ（squash・rebase）。`merged` も立つ */
+  pullRequest?: number;
   archived: boolean;
 }
 
 function branchFlags(info: BranchGroupsInfo, name: string): BranchFlags | undefined {
   const f = info.branches.find((b) => b.name === name);
+  if (!f) return undefined;
   // 既定のブランチと、その先端と同じだけのブランチは、取り込み済みと言わない
-  return f && { merged: f.merged && !f.atBase && name !== info.base, archived: f.archived };
+  const pullRequest = name !== info.base ? (f.pullRequest ?? undefined) : undefined;
+  return {
+    merged: (f.merged && !f.atBase && name !== info.base) || pullRequest !== undefined,
+    ...(pullRequest !== undefined ? { pullRequest } : {}),
+    archived: f.archived,
+  };
 }
 
 /** `other` はこのブランチを checkout している、書き込む先以外の worktree */
@@ -694,7 +702,7 @@ function branchItem(node: Extract<Node, { kind: 'branch' }>, other?: Worktree, f
   if (ref.upstream) lines.push(`upstream: ${ref.upstream.replace(/^refs\/remotes\//, '')}`);
   lines.push(`${ref.oid.slice(0, 8)}  ${ref.subject}`);
   if (other) lines.push(`Checked out in the worktree ${other.path}`);
-  if (flags?.merged) lines.push('Merged into the default branch');
+  if (flags?.merged) lines.push(flags.pullRequest !== undefined ? `Merged by pull request #${flags.pullRequest}` : 'Merged into the default branch');
   item.tooltip = lines.join('\n');
   item.contextValue = node.remote
     ? 'remoteBranch'

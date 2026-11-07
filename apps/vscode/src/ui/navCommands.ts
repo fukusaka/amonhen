@@ -15,7 +15,8 @@ function refOf(node: Node | undefined): string | undefined {
   return node?.kind === 'branch' || node?.kind === 'tag' ? node.ref.name : undefined;
 }
 
-export function registerNavCommands(manager: RepositoryManager): vscode.Disposable {
+/** `mergedBy` はブランチをマージしたプルリクエストの番号（squash・rebase。消すときの確認に添え、`-D` で消す） */
+export function registerNavCommands(manager: RepositoryManager, mergedBy: MergedBy): vscode.Disposable {
   const command = (id: string, fn: (repo: Repository, ref: string, head: string | undefined) => Promise<void>) =>
     vscode.commands.registerCommand(id, async (node?: Node) => {
       const repo = manager.current;
@@ -57,7 +58,7 @@ export function registerNavCommands(manager: RepositoryManager): vscode.Disposab
       if (!head) return;
       await runAction(repo, rebaseAction(repo, head, ref));
     }),
-    several('amonhen.nav.delete', (repo, ref) => deleteBranch(repo, ref), (repo, refs) => deleteBranches(repo, refs)),
+    several('amonhen.nav.delete', (repo, ref) => deleteBranch(repo, ref, mergedBy), (repo, refs) => deleteBranches(repo, refs, mergedBy)),
     // チェックアウトしていないブランチを upstream と合わせる（最後の Fetch の時点）
     command('amonhen.nav.fastForward', async (repo, ref) => {
       await runAction(repo, {
@@ -103,6 +104,8 @@ export async function checkoutRef(repo: Repository, ref: string): Promise<void> 
   }
 }
 
+type MergedBy = (repo: Repository, name: string) => number | undefined;
+
 /** ブランチを削除する。Undo で戻せる。merge されていなければ、もう一度確かめてから消す */
 /** 取り込んでいないので git が消すのを断った（git 実行層なら GitError、daemon ならコアのエラーの文に git の文が入る） */
 function notMerged(err: unknown): boolean {
@@ -111,8 +114,11 @@ function notMerged(err: unknown): boolean {
 }
 
 /** いくつものブランチを、まとめて確かめてから消す。取り込んでいないものは、もう一度確かめて消す */
-async function deleteBranches(repo: Repository, refs: string[]): Promise<void> {
-  const names = refs.map(shortName);
+async function deleteBranches(repo: Repository, refs: string[], mergedBy: MergedBy): Promise<void> {
+  const names = refs.map((ref) => {
+    const pr = mergedBy(repo, shortName(ref));
+    return pr === undefined ? shortName(ref) : `${shortName(ref)}（プルリクエスト #${pr} でマージ済み）`;
+  });
   const choice = await vscode.window.showWarningMessage(
     `${names.length} 個のブランチを削除しますか？`,
     { modal: true, detail: `${names.join('\n')}\n\nUndo で戻せます（1 回で 1 個）。` },
@@ -127,7 +133,7 @@ async function deleteBranches(repo: Repository, refs: string[]): Promise<void> {
   try {
     for (const ref of refs) {
       try {
-        await remove(ref, false);
+        await remove(ref, mergedBy(repo, shortName(ref)) !== undefined);
       } catch (err) {
         if (!notMerged(err)) throw err;
         unmerged.push(ref);
@@ -147,18 +153,19 @@ async function deleteBranches(repo: Repository, refs: string[]): Promise<void> {
   }
 }
 
-async function deleteBranch(repo: Repository, ref: string): Promise<void> {
+async function deleteBranch(repo: Repository, ref: string, mergedBy: MergedBy): Promise<void> {
   const name = shortName(ref);
+  const pr = mergedBy(repo, name);
   const choice = await vscode.window.showWarningMessage(
     `ブランチ ${name} を削除しますか？`,
-    { modal: true, detail: 'Undo で戻せます。' },
+    { modal: true, detail: `${pr === undefined ? '' : `プルリクエスト #${pr} でマージ済みです。`}Undo で戻せます。` },
     'Delete',
   );
   if (choice !== 'Delete') return;
   const remove = (force: boolean) =>
     repo.undo.record(`Delete ${name}`, [ref], 'keep', () => repo.backend.deleteBranch(name, force), { branches: [name] });
   try {
-    await remove(false);
+    await remove(pr !== undefined);
   } catch (err) {
     if (!notMerged(err)) {
       showError(err);

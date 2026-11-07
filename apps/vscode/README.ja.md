@@ -44,6 +44,7 @@ VSCode 上で快適に Git を操作するための自分用の拡張。Marketpl
 - History のコミットの右クリックにも Checkout (Detached) と、エンジンがあれば Reset Current Branch to Here… がある。`git reset` と同じに Mixed・Soft・Hard を選ぶ。Hard は先に作業中の変更を stash に残し、Undo でブランチを戻せる。
 - Submodules は右クリックで Update（初期化して記録されているコミットに合わせる）と、別のウィンドウで開く。エンジンがあれば、行にアプリと同じ印（取り出していない・違うコミット・中の変更・コンフリクト）と URL・追うブランチが出て、メニューに Update…（中の submodule も・追うブランチの最新）・Edit URL…・Branch to Follow…・Remove… も並ぶ。グループには Update All・Update Submodules…・Sync URLs・Add Submodule…。
 - エンジンがあるとき、Clean Up Branches…（コマンドパレット、Branches の見出しの右クリック）は、既定のブランチに取り込んだもの、GitHub のプルリクエストでマージしたもの（`gh` があれば読む）、上流が消えたものを理由ごとの見出しの下に並べ、チェックしたままのものを消す。上流が消えたものは最初はチェックしない。Undo 1 回で設定ごと全部戻る。
+- エンジンがあるとき、GitHub のプルリクエストで（squash・rebase で）先端をマージしたブランチ（`gh` で読む）には、ふつうの取り込み済みと同じ `merged` が出て、ツールチップにプルリクエストの番号が出る。消すときの確認はプルリクエストの番号を添えた 1 回で、Undo で戻る。
 - エンジンがあるとき、Delete Ignored Files…（コマンドパレット、Working Copy の右クリック）は `git clean -X` が消すもの（フォルダは 1 つ）を一覧し、選んだままのものを確かめてから消す。Undo では戻せない。
 - 自分のフォルダにデータを持つ submodule（手で clone してから足したもの）には Move Repository Data into .git/modules（`git submodule absorbgitdirs`）があり、Submodules のグループには Run in Each Submodule…（それぞれのフォルダでシェルの命令を動かす。中の submodule でも選べる。知らせるのは成否だけ）がある。
 - エンジンがあり、git に `git subtree` があれば、`git subtree` で取り込んだフォルダが Subtrees に並ぶ。Add Subtree… でリポジトリのブランチをフォルダに取り込み、subtree の右クリックで Pull…（ブランチをフォルダに merge）・Push…（フォルダのコミットをブランチに送る）・Split…（フォルダの履歴だけのブランチ）。相手・ブランチ・squash は前に使ったものから始まる。
