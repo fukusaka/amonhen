@@ -1647,7 +1647,7 @@ impl Repository {
             let data = files.read(Root::Workdir, &e.path)?;
             let markers = data.as_ref().map_or(0, |d| crate::conflict::parse(d).len());
             // バイナリなどのテキストでないファイルは、もともとマーカーが出ない（解決したわけではない）。
-            if markers == 0 && data.is_some_and(|d| std::str::from_utf8(&d).is_err()) {
+            if markers == 0 && data.is_some_and(|d| !crate::conflict::is_text(&d)) {
                 continue;
             }
             let rerere = markers == 0
@@ -3668,7 +3668,7 @@ impl Repository {
                         "It isn’t UTF-8 text, so it can’t be edited here. Use Take Current File or Take Incoming File."
                     )
                 };
-                if std::str::from_utf8(&data).is_err() {
+                if !crate::conflict::is_text(&data) {
                     return Err(not_text().into());
                 }
                 let markers = crate::conflict::parse(&data).len();
@@ -3681,7 +3681,10 @@ impl Repository {
                         id.map(|id| {
                             let blob = backend.blob(&id)?;
                             let text = backend.to_worktree_form(&path, &blob)?;
-                            let text = String::from_utf8(text).map_err(|_| not_text())?;
+                            if !crate::conflict::is_text(&text) {
+                                return Err(not_text().into());
+                            }
+                            let text = String::from_utf8_lossy(&text);
                             Ok(serde_json::json!({ "text": text, "regions": [] }))
                         })
                         .transpose()

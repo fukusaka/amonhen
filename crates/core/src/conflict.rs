@@ -68,6 +68,11 @@ fn is_marker(line: &[u8], marker: &[u8; 7]) -> bool {
             .is_none_or(|&b| b == b' ' || b == b'\n' || b == b'\r')
 }
 
+/// マージエディタで扱えるテキストか（UTF-8 で、NUL がない。git も NUL のあるファイルはバイナリとみなす）。
+pub fn is_text(data: &[u8]) -> bool {
+    !data.contains(&0) && std::str::from_utf8(data).is_ok()
+}
+
 /// コンフリクトを探す。マーカーが閉じていないものは無視する。
 pub fn parse(data: &[u8]) -> Vec<Conflict> {
     let ls = lines(data);
