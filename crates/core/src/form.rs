@@ -166,20 +166,18 @@ mod tests {
     use std::path::Path;
     use std::process::Command as Process;
 
-    /// `global` なら、テストのホームのユーザー全体の設定を使う（maintenance の登録を書く）。
-    fn git_with(dir: &Path, args: &[&str], global: bool) -> String {
+    fn git(dir: &Path, args: &[&str]) -> String {
         amonhen_model::testing::isolate_from_user_settings();
-        let mut cmd = Process::new("git");
-        cmd.args(args)
+        let out = Process::new("git")
+            .args(args)
             .current_dir(dir)
-            .env("GIT_CONFIG_NOSYSTEM", "1");
-        if !global {
-            cmd.env(
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env(
                 "GIT_CONFIG_GLOBAL",
                 if cfg!(windows) { "NUL" } else { "/dev/null" },
-            );
-        }
-        let out = cmd.output().unwrap();
+            )
+            .output()
+            .unwrap();
         assert!(
             out.status.success(),
             "git {args:?}: {}",
@@ -197,10 +195,6 @@ mod tests {
             }
         }
         out
-    }
-
-    fn git(dir: &Path, args: &[&str]) -> String {
-        git_with(dir, args, false)
     }
 
     fn run(repo: &Repository, json: &str) -> serde_json::Value {
@@ -423,55 +417,86 @@ mod tests {
         }
     }
 
+    /// このテストだけのホームを使う環境（ほかのテストのホームの `.gitconfig` と書き合わないよう、`AMONHEN_PASS_ENV` で
+    /// HOME も渡す。Windows では、書き換えの最中に読む git が `Permission denied` で止まる）。
+    fn env_with_home(home: &Path, more: &[(&str, String)]) -> amonhen_model::process::ClientEnv {
+        amonhen_model::testing::isolate_from_user_settings();
+        std::fs::create_dir_all(home.join(".config")).unwrap();
+        let ours: Vec<(&str, String)> = [
+            ("AMONHEN_PASS_ENV", "HOME".to_owned()),
+            ("HOME", home.to_str().unwrap().to_owned()),
+            (
+                "XDG_CONFIG_HOME",
+                home.join(".config").to_str().unwrap().to_owned(),
+            ),
+        ]
+        .into_iter()
+        .chain(more.iter().cloned())
+        .collect();
+        let env = amonhen_model::process::ClientEnv::from_vars(
+            std::env::vars()
+                .filter(|(k, _)| !ours.iter().any(|(o, _)| o == k))
+                .chain(ours.iter().map(|(k, v)| ((*k).to_owned(), v.clone()))),
+        );
+        assert_eq!(env.get("HOME"), home.to_str());
+        env
+    }
+
     /// `git maintenance register` と同じく、ユーザー全体の `maintenance.repo` に作業ツリーの実体のパスを足すと、
     /// 登録してあると読む。
     #[test]
     fn knows_a_repository_registered_for_maintenance() {
         let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path();
-        git(dir, &["init", "-q"]);
-        let repo = Repository::new(GixBackend::open(dir).unwrap());
-        assert_eq!(
-            run(&repo, r#"{"op":"repositoryForm"}"#)["info"]["maintenance"],
-            false
-        );
-        let top = git(dir, &["rev-parse", "--show-toplevel"]);
-        git_with(
-            dir,
-            &["config", "--global", "--add", "maintenance.repo", &top],
-            true,
-        );
-        let form = run(&repo, r#"{"op":"repositoryForm"}"#);
-        git_with(
-            dir,
-            &[
-                "config",
-                "--global",
-                "--unset-all",
-                "maintenance.repo",
-                &regex_escape(&top),
-            ],
-            true,
-        );
-        assert_eq!(form["info"]["maintenance"], true, "{form}");
+        let dir = tmp.path().join("repo");
+        let home = tmp.path().join("home");
+        let env = env_with_home(&home, &[]);
+        std::fs::create_dir(&dir).unwrap();
+        git(&dir, &["init", "-q"]);
+        amonhen_model::process::with_client_env(&env, || {
+            let repo = Repository::new(GixBackend::open(&dir).unwrap());
+            assert_eq!(
+                run(&repo, r#"{"op":"repositoryForm"}"#)["info"]["maintenance"],
+                false
+            );
+            let top = git(&dir, &["rev-parse", "--show-toplevel"]);
+            let global = home.join(".gitconfig");
+            git(
+                &dir,
+                &[
+                    "config",
+                    "--file",
+                    global.to_str().unwrap(),
+                    "--add",
+                    "maintenance.repo",
+                    &top,
+                ],
+            );
+            let form = run(&repo, r#"{"op":"repositoryForm"}"#);
+            assert_eq!(form["info"]["maintenance"], true, "{form}");
+        });
     }
 
     /// `git maintenance start` で登録し（このリポジトリの設定と OS の予定も書く）、`unregister` で登録を外して、
     /// 自動の手入れを止める `maintenance.auto=false` も外す。
     /// git 2.31 より古ければ、版を言って断る。
     ///
-    /// ユーザー全体の設定と予定は、このテストだけのホームに書く（ほかのテストのホームの `.gitconfig` と書き合わない
-    /// よう、`AMONHEN_PASS_ENV` で HOME も渡す）。OS の予定に登録するプログラム（launchctl・crontab・systemctl・
-    /// schtasks）は、git のテスト用の差し替え（`GIT_TEST_MAINT_SCHEDULER`）で echo にし、動かさない。
+    /// ユーザー全体の設定と予定は、このテストだけのホームに書く。OS の予定に登録するプログラム（launchctl・crontab・
+    /// systemctl・schtasks）は、git のテスト用の差し替え（`GIT_TEST_MAINT_SCHEDULER`）で echo にし、動かさない。
     #[test]
     #[cfg_attr(windows, ignore = "the schtasks path isn't tried on Windows yet")]
     fn registers_for_maintenance() {
-        use amonhen_model::process::{ClientEnv, with_client_env};
-        amonhen_model::testing::isolate_from_user_settings();
+        use amonhen_model::process::with_client_env;
         let tmp = tempfile::tempdir().unwrap();
         let home = tmp.path().join("home");
         let dir = tmp.path().join("repo");
-        std::fs::create_dir_all(home.join(".config")).unwrap();
+        let env = env_with_home(
+            &home,
+            &[(
+                "GIT_TEST_MAINT_SCHEDULER",
+                "launchctl:echo LAUNCHCTL,crontab:echo CRONTAB,systemctl:echo SYSTEMCTL,schtasks:echo SCHTASKS"
+                    .to_owned(),
+            )],
+        );
         std::fs::create_dir(&dir).unwrap();
         git(&dir, &["init", "-q"]);
         write(&dir, "a.txt", "a");
@@ -481,25 +506,6 @@ mod tests {
             let info = dir.join(".git/objects/info");
             info.join("commit-graph").exists() || info.join("commit-graphs").exists()
         };
-        let ours = [
-            ("AMONHEN_PASS_ENV", "HOME".to_owned()),
-            ("HOME", home.to_str().unwrap().to_owned()),
-            (
-                "XDG_CONFIG_HOME",
-                home.join(".config").to_str().unwrap().to_owned(),
-            ),
-            (
-                "GIT_TEST_MAINT_SCHEDULER",
-                "launchctl:echo LAUNCHCTL,crontab:echo CRONTAB,systemctl:echo SYSTEMCTL,schtasks:echo SCHTASKS"
-                    .to_owned(),
-            ),
-        ];
-        let env = ClientEnv::from_vars(
-            std::env::vars()
-                .filter(|(k, _)| !ours.iter().any(|(o, _)| o == k))
-                .chain(ours.iter().map(|(k, v)| ((*k).to_owned(), v.clone()))),
-        );
-        assert_eq!(env.get("HOME"), home.to_str());
         with_client_env(&env, || {
             let repo = Repository::new(GixBackend::open(&dir).unwrap());
             let form = run(&repo, r#"{"op":"repositoryForm"}"#);
@@ -582,15 +588,6 @@ mod tests {
             let r = run(&repo, r#"{"op":"maintenance","on":false}"#);
             assert_eq!(r["ok"], true, "{r}");
         });
-    }
-
-    fn regex_escape(s: &str) -> String {
-        s.chars()
-            .flat_map(|c| {
-                let special = ".^$*+?()[]{}|\\".contains(c);
-                special.then_some('\\').into_iter().chain([c])
-            })
-            .collect()
     }
 
     #[test]
