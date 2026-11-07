@@ -52,6 +52,8 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- History on an SSH host no longer fails with "bad object" when a commit it remembered is gone (pruned by gc, or the
+  repository was made again at the same path); it reads the history again.
 - `~` in a new worktree path means the home folder on the machine where git runs, including an SSH host.
 - Pull requests from a fork owned by an organization are listed, among the parent's newest 300.
 - Forgetting a resolution in a separate merge window shows the conflict again instead of the old Result.

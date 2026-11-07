@@ -52,6 +52,10 @@ fn commit(dir: &Path, name: &str, content: &str, message: &str) {
 
 /// パイプでつないだ daemon（`Server`）越しのリポジトリ。
 fn remote(dir: &Path) -> Repository {
+    Repository::new(remote_backend(dir))
+}
+
+fn remote_backend(dir: &Path) -> RemoteBackend {
     let (client_read, server_write) = std::io::pipe().unwrap();
     let (server_read, client_write) = std::io::pipe().unwrap();
     let backend: Arc<dyn GitBackend> = Arc::new(GixBackend::open(dir).unwrap());
@@ -60,7 +64,33 @@ fn remote(dir: &Path) -> Repository {
         let _ = server.run(server_read);
     });
     let conn = Connection::new(client_read, client_write);
-    Repository::new(RemoteBackend::connect(conn).unwrap())
+    RemoteBackend::connect(conn).unwrap()
+}
+
+/// 永続キャッシュの起点がもう SSH 先にないと（gc で消えた、同じパスに作り直した）、git が断る。最初から読み直す。
+#[test]
+fn history_is_read_again_when_the_cached_tips_are_gone() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("repo");
+    let cache = tmp.path().join("history.bin");
+    let make = |message: &str| {
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir(&dir).unwrap();
+        init(&dir);
+        commit(&dir, "a.txt", message, message);
+    };
+    make("old");
+    let repo = Repository::with_cache(remote_backend(&dir), cache.clone());
+    assert_eq!(repo.load_history().unwrap().graph.len(), 1);
+    drop(repo);
+
+    make("new");
+    let repo = Repository::with_cache(remote_backend(&dir), cache);
+    let old = repo.load_cached_history().unwrap();
+    let new = repo.load_history().unwrap();
+    assert_ne!(old.tips, new.tips);
+    assert_eq!(new.graph.len(), 1);
+    assert_eq!(Some(new.graph.ids()[0]), new.head);
 }
 
 #[test]

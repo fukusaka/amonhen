@@ -586,7 +586,7 @@ impl Repository {
         let shallow = self.backend.shallow()?;
         // shallow clone の境界が変わっていれば、前回の境界のコミットに親ができている（前回の History には、その先が
         // ない）ので、引き継がずに最初から読む。
-        let current = self
+        let mut current = self
             .history
             .load_full()
             .filter(|current| current.shallow == shallow);
@@ -598,15 +598,21 @@ impl Repository {
             current.rows();
             return Ok(current.clone());
         }
-        let graph = match &current {
-            Some(old) => {
-                let rows = old.rows();
-                let new = self
-                    .backend
-                    .read_new_commits(&tips, &old.tips, &|id| rows.contains_key(id))?;
-                topo::extend(new, &old.graph, rows, &tips)
+        let extended = current.as_ref().and_then(|old| {
+            let rows = old.rows();
+            // 前回の起点がもうないと（gc で消えた、同じパスに作り直した）、SSH 先の git は断る。最初から読む。
+            let new = self
+                .backend
+                .read_new_commits(&tips, &old.tips, &|id| rows.contains_key(id))
+                .ok()?;
+            Some(topo::extend(new, &old.graph, rows, &tips))
+        });
+        let graph = match extended {
+            Some(graph) => graph,
+            None => {
+                current = None;
+                self.backend.commit_graph(&tips)?
             }
-            None => self.backend.commit_graph(&tips)?,
         };
         // 日付順以外は全体を並べ直す（読み足した分は先頭に置かれるだけなので）。
         let order = self.history_order();
