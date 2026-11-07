@@ -10,7 +10,7 @@ export type Scope = 'head' | 'all' | `ref:${string}` | `refs:${string}`;
 
 export interface RefLabel {
   name: string;
-  kind: 'head' | 'branch' | 'remote' | 'tag';
+  kind: 'head' | 'branch' | 'remote' | 'tag' | 'worktree';
   /** checkout しているブランチ */
   current?: boolean;
 }

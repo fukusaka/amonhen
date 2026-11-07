@@ -251,7 +251,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Avatars | ✓ | ✓ | — | n/a |  |
 | Signature marks on commits | ✓ | ✓ | ✓ | △ | VSCode: With the engine.<br>CLI: In `show`. |
 | CI status per commit with a checks popover | ✓ | ✓ | — | — |  |
-| Worktree HEAD labels (✎ ⌂ ⑂, change counts) | ✓ | ✓ | — | — |  |
+| Worktree HEAD labels (✎ ⌂ ⑂, change counts) | ✓ | ✓ | ✓ | — |  |
 | Go to HEAD, Parent, Child | ✓ | ✓ | ✓ | n/a | VSCode: The HEAD button above History, Go to Parent and Go to Child on a commit's menu, and parent and child links in the details (with the engine). |
 | Go to Ref | — | — | — | n/a |  |
 | Several commits selected (range, two, scattered) | ✓ | ✓ | ✓ | △ | VSCode: With the engine.<br>CLI: `diff <rev> <rev>` for two. |

@@ -24,7 +24,8 @@ import type {
   SelectionView,
   SignatureView,
 } from '../history/protocol.ts';
-import { editableChain, refLabels } from '../history/rows.ts';
+import { samePath, type Worktree } from '../git/worktrees.ts';
+import { editableChain, refLabels, worktreeLabels } from '../history/rows.ts';
 import { scopeRefs } from '../history/scope.ts';
 import type { Repository, Section } from '../state/repository.ts';
 import { openCommitChanges, openCommitFile } from './commitChanges.ts';
@@ -658,6 +659,7 @@ export class HistoryController implements vscode.Disposable {
     this.post({ type: 'searchable', searchable: this.daemon !== undefined });
     if (this.daemon) void this.sendForm(this.daemon, generation).catch(() => undefined);
     this.opening = false;
+    await this.addWorktreeLabels(repo, generation);
     await this.loadMore();
     // 探していたら（途中でも）、新しい History で探し直す
     const query = this.searching ?? this.search?.query;
@@ -791,6 +793,29 @@ export class HistoryController implements vscode.Disposable {
     this.post({ type: 'reset', title: repo ? basename(repo.root) : '', scope: this.scope, select });
     const start = Math.floor(select / PAGE) * PAGE;
     await this.loadRange(next, start, PAGE);
+  }
+
+  /** worktree がいくつもあれば、それぞれの HEAD の札を足す（読めなければ出さない） */
+  private async addWorktreeLabels(repo: Repository, generation: number): Promise<void> {
+    const client = this.daemon?.client;
+    if (!client) return;
+    try {
+      const listed = (await client.call({ op: 'run', command: { op: 'worktrees' } })).json['info'] as
+        | { worktrees?: Worktree[] }
+        | undefined;
+      const worktrees = (listed?.worktrees ?? []).filter((w) => !w.bare);
+      if (worktrees.length < 2) return;
+      const paths = worktrees.filter((w) => w.prunable === null).map((w) => w.path);
+      const counted = (await client.call({ op: 'run', command: { op: 'worktreeChanges', paths } })).json['info'] as
+        | { worktrees?: { path: string; count: number | null }[] }
+        | undefined;
+      if (generation !== this.generation) return;
+      const changes = new Map((counted?.worktrees ?? []).map((w) => [w.path, w.count ?? 0]));
+      const labels = worktreeLabels(worktrees, changes, (w) => samePath(w.path, repo.root));
+      for (const [oid, added] of labels) this.labels.set(oid, [...added, ...(this.labels.get(oid) ?? [])]);
+    } catch {
+      // 札は出せなくてもよい
+    }
   }
 
   /** 共有の daemon で、今の範囲の History を開く（daemon を使わない設定なら undefined） */

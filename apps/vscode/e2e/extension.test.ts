@@ -2721,6 +2721,24 @@ suite('Amon Hen in VSCode', () => {
     }
   });
 
+  test('marks the HEAD of each worktree in History through the daemon', async () => {
+    const extra = join(root, '..', `wt-label-${process.pid}`);
+    git('worktree', 'add', '-q', '--detach', extra);
+    try {
+      writeFileSync(join(extra, 'dirty.txt'), 'x\n');
+      const mark = posted.length;
+      const panel = await showView('amonhen.showHistory');
+      await panel.history.reset();
+      const { rows } = await waitPosted('rows', mark, (m) => m.rows.some((r) => r.refs.some((l) => l.kind === 'worktree')));
+      const labels = rows.flatMap((r) => r.refs).filter((l) => l.kind === 'worktree').map((l) => l.name);
+      assert.ok(labels.some((l) => l.startsWith('✎ ')), labels.join(', '));
+      assert.ok(labels.includes(`⑂ wt-label-${process.pid} · 1`), labels.join(', '));
+    } finally {
+      git('worktree', 'remove', '--force', extra);
+      await api.panel()?.history.reset();
+    }
+  });
+
   test('shows names from the mailmap through the daemon and reloads them when it changes', async () => {
     await mailmapFlow();
   });

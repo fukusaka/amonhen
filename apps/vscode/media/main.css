@@ -372,6 +372,13 @@ button.secondary {
   background: var(--vscode-charts-yellow);
 }
 
+.ref.worktree {
+  color: var(--vscode-foreground);
+  background: transparent;
+  outline: 1px solid var(--vscode-panel-border);
+  outline-offset: -1px;
+}
+
 .ref.current,
 .ref.head {
   font-weight: bold;
