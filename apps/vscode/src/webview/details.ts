@@ -3,7 +3,7 @@
  * 差分を出す。差分は画面に入ったものから順に拡張ホストに求める
  */
 import type { FileDiff } from '../diff/fileDiff.ts';
-import type { CommitDetails, DetailsExtras, Person } from '../history/protocol.ts';
+import type { CommitDetails, DetailsExtras, PairMode, Person, SelectionView } from '../history/protocol.ts';
 import { el, formatDate, getState, post, updateState } from './api.ts';
 import { renderDiffBody } from './diffView.ts';
 import { signatureMark } from './signature.ts';
@@ -32,6 +32,8 @@ export interface DetailsPane {
   /** `focus` があれば、そのファイルを選んでその差分の位置に移る（File History） */
   show(details: CommitDetails, focus?: string): void;
   showDiff(oid: string, path: string, diff: FileDiff): void;
+  /** いくつも選んだコミット。読んでいる間は `view` なし */
+  showSelection(state: SelectionState): void;
   /** 詳細の残り（署名・子のコミット）。出しているコミットのものなら足す */
   showExtras(extras: DetailsExtras): void;
   clear(): void;
@@ -40,6 +42,22 @@ export interface DetailsPane {
 }
 
 /** onParent があれば、親の ID を押すとそれを呼ぶ（History でその行に移る） */
+/** いくつも選んだコミットの出し方 */
+export interface SelectionState {
+  count: number;
+  view?: SelectionView;
+  error?: string;
+  onPair?: (pair: PairMode) => void;
+  onCommit?: (row: number) => void;
+}
+
+const PAIR_NOTES: Record<PairMode, string> = {
+  forward: 'Two non-consecutive commits, so this is the diff from the older to the newer (A..B).',
+  reverse: 'The diff of the two non-consecutive commits from the newer to the older (reversed).',
+  mergeBase: 'The diff of the two non-consecutive commits from their common ancestor to the newer (A...B: only the changes on the newer side).',
+};
+const PAIR_NAMES: Record<PairMode, string> = { forward: 'A..B', reverse: 'Reverse', mergeBase: 'From the merge-base (A...B)' };
+
 export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane {
   const root = el('aside', 'details');
   let shownOid: string | undefined;
@@ -116,14 +134,35 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
       filesHead.append(all);
     }
     files.append(filesHead);
+    const { rows, diffs } = fileSections(d.oid, d.files, files, true);
+
+    const parts: Node[] = [head, list];
+    if (body) parts.push(el('pre', 'body', body));
+    parts.push(files, diffs);
+    root.replaceChildren(...parts);
+    root.scrollTop = 0;
+    const section = focus ? sections.get(focus) : undefined;
+    if (focus && section) {
+      rows.get(focus)?.classList.add('active');
+      section.scrollIntoView({ block: 'start' });
+    }
+  }
+
+  /** ファイルの一覧と差分の枠。差分は画面に入ったものから順に求める。`single` は 1 つのコミット（メニューと Open がある） */
+  function fileSections(
+    oid: string,
+    items: readonly { path: string; origPath?: string; status?: string }[],
+    files: HTMLElement,
+    single: boolean,
+  ): { rows: Map<string, HTMLElement>; diffs: HTMLElement } {
     const rows = new Map<string, HTMLElement>();
-    for (const f of d.files) {
+    for (const f of items) {
       const row = el('div', 'file');
       rows.set(f.path, row);
       // 右クリックのメニュー（package.json の webview/context）に渡す情報
-      row.dataset.vscodeContext = fileContext(d.oid, f.path);
+      if (single) row.dataset.vscodeContext = fileContext(oid, f.path);
       row.title = f.origPath ? `${f.origPath} → ${f.path}` : f.path;
-      row.append(el('span', `status s-${f.status}`, f.status));
+      if (f.status) row.append(el('span', `status s-${f.status}`, f.status));
       const slash = f.path.lastIndexOf('/');
       row.append(el('span', 'name', f.path.slice(slash + 1)));
       if (slash >= 0) row.append(el('span', 'dir', f.path.slice(0, slash)));
@@ -144,7 +183,7 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
           const path = (entry.target as HTMLElement).dataset.path!;
           if (entry.isIntersecting && !requestedDiffs.has(path)) {
             requestedDiffs.add(path);
-            post({ type: 'commitDiff', oid: d.oid, path });
+            post({ type: 'commitDiff', oid, path });
           }
         }
       },
@@ -153,33 +192,78 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
     requestedDiffs = new Set();
     sections = new Map();
     const diffs = el('div', 'commit-diffs');
-    for (const f of d.files) {
+    for (const f of items) {
       const section = el('section', 'file-diff');
       section.dataset.path = f.path;
       const sectionHead = el('div', 'diff-head');
-      sectionHead.dataset.vscodeContext = fileContext(d.oid, f.path);
-      sectionHead.append(el('span', `status s-${f.status}`, f.status));
+      if (f.status) sectionHead.append(el('span', `status s-${f.status}`, f.status));
       sectionHead.append(el('span', 'path', f.origPath ? `${f.origPath} → ${f.path}` : f.path));
-      const open = el('button', 'secondary', 'Open');
-      open.title = 'エディタで差分を開く';
-      open.addEventListener('click', () => post({ type: 'openFile', oid: d.oid, path: f.path }));
-      sectionHead.append(open);
+      if (single) {
+        sectionHead.dataset.vscodeContext = fileContext(oid, f.path);
+        const open = el('button', 'secondary', 'Open');
+        open.title = 'エディタで差分を開く';
+        open.addEventListener('click', () => post({ type: 'openFile', oid, path: f.path }));
+        sectionHead.append(open);
+      }
       section.append(sectionHead, el('div', 'empty', '読み込み中…'));
       diffs.append(section);
       sections.set(f.path, section);
       diffObserver.observe(section);
     }
+    return { rows, diffs };
+  }
 
-    const parts: Node[] = [head, list];
-    if (body) parts.push(el('pre', 'body', body));
-    parts.push(files, diffs);
+  function showSelection({ count, view, error, onPair, onCommit }: SelectionState): void {
+    shownOid = view?.key;
+    meta = undefined;
+    diffObserver?.disconnect();
+    sections = new Map();
+    const parts: Node[] = [el('div', 'subject', `${count} commits selected`)];
+    if (!view) {
+      parts.push(el('div', error ? 'selection-note error' : 'selection-note', error ?? 'Loading the diff…'));
+      root.replaceChildren(...parts);
+      root.scrollTop = 0;
+      return;
+    }
+    const note =
+      view.kind === 'range'
+        ? 'They are consecutive, so this is the diff from the parent of the oldest to the newest (the same as squashing them into one).'
+        : view.kind === 'pair'
+          ? PAIR_NOTES[view.pair]
+          : 'They are not contiguous, so each commit’s diff is listed file by file (headed by the path and short ID).';
+    parts.push(el('div', 'selection-note', note));
+    if (view.kind === 'pair') {
+      const modes = el('div', 'selection-pair');
+      for (const mode of ['forward', 'reverse', 'mergeBase'] as const) {
+        if (mode === view.pair) continue;
+        const link = el('button', 'secondary', PAIR_NAMES[mode]);
+        link.addEventListener('click', () => onPair?.(mode));
+        modes.append(link);
+      }
+      parts.push(modes);
+    }
+    const commits = el('div', 'selection-commits');
+    for (const c of view.commits) {
+      const row = el('div', 'selection-commit');
+      row.title = 'Show this commit alone';
+      row.append(el('code', '', c.oid.slice(0, 8)), el('span', 'subject-text', c.subject), el('span', 'author', c.author));
+      row.addEventListener('click', () => onCommit?.(c.row));
+      commits.append(row);
+    }
+    parts.push(commits);
+    if (view.count > view.commits.length) {
+      parts.push(el('div', 'selection-note', `…and ${view.count - view.commits.length} more`));
+    }
+    if (view.files.length === 0) {
+      parts.push(el('div', 'empty', 'No changes'));
+    } else {
+      const files = el('div', 'files');
+      const n = view.files.length;
+      files.append(el('div', 'files-head', `${n} file${n === 1 ? '' : 's'} changed`));
+      parts.push(files, fileSections(view.key, view.files, files, false).diffs);
+    }
     root.replaceChildren(...parts);
     root.scrollTop = 0;
-    const section = focus ? sections.get(focus) : undefined;
-    if (focus && section) {
-      rows.get(focus)?.classList.add('active');
-      section.scrollIntoView({ block: 'start' });
-    }
   }
 
   function showDiff(oid: string, path: string, diff: FileDiff): void {
@@ -225,6 +309,7 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
     showDiff,
     showExtras,
     clear,
+    showSelection,
     forget() {
       shownOid = undefined;
     },

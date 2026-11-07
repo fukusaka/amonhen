@@ -56,6 +56,22 @@ export interface Person {
 /** メッセージを編集してから行う操作 */
 export type MessageEdit = 'reword' | 'squash';
 
+/** 2 つ選んだときの差分の取り方（コアの `pair`） */
+export type PairMode = 'forward' | 'reverse' | 'mergeBase';
+
+/** いくつも選んだコミットの見せ方（`commitDiff` の `history`・`rows`）。差分はファイルごとに求める */
+export interface SelectionView {
+  /** 差分を求めるときの `oid` の代わり */
+  key: string;
+  count: number;
+  /** 続いたコミット・離れた 2 つ・離れた 3 つ以上 */
+  kind: 'range' | 'pair' | 'each';
+  pair: PairMode;
+  files: { path: string; added: number; removed: number; binary: boolean }[];
+  /** 選んだコミット（上から。多ければ先頭だけ） */
+  commits: { row: number; oid: string; subject: string; author: string }[];
+}
+
 /** History の検索の様子 */
 export interface SearchState {
   query: string;
@@ -82,6 +98,8 @@ export type HistoryHostMessage =
   | { type: 'search'; state: SearchState }
   | { type: 'busy'; busy: boolean }
   | { type: 'details'; details: CommitDetails }
+  /** いくつも選んだコミットの差分。`token` は頼んだときのもの。読めなければ `error` */
+  | { type: 'selection'; token: number; view?: SelectionView; error?: string }
   /** コミットの中の 1 ファイルの差分（最初の親との差分） */
   | { type: 'commitDiff'; oid: string; path: string; diff: FileDiff }
   | { type: 'editMessage'; oid: string; kind: MessageEdit; title: string; message: string }
@@ -126,6 +144,8 @@ export type HistoryWebviewMessage =
   | { type: 'open'; oid: string }
   /** 選んだコミットの詳細を求める */
   | { type: 'select'; oid: string }
+  /** いくつも選んだ行の差分を求める（エンジンだけ） */
+  | { type: 'selectRows'; token: number; rows: number[]; pair: PairMode }
   /** コミットの中の 1 ファイルの差分を、エディタで開く */
   | { type: 'openFile'; oid: string; path: string }
   /** コミットの中の 1 ファイルの差分を求める（詳細に並べる） */

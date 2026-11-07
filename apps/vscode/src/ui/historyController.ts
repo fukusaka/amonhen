@@ -15,11 +15,13 @@ import type {
   DetailsExtras,
   HistoryHostMessage,
   HistoryWebviewMessage,
+  PairMode,
   Person,
   RefLabel,
   RowData,
   Scope,
   SearchState,
+  SelectionView,
   SignatureView,
 } from '../history/protocol.ts';
 import { editableChain, refLabels } from '../history/rows.ts';
@@ -48,6 +50,8 @@ const EDITABLE_LIMIT = 500;
 const DETAILS_CACHE = 100;
 /** 差分を覚えておくファイルの数 */
 const DIFF_CACHE = 200;
+/** いくつも選んだときに並べるコミットの数 */
+const SELECTION_LIST = 200;
 
 /** 共有の daemon の History: そのつながりと History の番号と行の数 */
 interface DaemonHistory {
@@ -143,6 +147,9 @@ export class HistoryController implements vscode.Disposable {
   private base: DaemonHistory | undefined;
   /** 今の検索。`rows` は `history`（もとの History）の行 */
   private search: { query: string; history: unknown; rows: number[] } | undefined;
+  /** いくつも選んでいる行（昇順）と、その差分 */
+  private selection: { key: string; rows: number[]; diffs: Map<string, FileDiff> } | undefined;
+  private selectionRequest = 0;
   private searchAbort: AbortController | undefined;
   /** 探している途中の検索の文（History を読み直したら、終わっていなくても探し直す） */
   private searching: string | undefined;
@@ -229,7 +236,11 @@ export class HistoryController implements vscode.Disposable {
         await this.reset();
         break;
       case 'select':
+        this.clearSelection();
         await this.sendDetails(message.oid).catch(showError);
+        break;
+      case 'selectRows':
+        await this.sendSelection(message.token, message.rows, message.pair);
         break;
       case 'commitDiff':
         await this.sendCommitDiff(message.oid, message.path).catch(showError);
@@ -271,6 +282,46 @@ export class HistoryController implements vscode.Disposable {
         const command = { more: 'amonhen.fetchMoreHistory', all: 'amonhen.fetchAllHistory', contents: 'amonhen.fetchAllContents' };
         await vscode.commands.executeCommand(command[message.what]);
         break;
+      }
+    }
+  }
+
+  private clearSelection(): void {
+    this.selection = undefined;
+    this.selectionRequest++;
+  }
+
+  /** いくつも選んだ行の差分を読む。差分はとっておき、ファイルが画面に入ったら送る */
+  private async sendSelection(token: number, rows: readonly number[], pair: PairMode): Promise<void> {
+    const daemon = this.daemon;
+    if (!daemon) return;
+    const request = ++this.selectionRequest;
+    const sorted = [...rows].sort((a, b) => a - b);
+    this.selection = { key: `selection:${token}`, rows: sorted, diffs: new Map() };
+    const current = this.selection;
+    try {
+      const [diff, listed] = await Promise.all([
+        daemon.client.call({ op: 'commitDiff', history: daemon.history, rows: sorted, pair }),
+        daemon.client.call({ op: 'historyRows', history: daemon.history, rows: sorted.slice(0, SELECTION_LIST) }),
+      ]);
+      if (request !== this.selectionRequest) return;
+      current.diffs = splitCommitDiff(diff);
+      const selection = diff.json['selection'] as { kind: SelectionView['kind'] };
+      this.post({
+        type: 'selection',
+        token,
+        view: {
+          key: current.key,
+          count: sorted.length,
+          kind: selection.kind,
+          pair,
+          files: (diff.json['files'] as SelectionView['files'] | undefined) ?? [],
+          commits: readRows(listed).map((r) => ({ row: r.row, oid: r.oid, subject: r.subject, author: r.author })),
+        },
+      });
+    } catch (err) {
+      if (request === this.selectionRequest) {
+        this.post({ type: 'selection', token, error: errorMessage(err) });
       }
     }
   }
@@ -427,6 +478,11 @@ export class HistoryController implements vscode.Disposable {
   }
 
   private async sendCommitDiff(oid: string, path: string): Promise<void> {
+    if (oid === this.selection?.key) {
+      const diff = this.selection.diffs.get(path);
+      if (diff) this.post({ type: 'commitDiff', oid, path, diff });
+      return;
+    }
     const repo = this.repo;
     const details = this.details.get(oid);
     const file = details?.files.find((f) => f.path === path);
@@ -498,6 +554,7 @@ export class HistoryController implements vscode.Disposable {
 
   private async reload(): Promise<void> {
     const generation = ++this.generation;
+    this.clearSelection();
     this.extras.clear();
     this.commits = [];
     this.known.clear();
