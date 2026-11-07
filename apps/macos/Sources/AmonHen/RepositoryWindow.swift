@@ -2273,8 +2273,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 Task {
                     defer { RunningOperations.end() }
                     do {
+                        // SSH 先のパスは手元にないので、そこでは gh を起動しない（送り先は -R と --head で決まる）。
                         let url = try await GitHub.createPullRequest(
-                            in: dir, repo: target.repo, head: target.head(branch), title: answer.title, body: answer.body, base: answer.base,
+                            in: self.isLocal ? dir : nil, repo: target.repo, head: target.head(branch), title: answer.title, body: answer.body, base: answer.base,
                             draft: answer.draft)
                         let done = NSAlert()
                         done.messageText = L("Pull Request Created")
