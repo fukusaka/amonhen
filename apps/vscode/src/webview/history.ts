@@ -145,6 +145,8 @@ export function createHistoryView(): View {
   const signatures = new Map<string, SignatureView>();
   /** 行に出さない項目 */
   let hidden = new Set<HistoryItem>();
+  /** 祖先の行のビットの列（目立たせないなら null） */
+  let lineage: Uint8Array | null = null;
   /** 行。daemon の History では行の数だけの長さで、まだ届いていない行は空 */
   let rows: (RowData | undefined)[] = [];
   /** daemon の History（行の数が分かっていて、飛び飛びに頼む） */
@@ -222,6 +224,7 @@ export function createHistoryView(): View {
     const el = document.createElement('div');
     el.className = isSelected(index) ? 'row selected' : 'row';
     if (matchSet.has(index)) el.classList.add('match');
+    if (lineage && !((lineage[index >> 3] ?? 0) & (1 << (index & 7)))) el.classList.add('dim');
     el.style.top = `${index * ROW_HEIGHT}px`;
     el.dataset.index = String(index);
     // Webview の右クリックメニュー（package.json の webview/context）に渡す情報
@@ -692,11 +695,16 @@ export function createHistoryView(): View {
 
   function onMessage(message: HostMessage): void {
     switch (message.type) {
+      case 'lineage':
+        lineage = message.rows ? Uint8Array.from(atob(message.rows), (c) => c.charCodeAt(0)) : null;
+        render();
+        break;
       case 'historyDisplay':
         hidden = new Set(message.hidden);
         render();
         break;
       case 'reset':
+        lineage = null;
         // 形はこの後の form で送り直す（一致だけの History なら送らない）
         shallow = false;
         boundary = new Set();

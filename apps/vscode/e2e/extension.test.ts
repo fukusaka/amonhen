@@ -2819,6 +2819,52 @@ suite('Amon Hen in VSCode', () => {
     }
   });
 
+  test('sends the ancestors of the selected commit through the daemon', async () => {
+    const panel = await showView('amonhen.showHistory');
+    const start = git('rev-parse', 'HEAD').trim();
+    const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+    const quickPick = vscode.window.showQuickPick;
+    const toggle = async () => {
+      (vscode.window as { showQuickPick: unknown }).showQuickPick = async (items: vscode.QuickPickItem[]) =>
+        items.find((i) => i.label.endsWith('Highlight Ancestors'));
+      await panel.history.handle({ type: 'displayMenu' });
+    };
+    git('switch', '-q', '-c', 'lineage-side');
+    git('commit', '-q', '--allow-empty', '-m', 'lineage side');
+    const side = git('rev-parse', 'HEAD').trim();
+    git('switch', '-q', branch);
+    git('commit', '-q', '--allow-empty', '-m', 'lineage main');
+    const tip = git('rev-parse', 'HEAD').trim();
+    try {
+      await vscode.commands.executeCommand('amonhen.refresh');
+      await panel.history.handle({ type: 'scope', scope: 'all' });
+      let at = posted.length;
+      await panel.history.reset();
+      const { rows } = await waitPosted('rows', at, (m) => m.total !== undefined);
+      const rowOf = (oid: string) => rows.findIndex((r) => r.oid === oid);
+      at = posted.length;
+      await toggle();
+      await panel.history.handle({ type: 'select', oid: tip });
+      // Webview が最初の行を選んだ分が先に届くことがあるので、tip を選んだ答えを待つ
+      const isAncestor = (bits: string, oid: string) => {
+        const row = rowOf(oid);
+        return !!(Buffer.from(bits, 'base64')[row >> 3]! & (1 << (row & 7)));
+      };
+      const { rows: bits } = await waitPosted('lineage', at, (m) => !!m.rows && isAncestor(m.rows, tip));
+      assert.ok(isAncestor(bits!, start));
+      assert.ok(!isAncestor(bits!, side));
+      at = posted.length;
+      await toggle();
+      assert.equal((await waitPosted('lineage', at)).rows, null);
+    } finally {
+      (vscode.window as { showQuickPick: unknown }).showQuickPick = quickPick;
+      await panel.history.handle({ type: 'scope', scope: 'head' });
+      git('reset', '-q', '--hard', start);
+      git('branch', '-q', '-D', 'lineage-side');
+      await vscode.commands.executeCommand('amonhen.refresh');
+    }
+  });
+
   test('shows names from the mailmap through the daemon and reloads them when it changes', async () => {
     await mailmapFlow();
   });

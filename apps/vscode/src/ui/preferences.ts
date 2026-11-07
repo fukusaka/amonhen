@@ -55,3 +55,12 @@ export function historyFold(): boolean {
 export async function setHistoryFold(fold: boolean): Promise<void> {
   await store?.update('history.fold', fold);
 }
+
+/** History で、選んだコミットの祖先だけをはっきり出すか */
+export function historyHighlight(): boolean {
+  return store?.get<boolean>('history.highlight') ?? false;
+}
+
+export async function setHistoryHighlight(highlight: boolean): Promise<void> {
+  await store?.update('history.highlight', highlight);
+}

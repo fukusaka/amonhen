@@ -27,7 +27,16 @@ import type {
   HistoryOrder,
 } from '../history/protocol.ts';
 import { samePath, type Worktree } from '../git/worktrees.ts';
-import { historyFold, historyHidden, historyOrder, setHistoryFold, setHistoryHidden, setHistoryOrder } from './preferences.ts';
+import {
+  historyFold,
+  historyHidden,
+  historyHighlight,
+  historyOrder,
+  setHistoryFold,
+  setHistoryHidden,
+  setHistoryHighlight,
+  setHistoryOrder,
+} from './preferences.ts';
 import { editableChain, refLabels, worktreeLabels } from '../history/rows.ts';
 import { scopeRefs } from '../history/scope.ts';
 import type { Repository, Section } from '../state/repository.ts';
@@ -160,6 +169,9 @@ export class HistoryController implements vscode.Disposable {
   private readonly expandedMerges = new Set<string>();
   /** 畳んだ merge が行ごとに隠している数（畳んでいなければなし） */
   private foldedRows: Uint32Array | undefined;
+  /** 選んでいるコミット（祖先を目立たせるため） */
+  private selectedOid: string | undefined;
+  private lineageRequest = 0;
   /** 探している途中の検索の文（History を読み直したら、終わっていなくても探し直す） */
   private searching: string | undefined;
   /** 一致だけを出す切り替え（最後に頼まれたもの） */
@@ -253,6 +265,8 @@ export class HistoryController implements vscode.Disposable {
         break;
       case 'select':
         this.clearSelection();
+        this.selectedOid = message.oid;
+        void this.sendLineage().catch(() => undefined);
         await this.sendDetails(message.oid).catch(showError);
         break;
       case 'selectRows':
@@ -815,6 +829,23 @@ export class HistoryController implements vscode.Disposable {
     await this.loadRange(next, start, PAGE);
   }
 
+  /** 選んだコミットの祖先を送る */
+  private async sendLineage(): Promise<void> {
+    const request = ++this.lineageRequest;
+    const shown = this.daemon;
+    if (!historyHighlight() || !shown || !this.selectedOid) {
+      this.post({ type: 'lineage', rows: null });
+      return;
+    }
+    const at = await shown.client.call({ op: 'historyRowOf', history: shown.history, id: this.selectedOid });
+    const row = at.json['row'];
+    if (typeof row !== 'number') return;
+    const reply = await shown.client.call({ op: 'historyLineage', history: shown.history, row });
+    if (request === this.lineageRequest && shown === this.daemon) {
+      this.post({ type: 'lineage', rows: Buffer.from(reply.bytes('rows')).toString('base64') });
+    }
+  }
+
   /** 畳んだ merge を開く・畳む。読み直しても同じコミットを選んだままにする */
   async toggleFold(oid: string): Promise<void> {
     if (!this.expandedMerges.delete(oid)) this.expandedMerges.add(oid);
@@ -845,6 +876,10 @@ export class HistoryController implements vscode.Disposable {
       ['oid', 'Commit ID'],
       ['signature', 'Signature'],
     ];
+    const highlight: Item = {
+      label: `${mark(historyHighlight())}Highlight Ancestors`,
+      description: 'Dim the commits that aren’t ancestors of the selected one',
+    };
     const fold: Item = { label: `${mark(historyFold())}Fold Merged Branches`, description: 'Hide the commits a merge brought in' };
     const picked = await vscode.window.showQuickPick<Item>(
       [
@@ -861,11 +896,14 @@ export class HistoryController implements vscode.Disposable {
           : []),
         separator('Items'),
         ...items.map(([value, label]): Item => ({ label: `${mark(!hidden.includes(value))}${label}`, item: value })),
-        ...(this.daemon ? [separator('View'), fold] : []),
+        ...(this.daemon ? [separator('View'), fold, highlight] : []),
       ],
       { placeHolder: 'History Display' },
     );
-    if (picked === fold) {
+    if (picked === highlight) {
+      await setHistoryHighlight(!historyHighlight());
+      await this.sendLineage();
+    } else if (picked === fold) {
       await setHistoryFold(!historyFold());
       this.expandedMerges.clear();
       await this.reset();

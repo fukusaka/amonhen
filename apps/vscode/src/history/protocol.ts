@@ -106,6 +106,8 @@ export type HistoryHostMessage =
   | { type: 'searchable'; searchable: boolean }
   /** 行に出さない項目 */
   | { type: 'historyDisplay'; hidden: HistoryItem[] }
+  /** 祖先の行（ビットの列を base64 で。`row` の下位から）。目立たせないなら null */
+  | { type: 'lineage'; rows: string | null }
   | { type: 'search'; state: SearchState }
   | { type: 'busy'; busy: boolean }
   | { type: 'details'; details: CommitDetails }

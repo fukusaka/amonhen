@@ -1027,7 +1027,7 @@ First release.
 
 #### Added
 
-- History can show several selected refs, marks each worktree's HEAD, and its ⋯ button picks the order and the row items.
+- History can show several selected refs, marks each worktree's HEAD, and its ⋯ button picks the order, the row items, folding merged branches and highlighting ancestors.
 - Working Copy shows line counts per file, discards with ⌫, moves with J/K and ⌥J/⌥K, adds untracked files to
   `.gitignore`, and notes a sparse checkout above the list.
 - Commit's ▾ adds Commit and Push (⌘⇧↩), Amend Last Commit, and Fixup and Squash Commit For. What hooks wrote, and why a
