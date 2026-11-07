@@ -895,7 +895,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         branch.placeholderString = L("Branch name")
         let folder = NSTextField(string: "")
         folder.placeholderString = L("Folder")
-        for field in [branch, folder] { field.frame.size = NSSize(width: 360, height: 24) }
+        // スタックの中では frame の幅は効かない（制約がないと幅が 2pt に潰れる）。
+        for field in [branch, folder] { field.widthAnchor.constraint(equalToConstant: 360).isActive = true }
         let stack = NSStackView(views: [branch, folder])
         stack.orientation = .vertical
         stack.spacing = 8

@@ -52,6 +52,7 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- New Worktree's two fields and Clone's URL and Location fields no longer collapse to a sliver.
 - Create Pull Request… is no longer offered on the default branch, and the default branch no longer shows the
   "Merged into" mark, when the default branch is a remote one such as `origin/main`.
 - The GTK4 sidebar shortens a long branch name to keep its marks (merged, upstream gone), as the macOS app does,

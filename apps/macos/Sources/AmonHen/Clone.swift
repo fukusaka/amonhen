@@ -66,6 +66,10 @@ enum CloneSheet {
         let name = NSTextField(string: "")
         name.placeholderString = L("Taken from the URL")
         let choose = NSButton(title: L("Choose…"), target: nil, action: nil)
+        // ボタンと並べるスタックの中では、制約がないと幅が 2pt に潰れる。欄の列（下の 380）からボタンの分を引いた幅にする。
+        for (field, button) in [(url, bundleButton), (folder, choose)] {
+            field.widthAnchor.constraint(equalToConstant: 380 - 8 - button.fittingSize.width).isActive = true
+        }
         let alert = NSAlert()
         let chooser = ClosureTarget { [weak alert] in
             chooseLocation(initial: folder.stringValue, in: alert?.window) { picked in
