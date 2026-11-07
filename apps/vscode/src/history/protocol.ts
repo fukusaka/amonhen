@@ -8,6 +8,11 @@ import type { GraphRow } from './graph.ts';
 /** 履歴の範囲。現在のブランチ、すべて、または `ref:refs/heads/x` のような 1 つの ref */
 export type Scope = 'head' | 'all' | `ref:${string}` | `refs:${string}`;
 
+/** History の並び順: 日付順か、ブランチのコミットを merge の下にまとめるか */
+export type HistoryOrder = 'date' | 'topo';
+/** History の行に出す項目 */
+export type HistoryItem = 'refs' | 'author' | 'date' | 'oid' | 'signature';
+
 export interface RefLabel {
   name: string;
   kind: 'head' | 'branch' | 'remote' | 'tag' | 'worktree';
@@ -95,6 +100,8 @@ export type HistoryHostMessage =
   /** その行を選んで見せる（Reflog の Show in History） */
   | { type: 'reveal'; row: number }
   | { type: 'searchable'; searchable: boolean }
+  /** 行に出さない項目 */
+  | { type: 'historyDisplay'; hidden: HistoryItem[] }
   | { type: 'search'; state: SearchState }
   | { type: 'busy'; busy: boolean }
   | { type: 'details'; details: CommitDetails }
@@ -152,6 +159,8 @@ export type HistoryWebviewMessage =
   /** コミットの中の 1 ファイルの差分を求める（詳細に並べる） */
   | { type: 'commitDiff'; oid: string; path: string }
   | { type: 'scope'; scope: Scope }
+  /** 並び順と項目の一覧を出す */
+  | { type: 'displayMenu' }
   | { type: 'saveMessage'; oid: string; last?: string; kind: MessageEdit; message: string }
   /** 編集できる範囲の中で、新しい順の to 番目に動かす */
   | { type: 'move'; oid: string; to: number }

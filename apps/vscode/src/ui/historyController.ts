@@ -23,8 +23,11 @@ import type {
   SearchState,
   SelectionView,
   SignatureView,
+  HistoryItem,
+  HistoryOrder,
 } from '../history/protocol.ts';
 import { samePath, type Worktree } from '../git/worktrees.ts';
+import { historyHidden, historyOrder, setHistoryHidden, setHistoryOrder } from './preferences.ts';
 import { editableChain, refLabels, worktreeLabels } from '../history/rows.ts';
 import { scopeRefs } from '../history/scope.ts';
 import type { Repository, Section } from '../state/repository.ts';
@@ -232,6 +235,9 @@ export class HistoryController implements vscode.Disposable {
         break;
       case 'search':
         await this.runSearch(message.query.trim(), message.matchingOnly, message.selected);
+        break;
+      case 'displayMenu':
+        await this.displayMenu();
         break;
       case 'scope':
         this.scope = message.scope;
@@ -606,6 +612,7 @@ export class HistoryController implements vscode.Disposable {
     const repo = this.repo;
     this.opening = repo !== undefined;
     this.post({ type: 'reset', title: repo ? basename(repo.root) : '', scope: this.scope });
+    this.post({ type: 'historyDisplay', hidden: historyHidden() });
     if (!repo) {
       this.post({ type: 'rows', start: 0, rows: [], done: true });
       return;
@@ -795,6 +802,52 @@ export class HistoryController implements vscode.Disposable {
     await this.loadRange(next, start, PAGE);
   }
 
+  /** 並び順と、行に出す項目を選ぶ（アプリの History Display と同じ） */
+  private async displayMenu(): Promise<void> {
+    const order = historyOrder();
+    const hidden = historyHidden();
+    type Item = vscode.QuickPickItem & { order?: HistoryOrder; item?: HistoryItem };
+    const mark = (on: boolean) => (on ? '$(check) ' : '$(blank) ');
+    const separator = (label: string): Item => ({ label, kind: vscode.QuickPickItemKind.Separator });
+    const orders: [HistoryOrder, string, string][] = [
+      ['date', 'Date', 'Newest first'],
+      ['topo', 'Topological', 'Keep a branch’s commits together under its merge'],
+    ];
+    const items: [HistoryItem, string][] = [
+      ['refs', 'Branches and Tags'],
+      ['author', 'Author'],
+      ['date', 'Date'],
+      ['oid', 'Commit ID'],
+      ['signature', 'Signature'],
+    ];
+    const picked = await vscode.window.showQuickPick<Item>(
+      [
+        // 並び順は共有の daemon で変える（git で読むときは日付順のまま）
+        ...(this.daemon
+          ? [
+              separator('Order'),
+              ...orders.map(([value, label, detail]): Item => ({
+                label: `${mark(order === value)}${label}`,
+                description: detail,
+                order: value,
+              })),
+            ]
+          : []),
+        separator('Items'),
+        ...items.map(([value, label]): Item => ({ label: `${mark(!hidden.includes(value))}${label}`, item: value })),
+      ],
+      { placeHolder: 'History Display' },
+    );
+    if (picked?.order && picked.order !== order) {
+      await setHistoryOrder(picked.order);
+      await this.reset();
+    } else if (picked?.item) {
+      const next = hidden.includes(picked.item) ? hidden.filter((i) => i !== picked.item) : [...hidden, picked.item];
+      await setHistoryHidden(next);
+      this.post({ type: 'historyDisplay', hidden: next });
+    }
+  }
+
   /** worktree がいくつもあれば、それぞれの HEAD の札を足す（読めなければ出さない） */
   private async addWorktreeLabels(repo: Repository, generation: number): Promise<void> {
     const client = this.daemon?.client;
@@ -836,6 +889,7 @@ export class HistoryController implements vscode.Disposable {
         tips = resolved.map((r) => String(r.json['text']));
       }
     }
+    await client.call({ op: 'historyOrder', order: historyOrder() });
     const history = await client.call(tips ? { op: 'history', tips } : { op: 'history' });
     const boundary = history.json['shallow'] === true ? ((history.json['boundaryRows'] as number[] | undefined) ?? []) : undefined;
     return { client, history: history.json['history'], rows: Number(history.json['rows']), ...(boundary ? { boundary } : {}) };

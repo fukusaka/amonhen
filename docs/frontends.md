@@ -247,7 +247,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Graph with branch and tag labels | ✓ | ✓ | ✓ | ✓ | CLI: `log`. |
 | Huge histories in chunks with the persistent cache | ✓ | ✓ | ✓ | ✓ |  |
 | Search with match count, next / previous, matching only | ✓ | ✓ | ✓ | △ | VSCode: With the engine.<br>CLI: `log <query>` lists the matches. |
-| Display: order, one line, row items, fold merged, highlight ancestors | ✓ | ✓ | △ | △ | VSCode: Only the scope (current, all, a ref).<br>CLI: `--topo-order`, `--fold`. |
+| Display: order, one line, row items, fold merged, highlight ancestors | ✓ | ✓ | △ | △ | VSCode: The order (through the daemon) and the items. Rows are always one line; no folding or ancestor highlight.<br>CLI: `--topo-order`, `--fold`. |
 | Avatars | ✓ | ✓ | — | n/a |  |
 | Signature marks on commits | ✓ | ✓ | ✓ | △ | VSCode: With the engine.<br>CLI: In `show`. |
 | CI status per commit with a checks popover | ✓ | ✓ | — | — |  |

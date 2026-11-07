@@ -5,7 +5,7 @@
  * ところのまだない行をまとめて要求する（離れた行へもすぐ移れる）。
  */
 import { type LaneMetrics, lanePositions } from '../history/lanes.ts';
-import type { MessageEdit, PairMode, RowData, Scope, SearchState, SignatureView } from '../history/protocol.ts';
+import type { HistoryItem, MessageEdit, PairMode, RowData, Scope, SearchState, SignatureView } from '../history/protocol.ts';
 import { extendTo, isContiguous, singleRow, toggleRow, type RowSelection } from '../history/selection.ts';
 import type { HostMessage } from '../view/protocol.ts';
 import { scopeRefs, scopeTitle } from '../history/scope.ts';
@@ -110,7 +110,11 @@ export function createHistoryView(): View {
   const partialChip = el('button', 'chip', 'Partial');
   partialChip.hidden = true;
   partialChip.addEventListener('click', () => post({ type: 'fetchForm', what: 'contents' }));
-  toolbar.append(scopeSelect, search, goHead, shallowChip, partialChip, status);
+  const displayButton = el('button', 'icon-button display-menu', '⋯');
+  displayButton.title = 'History Display: order and row items';
+  displayButton.setAttribute('aria-label', 'History Display');
+  displayButton.addEventListener('click', () => post({ type: 'displayMenu' }));
+  toolbar.append(scopeSelect, search, goHead, shallowChip, partialChip, status, displayButton);
   // shallow clone の History の最後の行の下の帯（取得していない古い履歴を取り足す）
   const band = el('div', 'shallow-band');
   const bandMore = el('button', 'secondary', 'Fetch More…');
@@ -139,6 +143,8 @@ export function createHistoryView(): View {
 
   /** 行の署名の印（コミット → 見せ方。署名のないものは入らない） */
   const signatures = new Map<string, SignatureView>();
+  /** 行に出さない項目 */
+  let hidden = new Set<HistoryItem>();
   /** 行。daemon の History では行の数だけの長さで、まだ届いていない行は空 */
   let rows: (RowData | undefined)[] = [];
   /** daemon の History（行の数が分かっていて、飛び飛びに頼む） */
@@ -238,7 +244,7 @@ export function createHistoryView(): View {
     el.append(drawGraph(row, graph));
     const text = document.createElement('div');
     text.className = 'text';
-    for (const ref of row.refs) {
+    for (const ref of hidden.has('refs') ? [] : row.refs) {
       const badge = document.createElement('span');
       badge.className = `ref ${ref.kind}${ref.current ? ' current' : ''}`;
       badge.textContent = ref.name;
@@ -252,7 +258,7 @@ export function createHistoryView(): View {
       text.append(cut);
     }
     const signed = signatures.get(row.oid);
-    if (signed) text.append(signatureMark(signed));
+    if (signed && !hidden.has('signature')) text.append(signatureMark(signed));
     const subject = document.createElement('span');
     subject.className = 'subject';
     subject.textContent = row.subject;
@@ -264,6 +270,7 @@ export function createHistoryView(): View {
       ['date', formatDate(row.date)],
       ['oid', row.oid.slice(0, 8)],
     ] as const) {
+      if (hidden.has(cls)) continue;
       const span = document.createElement('span');
       span.className = cls;
       span.textContent = value;
@@ -670,6 +677,10 @@ export function createHistoryView(): View {
 
   function onMessage(message: HostMessage): void {
     switch (message.type) {
+      case 'historyDisplay':
+        hidden = new Set(message.hidden);
+        render();
+        break;
       case 'reset':
         // 形はこの後の form で送り直す（一致だけの History なら送らない）
         shallow = false;

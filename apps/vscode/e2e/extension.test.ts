@@ -2739,6 +2739,39 @@ suite('Amon Hen in VSCode', () => {
     }
   });
 
+  test('keeps the order and items chosen for History through the daemon', async () => {
+    const panel = await showView('amonhen.showHistory');
+    const quickPick = vscode.window.showQuickPick;
+    let picks: string[] = [];
+    const choose = (label: string) => {
+      (vscode.window as { showQuickPick: unknown }).showQuickPick = async (items: vscode.QuickPickItem[]) => {
+        picks = items.map((i) => i.label);
+        return items.find((i) => i.label.endsWith(label) && i.kind !== vscode.QuickPickItemKind.Separator);
+      };
+    };
+    try {
+      choose('Author');
+      let at = posted.length;
+      await panel.history.handle({ type: 'displayMenu' });
+      assert.deepEqual((await waitPosted('historyDisplay', at)).hidden, ['author']);
+      assert.ok(picks.includes('$(check) Date'), picks.join(', '));
+      choose('Author');
+      at = posted.length;
+      await panel.history.handle({ type: 'displayMenu' });
+      assert.deepEqual((await waitPosted('historyDisplay', at)).hidden, []);
+      // 並び順を変えると読み直す。読み直しても項目は送り直す
+      choose('Topological');
+      at = posted.length;
+      await panel.history.handle({ type: 'displayMenu' });
+      await waitPosted('reset', at);
+      await waitPosted('historyDisplay', at);
+      choose('Date');
+      await panel.history.handle({ type: 'displayMenu' });
+    } finally {
+      (vscode.window as { showQuickPick: unknown }).showQuickPick = quickPick;
+    }
+  });
+
   test('shows names from the mailmap through the daemon and reloads them when it changes', async () => {
     await mailmapFlow();
   });
