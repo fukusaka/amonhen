@@ -494,6 +494,13 @@ const EDIT_ACTIONS: [&str; 6] = [
     "edit-select-all",
 ];
 
+/// メニューの部品か（開くとフォーカスが移る。Edit の項目の相手はその前にフォーカスのあった部品）。
+fn is_menu_part(focus: &gtk::Widget) -> bool {
+    focus.is::<gtk::MenuButton>()
+        || focus.ancestor(gtk::Popover::static_type()).is_some()
+        || focus.ancestor(gtk::MenuButton::static_type()).is_some()
+}
+
 /// `focus` にできる Edit の項目（[`EDIT_ACTIONS`] と同じ順）。
 fn edit_abilities(focus: &gtk::Widget) -> [bool; 6] {
     let mut settings = focus.parent();
@@ -676,7 +683,7 @@ impl RepoWindow {
         window.connect_focus_widget_notify(move |window| {
             let Some(this) = weak.upgrade() else { return };
             if let Some(focus) = GtkWindowExt::focus(window)
-                && focus.ancestor(gtk::Popover::static_type()).is_none()
+                && !is_menu_part(&focus)
             {
                 this.last_focus.replace(focus.downgrade());
             }
@@ -840,7 +847,7 @@ impl RepoWindow {
     /// Edit の項目を渡す部品: 今フォーカスのある部品か、メニューを開いていればその前のもの。
     fn edit_focus(&self) -> Option<gtk::Widget> {
         GtkWindowExt::focus(&self.window)
-            .filter(|f| f.ancestor(gtk::Popover::static_type()).is_none())
+            .filter(|f| !is_menu_part(f))
             .or_else(|| self.last_focus.borrow().upgrade())
             .filter(|f| f.root().as_ref() == Some(self.window.upcast_ref::<gtk::Root>()))
     }
