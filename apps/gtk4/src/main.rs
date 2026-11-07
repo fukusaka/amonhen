@@ -1923,22 +1923,14 @@ fn build_tab(
     });
     // ほかの場所（ブランチのメニュー、ステータスバー）から worktree を書き込む先にする。
     let edit_action = gio::SimpleAction::new("edit-worktree", Some(glib::VariantTy::STRING));
-    let (w, p, s) = (
-        Rc::downgrade(&worktrees),
-        pages.downgrade(),
-        sidebar.clone(),
-    );
+    let w = Rc::downgrade(&worktrees);
     edit_action.connect_activate(move |_, value| {
-        let (Some(worktrees), Some(pages), Some(path)) = (
-            w.upgrade(),
-            p.upgrade(),
-            value.and_then(|v| v.get::<String>()),
-        ) else {
+        let (Some(worktrees), Some(path)) = (w.upgrade(), value.and_then(|v| v.get::<String>()))
+        else {
             return;
         };
+        // 今の画面のまま（macOS 版と同じ）。
         worktrees.edit(&path);
-        pages.set_visible_child_name("working");
-        s.select_page(Page::WorkingCopy);
     });
     tab.group.add_action(&edit_action);
     // GitHub（プルリクエスト・CI の状態・アバター）。ref を読むたびに読み直す（30 秒は空ける）。
