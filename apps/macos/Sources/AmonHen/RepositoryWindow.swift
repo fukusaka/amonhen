@@ -834,6 +834,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     /// worktree のフォルダを移す（git worktree move。git の記録も一緒に直す）。手元のリポジトリなら置き場所を選べる。
     private func moveWorktree(_ info: WorktreeInfo) {
+        // 開いたリポジトリは移せない（窓が古いパスを指したままになる。`removeWorktree` と同じ）。
+        guard !info.isSame(opened.path) else { return NSSound.beep() }
         askFolder(title: L("Move the Worktree “%@”", info.name),
                   message: L("Moves the folder and tells git where it is now (git worktree move)."),
                   initial: info.path, button: L("Move")) { [weak self] to in

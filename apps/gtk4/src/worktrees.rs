@@ -939,6 +939,13 @@ fn lock(actions: &Rc<crate::actions::Actions>, worktrees: &Rc<Worktrees>, info: 
 
 /// worktree のフォルダを移す（git worktree move）。
 fn move_to(actions: &Rc<crate::actions::Actions>, worktrees: &Rc<Worktrees>, info: &Info) {
+    // 開いたリポジトリは移せない（窓が古いパスを指したままになる。`remove` と同じ）。
+    if info.key == worktrees.opened_key() {
+        if let Some(window) = actions.window() {
+            window.error_bell();
+        }
+        return;
+    }
     let (a, w, info2) = (actions.clone(), worktrees.clone(), info.clone());
     ask_folder(
         actions,
