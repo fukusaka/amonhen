@@ -718,6 +718,15 @@ button.secondary {
   color: var(--vscode-gitDecoration-conflictingResourceForeground, var(--vscode-errorForeground));
 }
 
+.commit-actions {
+  display: flex;
+  gap: 1px;
+}
+
+.commit-menu {
+  padding: 0 6px;
+}
+
 .commit-row button:disabled {
   opacity: 0.5;
   cursor: default;

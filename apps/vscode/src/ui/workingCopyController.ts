@@ -114,6 +114,28 @@ export class WorkingCopyController implements vscode.Disposable {
     this.post({ type: 'wcRecent', messages: recent.map((c) => c.message) });
   }
 
+  private async commit(repo: Repository, message: string, amend: boolean, push: boolean): Promise<void> {
+    if (!(await commitStaged(repo, message, amend))) return;
+    await setCommitDraft(repo.root, undefined);
+    this.post({ type: 'wcCommitted' });
+    if (push) await vscode.commands.executeCommand('amonhen.push');
+  }
+
+  /** Commit の続き。Commit and Push は、Commit を押せるときだけ */
+  private async commitMenu(repo: Repository, canCommit: boolean, message: string, amend: boolean): Promise<void> {
+    const publishes = !repo.current.status?.branch.upstream;
+    const push = { label: publishes ? 'Commit and Publish…' : 'Commit and Push', description: '⌘⇧↩' };
+    const startAmend = { label: 'Amend Last Commit' };
+    const picked = await vscode.window.showQuickPick([...(canCommit ? [push] : []), startAmend], {
+      placeHolder: 'Commit',
+    });
+    if (picked === push) {
+      await this.commit(repo, message, amend, true);
+    } else if (picked === startAmend) {
+      this.post({ type: 'wcStartAmend' });
+    }
+  }
+
   /** Conventional Commits の型と、トレーラー（Co-authored-by・Signed-off-by）を選んで入れる */
   private async pickInsert(repo: Repository): Promise<void> {
     type Item = vscode.QuickPickItem & { commitType?: string; line?: string; signOff?: boolean };
@@ -309,10 +331,10 @@ export class WorkingCopyController implements vscode.Disposable {
         break;
       }
       case 'wcCommit':
-        if (await commitStaged(repo, message.message, message.amend)) {
-          await setCommitDraft(repo.root, undefined);
-          this.post({ type: 'wcCommitted' });
-        }
+        await this.commit(repo, message.message, message.amend, message.push === true);
+        break;
+      case 'wcCommitMenu':
+        await this.commitMenu(repo, message.canCommit, message.message, message.amend);
         break;
       case 'wcOpenFile':
         await vscode.commands.executeCommand('vscode.open', vscode.Uri.file(join(repo.root, message.path)), {

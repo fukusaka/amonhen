@@ -2847,6 +2847,36 @@ suite('Amon Hen in VSCode', () => {
     assert.equal(messages[0], git('log', '-1', '--format=%B').trim());
   });
 
+  test('commits and pushes from the commit box', async () => {
+    const panel = await showView('amonhen.showWorkingCopy');
+    const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+    const bare = join(root, '..', `amonhen-push-${process.pid}.git`);
+    git('init', '-q', '--bare', bare);
+    git('remote', 'add', 'wc-push', bare);
+    git('switch', '-q', '-c', 'wc-push-branch');
+    git('push', '-q', '-u', 'wc-push', 'wc-push-branch');
+    try {
+      const file = join(root, 'wc-push.txt');
+      writeFileSync(file, 'pushed\n');
+      git('add', 'wc-push.txt');
+      const mark = posted.length;
+      await vscode.commands.executeCommand('amonhen.refresh');
+      await waitPosted('wcFiles', mark, (m) => m.files.some((f) => f.group === 'staged' && f.path === 'wc-push.txt'));
+      // 終わりの知らせが閉じられるまで待つことがあるので、ここでは待たない
+      void panel.workingCopy.handle({ type: 'wcCommit', message: 'pushed from the commit box\n', amend: false, push: true });
+      await until('push したコミット', () => {
+        const remote = git('ls-remote', bare, 'refs/heads/wc-push-branch').split('\t')[0];
+        return remote === git('rev-parse', 'HEAD').trim() && git('log', '-1', '--format=%s').trim() === 'pushed from the commit box';
+      });
+    } finally {
+      git('switch', '-q', branch);
+      git('branch', '-q', '-D', 'wc-push-branch');
+      git('remote', 'remove', 'wc-push');
+      rmSync(bare, { recursive: true, force: true });
+      await vscode.commands.executeCommand('amonhen.refresh');
+    }
+  });
+
   test('drops the selection of a file whose changes went away before its diff is read', async () => {
     const panel = await showView('amonhen.showWorkingCopy');
     const path = join(root, FILE);

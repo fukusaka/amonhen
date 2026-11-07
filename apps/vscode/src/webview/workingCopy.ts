@@ -56,7 +56,15 @@ export function createWorkingCopyView(): View {
   insertButton.addEventListener('click', () => post({ type: 'wcPickInsert' }));
   const commitTools = el('div', 'commit-tools');
   commitTools.append(recentButton, insertButton, lengthLabel);
-  commitRow.append(amendLabel, commitButton);
+  const commitMenu = el('button', 'commit-menu', '▾');
+  commitMenu.title = 'Commit and Push (⌘⇧↩), Amend';
+  commitMenu.setAttribute('aria-label', 'More Commit Actions');
+  commitMenu.addEventListener('click', () =>
+    post({ type: 'wcCommitMenu', canCommit: !commitButton.disabled, message: message(), amend: amend.checked }),
+  );
+  const commitActions = el('div', 'commit-actions');
+  commitActions.append(commitButton, commitMenu);
+  commitRow.append(amendLabel, commitActions);
   commitBox.append(subject, body, commitTools, commitRow);
 
   // 一覧の絞り込みと見せ方
@@ -468,9 +476,9 @@ export function createWorkingCopyView(): View {
     return b ? `${subject.value.trim()}\n\n${b}\n` : `${subject.value.trim()}\n`;
   }
 
-  function commit(): void {
+  function commit(push = false): void {
     if (commitButton.disabled) return;
-    post({ type: 'wcCommit', message: message(), amend: amend.checked });
+    post({ type: 'wcCommit', message: message(), amend: amend.checked, ...(push ? { push } : {}) });
   }
 
   /** 欄の中身を入れ替える。打ったのと同じく Undo で戻せるように、編集として入れる */
@@ -520,24 +528,25 @@ export function createWorkingCopyView(): View {
   }
   subject.addEventListener('input', messageChanged);
   body.addEventListener('input', messageChanged);
-  commitButton.addEventListener('click', commit);
+  commitButton.addEventListener('click', () => commit());
   for (const input of [subject, body] as HTMLElement[]) {
     input.addEventListener('keydown', (e: KeyboardEvent) => {
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
-        commit();
+        commit(e.shiftKey);
       }
     });
   }
   // amend にしたら、空ならいまのコミットのメッセージを入れる
-  amend.addEventListener('change', () => {
+  function amendChanged(): void {
     if (amend.checked && !subject.value && !body.value && lastMessage) {
       const [s = '', ...rest] = lastMessage.replace(/\n+$/, '').split('\n');
       subject.value = s;
       body.value = rest.join('\n').replace(/^\n+/, '');
     }
     updateCommitButton();
-  });
+  }
+  amend.addEventListener('change', amendChanged);
 
   function onMessage(m: HostMessage): void {
     switch (m.type) {
@@ -566,6 +575,10 @@ export function createWorkingCopyView(): View {
       case 'wcUseMessage':
         recentCursor = -1;
         useMessage(m.message);
+        break;
+      case 'wcStartAmend':
+        amend.checked = true;
+        amendChanged();
         break;
       case 'wcInsertType':
         replaceField(subject, withType(subject.value, m.commitType));

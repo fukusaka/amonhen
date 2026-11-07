@@ -19,6 +19,8 @@ export type WorkingCopyHostMessage =
   | { type: 'wcInsertType'; commitType: string }
   /** 本文の末尾にトレーラーを足す */
   | { type: 'wcInsertTrailer'; line: string }
+  /** Amend を入れて、直前のメッセージを入れる */
+  | { type: 'wcStartAmend' }
   | { type: 'wcCommitted' };
 
 export type WorkingCopyWebviewMessage =
@@ -37,6 +39,9 @@ export type WorkingCopyWebviewMessage =
   | { type: 'wcDiscardFiles'; paths: string[] }
   /** Changes のファイルの、選んだ行だけを破棄する */
   | { type: 'wcDiscardLines'; path: string; version: string; lines: SelectedLine[] }
-  | { type: 'wcCommit'; message: string; amend: boolean }
+  /** コミットする。push なら続けて push する（上流がなければ Publish） */
+  | { type: 'wcCommit'; message: string; amend: boolean; push?: boolean }
+  /** Commit の続きの一覧を出す */
+  | { type: 'wcCommitMenu'; canCommit: boolean; message: string; amend: boolean }
   | { type: 'wcOpenFile'; path: string }
   | { type: 'wcResolve'; path: string; action: 'merge' | 'current' | 'incoming' };
