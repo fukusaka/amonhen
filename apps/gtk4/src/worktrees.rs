@@ -985,6 +985,7 @@ fn ask_folder(
 ) {
     use crate::sheets::{Response, Sheet};
     let (actions, remote) = (actions.clone(), worktrees.remote);
+    let on_ssh = on_ssh(&worktrees.location);
     glib::spawn_future_local(async move {
         let sheet = Sheet::unnamed(crate::sheets::parent(&actions).as_ref(), &title, &message);
         let field = gtk::Entry::new();
@@ -996,10 +997,12 @@ fn ask_folder(
         if !remote {
             let choose = gtk::Button::with_label(&tr!("Choose…"));
             let (f, w, t) = (field.downgrade(), sheet.window.downgrade(), title.clone());
+            let m = message.clone();
             choose.connect_clicked(move |_| {
                 let (f, w) = (f.clone(), w.upgrade());
                 let request = crate::filepicker::Request {
                     title: t.clone(),
+                    message: m.clone(),
                     kind: crate::filepicker::Kind::Folder,
                     initial: f
                         .upgrade()
@@ -1029,10 +1032,17 @@ fn ask_folder(
         if sheet.run().await != Response::Ok {
             return;
         }
-        let path = field.text().trim().to_owned();
-        if !path.is_empty() {
-            done(path);
+        let mut path = field.text().trim().to_owned();
+        if path.is_empty() {
+            return;
         }
+        // New Worktree と同じ（git は `~` を広げない。SSH 先のパスは手元のホームで広げない）。
+        if !on_ssh {
+            path = crate::repos::expand_tilde(&path)
+                .to_string_lossy()
+                .into_owned();
+        }
+        done(path);
     });
 }
 
