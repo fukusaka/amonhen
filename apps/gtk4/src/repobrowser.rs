@@ -29,6 +29,8 @@ const SORT_KEY: &str = "repositoryPageSort";
 const SORT_ASCENDING_KEY: &str = "repositoryPageSortAscending";
 /// 列の幅（列 → 幅の JSON）と、左右の境目の位置。
 const COLUMN_WIDTHS_KEY: &str = "repositoryPageColumns";
+/// 列の並び（`name,branch,…`）。
+const COLUMN_ORDER_KEY: &str = "repositoryPageColumnOrder";
 const SPLIT_KEY: &str = "repositoryPageSplit";
 
 pub type Open = Rc<dyn Fn(PathBuf, crate::tabs::Place)>;
@@ -913,7 +915,6 @@ impl Browser {
         let model = gtk::StringList::new(&[]);
         let view = gtk::ColumnView::new(None::<gtk::MultiSelection>);
         view.set_show_row_separators(false);
-        view.set_reorderable(false);
         let sorted = gtk::SortListModel::new(Some(model.clone()), view.sorter());
         let selection = gtk::MultiSelection::new(Some(sorted));
         view.set_model(Some(&selection));
@@ -991,13 +992,19 @@ impl Browser {
     /// 列（名前とパス・ブランチ・状態・最後のコミット・開いた日時）。見出しを押すと並べ替える（既定は開いた順）。
     /// 並べ替えた列と向き・列の幅は覚えておく（macOS 版と同じ）。
     fn build_columns(self: &Rc<Self>) {
-        let columns = [
+        let mut columns = [
             (Column::Name, "name", tr!("Name"), None),
             (Column::Branch, "branch", tr!("Branch"), Some(150)),
             (Column::Status, "status", tr!("Status"), Some(100)),
             (Column::Commit, "commit", tr!("Last Commit"), Some(300)),
             (Column::Opened, "opened", tr!("Opened"), Some(100)),
         ];
+        // 覚えている並びで（見出しをドラッグして変える。macOS 版と同じ）。覚えていない列は後ろに。
+        let order = crate::settings::string(COLUMN_ORDER_KEY).unwrap_or_default();
+        let order: Vec<&str> = order.split(',').collect();
+        columns
+            .sort_by_key(|(_, id, ..)| order.iter().position(|o| o == id).unwrap_or(order.len()));
+        let count = columns.len() as u32;
         let widths: serde_json::Map<String, serde_json::Value> =
             crate::settings::string(COLUMN_WIDTHS_KEY)
                 .and_then(|s| serde_json::from_str(&s).ok())
@@ -1152,6 +1159,18 @@ impl Browser {
             }
             self.view.append_column(&column);
         }
+        // 動かすと、いったん外してから入れ直す。全部そろったときに覚える。
+        self.view
+            .columns()
+            .connect_items_changed(move |list, _, _, _| {
+                if list.n_items() == count {
+                    let ids: Vec<String> = (0..count)
+                        .filter_map(|i| list.item(i).and_downcast::<gtk::ColumnViewColumn>())
+                        .filter_map(|c| c.id().map(|id| id.to_string()))
+                        .collect();
+                    crate::settings::set_string(COLUMN_ORDER_KEY, &ids.join(","));
+                }
+            });
         match sorted {
             Some(column) => {
                 let ascending =
