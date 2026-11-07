@@ -1936,6 +1936,12 @@ fn build_tab(
         }
     });
     // ほかの場所（ブランチのメニュー、ステータスバー）から worktree を書き込む先にする。
+    let w = Rc::downgrade(&working);
+    statusbar.connect_mark_without(move |paths| {
+        if let Some(working) = w.upgrade() {
+            working.mark_without_markers(paths);
+        }
+    });
     let edit_action = gio::SimpleAction::new("edit-worktree", Some(glib::VariantTy::STRING));
     let w = Rc::downgrade(&worktrees);
     edit_action.connect_activate(move |_, value| {

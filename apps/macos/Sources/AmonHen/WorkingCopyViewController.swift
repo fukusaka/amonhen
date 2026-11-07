@@ -1170,7 +1170,12 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     /// マーカーの残っていないコンフリクトのファイルを、まとめて解決済みにする（ウィンドウの帯から）。
     func markResolvedWithoutMarkers() {
-        let paths = conflictsWithoutMarkers
+        // 保存していない Result は、保存してから解決済みにする（Mark Resolved と同じ。黙って捨てない）。
+        let paths = conflictsWithoutMarkers.filter { path in
+            guard let editor = unsavedEditor(for: path) else { return true }
+            editor.saveAndResolve()
+            return false
+        }
         guard !paths.isEmpty else { return }
         let repository = self.repository
         actions?.perform { try repository.stage(paths: paths) }

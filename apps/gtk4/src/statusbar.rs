@@ -349,6 +349,9 @@ pub fn sequence_detail(s: &Value, conflicts: usize, without_markers: usize) -> S
     tr!("Conflicts resolved. Continue to finish, or Abort to go back to where you started.")
 }
 
+/// 「マーカーのないものを解決済みに」のボタンですること。
+type MarkWithout = Rc<dyn Fn(Vec<String>)>;
+
 /// 窓の下のステータスバー。作るときに、文字の色（`label.warning` など）も決める。
 pub struct StatusBar {
     pub root: gtk::Box,
@@ -357,6 +360,8 @@ pub struct StatusBar {
     flash_generation: Cell<u64>,
     /// 出している途中の行の中身（同じなら作り直さない。ボタンのホバー・フォーカスを保つ）。
     sequence_shown: RefCell<Option<(Value, usize, Vec<String>)>>,
+    /// 途中の行の、マーカーの残っていないファイルを解決済みにするボタン。
+    mark_without: RefCell<Option<MarkWithout>>,
 }
 
 impl StatusBar {
@@ -369,7 +374,13 @@ impl StatusBar {
             rows: RefCell::default(),
             flash_generation: Cell::new(0),
             sequence_shown: RefCell::default(),
+            mark_without: RefCell::default(),
         })
+    }
+
+    /// 途中の行の「マーカーのないものを解決済みに」のボタンですること（Working Copy が保存していない Result を見る）。
+    pub fn connect_mark_without(&self, f: impl Fn(Vec<String>) + 'static) {
+        self.mark_without.replace(Some(Rc::new(f)));
     }
 
     /// `row` の行を出す（同じ種類の前の行は置き換える）。
@@ -714,13 +725,11 @@ impl StatusBar {
                 false,
             );
             b.set_tooltip_text(Some(&tr!("Mark the conflicted files that have no conflict markers left as resolved (rerere or another editor resolved them).")));
-            let a = actions.clone();
+            let this = Rc::downgrade(self);
             b.connect_clicked(move |_| {
-                let paths = without.clone();
-                a.perform_work(move |repo| {
-                    let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
-                    repo.stage(&refs)
-                });
+                if let Some(mark) = this.upgrade().and_then(|t| t.mark_without.borrow().clone()) {
+                    mark(without.clone());
+                }
             });
             children.push(b.upcast());
         }

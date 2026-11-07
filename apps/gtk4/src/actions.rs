@@ -710,29 +710,8 @@ impl Actions {
         self.perform(json!({ "op": "rewrite", "label": label, "edit": edit }));
     }
 
-    /// JSON の命令にない操作を裏で行い、終わったら読み直す。
-    pub fn perform_work(
-        self: &Rc<Self>,
-        work: impl FnOnce(&Repository) -> amonhen_model::Result<()> + Send + 'static,
-    ) {
-        self.perform_work_titled(None, work);
-    }
-
-    /// `perform_work` の、失敗の見出しを決める形（Rebuild History なら「Couldn’t Rebuild History」）。失敗は
-    /// 命令の失敗と同じくステータスバーに出す（macOS 版と同じ）。
-    pub fn perform_work_titled(
-        self: &Rc<Self>,
-        heading: Option<String>,
-        work: impl FnOnce(&Repository) -> amonhen_model::Result<()> + Send + 'static,
-    ) {
-        let Some(repo) = self.repo.borrow().clone() else {
-            return;
-        };
-        self.perform_work_in(repo, heading, work);
-    }
-
-    /// [`Self::perform_work_titled`] と同じで、書き込む先の worktree ではなく `repo` で行う（Working Copy の
-    /// 操作を、始めたときの worktree に効かせる）。
+    /// 裏のスレッドで `repo` のことをし、失敗はステータスバーに出す（見出しは `heading`。Working Copy の操作を、
+    /// 始めたときの worktree に効かせる）。
     pub fn perform_work_in(
         self: &Rc<Self>,
         repo: Arc<Repository>,
