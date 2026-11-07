@@ -186,7 +186,7 @@ private struct RemoteSheetView: View {
                 }
                 Spacer()
                 Button(L("Cancel")) { model.close() }.keyboardShortcut(.cancelAction)
-                Button(L("Save")) { model.save() }.keyboardShortcut(.defaultAction).disabled(!model.canSave)
+                Button(model.remote == nil ? L("Add") : L("Save")) { model.save() }.keyboardShortcut(.defaultAction).disabled(!model.canSave)
             }
         }
         .padding(20)

@@ -6,7 +6,7 @@
 
 /* SyncSheets.swift */
 "Can’t Publish" = "Publish できません";
-"This repository has no remotes. Add one in Repository > Add Remote…." = "このリポジトリにはリモートがありません。Repository > リモートを追加… で足してください。";
+"This repository has no remotes. Add one in Repository > Add Remote…." = "このリポジトリにはリモートがありません。Repository > リモートを追加… で追加してください。";
 "Remote" = "リモート";
 "Name there" = "そこでの名前";
 "Publish %@?" = "%@ を Publish しますか？";
@@ -37,7 +37,7 @@
 "Merge them again after resolving these conflicts." = "このコンフリクトを解決してから、もう一度 merge してください。";
 "Nothing to push. Pull the %ld new commits first." = "送るコミットはありません。先に新しい %ld コミットを Pull してください。";
 "No remote branch to pull from" = "取り込み元のリモートのブランチがありません";
-"Fetch, or add a remote in Repository Settings." = "Fetch するか、リポジトリの設定でリモートを足してください。";
+"Fetch, or add a remote in Repository Settings." = "Fetch するか、リポジトリの設定でリモートを追加してください。";
 "Pull into %@?" = "%@ に Pull しますか？";
 "From:" = "取り込み元:";
 "Brings the upstream commits in. When both sides have new commits, a merge commit joins them." = "上流のコミットを取り込みます。両方に新しいコミットがあれば、マージコミットでつなぎます。";
@@ -128,7 +128,7 @@
 "Apply %@…" = "%@ を Apply…";
 "Pop %@…" = "%@ を Pop…";
 "Blame at %@" = "%@ の時点で Blame";
-"Add Folder to Scan over SSH…" = "SSH で探すフォルダを足す…";
+"Add Folder to Scan over SSH…" = "SSH で探すフォルダを追加…";
 "Puts the files back as they were. HEAD and the index stay." = "ファイルを元に戻します。HEAD と index はそのままです。";
 "Brings back the dropped stash." = "Drop した stash を戻します。";
 "Gives the branch its earlier name back." = "ブランチの名前を元に戻します。";
@@ -235,7 +235,7 @@
 "Group…" = "グループ…";
 "Folder to Scan…" = "スキャンするフォルダ…";
 "Add" = "追加";
-"Add repositories, SSH connections, groups and folders to scan" = "リポジトリ・SSH 接続・グループ・スキャンするフォルダを加える";
+"Add repositories, SSH connections, groups and folders to scan" = "リポジトリ・SSH 接続・グループ・スキャンするフォルダを追加";
 "All Repositories…" = "すべてのリポジトリ…";
 "Open the repository page (⌘⇧R)" = "リポジトリのページを開く（⌘⇧R）";
 "All" = "すべて";
@@ -243,19 +243,19 @@
 "This Mac" = "このMac";
 "Places" = "場所";
 "Groups" = "グループ";
-"Add Repositories" = "リポジトリを加える";
-"Choose the repositories to add to the list (green). ⌘-click to choose more than one." = "一覧に加えるリポジトリ（緑）を選びます。⌘ クリックでいくつでも選べます。";
-"Add a Folder to Scan" = "スキャンするフォルダを加える";
+"Add Repositories" = "リポジトリを追加";
+"Choose the repositories to add to the list (green). ⌘-click to choose more than one." = "一覧に追加するリポジトリ（緑）を選びます。⌘ クリックでいくつでも選べます。";
+"Add a Folder to Scan" = "スキャンするフォルダを追加";
 ", " = "、";
 "Choose a folder to search for repositories (up to 3 levels deep)." = "リポジトリを探すフォルダを選んでください（3 段下まで探します）";
-"Add a Folder to Scan on %@" = "%@ でスキャンするフォルダを加える";
+"Add a Folder to Scan on %@" = "%@ でスキャンするフォルダを追加";
 "New Group" = "新しいグループ";
 "Group name" = "グループの名前";
 "user@host:port (or a name in ~/.ssh/config)" = "user@host:port（~/.ssh/config の名前でもよい）";
 "Host:" = "接続先:";
-"Add a Repository on %@" = "%@ のリポジトリを加える";
-"Add SSH Connection" = "SSH 接続を加える";
-"Add and Open" = "加えて開く";
+"Add a Repository on %@" = "%@ のリポジトリを追加";
+"Add SSH Connection" = "SSH 接続を追加";
+"Add and Open" = "追加して開く";
 "Enter a host and a path" = "接続先とパスを入れてください";
 "The host can’t contain spaces or “/”." = "接続先には空白や / を含められません。";
 "Remove from List" = "一覧から外す";
@@ -264,12 +264,12 @@
 "%@ not found" = "%@ が見つかりません";
 "%@\nRemove it from the list?" = "%@\n一覧から外しますか？";
 "Remove" = "削除";
-"Add Local Repository…" = "手元のリポジトリを加える…";
-"Add SSH Connection…" = "SSH 接続を加える…";
+"Add Local Repository…" = "手元のリポジトリを追加…";
+"Add SSH Connection…" = "SSH 接続を追加…";
 "Fetch All (%ld)" = "すべて Fetch（%ld）";
-"Add Repository on This Host…" = "このホストのリポジトリを加える…";
-"Add Folder to Scan on This Host…" = "このホストでスキャンするフォルダを加える…";
-"Add Folder to Scan…" = "スキャンするフォルダを加える…";
+"Add Repository on This Host…" = "このホストのリポジトリを追加…";
+"Add Folder to Scan on This Host…" = "このホストでスキャンするフォルダを追加…";
+"Add Folder to Scan…" = "スキャンするフォルダを追加…";
 "Rename…" = "名前を変更…";
 "Rename Group" = "グループの名前を変える";
 "Delete Group" = "グループを削除";
@@ -461,7 +461,7 @@
 "Combined: the value in effect and where it comes from. Levels: a column per source, the one in effect in bold." = "Combined: 効いている値とその設定元。Levels: 設定元ごとの列で、効いている段が太字。";
 "(empty)" = "（空）";
 "Search by key or value" = "キーか値で検索";
-"Add a key to this repository" = "このリポジトリにキーを足す";
+"Add a key to this repository" = "このリポジトリにキーを追加";
 "Edit in This Repository" = "このリポジトリの値を編集";
 "Remove from This Repository" = "このリポジトリの値を消す";
 "Remove the selected keys from this repository (⌫)" = "選んだキーをこのリポジトリから消す（⌫）";
@@ -506,7 +506,7 @@
 /* Settings.swift */
 "Message Templates" = "メッセージのテンプレート";
 "Untitled" = "名前なし";
-"No templates yet. + adds one." = "テンプレートはまだありません。+ で足します。";
+"No templates yet. + adds one." = "テンプレートはまだありません。+ で追加します。";
 "Select a template to edit it." = "テンプレートを選ぶと編集できます。";
 "A repository chooses one in its Settings > Commits, or copies it for itself. git in a terminal uses only commit.template, a file." = "リポジトリはその設定 > コミットで 1 つを選ぶか、専用に写します。端末の git が使うのはファイルの commit.template だけです。";
 "Default Pull" = "Pull の既定";
@@ -1115,7 +1115,7 @@
 "Copy Branch Name “%@”" = "ブランチ名「%@」をコピー";
 "Copy Tag Name “%@”" = "タグ名「%@」をコピー";
 "Folder to Scan over SSH…" = "SSH 先でスキャンするフォルダ…";
-"Add a Folder to Scan over SSH" = "SSH 先でスキャンするフォルダを加える";
+"Add a Folder to Scan over SSH" = "SSH 先でスキャンするフォルダを追加";
 "Host" = "ホスト";
 "Worktrees with no changes (click to show)" = "変更のない worktree（クリックで表示）";
 "Git repository" = "git のリポジトリ";
@@ -1422,7 +1422,7 @@
 "Basic: the settings the pages here ask about, set or not. Customized: the keys set for all repositories. All: every key git reads." = "Basic: ここのページが尋ねる設定（未設定のものも）。Customized: すべてのリポジトリに設定したキー。All: git が読むすべてのキー。";
 "Edit for All Repositories" = "すべてのリポジトリの値を編集";
 "Remove from All Repositories" = "すべてのリポジトリの値を消す";
-"Add a key for all repositories" = "すべてのリポジトリにキーを足す";
+"Add a key for all repositories" = "すべてのリポジトリにキーを追加";
 "Remove the selected keys from all repositories (⌫)" = "選んだキーをすべてのリポジトリから消す（⌫）";
 "Removed %@ from all repositories" = "%@ をすべてのリポジトリから消しました";
 "Removed %ld keys from all repositories" = "%ld 個のキーをすべてのリポジトリから消しました";
@@ -1458,10 +1458,10 @@
 "Folders to Scan" = "探すフォルダ";
 "%ld levels" = "%ld 段まで";
 "The same list as under the host in Places." = "Repositories の Places の、この SSH 先の下と同じ一覧です。";
-"Add an SSH host" = "SSH 先を加える";
+"Add an SSH host" = "SSH 先を追加";
 "Forget this host" = "この SSH 先を忘れる";
 "Write it as ssh knows it: user@host:port, or a name in ~/.ssh/config." = "ssh が知っている名前で書きます: user@host:port か、~/.ssh/config の名前。";
-"Add an SSH host with +, or open one from Places." = "＋ で SSH 先を加えるか、Places から開きます。";
+"Add an SSH host with +, or open one from Places." = "＋ で SSH 先を追加するか、Places から開きます。";
 "Applies to every repository on %@ (its ~/.gitconfig). git in a terminal there follows these too." = "%@ のすべてのリポジトリに効きます（そこの ~/.gitconfig）。そこの端末の git も同じ設定に従います。";
 "The engine on %@ runs the git on its PATH." = "%@ のエンジンは、その PATH の git を使います。";
 "The git on %@ runs this repository. Every repository on that host uses it. See it in Settings > SSH Hosts." = "%@ の git がこのリポジトリを動かしています。その SSH 先のすべてのリポジトリが同じものを使います。設定 > SSH ホストで見られます。";
@@ -1671,14 +1671,14 @@
 "Files at the top, and directly in the folders above these, are checked out too." = "最上位のファイルと、これらの上のフォルダの直下のファイルも取り出します。";
 "Check Out All Folders…" = "すべてのフォルダを取り出す…";
 "Stop checking out this folder" = "このフォルダを取り出すのをやめます";
-"Check out one more folder" = "取り出すフォルダを 1 つ足します";
+"Check out one more folder" = "取り出すフォルダを 1 つ追加します";
 "Only the files matching these patterns are checked out" = "このパターンに合うファイルだけを取り出しています";
 "The patterns aren’t in cone mode, so Amon Hen doesn’t change them." = "cone mode のパターンではないので、Amon Hen では変えません。";
 "All folders are checked out" = "すべてのフォルダを取り出しています";
 "In a large repository, you can check out only the folders you work in (sparse checkout)." = "大きなリポジトリでは、作業するフォルダだけを取り出せます（sparse checkout）。";
 "Check Out Only Some Folders…" = "一部のフォルダだけを取り出す…";
 "Check Out Only Some Folders" = "一部のフォルダだけを取り出す";
-"Check Out One More Folder" = "取り出すフォルダを足す";
+"Check Out One More Folder" = "取り出すフォルダを追加";
 "Only this folder is checked out, with the files at the top. Others are removed from disk until you check them out again; add more folders here later." = "このフォルダと最上位のファイルだけを取り出します。ほかは、また取り出すまでディスクから消えます。フォルダは後からここで足せます。";
 "Folders in the latest commit, including ones not checked out." = "HEAD のコミットにあるフォルダです（取り出していないものも）。";
 "Check Out All Folders?" = "すべてのフォルダを取り出しますか？";
