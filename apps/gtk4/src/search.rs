@@ -202,6 +202,9 @@ impl Search {
             .show_close_button(true)
             .build();
         bar.connect_entry(&entry);
+        // History で文字を打つと、欄を開いてその文字から探す（GNOME の type-to-search。macOS 版にはない。矢印・
+        // スペース・Ctrl や Alt との組み合わせ・Menu は GtkSearchEntry が拾わず、History のキーのまま）。
+        bar.set_key_capture_widget(Some(view));
         let toggle = gtk::ToggleButton::new();
         let icon = crate::icon::Icon::default();
         icon.set(crate::icon::Kind::Search, false);

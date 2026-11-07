@@ -37,6 +37,7 @@ becomes the GitHub Release notes.
 
 #### Changed
 
+- In the GTK4 app, typing in History opens its search bar with what was typed, as GNOME apps do.
 - In the GTK4 app, Settings > General > External Editor chooses another program with the same column picker as
   Programs, and its list is divided like the macOS one.
 - The GTK4 app's View > Customize Toolbar… opens a palette under the header bar like the macOS one: drag items onto
