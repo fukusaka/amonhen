@@ -19,6 +19,7 @@ import { registerReflogCommands } from './ui/reflogCommands.ts';
 import { registerSequenceCommands } from './ui/sequenceCommands.ts';
 import { SidebarProvider } from './ui/sidebar.ts';
 import { registerStashCommands } from './ui/stashCommands.ts';
+import { registerBranchCleanupCommands } from './ui/branchCleanupCommands.ts';
 import { registerIgnoredCommands } from './ui/ignoredCommands.ts';
 import { registerOrphanCommands } from './ui/orphanCommands.ts';
 import { registerRerereCommands } from './ui/rerereCommands.ts';
@@ -109,6 +110,7 @@ export async function activate(
     registerBranchCommands(manager),
     registerStashCommands(manager),
     registerIgnoredCommands(manager),
+    registerBranchCleanupCommands(manager),
     registerOrphanCommands(manager),
     registerRerereCommands(manager),
     registerRestoreCommands(manager),

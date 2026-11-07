@@ -959,6 +959,8 @@ First release.
 
 #### Added
 
+- Clean Up Branches… lists branches merged into the default branch, merged by a pull request on GitHub, or whose
+  upstream is gone, and deletes the checked ones; one Undo brings them back (with the engine).
 - With the engine, submodules show the app's marks and the URL and branch they follow, and can be added, updated
   (nested ones, or to the branch followed), pointed elsewhere, synced and removed (keeping `.git/modules` unless asked).
 - With the engine and a git that has `git subtree`, a Subtrees group lists the folders added with it; Add Subtree…,
@@ -980,6 +982,8 @@ First release.
 
 #### Fixed
 
+- Undo of a deleted branch without the engine also brings back its settings (upstream, archived, favorite), as the
+  engine does.
 - Remove Worktree counts the worktree's changes again before asking, so files added since the last count are
   mentioned and removed with it, as in the app; before, git could refuse and leave the folder.
 - A folder opened through a symbolic link (macOS's `/var`, for one) selects its own repository at startup rather

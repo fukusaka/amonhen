@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { recordedElsewhere } from '../daemon/delegation.ts';
-import type { HeadState, RepositoryBackend } from '../git/backend.ts';
+import type { ConfigBackup, HeadState, RepositoryBackend } from '../git/backend.ts';
 
 export interface RefSnapshot {
   head: HeadState;
@@ -40,6 +40,11 @@ export interface UndoEntry {
   stash?: { oid: string; message: string };
   /** あれば、ブランチの改名（短い名前）。逆向きに改名して戻す（設定と reflog も戻る） */
   rename?: { from: string; to: string };
+  /**
+   * あれば、消したブランチの設定（`branch.<name>.*`。上流・アーカイブ・お気に入りなど）。git は ref と一緒に設定も
+   * 消すので、ref を戻したあとに書き戻す（コアの記録と同じ形）
+   */
+  config?: ConfigBackup[];
 }
 
 /** 記録した後に、ほかの操作でブランチや HEAD が動いている */
@@ -84,15 +89,17 @@ export class UndoLog {
    * - skip が true を返したら記録しない（コンフリクトで止まったときなど。戻すのは abort の役目）
    * - pending が true を返したら、操作の前の状態だけを保留しておき、settlePending で確定する
    *   （edit や split で rebase が途中で止まったとき）
+   * - branches（短い名前）を消す操作なら、その `branch.<name>.*` の設定も記録し、Undo で書き戻す
    */
   async record<T>(
     label: string,
     refs: readonly string[],
     mode: UndoEntry['mode'],
     fn: () => Promise<T>,
-    opts: { skip?: (result: T) => boolean; pending?: (result: T) => boolean } = {},
+    opts: { skip?: (result: T) => boolean; pending?: (result: T) => boolean; branches?: readonly string[] } = {},
   ): Promise<T> {
     const before = await this.snapshot(refs);
+    const config = await this.backend.branchConfig(opts.branches ?? []);
     const { result, recorded } = await recordedElsewhere(fn);
     // 共有の daemon のコアが同じ記録に書いた
     if (recorded) {
@@ -106,7 +113,7 @@ export class UndoLog {
     if (opts.skip?.(result)) {
       return result;
     }
-    await this.push({ label, time: Date.now(), mode, before }, await this.snapshot(refs));
+    await this.push({ label, time: Date.now(), mode, before, ...(config.length > 0 ? { config } : {}) }, await this.snapshot(refs));
     return result;
   }
 
@@ -278,6 +285,10 @@ export class UndoLog {
     }
     if (updates.length > 0) {
       await this.backend.updateRefs(updates);
+    }
+    // 消したブランチの設定を書き戻す（git は ref と一緒に消している）
+    for (const c of entry.config ?? []) {
+      await this.backend.setConfigValues(c.key, c.values);
     }
 
     entries.pop();

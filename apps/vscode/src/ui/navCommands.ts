@@ -120,7 +120,9 @@ async function deleteBranches(repo: Repository, refs: string[]): Promise<void> {
   );
   if (choice !== 'Delete') return;
   const remove = (ref: string, force: boolean) =>
-    repo.undo.record(`Delete ${shortName(ref)}`, [ref], 'keep', () => repo.backend.deleteBranch(shortName(ref), force));
+    repo.undo.record(`Delete ${shortName(ref)}`, [ref], 'keep', () => repo.backend.deleteBranch(shortName(ref), force), {
+      branches: [shortName(ref)],
+    });
   const unmerged: string[] = [];
   try {
     for (const ref of refs) {
@@ -154,7 +156,7 @@ async function deleteBranch(repo: Repository, ref: string): Promise<void> {
   );
   if (choice !== 'Delete') return;
   const remove = (force: boolean) =>
-    repo.undo.record(`Delete ${name}`, [ref], 'keep', () => repo.backend.deleteBranch(name, force));
+    repo.undo.record(`Delete ${name}`, [ref], 'keep', () => repo.backend.deleteBranch(name, force), { branches: [name] });
   try {
     await remove(false);
   } catch (err) {

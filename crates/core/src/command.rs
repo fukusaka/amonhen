@@ -1147,7 +1147,8 @@ impl Repository {
     fn branch_groups(&self) -> Result<serde_json::Value> {
         use crate::branches;
         let history = self.load_history()?;
-        let refs = self.refs()?;
+        // History と同じく今の ref を読む（変化の知らせより先に頼まれることがある。git で作った直後など）。
+        let refs = self.load_refs()?;
         let entries = &refs.refs.entries;
         let config = self.backend().operations()?.config_list()?;
         let config_value = |key: &str| {
@@ -7485,6 +7486,34 @@ mod tests {
         assert_eq!(r["ok"], true, "{r}");
         assert!(r["info"]["count"].as_u64().unwrap() >= 1, "{r}");
         assert!(!dir.join(".git/rr-cache").exists());
+    }
+
+    #[test]
+    fn lists_branches_to_clean_up_made_after_the_last_look() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        let names = |r: &serde_json::Value| -> Vec<String> {
+            r["info"]["branches"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|b| b["name"].as_str().unwrap().to_owned())
+                .collect()
+        };
+        let cleanup = r#"{"op":"branchCleanup","pullRequests":[]}"#;
+        let r = run(&repo, cleanup);
+        assert_eq!(r["ok"], true, "{r}");
+        assert!(names(&r).is_empty(), "{r}");
+        // 変化の知らせを待たずに（git で作ってすぐ）頼まれても、今の ref で選ぶ。
+        git(dir, &["switch", "-q", "-c", "later", "main"]);
+        std::fs::write(dir.join("later.txt"), "later").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-q", "-m", "later"]);
+        git(dir, &["switch", "-q", "main"]);
+        git(dir, &["merge", "-q", "--no-ff", "--no-edit", "later"]);
+        let r = run(&repo, cleanup);
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(names(&r), vec!["later".to_owned()], "{r}");
     }
 
     #[test]
