@@ -322,7 +322,6 @@ impl Search {
         });
         let find = gio::SimpleAction::new("find", None);
         let (bar, entry) = (self.bar.clone(), self.inner.entry.clone());
-        let g = group.downgrade();
         find.connect_activate(move |_, _| {
             // フォーカスが History の差分にあれば、その差分の中を探す（macOS 版と同じ）。
             if let Some(w) = bar.root().and_downcast::<gtk::Window>()
@@ -332,12 +331,12 @@ impl Search {
             {
                 return;
             }
-            // もう開いていれば notify が来ないので、ここで History に移る。
-            if bar.is_search_mode()
-                && !bar.is_mapped()
-                && let Some(group) = g.upgrade()
-            {
-                group.activate_action("show-history", None);
+            // History でなければ探すものがない（macOS 版の Find は押せない）。
+            if !bar.is_mapped() {
+                if let Some(w) = bar.root().and_downcast::<gtk::Window>() {
+                    w.error_bell();
+                }
+                return;
             }
             bar.set_search_mode(true);
             entry.grab_focus();
