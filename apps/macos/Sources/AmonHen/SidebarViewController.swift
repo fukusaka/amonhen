@@ -182,7 +182,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     /// ときは、確かめる予定に入れる（見えている行だけが呼ぶので、見えているタグだけを確かめる）。
     private func tagSignatureMark(_ name: String) -> (String, String, NSColor)? {
         let known = tagSignatures[name]
-        if known?.epoch != tagSignatureEpoch { verifyTagsSoon(name) }
+        if known?.epoch != tagSignatureEpoch, tagSignaturesFailed[name] != tagSignatureEpoch { verifyTagsSoon(name) }
         guard let status = known?.status else { return nil }
         return (status.symbol, "\(status.label) — \(status.explanation(tag: true))", status.color)
     }
@@ -212,6 +212,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                         (try? repository.tagSignatures(batch)) ?? []
                     }.value
                     guard generation == tagSignatureGeneration else { return }
+                    // 確かめられなかったものは、ref が変わるまで確かめ直さない（描き直しのたびに git を動かさない）。
+                    let answered = Set(found.map(\.name))
+                    for name in batch where !answered.contains(name) { tagSignaturesFailed[name] = epoch }
                     for tag in found {
                         let status = tag.signed.map { kind in
                             tag.signature.map {
