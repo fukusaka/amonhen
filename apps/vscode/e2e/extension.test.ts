@@ -2773,6 +2773,52 @@ suite('Amon Hen in VSCode', () => {
     }
   });
 
+  test('folds what merges brought in, and opens one merge, through the daemon', async () => {
+    const panel = await showView('amonhen.showHistory');
+    const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+    const start = git('rev-parse', 'HEAD').trim();
+    const quickPick = vscode.window.showQuickPick;
+    const pick = async (label: string) => {
+      (vscode.window as { showQuickPick: unknown }).showQuickPick = async (items: vscode.QuickPickItem[]) =>
+        items.find((i) => i.label.endsWith(label));
+      await panel.history.handle({ type: 'displayMenu' });
+    };
+    git('switch', '-q', '-c', 'fold-side');
+    git('commit', '-q', '--allow-empty', '-m', 'fold side one');
+    git('commit', '-q', '--allow-empty', '-m', 'fold side two');
+    git('switch', '-q', branch);
+    git('merge', '-q', '--no-ff', '-m', 'fold merge', 'fold-side');
+    try {
+      await vscode.commands.executeCommand('amonhen.refresh');
+      let at = posted.length;
+      await panel.history.reset();
+      const open = (await waitPosted('rows', at, (m) => m.total !== undefined)).total!;
+      at = posted.length;
+      await pick('Fold Merged Branches');
+      const folded = await waitPosted('rows', at, (m) => m.total !== undefined);
+      assert.equal(folded.total, open - 2);
+      const merge = folded.rows.find((r) => r.subject === 'fold merge')!;
+      assert.equal(merge.hidden, 2);
+      assert.ok(!folded.rows.some((r) => r.subject === 'fold side one'));
+      // 1 つだけ開くと、その merge が取り込んだコミットが出て、選んだまま
+      at = posted.length;
+      await panel.history.handle({ type: 'toggleFold', oid: merge.oid });
+      const opened = await waitPosted('rows', at, (m) => m.total !== undefined);
+      assert.equal(opened.total, open);
+      assert.ok(opened.rows.find((r) => r.oid === merge.oid)?.expanded);
+      assert.ok(opened.rows.some((r) => r.subject === 'fold side one'));
+      await waitPosted('reveal', at, (m) => opened.rows[m.row]?.oid === merge.oid);
+      at = posted.length;
+      await pick('Fold Merged Branches');
+      assert.equal((await waitPosted('rows', at, (m) => m.total !== undefined)).total, open);
+    } finally {
+      (vscode.window as { showQuickPick: unknown }).showQuickPick = quickPick;
+      git('reset', '-q', '--hard', start);
+      git('branch', '-q', '-D', 'fold-side');
+      await vscode.commands.executeCommand('amonhen.refresh');
+    }
+  });
+
   test('shows names from the mailmap through the daemon and reloads them when it changes', async () => {
     await mailmapFlow();
   });

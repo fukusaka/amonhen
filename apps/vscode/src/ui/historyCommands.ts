@@ -53,6 +53,8 @@ export function registerHistoryCommands(): vscode.Disposable {
       const message = `${(await fullMessage(repo, parent)).trimEnd()}\n\n${await fullMessage(repo, oid)}`;
       panel.post({ type: 'editMessage', oid, kind: 'squash', title: EDIT_TITLES.squash, message });
     }),
+    command('amonhen.history.showMerged', (panel, _repo, oid) => panel.toggleFold(oid)),
+    command('amonhen.history.foldMerged', (panel, _repo, oid) => panel.toggleFold(oid)),
     command('amonhen.history.fixup', (panel, repo, oid) =>
       run(panel, repo, `Fixup ${short(panel, oid)}`, { kind: 'fixup', oid }),
     ),

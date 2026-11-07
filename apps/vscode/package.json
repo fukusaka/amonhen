@@ -543,6 +543,16 @@
         "enablement": "amonhen.hasRepository"
       },
       {
+        "command": "amonhen.history.showMerged",
+        "title": "Show Merged Commits",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.history.foldMerged",
+        "title": "Fold Merged Commits",
+        "category": "Amon Hen"
+      },
+      {
         "command": "amonhen.showRefs",
         "title": "Show History of Selected",
         "category": "Amon Hen"
@@ -1590,6 +1600,14 @@
           "when": "false"
         },
         {
+          "command": "amonhen.history.showMerged",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.history.foldMerged",
+          "when": "false"
+        },
+        {
           "command": "amonhen.stash.files",
           "when": "false"
         },
@@ -1635,6 +1653,16 @@
         }
       ],
       "webview/context": [
+        {
+          "command": "amonhen.history.showMerged",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commit' && commitFolded",
+          "group": "0_fold@1"
+        },
+        {
+          "command": "amonhen.history.foldMerged",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commit' && commitExpanded",
+          "group": "0_fold@1"
+        },
         {
           "command": "amonhen.history.goToParent",
           "when": "webviewId == 'amonhen.main' && webviewSection == 'commit' && amonhen.engine",

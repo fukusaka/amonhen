@@ -233,6 +233,8 @@ export function createHistoryView(): View {
             oid: row.oid,
             commitEditable: row.editable,
             commitCanSquash: row.canSquash,
+            ...(row.hidden ? { commitFolded: true } : {}),
+            ...(row.expanded ? { commitExpanded: true } : {}),
             preventDefaultContextMenuItems: true,
           },
     );
@@ -256,6 +258,17 @@ export function createHistoryView(): View {
       cut.textContent = '⋯';
       cut.title = 'History stops here: its parents aren’t fetched (shallow clone)';
       text.append(cut);
+    }
+    if (row.hidden) {
+      const folded = document.createElement('button');
+      folded.className = 'folded-count';
+      folded.textContent = `+${row.hidden}`;
+      folded.title = `Show ${row.hidden} Merged Commits`;
+      folded.addEventListener('click', (e) => {
+        e.stopPropagation();
+        post({ type: 'toggleFold', oid: row.oid });
+      });
+      text.append(folded);
     }
     const signed = signatures.get(row.oid);
     if (signed && !hidden.has('signature')) text.append(signatureMark(signed));
@@ -547,6 +560,8 @@ export function createHistoryView(): View {
   list.addEventListener('scroll', scheduleRender);
   window.addEventListener('resize', scheduleRender);
   list.addEventListener('mousedown', (e) => {
+    // 行を選ぶと描き直して、押している途中のボタンが消え、クリックが届かない
+    if (e.button === 0 && (e.target as Element).closest('.folded-count')) return;
     const index = rowIndex(e);
     if (index === undefined) return;
     const mac = navigator.platform.startsWith('Mac');

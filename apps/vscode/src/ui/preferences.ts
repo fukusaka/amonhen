@@ -46,3 +46,12 @@ export function historyHidden(): HistoryItem[] {
 export async function setHistoryHidden(hidden: readonly HistoryItem[]): Promise<void> {
   await store?.update('history.hidden', hidden);
 }
+
+/** History で、merge が取り込んだコミットを畳むか */
+export function historyFold(): boolean {
+  return store?.get<boolean>('history.fold') ?? false;
+}
+
+export async function setHistoryFold(fold: boolean): Promise<void> {
+  await store?.update('history.fold', fold);
+}

@@ -34,6 +34,10 @@ export interface RowData {
   chain?: number;
   /** 親も編集できる範囲にあり、squash / fixup できる */
   canSquash: boolean;
+  /** 畳んだ merge が隠している、取り込んだコミットの数 */
+  hidden?: number;
+  /** 畳む設定で、開いている merge */
+  expanded?: boolean;
 }
 
 /** 右側に出すコミットの詳細 */
@@ -161,6 +165,8 @@ export type HistoryWebviewMessage =
   | { type: 'scope'; scope: Scope }
   /** 並び順と項目の一覧を出す */
   | { type: 'displayMenu' }
+  /** 畳んだ merge を開く・畳む */
+  | { type: 'toggleFold'; oid: string }
   | { type: 'saveMessage'; oid: string; last?: string; kind: MessageEdit; message: string }
   /** 編集できる範囲の中で、新しい順の to 番目に動かす */
   | { type: 'move'; oid: string; to: number }

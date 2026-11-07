@@ -27,7 +27,7 @@ import type {
   HistoryOrder,
 } from '../history/protocol.ts';
 import { samePath, type Worktree } from '../git/worktrees.ts';
-import { historyHidden, historyOrder, setHistoryHidden, setHistoryOrder } from './preferences.ts';
+import { historyFold, historyHidden, historyOrder, setHistoryFold, setHistoryHidden, setHistoryOrder } from './preferences.ts';
 import { editableChain, refLabels, worktreeLabels } from '../history/rows.ts';
 import { scopeRefs } from '../history/scope.ts';
 import type { Repository, Section } from '../state/repository.ts';
@@ -156,6 +156,10 @@ export class HistoryController implements vscode.Disposable {
   private selection: { key: string; rows: number[]; diffs: Map<string, FileDiff> } | undefined;
   private selectionRequest = 0;
   private searchAbort: AbortController | undefined;
+  /** 畳む設定で、開いている merge */
+  private readonly expandedMerges = new Set<string>();
+  /** 畳んだ merge が行ごとに隠している数（畳んでいなければなし） */
+  private foldedRows: Uint32Array | undefined;
   /** 探している途中の検索の文（History を読み直したら、終わっていなくても探し直す） */
   private searching: string | undefined;
   /** 一致だけを出す切り替え（最後に頼まれたもの） */
@@ -236,6 +240,9 @@ export class HistoryController implements vscode.Disposable {
         break;
       case 'search':
         await this.runSearch(message.query.trim(), message.matchingOnly, message.selected);
+        break;
+      case 'toggleFold':
+        await this.toggleFold(message.oid);
         break;
       case 'displayMenu':
         await this.displayMenu();
@@ -808,6 +815,16 @@ export class HistoryController implements vscode.Disposable {
     await this.loadRange(next, start, PAGE);
   }
 
+  /** 畳んだ merge を開く・畳む。読み直しても同じコミットを選んだままにする */
+  async toggleFold(oid: string): Promise<void> {
+    if (!this.expandedMerges.delete(oid)) this.expandedMerges.add(oid);
+    await this.reset();
+    const shown = this.daemon;
+    if (!shown) return;
+    const row = (await shown.client.call({ op: 'historyRowOf', history: shown.history, id: oid })).json['row'];
+    if (typeof row === 'number') this.post({ type: 'reveal', row });
+  }
+
   /** 並び順と、行に出す項目を選ぶ（アプリの History Display と同じ） */
   private async displayMenu(): Promise<void> {
     // エンジンだけの項目は、エンジンを使えれば出す（読み直しの途中で、開いた History がまだなくても）
@@ -828,6 +845,7 @@ export class HistoryController implements vscode.Disposable {
       ['oid', 'Commit ID'],
       ['signature', 'Signature'],
     ];
+    const fold: Item = { label: `${mark(historyFold())}Fold Merged Branches`, description: 'Hide the commits a merge brought in' };
     const picked = await vscode.window.showQuickPick<Item>(
       [
         // 並び順は共有の daemon で変える（git で読むときは日付順のまま）
@@ -843,10 +861,15 @@ export class HistoryController implements vscode.Disposable {
           : []),
         separator('Items'),
         ...items.map(([value, label]): Item => ({ label: `${mark(!hidden.includes(value))}${label}`, item: value })),
+        ...(this.daemon ? [separator('View'), fold] : []),
       ],
       { placeHolder: 'History Display' },
     );
-    if (picked?.order && picked.order !== order) {
+    if (picked === fold) {
+      await setHistoryFold(!historyFold());
+      this.expandedMerges.clear();
+      await this.reset();
+    } else if (picked?.order && picked.order !== order) {
       await setHistoryOrder(picked.order);
       await this.reset();
     } else if (picked?.item) {
@@ -898,7 +921,16 @@ export class HistoryController implements vscode.Disposable {
       }
     }
     await client.call({ op: 'historyOrder', order: historyOrder() });
-    const history = await client.call(tips ? { op: 'history', tips } : { op: 'history' });
+    const fold = historyFold();
+    const history = await client.call({
+      op: 'history',
+      ...(tips ? { tips } : {}),
+      ...(fold ? { fold, expanded: [...this.expandedMerges] } : {}),
+    });
+    this.foldedRows =
+      history.json['folded'] === true
+        ? (await client.call({ op: 'historyGraph', history: history.json['history'] })).u32('folded')
+        : undefined;
     const boundary = history.json['shallow'] === true ? ((history.json['boundaryRows'] as number[] | undefined) ?? []) : undefined;
     return { client, history: history.json['history'], rows: Number(history.json['rows']), ...(boundary ? { boundary } : {}) };
   }
@@ -921,6 +953,11 @@ export class HistoryController implements vscode.Disposable {
         this.known.set(r.oid, { oid: r.oid, parents: r.parentOids, author: r.author, email: '', date: r.date, subject: r.subject });
       }
       rows = toRowData(page, this.labels, this.chain);
+      rows.forEach((row, i) => {
+        const hidden = this.foldedRows?.[start + i];
+        if (hidden) row.hidden = hidden;
+        if (this.expandedMerges.has(row.oid)) row.expanded = true;
+      });
     } catch (err) {
       if (daemon !== this.daemon || generation !== this.generation) {
         return;
