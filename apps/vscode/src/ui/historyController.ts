@@ -626,6 +626,10 @@ export class HistoryController implements vscode.Disposable {
     } finally {
       doneReadingRefs();
     }
+    // 待つ間に新しい読み直しが始まっていれば、そちらが開いた History を閉じない
+    if (generation !== this.generation) {
+      return;
+    }
     this.searchAbort?.abort();
     for (const previous of [this.daemon, this.base]) {
       void previous?.client.call({ op: 'historyRelease', history: previous.history }).catch(() => undefined);

@@ -1034,6 +1034,7 @@ First release.
 
 #### Fixed
 
+- History stopped answering search and scrolling until the next reload, when an older reload finished after a newer one.
 - History's toolbar wraps at narrow widths; Matching Only no longer overlaps HEAD and the commit count.
 - The message editor in History (Reword, Squash) is no longer covered by the headings of the diffs behind it.
 - A branch merged into the default branch now says so in its tooltip.
