@@ -400,6 +400,8 @@ button.secondary {
 .overlay {
   position: fixed;
   inset: 0;
+  /* 差分の見出し（sticky）より上に */
+  z-index: 2;
   display: flex;
   align-items: flex-start;
   justify-content: center;
