@@ -928,7 +928,18 @@ impl Editor {
         let weak = Rc::downgrade(&this);
         base_toggle.connect_toggled(move |b| {
             if let Some(this) = weak.upgrade() {
-                this.base.root.set_visible(b.is_active());
+                let shown = b.is_active();
+                this.base.root.set_visible(shown);
+                if shown {
+                    // 隠れている間はスクロールできないので、大きさが決まってから Result に揃える（macOS 版は
+                    // 隠れていても揃っている）。
+                    let weak = Rc::downgrade(&this);
+                    glib::timeout_add_local_once(std::time::Duration::from_millis(30), move || {
+                        if let Some(this) = weak.upgrade() {
+                            this.scrolled(3);
+                        }
+                    });
+                }
             }
         });
         let f = with(|t| t.save(false));
