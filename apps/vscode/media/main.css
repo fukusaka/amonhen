@@ -62,11 +62,17 @@ select {
   color: var(--vscode-descriptionForeground);
 }
 
+.history .toolbar {
+  flex-wrap: wrap;
+}
+
+/* 中身の分の幅が取れなければ、ツールバーの次の行へ。その行にも入らなければ中で折り返す */
 .search {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -75,8 +81,9 @@ select {
 }
 
 .search input[type='search'] {
-  flex: 0 1 320px;
-  min-width: 120px;
+  flex: 1 1 120px;
+  width: 120px;
+  max-width: 320px;
   padding: 2px 6px;
   color: var(--vscode-input-foreground);
   background: var(--vscode-input-background);

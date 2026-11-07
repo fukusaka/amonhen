@@ -1020,6 +1020,7 @@ First release.
 
 #### Fixed
 
+- History's toolbar wraps at narrow widths; Matching Only no longer overlaps HEAD and the commit count.
 - The message editor in History (Reword, Squash) is no longer covered by the headings of the diffs behind it.
 - A branch merged into the default branch now says so in its tooltip.
 - Undo of a deleted branch without the engine also brings back its settings (upstream, archived, favorite), as the
