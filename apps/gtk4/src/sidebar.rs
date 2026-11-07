@@ -353,6 +353,7 @@ struct Inner {
     on_drop: Rc<RefCell<Option<DropCallback>>>,
     /// 作り直している間は、選択の変化を知らせない。
     rebuilding: Cell<bool>,
+    scrolled: gtk::ScrolledWindow,
     /// 分け方を読んだら一度だけ行う確認（`--sidebar-menu`・`--sidebar-mark`）。
     debug: RefCell<Option<Debug>>,
     /// サイドバーの部品（確認用のメニューと吹き出しを出す先）。
@@ -502,6 +503,7 @@ impl Sidebar {
             on_menu,
             on_drop,
             rebuilding: Cell::new(false),
+            scrolled: scrolled.clone(),
             debug: RefCell::default(),
             anchor: RefCell::default(),
             filter: RefCell::default(),
@@ -2515,7 +2517,11 @@ impl Inner {
                 )
             })
             .collect();
+        // 作り直してもスクロールの位置を残す（行がいったんなくなるので、先頭に戻ってしまう。macOS 版と同じ）。
+        let scroll = self.scrolled.vadjustment();
+        let value = scroll.value();
         self.root.splice(0, self.root.n_items(), &nodes);
+        glib::idle_add_local_once(move || scroll.set_value(value));
 
         // 見出しは、最初は Workspace と Branches だけを開いておく（macOS 版と同じ）。あとは前に開いていたものを開く
         // （開くと子の行が後ろに増える）。積んだブランチのある行は、畳んだもののほかは開く。
