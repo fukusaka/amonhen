@@ -229,6 +229,15 @@ impl Tab {
     pub fn forward_actions(self: &Rc<Self>) {
         let Some(owner) = self.owner() else { return };
         self.add_app_actions();
+        // ツールバーはこのタブにもあるので、切り替えずにここで変える（リポジトリのタブを閉じた後も。macOS 版と同じ）。
+        let customize = gio::SimpleAction::new("customize-toolbar", None);
+        let weak = Rc::downgrade(self);
+        customize.connect_activate(move |_, _| {
+            if let Some(window) = weak.upgrade().and_then(|t| t.window()) {
+                crate::toolbar::customize(window.upcast_ref());
+            }
+        });
+        self.group.add_action(&customize);
         for name in owner.group.list_actions() {
             forward(self, &owner, &name);
         }
