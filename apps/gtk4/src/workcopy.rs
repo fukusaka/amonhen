@@ -3832,7 +3832,8 @@ fn tree(entries: &[StatusEntry]) -> Vec<TreeItem> {
             total.add(inside);
         }
         let mut files = dir.files.clone();
-        files.sort_by(|&a, &b| entries[a].path.cmp(&entries[b].path));
+        // コンフリクトを先に（macOS 版と同じ）。
+        files.sort_by_key(|&i| (entries[i].kind != StatusKind::Unmerged, &entries[i].path));
         for index in files {
             let e = &entries[index];
             if e.kind != StatusKind::Unmerged {
@@ -3880,7 +3881,7 @@ mod tests {
     }
 
     /// 木のディレクトリのチェックは、中の（コンフリクト以外の）ファイルを数える。子が 1 つのディレクトリは
-    /// つなぎ、ディレクトリはファイルより先。
+    /// つなぎ、ディレクトリはファイルより先、コンフリクトはほかのファイルより先。
     #[test]
     fn tree_counts_files_inside_each_directory() {
         let entries = [
@@ -3909,9 +3910,9 @@ mod tests {
                 "0 src/ 3:1:2",
                 "1 src/deep/x/ 1:0:0",
                 "2 src/deep/x/y.rs",
+                "1 src/c.rs",
                 "1 src/a.rs",
                 "1 src/b.rs",
-                "1 src/c.rs",
                 "0 top.txt",
             ]
         );
