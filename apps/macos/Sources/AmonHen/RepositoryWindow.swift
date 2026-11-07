@@ -2114,7 +2114,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     }
 
     @objc func goToHead(_ sender: Any?) {
-        guard let head = latestRefs?.head else { return NSSound.beep() }
+        guard let head = editingRefs?.head else { return NSSound.beep() }
         sidebar.select(page: .history)
         goTo(id: head)
     }
