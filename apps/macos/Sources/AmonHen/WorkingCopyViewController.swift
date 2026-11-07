@@ -1675,7 +1675,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
                 add(L("Add “%@” to .gitignore", "*." + ext)) { [weak self] in self?.addToGitignore("*." + ext) }
             }
         } else {
-            if entry.item.worktreeState != "D" {
+            if entry.item.worktreeState != "D", entry.item.indexState != "D" {
                 add(Titles.blame(at: nil)) { [weak self] in self?.onBlame?(path) }
             }
             add(Titles.fileHistory) { [weak self] in self?.onFileHistory?(path) }
@@ -1686,7 +1686,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             NSPasteboard.general.setString(path, forType: .string)
         }
         // 手元のリポジトリなら、Finder とほかのアプリで開ける（SSH 先のファイルは開けない）。
-        if let workdir = repository.workdir, entry.item.worktreeState != "D" {
+        if let workdir = repository.workdir, entry.item.worktreeState != "D", entry.item.indexState != "D" {
             let url = URL(fileURLWithPath: workdir).appendingPathComponent(path)
             add(Titles.showInFinder) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
             add(L("Open with Default App")) { NSWorkspace.shared.open(url) }
