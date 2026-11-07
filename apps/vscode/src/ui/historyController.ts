@@ -326,6 +326,41 @@ export class HistoryController implements vscode.Disposable {
     }
   }
 
+  /** いくつも選んでいるなら、そのコミット（新しい順） */
+  async selectedCommits(): Promise<Commit[]> {
+    const daemon = this.daemon;
+    const rows = this.selection?.rows;
+    if (!daemon || !rows) return [];
+    const reply = await daemon.client.call({ op: 'historyRows', history: daemon.history, rows: [...rows] });
+    return readRows(reply).map((r) => ({
+      oid: r.oid,
+      parents: r.parentOids,
+      author: r.author,
+      email: '',
+      date: r.date,
+      subject: r.subject,
+    }));
+  }
+
+  /** merge するときの名前: ブランチ・タグがあればその名前（merge のメッセージが git と同じになる）、なければ ID */
+  mergeName(oid: string): string {
+    return this.labels.get(oid)?.find((l) => !l.current)?.name ?? oid;
+  }
+
+  get headCommit(): string | undefined {
+    return this.headOid;
+  }
+
+  /** 続いたコミットをまとめるときのメッセージと範囲（コアが、続いているか・編集できるかも確かめる） */
+  async combineMessage(oids: readonly string[]): Promise<{ oldest: string; newest: string; message: string }> {
+    const client = await this.engine();
+    if (!client) throw new Error('This needs the engine');
+    const reply = await client.call({ op: 'run', command: { op: 'squashRangeMessage', oids: [...oids] } });
+    const answer = reply.json as { ok?: boolean; error?: string; info?: { oldest: string; newest: string; message: string } };
+    if (!answer.ok || !answer.info) throw new Error(answer.error ?? 'These commits can’t be combined');
+    return answer.info;
+  }
+
   /** HEAD・親（最初の親）・子のコミットに移る。子がいくつもあれば選んでもらう */
   async goTo(to: 'head' | 'parent' | 'child', oid?: string): Promise<void> {
     let target: string | undefined;

@@ -6,7 +6,7 @@
  */
 import { type LaneMetrics, lanePositions } from '../history/lanes.ts';
 import type { MessageEdit, PairMode, RowData, Scope, SearchState, SignatureView } from '../history/protocol.ts';
-import { extendTo, singleRow, toggleRow, type RowSelection } from '../history/selection.ts';
+import { extendTo, isContiguous, singleRow, toggleRow, type RowSelection } from '../history/selection.ts';
 import type { HostMessage } from '../view/protocol.ts';
 import { el, formatDate, post, type View } from './api.ts';
 import { attachSplitter, createDetailsPane } from './details.ts';
@@ -220,7 +220,7 @@ export function createHistoryView(): View {
     // Webview の右クリックメニュー（package.json の webview/context）に渡す情報
     el.dataset.vscodeContext = JSON.stringify(
       marked.size > 1 && marked.has(index)
-        ? { webviewSection: 'commits', oid: row.oid, preventDefaultContextMenuItems: true }
+        ? { webviewSection: 'commits', oid: row.oid, ...markedContext, preventDefaultContextMenuItems: true }
         : {
             webviewSection: 'commit',
             oid: row.oid,
@@ -312,6 +312,7 @@ export function createHistoryView(): View {
   /** いくつも選んだ行（2 行以上のときだけ。1 行なら `selected`）。エンジンの History でだけ選べる */
   let marked: ReadonlySet<number> = new Set();
   let anchor = -1;
+  let markedContext: Record<string, boolean> = {};
   let selectionToken = 0;
   let multiSelectable = false;
 
@@ -332,6 +333,12 @@ export function createHistoryView(): View {
     selected = next.focus;
     anchor = next.anchor;
     marked = next.rows;
+    const shown = [...marked].map((r) => rows[r]);
+    markedContext = {
+      // 読んでいない行があれば、続いているか・編集できるかはコアに確かめてもらう
+      commitsCanCombine: isContiguous(marked) && shown.every((r) => !r || r.editable),
+      commitsAreTwo: marked.size === 2,
+    };
     requestSelection('forward');
     if (reveal) revealRow(next.focus);
     scheduleRender();
@@ -458,7 +465,7 @@ export function createHistoryView(): View {
   }
 
   /** メッセージの編集欄。保存は Ctrl/Cmd+Enter、取り消しは Esc */
-  function editMessage(oid: string, kind: MessageEdit, title: string, message: string): void {
+  function editMessage(oid: string, last: string | undefined, kind: MessageEdit, title: string, message: string): void {
     const overlay = document.createElement('div');
     overlay.className = 'overlay';
     const box = document.createElement('div');
@@ -495,7 +502,7 @@ export function createHistoryView(): View {
         textarea.focus();
         return;
       }
-      post({ type: 'saveMessage', oid, kind, message: textarea.value });
+      post({ type: 'saveMessage', oid, last, kind, message: textarea.value });
       close();
     };
     save.addEventListener('click', submit);
@@ -755,7 +762,7 @@ export function createHistoryView(): View {
         details.showDiff(message.oid, message.path, message.diff);
         return;
       case 'editMessage':
-        editMessage(message.oid, message.kind, message.title, message.message);
+        editMessage(message.oid, message.last, message.kind, message.title, message.message);
         return;
       default:
         return;

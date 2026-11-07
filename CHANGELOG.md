@@ -965,6 +965,8 @@ First release.
 
 #### Added
 
+- With the engine, several commits can be selected in History (⌘- or Ctrl-click, ⇧-click, ⇧+arrows): the details show
+  their diff, and the menu cherry-picks, reverts, combines, merges, saves patches, range-diffs two and copies the IDs.
 - Clean Up Branches… lists branches merged into the default branch, merged by a pull request on GitHub, or whose
   upstream is gone, and deletes the checked ones; one Undo brings them back (with the engine).
 - With the engine, a branch merged by a GitHub pull request (squash or rebase) gets the merged mark, names the pull

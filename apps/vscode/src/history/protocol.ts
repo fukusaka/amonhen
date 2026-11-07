@@ -54,7 +54,7 @@ export interface Person {
 }
 
 /** メッセージを編集してから行う操作 */
-export type MessageEdit = 'reword' | 'squash';
+export type MessageEdit = 'reword' | 'squash' | 'combine';
 
 /** 2 つ選んだときの差分の取り方（コアの `pair`） */
 export type PairMode = 'forward' | 'reverse' | 'mergeBase';
@@ -102,7 +102,8 @@ export type HistoryHostMessage =
   | { type: 'selection'; token: number; view?: SelectionView; error?: string }
   /** コミットの中の 1 ファイルの差分（最初の親との差分） */
   | { type: 'commitDiff'; oid: string; path: string; diff: FileDiff }
-  | { type: 'editMessage'; oid: string; kind: MessageEdit; title: string; message: string }
+  /** `last` はまとめる範囲のいちばん新しいコミット（combine のとき。`oid` がいちばん古い） */
+  | { type: 'editMessage'; oid: string; last?: string; kind: MessageEdit; title: string; message: string }
   /** 行の署名の印（届いた行の分。署名のないコミットは含まない） */
   | { type: 'signatures'; marks: Record<string, SignatureView> }
   /** 詳細の残り（署名・子のコミット） */
@@ -151,7 +152,7 @@ export type HistoryWebviewMessage =
   /** コミットの中の 1 ファイルの差分を求める（詳細に並べる） */
   | { type: 'commitDiff'; oid: string; path: string }
   | { type: 'scope'; scope: Scope }
-  | { type: 'saveMessage'; oid: string; kind: MessageEdit; message: string }
+  | { type: 'saveMessage'; oid: string; last?: string; kind: MessageEdit; message: string }
   /** 編集できる範囲の中で、新しい順の to 番目に動かす */
   | { type: 'move'; oid: string; to: number }
   /** HEAD・親・子のコミットに移る（`oid` は今選んでいるコミット） */

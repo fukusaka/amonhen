@@ -254,7 +254,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Worktree HEAD labels (✎ ⌂ ⑂, change counts) | ✓ | ✓ | — | — |  |
 | Go to HEAD, Parent, Child | ✓ | ✓ | ✓ | n/a | VSCode: The HEAD button above History, Go to Parent and Go to Child on a commit's menu, and parent and child links in the details (with the engine). |
 | Go to Ref | — | — | — | n/a |  |
-| Several commits selected (range, two, scattered) | ✓ | ✓ | — | △ | CLI: `diff <rev> <rev>` for two. |
+| Several commits selected (range, two, scattered) | ✓ | ✓ | ✓ | △ | VSCode: With the engine.<br>CLI: `diff <rev> <rev>` for two. |
 | History of several selected refs | ✓ | ✓ | — | ✓ | CLI: `log --branch` repeated. |
 | Commit menu: checkout, new branch or tag, cherry-pick, revert, copy ID | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Edit mode (keep, reword, squash, fixup, drop, edit; drag to reorder) | ✓ | ✓ | △ | △ | VSCode: One commit at a time, no plan of several steps.<br>CLI: Via `amonhen run`. |
@@ -274,8 +274,8 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Changed files as a tree beside the diff | ✓ | ✓ | △ | n/a | VSCode: A flat list above the diffs. |
 | File header menu (Blame, File History, copy path, open) | ✓ | ✓ | ✓ | n/a | VSCode: Blame, File History and Copy Path on the right-click; Open in VSCode's diff editor. |
 | Switch to the single-file diff | ✓ | ✓ | — | n/a |  |
-| Diff of a selection (range squashed, A..B / A...B, scattered) | ✓ | ✓ | — | △ | CLI: `diff <rev> <rev>`. |
-| Actions on a selection (cherry-pick, revert, squash, copy IDs) | ✓ | ✓ | — | △ | CLI: Via `amonhen run`. |
+| Diff of a selection (range squashed, A..B / A...B, scattered) | ✓ | ✓ | ✓ | △ | VSCode: With the engine.<br>CLI: `diff <rev> <rev>`. |
+| Actions on a selection (cherry-pick, revert, squash, copy IDs) | ✓ | ✓ | ✓ | △ | VSCode: With the engine.<br>CLI: Via `amonhen run`. |
 | Signature popover | ✓ | ✓ | ✓ | n/a | VSCode: A Signature row in the details (status, explanation, signer and key), no popover. |
 | Word highlights and syntax colors | ✓ | ✓ | △ | n/a | VSCode: Words only. |
 
