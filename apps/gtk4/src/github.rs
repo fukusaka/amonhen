@@ -258,6 +258,14 @@ pub fn open_uri(window: Option<&gtk::Window>, uri: &str) {
     gtk::UriLauncher::new(uri).launch(window, gio::Cancellable::NONE, |_| {});
 }
 
+/// ブランチのページの URL の後ろ。`#` や `?` を URL の区切りにしない（`/` はそのまま。macOS 版と同じ）。
+fn tree_path(branch: &str) -> String {
+    format!(
+        "/tree/{}",
+        glib::Uri::escape_string(branch, Some("/"), false)
+    )
+}
+
 /// Repository > Open on GitHub: 今のブランチのページを開く。
 pub fn open_on_github(actions: &Rc<Actions>, branch: Option<String>) {
     let actions = actions.clone();
@@ -272,7 +280,7 @@ pub fn open_on_github(actions: &Rc<Actions>, branch: Option<String>) {
         };
         let mut url = github.web_url();
         if let Some(b) = branch {
-            url.push_str(&format!("/tree/{b}"));
+            url.push_str(&tree_path(&b));
         }
         open_uri(window.as_ref(), &url);
     });
@@ -1333,6 +1341,12 @@ fn create_pull_request_in(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_branch_page_escapes_what_would_end_the_path() {
+        assert_eq!(tree_path("fix#12"), "/tree/fix%2312");
+        assert_eq!(tree_path("feature/a?b"), "/tree/feature/a%3Fb");
+    }
 
     #[test]
     fn a_fork_sends_pull_requests_to_its_parent() {
