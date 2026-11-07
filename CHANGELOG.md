@@ -967,6 +967,8 @@ First release.
 
 - Clean Up Branches… lists branches merged into the default branch, merged by a pull request on GitHub, or whose
   upstream is gone, and deletes the checked ones; one Undo brings them back (with the engine).
+- With the engine, a branch merged by a GitHub pull request (squash or rebase) gets the merged mark, names the pull
+  request in its tooltip, and is deleted with one confirmation.
 - With the engine, submodules show the app's marks and the URL and branch they follow, and can be added, updated
   (nested ones, or to the branch followed), pointed elsewhere, synced and removed (keeping `.git/modules` unless asked).
 - With the engine and a git that has `git subtree`, a Subtrees group lists the folders added with it; Add Subtree…,
@@ -988,6 +990,7 @@ First release.
 
 #### Fixed
 
+- A branch merged into the default branch now says so in its tooltip.
 - Undo of a deleted branch without the engine also brings back its settings (upstream, archived, favorite), as the
   engine does.
 - Remove Worktree counts the worktree's changes again before asking, so files added since the last count are

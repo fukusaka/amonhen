@@ -1412,6 +1412,109 @@ async function branchCleanupFlow(): Promise<void> {
 }
 
 /**
+ * GitHub のプルリクエストで（squash・rebase で）取り込んだブランチに、取り込み済みの印が出る。消すときはプルリクエストを
+ * 添えた確認 1 回で消え、Undo で戻る。先端が違うプルリクエストでは印を出さない（gh の答えは差し替える）
+ */
+async function pullRequestMarkFlow(): Promise<void> {
+  const sidebar = api.sidebar;
+  const repo = api.manager.current!;
+  const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+  const facts = sidebar.branchFacts;
+  const readMerged = facts.readMerged;
+  const section = () => sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'branches');
+  const row = (name = 'pm-squashed') => {
+    const find = (nodes: ReturnType<typeof sidebar.getChildren>): ReturnType<typeof sidebar.getChildren>[number] | undefined => {
+      for (const n of nodes) {
+        if (n.kind === 'branch' && n.ref.name === `refs/heads/${name}`) return n;
+        const inner = n.kind === 'branch' || n.kind === 'branchGroup' || n.kind === 'branchFolder' ? find(sidebar.getChildren(n)) : undefined;
+        if (inner) return inner;
+      }
+      return undefined;
+    };
+    return find(sidebar.getChildren(section()!));
+  };
+  const line = () => {
+    const n = row();
+    return n && sidebar.getTreeItem(n);
+  };
+  const setMerged = async (oid: string) => {
+    facts.readMerged = async () => [{ number: 77, branch: 'pm-squashed', oid }];
+    await facts.readPullRequests(true);
+  };
+  try {
+    git('switch', '-q', '-c', 'pm-squashed');
+    writeFileSync(join(root, 'pm.txt'), 'pm\n');
+    git('add', 'pm.txt');
+    git('commit', '-q', '-m', 'pm');
+    git('switch', '-q', branch);
+    await vscode.commands.executeCommand('amonhen.refresh');
+    await facts.reload();
+    const before = await until('印のない行', () => line());
+    assert.ok(!/merged/.test(String(before.description)), String(before.description));
+    const tip = git('rev-parse', 'pm-squashed').trim();
+
+    // 先端が違うプルリクエストでは印を出さない
+    await setMerged(git('rev-parse', branch).trim());
+    assert.ok(!/merged/.test(String(line()!.description)));
+
+    await setMerged(tip);
+    const marked = await until('取り込み済みの印', () => {
+      const item = line();
+      return item && /merged/.test(String(item.description)) && item;
+    });
+    assert.match(String(marked.tooltip), /Merged by pull request #77/);
+
+    // 確認は 1 回だけで、プルリクエストの番号が出る
+    const asked: { message: string; detail?: string | undefined }[] = [];
+    await withWindow(
+      {
+        showWarningMessage: async (message: string, options: vscode.MessageOptions) => {
+          asked.push({ message, detail: options.detail });
+          return 'Delete';
+        },
+      },
+      async () => vscode.commands.executeCommand('amonhen.nav.delete', row()),
+    );
+    assert.equal(asked.length, 1, JSON.stringify(asked));
+    assert.match(asked[0]!.detail ?? '', /#77/);
+    assert.equal(git('branch', '--list', 'pm-squashed').trim(), '', lastErrors());
+    await vscode.commands.executeCommand('amonhen.undo');
+    await until('Undo で戻る', () => git('branch', '--list', 'pm-squashed').trim() !== '');
+    assert.equal(git('rev-parse', 'pm-squashed').trim(), tip);
+
+    // 取り込んでいないものと一緒に選ぶと、確認にプルリクエストが添えられ、もう一度聞くのは取り込んでいないものだけ
+    git('switch', '-q', '-c', 'pm-plain');
+    writeFileSync(join(root, 'pm-plain.txt'), 'pm\n');
+    git('add', 'pm-plain.txt');
+    git('commit', '-q', '-m', 'pm-plain');
+    git('switch', '-q', branch);
+    await vscode.commands.executeCommand('amonhen.refresh');
+    await facts.reload();
+    const squashed = await until('取り込み済みの行', () => /merged/.test(String(line()?.description)) && row());
+    const plain = await until('取り込んでいない行', () => row('pm-plain'));
+    asked.length = 0;
+    await withWindow(
+      {
+        showWarningMessage: async (message: string, options: vscode.MessageOptions) => {
+          asked.push({ message, detail: options.detail });
+          return /merge されていない/.test(message) ? 'Delete Anyway' : 'Delete';
+        },
+      },
+      async () => vscode.commands.executeCommand('amonhen.nav.delete', squashed, [squashed, plain]),
+    );
+    assert.equal(asked.length, 2, JSON.stringify(asked));
+    assert.match(asked[0]!.detail ?? '', /pm-squashed（プルリクエスト #77 でマージ済み）/);
+    assert.match(asked[1]!.message, /^pm-plain は/);
+    assert.equal(git('branch', '--list', 'pm-squashed', 'pm-plain').trim(), '', lastErrors());
+  } finally {
+    facts.readMerged = readMerged;
+    await facts.readPullRequests(true);
+    for (const b of ['pm-squashed', 'pm-plain']) if (git('branch', '--list', b).trim()) git('branch', '-q', '-D', b);
+    await repo.refresh();
+  }
+}
+
+/**
  * Stashes は stash があるときだけ出て、行に作ったときのブランチ・土台と HEAD の離れ具合・untracked が出る。
  * stash からブランチを作り（git stash branch）、新しい stash を確かめてから pop する（daemon だけ）
  */
@@ -2494,6 +2597,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('cleans up merged branches and ones whose upstream is gone, with one Undo, through the daemon', async () => {
     await branchCleanupFlow();
+  });
+
+  test('marks a branch merged by a pull request and deletes it with one confirmation through the daemon', async () => {
+    await pullRequestMarkFlow();
   });
 
   test('shows stash details, branches from a stash and pops the latest through the daemon', async () => {

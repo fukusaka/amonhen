@@ -105,7 +105,7 @@ export async function activate(
     registerSequenceCommands(manager),
     registerHistoryCommands(),
     registerPatchCommands(manager),
-    registerNavCommands(manager),
+    registerNavCommands(manager, (repo, name) => sidebar.branchFacts.pullRequestOf(repo, name)),
     registerMergeBranchesCommand(manager),
     registerBranchCommands(manager),
     registerStashCommands(manager),

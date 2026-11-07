@@ -21,6 +21,8 @@ export interface BranchFacts {
   archived: boolean;
   /** お気に入りの順位（`branch.<name>.amonhenPinned`。小さいほど上） */
   pinned: number | null;
+  /** 取り込んでいないが、この番号のプルリクエストが今の先端を head にしてマージされた（squash・rebase） */
+  pullRequest?: number | null;
 }
 
 export interface BranchGroupsInfo {

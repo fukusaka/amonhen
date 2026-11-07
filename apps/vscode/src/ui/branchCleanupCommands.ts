@@ -4,7 +4,7 @@
  * 共有の daemon のコアで行う
  */
 import * as vscode from 'vscode';
-import { GhMissingError, type MergedPullRequest, mergedPullRequests, repositorySlug } from '../git/github.ts';
+import { GhMissingError, type MergedPullRequest, mergedPullRequests, pullRequestTarget, repositorySlug } from '../git/github.ts';
 import type { RepositoryManager } from '../state/manager.ts';
 import { runEngine } from './engine.ts';
 import { showError } from './stageCommands.ts';
@@ -31,7 +31,7 @@ export function registerBranchCleanupCommands(manager: RepositoryManager): vscod
       const slug = repositorySlug(await repo.backend.remotes());
       if (slug) {
         try {
-          pullRequests = await mergedPullRequests(slug);
+          pullRequests = await mergedPullRequests(await pullRequestTarget(slug));
         } catch (err) {
           if (!(err instanceof GhMissingError)) note = `Couldn’t read the merged pull requests: ${(err as Error).message}`;
         }
