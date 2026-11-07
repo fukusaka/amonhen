@@ -337,8 +337,12 @@ mod imp {
             }
             self.state.borrow_mut().accent = Some(probes);
 
+            // いくつか選んでいる行を押しただけでは、選びを変えない。離したときに 1 行にする（ドラッグならそのまま。
+            // macOS 版の表と同じ）。
+            let on_release: Rc<Cell<Option<u32>>> = Rc::default();
             let click = gtk::GestureClick::new();
             let weak = view.downgrade();
+            let later = on_release.clone();
             click.connect_pressed(move |gesture, _, x, y| {
                 if let Some(view) = weak.upgrade() {
                     view.grab_focus();
@@ -349,17 +353,29 @@ mod imp {
                     if let Some(row) = view.row_at(y as f32) {
                         // Ctrl で 1 行ずつ足す・外す、Shift で範囲（macOS の ⌘・⇧ と同じ）。
                         let state = gesture.current_event_state();
-                        view.select_with(
-                            row,
+                        let (shift, ctrl) = (
                             state.contains(gdk::ModifierType::SHIFT_MASK),
                             state.contains(gdk::ModifierType::CONTROL_MASK),
                         );
+                        if !shift && !ctrl && view.in_multiple_selection(row) {
+                            later.set(Some(row));
+                            return;
+                        }
+                        view.select_with(row, shift, ctrl);
                     } else if view.below_rows(y as f32) {
                         // 最後の行より下: 選択を外し、詳細も消す（macOS 版の表と同じ）。
                         view.clear_selection();
                     }
                 }
             });
+            let (weak, later) = (view.downgrade(), on_release.clone());
+            click.connect_released(move |_, _, _, _| {
+                if let (Some(view), Some(row)) = (weak.upgrade(), later.take()) {
+                    view.select_with(row, false, false);
+                }
+            });
+            // ドラッグになったら離しても選び直さない。
+            click.connect_stopped(move |_| on_release.set(None));
             view.add_controller(click);
 
             // 右クリック: その行のコミットのメニュー。選びはせず（詳細はそのまま）、メニューの間は行を枠で示す
@@ -1080,6 +1096,12 @@ impl HistoryView {
     }
 
     /// クリックで選ぶ。`shift` なら起点からの範囲、`ctrl` なら 1 行ずつ足す・外す。
+    /// `row` が、いくつか選んでいるうちの 1 つか。
+    fn in_multiple_selection(&self, row: u32) -> bool {
+        let st = self.state();
+        !st.extra.is_empty() && (st.selected == Some(row) || st.extra.contains(&row))
+    }
+
     pub fn select_with(&self, row: u32, shift: bool, ctrl: bool) {
         {
             let mut st = self.state();
