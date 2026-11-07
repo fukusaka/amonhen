@@ -222,10 +222,10 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Filter on paths | ✓ | ✓ | ✓ | n/a |  |
 | Per-row +/− counts and Discard on hover | ✓ | ✓ | △ | △ | VSCode: No line counts.<br>CLI: `diff --stat`. |
 | Space toggles, ⌫ discards | ✓ | ✓ | △ | n/a | VSCode: Space toggles; no ⌫. |
-| Commit box on top with 50/72 counter and body guide | ✓ | ✓ | △ | n/a | VSCode: No counter or guide. |
-| Draft per repository, starting from the template | ✓ | ✓ | — | n/a |  |
-| Recent messages (⌥↑ / ⌥↓, list) | ✓ | ✓ | — | n/a |  |
-| Insert Conventional types, Co-authored-by, Signed-off-by | ✓ | ✓ | — | n/a |  |
+| Commit box on top with 50/72 counter and body guide | ✓ | ✓ | △ | n/a | VSCode: The box stays under the list. A description line over 72 is counted instead of a guide. |
+| Draft per repository, starting from the template | ✓ | ✓ | ✓ | n/a | VSCode: `commit.template` only, not the shared template library. |
+| Recent messages (⌥↑ / ⌥↓, list) | ✓ | ✓ | ✓ | n/a |  |
+| Insert Conventional types, Co-authored-by, Signed-off-by | ✓ | ✓ | ✓ | n/a |  |
 | `#issue` completion | ✓ | ✓ | — | n/a |  |
 | Commit and Push, Amend | ✓ | ✓ | △ | △ | VSCode: Amend only.<br>CLI: `commit -m … --amend`. |
 | Fixup / Squash Commit For | ✓ | ✓ | — | n/a |  |

@@ -222,10 +222,10 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | パスで絞り込む | ✓ | ✓ | ✓ | n/a |  |
 | 行ごとの +/− の数と、ホバーで Discard | ✓ | ✓ | △ | △ | VSCode: 行の数はない。<br>CLI: `diff --stat`。 |
 | Space で切り替え、⌫ で捨てる | ✓ | ✓ | △ | n/a | VSCode: Space で切り替えるが、⌫ はない。 |
-| 上のコミットの欄、50/72 の数と本文の目安の線 | ✓ | ✓ | △ | n/a | VSCode: 数も目安の線もない。 |
-| リポジトリごとの下書き、テンプレートから始める | ✓ | ✓ | — | n/a |  |
-| 最近のメッセージ（⌥↑ / ⌥↓・一覧） | ✓ | ✓ | — | n/a |  |
-| Conventional の種類・Co-authored-by・Signed-off-by を入れる | ✓ | ✓ | — | n/a |  |
+| 上のコミットの欄、50/72 の数と本文の目安の線 | ✓ | ✓ | △ | n/a | VSCode: 欄は一覧の下のまま。目安の線の代わりに、72 を超える本文の行の長さを出す。 |
+| リポジトリごとの下書き、テンプレートから始める | ✓ | ✓ | ✓ | n/a | VSCode: `commit.template` だけで、共有のテンプレートは使わない。 |
+| 最近のメッセージ（⌥↑ / ⌥↓・一覧） | ✓ | ✓ | ✓ | n/a |  |
+| Conventional の種類・Co-authored-by・Signed-off-by を入れる | ✓ | ✓ | ✓ | n/a |  |
 | `#issue` の補完 | ✓ | ✓ | — | n/a |  |
 | Commit and Push・Amend | ✓ | ✓ | △ | △ | VSCode: Amend だけ。<br>CLI: `commit -m … --amend`。 |
 | Fixup / Squash Commit For | ✓ | ✓ | — | n/a |  |

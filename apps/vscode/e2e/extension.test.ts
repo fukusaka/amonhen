@@ -2762,6 +2762,42 @@ suite('Amon Hen in VSCode', () => {
     await settingsFlow();
   });
 
+  test('keeps the commit message as a draft for each repository, and starts from the template', async () => {
+    const panel = await showView('amonhen.showWorkingCopy');
+    const wc = panel.workingCopy;
+    const reopen = async () => {
+      const mark = posted.length;
+      wc.setRepository(panel.repository);
+      return waitPosted('wcMessage', mark, () => true);
+    };
+    const template = join(root, '..', `amonhen-template-${process.pid}.txt`);
+    writeFileSync(template, '# say why\nfeat: from the template\n\nDetails\n');
+    git('config', 'commit.template', template);
+    try {
+      const fromTemplate = await reopen();
+      assert.deepEqual([fromTemplate.summary, fromTemplate.body], ['feat: from the template', 'Details']);
+      await wc.handle({ type: 'wcDraft', summary: 'my draft', body: 'my body' });
+      const fromDraft = await reopen();
+      assert.deepEqual([fromDraft.summary, fromDraft.body], ['my draft', 'my body']);
+      // 空にすると下書きを忘れ、テンプレートに戻る
+      await wc.handle({ type: 'wcDraft', summary: ' ', body: '' });
+      assert.equal((await reopen()).summary, 'feat: from the template');
+    } finally {
+      git('config', '--unset', 'commit.template');
+      rmSync(template, { force: true });
+    }
+    assert.equal((await reopen()).summary, '');
+  });
+
+  test('sends the messages of recent commits to the commit box', async () => {
+    const panel = await showView('amonhen.showWorkingCopy');
+    const mark = posted.length;
+    panel.workingCopy.setRepository(panel.repository);
+    const { messages } = await waitPosted('wcRecent', mark, (m) => m.messages.length > 0);
+    assert.ok(messages.length <= 30);
+    assert.equal(messages[0], git('log', '-1', '--format=%B').trim());
+  });
+
   test('drops the selection of a file whose changes went away before its diff is read', async () => {
     const panel = await showView('amonhen.showWorkingCopy');
     const path = join(root, FILE);

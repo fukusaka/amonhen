@@ -689,6 +689,35 @@ button.secondary {
   justify-content: space-between;
 }
 
+.commit-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+}
+
+.commit-tools .link {
+  padding: 0;
+  color: var(--vscode-textLink-foreground);
+  background: none;
+  font-size: 0.9em;
+}
+
+.commit-tools .length {
+  margin-left: auto;
+  font-size: 0.9em;
+  font-variant-numeric: tabular-nums;
+  color: var(--vscode-descriptionForeground);
+}
+
+.length .level-long {
+  color: var(--vscode-editorWarning-foreground, var(--vscode-gitDecoration-modifiedResourceForeground));
+}
+
+.length .level-over {
+  color: var(--vscode-gitDecoration-conflictingResourceForeground, var(--vscode-errorForeground));
+}
+
 .commit-row button:disabled {
   opacity: 0.5;
   cursor: default;

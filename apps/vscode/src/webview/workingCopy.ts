@@ -7,6 +7,7 @@ import type { Change, ChangeGroup } from '../state/changes.ts';
 import type { HostMessage } from '../view/protocol.ts';
 import type { DiffHunk, FileDiff, SelectedLine } from '../diff/fileDiff.ts';
 import type { Eol, LineEndings } from '../git/eol.ts';
+import { addTrailer, lengthLevel, longestLine, messageLength, splitMessage, withType } from '../workingCopy/commitMessage.ts';
 import { filesUnder, filterByPath, makeFileTree, type FileDir, type FileLayout } from '../workingCopy/fileList.ts';
 import { el, post, type View } from './api.ts';
 import { lineKey, renderDiffBody } from './diffView.ts';
@@ -46,8 +47,17 @@ export function createWorkingCopyView(): View {
   amend.type = 'checkbox';
   amendLabel.append(amend, ' Amend');
   const commitButton = el('button', undefined, 'Commit');
+  const lengthLabel = el('span', 'length');
+  const recentButton = el('button', 'link', 'Recent…');
+  recentButton.title = 'Insert the message of a recent commit (⌥↑ and ⌥↓ in the Summary)';
+  recentButton.addEventListener('click', () => post({ type: 'wcPickRecent' }));
+  const insertButton = el('button', 'link', 'Insert…');
+  insertButton.title = 'Insert a Conventional Commits type, Co-authored-by or Signed-off-by';
+  insertButton.addEventListener('click', () => post({ type: 'wcPickInsert' }));
+  const commitTools = el('div', 'commit-tools');
+  commitTools.append(recentButton, insertButton, lengthLabel);
   commitRow.append(amendLabel, commitButton);
-  commitBox.append(subject, body, commitRow);
+  commitBox.append(subject, body, commitTools, commitRow);
 
   // 一覧の絞り込みと見せ方
   const tools = el('div', 'wc-tools');
@@ -440,6 +450,17 @@ export function createWorkingCopyView(): View {
       : staged > 0
         ? `Commit ${staged} File${staged > 1 ? 's' : ''}`
         : 'Commit';
+    updateLength();
+  }
+
+  /** 件名の文字数と、72 文字を超える本文の行（git の慣習） */
+  function updateLength(): void {
+    const length = messageLength(subject.value);
+    const line = longestLine(body.value);
+    lengthLabel.replaceChildren();
+    if (length > 0) lengthLabel.append(el('span', `level-${lengthLevel(length)}`, String(length)));
+    if (lengthLevel(line) === 'over') lengthLabel.append(el('span', 'level-over', ` Body ${line}`));
+    lengthLabel.title = 'Length of the summary (yellow over 50, orange over 72), and of a description line over 72';
   }
 
   function message(): string {
@@ -452,7 +473,53 @@ export function createWorkingCopyView(): View {
     post({ type: 'wcCommit', message: message(), amend: amend.checked });
   }
 
-  subject.addEventListener('input', updateCommitButton);
+  /** 欄の中身を入れ替える。打ったのと同じく Undo で戻せるように、編集として入れる */
+  function replaceField(field: HTMLInputElement | HTMLTextAreaElement, text: string): void {
+    if (field.value === text) return;
+    field.focus();
+    field.select();
+    if (!document.execCommand(text ? 'insertText' : 'delete', false, text)) {
+      field.value = text;
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  }
+
+  function useMessage(text: string): void {
+    const parts = splitMessage(text);
+    replaceField(body, parts.body);
+    replaceField(subject, parts.summary);
+  }
+
+  // ⌥↑・⌥↓ で最近のメッセージを順に呼び出す。一番新しいものの先は、呼び出す前の中身
+  let recent: string[] = [];
+  let recentCursor = -1;
+  let beforeRecall = { summary: '', body: '' };
+  let recalling = false;
+  subject.addEventListener('keydown', (e) => {
+    if (!e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') || recent.length === 0) return;
+    e.preventDefault();
+    if (recentCursor < 0) beforeRecall = { summary: subject.value, body: body.value };
+    recentCursor = Math.max(-1, Math.min(recent.length - 1, recentCursor + (e.key === 'ArrowUp' ? 1 : -1)));
+    const parts = recentCursor < 0 ? beforeRecall : splitMessage(recent[recentCursor]!);
+    recalling = true;
+    replaceField(body, parts.body);
+    replaceField(subject, parts.summary);
+    recalling = false;
+    subject.focus();
+  });
+
+  /** 打ち終わるのを少し待って、下書きを覚えてもらう */
+  let draftTimer: ReturnType<typeof setTimeout> | undefined;
+  function messageChanged(): void {
+    updateCommitButton();
+    clearTimeout(draftTimer);
+    // 呼び出しただけでは下書きにしない（呼び出す前の中身が下書きのまま）。手で直したら、それが下書き
+    if (recalling) return;
+    recentCursor = -1;
+    draftTimer = setTimeout(() => post({ type: 'wcDraft', summary: subject.value, body: body.value }), 300);
+  }
+  subject.addEventListener('input', messageChanged);
+  body.addEventListener('input', messageChanged);
   commitButton.addEventListener('click', commit);
   for (const input of [subject, body] as HTMLElement[]) {
     input.addEventListener('keydown', (e: KeyboardEvent) => {
@@ -492,7 +559,30 @@ export function createWorkingCopyView(): View {
         renderFiles();
         renderDiff();
         break;
+      case 'wcRecent':
+        recent = m.messages;
+        recentCursor = -1;
+        break;
+      case 'wcUseMessage':
+        recentCursor = -1;
+        useMessage(m.message);
+        break;
+      case 'wcInsertType':
+        replaceField(subject, withType(subject.value, m.commitType));
+        subject.focus();
+        break;
+      case 'wcInsertTrailer':
+        replaceField(body, addTrailer(body.value, m.line));
+        body.focus();
+        break;
+      case 'wcMessage':
+        clearTimeout(draftTimer);
+        subject.value = m.summary;
+        body.value = m.body;
+        updateCommitButton();
+        break;
       case 'wcCommitted':
+        clearTimeout(draftTimer);
         subject.value = '';
         body.value = '';
         amend.checked = false;
