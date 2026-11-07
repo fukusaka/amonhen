@@ -7696,6 +7696,37 @@ mod tests {
         assert_eq!(tip("done"), before.0);
     }
 
+    /// worktree の新しい置き場所の `~` は、git が動く機械のホーム（SSH 先のパスは FE が広げられない）。
+    #[test]
+    fn moves_a_worktree_to_a_path_under_home() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        let name = format!("amonhen-moved-{}", std::process::id());
+        let wt = tmp.path().with_extension("wt-home");
+        let wt = wt.to_str().unwrap();
+        let r = run(
+            &repo,
+            &serde_json::json!({ "op": "worktreeAdd", "path": wt, "newBranch": "moves-home" })
+                .to_string(),
+        );
+        assert_eq!(r["ok"], true, "{r}");
+        let r = run(
+            &repo,
+            &serde_json::json!({ "op": "worktreeMove", "path": wt, "to": format!("~/{name}") })
+                .to_string(),
+        );
+        assert_eq!(r["ok"], true, "{r}");
+        let moved = std::env::home_dir().unwrap().join(&name);
+        assert!(moved.join(".git").exists(), "{}", moved.display());
+        assert!(!dir.join("~").exists());
+        let r = run(
+            &repo,
+            &serde_json::json!({ "op": "worktreeRemove", "path": moved, "force": true })
+                .to_string(),
+        );
+        assert_eq!(r["ok"], true, "{r}");
+    }
+
     #[test]
     fn starts_orphan_branches_empty_or_with_the_files() {
         let (tmp, repo) = setup();

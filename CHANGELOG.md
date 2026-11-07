@@ -52,6 +52,9 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- `~` in a new worktree path means the home folder on the machine where git runs, including an SSH host.
+- Pull requests from a fork owned by an organization are listed, among the parent's newest 300.
+- Forgetting a resolution in a separate merge window shows the conflict again instead of the old Result.
 - Create Pull Request… works for a repository on an SSH host.
 - A submodule inside an added worktree opens as itself, not as the main repository.
 - In the GTK4 app, the sidebar opens a submodule from the worktree being edited, and Forget This Resolution in a

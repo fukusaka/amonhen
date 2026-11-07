@@ -83,6 +83,11 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
         return MergeEditorViewController(path: path, sides: sides, repository: repository, actions: actions)
     }
 
+    /// 同じファイルを読み直したエディタ。
+    func reloaded() async throws -> MergeEditorViewController {
+        try await Self.load(path: path, repository: repository, actions: actions)
+    }
+
     // MARK: - 組み立て
 
     private static func textView(editable: Bool) -> NSTextView {
@@ -883,7 +888,7 @@ extension Notification.Name {
 /// マージエディタを別ウィンドウで開く。worktree とパスごとに 1 つ（worktree が違えば同じパスでも別のファイル）。
 final class MergeEditorWindowController: NSWindowController, NSWindowDelegate {
     private static var open: [String: MergeEditorWindowController] = [:]
-    private let editor: MergeEditorViewController
+    private var editor: MergeEditorViewController
     private let actions: Actions
 
     /// `open` の鍵: 作業ツリー（SSH 先などで分からなければリポジトリそのもの）とパス。
@@ -948,11 +953,7 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate {
             styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "Merge — \(editor.path)"
         super.init(window: window)
-        editor.onPopOut = nil
-        editor.onResolved = { [weak self] in
-            self?.resolved = true
-            self?.close()
-        }
+        adopt(editor)
         window.contentViewController = editor
         window.setContentSize(NSSize(width: 1300, height: 820))
         window.center()
@@ -960,6 +961,32 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    /// `editor` をこのウィンドウのエディタにする。
+    private func adopt(_ editor: MergeEditorViewController) {
+        self.editor = editor
+        editor.onPopOut = nil
+        editor.onResolved = { [weak self] in
+            self?.resolved = true
+            self?.close()
+        }
+        editor.onReload = { [weak self] in self?.reload() }
+    }
+
+    /// rerere の解決を忘れたら、読み直したエディタに替える（古い Result のまま解決済みにしないように）。
+    private func reload() {
+        Task { @MainActor in
+            do {
+                let next = try await editor.reloaded()
+                let frame = window?.frame
+                adopt(next)
+                window?.contentViewController = next
+                if let frame { window?.setFrame(frame, display: true) }
+            } catch {
+                NSAlert(error: error).runModal()
+            }
+        }
+    }
 
     /// 保存していない変更があれば、捨てて閉じてよいかをシートで確かめる（確かめたら閉じ直す）。
     private var discardConfirmed = false

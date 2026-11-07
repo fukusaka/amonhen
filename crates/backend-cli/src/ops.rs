@@ -1671,17 +1671,27 @@ impl Operations for Git {
     }
 
     fn change_worktree(&self, change: &WorktreeChange) -> Result<()> {
+        // 新しい置き場所の `~` は、git が動く機械のホーム（git は広げない。SSH 先のパスは FE が広げられない）。
+        let home = |path: &String| -> String {
+            crate::directory::expand_home(path)
+                .to_string_lossy()
+                .into_owned()
+        };
+        let places: Vec<String> = match change {
+            WorktreeChange::Add { path, .. } => vec![home(path)],
+            WorktreeChange::Move { to, .. } => vec![home(to)],
+            WorktreeChange::Repair { paths } => paths.iter().map(home).collect(),
+            _ => Vec::new(),
+        };
         let args: Vec<&str> = match change {
             WorktreeChange::Add {
-                path,
-                start,
-                new_branch,
+                start, new_branch, ..
             } => {
                 let mut args = vec!["worktree", "add"];
                 if let Some(branch) = new_branch {
                     args.extend(["-b", branch]);
                 }
-                args.extend(["--", path]);
+                args.extend(["--", places[0].as_str()]);
                 if let Some(start) = start {
                     args.push(start);
                 }
@@ -1705,8 +1715,10 @@ impl Operations for Git {
                 args
             }
             WorktreeChange::Unlock { path } => vec!["worktree", "unlock", "--", path],
-            WorktreeChange::Move { path, to } => vec!["worktree", "move", "--", path, to],
-            WorktreeChange::Repair { paths } => {
+            WorktreeChange::Move { path, .. } => {
+                vec!["worktree", "move", "--", path, places[0].as_str()]
+            }
+            WorktreeChange::Repair { .. } => {
                 if let Some((a, b, c)) = crate::git_version()
                     && (a, b) < WORKTREE_REPAIR
                 {
@@ -1718,7 +1730,7 @@ impl Operations for Git {
                     .into());
                 }
                 let mut args = vec!["worktree", "repair", "--"];
-                args.extend(paths.iter().map(String::as_str));
+                args.extend(places.iter().map(String::as_str));
                 args
             }
         };

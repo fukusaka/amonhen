@@ -52,6 +52,8 @@ struct GitHubRepository: Equatable, Sendable {
 struct PullRequestTarget: Equatable, Sendable {
     let repo: GitHubRepository
     let forkOwner: String?
+    /// fork の持ち主が組織（プルリクエストの作者は人なので、作者では絞れない）。
+    var forkInOrganization = false
 
     /// fork から元のリポジトリへ出す。既定のブランチ（fork の main など）からも出せる。
     var isFork: Bool { forkOwner != nil }
@@ -236,8 +238,11 @@ enum GitHub {
     }
 
     /// `repo` が fork なら、その元のリポジトリ（fork でなければ nil）。読めなければ投げる。
-    static func parent(_ repo: GitHubRepository) async throws -> GitHubRepository? {
-        parent(from: try await run(["repo", "view", repo.slug, "--json", "parent"]), host: repo.host)
+    static func parent(_ repo: GitHubRepository) async throws -> (repo: GitHubRepository, organization: Bool)? {
+        struct View: Decodable { let isInOrganization: Bool? }
+        let data = try await run(["repo", "view", repo.slug, "--json", "parent,isInOrganization"])
+        guard let parent = parent(from: data, host: repo.host) else { return nil }
+        return (parent, (try? JSONDecoder().decode(View.self, from: data))?.isInOrganization == true)
     }
 
     /// `gh repo view --json parent` の答えから、元のリポジトリ（同じホスト）。
@@ -250,12 +255,12 @@ enum GitHub {
         return GitHubRepository(host: host, owner: parent.owner.login, name: parent.name)
     }
 
-    /// 読めた fork の元（slug → 元。fork でなければ nil）。読めなかったものは覚えない（次にまた読む）。
-    @MainActor private static var parents: [String: GitHubRepository?] = [:]
+    /// 読めた fork の元（slug → 元と、持ち主が組織か。fork でなければ nil）。読めなかったものは覚えない（次にまた読む）。
+    @MainActor private static var parents: [String: (repo: GitHubRepository, organization: Bool)?] = [:]
 
     /// `origin` のリポジトリからプルリクエストを出す先（fork なら元のリポジトリ）。
     @MainActor static func pullRequestTarget(_ origin: GitHubRepository) async -> PullRequestTarget {
-        let parent: GitHubRepository?
+        let parent: (repo: GitHubRepository, organization: Bool)?
         if let known = parents[origin.slug] {
             parent = known
         } else if let read = try? await Self.parent(origin) {
@@ -265,21 +270,27 @@ enum GitHub {
             parent = nil
         }
         guard let parent else { return PullRequestTarget(repo: origin, forkOwner: nil) }
-        return PullRequestTarget(repo: parent, forkOwner: origin.owner)
+        return PullRequestTarget(repo: parent.repo, forkOwner: origin.owner, forkInOrganization: parent.organization)
     }
 
     /// `pr list` の、fork のときの引数（その fork の持ち主が出したものに絞り、head の持ち主も読む）。元のリポジトリの
-    /// 新しいものから数えると、ほかの人のプルリクエストで埋まるので、作者で絞ってから数える。
+    /// 新しいものから数えると、ほかの人のプルリクエストで埋まるので、作者で絞ってから数える。組織の fork は作者で
+    /// 絞れないので、多めに読んで `mine` で絞る（それより古いものは見つからない）。
     private static func forkArguments(_ target: PullRequestTarget) -> (args: [String], field: String) {
         guard let owner = target.forkOwner else { return ([], "") }
-        return (["--author", owner], ",headRepositoryOwner")
+        return (target.forkInOrganization ? [] : ["--author", owner], ",headRepositoryOwner")
+    }
+
+    /// `pr list` の `--limit`。
+    private static func limit(_ count: Int, _ target: PullRequestTarget) -> String {
+        String(target.forkInOrganization ? 300 : count)
     }
 
     /// 開いているプルリクエスト（新しい順、最大 50 件。fork なら、その fork から出したもの）。
     static func pullRequests(_ target: PullRequestTarget) async throws -> [PullRequest] {
         let fork = forkArguments(target)
         let data = try await run([
-            "pr", "list", "-R", target.repo.slug, "--state", "open", "--limit", "50",
+            "pr", "list", "-R", target.repo.slug, "--state", "open", "--limit", limit(50, target),
             "--json", "number,title,url,headRefName,baseRefName,isDraft,author,reviewDecision,statusCheckRollup,headRefOid" + fork.field,
         ] + fork.args)
         return target.mine(try JSONDecoder().decode([PullRequest].self, from: data)) { $0.headRepositoryOwner?.login }
@@ -290,7 +301,7 @@ enum GitHub {
     static func mergedPullRequests(_ target: PullRequestTarget) async throws -> [MergedPullRequest] {
         let fork = forkArguments(target)
         let data = try await run([
-            "pr", "list", "-R", target.repo.slug, "--state", "merged", "--limit", "200",
+            "pr", "list", "-R", target.repo.slug, "--state", "merged", "--limit", limit(200, target),
             "--json", "number,headRefName,headRefOid" + fork.field,
         ] + fork.args)
         return target.mine(try JSONDecoder().decode([MergedPullRequest].self, from: data)) { $0.headRepositoryOwner?.login }

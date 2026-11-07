@@ -621,6 +621,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             }
         }
         pages?.replace(.workingCopy, with: slot.workingCopy)
+        // プルリクエストでマージ済みのブランチは、リポジトリで共通（分け方が同じなら読み直さない）。
+        slot.actions.mergedByPullRequest = sidebar.actions?.mergedByPullRequest ?? [:]
         sidebar.actions = slot.actions
         history.actions = slot.actions
         stashes.actions = slot.actions
@@ -880,8 +882,13 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         alert.addButton(withTitle: L("Cancel"))
         alert.beginSheetModal(for: window) { response in
             withExtendedLifetime(chooser) {}
-            let path = (field.stringValue.trimmingCharacters(in: .whitespaces) as NSString).expandingTildeInPath
+            var path = field.stringValue.trimmingCharacters(in: .whitespaces)
             guard response == .alertFirstButtonReturn, !path.isEmpty else { return }
+            // ~ はこの Mac のホーム。SSH 先のパスはそのまま送る（New Worktree と同じ）。
+            let location = self.location
+            if !(location.hasPrefix("ssh://") || location.hasPrefix("daemon:ssh://")) {
+                path = (path as NSString).expandingTildeInPath
+            }
             done(path)
         }
     }
@@ -929,8 +936,23 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             if !onSSH { path = (path as NSString).expandingTildeInPath }
             opened.actions.perform(["op": "worktreeAdd", "path": path, "newBranch": name, "start": start]) { [weak self] _ in
                 self?.reloadWorktrees()
-                self?.edit(worktree: path)
+                if path.hasPrefix("~") {
+                    self?.editWorktree(onBranch: name)
+                } else {
+                    self?.edit(worktree: path)
+                }
             }
+        }
+    }
+
+    /// SSH 先の `~` はそこのホーム。実際のパスは、作ったブランチの worktree で分かる。
+    private func editWorktree(onBranch name: String) {
+        let repository = opened.repository
+        Task {
+            let list = try? await Task.detached(priority: .userInitiated) {
+                try repository.info(["op": "worktrees"], as: WorktreeList.self)
+            }.value.worktrees
+            if let path = list?.first(where: { $0.branch == name })?.path { edit(worktree: path) }
         }
     }
 

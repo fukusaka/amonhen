@@ -127,12 +127,17 @@ async fn of_remote(repo: &Arc<Repository>) -> Option<(String, GitHubRepository)>
     Some((remote["name"].as_str()?.to_owned(), github))
 }
 
+/// 組織の fork のとき、元のリポジトリから読むプルリクエストの数（macOS 版と同じ）。
+const ORGANIZATION_FORK_LIMIT: &str = "300";
+
 /// プルリクエストを出す先。origin が GitHub の fork なら、その元のリポジトリ（`fork_owner` は fork の持ち主。
 /// head は `持ち主:ブランチ` の形で渡し、一覧はその fork から出したものだけにする）。fork でなければ origin。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PullRequestTarget {
     pub repo: GitHubRepository,
     pub fork_owner: Option<String>,
+    /// fork の持ち主が組織（プルリクエストの作者は人なので、作者では絞れない）。
+    pub fork_in_organization: bool,
 }
 
 impl PullRequestTarget {
@@ -164,9 +169,15 @@ impl PullRequestTarget {
     }
 
     /// `pr list` の、fork のときの引数（その fork の持ち主が出したものに絞り、head の持ち主も読む）。元のリポジトリの
-    /// 新しいものから数えると、ほかの人のプルリクエストで埋まるので、作者で絞ってから数える。
+    /// 新しいものから数えると、ほかの人のプルリクエストで埋まるので、作者で絞ってから数える。組織の fork は作者で
+    /// 絞れないので、多めに読んで [`Self::mine`] で絞る（それより古いものは見つからない）。
     fn list_args(&self, state: &str, limit: &str, fields: &str) -> Vec<String> {
         let mut fields = fields.to_owned();
+        let limit = if self.fork_in_organization {
+            ORGANIZATION_FORK_LIMIT
+        } else {
+            limit
+        };
         let mut args = [
             "pr",
             "list",
@@ -181,7 +192,9 @@ impl PullRequestTarget {
         .to_vec();
         if let Some(owner) = &self.fork_owner {
             fields.push_str(",headRepositoryOwner");
-            args.extend(["--author".to_owned(), owner.clone()]);
+            if !self.fork_in_organization {
+                args.extend(["--author".to_owned(), owner.clone()]);
+            }
         }
         args.extend(["--json".to_owned(), fields]);
         args
@@ -199,8 +212,8 @@ fn parent_from(view: &Value, host: &str) -> Option<GitHubRepository> {
 }
 
 thread_local! {
-    /// 読めた fork の元（slug → 元。fork でなければ None）。読めなかったものは覚えない（次にまた読む）。
-    static PARENTS: RefCell<HashMap<String, Option<GitHubRepository>>> = RefCell::default();
+    /// 読めた fork の元（slug → 元と、持ち主が組織か。fork でなければ None）。読めなかったものは覚えない（次にまた読む）。
+    static PARENTS: RefCell<HashMap<String, Option<(GitHubRepository, bool)>>> = RefCell::default();
 }
 
 /// `origin` のリポジトリからプルリクエストを出す先（fork なら元のリポジトリ。macOS 版と同じ）。
@@ -210,14 +223,17 @@ pub async fn pull_request_target(origin: &GitHubRepository) -> PullRequestTarget
     let parent = match known {
         Some(parent) => parent,
         None => {
-            let args = ["repo", "view", &slug, "--json", "parent"]
+            let args = ["repo", "view", &slug, "--json", "parent,isInOrganization"]
                 .map(str::to_owned)
                 .to_vec();
             let read = gh_async(args, None)
                 .await
                 .ok()
                 .and_then(|out| serde_json::from_str::<Value>(&out).ok())
-                .map(|view| parent_from(&view, &origin.host));
+                .map(|view| {
+                    let organization = view["isInOrganization"].as_bool() == Some(true);
+                    parent_from(&view, &origin.host).map(|parent| (parent, organization))
+                });
             if let Some(parent) = &read {
                 PARENTS.with(|p| p.borrow_mut().insert(slug, parent.clone()));
             }
@@ -225,13 +241,15 @@ pub async fn pull_request_target(origin: &GitHubRepository) -> PullRequestTarget
         }
     };
     match parent {
-        Some(repo) => PullRequestTarget {
+        Some((repo, fork_in_organization)) => PullRequestTarget {
             repo,
             fork_owner: Some(origin.owner.clone()),
+            fork_in_organization,
         },
         None => PullRequestTarget {
             repo: origin.clone(),
             fork_owner: None,
+            fork_in_organization: false,
         },
     }
 }
@@ -1326,6 +1344,7 @@ mod tests {
         let fork = PullRequestTarget {
             repo: parent,
             fork_owner: Some("me".to_owned()),
+            fork_in_organization: false,
         };
         assert_eq!(fork.head("main"), "me:main");
         let args = fork.list_args("open", "50", "number");
@@ -1344,9 +1363,26 @@ mod tests {
             .collect();
         assert_eq!(mine, [json!(1)]);
 
+        // 組織の fork は作者で絞れないので、多めに読んで head の持ち主で絞る。
+        let organization = PullRequestTarget {
+            fork_in_organization: true,
+            ..fork.clone()
+        };
+        let args = organization.list_args("open", "50", "number");
+        assert!(!args.contains(&"--author".to_owned()), "{args:?}");
+        assert!(
+            args.contains(&ORGANIZATION_FORK_LIMIT.to_owned()),
+            "{args:?}"
+        );
+        assert!(
+            args.iter().any(|a| a == "number,headRepositoryOwner"),
+            "{args:?}"
+        );
+
         let origin = PullRequestTarget {
             repo: GitHubRepository::parse("git@github.com:me/tool.git").unwrap(),
             fork_owner: None,
+            fork_in_organization: false,
         };
         assert_eq!(origin.head("topic"), "topic");
         assert_eq!(origin.mine(list).len(), 2);

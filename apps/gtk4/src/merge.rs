@@ -491,7 +491,6 @@ pub async fn load(
 
 /// エディタを（編集中の内容のまま）別の窓に入れて出す。埋め込んでいた側は、先に外しておく。
 pub fn show_in_window(editor: &Rc<Editor>, parent: &gtk::Window) {
-    editor.set_on_pop_out(None);
     let window = gtk::Window::builder()
         .title(format!("Merge — {}", editor.path))
         .default_width(1300)
@@ -522,7 +521,6 @@ pub fn show_in_window(editor: &Rc<Editor>, parent: &gtk::Window) {
         actions.add_action(&action);
     }
     window.insert_action_group("win", Some(&actions));
-    editor.window.replace(Some(window.downgrade()));
     OPEN.with(|o| {
         let mut o = o.borrow_mut();
         o.retain(|(_, w)| w.upgrade().is_some());
@@ -531,11 +529,12 @@ pub fn show_in_window(editor: &Rc<Editor>, parent: &gtk::Window) {
             window.downgrade(),
         ));
     });
-    // 窓がある間は持っておく（ボタンなどは弱い参照で呼ぶので、持たなければ開いた直後に消える）。
-    KEEP.with(|k| k.borrow_mut().push(editor.clone()));
-    let weak = Rc::downgrade(editor);
+    // 窓の中のエディタ（rerere の解決を忘れると、読み直したものに替わる）。
+    let current = Rc::new(RefCell::new(Rc::downgrade(editor)));
     let key = (editor.workdir.clone(), editor.path.clone());
+    let c = current.clone();
     window.connect_destroy(move |window| {
+        let weak = c.borrow().clone();
         let done = weak.upgrade().is_none_or(|e| e.window_done.get());
         KEEP.with(|k| {
             k.borrow_mut()
@@ -550,22 +549,11 @@ pub fn show_in_window(editor: &Rc<Editor>, parent: &gtk::Window) {
             notify_closed(key.0.as_deref(), &key.1);
         }
     });
-    // 解決済みにしたら閉じる（その前に、渡されていた知らせを呼ぶ）。
-    let previous = editor.on_resolved.borrow().clone();
-    let (w, e) = (window.downgrade(), Rc::downgrade(editor));
-    editor.set_on_resolved(move || {
-        previous();
-        if let Some(e) = e.upgrade() {
-            e.window_done.set(true);
-        }
-        if let Some(w) = w.upgrade() {
-            w.destroy();
-        }
-    });
+    adopt_in_window(editor, &window, &current);
     // 保存していない変更があれば、閉じる前に確かめる。
-    let weak = Rc::downgrade(editor);
+    let c = current.clone();
     window.connect_close_request(move |window| {
-        let Some(this) = weak.upgrade() else {
+        let Some(this) = c.borrow().upgrade() else {
             return glib::Propagation::Proceed;
         };
         if !this.has_unsaved_changes() {
@@ -580,6 +568,60 @@ pub fn show_in_window(editor: &Rc<Editor>, parent: &gtk::Window) {
         glib::Propagation::Stop
     });
     window.present();
+}
+
+/// `editor` を別の窓 `window` のエディタにする。
+fn adopt_in_window(
+    editor: &Rc<Editor>,
+    window: &gtk::Window,
+    current: &Rc<RefCell<std::rc::Weak<Editor>>>,
+) {
+    editor.set_on_pop_out(None);
+    editor.window.replace(Some(window.downgrade()));
+    current.replace(Rc::downgrade(editor));
+    // 窓がある間は持っておく（ボタンなどは弱い参照で呼ぶので、持たなければ開いた直後に消える）。
+    KEEP.with(|k| k.borrow_mut().push(editor.clone()));
+    // 解決済みにしたら閉じる（その前に、渡されていた知らせを呼ぶ）。
+    let previous = editor.on_resolved.borrow().clone();
+    let base = previous.clone();
+    let (w, e) = (window.downgrade(), Rc::downgrade(editor));
+    editor.set_on_resolved(move || {
+        previous();
+        if let Some(e) = e.upgrade() {
+            e.window_done.set(true);
+        }
+        if let Some(w) = w.upgrade() {
+            w.destroy();
+        }
+    });
+    // rerere の解決を忘れたら、読み直したエディタに替える（古い Result のまま解決済みにしないように）。
+    let (w, e, c) = (window.downgrade(), Rc::downgrade(editor), current.clone());
+    editor.set_on_reload(Some(Rc::new(move || {
+        let (Some(window), Some(editor)) = (w.upgrade(), e.upgrade()) else {
+            return;
+        };
+        let (base, current) = (base.clone(), c.clone());
+        glib::spawn_future_local(async move {
+            let next = load(
+                editor.repo.clone(),
+                editor.actions.clone(),
+                editor.path.as_str(),
+            )
+            .await;
+            match next {
+                Ok(next) => {
+                    next.set_on_resolved(move || base());
+                    window.set_child(Some(&next.root));
+                    KEEP.with(|k| k.borrow_mut().retain(|e| !Rc::ptr_eq(e, &editor)));
+                    adopt_in_window(&next, &window, &current);
+                    Editor::opened(&next);
+                }
+                Err(error) => {
+                    crate::sheets::alert(Some(&window), &error, "").await;
+                }
+            }
+        });
+    })));
 }
 
 impl Editor {
