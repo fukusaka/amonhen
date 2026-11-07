@@ -1237,7 +1237,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         guard let (isLocal, dragged) = draggedBranch(info), let node = item as? Node else { return [] }
         // お気に入りのブランチは、Branches の直下のお気に入りの間に落として並べ替える（絞り込み中は、名前順に
         // 平らに並べていてお気に入りの行がないので、並べ替えない）。
-        if isLocal, filterWords.isEmpty, pinnedOrder.contains(dragged), node.title == "Branches", node.item == nil, node.page == nil,
+        if isLocal, filterWords.isEmpty, pinnedOrder.contains(dragged), node.title == "Branches", groups.contains(where: { $0 === node }),
            index != NSOutlineViewDropOnItemIndex, index <= pinnedOrder.count {
             return .move
         }
@@ -1354,6 +1354,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
         // Remotes の組とその下のリモート（docs/ux.md の 4.5 のリモート: 設定のページと同じ操作をここにも）。
         if let actions, let node = outline.item(atRow: outline.clickedRow) as? Node, node.item == nil, node.worktree == nil {
+            // 見出しそのもの（`Remotes/x` のようなブランチのフォルダは、同じ名前でも見出しではない）。
+            let isGroup = groups.contains { $0 === node }
             if let remote = node.remote {
                 menu.addItem(ClosureMenuItem(title: L("Rename…")) { [weak self] in self?.onRemoteAction?(remote, .edit) })
                 menu.addItem(ClosureMenuItem(title: L("Edit URL…")) { [weak self] in self?.onRemoteAction?(remote, .edit) })
@@ -1362,7 +1364,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 menu.addItem(ClosureMenuItem(title: L("Remove…")) { [weak self] in self?.onRemoteAction?(remote, .remove) })
                 return
             }
-            if node.title == "Remotes" {
+            if isGroup, node.title == "Remotes" {
                 menu.addItem(ClosureMenuItem(title: L("Add Remote…")) { [weak self] in self?.onRemoteAction?(nil, .add) })
                 return
             }
@@ -1373,15 +1375,15 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 menu.addItem(ClosureMenuItem(title: "Split…") { [weak self] in self?.onSubtreeAction?(dir, .split) })
                 return
             }
-            if node.title == "Branches", node.branchGroup == nil {
+            if isGroup, node.title == "Branches", node.branchGroup == nil {
                 menu.addItem(ClosureMenuItem(title: L("Clean Up Branches…")) { [weak self] in self?.onCleanUpBranches?() })
                 return
             }
-            if node.title == "Subtrees" {
+            if isGroup, node.title == "Subtrees" {
                 menu.addItem(ClosureMenuItem(title: L("Add Subtree…")) { [weak self] in self?.onSubtreeAction?(nil, .add) })
                 return
             }
-            if node.title == "Submodules" {
+            if isGroup, node.title == "Submodules" {
                 menu.addItem(ClosureMenuItem(title: "Update All") { actions.perform(["op": "updateSubmodules", "paths": [String]()]) })
                 menu.addItem(ClosureMenuItem(title: "Update Submodules…") { [weak self] in self?.onSubmoduleAction?(nil, .update) })
                 menu.addItem(ClosureMenuItem(title: "Sync URLs") { [weak self] in self?.onSubmoduleAction?(nil, .sync) })
