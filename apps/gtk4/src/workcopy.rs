@@ -2684,10 +2684,25 @@ impl Inner {
         let pattern = pattern.to_owned();
         glib::spawn_future_local(async move {
             let files = crate::sheets::run(&repo, json!({ "op": "ignoreFiles" })).await;
-            let Some(gitignore) = with_ignore_pattern(
-                files["info"]["gitignore"].as_str().unwrap_or_default(),
-                &pattern,
+            // 読めなければ書かない（空として書くと、.gitignore と info/exclude の中身を失う。macOS 版と同じ）。
+            let (Some(current), Some(exclude)) = (
+                files["info"]["gitignore"].as_str(),
+                files["info"]["exclude"].as_str(),
             ) else {
+                actions
+                    .fail(crate::statusbar::Failure {
+                        message: files["error"]
+                            .as_str()
+                            .map_or_else(|| tr!("The operation failed"), str::to_owned),
+                        kind: None,
+                        path: None,
+                        command: None,
+                        heading: None,
+                    })
+                    .await;
+                return;
+            };
+            let Some(gitignore) = with_ignore_pattern(current, &pattern) else {
                 return;
             };
             // 読んだ worktree に書く（読んでいる間に書き込む先を替えても、ほかの worktree の .gitignore を、
@@ -2697,7 +2712,7 @@ impl Inner {
                 vec![json!({
                     "op": "saveIgnoreFiles",
                     "gitignore": gitignore,
-                    "exclude": files["info"]["exclude"].as_str().unwrap_or_default(),
+                    "exclude": exclude,
                 })],
                 |_| {},
             );
