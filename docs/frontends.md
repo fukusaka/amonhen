@@ -218,8 +218,8 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
 | One checkbox list (☑ ▣ ☐, header and folder checks) | ✓ | ✓ | ✓ | n/a | VSCode: Separate Staged and Changes groups. |
-| List / Tree / Flat | ✓ | ✓ | — | n/a |  |
-| Filter on paths | ✓ | ✓ | — | n/a |  |
+| List / Tree / Flat | ✓ | ✓ | ✓ | n/a |  |
+| Filter on paths | ✓ | ✓ | ✓ | n/a |  |
 | Per-row +/− counts and Discard on hover | ✓ | ✓ | △ | △ | VSCode: No line counts.<br>CLI: `diff --stat`. |
 | Space toggles, ⌫ discards | ✓ | ✓ | △ | n/a | VSCode: Space toggles; no ⌫. |
 | Commit box on top with 50/72 counter and body guide | ✓ | ✓ | △ | n/a | VSCode: No counter or guide. |

@@ -11,6 +11,7 @@ import { discardFiles, discardLines } from '../state/discard.ts';
 import type { WorkingCopyHostMessage, WorkingCopyWebviewMessage } from '../workingCopy/protocol.ts';
 import { commitStaged } from './commit.ts';
 import { openConflict } from './diff.ts';
+import { fileLayout, setFileLayout } from './preferences.ts';
 import { acceptConflicts, indexMode, showError, stageChanges } from './stageCommands.ts';
 
 /**
@@ -76,7 +77,7 @@ export class WorkingCopyController implements vscode.Disposable {
       }
       lastMessage = this.head.message;
     }
-    this.post({ type: 'wcFiles', files: this.files, branch: status?.branch.head, lastMessage });
+    this.post({ type: 'wcFiles', files: this.files, branch: status?.branch.head, lastMessage, layout: fileLayout() });
   }
 
   /** 選んでいるファイルの差分を送る。stage してグループが変わっても、同じファイルを見続ける */
@@ -156,6 +157,10 @@ export class WorkingCopyController implements vscode.Disposable {
   }
 
   async handle(message: WorkingCopyWebviewMessage): Promise<void> {
+    if (message.type === 'wcLayout') {
+      await setFileLayout(message.layout);
+      return;
+    }
     const repo = this.repo;
     if (!repo) {
       return;

@@ -154,9 +154,12 @@ async function workingCopyFlow(label: string): Promise<void> {
   assert.ok(old.startsWith('three') && !old.includes('\n'), '作業中のファイルは CRLF');
   const changed = before.replace(`${old}\r\n`, `three ${label}\r\n`);
   writeFileSync(path, changed, 'latin1');
+  // ファイル一覧の見せ方は覚えて、次に送る一覧で返す
+  await wc.handle({ type: 'wcLayout', layout: 'tree' });
   const mark = posted.length;
   await vscode.commands.executeCommand('amonhen.refresh');
-  await waitPosted('wcFiles', mark, (m) => m.files.some((f) => f.group === 'unstaged' && f.path === FILE));
+  await waitPosted('wcFiles', mark, (m) => m.layout === 'tree' && m.files.some((f) => f.group === 'unstaged' && f.path === FILE));
+  await wc.handle({ type: 'wcLayout', layout: 'flat' });
 
   /** 差分を選び、変わった行が 1 行の書き換えだけであることを確かめて、その行を返す */
   const select = async (group: 'unstaged' | 'staged') => {
