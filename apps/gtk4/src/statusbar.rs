@@ -613,15 +613,15 @@ impl StatusBar {
             }
         });
         children.push(close.upcast());
-        self.show(
-            Row::Failure,
-            &line(&children, (!cancelled).then_some("status-failure")),
-        );
-        // 取り消したことは、しばらくしたら消す。
+        let row = line(&children, (!cancelled).then_some("status-failure"));
+        self.show(Row::Failure, &row);
+        // 取り消したことは、しばらくしたら消す（その行のままなら。後から出た失敗は消さない）。
         if cancelled {
             let this = Rc::downgrade(self);
             glib::timeout_add_seconds_local_once(5, move || {
-                if let Some(this) = this.upgrade() {
+                if let Some(this) = this.upgrade()
+                    && row.root().is_some()
+                {
                     this.hide(Row::Failure);
                 }
             });
