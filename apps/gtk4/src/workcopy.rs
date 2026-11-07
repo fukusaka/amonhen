@@ -2622,7 +2622,9 @@ impl Inner {
         // untracked のファイルにはまだ履歴がない。代わりに .gitignore に足せる（そのパスか、拡張子のパターン）。
         if untracked {
             let mut patterns = vec![path.clone()];
-            if let Some((_, ext)) = name.rsplit_once('.')
+            // `.env` のように名前だけのものに拡張子はない（macOS 版と同じ）。
+            if let Some((stem, ext)) = name.rsplit_once('.')
+                && !stem.is_empty()
                 && !ext.is_empty()
             {
                 patterns.push(format!("*.{ext}"));
