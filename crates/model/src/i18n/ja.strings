@@ -1830,6 +1830,7 @@
 "Open in a Separate Window" = "別ウィンドウで開く";
 "The merge editor is open in a separate window" = "マージエディタを別ウィンドウで開いています";
 "Can’t read: {error}" = "読めません: {error}";
+"It isn’t UTF-8 text, so it can’t be edited here. Use Take Current File or Take Incoming File." = "UTF-8 のテキストではないので、ここでは編集できません。「手元のファイルを使う」か「取り込む側のファイルを使う」を選んでください。";
 
 /* GTK4: Settings > Performance の fsmonitor */
 "Speed up status with fsmonitor" = "fsmonitor で status を速くする";

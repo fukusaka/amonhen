@@ -3659,6 +3659,15 @@ impl Repository {
                     .files()
                     .read(Root::Workdir, &path)?
                     .ok_or_else(|| tr!("File not found"))?;
+                // UTF-8 でなければ開かない（文字列にするときに置き換えた内容を、保存で書いてしまう）。
+                let not_text = || {
+                    tr!(
+                        "It isn’t UTF-8 text, so it can’t be edited here. Use Take Current File or Take Incoming File."
+                    )
+                };
+                if std::str::from_utf8(&data).is_err() {
+                    return Err(not_text().into());
+                }
                 let markers = crate::conflict::parse(&data).len();
                 // マーカーが残っていない（rerere が解決を当てた、ほかのエディタで直した）なら、左右には index に
                 // 残っている両側の内容を出す（3 欄が同じにならないように）。
@@ -3669,7 +3678,8 @@ impl Repository {
                         id.map(|id| {
                             let blob = backend.blob(&id)?;
                             let text = backend.to_worktree_form(&path, &blob)?;
-                            Ok(serde_json::json!({ "text": String::from_utf8_lossy(&text), "regions": [] }))
+                            let text = String::from_utf8(text).map_err(|_| not_text())?;
+                            Ok(serde_json::json!({ "text": text, "regions": [] }))
                         })
                         .transpose()
                     };
@@ -8598,6 +8608,45 @@ mod tests {
         );
         assert_eq!(sides["info"]["markers"], 1);
         assert_eq!(sides["info"]["rerere"], false);
+    }
+
+    #[test]
+    fn does_not_open_files_that_are_not_utf8_in_the_merge_editor() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        let write = |name: &str, bytes: &[u8], message: &str| {
+            std::fs::write(dir.join(name), bytes).unwrap();
+            git(dir, &["add", name]);
+            git(dir, &["commit", "-q", "-m", message]);
+        };
+        write("a.png", b"\x89PNG\xff base", "base png");
+        write("sjis.txt", b"\x82\xa0 base\n", "base sjis");
+        git(dir, &["switch", "-q", "-c", "topic"]);
+        write("a.png", b"\x89PNG\xff topic", "topic png");
+        write("sjis.txt", b"\x82\xa0 topic\n", "topic sjis");
+        git(dir, &["switch", "-q", "-"]);
+        write("a.png", b"\x89PNG\xff main", "main png");
+        write("sjis.txt", b"\x82\xa0 main\n", "main sjis");
+        assert_eq!(
+            run(&repo, r#"{"op":"merge","rev":"topic"}"#)["outcome"],
+            "conflict"
+        );
+        repo.load_status().unwrap();
+        for path in ["a.png", "sjis.txt"] {
+            let command = serde_json::json!({ "op": "mergeSides", "path": path }).to_string();
+            let sides = run(&repo, &command);
+            assert!(
+                sides["error"].as_str().unwrap().contains("UTF-8"),
+                "{sides}"
+            );
+        }
+        // 片側を選ぶのは、バイトのまま。
+        let taken = run(&repo, r#"{"op":"takeSide","path":"a.png","ours":false}"#);
+        assert_eq!(taken["ok"], true, "{taken}");
+        assert_eq!(
+            std::fs::read(dir.join("a.png")).unwrap(),
+            b"\x89PNG\xff topic"
+        );
     }
 
     #[test]

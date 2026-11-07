@@ -237,7 +237,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 差分の表示の選択（unified/split・空白・前後の行・折り返し） | — | — | — | n/a |  |
 | 行・hunk・ファイルを捨てる（Undo できる） | ✓ | ✓ | ✓ | ✓ | CLI: `discard --rows`。 |
 | Add to .gitignore | ✓ | ✓ | — | n/a |  |
-| コンフリクトのファイルからマージエディターを開く | ✓ | ✓ | ✓ | n/a | VSCode: VSCode のマージエディターを開く。 |
+| コンフリクトのファイルからマージエディターを開く | ✓ | ✓ | ✓ | n/a | macOS, GTK4: UTF-8 でないファイルは開かない。片側を選ぶ。<br>VSCode: VSCode のマージエディターを開く。 |
 | 一部のフォルダだけを取り出しているとき、一覧の上に知らせる | ✓ | ✓ | — | △ | CLI: `status` が sparse checkout を添える。 |
 
 ## History

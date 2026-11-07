@@ -237,7 +237,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Diff options (unified/split, whitespace, context, wrap) | — | — | — | n/a |  |
 | Discard lines, hunks and files (undoable) | ✓ | ✓ | ✓ | ✓ | CLI: `discard --rows`. |
 | Add to .gitignore | ✓ | ✓ | — | n/a |  |
-| Conflicted files open the merge editor | ✓ | ✓ | ✓ | n/a | VSCode: Opens VSCode's merge editor. |
+| Conflicted files open the merge editor | ✓ | ✓ | ✓ | n/a | macOS, GTK4: A file that isn't UTF-8 doesn't open in it; take one side.<br>VSCode: Opens VSCode's merge editor. |
 | Note above the list when only some folders are checked out | ✓ | ✓ | — | △ | CLI: `status` notes a sparse checkout. |
 
 ## History
