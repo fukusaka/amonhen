@@ -902,10 +902,14 @@ impl Editor {
             button.connect_clicked(move |_| {
                 let Some(this) = weak.upgrade() else { return };
                 let reload = this.on_reload.borrow().clone();
-                this.actions.perform_then(
+                // 別の窓のエディタも、開いた worktree で。失敗したら、編集中の Result を残す（読み直さない）。
+                this.actions.perform_in(
+                    this.repo.clone(),
                     vec![serde_json::json!({ "op": "forgetResolution", "path": this.path })],
-                    move || {
-                        if let Some(f) = &reload {
+                    move |reply| {
+                        if !reply["error"].is_string()
+                            && let Some(f) = &reload
+                        {
                             f();
                         }
                     },

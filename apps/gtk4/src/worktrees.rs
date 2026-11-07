@@ -866,20 +866,16 @@ pub fn menu(
             items.push(menu::action(tr!("Locate Moved Folder…"), move || {
                 locate(&a, &w, &info)
             }));
-            let a = actions.clone();
+            let (a, w) = (actions.clone(), worktrees.clone());
             items.push(menu::action(tr!("Prune Worktrees"), move || {
-                a.perform(json!({ "op": "worktreePrune" }))
+                perform_in_opened(&a, &w, json!({ "op": "worktreePrune" }))
             }));
         } else {
             // ロックしていると、git は prune・remove・move で消したり移したりしない。
             if info.locked.is_some() {
                 let (a, w, p) = (actions.clone(), worktrees.clone(), path.clone());
                 items.push(menu::action(tr!("Unlock"), move || {
-                    let w = w.clone();
-                    a.perform_then(
-                        vec![json!({ "op": "worktreeUnlock", "path": p })],
-                        move || w.reload_list(),
-                    )
+                    perform_in_opened(&a, &w, json!({ "op": "worktreeUnlock", "path": p }))
                 }));
             } else {
                 let (a, w, i) = (actions.clone(), worktrees.clone(), info.clone());
@@ -894,6 +890,21 @@ pub fn menu(
         }
     }
     items
+}
+
+/// worktree そのものの操作を、開いたリポジトリで実行して一覧を読み直す（書き込む先の worktree のフォルダがなくても
+/// 動き、相対パスはいつも同じ所から。macOS 版と同じ）。
+fn perform_in_opened(
+    actions: &Rc<crate::actions::Actions>,
+    worktrees: &Rc<Worktrees>,
+    command: serde_json::Value,
+) {
+    let w = worktrees.clone();
+    let done = move |_: &serde_json::Value| w.reload_list();
+    match worktrees.opened() {
+        Some(repo) => actions.perform_in(repo, vec![command], done),
+        None => actions.perform_with(vec![command], done),
+    }
 }
 
 /// worktree をロックする（git が prune・remove・move で消したり移したりしない）。理由は git の記録に残る。
@@ -918,9 +929,10 @@ fn lock(actions: &Rc<crate::actions::Actions>, worktrees: &Rc<Worktrees>, info: 
             return;
         }
         let text = reason.text().trim().to_owned();
-        actions.perform_then(
-            vec![json!({ "op": "worktreeLock", "path": info.path, "reason": (!text.is_empty()).then_some(text) })],
-            move || worktrees.reload_list(),
+        perform_in_opened(
+            &actions,
+            &worktrees,
+            json!({ "op": "worktreeLock", "path": info.path, "reason": (!text.is_empty()).then_some(text) }),
         );
     });
 }
@@ -937,15 +949,21 @@ fn move_to(actions: &Rc<crate::actions::Actions>, worktrees: &Rc<Worktrees>, inf
         tr!("Move"),
         move |to| {
             // 書き込む先の worktree を移すなら、先に開いたリポジトリの worktree に戻す（macOS 版と同じ）。
-            if info2.key == w.editing_key()
-                && let Some(main) = w.list.borrow().iter().find(|i| i.current)
-            {
-                a.edit_worktree(&main.path);
+            if info2.key == w.editing_key() {
+                let main = w
+                    .list
+                    .borrow()
+                    .iter()
+                    .find(|i| i.current)
+                    .map(|i| i.path.clone());
+                if let Some(main) = main {
+                    w.edit(&main);
+                }
             }
-            let w = w.clone();
-            a.perform_then(
-                vec![json!({ "op": "worktreeMove", "path": info2.path, "to": to })],
-                move || w.reload_list(),
+            perform_in_opened(
+                &a,
+                &w,
+                json!({ "op": "worktreeMove", "path": info2.path, "to": to }),
             );
         },
     );
@@ -963,13 +981,7 @@ fn locate(actions: &Rc<crate::actions::Actions>, worktrees: &Rc<Worktrees>, info
         ),
         info.path.clone(),
         tr!("Reconnect"),
-        move |to| {
-            let w = w.clone();
-            a.perform_then(
-                vec![json!({ "op": "worktreeRepair", "paths": [to] })],
-                move || w.reload_list(),
-            );
-        },
+        move |to| perform_in_opened(&a, &w, json!({ "op": "worktreeRepair", "paths": [to] })),
     );
 }
 
@@ -985,6 +997,7 @@ fn ask_folder(
 ) {
     use crate::sheets::{Response, Sheet};
     let (actions, remote) = (actions.clone(), worktrees.remote);
+    let on_ssh = on_ssh(&worktrees.location);
     glib::spawn_future_local(async move {
         let sheet = Sheet::unnamed(crate::sheets::parent(&actions).as_ref(), &title, &message);
         let field = gtk::Entry::new();
@@ -996,10 +1009,12 @@ fn ask_folder(
         if !remote {
             let choose = gtk::Button::with_label(&tr!("Choose…"));
             let (f, w, t) = (field.downgrade(), sheet.window.downgrade(), title.clone());
+            let m = message.clone();
             choose.connect_clicked(move |_| {
                 let (f, w) = (f.clone(), w.upgrade());
                 let request = crate::filepicker::Request {
                     title: t.clone(),
+                    message: m.clone(),
                     kind: crate::filepicker::Kind::Folder,
                     initial: f
                         .upgrade()
@@ -1029,10 +1044,17 @@ fn ask_folder(
         if sheet.run().await != Response::Ok {
             return;
         }
-        let path = field.text().trim().to_owned();
-        if !path.is_empty() {
-            done(path);
+        let mut path = field.text().trim().to_owned();
+        if path.is_empty() {
+            return;
         }
+        // New Worktree と同じ（git は `~` を広げない。SSH 先のパスは手元のホームで広げない）。
+        if !on_ssh {
+            path = crate::repos::expand_tilde(&path)
+                .to_string_lossy()
+                .into_owned();
+        }
+        done(path);
     });
 }
 

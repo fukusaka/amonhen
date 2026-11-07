@@ -504,7 +504,7 @@ final class Actions {
         let alert = NSAlert()
         alert.messageText = paths.isEmpty ? "Stash Changes"
             : paths.count == 1 ? "Stash Changes in \((paths[0] as NSString).lastPathComponent)" : "Stash Changes in \(paths.count) Files"
-        alert.informativeText = L("Message (optional)")
+        alert.informativeText = sheetMessage(L("Message (optional)"))
         alert.addButton(withTitle: "Stash")
         alert.addButton(withTitle: L("Cancel"))
         let field = NSTextField(string: "")

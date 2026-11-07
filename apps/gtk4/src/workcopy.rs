@@ -2772,12 +2772,25 @@ impl Inner {
             this.embed_message(&tr!("The merge editor is open in a separate window"));
         })));
         // rerere の解決を忘れたら、読み直して埋め込み直す（ファイルがコンフリクトのある形に戻った）。
+        // 今そのファイルを選んでいるときだけ（別の窓で忘れた間に、別のファイルや worktree を選んでいれば、そのまま）。
         let (weak, k, p) = (Rc::downgrade(this), key.clone(), editor.path().to_owned());
+        let e = Rc::downgrade(editor);
         editor.set_on_reload(Some(Rc::new(move || {
-            let Some(this) = weak.upgrade() else { return };
-            this.unembed();
+            let (Some(this), Some(editor)) = (weak.upgrade(), e.upgrade()) else {
+                return;
+            };
+            let embedded = this
+                .embedded
+                .borrow()
+                .as_ref()
+                .is_some_and(|e| Rc::ptr_eq(e, &editor));
+            if embedded {
+                this.unembed();
+            }
             this.editors.borrow_mut().remove(&k);
-            Inner::show_conflict(&this, &p, this.generation.get());
+            if this.editor_key(&p) == k && this.selected.borrow().as_deref() == Some(p.as_str()) {
+                Inner::show_conflict(&this, &p, this.generation.get());
+            }
         })));
         // 保存して解決済みにしたら外す（status を読み直すと、普段の差分になる）。
         let weak = Rc::downgrade(this);

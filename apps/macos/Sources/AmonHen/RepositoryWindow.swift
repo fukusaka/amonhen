@@ -1785,7 +1785,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     /// 書き込む先の worktree の作業ツリーのファイルを、別のコミットの版に戻す（History・Reflog・File History から）。
     private func restore(_ path: String, _ paths: [String], rev: String, before: Bool) {
-        RestoreSheet.ask(in: window, path: path, paths: paths, rev: rev, before: before) { [weak self] command in
+        RestoreSheet.ask(in: window, path: path, paths: paths, rev: rev, before: before,
+                         message: actions.sheetMessage) { [weak self] command in
             self?.actions.perform(command)
         }
     }

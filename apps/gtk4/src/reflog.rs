@@ -235,6 +235,10 @@ impl ReflogView {
     }
 
     /// 行の「Compare with Current HEAD (Range Diff)」で使う。
+    pub fn set_restore(&self, restore: Option<crate::filetools::Restore>) {
+        self.inner.pane.set_restore(restore);
+    }
+
     pub fn set_range_diff(&self, opener: crate::rangediff::Opener) {
         self.inner.range_diff.replace(Some(opener));
     }

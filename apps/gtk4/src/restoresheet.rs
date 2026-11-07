@@ -17,6 +17,10 @@ use crate::sheets::{self, Response, Sheet};
 /// 元の名前に戻る。
 pub fn items(actions: &Rc<Actions>, commit: &str, change: &FileChange) -> Vec<Item> {
     let mut items = Vec::new();
+    // サブモジュールの行には出さない（git restore は中身のコミットを動かさない。macOS 版と同じ）。
+    if change.submodule {
+        return items;
+    }
     if change.kind != ChangeKind::Deleted {
         let (a, c, p) = (actions.clone(), commit.to_owned(), change.path.clone());
         items.push(menu::action(tr!("Restore This Version…"), move || {

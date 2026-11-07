@@ -52,6 +52,9 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- A submodule inside an added worktree opens as itself, not as the main repository.
+- In the GTK4 app, the sidebar opens a submodule from the worktree being edited, and Forget This Resolution in a
+  separate merge window stays in its own worktree.
 - New Worktree's two fields and Clone's URL and Location fields no longer collapse to a sliver.
 - Create Pull Request… is no longer offered on the default branch, and the default branch no longer shows the
   "Merged into" mark, when the default branch is a remote one such as `origin/main`.

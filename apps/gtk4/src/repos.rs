@@ -26,7 +26,8 @@ pub fn recent() -> Vec<String> {
 
 /// 追加した worktree のフォルダーなら、そのメインのリポジトリのフォルダー（macOS 版の
 /// `RepositoryList.mainRepository(ofWorktree:)`）。`.git` の `gitdir:` が `<main>/.git/worktrees/<名前>` を
-/// 指すものだけ。git は起動しない。daemon・SSH 越しの場所は None。
+/// 指すものだけ（追加した worktree の中の submodule は `<名前>/modules/…` を指す別のリポジトリ）。git は起動
+/// しない。daemon・SSH 越しの場所は None。
 pub fn main_of_worktree(location: &Path) -> Option<PathBuf> {
     if amonhen_remote::location::is_remote(&location.to_string_lossy()) {
         return None;
@@ -39,8 +40,8 @@ pub fn main_of_worktree(location: &Path) -> Option<PathBuf> {
     let target = Path::new(text.strip_prefix("gitdir:")?.trim());
     let git_dir = location.join(target);
     let git_dir = git_dir.to_string_lossy();
-    let (main, _) = git_dir.split_once("/.git/worktrees/")?;
-    Some(PathBuf::from(main))
+    let (main, name) = git_dir.split_once("/.git/worktrees/")?;
+    (!name.trim_end_matches('/').contains('/')).then(|| PathBuf::from(main))
 }
 
 /// 手元のリポジトリの中のフォルダーなら、その作業ツリーの一番上（`.git` のあるフォルダー）。git と同じく上へ
@@ -942,6 +943,21 @@ async fn choose_folder(parent: &gtk::Window, dest: &Path) {
 #[cfg(test)]
 mod tests {
     use super::{main_of_worktree, with_daemon};
+
+    #[test]
+    fn a_submodule_inside_a_worktree_is_not_the_worktree() {
+        let dir = std::env::temp_dir().join(format!("amonhen-main-of-{}", std::process::id()));
+        let write_git = |folder: &str, target: &str| {
+            std::fs::create_dir_all(dir.join(folder)).unwrap();
+            std::fs::write(dir.join(folder).join(".git"), format!("gitdir: {target}\n")).unwrap();
+        };
+        let main = dir.join("r");
+        write_git("wt", &format!("{}/.git/worktrees/wt", main.display()));
+        write_git("wt/sub", "../../r/.git/worktrees/wt/modules/sub");
+        assert_eq!(super::main_of_worktree(&dir.join("wt")), Some(main));
+        assert_eq!(super::main_of_worktree(&dir.join("wt/sub")), None);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn clones_with_what_was_chosen_to_download() {

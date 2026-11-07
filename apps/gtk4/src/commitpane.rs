@@ -30,6 +30,8 @@ pub struct CommitPane {
     commit: RefCell<Option<String>>,
     /// 詳細の親・メッセージの中の ID、Blame・File History の行を押したら、History でそのコミットを選ぶ。
     on_commit: RefCell<Option<OnCommit>>,
+    /// File History の「この版に戻す…」。
+    restore: RefCell<Option<crate::filetools::Restore>>,
     /// 裏で読んでいる数（`--snapshot` はなくなるまで待つ）。
     pending: Rc<Cell<u32>>,
     /// 選び直したら増やし、古い結果を捨てる。
@@ -123,13 +125,14 @@ impl CommitPane {
                     ));
                 }
                 let path = path.to_owned();
+                let restore = pane.restore.borrow().clone();
                 items.push(menu::action("File History", move || {
                     crate::filetools::file_history(
                         &window,
                         repo.clone(),
                         &path,
                         on_commit.clone(),
-                        None,
+                        restore.clone(),
                     );
                 }));
                 items
@@ -142,6 +145,7 @@ impl CommitPane {
                 tools_repo: RefCell::default(),
                 commit: RefCell::default(),
                 on_commit: RefCell::default(),
+                restore: RefCell::default(),
                 pending,
                 generation: Cell::new(0),
             }
@@ -173,6 +177,11 @@ impl CommitPane {
             f,
             None,
         );
+    }
+
+    /// ここから開く File History の「この版に戻す…」を決める。
+    pub fn set_restore(&self, restore: Option<crate::filetools::Restore>) {
+        self.restore.replace(restore);
     }
 
     /// Blame・File History を開くリポジトリ（書き込む先の worktree）を決める。
