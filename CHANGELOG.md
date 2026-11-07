@@ -55,6 +55,7 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- The merge editor's safe rules run once per conflict, so saving no longer reapplies what Undo took back.
 - Rows that only look consecutive in a filtered History are no longer treated as a range, and a binary conflict no
   longer counts as resolved without markers.
 - macOS: choosing a branch while History shows only matches selects its commit, and selected branches stay highlighted
