@@ -173,7 +173,6 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Stash (message, include untracked) | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Stash: only the staged changes, keep the index, selected files | ✓ | ✓ | ✓ | △ | VSCode: With the engine, the Stash list has the first two, and a Working Copy file's right-click has Stash… for that file.<br>CLI: Via `amonhen run` (`stashPush` with `staged`, `keepIndex`, `paths`). |
 | Delete ignored files (listed first) | ✓ | ✓ | ✓ | △ | VSCode: The Command Palette and Working Copy's right-click; the list is a pick list, all chosen at first.<br>CLI: Via `amonhen run` (`ignoredFiles`, `deleteIgnored`). |
-| Stash: staged only, selected files only | — | — | — | — |  |
 | Pop the latest stash (asks first) | ✓ | ✓ | ✓ | △ | VSCode: Pop Latest Stash… on the Stashes header and in the Command Palette (a row's Pop doesn't ask).<br>CLI: Via `amonhen run`. |
 | Activity spinner and count | ✓ | ✓ | ✓ | n/a | VSCode: VSCode's progress notifications. |
 | Refresh and Rebuild History | ✓ | ✓ | △ | △ | VSCode: Refresh only.<br>CLI: `log --rebuild`, `daemon rebuild`. |
