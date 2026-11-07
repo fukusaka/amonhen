@@ -554,18 +554,19 @@ impl StatusBar {
                     actions.clone(),
                     failure.command.clone(),
                 );
-                b.connect_clicked(move |b| {
-                    if let Some(this) = this.upgrade() {
-                        this.hide(Row::Failure);
-                    }
+                b.connect_clicked(move |_| {
+                    let Some(this) = this.upgrade() else { return };
+                    this.hide(Row::Failure);
+                    // バーから（行は外したので、ボタンからは窓のアクションに届かない）。
+                    let root = this.root.clone();
                     let activate = |name: &str| {
-                        let _ = b.activate_action(name, None);
+                        let _ = root.activate_action(name, None);
                     };
                     match &remedy {
                         // その worktree を書き込む先にする（別の窓では開かない）。
                         Remedy::OpenWorktree(path) => {
                             let _ =
-                                b.activate_action("win.edit-worktree", Some(&path.to_variant()));
+                                root.activate_action("win.edit-worktree", Some(&path.to_variant()));
                         }
                         Remedy::OpenTerminal => activate("win.open-in-terminal"),
                         Remedy::Retry => {
