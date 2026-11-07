@@ -155,6 +155,10 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     /// 確かめたときの refs の番号。refs が変わったら（タグを付け直したかもしれない）、見えている行から確かめ直す
     /// （コアが ID で覚えているので速い）。
     private var tagSignatures: [String: (status: SignatureStatus?, tag: TagSignature, epoch: Int)] = [:]
+    /// 確かめられなかったタグと、そのときの ref の代（ref が変わるまで確かめ直さない）。
+    private var tagSignaturesFailed: [String: Int] = [:]
+    /// 作り直した後に選び直している間（選んだ知らせで History を絞り直さない）。
+    private var reselecting = false
     /// 署名を検証した場所（吹き出しに出す。RepositoryWindow が渡す）。
     var signaturePlace = SignaturePlace(local: true, detail: L("the repository is on this Mac"))
     private var tagSignatureEpoch = 0
@@ -540,6 +544,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         let workspaceOpen = first || expanded.contains(workspace.title)
         let workingCopyOpen = isWorkingCopyOpen
         let selectedTitle = (outline.item(atRow: outline.selectedRow) as? Node).map { ($0.title, $0.page) }
+        let selectedRefs = outline.selectedRowIndexes.compactMap { (outline.item(atRow: $0) as? Node)?.item }
 
         func items(_ kind: RefKind) -> [RefItem] { refs.items.filter { $0.kind == kind } }
         // stash は Workspace の History（と Conflicts）の下の 1 行に、数だけ（絞り込み中も）。
@@ -563,6 +568,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             if workingCopyOpen { outline.expandItem(workingCopyNode) }
             groups.forEach { outline.expandItem($0) }
             if let (_, page) = selectedTitle, let page { select(page: page) }
+            reselect(selectedRefs)
             return
         }
         var groups: [Node] = []
@@ -643,6 +649,24 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         expandFolders()
         // 作り直す前に選んでいた Working Copy・History を選び直す。
         if let (_, page) = selectedTitle, let page { select(page: page) }
+        reselect(selectedRefs)
+    }
+
+    /// 作り直す前に選んでいたブランチ・タグを選び直す（History はそれに絞ったままなので、知らせない）。
+    private func reselect(_ refs: [RefItem]) {
+        guard !refs.isEmpty else { return }
+        var rows = IndexSet()
+        for ref in refs {
+            let row = (0..<outline.numberOfRows).first {
+                guard let item = (outline.item(atRow: $0) as? Node)?.item else { return false }
+                return item.kind == ref.kind && item.name == ref.name
+            }
+            if let row { rows.insert(row) }
+        }
+        guard !rows.isEmpty else { return }
+        reselecting = true
+        outline.selectRowIndexes(rows, byExtendingSelection: false)
+        reselecting = false
     }
 
     /// Inactive とみなす日数（最後のコミットからこれだけ経ったブランチ）。
@@ -1712,6 +1736,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     }
 
     func outlineViewSelectionDidChange(_ notification: Notification) {
+        guard !reselecting else { return }
         // ブランチ・タグを複数選んだら、それぞれから辿れる履歴をまとめて出す。
         if outline.selectedRowIndexes.count > 1 {
             let selected = outline.selectedRowIndexes.compactMap { (outline.item(atRow: $0) as? Node)?.item }
