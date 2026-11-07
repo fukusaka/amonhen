@@ -832,6 +832,19 @@ impl Loader {
         glib::spawn_future_local(async move {
             let github = of(&repo).await;
             this.github.replace(github.clone());
+            // Open on GitHub・Create Pull Request… は、fork かどうかを gh に聞く前から使える（macOS 版と同じ）。
+            this.actions.update_facts(|f| {
+                f.github = github.is_some();
+                f.gh = available();
+            });
+            if let Some(s) = this.sidebar.upgrade() {
+                let fork = this
+                    .target
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(PullRequestTarget::is_fork);
+                s.set_can_create_pull_request(github.is_some(), fork);
+            }
             let target = match &github {
                 Some(github) => Some(pull_request_target(github).await),
                 None => None,
@@ -1273,10 +1286,6 @@ fn create_pull_request_in(
         .await
         .unwrap_or_else(|_| Err(String::new()));
         crate::activity::end();
-        // できてもできなくても、GitHub の様子を読み直す（macOS 版と同じ）。
-        if let Some(loader) = loader_of(&actions) {
-            loader.load(true);
-        }
         match result {
             Ok(url) => {
                 // 済んだことの知らせなので、閉じるボタンは Close（macOS 版と同じ）。
@@ -1293,6 +1302,10 @@ fn create_pull_request_in(
             }
             // gh の文を見出しにして知らせる（macOS 版の NSAlert(error:)）。
             Err(e) => crate::sheets::alert(window.as_ref(), &e, "").await,
+        }
+        // できてもできなくても、知らせを閉じてから GitHub の様子を読み直す（macOS 版と同じ）。
+        if let Some(loader) = loader_of(&actions) {
+            loader.load(true);
         }
     });
 }
