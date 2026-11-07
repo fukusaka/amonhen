@@ -47,7 +47,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     /// Range Diff の画面（同じ一連のコミットの 2 つの版の比べ合わせ）。開いている間だけサイドバーに出す。
     private let rangeDiff: RangeDiffViewController
     /// リポジトリの設定の画面（サイドバーの Workspace の Settings）。
-    private let settings: RepositorySettingsPage
+    private var settings: RepositorySettingsPage
     private var actions: Actions { editing.actions }
     private let toolbar: MainToolbar
     private var watch: RepositoryWatch?
@@ -318,16 +318,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         history.actions = actions
         stashes.actions = actions
         reflog.actions = actions
-        // git の設定・リモートを変えたら、読み直す。
-        settings.model.onRepositoryChange = { [weak self] in self?.refreshRepository(nil) }
-        // 取得とフォルダのページの操作（取り足す・取り直す・取り出すフォルダを変える）は、Fetch と同じくウィンドウの操作で。
-        settings.model.performOperation = { [weak self] command, done in
-            guard let actions = self?.actions else { return done() }
-            actions.perform(command, completion: { _ in done() }, recover: { _ in
-                done()
-                return false
-            })
-        }
+        connectSettings()
         loadForm()
         window.toolbar = toolbar.toolbar
         toolbar.setRepository(window.title)
@@ -608,6 +599,19 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     private var slotOrder: [String] = []
     private static let keptSlots = 3
 
+    private func connectSettings() {
+        // git の設定・リモートを変えたら、読み直す。
+        settings.model.onRepositoryChange = { [weak self] in self?.refreshRepository(nil) }
+        // 取得とフォルダのページの操作（取り足す・取り直す・取り出すフォルダを変える）は、Fetch と同じくウィンドウの操作で。
+        settings.model.performOperation = { [weak self] command, done in
+            guard let actions = self?.actions else { return done() }
+            actions.perform(command, completion: { _ in done() }, recover: { _ in
+                done()
+                return false
+            })
+        }
+    }
+
     private func activate(_ slot: WorktreeSlot) {
         wantedSlot = nil
         editing = slot
@@ -621,6 +625,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             }
         }
         pages?.replace(.workingCopy, with: slot.workingCopy)
+        // リポジトリの設定も書き込む先の worktree のもの（読むのと操作の先を揃える。sparse checkout は worktree ごと）。
+        settings = RepositorySettingsPage(repository: slot.repository, location: location)
+        connectSettings()
+        pages?.replace(.settings, with: settings)
         // プルリクエストでマージ済みのブランチは、リポジトリで共通（分け方が同じなら読み直さない）。
         slot.actions.mergedByPullRequest = sidebar.actions?.mergedByPullRequest ?? [:]
         sidebar.actions = slot.actions
