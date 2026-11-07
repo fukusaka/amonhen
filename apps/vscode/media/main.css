@@ -689,6 +689,22 @@ button.secondary {
   justify-content: space-between;
 }
 
+.commit-row .length {
+  margin-left: auto;
+  margin-right: 8px;
+  font-size: 0.9em;
+  font-variant-numeric: tabular-nums;
+  color: var(--vscode-descriptionForeground);
+}
+
+.length .level-long {
+  color: var(--vscode-editorWarning-foreground, var(--vscode-gitDecoration-modifiedResourceForeground));
+}
+
+.length .level-over {
+  color: var(--vscode-gitDecoration-conflictingResourceForeground, var(--vscode-errorForeground));
+}
+
 .commit-row button:disabled {
   opacity: 0.5;
   cursor: default;

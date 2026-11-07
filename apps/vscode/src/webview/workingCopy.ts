@@ -7,6 +7,7 @@ import type { Change, ChangeGroup } from '../state/changes.ts';
 import type { HostMessage } from '../view/protocol.ts';
 import type { DiffHunk, FileDiff, SelectedLine } from '../diff/fileDiff.ts';
 import type { Eol, LineEndings } from '../git/eol.ts';
+import { lengthLevel, longestLine, messageLength } from '../workingCopy/commitMessage.ts';
 import { filesUnder, filterByPath, makeFileTree, type FileDir, type FileLayout } from '../workingCopy/fileList.ts';
 import { el, post, type View } from './api.ts';
 import { lineKey, renderDiffBody } from './diffView.ts';
@@ -46,7 +47,8 @@ export function createWorkingCopyView(): View {
   amend.type = 'checkbox';
   amendLabel.append(amend, ' Amend');
   const commitButton = el('button', undefined, 'Commit');
-  commitRow.append(amendLabel, commitButton);
+  const lengthLabel = el('span', 'length');
+  commitRow.append(amendLabel, lengthLabel, commitButton);
   commitBox.append(subject, body, commitRow);
 
   // 一覧の絞り込みと見せ方
@@ -440,6 +442,17 @@ export function createWorkingCopyView(): View {
       : staged > 0
         ? `Commit ${staged} File${staged > 1 ? 's' : ''}`
         : 'Commit';
+    updateLength();
+  }
+
+  /** 件名の文字数と、72 文字を超える本文の行（git の慣習） */
+  function updateLength(): void {
+    const length = messageLength(subject.value);
+    const line = longestLine(body.value);
+    lengthLabel.replaceChildren();
+    if (length > 0) lengthLabel.append(el('span', `level-${lengthLevel(length)}`, String(length)));
+    if (lengthLevel(line) === 'over') lengthLabel.append(el('span', 'level-over', ` Body ${line}`));
+    lengthLabel.title = 'Length of the summary (yellow over 50, orange over 72), and of a description line over 72';
   }
 
   function message(): string {
@@ -453,6 +466,7 @@ export function createWorkingCopyView(): View {
   }
 
   subject.addEventListener('input', updateCommitButton);
+  body.addEventListener('input', updateCommitButton);
   commitButton.addEventListener('click', commit);
   for (const input of [subject, body] as HTMLElement[]) {
     input.addEventListener('keydown', (e: KeyboardEvent) => {
