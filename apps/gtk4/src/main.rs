@@ -1791,13 +1791,15 @@ fn build_tab(
     });
     // サブモジュールは、作業ツリーからのパスで開く（daemon・SSH 越しなら、同じ接続先の上のパスとして）。
     let open_submodule: refops::OpenSubmodule = {
-        let (open, view) = (open.clone(), view.downgrade());
+        let (open, a) = (open.clone(), Rc::downgrade(&actions));
         let location = path.to_string_lossy().into_owned();
         Rc::new(move |name: &str| {
-            let workdir = view
+            // submodule は worktree ごとに取り出すので、書き込む先の worktree の中のものを開く（サイドバーの印も
+            // その worktree のもの。macOS 版と同じ）。
+            let workdir = a
                 .upgrade()
-                .and_then(|v| v.current())
-                .and_then(|(repo, _)| repo.paths().workdir);
+                .and_then(|a| a.repo())
+                .and_then(|repo| repo.paths().workdir);
             if let Some(dir) = workdir {
                 open(appmenu::same_place(&location, &dir.join(name)));
             }
