@@ -906,7 +906,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         // 下で開いたリポジトリから作るので、書き込む先の HEAD は ID で渡す。
         var start = startPoint
         if start == "HEAD", editing !== opened, let head = editingRefs?.head {
-            start = head.map { String(format: "%02x", $0) }.joined()
+            start = String(head.map { String(format: "%02x", $0) }.joined().prefix(12))
         }
         let base = opened.path
         let alert = NSAlert()
