@@ -1,8 +1,8 @@
 //! 見出しのツールバーのボタンの並び（macOS 版の `MainToolbar` と、NSToolbar のカスタマイズ）。View > Customize
 //! Toolbar… で見出しの下にパレットを出し、出している間は見出しのボタンを押す代わりにドラッグで並べ替える: パレットの項目を
 //! 見出しにドラッグして足し、見出しの項目を外にドラッグして外し、既定のセットをドラッグして元に戻す（macOS 版と同じ）。
-//! 見出しの左（Repository のメニューの右）と右（主メニューの左）に分けて並べ、境目は伸縮するスペース（macOS 版の
-//! flexibleSpace。見出しには 1 つだけ）。間にスペースを入れられる。並びはアプリ全体で 1 つ（設定の
+//! 見出しの左（Repository のメニューの右）と右（主メニューの左）に分けて並べ、境目は最初の伸縮するスペース（macOS 版の
+//! flexibleSpace）。間にスペースと、伸縮するスペースをいくつでも入れられる。並びはアプリ全体で 1 つ（設定の
 //! `toolbarItemsV3`）で、変えるとすべての窓のタブに効く。
 //!
 //! Repository のメニューと主メニュー（≡）は、macOS 版のメニューバーの代わりなので動かさない。リポジトリの名前は
@@ -27,6 +27,8 @@ const KEY_V2: &str = "toolbarItemsV2";
 const SPACE: &str = "space";
 /// 伸縮するスペース。ここから右は見出しの右に並べる。
 const SPLIT: &str = "|";
+/// 左右の境目のほかの、伸縮するスペース（いくつでも入れられる）。
+const FLEX: &str = "~";
 
 /// macOS 版の既定の並び（サイドバーの切り替え・Repositories・リポジトリの名前・Branch・Fetch・Pull・Push、
 /// Merge・Rebase、Stash・Pop、右に Activity・Refresh・Undo・検索）。
@@ -82,6 +84,7 @@ enum Entry {
     Item { id: String, shown: bool },
     Space,
     Split,
+    Flex,
 }
 
 /// パレットに出す名前（macOS 版の paletteLabel。操作の名前は英語のまま）。
@@ -127,6 +130,7 @@ fn parse(text: &str) -> Vec<Entry> {
     for part in text.split(',').map(str::trim).filter(|s| !s.is_empty()) {
         match part {
             SPACE => entries.push(Entry::Space),
+            FLEX => entries.push(Entry::Flex),
             SPLIT if !split => {
                 split = true;
                 entries.push(Entry::Split);
@@ -177,6 +181,7 @@ fn format(entries: &[Entry]) -> String {
             Entry::Item { id, shown: false } => format!("-{id}"),
             Entry::Space => SPACE.to_owned(),
             Entry::Split => SPLIT.to_owned(),
+            Entry::Flex => FLEX.to_owned(),
         })
         .collect::<Vec<_>>()
         .join(",")
@@ -244,7 +249,10 @@ fn shown_on(all: &[Entry], side: Side) -> Vec<usize> {
         .enumerate()
         .filter(|(i, e)| {
             (side == Side::Start) == (*i < split)
-                && matches!(e, Entry::Space | Entry::Item { shown: true, .. })
+                && matches!(
+                    e,
+                    Entry::Space | Entry::Flex | Entry::Item { shown: true, .. }
+                )
         })
         .map(|(i, _)| i)
         .collect()
@@ -288,26 +296,7 @@ fn dropped(all: &[Entry], dragged: &Dragged, side: Side, slot: usize) -> Vec<Ent
             insert_at(&mut all, side, slot, entry);
         }
         Dragged::Add(id) if id == SPACE => insert_at(&mut all, side, slot, Entry::Space),
-        Dragged::Add(id) if id == SPLIT => {
-            // 左右の出ているものを通して数え、その前に境目を移す。
-            let starts = shown_on(&all, Side::Start).len();
-            let at = if side == Side::Start {
-                slot.min(starts)
-            } else {
-                starts + slot
-            };
-            all.retain(|e| *e != Entry::Split);
-            // 境目がなければ、出ているものはみな左に数える。
-            let combined = shown_on(&all, Side::Start);
-            match combined.get(at) {
-                Some(&i) => all.insert(i, Entry::Split),
-                None => {
-                    // 出ているものの終わりの後（出していないものより前）に。
-                    let after = combined.last().map_or(0, |&i| i + 1);
-                    all.insert(after, Entry::Split);
-                }
-            }
-        }
+        Dragged::Add(id) if id == SPLIT => insert_at(&mut all, side, slot, Entry::Flex),
         Dragged::Add(id) => {
             if !known(id) {
                 return all;
@@ -337,7 +326,7 @@ fn dropped(all: &[Entry], dragged: &Dragged, side: Side, slot: usize) -> Vec<Ent
 fn removed(all: &[Entry], index: usize) -> Vec<Entry> {
     let mut all = all.to_vec();
     match all.get_mut(index) {
-        Some(Entry::Space) => {
+        Some(Entry::Space | Entry::Flex) => {
             all.remove(index);
         }
         Some(Entry::Item { shown, .. }) => *shown = false,
@@ -576,6 +565,9 @@ pub fn install(start: &gtk::Box, end: &gtk::Box, given: Given) {
             }
             let mut target = (&start, Side::Start);
             let mut now = Vec::new();
+            // 伸縮するスペースのある側は、見出しの真ん中まで広がる（その中でスペースが伸びる）。
+            start.set_hexpand(false);
+            end.set_hexpand(false);
             for (index, entry) in all.iter().enumerate() {
                 let widget = match entry {
                     Entry::Split => {
@@ -588,6 +580,16 @@ pub fn install(start: &gtk::Box, end: &gtk::Box, given: Given) {
                         if customizing {
                             space.add_css_class("toolbar-space");
                         }
+                        space.upcast()
+                    }
+                    Entry::Flex => {
+                        let space = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+                        space.set_hexpand(true);
+                        space.set_width_request(if customizing { 64 } else { 8 });
+                        if customizing {
+                            space.add_css_class("toolbar-space");
+                        }
+                        target.0.set_hexpand(true);
                         space.upcast()
                     }
                     Entry::Item { id, shown: true } => match buttons.get(id.as_str()) {
@@ -966,7 +968,7 @@ fn palette() -> gtk::Widget {
         let id = match &entry {
             Entry::Item { id, shown: true } => id.as_str(),
             Entry::Space => SPACE,
-            Entry::Split => SPLIT,
+            Entry::Split | Entry::Flex => SPLIT,
             Entry::Item { shown: false, .. } => continue,
         };
         set.append(&preview(id));
@@ -1139,16 +1141,18 @@ mod tests {
     }
 
     #[test]
-    fn the_flexible_space_moves_the_split() {
+    fn flexible_spaces_can_be_added_and_removed() {
         let all = parse("fetch,pull,|,undo");
-        let (l, r) = shown(&dropped(&all, &Dragged::Add(SPLIT.into()), Side::Start, 1));
-        assert_eq!(l, ["fetch"]);
-        assert_eq!(r, ["pull", "undo"]);
-        let (l, r) = shown(&dropped(&all, &Dragged::Add(SPLIT.into()), Side::End, 1));
-        assert_eq!(l, ["fetch", "pull", "undo"]);
-        assert!(r.is_empty());
-        let moved = dropped(&all, &Dragged::Add(SPLIT.into()), Side::Start, 0);
-        assert_eq!(moved.iter().filter(|e| **e == Entry::Split).count(), 1);
+        let flexes = |e: &[Entry]| e.iter().filter(|e| **e == Entry::Flex).count();
+        let added = dropped(&all, &Dragged::Add(SPLIT.into()), Side::Start, 1);
+        assert_eq!(added[1], Entry::Flex);
+        let added = dropped(&added, &Dragged::Add(SPLIT.into()), Side::End, 1);
+        assert_eq!(flexes(&added), 2);
+        assert_eq!(added.iter().filter(|e| **e == Entry::Split).count(), 1);
+        // 左右の境目は動かない。
+        assert_eq!(added[3], Entry::Split);
+        assert_eq!(parse(&format(&added)), added);
+        assert_eq!(flexes(&removed(&added, 1)), 1);
     }
 
     #[test]
