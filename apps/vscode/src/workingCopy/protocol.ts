@@ -15,6 +15,10 @@ export type WorkingCopyHostMessage =
   | { type: 'wcRecent'; messages: string[] }
   /** 選んだメッセージをコミット欄に入れる */
   | { type: 'wcUseMessage'; message: string }
+  /** 件名に型を付ける */
+  | { type: 'wcInsertType'; commitType: string }
+  /** 本文の末尾にトレーラーを足す */
+  | { type: 'wcInsertTrailer'; line: string }
   | { type: 'wcCommitted' };
 
 export type WorkingCopyWebviewMessage =
@@ -25,6 +29,8 @@ export type WorkingCopyWebviewMessage =
   | ({ type: 'wcDraft' } & MessageParts)
   /** 最近のメッセージの一覧を出す */
   | { type: 'wcPickRecent' }
+  /** 型やトレーラーの一覧を出す */
+  | { type: 'wcPickInsert' }
   | { type: 'wcStageFiles'; op: 'stage' | 'unstage'; files: { group: ChangeGroup; path: string }[] }
   | { type: 'wcStageLines'; group: ChangeGroup; path: string; version: string; lines: SelectedLine[] }
   /** Changes（unstaged）のファイルを丸ごと破棄する */

@@ -7,7 +7,7 @@ import type { Change, ChangeGroup } from '../state/changes.ts';
 import type { HostMessage } from '../view/protocol.ts';
 import type { DiffHunk, FileDiff, SelectedLine } from '../diff/fileDiff.ts';
 import type { Eol, LineEndings } from '../git/eol.ts';
-import { lengthLevel, longestLine, messageLength, splitMessage } from '../workingCopy/commitMessage.ts';
+import { addTrailer, lengthLevel, longestLine, messageLength, splitMessage, withType } from '../workingCopy/commitMessage.ts';
 import { filesUnder, filterByPath, makeFileTree, type FileDir, type FileLayout } from '../workingCopy/fileList.ts';
 import { el, post, type View } from './api.ts';
 import { lineKey, renderDiffBody } from './diffView.ts';
@@ -51,7 +51,10 @@ export function createWorkingCopyView(): View {
   const recentButton = el('button', 'link', 'Recent…');
   recentButton.title = 'Insert the message of a recent commit (⌥↑ and ⌥↓ in the Summary)';
   recentButton.addEventListener('click', () => post({ type: 'wcPickRecent' }));
-  commitRow.append(amendLabel, recentButton, lengthLabel, commitButton);
+  const insertButton = el('button', 'link', 'Insert…');
+  insertButton.title = 'Insert a Conventional Commits type, Co-authored-by or Signed-off-by';
+  insertButton.addEventListener('click', () => post({ type: 'wcPickInsert' }));
+  commitRow.append(amendLabel, recentButton, insertButton, lengthLabel, commitButton);
   commitBox.append(subject, body, commitRow);
 
   // 一覧の絞り込みと見せ方
@@ -557,6 +560,14 @@ export function createWorkingCopyView(): View {
       case 'wcUseMessage':
         recentCursor = -1;
         useMessage(m.message);
+        break;
+      case 'wcInsertType':
+        replaceField(subject, withType(subject.value, m.commitType));
+        subject.focus();
+        break;
+      case 'wcInsertTrailer':
+        replaceField(body, addTrailer(body.value, m.line));
+        body.focus();
         break;
       case 'wcMessage':
         clearTimeout(draftTimer);
