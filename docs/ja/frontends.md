@@ -51,7 +51,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Branches の並び（今のもの・活発・止まった・マージ済み・アーカイブ・積み重ね） | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。なければ `/` で分けたフォルダーの木。<br>CLI: `amonhen run`（`branchGroups`）から。 |
 | お気に入りのブランチ | ✓ | ✓ | ✓ | — | |
 | ブランチのアーカイブ | ✓ | ✓ | ✓ | — | |
-| ブランチを片付ける（取り込み済み・PR でマージ済み・上流が消えた。Undo 1 回） | ✓ | ✓ | — | △ | CLI: `amonhen run`（`branchCleanup`・`deleteBranches`）から。マージ済みの PR はアプリが gh で読む。 |
+| ブランチを片付ける（取り込み済み・PR でマージ済み・上流が消えた。Undo 1 回） | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき、理由ごとの見出しを付けた複数選択の一覧（コマンドパレット、Branches の見出しの右クリック）。CLI: `amonhen run`（`branchCleanup`・`deleteBranches`）から。マージ済みの PR はアプリと VSCode が gh で読む。 |
 | PR でマージ済みのブランチの印（GitHub で squash・rebase） | ✓ | ✓ | — | △ | CLI: `amonhen run`（`pullRequests` を渡した `branchGroups`）から。マージ済みの PR はアプリが gh で読む。 |
 | お気に入りをドラッグで並べ替える | ✓ | ✓ | ✓ | n/a | VSCode: メニューの Move Up・Move Down in Favorites（ブランチに落とすと Merge・Rebase）。 |
 | ブランチのメニュー: checkout・名前の変更・削除（未マージは Delete Anyway） | ✓ | ✓ | ✓ | △ | macOS: Set Upstream は Repository メニューだけ。<br>GTK4: Set Upstream は Repository メニューだけ。<br>CLI: `amonhen run` から。 |

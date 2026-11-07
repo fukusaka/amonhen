@@ -1260,17 +1260,16 @@ mod name_first {
                 let w = match i {
                     // アイコン。
                     0 if n > 1 => nat,
-                    // 名前: 後ろの印が入るなら、その分を残す。添え物の印を外せば入るなら、そうする。どちらも
-                    // 入らなければ印は外に出す。
+                    // 名前: 後ろの印が入るなら、その分を残す。入らなければ添え物の印を外し、それでも入らなければ
+                    // 名前を縮める（… で切る）。印と数は残す（macOS 版と同じ。取り込み済み・gone の印は、
+                    // 名前が長いブランチでこそ要る）。
                     1 => {
                         let room = width_ - x;
                         if nat + rest <= room {
                             room - rest
-                        } else if nat + rest_min <= room {
-                            compact.set(true);
-                            room - rest_min
                         } else {
-                            room.max(min)
+                            compact.set(true);
+                            (room - rest_min).max(min)
                         }
                     }
                     _ if compact.get() => min,
@@ -1317,7 +1316,7 @@ fn setup_row(item: &gtk::ListItem, inner: &Owner, drop_cb: &Rc<RefCell<Option<Dr
     line.append(&icon);
     line.append(&title);
     line.append(&trail);
-    // 名前が収まらないときは、名前を切らずに右端の印を隠す（macOS 版と同じ）。
+    // 名前が収まらないときは、添え物の印を外し、それでも入らなければ名前を縮める（印と数は残す。macOS 版と同じ）。
     line.set_layout_manager(Some(name_first_layout()));
     line.set_overflow(gtk::Overflow::Hidden);
     let expander = gtk::TreeExpander::new();

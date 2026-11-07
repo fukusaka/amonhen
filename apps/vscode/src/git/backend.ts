@@ -36,6 +36,12 @@ export interface HeadState {
 }
 
 /** 途中で止まっている操作（am はメールのパッチを当てている途中） */
+/** git の設定の 1 項目と、その値（いくつも持てる項目もあるので、並びのまま） */
+export interface ConfigBackup {
+  key: string;
+  values: string[];
+}
+
 export type Sequence = 'merge' | 'rebase' | 'cherry-pick' | 'revert' | 'am';
 
 /** `git am` が止まっているパッチ */
@@ -237,6 +243,10 @@ export interface RepositoryBackend {
   fastForward(branch: string, value: string, expected: string): Promise<void>;
   /** git の設定の値（`git config --get`）。無ければ undefined */
   config(key: string): Promise<string | undefined>;
+  /** このリポジトリの段にある、ローカルブランチ names（短い名前）の `branch.<name>.*` の設定。値は並びのまま */
+  branchConfig(names: readonly string[]): Promise<ConfigBackup[]>;
+  /** このリポジトリの段の key を、values（並びのまま）に置き換える */
+  setConfigValues(key: string, values: readonly string[]): Promise<void>;
   /**
    * ローカルブランチ branch（短い名前）を、取り込み方を決めずに pull すると、分かれていれば git が断るか。
    * `branch.<name>.rebase`・`pull.rebase`・`pull.ff` のどれもなく、git が 2.33.1 以降なら true（それより前の git は merge する）
@@ -906,6 +916,32 @@ export class CliBackend implements RepositoryBackend {
 
   async config(key: string): Promise<string | undefined> {
     return (await this.read(['config', '--get', key], [0, 1])).trim() || undefined;
+  }
+
+  async branchConfig(names: readonly string[]): Promise<ConfigBackup[]> {
+    if (names.length === 0) return [];
+    // 節（branch）と変数の名前は git が小文字にするが、ブランチの名前は大文字小文字を区別する
+    const prefixes = names.map((n) => `branch.${n}.`);
+    const out = await this.read(['config', '--local', '-z', '--get-regexp', '^branch\\.'], [0, 1]);
+    const backups: ConfigBackup[] = [];
+    for (const item of out.split('\0')) {
+      const newline = item.indexOf('\n');
+      const key = newline < 0 ? item : item.slice(0, newline);
+      if (!key || !prefixes.some((p) => key.startsWith(p))) continue;
+      const value = newline < 0 ? '' : item.slice(newline + 1);
+      const known = backups.find((b) => b.key === key);
+      if (known) known.values.push(value);
+      else backups.push({ key, values: [value] });
+    }
+    return backups;
+  }
+
+  async setConfigValues(key: string, values: readonly string[]): Promise<void> {
+    // 無ければ 5 で終わる
+    await this.git.exec(['config', '--local', '--unset-all', key], { cwd: this.root, okCodes: [0, 5] });
+    for (const value of values) {
+      await this.git.exec(['config', '--local', '--add', key, value], { cwd: this.root });
+    }
   }
 
   async pullLeftUndecided(branch: string): Promise<boolean> {

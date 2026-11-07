@@ -104,6 +104,24 @@ test('undo deletes a branch created by the operation', async () => {
   assert.equal(git('branch', '--list', 'topic'), '');
 });
 
+test('undo a deleted branch brings back its settings', async () => {
+  git('branch', 'Topic');
+  git('config', 'branch.Topic.remote', 'origin');
+  git('config', 'branch.Topic.merge', 'refs/heads/Topic');
+  git('config', '--add', 'branch.Topic.amonhenPinned', 'true');
+  git('config', 'branch.other.remote', 'origin');
+  await log.record('Delete Topic', ['refs/heads/Topic'], 'keep', () => backend.deleteBranch('Topic', false), {
+    branches: ['Topic'],
+  });
+  // git は ref と一緒に設定も消す
+  assert.throws(() => git('config', 'branch.Topic.remote'));
+  await log.undo();
+  assert.equal(git('branch', '--list', 'Topic'), 'Topic');
+  assert.equal(git('config', 'branch.Topic.remote'), 'origin');
+  assert.equal(git('config', 'branch.Topic.merge'), 'refs/heads/Topic');
+  assert.equal(git('config', 'branch.Topic.amonhenpinned'), 'true');
+});
+
 test('undo refuses when the branch moved afterwards', async () => {
   writeFileSync(join(dir, 'a.txt'), 'x\n');
   git('add', 'a.txt');
