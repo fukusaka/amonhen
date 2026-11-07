@@ -37,6 +37,24 @@ pub fn flush_all() {
 }
 
 /// `repo` の下書きを覚える鍵（worktree ごと）。
+/// 件名の先頭の `type(scope)!: ` を外したもの（`^[a-z]+(\([^)]*\))?!?:\s*`。macOS 版と同じ）。
+fn without_commit_type(subject: &str) -> &str {
+    let rest = subject.trim_start_matches(|c: char| c.is_ascii_lowercase());
+    if rest.len() == subject.len() {
+        return subject;
+    }
+    let rest = match rest.strip_prefix('(') {
+        Some(scope) => match scope.split_once(')') {
+            Some((_, after)) => after,
+            None => return subject,
+        },
+        None => rest,
+    };
+    let rest = rest.strip_prefix('!').unwrap_or(rest);
+    rest.strip_prefix(':')
+        .map_or(subject, |after| after.trim_start())
+}
+
 fn draft_key_of(repo: &Repository) -> String {
     draft_key_for(repo.paths().workdir.as_deref())
 }
@@ -561,23 +579,8 @@ impl MessageAids {
     /// 件名の先頭を `type: ` にする（もう型があれば置き換える）。
     fn set_type(&self, t: &str) {
         let s = self.subject.text().to_string();
-        // `type(scope)!: ` を外す。
-        let stripped = match s.split_once(':') {
-            Some((head, rest))
-                if !head.is_empty()
-                    && head
-                        .trim_end_matches('!')
-                        .split('(')
-                        .next()
-                        .is_some_and(|w| {
-                            w.chars().all(|c| c.is_ascii_lowercase()) && !w.is_empty()
-                        }) =>
-            {
-                rest.trim_start().to_owned()
-            }
-            _ => s,
-        };
-        self.subject.set_text(&format!("{t}: {stripped}"));
+        self.subject
+            .set_text(&format!("{t}: {}", without_commit_type(&s)));
         self.subject.grab_focus();
         self.subject.set_position(-1);
     }
@@ -734,6 +737,23 @@ impl Drop for MessageAids {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replaces_only_a_whole_commit_type() {
+        for (subject, rest) in [
+            ("fix: x", "x"),
+            ("feat!: x", "x"),
+            ("fix(a:b): x", "x"),
+            ("fix(a)!:x", "x"),
+            ("fix(a)b: x", "fix(a)b: x"),
+            ("Fix: x", "Fix: x"),
+            ("no colon", "no colon"),
+            (": x", ": x"),
+            ("fix(a: x", "fix(a: x"),
+        ] {
+            assert_eq!(without_commit_type(subject), rest, "{subject}");
+        }
+    }
 
     #[test]
     fn drafts_are_kept_per_worktree() {
