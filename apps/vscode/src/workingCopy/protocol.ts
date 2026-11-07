@@ -4,6 +4,12 @@ import type { Change, ChangeGroup } from '../state/changes.ts';
 import type { MessageParts } from './commitMessage.ts';
 import type { FileLayout } from './fileList.ts';
 
+export interface FileStat {
+  path: string;
+  added: number | null;
+  removed: number | null;
+}
+
 export type WorkingCopyHostMessage =
   | { type: 'wcFiles'; files: Change[]; branch?: string; lastMessage?: string; layout: FileLayout }
   /** 選んでいるファイルの差分。group は今そのファイルがあるグループ */
@@ -25,6 +31,8 @@ export type WorkingCopyHostMessage =
   | { type: 'wcStartFixup'; kind: 'fixup' | 'squash'; subject: string }
   /** コミットの hooks の出力や、失敗の理由 */
   | { type: 'wcCommitOutput'; title: string; text: string }
+  /** ファイルごとの追加・削除の行数（HEAD と作業ツリー。エンジンのあるときだけ） */
+  | { type: 'wcStats'; stats: FileStat[] }
   | { type: 'wcCommitted' };
 
 export type WorkingCopyWebviewMessage =

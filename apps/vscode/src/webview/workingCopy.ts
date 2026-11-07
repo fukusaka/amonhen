@@ -102,6 +102,8 @@ export function createWorkingCopyView(): View {
   const collapsed = new Set<string>();
   /** 一覧に出ているファイル（上から順。絞り込みと畳んだディレクトリの分を除く） */
   let listed: Change[] = [];
+  /** ファイルごとの追加・削除の行数 */
+  let stats = new Map<string, { added: number | null; removed: number | null }>();
 
   // ---- ファイル一覧 ----
 
@@ -211,6 +213,13 @@ export function createWorkingCopyView(): View {
       row.append(el('span', `status s-${f.letter === '!' ? 'U' : f.letter}`, f.letter));
       row.append(el('span', 'name', name));
       row.append(el('span', 'dir', layout === 'flat' && slash >= 0 ? f.path.slice(0, slash) : ''));
+    }
+    const stat = stats.get(f.path);
+    if (stat && (stat.added || stat.removed)) {
+      const counts = el('span', 'stat');
+      if (stat.added) counts.append(el('span', 'added', `+${stat.added}`));
+      if (stat.removed) counts.append(el('span', 'removed', `−${stat.removed}`));
+      row.append(counts);
     }
     if (f.group !== 'conflicts') {
       const op = f.group === 'staged' ? 'unstage' : 'stage';
@@ -613,6 +622,10 @@ export function createWorkingCopyView(): View {
         break;
       case 'wcCommitOutput':
         showCommitOutput(m.title, m.text);
+        break;
+      case 'wcStats':
+        stats = new Map(m.stats.map((s) => [s.path, s]));
+        renderFiles();
         break;
       case 'wcInsertType':
         replaceField(subject, withType(subject.value, m.commitType));

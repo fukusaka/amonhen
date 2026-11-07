@@ -2915,6 +2915,25 @@ suite('Amon Hen in VSCode', () => {
     }
   });
 
+  test('counts the changed lines of each file through the daemon', async () => {
+    const panel = await showView('amonhen.showWorkingCopy');
+    const file = join(root, 'wc-stat.txt');
+    writeFileSync(file, 'one\ntwo\n');
+    git('add', 'wc-stat.txt');
+    git('commit', '-q', '-m', 'wc-stat');
+    try {
+      writeFileSync(file, 'one\nchanged\nthree\n');
+      const mark = posted.length;
+      panel.workingCopy.setRepository(panel.repository);
+      const { stats } = await waitPosted('wcStats', mark, (m) => m.stats.some((s) => s.path === 'wc-stat.txt'));
+      const stat = stats.find((s) => s.path === 'wc-stat.txt')!;
+      assert.deepEqual([stat.added, stat.removed], [2, 1]);
+    } finally {
+      git('reset', '-q', '--hard', 'HEAD~1');
+      await vscode.commands.executeCommand('amonhen.refresh');
+    }
+  });
+
   test('drops the selection of a file whose changes went away before its diff is read', async () => {
     const panel = await showView('amonhen.showWorkingCopy');
     const path = join(root, FILE);

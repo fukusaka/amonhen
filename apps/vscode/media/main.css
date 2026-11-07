@@ -581,6 +581,22 @@ button.secondary {
   flex: none;
 }
 
+.wc-file .stat {
+  flex: none;
+  display: flex;
+  gap: 4px;
+  font-size: 0.85em;
+  font-variant-numeric: tabular-nums;
+}
+
+.wc-file .stat .added {
+  color: var(--vscode-gitDecoration-addedResourceForeground);
+}
+
+.wc-file .stat .removed {
+  color: var(--vscode-gitDecoration-deletedResourceForeground);
+}
+
 .wc-dir .name {
   color: var(--vscode-descriptionForeground);
 }

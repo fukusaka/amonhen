@@ -11,7 +11,7 @@ import { changedRows, readWorkingDiff, selectedRows, type DaemonDiff } from '../
 import { applyDiffSelection, computeDiff, type ComputedDiff } from '../diff/fileDiff.ts';
 import { discardFiles, discardLines } from '../state/discard.ts';
 import { COMMIT_TYPES, fixupSubjects, templateMessage, type MessageParts } from '../workingCopy/commitMessage.ts';
-import type { WorkingCopyHostMessage, WorkingCopyWebviewMessage } from '../workingCopy/protocol.ts';
+import type { FileStat, WorkingCopyHostMessage, WorkingCopyWebviewMessage } from '../workingCopy/protocol.ts';
 import { commitStaged } from './commit.ts';
 import { openConflict } from './diff.ts';
 import { commitDraft, fileLayout, setCommitDraft, setFileLayout } from './preferences.ts';
@@ -97,6 +97,16 @@ export class WorkingCopyController implements vscode.Disposable {
       lastMessage = this.head.message;
     }
     this.post({ type: 'wcFiles', files: this.files, branch: status?.branch.head, lastMessage, layout: fileLayout() });
+    if (repo) void this.sendEngineFacts(repo).catch(() => undefined);
+  }
+
+  /** 一覧に添える、エンジンから読む様子 */
+  private async sendEngineFacts(repo: Repository): Promise<void> {
+    const client = await daemonFor(repo.root);
+    if (!client) return;
+    const reply = await client.call({ op: 'run', command: { op: 'workingStats' } });
+    const info = reply.json['info'] as { stats?: FileStat[] } | undefined;
+    if (repo === this.repo) this.post({ type: 'wcStats', stats: info?.stats ?? [] });
   }
 
   /** 最近のコミット 30 個を読む（一覧と ⌥↑・⌥↓ のため） */
