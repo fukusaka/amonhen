@@ -465,8 +465,15 @@ export function createWorkingCopyView(): View {
     post({ type: 'wcCommit', message: message(), amend: amend.checked });
   }
 
-  subject.addEventListener('input', updateCommitButton);
-  body.addEventListener('input', updateCommitButton);
+  /** 打ち終わるのを少し待って、下書きを覚えてもらう */
+  let draftTimer: ReturnType<typeof setTimeout> | undefined;
+  function messageChanged(): void {
+    updateCommitButton();
+    clearTimeout(draftTimer);
+    draftTimer = setTimeout(() => post({ type: 'wcDraft', summary: subject.value, body: body.value }), 300);
+  }
+  subject.addEventListener('input', messageChanged);
+  body.addEventListener('input', messageChanged);
   commitButton.addEventListener('click', commit);
   for (const input of [subject, body] as HTMLElement[]) {
     input.addEventListener('keydown', (e: KeyboardEvent) => {
@@ -506,7 +513,14 @@ export function createWorkingCopyView(): View {
         renderFiles();
         renderDiff();
         break;
+      case 'wcMessage':
+        clearTimeout(draftTimer);
+        subject.value = m.summary;
+        body.value = m.body;
+        updateCommitButton();
+        break;
       case 'wcCommitted':
+        clearTimeout(draftTimer);
         subject.value = '';
         body.value = '';
         amend.checked = false;
