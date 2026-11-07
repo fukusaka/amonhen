@@ -1304,9 +1304,13 @@ impl Opener {
         if let Some(keys) = inner.keys.take() {
             keys.remove();
         }
+        // 今の画面のまま（止まった操作は Working Copy を開いている）。History を見ていたときだけ History を出す。
+        let page = inner.pages.visible_child_name();
         inner.pages.remove(&mode.root);
         inner.pages.add_named(&inner.history, Some("history"));
-        inner.pages.set_visible_child_name("history");
+        inner
+            .pages
+            .set_visible_child_name(page.as_deref().unwrap_or("history"));
     }
 
     /// 確認用（`--edit-plan`）: 行ですることを新しい順に並べたもの（`pick,squash,drop` など）を入れる。
