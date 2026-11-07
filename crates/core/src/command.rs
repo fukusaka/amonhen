@@ -1633,7 +1633,7 @@ impl Repository {
 
     /// `status` の内容のコンフリクト（両側にファイルがある UU・AA）それぞれの、作業ツリーに残っているマーカーの
     /// 数と、git の rerere が前の解決を当てたか。作業ツリーのファイルと `.git/MERGE_RR` を読むだけ（git は呼ばない）。
-    /// 片側で消えたコンフリクトなど、マーカーで表せないものは入れない。
+    /// 片側で消えたコンフリクトや、マーカーのないテキストでないファイルなど、マーカーで表せないものは入れない。
     pub fn conflict_files(&self, status: &amonhen_model::Status) -> Result<Vec<ConflictFile>> {
         let files = self.backend().files();
         let mut tracked = None;
@@ -1644,9 +1644,12 @@ impl Repository {
             {
                 continue;
             }
-            let markers = files
-                .read(Root::Workdir, &e.path)?
-                .map_or(0, |d| crate::conflict::parse(&d).len());
+            let data = files.read(Root::Workdir, &e.path)?;
+            let markers = data.as_ref().map_or(0, |d| crate::conflict::parse(d).len());
+            // バイナリなどのテキストでないファイルは、もともとマーカーが出ない（解決したわけではない）。
+            if markers == 0 && data.is_some_and(|d| std::str::from_utf8(&d).is_err()) {
+                continue;
+            }
             let rerere = markers == 0
                 && match &tracked {
                     Some(t) => Self::rerere_applied(t, &e.path),
@@ -8619,19 +8622,26 @@ mod tests {
             git(dir, &["add", name]);
             git(dir, &["commit", "-q", "-m", message]);
         };
-        write("a.png", b"\x89PNG\xff base", "base png");
+        write("a.png", b"\x89PNG\0\xff base", "base png");
         write("sjis.txt", b"\x82\xa0 base\n", "base sjis");
         git(dir, &["switch", "-q", "-c", "topic"]);
-        write("a.png", b"\x89PNG\xff topic", "topic png");
+        write("a.png", b"\x89PNG\0\xff topic", "topic png");
         write("sjis.txt", b"\x82\xa0 topic\n", "topic sjis");
         git(dir, &["switch", "-q", "-"]);
-        write("a.png", b"\x89PNG\xff main", "main png");
+        write("a.png", b"\x89PNG\0\xff main", "main png");
         write("sjis.txt", b"\x82\xa0 main\n", "main sjis");
         assert_eq!(
             run(&repo, r#"{"op":"merge","rev":"topic"}"#)["outcome"],
             "conflict"
         );
         repo.load_status().unwrap();
+        // マーカーのないバイナリは「マーカーのないコンフリクト」に数えない。Shift-JIS はマーカーがあるので載る。
+        let files = run(&repo, r#"{"op":"conflictFiles"}"#);
+        assert_eq!(
+            files["info"]["files"],
+            serde_json::json!([{"path": "sjis.txt", "markers": 1, "rerere": false}]),
+            "{files}"
+        );
         for path in ["a.png", "sjis.txt"] {
             let command = serde_json::json!({ "op": "mergeSides", "path": path }).to_string();
             let sides = run(&repo, &command);
@@ -8645,7 +8655,7 @@ mod tests {
         assert_eq!(taken["ok"], true, "{taken}");
         assert_eq!(
             std::fs::read(dir.join("a.png")).unwrap(),
-            b"\x89PNG\xff topic"
+            b"\x89PNG\0\xff topic"
         );
     }
 
