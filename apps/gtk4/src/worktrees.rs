@@ -1147,7 +1147,7 @@ pub fn new_worktree(
     let (parent, repo_name) = (parent.to_owned(), repo_name.to_owned());
     // ~ はこの機械のホーム。SSH 先のパスはそのまま送る（手元の daemon 越しなら、この機械のパス。macOS 版と同じ）。
     let on_ssh = on_ssh(&worktrees.location);
-    let actions = actions.clone();
+    let (actions, worktrees) = (actions.clone(), worktrees.clone());
     glib::spawn_future_local(async move {
         let sheet = Sheet::unnamed(
             crate::sheets::parent(&actions).as_ref(),
@@ -1202,13 +1202,31 @@ pub fn new_worktree(
                 .to_string_lossy()
                 .into_owned();
         }
-        let a = actions.clone();
+        let (a, w, branch) = (actions.clone(), worktrees.clone(), name.clone());
         actions.perform_with(
             vec![json!({ "op": "worktreeAdd", "path": path, "newBranch": name, "start": start })],
             move |reply| {
-                if reply["ok"].as_bool() == Some(true) {
-                    a.edit_worktree(&path);
+                if reply["ok"].as_bool() != Some(true) {
+                    return;
                 }
+                if !path.starts_with('~') {
+                    return a.edit_worktree(&path);
+                }
+                // SSH 先の `~` はそこのホーム。実際のパスは、作ったブランチの worktree で分かる。
+                let Some(repo) = w.opened() else { return };
+                let a = a.clone();
+                let branch = branch.clone();
+                glib::spawn_future_local(async move {
+                    let reply = crate::sheets::run(&repo, json!({ "op": "worktrees" })).await;
+                    let made = reply["info"]["worktrees"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .find(|w| w["branch"].as_str() == Some(branch.as_str()));
+                    if let Some(path) = made.and_then(|w| w["path"].as_str()) {
+                        a.edit_worktree(path);
+                    }
+                });
             },
         );
     });

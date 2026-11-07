@@ -936,8 +936,23 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             if !onSSH { path = (path as NSString).expandingTildeInPath }
             opened.actions.perform(["op": "worktreeAdd", "path": path, "newBranch": name, "start": start]) { [weak self] _ in
                 self?.reloadWorktrees()
-                self?.edit(worktree: path)
+                if path.hasPrefix("~") {
+                    self?.editWorktree(onBranch: name)
+                } else {
+                    self?.edit(worktree: path)
+                }
             }
+        }
+    }
+
+    /// SSH 先の `~` はそこのホーム。実際のパスは、作ったブランチの worktree で分かる。
+    private func editWorktree(onBranch name: String) {
+        let repository = opened.repository
+        Task {
+            let list = try? await Task.detached(priority: .userInitiated) {
+                try repository.info(["op": "worktrees"], as: WorktreeList.self)
+            }.value.worktrees
+            if let path = list?.first(where: { $0.branch == name })?.path { edit(worktree: path) }
         }
     }
 
