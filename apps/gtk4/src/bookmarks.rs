@@ -245,7 +245,8 @@ pub fn data() -> Data {
 
 /// ほかのプロセス（ほかの窓の Amon Hen・macOS 版ではない同じ FE）が書き換えていたら読み直す（一覧を開くとき）。
 pub fn refresh() {
-    let fresh = read().unwrap_or_default();
+    // 読めなければ今の中身のまま（空にすると、次の編集で一覧を失う。macOS 版と同じ）。
+    let Some(fresh) = read() else { return };
     let (changed, roots_changed) = STATE.with(|s| {
         let mut s = s.borrow_mut();
         let changed = s.data.as_ref() != Some(&fresh);
