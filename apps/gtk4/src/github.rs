@@ -867,7 +867,7 @@ impl Loader {
                 ),
             }
             // マージされたプルリクエストも同じときに読む（squash・rebase で取り込んだブランチに印を出す）。
-            if let Ok(merged) = merged_pull_requests(&github).await
+            if let Ok(merged) = merged_pull_requests(&target).await
                 && let Some(s) = this.sidebar.upgrade()
             {
                 s.set_merged_pull_requests(merged);
