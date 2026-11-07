@@ -10,7 +10,7 @@ import { daemonFor } from '../daemon/connection.ts';
 import { changedRows, readWorkingDiff, selectedRows, type DaemonDiff } from '../daemon/diff.ts';
 import { applyDiffSelection, computeDiff, type ComputedDiff } from '../diff/fileDiff.ts';
 import { discardFiles, discardLines } from '../state/discard.ts';
-import { templateMessage, type MessageParts } from '../workingCopy/commitMessage.ts';
+import { COMMIT_TYPES, templateMessage, type MessageParts } from '../workingCopy/commitMessage.ts';
 import type { WorkingCopyHostMessage, WorkingCopyWebviewMessage } from '../workingCopy/protocol.ts';
 import { commitStaged } from './commit.ts';
 import { openConflict } from './diff.ts';
@@ -114,6 +114,42 @@ export class WorkingCopyController implements vscode.Disposable {
     this.post({ type: 'wcRecent', messages: recent.map((c) => c.message) });
   }
 
+  /** Conventional Commits の型と、トレーラー（Co-authored-by・Signed-off-by）を選んで入れる */
+  private async pickInsert(repo: Repository): Promise<void> {
+    type Item = vscode.QuickPickItem & { commitType?: string; line?: string; signOff?: boolean };
+    const separator = (label: string): Item => ({ label, kind: vscode.QuickPickItemKind.Separator });
+    const seen = new Set<string>();
+    const authors = this.recent.flatMap((c): Item[] => {
+      const key = c.email.toLowerCase();
+      if (!key || seen.has(key)) return [];
+      seen.add(key);
+      return [{ label: `${c.author} <${c.email}>`, line: `Co-authored-by: ${c.author} <${c.email}>` }];
+    });
+    const picked = await vscode.window.showQuickPick<Item>(
+      [
+        separator('Conventional Commits Type'),
+        ...COMMIT_TYPES.map((t) => ({ label: `${t}:`, commitType: t })),
+        separator('Signed-off-by'),
+        { label: 'Signed-off-by (Me)', signOff: true },
+        separator('Co-authored-by'),
+        ...authors,
+      ],
+      { placeHolder: 'Insert a Conventional Commits type, Co-authored-by or Signed-off-by' },
+    );
+    if (picked?.commitType) {
+      this.post({ type: 'wcInsertType', commitType: picked.commitType });
+    } else if (picked?.line) {
+      this.post({ type: 'wcInsertTrailer', line: picked.line });
+    } else if (picked?.signOff) {
+      const [name, email] = await Promise.all([repo.backend.config('user.name'), repo.backend.config('user.email')]);
+      if (name && email) {
+        this.post({ type: 'wcInsertTrailer', line: `Signed-off-by: ${name} <${email}>` });
+      } else {
+        void vscode.window.showWarningMessage('Set user.name and user.email to sign off.');
+      }
+    }
+  }
+
   /** 選んでいるファイルの差分を送る。stage してグループが変わっても、同じファイルを見続ける */
   private async sendDiff(): Promise<void> {
     const selected = this.selected;
@@ -213,6 +249,10 @@ export class WorkingCopyController implements vscode.Disposable {
       });
       const picked = await vscode.window.showQuickPick(items, { placeHolder: 'Insert the message of a recent commit' });
       if (picked) this.post({ type: 'wcUseMessage', message: picked.message });
+      return;
+    }
+    if (message.type === 'wcPickInsert') {
+      await this.pickInsert(repo);
       return;
     }
     const find = (group: ChangeGroup, path: string) => this.files.find((f) => f.group === group && f.path === path);

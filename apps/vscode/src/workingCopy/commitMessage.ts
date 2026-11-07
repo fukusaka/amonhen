@@ -1,5 +1,8 @@
 /** Working Copy のコミット欄のメッセージの扱い。vscode に依存しない */
 
+/** Conventional Commits の型 */
+export const COMMIT_TYPES = ['feat', 'fix', 'docs', 'style', 'refactor', 'perf', 'test', 'build', 'ci', 'chore', 'revert'];
+
 export interface MessageParts {
   summary: string;
   body: string;
@@ -36,4 +39,18 @@ export function templateMessage(raw: string): MessageParts {
       .filter((line) => !line.startsWith('#'))
       .join('\n'),
   );
+}
+
+/** 件名の先頭を `type: ` にする（もう型があれば置き換える） */
+export function withType(summary: string, type: string): string {
+  return `${type}: ${summary.replace(/^[a-z]+(\([^)]*\))?!?:\s*/, '')}`;
+}
+
+/** 本文の末尾にトレーラーを足す（もうあれば足さない）。本文とは空行で分け、前の行がトレーラーなら続ける */
+export function addTrailer(body: string, line: string): string {
+  if (body.includes(line)) return body;
+  const text = body.trim();
+  if (!text) return line;
+  const last = text.split('\n').pop()!;
+  return `${text}${/^[A-Za-z-]+: /.test(last) ? '\n' : '\n\n'}${line}`;
 }
