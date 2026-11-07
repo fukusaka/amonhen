@@ -91,7 +91,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Folders to scan on SSH hosts | ✓ | ✓ | n/a | △ | CLI: `find-repositories` does the scan for the apps. |
 | Folder tree of the repositories under a place | ✓ | ✓ | n/a | n/a |  |
 | Manual groups; rows dragged onto Favorites or a group | △ | △ | n/a | n/a | macOS: Groups themselves can't be reordered by dragging.<br>GTK4: Groups themselves can't be reordered by dragging. |
-| Status columns (branch, changes, ahead/behind, last commit, opened), sortable | ✓ | ✓ | n/a | n/a |  |
+| Status columns (branch, changes, ahead/behind, last commit, opened), sortable and reorderable | ✓ | ✓ | n/a | n/a |  |
 | Favorites, display name, color label | ✓ | ✓ | n/a | n/a |  |
 | Open in a tab or window; Finder / Files, Terminal | △ | △ | n/a | n/a | macOS: No Open in Editor.<br>GTK4: No Open in Editor. |
 | Fetch the selected repositories | ✓ | ✓ | n/a | n/a |  |
