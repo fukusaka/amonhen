@@ -1927,6 +1927,10 @@ impl Browser {
             for cell in self.cells.borrow().iter() {
                 cell.render();
             }
+            // 絞り込んでいれば、同じ行でも先頭を選ぶ（Enter で開くもの。macOS 版と同じ）。
+            if !query.is_empty() && self.selection.n_items() > 0 {
+                self.selection.select_item(0, true);
+            }
             return;
         }
         // 絞り込んでいれば先頭（選ぶ行）を見せる。そうでなければスクロールの位置を残す（macOS 版と同じ）。
