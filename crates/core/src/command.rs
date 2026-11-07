@@ -430,8 +430,13 @@ pub enum Command {
     /// `branches` はブランチごとの `name`・`time`（先端のコミットの日時）・`merged`（既定のブランチに取り込み済み）・
     /// `atBase`（既定のブランチの先端と同じ）・
     /// `mine`（取り込んでいない自分のコミットがある）・`parent`（その上に積んであるブランチ）・
-    /// `archived`（`branch.<name>.amonhenArchived`）・`pinned`（お気に入りの順位。`branch.<name>.amonhenPinned`）。
-    BranchGroups,
+    /// `archived`（`branch.<name>.amonhenArchived`）・`pinned`（お気に入りの順位。`branch.<name>.amonhenPinned`）・
+    /// `pullRequest`（取り込んでいないが、`pullRequests` の PR が今の先端を head にしてマージされた。squash・rebase。
+    /// その番号）。
+    BranchGroups {
+        #[serde(default)]
+        pull_requests: Vec<MergedPullRequest>,
+    },
     /// `oid` を親にまとめるときの、メッセージの初期値（親のメッセージ ＋ `oid` のメッセージ）。
     SquashMessage {
         oid: String,
@@ -1058,7 +1063,7 @@ impl Repository {
 
     /// `Command::BranchCleanup` の答え。
     fn branch_cleanup(&self, pull_requests: &[MergedPullRequest]) -> Result<serde_json::Value> {
-        let groups = self.branch_groups()?;
+        let groups = self.branch_groups(pull_requests)?;
         let refs = self.refs()?;
         let entries = &refs.refs.entries;
         let base = groups["base"].as_str();
@@ -1116,10 +1121,7 @@ impl Repository {
             {
                 continue;
             }
-            let tip = entry.target.map(|t| t.to_string());
-            let pr = pull_requests
-                .iter()
-                .find(|p| p.branch == name && tip.as_deref() == Some(p.oid.as_str()));
+            let pr = b["pullRequest"].as_u64();
             let (reason, force, checked) = if b["merged"] == true {
                 ("merged", false, true)
             } else if pr.is_some() {
@@ -1134,7 +1136,7 @@ impl Repository {
                 "reason": reason,
                 "force": force,
                 "checked": checked,
-                "pullRequest": if reason == "pullRequest" { pr.map(|p| p.number) } else { None },
+                "pullRequest": pr,
                 "gone": entry.gone,
                 "upstream": entry.detail,
                 "time": b["time"],
@@ -1144,7 +1146,7 @@ impl Repository {
     }
 
     /// `Command::BranchGroups` の答え。
-    fn branch_groups(&self) -> Result<serde_json::Value> {
+    fn branch_groups(&self, pull_requests: &[MergedPullRequest]) -> Result<serde_json::Value> {
         use crate::branches;
         let history = self.load_history()?;
         // History と同じく今の ref を読む（変化の知らせより先に頼まれることがある。git で作った直後など）。
@@ -1289,6 +1291,14 @@ impl Repository {
             })
             .collect();
         let parents = branches::parents(graph, &in_base, &candidates);
+        // 取り込んでいないが、PR が今の先端を head にしてマージされたもの（squash・rebase で取り込んだ）。
+        let pull_request_of = |e: &RefEntry, merged: bool| {
+            let tip = e.target.map(|t| t.to_string())?;
+            pull_requests
+                .iter()
+                .find(|p| !merged && p.branch == e.name && p.oid == tip)
+                .map(|p| p.number)
+        };
         let branches: Vec<serde_json::Value> = locals
             .iter()
             .zip(&facts)
@@ -1306,6 +1316,7 @@ impl Repository {
                     "archived": config_value(&format!("branch.{}.amonhenarchived", e.name)).is_some_and(|v| v == "true"),
                     // お気に入り（サイドバーの一番上に出す）の順位。小さいほど上。
                     "pinned": config_value(&format!("branch.{}.amonhenpinned", e.name)).and_then(|v| v.parse::<i64>().ok()),
+                    "pullRequest": pull_request_of(e, f.as_ref().is_some_and(|f| f.merged)),
                 })
             })
             .collect();
@@ -3416,9 +3427,9 @@ impl Repository {
                 info: Some(self.branch_cleanup(&pull_requests)?),
                 ..Default::default()
             }),
-            Command::BranchGroups => Ok(Response {
+            Command::BranchGroups { pull_requests } => Ok(Response {
                 ok: true,
-                info: Some(self.branch_groups()?),
+                info: Some(self.branch_groups(&pull_requests)?),
                 ..Default::default()
             }),
             Command::RewritePreview {
@@ -7597,6 +7608,23 @@ mod tests {
             .find(|b| b["name"] == "squashed")
             .unwrap();
         assert_eq!(squashed["pullRequest"], 7);
+        // サイドバーの分け方にも、PR でマージ済みのものの番号が付く（先端が違うものには付かない）。
+        let groups = run(
+            &repo,
+            &serde_json::json!({ "op": "branchGroups", "pullRequests": prs }).to_string(),
+        );
+        let pr_of = |name: &str| {
+            groups["info"]["branches"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|b| b["name"] == name)
+                .unwrap()["pullRequest"]
+                .clone()
+        };
+        assert_eq!(pr_of("squashed"), 7);
+        assert_eq!(pr_of("moved"), serde_json::Value::Null);
+        assert_eq!(pr_of("done"), serde_json::Value::Null);
         // まとめて消し、1 回の Undo でまとめて戻る。git が一緒に消す `branch.<name>.*` の設定（上流・アーカイブ）も戻る。
         git(dir, &["config", "branch.done.amonhenArchived", "true"]);
         let before = (tip("done"), tip("squashed"), tip("lost"));

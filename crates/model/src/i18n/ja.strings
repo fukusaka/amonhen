@@ -2186,3 +2186,7 @@
 "Upstream gone, not merged (their own commits go with them)" = "上流が消えた・取り込んでいない（そのブランチだけのコミットも消えます）";
 "Delete 1 Branch" = "1 本のブランチを削除";
 "Delete {count} Branches" = "{count} 本のブランチを削除";
+"Merged by pull request #{number}" = "プルリクエスト #{number} でマージ済み";
+"Pull request #{number} was merged into {base} by squash or rebase with this branch’s tip as its head (read from GitHub). Its commits were rewritten on the way, so they aren’t in the local history, but their changes are. It is safe to delete." = "プルリクエスト #{number} が、このブランチの先端を head にして、squash か rebase で {base} にマージされました（GitHub から読みました）。そのときにコミットが書き換えられたので手元の履歴にはありませんが、中身は入っています。消してかまいません。";
+"Pull request #{number} merged its changes." = "プルリクエスト #{number} で中身は取り込み済みです。";
+"Merged by pull request: {branches}" = "プルリクエストでマージ済み: {branches}";

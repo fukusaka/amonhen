@@ -51,6 +51,9 @@ pub struct Actions {
     undo_label: Rc<RefCell<Option<String>>>,
     /// 今のブランチを送るのが Publish か（まだリモートにない。メニューの「Publish…」）。
     publishes: std::cell::Cell<bool>,
+    /// squash・rebase でマージされたプルリクエストのブランチと、その番号（サイドバーが `branchGroups` から入れる）。
+    /// 消すときは、取り込んでいないコミットを並べる確認でなく、そのプルリクエストを添えた確認にする。
+    merged_by_pull_request: RefCell<std::collections::HashMap<String, u64>>,
 }
 
 impl Actions {
@@ -84,7 +87,17 @@ impl Actions {
             main_worktree_branch: RefCell::default(),
             undo_label: Rc::default(),
             publishes: std::cell::Cell::default(),
+            merged_by_pull_request: RefCell::default(),
         })
+    }
+
+    /// squash・rebase でマージされたプルリクエストの番号（`branch` がそうなら）。
+    pub fn merged_by_pull_request(&self, branch: &str) -> Option<u64> {
+        self.merged_by_pull_request.borrow().get(branch).copied()
+    }
+
+    pub fn set_merged_by_pull_request(&self, map: std::collections::HashMap<String, u64>) {
+        self.merged_by_pull_request.replace(map);
     }
 
     pub fn set_repo(&self, repo: Arc<Repository>) {

@@ -1724,10 +1724,12 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     private func reloadBranchGroups() {
         let repository = self.repository
+        let merged = mergedPullRequests
         Task {
             let started = CACurrentMediaTime()
             guard let groups = await Task.detached(priority: .utility, operation: {
-                try? repository.info(["op": "branchGroups"], as: BranchGroups.self)
+                let prs = merged.map { ["number": $0.number, "branch": $0.headRefName, "oid": $0.headRefOid] as [String: Any] }
+                return try? repository.info(["op": "branchGroups", "pullRequests": prs], as: BranchGroups.self)
             }).value else { return }
             PerformanceLog.record("Sidebar: branch groups", ms: (CACurrentMediaTime() - started) * 1000)
             sidebar.show(branchGroups: groups)
@@ -2100,6 +2102,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     /// プルリクエストを出す先（`gitHub` が fork なら元のリポジトリ）。
     private var pullRequestTarget: PullRequestTarget?
     private var gitHubLoadedAt: Date?
+    /// マージされたプルリクエスト（squash・rebase で取り込んだブランチを見分ける。`branchGroups` に渡す）。
+    private var mergedPullRequests: [MergedPullRequest] = []
 
     /// GitHub のリポジトリを判定し、開いているプルリクエストを読んでサイドバーに出す。gh がなければ何もしない。
     /// `force` でなければ、前に読んでから 30 秒は読まない。
@@ -2131,6 +2135,11 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 sidebar.show(pullRequests: try await GitHub.pullRequests(target))
             } catch {
                 EventLog.add(repo: window.title, L("Can’t read pull requests: %@", "\(error)"))
+            }
+            // マージされたプルリクエストも同じときに読む（変わったら、ブランチの分け方を読み直して印を出す）。
+            if let merged = try? await GitHub.mergedPullRequests(target), merged != mergedPullRequests {
+                mergedPullRequests = merged
+                reloadBranchGroups()
             }
             await loadCommitStatuses(gitHub)
         }

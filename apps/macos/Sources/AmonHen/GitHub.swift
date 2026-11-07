@@ -70,7 +70,7 @@ struct PullRequestTarget: Equatable, Sendable {
 struct RepositoryOwner: Decodable, Sendable, Hashable { let login: String }
 
 /// マージされたプルリクエスト（`gh pr list --state merged --json`）。`headRefOid` はマージしたときの head。
-struct MergedPullRequest: Decodable, Sendable {
+struct MergedPullRequest: Decodable, Sendable, Equatable {
     let number: Int
     let headRefName: String
     let headRefOid: String

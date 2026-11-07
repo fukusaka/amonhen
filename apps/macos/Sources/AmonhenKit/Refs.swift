@@ -191,6 +191,8 @@ public struct BranchGroups: Decodable, Equatable, Sendable {
         public let archived: Bool
         /// お気に入りの順位（`branch.<name>.amonhenPinned`。小さいほど上）。お気に入りでなければ nil。
         public let pinned: Int64?
+        /// 取り込んでいないが、今の先端を head にして squash・rebase でマージされたプルリクエストの番号。
+        public let pullRequest: Int?
     }
 
     /// 既定のブランチ（`origin/main`・`main` など）。

@@ -21,6 +21,9 @@ final class Actions {
     var worktreeName: String?
     /// 書き込む先の worktree のブランチ（detached HEAD なら nil）。reset の確認に出す。
     var currentBranch: String?
+    /// squash・rebase でマージされたプルリクエストのブランチと、その番号（サイドバーが `branchGroups` から入れる）。
+    /// 消すときは、取り込んでいないコミットを並べる確認でなく、そのプルリクエストを添えた確認にする。
+    var mergedByPullRequest: [String: Int] = [:]
     /// Push のシートに埋め込む詳細の欄（メッセージ・変更ファイル・差分）を作る。Metal の描画器を持つウィンドウが渡す。
     var makeDetailView: (() -> CommitDetailViewController?)?
 

@@ -327,6 +327,8 @@ struct Inner {
     /// 最後に出した ref（分け方が届いたら作り直す）。
     refs: RefCell<Option<Refs>>,
     groups: RefCell<Option<BranchGroups>>,
+    /// マージされたプルリクエスト（`branchGroups` の `pullRequests`。GitHub から読む）。
+    merged_pull_requests: RefCell<Vec<Value>>,
     tags: RefCell<Option<TagRemotes>>,
     /// submodule の様子（場所 → 様子。submodule がなければ読まない）。
     submodules: RefCell<HashMap<String, SubmoduleState>>,
@@ -483,6 +485,7 @@ impl Sidebar {
             generation: RefCell::default(),
             refs: RefCell::default(),
             groups: RefCell::default(),
+            merged_pull_requests: RefCell::default(),
             tags: RefCell::default(),
             submodules: RefCell::default(),
             subtrees: RefCell::default(),
@@ -725,6 +728,16 @@ impl Sidebar {
     }
 
     /// 開いているプルリクエストを出す（なければ Pull Requests の見出しを出さない）。前と同じなら何もしない。
+    /// マージされたプルリクエスト（`branchGroups` の `pullRequests` の形）。変わったら、ブランチの分け方を読み直す
+    /// （squash・rebase でマージされたブランチに、取り込み済みの印を出す）。
+    pub fn set_merged_pull_requests(&self, list: Vec<Value>) {
+        if *self.inner.merged_pull_requests.borrow() == list {
+            return;
+        }
+        self.inner.merged_pull_requests.replace(list);
+        self.inner.load_groups();
+    }
+
     pub fn show_pull_requests(&self, list: Vec<PullRequest>) {
         if *self.inner.pull_requests.borrow() == list {
             return;
@@ -2022,17 +2035,24 @@ impl Inner {
 
     /// コアの命令（答えの要らない読み取り）を裏で始める（待つ前から動く）。
     fn ask(&self, op: &'static str) -> Option<gio::JoinHandle<Value>> {
+        self.ask_with(json!({ "op": op }))
+    }
+
+    /// `ask` と同じだが、命令をそのまま渡す。
+    fn ask_with(&self, command: Value) -> Option<gio::JoinHandle<Value>> {
         let repo = self.actions.borrow().as_ref().and_then(|a| a.repo())?;
         self.facts_pending.set(self.facts_pending.get() + 1);
         Some(gio::spawn_blocking(move || {
-            serde_json::from_str::<Value>(&repo.run_json(&json!({ "op": op }).to_string()))
-                .unwrap_or_default()
+            serde_json::from_str::<Value>(&repo.run_json(&command.to_string())).unwrap_or_default()
         }))
     }
 
     /// ローカルブランチの分け方を裏で読み、変わっていたら作り直す。
     fn load_groups(self: &Rc<Self>) {
-        let Some(reply) = self.ask("branchGroups") else {
+        let pull_requests = self.merged_pull_requests.borrow().clone();
+        let Some(reply) =
+            self.ask_with(json!({ "op": "branchGroups", "pullRequests": pull_requests }))
+        else {
             return;
         };
         let token = self.loading.get() + 1;
@@ -2045,6 +2065,14 @@ impl Inner {
             if inner.loading.get() == token {
                 let groups = BranchGroups::from(&reply["info"]);
                 if groups.is_some() && groups != *inner.groups.borrow() {
+                    if let (Some(g), Some(actions)) = (&groups, inner.actions.borrow().as_ref()) {
+                        actions.set_merged_by_pull_request(
+                            g.branches
+                                .values()
+                                .filter_map(|b| Some((b.name.clone(), b.pull_request?)))
+                                .collect(),
+                        );
+                    }
                     // Repository > Create Pull Request… は既定のブランチでは押せない。
                     if let (Some(actions), Some(g)) = (inner.actions.borrow().as_ref(), &groups) {
                         let base = g.local_base().map(str::to_owned);
@@ -2764,9 +2792,14 @@ fn ref_data(
         && !is_head
         && Some(e.name.as_str()) != groups.local_base()
     {
+        // squash・rebase でマージされたプルリクエストのブランチも、同じ印で（意味はツールチップ）。
+        let tooltip = match groups.get(&e.name).and_then(|b| b.pull_request) {
+            Some(number) => tr!("Merged by pull request #{number}", number = number),
+            None => tr!("Merged into {base}", base = groups.base_name()),
+        };
         data.marks.push(Mark {
             icon: icon::Kind::Merge,
-            tooltip: tr!("Merged into {base}", base = groups.base_name()),
+            tooltip,
             css: None,
         });
     }

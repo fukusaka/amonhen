@@ -44,10 +44,14 @@ final class BranchStatusPopover: NSViewController {
 
     override func loadView() {
         let item = facts.item
-        let merged = facts.branch?.merged == true && facts.branch?.atBase != true
+        let pullRequest = facts.branch?.pullRequest
+        let merged = (facts.branch?.merged == true && facts.branch?.atBase != true) || pullRequest != nil
         let base = facts.base ?? "main"
         // 見出し: いちばん大事な状態。
         let (symbol, color, title, explanation): (String, NSColor, String, String) = switch (merged, item.gone) {
+        case (true, _) where pullRequest != nil:
+            ("arrow.triangle.merge", .systemGreen, L("Merged by pull request #%ld", pullRequest ?? 0),
+             L("Pull request #%1$ld was merged into %2$@ by squash or rebase with this branch’s tip as its head (read from GitHub). Its commits were rewritten on the way, so they aren’t in the local history, but their changes are. It is safe to delete.", pullRequest ?? 0, base))
         case (true, true):
             ("arrow.triangle.merge", .systemGreen, L("Merged and cleaned up on the remote"),
              L("All of this branch’s commits are in %@, and its upstream %@ has been deleted on the remote (typically after the pull request was merged). It is safe to delete.", base, item.detail ?? ""))
