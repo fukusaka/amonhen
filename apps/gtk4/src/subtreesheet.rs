@@ -119,14 +119,14 @@ pub fn pull_or_push(actions: &Rc<Actions>, subtree: &Subtree, push: bool) {
     glib::spawn_future_local(async move {
         let (title, message) = if push {
             (
-                format!("Push {}", subtree.dir),
+                tr!("Push {dir}", dir = &subtree.dir),
                 tr!(
                     "Sends the commits that changed this folder to the repository’s branch, as that repository’s own history (git subtree push)."
                 ),
             )
         } else {
             (
-                format!("Pull {}", subtree.dir),
+                tr!("Pull {dir}", dir = &subtree.dir),
                 tr!(
                     "Merges the repository’s branch into this folder (git subtree pull). Conflicts stop it like a merge."
                 ),
@@ -189,7 +189,7 @@ pub fn split(actions: &Rc<Actions>, subtree: &Subtree) {
     glib::spawn_future_local(async move {
         let sheet = target.sheet(
             sheets::parent(&actions).as_ref(),
-            &format!("Split {}", subtree.dir),
+            &tr!("Split {dir}", dir = &subtree.dir),
             &tr!(
                 "Creates a branch with only the history of this folder, its files at the top (git subtree split)."
             ),

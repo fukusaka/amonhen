@@ -83,7 +83,7 @@ enum SubtreeSheet {
     /// Pull…（`push` なら Push…）: 前に使った相手を入れておく。Pull の squash は前の選び方。
     static func pullOrPush(_ push: Bool, in window: NSWindow, actions: Actions, subtree: SubtreeInfo, perform: @escaping ([String: Any]) -> Void) {
         let alert = NSAlert()
-        alert.messageText = push ? "Push \(subtree.dir)" : "Pull \(subtree.dir)"
+        alert.messageText = push ? L("Push %@", subtree.dir) : L("Pull %@", subtree.dir)
         alert.informativeText = actions.sheetMessage(push
             ? L("Sends the commits that changed this folder to the repository’s branch, as that repository’s own history (git subtree push).")
             : L("Merges the repository’s branch into this folder (git subtree pull). Conflicts stop it like a merge."))
@@ -107,7 +107,7 @@ enum SubtreeSheet {
     /// Split…: このフォルダの履歴だけのブランチを作る。
     static func split(in window: NSWindow, actions: Actions, subtree: SubtreeInfo, perform: @escaping ([String: Any]) -> Void) {
         let alert = NSAlert()
-        alert.messageText = "Split \(subtree.dir)"
+        alert.messageText = L("Split %@", subtree.dir)
         alert.informativeText = actions.sheetMessage(L("Creates a branch with only the history of this folder, its files at the top (git subtree split)."))
         let name = (subtree.dir as NSString).lastPathComponent
         let branch = field("", placeholder: "\(name)-split")

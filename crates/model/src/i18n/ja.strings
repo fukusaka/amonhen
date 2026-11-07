@@ -386,7 +386,7 @@
 "Rename Branch…" = "ブランチの名前を変える…";
 "Rename {name}" = "{name} の名前を変える";
 "New name of the branch." = "ブランチの新しい名前。";
-"Prune Worktrees" = "Prune Worktrees";
+"Prune Worktrees" = "worktree を Prune";
 "Compare with Previous Version" = "前の版と比べる";
 "Compare the current branch with its version before it was last rewritten (a rebase, History edit, amend or reset), like git range-diff" = "今のブランチを、最後に書き換える（rebase・コミットの編集・amend・reset）前の版と比べます（git range-diff と同じ）";
 "Apply Patch…" = "パッチを当てる…";
@@ -1545,7 +1545,7 @@
 "  · in the worktree {name}" = "　· worktree {name} で使用中";
 
 /* GTK4: Worktrees（New Worktree…・Remove Worktree…・右クリック） */
-"New Worktree" = "New Worktree";
+"New Worktree" = "新しい worktree";
 "Creates a branch from {start} and checks it out in a new folder." = "{start} からブランチを作り、新しいフォルダに checkout します。";
 "Branch name" = "ブランチの名前";
 "Folder" = "フォルダ";
@@ -2193,3 +2193,15 @@
 "“{name}” wasn’t deleted: git only deletes a branch merged into the current branch or its upstream. Switch to the branch it’s merged into and try again." = "「{name}」は消していません: git が消すのは、今のブランチか上流に取り込んだブランチだけです。取り込んだ先のブランチに切り替えて、やり直してください。";
 "Already deleted: {count}." = "消したもの: {count} 本。";
 "Apply the stash {name}?" = "{name} を Apply しますか？";
+"New Worktree…" = "新しい worktree…";
+"Update Submodules…" = "submodule を Update…";
+"Stash Changes" = "変更を Stash";
+"Stash Changes in {name}" = "{name} の変更を Stash";
+"Stash Changes in {count} Files" = "{count} ファイルの変更を Stash";
+"Clone Repository" = "リポジトリを Clone";
+"Update {path}" = "{path} を Update";
+"Update All Submodules" = "すべての submodule を Update";
+"Pull {dir}" = "{dir} を Pull";
+"Push {dir}" = "{dir} を Push";
+"Split {dir}" = "{dir} を Split";
+"Create Pull Request" = "プルリクエストを作成";

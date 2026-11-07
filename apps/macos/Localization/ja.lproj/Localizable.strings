@@ -1090,8 +1090,8 @@
 "Its folder is gone (Prune removes it): %@" = "フォルダがありません（Prune で片付けられます）: %@";
 "Locked" = "ロック中";
 "Locked: %@" = "ロック中: %@";
-"New Worktree" = "New Worktree";
-"Prune Worktrees" = "Prune Worktrees";
+"New Worktree" = "新しい worktree";
+"Prune Worktrees" = "worktree を Prune";
 "Remove Worktree" = "削除";
 "Remove Worktree…" = "削除…";
 "Remove the worktree “%@”?" = "worktree「%@」を削除しますか？";
@@ -1860,3 +1860,15 @@
 "Pull request #%ld merged its changes." = "プルリクエスト #%ld で中身は取り込み済みです。";
 "Merged by pull request: %@" = "プルリクエストでマージ済み: %@";
 "Apply the stash %@?" = "%@ を Apply しますか？";
+"New Worktree…" = "新しい worktree…";
+"Update Submodules…" = "submodule を Update…";
+"Stash Changes" = "変更を Stash";
+"Stash Changes in %@" = "%@ の変更を Stash";
+"Stash Changes in %ld Files" = "%ld ファイルの変更を Stash";
+"Clone Repository" = "リポジトリを Clone";
+"Update %@" = "%@ を Update";
+"Update All Submodules" = "すべての submodule を Update";
+"Pull %@" = "%@ を Pull";
+"Push %@" = "%@ を Push";
+"Split %@" = "%@ を Split";
+"Create Pull Request" = "プルリクエストを作成";

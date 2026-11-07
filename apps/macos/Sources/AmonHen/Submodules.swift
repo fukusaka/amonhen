@@ -86,7 +86,7 @@ enum SubmoduleSheet {
     /// すべて。
     static func update(in window: NSWindow, actions: Actions, paths: [String], perform: @escaping ([String: Any]) -> Void) {
         let alert = NSAlert()
-        alert.messageText = paths.count == 1 ? "Update \(paths[0])" : "Update All Submodules"
+        alert.messageText = paths.count == 1 ? L("Update %@", paths[0]) : L("Update All Submodules")
         alert.informativeText = actions.sheetMessage(L("Checks out the commit recorded in this repository, unless you choose otherwise."))
         let recursive = NSButton(checkboxWithTitle: L("Also update the submodules inside it (--recursive)"), target: nil, action: nil)
         let remote = NSButton(checkboxWithTitle: L("Use the latest commit of the branch it follows (--remote)"), target: nil, action: nil)

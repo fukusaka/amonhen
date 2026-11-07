@@ -141,7 +141,7 @@ pub static COMMANDS: &[Command] = &[
     command("set-upstream", "Set Upstream…").localized(),
     command("add-remote", "Add Remote…").localized(),
     command("add-submodule", "Add Submodule…").localized(),
-    command("update-submodules", "Update Submodules…"),
+    command("update-submodules", "Update Submodules…").localized(),
     command("add-subtree", "Add Subtree…").localized(),
     command("create-pull-request", "Create Pull Request…").localized(),
     command("open-on-github", "Open on GitHub").localized(),
@@ -159,7 +159,7 @@ pub static COMMANDS: &[Command] = &[
     command("new-tag", "New Tag…")
         .key("Primary+Alt+T")
         .gtk(Gtk::None),
-    command("new-worktree", "New Worktree…"),
+    command("new-worktree", "New Worktree…").localized(),
     command("prune-worktrees", "Prune Worktrees").localized(),
     // 取り込み・書き換え
     command("merge", "Merge…").key("Primary+Alt+M"),

@@ -1235,7 +1235,7 @@ fn create_pull_request_in(
         // ブランチを名前で渡すので、worktree の行は書かない（macOS 版と同じ）。
         let sheet = Sheet::unnamed(
             window.as_ref(),
-            "Create Pull Request",
+            &tr!("Create Pull Request"),
             &tr!("From {branch}", branch = branch),
         );
         // NSAlert の欄と同じく、Return で Create を押す。
