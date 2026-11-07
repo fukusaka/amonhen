@@ -895,7 +895,11 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     /// Repository > New Worktree…: ブランチを作り、それを checkout した worktree を作って、書き込む先にする。
     @objc func newWorktree(_ sender: Any?) {
-        let start = startPoint
+        // 下で開いたリポジトリから作るので、書き込む先の HEAD は ID で渡す。
+        var start = startPoint
+        if start == "HEAD", editing !== opened, let head = editingRefs?.head {
+            start = head.map { String(format: "%02x", $0) }.joined()
+        }
         let base = opened.path
         let alert = NSAlert()
         alert.messageText = L("New Worktree")
