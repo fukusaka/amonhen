@@ -473,6 +473,49 @@ button.secondary {
   border-right: 1px solid var(--vscode-panel-border);
 }
 
+.wc-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.wc-tools input[type='search'] {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 6px;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, transparent);
+  outline: none;
+}
+
+.wc-tools input[type='search']:focus {
+  border-color: var(--vscode-focusBorder);
+}
+
+.wc-layout {
+  flex: none;
+  display: flex;
+  gap: 1px;
+}
+
+.wc-layout button {
+  padding: 1px 6px;
+  color: var(--vscode-foreground);
+  background: transparent;
+}
+
+.wc-layout button:hover {
+  background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+}
+
+.wc-layout button.active {
+  color: var(--vscode-inputOption-activeForeground, var(--vscode-foreground));
+  background: var(--vscode-inputOption-activeBackground, var(--vscode-list-inactiveSelectionBackground));
+}
+
 .wc-files {
   flex: 1;
   overflow-y: auto;
@@ -526,6 +569,27 @@ button.secondary {
 .wc-files:focus .wc-file.selected {
   color: var(--vscode-list-activeSelectionForeground);
   background: var(--vscode-list-activeSelectionBackground);
+}
+
+.wc-file .name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wc-file .icon-button {
+  flex: none;
+}
+
+.wc-dir .name {
+  color: var(--vscode-descriptionForeground);
+}
+
+.wc-dir .chevron {
+  flex: none;
+  width: 1em;
+  text-align: center;
+  color: var(--vscode-descriptionForeground);
 }
 
 .wc-file .status,

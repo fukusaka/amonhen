@@ -1,9 +1,10 @@
 /** メインビューの Working Copy と拡張ホストの間のメッセージ */
 import type { FileDiff, SelectedLine } from '../diff/fileDiff.ts';
 import type { Change, ChangeGroup } from '../state/changes.ts';
+import type { FileLayout } from './fileList.ts';
 
 export type WorkingCopyHostMessage =
-  | { type: 'wcFiles'; files: Change[]; branch?: string; lastMessage?: string }
+  | { type: 'wcFiles'; files: Change[]; branch?: string; lastMessage?: string; layout: FileLayout }
   /** 選んでいるファイルの差分。group は今そのファイルがあるグループ */
   | { type: 'wcDiff'; group: ChangeGroup; diff: FileDiff }
   | { type: 'wcDiff'; group?: undefined; diff: undefined }
@@ -11,6 +12,8 @@ export type WorkingCopyHostMessage =
 
 export type WorkingCopyWebviewMessage =
   | { type: 'wcSelect'; group: ChangeGroup; path: string }
+  /** ファイル一覧の見せ方を変えた（次に開くときのために覚える） */
+  | { type: 'wcLayout'; layout: FileLayout }
   | { type: 'wcStageFiles'; op: 'stage' | 'unstage'; files: { group: ChangeGroup; path: string }[] }
   | { type: 'wcStageLines'; group: ChangeGroup; path: string; version: string; lines: SelectedLine[] }
   /** Changes（unstaged）のファイルを丸ごと破棄する */

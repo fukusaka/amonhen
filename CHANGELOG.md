@@ -1007,6 +1007,8 @@ First release.
 
 #### Added
 
+- Working Copy's file list filters on paths and shows paths, a folder tree (folders stage and unstage together) or
+  file names first.
 - With the engine, several commits can be selected in History (⌘- or Ctrl-click, ⇧-click, ⇧+arrows): the details show
   their diff, and the menu cherry-picks, reverts, combines, merges, saves patches, range-diffs two and copies the IDs.
 - Clean Up Branches… lists branches merged into the default branch, merged by a pull request on GitHub, or whose
