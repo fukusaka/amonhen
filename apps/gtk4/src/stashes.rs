@@ -254,6 +254,10 @@ impl Stashes {
 
     /// 詳細の親（土台）・メッセージの中の ID を押したら `f(ID)` を呼ぶ（History でそのコミットを選ぶ。macOS 版の
     /// `stashes.detail.onSelectCommit`）。
+    pub fn set_restore(&self, restore: Option<crate::filetools::Restore>) {
+        self.inner.pane.set_restore(restore);
+    }
+
     pub fn connect_select_commit(&self, f: impl Fn(Oid) + 'static) {
         self.inner.pane.connect_select_commit(Rc::new(f));
     }

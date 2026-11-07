@@ -1417,6 +1417,9 @@ fn build_tab(
     }
     reflog_slot.replace(Some(reflog.clone()));
     reflog.set_range_diff(range_diff_opener.clone());
+    reflog.set_restore(restorer(&Rc::downgrade(&actions)));
+    stashes.set_restore(restorer(&Rc::downgrade(&actions)));
+    range_diff.set_restore(restorer(&Rc::downgrade(&actions)));
     let (v, w, oc) = (view.downgrade(), win_of.clone(), on_commit.clone());
     let (dw, dt) = (diff.downgrade(), details.clone());
     // 作業ツリーのファイルを、選んでいる 1 つのコミットの版（その前の版）に戻す（macOS 版と同じ）。

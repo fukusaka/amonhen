@@ -448,6 +448,10 @@ impl RangeDiff {
     }
 
     /// 組のコミットの Blame・File History を開くリポジトリ（書き込む先の worktree）。比べるのは開いたリポジトリのまま。
+    pub fn set_restore(&self, restore: Option<crate::filetools::Restore>) {
+        self.commit.set_restore(restore);
+    }
+
     pub fn set_tools_repo(&self, repo: Arc<Repository>) {
         self.commit.set_tools_repo(repo);
     }
