@@ -337,6 +337,7 @@ fn git_row(
                         .unwrap_or_default(),
                 );
                 warn.set_visible(read.problem.is_some());
+                s.set_git_problem(read.problem.clone());
                 pop.set_child(Some(&git_details(&s, &read)));
                 g.replace(read);
                 s.refresh();

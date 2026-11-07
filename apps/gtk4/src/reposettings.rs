@@ -207,6 +207,8 @@ pub struct RepoSettings {
     stack: gtk::Stack,
     /// ページの下の、行に付かないエラー。
     error: gtk::Label,
+    /// 使う git が使えない理由（プログラムのページが git の行の下に出すので、同じ文を下に重ねて出さない）。
+    git_problem: RefCell<Option<String>>,
     /// 読み込みの世代（古い読み込みの答えは捨てる）。
     generation: Cell<u64>,
     /// 今の読み込みを終えたら呼ぶもの（`perform` の続き）。
@@ -710,6 +712,7 @@ impl RepoSettings {
             widget: widget.clone(),
             stack: stack.clone(),
             error: error.clone(),
+            git_problem: RefCell::default(),
             generation: Cell::new(0),
             after_load: RefCell::default(),
             signing_loaded: Cell::new(false),
@@ -874,6 +877,12 @@ impl RepoSettings {
             group.add_action(&action);
         }
         widget.insert_action_group("reposettings", Some(&group));
+        let weak = Rc::downgrade(&this);
+        stack.connect_visible_child_notify(move |_| {
+            if let Some(s) = weak.upgrade() {
+                s.update_error();
+            }
+        });
         this.load();
         this
     }
@@ -1243,7 +1252,21 @@ impl RepoSettings {
     /// 書き換えや操作の失敗をページの下の 1 か所に出す（None なら消す。macOS 版の `model.error`）。
     pub(crate) fn show_error(&self, message: Option<&str>) {
         self.error.set_text(message.unwrap_or_default());
-        self.error.set_visible(message.is_some());
+        self.update_error();
+    }
+
+    /// 使う git が使えない理由を知らせる（プログラムのページが読む）。
+    pub(crate) fn set_git_problem(&self, problem: Option<String>) {
+        self.git_problem.replace(problem);
+        self.update_error();
+    }
+
+    /// ページの下のエラーを出すか。プログラムのページでは、git の行の下と同じ文を重ねない（macOS 版と同じ）。
+    fn update_error(&self) {
+        let text = self.error.text();
+        let above = self.stack.visible_child_name().as_deref() == Some("programs")
+            && self.git_problem.borrow().as_deref() == Some(text.as_str());
+        self.error.set_visible(!text.is_empty() && !above);
     }
 
     /// 命令を順に実行し（リモート・フックなど、設定の書き換えでないもの。Undo には積まない）、読み直す。
