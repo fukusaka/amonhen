@@ -1095,6 +1095,10 @@ impl Inner {
         this.single.set(single.is_some());
         this.shown_file.set(single);
         this.source.replace(Some(source.clone()));
+        // 前のコミットのファイルの番号を持ち越さない（一覧の選びが、出している差分とずれる）。
+        this.syncing.set(true);
+        this.store.remove_all();
+        this.syncing.set(false);
         Inner::fill_list(this);
         match single {
             Some(_) => this.diff.show(source, view),
