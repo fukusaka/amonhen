@@ -2620,6 +2620,8 @@ impl Inner {
             }));
             items.push(Item::Separator);
         }
+        // 消したファイル（`git rm` なら index の側に D が付く）は開けない。
+        let exists = entry.worktree != b'D' && entry.index != b'D';
         // untracked のファイルにはまだ履歴がない。代わりに .gitignore に足せる（そのパスか、拡張子のパターン）。
         if untracked {
             let mut patterns = vec![path.clone()];
@@ -2642,7 +2644,7 @@ impl Inner {
                 ));
             }
         } else if let Some(f) = this.on_file_menu.borrow().as_ref() {
-            items.extend(f(&path, entry.worktree != b'D', true));
+            items.extend(f(&path, exists, true));
         }
         items.push(Item::Separator);
         let (w, p) = (this.list.downgrade(), path.clone());
@@ -2657,7 +2659,7 @@ impl Inner {
             .filter(|r| r.connection_state().is_none())
             .and_then(|r| r.paths().workdir);
         if let Some(workdir) = local
-            && entry.worktree != b'D'
+            && exists
         {
             let file = gio::File::for_path(workdir.join(&path));
             let (w, f) = (this.list.downgrade(), file.clone());
