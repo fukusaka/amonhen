@@ -126,6 +126,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     /// コンフリクトのファイルごとのマージエディタ（ほかのファイルに移っても、編集中の内容を保つ）。
     private var mergeEditors: [String: MergeEditorViewController] = [:]
     private var embeddedEditor: MergeEditorViewController?
+    /// 開いたときの自動の解決を済ませたファイル（コンフリクトの間は、読み直しても 1 回だけ）。
+    private var autoAppliedPaths: Set<String> = []
 
     init(repository: Repository, renderer: TextRenderer) {
         self.repository = repository
@@ -503,6 +505,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         // 解決済みになったファイルのエディタは捨てる。
         let conflicted = Set(status.items.filter { $0.kind == .unmerged }.map(\.path))
         mergeEditors = mergeEditors.filter { conflicted.contains($0.key) }
+        autoAppliedPaths.formIntersection(conflicted)
         if let editor = embeddedEditor, !conflicted.contains(editor.path) { unembed() }
         allEntries = status.items.map(Entry.init).sorted {
             $0.isConflict != $1.isConflict ? $0.isConflict : $0.item.path < $1.item.path
@@ -813,6 +816,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
                 do {
                     let editor = try await MergeEditorViewController.load(path: path, repository: repository, actions: actions!)
                     guard request == self.request else { return }
+                    editor.autoApplied = !autoAppliedPaths.insert(path).inserted
                     mergeEditors[path] = editor
                     embed(editor)
                 } catch {

@@ -8,7 +8,7 @@
 //! コンフリクトのファイルは、差分の代わりにマージエディタ（`merge.rs`）を埋め込み、上にファイルごとの解決のボタンを出す。
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -196,6 +196,8 @@ struct Inner {
     /// 作ったマージエディタ（worktree とパスごと。ファイルを選び直しても、書き込む先の worktree を切り替えて
     /// 戻っても、編集中の Result を保つ）と、埋め込んでいるもの。
     editors: RefCell<HashMap<EditorKey, Rc<crate::merge::Editor>>>,
+    /// 開いたときの自動の解決を済ませたファイル。
+    auto_magic_done: RefCell<HashSet<EditorKey>>,
     embedded: RefCell<Option<Rc<crate::merge::Editor>>>,
     /// 改行を変換している・改行が混ざっているファイルの印（普段のファイルでは出さない）。
     line_endings: gtk::Label,
@@ -566,6 +568,7 @@ impl WorkingCopy {
             right_stack,
             merge_holder,
             editors: RefCell::default(),
+            auto_magic_done: RefCell::default(),
             embedded: RefCell::default(),
             line_endings,
             selected: RefCell::default(),
@@ -2775,9 +2778,12 @@ impl Inner {
             }
             match loaded {
                 Ok(editor) => {
+                    // 開いたときの自動の解決は、コンフリクトの間に 1 回だけ（読み直したエディタで、Undo で戻したものを
+                    // また解かない。macOS 版と同じ）。
+                    let first = this.auto_magic_done.borrow_mut().insert(key.clone());
                     this.editors.borrow_mut().insert(key, editor.clone());
                     Inner::embed(&this, &editor);
-                    crate::merge::Editor::opened(&editor);
+                    crate::merge::Editor::opened(&editor, first);
                 }
                 Err(e) => this.embed_message(&tr!("Can’t read: {error}", error = e)),
             }
@@ -2899,6 +2905,9 @@ impl Inner {
         self.editors
             .borrow_mut()
             .retain(|(w, path), _| *w != workdir || conflicted.contains(path));
+        self.auto_magic_done
+            .borrow_mut()
+            .retain(|(w, path)| *w != workdir || conflicted.contains(path));
         let stale = self
             .embedded
             .borrow()

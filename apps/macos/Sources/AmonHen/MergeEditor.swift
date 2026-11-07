@@ -240,7 +240,8 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
         for text in [current, incoming, base, result] { colorSyntax(text) }
     }
 
-    private var autoApplied = false
+    /// 開いたときの自動の解決はもう済んだ（読み直したエディタでは、Undo で戻したものをまた解かない）。
+    var autoApplied = false
 
     override func viewDidAppear() {
         super.viewDidAppear()
