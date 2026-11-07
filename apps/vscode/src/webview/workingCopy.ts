@@ -266,7 +266,32 @@ export function createWorkingCopyView(): View {
       e.preventDefault();
       const f = order[index]!;
       if (f.group !== 'conflicts') stageFiles(f.group === 'staged' ? 'unstage' : 'stage', [f]);
+    } else if ((e.key === 'Backspace' || e.key === 'Delete') && order[index]?.group === 'unstaged') {
+      e.preventDefault();
+      post({ type: 'wcDiscardFiles', paths: [order[index]!.path] });
     }
+  });
+
+  // J・K で次・前の hunk、⌥J・⌥K で次・前のファイル（文字を打つ欄の中では効かない）
+  root.addEventListener('keydown', (e) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || (e.code !== 'KeyJ' && e.code !== 'KeyK')) return;
+    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+    e.preventDefault();
+    const forward = e.code === 'KeyJ';
+    if (e.altKey) {
+      const index = listed.findIndex((f) => f.group === selected?.group && f.path === selected.path);
+      const next = listed[forward ? index + 1 : Math.max(0, index - 1)];
+      if (next) select(next);
+      return;
+    }
+    const top = diffPane.getBoundingClientRect().top;
+    const heads = [...diffPane.querySelectorAll<HTMLElement>('.hunk-head')].map((h) => h.getBoundingClientRect().top - top);
+    // 見出しは差分の見出しの下に止まるので、少し余裕を見て比べる
+    const offset = diffPane.querySelector<HTMLElement>('.diff-head')?.offsetHeight ?? 0;
+    const target = forward
+      ? heads.find((y) => y > offset + 2)
+      : heads.filter((y) => y < offset - 2).at(-1);
+    if (target !== undefined) diffPane.scrollBy({ top: target - offset });
   });
 
   filter.addEventListener('input', () => {
