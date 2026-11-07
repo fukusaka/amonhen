@@ -426,6 +426,11 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
                 // 読み直す（コアは中身が同じなら前回の status を返すので、一覧は作り直さない）。
                 loadStats()
                 reloadShownDiff()
+                // 見張りが先に読んでいたら、ここで選ぶ（残すと、後で別の変更があったときに選びが飛ぶ）。
+                if wantsFirstConflict {
+                    wantsFirstConflict = false
+                    selectFirstConflict()
+                }
             }
             loadConflictStates()
             isRefreshing = false
