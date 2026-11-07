@@ -193,6 +193,8 @@ export function createWorkingCopyView(): View {
       path: f.path,
       // コンフリクトのファイル（Stash… を出さない）
       ...(f.group === 'conflicts' ? { wcConflict: true } : {}),
+      // まだ履歴のないファイル（.gitignore に足せる）
+      ...(f.letter === 'U' ? { wcUntracked: true } : {}),
       // rerere が解決を当てたコンフリクトのファイル（Forget Resolution を出す）
       ...(f.group === 'conflicts' && f.rerere ? { wcRerere: true } : {}),
       preventDefaultContextMenuItems: true,

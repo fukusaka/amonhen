@@ -432,6 +432,11 @@
         "enablement": "amonhen.hasRepository"
       },
       {
+        "command": "amonhen.addToGitignore",
+        "title": "Add to .gitignore…",
+        "category": "Amon Hen"
+      },
+      {
         "command": "amonhen.showRepositorySettings",
         "title": "Repository Settings",
         "category": "Amon Hen",
@@ -1567,6 +1572,10 @@
           "when": "false"
         },
         {
+          "command": "amonhen.addToGitignore",
+          "when": "false"
+        },
+        {
           "command": "amonhen.stash.files",
           "when": "false"
         },
@@ -1786,6 +1795,11 @@
           "command": "amonhen.restoreFile.versionBefore",
           "when": "webviewId == 'amonhen.main' && webviewSection == 'commitFile' && amonhen.engine",
           "group": "2_restore@2"
+        },
+        {
+          "command": "amonhen.addToGitignore",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && wcUntracked && amonhen.engine",
+          "group": "3_ignore@1"
         },
         {
           "command": "amonhen.stash.files",

@@ -9,6 +9,7 @@ import { registerRangeDiffCommands } from './ui/rangeDiff.ts';
 import { SidebarDragAndDrop } from './ui/dragDrop.ts';
 import { registerFetchCommand } from './ui/fetchCommand.ts';
 import { registerFileToolCommands } from './ui/fileToolCommands.ts';
+import { registerIgnoreCommand } from './ui/ignoreCommand.ts';
 import { initPreferences } from './ui/preferences.ts';
 import { registerFormCommands } from './ui/formCommands.ts';
 import { registerHistoryCommands } from './ui/historyCommands.ts';
@@ -94,6 +95,7 @@ export async function activate(
     manager.onDidChangeCurrent(updateDescription),
     registerContentProvider(manager),
     vscode.commands.registerCommand('amonhen.refresh', () => manager.current?.refresh()),
+    registerIgnoreCommand(manager),
     vscode.commands.registerCommand('amonhen.selectRepository', () => manager.pick()),
     vscode.commands.registerCommand('amonhen.open', () => show()),
     vscode.commands.registerCommand('amonhen.showWorkingCopy', () => show('workingCopy')),
