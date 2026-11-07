@@ -494,14 +494,17 @@ export function createWorkingCopyView(): View {
   let recent: string[] = [];
   let recentCursor = -1;
   let beforeRecall = { summary: '', body: '' };
+  let recalling = false;
   subject.addEventListener('keydown', (e) => {
     if (!e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') || recent.length === 0) return;
     e.preventDefault();
     if (recentCursor < 0) beforeRecall = { summary: subject.value, body: body.value };
     recentCursor = Math.max(-1, Math.min(recent.length - 1, recentCursor + (e.key === 'ArrowUp' ? 1 : -1)));
     const parts = recentCursor < 0 ? beforeRecall : splitMessage(recent[recentCursor]!);
+    recalling = true;
     replaceField(body, parts.body);
     replaceField(subject, parts.summary);
+    recalling = false;
     subject.focus();
   });
 
@@ -510,8 +513,9 @@ export function createWorkingCopyView(): View {
   function messageChanged(): void {
     updateCommitButton();
     clearTimeout(draftTimer);
-    // 呼び出している間は下書きにしない（呼び出す前の中身が下書きのまま）
-    if (recentCursor >= 0) return;
+    // 呼び出しただけでは下書きにしない（呼び出す前の中身が下書きのまま）。手で直したら、それが下書き
+    if (recalling) return;
+    recentCursor = -1;
     draftTimer = setTimeout(() => post({ type: 'wcDraft', summary: subject.value, body: body.value }), 300);
   }
   subject.addEventListener('input', messageChanged);
