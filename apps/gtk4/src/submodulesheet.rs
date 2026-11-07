@@ -114,8 +114,8 @@ pub fn update(actions: &Rc<Actions>, paths: Vec<String>) {
     let actions = actions.clone();
     glib::spawn_future_local(async move {
         let title = match &paths[..] {
-            [path] => format!("Update {path}"),
-            _ => "Update All Submodules".to_owned(),
+            [path] => tr!("Update {path}", path = path),
+            _ => tr!("Update All Submodules"),
         };
         let sheet = target.sheet(
             sheets::parent(&actions).as_ref(),
@@ -283,8 +283,10 @@ pub fn remove(actions: &Rc<Actions>, submodule: &SubmoduleState) {
         let sheet = target.sheet(
             sheets::parent(&actions).as_ref(),
             &tr!("Remove {name}?", name = &submodule.path),
-            &tr!(
-                "Removes the folder and its entry in .gitmodules, and stages that. Commit to keep it."
+            &format!(
+                "{} {}",
+                tr!("Removes the folder and its entry in .gitmodules, and stages that. Commit to keep it."),
+                sheets::cant_undo()
             ),
         );
         let delete_git_dir = gtk::CheckButton::with_label(&tr!(

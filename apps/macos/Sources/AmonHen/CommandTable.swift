@@ -38,7 +38,7 @@ enum CommandTable {
         id: "add-submodule", title: "Add Submodule…", localized: true, key: "", modifiers: [.command],
         toolTip: nil, app: false)
     static let updateSubmodules = Entry(
-        id: "update-submodules", title: "Update Submodules…", localized: false, key: "", modifiers: [.command],
+        id: "update-submodules", title: "Update Submodules…", localized: true, key: "", modifiers: [.command],
         toolTip: nil, app: false)
     static let addSubtree = Entry(
         id: "add-subtree", title: "Add Subtree…", localized: true, key: "", modifiers: [.command],
@@ -68,7 +68,7 @@ enum CommandTable {
         id: "new-tag", title: "New Tag…", localized: false, key: "t", modifiers: [.command, .option],
         toolTip: nil, app: false)
     static let newWorktree = Entry(
-        id: "new-worktree", title: "New Worktree…", localized: false, key: "", modifiers: [.command],
+        id: "new-worktree", title: "New Worktree…", localized: true, key: "", modifiers: [.command],
         toolTip: nil, app: false)
     static let pruneWorktrees = Entry(
         id: "prune-worktrees", title: "Prune Worktrees", localized: true, key: "", modifiers: [.command],

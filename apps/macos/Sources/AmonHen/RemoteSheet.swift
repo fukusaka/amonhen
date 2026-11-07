@@ -26,9 +26,9 @@ enum RemoteSheet {
     static func confirmRemove(_ name: String, in window: NSWindow?) async -> Bool {
         let alert = NSAlert()
         alert.messageText = L("Remove %@?", name)
-        alert.informativeText = L("This removes the remote’s settings and its remote-tracking branches (%@/…). The remote repository isn’t touched.", name)
+        alert.informativeText = L("This removes the remote’s settings and its remote-tracking branches (%@/…). The remote repository isn’t touched.", name) + " " + Actions.cantUndo
         // 戻せないので、赤く、↩ では押せない（↩ は Cancel）。
-        let delete = alert.addButton(withTitle: L("Delete"))
+        let delete = alert.addButton(withTitle: L("Remove"))
         delete.hasDestructiveAction = true
         delete.keyEquivalent = ""
         alert.addButton(withTitle: L("Cancel")).keyEquivalent = "\r"
@@ -186,7 +186,7 @@ private struct RemoteSheetView: View {
                 }
                 Spacer()
                 Button(L("Cancel")) { model.close() }.keyboardShortcut(.cancelAction)
-                Button(L("Save")) { model.save() }.keyboardShortcut(.defaultAction).disabled(!model.canSave)
+                Button(model.remote == nil ? L("Add") : L("Save")) { model.save() }.keyboardShortcut(.defaultAction).disabled(!model.canSave)
             }
         }
         .padding(20)

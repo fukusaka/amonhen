@@ -981,7 +981,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         alert.informativeText = changes > 0
             ? L("%@ has uncommitted changes in %ld files. They are lost with the folder. The branch stays.", info.path, changes)
                 + " " + Actions.cantUndo
-            : L("Removes the folder %@. The branch stays.", info.path)
+            : L("Removes the folder %@. The branch stays.", info.path) + " " + Actions.cantUndo
         let button = alert.addButton(withTitle: L("Remove Worktree"))
         let cancel = alert.addButton(withTitle: L("Cancel"))
         // 作業中の変更があれば、消えたら戻せない（赤く、↩ では押せない）。

@@ -451,7 +451,7 @@ enum CreatePullRequestSheet {
         completion: @escaping ((title: String, body: String, base: String, draft: Bool)?) -> Void
     ) {
         let alert = NSAlert()
-        alert.messageText = "Create Pull Request"
+        alert.messageText = L("Create Pull Request")
         alert.informativeText = L("From %@", branch)
         let create = alert.addButton(withTitle: L("Create"))
         alert.addButton(withTitle: L("Cancel"))

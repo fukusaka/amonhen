@@ -355,7 +355,7 @@ fn clone_help() -> gtk::Label {
 pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
     let parent = parent.clone();
     glib::spawn_future_local(async move {
-        let sheet = Sheet::unnamed(Some(&parent), "Clone Repository", "");
+        let sheet = Sheet::unnamed(Some(&parent), &tr!("Clone Repository"), "");
         let url = gtk::Entry::builder()
             .placeholder_text(tr!(
                 "https://github.com/owner/repo.git, git@host:owner/repo.git or a bundle file"

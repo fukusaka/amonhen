@@ -2199,7 +2199,7 @@ pub fn pop(actions: &Rc<Actions>, name: &str, message: Option<&str>, pop: bool) 
     let title = if pop {
         tr!("Pop {name}?", name = name)
     } else {
-        tr!("Apply {name}?", name = name)
+        tr!("Apply the stash {name}?", name = name)
     };
     confirm_then(
         actions,

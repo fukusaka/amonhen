@@ -2392,7 +2392,7 @@ impl Browser {
                     folders = roots.len()
                 ),
             );
-            sheet.buttons(&tr!("Delete"), true, None);
+            sheet.buttons(&tr!("Remove"), true, None);
             if sheet.run().await != Response::Ok {
                 return;
             }
@@ -2670,7 +2670,7 @@ pub fn found_or_offer_removal(
             ),
             &tr!("{path}\nRemove it from the list?", path = location),
         );
-        sheet.buttons(&tr!("Remove"), false, None);
+        sheet.buttons(&tr!("Remove from List"), false, None);
         if sheet.run().await == Response::Ok {
             crate::repos::forget(&location);
             bookmarks::remove(&location);

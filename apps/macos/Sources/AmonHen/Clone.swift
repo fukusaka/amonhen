@@ -248,7 +248,7 @@ enum CloneSheet {
         grid.column(at: 1).width = 380
         grid.rowSpacing = 8
         grid.frame = NSRect(x: 0, y: 0, width: 500, height: grid.fittingSize.height)
-        alert.messageText = "Clone Repository"
+        alert.messageText = L("Clone Repository")
         alert.addButton(withTitle: "Clone")
         alert.addButton(withTitle: L("Cancel"))
         alert.accessoryView = grid

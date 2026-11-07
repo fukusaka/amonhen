@@ -37,6 +37,9 @@ becomes the GitHub Release notes.
 
 #### Changed
 
+- Japanese wording is consistent across dialogs and menus: removing is 削除, adding is 追加, git's verbs are capitalized
+  and repeated by the button, and titles read target, then verb. Removing a remote, submodule or worktree says it can't
+  be undone, and adding a remote presses Add.
 - In the GTK4 app, typing in History opens its search bar with what was typed, as GNOME apps do.
 - In the GTK4 app, Settings > General > External Editor chooses another program with the same column picker as
   Programs, and its list is divided like the macOS one.

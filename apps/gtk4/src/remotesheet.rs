@@ -73,12 +73,16 @@ pub async fn ask_remove(parent: Option<&gtk::Window>, name: &str) -> bool {
     let sheet = Sheet::unnamed(
         parent,
         &tr!("Remove {name}?", name = name),
-        &tr!(
-            "This removes the remote’s settings and its remote-tracking branches ({name}/…). The remote repository isn’t touched.",
-            name = name
+        &format!(
+            "{} {}",
+            tr!(
+                "This removes the remote’s settings and its remote-tracking branches ({name}/…). The remote repository isn’t touched.",
+                name = name
+            ),
+            sheets::cant_undo()
         ),
     );
-    sheet.buttons(&tr!("Delete"), true, None);
+    sheet.buttons(&tr!("Remove"), true, None);
     sheet.run().await == Response::Ok
 }
 
@@ -173,6 +177,7 @@ fn changes(remote: Option<&Remote>, name: &str, fetch: &str, push: &str) -> Vec<
 
 /// リモートの追加（`remote` が None）・編集のシートを出す。保存したら `changeRemote` を順に実行する。
 pub fn present(actions: &Rc<Actions>, remote: Option<Remote>) {
+    let is_new = remote.is_none();
     let actions = actions.clone();
     glib::spawn_future_local(async move {
         let Some(repo) = actions.repo() else { return };
@@ -239,7 +244,11 @@ pub fn present(actions: &Rc<Actions>, remote: Option<Remote>) {
             });
         }
         sheet.button(&tr!("Cancel"), Response::Cancel, None);
-        let save = sheet.button(&tr!("Save"), Response::Ok, Some(Style::Suggested));
+        let save = sheet.button(
+            &if is_new { tr!("Add") } else { tr!("Save") },
+            Response::Ok,
+            Some(Style::Suggested),
+        );
         let checking = Rc::new(std::cell::Cell::new(false));
         let update = {
             let (name, fetch, save, check, checking) = (

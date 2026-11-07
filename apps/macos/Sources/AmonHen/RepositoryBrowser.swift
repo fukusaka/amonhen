@@ -1125,7 +1125,7 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
             let alert = NSAlert()
             alert.messageText = L("%@ not found", (path as NSString).lastPathComponent)
             alert.informativeText = L("%@\nRemove it from the list?", path)
-            alert.addButton(withTitle: L("Remove"))
+            alert.addButton(withTitle: L("Remove from List"))
             alert.addButton(withTitle: L("Cancel"))
             Task { @MainActor in
                 guard await present(alert) == .alertFirstButtonReturn else { return }

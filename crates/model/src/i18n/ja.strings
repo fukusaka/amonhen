@@ -386,7 +386,7 @@
 "Rename Branch…" = "ブランチの名前を変える…";
 "Rename {name}" = "{name} の名前を変える";
 "New name of the branch." = "ブランチの新しい名前。";
-"Prune Worktrees" = "Prune Worktrees";
+"Prune Worktrees" = "worktree を Prune";
 "Compare with Previous Version" = "前の版と比べる";
 "Compare the current branch with its version before it was last rewritten (a rebase, History edit, amend or reset), like git range-diff" = "今のブランチを、最後に書き換える（rebase・コミットの編集・amend・reset）前の版と比べます（git range-diff と同じ）";
 "Apply Patch…" = "パッチを当てる…";
@@ -471,8 +471,8 @@
 "Add Remote" = "リモートを追加";
 "Open" = "開く";
 "The operation failed" = "操作に失敗しました";
-"Force push {branch}?" = "{branch} を force push しますか？";
-"Message (optional)" = "メッセージ（空でもよい）";
+"Force push {branch}?" = "{branch} を Force Push しますか？";
+"Message (optional)" = "メッセージ（任意）";
 "Description (optional)" = "Description（任意）";
 "Include untracked files" = "untracked のファイルも含める";
 "Edit Message" = "メッセージを編集";
@@ -548,7 +548,7 @@
 "It’s untracked." = "untracked のファイルです。";
 "This can’t be undone." = "元に戻せません。";
 "Delete" = "削除";
-"Discard changes to {path}?" = "{path} の変更を捨てますか？";
+"Discard changes to {path}?" = "{path} の変更を Discard しますか？";
 "Discard" = "捨てる";
 "Mark {path} as resolved with {count} conflicts left?" = "{path} にコンフリクトが {count} 残っていますが、解決済みにしますか？";
 "The conflict markers stay in the file." = "コンフリクトのマーカーはファイルに残ります。";
@@ -667,7 +667,7 @@
 "From:" = "取り込み元:";
 "Follow git’s settings" = "git の設定に従う";
 "No remote branch to pull from" = "取り込み元のリモートのブランチがありません";
-"Fetch, or add a remote in Repository Settings." = "Fetch するか、リポジトリの設定でリモートを足してください。";
+"Fetch, or add a remote in Repository Settings." = "Fetch するか、リポジトリの設定でリモートを追加してください。";
 "Pull {count} commits from {upstream}?" = "{upstream} から {count} コミット取り込みますか？";
 "Pull from {upstream}?" = "{upstream} から Pull しますか？";
 "Pull into {branch}?" = "{branch} に Pull しますか？";
@@ -687,9 +687,9 @@
 "Pull them first, or force push to replace them. Force Push can’t be undone." = "先に Pull するか、Force Push で置き換えます。Force Push は元に戻せません。";
 "{upstream} loses {count} commits. This can’t be undone." = "{upstream} から {count} コミットが消えます。元に戻せません。";
 "It fails if {upstream} has moved since you last fetched." = "最後の Fetch のあとに {upstream} が動いていれば、失敗します。";
-"Push {count} commits to {upstream}?" = "{count} コミットを {upstream} に push しますか？";
+"Push {count} commits to {upstream}?" = "{count} コミットを {upstream} に Push しますか？";
 "Can’t Publish" = "Publish できません";
-"This repository has no remotes. Add one in Repository > Add Remote…." = "このリポジトリにはリモートがありません。Repository > リモートを追加… で足してください。";
+"This repository has no remotes. Add one in Repository > Add Remote…." = "このリポジトリにはリモートがありません。Repository > リモートを追加… で追加してください。";
 "Publish {branch}?" = "{branch} を Publish しますか？";
 "This creates the branch on the remote and makes it the upstream (where Pull and Push go from now on)." = "リモートにブランチを作り、それを上流（これからの Pull と Push の相手）にします。";
 "Remote" = "リモート";
@@ -709,7 +709,7 @@
 "Adds copies of them." = "その写しのコミットを足します。";
 "Applies it to the working tree and removes it from the list." = "作業ツリーに戻し、一覧から消します。";
 "Applies it to the working tree. It stays in the list." = "作業ツリーに戻します。一覧には残ります。";
-"Pop {name}?" = "{name} を戻して消しますか？";
+"Pop {name}?" = "{name} を Pop しますか？";
 "Apply {name}?" = "{name} を当てますか？";
 "Puts the files back as they were. HEAD and the index stay." = "ファイルを元に戻します。HEAD と index はそのままです。";
 "Brings back the dropped stash." = "Drop した stash を戻します。";
@@ -719,9 +719,9 @@
 "Undo the last {count} operations?" = "直近の {count} 個の操作を Undo しますか？";
 "Rebase {target} onto {rev}?" = "{target} を {rev} の上に Rebase しますか？";
 "Merge {rev} into {target}?" = "{rev} を {target} に Merge しますか？";
-"Merge into {name}" = "{name} に merge する";
+"Merge into {name}" = "{name} に Merge";
 "The branch, tag or commit to merge in" = "取り込むブランチ・タグ・コミット";
-"Rebase {name}" = "{name} を rebase する";
+"Rebase {name}" = "{name} を Rebase";
 "The branch, tag or commit to rebase onto" = "上に載せる先のブランチ・タグ・コミット";
 "Delete {name}?" = "{name} を削除しますか？";
 "Delete {count} branches?" = "{count} 本のブランチを削除しますか？";
@@ -808,8 +808,8 @@
 "Mark {count} Without Markers Resolved" = "マーカーのない {count} ファイルを解決済みにする";
 "Mark the conflicted files that have no conflict markers left as resolved (rerere or another editor resolved them)." = "マーカーの残っていないコンフリクトのファイルを解決済みにします（rerere やほかのエディタで解決したもの）。";
 "Retry with 3-Way Merge" = "3-way merge で当て直す";
-"Drop {name}…" = "{name} を drop…";
-"Drop {name}?" = "{name} を取り除きますか？";
+"Drop {name}…" = "{name} を Drop…";
+"Drop {name}?" = "{name} を Drop しますか？";
 "Cherry-pick {count} Commits…" = "{count} コミットを Cherry-pick…";
 "Revert {count} Commits…" = "{count} コミットを Revert…";
 
@@ -925,7 +925,7 @@
 "Compare as Two Versions (Range Diff)" = "2 つの版として比べる（Range Diff）";
 /* GTK4: Reset（History と Reflog の右クリック） */
 "Reset {branch} to {id}…" = "{branch} を {id} に Reset…";
-"Reset {branch} to {id}?" = "{branch} を {id} に reset しますか？";
+"Reset {branch} to {id}?" = "{branch} を {id} に Reset しますか？";
 "Soft: keep the changes staged" = "Soft: 変更は stage したまま残す";
 "Mixed: keep the changes in the working tree" = "Mixed: 変更は作業ツリーに残す";
 "Hard: match the commit (uncommitted changes are stashed first)" = "Hard: コミットに合わせる（作業中の変更は先に stash する）";
@@ -990,9 +990,9 @@
 
 /* GTK4: いくつもまとめて merge（octopus） */
 "Merge {count} into {branch}…" = "{count} 個を {branch} に Merge…";
-"Merge {count} into {branch}?" = "{count} 個を {branch} に merge しますか？";
+"Merge {count} into {branch}?" = "{count} 個を {branch} に Merge しますか？";
 "This makes one merge commit with all of them as parents, as git merge does with several branches. Drag to change the order. Undo puts it back." = "すべてを親とする merge のコミットを 1 つ作ります（git merge にいくつものブランチを渡したときと同じ）。順はドラッグで変えられます。Undo で戻せます。";
-"Merge One by One" = "1 つずつ merge";
+"Merge One by One" = "1 つずつ Merge";
 "⚠︎ {name} conflicts, and git stops when one before the last conflicts. Put it last to resolve the conflicts in this merge, or merge them one by one." = "⚠︎ {name} がコンフリクトします。最後より前のものがコンフリクトすると git は止まります。最後に回せば、この merge でコンフリクトを解けます。1 つずつ merge することもできます。";
 "⚠︎ {names} conflict, and git stops when one before the last conflicts. Merge them one by one instead." = "⚠︎ {names} がコンフリクトします。最後より前のものがコンフリクトすると git は止まるので、1 つずつ merge してください。";
 "Put {name} Last" = "{name} を最後に回す";
@@ -1087,7 +1087,7 @@
 "A path" = "パス";
 "SSH host {host}" = "SSH 先 {host}";
 "Other" = "その他";
-"Remove {name}?" = "{name} を消しますか？";
+"Remove {name}?" = "{name} を削除しますか？";
 "This removes the remote’s settings and its remote-tracking branches ({name}/…). The remote repository isn’t touched." = "リモートの設定と、追跡しているリモートブランチ（{name}/…）が消えます。リモートのリポジトリには触れません。";
 "Edit Remote" = "リモートを編集";
 "Same as the fetch URL" = "fetch と同じ";
@@ -1132,7 +1132,7 @@
 "No LFS patterns in .gitattributes." = ".gitattributes に LFS で扱うパターンはない";
 "Pattern" = "パターン";
 "Track Pattern…" = "パターンを追跡…";
-"Remove" = "外す";
+"Remove" = "削除";
 "core.hooksPath ({path}) is outside the working tree, so its contents can’t be shown." = "core.hooksPath（{path}）は作業ツリーの外なので、中を見られない";
 "No hooks. .sample files aren’t counted." = "フックはありません。.sample のファイルは数えません。";
 "Location: {path}" = "場所: {path}";
@@ -1162,8 +1162,8 @@
 "Remove from This Repository" = "このリポジトリの値を消す";
 "Remove from All Repositories" = "すべてのリポジトリの値を消す";
 "Copy" = "コピー";
-"Add a key to this repository" = "このリポジトリにキーを足す";
-"Add a key for all repositories" = "すべてのリポジトリにキーを足す";
+"Add a key to this repository" = "このリポジトリにキーを追加";
+"Add a key for all repositories" = "すべてのリポジトリにキーを追加";
 "Remove the selected keys from this repository (Delete)" = "選んだキーをこのリポジトリから消す（Delete）";
 "Remove the selected keys from all repositories (Delete)" = "選んだキーをすべてのリポジトリから消す（Delete）";
 "Couldn’t prepare the settings repository" = "設定のためのリポジトリを用意できませんでした";
@@ -1265,7 +1265,7 @@
 "Built on" = "土台";
 "Merged into" = "取り込み先";
 "Merging into {base}" = "{base} への merge";
-"Delete Branch" = "ブランチを消す";
+"Delete Branch" = "ブランチを削除";
 "Archive" = "アーカイブ";
 "Unarchive" = "アーカイブから戻す";
 "Branches with no new commit for 90 days. Folded." = "90 日以上新しいコミットがないブランチ。畳んでおきます。";
@@ -1328,7 +1328,7 @@
 "Remove…" = "削除…";
 "Rename…" = "名前を変更…";
 "Edit URL…" = "URL を編集…";
-"Remove {name}?" = "{name} を消しますか？";
+"Remove {name}?" = "{name} を削除しますか？";
 "This removes the remote’s settings and its remote-tracking branches ({name}/…). The remote repository isn’t touched." = "リモートの設定と、追跡しているリモートブランチ（{name}/…）が消えます。リモートのリポジトリには触れません。";
 "A path" = "パス";
 "SSH host {host}" = "SSH 先 {host}";
@@ -1348,30 +1348,30 @@
 "{count} files with changes" = "変更のあるファイル {count} 個";
 "{path}\nRemove it from the list?" = "{path}\n一覧から外しますか？";
 "Add" = "追加";
-"Add a Folder to Scan" = "スキャンするフォルダを加える";
-"Add a Folder to Scan on {host}" = "{host} でスキャンするフォルダを加える";
-"Add a Folder to Scan over SSH" = "SSH 先でスキャンするフォルダを加える";
-"Add Folder to Scan…" = "スキャンするフォルダを加える…";
-"Add Folder to Scan on This Host…" = "このホストでスキャンするフォルダを加える…";
-"Add Folder to Scan over SSH…" = "SSH で探すフォルダを足す…";
-"Add Local Repository…" = "手元のリポジトリを加える…";
-"Add Repositories" = "リポジトリを加える";
-"Add repositories, SSH connections, groups and folders to scan" = "リポジトリ・SSH 接続・グループ・スキャンするフォルダを加える";
-"Add Repository on This Host…" = "このホストのリポジトリを加える…";
-"Add SSH Connection" = "SSH 接続を加える";
-"Add a Repository on {host}" = "{host} のリポジトリを加える";
+"Add a Folder to Scan" = "スキャンするフォルダを追加";
+"Add a Folder to Scan on {host}" = "{host} でスキャンするフォルダを追加";
+"Add a Folder to Scan over SSH" = "SSH 先でスキャンするフォルダを追加";
+"Add Folder to Scan…" = "スキャンするフォルダを追加…";
+"Add Folder to Scan on This Host…" = "このホストでスキャンするフォルダを追加…";
+"Add Folder to Scan over SSH…" = "SSH で探すフォルダを追加…";
+"Add Local Repository…" = "手元のリポジトリを追加…";
+"Add Repositories" = "リポジトリを追加";
+"Add repositories, SSH connections, groups and folders to scan" = "リポジトリ・SSH 接続・グループ・スキャンするフォルダを追加";
+"Add Repository on This Host…" = "このホストのリポジトリを追加…";
+"Add SSH Connection" = "SSH 接続を追加";
+"Add a Repository on {host}" = "{host} のリポジトリを追加";
 "Connects over SSH. Use a host you can log in to without a password (with a key or ssh-agent)." = "SSH でつなぎます。鍵か ssh-agent でパスワードなしに入れるホストを使ってください。";
 "Path" = "パス";
 "Hosts in ~/.ssh/config and ones already in the list" = "~/.ssh/config のホストと、一覧にあるホスト";
 "Folder of the repository on the host" = "ホストにあるリポジトリのフォルダ";
-"Add and Open" = "加えて開く";
+"Add and Open" = "追加して開く";
 "Couldn’t run ssh" = "ssh を動かせませんでした";
 "Couldn’t connect (exit {code})" = "つながりませんでした（終了コード {code}）";
 "Reachable: git {version}" = "つながりました: git {version}";
 "Reachable, but git wasn’t found on the host" = "つながりましたが、ホストに git がありません";
 ", engine found" = "、エンジンあり";
 ", engine not installed (Amon Hen sends one)" = "、エンジンなし（Amon Hen が送ります）";
-"Add SSH Connection…" = "SSH 接続を加える…";
+"Add SSH Connection…" = "SSH 接続を追加…";
 "Add to Favorites" = "お気に入りに入れる";
 "Bookmark repositories you open" = "開いたリポジトリをブックマークに入れる";
 "Branch" = "ブランチ";
@@ -1380,7 +1380,7 @@
 "Choose a repository to open" = "リポジトリを選んで開く";
 "Color Label" = "色ラベル";
 "Couldn’t search: {error}" = "探せませんでした: {error}";
-"Delete Group" = "グループを消す";
+"Delete Group" = "グループを削除";
 "Favorites" = "お気に入り";
 "Fetch ({count})" = "Fetch（{count}）";
 "Fetch All ({count})" = "すべて Fetch（{count}）";
@@ -1415,8 +1415,8 @@
 "Share History, the search index and the operation log with the CLI and others" = "History・検索の索引・操作の記録を CLI などと共有する";
 "Opened" = "開いた日時";
 "Places" = "場所";
-"Remove" = "外す";
-"Remove {host}?" = "{host} を消しますか？";
+"Remove" = "削除";
+"Remove {host}?" = "{host} を削除しますか？";
 "Remove {name} from List…" = "{name} を一覧から外す…";
 "Remove from Favorites" = "お気に入りから外す";
 "Remove from Group" = "グループから外す";
@@ -1477,11 +1477,11 @@
 
 /* GTK4 の FE: Settings > SSH Hosts */
 "SSH Hosts" = "SSH ホスト";
-"Add an SSH host" = "SSH 先を加える";
+"Add an SSH host" = "SSH 先を追加";
 "Forget this host" = "この SSH 先を忘れる";
 "Connection" = "接続";
 "unreachable" = "つながらない";
-"Add an SSH host with +, or open one from Places." = "＋ で SSH 先を加えるか、Places から開きます。";
+"Add an SSH host with +, or open one from Places." = "＋ で SSH 先を追加するか、Places から開きます。";
 "Applies to every repository on {host} (its ~/.gitconfig). git in a terminal there follows these too." = "{host} のすべてのリポジトリに効きます（そこの ~/.gitconfig）。そこの端末の git も同じ設定に従います。";
 "Connecting to {host}…" = "{host} につないでいます…";
 "Couldn’t connect to {host}" = "{host} につなげませんでした";
@@ -1502,7 +1502,7 @@
 "Signatures of commits in repositories on this host are checked with these." = "この SSH 先のリポジトリのコミットの署名を、これで検証します。";
 "Write it as ssh knows it: user@host:port, or a name in ~/.ssh/config." = "ssh が知っている名前で書きます: user@host:port か、~/.ssh/config の名前。";
 "Add" = "追加";
-"Remove {host}?" = "{host} を消しますか？";
+"Remove {host}?" = "{host} を削除しますか？";
 "This removes its {repositories} repositories and {folders} folders to scan from the list. Nothing on the host is touched." = "そのホストのリポジトリ {repositories} 個とスキャンするフォルダ {folders} 個を一覧から外します。ホストの中には触れません。";
 "Engine on {host}" = "{host} のエンジン";
 "Choose amonhen on the host. It must be this build." = "SSH 先の amonhen を選びます。このビルドのものである必要があります。";
@@ -1545,14 +1545,14 @@
 "  · in the worktree {name}" = "　· worktree {name} で使用中";
 
 /* GTK4: Worktrees（New Worktree…・Remove Worktree…・右クリック） */
-"New Worktree" = "New Worktree";
+"New Worktree" = "新しい worktree";
 "Creates a branch from {start} and checks it out in a new folder." = "{start} からブランチを作り、新しいフォルダに checkout します。";
 "Branch name" = "ブランチの名前";
 "Folder" = "フォルダ";
 "Edit This Worktree" = "この worktree を編集";
-"Remove Worktree" = "Remove Worktree";
-"Remove Worktree…" = "Remove Worktree…";
-"Remove the worktree “{name}”?" = "worktree「{name}」を消しますか？";
+"Remove Worktree" = "削除";
+"Remove Worktree…" = "削除…";
+"Remove the worktree “{name}”?" = "worktree「{name}」を削除しますか？";
 "{path} has uncommitted changes in {count} files. They are lost with the folder. The branch stays." = "{path} には、コミットしていない変更が {count} ファイルあります。フォルダと一緒に失われます。ブランチは残ります。";
 "Removes the folder {path}. The branch stays." = "フォルダ {path} を消します。ブランチは残ります。";
 
@@ -1868,7 +1868,7 @@
 "In {path}" = "{path} の中";
 "A folder name can’t contain “/”." = "フォルダの名前に「/」は使えません。";
 "Choose the folder to clone into." = "Clone するフォルダを置く場所を選びます。";
-"Choose the repositories to add to the list (green). Ctrl-click to choose more than one." = "一覧に加えるリポジトリ（緑）を選びます。Ctrl クリックでいくつでも選べます。";
+"Choose the repositories to add to the list (green). Ctrl-click to choose more than one." = "一覧に追加するリポジトリ（緑）を選びます。Ctrl クリックでいくつでも選べます。";
 "Home folder" = "ホームフォルダ";
 "Go to a folder" = "フォルダへ移動";
 "Git repository" = "git のリポジトリ";
@@ -1977,7 +1977,7 @@
 "In a large repository, you can check out only the folders you work in (sparse checkout)." = "大きなリポジトリでは、作業するフォルダだけを取り出せます（sparse checkout）。";
 "Folders" = "フォルダ";
 "Check Out Only Some Folders" = "一部のフォルダだけを取り出す";
-"Check Out One More Folder" = "取り出すフォルダを足す";
+"Check Out One More Folder" = "取り出すフォルダを追加";
 "Only this folder is checked out, with the files at the top. Others are removed from disk until you check them out again; add more folders here later." = "このフォルダと最上位のファイルだけを取り出します。ほかは、また取り出すまでディスクから消えます。フォルダは後からここで足せます。";
 "Folders in the latest commit, including ones not checked out." = "HEAD のコミットにあるフォルダです（取り出していないものも）。";
 "Check Out All Folders?" = "すべてのフォルダを取り出しますか？";
@@ -2090,7 +2090,7 @@
 "Also update the submodules inside it (--recursive)" = "中の submodule も（--recursive）";
 "At another commit than the one recorded (Update goes back to it)" = "記録したコミットと違うコミットにいる（Update で戻る）";
 "Branch to Follow…" = "追うブランチ…";
-"Branch to follow (optional)" = "追うブランチ（なくてもよい）";
+"Branch to follow (optional)" = "追うブランチ（任意）";
 "Branch to Follow for {path}" = "{path} が追うブランチ";
 "Changes the URL in .gitmodules and copies it to this repository’s settings (git submodule set-url). Commit .gitmodules to share it." = ".gitmodules の URL を変え、このリポジトリの設定にも写します（git submodule set-url）。共有するには .gitmodules をコミットします。";
 "Check out submodules too" = "submodule も取り出す";
@@ -2143,7 +2143,7 @@
 "Move…" = "移す…";
 "Lock the Worktree “{name}”?" = "worktree「{name}」をロックしますか？";
 "git then won’t prune, remove or move it, for example while it is on a disk that isn’t always connected (git worktree lock)." = "git が prune・削除・移動をしなくなります。いつもはつないでいないディスクに置いているときなどに使います（git worktree lock）。";
-"Reason (optional)" = "理由（なくてもよい）";
+"Reason (optional)" = "理由（任意）";
 "Lock" = "ロック";
 "Move the Worktree “{name}”" = "worktree「{name}」を移す";
 "Moves the folder and tells git where it is now (git worktree move)." = "フォルダを移し、git にも今の場所を伝えます（git worktree move）。";
@@ -2170,9 +2170,9 @@
 "Also in the submodules inside them (--recursive)" = "中の submodule でも（--recursive）";
 "Run" = "動かす";
 "Move Repository Data into .git/modules" = "リポジトリのデータを .git/modules に移す";
-"Delete Ignored Files…" = "ignore されたファイルを消す…";
+"Delete Ignored Files…" = "ignore されたファイルを削除…";
 "No Ignored Files" = "ignore されたファイルはありません";
-"Delete {count} Ignored Items?" = "ignore された {count} 個を消しますか？";
+"Delete {count} Ignored Items?" = "ignore された {count} 個を削除しますか？";
 "Nothing in the working tree matches .gitignore." = "作業ツリーに .gitignore に当たるものはありません。";
 "These are removed from the working tree (git clean -X); folders go with everything in them." = "これらを作業ツリーから消します（git clean -X）。フォルダは中身ごと消えます。";
 "Clean Up Branches…" = "ブランチを片付ける…";
@@ -2192,3 +2192,16 @@
 "Merged by pull request: {branches}" = "プルリクエストでマージ済み: {branches}";
 "“{name}” wasn’t deleted: git only deletes a branch merged into the current branch or its upstream. Switch to the branch it’s merged into and try again." = "「{name}」は消していません: git が消すのは、今のブランチか上流に取り込んだブランチだけです。取り込んだ先のブランチに切り替えて、やり直してください。";
 "Already deleted: {count}." = "消したもの: {count} 本。";
+"Apply the stash {name}?" = "{name} を Apply しますか？";
+"New Worktree…" = "新しい worktree…";
+"Update Submodules…" = "submodule を Update…";
+"Stash Changes" = "変更を Stash";
+"Stash Changes in {name}" = "{name} の変更を Stash";
+"Stash Changes in {count} Files" = "{count} ファイルの変更を Stash";
+"Clone Repository" = "リポジトリを Clone";
+"Update {path}" = "{path} を Update";
+"Update All Submodules" = "すべての submodule を Update";
+"Pull {dir}" = "{dir} を Pull";
+"Push {dir}" = "{dir} を Push";
+"Split {dir}" = "{dir} を Split";
+"Create Pull Request" = "プルリクエストを作成";

@@ -502,8 +502,8 @@ final class Actions {
     @MainActor
     private func stashSheet(paths: [String], untrackedChosen: Bool) async {
         let alert = NSAlert()
-        alert.messageText = paths.isEmpty ? "Stash Changes"
-            : paths.count == 1 ? "Stash Changes in \((paths[0] as NSString).lastPathComponent)" : "Stash Changes in \(paths.count) Files"
+        alert.messageText = paths.isEmpty ? L("Stash Changes")
+            : paths.count == 1 ? L("Stash Changes in %@", (paths[0] as NSString).lastPathComponent) : L("Stash Changes in %ld Files", paths.count)
         alert.informativeText = sheetMessage(L("Message (optional)"))
         alert.addButton(withTitle: "Stash")
         alert.addButton(withTitle: L("Cancel"))
