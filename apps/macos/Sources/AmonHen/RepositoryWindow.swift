@@ -880,8 +880,13 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         alert.addButton(withTitle: L("Cancel"))
         alert.beginSheetModal(for: window) { response in
             withExtendedLifetime(chooser) {}
-            let path = (field.stringValue.trimmingCharacters(in: .whitespaces) as NSString).expandingTildeInPath
+            var path = field.stringValue.trimmingCharacters(in: .whitespaces)
             guard response == .alertFirstButtonReturn, !path.isEmpty else { return }
+            // ~ はこの Mac のホーム。SSH 先のパスはそのまま送る（New Worktree と同じ）。
+            let location = self.location
+            if !(location.hasPrefix("ssh://") || location.hasPrefix("daemon:ssh://")) {
+                path = (path as NSString).expandingTildeInPath
+            }
             done(path)
         }
     }
