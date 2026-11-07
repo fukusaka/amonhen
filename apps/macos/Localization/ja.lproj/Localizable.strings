@@ -774,7 +774,7 @@
 "Can’t Read" = "読み込めません";
 "Edit Message" = "メッセージを編集";
 "Change" = "変更";
-"Message (optional)" = "メッセージ（空でもよい）";
+"Message (optional)" = "メッセージ（任意）";
 "Include untracked files" = "untracked のファイルも含める";
 
 /* SidebarViewController.swift */
@@ -1756,7 +1756,7 @@
 "Also delete its repository data (.git/modules/%@)" = "リポジトリのデータも消す（.git/modules/%@）";
 "Also update the submodules inside it (--recursive)" = "中の submodule も（--recursive）";
 "At another commit than the one recorded (Update goes back to it)" = "記録したコミットと違うコミットにいる（Update で戻る）";
-"Branch to follow (optional)" = "追うブランチ（なくてもよい）";
+"Branch to follow (optional)" = "追うブランチ（任意）";
 "Branch to Follow for %@" = "%@ が追うブランチ";
 "Branch to Follow…" = "追うブランチ…";
 "Changes the URL in .gitmodules and copies it to this repository’s settings (git submodule set-url). Commit .gitmodules to share it." = ".gitmodules の URL を変え、このリポジトリの設定にも写します（git submodule set-url）。共有するには .gitmodules をコミットします。";
@@ -1805,7 +1805,7 @@
 "Move…" = "移す…";
 "Lock the Worktree “%@”?" = "worktree「%@」をロックしますか？";
 "git then won’t prune, remove or move it, for example while it is on a disk that isn’t always connected (git worktree lock)." = "git が prune・削除・移動をしなくなります。いつもはつないでいないディスクに置いているときなどに使います（git worktree lock）。";
-"Reason (optional)" = "理由（なくてもよい）";
+"Reason (optional)" = "理由（任意）";
 "Lock" = "ロック";
 "Move the Worktree “%@”" = "worktree「%@」を移す";
 "Moves the folder and tells git where it is now (git worktree move)." = "フォルダを移し、git にも今の場所を伝えます（git worktree move）。";
