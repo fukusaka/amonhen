@@ -621,6 +621,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             }
         }
         pages?.replace(.workingCopy, with: slot.workingCopy)
+        // プルリクエストでマージ済みのブランチは、リポジトリで共通（分け方が同じなら読み直さない）。
+        slot.actions.mergedByPullRequest = sidebar.actions?.mergedByPullRequest ?? [:]
         sidebar.actions = slot.actions
         history.actions = slot.actions
         stashes.actions = slot.actions
