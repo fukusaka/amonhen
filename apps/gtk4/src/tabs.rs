@@ -1400,13 +1400,22 @@ pub fn close_tab(tab: &Rc<Tab>) {
         });
         return;
     }
+    // 最後のリポジトリを閉じたら、File History・Blame のタブが残っていても Repositories を出す（macOS 版と同じ）。
+    let only_tools = !tab.is_home()
+        && !tab.is_tool()
+        && WINDOWS.with(|w| {
+            w.borrow()
+                .iter()
+                .flat_map(|h| h.tabs())
+                .all(|t| Rc::ptr_eq(&t, tab) || t.is_tool())
+        });
+    let app = tab.window().and_then(|w| w.application());
     if host.tabs.borrow().len() <= 1 {
         let alone = WINDOWS.with(|w| w.borrow().len() <= 1);
-        if alone
-            && !tab.is_home()
-            && let Some(app) = tab.window().and_then(|w| w.application())
+        if ((alone && !tab.is_home()) || only_tools)
+            && let Some(app) = &app
         {
-            show_home(&app, None);
+            show_home(app, None);
         }
         host.window.close();
         return;
@@ -1414,6 +1423,9 @@ pub fn close_tab(tab: &Rc<Tab>) {
     detach(&host, tab);
     teardown(tab);
     save();
+    if only_tools && let Some(app) = &app {
+        show_home(app, None);
+    }
 }
 
 /// 終える前に、保存していないもの（マージエディタの Result）を捨ててよいかを確かめる（macOS 版と同じく 1 度だけ。
