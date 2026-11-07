@@ -241,3 +241,4 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 30. Forgetting a rerere resolution, or all of them
 - [x] 31. A new orphan branch, empty or keeping the files
 - [x] 32. Deleting ignored files, listed first
+- [x] 33. Working Copy: filtering on paths, list, tree or file name

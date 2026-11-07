@@ -9,6 +9,7 @@ import { registerRangeDiffCommands } from './ui/rangeDiff.ts';
 import { SidebarDragAndDrop } from './ui/dragDrop.ts';
 import { registerFetchCommand } from './ui/fetchCommand.ts';
 import { registerFileToolCommands } from './ui/fileToolCommands.ts';
+import { initPreferences } from './ui/preferences.ts';
 import { registerFormCommands } from './ui/formCommands.ts';
 import { registerHistoryCommands } from './ui/historyCommands.ts';
 import { MainPanel } from './ui/mainPanel.ts';
@@ -42,6 +43,7 @@ export async function activate(
   /** 開いているメインビュー（e2e のテストが Webview の代わりにメッセージを入れる） */
   panel: () => MainPanel | undefined;
 }> {
+  initPreferences(context.globalState);
   const start = performance.now();
   const log = vscode.window.createOutputChannel('Amon Hen', { log: true });
   // daemon が作るエラーの文を、VSCode の表示言語にする
