@@ -55,6 +55,22 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- A file that isn't UTF-8 no longer opens in the merge editor, whose save replaced its invalid bytes; take one side
+  instead, which keeps the bytes.
+- Mark N Without Markers Resolved saves unsaved Result edits first instead of dropping them.
+- Combine N Commits refuses rows that only look adjacent because History shows only matching commits.
+- macOS: Go to HEAD, New Worktree from a detached worktree and Repository Settings follow the worktree being edited,
+  and a stopped operation always opens the first conflict.
+- GTK4: Add to .gitignore no longer overwrites the file when reading it fails, and an unreadable bookmarks file no
+  longer empties the list.
+- GTK4: a commit's diff is its own when History shows only matches, and the changed-files list starts at the first file.
+- GTK4: the failure band's buttons work, and a cancelled operation's message no longer hides a later failure.
+- GTK4: closing edit mode and switching worktree stay on the current page, and launching with a path restores the
+  session and adds a tab.
+- GTK4: Rebuild History rebuilds the History on screen, Open on GitHub escapes the branch name, filtering a search
+  with no matches keeps History, and dropping a commit reads the worktree being edited.
+- GTK4: messages filled in by the app stay when switching worktree, Return in the path picker chooses the open folder,
+  and the SSH host's Connection page no longer rebuilds on every refresh.
 - History on an SSH host no longer fails with "bad object" when a commit it remembered is gone (pruned by gc, or the
   repository was made again at the same path); it reads the history again.
 - `~` in a new worktree path means the home folder on the machine where git runs, including an SSH host.
