@@ -7,7 +7,7 @@ import type { Change, ChangeGroup } from '../state/changes.ts';
 import type { HostMessage } from '../view/protocol.ts';
 import type { DiffHunk, FileDiff, SelectedLine } from '../diff/fileDiff.ts';
 import type { Eol, LineEndings } from '../git/eol.ts';
-import { lengthLevel, longestLine, messageLength } from '../workingCopy/commitMessage.ts';
+import { lengthLevel, longestLine, messageLength, splitMessage } from '../workingCopy/commitMessage.ts';
 import { filesUnder, filterByPath, makeFileTree, type FileDir, type FileLayout } from '../workingCopy/fileList.ts';
 import { el, post, type View } from './api.ts';
 import { lineKey, renderDiffBody } from './diffView.ts';
@@ -48,7 +48,10 @@ export function createWorkingCopyView(): View {
   amendLabel.append(amend, ' Amend');
   const commitButton = el('button', undefined, 'Commit');
   const lengthLabel = el('span', 'length');
-  commitRow.append(amendLabel, lengthLabel, commitButton);
+  const recentButton = el('button', 'link', 'Recent…');
+  recentButton.title = 'Insert the message of a recent commit (⌥↑ and ⌥↓ in the Summary)';
+  recentButton.addEventListener('click', () => post({ type: 'wcPickRecent' }));
+  commitRow.append(amendLabel, recentButton, lengthLabel, commitButton);
   commitBox.append(subject, body, commitRow);
 
   // 一覧の絞り込みと見せ方
@@ -465,11 +468,45 @@ export function createWorkingCopyView(): View {
     post({ type: 'wcCommit', message: message(), amend: amend.checked });
   }
 
+  /** 欄の中身を入れ替える。打ったのと同じく Undo で戻せるように、編集として入れる */
+  function replaceField(field: HTMLInputElement | HTMLTextAreaElement, text: string): void {
+    if (field.value === text) return;
+    field.focus();
+    field.select();
+    if (!document.execCommand(text ? 'insertText' : 'delete', false, text)) {
+      field.value = text;
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  }
+
+  function useMessage(text: string): void {
+    const parts = splitMessage(text);
+    replaceField(body, parts.body);
+    replaceField(subject, parts.summary);
+  }
+
+  // ⌥↑・⌥↓ で最近のメッセージを順に呼び出す。一番新しいものの先は、呼び出す前の中身
+  let recent: string[] = [];
+  let recentCursor = -1;
+  let beforeRecall = { summary: '', body: '' };
+  subject.addEventListener('keydown', (e) => {
+    if (!e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') || recent.length === 0) return;
+    e.preventDefault();
+    if (recentCursor < 0) beforeRecall = { summary: subject.value, body: body.value };
+    recentCursor = Math.max(-1, Math.min(recent.length - 1, recentCursor + (e.key === 'ArrowUp' ? 1 : -1)));
+    const parts = recentCursor < 0 ? beforeRecall : splitMessage(recent[recentCursor]!);
+    replaceField(body, parts.body);
+    replaceField(subject, parts.summary);
+    subject.focus();
+  });
+
   /** 打ち終わるのを少し待って、下書きを覚えてもらう */
   let draftTimer: ReturnType<typeof setTimeout> | undefined;
   function messageChanged(): void {
     updateCommitButton();
     clearTimeout(draftTimer);
+    // 呼び出している間は下書きにしない（呼び出す前の中身が下書きのまま）
+    if (recentCursor >= 0) return;
     draftTimer = setTimeout(() => post({ type: 'wcDraft', summary: subject.value, body: body.value }), 300);
   }
   subject.addEventListener('input', messageChanged);
@@ -512,6 +549,14 @@ export function createWorkingCopyView(): View {
         selected = m.diff ? { group: m.group!, path: m.diff.path } : undefined;
         renderFiles();
         renderDiff();
+        break;
+      case 'wcRecent':
+        recent = m.messages;
+        recentCursor = -1;
+        break;
+      case 'wcUseMessage':
+        recentCursor = -1;
+        useMessage(m.message);
         break;
       case 'wcMessage':
         clearTimeout(draftTimer);

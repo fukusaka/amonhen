@@ -11,6 +11,10 @@ export type WorkingCopyHostMessage =
   | { type: 'wcDiff'; group?: undefined; diff: undefined }
   /** リポジトリを開いたときのコミット欄の中身（下書き、なければテンプレート） */
   | ({ type: 'wcMessage' } & MessageParts)
+  /** 最近のコミットのメッセージ（新しい順。⌥↑・⌥↓ で呼び出す） */
+  | { type: 'wcRecent'; messages: string[] }
+  /** 選んだメッセージをコミット欄に入れる */
+  | { type: 'wcUseMessage'; message: string }
   | { type: 'wcCommitted' };
 
 export type WorkingCopyWebviewMessage =
@@ -19,6 +23,8 @@ export type WorkingCopyWebviewMessage =
   | { type: 'wcLayout'; layout: FileLayout }
   /** コミット欄を書き換えた（下書きとして覚える） */
   | ({ type: 'wcDraft' } & MessageParts)
+  /** 最近のメッセージの一覧を出す */
+  | { type: 'wcPickRecent' }
   | { type: 'wcStageFiles'; op: 'stage' | 'unstage'; files: { group: ChangeGroup; path: string }[] }
   | { type: 'wcStageLines'; group: ChangeGroup; path: string; version: string; lines: SelectedLine[] }
   /** Changes（unstaged）のファイルを丸ごと破棄する */

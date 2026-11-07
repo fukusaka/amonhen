@@ -2838,6 +2838,15 @@ suite('Amon Hen in VSCode', () => {
     assert.equal((await reopen()).summary, '');
   });
 
+  test('sends the messages of recent commits to the commit box', async () => {
+    const panel = await showView('amonhen.showWorkingCopy');
+    const mark = posted.length;
+    panel.workingCopy.setRepository(panel.repository);
+    const { messages } = await waitPosted('wcRecent', mark, (m) => m.messages.length > 0);
+    assert.ok(messages.length <= 30);
+    assert.equal(messages[0], git('log', '-1', '--format=%B').trim());
+  });
+
   test('drops the selection of a file whose changes went away before its diff is read', async () => {
     const panel = await showView('amonhen.showWorkingCopy');
     const path = join(root, FILE);
