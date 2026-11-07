@@ -694,8 +694,8 @@ function branchItem(node: Extract<Node, { kind: 'branch' }>, other?: Worktree, f
   if (ref.upstream) lines.push(`upstream: ${ref.upstream.replace(/^refs\/remotes\//, '')}`);
   lines.push(`${ref.oid.slice(0, 8)}  ${ref.subject}`);
   if (other) lines.push(`Checked out in the worktree ${other.path}`);
-  item.tooltip = lines.join('\n');
   if (flags?.merged) lines.push('Merged into the default branch');
+  item.tooltip = lines.join('\n');
   item.contextValue = node.remote
     ? 'remoteBranch'
     : (ref.isHead ? 'branch.current' : 'branch') + syncState(ref) + (node.pinned ? ';pinned' : '') + (flags?.archived ? ';archived' : '');

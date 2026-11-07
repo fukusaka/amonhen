@@ -987,6 +987,7 @@ First release.
 
 #### Fixed
 
+- A branch merged into the default branch now says so in its tooltip.
 - Undo of a deleted branch without the engine also brings back its settings (upstream, archived, favorite), as the
   engine does.
 - Remove Worktree counts the worktree's changes again before asking, so files added since the last count are
