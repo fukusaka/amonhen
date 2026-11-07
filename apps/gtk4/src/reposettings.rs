@@ -877,6 +877,7 @@ impl RepoSettings {
             group.add_action(&action);
         }
         widget.insert_action_group("reposettings", Some(&group));
+        widget.set_widget_name(crate::tabs::REPO_SETTINGS_NAME);
         let weak = Rc::downgrade(&this);
         stack.connect_visible_child_notify(move |_| {
             if let Some(s) = weak.upgrade() {

@@ -370,6 +370,17 @@ mod imp {
                     }
                 }
             });
+            // Edit の Select All（キーは下の `keys`）。
+            let group = gio::SimpleActionGroup::new();
+            let action = gio::SimpleAction::new("select-all", None);
+            let weak = view.downgrade();
+            action.connect_activate(move |_, _| {
+                if let Some(view) = weak.upgrade() {
+                    view.select_all();
+                }
+            });
+            group.add_action(&action);
+            view.insert_action_group("selection", Some(&group));
             let (weak, later) = (view.downgrade(), on_release.clone());
             click.connect_released(move |_, _, _, _| {
                 if let (Some(view), Some(row)) = (weak.upgrade(), later.take()) {

@@ -481,6 +481,85 @@ fn forward(tool: &Rc<Tab>, owner: &Rc<Tab>, name: &str) {
     tool.group.add_action(&proxy);
 }
 
+/// Repository Settings のページの部品の名前（フォーカスがその中かを見分ける）。
+pub const REPO_SETTINGS_NAME: &str = "repository-settings";
+
+/// Edit の項目のアクション（[`edit_abilities`] と同じ順）。
+const EDIT_ACTIONS: [&str; 6] = [
+    "edit-undo",
+    "edit-redo",
+    "edit-cut",
+    "edit-copy",
+    "edit-paste",
+    "edit-select-all",
+];
+
+/// `focus` にできる Edit の項目（[`EDIT_ACTIONS`] と同じ順）。
+fn edit_abilities(focus: &gtk::Widget) -> [bool; 6] {
+    let mut settings = focus.parent();
+    let in_settings = loop {
+        match settings {
+            Some(w) if w.widget_name() == REPO_SETTINGS_NAME => break true,
+            Some(w) => settings = w.parent(),
+            None => break false,
+        }
+    };
+    if let Some(text) = focus.downcast_ref::<gtk::Text>() {
+        let (editable, selected) = (text.is_editable(), text.selection_bounds().is_some());
+        return [
+            editable,
+            editable,
+            editable && selected,
+            selected,
+            editable,
+            true,
+        ];
+    }
+    if let Some(text) = focus.downcast_ref::<gtk::TextView>() {
+        let buffer = text.buffer();
+        let (editable, selected) = (text.is_editable(), buffer.has_selection());
+        return [
+            editable && buffer.can_undo(),
+            editable && buffer.can_redo(),
+            editable && selected,
+            selected,
+            editable,
+            true,
+        ];
+    }
+    let select_all = if let Some(label) = focus.downcast_ref::<gtk::Label>() {
+        if label.selection_bounds().is_some() {
+            return [false, false, false, true, false, true];
+        }
+        label.is_selectable()
+    } else if let Some(diff) = focus.downcast_ref::<crate::diff::DiffWidget>() {
+        return [
+            in_settings,
+            in_settings,
+            false,
+            diff.selected_text().is_some(),
+            false,
+            true,
+        ];
+    } else {
+        focus.is::<crate::history::HistoryView>()
+            || [
+                focus
+                    .ancestor(gtk::ListView::static_type())
+                    .and_downcast::<gtk::ListView>()
+                    .and_then(|l| l.model()),
+                focus
+                    .ancestor(gtk::ColumnView::static_type())
+                    .and_downcast::<gtk::ColumnView>()
+                    .and_then(|c| c.model()),
+            ]
+            .iter()
+            .flatten()
+            .any(|m| m.is::<gtk::MultiSelection>())
+    };
+    [in_settings, in_settings, false, false, false, select_all]
+}
+
 /// リポジトリのタブを並べる窓。
 pub struct RepoWindow {
     pub window: gtk::ApplicationWindow,
@@ -595,12 +674,13 @@ impl RepoWindow {
         });
         let weak = Rc::downgrade(&this);
         window.connect_focus_widget_notify(move |window| {
-            if let Some(this) = weak.upgrade()
-                && let Some(focus) = GtkWindowExt::focus(window)
+            let Some(this) = weak.upgrade() else { return };
+            if let Some(focus) = GtkWindowExt::focus(window)
                 && focus.ancestor(gtk::Popover::static_type()).is_none()
             {
                 this.last_focus.replace(focus.downgrade());
             }
+            this.update_edit_actions();
         });
         WINDOWS.with(|w| w.borrow_mut().push(this.clone()));
         // 窓の大きさは、そのリポジトリごとに覚える（macOS 版の窓の frame と同じ。GNOME では位置は決められない
@@ -763,6 +843,25 @@ impl RepoWindow {
             .filter(|f| f.ancestor(gtk::Popover::static_type()).is_none())
             .or_else(|| self.last_focus.borrow().upgrade())
             .filter(|f| f.root().as_ref() == Some(self.window.upcast_ref::<gtk::Root>()))
+    }
+
+    /// Edit の項目を、フォーカスのある部品にできるものだけ押せるようにする（macOS 版の標準の項目と同じ。メニューを
+    /// 開くとフォーカスが動くので、そのときの状態になる。押せなくてもキーは部品がじかに受ける）。
+    fn update_edit_actions(&self) {
+        let can = self
+            .edit_focus()
+            .map_or([false; EDIT_ACTIONS.len()], |f| edit_abilities(&f));
+        for tab in self.tabs() {
+            for (name, can) in EDIT_ACTIONS.iter().zip(can) {
+                if let Some(action) = tab
+                    .group
+                    .lookup_action(name)
+                    .and_downcast::<gio::SimpleAction>()
+                {
+                    action.set_enabled(can);
+                }
+            }
+        }
     }
 
     pub fn current(&self) -> Option<Rc<Tab>> {

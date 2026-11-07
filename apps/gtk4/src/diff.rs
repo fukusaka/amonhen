@@ -283,6 +283,23 @@ mod imp {
             view.set_focusable(true);
             view.set_overflow(gtk::Overflow::Hidden);
             view.add_css_class("view");
+            // Edit の Copy・Select All（キーは `key_pressed`）。
+            for (prefix, name) in [("clipboard", "copy"), ("selection", "select-all")] {
+                let group = gio::SimpleActionGroup::new();
+                let action = gio::SimpleAction::new(name, None);
+                let weak = view.downgrade();
+                action.connect_activate(move |_, _| {
+                    if let Some(view) = weak.upgrade() {
+                        if prefix == "clipboard" {
+                            view.copy_selection();
+                        } else {
+                            view.select_all();
+                        }
+                    }
+                });
+                group.add_action(&action);
+                view.insert_action_group(prefix, Some(&group));
+            }
             let click = gtk::GestureClick::new();
             let weak = view.downgrade();
             click.connect_pressed(move |gesture, clicks, x, y| {
