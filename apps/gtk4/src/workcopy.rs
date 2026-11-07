@@ -2392,7 +2392,8 @@ impl Inner {
             let result = gio::spawn_blocking(move || {
                 let profile = FrontendProfile::GTK;
                 // 1 本の差分で表せなければ、選んだ側（片側にしか変更がなければその側）。
-                let mut working = match repo.working_diff_combined(&entry, &profile)? {
+                // 1 本の差分で表せない・読めないときは、選んだ側の差分（macOS 版と同じ）。
+                let mut working = match repo.working_diff_combined(&entry, &profile).ok().flatten() {
                     Some(d) => d,
                     None => {
                         let staged = if entry.is_staged() && entry.is_unstaged() {
