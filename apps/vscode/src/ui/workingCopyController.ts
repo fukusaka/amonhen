@@ -21,6 +21,8 @@ import { acceptConflicts, indexMode, showError, stageChanges } from './stageComm
  * メインビューの Working Copy の拡張ホスト側。
  * 変更ファイルの一覧と、選んだファイルの差分を送り、ファイル・hunk・行単位の stage とコミットを受け持つ。
  */
+const RECENT_COMMITS = 30;
+
 export class WorkingCopyController implements vscode.Disposable {
   private readonly post: (message: WorkingCopyHostMessage) => void;
   private repo: Repository | undefined;
@@ -31,6 +33,9 @@ export class WorkingCopyController implements vscode.Disposable {
   /** amend のときにメッセージ欄へ入れる、HEAD のメッセージ */
   private head: { oid: string; message: string } | undefined;
 
+  /** 最近のコミット（新しい順） */
+  private recent: { message: string; author: string; email: string }[] = [];
+
   constructor(post: (message: WorkingCopyHostMessage) => void) {
     this.post = post;
   }
@@ -39,6 +44,8 @@ export class WorkingCopyController implements vscode.Disposable {
     vscode.Disposable.from(...this.listeners).dispose();
     this.repo = repo;
     this.selected = undefined;
+    this.head = undefined;
+    this.recent = [];
     this.listeners = repo
       ? [
           repo.onDidChange((changed) => changed.has('workingCopy') && this.schedule()),
@@ -85,10 +92,26 @@ export class WorkingCopyController implements vscode.Disposable {
       if (this.head?.oid !== oid) {
         const obj = await repo.backend.object(oid);
         this.head = { oid, message: obj ? parseCommitObject(obj.data.toString('utf8')).message : '' };
+        void this.sendRecent(repo).catch(showError);
       }
       lastMessage = this.head.message;
     }
     this.post({ type: 'wcFiles', files: this.files, branch: status?.branch.head, lastMessage, layout: fileLayout() });
+  }
+
+  /** 最近のコミット 30 個を読む（一覧と ⌥↑・⌥↓ のため） */
+  private async sendRecent(repo: Repository): Promise<void> {
+    const commits = await repo.backend.log(['HEAD'], 0, RECENT_COMMITS);
+    const recent = await Promise.all(
+      commits.map(async (c) => {
+        const obj = await repo.backend.object(c.oid);
+        const message = obj ? parseCommitObject(obj.data.toString('utf8')).message.trim() : c.subject;
+        return { message, author: c.author, email: c.email };
+      }),
+    );
+    if (repo !== this.repo) return;
+    this.recent = recent;
+    this.post({ type: 'wcRecent', messages: recent.map((c) => c.message) });
   }
 
   /** 選んでいるファイルの差分を送る。stage してグループが変わっても、同じファイルを見続ける */
@@ -178,6 +201,18 @@ export class WorkingCopyController implements vscode.Disposable {
     }
     if (message.type === 'wcDraft') {
       await setCommitDraft(repo.root, { summary: message.summary, body: message.body });
+      return;
+    }
+    if (message.type === 'wcPickRecent') {
+      const seen = new Set<string>();
+      const items = this.recent.flatMap((c) => {
+        if (seen.has(c.message)) return [];
+        seen.add(c.message);
+        const [subject = '', ...rest] = c.message.split('\n');
+        return [{ label: subject.slice(0, 80), detail: rest.join(' ').trim() || undefined, message: c.message }];
+      });
+      const picked = await vscode.window.showQuickPick(items, { placeHolder: 'Insert the message of a recent commit' });
+      if (picked) this.post({ type: 'wcUseMessage', message: picked.message });
       return;
     }
     const find = (group: ChangeGroup, path: string) => this.files.find((f) => f.group === group && f.path === path);
