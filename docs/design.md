@@ -410,8 +410,11 @@ out: they have no confirmation, and adding one only for a drawing would slow the
 - **Drawing.** Gained commits are on the left lane and taken-off ones on the right, joining where they part; with only
   one kind there is one lane. The moving ref's label is filled, at its commit now and at the destination after. After
   the move, gained commits are highlighted and taken-off ones are hollow, with a note: red "removed from
-  `origin/<branch>`" for a push that replaces commits, grey "taken off" for Reset (they stay in Reflog). Long runs end
-  in "and N more".
+  `origin/<branch>`" for a push that replaces commits, grey "taken off" for Reset (they stay in Reflog).
+- **Long runs and old forks.** A run longer than six commits shows its newest three and its oldest two, with "and N
+  more" between them, and the lane is dashed across what is left out, so the commits just after the fork still show.
+  When both sides have commits, the fork point says how long ago they split off ("split off 3 mo. ago"). The rebase
+  drawing does the same for the commits it moves and for those on the new base.
 - **Push and Force Push.** The drawing sits at the top of the Push sheet, above the commit list. `origin/<branch>`
   moves to the local tip.
 - **Reset.** Under the drawing, Soft, Mixed and Hard say where the difference from now goes (staged, in the working
