@@ -810,6 +810,8 @@ export class HistoryController implements vscode.Disposable {
 
   /** 並び順と、行に出す項目を選ぶ（アプリの History Display と同じ） */
   private async displayMenu(): Promise<void> {
+    // エンジンだけの項目は、エンジンを使えれば出す（読み直しの途中で、開いた History がまだなくても）
+    const engine = this.daemon !== undefined || (await this.engine()) !== undefined;
     const order = historyOrder();
     const hidden = historyHidden();
     type Item = vscode.QuickPickItem & { order?: HistoryOrder; item?: HistoryItem };
@@ -829,7 +831,7 @@ export class HistoryController implements vscode.Disposable {
     const picked = await vscode.window.showQuickPick<Item>(
       [
         // 並び順は共有の daemon で変える（git で読むときは日付順のまま）
-        ...(this.daemon
+        ...(engine
           ? [
               separator('Order'),
               ...orders.map(([value, label, detail]): Item => ({
