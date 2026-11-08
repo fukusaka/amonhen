@@ -67,6 +67,12 @@ becomes the GitHub Release notes.
   because the engine was refreshing Working Copy at the same moment.
 - On Windows, removing a worktree whose folder another program was using for a moment no longer leaves the folder
   behind, unregistered and impossible to remove from the app, and removing such a submodule no longer fails.
+- GTK4: the details follow ref changes, a multi-commit selection shows every file, an outside config change updates
+  Repository Settings, and a deleted repository is reported missing instead of opening the one around it.
+- GTK4: smaller differences from macOS in the diff's find highlights, the CI popover, the Repositories page, the
+  Rebase sheet and a few sheets; on GNOME the Rebase sheet no longer opens enlarged and cut off.
+- macOS: AI prompts keep `\` and `$1` in the inserted text, a quick second accept in the merge editor waits for the
+  conflicts to be re-read, and a repository that isn't a fork is no longer looked up again on every GitHub load.
 - GTK4: ↑ and ↓ in the sidebar skip headings and folders, as on macOS, instead of stopping on them.
 - In a narrow GTK4 merge editor, the bar hides its lesser buttons instead of cutting every button's name.
 - The GTK4 Rebase sheet no longer cuts commit subjects, its Push sheet no longer leaves an empty band, and disabled
