@@ -164,6 +164,15 @@ fn ask_reset(actions: &Rc<Actions>, hex: &str) {
     let (actions, hex) = (actions.clone(), hex.to_owned());
     glib::spawn_future_local(async move {
         let branch = actions.head().unwrap_or_else(|| "HEAD".to_owned());
+        // 前と後の絵と、今との違いがどこへ行くかの材料（シートを出す前に読む。出してから背が伸びないように）。
+        let mut command = json!({ "op": "movePreview", "from": "HEAD", "to": hex });
+        if let Some(head) = actions.head() {
+            command["branch"] = json!(head);
+        }
+        let preview = match actions.repo() {
+            Some(repo) => crate::sheets::run(&repo, command).await["info"].clone(),
+            None => serde_json::Value::Null,
+        };
         let parent = crate::sheets::parent(&actions);
         let sheet = crate::sheets::Sheet::new(
             parent.as_ref(),
@@ -186,6 +195,17 @@ fn ask_reset(actions: &Rc<Actions>, hex: &str) {
                 tr!("Hard: match the commit (uncommitted changes are stashed first)"),
             ),
         ];
+        if !preview["drawing"].is_null() {
+            let (drawing, set) = crate::rewritedraw::new_move(crate::rewritedraw::Move {
+                moving: branch.clone(),
+                kind: "local",
+                after_title: tr!("After the reset"),
+                lost_note: tr!("taken off"),
+                lost_red: false,
+            });
+            set(&preview);
+            sheet.add(&drawing);
+        }
         let column = gtk::Box::new(gtk::Orientation::Vertical, 4);
         let radios: Vec<gtk::CheckButton> = modes
             .iter()
@@ -198,6 +218,62 @@ fn ask_reset(actions: &Rc<Actions>, hex: &str) {
             column.append(r);
         }
         radios[1].set_active(true);
+        // 選んだ動かし方で、今との違いがどこへ行くか（macOS 版と同じ）。
+        let files = preview["files"].as_u64().unwrap_or(0);
+        let note = gtk::Label::new(None);
+        note.set_xalign(0.0);
+        note.set_wrap(true);
+        note.set_max_width_chars(60);
+        note.add_css_class("dim-label");
+        note.add_css_class("caption");
+        note.set_visible(files > 0);
+        let update = {
+            let (radios, note) = (radios.clone(), note.clone());
+            move || {
+                let text = if radios[0].is_active() {
+                    tr!(
+                        "The difference from now ({count} files) stays staged.",
+                        count = files
+                    )
+                } else if radios[2].is_active() {
+                    tr!(
+                        "The working tree matches the commit; the difference from now ({count} files) goes away (Undo brings it back).",
+                        count = files
+                    )
+                } else {
+                    tr!(
+                        "The difference from now ({count} files) stays in the working tree.",
+                        count = files
+                    )
+                };
+                note.set_text(&text);
+            }
+        };
+        update();
+        let update = Rc::new(update);
+        for r in &radios {
+            let u = update.clone();
+            r.connect_toggled(move |_| u());
+        }
+        column.append(&note);
+        // 外れるコミットを上流が持っていれば、このあとの Push は Force Push になる。
+        if preview["upstreamHas"].as_u64().unwrap_or(0) > 0
+            && let Some(upstream) = preview["upstream"].as_str()
+        {
+            let warning = gtk::Label::new(Some(&format!(
+                "⚠︎ {}",
+                tr!(
+                    "{upstream} has commits this takes off, so pushing afterwards needs Force Push.",
+                    upstream = upstream
+                )
+            )));
+            warning.set_xalign(0.0);
+            warning.set_wrap(true);
+            warning.set_max_width_chars(60);
+            warning.add_css_class("warning");
+            warning.add_css_class("caption");
+            column.append(&warning);
+        }
         sheet.add(&column);
         sheet.buttons("Reset", false, None);
         if sheet.run().await != crate::sheets::Response::Ok {
