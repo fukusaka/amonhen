@@ -1359,6 +1359,13 @@ async function bundleArchiveFlow(): Promise<void> {
       async () => vscode.commands.executeCommand('amonhen.fetchBundle'),
     );
     assert.equal(git('rev-parse', `refs/remotes/bundle-e2e/${branch}`).trim(), head, lastErrors());
+    // 設定のないリモートの名前でも、Remotes の下に並ぶ（リモートの操作は出さない）
+    const sidebar = api.sidebar;
+    const remotes = sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'remotes')!;
+    const fetched = await until('Remotes の下に bundle-e2e が出る', () =>
+      sidebar.getChildren(remotes).find((n) => n.kind === 'remote' && n.remote.name === 'bundle-e2e'),
+    );
+    assert.equal((sidebar.getTreeItem(fetched) as vscode.TreeItem).contextValue, 'remote.unconfigured');
 
     // clone（ファイル、フォルダの順に選ぶ）
     await withWindow(

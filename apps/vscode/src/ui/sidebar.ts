@@ -280,7 +280,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
         }
         return this.branchChildren(repo);
       case 'remotes': {
-        const remotes = state.remotes ?? [];
+        const remotes = [...(state.remotes ?? [])];
         const names = remotes.map((r) => r.name);
         const byRemote = new Map<string, Ref[]>(names.map((n) => [n, []]));
         for (const ref of state.remoteBranches ?? []) {
@@ -288,8 +288,14 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
           if (ref.symref) continue;
           const split = splitRemoteRef(ref.name, names);
           if (!split || (this.filterWords.length > 0 && !this.matches(shortName(ref.name)))) continue;
-          byRemote.get(split.remote)?.push(ref);
+          // 設定のないリモートの名前の下の ref（Fetch from Bundle が取り込んだものなど）も、アプリと同じくその名前で並べる
+          if (!byRemote.has(split.remote)) {
+            byRemote.set(split.remote, []);
+            remotes.push({ name: split.remote, unconfigured: true });
+          }
+          byRemote.get(split.remote)!.push(ref);
         }
+        remotes.sort((a, b) => Number(a.unconfigured ?? false) - Number(b.unconfigured ?? false));
         const filtering = this.filterWords.length > 0;
         const rest = (remote: string) => (r: Ref) => r.name.slice(`refs/remotes/${remote}/`.length);
         return remotes
@@ -453,9 +459,10 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
           filtered ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed,
         );
         item.id = `remote:${node.remote.name}${filtered ? ':filtered' : ''}`;
-        item.description = node.remote.fetchUrl;
-        item.iconPath = new vscode.ThemeIcon('cloud');
-        item.contextValue = 'remote';
+        item.description = node.remote.unconfigured ? 'not a configured remote' : node.remote.fetchUrl;
+        item.iconPath = new vscode.ThemeIcon(node.remote.unconfigured ? 'folder' : 'cloud');
+        // 設定のないものには、リモートの操作（fetch・名前・URL・削除）を出さない
+        item.contextValue = node.remote.unconfigured ? 'remote.unconfigured' : 'remote';
         return item;
       }
       case 'tag':

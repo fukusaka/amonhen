@@ -82,6 +82,8 @@ export interface Remote {
   name: string;
   fetchUrl?: string;
   pushUrl?: string;
+  /** git の設定にないリモートの名前（`refs/remotes/<name>/` に ref だけがある） */
+  unconfigured?: boolean;
 }
 
 export const REMOTE_ARGS = ['remote', '-v'] as const;
