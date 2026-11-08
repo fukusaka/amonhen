@@ -1388,6 +1388,82 @@ async function bundleArchiveFlow(): Promise<void> {
   }
 }
 
+/**
+ * Switch Branch…（QuickPick）: 打った名前のブランチを作って切り替え、最近のものとして上に出たブランチに戻り、リモートの
+ * ブランチを選ぶと追跡するブランチを作って切り替える
+ */
+async function branchSwitcherFlow(): Promise<void> {
+  const repo = api.manager.current!;
+  const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+  /** createQuickPick の代わり: show で、typed を打ってから choose が選んだ行を受け入れる。選んだ時点の並びを返す */
+  let seen: string[] = [];
+  const quickPick = (choose: (items: readonly vscode.QuickPickItem[]) => vscode.QuickPickItem | undefined, typed = '') => ({
+    createQuickPick: () => {
+      const on: { value?: (v: string) => void; accept?: () => void; hide?: () => void } = {};
+      const pick = {
+        items: [] as vscode.QuickPickItem[],
+        selectedItems: [] as vscode.QuickPickItem[],
+        value: '',
+        title: '',
+        placeholder: '',
+        matchOnDescription: false,
+        onDidChangeValue: (f: (v: string) => void) => (on.value = f),
+        onDidAccept: (f: () => void) => (on.accept = f),
+        onDidHide: (f: () => void) => (on.hide = f),
+        show: () => {
+          if (typed) {
+            pick.value = typed;
+            on.value?.(typed);
+          }
+          seen = pick.items.map((i) => i.label);
+          const item = choose(pick.items);
+          if (item) {
+            pick.selectedItems = [item];
+            on.accept?.();
+          } else on.hide?.();
+        },
+        hide: () => on.hide?.(),
+        dispose: () => undefined,
+      };
+      return pick;
+    },
+  });
+  const head = () => git('symbolic-ref', '--short', 'HEAD').trim();
+  try {
+    await withWindow(quickPick((items) => items.find((i) => i.label.includes('Create branch sw-new')), 'sw-new'), async () =>
+      vscode.commands.executeCommand('amonhen.switchBranch'),
+    );
+    assert.equal(head(), 'sw-new', lastErrors());
+    await until('今のブランチが sw-new になる', () => repo.current.status?.branch.head === 'sw-new');
+
+    // 戻る先は最近のものとして先頭に出る
+    await withWindow(quickPick((items) => items.find((i) => i.label.endsWith(` ${branch}`))), async () =>
+      vscode.commands.executeCommand('amonhen.switchBranch'),
+    );
+    assert.equal(head(), branch, lastErrors());
+    await until(`今のブランチが ${branch} になる`, () => repo.current.status?.branch.head === branch);
+    await withWindow(quickPick(() => undefined), async () => vscode.commands.executeCommand('amonhen.switchBranch'));
+    assert.match(seen[0] ?? '', /sw-new$/, seen.join(', '));
+
+    // リモートのブランチは追跡するブランチを作って切り替える
+    git('remote', 'add', 'sw-remote', root);
+    git('branch', 'sw-track');
+    git('fetch', '-q', 'sw-remote', 'sw-track');
+    git('branch', '-D', 'sw-track');
+    await repo.refresh();
+    await withWindow(quickPick((items) => items.find((i) => i.label.endsWith(' sw-remote/sw-track'))), async () =>
+      vscode.commands.executeCommand('amonhen.switchBranch'),
+    );
+    assert.equal(head(), 'sw-track', lastErrors());
+    assert.equal(git('rev-parse', '--abbrev-ref', 'sw-track@{upstream}').trim(), 'sw-remote/sw-track');
+  } finally {
+    git('switch', '-q', '-f', branch);
+    for (const b of ['sw-new', 'sw-track']) if (git('branch', '--list', b)) git('branch', '-D', b);
+    if (git('remote').split('\n').includes('sw-remote')) git('remote', 'remove', 'sw-remote');
+    await repo.refresh();
+  }
+}
+
 async function orphanFlow(): Promise<void> {
   const repo = api.manager.current!;
   const branch = git('symbolic-ref', '--short', 'HEAD').trim();
@@ -3212,6 +3288,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('exports an archive, saves and fetches bundles and clones from one through the daemon', async () => {
     await bundleArchiveFlow();
+  });
+
+  test('switches to a new, a recent and a remote branch from Switch Branch', async () => {
+    await branchSwitcherFlow();
   });
 
   test('creates an orphan branch, empty or keeping the files, through the daemon', async () => {

@@ -249,3 +249,4 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 38. History's details: find with ⌘F, collapsing files and Viewed, the changed files as a tree, one file at a time
 - [x] 39. History's edit mode: several commits in one rebase, shortcuts opening it, merges kept (`--rebase-merges`)
 - [x] 40. Export Archive, Save as Bundle, Fetch from Bundle, Clone from Bundle
+- [x] 41. Switch Branch: recent branches first, a remote branch gets a tracking branch, a typed name a new one

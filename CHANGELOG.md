@@ -1035,6 +1035,8 @@ First release.
 
 #### Added
 
+- Switch Branch… finds a branch to switch to, recent ones first; a remote branch gets a tracking branch and a new
+  name creates one.
 - Export Archive… writes a branch, tag or commit as zip, tar.gz or tar; Save as Bundle… and Fetch from Bundle… use
   `git bundle` with the engine, and Clone from Bundle… clones a bundle file.
 - Remotes lists branches under a name that isn't a configured remote, such as ones fetched from a bundle.

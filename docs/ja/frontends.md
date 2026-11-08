@@ -163,7 +163,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
 | 履歴のない新しいブランチ（空から・ファイルを残して） | ✓ | ✓ | ✓ | △ | VSCode: コマンドパレットと Branches のグループの右クリックから。<br>CLI: `amonhen run`（`createOrphanBranch`）から。 |
-| ブランチの切り替え（あいまい検索・最近・追跡・新しいブランチ） | ✓ | ✓ | △ | △ | VSCode: サイドバーからの Checkout と New Branch… だけ。<br>CLI: `amonhen run` から。 |
+| ブランチの切り替え（あいまい検索・最近・追跡・新しいブランチ） | ✓ | ✓ | ✓ | △ | VSCode: Switch Branch…（QuickPick）。サイドバーの ⋯・Branches の見出し・コマンドパレットから。⌘⇧B は VSCode のビルドのタスクなので近道はない。<br>CLI: `amonhen run` から。 |
 | Fetch のシート（すべてか 1 つのリモート、prune を示す） | ✓ | ✓ | △ | △ | VSCode: シートなしで、すべてを prune 付きですぐ fetch。<br>CLI: `amonhen run` から。 |
 | Pull のシート（コミット・merge / rebase / ff-only・なければ上流） | ✓ | ✓ | △ | △ | VSCode: シートも選択もなく、上流をマージする。<br>CLI: `amonhen run` から。 |
 | Push のシート（注意・コミットと差分・lease 付きの Force Push） | ✓ | ✓ | △ | △ | VSCode: シートはなく、Force Push は別に尋ねる。<br>CLI: `amonhen run` から。 |
