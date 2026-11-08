@@ -396,6 +396,33 @@ or split history in ways that are hard to see afterwards.
   does with the same setting, and a History edit keeps the `update-ref` lines in its todo only when the setting is on
   and git is 2.38 or later.
 
+## Previewing graph changes
+
+Every operation that changes the commit graph shows, in its confirmation sheet, the graph before and after side by
+side, drawn as the rebase sheet draws it (History's lanes, dots, labels and subjects). Commit, Amend and Fetch are left
+out: they have no confirmation, and adding one only for a drawing would slow them down.
+
+- **Moving a ref.** Push, Force Push and Reset move one ref from one commit to another. A core command
+  (`movePreview`, with `from`, `to` and optionally the branch) returns the commits only `to` reaches (gained), the
+  commits only `from` reaches (taken off), where they part, the branches on them, the number of files that differ, and
+  how many of the taken-off commits the branch's upstream already has. It reads only the History. The CLI has it too
+  (`amonhen run`).
+- **Drawing.** Gained commits are on the left lane and taken-off ones on the right, joining where they part; with only
+  one kind there is one lane. The moving ref's label is filled, at its commit now and at the destination after. After
+  the move, gained commits are highlighted and taken-off ones are hollow, with a note: red "removed from
+  `origin/<branch>`" for a push that replaces commits, grey "taken off" for Reset (they stay in Reflog). Long runs end
+  in "and N more".
+- **Push and Force Push.** The drawing sits at the top of the Push sheet, above the commit list. `origin/<branch>`
+  moves to the local tip.
+- **Reset.** Under the drawing, Soft, Mixed and Hard say where the difference from now goes (staged, in the working
+  tree, or gone with Undo to bring it back). When the upstream has commits the reset takes off, the sheet says that
+  pushing afterwards needs Force Push.
+- **Showing the sheet.** The sheet is shown once the drawing is ready, not grown afterwards (on GNOME, a sheet that
+  grows while it opens is left enlarged).
+- **Next.** Merge, Pull, Cherry-pick and Revert, then octopus merges, am, History edits, Undo, fast-forwarding a branch
+  that isn't checked out, deleting a branch whose commits nothing else reaches, and subtree pull and split. Those that
+  make new commits draw them dashed after the change.
+
 ## Patches
 
 - Saving commits as patches is `git format-patch`; applying them is `git am` for mail (format-patch's files, an mbox,

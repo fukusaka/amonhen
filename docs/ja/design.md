@@ -380,6 +380,17 @@ rebase と History の編集（reword・squash・fixup・drop・edit・split・m
 - **リポジトリの設定。** シート（⌘;）をやめ、サイドバーの Workspace に、Working Copy・History・Stashes・Reflog と並ぶ Settings の画面として置く。⌘; はその画面を開く。
 - **独自の既定を持たない。** Amon Hen は自分で `rebase.updateRefs` を有効にしない。rebase は、同じ設定の `git rebase` と同じにふるまう。History の編集は、設定がオンで git が 2.38 以降のときだけ、todo の `update-ref` の行を残す。
 
+## コミットグラフの変化を見せる
+
+コミットグラフが変わる操作は、どれも確認のシートに、前と後のグラフを左右に並べて描く。描き方は rebase のシートと同じ（History のレーン・点・札・件名）。Commit・Amend・Fetch は除く。確認がない操作で、絵のためだけに確認を足すと遅くなるため。
+
+- **ref を動かす。** Push・Force Push・Reset は、1 つの ref をあるコミットから別のコミットへ動かす。コアの命令（`movePreview`。`from`・`to` と、あればブランチ）が、`to` だけから辿れるコミット（増える）、`from` だけから辿れるコミット（外れる）、分かれたところ、それらに付くブランチ、違うファイルの数、外れるコミットをブランチの上流がいくつ持っているかを返す。読むのは History だけ。CLI でも使える（`amonhen run`）。
+- **描き方。** 増えるコミットを左のレーン、外れるコミットを右のレーンに置き、分かれたところで合流させる。片方しかなければ 1 本。動かす ref の札は塗りつぶし、前では今のコミットに、後では行き先に描く。後では、増えるコミットを強調し、外れるコミットを中抜きの点にして文を添える。コミットを置き換える push は赤で「`origin/<ブランチ>` から消える」、Reset は灰色で「外れる」（Reflog に残る）。長いときは「ほか n コミット」で終える。
+- **Push と Force Push。** 絵は Push のシートの上、コミットの一覧の上に置く。`origin/<ブランチ>` が手元の先端へ動く。
+- **Reset。** 絵の下で、Soft・Mixed・Hard のそれぞれについて、今との違いがどこへ行くか（stage、作業ツリー、消える。Undo で戻せる）を出す。外れるコミットを上流がすでに持っていれば、このあとの Push には Force Push が要ることを出す。
+- **シートの出し方。** 絵を読み終えてからシートを出し、出したあとで大きくしない（GNOME では、開く途中で大きくなったシートが拡大されたまま残る）。
+- **このあと。** Merge・Pull・Cherry-pick・Revert、続いて octopus merge・am・History の編集・Undo・チェックアウトしていないブランチの fast-forward・ほかから辿れないコミットのあるブランチの削除・subtree の pull と split。新しいコミットを作るものは、後ではそのコミットを点線で描く。
+
 ## パッチ
 
 - コミットをパッチにするのは `git format-patch`、当てるのはメールの形（format-patch のファイル・mbox・.eml）なら

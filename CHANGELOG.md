@@ -11,6 +11,9 @@ becomes the GitHub Release notes.
 
 #### Added
 
+- Push, Force Push and Reset draw the graph before and after in their sheet: where the branch or `origin/<branch>`
+  moves, and which commits a force push removes or a reset takes off. Reset also says where the changes go for each
+  mode and when pushing afterwards will need Force Push.
 - A branch merged by a GitHub pull request (squash or rebase) gets the merged mark in the sidebar, says "Merged by
   pull request #123" in its popover, and is deleted with a plain confirmation naming the pull request.
 - Clean Up Branches… (Repository menu and the Branches heading) lists the branches merged into the default branch,
