@@ -68,8 +68,8 @@ pub fn new() -> (gtk::DrawingArea, Setter) {
         }
         let picks = d["picks"].as_array().map_or(0, Vec::len);
         let onto = d["onto"].as_array().map_or(0, Vec::len);
-        let more = usize::from(d["ontoMore"].as_u64().unwrap_or(0) > 0);
-        let rows = picks + onto + more + 1;
+        let more = |k: &str| usize::from(d[k].as_u64().unwrap_or(0) > 0);
+        let rows = picks + more("picksMore") + onto + more("ontoMore") + 1;
         area.set_content_height((rows as f64 * ROW + 26.0) as i32);
         area.set_visible(true);
         area.queue_draw();
@@ -133,20 +133,29 @@ fn draw(area: &gtk::DrawingArea, cr: &gtk::cairo::Context, info: &Value) {
     // 左: 今。上に載せ直すコミット（右の線）、その下に載せ先で進んだコミット（左の線）、いちばん下で合流。
     let mut y = TOP;
     let mut rows = Vec::new();
-    for (oid, subject) in &picks {
-        rows.push(Row {
-            oid: oid.clone(),
-            subject: subject.clone(),
-            lane: 1,
-            dim: true,
-            y,
-            ..Default::default()
-        });
-        y += ROW;
-    }
-    // 載せ先で進んだコミットは、長ければ真ん中を省く（そこだけ点線）。
-    let more_at = d["ontoMoreAt"].as_u64();
     let mut gaps = Vec::new();
+    // 載せ直すコミットも載せ先で進んだコミットも、長ければ真ん中を省く（そこだけ点線）。
+    let picks_more = d["picksMore"].as_u64().unwrap_or(0);
+    let picks_at = d["picksMoreAt"].as_u64();
+    with_gap(
+        &picks,
+        picks_more,
+        picks_at,
+        1,
+        &mut y,
+        &mut gaps,
+        |(oid, subject), y| {
+            rows.push(Row {
+                oid: oid.clone(),
+                subject: subject.clone(),
+                lane: 1,
+                dim: true,
+                y,
+                ..Default::default()
+            });
+        },
+    );
+    let more_at = d["ontoMoreAt"].as_u64();
     with_gap(
         &onto,
         more,
@@ -191,19 +200,26 @@ fn draw(area: &gtk::DrawingArea, cr: &gtk::cairo::Context, info: &Value) {
 
     // 右: rebase の後。載せ直したコミット（A′）が載せ先の上に 1 本で続く。
     let mut after = Vec::new();
-    y = TOP;
-    for (oid, subject) in &picks {
-        after.push(Row {
-            oid: oid.clone(),
-            subject: format!("{subject}′"),
-            lane: 0,
-            dim: false,
-            y,
-            ..Default::default()
-        });
-        y += ROW;
-    }
     let mut after_gaps = Vec::new();
+    y = TOP;
+    with_gap(
+        &picks,
+        picks_more,
+        picks_at,
+        0,
+        &mut y,
+        &mut after_gaps,
+        |(oid, subject), y| {
+            after.push(Row {
+                oid: oid.clone(),
+                subject: format!("{subject}′"),
+                lane: 0,
+                dim: false,
+                y,
+                ..Default::default()
+            });
+        },
+    );
     with_gap(
         &onto,
         more,
