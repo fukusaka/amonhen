@@ -1560,10 +1560,9 @@ fn bind_row(item: &gtk::ListItem) {
     if data.dim {
         title.add_css_class("dim-label");
     }
+    // 今のブランチは名前を太くせず、アクセントカラーのアイコンで示す（macOS 版のサイドバーの見た目と同じ。
+    // macOS 版はサイドバーの行の字をシステムの字のまま出す）。
     let attrs = gtk::pango::AttrList::new();
-    if data.head {
-        attrs.insert(gtk::pango::AttrInt::new_weight(gtk::pango::Weight::Bold));
-    }
     // 見出しの数は、名前のすぐ後ろに薄く小さく（右端には出さない）。
     if group && !data.badge.is_empty() {
         let start = data.title.len() as u32;
