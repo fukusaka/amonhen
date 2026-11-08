@@ -420,11 +420,20 @@ out: they have no confirmation, and adding one only for a drawing would slow the
 - **Reset.** Under the drawing, Soft, Mixed and Hard say where the difference from now goes (staged, in the working
   tree, or gone with Undo to bring it back). When the upstream has commits the reset takes off, the sheet says that
   pushing afterwards needs Force Push.
+- **Merge and Pull.** A core command (`mergePreview`, with `theirs`, optionally `ours` and the fast-forward setting:
+  `merge.ff`, or `pull.ff` for Pull) answers that there is nothing to merge, that it is a fast-forward (with the
+  `movePreview` answer, drawn as a move), or gives both sides since the fork, the fork point and git's subject for the
+  merge commit. The drawing puts the current branch on the left lane and the other side on the right; after, a merge
+  commit drawn as a dashed dot sits on top, joined to both tips, and the branch's label moves to it. Pull draws the mode
+  chosen in its sheet (a merge, a rebase with the rebase drawing, or a fast-forward), keeping the sheet's height when
+  the mode changes; a mode that can't run draws nothing.
+- **Cherry-pick and Revert.** A core command (`pickPreview`, with `oids` and `revert`) gives the current tip and its
+  parent, and the subjects of the commits it will make. After, those commits are dashed dots above the tip (with ′ for
+  a cherry-pick, `Revert "…"` for a revert), and the branch's label moves to the top one.
 - **Showing the sheet.** The sheet is shown once the drawing is ready, not grown afterwards (on GNOME, a sheet that
   grows while it opens is left enlarged).
-- **Next.** Merge, Pull, Cherry-pick and Revert, then octopus merges, am, History edits, Undo, fast-forwarding a branch
-  that isn't checked out, deleting a branch whose commits nothing else reaches, and subtree pull and split. Those that
-  make new commits draw them dashed after the change.
+- **Next.** Octopus merges, am, History edits, Undo, fast-forwarding a branch that isn't checked out, deleting a branch
+  whose commits nothing else reaches, and subtree pull and split.
 
 ## Patches
 
