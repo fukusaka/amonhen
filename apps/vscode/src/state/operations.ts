@@ -163,6 +163,30 @@ export async function pullCurrent(
 }
 
 /**
+ * branch（`refs/heads/...`、今のブランチ）に upstream（`refs/remotes/...`）を、how で取り込む。先に upstream のリモートから
+ * fetch する。refuseDiverged なら（取り込み方を git の設定が決めていない）、fetch の後に分かれていれば git と同じく断る
+ */
+export async function pullWith(
+  backend: RepositoryBackend,
+  undo: UndoLog,
+  branch: string,
+  upstream: string,
+  how: 'merge' | 'rebase' | 'fastForwardOnly',
+  refuseDiverged = false,
+): Promise<OperationResult> {
+  const remote = splitRemoteRef(upstream, (await backend.remotes()).map((r) => r.name))?.remote;
+  await backend.fetch(remote);
+  if ((how === 'fastForwardOnly' || refuseDiverged) && (await planUpdate(backend, upstream, branch)).kind === 'diverged') {
+    throw new Error(
+      how === 'fastForwardOnly'
+        ? `Can’t fast-forward ${shortName(branch)}: it has commits ${shortName(upstream)} doesn’t have. Pull again and choose Merge or Rebase.`
+        : `git won’t pull: ${shortName(branch)} and ${shortName(upstream)} have diverged. Pull again and choose Merge or Rebase.`,
+    );
+  }
+  return how === 'rebase' ? rebaseOnto(backend, undo, branch, upstream) : mergeInto(backend, undo, upstream, branch);
+}
+
+/**
  * 現在のブランチを upstream へ push する。upstream が無い（リモートで消えたものも）なら unpublished を返す。
  * 初めて送るときは送り先を選んでから publishBranch で送る
  */

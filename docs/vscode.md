@@ -251,3 +251,4 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 40. Export Archive, Save as Bundle, Fetch from Bundle, Clone from Bundle
 - [x] 41. Switch Branch: recent branches first, a remote branch gets a tracking branch, a typed name a new one
 - [x] 42. Fetch asks first: all remotes or one, saying which prune
+- [x] 43. Pull asks first: the commits, how to integrate (git's settings, merge, rebase, fast-forward only), the upstream when missing

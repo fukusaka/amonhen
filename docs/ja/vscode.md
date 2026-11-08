@@ -243,3 +243,4 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 40. Export Archive、Save as Bundle、Fetch from Bundle、Clone from Bundle
 - [x] 41. Switch Branch: 最近のブランチを上に、リモートのブランチは追跡するブランチを作って、打った名前は新しいブランチで
 - [x] 42. Fetch の前に確かめる: すべてのリモートか 1 つか、どれが prune するか
+- [x] 43. Pull の前に確かめる: コミット、取り込み方（git の設定・merge・rebase・fast-forward のみ）、なければ上流

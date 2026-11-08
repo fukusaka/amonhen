@@ -1,32 +1,16 @@
 /** 現在のブランチの Pull / Push / Publish */
 import * as vscode from 'vscode';
-import {
-  publishBranch,
-  publishChoices,
-  pullCurrent,
-  pushCurrent,
-  shortName,
-  type ReconcileChoice,
-} from '../state/operations.ts';
+import { publishBranch, publishChoices, pushCurrent, shortName } from '../state/operations.ts';
 import type { RepositoryManager } from '../state/manager.ts';
 import type { Repository } from '../state/repository.ts';
 import { runAction } from './dragDrop.ts';
+import { pullWithSheet } from './pullSheet.ts';
 
 export function registerSyncCommands(manager: RepositoryManager): vscode.Disposable {
   return vscode.Disposable.from(
     vscode.commands.registerCommand('amonhen.pull', async () => {
       const repo = manager.current;
-      if (!repo) return;
-      await runAction(repo, {
-        label: '$(repo-pull) Pull',
-        run: async () => {
-          const result = await pullCurrent(repo.backend, repo.undo, chooseReconcile);
-          if (result === 'no-upstream') {
-            throw new Error('No upstream is set. Publish the branch to set one.');
-          }
-          return result;
-        },
-      });
+      if (repo) await pullWithSheet(repo);
     }),
     vscode.commands.registerCommand('amonhen.push', () => push(manager, false)),
     vscode.commands.registerCommand('amonhen.publish', async () => {
@@ -43,24 +27,6 @@ export function registerSyncCommands(manager: RepositoryManager): vscode.Disposa
       if (choice === 'Force Push') await push(manager, true);
     }),
   );
-}
-
-/**
- * 分かれたブランチを、取り込み方を決めずに pull するとき（git 2.33.1 からは git が断る）。この pull だけの取り込み方を
- * 選ぶ。設定は書かない
- */
-async function chooseReconcile(branch: string, upstream: string): Promise<ReconcileChoice | undefined> {
-  const choice = await vscode.window.showWarningMessage(
-    `${shortName(branch)} and ${shortName(upstream)} have diverged`,
-    {
-      modal: true,
-      detail:
-        'Neither pull.rebase nor pull.ff says how to bring them together, so git won’t pull. Choose how for this pull (your settings stay as they are).',
-    },
-    'Merge',
-    'Rebase',
-  );
-  return choice === 'Merge' ? 'merge' : choice === 'Rebase' ? 'rebase' : undefined;
 }
 
 async function push(manager: RepositoryManager, force: boolean): Promise<void> {

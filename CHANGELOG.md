@@ -1080,6 +1080,8 @@ First release.
 
 #### Changed
 
+- Pull asks first: how to integrate (git's settings, which it now follows, or merge, rebase or fast-forward only for
+  this pull), what that does here, and the commits; with no upstream it asks which remote branch to pull from.
 - Fetch asks first, from all remotes or one, and prunes as git's settings say (`remote.<name>.prune`, `fetch.prune`)
   instead of always.
 - The extension's own messages, prompts and settings descriptions are in English. Messages from the engine still follow

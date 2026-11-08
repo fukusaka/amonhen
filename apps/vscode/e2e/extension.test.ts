@@ -1397,24 +1397,24 @@ async function bundleArchiveFlow(): Promise<void> {
 }
 
 /**
- * Switch Branch…（QuickPick）: 打った名前のブランチを作って切り替え、最近のものとして上に出たブランチに戻り、リモートの
- * ブランチを選ぶと追跡するブランチを作って切り替える
+ * createQuickPick の代わり（withWindow に渡す）: show で typed を打ってから、choose が選んだ行を受け入れる。受け入れても
+ * 閉じなければ（押せない行）閉じる。show の時点の並びは pickSeen に、閉じたかは pickHidden に
  */
-async function branchSwitcherFlow(): Promise<void> {
-  const repo = api.manager.current!;
-  const branch = git('symbolic-ref', '--short', 'HEAD').trim();
-  /** createQuickPick の代わり: show で、typed を打ってから choose が選んだ行を受け入れる。選んだ時点の並びを返す */
-  let seen: string[] = [];
-  const quickPick = (choose: (items: readonly vscode.QuickPickItem[]) => vscode.QuickPickItem | undefined, typed = '') => ({
+let pickSeen: vscode.QuickPickItem[] = [];
+function fakeQuickPick(choose: (items: readonly vscode.QuickPickItem[]) => vscode.QuickPickItem | undefined, typed = '') {
+  return {
     createQuickPick: () => {
       const on: { value?: (v: string) => void; accept?: () => void; hide?: () => void } = {};
+      let hidden = false;
       const pick = {
         items: [] as vscode.QuickPickItem[],
         selectedItems: [] as vscode.QuickPickItem[],
+        activeItems: [] as vscode.QuickPickItem[],
         value: '',
         title: '',
         placeholder: '',
         matchOnDescription: false,
+        matchOnDetail: false,
         onDidChangeValue: (f: (v: string) => void) => (on.value = f),
         onDidAccept: (f: () => void) => (on.accept = f),
         onDidHide: (f: () => void) => (on.hide = f),
@@ -1423,35 +1423,49 @@ async function branchSwitcherFlow(): Promise<void> {
             pick.value = typed;
             on.value?.(typed);
           }
-          seen = pick.items.map((i) => i.label);
+          pickSeen = [...pick.items];
           const item = choose(pick.items);
           if (item) {
             pick.selectedItems = [item];
             on.accept?.();
-          } else on.hide?.();
+          }
+          if (!hidden) pick.hide();
         },
-        hide: () => on.hide?.(),
+        hide: () => {
+          if (hidden) return;
+          hidden = true;
+          on.hide?.();
+        },
         dispose: () => undefined,
       };
       return pick;
     },
-  });
+  };
+}
+
+/**
+ * Switch Branch…（QuickPick）: 打った名前のブランチを作って切り替え、最近のものとして上に出たブランチに戻り、リモートの
+ * ブランチを選ぶと追跡するブランチを作って切り替える
+ */
+async function branchSwitcherFlow(): Promise<void> {
+  const repo = api.manager.current!;
+  const branch = git('symbolic-ref', '--short', 'HEAD').trim();
   const head = () => git('symbolic-ref', '--short', 'HEAD').trim();
   try {
-    await withWindow(quickPick((items) => items.find((i) => i.label.includes('Create branch sw-new')), 'sw-new'), async () =>
+    await withWindow(fakeQuickPick((items) => items.find((i) => i.label.includes('Create branch sw-new')), 'sw-new'), async () =>
       vscode.commands.executeCommand('amonhen.switchBranch'),
     );
     assert.equal(head(), 'sw-new', lastErrors());
     await until('今のブランチが sw-new になる', () => repo.current.status?.branch.head === 'sw-new');
 
     // 戻る先は最近のものとして先頭に出る
-    await withWindow(quickPick((items) => items.find((i) => i.label.endsWith(` ${branch}`))), async () =>
+    await withWindow(fakeQuickPick((items) => items.find((i) => i.label.endsWith(` ${branch}`))), async () =>
       vscode.commands.executeCommand('amonhen.switchBranch'),
     );
     assert.equal(head(), branch, lastErrors());
     await until(`今のブランチが ${branch} になる`, () => repo.current.status?.branch.head === branch);
-    await withWindow(quickPick(() => undefined), async () => vscode.commands.executeCommand('amonhen.switchBranch'));
-    assert.match(seen[0] ?? '', /sw-new$/, seen.join(', '));
+    await withWindow(fakeQuickPick(() => undefined), async () => vscode.commands.executeCommand('amonhen.switchBranch'));
+    assert.match(pickSeen[0]?.label ?? '', /sw-new$/, pickSeen.map((i) => i.label).join(', '));
 
     // リモートのブランチは追跡するブランチを作って切り替える
     git('remote', 'add', 'sw-remote', root);
@@ -1459,7 +1473,7 @@ async function branchSwitcherFlow(): Promise<void> {
     git('fetch', '-q', 'sw-remote', 'sw-track');
     git('branch', '-D', 'sw-track');
     await repo.refresh();
-    await withWindow(quickPick((items) => items.find((i) => i.label.endsWith(' sw-remote/sw-track'))), async () =>
+    await withWindow(fakeQuickPick((items) => items.find((i) => i.label.endsWith(' sw-remote/sw-track'))), async () =>
       vscode.commands.executeCommand('amonhen.switchBranch'),
     );
     assert.equal(head(), 'sw-track', lastErrors());
@@ -1513,6 +1527,75 @@ async function fetchSheetFlow(): Promise<void> {
   } finally {
     if (git('branch', '--list', 'fs-gone')) git('branch', '-D', 'fs-gone');
     childProcess.execFileSync('git', ['branch', '-D', 'fs-only-origin'], { cwd: git('remote', 'get-url', 'origin').trim(), stdio: 'ignore' });
+    if (git('remote').split('\n').includes(remote)) git('remote', 'remove', remote);
+    await repo.refresh();
+  }
+}
+
+/**
+ * Pull: 取り込み方を選ぶ行に、それで何が起きるかが出る。手元にコミットがなければ fast-forward。分かれていれば
+ * Fast-Forward Only は押せず（何も変わらない）、Rebase を選ぶと手元のコミットが上に載る。上流がなければ取り込み元を
+ * 選んで上流にする
+ */
+async function pullSheetFlow(): Promise<void> {
+  const repo = api.manager.current!;
+  const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+  const remote = 'pl-remote';
+  const commit = (name: string) => {
+    writeFileSync(join(root, `${name}.txt`), `${name}\n`);
+    git('add', `${name}.txt`);
+    git('commit', '-q', '-m', name);
+  };
+  const pull = (label: RegExp, source?: string) =>
+    withWindow(
+      {
+        ...fakeQuickPick((items) => items.find((i) => label.test(i.label))),
+        showQuickPick: async (items: readonly string[]) => items.find((i) => i === source),
+        showInformationMessage: async () => undefined,
+      },
+      async () => vscode.commands.executeCommand('amonhen.pull'),
+    );
+  try {
+    // pl-src に 2 つ進んだものを用意し、pl-remote から取れるようにする
+    git('switch', '-q', '-c', 'pl-src');
+    commit('pl-a');
+    commit('pl-b');
+    git('switch', '-q', branch);
+    git('remote', 'add', remote, root);
+    git('fetch', '-q', remote, 'pl-src');
+    git('branch', 'pl-main', 'pl-src~2');
+    git('switch', '-q', 'pl-main');
+    await repo.refresh();
+    await until('pl-main に切り替わる', () => repo.current.status?.branch.head === 'pl-main');
+
+    // 上流がないので、取り込み元を選ぶ（上流になる）
+    await pull(/Follow git’s Settings/, `${remote}/pl-src`);
+    assert.equal(git('rev-parse', 'pl-main').trim(), git('rev-parse', 'pl-src').trim(), lastErrors());
+    assert.equal(git('rev-parse', '--abbrev-ref', 'pl-main@{upstream}').trim(), `${remote}/pl-src`);
+
+    // 分かれる: 手元に 1 つ、pl-src に 1 つ
+    commit('pl-local');
+    git('switch', '-q', 'pl-src');
+    commit('pl-c');
+    git('switch', '-q', 'pl-main');
+    git('fetch', '-q', remote, 'pl-src');
+    await repo.refresh();
+    await until('上流が読める', () => (repo.current.branches ?? []).some((b) => b.name === 'refs/heads/pl-main' && b.upstream));
+    const before = git('rev-parse', 'pl-main').trim();
+    await pull(/Fast-Forward Only/);
+    assert.equal(git('rev-parse', 'pl-main').trim(), before, 'Fast-Forward Only は押せない');
+    const ff = pickSeen.find((i) => /Fast-Forward Only/.test(i.label))!;
+    assert.match(ff.label, /\$\(warning\)/);
+    assert.match(String(ff.detail), /can’t pull these: you have 1 local commit/);
+    assert.match(String(pickSeen.find((i) => /^\$\(repo-pull\) Rebase/.test(i.label))?.detail), /replayed on top/);
+    assert.ok(pickSeen.some((i) => i.label === '$(git-commit) pl-c'), '取り込むコミットが並ぶ');
+
+    await pull(/^\$\(repo-pull\) Rebase/);
+    await until('rebase が終わる', () => git('log', '-1', '--format=%s', 'pl-main').trim() === 'pl-local');
+    assert.equal(git('rev-parse', 'pl-main~1').trim(), git('rev-parse', 'pl-src').trim(), lastErrors());
+  } finally {
+    git('switch', '-q', '-f', branch);
+    for (const b of ['pl-main', 'pl-src']) if (git('branch', '--list', b)) git('branch', '-D', b);
     if (git('remote').split('\n').includes(remote)) git('remote', 'remove', remote);
     await repo.refresh();
   }
@@ -3350,6 +3433,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('fetches from all remotes or one, saying which prune', async () => {
     await fetchSheetFlow();
+  });
+
+  test('pulls after showing how each way integrates, choosing the upstream when there is none', async () => {
+    await pullSheetFlow();
   });
 
   test('creates an orphan branch, empty or keeping the files, through the daemon', async () => {
