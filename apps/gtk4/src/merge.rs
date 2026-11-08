@@ -740,8 +740,10 @@ impl Editor {
         popout.set_visible(false);
 
         // 操作の帯は 1 段（macOS 版と同じ並び）: 位置・∧ ∨・Magic Merge・AI・知らせ・Accept…・Base、右に
-        // 別の窓・Save・Save & Mark Resolved。狭いときも折らずに 1 段のまま、先に知らせを、次にボタンの名前を
-        // 切り詰める（macOS 版の NSStackView は幅に合わせて、押し縮めに弱い順に切り詰める）。
+        // 別の窓・Save・Save & Mark Resolved。狭いときは、ボタンの名前を切り詰めずに、軽いボタンから隠す
+        // （AI・別の窓・Magic Merge・Base・Accept… の順。位置・∧ ∨・Save・Save & Mark Resolved は残す。
+        // macOS 版と同じ）。隠すのは包みの箱で、ボタンそのものの表示（AI の設定など）とは別に決める。
+        // 名前は切り詰められるままにする（隠す前の最小の幅で窓を広げない）。
         for button in [&magic, &ai_resolve, &ai_explain, &save, &resolve]
             .into_iter()
             .chain(accept_buttons.iter().map(|(b, _)| b))
@@ -750,33 +752,135 @@ impl Editor {
                 label.set_ellipsize(gtk::pango::EllipsizeMode::End);
             }
         }
+        let slot = |w: &gtk::Widget| {
+            let b = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+            b.append(w);
+            b
+        };
+        let widget = |w: &dyn AsRef<gtk::Widget>| w.as_ref().clone();
+        // 隠す順に並べる。
+        let lesser: Vec<(gtk::Widget, gtk::Box)> = [
+            widget(&ai_explain),
+            widget(&ai_resolve),
+            widget(&popout),
+            widget(&magic),
+            widget(&base_toggle),
+        ]
+        .into_iter()
+        .chain(accept_buttons.iter().map(|(b, _)| widget(b)))
+        .map(|w| {
+            let s = slot(&w);
+            (w, s)
+        })
+        .collect();
+        let slot_of = |w: gtk::Widget| {
+            lesser
+                .iter()
+                .find(|(x, _)| *x == w)
+                .map(|(_, s)| s.clone().upcast::<gtk::Widget>())
+                .unwrap_or(w)
+        };
         let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         spacer.set_hexpand(true);
+        // 幅が変わったことは、帯に重ねた（何も描かない）面の大きさで知る（はみ出す間は隙間の幅が 0 のままで
+        // 変わらないので、隙間では知れない）。
+        let watch = gtk::DrawingArea::new();
+        watch.set_can_target(false);
         let bar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         bar.set_margin_start(10);
         bar.set_margin_end(10);
         bar.set_margin_top(6);
         bar.set_margin_bottom(6);
-        let widget = |w: &dyn AsRef<gtk::Widget>| w.as_ref().clone();
         for w in [
             widget(&position),
             widget(&previous),
             widget(&next),
-            widget(&magic),
-            widget(&ai_resolve),
-            widget(&ai_explain),
+            slot_of(widget(&magic)),
+            slot_of(widget(&ai_resolve)),
+            slot_of(widget(&ai_explain)),
             widget(&note),
         ]
         .into_iter()
-        .chain(accept_buttons.iter().map(|(b, _)| widget(b)))
+        .chain(accept_buttons.iter().map(|(b, _)| slot_of(widget(b))))
         .chain([
-            widget(&base_toggle),
+            slot_of(widget(&base_toggle)),
             widget(&spacer),
-            widget(&popout),
+            slot_of(widget(&popout)),
             widget(&save),
             widget(&resolve),
         ]) {
             bar.append(&w);
+        }
+        {
+            let fit = {
+                let bar = bar.downgrade();
+                let note = note.downgrade();
+                let lesser = lesser.clone();
+                let fitted = Cell::new(-1);
+                Rc::new(move |force: bool| {
+                    let (Some(bar), Some(note)) = (bar.upgrade(), note.upgrade()) else {
+                        return;
+                    };
+                    let width = bar.width();
+                    if width <= 0 || (!force && width == fitted.get()) {
+                        return;
+                    }
+                    fitted.set(width);
+                    for (w, s) in &lesser {
+                        s.set_visible(w.is_visible());
+                    }
+                    // 要る幅は足し上げる（知らせはいつ出ても切り詰まるので、少しだけ数える。空でも間隔は取る）。
+                    let needed = || {
+                        let mut total = 0;
+                        let mut shown = 0;
+                        let mut child = bar.first_child();
+                        while let Some(c) = child {
+                            child = c.next_sibling();
+                            let is_note = c == *note.upcast_ref::<gtk::Widget>();
+                            if !c.is_visible() {
+                                continue;
+                            }
+                            shown += 1;
+                            total += if is_note {
+                                if note.text().is_empty() { 0 } else { 40 }
+                            } else {
+                                c.measure(gtk::Orientation::Horizontal, -1).1
+                            };
+                        }
+                        total + bar.spacing() * (shown - 1).max(0)
+                    };
+                    for (_, s) in &lesser {
+                        if s.is_visible() && needed() > width {
+                            s.set_visible(false);
+                        }
+                    }
+                })
+            };
+            // 割り当ての最中には表示を変えないので、後で行う（重なった頼みは 1 回にまとめる）。
+            let later = {
+                let fit = fit.clone();
+                // 頼まれているか、そのうち 1 つでも測り直しを求めたか。
+                let pending: Rc<Cell<Option<bool>>> = Rc::default();
+                move |force: bool| {
+                    let queued = pending.get();
+                    pending.set(Some(force || queued == Some(true)));
+                    if queued.is_some() {
+                        return;
+                    }
+                    let fit = fit.clone();
+                    let pending = pending.clone();
+                    glib::idle_add_local_once(move || {
+                        fit(pending.take() == Some(true));
+                    });
+                }
+            };
+            let f = later.clone();
+            watch.connect_resize(move |_, _, _| f(false));
+            for (w, _) in &lesser {
+                let f = later.clone();
+                w.connect_visible_notify(move |_| f(true));
+            }
+            note.connect_label_notify(move |_| later(true));
         }
 
         // 列: Base（出すとき）・Current と帯・Result・帯と Incoming（同じ幅に分ける）。
@@ -812,8 +916,11 @@ impl Editor {
             .vscrollbar_policy(gtk::PolicyType::Never)
             .propagate_natural_height(true)
             .build();
+        let bar_area = gtk::Overlay::new();
+        bar_area.set_child(Some(&bar));
+        bar_area.add_overlay(&watch);
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        root.append(&bar);
+        root.append(&bar_area);
         // マーカーの残っていないファイル（rerere が解決を当てた、ほかのエディタで直した）の案内。
         let mut banner_forget = None;
         let banner_resolve = without_markers.as_ref().map(|text| {
