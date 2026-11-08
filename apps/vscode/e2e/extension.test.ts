@@ -2637,6 +2637,33 @@ suite('Amon Hen in VSCode', () => {
     await panel.history.handle({ type: 'search', query: '', matchingOnly: false, selected: 0 });
   });
 
+  test('keeps the History open when an older reload finishes after a newer one', async () => {
+    const panel = await showView('amonhen.showHistory');
+    const repo = api.manager.current!;
+    const want = repo.want;
+    let release = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    // 古い読み直しだけ、新しい読み直しが終わるまで止める
+    repo.want = async function (this: typeof repo, ...args: Parameters<typeof want>) {
+      repo.want = want;
+      await gate;
+      return want.apply(this, args);
+    };
+    try {
+      const older = panel.history.reset();
+      await panel.history.reset();
+      release();
+      await older;
+    } finally {
+      repo.want = want;
+      release();
+    }
+    const at = posted.length;
+    // 読み直しが頼むのは最初の行なので、2 行目の答えは、この頼みへの答えだけ
+    await panel.history.handle({ type: 'range', start: 1, count: 1 });
+    assert.equal((await waitPosted('rows', at, (m) => m.start === 1)).rows.length, 1);
+  });
+
   test('shows names from the mailmap through the daemon and reloads them when it changes', async () => {
     await mailmapFlow();
   });
