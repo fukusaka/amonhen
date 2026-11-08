@@ -16,6 +16,8 @@ pub(crate) struct Table {
     pub view: gtk::ColumnView,
     model: gtk::StringList,
     selection: gtk::SingleSelection,
+    /// 行を交互に塗るか（`stripe`）。
+    striped: Rc<std::cell::Cell<bool>>,
 }
 
 impl Table {
@@ -31,7 +33,14 @@ impl Table {
             view,
             model,
             selection,
+            striped: Rc::default(),
         }
+    }
+
+    /// 行を交互に塗る（macOS 版の SwiftUI の Table と同じ。見出しのない List は塗らない）。列を足す前に。
+    pub fn stripe(&self) {
+        self.striped.set(true);
+        self.view.add_css_class("zebra");
     }
 
     /// 列の見出しを隠す（macOS 版の、見出しのない List）。
@@ -79,10 +88,14 @@ impl Table {
                 item.set_child(Some(&setup()));
             }
         });
+        let striped = self.striped.clone();
         factory.connect_bind(move |_, item| {
             let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
                 return;
             };
+            if striped.get() {
+                crate::stripe_rows(item);
+            }
             let (Some(id), Some(child)) = (
                 item.item().and_downcast::<gtk::StringObject>(),
                 item.child().and_downcast::<W>(),
@@ -530,6 +543,7 @@ pub(crate) fn remote_sheet(s: &Rc<RepoSettings>, remote: Option<Remote>) {
 /// リモートのページ: 名前・URL・push の URL（同じなら「（同じ）」）・URL の先の表と、追加・編集・Prune・削除。
 pub(crate) fn remotes_page(s: &Rc<RepoSettings>) -> gtk::Box {
     let table = Rc::new(Table::new());
+    table.stripe();
     let remote = {
         let w = s.weak();
         move |name: &str| -> Option<Remote> {
@@ -1317,6 +1331,7 @@ fn create_hook(s: &Rc<RepoSettings>, table: Rc<Table>) {
 /// フックの表（名前・いつ動くか・有効＝実行の許可）と選んだフックの中身、LFS の様子と追跡するパターン。
 pub(crate) fn hooks_page(s: &Rc<RepoSettings>) -> gtk::ScrolledWindow {
     let table = Rc::new(Table::new());
+    table.stripe();
     let hook = {
         let w = s.weak();
         move |name: &str| {
@@ -1531,6 +1546,7 @@ pub(crate) fn hooks_page(s: &Rc<RepoSettings>) -> gtk::ScrolledWindow {
     lfs_status.set_wrap(true);
     let no_patterns = label(&tr!("No LFS patterns in .gitattributes."), &["dim-label"]);
     let patterns = Rc::new(Table::new());
+    patterns.stripe();
     patterns.text_column(&tr!("Pattern"), true, |id, l| {
         l.set_text(id);
         l.add_css_class("monospace");
