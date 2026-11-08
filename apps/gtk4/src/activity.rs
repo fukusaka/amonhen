@@ -218,7 +218,7 @@ fn repository_width<S: AsRef<str>>(widget: &impl IsA<gtk::Widget>, names: &[S]) 
         .min(REPOSITORY_MAX)
 }
 
-/// 中身を作り直す一覧（行は少ないので ListBox で足りる）。
+/// 中身を作り直す一覧（行は少ないので ListBox で足りる）。macOS 版で Table の一覧は `zebra` を付けて行を交互に塗る。
 fn list() -> (gtk::ScrolledWindow, gtk::ListBox) {
     let list = gtk::ListBox::new();
     list.set_selection_mode(gtk::SelectionMode::None);
@@ -674,6 +674,7 @@ impl Activity {
         bar.append(&filter);
         bar.append(&export);
         let (scrolled, op_list) = list();
+        op_list.add_css_class("zebra");
         // 選んだ記録の、リポジトリ・内容・エラーを選んでコピーできる字で（macOS 版と同じ）。
         op_list.set_selection_mode(gtk::SelectionMode::Single);
         let op_detail = label("", &["caption", "monospace"]);
@@ -1096,6 +1097,7 @@ impl Activity {
         let perf = gtk::Box::new(gtk::Orientation::Vertical, 8);
         margin(&perf);
         let (scrolled, perf_list) = list();
+        perf_list.add_css_class("zebra");
         // 列の見出しは一覧の上に置き、流れない（macOS 版の表と同じ）。
         let (perf_header, _) = column_header(&[
             (tr!("Item").as_str(), 0),
@@ -1156,6 +1158,7 @@ impl Activity {
         let events = gtk::Box::new(gtk::Orientation::Vertical, 8);
         margin(&events);
         let (scrolled, event_list) = list();
+        event_list.add_css_class("zebra");
         let (event_header, event_header_line) = column_header(&[
             (tr!("Time").as_str(), TIME),
             (tr!("Repository").as_str(), REPOSITORY),
@@ -1224,6 +1227,7 @@ impl Activity {
         top.append(&texts);
         top.append(&toggle);
         let (scrolled, repo_list) = list();
+        repo_list.add_css_class("zebra");
         daemon.append(&top);
         daemon.append(&label(&tr!("Open Repositories"), &["heading"]));
         // 列の見出しは一覧の上に置き、流れない。daemon が動いていなくても出す（macOS 版の表と同じ）。
@@ -1239,6 +1243,7 @@ impl Activity {
         daemon.append(&scrolled);
         // このアプリから daemon 越しに開いているリポジトリ（macOS 版と同じ列）。
         let (scrolled, conn_list) = list();
+        conn_list.add_css_class("zebra");
         scrolled.set_min_content_height(80);
         daemon.append(&label(
             &tr!("This App’s Connections to the Daemon"),
