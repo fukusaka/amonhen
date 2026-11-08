@@ -578,6 +578,7 @@ impl Sidebar {
         inner.rebuild(true);
         add_type_select(&list, &inner);
         add_fold_keys(&list, &inner);
+        add_skip_keys(&list, &inner);
 
         // 絞り込みの欄は一覧の上に。打つたびに絞り込む（Esc で消す）。
         let filter = gtk::SearchEntry::new();
@@ -1059,6 +1060,69 @@ fn add_fold_keys(list: &gtk::ListView, inner: &Rc<Inner>) {
             view.scroll_to(i, gtk::ListScrollFlags::FOCUS, None);
             inner.selection.select_item(i, true);
         }
+        glib::Propagation::Stop
+    });
+    list.add_controller(keys);
+}
+
+/// ↑・↓ で、選べない行（見出し・名前のフォルダ・subtree）を飛ばして、次の選べる行へ移る（macOS 版の
+/// NSOutlineView と同じ）。一覧の部品はそこで一度止まるので、隣が選べない行のときだけ代わりに動かす。
+fn add_skip_keys(list: &gtk::ListView, inner: &Rc<Inner>) {
+    let keys = gtk::EventControllerKey::new();
+    keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let (weak, view) = (Rc::downgrade(inner), list.downgrade());
+    keys.connect_key_pressed(move |_, key, _, state| {
+        use gtk::gdk::Key;
+        let down = match key {
+            Key::Down | Key::KP_Down => true,
+            Key::Up | Key::KP_Up => false,
+            _ => return glib::Propagation::Proceed,
+        };
+        let (Some(inner), Some(view)) = (weak.upgrade(), view.upgrade()) else {
+            return glib::Propagation::Proceed;
+        };
+        if !(state & gtk::accelerator_get_default_mod_mask()).is_empty() {
+            return glib::Propagation::Proceed;
+        }
+        let n = inner.model.n_items();
+        let selected: Vec<u32> = (0..n).filter(|&i| inner.selection.is_selected(i)).collect();
+        let [at] = selected[..] else {
+            return glib::Propagation::Proceed;
+        };
+        let selectable = |i: u32| {
+            inner
+                .model
+                .row(i)
+                .and_then(|r| r.item())
+                .and_downcast::<Node>()
+                .is_some_and(|n| {
+                    !matches!(n.data().item, Item::Group | Item::Folder | Item::Subtree(_))
+                })
+        };
+        let mut next = if down {
+            at.checked_add(1)
+        } else {
+            at.checked_sub(1)
+        };
+        if next.is_some_and(|i| i < n && selectable(i)) {
+            return glib::Propagation::Proceed;
+        }
+        while let Some(i) = next.filter(|&i| i < n) {
+            if selectable(i) {
+                view.scroll_to(
+                    i,
+                    gtk::ListScrollFlags::FOCUS | gtk::ListScrollFlags::SELECT,
+                    None,
+                );
+                return glib::Propagation::Stop;
+            }
+            next = if down {
+                i.checked_add(1)
+            } else {
+                i.checked_sub(1)
+            };
+        }
+        // 先に選べる行がなければ動かない（見出しで止まらない）。
         glib::Propagation::Stop
     });
     list.add_controller(keys);
