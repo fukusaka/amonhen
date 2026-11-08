@@ -2516,7 +2516,11 @@ impl Repository {
         let mut drawing = serde_json::Value::Null;
         if onto.is_some() && !picks.is_empty() {
             let (shown_onto, onto_more, onto_at) = elide(&onto_commits);
-            let mut ids: Vec<Oid> = picks.clone();
+            // 載せ直すコミットも、長ければ真ん中を省く（新しい順で省いてから、古い順に戻す）。
+            let newest_first: Vec<Oid> = picks.iter().rev().copied().collect();
+            let (mut shown_picks, picks_more, picks_at) = elide(&newest_first);
+            shown_picks.reverse();
+            let mut ids: Vec<Oid> = shown_picks.clone();
             ids.extend(&shown_onto);
             ids.extend(fork);
             let texts = self.commit_texts(&ids)?;
@@ -2543,7 +2547,10 @@ impl Repository {
                 })
                 .collect();
             drawing = serde_json::json!({
-                "picks": picks.iter().map(commit).collect::<Vec<_>>(),
+                "picks": shown_picks.iter().map(commit).collect::<Vec<_>>(),
+                "picksMore": picks_more,
+                // 新しい順に並べたときの、省いたところ。
+                "picksMoreAt": picks_at,
                 "onto": shown_onto.iter().map(commit).collect::<Vec<_>>(),
                 "ontoMore": onto_more,
                 "ontoMoreAt": onto_at,
