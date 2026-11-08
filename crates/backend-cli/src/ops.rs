@@ -1734,7 +1734,15 @@ impl Operations for Git {
                 args
             }
         };
-        self.write(&args).map(drop)
+        let result = self.write(&args).map(drop);
+        if let (Err(e), WorktreeChange::Remove { path, .. }) = (&result, change) {
+            // Windows では、ほかのプロセスが中のフォルダーを使っていると消せない。git は登録を外してからフォルダーを
+            // 消すので、失敗すると登録のないフォルダーが残り、もう `worktree remove` では消せない。少し待って消し直す。
+            if e.to_string().contains("failed to delete") && self.finish_removing(path) {
+                return Ok(());
+            }
+        }
+        result
     }
 
     fn worktree_changes(&self, paths: &[String], fresh: bool) -> Result<Vec<WorktreeChanges>> {
@@ -1947,6 +1955,40 @@ impl Git {
             .or_else(|| std::env::var_os("USERPROFILE"))
             .ok_or_else(|| amonhen_model::tr!("HOME isn’t set"))?;
         Ok(std::path::PathBuf::from(home).join(".config/git/ignore"))
+    }
+}
+
+impl Git {
+    /// `git worktree remove` が登録を外したのに消せなかったフォルダーを、使い終わるのを待って消す（2 秒まで）。
+    /// まだ登録があれば、git の失敗のとおりにする（消してよいかは git が決める）。消せたら true。
+    fn finish_removing(&self, path: &str) -> bool {
+        let dir = self.workdir.join(path);
+        let Ok(dir) = dir.canonicalize() else {
+            return false;
+        };
+        let listed = self.worktree_list().unwrap_or_default();
+        let registered = listed
+            .split(|&b| b == 0)
+            .filter_map(|field| field.strip_prefix(b"worktree "))
+            .filter_map(|p| {
+                std::path::Path::new(&*String::from_utf8_lossy(p))
+                    .canonicalize()
+                    .ok()
+            })
+            .any(|p| p == dir);
+        if registered {
+            return false;
+        }
+        let started = std::time::Instant::now();
+        loop {
+            if std::fs::remove_dir_all(&dir).is_ok() || !dir.exists() {
+                return true;
+            }
+            if started.elapsed() > std::time::Duration::from_secs(2) {
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
     }
 }
 
