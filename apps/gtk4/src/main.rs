@@ -2826,7 +2826,7 @@ fn build_tab(
 /// 見張りの知らせの糸を止める知らせ（タブを閉じたとき）。
 const STOP: u32 = u32::MAX;
 
-/// 詳細の欄をメッセージの高さに合わせる（右の列の半分まで。残りは欄の中でスクロール）。
+/// 詳細の欄をメッセージの高さに合わせる（40 から右の列の半分まで。残りは欄の中でスクロール。macOS 版と同じ）。
 /// 窓が開いた直後は大きさがまだ決まっていないので、決まったフレームで合わせる。
 fn fit_details(right: &gtk::Paned, details: Rc<Details>) {
     right.add_tick_callback(move |right, _| {
@@ -2834,7 +2834,7 @@ fn fit_details(right: &gtk::Paned, details: Rc<Details>) {
             return glib::ControlFlow::Continue;
         }
         let height = details.natural_height(right.width());
-        right.set_position(height.min(right.height() / 2).max(60));
+        right.set_position(height.min(right.height() / 2).max(40));
         glib::ControlFlow::Break
     });
 }
