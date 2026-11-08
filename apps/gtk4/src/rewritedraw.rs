@@ -144,21 +144,27 @@ fn draw(area: &gtk::DrawingArea, cr: &gtk::cairo::Context, info: &Value) {
         });
         y += ROW;
     }
-    for (oid, subject) in &onto {
-        rows.push(Row {
-            oid: oid.clone(),
-            subject: subject.clone(),
-            lane: 0,
-            dim: false,
-            y,
-            ..Default::default()
-        });
-        y += ROW;
-    }
-    let more_y = (more > 0).then_some(y);
-    if more > 0 {
-        y += ROW;
-    }
+    // 載せ先で進んだコミットは、長ければ真ん中を省く（そこだけ点線）。
+    let more_at = d["ontoMoreAt"].as_u64();
+    let mut gaps = Vec::new();
+    with_gap(
+        &onto,
+        more,
+        more_at,
+        0,
+        &mut y,
+        &mut gaps,
+        |(oid, subject), y| {
+            rows.push(Row {
+                oid: oid.clone(),
+                subject: subject.clone(),
+                lane: 0,
+                dim: false,
+                y,
+                ..Default::default()
+            });
+        },
+    );
     let base_y = y;
     let current_c = current.clone();
     let labels_c = labels.clone();
@@ -169,9 +175,9 @@ fn draw(area: &gtk::DrawingArea, cr: &gtk::cairo::Context, info: &Value) {
         &rows,
         base_y,
         base.as_ref(),
-        more_y,
-        more,
+        &gaps,
         0,
+        split_note(&d["base"]),
         &|oid| {
             // 左には今のブランチの札をすべて（動くものも、まだ元のところにある）。
             labels_c
@@ -197,21 +203,25 @@ fn draw(area: &gtk::DrawingArea, cr: &gtk::cairo::Context, info: &Value) {
         });
         y += ROW;
     }
-    for (oid, subject) in &onto {
-        after.push(Row {
-            oid: oid.clone(),
-            subject: subject.clone(),
-            lane: 0,
-            dim: true,
-            y,
-            ..Default::default()
-        });
-        y += ROW;
-    }
-    let after_more_y = (more > 0).then_some(y);
-    if more > 0 {
-        y += ROW;
-    }
+    let mut after_gaps = Vec::new();
+    with_gap(
+        &onto,
+        more,
+        more_at,
+        0,
+        &mut y,
+        &mut after_gaps,
+        |(oid, subject), y| {
+            after.push(Row {
+                oid: oid.clone(),
+                subject: subject.clone(),
+                lane: 0,
+                dim: true,
+                y,
+                ..Default::default()
+            });
+        },
+    );
     let first_pick = picks.first().map(|p| p.0.clone());
     let onto_ids: Vec<String> = onto.iter().map(|c| c.0.clone()).collect();
     let base_id = base.as_ref().map(|b| b.0.clone());
@@ -222,9 +232,9 @@ fn draw(area: &gtk::DrawingArea, cr: &gtk::cairo::Context, info: &Value) {
         &after,
         y,
         base.as_ref(),
-        after_more_y,
-        more,
+        &after_gaps,
         picks.len(),
+        None,
         &|oid| {
             let mut out: Vec<Label> = Vec::new();
             // 今のブランチは先頭の A′ へ、一緒に動くブランチは、元の先頭に対応する A′ へ。
@@ -268,7 +278,11 @@ fn dimmed(c: &gdk::RGBA, alpha: f32) -> gdk::RGBA {
     c
 }
 
-/// 1 列を描く。lane 1 は右の線（いちばん下で lane 0 へ合流）。`highlight` は強調する上からの行数。
+/// 省いたコミットの行（線、y、数）。そこだけ線を点線にして「ほか n コミット」と書く。
+type Gap = (u8, f64, u64);
+
+/// 1 列を描く。lane 1 は右の線（いちばん下で lane 0 へ合流）。`highlight` は強調する上からの行数。`gaps` は
+/// 省いたところ、`base_note` は分かれたところに添える文（いつ分かれたか）。
 #[allow(clippy::too_many_arguments)]
 fn column(
     area: &gtk::DrawingArea,
@@ -277,9 +291,9 @@ fn column(
     rows: &[Row],
     base_y: f64,
     base: Option<&(String, String)>,
-    more_y: Option<f64>,
-    more: u64,
+    gaps: &[Gap],
     highlight: usize,
+    base_note: Option<String>,
     labels: &dyn Fn(&str) -> Vec<Label>,
 ) {
     let fg = area.color();
@@ -294,25 +308,52 @@ fn column(
         line.blue().into(),
         line.alpha().into(),
     );
+    // まっすぐな線を、省いたところ（前の点から次の点まで）だけ点線にして引く。
+    let vertical = |lane: u8, top: f64, bottom: f64| {
+        let mut sorted: Vec<&Gap> = gaps.iter().filter(|g| g.0 == lane).collect();
+        sorted.sort_by(|a, b| a.1.total_cmp(&b.1));
+        let mut y = top;
+        for g in sorted {
+            let (a, b) = (center(g.1) - ROW, center(g.1) + ROW);
+            if a < top || b > bottom {
+                continue;
+            }
+            cr.move_to(lane_x(lane), y);
+            cr.line_to(lane_x(lane), a);
+            let _ = cr.stroke();
+            cr.set_dash(&[3.0, 3.0], 0.0);
+            cr.move_to(lane_x(lane), a);
+            cr.line_to(lane_x(lane), b);
+            let _ = cr.stroke();
+            cr.set_dash(&[], 0.0);
+            y = b;
+        }
+        cr.move_to(lane_x(lane), y);
+        cr.line_to(lane_x(lane), bottom);
+        let _ = cr.stroke();
+    };
     let lane1: Vec<&Row> = rows.iter().filter(|r| r.lane == 1).collect();
     if let (Some(first), Some(last)) = (lane1.first(), lane1.last()) {
-        cr.move_to(lane_x(1), center(first.y));
-        cr.line_to(lane_x(1), center(last.y));
+        let last_y = gaps
+            .iter()
+            .filter(|g| g.0 == 1)
+            .map(|g| g.1)
+            .fold(last.y, f64::max);
+        vertical(1, center(first.y), center(last_y));
+        cr.move_to(lane_x(1), center(last_y));
         // 制御点は macOS 版と同じ並び。
         cr.curve_to(
             lane_x(1),
             center(base_y) - 6.0,
             lane_x(0),
-            center(last.y) + 8.0,
+            center(last_y) + 8.0,
             lane_x(0),
             center(base_y),
         );
         let _ = cr.stroke();
     }
     if let Some(first) = rows.iter().find(|r| r.lane == 0) {
-        cr.move_to(lane_x(0), center(first.y));
-        cr.line_to(lane_x(0), center(base_y));
-        let _ = cr.stroke();
+        vertical(0, center(first.y), center(base_y));
     }
     // 点と件名、札。
     let text_x = lane_x(1) + 14.0;
@@ -332,11 +373,11 @@ fn column(
             row.note.as_ref(),
         );
     }
-    if let Some(y) = more_y {
+    for &(_, y, count) in gaps {
         text_at(
             area,
             cr,
-            &tr!("and {count} more", count = more),
+            &tr!("and {count} more", count = count),
             text_x,
             y + 3.0,
             &dimmed(&fg, 0.5),
@@ -345,6 +386,7 @@ fn column(
         );
     }
     if let Some((oid, subject)) = base {
+        let note = base_note.map(|n| (n, None));
         row_at(
             area,
             cr,
@@ -357,8 +399,43 @@ fn column(
             false,
             &labels(oid),
             false,
-            None,
+            note.as_ref(),
         );
+    }
+}
+
+/// 分かれたところに添える文（「3 か月前に分かれた」）。日時がなければ None。
+fn split_note(base: &Value) -> Option<String> {
+    let time = base["time"].as_i64().filter(|t| *t > 0)?;
+    Some(tr!("split off {when}", when = crate::stashes::ago(time)))
+}
+
+/// 省いたところを挟んで行を並べる（`at` の前に省いた行。macOS 版と同じ）。`y` を進める。
+fn with_gap(
+    items: &[(String, String)],
+    more: u64,
+    at: Option<u64>,
+    lane: u8,
+    y: &mut f64,
+    gaps: &mut Vec<Gap>,
+    mut push: impl FnMut(&(String, String), f64),
+) {
+    let at = if more > 0 {
+        at.map_or(items.len(), |a| a as usize)
+    } else {
+        usize::MAX
+    };
+    for (i, c) in items.iter().enumerate() {
+        if i == at {
+            gaps.push((lane, *y, more));
+            *y += ROW;
+        }
+        push(c, *y);
+        *y += ROW;
+    }
+    if at == items.len() {
+        gaps.push((lane, *y, more));
+        *y += ROW;
     }
 }
 
@@ -643,36 +720,47 @@ fn draw_move(area: &gtk::DrawingArea, cr: &gtk::cairo::Context, info: &Value, ho
         };
         let mut y = TOP;
         let mut rows = Vec::new();
-        let mut more = Vec::new();
-        for (oid, subject) in &gained {
-            rows.push(Row {
-                oid: oid.clone(),
-                subject: subject.clone(),
-                y,
-                ..Default::default()
-            });
-            y += ROW;
-        }
-        if gained_more > 0 {
-            more.push((y, gained_more));
-            y += ROW;
-        }
-        for (oid, subject) in &lost {
-            rows.push(Row {
-                oid: oid.clone(),
-                subject: subject.clone(),
-                lane: lost_lane,
-                dim: after,
-                y,
-                hollow: after,
-                note: after.then(|| (how.lost_note.clone(), how.lost_red.then_some(red))),
-            });
-            y += ROW;
-        }
-        if lost_more > 0 {
-            more.push((y, lost_more));
-            y += ROW;
-        }
+        let mut gaps = Vec::new();
+        // 長ければ真ん中を省く（そこだけ点線にして「ほか n コミット」）。
+        with_gap(
+            &gained,
+            gained_more,
+            d["gainedMoreAt"].as_u64(),
+            0,
+            &mut y,
+            &mut gaps,
+            |(oid, subject), y| {
+                rows.push(Row {
+                    oid: oid.clone(),
+                    subject: subject.clone(),
+                    y,
+                    ..Default::default()
+                });
+            },
+        );
+        with_gap(
+            &lost,
+            lost_more,
+            d["lostMoreAt"].as_u64(),
+            lost_lane,
+            &mut y,
+            &mut gaps,
+            |(oid, subject), y| {
+                rows.push(Row {
+                    oid: oid.clone(),
+                    subject: subject.clone(),
+                    lane: lost_lane,
+                    dim: after,
+                    y,
+                    hollow: after,
+                    note: after.then(|| (how.lost_note.clone(), how.lost_red.then_some(red))),
+                });
+            },
+        );
+        // 両方の側があれば、左の分かれたところに、いつ分かれたか。
+        let split = (!after && !gained.is_empty() && !lost.is_empty())
+            .then(|| split_note(&d["base"]))
+            .flatten();
         column(
             area,
             cr,
@@ -680,9 +768,9 @@ fn draw_move(area: &gtk::DrawingArea, cr: &gtk::cairo::Context, info: &Value, ho
             &rows,
             y,
             base.as_ref(),
-            None,
-            0,
+            &gaps,
             if after { gained.len() } else { 0 },
+            split,
             &|oid| {
                 let mut out: Vec<Label> = labels
                     .get(oid)
@@ -705,19 +793,6 @@ fn draw_move(area: &gtk::DrawingArea, cr: &gtk::cairo::Context, info: &Value, ho
                 out
             },
         );
-        let text_x = x + 10.0 + LANE + 14.0;
-        for (my, count) in more {
-            text_at(
-                area,
-                cr,
-                &tr!("and {count} more", count = count),
-                text_x,
-                my + 3.0,
-                &dimmed(&fg, 0.5),
-                false,
-                x + column_width(area) - text_x,
-            );
-        }
     }
     // 真ん中の矢印。
     text_at(

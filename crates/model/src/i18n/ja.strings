@@ -949,6 +949,7 @@
 "Also move the stacked branches" = "積み重ねたブランチも一緒に動かす";
 "Now" = "今";
 "After the rebase" = "rebase の後";
+"split off {when}" = "{when}に分かれた";
 "After the push" = "Push の後";
 "After the force push" = "Force Push の後";
 "removed from {upstream}" = "{upstream} から消える";
