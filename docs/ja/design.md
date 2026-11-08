@@ -391,8 +391,9 @@ rebase と History の編集（reword・squash・fixup・drop・edit・split・m
 - **Reset。** 絵の下で、Soft・Mixed・Hard のそれぞれについて、今との違いがどこへ行くか（stage、作業ツリー、消える。Undo で戻せる）を出す。外れるコミットを上流がすでに持っていれば、このあとの Push には Force Push が要ることを出す。
 - **Merge と Pull。** コアの命令（`mergePreview`。`theirs` と、あれば `ours` と fast-forward を決める設定: `merge.ff`、Pull は `pull.ff`）が、取り込むものがないこと、fast-forward で済むこと（`movePreview` の答えを添え、ref が動く絵で描く）、または分かれてからの両側のコミット・分かれたところ・git が書く merge コミットの件名を返す。絵は、今のブランチを左のレーン、取り込む側を右のレーンに置く。後では、一番上に点線の丸の merge コミットを置いて両方の先端とつなぎ、ブランチの札をそこへ移す。Pull はシートで選んだ取り込み方（merge、rebase の絵の rebase、fast-forward）を描き、選び直してもシートの高さを変えない。実行できない取り込み方では何も描かない。
 - **Cherry-pick と Revert。** コアの命令（`pickPreview`。`oids` と `revert`）が、今の先端とその親、作るコミットの件名を返す。後では、作るコミットを先端の上に点線の丸で並べ（cherry-pick は ′ を付け、revert は `Revert "…"`）、ブランチの札を一番上へ移す。
+- **fast-forward・削除・Undo・パッチ。** チェックアウトしていないブランチの fast-forward は、上流への移動として描く。ほかにないコミットのあるブランチの削除は、`deletePreview`（`branch` と、比べた相手の `against`: 今のブランチか上流）で、分かれたところへの移動として描く。そのコミットは赤い中抜きの点で「ブランチと一緒に消える」とし、後ではブランチの札を描かない。Undo は、`undoPeek` の `moves` から、今のブランチ（なければ最初に動くブランチ）の移動を描く。戻る先がどの ref からも辿れなければ、親を辿って History に合流するまでを足し、前ではそのコミットを中抜きの点で「Reflog にだけある」とする。`git am` でのパッチの取り込みは、パッチの件名を、先端の上に作るコミットとして描く（`pickPreview` の `subjects`）。
 - **シートの出し方。** 絵を読み終えてからシートを出し、出したあとで大きくしない（GNOME では、開く途中で大きくなったシートが拡大されたまま残る）。
-- **このあと。** octopus merge・am・History の編集・Undo・チェックアウトしていないブランチの fast-forward・ほかから辿れないコミットのあるブランチの削除・subtree の pull と split。
+- **このあと。** octopus merge・History の編集・subtree の pull と split。
 
 ## パッチ
 

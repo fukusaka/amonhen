@@ -430,10 +430,16 @@ out: they have no confirmation, and adding one only for a drawing would slow the
 - **Cherry-pick and Revert.** A core command (`pickPreview`, with `oids` and `revert`) gives the current tip and its
   parent, and the subjects of the commits it will make. After, those commits are dashed dots above the tip (with ′ for
   a cherry-pick, `Revert "…"` for a revert), and the branch's label moves to the top one.
+- **Fast-forward, delete, Undo and patches.** Fast-forwarding a branch that isn't checked out is a move to its
+  upstream. Deleting a branch with commits nowhere else uses `deletePreview` (`branch`, `against`: the current branch or
+  the upstream it was compared with), a move to where they part: those commits are hollow red "goes with the branch",
+  and the branch's label is gone after. Undo draws the move of the current branch (or the first branch it moves) from
+  `undoPeek`'s `moves`; a destination that no ref reaches any more is followed through its parents until it joins the
+  History, and those commits are drawn hollow "only in Reflog" before. Applying patches with `git am` draws the
+  patches' subjects as new commits above the tip (`pickPreview` with `subjects`).
 - **Showing the sheet.** The sheet is shown once the drawing is ready, not grown afterwards (on GNOME, a sheet that
   grows while it opens is left enlarged).
-- **Next.** Octopus merges, am, History edits, Undo, fast-forwarding a branch that isn't checked out, deleting a branch
-  whose commits nothing else reaches, and subtree pull and split.
+- **Next.** Octopus merges, History edits, and subtree pull and split.
 
 ## Patches
 
