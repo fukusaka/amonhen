@@ -1074,6 +1074,7 @@ First release.
 
 #### Fixed
 
+- When the preview before a rebase or History edit can't be read, the confirmation says why instead of leaving it out.
 - History stopped answering search and scrolling until the next reload, when an older reload finished after a newer one.
 - History's toolbar wraps at narrow widths; Matching Only no longer overlaps HEAD and the commit count.
 - The message editor in History (Reword, Squash) is no longer covered by the headings of the diffs behind it.
