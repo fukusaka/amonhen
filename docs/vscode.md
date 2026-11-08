@@ -246,3 +246,4 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 35. Commit and Push, Fixup and Squash Commit For, the hooks' output
 - [x] 36. Working Copy: line counts per file, ⌫, J/K, Add to .gitignore, the note for a sparse checkout
 - [x] 37. History: several refs, worktree labels, order, row items, folding merges, highlighting ancestors
+- [x] 38. History's details: find with ⌘F, collapsing files and Viewed, the changed files as a tree, one file at a time

@@ -1028,6 +1028,8 @@ First release.
 #### Added
 
 - History can show several selected refs, marks each worktree's HEAD, and its ⋯ button picks the order, the row items, folding merged branches and highlighting ancestors.
+- History's details collapse each file and mark it Viewed, start lockfiles and large changes collapsed, show line
+  counts, list the files as a tree beside the diffs or show one file at a time, and ⌘F finds text in them.
 - Working Copy shows line counts per file, discards with ⌫, moves with J/K and ⌥J/⌥K, adds untracked files to
   `.gitignore`, and notes a sparse checkout above the list.
 - Commit's ▾ adds Commit and Push (⌘⇧↩), Amend Last Commit, and Fixup and Squash Commit For. What hooks wrote, and why a
