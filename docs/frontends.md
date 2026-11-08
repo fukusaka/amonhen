@@ -166,7 +166,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Branch switcher (fuzzy search, recent, tracking or new branch) | ✓ | ✓ | ✓ | △ | VSCode: Switch Branch… (a QuickPick) in the sidebar's ⋯, the Branches heading and the command palette; no shortcut, as ⌘⇧B is VSCode's build task.<br>CLI: Via `amonhen run`. |
 | Fetch sheet (all or one remote, prune shown) | ✓ | ✓ | ✓ | △ | VSCode: A modal with one remote, a QuickPick of all or one with several.<br>CLI: Via `amonhen run`. |
 | Pull sheet (commits, merge / rebase / ff-only, upstream when missing) | ✓ | ✓ | ✓ | △ | VSCode: A QuickPick: each way to integrate with what it does here, then the commits; no conflict forecast.<br>CLI: Via `amonhen run`. |
-| Push sheet (warnings, commits and diff, Force Push with lease) | ✓ | ✓ | △ | △ | VSCode: No sheet; Force Push asks separately.<br>CLI: Via `amonhen run`. |
+| Push sheet (warnings, commits and diff, Force Push with lease) | ✓ | ✓ | △ | △ | VSCode: A QuickPick with the warnings, the commits to send and the ones the upstream would lose, Pull… or Force Push with lease; no diff.<br>CLI: Via `amonhen run`. |
 | Publish (choose the remote and name) | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Merge (no-ff / squash options) | △ | △ | △ | △ | macOS: No no-ff or squash choice.<br>GTK4: No no-ff or squash choice.<br>VSCode: Context menu or drag, no options.<br>CLI: Via `amonhen run`. |
 | Octopus merge of several (order, expected conflicts) | ✓ | ✓ | ✓ | △ | CLI: `merge-check` checks; the merge via `amonhen run`. |

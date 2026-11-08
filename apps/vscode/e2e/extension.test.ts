@@ -1601,6 +1601,83 @@ async function pullSheetFlow(): Promise<void> {
   }
 }
 
+/**
+ * Push: 送るコミットと見ておくこと（fixup!・秘密らしいファイル）を見せてから送る。上流が先に進んでいれば、消える
+ * コミットを見せて Pull… か Force Push。Force Push は見せたときの上流のコミットのときだけ置き換える
+ */
+async function pushSheetFlow(): Promise<void> {
+  const repo = api.manager.current!;
+  const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+  const bare = join(root, '..', `amonhen-push-sheet-${process.pid}.git`);
+  const remote = 'ps-remote';
+  const commit = (name: string, subject = name) => {
+    writeFileSync(join(root, name), `${name}\n`);
+    git('add', name);
+    git('commit', '-q', '-m', subject);
+  };
+  const inBare = (...args: string[]) => childProcess.execFileSync('git', args, { cwd: bare, encoding: 'utf8' });
+  const push = (label: RegExp, command = 'amonhen.push') =>
+    withWindow(
+      { ...fakeQuickPick((items) => items.find((i) => label.test(i.label))), showInformationMessage: async () => undefined },
+      async () => vscode.commands.executeCommand(command),
+    );
+  try {
+    git('init', '-q', '--bare', bare);
+    git('remote', 'add', remote, bare);
+    git('switch', '-q', '-c', 'ps-branch');
+    git('push', '-q', '-u', remote, 'ps-branch');
+    commit('ps-a.txt', 'fixup! ps');
+    commit('.env', 'Add settings');
+    await repo.refresh();
+    await until('ps-branch の上流が読める', () =>
+      (repo.current.branches ?? []).some((b) => b.name === 'refs/heads/ps-branch' && b.upstream),
+    );
+    await push(/^\$\(repo-push\) Push 2 commits/);
+    assert.equal(inBare('rev-parse', 'ps-branch').trim(), git('rev-parse', 'HEAD').trim(), lastErrors());
+    const labels = pickSeen.map((i) => i.label);
+    assert.ok(labels.includes('$(warning) 1 commit looks unfinished (fixup!, squash! or WIP).'), labels.join(' | '));
+    assert.ok(labels.includes('$(warning) Adds files that may hold secrets: .env'), labels.join(' | '));
+    assert.ok(labels.includes('$(git-commit) Add settings'));
+
+    // 上流が先に進む（別の場所からの push）。手元にも 1 つ
+    const theirs = git('commit-tree', '-p', 'HEAD', '-m', 'theirs', `HEAD^{tree}`).trim();
+    git('push', '-q', remote, `${theirs}:refs/heads/ps-branch`);
+    git('fetch', '-q', remote);
+    commit('ps-b.txt', 'ours');
+    await repo.refresh();
+    await push(/Force Push/);
+    assert.match(pickSeen.find((i) => /Force Push/.test(i.label))?.detail ?? '', /loses 1 commit\. Replaces ps-remote\/ps-branch only if it is still at/);
+    assert.ok(pickSeen.some((i) => i.label === '$(repo-pull) Pull…'));
+    assert.equal(inBare('rev-parse', 'ps-branch').trim(), git('rev-parse', 'HEAD').trim(), lastErrors());
+
+    // 見せた後に上流が動いていれば、Force Push は断られる
+    commit('ps-c.txt', 'ours again');
+    const moved = git('commit-tree', '-p', theirs, '-m', 'moved', `HEAD^{tree}`).trim();
+    git('fetch', '-q', remote);
+    await repo.refresh();
+    const errorsBefore = errors.length;
+    await withWindow(
+      {
+        ...fakeQuickPick((items) => {
+          // 見せた後に（選ぶ前に）上流が動く
+          git('push', '-q', '-f', remote, `${moved}:refs/heads/ps-branch`);
+          return items.find((i) => /Force Push/.test(i.label));
+        }),
+        showInformationMessage: async () => undefined,
+      },
+      async () => vscode.commands.executeCommand('amonhen.forcePush'),
+    );
+    assert.equal(inBare('rev-parse', 'ps-branch').trim(), moved, `置き換えない（${lastErrors()}）`);
+    assert.ok(errors.length > errorsBefore, 'push が断られたと知らせる');
+  } finally {
+    git('switch', '-q', '-f', branch);
+    if (git('branch', '--list', 'ps-branch')) git('branch', '-D', 'ps-branch');
+    if (git('remote').split('\n').includes(remote)) git('remote', 'remove', remote);
+    rmSync(bare, { recursive: true, force: true });
+    await repo.refresh();
+  }
+}
+
 async function orphanFlow(): Promise<void> {
   const repo = api.manager.current!;
   const branch = git('symbolic-ref', '--short', 'HEAD').trim();
@@ -3437,6 +3514,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('pulls after showing how each way integrates, choosing the upstream when there is none', async () => {
     await pullSheetFlow();
+  });
+
+  test('pushes after showing the commits and warnings, and force pushes only over what it showed', async () => {
+    await pushSheetFlow();
   });
 
   test('creates an orphan branch, empty or keeping the files, through the daemon', async () => {

@@ -139,7 +139,8 @@ export class WorkingCopyController implements vscode.Disposable {
     this.post({ type: 'wcCommitted' });
     const output = result.output?.trim();
     if (output) this.post({ type: 'wcCommitOutput', title: 'Committed (hooks output)', text: output });
-    if (push) await vscode.commands.executeCommand('amonhen.push');
+    // Commit and Push は、上流が先に進んでいなければ確かめずに送る（アプリと同じ）
+    if (push) await vscode.commands.executeCommand('amonhen.push', { quiet: true });
   }
 
   /** Commit の続き。Commit and Push は、Commit を押せるときだけ */

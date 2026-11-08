@@ -1,10 +1,11 @@
 /** 現在のブランチの Pull / Push / Publish */
 import * as vscode from 'vscode';
-import { publishBranch, publishChoices, pushCurrent, shortName } from '../state/operations.ts';
+import { publishBranch, publishChoices, shortName } from '../state/operations.ts';
 import type { RepositoryManager } from '../state/manager.ts';
 import type { Repository } from '../state/repository.ts';
 import { runAction } from './dragDrop.ts';
 import { pullWithSheet } from './pullSheet.ts';
+import { pushWithSheet } from './pushSheet.ts';
 
 export function registerSyncCommands(manager: RepositoryManager): vscode.Disposable {
   return vscode.Disposable.from(
@@ -12,41 +13,22 @@ export function registerSyncCommands(manager: RepositoryManager): vscode.Disposa
       const repo = manager.current;
       if (repo) await pullWithSheet(repo);
     }),
-    vscode.commands.registerCommand('amonhen.push', () => push(manager, false)),
+    // Commit and Push は { quiet: true } を渡す（上流が先に進んでいなければ確かめずに送る）
+    vscode.commands.registerCommand('amonhen.push', async (arg?: unknown) => {
+      const repo = manager.current;
+      const quiet = (arg as { quiet?: unknown } | undefined)?.quiet === true;
+      if (repo) await pushWithSheet(repo, { quiet }, publish);
+    }),
     vscode.commands.registerCommand('amonhen.publish', async () => {
       const repo = manager.current;
       const branch = repo && (await repo.backend.head()).branch;
       if (repo && branch) await publish(repo, branch);
     }),
     vscode.commands.registerCommand('amonhen.forcePush', async () => {
-      const choice = await vscode.window.showWarningMessage(
-        'Force push the current branch?',
-        { modal: true, detail: 'Replaces the remote’s history (--force-with-lease).' },
-        'Force Push',
-      );
-      if (choice === 'Force Push') await push(manager, true);
+      const repo = manager.current;
+      if (repo) await pushWithSheet(repo, { force: true }, publish);
     }),
   );
-}
-
-async function push(manager: RepositoryManager, force: boolean): Promise<void> {
-  const repo = manager.current;
-  if (!repo) return;
-  let unpublished: string | undefined;
-  await runAction(repo, {
-    label: force ? '$(warning) Force Push' : '$(repo-push) Push',
-    run: async () => {
-      const result = await pushCurrent(repo.backend, { force });
-      if (result === 'detached') throw new Error('Can’t push a detached HEAD');
-      if (result === 'unpublished') {
-        unpublished = (await repo.backend.head()).branch;
-        return undefined;
-      }
-      return 'pushed';
-    },
-  });
-  // upstream が無ければ、送り先を選んで初めて送る
-  if (unpublished && !force) await publish(repo, unpublished);
 }
 
 /**

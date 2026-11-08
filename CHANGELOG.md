@@ -1080,6 +1080,8 @@ First release.
 
 #### Changed
 
+- Push asks first, showing the commits and anything worth a look (the default branch, fixup!/WIP commits, secrets,
+  binaries); when the upstream moved on it offers Pull… or a Force Push that replaces only what it showed.
 - Pull asks first: how to integrate (git's settings, which it now follows, or merge, rebase or fast-forward only for
   this pull), what that does here, and the commits; with no upstream it asks which remote branch to pull from.
 - Fetch asks first, from all remotes or one, and prunes as git's settings say (`remote.<name>.prune`, `fetch.prune`)

@@ -166,7 +166,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | ブランチの切り替え（あいまい検索・最近・追跡・新しいブランチ） | ✓ | ✓ | ✓ | △ | VSCode: Switch Branch…（QuickPick）。サイドバーの ⋯・Branches の見出し・コマンドパレットから。⌘⇧B は VSCode のビルドのタスクなので近道はない。<br>CLI: `amonhen run` から。 |
 | Fetch のシート（すべてか 1 つのリモート、prune を示す） | ✓ | ✓ | ✓ | △ | VSCode: リモートが 1 つならモーダル、いくつもならすべてか 1 つを QuickPick で。<br>CLI: `amonhen run` から。 |
 | Pull のシート（コミット・merge / rebase / ff-only・なければ上流） | ✓ | ✓ | ✓ | △ | VSCode: QuickPick。取り込み方ごとにここで何が起きるか、その下にコミット。コンフリクトの見込みはない。<br>CLI: `amonhen run` から。 |
-| Push のシート（注意・コミットと差分・lease 付きの Force Push） | ✓ | ✓ | △ | △ | VSCode: シートはなく、Force Push は別に尋ねる。<br>CLI: `amonhen run` から。 |
+| Push のシート（注意・コミットと差分・lease 付きの Force Push） | ✓ | ✓ | △ | △ | VSCode: QuickPick。注意、送るコミット、上流から消えるコミット、Pull… か lease 付きの Force Push。差分はない。<br>CLI: `amonhen run` から。 |
 | Publish（リモートと名前を選ぶ） | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | Merge（no-ff・squash の選択） | △ | △ | △ | △ | macOS: no-ff・squash の選択はない。<br>GTK4: no-ff・squash の選択はない。<br>VSCode: メニューかドラッグで、選択はない。<br>CLI: `amonhen run` から。 |
 | いくつもを 1 つにマージ（順番・コンフリクトの見込み） | ✓ | ✓ | ✓ | △ | CLI: `merge-check` で確かめ、マージは `amonhen run` から。 |

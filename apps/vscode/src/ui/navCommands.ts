@@ -9,6 +9,7 @@ import type { Node } from './sidebar.ts';
 import { showError } from './stageCommands.ts';
 import { mergeBranches } from './mergeBranches.ts';
 import { publish } from './syncCommands.ts';
+import { pushWithSheet } from './pushSheet.ts';
 
 /** ブランチ・リモートブランチ・タグのノードから ref を取り出す */
 function refOf(node: Node | undefined): string | undefined {
@@ -73,17 +74,7 @@ export function registerNavCommands(manager: RepositoryManager, mergedBy: Merged
         },
       });
     }),
-    command('amonhen.nav.push', async (repo, ref) => {
-      await runAction(repo, {
-        label: `$(repo-push) Push ${shortName(ref)}`,
-        run: async () => {
-          const target = await pushTarget(repo.backend, ref);
-          if (!target) throw new Error(`${shortName(ref)} has no upstream. Publish it.`);
-          await repo.backend.push(target.remote, shortName(ref), target.branch);
-          return 'pushed';
-        },
-      });
-    }),
+    command('amonhen.nav.push', (repo, ref) => pushWithSheet(repo, { branch: ref }, publish)),
     command('amonhen.nav.publish', (repo, ref) => publish(repo, ref)),
   );
 }
