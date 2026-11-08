@@ -2729,6 +2729,7 @@ fn build_tab(
                             spinner.start();
                         }
                     }
+                    Event::ConfigChanged => load_form(),
                     // History は作り直さず、行と詳細を読み直す（macOS 版の `checkMailmap`）。
                     Event::MailmapChanged => {
                         view.reload_rows();
@@ -3254,6 +3255,9 @@ enum Event {
     OpenFailed(String),
     /// mailmap（`.mailmap`・`log.mailmap`・`mailmap.file`）が変わった（作者名を出し直す）。
     MailmapChanged,
+    /// 設定だけが変わった（外での `git sparse-checkout`・`git maintenance` など。ref の読み直しとは別に、
+    /// リポジトリの形を読み直す）。
+    ConfigChanged,
     /// daemon・SSH 越しに初めて読んでいる間の、受け取ったバイト数。
     Received(u64),
 }
@@ -3502,6 +3506,8 @@ fn load(
             // 設定が変わった（外での `git remote add`・上流の付け替えなど）: ref を読み直す（リモートと上流、
             // GitHub も。macOS 版と同じ）。
             let _ = tx.send_blocking(Event::Refs(refs));
+            // partial clone と sparse checkout は設定で変わる（macOS 版と同じ）。
+            let _ = tx.send_blocking(Event::ConfigChanged);
         }
         if changes.contains(Changes::REFS)
             || changes.contains(Changes::INDEX)
