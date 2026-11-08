@@ -549,6 +549,27 @@ pub enum Command {
         #[serde(default)]
         branch: Option<String>,
     },
+    /// `theirs` を `ours`（既定は HEAD）に merge したときの前と後（Merge・Pull の確認に描く）。fast-forward で
+    /// 済み、`ff_setting`（既定は `merge.ff`。Pull は `pull.ff`）が false でなければ `info.fastForward` を true に
+    /// して、`info.move` に `MovePreview` と同じ答えを返す。取り込むものがなければ `info.upToDate`。そうでなければ
+    /// `info.drawing`: `ours`・`theirs`（分かれてからのコミット。新しい順、長ければ真ん中を省く。`oursMore`・
+    /// `oursMoreAt`・`theirsMore`・`theirsMoreAt`）、`base`（分かれたところと日時）、`labels`、`subject`（git が
+    /// 書く merge コミットの件名）。
+    MergePreview {
+        theirs: String,
+        #[serde(default)]
+        ours: Option<String>,
+        #[serde(default)]
+        ff_setting: Option<String>,
+    },
+    /// コミット `oids`（古い順）を今のブランチに cherry-pick・revert したときの前と後。`info.drawing`: `head`
+    /// （今の先端とその親）、`picks`（作るコミットの件名。新しい順、長ければ真ん中を省く。`picksMore`・
+    /// `picksMoreAt`）、`labels`。
+    PickPreview {
+        oids: Vec<String>,
+        #[serde(default)]
+        revert: bool,
+    },
     /// `theirs` を `ours`（既定は HEAD）にマージしたらコンフリクトするファイル（`info.conflicts`。なければ空、
     /// git が古くて調べられなければ null）。作業ツリーと index には触らない（`git merge-tree --write-tree`）。
     /// Merge・Pull の前に見せる。rebase は最後の結果が同じになるので、目安に使える。`theirs` が配列なら、
@@ -774,6 +795,9 @@ pub enum Command {
 
 /// リポジトリ専用のコミットのテンプレートの置き場所（`<git dir>` から）。
 const COMMIT_TEMPLATE: &str = "amonhen/commit-template";
+
+/// 前と後の絵に描くコミットの件名と日時（`Repository::drawing_texts`）。
+type DrawingTexts = std::collections::HashMap<Oid, (String, i64)>;
 
 /// 前と後の絵に描くコミット（新しい順）を、長ければ真ん中で省く: 新しい 3 つと、分かれたところに近い古い 2 つ。
 /// 描くもの、省いた数、省いたところ（描くものの何番目の前か）を返す。
@@ -2213,6 +2237,183 @@ impl Repository {
             }
         };
         Ok(message)
+    }
+
+    /// 絵に描くコミットの件名と日時、それぞれに付くブランチの札（`ids` のコミットに付くもの）。
+    fn drawing_texts(&self, ids: &[Oid]) -> Result<(DrawingTexts, Vec<serde_json::Value>)> {
+        let texts = self.commit_texts(ids)?;
+        let map = ids
+            .iter()
+            .zip(&texts)
+            .map(|(id, t)| {
+                (
+                    *id,
+                    (
+                        String::from_utf8_lossy(t.subject()).into_owned(),
+                        t.author_time,
+                    ),
+                )
+            })
+            .collect();
+        let refs = self.load_refs()?;
+        let labels = refs
+            .refs
+            .entries
+            .iter()
+            .filter(|e| matches!(e.kind, RefKind::Local | RefKind::Remote))
+            .filter_map(|e| {
+                let t = e.target.filter(|t| ids.contains(t))?;
+                Some(serde_json::json!({
+                    "oid": t.to_string(), "name": e.name,
+                    "kind": if e.kind == RefKind::Local { "local" } else { "remote" },
+                }))
+            })
+            .collect();
+        Ok((map, labels))
+    }
+
+    /// `MergePreview` の中身。
+    fn merge_preview(
+        &self,
+        ops: &dyn amonhen_model::Operations,
+        ours: &str,
+        theirs: &str,
+        ff_setting: &str,
+    ) -> Result<serde_json::Value> {
+        let (ours_id, theirs_id) = (ops.resolve(ours)?, ops.resolve(theirs)?);
+        let history = self.load_history()?;
+        let graph = &history.graph;
+        let row = |id: &Oid, rev: &str| -> Result<usize> {
+            history
+                .row_of(id)
+                .map(|r| r as usize)
+                .ok_or_else(|| tr!("{rev} isn’t in the History (reload it)", rev = rev).into())
+        };
+        let (ours_row, theirs_row) = (row(&ours_id, ours)?, row(&theirs_id, theirs)?);
+        let reach = |start: usize| {
+            let mut mark = vec![false; graph.len()];
+            mark[start] = true;
+            for r in start..graph.len() {
+                if mark[r] {
+                    for &p in graph.parents(r) {
+                        mark[p as usize] = true;
+                    }
+                }
+            }
+            mark
+        };
+        let (ours_reach, theirs_reach) = (reach(ours_row), reach(theirs_row));
+        if ours_reach[theirs_row] {
+            return Ok(serde_json::json!({ "upToDate": true, "drawing": null }));
+        }
+        let ff_off = ops
+            .config_list()?
+            .iter()
+            .rev()
+            .find(|e| e.key.eq_ignore_ascii_case(ff_setting))
+            .is_some_and(|e| e.value.eq_ignore_ascii_case("false"));
+        let current = ops
+            .head_state()?
+            .branch
+            .map(|b| b.strip_prefix("refs/heads/").unwrap_or(&b).to_owned());
+        if theirs_reach[ours_row] && !ff_off {
+            let branch = (ours == "HEAD").then_some(current).flatten();
+            return Ok(serde_json::json!({
+                "fastForward": true,
+                "move": self.move_preview(ops, ours, theirs, branch.as_deref())?,
+            }));
+        }
+        let ids_of = |mark: &[bool], other: &[bool]| {
+            (0..graph.len())
+                .filter(|&r| mark[r] && !other[r])
+                .map(|r| graph.ids()[r])
+                .collect::<Vec<_>>()
+        };
+        let (shown_ours, ours_more, ours_at) = elide(&ids_of(&ours_reach, &theirs_reach));
+        let (shown_theirs, theirs_more, theirs_at) = elide(&ids_of(&theirs_reach, &ours_reach));
+        let base = crate::repository::merge_base(graph, ours_row as u32, theirs_row as u32)
+            .map(|r| graph.ids()[r as usize]);
+        let mut ids = shown_ours.clone();
+        ids.extend(&shown_theirs);
+        ids.extend(base);
+        let (texts, labels) = self.drawing_texts(&ids)?;
+        let commit = |id: &Oid| serde_json::json!({ "oid": id.to_string(), "subject": texts.get(id).map(|t| t.0.clone()) });
+        // git の merge コミットの件名（`Merge branch 'x'`。main・master に取り込むときは「into」を付けない）。
+        let refs = self.load_refs()?;
+        let kind = refs
+            .refs
+            .entries
+            .iter()
+            .find(|e| e.name == theirs)
+            .map(|e| e.kind);
+        let mut subject = match kind {
+            Some(RefKind::Local) => format!("Merge branch '{theirs}'"),
+            Some(RefKind::Remote) => format!("Merge remote-tracking branch '{theirs}'"),
+            _ => format!("Merge commit '{theirs}'"),
+        };
+        if let Some(branch) = current.filter(|b| ours == "HEAD" && b != "main" && b != "master") {
+            subject.push_str(&format!(" into {branch}"));
+        }
+        Ok(serde_json::json!({
+            "fastForward": false,
+            "drawing": {
+                "ours": shown_ours.iter().map(commit).collect::<Vec<_>>(),
+                "oursMore": ours_more,
+                "oursMoreAt": ours_at,
+                "theirs": shown_theirs.iter().map(commit).collect::<Vec<_>>(),
+                "theirsMore": theirs_more,
+                "theirsMoreAt": theirs_at,
+                "base": base.map(|b| {
+                    let mut c = commit(&b);
+                    c["time"] = serde_json::json!(texts.get(&b).map_or(0, |t| t.1));
+                    c
+                }),
+                "labels": labels,
+                "subject": subject,
+            },
+        }))
+    }
+
+    /// `PickPreview` の中身。
+    fn pick_preview(
+        &self,
+        ops: &dyn amonhen_model::Operations,
+        oids: &[String],
+        revert: bool,
+    ) -> Result<serde_json::Value> {
+        let head = ops.head_state()?.oid.ok_or_else(|| tr!("No commits yet"))?;
+        let history = self.load_history()?;
+        let graph = &history.graph;
+        let mut context = vec![head];
+        if let Some(parent) = history
+            .row_of(&head)
+            .and_then(|r| graph.parents(r as usize).first().copied())
+        {
+            context.push(graph.ids()[parent as usize]);
+        }
+        let picked: Vec<Oid> = oids.iter().map(|o| ops.resolve(o)).collect::<Result<_>>()?;
+        // 作るコミットは新しい順（最後に渡したものが一番上）。
+        let newest_first: Vec<Oid> = picked.iter().rev().copied().collect();
+        let (shown, more, at) = elide(&newest_first);
+        let mut ids = context.clone();
+        ids.extend(&shown);
+        let (texts, labels) = self.drawing_texts(&ids)?;
+        let subject = |id: &Oid| texts.get(id).map(|t| t.0.clone()).unwrap_or_default();
+        Ok(serde_json::json!({
+            "drawing": {
+                "head": context.iter().map(|id| serde_json::json!({ "oid": id.to_string(), "subject": subject(id) })).collect::<Vec<_>>(),
+                "picks": shown.iter().map(|id| {
+                    let s = subject(id);
+                    serde_json::json!({
+                        "oid": id.to_string(),
+                        "subject": if revert { format!("Revert \"{s}\"") } else { s },
+                    })
+                }).collect::<Vec<_>>(),
+                "picksMore": more,
+                "picksMoreAt": at,
+                "labels": labels,
+            },
+        }))
     }
 
     /// `MovePreview` の中身。
@@ -4011,6 +4212,25 @@ impl Repository {
                     ..Default::default()
                 })
             }
+            Command::MergePreview {
+                theirs,
+                ours,
+                ff_setting,
+            } => Ok(Response {
+                ok: true,
+                info: Some(self.merge_preview(
+                    ops,
+                    ours.as_deref().unwrap_or("HEAD"),
+                    &theirs,
+                    ff_setting.as_deref().unwrap_or("merge.ff"),
+                )?),
+                ..Default::default()
+            }),
+            Command::PickPreview { oids, revert } => Ok(Response {
+                ok: true,
+                info: Some(self.pick_preview(ops, &oids, revert)?),
+                ..Default::default()
+            }),
             Command::MovePreview { from, to, branch } => Ok(Response {
                 ok: true,
                 info: Some(self.move_preview(ops, &from, &to, branch.as_deref())?),
@@ -5273,6 +5493,47 @@ mod tests {
         // 6 つまでは省かない（1 つだけ省くなら、その 1 つを描く）。
         let (shown, more, at) = super::elide(&ids[..6]);
         assert_eq!((shown.len(), more, at), (6, 0, 6));
+    }
+
+    #[test]
+    fn previews_merges_and_picks() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        git(dir, &["switch", "-q", "-c", "topic"]);
+        for name in ["b", "c"] {
+            std::fs::write(dir.join(name), format!("{name}\n")).unwrap();
+            git(dir, &["add", "."]);
+            git(dir, &["commit", "-q", "-m", &format!("add {name}")]);
+        }
+        git(dir, &["switch", "-q", "main"]);
+        std::fs::write(dir.join("d"), "d\n").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-q", "-m", "add d"]);
+        let merge = run(&repo, r#"{"op":"mergePreview","theirs":"topic"}"#);
+        let info = &merge["info"];
+        assert_eq!(info["fastForward"], false);
+        assert_eq!(info["drawing"]["ours"][0]["subject"], "add d");
+        assert_eq!(info["drawing"]["theirs"][0]["subject"], "add c");
+        assert_eq!(info["drawing"]["base"]["subject"], "first");
+        assert_eq!(info["drawing"]["subject"], "Merge branch 'topic'");
+        // 取り込むものがない・fast-forward で済む。
+        let none = run(&repo, r#"{"op":"mergePreview","theirs":"main~1"}"#);
+        assert_eq!(none["info"]["upToDate"], true);
+        let ff = run(
+            &repo,
+            r#"{"op":"mergePreview","ours":"main~1","theirs":"main"}"#,
+        );
+        assert_eq!(ff["info"]["fastForward"], true);
+        assert_eq!(ff["info"]["move"]["gainedCount"], 1);
+        // cherry-pick・revert で作るコミット（新しい順）。
+        let pick = run(
+            &repo,
+            r#"{"op":"pickPreview","oids":["topic~1","topic"],"revert":true}"#,
+        );
+        let d = &pick["info"]["drawing"];
+        assert_eq!(d["head"][0]["subject"], "add d");
+        assert_eq!(d["picks"][0]["subject"], "Revert \"add c\"");
+        assert_eq!(d["picks"][1]["subject"], "Revert \"add b\"");
     }
 
     #[test]
