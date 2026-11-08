@@ -1042,10 +1042,13 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         let cell = outlineView.makeView(withIdentifier: .init("item"), owner: nil) as? SidebarCell
             ?? SidebarCell(identifier: .init("item"), hasIcon: true)
         cell.textField?.stringValue = node.title
-        cell.textField?.font = node.isHead ? .boldSystemFont(ofSize: NSFont.systemFontSize) : .systemFont(ofSize: NSFont.systemFontSize)
+        cell.textField?.font = .systemFont(ofSize: NSFont.systemFontSize)
         cell.textField?.textColor = node === cleanWorktreesNode ? .secondaryLabelColor : .labelColor
         cell.imageView?.image = NSImage(systemSymbolName: Self.symbol(for: node), accessibilityDescription: nil)
         cell.imageView?.contentTintColor = node.isHead ? .controlAccentColor : .secondaryLabelColor
+        // 今のブランチ（HEAD）は、塗った丸に枝の専用の形で示す（色だけだと、選んだ行や色の見分けにくい人には
+        // 分からない。名前はほかの行と同じ色にして、選んだ行のアクセントカラーとぶつけない。GTK4 版と同じ）。
+        cell.isCurrentBranch = node.isHead && node.item?.kind == .local
         cell.onLeadingMarkClick = nil
         var badge = node.badge ?? ""
         /// 右端のアイコン（SF Symbols の名前, ツールチップ）。
@@ -1784,6 +1787,40 @@ private final class BadgeLabel: NSTextField {
 /// サイドバーの行: アイコン、名前、右に薄い数（ahead・behind や変更の数）。
 final class SidebarCell: NSTableCellView {
     let badge: NSTextField = BadgeLabel(labelWithString: "")
+    /// 今のブランチの行か。アイコンを塗った丸に枝にし、選んで強調した行では丸を白、枝をアクセントカラーにする。
+    var isCurrentBranch = false {
+        didSet { applyCurrentBranchIcon() }
+    }
+    override var backgroundStyle: NSView.BackgroundStyle {
+        didSet { applyCurrentBranchIcon() }
+    }
+    private func applyCurrentBranchIcon() {
+        guard isCurrentBranch, let imageView else { return }
+        let emphasized = backgroundStyle == .emphasized
+        imageView.image = Self.branchDisc(disc: emphasized ? .white : .controlAccentColor,
+                                          branch: emphasized ? .controlAccentColor : .white)
+        imageView.contentTintColor = nil
+    }
+    /// 塗った丸に枝（SF Symbols にこの形はないので、丸の上に arrow.triangle.branch を重ねる）。色は描くときに決まる
+    /// （外観が変わっても合う）。
+    static func branchDisc(disc: NSColor, branch: NSColor) -> NSImage {
+        let size = NSSize(width: 16, height: 16)
+        let image = NSImage(size: size, flipped: false) { rect in
+            disc.setFill()
+            NSBezierPath(ovalIn: rect.insetBy(dx: 0.5, dy: 0.5)).fill()
+            let config = NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold)
+                .applying(.init(paletteColors: [branch]))
+            if let symbol = NSImage(systemSymbolName: "arrow.triangle.branch", accessibilityDescription: nil)?
+                .withSymbolConfiguration(config) {
+                let s = symbol.size
+                symbol.draw(in: NSRect(x: rect.midX - s.width / 2, y: rect.midY - s.height / 2, width: s.width, height: s.height))
+            }
+            return true
+        }
+        image.isTemplate = false
+        image.accessibilityDescription = L("Current branch")
+        return image
+    }
     /// 右端のアイコンを押した（取り込み済み・gone の詳細の吹き出し）。なければ押しても何も起きない。
     var onBadgeClick: (() -> Void)?
     /// 右端の先頭のアイコン（幅 `leadingMarkWidth`）だけ別の吹き出しを出すとき（タグの署名の印）。

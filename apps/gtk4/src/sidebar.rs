@@ -1597,7 +1597,17 @@ fn bind_row(item: &gtk::ListItem) {
         data.item,
         Item::Group | Item::Folder | Item::Subtree(_)
     ));
-    icon.set(data.icon, data.head);
+    // 今のブランチ（HEAD）は、塗った丸から枝を抜いた専用の形で示す。色だけだと、選んだ行や色の見分けにくい人には
+    // 分からない（名前はほかの行と同じ色。選んだ行の色とぶつけない。macOS 版と同じ）。
+    let current = data.head && matches!(&data.item, Item::Ref(e) if e.kind == RefKind::Local);
+    icon.set(
+        if current {
+            icon::Kind::BranchDisc
+        } else {
+            data.icon
+        },
+        data.head,
+    );
     for w in [icon.upcast_ref::<gtk::Widget>(), badge.upcast_ref()] {
         if data.green {
             w.add_css_class("success");
@@ -1624,8 +1634,6 @@ fn bind_row(item: &gtk::ListItem) {
     if data.dim {
         title.add_css_class("dim-label");
     }
-    // 今のブランチは名前を太くせず、アクセントカラーのアイコンで示す（macOS 版のサイドバーの見た目と同じ。
-    // macOS 版はサイドバーの行の字をシステムの字のまま出す）。
     let attrs = gtk::pango::AttrList::new();
     // 見出しの数は、名前のすぐ後ろに薄く小さく（右端には出さない）。
     if group && !data.badge.is_empty() {

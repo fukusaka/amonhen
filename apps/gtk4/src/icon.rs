@@ -77,6 +77,8 @@ pub enum Kind {
     Sliders,
     /// location（Go to HEAD）
     Location,
+    /// 塗った丸から枝を抜いたもの（サイドバーの今のブランチ。macOS 版も同じ形を描く）
+    BranchDisc,
     /// star.fill（お気に入りのブランチ）
     Star,
     /// arrow.turn.down.right（ほかのブランチの上に積んだブランチ）
@@ -685,6 +687,22 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.line_to(8.0, 8.0);
             p.line_to(8.7, 13.5);
             p.close();
+        }
+        Kind::BranchDisc => {
+            // 塗った丸から、Branch と同じ形を 0.75 倍にして抜く（選んだ行の地の色が透けて見える）。抜く線は太い
+            // （1.6）ので、点は小さくして形が潰れないように。
+            let solid = gsk::PathBuilder::new();
+            solid.add_circle(&point(8.0, 8.0), 7.5);
+            fill = Some(solid);
+            let mark = gsk::PathBuilder::new();
+            mark.add_circle(&point(5.75, 4.6), 0.5);
+            mark.add_circle(&point(5.75, 11.4), 0.5);
+            mark.add_circle(&point(10.25, 5.4), 0.5);
+            mark.move_to(5.75, 5.9);
+            mark.line_to(5.75, 10.1);
+            mark.move_to(10.25, 6.7);
+            mark.cubic_to(10.25, 8.8, 5.75, 8.0, 5.75, 10.1);
+            knock = Some(mark);
         }
         Kind::Star => {
             // 塗った五つの角の星。
