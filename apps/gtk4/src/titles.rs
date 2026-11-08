@@ -113,18 +113,43 @@ fn list_in(lang: amonhen_model::i18n::Lang, parts: &[String]) -> String {
     }
 }
 
-/// 日付（地域の書式。macOS 版の DateFormatter の日付と同じく、言語の設定に従う）。
+/// 短い日付（macOS 版の DateFormatter の .short。言語の設定に従う: 英語は「11/3/26」、日本語は
+/// 「2026/11/03」）。
 pub fn date(time: i64) -> String {
-    format_time(time, "%x")
+    glib::DateTime::from_unix_local(time)
+        .map(|d| {
+            short_date(
+                amonhen_model::i18n::current(),
+                d.year(),
+                d.month(),
+                d.day_of_month(),
+            )
+        })
+        .unwrap_or_default()
+}
+
+/// [`date`] の組み立て。
+fn short_date(lang: amonhen_model::i18n::Lang, year: i32, month: i32, day: i32) -> String {
+    use amonhen_model::i18n::Lang;
+    match lang {
+        Lang::Ja => format!("{year}/{month:02}/{day:02}"),
+        Lang::En => format!("{month}/{day}/{:02}", year.rem_euclid(100)),
+    }
 }
 
 /// History の 2 行の行の日時（macOS 版の DateFormatter の日付 .medium・時刻 .short: 英語は
 /// 「Nov 3, 2026 at 10:00 AM」、日本語は「2026/11/03 10:00」）。
 pub fn medium_date_time(time: i64) -> String {
+    date_time(time, false)
+}
+
+/// 日付と時刻（macOS 版の DateFormatter の日付 .medium と、時刻の .short・`seconds` なら .medium）。
+/// 日付は言語の設定に従い、時刻の 12・24 時間は地域の書式に従う。
+pub fn date_time(time: i64, seconds: bool) -> String {
     let Some(d) = glib::DateTime::from_unix_local(time).ok() else {
         return String::new();
     };
-    let clock = format_time_of(&d, clock_format(&d, false));
+    let clock = format_time_of(&d, clock_format(&d, seconds));
     medium_date(
         amonhen_model::i18n::current(),
         d.year(),
@@ -134,7 +159,7 @@ pub fn medium_date_time(time: i64) -> String {
     )
 }
 
-/// [`medium_date_time`] の組み立て。
+/// [`date_time`] の組み立て。
 fn medium_date(
     lang: amonhen_model::i18n::Lang,
     year: i32,
@@ -169,20 +194,6 @@ fn clock_format(d: &glib::DateTime, seconds: bool) -> &'static str {
     }
 }
 
-/// 日付と時刻（地域の書式。`seconds` なら秒まで。macOS 版の DateFormatter の時刻の .short・.medium）。
-pub fn date_time(time: i64, seconds: bool) -> String {
-    let Some(d) = glib::DateTime::from_unix_local(time).ok() else {
-        return String::new();
-    };
-    format_time_of(&d, &format!("%x {}", clock_format(&d, seconds)))
-}
-
-fn format_time(time: i64, format: &str) -> String {
-    glib::DateTime::from_unix_local(time)
-        .map(|d| format_time_of(&d, format))
-        .unwrap_or_default()
-}
-
 fn format_time_of(d: &glib::DateTime, format: &str) -> String {
     d.format(format)
         .map(|s| s.split_whitespace().collect::<Vec<_>>().join(" "))
@@ -204,6 +215,13 @@ mod tests {
             medium_date(Lang::Ja, 2026, 11, 3, "10:00"),
             "2026/11/03 10:00"
         );
+    }
+
+    #[test]
+    fn short_dates_follow_the_language() {
+        assert_eq!(short_date(Lang::En, 2026, 11, 3), "11/3/26");
+        assert_eq!(short_date(Lang::En, 2005, 1, 9), "1/9/05");
+        assert_eq!(short_date(Lang::Ja, 2026, 9, 22), "2026/09/22");
     }
 
     #[test]
