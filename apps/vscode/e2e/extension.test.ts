@@ -2789,28 +2789,28 @@ suite('Amon Hen in VSCode', () => {
     git('switch', '-q', branch);
     git('merge', '-q', '--no-ff', '-m', 'fold merge', 'fold-side');
     try {
+      // git の変化を知ってからの読み直しが遅れて届くことがある（CI）。最初に届いた行ではなく、期待する数の行を待つ
+      const open = Number(git('rev-list', '--count', 'HEAD').trim());
       await vscode.commands.executeCommand('amonhen.refresh');
       let at = posted.length;
       await panel.history.reset();
-      const open = (await waitPosted('rows', at, (m) => m.total !== undefined)).total!;
+      await waitPosted('rows', at, (m) => m.total === open);
       at = posted.length;
       await pick('Fold Merged Branches');
-      const folded = await waitPosted('rows', at, (m) => m.total !== undefined);
-      assert.equal(folded.total, open - 2);
+      const folded = await waitPosted('rows', at, (m) => m.total === open - 2);
       const merge = folded.rows.find((r) => r.subject === 'fold merge')!;
       assert.equal(merge.hidden, 2);
       assert.ok(!folded.rows.some((r) => r.subject === 'fold side one'));
       // 1 つだけ開くと、その merge が取り込んだコミットが出て、選んだまま
       at = posted.length;
       await panel.history.handle({ type: 'toggleFold', oid: merge.oid });
-      const opened = await waitPosted('rows', at, (m) => m.total !== undefined);
-      assert.equal(opened.total, open);
-      assert.ok(opened.rows.find((r) => r.oid === merge.oid)?.expanded);
+      const opened = await waitPosted('rows', at, (m) => m.total === open && m.rows.some((r) => r.expanded));
+      assert.equal(opened.rows.find((r) => r.expanded)?.oid, merge.oid);
       assert.ok(opened.rows.some((r) => r.subject === 'fold side one'));
       await waitPosted('reveal', at, (m) => opened.rows[m.row]?.oid === merge.oid);
       at = posted.length;
       await pick('Fold Merged Branches');
-      assert.equal((await waitPosted('rows', at, (m) => m.total !== undefined)).total, open);
+      await waitPosted('rows', at, (m) => m.total === open && !m.rows.some((r) => r.hidden || r.expanded));
     } finally {
       (vscode.window as { showQuickPick: unknown }).showQuickPick = quickPick;
       git('reset', '-q', '--hard', start);
