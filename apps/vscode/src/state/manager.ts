@@ -58,6 +58,11 @@ export class RepositoryManager implements vscode.Disposable {
     this.log = log;
   }
 
+  /** リポジトリの外で git を動かすとき（bundle から clone する）。git がまだ見つかっていなければ undefined */
+  get executor(): GitExecutor | undefined {
+    return this.git;
+  }
+
   get current(): Repository | undefined {
     return this._current;
   }

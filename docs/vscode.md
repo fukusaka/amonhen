@@ -248,3 +248,4 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 37. History: several refs, worktree labels, order, row items, folding merges, highlighting ancestors
 - [x] 38. History's details: find with ⌘F, collapsing files and Viewed, the changed files as a tree, one file at a time
 - [x] 39. History's edit mode: several commits in one rebase, shortcuts opening it, merges kept (`--rebase-merges`)
+- [x] 40. Export Archive, Save as Bundle, Fetch from Bundle, Clone from Bundle

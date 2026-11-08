@@ -60,7 +60,7 @@
     "viewsWelcome": [
       {
         "view": "amonhen.sidebar",
-        "contents": "No Git repository found.\n[Open Folder](command:vscode.openFolder)",
+        "contents": "No Git repository found.\n[Open Folder](command:vscode.openFolder)\n[Clone from Bundle](command:amonhen.cloneBundle)",
         "when": "!amonhen.hasRepository"
       }
     ],
@@ -760,6 +760,31 @@
         "command": "amonhen.subtree.split",
         "title": "Split Subtree…",
         "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.exportArchive",
+        "title": "Export Archive…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.saveBundle",
+        "title": "Save as Bundle…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.saveRepositoryBundle",
+        "title": "Save Repository as Bundle…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.fetchBundle",
+        "title": "Fetch from Bundle…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.cloneBundle",
+        "title": "Clone from Bundle…",
+        "category": "Amon Hen"
       }
     ],
     "menus": {
@@ -833,6 +858,21 @@
           "command": "amonhen.stash",
           "when": "view == amonhen.sidebar",
           "group": "1_view@1"
+        },
+        {
+          "command": "amonhen.saveRepositoryBundle",
+          "when": "view == amonhen.sidebar && amonhen.engine",
+          "group": "3_bundle@1"
+        },
+        {
+          "command": "amonhen.fetchBundle",
+          "when": "view == amonhen.sidebar && amonhen.engine",
+          "group": "3_bundle@2"
+        },
+        {
+          "command": "amonhen.cloneBundle",
+          "when": "view == amonhen.sidebar",
+          "group": "3_bundle@3"
         }
       ],
       "view/item/context": [
@@ -1205,6 +1245,16 @@
           "command": "amonhen.deleteIgnored",
           "when": "view == amonhen.sidebar && amonhen.engine && viewItem == view.workingCopy",
           "group": "9_clean@1"
+        },
+        {
+          "command": "amonhen.exportArchive",
+          "when": "view == amonhen.sidebar && viewItem =~ /^(branch(\\.current)?(;\\w+)*|remoteBranch|tag(;\\w+)*)$/ && !listMultiSelection && amonhen.engine",
+          "group": "6_export@1"
+        },
+        {
+          "command": "amonhen.saveBundle",
+          "when": "view == amonhen.sidebar && viewItem =~ /^(branch(\\.current)?(;\\w+)*|remoteBranch|tag(;\\w+)*)$/ && amonhen.engine",
+          "group": "6_export@2"
         }
       ],
       "commandPalette": [
@@ -1659,6 +1709,22 @@
         {
           "command": "amonhen.branches.cleanUp",
           "when": "amonhen.hasRepository && amonhen.engine"
+        },
+        {
+          "command": "amonhen.exportArchive",
+          "when": "amonhen.hasRepository && amonhen.engine"
+        },
+        {
+          "command": "amonhen.saveBundle",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.saveRepositoryBundle",
+          "when": "amonhen.hasRepository && amonhen.engine"
+        },
+        {
+          "command": "amonhen.fetchBundle",
+          "when": "amonhen.hasRepository && amonhen.engine"
         }
       ],
       "webview/context": [
@@ -1866,6 +1932,11 @@
           "command": "amonhen.forgetResolution",
           "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && wcRerere && amonhen.engine",
           "group": "2_conflict@1"
+        },
+        {
+          "command": "amonhen.exportArchive",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commit' && amonhen.engine",
+          "group": "6_patch@3"
         }
       ],
       "editor/title/context": [
