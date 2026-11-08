@@ -1,97 +1,28 @@
 import AppKit
 
-/// rebase の確認に埋め込む、前と後の絵（docs/design.md の「Rewriting operations and stacked branches」）。左が今、
-/// 右が rebase の後。History と同じく新しいものが上で、線・点・ブランチの札・件名で描く。載せ直すコミットは左で
-/// 薄く、右で強調（A → A′）。一緒に動くブランチの札は右で新しいコミットへ移り、残るブランチと `origin/…` は左の
-/// 元のコミットに残る。
-final class RewriteDrawingView: NSView {
-    var preview: RewritePreview? {
-        didSet {
-            invalidateIntrinsicContentSize()
-            needsDisplay = true
-        }
+/// 確認のシートに埋め込む、コミットグラフの前と後の絵の共通の部品（rebase の `RewriteDrawingView` と、ref を動かす
+/// `MoveDrawingView`）。History と同じく新しいものが上で、線・点・ブランチの札・件名で描く。
+class GraphDrawingView: NSView {
+    /// 描く 1 行。lane 0 は左の線、lane 1 は右の線。`hollow` は中を抜いた点、`note` は件名の後ろに添える文。
+    struct GraphRow {
+        let commit: RewritePreview.Drawing.Commit
+        let lane: Int
+        let dim: Bool
+        let y: CGFloat
+        var hollow = false
+        var note: String?
+        var noteColor: NSColor?
     }
 
-    private static let rowHeight: CGFloat = 22
-    private static let laneWidth: CGFloat = 14
-    private static let columnWidth: CGFloat = 330
+    static let rowHeight: CGFloat = 22
+    static let laneWidth: CGFloat = 14
+    static let columnWidth: CGFloat = 330
 
     override var isFlipped: Bool { true }
 
-    override var intrinsicContentSize: NSSize {
-        guard let d = preview?.drawing else { return NSSize(width: Self.columnWidth * 2 + 24, height: 0) }
-        let rows = max(d.picks.count + d.onto.count + (d.ontoMore > 0 ? 1 : 0) + 1, d.picks.count + d.onto.count + 1)
-        return NSSize(width: Self.columnWidth * 2 + 24, height: CGFloat(rows) * Self.rowHeight + 26)
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        guard let preview, let d = preview.drawing else { return }
-        let headingAttributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.boldSystemFont(ofSize: NSFont.smallSystemFontSize), .foregroundColor: NSColor.secondaryLabelColor,
-        ]
-        NSString(string: L("Now")).draw(at: NSPoint(x: 4, y: 2), withAttributes: headingAttributes)
-        NSString(string: L("After the rebase")).draw(at: NSPoint(x: Self.columnWidth + 28, y: 2), withAttributes: headingAttributes)
-        let top: CGFloat = 22
-        let moving = Set(preview.moving.map(\.name))
-        let labels = Dictionary(grouping: d.labels, by: \.oid)
-
-        // 左: 今。上に載せ直すコミット（右の線）、その下に載せ先で進んだコミット（左の線）、いちばん下で合流。
-        let picks = Array(d.picks.reversed())
-        var y = top
-        var rows: [(commit: RewritePreview.Drawing.Commit, lane: Int, dim: Bool, y: CGFloat)] = []
-        for c in picks {
-            rows.append((c, 1, true, y))
-            y += Self.rowHeight
-        }
-        for c in d.onto {
-            rows.append((c, 0, false, y))
-            y += Self.rowHeight
-        }
-        let moreY = d.ontoMore > 0 ? y : nil
-        if d.ontoMore > 0 { y += Self.rowHeight }
-        let baseY = y
-        drawColumn(x: 0, rows: rows, baseY: baseY, base: d.base, moreY: moreY, more: d.ontoMore, labels: { oid in
-            // 左には今のブランチの札をすべて（動くものも、まだ元のところにある）。
-            (labels[oid] ?? []).map { ($0.name, $0.kind, $0.name == preview.current) }
-        })
-
-        // 右: rebase の後。載せ直したコミット（A′）が載せ先の上に 1 本で続く。
-        var after: [(commit: RewritePreview.Drawing.Commit, lane: Int, dim: Bool, y: CGFloat)] = []
-        y = top
-        for c in picks {
-            after.append((RewritePreview.Drawing.Commit(oid: c.oid, subject: c.subject + "′"), 0, false, y))
-            y += Self.rowHeight
-        }
-        for c in d.onto {
-            after.append((c, 0, true, y))
-            y += Self.rowHeight
-        }
-        let afterMoreY = d.ontoMore > 0 ? y : nil
-        if d.ontoMore > 0 { y += Self.rowHeight }
-        drawColumn(x: Self.columnWidth + 24, rows: after, baseY: y, base: d.base, moreY: afterMoreY, more: d.ontoMore,
-                   highlightTop: picks.count, labels: { oid in
-            var out: [(String, String, Bool)] = []
-            // 今のブランチは先頭の A′ へ、一緒に動くブランチは、元の先頭に対応する A′ へ。
-            if oid == picks.first?.oid, let current = preview.current { out.append((current, "local", true)) }
-            for label in labels[oid] ?? [] where label.kind == "local" && moving.contains(label.name) {
-                out.append((label.name, "moved", false))
-            }
-            // 載せ先のコミットに付いている札は、そのまま。
-            if d.onto.contains(where: { $0.oid == oid }) || d.base?.oid == oid {
-                out += (labels[oid] ?? []).filter { $0.name != preview.current && !moving.contains($0.name) }
-                    .map { ($0.name, $0.kind, false) }
-            }
-            return out
-        })
-        // 真ん中の矢印。
-        let arrow = NSString(string: "→")
-        arrow.draw(at: NSPoint(x: Self.columnWidth + 6, y: top + CGFloat(max(picks.count - 1, 0)) * Self.rowHeight / 2),
-                   withAttributes: [.font: NSFont.systemFont(ofSize: 15), .foregroundColor: NSColor.tertiaryLabelColor])
-    }
-
     /// 1 列を描く。`rows` の lane 1 は右の線（いちばん下で lane 0 へ合流）。`highlightTop` は強調する上からの行数。
-    private func drawColumn(
-        x: CGFloat, rows: [(commit: RewritePreview.Drawing.Commit, lane: Int, dim: Bool, y: CGFloat)], baseY: CGFloat,
+    func drawColumn(
+        x: CGFloat, rows: [GraphRow], baseY: CGFloat,
         base: RewritePreview.Drawing.Commit?, moreY: CGFloat?, more: Int, highlightTop: Int = 0,
         labels: (String) -> [(String, String, Bool)]
     ) {
@@ -118,7 +49,8 @@ final class RewriteDrawingView: NSView {
         for (i, row) in rows.enumerated() {
             let highlighted = i < highlightTop
             drawRow(at: NSPoint(x: laneX(row.lane), y: row.y), textX: laneX(1) + 14, width: x + Self.columnWidth,
-                    subject: row.commit.subject, dim: row.dim, highlighted: highlighted, labels: labels(row.commit.oid))
+                    subject: row.commit.subject, dim: row.dim, highlighted: highlighted, labels: labels(row.commit.oid),
+                    hollow: row.hollow, note: row.note, noteColor: row.noteColor)
         }
         if let moreY {
             NSString(string: L("and %ld more", more)).draw(
@@ -131,12 +63,20 @@ final class RewriteDrawingView: NSView {
         }
     }
 
-    private func drawRow(at dot: NSPoint, textX: CGFloat, width: CGFloat, subject: String, dim: Bool, highlighted: Bool,
-                         labels: [(String, String, Bool)]) {
+    /// 1 行を描く。`hollow` なら中を抜いた点（外れる・消えるコミット）、`note` は件名の後ろに `noteColor` で添える。
+    func drawRow(at dot: NSPoint, textX: CGFloat, width: CGFloat, subject: String, dim: Bool, highlighted: Bool,
+                 labels: [(String, String, Bool)], hollow: Bool = false, note: String? = nil, noteColor: NSColor? = nil) {
         let r: CGFloat = highlighted ? 5 : 4
         let circle = NSBezierPath(ovalIn: NSRect(x: dot.x - r, y: dot.y + Self.rowHeight / 2 - r, width: r * 2, height: r * 2))
-        (highlighted ? NSColor.controlAccentColor : dim ? NSColor.tertiaryLabelColor : NSColor.secondaryLabelColor).setFill()
-        circle.fill()
+        let dotColor = highlighted ? NSColor.controlAccentColor : dim ? NSColor.tertiaryLabelColor : NSColor.secondaryLabelColor
+        if hollow {
+            (noteColor ?? dotColor).setStroke()
+            circle.lineWidth = 1.5
+            circle.stroke()
+        } else {
+            dotColor.setFill()
+            circle.fill()
+        }
         var x = textX
         for (name, kind, current) in labels {
             x = drawLabel(name, kind: kind, current: current, at: NSPoint(x: x, y: dot.y + 3)) + 4
@@ -145,13 +85,19 @@ final class RewriteDrawingView: NSView {
             .font: highlighted ? NSFont.boldSystemFont(ofSize: NSFont.smallSystemFontSize) : NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
             .foregroundColor: dim ? NSColor.tertiaryLabelColor : NSColor.labelColor,
         ]
-        let text = NSString(string: subject)
+        let text = NSMutableAttributedString(string: subject, attributes: attributes)
+        if let note {
+            var noteAttributes = attributes
+            noteAttributes[.foregroundColor] = noteColor ?? NSColor.tertiaryLabelColor
+            noteAttributes[.font] = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
+            text.append(NSAttributedString(string: " — " + note, attributes: noteAttributes))
+        }
         text.draw(with: NSRect(x: x, y: dot.y + 4, width: max(0, width - x), height: Self.rowHeight),
-                  options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], attributes: attributes)
+                  options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
     }
 
     /// History と同じ色の札（ローカルは青、リモートは紫、一緒に動いたものは緑）。右端を返す。
-    private func drawLabel(_ name: String, kind: String, current: Bool, at point: NSPoint) -> CGFloat {
+    func drawLabel(_ name: String, kind: String, current: Bool, at point: NSPoint) -> CGFloat {
         let color: NSColor = switch kind {
         case "remote": .systemPurple
         case "moved": .systemGreen
@@ -167,6 +113,91 @@ final class RewriteDrawingView: NSView {
         text.draw(at: NSPoint(x: rect.minX + 5, y: rect.minY + 1))
         return rect.maxX
     }
+}
+
+/// rebase の確認に埋め込む、前と後の絵（docs/design.md の「Rewriting operations and stacked branches」）。左が今、
+/// 右が rebase の後。History と同じく新しいものが上で、線・点・ブランチの札・件名で描く。載せ直すコミットは左で
+/// 薄く、右で強調（A → A′）。一緒に動くブランチの札は右で新しいコミットへ移り、残るブランチと `origin/…` は左の
+/// 元のコミットに残る。
+final class RewriteDrawingView: GraphDrawingView {
+    var preview: RewritePreview? {
+        didSet {
+            invalidateIntrinsicContentSize()
+            needsDisplay = true
+        }
+    }
+
+    override var intrinsicContentSize: NSSize {
+        guard let d = preview?.drawing else { return NSSize(width: Self.columnWidth * 2 + 24, height: 0) }
+        let rows = max(d.picks.count + d.onto.count + (d.ontoMore > 0 ? 1 : 0) + 1, d.picks.count + d.onto.count + 1)
+        return NSSize(width: Self.columnWidth * 2 + 24, height: CGFloat(rows) * Self.rowHeight + 26)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let preview, let d = preview.drawing else { return }
+        let headingAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.boldSystemFont(ofSize: NSFont.smallSystemFontSize), .foregroundColor: NSColor.secondaryLabelColor,
+        ]
+        NSString(string: L("Now")).draw(at: NSPoint(x: 4, y: 2), withAttributes: headingAttributes)
+        NSString(string: L("After the rebase")).draw(at: NSPoint(x: Self.columnWidth + 28, y: 2), withAttributes: headingAttributes)
+        let top: CGFloat = 22
+        let moving = Set(preview.moving.map(\.name))
+        let labels = Dictionary(grouping: d.labels, by: \.oid)
+
+        // 左: 今。上に載せ直すコミット（右の線）、その下に載せ先で進んだコミット（左の線）、いちばん下で合流。
+        let picks = Array(d.picks.reversed())
+        var y = top
+        var rows: [GraphRow] = []
+        for c in picks {
+            rows.append(GraphRow(commit: c, lane: 1, dim: true, y: y))
+            y += Self.rowHeight
+        }
+        for c in d.onto {
+            rows.append(GraphRow(commit: c, lane: 0, dim: false, y: y))
+            y += Self.rowHeight
+        }
+        let moreY = d.ontoMore > 0 ? y : nil
+        if d.ontoMore > 0 { y += Self.rowHeight }
+        let baseY = y
+        drawColumn(x: 0, rows: rows, baseY: baseY, base: d.base, moreY: moreY, more: d.ontoMore, labels: { oid in
+            // 左には今のブランチの札をすべて（動くものも、まだ元のところにある）。
+            (labels[oid] ?? []).map { ($0.name, $0.kind, $0.name == preview.current) }
+        })
+
+        // 右: rebase の後。載せ直したコミット（A′）が載せ先の上に 1 本で続く。
+        var after: [GraphRow] = []
+        y = top
+        for c in picks {
+            after.append(GraphRow(commit: RewritePreview.Drawing.Commit(oid: c.oid, subject: c.subject + "′"), lane: 0, dim: false, y: y))
+            y += Self.rowHeight
+        }
+        for c in d.onto {
+            after.append(GraphRow(commit: c, lane: 0, dim: true, y: y))
+            y += Self.rowHeight
+        }
+        let afterMoreY = d.ontoMore > 0 ? y : nil
+        if d.ontoMore > 0 { y += Self.rowHeight }
+        drawColumn(x: Self.columnWidth + 24, rows: after, baseY: y, base: d.base, moreY: afterMoreY, more: d.ontoMore,
+                   highlightTop: picks.count, labels: { oid in
+            var out: [(String, String, Bool)] = []
+            // 今のブランチは先頭の A′ へ、一緒に動くブランチは、元の先頭に対応する A′ へ。
+            if oid == picks.first?.oid, let current = preview.current { out.append((current, "local", true)) }
+            for label in labels[oid] ?? [] where label.kind == "local" && moving.contains(label.name) {
+                out.append((label.name, "moved", false))
+            }
+            // 載せ先のコミットに付いている札は、そのまま。
+            if d.onto.contains(where: { $0.oid == oid }) || d.base?.oid == oid {
+                out += (labels[oid] ?? []).filter { $0.name != preview.current && !moving.contains($0.name) }
+                    .map { ($0.name, $0.kind, false) }
+            }
+            return out
+        })
+        // 真ん中の矢印。
+        let arrow = NSString(string: "→")
+        arrow.draw(at: NSPoint(x: Self.columnWidth + 6, y: top + CGFloat(max(picks.count - 1, 0)) * Self.rowHeight / 2),
+                   withAttributes: [.font: NSFont.systemFont(ofSize: 15), .foregroundColor: NSColor.tertiaryLabelColor])
+    }
+
 }
 
 /// rebase の確認に埋め込む、前と後の絵・見通しの文・「積み重ねたブランチも一緒に動かす」（この操作だけ。最初は git の
