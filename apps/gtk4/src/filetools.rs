@@ -313,7 +313,7 @@ fn show_blame(
         code.set_xalign(0.0);
         code.set_hexpand(true);
         code.add_css_class("monospace");
-        let line = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        let line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         line.append(&info);
         line.append(&number);
         line.append(&code);
@@ -394,6 +394,7 @@ fn show_blame(
     selection.set_selected(gtk::INVALID_LIST_POSITION);
     let list = gtk::ListView::new(Some(selection.clone()), Some(factory));
     list.add_css_class("view");
+    list.add_css_class("blame");
     // History に出すのはダブルクリックだけ。Return では何もしない（ListView は Return でも activate を出す。
     // macOS 版と同じ）。
     let keys = gtk::EventControllerKey::new();
@@ -428,7 +429,8 @@ fn show_blame(
     (model, selection)
 }
 
-/// Blame の交互の背景。
+/// Blame の交互の背景と、詰めた行（macOS 版と同じく、行の上下に余白を置かず、字の行送りだけの高さ）。
+/// 左右は macOS 版の列の間と同じだけ空ける（コミットの列が窓の縁に付かないように）。
 fn install_css() {
     thread_local! {
         static DONE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -437,7 +439,10 @@ fn install_css() {
         return;
     }
     let provider = gtk::CssProvider::new();
-    provider.load_from_string(".blame-shaded { background-color: alpha(currentColor, 0.05); }");
+    provider.load_from_string(
+        ".blame-shaded { background-color: alpha(currentColor, 0.05); }
+         listview.blame > row { min-height: 0; padding: 0 6px; }",
+    );
     if let Some(display) = gtk::gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
             &display,
