@@ -1035,6 +1035,9 @@ First release.
 
 #### Added
 
+- Export Archive… writes a branch, tag or commit as zip, tar.gz or tar; Save as Bundle… and Fetch from Bundle… use
+  `git bundle` with the engine, and Clone from Bundle… clones a bundle file.
+- Remotes lists branches under a name that isn't a configured remote, such as ones fetched from a bundle.
 - History can show several selected refs, marks each worktree's HEAD, and its ⋯ button picks the order, the row items, folding merged branches and highlighting ancestors.
 - With the engine, History's Edit Commits from Here… opens an edit mode: choose what to do with each commit, drag to
   reorder and apply it all as one rebase that keeps merges; Edit Message…, Combine, Drop… and dragging a commit open it.

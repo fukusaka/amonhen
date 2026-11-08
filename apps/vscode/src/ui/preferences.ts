@@ -1,5 +1,6 @@
 /** 拡張の見た目の好み。設定（settings.json）に出すほどではないものを、VSCode の globalState に覚える */
 import type * as vscode from 'vscode';
+import type { ArchiveFormat } from '../bundle/archiveBundle.ts';
 import type { DetailsLayout, HistoryItem, HistoryOrder } from '../history/protocol.ts';
 import { type ViewedStore, withViewed } from '../history/stackedFiles.ts';
 import type { MessageParts } from '../workingCopy/commitMessage.ts';
@@ -83,4 +84,13 @@ export function detailsLayout(): DetailsLayout {
 
 export async function setDetailsLayout(layout: DetailsLayout): Promise<void> {
   await store?.update('history.detailsLayout', { tree: layout.tree, single: layout.single });
+}
+
+/** 前に選んだアーカイブの形 */
+export function archiveFormat(): ArchiveFormat | undefined {
+  return store?.get<ArchiveFormat>('archive.format');
+}
+
+export async function setArchiveFormat(format: ArchiveFormat): Promise<void> {
+  await store?.update('archive.format', format);
 }

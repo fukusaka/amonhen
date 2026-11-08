@@ -1295,6 +1295,99 @@ async function rerereForgetFlow(): Promise<void> {
  * New Orphan Branch… で履歴のないブランチに切り替える。Keep the Files なら今のファイルが stage されて残り、Start Empty
  * なら何もない。コアの命令（daemon だけ）
  */
+/**
+ * Export Archive… は選んだ形・最上位のフォルダで git archive を書き、Save Repository as Bundle… はすべての履歴を、
+ * 「Only commits after…」は前提のコミット付きの bundle を書く。Fetch from Bundle… はブランチを refs/remotes/<name>/ に
+ * 取り込み、Clone from Bundle… は選んだフォルダに clone する。clone のほかはコアの命令（daemon だけ）
+ */
+async function bundleArchiveFlow(): Promise<void> {
+  const repo = api.manager.current!;
+  const out = join(dirname(root), 'bundle-archive-e2e');
+  rmSync(out, { recursive: true, force: true });
+  mkdirSync(out, { recursive: true });
+  const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+  const head = git('rev-parse', 'HEAD').trim();
+  const pickLabels = (...labels: string[]) => {
+    let i = 0;
+    return async (items: readonly vscode.QuickPickItem[]) => {
+      const label = labels[i++];
+      return items.find((item) => (label === undefined ? true : item.label === label));
+    };
+  };
+  const quiet = { showInformationMessage: async () => undefined };
+  try {
+    // zip、最上位のフォルダは <リポジトリ>-<ブランチ>
+    const zip = join(out, 'e2e.zip');
+    const top = `${basename(root)}-${branch}`.replace(/[\\/:*?"<>|\s]+/g, '-');
+    await withWindow(
+      { ...quiet, showQuickPick: pickLabels('zip', top, 'All Files'), showSaveDialog: async () => vscode.Uri.file(zip) },
+      async () => vscode.commands.executeCommand('amonhen.exportArchive'),
+    );
+    assert.ok(existsSync(zip), lastErrors());
+    assert.equal(readFileSync(zip).subarray(0, 2).toString('latin1'), 'PK', 'zip の形');
+    assert.ok(readFileSync(zip).includes(`${top}/${FILE}`), '最上位のフォルダの下に入る');
+
+    // すべての履歴の bundle
+    const bundle = join(out, 'all.bundle');
+    await withWindow(
+      { ...quiet, showQuickPick: pickLabels('All history'), showSaveDialog: async () => vscode.Uri.file(bundle) },
+      async () => vscode.commands.executeCommand('amonhen.saveRepositoryBundle'),
+    );
+    assert.ok(existsSync(bundle), lastErrors());
+    const listed = git('bundle', 'list-heads', bundle);
+    assert.ok(listed.includes(`${head} HEAD`) && listed.includes(`refs/heads/${branch}`), listed);
+    assert.ok(!readFileSync(bundle).toString('latin1').split('\n\n', 1)[0]!.includes('\n-'), '前提のコミットはない');
+
+    // 1 つ前のコミットより後だけ
+    const after = join(out, 'after.bundle');
+    const base = git('rev-parse', 'HEAD~1').trim();
+    await withWindow(
+      {
+        ...quiet,
+        showQuickPick: pickLabels('Only commits after…', 'A Commit…'),
+        showInputBox: inputs(base),
+        showSaveDialog: async () => vscode.Uri.file(after),
+      },
+      async () => vscode.commands.executeCommand('amonhen.saveRepositoryBundle'),
+    );
+    assert.ok(existsSync(after), lastErrors());
+    assert.ok(readFileSync(after).toString('latin1').includes(`\n-${base}`), '前提のコミットが入る');
+
+    // bundle のブランチを refs/remotes/bundle-e2e/ に
+    await withWindow(
+      { ...quiet, showOpenDialog: async () => [vscode.Uri.file(bundle)], showInputBox: inputs('bundle-e2e') },
+      async () => vscode.commands.executeCommand('amonhen.fetchBundle'),
+    );
+    assert.equal(git('rev-parse', `refs/remotes/bundle-e2e/${branch}`).trim(), head, lastErrors());
+    // 設定のないリモートの名前でも、Remotes の下に並ぶ（リモートの操作は出さない）
+    const sidebar = api.sidebar;
+    const remotes = sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'remotes')!;
+    const fetched = await until('Remotes の下に bundle-e2e が出る', () =>
+      sidebar.getChildren(remotes).find((n) => n.kind === 'remote' && n.remote.name === 'bundle-e2e'),
+    );
+    assert.equal((sidebar.getTreeItem(fetched) as vscode.TreeItem).contextValue, 'remote.unconfigured');
+
+    // clone（ファイル、フォルダの順に選ぶ）
+    await withWindow(
+      {
+        ...quiet,
+        showOpenDialog: async (options: vscode.OpenDialogOptions) => [vscode.Uri.file(options.canSelectFolders ? out : bundle)],
+        showInputBox: inputs('cloned'),
+      },
+      async () => vscode.commands.executeCommand('amonhen.cloneBundle'),
+    );
+    const cloned = join(out, 'cloned');
+    assert.ok(existsSync(join(cloned, '.git')), lastErrors());
+    assert.equal(childProcess.execFileSync('git', ['rev-parse', 'HEAD'], { cwd: cloned, encoding: 'utf8' }).trim(), head);
+  } finally {
+    for (const ref of git('for-each-ref', '--format=%(refname)', 'refs/remotes/bundle-e2e').split('\n').filter(Boolean)) {
+      git('update-ref', '-d', ref);
+    }
+    rmSync(out, { recursive: true, force: true });
+    await repo.refresh();
+  }
+}
+
 async function orphanFlow(): Promise<void> {
   const repo = api.manager.current!;
   const branch = git('symbolic-ref', '--short', 'HEAD').trim();
@@ -3115,6 +3208,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('forgets one rerere resolution and all of them through the daemon', async () => {
     await rerereForgetFlow();
+  });
+
+  test('exports an archive, saves and fetches bundles and clones from one through the daemon', async () => {
+    await bundleArchiveFlow();
   });
 
   test('creates an orphan branch, empty or keeping the files, through the daemon', async () => {

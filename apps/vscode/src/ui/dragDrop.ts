@@ -124,11 +124,11 @@ function dropActions(repo: Repository, source: DragSource, target: DropTarget): 
     ];
   }
 
-  // リモートへ: push。送れるのはローカルブランチだけ
-  if (!source.local) {
+  // リモートへ: push。送れるのはローカルブランチだけで、設定のあるリモートだけ（Fetch from Bundle の名前などには送れない）
+  const remote = target.remote;
+  if (!source.local || !(repo.current.remotes ?? []).some((r) => r.name === remote)) {
     return [];
   }
-  const remote = target.remote;
   const remoteBranch = target.kind === 'remote' ? src : target.ref.slice(`refs/remotes/${remote}/`.length);
   // upstream が無ければ、push 先を upstream にする
   const setUpstream = !source.upstream;

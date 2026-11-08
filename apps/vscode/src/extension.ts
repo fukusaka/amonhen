@@ -17,6 +17,7 @@ import { registerHistoryCommands } from './ui/historyCommands.ts';
 import { MainPanel } from './ui/mainPanel.ts';
 import { registerMergeBranchesCommand } from './ui/mergeBranches.ts';
 import { registerNavCommands } from './ui/navCommands.ts';
+import { registerBundleArchiveCommands } from './ui/bundleArchiveCommands.ts';
 import { registerPatchCommands } from './ui/patchCommands.ts';
 import { registerReflogCommands } from './ui/reflogCommands.ts';
 import { registerSequenceCommands } from './ui/sequenceCommands.ts';
@@ -120,6 +121,7 @@ export async function activate(
     registerSequenceCommands(manager),
     registerHistoryCommands(),
     registerPatchCommands(manager),
+    registerBundleArchiveCommands(manager),
     registerNavCommands(manager, (repo, name) => sidebar.branchFacts.pullRequestOf(repo, name)),
     registerMergeBranchesCommand(manager),
     registerBranchCommands(manager),

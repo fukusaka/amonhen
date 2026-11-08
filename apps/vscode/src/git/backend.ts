@@ -106,6 +106,8 @@ export interface RepositoryBackend {
   stashes(): Promise<Stash[]>;
   submodules(): Promise<SubmoduleConfig[]>;
   object(rev: string): Promise<GitObject | undefined>;
+  /** `rev` の木の中のフォルダ（すべての深さ、パスの順） */
+  treeFolders(rev: string): Promise<string[]>;
   switchBranch(name: string): Promise<void>;
   /** リモートブランチ（`origin/x`）から、同じ名前で追跡するローカルブランチを作って切り替える */
   trackBranch(remoteBranch: string): Promise<void>;
@@ -338,6 +340,11 @@ export class CliBackend implements RepositoryBackend {
     }
     // 該当するキーが無いと終了コード 1
     return parseSubmoduleConfig(await this.read(SUBMODULE_CONFIG_ARGS, [1]));
+  }
+
+  async treeFolders(rev: string): Promise<string[]> {
+    const out = await this.git.exec(['ls-tree', '-d', '-r', '--name-only', '-z', rev], { cwd: this.root, readOnly: true });
+    return out.toString('utf8').split('\0').filter(Boolean);
   }
 
   object(rev: string): Promise<GitObject | undefined> {

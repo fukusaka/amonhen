@@ -296,10 +296,10 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Save as Patch (per commit or mbox, cover letter, -v) | ✓ | ✓ | △ | ✓ | VSCode: No `-v`.<br>CLI: `format-patch`. |
 | Apply Patch (am / apply, preview, 3-way, --index) | ✓ | ✓ | ✓ | ✓ | CLI: `am`, `apply` (`--check`). |
 | Drop patch files on the window | ✓ | ✓ | ✓ | n/a | VSCode: From the Explorer's context menu. |
-| Export Archive (zip / tar.gz / tar, top folder, one folder) | ✓ | ✓ | — | ✓ | CLI: `archive`. |
-| Save as Bundle (all, some refs, after a base) | ✓ | ✓ | — | ✓ | CLI: `bundle create`. |
-| Clone from a bundle file (branch when no HEAD) | ✓ | ✓ | — | ✓ | CLI: `clone <file> [-b <branch>]`. |
-| Fetch from Bundle (under a name, prerequisites checked) | ✓ | ✓ | — | ✓ | CLI: `bundle fetch`. |
+| Export Archive (zip / tar.gz / tar, top folder, one folder) | ✓ | ✓ | ✓ | ✓ | VSCode: With the engine; a branch's or tag's right-click, a commit's in History, or the command palette for HEAD.<br>CLI: `archive`. |
+| Save as Bundle (all, some refs, after a base) | ✓ | ✓ | ✓ | ✓ | VSCode: With the engine; the selected branches' and tags' right-click, or the sidebar's ⋯ for the whole repository.<br>CLI: `bundle create`. |
+| Clone from a bundle file (branch when no HEAD) | ✓ | ✓ | ✓ | ✓ | VSCode: The sidebar's ⋯ and the welcome view; then open the clone, in a new window or in the workspace.<br>CLI: `clone <file> [-b <branch>]`. |
+| Fetch from Bundle (under a name, prerequisites checked) | ✓ | ✓ | ✓ | ✓ | VSCode: With the engine; the sidebar's ⋯.<br>CLI: `bundle fetch`. |
 | Stopped `am` with Retry with 3-Way, Skip, Abort, Continue | ✓ | ✓ | ✓ | ✓ | VSCode: In a sidebar row.<br>CLI: `am --continue / --skip / --abort / --retry-3way`. |
 
 ## 8. Merge editor
@@ -385,7 +385,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| English UI with a Japanese translation | ✓ | ✓ | — | ✓ | VSCode: Not localized; some messages are in Japanese. |
+| English UI with a Japanese translation | ✓ | ✓ | — | ✓ | VSCode: English only, not translated. |
 
 ## 14. Worktrees
 
