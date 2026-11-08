@@ -1193,23 +1193,29 @@ impl Browser {
                 .view
                 .sort_by_column(opened.as_ref(), gtk::SortType::Descending),
         }
-        // 見出しの説明（macOS 版の `headerToolTip`）。列の見出しの部品は表の見出しの行の子に、列の順に並ぶ。
-        let tips = [
-            None,
-            Some(tr!("Current branch")),
-            Some(tr!(
+        // 見出しの説明（macOS 版の `headerToolTip`）。列の見出しの部品は表の見出しの行の子に、今の列の順に並ぶ
+        // （並べ替えた列にも、その列の説明を付ける）。
+        let tip = |id: &str| match id {
+            "branch" => Some(tr!("Current branch")),
+            "status" => Some(tr!(
                 "Changes n: files with changes\n↑ commits ahead of the upstream · ↓ commits behind it\n✓ no changes and same as the upstream"
             )),
-            Some(tr!("Date and subject of the last commit")),
-            Some(tr!("When you last opened it in this app (— if never)")),
-        ];
+            "commit" => Some(tr!("Date and subject of the last commit")),
+            "opened" => Some(tr!("When you last opened it in this app (— if never)")),
+            _ => None,
+        };
         let titles = std::iter::successors(
             self.view.first_child().and_then(|h| h.first_child()),
             gtk::Widget::next_sibling,
         )
         .filter(|w| w.type_().name() == "GtkColumnViewTitle");
-        for (title, tip) in titles.zip(tips) {
-            title.set_tooltip_text(tip.as_deref());
+        let columns = self.view.columns();
+        for (i, title) in titles.enumerate() {
+            let id = columns
+                .item(i as u32)
+                .and_downcast::<gtk::ColumnViewColumn>()
+                .and_then(|c| c.id());
+            title.set_tooltip_text(id.and_then(|id| tip(&id)).as_deref());
         }
         // 並べ替えを変えたら覚える。Status・Last Commit・Opened は、初めて押したとき新しい順・多い順にする（名前と
         // ブランチは昇順。macOS 版の列の `sortDescriptorPrototype` と同じ）。
