@@ -305,10 +305,13 @@ final class Actions {
     }
 
     /// 今のブランチ（detached HEAD なら HEAD）を `target` に動かす。動かし方（soft・mixed・hard）は確認のシートで選ぶ。
+    /// シートには前と後の絵（外れるコミット）と、選んだ動かし方で今との違いがどこへ行くかを出す。外れるコミットを
+    /// 上流が持っていれば、このあとの Push に Force Push が要ることも。
     func reset(to target: String) {
         Task { @MainActor in
             let short = String(target.prefix(8))
             let name = currentBranch ?? "HEAD"
+            let preview = await movePreview(from: "HEAD", to: target, branch: currentBranch)
             let alert = makeAlert(L("Reset %@ to %@?", name, short), L("Commits taken off stay in Reflog.") + " " + Self.canUndo)
             alert.addButton(withTitle: "Reset")
             alert.addButton(withTitle: L("Cancel"))
@@ -317,13 +320,50 @@ final class Actions {
                 ("mixed", L("Mixed: keep the changes in the working tree")),
                 ("hard", L("Hard: match the commit (uncommitted changes are stashed first)")),
             ]
-            let target_ = ClosureTarget {}
-            let radios = modes.map { NSButton(radioButtonWithTitle: $0.1, target: target_, action: #selector(ClosureTarget.fire)) }
+            // 選んだ動かし方で、今との違いがどこへ行くか。
+            let note = NSTextField(wrappingLabelWithString: "")
+            note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+            note.textColor = .secondaryLabelColor
+            note.preferredMaxLayoutWidth = 684
+            let files = preview?.files ?? 0
+            let radios = modes.map { NSButton(radioButtonWithTitle: $0.1, target: nil, action: nil) }
+            let update = {
+                let mode = zip(radios, modes).first(where: { $0.0.state == .on })?.1.0 ?? "mixed"
+                note.stringValue = switch mode {
+                case "soft": L("The difference from now (%ld files) stays staged.", files)
+                case "hard": L("The working tree matches the commit; the difference from now (%ld files) goes away (Undo brings it back).", files)
+                default: L("The difference from now (%ld files) stays in the working tree.", files)
+                }
+                note.isHidden = files == 0
+            }
+            let target_ = ClosureTarget(update)
+            for radio in radios {
+                radio.target = target_
+                radio.action = #selector(ClosureTarget.fire)
+            }
             radios[1].state = .on
-            let stack = NSStackView(views: radios)
+            update()
+            var views: [NSView] = []
+            if let preview, preview.drawing != nil {
+                let drawing = MoveDrawingView(moving: name, kind: "local", afterTitle: L("After the reset"),
+                                              lostNote: L("taken off"), lostColor: nil)
+                drawing.preview = preview
+                views.append(drawing)
+            }
+            views += radios
+            views.append(note)
+            if let preview, preview.upstreamHas > 0, let upstream = preview.upstream {
+                let warning = NSTextField(wrappingLabelWithString: "⚠︎ " + L("%@ has commits this takes off, so pushing afterwards needs Force Push.", upstream))
+                warning.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+                warning.textColor = .systemOrange
+                warning.preferredMaxLayoutWidth = 684
+                views.append(warning)
+            }
+            let stack = NSStackView(views: views)
             stack.orientation = .vertical
             stack.alignment = .leading
             stack.spacing = 4
+            if let first = views.first as? MoveDrawingView { stack.setCustomSpacing(10, after: first) }
             stack.frame.size = stack.fittingSize
             alert.accessoryView = stack
             let response = await present(alert)
