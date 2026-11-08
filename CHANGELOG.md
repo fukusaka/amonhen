@@ -61,6 +61,7 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- Editing commits right after another tool moved HEAD no longer fails with "HEAD isn’t in the History".
 - Writing to the repository (stash, commit and the like) no longer fails now and then with "index.lock: File exists"
   because the engine was refreshing Working Copy at the same moment.
 - On Windows, removing a worktree whose folder another program was using for a moment no longer leaves the folder

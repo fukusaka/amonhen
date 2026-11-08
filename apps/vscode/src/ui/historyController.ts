@@ -425,12 +425,7 @@ export class HistoryController implements vscode.Disposable {
       if (!reply.ok) throw new Error(reply.error ?? 'Can’t read the commits');
       return reply.text ?? '';
     };
-    // HEAD が動いた直後は、コアの History がまだ前のままで断られる。読み直してから、もう一度だけ頼む
-    const listed = await run({ op: 'editableCommits', throughMerges: true }).catch(async () => {
-      await this.reset();
-      return run({ op: 'editableCommits', throughMerges: true });
-    });
-    const line = listed
+    const line = (await run({ op: 'editableCommits', throughMerges: true }))
       .split('\n')
       .filter(Boolean)
       .map((l) => ({ oid: l.slice(0, l.indexOf(' ') < 0 ? undefined : l.indexOf(' ')), merge: l.endsWith(' merge') }));
