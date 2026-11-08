@@ -64,6 +64,10 @@ becomes the GitHub Release notes.
   Commit, Push and Delete buttons lose their colour.
 - The macOS app ends long Reflog and Stashes rows with "…", and a new window starts with focus in History rather than
   the branch filter.
+- GTK4: flexible spaces in the toolbar go anywhere and share the free width equally, with no fixed boundary between the
+  two ends of the header.
+- macOS: in a narrow window the merge editor's bar hides its lesser buttons, keeping the conflict position, Save and
+  Mark Resolved usable.
 - The merge editor's safe rules run once per conflict, so saving no longer reapplies what Undo took back.
 - Rows that only look consecutive in a filtered History are no longer treated as a range, and a binary conflict no
   longer counts as resolved without markers.
