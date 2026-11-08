@@ -570,7 +570,8 @@ async function fileHistoryFlow(): Promise<void> {
     // マージも出すに切り替えると読み直す
     mark = posted.length;
     await panel.fileHistory.handle({ type: 'fileHistoryLoad', merges: true });
-    assert.equal((await waitPosted('fileHistory', mark, (m) => m.complete)).merges, true);
+    // 前の読み込みの答えが後から届くことがある。切り替えた答えを待つ
+    await waitPosted('fileHistory', mark, (m) => m.complete && m.merges);
 
     // ダブルクリックで、そのコミットを History で選ぶ
     mark = posted.length;
