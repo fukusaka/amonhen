@@ -57,6 +57,7 @@
 "For this edit only (git’s update-ref). Starts from rebase.updateRefs." = "この編集だけの指定です（git の update-ref）。最初は rebase.updateRefs のとおり。";
 "Now" = "今";
 "After the rebase" = "rebase の後";
+"split off %@" = "%@に分かれた";
 "After the push" = "Push の後";
 "After the force push" = "Force Push の後";
 "removed from %@" = "%@ から消える";

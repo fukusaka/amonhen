@@ -20,31 +20,56 @@ class GraphDrawingView: NSView {
 
     override var isFlipped: Bool { true }
 
+    /// 省いたコミットの行（`lane` の線の、`y` の行。そこだけ線を点線にして「ほか n コミット」と書く）。
+    struct Gap {
+        let lane: Int
+        let y: CGFloat
+        let count: Int
+    }
+
     /// 1 列を描く。`rows` の lane 1 は右の線（いちばん下で lane 0 へ合流）。`highlightTop` は強調する上からの行数。
+    /// `gaps` は省いたところ、`baseNote` は分かれたところに添える文（いつ分かれたか）。
     func drawColumn(
         x: CGFloat, rows: [GraphRow], baseY: CGFloat,
-        base: RewritePreview.Drawing.Commit?, moreY: CGFloat?, more: Int, highlightTop: Int = 0,
+        base: RewritePreview.Drawing.Commit?, gaps: [Gap] = [], highlightTop: Int = 0, baseNote: String? = nil,
         labels: (String) -> [(String, String, Bool)]
     ) {
         let laneX = { (lane: Int) in x + 10 + CGFloat(lane) * Self.laneWidth }
         let center = { (y: CGFloat) in y + Self.rowHeight / 2 }
-        // 線。
-        let path = NSBezierPath()
-        path.lineWidth = 2
+        let solid = NSBezierPath()
+        solid.lineWidth = 2
+        let dashed = NSBezierPath()
+        dashed.lineWidth = 2
+        dashed.setLineDash([3, 3], count: 2, phase: 0)
+        // まっすぐな線を、省いたところ（前の点から次の点まで）だけ点線にして引く。
+        func vertical(_ lane: Int, from top: CGFloat, to bottom: CGFloat) {
+            var y = top
+            for gap in gaps.filter({ $0.lane == lane }).sorted(by: { $0.y < $1.y }) {
+                let (a, b) = (center(gap.y) - Self.rowHeight, center(gap.y) + Self.rowHeight)
+                guard a >= top, b <= bottom else { continue }
+                solid.move(to: NSPoint(x: laneX(lane), y: y))
+                solid.line(to: NSPoint(x: laneX(lane), y: a))
+                dashed.move(to: NSPoint(x: laneX(lane), y: a))
+                dashed.line(to: NSPoint(x: laneX(lane), y: b))
+                y = b
+            }
+            solid.move(to: NSPoint(x: laneX(lane), y: y))
+            solid.line(to: NSPoint(x: laneX(lane), y: bottom))
+        }
         let lane1 = rows.filter { $0.lane == 1 }
         if let first = lane1.first, let last = lane1.last {
-            path.move(to: NSPoint(x: laneX(1), y: center(first.y)))
-            path.line(to: NSPoint(x: laneX(1), y: center(last.y)))
-            path.curve(to: NSPoint(x: laneX(0), y: center(baseY)), controlPoint1: NSPoint(x: laneX(1), y: center(baseY) - 6),
-                       controlPoint2: NSPoint(x: laneX(0), y: center(last.y) + 8))
+            let lastY = max(last.y, gaps.filter { $0.lane == 1 }.map(\.y).max() ?? last.y)
+            vertical(1, from: center(first.y), to: center(lastY))
+            solid.move(to: NSPoint(x: laneX(1), y: center(lastY)))
+            solid.curve(to: NSPoint(x: laneX(0), y: center(baseY)), controlPoint1: NSPoint(x: laneX(1), y: center(baseY) - 6),
+                        controlPoint2: NSPoint(x: laneX(0), y: center(lastY) + 8))
         }
-        let lane0 = rows.filter { $0.lane == 0 }
-        if let first = lane0.first {
-            path.move(to: NSPoint(x: laneX(0), y: center(first.y)))
-            path.line(to: NSPoint(x: laneX(0), y: center(baseY)))
+        if let first = rows.first(where: { $0.lane == 0 }) {
+            vertical(0, from: center(first.y), to: center(baseY))
         }
         NSColor.secondaryLabelColor.withAlphaComponent(0.5).setStroke()
-        path.stroke()
+        solid.stroke()
+        dashed.stroke()
         // 点と件名、札。
         for (i, row) in rows.enumerated() {
             let highlighted = i < highlightTop
@@ -52,15 +77,23 @@ class GraphDrawingView: NSView {
                     subject: row.commit.subject, dim: row.dim, highlighted: highlighted, labels: labels(row.commit.oid),
                     hollow: row.hollow, note: row.note, noteColor: row.noteColor)
         }
-        if let moreY {
-            NSString(string: L("and %ld more", more)).draw(
-                at: NSPoint(x: laneX(1) + 14, y: moreY + 3),
+        for gap in gaps {
+            NSString(string: L("and %ld more", gap.count)).draw(
+                at: NSPoint(x: laneX(1) + 14, y: gap.y + 3),
                 withAttributes: [.font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize), .foregroundColor: NSColor.tertiaryLabelColor])
         }
         if let base {
             drawRow(at: NSPoint(x: laneX(0), y: baseY), textX: laneX(1) + 14, width: x + Self.columnWidth, subject: base.subject,
-                    dim: true, highlighted: false, labels: labels(base.oid))
+                    dim: true, highlighted: false, labels: labels(base.oid), note: baseNote)
         }
+    }
+
+    /// 分かれたところに添える文（「3 か月前に分かれた」）。日時がなければ nil。
+    static func splitNote(_ base: RewritePreview.Drawing.Commit?) -> String? {
+        guard let time = base?.time, time > 0 else { return nil }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return L("split off %@", formatter.localizedString(for: Date(timeIntervalSince1970: TimeInterval(time)), relativeTo: Date()))
     }
 
     /// 1 行を描く。`hollow` なら中を抜いた点（外れる・消えるコミット）、`note` は件名の後ろに `noteColor` で添える。
@@ -129,7 +162,7 @@ final class RewriteDrawingView: GraphDrawingView {
 
     override var intrinsicContentSize: NSSize {
         guard let d = preview?.drawing else { return NSSize(width: Self.columnWidth * 2 + 24, height: 0) }
-        let rows = max(d.picks.count + d.onto.count + (d.ontoMore > 0 ? 1 : 0) + 1, d.picks.count + d.onto.count + 1)
+        let rows = d.picks.count + d.onto.count + (d.ontoMore > 0 ? 1 : 0) + 1
         return NSSize(width: Self.columnWidth * 2 + 24, height: CGFloat(rows) * Self.rowHeight + 26)
     }
 
@@ -152,14 +185,17 @@ final class RewriteDrawingView: GraphDrawingView {
             rows.append(GraphRow(commit: c, lane: 1, dim: true, y: y))
             y += Self.rowHeight
         }
-        for c in d.onto {
+        // 載せ先で進んだコミットは、長ければ真ん中を省く（そこだけ点線）。
+        let moreAt = d.ontoMore > 0 ? (d.ontoMoreAt ?? d.onto.count) : -1
+        var gaps: [Gap] = []
+        for (i, c) in d.onto.enumerated() {
+            if i == moreAt { gaps.append(Gap(lane: 0, y: y, count: d.ontoMore)); y += Self.rowHeight }
             rows.append(GraphRow(commit: c, lane: 0, dim: false, y: y))
             y += Self.rowHeight
         }
-        let moreY = d.ontoMore > 0 ? y : nil
-        if d.ontoMore > 0 { y += Self.rowHeight }
+        if moreAt == d.onto.count { gaps.append(Gap(lane: 0, y: y, count: d.ontoMore)); y += Self.rowHeight }
         let baseY = y
-        drawColumn(x: 0, rows: rows, baseY: baseY, base: d.base, moreY: moreY, more: d.ontoMore, labels: { oid in
+        drawColumn(x: 0, rows: rows, baseY: baseY, base: d.base, gaps: gaps, baseNote: Self.splitNote(d.base), labels: { oid in
             // 左には今のブランチの札をすべて（動くものも、まだ元のところにある）。
             (labels[oid] ?? []).map { ($0.name, $0.kind, $0.name == preview.current) }
         })
@@ -171,13 +207,14 @@ final class RewriteDrawingView: GraphDrawingView {
             after.append(GraphRow(commit: RewritePreview.Drawing.Commit(oid: c.oid, subject: c.subject + "′"), lane: 0, dim: false, y: y))
             y += Self.rowHeight
         }
-        for c in d.onto {
+        var afterGaps: [Gap] = []
+        for (i, c) in d.onto.enumerated() {
+            if i == moreAt { afterGaps.append(Gap(lane: 0, y: y, count: d.ontoMore)); y += Self.rowHeight }
             after.append(GraphRow(commit: c, lane: 0, dim: true, y: y))
             y += Self.rowHeight
         }
-        let afterMoreY = d.ontoMore > 0 ? y : nil
-        if d.ontoMore > 0 { y += Self.rowHeight }
-        drawColumn(x: Self.columnWidth + 24, rows: after, baseY: y, base: d.base, moreY: afterMoreY, more: d.ontoMore,
+        if moreAt == d.onto.count { afterGaps.append(Gap(lane: 0, y: y, count: d.ontoMore)); y += Self.rowHeight }
+        drawColumn(x: Self.columnWidth + 24, rows: after, baseY: y, base: d.base, gaps: afterGaps,
                    highlightTop: picks.count, labels: { oid in
             var out: [(String, String, Bool)] = []
             // 今のブランチは先頭の A′ へ、一緒に動くブランチは、元の先頭に対応する A′ へ。

@@ -58,6 +58,8 @@ nonisolated struct RewritePreview: Decodable, Sendable {
         struct Commit: Decodable, Sendable {
             let oid: String
             let subject: String
+            /// 分かれたところだけ: 作った日時（Unix 秒）。
+            var time: Int64? = nil
         }
 
         struct Label: Decodable, Sendable {
@@ -72,6 +74,8 @@ nonisolated struct RewritePreview: Decodable, Sendable {
         /// 載せ先で進んだコミット（新しい順、先頭のいくつか）と、ほかにいくつあるか。
         let onto: [Commit]
         let ontoMore: Int
+        /// 省いたところ（`onto` の何番目の前か。古いエンジンは送らないので、末尾として扱う）。
+        let ontoMoreAt: Int?
         /// 分かれたところ。
         let base: Commit?
         let labels: [Label]

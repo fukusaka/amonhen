@@ -7,9 +7,12 @@ nonisolated struct MovePreview: Decodable, Sendable {
         /// 行き先だけから辿れるコミット（新しい順、先頭のいくつか）と、ほかにいくつあるか。
         let gained: [RewritePreview.Drawing.Commit]
         let gainedMore: Int
+        /// 省いたところ（`gained` の何番目の前か）。
+        let gainedMoreAt: Int?
         /// 今のところだけから辿れる、外れるコミット（新しい順、先頭のいくつか）と、ほかにいくつあるか。
         let lost: [RewritePreview.Drawing.Commit]
         let lostMore: Int
+        let lostMoreAt: Int?
         /// 分かれたところ。
         let base: RewritePreview.Drawing.Commit?
         let labels: [RewritePreview.Drawing.Label]
@@ -95,16 +98,18 @@ final class MoveDrawingView: GraphDrawingView {
             let x = after ? Self.columnWidth + 24 : 0
             var y: CGFloat = 22
             var rows: [GraphRow] = []
-            var more: [(y: CGFloat, count: Int, lane: Int)] = []
-            for c in d.gained {
+            var gaps: [Gap] = []
+            // 長ければ真ん中を省く（そこだけ点線にして「ほか n コミット」）。
+            let gainedAt = d.gainedMore > 0 ? (d.gainedMoreAt ?? d.gained.count) : -1
+            for (i, c) in d.gained.enumerated() {
+                if i == gainedAt { gaps.append(Gap(lane: 0, y: y, count: d.gainedMore)); y += Self.rowHeight }
                 rows.append(GraphRow(commit: c, lane: 0, dim: false, y: y))
                 y += Self.rowHeight
             }
-            if d.gainedMore > 0 {
-                more.append((y, d.gainedMore, 0))
-                y += Self.rowHeight
-            }
-            for c in d.lost {
+            if gainedAt == d.gained.count { gaps.append(Gap(lane: 0, y: y, count: d.gainedMore)); y += Self.rowHeight }
+            let lostAt = d.lostMore > 0 ? (d.lostMoreAt ?? d.lost.count) : -1
+            for (i, c) in d.lost.enumerated() {
+                if i == lostAt { gaps.append(Gap(lane: lostLane, y: y, count: d.lostMore)); y += Self.rowHeight }
                 var row = GraphRow(commit: c, lane: lostLane, dim: after, y: y)
                 if after {
                     row.hollow = true
@@ -114,25 +119,17 @@ final class MoveDrawingView: GraphDrawingView {
                 rows.append(row)
                 y += Self.rowHeight
             }
-            if d.lostMore > 0 {
-                more.append((y, d.lostMore, lostLane))
-                y += Self.rowHeight
-            }
-            drawColumn(x: x, rows: rows, baseY: y, base: d.base, moreY: nil, more: 0,
-                       highlightTop: after ? d.gained.count : 0, labels: { oid in
+            if lostAt == d.lost.count { gaps.append(Gap(lane: lostLane, y: y, count: d.lostMore)); y += Self.rowHeight }
+            // 両方の側があれば、左の分かれたところに、いつ分かれたか。
+            let split = !after && !d.gained.isEmpty && !d.lost.isEmpty ? Self.splitNote(d.base) : nil
+            drawColumn(x: x, rows: rows, baseY: y, base: d.base, gaps: gaps,
+                       highlightTop: after ? d.gained.count : 0, baseNote: split, labels: { oid in
                 var out = (labels[oid] ?? []).filter { $0.name != self.moving }.map { ($0.name, $0.kind, false) }
                 // 動かす ref は、左では今のところ、右では行き先に、塗った札で。
                 let here = after ? oid == destination : labels[oid]?.contains { $0.name == self.moving } == true
                 if here { out.insert((self.moving, self.movingKind, true), at: 0) }
                 return out
             })
-            let laneX = { (lane: Int) in x + 10 + CGFloat(lane) * Self.laneWidth }
-            for m in more {
-                NSString(string: L("and %ld more", m.count)).draw(
-                    at: NSPoint(x: laneX(1) + 14, y: m.y + 3),
-                    withAttributes: [.font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
-                                     .foregroundColor: NSColor.tertiaryLabelColor])
-            }
         }
         // 真ん中の矢印。
         NSString(string: "→").draw(
