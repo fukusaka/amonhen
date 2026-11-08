@@ -71,6 +71,9 @@ nonisolated struct RewritePreview: Decodable, Sendable {
 
         /// 載せ直すコミット（古い順）。
         let picks: [Commit]
+        /// 省いた載せ直すコミットの数と、新しい順に並べたときの省いたところ（古いエンジンは送らない）。
+        let picksMore: Int?
+        let picksMoreAt: Int?
         /// 載せ先で進んだコミット（新しい順、先頭のいくつか）と、ほかにいくつあるか。
         let onto: [Commit]
         let ontoMore: Int

@@ -162,7 +162,7 @@ final class RewriteDrawingView: GraphDrawingView {
 
     override var intrinsicContentSize: NSSize {
         guard let d = preview?.drawing else { return NSSize(width: Self.columnWidth * 2 + 24, height: 0) }
-        let rows = d.picks.count + d.onto.count + (d.ontoMore > 0 ? 1 : 0) + 1
+        let rows = d.picks.count + ((d.picksMore ?? 0) > 0 ? 1 : 0) + d.onto.count + (d.ontoMore > 0 ? 1 : 0) + 1
         return NSSize(width: Self.columnWidth * 2 + 24, height: CGFloat(rows) * Self.rowHeight + 26)
     }
 
@@ -181,13 +181,17 @@ final class RewriteDrawingView: GraphDrawingView {
         let picks = Array(d.picks.reversed())
         var y = top
         var rows: [GraphRow] = []
-        for c in picks {
+        var gaps: [Gap] = []
+        // 載せ直すコミットも載せ先で進んだコミットも、長ければ真ん中を省く（そこだけ点線）。
+        let picksMore = d.picksMore ?? 0
+        let picksAt = picksMore > 0 ? (d.picksMoreAt ?? picks.count) : -1
+        for (i, c) in picks.enumerated() {
+            if i == picksAt { gaps.append(Gap(lane: 1, y: y, count: picksMore)); y += Self.rowHeight }
             rows.append(GraphRow(commit: c, lane: 1, dim: true, y: y))
             y += Self.rowHeight
         }
-        // 載せ先で進んだコミットは、長ければ真ん中を省く（そこだけ点線）。
+        if picksAt == picks.count { gaps.append(Gap(lane: 1, y: y, count: picksMore)); y += Self.rowHeight }
         let moreAt = d.ontoMore > 0 ? (d.ontoMoreAt ?? d.onto.count) : -1
-        var gaps: [Gap] = []
         for (i, c) in d.onto.enumerated() {
             if i == moreAt { gaps.append(Gap(lane: 0, y: y, count: d.ontoMore)); y += Self.rowHeight }
             rows.append(GraphRow(commit: c, lane: 0, dim: false, y: y))
@@ -202,12 +206,14 @@ final class RewriteDrawingView: GraphDrawingView {
 
         // 右: rebase の後。載せ直したコミット（A′）が載せ先の上に 1 本で続く。
         var after: [GraphRow] = []
+        var afterGaps: [Gap] = []
         y = top
-        for c in picks {
+        for (i, c) in picks.enumerated() {
+            if i == picksAt { afterGaps.append(Gap(lane: 0, y: y, count: picksMore)); y += Self.rowHeight }
             after.append(GraphRow(commit: RewritePreview.Drawing.Commit(oid: c.oid, subject: c.subject + "′"), lane: 0, dim: false, y: y))
             y += Self.rowHeight
         }
-        var afterGaps: [Gap] = []
+        if picksAt == picks.count { afterGaps.append(Gap(lane: 0, y: y, count: picksMore)); y += Self.rowHeight }
         for (i, c) in d.onto.enumerated() {
             if i == moreAt { afterGaps.append(Gap(lane: 0, y: y, count: d.ontoMore)); y += Self.rowHeight }
             after.append(GraphRow(commit: c, lane: 0, dim: true, y: y))
