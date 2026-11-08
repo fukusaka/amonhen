@@ -14,6 +14,8 @@ export interface DiffLine {
   /** 表示用の行番号（1 始まり）。新しい側 */
   new?: number;
   text: string;
+  /** HEAD → 作業ツリーの差分（FileDiff の combined）で、この変更が index に入っている（次のコミットに含める） */
+  staged?: boolean;
 }
 
 export interface DiffHunk {
@@ -30,6 +32,8 @@ export interface FileDiff {
   tooLarge?: boolean;
   /** ファイルの改行（Working Copy の stage していない差分だけ） */
   lineEndings?: LineEndings;
+  /** HEAD → 作業ツリーの 1 つの差分で、変更の行に staged の印がある（Working Copy、エンジンがあるとき） */
+  combined?: boolean;
 }
 
 /** 選んだ行。kind と、その側の行番号 */

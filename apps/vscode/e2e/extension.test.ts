@@ -178,6 +178,14 @@ async function workingCopyFlow(label: string): Promise<void> {
       '変えた 1 行だけが差分になる（改行の違いで全体が書き換えに見えない）',
     );
     const selected = lines.map((l): SelectedLine => (l.kind === '-' ? { kind: '-', old: l.old! } : { kind: '+', new: l.new! }));
+    // エンジンがあれば HEAD → 作業ツリーの 1 つの差分で、行に staged の印がある
+    if (label === 'daemon') {
+      assert.equal(diff!.combined, true, 'HEAD → 作業ツリーの差分');
+      assert.deepEqual(
+        lines.map((l) => l.staged),
+        lines.map(() => group === 'staged'),
+      );
+    }
     return { group, path: FILE, version: diff!.version, lines: selected };
   };
   const numstat = (...args: string[]) => git('diff', '--numstat', ...args).trim();
@@ -186,7 +194,8 @@ async function workingCopyFlow(label: string): Promise<void> {
   // 行単位の stage と unstage
   await wc.handle({ type: 'wcStageLines', ...(await select('unstaged')) });
   await until('stage', () => numstat('--cached') === one && numstat() === '');
-  await wc.handle({ type: 'wcStageLines', ...(await select('staged')) });
+  // 1 つの差分では、外すことを stage: false で頼む（git 実行層では見ない）
+  await wc.handle({ type: 'wcStageLines', ...(await select('staged')), stage: false });
   await until('unstage', () => numstat('--cached') === '' && numstat() === one);
 
   // 行の破棄（確かめのダイアログには Discard と答える）と、その Undo

@@ -256,8 +256,14 @@ export class WorkingCopyController implements vscode.Disposable {
     if (!client) {
       return undefined;
     }
-    const mode = change.group === 'staged' ? 'staged' : 'unstaged';
-    return readWorkingDiff(await client.call({ op: 'workingDiff', path: change.path, mode }));
+    // HEAD → 作業ツリーの 1 つの差分（行ごとに staged の印）。index を「HEAD に変更の一部を当てたもの」で表せない
+    // ファイルは、コアが断るので、今までどおり Changes・Staged の差分に
+    try {
+      return readWorkingDiff(await client.call({ op: 'workingDiff', path: change.path, mode: 'combined' }));
+    } catch {
+      const mode = change.group === 'staged' ? 'staged' : 'unstaged';
+      return readWorkingDiff(await client.call({ op: 'workingDiff', path: change.path, mode }));
+    }
   }
 
   private async loadDiff(change: Change): Promise<ComputedDiff> {
@@ -332,7 +338,7 @@ export class WorkingCopyController implements vscode.Disposable {
       case 'wcStageLines': {
         const change = find(message.group, message.path);
         if (change) {
-          await this.stageLines(repo, change, message.version, message.lines).catch(showError);
+          await this.stageLines(repo, change, message.version, message.lines, message.stage ?? true).catch(showError);
         }
         break;
       }
@@ -419,10 +425,11 @@ export class WorkingCopyController implements vscode.Disposable {
     change: Change,
     version: string,
     lines: Extract<WorkingCopyWebviewMessage, { type: 'wcStageLines' }>['lines'],
+    stage = true,
   ): Promise<void> {
     const daemon = await this.daemonDiff(change);
     if (daemon) {
-      return this.stageLinesThroughDaemon(repo, change, version, lines, daemon);
+      return this.stageLinesThroughDaemon(repo, change, version, lines, daemon, stage);
     }
     // 表示している差分と今の内容が違えば、選んだ行がずれるので当てない
     const fresh = await this.loadDiff(change);
@@ -458,6 +465,7 @@ export class WorkingCopyController implements vscode.Disposable {
     version: string,
     lines: Extract<WorkingCopyWebviewMessage, { type: 'wcStageLines' }>['lines'],
     fresh: DaemonDiff,
+    stage: boolean,
   ): Promise<void> {
     if (fresh.diff.version !== version) {
       this.post({ type: 'wcDiff', group: change.group, diff: fresh.diff });
@@ -469,6 +477,15 @@ export class WorkingCopyController implements vscode.Disposable {
       return;
     }
     const client = (await daemonFor(repo.root))!;
+    if (fresh.diff.combined) {
+      // HEAD → 作業ツリーの差分: 選んだ行を index に入れる・外す（すべて入れれば git add、すべて外せば git reset と同じ）
+      try {
+        await client.call({ op: 'stageRows', diff: fresh.handle, rows, stage });
+      } finally {
+        await repo.refresh();
+      }
+      return;
+    }
     const op = change.group === 'staged' ? 'unstage' : 'stage';
     try {
       // すべての行を選んで中身が空になるなら、index のエントリごと戻す（削除の stage、新規ファイルの unstage）

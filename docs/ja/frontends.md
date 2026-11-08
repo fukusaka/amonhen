@@ -231,7 +231,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Fixup / Squash Commit For | ✓ | ✓ | ✓ | n/a |  |
 | hooks の出力のシート | ✓ | ✓ | ✓ | n/a |  |
 | Commit が押せない理由を出す | — | — | △ | n/a | VSCode: コミットできないときに注意を出す。 |
-| HEAD → 作業ツリーの 1 つの差分と、行・hunk のチェック | ✓ | ✓ | △ | ✓ | VSCode: 別々の未ステージ・ステージ済みの差分で行をステージ。<br>CLI: `diff --combined`・`stage --rows`。 |
+| HEAD → 作業ツリーの 1 つの差分と、行・hunk のチェック | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあれば。なければ別々の未ステージ・ステージ済みの差分で行をステージ。<br>CLI: `diff --combined`・`stage --rows`。 |
 | 行の範囲の選択、J/K・⌥J/⌥K | ✓ | ✓ | ✓ | n/a |  |
 | 重ねられないファイルの Unstaged / Staged の切り替え | ✓ | ✓ | n/a | ✓ | VSCode: いつも別々に出す。<br>CLI: `diff --staged`。 |
 | 差分の表示の選択（unified/split・空白・前後の行・折り返し） | — | — | — | n/a |  |

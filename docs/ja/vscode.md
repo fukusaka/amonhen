@@ -248,3 +248,4 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 45. Rebase の確認に、今と後のコミットをブランチの札と一緒に出す
 - [x] 46. Rebuild History
 - [x] 47. 拡張自身の fetch・push も、120 秒何も出さなければ止める
+- [x] 48. Working Copy: HEAD → 作業ツリーの 1 つの差分、変わった行と hunk ごとのチェック
