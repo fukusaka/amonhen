@@ -63,6 +63,7 @@ becomes the GitHub Release notes.
 #### Fixed
 
 - On Windows, removing a worktree whose folder another program was using for a moment no longer leaves the folder
+  behind, unregistered and impossible to remove from the app, and removing such a submodule no longer fails.
   behind, unregistered and impossible to remove from the app.
 - GTK4: ↑ and ↓ in the sidebar skip headings and folders, as on macOS, instead of stopping on them.
 - In a narrow GTK4 merge editor, the bar hides its lesser buttons instead of cutting every button's name.

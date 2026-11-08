@@ -142,8 +142,24 @@ impl Git {
                 {
                     return Err(tr!("Stage or discard the changes to .gitmodules first").into());
                 }
+                // Windows では、ほかのプロセスが中のフォルダーを使っていると、deinit は消せないまま進み、rm が
+                // 「could not remove」で断る。手放されるのを待って、2 秒まで試し直す。
                 self.write(&["submodule", "deinit", "-f", "--", path])?;
-                self.write(&["rm", "-f", "--", path])?;
+                let started = std::time::Instant::now();
+                loop {
+                    match self.write(&["rm", "-f", "--", path]) {
+                        Err(e)
+                            if e.to_string().contains("could not remove")
+                                && started.elapsed() < std::time::Duration::from_secs(2) =>
+                        {
+                            std::thread::sleep(std::time::Duration::from_millis(100));
+                        }
+                        result => {
+                            result?;
+                            break;
+                        }
+                    }
+                }
                 if *delete_git_dir {
                     let dir =
                         self.read(&["rev-parse", "--git-path", &format!("modules/{name}")])?;
