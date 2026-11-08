@@ -775,6 +775,19 @@ pub enum Command {
 /// リポジトリ専用のコミットのテンプレートの置き場所（`<git dir>` から）。
 const COMMIT_TEMPLATE: &str = "amonhen/commit-template";
 
+/// 前と後の絵に描くコミット（新しい順）を、長ければ真ん中で省く: 新しい 3 つと、分かれたところに近い古い 2 つ。
+/// 描くもの、省いた数、省いたところ（描くものの何番目の前か）を返す。
+fn elide(commits: &[Oid]) -> (Vec<Oid>, usize, usize) {
+    const NEW: usize = 3;
+    const OLD: usize = 2;
+    if commits.len() <= NEW + OLD + 1 {
+        return (commits.to_vec(), 0, commits.len());
+    }
+    let mut shown = commits[..NEW].to_vec();
+    shown.extend_from_slice(&commits[commits.len() - OLD..]);
+    (shown, commits.len() - NEW - OLD, NEW)
+}
+
 impl Repository {
     /// 専用のテンプレートのファイルのパス（git の `commit.template` に書く。絶対パス）。
     fn commit_template_path(&self) -> String {
@@ -2210,7 +2223,6 @@ impl Repository {
         to: &str,
         branch: Option<&str>,
     ) -> Result<serde_json::Value> {
-        const SHOWN: usize = 6;
         let (from_id, to_id) = (ops.resolve(from)?, ops.resolve(to)?);
         let history = self.load_history()?;
         let graph = &history.graph;
@@ -2268,9 +2280,9 @@ impl Repository {
             });
         let mut drawing = serde_json::Value::Null;
         if from_id != to_id {
-            let shown_gained: Vec<Oid> =
-                gained.iter().take(SHOWN).map(|&r| graph.ids()[r]).collect();
-            let shown_lost: Vec<Oid> = lost.iter().take(SHOWN).map(|&r| graph.ids()[r]).collect();
+            let ids_of = |rows: &[usize]| rows.iter().map(|&r| graph.ids()[r]).collect::<Vec<_>>();
+            let (shown_gained, gained_more, gained_at) = elide(&ids_of(&gained));
+            let (shown_lost, lost_more, lost_at) = elide(&ids_of(&lost));
             let mut ids: Vec<Oid> = shown_gained.clone();
             ids.extend(&shown_lost);
             ids.extend(base);
@@ -2297,12 +2309,24 @@ impl Repository {
                     }))
                 })
                 .collect();
+            let time = |id: &Oid| {
+                ids.iter()
+                    .position(|i| i == id)
+                    .and_then(|i| texts.get(i))
+                    .map_or(0, |t| t.author_time)
+            };
             drawing = serde_json::json!({
                 "gained": shown_gained.iter().map(commit).collect::<Vec<_>>(),
-                "gainedMore": gained.len().saturating_sub(SHOWN),
+                "gainedMore": gained_more,
+                "gainedMoreAt": gained_at,
                 "lost": shown_lost.iter().map(commit).collect::<Vec<_>>(),
-                "lostMore": lost.len().saturating_sub(SHOWN),
-                "base": base.map(|b| commit(&b)),
+                "lostMore": lost_more,
+                "lostMoreAt": lost_at,
+                "base": base.map(|b| {
+                    let mut c = commit(&b);
+                    c["time"] = serde_json::json!(time(&b));
+                    c
+                }),
                 "labels": labels,
             });
         }
@@ -2491,8 +2515,7 @@ impl Repository {
         // いくつか）、分かれたところ、それぞれに付いているブランチ。
         let mut drawing = serde_json::Value::Null;
         if onto.is_some() && !picks.is_empty() {
-            const SHOWN: usize = 6;
-            let shown_onto: Vec<Oid> = onto_commits.iter().take(SHOWN).copied().collect();
+            let (shown_onto, onto_more, onto_at) = elide(&onto_commits);
             let mut ids: Vec<Oid> = picks.clone();
             ids.extend(&shown_onto);
             ids.extend(fork);
@@ -2522,8 +2545,17 @@ impl Repository {
             drawing = serde_json::json!({
                 "picks": picks.iter().map(commit).collect::<Vec<_>>(),
                 "onto": shown_onto.iter().map(commit).collect::<Vec<_>>(),
-                "ontoMore": onto_commits.len().saturating_sub(SHOWN),
-                "base": fork.map(|b| commit(&b)),
+                "ontoMore": onto_more,
+                "ontoMoreAt": onto_at,
+                "base": fork.map(|b| {
+                    let mut c = commit(&b);
+                    c["time"] = serde_json::json!(ids
+                        .iter()
+                        .position(|i| *i == b)
+                        .and_then(|i| texts.get(i))
+                        .map_or(0, |t| t.author_time));
+                    c
+                }),
                 "labels": labels,
             });
         }
@@ -5221,6 +5253,19 @@ mod tests {
         assert_eq!(limited["info"]["commits"].as_array().unwrap().len(), 1);
         let back = run(&repo, r#"{"op":"between","base":"topic","tip":"main"}"#);
         assert_eq!(back["info"]["count"], 0);
+    }
+
+    #[test]
+    fn elides_the_middle_of_long_runs() {
+        let ids: Vec<Oid> = (0..10)
+            .map(|i| Oid::from_hex(&format!("{i:040}")).unwrap())
+            .collect();
+        let (shown, more, at) = super::elide(&ids);
+        assert_eq!(shown, [&ids[..3], &ids[8..]].concat());
+        assert_eq!((more, at), (5, 3));
+        // 6 つまでは省かない（1 つだけ省くなら、その 1 つを描く）。
+        let (shown, more, at) = super::elide(&ids[..6]);
+        assert_eq!((shown.len(), more, at), (6, 0, 6));
     }
 
     #[test]
