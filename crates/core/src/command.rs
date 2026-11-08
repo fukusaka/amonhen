@@ -4950,6 +4950,38 @@ mod tests {
     }
 
     #[test]
+    fn removes_a_worktree_whose_folder_is_still_in_use_for_a_moment() {
+        // Windows では、ほかのプロセスが作業ディレクトリにしている間はフォルダーを消せず、git は登録だけ外して
+        // フォルダーを残す。少しして手放されれば、消し切ること。
+        let (tmp, repo) = setup();
+        let wt = tmp.path().join(".worktrees/busy");
+        let command = |value: serde_json::Value| value.to_string();
+        let added = run(
+            &repo,
+            &command(serde_json::json!({"op": "worktreeAdd", "path": wt, "newBranch": "busy"})),
+        );
+        assert_eq!(added["ok"], true, "{added}");
+        let mut holder = if cfg!(windows) {
+            let mut c = amonhen_model::process::command("powershell");
+            c.args(["-NoProfile", "-Command", "Start-Sleep -Milliseconds 700"]);
+            c
+        } else {
+            let mut c = amonhen_model::process::command("sleep");
+            c.arg("0.7");
+            c
+        };
+        let mut holder = holder.current_dir(&wt).spawn().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let removed = run(
+            &repo,
+            &command(serde_json::json!({"op": "worktreeRemove", "path": wt, "force": true})),
+        );
+        holder.wait().unwrap();
+        assert_eq!(removed["ok"], true, "{removed}");
+        assert!(!wt.exists());
+    }
+
+    #[test]
     fn lists_commits_on_one_side_only() {
         let (tmp, repo) = setup();
         let dir = tmp.path();
