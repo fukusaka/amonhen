@@ -99,8 +99,8 @@ export class DaemonClient {
   private constructor(socket: Socket) {
     this.socket = socket;
     socket.on('data', (chunk: Buffer) => this.receive(chunk));
-    socket.on('close', () => this.close('daemon との接続が切れました'));
-    socket.on('error', (err) => this.close(`daemon との接続が切れました: ${err.message}`));
+    socket.on('close', () => this.close('Lost the connection to the daemon'));
+    socket.on('error', (err) => this.close(`Lost the connection to the daemon: ${err.message}`));
   }
 
   /**
@@ -118,7 +118,7 @@ export class DaemonClient {
     const hello = await client.call({ op: 'hello', language });
     if (hello.json['version'] !== FRONT_VERSION) {
       client.dispose();
-      throw new DaemonError(`daemon の窓口の版が違います: ${String(hello.json['version'])}`);
+      throw new DaemonError(`The daemon speaks a different protocol version: ${String(hello.json['version'])}`);
     }
     return client;
   }
@@ -141,7 +141,7 @@ export class DaemonClient {
         () => {
           if (this.pending.delete(id)) {
             this.send(CANCEL, id, Buffer.alloc(0));
-            reject(new DaemonError('取り消しました'));
+            reject(new DaemonError('Canceled'));
           }
         },
         { once: true },
@@ -167,7 +167,7 @@ export class DaemonClient {
 
   dispose(): void {
     this.socket.destroy();
-    this.close('閉じました');
+    this.close('Closed');
   }
 
   private send(kind: number, id: number, payload: Buffer): void {
@@ -237,7 +237,7 @@ function socketPath(daemon: string): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(daemon, ['--socket'], { windowsHide: true }, (err, stdout) => {
       if (err) {
-        reject(new DaemonError(`${daemon} を起動できません: ${err.message}`));
+        reject(new DaemonError(`Can’t start ${daemon}: ${err.message}`));
       } else {
         resolve(stdout.trim());
       }
@@ -284,7 +284,7 @@ async function connectOrLaunch(daemon: string, path: string): Promise<Socket> {
       return socket;
     }
   }
-  throw new DaemonError(`daemon（${path}）につなげません`);
+  throw new DaemonError(`Can’t connect to the daemon (${path})`);
 }
 
 let fallbackGit: string | undefined;

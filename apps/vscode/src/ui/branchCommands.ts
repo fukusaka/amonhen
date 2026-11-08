@@ -44,7 +44,7 @@ export function registerBranchCommands(manager: RepositoryManager): vscode.Dispo
       if (!name) return;
       const message = await vscode.window.showInputBox({
         title: `Tag ${name}`,
-        prompt: 'メッセージ（空なら lightweight tag）',
+        prompt: 'Message (leave empty for a lightweight tag)',
       });
       if (message === undefined) return;
       await repo.undo.record(`Create tag ${name}`, [`refs/tags/${name}`], 'keep', () =>
@@ -83,8 +83,8 @@ async function askName(
     validateInput: async (v) => {
       const trimmed = v.trim();
       if (!trimmed) return undefined;
-      if (trimmed !== value && existing.has(trimmed)) return 'すでにあります';
-      return (await repo.backend.checkBranchName(trimmed)) ? '名前に使えない文字や形が含まれています' : undefined;
+      if (trimmed !== value && existing.has(trimmed)) return 'Already exists';
+      return (await repo.backend.checkBranchName(trimmed)) ? 'Not a valid name' : undefined;
     },
   });
   return name?.trim() || undefined;

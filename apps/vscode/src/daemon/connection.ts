@@ -15,10 +15,10 @@ let prepared: Promise<string | undefined> | undefined;
 export function initDaemon(extensionPath: string, log?: vscode.LogOutputChannel): void {
   binDir = `${extensionPath}/bin`;
   prepared = prepareEngine(binDir).catch((err: unknown) => {
-    log?.warn('エンジンを置けません:', err);
+    log?.warn('Can’t install the engine:', err);
     return undefined;
   });
-  void prepared.then((path) => log?.info(path ? `daemon のエンジン: ${path}` : 'このホスト向けのエンジンがありません（git 実行層で動きます）'));
+  void prepared.then((path) => log?.info(path ? `Daemon engine: ${path}` : 'No engine for this host (running on the git execution layer)'));
 }
 
 /** daemon に使うエンジンの場所。使わない設定か、エンジンがなければ undefined */

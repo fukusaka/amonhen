@@ -22,7 +22,7 @@ export function registerSyncCommands(manager: RepositoryManager): vscode.Disposa
         run: async () => {
           const result = await pullCurrent(repo.backend, repo.undo, chooseReconcile);
           if (result === 'no-upstream') {
-            throw new Error('upstream が設定されていません。Publish でリモートに送ると設定されます');
+            throw new Error('No upstream is set. Publish the branch to set one.');
           }
           return result;
         },
@@ -36,8 +36,8 @@ export function registerSyncCommands(manager: RepositoryManager): vscode.Disposa
     }),
     vscode.commands.registerCommand('amonhen.forcePush', async () => {
       const choice = await vscode.window.showWarningMessage(
-        '現在のブランチを Force Push しますか？',
-        { modal: true, detail: '--force-with-lease で、リモートの履歴を上書きします。' },
+        'Force push the current branch?',
+        { modal: true, detail: 'Replaces the remote’s history (--force-with-lease).' },
         'Force Push',
       );
       if (choice === 'Force Push') await push(manager, true);
@@ -51,11 +51,11 @@ export function registerSyncCommands(manager: RepositoryManager): vscode.Disposa
  */
 async function chooseReconcile(branch: string, upstream: string): Promise<ReconcileChoice | undefined> {
   const choice = await vscode.window.showWarningMessage(
-    `${shortName(branch)} と ${shortName(upstream)} が分かれています`,
+    `${shortName(branch)} and ${shortName(upstream)} have diverged`,
     {
       modal: true,
       detail:
-        'pull.rebase・pull.ff のどちらも取り込み方を決めていないので、git は取り込みません。この Pull の取り込み方を選んでください（設定は変えません）。',
+        'Neither pull.rebase nor pull.ff says how to bring them together, so git won’t pull. Choose how for this pull (your settings stay as they are).',
     },
     'Merge',
     'Rebase',
@@ -71,7 +71,7 @@ async function push(manager: RepositoryManager, force: boolean): Promise<void> {
     label: force ? '$(warning) Force Push' : '$(repo-push) Push',
     run: async () => {
       const result = await pushCurrent(repo.backend, { force });
-      if (result === 'detached') throw new Error('detached HEAD では push できません');
+      if (result === 'detached') throw new Error('Can’t push a detached HEAD');
       if (result === 'unpublished') {
         unpublished = (await repo.backend.head()).branch;
         return undefined;
@@ -92,19 +92,19 @@ export async function publish(repo: Repository, branch: string): Promise<void> {
   const { remotes, preferred } = await publishChoices(repo.backend, branch);
   const first = preferred ?? remotes[0];
   if (!first) {
-    void vscode.window.showErrorMessage('リモートがありません。先にリモートを足してください');
+    void vscode.window.showErrorMessage('There’s no remote. Add one first.');
     return;
   }
   const remote =
     remotes.length > 1
       ? await vscode.window.showQuickPick([first, ...remotes.filter((r) => r !== first)], {
           title: `Publish ${name}`,
-          placeHolder: 'ブランチを作るリモート',
+          placeHolder: 'Remote to publish to',
         })
       : first;
   if (!remote) return;
   const remoteBranch = (
-    await vscode.window.showInputBox({ title: `Publish ${name}`, prompt: `${remote} での名前`, value: name })
+    await vscode.window.showInputBox({ title: `Publish ${name}`, prompt: `Name on ${remote}`, value: name })
   )?.trim();
   if (!remoteBranch) return;
   const target = `refs/remotes/${remote}/${remoteBranch}`;
@@ -113,9 +113,9 @@ export async function publish(repo: Repository, branch: string): Promise<void> {
     const short = `${remote}/${remoteBranch}`;
     if (!(await repo.backend.isAncestor(existing, branch))) {
       const choice = await vscode.window.showWarningMessage(
-        `${short} はもうあります`,
-        { modal: true, detail: `${name} にないコミットがあるので（最後の Fetch の時点）、push は断られます。upstream にして、先に Pull してください。` },
-        'upstream にする',
+        `${short} already exists`,
+        { modal: true, detail: `It has commits ${name} doesn’t have (as of the last fetch), so the push would be refused. Make it the upstream and pull first.` },
+        'Set as Upstream',
       );
       if (choice) {
         await repo.backend.setUpstream(name, target);
@@ -124,8 +124,8 @@ export async function publish(repo: Repository, branch: string): Promise<void> {
       return;
     }
     const choice = await vscode.window.showInformationMessage(
-      `${short} はもうあります`,
-      { modal: true, detail: 'そこへ push して、upstream にします。' },
+      `${short} already exists`,
+      { modal: true, detail: 'Pushes there and makes it the upstream.' },
       'Push',
     );
     if (!choice) return;

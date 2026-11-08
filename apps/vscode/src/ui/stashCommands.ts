@@ -46,9 +46,9 @@ export function registerStashCommands(manager: RepositoryManager): vscode.Dispos
             { label: 'Stash, Keeping the Staged Changes', detail: 'git stash --keep-index', includeUntracked: false, keepIndex: true },
           );
         }
-        const kind = await vscode.window.showQuickPick(kinds, { placeHolder: 'stash する変更' });
+        const kind = await vscode.window.showQuickPick(kinds, { placeHolder: 'Changes to stash' });
         if (!kind) return;
-        const message = await vscode.window.showInputBox({ title: 'Stash', prompt: 'メッセージ（空でもよい）' });
+        const message = await vscode.window.showInputBox({ title: 'Stash', prompt: 'Message (optional)' });
         if (message === undefined) return;
         if (kind.staged || kind.keepIndex) {
           await runEngine(
@@ -84,8 +84,8 @@ export function registerStashCommands(manager: RepositoryManager): vscode.Dispos
     onStash('amonhen.stash.pop', (repo, node) => apply(repo, node, true)),
     onStash('amonhen.stash.drop', async (repo, node) => {
       const choice = await vscode.window.showWarningMessage(
-        `${node.stash.name}（${node.stash.subject}）を削除しますか？`,
-        { modal: true, detail: 'Undo で戻せます。' },
+        `Drop ${node.stash.name} (${node.stash.subject})?`,
+        { modal: true, detail: 'You can undo this.' },
         'Drop',
       );
       if (choice === 'Drop') {
@@ -137,7 +137,7 @@ async function apply(repo: Repository, node: StashNode, pop: boolean): Promise<v
   const result = await repo.backend.stashApply(node.stash.name, pop);
   if (result === 'conflict') {
     const choice = await vscode.window.showWarningMessage(
-      `${node.stash.name} を当てたところ、コンフリクトが発生しました。${pop ? 'stash は残っています。' : ''}`,
+      `Applying ${node.stash.name} left conflicts.${pop ? ' The stash is kept.' : ''}`,
       'Show Working Copy',
     );
     if (choice) await vscode.commands.executeCommand('amonhen.showWorkingCopy');

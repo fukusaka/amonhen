@@ -584,7 +584,7 @@ export class HistoryController implements vscode.Disposable {
     ]);
     const i = info.json['info'] as Record<string, unknown>;
     if (info.json['ok'] !== true || !i) {
-      throw new Error(String(info.json['error'] ?? 'コミットを読めません'));
+      throw new Error(String(info.json['error'] ?? 'Can’t read the commit'));
     }
     for (const [path, d] of splitCommitDiff(diff)) {
       this.diffs.set(`${oid}:${path}`, d);

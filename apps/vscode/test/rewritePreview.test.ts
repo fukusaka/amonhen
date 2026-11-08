@@ -21,20 +21,20 @@ test('previewLines says which branches move or stay, which are pushed and what c
       }),
     ),
     [
-      'a、b も一緒に動きます。',
-      'c は動きません（rebase.updateRefs がオフ）。',
-      'd は動きません（動かすには git 2.38 が要ります）。',
-      'e は動きません（ほかの worktree で checkout 中）。',
-      'f は動きません（今回は動かさない）。',
-      'main、a は push 済みなので、あとの push には Force Push が要ります。',
-      '⚠︎ 01234567 でコンフリクトする見込みです: x, y, z, …',
+      'Also moves a and b.',
+      'c stays where it is (rebase.updateRefs is off).',
+      'd stays where it is (moving it needs git 2.38).',
+      'e stays where it is (checked out in another worktree).',
+      'f stays where it is (not moved this time).',
+      'main and a are pushed, so pushing afterwards needs Force Push.',
+      '⚠︎ Conflicts expected at 01234567: x, y, z, …',
     ],
   );
   assert.deepEqual(
     previewLines(preview({ conflicts: [{ oid: 'aaaaaaaa1', files: ['x'] }, { oid: 'b', files: ['y'] }] })),
-    ['⚠︎ 2 コミットでコンフリクトする見込みです。最初は aaaaaaaa: x'],
+    ['⚠︎ Conflicts expected at 2 commits, first at aaaaaaaa: x'],
   );
-  assert.deepEqual(previewLines(preview({ conflicts: [] })), ['コンフリクトしない見込みです。']);
+  assert.deepEqual(previewLines(preview({ conflicts: [] })), ['No conflicts expected.']);
   // 調べられなければ（git が古い）コンフリクトの行はない
   assert.deepEqual(previewLines(preview({ conflicts: null })), []);
 });

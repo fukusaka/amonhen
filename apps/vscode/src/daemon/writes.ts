@@ -29,7 +29,7 @@ export function withDaemonWrites(
   const run = async (c: DaemonClient, command: Json, recorded: boolean): Promise<Json> => {
     const reply = (await c.call({ op: 'run', command })).json;
     if (reply['ok'] !== true) {
-      throw new Error(String(reply['error'] ?? `${String(command['op'])} に失敗しました`));
+      throw new Error(String(reply['error'] ?? `${String(command['op'])} failed`));
     }
     if (recorded) {
       markRecorded();

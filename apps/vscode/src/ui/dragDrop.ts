@@ -83,7 +83,7 @@ export function rebaseAction(repo: Repository, target: string, onto: string): Ac
       const current = (await repo.backend.head()).branch === target;
       const choice = await confirmRewrite(
         repo,
-        `${tgt} を ${src} の上に Rebase しますか？`,
+        `Rebase ${tgt} onto ${src}?`,
         'Rebase',
         current ? { onto } : undefined,
       );
@@ -100,7 +100,7 @@ export async function pickAndRun(repo: Repository, source: DragSource, target: D
   if (actions.length === 0) {
     return;
   }
-  const picked = await vscode.window.showQuickPick(actions, { placeHolder: 'ドロップしたときの操作を選ぶ' });
+  const picked = await vscode.window.showQuickPick(actions, { placeHolder: 'Choose what dropping does' });
   if (picked) {
     await runAction(repo, picked);
   }
@@ -133,7 +133,7 @@ function dropActions(repo: Repository, source: DragSource, target: DropTarget): 
   // upstream が無ければ、push 先を upstream にする
   const setUpstream = !source.upstream;
   const dest = `${remote}/${remoteBranch}`;
-  const detail = setUpstream ? `${dest} を upstream に設定する` : undefined;
+  const detail = setUpstream ? `Set ${dest} as the upstream` : undefined;
   const push = (force: boolean) => async () => {
     await backend.push(remote, src, remoteBranch, { force, setUpstream });
     return 'pushed' as const;
@@ -142,7 +142,7 @@ function dropActions(repo: Repository, source: DragSource, target: DropTarget): 
     { label: `$(cloud-upload) Push ${src} to ${dest}`, detail, run: push(false) },
     {
       label: `$(warning) Force Push ${src} to ${dest}`,
-      detail: '--force-with-lease。rebase した後など、リモートの履歴を上書きするとき',
+      detail: '--force-with-lease: replaces the remote’s history, as after a rebase',
       run: push(true),
     },
   ];
@@ -166,13 +166,13 @@ export async function runAction(repo: Repository, action: Action): Promise<void>
   }
   switch (result) {
     case 'up-to-date':
-      void vscode.window.showInformationMessage(`${title}: すでに最新です`);
+      void vscode.window.showInformationMessage(`${title}: Already up to date`);
       break;
     case 'conflict':
       await handleConflict(repo, title, action.conflictNote?.());
       break;
     case 'done': {
-      const choice = await vscode.window.showInformationMessage(`${title}: 完了しました`, 'Undo');
+      const choice = await vscode.window.showInformationMessage(`${title}: Done`, 'Undo');
       if (choice === 'Undo') {
         await vscode.commands.executeCommand('amonhen.undo');
       }
@@ -190,10 +190,10 @@ export async function runAction(repo: Repository, action: Action): Promise<void>
  */
 async function handleConflict(repo: Repository, title: string, note?: string): Promise<void> {
   const sequence = await repo.backend.sequenceInProgress();
-  const row = sequence ? `「${sequenceRowName(sequence)}」の行` : '';
+  const row = sequence ? ` on the “${sequenceRowName(sequence)}” row` : '';
   const choice = await vscode.window.showWarningMessage(
-    `${title}: コンフリクトが発生しました。解決して stage してから、サイドバーの${row}の Continue で続けるか、Abort で中止してください` +
-      (note ? `。${note}` : ''),
+    `${title}: There are conflicts. Resolve and stage them, then Continue${row} in the sidebar, or Abort.` +
+      (note ? ` ${note}` : ''),
     'Abort',
   );
   if (choice === 'Abort' && sequence) {

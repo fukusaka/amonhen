@@ -337,7 +337,7 @@ export class WorkingCopyController implements vscode.Disposable {
       }
       case 'wcDiscardFiles': {
         const changes = message.paths.flatMap((p) => find('unstaged', p) ?? []);
-        await this.discard(repo, changes.length === 1 ? changes[0]!.path : `${changes.length} 個のファイル`, () =>
+        await this.discard(repo, changes.length === 1 ? changes[0]!.path : `${changes.length} files`, () =>
           discardFiles(repo.backend, repo.undo, changes),
         );
         break;
@@ -350,11 +350,11 @@ export class WorkingCopyController implements vscode.Disposable {
         if (daemon) {
           if (daemon.diff.version !== message.version) {
             this.post({ type: 'wcDiff', group: change.group, diff: daemon.diff });
-            vscode.window.setStatusBarMessage('ファイルが変わったので差分を更新しました。もう一度選んでください', 4000);
+            vscode.window.setStatusBarMessage('The file changed, so the diff was updated. Select the lines again.', 4000);
             break;
           }
           const client = (await daemonFor(repo.root))!;
-          await this.discard(repo, `${change.path} の ${n} 行`, async () => {
+          await this.discard(repo, `${n} ${n === 1 ? 'line' : 'lines'} of ${change.path}`, async () => {
             await client.call({ op: 'discardRows', diff: daemon.handle, rows: selectedRows(daemon.rows, message.lines) });
           });
           break;
@@ -362,10 +362,10 @@ export class WorkingCopyController implements vscode.Disposable {
         const fresh = await this.loadDiff(change);
         if (fresh.diff.version !== message.version) {
           this.post({ type: 'wcDiff', group: change.group, diff: fresh.diff });
-          vscode.window.setStatusBarMessage('ファイルが変わったので差分を更新しました。もう一度選んでください', 4000);
+          vscode.window.setStatusBarMessage('The file changed, so the diff was updated. Select the lines again.', 4000);
           break;
         }
-        await this.discard(repo, `${change.path} の ${n} 行`, () =>
+        await this.discard(repo, `${n} ${n === 1 ? 'line' : 'lines'} of ${change.path}`, () =>
           discardLines(repo.backend, repo.undo, change.path, fresh, message.lines),
         );
         break;
@@ -397,8 +397,8 @@ export class WorkingCopyController implements vscode.Disposable {
   /** 確かめてから破棄する。破棄した内容は Undo で戻せる */
   private async discard(repo: Repository, target: string, run: () => Promise<void>): Promise<void> {
     const choice = await vscode.window.showWarningMessage(
-      `${target}の変更を破棄しますか？`,
-      { modal: true, detail: 'stage していない変更が失われます。Undo で戻せます。' },
+      `Discard the changes to ${target}?`,
+      { modal: true, detail: 'The unstaged changes are discarded. You can undo this.' },
       'Discard',
     );
     if (choice !== 'Discard') {
@@ -427,7 +427,7 @@ export class WorkingCopyController implements vscode.Disposable {
     const fresh = await this.loadDiff(change);
     if (fresh.diff.version !== version) {
       this.post({ type: 'wcDiff', group: change.group, diff: fresh.diff });
-      vscode.window.setStatusBarMessage('ファイルが変わったので差分を更新しました。もう一度選んでください', 4000);
+      vscode.window.setStatusBarMessage('The file changed, so the diff was updated. Select the lines again.', 4000);
       return;
     }
     const op = change.group === 'staged' ? 'unstage' : 'stage';
@@ -460,7 +460,7 @@ export class WorkingCopyController implements vscode.Disposable {
   ): Promise<void> {
     if (fresh.diff.version !== version) {
       this.post({ type: 'wcDiff', group: change.group, diff: fresh.diff });
-      vscode.window.setStatusBarMessage('ファイルが変わったので差分を更新しました。もう一度選んでください', 4000);
+      vscode.window.setStatusBarMessage('The file changed, so the diff was updated. Select the lines again.', 4000);
       return;
     }
     const rows = selectedRows(fresh.rows, lines);

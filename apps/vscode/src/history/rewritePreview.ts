@@ -29,28 +29,31 @@ export interface RewritePreview {
 export type PreviewTarget = { edit: HistoryEdit } | { onto: string };
 
 const list = (names: readonly string[]): string =>
-  names.length < 2 ? (names[0] ?? '') : `${names.slice(0, -1).join('、')}、${names.at(-1)}`;
+  names.length < 2 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
 
 /** 確認に出す行（ブランチ、push 済み、コンフリクト）。macOS のアプリと同じ内容 */
 export function previewLines(p: RewritePreview): string[] {
   const out: string[] = [];
   const names = (bs: readonly PreviewBranch[]) => list(bs.map((b) => b.name));
-  if (p.moving.length > 0) out.push(`${names(p.moving)} も一緒に動きます。`);
+  if (p.moving.length > 0) out.push(`Also moves ${names(p.moving)}.`);
   const stay = (reason: string) => p.staying.filter((b) => b.reason === reason);
   const reasons: [string, string][] = [
-    ['setting', 'rebase.updateRefs がオフ'],
-    ['git', '動かすには git 2.38 が要ります'],
-    ['checkedOut', 'ほかの worktree で checkout 中'],
-    ['off', '今回は動かさない'],
+    ['setting', 'rebase.updateRefs is off'],
+    ['git', 'moving it needs git 2.38'],
+    ['checkedOut', 'checked out in another worktree'],
+    ['off', 'not moved this time'],
   ];
   for (const [reason, why] of reasons) {
-    if (stay(reason).length > 0) out.push(`${names(stay(reason))} は動きません（${why}）。`);
+    const staying = stay(reason);
+    if (staying.length > 0) out.push(`${names(staying)} ${staying.length === 1 ? 'stays' : 'stay'} where ${staying.length === 1 ? 'it is' : 'they are'} (${why}).`);
   }
   const pushed = [
     ...(p.currentUpstream && p.current ? [p.current] : []),
     ...p.moving.filter((b) => b.upstream).map((b) => b.name),
   ];
-  if (pushed.length > 0) out.push(`${list(pushed)} は push 済みなので、あとの push には Force Push が要ります。`);
+  if (pushed.length > 0) {
+    out.push(`${list(pushed)} ${pushed.length === 1 ? 'is' : 'are'} pushed, so pushing afterwards needs Force Push.`);
+  }
   if (p.conflicts) {
     const [first] = p.conflicts;
     if (first) {
@@ -58,11 +61,11 @@ export function previewLines(p: RewritePreview): string[] {
       const at = first.oid.slice(0, 8);
       out.push(
         p.conflicts.length === 1
-          ? `⚠︎ ${at} でコンフリクトする見込みです: ${files}`
-          : `⚠︎ ${p.conflicts.length} コミットでコンフリクトする見込みです。最初は ${at}: ${files}`,
+          ? `⚠︎ Conflicts expected at ${at}: ${files}`
+          : `⚠︎ Conflicts expected at ${p.conflicts.length} commits, first at ${at}: ${files}`,
       );
     } else {
-      out.push('コンフリクトしない見込みです。');
+      out.push('No conflicts expected.');
     }
   }
   return out;

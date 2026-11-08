@@ -766,7 +766,7 @@ async function branchArrangeFlow(): Promise<void> {
     await until('merge の Undo', () => git('rev-parse', 'HEAD').trim() === before);
     await settle();
     // 取り込んでいないので、もう一度確かめてから消す
-    const answer = async (message: string) => (/merge されていない/.test(message) ? 'Delete Anyway' : 'Delete');
+    const answer = async (message: string) => (/aren’t merged/.test(message) ? 'Delete Anyway' : 'Delete');
     await withWindow({ showWarningMessage: answer }, async () =>
       vscode.commands.executeCommand('amonhen.nav.delete', node('arr-a'), [node('arr-a'), node('arr-b')]),
     );
@@ -1503,14 +1503,14 @@ async function pullRequestMarkFlow(): Promise<void> {
       {
         showWarningMessage: async (message: string, options: vscode.MessageOptions) => {
           asked.push({ message, detail: options.detail });
-          return /merge されていない/.test(message) ? 'Delete Anyway' : 'Delete';
+          return /aren’t merged/.test(message) ? 'Delete Anyway' : 'Delete';
         },
       },
       async () => vscode.commands.executeCommand('amonhen.nav.delete', squashed, [squashed, plain]),
     );
     assert.equal(asked.length, 2, JSON.stringify(asked));
-    assert.match(asked[0]!.detail ?? '', /pm-squashed（プルリクエスト #77 でマージ済み）/);
-    assert.match(asked[1]!.message, /^pm-plain は/);
+    assert.match(asked[0]!.detail ?? '', /pm-squashed \(merged by pull request #77\)/);
+    assert.match(asked[1]!.message, /^pm-plain has/);
     assert.equal(git('branch', '--list', 'pm-squashed', 'pm-plain').trim(), '', lastErrors());
   } finally {
     facts.readMerged = readMerged;
@@ -2232,7 +2232,7 @@ async function conflictsWithoutMarkersFlow(): Promise<void> {
       return undefined;
     };
     await withWindow({ showWarningMessage }, () => wc.handle({ type: 'wcResolve', path: 'hand.txt', action: 'current' }));
-    assert.match(detail ?? '', /もう解決済みかもしれません/);
+    assert.match(detail ?? '', /may already be resolved/);
     assert.equal(readFileSync(join(root, 'hand.txt'), 'utf8'), '1\nhand.txt both\n3\n', '断れば変わらない');
 
     // Conflicts の見出しの Mark N as Resolved と同じく、マーカーのないものだけを解決済みにする
@@ -2385,10 +2385,10 @@ async function editFlow(label: string): Promise<void> {
     });
     // 編集モードは確かめない（Apply Changes が確かめる代わり）
     assert.deepEqual(
-      asked.map((m) => m.replace(/^.* を /, '')),
+      asked.map((m) => m.split(' ')[0]),
       label === 'daemon'
-        ? ['Reword しますか？', 'Reword しますか？', 'Squash しますか？', 'Split しますか？']
-        : ['Reword しますか？', 'Reword しますか？', 'Squash しますか？', 'Fixup しますか？', 'Move しますか？', 'Edit しますか？', 'Split しますか？'],
+        ? ['Reword', 'Reword', 'Squash', 'Split']
+        : ['Reword', 'Reword', 'Squash', 'Fixup', 'Move', 'Edit', 'Split'],
     );
     // daemon ならコアが rebase する（拡張は git の rebase を起動しない）
     assert.equal(
@@ -2445,27 +2445,27 @@ async function rewriteFlow(label: string): Promise<void> {
     showInformationMessage: async () => undefined,
   };
   // 今回だけ積み重ねたブランチも動かす。git が古くてできなければ、そのまま
-  const moveStacked = (ok: string) => (buttons: string[]) => buttons.find((b) => b.includes('も動かす')) ?? ok;
+  const moveStacked = (ok: string) => (buttons: string[]) => buttons.find((b) => b.includes('Move the Stacked Branches Too')) ?? ok;
   // mid は「設定がオフ」か「git が古い」で動かない、と見通しに出る
-  const stays = new RegExp(`${name('mid')} は動きません（(rebase\\.updateRefs がオフ|動かすには git 2\\.38 が要ります)）`);
+  const stays = new RegExp(`${name('mid')} stays where it is \\((rebase\\.updateRefs is off|moving it needs git 2\\.38)\\)`);
   try {
     await withWindow(stubs, async () => {
       // 右クリックの Rebase。やめれば何も変わらない
       const node = { kind: 'branch', ref: { name: `refs/heads/${name('onto')}` } };
       await vscode.commands.executeCommand('amonhen.nav.rebase', node);
       const first = asked.at(-1)!;
-      assert.equal(first.message, `${name('top')} を ${name('onto')} の上に Rebase しますか？`);
+      assert.equal(first.message, `Rebase ${name('top')} onto ${name('onto')}?`);
       assert.equal(rev(name('top')), before.top);
       if (label === 'daemon') {
         assert.match(first.detail, stays);
         // git 2.38 からは、今回だけ動かすこともできる
-        if (first.detail.includes('がオフ')) {
-          assert.deepEqual(first.buttons, ['Rebase', 'Rebase（積み重ねたブランチも動かす）']);
+        if (first.detail.includes('is off')) {
+          assert.deepEqual(first.buttons, ['Rebase', 'Rebase (Move the Stacked Branches Too)']);
         }
         // コンフリクトの見込みは git 2.40 から
-        assert.doesNotMatch(first.detail, /コンフリクトする見込み/);
+        assert.doesNotMatch(first.detail, /Conflicts expected/);
       } else {
-        assert.equal(first.detail, 'Undo で戻せます。');
+        assert.equal(first.detail, 'You can undo this.');
         assert.deepEqual(first.buttons, ['Rebase']);
       }
 
@@ -2474,7 +2474,7 @@ async function rewriteFlow(label: string): Promise<void> {
       await vscode.commands.executeCommand('amonhen.nav.rebase', node);
       await until('rebase', () => rev(`${name('top')}~2`) === rev(name('onto')) && rev(name('top')), undefined, lastErrors);
       const moved = asked.at(-1)!.buttons.length > 1;
-      assert.equal(moved, label === 'daemon' && asked.at(-1)!.buttons.includes('Rebase（積み重ねたブランチも動かす）'));
+      assert.equal(moved, label === 'daemon' && asked.at(-1)!.buttons.includes('Rebase (Move the Stacked Branches Too)'));
       assert.equal(rev(name('mid')) === rev(`${name('top')}~1`), moved, moved ? 'mid も動く' : 'mid は残る');
       await vscode.commands.executeCommand('amonhen.undo');
       await until('rebase の Undo', () => rev(name('top')) === before.top && rev(name('mid')) === before.mid, undefined, lastErrors);
@@ -2497,8 +2497,8 @@ async function rewriteFlow(label: string): Promise<void> {
       } else {
         await vscode.commands.executeCommand('amonhen.history.drop', { oid: one });
         const drop = asked.at(-1)!;
-        assert.match(drop.message, /を Drop しますか？$/);
-        assert.ok(drop.detail.startsWith('履歴から取り除きます。'), drop.detail);
+        assert.match(drop.message, /^Drop .*\?$/);
+        assert.ok(drop.detail.startsWith('Removes it from the history.'), drop.detail);
         assert.deepEqual(drop.buttons, ['Drop']);
         dropMoved = false;
       }
@@ -2589,18 +2589,18 @@ async function mergeBranchesFlow(label: string): Promise<void> {
       choose = (l) => l.startsWith('$(git-merge)');
       await vscode.commands.executeCommand('amonhen.mergeBranches');
       await until('merge', () => git('log', '-1', '--format=%s').startsWith(`Merge branches '${name('a')}' and '${name('x')}'`));
-      assert.equal(placeHolders.at(-1), `2 個を ${branch} に 1 つのコミットで merge する`);
+      assert.equal(placeHolders.at(-1), `Merge 2 into ${branch} in one commit`);
       await vscode.commands.executeCommand('amonhen.undo');
       await until('merge の Undo', () => head() === start);
 
       // x の後の y はぶつかる。見込みが分かれば（git 2.38 以降）そう伝える。それでも 1 つにまとめると git は断る
       order = [name('x'), name('y'), name('a')];
       await vscode.commands.executeCommand('amonhen.mergeBranches');
-      if (!placeHolders.at(-1)!.includes('個を')) {
-        assert.match(placeHolders.at(-1)!, new RegExp(`${name('y')} がコンフリクトするので`));
+      if (!placeHolders.at(-1)!.startsWith('Merge ')) {
+        assert.match(placeHolders.at(-1)!, new RegExp(`${name('y')} conflicts, so git stops`));
       }
       // 1 つずつなら x は merge され、y で止まって中止する。残りの a を知らせる
-      await until('1 つずつ', () => warned.some((m) => m.includes(`まだ merge していないもの: ${name('a')}`)));
+      await until('1 つずつ', () => warned.some((m) => m.includes(`Not merged yet: ${name('a')}`)));
       await until('中止', async () => (await repo.backend.sequenceInProgress()) === undefined);
       // x は今のブランチの先にあるので、git の既定どおり fast-forward になる
       assert.equal(head(), git('rev-parse', name('x')).trim());
@@ -2614,8 +2614,8 @@ async function mergeBranchesFlow(label: string): Promise<void> {
       const warnings = warned.length;
       order = [name('a')];
       await vscode.commands.executeCommand('amonhen.mergeBranches');
-      // 文は daemon ならコアの訳（VSCode の表示言語）、git 実行層なら拡張の日本語
-      const busy = /merge (in progress|の途中です)/;
+      // 文は daemon ならコアの訳（VSCode の表示言語）、git 実行層なら拡張の英語
+      const busy = /merge (is )?in progress/;
       await until('途中なので断る', () => failed.some((m) => busy.test(m)));
       assert.equal(warned.length, warnings, 'コンフリクトとは知らせない');
       assert.equal(await repo.backend.sequenceInProgress(), 'merge');
@@ -2623,7 +2623,7 @@ async function mergeBranchesFlow(label: string): Promise<void> {
       git('reset', '-q', '--hard', start);
     });
     assert.deepEqual(
-      failed.filter((m) => !/merge (in progress|の途中です)/.test(m)),
+      failed.filter((m) => !/merge (is )?in progress/.test(m)),
       [],
     );
   } finally {

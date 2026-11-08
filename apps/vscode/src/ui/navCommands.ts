@@ -65,10 +65,10 @@ export function registerNavCommands(manager: RepositoryManager, mergedBy: Merged
         label: `$(arrow-down) Fast-Forward ${shortName(ref)}`,
         run: async () => {
           const result = await fastForwardBranch(repo.backend, repo.undo, ref);
-          if (result === 'no-upstream') throw new Error(`${shortName(ref)} に upstream がありません`);
-          if (result === 'checked-out') throw new Error(`${shortName(ref)} はチェックアウト中です。Pull で取り込んでください`);
+          if (result === 'no-upstream') throw new Error(`${shortName(ref)} has no upstream`);
+          if (result === 'checked-out') throw new Error(`${shortName(ref)} is checked out. Pull it instead.`);
           if (result === 'diverged')
-            throw new Error(`${shortName(ref)} は upstream と分かれています。チェックアウトして merge か rebase をしてください`);
+            throw new Error(`${shortName(ref)} has diverged from its upstream. Check it out, then merge or rebase.`);
           return result;
         },
       });
@@ -78,7 +78,7 @@ export function registerNavCommands(manager: RepositoryManager, mergedBy: Merged
         label: `$(repo-push) Push ${shortName(ref)}`,
         run: async () => {
           const target = await pushTarget(repo.backend, ref);
-          if (!target) throw new Error(`${shortName(ref)} に upstream がありません。Publish で送ってください`);
+          if (!target) throw new Error(`${shortName(ref)} has no upstream. Publish it.`);
           await repo.backend.push(target.remote, shortName(ref), target.branch);
           return 'pushed';
         },
@@ -117,11 +117,11 @@ function notMerged(err: unknown): boolean {
 async function deleteBranches(repo: Repository, refs: string[], mergedBy: MergedBy): Promise<void> {
   const names = refs.map((ref) => {
     const pr = mergedBy(repo, shortName(ref));
-    return pr === undefined ? shortName(ref) : `${shortName(ref)}（プルリクエスト #${pr} でマージ済み）`;
+    return pr === undefined ? shortName(ref) : `${shortName(ref)} (merged by pull request #${pr})`;
   });
   const choice = await vscode.window.showWarningMessage(
-    `${names.length} 個のブランチを削除しますか？`,
-    { modal: true, detail: `${names.join('\n')}\n\nUndo で戻せます（1 回で 1 個）。` },
+    `Delete ${names.length} branches?`,
+    { modal: true, detail: `${names.join('\n')}\n\nYou can undo this, one branch at a time.` },
     'Delete',
   );
   if (choice !== 'Delete') return;
@@ -141,8 +141,8 @@ async function deleteBranches(repo: Repository, refs: string[], mergedBy: Merged
     }
     if (unmerged.length === 0) return;
     const force = await vscode.window.showWarningMessage(
-      `${unmerged.map(shortName).join('、')} は merge されていないコミットを含んでいます。削除しますか？`,
-      { modal: true, detail: 'Undo で戻せます。' },
+      `${unmerged.map(shortName).join(', ')} ${unmerged.length === 1 ? 'has' : 'have'} commits that aren’t merged. Delete anyway?`,
+      { modal: true, detail: 'You can undo this.' },
       'Delete Anyway',
     );
     if (force === 'Delete Anyway') for (const ref of unmerged) await remove(ref, true);
@@ -157,8 +157,8 @@ async function deleteBranch(repo: Repository, ref: string, mergedBy: MergedBy): 
   const name = shortName(ref);
   const pr = mergedBy(repo, name);
   const choice = await vscode.window.showWarningMessage(
-    `ブランチ ${name} を削除しますか？`,
-    { modal: true, detail: `${pr === undefined ? '' : `プルリクエスト #${pr} でマージ済みです。`}Undo で戻せます。` },
+    `Delete the branch ${name}?`,
+    { modal: true, detail: `${pr === undefined ? '' : `Merged by pull request #${pr}. `}You can undo this.` },
     'Delete',
   );
   if (choice !== 'Delete') return;
@@ -172,8 +172,8 @@ async function deleteBranch(repo: Repository, ref: string, mergedBy: MergedBy): 
       return;
     }
     const force = await vscode.window.showWarningMessage(
-      `${name} は merge されていないコミットを含んでいます。削除しますか？`,
-      { modal: true, detail: 'Undo で戻せます。' },
+      `${name} has commits that aren’t merged. Delete anyway?`,
+      { modal: true, detail: 'You can undo this.' },
       'Delete Anyway',
     );
     if (force === 'Delete Anyway') await remove(true).catch(showError);

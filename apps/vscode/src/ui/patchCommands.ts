@@ -24,7 +24,7 @@ export function registerPatchCommands(manager: RepositoryManager): vscode.Dispos
     if (!repo || !ctx?.oid) return;
     const oids = all ? await repo.backend.firstParentsToHead(ctx.oid) : [ctx.oid];
     if (!oids) {
-      void vscode.window.showWarningMessage('このコミットは HEAD から first-parent で辿れません');
+      void vscode.window.showWarningMessage('This commit isn’t on HEAD’s first-parent line');
       return;
     }
     await savePatches(repo, oids);
@@ -59,7 +59,7 @@ export function registerPatchCommands(manager: RepositoryManager): vscode.Dispos
           () => repo.backend.amThreeWay(),
         );
         if (result !== 'done') {
-          void vscode.window.showWarningMessage('コンフリクトを解決して stage してから、サイドバーの Continue で続けてください');
+          void vscode.window.showWarningMessage('Resolve and stage the conflicts, then Continue in the sidebar');
         }
       } catch (err) {
         showError(err);
@@ -74,9 +74,9 @@ export function registerPatchCommands(manager: RepositoryManager): vscode.Dispos
 async function savePatches(repo: Repository, oids: string[]): Promise<void> {
   const choice = await vscode.window.showQuickPick(
     [
-      { label: '1 コミット 1 ファイル', description: '0001-….patch（git format-patch の既定）', single: false, cover: false },
-      { label: '1 コミット 1 ファイル（送り状つき）', description: '0000-cover-letter.patch も作る', single: false, cover: true },
-      { label: '1 つの mbox ファイル', description: 'git format-patch --stdout', single: true, cover: false },
+      { label: 'One File per Commit', description: '0001-….patch (git format-patch’s default)', single: false, cover: false },
+      { label: 'One File per Commit, with a Cover Letter', description: 'Also writes 0000-cover-letter.patch', single: false, cover: true },
+      { label: 'One mbox File', description: 'git format-patch --stdout', single: true, cover: false },
     ],
     { title: oids.length === 1 ? 'Save as Patch' : `Save ${oids.length} Commits as Patches` },
   );
@@ -98,7 +98,7 @@ async function savePatches(repo: Repository, oids: string[]): Promise<void> {
         canSelectMany: false,
         defaultUri: root,
         openLabel: 'Save Here',
-        title: 'パッチを書き出すフォルダ（同じ名前のファイルは置き換えます）',
+        title: 'Folder for the patches (files with the same names are replaced)',
       })) ?? [];
     if (!uri) return;
     out.dir = uri.fsPath;
@@ -109,7 +109,7 @@ async function savePatches(repo: Repository, oids: string[]): Promise<void> {
       { location: vscode.ProgressLocation.Window, title: 'Save as Patch' },
       () => repo.backend.formatPatch(oids, options, out),
     );
-    const open = await vscode.window.showInformationMessage(`${files.length} 個のパッチを保存しました`, 'Open');
+    const open = await vscode.window.showInformationMessage(`Saved ${files.length} ${files.length === 1 ? 'patch' : 'patches'}`, 'Open');
     if (open && files[0]) {
       await vscode.commands.executeCommand('vscode.open', vscode.Uri.file(files[0]));
     }
@@ -139,7 +139,7 @@ async function applyPatches(repo: Repository, uris: readonly vscode.Uri[]): Prom
     return;
   }
   if (summary.patches.every((p) => p.files.length === 0)) {
-    void vscode.window.showWarningMessage('パッチに変更がありません');
+    void vscode.window.showWarningMessage('The patch has no changes');
     return;
   }
   const mailbox = summary.kind === 'mailbox';
@@ -152,15 +152,15 @@ async function applyPatches(repo: Repository, uris: readonly vscode.Uri[]): Prom
       return [p.subject ? `${p.subject}${p.author ? `  (${p.author})` : ''}` : undefined, ...files].filter(Boolean).join('\n');
     })
     .join('\n');
-  const status = problem ? `そのままでは当たりません: ${firstError(problem)}` : 'そのまま当たります';
+  const status = problem ? `Doesn’t apply as it is: ${firstError(problem)}` : 'Applies cleanly';
   const title = mailbox
     ? summary.patches.length === 1
-      ? `「${summary.patches[0]!.subject}」を当てますか？`
-      : `${summary.patches.length} 個のパッチを当てますか？`
-    : `${paths.length === 1 ? basename(paths[0]!) : `${paths.length} 個のパッチ`}を当てますか？`;
+      ? `Apply “${summary.patches[0]!.subject}”?`
+      : `Apply ${summary.patches.length} patches?`
+    : `Apply ${paths.length === 1 ? basename(paths[0]!) : `${paths.length} patches`}?`;
   const how = mailbox
-    ? `パッチごとに ${branch} のコミットになります（git am）。Undo で戻せます。`
-    : '変更を作業ツリーに当てます（git apply）。Undo で戻せます。';
+    ? `Each patch becomes a commit on ${branch} (git am). You can undo this.`
+    : 'Applies the changes to the working tree (git apply). You can undo this.';
   // 既定のボタンは git の既定（am は am.threeWay に任せ、apply は作業ツリーだけ）
   const buttons = mailbox ? ['Apply', 'Apply with 3-Way Merge'] : ['Apply', 'Apply and Stage', 'Apply with 3-Way Merge'];
   const choice = await vscode.window.showInformationMessage(title, { modal: true, detail: `${how}\n\n${list}\n\n${status}` }, ...buttons);
@@ -191,12 +191,12 @@ async function applyPatches(repo: Repository, uris: readonly vscode.Uri[]): Prom
     await repo.refresh();
   }
   if (result === 'done') {
-    const undo = await vscode.window.showInformationMessage(`${label}: 完了しました`, 'Undo');
+    const undo = await vscode.window.showInformationMessage(`${label}: Done`, 'Undo');
     if (undo === 'Undo') await vscode.commands.executeCommand('amonhen.undo');
   } else if (result && mailbox) {
-    void vscode.window.showWarningMessage(`${label}: パッチで止まりました。理由と次にできることはサイドバーに出ています`);
+    void vscode.window.showWarningMessage(`${label}: Stopped at a patch. The sidebar says why and what to do next.`);
   } else if (result) {
-    void vscode.window.showWarningMessage(`${label}: コンフリクトつきで当てました。解決して stage してください`);
+    void vscode.window.showWarningMessage(`${label}: Applied with conflicts. Resolve and stage them.`);
   }
 }
 

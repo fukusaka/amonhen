@@ -52,7 +52,7 @@ export class UndoConflictError extends Error {
   readonly entry: UndoEntry;
 
   constructor(entry: UndoEntry) {
-    super(`「${entry.label}」のあとにブランチや HEAD が変わっているため、Undo できません`);
+    super(`Can’t undo “${entry.label}”: a branch or HEAD has moved since`);
     this.name = 'UndoConflictError';
     this.entry = entry;
   }
@@ -188,7 +188,7 @@ export class UndoLog {
       }
       const obj = await this.backend.object(f.before);
       if (!obj) {
-        throw new Error(`${f.path} の元の内容が見つかりません`);
+        throw new Error(`Can’t find the earlier contents of ${f.path}`);
       }
       await mkdir(dirname(abs), { recursive: true });
       await writeFile(abs, obj.data);

@@ -46,13 +46,13 @@
         "amonhen.daemon.enabled": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Amon Hen のエンジン（スタンドアロン版と共通。拡張に同梱）の共有の daemon で、History・差分・操作を行う（アプリ・CLI と History・検索の索引を共有し、Undo の記録も共通）。切ると git 実行層だけで動く。このホストの OS と CPU 向けのエンジンがなければ、設定に関わらず git 実行層で動く",
+          "markdownDescription": "Use the shared daemon of Amon Hen’s engine (the same as the standalone app’s, bundled with the extension) for History, diffs and operations. It shares History, the search index and the Undo log with the app and the CLI. When off, the extension runs on its own git execution layer. Without an engine for this host’s OS and CPU, it runs on the git execution layer whatever this says.",
           "scope": "machine"
         },
         "amonhen.daemon.path": {
           "type": "string",
           "default": "",
-          "markdownDescription": "同梱のものの代わりに使うエンジン（`amonhen`）の場所。空なら同梱のものを `~/.local/share/amonhen` に置いて使う",
+          "markdownDescription": "Where the engine (`amonhen`) to use instead of the bundled one is. When empty, the bundled one is installed in `~/.local/share/amonhen` and used.",
           "scope": "machine"
         }
       }
@@ -60,7 +60,7 @@
     "viewsWelcome": [
       {
         "view": "amonhen.sidebar",
-        "contents": "Git リポジトリが見つかりません。\n[フォルダーを開く](command:vscode.openFolder)",
+        "contents": "No Git repository found.\n[Open Folder](command:vscode.openFolder)",
         "when": "!amonhen.hasRepository"
       }
     ],

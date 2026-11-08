@@ -284,7 +284,7 @@ async function exists(path: string): Promise<boolean> {
  * 何の途中かを言って失敗する（コアと同じ文）
  */
 function inProgress(sequence: Sequence): Error {
-  return new Error(`${sequence} の途中です。Continue か Abort で終えてから、もう一度してください`);
+  return new Error(`A ${sequence} is in progress. Continue or Abort it, then try again.`);
 }
 
 export class CliBackend implements RepositoryBackend {
@@ -806,7 +806,7 @@ export class CliBackend implements RepositoryBackend {
       await writeFile(out.file, content);
       return [out.file];
     }
-    if (!out.dir) throw new Error('パッチを書き出すフォルダかファイルを選んでください');
+    if (!out.dir) throw new Error('Choose a folder or file for the patches');
     const written = await this.read([...args, '--output-directory', out.dir, ...revs]);
     return written.split('\n').filter(Boolean).map((p) => resolve(this.root, p));
   }
@@ -913,7 +913,7 @@ export class CliBackend implements RepositoryBackend {
     const elsewhere = list.split('\n\n').find((w) => w.split('\n').includes(`branch ${branch}`));
     if (elsewhere) {
       const path = (elsewhere.split('\n')[0] ?? '').replace(/^worktree /, '');
-      throw new Error(`${branch.replace(/^refs\/heads\//, '')} は worktree ${path} でチェックアウトしています。そちらで取り込んでください`);
+      throw new Error(`${branch.replace(/^refs\/heads\//, '')} is checked out in the worktree ${path}. Pull it there.`);
     }
     await this.updateRef(branch, value, expected);
   }
