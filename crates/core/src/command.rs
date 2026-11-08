@@ -536,6 +536,19 @@ pub enum Command {
         tip: String,
         limit: Option<usize>,
     },
+    /// ref を `from` から `to` へ動かしたときの、確認のシートに描く前と後（Force Push・Push・Reset など。
+    /// docs/design.md の「Previewing graph changes」）。`info`: `gainedCount`（`to` だけから辿れるコミットの数）、
+    /// `lostCount`（`from` だけから辿れる、外れるコミットの数）、`files`（`to` から `from` までに変わったファイルの数。
+    /// Reset で外したコミットの変更がどこへ行くかの文に使う）、`upstream`（`branch` の上流）と `upstreamHas`（その上流が、
+    /// 外れるコミットをいくつ持っているか。Reset の後の Push に Force Push が要るか）、`drawing`（`gained`・`lost` は新しい順に
+    /// 先頭のいくつか、`gainedMore`・`lostMore` は残りの数、`base` は分かれたところ、`labels` はそれぞれに付く
+    /// ブランチ。同じなら null）。
+    MovePreview {
+        from: String,
+        to: String,
+        #[serde(default)]
+        branch: Option<String>,
+    },
     /// `theirs` を `ours`（既定は HEAD）にマージしたらコンフリクトするファイル（`info.conflicts`。なければ空、
     /// git が古くて調べられなければ null）。作業ツリーと index には触らない（`git merge-tree --write-tree`）。
     /// Merge・Pull の前に見せる。rebase は最後の結果が同じになるので、目安に使える。`theirs` が配列なら、
@@ -2187,6 +2200,120 @@ impl Repository {
             }
         };
         Ok(message)
+    }
+
+    /// `MovePreview` の中身。
+    fn move_preview(
+        &self,
+        ops: &dyn amonhen_model::Operations,
+        from: &str,
+        to: &str,
+        branch: Option<&str>,
+    ) -> Result<serde_json::Value> {
+        const SHOWN: usize = 6;
+        let (from_id, to_id) = (ops.resolve(from)?, ops.resolve(to)?);
+        let history = self.load_history()?;
+        let graph = &history.graph;
+        let row = |id: &Oid, rev: &str| -> Result<usize> {
+            history
+                .row_of(id)
+                .map(|r| r as usize)
+                .ok_or_else(|| tr!("{rev} isn’t in the History (reload it)", rev = rev).into())
+        };
+        let (from_row, to_row) = (row(&from_id, from)?, row(&to_id, to)?);
+        // それぞれから辿れる行に印を付ける（行はトポロジカル順で、親は子より後ろ）。
+        let reach = |start: usize| {
+            let mut mark = vec![false; graph.len()];
+            mark[start] = true;
+            for r in start..graph.len() {
+                if mark[r] {
+                    for &p in graph.parents(r) {
+                        mark[p as usize] = true;
+                    }
+                }
+            }
+            mark
+        };
+        let (from_reach, to_reach) = (reach(from_row), reach(to_row));
+        // History の行は新しい順。
+        let gained: Vec<usize> = (0..graph.len())
+            .filter(|&r| to_reach[r] && !from_reach[r])
+            .collect();
+        let lost: Vec<usize> = (0..graph.len())
+            .filter(|&r| from_reach[r] && !to_reach[r])
+            .collect();
+        let base = crate::repository::merge_base(graph, from_row as u32, to_row as u32)
+            .map(|r| graph.ids()[r as usize]);
+        let files = if lost.is_empty() {
+            0
+        } else {
+            self.changes_between(Some(&to_id), &from_id)?.len()
+        };
+        let refs = self.load_refs()?;
+        // 上流が、外れるコミットをいくつ持っているか（Reset の後の Push は Force Push になる）。
+        let upstream = branch.and_then(|name| {
+            refs.refs
+                .entries
+                .iter()
+                .find(|e| e.kind == RefKind::Local && e.name == name && !e.gone)
+                .and_then(|e| e.detail.clone())
+        });
+        let upstream_has = upstream
+            .as_deref()
+            .and_then(|upstream| ops.resolve(upstream).ok())
+            .and_then(|id| history.row_of(&id))
+            .map_or(0, |r| {
+                let up = reach(r as usize);
+                lost.iter().filter(|&&l| up[l]).count()
+            });
+        let mut drawing = serde_json::Value::Null;
+        if from_id != to_id {
+            let shown_gained: Vec<Oid> =
+                gained.iter().take(SHOWN).map(|&r| graph.ids()[r]).collect();
+            let shown_lost: Vec<Oid> = lost.iter().take(SHOWN).map(|&r| graph.ids()[r]).collect();
+            let mut ids: Vec<Oid> = shown_gained.clone();
+            ids.extend(&shown_lost);
+            ids.extend(base);
+            let texts = self.commit_texts(&ids)?;
+            let subject = |id: &Oid| {
+                ids.iter()
+                    .position(|i| i == id)
+                    .and_then(|i| texts.get(i))
+                    .map(|t| String::from_utf8_lossy(t.subject()).into_owned())
+                    .unwrap_or_default()
+            };
+            let commit =
+                |id: &Oid| serde_json::json!({ "oid": id.to_string(), "subject": subject(id) });
+            let labels: Vec<serde_json::Value> = refs
+                .refs
+                .entries
+                .iter()
+                .filter(|e| matches!(e.kind, RefKind::Local | RefKind::Remote))
+                .filter_map(|e| {
+                    let t = e.target.filter(|t| ids.contains(t))?;
+                    Some(serde_json::json!({
+                        "oid": t.to_string(), "name": e.name,
+                        "kind": if e.kind == RefKind::Local { "local" } else { "remote" },
+                    }))
+                })
+                .collect();
+            drawing = serde_json::json!({
+                "gained": shown_gained.iter().map(commit).collect::<Vec<_>>(),
+                "gainedMore": gained.len().saturating_sub(SHOWN),
+                "lost": shown_lost.iter().map(commit).collect::<Vec<_>>(),
+                "lostMore": lost.len().saturating_sub(SHOWN),
+                "base": base.map(|b| commit(&b)),
+                "labels": labels,
+            });
+        }
+        Ok(serde_json::json!({
+            "gainedCount": gained.len(),
+            "lostCount": lost.len(),
+            "files": files,
+            "upstream": upstream,
+            "upstreamHas": upstream_has,
+            "drawing": drawing,
+        }))
     }
 
     /// `RewritePreview` の中身。
@@ -3845,6 +3972,11 @@ impl Repository {
                     ..Default::default()
                 })
             }
+            Command::MovePreview { from, to, branch } => Ok(Response {
+                ok: true,
+                info: Some(self.move_preview(ops, &from, &to, branch.as_deref())?),
+                ..Default::default()
+            }),
             Command::Between { base, tip, limit } => {
                 let history = self.load_history()?;
                 let graph = &history.graph;
@@ -5089,6 +5221,60 @@ mod tests {
         assert_eq!(limited["info"]["commits"].as_array().unwrap().len(), 1);
         let back = run(&repo, r#"{"op":"between","base":"topic","tip":"main"}"#);
         assert_eq!(back["info"]["count"], 0);
+    }
+
+    #[test]
+    fn previews_moving_a_ref() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        git(dir, &["switch", "-q", "-c", "topic"]);
+        for name in ["b", "c"] {
+            std::fs::write(dir.join(name), format!("{name}\n")).unwrap();
+            git(dir, &["add", "."]);
+            git(dir, &["commit", "-q", "-m", &format!("add {name}")]);
+        }
+        git(dir, &["switch", "-q", "main"]);
+        std::fs::write(dir.join("d"), "d\n").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-q", "-m", "add d"]);
+        git(
+            dir,
+            &["remote", "add", "origin", "https://example.invalid/x.git"],
+        );
+        git(dir, &["update-ref", "refs/remotes/origin/main", "main"]);
+        git(
+            dir,
+            &["branch", "-q", "--set-upstream-to=origin/main", "main"],
+        );
+        // main を topic へ（main の 1 つが外れ、topic の 2 つが増える）。
+        let side = run(&repo, r#"{"op":"movePreview","from":"main","to":"topic"}"#);
+        let info = &side["info"];
+        assert_eq!(info["gainedCount"], 2);
+        assert_eq!(info["lostCount"], 1);
+        assert_eq!(info["files"], 3);
+        assert_eq!(info["drawing"]["gained"][0]["subject"], "add c");
+        assert_eq!(info["drawing"]["lost"][0]["subject"], "add d");
+        assert_eq!(info["drawing"]["base"]["subject"], "first");
+        // 戻すだけ（増えるものはなく、分かれたところは行き先）。
+        let back = run(
+            &repo,
+            r#"{"op":"movePreview","from":"topic","to":"topic~2"}"#,
+        );
+        assert_eq!(back["info"]["gainedCount"], 0);
+        assert_eq!(back["info"]["lostCount"], 2);
+        assert_eq!(back["info"]["drawing"]["base"]["subject"], "first");
+        // 上流が外れるコミットを持っていれば数える。
+        // 上流の設定を読むよう、開き直す。
+        let reopened = Repository::new(GixBackend::open(dir).unwrap());
+        let reset = run(
+            &reopened,
+            r#"{"op":"movePreview","from":"main","to":"main~1","branch":"main"}"#,
+        );
+        assert_eq!(reset["info"]["upstream"], "origin/main");
+        assert_eq!(reset["info"]["upstreamHas"], 1);
+        // 同じところなら絵はない。
+        let same = run(&repo, r#"{"op":"movePreview","from":"main","to":"main"}"#);
+        assert!(same["info"]["drawing"].is_null());
     }
 
     #[test]
