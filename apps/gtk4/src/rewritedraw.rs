@@ -30,13 +30,17 @@ fn column_width(area: &gtk::DrawingArea) -> f64 {
     }
 }
 
-/// 1 行（コミット、線、薄くするか、y）。
+/// 1 行（コミット、線、薄くするか、y）。`hollow` なら中を抜いた点（外れる・消えるコミット）、`note` は件名の
+/// 後ろに添える文と色（なければ薄く）。
+#[derive(Default)]
 struct Row {
     oid: String,
     subject: String,
     lane: u8,
     dim: bool,
     y: f64,
+    hollow: bool,
+    note: Option<(String, Option<gdk::RGBA>)>,
 }
 
 /// 札（名前、種類 `local`・`remote`・`moved`、今のブランチか）。
@@ -136,6 +140,7 @@ fn draw(area: &gtk::DrawingArea, cr: &gtk::cairo::Context, info: &Value) {
             lane: 1,
             dim: true,
             y,
+            ..Default::default()
         });
         y += ROW;
     }
@@ -146,6 +151,7 @@ fn draw(area: &gtk::DrawingArea, cr: &gtk::cairo::Context, info: &Value) {
             lane: 0,
             dim: false,
             y,
+            ..Default::default()
         });
         y += ROW;
     }
@@ -187,6 +193,7 @@ fn draw(area: &gtk::DrawingArea, cr: &gtk::cairo::Context, info: &Value) {
             lane: 0,
             dim: false,
             y,
+            ..Default::default()
         });
         y += ROW;
     }
@@ -197,6 +204,7 @@ fn draw(area: &gtk::DrawingArea, cr: &gtk::cairo::Context, info: &Value) {
             lane: 0,
             dim: true,
             y,
+            ..Default::default()
         });
         y += ROW;
     }
@@ -320,6 +328,8 @@ fn column(
             row.dim,
             i < highlight,
             &labels(&row.oid),
+            row.hollow,
+            row.note.as_ref(),
         );
     }
     if let Some(y) = more_y {
@@ -346,6 +356,8 @@ fn column(
             true,
             false,
             &labels(oid),
+            false,
+            None,
         );
     }
 }
@@ -362,6 +374,8 @@ fn row_at(
     dim: bool,
     highlighted: bool,
     labels: &[Label],
+    hollow: bool,
+    note: Option<&(String, Option<gdk::RGBA>)>,
 ) {
     let fg = area.color();
     let r = if highlighted { 5.0 } else { 4.0 };
@@ -372,29 +386,68 @@ fn row_at(
     } else {
         dimmed(&fg, 0.65)
     };
+    let dot = if hollow {
+        note.and_then(|n| n.1).unwrap_or(dot)
+    } else {
+        dot
+    };
     cr.set_source_rgba(
         dot.red().into(),
         dot.green().into(),
         dot.blue().into(),
         dot.alpha().into(),
     );
+    // 前の文字の位置から線がつながらないよう、経路を空にしてから。
+    cr.new_path();
     cr.arc(dot_x, y + ROW / 2.0, r, 0.0, std::f64::consts::TAU);
-    let _ = cr.fill();
+    if hollow {
+        cr.set_line_width(1.5);
+        let _ = cr.stroke();
+    } else {
+        let _ = cr.fill();
+    }
     let mut x = text_x;
     for (name, kind, current) in labels {
         x = pill(area, cr, name, kind, *current, x, y + 3.0) + 4.0;
     }
     let color = if dim { dimmed(&fg, 0.45) } else { fg };
-    text_at(
-        area,
-        cr,
-        subject,
-        x,
-        y + 3.0,
-        &color,
-        highlighted,
-        (right - x).max(0.0),
+    let Some((note, note_color)) = note else {
+        text_at(
+            area,
+            cr,
+            subject,
+            x,
+            y + 3.0,
+            &color,
+            highlighted,
+            (right - x).max(0.0),
+        );
+        return;
+    };
+    // 件名の後ろに、添える文を別の色で。
+    let text = format!("{subject} — {note}");
+    let layout = area.create_pango_layout(Some(&text));
+    let mut font = area.pango_context().font_description().unwrap_or_default();
+    font.set_size(font.size() * 11 / 13);
+    layout.set_font_description(Some(&font));
+    layout.set_width(((right - x).max(0.0) * f64::from(pango::SCALE)) as i32);
+    layout.set_ellipsize(pango::EllipsizeMode::End);
+    let attrs = pango::AttrList::new();
+    let c = note_color.unwrap_or_else(|| dimmed(&fg, 0.5));
+    let to16 = |v: f32| (v.clamp(0.0, 1.0) * 65535.0) as u16;
+    let mut fgattr =
+        pango::AttrColor::new_foreground(to16(c.red()), to16(c.green()), to16(c.blue()));
+    fgattr.set_start_index(subject.len() as u32);
+    attrs.insert(fgattr);
+    layout.set_attributes(Some(&attrs));
+    cr.set_source_rgba(
+        color.red().into(),
+        color.green().into(),
+        color.blue().into(),
+        color.alpha().into(),
     );
+    cr.move_to(x, y + 3.0);
+    pangocairo::functions::show_layout(cr, &layout);
 }
 
 fn accent(area: &gtk::DrawingArea) -> gdk::RGBA {
@@ -491,4 +544,190 @@ fn text_at(
     );
     cr.move_to(x, y);
     pangocairo::functions::show_layout(cr, &layout);
+}
+
+/// ref を動かす確認（Force Push・Push・Reset）の絵の見せ方（macOS 版の `MoveDrawingView` の引数）。
+pub struct Move {
+    /// 動かす ref（`main`・`origin/main`）と、その札の種類（`local`・`remote`）。
+    pub moving: String,
+    pub kind: &'static str,
+    /// 右の見出し（「Push の後」など）。
+    pub after_title: String,
+    /// 外れるコミットに添える文と色（Force Push は赤、Reset は薄く）。
+    pub lost_note: String,
+    pub lost_red: bool,
+}
+
+/// ref を動かす確認に埋め込む、前と後の絵（docs/design.md の「Previewing graph changes」）。左が今、右が動かした
+/// 後。行き先だけにあるコミットは左の線、外れるコミットは右の線で、分かれたところで合流する（片方しかなければ
+/// 1 本）。動かす ref の札は、右では行き先へ移る。外れるコミットは右で中を抜いた点にして、文を添える。材料は
+/// `movePreview` の答え。`set` で答えを渡す。`drawing` がなければ隠す。
+pub fn new_move(how: Move) -> (gtk::DrawingArea, Setter) {
+    let area = gtk::DrawingArea::new();
+    area.set_content_width((column_width(&area) * 2.0 + 24.0) as i32);
+    area.set_visible(false);
+    let info: Rc<RefCell<Value>> = Rc::default();
+    let i = info.clone();
+    let how = Rc::new(how);
+    area.set_draw_func(move |area, cr, _, _| draw_move(area, cr, &i.borrow(), &how));
+    let a = area.downgrade();
+    let set: Setter = Rc::new(move |value: &Value| {
+        let Some(area) = a.upgrade() else { return };
+        info.replace(value.clone());
+        let d = &value["drawing"];
+        if d.is_null() {
+            area.set_visible(false);
+            return;
+        }
+        area.set_content_height((move_rows(d) as f64 * ROW + 26.0) as i32);
+        area.set_visible(true);
+        area.queue_draw();
+    });
+    (area, set)
+}
+
+fn move_rows(d: &Value) -> usize {
+    let len = |k: &str| d[k].as_array().map_or(0, Vec::len);
+    let more = |k: &str| usize::from(d[k].as_u64().unwrap_or(0) > 0);
+    len("gained")
+        + more("gainedMore")
+        + len("lost")
+        + more("lostMore")
+        + usize::from(!d["base"].is_null())
+}
+
+fn draw_move(area: &gtk::DrawingArea, cr: &gtk::cairo::Context, info: &Value, how: &Move) {
+    let d = &info["drawing"];
+    if d.is_null() {
+        return;
+    }
+    let fg = area.color();
+    let mut labels: HashMap<String, Vec<(String, String)>> = HashMap::new();
+    for l in d["labels"].as_array().into_iter().flatten() {
+        labels
+            .entry(l["oid"].as_str().unwrap_or_default().to_owned())
+            .or_default()
+            .push((
+                l["name"].as_str().unwrap_or_default().to_owned(),
+                l["kind"].as_str().unwrap_or_default().to_owned(),
+            ));
+    }
+    let gained = commits(&d["gained"]);
+    let lost = commits(&d["lost"]);
+    let gained_more = d["gainedMore"].as_u64().unwrap_or(0);
+    let lost_more = d["lostMore"].as_u64().unwrap_or(0);
+    let base = (!d["base"].is_null()).then(|| {
+        (
+            d["base"]["oid"].as_str().unwrap_or_default().to_owned(),
+            d["base"]["subject"].as_str().unwrap_or_default().to_owned(),
+        )
+    });
+    let heading = |text: &str, x: f64| {
+        text_at(area, cr, text, x, 2.0, &dimmed(&fg, 0.6), true, f64::MAX);
+    };
+    heading(&tr!("Now"), 4.0);
+    heading(&how.after_title, column_width(area) + 28.0);
+    // 両方にあれば 2 本（行き先の側が左）、片方だけなら 1 本。
+    let lost_lane = u8::from(!gained.is_empty());
+    // 動かす ref の行き先（行き先だけのコミットがなければ、分かれたところ）。
+    let destination = gained
+        .first()
+        .map(|c| c.0.clone())
+        .or_else(|| base.as_ref().map(|b| b.0.clone()));
+    let red = gdk::RGBA::new(0.89, 0.29, 0.29, 1.0);
+    for after in [false, true] {
+        let x = if after {
+            column_width(area) + 24.0
+        } else {
+            0.0
+        };
+        let mut y = TOP;
+        let mut rows = Vec::new();
+        let mut more = Vec::new();
+        for (oid, subject) in &gained {
+            rows.push(Row {
+                oid: oid.clone(),
+                subject: subject.clone(),
+                y,
+                ..Default::default()
+            });
+            y += ROW;
+        }
+        if gained_more > 0 {
+            more.push((y, gained_more));
+            y += ROW;
+        }
+        for (oid, subject) in &lost {
+            rows.push(Row {
+                oid: oid.clone(),
+                subject: subject.clone(),
+                lane: lost_lane,
+                dim: after,
+                y,
+                hollow: after,
+                note: after.then(|| (how.lost_note.clone(), how.lost_red.then_some(red))),
+            });
+            y += ROW;
+        }
+        if lost_more > 0 {
+            more.push((y, lost_more));
+            y += ROW;
+        }
+        column(
+            area,
+            cr,
+            x,
+            &rows,
+            y,
+            base.as_ref(),
+            None,
+            0,
+            if after { gained.len() } else { 0 },
+            &|oid| {
+                let mut out: Vec<Label> = labels
+                    .get(oid)
+                    .into_iter()
+                    .flatten()
+                    .filter(|(n, _)| *n != how.moving)
+                    .map(|(n, k)| (n.clone(), k.clone(), false))
+                    .collect();
+                // 動かす ref は、左では今のところ、右では行き先に、塗った札で。
+                let here = if after {
+                    destination.as_deref() == Some(oid)
+                } else {
+                    labels
+                        .get(oid)
+                        .is_some_and(|l| l.iter().any(|(n, _)| *n == how.moving))
+                };
+                if here {
+                    out.insert(0, (how.moving.clone(), how.kind.to_owned(), true));
+                }
+                out
+            },
+        );
+        let text_x = x + 10.0 + LANE + 14.0;
+        for (my, count) in more {
+            text_at(
+                area,
+                cr,
+                &tr!("and {count} more", count = count),
+                text_x,
+                my + 3.0,
+                &dimmed(&fg, 0.5),
+                false,
+                x + column_width(area) - text_x,
+            );
+        }
+    }
+    // 真ん中の矢印。
+    text_at(
+        area,
+        cr,
+        "→",
+        column_width(area) + 6.0,
+        TOP + (move_rows(d).saturating_sub(1)) as f64 * ROW / 2.0,
+        &dimmed(&fg, 0.4),
+        false,
+        f64::MAX,
+    );
 }
