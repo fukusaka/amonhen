@@ -367,6 +367,26 @@ fn commit_link(hex: &str, length: usize) -> String {
 
 /// リンクを文字の色のままにする値の欄（Branches・Pushed・人の名前。macOS 版はリンクの色を付けない）。
 const VALUE_LINKS: &str = "amonhen-value-links";
+/// 詳細の欄の根（リンクの色をここに限る）。
+const DETAILS: &str = "amonhen-details";
+
+/// リンクの色（macOS 版の `NSColor.linkColor`。アクセントの色によらない）。
+fn link_color() -> &'static str {
+    if adw::StyleManager::default().is_dark() {
+        "#419cff"
+    } else {
+        "#0068da"
+    }
+}
+
+/// リンクは青で下線なし（macOS 版の詳細と同じ）。Branches・Pushed・人の名前は文字の色のまま。
+fn css() -> String {
+    let link = link_color();
+    format!(
+        ".{DETAILS} label link {{ color: {link}; text-decoration-line: none; }}\n\
+         .{DETAILS} label.{VALUE_LINKS} link {{ color: inherit; }}"
+    )
+}
 
 fn install_css() {
     thread_local! {
@@ -376,7 +396,12 @@ fn install_css() {
         return;
     }
     let provider = gtk::CssProvider::new();
-    provider.load_from_string(&format!("label.{VALUE_LINKS} link {{ color: inherit; }}"));
+    provider.load_from_string(&css());
+    // 明暗を切り替えたら、リンクの色も替える。
+    adw::StyleManager::default().connect_dark_notify({
+        let provider = provider.clone();
+        move |_| provider.load_from_string(&css())
+    });
     if let Some(display) = gtk::gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
             &display,
@@ -550,6 +575,7 @@ impl Details {
             .vexpand(true)
             .build();
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        root.add_css_class(DETAILS);
         // 探すのは、macOS 版のメッセージの欄と同じく見出し・表・件名・本文・notes（作者の帯は除く）。
         let searched = {
             let fixed = [selection_title.clone(), selection_note.clone()];
