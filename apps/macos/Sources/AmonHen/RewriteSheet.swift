@@ -20,6 +20,14 @@ class GraphDrawingView: NSView {
 
     override var isFlipped: Bool { true }
 
+    /// 絵の高さは中身のとおり（積み重ねの中で余った高さを受け取って、下に空きを作らない）。
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        setContentHuggingPriority(.required, for: .vertical)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
     /// 省いたコミットの行（`lane` の線の、`y` の行。そこだけ線を点線にして「ほか n コミット」と書く）。
     struct Gap {
         let lane: Int
