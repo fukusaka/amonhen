@@ -334,7 +334,15 @@ async function tagsAndRemotesFlow(): Promise<void> {
         return `${item?.contextValue}「${String(item?.description)}」${errors.slice(-2).join('、')}`;
       },
     );
-  const fetch = () => vscode.commands.executeCommand('amonhen.fetch');
+  // Fetch は確かめてから（リモートが 1 つなら確認、いくつもならすべて）
+  const fetch = () =>
+    withWindow(
+      {
+        showInformationMessage: async (_m: string, ...rest: unknown[]) => (rest.includes('Fetch') ? 'Fetch' : undefined),
+        showQuickPick: async (items: readonly vscode.QuickPickItem[]) => items[0],
+      },
+      async () => vscode.commands.executeCommand('amonhen.fetch'),
+    );
   const tag = 'e2e-tag';
   const remote = 'e2e-mirror';
   try {
@@ -1460,6 +1468,47 @@ async function branchSwitcherFlow(): Promise<void> {
     git('switch', '-q', '-f', branch);
     for (const b of ['sw-new', 'sw-track']) if (git('branch', '--list', b)) git('branch', '-D', b);
     if (git('remote').split('\n').includes('sw-remote')) git('remote', 'remove', 'sw-remote');
+    await repo.refresh();
+  }
+}
+
+/**
+ * Fetch: リモートがいくつもあれば、すべてか 1 つを選ぶ。片づけるかは git の設定のとおりで、選ぶ行にそれを書く
+ */
+async function fetchSheetFlow(): Promise<void> {
+  const repo = api.manager.current!;
+  const remote = 'fs-remote';
+  let shown: vscode.QuickPickItem[] = [];
+  const fetchFrom = (label: string) =>
+    withWindow(
+      {
+        showQuickPick: async (items: readonly vscode.QuickPickItem[]) => {
+          shown = [...items];
+          return items.find((i) => i.label === label);
+        },
+      },
+      async () => vscode.commands.executeCommand('amonhen.fetch'),
+    );
+  try {
+    git('remote', 'add', remote, root);
+    git('config', `remote.${remote}.prune`, 'true');
+    git('branch', 'fs-gone');
+    await repo.refresh();
+    await until('リモートが 2 つになる', () => (repo.current.remotes ?? []).length >= 2);
+    await fetchFrom(remote);
+    assert.ok(git('for-each-ref', `refs/remotes/${remote}/fs-gone`).trim(), lastErrors());
+    assert.match(shown[0]!.label, /^All Remotes \(.*fs-remote.*\)$/);
+    assert.equal(
+      shown.find((i) => i.label === remote)?.detail,
+      'Remote branches deleted there are removed here too (remote.fs-remote.prune).',
+    );
+    // 片づける設定なので、消したブランチは次の fetch で消える
+    git('branch', '-D', 'fs-gone');
+    await fetchFrom(remote);
+    assert.equal(git('for-each-ref', `refs/remotes/${remote}/fs-gone`).trim(), '', lastErrors());
+  } finally {
+    if (git('branch', '--list', 'fs-gone')) git('branch', '-D', 'fs-gone');
+    if (git('remote').split('\n').includes(remote)) git('remote', 'remove', remote);
     await repo.refresh();
   }
 }
@@ -3292,6 +3341,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('switches to a new, a recent and a remote branch from Switch Branch', async () => {
     await branchSwitcherFlow();
+  });
+
+  test('fetches from all remotes or one, saying which prune', async () => {
+    await fetchSheetFlow();
   });
 
   test('creates an orphan branch, empty or keeping the files, through the daemon', async () => {

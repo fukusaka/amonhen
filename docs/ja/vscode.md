@@ -242,3 +242,4 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 39. History の編集モード: いくつものコミットを 1 回の rebase で、近道から開く、マージを保つ（`--rebase-merges`）
 - [x] 40. Export Archive、Save as Bundle、Fetch from Bundle、Clone from Bundle
 - [x] 41. Switch Branch: 最近のブランチを上に、リモートのブランチは追跡するブランチを作って、打った名前は新しいブランチで
+- [x] 42. Fetch の前に確かめる: すべてのリモートか 1 つか、どれが prune するか

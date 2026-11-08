@@ -258,7 +258,8 @@ export interface RepositoryBackend {
   pullLeftUndecided(branch: string): Promise<boolean>;
   /** ローカルブランチ branch（短い名前）の upstream を upstream（`refs/remotes/...`）にする */
   setUpstream(branch: string, upstream: string): Promise<void>;
-  fetch(): Promise<void>;
+  /** すべてのリモート（`--all`）か、remote から取る */
+  fetch(remote?: string): Promise<void>;
   /** revs から辿れるコミットを、トポロジカル順で skip 件飛ばして max 件 */
   log(revs: readonly string[], skip: number, max: number): Promise<Commit[]>;
   /** コミットで変わったファイル。parent が無ければ root コミットとして扱う */
@@ -969,8 +970,9 @@ export class CliBackend implements RepositoryBackend {
     await this.git.exec(['branch', `--set-upstream-to=${upstream}`, branch], { cwd: this.root });
   }
 
-  async fetch(): Promise<void> {
-    await this.git.exec(['fetch', '--all', '--prune'], { cwd: this.root });
+  async fetch(remote?: string): Promise<void> {
+    // 片づけるかは git の設定（remote.<name>.prune・fetch.prune）のとおり。コアの fetch と同じ
+    await this.git.exec(['fetch', ...(remote ? ['--', remote] : ['--all'])], { cwd: this.root });
   }
 
   async log(revs: readonly string[], skip: number, max: number): Promise<Commit[]> {

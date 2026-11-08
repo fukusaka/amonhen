@@ -1080,6 +1080,8 @@ First release.
 
 #### Changed
 
+- Fetch asks first, from all remotes or one, and prunes as git's settings say (`remote.<name>.prune`, `fetch.prune`)
+  instead of always.
 - The extension's own messages, prompts and settings descriptions are in English. Messages from the engine still follow
   VSCode's display language.
 
