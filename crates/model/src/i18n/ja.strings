@@ -1971,7 +1971,7 @@
 "Only these folders are checked out" = "このフォルダだけを取り出しています";
 "Files at the top, and directly in the folders above these, are checked out too." = "最上位のファイルと、これらの上のフォルダの直下のファイルも取り出します。";
 "Stop checking out this folder" = "このフォルダを取り出すのをやめます";
-"Check out one more folder" = "取り出すフォルダを 1 つ足します";
+"Check out one more folder" = "取り出すフォルダを 1 つ追加します";
 "Only the files matching these patterns are checked out" = "このパターンに合うファイルだけを取り出しています";
 "The patterns aren’t in cone mode, so Amon Hen doesn’t change them." = "cone mode のパターンではないので、Amon Hen では変えません。";
 "Check Out Only Some Folders…" = "一部のフォルダだけを取り出す…";
