@@ -794,7 +794,7 @@ impl Table {
     }
 }
 
-/// 色・枠（書けるセルは、マウスを載せたときだけ欄の枠）。
+/// 色・枠（書けるセルは、マウスを載せたときだけ欄の枠）。行は macOS 版の表と同じくらいに詰める。
 fn install_css() {
     thread_local! {
         static DONE: Cell<bool> = const { Cell::new(false) };
@@ -809,7 +809,8 @@ fn install_css() {
          .config-editable:hover, .config-one-selected row:selected .config-editable { \
            background-color: alpha(@theme_base_color, 0.6); \
            box-shadow: inset 0 0 0 1px alpha(currentColor, 0.35); } \
-         .config-entry { min-height: 0; padding-top: 0; padding-bottom: 0; }",
+         .config-entry { min-height: 0; padding-top: 0; padding-bottom: 0; } \
+         columnview.config-table > listview > row > cell { padding-top: 2px; padding-bottom: 2px; }",
     );
     if let Some(display) = gtk::gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
@@ -868,9 +869,9 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
     parts.append(&sort_model);
     parts.append(&adding_rows);
     let selection = gtk::MultiSelection::new(Some(gtk::FlattenListModel::new(Some(parts))));
+    // 罫線はない（macOS 版の表と同じ）。
     let view = gtk::ColumnView::new(Some(selection.clone()));
-    view.set_show_row_separators(true);
-    view.set_show_column_separators(true);
+    view.add_css_class("config-table");
     let row_sorter = gtk::TreeListRowSorter::new(view.sorter());
     sort_model.set_sorter(Some(&row_sorter));
 
