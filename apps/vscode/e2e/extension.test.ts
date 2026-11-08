@@ -2940,6 +2940,8 @@ suite('Amon Hen in VSCode', () => {
     const gitignore = join(root, '.gitignore');
     const had = existsSync(gitignore) ? readFileSync(gitignore) : undefined;
     const quickPick = vscode.window.showQuickPick;
+    const [major = 0, minor = 0] = (git('version').match(/(\d+)\.(\d+)/) ?? []).slice(1).map(Number);
+    const sparseCheckout = major > 2 || (major === 2 && minor >= 25);
     (vscode.window as { showQuickPick: unknown }).showQuickPick = async (items: string[]) => items[1];
     try {
       await vscode.commands.executeCommand('amonhen.addToGitignore', { path: 'dir/new.ignored-e2e' });
@@ -2949,13 +2951,16 @@ suite('Amon Hen in VSCode', () => {
       let mark = posted.length;
       panel.workingCopy.setRepository(panel.repository);
       assert.equal((await waitPosted('wcSparse', mark)).sparse, null);
-      git('sparse-checkout', 'set', '--cone', 'e2e-only-folder');
-      mark = posted.length;
-      panel.workingCopy.setRepository(panel.repository);
-      assert.deepEqual((await waitPosted('wcSparse', mark, (m) => m.sparse !== null)).sparse?.folders, ['e2e-only-folder']);
+      // git sparse-checkout は git 2.25 から
+      if (sparseCheckout) {
+        git('sparse-checkout', 'set', '--cone', 'e2e-only-folder');
+        mark = posted.length;
+        panel.workingCopy.setRepository(panel.repository);
+        assert.deepEqual((await waitPosted('wcSparse', mark, (m) => m.sparse !== null)).sparse?.folders, ['e2e-only-folder']);
+      }
     } finally {
       (vscode.window as { showQuickPick: unknown }).showQuickPick = quickPick;
-      git('sparse-checkout', 'disable');
+      if (sparseCheckout) git('sparse-checkout', 'disable');
       if (had) writeFileSync(gitignore, had);
       else rmSync(gitignore, { force: true });
       await vscode.commands.executeCommand('amonhen.refresh');
