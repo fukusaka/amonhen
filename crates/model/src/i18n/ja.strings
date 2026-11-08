@@ -956,6 +956,12 @@
 "After the pull" = "Pull の後";
 "After the cherry-pick" = "Cherry-pick の後";
 "After the revert" = "Revert の後";
+"After the undo" = "Undo の後";
+"only in Reflog" = "Reflog にだけある";
+"After the fast-forward" = "Fast-Forward の後";
+"After deleting" = "削除の後";
+"goes with the branch" = "ブランチと一緒に消える";
+"After applying the patches" = "パッチを当てた後";
 "removed from {upstream}" = "{upstream} から消える";
 "For this rebase only (git’s --update-refs). Starts from rebase.updateRefs." = "この rebase だけの指定です（git の --update-refs）。最初は rebase.updateRefs のとおり。";
 

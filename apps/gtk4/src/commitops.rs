@@ -202,6 +202,7 @@ fn ask_reset(actions: &Rc<Actions>, hex: &str) {
                 after_title: tr!("After the reset"),
                 lost_note: tr!("taken off"),
                 lost_red: false,
+                removes: false,
             });
             set(&preview);
             sheet.add(&drawing);

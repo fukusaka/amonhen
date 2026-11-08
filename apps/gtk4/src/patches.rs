@@ -330,6 +330,24 @@ async fn confirm(
         status.add_css_class("warning");
     }
     sheet.add(&status);
+    // コミットになるなら（git am）、前と後の絵（今の先端の上に、パッチごとのコミット。macOS 版と同じ）。
+    if mailbox {
+        let subjects: Vec<&str> = patches
+            .iter()
+            .map(|p| p["subject"].as_str().unwrap_or_default())
+            .collect();
+        let preview = sheets::run(
+            &target.repo,
+            json!({ "op": "pickPreview", "subjects": subjects }),
+        )
+        .await["info"]
+            .clone();
+        if let Some(drawing) =
+            crate::rewritedraw::for_pick(&preview, branch, crate::rewritedraw::PickKind::Patches)
+        {
+            sheet.add(&drawing);
+        }
+    }
     let three_way = gtk::CheckButton::with_label(&tr!("3-way merge where it doesn’t apply"));
     three_way.set_tooltip_text(Some(&tr!(
         "Leaves conflicts to resolve in Working Copy instead of stopping (--3way)."

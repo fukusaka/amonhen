@@ -292,24 +292,10 @@ fn sync_items(actions: &Rc<Actions>, entry: &amonhen_model::RefEntry, is_head: b
             } else if actions.worktree_using(&name).is_none() {
                 // ほかの worktree が checkout しているなら動かせない（その作業ツリーとずれる）。上の Open Worktree
                 // から（macOS 版と同じ）。
-                let title = tr!(
-                    "Fast-forward {branch} to {upstream}?",
-                    branch = name,
-                    upstream = upstream
-                );
-                let command = json!({ "op": "fastForward", "branch": name });
+                let (n, u) = (name.clone(), upstream.to_owned());
                 items.push(menu::action(
                     format!("Fast-Forward {name} to {upstream}…"),
-                    move || {
-                        sheets::confirm_ref_then(
-                            &a,
-                            title.clone(),
-                            sheets::can_undo(),
-                            "Fast-Forward".to_owned(),
-                            false,
-                            vec![command.clone()],
-                        )
-                    },
+                    move || sheets::fast_forward(&a, &n, &u),
                 ));
             }
         }

@@ -739,6 +739,13 @@ fn draw_move(area: &gtk::DrawingArea, cr: &gtk::cairo::Context, info: &Value, ho
     }
     let gained = commits(&d["gained"]);
     let lost = commits(&d["lost"]);
+    let hidden: Vec<String> = d["gained"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|c| c["hidden"].as_bool() == Some(true))
+        .filter_map(|c| c["oid"].as_str().map(str::to_owned))
+        .collect();
     let gained_more = d["gainedMore"].as_u64().unwrap_or(0);
     let lost_more = d["lostMore"].as_u64().unwrap_or(0);
     let base = (!d["base"].is_null()).then(|| {
@@ -778,9 +785,14 @@ fn draw_move(area: &gtk::DrawingArea, cr: &gtk::cairo::Context, info: &Value, ho
             &mut y,
             &mut gaps,
             |(oid, subject), y| {
+                // どこからも辿れないコミットは、今は History にない（Reflog にだけある。macOS 版と同じ）。
+                let gone = !after && hidden.contains(oid);
                 rows.push(Row {
                     oid: oid.clone(),
                     subject: subject.clone(),
+                    dim: gone,
+                    hollow: gone,
+                    note: gone.then(|| (tr!("only in Reflog"), None)),
                     y,
                     ..Default::default()
                 });
