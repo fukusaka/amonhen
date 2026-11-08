@@ -369,6 +369,8 @@ fn commit_link(hex: &str, length: usize) -> String {
 const VALUE_LINKS: &str = "amonhen-value-links";
 /// 詳細の欄の根（リンクの色をここに限る）。
 const DETAILS: &str = "amonhen-details";
+/// リンクにしない ref の名前（Reflog・Range Diff。macOS 版の refAttrs: 太字の青）。
+const REF_TEXT: &str = "amonhen-ref-text";
 
 /// リンクの色（macOS 版の `NSColor.linkColor`。アクセントの色によらない）。
 fn link_color() -> &'static str {
@@ -384,6 +386,7 @@ fn css() -> String {
     let link = link_color();
     format!(
         ".{DETAILS} label link {{ color: {link}; text-decoration-line: none; }}\n\
+         .{DETAILS} label.{REF_TEXT} {{ color: {link}; font-weight: bold; }}\n\
          .{DETAILS} label.{VALUE_LINKS} link {{ color: inherit; }}"
     )
 }
@@ -1302,10 +1305,15 @@ impl Details {
         let refs = strings(&info["refs"]);
         if !refs.is_empty() {
             markup.push_str("  ");
+            // リンクにしないところでも太字の青（macOS 版の refAttrs）。
             markup.push_str(&if names {
                 format!("<b>{}</b>", ref_links(&refs))
             } else {
-                format!("<b>{}</b>", esc(&refs.join(", ")))
+                format!(
+                    "<span foreground=\"{}\"><b>{}</b></span>",
+                    link_color(),
+                    esc(&refs.join(", "))
+                )
             });
         }
         let parents = strings(&info["parents"]);
@@ -1429,11 +1437,13 @@ impl Details {
         }
         let refs = strings(&info["refs"]);
         if !refs.is_empty() {
-            // ref は太字の青（macOS 版の refAttrs）。Branches・Pushed は文字の色（下の VALUE_LINKS）。
+            // ref は、リンクにしないところ（Reflog・Range Diff）でも太字の青（macOS 版の refAttrs）。
+            // Branches・Pushed は文字の色（下の VALUE_LINKS）。
             rows.push((
                 "Refs".into(),
                 match refs_cell(&refs) {
                     Cell::Markup(m) => Cell::Markup(format!("<b>{m}</b>")),
+                    Cell::Text(t) => Cell::Styled(t, REF_TEXT),
                     other => other,
                 },
             ));
