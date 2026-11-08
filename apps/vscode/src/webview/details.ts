@@ -172,7 +172,7 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
       el(
         'span',
         '',
-        `${count} file${count === 1 ? '' : 's'} changed${d.parents.length > 1 ? '（最初の親との差分）' : ''}`,
+        `${count} file${count === 1 ? '' : 's'} changed${d.parents.length > 1 ? ' (against the first parent)' : ''}`,
       ),
     );
     if (count > 0) {
@@ -347,11 +347,11 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
       if (single) {
         head.dataset.vscodeContext = fileContext(oid, f.path);
         const open = el('button', 'secondary', 'Open');
-        open.title = 'エディタで差分を開く';
+        open.title = 'Open the diff in the editor';
         open.addEventListener('click', () => post({ type: 'openFile', oid, path: f.path }));
         head.append(open);
       }
-      section.append(head, el('div', 'empty', '読み込み中…'));
+      section.append(head, el('div', 'empty', 'Loading…'));
       diffs.append(section);
 
       const file: FileSection = { row, section, head, requested: false, chosen: false, viewed: viewedSet.has(f.path) };
@@ -511,7 +511,7 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
     meta = undefined;
     listed = undefined;
     sections = new Map();
-    root.replaceChildren(el('div', 'empty', 'コミットを選ぶと、ここに詳細が出ます'));
+    root.replaceChildren(el('div', 'empty', 'Select a commit to see its details here'));
   }
 
   clear();

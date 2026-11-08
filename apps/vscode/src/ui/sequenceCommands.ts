@@ -24,7 +24,7 @@ async function continueSequence(manager: RepositoryManager): Promise<void> {
     );
     if (result === 'conflict') {
       void vscode.window.showWarningMessage(
-        'コンフリクトが残っているか、続けられない状態です。解決して stage してから Continue してください',
+        'There are conflicts left, or it can’t continue yet. Resolve and stage them, then Continue.',
       );
     } else if (result === 'done') {
       vscode.window.setStatusBarMessage(`$(check) ${sequence} finished`, 5000);
@@ -44,8 +44,8 @@ async function skipSequence(manager: RepositoryManager): Promise<void> {
     return;
   }
   const choice = await vscode.window.showWarningMessage(
-    '今のコミットを飛ばして続けますか？',
-    { modal: true, detail: 'このコミットの変更は結果に含まれません。全体を戻すなら Abort を使ってください。' },
+    'Skip the current commit and go on?',
+    { modal: true, detail: 'Its changes are left out of the result. To go back to where you started, use Abort.' },
     'Skip',
   );
   if (choice !== 'Skip') {
@@ -54,7 +54,7 @@ async function skipSequence(manager: RepositoryManager): Promise<void> {
   try {
     const result = await repo.backend.skipSequence(sequence);
     if (result === 'conflict') {
-      void vscode.window.showWarningMessage('次のコミットでもコンフリクトが発生しました');
+      void vscode.window.showWarningMessage('The next commit has conflicts too');
     }
   } catch (err) {
     showError(err);
@@ -70,7 +70,7 @@ async function abortSequence(manager: RepositoryManager): Promise<void> {
     return;
   }
   const choice = await vscode.window.showWarningMessage(
-    `${sequence} を中止して、始める前の状態に戻しますか？`,
+    `Abort the ${sequence} and go back to where you started?`,
     { modal: true },
     'Abort',
   );

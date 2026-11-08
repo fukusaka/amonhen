@@ -21,10 +21,10 @@ export async function rewriteHistory(
 ): Promise<RebaseResult> {
   const head = await backend.head();
   if (!head.oid) {
-    throw new Error('まだコミットがありません');
+    throw new Error('No commits yet');
   }
   if (await backend.sequenceInProgress()) {
-    throw new Error('merge や rebase の途中です。先に終わらせるか中止してください');
+    throw new Error('A merge or rebase is in progress. Finish or abort it first.');
   }
   const refs = head.branch ? [head.branch] : [];
   const opts = { skip: (r: RebaseResult) => r === 'conflict', pending: (r: RebaseResult) => r === 'stopped' };

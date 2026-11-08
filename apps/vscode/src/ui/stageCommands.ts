@@ -46,8 +46,8 @@ async function confirmMarkers(repo: Repository, changes: readonly Change[]): Pro
     return true;
   }
   const choice = await vscode.window.showWarningMessage(
-    `コンフリクトのマーカーが残っています: ${withMarkers.join(', ')}`,
-    { modal: true, detail: 'このまま解決済みにしますか？' },
+    `Conflict markers are left in ${withMarkers.join(', ')}`,
+    { modal: true, detail: 'Mark it as resolved anyway?' },
     'Mark as Resolved',
   );
   return choice === 'Mark as Resolved';
@@ -63,17 +63,17 @@ export async function acceptConflicts(
   if (!repo || files.length === 0) {
     return;
   }
-  const name = side === 'current' ? 'Current（HEAD 側）' : 'Incoming（取り込む側）';
-  const target = files.length === 1 ? files[0]!.path : `${files.length} 個のファイル`;
+  const name = side === 'current' ? 'Current (HEAD)' : 'Incoming';
+  const target = files.length === 1 ? files[0]!.path : `${files.length} files`;
   // マーカーが残っていなければ、rerere やほかのエディタで解決した内容を上書きしてしまう
   const resolved = changes.some((c) => c.markers === 0);
   const choice = await vscode.window.showWarningMessage(
-    `${target} を ${name} の内容で解決しますか？`,
+    `Resolve ${target} with ${name}?`,
     {
       modal: true,
       detail: resolved
-        ? 'マーカーが残っていないので、もう解決済みかもしれません。その解決した内容と、もう一方の変更は失われます。'
-        : 'もう一方の変更と、ファイルに加えた編集は失われます。',
+        ? 'No conflict markers are left, so it may already be resolved. That resolution and the other side’s changes are lost.'
+        : 'The other side’s changes and your edits to the file are lost.',
     },
     'Accept',
   );

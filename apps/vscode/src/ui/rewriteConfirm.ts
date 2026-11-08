@@ -26,16 +26,16 @@ export async function confirmRewrite(
   // 調べられなくても書き換えはできる（見通しなしで確かめる）
   const preview = target
     ? await vscode.window.withProgress(
-        { location: vscode.ProgressLocation.Notification, title: '書き換えの見通しを調べています' },
+        { location: vscode.ProgressLocation.Notification, title: 'Checking what the rewrite will do' },
         () => repo.backend.rewritePreview(target).catch(() => undefined),
       )
     : undefined;
-  const lines = [...(note ? [note] : []), ...(preview ? previewLines(preview) : []), 'Undo で戻せます。'];
+  const lines = [...(note ? [note] : []), ...(preview ? previewLines(preview) : []), 'You can undo this.'];
   const items: Item[] = [{ title: ok }];
   const alternative = preview && stackedAlternative(preview);
   if (alternative !== undefined) {
     items.push({
-      title: alternative ? `${ok}（積み重ねたブランチも動かす）` : `${ok}（積み重ねたブランチは動かさない）`,
+      title: alternative ? `${ok} (Move the Stacked Branches Too)` : `${ok} (Leave the Stacked Branches)`,
       updateRefs: alternative,
     });
   }

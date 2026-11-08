@@ -12,11 +12,11 @@ function stagedCount(repo: Repository): number {
 function canCommit(repo: Repository, amend: boolean): boolean {
   const entries = repo.current.status?.entries ?? [];
   if (entries.some((e) => e.kind === 'unmerged')) {
-    void vscode.window.showWarningMessage('コンフリクトを解決してからコミットしてください');
+    void vscode.window.showWarningMessage('Resolve the conflicts before committing');
     return false;
   }
   if (!amend && stagedCount(repo) === 0) {
-    void vscode.window.showWarningMessage('stage されている変更がありません');
+    void vscode.window.showWarningMessage('Nothing is staged');
     return false;
   }
   return true;

@@ -44,23 +44,23 @@ export function planRebase(chain: readonly Commit[], edit: HistoryEdit): RebaseP
   let seq = [...chain].reverse();
   const index = seq.findIndex((c) => c.oid === edit.oid);
   if (index < 0) {
-    throw new Error('このコミットは編集できません（HEAD から辿れないか、merge より前にあります）');
+    throw new Error('This commit can’t be edited (it isn’t reachable from HEAD, or it’s before a merge)');
   }
 
   let start = index;
   if (edit.kind === 'squash' || edit.kind === 'fixup') {
     if (index === 0) {
-      throw new Error('親が編集できる範囲に無いので、まとめられません');
+      throw new Error('Can’t squash: the parent isn’t in the editable range');
     }
     start = index - 1;
   }
   if (edit.kind === 'split' && seq[index]!.parents.length === 0) {
-    throw new Error('最初のコミットは split できません');
+    throw new Error('Can’t split the first commit');
   }
   if (edit.kind === 'move') {
     const target = seq.length - 1 - edit.to;
     if (target < 0 || target >= seq.length) {
-      throw new Error('移動先が編集できる範囲の外です');
+      throw new Error('The destination is outside the editable range');
     }
     const [moved] = seq.splice(index, 1);
     seq.splice(target, 0, moved!);

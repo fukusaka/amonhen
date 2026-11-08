@@ -26,8 +26,8 @@ async function openMergeEditor(root: string, change: Change, sequence: Sequence 
   // rebase では HEAD が rebase 先で、取り込む側が自分のコミットになる
   const [current, incoming] =
     sequence === 'rebase'
-      ? ['rebase 先（HEAD）', '当てているコミット']
-      : ['現在のブランチ（HEAD）', `${sequence ?? 'merge'} で取り込む側`];
+      ? ['Rebasing onto (HEAD)', 'Commit being applied']
+      : ['Current branch (HEAD)', `Incoming (${sequence ?? 'merge'})`];
   try {
     await vscode.commands.executeCommand('_open.mergeEditor', {
       base: sides.base ? gitUri(root, change.path, 'rev', ':1') : gitUri(root, change.path, 'empty'),

@@ -1066,6 +1066,11 @@ First release.
 - With the engine, Delete Ignored Files… (Command Palette, Working Copy's right-click) lists what `git clean -X` would
   delete, folders as one entry, and deletes the ones kept chosen after asking.
 
+#### Changed
+
+- The extension's own messages, prompts and settings descriptions are in English. Messages from the engine still follow
+  VSCode's display language.
+
 #### Fixed
 
 - History stopped answering search and scrolling until the next reload, when an older reload finished after a newer one.

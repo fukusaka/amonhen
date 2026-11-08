@@ -47,7 +47,7 @@ export async function mergeBranches(repo: Repository, chosen?: readonly string[]
   const picked = await vscode.window.showQuickPick(items, {
     canPickMany: true,
     matchOnDetail: true,
-    placeHolder: `${target} に merge するものを選ぶ（いくつも選ぶと 1 つのコミットにまとめる）`,
+    placeHolder: `Choose what to merge into ${target} (several make one merge commit)`,
   });
   if (!picked || picked.length === 0) {
     return;
@@ -67,7 +67,7 @@ async function mergeRevs(repo: Repository, revs: string[], head: string | undefi
 
   // 調べられなくても merge はできる（見込みなしで選ばせる）
   const steps = await vscode.window.withProgress(
-    { location: vscode.ProgressLocation.Notification, title: 'コンフリクトするかを調べています' },
+    { location: vscode.ProgressLocation.Notification, title: 'Checking for conflicts…' },
     () => repo.backend.predictMerge(revs.map(shortName)).catch(() => undefined),
   );
   const choice = await vscode.window.showQuickPick(choices(revs, target, steps), {
@@ -85,7 +85,7 @@ function choices(revs: string[], target: string, steps: string[][] | undefined):
   const early = conflicting.filter((i) => i < revs.length - 1);
   const summary = steps
     ? names.map((n, i) => (steps[i]?.length ? `${n} ⚠ ${steps[i]?.join(', ')}` : `${n} ✓`)).join(' · ')
-    : 'コンフリクトの見込みは調べられません（git 2.38 以降が要ります）';
+    : 'Can’t check for conflicts ahead (needs git 2.38 or newer).';
   const merge: Choice = {
     label: `$(git-merge) Merge ${namesLabel(names)} into ${target}`,
     detail: summary,
@@ -94,7 +94,7 @@ function choices(revs: string[], target: string, steps: string[][] | undefined):
   };
   const oneByOne: Choice = {
     label: '$(list-ordered) Merge One by One',
-    detail: 'それぞれを merge のコミットにする。コンフリクトはその都度解く。Undo 1 回で全部戻る',
+    detail: 'Each makes its own merge commit, and you resolve conflicts as they come. One Undo puts them all back.',
     revs,
     oneByOne: true,
   };
@@ -106,7 +106,7 @@ function choices(revs: string[], target: string, steps: string[][] | undefined):
     const order = [...revs.slice(0, only), ...revs.slice(only + 1), revs[only] ?? ''];
     const putLast: Choice = {
       label: `$(arrow-down) Put ${names[only]} Last and Merge`,
-      detail: `${order.map(shortName).join(', ')} の順に（最後のものなら、この merge でコンフリクトを解ける）`,
+      detail: `In the order ${order.map(shortName).join(', ')} (conflicts in the last one can be resolved in this merge)`,
       revs: order,
       oneByOne: false,
     };
@@ -121,11 +121,11 @@ function advice(revs: string[], target: string, steps: string[][] | undefined): 
   const conflicting = conflictingIndexes(steps);
   const early = conflicting.filter((i) => i < revs.length - 1);
   if (early.length === 0) {
-    return `${revs.length} 個を ${target} に 1 つのコミットで merge する`;
+    return `Merge ${revs.length} into ${target} in one commit`;
   }
   // 長いと切れるので短く。理由と手は、勧める項目の説明に書く
-  const which = early.map((i) => names[i]).join('、');
-  return `${which} がコンフリクトするので、この順では git が止まります`;
+  const which = early.map((i) => names[i]).join(', ');
+  return `${which} conflict${early.length === 1 ? 's' : ''}, so git stops in this order`;
 }
 
 function conflictingIndexes(steps: string[][] | undefined): number[] {
@@ -156,16 +156,16 @@ async function run(repo: Repository, revs: string[], oneByOne: boolean, target: 
     },
     conflictNote: () =>
       remaining.length > 0
-        ? `まだ merge していないもの: ${remaining.join('、')}（Continue の後で改めて merge してください）`
+        ? `Not merged yet: ${remaining.join(', ')}. Merge them again after you Continue.`
         : undefined,
   });
   if (gaveUp) {
     const answer = await vscode.window.showWarningMessage(
-      '1 つのコミットにまとめられません',
+      'Can’t make them one commit',
       {
         modal: true,
         detail:
-          '最後より前のものがコンフリクトしたので git は止まりました。何も変わっていません。代わりに 1 つずつ merge しますか？ それぞれが merge のコミットになり、コンフリクトはその都度解きます。Undo ですべて戻せます。',
+          'git stopped because one of them conflicts before the last, and nothing was changed. Merge them one by one instead? Each makes its own merge commit, and you resolve conflicts as they come. Undo puts them all back.',
       },
       'Merge One by One',
     );

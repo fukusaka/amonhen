@@ -251,7 +251,7 @@ async function sendEditPreview(
   updateRefs: boolean | undefined,
 ): Promise<void> {
   const preview = await repo.backend.rewritePreview({ edit: { kind: 'plan', steps } }, updateRefs).catch((err: unknown) => {
-    panel.post({ type: 'editPreview', key, lines: [`書き換えの見通しを調べられませんでした（${err instanceof Error ? err.message : String(err)}）。`], conflicts: [] });
+    panel.post({ type: 'editPreview', key, lines: [`Couldn’t read what the rewrite will do (${err instanceof Error ? err.message : String(err)}).`], conflicts: [] });
     return null;
   });
   if (preview === null) return;
@@ -282,12 +282,12 @@ const EDIT_TITLES = { reword: 'Reword', squash: 'Squash into Parent' } as const;
 /** 編集ごとの確認の題と、書き添えること */
 const KINDS: Record<HistoryEdit['kind'], { name: string; note?: string }> = {
   reword: { name: 'Reword' },
-  squash: { name: 'Squash', note: '親のコミットにまとめます。' },
+  squash: { name: 'Squash', note: 'Combines it into its parent.' },
   squashRange: { name: 'Combine', note: 'Combines the selected commits into one.' },
-  fixup: { name: 'Fixup', note: '親のコミットにまとめ、親のメッセージを残します。' },
-  drop: { name: 'Drop', note: '履歴から取り除きます。' },
-  edit: { name: 'Edit', note: 'このコミットで止まります。変更して amend してから Continue で続けます。' },
-  split: { name: 'Split', note: 'このコミットを取り消して、変更を Working Copy に戻したところで止まります。' },
+  fixup: { name: 'Fixup', note: 'Combines it into its parent, keeping the parent’s message.' },
+  drop: { name: 'Drop', note: 'Removes it from the history.' },
+  edit: { name: 'Edit', note: 'Stops at this commit. Change its files and amend it, then Continue.' },
+  split: { name: 'Split', note: 'Undoes this commit and stops with its changes back in Working Copy.' },
   move: { name: 'Move' },
   plan: { name: 'Edit' },
 };
@@ -298,7 +298,7 @@ async function run(panel: HistoryController, repo: Repository, label: string, ed
   const title =
     edit.kind === 'squashRange' || edit.kind === 'plan'
       ? 'Combine the selected commits?'
-      : `${short(panel, edit.oid)} を ${kind.name} しますか？`;
+      : `${kind.name} ${short(panel, edit.oid)}?`;
   const choice = await confirmRewrite(repo, title, kind.name, { edit }, kind.note);
   if (!choice) {
     // 書いたメッセージを失わないように、書いたままの編集欄を開き直す（Webview は Save で欄を閉じている）
@@ -335,20 +335,20 @@ async function execute(
   switch (result) {
     // 知らせは閉じるまで待たない（編集モードはすぐ閉じる）
     case 'done':
-      void vscode.window.showInformationMessage(`${label}: 完了しました`, 'Undo').then(async (choice) => {
+      void vscode.window.showInformationMessage(`${label}: Done`, 'Undo').then(async (choice) => {
         if (choice === 'Undo') await vscode.commands.executeCommand('amonhen.undo');
       });
       break;
     case 'stopped':
       void vscode.window.showInformationMessage(
         edit.kind === 'split'
-          ? `${label}: 変更を Working Copy に戻しました。分けてコミットしてから、サイドバーの Continue で続けてください`
-          : `${label}: このコミットで止めました。変更してコミット（amend）してから、サイドバーの Continue で続けてください`,
+          ? `${label}: The changes are back in Working Copy. Commit them in parts, then Continue in the sidebar.`
+          : `${label}: Stopped at this commit. Change its files and amend it, then Continue in the sidebar.`,
       );
       break;
     case 'conflict':
       void vscode.window.showWarningMessage(
-        `${label}: コンフリクトが発生しました。解決して stage してから、サイドバーの「${sequenceRowName('rebase')}」の行の Continue で続けるか、Abort で中止してください`,
+        `${label}: There are conflicts. Resolve and stage them, then Continue on the “${sequenceRowName('rebase')}” row in the sidebar, or Abort.`,
       );
       break;
   }

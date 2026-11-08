@@ -135,7 +135,7 @@ export function createWorkingCopyView(): View {
       const resolved = items.filter((f) => f.markers === 0);
       if (group === 'conflicts' && resolved.length > 0) {
         const all = el('button', 'link', `Mark ${resolved.length} as Resolved`);
-        all.title = 'マーカーの残っていないファイル（rerere やほかのエディタで解決したもの）を解決済みにする';
+        all.title = 'Mark the conflicted files that have no conflict markers left as resolved (rerere or another editor resolved them)';
         all.addEventListener('click', () => stageFiles('stage', resolved));
         head.append(all);
       }
@@ -150,7 +150,7 @@ export function createWorkingCopyView(): View {
       }
     }
     if (parts.length === 0) {
-      parts.push(el('div', 'empty', files.length > 0 ? 'No matching files' : '変更はありません'));
+      parts.push(el('div', 'empty', files.length > 0 ? 'No matching files' : 'No changes'));
     }
     fileList.replaceChildren(...parts);
     updateCommitButton();
@@ -212,7 +212,7 @@ export function createWorkingCopyView(): View {
       row.title += `\n${withoutMarkersMessage(f)}`;
       row.append(el('span', 'status s-resolved', '✓'));
       row.append(el('span', 'name', name));
-      row.append(el('span', 'dir', f.rerere ? 'rerere' : 'マーカーなし'));
+      row.append(el('span', 'dir', f.rerere ? 'rerere' : 'no markers'));
     } else {
       row.append(el('span', `status s-${f.letter === '!' ? 'U' : f.letter}`, f.letter));
       row.append(el('span', 'name', name));
@@ -317,20 +317,20 @@ export function createWorkingCopyView(): View {
 
   /** 改行を変換している（作業ツリーと git で違う）・改行が混ざっているファイルの印。差分には出ないので */
   function lineEndingsBadge(le: LineEndings): HTMLElement {
-    const name = (e: Eol) => (e === 'lf' ? 'LF' : e === 'crlf' ? 'CRLF' : e === 'mixed' ? '混在' : 'なし');
+    const name = (e: Eol) => (e === 'lf' ? 'LF' : e === 'crlf' ? 'CRLF' : e === 'mixed' ? 'Mixed' : 'None');
     // 作業ツリーの形 → git に入る形
     const text = le.worktree !== le.index && le.index !== 'none' ? `${name(le.worktree)} → ${name(le.index)}` : name(le.worktree);
     const badge = el('span', le.warning ? 'eol warning' : 'eol', le.warning ? `⚠ ${text}` : text);
-    const tip = [`改行: 作業ツリー ${name(le.worktree)}、git ${name(le.index)}、checkout ${name(le.checkout)}`];
-    if (le.rule) tip.push(`変換: ${le.rule}`);
-    if (le.warning) tip.push('次の commit や checkout で、ファイル全体の改行が変わることがあります');
+    const tip = [`Line endings: working tree ${name(le.worktree)}, git ${name(le.index)}, checkout ${name(le.checkout)}`];
+    if (le.rule) tip.push(`Conversion: ${le.rule}`);
+    if (le.warning) tip.push('The next commit or checkout may change the line endings of the whole file');
     badge.title = tip.join('\n');
     return badge;
   }
 
   function renderDiff(): void {
     if (!diff) {
-      diffPane.replaceChildren(el('div', 'empty', files.length ? 'ファイルを選ぶと差分が出ます' : ''));
+      diffPane.replaceChildren(el('div', 'empty', files.length ? 'Select a file to see its diff' : ''));
       return;
     }
     const d = diff;
@@ -410,7 +410,7 @@ export function createWorkingCopyView(): View {
         undefined,
         clean && f
           ? withoutMarkersMessage(f)
-          : 'このファイルはコンフリクトしています。マージエディタで解決するか、どちらかの内容を採用してください。',
+          : 'This file has conflicts. Resolve them in the merge editor, or take one side’s version.',
       ),
     );
     const buttons = el('div', 'buttons');
@@ -436,8 +436,8 @@ export function createWorkingCopyView(): View {
   /** マーカーの残っていないコンフリクトの説明 */
   function withoutMarkersMessage(f: Change): string {
     return f.rerere
-      ? 'git の rerere が前の解決を適用しました。結果を確かめて「Mark as Resolved」を押してください。'
-      : 'コンフリクトのマーカーは残っていません。結果を確かめて「Mark as Resolved」を押してください。';
+      ? 'git rerere applied an earlier resolution. Check the result, then Mark as Resolved.'
+      : 'No conflict markers are left. Check the result, then Mark as Resolved.';
   }
 
   function toLines(keys: string[]): SelectedLine[] {

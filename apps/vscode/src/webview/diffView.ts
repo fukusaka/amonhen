@@ -19,14 +19,14 @@ export function lineKey(line: DiffLine): string {
 
 /** 差分の本体（hunk の並び、またはバイナリなどの説明） */
 export function renderDiffBody(diff: FileDiff, opts: DiffOptions = {}): HTMLElement[] {
-  if (diff.binary) return [el('div', 'empty', 'バイナリファイルです')];
-  if (diff.tooLarge) return [el('div', 'empty', 'ファイルが大きいので差分を出しません')];
-  if (diff.hunks.length === 0) return [el('div', 'empty', '差分はありません')];
+  if (diff.binary) return [el('div', 'empty', 'Binary file')];
+  if (diff.tooLarge) return [el('div', 'empty', 'The file is too large to show its diff')];
+  if (diff.hunks.length === 0) return [el('div', 'empty', 'No changes')];
   const parts: HTMLElement[] = [];
   let budget = MAX_LINES;
   for (const hunk of diff.hunks) {
     if (budget <= 0) {
-      parts.push(el('div', 'empty', '残りの差分は省略しました。エディタで開いて確認してください'));
+      parts.push(el('div', 'empty', 'The rest of the diff is left out. Open it in the editor to see it all.'));
       break;
     }
     parts.push(renderHunk(hunk, opts, budget));

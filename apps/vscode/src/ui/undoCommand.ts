@@ -29,7 +29,7 @@ async function undoWithConfirmation(manager: RepositoryManager): Promise<void> {
   await repo.undo.settlePending().catch(() => false);
   const entry = await repo.undo.peek();
   if (!entry) {
-    void vscode.window.showInformationMessage('Undo できる操作はありません');
+    void vscode.window.showInformationMessage('Nothing to Undo');
     return;
   }
   const answer = await vscode.window.showWarningMessage(`Undo “${entry.label}”?`, { modal: true, detail: undoWhat(entry) }, 'Undo');
@@ -42,7 +42,7 @@ async function undoHistory(manager: RepositoryManager): Promise<void> {
   await repo.undo.settlePending().catch(() => false);
   const entries = await repo.undo.list();
   if (entries.length === 0) {
-    void vscode.window.showInformationMessage('Undo できる操作はありません');
+    void vscode.window.showInformationMessage('Nothing to Undo');
     return;
   }
   const picked = await vscode.window.showQuickPick(
@@ -85,7 +85,7 @@ async function undo(manager: RepositoryManager, count: number): Promise<void> {
     if (last) {
       vscode.window.setStatusBarMessage(`$(discard) Undo: ${count > 1 ? `${count} operations` : last.label}`, 5000);
     } else {
-      void vscode.window.showInformationMessage('Undo できる操作はありません');
+      void vscode.window.showInformationMessage('Nothing to Undo');
     }
   } catch (err) {
     showError(err);

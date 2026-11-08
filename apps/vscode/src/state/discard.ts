@@ -58,7 +58,7 @@ export async function discardLines(
   const newLines = splitLines(raw.toString('latin1'));
   const oldLines = splitLines(restore.toString('latin1'));
   if (!sameLines(newLines, computed.newLines) || !sameLines(oldLines, computed.oldLines)) {
-    throw new Error(`${path} は、作業中のファイルの形と git に入れる形が行ごとに対応しないため、行単位では破棄できません`);
+    throw new Error(`Can’t discard lines of ${path}: its lines in the working tree and in git don’t match one to one`);
   }
   // 作業中のファイル（new）を index（old）に向けて、選んだ行だけ戻す。unstage と同じ計算
   const next = applyDiffSelection({ ...computed, oldLines, newLines }, 'unstage', lines);

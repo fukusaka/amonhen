@@ -223,7 +223,7 @@ export class RepositoryManager implements vscode.Disposable {
       description: r.root,
       repository: r,
     }));
-    const picked = await vscode.window.showQuickPick(items, { placeHolder: 'リポジトリを選択' });
+    const picked = await vscode.window.showQuickPick(items, { placeHolder: 'Select a repository' });
     if (picked) {
       this.select(picked.repository);
     }

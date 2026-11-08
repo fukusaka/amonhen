@@ -118,7 +118,7 @@ async function planUpdate(backend: RepositoryBackend, source: string, target: st
   const sourceOid = values.get(source);
   const targetOid = values.get(target);
   if (!sourceOid || !targetOid) {
-    throw new Error(`${!sourceOid ? source : target} が見つかりません`);
+    throw new Error(`Can’t find ${!sourceOid ? source : target}`);
   }
   if (sourceOid === targetOid || (await backend.isAncestor(sourceOid, targetOid))) {
     return { kind: 'up-to-date' };
