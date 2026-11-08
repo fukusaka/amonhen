@@ -41,6 +41,8 @@ struct Row {
     y: f64,
     hollow: bool,
     note: Option<(String, Option<gdk::RGBA>)>,
+    /// これから作るコミット（点線の丸）。
+    is_new: bool,
 }
 
 /// 札（名前、種類 `local`・`remote`・`moved`、今のブランチか）。
@@ -187,6 +189,7 @@ fn draw(area: &gtk::DrawingArea, cr: &gtk::cairo::Context, info: &Value) {
         &gaps,
         0,
         split_note(&d["base"]),
+        None,
         &|oid| {
             // 左には今のブランチの札をすべて（動くものも、まだ元のところにある）。
             labels_c
@@ -251,6 +254,7 @@ fn draw(area: &gtk::DrawingArea, cr: &gtk::cairo::Context, info: &Value) {
         &after_gaps,
         picks.len(),
         None,
+        None,
         &|oid| {
             let mut out: Vec<Label> = Vec::new();
             // 今のブランチは先頭の A′ へ、一緒に動くブランチは、元の先頭に対応する A′ へ。
@@ -310,6 +314,7 @@ fn column(
     gaps: &[Gap],
     highlight: usize,
     base_note: Option<String>,
+    lane1_join: Option<f64>,
     labels: &dyn Fn(&str) -> Vec<Label>,
 ) {
     let fg = area.color();
@@ -371,6 +376,20 @@ fn column(
     if let Some(first) = rows.iter().find(|r| r.lane == 0) {
         vertical(0, center(first.y), center(base_y));
     }
+    // merge コミットから、すぐ右の線へ曲がり、取り込む側の先端まで下りる（macOS 版と同じ）。
+    if let (Some(join), Some(first)) = (lane1_join, lane1.first()) {
+        cr.move_to(lane_x(0), center(join));
+        cr.curve_to(
+            lane_x(1),
+            center(join),
+            lane_x(1),
+            center(join),
+            lane_x(1),
+            center(join) + ROW * 0.8,
+        );
+        cr.line_to(lane_x(1), center(first.y));
+        let _ = cr.stroke();
+    }
     // 点と件名、札。
     let text_x = lane_x(1) + 14.0;
     for (i, row) in rows.iter().enumerate() {
@@ -387,6 +406,7 @@ fn column(
             &labels(&row.oid),
             row.hollow,
             row.note.as_ref(),
+            row.is_new,
         );
     }
     for &(_, y, count) in gaps {
@@ -416,6 +436,7 @@ fn column(
             &labels(oid),
             false,
             note.as_ref(),
+            false,
         );
     }
 }
@@ -469,9 +490,10 @@ fn row_at(
     labels: &[Label],
     hollow: bool,
     note: Option<&(String, Option<gdk::RGBA>)>,
+    is_new: bool,
 ) {
     let fg = area.color();
-    let r = if highlighted { 5.0 } else { 4.0 };
+    let r = if highlighted || is_new { 5.0 } else { 4.0 };
     let dot = if highlighted {
         accent(area)
     } else if dim {
@@ -493,7 +515,15 @@ fn row_at(
     // 前の文字の位置から線がつながらないよう、経路を空にしてから。
     cr.new_path();
     cr.arc(dot_x, y + ROW / 2.0, r, 0.0, std::f64::consts::TAU);
-    if hollow {
+    if is_new {
+        // これから作るコミットは、点線の丸（まだない）。
+        let a = accent(area);
+        cr.set_source_rgba(a.red().into(), a.green().into(), a.blue().into(), 1.0);
+        cr.set_line_width(1.5);
+        cr.set_dash(&[2.0, 2.0], 0.0);
+        let _ = cr.stroke();
+        cr.set_dash(&[], 0.0);
+    } else if hollow {
         cr.set_line_width(1.5);
         let _ = cr.stroke();
     } else {
@@ -512,7 +542,7 @@ fn row_at(
             x,
             y + 3.0,
             &color,
-            highlighted,
+            highlighted || is_new,
             (right - x).max(0.0),
         );
         return;
@@ -770,6 +800,7 @@ fn draw_move(area: &gtk::DrawingArea, cr: &gtk::cairo::Context, info: &Value, ho
                     y,
                     hollow: after,
                     note: after.then(|| (how.lost_note.clone(), how.lost_red.then_some(red))),
+                    ..Default::default()
                 });
             },
         );
@@ -787,6 +818,7 @@ fn draw_move(area: &gtk::DrawingArea, cr: &gtk::cairo::Context, info: &Value, ho
             &gaps,
             if after { gained.len() } else { 0 },
             split,
+            None,
             &|oid| {
                 let mut out: Vec<Label> = labels
                     .get(oid)
@@ -818,6 +850,313 @@ fn draw_move(area: &gtk::DrawingArea, cr: &gtk::cairo::Context, info: &Value, ho
         column_width(area) + 6.0,
         TOP + (move_rows(d).saturating_sub(1)) as f64 * ROW / 2.0,
         &dimmed(&fg, 0.4),
+        false,
+        f64::MAX,
+    );
+}
+
+/// merge の見込み（`mergePreview` の答え）の絵。fast-forward なら ref が動く絵（[`new_move`]）、merge コミットを作るなら
+/// [`draw_merge`]。描くものがなければ None。`current` は今のブランチ、`after_title` は右の見出し（macOS 版の
+/// `mergeDrawing`）。
+pub fn for_merge(info: &Value, current: &str, after_title: String) -> Option<gtk::DrawingArea> {
+    if info["fastForward"].as_bool() == Some(true) {
+        let mv = &info["move"];
+        if mv["drawing"].is_null() {
+            return None;
+        }
+        let (area, set) = new_move(Move {
+            moving: current.to_owned(),
+            kind: "local",
+            after_title,
+            lost_note: String::new(),
+            lost_red: false,
+        });
+        set(mv);
+        return Some(area);
+    }
+    let d = &info["drawing"];
+    if d.is_null() {
+        return None;
+    }
+    let area = gtk::DrawingArea::new();
+    area.set_content_width((column_width(&area) * 2.0 + 24.0) as i32);
+    let rows = |k: &str, more: &str| {
+        d[k].as_array().map_or(0, Vec::len) + usize::from(d[more].as_u64().unwrap_or(0) > 0)
+    };
+    let count =
+        rows("ours", "oursMore") + rows("theirs", "theirsMore") + usize::from(!d["base"].is_null());
+    // 右には merge コミットの 1 行が増える。
+    area.set_content_height(((count + 1) as f64 * ROW + 26.0) as i32);
+    let info = info.clone();
+    let current = current.to_owned();
+    area.set_draw_func(move |area, cr, _, _| draw_merge(area, cr, &info, &current, &after_title));
+    Some(area)
+}
+
+/// merge の確認の、前と後の絵（docs/design.md の「Previewing graph changes」。macOS 版の `MergeDrawingView`）。左が今:
+/// 今のブランチ（左の線）と取り込む側（右の線）が、分かれたところで合流する。右が後: 一番上に、これから作る merge
+/// コミット（点線の丸）が両方の先端を親に持ち、今のブランチの札がそこへ移る。
+fn draw_merge(
+    area: &gtk::DrawingArea,
+    cr: &gtk::cairo::Context,
+    info: &Value,
+    current: &str,
+    after_title: &str,
+) {
+    let d = &info["drawing"];
+    let fg = area.color();
+    let labels = labels_of(d);
+    let ours = commits(&d["ours"]);
+    let theirs = commits(&d["theirs"]);
+    let base = (!d["base"].is_null()).then(|| {
+        (
+            d["base"]["oid"].as_str().unwrap_or_default().to_owned(),
+            d["base"]["subject"].as_str().unwrap_or_default().to_owned(),
+        )
+    });
+    let ours_tip = ours
+        .first()
+        .map(|c| c.0.clone())
+        .or_else(|| base.as_ref().map(|b| b.0.clone()));
+    let heading = |text: &str, x: f64| {
+        text_at(area, cr, text, x, 2.0, &dimmed(&fg, 0.6), true, f64::MAX);
+    };
+    heading(&tr!("Now"), 4.0);
+    heading(after_title, column_width(area) + 28.0);
+    for after in [false, true] {
+        let x = if after {
+            column_width(area) + 24.0
+        } else {
+            0.0
+        };
+        let mut y = TOP;
+        let mut rows = Vec::new();
+        let mut gaps = Vec::new();
+        // 右の一番上に、これから作る merge コミット。
+        let merge_y = y;
+        if after {
+            rows.push(Row {
+                subject: d["subject"].as_str().unwrap_or_default().to_owned(),
+                y,
+                is_new: true,
+                ..Default::default()
+            });
+            y += ROW;
+        }
+        with_gap(
+            &ours,
+            d["oursMore"].as_u64().unwrap_or(0),
+            d["oursMoreAt"].as_u64(),
+            0,
+            &mut y,
+            &mut gaps,
+            |(oid, subject), y| {
+                rows.push(Row {
+                    oid: oid.clone(),
+                    subject: subject.clone(),
+                    y,
+                    ..Default::default()
+                });
+            },
+        );
+        with_gap(
+            &theirs,
+            d["theirsMore"].as_u64().unwrap_or(0),
+            d["theirsMoreAt"].as_u64(),
+            1,
+            &mut y,
+            &mut gaps,
+            |(oid, subject), y| {
+                rows.push(Row {
+                    oid: oid.clone(),
+                    subject: subject.clone(),
+                    lane: 1,
+                    y,
+                    ..Default::default()
+                });
+            },
+        );
+        column(
+            area,
+            cr,
+            x,
+            &rows,
+            y,
+            base.as_ref(),
+            &gaps,
+            0,
+            if after { None } else { split_note(&d["base"]) },
+            after.then_some(merge_y),
+            &|oid| {
+                let mut out: Vec<Label> = labels
+                    .get(oid)
+                    .into_iter()
+                    .flatten()
+                    .filter(|(n, _)| n != current)
+                    .map(|(n, k)| (n.clone(), k.clone(), false))
+                    .collect();
+                // 今のブランチの札は、左では今の先端、右では merge コミットに、塗った札で。
+                let here = if after {
+                    oid.is_empty()
+                } else {
+                    ours_tip.as_deref() == Some(oid)
+                };
+                if here {
+                    out.insert(0, (current.to_owned(), "local".to_owned(), true));
+                }
+                out
+            },
+        );
+    }
+    arrow(area, cr, &fg);
+}
+
+/// cherry-pick・revert の見込み（`pickPreview` の答え）の絵（macOS 版の `PickDrawingView`）。左が今の先端、右が後:
+/// その上に、これから作るコミット（点線の丸。cherry-pick は件名に ′、revert は「Revert "…"」）が並び、今のブランチの
+/// 札が一番上へ移る。描くものがなければ None。
+pub fn for_pick(info: &Value, current: &str, revert: bool) -> Option<gtk::DrawingArea> {
+    let d = &info["drawing"];
+    if d.is_null() {
+        return None;
+    }
+    let area = gtk::DrawingArea::new();
+    area.set_content_width((column_width(&area) * 2.0 + 24.0) as i32);
+    let picks = d["picks"].as_array().map_or(0, Vec::len)
+        + usize::from(d["picksMore"].as_u64().unwrap_or(0) > 0);
+    let head = d["head"].as_array().map_or(0, Vec::len);
+    area.set_content_height(((picks + head) as f64 * ROW + 26.0) as i32);
+    let info = info.clone();
+    let current = current.to_owned();
+    area.set_draw_func(move |area, cr, _, _| draw_pick(area, cr, &info, &current, revert));
+    Some(area)
+}
+
+fn draw_pick(
+    area: &gtk::DrawingArea,
+    cr: &gtk::cairo::Context,
+    info: &Value,
+    current: &str,
+    revert: bool,
+) {
+    let d = &info["drawing"];
+    let fg = area.color();
+    let labels = labels_of(d);
+    let head = commits(&d["head"]);
+    let picks = commits(&d["picks"]);
+    let tip = head.first().map(|c| c.0.clone());
+    let first_new = picks.first().map(|c| format!("new:{}", c.0));
+    let heading = |text: &str, x: f64| {
+        text_at(area, cr, text, x, 2.0, &dimmed(&fg, 0.6), true, f64::MAX);
+    };
+    heading(&tr!("Now"), 4.0);
+    heading(
+        &if revert {
+            tr!("After the revert")
+        } else {
+            tr!("After the cherry-pick")
+        },
+        column_width(area) + 28.0,
+    );
+    for after in [false, true] {
+        let x = if after {
+            column_width(area) + 24.0
+        } else {
+            0.0
+        };
+        let mut y = TOP;
+        let mut rows = Vec::new();
+        let mut gaps = Vec::new();
+        if after {
+            with_gap(
+                &picks,
+                d["picksMore"].as_u64().unwrap_or(0),
+                d["picksMoreAt"].as_u64(),
+                0,
+                &mut y,
+                &mut gaps,
+                |(oid, subject), y| {
+                    rows.push(Row {
+                        oid: format!("new:{oid}"),
+                        subject: if revert {
+                            subject.clone()
+                        } else {
+                            format!("{subject}′")
+                        },
+                        y,
+                        is_new: true,
+                        ..Default::default()
+                    });
+                },
+            );
+        }
+        for (i, (oid, subject)) in head.iter().enumerate() {
+            rows.push(Row {
+                oid: oid.clone(),
+                subject: subject.clone(),
+                dim: after || i > 0,
+                y,
+                ..Default::default()
+            });
+            y += ROW;
+        }
+        column(
+            area,
+            cr,
+            x,
+            &rows,
+            y - ROW,
+            None,
+            &gaps,
+            0,
+            None,
+            None,
+            &|oid| {
+                let mut out: Vec<Label> = labels
+                    .get(oid)
+                    .into_iter()
+                    .flatten()
+                    .filter(|(n, _)| n != current)
+                    .map(|(n, k)| (n.clone(), k.clone(), false))
+                    .collect();
+                let here = if after {
+                    first_new.as_deref() == Some(oid)
+                } else {
+                    tip.as_deref() == Some(oid)
+                };
+                if here {
+                    out.insert(0, (current.to_owned(), "local".to_owned(), true));
+                }
+                out
+            },
+        );
+    }
+    arrow(area, cr, &fg);
+}
+
+/// 絵の材料の `labels` を、コミットごとの（名前、種類）に。
+fn labels_of(d: &Value) -> HashMap<String, Vec<(String, String)>> {
+    let mut labels: HashMap<String, Vec<(String, String)>> = HashMap::new();
+    for l in d["labels"].as_array().into_iter().flatten() {
+        labels
+            .entry(l["oid"].as_str().unwrap_or_default().to_owned())
+            .or_default()
+            .push((
+                l["name"].as_str().unwrap_or_default().to_owned(),
+                l["kind"].as_str().unwrap_or_default().to_owned(),
+            ));
+    }
+    labels
+}
+
+/// 真ん中の矢印。
+fn arrow(area: &gtk::DrawingArea, cr: &gtk::cairo::Context, fg: &gdk::RGBA) {
+    text_at(
+        area,
+        cr,
+        "→",
+        column_width(area) + 6.0,
+        TOP + ROW,
+        &dimmed(fg, 0.4),
         false,
         f64::MAX,
     );
