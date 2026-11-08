@@ -385,7 +385,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| English UI with a Japanese translation | ✓ | ✓ | — | ✓ | VSCode: Not localized; some messages are in Japanese. |
+| English UI with a Japanese translation | ✓ | ✓ | — | ✓ | VSCode: English only, not translated. |
 
 ## 14. Worktrees
 
