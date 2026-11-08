@@ -2699,6 +2699,10 @@ async function conflictsWithoutMarkersFlow(): Promise<void> {
     assert.deepEqual(state('rerere.txt'), { markers: 0, rerere: true });
     assert.deepEqual(state('hand.txt'), { markers: 0, rerere: false });
     assert.deepEqual(state('open.txt'), { markers: 1, rerere: false });
+    // サイドバーの Workspace に、コンフリクトの数を添えた Conflicts の行が出る
+    const conflictsRow = api.sidebar.getChildren().find((n) => n.kind === 'conflicts');
+    assert.ok(conflictsRow, 'Conflicts の行');
+    assert.equal((api.sidebar.getTreeItem(conflictsRow) as vscode.TreeItem).description, '3');
 
     // Accept は、解決した内容が失われると確かめる（ここでは断る）
     let detail: string | undefined;

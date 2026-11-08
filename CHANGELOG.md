@@ -1037,6 +1037,8 @@ First release.
 
 #### Added
 
+- While there are conflicts, the sidebar shows Conflicts with their count; clicking it opens the first in the merge
+  editor.
 - With the engine, diffs in History and Working Copy and the lines in Blame get syntax colors.
 - The sidebar's Working Copy row says "some folders" in a sparse checkout.
 - Save as Patch asks for a version (`-v`), naming the files `v2-0001-…` and the subjects `[PATCH v2]`.

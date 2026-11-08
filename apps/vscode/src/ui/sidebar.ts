@@ -43,6 +43,8 @@ interface Folder {
 export type Node =
   | { kind: 'view'; view: ViewName }
   | { kind: 'sequence'; sequence: Sequence; progress?: { current: number; total: number } }
+  /** コンフリクトのあるファイル（あるときだけ。押すと最初のファイルをマージエディタで） */
+  | { kind: 'conflicts'; count: number }
   | { kind: 'section'; section: RefSection }
   | { kind: 'folder'; id: string; label: string; folder: Folder; remote?: string }
   /**
@@ -242,6 +244,9 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
         { kind: 'view', view: 'workingCopy' },
         { kind: 'view', view: 'history' },
       ];
+      // Conflicts はコンフリクトがあるときだけ、数を添えて（アプリと同じく History の下）
+      const conflicts = (state.status?.entries ?? []).filter((e) => e.kind === 'unmerged').length;
+      if (conflicts > 0) nodes.push({ kind: 'conflicts', count: conflicts });
       if (state.sequence) nodes.push({ kind: 'sequence', sequence: state.sequence, progress: state.progress });
       // Stashes は stash があるときだけ（アプリと同じ）。status が stash の数を言うのは git 2.35 からなので、
       // 一覧も読んでおく（git stash list は軽い）
@@ -391,6 +396,16 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
         item.description = state?.status?.branch.head ?? 'detached HEAD';
         item.iconPath = new vscode.ThemeIcon('history');
         item.command = { command: 'amonhen.showHistory', title: 'Show History' };
+        return item;
+      }
+      case 'conflicts': {
+        const item = new vscode.TreeItem('Conflicts');
+        item.id = 'view:conflicts';
+        item.description = String(node.count);
+        item.tooltip = `${node.count} ${node.count === 1 ? 'file has' : 'files have'} conflicts. Click to open the first in the merge editor.`;
+        item.iconPath = new vscode.ThemeIcon('warning', new vscode.ThemeColor('list.warningForeground'));
+        item.command = { command: 'amonhen.openFirstConflict', title: 'Open the First Conflict' };
+        item.contextValue = 'view.conflicts';
         return item;
       }
       case 'sequence': {

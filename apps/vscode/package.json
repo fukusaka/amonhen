@@ -72,6 +72,12 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "amonhen.openFirstConflict",
+        "title": "Open the First Conflict",
+        "category": "Amon Hen",
+        "enablement": "amonhen.hasRepository"
+      },
+      {
         "command": "amonhen.rebuildHistory",
         "title": "Rebuild History",
         "category": "Amon Hen",
