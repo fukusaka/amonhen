@@ -905,7 +905,7 @@ export class HistoryController implements vscode.Disposable {
           : []),
         separator('Items'),
         ...items.map(([value, label]): Item => ({ label: `${mark(!hidden.includes(value))}${label}`, item: value })),
-        ...(this.daemon ? [separator('View'), fold, highlight] : []),
+        ...(engine ? [separator('View'), fold, highlight] : []),
       ],
       { placeHolder: 'History Display' },
     );
