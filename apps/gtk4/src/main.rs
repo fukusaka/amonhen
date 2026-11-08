@@ -2536,6 +2536,13 @@ fn build_tab(
                             pending.set(pending.get() - 1);
                         }
                         latest_refs.replace(Some(refs.clone()));
+                        // 選んでいるコミットに付く ref（タグを付けた・fetch で動いた）を詳細にも出し直す（macOS 版の
+                        // `reloadInfo`）。
+                        if let (Some(details), Some((repo, _))) =
+                            (details_weak.upgrade(), view.current())
+                        {
+                            reload_details_info(&details, repo);
+                        }
                         actions.set_head(refs.refs.head_branch.clone());
                         // push・fetch の後はプルリクエストや CI も変わりうる（読みすぎないよう、間を空ける）。
                         if github_started {
@@ -3282,8 +3289,13 @@ fn reload_details_info(details: &Rc<Details>, repo: Arc<Repository>) {
         let info = gio::spawn_blocking(move || repo.commit_info(&id)).await;
         if let Ok(Ok(info)) = info
             && details.oid().as_deref() == Some(oid.as_str())
+            && !details.shows_info(&info)
         {
             details.show(&info);
+            // Refs の行が増えた・減ったなら、欄の高さも中身に合わせ直す（macOS 版の `renderHeader`）。
+            if let Some(paned) = details.root.parent().and_downcast::<gtk::Paned>() {
+                fit_details(&paned, details.clone());
+            }
         }
     });
 }
