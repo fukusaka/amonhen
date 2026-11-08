@@ -3196,7 +3196,8 @@ impl Loader {
                     amonhen_core::Selection::Pair { .. } => "pair",
                     amonhen_core::Selection::Each(_) => "each",
                 };
-                Ok::<_, String>((kind, commitfiles::Prepared::new(stacked, &viewed, all)))
+                // 複数のコミットは、設定によらず全ファイルを並べる（macOS 版と同じ）。
+                Ok::<_, String>((kind, commitfiles::Prepared::new(stacked, &viewed, true)))
             })
             .await;
             this.pending.set(this.pending.get() - 1);
