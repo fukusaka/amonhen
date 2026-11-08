@@ -474,6 +474,8 @@ impl Table {
         self.column_view.set(Some(&view));
         view.set_show_column_separators(false);
         view.set_reorderable(false);
+        // 行を交互に塗る（macOS 版の SwiftUI の Table と同じ）。
+        view.add_css_class("zebra");
         let w = Rc::downgrade(self);
         self.selection.connect_selected_item_notify(move |sel| {
             let Some(t) = w.upgrade() else { return };
@@ -557,6 +559,8 @@ impl Table {
             let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
                 return;
             };
+            // 名前の列はどちらの表にもあるので、ここで塗る。
+            crate::stripe_rows(item);
             let (Some(b), Some(row)) = (
                 item.child().and_downcast::<gtk::Box>(),
                 item.item().and_then(|o| row_of(&o)),
