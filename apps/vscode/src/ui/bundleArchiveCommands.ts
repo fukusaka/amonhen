@@ -240,6 +240,13 @@ async function fetchBundle(repo: Repository): Promise<void> {
   );
 }
 
+/** parent の中でまだない名前（name、name-2、name-3…） */
+function freeName(parent: string, base: string): string {
+  let name = base;
+  for (let i = 2; existsSync(join(parent, name)); i++) name = `${base}-${i}`;
+  return name;
+}
+
 /** bundle のファイルから clone して開く（HEAD がなければブランチを選ぶ） */
 async function cloneBundle(manager: RepositoryManager): Promise<void> {
   const title = 'Clone from Bundle';
@@ -279,7 +286,7 @@ async function cloneBundle(manager: RepositoryManager): Promise<void> {
   const folder = await vscode.window.showInputBox({
     title,
     prompt: `Name of the new folder in ${parent.fsPath}`,
-    value: folderForBundle(file),
+    value: freeName(parent.fsPath, folderForBundle(file)),
     validateInput: (v) => {
       const n = v.trim();
       if (!n || /[\\/]/.test(n)) return 'Type a folder name';
@@ -292,7 +299,14 @@ async function cloneBundle(manager: RepositoryManager): Promise<void> {
   await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Cloning ${basename(file)}` }, () =>
     git.exec(['clone', ...(branch ? ['-b', branch] : []), '--', file, dest], { cwd: parent.fsPath }),
   );
-  const choice = await vscode.window.showInformationMessage(`Cloned into ${dest}`, 'Open', 'Open in New Window', 'Add to Workspace');
+  // git の clone（vscode.git）と同じく、開き方を尋ねる
+  const choice = await vscode.window.showInformationMessage(
+    'Would you like to open the cloned repository, or add it to the current workspace?',
+    { modal: true, detail: dest },
+    'Open',
+    'Open in New Window',
+    'Add to Workspace',
+  );
   if (choice === 'Open') await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(dest));
   else if (choice === 'Open in New Window') await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(dest), { forceNewWindow: true });
   else if (choice === 'Add to Workspace') {
