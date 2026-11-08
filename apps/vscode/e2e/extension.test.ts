@@ -2555,6 +2555,18 @@ suite('Amon Hen in VSCode', () => {
     api = await ext.activate();
   });
 
+  // 前の試験の git 操作を知って遅れて始まる History の読み直しが、次の試験に入り込まないように、落ち着くまで待つ
+  setup(async () => {
+    const history = api.panel()?.history;
+    if (!history) return;
+    for (let i = 0; i < 10; i++) {
+      await history.idle();
+      const quiet = posted.length;
+      await new Promise((r) => setTimeout(r, 700));
+      if (!posted.slice(quiet).some((m) => m.type === 'reset' || m.type === 'rows')) return;
+    }
+  });
+
   test('activates with the bundled engine and the shared daemon', async () => {
     const repo = await until('リポジトリ', () => api.manager.current);
     assert.equal(repo.root.toLowerCase(), root.toLowerCase());

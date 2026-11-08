@@ -564,6 +564,11 @@ export class HistoryController implements vscode.Disposable {
     return true;
   }
 
+  /** 読み直しを待たせていれば今すぐ読み直し、すべて終わるまで待つ（結合テストが、試験の間で使う） */
+  async idle(): Promise<void> {
+    await this.settled();
+  }
+
   /**
    * 読み直しが終わるまで待つ。HEAD やブランチが動いた直後で読み直しを待たせていれば、今すぐ読み直す。
    * 待つ間に次の読み直しが始まれば、それも待つ
