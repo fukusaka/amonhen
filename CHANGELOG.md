@@ -52,6 +52,7 @@ becomes the GitHub Release notes.
 - The GTK4 app's Settings show on/off items as switches on the right, as the macOS app does.
 - The GTK4 app's Settings forms sit in a centred column of the macOS width instead of spanning the window; tables
   such as Remotes and Keys and Values still use the full width.
+- The GTK4 app shades every other row in the Remotes, Hooks, LFS and Environment Variables tables, as the macOS app does.
 - The GTK4 app follows the macOS app's look more closely: its dates use the same formats, links in the details are
   link blue without an underline, and History, Blame and the key/value table have tighter rows.
 - In the GTK4 app, Working Copy, Stashes, Reflog, the commit message box and Settings open at the macOS sizes, a list
