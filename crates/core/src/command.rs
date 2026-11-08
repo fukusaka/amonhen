@@ -566,9 +566,19 @@ pub enum Command {
     /// （今の先端とその親）、`picks`（作るコミットの件名。新しい順、長ければ真ん中を省く。`picksMore`・
     /// `picksMoreAt`）、`labels`。
     PickPreview {
+        #[serde(default)]
         oids: Vec<String>,
         #[serde(default)]
         revert: bool,
+        /// `oids` の代わりに、作るコミットの件名（古い順。パッチの取り込みのように、まだコミットがないとき）。
+        #[serde(default)]
+        subjects: Vec<String>,
+    },
+    /// ブランチ `branch` を消したときの前と後（`MovePreview` と同じ形の答え）。`against`（今のブランチか上流）と
+    /// 分かれたところへ動かしたものとして、`branch` にしかないコミットを外れるコミットとして返す。
+    DeletePreview {
+        branch: String,
+        against: String,
     },
     /// `theirs` を `ours`（既定は HEAD）にマージしたらコンフリクトするファイル（`info.conflicts`。なければ空、
     /// git が古くて調べられなければ null）。作業ツリーと index には触らない（`git merge-tree --write-tree`）。
@@ -796,12 +806,20 @@ pub enum Command {
 /// リポジトリ専用のコミットのテンプレートの置き場所（`<git dir>` から）。
 const COMMIT_TEMPLATE: &str = "amonhen/commit-template";
 
+/// コミットの本文（ヘッダ）から、最初の親。
+fn first_parent(raw: &[u8]) -> Option<Oid> {
+    raw.split(|&b| b == b'\n')
+        .take_while(|line| !line.is_empty())
+        .find_map(|line| line.strip_prefix(b"parent "))
+        .and_then(|hex| Oid::from_hex(std::str::from_utf8(hex).ok()?.trim()))
+}
+
 /// 前と後の絵に描くコミットの件名と日時（`Repository::drawing_texts`）。
 type DrawingTexts = std::collections::HashMap<Oid, (String, i64)>;
 
 /// 前と後の絵に描くコミット（新しい順）を、長ければ真ん中で省く: 新しい 3 つと、分かれたところに近い古い 2 つ。
 /// 描くもの、省いた数、省いたところ（描くものの何番目の前か）を返す。
-fn elide(commits: &[Oid]) -> (Vec<Oid>, usize, usize) {
+fn elide<T: Clone>(commits: &[T]) -> (Vec<T>, usize, usize) {
     const NEW: usize = 3;
     const OLD: usize = 2;
     if commits.len() <= NEW + OLD + 1 {
@@ -2380,6 +2398,7 @@ impl Repository {
         ops: &dyn amonhen_model::Operations,
         oids: &[String],
         revert: bool,
+        subjects: &[String],
     ) -> Result<serde_json::Value> {
         let head = ops.head_state()?.oid.ok_or_else(|| tr!("No commits yet"))?;
         let history = self.load_history()?;
@@ -2399,16 +2418,32 @@ impl Repository {
         ids.extend(&shown);
         let (texts, labels) = self.drawing_texts(&ids)?;
         let subject = |id: &Oid| texts.get(id).map(|t| t.0.clone()).unwrap_or_default();
-        Ok(serde_json::json!({
-            "drawing": {
-                "head": context.iter().map(|id| serde_json::json!({ "oid": id.to_string(), "subject": subject(id) })).collect::<Vec<_>>(),
-                "picks": shown.iter().map(|id| {
+        let (picks, more, at) = if subjects.is_empty() {
+            let picks: Vec<_> = shown
+                .iter()
+                .map(|id| {
                     let s = subject(id);
                     serde_json::json!({
                         "oid": id.to_string(),
                         "subject": if revert { format!("Revert \"{s}\"") } else { s },
                     })
-                }).collect::<Vec<_>>(),
+                })
+                .collect();
+            (picks, more, at)
+        } else {
+            // まだコミットのないもの（パッチ）は、件名だけ（新しい順）。
+            let newest_first: Vec<(usize, &String)> = subjects.iter().enumerate().rev().collect();
+            let (shown, more, at) = elide(&newest_first);
+            let picks = shown
+                .iter()
+                .map(|(i, s)| serde_json::json!({ "oid": format!("patch-{i}"), "subject": s }))
+                .collect();
+            (picks, more, at)
+        };
+        Ok(serde_json::json!({
+            "drawing": {
+                "head": context.iter().map(|id| serde_json::json!({ "oid": id.to_string(), "subject": subject(id) })).collect::<Vec<_>>(),
+                "picks": picks,
                 "picksMore": more,
                 "picksMoreAt": at,
                 "labels": labels,
@@ -2433,7 +2468,22 @@ impl Repository {
                 .map(|r| r as usize)
                 .ok_or_else(|| tr!("{rev} isn’t in the History (reload it)", rev = rev).into())
         };
-        let (from_row, to_row) = (row(&from_id, from)?, row(&to_id, to)?);
+        // 行き先が History にない（Undo で戻る、どこからも辿れなくなったコミット）なら、親を辿って History に
+        // 合流するところまでを、行き先だけのコミットとして先に並べる。
+        let mut outside: Vec<Oid> = Vec::new();
+        let mut join = to_id;
+        while history.row_of(&join).is_none() {
+            if outside.len() >= 100 {
+                return Err(tr!("{rev} isn’t in the History (reload it)", rev = to).into());
+            }
+            outside.push(join);
+            let texts = self.commit_texts(&[join])?;
+            join = texts
+                .first()
+                .and_then(|t| first_parent(&t.raw))
+                .ok_or_else(|| tr!("{rev} isn’t in the History (reload it)", rev = to))?;
+        }
+        let (from_row, to_row) = (row(&from_id, from)?, row(&join, to)?);
         // それぞれから辿れる行に印を付ける（行はトポロジカル順で、親は子より後ろ）。
         let reach = |start: usize| {
             let mut mark = vec![false; graph.len()];
@@ -2482,7 +2532,9 @@ impl Repository {
         let mut drawing = serde_json::Value::Null;
         if from_id != to_id {
             let ids_of = |rows: &[usize]| rows.iter().map(|&r| graph.ids()[r]).collect::<Vec<_>>();
-            let (shown_gained, gained_more, gained_at) = elide(&ids_of(&gained));
+            let mut gained_ids = outside.clone();
+            gained_ids.extend(ids_of(&gained));
+            let (shown_gained, gained_more, gained_at) = elide(&gained_ids);
             let (shown_lost, lost_more, lost_at) = elide(&ids_of(&lost));
             let mut ids: Vec<Oid> = shown_gained.clone();
             ids.extend(&shown_lost);
@@ -2517,7 +2569,17 @@ impl Repository {
                     .map_or(0, |t| t.author_time)
             };
             drawing = serde_json::json!({
-                "gained": shown_gained.iter().map(commit).collect::<Vec<_>>(),
+                // どこからも辿れない（Reflog にだけある）ものには印を付ける。
+                "gained": shown_gained
+                    .iter()
+                    .map(|id| {
+                        let mut c = commit(id);
+                        if outside.contains(id) {
+                            c["hidden"] = serde_json::json!(true);
+                        }
+                        c
+                    })
+                    .collect::<Vec<_>>(),
                 "gainedMore": gained_more,
                 "gainedMoreAt": gained_at,
                 "lost": shown_lost.iter().map(commit).collect::<Vec<_>>(),
@@ -2532,7 +2594,7 @@ impl Repository {
             });
         }
         Ok(serde_json::json!({
-            "gainedCount": gained.len(),
+            "gainedCount": gained.len() + outside.len(),
             "lostCount": lost.len(),
             "files": files,
             "upstream": upstream,
@@ -3785,11 +3847,21 @@ impl Repository {
                 // 外で rebase を終わらせた場合も、ここで確定させる。
                 undo.settle_pending(ops)?;
                 let peek = undo.peek_kind();
+                // 動くブランチ（今と戻る先）。確認の前と後の絵に使う。
+                let (head, moves) = undo.peek_moves().unwrap_or_default();
+                let moves: Vec<_> = moves
+                    .into_iter()
+                    .map(|(name, from, to)| {
+                        let short = name.strip_prefix("refs/heads/").unwrap_or(&name).to_owned();
+                        serde_json::json!({ "name": short, "from": from, "to": to })
+                    })
+                    .collect();
+                let head = head.map(|h| h.strip_prefix("refs/heads/").unwrap_or(&h).to_owned());
                 Ok(Response {
                     ok: true,
-                    info: peek
-                        .as_ref()
-                        .map(|(_, kind)| serde_json::json!({ "kind": kind })),
+                    info: peek.as_ref().map(|(_, kind)| {
+                        serde_json::json!({ "kind": kind, "head": head, "moves": moves })
+                    }),
                     label: peek.map(|(label, _)| label),
                     ..Default::default()
                 })
@@ -4226,11 +4298,35 @@ impl Repository {
                 )?),
                 ..Default::default()
             }),
-            Command::PickPreview { oids, revert } => Ok(Response {
+            Command::PickPreview {
+                oids,
+                revert,
+                subjects,
+            } => Ok(Response {
                 ok: true,
-                info: Some(self.pick_preview(ops, &oids, revert)?),
+                info: Some(self.pick_preview(ops, &oids, revert, &subjects)?),
                 ..Default::default()
             }),
+            Command::DeletePreview { branch, against } => {
+                let history = self.load_history()?;
+                let row = |rev: &str| -> Result<u32> {
+                    let id = ops.resolve(rev)?;
+                    history.row_of(&id).ok_or_else(|| {
+                        tr!("{rev} isn’t in the History (reload it)", rev = rev).into()
+                    })
+                };
+                let base =
+                    crate::repository::merge_base(&history.graph, row(&branch)?, row(&against)?)
+                        .map(|r| history.graph.ids()[r as usize].to_string())
+                        .ok_or_else(|| {
+                            tr!("{rev} isn’t in the History (reload it)", rev = against)
+                        })?;
+                Ok(Response {
+                    ok: true,
+                    info: Some(self.move_preview(ops, &branch, &base, None)?),
+                    ..Default::default()
+                })
+            }
             Command::MovePreview { from, to, branch } => Ok(Response {
                 ok: true,
                 info: Some(self.move_preview(ops, &from, &to, branch.as_deref())?),
@@ -5534,6 +5630,38 @@ mod tests {
         assert_eq!(d["head"][0]["subject"], "add d");
         assert_eq!(d["picks"][0]["subject"], "Revert \"add c\"");
         assert_eq!(d["picks"][1]["subject"], "Revert \"add b\"");
+        // パッチの取り込み（件名だけ。新しい順）。
+        let am = run(&repo, r#"{"op":"pickPreview","subjects":["one","two"]}"#);
+        assert_eq!(am["info"]["drawing"]["picks"][0]["subject"], "two");
+        // topic を消すと、main にない 2 つが外れる。
+        let delete = run(
+            &repo,
+            r#"{"op":"deletePreview","branch":"topic","against":"main"}"#,
+        );
+        assert_eq!(delete["info"]["lostCount"], 2);
+        assert_eq!(delete["info"]["gainedCount"], 0);
+        assert_eq!(delete["info"]["drawing"]["base"]["subject"], "first");
+    }
+
+    #[test]
+    fn previews_moving_to_a_commit_no_ref_reaches() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        std::fs::write(dir.join("d"), "d\n").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-q", "-m", "add d"]);
+        let gone = git(dir, &["rev-parse", "main"]);
+        git(dir, &["reset", "-q", "--hard", "HEAD~1"]);
+        // git reset が残す ORIG_HEAD から辿れないように。
+        git(dir, &["update-ref", "-d", "ORIG_HEAD"]);
+        // Undo で戻る、どこからも辿れなくなったコミット: 親を辿って History に合流するまでを足し、印を付ける。
+        let back = run(
+            &repo,
+            &serde_json::json!({"op": "movePreview", "from": "main", "to": gone}).to_string(),
+        );
+        assert_eq!(back["info"]["gainedCount"], 1, "{back}");
+        assert_eq!(back["info"]["drawing"]["gained"][0]["subject"], "add d");
+        assert_eq!(back["info"]["drawing"]["gained"][0]["hidden"], true);
     }
 
     #[test]
@@ -6235,6 +6363,9 @@ mod tests {
         let peek = run(&repo, r#"{"op":"undoPeek"}"#);
         assert_eq!(peek["label"], "Create branch topic");
         assert_eq!(peek["info"]["kind"], "refs", "{peek}");
+        // 作ったブランチは、戻すと消える（戻る先がない）。
+        assert_eq!(peek["info"]["moves"][0]["name"], "topic", "{peek}");
+        assert!(peek["info"]["moves"][0]["to"].is_null(), "{peek}");
         assert_eq!(
             run(&repo, r#"{"op":"undo"}"#)["label"],
             "Create branch topic"

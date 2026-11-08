@@ -114,6 +114,9 @@ impl Entry {
     }
 }
 
+/// Undo で動く ref（完全な名前、今の oid、戻る先の oid。ないものは None）。
+pub type RefMove = (String, Option<String>, Option<String>);
+
 /// 記録した後に、ほかの操作でブランチや HEAD が動いている。
 #[derive(Debug)]
 pub struct UndoConflict(pub String);
@@ -209,6 +212,30 @@ impl UndoLog {
     /// 次に Undo される操作の名前と、何を戻すか（`Entry::kind`）。
     pub fn peek_kind(&self) -> Option<(String, &'static str)> {
         self.load().last().map(|e| (e.label.clone(), e.kind()))
+    }
+
+    /// 次の Undo で動くもの: HEAD のブランチ（操作の後の名前）と、動いたブランチごとの（完全な名前、今の oid、
+    /// 戻る先の oid）。ない・作られた・消されたものは oid が None。確認の前と後の絵に使う。
+    pub fn peek_moves(&self) -> Option<(Option<String>, Vec<RefMove>)> {
+        let entry = self.load().into_iter().last()?;
+        let mut moves: Vec<_> = entry
+            .after
+            .refs
+            .iter()
+            .filter_map(|(name, after)| {
+                let before = entry.before.refs.get(name).cloned().flatten();
+                (after.as_ref() != before.as_ref()).then(|| (name.clone(), after.clone(), before))
+            })
+            .collect();
+        // detached HEAD が動いたなら、それも（名前は HEAD）。
+        if entry.after.head.branch.is_none() && entry.after.head.oid != entry.before.head.oid {
+            moves.push((
+                "HEAD".to_owned(),
+                entry.after.head.oid.clone(),
+                entry.before.head.oid.clone(),
+            ));
+        }
+        Some((entry.after.head.branch.clone(), moves))
     }
 
     fn snapshot(ops: &dyn Operations, refs: &[String]) -> Result<RefSnapshot> {
