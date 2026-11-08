@@ -2989,7 +2989,15 @@ suite('Amon Hen in VSCode', () => {
       await panel.history.handle({ type: 'scope', scope: 'all' });
       let at = posted.length;
       await panel.history.reset();
-      const { rows } = await waitPosted('rows', at, (m) => m.total !== undefined);
+      // 祖先の印は行の番号なので、落ち着いた History の行で見る（後から届く読み直しで、並びが変わることがある）
+      for (;;) {
+        const quiet = posted.length;
+        await new Promise((r) => setTimeout(r, 800));
+        if (!posted.slice(quiet).some((m) => m.type === 'reset' || m.type === 'rows')) break;
+      }
+      const shown = posted.slice(at).filter((m): m is Extract<HostMessage, { type: 'rows' }> => m.type === 'rows' && m.total !== undefined);
+      const rows = shown.at(-1)?.rows ?? (await waitPosted('rows', at, (m) => m.total !== undefined)).rows;
+      assert.ok(rows.some((r) => r.oid === tip) && rows.some((r) => r.oid === side), 'tip と side が History にある');
       const rowOf = (oid: string) => rows.findIndex((r) => r.oid === oid);
       at = posted.length;
       await toggle();
