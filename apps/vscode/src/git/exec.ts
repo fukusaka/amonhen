@@ -9,6 +9,8 @@ export interface ExecOptions {
   env?: Record<string, string>;
   /** 0 以外で成功扱いにする終了コード */
   okCodes?: readonly number[];
+  /** 成功したときの標準エラー出力を受け取る（hooks の出力など） */
+  onStderr?: (text: string) => void;
 }
 
 export interface ExecLog {
@@ -84,6 +86,7 @@ export class GitExecutor {
       child.on('close', (code) => {
         this.onLog?.({ args: fullArgs, ms: performance.now() - start, exitCode: code });
         if (code === 0 || (code !== null && opts.okCodes?.includes(code))) {
+          opts.onStderr?.(Buffer.concat(err).toString('utf8'));
           resolve(Buffer.concat(out));
         } else {
           reject(new GitError(fullArgs, code, Buffer.concat(err).toString('utf8')));

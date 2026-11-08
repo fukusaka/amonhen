@@ -62,6 +62,10 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- Writing to the repository (stash, commit and the like) no longer fails now and then with "index.lock: File exists"
+  because the engine was refreshing Working Copy at the same moment.
+- On Windows, removing a worktree whose folder another program was using for a moment no longer leaves the folder
+  behind, unregistered and impossible to remove from the app, and removing such a submodule no longer fails.
 - GTK4: ↑ and ↓ in the sidebar skip headings and folders, as on macOS, instead of stopping on them.
 - In a narrow GTK4 merge editor, the bar hides its lesser buttons instead of cutting every button's name.
 - The GTK4 Rebase sheet no longer cuts commit subjects, its Push sheet no longer leaves an empty band, and disabled
@@ -1024,6 +1028,17 @@ First release.
 
 #### Added
 
+- History can show several selected refs, marks each worktree's HEAD, and its ⋯ button picks the order, the row items, folding merged branches and highlighting ancestors.
+- History's details collapse each file and mark it Viewed, start lockfiles and large changes collapsed, show line
+  counts, list the files as a tree beside the diffs or show one file at a time, and ⌘F finds text in them.
+- Working Copy shows line counts per file, discards with ⌫, moves with J/K and ⌥J/⌥K, adds untracked files to
+  `.gitignore`, and notes a sparse checkout above the list.
+- Commit's ▾ adds Commit and Push (⌘⇧↩), Amend Last Commit, and Fixup and Squash Commit For. What hooks wrote, and why a
+  commit failed, open in a readable sheet.
+- The commit box counts the summary's length, keeps a draft per repository, starts from `commit.template`, brings back
+  recent messages (⌥↑ and ⌥↓ too) and inserts Conventional types, Co-authored-by and Signed-off-by.
+- Working Copy's file list filters on paths and shows paths, a folder tree (folders stage and unstage together) or
+  file names first.
 - With the engine, several commits can be selected in History (⌘- or Ctrl-click, ⇧-click, ⇧+arrows): the details show
   their diff, and the menu cherry-picks, reverts, combines, merges, saves patches, range-diffs two and copies the IDs.
 - Clean Up Branches… lists branches merged into the default branch, merged by a pull request on GitHub, or whose

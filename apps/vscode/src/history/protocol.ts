@@ -6,11 +6,16 @@ import type { SignatureKind } from '../git/signature.ts';
 import type { GraphRow } from './graph.ts';
 
 /** 履歴の範囲。現在のブランチ、すべて、または `ref:refs/heads/x` のような 1 つの ref */
-export type Scope = 'head' | 'all' | `ref:${string}`;
+export type Scope = 'head' | 'all' | `ref:${string}` | `refs:${string}`;
+
+/** History の並び順: 日付順か、ブランチのコミットを merge の下にまとめるか */
+export type HistoryOrder = 'date' | 'topo';
+/** History の行に出す項目 */
+export type HistoryItem = 'refs' | 'author' | 'date' | 'oid' | 'signature';
 
 export interface RefLabel {
   name: string;
-  kind: 'head' | 'branch' | 'remote' | 'tag';
+  kind: 'head' | 'branch' | 'remote' | 'tag' | 'worktree';
   /** checkout しているブランチ */
   current?: boolean;
 }
@@ -29,6 +34,10 @@ export interface RowData {
   chain?: number;
   /** 親も編集できる範囲にあり、squash / fixup できる */
   canSquash: boolean;
+  /** 畳んだ merge が隠している、取り込んだコミットの数 */
+  hidden?: number;
+  /** 畳む設定で、開いている merge */
+  expanded?: boolean;
 }
 
 /** 右側に出すコミットの詳細 */
@@ -59,6 +68,12 @@ export type MessageEdit = 'reword' | 'squash' | 'combine';
 /** 2 つ選んだときの差分の取り方（コアの `pair`） */
 export type PairMode = 'forward' | 'reverse' | 'mergeBase';
 
+/** 詳細の欄の、変わったファイルの見せ方。`tree` は木にして差分の左に、`single` は選んだファイルの差分だけ */
+export interface DetailsLayout {
+  tree: boolean;
+  single: boolean;
+}
+
 /** いくつも選んだコミットの見せ方（`commitDiff` の `history`・`rows`）。差分はファイルごとに求める */
 export interface SelectionView {
   /** 差分を求めるときの `oid` の代わり */
@@ -70,6 +85,9 @@ export interface SelectionView {
   files: { path: string; added: number; removed: number; binary: boolean }[];
   /** 選んだコミット（上から。多ければ先頭だけ） */
   commits: { row: number; oid: string; subject: string; author: string }[];
+  /** Viewed を覚える鍵（選んだコミットがすべて `commits` にあるときだけ） */
+  viewedKey?: string;
+  viewed: string[];
 }
 
 /** History の検索の様子 */
@@ -95,9 +113,16 @@ export type HistoryHostMessage =
   /** その行を選んで見せる（Reflog の Show in History） */
   | { type: 'reveal'; row: number }
   | { type: 'searchable'; searchable: boolean }
+  /** 行に出さない項目 */
+  | { type: 'historyDisplay'; hidden: HistoryItem[] }
+  /** 詳細の欄の、変わったファイルの見せ方 */
+  | { type: 'detailsLayout'; layout: DetailsLayout }
+  /** 祖先の行（ビットの列を base64 で。`row` の下位から）。目立たせないなら null */
+  | { type: 'lineage'; rows: string | null }
   | { type: 'search'; state: SearchState }
   | { type: 'busy'; busy: boolean }
-  | { type: 'details'; details: CommitDetails }
+  /** `viewed` は Viewed にしたファイル */
+  | { type: 'details'; details: CommitDetails; viewed: string[] }
   /** いくつも選んだコミットの差分。`token` は頼んだときのもの。読めなければ `error` */
   | { type: 'selection'; token: number; view?: SelectionView; error?: string }
   /** コミットの中の 1 ファイルの差分（最初の親との差分） */
@@ -151,7 +176,14 @@ export type HistoryWebviewMessage =
   | { type: 'openFile'; oid: string; path: string }
   /** コミットの中の 1 ファイルの差分を求める（詳細に並べる） */
   | { type: 'commitDiff'; oid: string; path: string }
+  /** 詳細のファイルを Viewed にする・戻す。`key` はコミット ID か、いくつも選んだときの見せ方の `viewedKey` */
+  | { type: 'viewed'; key: string; path: string; viewed: boolean }
+  | { type: 'detailsLayout'; layout: DetailsLayout }
   | { type: 'scope'; scope: Scope }
+  /** 並び順と項目の一覧を出す */
+  | { type: 'displayMenu' }
+  /** 畳んだ merge を開く・畳む */
+  | { type: 'toggleFold'; oid: string }
   | { type: 'saveMessage'; oid: string; last?: string; kind: MessageEdit; message: string }
   /** 編集できる範囲の中で、新しい順の to 番目に動かす */
   | { type: 'move'; oid: string; to: number }

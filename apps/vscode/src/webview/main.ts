@@ -6,6 +6,7 @@
 import type { HostMessage, ViewName } from '../view/protocol.ts';
 import { el, getState, post, updateState, type View } from './api.ts';
 import { createBlameView } from './blame.ts';
+import { setDetailsLayout } from './details.ts';
 import { createFileHistoryView } from './fileHistory.ts';
 import { createHistoryView } from './history.ts';
 import { createReflogView } from './reflog.ts';
@@ -46,6 +47,10 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
   const message = event.data;
   if (message.type === 'show') {
     show(message.view);
+    return;
+  }
+  if (message.type === 'detailsLayout') {
+    setDetailsLayout(message.layout);
     return;
   }
   for (const v of Object.values(views)) {

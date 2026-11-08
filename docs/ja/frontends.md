@@ -218,27 +218,27 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
 | 1 つのチェックボックスの一覧（☑ ▣ ☐、見出し・フォルダーのチェック） | ✓ | ✓ | ✓ | n/a | VSCode: Staged と Changes が別のグループ。 |
-| List / Tree / Flat | ✓ | ✓ | — | n/a |  |
-| パスで絞り込む | ✓ | ✓ | — | n/a |  |
-| 行ごとの +/− の数と、ホバーで Discard | ✓ | ✓ | △ | △ | VSCode: 行の数はない。<br>CLI: `diff --stat`。 |
-| Space で切り替え、⌫ で捨てる | ✓ | ✓ | △ | n/a | VSCode: Space で切り替えるが、⌫ はない。 |
-| 上のコミットの欄、50/72 の数と本文の目安の線 | ✓ | ✓ | △ | n/a | VSCode: 数も目安の線もない。 |
-| リポジトリごとの下書き、テンプレートから始める | ✓ | ✓ | — | n/a |  |
-| 最近のメッセージ（⌥↑ / ⌥↓・一覧） | ✓ | ✓ | — | n/a |  |
-| Conventional の種類・Co-authored-by・Signed-off-by を入れる | ✓ | ✓ | — | n/a |  |
+| List / Tree / Flat | ✓ | ✓ | ✓ | n/a |  |
+| パスで絞り込む | ✓ | ✓ | ✓ | n/a |  |
+| 行ごとの +/− の数と、ホバーで Discard | ✓ | ✓ | ✓ | △ | VSCode: 行数はエンジンがあるときだけ。<br>CLI: `diff --stat`。 |
+| Space で切り替え、⌫ で捨てる | ✓ | ✓ | ✓ | n/a |  |
+| 上のコミットの欄、50/72 の数と本文の目安の線 | ✓ | ✓ | △ | n/a | VSCode: 欄は一覧の下のまま。目安の線の代わりに、72 を超える本文の行の長さを出す。 |
+| リポジトリごとの下書き、テンプレートから始める | ✓ | ✓ | ✓ | n/a | VSCode: `commit.template` だけで、共有のテンプレートは使わない。 |
+| 最近のメッセージ（⌥↑ / ⌥↓・一覧） | ✓ | ✓ | ✓ | n/a |  |
+| Conventional の種類・Co-authored-by・Signed-off-by を入れる | ✓ | ✓ | ✓ | n/a |  |
 | `#issue` の補完 | ✓ | ✓ | — | n/a |  |
-| Commit and Push・Amend | ✓ | ✓ | △ | △ | VSCode: Amend だけ。<br>CLI: `commit -m … --amend`。 |
-| Fixup / Squash Commit For | ✓ | ✓ | — | n/a |  |
-| hooks の出力のシート | ✓ | ✓ | — | n/a |  |
+| Commit and Push・Amend | ✓ | ✓ | ✓ | △ | CLI: `commit -m … --amend`。 |
+| Fixup / Squash Commit For | ✓ | ✓ | ✓ | n/a |  |
+| hooks の出力のシート | ✓ | ✓ | ✓ | n/a |  |
 | Commit が押せない理由を出す | — | — | △ | n/a | VSCode: コミットできないときに注意を出す。 |
 | HEAD → 作業ツリーの 1 つの差分と、行・hunk のチェック | ✓ | ✓ | △ | ✓ | VSCode: 別々の未ステージ・ステージ済みの差分で行をステージ。<br>CLI: `diff --combined`・`stage --rows`。 |
-| 行の範囲の選択、J/K・⌥J/⌥K | ✓ | ✓ | △ | n/a | VSCode: J/K のキーはない。 |
+| 行の範囲の選択、J/K・⌥J/⌥K | ✓ | ✓ | ✓ | n/a |  |
 | 重ねられないファイルの Unstaged / Staged の切り替え | ✓ | ✓ | n/a | ✓ | VSCode: いつも別々に出す。<br>CLI: `diff --staged`。 |
 | 差分の表示の選択（unified/split・空白・前後の行・折り返し） | — | — | — | n/a |  |
 | 行・hunk・ファイルを捨てる（Undo できる） | ✓ | ✓ | ✓ | ✓ | CLI: `discard --rows`。 |
-| Add to .gitignore | ✓ | ✓ | — | n/a |  |
+| Add to .gitignore | ✓ | ✓ | ✓ | n/a |  |
 | コンフリクトのファイルからマージエディターを開く | ✓ | ✓ | ✓ | n/a | macOS, GTK4: UTF-8 でないファイルは開かない。片側を選ぶ。<br>VSCode: VSCode のマージエディターを開く。 |
-| 一部のフォルダだけを取り出しているとき、一覧の上に知らせる | ✓ | ✓ | — | △ | CLI: `status` が sparse checkout を添える。 |
+| 一部のフォルダだけを取り出しているとき、一覧の上に知らせる | ✓ | ✓ | ✓ | △ | CLI: `status` が sparse checkout を添える。 |
 
 ## History
 
@@ -247,15 +247,15 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | ブランチ・タグのラベル付きのグラフ | ✓ | ✓ | ✓ | ✓ | CLI: `log`。 |
 | 大きな履歴をかたまりで読み、永続キャッシュを使う | ✓ | ✓ | ✓ | ✓ |  |
 | 一致の数・次 / 前・一致だけの検索 | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。<br>CLI: `log <query>` が一致を並べる。 |
-| 表示: 順・1 行・行の項目・マージ済みを畳む・祖先を目立たせる | ✓ | ✓ | △ | △ | VSCode: 範囲（今・すべて・ref）だけ。<br>CLI: `--topo-order`・`--fold`。 |
+| 表示: 順・1 行・行の項目・マージ済みを畳む・祖先を目立たせる | ✓ | ✓ | △ | △ | VSCode: 行はいつも 1 行。祖先を目立たせるのは行ごとで、グラフの線ごとではない。<br>CLI: `--topo-order`・`--fold`。 |
 | アバター | ✓ | ✓ | — | n/a |  |
 | コミットの署名の印 | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。<br>CLI: `show` に出る。 |
 | コミットごとの CI の状態とポップオーバー | ✓ | ✓ | — | — |  |
-| worktree の HEAD のラベル（✎ ⌂ ⑂・変更の数） | ✓ | ✓ | — | — |  |
+| worktree の HEAD のラベル（✎ ⌂ ⑂・変更の数） | ✓ | ✓ | ✓ | — |  |
 | Go to HEAD・Parent・Child | ✓ | ✓ | ✓ | n/a | VSCode: History の上の HEAD のボタン、コミットのメニューの Go to Parent・Go to Child、詳細の親と子へのリンク（エンジンがあるとき）。 |
 | Go to Ref | — | — | — | n/a |  |
 | いくつものコミットを選ぶ（範囲・2 つ・飛び飛び） | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。<br>CLI: 2 つは `diff <rev> <rev>`。 |
-| 選んだいくつもの ref の History | ✓ | ✓ | — | ✓ | CLI: `log --branch` を重ねる。 |
+| 選んだいくつもの ref の History | ✓ | ✓ | ✓ | ✓ | CLI: `log --branch` を重ねる。 |
 | コミットのメニュー: checkout・新しいブランチやタグ・cherry-pick・revert・ID のコピー | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | 編集モード（keep・reword・squash・fixup・drop・edit、ドラッグで並べ替え） | ✓ | ✓ | △ | △ | VSCode: 1 つずつで、いくつもの段の計画はない。<br>CLI: `amonhen run` から。 |
 | 書き換えの見込み（積み重ね・push 済みのブランチ、コンフリクトの見込み） | ✓ | ✓ | △ | ✓ | VSCode: daemon 越しで、今のブランチだけ。<br>CLI: `rewrite-preview`。 |
@@ -268,12 +268,12 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| メッセージ全体・ドラッグできる境・⤢ で広げる | ✓ | ✓ | △ | n/a | VSCode: ⤢ はない。 |
-| 詳細の中を探す | ✓ | ✓ | — | n/a |  |
-| すべてのファイルを積む（貼り付く見出し・畳む・Viewed） | ✓ | ✓ | △ | ✓ | VSCode: 積んでスクロールで読むが、畳むことも Viewed もない。<br>CLI: `show`。 |
-| 差分の横の、変更したファイルの木 | ✓ | ✓ | △ | n/a | VSCode: 差分の上の平らな一覧。 |
+| メッセージ全体・ドラッグできる境・⤢ で広げる | ✓ | ✓ | △ | n/a | VSCode: メッセージ・ファイル・差分を 1 つの欄でまとめてスクロールするので、ドラッグする境も広げる欄もない。 |
+| 詳細の中を探す | ✓ | ✓ | ✓ | n/a | VSCode: ⌘F でメインビュー全体を探す。まだ読んでいない差分は探さない。 |
+| すべてのファイルを積む（貼り付く見出し・畳む・Viewed） | ✓ | ✓ | ✓ | ✓ | CLI: `show`。 |
+| 差分の横の、変更したファイルの木 | ✓ | ✓ | ✓ | n/a | VSCode: 一覧の上の Tree / List で切り替える。 |
 | ファイルの見出しのメニュー（Blame・File History・パスのコピー・開く） | ✓ | ✓ | ✓ | n/a | VSCode: 右クリックの Blame・File History・Copy Path と、VSCode の差分のエディターで開く。 |
-| 1 ファイルずつの差分に切り替える | ✓ | ✓ | — | n/a |  |
+| 1 ファイルずつの差分に切り替える | ✓ | ✓ | ✓ | n/a | VSCode: 一覧の上の One File / All Files で切り替える。 |
 | 選んだものの差分（範囲をまとめる・A..B / A...B・飛び飛び） | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。<br>CLI: `diff <rev> <rev>`。 |
 | 選んだものの操作（cherry-pick・revert・squash・ID のコピー） | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。<br>CLI: `amonhen run` から。 |
 | 署名のポップオーバー | ✓ | ✓ | ✓ | n/a | VSCode: 詳細の Signature の行（様子・説明・署名した人と鍵）。ポップオーバーはない。 |

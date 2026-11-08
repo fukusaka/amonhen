@@ -5,9 +5,10 @@
  * ところのまだない行をまとめて要求する（離れた行へもすぐ移れる）。
  */
 import { type LaneMetrics, lanePositions } from '../history/lanes.ts';
-import type { MessageEdit, PairMode, RowData, Scope, SearchState, SignatureView } from '../history/protocol.ts';
+import type { HistoryItem, MessageEdit, PairMode, RowData, Scope, SearchState, SignatureView } from '../history/protocol.ts';
 import { extendTo, isContiguous, singleRow, toggleRow, type RowSelection } from '../history/selection.ts';
 import type { HostMessage } from '../view/protocol.ts';
+import { scopeRefs, scopeTitle } from '../history/scope.ts';
 import { el, formatDate, post, type View } from './api.ts';
 import { attachSplitter, createDetailsPane } from './details.ts';
 import { signatureMark } from './signature.ts';
@@ -66,9 +67,9 @@ export function createHistoryView(): View {
   // ナビでブランチなどを選んだときは、その ref の選択肢を足す
   const refOption = el('option');
   function setScope(scope: Scope): void {
-    if (scope.startsWith('ref:')) {
+    if (scopeRefs(scope)) {
       refOption.value = scope;
-      refOption.textContent = scope.slice('ref:'.length).replace(/^refs\/(heads|remotes|tags)\//, '');
+      refOption.textContent = scopeTitle(scope);
       if (!refOption.parentElement) scopeSelect.append(refOption);
     } else {
       refOption.remove();
@@ -109,7 +110,11 @@ export function createHistoryView(): View {
   const partialChip = el('button', 'chip', 'Partial');
   partialChip.hidden = true;
   partialChip.addEventListener('click', () => post({ type: 'fetchForm', what: 'contents' }));
-  toolbar.append(scopeSelect, search, goHead, shallowChip, partialChip, status);
+  const displayButton = el('button', 'icon-button display-menu', '⋯');
+  displayButton.title = 'History Display: order and row items';
+  displayButton.setAttribute('aria-label', 'History Display');
+  displayButton.addEventListener('click', () => post({ type: 'displayMenu' }));
+  toolbar.append(scopeSelect, search, goHead, shallowChip, partialChip, status, displayButton);
   // shallow clone の History の最後の行の下の帯（取得していない古い履歴を取り足す）
   const band = el('div', 'shallow-band');
   const bandMore = el('button', 'secondary', 'Fetch More…');
@@ -138,6 +143,10 @@ export function createHistoryView(): View {
 
   /** 行の署名の印（コミット → 見せ方。署名のないものは入らない） */
   const signatures = new Map<string, SignatureView>();
+  /** 行に出さない項目 */
+  let hidden = new Set<HistoryItem>();
+  /** 祖先の行のビットの列（目立たせないなら null） */
+  let lineage: Uint8Array | null = null;
   /** 行。daemon の History では行の数だけの長さで、まだ届いていない行は空 */
   let rows: (RowData | undefined)[] = [];
   /** daemon の History（行の数が分かっていて、飛び飛びに頼む） */
@@ -215,6 +224,7 @@ export function createHistoryView(): View {
     const el = document.createElement('div');
     el.className = isSelected(index) ? 'row selected' : 'row';
     if (matchSet.has(index)) el.classList.add('match');
+    if (lineage && !((lineage[index >> 3] ?? 0) & (1 << (index & 7)))) el.classList.add('dim');
     el.style.top = `${index * ROW_HEIGHT}px`;
     el.dataset.index = String(index);
     // Webview の右クリックメニュー（package.json の webview/context）に渡す情報
@@ -226,6 +236,8 @@ export function createHistoryView(): View {
             oid: row.oid,
             commitEditable: row.editable,
             commitCanSquash: row.canSquash,
+            ...(row.hidden ? { commitFolded: true } : {}),
+            ...(row.expanded ? { commitExpanded: true } : {}),
             preventDefaultContextMenuItems: true,
           },
     );
@@ -237,7 +249,7 @@ export function createHistoryView(): View {
     el.append(drawGraph(row, graph));
     const text = document.createElement('div');
     text.className = 'text';
-    for (const ref of row.refs) {
+    for (const ref of hidden.has('refs') ? [] : row.refs) {
       const badge = document.createElement('span');
       badge.className = `ref ${ref.kind}${ref.current ? ' current' : ''}`;
       badge.textContent = ref.name;
@@ -250,8 +262,19 @@ export function createHistoryView(): View {
       cut.title = 'History stops here: its parents aren’t fetched (shallow clone)';
       text.append(cut);
     }
+    if (row.hidden) {
+      const folded = document.createElement('button');
+      folded.className = 'folded-count';
+      folded.textContent = `+${row.hidden}`;
+      folded.title = `Show ${row.hidden} Merged Commits`;
+      folded.addEventListener('click', (e) => {
+        e.stopPropagation();
+        post({ type: 'toggleFold', oid: row.oid });
+      });
+      text.append(folded);
+    }
     const signed = signatures.get(row.oid);
-    if (signed) text.append(signatureMark(signed));
+    if (signed && !hidden.has('signature')) text.append(signatureMark(signed));
     const subject = document.createElement('span');
     subject.className = 'subject';
     subject.textContent = row.subject;
@@ -263,6 +286,7 @@ export function createHistoryView(): View {
       ['date', formatDate(row.date)],
       ['oid', row.oid.slice(0, 8)],
     ] as const) {
+      if (hidden.has(cls)) continue;
       const span = document.createElement('span');
       span.className = cls;
       span.textContent = value;
@@ -539,6 +563,8 @@ export function createHistoryView(): View {
   list.addEventListener('scroll', scheduleRender);
   window.addEventListener('resize', scheduleRender);
   list.addEventListener('mousedown', (e) => {
+    // 行を選ぶと描き直して、押している途中のボタンが消え、クリックが届かない
+    if (e.button === 0 && (e.target as Element).closest('.folded-count')) return;
     const index = rowIndex(e);
     if (index === undefined) return;
     const mac = navigator.platform.startsWith('Mac');
@@ -669,7 +695,16 @@ export function createHistoryView(): View {
 
   function onMessage(message: HostMessage): void {
     switch (message.type) {
+      case 'lineage':
+        lineage = message.rows ? Uint8Array.from(atob(message.rows), (c) => c.charCodeAt(0)) : null;
+        render();
+        break;
+      case 'historyDisplay':
+        hidden = new Set(message.hidden);
+        render();
+        break;
       case 'reset':
+        lineage = null;
         // 形はこの後の form で送り直す（一致だけの History なら送らない）
         shallow = false;
         boundary = new Set();
@@ -730,7 +765,7 @@ export function createHistoryView(): View {
         root.classList.toggle('busy', message.busy);
         break;
       case 'details':
-        if (marked.size <= 1 && message.details.oid === rows[selected]?.oid) details.show(message.details);
+        if (marked.size <= 1 && message.details.oid === rows[selected]?.oid) details.show(message.details, undefined, message.viewed);
         return;
       case 'detailsExtras':
         details.showExtras(message.extras);

@@ -23,8 +23,26 @@ import type {
   SearchState,
   SelectionView,
   SignatureView,
+  HistoryItem,
+  HistoryOrder,
 } from '../history/protocol.ts';
-import { editableChain, refLabels } from '../history/rows.ts';
+import { samePath, type Worktree } from '../git/worktrees.ts';
+import {
+  historyFold,
+  historyHidden,
+  historyHighlight,
+  historyOrder,
+  setDetailsLayout,
+  setHistoryFold,
+  setViewedFile,
+  viewedFiles,
+  detailsLayout,
+  setHistoryHidden,
+  setHistoryHighlight,
+  setHistoryOrder,
+} from './preferences.ts';
+import { editableChain, refLabels, worktreeLabels } from '../history/rows.ts';
+import { scopeRefs } from '../history/scope.ts';
 import type { Repository, Section } from '../state/repository.ts';
 import { openCommitChanges, openCommitFile } from './commitChanges.ts';
 import { showError } from './stageCommands.ts';
@@ -60,6 +78,8 @@ interface DaemonHistory {
   rows: number;
   /** shallow clone の History なら、境目のコミットの行 */
   boundary?: number[];
+  /** 畳んだ merge が行ごとに隠している数（畳んでいなければなし） */
+  folded?: Uint32Array;
 }
 
 /** 昇順の `rows` で、`row` 以上の最初の位置（なければ最後） */
@@ -151,6 +171,23 @@ export class HistoryController implements vscode.Disposable {
   private selection: { key: string; rows: number[]; diffs: Map<string, FileDiff> } | undefined;
   private selectionRequest = 0;
   private searchAbort: AbortController | undefined;
+  /** 畳む設定で、開いている merge */
+  private readonly expandedMerges = new Set<string>();
+  /**
+   * 畳むか・祖先を目立たせるか。選んだらすぐこの値で読み直し、覚えるのは裏で（覚え終わるのを待つと、その間に始まった
+   * 読み直しが前の値で読む）。まだ選んでいなければ、覚えている値
+   */
+  private foldChoice: boolean | undefined;
+  private highlightChoice: boolean | undefined;
+  private get folding(): boolean {
+    return this.foldChoice ?? historyFold();
+  }
+  private get highlighting(): boolean {
+    return this.highlightChoice ?? historyHighlight();
+  }
+  /** 選んでいるコミット（祖先を目立たせるため） */
+  private selectedOid: string | undefined;
+  private lineageRequest = 0;
   /** 探している途中の検索の文（History を読み直したら、終わっていなくても探し直す） */
   private searching: string | undefined;
   /** 一致だけを出す切り替え（最後に頼まれたもの） */
@@ -167,7 +204,7 @@ export class HistoryController implements vscode.Disposable {
    * ref の履歴を出していたときだけ現在のブランチに戻す（All Branches は保つ）
    */
   showScope(scope: Scope | undefined): void {
-    const next = scope ?? (this.scope.startsWith('ref:') ? 'head' : this.scope);
+    const next = scope ?? (scopeRefs(this.scope) ? 'head' : this.scope);
     if (next !== this.scope) {
       this.scope = next;
       void this.reset();
@@ -224,12 +261,26 @@ export class HistoryController implements vscode.Disposable {
         await this.loadMore();
         break;
       case 'range':
-        if (this.daemon) {
+        // 開いている途中なら、読み直しが行を送る
+        if (this.daemon && !this.opening) {
           await this.loadRange(this.daemon, message.start, message.count);
         }
         break;
       case 'search':
         await this.runSearch(message.query.trim(), message.matchingOnly, message.selected);
+        break;
+      case 'toggleFold':
+        await this.toggleFold(message.oid);
+        break;
+      case 'viewed':
+        await setViewedFile(message.key, message.path, message.viewed);
+        break;
+      case 'detailsLayout':
+        await setDetailsLayout(message.layout);
+        this.post({ type: 'detailsLayout', layout: detailsLayout() });
+        break;
+      case 'displayMenu':
+        await this.displayMenu();
         break;
       case 'scope':
         this.scope = message.scope;
@@ -237,6 +288,8 @@ export class HistoryController implements vscode.Disposable {
         break;
       case 'select':
         this.clearSelection();
+        this.selectedOid = message.oid;
+        void this.sendLineage().catch(() => undefined);
         await this.sendDetails(message.oid).catch(showError);
         break;
       case 'selectRows':
@@ -307,6 +360,9 @@ export class HistoryController implements vscode.Disposable {
       if (request !== this.selectionRequest) return;
       current.diffs = splitCommitDiff(diff);
       const selection = diff.json['selection'] as { kind: SelectionView['kind'] };
+      const commits = readRows(listed).map((r) => ({ row: r.row, oid: r.oid, subject: r.subject, author: r.author }));
+      // Viewed は選んだコミットの組で覚える（全部の ID が分かるときだけ）
+      const viewedKey = commits.length === sorted.length ? `${pair}:${commits.map((c) => c.oid).join(',')}` : undefined;
       this.post({
         type: 'selection',
         token,
@@ -316,7 +372,9 @@ export class HistoryController implements vscode.Disposable {
           kind: selection.kind,
           pair,
           files: (diff.json['files'] as SelectionView['files'] | undefined) ?? [],
-          commits: readRows(listed).map((r) => ({ row: r.row, oid: r.oid, subject: r.subject, author: r.author })),
+          commits,
+          viewedKey,
+          viewed: viewedKey ? viewedFiles(viewedKey) : [],
         },
       });
     } catch (err) {
@@ -477,7 +535,7 @@ export class HistoryController implements vscode.Disposable {
         this.details.delete(this.details.keys().next().value!);
       }
     }
-    this.post({ type: 'details', details: { ...details, refs: this.labels.get(oid) ?? [] } });
+    this.post({ type: 'details', details: { ...details, refs: this.labels.get(oid) ?? [] }, viewed: viewedFiles(oid) });
     // 署名の検証と子のコミットは時間がかかるので、後から送る（エンジンだけ）
     void this.readExtras(oid)
       .then((extras) => extras && this.post({ type: 'detailsExtras', extras }))
@@ -564,6 +622,11 @@ export class HistoryController implements vscode.Disposable {
     return true;
   }
 
+  /** 読み直しを待たせていれば今すぐ読み直し、すべて終わるまで待つ（結合テストが、試験の間で使う） */
+  async idle(): Promise<void> {
+    await this.settled();
+  }
+
   /**
    * 読み直しが終わるまで待つ。HEAD やブランチが動いた直後で読み直しを待たせていれば、今すぐ読み直す。
    * 待つ間に次の読み直しが始まれば、それも待つ
@@ -599,6 +662,7 @@ export class HistoryController implements vscode.Disposable {
     const repo = this.repo;
     this.opening = repo !== undefined;
     this.post({ type: 'reset', title: repo ? basename(repo.root) : '', scope: this.scope });
+    this.post({ type: 'historyDisplay', hidden: historyHidden() });
     if (!repo) {
       this.post({ type: 'rows', start: 0, rows: [], done: true });
       return;
@@ -651,6 +715,12 @@ export class HistoryController implements vscode.Disposable {
     }
     this.post({ type: 'searchable', searchable: this.daemon !== undefined });
     if (this.daemon) void this.sendForm(this.daemon, generation).catch(() => undefined);
+    // 札を付けてから行を送る。それまでは開いている途中のまま（Webview が求めても、札のない行を先に送らない）
+    await this.addWorktreeLabels(repo, generation);
+    // 札を待つ間に新しい読み直しが始まっていれば、その History の行を送らない
+    if (generation !== this.generation) {
+      return;
+    }
     this.opening = false;
     await this.loadMore();
     // 探していたら（途中でも）、新しい History で探し直す
@@ -787,6 +857,128 @@ export class HistoryController implements vscode.Disposable {
     await this.loadRange(next, start, PAGE);
   }
 
+  /** 選んだコミットの祖先を送る */
+  private async sendLineage(): Promise<void> {
+    const request = ++this.lineageRequest;
+    const shown = this.daemon;
+    if (!this.highlighting || !shown || !this.selectedOid) {
+      this.post({ type: 'lineage', rows: null });
+      return;
+    }
+    let reply;
+    try {
+      const at = await shown.client.call({ op: 'historyRowOf', history: shown.history, id: this.selectedOid });
+      const row = at.json['row'];
+      if (typeof row !== 'number') return;
+      reply = await shown.client.call({ op: 'historyLineage', history: shown.history, row });
+    } catch (err) {
+      // 読む間に読み直しが History を入れ替えて片付けたなら、新しい History で頼み直されるので捨てる
+      if (shown !== this.daemon) return;
+      throw err;
+    }
+    if (request === this.lineageRequest && shown === this.daemon) {
+      this.post({ type: 'lineage', rows: Buffer.from(reply.bytes('rows')).toString('base64') });
+    }
+  }
+
+  /** 畳んだ merge を開く・畳む。読み直しても同じコミットを選んだままにする */
+  async toggleFold(oid: string): Promise<void> {
+    if (!this.expandedMerges.delete(oid)) this.expandedMerges.add(oid);
+    await this.reset();
+    // 読み直しの途中で次の読み直しが始まっていれば、それも待ってから選ぶ
+    await this.settled();
+    const shown = this.daemon;
+    if (!shown) return;
+    const row = (await shown.client.call({ op: 'historyRowOf', history: shown.history, id: oid })).json['row'];
+    if (typeof row === 'number') this.post({ type: 'reveal', row });
+  }
+
+  /** 並び順と、行に出す項目を選ぶ（アプリの History Display と同じ） */
+  private async displayMenu(): Promise<void> {
+    // エンジンだけの項目は、エンジンを使えれば出す（読み直しの途中で、開いた History がまだなくても）
+    const engine = this.daemon !== undefined || (await this.engine()) !== undefined;
+    const order = historyOrder();
+    const hidden = historyHidden();
+    type Item = vscode.QuickPickItem & { order?: HistoryOrder; item?: HistoryItem };
+    const mark = (on: boolean) => (on ? '$(check) ' : '$(blank) ');
+    const separator = (label: string): Item => ({ label, kind: vscode.QuickPickItemKind.Separator });
+    const orders: [HistoryOrder, string, string][] = [
+      ['date', 'Date', 'Newest first'],
+      ['topo', 'Topological', 'Keep a branch’s commits together under its merge'],
+    ];
+    const items: [HistoryItem, string][] = [
+      ['refs', 'Branches and Tags'],
+      ['author', 'Author'],
+      ['date', 'Date'],
+      ['oid', 'Commit ID'],
+      ['signature', 'Signature'],
+    ];
+    const highlight: Item = {
+      label: `${mark(this.highlighting)}Highlight Ancestors`,
+      description: 'Dim the commits that aren’t ancestors of the selected one',
+    };
+    const fold: Item = { label: `${mark(this.folding)}Fold Merged Branches`, description: 'Hide the commits a merge brought in' };
+    const picked = await vscode.window.showQuickPick<Item>(
+      [
+        // 並び順は共有の daemon で変える（git で読むときは日付順のまま）
+        ...(engine
+          ? [
+              separator('Order'),
+              ...orders.map(([value, label, detail]): Item => ({
+                label: `${mark(order === value)}${label}`,
+                description: detail,
+                order: value,
+              })),
+            ]
+          : []),
+        separator('Items'),
+        ...items.map(([value, label]): Item => ({ label: `${mark(!hidden.includes(value))}${label}`, item: value })),
+        ...(engine ? [separator('View'), fold, highlight] : []),
+      ],
+      { placeHolder: 'History Display' },
+    );
+    if (picked === highlight) {
+      this.highlightChoice = !this.highlighting;
+      void setHistoryHighlight(this.highlightChoice);
+      await this.sendLineage();
+    } else if (picked === fold) {
+      this.foldChoice = !this.folding;
+      void setHistoryFold(this.foldChoice);
+      this.expandedMerges.clear();
+      await this.reset();
+    } else if (picked?.order && picked.order !== order) {
+      await setHistoryOrder(picked.order);
+      await this.reset();
+    } else if (picked?.item) {
+      const next = hidden.includes(picked.item) ? hidden.filter((i) => i !== picked.item) : [...hidden, picked.item];
+      await setHistoryHidden(next);
+      this.post({ type: 'historyDisplay', hidden: next });
+    }
+  }
+
+  /** worktree がいくつもあれば、それぞれの HEAD の札を足す（読めなければ出さない） */
+  private async addWorktreeLabels(repo: Repository, generation: number): Promise<void> {
+    const client = this.daemon?.client;
+    if (!client) return;
+    try {
+      const listed = (await client.call({ op: 'run', command: { op: 'worktrees' } })).json['info'] as
+        | { worktrees?: Worktree[] }
+        | undefined;
+      const worktrees = (listed?.worktrees ?? []).filter((w) => !w.bare);
+      if (worktrees.length < 2) return;
+      const paths = worktrees.filter((w) => w.prunable === null).map((w) => w.path);
+      const counted = (await client.call({ op: 'run', command: { op: 'worktreeChanges', paths } })).json['info'] as
+        | { worktrees?: { path: string; count: number | null }[] }
+        | undefined;
+      if (generation !== this.generation) return;
+      const changes = new Map((counted?.worktrees ?? []).map((w) => [w.path, w.count ?? 0]));
+      const labels = worktreeLabels(worktrees, changes, (w) => samePath(w.path, repo.root));
+      for (const [oid, added] of labels) this.labels.set(oid, [...added, ...(this.labels.get(oid) ?? [])]);
+    } catch {
+      // 札は出せなくてもよい
+    }
+  }
+
   /** 共有の daemon で、今の範囲の History を開く（daemon を使わない設定なら undefined） */
   private async openDaemonHistory(root: string): Promise<DaemonHistory | undefined> {
     const client = await daemonFor(root);
@@ -796,13 +988,35 @@ export class HistoryController implements vscode.Disposable {
     let tips: string[] | undefined;
     if (this.scope === 'head') {
       tips = [this.headOid!];
-    } else if (this.scope.startsWith('ref:')) {
-      const resolved = await client.call({ op: 'run', command: { op: 'resolveCommit', rev: this.scope.slice('ref:'.length) } });
-      tips = [String(resolved.json['text'])];
+    } else {
+      const refs = scopeRefs(this.scope);
+      if (refs) {
+        const resolved = await Promise.all(
+          refs.map((rev) => client.call({ op: 'run', command: { op: 'resolveCommit', rev } })),
+        );
+        tips = resolved.map((r) => String(r.json['text']));
+      }
     }
-    const history = await client.call(tips ? { op: 'history', tips } : { op: 'history' });
+    await client.call({ op: 'historyOrder', order: historyOrder() });
+    const fold = this.folding;
+    const history = await client.call({
+      op: 'history',
+      ...(tips ? { tips } : {}),
+      ...(fold ? { fold, expanded: [...this.expandedMerges] } : {}),
+    });
+    // 畳んだ数は History ごとに持つ（古い読み直しが新しい History の分を書き換えないように）
+    const folded =
+      history.json['folded'] === true
+        ? (await client.call({ op: 'historyGraph', history: history.json['history'] })).u32('folded')
+        : undefined;
     const boundary = history.json['shallow'] === true ? ((history.json['boundaryRows'] as number[] | undefined) ?? []) : undefined;
-    return { client, history: history.json['history'], rows: Number(history.json['rows']), ...(boundary ? { boundary } : {}) };
+    return {
+      client,
+      history: history.json['history'],
+      rows: Number(history.json['rows']),
+      ...(boundary ? { boundary } : {}),
+      ...(folded ? { folded } : {}),
+    };
   }
 
   /**
@@ -811,9 +1025,11 @@ export class HistoryController implements vscode.Disposable {
    */
   private async loadRange(daemon: DaemonHistory, start: number, count: number): Promise<void> {
     let rows: RowData[] = [];
+    const generation = this.generation;
     try {
       const reply = await daemon.client.call({ op: 'historyRows', history: daemon.history, start, count });
-      if (daemon !== this.daemon) {
+      // 読む間に新しい読み直しが始まっていれば、古い History の行は送らない（新しい reset の後に届いてしまう）
+      if (daemon !== this.daemon || generation !== this.generation) {
         return;
       }
       const page = readRows(reply);
@@ -821,8 +1037,13 @@ export class HistoryController implements vscode.Disposable {
         this.known.set(r.oid, { oid: r.oid, parents: r.parentOids, author: r.author, email: '', date: r.date, subject: r.subject });
       }
       rows = toRowData(page, this.labels, this.chain);
+      rows.forEach((row, i) => {
+        const hidden = daemon.folded?.[start + i];
+        if (hidden) row.hidden = hidden;
+        if (this.expandedMerges.has(row.oid)) row.expanded = true;
+      });
     } catch (err) {
-      if (daemon !== this.daemon) {
+      if (daemon !== this.daemon || generation !== this.generation) {
         return;
       }
       showError(err);
@@ -846,9 +1067,7 @@ export class HistoryController implements vscode.Disposable {
     const revs =
       this.scope === 'all'
         ? ['HEAD', '--branches', '--remotes', '--tags']
-        : this.scope.startsWith('ref:')
-          ? [this.scope.slice('ref:'.length)]
-          : ['HEAD'];
+        : (scopeRefs(this.scope) ?? ['HEAD']);
     let page: Commit[] = [];
     try {
       page = this.headOid ? await repo.backend.log(revs, this.commits.length, PAGE) : [];

@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
+import { GitError } from '../git/exec.ts';
 import type { Repository } from '../state/repository.ts';
-import { showError } from './stageCommands.ts';
 
 function stagedCount(repo: Repository): number {
   return (repo.current.status?.entries ?? []).filter(
@@ -22,26 +22,32 @@ function canCommit(repo: Repository, amend: boolean): boolean {
   return true;
 }
 
+/** コミットの結果。`output` は hooks の出力、`error` は失敗の理由（コミットできる状態でなければどちらもない） */
+export interface CommitResult {
+  committed: boolean;
+  output?: string;
+  error?: string;
+}
+
 /**
  * stage した変更をコミットする。amend なら直前のコミットを置き換える。
- * Undo すると、コミットした変更は stage された状態に戻る。コミットしたら true
+ * Undo すると、コミットした変更は stage された状態に戻る
  */
-export async function commitStaged(repo: Repository, message: string, amend: boolean): Promise<boolean> {
+export async function commitStaged(repo: Repository, message: string, amend: boolean): Promise<CommitResult> {
   if (!canCommit(repo, amend)) {
-    return false;
+    return { committed: false };
   }
   try {
     const branch = (await repo.backend.head()).branch;
     const subject = message.split('\n')[0]!;
-    await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: 'Commit' }, () =>
+    const output = await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: 'Commit' }, () =>
       repo.undo.record(`${amend ? 'Amend' : 'Commit'} "${subject}"`, branch ? [branch] : [], 'soft', () =>
         repo.backend.commit(message, { amend }),
       ),
     );
-    return true;
+    return { committed: true, output };
   } catch (err) {
-    showError(err);
-    return false;
+    return { committed: false, error: err instanceof GitError ? err.stderr.trim() || err.message : String(err) };
   } finally {
     await repo.refresh();
   }

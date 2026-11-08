@@ -7,6 +7,8 @@ import type { Change, ChangeGroup } from '../state/changes.ts';
 import type { HostMessage } from '../view/protocol.ts';
 import type { DiffHunk, FileDiff, SelectedLine } from '../diff/fileDiff.ts';
 import type { Eol, LineEndings } from '../git/eol.ts';
+import { addTrailer, lengthLevel, longestLine, messageLength, splitMessage, withType } from '../workingCopy/commitMessage.ts';
+import { filesUnder, filterByPath, makeFileTree, type FileDir, type FileLayout } from '../workingCopy/fileList.ts';
 import { el, post, type View } from './api.ts';
 import { lineKey, renderDiffBody } from './diffView.ts';
 
@@ -14,6 +16,12 @@ const GROUPS: { group: ChangeGroup; title: string }[] = [
   { group: 'conflicts', title: 'Conflicts' },
   { group: 'staged', title: 'Staged' },
   { group: 'unstaged', title: 'Changes' },
+];
+
+const LAYOUTS: { layout: FileLayout; label: string; title: string }[] = [
+  { layout: 'list', label: 'List', title: 'Show files as a list of paths' },
+  { layout: 'tree', label: 'Tree', title: 'Show files as a directory tree' },
+  { layout: 'flat', label: 'Name', title: 'Show the file name first and the parent directory dimmed' },
 ];
 
 export function createWorkingCopyView(): View {
@@ -39,9 +47,51 @@ export function createWorkingCopyView(): View {
   amend.type = 'checkbox';
   amendLabel.append(amend, ' Amend');
   const commitButton = el('button', undefined, 'Commit');
-  commitRow.append(amendLabel, commitButton);
-  commitBox.append(subject, body, commitRow);
-  side.append(fileList, commitBox);
+  const lengthLabel = el('span', 'length');
+  const recentButton = el('button', 'link', 'Recent…');
+  recentButton.title = 'Insert the message of a recent commit (⌥↑ and ⌥↓ in the Summary)';
+  recentButton.addEventListener('click', () => post({ type: 'wcPickRecent' }));
+  const insertButton = el('button', 'link', 'Insert…');
+  insertButton.title = 'Insert a Conventional Commits type, Co-authored-by or Signed-off-by';
+  insertButton.addEventListener('click', () => post({ type: 'wcPickInsert' }));
+  const commitTools = el('div', 'commit-tools');
+  commitTools.append(recentButton, insertButton, lengthLabel);
+  const commitMenu = el('button', 'commit-menu', '▾');
+  commitMenu.title = 'Commit and Push (⌘⇧↩), Amend';
+  commitMenu.setAttribute('aria-label', 'More Commit Actions');
+  commitMenu.addEventListener('click', () =>
+    post({ type: 'wcCommitMenu', canCommit: !commitButton.disabled, message: message(), amend: amend.checked }),
+  );
+  const commitActions = el('div', 'commit-actions');
+  commitActions.append(commitButton, commitMenu);
+  commitRow.append(amendLabel, commitActions);
+  commitBox.append(subject, body, commitTools, commitRow);
+
+  // 一覧の絞り込みと見せ方
+  const tools = el('div', 'wc-tools');
+  const filter = el('input');
+  filter.type = 'search';
+  filter.placeholder = 'Filter by path';
+  filter.setAttribute('aria-label', 'Filter by path');
+  const layoutButtons = el('div', 'wc-layout');
+  tools.append(filter, layoutButtons);
+  let layout: FileLayout = 'flat';
+  for (const { layout: value, label, title } of LAYOUTS) {
+    const button = el('button', undefined, label);
+    button.title = title;
+    button.dataset.layout = value;
+    button.addEventListener('click', () => {
+      layout = value;
+      post({ type: 'wcLayout', layout: value });
+      renderFiles();
+    });
+    layoutButtons.append(button);
+  }
+  // sparse checkout なら、一覧の上にそう出す（取り出していないフォルダのファイルは変更に出ない）
+  const sparseNote = el('button', 'wc-sparse');
+  sparseNote.hidden = true;
+  sparseNote.addEventListener('click', () => post({ type: 'wcShowFolders' }));
+  side.append(sparseNote, tools, fileList, commitBox);
 
   let files: Change[] = [];
   let lastMessage = '';
@@ -52,13 +102,26 @@ export function createWorkingCopyView(): View {
   /** 選んでいる行。キーは `old:12` / `new:7` */
   let picked = new Set<string>();
   let anchor: string | undefined;
+  /** 木で畳んだディレクトリ（グループとパス）。読み直しても畳んだままにする */
+  const collapsed = new Set<string>();
+  /** 一覧に出ているファイル（上から順。絞り込みと畳んだディレクトリの分を除く） */
+  let listed: Change[] = [];
+  /** ファイルごとの追加・削除の行数 */
+  let stats = new Map<string, { added: number | null; removed: number | null }>();
 
   // ---- ファイル一覧 ----
 
   function renderFiles(): void {
+    for (const button of layoutButtons.children as HTMLCollectionOf<HTMLElement>) {
+      button.classList.toggle('active', button.dataset.layout === layout);
+    }
+    listed = [];
     const parts: HTMLElement[] = [];
     for (const { group, title } of GROUPS) {
-      const items = files.filter((f) => f.group === group);
+      const items = filterByPath(
+        files.filter((f) => f.group === group),
+        filter.value,
+      );
       if (items.length === 0) continue;
       const head = el('div', 'wc-group');
       head.append(el('span', 'title', title), el('span', 'count', String(items.length)));
@@ -77,17 +140,57 @@ export function createWorkingCopyView(): View {
         head.append(all);
       }
       parts.push(head);
-      for (const f of items) parts.push(renderFile(f));
+      if (layout === 'tree') {
+        renderDir(makeFileTree(items), group, 0, parts);
+      } else {
+        for (const f of items) {
+          listed.push(f);
+          parts.push(renderFile(f, 0));
+        }
+      }
     }
     if (parts.length === 0) {
-      parts.push(el('div', 'empty', '変更はありません'));
+      parts.push(el('div', 'empty', files.length > 0 ? 'No matching files' : '変更はありません'));
     }
     fileList.replaceChildren(...parts);
     updateCommitButton();
   }
 
-  function renderFile(f: Change): HTMLElement {
+  /** 木の 1 つのディレクトリの中身を parts に足す（ディレクトリが先、ファイルが後） */
+  function renderDir(dir: FileDir<Change>, group: ChangeGroup, depth: number, parts: HTMLElement[]): void {
+    for (const child of dir.dirs) {
+      const key = `${group}:${child.path}`;
+      const open = !collapsed.has(key);
+      const row = el('div', 'wc-file wc-dir');
+      row.style.paddingLeft = `${12 + depth * 14}px`;
+      row.title = child.path;
+      row.append(el('span', 'chevron', open ? '▾' : '▸'), el('span', 'name', `${child.name}/`), el('span', 'dir'));
+      if (group !== 'conflicts') {
+        const button = el('button', 'icon-button', group === 'staged' ? '−' : '+');
+        button.title = group === 'staged' ? 'Unstage Folder' : 'Stage Folder';
+        button.addEventListener('click', (e) => {
+          e.stopPropagation();
+          stageFiles(group === 'staged' ? 'unstage' : 'stage', filesUnder(child));
+        });
+        row.append(button);
+      }
+      row.addEventListener('click', () => {
+        if (open) collapsed.add(key);
+        else collapsed.delete(key);
+        renderFiles();
+      });
+      parts.push(row);
+      if (open) renderDir(child, group, depth + 1, parts);
+    }
+    for (const f of dir.files) {
+      listed.push(f);
+      parts.push(renderFile(f, depth));
+    }
+  }
+
+  function renderFile(f: Change, depth: number): HTMLElement {
     const row = el('div', 'wc-file');
+    if (depth > 0) row.style.paddingLeft = `${12 + depth * 14}px`;
     if (selected?.group === f.group && selected.path === f.path) row.classList.add('selected');
     row.title = f.origPath ? `${f.origPath} → ${f.path}` : f.path;
     // Webview の右クリックメニュー（package.json の webview/context）に渡す情報
@@ -96,21 +199,31 @@ export function createWorkingCopyView(): View {
       path: f.path,
       // コンフリクトのファイル（Stash… を出さない）
       ...(f.group === 'conflicts' ? { wcConflict: true } : {}),
+      // まだ履歴のないファイル（.gitignore に足せる）
+      ...(f.letter === 'U' ? { wcUntracked: true } : {}),
       // rerere が解決を当てたコンフリクトのファイル（Forget Resolution を出す）
       ...(f.group === 'conflicts' && f.rerere ? { wcRerere: true } : {}),
       preventDefaultContextMenuItems: true,
     });
     const slash = f.path.lastIndexOf('/');
+    const name = layout === 'list' ? f.path : f.path.slice(slash + 1);
     if (f.markers === 0) {
       // マーカーが残っていない。解決できていそうなことを印と短い注記で示す
       row.title += `\n${withoutMarkersMessage(f)}`;
       row.append(el('span', 'status s-resolved', '✓'));
-      row.append(el('span', 'name', f.path.slice(slash + 1)));
+      row.append(el('span', 'name', name));
       row.append(el('span', 'dir', f.rerere ? 'rerere' : 'マーカーなし'));
     } else {
       row.append(el('span', `status s-${f.letter === '!' ? 'U' : f.letter}`, f.letter));
-      row.append(el('span', 'name', f.path.slice(slash + 1)));
-      row.append(el('span', 'dir', slash >= 0 ? f.path.slice(0, slash) : ''));
+      row.append(el('span', 'name', name));
+      row.append(el('span', 'dir', layout === 'flat' && slash >= 0 ? f.path.slice(0, slash) : ''));
+    }
+    const stat = stats.get(f.path);
+    if (stat && (stat.added || stat.removed)) {
+      const counts = el('span', 'stat');
+      if (stat.added) counts.append(el('span', 'added', `+${stat.added}`));
+      if (stat.removed) counts.append(el('span', 'removed', `−${stat.removed}`));
+      row.append(counts);
     }
     if (f.group !== 'conflicts') {
       const op = f.group === 'staged' ? 'unstage' : 'stage';
@@ -147,7 +260,7 @@ export function createWorkingCopyView(): View {
   }
 
   fileList.addEventListener('keydown', (e) => {
-    const order = GROUPS.flatMap(({ group }) => files.filter((f) => f.group === group));
+    const order = listed;
     const index = order.findIndex((f) => f.group === selected?.group && f.path === selected.path);
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
@@ -157,6 +270,46 @@ export function createWorkingCopyView(): View {
       e.preventDefault();
       const f = order[index]!;
       if (f.group !== 'conflicts') stageFiles(f.group === 'staged' ? 'unstage' : 'stage', [f]);
+    } else if ((e.key === 'Backspace' || e.key === 'Delete') && order[index]?.group === 'unstaged') {
+      e.preventDefault();
+      post({ type: 'wcDiscardFiles', paths: [order[index]!.path] });
+    }
+  });
+
+  // J・K で次・前の hunk、⌥J・⌥K で次・前のファイル（文字を打つ欄の中では効かない）
+  root.addEventListener('keydown', (e) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || (e.code !== 'KeyJ' && e.code !== 'KeyK')) return;
+    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+    e.preventDefault();
+    const forward = e.code === 'KeyJ';
+    if (e.altKey) {
+      const index = listed.findIndex((f) => f.group === selected?.group && f.path === selected.path);
+      const next = listed[forward ? index + 1 : Math.max(0, index - 1)];
+      if (next) select(next);
+      return;
+    }
+    const top = diffPane.getBoundingClientRect().top;
+    const heads = [...diffPane.querySelectorAll<HTMLElement>('.hunk-head')].map((h) => h.getBoundingClientRect().top - top);
+    // 見出しは差分の見出しの下に止まるので、少し余裕を見て比べる
+    const offset = diffPane.querySelector<HTMLElement>('.diff-head')?.offsetHeight ?? 0;
+    const target = forward
+      ? heads.find((y) => y > offset + 2)
+      : heads.filter((y) => y < offset - 2).at(-1);
+    if (target !== undefined) diffPane.scrollBy({ top: target - offset });
+  });
+
+  filter.addEventListener('input', () => {
+    renderFiles();
+    // 選んでいたファイルが隠れたら、残っている最初のものへ
+    const shown = listed.some((f) => f.group === selected?.group && f.path === selected.path);
+    if (selected && !shown && listed[0]) select(listed[0]);
+  });
+  filter.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      filter.value = '';
+      renderFiles();
+      fileList.focus();
     }
   });
 
@@ -345,6 +498,17 @@ export function createWorkingCopyView(): View {
       : staged > 0
         ? `Commit ${staged} File${staged > 1 ? 's' : ''}`
         : 'Commit';
+    updateLength();
+  }
+
+  /** 件名の文字数と、72 文字を超える本文の行（git の慣習） */
+  function updateLength(): void {
+    const length = messageLength(subject.value);
+    const line = longestLine(body.value);
+    lengthLabel.replaceChildren();
+    if (length > 0) lengthLabel.append(el('span', `level-${lengthLevel(length)}`, String(length)));
+    if (lengthLevel(line) === 'over') lengthLabel.append(el('span', 'level-over', ` Body ${line}`));
+    lengthLabel.title = 'Length of the summary (yellow over 50, orange over 72), and of a description line over 72';
   }
 
   function message(): string {
@@ -352,41 +516,107 @@ export function createWorkingCopyView(): View {
     return b ? `${subject.value.trim()}\n\n${b}\n` : `${subject.value.trim()}\n`;
   }
 
-  function commit(): void {
+  function commit(push = false): void {
     if (commitButton.disabled) return;
-    post({ type: 'wcCommit', message: message(), amend: amend.checked });
+    post({ type: 'wcCommit', message: message(), amend: amend.checked, ...(push ? { push } : {}) });
   }
 
-  subject.addEventListener('input', updateCommitButton);
-  commitButton.addEventListener('click', commit);
+  /** 欄の中身を入れ替える。打ったのと同じく Undo で戻せるように、編集として入れる */
+  function replaceField(field: HTMLInputElement | HTMLTextAreaElement, text: string): void {
+    if (field.value === text) return;
+    field.focus();
+    field.select();
+    if (!document.execCommand(text ? 'insertText' : 'delete', false, text)) {
+      field.value = text;
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  }
+
+  function useMessage(text: string): void {
+    const parts = splitMessage(text);
+    replaceField(body, parts.body);
+    replaceField(subject, parts.summary);
+  }
+
+  // ⌥↑・⌥↓ で最近のメッセージを順に呼び出す。一番新しいものの先は、呼び出す前の中身
+  let recent: string[] = [];
+  let recentCursor = -1;
+  let beforeRecall = { summary: '', body: '' };
+  let recalling = false;
+  subject.addEventListener('keydown', (e) => {
+    if (!e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') || recent.length === 0) return;
+    e.preventDefault();
+    if (recentCursor < 0) beforeRecall = { summary: subject.value, body: body.value };
+    recentCursor = Math.max(-1, Math.min(recent.length - 1, recentCursor + (e.key === 'ArrowUp' ? 1 : -1)));
+    const parts = recentCursor < 0 ? beforeRecall : splitMessage(recent[recentCursor]!);
+    recalling = true;
+    replaceField(body, parts.body);
+    replaceField(subject, parts.summary);
+    recalling = false;
+    subject.focus();
+  });
+
+  /** 打ち終わるのを少し待って、下書きを覚えてもらう */
+  let draftTimer: ReturnType<typeof setTimeout> | undefined;
+  function messageChanged(): void {
+    updateCommitButton();
+    clearTimeout(draftTimer);
+    // 呼び出しただけでは下書きにしない（呼び出す前の中身が下書きのまま）。手で直したら、それが下書き
+    if (recalling) return;
+    recentCursor = -1;
+    draftTimer = setTimeout(() => post({ type: 'wcDraft', summary: subject.value, body: body.value }), 300);
+  }
+  subject.addEventListener('input', messageChanged);
+  body.addEventListener('input', messageChanged);
+  commitButton.addEventListener('click', () => commit());
   for (const input of [subject, body] as HTMLElement[]) {
     input.addEventListener('keydown', (e: KeyboardEvent) => {
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
-        commit();
+        commit(e.shiftKey);
       }
     });
   }
   // amend にしたら、空ならいまのコミットのメッセージを入れる
-  amend.addEventListener('change', () => {
+  function amendChanged(): void {
     if (amend.checked && !subject.value && !body.value && lastMessage) {
       const [s = '', ...rest] = lastMessage.replace(/\n+$/, '').split('\n');
       subject.value = s;
       body.value = rest.join('\n').replace(/^\n+/, '');
     }
     updateCommitButton();
-  });
+  }
+  amend.addEventListener('change', amendChanged);
+
+  /** コミットの hooks の出力や失敗の理由を、長くても読めるように出す */
+  function showCommitOutput(title: string, text: string): void {
+    const overlay = el('div', 'overlay');
+    const sheet = el('div', 'editor commit-output');
+    const close = el('button', undefined, 'Close');
+    const row = el('div', 'buttons');
+    row.append(close);
+    sheet.append(el('div', 'title', title), el('pre', undefined, text), row);
+    overlay.append(sheet);
+    const dismiss = () => {
+      overlay.remove();
+      subject.focus();
+    };
+    close.addEventListener('click', dismiss);
+    overlay.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') dismiss();
+    });
+    root.append(overlay);
+    close.focus();
+  }
 
   function onMessage(m: HostMessage): void {
     switch (m.type) {
       case 'wcFiles':
         files = m.files;
         lastMessage = m.lastMessage ?? '';
-        if (!selected && files.length > 0) {
-          select(files[0]!);
-        } else {
-          renderFiles();
-        }
+        layout = m.layout;
+        renderFiles();
+        if (!selected && listed[0]) select(listed[0]);
         break;
       case 'wcDiff':
         if (diff?.version !== m.diff?.version || diff?.path !== m.diff?.path) {
@@ -399,7 +629,58 @@ export function createWorkingCopyView(): View {
         renderFiles();
         renderDiff();
         break;
+      case 'wcRecent':
+        recent = m.messages;
+        recentCursor = -1;
+        break;
+      case 'wcUseMessage':
+        recentCursor = -1;
+        useMessage(m.message);
+        break;
+      case 'wcStartAmend':
+        amend.checked = true;
+        amendChanged();
+        break;
+      case 'wcStartFixup':
+        // fixup! は件名だけ（元のメッセージを残す）、squash! は本文に書き足せる
+        amend.checked = false;
+        replaceField(subject, `${m.kind}! ${m.subject}`);
+        if (m.kind === 'fixup') replaceField(body, '');
+        (m.kind === 'fixup' ? subject : body).focus();
+        updateCommitButton();
+        break;
+      case 'wcCommitOutput':
+        showCommitOutput(m.title, m.text);
+        break;
+      case 'wcStats':
+        stats = new Map(m.stats.map((s) => [s.path, s]));
+        renderFiles();
+        break;
+      case 'wcSparse':
+        sparseNote.hidden = !m.sparse;
+        if (m.sparse) {
+          sparseNote.textContent = m.sparse.cone
+            ? `Only some folders are checked out (${m.sparse.folders.length})`
+            : 'Only some files are checked out';
+          sparseNote.title = `${m.sparse.folders.join('\n')}\nClick to change them in Repository Settings`;
+        }
+        break;
+      case 'wcInsertType':
+        replaceField(subject, withType(subject.value, m.commitType));
+        subject.focus();
+        break;
+      case 'wcInsertTrailer':
+        replaceField(body, addTrailer(body.value, m.line));
+        body.focus();
+        break;
+      case 'wcMessage':
+        clearTimeout(draftTimer);
+        subject.value = m.summary;
+        body.value = m.body;
+        updateCommitButton();
+        break;
       case 'wcCommitted':
+        clearTimeout(draftTimer);
         subject.value = '';
         body.value = '';
         amend.checked = false;

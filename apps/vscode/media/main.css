@@ -287,6 +287,8 @@ aside.details .body {
 }
 
 .file .dir {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--vscode-descriptionForeground);
@@ -370,6 +372,32 @@ button.secondary {
 .ref.tag {
   color: var(--vscode-editor-background);
   background: var(--vscode-charts-yellow);
+}
+
+.toolbar .display-menu {
+  visibility: visible;
+  flex: none;
+}
+
+.row.dim {
+  opacity: 0.45;
+}
+
+.folded-count {
+  margin-right: 4px;
+  padding: 0 5px;
+  border-radius: 8px;
+  font-size: 0.85em;
+  line-height: 16px;
+  color: var(--vscode-foreground);
+  background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+}
+
+.ref.worktree {
+  color: var(--vscode-foreground);
+  background: transparent;
+  outline: 1px solid var(--vscode-panel-border);
+  outline-offset: -1px;
 }
 
 .ref.current,
@@ -473,6 +501,62 @@ button.secondary {
   border-right: 1px solid var(--vscode-panel-border);
 }
 
+.wc-sparse {
+  padding: 4px 12px;
+  text-align: left;
+  font-size: 0.9em;
+  color: var(--vscode-descriptionForeground);
+  background: transparent;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.wc-sparse[hidden] {
+  display: none;
+}
+
+.wc-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.wc-tools input[type='search'] {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 6px;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, transparent);
+  outline: none;
+}
+
+.wc-tools input[type='search']:focus {
+  border-color: var(--vscode-focusBorder);
+}
+
+.wc-layout {
+  flex: none;
+  display: flex;
+  gap: 1px;
+}
+
+.wc-layout button {
+  padding: 1px 6px;
+  color: var(--vscode-foreground);
+  background: transparent;
+}
+
+.wc-layout button:hover {
+  background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+}
+
+.wc-layout button.active {
+  color: var(--vscode-inputOption-activeForeground, var(--vscode-foreground));
+  background: var(--vscode-inputOption-activeBackground, var(--vscode-list-inactiveSelectionBackground));
+}
+
 .wc-files {
   flex: 1;
   overflow-y: auto;
@@ -526,6 +610,43 @@ button.secondary {
 .wc-files:focus .wc-file.selected {
   color: var(--vscode-list-activeSelectionForeground);
   background: var(--vscode-list-activeSelectionBackground);
+}
+
+.wc-file .name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wc-file .icon-button {
+  flex: none;
+}
+
+.wc-file .stat {
+  flex: none;
+  display: flex;
+  gap: 4px;
+  font-size: 0.85em;
+  font-variant-numeric: tabular-nums;
+}
+
+.wc-file .stat .added {
+  color: var(--vscode-gitDecoration-addedResourceForeground);
+}
+
+.wc-file .stat .removed {
+  color: var(--vscode-gitDecoration-deletedResourceForeground);
+}
+
+.wc-dir .name {
+  color: var(--vscode-descriptionForeground);
+}
+
+.wc-dir .chevron {
+  flex: none;
+  width: 1em;
+  text-align: center;
+  color: var(--vscode-descriptionForeground);
 }
 
 .wc-file .status,
@@ -623,6 +744,66 @@ button.secondary {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+
+.commit-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+}
+
+.commit-tools .link {
+  padding: 0;
+  color: var(--vscode-textLink-foreground);
+  background: none;
+  font-size: 0.9em;
+}
+
+.commit-tools .length {
+  margin-left: auto;
+  font-size: 0.9em;
+  font-variant-numeric: tabular-nums;
+  color: var(--vscode-descriptionForeground);
+}
+
+.length .level-long {
+  color: var(--vscode-editorWarning-foreground, var(--vscode-gitDecoration-modifiedResourceForeground));
+}
+
+.length .level-over {
+  color: var(--vscode-gitDecoration-conflictingResourceForeground, var(--vscode-errorForeground));
+}
+
+.commit-output {
+  max-height: 70vh;
+}
+
+.commit-output .title {
+  font-weight: bold;
+}
+
+.commit-output pre {
+  flex: 1;
+  min-height: 0;
+  margin: 8px 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-family: var(--vscode-editor-font-family);
+}
+
+.commit-output .buttons {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.commit-actions {
+  display: flex;
+  gap: 1px;
+}
+
+.commit-menu {
+  padding: 0 6px;
 }
 
 .commit-row button:disabled {
@@ -779,6 +960,125 @@ button.secondary {
 
 .file-diff .diff-head .status {
   font-weight: bold;
+}
+
+/* 変わったファイルの見せ方の切り替え */
+.files-head {
+  gap: 6px;
+}
+
+.files-head .layout-buttons {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+/* 木: 一覧を差分の左に置き、スクロールしても見えたままにする */
+aside.details.tree .stack {
+  display: grid;
+  grid-template-columns: minmax(140px, 32%) 1fr;
+  align-items: start;
+}
+
+aside.details.tree .stack > .files-head {
+  grid-column: 1 / -1;
+}
+
+aside.details.tree .stack > .files {
+  position: sticky;
+  top: -12px;
+  max-height: calc(100vh - 8px);
+  overflow: auto;
+  border-right: 1px solid var(--vscode-panel-border);
+}
+
+aside.details.tree .stack > .commit-diffs {
+  min-width: 0;
+  margin-left: 0;
+}
+
+aside.details.tree .file .dir {
+  display: none;
+}
+
+aside.details.tree .file .name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file.dir-row {
+  color: var(--vscode-descriptionForeground);
+}
+
+.file.dir-row .chevron {
+  width: 1em;
+  flex: none;
+}
+
+/* 1 つのファイル: 選んだファイルの差分だけ */
+aside.details.single .file-diff:not(.current) {
+  display: none;
+}
+
+/* 見出しを押して畳む・開く */
+.file-diff .diff-head {
+  cursor: pointer;
+}
+
+.file-diff .diff-head .chevron {
+  width: 1em;
+  flex: none;
+  color: var(--vscode-descriptionForeground);
+}
+
+.file-diff.collapsed > :not(.diff-head) {
+  display: none;
+}
+
+.diff-head .viewed {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 0.9em;
+  white-space: nowrap;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+}
+
+.diff-head .viewed input {
+  margin: 0;
+}
+
+.diff-head .stat,
+.file .stat {
+  display: flex;
+  gap: 4px;
+  font-size: 0.85em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.diff-head .stat .added,
+.file .stat .added {
+  color: var(--vscode-gitDecoration-addedResourceForeground);
+}
+
+.diff-head .stat .removed,
+.file .stat .removed {
+  color: var(--vscode-gitDecoration-deletedResourceForeground);
+}
+
+/* Viewed にしたファイルの印（一覧） */
+.file .viewed-mark {
+  visibility: hidden;
+  flex: none;
+  color: var(--vscode-descriptionForeground);
+}
+
+.file.viewed .viewed-mark {
+  visibility: visible;
 }
 
 .file-diff .empty {

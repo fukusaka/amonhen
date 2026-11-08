@@ -69,7 +69,7 @@ History と差分は番号（`history`・`diff`）で持つ。FE がスクロー
 | `stage`・`unstage` | paths | | |
 | `stageRows` | diff・rows・stage?（combined の差分のとき。false で外す） | | |
 | `discardRows` | diff・rows（unstaged の差分の行） | | |
-| `commit` | message・amend? | | |
+| `commit` | message・amend? | output（hooks が書いたもの） | |
 | `run` | command（`crates/core/src/command.rs` の命令。checkout・merge・rebase・fetch・push・stash・undo・blame・設定など） | その命令の答え（ok・error ほか） | |
 | `connection` | | sent・received・closed（SSH 先のつながり。手元なら null） | |
 

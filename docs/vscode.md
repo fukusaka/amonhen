@@ -241,3 +241,9 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 30. Forgetting a rerere resolution, or all of them
 - [x] 31. A new orphan branch, empty or keeping the files
 - [x] 32. Deleting ignored files, listed first
+- [x] 33. Working Copy: filtering on paths, list, tree or file name
+- [x] 34. Commit box: summary length, drafts and the template, recent messages, types and trailers
+- [x] 35. Commit and Push, Fixup and Squash Commit For, the hooks' output
+- [x] 36. Working Copy: line counts per file, ⌫, J/K, Add to .gitignore, the note for a sparse checkout
+- [x] 37. History: several refs, worktree labels, order, row items, folding merges, highlighting ancestors
+- [x] 38. History's details: find with ⌘F, collapsing files and Viewed, the changed files as a tree, one file at a time

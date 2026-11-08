@@ -9,6 +9,9 @@ import { registerRangeDiffCommands } from './ui/rangeDiff.ts';
 import { SidebarDragAndDrop } from './ui/dragDrop.ts';
 import { registerFetchCommand } from './ui/fetchCommand.ts';
 import { registerFileToolCommands } from './ui/fileToolCommands.ts';
+import { refsScope } from './history/scope.ts';
+import { registerIgnoreCommand } from './ui/ignoreCommand.ts';
+import { initPreferences } from './ui/preferences.ts';
 import { registerFormCommands } from './ui/formCommands.ts';
 import { registerHistoryCommands } from './ui/historyCommands.ts';
 import { MainPanel } from './ui/mainPanel.ts';
@@ -33,6 +36,11 @@ import { registerWorktreeCommands } from './ui/worktreeCommands.ts';
 import type { ViewName } from './view/protocol.ts';
 
 /** 戻り値は結合テストから中身を確かめるためのもの */
+/** サイドバーのブランチやタグの行 */
+interface RefNode {
+  ref?: { name: string };
+}
+
 export async function activate(
   context: vscode.ExtensionContext,
 ): Promise<{
@@ -42,6 +50,7 @@ export async function activate(
   /** 開いているメインビュー（e2e のテストが Webview の代わりにメッセージを入れる） */
   panel: () => MainPanel | undefined;
 }> {
+  initPreferences(context.globalState);
   const start = performance.now();
   const log = vscode.window.createOutputChannel('Amon Hen', { log: true });
   // daemon が作るエラーの文を、VSCode の表示言語にする
@@ -92,6 +101,7 @@ export async function activate(
     manager.onDidChangeCurrent(updateDescription),
     registerContentProvider(manager),
     vscode.commands.registerCommand('amonhen.refresh', () => manager.current?.refresh()),
+    registerIgnoreCommand(manager),
     vscode.commands.registerCommand('amonhen.selectRepository', () => manager.pick()),
     vscode.commands.registerCommand('amonhen.open', () => show()),
     vscode.commands.registerCommand('amonhen.showWorkingCopy', () => show('workingCopy')),
@@ -99,6 +109,11 @@ export async function activate(
     vscode.commands.registerCommand('amonhen.showReflog', () => show('reflog')),
     vscode.commands.registerCommand('amonhen.showRepositorySettings', () => show('settings')),
     vscode.commands.registerCommand('amonhen.showRef', (ref: string) => show('history', ref)),
+    // サイドバーでいくつも選んだブランチやタグの History
+    vscode.commands.registerCommand('amonhen.showRefs', (node?: RefNode, selected?: RefNode[]) => {
+      const names = (selected && selected.length > 0 ? selected : node ? [node] : []).flatMap((n) => n.ref?.name ?? []);
+      if (names.length > 0) void show('history').history.showScope(refsScope(names));
+    }),
     registerUndoCommand(manager),
     registerFetchCommand(manager, () => sidebar.tagMarks.reload()),
     registerSyncCommands(manager),

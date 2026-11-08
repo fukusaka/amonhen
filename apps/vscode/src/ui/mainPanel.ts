@@ -7,6 +7,7 @@ import type { HostMessage, ViewName, WebviewMessage } from '../view/protocol.ts'
 import { BlameController } from './blameController.ts';
 import { FileHistoryController } from './fileHistoryController.ts';
 import { HistoryController } from './historyController.ts';
+import { detailsLayout } from './preferences.ts';
 import { ReflogController } from './reflogController.ts';
 import { SettingsController } from './settingsController.ts';
 import { showError } from './stageCommands.ts';
@@ -42,6 +43,8 @@ export class MainPanel implements vscode.Disposable {
       const panel = vscode.window.createWebviewPanel('amonhen.main', 'Amon Hen', vscode.ViewColumn.Active, {
         enableScripts: true,
         retainContextWhenHidden: true,
+        // ⌘F で中を探す（History の詳細のメッセージや差分）
+        enableFindWidget: true,
         localResourceRoots: [
           vscode.Uri.joinPath(extensionUri, 'dist', 'webview'),
           vscode.Uri.joinPath(extensionUri, 'media'),
@@ -122,6 +125,7 @@ export class MainPanel implements vscode.Disposable {
     switch (message.type) {
       case 'ready':
         this.ready = true;
+        this.post({ type: 'detailsLayout', layout: detailsLayout() });
         if (this.pendingView) {
           this.post({ type: 'show', view: this.pendingView });
           this.pendingView = undefined;
@@ -136,6 +140,12 @@ export class MainPanel implements vscode.Disposable {
       case 'view':
         break;
       case 'wcSelect':
+      case 'wcLayout':
+      case 'wcDraft':
+      case 'wcPickRecent':
+      case 'wcShowFolders':
+      case 'wcPickInsert':
+      case 'wcCommitMenu':
       case 'wcStageFiles':
       case 'wcStageLines':
       case 'wcDiscardFiles':

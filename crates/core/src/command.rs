@@ -4950,6 +4950,92 @@ mod tests {
     }
 
     #[test]
+    fn removes_a_submodule_whose_folder_is_still_in_use_for_a_moment() {
+        // Windows では、ほかのプロセスが中のフォルダーを使っている間は git rm が消せない。少しして手放されれば、消し切ること。
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        let lib = tempfile::tempdir().unwrap();
+        git(lib.path(), &["init", "-q"]);
+        git(lib.path(), &["config", "user.name", "a"]);
+        git(lib.path(), &["config", "user.email", "a@example.com"]);
+        std::fs::write(lib.path().join("l.txt"), "l\n").unwrap();
+        git(lib.path(), &["add", "."]);
+        git(lib.path(), &["commit", "-q", "-m", "lib"]);
+        let url = lib.path().to_str().unwrap().replace('\\', "/");
+        let change = |json: serde_json::Value| {
+            run(
+                &repo,
+                &serde_json::json!({ "op": "changeSubmodule", "change": json }).to_string(),
+            )
+        };
+        let r =
+            change(serde_json::json!({ "kind": "add", "url": url, "path": "lib", "branch": null }));
+        assert_eq!(r["ok"], true, "{r}");
+        git(dir, &["commit", "-q", "-m", "add lib"]);
+        let mut holder = if cfg!(windows) {
+            let mut c = amonhen_model::process::command("powershell");
+            c.args(["-NoProfile", "-Command", "Start-Sleep -Seconds 30"]);
+            c
+        } else {
+            let mut c = amonhen_model::process::command("sleep");
+            c.arg("30");
+            c
+        };
+        // deinit と rm が動く間は掴んでいて、試し直す 2 秒のうちに手放す
+        let holder = std::sync::Mutex::new(holder.current_dir(dir.join("lib")).spawn().unwrap());
+        let removed = std::thread::scope(|scope| {
+            scope.spawn(|| {
+                std::thread::sleep(std::time::Duration::from_millis(1500));
+                let mut holder = holder.lock().unwrap();
+                let _ = holder.kill();
+                let _ = holder.wait();
+            });
+            change(serde_json::json!({ "kind": "remove", "path": "lib", "deleteGitDir": true }))
+        });
+        assert_eq!(removed["ok"], true, "{removed}");
+        assert!(!dir.join("lib").exists());
+    }
+
+    #[test]
+    fn removes_a_worktree_whose_folder_is_still_in_use_for_a_moment() {
+        // Windows では、ほかのプロセスが作業ディレクトリにしている間はフォルダーを消せず、git は登録だけ外して
+        // フォルダーを残す。少しして手放されれば、消し切ること。
+        let (tmp, repo) = setup();
+        let wt = tmp.path().join(".worktrees/busy");
+        let command = |value: serde_json::Value| value.to_string();
+        let added = run(
+            &repo,
+            &command(serde_json::json!({"op": "worktreeAdd", "path": wt, "newBranch": "busy"})),
+        );
+        assert_eq!(added["ok"], true, "{added}");
+        // 掴み続けるプロセスを作り、消し始めてから少しして終わらせる（起動にかかる時間に左右されないように）
+        let mut holder = if cfg!(windows) {
+            let mut c = amonhen_model::process::command("powershell");
+            c.args(["-NoProfile", "-Command", "Start-Sleep -Seconds 30"]);
+            c
+        } else {
+            let mut c = amonhen_model::process::command("sleep");
+            c.arg("30");
+            c
+        };
+        let holder = std::sync::Mutex::new(holder.current_dir(&wt).spawn().unwrap());
+        let removed = std::thread::scope(|scope| {
+            scope.spawn(|| {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                let mut holder = holder.lock().unwrap();
+                let _ = holder.kill();
+                let _ = holder.wait();
+            });
+            run(
+                &repo,
+                &command(serde_json::json!({"op": "worktreeRemove", "path": wt, "force": true})),
+            )
+        });
+        assert_eq!(removed["ok"], true, "{removed}");
+        assert!(!wt.exists());
+    }
+
+    #[test]
     fn lists_commits_on_one_side_only() {
         let (tmp, repo) = setup();
         let dir = tmp.path();

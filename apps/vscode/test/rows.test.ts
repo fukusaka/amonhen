@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Commit } from '../src/git/log.ts';
 import type { Ref } from '../src/git/refs.ts';
-import { editableChain, refLabels } from '../src/history/rows.ts';
+import { editableChain, refLabels, worktreeLabels } from '../src/history/rows.ts';
 
 const ref = (name: string, oid: string, extra: Partial<Ref> = {}): Ref => ({
   name,
@@ -39,4 +39,16 @@ test('editableChain stops at the first merge', () => {
     ['b', 0],
     ['a', 1],
   ]);
+});
+
+test('worktree labels mark where writes go, the main one, and the changes', () => {
+  const tree = (path: string, head: string | null, main = false) =>
+    ({ path, head, branch: null, detached: false, bare: false, locked: null, prunable: null, main }) as const;
+  const main = tree('/r/repo', 'aaa', true);
+  const extra = tree('/r/wt-x/', 'bbb');
+  assert.equal(worktreeLabels([main], new Map(), () => true).size, 0);
+  const labels = worktreeLabels([main, extra, tree('/r/empty', null)], new Map([['/r/wt-x/', 3]]), (w) => w === main);
+  assert.deepEqual(labels.get('aaa'), [{ name: '✎ repo', kind: 'worktree', current: true }]);
+  assert.deepEqual(labels.get('bbb'), [{ name: '⑂ wt-x · 3', kind: 'worktree' }]);
+  assert.equal(labels.size, 2);
 });

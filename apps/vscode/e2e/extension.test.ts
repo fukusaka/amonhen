@@ -5,10 +5,11 @@
  * メインビューの Webview が送るメッセージを拡張ホストに直接入れ、拡張ホストが Webview に送るメッセージと git の様子を
  * 確かめる。テストは上から順に、前のテストの結果を引き継いで進む
  */
+import type { FileStat } from '../src/workingCopy/protocol.ts';
 import assert from 'node:assert/strict';
 import childProcess from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
 import * as vscode from 'vscode';
 import { DaemonClient } from '../src/daemon/client.ts';
 import type { SelectedLine } from '../src/diff/fileDiff.ts';
@@ -74,7 +75,7 @@ function waitPosted<T extends HostMessage['type']>(
     () => posted.slice(since).find((m): m is Message<T> => m.type === type && match(m as Message<T>)),
     undefined,
     () => {
-      const kinds = posted.slice(since).map((m) => (m.type === 'rows' ? `rows[${m.start}+${m.rows.length}]` : m.type));
+      const kinds = posted.slice(since).map((m) => (m.type === 'rows' ? `rows[${m.start}+${m.rows.length}${m.total === undefined ? '' : `/${m.total}`}]` : m.type));
       return [kinds.join(', ') || 'なし', ...errors.slice(-3).map((e) => `エラー「${e}」`)].join('、');
     },
   );
@@ -154,9 +155,12 @@ async function workingCopyFlow(label: string): Promise<void> {
   assert.ok(old.startsWith('three') && !old.includes('\n'), '作業中のファイルは CRLF');
   const changed = before.replace(`${old}\r\n`, `three ${label}\r\n`);
   writeFileSync(path, changed, 'latin1');
+  // ファイル一覧の見せ方は覚えて、次に送る一覧で返す
+  await wc.handle({ type: 'wcLayout', layout: 'tree' });
   const mark = posted.length;
   await vscode.commands.executeCommand('amonhen.refresh');
-  await waitPosted('wcFiles', mark, (m) => m.files.some((f) => f.group === 'unstaged' && f.path === FILE));
+  await waitPosted('wcFiles', mark, (m) => m.layout === 'tree' && m.files.some((f) => f.group === 'unstaged' && f.path === FILE));
+  await wc.handle({ type: 'wcLayout', layout: 'flat' });
 
   /** 差分を選び、変わった行が 1 行の書き換えだけであることを確かめて、その行を返す */
   const select = async (group: 'unstaged' | 'staged') => {
@@ -567,7 +571,8 @@ async function fileHistoryFlow(): Promise<void> {
     // マージも出すに切り替えると読み直す
     mark = posted.length;
     await panel.fileHistory.handle({ type: 'fileHistoryLoad', merges: true });
-    assert.equal((await waitPosted('fileHistory', mark, (m) => m.complete)).merges, true);
+    // 前の読み込みの答えが後から届くことがある。切り替えた答えを待つ
+    await waitPosted('fileHistory', mark, (m) => m.complete && m.merges);
 
     // ダブルクリックで、そのコミットを History で選ぶ
     mark = posted.length;
@@ -1534,6 +1539,9 @@ async function historySelectionFlow(): Promise<void> {
     }
   };
   const read = async (names: string[]) => {
+    // status の HEAD が古いままだと、追いついたときに History を読み直す（選んだ行が消える）。追いつくまで待つ
+    const head = git('rev-parse', 'HEAD').trim();
+    await until('status の HEAD', () => repo.current.status?.branch.oid === head || undefined);
     await settled();
     const mark = posted.length;
     await panel.history.reset();
@@ -1575,6 +1583,36 @@ async function historySelectionFlow(): Promise<void> {
     await panel.history.handle({ type: 'commitDiff', oid: range.key, path: 's3.txt' });
     const { diff } = await waitPosted('commitDiff', mark, (m) => m.oid === range.key);
     assert.ok(diff.hunks.some((h) => h.lines.some((l) => l.kind === '+' && l.text === 's3')), JSON.stringify(diff));
+
+    // Viewed は選んだ組ごとに覚え、同じ組を選び直すと戻る
+    assert.ok(range.viewedKey);
+    assert.deepEqual(range.viewed, []);
+    await panel.history.handle({ type: 'viewed', key: range.viewedKey, path: 's3.txt', viewed: true });
+    assert.deepEqual((await select(11, [s4, s3])).viewed, ['s3.txt']);
+
+    // 1 つのコミットの詳細には行数が付き、Viewed もコミットごとに覚える
+    const s4oid = git('rev-parse', 'sel-base').trim();
+    const showOne = async () => {
+      const at = posted.length;
+      await panel.history.handle({ type: 'select', oid: s4oid });
+      return waitPosted('details', at, (m) => m.details.oid === s4oid);
+    };
+    const one = await showOne();
+    assert.deepEqual(one.details.files, [{ status: 'A', path: 's4.txt', added: 1, removed: 0 }]);
+    assert.deepEqual(one.viewed, []);
+    await panel.history.handle({ type: 'viewed', key: s4oid, path: 's4.txt', viewed: true });
+    assert.deepEqual((await showOne()).viewed, ['s4.txt']);
+    await panel.history.handle({ type: 'viewed', key: s4oid, path: 's4.txt', viewed: false });
+    assert.deepEqual((await showOne()).viewed, []);
+
+    // 変わったファイルの見せ方は覚えて、Webview に返す
+    const layout = async (tree: boolean, single: boolean) => {
+      const at = posted.length;
+      await panel.history.handle({ type: 'detailsLayout', layout: { tree, single } });
+      return (await waitPosted('detailsLayout', at)).layout;
+    };
+    assert.deepEqual(await layout(true, true), { tree: true, single: true });
+    assert.deepEqual(await layout(false, false), { tree: false, single: false });
 
     // 離れた 2 つは取り方を選べる。逆にすると足した行が消した行になる
     const pair = await select(2, [s4, s1]);
@@ -2548,6 +2586,18 @@ suite('Amon Hen in VSCode', () => {
     api = await ext.activate();
   });
 
+  // 前の試験の git 操作を知って遅れて始まる History の読み直しが、次の試験に入り込まないように、落ち着くまで待つ
+  setup(async () => {
+    const history = api.panel()?.history;
+    if (!history) return;
+    for (let i = 0; i < 10; i++) {
+      await history.idle();
+      const quiet = posted.length;
+      await new Promise((r) => setTimeout(r, 700));
+      if (!posted.slice(quiet).some((m) => m.type === 'reset' || m.type === 'rows')) return;
+    }
+  });
+
   test('activates with the bundled engine and the shared daemon', async () => {
     const repo = await until('リポジトリ', () => api.manager.current);
     assert.equal(repo.root.toLowerCase(), root.toLowerCase());
@@ -2658,10 +2708,209 @@ suite('Amon Hen in VSCode', () => {
       repo.want = want;
       release();
     }
+    // ほかの読み直し（前の試験の git の変化を知って始まるもの）が途中だと、その History の行は送られない。落ち着くのを待つ
+    for (;;) {
+      const quiet = posted.length;
+      await new Promise((r) => setTimeout(r, 800));
+      if (!posted.slice(quiet).some((m) => m.type === 'reset' || m.type === 'rows')) break;
+    }
     const at = posted.length;
     // 読み直しが頼むのは最初の行なので、2 行目の答えは、この頼みへの答えだけ
     await panel.history.handle({ type: 'range', start: 1, count: 1 });
     assert.equal((await waitPosted('rows', at, (m) => m.start === 1)).rows.length, 1);
+  });
+
+  test('shows the History of several selected refs through the daemon', async () => {
+    const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+    const start = git('rev-parse', 'HEAD').trim();
+    const make = (name: string) => {
+      git('switch', '-q', '-c', name, start);
+      git('commit', '-q', '--allow-empty', '-m', name);
+    };
+    make('several-a');
+    make('several-b');
+    make('several-c');
+    git('switch', '-q', branch);
+    try {
+      await vscode.commands.executeCommand('amonhen.refresh');
+      const mark = posted.length;
+      const node = (name: string) => ({ ref: { name: `refs/heads/${name}` } });
+      await vscode.commands.executeCommand('amonhen.showRefs', node('several-a'), [node('several-a'), node('several-b')]);
+      const { scope } = await waitPosted('reset', mark, (m) => m.scope.startsWith('refs:'));
+      assert.equal(scope, 'refs:refs/heads/several-a\nrefs/heads/several-b');
+      const { rows } = await waitPosted('rows', mark, (m) => m.rows.some((r) => r.subject === 'several-a'));
+      const subjects = rows.map((r) => r.subject);
+      assert.ok(subjects.includes('several-b'), subjects.join(', '));
+      assert.ok(!subjects.includes('several-c'), subjects.join(', '));
+    } finally {
+      await showView('amonhen.showHistory');
+      await vscode.commands.executeCommand('amonhen.showHistory');
+      api.panel()?.history.showScope('head');
+      git('branch', '-q', '-D', 'several-a', 'several-b', 'several-c');
+      await vscode.commands.executeCommand('amonhen.refresh');
+    }
+  });
+
+  test('marks the HEAD of each worktree in History through the daemon', async () => {
+    const extra = join(root, '..', `wt-label-${process.pid}`);
+    git('worktree', 'add', '-q', '--detach', extra);
+    try {
+      writeFileSync(join(extra, 'dirty.txt'), 'x\n');
+      const mark = posted.length;
+      const panel = await showView('amonhen.showHistory');
+      await panel.history.reset();
+      const { rows } = await waitPosted('rows', mark, (m) => m.rows.some((r) => r.refs.some((l) => l.kind === 'worktree')));
+      const labels = rows.flatMap((r) => r.refs).filter((l) => l.kind === 'worktree').map((l) => l.name);
+      assert.ok(labels.some((l) => l.startsWith('✎ ')), labels.join(', '));
+      assert.ok(labels.includes(`⑂ wt-label-${process.pid} · 1`), labels.join(', '));
+    } finally {
+      git('worktree', 'remove', '--force', extra);
+      await api.panel()?.history.reset();
+    }
+  });
+
+  test('keeps the order and items chosen for History through the daemon', async () => {
+    const panel = await showView('amonhen.showHistory');
+    const quickPick = vscode.window.showQuickPick;
+    let picks: string[] = [];
+    const choose = (label: string) => {
+      (vscode.window as { showQuickPick: unknown }).showQuickPick = async (items: vscode.QuickPickItem[]) => {
+        picks = items.map((i) => i.label);
+        return items.find((i) => i.label.endsWith(label) && i.kind !== vscode.QuickPickItemKind.Separator);
+      };
+    };
+    try {
+      choose('Author');
+      let at = posted.length;
+      await panel.history.handle({ type: 'displayMenu' });
+      // 読み直し（git の変化を知って始まるもの）も項目を送るので、変えた答えを待つ
+      await waitPosted('historyDisplay', at, (m) => m.hidden.join() === 'author');
+      assert.ok(picks.includes('$(check) Date'), picks.join(', '));
+      choose('Author');
+      at = posted.length;
+      await panel.history.handle({ type: 'displayMenu' });
+      await waitPosted('historyDisplay', at, (m) => m.hidden.length === 0);
+      // 並び順を変えると読み直す。読み直しても項目は送り直す
+      choose('Topological');
+      at = posted.length;
+      await panel.history.handle({ type: 'displayMenu' });
+      await waitPosted('reset', at);
+      await waitPosted('historyDisplay', at);
+      choose('Date');
+      await panel.history.handle({ type: 'displayMenu' });
+    } finally {
+      (vscode.window as { showQuickPick: unknown }).showQuickPick = quickPick;
+    }
+  });
+
+  test('folds what merges brought in, and opens one merge, through the daemon', async () => {
+    const panel = await showView('amonhen.showHistory');
+    const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+    const start = git('rev-parse', 'HEAD').trim();
+    const quickPick = vscode.window.showQuickPick;
+    // 待ちきれなかったときに、メニューに何が並び、何を選んだかを添える
+    const menus: string[] = [];
+    const pick = async (label: string) => {
+      (vscode.window as { showQuickPick: unknown }).showQuickPick = async (items: vscode.QuickPickItem[]) => {
+        const picked = items.find((i) => i.label.endsWith(label));
+        menus.push(`[${items.map((i) => i.label).join(' | ')}] → ${picked?.label ?? 'none'}`);
+        return picked;
+      };
+      await panel.history.handle({ type: 'displayMenu' });
+    };
+    git('switch', '-q', '-c', 'fold-side');
+    git('commit', '-q', '--allow-empty', '-m', 'fold side one');
+    git('commit', '-q', '--allow-empty', '-m', 'fold side two');
+    git('switch', '-q', branch);
+    git('merge', '-q', '--no-ff', '-m', 'fold merge', 'fold-side');
+    try {
+      // git の変化を知ってからの読み直しが遅れて届くことがある（CI）。落ち着いてからの行の数を基準にし、そのあとは
+      // 最初に届いた行ではなく、期待する数の行を待つ
+      await vscode.commands.executeCommand('amonhen.refresh');
+      let at = posted.length;
+      await panel.history.reset();
+      for (;;) {
+        const quiet = posted.length;
+        await new Promise((r) => setTimeout(r, 800));
+        if (!posted.slice(quiet).some((m) => m.type === 'reset' || m.type === 'rows')) break;
+      }
+      const open = (posted.slice(at).filter((m): m is Extract<HostMessage, { type: 'rows' }> => m.type === 'rows' && m.total !== undefined).at(-1) ??
+        (await waitPosted('rows', at, (m) => m.total !== undefined))).total!;
+      assert.ok(posted.slice(at).some((m) => m.type === 'rows' && m.rows.some((r) => r.subject === 'fold merge')), 'merge が History にある');
+      at = posted.length;
+      await pick('Fold Merged Branches');
+      const folded = await waitPosted('rows', at, (m) => m.total === open - 2);
+      const merge = folded.rows.find((r) => r.subject === 'fold merge')!;
+      assert.equal(merge.hidden, 2);
+      assert.ok(!folded.rows.some((r) => r.subject === 'fold side one'));
+      // 1 つだけ開くと、その merge が取り込んだコミットが出て、選んだまま
+      at = posted.length;
+      await panel.history.handle({ type: 'toggleFold', oid: merge.oid });
+      const opened = await waitPosted('rows', at, (m) => m.total === open && m.rows.some((r) => r.expanded));
+      assert.equal(opened.rows.find((r) => r.expanded)?.oid, merge.oid);
+      assert.ok(opened.rows.some((r) => r.subject === 'fold side one'));
+      await waitPosted('reveal', at, (m) => opened.rows[m.row]?.oid === merge.oid);
+      at = posted.length;
+      await pick('Fold Merged Branches');
+      await until(
+        'merge を畳まない行',
+        () => posted.slice(at).find((m) => m.type === 'rows' && m.total === open && !m.rows.some((r) => r.hidden || r.expanded)),
+        undefined,
+        () => `open ${open}; menus ${menus.join(' / ')}; ${posted.slice(at).map((m) => (m.type === 'rows' ? `rows[${m.start}+${m.rows.length}/${m.total}${m.rows.some((r) => r.hidden) ? ' hidden' : ''}]` : m.type)).join(', ')}`,
+      );
+    } finally {
+      (vscode.window as { showQuickPick: unknown }).showQuickPick = quickPick;
+      git('reset', '-q', '--hard', start);
+      git('branch', '-q', '-D', 'fold-side');
+      await vscode.commands.executeCommand('amonhen.refresh');
+    }
+  });
+
+  test('sends the ancestors of the selected commit through the daemon', async () => {
+    const panel = await showView('amonhen.showHistory');
+    const start = git('rev-parse', 'HEAD').trim();
+    const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+    const quickPick = vscode.window.showQuickPick;
+    const toggle = async () => {
+      (vscode.window as { showQuickPick: unknown }).showQuickPick = async (items: vscode.QuickPickItem[]) =>
+        items.find((i) => i.label.endsWith('Highlight Ancestors'));
+      await panel.history.handle({ type: 'displayMenu' });
+    };
+    git('switch', '-q', '-c', 'lineage-side');
+    git('commit', '-q', '--allow-empty', '-m', 'lineage side');
+    const side = git('rev-parse', 'HEAD').trim();
+    git('switch', '-q', branch);
+    git('commit', '-q', '--allow-empty', '-m', 'lineage main');
+    const tip = git('rev-parse', 'HEAD').trim();
+    try {
+      await vscode.commands.executeCommand('amonhen.refresh');
+      await panel.history.handle({ type: 'scope', scope: 'all' });
+      let at = posted.length;
+      await panel.history.reset();
+      const { rows } = await waitPosted('rows', at, (m) => m.total !== undefined);
+      const rowOf = (oid: string) => rows.findIndex((r) => r.oid === oid);
+      at = posted.length;
+      await toggle();
+      await panel.history.handle({ type: 'select', oid: tip });
+      // Webview が最初の行を選んだ分が先に届くことがあるので、tip を選んだ答えを待つ
+      const isAncestor = (bits: string, oid: string) => {
+        const row = rowOf(oid);
+        return !!(Buffer.from(bits, 'base64')[row >> 3]! & (1 << (row & 7)));
+      };
+      const { rows: bits } = await waitPosted('lineage', at, (m) => !!m.rows && isAncestor(m.rows, tip));
+      assert.ok(isAncestor(bits!, start));
+      assert.ok(!isAncestor(bits!, side));
+      // 切る前に頼んだ分の答えが後から届くことがある。切った答え（null）を待つ
+      at = posted.length;
+      await toggle();
+      await waitPosted('lineage', at, (m) => m.rows === null);
+    } finally {
+      (vscode.window as { showQuickPick: unknown }).showQuickPick = quickPick;
+      await panel.history.handle({ type: 'scope', scope: 'head' });
+      git('reset', '-q', '--hard', start);
+      git('branch', '-q', '-D', 'lineage-side');
+      await vscode.commands.executeCommand('amonhen.refresh');
+    }
   });
 
   test('shows names from the mailmap through the daemon and reloads them when it changes', async () => {
@@ -2784,6 +3033,161 @@ suite('Amon Hen in VSCode', () => {
 
   test('shows and writes this repository’s settings through the daemon', async () => {
     await settingsFlow();
+  });
+
+  test('keeps the commit message as a draft for each repository, and starts from the template', async () => {
+    const panel = await showView('amonhen.showWorkingCopy');
+    const wc = panel.workingCopy;
+    const reopen = async () => {
+      const mark = posted.length;
+      wc.setRepository(panel.repository);
+      return waitPosted('wcMessage', mark, () => true);
+    };
+    const template = join(root, '..', `amonhen-template-${process.pid}.txt`);
+    writeFileSync(template, '# say why\nfeat: from the template\n\nDetails\n');
+    git('config', 'commit.template', template);
+    try {
+      const fromTemplate = await reopen();
+      assert.deepEqual([fromTemplate.summary, fromTemplate.body], ['feat: from the template', 'Details']);
+      await wc.handle({ type: 'wcDraft', summary: 'my draft', body: 'my body' });
+      const fromDraft = await reopen();
+      assert.deepEqual([fromDraft.summary, fromDraft.body], ['my draft', 'my body']);
+      // 空にすると下書きを忘れ、テンプレートに戻る
+      await wc.handle({ type: 'wcDraft', summary: ' ', body: '' });
+      assert.equal((await reopen()).summary, 'feat: from the template');
+    } finally {
+      git('config', '--unset', 'commit.template');
+      rmSync(template, { force: true });
+    }
+    assert.equal((await reopen()).summary, '');
+  });
+
+  test('sends the messages of recent commits to the commit box', async () => {
+    const panel = await showView('amonhen.showWorkingCopy');
+    const mark = posted.length;
+    panel.workingCopy.setRepository(panel.repository);
+    const { messages } = await waitPosted('wcRecent', mark, (m) => m.messages.length > 0);
+    assert.ok(messages.length <= 30);
+    assert.equal(messages[0], git('log', '-1', '--format=%B').trim());
+  });
+
+  test('commits and pushes from the commit box', async () => {
+    const panel = await showView('amonhen.showWorkingCopy');
+    const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+    const bare = join(root, '..', `amonhen-push-${process.pid}.git`);
+    git('init', '-q', '--bare', bare);
+    git('remote', 'add', 'wc-push', bare);
+    git('switch', '-q', '-c', 'wc-push-branch');
+    git('push', '-q', '-u', 'wc-push', 'wc-push-branch');
+    try {
+      const file = join(root, 'wc-push.txt');
+      writeFileSync(file, 'pushed\n');
+      git('add', 'wc-push.txt');
+      const mark = posted.length;
+      await vscode.commands.executeCommand('amonhen.refresh');
+      await waitPosted('wcFiles', mark, (m) => m.files.some((f) => f.group === 'staged' && f.path === 'wc-push.txt'));
+      // 終わりの知らせが閉じられるまで待つことがあるので、ここでは待たない
+      void panel.workingCopy.handle({ type: 'wcCommit', message: 'pushed from the commit box\n', amend: false, push: true });
+      await until('push したコミット', () => {
+        const remote = git('ls-remote', bare, 'refs/heads/wc-push-branch').split('\t')[0];
+        return remote === git('rev-parse', 'HEAD').trim() && git('log', '-1', '--format=%s').trim() === 'pushed from the commit box';
+      });
+    } finally {
+      git('switch', '-q', branch);
+      git('branch', '-q', '-D', 'wc-push-branch');
+      git('remote', 'remove', 'wc-push');
+      rmSync(bare, { recursive: true, force: true });
+      await vscode.commands.executeCommand('amonhen.refresh');
+    }
+  });
+
+  test('shows what the hooks wrote when committing, and why a commit failed', async () => {
+    const panel = await showView('amonhen.showWorkingCopy');
+    const hooks = git('rev-parse', '--git-path', 'hooks').trim();
+    const hook = resolve(root, hooks, 'pre-commit');
+    mkdirSync(dirname(hook), { recursive: true });
+    const start = git('rev-parse', 'HEAD').trim();
+    const stage = async (name: string) => {
+      writeFileSync(join(root, name), `${name}\n`);
+      git('add', name);
+      const mark = posted.length;
+      await vscode.commands.executeCommand('amonhen.refresh');
+      await waitPosted('wcFiles', mark, (m) => m.files.some((f) => f.group === 'staged' && f.path === name));
+    };
+    try {
+      await stage('hook-ok.txt');
+      // 前の試験のファイルが残っていれば、書くだけでは実行できるようにならない
+      writeFileSync(hook, '#!/bin/sh\necho said by the hook\n');
+      chmodSync(hook, 0o755);
+      let at = posted.length;
+      await panel.workingCopy.handle({ type: 'wcCommit', message: 'with a hook\n', amend: false });
+      const said = await waitPosted('wcCommitOutput', at);
+      assert.equal(said.title, 'Committed (hooks output)');
+      assert.match(said.text, /said by the hook/);
+      await stage('hook-no.txt');
+      writeFileSync(hook, '#!/bin/sh\necho refused by the hook\nexit 1\n');
+      at = posted.length;
+      await panel.workingCopy.handle({ type: 'wcCommit', message: 'stopped by a hook\n', amend: false });
+      const failed = await waitPosted('wcCommitOutput', at);
+      assert.equal(failed.title, 'Couldn’t Commit');
+      assert.match(failed.text, /refused by the hook/);
+      assert.ok(!posted.slice(at).some((m) => m.type === 'wcCommitted'));
+    } finally {
+      rmSync(hook, { force: true });
+      git('reset', '-q', '--hard', start);
+      await vscode.commands.executeCommand('amonhen.refresh');
+    }
+  });
+
+  test('counts the changed lines of each file through the daemon', async () => {
+    const panel = await showView('amonhen.showWorkingCopy');
+    const file = join(root, 'wc-stat.txt');
+    writeFileSync(file, 'one\ntwo\n');
+    git('add', 'wc-stat.txt');
+    git('commit', '-q', '-m', 'wc-stat');
+    try {
+      writeFileSync(file, 'one\nchanged\nthree\n');
+      const mark = posted.length;
+      panel.workingCopy.setRepository(panel.repository);
+      // コミットの前に読み始めた分が先に届くことがあるので、合うものを待つ
+      const stat = (s: FileStat) => s.path === 'wc-stat.txt' && s.added === 2 && s.removed === 1;
+      await waitPosted('wcStats', mark, (m) => m.stats.some(stat));
+    } finally {
+      git('reset', '-q', '--hard', 'HEAD~1');
+      await vscode.commands.executeCommand('amonhen.refresh');
+    }
+  });
+
+  test('adds a file to .gitignore, and notes a sparse checkout, through the daemon', async () => {
+    const panel = await showView('amonhen.showWorkingCopy');
+    const gitignore = join(root, '.gitignore');
+    const had = existsSync(gitignore) ? readFileSync(gitignore) : undefined;
+    const quickPick = vscode.window.showQuickPick;
+    const [major = 0, minor = 0] = (git('version').match(/(\d+)\.(\d+)/) ?? []).slice(1).map(Number);
+    const sparseCheckout = major > 2 || (major === 2 && minor >= 25);
+    (vscode.window as { showQuickPick: unknown }).showQuickPick = async (items: string[]) => items[1];
+    try {
+      await vscode.commands.executeCommand('amonhen.addToGitignore', { path: 'dir/new.ignored-e2e' });
+      assert.match(readFileSync(gitignore, 'utf8'), /^\*\.ignored-e2e$/m);
+      await vscode.commands.executeCommand('amonhen.addToGitignore', { path: 'other.ignored-e2e' });
+      assert.equal(readFileSync(gitignore, 'utf8').match(/\*\.ignored-e2e/g)?.length, 1);
+      let mark = posted.length;
+      panel.workingCopy.setRepository(panel.repository);
+      assert.equal((await waitPosted('wcSparse', mark)).sparse, null);
+      // git sparse-checkout は git 2.25 から
+      if (sparseCheckout) {
+        git('sparse-checkout', 'set', '--cone', 'e2e-only-folder');
+        mark = posted.length;
+        panel.workingCopy.setRepository(panel.repository);
+        assert.deepEqual((await waitPosted('wcSparse', mark, (m) => m.sparse !== null)).sparse?.folders, ['e2e-only-folder']);
+      }
+    } finally {
+      (vscode.window as { showQuickPick: unknown }).showQuickPick = quickPick;
+      if (sparseCheckout) git('sparse-checkout', 'disable');
+      if (had) writeFileSync(gitignore, had);
+      else rmSync(gitignore, { force: true });
+      await vscode.commands.executeCommand('amonhen.refresh');
+    }
   });
 
   test('drops the selection of a file whose changes went away before its diff is read', async () => {

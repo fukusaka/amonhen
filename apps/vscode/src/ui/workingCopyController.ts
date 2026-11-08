@@ -1,4 +1,6 @@
-import { join } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join, resolve } from 'node:path';
 import * as vscode from 'vscode';
 import { parseCommitObject } from '../git/commitObject.ts';
 import { groupChanges, type Change, type ChangeGroup } from '../state/changes.ts';
@@ -8,15 +10,19 @@ import { daemonFor } from '../daemon/connection.ts';
 import { changedRows, readWorkingDiff, selectedRows, type DaemonDiff } from '../daemon/diff.ts';
 import { applyDiffSelection, computeDiff, type ComputedDiff } from '../diff/fileDiff.ts';
 import { discardFiles, discardLines } from '../state/discard.ts';
-import type { WorkingCopyHostMessage, WorkingCopyWebviewMessage } from '../workingCopy/protocol.ts';
+import { COMMIT_TYPES, fixupSubjects, templateMessage, type MessageParts } from '../workingCopy/commitMessage.ts';
+import type { FileStat, WorkingCopyHostMessage, WorkingCopyWebviewMessage } from '../workingCopy/protocol.ts';
 import { commitStaged } from './commit.ts';
 import { openConflict } from './diff.ts';
+import { commitDraft, fileLayout, setCommitDraft, setFileLayout } from './preferences.ts';
 import { acceptConflicts, indexMode, showError, stageChanges } from './stageCommands.ts';
 
 /**
  * メインビューの Working Copy の拡張ホスト側。
  * 変更ファイルの一覧と、選んだファイルの差分を送り、ファイル・hunk・行単位の stage とコミットを受け持つ。
  */
+const RECENT_COMMITS = 30;
+
 export class WorkingCopyController implements vscode.Disposable {
   private readonly post: (message: WorkingCopyHostMessage) => void;
   private repo: Repository | undefined;
@@ -27,6 +33,10 @@ export class WorkingCopyController implements vscode.Disposable {
   /** amend のときにメッセージ欄へ入れる、HEAD のメッセージ */
   private head: { oid: string; message: string } | undefined;
 
+  /** 最近のコミット（新しい順） */
+  private factsReading = 0;
+  private recent: { message: string; author: string; email: string }[] = [];
+
   constructor(post: (message: WorkingCopyHostMessage) => void) {
     this.post = post;
   }
@@ -35,6 +45,8 @@ export class WorkingCopyController implements vscode.Disposable {
     vscode.Disposable.from(...this.listeners).dispose();
     this.repo = repo;
     this.selected = undefined;
+    this.head = undefined;
+    this.recent = [];
     this.listeners = repo
       ? [
           repo.onDidChange((changed) => changed.has('workingCopy') && this.schedule()),
@@ -42,6 +54,14 @@ export class WorkingCopyController implements vscode.Disposable {
         ]
       : [];
     this.schedule();
+    void this.sendMessage(repo).catch(showError);
+  }
+
+  /** コミット欄の中身を送る。下書きがなければ `commit.template` のファイル（`#` の行は除く） */
+  private async sendMessage(repo: Repository | undefined): Promise<void> {
+    const draft = repo && commitDraft(repo.root);
+    const parts = draft ?? (repo ? await commitTemplate(repo) : undefined) ?? { summary: '', body: '' };
+    if (repo === this.repo) this.post({ type: 'wcMessage', ...parts });
   }
 
   /** 変更が続けて来てもまとめて 1 回送る */
@@ -73,10 +93,119 @@ export class WorkingCopyController implements vscode.Disposable {
       if (this.head?.oid !== oid) {
         const obj = await repo.backend.object(oid);
         this.head = { oid, message: obj ? parseCommitObject(obj.data.toString('utf8')).message : '' };
+        void this.sendRecent(repo).catch(showError);
       }
       lastMessage = this.head.message;
     }
-    this.post({ type: 'wcFiles', files: this.files, branch: status?.branch.head, lastMessage });
+    this.post({ type: 'wcFiles', files: this.files, branch: status?.branch.head, lastMessage, layout: fileLayout() });
+    if (repo) void this.sendEngineFacts(repo).catch(() => undefined);
+  }
+
+  /** 一覧に添える、エンジンから読む様子 */
+  private async sendEngineFacts(repo: Repository): Promise<void> {
+    const client = await daemonFor(repo.root);
+    if (!client) return;
+    // 読む間に次の読み直しが始まっていれば、古い答えで上書きしない
+    const reading = ++this.factsReading;
+    const reply = await client.call({ op: 'run', command: { op: 'workingStats' } });
+    if (reading !== this.factsReading) return;
+    const info = reply.json['info'] as { stats?: FileStat[] } | undefined;
+    if (repo === this.repo) this.post({ type: 'wcStats', stats: info?.stats ?? [] });
+    const form = await client.call({ op: 'run', command: { op: 'repositoryForm' } });
+    const sparse = (form.json['info'] as { sparse?: { cone: boolean; folders: string[] } | null } | undefined)?.sparse;
+    if (repo === this.repo && reading === this.factsReading) this.post({ type: 'wcSparse', sparse: sparse ?? null });
+  }
+
+  /** 最近のコミット 30 個を読む（一覧と ⌥↑・⌥↓ のため） */
+  private async sendRecent(repo: Repository): Promise<void> {
+    const commits = await repo.backend.log(['HEAD'], 0, RECENT_COMMITS);
+    const recent = await Promise.all(
+      commits.map(async (c) => {
+        const obj = await repo.backend.object(c.oid);
+        const message = obj ? parseCommitObject(obj.data.toString('utf8')).message.trim() : c.subject;
+        return { message, author: c.author, email: c.email };
+      }),
+    );
+    if (repo !== this.repo) return;
+    this.recent = recent;
+    this.post({ type: 'wcRecent', messages: recent.map((c) => c.message) });
+  }
+
+  private async commit(repo: Repository, message: string, amend: boolean, push: boolean): Promise<void> {
+    const result = await commitStaged(repo, message, amend);
+    if (result.error) this.post({ type: 'wcCommitOutput', title: 'Couldn’t Commit', text: result.error });
+    if (!result.committed) return;
+    await setCommitDraft(repo.root, undefined);
+    this.post({ type: 'wcCommitted' });
+    const output = result.output?.trim();
+    if (output) this.post({ type: 'wcCommitOutput', title: 'Committed (hooks output)', text: output });
+    if (push) await vscode.commands.executeCommand('amonhen.push');
+  }
+
+  /** Commit の続き。Commit and Push は、Commit を押せるときだけ */
+  private async commitMenu(repo: Repository, canCommit: boolean, message: string, amend: boolean): Promise<void> {
+    const publishes = !repo.current.status?.branch.upstream;
+    const push = { label: publishes ? 'Commit and Publish…' : 'Commit and Push', description: '⌘⇧↩' };
+    const startAmend = { label: 'Amend Last Commit' };
+    const subjects = fixupSubjects(this.recent.map((c) => c.message));
+    const fixup = {
+      label: 'Fixup Commit For…',
+      detail: 'Commit as a fixup! of the chosen commit (combine later with rebase -i --autosquash)',
+    };
+    const squash = {
+      label: 'Squash Commit For…',
+      detail: 'Commit as a squash! of the chosen commit (its message is added when combined)',
+    };
+    const picked = await vscode.window.showQuickPick(
+      [...(canCommit ? [push] : []), startAmend, ...(subjects.length > 0 ? [fixup, squash] : [])],
+      { placeHolder: 'Commit' },
+    );
+    if (picked === fixup || picked === squash) {
+      const subject = await vscode.window.showQuickPick(subjects, { placeHolder: picked.label });
+      if (subject) this.post({ type: 'wcStartFixup', kind: picked === fixup ? 'fixup' : 'squash', subject });
+      return;
+    }
+    if (picked === push) {
+      await this.commit(repo, message, amend, true);
+    } else if (picked === startAmend) {
+      this.post({ type: 'wcStartAmend' });
+    }
+  }
+
+  /** Conventional Commits の型と、トレーラー（Co-authored-by・Signed-off-by）を選んで入れる */
+  private async pickInsert(repo: Repository): Promise<void> {
+    type Item = vscode.QuickPickItem & { commitType?: string; line?: string; signOff?: boolean };
+    const separator = (label: string): Item => ({ label, kind: vscode.QuickPickItemKind.Separator });
+    const seen = new Set<string>();
+    const authors = this.recent.flatMap((c): Item[] => {
+      const key = c.email.toLowerCase();
+      if (!key || seen.has(key)) return [];
+      seen.add(key);
+      return [{ label: `${c.author} <${c.email}>`, line: `Co-authored-by: ${c.author} <${c.email}>` }];
+    });
+    const picked = await vscode.window.showQuickPick<Item>(
+      [
+        separator('Conventional Commits Type'),
+        ...COMMIT_TYPES.map((t) => ({ label: `${t}:`, commitType: t })),
+        separator('Signed-off-by'),
+        { label: 'Signed-off-by (Me)', signOff: true },
+        separator('Co-authored-by'),
+        ...authors,
+      ],
+      { placeHolder: 'Insert a Conventional Commits type, Co-authored-by or Signed-off-by' },
+    );
+    if (picked?.commitType) {
+      this.post({ type: 'wcInsertType', commitType: picked.commitType });
+    } else if (picked?.line) {
+      this.post({ type: 'wcInsertTrailer', line: picked.line });
+    } else if (picked?.signOff) {
+      const [name, email] = await Promise.all([repo.backend.config('user.name'), repo.backend.config('user.email')]);
+      if (name && email) {
+        this.post({ type: 'wcInsertTrailer', line: `Signed-off-by: ${name} <${email}>` });
+      } else {
+        void vscode.window.showWarningMessage('Set user.name and user.email to sign off.');
+      }
+    }
   }
 
   /** 選んでいるファイルの差分を送る。stage してグループが変わっても、同じファイルを見続ける */
@@ -156,8 +285,36 @@ export class WorkingCopyController implements vscode.Disposable {
   }
 
   async handle(message: WorkingCopyWebviewMessage): Promise<void> {
+    if (message.type === 'wcLayout') {
+      await setFileLayout(message.layout);
+      return;
+    }
     const repo = this.repo;
     if (!repo) {
+      return;
+    }
+    if (message.type === 'wcDraft') {
+      await setCommitDraft(repo.root, { summary: message.summary, body: message.body });
+      return;
+    }
+    if (message.type === 'wcShowFolders') {
+      await vscode.commands.executeCommand('amonhen.showRepositorySettings');
+      return;
+    }
+    if (message.type === 'wcPickRecent') {
+      const seen = new Set<string>();
+      const items = this.recent.flatMap((c) => {
+        if (seen.has(c.message)) return [];
+        seen.add(c.message);
+        const [subject = '', ...rest] = c.message.split('\n');
+        return [{ label: subject.slice(0, 80), detail: rest.join(' ').trim() || undefined, message: c.message }];
+      });
+      const picked = await vscode.window.showQuickPick(items, { placeHolder: 'Insert the message of a recent commit' });
+      if (picked) this.post({ type: 'wcUseMessage', message: picked.message });
+      return;
+    }
+    if (message.type === 'wcPickInsert') {
+      await this.pickInsert(repo);
       return;
     }
     const find = (group: ChangeGroup, path: string) => this.files.find((f) => f.group === group && f.path === path);
@@ -214,9 +371,10 @@ export class WorkingCopyController implements vscode.Disposable {
         break;
       }
       case 'wcCommit':
-        if (await commitStaged(repo, message.message, message.amend)) {
-          this.post({ type: 'wcCommitted' });
-        }
+        await this.commit(repo, message.message, message.amend, message.push === true);
+        break;
+      case 'wcCommitMenu':
+        await this.commitMenu(repo, message.canCommit, message.message, message.amend);
         break;
       case 'wcOpenFile':
         await vscode.commands.executeCommand('vscode.open', vscode.Uri.file(join(repo.root, message.path)), {
@@ -327,5 +485,17 @@ export class WorkingCopyController implements vscode.Disposable {
   dispose(): void {
     clearTimeout(this.timer);
     vscode.Disposable.from(...this.listeners).dispose();
+  }
+}
+
+/** `commit.template` のファイルの中身。相対パスはリポジトリから（git と同じ） */
+async function commitTemplate(repo: Repository): Promise<MessageParts | undefined> {
+  const path = await repo.backend.config('commit.template');
+  if (!path) return undefined;
+  const file = path === '~' || path.startsWith('~/') ? join(homedir(), path.slice(1)) : resolve(repo.root, path);
+  try {
+    return templateMessage(await readFile(file, 'utf8'));
+  } catch {
+    return undefined;
   }
 }

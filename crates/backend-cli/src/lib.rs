@@ -447,11 +447,40 @@ impl Git {
 }
 
 /// git を実行し、Activity に記録する（どのリポジトリで、何を、どれだけかかったか）。
+/// 作業ツリーごとの、書き込みの鍵。git の書き込みは共有で取り（同時に動いてよい）、status の結果を index に
+/// 書き残すのは独り占めできたときだけにする（書き残すときは index の鍵を取るので、同じエンジンの書き込みと重なると、
+/// 書き込みの側が「index.lock: File exists」で失敗する）。
+fn writes_in(dir: &Path) -> Arc<std::sync::RwLock<()>> {
+    static LOCKS: std::sync::OnceLock<
+        Mutex<std::collections::HashMap<PathBuf, Arc<std::sync::RwLock<()>>>>,
+    > = std::sync::OnceLock::new();
+    LOCKS
+        .get_or_init(Mutex::default)
+        .lock()
+        .unwrap()
+        .entry(dir.to_path_buf())
+        .or_default()
+        .clone()
+}
+
+/// 書き込みなら、その作業ツリーの書き込みの鍵を共有で取る。`GIT_OPTIONAL_LOCKS` を決めてある git は取らない
+/// （0 は読み取り、1 は鍵を自分で持っている status の書き残し）。
+fn writing(cmd: &Command) -> Option<Arc<std::sync::RwLock<()>>> {
+    if cmd.get_envs().any(|(k, _)| k == "GIT_OPTIONAL_LOCKS") {
+        return None;
+    }
+    cmd.get_current_dir().map(writes_in)
+}
+
 fn run(cmd: Command, input: Option<&[u8]>) -> Result<Vec<u8>> {
     // 選んだ git がなければ、PATH の git に戻さずに止める。
     if let Some(reason) = amonhen_model::process::missing_git() {
         return Err(reason.into());
     }
+    let writes = writing(&cmd);
+    let _writing = writes
+        .as_ref()
+        .map(|l| l.read().unwrap_or_else(|e| e.into_inner()));
     let repo = cmd
         .get_current_dir()
         .map(|d| d.to_string_lossy().into_owned())
@@ -498,6 +527,10 @@ fn run_lenient(mut cmd: Command) -> Result<(bool, Vec<u8>, Vec<u8>)> {
     if let Some(reason) = amonhen_model::process::missing_git() {
         return Err(reason.into());
     }
+    let writes = writing(&cmd);
+    let _writing = writes
+        .as_ref()
+        .map(|l| l.read().unwrap_or_else(|e| e.into_inner()));
     let repo = cmd
         .get_current_dir()
         .map(|d| d.to_string_lossy().into_owned())
@@ -895,8 +928,13 @@ impl Git {
             }
             due
         };
-        parse_status(&if save {
-            self.write(&args)?
+        // 書き残すのは、このエンジンの書き込みが動いていないときだけ（重なると、書き込みが index の鍵を取れずに失敗する）
+        let writes = writes_in(&self.workdir);
+        let alone = if save { writes.try_write().ok() } else { None };
+        parse_status(&if alone.is_some() {
+            let mut cmd = self.command(&args);
+            cmd.env("GIT_OPTIONAL_LOCKS", "1");
+            run(cmd, None)?
         } else {
             self.read(&args)?
         })

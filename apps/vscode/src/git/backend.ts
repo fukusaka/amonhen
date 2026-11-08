@@ -152,7 +152,8 @@ export interface RepositoryBackend {
   /** 作業中のファイルを index の内容に戻す（stage していない変更を破棄する） */
   restoreWorktree(paths: readonly string[]): Promise<void>;
   /** amend なら直前のコミットを置き換える（stage したものと message で） */
-  commit(message: string, opts?: { amend?: boolean }): Promise<void>;
+  /** コミットする。返すのは hooks などが書いた出力（git は hooks の標準出力も標準エラー出力へ送る） */
+  commit(message: string, opts?: { amend?: boolean }): Promise<string>;
   head(): Promise<HeadState>;
   /** 完全な名前の ref の現在の値。存在しなければ null */
   resolveRefs(names: readonly string[]): Promise<Map<string, string | null>>;
@@ -483,9 +484,11 @@ export class CliBackend implements RepositoryBackend {
     await this.write(['checkout', '--', ...paths]);
   }
 
-  async commit(message: string, opts: { amend?: boolean } = {}): Promise<void> {
+  async commit(message: string, opts: { amend?: boolean } = {}): Promise<string> {
     const args = opts.amend ? ['commit', '--amend', '--file=-'] : ['commit', '--file=-'];
-    await this.git.exec(args, { cwd: this.root, input: message });
+    let output = '';
+    await this.git.exec(args, { cwd: this.root, input: message, onStderr: (text) => (output = text) });
+    return output;
   }
 
   async head(): Promise<HeadState> {

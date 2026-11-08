@@ -233,3 +233,9 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 30. rerere の解決を忘れる・すべて忘れる
 - [x] 31. 履歴のない新しいブランチ（空から・ファイルを残して）
 - [x] 32. ignore されたファイルを一覧してから消す
+- [x] 33. Working Copy: パスでの絞り込み、パス・木・ファイル名の見せ方
+- [x] 34. コミット欄: 件名の長さ、下書きとテンプレート、過去のメッセージ、型とトレーラー
+- [x] 35. Commit and Push、Fixup・Squash Commit For、hooks の出力
+- [x] 36. Working Copy: ファイルごとの行数、⌫、J/K、.gitignore に足す、sparse checkout の知らせ
+- [x] 37. History: いくつもの ref、worktree の札、順、行の項目、merge を畳む、祖先を目立たせる
+- [x] 38. History の詳細: ⌘F で探す、ファイルを畳む・Viewed、変更したファイルの木、1 ファイルずつ

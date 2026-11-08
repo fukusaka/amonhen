@@ -1,4 +1,5 @@
 /** History の行に付ける情報。vscode に依存しない */
+import type { Worktree } from '../git/worktrees.ts';
 import type { HeadState } from '../git/backend.ts';
 import type { Commit } from '../git/log.ts';
 import type { Ref } from '../git/refs.ts';
@@ -57,4 +58,30 @@ export function editableChain(firstParentChain: readonly Commit[]): Map<string, 
     result.set(c.oid, result.size);
   }
   return result;
+}
+
+/**
+ * worktree ごとの HEAD の札（アプリと同じ印）。✎ 書き込む先、⌂ メインの作業ツリー、⑂ 追加した worktree。変更があれば
+ * 数を添える。worktree が 1 つなら札はいらない
+ */
+export function worktreeLabels(
+  worktrees: readonly Worktree[],
+  changes: ReadonlyMap<string, number>,
+  isEditing: (w: Worktree) => boolean,
+): Map<string, RefLabel[]> {
+  const map = new Map<string, RefLabel[]>();
+  if (worktrees.length < 2) return map;
+  for (const w of worktrees) {
+    if (!w.head) continue;
+    const editing = isEditing(w);
+    const name = w.path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? w.path;
+    const count = changes.get(w.path) ?? 0;
+    const label: RefLabel = {
+      name: `${editing ? '✎' : w.main ? '⌂' : '⑂'} ${name}${count > 0 ? ` · ${count}` : ''}`,
+      kind: 'worktree',
+      ...(editing ? { current: true } : {}),
+    };
+    map.set(w.head, [...(map.get(w.head) ?? []), label]);
+  }
+  return map;
 }

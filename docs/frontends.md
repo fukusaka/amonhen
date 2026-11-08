@@ -218,27 +218,27 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
 | One checkbox list (☑ ▣ ☐, header and folder checks) | ✓ | ✓ | ✓ | n/a | VSCode: Separate Staged and Changes groups. |
-| List / Tree / Flat | ✓ | ✓ | — | n/a |  |
-| Filter on paths | ✓ | ✓ | — | n/a |  |
-| Per-row +/− counts and Discard on hover | ✓ | ✓ | △ | △ | VSCode: No line counts.<br>CLI: `diff --stat`. |
-| Space toggles, ⌫ discards | ✓ | ✓ | △ | n/a | VSCode: Space toggles; no ⌫. |
-| Commit box on top with 50/72 counter and body guide | ✓ | ✓ | △ | n/a | VSCode: No counter or guide. |
-| Draft per repository, starting from the template | ✓ | ✓ | — | n/a |  |
-| Recent messages (⌥↑ / ⌥↓, list) | ✓ | ✓ | — | n/a |  |
-| Insert Conventional types, Co-authored-by, Signed-off-by | ✓ | ✓ | — | n/a |  |
+| List / Tree / Flat | ✓ | ✓ | ✓ | n/a |  |
+| Filter on paths | ✓ | ✓ | ✓ | n/a |  |
+| Per-row +/− counts and Discard on hover | ✓ | ✓ | ✓ | △ | VSCode: Counts need the engine.<br>CLI: `diff --stat`. |
+| Space toggles, ⌫ discards | ✓ | ✓ | ✓ | n/a |  |
+| Commit box on top with 50/72 counter and body guide | ✓ | ✓ | △ | n/a | VSCode: The box stays under the list. A description line over 72 is counted instead of a guide. |
+| Draft per repository, starting from the template | ✓ | ✓ | ✓ | n/a | VSCode: `commit.template` only, not the shared template library. |
+| Recent messages (⌥↑ / ⌥↓, list) | ✓ | ✓ | ✓ | n/a |  |
+| Insert Conventional types, Co-authored-by, Signed-off-by | ✓ | ✓ | ✓ | n/a |  |
 | `#issue` completion | ✓ | ✓ | — | n/a |  |
-| Commit and Push, Amend | ✓ | ✓ | △ | △ | VSCode: Amend only.<br>CLI: `commit -m … --amend`. |
-| Fixup / Squash Commit For | ✓ | ✓ | — | n/a |  |
-| Hooks output sheet | ✓ | ✓ | — | n/a |  |
+| Commit and Push, Amend | ✓ | ✓ | ✓ | △ | CLI: `commit -m … --amend`. |
+| Fixup / Squash Commit For | ✓ | ✓ | ✓ | n/a |  |
+| Hooks output sheet | ✓ | ✓ | ✓ | n/a |  |
 | Reason shown when Commit is disabled | — | — | △ | n/a | VSCode: A warning when committing is blocked. |
 | Combined HEAD → working tree diff with line and hunk checks | ✓ | ✓ | △ | ✓ | VSCode: Line staging on separate unstaged and staged diffs.<br>CLI: `diff --combined`, `stage --rows`. |
-| Range selection in the gutter, J/K and ⌥J/⌥K | ✓ | ✓ | △ | n/a | VSCode: No J/K keys. |
+| Range selection in the gutter, J/K and ⌥J/⌥K | ✓ | ✓ | ✓ | n/a |  |
 | Unstaged / Staged switch for files that can't be overlaid | ✓ | ✓ | n/a | ✓ | VSCode: Always shown separately.<br>CLI: `diff --staged`. |
 | Diff options (unified/split, whitespace, context, wrap) | — | — | — | n/a |  |
 | Discard lines, hunks and files (undoable) | ✓ | ✓ | ✓ | ✓ | CLI: `discard --rows`. |
-| Add to .gitignore | ✓ | ✓ | — | n/a |  |
+| Add to .gitignore | ✓ | ✓ | ✓ | n/a |  |
 | Conflicted files open the merge editor | ✓ | ✓ | ✓ | n/a | macOS, GTK4: A file that isn't UTF-8 doesn't open in it; take one side.<br>VSCode: Opens VSCode's merge editor. |
-| Note above the list when only some folders are checked out | ✓ | ✓ | — | △ | CLI: `status` notes a sparse checkout. |
+| Note above the list when only some folders are checked out | ✓ | ✓ | ✓ | △ | CLI: `status` notes a sparse checkout. |
 
 ## History
 
@@ -247,15 +247,15 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Graph with branch and tag labels | ✓ | ✓ | ✓ | ✓ | CLI: `log`. |
 | Huge histories in chunks with the persistent cache | ✓ | ✓ | ✓ | ✓ |  |
 | Search with match count, next / previous, matching only | ✓ | ✓ | ✓ | △ | VSCode: With the engine.<br>CLI: `log <query>` lists the matches. |
-| Display: order, one line, row items, fold merged, highlight ancestors | ✓ | ✓ | △ | △ | VSCode: Only the scope (current, all, a ref).<br>CLI: `--topo-order`, `--fold`. |
+| Display: order, one line, row items, fold merged, highlight ancestors | ✓ | ✓ | △ | △ | VSCode: Rows are always one line. Highlight Ancestors dims whole rows, not single lines of the graph.<br>CLI: `--topo-order`, `--fold`. |
 | Avatars | ✓ | ✓ | — | n/a |  |
 | Signature marks on commits | ✓ | ✓ | ✓ | △ | VSCode: With the engine.<br>CLI: In `show`. |
 | CI status per commit with a checks popover | ✓ | ✓ | — | — |  |
-| Worktree HEAD labels (✎ ⌂ ⑂, change counts) | ✓ | ✓ | — | — |  |
+| Worktree HEAD labels (✎ ⌂ ⑂, change counts) | ✓ | ✓ | ✓ | — |  |
 | Go to HEAD, Parent, Child | ✓ | ✓ | ✓ | n/a | VSCode: The HEAD button above History, Go to Parent and Go to Child on a commit's menu, and parent and child links in the details (with the engine). |
 | Go to Ref | — | — | — | n/a |  |
 | Several commits selected (range, two, scattered) | ✓ | ✓ | ✓ | △ | VSCode: With the engine.<br>CLI: `diff <rev> <rev>` for two. |
-| History of several selected refs | ✓ | ✓ | — | ✓ | CLI: `log --branch` repeated. |
+| History of several selected refs | ✓ | ✓ | ✓ | ✓ | CLI: `log --branch` repeated. |
 | Commit menu: checkout, new branch or tag, cherry-pick, revert, copy ID | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Edit mode (keep, reword, squash, fixup, drop, edit; drag to reorder) | ✓ | ✓ | △ | △ | VSCode: One commit at a time, no plan of several steps.<br>CLI: Via `amonhen run`. |
 | Rewrite preview (stacked and pushed branches, expected conflicts) | ✓ | ✓ | △ | ✓ | VSCode: Through the daemon and for the current branch only.<br>CLI: `rewrite-preview`. |
@@ -268,12 +268,12 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| Full message, draggable panes, ⤢ to expand | ✓ | ✓ | △ | n/a | VSCode: No ⤢. |
-| Find inside the details | ✓ | ✓ | — | n/a |  |
-| All files stacked (sticky headers, collapse, Viewed) | ✓ | ✓ | △ | ✓ | VSCode: Stacked, loaded as they scroll; no collapse or Viewed.<br>CLI: `show`. |
-| Changed files as a tree beside the diff | ✓ | ✓ | △ | n/a | VSCode: A flat list above the diffs. |
+| Full message, draggable panes, ⤢ to expand | ✓ | ✓ | △ | n/a | VSCode: The message, files and diffs scroll together in one pane, so there are no panes to drag or expand. |
+| Find inside the details | ✓ | ✓ | ✓ | n/a | VSCode: ⌘F searches the whole main view; diffs not loaded yet aren't searched. |
+| All files stacked (sticky headers, collapse, Viewed) | ✓ | ✓ | ✓ | ✓ | CLI: `show`. |
+| Changed files as a tree beside the diff | ✓ | ✓ | ✓ | n/a | VSCode: Tree / List above the files. |
 | File header menu (Blame, File History, copy path, open) | ✓ | ✓ | ✓ | n/a | VSCode: Blame, File History and Copy Path on the right-click; Open in VSCode's diff editor. |
-| Switch to the single-file diff | ✓ | ✓ | — | n/a |  |
+| Switch to the single-file diff | ✓ | ✓ | ✓ | n/a | VSCode: One File / All Files above the files. |
 | Diff of a selection (range squashed, A..B / A...B, scattered) | ✓ | ✓ | ✓ | △ | VSCode: With the engine.<br>CLI: `diff <rev> <rev>`. |
 | Actions on a selection (cherry-pick, revert, squash, copy IDs) | ✓ | ✓ | ✓ | △ | VSCode: With the engine.<br>CLI: Via `amonhen run`. |
 | Signature popover | ✓ | ✓ | ✓ | n/a | VSCode: A Signature row in the details (status, explanation, signer and key), no popover. |
