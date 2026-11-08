@@ -2753,12 +2753,13 @@ suite('Amon Hen in VSCode', () => {
       choose('Author');
       let at = posted.length;
       await panel.history.handle({ type: 'displayMenu' });
-      assert.deepEqual((await waitPosted('historyDisplay', at)).hidden, ['author']);
+      // 読み直し（git の変化を知って始まるもの）も項目を送るので、変えた答えを待つ
+      await waitPosted('historyDisplay', at, (m) => m.hidden.join() === 'author');
       assert.ok(picks.includes('$(check) Date'), picks.join(', '));
       choose('Author');
       at = posted.length;
       await panel.history.handle({ type: 'displayMenu' });
-      assert.deepEqual((await waitPosted('historyDisplay', at)).hidden, []);
+      await waitPosted('historyDisplay', at, (m) => m.hidden.length === 0);
       // 並び順を変えると読み直す。読み直しても項目は送り直す
       choose('Topological');
       at = posted.length;
