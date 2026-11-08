@@ -259,3 +259,4 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 48. Working Copy: one HEAD → working tree diff with a check on each changed line and hunk
 - [x] 49. Working Copy: the commit box above the list
 - [x] 50. Save as Patch asks for the version (-v)
+- [x] 51. The Working Copy row says when only some folders are checked out

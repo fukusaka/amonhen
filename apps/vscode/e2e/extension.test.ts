@@ -2350,11 +2350,24 @@ async function settingsFlow(): Promise<void> {
       const sparse = await waitPosted('settings', mark, (m) => !!m.facts.repositoryForm?.sparse);
       assert.deepEqual(sparse.facts.repositoryForm?.sparse, { cone: true, folders: ['sp-dir'] });
       assert.ok(existsSync(join(root, 'sp-dir', 'a.txt')));
+      // サイドバーの Working Copy の行に、一部のフォルダだけだと出る
+      const workingCopyRow = () => {
+        const node = api.sidebar.getChildren().find((n) => n.kind === 'view' && n.view === 'workingCopy')!;
+        return String((api.sidebar.getTreeItem(node) as vscode.TreeItem).description);
+      };
+      await until('Working Copy の行の印', async () => {
+        await api.manager.current!.refresh();
+        return workingCopyRow().endsWith(' · some folders');
+      });
       mark = posted.length;
       await withWindow({ showWarningMessage: async () => 'Check Out All' }, async () =>
         panel.settings.handle({ type: 'settingsRun', action: 'checkOutAll' }),
       );
       assert.equal((await waitPosted('settings', mark)).facts.repositoryForm?.sparse, null);
+      await until('Working Copy の行の印が消える', async () => {
+        await api.manager.current!.refresh();
+        return !workingCopyRow().includes('some folders');
+      });
     }
   } finally {
     if (sparseCommit) {

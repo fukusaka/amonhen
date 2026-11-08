@@ -68,7 +68,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | submodule の印（取り出していない・違うコミット・中の変更・コンフリクト）とメニュー: Update…（中の submodule も・追うブランチの最新）・URL の編集・追うブランチ・外す（.git/modules も消せる）・追加・Sync URLs | ✓ | ✓ | ✓ | ✓ | VSCode: Remove は 2 つのボタンで、.git/modules を残すか一緒に消すかを聞く。<br>CLI: `submodule`（`add`・`remove`・`set-url`・`set-branch`・`sync`）。 |
 | submodule: リポジトリのデータを .git/modules に移す・それぞれで命令を動かす | ✓ | ✓ | △ | ✓ | VSCode: Run in Each Submodule… は成否だけを知らせ、命令の出力は出ない。<br>CLI: `submodule absorb`・`submodule foreach`。 |
 | Working Copy の下の worktree と変更の数（✎ ⌂ ⑂） | ✓ | ✓ | ✓ | △ | VSCode: 印は行のアイコン。ほかの worktree が checkout しているブランチには ⌂ か ⑂ が付く。<br>CLI: `worktree list --changes`。 |
-| shallow clone・partial clone（History）と sparse checkout（Working Copy）の印 | ✓ | ✓ | △ | n/a | VSCode: History の上の Shallow・Partial（Partial は押すと中身をすべて取る）。sparse の印はない。 |
+| shallow clone・partial clone（History）と sparse checkout（Working Copy）の印 | ✓ | ✓ | ✓ | n/a | VSCode: History の上の Shallow・Partial（Partial は押すと中身をすべて取る）。sparse checkout なら Working Copy の行に「· some folders」。 |
 
 ## 1. タブと窓
 
