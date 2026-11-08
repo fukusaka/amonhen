@@ -12,6 +12,8 @@ class GraphDrawingView: NSView {
         var hollow = false
         var note: String?
         var noteColor: NSColor?
+        /// これから作るコミット（点線の丸）。
+        var isNew = false
     }
 
     static let rowHeight: CGFloat = 22
@@ -40,7 +42,7 @@ class GraphDrawingView: NSView {
     func drawColumn(
         x: CGFloat, rows: [GraphRow], baseY: CGFloat,
         base: RewritePreview.Drawing.Commit?, gaps: [Gap] = [], highlightTop: Int = 0, baseNote: String? = nil,
-        labels: (String) -> [(String, String, Bool)]
+        lane1JoinsAt: CGFloat? = nil, labels: (String) -> [(String, String, Bool)]
     ) {
         let laneX = { (lane: Int) in x + 10 + CGFloat(lane) * Self.laneWidth }
         let center = { (y: CGFloat) in y + Self.rowHeight / 2 }
@@ -75,6 +77,13 @@ class GraphDrawingView: NSView {
         if let first = rows.first(where: { $0.lane == 0 }) {
             vertical(0, from: center(first.y), to: center(baseY))
         }
+        // merge コミットから、すぐ右の線へ曲がり、取り込む側の先端まで下りる。
+        if let joinY = lane1JoinsAt, let first = lane1.first {
+            let corner = NSPoint(x: laneX(1), y: center(joinY))
+            solid.move(to: NSPoint(x: laneX(0), y: center(joinY)))
+            solid.curve(to: NSPoint(x: laneX(1), y: center(joinY) + Self.rowHeight * 0.8), controlPoint1: corner, controlPoint2: corner)
+            solid.line(to: NSPoint(x: laneX(1), y: center(first.y)))
+        }
         NSColor.secondaryLabelColor.withAlphaComponent(0.5).setStroke()
         solid.stroke()
         dashed.stroke()
@@ -83,7 +92,7 @@ class GraphDrawingView: NSView {
             let highlighted = i < highlightTop
             drawRow(at: NSPoint(x: laneX(row.lane), y: row.y), textX: laneX(1) + 14, width: x + Self.columnWidth,
                     subject: row.commit.subject, dim: row.dim, highlighted: highlighted, labels: labels(row.commit.oid),
-                    hollow: row.hollow, note: row.note, noteColor: row.noteColor)
+                    hollow: row.hollow, note: row.note, noteColor: row.noteColor, isNew: row.isNew)
         }
         for gap in gaps {
             NSString(string: L("and %ld more", gap.count)).draw(
@@ -106,11 +115,18 @@ class GraphDrawingView: NSView {
 
     /// 1 行を描く。`hollow` なら中を抜いた点（外れる・消えるコミット）、`note` は件名の後ろに `noteColor` で添える。
     func drawRow(at dot: NSPoint, textX: CGFloat, width: CGFloat, subject: String, dim: Bool, highlighted: Bool,
-                 labels: [(String, String, Bool)], hollow: Bool = false, note: String? = nil, noteColor: NSColor? = nil) {
-        let r: CGFloat = highlighted ? 5 : 4
+                 labels: [(String, String, Bool)], hollow: Bool = false, note: String? = nil, noteColor: NSColor? = nil,
+                 isNew: Bool = false) {
+        let r: CGFloat = highlighted || isNew ? 5 : 4
         let circle = NSBezierPath(ovalIn: NSRect(x: dot.x - r, y: dot.y + Self.rowHeight / 2 - r, width: r * 2, height: r * 2))
         let dotColor = highlighted ? NSColor.controlAccentColor : dim ? NSColor.tertiaryLabelColor : NSColor.secondaryLabelColor
-        if hollow {
+        if isNew {
+            // これから作るコミットは、点線の丸（まだない）。
+            NSColor.controlAccentColor.setStroke()
+            circle.lineWidth = 1.5
+            circle.setLineDash([2, 2], count: 2, phase: 0)
+            circle.stroke()
+        } else if hollow {
             (noteColor ?? dotColor).setStroke()
             circle.lineWidth = 1.5
             circle.stroke()
@@ -123,7 +139,7 @@ class GraphDrawingView: NSView {
             x = drawLabel(name, kind: kind, current: current, at: NSPoint(x: x, y: dot.y + 3)) + 4
         }
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: highlighted ? NSFont.boldSystemFont(ofSize: NSFont.smallSystemFontSize) : NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
+            .font: highlighted || isNew ? NSFont.boldSystemFont(ofSize: NSFont.smallSystemFontSize) : NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
             .foregroundColor: dim ? NSColor.tertiaryLabelColor : NSColor.labelColor,
         ]
         let text = NSMutableAttributedString(string: subject, attributes: attributes)
