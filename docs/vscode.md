@@ -263,3 +263,4 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 52. Checkout, Merge, Cherry-pick, Revert, Apply and Pop ask first
 - [x] 53. Syntax colors in History's and Working Copy's diffs and in Blame (the engine's tree-sitter)
 - [x] 54. Conflicts in the sidebar's Workspace while there are conflicts
+- [x] 55. Failures give the cause, with Details for the whole output

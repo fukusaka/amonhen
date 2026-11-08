@@ -1091,6 +1091,8 @@ First release.
 
 #### Changed
 
+- A failure's notification gives its cause (git's `fatal:` and `error:` lines), with Details for the whole output and
+  the git command.
 - Checkout, Merge, Cherry-pick, Revert and applying or popping a stash ask first, saying what happens (a tracking
   branch, a detached HEAD, uncommitted changes coming along).
 - Working Copy's commit box is above the file list, as in the app.
