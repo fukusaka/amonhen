@@ -533,9 +533,11 @@ fn handlers() -> Vec<(&'static str, Handler)> {
         (
             "new-worktree",
             Box::new(|p| {
-                // 下で開いたリポジトリから作るので、書き込む先の HEAD は ID で渡す。
+                // 下で開いたリポジトリから作るので、ほかの worktree を書き込む先にしていれば、その HEAD は ID で
+                // 渡す（開いたものなら「HEAD」のまま。macOS 版と同じ）。
                 let mut start = start_point(p);
                 if start == "HEAD"
+                    && p.worktrees.editing_key() != p.worktrees.opened_key()
                     && let Some(head) = p.refs.borrow().as_ref().and_then(|r| r.refs.head)
                 {
                     start = head.to_string()[..12].to_owned();
