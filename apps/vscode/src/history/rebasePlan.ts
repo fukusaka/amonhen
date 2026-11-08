@@ -4,6 +4,7 @@
  * メッセージの書き換えは git の reword・squash で行い、git が開くエディタ（GIT_EDITOR）にメッセージを書かせる。
  */
 import type { Commit } from '../git/log.ts';
+import type { PlanStep } from './editPlan.ts';
 
 export type HistoryEdit =
   | { kind: 'reword'; oid: string; message: string }
@@ -19,7 +20,9 @@ export type HistoryEdit =
   /** oid を取り消して変更を作業ツリーに戻したところで止まる。分けてコミットしてから続ける */
   | { kind: 'split'; oid: string }
   /** oid を、新しい順の並びで to 番目に動かす */
-  | { kind: 'move'; oid: string; to: number };
+  | { kind: 'move'; oid: string; to: number }
+  /** History の編集モードでまとめて決めた並びと操作（古い順）。コアだけ */
+  | { kind: 'plan'; steps: PlanStep[] };
 
 export interface RebasePlan {
   /** rebase の起点。null なら `--root` */
@@ -34,8 +37,8 @@ export interface RebasePlan {
 
 /** chain は HEAD から first-parent で辿ったコミット（新しい順）。間に merge が無いこと */
 export function planRebase(chain: readonly Commit[], edit: HistoryEdit): RebasePlan {
-  if (edit.kind === 'squashRange') {
-    throw new Error('Combining commits needs the engine');
+  if (edit.kind === 'squashRange' || edit.kind === 'plan') {
+    throw new Error('Editing several commits at once needs the engine');
   }
   // 古い順にする
   let seq = [...chain].reverse();

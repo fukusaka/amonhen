@@ -1,4 +1,5 @@
 /** メインビューの History と拡張ホストの間のメッセージ。Remote-SSH では SSH を通るので最小限にする */
+import type { EditRow, PlanStep } from './editPlan.ts';
 import type { Signature } from '../git/commitObject.ts';
 import type { FileDiff } from '../diff/fileDiff.ts';
 import type { FileChange } from '../git/log.ts';
@@ -68,6 +69,12 @@ export type MessageEdit = 'reword' | 'squash' | 'combine';
 /** 2 つ選んだときの差分の取り方（コアの `pair`） */
 export type PairMode = 'forward' | 'reverse' | 'mergeBase';
 
+/** 編集モードの「積み重ねたブランチも動かす」: git の設定（configured）と、選べるか（git 2.38 から） */
+export interface EditStacked {
+  configured: boolean;
+  available: boolean;
+}
+
 /** 詳細の欄の、変わったファイルの見せ方。`tree` は木にして差分の左に、`single` は選んだファイルの差分だけ */
 export interface DetailsLayout {
   tree: boolean;
@@ -117,6 +124,15 @@ export type HistoryHostMessage =
   | { type: 'historyDisplay'; hidden: HistoryItem[] }
   /** 詳細の欄の、変わったファイルの見せ方 */
   | { type: 'detailsLayout'; layout: DetailsLayout }
+  /**
+   * 編集モードを開く（行は新しい順。最初の変更を入れてある。`original` は入れる前の並び）。`editMessageAt` の行は、
+   * すぐメッセージの編集欄を開く
+   */
+  | { type: 'editMode'; rows: EditRow[]; original: string[]; editMessageAt?: number }
+  /** 編集モードの見通し（`key` は頼んだときのもの）。`conflicts` はコンフリクトしそうなコミット */
+  | { type: 'editPreview'; key: number; lines: string[]; conflicts: string[]; stacked?: EditStacked }
+  /** Apply を終えた。`ok` なら編集モードを閉じ、そうでなければ開いたまま（もう一度押せる） */
+  | { type: 'editApplied'; ok: boolean }
   /** 祖先の行（ビットの列を base64 で。`row` の下位から）。目立たせないなら null */
   | { type: 'lineage'; rows: string | null }
   | { type: 'search'; state: SearchState }
@@ -179,6 +195,10 @@ export type HistoryWebviewMessage =
   /** 詳細のファイルを Viewed にする・戻す。`key` はコミット ID か、いくつも選んだときの見せ方の `viewedKey` */
   | { type: 'viewed'; key: string; path: string; viewed: boolean }
   | { type: 'detailsLayout'; layout: DetailsLayout }
+  /** 編集モードの見通しを求める。`updateRefs` は、積み重ねたブランチを今回だけどうするか（触っていなければなし） */
+  | { type: 'editPreview'; key: number; steps: PlanStep[]; updateRefs?: boolean }
+  /** 編集モードの変更を当てる */
+  | { type: 'editApply'; steps: PlanStep[]; updateRefs?: boolean }
   | { type: 'scope'; scope: Scope }
   /** 並び順と項目の一覧を出す */
   | { type: 'displayMenu' }

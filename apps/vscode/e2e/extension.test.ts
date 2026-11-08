@@ -12,6 +12,7 @@ import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, re
 import { basename, dirname, join, resolve } from 'node:path';
 import * as vscode from 'vscode';
 import { DaemonClient } from '../src/daemon/client.ts';
+import { type EditRow, planSteps } from '../src/history/editPlan.ts';
 import type { SelectedLine } from '../src/diff/fileDiff.ts';
 import { settingsFile } from '../src/git/choice.ts';
 import { samePath } from '../src/git/worktrees.ts';
@@ -1673,13 +1674,13 @@ async function historySelectionFlow(): Promise<void> {
     const combine = await read(['s3', 's4']) as [number, number];
     await select(10, combine);
     const before = git('rev-parse', 'HEAD~2').trim();
-    const edit = posted.length;
-    await vscode.commands.executeCommand('amonhen.history.selection.combine');
-    const opened = await waitPosted('editMessage', edit, (m) => m.kind === 'combine');
-    assert.equal(opened.message, 's3\n\ns4');
-    assert.equal(opened.oid, git('rev-parse', 'HEAD~1').trim());
-    assert.equal(opened.last, git('rev-parse', 'HEAD').trim());
-    await panel.history.handle({ type: 'saveMessage', oid: opened.oid, last: opened.last, kind: 'combine', message: 's3 and s4' });
+    // 編集モードを、新しいほうを古いほうにまとめて開く
+    const combined = await openedEditMode(() => vscode.commands.executeCommand('amonhen.history.selection.combine'));
+    assert.deepEqual(combined.map((r) => [r.oid, r.action]), [
+      [git('rev-parse', 'HEAD').trim(), 'squash'],
+      [git('rev-parse', 'HEAD~1').trim(), 'pick'],
+    ]);
+    await applyEditMode([{ ...combined[0]!, newMessage: 's3 and s4' }, combined[1]!]);
     await until('まとめたコミット', () => git('log', '-1', '--format=%s').trim() === 's3 and s4' || undefined);
     assert.equal(git('rev-parse', 'HEAD~1').trim(), before);
 
@@ -2321,20 +2322,40 @@ async function editFlow(label: string): Promise<void> {
       await undo('squash');
 
       answer = 'Fixup';
-      await vscode.commands.executeCommand('amonhen.history.fixup', { oid: d });
+      if (label === 'daemon') {
+        // エンジンがあれば、近道は編集モードをその変更を入れて開く（Apply まで何も変わらない）
+        const rows = await openedEditMode(() => vscode.commands.executeCommand('amonhen.history.fixup', { oid: d }));
+        assert.deepEqual(rows.map((r) => r.action), ['fixup', 'pick']);
+        assert.equal(rev(work), top);
+        await applyEditMode(rows);
+      } else {
+        await vscode.commands.executeCommand('amonhen.history.fixup', { oid: d });
+      }
       await until('fixup', () => subjects(1)[0] === name('c') && rev(work) !== top);
       assert.ok(existsSync(join(root, `${name('d')}.txt`)), 'd の変更は c に入る');
       await undo('fixup');
 
       // Webview での並べ替え: d を 2 つ古い側へ
       answer = 'Move';
-      await fromWebview({ type: 'move', oid: d, to: 2 });
+      if (label === 'daemon') {
+        const rows = await openedEditMode(() => panel.history.handle({ type: 'move', oid: d, to: 2 }));
+        assert.deepEqual(rows.map((r) => r.oid), [c, b, d]);
+        await applyEditMode(rows);
+      } else {
+        await fromWebview({ type: 'move', oid: d, to: 2 });
+      }
       await until('move', () => subjects(3).join() === [name('c'), name('b'), name('d')].join());
       await undo('move');
 
       // Edit: b で止まり、変えて amend されるように stage してから Continue
       answer = 'Edit';
-      await vscode.commands.executeCommand('amonhen.history.edit', { oid: b });
+      if (label === 'daemon') {
+        const rows = await openedEditMode(() => vscode.commands.executeCommand('amonhen.history.edit', { oid: b }));
+        assert.deepEqual(rows.map((r) => r.action), ['pick', 'pick', 'edit']);
+        await applyEditMode(rows);
+      } else {
+        await vscode.commands.executeCommand('amonhen.history.edit', { oid: b });
+      }
       await until('edit で止まる', async () => (await api.manager.current!.backend.sequenceInProgress()) === 'rebase');
       writeFileSync(join(root, `${name('b')}.txt`), 'b edited\n');
       git('add', `${name('b')}.txt`);
@@ -2362,9 +2383,12 @@ async function editFlow(label: string): Promise<void> {
       await undo('split');
       assert.ok(!existsSync(join(root, `${name('c')}-2.txt`)));
     });
+    // 編集モードは確かめない（Apply Changes が確かめる代わり）
     assert.deepEqual(
       asked.map((m) => m.replace(/^.* を /, '')),
-      ['Reword しますか？', 'Reword しますか？', 'Squash しますか？', 'Fixup しますか？', 'Move しますか？', 'Edit しますか？', 'Split しますか？'],
+      label === 'daemon'
+        ? ['Reword しますか？', 'Reword しますか？', 'Squash しますか？', 'Split しますか？']
+        : ['Reword しますか？', 'Reword しますか？', 'Squash しますか？', 'Fixup しますか？', 'Move しますか？', 'Edit しますか？', 'Split しますか？'],
     );
     // daemon ならコアが rebase する（拡張は git の rebase を起動しない）
     assert.equal(
@@ -2459,17 +2483,26 @@ async function rewriteFlow(label: string): Promise<void> {
       await showView('amonhen.showHistory');
       const one = rev(`${name('top')}~1`);
       answer = moveStacked('Drop');
-      await vscode.commands.executeCommand('amonhen.history.drop', { oid: one });
-      const drop = asked.at(-1)!;
-      assert.match(drop.message, /を Drop しますか？$/);
-      assert.ok(drop.detail.startsWith('履歴から取り除きます。'), drop.detail);
+      let dropMoved: boolean;
       if (label === 'daemon') {
-        assert.match(drop.detail, stays);
+        // エンジンがあれば編集モードを開き、見通しは編集モードの下に出る。今回だけ積み重ねたブランチも動かせる
+        const rows = await openedEditMode(() => vscode.commands.executeCommand('amonhen.history.drop', { oid: one }));
+        assert.deepEqual(rows.map((r) => r.action), ['pick', 'drop']);
+        const at = posted.length;
+        await api.panel()!.history.handle({ type: 'editPreview', key: 1, steps: planSteps(rows) });
+        const preview = await waitPosted('editPreview', at, (m) => m.key === 1);
+        assert.match(preview.lines.join('\n'), stays);
+        dropMoved = preview.stacked?.available === true && !preview.stacked.configured;
+        await applyEditMode(rows, dropMoved ? true : undefined);
       } else {
+        await vscode.commands.executeCommand('amonhen.history.drop', { oid: one });
+        const drop = asked.at(-1)!;
+        assert.match(drop.message, /を Drop しますか？$/);
+        assert.ok(drop.detail.startsWith('履歴から取り除きます。'), drop.detail);
         assert.deepEqual(drop.buttons, ['Drop']);
+        dropMoved = false;
       }
       await until('drop', () => git('log', '-1', '--format=%s', `${name('top')}~1`).trim() === branchSubject(branch) && rev(name('top')), undefined, lastErrors);
-      const dropMoved = drop.buttons.length > 1;
       assert.equal(rev(name('mid')) !== before.mid, dropMoved, dropMoved ? 'mid も動く' : 'mid は残る');
       await vscode.commands.executeCommand('amonhen.undo');
       await until('drop の Undo', () => rev(name('top')) === before.top && rev(name('mid')) === before.mid, undefined, lastErrors);
@@ -2479,6 +2512,20 @@ async function rewriteFlow(label: string): Promise<void> {
     git('branch', '-q', '-D', name('onto'), name('top'), name('mid'));
     await vscode.commands.executeCommand('amonhen.refresh');
   }
+}
+
+/** History の編集モードを開いて（trigger）、届いた行（新しい順）を返す */
+async function openedEditMode(trigger: () => PromiseLike<unknown>): Promise<EditRow[]> {
+  const at = posted.length;
+  await trigger();
+  return (await waitPosted('editMode', at)).rows;
+}
+
+/** 編集モードの行を当てて、終わるまで待つ */
+async function applyEditMode(rows: readonly EditRow[], updateRefs?: boolean): Promise<void> {
+  const at = posted.length;
+  await api.panel()!.history.handle({ type: 'editApply', steps: planSteps(rows), ...(updateRefs === undefined ? {} : { updateRefs }) });
+  assert.ok((await waitPosted('editApplied', at)).ok, '編集モードの Apply');
 }
 
 /** ブランチの先頭のコミットの件名 */
@@ -2862,6 +2909,54 @@ suite('Amon Hen in VSCode', () => {
       (vscode.window as { showQuickPick: unknown }).showQuickPick = quickPick;
       git('reset', '-q', '--hard', start);
       git('branch', '-q', '-D', 'fold-side');
+      await vscode.commands.executeCommand('amonhen.refresh');
+    }
+  });
+
+  test('edits several commits at once, across a merge that is kept, through the daemon', async () => {
+    await showView('amonhen.showHistory');
+    const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+    const start = git('rev-parse', 'HEAD').trim();
+    const commit = (subject: string) => {
+      writeFileSync(join(root, `em-${subject}.txt`), `${subject}\n`);
+      git('add', `em-${subject}.txt`);
+      git('commit', '-q', '-m', `em ${subject}`);
+    };
+    commit('a');
+    commit('b');
+    git('switch', '-q', '-c', 'em-side');
+    commit('side');
+    git('switch', '-q', branch);
+    git('merge', '-q', '--no-ff', '-m', 'em merge', 'em-side');
+    commit('c');
+    commit('d');
+    const subjects = () => git('log', '--first-parent', '-6', '--format=%s').trim().split('\n');
+    try {
+      await vscode.commands.executeCommand('amonhen.refresh');
+      const a = git('rev-parse', 'HEAD~4').trim();
+      // a から HEAD まで（merge の行も。merge は作り直すだけで、することは選べない）
+      const rows = await openedEditMode(() => vscode.commands.executeCommand('amonhen.history.editFrom', { oid: a }));
+      assert.deepEqual(rows.map((r) => r.message.split('\n')[0]), ['em d', 'em c', 'em merge', 'em b', 'em a']);
+      assert.deepEqual(rows.map((r) => r.merge === true), [false, false, true, false, false]);
+      // b を落とし、d のメッセージを直す（git の --rebase-merges で merge を作り直す）
+      const edited: EditRow[] = [
+        { ...rows[0]!, action: 'reword', newMessage: 'em d2' },
+        rows[1]!,
+        rows[2]!,
+        { ...rows[3]!, action: 'drop' },
+        rows[4]!,
+      ];
+      await applyEditMode(edited);
+      assert.deepEqual(subjects().slice(0, 4), ['em d2', 'em c', 'em merge', 'em a']);
+      assert.equal(git('rev-list', '--parents', '-1', 'HEAD~2').trim().split(' ').length, 3, 'merge は merge のまま');
+      assert.ok(!existsSync(join(root, 'em-b.txt')));
+      assert.ok(existsSync(join(root, 'em-side.txt')));
+      // Undo 1 回で全部戻る
+      await vscode.commands.executeCommand('amonhen.undo');
+      await until('編集の Undo', () => subjects()[0] === 'em d' && existsSync(join(root, 'em-b.txt')) || undefined, undefined, lastErrors);
+    } finally {
+      git('reset', '-q', '--hard', start);
+      git('branch', '-q', '-D', 'em-side');
       await vscode.commands.executeCommand('amonhen.refresh');
     }
   });
