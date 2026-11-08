@@ -5,6 +5,7 @@
 import type { FileDiff } from '../diff/fileDiff.ts';
 import type { CommitDetails, DetailsExtras, PairMode, Person, SelectionView } from '../history/protocol.ts';
 import { el, formatDate, getState, post, updateState } from './api.ts';
+import { COLLAPSE_ABOVE, isGenerated, type LineCounts, lineCounts } from '../history/stackedFiles.ts';
 import { renderDiffBody } from './diffView.ts';
 import { signatureMark } from './signature.ts';
 
@@ -29,8 +30,8 @@ export interface DetailsPane {
   readonly root: HTMLElement;
   /** 出しているコミット */
   readonly shownOid: string | undefined;
-  /** `focus` があれば、そのファイルを選んでその差分の位置に移る（File History） */
-  show(details: CommitDetails, focus?: string): void;
+  /** `focus` があれば、そのファイルを選んでその差分の位置に移る（File History）。`viewed` は Viewed にしたファイル */
+  show(details: CommitDetails, focus?: string, viewed?: readonly string[]): void;
   showDiff(oid: string, path: string, diff: FileDiff): void;
   /** いくつも選んだコミット。読んでいる間は `view` なし */
   showSelection(state: SelectionState): void;
@@ -58,12 +59,31 @@ const PAIR_NOTES: Record<PairMode, string> = {
 };
 const PAIR_NAMES: Record<PairMode, string> = { forward: 'A..B', reverse: 'Reverse', mergeBase: 'From the merge-base (A...B)' };
 
+/** 詳細に並べた 1 ファイル（一覧の行と差分の場所） */
+interface FileSection {
+  row: HTMLElement;
+  section: HTMLElement;
+  head: HTMLElement;
+  /** 差分を求めたか */
+  requested: boolean;
+  /** 開く・畳むを自分で選んだか（選んでいれば、大きな差分でも畳まない） */
+  chosen: boolean;
+  viewed: boolean;
+}
+
+/** 足した行と消した行（どちらも 0 なら空） */
+function countsLabel(counts: LineCounts): HTMLElement {
+  const span = el('span', 'stat');
+  if (counts.added) span.append(el('span', 'added', `+${counts.added}`));
+  if (counts.removed) span.append(el('span', 'removed', `−${counts.removed}`));
+  return span;
+}
+
 export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane {
   const root = el('aside', 'details');
   let shownOid: string | undefined;
-  /** 詳細に並べたファイルごとの差分の場所 */
-  let sections = new Map<string, HTMLElement>();
-  let requestedDiffs = new Set<string>();
+  /** 詳細に並べたファイル */
+  let sections = new Map<string, FileSection>();
   let diffObserver: IntersectionObserver | undefined;
   /** 出している詳細の作者などの並び（後から署名・子のコミットを足す） */
   let meta: HTMLElement | undefined;
@@ -90,7 +110,7 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
     return span;
   }
 
-  function show(d: CommitDetails, focus?: string): void {
+  function show(d: CommitDetails, focus?: string, viewed: readonly string[] = []): void {
     shownOid = d.oid;
     const [subject = '', ...rest] = d.message.replace(/\n+$/, '').split('\n');
     const body = rest.join('\n').replace(/^\n+/, '');
@@ -134,83 +154,140 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
       filesHead.append(all);
     }
     files.append(filesHead);
-    const { rows, diffs } = fileSections(d.oid, d.files, files, true);
+    const diffs = fileSections(d.oid, d.oid, d.files, files, true, viewed);
 
     const parts: Node[] = [head, list];
     if (body) parts.push(el('pre', 'body', body));
     parts.push(files, diffs);
     root.replaceChildren(...parts);
     root.scrollTop = 0;
-    const section = focus ? sections.get(focus) : undefined;
-    if (focus && section) {
-      rows.get(focus)?.classList.add('active');
-      section.scrollIntoView({ block: 'start' });
+    const file = focus ? sections.get(focus) : undefined;
+    if (file) {
+      file.row.classList.add('active');
+      file.section.scrollIntoView({ block: 'start' });
     }
   }
 
-  /** ファイルの一覧と差分の枠。差分は画面に入ったものから順に求める。`single` は 1 つのコミット（メニューと Open がある） */
+  /**
+   * ファイルの一覧と差分の枠。差分は画面に入ったものから順に求める（畳んだものは開くまで求めない）。`single` は
+   * 1 つのコミット（メニューと Open がある）。`viewedKey` があれば、Viewed をそこに覚える
+   */
   function fileSections(
     oid: string,
-    items: readonly { path: string; origPath?: string; status?: string }[],
+    viewedKey: string | undefined,
+    items: readonly { path: string; origPath?: string; status?: string; added?: number; removed?: number }[],
     files: HTMLElement,
     single: boolean,
-  ): { rows: Map<string, HTMLElement>; diffs: HTMLElement } {
-    const rows = new Map<string, HTMLElement>();
+    viewed: readonly string[],
+  ): HTMLElement {
+    diffObserver?.disconnect();
+    diffObserver = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          const file = sections.get((entry.target as HTMLElement).dataset.path!);
+          if (entry.isIntersecting && file) request(oid, file);
+        }
+      },
+      { root, rootMargin: '200px' },
+    );
+    sections = new Map();
+    const viewedSet = new Set(viewed);
+    const diffs = el('div', 'commit-diffs');
     for (const f of items) {
       const row = el('div', 'file');
-      rows.set(f.path, row);
       // 右クリックのメニュー（package.json の webview/context）に渡す情報
       if (single) row.dataset.vscodeContext = fileContext(oid, f.path);
       row.title = f.origPath ? `${f.origPath} → ${f.path}` : f.path;
       if (f.status) row.append(el('span', `status s-${f.status}`, f.status));
       const slash = f.path.lastIndexOf('/');
       row.append(el('span', 'name', f.path.slice(slash + 1)));
-      if (slash >= 0) row.append(el('span', 'dir', f.path.slice(0, slash)));
+      row.append(el('span', 'dir', slash >= 0 ? f.path.slice(0, slash) : ''));
+      row.append(el('span', 'viewed-mark', '✓'));
+
+      const section = el('section', 'file-diff');
+      section.dataset.path = f.path;
+      const head = el('div', 'diff-head');
+      head.title = 'Click to collapse or expand';
+      head.append(el('span', 'chevron'));
+      if (f.status) head.append(el('span', `status s-${f.status}`, f.status));
+      head.append(el('span', 'path', f.origPath ? `${f.origPath} → ${f.path}` : f.path));
+      const box = el('input');
+      box.type = 'checkbox';
+      const check = el('label', 'viewed');
+      check.title = 'Mark as viewed and collapse';
+      check.append(box, ' Viewed');
+      head.append(check);
+      if (single) {
+        head.dataset.vscodeContext = fileContext(oid, f.path);
+        const open = el('button', 'secondary', 'Open');
+        open.title = 'エディタで差分を開く';
+        open.addEventListener('click', () => post({ type: 'openFile', oid, path: f.path }));
+        head.append(open);
+      }
+      section.append(head, el('div', 'empty', '読み込み中…'));
+      diffs.append(section);
+
+      const file: FileSection = { row, section, head, requested: false, chosen: false, viewed: viewedSet.has(f.path) };
+      sections.set(f.path, file);
+      if (f.added !== undefined && f.removed !== undefined) setCounts(file, { added: f.added, removed: f.removed });
+      box.checked = file.viewed;
+      setViewed(file, file.viewed);
+      // 最初から畳む: Viewed にしたもの、生成物、変わった行が多いもの
+      const large = (f.added ?? 0) + (f.removed ?? 0) > COLLAPSE_ABOVE;
+      setCollapsed(file, file.viewed || isGenerated(f.path) || large);
+
       // その差分の位置へ移る
       row.addEventListener('click', () => {
         for (const other of files.querySelectorAll('.file.active')) other.classList.remove('active');
         row.classList.add('active');
-        sections.get(f.path)?.scrollIntoView({ block: 'start' });
+        section.scrollIntoView({ block: 'start' });
+      });
+      head.addEventListener('click', (e) => {
+        if ((e.target as Element).closest('button, label')) return;
+        file.chosen = true;
+        setCollapsed(file, !section.classList.contains('collapsed'));
+        if (!section.classList.contains('collapsed')) request(oid, file);
+        // 畳んで見出しが上に隠れたら、見出しが見えるところまで戻す
+        if (head.getBoundingClientRect().top < root.getBoundingClientRect().top) section.scrollIntoView({ block: 'start' });
+      });
+      box.addEventListener('change', () => {
+        // Viewed にしたら畳み、戻したら開く（GitHub と同じ）
+        file.chosen = true;
+        setViewed(file, box.checked);
+        setCollapsed(file, box.checked);
+        if (!box.checked) request(oid, file);
+        if (viewedKey) post({ type: 'viewed', key: viewedKey, path: f.path, viewed: box.checked });
+        if (box.checked && head.getBoundingClientRect().top < root.getBoundingClientRect().top) section.scrollIntoView({ block: 'start' });
       });
       files.append(row);
-    }
-
-    // ファイルごとの差分。画面に入ったものから順に求める
-    diffObserver?.disconnect();
-    diffObserver = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          const path = (entry.target as HTMLElement).dataset.path!;
-          if (entry.isIntersecting && !requestedDiffs.has(path)) {
-            requestedDiffs.add(path);
-            post({ type: 'commitDiff', oid, path });
-          }
-        }
-      },
-      { root, rootMargin: '200px' },
-    );
-    requestedDiffs = new Set();
-    sections = new Map();
-    const diffs = el('div', 'commit-diffs');
-    for (const f of items) {
-      const section = el('section', 'file-diff');
-      section.dataset.path = f.path;
-      const sectionHead = el('div', 'diff-head');
-      if (f.status) sectionHead.append(el('span', `status s-${f.status}`, f.status));
-      sectionHead.append(el('span', 'path', f.origPath ? `${f.origPath} → ${f.path}` : f.path));
-      if (single) {
-        sectionHead.dataset.vscodeContext = fileContext(oid, f.path);
-        const open = el('button', 'secondary', 'Open');
-        open.title = 'エディタで差分を開く';
-        open.addEventListener('click', () => post({ type: 'openFile', oid, path: f.path }));
-        sectionHead.append(open);
-      }
-      section.append(sectionHead, el('div', 'empty', '読み込み中…'));
-      diffs.append(section);
-      sections.set(f.path, section);
       diffObserver.observe(section);
     }
-    return { rows, diffs };
+    return diffs;
+  }
+
+  /** 見えたファイルの差分を求める（畳んでいれば開くまで待つ） */
+  function request(oid: string, file: FileSection): void {
+    if (file.requested || file.section.classList.contains('collapsed')) return;
+    file.requested = true;
+    post({ type: 'commitDiff', oid, path: file.section.dataset.path! });
+  }
+
+  function setCollapsed(file: FileSection, collapsed: boolean): void {
+    file.section.classList.toggle('collapsed', collapsed);
+    file.head.querySelector('.chevron')!.textContent = collapsed ? '▸' : '▾';
+  }
+
+  function setViewed(file: FileSection, viewed: boolean): void {
+    file.viewed = viewed;
+    file.row.classList.toggle('viewed', viewed);
+  }
+
+  /** 行数を一覧の行と見出しに出す */
+  function setCounts(file: FileSection, counts: LineCounts): void {
+    file.row.querySelector('.stat')?.remove();
+    file.head.querySelector('.stat')?.remove();
+    file.row.querySelector('.viewed-mark')!.before(countsLabel(counts));
+    file.head.querySelector('.viewed')!.before(countsLabel(counts));
   }
 
   function showSelection({ count, view, error, onPair, onCommit }: SelectionState): void {
@@ -260,18 +337,22 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
       const files = el('div', 'files');
       const n = view.files.length;
       files.append(el('div', 'files-head', `${n} file${n === 1 ? '' : 's'} changed`));
-      parts.push(files, fileSections(view.key, view.files, files, false).diffs);
+      parts.push(files, fileSections(view.key, view.viewedKey, view.files, files, false, view.viewed));
     }
     root.replaceChildren(...parts);
     root.scrollTop = 0;
   }
 
   function showDiff(oid: string, path: string, diff: FileDiff): void {
-    const section = sections.get(path);
-    if (oid !== shownOid || !section) {
+    const file = sections.get(path);
+    if (oid !== shownOid || !file) {
       return;
     }
-    section.replaceChildren(section.firstElementChild!, ...renderDiffBody(diff));
+    file.section.replaceChildren(file.head, ...renderDiffBody(diff));
+    const counts = lineCounts(diff);
+    setCounts(file, counts);
+    // 行数は差分を読んで初めて分かることがある。大きければ畳む（自分で開いたものは畳まない）
+    if (!file.chosen && counts.added + counts.removed > COLLAPSE_ABOVE) setCollapsed(file, true);
   }
 
   function showExtras(extras: DetailsExtras): void {

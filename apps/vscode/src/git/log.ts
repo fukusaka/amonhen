@@ -63,6 +63,9 @@ export interface FileChange {
   path: string;
   /** rename・copy の元のパス */
   origPath?: string;
+  /** 足した行と消した行（分かっていれば。共有の daemon で読んだとき） */
+  added?: number;
+  removed?: number;
 }
 
 /** 親（無ければ空の木）とコミットの間で変わったファイル */

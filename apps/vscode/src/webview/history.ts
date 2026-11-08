@@ -765,7 +765,7 @@ export function createHistoryView(): View {
         root.classList.toggle('busy', message.busy);
         break;
       case 'details':
-        if (marked.size <= 1 && message.details.oid === rows[selected]?.oid) details.show(message.details);
+        if (marked.size <= 1 && message.details.oid === rows[selected]?.oid) details.show(message.details, undefined, message.viewed);
         return;
       case 'detailsExtras':
         details.showExtras(message.extras);

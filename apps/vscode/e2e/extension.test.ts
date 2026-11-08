@@ -1584,6 +1584,27 @@ async function historySelectionFlow(): Promise<void> {
     const { diff } = await waitPosted('commitDiff', mark, (m) => m.oid === range.key);
     assert.ok(diff.hunks.some((h) => h.lines.some((l) => l.kind === '+' && l.text === 's3')), JSON.stringify(diff));
 
+    // Viewed は選んだ組ごとに覚え、同じ組を選び直すと戻る
+    assert.ok(range.viewedKey);
+    assert.deepEqual(range.viewed, []);
+    await panel.history.handle({ type: 'viewed', key: range.viewedKey, path: 's3.txt', viewed: true });
+    assert.deepEqual((await select(11, [s4, s3])).viewed, ['s3.txt']);
+
+    // 1 つのコミットの詳細には行数が付き、Viewed もコミットごとに覚える
+    const s4oid = git('rev-parse', 'sel-base').trim();
+    const showOne = async () => {
+      const at = posted.length;
+      await panel.history.handle({ type: 'select', oid: s4oid });
+      return waitPosted('details', at, (m) => m.details.oid === s4oid);
+    };
+    const one = await showOne();
+    assert.deepEqual(one.details.files, [{ status: 'A', path: 's4.txt', added: 1, removed: 0 }]);
+    assert.deepEqual(one.viewed, []);
+    await panel.history.handle({ type: 'viewed', key: s4oid, path: 's4.txt', viewed: true });
+    assert.deepEqual((await showOne()).viewed, ['s4.txt']);
+    await panel.history.handle({ type: 'viewed', key: s4oid, path: 's4.txt', viewed: false });
+    assert.deepEqual((await showOne()).viewed, []);
+
     // 離れた 2 つは取り方を選べる。逆にすると足した行が消した行になる
     const pair = await select(2, [s4, s1]);
     assert.equal(pair.kind, 'pair');

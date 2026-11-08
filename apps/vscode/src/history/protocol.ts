@@ -79,6 +79,9 @@ export interface SelectionView {
   files: { path: string; added: number; removed: number; binary: boolean }[];
   /** 選んだコミット（上から。多ければ先頭だけ） */
   commits: { row: number; oid: string; subject: string; author: string }[];
+  /** Viewed を覚える鍵（選んだコミットがすべて `commits` にあるときだけ） */
+  viewedKey?: string;
+  viewed: string[];
 }
 
 /** History の検索の様子 */
@@ -110,7 +113,8 @@ export type HistoryHostMessage =
   | { type: 'lineage'; rows: string | null }
   | { type: 'search'; state: SearchState }
   | { type: 'busy'; busy: boolean }
-  | { type: 'details'; details: CommitDetails }
+  /** `viewed` は Viewed にしたファイル */
+  | { type: 'details'; details: CommitDetails; viewed: string[] }
   /** いくつも選んだコミットの差分。`token` は頼んだときのもの。読めなければ `error` */
   | { type: 'selection'; token: number; view?: SelectionView; error?: string }
   /** コミットの中の 1 ファイルの差分（最初の親との差分） */
@@ -164,6 +168,8 @@ export type HistoryWebviewMessage =
   | { type: 'openFile'; oid: string; path: string }
   /** コミットの中の 1 ファイルの差分を求める（詳細に並べる） */
   | { type: 'commitDiff'; oid: string; path: string }
+  /** 詳細のファイルを Viewed にする・戻す。`key` はコミット ID か、いくつも選んだときの見せ方の `viewedKey` */
+  | { type: 'viewed'; key: string; path: string; viewed: boolean }
   | { type: 'scope'; scope: Scope }
   /** 並び順と項目の一覧を出す */
   | { type: 'displayMenu' }

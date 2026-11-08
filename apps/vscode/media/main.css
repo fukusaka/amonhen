@@ -287,6 +287,8 @@ aside.details .body {
 }
 
 .file .dir {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--vscode-descriptionForeground);
@@ -958,6 +960,65 @@ button.secondary {
 
 .file-diff .diff-head .status {
   font-weight: bold;
+}
+
+/* 見出しを押して畳む・開く */
+.file-diff .diff-head {
+  cursor: pointer;
+}
+
+.file-diff .diff-head .chevron {
+  width: 1em;
+  flex: none;
+  color: var(--vscode-descriptionForeground);
+}
+
+.file-diff.collapsed > :not(.diff-head) {
+  display: none;
+}
+
+.diff-head .viewed {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 0.9em;
+  white-space: nowrap;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+}
+
+.diff-head .viewed input {
+  margin: 0;
+}
+
+.diff-head .stat,
+.file .stat {
+  display: flex;
+  gap: 4px;
+  font-size: 0.85em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.diff-head .stat .added,
+.file .stat .added {
+  color: var(--vscode-gitDecoration-addedResourceForeground);
+}
+
+.diff-head .stat .removed,
+.file .stat .removed {
+  color: var(--vscode-gitDecoration-deletedResourceForeground);
+}
+
+/* Viewed にしたファイルの印（一覧） */
+.file .viewed-mark {
+  visibility: hidden;
+  flex: none;
+  color: var(--vscode-descriptionForeground);
+}
+
+.file.viewed .viewed-mark {
+  visibility: visible;
 }
 
 .file-diff .empty {

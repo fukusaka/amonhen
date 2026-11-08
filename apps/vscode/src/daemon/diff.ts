@@ -134,13 +134,22 @@ export function splitCommitDiff(reply: Reply): Map<string, FileDiff> {
   return out;
 }
 
-/** `commitDiff` の答えの、変わったファイル（`git diff-tree` と同じ形） */
+/** `commitDiff` の答えの、変わったファイル（`git diff-tree` と同じ形、行数つき） */
 export function commitFiles(reply: Reply): FileChange[] {
   const letters: Record<string, string> = { added: 'A', deleted: 'D', modified: 'M', renamed: 'R', copied: 'C' };
   const changes = (reply.json['changes'] as { kind: string; path: string; oldPath: string | null }[] | undefined) ?? [];
-  return changes.map((c) =>
-    c.oldPath && c.oldPath !== c.path
-      ? { status: letters[c.kind] ?? 'M', path: c.path, origPath: c.oldPath }
-      : { status: letters[c.kind] ?? 'M', path: c.path },
+  const counts = new Map(
+    ((reply.json['files'] as { path: string; added?: number; removed?: number }[] | undefined) ?? []).map((f) => [f.path, f]),
   );
+  return changes.map((c) => {
+    const count = counts.get(c.path);
+    return {
+      status: letters[c.kind] ?? 'M',
+      path: c.path,
+      ...(c.oldPath && c.oldPath !== c.path ? { origPath: c.oldPath } : {}),
+      ...(typeof count?.added === 'number' && typeof count.removed === 'number'
+        ? { added: count.added, removed: count.removed }
+        : {}),
+    };
+  });
 }

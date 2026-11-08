@@ -176,7 +176,7 @@ export function createFileHistoryView(): View {
       case 'details': {
         const entry = entries[selected];
         if (root.classList.contains('active') && message.details.oid === entry?.oid) {
-          details.show(message.details, entry.path);
+          details.show(message.details, entry.path, message.viewed);
         }
         break;
       }

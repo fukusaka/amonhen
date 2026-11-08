@@ -1,6 +1,7 @@
 /** 拡張の見た目の好み。設定（settings.json）に出すほどではないものを、VSCode の globalState に覚える */
 import type * as vscode from 'vscode';
 import type { HistoryItem, HistoryOrder } from '../history/protocol.ts';
+import { type ViewedStore, withViewed } from '../history/stackedFiles.ts';
 import type { MessageParts } from '../workingCopy/commitMessage.ts';
 import type { FileLayout } from '../workingCopy/fileList.ts';
 
@@ -63,4 +64,14 @@ export function historyHighlight(): boolean {
 
 export async function setHistoryHighlight(highlight: boolean): Promise<void> {
   await store?.update('history.highlight', highlight);
+}
+
+/** History の詳細で Viewed にしたファイル（コミットごと。新しい 500 コミットの分） */
+export function viewedFiles(key: string): string[] {
+  return store?.get<ViewedStore>('history.viewed')?.files[key] ?? [];
+}
+
+export async function setViewedFile(key: string, path: string, viewed: boolean): Promise<void> {
+  const now = store?.get<ViewedStore>('history.viewed') ?? { order: [], files: {} };
+  await store?.update('history.viewed', withViewed(now, key, path, viewed));
 }
