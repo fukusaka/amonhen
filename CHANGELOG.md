@@ -62,9 +62,10 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- Writing to the repository (stash, commit and the like) no longer fails now and then with "index.lock: File exists"
+  because the engine was refreshing Working Copy at the same moment.
 - On Windows, removing a worktree whose folder another program was using for a moment no longer leaves the folder
   behind, unregistered and impossible to remove from the app, and removing such a submodule no longer fails.
-  behind, unregistered and impossible to remove from the app.
 - GTK4: ↑ and ↓ in the sidebar skip headings and folders, as on macOS, instead of stopping on them.
 - In a narrow GTK4 merge editor, the bar hides its lesser buttons instead of cutting every button's name.
 - The GTK4 Rebase sheet no longer cuts commit subjects, its Push sheet no longer leaves an empty band, and disabled
