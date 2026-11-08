@@ -850,6 +850,8 @@ export class HistoryController implements vscode.Disposable {
   async toggleFold(oid: string): Promise<void> {
     if (!this.expandedMerges.delete(oid)) this.expandedMerges.add(oid);
     await this.reset();
+    // 読み直しの途中で次の読み直しが始まっていれば、それも待ってから選ぶ
+    await this.settled();
     const shown = this.daemon;
     if (!shown) return;
     const row = (await shown.client.call({ op: 'historyRowOf', history: shown.history, id: oid })).json['row'];
