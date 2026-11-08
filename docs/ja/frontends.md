@@ -293,7 +293,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| Save as Patch（コミットごとか mbox・カバーレター・-v） | ✓ | ✓ | △ | ✓ | VSCode: `-v` はない。<br>CLI: `format-patch`。 |
+| Save as Patch（コミットごとか mbox・カバーレター・-v） | ✓ | ✓ | ✓ | ✓ | CLI: `format-patch`。 |
 | Apply Patch（am / apply・下見・3-way・--index） | ✓ | ✓ | ✓ | ✓ | CLI: `am`・`apply`（`--check`）。 |
 | パッチのファイルを窓に落とす | ✓ | ✓ | ✓ | n/a | VSCode: エクスプローラーのメニューから。 |
 | Export Archive（zip・tar.gz・tar、先頭のフォルダ、1 つのフォルダ） | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあれば。ブランチ・タグの右クリック、History のコミットの右クリック、HEAD はコマンドパレットから。<br>CLI: `archive`。 |

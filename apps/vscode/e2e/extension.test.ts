@@ -2515,8 +2515,11 @@ async function patchFlow(label: string): Promise<void> {
   };
   // 当てる前の確かめ（modal）には answer と答え、ほかの知らせは閉じる
   let answer = 'Apply';
+  // Save as Patch の版（-v）。空なら付けない
+  let version = '';
   const stubs = {
     showQuickPick: async (items: unknown) => ((await items) as unknown[])[0],
+    showInputBox: async () => version,
     showOpenDialog: async () => [vscode.Uri.file(out)],
     showInformationMessage: async (_message: string, ...rest: unknown[]) =>
       (rest[0] as { modal?: boolean } | undefined)?.modal ? answer : undefined,
@@ -2532,6 +2535,12 @@ async function patchFlow(label: string): Promise<void> {
       await vscode.commands.executeCommand('amonhen.history.savePatch', { oid: change });
       const patch = join(out, `0001-change-${label}.patch`);
       assert.ok(existsSync(patch), `${patch} がある`);
+      // 2 版目は名前と件名に v2 が付く
+      version = '2';
+      await vscode.commands.executeCommand('amonhen.history.savePatch', { oid: change });
+      version = '';
+      const second = join(out, `v2-0001-change-${label}.patch`);
+      assert.ok(existsSync(second) && readFileSync(second, 'utf8').includes('[PATCH v2]'), `${second} がある`);
       git('reset', '-q', '--hard', 'HEAD~1');
       const base = head();
       await vscode.commands.executeCommand('amonhen.applyPatch', vscode.Uri.file(patch));

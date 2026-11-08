@@ -1035,6 +1035,7 @@ First release.
 
 #### Added
 
+- Save as Patch asks for a version (`-v`), naming the files `v2-0001-…` and the subjects `[PATCH v2]`.
 - With the engine, Working Copy shows one HEAD → working tree diff with a check on each changed line and hunk;
   clicking a check stages or unstages it, and Space does so for the selected lines.
 - Rebuild History (the sidebar's ⋯) discards the engine's History cache and builds it again.
