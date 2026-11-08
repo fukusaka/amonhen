@@ -1968,18 +1968,7 @@ impl Repository {
     /// HEAD から first-parent で辿り、最初の merge の手前まで（新しい順）。
     /// HEAD から first-parent で辿ったコミット（新しい順、merge を越えて。merge なら true）。
     fn first_parent_chain(&self) -> Result<Vec<(ChainCommit, bool)>> {
-        let history = match self.history() {
-            Some(h) => h,
-            None => self.load_history()?,
-        };
-        let head = self
-            .backend()
-            .head()?
-            .ok_or_else(|| tr!("No commits yet"))?;
-        let mut row = history
-            .row_of(&head)
-            .ok_or_else(|| tr!("HEAD isn’t in the History (reload it)"))?
-            as usize;
+        let (history, mut row) = self.history_at_head()?;
         let graph = &history.graph;
         let mut chain = Vec::new();
         while chain.len() < CHAIN_LIMIT {
@@ -2000,19 +1989,27 @@ impl Repository {
         Ok(chain)
     }
 
-    fn editable_chain(&self) -> Result<Vec<ChainCommit>> {
-        let history = match self.history() {
-            Some(h) => h,
-            None => self.load_history()?,
-        };
+    /// 覚えている History（なければ読む）と、その中の HEAD の行。HEAD が動いた直後で覚えている History が古ければ、
+    /// 読み直す。
+    fn history_at_head(&self) -> Result<(std::sync::Arc<crate::HistorySnapshot>, usize)> {
         let head = self
             .backend()
             .head()?
             .ok_or_else(|| tr!("No commits yet"))?;
-        let mut row = history
+        if let Some(history) = self.history()
+            && let Some(row) = history.row_of(&head)
+        {
+            return Ok((history, row as usize));
+        }
+        let history = self.load_history()?;
+        let row = history
             .row_of(&head)
-            .ok_or_else(|| tr!("HEAD isn’t in the History (reload it)"))?
-            as usize;
+            .ok_or_else(|| tr!("HEAD isn’t in the History (reload it)"))?;
+        Ok((history, row as usize))
+    }
+
+    fn editable_chain(&self) -> Result<Vec<ChainCommit>> {
+        let (history, mut row) = self.history_at_head()?;
         let graph = &history.graph;
         let mut chain = Vec::new();
         while chain.len() < CHAIN_LIMIT {
@@ -4889,6 +4886,40 @@ mod tests {
             .iter()
             .map(|c| c.status)
             .collect()
+    }
+
+    #[test]
+    fn reads_the_history_again_when_head_has_moved_since() {
+        // 編集できるコミットを読んで History を覚えたあとで、ほかのツールがコミットしても、新しい HEAD から読む。
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        let list = |through: bool| {
+            run(
+                &repo,
+                &serde_json::json!({"op": "editableCommits", "throughMerges": through}).to_string(),
+            )
+        };
+        assert_eq!(list(true)["ok"], true);
+        std::fs::write(dir.join("later.txt"), "x").unwrap();
+        git(dir, &["add", "later.txt"]);
+        git(dir, &["commit", "-q", "-m", "later"]);
+        let head = String::from_utf8(
+            std::process::Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(dir)
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap();
+        for through in [true, false] {
+            let listed = list(through);
+            assert_eq!(listed["ok"], true, "{listed}");
+            assert!(
+                listed["text"].as_str().unwrap().starts_with(head.trim()),
+                "{listed}"
+            );
+        }
     }
 
     #[test]

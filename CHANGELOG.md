@@ -62,6 +62,7 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- Editing commits right after another tool moved HEAD no longer fails with "HEAD isn’t in the History".
 - Writing to the repository (stash, commit and the like) no longer fails now and then with "index.lock: File exists"
   because the engine was refreshing Working Copy at the same moment.
 - On Windows, removing a worktree whose folder another program was using for a moment no longer leaves the folder
@@ -1029,6 +1030,8 @@ First release.
 #### Added
 
 - History can show several selected refs, marks each worktree's HEAD, and its ⋯ button picks the order, the row items, folding merged branches and highlighting ancestors.
+- With the engine, History's Edit Commits from Here… opens an edit mode: choose what to do with each commit, drag to
+  reorder and apply it all as one rebase that keeps merges; Edit Message…, Combine, Drop… and dragging a commit open it.
 - History's details collapse each file and mark it Viewed, start lockfiles and large changes collapsed, show line
   counts, list the files as a tree beside the diffs or show one file at a time, and ⌘F finds text in them.
 - Working Copy shows line counts per file, discards with ⌫, moves with J/K and ⌥J/⌥K, adds untracked files to

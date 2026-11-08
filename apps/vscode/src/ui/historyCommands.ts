@@ -3,7 +3,9 @@ import * as vscode from 'vscode';
 import type { RebaseResult } from '../git/backend.ts';
 import type { Commit } from '../git/log.ts';
 import { parseCommitObject } from '../git/commitObject.ts';
+import { applyPreset, type EditPreset, type PlanStep } from '../history/editPlan.ts';
 import type { HistoryEdit } from '../history/rebasePlan.ts';
+import { previewLines, stackedAlternative } from '../history/rewritePreview.ts';
 import { rewriteHistory } from '../state/rewrite.ts';
 import type { Repository } from '../state/repository.ts';
 import { HistoryController } from './historyController.ts';
@@ -44,10 +46,12 @@ export function registerHistoryCommands(): vscode.Disposable {
 
   return vscode.Disposable.from(
     command('amonhen.history.reword', async (panel, repo, oid) => {
+      if (await editMode(panel, oid, { kind: 'reword', oid })) return;
       const message = await fullMessage(repo, oid);
       panel.post({ type: 'editMessage', oid, kind: 'reword', title: EDIT_TITLES.reword, message });
     }),
     command('amonhen.history.squash', async (panel, repo, oid) => {
+      if (await editMode(panel, oid, { kind: 'combine', oids: [oid] }, 1)) return;
       const parent = panel.commit(oid)?.parents[0];
       if (!parent) return;
       const message = `${(await fullMessage(repo, parent)).trimEnd()}\n\n${await fullMessage(repo, oid)}`;
@@ -55,15 +59,24 @@ export function registerHistoryCommands(): vscode.Disposable {
     }),
     command('amonhen.history.showMerged', (panel, _repo, oid) => panel.toggleFold(oid)),
     command('amonhen.history.foldMerged', (panel, _repo, oid) => panel.toggleFold(oid)),
-    command('amonhen.history.fixup', (panel, repo, oid) =>
-      run(panel, repo, `Fixup ${short(panel, oid)}`, { kind: 'fixup', oid }),
-    ),
-    command('amonhen.history.drop', (panel, repo, oid) =>
-      run(panel, repo, `Drop ${short(panel, oid)}`, { kind: 'drop', oid }),
-    ),
-    command('amonhen.history.edit', (panel, repo, oid) =>
-      run(panel, repo, `Edit ${short(panel, oid)}`, { kind: 'edit', oid }),
-    ),
+    // エンジンがあれば、どれも編集モードをその変更を入れて開く（Apply まで何も変わらない）
+    command('amonhen.history.editFrom', async (panel, _repo, oid) => {
+      if (!(await editMode(panel, oid))) {
+        void vscode.window.showWarningMessage('Only commits on the current branch’s first-parent line can be edited.');
+      }
+    }),
+    command('amonhen.history.fixup', async (panel, repo, oid) => {
+      if (await editMode(panel, oid, { kind: 'fixup', oid }, 1)) return;
+      await run(panel, repo, `Fixup ${short(panel, oid)}`, { kind: 'fixup', oid });
+    }),
+    command('amonhen.history.drop', async (panel, repo, oid) => {
+      if (await editMode(panel, oid, { kind: 'drop', oid })) return;
+      await run(panel, repo, `Drop ${short(panel, oid)}`, { kind: 'drop', oid });
+    }),
+    command('amonhen.history.edit', async (panel, repo, oid) => {
+      if (await editMode(panel, oid, { kind: 'edit', oid })) return;
+      await run(panel, repo, `Edit ${short(panel, oid)}`, { kind: 'edit', oid });
+    }),
     command('amonhen.history.split', (panel, repo, oid) =>
       run(panel, repo, `Split ${short(panel, oid)}`, { kind: 'split', oid }),
     ),
@@ -78,6 +91,8 @@ export function registerHistoryCommands(): vscode.Disposable {
     selected('amonhen.history.selection.cherryPick', (_panel, repo, commits) => pickSelected(repo, commits, 'cherry-pick')),
     selected('amonhen.history.selection.revert', (_panel, repo, commits) => pickSelected(repo, commits, 'revert')),
     selected('amonhen.history.selection.combine', async (panel, _repo, commits) => {
+      const oids = commits.map((c) => c.oid);
+      if (await editMode(panel, oids.at(-1)!, { kind: 'combine', oids }, 0, oids)) return;
       const { oldest, newest, message } = await panel.combineMessage(commits.map((c) => c.oid));
       panel.post({ type: 'editMessage', oid: oldest, last: newest, kind: 'combine', title: `Combine ${commits.length} Commits`, message });
     }),
@@ -97,6 +112,16 @@ export function registerHistoryCommands(): vscode.Disposable {
       const panel = MainPanel.active?.history;
       const repo = panel?.repository;
       if (!panel || !repo) return;
+      if (message.type === 'editPreview') {
+        await sendEditPreview(panel, repo, message.key, message.steps, message.updateRefs);
+        return;
+      }
+      if (message.type === 'editApply') {
+        const label = `Edit ${message.steps.length} Commits`;
+        const result = await execute(panel, repo, label, { kind: 'plan', steps: message.steps }, message.updateRefs);
+        panel.post({ type: 'editApplied', ok: result !== undefined });
+        return;
+      }
       if (message.type === 'saveMessage') {
         if (message.kind === 'combine') {
           const edit = { kind: 'squashRange', oid: message.oid, last: message.last!, message: message.message } as const;
@@ -106,7 +131,7 @@ export function registerHistoryCommands(): vscode.Disposable {
         const label = `${message.kind === 'reword' ? 'Reword' : 'Squash'} ${short(panel, message.oid)}`;
         await run(panel, repo, label, { kind: message.kind, oid: message.oid, message: message.message });
       } else {
-        await run(panel, repo, `Move ${short(panel, message.oid)}`, { kind: 'move', oid: message.oid, to: message.to });
+        await moveTo(panel, repo, message.oid, message.to);
       }
     }),
   );
@@ -180,7 +205,69 @@ function short(panel: HistoryController, oid: string): string {
 async function move(panel: HistoryController, repo: Repository, oid: string, delta: number): Promise<void> {
   const index = panel.chainIndex(oid);
   if (index === undefined) return;
-  await run(panel, repo, `Move ${short(panel, oid)}`, { kind: 'move', oid, to: index + delta });
+  await moveTo(panel, repo, oid, index + delta);
+}
+
+/**
+ * oid を、新しい順の並びで to 番目に動かす（エンジンがあれば、動かした編集モードを開く）。並びはエンジンから読む
+ * （History の読み直しの途中でも、位置を取り違えない）
+ */
+async function moveTo(panel: HistoryController, repo: Repository, oid: string, to: number): Promise<void> {
+  if (await editMode(panel, oid, { kind: 'move', oid, to }, 0, [], to + 1)) return;
+  await run(panel, repo, `Move ${short(panel, oid)}`, { kind: 'move', oid, to });
+}
+
+/**
+ * from から HEAD まで（と、それより older 個古いもの）の編集モードを、preset の変更を入れて開く。エンジンがないか、
+ * 辿れない（`need` のコミットが並びにない）なら false（呼んだ側は、1 回の書き換えにする）
+ */
+async function editMode(
+  panel: HistoryController,
+  from: string,
+  preset?: EditPreset,
+  older = 0,
+  need: readonly string[] = [],
+  atLeast = 0,
+): Promise<boolean> {
+  let rows;
+  try {
+    rows = await panel.editRows(from, older, atLeast);
+  } catch (err) {
+    showError(err);
+    return true;
+  }
+  if (!rows || !need.every((oid) => rows.some((r) => r.oid === oid))) return false;
+  const started = preset ? applyPreset(rows, preset) : { rows };
+  panel.post({ type: 'editMode', rows: started.rows, original: rows.map((r) => r.oid), ...(started.editMessageAt !== undefined ? { editMessageAt: started.editMessageAt } : {}) });
+  return true;
+}
+
+/** 編集モードの見通し（一緒に動くブランチ・push 済み・コンフリクトの見込み）を送る */
+async function sendEditPreview(
+  panel: HistoryController,
+  repo: Repository,
+  key: number,
+  steps: PlanStep[],
+  updateRefs: boolean | undefined,
+): Promise<void> {
+  const preview = await repo.backend.rewritePreview({ edit: { kind: 'plan', steps } }, updateRefs).catch((err: unknown) => {
+    panel.post({ type: 'editPreview', key, lines: [`書き換えの見通しを調べられませんでした（${err instanceof Error ? err.message : String(err)}）。`], conflicts: [] });
+    return null;
+  });
+  if (preview === null) return;
+  if (!preview) {
+    panel.post({ type: 'editPreview', key, lines: [], conflicts: [] });
+    return;
+  }
+  // 積み重ねたブランチがあるときだけ選ばせる
+  const stacked = stackedAlternative(preview) !== undefined || preview.moving.length > 0 || preview.staying.some((b) => b.reason === 'setting' || b.reason === 'off');
+  panel.post({
+    type: 'editPreview',
+    key,
+    lines: previewLines(preview),
+    conflicts: (preview.conflicts ?? []).map((c) => c.oid),
+    ...(stacked && preview.updateRefs ? { stacked: preview.updateRefs } : {}),
+  });
 }
 
 /** コミットのメッセージ全体（subject と本文） */
@@ -202,12 +289,16 @@ const KINDS: Record<HistoryEdit['kind'], { name: string; note?: string }> = {
   edit: { name: 'Edit', note: 'このコミットで止まります。変更して amend してから Continue で続けます。' },
   split: { name: 'Split', note: 'このコミットを取り消して、変更を Working Copy に戻したところで止まります。' },
   move: { name: 'Move' },
+  plan: { name: 'Edit' },
 };
 
 async function run(panel: HistoryController, repo: Repository, label: string, edit: HistoryEdit): Promise<void> {
   // コミットを書き換えるので、見通し（一緒に動くブランチ・コンフリクトの見込み）を添えて確かめる
   const kind = KINDS[edit.kind];
-  const title = edit.kind === 'squashRange' ? 'Combine the selected commits?' : `${short(panel, edit.oid)} を ${kind.name} しますか？`;
+  const title =
+    edit.kind === 'squashRange' || edit.kind === 'plan'
+      ? 'Combine the selected commits?'
+      : `${short(panel, edit.oid)} を ${kind.name} しますか？`;
   const choice = await confirmRewrite(repo, title, kind.name, { edit }, kind.note);
   if (!choice) {
     // 書いたメッセージを失わないように、書いたままの編集欄を開き直す（Webview は Save で欄を閉じている）
@@ -218,11 +309,22 @@ async function run(panel: HistoryController, repo: Repository, label: string, ed
     }
     return;
   }
+  await execute(panel, repo, label, edit, choice.updateRefs);
+}
+
+/** 書き換えて、結果を知らせる。失敗したら undefined */
+async function execute(
+  panel: HistoryController,
+  repo: Repository,
+  label: string,
+  edit: HistoryEdit,
+  updateRefs: boolean | undefined,
+): Promise<RebaseResult | undefined> {
   let result: RebaseResult | undefined;
   panel.post({ type: 'busy', busy: true });
   try {
     result = await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: label }, () =>
-      rewriteHistory(repo.backend, repo.undo, label, edit, choice.updateRefs),
+      rewriteHistory(repo.backend, repo.undo, label, edit, updateRefs),
     );
   } catch (err) {
     showError(err);
@@ -231,13 +333,12 @@ async function run(panel: HistoryController, repo: Repository, label: string, ed
     await repo.refresh();
   }
   switch (result) {
-    case 'done': {
-      const choice = await vscode.window.showInformationMessage(`${label}: 完了しました`, 'Undo');
-      if (choice === 'Undo') {
-        await vscode.commands.executeCommand('amonhen.undo');
-      }
+    // 知らせは閉じるまで待たない（編集モードはすぐ閉じる）
+    case 'done':
+      void vscode.window.showInformationMessage(`${label}: 完了しました`, 'Undo').then(async (choice) => {
+        if (choice === 'Undo') await vscode.commands.executeCommand('amonhen.undo');
+      });
       break;
-    }
     case 'stopped':
       void vscode.window.showInformationMessage(
         edit.kind === 'split'
@@ -251,4 +352,5 @@ async function run(panel: HistoryController, repo: Repository, label: string, ed
       );
       break;
   }
+  return result;
 }

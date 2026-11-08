@@ -1,3 +1,4 @@
+import type { EditRow } from '../history/editPlan.ts';
 import { basename } from 'node:path';
 import * as vscode from 'vscode';
 import type { DaemonClient } from '../daemon/client.ts';
@@ -122,7 +123,7 @@ async function confirmContentsSearch(count: number, more: boolean): Promise<bool
  */
 export class HistoryController implements vscode.Disposable {
   private static readonly edits = new vscode.EventEmitter<
-    Extract<HistoryWebviewMessage, { type: 'saveMessage' | 'move' }>
+    Extract<HistoryWebviewMessage, { type: 'saveMessage' | 'move' | 'editPreview' | 'editApply' }>
   >();
   /** Webview でメッセージの編集や並べ替えが行われた。処理は historyCommands が受け持つ */
   static readonly onDidReceiveEdit = HistoryController.edits.event;
@@ -326,6 +327,8 @@ export class HistoryController implements vscode.Disposable {
       }
       case 'saveMessage':
       case 'move':
+      case 'editPreview':
+      case 'editApply':
         HistoryController.edits.fire(message);
         break;
       case 'goTo':
@@ -410,6 +413,37 @@ export class HistoryController implements vscode.Disposable {
   }
 
   /** 続いたコミットをまとめるときのメッセージと範囲（コアが、続いているか・編集できるかも確かめる） */
+  /**
+   * 編集モードの行: HEAD から first-parent で merge を越えて辿り、`from` とそれより `older` 個古いもの、少なくとも `atLeast`
+   * 行まで（古いものにまとめる・古い方へ動かすため）。新しい順。エンジンがないか、`from` を辿れなければ undefined
+   */
+  async editRows(from: string, older = 0, atLeast = 0): Promise<EditRow[] | undefined> {
+    const client = await this.engine();
+    if (!client) return undefined;
+    const run = async (command: Record<string, unknown>) => {
+      const reply = (await client.call({ op: 'run', command })).json as { ok?: boolean; error?: string; text?: string | null };
+      if (!reply.ok) throw new Error(reply.error ?? 'Can’t read the commits');
+      return reply.text ?? '';
+    };
+    const line = (await run({ op: 'editableCommits', throughMerges: true }))
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => ({ oid: l.slice(0, l.indexOf(' ') < 0 ? undefined : l.indexOf(' ')), merge: l.endsWith(' merge') }));
+    let end = line.findIndex((c) => c.oid === from);
+    if (end < 0) return undefined;
+    end = Math.max(end + older, atLeast - 1);
+    if (end >= line.length) return undefined;
+    return Promise.all(
+      line.slice(0, end + 1).map(async (c): Promise<EditRow> => ({
+        oid: c.oid,
+        message: await run({ op: 'commitMessage', oid: c.oid }),
+        author: this.known.get(c.oid)?.author ?? '',
+        ...(c.merge ? { merge: true } : {}),
+        action: 'pick',
+      })),
+    );
+  }
+
   async combineMessage(oids: readonly string[]): Promise<{ oldest: string; newest: string; message: string }> {
     const client = await this.engine();
     if (!client) throw new Error('This needs the engine');

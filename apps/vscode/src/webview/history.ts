@@ -11,6 +11,8 @@ import type { HostMessage } from '../view/protocol.ts';
 import { scopeRefs, scopeTitle } from '../history/scope.ts';
 import { el, formatDate, post, type View } from './api.ts';
 import { attachSplitter, createDetailsPane } from './details.ts';
+import { createEditMode } from './historyEdit.ts';
+import { openMessageEditor } from './messageEditor.ts';
 import { signatureMark } from './signature.ts';
 
 const ROW_HEIGHT = 24;
@@ -138,7 +140,19 @@ export function createHistoryView(): View {
     const index = rows.findIndex((r) => r?.oid === oid);
     if (index >= 0) select(index, true);
   });
-  body.append(list, splitter, details.root);
+  // 編集モード（開いている間は、一覧の代わりに出す）
+  const editMode = createEditMode(
+    () => {
+      root.classList.remove('editing');
+      list.focus();
+      // 一覧で選んでいたコミットの詳細に戻す
+      details.forget();
+      const oid = rows[selected]?.oid;
+      if (oid) post({ type: 'select', oid });
+    },
+    (oid) => post({ type: 'select', oid }),
+  );
+  body.append(list, editMode.root, splitter, details.root);
   root.append(toolbar, body);
 
   /** 行の署名の印（コミット → 見せ方。署名のないものは入らない） */
@@ -488,58 +502,9 @@ export function createHistoryView(): View {
     scheduleRender();
   }
 
-  /** メッセージの編集欄。保存は Ctrl/Cmd+Enter、取り消しは Esc */
+  /** メッセージの編集欄（History の近道から） */
   function editMessage(oid: string, last: string | undefined, kind: MessageEdit, title: string, message: string): void {
-    const overlay = document.createElement('div');
-    overlay.className = 'overlay';
-    const box = document.createElement('div');
-    box.className = 'editor';
-    const heading = document.createElement('div');
-    heading.className = 'heading';
-    heading.textContent = title;
-    const textarea = document.createElement('textarea');
-    textarea.value = message;
-    textarea.spellcheck = false;
-    const buttons = document.createElement('div');
-    buttons.className = 'buttons';
-    const save = document.createElement('button');
-    save.textContent = 'Save';
-    const cancel = document.createElement('button');
-    cancel.textContent = 'Cancel';
-    cancel.className = 'secondary';
-    buttons.append(cancel, save);
-    box.append(heading, textarea, buttons);
-    overlay.append(box);
-    document.body.append(overlay);
-    textarea.focus();
-    textarea.setSelectionRange(
-      0,
-      textarea.value.indexOf('\n') < 0 ? textarea.value.length : textarea.value.indexOf('\n'),
-    );
-
-    const close = () => {
-      overlay.remove();
-      list.focus();
-    };
-    const submit = () => {
-      if (!textarea.value.trim()) {
-        textarea.focus();
-        return;
-      }
-      post({ type: 'saveMessage', oid, last, kind, message: textarea.value });
-      close();
-    };
-    save.addEventListener('click', submit);
-    cancel.addEventListener('click', close);
-    textarea.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault();
-        submit();
-      } else if (e.key === 'Escape') {
-        e.preventDefault();
-        close();
-      }
-    });
+    openMessageEditor(title, message, (text) => post({ type: 'saveMessage', oid, last, kind, message: text }), () => list.focus());
   }
 
   /** 選択が落ち着いてから詳細を求める。矢印キーを押し続けても要求が溜まらないように */
@@ -765,7 +730,9 @@ export function createHistoryView(): View {
         root.classList.toggle('busy', message.busy);
         break;
       case 'details':
-        if (marked.size <= 1 && message.details.oid === rows[selected]?.oid) details.show(message.details, undefined, message.viewed);
+        if (editMode.isOpen || (marked.size <= 1 && message.details.oid === rows[selected]?.oid)) {
+          details.show(message.details, undefined, message.viewed);
+        }
         return;
       case 'detailsExtras':
         details.showExtras(message.extras);
@@ -796,6 +763,16 @@ export function createHistoryView(): View {
       case 'commitDiff':
         details.showDiff(message.oid, message.path, message.diff);
         return;
+      case 'editMode':
+        root.classList.add('editing');
+        editMode.open(message.rows, message.original, message.editMessageAt);
+        break;
+      case 'editPreview':
+        editMode.preview(message.key, message.lines, message.conflicts, message.stacked);
+        break;
+      case 'editApplied':
+        editMode.applied(message.ok);
+        break;
       case 'editMessage':
         editMessage(message.oid, message.last, message.kind, message.title, message.message);
         return;

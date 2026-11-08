@@ -1531,3 +1531,166 @@ aside.details.single .file-diff:not(.current) {
   flex: none;
   color: var(--vscode-descriptionForeground);
 }
+
+/* History の編集モード（開いている間は、ツールバーと一覧の代わりに出す） */
+.history.editing > .toolbar,
+.history.editing .split > .list {
+  display: none;
+}
+
+.edit-mode {
+  flex: 1;
+  min-width: 260px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.edit-mode[hidden] {
+  display: none;
+}
+
+.edit-heading {
+  padding: 10px 12px 0;
+  font-weight: bold;
+  font-size: 1.1em;
+}
+
+.edit-hint {
+  padding: 2px 12px 8px;
+  font-size: 0.9em;
+  color: var(--vscode-descriptionForeground);
+}
+
+.edit-rows {
+  flex: 1;
+  overflow-y: auto;
+  container-type: inline-size;
+  outline: none;
+  border-top: 1px solid var(--vscode-panel-border);
+}
+
+.edit-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 12px;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.edit-row:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.edit-row.selected {
+  background: var(--vscode-list-inactiveSelectionBackground);
+}
+
+.edit-rows:focus .edit-row.selected {
+  background: var(--vscode-list-activeSelectionBackground);
+  color: var(--vscode-list-activeSelectionForeground);
+}
+
+.edit-row .mark {
+  width: 1em;
+  flex: none;
+  text-align: center;
+  color: var(--vscode-descriptionForeground);
+}
+
+.edit-row select {
+  flex: none;
+  width: 10.5em;
+}
+
+/* 欄が狭いときは、件名を優先して作者を隠す */
+@container (max-width: 520px) {
+  .edit-row .author {
+    display: none;
+  }
+}
+
+.edit-row .subject {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.edit-row .subject.changed {
+  font-style: italic;
+}
+
+.edit-row.a-drop .subject {
+  text-decoration: line-through;
+  color: var(--vscode-descriptionForeground);
+}
+
+.edit-row.a-squash .subject,
+.edit-row.a-fixup .subject,
+.edit-row.merge .subject {
+  color: var(--vscode-descriptionForeground);
+}
+
+.edit-row .warn {
+  color: var(--vscode-editorWarning-foreground);
+}
+
+.edit-row .author,
+.edit-row .oid {
+  flex: none;
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.9em;
+}
+
+.edit-row.drop-above {
+  box-shadow: inset 0 2px 0 var(--vscode-focusBorder);
+}
+
+.edit-row.drop-below {
+  box-shadow: inset 0 -2px 0 var(--vscode-focusBorder);
+}
+
+.edit-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--vscode-panel-border);
+}
+
+.edit-texts {
+  flex: 1 1 240px;
+  min-width: 0;
+  font-size: 0.9em;
+}
+
+.edit-preview {
+  color: var(--vscode-descriptionForeground);
+}
+
+.edit-preview.warning {
+  color: var(--vscode-editorWarning-foreground);
+}
+
+.edit-buttons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.edit-stacked[hidden] {
+  display: none;
+}
+
+.edit-stacked {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.9em;
+  white-space: nowrap;
+}

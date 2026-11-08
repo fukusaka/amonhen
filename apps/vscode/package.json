@@ -118,6 +118,11 @@
         "icon": "$(close)"
       },
       {
+        "command": "amonhen.history.editFrom",
+        "title": "Edit Commits from Here…",
+        "category": "Amon Hen"
+      },
+      {
         "command": "amonhen.history.reword",
         "title": "Reword…",
         "category": "Amon Hen"
@@ -1232,6 +1237,10 @@
           "when": "false"
         },
         {
+          "command": "amonhen.history.editFrom",
+          "when": "false"
+        },
+        {
           "command": "amonhen.history.drop",
           "when": "false"
         },
@@ -1672,6 +1681,11 @@
           "command": "amonhen.history.goToChild",
           "when": "webviewId == 'amonhen.main' && webviewSection == 'commit' && amonhen.engine",
           "group": "0_goto@2"
+        },
+        {
+          "command": "amonhen.history.editFrom",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commit' && amonhen.engine",
+          "group": "1_message@0"
         },
         {
           "command": "amonhen.history.reword",
