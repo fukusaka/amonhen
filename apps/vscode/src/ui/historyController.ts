@@ -414,10 +414,10 @@ export class HistoryController implements vscode.Disposable {
 
   /** 続いたコミットをまとめるときのメッセージと範囲（コアが、続いているか・編集できるかも確かめる） */
   /**
-   * 編集モードの行: HEAD から first-parent で merge を越えて辿り、`from` とそれより `older` 個古いものまで（古いものに
-   * まとめる・古い方へ動かすため）。新しい順。エンジンがないか、`from` を辿れなければ undefined
+   * 編集モードの行: HEAD から first-parent で merge を越えて辿り、`from` とそれより `older` 個古いもの、少なくとも `atLeast`
+   * 行まで（古いものにまとめる・古い方へ動かすため）。新しい順。エンジンがないか、`from` を辿れなければ undefined
    */
-  async editRows(from: string, older = 0): Promise<EditRow[] | undefined> {
+  async editRows(from: string, older = 0, atLeast = 0): Promise<EditRow[] | undefined> {
     const client = await this.engine();
     if (!client) return undefined;
     const run = async (command: Record<string, unknown>) => {
@@ -431,8 +431,8 @@ export class HistoryController implements vscode.Disposable {
       .map((l) => ({ oid: l.slice(0, l.indexOf(' ') < 0 ? undefined : l.indexOf(' ')), merge: l.endsWith(' merge') }));
     let end = line.findIndex((c) => c.oid === from);
     if (end < 0) return undefined;
-    if (end + older >= line.length) return undefined;
-    end += older;
+    end = Math.max(end + older, atLeast - 1);
+    if (end >= line.length) return undefined;
     return Promise.all(
       line.slice(0, end + 1).map(async (c): Promise<EditRow> => ({
         oid: c.oid,

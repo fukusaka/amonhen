@@ -208,10 +208,12 @@ async function move(panel: HistoryController, repo: Repository, oid: string, del
   await moveTo(panel, repo, oid, index + delta);
 }
 
-/** oid を、新しい順の並びで to 番目に動かす（エンジンがあれば、動かした編集モードを開く） */
+/**
+ * oid を、新しい順の並びで to 番目に動かす（エンジンがあれば、動かした編集モードを開く）。並びはエンジンから読む
+ * （History の読み直しの途中でも、位置を取り違えない）
+ */
 async function moveTo(panel: HistoryController, repo: Repository, oid: string, to: number): Promise<void> {
-  const index = panel.chainIndex(oid);
-  if (index !== undefined && (await editMode(panel, oid, { kind: 'move', oid, to }, Math.max(0, to - index)))) return;
+  if (await editMode(panel, oid, { kind: 'move', oid, to }, 0, [], to + 1)) return;
   await run(panel, repo, `Move ${short(panel, oid)}`, { kind: 'move', oid, to });
 }
 
@@ -225,10 +227,11 @@ async function editMode(
   preset?: EditPreset,
   older = 0,
   need: readonly string[] = [],
+  atLeast = 0,
 ): Promise<boolean> {
   let rows;
   try {
-    rows = await panel.editRows(from, older);
+    rows = await panel.editRows(from, older, atLeast);
   } catch (err) {
     showError(err);
     return true;
