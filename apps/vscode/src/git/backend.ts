@@ -917,7 +917,7 @@ export class CliBackend implements RepositoryBackend {
     if (opts.force) args.push(opts.expect ? `--force-with-lease=refs/heads/${remoteBranch}:${opts.expect}` : '--force-with-lease');
     if (opts.setUpstream) args.push('--set-upstream');
     args.push(remote, `refs/heads/${branch}:refs/heads/${remoteBranch}`);
-    await this.git.exec(args, { cwd: this.root });
+    await this.git.exec(args, { cwd: this.root, network: true });
   }
 
   async addedFiles(base: string, tip: string): Promise<{ path: string; binary: boolean }[]> {
@@ -988,7 +988,7 @@ export class CliBackend implements RepositoryBackend {
 
   async fetch(remote?: string): Promise<void> {
     // 片づけるかは git の設定（remote.<name>.prune・fetch.prune）のとおり。コアの fetch と同じ
-    await this.git.exec(['fetch', ...(remote ? ['--', remote] : ['--all'])], { cwd: this.root });
+    await this.git.exec(['fetch', ...(remote ? ['--', remote] : ['--all'])], { cwd: this.root, network: true });
   }
 
   async log(revs: readonly string[], skip: number, max: number): Promise<Commit[]> {

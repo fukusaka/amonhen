@@ -1082,6 +1082,8 @@ First release.
 
 #### Changed
 
+- Without the engine, a fetch or push that prints nothing for 120 seconds (usually a sign-in nobody sees) is
+  stopped with an error saying so, as the engine does.
 - Push asks first, showing the commits and anything worth a look (the default branch, fixup!/WIP commits, secrets,
   binaries); when the upstream moved on it offers Pull… or a Force Push that replaces only what it showed.
 - Pull asks first: how to integrate (git's settings, which it now follows, or merge, rebase or fast-forward only for

@@ -181,7 +181,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | History search with scopes (subject, author, ID, path, contents) | ✓ | ✓ | ✓ | ✓ | VSCode: With the engine.<br>CLI: `log <query>`. |
 | Ahead/behind badges | ✓ | ✓ | ✓ | △ | VSCode: On the sidebar's branch rows.<br>CLI: In `status`. |
 | Toolbar customization | ✓ | ✓ | n/a | n/a | GTK4: The palette works like NSToolbar's and slides down under the header bar over the content like its sheet, without changing the window's size, with no Show (icon/text) choice since the header bar shows icons; the Repository menu and the main menu take the menu bar's place and stay put. |
-| Network git stopped after 120 s of silence | ✓ | ✓ | — | ✓ | VSCode: Not in the extension's own git layer. |
+| Network git stopped after 120 s of silence | ✓ | ✓ | ✓ | ✓ | VSCode: The engine's, and the extension's own fetch and push without it. |
 
 ## 5a. Stashes
 

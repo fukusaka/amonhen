@@ -247,3 +247,4 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 44. Push の前に確かめる: 注意、コミット、上流が進んでいれば Pull… か見せたものの上だけの Force Push
 - [x] 45. Rebase の確認に、今と後のコミットをブランチの札と一緒に出す
 - [x] 46. Rebuild History
+- [x] 47. 拡張自身の fetch・push も、120 秒何も出さなければ止める

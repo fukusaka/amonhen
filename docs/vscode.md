@@ -255,3 +255,4 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 44. Push asks first: warnings, the commits, Pull… or Force Push over what it showed when the upstream moved on
 - [x] 45. Rebase's confirmation shows the commits now and after, with the branches
 - [x] 46. Rebuild History
+- [x] 47. The extension's own fetch and push stop after 120 seconds without output
