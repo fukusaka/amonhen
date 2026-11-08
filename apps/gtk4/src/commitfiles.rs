@@ -1230,6 +1230,9 @@ impl Inner {
                     Prepared::from_changes(lazy.repo.clone(), lazy.changes.clone(), &viewed, all)
                 }
                 None => {
+                    // 変更ファイルの一覧がないのは複数のコミットの差分で、設定によらず全ファイルを並べる
+                    // （macOS 版と同じ）。
+                    let all = all || changes.is_none();
                     let mut prepared = Prepared::with_source(source, &viewed, all);
                     prepared.changes = changes;
                     Ok(prepared)

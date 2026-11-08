@@ -290,11 +290,12 @@ fn column(
     if let (Some(first), Some(last)) = (lane1.first(), lane1.last()) {
         cr.move_to(lane_x(1), center(first.y));
         cr.line_to(lane_x(1), center(last.y));
+        // 制御点は macOS 版と同じ並び。
         cr.curve_to(
             lane_x(1),
-            center(last.y) + 8.0,
-            lane_x(0),
             center(base_y) - 6.0,
+            lane_x(0),
+            center(last.y) + 8.0,
             lane_x(0),
             center(base_y),
         );

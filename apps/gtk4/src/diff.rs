@@ -1940,15 +1940,17 @@ impl DiffWidget {
             rh,
         ));
         snapshot.translate(&graphene::Point::new(left, y));
-        // パスの中の、探している語の一致（今の一致は濃く）。
+        // パスの中の、探している語の一致（今の一致は濃く）。一致はパスの中の位置なので、頭の開閉の印と空白の
+        // 分をずらす。
+        let shift = line.text.text().find(' ').map_or(0, |i| i + 1) as i32;
         let from = st.matches.partition_point(|m| m.0 < index);
         for (i, m) in st.matches[from..]
             .iter()
             .enumerate()
             .take_while(|(_, m)| m.0 == index)
         {
-            let x0 = line.text.index_to_pos(m.1 as i32).x() as f32 / pango::SCALE as f32;
-            let x1 = line.text.index_to_pos(m.2 as i32).x() as f32 / pango::SCALE as f32;
+            let x0 = line.text.index_to_pos(shift + m.1 as i32).x() as f32 / pango::SCALE as f32;
+            let x1 = line.text.index_to_pos(shift + m.2 as i32).x() as f32 / pango::SCALE as f32;
             let color = if st.current_match == Some(from + i) {
                 gdk::RGBA::new(1.0, 0.6, 0.0, 0.75)
             } else {

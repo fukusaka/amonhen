@@ -1372,10 +1372,14 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         cell.show(title: node.title, symbol: node.symbol, count: count)
         // 狭いと名前の途中が省かれるので、フォルダはフルパスをツールチップに出す。
         let tilde = { (path: String) in (path as NSString).abbreviatingWithTildeInPath }
+        // SSH 先のパスは `/~/prj` ではなく `~/prj` と書く（名前と同じ。`remoteTitle`）。
+        let shown = { (root: String, path: String) in
+            Self.sshHost(root).map { "\($0):\(Self.remoteTitle(path))" } ?? tilde(path)
+        }
         switch category {
         case let .folder(path): cell.toolTip = tilde(path)
-        case let .scan(root): cell.toolTip = L("Searches %@", (Self.sshHost(root).map { $0 + ":" } ?? "") + tilde(Self.pathPart(root)))
-        case let .scanFolder(root, path): cell.toolTip = "\(Self.sshHost(root).map { $0 + ":" } ?? "")\(tilde(path))"
+        case let .scan(root): cell.toolTip = L("Searches %@", shown(root, Self.pathPart(root)))
+        case let .scanFolder(root, path): cell.toolTip = shown(root, path)
         case let .hostFolder(host, path): cell.toolTip = "\(host):\(Self.remoteTitle(path))"
         default: cell.toolTip = nil
         }

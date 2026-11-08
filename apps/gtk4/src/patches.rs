@@ -62,6 +62,7 @@ pub fn save(actions: &Rc<Actions>, oids: Vec<String>) {
             .placeholder_text("1")
             .width_chars(4)
             .max_width_chars(4)
+            .activates_default(true)
             .build();
         sheet.add(&sheets::row(&tr!("Version (-v):"), &version));
         sheet.buttons(&tr!("Save…"), false, None);

@@ -21,8 +21,11 @@ use crate::sheets::{Response, Sheet};
 
 /// リポジトリを新しい窓で開く。
 /// リポジトリを開く（場所と、開く先: 前の窓のタブか新しい窓か）。
-/// 表の行をドラッグしたときに運ぶ文字の頭（ほかから落とされた文字と見分ける）。その後に場所を 1 行ずつ。
-const DRAG_MARK: &str = "\u{1}amonhen-repositories\n";
+/// 表の行をドラッグしたときに運ぶもの（リポジトリの場所）。文字ではなくこのアプリだけの型にして、ほかの欄や
+/// ほかのアプリに落としても何も入らないようにする（macOS 版の専用のドラッグの型と同じ）。
+#[derive(Clone, Debug, glib::Boxed)]
+#[boxed_type(name = "AmonhenRepositoriesDrag")]
+struct RepositoriesDrag(Vec<String>);
 
 /// 並べ替えた列（`name`・`branch`・`status`・`commit`・`opened`）と、上る向きか（macOS 版と同じ鍵）。
 const SORT_KEY: &str = "repositoryPageSort";
@@ -1088,8 +1091,8 @@ impl Browser {
                     if row == gtk::INVALID_LIST_POSITION {
                         return None;
                     }
-                    let text = format!("{DRAG_MARK}{}", b.targets(row).join("\n"));
-                    Some(gtk::gdk::ContentProvider::for_value(&text.to_value()))
+                    let drag = RepositoriesDrag(b.targets(row));
+                    Some(gtk::gdk::ContentProvider::for_value(&drag.to_value()))
                 });
                 cell.add_controller(drag);
                 item.set_child(Some(&cell));
@@ -1193,23 +1196,29 @@ impl Browser {
                 .view
                 .sort_by_column(opened.as_ref(), gtk::SortType::Descending),
         }
-        // 見出しの説明（macOS 版の `headerToolTip`）。列の見出しの部品は表の見出しの行の子に、列の順に並ぶ。
-        let tips = [
-            None,
-            Some(tr!("Current branch")),
-            Some(tr!(
+        // 見出しの説明（macOS 版の `headerToolTip`）。列の見出しの部品は表の見出しの行の子に、今の列の順に並ぶ
+        // （並べ替えた列にも、その列の説明を付ける）。
+        let tip = |id: &str| match id {
+            "branch" => Some(tr!("Current branch")),
+            "status" => Some(tr!(
                 "Changes n: files with changes\n↑ commits ahead of the upstream · ↓ commits behind it\n✓ no changes and same as the upstream"
             )),
-            Some(tr!("Date and subject of the last commit")),
-            Some(tr!("When you last opened it in this app (— if never)")),
-        ];
+            "commit" => Some(tr!("Date and subject of the last commit")),
+            "opened" => Some(tr!("When you last opened it in this app (— if never)")),
+            _ => None,
+        };
         let titles = std::iter::successors(
             self.view.first_child().and_then(|h| h.first_child()),
             gtk::Widget::next_sibling,
         )
         .filter(|w| w.type_().name() == "GtkColumnViewTitle");
-        for (title, tip) in titles.zip(tips) {
-            title.set_tooltip_text(tip.as_deref());
+        let columns = self.view.columns();
+        for (i, title) in titles.enumerate() {
+            let id = columns
+                .item(i as u32)
+                .and_downcast::<gtk::ColumnViewColumn>()
+                .and_then(|c| c.id());
+            title.set_tooltip_text(id.and_then(|id| tip(&id)).as_deref());
         }
         // 並べ替えを変えたら覚える。Status・Last Commit・Opened は、初めて押したとき新しい順・多い順にする（名前と
         // ブランチは昇順。macOS 版の列の `sortDescriptorPrototype` と同じ）。
@@ -1794,22 +1803,16 @@ impl Browser {
                     row.set_tooltip_text(r.tip.as_deref());
                     // お気に入り・グループには、表の行を落として入れられる（macOS 版と同じ）。
                     if matches!(c, Category::Favorites | Category::Group(_)) {
-                        let drop =
-                            gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
+                        let drop = gtk::DropTarget::new(
+                            RepositoriesDrag::static_type(),
+                            gtk::gdk::DragAction::MOVE,
+                        );
                         let target = c.clone();
                         drop.connect_drop(move |_, value, _, _| {
-                            let Some(paths) = value
-                                .get::<String>()
-                                .ok()
-                                .and_then(|t| t.strip_prefix(DRAG_MARK).map(str::to_owned))
+                            let Ok(RepositoriesDrag(paths)) = value.get::<RepositoriesDrag>()
                             else {
                                 return false;
                             };
-                            let paths: Vec<String> = paths
-                                .lines()
-                                .filter(|l| !l.is_empty())
-                                .map(str::to_owned)
-                                .collect();
                             let target = target.clone();
                             // 落とした後で（一覧を作り直すと、落とした先の行が消える）。
                             glib::idle_add_local_once(move || {

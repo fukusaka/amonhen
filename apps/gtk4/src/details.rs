@@ -993,6 +993,11 @@ impl Details {
         }
     }
 
+    /// 出しているコミットの情報が `info` と同じか（読み直しても変わらなければ描き直さない。ちらつくので）。
+    pub fn shows_info(&self, info: &Value) -> bool {
+        self.info.borrow().as_ref() == Some(info)
+    }
+
     /// 出しているコミットの ID（1 つのコミットを出していなければ None）。
     pub fn oid(&self) -> Option<String> {
         self.info

@@ -64,6 +64,12 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
     private let initialRegions: [ConflictRegions.Conflict]
     /// 読み直しの番号（読んでいる間に次の読み直しが来たら、前のは捨てる）。
     private var conflictsRequest = 0
+    /// 解決を当ててから、コンフリクトを読み直し終えるまで（この番号以降の読み直しが終わるまで）。その間の
+    /// `conflicts` は古い Result のもので、番号が合わない。
+    private var settleRequest: Int?
+    private var settling = false
+    /// 読み直し終えたら続ける操作（その間に押したボタン）。
+    private var afterSettling: [() -> Void] = []
 
     init(path: String, sides: MergeSides, regions: [ConflictRegions.Conflict], repository: Repository, actions: Actions) {
         self.path = path
@@ -396,22 +402,38 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
 
     /// Result を読み直して、残っているコンフリクトと左右の欄との対応を決め、強調し直す。
     /// 裏で読む（daemon 越しでは Result 全体を送って往復する）。読み終えたら `then`。
-    private func updateConflicts(then: (() -> Void)? = nil) {
+    private func updateConflicts(settle: Bool = false, then: (() -> Void)? = nil) {
         // 最初のどのコンフリクトに当たるか（手で書き換えたものも、前後と片側からコアが結ぶ）。
         let command: [String: Any] = ["op": "conflictRegions", "text": result.string,
                                       "originals": originals.map { [$0.current, $0.incoming] }]
-        guard let json = try? Repository.json(command) else { return }
+        guard let json = try? Repository.json(command) else { return settle ? settled() : () }
         let repository = self.repository
         conflictsRequest += 1
         let request = conflictsRequest
+        if settle { settleRequest = request }
         Task { [weak self] in
             let found = await Task.detached(priority: .userInitiated) {
                 (try? repository.info(json: json, as: ConflictRegions.self))?.conflicts ?? []
             }.value
             guard let self, request == conflictsRequest else { return }
             show(conflicts: found, initial: false)
+            if let settleRequest, request >= settleRequest { settled() }
             then?()
         }
+    }
+
+    /// 解決を当てたあとのコンフリクトを読み終えた（当てられなかった）。待たせていた操作を続ける。
+    private func settled() {
+        settling = false
+        settleRequest = nil
+        let pending = afterSettling
+        afterSettling = []
+        for action in pending { action() }
+    }
+
+    /// 解決を当ててからコンフリクトを読み直し終えるまでは待ってから `action`（古い番号で解かない）。
+    private func whenSettled(_ action: @escaping () -> Void) {
+        if settling { afterSettling.append(action) } else { action() }
     }
 
     private func show(conflicts found: [ConflictRegions.Conflict], initial: Bool) {
@@ -572,11 +594,15 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
 
     @objc private func accept(_ sender: NSButton) {
         guard let choice = sender.identifier?.rawValue else { return }
-        resolve(selected, choice)
+        whenSettled { [weak self] in
+            guard let self else { return }
+            resolve(selected, choice)
+        }
     }
 
-    /// 帯の ≫・≪ を押した。
+    /// 帯の ≫・≪ を押した。読み直している間の帯は古い Result のものなので、押しても当てない。
     fileprivate func acceptFromBand(_ index: Int, side: ConflictBand.Side) {
+        guard !settling else { return NSSound.beep() }
         resolve(index, side == .ours ? "ours" : "theirs")
     }
 
@@ -586,20 +612,23 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
         let old = result.string
         guard let json = try? Repository.json(["op": "resolveText", "text": old, "index": index, "choice": choice]) else { return }
         let repository = self.repository
+        settling = true
         Task { [weak self] in
             // 裏で計算する（daemon 越しでは Result 全体を送って往復する）。
             let answer = await Task.detached(priority: .userInitiated) {
                 Result { try repository.run(json: json).text }
             }.value
             // 読んでいる間に Result が変わったら、番号も中身も古いので当てない。
-            guard let self, result.string == old else { return }
+            guard let self else { return }
+            guard result.string == old else { return settled() }
             switch answer {
             case let .success(text):
-                guard let text else { return }
+                guard let text else { return settled() }
                 selected = index
                 replace(old: old, with: text)
-                updateConflicts { [weak self] in self?.reveal() }
+                updateConflicts(settle: true) { [weak self] in self?.reveal() }
             case let .failure(error):
+                settled()
                 NSAlert(error: error).runModal()
             }
         }
@@ -832,6 +861,8 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
     /// Mark Resolved: Result を保存してから解決済みにする（コンフリクトが残っていれば確かめる）。Working Copy の帯の
     /// Mark Resolved も、保存していない Result があればこれを使う。
     @objc func saveAndResolve() {
+        // 解決を当てた直後なら、残りの数を読み直してから確かめる。
+        guard !settling else { return whenSettled { [weak self] in self?.saveAndResolve() } }
         guard !conflicts.isEmpty else { return save(stage: true) }
         Task { @MainActor in
             guard await actions.confirm(

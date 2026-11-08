@@ -45,12 +45,16 @@ pub fn main_of_worktree(location: &Path) -> Option<PathBuf> {
 }
 
 /// 手元のリポジトリの中のフォルダーなら、その作業ツリーの一番上（`.git` のあるフォルダー）。git と同じく上へ
-/// たどる。見つからない・daemon・SSH 越しの場所はそのまま。パスは [`standardize`] した形（リンクは解かない）。
+/// たどる。見つからない・ない・daemon・SSH 越しの場所はそのまま。パスは [`standardize`] した形（リンクは解かない）。
 pub fn top_of(location: &Path) -> PathBuf {
     if amonhen_remote::location::is_remote(&location.to_string_lossy()) {
         return location.to_owned();
     }
     let full = standardize(location);
+    // ないフォルダー（消したリポジトリ）は外側のリポジトリにせず、開けないと知らせる（macOS 版と同じ）。
+    if !full.exists() {
+        return full;
+    }
     full.ancestors()
         .find(|d| d.join(".git").exists())
         .map_or(full.clone(), Path::to_path_buf)
@@ -1020,6 +1024,8 @@ mod tests {
         let inner = wt.join("src");
         std::fs::create_dir_all(&inner).unwrap();
         assert_eq!(super::top_of(&inner), wt);
+        // 消したフォルダーは、外側のリポジトリにしない。
+        assert_eq!(super::top_of(&wt.join("gone")), wt.join("gone"));
         // `.`・`..` は字面で除く（リンクは解かない）。
         assert_eq!(super::standardize(&inner.join("../src/.")), inner);
         // メインの作業ツリーと、`.git` のないフォルダーは worktree ではない。

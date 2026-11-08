@@ -263,11 +263,15 @@ enum GitHub {
         let parent: (repo: GitHubRepository, organization: Bool)?
         if let known = parents[origin.slug] {
             parent = known
-        } else if let read = try? await Self.parent(origin) {
-            parents[origin.slug] = .some(read)
-            parent = read
         } else {
-            parent = nil
+            // fork でない（nil）ことも覚える（`try?` で包むと nil と読めなかったの見分けがつかず、毎回読み直す）。
+            do {
+                let read = try await Self.parent(origin)
+                parents[origin.slug] = .some(read)
+                parent = read
+            } catch {
+                parent = nil
+            }
         }
         guard let parent else { return PullRequestTarget(repo: origin, forkOwner: nil) }
         return PullRequestTarget(repo: parent.repo, forkOwner: origin.owner, forkInOrganization: parent.organization)

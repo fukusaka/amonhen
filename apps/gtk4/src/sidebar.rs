@@ -1608,6 +1608,14 @@ fn bind_row(item: &gtk::ListItem) {
         },
         data.head,
     );
+    // 読み上げでも分かるように（macOS 版はアイコンの説明に「Current branch」）。
+    if current {
+        title.update_property(&[gtk::accessible::Property::Description(&tr!(
+            "Current branch"
+        ))]);
+    } else {
+        title.reset_property(gtk::AccessibleProperty::Description);
+    }
     for w in [icon.upcast_ref::<gtk::Widget>(), badge.upcast_ref()] {
         if data.green {
             w.add_css_class("success");

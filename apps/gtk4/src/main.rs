@@ -2536,6 +2536,13 @@ fn build_tab(
                             pending.set(pending.get() - 1);
                         }
                         latest_refs.replace(Some(refs.clone()));
+                        // 選んでいるコミットに付く ref（タグを付けた・fetch で動いた）を詳細にも出し直す（macOS 版の
+                        // `reloadInfo`）。
+                        if let (Some(details), Some((repo, _))) =
+                            (details_weak.upgrade(), view.current())
+                        {
+                            reload_details_info(&details, repo);
+                        }
                         actions.set_head(refs.refs.head_branch.clone());
                         // push・fetch の後はプルリクエストや CI も変わりうる（読みすぎないよう、間を空ける）。
                         if github_started {
@@ -2722,6 +2729,7 @@ fn build_tab(
                             spinner.start();
                         }
                     }
+                    Event::ConfigChanged => load_form(),
                     // History は作り直さず、行と詳細を読み直す（macOS 版の `checkMailmap`）。
                     Event::MailmapChanged => {
                         view.reload_rows();
@@ -2818,7 +2826,7 @@ fn build_tab(
 /// 見張りの知らせの糸を止める知らせ（タブを閉じたとき）。
 const STOP: u32 = u32::MAX;
 
-/// 詳細の欄をメッセージの高さに合わせる（右の列の半分まで。残りは欄の中でスクロール）。
+/// 詳細の欄をメッセージの高さに合わせる（40 から右の列の半分まで。残りは欄の中でスクロール。macOS 版と同じ）。
 /// 窓が開いた直後は大きさがまだ決まっていないので、決まったフレームで合わせる。
 fn fit_details(right: &gtk::Paned, details: Rc<Details>) {
     right.add_tick_callback(move |right, _| {
@@ -2826,7 +2834,7 @@ fn fit_details(right: &gtk::Paned, details: Rc<Details>) {
             return glib::ControlFlow::Continue;
         }
         let height = details.natural_height(right.width());
-        right.set_position(height.min(right.height() / 2).max(60));
+        right.set_position(height.min(right.height() / 2).max(40));
         glib::ControlFlow::Break
     });
 }
@@ -3189,7 +3197,8 @@ impl Loader {
                     amonhen_core::Selection::Pair { .. } => "pair",
                     amonhen_core::Selection::Each(_) => "each",
                 };
-                Ok::<_, String>((kind, commitfiles::Prepared::new(stacked, &viewed, all)))
+                // 複数のコミットは、設定によらず全ファイルを並べる（macOS 版と同じ）。
+                Ok::<_, String>((kind, commitfiles::Prepared::new(stacked, &viewed, true)))
             })
             .await;
             this.pending.set(this.pending.get() - 1);
@@ -3246,6 +3255,9 @@ enum Event {
     OpenFailed(String),
     /// mailmap（`.mailmap`・`log.mailmap`・`mailmap.file`）が変わった（作者名を出し直す）。
     MailmapChanged,
+    /// 設定だけが変わった（外での `git sparse-checkout`・`git maintenance` など。ref の読み直しとは別に、
+    /// リポジトリの形を読み直す）。
+    ConfigChanged,
     /// daemon・SSH 越しに初めて読んでいる間の、受け取ったバイト数。
     Received(u64),
 }
@@ -3282,8 +3294,13 @@ fn reload_details_info(details: &Rc<Details>, repo: Arc<Repository>) {
         let info = gio::spawn_blocking(move || repo.commit_info(&id)).await;
         if let Ok(Ok(info)) = info
             && details.oid().as_deref() == Some(oid.as_str())
+            && !details.shows_info(&info)
         {
             details.show(&info);
+            // Refs の行が増えた・減ったなら、欄の高さも中身に合わせ直す（macOS 版の `renderHeader`）。
+            if let Some(paned) = details.root.parent().and_downcast::<gtk::Paned>() {
+                fit_details(&paned, details.clone());
+            }
         }
     });
 }
@@ -3489,6 +3506,8 @@ fn load(
             // 設定が変わった（外での `git remote add`・上流の付け替えなど）: ref を読み直す（リモートと上流、
             // GitHub も。macOS 版と同じ）。
             let _ = tx.send_blocking(Event::Refs(refs));
+            // partial clone と sparse checkout は設定で変わる（macOS 版と同じ）。
+            let _ = tx.send_blocking(Event::ConfigChanged);
         }
         if changes.contains(Changes::REFS)
             || changes.contains(Changes::INDEX)
