@@ -738,5 +738,53 @@
 			<string>%ld commits</string>
 		</dict>
 	</dict>
+	<key>The difference from now (%ld files) stays staged.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>The difference from now (%#@n0@) stays staged.</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld file</string>
+			<key>other</key>
+			<string>%ld files</string>
+		</dict>
+	</dict>
+	<key>The difference from now (%ld files) stays in the working tree.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>The difference from now (%#@n0@) stays in the working tree.</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld file</string>
+			<key>other</key>
+			<string>%ld files</string>
+		</dict>
+	</dict>
+	<key>The working tree matches the commit; the difference from now (%ld files) goes away (Undo brings it back).</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>The working tree matches the commit; the difference from now (%#@n0@) goes away (Undo brings it back).</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld file</string>
+			<key>other</key>
+			<string>%ld files</string>
+		</dict>
+	</dict>
 </dict>
 </plist>

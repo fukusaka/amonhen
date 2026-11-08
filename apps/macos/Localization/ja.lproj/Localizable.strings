@@ -57,6 +57,9 @@
 "For this edit only (git’s update-ref). Starts from rebase.updateRefs." = "この編集だけの指定です（git の update-ref）。最初は rebase.updateRefs のとおり。";
 "Now" = "今";
 "After the rebase" = "rebase の後";
+"After the push" = "Push の後";
+"After the force push" = "Force Push の後";
+"removed from %@" = "%@ から消える";
 "For this rebase only (git’s --update-refs). Starts from rebase.updateRefs." = "この rebase だけの指定です（git の --update-refs）。最初は rebase.updateRefs のとおり。";
 "Moving stacked branches needs git 2.38 or newer." = "積み重ねたブランチを動かすには、git 2.38 以降が要ります。";
 "%@ stays where it is (not moved this time)." = "%@ は動きません（今回は動かさない）。";
@@ -190,6 +193,12 @@
 "Soft: keep the changes staged" = "Soft: 変更は stage したまま残す";
 "Mixed: keep the changes in the working tree" = "Mixed: 変更は作業ツリーに残す";
 "Hard: match the commit (uncommitted changes are stashed first)" = "Hard: コミットに合わせる（作業中の変更は先に stash する）";
+"After the reset" = "Reset の後";
+"taken off" = "外れる";
+"The difference from now (%ld files) stays staged." = "今との違い（%ld ファイル）は stage に残ります。";
+"The difference from now (%ld files) stays in the working tree." = "今との違い（%ld ファイル）は作業ツリーに残ります。";
+"The working tree matches the commit; the difference from now (%ld files) goes away (Undo brings it back)." = "作業ツリーをコミットに合わせます。今との違い（%ld ファイル）は消えます（Undo で戻せます）。";
+"%@ has commits this takes off, so pushing afterwards needs Force Push." = "%@ は外れるコミットを持っているので、このあとの Push には Force Push が要ります。";
 "Edit a pushed commit?" = "push 済みのコミットを書き換えますか？";
 "It is in %@, so pushing afterwards needs Force Push." = "%@ にあるので、あとの push には Force Push が要ります。";
 "Mark as resolved with %ld conflicts left?" = "コンフリクトが %ld 残っていますが、解決済みにしますか？";
