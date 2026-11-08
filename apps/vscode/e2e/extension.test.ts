@@ -1495,8 +1495,12 @@ async function fetchSheetFlow(): Promise<void> {
     git('branch', 'fs-gone');
     await repo.refresh();
     await until('リモートが 2 つになる', () => (repo.current.remotes ?? []).length >= 2);
+    // origin だけにあるブランチは、fs-remote から取っても来ない
+    const origin = git('remote', 'get-url', 'origin').trim();
+    childProcess.execFileSync('git', ['branch', 'fs-only-origin'], { cwd: origin });
     await fetchFrom(remote);
     assert.ok(git('for-each-ref', `refs/remotes/${remote}/fs-gone`).trim(), lastErrors());
+    assert.equal(git('for-each-ref', 'refs/remotes/origin/fs-only-origin').trim(), '', '選んだリモートからだけ取る');
     assert.match(shown[0]!.label, /^All Remotes \(.*fs-remote.*\)$/);
     assert.equal(
       shown.find((i) => i.label === remote)?.detail,
@@ -1508,6 +1512,7 @@ async function fetchSheetFlow(): Promise<void> {
     assert.equal(git('for-each-ref', `refs/remotes/${remote}/fs-gone`).trim(), '', lastErrors());
   } finally {
     if (git('branch', '--list', 'fs-gone')) git('branch', '-D', 'fs-gone');
+    childProcess.execFileSync('git', ['branch', '-D', 'fs-only-origin'], { cwd: git('remote', 'get-url', 'origin').trim(), stdio: 'ignore' });
     if (git('remote').split('\n').includes(remote)) git('remote', 'remove', remote);
     await repo.refresh();
   }
