@@ -60,9 +60,11 @@ extension Actions {
     }
 
     /// merge の見込みの絵（fast-forward なら ref が動く絵）。描くものがなければ nil。`theirs` は取り込むものの名前。
-    func mergeDrawing(_ preview: MergePreview?, theirs: String, afterTitle: String = L("After the merge")) -> NSView? {
+    func mergeDrawing(_ preview: MergePreview?, theirs: String, into ours: String = "HEAD",
+                      afterTitle: String = L("After the merge")) -> NSView? {
         guard let preview else { return nil }
-        let current = currentBranch ?? "HEAD"
+        // 取り込む先のブランチの札（今のブランチ以外へ取り込むときは、その名前）。
+        let current = ours == "HEAD" ? currentBranch ?? "HEAD" : ours
         if preview.fastForward == true, let move = preview.move, move.drawing != nil {
             let view = MoveDrawingView(moving: current, kind: "local", afterTitle: afterTitle, lostNote: "", lostColor: nil)
             view.preview = move

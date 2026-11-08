@@ -358,9 +358,56 @@ extension Actions {
                 }
             }
             showForecast()
+            // 取り込み方ごとの前と後の絵（読んでからシートを出す）。選び直すと絵も替わる。高さはいちばん高い絵に
+            // 合わせておく（シートの大きさを変えない）。
+            var drawings: [PullMode: NSView] = [:]
+            if let upstream, incoming.count > 0 {
+                if outgoing.count == 0 {
+                    // 手元に新しいコミットがなければ、どの取り込み方でも先へ進めるだけ。
+                    if let preview = await movePreview(from: "HEAD", to: upstream, branch: branch), preview.drawing != nil {
+                        let view = MoveDrawingView(moving: branch, kind: "local", afterTitle: L("After the pull"),
+                                                   lostNote: "", lostColor: nil)
+                        view.preview = preview
+                        for m in PullMode.allCases { drawings[m] = view }
+                    }
+                } else {
+                    drawings[.merge] = mergeDrawing(await mergePreview(theirs: upstream, ffSetting: "pull.ff"), theirs: upstream,
+                                                    afterTitle: L("After the pull"))
+                    if let preview = await rewritePreview(onto: upstream), preview.drawing != nil {
+                        let view = RewriteDrawingView()
+                        view.preview = preview
+                        drawings[.rebase] = view
+                    }
+                }
+            }
+            let drawingBox = NSView()
+            let shownDrawings = Array(Set(drawings.values.map(ObjectIdentifier.init))).compactMap { id in
+                drawings.values.first { ObjectIdentifier($0) == id }
+            }
+            for view in shownDrawings {
+                view.translatesAutoresizingMaskIntoConstraints = false
+                drawingBox.addSubview(view)
+                NSLayoutConstraint.activate([
+                    view.topAnchor.constraint(equalTo: drawingBox.topAnchor),
+                    view.leadingAnchor.constraint(equalTo: drawingBox.leadingAnchor),
+                ])
+            }
+            let boxSize = shownDrawings.reduce(NSSize.zero) {
+                NSSize(width: max($0.width, $1.fittingSize.width), height: max($0.height, $1.fittingSize.height))
+            }
+            drawingBox.translatesAutoresizingMaskIntoConstraints = false
+            drawingBox.widthAnchor.constraint(equalToConstant: boxSize.width).isActive = true
+            drawingBox.heightAnchor.constraint(equalToConstant: boxSize.height).isActive = true
+            let showDrawing = {
+                let m = chosen() == .git ? byGit : chosen()
+                let shown = (m == .fastForwardOnly && outgoing.count > 0) || (chosen() == .git && refused) ? nil : drawings[m]
+                for view in shownDrawings { view.isHidden = view !== shown }
+            }
+            showDrawing()
             let target = ClosureTarget {
                 update()
                 showForecast()
+                showDrawing()
             }
             for p in [popup, source] {
                 p.target = target
@@ -377,7 +424,8 @@ extension Actions {
                 + [[NSTextField(labelWithString: L("Integrate with:")), popup]])
             grid.rowSpacing = 6
             grid.column(at: 0).xPlacement = .trailing
-            let stack = NSStackView(views: [grid, note] + (forecastLabel.map { [$0] } ?? []))
+            let stack = NSStackView(views: [grid] + (shownDrawings.isEmpty ? [] : [drawingBox]) + [note]
+                + (forecastLabel.map { [$0] } ?? []))
             stack.orientation = .vertical
             stack.alignment = .leading
             stack.spacing = 8
@@ -427,8 +475,22 @@ extension Actions {
                 panel = p
             } else {
                 let label = Self.forecastLabel()
-                label.frame.size = label.fittingSize
-                alert.accessoryView = label
+                // 1 つを merge するなら、前と後の絵（読んでからシートを出す）。
+                var drawing: NSView?
+                if !estimate, theirs.count == 1, let rev = theirs.first {
+                    drawing = mergeDrawing(await mergePreview(theirs: rev, ours: ours), theirs: rev, into: ours)
+                }
+                if let drawing {
+                    let stack = NSStackView(views: [drawing, label])
+                    stack.orientation = .vertical
+                    stack.alignment = .leading
+                    stack.spacing = 10
+                    stack.frame.size = stack.fittingSize
+                    alert.accessoryView = stack
+                } else {
+                    label.frame.size = label.fittingSize
+                    alert.accessoryView = label
+                }
                 Task { @MainActor in
                     Self.show(await predictMerge(ours: ours, theirs: theirs), estimate: estimate || theirs.count > 1, in: label)
                 }
@@ -579,7 +641,16 @@ extension Actions {
             let onto = currentBranch ?? "HEAD"
             let title = revert ? L("Revert %@ on %@?", what, onto) : L("Cherry-pick %@ onto %@?", what, onto)
             let message = (revert ? L("Adds commits that undo them.") : L("Adds copies of them.")) + " " + Self.canUndo
-            guard await confirm(title, message: sheetMessage(message), ok: revert ? "Revert" : "Cherry-pick") else { return }
+            // 前と後の絵（今の先端の上に、作るコミット）。読んでからシートを出す。
+            let drawing = pickDrawing(await pickPreview(oids: commits.map(\.hex), revert: revert), revert: revert)
+            let alert = makeAlert(title, sheetMessage(message))
+            alert.addButton(withTitle: revert ? "Revert" : "Cherry-pick")
+            alert.addButton(withTitle: L("Cancel"))
+            if let drawing {
+                drawing.frame.size = drawing.fittingSize
+                alert.accessoryView = drawing
+            }
+            guard await present(alert) == .alertFirstButtonReturn else { return }
             // 1 つの命令で（git cherry-pick A B C と同じく、コンフリクトで止まったら残りは git が覚えていて、Continue・
             // Skip で続く。1 つずつ実行すると、止まったところで残りが黙って落ちる）。
             perform(["op": revert ? "revert" : "cherryPick", "oids": commits.map(\.hex),

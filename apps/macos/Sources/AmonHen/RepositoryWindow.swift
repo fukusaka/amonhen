@@ -2503,14 +2503,40 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 var known: [String: MergeForecast?] = [:]
                 /// rebase の見通し（動く・残るブランチとコミットごとの見込み）。
                 var previews: [String: RewritePreview] = [:]
+                /// merge の前と後の絵（相手ごと。描くものがなければ nil）。
+                var drawings: [String: NSView?] = [:]
                 var shown = ""
             }
             let answers = Answers()
             let actions = self.actions
+            // merge なら、選んだ相手の前と後の絵を、見込みの文の上に。選び直すと替わる。
+            let drawingBox = NSStackView()
+            drawingBox.orientation = .vertical
+            var relayout: () -> Void = {}
+            let showDrawing = { (rev: String) in
+                guard forecast == .merge else { return }
+                let put = { (view: NSView?) in
+                    drawingBox.arrangedSubviews.forEach { $0.removeFromSuperview() }
+                    if let view { drawingBox.addArrangedSubview(view) }
+                    relayout()
+                }
+                if let known = answers.drawings[rev] { return put(known) }
+                Task { @MainActor in
+                    let view = actions.mergeDrawing(await actions.mergePreview(theirs: rev), theirs: rev)
+                    answers.drawings[rev] = view
+                    if answers.shown == rev { put(view) }
+                }
+            }
+            // 最初の相手の絵は、読んでからシートを出す（出してから大きさを変えない）。
+            if forecast == .merge, let item = popup.selectedItem {
+                let rev = choices[item.tag].rev
+                answers.drawings[rev] = actions.mergeDrawing(await actions.mergePreview(theirs: rev), theirs: rev)
+            }
             let update = {
                 guard let item = popup.selectedItem else { return }
                 let rev = choices[item.tag].rev
                 answers.shown = rev
+                showDrawing(rev)
                 if let preview = answers.previews[rev] { return Actions.show(preview, in: label) }
                 if let known = answers.known[rev] {
                     return Actions.show(known, estimate: forecast == .rebase, in: label)
@@ -2532,13 +2558,18 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             target = ClosureTarget(update)
             popup.target = target
             popup.action = #selector(ClosureTarget.fire)
-            let stack = NSStackView(views: [popup, label])
+            let stack = NSStackView(views: [popup, drawingBox, label])
             stack.orientation = .vertical
             stack.alignment = .leading
             stack.spacing = 8
             stack.layoutSubtreeIfNeeded()
             stack.frame.size = stack.fittingSize
             alert.accessoryView = stack
+            relayout = { [weak alert, weak stack] in
+                stack?.layoutSubtreeIfNeeded()
+                if let stack { stack.frame.size = stack.fittingSize }
+                alert?.layout()
+            }
         }
         alert.window.initialFirstResponder = popup
         let response = await alert.beginSheetModal(for: window)
