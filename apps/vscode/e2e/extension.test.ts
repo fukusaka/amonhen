@@ -2518,7 +2518,14 @@ async function rewriteFlow(label: string): Promise<void> {
 async function openedEditMode(trigger: () => PromiseLike<unknown>): Promise<EditRow[]> {
   const at = posted.length;
   await trigger();
-  return (await waitPosted('editMode', at)).rows;
+  // 開けなければ、拡張が知らせたエラーを添える
+  const opened = await until(
+    '編集モード',
+    () => posted.slice(at).find((m): m is Extract<HostMessage, { type: 'editMode' }> => m.type === 'editMode'),
+    undefined,
+    lastErrors,
+  );
+  return opened.rows;
 }
 
 /** 編集モードの行を当てて、終わるまで待つ */
