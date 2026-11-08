@@ -2354,6 +2354,8 @@ fn integrate_sheet(
         let touched = Rc::new(std::cell::Cell::new(false));
         let configured = Rc::new(std::cell::Cell::new(false));
         let syncing = Rc::new(std::cell::Cell::new(false));
+        // 最初の絵を描けた知らせ（シートを出すのを待つ）。
+        let (drawn_tx, drawn_rx) = async_channel::bounded::<()>(1);
         let load = {
             let (repo, forecast, update_refs, chosen, generation, set_drawing) = (
                 repo.clone(),
@@ -2365,6 +2367,7 @@ fn integrate_sheet(
             );
             let (touched, configured, syncing) =
                 (touched.clone(), configured.clone(), syncing.clone());
+            let drawn_tx = drawn_tx.clone();
             Rc::new(move || {
                 let g = generation.get() + 1;
                 generation.set(g);
@@ -2376,8 +2379,12 @@ fn integrate_sheet(
                     generation.clone(),
                     set_drawing.clone(),
                 );
-                let (touched, configured, syncing) =
-                    (touched.clone(), configured.clone(), syncing.clone());
+                let (touched, configured, syncing, drawn_tx) = (
+                    touched.clone(),
+                    configured.clone(),
+                    syncing.clone(),
+                    drawn_tx.clone(),
+                );
                 let rev = chosen().1;
                 forecast.set_text(&tr!("Checking for conflicts…"));
                 forecast.remove_css_class("warning");
@@ -2398,6 +2405,7 @@ fn integrate_sheet(
                         return;
                     }
                     set_drawing(&info);
+                    let _ = drawn_tx.try_send(());
                     let (lines, conflicts) = rewrite_lines(&info);
                     forecast.set_text(&lines.join("\n"));
                     if conflicts {
@@ -2449,6 +2457,12 @@ fn integrate_sheet(
             }
             l();
         });
+        // rebase の絵は、読み終えてから出す（出した直後に窓の背が伸びると、GNOME の Mutter は開くときの拡大の
+        // 動きのまま止め、シートが大きくずれて描かれる）。遅い場所（SSH 越し）では待ちすぎない。
+        if rebase {
+            let _ =
+                glib::future_with_timeout(std::time::Duration::from_secs(2), drawn_rx.recv()).await;
+        }
         if sheet.run().await != Response::Ok {
             return;
         }
