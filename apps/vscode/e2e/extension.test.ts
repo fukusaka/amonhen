@@ -2778,9 +2778,14 @@ suite('Amon Hen in VSCode', () => {
     const branch = git('symbolic-ref', '--short', 'HEAD').trim();
     const start = git('rev-parse', 'HEAD').trim();
     const quickPick = vscode.window.showQuickPick;
+    // 待ちきれなかったときに、メニューに何が並び、何を選んだかを添える
+    const menus: string[] = [];
     const pick = async (label: string) => {
-      (vscode.window as { showQuickPick: unknown }).showQuickPick = async (items: vscode.QuickPickItem[]) =>
-        items.find((i) => i.label.endsWith(label));
+      (vscode.window as { showQuickPick: unknown }).showQuickPick = async (items: vscode.QuickPickItem[]) => {
+        const picked = items.find((i) => i.label.endsWith(label));
+        menus.push(`[${items.map((i) => i.label).join(' | ')}] → ${picked?.label ?? 'none'}`);
+        return picked;
+      };
       await panel.history.handle({ type: 'displayMenu' });
     };
     git('switch', '-q', '-c', 'fold-side');
@@ -2817,7 +2822,12 @@ suite('Amon Hen in VSCode', () => {
       await waitPosted('reveal', at, (m) => opened.rows[m.row]?.oid === merge.oid);
       at = posted.length;
       await pick('Fold Merged Branches');
-      await waitPosted('rows', at, (m) => m.total === open && !m.rows.some((r) => r.hidden || r.expanded));
+      await until(
+        'merge を畳まない行',
+        () => posted.slice(at).find((m) => m.type === 'rows' && m.total === open && !m.rows.some((r) => r.hidden || r.expanded)),
+        undefined,
+        () => `open ${open}; menus ${menus.join(' / ')}; ${posted.slice(at).map((m) => (m.type === 'rows' ? `rows[${m.start}+${m.rows.length}/${m.total}${m.rows.some((r) => r.hidden) ? ' hidden' : ''}]` : m.type)).join(', ')}`,
+      );
     } finally {
       (vscode.window as { showQuickPick: unknown }).showQuickPick = quickPick;
       git('reset', '-q', '--hard', start);
