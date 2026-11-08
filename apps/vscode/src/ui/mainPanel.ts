@@ -7,6 +7,7 @@ import type { HostMessage, ViewName, WebviewMessage } from '../view/protocol.ts'
 import { BlameController } from './blameController.ts';
 import { FileHistoryController } from './fileHistoryController.ts';
 import { HistoryController } from './historyController.ts';
+import { detailsLayout } from './preferences.ts';
 import { ReflogController } from './reflogController.ts';
 import { SettingsController } from './settingsController.ts';
 import { showError } from './stageCommands.ts';
@@ -124,6 +125,7 @@ export class MainPanel implements vscode.Disposable {
     switch (message.type) {
       case 'ready':
         this.ready = true;
+        this.post({ type: 'detailsLayout', layout: detailsLayout() });
         if (this.pendingView) {
           this.post({ type: 'show', view: this.pendingView });
           this.pendingView = undefined;

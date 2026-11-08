@@ -32,9 +32,11 @@ import {
   historyHidden,
   historyHighlight,
   historyOrder,
+  setDetailsLayout,
   setHistoryFold,
   setViewedFile,
   viewedFiles,
+  detailsLayout,
   setHistoryHidden,
   setHistoryHighlight,
   setHistoryOrder,
@@ -272,6 +274,10 @@ export class HistoryController implements vscode.Disposable {
         break;
       case 'viewed':
         await setViewedFile(message.key, message.path, message.viewed);
+        break;
+      case 'detailsLayout':
+        await setDetailsLayout(message.layout);
+        this.post({ type: 'detailsLayout', layout: detailsLayout() });
         break;
       case 'displayMenu':
         await this.displayMenu();

@@ -1,6 +1,6 @@
 /** 拡張の見た目の好み。設定（settings.json）に出すほどではないものを、VSCode の globalState に覚える */
 import type * as vscode from 'vscode';
-import type { HistoryItem, HistoryOrder } from '../history/protocol.ts';
+import type { DetailsLayout, HistoryItem, HistoryOrder } from '../history/protocol.ts';
 import { type ViewedStore, withViewed } from '../history/stackedFiles.ts';
 import type { MessageParts } from '../workingCopy/commitMessage.ts';
 import type { FileLayout } from '../workingCopy/fileList.ts';
@@ -74,4 +74,13 @@ export function viewedFiles(key: string): string[] {
 export async function setViewedFile(key: string, path: string, viewed: boolean): Promise<void> {
   const now = store?.get<ViewedStore>('history.viewed') ?? { order: [], files: {} };
   await store?.update('history.viewed', withViewed(now, key, path, viewed));
+}
+
+/** History の詳細の、変わったファイルの見せ方（既定は一覧を上に、全ファイルを縦に並べる） */
+export function detailsLayout(): DetailsLayout {
+  return store?.get<DetailsLayout>('history.detailsLayout') ?? { tree: false, single: false };
+}
+
+export async function setDetailsLayout(layout: DetailsLayout): Promise<void> {
+  await store?.update('history.detailsLayout', { tree: layout.tree, single: layout.single });
 }

@@ -68,6 +68,12 @@ export type MessageEdit = 'reword' | 'squash' | 'combine';
 /** 2 つ選んだときの差分の取り方（コアの `pair`） */
 export type PairMode = 'forward' | 'reverse' | 'mergeBase';
 
+/** 詳細の欄の、変わったファイルの見せ方。`tree` は木にして差分の左に、`single` は選んだファイルの差分だけ */
+export interface DetailsLayout {
+  tree: boolean;
+  single: boolean;
+}
+
 /** いくつも選んだコミットの見せ方（`commitDiff` の `history`・`rows`）。差分はファイルごとに求める */
 export interface SelectionView {
   /** 差分を求めるときの `oid` の代わり */
@@ -109,6 +115,8 @@ export type HistoryHostMessage =
   | { type: 'searchable'; searchable: boolean }
   /** 行に出さない項目 */
   | { type: 'historyDisplay'; hidden: HistoryItem[] }
+  /** 詳細の欄の、変わったファイルの見せ方 */
+  | { type: 'detailsLayout'; layout: DetailsLayout }
   /** 祖先の行（ビットの列を base64 で。`row` の下位から）。目立たせないなら null */
   | { type: 'lineage'; rows: string | null }
   | { type: 'search'; state: SearchState }
@@ -170,6 +178,7 @@ export type HistoryWebviewMessage =
   | { type: 'commitDiff'; oid: string; path: string }
   /** 詳細のファイルを Viewed にする・戻す。`key` はコミット ID か、いくつも選んだときの見せ方の `viewedKey` */
   | { type: 'viewed'; key: string; path: string; viewed: boolean }
+  | { type: 'detailsLayout'; layout: DetailsLayout }
   | { type: 'scope'; scope: Scope }
   /** 並び順と項目の一覧を出す */
   | { type: 'displayMenu' }

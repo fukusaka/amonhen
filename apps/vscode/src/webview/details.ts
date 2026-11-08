@@ -3,8 +3,9 @@
  * 差分を出す。差分は画面に入ったものから順に拡張ホストに求める
  */
 import type { FileDiff } from '../diff/fileDiff.ts';
-import type { CommitDetails, DetailsExtras, PairMode, Person, SelectionView } from '../history/protocol.ts';
+import type { CommitDetails, DetailsExtras, DetailsLayout, PairMode, Person, SelectionView } from '../history/protocol.ts';
 import { el, formatDate, getState, post, updateState } from './api.ts';
+import { type FileDir, makeFileTree } from '../workingCopy/fileList.ts';
 import { COLLAPSE_ABOVE, isGenerated, type LineCounts, lineCounts } from '../history/stackedFiles.ts';
 import { renderDiffBody } from './diffView.ts';
 import { signatureMark } from './signature.ts';
@@ -59,6 +60,28 @@ const PAIR_NOTES: Record<PairMode, string> = {
 };
 const PAIR_NAMES: Record<PairMode, string> = { forward: 'A..B', reverse: 'Reverse', mergeBase: 'From the merge-base (A...B)' };
 
+/** 変わったファイルの見せ方。拡張ホストが覚え、すべての詳細の欄で同じにする */
+let layout: DetailsLayout = { tree: false, single: false };
+const panes = new Set<(layout: DetailsLayout) => void>();
+
+export function setDetailsLayout(next: DetailsLayout): void {
+  layout = next;
+  for (const apply of panes) apply(layout);
+}
+
+/** 一覧の上に置く、見せ方の切り替え */
+function layoutButtons(): HTMLElement {
+  const span = el('span', 'layout-buttons');
+  const tree = el('button', 'secondary', layout.tree ? 'List' : 'Tree');
+  tree.title = layout.tree ? 'Show the changed files as a list above the diffs' : 'Show the changed files as a tree beside the diffs';
+  tree.addEventListener('click', () => post({ type: 'detailsLayout', layout: { ...layout, tree: !layout.tree } }));
+  const single = el('button', 'secondary', layout.single ? 'All Files' : 'One File');
+  single.title = layout.single ? 'Show the diffs of all files one after another' : 'Show only the diff of the selected file';
+  single.addEventListener('click', () => post({ type: 'detailsLayout', layout: { ...layout, single: !layout.single } }));
+  span.append(tree, single);
+  return span;
+}
+
 /** 詳細に並べた 1 ファイル（一覧の行と差分の場所） */
 interface FileSection {
   row: HTMLElement;
@@ -87,6 +110,10 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
   let diffObserver: IntersectionObserver | undefined;
   /** 出している詳細の作者などの並び（後から署名・子のコミットを足す） */
   let meta: HTMLElement | undefined;
+  /** 出しているファイルの一覧（見せ方を変えたら並べ直す） */
+  let listed: { files: HTMLElement; diffs: HTMLElement; items: readonly { path: string }[] } | undefined;
+  /** 選んでいるファイル（`single` のときに差分を出すもの） */
+  let current: string | undefined;
 
   /** コミットの ID の並び（onParent があれば押すとその行に移る） */
   function commitLinks(oids: readonly string[]): HTMLElement {
@@ -151,22 +178,120 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
     if (count > 0) {
       const all = el('button', 'secondary', 'Open All');
       all.addEventListener('click', () => post({ type: 'open', oid: d.oid }));
-      filesHead.append(all);
+      filesHead.append(layoutButtons(), all);
     }
-    files.append(filesHead);
     const diffs = fileSections(d.oid, d.oid, d.files, files, true, viewed);
 
     const parts: Node[] = [head, list];
     if (body) parts.push(el('pre', 'body', body));
-    parts.push(files, diffs);
+    parts.push(stack(filesHead, files, diffs));
     root.replaceChildren(...parts);
     root.scrollTop = 0;
-    const file = focus ? sections.get(focus) : undefined;
-    if (file) {
-      file.row.classList.add('active');
+    if (focus && sections.has(focus)) select(focus, true);
+  }
+
+  /** 一覧の見出し・一覧・差分を並べる枠（木のときは一覧と差分を横に並べる） */
+  function stack(head: HTMLElement, files: HTMLElement, diffs: HTMLElement): HTMLElement {
+    const box = el('div', 'stack');
+    box.append(head, files, diffs);
+    return box;
+  }
+
+  /** ファイルを選ぶ。`single` ならその差分だけを出し、そうでなければ `scroll` でその差分に移る */
+  function select(path: string, scroll: boolean): void {
+    const file = sections.get(path);
+    if (!file) return;
+    current = path;
+    for (const [p, f] of sections) {
+      f.row.classList.toggle('active', p === path);
+      f.section.classList.toggle('current', p === path);
+    }
+    if (layout.single) {
+      request(file);
+      if (scroll) file.section.scrollIntoView({ block: 'nearest' });
+    } else if (scroll) {
       file.section.scrollIntoView({ block: 'start' });
     }
   }
+
+  /** 一覧の行を、今の見せ方（木・パスの並び）で並べ直す */
+  function arrange(): void {
+    if (!listed) return;
+    const { files, diffs, items } = listed;
+    const rows: Node[] = [];
+    /** 差分も一覧と同じ順に並べる */
+    const order: HTMLElement[] = [];
+    if (layout.tree) {
+      const walk = (dir: FileDir<{ path: string }>, depth: number, into: Node[]) => {
+        for (const sub of dir.dirs) {
+          const row = el('div', 'file dir-row');
+          row.style.paddingLeft = `${4 + depth * 12}px`;
+          row.append(el('span', 'chevron', '▾'), el('span', 'name', sub.name));
+          const children = el('div', 'dir-children');
+          row.addEventListener('click', () => {
+            children.hidden = !children.hidden;
+            row.querySelector('.chevron')!.textContent = children.hidden ? '▸' : '▾';
+          });
+          const inner: Node[] = [];
+          walk(sub, depth + 1, inner);
+          children.append(...inner);
+          into.push(row, children);
+        }
+        for (const f of dir.files) {
+          const file = sections.get(f.path)!;
+          file.row.style.paddingLeft = `${4 + depth * 12}px`;
+          file.row.querySelector('.dir')!.textContent = '';
+          into.push(file.row);
+          order.push(file.section);
+        }
+      };
+      walk(makeFileTree(items), 0, rows);
+    } else {
+      for (const f of items) {
+        const file = sections.get(f.path)!;
+        const slash = f.path.lastIndexOf('/');
+        file.row.style.paddingLeft = '';
+        file.row.querySelector('.dir')!.textContent = slash >= 0 ? f.path.slice(0, slash) : '';
+        rows.push(file.row);
+        order.push(file.section);
+      }
+    }
+    files.replaceChildren(...rows);
+    diffs.replaceChildren(...order);
+  }
+
+  /** 見せ方を変えた */
+  function applyLayout(): void {
+    root.classList.toggle('tree', layout.tree);
+    root.classList.toggle('single', layout.single);
+    for (const old of root.querySelectorAll('.layout-buttons')) old.replaceWith(layoutButtons());
+    arrange();
+    if (layout.single && sections.size > 0) {
+      select(current && sections.has(current) ? current : sections.keys().next().value!, false);
+    }
+  }
+  panes.add(applyLayout);
+  applyLayout();
+
+  /** 差分の欄をスクロールしたら、いちばん上に見えているファイルを一覧で選ぶ */
+  let following = false;
+  root.addEventListener('scroll', () => {
+    if (layout.single || following || sections.size === 0) return;
+    following = true;
+    requestAnimationFrame(() => {
+      following = false;
+      const top = root.getBoundingClientRect().top;
+      let shown: string | undefined;
+      for (const [path, f] of sections) {
+        if (f.section.getBoundingClientRect().top > top + 1) break;
+        shown = path;
+      }
+      if (shown && shown !== current) {
+        current = shown;
+        for (const [p, f] of sections) f.row.classList.toggle('active', p === shown);
+      }
+    });
+  });
 
   /**
    * ファイルの一覧と差分の枠。差分は画面に入ったものから順に求める（畳んだものは開くまで求めない）。`single` は
@@ -185,12 +310,14 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
       (entries) => {
         for (const entry of entries) {
           const file = sections.get((entry.target as HTMLElement).dataset.path!);
-          if (entry.isIntersecting && file) request(oid, file);
+          if (entry.isIntersecting && file) request(file);
         }
       },
       { root, rootMargin: '200px' },
     );
     sections = new Map();
+    current = undefined;
+    requestDiff = (path) => post({ type: 'commitDiff', oid, path });
     const viewedSet = new Set(viewed);
     const diffs = el('div', 'commit-diffs');
     for (const f of items) {
@@ -236,17 +363,13 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
       const large = (f.added ?? 0) + (f.removed ?? 0) > COLLAPSE_ABOVE;
       setCollapsed(file, file.viewed || isGenerated(f.path) || large);
 
-      // その差分の位置へ移る
-      row.addEventListener('click', () => {
-        for (const other of files.querySelectorAll('.file.active')) other.classList.remove('active');
-        row.classList.add('active');
-        section.scrollIntoView({ block: 'start' });
-      });
+      // その差分の位置へ移る（single ならその差分だけを出す）
+      row.addEventListener('click', () => select(f.path, !layout.single));
       head.addEventListener('click', (e) => {
         if ((e.target as Element).closest('button, label')) return;
         file.chosen = true;
         setCollapsed(file, !section.classList.contains('collapsed'));
-        if (!section.classList.contains('collapsed')) request(oid, file);
+        if (!section.classList.contains('collapsed')) request(file);
         // 畳んで見出しが上に隠れたら、見出しが見えるところまで戻す
         if (head.getBoundingClientRect().top < root.getBoundingClientRect().top) section.scrollIntoView({ block: 'start' });
       });
@@ -255,21 +378,27 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
         file.chosen = true;
         setViewed(file, box.checked);
         setCollapsed(file, box.checked);
-        if (!box.checked) request(oid, file);
+        if (!box.checked) request(file);
         if (viewedKey) post({ type: 'viewed', key: viewedKey, path: f.path, viewed: box.checked });
         if (box.checked && head.getBoundingClientRect().top < root.getBoundingClientRect().top) section.scrollIntoView({ block: 'start' });
       });
-      files.append(row);
       diffObserver.observe(section);
     }
+    listed = { files, diffs, items };
+    applyLayout();
     return diffs;
   }
 
-  /** 見えたファイルの差分を求める（畳んでいれば開くまで待つ） */
-  function request(oid: string, file: FileSection): void {
+  /** 出しているコミットの、ファイルの差分を求める */
+  let requestDiff: (path: string) => void = () => undefined;
+
+  /** 見えたファイルの差分を求める（畳んでいれば開くまで待つ。single なら選んだものだけ） */
+  function request(file: FileSection): void {
     if (file.requested || file.section.classList.contains('collapsed')) return;
+    const path = file.section.dataset.path!;
+    if (layout.single && path !== current) return;
     file.requested = true;
-    post({ type: 'commitDiff', oid, path: file.section.dataset.path! });
+    requestDiff(path);
   }
 
   function setCollapsed(file: FileSection, collapsed: boolean): void {
@@ -293,6 +422,7 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
   function showSelection({ count, view, error, onPair, onCommit }: SelectionState): void {
     shownOid = view?.key;
     meta = undefined;
+    listed = undefined;
     diffObserver?.disconnect();
     sections = new Map();
     const parts: Node[] = [el('div', 'subject', `${count} commits selected`)];
@@ -336,8 +466,10 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
     } else {
       const files = el('div', 'files');
       const n = view.files.length;
-      files.append(el('div', 'files-head', `${n} file${n === 1 ? '' : 's'} changed`));
-      parts.push(files, fileSections(view.key, view.viewedKey, view.files, files, false, view.viewed));
+      const filesHead = el('div', 'files-head');
+      filesHead.append(el('span', '', `${n} file${n === 1 ? '' : 's'} changed`), layoutButtons());
+      const diffs = fileSections(view.key, view.viewedKey, view.files, files, false, view.viewed);
+      parts.push(stack(filesHead, files, diffs));
     }
     root.replaceChildren(...parts);
     root.scrollTop = 0;
@@ -377,6 +509,8 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
   function clear(): void {
     shownOid = undefined;
     meta = undefined;
+    listed = undefined;
+    sections = new Map();
     root.replaceChildren(el('div', 'empty', 'コミットを選ぶと、ここに詳細が出ます'));
   }
 

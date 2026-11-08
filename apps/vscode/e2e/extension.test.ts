@@ -1605,6 +1605,15 @@ async function historySelectionFlow(): Promise<void> {
     await panel.history.handle({ type: 'viewed', key: s4oid, path: 's4.txt', viewed: false });
     assert.deepEqual((await showOne()).viewed, []);
 
+    // 変わったファイルの見せ方は覚えて、Webview に返す
+    const layout = async (tree: boolean, single: boolean) => {
+      const at = posted.length;
+      await panel.history.handle({ type: 'detailsLayout', layout: { tree, single } });
+      return (await waitPosted('detailsLayout', at)).layout;
+    };
+    assert.deepEqual(await layout(true, true), { tree: true, single: true });
+    assert.deepEqual(await layout(false, false), { tree: false, single: false });
+
     // 離れた 2 つは取り方を選べる。逆にすると足した行が消した行になる
     const pair = await select(2, [s4, s1]);
     assert.equal(pair.kind, 'pair');

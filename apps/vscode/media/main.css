@@ -962,6 +962,66 @@ button.secondary {
   font-weight: bold;
 }
 
+/* 変わったファイルの見せ方の切り替え */
+.files-head {
+  gap: 6px;
+}
+
+.files-head .layout-buttons {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+/* 木: 一覧を差分の左に置き、スクロールしても見えたままにする */
+aside.details.tree .stack {
+  display: grid;
+  grid-template-columns: minmax(140px, 32%) 1fr;
+  align-items: start;
+}
+
+aside.details.tree .stack > .files-head {
+  grid-column: 1 / -1;
+}
+
+aside.details.tree .stack > .files {
+  position: sticky;
+  top: -12px;
+  max-height: calc(100vh - 8px);
+  overflow: auto;
+  border-right: 1px solid var(--vscode-panel-border);
+}
+
+aside.details.tree .stack > .commit-diffs {
+  min-width: 0;
+  margin-left: 0;
+}
+
+aside.details.tree .file .dir {
+  display: none;
+}
+
+aside.details.tree .file .name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file.dir-row {
+  color: var(--vscode-descriptionForeground);
+}
+
+.file.dir-row .chevron {
+  width: 1em;
+  flex: none;
+}
+
+/* 1 つのファイル: 選んだファイルの差分だけ */
+aside.details.single .file-diff:not(.current) {
+  display: none;
+}
+
 /* 見出しを押して畳む・開く */
 .file-diff .diff-head {
   cursor: pointer;
