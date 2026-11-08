@@ -51,9 +51,10 @@ extension Actions {
         return await Task.detached { try? repository.info(json: json, as: MergePreview.self) }.value
     }
 
-    /// コミット `oids`（古い順）を cherry-pick・revert したときの見込みを読む。読めなければ nil。
-    func pickPreview(oids: [String], revert: Bool) async -> PickPreview? {
-        let command: [String: Any] = ["op": "pickPreview", "oids": oids, "revert": revert]
+    /// コミット `oids`（古い順）を cherry-pick・revert したときの見込みを読む。`subjects` を渡せば、まだコミットの
+    /// ないもの（パッチ）を、その件名（古い順）で。読めなければ nil。
+    func pickPreview(oids: [String] = [], revert: Bool = false, subjects: [String] = []) async -> PickPreview? {
+        let command: [String: Any] = ["op": "pickPreview", "oids": oids, "revert": revert, "subjects": subjects]
         let repository = self.repository
         guard let json = try? Repository.json(command) else { return nil }
         return await Task.detached { try? repository.info(json: json, as: PickPreview.self) }.value
@@ -77,9 +78,9 @@ extension Actions {
     }
 
     /// cherry-pick・revert の見込みの絵。描くものがなければ nil。
-    func pickDrawing(_ preview: PickPreview?, revert: Bool) -> NSView? {
+    func pickDrawing(_ preview: PickPreview?, kind: PickDrawingView.Kind) -> NSView? {
         guard let preview, preview.drawing != nil else { return nil }
-        let view = PickDrawingView(current: currentBranch ?? "HEAD", revert: revert)
+        let view = PickDrawingView(current: currentBranch ?? "HEAD", kind: kind)
         view.preview = preview
         return view
     }
@@ -181,12 +182,15 @@ final class PickDrawingView: GraphDrawingView {
         }
     }
 
-    private let current: String
-    private let revert: Bool
+    /// 何で作るか（見出しと、件名の書き方が変わる）。
+    enum Kind { case cherryPick, revert, patches }
 
-    init(current: String, revert: Bool) {
+    private let current: String
+    private let kind: Kind
+
+    init(current: String, kind: Kind) {
         self.current = current
-        self.revert = revert
+        self.kind = kind
         super.init(frame: .zero)
     }
 
@@ -205,8 +209,12 @@ final class PickDrawingView: GraphDrawingView {
             .font: NSFont.boldSystemFont(ofSize: NSFont.smallSystemFontSize), .foregroundColor: NSColor.secondaryLabelColor,
         ]
         NSString(string: L("Now")).draw(at: NSPoint(x: 4, y: 2), withAttributes: headingAttributes)
-        NSString(string: revert ? L("After the revert") : L("After the cherry-pick"))
-            .draw(at: NSPoint(x: Self.columnWidth + 28, y: 2), withAttributes: headingAttributes)
+        let title = switch kind {
+        case .cherryPick: L("After the cherry-pick")
+        case .revert: L("After the revert")
+        case .patches: L("After applying the patches")
+        }
+        NSString(string: title).draw(at: NSPoint(x: Self.columnWidth + 28, y: 2), withAttributes: headingAttributes)
         let labels = Dictionary(grouping: d.labels, by: \.oid)
         let tip = d.head.first?.oid
         let firstNew = d.picks.first.map { "new:" + $0.oid }
@@ -220,7 +228,7 @@ final class PickDrawingView: GraphDrawingView {
                 let at = d.picksMore > 0 ? (d.picksMoreAt ?? d.picks.count) : -1
                 for (i, c) in d.picks.enumerated() {
                     if i == at { gaps.append(Gap(lane: 0, y: y, count: d.picksMore)); y += Self.rowHeight }
-                    let subject = revert ? c.subject : c.subject + "′"
+                    let subject = kind == .cherryPick ? c.subject + "′" : c.subject
                     var row = GraphRow(commit: RewritePreview.Drawing.Commit(oid: "new:" + c.oid, subject: subject), lane: 0, dim: false, y: y)
                     row.isNew = true
                     rows.append(row)

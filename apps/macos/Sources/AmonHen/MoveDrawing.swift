@@ -32,6 +32,14 @@ nonisolated struct MovePreview: Decodable, Sendable {
 extension Actions {
     /// ref を `from` から `to` へ動かしたときの見込みを読む（`branch` を渡せば、その上流が外れるコミットを持つかも）。
     /// 読めなければ nil。
+    /// ブランチ `branch` を消したときの見込み（`against` と分かれたところへ動かしたものとして）。読めなければ nil。
+    func deletePreview(branch: String, against: String) async -> MovePreview? {
+        let command: [String: Any] = ["op": "deletePreview", "branch": branch, "against": against]
+        let repository = self.repository
+        guard let json = try? Repository.json(command) else { return nil }
+        return await Task.detached { try? repository.info(json: json, as: MovePreview.self) }.value
+    }
+
     func movePreview(from: String, to: String, branch: String? = nil) async -> MovePreview? {
         var command: [String: Any] = ["op": "movePreview", "from": from, "to": to]
         if let branch { command["branch"] = branch }
@@ -60,13 +68,16 @@ final class MoveDrawingView: GraphDrawingView {
     /// 外れるコミットに添える文と色（Force Push は赤、Reset は灰）。
     private let lostNote: String
     private let lostColor: NSColor?
+    /// ref が消える（ブランチの削除）。右には札を描かない。
+    private let removes: Bool
 
-    init(moving: String, kind: String, afterTitle: String, lostNote: String, lostColor: NSColor?) {
+    init(moving: String, kind: String, afterTitle: String, lostNote: String, lostColor: NSColor?, removes: Bool = false) {
         self.moving = moving
         movingKind = kind
         self.afterTitle = afterTitle
         self.lostNote = lostNote
         self.lostColor = lostColor
+        self.removes = removes
         super.init(frame: .zero)
     }
 
@@ -103,7 +114,14 @@ final class MoveDrawingView: GraphDrawingView {
             let gainedAt = d.gainedMore > 0 ? (d.gainedMoreAt ?? d.gained.count) : -1
             for (i, c) in d.gained.enumerated() {
                 if i == gainedAt { gaps.append(Gap(lane: 0, y: y, count: d.gainedMore)); y += Self.rowHeight }
-                rows.append(GraphRow(commit: c, lane: 0, dim: false, y: y))
+                var row = GraphRow(commit: c, lane: 0, dim: false, y: y)
+                // どこからも辿れないコミットは、今は History にない（Reflog にだけある）。
+                if !after, c.hidden == true {
+                    row = GraphRow(commit: c, lane: 0, dim: true, y: y)
+                    row.hollow = true
+                    row.note = L("only in Reflog")
+                }
+                rows.append(row)
                 y += Self.rowHeight
             }
             if gainedAt == d.gained.count { gaps.append(Gap(lane: 0, y: y, count: d.gainedMore)); y += Self.rowHeight }
@@ -126,7 +144,7 @@ final class MoveDrawingView: GraphDrawingView {
                        highlightTop: after ? d.gained.count : 0, baseNote: split, labels: { oid in
                 var out = (labels[oid] ?? []).filter { $0.name != self.moving }.map { ($0.name, $0.kind, false) }
                 // 動かす ref は、左では今のところ、右では行き先に、塗った札で。
-                let here = after ? oid == destination : labels[oid]?.contains { $0.name == self.moving } == true
+                let here = after ? oid == destination && !self.removes : labels[oid]?.contains { $0.name == self.moving } == true
                 if here { out.insert((self.moving, self.movingKind, true), at: 0) }
                 return out
             })

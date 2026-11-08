@@ -51,6 +51,10 @@ public struct UndoPeek: Sendable {
     public let label: String
     /// 何を戻すか: `refs`（HEAD とブランチ）・`files`（作業ツリーのファイル）・`stash`（消した stash）・`rename`（ブランチの名前）。
     public let kind: String
+    /// 今の HEAD のブランチ（detached なら nil）。
+    public var head: String? = nil
+    /// 動くブランチ（名前、今の oid、戻る先の oid。作られた・消されたものは nil）。
+    public var moves: [(name: String, from: String?, to: String?)] = []
 }
 
 extension Repository {
@@ -63,8 +67,13 @@ extension Repository {
             throw AmonhenError(description: response["error"] as? String ?? "失敗した")
         }
         guard let label = response["label"] as? String else { return nil }
-        let kind = (response["info"] as? [String: Any])?["kind"] as? String ?? "refs"
-        return UndoPeek(label: label, kind: kind)
+        let info = response["info"] as? [String: Any]
+        let kind = info?["kind"] as? String ?? "refs"
+        let moves = (info?["moves"] as? [[String: Any]] ?? []).compactMap { m -> (name: String, from: String?, to: String?)? in
+            guard let name = m["name"] as? String else { return nil }
+            return (name, m["from"] as? String, m["to"] as? String)
+        }
+        return UndoPeek(label: label, kind: kind, head: info?["head"] as? String, moves: moves)
     }
 }
 

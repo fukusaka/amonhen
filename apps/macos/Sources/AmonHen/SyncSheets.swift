@@ -60,6 +60,8 @@ nonisolated struct RewritePreview: Decodable, Sendable {
             let subject: String
             /// 分かれたところだけ: 作った日時（Unix 秒）。
             var time: Int64? = nil
+            /// どこからも辿れない（Reflog にだけある。Undo で戻る先）。
+            var hidden: Bool? = nil
         }
 
         struct Label: Decodable, Sendable {
@@ -642,7 +644,7 @@ extension Actions {
             let title = revert ? L("Revert %@ on %@?", what, onto) : L("Cherry-pick %@ onto %@?", what, onto)
             let message = (revert ? L("Adds commits that undo them.") : L("Adds copies of them.")) + " " + Self.canUndo
             // 前と後の絵（今の先端の上に、作るコミット）。読んでからシートを出す。
-            let drawing = pickDrawing(await pickPreview(oids: commits.map(\.hex), revert: revert), revert: revert)
+            let drawing = pickDrawing(await pickPreview(oids: commits.map(\.hex), revert: revert), kind: revert ? .revert : .cherryPick)
             let alert = makeAlert(title, sheetMessage(message))
             alert.addButton(withTitle: revert ? "Revert" : "Cherry-pick")
             alert.addButton(withTitle: L("Cancel"))
@@ -676,6 +678,23 @@ extension Actions {
         }
     }
 
+    /// チェックアウトしていないブランチを上流まで進める前に確かめる（前と後の絵つき）。
+    func fastForwardWithConfirmation(_ name: String, to upstream: String) {
+        Task { @MainActor in
+            let alert = makeAlert(L("Fast-forward %@ to %@?", name, upstream), Self.canUndo)
+            alert.addButton(withTitle: "Fast-Forward")
+            alert.addButton(withTitle: L("Cancel"))
+            if let preview = await movePreview(from: name, to: upstream, branch: name), preview.drawing != nil {
+                let drawing = MoveDrawingView(moving: name, kind: "local", afterTitle: L("After the fast-forward"),
+                                              lostNote: "", lostColor: nil)
+                drawing.preview = preview
+                drawing.frame.size = drawing.fittingSize
+                alert.accessoryView = drawing
+            }
+            if await present(alert) == .alertFirstButtonReturn { perform(["op": "fastForward", "branch": name]) }
+        }
+    }
+
     /// Undo の前に、何を戻すかを見せる（ツールバーのボタンでは名前がツールチップにしか出ないため）。
     func undoWithConfirmation() {
         let repository = self.repository
@@ -693,6 +712,17 @@ extension Actions {
             let alert = makeAlert(L("Undo “%@”?", peek.label), what)
             alert.addButton(withTitle: "Undo")
             alert.addButton(withTitle: L("Cancel"))
+            // ブランチが戻るなら、前と後の絵（今のブランチを先に。作られた・消されたブランチは描かない）。
+            let move = peek.moves.first { $0.name == peek.head && $0.from != nil && $0.to != nil }
+                ?? peek.moves.first { $0.from != nil && $0.to != nil }
+            if let move, let from = move.from, let to = move.to,
+               let preview = await movePreview(from: from, to: to), preview.drawing != nil {
+                let drawing = MoveDrawingView(moving: move.name, kind: "local", afterTitle: L("After the undo"),
+                                              lostNote: L("taken off"), lostColor: nil)
+                drawing.preview = preview
+                drawing.frame.size = drawing.fittingSize
+                alert.accessoryView = drawing
+            }
             if await present(alert) == .alertFirstButtonReturn { undo() }
         }
     }
@@ -947,7 +977,7 @@ extension Actions {
         let others = names.filter { mergedByPullRequest[$0] == nil }
         Task { @MainActor in
             // それぞれのブランチにしかないコミット。git と同じく、今のブランチか上流のどちらかに取り込まれていれば消せる。
-            let result = await Task.detached { () -> Result<[(String, CommitRange)], Error> in
+            let result = await Task.detached { () -> Result<[(String, CommitRange, String)], Error> in
                 Result {
                     let refs = try repository.loadRefs()
                     return try others.map { name in
@@ -957,16 +987,26 @@ extension Actions {
                         let item = refs.items.first { $0.kind == .local && $0.name == name }
                         let upstream = item.flatMap { $0.gone ? nil : $0.detail }
                         let fromHead = try only("HEAD")
-                        guard fromHead.count > 0, let upstream else { return (name, fromHead) }
+                        guard fromHead.count > 0, let upstream else { return (name, fromHead, "HEAD") }
                         let fromUpstream = try only(upstream)
-                        return (name, fromUpstream.count < fromHead.count ? fromUpstream : fromHead)
+                        return fromUpstream.count < fromHead.count ? (name, fromUpstream, upstream) : (name, fromHead, "HEAD")
                     }
                 }
             }.value
             let unique: [(String, CommitRange)]
+            // 1 本を消して、ほかにないコミットがあれば、それが外れる前と後の絵（どこに取り込まれているかと比べて）。
+            var drawing: NSView?
             switch result {
             case let .failure(error): return await inform(L("Couldn’t check the branches"), "\(error)")
-            case let .success(ranges): unique = ranges
+            case let .success(ranges):
+                unique = ranges.map { ($0.0, $0.1) }
+                if names.count == 1, let (name, range, against) = ranges.first, range.count > 0,
+                   let preview = await deletePreview(branch: name, against: against), preview.drawing != nil {
+                    let view = MoveDrawingView(moving: name, kind: "local", afterTitle: L("After deleting"),
+                                               lostNote: L("goes with the branch"), lostColor: .systemRed, removes: true)
+                    view.preview = preview
+                    drawing = view
+                }
             }
             let unmerged = unique.filter { $0.1.count > 0 }
             let title = names.count == 1 ? L("Delete %@?", names[0]) : L("Delete %ld branches?", names.count)
@@ -976,7 +1016,17 @@ extension Actions {
             let message = list + prNote + (unmerged.isEmpty ? "" : L("Some commits are on no other branch; they go with the branch.") + " ") + Self.canUndo
             let alert = makeAlert(title, message)
             if !unmerged.isEmpty {
-                alert.accessoryView = Self.commitLists(unmerged.map { (L("Commits only on %@", $0.0), $0.1, true) })
+                let lists = Self.commitLists(unmerged.map { (L("Commits only on %@", $0.0), $0.1, true) })
+                if let drawing {
+                    let stack = NSStackView(views: [drawing, lists])
+                    stack.orientation = .vertical
+                    stack.alignment = .leading
+                    stack.spacing = 10
+                    stack.frame.size = stack.fittingSize
+                    alert.accessoryView = stack
+                } else {
+                    alert.accessoryView = lists
+                }
             }
             alert.addButton(withTitle: unmerged.isEmpty ? L("Delete") : L("Delete Anyway"))
             alert.addButton(withTitle: L("Cancel"))
