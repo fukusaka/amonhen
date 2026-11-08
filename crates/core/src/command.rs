@@ -4961,22 +4961,29 @@ mod tests {
             &command(serde_json::json!({"op": "worktreeAdd", "path": wt, "newBranch": "busy"})),
         );
         assert_eq!(added["ok"], true, "{added}");
+        // 掴み続けるプロセスを作り、消し始めてから少しして終わらせる（起動にかかる時間に左右されないように）
         let mut holder = if cfg!(windows) {
             let mut c = amonhen_model::process::command("powershell");
-            c.args(["-NoProfile", "-Command", "Start-Sleep -Milliseconds 700"]);
+            c.args(["-NoProfile", "-Command", "Start-Sleep -Seconds 30"]);
             c
         } else {
             let mut c = amonhen_model::process::command("sleep");
-            c.arg("0.7");
+            c.arg("30");
             c
         };
-        let mut holder = holder.current_dir(&wt).spawn().unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        let removed = run(
-            &repo,
-            &command(serde_json::json!({"op": "worktreeRemove", "path": wt, "force": true})),
-        );
-        holder.wait().unwrap();
+        let holder = std::sync::Mutex::new(holder.current_dir(&wt).spawn().unwrap());
+        let removed = std::thread::scope(|scope| {
+            scope.spawn(|| {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                let mut holder = holder.lock().unwrap();
+                let _ = holder.kill();
+                let _ = holder.wait();
+            });
+            run(
+                &repo,
+                &command(serde_json::json!({"op": "worktreeRemove", "path": wt, "force": true})),
+            )
+        });
         assert_eq!(removed["ok"], true, "{removed}");
         assert!(!wt.exists());
     }
