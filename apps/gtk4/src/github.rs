@@ -353,16 +353,6 @@ impl Ci {
             Self::None => tr!("No CI"),
         }
     }
-
-    /// 印の文字と色の CSS のクラス（GTK の部品で出すとき）。
-    pub fn symbol(self) -> (&'static str, &'static str) {
-        match self {
-            Self::Passing => ("✓", "success"),
-            Self::Failing => ("✗", "error"),
-            Self::Pending => ("●", "warning"),
-            Self::None => ("○", "dim-label"),
-        }
-    }
 }
 
 /// プルリクエストの `statusCheckRollup` の 1 つ。CheckRun なら status・conclusion、StatusContext なら state。

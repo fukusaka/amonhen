@@ -151,6 +151,8 @@ pub enum Kind {
     CircleFill,
     /// circle（CI がない）
     Circle,
+    /// slash.circle（CI のチェックを取り消した）
+    SlashCircle,
     /// arrow.up.left.and.arrow.down.right（詳細を広げる）
     Expand,
     /// arrow.down.right.and.arrow.up.left（広げた詳細を戻す）
@@ -895,6 +897,11 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
         }
         Kind::Circle => {
             p.add_circle(&point(8.0, 8.0), 6.3);
+        }
+        Kind::SlashCircle => {
+            p.add_circle(&point(8.0, 8.0), 6.3);
+            p.move_to(3.5, 12.5);
+            p.line_to(12.5, 3.5);
         }
         Kind::Expand => {
             // 左上と右下の角へ向かう矢印。

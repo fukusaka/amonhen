@@ -10,31 +10,20 @@ use amonhen_model::tr;
 
 use crate::github::{self, Ci, CommitCheck, GitHubRepository};
 
-/// 状態の印（文字と色）の部品。
-fn mark(ci: Ci, cancelled: bool) -> gtk::Label {
-    // 取り消しで終わったものは、失敗ではなく止まった印（灰色）。
-    let (symbol, css) = if cancelled {
-        ("⊘", "dim-label")
-    } else {
-        ci.symbol()
-    };
-    let l = gtk::Label::new(Some(symbol));
-    l.add_css_class(css);
-    l
-}
-
-/// 見出しの、18 px の色の付いた記号（macOS 版の `look` の SF Symbols）。
-fn header_icon(ci: Ci) -> gtk::Widget {
+/// 色の付いた状態の記号（macOS 版の `look` の SF Symbols）。見出しは 18 px、チェックの行は 12 px。
+/// 取り消しで終わったものは、失敗ではなく止まった印（灰色）。
+fn ci_icon(ci: Ci, cancelled: bool, size: i32) -> gtk::Widget {
     use crate::icon::{Icon, Kind};
     let (kind, css) = match ci {
+        _ if cancelled => (Kind::SlashCircle, Some("dim-label")),
         Ci::Passing => (Kind::CheckCircleFill, Some("success")),
         Ci::Failing => (Kind::XCircleFill, Some("error")),
         Ci::Pending => (Kind::CircleFill, Some("warning")),
-        Ci::None => (Kind::Circle, None),
+        Ci::None => (Kind::Circle, Some("dim-label")),
     };
     let icon = Icon::default();
     icon.set(kind, false);
-    icon.set_pixel_size(18);
+    icon.set_pixel_size(size);
     if let Some(css) = css {
         icon.add_css_class(css);
     }
@@ -115,7 +104,7 @@ pub fn show(
     badge.add_css_class("ci-badge");
     badge.set_valign(gtk::Align::Center);
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    header.append(&header_icon(status));
+    header.append(&ci_icon(status, false, 18));
     header.append(&title);
     header.append(&badge);
 
@@ -208,7 +197,7 @@ fn fill(note: &gtk::Label, list: &gtk::Box, all: &[CommitCheck]) {
     checks.sort_by(|a, b| (order(a), &a.name).cmp(&(order(b), &b.name)));
     for check in checks {
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        row.append(&mark(check.ci(), check.is_cancelled()));
+        row.append(&ci_icon(check.ci(), check.is_cancelled(), 12));
         // 名前が長いときは名前を省略し、印と結果は縮めない。
         // URL があれば、押すとそのログをブラウザで開くリンク。
         let name = gtk::Label::new(None);
