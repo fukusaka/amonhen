@@ -679,6 +679,8 @@ pub struct Move {
     /// 外れるコミットに添える文と色（Force Push は赤、Reset は薄く）。
     pub lost_note: String,
     pub lost_red: bool,
+    /// ref が消える（ブランチの削除）。右には札を描かない。
+    pub removes: bool,
 }
 
 /// ref を動かす確認に埋め込む、前と後の絵（docs/design.md の「Previewing graph changes」）。左が今、右が動かした
@@ -829,7 +831,7 @@ fn draw_move(area: &gtk::DrawingArea, cr: &gtk::cairo::Context, info: &Value, ho
                     .collect();
                 // 動かす ref は、左では今のところ、右では行き先に、塗った札で。
                 let here = if after {
-                    destination.as_deref() == Some(oid)
+                    destination.as_deref() == Some(oid) && !how.removes
                 } else {
                     labels
                         .get(oid)
@@ -870,6 +872,7 @@ pub fn for_merge(info: &Value, current: &str, after_title: String) -> Option<gtk
             after_title,
             lost_note: String::new(),
             lost_red: false,
+            removes: false,
         });
         set(mv);
         return Some(area);
@@ -1014,7 +1017,15 @@ fn draw_merge(
 /// cherry-pick・revert の見込み（`pickPreview` の答え）の絵（macOS 版の `PickDrawingView`）。左が今の先端、右が後:
 /// その上に、これから作るコミット（点線の丸。cherry-pick は件名に ′、revert は「Revert "…"」）が並び、今のブランチの
 /// 札が一番上へ移る。描くものがなければ None。
-pub fn for_pick(info: &Value, current: &str, revert: bool) -> Option<gtk::DrawingArea> {
+/// 何で作るか（見出しと、件名の書き方が変わる。macOS 版の `PickDrawingView.Kind`）。
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PickKind {
+    CherryPick,
+    Revert,
+    Patches,
+}
+
+pub fn for_pick(info: &Value, current: &str, kind: PickKind) -> Option<gtk::DrawingArea> {
     let d = &info["drawing"];
     if d.is_null() {
         return None;
@@ -1027,7 +1038,7 @@ pub fn for_pick(info: &Value, current: &str, revert: bool) -> Option<gtk::Drawin
     area.set_content_height(((picks + head) as f64 * ROW + 26.0) as i32);
     let info = info.clone();
     let current = current.to_owned();
-    area.set_draw_func(move |area, cr, _, _| draw_pick(area, cr, &info, &current, revert));
+    area.set_draw_func(move |area, cr, _, _| draw_pick(area, cr, &info, &current, kind));
     Some(area)
 }
 
@@ -1036,7 +1047,7 @@ fn draw_pick(
     cr: &gtk::cairo::Context,
     info: &Value,
     current: &str,
-    revert: bool,
+    kind: PickKind,
 ) {
     let d = &info["drawing"];
     let fg = area.color();
@@ -1050,10 +1061,10 @@ fn draw_pick(
     };
     heading(&tr!("Now"), 4.0);
     heading(
-        &if revert {
-            tr!("After the revert")
-        } else {
-            tr!("After the cherry-pick")
+        &match kind {
+            PickKind::CherryPick => tr!("After the cherry-pick"),
+            PickKind::Revert => tr!("After the revert"),
+            PickKind::Patches => tr!("After applying the patches"),
         },
         column_width(area) + 28.0,
     );
@@ -1077,10 +1088,10 @@ fn draw_pick(
                 |(oid, subject), y| {
                     rows.push(Row {
                         oid: format!("new:{oid}"),
-                        subject: if revert {
-                            subject.clone()
-                        } else {
+                        subject: if kind == PickKind::CherryPick {
                             format!("{subject}′")
+                        } else {
+                            subject.clone()
                         },
                         y,
                         is_new: true,
