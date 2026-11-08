@@ -169,6 +169,18 @@ export class HistoryController implements vscode.Disposable {
   private searchAbort: AbortController | undefined;
   /** 畳む設定で、開いている merge */
   private readonly expandedMerges = new Set<string>();
+  /**
+   * 畳むか・祖先を目立たせるか。選んだらすぐこの値で読み直し、覚えるのは裏で（覚え終わるのを待つと、その間に始まった
+   * 読み直しが前の値で読む）。まだ選んでいなければ、覚えている値
+   */
+  private foldChoice: boolean | undefined;
+  private highlightChoice: boolean | undefined;
+  private get folding(): boolean {
+    return this.foldChoice ?? historyFold();
+  }
+  private get highlighting(): boolean {
+    return this.highlightChoice ?? historyHighlight();
+  }
   /** 選んでいるコミット（祖先を目立たせるため） */
   private selectedOid: string | undefined;
   private lineageRequest = 0;
@@ -833,7 +845,7 @@ export class HistoryController implements vscode.Disposable {
   private async sendLineage(): Promise<void> {
     const request = ++this.lineageRequest;
     const shown = this.daemon;
-    if (!historyHighlight() || !shown || !this.selectedOid) {
+    if (!this.highlighting || !shown || !this.selectedOid) {
       this.post({ type: 'lineage', rows: null });
       return;
     }
@@ -886,10 +898,10 @@ export class HistoryController implements vscode.Disposable {
       ['signature', 'Signature'],
     ];
     const highlight: Item = {
-      label: `${mark(historyHighlight())}Highlight Ancestors`,
+      label: `${mark(this.highlighting)}Highlight Ancestors`,
       description: 'Dim the commits that aren’t ancestors of the selected one',
     };
-    const fold: Item = { label: `${mark(historyFold())}Fold Merged Branches`, description: 'Hide the commits a merge brought in' };
+    const fold: Item = { label: `${mark(this.folding)}Fold Merged Branches`, description: 'Hide the commits a merge brought in' };
     const picked = await vscode.window.showQuickPick<Item>(
       [
         // 並び順は共有の daemon で変える（git で読むときは日付順のまま）
@@ -910,10 +922,12 @@ export class HistoryController implements vscode.Disposable {
       { placeHolder: 'History Display' },
     );
     if (picked === highlight) {
-      await setHistoryHighlight(!historyHighlight());
+      this.highlightChoice = !this.highlighting;
+      void setHistoryHighlight(this.highlightChoice);
       await this.sendLineage();
     } else if (picked === fold) {
-      await setHistoryFold(!historyFold());
+      this.foldChoice = !this.folding;
+      void setHistoryFold(this.foldChoice);
       this.expandedMerges.clear();
       await this.reset();
     } else if (picked?.order && picked.order !== order) {
@@ -968,7 +982,7 @@ export class HistoryController implements vscode.Disposable {
       }
     }
     await client.call({ op: 'historyOrder', order: historyOrder() });
-    const fold = historyFold();
+    const fold = this.folding;
     const history = await client.call({
       op: 'history',
       ...(tips ? { tips } : {}),
