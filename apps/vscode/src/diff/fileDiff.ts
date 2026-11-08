@@ -16,6 +16,8 @@ export interface DiffLine {
   text: string;
   /** HEAD → 作業ツリーの差分（FileDiff の combined）で、この変更が index に入っている（次のコミットに含める） */
   staged?: boolean;
+  /** 構文の色: [始め, 終わり, 種類]（text の文字の位置。種類はコアの `SyntaxSpan` の kind） */
+  syntax?: [number, number, number][];
 }
 
 export interface DiffHunk {

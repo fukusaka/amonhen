@@ -7,7 +7,7 @@ import { groupChanges, type Change, type ChangeGroup } from '../state/changes.ts
 import { conflictStates } from '../state/conflicts.ts';
 import type { Repository } from '../state/repository.ts';
 import { daemonFor } from '../daemon/connection.ts';
-import { changedRows, readWorkingDiff, selectedRows, type DaemonDiff } from '../daemon/diff.ts';
+import { applySyntax, changedRows, readWorkingDiff, selectedRows, type DaemonDiff } from '../daemon/diff.ts';
 import { applyDiffSelection, computeDiff, type ComputedDiff } from '../diff/fileDiff.ts';
 import { discardFiles, discardLines } from '../state/discard.ts';
 import { COMMIT_TYPES, fixupSubjects, templateMessage, type MessageParts } from '../workingCopy/commitMessage.ts';
@@ -242,6 +242,21 @@ export class WorkingCopyController implements vscode.Disposable {
     }
     const diff = daemon ? daemon.diff : (await this.loadDiff(change)).diff;
     this.post({ type: 'wcDiff', group: change.group, diff });
+    if (daemon) void this.sendSyntax(daemon, change.group);
+  }
+
+  /** 構文の色を後から頼み、付いたら同じ差分を送り直す（選んだ行はそのまま）。古いエンジンが断れば色なしのまま */
+  private async sendSyntax(daemon: DaemonDiff, group: ChangeGroup): Promise<void> {
+    try {
+      const client = this.repo && (await daemonFor(this.repo.root));
+      if (!client) return;
+      const touched = applySyntax(await client.call({ op: 'diffSyntax', diff: daemon.handle }), daemon.lines);
+      if (touched.size > 0 && this.selected?.path === daemon.diff.path) {
+        this.post({ type: 'wcDiff', group, diff: daemon.diff });
+      }
+    } catch {
+      // 色なしのまま
+    }
   }
 
   /**

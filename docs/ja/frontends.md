@@ -277,13 +277,13 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 選んだものの差分（範囲をまとめる・A..B / A...B・飛び飛び） | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。<br>CLI: `diff <rev> <rev>`。 |
 | 選んだものの操作（cherry-pick・revert・squash・ID のコピー） | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。<br>CLI: `amonhen run` から。 |
 | 署名のポップオーバー | ✓ | ✓ | ✓ | n/a | VSCode: 詳細の Signature の行（様子・説明・署名した人と鍵）。ポップオーバーはない。 |
-| 単語の強調と構文の色 | ✓ | ✓ | △ | n/a | VSCode: 単語だけ。 |
+| 単語の強調と構文の色 | ✓ | ✓ | ✓ | n/a | VSCode: 構文の色はエンジンがあれば、差分を出した後に付く。 |
 
 ## Blame・File History
 
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| Blame | ✓ | ✓ | △ | △ | VSCode: メインビューのページ。構文の色はない。<br>CLI: `amonhen run`（`blame`）から。 |
+| Blame | ✓ | ✓ | ✓ | △ | VSCode: メインビューのページ。<br>CLI: `amonhen run`（`blame`）から。 |
 | ファイルをコミットの版に戻す（この版・その前の版。選べば stage も） | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあるとき、History の詳細のファイルの右クリックから。Restore and Stage は 2 つめのボタン。<br>CLI: `restore --source <rev> [--staged]`。 |
 | File History | ✓ | ✓ | ✓ | △ | VSCode: メインビューのページ。エクスプローラー・エディターのタブ・コマンドパレット・メインビューのファイルから開く。<br>CLI: `amonhen run`（`fileHistory`）から。 |
 | リポジトリのタブの隣のタブに、リポジトリのツールバー付きで開く | ✓ | ✓ | n/a | n/a | GTK4: リポジトリのタブがほかの窓で前に出ているときは、ツールバーのない題だけの帯になる。 |

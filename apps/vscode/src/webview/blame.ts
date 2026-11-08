@@ -6,6 +6,7 @@
 import type { BlameCommit } from '../blame/protocol.ts';
 import type { HostMessage } from '../view/protocol.ts';
 import { el, formatDate, post, type View } from './api.ts';
+import { renderCode } from './diffView.ts';
 
 const ROW_HEIGHT = 20;
 /** 見えている範囲の上下に余分に描く行 */
@@ -28,6 +29,8 @@ export function createBlameView(): View {
   let path = '';
   let commits: BlameCommit[] = [];
   let lines: { c: number; t: string }[] = [];
+  /** 行ごとの構文の色（後から届く） */
+  let syntax: [number, number, number][][] = [];
   /** 行ごとの、まとまりの番号（背景を交互に変える）と、まとまりの中で何行目か */
   let blocks: { index: number; offset: number }[] = [];
   /** 選んだ行（同じまとまりを強く出す） */
@@ -69,7 +72,7 @@ export function createBlameView(): View {
         preventDefaultContextMenuItems: true,
       });
     }
-    row.append(info, el('span', 'number', String(i + 1)), el('span', 'code', line.t));
+    row.append(info, el('span', 'number', String(i + 1)), renderCode(line.t, syntax[i]));
     return row;
   }
 
@@ -98,6 +101,7 @@ export function createBlameView(): View {
     const same = message.path === path;
     path = message.path;
     commits = message.commits;
+    if (!same || message.lines !== lines) syntax = [];
     lines = message.lines;
     let index = -1;
     let previous = -1;
@@ -127,6 +131,10 @@ export function createBlameView(): View {
 
   function onMessage(message: HostMessage): void {
     if (message.type === 'blame') onBlame(message);
+    if (message.type === 'blameSyntax' && message.path === path && message.syntax.length === lines.length) {
+      syntax = message.syntax;
+      renderVisible();
+    }
   }
 
   return {

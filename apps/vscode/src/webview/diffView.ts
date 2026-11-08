@@ -26,6 +26,59 @@ export function hunkCheck(hunk: DiffHunk): 'all' | 'some' | 'none' {
 
 const CHECK_MARKS = { all: '☑', some: '▣', none: '☐' } as const;
 
+/** 構文の色の種類（コアの `SyntaxSpan` の kind）→ class の名前 */
+const SYNTAX_CLASSES = [
+  '',
+  'keyword',
+  'string',
+  'comment',
+  'number',
+  'function',
+  'type',
+  'constant',
+  'property',
+  'attribute',
+  'tag',
+  'operator',
+  'variable',
+  'escape',
+  'module',
+];
+
+/**
+ * コードの 1 行。syntax（[始め, 終わり, 種類]）で色を付け、word（変わった部分）を強調する。どちらもなければ文字だけ
+ */
+export function renderCode(text: string, syntax?: readonly (readonly [number, number, number])[], word?: readonly [number, number]): HTMLElement {
+  const code = el('span', 'code');
+  if (!syntax?.length && !word) {
+    code.textContent = text;
+    return code;
+  }
+  // 区切り（色の境と強調の境）ごとに切る
+  const cuts = new Set<number>([0, text.length]);
+  for (const [s, e] of syntax ?? []) {
+    cuts.add(Math.max(0, Math.min(text.length, s)));
+    cuts.add(Math.max(0, Math.min(text.length, e)));
+  }
+  if (word) {
+    cuts.add(word[0]);
+    cuts.add(word[1]);
+  }
+  const points = [...cuts].sort((a, b) => a - b);
+  for (let i = 0; i + 1 < points.length; i++) {
+    const [from, to] = [points[i]!, points[i + 1]!];
+    if (to <= from) continue;
+    // 重なっていれば内側（後に来るもの）
+    let span: readonly [number, number, number] | undefined;
+    for (const candidate of syntax ?? []) if (candidate[0] <= from && to <= candidate[1]) span = candidate;
+    const classes = [span ? `syn-${SYNTAX_CLASSES[span[2]] ?? ''}` : '', word && word[0] <= from && to <= word[1] ? 'word' : '']
+      .filter(Boolean)
+      .join(' ');
+    code.append(classes ? el('span', classes, text.slice(from, to)) : text.slice(from, to));
+  }
+  return code;
+}
+
 /** 行を表す文字列。削除行は古い側、追加行は新しい側の行番号で表す */
 export function lineKey(line: DiffLine): string {
   return line.kind === '-' ? `old:${line.old}` : `new:${line.new}`;
@@ -104,18 +157,7 @@ function renderHunk(hunk: DiffHunk, opts: DiffOptions, budget: number): HTMLElem
     }
     row.append(el('span', 'no', line.old ? String(line.old) : ''), el('span', 'no', line.new ? String(line.new) : ''));
     row.append(el('span', 'sign', line.kind === ' ' ? '' : line.kind));
-    const text = el('span', 'code');
-    const range = words.get(i);
-    if (range) {
-      text.append(
-        line.text.slice(0, range[0]),
-        el('span', 'word', line.text.slice(range[0], range[1])),
-        line.text.slice(range[1]),
-      );
-    } else {
-      text.textContent = line.text;
-    }
-    row.append(text);
+    row.append(renderCode(line.text, line.syntax, words.get(i)));
     table.append(row);
   });
   box.append(table);
