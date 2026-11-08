@@ -869,9 +869,10 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
     parts.append(&sort_model);
     parts.append(&adding_rows);
     let selection = gtk::MultiSelection::new(Some(gtk::FlattenListModel::new(Some(parts))));
-    // 罫線はない（macOS 版の表と同じ）。
+    // 罫線はなく、1 行おきに薄く塗る（macOS 版の表と同じ）。
     let view = gtk::ColumnView::new(Some(selection.clone()));
     view.add_css_class("config-table");
+    view.add_css_class("zebra");
     let row_sorter = gtk::TreeListRowSorter::new(view.sorter());
     sort_model.set_sorter(Some(&row_sorter));
 
@@ -963,6 +964,7 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
             return;
         };
         expander.set_list_row(Some(&tree_row));
+        crate::stripe_rows(item);
         let Some(row) = tree_row.item().and_then(|o| row_of(&o)) else {
             return;
         };

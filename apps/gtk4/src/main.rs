@@ -3599,6 +3599,44 @@ pub fn scale_font(
     }
 }
 
+/// 一覧の行を 1 行おきに薄く塗る（macOS 版の表の交互の背景）。セルを結ぶとき（bind）に呼ぶと、`item` の
+/// セルを入れた行（`row`）に、奇数の位置なら `zebra-odd` を付ける（行が足されたり畳まれたりして位置が変わった
+/// ときも付け直す）。一覧には `zebra` を付けておく（色は `menu::install_css`）。
+///
+/// 行を触るのは後で。bind のときの行はまだ一覧に入っておらず（floating）、そこで親をたどると参照を取って
+/// 行を壊す（GTK 4.14 で落ちた）。
+pub fn stripe_rows(item: &gtk::ListItem) {
+    const WATCHED: &str = "amonhen-zebra";
+    // SAFETY: この鍵には `bool` だけを入れる。
+    if unsafe { item.data::<bool>(WATCHED) }.is_none() {
+        unsafe { item.set_data(WATCHED, true) };
+        item.connect_position_notify(stripe_later);
+    }
+    stripe_later(item);
+}
+
+fn stripe_later(item: &gtk::ListItem) {
+    let item = item.downgrade();
+    glib::idle_add_local_once(move || {
+        let Some(item) = item.upgrade() else {
+            return;
+        };
+        let odd = item.position() != gtk::INVALID_LIST_POSITION && item.position() % 2 == 1;
+        let mut widget = item.child();
+        while let Some(w) = widget {
+            if w.css_name() == "row" {
+                if odd {
+                    w.add_css_class("zebra-odd");
+                } else {
+                    w.remove_css_class("zebra-odd");
+                }
+                return;
+            }
+            widget = w.parent();
+        }
+    });
+}
+
 /// `widget` の下の、見えている popover。
 fn collect_popovers(widget: &gtk::Widget, out: &mut Vec<gtk::Popover>) {
     let mut child = widget.first_child();

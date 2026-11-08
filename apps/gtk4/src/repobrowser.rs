@@ -915,6 +915,8 @@ impl Browser {
         let model = gtk::StringList::new(&[]);
         let view = gtk::ColumnView::new(None::<gtk::MultiSelection>);
         view.set_show_row_separators(false);
+        // 1 行おきに地の色を変える（macOS 版の `usesAlternatingRowBackgroundColors`）。
+        view.add_css_class("zebra");
         let sorted = gtk::SortListModel::new(Some(model.clone()), view.sorter());
         let selection = gtk::MultiSelection::new(Some(sorted));
         view.set_model(Some(&selection));
@@ -1107,6 +1109,9 @@ impl Browser {
             factory.connect_bind(move |_, item| {
                 let Some(b) = weak.upgrade() else { return };
                 let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
+                if kind == Column::Name {
+                    crate::stripe_rows(item);
+                }
                 let Some(location) = item
                     .item()
                     .and_downcast::<gtk::StringObject>()

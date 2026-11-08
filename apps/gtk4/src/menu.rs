@@ -312,6 +312,7 @@ fn build(
 /// 小さなアイコンのボタン（macOS 版のプルダウンの ▾ や時計のように、幅を取らない）。`small-push` は小さな文字の
 /// ボタン（macOS 版の controlSize small）。一覧の選んだ行は、一覧に入力の焦点がないときはアクセントカラーではなく
 /// 灰色に（macOS 版の焦点のない表と同じ。History は自分で描くので同じ色を自分で選ぶ）。
+/// 交互の背景（`stripe_rows`）の色もここに。
 pub fn install_css() {
     let provider = gtk::CssProvider::new();
     provider.load_from_string(
@@ -332,7 +333,8 @@ pub fn install_css() {
            min-width: 16px; padding-left: 4px; padding-right: 4px; } \
          button.small-push { min-height: 24px; padding: 2px 8px; font-size: smaller; } \
          listview:not(:focus-within) > row:selected, list:not(:focus-within) > row:selected { \
-         background-color: alpha(currentColor, 0.12); }",
+         background-color: alpha(currentColor, 0.12); } \
+         .zebra row.zebra-odd:not(:selected) { background-color: alpha(currentColor, 0.04); }",
     );
     if let Some(display) = gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
