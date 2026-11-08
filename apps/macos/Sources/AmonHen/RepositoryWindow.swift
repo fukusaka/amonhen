@@ -120,6 +120,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         // パッチのファイルのドロップ（窓が受けて delegate に回す。文字の欄は自分で受ける）。
         window.registerForDraggedTypes([.fileURL])
         assemble()
+        // 決めないと、AppKit は最初の文字の欄（サイドバーの絞り込み）にフォーカスを置く。
+        window.initialFirstResponder = history.initialKeyView
         scheduleAutoFetch()
         // リポジトリごとに、前回の位置と大きさで開く（初めてなら真ん中に）。
         let frameName = "Repository \(location)"

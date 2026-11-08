@@ -161,6 +161,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     private let renderer: GraphRenderer
     private let scrollView: NSScrollView = HistoryScrollView()
     private let tableView = FocusTableView()
+    /// 窓を開いたときにキー入力を受けるところ（GTK4 版と同じく一覧）。
+    var initialKeyView: NSView { tableView }
     private let graphView = GraphView()
     /// 件名などを描く。表のセルに文字を描かせると、速いスクロールでは CPU で描く分が間に合わない。
     private let textView = GraphView()
