@@ -74,6 +74,8 @@ interface DaemonHistory {
   rows: number;
   /** shallow clone の History なら、境目のコミットの行 */
   boundary?: number[];
+  /** 畳んだ merge が行ごとに隠している数（畳んでいなければなし） */
+  folded?: Uint32Array;
 }
 
 /** 昇順の `rows` で、`row` 以上の最初の位置（なければ最後） */
@@ -167,8 +169,6 @@ export class HistoryController implements vscode.Disposable {
   private searchAbort: AbortController | undefined;
   /** 畳む設定で、開いている merge */
   private readonly expandedMerges = new Set<string>();
-  /** 畳んだ merge が行ごとに隠している数（畳んでいなければなし） */
-  private foldedRows: Uint32Array | undefined;
   /** 選んでいるコミット（祖先を目立たせるため） */
   private selectedOid: string | undefined;
   private lineageRequest = 0;
@@ -965,12 +965,19 @@ export class HistoryController implements vscode.Disposable {
       ...(tips ? { tips } : {}),
       ...(fold ? { fold, expanded: [...this.expandedMerges] } : {}),
     });
-    this.foldedRows =
+    // 畳んだ数は History ごとに持つ（古い読み直しが新しい History の分を書き換えないように）
+    const folded =
       history.json['folded'] === true
         ? (await client.call({ op: 'historyGraph', history: history.json['history'] })).u32('folded')
         : undefined;
     const boundary = history.json['shallow'] === true ? ((history.json['boundaryRows'] as number[] | undefined) ?? []) : undefined;
-    return { client, history: history.json['history'], rows: Number(history.json['rows']), ...(boundary ? { boundary } : {}) };
+    return {
+      client,
+      history: history.json['history'],
+      rows: Number(history.json['rows']),
+      ...(boundary ? { boundary } : {}),
+      ...(folded ? { folded } : {}),
+    };
   }
 
   /**
@@ -992,7 +999,7 @@ export class HistoryController implements vscode.Disposable {
       }
       rows = toRowData(page, this.labels, this.chain);
       rows.forEach((row, i) => {
-        const hidden = this.foldedRows?.[start + i];
+        const hidden = daemon.folded?.[start + i];
         if (hidden) row.hidden = hidden;
         if (this.expandedMerges.has(row.oid)) row.expanded = true;
       });
