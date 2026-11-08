@@ -173,20 +173,40 @@ extension Actions {
                 message = ""
             }
             let ok = force || diverged ? "Force Push" : "Push"
+            // 送った後の形（上流の札が手元の先端へ。Force Push なら上流から消えるコミットを赤で）。
+            let replacing = force || diverged
+            var drawing: MoveDrawingView?
+            if let preview = await movePreview(from: upstream, to: branch), preview.drawing != nil {
+                let view = MoveDrawingView(
+                    moving: upstream, kind: "remote", afterTitle: replacing ? L("After the force push") : L("After the push"),
+                    lostNote: L("removed from %@", upstream), lostColor: .systemRed)
+                view.preview = preview
+                drawing = view
+            }
             let choice: PushSheet.Choice
             // 送るコミットとその中身を、右の欄と同じ表示で読んでから押す（Metal がなければ一覧だけのシート）。
             if let range = state.range, let detail = makeDetailView?(), let window {
                 let sheet = PushSheet(
                     title: title, message: sheetMessage(message), warnings: state.warnings, commits: outgoing,
                     lost: force || diverged ? incoming : nil, range: range, detail: detail, ok: ok,
-                    destructive: force || diverged, other: diverged ? "Pull…" : nil)
+                    destructive: force || diverged, other: diverged ? "Pull…" : nil, drawing: drawing)
                 choice = await sheet.present(in: window)
             } else {
                 let alert = makeAlert(title, message)
-                alert.accessoryView = Self.commitLists([
+                let lists = Self.commitLists([
                     (L("Commits to send"), outgoing, false),
                     (L("Commits %@ will lose", upstream), force || diverged ? incoming : .empty, true),
                 ])
+                if let drawing {
+                    let stack = NSStackView(views: [drawing, lists])
+                    stack.orientation = .vertical
+                    stack.alignment = .leading
+                    stack.spacing = 10
+                    stack.frame.size = stack.fittingSize
+                    alert.accessoryView = stack
+                } else {
+                    alert.accessoryView = lists
+                }
                 let okButton = alert.addButton(withTitle: ok)
                 let cancel = alert.addButton(withTitle: L("Cancel"))
                 // Force Push は戻せない（赤く、↩ では押せない。PushSheet と同じ）。

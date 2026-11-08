@@ -31,7 +31,7 @@ final class PushSheet: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     init(
         title: String, message: String, warnings: [String], commits: CommitRange, lost: CommitRange?,
         range: (base: Data, tip: Data), detail: CommitDetailViewController, ok: String, destructive: Bool,
-        other: String? = nil
+        other: String? = nil, drawing: NSView? = nil
     ) {
         self.detail = detail
         detail.isPreview = true
@@ -74,6 +74,11 @@ final class PushSheet: NSObject, NSTableViewDataSource, NSTableViewDelegate {
             label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
             label.textColor = .systemOrange
             top.addArrangedSubview(label)
+        }
+        // 送った後の形（上流の札が手元の先端へ移る。Force Push なら上流から消えるコミットも）。
+        if let drawing {
+            top.setCustomSpacing(10, after: top.arrangedSubviews.last ?? titleLabel)
+            top.addArrangedSubview(drawing)
         }
 
         // 左: コミットの一覧。右: 詳細の欄。
