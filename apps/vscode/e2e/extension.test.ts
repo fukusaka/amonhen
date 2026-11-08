@@ -1538,6 +1538,9 @@ async function historySelectionFlow(): Promise<void> {
     }
   };
   const read = async (names: string[]) => {
+    // status の HEAD が古いままだと、追いついたときに History を読み直す（選んだ行が消える）。追いつくまで待つ
+    const head = git('rev-parse', 'HEAD').trim();
+    await until('status の HEAD', () => repo.current.status?.branch.oid === head || undefined);
     await settled();
     const mark = posted.length;
     await panel.history.reset();
