@@ -239,3 +239,4 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 36. Working Copy: ファイルごとの行数、⌫、J/K、.gitignore に足す、sparse checkout の知らせ
 - [x] 37. History: いくつもの ref、worktree の札、順、行の項目、merge を畳む、祖先を目立たせる
 - [x] 38. History の詳細: ⌘F で探す、ファイルを畳む・Viewed、変更したファイルの木、1 ファイルずつ
+- [x] 39. History の編集モード: いくつものコミットを 1 回の rebase で、近道から開く、マージを保つ（`--rebase-merges`）

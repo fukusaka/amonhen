@@ -257,11 +257,11 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | いくつものコミットを選ぶ（範囲・2 つ・飛び飛び） | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。<br>CLI: 2 つは `diff <rev> <rev>`。 |
 | 選んだいくつもの ref の History | ✓ | ✓ | ✓ | ✓ | CLI: `log --branch` を重ねる。 |
 | コミットのメニュー: checkout・新しいブランチやタグ・cherry-pick・revert・ID のコピー | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
-| 編集モード（keep・reword・squash・fixup・drop・edit、ドラッグで並べ替え） | ✓ | ✓ | △ | △ | VSCode: 1 つずつで、いくつもの段の計画はない。<br>CLI: `amonhen run` から。 |
+| 編集モード（keep・reword・squash・fixup・drop・edit、ドラッグで並べ替え） | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。ないときは 1 つずつ。<br>CLI: `amonhen run` から。 |
 | 書き換えの見込み（積み重ね・push 済みのブランチ、コンフリクトの見込み） | ✓ | ✓ | △ | ✓ | VSCode: daemon 越しで、今のブランチだけ。<br>CLI: `rewrite-preview`。 |
-| 近道: Edit Message…・Combine with Older…・Drop…・Combine N…・コミットのドラッグ | ✓ | ✓ | △ | △ | VSCode: Combine N Commits はない。<br>CLI: `amonhen run` から。 |
+| 近道: Edit Message…・Combine with Older…・Drop…・Combine N…・コミットのドラッグ | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあれば編集モードを開く。ないときはすぐ書き換え、Combine N Commits はない。<br>CLI: `amonhen run` から。 |
 | コミットを分ける | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
-| 編集でマージを保つ（`--rebase-merges`） | ✓ | ✓ | — | △ | VSCode: 最初のマージで止まる。<br>CLI: `amonhen run` から。 |
+| 編集でマージを保つ（`--rebase-merges`） | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。ないときは最初のマージで止まる。<br>CLI: `amonhen run` から。 |
 | shallow clone: 終わりの帯で取り足す、境界のコミットの印 | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。<br>CLI: `log` が履歴の止まる所を添える。取り足すのは `amonhen run` から。 |
 
 ## 7. History の右の列
