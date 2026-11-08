@@ -667,6 +667,10 @@ export class HistoryController implements vscode.Disposable {
     if (this.daemon) void this.sendForm(this.daemon, generation).catch(() => undefined);
     this.opening = false;
     await this.addWorktreeLabels(repo, generation);
+    // 札を待つ間に新しい読み直しが始まっていれば、その History の行を送らない（札のない行を先に送ってしまう）
+    if (generation !== this.generation) {
+      return;
+    }
     await this.loadMore();
     // 探していたら（途中でも）、新しい History で探し直す
     const query = this.searching ?? this.search?.query;
@@ -901,9 +905,11 @@ export class HistoryController implements vscode.Disposable {
    */
   private async loadRange(daemon: DaemonHistory, start: number, count: number): Promise<void> {
     let rows: RowData[] = [];
+    const generation = this.generation;
     try {
       const reply = await daemon.client.call({ op: 'historyRows', history: daemon.history, start, count });
-      if (daemon !== this.daemon) {
+      // 読む間に新しい読み直しが始まっていれば、古い History の行は送らない（新しい reset の後に届いてしまう）
+      if (daemon !== this.daemon || generation !== this.generation) {
         return;
       }
       const page = readRows(reply);
@@ -912,7 +918,7 @@ export class HistoryController implements vscode.Disposable {
       }
       rows = toRowData(page, this.labels, this.chain);
     } catch (err) {
-      if (daemon !== this.daemon) {
+      if (daemon !== this.daemon || generation !== this.generation) {
         return;
       }
       showError(err);
