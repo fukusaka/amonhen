@@ -229,7 +229,8 @@ export class HistoryController implements vscode.Disposable {
         await this.loadMore();
         break;
       case 'range':
-        if (this.daemon) {
+        // 開いている途中なら、読み直しが行を送る
+        if (this.daemon && !this.opening) {
           await this.loadRange(this.daemon, message.start, message.count);
         }
         break;
@@ -665,12 +666,13 @@ export class HistoryController implements vscode.Disposable {
     }
     this.post({ type: 'searchable', searchable: this.daemon !== undefined });
     if (this.daemon) void this.sendForm(this.daemon, generation).catch(() => undefined);
-    this.opening = false;
+    // 札を付けてから行を送る。それまでは開いている途中のまま（Webview が求めても、札のない行を先に送らない）
     await this.addWorktreeLabels(repo, generation);
-    // 札を待つ間に新しい読み直しが始まっていれば、その History の行を送らない（札のない行を先に送ってしまう）
+    // 札を待つ間に新しい読み直しが始まっていれば、その History の行を送らない
     if (generation !== this.generation) {
       return;
     }
+    this.opening = false;
     await this.loadMore();
     // 探していたら（途中でも）、新しい History で探し直す
     const query = this.searching ?? this.search?.query;
