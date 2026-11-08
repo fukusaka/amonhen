@@ -72,6 +72,12 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "amonhen.rebuildHistory",
+        "title": "Rebuild History",
+        "category": "Amon Hen",
+        "enablement": "amonhen.hasRepository"
+      },
+      {
         "command": "amonhen.selectRepository",
         "title": "Select Repository",
         "category": "Amon Hen",
@@ -850,6 +856,11 @@
           "command": "amonhen.refresh",
           "when": "view == amonhen.sidebar",
           "group": "1_view@2"
+        },
+        {
+          "command": "amonhen.rebuildHistory",
+          "when": "view == amonhen.sidebar && amonhen.engine",
+          "group": "1_view@3"
         },
         {
           "command": "amonhen.forcePush",
@@ -1741,6 +1752,10 @@
         },
         {
           "command": "amonhen.fetchBundle",
+          "when": "amonhen.hasRepository && amonhen.engine"
+        },
+        {
+          "command": "amonhen.rebuildHistory",
           "when": "amonhen.hasRepository && amonhen.engine"
         }
       ],

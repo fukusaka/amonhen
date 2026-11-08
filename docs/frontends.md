@@ -176,7 +176,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Delete ignored files (listed first) | ✓ | ✓ | ✓ | △ | VSCode: The Command Palette and Working Copy's right-click; the list is a pick list, all chosen at first.<br>CLI: Via `amonhen run` (`ignoredFiles`, `deleteIgnored`). |
 | Pop the latest stash (asks first) | ✓ | ✓ | ✓ | △ | VSCode: Pop Latest Stash… on the Stashes header and in the Command Palette (a row's Pop doesn't ask).<br>CLI: Via `amonhen run`. |
 | Activity spinner and count | ✓ | ✓ | ✓ | n/a | VSCode: VSCode's progress notifications. |
-| Refresh and Rebuild History | ✓ | ✓ | △ | △ | VSCode: Refresh only.<br>CLI: `log --rebuild`, `daemon rebuild`. |
+| Refresh and Rebuild History | ✓ | ✓ | ✓ | △ | VSCode: Rebuild History in the sidebar's ⋯ and the command palette, with the engine.<br>CLI: `log --rebuild`, `daemon rebuild`. |
 | Undo the last operation (asks, names what it puts back) | ✓ | ✓ | ✓ | ✓ | VSCode: The title's Undo and the Command Palette ask; a notification's Undo, pressed right after the operation, doesn't.<br>CLI: `undo` (`--peek` to see it first). |
 | History search with scopes (subject, author, ID, path, contents) | ✓ | ✓ | ✓ | ✓ | VSCode: With the engine.<br>CLI: `log <query>`. |
 | Ahead/behind badges | ✓ | ✓ | ✓ | △ | VSCode: On the sidebar's branch rows.<br>CLI: In `status`. |

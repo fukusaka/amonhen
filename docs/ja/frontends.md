@@ -176,7 +176,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | ignore されたファイルを消す（先に一覧） | ✓ | ✓ | ✓ | △ | VSCode: コマンドパレットと Working Copy の右クリックから。一覧は選ぶもので、はじめはすべて選んである。<br>CLI: `amonhen run`（`ignoredFiles`・`deleteIgnored`）から。 |
 | 最新の stash を Pop（先に尋ねる） | ✓ | ✓ | ✓ | △ | VSCode: Stashes の見出しとコマンドパレットの Pop Latest Stash…（行の Pop は尋ねない）。<br>CLI: `amonhen run` から。 |
 | Activity のくるくると数 | ✓ | ✓ | ✓ | n/a | VSCode: VSCode の進み具合の知らせ。 |
-| Refresh と Rebuild History | ✓ | ✓ | △ | △ | VSCode: Refresh だけ。<br>CLI: `log --rebuild`・`daemon rebuild`。 |
+| Refresh と Rebuild History | ✓ | ✓ | ✓ | △ | VSCode: Rebuild History はサイドバーの ⋯ とコマンドパレットから。エンジンがあれば。<br>CLI: `log --rebuild`・`daemon rebuild`。 |
 | 直前の操作の Undo（尋ね、何を戻すか示す） | ✓ | ✓ | ✓ | ✓ | VSCode: 上の Undo とコマンドパレットは尋ねる。操作の直後に押す知らせの Undo は尋ねない。<br>CLI: `undo`（先に見るなら `--peek`）。 |
 | 範囲付きの History の検索（件名・作者・ID・パス・中身） | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあるとき。<br>CLI: `log <query>`。 |
 | ahead/behind のバッジ | ✓ | ✓ | ✓ | △ | VSCode: サイドバーのブランチの行に出る。<br>CLI: `status` に出る。 |

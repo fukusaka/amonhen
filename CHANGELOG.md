@@ -1035,6 +1035,7 @@ First release.
 
 #### Added
 
+- Rebuild History (the sidebar's ⋯) discards the engine's History cache and builds it again.
 - Rebasing the current branch shows the commits now and after the rebase, with where each branch ends up.
 - Switch Branch… finds a branch to switch to, recent ones first; a remote branch gets a tracking branch and a new
   name creates one.

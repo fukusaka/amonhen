@@ -3523,6 +3523,15 @@ suite('Amon Hen in VSCode', () => {
     await pushSheetFlow();
   });
 
+  test('rebuilds History from scratch through the daemon', async () => {
+    await showView('amonhen.showHistory');
+    const at = posted.length;
+    await vscode.commands.executeCommand('amonhen.rebuildHistory');
+    await waitPosted('reset', at);
+    const head = git('rev-parse', 'HEAD').trim();
+    await waitPosted('rows', at, (m) => m.rows.some((r) => r.oid === head));
+  });
+
   test('creates an orphan branch, empty or keeping the files, through the daemon', async () => {
     await orphanFlow();
   });
