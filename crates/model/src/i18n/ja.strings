@@ -952,6 +952,10 @@
 "split off {when}" = "{when}に分かれた";
 "After the push" = "Push の後";
 "After the force push" = "Force Push の後";
+"After the merge" = "Merge の後";
+"After the pull" = "Pull の後";
+"After the cherry-pick" = "Cherry-pick の後";
+"After the revert" = "Revert の後";
 "removed from {upstream}" = "{upstream} から消える";
 "For this rebase only (git’s --update-refs). Starts from rebase.updateRefs." = "この rebase だけの指定です（git の --update-refs）。最初は rebase.updateRefs のとおり。";
 
