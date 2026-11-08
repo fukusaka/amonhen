@@ -21,8 +21,11 @@ use crate::sheets::{Response, Sheet};
 
 /// リポジトリを新しい窓で開く。
 /// リポジトリを開く（場所と、開く先: 前の窓のタブか新しい窓か）。
-/// 表の行をドラッグしたときに運ぶ文字の頭（ほかから落とされた文字と見分ける）。その後に場所を 1 行ずつ。
-const DRAG_MARK: &str = "\u{1}amonhen-repositories\n";
+/// 表の行をドラッグしたときに運ぶもの（リポジトリの場所）。文字ではなくこのアプリだけの型にして、ほかの欄や
+/// ほかのアプリに落としても何も入らないようにする（macOS 版の専用のドラッグの型と同じ）。
+#[derive(Clone, Debug, glib::Boxed)]
+#[boxed_type(name = "AmonhenRepositoriesDrag")]
+struct RepositoriesDrag(Vec<String>);
 
 /// 並べ替えた列（`name`・`branch`・`status`・`commit`・`opened`）と、上る向きか（macOS 版と同じ鍵）。
 const SORT_KEY: &str = "repositoryPageSort";
@@ -1088,8 +1091,8 @@ impl Browser {
                     if row == gtk::INVALID_LIST_POSITION {
                         return None;
                     }
-                    let text = format!("{DRAG_MARK}{}", b.targets(row).join("\n"));
-                    Some(gtk::gdk::ContentProvider::for_value(&text.to_value()))
+                    let drag = RepositoriesDrag(b.targets(row));
+                    Some(gtk::gdk::ContentProvider::for_value(&drag.to_value()))
                 });
                 cell.add_controller(drag);
                 item.set_child(Some(&cell));
@@ -1800,22 +1803,16 @@ impl Browser {
                     row.set_tooltip_text(r.tip.as_deref());
                     // お気に入り・グループには、表の行を落として入れられる（macOS 版と同じ）。
                     if matches!(c, Category::Favorites | Category::Group(_)) {
-                        let drop =
-                            gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
+                        let drop = gtk::DropTarget::new(
+                            RepositoriesDrag::static_type(),
+                            gtk::gdk::DragAction::MOVE,
+                        );
                         let target = c.clone();
                         drop.connect_drop(move |_, value, _, _| {
-                            let Some(paths) = value
-                                .get::<String>()
-                                .ok()
-                                .and_then(|t| t.strip_prefix(DRAG_MARK).map(str::to_owned))
+                            let Ok(RepositoriesDrag(paths)) = value.get::<RepositoriesDrag>()
                             else {
                                 return false;
                             };
-                            let paths: Vec<String> = paths
-                                .lines()
-                                .filter(|l| !l.is_empty())
-                                .map(str::to_owned)
-                                .collect();
                             let target = target.clone();
                             // 落とした後で（一覧を作り直すと、落とした先の行が消える）。
                             glib::idle_add_local_once(move || {
