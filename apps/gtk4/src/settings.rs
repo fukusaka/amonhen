@@ -751,14 +751,15 @@ pub fn show(near: &impl IsA<gtk::Widget>) {
     content.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
     content.append(&scrolled);
     let header = gtk::HeaderBar::new();
+    // 窓全体で macOS 版と同じ大きさ（macOS 版は中身が 960x720 で、題名とタブの帯が外に付く）。
     let window = gtk::Window::builder()
         .title(tr!("Settings"))
         .default_width(960)
-        .default_height(720)
+        .default_height(808)
         .child(&content)
         .hide_on_close(true)
         .build();
-    window.set_size_request(960, 400);
+    window.set_size_request(960, 488);
     window.set_titlebar(Some(&header));
     // 窓のタイトルは選んでいるタブの名前（macOS 標準の設定画面と同じ）。
     let retitle = {

@@ -52,9 +52,18 @@ becomes the GitHub Release notes.
 - The GTK4 app's Settings show on/off items as switches on the right, as the macOS app does.
 - The GTK4 app's Settings forms sit in a centred column of the macOS width instead of spanning the window; tables
   such as Remotes and Keys and Values still use the full width.
+- The GTK4 app follows the macOS app's look more closely: its dates use the same formats, links in the details are
+  link blue without an underline, and History, Blame and the key/value table have tighter rows.
+- In the GTK4 app, Working Copy, Stashes, Reflog, the commit message box and Settings open at the macOS sizes, a list
+  without the keyboard focus shows its selection in grey, and the key/value table and Repositories shade every other row.
 
 #### Fixed
 
+- In a narrow GTK4 merge editor, the bar hides its lesser buttons instead of cutting every button's name.
+- The GTK4 Rebase sheet no longer cuts commit subjects, its Push sheet no longer leaves an empty band, and disabled
+  Commit, Push and Delete buttons lose their colour.
+- The macOS app ends long Reflog and Stashes rows with "…", and a new window starts with focus in History rather than
+  the branch filter.
 - GTK4: flexible spaces in the toolbar go anywhere and share the free width equally, with no fixed boundary between the
   two ends of the header.
 - macOS: in a narrow window the merge editor's bar hides its lesser buttons, keeping the conflict position, Save and

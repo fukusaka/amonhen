@@ -258,8 +258,9 @@ pub fn tag(actions: &Rc<Actions>, item: &RefEntry, known: &Known, anchor: &gtk::
     remember(&p.popup(), &key);
 }
 
+/// 日時（macOS 版の詳細と同じ、秒まで）。
 fn date(t: i64) -> String {
-    crate::titles::date_time(t, false)
+    crate::titles::date_time(t, true)
 }
 
 /// ローカルブランチの印（取り込み済み・gone・↑↓、ほかの worktree が checkout している ⌂・⑂、書き込む先の ✎）の

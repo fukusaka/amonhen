@@ -42,6 +42,8 @@ const GRAPH_WIDTH: f32 = 120.0;
 const TEXT_INSET: f32 = 8.0;
 /// 行ごとのグラフの右端と、件名などの間（macOS 版の `graphGap`）。
 const GRAPH_GAP: f32 = 10.0;
+/// 件名と作者・日時の間（macOS 版の `gap`）。
+const ROW_GAP: f32 = 2.0;
 
 /// 裏のスレッドから受け取るチャンク。文字列置き場は自分のバッファ（`Blob`）を持っているので、
 /// どのスレッドに渡してもよい。
@@ -84,6 +86,24 @@ struct Fonts {
     subject: pango::FontDescription,
     meta: pango::FontDescription,
     label: pango::FontDescription,
+    /// 件名・作者と日時・ラベルの字の上下（ベースラインから。px）。
+    subject_line: Line,
+    meta_line: Line,
+    label_line: Line,
+}
+
+/// 字の高さ（ベースラインからの上と下）。行の高さと字を置く位置は、字体の行送り（日本語の字体や Ubuntu は
+/// 字の大きさの 1.4 倍を超える）ではなく字の大きさから、macOS 版のシステムフォントの上下の割合で決める。
+#[derive(Clone, Copy)]
+struct Line {
+    ascent: f32,
+    descent: f32,
+}
+
+impl Line {
+    fn height(self) -> f32 {
+        self.ascent + self.descent
+    }
 }
 
 /// History の行の見せ方（View の History の表示）。
@@ -1637,16 +1657,24 @@ impl HistoryView {
         let mut label = subject.clone();
         crate::scale_font(&mut label, &subject, 0.80);
         label.set_weight(pango::Weight::Medium);
-        // 行の高さは、件名と作者・日時の 2 段が収まるように（フォントの大きさは OS や設定で違う）。
-        let height = |font: &pango::FontDescription| {
-            let layout = self.create_pango_layout(Some("Ag"));
-            layout.set_font_description(Some(font));
-            layout.pixel_size().1 as f32
+        // 行の高さは、件名と作者・日時の 2 段が収まるように（フォントの大きさは OS や設定で違う）。余白は
+        // macOS 版の行（38 pt に 13 pt と 11 pt の 2 段、1 行なら 24 pt）と同じ。
+        let line = |font: &pango::FontDescription| {
+            let size = self
+                .pango_context()
+                .load_font(font)
+                .map_or(font.size(), |f| f.describe_with_absolute_size().size());
+            let em = size as f32 / pango::SCALE as f32;
+            Line {
+                ascent: em * 0.95,
+                descent: em * 0.24,
+            }
         };
+        let (subject_line, meta_line, label_line) = (line(&subject), line(&meta), line(&label));
         st.metrics.row_height = if st.display.compact() {
-            (height(&subject) + 8.0).ceil().max(24.0)
+            (subject_line.height() + 8.5).ceil().max(24.0)
         } else {
-            (height(&subject) + 2.0 + height(&meta) + 8.0)
+            (subject_line.height() + ROW_GAP + meta_line.height() + 7.0)
                 .ceil()
                 .max(Metrics::default().row_height)
         };
@@ -1654,6 +1682,9 @@ impl HistoryView {
             subject,
             meta,
             label,
+            subject_line,
+            meta_line,
+            label_line,
         });
     }
 
@@ -1802,6 +1833,27 @@ impl HistoryView {
                 st.rows.clear();
             }
             let compact = st.display.compact();
+            // 2 行なら行の高さの中ほどに 2 行を、1 行なら件名と同じ高さに作者・日時を置く（ベースラインで）。
+            let (subject_line, meta_line) = {
+                let fonts = st.fonts.as_ref().expect("fonts");
+                (fonts.subject_line, fonts.meta_line)
+            };
+            let text_top = ((rh
+                - subject_line.height()
+                - if compact {
+                    0.0
+                } else {
+                    ROW_GAP + meta_line.height()
+                })
+                / 2.0)
+                .round();
+            let subject_baseline = text_top + subject_line.ascent;
+            let meta_baseline = if compact {
+                subject_baseline
+            } else {
+                (subject_baseline + subject_line.descent + ROW_GAP + meta_line.ascent).round()
+            };
+            let baseline = |layout: &pango::Layout| layout.baseline() as f32 / pango::SCALE as f32;
             for row in first..last {
                 let index = row / CHUNK_ROWS;
                 let Some(chunk) = st.chunks.get(&index).cloned() else {
@@ -1818,17 +1870,6 @@ impl HistoryView {
                 let top = row as f32 * rh - scroll_y;
                 let text_x = text_x_of(row);
                 let mut x = text_x;
-                let line = &st.rows[&row];
-                let (_, subject_h) = line.subject.pixel_size();
-                let (_, meta_h) = line.meta.pixel_size();
-                let gap = 2.0;
-                let text_top = ((rh - subject_h as f32 - gap - meta_h as f32) / 2.0).round();
-                // 2 行なら行の高さの中ほどに 2 行を、1 行なら件名と同じ高さに作者・日時を置く。
-                let text_top = if compact {
-                    ((rh - subject_h as f32) / 2.0).round()
-                } else {
-                    text_top
-                };
                 let id = history.graph.ids()[row as usize];
                 // GitHub の CI の状態（知っていれば）。行の右端に置き、署名の印とは離す。
                 let ci = if st.display.items & items::CI != 0 {
@@ -1854,8 +1895,7 @@ impl HistoryView {
                         &labels,
                         x,
                         text_end - 40.0,
-                        top + text_top,
-                        subject_h as f32,
+                        top + subject_baseline,
                         selected,
                     );
                 }
@@ -1893,17 +1933,19 @@ impl HistoryView {
                         as i32,
                 );
                 snapshot.save();
-                snapshot.translate(&graphene::Point::new(x, top + text_top));
+                snapshot.translate(&graphene::Point::new(
+                    x,
+                    top + subject_baseline - baseline(&line.subject),
+                ));
                 snapshot.append_layout(&line.subject, if selected { &white } else { &fg });
                 snapshot.restore();
-                let (meta_x, meta_y) = if compact {
-                    // 件名と並べて、ベースラインをそろえる。
-                    let shift = (line.subject.baseline() - line.meta.baseline()) as f32
-                        / pango::SCALE as f32;
-                    (text_end - meta_width, top + text_top + shift)
+                // 1 行なら件名と並べて、ベースラインをそろえる。
+                let meta_x = if compact {
+                    text_end - meta_width
                 } else {
-                    (text_x, top + text_top + subject_h as f32 + gap)
+                    text_x
                 };
+                let meta_y = top + meta_baseline - baseline(&line.meta);
                 snapshot.save();
                 snapshot.translate(&graphene::Point::new(meta_x, meta_y));
                 let meta_color = if selected {
@@ -1924,7 +1966,8 @@ impl HistoryView {
                     } else {
                         text_x + meta_natural.min(meta_max) + 9.0
                     };
-                    let cy = meta_y + meta_h as f32 / 2.0;
+                    // 作者・日時の字の高さの中ほど（macOS 版は x-height の半分）。
+                    let cy = top + meta_baseline - meta_line.ascent * 0.28;
                     let color = if selected {
                         white
                     } else {
@@ -2016,11 +2059,14 @@ impl HistoryView {
         labels: &[Label],
         start: f32,
         max_x: f32,
-        top: f32,
-        line_height: f32,
+        baseline: f32,
         selected: bool,
     ) -> f32 {
         let fg = self.color();
+        // 字の上下に 2 px ずつ（macOS 版の `drawLabels`）。
+        let line = st.fonts.as_ref().expect("fonts").label_line;
+        let height = (line.height() + 4.0).round();
+        let y = (baseline - line.ascent - 2.0).round();
         let mut x = start;
         for (i, label) in labels.iter().enumerate() {
             let shown = if i < 3 {
@@ -2035,13 +2081,11 @@ impl HistoryView {
                 st.label_layouts.insert(shown.clone(), layout);
             }
             let layout = &st.label_layouts[&shown];
-            let (w, h) = layout.pixel_size();
+            let w = layout.pixel_size().0;
             let width = (w as f32 + 10.0).round();
-            let height = h as f32 + 2.0;
             if x + width > max_x && i > 0 {
                 break;
             }
-            let y = (top + (line_height - height) / 2.0).round();
             // 選んだ行の文字の色（テーマの選択の上の文字）。st を借りているので、子から直接読む。
             let on_accent = st
                 .accent
@@ -2053,7 +2097,8 @@ impl HistoryView {
             path.add_rounded_rect(&rect);
             snapshot.append_fill(&path.to_path(), gsk::FillRule::Winding, &fill);
             snapshot.save();
-            snapshot.translate(&graphene::Point::new(x + 5.0, y + 1.0));
+            let text_y = baseline - 1.0 - layout.baseline() as f32 / pango::SCALE as f32;
+            snapshot.translate(&graphene::Point::new(x + 5.0, text_y));
             snapshot.append_layout(layout, &ink);
             snapshot.restore();
             x += width + 4.0;

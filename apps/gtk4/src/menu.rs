@@ -307,7 +307,12 @@ fn build(
 /// メニューの見た目の直し。GTK のメニューは中身をスクロールの枠に入れていて、その縦のスクロールバーの最小の
 /// 高さ（46）が枠の高さになるので、項目が 1 つだと下が空く。メニューの中では、スクロールバーの最小の高さをなくす。
 /// 等幅の入力欄の説明（プレースホルダー）は、ふつうの字で（等幅だと横に長く、切れる）。Quick Open の欄は大きな字
-/// （macOS 版の 17 pt。ふつうの字の 13 pt に対する比）。
+/// （macOS 版の 17 pt。ふつうの字の 13 pt に対する比）。押せない Commit・削除などのボタンは色を外して、ふつうの
+/// 押せないボタンと同じに（macOS 版と同じ。押せないのに色が残ると押せそうに見える）。`compact-icon` は枠のない
+/// 小さなアイコンのボタン（macOS 版のプルダウンの ▾ や時計のように、幅を取らない）。`small-push` は小さな文字の
+/// ボタン（macOS 版の controlSize small）。一覧の選んだ行は、一覧に入力の焦点がないときはアクセントカラーではなく
+/// 灰色に（macOS 版の焦点のない表と同じ。History は自分で描くので同じ色を自分で選ぶ）。
+/// 交互の背景（`stripe_rows`）の色もここに。
 pub fn install_css() {
     let provider = gtk::CssProvider::new();
     provider.load_from_string(
@@ -321,7 +326,15 @@ pub fn install_css() {
          .quick-open-field { font-size: 1.3em; } \
          .drop-above { box-shadow: inset 0 2px @accent_color; } \
          .drop-below { box-shadow: inset 0 -2px @accent_color; } \
-         .drop-above:drop(active), .drop-below:drop(active) { background: none; }",
+         .drop-above:drop(active), .drop-below:drop(active) { background: none; } \
+         button.suggested-action:disabled, button.destructive-action:disabled { \
+           background-color: alpha(currentColor, 0.1); color: @window_fg_color; } \
+         button.compact-icon, menubutton.compact-icon > button { \
+           min-width: 16px; padding-left: 4px; padding-right: 4px; } \
+         button.small-push { min-height: 24px; padding: 2px 8px; font-size: smaller; } \
+         listview:not(:focus-within) > row:selected, list:not(:focus-within) > row:selected { \
+         background-color: alpha(currentColor, 0.12); } \
+         .zebra row.zebra-odd:not(:selected) { background-color: alpha(currentColor, 0.04); }",
     );
     if let Some(display) = gdk::Display::default() {
         gtk::style_context_add_provider_for_display(

@@ -55,6 +55,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     private var latestRefs: Refs?
     /// History で選んでいるコミット（Merge・Rebase の相手の候補）。
     private var selectedCommit: Data?
+    /// History を一度出して、一覧にキー入力を向けたか（開いたときだけ。あとは利用者の選んだところのまま）。
+    private var focusedHistory = false
     /// 次に Undo される操作の名前。
     private var undoLabel: String?
 
@@ -223,7 +225,14 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 history.set(scope: .all, select: id)
             }
         }
-        sidebar.onSelectPage = { [weak pages] page in pages?.show(page) }
+        sidebar.onSelectPage = { [weak self, weak pages] page in
+            pages?.show(page)
+            // History は ref を読んでから出るので、窓を出したときの `initialFirstResponder` は効かない。
+            // 初めて出したときに一覧へキー入力を向ける（GTK4 版と同じ）。
+            guard let self, page == .history, !focusedHistory else { return }
+            focusedHistory = true
+            window.makeFirstResponder(history.initialKeyView)
+        }
         // stash の詳細の親（土台）のリンクは、History でそのコミットを選ぶ。
         stashes.detail.onSelectCommit = { [weak self] hex in
             guard let self, let id = Data(hex: hex) else { return }

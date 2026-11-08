@@ -124,6 +124,8 @@ pub struct Details {
     extras: Rc<RefCell<Option<Value>>>,
     /// 複数のコミットを選んだときの見出し（ほかの部品の代わりに出す）。
     selection: gtk::Box,
+    /// 複数選んだとき・送る変更すべての見出しと説明の段（右上のボタンを移す先）。
+    selection_head: gtk::Box,
     selection_title: gtk::Label,
     selection_note: gtk::Label,
     pairs: gtk::Box,
@@ -367,6 +369,29 @@ fn commit_link(hex: &str, length: usize) -> String {
 
 /// リンクを文字の色のままにする値の欄（Branches・Pushed・人の名前。macOS 版はリンクの色を付けない）。
 const VALUE_LINKS: &str = "amonhen-value-links";
+/// 詳細の欄の根（リンクの色をここに限る）。
+const DETAILS: &str = "amonhen-details";
+/// リンクにしない ref の名前（Reflog・Range Diff。macOS 版の refAttrs: 太字の青）。
+const REF_TEXT: &str = "amonhen-ref-text";
+
+/// リンクの色（macOS 版の `NSColor.linkColor`。アクセントの色によらない）。
+fn link_color() -> &'static str {
+    if adw::StyleManager::default().is_dark() {
+        "#419cff"
+    } else {
+        "#0068da"
+    }
+}
+
+/// リンクは青で下線なし（macOS 版の詳細と同じ）。Branches・Pushed・人の名前は文字の色のまま。
+fn css() -> String {
+    let link = link_color();
+    format!(
+        ".{DETAILS} label link {{ color: {link}; text-decoration-line: none; }}\n\
+         .{DETAILS} label.{REF_TEXT} {{ color: {link}; font-weight: bold; }}\n\
+         .{DETAILS} label.{VALUE_LINKS} link {{ color: inherit; }}"
+    )
+}
 
 fn install_css() {
     thread_local! {
@@ -376,7 +401,12 @@ fn install_css() {
         return;
     }
     let provider = gtk::CssProvider::new();
-    provider.load_from_string(&format!("label.{VALUE_LINKS} link {{ color: inherit; }}"));
+    provider.load_from_string(&css());
+    // 明暗を切り替えたら、リンクの色も替える。
+    adw::StyleManager::default().connect_dark_notify({
+        let provider = provider.clone();
+        move |_| provider.load_from_string(&css())
+    });
     if let Some(display) = gtk::gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
             &display,
@@ -489,9 +519,16 @@ impl Details {
         let selection_note = label(&["dim-label", "caption"]);
         let pairs = gtk::Box::new(gtk::Orientation::Horizontal, 4);
         let selection_lines = label(&["caption"]);
+        // 見出しと説明の右に、上の帯の右上のボタンを移せる場所（上の帯がボタンだけになるときに。macOS 版と同じく、
+        // ボタンだけの空いた段を作らない）。
+        let selection_text = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        selection_text.set_hexpand(true);
+        selection_text.append(&selection_title);
+        selection_text.append(&selection_note);
+        let selection_head = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        selection_head.append(&selection_text);
         let selection = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        selection.append(&selection_title);
-        selection.append(&selection_note);
+        selection.append(&selection_head);
         selection.append(&pairs);
         selection.append(&selection_lines);
         // 上の帯: 作者と、右上のボタン。スクロールの外に置き、長いメッセージでも見えたままにする（macOS 版の
@@ -550,6 +587,7 @@ impl Details {
             .vexpand(true)
             .build();
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        root.add_css_class(DETAILS);
         // 探すのは、macOS 版のメッセージの欄と同じく見出し・表・件名・本文・notes（作者の帯は除く）。
         let searched = {
             let fixed = [selection_title.clone(), selection_note.clone()];
@@ -604,6 +642,7 @@ impl Details {
             info: RefCell::default(),
             extras: Rc::default(),
             selection,
+            selection_head,
             selection_title,
             selection_note,
             pairs,
@@ -1036,6 +1075,26 @@ impl Details {
     /// 複数選んだときの見出しか、1 つのコミットの詳細か。
     fn set_selection_mode(&self, on: bool) {
         self.selection.set_visible(on);
+        // 上の帯に右上のボタンしか残らないなら、ボタンを見出しの右に移し、帯は隠す。
+        let move_tools = on && !self.styles.is_visible();
+        let target: &gtk::Box = if move_tools {
+            &self.selection_head
+        } else {
+            &self.head
+        };
+        if self.tools.parent().as_ref() != Some(target.upcast_ref()) {
+            if let Some(parent) = self.tools.parent().and_downcast::<gtk::Box>() {
+                parent.remove(&self.tools);
+            }
+            if move_tools {
+                target.append(&self.tools);
+            } else {
+                // 作者の帯の右、見せ方の切り替えの左（もとの場所）。
+                target
+                    .insert_child_after(&self.tools, Some(&self.head.first_child().expect("lead")));
+            }
+        }
+        self.head.set_visible(!move_tools);
         // 簡潔では、作者の帯の代わりに 1 行（[`Details::show_brief`]）。
         self.people
             .set_visible(!on && self.style.get() != Style::Brief);
@@ -1276,10 +1335,15 @@ impl Details {
         let refs = strings(&info["refs"]);
         if !refs.is_empty() {
             markup.push_str("  ");
+            // リンクにしないところでも太字の青（macOS 版の refAttrs）。
             markup.push_str(&if names {
                 format!("<b>{}</b>", ref_links(&refs))
             } else {
-                format!("<b>{}</b>", esc(&refs.join(", ")))
+                format!(
+                    "<span foreground=\"{}\"><b>{}</b></span>",
+                    link_color(),
+                    esc(&refs.join(", "))
+                )
             });
         }
         let parents = strings(&info["parents"]);
@@ -1403,11 +1467,13 @@ impl Details {
         }
         let refs = strings(&info["refs"]);
         if !refs.is_empty() {
-            // ref は太字の青（macOS 版の refAttrs）。Branches・Pushed は文字の色（下の VALUE_LINKS）。
+            // ref は、リンクにしないところ（Reflog・Range Diff）でも太字の青（macOS 版の refAttrs）。
+            // Branches・Pushed は文字の色（下の VALUE_LINKS）。
             rows.push((
                 "Refs".into(),
                 match refs_cell(&refs) {
                     Cell::Markup(m) => Cell::Markup(format!("<b>{m}</b>")),
+                    Cell::Text(t) => Cell::Styled(t, REF_TEXT),
                     other => other,
                 },
             ));
