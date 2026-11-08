@@ -253,3 +253,4 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 42. Fetch asks first: all remotes or one, saying which prune
 - [x] 43. Pull asks first: the commits, how to integrate (git's settings, merge, rebase, fast-forward only), the upstream when missing
 - [x] 44. Push asks first: warnings, the commits, Pull… or Force Push over what it showed when the upstream moved on
+- [x] 45. Rebase's confirmation shows the commits now and after, with the branches

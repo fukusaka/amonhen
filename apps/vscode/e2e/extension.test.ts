@@ -2847,6 +2847,9 @@ async function rewriteFlow(label: string): Promise<void> {
         }
         // コンフリクトの見込みは git 2.40 から
         assert.doesNotMatch(first.detail, /Conflicts expected/);
+        // 前と後: 今のブランチは載せ直したコミットへ、載せ先の札はそのまま
+        assert.ok(first.detail.includes(`Now:\n  ○ ${name('two')}  [${name('top')}]\n  ○ ${name('one')}  [${name('mid')}]\n  ● ${name('onto')}  [${name('onto')}]`), first.detail);
+        assert.ok(first.detail.includes(`After the rebase:\n  ○ ${name('two')}′  [${name('top')}]`), first.detail);
       } else {
         assert.equal(first.detail, 'You can undo this.');
         assert.deepEqual(first.buttons, ['Rebase']);

@@ -1035,6 +1035,7 @@ First release.
 
 #### Added
 
+- Rebasing the current branch shows the commits now and after the rebase, with where each branch ends up.
 - Switch Branch… finds a branch to switch to, recent ones first; a remote branch gets a tracking branch and a new
   name creates one.
 - Export Archive… writes a branch, tag or commit as zip, tar.gz or tar; Save as Bundle… and Fetch from Bundle… use
