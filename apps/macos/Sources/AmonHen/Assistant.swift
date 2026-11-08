@@ -324,20 +324,28 @@ enum Assistant {
         return text
     }
 
-    /// `{{name}}` を差し込む。知らない変数があれば失敗にする。
+    /// `{{name}}` を差し込む。知らない変数があれば失敗にする。中身はそのまま 1 度だけ差し込む（差分の `\` や `$1`、
+    /// 中身の中の `{{…}}` を置き換えの書式として読まない。エンジンの `assist::fill` と同じ）。
     static func fill(_ template: String, _ variables: [String: String], purpose: AssistPurpose) throws -> String {
-        var out = template
         let regex = try NSRegularExpression(pattern: #"\{\{\s*([a-z_]+)\s*\}\}"#)
-        let names = regex.matches(in: template, range: NSRange(template.startIndex..., in: template)).compactMap {
-            Range($0.range(at: 1), in: template).map { String(template[$0]) }
+        let found = regex.matches(in: template, range: NSRange(template.startIndex..., in: template)).compactMap {
+            match -> (range: Range<String.Index>, name: String)? in
+            guard let whole = Range(match.range, in: template), let name = Range(match.range(at: 1), in: template) else {
+                return nil
+            }
+            return (whole, String(template[name]))
         }
-        if let unknown = names.first(where: { !purpose.variables.contains($0) }) {
-            throw Failure(description: L("The prompt variable {{%@}} can’t be used for “%@” (available: %@)", unknown, purpose.title, purpose.variables.joined(separator: ", ")))
+        if let unknown = found.first(where: { !purpose.variables.contains($0.name) }) {
+            throw Failure(description: L("The prompt variable {{%@}} can’t be used for “%@” (available: %@)", unknown.name, purpose.title, purpose.variables.joined(separator: ", ")))
         }
-        for name in Set(names) {
-            out = out.replacingOccurrences(
-                of: #"\{\{\s*"# + name + #"\s*\}\}"#, with: variables[name] ?? "", options: .regularExpression)
+        var out = ""
+        var last = template.startIndex
+        for (range, name) in found {
+            out += template[last..<range.lowerBound]
+            out += variables[name] ?? ""
+            last = range.upperBound
         }
+        out += template[last...]
         return out
     }
 
