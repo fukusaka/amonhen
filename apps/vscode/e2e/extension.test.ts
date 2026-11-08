@@ -2853,9 +2853,10 @@ suite('Amon Hen in VSCode', () => {
       const { rows: bits } = await waitPosted('lineage', at, (m) => !!m.rows && isAncestor(m.rows, tip));
       assert.ok(isAncestor(bits!, start));
       assert.ok(!isAncestor(bits!, side));
+      // 切る前に頼んだ分の答えが後から届くことがある。切った答え（null）を待つ
       at = posted.length;
       await toggle();
-      assert.equal((await waitPosted('lineage', at)).rows, null);
+      await waitPosted('lineage', at, (m) => m.rows === null);
     } finally {
       (vscode.window as { showQuickPick: unknown }).showQuickPick = quickPick;
       await panel.history.handle({ type: 'scope', scope: 'head' });
