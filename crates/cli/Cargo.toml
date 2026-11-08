@@ -13,8 +13,7 @@ path = "src/main.rs"
 [dependencies]
 amonhen-backend-cli.workspace = true
 amonhen-backend-gix.workspace = true
-# 構文の色付け（tree-sitter）。FE 向けの窓口の diffSyntax などで使う
-amonhen-core = { workspace = true, features = ["syntax"] }
+amonhen-core.workspace = true
 amonhen-daemon.workspace = true
 amonhen-front.workspace = true
 amonhen-layout.workspace = true
@@ -29,3 +28,9 @@ libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3"
+
+[features]
+# 構文の色付け（tree-sitter）。FE 向けの窓口の diffSyntax などで使う。文法は C なので、ターゲットごとの C コンパイラが
+# 要る（CI の targets は --no-default-features で外す。ffi-c と同じ）
+default = ["syntax"]
+syntax = ["amonhen-core/syntax"]
