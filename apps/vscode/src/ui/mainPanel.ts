@@ -42,6 +42,8 @@ export class MainPanel implements vscode.Disposable {
       const panel = vscode.window.createWebviewPanel('amonhen.main', 'Amon Hen', vscode.ViewColumn.Active, {
         enableScripts: true,
         retainContextWhenHidden: true,
+        // ⌘F で中を探す（History の詳細のメッセージや差分）
+        enableFindWidget: true,
         localResourceRoots: [
           vscode.Uri.joinPath(extensionUri, 'dist', 'webview'),
           vscode.Uri.joinPath(extensionUri, 'media'),
