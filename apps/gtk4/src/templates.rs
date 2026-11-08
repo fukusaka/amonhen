@@ -187,6 +187,7 @@ fn edit_sheet(anchor: &gtk::Widget, id: String) {
         let name = gtk::Entry::builder()
             .text(&template.name)
             .placeholder_text(tr!("Name"))
+            .activates_default(true)
             .build();
         let text = gtk::TextView::builder()
             .monospace(true)
