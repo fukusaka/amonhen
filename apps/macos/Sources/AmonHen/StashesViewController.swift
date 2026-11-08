@@ -267,7 +267,7 @@ final class StashesViewController: NSSplitViewController, NSTableViewDataSource,
             .font: NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular),
         ])
         title.append(NSAttributedString(string: stash.title, attributes: [.foregroundColor: NSColor.labelColor]))
-        cell.title.attributedStringValue = title
+        cell.title.attributedStringValue = title.truncatingTail()
         cell.title.toolTip = stash.item.detail
 
         // 2 行目: 作ったブランチ・土台と HEAD の関係・いつ・untracked を含むか・土台の短い ID（狭ければ後ろから切れる）。
@@ -294,7 +294,7 @@ final class StashesViewController: NSSplitViewController, NSTableViewDataSource,
             if info.parents.count > 2 { part(L("with untracked files")) }
             if let base = info.parents.first { part(String(base.prefix(7))) }
         }
-        cell.subtitle.attributedStringValue = sub
+        cell.subtitle.attributedStringValue = sub.truncatingTail()
         return cell
     }
 

@@ -209,7 +209,7 @@ final class ReflogViewController: NSSplitViewController, NSTableViewDataSource, 
             .font: NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular),
         ])
         title.append(NSAttributedString(string: entry.message.isEmpty ? "—" : entry.message, attributes: [.foregroundColor: NSColor.labelColor]))
-        cell.title.attributedStringValue = title
+        cell.title.attributedStringValue = title.truncatingTail()
         cell.title.toolTip = entry.message
 
         // 2 行目: どのブランチにも残っていないか・いつ・短い ID・件名（狭ければ後ろから切れる）。
@@ -224,7 +224,7 @@ final class ReflogViewController: NSSplitViewController, NSTableViewDataSource, 
         part(Self.relative.localizedString(for: Date(timeIntervalSince1970: TimeInterval(entry.time)), relativeTo: Date()))
         part(String(entry.new.prefix(7)))
         if !entry.subject.isEmpty { part(entry.subject) }
-        cell.subtitle.attributedStringValue = sub
+        cell.subtitle.attributedStringValue = sub.truncatingTail()
         cell.subtitle.toolTip = entry.subject
         return cell
     }
@@ -262,4 +262,14 @@ private final class ReflogCell: NSTableCellView {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+}
+
+extension NSMutableAttributedString {
+    /// 1 行の欄で、入りきらない後ろを「…」にする（属性付きの文字列には欄の `lineBreakMode` が効かず、黙って切れる）。
+    func truncatingTail() -> NSMutableAttributedString {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingTail
+        addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: length))
+        return self
+    }
 }
