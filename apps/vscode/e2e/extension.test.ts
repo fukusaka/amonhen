@@ -2789,12 +2789,19 @@ suite('Amon Hen in VSCode', () => {
     git('switch', '-q', branch);
     git('merge', '-q', '--no-ff', '-m', 'fold merge', 'fold-side');
     try {
-      // git の変化を知ってからの読み直しが遅れて届くことがある（CI）。最初に届いた行ではなく、期待する数の行を待つ
-      const open = Number(git('rev-list', '--count', 'HEAD').trim());
+      // git の変化を知ってからの読み直しが遅れて届くことがある（CI）。落ち着いてからの行の数を基準にし、そのあとは
+      // 最初に届いた行ではなく、期待する数の行を待つ
       await vscode.commands.executeCommand('amonhen.refresh');
       let at = posted.length;
       await panel.history.reset();
-      await waitPosted('rows', at, (m) => m.total === open);
+      for (;;) {
+        const quiet = posted.length;
+        await new Promise((r) => setTimeout(r, 800));
+        if (!posted.slice(quiet).some((m) => m.type === 'reset' || m.type === 'rows')) break;
+      }
+      const open = (posted.slice(at).filter((m): m is Extract<HostMessage, { type: 'rows' }> => m.type === 'rows' && m.total !== undefined).at(-1) ??
+        (await waitPosted('rows', at, (m) => m.total !== undefined))).total!;
+      assert.ok(posted.slice(at).some((m) => m.type === 'rows' && m.rows.some((r) => r.subject === 'fold merge')), 'merge が History にある');
       at = posted.length;
       await pick('Fold Merged Branches');
       const folded = await waitPosted('rows', at, (m) => m.total === open - 2);
