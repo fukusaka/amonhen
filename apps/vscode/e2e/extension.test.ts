@@ -2124,7 +2124,9 @@ async function stashFlow(): Promise<void> {
     // 新しい stash を確かめてから pop する
     git('stash', 'push', '-q', '-u', '-m', 'again');
     await vscode.commands.executeCommand('amonhen.refresh');
-    await withWindow({ showWarningMessage: async () => 'Pop' }, async () => vscode.commands.executeCommand('amonhen.stash.popLatest'));
+    await withWindow({ showInformationMessage: async (_m: string, ...rest: unknown[]) => (rest.includes('Pop') ? 'Pop' : undefined) }, async () =>
+      vscode.commands.executeCommand('amonhen.stash.popLatest'),
+    );
     assert.equal(git('stash', 'list').trim(), '');
     assert.equal(readFileSync(file, 'utf8').replaceAll('\r\n', '\n'), 'untracked\n');
   } finally {
@@ -2476,7 +2478,19 @@ async function reflogFlow(): Promise<void> {
     assert.equal(rev('HEAD'), lost);
 
     // Checkout（detached）と、History で見せる
-    await panel.reflog.handle({ type: 'reflogAction', action: 'checkout', oid: parent, selector: 'HEAD@{1}' });
+    // Checkout の前に確かめる（detached になる）
+    let checkoutAsked = '';
+    await withWindow(
+      {
+        showInformationMessage: async (message: string, ...rest: unknown[]) => {
+          if (!rest.includes('Checkout')) return undefined;
+          checkoutAsked = `${message} ${(rest[0] as { detail?: string }).detail ?? ''}`;
+          return 'Checkout';
+        },
+      },
+      async () => panel.reflog.handle({ type: 'reflogAction', action: 'checkout', oid: parent, selector: 'HEAD@{1}' }),
+    );
+    assert.match(checkoutAsked, /^Checkout [0-9a-f]{8}\? HEAD is detached/);
     assert.equal(rev('HEAD'), parent, lastErrors());
     assert.throws(() => git('symbolic-ref', '-q', 'HEAD'));
     git('switch', '-q', 'reflog-e2e');

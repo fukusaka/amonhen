@@ -1086,6 +1086,8 @@ First release.
 
 #### Changed
 
+- Checkout, Merge, Cherry-pick, Revert and applying or popping a stash ask first, saying what happens (a tracking
+  branch, a detached HEAD, uncommitted changes coming along).
 - Working Copy's commit box is above the file list, as in the app.
 - Without the engine, a fetch or push that prints nothing for 120 seconds (usually a sign-in nobody sees) is
   stopped with an error saying so, as the engine does.

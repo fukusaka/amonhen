@@ -1,6 +1,7 @@
 /** Stash の保存・適用・pop・削除と、中身の表示 */
 import { join } from 'node:path';
 import * as vscode from 'vscode';
+import { confirmOperation } from './confirm.ts';
 import { daemonFor } from '../daemon/connection.ts';
 import { parseCommitObject } from '../git/commitObject.ts';
 import { stashBranch } from '../git/stash.ts';
@@ -103,12 +104,8 @@ export function registerStashCommands(manager: RepositoryManager): vscode.Dispos
           void vscode.window.showInformationMessage('There are no stashes');
           return;
         }
-        const answer = await vscode.window.showWarningMessage(
-          `Pop ${latest.name} (${latest.subject})?`,
-          { modal: true, detail: 'Applies it to the working tree and removes it from the list. If it conflicts, the stash stays.' },
-          'Pop',
-        );
-        if (answer === 'Pop') await apply(repo, { kind: 'stash', stash: latest }, true);
+        // 確かめるのは apply（Stashes の Pop と同じ文）
+        await apply(repo, { kind: 'stash', stash: latest }, true);
       }),
     ),
     // stash を作ったときの HEAD からブランチを作り、そこで stash を当てて消す（git stash branch。エンジンだけ）
@@ -134,6 +131,12 @@ export function registerStashCommands(manager: RepositoryManager): vscode.Dispos
 }
 
 async function apply(repo: Repository, node: StashNode, pop: boolean): Promise<void> {
+  const ok = await confirmOperation(
+    `${pop ? 'Pop' : 'Apply'} ${node.stash.name} (${node.stash.subject})?`,
+    [pop ? 'Applies it to the working tree and removes it from the list. If it conflicts, the stash stays.' : 'Applies it to the working tree; the stash stays.'],
+    pop ? 'Pop' : 'Apply',
+  );
+  if (!ok) return;
   const result = await repo.backend.stashApply(node.stash.name, pop);
   if (result === 'conflict') {
     const choice = await vscode.window.showWarningMessage(

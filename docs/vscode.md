@@ -260,3 +260,4 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 49. Working Copy: the commit box above the list
 - [x] 50. Save as Patch asks for the version (-v)
 - [x] 51. The Working Copy row says when only some folders are checked out
+- [x] 52. Checkout, Merge, Cherry-pick, Revert, Apply and Pop ask first

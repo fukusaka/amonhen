@@ -365,7 +365,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| A sheet before remote, HEAD-moving and deleting operations | ✓ | ✓ | △ | n/a | GTK4: Name prompts and every confirmation are the same sheet. Return presses the default button wherever the focus is (a drop-down or a radio too), as on macOS.<br>VSCode: Deleting, rewriting and Reset only; not Fetch, Pull, Push, Merge or Checkout. |
+| A sheet before remote, HEAD-moving and deleting operations | ✓ | ✓ | ✓ | n/a | GTK4: Name prompts and every confirmation are the same sheet. Return presses the default button wherever the focus is (a drop-down or a radio too), as on macOS.<br>VSCode: Modals, and QuickPicks for Fetch, Pull and Push; Switch Branch… switches at once, as the app's switcher does. |
 | Undo of git operations (`undo.json`) | ✓ | ✓ | ✓ | ✓ |  |
 | Disabled controls say why in their tooltip | ✓ | ✓ | n/a | n/a | VSCode: Commands that can't be used aren't shown (when clauses). |
 
