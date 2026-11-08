@@ -308,7 +308,9 @@ fn build(
 /// 高さ（46）が枠の高さになるので、項目が 1 つだと下が空く。メニューの中では、スクロールバーの最小の高さをなくす。
 /// 等幅の入力欄の説明（プレースホルダー）は、ふつうの字で（等幅だと横に長く、切れる）。Quick Open の欄は大きな字
 /// （macOS 版の 17 pt。ふつうの字の 13 pt に対する比）。押せない Commit・削除などのボタンは色を外して、ふつうの
-/// 押せないボタンと同じに（macOS 版と同じ。押せないのに色が残ると押せそうに見える）。
+/// 押せないボタンと同じに（macOS 版と同じ。押せないのに色が残ると押せそうに見える）。`compact-icon` は枠のない
+/// 小さなアイコンのボタン（macOS 版のプルダウンの ▾ や時計のように、幅を取らない）。`small-push` は小さな文字の
+/// ボタン（macOS 版の controlSize small）。
 pub fn install_css() {
     let provider = gtk::CssProvider::new();
     provider.load_from_string(
@@ -324,7 +326,10 @@ pub fn install_css() {
          .drop-below { box-shadow: inset 0 -2px @accent_color; } \
          .drop-above:drop(active), .drop-below:drop(active) { background: none; } \
          button.suggested-action:disabled, button.destructive-action:disabled { \
-           background-color: alpha(currentColor, 0.1); color: @window_fg_color; }",
+           background-color: alpha(currentColor, 0.1); color: @window_fg_color; } \
+         button.compact-icon, menubutton.compact-icon > button { \
+           min-width: 16px; padding-left: 4px; padding-right: 4px; } \
+         button.small-push { min-height: 24px; padding: 2px 8px; font-size: smaller; }",
     );
     if let Some(display) = gdk::Display::default() {
         gtk::style_context_add_provider_for_display(

@@ -97,6 +97,8 @@ impl ReflogView {
         bar.set_margin_start(8);
         bar.set_margin_end(8);
         for button in [&branch_button, &checkout_button] {
+            // 小さなボタン（macOS 版の controlSize small。一覧の欄を macOS 版と同じ幅に収める）。
+            button.add_css_class("small-push");
             button.set_sensitive(false);
             bar.append(button);
         }
@@ -138,7 +140,7 @@ impl ReflogView {
         root.set_end_child(Some(&pane.root));
         root.set_resize_start_child(false);
         root.set_shrink_start_child(false);
-        root.set_position(420);
+        root.set_position(280);
 
         let inner = Rc::new(Inner {
             actions,

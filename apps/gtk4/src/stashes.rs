@@ -159,6 +159,8 @@ impl Stashes {
         ] {
             let button = gtk::Button::with_label(&title);
             button.set_tooltip_text(Some(&tip));
+            // 小さなボタン（macOS 版の controlSize small。一覧の欄を macOS 版と同じ幅に収める）。
+            button.add_css_class("small-push");
             bar.append(&button);
             buttons.push(button);
         }
@@ -186,7 +188,7 @@ impl Stashes {
         root.set_end_child(Some(&pane.root));
         root.set_shrink_start_child(false);
         root.set_resize_start_child(false);
-        root.set_position(360);
+        root.set_position(280);
 
         let inner = Rc::new(Inner {
             actions: RefCell::default(),

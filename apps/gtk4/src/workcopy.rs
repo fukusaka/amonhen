@@ -287,6 +287,7 @@ impl WorkingCopy {
             .tooltip_text(tr!("Commit and Push (Ctrl+Shift+Return), Amend"))
             .build();
         commit_menu.add_css_class("flat");
+        commit_menu.add_css_class("compact-icon");
         let menu = gio::Menu::new();
         menu.append(Some("Commit and Push"), Some("win.commit-and-push"));
         menu.append(Some("Amend Last Commit"), Some("win.amend-last-commit"));
@@ -296,10 +297,13 @@ impl WorkingCopy {
         let commit_group = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         commit_group.append(&commit);
         commit_group.append(&commit_menu);
-        let commit_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        // 詰めて並べる（macOS 版と同じ 3。左の列を macOS 版と同じ 280 の幅に収める）。
+        let commit_row = gtk::Box::new(gtk::Orientation::Horizontal, 3);
         commit_row.append(&amend);
-        commit_row.append(&aids.history);
-        commit_row.append(&aids.insert);
+        for b in [&aids.history, &aids.insert] {
+            b.add_css_class("compact-icon");
+            commit_row.append(b);
+        }
         // 件名の文字数（50 を超えたら黄、72 を超えたら橙。git の慣習）。
         let summary_count = gtk::Label::new(None);
         summary_count.set_hexpand(true);
@@ -523,7 +527,7 @@ impl WorkingCopy {
         root.set_resize_start_child(false);
         // 左の列は最小の幅より狭くしない（「Commit 3 Files」などで行が伸びると、左の余白が削られて詰まる）。
         root.set_shrink_start_child(false);
-        root.set_position(340);
+        root.set_position(280);
 
         let inner = Rc::new(Inner {
             repo: RefCell::default(),
@@ -3417,15 +3421,34 @@ impl Inner {
 /// コミットの入力とファイルの一覧の間の仕切りの位置（上の段の高さ）を覚える設定の鍵。
 const MESSAGE_HEIGHT: &str = "workingCopyMessageHeight";
 
-/// 仕切りを覚えた位置に置き、動かしたら覚える（ドラッグの間は書かず、止まってから）。
+/// 仕切りを覚えた位置に置き、動かしたら覚える（ドラッグの間は書かず、止まってから）。覚えた位置がなければ、
+/// メッセージの欄を最小より少し広めに（macOS 版と同じく 60 pt ほど。Description が 150 ほどの高さになる）。
 fn remember_message_height(paned: &gtk::Paned) {
+    let placing = Rc::new(Cell::new(false));
     if let Some(height) = crate::settings::string(MESSAGE_HEIGHT).and_then(|s| s.parse().ok()) {
         paned.set_position(height);
+    } else {
+        let placing = placing.clone();
+        let handler: Rc<RefCell<Option<glib::SignalHandlerId>>> = Rc::default();
+        let h = handler.clone();
+        let id = paned.connect_map(move |paned| {
+            if let Some(id) = h.borrow_mut().take() {
+                paned.disconnect(id);
+            }
+            let Some(top) = paned.start_child() else {
+                return;
+            };
+            let minimum = top.measure(gtk::Orientation::Vertical, paned.width()).0;
+            placing.set(true);
+            paned.set_position(minimum + 72);
+            placing.set(false);
+        });
+        handler.replace(Some(id));
     }
     let pending: Rc<RefCell<Option<glib::SourceId>>> = Rc::default();
     paned.connect_position_notify(move |paned| {
         // 自分で置いたとき・まだ大きさが決まっていないときは覚えない。
-        if !paned.is_mapped() {
+        if !paned.is_mapped() || placing.get() {
             return;
         }
         if let Some(id) = pending.borrow_mut().take() {
