@@ -837,10 +837,17 @@ export class HistoryController implements vscode.Disposable {
       this.post({ type: 'lineage', rows: null });
       return;
     }
-    const at = await shown.client.call({ op: 'historyRowOf', history: shown.history, id: this.selectedOid });
-    const row = at.json['row'];
-    if (typeof row !== 'number') return;
-    const reply = await shown.client.call({ op: 'historyLineage', history: shown.history, row });
+    let reply;
+    try {
+      const at = await shown.client.call({ op: 'historyRowOf', history: shown.history, id: this.selectedOid });
+      const row = at.json['row'];
+      if (typeof row !== 'number') return;
+      reply = await shown.client.call({ op: 'historyLineage', history: shown.history, row });
+    } catch (err) {
+      // 読む間に読み直しが History を入れ替えて片付けたなら、新しい History で頼み直されるので捨てる
+      if (shown !== this.daemon) return;
+      throw err;
+    }
     if (request === this.lineageRequest && shown === this.daemon) {
       this.post({ type: 'lineage', rows: Buffer.from(reply.bytes('rows')).toString('base64') });
     }
