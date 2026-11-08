@@ -124,6 +124,8 @@ pub struct Details {
     extras: Rc<RefCell<Option<Value>>>,
     /// 複数のコミットを選んだときの見出し（ほかの部品の代わりに出す）。
     selection: gtk::Box,
+    /// 複数選んだとき・送る変更すべての見出しと説明の段（右上のボタンを移す先）。
+    selection_head: gtk::Box,
     selection_title: gtk::Label,
     selection_note: gtk::Label,
     pairs: gtk::Box,
@@ -517,9 +519,16 @@ impl Details {
         let selection_note = label(&["dim-label", "caption"]);
         let pairs = gtk::Box::new(gtk::Orientation::Horizontal, 4);
         let selection_lines = label(&["caption"]);
+        // 見出しと説明の右に、上の帯の右上のボタンを移せる場所（上の帯がボタンだけになるときに。macOS 版と同じく、
+        // ボタンだけの空いた段を作らない）。
+        let selection_text = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        selection_text.set_hexpand(true);
+        selection_text.append(&selection_title);
+        selection_text.append(&selection_note);
+        let selection_head = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        selection_head.append(&selection_text);
         let selection = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        selection.append(&selection_title);
-        selection.append(&selection_note);
+        selection.append(&selection_head);
         selection.append(&pairs);
         selection.append(&selection_lines);
         // 上の帯: 作者と、右上のボタン。スクロールの外に置き、長いメッセージでも見えたままにする（macOS 版の
@@ -633,6 +642,7 @@ impl Details {
             info: RefCell::default(),
             extras: Rc::default(),
             selection,
+            selection_head,
             selection_title,
             selection_note,
             pairs,
@@ -1065,6 +1075,26 @@ impl Details {
     /// 複数選んだときの見出しか、1 つのコミットの詳細か。
     fn set_selection_mode(&self, on: bool) {
         self.selection.set_visible(on);
+        // 上の帯に右上のボタンしか残らないなら、ボタンを見出しの右に移し、帯は隠す。
+        let move_tools = on && !self.styles.is_visible();
+        let target: &gtk::Box = if move_tools {
+            &self.selection_head
+        } else {
+            &self.head
+        };
+        if self.tools.parent().as_ref() != Some(target.upcast_ref()) {
+            if let Some(parent) = self.tools.parent().and_downcast::<gtk::Box>() {
+                parent.remove(&self.tools);
+            }
+            if move_tools {
+                target.append(&self.tools);
+            } else {
+                // 作者の帯の右、見せ方の切り替えの左（もとの場所）。
+                target
+                    .insert_child_after(&self.tools, Some(&self.head.first_child().expect("lead")));
+            }
+        }
+        self.head.set_visible(!move_tools);
         // 簡潔では、作者の帯の代わりに 1 行（[`Details::show_brief`]）。
         self.people
             .set_visible(!on && self.style.get() != Style::Brief);
