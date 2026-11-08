@@ -74,7 +74,7 @@ function waitPosted<T extends HostMessage['type']>(
     () => posted.slice(since).find((m): m is Message<T> => m.type === type && match(m as Message<T>)),
     undefined,
     () => {
-      const kinds = posted.slice(since).map((m) => (m.type === 'rows' ? `rows[${m.start}+${m.rows.length}]` : m.type));
+      const kinds = posted.slice(since).map((m) => (m.type === 'rows' ? `rows[${m.start}+${m.rows.length}${m.total === undefined ? '' : `/${m.total}`}]` : m.type));
       return [kinds.join(', ') || 'なし', ...errors.slice(-3).map((e) => `エラー「${e}」`)].join('、');
     },
   );
@@ -2660,6 +2660,12 @@ suite('Amon Hen in VSCode', () => {
     } finally {
       repo.want = want;
       release();
+    }
+    // ほかの読み直し（前の試験の git の変化を知って始まるもの）が途中だと、その History の行は送られない。落ち着くのを待つ
+    for (;;) {
+      const quiet = posted.length;
+      await new Promise((r) => setTimeout(r, 800));
+      if (!posted.slice(quiet).some((m) => m.type === 'reset' || m.type === 'rows')) break;
     }
     const at = posted.length;
     // 読み直しが頼むのは最初の行なので、2 行目の答えは、この頼みへの答えだけ
