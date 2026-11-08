@@ -14,8 +14,21 @@ use serde_json::Value;
 
 const ROW: f64 = 22.0;
 const LANE: f64 = 14.0;
+/// 列の幅（macOS 版の 330 pt。ふつうの字 13 pt に対する幅なので、字の大きさに合わせて広げる）。
 const COLUMN: f64 = 330.0;
 const TOP: f64 = 22.0;
+
+/// 字の大きさに合わせた列の幅（件名が macOS 版と同じだけ入る）。
+fn column_width(area: &gtk::DrawingArea) -> f64 {
+    let font = area.pango_context().font_description().unwrap_or_default();
+    // 字の大きさ（pt）を 96 dpi の px に。
+    let px = f64::from(font.size()) / f64::from(pango::SCALE) * 96.0 / 72.0;
+    if px > 0.0 {
+        (COLUMN * px / 13.0).max(COLUMN).round()
+    } else {
+        COLUMN
+    }
+}
 
 /// 1 行（コミット、線、薄くするか、y）。
 struct Row {
@@ -35,7 +48,7 @@ pub type Setter = Rc<dyn Fn(&Value)>;
 /// 絵の部品。`set` で答えを渡す。`drawing` がなければ隠す。
 pub fn new() -> (gtk::DrawingArea, Setter) {
     let area = gtk::DrawingArea::new();
-    area.set_content_width((COLUMN * 2.0 + 24.0) as i32);
+    area.set_content_width((column_width(&area) * 2.0 + 24.0) as i32);
     area.set_visible(false);
     let info: Rc<RefCell<Value>> = Rc::default();
     let i = info.clone();
@@ -111,7 +124,7 @@ fn draw(area: &gtk::DrawingArea, cr: &gtk::cairo::Context, info: &Value) {
         text_at(area, cr, text, x, 2.0, &dimmed(&fg, 0.6), true, f64::MAX);
     };
     heading(&tr!("Now"), 4.0);
-    heading(&tr!("After the rebase"), COLUMN + 28.0);
+    heading(&tr!("After the rebase"), column_width(area) + 28.0);
 
     // 左: 今。上に載せ直すコミット（右の線）、その下に載せ先で進んだコミット（左の線）、いちばん下で合流。
     let mut y = TOP;
@@ -197,7 +210,7 @@ fn draw(area: &gtk::DrawingArea, cr: &gtk::cairo::Context, info: &Value) {
     column(
         area,
         cr,
-        COLUMN + 24.0,
+        column_width(area) + 24.0,
         &after,
         y,
         base.as_ref(),
@@ -233,7 +246,7 @@ fn draw(area: &gtk::DrawingArea, cr: &gtk::cairo::Context, info: &Value) {
         area,
         cr,
         "→",
-        COLUMN + 6.0,
+        column_width(area) + 6.0,
         TOP + (picks.len().saturating_sub(1)) as f64 * ROW / 2.0,
         &dimmed(&fg, 0.4),
         false,
@@ -301,7 +314,7 @@ fn column(
             lane_x(row.lane),
             row.y,
             text_x,
-            x + COLUMN,
+            x + column_width(area),
             &row.subject,
             row.dim,
             i < highlight,
@@ -317,7 +330,7 @@ fn column(
             y + 3.0,
             &dimmed(&fg, 0.5),
             false,
-            x + COLUMN - text_x,
+            x + column_width(area) - text_x,
         );
     }
     if let Some((oid, subject)) = base {
@@ -327,7 +340,7 @@ fn column(
             lane_x(0),
             base_y,
             text_x,
-            x + COLUMN,
+            x + column_width(area),
             subject,
             true,
             false,
@@ -406,7 +419,8 @@ fn pill(
     };
     let layout = area.create_pango_layout(Some(name));
     let mut font = area.pango_context().font_description().unwrap_or_default();
-    font.set_size(font.size() * 85 / 100);
+    // macOS 版と同じ割合（ふつうの字 13 pt に対して 10 pt）。
+    font.set_size(font.size() * 10 / 13);
     if current {
         font.set_weight(pango::Weight::Bold);
     }
@@ -458,7 +472,8 @@ fn text_at(
 ) {
     let layout = area.create_pango_layout(Some(text));
     let mut font = area.pango_context().font_description().unwrap_or_default();
-    font.set_size(font.size() * 9 / 10);
+    // macOS 版と同じ割合（ふつうの字 13 pt に対して小さな字 11 pt）。件名が列に収まるように。
+    font.set_size(font.size() * 11 / 13);
     if bold {
         font.set_weight(pango::Weight::Bold);
     }
