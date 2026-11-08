@@ -23,14 +23,24 @@ export async function confirmRewrite(
   target: PreviewTarget | undefined,
   note?: string,
 ): Promise<RewriteChoice | undefined> {
-  // 調べられなくても書き換えはできる（見通しなしで確かめる）
+  // 調べられなくても書き換えはできる（見通しなしで、調べられなかったわけを添えて確かめる）
+  let failure: string | undefined;
   const preview = target
     ? await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: 'Checking what the rewrite will do' },
-        () => repo.backend.rewritePreview(target).catch(() => undefined),
+        () =>
+          repo.backend.rewritePreview(target).catch((err: unknown) => {
+            failure = err instanceof Error ? err.message : String(err);
+            return undefined;
+          }),
       )
     : undefined;
-  const lines = [...(note ? [note] : []), ...(preview ? previewLines(preview) : []), 'You can undo this.'];
+  const lines = [
+    ...(note ? [note] : []),
+    ...(preview ? previewLines(preview) : []),
+    ...(failure ? [`Couldn’t read what the rewrite will do (${failure}).`] : []),
+    'You can undo this.',
+  ];
   const items: Item[] = [{ title: ok }];
   const alternative = preview && stackedAlternative(preview);
   if (alternative !== undefined) {
