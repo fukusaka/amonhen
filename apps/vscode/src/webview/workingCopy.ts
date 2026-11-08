@@ -91,7 +91,8 @@ export function createWorkingCopyView(): View {
   const sparseNote = el('button', 'wc-sparse');
   sparseNote.hidden = true;
   sparseNote.addEventListener('click', () => post({ type: 'wcShowFolders' }));
-  side.append(sparseNote, tools, fileList, commitBox);
+  // コミットの欄は一覧の上（アプリと同じ）
+  side.append(commitBox, sparseNote, tools, fileList);
 
   let files: Change[] = [];
   let lastMessage = '';

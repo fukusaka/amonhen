@@ -249,3 +249,4 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 46. Rebuild History
 - [x] 47. 拡張自身の fetch・push も、120 秒何も出さなければ止める
 - [x] 48. Working Copy: HEAD → 作業ツリーの 1 つの差分、変わった行と hunk ごとのチェック
+- [x] 49. Working Copy: コミットの欄を一覧の上に

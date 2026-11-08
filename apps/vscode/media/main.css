@@ -715,8 +715,8 @@ button.secondary {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 8px 12px 12px;
-  border-top: 1px solid var(--vscode-panel-border);
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--vscode-panel-border);
 }
 
 .wc-commit input.subject,

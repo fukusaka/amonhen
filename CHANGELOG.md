@@ -1084,6 +1084,7 @@ First release.
 
 #### Changed
 
+- Working Copy's commit box is above the file list, as in the app.
 - Without the engine, a fetch or push that prints nothing for 120 seconds (usually a sign-in nobody sees) is
   stopped with an error saying so, as the engine does.
 - Push asks first, showing the commits and anything worth a look (the default branch, fixup!/WIP commits, secrets,
