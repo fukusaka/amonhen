@@ -1677,6 +1677,29 @@ pub fn push_in(
             l.add_css_class("warning");
             sheet.add(&l);
         }
+        // 送った後の形（上流の札が手元の先端へ。Force Push なら上流から消えるコミットを赤で。macOS 版と同じ）。
+        let preview = run(
+            &repo,
+            json!({ "op": "movePreview", "from": upstream, "to": branch }),
+        )
+        .await["info"]
+            .clone();
+        if !preview["drawing"].is_null() {
+            let replacing = force || diverged;
+            let (drawing, set) = crate::rewritedraw::new_move(crate::rewritedraw::Move {
+                moving: upstream.clone(),
+                kind: "remote",
+                after_title: if replacing {
+                    tr!("After the force push")
+                } else {
+                    tr!("After the push")
+                },
+                lost_note: tr!("removed from {upstream}", upstream = upstream),
+                lost_red: true,
+            });
+            set(&preview);
+            sheet.add(&drawing);
+        }
         // 送る範囲があれば、送るコミットとその中身を見せる広いシート。なければ（送るコミットがなく、上流だけが
         // 進んでいる Force Push など）一覧だけの小さなシート（macOS 版と同じ）。
         if range.is_some() {
