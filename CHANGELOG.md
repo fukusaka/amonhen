@@ -11,6 +11,8 @@ becomes the GitHub Release notes.
 
 #### Added
 
+- The engine is built with syntax highlighting (tree-sitter), and its front-end interface gives a diff's or a text's
+  syntax colors (`diffSyntax`, `textSyntax`).
 - A branch merged by a GitHub pull request (squash or rebase) gets the merged mark in the sidebar, says "Merged by
   pull request #123" in its popover, and is deleted with a plain confirmation naming the pull request.
 - Clean Up Branches… (Repository menu and the Branches heading) lists the branches merged into the default branch,
