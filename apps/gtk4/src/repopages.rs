@@ -344,6 +344,7 @@ pub(crate) fn remote_sheet(s: &Rc<RepoSettings>, remote: Option<Remote>) {
     let (w, parent) = (s.weak(), s.window());
     let repo = s.repo.clone();
     glib::spawn_future_local(async move {
+        let is_new = remote.is_none();
         let title = if remote.is_some() {
             tr!("Edit Remote")
         } else {
@@ -427,7 +428,8 @@ pub(crate) fn remote_sheet(s: &Rc<RepoSettings>, remote: Option<Remote>) {
                 });
             });
         }
-        let save = sheet.buttons(&tr!("Save"), false, None);
+        // 足すときは「Add」（サイドバーのシートと macOS 版と同じ）。
+        let save = sheet.buttons(&if is_new { tr!("Add") } else { tr!("Save") }, false, None);
         let update = {
             let (name, fetch, points, save, check) = (
                 name.clone(),
