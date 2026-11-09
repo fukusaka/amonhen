@@ -2592,6 +2592,13 @@ async function reflogFlow(): Promise<void> {
     await vscode.commands.executeCommand('amonhen.reflog.showInHistory', { oid: parent });
     await waitPosted('reveal', mark);
 
+    // 一番上でない行は、今の HEAD と Range Diff で比べられる（ここでは足したコミットが 1 つ）
+    mark = posted.length;
+    await vscode.commands.executeCommand('amonhen.reflog.rangeDiff', { oid: parent, reflogHead: lost });
+    const compared = await waitPosted('rangeDiff', mark, (m) => m.pairs !== null);
+    assert.deepEqual(compared.ranges, [`${parent}...${lost}`]);
+    assert.deepEqual(compared.pairs!.map((p) => [p.status, p.subject]), [['added', 'reflog e2e']]);
+    await panel.rangeDiff.handle({ type: 'rangeDiffClose' });
   } finally {
     git('switch', '-q', branch);
     git('branch', '-D', 'reflog-e2e');

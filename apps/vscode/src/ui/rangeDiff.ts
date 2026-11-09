@@ -16,6 +16,13 @@ interface PairContext {
   newOid?: string;
 }
 
+/** Reflog の行の右クリックに渡される情報 */
+interface ReflogContext {
+  oid?: string;
+  /** 一番上の行（今の HEAD）のコミット。一番上の行にはない */
+  reflogHead?: string;
+}
+
 export function registerRangeDiffCommands(
   manager: RepositoryManager,
   show: (view: ViewName) => MainPanel,
@@ -47,6 +54,11 @@ export function registerRangeDiffCommands(
       if (!history?.repository) return;
       const [newer, older] = await history.selectedCommits();
       if (newer && older) await page().open([`${older.oid}...${newer.oid}`]).catch(showError);
+    }),
+    // Reflog のこの時点の HEAD と今の HEAD を、同じ一連のコミットの 2 つの版として比べる。今の HEAD は一番上の行の
+    // コミット（`HEAD` と書くと、比べている間に動いたときに別のものになる）
+    vscode.commands.registerCommand('amonhen.reflog.rangeDiff', async (ctx?: ReflogContext) => {
+      if (manager.current && ctx?.oid && ctx.reflogHead) await page().open([`${ctx.oid}...${ctx.reflogHead}`]).catch(showError);
     }),
     // パレットの Range Diff…: 今のブランチの前の版と比べて開く（範囲は上の欄で直せる）
     vscode.commands.registerCommand('amonhen.rangeDiff', async () => {

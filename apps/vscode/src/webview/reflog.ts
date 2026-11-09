@@ -55,6 +55,8 @@ export function createReflogView(): View {
       selector: entry.selector,
       subject: entry.subject || undefined,
       reflogReachable: entry.reachable,
+      // 一番上でない行は、今の HEAD（一番上の行のコミット）と Range Diff で比べられる
+      reflogHead: index > 0 ? entries[0]!.oid : undefined,
       preventDefaultContextMenuItems: true,
     });
     row.append(el('span', 'selector', entry.selector));

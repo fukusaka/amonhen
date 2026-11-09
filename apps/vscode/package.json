@@ -200,6 +200,11 @@
         "category": "Amon Hen"
       },
       {
+        "command": "amonhen.reflog.rangeDiff",
+        "title": "Compare with Current HEAD (Range Diff)",
+        "category": "Amon Hen"
+      },
+      {
         "command": "amonhen.tag.push",
         "title": "Push Tag",
         "category": "Amon Hen"
@@ -1570,6 +1575,10 @@
           "when": "false"
         },
         {
+          "command": "amonhen.reflog.rangeDiff",
+          "when": "false"
+        },
+        {
           "command": "amonhen.showRangeDiff",
           "when": "false"
         },
@@ -1990,6 +1999,11 @@
           "command": "amonhen.reflog.copyName",
           "when": "webviewId == 'amonhen.main' && webviewSection == 'reflog'",
           "group": "9_copy@2"
+        },
+        {
+          "command": "amonhen.reflog.rangeDiff",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'reflog' && reflogHead",
+          "group": "5_compare@1"
         },
         {
           "command": "amonhen.rangeDiff.showOldInHistory",
