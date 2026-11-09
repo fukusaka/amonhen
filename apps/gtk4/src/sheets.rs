@@ -1375,6 +1375,7 @@ pub fn pull_in(actions: &Rc<Actions>, target: Target, mode: &str) {
         let drawings = gtk::Stack::new();
         drawings.add_named(&gtk::Box::new(gtk::Orientation::Vertical, 0), Some("none"));
         let mut drawn: Vec<&str> = Vec::new();
+        let mut now = None;
         if let Some(upstream) = state.upstream.clone()
             && incoming > 0
         {
@@ -1412,6 +1413,8 @@ pub fn pull_in(actions: &Rc<Actions>, target: Target, mode: &str) {
                     drawings.add_named(&area, Some("merge"));
                     drawn.push("merge");
                 }
+                // 押せない取り込み方（Fast-Forward Only、断られる git の設定）では、左に今だけを描く。
+                now = crate::rewritedraw::for_merge_now(&merge, &branch, tr!("After the pull"));
                 let rebase = run(&repo, json!({ "op": "rewritePreview", "onto": upstream })).await
                     ["info"]
                     .clone();
@@ -1422,6 +1425,46 @@ pub fn pull_in(actions: &Rc<Actions>, target: Target, mode: &str) {
                     drawn.push("rebase");
                 }
             }
+        }
+        // 押せないときは、後の絵の代わりに「Pull できません」と理由を、真ん中の高さに。今の絵があれば左に残す
+        // （macOS 版と同じ）。
+        let blocked_reason = gtk::Label::new(None);
+        blocked_reason.set_wrap(true);
+        blocked_reason.set_max_width_chars(60);
+        blocked_reason.set_xalign(0.0);
+        blocked_reason.add_css_class("dim-label");
+        {
+            let title = gtk::Label::new(Some(&tr!("Can’t pull")));
+            title.add_css_class("heading");
+            let icon = gtk::Image::from_icon_name("dialog-warning-symbolic");
+            icon.add_css_class("warning");
+            let heading = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+            heading.append(&icon);
+            heading.append(&title);
+            let panel = gtk::Box::new(gtk::Orientation::Vertical, 6);
+            panel.set_valign(gtk::Align::Center);
+            panel.set_halign(gtk::Align::Start);
+            panel.append(&heading);
+            panel.append(&blocked_reason);
+            let overlay = gtk::Overlay::new();
+            match &now {
+                Some((area, x)) => {
+                    overlay.set_child(Some(area));
+                    panel.set_margin_start(*x as i32);
+                    // 右の見出し（Pull の後）の下から。
+                    panel.set_valign(gtk::Align::Start);
+                    panel.set_margin_top(28);
+                    // 右の列の幅で折り返す。
+                    blocked_reason.set_max_width_chars(1);
+                    blocked_reason.set_size_request((*x - 36.0) as i32, -1);
+                }
+                None => {
+                    overlay.set_child(Some(&gtk::Box::new(gtk::Orientation::Vertical, 0)));
+                    panel.set_margin_start(4);
+                }
+            }
+            overlay.add_overlay(&panel);
+            drawings.add_named(&overlay, Some("blocked"));
         }
         if !drawn.is_empty() {
             sheet.add(&drawings);
@@ -1460,9 +1503,9 @@ pub fn pull_in(actions: &Rc<Actions>, target: Target, mode: &str) {
                 method.clone(),
             );
             let changed = state.changed;
-            move |m: &str| -> (String, bool) {
+            move |m: &str| -> (String, Option<String>) {
                 let mut lines = Vec::new();
-                let mut blocked = false;
+                let mut blocked = None;
                 if upstream.is_none() {
                     let picked = source
                         .selected_item()
@@ -1474,10 +1517,9 @@ pub fn pull_in(actions: &Rc<Actions>, target: Target, mode: &str) {
                         source = picked
                     ));
                 } else if m == "git" && refused {
-                    lines.push(tr!(
-                        "⚠︎ git won’t pull: the branches have diverged, and neither pull.rebase nor pull.ff says how to reconcile them. Choose Merge or Rebase for this pull (your settings stay as they are)."
+                    blocked = Some(tr!(
+                        "git won’t pull: the branches have diverged, and neither pull.rebase nor pull.ff says how to reconcile them. Choose Merge or Rebase for this pull (your settings stay as they are)."
                     ));
-                    blocked = true;
                 } else if incoming == 0 {
                     lines.push(tr!(
                         "Nothing new as of the last Fetch (Pull fetches first)."
@@ -1494,11 +1536,10 @@ pub fn pull_in(actions: &Rc<Actions>, target: Target, mode: &str) {
                             count = outgoing
                         )),
                         "fastForwardOnly" => {
-                            lines.push(tr!(
-                                "⚠︎ Fast-Forward Only can’t pull these: you have {count} local commits. Choose Merge or Rebase.",
+                            blocked = Some(tr!(
+                                "Fast-Forward Only can’t pull these: you have {count} local commits. Choose Merge or Rebase.",
                                 count = outgoing
                             ));
-                            blocked = true;
                         }
                         _ => lines.push(tr!(
                             "You have {count} local commits, so this makes a merge commit.",
@@ -1513,7 +1554,7 @@ pub fn pull_in(actions: &Rc<Actions>, target: Target, mode: &str) {
                     ));
                 }
                 // 押せないときは、戻すものもない。
-                if !blocked {
+                if blocked.is_none() {
                     lines.push(can_undo());
                 }
                 (lines.join("\n"), blocked)
@@ -1531,9 +1572,10 @@ pub fn pull_in(actions: &Rc<Actions>, target: Target, mode: &str) {
                 method.clone(),
                 describe.clone(),
             );
-            let (drawings, drawn) = (
+            let (drawings, drawn, blocked_reason) = (
                 drawings.clone(),
                 drawn.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>(),
+                blocked_reason.clone(),
             );
             Rc::new(move || {
                 // 選んだ取り込み方の絵（押せないときは出さない）。
@@ -1544,16 +1586,27 @@ pub fn pull_in(actions: &Rc<Actions>, target: Target, mode: &str) {
                     m.clone()
                 };
                 let blocked = describe(&chosen()).1;
-                drawings.set_visible_child_name(if !blocked && drawn.contains(&name) {
+                blocked_reason.set_text(blocked.as_deref().unwrap_or_default());
+                drawings.set_visible_child_name(if blocked.is_some() {
+                    "blocked"
+                } else if drawn.contains(&name) {
                     &name
                 } else {
                     "none"
                 });
+                // 押せない理由は絵の場所に出す。絵がなければ説明に。
                 for (m, label) in PULL_MODES.iter().zip(&explains) {
-                    label.set_text(&describe(m).0);
+                    let (text, blocked) = describe(m);
+                    label.set_text(&match blocked {
+                        Some(reason) if drawn.is_empty() && text.is_empty() => {
+                            format!("⚠︎ {reason}")
+                        }
+                        Some(reason) if drawn.is_empty() => format!("⚠︎ {reason}\n{text}"),
+                        _ => text,
+                    });
                 }
                 explain.set_visible_child_name(&chosen());
-                ok.set_sensitive(!describe(&chosen()).1);
+                ok.set_sensitive(blocked.is_none());
                 if let Some(label) = &forecast {
                     let m = method(&chosen());
                     if m == "fastForwardOnly" || (chosen() == "git" && refused) {

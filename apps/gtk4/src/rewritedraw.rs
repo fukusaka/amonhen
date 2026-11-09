@@ -895,6 +895,30 @@ pub fn for_merge(info: &Value, current: &str, after_title: String) -> Option<gtk
         set(mv);
         return Some(area);
     }
+    merge_area(info, current, after_title, false)
+}
+
+/// Pull で取り込めないとき（Fast-Forward Only など）の、左の今だけの絵と、右の列（後の絵の場所）の左端。右には呼ぶ側が
+/// 取り込めないことを重ねる（macOS 版の `mergeDrawing(nowOnly:)`）。merge コミットを作る見込みでなければ None。
+pub fn for_merge_now(
+    info: &Value,
+    current: &str,
+    after_title: String,
+) -> Option<(gtk::DrawingArea, f64)> {
+    if info["fastForward"].as_bool() == Some(true) {
+        return None;
+    }
+    let area = merge_area(info, current, after_title, true)?;
+    let x = column_width(&area) + 28.0;
+    Some((area, x))
+}
+
+fn merge_area(
+    info: &Value,
+    current: &str,
+    after_title: String,
+    now_only: bool,
+) -> Option<gtk::DrawingArea> {
     let d = &info["drawing"];
     if d.is_null() {
         return None;
@@ -910,7 +934,9 @@ pub fn for_merge(info: &Value, current: &str, after_title: String) -> Option<gtk
     area.set_content_height(((count + 1) as f64 * ROW + 26.0) as i32);
     let info = info.clone();
     let current = current.to_owned();
-    area.set_draw_func(move |area, cr, _, _| draw_merge(area, cr, &info, &current, &after_title));
+    area.set_draw_func(move |area, cr, _, _| {
+        draw_merge(area, cr, &info, &current, &after_title, now_only)
+    });
     Some(area)
 }
 
@@ -923,6 +949,7 @@ fn draw_merge(
     info: &Value,
     current: &str,
     after_title: &str,
+    now_only: bool,
 ) {
     let d = &info["drawing"];
     let fg = area.color();
@@ -944,7 +971,8 @@ fn draw_merge(
     };
     heading(&tr!("Now"), 4.0);
     heading(after_title, column_width(area) + 28.0);
-    for after in [false, true] {
+    let columns: &[bool] = if now_only { &[false] } else { &[false, true] };
+    for &after in columns {
         let x = if after {
             column_width(area) + 24.0
         } else {

@@ -7,6 +7,13 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
+### Unreleased
+
+#### Fixed
+
+- The Pull sheet no longer leaves a blank space when the chosen mode can't pull: it keeps the graph as it is now and
+  says so, and why, where the after graph would be.
+
 ### [0.2.10] - 2026-11-09
 
 The sheets for Push, Reset, Merge, Pull, Cherry-pick, Revert, Undo and History edits draw the graph before and after.

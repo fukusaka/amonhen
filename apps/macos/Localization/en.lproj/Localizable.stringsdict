@@ -578,10 +578,10 @@
 			<string>%ld new commits</string>
 		</dict>
 	</dict>
-	<key>⚠︎ Fast-Forward Only can’t pull these: you have %ld local commits. Choose Merge or Rebase.</key>
+	<key>Fast-Forward Only can’t pull these: you have %ld local commits. Choose Merge or Rebase.</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
-		<string>⚠︎ Fast-Forward Only can’t pull these: you have %#@n0@. Choose Merge or Rebase.</string>
+		<string>Fast-Forward Only can’t pull these: you have %#@n0@. Choose Merge or Rebase.</string>
 		<key>n0</key>
 		<dict>
 			<key>NSStringFormatSpecTypeKey</key>

@@ -327,15 +327,14 @@ extension Actions {
             note.preferredMaxLayoutWidth = 440
             note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
             note.textColor = .secondaryLabelColor
-            // 今の状態で、選んだ取り込み方が何をするか（1 行）と、作業中の変更、Undo。
-            let describe = { (m: PullMode) -> (String, Bool) in
+            // 今の状態で、選んだ取り込み方が何をするか（1 行）と、作業中の変更、Undo。押せないときは、その理由も。
+            let describe = { (m: PullMode) -> (String, String?) in
                 var lines: [String] = []
-                var blocked = false
+                var blocked: String?
                 if upstream == nil {
                     lines.append(L("Sets %@ as the upstream, then pulls.", source.titleOfSelectedItem ?? ""))
                 } else if m == .git && refused {
-                    lines.append(L("⚠︎ git won’t pull: the branches have diverged, and neither pull.rebase nor pull.ff says how to reconcile them. Choose Merge or Rebase for this pull (your settings stay as they are)."))
-                    blocked = true
+                    blocked = L("git won’t pull: the branches have diverged, and neither pull.rebase nor pull.ff says how to reconcile them. Choose Merge or Rebase for this pull (your settings stay as they are).")
                 } else if incoming.count == 0 {
                     lines.append(L("Nothing new as of the last Fetch (Pull fetches first)."))
                 } else if outgoing.count == 0 {
@@ -345,28 +344,15 @@ extension Actions {
                     case .merge: lines.append(L("You have %ld local commits, so this makes a merge commit.", outgoing.count))
                     case .rebase: lines.append(L("Your %ld local commits are replayed on top (their IDs change).", outgoing.count))
                     case .fastForwardOnly:
-                        lines.append(L("⚠︎ Fast-Forward Only can’t pull these: you have %ld local commits. Choose Merge or Rebase.", outgoing.count))
-                        blocked = true
+                        blocked = L("Fast-Forward Only can’t pull these: you have %ld local commits. Choose Merge or Rebase.", outgoing.count)
                     case .git: break
                     }
                 }
                 if changed > 0 { lines.append(L("%ld files have uncommitted changes. Pull stops if the incoming changes touch them.", changed)) }
                 // 押せないときは、戻すものもない。
-                if !blocked { lines.append(L("You can Undo this (⌥⌘Z).")) }
+                if blocked == nil { lines.append(L("You can Undo this (⌥⌘Z).")) }
                 return (lines.joined(separator: "\n"), blocked)
             }
-            // 説明の高さは、いちばん長い取り込み方に合わせて決めておく（選び直してもシートの大きさを変えない）。
-            let height = PullMode.allCases.map { m -> CGFloat in
-                note.stringValue = describe(m).0
-                return note.fittingSize.height
-            }.max() ?? 0
-            note.heightAnchor.constraint(equalToConstant: height).isActive = true
-            let update = {
-                let (text, blocked) = describe(chosen())
-                note.stringValue = text
-                pullButton.isEnabled = !blocked
-            }
-            update()
             // 両方に新しいコミットがあるときだけ、取り込むとコンフリクトするかを裏で調べる（fast-forward なら重ならない）。
             // Fast-Forward Only はマージしないので出さない。rebase は最後の結果での目安。
             let forecastLabel = upstream != nil && incoming.count > 0 && outgoing.count > 0 ? Self.forecastLabel() : nil
@@ -387,6 +373,7 @@ extension Actions {
             // 取り込み方ごとの前と後の絵（読んでからシートを出す）。選び直すと絵も替わる。高さはいちばん高い絵に
             // 合わせておく（シートの大きさを変えない）。
             var drawings: [PullMode: NSView] = [:]
+            var nowDrawing: NSView?
             if let upstream, incoming.count > 0 {
                 if outgoing.count == 0 {
                     // 手元に新しいコミットがなければ、どの取り込み方でも先へ進めるだけ。
@@ -397,8 +384,10 @@ extension Actions {
                         for m in PullMode.allCases { drawings[m] = view }
                     }
                 } else {
-                    drawings[.merge] = mergeDrawing(await mergePreview(theirs: upstream, ffSetting: "pull.ff"), theirs: upstream,
-                                                    afterTitle: L("After the pull"))
+                    let merge = await mergePreview(theirs: upstream, ffSetting: "pull.ff")
+                    drawings[.merge] = mergeDrawing(merge, theirs: upstream, afterTitle: L("After the pull"))
+                    // 押せない取り込み方（Fast-Forward Only、断られる git の設定）では、左に今だけを描く。
+                    nowDrawing = mergeDrawing(merge, theirs: upstream, afterTitle: L("After the pull"), nowOnly: true)
                     if let preview = await rewritePreview(onto: upstream), preview.drawing != nil {
                         let view = RewriteDrawingView()
                         view.preview = preview
@@ -406,10 +395,11 @@ extension Actions {
                     }
                 }
             }
+            let now = nowDrawing
             let drawingBox = NSView()
             let shownDrawings = Array(Set(drawings.values.map(ObjectIdentifier.init))).compactMap { id in
                 drawings.values.first { ObjectIdentifier($0) == id }
-            }
+            } + (now.map { [$0] } ?? [])
             for view in shownDrawings {
                 view.translatesAutoresizingMaskIntoConstraints = false
                 drawingBox.addSubview(view)
@@ -418,16 +408,67 @@ extension Actions {
                     view.leadingAnchor.constraint(equalTo: drawingBox.leadingAnchor),
                 ])
             }
-            let boxSize = shownDrawings.reduce(NSSize.zero) {
+            // 押せない理由は、絵の場所に「Pull できません」と出す（絵がなければ説明に）。
+            let hasDrawings = !shownDrawings.isEmpty
+            let noteText = { (m: PullMode) -> String in
+                let (text, blocked) = describe(m)
+                guard let blocked, !hasDrawings else { return text }
+                return (["⚠︎ " + blocked] + (text.isEmpty ? [] : [text])).joined(separator: "\n")
+            }
+            // 説明の高さは、いちばん長い取り込み方に合わせて決めておく（選び直してもシートの大きさを変えない）。
+            let height = PullMode.allCases.map { m -> CGFloat in
+                note.stringValue = noteText(m)
+                return note.fittingSize.height
+            }.max() ?? 0
+            note.heightAnchor.constraint(equalToConstant: height).isActive = true
+            let blockedTitle = NSTextField(labelWithString: L("Can’t pull"))
+            blockedTitle.font = .boldSystemFont(ofSize: 15)
+            let blockedIcon = NSImageView(image: NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: nil)
+                ?? NSImage())
+            blockedIcon.symbolConfiguration = .init(pointSize: 15, weight: .regular)
+            blockedIcon.contentTintColor = .systemYellow
+            let blockedReason = NSTextField(wrappingLabelWithString: "")
+            // 今の絵があれば、その右（後の絵の場所）に。
+            blockedReason.preferredMaxLayoutWidth = now == nil ? 440 : GraphDrawingView.columnWidth - 8
+            blockedReason.textColor = .secondaryLabelColor
+            let blockedHeading = NSStackView(views: [blockedIcon, blockedTitle])
+            blockedHeading.spacing = 6
+            let blockedView = NSStackView(views: [blockedHeading, blockedReason])
+            blockedView.orientation = .vertical
+            blockedView.alignment = .leading
+            blockedView.spacing = 6
+            let update = {
+                let blocked = describe(chosen()).1
+                note.stringValue = noteText(chosen())
+                blockedReason.stringValue = blocked ?? ""
+                pullButton.isEnabled = blocked == nil
+            }
+            update()
+            var boxSize = shownDrawings.reduce(NSSize.zero) {
                 NSSize(width: max($0.width, $1.fittingSize.width), height: max($0.height, $1.fittingSize.height))
+            }
+            if !shownDrawings.isEmpty {
+                // 押せないときは、後の絵の代わりに「Pull できません」と理由を。
+                blockedView.translatesAutoresizingMaskIntoConstraints = false
+                drawingBox.addSubview(blockedView)
+                NSLayoutConstraint.activate([
+                    blockedView.leadingAnchor.constraint(equalTo: drawingBox.leadingAnchor,
+                                                         constant: now == nil ? 4 : GraphDrawingView.columnWidth + 28),
+                    // 今の絵があれば右の見出し（Pull の後）の下から、なければ真ん中の高さに。
+                    now == nil ? blockedView.centerYAnchor.constraint(equalTo: drawingBox.centerYAnchor)
+                        : blockedView.topAnchor.constraint(equalTo: drawingBox.topAnchor, constant: 26),
+                ])
+                boxSize.height = max(boxSize.height, blockedView.fittingSize.height)
             }
             drawingBox.translatesAutoresizingMaskIntoConstraints = false
             drawingBox.widthAnchor.constraint(equalToConstant: boxSize.width).isActive = true
             drawingBox.heightAnchor.constraint(equalToConstant: boxSize.height).isActive = true
             let showDrawing = {
                 let m = chosen() == .git ? byGit : chosen()
-                let shown = (m == .fastForwardOnly && outgoing.count > 0) || (chosen() == .git && refused) ? nil : drawings[m]
+                let blocked = describe(chosen()).1 != nil
+                let shown = blocked ? now : drawings[m]
                 for view in shownDrawings { view.isHidden = view !== shown }
+                blockedView.isHidden = !blocked
             }
             showDrawing()
             let target = ClosureTarget {
