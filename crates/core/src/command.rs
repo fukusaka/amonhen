@@ -554,7 +554,8 @@ pub enum Command {
     /// して、`info.move` に `MovePreview` と同じ答えを返す。取り込むものがなければ `info.upToDate`。そうでなければ
     /// `info.drawing`: `ours`・`theirs`（分かれてからのコミット。新しい順、長ければ真ん中を省く。`oursMore`・
     /// `oursMoreAt`・`theirsMore`・`theirsMoreAt`）、`base`（分かれたところと日時）、`labels`、`subject`（git が
-    /// 書く merge コミットの件名）。
+    /// 書く merge コミットの件名。Pull（`ff_setting` が `pull.ff`）で `theirs` が上流なら、git pull と同じく
+    /// `Merge branch 'x' of <URL>`）。
     MergePreview {
         theirs: String,
         #[serde(default)]
@@ -824,6 +825,97 @@ fn first_parent(raw: &[u8]) -> Option<Oid> {
 
 /// 前と後の絵に描くコミットの件名と日時（`Repository::drawing_texts`）。
 type DrawingTexts = std::collections::HashMap<Oid, (String, i64)>;
+
+/// git pull が書く merge コミットの件名（`into` の前まで）。`branch` の上流（`branch.<branch>.remote` の
+/// `branch.<branch>.merge`）が `theirs` のときだけ。git は取ってきたところ（FETCH_HEAD）から、`Merge branch 'main' of
+/// <URL>` と書く（URL は利用者名とパスワードを除き、末尾の `/` と `.git` を落とす。手元のブランチ（remote が `.`）
+/// なら `of` を付けない）。
+fn pull_merge_subject(
+    ops: &dyn amonhen_model::Operations,
+    branch: &str,
+    theirs: &str,
+) -> Result<Option<String>> {
+    let config = ops.config_list()?;
+    let value = |key: &str| {
+        config
+            .iter()
+            .rev()
+            .find(|e| e.key == key)
+            .map(|e| e.value.clone())
+    };
+    let (Some(remote), Some(merge)) = (
+        value(&format!("branch.{branch}.remote")),
+        value(&format!("branch.{branch}.merge")),
+    ) else {
+        return Ok(None);
+    };
+    let what = if let Some(name) = merge.strip_prefix("refs/heads/") {
+        format!("branch '{name}'")
+    } else if let Some(name) = merge.strip_prefix("refs/tags/") {
+        format!("tag '{name}'")
+    } else {
+        format!("'{merge}'")
+    };
+    if remote == "." {
+        return Ok(
+            (theirs == merge.strip_prefix("refs/heads/").unwrap_or(&merge))
+                .then(|| format!("Merge {what}")),
+        );
+    }
+    let tracking = merge
+        .strip_prefix("refs/heads/")
+        .map(|name| format!("{remote}/{name}"));
+    if tracking.as_deref() != Some(theirs) {
+        return Ok(None);
+    }
+    let Some(url) = value(&format!("remote.{remote}.url")) else {
+        return Ok(None);
+    };
+    Ok(Some(format!("Merge {what} of {}", fetched_url(&url))))
+}
+
+/// git fetch が FETCH_HEAD に書く URL（`transport_anonymize_url` で利用者名とパスワードを除き、末尾の `/` と
+/// `.git` を落とす）。
+fn fetched_url(url: &str) -> String {
+    let anonymous = (|| {
+        let at = url.find('@')?;
+        let rest = &url[at + 1..];
+        match url.find("://") {
+            Some(scheme) => {
+                let ok = url[..scheme]
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "+.-".contains(c));
+                // パスの中の @ は数えない。
+                let slash = url[scheme + 3..].find('/').map(|i| i + scheme + 3);
+                (ok && slash.is_none_or(|s| s > at))
+                    .then(|| format!("{}{rest}", &url[..scheme + 3]))
+            }
+            // `me@there:/path` の形だけ（`:` がなければ手元のパス）。
+            None => (rest.contains(':') && !is_local_path(url)).then(|| rest.to_owned()),
+        }
+    })()
+    .unwrap_or_else(|| url.to_owned());
+    let trimmed = anonymous.trim_end_matches('/');
+    trimmed
+        .strip_suffix(".git")
+        .filter(|s| !s.is_empty())
+        .unwrap_or(trimmed)
+        .to_owned()
+}
+
+/// git が手元のパスとみなす URL（`url_is_local_not_ssh`: 最初の `:` より前に `/` がある、`:` がない、または
+/// Windows のドライブ（`C:`）で始まる）。
+fn is_local_path(url: &str) -> bool {
+    let bytes = url.as_bytes();
+    if cfg!(windows) && bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+        return true;
+    }
+    match (url.find(':'), url.find('/')) {
+        (None, _) => true,
+        (Some(colon), Some(slash)) => slash < colon,
+        (Some(_), None) => false,
+    }
+}
 
 /// 前と後の絵に描くコミット（新しい順）を、長ければ真ん中で省く: 新しい 3 つと、分かれたところに近い古い 2 つ。
 /// 描くもの、省いた数、省いたところ（描くものの何番目の前か）を返す。
@@ -2372,9 +2464,14 @@ impl Repository {
             .iter()
             .find(|e| e.name == theirs)
             .map(|e| e.kind);
-        let mut subject = match kind {
-            Some(RefKind::Local) => format!("Merge branch '{theirs}'"),
-            Some(RefKind::Remote) => format!("Merge remote-tracking branch '{theirs}'"),
+        let pulled = (ff_setting == "pull.ff" && ours == "HEAD")
+            .then(|| pull_merge_subject(ops, current.as_deref()?, theirs).transpose())
+            .flatten()
+            .transpose()?;
+        let mut subject = match (pulled, kind) {
+            (Some(pulled), _) => pulled,
+            (None, Some(RefKind::Local)) => format!("Merge branch '{theirs}'"),
+            (None, Some(RefKind::Remote)) => format!("Merge remote-tracking branch '{theirs}'"),
             _ => format!("Merge commit '{theirs}'"),
         };
         if let Some(branch) = current.filter(|b| ours == "HEAD" && b != "main" && b != "master") {
@@ -5768,6 +5865,81 @@ mod tests {
         // 6 つまでは省かない（1 つだけ省くなら、その 1 つを描く）。
         let (shown, more, at) = super::elide(&ids[..6]);
         assert_eq!((shown.len(), more, at), (6, 0, 6));
+    }
+
+    #[test]
+    fn pull_merge_subjects_match_git() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        let remote = tempfile::tempdir().unwrap();
+        let origin = remote.path().join("origin.git");
+        std::fs::create_dir(&origin).unwrap();
+        git(&origin, &["init", "-q", "--bare"]);
+        git(&origin, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        git(dir, &["remote", "add", "origin", origin.to_str().unwrap()]);
+        git(dir, &["push", "-q", "-u", "origin", "main"]);
+        let other = remote.path().join("other");
+        git(
+            remote.path(),
+            &[
+                "clone",
+                "-q",
+                origin.to_str().unwrap(),
+                other.to_str().unwrap(),
+            ],
+        );
+        git(&other, &["config", "user.name", "b"]);
+        git(&other, &["config", "user.email", "b@example.com"]);
+        git(&other, &["config", "commit.gpgsign", "false"]);
+        std::fs::write(other.join("b"), "b\n").unwrap();
+        git(&other, &["add", "."]);
+        git(&other, &["commit", "-q", "-m", "upstream"]);
+        git(&other, &["push", "-q", "origin", "main"]);
+        // 上流が進む前に作った、origin/main を上流にするもう 1 つのブランチ（件名に「into work」が付く）。
+        git(
+            dir,
+            &["switch", "-q", "-c", "work", "--track", "origin/main"],
+        );
+        git(dir, &["fetch", "-q"]);
+        for branch in ["main", "work"] {
+            git(dir, &["switch", "-q", branch]);
+            std::fs::write(dir.join(branch), "x\n").unwrap();
+            git(dir, &["add", "."]);
+            git(dir, &["commit", "-q", "-m", branch]);
+            let preview = run(
+                &repo,
+                r#"{"op":"mergePreview","theirs":"origin/main","ffSetting":"pull.ff"}"#,
+            );
+            let subject = preview["info"]["drawing"]["subject"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            git(dir, &["-c", "pull.rebase=false", "pull", "-q"]);
+            assert_eq!(subject, git(dir, &["log", "-1", "--format=%s"]));
+        }
+    }
+
+    #[test]
+    fn fetched_urls_are_anonymized_and_trimmed() {
+        use super::fetched_url;
+        assert_eq!(
+            fetched_url("https://u:p@example.com/a/b.git"),
+            "https://example.com/a/b"
+        );
+        assert_eq!(
+            fetched_url("https://example.com/a/b/"),
+            "https://example.com/a/b"
+        );
+        assert_eq!(fetched_url("git@example.com:a/b.git"), "example.com:a/b");
+        assert_eq!(
+            fetched_url("ssh://git@example.com/a/b.git/"),
+            "ssh://example.com/a/b"
+        );
+        assert_eq!(fetched_url("/srv/git/a@b.git"), "/srv/git/a@b");
+        assert_eq!(
+            fetched_url("https://example.com/a@b/c"),
+            "https://example.com/a@b/c"
+        );
     }
 
     #[test]

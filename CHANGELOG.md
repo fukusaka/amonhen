@@ -13,6 +13,7 @@ becomes the GitHub Release notes.
 
 - The Pull sheet no longer leaves a blank space when the chosen mode can't pull: it keeps the graph as it is now and
   says so, and why, where the after graph would be.
+- The merge commit the Pull sheet draws has the subject git pull writes (`Merge branch 'main' of <URL>`).
 
 ### [0.2.10] - 2026-11-09
 
