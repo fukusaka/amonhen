@@ -50,7 +50,8 @@ export type WorkingCopyWebviewMessage =
   /** 型やトレーラーの一覧を出す */
   | { type: 'wcPickInsert' }
   | { type: 'wcStageFiles'; op: 'stage' | 'unstage'; files: { group: ChangeGroup; path: string }[] }
-  | { type: 'wcStageLines'; group: ChangeGroup; path: string; version: string; lines: SelectedLine[] }
+  /** stage は HEAD → 作業ツリーの差分（combined）で、入れるか（true）外すか（false） */
+  | { type: 'wcStageLines'; group: ChangeGroup; path: string; version: string; lines: SelectedLine[]; stage?: boolean }
   /** Changes（unstaged）のファイルを丸ごと破棄する */
   | { type: 'wcDiscardFiles'; paths: string[] }
   /** Changes のファイルの、選んだ行だけを破棄する */

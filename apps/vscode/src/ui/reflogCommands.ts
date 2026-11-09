@@ -3,6 +3,7 @@
  * Reflog の行を History で見せる・名前をコピーする
  */
 import * as vscode from 'vscode';
+import { confirmOperation, uncommittedLine } from './confirm.ts';
 import { daemonFor } from '../daemon/connection.ts';
 import type { RepositoryManager } from '../state/manager.ts';
 import type { Repository } from '../state/repository.ts';
@@ -27,6 +28,12 @@ function commitName(ctx: CommitContext): string {
 
 /** コミットを detached HEAD で checkout する */
 async function checkoutCommit(repo: Repository, ctx: CommitContext): Promise<void> {
+  const ok = await confirmOperation(
+    `Checkout ${ctx.oid.slice(0, 8)}?`,
+    ['HEAD is detached (on no branch).', uncommittedLine(repo)],
+    'Checkout',
+  );
+  if (!ok) return;
   try {
     await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Window, title: `Checkout ${ctx.oid.slice(0, 8)}` },

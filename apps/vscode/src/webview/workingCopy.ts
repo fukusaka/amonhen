@@ -5,7 +5,7 @@
  */
 import type { Change, ChangeGroup } from '../state/changes.ts';
 import type { HostMessage } from '../view/protocol.ts';
-import type { DiffHunk, FileDiff, SelectedLine } from '../diff/fileDiff.ts';
+import type { DiffHunk, DiffLine, FileDiff, SelectedLine } from '../diff/fileDiff.ts';
 import type { Eol, LineEndings } from '../git/eol.ts';
 import { addTrailer, lengthLevel, longestLine, messageLength, splitMessage, withType } from '../workingCopy/commitMessage.ts';
 import { filesUnder, filterByPath, makeFileTree, type FileDir, type FileLayout } from '../workingCopy/fileList.ts';
@@ -91,7 +91,8 @@ export function createWorkingCopyView(): View {
   const sparseNote = el('button', 'wc-sparse');
   sparseNote.hidden = true;
   sparseNote.addEventListener('click', () => post({ type: 'wcShowFolders' }));
-  side.append(sparseNote, tools, fileList, commitBox);
+  // コミットの欄は一覧の上（アプリと同じ）
+  side.append(commitBox, sparseNote, tools, fileList);
 
   let files: Change[] = [];
   let lastMessage = '';
@@ -345,6 +346,10 @@ export function createWorkingCopyView(): View {
       diffPane.replaceChildren(head, renderConflict(d));
       return;
     }
+    if (d.combined) {
+      renderCombined(d, head, actions);
+      return;
+    }
     const staged = group === 'staged';
     if (picked.size > 0) {
       const lines = el(
@@ -397,6 +402,79 @@ export function createWorkingCopyView(): View {
       }),
     );
     diffPane.replaceChildren(...content);
+  }
+
+  /**
+   * HEAD → 作業ツリーの 1 つの差分（エンジンがあるとき）。変更の行と hunk の見出しのチェックが「次のコミットに
+   * 入れるか」で、押すとその行・hunk を入れる・外す。選んだ行はまとめて入れる・外す・捨てる（捨てるのは入れて
+   * いない行だけ）
+   */
+  function renderCombined(d: FileDiff, head: HTMLElement, actions: HTMLElement): void {
+    const changed = d.hunks.flatMap((h) => h.lines.filter((l) => l.kind !== ' '));
+    const pickedLines = changed.filter((l) => picked.has(lineKey(l)));
+    if (pickedLines.length > 0) {
+      const n = pickedLines.length;
+      const allStaged = pickedLines.every((l) => l.staged);
+      const toggle = el('button', undefined, `${allStaged ? 'Unstage' : 'Stage'} ${n} Line${n > 1 ? 's' : ''}`);
+      toggle.addEventListener('click', () => checkLines(pickedLines, !allStaged));
+      actions.append(toggle);
+      const loose = pickedLines.filter((l) => !l.staged);
+      if (loose.length > 0) {
+        const discardLines = el('button', 'secondary', `Discard ${loose.length} Line${loose.length > 1 ? 's' : ''}`);
+        discardLines.addEventListener('click', () => discard(loose.map(lineKey)));
+        actions.append(discardLines);
+      }
+    }
+    const unstaged = files.find((x) => x.group === 'unstaged' && x.path === d.path);
+    const stagedFile = files.find((x) => x.group === 'staged' && x.path === d.path);
+    if (unstaged) {
+      const stageFile = el('button', 'secondary', 'Stage File');
+      stageFile.addEventListener('click', () => stageFiles('stage', [unstaged]));
+      actions.append(stageFile);
+    }
+    if (stagedFile) {
+      const unstageFile = el('button', 'secondary', 'Unstage File');
+      unstageFile.addEventListener('click', () => stageFiles('unstage', [stagedFile]));
+      actions.append(unstageFile);
+    }
+    if (unstaged) {
+      const discardFile = el('button', 'secondary', 'Discard File');
+      discardFile.addEventListener('click', () => post({ type: 'wcDiscardFiles', paths: [d.path] }));
+      actions.append(discardFile);
+    }
+    const open = el('button', 'secondary', 'Open File');
+    open.addEventListener('click', () => post({ type: 'wcOpenFile', path: d.path }));
+    actions.append(open);
+    head.append(actions);
+    diffPane.replaceChildren(
+      head,
+      ...renderDiffBody(d, {
+        picked,
+        check: checkLines,
+        hunkActions: [
+          {
+            label: 'Discard Hunk',
+            run: (hunk: DiffHunk) => discard(hunk.lines.filter((l) => l.kind !== ' ' && !l.staged).map(lineKey)),
+          },
+        ],
+      }),
+    );
+  }
+
+  /** HEAD → 作業ツリーの差分で、lines を入れる・外す。すぐにチェックを変えて描き直し、status が来たら合わせる */
+  function checkLines(lines: DiffLine[], stage: boolean): void {
+    if (!diff || lines.length === 0) return;
+    post({
+      type: 'wcStageLines',
+      group: diffGroup!,
+      path: diff.path,
+      version: diff.version,
+      lines: toLines(lines.map(lineKey)),
+      stage,
+    });
+    for (const line of lines) line.staged = stage;
+    picked = new Set();
+    renderDiff();
   }
 
   function renderConflict(d: FileDiff): HTMLElement {
@@ -480,6 +558,11 @@ export function createWorkingCopyView(): View {
     if (e.key === 'Escape' && picked.size > 0) {
       picked = new Set();
       renderDiff();
+    } else if (e.key === ' ' && diff?.combined && picked.size > 0) {
+      // 選んだ行をまとめて入れる・外す（すべて入っていれば外す）
+      e.preventDefault();
+      const lines = diff.hunks.flatMap((h) => h.lines.filter((l) => l.kind !== ' ' && picked.has(lineKey(l))));
+      checkLines(lines, !lines.every((l) => l.staged));
     }
   });
   diffPane.tabIndex = 0;

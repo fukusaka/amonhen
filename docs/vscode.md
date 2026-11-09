@@ -249,3 +249,18 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 38. History's details: find with ⌘F, collapsing files and Viewed, the changed files as a tree, one file at a time
 - [x] 39. History's edit mode: several commits in one rebase, shortcuts opening it, merges kept (`--rebase-merges`)
 - [x] 40. Export Archive, Save as Bundle, Fetch from Bundle, Clone from Bundle
+- [x] 41. Switch Branch: recent branches first, a remote branch gets a tracking branch, a typed name a new one
+- [x] 42. Fetch asks first: all remotes or one, saying which prune
+- [x] 43. Pull asks first: the commits, how to integrate (git's settings, merge, rebase, fast-forward only), the upstream when missing
+- [x] 44. Push asks first: warnings, the commits, Pull… or Force Push over what it showed when the upstream moved on
+- [x] 45. Rebase's confirmation shows the commits now and after, with the branches
+- [x] 46. Rebuild History
+- [x] 47. The extension's own fetch and push stop after 120 seconds without output
+- [x] 48. Working Copy: one HEAD → working tree diff with a check on each changed line and hunk
+- [x] 49. Working Copy: the commit box above the list
+- [x] 50. Save as Patch asks for the version (-v)
+- [x] 51. The Working Copy row says when only some folders are checked out
+- [x] 52. Checkout, Merge, Cherry-pick, Revert, Apply and Pop ask first
+- [x] 53. Syntax colors in History's and Working Copy's diffs and in Blame (the engine's tree-sitter)
+- [x] 54. Conflicts in the sidebar's Workspace while there are conflicts
+- [x] 55. Failures give the cause, with Details for the whole output

@@ -81,6 +81,15 @@ async function savePatches(repo: Repository, oids: string[]): Promise<void> {
     { title: oids.length === 1 ? 'Save as Patch' : `Save ${oids.length} Commits as Patches` },
   );
   if (!choice) return;
+  // 版（-v）。空か 1 なら付けない。2 からは v2-0001-….patch のように名前と件名に入る
+  const version = await vscode.window.showInputBox({
+    title: 'Version (-v)',
+    prompt: 'Leave empty for the first version. 2 or more names the files v2-0001-….patch and the subjects [PATCH v2].',
+    placeHolder: '1',
+    validateInput: (v) => (v.trim() === '' || /^[1-9]\d*$/.test(v.trim()) ? undefined : 'Type a whole number'),
+  });
+  if (version === undefined) return;
+  const reroll = Number(version.trim() || '1');
   const root = vscode.Uri.file(repo.root);
   const out: { dir?: string; file?: string } = {};
   if (choice.single) {
@@ -103,7 +112,7 @@ async function savePatches(repo: Repository, oids: string[]): Promise<void> {
     if (!uri) return;
     out.dir = uri.fsPath;
   }
-  const options: FormatPatchOptions = { coverLetter: choice.cover };
+  const options: FormatPatchOptions = { coverLetter: choice.cover, ...(reroll > 1 ? { reroll } : {}) };
   try {
     const files = await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Window, title: 'Save as Patch' },
