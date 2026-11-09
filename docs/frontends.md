@@ -37,7 +37,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| Workspace rows switch the main view (Working Copy, History, Stashes, Reflog…) | ✓ | ✓ | △ | n/a | VSCode: Working Copy, History, Stashes and (with the engine) Reflog; no Conflicts. |
+| Workspace rows switch the main view (Working Copy, History, Stashes, Reflog…) | ✓ | ✓ | ✓ | n/a | VSCode: Working Copy, History, Stashes and (with the engine) Reflog; Conflicts while there are conflicts, opening the first in the merge editor. |
 | Conflicts row with a count while there are conflicts | ✓ | ✓ | ✓ | n/a | VSCode: A Conflicts group inside the Working Copy view. |
 | Stashes row with a count only when there are stashes | ✓ | ✓ | ✓ | n/a | VSCode: The Stashes section. |
 | Range Diff row while a range diff is open | ✓ | ✓ | n/a | n/a | VSCode: A range diff opens as an editor tab. |
@@ -68,7 +68,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Submodule marks (not checked out, another commit, changes inside, conflict) and menus: Update… (recursive, remote), Edit URL, Branch to Follow, Remove (optionally .git/modules), Add, Sync URLs | ✓ | ✓ | ✓ | ✓ | VSCode: Remove asks with two buttons: keep `.git/modules` or delete it too.<br>CLI: `submodule` (`add`, `remove`, `set-url`, `set-branch`, `sync`). |
 | Submodules: move repository data into .git/modules, run a command in each | ✓ | ✓ | △ | ✓ | VSCode: Run in Each Submodule… says only whether it worked; the command's output isn't shown.<br>CLI: `submodule absorb`, `submodule foreach`. |
 | Worktrees under Working Copy with change counts (✎ ⌂ ⑂) | ✓ | ✓ | ✓ | △ | VSCode: The marks are the rows' icons; a branch another worktree has checked out gets ⌂ or ⑂.<br>CLI: `worktree list --changes`. |
-| Marks for a shallow or partial clone (History) and a sparse checkout (Working Copy) | ✓ | ✓ | △ | n/a | VSCode: Shallow and Partial above History (Partial fetches all contents when clicked); no sparse mark. |
+| Marks for a shallow or partial clone (History) and a sparse checkout (Working Copy) | ✓ | ✓ | ✓ | n/a | VSCode: Shallow and Partial above History (Partial fetches all contents when clicked); " · some folders" on the Working Copy row for a sparse checkout. |
 
 ## 1. Tabs and windows
 
@@ -163,25 +163,25 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
 | New Orphan Branch (empty, or keeping the files) | ✓ | ✓ | ✓ | △ | VSCode: The Command Palette and the Branches group's right-click.<br>CLI: Via `amonhen run` (`createOrphanBranch`). |
-| Branch switcher (fuzzy search, recent, tracking or new branch) | ✓ | ✓ | △ | △ | VSCode: Checkout from the sidebar and New Branch… only.<br>CLI: Via `amonhen run`. |
-| Fetch sheet (all or one remote, prune shown) | ✓ | ✓ | △ | △ | VSCode: Fetches all with prune at once, without a sheet.<br>CLI: Via `amonhen run`. |
-| Pull sheet (commits, merge / rebase / ff-only, upstream when missing) | ✓ | ✓ | △ | △ | VSCode: Merges the upstream without a sheet or choice.<br>CLI: Via `amonhen run`. |
-| Push sheet (warnings, commits and diff, Force Push with lease) | ✓ | ✓ | △ | △ | VSCode: No sheet; Force Push asks separately.<br>CLI: Via `amonhen run`. |
+| Branch switcher (fuzzy search, recent, tracking or new branch) | ✓ | ✓ | ✓ | △ | VSCode: Switch Branch… (a QuickPick) in the sidebar's ⋯, the Branches heading and the command palette; no shortcut, as ⌘⇧B is VSCode's build task.<br>CLI: Via `amonhen run`. |
+| Fetch sheet (all or one remote, prune shown) | ✓ | ✓ | ✓ | △ | VSCode: A modal with one remote, a QuickPick of all or one with several.<br>CLI: Via `amonhen run`. |
+| Pull sheet (commits, merge / rebase / ff-only, upstream when missing) | ✓ | ✓ | ✓ | △ | VSCode: A QuickPick: each way to integrate with what it does here, then the commits; no conflict forecast.<br>CLI: Via `amonhen run`. |
+| Push sheet (warnings, commits and diff, Force Push with lease) | ✓ | ✓ | △ | △ | VSCode: A QuickPick with the warnings, the commits to send and the ones the upstream would lose, Pull… or Force Push with lease; no diff.<br>CLI: Via `amonhen run`. |
 | Publish (choose the remote and name) | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Merge (no-ff / squash options) | △ | △ | △ | △ | macOS: No no-ff or squash choice.<br>GTK4: No no-ff or squash choice.<br>VSCode: Context menu or drag, no options.<br>CLI: Via `amonhen run`. |
 | Octopus merge of several (order, expected conflicts) | ✓ | ✓ | ✓ | △ | CLI: `merge-check` checks; the merge via `amonhen run`. |
-| Rebase sheet drawing before and after | ✓ | ✓ | △ | △ | VSCode: A dialog with the rewrite preview as text.<br>CLI: `rewrite-preview` prints it; the rebase via `amonhen run`. |
+| Rebase sheet drawing before and after | ✓ | ✓ | ✓ | △ | VSCode: The dialog lists the commits now and after the rebase, with the branches, as text.<br>CLI: `rewrite-preview` prints it; the rebase via `amonhen run`. |
 | Stash (message, include untracked) | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Stash: only the staged changes, keep the index, selected files | ✓ | ✓ | ✓ | △ | VSCode: With the engine, the Stash list has the first two, and a Working Copy file's right-click has Stash… for that file.<br>CLI: Via `amonhen run` (`stashPush` with `staged`, `keepIndex`, `paths`). |
 | Delete ignored files (listed first) | ✓ | ✓ | ✓ | △ | VSCode: The Command Palette and Working Copy's right-click; the list is a pick list, all chosen at first.<br>CLI: Via `amonhen run` (`ignoredFiles`, `deleteIgnored`). |
 | Pop the latest stash (asks first) | ✓ | ✓ | ✓ | △ | VSCode: Pop Latest Stash… on the Stashes header and in the Command Palette (a row's Pop doesn't ask).<br>CLI: Via `amonhen run`. |
 | Activity spinner and count | ✓ | ✓ | ✓ | n/a | VSCode: VSCode's progress notifications. |
-| Refresh and Rebuild History | ✓ | ✓ | △ | △ | VSCode: Refresh only.<br>CLI: `log --rebuild`, `daemon rebuild`. |
+| Refresh and Rebuild History | ✓ | ✓ | ✓ | △ | VSCode: Rebuild History in the sidebar's ⋯ and the command palette, with the engine.<br>CLI: `log --rebuild`, `daemon rebuild`. |
 | Undo the last operation (asks, names what it puts back) | ✓ | ✓ | ✓ | ✓ | VSCode: The title's Undo and the Command Palette ask; a notification's Undo, pressed right after the operation, doesn't.<br>CLI: `undo` (`--peek` to see it first). |
 | History search with scopes (subject, author, ID, path, contents) | ✓ | ✓ | ✓ | ✓ | VSCode: With the engine.<br>CLI: `log <query>`. |
 | Ahead/behind badges | ✓ | ✓ | ✓ | △ | VSCode: On the sidebar's branch rows.<br>CLI: In `status`. |
 | Toolbar customization | ✓ | ✓ | n/a | n/a | GTK4: The palette works like NSToolbar's and slides down under the header bar over the content like its sheet, without changing the window's size, with no Show (icon/text) choice since the header bar shows icons; the Repository menu and the main menu take the menu bar's place and stay put. |
-| Network git stopped after 120 s of silence | ✓ | ✓ | — | ✓ | VSCode: Not in the extension's own git layer. |
+| Network git stopped after 120 s of silence | ✓ | ✓ | ✓ | ✓ | VSCode: The engine's, and the extension's own fetch and push without it. |
 
 ## 5a. Stashes
 
@@ -222,7 +222,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Filter on paths | ✓ | ✓ | ✓ | n/a |  |
 | Per-row +/− counts and Discard on hover | ✓ | ✓ | ✓ | △ | VSCode: Counts need the engine.<br>CLI: `diff --stat`. |
 | Space toggles, ⌫ discards | ✓ | ✓ | ✓ | n/a |  |
-| Commit box on top with 50/72 counter and body guide | ✓ | ✓ | △ | n/a | VSCode: The box stays under the list. A description line over 72 is counted instead of a guide. |
+| Commit box on top with 50/72 counter and body guide | ✓ | ✓ | ✓ | n/a | VSCode: A description line over 72 is counted instead of a guide (the column is narrower than 72 characters). |
 | Draft per repository, starting from the template | ✓ | ✓ | ✓ | n/a | VSCode: `commit.template` only, not the shared template library. |
 | Recent messages (⌥↑ / ⌥↓, list) | ✓ | ✓ | ✓ | n/a |  |
 | Insert Conventional types, Co-authored-by, Signed-off-by | ✓ | ✓ | ✓ | n/a |  |
@@ -231,7 +231,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Fixup / Squash Commit For | ✓ | ✓ | ✓ | n/a |  |
 | Hooks output sheet | ✓ | ✓ | ✓ | n/a |  |
 | Reason shown when Commit is disabled | — | — | △ | n/a | VSCode: A warning when committing is blocked. |
-| Combined HEAD → working tree diff with line and hunk checks | ✓ | ✓ | △ | ✓ | VSCode: Line staging on separate unstaged and staged diffs.<br>CLI: `diff --combined`, `stage --rows`. |
+| Combined HEAD → working tree diff with line and hunk checks | ✓ | ✓ | ✓ | ✓ | VSCode: With the engine; without it, line staging on separate unstaged and staged diffs.<br>CLI: `diff --combined`, `stage --rows`. |
 | Range selection in the gutter, J/K and ⌥J/⌥K | ✓ | ✓ | ✓ | n/a |  |
 | Unstaged / Staged switch for files that can't be overlaid | ✓ | ✓ | n/a | ✓ | VSCode: Always shown separately.<br>CLI: `diff --staged`. |
 | Diff options (unified/split, whitespace, context, wrap) | — | — | — | n/a |  |
@@ -277,13 +277,13 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Diff of a selection (range squashed, A..B / A...B, scattered) | ✓ | ✓ | ✓ | △ | VSCode: With the engine.<br>CLI: `diff <rev> <rev>`. |
 | Actions on a selection (cherry-pick, revert, squash, copy IDs) | ✓ | ✓ | ✓ | △ | VSCode: With the engine.<br>CLI: Via `amonhen run`. |
 | Signature popover | ✓ | ✓ | ✓ | n/a | VSCode: A Signature row in the details (status, explanation, signer and key), no popover. |
-| Word highlights and syntax colors | ✓ | ✓ | △ | n/a | VSCode: Words only. |
+| Word highlights and syntax colors | ✓ | ✓ | ✓ | n/a | VSCode: Syntax colors with the engine, after the diff shows. |
 
 ## Blame / File History
 
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| Blame | ✓ | ✓ | △ | △ | VSCode: A page of the main view, without syntax colours.<br>CLI: Via `amonhen run` (`blame`). |
+| Blame | ✓ | ✓ | ✓ | △ | VSCode: A page of the main view.<br>CLI: Via `amonhen run` (`blame`). |
 | Restore a file from a commit (this version, the version before; staged if chosen) | ✓ | ✓ | ✓ | ✓ | VSCode: With the engine, from a file's right-click in History's details; Restore and Stage is the second button.<br>CLI: `restore --source <rev> [--staged]`. |
 | File History | ✓ | ✓ | ✓ | △ | VSCode: A page of the main view, opened from the Explorer, an editor tab, the Command Palette or a file in the main view.<br>CLI: Via `amonhen run` (`fileHistory`). |
 | Opened as a tab beside the repository tab, with the repository toolbar | ✓ | ✓ | n/a | n/a | GTK4: When the repository tab is in front in another window, the tab gets a title bar without the toolbar. |
@@ -293,7 +293,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| Save as Patch (per commit or mbox, cover letter, -v) | ✓ | ✓ | △ | ✓ | VSCode: No `-v`.<br>CLI: `format-patch`. |
+| Save as Patch (per commit or mbox, cover letter, -v) | ✓ | ✓ | ✓ | ✓ | CLI: `format-patch`. |
 | Apply Patch (am / apply, preview, 3-way, --index) | ✓ | ✓ | ✓ | ✓ | CLI: `am`, `apply` (`--check`). |
 | Drop patch files on the window | ✓ | ✓ | ✓ | n/a | VSCode: From the Explorer's context menu. |
 | Export Archive (zip / tar.gz / tar, top folder, one folder) | ✓ | ✓ | ✓ | ✓ | VSCode: With the engine; a branch's or tag's right-click, a commit's in History, or the command palette for HEAD.<br>CLI: `archive`. |
@@ -357,7 +357,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
 | Operation in progress with Continue / Skip / Abort | ✓ | ✓ | ✓ | n/a | VSCode: A sidebar row. |
-| Failure with its cause and Details | ✓ | ✓ | △ | n/a | VSCode: An error notification only. |
+| Failure with its cause and Details | ✓ | ✓ | ✓ | n/a | VSCode: The notification gives the cause (git's fatal: and error: lines); Details shows the whole output and the git command in an output panel. |
 | Lost connection with Reconnect | ✓ | ✓ | n/a | n/a |  |
 | What a finished operation did, for a few seconds | ✓ | ✓ | ✓ | n/a | VSCode: A status bar message or a notification with Undo. |
 
@@ -365,7 +365,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| A sheet before remote, HEAD-moving and deleting operations | ✓ | ✓ | △ | n/a | GTK4: Name prompts and every confirmation are the same sheet. Return presses the default button wherever the focus is (a drop-down or a radio too), as on macOS.<br>VSCode: Deleting, rewriting and Reset only; not Fetch, Pull, Push, Merge or Checkout. |
+| A sheet before remote, HEAD-moving and deleting operations | ✓ | ✓ | ✓ | n/a | GTK4: Name prompts and every confirmation are the same sheet. Return presses the default button wherever the focus is (a drop-down or a radio too), as on macOS.<br>VSCode: Modals, and QuickPicks for Fetch, Pull and Push; Switch Branch… switches at once, as the app's switcher does. |
 | Undo of git operations (`undo.json`) | ✓ | ✓ | ✓ | ✓ |  |
 | Disabled controls say why in their tooltip | ✓ | ✓ | n/a | n/a | VSCode: Commands that can't be used aren't shown (when clauses). |
 

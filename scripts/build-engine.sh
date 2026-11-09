@@ -32,7 +32,9 @@ for platform in ${AMONHEN_ENGINE_PLATFORMS:-darwin-aarch64 linux-x86_64 linux-aa
         flags="-C strip=symbols"
         if command -v zig >/dev/null 2>&1; then
             # 起動の部分（crt）と libc は zig のものを使い、Rust の同梱のものとの二重定義を避ける。
+            # C の部分（構文の色付けの tree-sitter）も zig cc でコンパイルし、zig ar でまとめる。
             env "CARGO_TARGET_${upper}_LINKER=$PWD/scripts/zig-cc.sh" ZIG_TARGET="$arch-linux-musl" \
+                "CC_$lower=$PWD/scripts/zig-cc.sh" "AR_$lower=$PWD/scripts/zig-ar.sh" \
                 "CARGO_TARGET_${upper}_RUSTFLAGS=-C link-self-contained=no $flags" \
                 cargo build --release -p amonhen-cli --target "$triple"
         else

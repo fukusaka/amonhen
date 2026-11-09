@@ -16,7 +16,8 @@ import type { StatusEntry, StatusResult } from '../git/status.ts';
 import { UndoLog } from './undo.ts';
 
 /** `mailmap` は、人の名前の置き換え（`.mailmap`・`log.mailmap`）が変わったかもしれないとき */
-export type Section = 'workingCopy' | 'branches' | 'remotes' | 'tags' | 'stashes' | 'submodules' | 'mailmap';
+/** config は git の設定ファイル（リポジトリ・worktree のもの）が変わったこと */
+export type Section = 'workingCopy' | 'branches' | 'remotes' | 'tags' | 'stashes' | 'submodules' | 'mailmap' | 'config';
 
 /** 展開されるまで取得しないセクション */
 export type LazySection = 'tags' | 'stashes' | 'submodules';
@@ -207,6 +208,8 @@ export class Repository implements vscode.Disposable {
       tasks.push(
         this.backend.remotes().then((remotes) => {
           if (this.replace('remotes', remotes)) changed.add('remotes');
+          // 最初に読むときは知らせない（変わったのではない）
+          if (this.stamps.config !== undefined) changed.add('config');
           this.stamps.config = config;
         }),
       );

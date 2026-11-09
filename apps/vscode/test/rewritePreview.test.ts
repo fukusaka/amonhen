@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { previewLines, stackedAlternative, type RewritePreview } from '../src/history/rewritePreview.ts';
+import { drawingLines, previewLines, stackedAlternative, type RewritePreview } from '../src/history/rewritePreview.ts';
 
 const preview = (p: Partial<RewritePreview>): RewritePreview => ({ moving: [], staying: [], ...p });
 
@@ -48,4 +48,42 @@ test('stackedAlternative offers the opposite of the setting only when a branch i
   assert.equal(stackedAlternative(preview({ staying: [{ name: 'a', reason: 'checkedOut' }], updateRefs: updateRefs(false) })), undefined);
   assert.equal(stackedAlternative(preview({ staying: [{ name: 'a', reason: 'git' }], updateRefs: updateRefs(false, false) })), undefined);
   assert.equal(stackedAlternative(preview({ updateRefs: updateRefs(false) })), undefined);
+});
+
+test('draws the rebase before and after: the current and stacked branches move to the replayed commits', () => {
+  const c = (oid: string, subject: string) => ({ oid, subject });
+  const lines = drawingLines({
+    moving: [{ name: 'part1' }],
+    staying: [],
+    current: 'topic',
+    drawing: {
+      picks: [c('a1', 'First'), c('a2', 'Second')],
+      onto: [c('m2', 'Upstream two'), c('m1', 'Upstream one')],
+      ontoMore: 3,
+      base: c('b', 'Base'),
+      labels: [
+        { oid: 'a2', name: 'topic', kind: 'local' },
+        { oid: 'a1', name: 'part1', kind: 'local' },
+        { oid: 'm2', name: 'main', kind: 'local' },
+        { oid: 'm2', name: 'origin/main', kind: 'remote' },
+      ],
+    },
+  });
+  assert.deepEqual(lines, [
+    'Now:',
+    '  ○ Second  [topic]',
+    '  ○ First  [part1]',
+    '  ● Upstream two  [main, origin/main]',
+    '  ● Upstream one',
+    '  ⋮ 3 more',
+    '  ● Base',
+    'After the rebase:',
+    '  ○ Second′  [topic]',
+    '  ○ First′  [part1]',
+    '  ● Upstream two  [main, origin/main]',
+    '  ● Upstream one',
+    '  ⋮ 3 more',
+    '  ● Base',
+  ]);
+  assert.deepEqual(drawingLines({ moving: [], staying: [] }), []);
 });

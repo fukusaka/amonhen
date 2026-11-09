@@ -2,6 +2,7 @@
 import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import * as vscode from 'vscode';
+import { failureCause, hasMoreThan } from '../failure/cause.ts';
 import { GitError } from '../git/exec.ts';
 import type { Change } from '../state/changes.ts';
 import { predictStage, predictUnstage } from '../state/predict.ts';
@@ -89,8 +90,29 @@ export async function acceptConflicts(
   }
 }
 
+/** 失敗の全文を見せるところ（Details） */
+let failures: vscode.OutputChannel | undefined;
+
+/**
+ * 失敗を知らせる。原因の行（git の `fatal:`・`error:`）だけを出し、それで言い尽くさなければ Details で全文（git の
+ * 命令も）を出力パネルに出す（アプリの帯の原因と Details）
+ */
 export function showError(err: unknown): void {
-  void vscode.window.showErrorMessage(err instanceof GitError || err instanceof Error ? err.message : String(err));
+  const message = err instanceof GitError || err instanceof Error ? err.message : String(err);
+  const cause = failureCause(message);
+  if (!hasMoreThan(cause, message) && !(err instanceof GitError)) {
+    void vscode.window.showErrorMessage(message);
+    return;
+  }
+  void vscode.window.showErrorMessage(cause, 'Details').then((choice) => {
+    if (choice !== 'Details') return;
+    failures ??= vscode.window.createOutputChannel('Amon Hen Failures');
+    const command = err instanceof GitError ? `git ${err.args.join(' ')}\n${err.exitCode === null ? '' : `exit code ${err.exitCode}\n`}` : '';
+    failures.appendLine(`[${new Date().toLocaleString()}] ${cause}`);
+    failures.appendLine(`${command}${(err instanceof GitError ? err.stderr : message).trimEnd()}`);
+    failures.appendLine('');
+    failures.show(true);
+  });
 }
 
 /** index にあればそのモード、無ければ実ファイルの実行ビットから決める */
