@@ -72,6 +72,12 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "amonhen.rebuildHistory",
+        "title": "Rebuild History",
+        "category": "Amon Hen",
+        "enablement": "amonhen.hasRepository"
+      },
+      {
         "command": "amonhen.selectRepository",
         "title": "Select Repository",
         "category": "Amon Hen",
@@ -568,6 +574,13 @@
         "category": "Amon Hen"
       },
       {
+        "command": "amonhen.switchBranch",
+        "title": "Switch Branch…",
+        "category": "Amon Hen",
+        "icon": "$(git-branch)",
+        "enablement": "amonhen.hasRepository"
+      },
+      {
         "command": "amonhen.newBranch",
         "title": "New Branch…",
         "category": "Amon Hen",
@@ -845,14 +858,24 @@
           "group": "1_view@2"
         },
         {
+          "command": "amonhen.rebuildHistory",
+          "when": "view == amonhen.sidebar && amonhen.engine",
+          "group": "1_view@3"
+        },
+        {
           "command": "amonhen.forcePush",
           "when": "view == amonhen.sidebar",
           "group": "2_sync@1"
         },
         {
+          "command": "amonhen.switchBranch",
+          "when": "view == amonhen.sidebar",
+          "group": "0_branch@1"
+        },
+        {
           "command": "amonhen.newBranch",
           "when": "view == amonhen.sidebar",
-          "group": "1_view@0"
+          "group": "0_branch@2"
         },
         {
           "command": "amonhen.stash",
@@ -1230,6 +1253,11 @@
           "command": "amonhen.submodules.foreach",
           "when": "view == amonhen.sidebar && amonhen.engine && viewItem == section.submodules",
           "group": "1_submodules@4"
+        },
+        {
+          "command": "amonhen.switchBranch",
+          "when": "view == amonhen.sidebar && viewItem == section.branches",
+          "group": "0_switch@1"
         },
         {
           "command": "amonhen.branch.newOrphan",
@@ -1724,6 +1752,10 @@
         },
         {
           "command": "amonhen.fetchBundle",
+          "when": "amonhen.hasRepository && amonhen.engine"
+        },
+        {
+          "command": "amonhen.rebuildHistory",
           "when": "amonhen.hasRepository && amonhen.engine"
         }
       ],

@@ -178,6 +178,14 @@ async function workingCopyFlow(label: string): Promise<void> {
       '変えた 1 行だけが差分になる（改行の違いで全体が書き換えに見えない）',
     );
     const selected = lines.map((l): SelectedLine => (l.kind === '-' ? { kind: '-', old: l.old! } : { kind: '+', new: l.new! }));
+    // エンジンがあれば HEAD → 作業ツリーの 1 つの差分で、行に staged の印がある
+    if (label === 'daemon') {
+      assert.equal(diff!.combined, true, 'HEAD → 作業ツリーの差分');
+      assert.deepEqual(
+        lines.map((l) => l.staged),
+        lines.map(() => group === 'staged'),
+      );
+    }
     return { group, path: FILE, version: diff!.version, lines: selected };
   };
   const numstat = (...args: string[]) => git('diff', '--numstat', ...args).trim();
@@ -186,7 +194,8 @@ async function workingCopyFlow(label: string): Promise<void> {
   // 行単位の stage と unstage
   await wc.handle({ type: 'wcStageLines', ...(await select('unstaged')) });
   await until('stage', () => numstat('--cached') === one && numstat() === '');
-  await wc.handle({ type: 'wcStageLines', ...(await select('staged')) });
+  // 1 つの差分では、外すことを stage: false で頼む（git 実行層では見ない）
+  await wc.handle({ type: 'wcStageLines', ...(await select('staged')), stage: false });
   await until('unstage', () => numstat('--cached') === '' && numstat() === one);
 
   // 行の破棄（確かめのダイアログには Discard と答える）と、その Undo
@@ -334,7 +343,15 @@ async function tagsAndRemotesFlow(): Promise<void> {
         return `${item?.contextValue}「${String(item?.description)}」${errors.slice(-2).join('、')}`;
       },
     );
-  const fetch = () => vscode.commands.executeCommand('amonhen.fetch');
+  // Fetch は確かめてから（リモートが 1 つなら確認、いくつもならすべて）
+  const fetch = () =>
+    withWindow(
+      {
+        showInformationMessage: async (_m: string, ...rest: unknown[]) => (rest.includes('Fetch') ? 'Fetch' : undefined),
+        showQuickPick: async (items: readonly vscode.QuickPickItem[]) => items[0],
+      },
+      async () => vscode.commands.executeCommand('amonhen.fetch'),
+    );
   const tag = 'e2e-tag';
   const remote = 'e2e-mirror';
   try {
@@ -1388,6 +1405,288 @@ async function bundleArchiveFlow(): Promise<void> {
   }
 }
 
+/**
+ * createQuickPick の代わり（withWindow に渡す）: show で typed を打ってから、choose が選んだ行を受け入れる。受け入れても
+ * 閉じなければ（押せない行）閉じる。show の時点の並びは pickSeen に、閉じたかは pickHidden に
+ */
+let pickSeen: vscode.QuickPickItem[] = [];
+function fakeQuickPick(choose: (items: readonly vscode.QuickPickItem[]) => vscode.QuickPickItem | undefined, typed = '') {
+  return {
+    createQuickPick: () => {
+      const on: { value?: (v: string) => void; accept?: () => void; hide?: () => void } = {};
+      let hidden = false;
+      const pick = {
+        items: [] as vscode.QuickPickItem[],
+        selectedItems: [] as vscode.QuickPickItem[],
+        activeItems: [] as vscode.QuickPickItem[],
+        value: '',
+        title: '',
+        placeholder: '',
+        matchOnDescription: false,
+        matchOnDetail: false,
+        onDidChangeValue: (f: (v: string) => void) => (on.value = f),
+        onDidAccept: (f: () => void) => (on.accept = f),
+        onDidHide: (f: () => void) => (on.hide = f),
+        show: () => {
+          if (typed) {
+            pick.value = typed;
+            on.value?.(typed);
+          }
+          pickSeen = [...pick.items];
+          const item = choose(pick.items);
+          if (item) {
+            pick.selectedItems = [item];
+            on.accept?.();
+          }
+          if (!hidden) pick.hide();
+        },
+        hide: () => {
+          if (hidden) return;
+          hidden = true;
+          on.hide?.();
+        },
+        dispose: () => undefined,
+      };
+      return pick;
+    },
+  };
+}
+
+/**
+ * Switch Branch…（QuickPick）: 打った名前のブランチを作って切り替え、最近のものとして上に出たブランチに戻り、リモートの
+ * ブランチを選ぶと追跡するブランチを作って切り替える
+ */
+async function branchSwitcherFlow(): Promise<void> {
+  const repo = api.manager.current!;
+  const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+  const head = () => git('symbolic-ref', '--short', 'HEAD').trim();
+  try {
+    await withWindow(fakeQuickPick((items) => items.find((i) => i.label.includes('Create branch sw-new')), 'sw-new'), async () =>
+      vscode.commands.executeCommand('amonhen.switchBranch'),
+    );
+    assert.equal(head(), 'sw-new', lastErrors());
+    await until('今のブランチが sw-new になる', () => repo.current.status?.branch.head === 'sw-new');
+
+    // 戻る先は最近のものとして先頭に出る
+    await withWindow(fakeQuickPick((items) => items.find((i) => i.label.endsWith(` ${branch}`))), async () =>
+      vscode.commands.executeCommand('amonhen.switchBranch'),
+    );
+    assert.equal(head(), branch, lastErrors());
+    await until(`今のブランチが ${branch} になる`, () => repo.current.status?.branch.head === branch);
+    await withWindow(fakeQuickPick(() => undefined), async () => vscode.commands.executeCommand('amonhen.switchBranch'));
+    assert.match(pickSeen[0]?.label ?? '', /sw-new$/, pickSeen.map((i) => i.label).join(', '));
+
+    // リモートのブランチは追跡するブランチを作って切り替える
+    git('remote', 'add', 'sw-remote', root);
+    git('branch', 'sw-track');
+    git('fetch', '-q', 'sw-remote', 'sw-track');
+    git('branch', '-D', 'sw-track');
+    await repo.refresh();
+    await withWindow(fakeQuickPick((items) => items.find((i) => i.label.endsWith(' sw-remote/sw-track'))), async () =>
+      vscode.commands.executeCommand('amonhen.switchBranch'),
+    );
+    assert.equal(head(), 'sw-track', lastErrors());
+    assert.equal(git('rev-parse', '--abbrev-ref', 'sw-track@{upstream}').trim(), 'sw-remote/sw-track');
+  } finally {
+    git('switch', '-q', '-f', branch);
+    for (const b of ['sw-new', 'sw-track']) if (git('branch', '--list', b)) git('branch', '-D', b);
+    if (git('remote').split('\n').includes('sw-remote')) git('remote', 'remove', 'sw-remote');
+    await repo.refresh();
+  }
+}
+
+/**
+ * Fetch: リモートがいくつもあれば、すべてか 1 つを選ぶ。片づけるかは git の設定のとおりで、選ぶ行にそれを書く
+ */
+async function fetchSheetFlow(): Promise<void> {
+  const repo = api.manager.current!;
+  const remote = 'fs-remote';
+  let shown: vscode.QuickPickItem[] = [];
+  const fetchFrom = (label: string) =>
+    withWindow(
+      {
+        showQuickPick: async (items: readonly vscode.QuickPickItem[]) => {
+          shown = [...items];
+          return items.find((i) => i.label === label);
+        },
+      },
+      async () => vscode.commands.executeCommand('amonhen.fetch'),
+    );
+  try {
+    git('remote', 'add', remote, root);
+    git('config', `remote.${remote}.prune`, 'true');
+    git('branch', 'fs-gone');
+    await repo.refresh();
+    await until('リモートが 2 つになる', () => (repo.current.remotes ?? []).length >= 2);
+    // origin だけにあるブランチは、fs-remote から取っても来ない
+    const origin = git('remote', 'get-url', 'origin').trim();
+    childProcess.execFileSync('git', ['branch', 'fs-only-origin'], { cwd: origin });
+    await fetchFrom(remote);
+    assert.ok(git('for-each-ref', `refs/remotes/${remote}/fs-gone`).trim(), lastErrors());
+    assert.equal(git('for-each-ref', 'refs/remotes/origin/fs-only-origin').trim(), '', '選んだリモートからだけ取る');
+    assert.match(shown[0]!.label, /^All Remotes \(.*fs-remote.*\)$/);
+    assert.equal(
+      shown.find((i) => i.label === remote)?.detail,
+      'Remote branches deleted there are removed here too (remote.fs-remote.prune).',
+    );
+    // 片づける設定なので、消したブランチは次の fetch で消える
+    git('branch', '-D', 'fs-gone');
+    await fetchFrom(remote);
+    assert.equal(git('for-each-ref', `refs/remotes/${remote}/fs-gone`).trim(), '', lastErrors());
+  } finally {
+    if (git('branch', '--list', 'fs-gone')) git('branch', '-D', 'fs-gone');
+    childProcess.execFileSync('git', ['branch', '-D', 'fs-only-origin'], { cwd: git('remote', 'get-url', 'origin').trim(), stdio: 'ignore' });
+    if (git('remote').split('\n').includes(remote)) git('remote', 'remove', remote);
+    await repo.refresh();
+  }
+}
+
+/**
+ * Pull: 取り込み方を選ぶ行に、それで何が起きるかが出る。手元にコミットがなければ fast-forward。分かれていれば
+ * Fast-Forward Only は押せず（何も変わらない）、Rebase を選ぶと手元のコミットが上に載る。上流がなければ取り込み元を
+ * 選んで上流にする
+ */
+async function pullSheetFlow(): Promise<void> {
+  const repo = api.manager.current!;
+  const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+  const remote = 'pl-remote';
+  const commit = (name: string) => {
+    writeFileSync(join(root, `${name}.txt`), `${name}\n`);
+    git('add', `${name}.txt`);
+    git('commit', '-q', '-m', name);
+  };
+  const pull = (label: RegExp, source?: string) =>
+    withWindow(
+      {
+        ...fakeQuickPick((items) => items.find((i) => label.test(i.label))),
+        showQuickPick: async (items: readonly string[]) => items.find((i) => i === source),
+        showInformationMessage: async () => undefined,
+      },
+      async () => vscode.commands.executeCommand('amonhen.pull'),
+    );
+  try {
+    // pl-src に 2 つ進んだものを用意し、pl-remote から取れるようにする
+    git('switch', '-q', '-c', 'pl-src');
+    commit('pl-a');
+    commit('pl-b');
+    git('switch', '-q', branch);
+    git('remote', 'add', remote, root);
+    git('fetch', '-q', remote, 'pl-src');
+    git('branch', 'pl-main', 'pl-src~2');
+    git('switch', '-q', 'pl-main');
+    await repo.refresh();
+    await until('pl-main に切り替わる', () => repo.current.status?.branch.head === 'pl-main');
+
+    // 上流がないので、取り込み元を選ぶ（上流になる）
+    await pull(/Follow git’s Settings/, `${remote}/pl-src`);
+    assert.equal(git('rev-parse', 'pl-main').trim(), git('rev-parse', 'pl-src').trim(), lastErrors());
+    assert.equal(git('rev-parse', '--abbrev-ref', 'pl-main@{upstream}').trim(), `${remote}/pl-src`);
+
+    // 分かれる: 手元に 1 つ、pl-src に 1 つ
+    commit('pl-local');
+    git('switch', '-q', 'pl-src');
+    commit('pl-c');
+    git('switch', '-q', 'pl-main');
+    git('fetch', '-q', remote, 'pl-src');
+    await repo.refresh();
+    await until('上流が読める', () => (repo.current.branches ?? []).some((b) => b.name === 'refs/heads/pl-main' && b.upstream));
+    const before = git('rev-parse', 'pl-main').trim();
+    await pull(/Fast-Forward Only/);
+    assert.equal(git('rev-parse', 'pl-main').trim(), before, 'Fast-Forward Only は押せない');
+    const ff = pickSeen.find((i) => /Fast-Forward Only/.test(i.label))!;
+    assert.match(ff.label, /\$\(warning\)/);
+    assert.match(String(ff.detail), /can’t pull these: you have 1 local commit/);
+    assert.match(String(pickSeen.find((i) => /^\$\(repo-pull\) Rebase/.test(i.label))?.detail), /replayed on top/);
+    assert.ok(pickSeen.some((i) => i.label === '$(git-commit) pl-c'), '取り込むコミットが並ぶ');
+
+    await pull(/^\$\(repo-pull\) Rebase/);
+    await until('rebase が終わる', () => git('log', '-1', '--format=%s', 'pl-main').trim() === 'pl-local');
+    assert.equal(git('rev-parse', 'pl-main~1').trim(), git('rev-parse', 'pl-src').trim(), lastErrors());
+  } finally {
+    git('switch', '-q', '-f', branch);
+    for (const b of ['pl-main', 'pl-src']) if (git('branch', '--list', b)) git('branch', '-D', b);
+    if (git('remote').split('\n').includes(remote)) git('remote', 'remove', remote);
+    await repo.refresh();
+  }
+}
+
+/**
+ * Push: 送るコミットと見ておくこと（fixup!・秘密らしいファイル）を見せてから送る。上流が先に進んでいれば、消える
+ * コミットを見せて Pull… か Force Push。Force Push は見せたときの上流のコミットのときだけ置き換える
+ */
+async function pushSheetFlow(): Promise<void> {
+  const repo = api.manager.current!;
+  const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+  const bare = join(root, '..', `amonhen-push-sheet-${process.pid}.git`);
+  const remote = 'ps-remote';
+  const commit = (name: string, subject = name) => {
+    writeFileSync(join(root, name), `${name}\n`);
+    git('add', name);
+    git('commit', '-q', '-m', subject);
+  };
+  const inBare = (...args: string[]) => childProcess.execFileSync('git', args, { cwd: bare, encoding: 'utf8' });
+  const push = (label: RegExp, command = 'amonhen.push') =>
+    withWindow(
+      { ...fakeQuickPick((items) => items.find((i) => label.test(i.label))), showInformationMessage: async () => undefined },
+      async () => vscode.commands.executeCommand(command),
+    );
+  try {
+    git('init', '-q', '--bare', bare);
+    git('remote', 'add', remote, bare);
+    git('switch', '-q', '-c', 'ps-branch');
+    git('push', '-q', '-u', remote, 'ps-branch');
+    commit('ps-a.txt', 'fixup! ps');
+    commit('.env', 'Add settings');
+    await repo.refresh();
+    await until('ps-branch の上流が読める', () =>
+      (repo.current.branches ?? []).some((b) => b.name === 'refs/heads/ps-branch' && b.upstream),
+    );
+    await push(/^\$\(repo-push\) Push 2 commits/);
+    assert.equal(inBare('rev-parse', 'ps-branch').trim(), git('rev-parse', 'HEAD').trim(), lastErrors());
+    const labels = pickSeen.map((i) => i.label);
+    assert.ok(labels.includes('$(warning) 1 commit looks unfinished (fixup!, squash! or WIP).'), labels.join(' | '));
+    assert.ok(labels.includes('$(warning) Adds files that may hold secrets: .env'), labels.join(' | '));
+    assert.ok(labels.includes('$(git-commit) Add settings'));
+
+    // 上流が先に進む（別の場所からの push）。手元にも 1 つ
+    const theirs = git('commit-tree', '-p', 'HEAD', '-m', 'theirs', `HEAD^{tree}`).trim();
+    git('push', '-q', remote, `${theirs}:refs/heads/ps-branch`);
+    git('fetch', '-q', remote);
+    commit('ps-b.txt', 'ours');
+    await repo.refresh();
+    await push(/Force Push/);
+    assert.match(pickSeen.find((i) => /Force Push/.test(i.label))?.detail ?? '', /loses 1 commit\. Replaces ps-remote\/ps-branch only if it is still at/);
+    assert.ok(pickSeen.some((i) => i.label === '$(repo-pull) Pull…'));
+    assert.equal(inBare('rev-parse', 'ps-branch').trim(), git('rev-parse', 'HEAD').trim(), lastErrors());
+
+    // 見せた後に上流が動いていれば、Force Push は断られる
+    commit('ps-c.txt', 'ours again');
+    const moved = git('commit-tree', '-p', theirs, '-m', 'moved', `HEAD^{tree}`).trim();
+    git('fetch', '-q', remote);
+    await repo.refresh();
+    const errorsBefore = errors.length;
+    await withWindow(
+      {
+        ...fakeQuickPick((items) => {
+          // 見せた後に（選ぶ前に）上流が動く
+          git('push', '-q', '-f', remote, `${moved}:refs/heads/ps-branch`);
+          return items.find((i) => /Force Push/.test(i.label));
+        }),
+        showInformationMessage: async () => undefined,
+      },
+      async () => vscode.commands.executeCommand('amonhen.forcePush'),
+    );
+    assert.equal(inBare('rev-parse', 'ps-branch').trim(), moved, `置き換えない（${lastErrors()}）`);
+    assert.ok(errors.length > errorsBefore, 'push が断られたと知らせる');
+  } finally {
+    git('switch', '-q', '-f', branch);
+    if (git('branch', '--list', 'ps-branch')) git('branch', '-D', 'ps-branch');
+    if (git('remote').split('\n').includes(remote)) git('remote', 'remove', remote);
+    rmSync(bare, { recursive: true, force: true });
+    await repo.refresh();
+  }
+}
+
 async function orphanFlow(): Promise<void> {
   const repo = api.manager.current!;
   const branch = git('symbolic-ref', '--short', 'HEAD').trim();
@@ -2051,11 +2350,24 @@ async function settingsFlow(): Promise<void> {
       const sparse = await waitPosted('settings', mark, (m) => !!m.facts.repositoryForm?.sparse);
       assert.deepEqual(sparse.facts.repositoryForm?.sparse, { cone: true, folders: ['sp-dir'] });
       assert.ok(existsSync(join(root, 'sp-dir', 'a.txt')));
+      // サイドバーの Working Copy の行に、一部のフォルダだけだと出る
+      const workingCopyRow = () => {
+        const node = api.sidebar.getChildren().find((n) => n.kind === 'view' && n.view === 'workingCopy')!;
+        return String((api.sidebar.getTreeItem(node) as vscode.TreeItem).description);
+      };
+      await until('Working Copy の行の印', async () => {
+        await api.manager.current!.refresh();
+        return workingCopyRow().endsWith(' · some folders');
+      });
       mark = posted.length;
       await withWindow({ showWarningMessage: async () => 'Check Out All' }, async () =>
         panel.settings.handle({ type: 'settingsRun', action: 'checkOutAll' }),
       );
       assert.equal((await waitPosted('settings', mark)).facts.repositoryForm?.sparse, null);
+      await until('Working Copy の行の印が消える', async () => {
+        await api.manager.current!.refresh();
+        return !workingCopyRow().includes('some folders');
+      });
     }
   } finally {
     if (sparseCommit) {
@@ -2216,8 +2528,11 @@ async function patchFlow(label: string): Promise<void> {
   };
   // 当てる前の確かめ（modal）には answer と答え、ほかの知らせは閉じる
   let answer = 'Apply';
+  // Save as Patch の版（-v）。空なら付けない
+  let version = '';
   const stubs = {
     showQuickPick: async (items: unknown) => ((await items) as unknown[])[0],
+    showInputBox: async () => version,
     showOpenDialog: async () => [vscode.Uri.file(out)],
     showInformationMessage: async (_message: string, ...rest: unknown[]) =>
       (rest[0] as { modal?: boolean } | undefined)?.modal ? answer : undefined,
@@ -2233,6 +2548,12 @@ async function patchFlow(label: string): Promise<void> {
       await vscode.commands.executeCommand('amonhen.history.savePatch', { oid: change });
       const patch = join(out, `0001-change-${label}.patch`);
       assert.ok(existsSync(patch), `${patch} がある`);
+      // 2 版目は名前と件名に v2 が付く
+      version = '2';
+      await vscode.commands.executeCommand('amonhen.history.savePatch', { oid: change });
+      version = '';
+      const second = join(out, `v2-0001-change-${label}.patch`);
+      assert.ok(existsSync(second) && readFileSync(second, 'utf8').includes('[PATCH v2]'), `${second} がある`);
       git('reset', '-q', '--hard', 'HEAD~1');
       const base = head();
       await vscode.commands.executeCommand('amonhen.applyPatch', vscode.Uri.file(patch));
@@ -2557,6 +2878,9 @@ async function rewriteFlow(label: string): Promise<void> {
         }
         // コンフリクトの見込みは git 2.40 から
         assert.doesNotMatch(first.detail, /Conflicts expected/);
+        // 前と後: 今のブランチは載せ直したコミットへ、載せ先の札はそのまま
+        assert.ok(first.detail.includes(`Now:\n  ○ ${name('two')}  [${name('top')}]\n  ○ ${name('one')}  [${name('mid')}]\n  ● ${name('onto')}  [${name('onto')}]`), first.detail);
+        assert.ok(first.detail.includes(`After the rebase:\n  ○ ${name('two')}′  [${name('top')}]`), first.detail);
       } else {
         assert.equal(first.detail, 'You can undo this.');
         assert.deepEqual(first.buttons, ['Rebase']);
@@ -3212,6 +3536,31 @@ suite('Amon Hen in VSCode', () => {
 
   test('exports an archive, saves and fetches bundles and clones from one through the daemon', async () => {
     await bundleArchiveFlow();
+  });
+
+  test('switches to a new, a recent and a remote branch from Switch Branch', async () => {
+    await branchSwitcherFlow();
+  });
+
+  test('fetches from all remotes or one, saying which prune', async () => {
+    await fetchSheetFlow();
+  });
+
+  test('pulls after showing how each way integrates, choosing the upstream when there is none', async () => {
+    await pullSheetFlow();
+  });
+
+  test('pushes after showing the commits and warnings, and force pushes only over what it showed', async () => {
+    await pushSheetFlow();
+  });
+
+  test('rebuilds History from scratch through the daemon', async () => {
+    await showView('amonhen.showHistory');
+    const at = posted.length;
+    await vscode.commands.executeCommand('amonhen.rebuildHistory');
+    await waitPosted('reset', at);
+    const head = git('rev-parse', 'HEAD').trim();
+    await waitPosted('rows', at, (m) => m.rows.some((r) => r.oid === head));
   });
 
   test('creates an orphan branch, empty or keeping the files, through the daemon', async () => {

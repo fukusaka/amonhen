@@ -98,6 +98,8 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
   readonly onDidChangeFilter = this._onDidChangeFilter.event;
   /** 開いている遅延セクション */
   private readonly expanded = new Set<LazySection>();
+  /** sparse checkout のリポジトリ（Working Copy の行に印を付ける） */
+  private readonly sparse = new Set<string>();
   /** 更新通知で同じノードを指せるよう、セクションのノードは使い回す */
   private readonly sections = new Map<RefSection, Node>(
     (Object.keys(SECTION_LABELS) as RefSection[]).map((s) => [s, { kind: 'section', section: s }]),
@@ -143,8 +145,11 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
     this.stashFacts.setRepository(this.engine ? repository : undefined);
     this.submoduleFacts.setRepository(this.engine ? repository : undefined);
     this.subtreeFacts.setRepository(this.engine ? repository : undefined);
+    if (repository) void this.checkSparse(repository);
     this.repoListener = repository?.onDidChange((changed) => {
       if (changed.has('branches')) this.updateContext(repository);
+      // sparse checkout にしたかは設定（core.sparseCheckout。worktree の config.worktree のこともある）に出る
+      if (changed.has('config') || changed.has('workingCopy')) void this.checkSparse(repository);
       // Working Copy の変化は、入口の数と途中の merge / rebase に出る
       // Stashes の節は、stash があるかで出たり消えたりする
       if (changed.has('workingCopy') || changed.has('stashes')) {
@@ -157,6 +162,16 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
       }
     });
     this._onDidChangeTreeData.fire(undefined);
+  }
+
+  /** sparse checkout かを読み、変わっていれば Working Copy の行を描き直す */
+  private async checkSparse(repository: Repository): Promise<void> {
+    const value = await repository.backend.config('core.sparseCheckout').catch(() => undefined);
+    const on = ['true', 'yes', 'on', '1'].includes((value ?? '').trim().toLowerCase());
+    if (on === this.sparse.has(repository.root)) return;
+    if (on) this.sparse.add(repository.root);
+    else this.sparse.delete(repository.root);
+    if (repository === this.repo) this._onDidChangeTreeData.fire(undefined);
   }
 
   /** 絞り込みの文字列（空白で区切った言葉。大文字小文字は区別しない） */
@@ -341,6 +356,11 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
           const count = state?.status?.entries.filter((e) => e.kind !== 'ignored').length ?? 0;
           item.description = count > 0 ? `${count} changed` : 'clean';
           item.iconPath = new vscode.ThemeIcon('diff');
+          // sparse checkout なら、一部のフォルダだけだと添える（アプリの Working Copy の行のフォルダの印）
+          if (repo && this.sparse.has(repo.root)) {
+            item.description += ' · some folders';
+            item.tooltip = 'Only some folders are checked out (sparse checkout). Repository Settings > Fetching and Folders changes them.';
+          }
           item.command = { command: 'amonhen.showWorkingCopy', title: 'Show Working Copy' };
           item.contextValue = 'view.workingCopy';
           // worktree が 2 つ以上あれば、その並びを下に出す（書き込む先は ✎）

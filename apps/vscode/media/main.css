@@ -715,8 +715,8 @@ button.secondary {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 8px 12px 12px;
-  border-top: 1px solid var(--vscode-panel-border);
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--vscode-panel-border);
 }
 
 .wc-commit input.subject,
@@ -1693,4 +1693,39 @@ aside.details.single .file-diff:not(.current) {
   gap: 4px;
   font-size: 0.9em;
   white-space: nowrap;
+}
+
+/* HEAD → 作業ツリーの差分のチェック（次のコミットに入れるか）。行の左と hunk の見出しに */
+.line .check,
+.hunk-head .check {
+  flex: none;
+  width: 2.4ch;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--vscode-descriptionForeground);
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+  user-select: none;
+}
+
+.line span.check {
+  cursor: default;
+}
+
+.line .check.all,
+.hunk-head .check.all,
+.hunk-head .check.some {
+  color: var(--vscode-textLink-foreground);
+}
+
+.line .check:focus-visible,
+.hunk-head .check:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+}
+
+.hunk-head .check + .range {
+  margin-left: 2px;
+  margin-right: auto;
 }

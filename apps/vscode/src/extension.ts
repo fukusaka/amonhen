@@ -31,6 +31,8 @@ import { registerRestoreCommands } from './ui/restoreCommands.ts';
 import { registerSubmoduleCommands } from './ui/submoduleCommands.ts';
 import { registerSubtreeCommands } from './ui/subtreeCommands.ts';
 import { registerSyncCommands } from './ui/syncCommands.ts';
+import { registerBranchSwitcher } from './ui/branchSwitcher.ts';
+import { registerRebuildHistory } from './ui/rebuildHistory.ts';
 import { registerTagCommands } from './ui/tagCommands.ts';
 import { registerUndoCommand } from './ui/undoCommand.ts';
 import { registerWorktreeCommands } from './ui/worktreeCommands.ts';
@@ -137,6 +139,8 @@ export async function activate(
     registerReflogCommands(manager),
     registerTagCommands(manager, sidebar),
     registerWorktreeCommands(manager, sidebar),
+    registerBranchSwitcher(manager, sidebar),
+    registerRebuildHistory(manager),
     registerBranchArrangeCommands(manager, sidebar),
     registerFormCommands(manager),
     registerFileToolCommands(manager, (target) => show(target)),

@@ -12,10 +12,14 @@ const ADDED = 1;
 const REMOVED = 2;
 const HUNK = 3;
 const FILE = 8;
+/** `flags`: HEAD → 作業ツリーの差分で、この行の変更が index に入っている */
+const STAGED = 1;
 
 /** 差分の 1 行（daemon の差分の行の番号の順） */
 export interface Row {
   kind: number;
+  /** `STAGED`（1）など */
+  flags: number;
   old: number;
   new: number;
   text: string;
@@ -41,6 +45,7 @@ export function readRowsOf(reply: Reply): Row[] {
     const off = raw[i * 4 + 3]!;
     rows.push({
       kind: raw[i * 4]! & 0xff,
+      flags: (raw[i * 4]! >> 8) & 0xff,
       old: raw[i * 4 + 1]!,
       new: raw[i * 4 + 2]!,
       text: decoder.decode(text.subarray(off, off + lengths[i]!)),
@@ -50,7 +55,7 @@ export function readRowsOf(reply: Reply): Row[] {
 }
 
 /** 行を hunk に分けた差分。version は中身から作る（表示した差分と今の差分が同じかを確かめる） */
-export function toFileDiff(path: string, rows: readonly Row[], binary: boolean): FileDiff {
+export function toFileDiff(path: string, rows: readonly Row[], binary: boolean, combined = false): FileDiff {
   const version = createHash('sha1')
     .update(path)
     .update('\0')
@@ -69,22 +74,23 @@ export function toFileDiff(path: string, rows: readonly Row[], binary: boolean):
     if (!hunk) {
       continue;
     }
+    const staged = combined ? { staged: (r.flags & STAGED) !== 0 } : {};
     const line: DiffLine =
       r.kind === ADDED
-        ? { kind: '+', new: r.new, text: r.text }
+        ? { kind: '+', new: r.new, text: r.text, ...staged }
         : r.kind === REMOVED
-          ? { kind: '-', old: r.old, text: r.text }
+          ? { kind: '-', old: r.old, text: r.text, ...staged }
           : { kind: ' ', old: r.old, new: r.new, text: r.text };
     hunk.lines.push(line);
   }
-  return { path, version, hunks };
+  return { path, version, hunks, ...(combined ? { combined: true } : {}) };
 }
 
 /** `workingDiff` の答え */
 export function readWorkingDiff(reply: Reply): DaemonDiff {
   const rows = readRowsOf(reply);
   const path = String(reply.json['path']);
-  const diff = toFileDiff(path, rows, reply.json['binary'] === true);
+  const diff = toFileDiff(path, rows, reply.json['binary'] === true, reply.json['mode'] === 'combined');
   const le = reply.json['lineEndings'] as Record<string, unknown> | null | undefined;
   if (le) {
     diff.lineEndings = {
