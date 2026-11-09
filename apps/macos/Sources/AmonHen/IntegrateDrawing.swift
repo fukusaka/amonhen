@@ -92,7 +92,7 @@ extension Actions {
 
     /// merge の見込みの絵（fast-forward なら ref が動く絵）。描くものがなければ nil。`theirs` は取り込むものの名前。
     func mergeDrawing(_ preview: MergePreview?, theirs: String, into ours: String = "HEAD",
-                      afterTitle: String = L("After the merge")) -> NSView? {
+                      afterTitle: String = L("After the merge"), nowOnly: Bool = false) -> NSView? {
         guard let preview else { return nil }
         // 取り込む先のブランチの札（今のブランチ以外へ取り込むときは、その名前）。
         let current = ours == "HEAD" ? currentBranch ?? "HEAD" : ours
@@ -102,7 +102,7 @@ extension Actions {
             return view
         }
         guard preview.drawing != nil else { return nil }
-        let view = MergeDrawingView(current: current, theirs: theirs, afterTitle: afterTitle)
+        let view = MergeDrawingView(current: current, theirs: theirs, afterTitle: afterTitle, nowOnly: nowOnly)
         view.preview = preview
         return view
     }
@@ -130,11 +130,14 @@ final class MergeDrawingView: GraphDrawingView {
     private let current: String
     private let theirs: String
     private let afterTitle: String
+    /// 左の今だけを描く（右には呼ぶ側が、取り込めないことを重ねる。Pull の Fast-Forward Only など）。
+    private let nowOnly: Bool
 
-    init(current: String, theirs: String, afterTitle: String) {
+    init(current: String, theirs: String, afterTitle: String, nowOnly: Bool = false) {
         self.current = current
         self.theirs = theirs
         self.afterTitle = afterTitle
+        self.nowOnly = nowOnly
         super.init(frame: .zero)
     }
 
@@ -159,7 +162,7 @@ final class MergeDrawingView: GraphDrawingView {
         NSString(string: afterTitle).draw(at: NSPoint(x: Self.columnWidth + 28, y: 2), withAttributes: headingAttributes)
         let labels = Dictionary(grouping: d.labels, by: \.oid)
         let oursTip = d.ours.first?.oid ?? d.base?.oid
-        for after in [false, true] {
+        for after in nowOnly ? [false] : [false, true] {
             let x = after ? Self.columnWidth + 24 : 0
             var y: CGFloat = 22
             var rows: [GraphRow] = []

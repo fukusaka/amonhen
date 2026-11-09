@@ -21,7 +21,7 @@
 "{upstream} loses {count} commits. This can’t be undone." = "{upstream} loses {count} commit. This can’t be undone.";
 "⚠︎ Conflicts expected at {count} commits, first at {commit}: {files}" = "⚠︎ Conflicts expected at {count} commit, first at {commit}: {files}";
 "⚠︎ Conflicts expected in {count} files: {names}" = "⚠︎ Conflicts expected in {count} file: {names}";
-"⚠︎ Fast-Forward Only can’t pull these: you have {count} local commits. Choose Merge or Rebase." = "⚠︎ Fast-Forward Only can’t pull these: you have a local commit. Choose Merge or Rebase.";
+"Fast-Forward Only can’t pull these: you have {count} local commits. Choose Merge or Rebase." = "Fast-Forward Only can’t pull these: you have a local commit. Choose Merge or Rebase.";
 "This pushes {count} commits to it and makes it the upstream." = "This pushes {count} commit to it and makes it the upstream.";
 "It has {count} commits that {branch} doesn’t (as of the last Fetch), so pushing would be refused. Make it the upstream and Pull first." = "It has {count} commit that {branch} doesn’t (as of the last Fetch), so pushing would be refused. Make it the upstream and Pull first.";
 "{count} matches" = "{count} match";
