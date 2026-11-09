@@ -1997,11 +1997,28 @@ async function historySelectionFlow(): Promise<void> {
     });
   };
   const select = async (token: number, rows: number[], pair: 'forward' | 'reverse' | 'mergeBase' = 'forward') => {
-    const mark = posted.length;
-    await panel.history.handle({ type: 'selectRows', token, rows, pair });
-    const answer = await waitPosted('selection', mark, (m) => m.token === token);
-    assert.ok(answer.view, answer.error);
-    return answer.view;
+    for (;;) {
+      const mark = posted.length;
+      await panel.history.handle({ type: 'selectRows', token, rows, pair });
+      // ref や HEAD の変化を遅れて知って History を読み直すと、読んでいる途中の選択は捨てられる（答えが来ない）。
+      // 読み直しが落ち着いてから選び直す（行は同じ）
+      const answer = await until(
+        'selection のメッセージ',
+        () => {
+          const since = posted.slice(mark);
+          return since.find((m): m is Message<'selection'> => m.type === 'selection' && m.token === token)
+            ?? (since.some((m) => m.type === 'reset') ? 'reset' as const : undefined);
+        },
+        undefined,
+        () => posted.slice(mark).map((m) => m.type).join(', ') || 'なし',
+      );
+      if (answer === 'reset') {
+        await settled();
+        continue;
+      }
+      assert.ok(answer.view, answer.error);
+      return answer.view;
+    }
   };
   try {
     const base = git('rev-parse', 'HEAD').trim();
