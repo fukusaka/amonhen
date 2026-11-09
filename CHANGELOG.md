@@ -7,7 +7,12 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
-### Unreleased
+### [0.2.10] - 2026-11-09
+
+The sheets for Push, Reset, Merge, Pull, Cherry-pick, Revert, Undo and History edits draw the graph before and after.
+Branches merged by a GitHub pull request are marked and Clean Up Branches… tidies them away, subtrees join submodules
+in the sidebar, and worktrees, stashes, rerere and ignored files get more of git's commands. The GTK4 app now
+looks and behaves like the macOS app, and both apps act on the worktree you chose rather than the one you opened.
 
 #### Added
 
