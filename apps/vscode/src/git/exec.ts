@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { chooseGit, type GitChoice } from './choice.ts';
 
 export interface ExecOptions {
@@ -11,6 +11,29 @@ export interface ExecOptions {
   okCodes?: readonly number[];
   /** 成功したときの標準エラー出力を受け取る（hooks の出力など） */
   onStderr?: (text: string) => void;
+  /**
+   * ネットワークを使う git（fetch・push）。`--progress` を付け、何も出さないまま silenceMs（既定 120 秒）経てば止める
+   * （たいていは誰にも見えないところでの認証の入力待ち。コアと同じ）
+   */
+  network?: boolean;
+  silenceMs?: number;
+}
+
+/** ネットワークを使う git が、これだけ何も出さなければ止める（`--progress` なので、動いていれば数秒ごとに出す） */
+export const NETWORK_SILENCE_MS = 120_000;
+
+/** git と、git が起動した ssh なども止める */
+function killTree(child: ChildProcess): void {
+  if (child.pid === undefined) return;
+  if (process.platform === 'win32') {
+    spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+  } else {
+    try {
+      process.kill(-child.pid, 'SIGKILL');
+    } catch {
+      child.kill('SIGKILL');
+    }
+  }
 }
 
 export interface ExecLog {
@@ -64,7 +87,9 @@ export class GitExecutor {
   }
 
   exec(args: readonly string[], opts: ExecOptions): Promise<Buffer> {
-    const fullArgs = opts.readOnly ? ['--no-optional-locks', ...args] : [...args];
+    // --progress はサブコマンドのすぐ後に（後ろだと `--` の後のリモートの名前になりうる）
+    const withProgress = opts.network && args.length > 0 ? [args[0]!, '--progress', ...args.slice(1)] : [...args];
+    const fullArgs = opts.readOnly ? ['--no-optional-locks', ...withProgress] : withProgress;
     const start = performance.now();
     const git = this.choose();
     if (git.problem) {
@@ -77,14 +102,47 @@ export class GitExecutor {
         env: { ...process.env, ...BASE_ENV, ...opts.env },
         // Windows でコンソールの窓を出さない
         windowsHide: true,
+        // 止めるときに git が起動した ssh なども止められるよう、別のプロセスグループにする
+        detached: !!opts.network && process.platform !== 'win32',
       });
       const out: Buffer[] = [];
       const err: Buffer[] = [];
-      child.stdout.on('data', (c: Buffer) => out.push(c));
-      child.stderr.on('data', (c: Buffer) => err.push(c));
-      child.on('error', reject);
+      let heard = performance.now();
+      let stopped: number | undefined;
+      const limit = opts.silenceMs ?? NETWORK_SILENCE_MS;
+      const watch = opts.network
+        ? setInterval(() => {
+            if (performance.now() - heard <= limit) return;
+            stopped = limit;
+            clearInterval(watch);
+            killTree(child);
+          }, Math.min(1000, limit / 4))
+        : undefined;
+      child.stdout.on('data', (c: Buffer) => {
+        heard = performance.now();
+        out.push(c);
+      });
+      child.stderr.on('data', (c: Buffer) => {
+        heard = performance.now();
+        err.push(c);
+      });
+      child.on('error', (e) => {
+        clearInterval(watch);
+        reject(e);
+      });
       child.on('close', (code) => {
+        clearInterval(watch);
         this.onLog?.({ args: fullArgs, ms: performance.now() - start, exitCode: code });
+        if (stopped !== undefined) {
+          reject(
+            new GitError(
+              fullArgs,
+              code,
+              `Stopped after ${Math.round(stopped / 1000)} seconds without a response. It may have been waiting for a sign-in (a password or passphrase, or the SSH agent) or for the network.`,
+            ),
+          );
+          return;
+        }
         if (code === 0 || (code !== null && opts.okCodes?.includes(code))) {
           opts.onStderr?.(Buffer.concat(err).toString('utf8'));
           resolve(Buffer.concat(out));

@@ -94,3 +94,12 @@ export function archiveFormat(): ArchiveFormat | undefined {
 export async function setArchiveFormat(format: ArchiveFormat): Promise<void> {
   await store?.update('archive.format', format);
 }
+
+/** リポジトリごとの、最近切り替えたブランチ（新しい順。ブランチの切り替えで上に出す） */
+export function recentBranches(root: string): string[] {
+  return store?.get<string[]>(`branch.recent:${root}`) ?? [];
+}
+
+export async function setRecentBranches(root: string, names: string[]): Promise<void> {
+  await store?.update(`branch.recent:${root}`, names);
+}

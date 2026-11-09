@@ -1,5 +1,6 @@
 /** History の右クリックメニューと、Webview でのメッセージ編集・並べ替えから、コミットを編集する */
 import * as vscode from 'vscode';
+import { confirmOperation } from './confirm.ts';
 import type { RebaseResult } from '../git/backend.ts';
 import type { Commit } from '../git/log.ts';
 import { parseCommitObject } from '../git/commitObject.ts';
@@ -147,8 +148,15 @@ async function applyCommit(
   const isMerge = (panel.commit(oid)?.parents.length ?? 0) > 1;
   const branch = (await repo.backend.head()).branch;
   const label = `${kind === 'cherry-pick' ? 'Cherry-pick' : 'Revert'} ${short(panel, oid)}`;
+  const onto = branch ? branch.replace(/^refs\/heads\//, '') : 'HEAD';
   await runAction(repo, {
     label: `$(${kind === 'cherry-pick' ? 'git-commit' : 'discard'}) ${label}`,
+    confirm: () =>
+      confirmOperation(
+        kind === 'cherry-pick' ? `Cherry-pick ${short(panel, oid)} onto ${onto}?` : `Revert ${short(panel, oid)} on ${onto}?`,
+        [kind === 'cherry-pick' ? 'Adds a copy of it.' : 'Adds a commit that undoes it.', 'You can undo this.'],
+        kind === 'cherry-pick' ? 'Cherry-pick' : 'Revert',
+      ),
     run: async () => {
       const result = await repo.undo.record(
         label,

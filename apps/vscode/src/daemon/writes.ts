@@ -135,9 +135,22 @@ export function withDaemonWrites(
         await run(c, { op: 'applyPatch', paths: [...paths], index: !!options.index, threeWay: !!options.threeWay }, true),
       ) as MergeResult,
     ),
-    fetch: via('fetch', async (c) => void (await run(c, { op: 'fetch' }, false))),
+    fetch: via('fetch', async (c, remote?: string) => void (await run(c, { op: 'fetch', ...(remote ? { remote } : {}) }, false))),
     push: via('push', async (c, remote: string, branch: string, remoteBranch: string, opts?: PushOptions) =>
-      void (await run(c, { op: 'push', remote, branch, remoteBranch, force: !!opts?.force, setUpstream: !!opts?.setUpstream }, false)),
+      void (await run(
+        c,
+        {
+          op: 'push',
+          remote,
+          branch,
+          remoteBranch,
+          force: !!opts?.force,
+          setUpstream: !!opts?.setUpstream,
+          // Force Push は、確認で見せた上流のコミットのときだけ置き換える
+          ...(opts?.force && opts.expect ? { expect: opts.expect } : {}),
+        },
+        false,
+      )),
     ),
     commit: via('commit', async (c, message: string, opts?: { amend?: boolean }) => {
       const reply = await c.call({ op: 'commit', message, amend: !!opts?.amend });
