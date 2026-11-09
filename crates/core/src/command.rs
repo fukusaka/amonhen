@@ -868,7 +868,13 @@ fn pull_merge_subject(
     if tracking.as_deref() != Some(theirs) {
         return Ok(None);
     }
-    let Some(url) = value(&format!("remote.{remote}.url")) else {
+    // URL がいくつもあれば、fetch は最初のものから。
+    let url_key = format!("remote.{remote}.url");
+    let Some(url) = config
+        .iter()
+        .find(|e| e.key == url_key)
+        .map(|e| e.value.clone())
+    else {
         return Ok(None);
     };
     Ok(Some(format!(
@@ -5997,6 +6003,17 @@ mod tests {
                 git(
                     dir,
                     &["remote", "set-url", "origin", "amonhen-test:origin.git"],
+                );
+                // 2 つ目の URL からは fetch しない。
+                git(
+                    dir,
+                    &[
+                        "remote",
+                        "set-url",
+                        "--add",
+                        "origin",
+                        "amonhen-test:none.git",
+                    ],
                 );
             }
             git(dir, &["switch", "-q", branch]);
