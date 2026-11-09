@@ -121,7 +121,7 @@ export type HistoryHostMessage =
   | { type: 'reveal'; row: number }
   | { type: 'searchable'; searchable: boolean }
   /** 行に出さない項目 */
-  | { type: 'historyDisplay'; hidden: HistoryItem[] }
+  | { type: 'historyDisplay'; hidden: HistoryItem[]; oneLine: boolean }
   /** 詳細の欄の、変わったファイルの見せ方 */
   | { type: 'detailsLayout'; layout: DetailsLayout }
   /**

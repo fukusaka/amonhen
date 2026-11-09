@@ -146,10 +146,10 @@ select {
   container-type: inline-size;
 }
 
-/* 一覧が狭いときは、メッセージを優先して作者と日時を隠す */
+/* 一覧が狭いときは、メッセージを優先して作者と日時を隠す（2 行なら 2 行目にあるので隠さない） */
 @container (max-width: 560px) {
-  .row .author,
-  .row .date {
+  .row:not(.two-line) .author,
+  .row:not(.two-line) .date {
     display: none;
   }
 }
@@ -345,6 +345,41 @@ button.secondary {
 
 .row canvas {
   flex: none;
+}
+
+/* 件名と、作者・日時・ID の 2 行（History の Display の One Line per Commit を切ったとき） */
+.row.two-line {
+  height: 38px;
+}
+
+.row.two-line .row-lines {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.row.two-line .text {
+  flex: none;
+}
+
+.row.two-line .meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  font-size: 0.9em;
+}
+
+.row.two-line .meta .author {
+  width: auto;
+  max-width: 40%;
+}
+
+.row.two-line .meta .date {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .text {

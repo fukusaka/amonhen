@@ -3343,6 +3343,16 @@ suite('Amon Hen in VSCode', () => {
       at = posted.length;
       await panel.history.handle({ type: 'displayMenu' });
       await waitPosted('historyDisplay', at, (m) => m.hidden.length === 0);
+      // 既定は 2 行。One Line per Commit で 1 行にし、戻す
+      assert.ok(picks.includes('$(blank) One Line per Commit'), picks.join(', '));
+      choose('One Line per Commit');
+      at = posted.length;
+      await panel.history.handle({ type: 'displayMenu' });
+      await waitPosted('historyDisplay', at, (m) => m.oneLine);
+      choose('One Line per Commit');
+      at = posted.length;
+      await panel.history.handle({ type: 'displayMenu' });
+      await waitPosted('historyDisplay', at, (m) => !m.oneLine);
       // 並び順を変えると読み直す。読み直しても項目は送り直す
       choose('Topological');
       at = posted.length;

@@ -32,6 +32,7 @@ import {
   historyFold,
   historyHidden,
   historyHighlight,
+  historyOneLine,
   historyOrder,
   setDetailsLayout,
   setHistoryFold,
@@ -40,6 +41,7 @@ import {
   detailsLayout,
   setHistoryHidden,
   setHistoryHighlight,
+  setHistoryOneLine,
   setHistoryOrder,
 } from './preferences.ts';
 import { editableChain, refLabels, worktreeLabels } from '../history/rows.ts';
@@ -731,7 +733,7 @@ export class HistoryController implements vscode.Disposable {
     const repo = this.repo;
     this.opening = repo !== undefined;
     this.post({ type: 'reset', title: repo ? basename(repo.root) : '', scope: this.scope });
-    this.post({ type: 'historyDisplay', hidden: historyHidden() });
+    this.post({ type: 'historyDisplay', hidden: historyHidden(), oneLine: historyOneLine() });
     if (!repo) {
       this.post({ type: 'rows', start: 0, rows: [], done: true });
       return;
@@ -991,6 +993,7 @@ export class HistoryController implements vscode.Disposable {
       description: 'Full color only for the selected commit’s ancestors',
     };
     const fold: Item = { label: `${mark(this.folding)}Fold Merged Branches`, description: 'Hide the commits a merge brought in' };
+    const oneLine: Item = { label: `${mark(historyOneLine())}One Line per Commit` };
     const picked = await vscode.window.showQuickPick<Item>(
       [
         // 並び順は共有の daemon で変える（git で読むときは日付順のまま）
@@ -1006,11 +1009,16 @@ export class HistoryController implements vscode.Disposable {
           : []),
         separator('Items'),
         ...items.map(([value, label]): Item => ({ label: `${mark(!hidden.includes(value))}${label}`, item: value })),
-        ...(engine ? [separator('View'), fold, highlight] : []),
+        separator('View'),
+        oneLine,
+        ...(engine ? [fold, highlight] : []),
       ],
       { placeHolder: 'History Display' },
     );
-    if (picked === highlight) {
+    if (picked === oneLine) {
+      await setHistoryOneLine(!historyOneLine());
+      this.post({ type: 'historyDisplay', hidden, oneLine: historyOneLine() });
+    } else if (picked === highlight) {
       this.highlightChoice = !this.highlighting;
       void setHistoryHighlight(this.highlightChoice);
       await this.sendLineage();
@@ -1025,7 +1033,7 @@ export class HistoryController implements vscode.Disposable {
     } else if (picked?.item) {
       const next = hidden.includes(picked.item) ? hidden.filter((i) => i !== picked.item) : [...hidden, picked.item];
       await setHistoryHidden(next);
-      this.post({ type: 'historyDisplay', hidden: next });
+      this.post({ type: 'historyDisplay', hidden: next, oneLine: historyOneLine() });
     }
   }
 

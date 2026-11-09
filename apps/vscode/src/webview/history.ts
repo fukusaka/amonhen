@@ -15,7 +15,9 @@ import { createEditMode } from './historyEdit.ts';
 import { openMessageEditor } from './messageEditor.ts';
 import { signatureMark } from './signature.ts';
 
-const ROW_HEIGHT = 24;
+/** 1 行の行と、件名と作者・日時の 2 行の行の高さ（アプリと同じ） */
+const ONE_LINE_HEIGHT = 24;
+const TWO_LINE_HEIGHT = 38;
 /** 祖先の強調で、祖先でない点と線の不透明度（アプリと同じ） */
 const DIMMED_ALPHA = 0.18;
 /** 線を光らせないことを表す、光らせ始める行の値（コアの `lineage::NOT_LIT`） */
@@ -163,6 +165,9 @@ export function createHistoryView(): View {
   const signatures = new Map<string, SignatureView>();
   /** 行に出さない項目 */
   let hidden = new Set<HistoryItem>();
+  /** 行を 1 行にするか（設定で 1 行にしたか、2 行目に出す項目がないとき） */
+  let oneLine = false;
+  let rowHeight = TWO_LINE_HEIGHT;
   /** 祖先の行のビットの列（目立たせないなら null） */
   let lineage: Uint8Array | null = null;
   /** 線ごとの、光らせ始める行（`LINEAGE_NOT_LIT` なら光らせない。古いエンジンなら null で、線は行で決める） */
@@ -200,9 +205,9 @@ export function createHistoryView(): View {
 
   function render(): void {
     const bandShown = shallow && done;
-    spacer.style.height = `${rows.length * ROW_HEIGHT + (bandShown ? BAND_HEIGHT : 0)}px`;
-    const first = Math.max(0, Math.floor(list.scrollTop / ROW_HEIGHT) - OVERSCAN);
-    const last = Math.min(rows.length, Math.ceil((list.scrollTop + list.clientHeight) / ROW_HEIGHT) + OVERSCAN);
+    spacer.style.height = `${rows.length * rowHeight + (bandShown ? BAND_HEIGHT : 0)}px`;
+    const first = Math.max(0, Math.floor(list.scrollTop / rowHeight) - OVERSCAN);
+    const last = Math.min(rows.length, Math.ceil((list.scrollTop + list.clientHeight) / rowHeight) + OVERSCAN);
     // レーンは描く範囲に合わせて並べ（点のあるレーンは広く、線だけのレーンは細く）、列は上限までに収める。
     // まだ届いていない行は飛ばす
     const lanes = lanePositions(
@@ -228,7 +233,7 @@ export function createHistoryView(): View {
       }
     }
     if (bandShown) {
-      band.style.top = `${rows.length * ROW_HEIGHT}px`;
+      band.style.top = `${rows.length * rowHeight}px`;
       elements.push(band);
     }
     spacer.replaceChildren(...elements);
@@ -243,8 +248,9 @@ export function createHistoryView(): View {
   function renderRow(row: RowData, index: number, graph: GraphColumn): HTMLElement {
     const el = document.createElement('div');
     el.className = isSelected(index) ? 'row selected' : 'row';
+    if (!oneLine) el.classList.add('two-line');
     if (matchSet.has(index)) el.classList.add('match');
-    el.style.top = `${index * ROW_HEIGHT}px`;
+    el.style.top = `${index * rowHeight}px`;
     el.dataset.index = String(index);
     // Webview の右クリックメニュー（package.json の webview/context）に渡す情報
     el.dataset.vscodeContext = JSON.stringify(
@@ -266,8 +272,11 @@ export function createHistoryView(): View {
     }
 
     el.append(drawGraph(row, index, graph));
+    // 2 行なら、1 行目に札と件名、2 行目に署名の印と作者・日時・ID（アプリと同じ）
     const text = document.createElement('div');
     text.className = 'text';
+    const meta = document.createElement('div');
+    meta.className = 'meta';
     for (const ref of hidden.has('refs') ? [] : row.refs) {
       const badge = document.createElement('span');
       badge.className = `ref ${ref.kind}${ref.current ? ' current' : ''}`;
@@ -293,12 +302,11 @@ export function createHistoryView(): View {
       text.append(folded);
     }
     const signed = signatures.get(row.oid);
-    if (signed && !hidden.has('signature')) text.append(signatureMark(signed));
+    if (signed && !hidden.has('signature')) (oneLine ? text : meta).append(signatureMark(signed));
     const subject = document.createElement('span');
     subject.className = 'subject';
     subject.textContent = row.subject;
     text.append(subject);
-    el.append(text);
 
     for (const [cls, value] of [
       ['author', row.author],
@@ -309,7 +317,15 @@ export function createHistoryView(): View {
       const span = document.createElement('span');
       span.className = cls;
       span.textContent = value;
-      el.append(span);
+      meta.append(span);
+    }
+    if (oneLine) {
+      el.append(text, ...meta.childNodes);
+    } else {
+      const lines = document.createElement('div');
+      lines.className = 'row-lines';
+      lines.append(text, meta);
+      el.append(lines);
     }
     return el;
   }
@@ -339,14 +355,14 @@ export function createHistoryView(): View {
     const canvas = document.createElement('canvas');
     const ratio = window.devicePixelRatio || 1;
     canvas.width = width * ratio;
-    canvas.height = ROW_HEIGHT * ratio;
+    canvas.height = rowHeight * ratio;
     canvas.style.width = `${width}px`;
-    canvas.style.height = `${ROW_HEIGHT}px`;
+    canvas.style.height = `${rowHeight}px`;
     const ctx = canvas.getContext('2d')!;
     ctx.scale(ratio, ratio);
     ctx.lineWidth = 1.5;
     const x = (col: number) => GRAPH_INSET / 2 + (centers[col] ?? col * LANE_WIDTH + LANE_WIDTH / 2);
-    const y = (pos: number) => (pos * ROW_HEIGHT) / 2;
+    const y = (pos: number) => (pos * rowHeight) / 2;
     const { segs } = row.graph;
     const stroke = (x1: number, y1: number, x2: number, y2: number, alpha: number) => {
       if (y1 === y2) return;
@@ -446,16 +462,16 @@ export function createHistoryView(): View {
   }
 
   function revealRow(index: number): void {
-    const top = index * ROW_HEIGHT;
-    const far = top + ROW_HEIGHT < list.scrollTop - list.clientHeight || top > list.scrollTop + 2 * list.clientHeight;
+    const top = index * rowHeight;
+    const far = top + rowHeight < list.scrollTop - list.clientHeight || top > list.scrollTop + 2 * list.clientHeight;
     if (far) {
       // 離れた行（検索の一致など）は、真ん中に出す
-      spacer.style.height = `${rows.length * ROW_HEIGHT}px`;
-      list.scrollTop = top - (list.clientHeight - ROW_HEIGHT) / 2;
+      spacer.style.height = `${rows.length * rowHeight}px`;
+      list.scrollTop = top - (list.clientHeight - rowHeight) / 2;
     } else if (top < list.scrollTop) {
       list.scrollTop = top;
-    } else if (top + ROW_HEIGHT > list.scrollTop + list.clientHeight) {
-      list.scrollTop = top + ROW_HEIGHT - list.clientHeight;
+    } else if (top + rowHeight > list.scrollTop + list.clientHeight) {
+      list.scrollTop = top + rowHeight - list.clientHeight;
     }
   }
 
@@ -591,7 +607,7 @@ export function createHistoryView(): View {
     if (index !== undefined) post({ type: 'open', oid: rows[index]!.oid });
   });
   list.addEventListener('keydown', (e) => {
-    const page = Math.max(1, Math.floor(list.clientHeight / ROW_HEIGHT) - 1);
+    const page = Math.max(1, Math.floor(list.clientHeight / rowHeight) - 1);
     const moves: Record<string, number> = { ArrowDown: 1, ArrowUp: -1, PageDown: page, PageUp: -page };
     if (e.key in moves) {
       e.preventDefault();
@@ -706,10 +722,20 @@ export function createHistoryView(): View {
         lineageEdges = message.rows && message.edges ? new Uint32Array(Uint8Array.from(atob(message.edges), (c) => c.charCodeAt(0)).buffer) : null;
         render();
         break;
-      case 'historyDisplay':
+      case 'historyDisplay': {
         hidden = new Set(message.hidden);
+        oneLine = message.oneLine || (['author', 'date', 'oid'] as const).every((item) => hidden.has(item));
+        const height = oneLine ? ONE_LINE_HEIGHT : TWO_LINE_HEIGHT;
+        if (height !== rowHeight) {
+          // 高さが変わっても、上端の行を同じところに出す
+          const top = list.scrollTop / rowHeight;
+          rowHeight = height;
+          spacer.style.height = `${rows.length * rowHeight}px`;
+          list.scrollTop = top * rowHeight;
+        }
         render();
         break;
+      }
       case 'reset':
         lineage = null;
         lineageEdges = null;
