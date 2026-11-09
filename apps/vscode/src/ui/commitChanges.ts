@@ -21,6 +21,14 @@ export async function openCommitChanges(repo: Repository, commit: Commit): Promi
   await vscode.commands.executeCommand('vscode.changes', `${commit.oid.slice(0, 8)} ${commit.subject}`, resources);
 }
 
+/** 2 つのコミットの間の変更（`base` から `tip` まで）を、標準の複数ファイル diff エディタで開く */
+export async function openRangeChanges(repo: Repository, base: string, tip: string, title: string): Promise<void> {
+  const root = repo.root;
+  const files = await repo.backend.commitFiles(tip, base);
+  const resources = files.map((f) => [vscode.Uri.file(join(root, f.path)), ...fileUris(root, tip, base, f)]);
+  await vscode.commands.executeCommand('vscode.changes', title, resources);
+}
+
 /** コミットの中の 1 ファイルの差分を、History の横に開く */
 export async function openCommitFile(
   repo: Repository,

@@ -1665,6 +1665,19 @@ async function pushSheetFlow(): Promise<void> {
     await until('ps-branch の上流が読める', () =>
       (repo.current.branches ?? []).some((b) => b.name === 'refs/heads/ps-branch' && b.upstream),
     );
+    // 送る変更すべての行とコミットの行は、差分を開く（送らない）
+    const tabs = () => vscode.window.tabGroups.all.flatMap((g) => g.tabs).map((t) => t.label);
+    await push(/All changes to send/);
+    // 複数ファイルの diff エディタのタブは、名前の後ろにファイルの数が付く
+    const opened = (title: string) => tabs().some((t) => t.startsWith(title));
+    await until('送る変更すべての差分が開く', () => opened('All changes to send (2): ps-remote/ps-branch → ps-branch'));
+    await push(/^\$\(git-commit\) Add settings$/);
+    const settings = git('rev-parse', '--short=8', 'HEAD').trim();
+    await until('コミットの差分が開く', () => opened(`${settings} Add settings`));
+    assert.notEqual(inBare('rev-parse', 'ps-branch').trim(), git('rev-parse', 'HEAD').trim(), '差分を開くだけで送らない');
+    await vscode.window.tabGroups.close(
+      vscode.window.tabGroups.all.flatMap((g) => g.tabs).filter((t) => /^All changes to send|Add settings/.test(t.label)),
+    );
     await push(/^\$\(repo-push\) Push 2 commits/);
     assert.equal(inBare('rev-parse', 'ps-branch').trim(), git('rev-parse', 'HEAD').trim(), lastErrors());
     const labels = pickSeen.map((i) => i.label);

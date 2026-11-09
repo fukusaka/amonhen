@@ -1,15 +1,18 @@
 /**
  * Push の前に、送るコミットを見せる（アプリの Push のシートを QuickPick で）。どこへ送るか、見ておくとよいこと、送る
  * コミットを並べ、Push の行で送る。上流が先に進んでいれば、同じ一覧で消えるコミットを見せ、Pull… か Force Push を
- * 選ばせる。Force Push は、ここで見せた上流のコミットのときだけ置き換える（`--force-with-lease=<ref>:<commit>`）
+ * 選ばせる。Force Push は、ここで見せた上流のコミットのときだけ置き換える（`--force-with-lease=<ref>:<commit>`）。
+ * 送る変更すべての行やコミットの行を選ぶと、その差分を標準の複数ファイル diff エディタで開く（シートは閉じない）
  */
 import * as vscode from 'vscode';
 import type { Commit } from '../git/log.ts';
 import { pushTarget, shortName } from '../state/operations.ts';
 import type { Repository } from '../state/repository.ts';
 import { pushWarnings } from '../sync/pushPlan.ts';
+import { openCommitChanges, openRangeChanges } from './commitChanges.ts';
 import { runAction } from './dragDrop.ts';
 import { pullWithSheet } from './pullSheet.ts';
+import { showError } from './stageCommands.ts';
 
 /** 並べるコミットの数（それより多ければ数だけ） */
 const LISTED = 20;
@@ -19,6 +22,8 @@ type Choice = 'push' | 'force' | 'pull';
 
 interface Item extends vscode.QuickPickItem {
   choice?: Choice;
+  /** 選ぶと差分を開く */
+  open?: () => Promise<void>;
 }
 
 export interface PushRequest {
@@ -89,14 +94,33 @@ export async function pushWithSheet(repo: Repository, request: PushRequest, publ
   );
   const count = (n: number) => (n >= LIMIT ? `${LIMIT}+` : String(n));
   const plural = (n: number) => `${count(n)} ${n === 1 ? 'commit' : 'commits'}`;
-  const commitItems = (title: string, commits: readonly Commit[]): Item[] =>
+  const commitItems = (title: string, commits: readonly Commit[], first: Item[] = []): Item[] =>
     commits.length === 0
       ? []
       : [
           { label: `${title} (${count(commits.length)})`, kind: vscode.QuickPickItemKind.Separator },
-          ...commits.slice(0, LISTED).map((c) => ({ label: `$(git-commit) ${c.subject}`, description: `${c.oid.slice(0, 8)} · ${c.author}` })),
+          ...first,
+          ...commits.slice(0, LISTED).map((c) => ({
+            label: `$(git-commit) ${c.subject}`,
+            description: `${c.oid.slice(0, 8)} · ${c.author}`,
+            open: () => openCommitChanges(repo, c),
+          })),
           ...(commits.length > LISTED ? [{ label: `… and ${count(commits.length - LISTED)} more` }] : []),
         ];
+  // 送る変更すべて: 上流（分かれていれば分かれたところ）から送る先端まで
+  const tip = outgoing[0];
+  const from = incoming.length > 0 && oldest && outgoing.length < LIMIT ? oldest.parents[0] : expect;
+  const allTitle = `All changes to send (${count(outgoing.length)})`;
+  const all: Item[] =
+    tip && from
+      ? [
+          {
+            label: `$(diff-multiple) ${allTitle}`,
+            description: `${upstream} → ${name}, all files`,
+            open: () => openRangeChanges(repo, from, tip.oid, `${allTitle}: ${upstream} → ${name}`),
+          },
+        ]
+      : [];
   const lease = expect ? ` Replaces ${upstream} only if it is still at ${expect.slice(0, 8)}.` : '';
   const actions: Item[] = request.force
     ? [
@@ -119,7 +143,13 @@ export async function pushWithSheet(repo: Repository, request: PushRequest, publ
             choice: 'force',
           },
         ]
-      : [{ label: `$(repo-push) Push ${plural(outgoing.length)} to ${upstream}`, detail: 'Enter pushes.', choice: 'push' }];
+      : [
+          {
+            label: `$(repo-push) Push ${plural(outgoing.length)} to ${upstream}`,
+            detail: 'Enter pushes. Choose a commit below to see its changes.',
+            choice: 'push',
+          },
+        ];
   const pick = vscode.window.createQuickPick<Item>();
   pick.title = diverged
     ? `${upstream} has ${plural(incoming.length)} you don’t have`
@@ -128,19 +158,25 @@ export async function pushWithSheet(repo: Repository, request: PushRequest, publ
       : `Push ${plural(outgoing.length)} to ${upstream}?`;
   pick.placeholder = diverged ? 'Pull them first, or force push to replace them' : `${name} → ${upstream}`;
   pick.matchOnDescription = false;
+  // 差分を開いてもシートは閉じない
+  pick.ignoreFocusOut = true;
   pick.items = [
     ...actions,
     ...(warnings.length > 0
       ? [{ label: 'Worth a look', kind: vscode.QuickPickItemKind.Separator }, ...warnings.map((w) => ({ label: `$(warning) ${w}` }))]
       : []),
-    ...commitItems('Commits to send', outgoing),
+    ...commitItems('Commits to send', outgoing, all),
     ...commitItems(`Commits ${upstream} will lose`, request.force || diverged ? incoming : []),
   ];
   pick.activeItems = [actions[0]!];
   const chosen = await new Promise<Choice | undefined>((resolve) => {
     pick.onDidAccept(() => {
       const item = pick.selectedItems[0];
-      // 注意やコミットの行は、選んでも閉じない（Cancel は閉じる）
+      // 送る変更すべてとコミットの行は差分を開く。どの行も、選んでも閉じない（Cancel は閉じる）
+      if (item?.open) {
+        void item.open().catch(showError);
+        return;
+      }
       if (item && !item.choice && item !== actions[0]) return;
       resolve(item?.choice);
       pick.hide();
