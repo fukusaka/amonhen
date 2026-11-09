@@ -821,7 +821,18 @@ mod tests {
             );
             // FE が送っていない名前は、daemon が持っていても渡さない。
             assert_eq!(var_os("XDG_CONFIG_HOME"), None);
-            command("amonhen-client-env-test").output().unwrap()
+            // ほかのテストが同時に子を起動すると、書いたばかりのファイルの fd をその子が exec まで持っていて、
+            // Linux では ETXTBSY になることがある。少し待って起動し直す。
+            let mut tries = 0;
+            loop {
+                match command("amonhen-client-env-test").output() {
+                    Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy && tries < 50 => {
+                        tries += 1;
+                        std::thread::sleep(std::time::Duration::from_millis(20));
+                    }
+                    other => break other.unwrap(),
+                }
+            }
         });
         assert_eq!(String::from_utf8_lossy(&out.stdout), "from the client|\n");
         assert!(
