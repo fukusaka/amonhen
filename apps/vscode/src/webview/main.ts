@@ -1,5 +1,5 @@
 /**
- * メインビュー。Working Copy・History・Reflog・File History・Blame のどれかを出す。どれを出すかはサイドバーのナビ
+ * メインビュー。Working Copy・History・Reflog・Range Diff・File History・Blame などのどれかを出す。どれを出すかはサイドバーのナビ
  * （File History・Blame はファイルの右クリック）で選ぶ。
  * どの画面も作っておき、表示だけを切り替えるので、切り替えたときに作り直さない。
  */
@@ -9,6 +9,7 @@ import { createBlameView } from './blame.ts';
 import { setDetailsLayout } from './details.ts';
 import { createFileHistoryView } from './fileHistory.ts';
 import { createHistoryView } from './history.ts';
+import { createRangeDiffView } from './rangeDiff.ts';
 import { createReflogView } from './reflog.ts';
 import { createSettingsView } from './settings.ts';
 import { createWorkingCopyView } from './workingCopy.ts';
@@ -17,6 +18,7 @@ const views: Record<ViewName, View> = {
   workingCopy: createWorkingCopyView(),
   history: createHistoryView(),
   reflog: createReflogView(),
+  rangeDiff: createRangeDiffView(),
   fileHistory: createFileHistoryView(),
   blame: createBlameView(),
   settings: createSettingsView(),

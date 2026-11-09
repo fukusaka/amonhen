@@ -15,7 +15,13 @@ import { createEditMode } from './historyEdit.ts';
 import { openMessageEditor } from './messageEditor.ts';
 import { signatureMark } from './signature.ts';
 
-const ROW_HEIGHT = 24;
+/** 1 行の行と、件名と作者・日時の 2 行の行の高さ（アプリと同じ） */
+const ONE_LINE_HEIGHT = 24;
+const TWO_LINE_HEIGHT = 38;
+/** 祖先の強調で、祖先でない点と線の不透明度（アプリと同じ） */
+const DIMMED_ALPHA = 0.18;
+/** 線を光らせないことを表す、光らせ始める行の値（コアの `lineage::NOT_LIT`） */
+const LINEAGE_NOT_LIT = 0xffffffff;
 /** shallow clone の帯の高さ */
 const BAND_HEIGHT = 36;
 const LANE_WIDTH = 14;
@@ -159,8 +165,13 @@ export function createHistoryView(): View {
   const signatures = new Map<string, SignatureView>();
   /** 行に出さない項目 */
   let hidden = new Set<HistoryItem>();
+  /** 行を 1 行にするか（設定で 1 行にしたか、2 行目に出す項目がないとき） */
+  let oneLine = false;
+  let rowHeight = TWO_LINE_HEIGHT;
   /** 祖先の行のビットの列（目立たせないなら null） */
   let lineage: Uint8Array | null = null;
+  /** 線ごとの、光らせ始める行（`LINEAGE_NOT_LIT` なら光らせない。古いエンジンなら null で、線は行で決める） */
+  let lineageEdges: Uint32Array | null = null;
   /** 行。daemon の History では行の数だけの長さで、まだ届いていない行は空 */
   let rows: (RowData | undefined)[] = [];
   /** daemon の History（行の数が分かっていて、飛び飛びに頼む） */
@@ -194,9 +205,9 @@ export function createHistoryView(): View {
 
   function render(): void {
     const bandShown = shallow && done;
-    spacer.style.height = `${rows.length * ROW_HEIGHT + (bandShown ? BAND_HEIGHT : 0)}px`;
-    const first = Math.max(0, Math.floor(list.scrollTop / ROW_HEIGHT) - OVERSCAN);
-    const last = Math.min(rows.length, Math.ceil((list.scrollTop + list.clientHeight) / ROW_HEIGHT) + OVERSCAN);
+    spacer.style.height = `${rows.length * rowHeight + (bandShown ? BAND_HEIGHT : 0)}px`;
+    const first = Math.max(0, Math.floor(list.scrollTop / rowHeight) - OVERSCAN);
+    const last = Math.min(rows.length, Math.ceil((list.scrollTop + list.clientHeight) / rowHeight) + OVERSCAN);
     // レーンは描く範囲に合わせて並べ（点のあるレーンは広く、線だけのレーンは細く）、列は上限までに収める。
     // まだ届いていない行は飛ばす
     const lanes = lanePositions(
@@ -222,7 +233,7 @@ export function createHistoryView(): View {
       }
     }
     if (bandShown) {
-      band.style.top = `${rows.length * ROW_HEIGHT}px`;
+      band.style.top = `${rows.length * rowHeight}px`;
       elements.push(band);
     }
     spacer.replaceChildren(...elements);
@@ -237,9 +248,9 @@ export function createHistoryView(): View {
   function renderRow(row: RowData, index: number, graph: GraphColumn): HTMLElement {
     const el = document.createElement('div');
     el.className = isSelected(index) ? 'row selected' : 'row';
+    if (!oneLine) el.classList.add('two-line');
     if (matchSet.has(index)) el.classList.add('match');
-    if (lineage && !((lineage[index >> 3] ?? 0) & (1 << (index & 7)))) el.classList.add('dim');
-    el.style.top = `${index * ROW_HEIGHT}px`;
+    el.style.top = `${index * rowHeight}px`;
     el.dataset.index = String(index);
     // Webview の右クリックメニュー（package.json の webview/context）に渡す情報
     el.dataset.vscodeContext = JSON.stringify(
@@ -260,9 +271,12 @@ export function createHistoryView(): View {
       el.draggable = true;
     }
 
-    el.append(drawGraph(row, graph));
+    el.append(drawGraph(row, index, graph));
+    // 2 行なら、1 行目に札と件名、2 行目に署名の印と作者・日時・ID（アプリと同じ）
     const text = document.createElement('div');
     text.className = 'text';
+    const meta = document.createElement('div');
+    meta.className = 'meta';
     for (const ref of hidden.has('refs') ? [] : row.refs) {
       const badge = document.createElement('span');
       badge.className = `ref ${ref.kind}${ref.current ? ' current' : ''}`;
@@ -288,12 +302,11 @@ export function createHistoryView(): View {
       text.append(folded);
     }
     const signed = signatures.get(row.oid);
-    if (signed && !hidden.has('signature')) text.append(signatureMark(signed));
+    if (signed && !hidden.has('signature')) (oneLine ? text : meta).append(signatureMark(signed));
     const subject = document.createElement('span');
     subject.className = 'subject';
     subject.textContent = row.subject;
     text.append(subject);
-    el.append(text);
 
     for (const [cls, value] of [
       ['author', row.author],
@@ -304,27 +317,56 @@ export function createHistoryView(): View {
       const span = document.createElement('span');
       span.className = cls;
       span.textContent = value;
-      el.append(span);
+      meta.append(span);
+    }
+    if (oneLine) {
+      el.append(text, ...meta.childNodes);
+    } else {
+      const lines = document.createElement('div');
+      lines.className = 'row-lines';
+      lines.append(text, meta);
+      el.append(lines);
     }
     return el;
   }
 
-  function drawGraph(row: RowData, { width, centers }: GraphColumn): HTMLCanvasElement {
+  /** 祖先の強調で、`index` の行のコミットが祖先か（強調しないなら true） */
+  function isAncestor(index: number): boolean {
+    return !lineage || ((lineage[index >> 3] ?? 0) & (1 << (index & 7))) !== 0;
+  }
+
+  /**
+   * 祖先の強調で、`index` の行の i 番目の線分のうち光らせる部分（y の範囲。光らせないなら undefined）。アプリと同じく、
+   * 縦線は光らせ始める行の点から下を、曲線は全体を光らせるかまったく光らせない
+   */
+  function litPart(row: RowData, index: number, i: number): [number, number] | undefined {
+    const [y1, x2, y2] = row.graph.segs.slice(i * 5 + 1, i * 5 + 4) as [number, number, number];
+    const id = row.graph.edges?.[i];
+    if (!lineage) return [y1, y2];
+    // 線の番号がなければ（古いエンジン）、行が祖先かで決める
+    if (id === undefined || !lineageEdges) return isAncestor(index) ? [y1, y2] : undefined;
+    const from = lineageEdges[id] ?? LINEAGE_NOT_LIT;
+    if (from === LINEAGE_NOT_LIT || from > index) return undefined;
+    const vertical = row.graph.segs[i * 5] === x2;
+    return vertical && from === index ? [Math.max(y1, 1), Math.max(y2, 1)] : [y1, y2];
+  }
+
+  function drawGraph(row: RowData, index: number, { width, centers }: GraphColumn): HTMLCanvasElement {
     const canvas = document.createElement('canvas');
     const ratio = window.devicePixelRatio || 1;
     canvas.width = width * ratio;
-    canvas.height = ROW_HEIGHT * ratio;
+    canvas.height = rowHeight * ratio;
     canvas.style.width = `${width}px`;
-    canvas.style.height = `${ROW_HEIGHT}px`;
+    canvas.style.height = `${rowHeight}px`;
     const ctx = canvas.getContext('2d')!;
     ctx.scale(ratio, ratio);
     ctx.lineWidth = 1.5;
     const x = (col: number) => GRAPH_INSET / 2 + (centers[col] ?? col * LANE_WIDTH + LANE_WIDTH / 2);
-    const y = (pos: number) => (pos * ROW_HEIGHT) / 2;
+    const y = (pos: number) => (pos * rowHeight) / 2;
     const { segs } = row.graph;
-    for (let i = 0; i < segs.length; i += 5) {
-      const [x1, y1, x2, y2, color] = segs.slice(i, i + 5) as [number, number, number, number, number];
-      ctx.strokeStyle = colors[color % colors.length]!;
+    const stroke = (x1: number, y1: number, x2: number, y2: number, alpha: number) => {
+      if (y1 === y2) return;
+      ctx.globalAlpha = alpha;
       ctx.beginPath();
       ctx.moveTo(x(x1), y(y1));
       if (x1 === x2) {
@@ -335,7 +377,22 @@ export function createHistoryView(): View {
         ctx.bezierCurveTo(x(x1), mid, x(x2), mid, x(x2), y(y2));
       }
       ctx.stroke();
+    };
+    for (let i = 0; i < segs.length; i += 5) {
+      const [x1, y1, x2, y2, color] = segs.slice(i, i + 5) as [number, number, number, number, number];
+      ctx.strokeStyle = colors[color % colors.length]!;
+      const lit = litPart(row, index, i / 5);
+      if (!lit) {
+        stroke(x1, y1, x2, y2, DIMMED_ALPHA);
+      } else if (x1 === x2 && lit[0] > y1) {
+        // 縦線の光らない上の部分は薄く
+        stroke(x1, y1, x2, lit[0], DIMMED_ALPHA);
+        stroke(x1, lit[0], x2, y2, 1);
+      } else {
+        stroke(x1, y1, x2, y2, 1);
+      }
     }
+    ctx.globalAlpha = isAncestor(index) ? 1 : DIMMED_ALPHA;
     ctx.fillStyle = colors[row.graph.color % colors.length]!;
     ctx.beginPath();
     ctx.arc(x(row.graph.col), y(1), 4, 0, Math.PI * 2);
@@ -405,16 +462,16 @@ export function createHistoryView(): View {
   }
 
   function revealRow(index: number): void {
-    const top = index * ROW_HEIGHT;
-    const far = top + ROW_HEIGHT < list.scrollTop - list.clientHeight || top > list.scrollTop + 2 * list.clientHeight;
+    const top = index * rowHeight;
+    const far = top + rowHeight < list.scrollTop - list.clientHeight || top > list.scrollTop + 2 * list.clientHeight;
     if (far) {
       // 離れた行（検索の一致など）は、真ん中に出す
-      spacer.style.height = `${rows.length * ROW_HEIGHT}px`;
-      list.scrollTop = top - (list.clientHeight - ROW_HEIGHT) / 2;
+      spacer.style.height = `${rows.length * rowHeight}px`;
+      list.scrollTop = top - (list.clientHeight - rowHeight) / 2;
     } else if (top < list.scrollTop) {
       list.scrollTop = top;
-    } else if (top + ROW_HEIGHT > list.scrollTop + list.clientHeight) {
-      list.scrollTop = top + ROW_HEIGHT - list.clientHeight;
+    } else if (top + rowHeight > list.scrollTop + list.clientHeight) {
+      list.scrollTop = top + rowHeight - list.clientHeight;
     }
   }
 
@@ -550,7 +607,7 @@ export function createHistoryView(): View {
     if (index !== undefined) post({ type: 'open', oid: rows[index]!.oid });
   });
   list.addEventListener('keydown', (e) => {
-    const page = Math.max(1, Math.floor(list.clientHeight / ROW_HEIGHT) - 1);
+    const page = Math.max(1, Math.floor(list.clientHeight / rowHeight) - 1);
     const moves: Record<string, number> = { ArrowDown: 1, ArrowUp: -1, PageDown: page, PageUp: -page };
     if (e.key in moves) {
       e.preventDefault();
@@ -662,14 +719,26 @@ export function createHistoryView(): View {
     switch (message.type) {
       case 'lineage':
         lineage = message.rows ? Uint8Array.from(atob(message.rows), (c) => c.charCodeAt(0)) : null;
+        lineageEdges = message.rows && message.edges ? new Uint32Array(Uint8Array.from(atob(message.edges), (c) => c.charCodeAt(0)).buffer) : null;
         render();
         break;
-      case 'historyDisplay':
+      case 'historyDisplay': {
         hidden = new Set(message.hidden);
+        oneLine = message.oneLine || (['author', 'date', 'oid'] as const).every((item) => hidden.has(item));
+        const height = oneLine ? ONE_LINE_HEIGHT : TWO_LINE_HEIGHT;
+        if (height !== rowHeight) {
+          // 高さが変わっても、上端の行を同じところに出す
+          const top = list.scrollTop / rowHeight;
+          rowHeight = height;
+          spacer.style.height = `${rows.length * rowHeight}px`;
+          list.scrollTop = top * rowHeight;
+        }
         render();
         break;
+      }
       case 'reset':
         lineage = null;
+        lineageEdges = null;
         // 形はこの後の form で送り直す（一致だけの History なら送らない）
         shallow = false;
         boundary = new Set();

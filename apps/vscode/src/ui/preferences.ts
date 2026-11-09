@@ -58,6 +58,15 @@ export async function setHistoryFold(fold: boolean): Promise<void> {
   await store?.update('history.fold', fold);
 }
 
+/** History の行を 1 行にするか（既定は、アプリと同じく件名と作者・日時の 2 行） */
+export function historyOneLine(): boolean {
+  return store?.get<boolean>('history.oneLine') ?? false;
+}
+
+export async function setHistoryOneLine(oneLine: boolean): Promise<void> {
+  await store?.update('history.oneLine', oneLine);
+}
+
 /** History で、選んだコミットの祖先だけをはっきり出すか */
 export function historyHighlight(): boolean {
   return store?.get<boolean>('history.highlight') ?? false;

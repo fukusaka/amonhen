@@ -1,8 +1,9 @@
 /**
- * `git range-diff`（同じ一連のコミットの 2 つの版の比べ合わせ）の結果の形と、読み取り・文字列にする処理。
+ * `git range-diff`（同じ一連のコミットの 2 つの版の比べ合わせ）の結果の形と、読み取り・差分の形にする処理。
  * コアの `rangeDiff`・`previousVersion` の答えと同じ形にする（daemon を使わないときは、拡張の git 実行層で作る）。
  * vscode に依存しない
  */
+import type { DiffHunk, FileDiff } from '../diff/fileDiff.ts';
 
 export type RangeStatus = 'same' | 'changed' | 'removed' | 'added';
 
@@ -34,6 +35,8 @@ export interface PreviousVersion {
   onto: string | null;
   /** range-diff に渡す範囲 */
   ranges: string[];
+  /** 書き換えた時刻（unix 秒。コアの答えだけ） */
+  time?: number;
 }
 
 /** `git range-diff --no-color` の出力を組に分ける。見出しでない行は、前の組の差分の差分 */
@@ -140,21 +143,33 @@ export async function findPreviousVersion(
   return undefined;
 }
 
-/** git range-diff に近い形の文字列（ID は短く）。previous があれば、何と何を比べたかを頭に書く */
-export function formatRangeDiff(pairs: readonly RangePair[], ranges: readonly string[], previous?: PreviousVersion): string {
-  const width = String(Math.max(1, ...pairs.flatMap((p) => [p.old?.index ?? 0, p.new?.index ?? 0]))).length;
-  const side = (c: RangeCommit | null) =>
-    c ? `${String(c.index).padStart(width)}:  ${c.oid.slice(0, 7)}` : `${'-'.padStart(width)}:  -------`;
-  const mark = { same: '=', changed: '!', removed: '<', added: '>' } as const;
-  const lines: string[] = [];
-  if (previous) {
-    lines.push(`# ${previous.selector} → ${previous.branch}: ${previous.message}`);
+/**
+ * 組の差分の差分を、ほかの差分と同じ形にする（コアの `range_diff_file` と同じ）。外側の記号で行の種類を決め、残り
+ * （それぞれの版のパッチの行。内側の記号を含む）を文字列にする。`@` の行は hunk の見出し。行番号はそれぞれの版の
+ * パッチの中の番号
+ */
+export function rangeDiffFile(lines: readonly string[]): FileDiff {
+  const hunks: DiffHunk[] = [];
+  let [oldNo, newNo] = [0, 0];
+  for (const line of lines) {
+    if (line.startsWith('@')) {
+      hunks.push({ header: line, lines: [] });
+      continue;
+    }
+    if (hunks.length === 0) hunks.push({ header: '', lines: [] });
+    const rows = hunks.at(-1)!.lines;
+    const text = line.slice(1);
+    if (line.startsWith('-')) rows.push({ kind: '-', old: ++oldNo, text });
+    else if (line.startsWith('+')) rows.push({ kind: '+', new: ++newNo, text });
+    else rows.push({ kind: ' ', old: ++oldNo, new: ++newNo, text });
   }
-  lines.push(`# git range-diff ${ranges.join(' ')}`, '');
-  if (pairs.length === 0) lines.push('# No commits to compare');
-  for (const p of pairs) {
-    lines.push(`${side(p.old)} ${mark[p.status]} ${side(p.new)} ${p.subject}`);
-    for (const d of p.diff) lines.push(`    ${d}`);
-  }
-  return lines.join('\n') + '\n';
+  return { path: '', version: '', hunks };
+}
+
+/**
+ * 範囲の 40 桁の ID を 12 桁にする（入力欄にそのまま比べ直せる長さで出す）。ちょうど 40 桁の並びだけ（SHA-256 の
+ * 64 桁の途中を切ると、ない ID になる）
+ */
+export function shortRange(range: string): string {
+  return range.replace(/[0-9a-f]+/g, (hex) => (hex.length === 40 ? hex.slice(0, 12) : hex));
 }

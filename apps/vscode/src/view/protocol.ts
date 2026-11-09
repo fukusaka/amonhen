@@ -2,12 +2,13 @@
 import type { BlameHostMessage, BlameWebviewMessage } from '../blame/protocol.ts';
 import type { FileHistoryHostMessage, FileHistoryWebviewMessage } from '../fileHistory/protocol.ts';
 import type { HistoryHostMessage, HistoryWebviewMessage } from '../history/protocol.ts';
+import type { RangeDiffHostMessage, RangeDiffWebviewMessage } from '../rangeDiff/protocol.ts';
 import type { ReflogHostMessage, ReflogWebviewMessage } from '../reflog/protocol.ts';
 import type { SettingsHostMessage, SettingsWebviewMessage } from '../settings/protocol.ts';
 import type { WorkingCopyHostMessage, WorkingCopyWebviewMessage } from '../workingCopy/protocol.ts';
 
 /** メインビューに出す画面 */
-export type ViewName = 'workingCopy' | 'history' | 'reflog' | 'fileHistory' | 'blame' | 'settings';
+export type ViewName = 'workingCopy' | 'history' | 'reflog' | 'rangeDiff' | 'fileHistory' | 'blame' | 'settings';
 
 /** ドラッグしたもの。tag とリモートブランチは local でない */
 export interface DragSource {
@@ -26,6 +27,7 @@ export type HostMessage =
   | HistoryHostMessage
   | WorkingCopyHostMessage
   | ReflogHostMessage
+  | RangeDiffHostMessage
   | FileHistoryHostMessage
   | BlameHostMessage
   | SettingsHostMessage
@@ -36,6 +38,7 @@ export type WebviewMessage =
   | HistoryWebviewMessage
   | WorkingCopyWebviewMessage
   | ReflogWebviewMessage
+  | RangeDiffWebviewMessage
   | FileHistoryWebviewMessage
   | BlameWebviewMessage
   | SettingsWebviewMessage

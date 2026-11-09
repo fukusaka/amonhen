@@ -8,13 +8,14 @@ import { BlameController } from './blameController.ts';
 import { FileHistoryController } from './fileHistoryController.ts';
 import { HistoryController } from './historyController.ts';
 import { detailsLayout } from './preferences.ts';
+import { RangeDiffController } from './rangeDiffController.ts';
 import { ReflogController } from './reflogController.ts';
 import { SettingsController } from './settingsController.ts';
 import { showError } from './stageCommands.ts';
 import { WorkingCopyController } from './workingCopyController.ts';
 
 /**
- * メインビュー。エディタ領域の 1 つの Webview に、Working Copy・History・Reflog を出す。
+ * メインビュー。エディタ領域の 1 つの Webview に、Working Copy・History・Reflog・Range Diff などを出す。
  * どちらを出すかはサイドバーのナビで選ぶ。こちらは画面ごとのコントローラーにメッセージを振り分ける。
  */
 export class MainPanel implements vscode.Disposable {
@@ -23,6 +24,7 @@ export class MainPanel implements vscode.Disposable {
   readonly history: HistoryController;
   readonly workingCopy: WorkingCopyController;
   readonly reflog: ReflogController;
+  readonly rangeDiff: RangeDiffController;
   readonly fileHistory: FileHistoryController;
   readonly blame: BlameController;
   readonly settings: SettingsController;
@@ -73,6 +75,10 @@ export class MainPanel implements vscode.Disposable {
     this.history = new HistoryController((m) => this.post(m));
     this.workingCopy = new WorkingCopyController((m) => this.post(m));
     this.reflog = new ReflogController((m) => this.post(m));
+    this.rangeDiff = new RangeDiffController(
+      (m) => this.post(m),
+      () => this.showView('history'),
+    );
     this.fileHistory = new FileHistoryController((m) => this.post(m));
     this.blame = new BlameController((m) => this.post(m));
     this.settings = new SettingsController((m) => this.post(m));
@@ -82,6 +88,7 @@ export class MainPanel implements vscode.Disposable {
       this.history,
       this.workingCopy,
       this.reflog,
+      this.rangeDiff,
       this.fileHistory,
       this.blame,
       this.settings,
@@ -111,6 +118,8 @@ export class MainPanel implements vscode.Disposable {
   private watch(repo: Repository | undefined): void {
     this.repo = repo;
     this.panel.title = repo ? `Amon Hen: ${basename(repo.root)}` : 'Amon Hen';
+    // Range Diff は開く前から比べ始める（結果は出したときに送り直す）
+    this.rangeDiff.setRepository(repo);
     if (this.ready) {
       this.history.setRepository(repo);
       this.workingCopy.setRepository(repo);
@@ -158,6 +167,11 @@ export class MainPanel implements vscode.Disposable {
       case 'reflogLoad':
       case 'reflogAction':
         await this.reflog.handle(message);
+        break;
+      case 'rangeDiffLoad':
+      case 'rangeDiffCompare':
+      case 'rangeDiffClose':
+        await this.rangeDiff.handle(message);
         break;
       case 'fileHistoryLoad':
       case 'fileHistoryReveal':

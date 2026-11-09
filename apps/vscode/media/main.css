@@ -146,10 +146,10 @@ select {
   container-type: inline-size;
 }
 
-/* 一覧が狭いときは、メッセージを優先して作者と日時を隠す */
+/* 一覧が狭いときは、メッセージを優先して作者と日時を隠す（2 行なら 2 行目にあるので隠さない） */
 @container (max-width: 560px) {
-  .row .author,
-  .row .date {
+  .row:not(.two-line) .author,
+  .row:not(.two-line) .date {
     display: none;
   }
 }
@@ -174,10 +174,88 @@ body.resizing {
 aside.details {
   flex: none;
   width: 55%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-sizing: border-box;
+  user-select: text;
+}
+
+/* メッセージの欄（中身に合わせ、列の半分まで）と、ファイルと差分の欄。間の仕切りで高さを変える */
+.details-head {
+  position: relative;
+  flex: none;
+  max-height: 50%;
+  overflow: auto;
+  padding: 12px 16px 4px;
+  box-sizing: border-box;
+}
+
+.details-body {
+  flex: 1;
+  min-height: 0;
   overflow: auto;
   padding: 12px 16px;
   box-sizing: border-box;
-  user-select: text;
+}
+
+aside.details:not(.split) > .details-head,
+aside.details:not(.split) > .details-divider {
+  display: none;
+}
+
+.details-head[style*='height'] {
+  max-height: none;
+}
+
+.details-divider {
+  flex: none;
+  height: 4px;
+  cursor: row-resize;
+  border-top: 1px solid var(--vscode-panel-border);
+}
+
+.details-divider:hover,
+body.resizing-rows .details-divider {
+  background: var(--vscode-sash-hoverBorder, var(--vscode-focusBorder));
+}
+
+body.resizing-rows {
+  cursor: row-resize;
+  user-select: none;
+}
+
+/* ⤢ で広げたら、メッセージの欄が列いっぱい */
+aside.details.expanded > .details-head {
+  flex: 1;
+  max-height: none;
+  height: auto !important;
+}
+
+aside.details.expanded > .details-divider,
+aside.details.expanded > .details-body {
+  display: none;
+}
+
+.details-head .expand-details {
+  float: right;
+  margin: -4px -8px 0 8px;
+  padding: 0 4px;
+  font-size: 20px;
+  line-height: 24px;
+  color: var(--vscode-icon-foreground, var(--vscode-foreground));
+  background: transparent;
+}
+
+.details-head .expand-details:hover,
+.details-head .expand-details.on {
+  background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+}
+
+/* 仕切りの線があるので、一覧の見出しの上の線は引かない */
+aside.details.split > .details-body > .stack:first-child > .files-head {
+  border-top: none;
+  padding-top: 0;
 }
 
 aside.details .empty {
@@ -347,6 +425,41 @@ button.secondary {
   flex: none;
 }
 
+/* 件名と、作者・日時・ID の 2 行（History の Display の One Line per Commit を切ったとき） */
+.row.two-line {
+  height: 38px;
+}
+
+.row.two-line .row-lines {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.row.two-line .text {
+  flex: none;
+}
+
+.row.two-line .meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  font-size: 0.9em;
+}
+
+.row.two-line .meta .author {
+  width: auto;
+  max-width: 40%;
+}
+
+.row.two-line .meta .date {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .text {
   flex: 1;
   min-width: 0;
@@ -377,10 +490,6 @@ button.secondary {
 .toolbar .display-menu {
   visibility: visible;
   flex: none;
-}
-
-.row.dim {
-  opacity: 0.45;
 }
 
 .folded-count {
@@ -1125,6 +1234,212 @@ aside.details.single .file-diff:not(.current) {
 .reflog .toolbar button:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* Range Diff */
+
+.range-side {
+  flex: 1;
+  min-width: 280px;
+  display: flex;
+  flex-direction: column;
+}
+
+.range-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.range-top,
+.range-second {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.range-field {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 6px;
+  font-family: var(--vscode-editor-font-family);
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, transparent);
+  outline: none;
+}
+
+.range-field:focus {
+  border-color: var(--vscode-focusBorder);
+}
+
+.range-diff .close {
+  visibility: visible;
+  font-size: 16px;
+}
+
+.range-summary,
+.range-counts {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.9em;
+  color: var(--vscode-descriptionForeground);
+}
+
+.range-summary:empty {
+  display: none;
+}
+
+.range-summary.error {
+  color: var(--vscode-errorForeground);
+}
+
+.range-changes-only {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  font-size: 0.9em;
+  white-space: nowrap;
+}
+
+/* 組の行: 印・番号・件名と、どうなったか・ID の 2 行 */
+.range-row {
+  height: 40px;
+  padding-left: 8px;
+}
+
+.range-row .row-lines {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.range-row .range-line {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.range-row .mark {
+  flex: none;
+  width: 1ch;
+  font-family: var(--vscode-editor-font-family);
+  font-weight: bold;
+}
+
+.range-row .numbers {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  color: var(--vscode-descriptionForeground);
+}
+
+.range-row .subject {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.range-row .meta {
+  padding-left: calc(1ch + 6px);
+  font-size: 0.9em;
+}
+
+.range-row .ids {
+  font-family: var(--vscode-editor-font-family);
+  color: var(--vscode-descriptionForeground);
+}
+
+.range-row.same .mark,
+.range-row.same .word {
+  color: var(--vscode-disabledForeground);
+}
+
+.range-row.same .subject {
+  color: var(--vscode-descriptionForeground);
+}
+
+.range-row.changed .mark,
+.range-row.changed .word {
+  color: var(--vscode-charts-orange);
+}
+
+.range-row.removed .mark,
+.range-row.removed .word {
+  color: var(--vscode-charts-red);
+}
+
+.range-row.removed .subject {
+  text-decoration: line-through;
+}
+
+.range-row.added .mark,
+.range-row.added .word {
+  color: var(--vscode-charts-green);
+}
+
+/* 右: 差分の差分か、コミットの中身（History と同じ詳細の欄） */
+.range-right {
+  flex: none;
+  width: 55%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.range-right > aside.details {
+  flex: 1;
+  width: auto;
+  min-height: 0;
+}
+
+.range-right > [hidden] {
+  display: none;
+}
+
+.range-pair {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  user-select: text;
+}
+
+.range-pair-head {
+  padding: 8px 12px;
+}
+
+.range-pair-head:empty {
+  display: none;
+}
+
+.range-pair-subject {
+  font-weight: bold;
+}
+
+.range-pair-note {
+  margin-top: 2px;
+  font-family: var(--vscode-editor-font-family);
+  font-size: 0.9em;
+  color: var(--vscode-descriptionForeground);
+}
+
+.range-pair-body {
+  flex: 1;
+  overflow: auto;
+}
+
+.range-pair-body > .empty {
+  padding: 24px;
+  color: var(--vscode-descriptionForeground);
 }
 
 /* File History */

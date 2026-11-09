@@ -40,7 +40,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Workspace rows switch the main view (Working Copy, History, Stashes, Reflog…) | ✓ | ✓ | ✓ | n/a | VSCode: Working Copy, History, Stashes and (with the engine) Reflog; Conflicts while there are conflicts, opening the first in the merge editor. |
 | Conflicts row with a count while there are conflicts | ✓ | ✓ | ✓ | n/a | VSCode: A Conflicts group inside the Working Copy view. |
 | Stashes row with a count only when there are stashes | ✓ | ✓ | ✓ | n/a | VSCode: The Stashes section. |
-| Range Diff row while a range diff is open | ✓ | ✓ | n/a | n/a | VSCode: A range diff opens as an editor tab. |
+| Range Diff row while a range diff is open | ✓ | ✓ | ✓ | n/a |  |
 | Filter field over Branches, Remotes and Tags | ✓ | ✓ | ✓ | n/a | VSCode: The filter button on the sidebar's title asks for the words; the matches are listed flat. |
 | Several branches or tags selected at once | ✓ | ✓ | ✓ | n/a | VSCode: Merge into Current Branch, Delete Branch, favorites and Archive act on all of them. |
 | Pull Requests and Worktrees shown only when not empty | ✓ | ✓ | △ | n/a | VSCode: Worktrees only (GitHub is left out). |
@@ -208,10 +208,10 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| Range Diff view (= ! < >, Changes Only, diff of diffs) | ✓ | ✓ | △ | ✓ | VSCode: A read-only text document in git's form.<br>CLI: `range-diff`. |
+| Range Diff view (= ! < >, Changes Only, diff of diffs) | ✓ | ✓ | ✓ | ✓ | CLI: `range-diff`. |
 | Compare with Previous Version | ✓ | ✓ | ✓ | ✓ | CLI: `range-diff --previous`. |
-| Two History commits or a Reflog entry compared as two versions | ✓ | ✓ | △ | ✓ | VSCode: Range Diff… takes typed ranges instead.<br>CLI: Any ranges. |
-| Editable ranges | ✓ | ✓ | △ | ✓ | VSCode: Only before opening. |
+| Two History commits or a Reflog entry compared as two versions | ✓ | ✓ | ✓ | ✓ | CLI: Any ranges. |
+| Editable ranges | ✓ | ✓ | ✓ | ✓ |  |
 
 ## 6. Working Copy
 
@@ -247,7 +247,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Graph with branch and tag labels | ✓ | ✓ | ✓ | ✓ | CLI: `log`. |
 | Huge histories in chunks with the persistent cache | ✓ | ✓ | ✓ | ✓ |  |
 | Search with match count, next / previous, matching only | ✓ | ✓ | ✓ | △ | VSCode: With the engine.<br>CLI: `log <query>` lists the matches. |
-| Display: order, one line, row items, fold merged, highlight ancestors | ✓ | ✓ | △ | △ | VSCode: Rows are always one line. Highlight Ancestors dims whole rows, not single lines of the graph.<br>CLI: `--topo-order`, `--fold`. |
+| Display: order, one line, row items, fold merged, highlight ancestors | ✓ | ✓ | ✓ | △ | VSCode: Order, folding and highlighting with the engine.<br>CLI: `--topo-order`, `--fold`. |
 | Avatars | ✓ | ✓ | — | n/a |  |
 | Signature marks on commits | ✓ | ✓ | ✓ | △ | VSCode: With the engine.<br>CLI: In `show`. |
 | CI status per commit with a checks popover | ✓ | ✓ | — | — |  |
@@ -268,7 +268,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| Full message, draggable panes, ⤢ to expand | ✓ | ✓ | △ | n/a | VSCode: The message, files and diffs scroll together in one pane, so there are no panes to drag or expand. |
+| Full message, draggable panes, ⤢ to expand | ✓ | ✓ | ✓ | n/a |  |
 | Find inside the details | ✓ | ✓ | ✓ | n/a | VSCode: ⌘F searches the whole main view; diffs not loaded yet aren't searched. |
 | All files stacked (sticky headers, collapse, Viewed) | ✓ | ✓ | ✓ | ✓ | CLI: `show`. |
 | Changed files as a tree beside the diff | ✓ | ✓ | ✓ | n/a | VSCode: Tree / List above the files. |

@@ -1,6 +1,7 @@
 /**
  * コミットの詳細の欄（History と Reflog の右側）。メッセージ・作者・親と、変更したファイルの一覧、ファイルごとの
- * 差分を出す。差分は画面に入ったものから順に拡張ホストに求める
+ * 差分を出す。差分は画面に入ったものから順に拡張ホストに求める。アプリと同じく、メッセージの欄と、ファイルと差分の
+ * 欄を上下に分け、間の仕切りをドラッグできる。メッセージの欄は中身に合わせ（列の半分まで）、⤢ で列いっぱいに広げる
  */
 import type { FileDiff } from '../diff/fileDiff.ts';
 import type { CommitDetails, DetailsExtras, DetailsLayout, PairMode, Person, SelectionView } from '../history/protocol.ts';
@@ -104,6 +105,13 @@ function countsLabel(counts: LineCounts): HTMLElement {
 
 export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane {
   const root = el('aside', 'details');
+  /** メッセージ（件名・作者など・本文）の欄。コミットを 1 つ出すときだけ */
+  const head = el('div', 'details-head');
+  const divider = el('div', 'details-divider');
+  /** ファイルと差分の欄（コミットを 1 つ出すとき以外は、これだけ） */
+  const scroller = el('div', 'details-body');
+  root.append(head, divider, scroller);
+  attachRowSplitter(root, divider, head);
   let shownOid: string | undefined;
   /** 詳細に並べたファイル */
   let sections = new Map<string, FileSection>();
@@ -142,11 +150,11 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
     const [subject = '', ...rest] = d.message.replace(/\n+$/, '').split('\n');
     const body = rest.join('\n').replace(/^\n+/, '');
 
-    const head = el('div', 'subject');
+    const title = el('div', 'subject');
     for (const ref of d.refs) {
-      head.append(el('span', `ref ${ref.kind}${ref.current ? ' current' : ''}`, ref.name));
+      title.append(el('span', `ref ${ref.kind}${ref.current ? ' current' : ''}`, ref.name));
     }
-    head.append(el('span', '', subject));
+    title.append(el('span', '', subject));
 
     const list = el('dl', 'meta');
     meta = list;
@@ -182,12 +190,40 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
     }
     const diffs = fileSections(d.oid, d.oid, d.files, files, true, viewed);
 
-    const parts: Node[] = [head, list];
+    const parts: Node[] = [expandButton(), title, list];
     if (body) parts.push(el('pre', 'body', body));
-    parts.push(stack(filesHead, files, diffs));
-    root.replaceChildren(...parts);
-    root.scrollTop = 0;
+    place(parts, [stack(filesHead, files, diffs)]);
     if (focus && sections.has(focus)) select(focus, true);
+  }
+
+  /**
+   * 欄に並べる。`message` があれば上のメッセージの欄に（高さは中身に合わせ直し、広げていれば戻す）、なければ
+   * 1 つの欄だけにする
+   */
+  function place(message: Node[] | undefined, rest: Node[]): void {
+    root.classList.remove('expanded');
+    root.classList.toggle('split', message !== undefined);
+    head.style.height = '';
+    head.replaceChildren(...(message ?? []));
+    scroller.replaceChildren(...rest);
+    head.scrollTop = 0;
+    scroller.scrollTop = 0;
+  }
+
+  /** メッセージの欄を、列いっぱいに広げる・戻すボタン */
+  function expandButton(): HTMLElement {
+    const button = el('button', 'expand-details', '⤢');
+    const label = () => {
+      const expanded = root.classList.contains('expanded');
+      button.title = expanded ? 'Restore the details' : 'Expand the commit details to fill the right column (click again to restore)';
+      button.classList.toggle('on', expanded);
+    };
+    label();
+    button.addEventListener('click', () => {
+      root.classList.toggle('expanded');
+      label();
+    });
+    return button;
   }
 
   /** 一覧の見出し・一覧・差分を並べる枠（木のときは一覧と差分を横に並べる） */
@@ -275,12 +311,12 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
 
   /** 差分の欄をスクロールしたら、いちばん上に見えているファイルを一覧で選ぶ */
   let following = false;
-  root.addEventListener('scroll', () => {
+  scroller.addEventListener('scroll', () => {
     if (layout.single || following || sections.size === 0) return;
     following = true;
     requestAnimationFrame(() => {
       following = false;
-      const top = root.getBoundingClientRect().top;
+      const top = scroller.getBoundingClientRect().top;
       let shown: string | undefined;
       for (const [path, f] of sections) {
         if (f.section.getBoundingClientRect().top > top + 1) break;
@@ -313,7 +349,7 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
           if (entry.isIntersecting && file) request(file);
         }
       },
-      { root, rootMargin: '200px' },
+      { root: scroller, rootMargin: '200px' },
     );
     sections = new Map();
     current = undefined;
@@ -371,7 +407,7 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
         setCollapsed(file, !section.classList.contains('collapsed'));
         if (!section.classList.contains('collapsed')) request(file);
         // 畳んで見出しが上に隠れたら、見出しが見えるところまで戻す
-        if (head.getBoundingClientRect().top < root.getBoundingClientRect().top) section.scrollIntoView({ block: 'start' });
+        if (head.getBoundingClientRect().top < scroller.getBoundingClientRect().top) section.scrollIntoView({ block: 'start' });
       });
       box.addEventListener('change', () => {
         // Viewed にしたら畳み、戻したら開く（GitHub と同じ）
@@ -380,7 +416,7 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
         setCollapsed(file, box.checked);
         if (!box.checked) request(file);
         if (viewedKey) post({ type: 'viewed', key: viewedKey, path: f.path, viewed: box.checked });
-        if (box.checked && head.getBoundingClientRect().top < root.getBoundingClientRect().top) section.scrollIntoView({ block: 'start' });
+        if (box.checked && head.getBoundingClientRect().top < scroller.getBoundingClientRect().top) section.scrollIntoView({ block: 'start' });
       });
       diffObserver.observe(section);
     }
@@ -428,8 +464,7 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
     const parts: Node[] = [el('div', 'subject', `${count} commits selected`)];
     if (!view) {
       parts.push(el('div', error ? 'selection-note error' : 'selection-note', error ?? 'Loading the diff…'));
-      root.replaceChildren(...parts);
-      root.scrollTop = 0;
+      place(undefined, parts);
       return;
     }
     const note =
@@ -471,8 +506,7 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
       const diffs = fileSections(view.key, view.viewedKey, view.files, files, false, view.viewed);
       parts.push(stack(filesHead, files, diffs));
     }
-    root.replaceChildren(...parts);
-    root.scrollTop = 0;
+    place(undefined, parts);
   }
 
   function showDiff(oid: string, path: string, diff: FileDiff): void {
@@ -511,7 +545,7 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
     meta = undefined;
     listed = undefined;
     sections = new Map();
-    root.replaceChildren(el('div', 'empty', 'Select a commit to see its details here'));
+    place(undefined, [el('div', 'empty', 'Select a commit to see its details here')]);
   }
 
   clear();
@@ -529,6 +563,29 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
       shownOid = undefined;
     },
   };
+}
+
+/**
+ * メッセージの欄と、ファイルと差分の欄の仕切りをドラッグして、メッセージの欄の高さを変える（次のコミットを出すと
+ * 中身に合わせ直す。アプリと同じ）
+ */
+function attachRowSplitter(root: HTMLElement, divider: HTMLElement, head: HTMLElement): void {
+  divider.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    const top = head.getBoundingClientRect().top;
+    const onMove = (m: MouseEvent) => {
+      const max = Math.max(48, root.clientHeight - 80);
+      head.style.height = `${Math.min(max, Math.max(32, m.clientY - top))}px`;
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.classList.remove('resizing-rows');
+    };
+    document.body.classList.add('resizing-rows');
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  });
 }
 
 /** 左右の境目をドラッグして、詳細の幅を変える。幅は覚えておき、どの画面でも同じにする */

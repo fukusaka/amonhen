@@ -83,6 +83,8 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
   private readonly disposables: vscode.Disposable[] = [];
   /** 共有の daemon のエンジンを使えるか（Reflog、タグの印とメニューはエンジンだけ） */
   private engine = false;
+  /** Range Diff を開いている（その間だけ行を出す） */
+  private rangeDiffShown = false;
   /** タグのリモートでの様子と署名 */
   readonly tagMarks = new TagMarks();
   /** リポジトリの worktree（2 つ以上あるときだけ Working Copy の下に出す） */
@@ -201,6 +203,14 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
     return undefined;
   }
 
+  /** Range Diff を開いた・閉じた */
+  setRangeDiffShown(shown: boolean): void {
+    if (shown !== this.rangeDiffShown) {
+      this.rangeDiffShown = shown;
+      this._onDidChangeTreeData.fire(undefined);
+    }
+  }
+
   /** エンジンを使えるかが分かった・変わった */
   setEngine(engine: boolean): void {
     if (engine !== this.engine) {
@@ -257,7 +267,8 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
         n.kind === 'section' &&
         ((n.section === 'stashes' && stashes === 0) || (n.section === 'subtrees' && !(this.engine && this.subtreeFacts.available)));
       nodes.push(...[...this.sections.values()].filter((n) => !hidden(n)));
-      // Reflog はいつもいちばん下（アプリと同じ）
+      // Range Diff は開いている間だけ、Reflog はいつもいちばん下（アプリと同じ）
+      if (this.rangeDiffShown) nodes.push({ kind: 'view', view: 'rangeDiff' });
       if (this.engine) nodes.push({ kind: 'view', view: 'reflog' }, { kind: 'view', view: 'settings' });
       return nodes;
     }
@@ -381,6 +392,15 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
           item.tooltip = 'This repository’s git settings (author, operations, remotes…)';
           item.iconPath = new vscode.ThemeIcon('settings-gear');
           item.command = { command: 'amonhen.showRepositorySettings', title: 'Show Repository Settings' };
+          return item;
+        }
+        if (node.view === 'rangeDiff') {
+          const item = new vscode.TreeItem('Range Diff');
+          item.id = 'view:rangeDiff';
+          item.tooltip = 'Two versions of the same commits, compared (git range-diff)';
+          item.iconPath = new vscode.ThemeIcon('diff-multiple');
+          item.command = { command: 'amonhen.showRangeDiff', title: 'Show Range Diff' };
+          item.contextValue = 'view.rangeDiff';
           return item;
         }
         if (node.view === 'reflog') {

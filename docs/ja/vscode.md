@@ -69,9 +69,11 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
   ファイルが変わったら（読み直すたびに更新時刻を見る。`mailmap.file` の場所は設定ファイルが変わったときだけ git に聞く）、
   History と覚えている詳細を読み直す。
 
-- Range Diff（ローカルブランチの Compare with Previous Version と、パレットの Range Diff…）は、`git range-diff` の形の
-  読み取り専用の `amonhen:` の文書を出す。エンジンではコアの `previousVersion`・`rangeDiff` を使い、git 実行層では
-  ブランチの reflog（`git log -g`）を読んで `git range-diff` を自分で動かす。
+- Range Diff（ローカルブランチの Compare with Previous Version、パレットの Range Diff、History で選んだ 2 つのコミット、
+  Reflog の行の Compare with Current HEAD）は、アプリと同じくメインビューのページに出す。上に比べる範囲（直せる）、
+  左に組の一覧（= ! < >、Changes Only）、右に変わった組の差分の差分か、ほかの組のコミット（詳細の欄）。開いている
+  あいだはサイドバーに Range Diff の行を出す。エンジンではコアの `previousVersion`・`rangeDiff` を使い、git 実行層
+  ではブランチの reflog（`git log -g`）を読んで `git range-diff` を自分で動かす。
 - エンジンのあとに足した機能は、エンジンだけで作る（`run` でコアの命令を使う）。エンジンがなければ、その行とコマンドは
   出さない（コンテキストキー `amonhen.engine`）。
 - サイドバーのいちばん下の Reflog は、メインビューのページを開く。左に HEAD の reflog（コアの `reflog`）、右に選んだ行の
@@ -256,3 +258,6 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 53. History と Working Copy の差分・Blame の構文の色（エンジンの tree-sitter）
 - [x] 54. コンフリクトがあるときのサイドバーの Workspace の Conflicts
 - [x] 55. 失敗は原因を出し、Details で全文を
+- [x] 56. History: 2 行の行（One Line per Commit）と、グラフの線ごとの祖先の強調
+- [x] 57. History の詳細: メッセージをファイルの上の別の欄に、ドラッグできる境と ⤢ で広げる
+- [x] 58. Range Diff をメインビューのページに（組の一覧・差分の差分・直せる範囲）。History と Reflog からも開く
