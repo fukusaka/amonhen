@@ -18,6 +18,8 @@ becomes the GitHub Release notes.
   as dashed dots, and Pull draws the mode chosen in its sheet.
 - Fast-forwarding a branch, deleting one with commits nowhere else, Undo and applying patches draw the graph before and
   after as well; Undo shows commits it brings back from Reflog.
+- Merging several branches in one commit draws a lane for each, and History edits now confirm Apply Changes with the
+  commits before and after (dropped, combined and reworded).
 - A branch merged by a GitHub pull request (squash or rebase) gets the merged mark in the sidebar, says "Merged by
   pull request #123" in its popover, and is deleted with a plain confirmation naming the pull request.
 - Clean Up Branches… (Repository menu and the Branches heading) lists the branches merged into the default branch,

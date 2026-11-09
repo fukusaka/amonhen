@@ -439,7 +439,18 @@ out: they have no confirmation, and adding one only for a drawing would slow the
   patches' subjects as new commits above the tip (`pickPreview` with `subjects`).
 - **Showing the sheet.** The sheet is shown once the drawing is ready, not grown afterwards (on GNOME, a sheet that
   grows while it opens is left enlarged).
-- **Next.** Octopus merges, History edits, and subtree pull and split.
+- **Octopus merge.** A core command (`octopusPreview`, with `theirs`) gives the current branch's commits since all of
+  them part, and for each one merged its tip and how many more commits only it has. The drawing gives each one a lane
+  of its own in the sheet's order (up to four, then "and n more branches"), with its tip and its count elided; after,
+  the dashed merge commit on top joins every tip. Reordering the list reorders the lanes.
+- **History edits.** Apply Changes first shows a confirmation with the drawing (`rewritePreview` with an edit gives
+  `editDrawing`: the commits rewritten and the commits that result, both newest first and elided when long, and the
+  commit below that stays). Before, dropped commits are hollow red "dropped", and combined, reworded and stopping
+  commits say so; after, the resulting commits have ′, a combined one is a single row saying how many it holds, and a
+  reworded one shows its new subject. An edit across merges can't be drawn and applies without the confirmation, as
+  before.
+- **Not drawn.** Subtree pull and split: the commits a pull brings aren't known before it fetches, and split makes a
+  new history only when it runs.
 
 ## Patches
 
