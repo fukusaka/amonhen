@@ -263,3 +263,4 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 58. Range Diff をメインビューのページに（組の一覧・差分の差分・直せる範囲）。History と Reflog からも開く
 - [x] 59. Push のシートから、送る変更すべてやコミットひとつの差分を開く
 - [x] 60. Keys and Values の列を Combined / Levels で切り替える
+- [x] 61. 右クリックのメニューの名前をアプリに合わせる

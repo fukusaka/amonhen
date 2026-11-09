@@ -349,7 +349,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Menus from the shared command table (`crates/commands`) | ✓ | ✓ | n/a | n/a | VSCode: VSCode's Command Palette and context menus. |
 | Every command reachable without a menu bar (≡) | ✓ | ✓ | ✓ | n/a | GTK4: The ≡ menu holds the menu bar's File, Edit, View, Navigate, Commit and Window menus with macOS's items and order (Edit's Undo, Cut, Copy… act on the focused field), then Settings…, About and Quit.<br>VSCode: Command Palette and context menus. |
 | Keyboard shortcuts | ✓ | ✓ | n/a | n/a | GTK4: Keys that Linux desktops or other commands take differ: Show Sidebar is F9 (GNOME's utility pane key); Filter Branches, Go to Parent / Child and New Tag have none (GNOME takes Ctrl+Alt+arrows and Ctrl+Alt+T, and the HIG gives Alt+Up another meaning); the merge editor's previous / next conflict is Alt+Up / Down.<br>VSCode: VSCode's keybindings; the extension contributes none, and any command can be bound. |
-| Context menus with the menu's names | ✓ | ✓ | △ | n/a | VSCode: Names differ from the apps. |
+| Context menus with the menu's names | ✓ | ✓ | ✓ | n/a | VSCode: The same words without the names the apps put in (Checkout… for Checkout main…, Delete… for Delete main…), since VSCode's menu items are fixed text. |
 | Keyboard shortcuts window | — | ✓ | n/a | n/a | macOS: macOS's App Shortcuts change them instead. |
 
 ## Status bar

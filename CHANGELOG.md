@@ -1067,6 +1067,8 @@ First release.
 - The Push sheet opens the diff of all the changes to send, or of one commit, without closing.
 - Keys and Values switches between Combined and Levels, as in the app; Levels shows a column per source with the value
   in effect in bold.
+- Context menus use the app's names, such as Edit Message…, Combine with Older Commit…, Checkout as Local Branch… and
+  Rename…, and items that ask first end with “…”.
 
 ### [0.2.6] - 2026-11-09
 
