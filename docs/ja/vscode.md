@@ -256,3 +256,5 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 53. History と Working Copy の差分・Blame の構文の色（エンジンの tree-sitter）
 - [x] 54. コンフリクトがあるときのサイドバーの Workspace の Conflicts
 - [x] 55. 失敗は原因を出し、Details で全文を
+- [x] 56. History: 2 行の行（One Line per Commit）と、グラフの線ごとの祖先の強調
+- [x] 57. History の詳細: メッセージをファイルの上の別の欄に、ドラッグできる境と ⤢ で広げる

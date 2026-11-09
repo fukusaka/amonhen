@@ -264,3 +264,5 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 53. Syntax colors in History's and Working Copy's diffs and in Blame (the engine's tree-sitter)
 - [x] 54. Conflicts in the sidebar's Workspace while there are conflicts
 - [x] 55. Failures give the cause, with Details for the whole output
+- [x] 56. History: two-line rows (One Line per Commit), and Highlight Ancestors per line of the graph
+- [x] 57. History's details: the message in its own pane above the files, a divider to drag, and ⤢ to expand it
