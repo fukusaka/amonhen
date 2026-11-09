@@ -270,3 +270,4 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 56. History: two-line rows (One Line per Commit), and Highlight Ancestors per line of the graph
 - [x] 57. History's details: the message in its own pane above the files, a divider to drag, and ⤢ to expand it
 - [x] 58. Range Diff as a page of the main view (pairs, diff of diffs, editable ranges), also from History and Reflog
+- [x] 59. The Push sheet opens the diff of all the changes to send, or of one commit
