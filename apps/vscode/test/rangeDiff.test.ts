@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { CliBackend } from '../src/git/backend.ts';
 import { GitExecutor } from '../src/git/exec.ts';
-import { formatRangeDiff, parseRangeDiff, rebaseOnto, rebaseOntoFromHead, reflogKeepsHistory } from '../src/git/rangeDiff.ts';
+import { parseRangeDiff, rangeDiffFile, rebaseOnto, rebaseOntoFromHead, reflogKeepsHistory, shortRange } from '../src/git/rangeDiff.ts';
 import { initMain } from './git.ts';
 
 Object.assign(process.env, {
@@ -42,7 +42,27 @@ test('parseRangeDiff splits headers and the diff of diffs', () => {
     ],
   );
   assert.deepEqual(pairs[0]!.diff, ['@@ Commit message', '-+old', '++new']);
-  assert.match(formatRangeDiff(pairs, ['a...b']), /^# git range-diff a\.\.\.b\n\n1:  ef98ed8 ! 1:  040a1df five\n    @@ Commit message/);
+});
+
+test('rangeDiffFile turns the diff of diffs into hunks, numbering each version’s patch', () => {
+  const file = rangeDiffFile(['@@ Commit message', '     five', '-+old', '++new', '@@ a.txt', ' @@ -1 +1 @@']);
+  assert.deepEqual(
+    file.hunks.map((h) => [h.header, h.lines.map((l) => [l.kind, l.old ?? 0, l.new ?? 0, l.text])]),
+    [
+      ['@@ Commit message', [[' ', 1, 1, '    five'], ['-', 2, 0, '+old'], ['+', 0, 2, '+new']]],
+      ['@@ a.txt', [[' ', 3, 3, '@@ -1 +1 @@']]],
+    ],
+  );
+  // 見出しのない行も出す
+  assert.deepEqual(rangeDiffFile(['+x']).hunks, [{ header: '', lines: [{ kind: '+', new: 1, text: 'x' }] }]);
+});
+
+test('shortRange shortens 40-digit IDs only', () => {
+  const sha1 = 'a'.repeat(40);
+  const sha256 = 'b'.repeat(64);
+  assert.equal(shortRange(`${sha1}...${sha1}`), `${'a'.repeat(12)}...${'a'.repeat(12)}`);
+  assert.equal(shortRange(sha256), sha256);
+  assert.equal(shortRange('main'), 'main');
 });
 
 test('rebaseOnto and reflogKeepsHistory read reflog messages', () => {

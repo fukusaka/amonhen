@@ -611,7 +611,32 @@
       },
       {
         "command": "amonhen.rangeDiff",
-        "title": "Range Diff…",
+        "title": "Range Diff",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.showRangeDiff",
+        "title": "Show Range Diff",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.rangeDiff.showOldInHistory",
+        "title": "Show Old Version in History",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.rangeDiff.showNewInHistory",
+        "title": "Show New Version in History",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.rangeDiff.copyOldId",
+        "title": "Copy Old Commit ID",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.rangeDiff.copyNewId",
+        "title": "Copy New Commit ID",
         "category": "Amon Hen"
       },
       {
@@ -1545,6 +1570,26 @@
           "when": "false"
         },
         {
+          "command": "amonhen.showRangeDiff",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.rangeDiff.showOldInHistory",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.rangeDiff.showNewInHistory",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.rangeDiff.copyOldId",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.rangeDiff.copyNewId",
+          "when": "false"
+        },
+        {
           "command": "amonhen.tag.push",
           "when": "false"
         },
@@ -1944,6 +1989,26 @@
         {
           "command": "amonhen.reflog.copyName",
           "when": "webviewId == 'amonhen.main' && webviewSection == 'reflog'",
+          "group": "9_copy@2"
+        },
+        {
+          "command": "amonhen.rangeDiff.showOldInHistory",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'rangePair' && rangePairOld",
+          "group": "1_show@1"
+        },
+        {
+          "command": "amonhen.rangeDiff.showNewInHistory",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'rangePair' && rangePairNew",
+          "group": "1_show@2"
+        },
+        {
+          "command": "amonhen.rangeDiff.copyOldId",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'rangePair' && rangePairOld",
+          "group": "9_copy@1"
+        },
+        {
+          "command": "amonhen.rangeDiff.copyNewId",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'rangePair' && rangePairNew",
           "group": "9_copy@2"
         },
         {

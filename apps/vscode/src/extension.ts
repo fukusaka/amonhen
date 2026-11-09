@@ -8,6 +8,7 @@ import { registerBranchArrangeCommands } from './ui/branchArrangeCommands.ts';
 import { registerBranchCommands } from './ui/branchCommands.ts';
 import { registerContentProvider } from './ui/content.ts';
 import { registerRangeDiffCommands } from './ui/rangeDiff.ts';
+import { onDidChangeRangeDiffShown } from './ui/rangeDiffController.ts';
 import { SidebarDragAndDrop } from './ui/dragDrop.ts';
 import { registerFetchCommand } from './ui/fetchCommand.ts';
 import { registerFileToolCommands } from './ui/fileToolCommands.ts';
@@ -143,7 +144,8 @@ export async function activate(
     registerRestoreCommands(manager),
     registerSubmoduleCommands(manager, sidebar),
     registerSubtreeCommands(manager, sidebar),
-    registerRangeDiffCommands(manager),
+    registerRangeDiffCommands(manager, show),
+    onDidChangeRangeDiffShown((shown) => sidebar.setRangeDiffShown(shown)),
     registerReflogCommands(manager),
     registerTagCommands(manager, sidebar),
     registerWorktreeCommands(manager, sidebar),

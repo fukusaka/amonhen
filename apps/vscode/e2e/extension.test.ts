@@ -283,7 +283,8 @@ async function mailmapFlow(): Promise<void> {
 
 /**
  * ブランチを書き換えると（ここでは update-ref で）、そのブランチの右クリックの Compare with Previous Version が、
- * 書き換える前の版と比べた文書を開く。range-diff を動かすのは、daemon を使うならコア、使わなければ拡張の git
+ * 書き換える前の版と比べた Range Diff のページを開き、サイドバーに Range Diff の行が出る。上の欄の範囲で比べ直せ、
+ * 閉じると行が消える。range-diff を動かすのは、daemon を使うならコア、使わなければ拡張の git
  */
 async function rangeDiffFlow(path: 'daemon' | 'git'): Promise<void> {
   const branch = `range-diff-${path}`;
@@ -291,25 +292,48 @@ async function rangeDiffFlow(path: 'daemon' | 'git'): Promise<void> {
   const make = (parent: string, message: string) => git('commit-tree', tree, '-p', parent, '-m', message).trim();
   const head = git('rev-parse', 'HEAD').trim();
   const one = make(head, 'one');
-  git('branch', branch, make(one, 'two'));
+  const two = make(one, 'two');
+  git('branch', branch, two);
   git('update-ref', '-m', 'rewrite', `refs/heads/${branch}`, make(head, 'one, reworded'));
+  const rangeDiffRow = () => api.sidebar.getChildren().some((n) => n.kind === 'view' && n.view === 'rangeDiff');
+  const panel = await showView('amonhen.showHistory');
   const mark = spawned.length;
   try {
+    let at = posted.length;
     const target = { kind: 'branch', remote: false, ref: { name: `refs/heads/${branch}` } };
     await vscode.commands.executeCommand('amonhen.compareWithPrevious', target);
-    const doc = await until('Range Diff の文書', () =>
-      vscode.workspace.textDocuments.find((d) => d.uri.scheme === 'amonhen' && d.uri.path.endsWith(`${branch}.range-diff.diff`)),
-    );
-    const text = doc.getText();
-    assert.match(text, new RegExp(`^# ${branch}@\\{1\\} → ${branch}: rewrite\n# git range-diff `), text);
-    assert.match(text, /^\s*\d+:\s+[0-9a-f]{7} < +-:\s+-+ two$/m, text);
+    const result = await waitPosted('rangeDiff', at, (m) => m.pairs !== null);
+    assert.equal(result.error, undefined);
+    assert.equal(result.summary, `${branch}@{1} → ${branch} · rewrite`);
+    assert.ok(result.ranges.length > 0);
+    // 中身のないコミットなので、どれとどれが組になるかは決まらない。two は消えたものになる
+    const removed = result.pairs!.find((p) => p.subject === 'two');
+    assert.deepEqual([removed?.status, removed?.old?.oid, removed?.new], ['removed', two, null], JSON.stringify(result.pairs));
+    assert.ok(rangeDiffRow(), 'サイドバーに Range Diff の行');
     assert.equal(
       spawned.slice(mark).some((s) => s.args.includes('range-diff')),
       path === 'git',
       path === 'git' ? '拡張が git range-diff を動かす' : 'range-diff はコアがする',
     );
+
+    // 上の欄の範囲で比べ直す（ここでは書き換える前の版どうし: どれも同じ）
+    at = posted.length;
+    await panel.rangeDiff.handle({ type: 'rangeDiffCompare', ranges: [`${head}..${two}`, `${head}..${two}`] });
+    const again = await waitPosted('rangeDiff', at, (m) => m.pairs !== null);
+    assert.deepEqual(again.pairs!.map((p) => [p.status, p.subject]), [['same', 'one'], ['same', 'two']]);
+
+    // 開き直すと、今の結果を送り直す
+    at = posted.length;
+    await panel.rangeDiff.handle({ type: 'rangeDiffLoad' });
+    assert.equal((await waitPosted('rangeDiff', at)).pairs?.length, 2);
+
+    // 閉じると History に戻り、サイドバーの行が消える
+    at = posted.length;
+    await panel.rangeDiff.handle({ type: 'rangeDiffClose' });
+    await waitPosted('show', at, (m) => m.view === 'history');
+    await until('Range Diff の行が消える', () => !rangeDiffRow() || undefined);
   } finally {
-    await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+    await panel.rangeDiff.handle({ type: 'rangeDiffClose' });
     git('branch', '-D', branch);
   }
 }
@@ -2089,11 +2113,15 @@ async function historySelectionFlow(): Promise<void> {
     await vscode.commands.executeCommand('amonhen.history.selection.copyIds');
     assert.equal(await vscode.env.clipboard.readText(), [git('rev-parse', 'sel-base').trim(), git('rev-parse', 'sel-base~2').trim()].join('\n'));
 
-    // 2 つは範囲の差分と同じ窓口で比べられる
+    // 2 つは、それぞれを先端とする 2 つの版として Range Diff で比べられる
     await select(7, [s4, s2]);
+    const compareAt = posted.length;
     await vscode.commands.executeCommand('amonhen.history.selection.rangeDiff');
-    await until('Range Diff のタブ', () => /Range Diff/.test(vscode.window.tabGroups.activeTabGroup.activeTab?.label ?? '') || undefined);
-    await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+    const compared = await waitPosted('rangeDiff', compareAt, (m) => m.pairs !== null);
+    const [newer, older] = [git('rev-parse', 'sel-base').trim(), git('rev-parse', 'sel-base~2').trim()];
+    assert.deepEqual(compared.ranges, [`${older}...${newer}`]);
+    await waitPosted('show', compareAt, (m) => m.view === 'rangeDiff');
+    await panel.rangeDiff.handle({ type: 'rangeDiffClose' });
 
     // 選んだコミットを、古い順に 1 回で cherry-pick する
     const prompts: string[] = [];
@@ -2563,6 +2591,7 @@ async function reflogFlow(): Promise<void> {
     mark = posted.length;
     await vscode.commands.executeCommand('amonhen.reflog.showInHistory', { oid: parent });
     await waitPosted('reveal', mark);
+
   } finally {
     git('switch', '-q', branch);
     git('branch', '-D', 'reflog-e2e');
