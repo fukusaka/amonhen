@@ -1065,6 +1065,8 @@ First release.
 - Range Diff is a page of the main view, as in the app: the pairs on the left, the diff of diffs or the commit on the
   right, and ranges you can edit and compare again. Reflog rows can be compared with the current HEAD.
 - The Push sheet opens the diff of all the changes to send, or of one commit, without closing.
+- Keys and Values switches between Combined and Levels, as in the app; Levels shows a column per source with the value
+  in effect in bold.
 
 ### [0.2.6] - 2026-11-09
 

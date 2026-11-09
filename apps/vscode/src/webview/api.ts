@@ -9,6 +9,8 @@ export interface State {
   fileHistoryMerges?: boolean;
   /** Repository Settings で出しているページ */
   settingsPage?: string;
+  /** Keys and Values の列: 効いている値と設定元か、設定元ごとの列か */
+  configColumns?: 'combined' | 'levels';
 }
 
 declare function acquireVsCodeApi(): {

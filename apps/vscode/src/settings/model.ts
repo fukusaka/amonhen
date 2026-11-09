@@ -40,6 +40,12 @@ export class ConfigView {
     return findLast(this.entries, (e) => e.key.toLowerCase() === k && e.scope === 'local')?.value;
   }
 
+  /** ひとつの設定元（`system`・`global`・`local`・`worktree`）での値。その中で最後に書かれたもの */
+  at(key: string, scope: string): ConfigEntry | undefined {
+    const k = key.toLowerCase();
+    return findLast(this.entries, (e) => e.key.toLowerCase() === k && e.scope === scope);
+  }
+
   /** 上書きしなければ効く値（このリポジトリより上で決まっているもの） */
   inherited(key: string): ConfigEntry | undefined {
     const k = key.toLowerCase();
