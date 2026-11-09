@@ -1047,7 +1047,11 @@ First release.
 
 ## VSCode extension
 
-### Unreleased
+### [0.2.6] - 2026-11-09
+
+Working Copy matches the app: one diff with a check on each line and hunk, a file tree, and Commit's ▾ with Commit and
+Push, Amend and Fixup. Push, Pull, Fetch, Checkout and Merge ask first and say what will happen, and with the engine
+History gets syntax colors, several selected commits, an edit mode, and submodules, subtrees and branch clean-up.
 
 #### Added
 
