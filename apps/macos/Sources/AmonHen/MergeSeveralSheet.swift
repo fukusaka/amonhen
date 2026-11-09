@@ -20,6 +20,10 @@ extension Actions {
         }
         Task { @MainActor in
             let target = branch ?? "HEAD"
+            // 前と後の絵（並べ替えると、線の順も変わる）。
+            let octopus = await octopusPreview(theirs: sources.map(\.rev))
+            let drawing = octopus?.drawing == nil ? nil : OctopusDrawingView(current: target)
+            drawing?.preview = octopus
             let alert = makeAlert(
                 L("Merge %ld into %@?", sources.count, target),
                 L("This makes one merge commit with all of them as parents, as git merge does with several branches. Drag to change the order. Undo puts it back."))
@@ -68,6 +72,8 @@ extension Actions {
             let update = {
                 let revs = list.sources.map(\.rev)
                 message.stringValue = L("Message: %@", Actions.mergeMessage(list.sources, into: branch))
+                drawing?.order = revs
+                drawing?.subject = Actions.mergeMessage(list.sources, into: branch)
                 answers.shown = revs
                 if let known = answers.known[revs] { return show(known) }
                 list.steps = nil
@@ -96,7 +102,7 @@ extension Actions {
             // 「最後に回す」は答えが来てから出すので、場所を取っておく（シートの大きさを変えないため）。隠す前に決める
             // （隠してから切り替えても、外した場所は戻らない）。
             stack.detachesHiddenViews = false
-            for view in [list.view, label, putLast, message] { stack.addArrangedSubview(view) }
+            for view in [list.view, drawing, label, putLast, message].compactMap({ $0 }) { stack.addArrangedSubview(view) }
             update()
             list.view.widthAnchor.constraint(equalToConstant: 420).isActive = true
             stack.layoutSubtreeIfNeeded()

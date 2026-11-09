@@ -466,6 +466,22 @@
 			<string>%ld local commits are replayed on top (their IDs change)</string>
 		</dict>
 	</dict>
+	<key>and %ld more branches</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>and %#@n0@</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld more branch</string>
+			<key>other</key>
+			<string>%ld more branches</string>
+		</dict>
+	</dict>
 	<key>and %ld more tags</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>

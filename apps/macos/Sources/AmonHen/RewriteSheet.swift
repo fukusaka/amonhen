@@ -37,14 +37,16 @@ class GraphDrawingView: NSView {
         let count: Int
     }
 
-    /// 1 列を描く。`rows` の lane 1 は右の線（いちばん下で lane 0 へ合流）。`highlightTop` は強調する上からの行数。
-    /// `gaps` は省いたところ、`baseNote` は分かれたところに添える文（いつ分かれたか）。
+    /// 1 列を描く。`rows` の lane 1 から先は右の線（それぞれ、いちばん下で lane 0 へ合流。octopus merge では
+    /// いくつも）。`highlightTop` は強調する上からの行数。`gaps` は省いたところ、`baseNote` は分かれたところに
+    /// 添える文（いつ分かれたか）。`lane1JoinsAt` は merge コミットの行で、そこから右の線それぞれの先頭へ下りる。
     func drawColumn(
         x: CGFloat, rows: [GraphRow], baseY: CGFloat,
         base: RewritePreview.Drawing.Commit?, gaps: [Gap] = [], highlightTop: Int = 0, baseNote: String? = nil,
         lane1JoinsAt: CGFloat? = nil, labels: (String) -> [(String, String, Bool)]
     ) {
         let laneX = { (lane: Int) in x + 10 + CGFloat(lane) * Self.laneWidth }
+        let lanes = max(1, rows.map(\.lane).max() ?? 1)
         let center = { (y: CGFloat) in y + Self.rowHeight / 2 }
         let solid = NSBezierPath()
         solid.lineWidth = 2
@@ -66,23 +68,24 @@ class GraphDrawingView: NSView {
             solid.move(to: NSPoint(x: laneX(lane), y: y))
             solid.line(to: NSPoint(x: laneX(lane), y: bottom))
         }
-        let lane1 = rows.filter { $0.lane == 1 }
-        if let first = lane1.first, let last = lane1.last {
-            let lastY = max(last.y, gaps.filter { $0.lane == 1 }.map(\.y).max() ?? last.y)
-            vertical(1, from: center(first.y), to: center(lastY))
-            solid.move(to: NSPoint(x: laneX(1), y: center(lastY)))
-            solid.curve(to: NSPoint(x: laneX(0), y: center(baseY)), controlPoint1: NSPoint(x: laneX(1), y: center(baseY) - 6),
+        for lane in 1...lanes {
+            let lane1 = rows.filter { $0.lane == lane }
+            guard let first = lane1.first, let last = lane1.last else { continue }
+            let lastY = max(last.y, gaps.filter { $0.lane == lane }.map(\.y).max() ?? last.y)
+            vertical(lane, from: center(first.y), to: center(lastY))
+            solid.move(to: NSPoint(x: laneX(lane), y: center(lastY)))
+            solid.curve(to: NSPoint(x: laneX(0), y: center(baseY)), controlPoint1: NSPoint(x: laneX(lane), y: center(baseY) - 6),
                         controlPoint2: NSPoint(x: laneX(0), y: center(lastY) + 8))
+            // merge コミットから、その線へ曲がり、取り込む側の先端まで下りる。
+            if let joinY = lane1JoinsAt {
+                let corner = NSPoint(x: laneX(lane), y: center(joinY))
+                solid.move(to: NSPoint(x: laneX(0), y: center(joinY)))
+                solid.curve(to: NSPoint(x: laneX(lane), y: center(joinY) + Self.rowHeight * 0.8), controlPoint1: corner, controlPoint2: corner)
+                solid.line(to: NSPoint(x: laneX(lane), y: center(first.y)))
+            }
         }
         if let first = rows.first(where: { $0.lane == 0 }) {
             vertical(0, from: center(first.y), to: center(baseY))
-        }
-        // merge コミットから、すぐ右の線へ曲がり、取り込む側の先端まで下りる。
-        if let joinY = lane1JoinsAt, let first = lane1.first {
-            let corner = NSPoint(x: laneX(1), y: center(joinY))
-            solid.move(to: NSPoint(x: laneX(0), y: center(joinY)))
-            solid.curve(to: NSPoint(x: laneX(1), y: center(joinY) + Self.rowHeight * 0.8), controlPoint1: corner, controlPoint2: corner)
-            solid.line(to: NSPoint(x: laneX(1), y: center(first.y)))
         }
         NSColor.secondaryLabelColor.withAlphaComponent(0.5).setStroke()
         solid.stroke()
@@ -90,17 +93,17 @@ class GraphDrawingView: NSView {
         // 点と件名、札。
         for (i, row) in rows.enumerated() {
             let highlighted = i < highlightTop
-            drawRow(at: NSPoint(x: laneX(row.lane), y: row.y), textX: laneX(1) + 14, width: x + Self.columnWidth,
+            drawRow(at: NSPoint(x: laneX(row.lane), y: row.y), textX: laneX(lanes) + 14, width: x + Self.columnWidth,
                     subject: row.commit.subject, dim: row.dim, highlighted: highlighted, labels: labels(row.commit.oid),
                     hollow: row.hollow, note: row.note, noteColor: row.noteColor, isNew: row.isNew)
         }
         for gap in gaps {
             NSString(string: L("and %ld more", gap.count)).draw(
-                at: NSPoint(x: laneX(1) + 14, y: gap.y + 3),
+                at: NSPoint(x: laneX(lanes) + 14, y: gap.y + 3),
                 withAttributes: [.font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize), .foregroundColor: NSColor.tertiaryLabelColor])
         }
         if let base {
-            drawRow(at: NSPoint(x: laneX(0), y: baseY), textX: laneX(1) + 14, width: x + Self.columnWidth, subject: base.subject,
+            drawRow(at: NSPoint(x: laneX(0), y: baseY), textX: laneX(lanes) + 14, width: x + Self.columnWidth, subject: base.subject,
                     dim: true, highlighted: false, labels: labels(base.oid), note: baseNote)
         }
     }

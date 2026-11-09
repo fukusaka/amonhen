@@ -100,6 +100,30 @@ nonisolated struct RewritePreview: Decodable, Sendable {
     let conflicts: [Conflict]?
     let updateRefs: UpdateRefs?
     let drawing: Drawing?
+    /// History の編集の前と後（古いエンジンは送らない）。
+    var editDrawing: EditDrawing? = nil
+
+    /// History の編集の前と後を描く材料。`before` は書き換わるコミット、`after` はできるコミット（どちらも新しい順、
+    /// 長ければ真ん中を省く）。
+    struct EditDrawing: Decodable, Sendable {
+        struct Step: Decodable, Sendable {
+            let oid: String
+            let subject: String
+            /// git の命令（`pick`・`reword`・`squash`・`fixup`・`drop`・`edit`）。
+            let action: String
+            /// `after` だけ: まとめたコミットの数。
+            var combined: Int? = nil
+        }
+
+        let before: [Step]
+        let beforeMore: Int
+        let beforeMoreAt: Int?
+        let after: [Step]
+        let afterMore: Int
+        let afterMoreAt: Int?
+        let base: Drawing.Commit?
+        let labels: [Drawing.Label]
+    }
 
     /// 確認とステータスバーに出す行（ブランチ、push 済み、コンフリクト）。
     func lines() -> [String] {

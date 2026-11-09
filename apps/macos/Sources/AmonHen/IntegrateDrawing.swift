@@ -41,7 +41,37 @@ nonisolated struct PickPreview: Decodable, Sendable {
     let drawing: Drawing?
 }
 
+/// いくつものものを 1 つのコミットで merge したとき（octopus）の見込み（エンジンの `octopusPreview`）。
+nonisolated struct OctopusPreview: Decodable, Sendable {
+    struct Side: Decodable, Sendable {
+        let rev: String
+        /// 先端（今のブランチにもうあれば nil）と、それだけにあるコミットのうち先端のほかの数。
+        let tip: RewritePreview.Drawing.Commit?
+        let more: Int
+    }
+
+    struct Drawing: Decodable, Sendable {
+        let ours: [RewritePreview.Drawing.Commit]
+        let oursMore: Int
+        let oursMoreAt: Int?
+        let sides: [Side]
+        let base: RewritePreview.Drawing.Commit?
+        let labels: [RewritePreview.Drawing.Label]
+    }
+
+    let upToDate: Bool?
+    let drawing: Drawing?
+}
+
 extension Actions {
+    /// `theirs` を今のブランチに 1 つのコミットで merge したとき（octopus）の見込みを読む。読めなければ nil。
+    func octopusPreview(theirs: [String]) async -> OctopusPreview? {
+        let command: [String: Any] = ["op": "octopusPreview", "theirs": theirs]
+        let repository = self.repository
+        guard let json = try? Repository.json(command) else { return nil }
+        return await Task.detached { try? repository.info(json: json, as: OctopusPreview.self) }.value
+    }
+
     /// `theirs` を今のブランチ（`ours`）に merge したときの見込みを読む。`ffSetting` は fast-forward を決める git の
     /// 設定（Pull は `pull.ff`）。読めなければ nil。
     func mergePreview(theirs: String, ours: String = "HEAD", ffSetting: String = "merge.ff") async -> MergePreview? {
@@ -249,6 +279,115 @@ final class PickDrawingView: GraphDrawingView {
         }
         NSString(string: "→").draw(
             at: NSPoint(x: Self.columnWidth + 6, y: 22 + CGFloat(max(newRows(d) - 1, 0)) * Self.rowHeight / 2),
+            withAttributes: [.font: NSFont.systemFont(ofSize: 15), .foregroundColor: NSColor.tertiaryLabelColor])
+    }
+}
+
+/// octopus merge の確認に埋め込む、前と後の絵。左が今: 今のブランチ（左の線）と、取り込むもの（並べた順に右の線。
+/// 先端と、ほかにいくつあるか）が、すべてが分かれたところで合流する。右が後: 一番上の merge コミット（点線の丸）が
+/// すべての先端を親に持ち、今のブランチの札がそこへ移る。線は 4 本まで、残りは「ほか n 本」。
+final class OctopusDrawingView: GraphDrawingView {
+    var preview: OctopusPreview? {
+        didSet {
+            invalidateIntrinsicContentSize()
+            needsDisplay = true
+        }
+    }
+
+    /// 取り込む順（シートで並べ替える）と、merge コミットの件名。
+    var order: [String] = [] {
+        didSet {
+            invalidateIntrinsicContentSize()
+            needsDisplay = true
+        }
+    }
+
+    var subject = "" {
+        didSet { needsDisplay = true }
+    }
+
+    static let maxLanes = 4
+    private let current: String
+
+    init(current: String) {
+        self.current = current
+        super.init(frame: .zero)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// 描く取り込む側（並べた順、もう取り込んであるものは除く）と、描かないものの数。
+    private func sides(_ d: OctopusPreview.Drawing) -> ([OctopusPreview.Side], Int) {
+        let byRev = Dictionary(d.sides.map { ($0.rev, $0) }, uniquingKeysWith: { a, _ in a })
+        let all = order.compactMap { byRev[$0] }.filter { $0.tip != nil }
+        return (Array(all.prefix(Self.maxLanes)), max(0, all.count - Self.maxLanes))
+    }
+
+    private func rowCount(_ d: OctopusPreview.Drawing) -> Int {
+        let (shown, rest) = sides(d)
+        return d.ours.count + (d.oursMore > 0 ? 1 : 0) + shown.reduce(0) { $0 + 1 + ($1.more > 0 ? 1 : 0) }
+            + (rest > 0 ? 1 : 0) + (d.base == nil ? 0 : 1)
+    }
+
+    override var intrinsicContentSize: NSSize {
+        guard let d = preview?.drawing else { return NSSize(width: Self.columnWidth * 2 + 24, height: 0) }
+        return NSSize(width: Self.columnWidth * 2 + 24, height: CGFloat(rowCount(d) + 1) * Self.rowHeight + 26)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let d = preview?.drawing else { return }
+        let headingAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.boldSystemFont(ofSize: NSFont.smallSystemFontSize), .foregroundColor: NSColor.secondaryLabelColor,
+        ]
+        NSString(string: L("Now")).draw(at: NSPoint(x: 4, y: 2), withAttributes: headingAttributes)
+        NSString(string: L("After the merge")).draw(at: NSPoint(x: Self.columnWidth + 28, y: 2), withAttributes: headingAttributes)
+        let labels = Dictionary(grouping: d.labels, by: \.oid)
+        let oursTip = d.ours.first?.oid ?? d.base?.oid
+        let (shown, rest) = sides(d)
+        let tips = Dictionary(shown.compactMap { side in side.tip.map { ($0.oid, side.rev) } }, uniquingKeysWith: { a, _ in a })
+        for after in [false, true] {
+            let x = after ? Self.columnWidth + 24 : 0
+            var y: CGFloat = 22
+            var rows: [GraphRow] = []
+            var gaps: [Gap] = []
+            let mergeY = y
+            if after {
+                var row = GraphRow(commit: RewritePreview.Drawing.Commit(oid: "", subject: subject), lane: 0, dim: false, y: y)
+                row.isNew = true
+                rows.append(row)
+                y += Self.rowHeight
+            }
+            let oursAt = d.oursMore > 0 ? (d.oursMoreAt ?? d.ours.count) : -1
+            for (i, c) in d.ours.enumerated() {
+                if i == oursAt { gaps.append(Gap(lane: 0, y: y, count: d.oursMore)); y += Self.rowHeight }
+                rows.append(GraphRow(commit: c, lane: 0, dim: false, y: y))
+                y += Self.rowHeight
+            }
+            if oursAt == d.ours.count { gaps.append(Gap(lane: 0, y: y, count: d.oursMore)); y += Self.rowHeight }
+            for (i, side) in shown.enumerated() {
+                guard let tip = side.tip else { continue }
+                rows.append(GraphRow(commit: tip, lane: i + 1, dim: false, y: y))
+                y += Self.rowHeight
+                if side.more > 0 { gaps.append(Gap(lane: i + 1, y: y, count: side.more)); y += Self.rowHeight }
+            }
+            if rest > 0 {
+                NSString(string: L("and %ld more branches", rest)).draw(
+                    at: NSPoint(x: x + 10 + CGFloat(shown.count) * Self.laneWidth + 14, y: y + 3),
+                    withAttributes: [.font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize), .foregroundColor: NSColor.tertiaryLabelColor])
+                y += Self.rowHeight
+            }
+            drawColumn(x: x, rows: rows, baseY: y, base: d.base, gaps: gaps,
+                       baseNote: after ? nil : Self.splitNote(d.base), lane1JoinsAt: after ? mergeY : nil, labels: { oid in
+                var out = (labels[oid] ?? []).filter { $0.name != self.current }.map { ($0.name, $0.kind, false) }
+                // タグ・コミットを取り込むときは、その名前を札に。
+                if let rev = tips[oid], !out.contains(where: { $0.0 == rev }) { out.append((rev, "local", false)) }
+                let here = after ? oid.isEmpty : oid == oursTip
+                if here { out.insert((self.current, "local", true), at: 0) }
+                return out
+            })
+        }
+        NSString(string: "→").draw(
+            at: NSPoint(x: Self.columnWidth + 6, y: 22 + CGFloat(max(rowCount(d) - 1, 0)) * Self.rowHeight / 2),
             withAttributes: [.font: NSFont.systemFont(ofSize: 15), .foregroundColor: NSColor.tertiaryLabelColor])
     }
 }
