@@ -396,6 +396,62 @@ or split history in ways that are hard to see afterwards.
   does with the same setting, and a History edit keeps the `update-ref` lines in its todo only when the setting is on
   and git is 2.38 or later.
 
+## Previewing graph changes
+
+Every operation that changes the commit graph shows, in its confirmation sheet, the graph before and after side by
+side, drawn as the rebase sheet draws it (History's lanes, dots, labels and subjects). Commit, Amend and Fetch are left
+out: they have no confirmation, and adding one only for a drawing would slow them down.
+
+- **Moving a ref.** Push, Force Push and Reset move one ref from one commit to another. A core command
+  (`movePreview`, with `from`, `to` and optionally the branch) returns the commits only `to` reaches (gained), the
+  commits only `from` reaches (taken off), where they part, the branches on them, the number of files that differ, and
+  how many of the taken-off commits the branch's upstream already has. It reads only the History. The CLI has it too
+  (`amonhen run`).
+- **Drawing.** Gained commits are on the left lane and taken-off ones on the right, joining where they part; with only
+  one kind there is one lane. The moving ref's label is filled, at its commit now and at the destination after. After
+  the move, gained commits are highlighted and taken-off ones are hollow, with a note: red "removed from
+  `origin/<branch>`" for a push that replaces commits, grey "taken off" for Reset (they stay in Reflog).
+- **Long runs and old forks.** A run longer than six commits shows its newest three and its oldest two, with "and N
+  more" between them, and the lane is dashed across what is left out, so the commits just after the fork still show.
+  When both sides have commits, the fork point says how long ago they split off ("split off 3 mo. ago"). The rebase
+  drawing does the same for the commits it moves and for those on the new base.
+- **Push and Force Push.** The drawing sits at the top of the Push sheet, above the commit list. `origin/<branch>`
+  moves to the local tip.
+- **Reset.** Under the drawing, Soft, Mixed and Hard say where the difference from now goes (staged, in the working
+  tree, or gone with Undo to bring it back). When the upstream has commits the reset takes off, the sheet says that
+  pushing afterwards needs Force Push.
+- **Merge and Pull.** A core command (`mergePreview`, with `theirs`, optionally `ours` and the fast-forward setting:
+  `merge.ff`, or `pull.ff` for Pull) answers that there is nothing to merge, that it is a fast-forward (with the
+  `movePreview` answer, drawn as a move), or gives both sides since the fork, the fork point and git's subject for the
+  merge commit. The drawing puts the current branch on the left lane and the other side on the right; after, a merge
+  commit drawn as a dashed dot sits on top, joined to both tips, and the branch's label moves to it. Pull draws the mode
+  chosen in its sheet (a merge, a rebase with the rebase drawing, or a fast-forward), keeping the sheet's height when
+  the mode changes; a mode that can't run draws nothing.
+- **Cherry-pick and Revert.** A core command (`pickPreview`, with `oids` and `revert`) gives the current tip and its
+  parent, and the subjects of the commits it will make. After, those commits are dashed dots above the tip (with ′ for
+  a cherry-pick, `Revert "…"` for a revert), and the branch's label moves to the top one.
+- **Fast-forward, delete, Undo and patches.** Fast-forwarding a branch that isn't checked out is a move to its
+  upstream. Deleting a branch with commits nowhere else uses `deletePreview` (`branch`, `against`: the current branch or
+  the upstream it was compared with), a move to where they part: those commits are hollow red "goes with the branch",
+  and the branch's label is gone after. Undo draws the move of the current branch (or the first branch it moves) from
+  `undoPeek`'s `moves`; a destination that no ref reaches any more is followed through its parents until it joins the
+  History, and those commits are drawn hollow "only in Reflog" before. Applying patches with `git am` draws the
+  patches' subjects as new commits above the tip (`pickPreview` with `subjects`).
+- **Showing the sheet.** The sheet is shown once the drawing is ready, not grown afterwards (on GNOME, a sheet that
+  grows while it opens is left enlarged).
+- **Octopus merge.** A core command (`octopusPreview`, with `theirs`) gives the current branch's commits since all of
+  them part, and for each one merged its tip and how many more commits only it has. The drawing gives each one a lane
+  of its own in the sheet's order (up to four, then "and n more branches"), with its tip and its count elided; after,
+  the dashed merge commit on top joins every tip. Reordering the list reorders the lanes.
+- **History edits.** Apply Changes first shows a confirmation with the drawing (`rewritePreview` with an edit gives
+  `editDrawing`: the commits rewritten and the commits that result, both newest first and elided when long, and the
+  commit below that stays). Before, dropped commits are hollow red "dropped", and combined, reworded and stopping
+  commits say so; after, the resulting commits have ′, a combined one is a single row saying how many it holds, and a
+  reworded one shows its new subject. An edit across merges can't be drawn and applies without the confirmation, as
+  before.
+- **Not drawn.** Subtree pull and split: the commits a pull brings aren't known before it fetches, and split makes a
+  new history only when it runs.
+
 ## Patches
 
 - Saving commits as patches is `git format-patch`; applying them is `git am` for mail (format-patch's files, an mbox,

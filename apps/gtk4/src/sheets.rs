@@ -1370,6 +1370,62 @@ pub fn pull_in(actions: &Rc<Actions>, target: Target, mode: &str) {
                 l
             })
             .collect();
+        // 取り込み方ごとの前と後の絵を重ね、選んだものだけを見せる（高さはいちばん高い絵に合わせ、選び直しても
+        // シートの大きさを変えない。読んでからシートを出す。macOS 版と同じ）。
+        let drawings = gtk::Stack::new();
+        drawings.add_named(&gtk::Box::new(gtk::Orientation::Vertical, 0), Some("none"));
+        let mut drawn: Vec<&str> = Vec::new();
+        if let Some(upstream) = state.upstream.clone()
+            && incoming > 0
+        {
+            if outgoing == 0 {
+                // 手元に新しいコミットがなければ、どの取り込み方でも先へ進めるだけ。
+                let preview = run(
+                    &repo,
+                    json!({ "op": "movePreview", "from": "HEAD", "to": upstream, "branch": branch }),
+                )
+                .await["info"]
+                    .clone();
+                if !preview["drawing"].is_null() {
+                    let (area, set) = crate::rewritedraw::new_move(crate::rewritedraw::Move {
+                        moving: branch.clone(),
+                        kind: "local",
+                        after_title: tr!("After the pull"),
+                        lost_note: String::new(),
+                        lost_red: false,
+                        removes: false,
+                    });
+                    set(&preview);
+                    drawings.add_named(&area, Some("fastForward"));
+                    drawn.push("fastForward");
+                }
+            } else {
+                let merge = run(
+                    &repo,
+                    json!({ "op": "mergePreview", "theirs": upstream, "ffSetting": "pull.ff" }),
+                )
+                .await["info"]
+                    .clone();
+                if let Some(area) =
+                    crate::rewritedraw::for_merge(&merge, &branch, tr!("After the pull"))
+                {
+                    drawings.add_named(&area, Some("merge"));
+                    drawn.push("merge");
+                }
+                let rebase = run(&repo, json!({ "op": "rewritePreview", "onto": upstream })).await
+                    ["info"]
+                    .clone();
+                if !rebase["drawing"].is_null() {
+                    let (area, set) = crate::rewritedraw::new();
+                    set(&rebase);
+                    drawings.add_named(&area, Some("rebase"));
+                    drawn.push("rebase");
+                }
+            }
+        }
+        if !drawn.is_empty() {
+            sheet.add(&drawings);
+        }
         sheet.add(&explain);
         let forecast =
             (state.upstream.is_some() && incoming > 0 && outgoing > 0).then(forecast_label);
@@ -1475,7 +1531,24 @@ pub fn pull_in(actions: &Rc<Actions>, target: Target, mode: &str) {
                 method.clone(),
                 describe.clone(),
             );
+            let (drawings, drawn) = (
+                drawings.clone(),
+                drawn.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>(),
+            );
             Rc::new(move || {
+                // 選んだ取り込み方の絵（押せないときは出さない）。
+                let m = method(&chosen());
+                let name = if outgoing == 0 {
+                    "fastForward".to_owned()
+                } else {
+                    m.clone()
+                };
+                let blocked = describe(&chosen()).1;
+                drawings.set_visible_child_name(if !blocked && drawn.contains(&name) {
+                    &name
+                } else {
+                    "none"
+                });
                 for (m, label) in PULL_MODES.iter().zip(&explains) {
                     label.set_text(&describe(m).0);
                 }
@@ -1676,6 +1749,30 @@ pub fn push_in(
             l.remove_css_class("dim-label");
             l.add_css_class("warning");
             sheet.add(&l);
+        }
+        // 送った後の形（上流の札が手元の先端へ。Force Push なら上流から消えるコミットを赤で。macOS 版と同じ）。
+        let preview = run(
+            &repo,
+            json!({ "op": "movePreview", "from": upstream, "to": branch }),
+        )
+        .await["info"]
+            .clone();
+        if !preview["drawing"].is_null() {
+            let replacing = force || diverged;
+            let (drawing, set) = crate::rewritedraw::new_move(crate::rewritedraw::Move {
+                moving: upstream.clone(),
+                kind: "remote",
+                after_title: if replacing {
+                    tr!("After the force push")
+                } else {
+                    tr!("After the push")
+                },
+                lost_note: tr!("removed from {upstream}", upstream = upstream),
+                lost_red: true,
+                removes: false,
+            });
+            set(&preview);
+            sheet.add(&drawing);
         }
         // 送る範囲があれば、送るコミットとその中身を見せる広いシート。なければ（送るコミットがなく、上流だけが
         // 進んでいる Force Push など）一覧だけの小さなシート（macOS 版と同じ）。
@@ -2049,29 +2146,6 @@ pub fn confirm_ref_in(
     );
 }
 
-/// [`confirm_then`] と同じで、`target` の worktree の名前を書き、そこで実行する（確かめる前に読んだ worktree に
-/// 効かせる）。
-pub fn confirm_in(
-    actions: &Rc<Actions>,
-    target: Target,
-    title: String,
-    message: String,
-    ok: String,
-    destructive: bool,
-    commands: Vec<Value>,
-) {
-    confirm_sheet(
-        actions,
-        Some(target),
-        true,
-        title,
-        message,
-        ok,
-        destructive,
-        commands,
-    );
-}
-
 #[allow(clippy::too_many_arguments)]
 fn confirm_sheet(
     actions: &Rc<Actions>,
@@ -2121,6 +2195,25 @@ pub fn confirm_integrate(
     glib::spawn_future_local(async move {
         let repo = target.repo.clone();
         let sheet = target.sheet(parent(&actions).as_ref(), &title, &can_undo());
+        // 1 つを merge するなら、前と後の絵（読んでからシートを出す。macOS 版と同じ）。
+        if !estimate && let [rev] = theirs.as_slice() {
+            let preview = run(
+                &repo,
+                json!({ "op": "mergePreview", "theirs": rev, "ours": ours }),
+            )
+            .await["info"]
+                .clone();
+            let into = if ours == "HEAD" {
+                actions.head().unwrap_or_else(|| "HEAD".to_owned())
+            } else {
+                ours.clone()
+            };
+            if let Some(drawing) =
+                crate::rewritedraw::for_merge(&preview, &into, tr!("After the merge"))
+            {
+                sheet.add(&drawing);
+            }
+        }
         let forecast = forecast_label();
         sheet.add(&forecast);
         sheet.buttons(ok, false, None);
@@ -2173,17 +2266,28 @@ pub fn pick(actions: &Rc<Actions>, revert: bool, commits: Vec<(String, bool)>) {
         let op = if revert { "revert" } else { "cherryPick" };
         let merge = commits.iter().any(|(_, merge)| *merge);
         let oids: Vec<String> = commits.into_iter().map(|(oid, _)| oid).collect();
+        // 前と後の絵（今の先端の上に、作るコミット。macOS 版と同じ）。読んでからシートを出す。
+        let preview = run(
+            &target.repo,
+            json!({ "op": "pickPreview", "oids": oids, "revert": revert }),
+        )
+        .await["info"]
+            .clone();
         let commands = vec![json!({ "op": op, "oids": oids, "isMerge": merge })];
         let ok = if revert { "Revert" } else { "Cherry-pick" };
-        confirm_in(
-            &actions,
-            target,
-            title,
-            message,
-            ok.to_owned(),
-            false,
-            commands,
-        );
+        let sheet = target.sheet(parent(&actions).as_ref(), &title, &message);
+        let kind = if revert {
+            crate::rewritedraw::PickKind::Revert
+        } else {
+            crate::rewritedraw::PickKind::CherryPick
+        };
+        if let Some(drawing) = crate::rewritedraw::for_pick(&preview, &onto, kind) {
+            sheet.add(&drawing);
+        }
+        sheet.buttons(ok, false, None);
+        if sheet.run().await == Response::Ok {
+            actions.perform_in(target.repo, commands, |_| {});
+        }
     });
 }
 
@@ -2211,6 +2315,46 @@ pub fn pop(actions: &Rc<Actions>, name: &str, message: Option<&str>, pop: bool) 
     );
 }
 
+/// チェックアウトしていないブランチを上流まで進める前に確かめる（前と後の絵つき。macOS 版の
+/// `fastForwardWithConfirmation`）。
+pub fn fast_forward(actions: &Rc<Actions>, name: &str, upstream: &str) {
+    let (actions, name, upstream) = (actions.clone(), name.to_owned(), upstream.to_owned());
+    glib::spawn_future_local(async move {
+        let Some(repo) = actions.repo() else { return };
+        let preview = run(
+            &repo,
+            json!({ "op": "movePreview", "from": name, "to": upstream, "branch": name }),
+        )
+        .await["info"]
+            .clone();
+        let sheet = Sheet::unnamed(
+            parent(&actions).as_ref(),
+            &tr!(
+                "Fast-forward {branch} to {upstream}?",
+                branch = name,
+                upstream = upstream
+            ),
+            &can_undo(),
+        );
+        if !preview["drawing"].is_null() {
+            let (area, set) = crate::rewritedraw::new_move(crate::rewritedraw::Move {
+                moving: name.clone(),
+                kind: "local",
+                after_title: tr!("After the fast-forward"),
+                lost_note: String::new(),
+                lost_red: false,
+                removes: false,
+            });
+            set(&preview);
+            sheet.add(&area);
+        }
+        sheet.buttons("Fast-Forward", false, None);
+        if sheet.run().await == Response::Ok {
+            actions.perform_sequence(vec![json!({ "op": "fastForward", "branch": name })]);
+        }
+    });
+}
+
 /// Undo の前に、何を戻すかを見せる。
 pub fn undo(actions: &Rc<Actions>) {
     // 選んだときの worktree の最後の操作を見せ、それを戻す（読んでいる間に書き込む先を替えても）。
@@ -2234,6 +2378,38 @@ pub fn undo(actions: &Rc<Actions>) {
             &tr!("Undo “{label}”?", label = label),
             &what,
         );
+        // ブランチが戻るなら、前と後の絵（今のブランチを先に。作られた・消されたブランチは描かない。macOS 版と同じ）。
+        let moves = peek["info"]["moves"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        let both = |m: &&Value| m["from"].is_string() && m["to"].is_string();
+        let head = peek["info"]["head"].as_str();
+        let chosen = moves
+            .iter()
+            .filter(both)
+            .find(|m| m["name"].as_str() == head)
+            .or_else(|| moves.iter().find(both));
+        if let Some(m) = chosen {
+            let preview = run(
+                &target.repo,
+                json!({ "op": "movePreview", "from": m["from"], "to": m["to"] }),
+            )
+            .await["info"]
+                .clone();
+            if !preview["drawing"].is_null() {
+                let (area, set) = crate::rewritedraw::new_move(crate::rewritedraw::Move {
+                    moving: m["name"].as_str().unwrap_or("HEAD").to_owned(),
+                    kind: "local",
+                    after_title: tr!("After the undo"),
+                    lost_note: tr!("taken off"),
+                    lost_red: false,
+                    removes: false,
+                });
+                set(&preview);
+                sheet.add(&area);
+            }
+        }
         sheet.buttons("Undo", false, None);
         if sheet.run().await == Response::Ok {
             actions.perform_in(target.repo, vec![json!({ "op": "undo" })], |_| {});
@@ -2329,8 +2505,12 @@ fn integrate_sheet(
         }
         // rebase なら、前と後の絵（今のブランチの rebase のとき）。
         let (drawing, set_drawing) = crate::rewritedraw::new();
+        // merge なら、選んだ相手の前と後の絵（選び直すと替わる。macOS 版と同じ）。
+        let merge_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
         if rebase {
             sheet.add(&drawing);
+        } else {
+            sheet.add(&merge_box);
         }
         let forecast = forecast_label();
         sheet.add(&forecast);
@@ -2368,6 +2548,7 @@ fn integrate_sheet(
             let (touched, configured, syncing) =
                 (touched.clone(), configured.clone(), syncing.clone());
             let drawn_tx = drawn_tx.clone();
+            let (merge_box, into) = (merge_box.clone(), current.clone());
             Rc::new(move || {
                 let g = generation.get() + 1;
                 generation.set(g);
@@ -2385,11 +2566,28 @@ fn integrate_sheet(
                     syncing.clone(),
                     drawn_tx.clone(),
                 );
+                let (merge_box, into) = (merge_box.clone(), into.clone());
                 let rev = chosen().1;
                 forecast.set_text(&tr!("Checking for conflicts…"));
                 forecast.remove_css_class("warning");
                 glib::spawn_future_local(async move {
                     if !rebase {
+                        let preview = run(&repo, json!({ "op": "mergePreview", "theirs": rev }))
+                            .await["info"]
+                            .clone();
+                        if generation.get() == g {
+                            while let Some(child) = merge_box.first_child() {
+                                merge_box.remove(&child);
+                            }
+                            if let Some(area) = crate::rewritedraw::for_merge(
+                                &preview,
+                                &into,
+                                tr!("After the merge"),
+                            ) {
+                                merge_box.append(&area);
+                            }
+                            let _ = drawn_tx.try_send(());
+                        }
                         let f = predict_merge(&repo, "HEAD", &[rev]).await;
                         if generation.get() == g {
                             show_forecast(&forecast, f.as_ref(), false);
@@ -2457,12 +2655,9 @@ fn integrate_sheet(
             }
             l();
         });
-        // rebase の絵は、読み終えてから出す（出した直後に窓の背が伸びると、GNOME の Mutter は開くときの拡大の
+        // rebase・merge の絵は、読み終えてから出す（出した直後に窓の背が伸びると、GNOME の Mutter は開くときの拡大の
         // 動きのまま止め、シートが大きくずれて描かれる）。遅い場所（SSH 越し）では待ちすぎない。
-        if rebase {
-            let _ =
-                glib::future_with_timeout(std::time::Duration::from_secs(2), drawn_rx.recv()).await;
-        }
+        let _ = glib::future_with_timeout(std::time::Duration::from_secs(2), drawn_rx.recv()).await;
         if sheet.run().await != Response::Ok {
             return;
         }
@@ -2518,7 +2713,7 @@ pub fn push_after_commit(actions: &Rc<Actions>, target: Target) {
 async fn unique_commits(
     repo: &Arc<Repository>,
     names: &[String],
-) -> Result<Vec<(String, CommitRange)>, String> {
+) -> Result<Vec<(String, CommitRange, String)>, String> {
     let r = repo.clone();
     let refs = gio::spawn_blocking(move || r.load_refs().map_err(|e| e.to_string()))
         .await
@@ -2532,18 +2727,19 @@ async fn unique_commits(
             .find(|i| i.kind == amonhen_model::RefKind::Local && &i.name == name);
         let upstream = item.and_then(|i| if i.gone { None } else { i.detail.clone() });
         let from_head = try_between(repo, "HEAD", name, 30).await?;
-        let only = match upstream {
+        // 比べた相手（今のブランチか上流）も返す（消したときの絵に使う）。
+        let (only, against) = match upstream {
             Some(u) if from_head.count > 0 => {
                 let from_upstream = try_between(repo, &u, name, 30).await?;
                 if from_upstream.count < from_head.count {
-                    from_upstream
+                    (from_upstream, u)
                 } else {
-                    from_head
+                    (from_head, "HEAD".to_owned())
                 }
             }
-            _ => from_head,
+            _ => (from_head, "HEAD".to_owned()),
         };
-        unique.push((name.clone(), only));
+        unique.push((name.clone(), only, against));
     }
     Ok(unique)
 }
@@ -2580,7 +2776,7 @@ pub fn delete_branches(actions: &Rc<Actions>, names: Vec<String>) {
                     .await;
             }
         };
-        let unmerged = unique.iter().any(|(_, r)| r.count > 0);
+        let unmerged = unique.iter().any(|(_, r, _)| r.count > 0);
         let title = if names.len() == 1 {
             tr!("Delete {name}?", name = names[0])
         } else {
@@ -2617,11 +2813,35 @@ pub fn delete_branches(actions: &Rc<Actions>, names: Vec<String>) {
         }
         message.push_str(&can_undo());
         let sheet = target.sheet(parent(&actions).as_ref(), &title, &message);
+        // 1 本を消して、ほかにないコミットがあれば、それが外れる前と後の絵（macOS 版と同じ）。
+        if let [(name, range, against)] = &unique[..]
+            && names.len() == 1
+            && range.count > 0
+        {
+            let preview = run(
+                &target.repo,
+                json!({ "op": "deletePreview", "branch": name, "against": against }),
+            )
+            .await["info"]
+                .clone();
+            if !preview["drawing"].is_null() {
+                let (area, set) = crate::rewritedraw::new_move(crate::rewritedraw::Move {
+                    moving: name.clone(),
+                    kind: "local",
+                    after_title: tr!("After deleting"),
+                    lost_note: tr!("goes with the branch"),
+                    lost_red: true,
+                    removes: true,
+                });
+                set(&preview);
+                sheet.add(&area);
+            }
+        }
         if unmerged {
             let lists: Vec<(String, &CommitRange, bool)> = unique
                 .iter()
-                .filter(|(_, r)| r.count > 0)
-                .map(|(n, r)| (tr!("Commits only on {branch}", branch = n), r, true))
+                .filter(|(_, r, _)| r.count > 0)
+                .map(|(n, r, _)| (tr!("Commits only on {branch}", branch = n), r, true))
                 .collect();
             sheet.add(&commit_lists(&lists));
         }
@@ -2639,7 +2859,7 @@ pub fn delete_branches(actions: &Rc<Actions>, names: Vec<String>) {
             unique
                 .into_iter()
                 .map(
-                    |(name, r)| json!({ "op": "deleteBranch", "name": name, "force": r.count > 0 }),
+                    |(name, r, _)| json!({ "op": "deleteBranch", "name": name, "force": r.count > 0 }),
                 )
                 .chain(
                     by_pull_request.into_iter().map(

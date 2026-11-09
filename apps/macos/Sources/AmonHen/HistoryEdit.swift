@@ -482,10 +482,27 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
         guard barButtons.allSatisfy(\.isEnabled) else { return }
         let steps = planSteps()
         barButtons.forEach { $0.isEnabled = false }
-        actions.rewrite(
-            L("Edit %ld Commits", rows.count), ["kind": "plan", "steps": steps], updateRefs: updateRefs,
-            completion: { [weak self] _ in self?.onFinish?(true) },
-            failed: { [weak self] in self?.barButtons.forEach { $0.isEnabled = true } })
+        let updateRefs = updateRefs
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            // 前と後の絵を見せて確かめる（merge を越える編集では描けないので、そのまま）。
+            let answer = await actions.rewritePreview(edit: ["kind": "plan", "steps": steps], updateRefs: updateRefs)
+            if let drawing = answer?.editDrawing {
+                let alert = actions.makeAlert(L("Apply These Changes?"), (answer?.lines() ?? []).joined(separator: " "))
+                alert.addButton(withTitle: L("Apply Changes"))
+                alert.addButton(withTitle: L("Cancel"))
+                alert.accessoryView = EditDrawingView(drawing, current: answer?.current)
+                alert.accessoryView?.frame.size = alert.accessoryView?.intrinsicContentSize ?? .zero
+                guard await actions.present(alert) == .alertFirstButtonReturn else {
+                    barButtons.forEach { $0.isEnabled = true }
+                    return
+                }
+            }
+            actions.rewrite(
+                L("Edit %ld Commits", rows.count), ["kind": "plan", "steps": steps], updateRefs: updateRefs,
+                completion: { [weak self] _ in self?.onFinish?(true) },
+                failed: { [weak self] in self?.barButtons.forEach { $0.isEnabled = true } })
+        }
     }
 }
 

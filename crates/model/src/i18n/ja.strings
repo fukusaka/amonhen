@@ -930,6 +930,12 @@
 "Mixed: keep the changes in the working tree" = "Mixed: 変更は作業ツリーに残す";
 "Hard: match the commit (uncommitted changes are stashed first)" = "Hard: コミットに合わせる（作業中の変更は先に stash する）";
 "Commits taken off stay in Reflog." = "外れたコミットは Reflog に残ります。";
+"After the reset" = "Reset の後";
+"taken off" = "外れる";
+"The difference from now ({count} files) stays staged." = "今との違い（{count} ファイル）は stage に残ります。";
+"The difference from now ({count} files) stays in the working tree." = "今との違い（{count} ファイル）は作業ツリーに残ります。";
+"The working tree matches the commit; the difference from now ({count} files) goes away (Undo brings it back)." = "作業ツリーをコミットに合わせます。今との違い（{count} ファイル）は消えます（Undo で戻せます）。";
+"{upstream} has commits this takes off, so pushing afterwards needs Force Push." = "{upstream} は外れるコミットを持っているので、このあとの Push には Force Push が要ります。";
 
 /* GTK4: Reflog の画面 */
 "Create a branch at this commit and switch to it" = "このコミットにブランチを作って切り替える";
@@ -943,6 +949,28 @@
 "Also move the stacked branches" = "積み重ねたブランチも一緒に動かす";
 "Now" = "今";
 "After the rebase" = "rebase の後";
+"split off {when}" = "{when}に分かれた";
+"After the push" = "Push の後";
+"After the force push" = "Force Push の後";
+"After the merge" = "Merge の後";
+"After the pull" = "Pull の後";
+"After the cherry-pick" = "Cherry-pick の後";
+"After the revert" = "Revert の後";
+"After the undo" = "Undo の後";
+"only in Reflog" = "Reflog にだけある";
+"After the fast-forward" = "Fast-Forward の後";
+"After deleting" = "削除の後";
+"goes with the branch" = "ブランチと一緒に消える";
+"After applying the patches" = "パッチを当てた後";
+"and {count} more branches" = "ほか {count} 本";
+"After the edit" = "編集の後";
+"dropped" = "消える";
+"combined with the one below" = "下とまとめる";
+"new message" = "メッセージを変える";
+"stops here" = "ここで止まる";
+"{count} commits in one" = "{count} コミットを 1 つに";
+"Apply These Changes?" = "この変更を実行しますか？";
+"removed from {upstream}" = "{upstream} から消える";
 "For this rebase only (git’s --update-refs). Starts from rebase.updateRefs." = "この rebase だけの指定です（git の --update-refs）。最初は rebase.updateRefs のとおり。";
 
 /* GTK4 の FE: つながりが切れた */

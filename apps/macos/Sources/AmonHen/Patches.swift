@@ -182,6 +182,11 @@ extension Actions {
         status.preferredMaxLayoutWidth = width
 
         var views: [NSView] = [scroll, status]
+        // コミットになるなら（git am）、前と後の絵（今の先端の上に、パッチごとのコミット）。
+        if summary.isMailbox,
+           let drawing = pickDrawing(await pickPreview(subjects: summary.patches.map(\.subject)), kind: .patches) {
+            views.insert(drawing, at: 0)
+        }
         let threeWay = NSButton(checkboxWithTitle: L("3-way merge where it doesn’t apply"), target: nil, action: nil)
         threeWay.toolTip = L("Leaves conflicts to resolve in Working Copy instead of stopping (--3way).")
         let index = NSButton(checkboxWithTitle: L("Stage the changes too (--index)"), target: nil, action: nil)
@@ -196,7 +201,8 @@ extension Actions {
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 8
-        stack.frame = NSRect(x: 0, y: 0, width: width, height: stack.fittingSize.height)
+        // 絵があれば、その幅まで広げる。
+        stack.frame = NSRect(x: 0, y: 0, width: max(width, stack.fittingSize.width), height: stack.fittingSize.height)
         alert.accessoryView = stack
         guard await present(alert) == .alertFirstButtonReturn else { return }
         if summary.isMailbox {

@@ -1502,11 +1502,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 } else if otherWorktree(using: name) == nil {
                     // ほかの worktree でチェックアウト中なら動かせない（その作業ツリーとずれる）。上の Open Worktree から。
                     add("Fast-Forward \(name) to \(upstream)…") {
-                        Task { @MainActor in
-                            guard await actions.confirm(L("Fast-forward %@ to %@?", name, upstream), message: Actions.canUndo,
-                                                        ok: "Fast-Forward") else { return }
-                            actions.perform(["op": "fastForward", "branch": name])
-                        }
+                        actions.fastForwardWithConfirmation(name, to: upstream)
                     }
                 }
                 menu.addItem(.separator())

@@ -58,6 +58,10 @@ nonisolated struct RewritePreview: Decodable, Sendable {
         struct Commit: Decodable, Sendable {
             let oid: String
             let subject: String
+            /// 分かれたところだけ: 作った日時（Unix 秒）。
+            var time: Int64? = nil
+            /// どこからも辿れない（Reflog にだけある。Undo で戻る先）。
+            var hidden: Bool? = nil
         }
 
         struct Label: Decodable, Sendable {
@@ -69,9 +73,14 @@ nonisolated struct RewritePreview: Decodable, Sendable {
 
         /// 載せ直すコミット（古い順）。
         let picks: [Commit]
+        /// 省いた載せ直すコミットの数と、新しい順に並べたときの省いたところ（古いエンジンは送らない）。
+        let picksMore: Int?
+        let picksMoreAt: Int?
         /// 載せ先で進んだコミット（新しい順、先頭のいくつか）と、ほかにいくつあるか。
         let onto: [Commit]
         let ontoMore: Int
+        /// 省いたところ（`onto` の何番目の前か。古いエンジンは送らないので、末尾として扱う）。
+        let ontoMoreAt: Int?
         /// 分かれたところ。
         let base: Commit?
         let labels: [Label]
@@ -91,6 +100,30 @@ nonisolated struct RewritePreview: Decodable, Sendable {
     let conflicts: [Conflict]?
     let updateRefs: UpdateRefs?
     let drawing: Drawing?
+    /// History の編集の前と後（古いエンジンは送らない）。
+    var editDrawing: EditDrawing? = nil
+
+    /// History の編集の前と後を描く材料。`before` は書き換わるコミット、`after` はできるコミット（どちらも新しい順、
+    /// 長ければ真ん中を省く）。
+    struct EditDrawing: Decodable, Sendable {
+        struct Step: Decodable, Sendable {
+            let oid: String
+            let subject: String
+            /// git の命令（`pick`・`reword`・`squash`・`fixup`・`drop`・`edit`）。
+            let action: String
+            /// `after` だけ: まとめたコミットの数。
+            var combined: Int? = nil
+        }
+
+        let before: [Step]
+        let beforeMore: Int
+        let beforeMoreAt: Int?
+        let after: [Step]
+        let afterMore: Int
+        let afterMoreAt: Int?
+        let base: Drawing.Commit?
+        let labels: [Drawing.Label]
+    }
 
     /// 確認とステータスバーに出す行（ブランチ、push 済み、コンフリクト）。
     func lines() -> [String] {
@@ -173,20 +206,40 @@ extension Actions {
                 message = ""
             }
             let ok = force || diverged ? "Force Push" : "Push"
+            // 送った後の形（上流の札が手元の先端へ。Force Push なら上流から消えるコミットを赤で）。
+            let replacing = force || diverged
+            var drawing: MoveDrawingView?
+            if let preview = await movePreview(from: upstream, to: branch), preview.drawing != nil {
+                let view = MoveDrawingView(
+                    moving: upstream, kind: "remote", afterTitle: replacing ? L("After the force push") : L("After the push"),
+                    lostNote: L("removed from %@", upstream), lostColor: .systemRed)
+                view.preview = preview
+                drawing = view
+            }
             let choice: PushSheet.Choice
             // 送るコミットとその中身を、右の欄と同じ表示で読んでから押す（Metal がなければ一覧だけのシート）。
             if let range = state.range, let detail = makeDetailView?(), let window {
                 let sheet = PushSheet(
                     title: title, message: sheetMessage(message), warnings: state.warnings, commits: outgoing,
                     lost: force || diverged ? incoming : nil, range: range, detail: detail, ok: ok,
-                    destructive: force || diverged, other: diverged ? "Pull…" : nil)
+                    destructive: force || diverged, other: diverged ? "Pull…" : nil, drawing: drawing)
                 choice = await sheet.present(in: window)
             } else {
                 let alert = makeAlert(title, message)
-                alert.accessoryView = Self.commitLists([
+                let lists = Self.commitLists([
                     (L("Commits to send"), outgoing, false),
                     (L("Commits %@ will lose", upstream), force || diverged ? incoming : .empty, true),
                 ])
+                if let drawing {
+                    let stack = NSStackView(views: [drawing, lists])
+                    stack.orientation = .vertical
+                    stack.alignment = .leading
+                    stack.spacing = 10
+                    stack.frame.size = stack.fittingSize
+                    alert.accessoryView = stack
+                } else {
+                    alert.accessoryView = lists
+                }
                 let okButton = alert.addButton(withTitle: ok)
                 let cancel = alert.addButton(withTitle: L("Cancel"))
                 // Force Push は戻せない（赤く、↩ では押せない。PushSheet と同じ）。
@@ -331,9 +384,56 @@ extension Actions {
                 }
             }
             showForecast()
+            // 取り込み方ごとの前と後の絵（読んでからシートを出す）。選び直すと絵も替わる。高さはいちばん高い絵に
+            // 合わせておく（シートの大きさを変えない）。
+            var drawings: [PullMode: NSView] = [:]
+            if let upstream, incoming.count > 0 {
+                if outgoing.count == 0 {
+                    // 手元に新しいコミットがなければ、どの取り込み方でも先へ進めるだけ。
+                    if let preview = await movePreview(from: "HEAD", to: upstream, branch: branch), preview.drawing != nil {
+                        let view = MoveDrawingView(moving: branch, kind: "local", afterTitle: L("After the pull"),
+                                                   lostNote: "", lostColor: nil)
+                        view.preview = preview
+                        for m in PullMode.allCases { drawings[m] = view }
+                    }
+                } else {
+                    drawings[.merge] = mergeDrawing(await mergePreview(theirs: upstream, ffSetting: "pull.ff"), theirs: upstream,
+                                                    afterTitle: L("After the pull"))
+                    if let preview = await rewritePreview(onto: upstream), preview.drawing != nil {
+                        let view = RewriteDrawingView()
+                        view.preview = preview
+                        drawings[.rebase] = view
+                    }
+                }
+            }
+            let drawingBox = NSView()
+            let shownDrawings = Array(Set(drawings.values.map(ObjectIdentifier.init))).compactMap { id in
+                drawings.values.first { ObjectIdentifier($0) == id }
+            }
+            for view in shownDrawings {
+                view.translatesAutoresizingMaskIntoConstraints = false
+                drawingBox.addSubview(view)
+                NSLayoutConstraint.activate([
+                    view.topAnchor.constraint(equalTo: drawingBox.topAnchor),
+                    view.leadingAnchor.constraint(equalTo: drawingBox.leadingAnchor),
+                ])
+            }
+            let boxSize = shownDrawings.reduce(NSSize.zero) {
+                NSSize(width: max($0.width, $1.fittingSize.width), height: max($0.height, $1.fittingSize.height))
+            }
+            drawingBox.translatesAutoresizingMaskIntoConstraints = false
+            drawingBox.widthAnchor.constraint(equalToConstant: boxSize.width).isActive = true
+            drawingBox.heightAnchor.constraint(equalToConstant: boxSize.height).isActive = true
+            let showDrawing = {
+                let m = chosen() == .git ? byGit : chosen()
+                let shown = (m == .fastForwardOnly && outgoing.count > 0) || (chosen() == .git && refused) ? nil : drawings[m]
+                for view in shownDrawings { view.isHidden = view !== shown }
+            }
+            showDrawing()
             let target = ClosureTarget {
                 update()
                 showForecast()
+                showDrawing()
             }
             for p in [popup, source] {
                 p.target = target
@@ -350,7 +450,8 @@ extension Actions {
                 + [[NSTextField(labelWithString: L("Integrate with:")), popup]])
             grid.rowSpacing = 6
             grid.column(at: 0).xPlacement = .trailing
-            let stack = NSStackView(views: [grid, note] + (forecastLabel.map { [$0] } ?? []))
+            let stack = NSStackView(views: [grid] + (shownDrawings.isEmpty ? [] : [drawingBox]) + [note]
+                + (forecastLabel.map { [$0] } ?? []))
             stack.orientation = .vertical
             stack.alignment = .leading
             stack.spacing = 8
@@ -400,8 +501,22 @@ extension Actions {
                 panel = p
             } else {
                 let label = Self.forecastLabel()
-                label.frame.size = label.fittingSize
-                alert.accessoryView = label
+                // 1 つを merge するなら、前と後の絵（読んでからシートを出す）。
+                var drawing: NSView?
+                if !estimate, theirs.count == 1, let rev = theirs.first {
+                    drawing = mergeDrawing(await mergePreview(theirs: rev, ours: ours), theirs: rev, into: ours)
+                }
+                if let drawing {
+                    let stack = NSStackView(views: [drawing, label])
+                    stack.orientation = .vertical
+                    stack.alignment = .leading
+                    stack.spacing = 10
+                    stack.frame.size = stack.fittingSize
+                    alert.accessoryView = stack
+                } else {
+                    label.frame.size = label.fittingSize
+                    alert.accessoryView = label
+                }
                 Task { @MainActor in
                     Self.show(await predictMerge(ours: ours, theirs: theirs), estimate: estimate || theirs.count > 1, in: label)
                 }
@@ -552,7 +667,16 @@ extension Actions {
             let onto = currentBranch ?? "HEAD"
             let title = revert ? L("Revert %@ on %@?", what, onto) : L("Cherry-pick %@ onto %@?", what, onto)
             let message = (revert ? L("Adds commits that undo them.") : L("Adds copies of them.")) + " " + Self.canUndo
-            guard await confirm(title, message: sheetMessage(message), ok: revert ? "Revert" : "Cherry-pick") else { return }
+            // 前と後の絵（今の先端の上に、作るコミット）。読んでからシートを出す。
+            let drawing = pickDrawing(await pickPreview(oids: commits.map(\.hex), revert: revert), kind: revert ? .revert : .cherryPick)
+            let alert = makeAlert(title, sheetMessage(message))
+            alert.addButton(withTitle: revert ? "Revert" : "Cherry-pick")
+            alert.addButton(withTitle: L("Cancel"))
+            if let drawing {
+                drawing.frame.size = drawing.fittingSize
+                alert.accessoryView = drawing
+            }
+            guard await present(alert) == .alertFirstButtonReturn else { return }
             // 1 つの命令で（git cherry-pick A B C と同じく、コンフリクトで止まったら残りは git が覚えていて、Continue・
             // Skip で続く。1 つずつ実行すると、止まったところで残りが黙って落ちる）。
             perform(["op": revert ? "revert" : "cherryPick", "oids": commits.map(\.hex),
@@ -578,6 +702,23 @@ extension Actions {
         }
     }
 
+    /// チェックアウトしていないブランチを上流まで進める前に確かめる（前と後の絵つき）。
+    func fastForwardWithConfirmation(_ name: String, to upstream: String) {
+        Task { @MainActor in
+            let alert = makeAlert(L("Fast-forward %@ to %@?", name, upstream), Self.canUndo)
+            alert.addButton(withTitle: "Fast-Forward")
+            alert.addButton(withTitle: L("Cancel"))
+            if let preview = await movePreview(from: name, to: upstream, branch: name), preview.drawing != nil {
+                let drawing = MoveDrawingView(moving: name, kind: "local", afterTitle: L("After the fast-forward"),
+                                              lostNote: "", lostColor: nil)
+                drawing.preview = preview
+                drawing.frame.size = drawing.fittingSize
+                alert.accessoryView = drawing
+            }
+            if await present(alert) == .alertFirstButtonReturn { perform(["op": "fastForward", "branch": name]) }
+        }
+    }
+
     /// Undo の前に、何を戻すかを見せる（ツールバーのボタンでは名前がツールチップにしか出ないため）。
     func undoWithConfirmation() {
         let repository = self.repository
@@ -595,6 +736,17 @@ extension Actions {
             let alert = makeAlert(L("Undo “%@”?", peek.label), what)
             alert.addButton(withTitle: "Undo")
             alert.addButton(withTitle: L("Cancel"))
+            // ブランチが戻るなら、前と後の絵（今のブランチを先に。作られた・消されたブランチは描かない）。
+            let move = peek.moves.first { $0.name == peek.head && $0.from != nil && $0.to != nil }
+                ?? peek.moves.first { $0.from != nil && $0.to != nil }
+            if let move, let from = move.from, let to = move.to,
+               let preview = await movePreview(from: from, to: to), preview.drawing != nil {
+                let drawing = MoveDrawingView(moving: move.name, kind: "local", afterTitle: L("After the undo"),
+                                              lostNote: L("taken off"), lostColor: nil)
+                drawing.preview = preview
+                drawing.frame.size = drawing.fittingSize
+                alert.accessoryView = drawing
+            }
             if await present(alert) == .alertFirstButtonReturn { undo() }
         }
     }
@@ -849,7 +1001,7 @@ extension Actions {
         let others = names.filter { mergedByPullRequest[$0] == nil }
         Task { @MainActor in
             // それぞれのブランチにしかないコミット。git と同じく、今のブランチか上流のどちらかに取り込まれていれば消せる。
-            let result = await Task.detached { () -> Result<[(String, CommitRange)], Error> in
+            let result = await Task.detached { () -> Result<[(String, CommitRange, String)], Error> in
                 Result {
                     let refs = try repository.loadRefs()
                     return try others.map { name in
@@ -859,16 +1011,26 @@ extension Actions {
                         let item = refs.items.first { $0.kind == .local && $0.name == name }
                         let upstream = item.flatMap { $0.gone ? nil : $0.detail }
                         let fromHead = try only("HEAD")
-                        guard fromHead.count > 0, let upstream else { return (name, fromHead) }
+                        guard fromHead.count > 0, let upstream else { return (name, fromHead, "HEAD") }
                         let fromUpstream = try only(upstream)
-                        return (name, fromUpstream.count < fromHead.count ? fromUpstream : fromHead)
+                        return fromUpstream.count < fromHead.count ? (name, fromUpstream, upstream) : (name, fromHead, "HEAD")
                     }
                 }
             }.value
             let unique: [(String, CommitRange)]
+            // 1 本を消して、ほかにないコミットがあれば、それが外れる前と後の絵（どこに取り込まれているかと比べて）。
+            var drawing: NSView?
             switch result {
             case let .failure(error): return await inform(L("Couldn’t check the branches"), "\(error)")
-            case let .success(ranges): unique = ranges
+            case let .success(ranges):
+                unique = ranges.map { ($0.0, $0.1) }
+                if names.count == 1, let (name, range, against) = ranges.first, range.count > 0,
+                   let preview = await deletePreview(branch: name, against: against), preview.drawing != nil {
+                    let view = MoveDrawingView(moving: name, kind: "local", afterTitle: L("After deleting"),
+                                               lostNote: L("goes with the branch"), lostColor: .systemRed, removes: true)
+                    view.preview = preview
+                    drawing = view
+                }
             }
             let unmerged = unique.filter { $0.1.count > 0 }
             let title = names.count == 1 ? L("Delete %@?", names[0]) : L("Delete %ld branches?", names.count)
@@ -878,7 +1040,17 @@ extension Actions {
             let message = list + prNote + (unmerged.isEmpty ? "" : L("Some commits are on no other branch; they go with the branch.") + " ") + Self.canUndo
             let alert = makeAlert(title, message)
             if !unmerged.isEmpty {
-                alert.accessoryView = Self.commitLists(unmerged.map { (L("Commits only on %@", $0.0), $0.1, true) })
+                let lists = Self.commitLists(unmerged.map { (L("Commits only on %@", $0.0), $0.1, true) })
+                if let drawing {
+                    let stack = NSStackView(views: [drawing, lists])
+                    stack.orientation = .vertical
+                    stack.alignment = .leading
+                    stack.spacing = 10
+                    stack.frame.size = stack.fittingSize
+                    alert.accessoryView = stack
+                } else {
+                    alert.accessoryView = lists
+                }
             }
             alert.addButton(withTitle: unmerged.isEmpty ? L("Delete") : L("Delete Anyway"))
             alert.addButton(withTitle: L("Cancel"))

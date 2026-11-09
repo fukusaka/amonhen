@@ -10,6 +10,7 @@
 "You have {count} local commits, so this makes a merge commit." = "You have {count} local commit, so this makes a merge commit.";
 "Your {count} local commits are replayed on top (their IDs change)." = "Your {count} local commit is replayed on top (its ID changes).";
 "and {count} more tags" = "and {count} more tag";
+"and {count} more branches" = "and {count} more branch";
 "{count} commits" = "{count} commit";
 "{count} commits selected" = "{count} commit selected";
 "{count} files have conflicts at {subject}. Resolve them in Working Copy, then Continue." = "{count} file has conflicts at {subject}. Resolve them in Working Copy, then Continue.";
@@ -54,3 +55,6 @@
 "{count} operations running (click for Activity)" = "{count} operation running (click for Activity)";
 "Nothing to push. Pull the {count} new commits first." = "Nothing to push. Pull the {count} new commit first.";
 "{count} levels" = "{count} level";
+"The difference from now ({count} files) stays staged." = "The difference from now ({count} file) stays staged.";
+"The difference from now ({count} files) stays in the working tree." = "The difference from now ({count} file) stays in the working tree.";
+"The working tree matches the commit; the difference from now ({count} files) goes away (Undo brings it back)." = "The working tree matches the commit; the difference from now ({count} file) goes away (Undo brings it back).";
