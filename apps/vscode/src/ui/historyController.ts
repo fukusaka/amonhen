@@ -3,10 +3,10 @@ import { basename } from 'node:path';
 import * as vscode from 'vscode';
 import type { DaemonClient } from '../daemon/client.ts';
 import { daemonFor } from '../daemon/connection.ts';
-import { commitFiles, splitCommitDiff } from '../daemon/diff.ts';
+import { applySyntax, commitFiles, splitCommitDiff } from '../daemon/diff.ts';
 import { readRows, toRowData } from '../daemon/history.ts';
 import { contentsToFetch, searchesContents, searchHistory } from '../daemon/search.ts';
-import { computeDiff, type FileDiff } from '../diff/fileDiff.ts';
+import { computeDiff, type DiffLine, type FileDiff } from '../diff/fileDiff.ts';
 import { parseCommitObject } from '../git/commitObject.ts';
 import { signatureExplanation, signatureLabel, signatureStatus, type SignatureCheck } from '../git/signature.ts';
 import type { Commit } from '../git/log.ts';
@@ -158,6 +158,8 @@ export class HistoryController implements vscode.Disposable {
   private readonly details = new Map<string, Omit<CommitDetails, 'refs'>>();
   /** 一度求めたファイルの差分。キーは `oid:path` */
   private readonly diffs = new Map<string, FileDiff>();
+  /** Webview に送ったコミットの差分（`<oid か選択の key>:<path>`）。構文の色が後から届いたら、これだけ送り直す */
+  private readonly sentDiffs = new Set<string>();
   /** 行の署名の印（null は署名なし）。コミットは変わらないので、読み直しても覚えておく */
   private readonly signatures = new Map<string, SignatureView | null>();
   /** 詳細の残り（署名・子のコミット）。子は増えるので、History を読み直したら捨てる */
@@ -361,7 +363,9 @@ export class HistoryController implements vscode.Disposable {
         daemon.client.call({ op: 'historyRows', history: daemon.history, rows: sorted.slice(0, SELECTION_LIST) }),
       ]);
       if (request !== this.selectionRequest) return;
-      current.diffs = splitCommitDiff(diff);
+      const index = new Map<number, DiffLine>();
+      current.diffs = splitCommitDiff(diff, index);
+      void this.loadSyntax(daemon.client, diff.json['view'], index, current.key, current.diffs);
       const selection = diff.json['selection'] as { kind: SelectionView['kind'] };
       const commits = readRows(listed).map((r) => ({ row: r.row, oid: r.oid, subject: r.subject, author: r.author }));
       // Viewed は選んだコミットの組で覚える（全部の ID が分かるときだけ）
@@ -586,9 +590,12 @@ export class HistoryController implements vscode.Disposable {
     if (info.json['ok'] !== true || !i) {
       throw new Error(String(info.json['error'] ?? 'Can’t read the commit'));
     }
-    for (const [path, d] of splitCommitDiff(diff)) {
+    const index = new Map<number, DiffLine>();
+    const split = splitCommitDiff(diff, index);
+    for (const [path, d] of split) {
       this.diffs.set(`${oid}:${path}`, d);
     }
+    void this.loadSyntax(client, diff.json['view'], index, oid, split);
     while (this.diffs.size > DIFF_CACHE) {
       this.diffs.delete(this.diffs.keys().next().value!);
     }
@@ -604,7 +611,35 @@ export class HistoryController implements vscode.Disposable {
     };
   }
 
+  /**
+   * コミットの差分の構文の色を後から頼み、行に付ける。もう送ったファイルは送り直す（ほかは送るときに色が付いている）。
+   * 古いエンジンが断れば色なしのまま
+   */
+  private async loadSyntax(
+    client: DaemonClient,
+    view: unknown,
+    index: ReadonlyMap<number, DiffLine>,
+    key: string,
+    diffs: ReadonlyMap<string, FileDiff>,
+  ): Promise<void> {
+    if (view === undefined || view === null) return;
+    try {
+      const touched = applySyntax(await client.call({ op: 'diffSyntax', view }), index);
+      if (touched.size === 0) return;
+      for (const [path, diff] of diffs) {
+        if (this.sentDiffs.has(`${key}:${path}`) && diff.hunks.some((h) => h.lines.some((l) => touched.has(l)))) {
+          this.post({ type: 'commitDiff', oid: key, path, diff });
+        }
+      }
+    } catch {
+      // 色なしのまま
+    }
+  }
+
   private async sendCommitDiff(oid: string, path: string): Promise<void> {
+    // 送ったものを覚える（構文の色が届いたら送り直す）。増えすぎたら古いものから忘れる
+    this.sentDiffs.add(`${oid}:${path}`);
+    while (this.sentDiffs.size > 4 * DIFF_CACHE) this.sentDiffs.delete(this.sentDiffs.values().next().value!);
     if (oid === this.selection?.key) {
       const diff = this.selection.diffs.get(path);
       if (diff) this.post({ type: 'commitDiff', oid, path, diff });

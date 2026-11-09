@@ -63,9 +63,11 @@ History and diffs are held by number (`history`, `diff`). Even if History is ref
 | `historyOrder` | order (`date`, or `topo` to keep a branch's commits together under its merge; applies to every History this session loads from now on, and the current one is reordered without rereading git) | order | |
 | `refs` | | headBranch, head, entries (kind, name, target, detail, ahead, behind, gone) | |
 | `status` | | generation, branch, upstream, ahead, behind, entries (kind, path, origPath, index, worktree, staged, unstaged, submodule; content conflicts, UU and AA, also have markers, the number of conflict markers left in the working tree file, and rerere, whether git's rerere applied an earlier resolution) | |
-| `commitDiff` | id or stash (ID), or history, rows, pair? (forward, reverse, mergeBase) | files (path, oldPath, kind, added, removed, binary), changes, selection, rows | diff lines (below) |
+| `commitDiff` | id or stash (ID), or history, rows, pair? (forward, reverse, mergeBase) | files (path, oldPath, kind, added, removed, binary), changes, selection, rows, view (for `diffSyntax`) | diff lines (below) |
 | `workingDiff` | path, mode (unstaged, staged, combined) | diff, path, mode, binary, added, removed, rows, lineEndings (below) | diff lines |
 | `conflict` | path | path, rows | diff lines |
+| `diffSyntax` | diff (of `workingDiff`) or view (of `commitDiff`) | spans | spans (row, start, end, kind as u32 × 4: the diff line, positions in that line's text as in highlights, and keyword 1, string 2, comment 3, number 4 and the rest of `SyntaxSpan`'s kinds); asked after showing the diff, since it can take a while |
+| `textSyntax` | path (picks the language), text | spans | spans as above, with row 0 and UTF-16 positions from the start of the text |
 | `stage`, `unstage` | paths | | |
 | `stageRows` | diff, rows, stage? (for a combined diff; false to unstage) | | |
 | `discardRows` | diff, rows (lines of an unstaged diff) | | |

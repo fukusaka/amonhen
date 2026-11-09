@@ -94,6 +94,8 @@ export interface PushOptions {
   force?: boolean;
   /** upstream に設定する */
   setUpstream?: boolean;
+  /** force のとき、送り先がこのコミットのときだけ置き換える（`--force-with-lease=<ref>:<expect>`。確認で見せたもの） */
+  expect?: string;
 }
 
 export interface RepositoryBackend {
@@ -240,6 +242,8 @@ export interface RepositoryBackend {
   rebaseTodo(base: string | null, todoPath: string, messagePath?: string | null): Promise<RebaseResult>;
   /** ローカルブランチ branch を remote の remoteBranch へ push する */
   push(remote: string, branch: string, remoteBranch: string, opts?: PushOptions): Promise<void>;
+  /** base から tip までに足したファイル（バイナリか。名前の変更は数えない） */
+  addedFiles(base: string, tip: string): Promise<{ path: string; binary: boolean }[]>;
   /**
    * チェックアウトしていないローカルブランチ branch（`refs/heads/...`）を、現在の値が expected のときだけ value へ進める。
    * ほかの worktree でチェックアウトしていれば断る（その作業ツリーとずれる）
@@ -258,7 +262,8 @@ export interface RepositoryBackend {
   pullLeftUndecided(branch: string): Promise<boolean>;
   /** ローカルブランチ branch（短い名前）の upstream を upstream（`refs/remotes/...`）にする */
   setUpstream(branch: string, upstream: string): Promise<void>;
-  fetch(): Promise<void>;
+  /** すべてのリモート（`--all`）か、remote から取る */
+  fetch(remote?: string): Promise<void>;
   /** revs から辿れるコミットを、トポロジカル順で skip 件飛ばして max 件 */
   log(revs: readonly string[], skip: number, max: number): Promise<Commit[]>;
   /** コミットで変わったファイル。parent が無ければ root コミットとして扱う */
@@ -909,10 +914,22 @@ export class CliBackend implements RepositoryBackend {
 
   async push(remote: string, branch: string, remoteBranch: string, opts: PushOptions = {}): Promise<void> {
     const args = ['push'];
-    if (opts.force) args.push('--force-with-lease');
+    if (opts.force) args.push(opts.expect ? `--force-with-lease=refs/heads/${remoteBranch}:${opts.expect}` : '--force-with-lease');
     if (opts.setUpstream) args.push('--set-upstream');
     args.push(remote, `refs/heads/${branch}:refs/heads/${remoteBranch}`);
-    await this.git.exec(args, { cwd: this.root });
+    await this.git.exec(args, { cwd: this.root, network: true });
+  }
+
+  async addedFiles(base: string, tip: string): Promise<{ path: string; binary: boolean }[]> {
+    // -z の numstat は `<足した行>\t<消した行>\t<パス>\0`。バイナリは行の数が `-`
+    const out = await this.read(['diff', '--numstat', '-z', '--no-renames', '--diff-filter=A', base, tip, '--']);
+    return out
+      .split('\0')
+      .filter(Boolean)
+      .map((line) => {
+        const [added, , ...path] = line.split('\t');
+        return { path: path.join('\t'), binary: added === '-' };
+      });
   }
 
   async fastForward(branch: string, value: string, expected: string): Promise<void> {
@@ -969,8 +986,9 @@ export class CliBackend implements RepositoryBackend {
     await this.git.exec(['branch', `--set-upstream-to=${upstream}`, branch], { cwd: this.root });
   }
 
-  async fetch(): Promise<void> {
-    await this.git.exec(['fetch', '--all', '--prune'], { cwd: this.root });
+  async fetch(remote?: string): Promise<void> {
+    // 片づけるかは git の設定（remote.<name>.prune・fetch.prune）のとおり。コアの fetch と同じ
+    await this.git.exec(['fetch', ...(remote ? ['--', remote] : ['--all'])], { cwd: this.root, network: true });
   }
 
   async log(revs: readonly string[], skip: number, max: number): Promise<Commit[]> {

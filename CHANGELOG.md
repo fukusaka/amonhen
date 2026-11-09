@@ -11,6 +11,8 @@ becomes the GitHub Release notes.
 
 #### Added
 
+- The engine is built with syntax highlighting (tree-sitter), and its front-end interface gives a diff's or a text's
+  syntax colors (`diffSyntax`, `textSyntax`).
 - Push, Force Push and Reset draw the graph before and after in their sheet: where the branch or `origin/<branch>`
   moves, and which commits a force push removes or a reset takes off. Reset also says where the changes go for each
   mode and when pushing afterwards will need Force Push.
@@ -1042,6 +1044,17 @@ First release.
 
 #### Added
 
+- While there are conflicts, the sidebar shows Conflicts with their count; clicking it opens the first in the merge
+  editor.
+- With the engine, diffs in History and Working Copy and the lines in Blame get syntax colors.
+- The sidebar's Working Copy row says "some folders" in a sparse checkout.
+- Save as Patch asks for a version (`-v`), naming the files `v2-0001-…` and the subjects `[PATCH v2]`.
+- With the engine, Working Copy shows one HEAD → working tree diff with a check on each changed line and hunk;
+  clicking a check stages or unstages it, and Space does so for the selected lines.
+- Rebuild History (the sidebar's ⋯) discards the engine's History cache and builds it again.
+- Rebasing the current branch shows the commits now and after the rebase, with where each branch ends up.
+- Switch Branch… finds a branch to switch to, recent ones first; a remote branch gets a tracking branch and a new
+  name creates one.
 - Export Archive… writes a branch, tag or commit as zip, tar.gz or tar; Save as Bundle… and Fetch from Bundle… use
   `git bundle` with the engine, and Clone from Bundle… clones a bundle file.
 - Remotes lists branches under a name that isn't a configured remote, such as ones fetched from a bundle.
@@ -1085,6 +1098,19 @@ First release.
 
 #### Changed
 
+- A failure's notification gives its cause (git's `fatal:` and `error:` lines), with Details for the whole output and
+  the git command.
+- Checkout, Merge, Cherry-pick, Revert and applying or popping a stash ask first, saying what happens (a tracking
+  branch, a detached HEAD, uncommitted changes coming along).
+- Working Copy's commit box is above the file list, as in the app.
+- Without the engine, a fetch or push that prints nothing for 120 seconds (usually a sign-in nobody sees) is
+  stopped with an error saying so, as the engine does.
+- Push asks first, showing the commits and anything worth a look (the default branch, fixup!/WIP commits, secrets,
+  binaries); when the upstream moved on it offers Pull… or a Force Push that replaces only what it showed.
+- Pull asks first: how to integrate (git's settings, which it now follows, or merge, rebase or fast-forward only for
+  this pull), what that does here, and the commits; with no upstream it asks which remote branch to pull from.
+- Fetch asks first, from all remotes or one, and prunes as git's settings say (`remote.<name>.prune`, `fetch.prune`)
+  instead of always.
 - The extension's own messages, prompts and settings descriptions are in English. Messages from the engine still follow
   VSCode's display language.
 

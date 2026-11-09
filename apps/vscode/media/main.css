@@ -715,8 +715,8 @@ button.secondary {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 8px 12px 12px;
-  border-top: 1px solid var(--vscode-panel-border);
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--vscode-panel-border);
 }
 
 .wc-commit input.subject,
@@ -1693,4 +1693,112 @@ aside.details.single .file-diff:not(.current) {
   gap: 4px;
   font-size: 0.9em;
   white-space: nowrap;
+}
+
+/* HEAD → 作業ツリーの差分のチェック（次のコミットに入れるか）。行の左と hunk の見出しに */
+.line .check,
+.hunk-head .check {
+  flex: none;
+  width: 2.4ch;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--vscode-descriptionForeground);
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+  user-select: none;
+}
+
+.line span.check {
+  cursor: default;
+}
+
+.line .check.all,
+.hunk-head .check.all,
+.hunk-head .check.some {
+  color: var(--vscode-textLink-foreground);
+}
+
+.line .check:focus-visible,
+.hunk-head .check:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+}
+
+.hunk-head .check + .range {
+  margin-left: 2px;
+  margin-right: auto;
+}
+
+/*
+ * 構文の色（コアの tree-sitter の種類。差分・Blame で共通）。テーマの記号の色は多くのテーマで文字の色と同じなので、
+ * アプリと同じく決まった色を、VSCode の標準の配色（暗い外観は Dark+、明るい外観は Light+）で
+ */
+.syn-keyword,
+.syn-tag,
+.syn-variable {
+  color: #c586c0;
+}
+.syn-string {
+  color: #ce9178;
+}
+.syn-comment {
+  color: #6a9955;
+  font-style: italic;
+}
+.syn-number {
+  color: #b5cea8;
+}
+.syn-constant {
+  color: #4fc1ff;
+}
+.syn-function {
+  color: #dcdcaa;
+}
+.syn-type,
+.syn-module {
+  color: #4ec9b0;
+}
+.syn-property {
+  color: #9cdcfe;
+}
+.syn-attribute,
+.syn-escape {
+  color: #d7ba7d;
+}
+body.vscode-light .syn-keyword,
+body.vscode-light .syn-tag,
+body.vscode-light .syn-variable {
+  color: #af00db;
+}
+body.vscode-light .syn-string {
+  color: #a31515;
+}
+body.vscode-light .syn-comment {
+  color: #008000;
+}
+body.vscode-light .syn-number {
+  color: #098658;
+}
+body.vscode-light .syn-constant {
+  color: #0070c1;
+}
+body.vscode-light .syn-function {
+  color: #795e26;
+}
+body.vscode-light .syn-type,
+body.vscode-light .syn-module {
+  color: #267f99;
+}
+body.vscode-light .syn-property {
+  color: #001080;
+}
+body.vscode-light .syn-attribute,
+body.vscode-light .syn-escape {
+  color: #e50000;
+}
+/* ハイコントラストでは色を付けない（文字の色のまま） */
+body.vscode-high-contrast [class^='syn-'],
+body.vscode-high-contrast-light [class^='syn-'] {
+  color: inherit;
 }

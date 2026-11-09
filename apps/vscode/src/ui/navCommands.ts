@@ -9,6 +9,8 @@ import type { Node } from './sidebar.ts';
 import { showError } from './stageCommands.ts';
 import { mergeBranches } from './mergeBranches.ts';
 import { publish } from './syncCommands.ts';
+import { confirmOperation, uncommittedLine } from './confirm.ts';
+import { pushWithSheet } from './pushSheet.ts';
 
 /** ブランチ・リモートブランチ・タグのノードから ref を取り出す */
 function refOf(node: Node | undefined): string | undefined {
@@ -48,6 +50,7 @@ export function registerNavCommands(manager: RepositoryManager, mergedBy: Merged
         if (!head) return;
         await runAction(repo, {
           label: `$(git-merge) Merge ${shortName(ref)} into ${shortName(head)}`,
+          confirm: () => confirmOperation(`Merge ${shortName(ref)} into ${shortName(head)}?`, ['You can undo this.'], 'Merge'),
           run: () => mergeInto(repo.backend, repo.undo, ref, head),
         });
       },
@@ -73,23 +76,18 @@ export function registerNavCommands(manager: RepositoryManager, mergedBy: Merged
         },
       });
     }),
-    command('amonhen.nav.push', async (repo, ref) => {
-      await runAction(repo, {
-        label: `$(repo-push) Push ${shortName(ref)}`,
-        run: async () => {
-          const target = await pushTarget(repo.backend, ref);
-          if (!target) throw new Error(`${shortName(ref)} has no upstream. Publish it.`);
-          await repo.backend.push(target.remote, shortName(ref), target.branch);
-          return 'pushed';
-        },
-      });
-    }),
+    command('amonhen.nav.push', (repo, ref) => pushWithSheet(repo, { branch: ref }, publish)),
     command('amonhen.nav.publish', (repo, ref) => publish(repo, ref)),
   );
 }
 
 /** ローカルブランチなら切り替え、リモートブランチなら追跡するブランチを作って切り替える */
 export async function checkoutRef(repo: Repository, ref: string): Promise<void> {
+  // 何が起きるか（追跡するブランチを作る、作業中の変更は持って行く）を見せてから
+  const local = ref.startsWith('refs/remotes/') ? (repo.current.branches ?? []).find((b) => b.upstream === ref) : undefined;
+  const name = shortName(local?.name ?? ref);
+  const creates = ref.startsWith('refs/remotes/') && !local ? `Creates ${name.slice(name.indexOf('/') + 1)} tracking ${name}.` : '';
+  if (!(await confirmOperation(`Checkout ${name}?`, [creates, uncommittedLine(repo)], 'Checkout'))) return;
   try {
     if (ref.startsWith('refs/heads/')) {
       await repo.backend.switchBranch(shortName(ref));

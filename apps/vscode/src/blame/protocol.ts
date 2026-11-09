@@ -19,7 +19,9 @@ export type BlameHostMessage =
       lines: { c: number; t: string }[];
       loading: boolean;
       error?: string;
-    };
+    }
+  /** 行ごとの構文の色（[始め, 終わり, 種類]。後から送る） */
+  | { type: 'blameSyntax'; path: string; rev?: string; syntax: [number, number, number][][] };
 
 export type BlameWebviewMessage =
   /** Blame を出した（読み直してもらう） */

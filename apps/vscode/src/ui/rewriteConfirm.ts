@@ -4,7 +4,7 @@
  * 見通しなしで確かめる。積み重ねたブランチの扱いを今回だけ設定と逆にできるなら、そのボタンも出す
  */
 import * as vscode from 'vscode';
-import { previewLines, stackedAlternative, type PreviewTarget } from '../history/rewritePreview.ts';
+import { drawingLines, previewLines, stackedAlternative, type PreviewTarget } from '../history/rewritePreview.ts';
 import type { Repository } from '../state/repository.ts';
 
 /** 選んだ答え。updateRefs は今回だけの指定（なければ git の `rebase.updateRefs` のとおり） */
@@ -38,6 +38,8 @@ export async function confirmRewrite(
   const lines = [
     ...(note ? [note] : []),
     ...(preview ? previewLines(preview) : []),
+    // rebase なら、前と後
+    ...(preview && drawingLines(preview).length > 0 ? ['', ...drawingLines(preview), ''] : []),
     ...(failure ? [`Couldn’t read what the rewrite will do (${failure}).`] : []),
     'You can undo this.',
   ];

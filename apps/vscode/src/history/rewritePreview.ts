@@ -23,6 +23,25 @@ export interface RewritePreview {
   conflicts?: { oid: string; files: string[] }[] | null;
   /** rebase.updateRefs の値（configured）と、git がそれをできるか（available、2.38 から） */
   updateRefs?: { configured: boolean; available: boolean } | null;
+  /** 前と後を描く材料（rebase のとき） */
+  drawing?: RewriteDrawing | null;
+}
+
+export interface DrawnCommit {
+  oid: string;
+  subject: string;
+}
+
+export interface RewriteDrawing {
+  /** 載せ直すコミット（古い順） */
+  picks: DrawnCommit[];
+  /** 載せ先で進んだコミット（新しい順、先頭のいくつか）と、ほかにいくつあるか */
+  onto: DrawnCommit[];
+  ontoMore: number;
+  /** 分かれたところ */
+  base?: DrawnCommit | null;
+  /** コミットに付いているブランチ。kind は `local`・`remote` */
+  labels: { oid: string; name: string; kind: string }[];
 }
 
 /** 何を書き換えるか: History の編集か、今のブランチを onto へ rebase すること */
@@ -79,4 +98,38 @@ export function stackedAlternative(p: RewritePreview): boolean | undefined {
   if (!p.updateRefs?.available) return undefined;
   const affected = p.moving.length + p.staying.filter((b) => b.reason === 'setting' || b.reason === 'off').length;
   return affected > 0 ? !p.updateRefs.configured : undefined;
+}
+
+/**
+ * rebase の前と後を文で描く（アプリの RewriteDrawingView と同じ中身）。○ は載せ直すコミット、● はそのまま。後では
+ * 今のブランチと一緒に動くブランチの札が載せ直したコミット（′）に移り、載せ先の札はそのまま
+ */
+export function drawingLines(p: RewritePreview): string[] {
+  const d = p.drawing;
+  if (!d || d.picks.length === 0) return [];
+  const moving = new Set(p.moving.map((b) => b.name));
+  const labelsOf = (oid: string, keep: (name: string) => boolean = () => true) =>
+    d.labels.filter((l) => l.oid === oid && keep(l.name)).map((l) => l.name);
+  const row = (mark: string, subject: string, labels: readonly string[]) =>
+    `  ${mark} ${subject}${labels.length > 0 ? `  [${labels.join(', ')}]` : ''}`;
+  const picks = [...d.picks].reverse();
+  const tail = (keep: (name: string) => boolean) => [
+    ...d.onto.map((c) => row('●', c.subject, labelsOf(c.oid, keep))),
+    ...(d.ontoMore > 0 ? [`  ⋮ ${d.ontoMore} more`] : []),
+    ...(d.base ? [row('●', d.base.subject, labelsOf(d.base.oid, keep))] : []),
+  ];
+  const stays = (name: string) => name !== p.current && !moving.has(name);
+  return [
+    'Now:',
+    ...picks.map((c) => row('○', c.subject, labelsOf(c.oid))),
+    ...tail(() => true),
+    'After the rebase:',
+    ...picks.map((c, i) =>
+      row('○', `${c.subject}′`, [
+        ...(i === 0 && p.current ? [p.current] : []),
+        ...d.labels.filter((l) => l.oid === c.oid && l.kind === 'local' && moving.has(l.name)).map((l) => l.name),
+      ]),
+    ),
+    ...tail(stays),
+  ];
 }
