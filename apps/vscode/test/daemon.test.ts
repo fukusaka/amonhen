@@ -80,6 +80,14 @@ test('reads History rows and the graph through the daemon', { skip }, async () =
     assert.notEqual(rows[2]!.graph.col, rows[1]!.graph.col);
     assert.ok(rows.every((r) => r.graph.segs.length % 5 === 0));
     assert.ok(rows[0]!.graph.segs.length > 0);
+    // 線分ごとにコアの線の番号があり、祖先の強調はそれで線ごとに光らせる
+    assert.ok(rows.every((r) => r.graph.edges?.length === r.graph.segs.length / 5));
+    const lineage = await client.call({ op: 'historyLineage', history: history.json['history'], row: 1 });
+    const from = lineage.u32('edgeFrom');
+    const lit = (row: number) => rows[row]!.graph.edges!.map((id) => from[id]! <= row);
+    // main work（1）から first（3）への線は光り、merge から topic work（2）への線は光らない
+    assert.ok(lit(3).includes(true));
+    assert.ok(lit(2).includes(false));
 
     const found = await client.call({ op: 'historySearch', history: history.json['history'], query: 'topic' });
     assert.deepEqual(Array.from(found.u32('rows')), [0, 2]);

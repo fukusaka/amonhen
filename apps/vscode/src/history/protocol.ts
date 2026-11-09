@@ -134,7 +134,7 @@ export type HistoryHostMessage =
   /** Apply を終えた。`ok` なら編集モードを閉じ、そうでなければ開いたまま（もう一度押せる） */
   | { type: 'editApplied'; ok: boolean }
   /** 祖先の行（ビットの列を base64 で。`row` の下位から）。目立たせないなら null */
-  | { type: 'lineage'; rows: string | null }
+  | { type: 'lineage'; rows: string | null; edges?: string }
   | { type: 'search'; state: SearchState }
   | { type: 'busy'; busy: boolean }
   /** `viewed` は Viewed にしたファイル */

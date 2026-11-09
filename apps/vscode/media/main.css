@@ -379,10 +379,6 @@ button.secondary {
   flex: none;
 }
 
-.row.dim {
-  opacity: 0.45;
-}
-
 .folded-count {
   margin-right: 4px;
   padding: 0 5px;

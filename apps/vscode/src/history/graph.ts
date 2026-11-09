@@ -15,6 +15,10 @@ export interface GraphRow {
    * Webview にそのまま送るので数値の配列にしている。
    */
   segs: number[];
+  /**
+   * 線分ごとの、コアの線の番号（`segs` と同じ順。daemon の History でだけ。祖先の強調で、線ごとに光らせるかを決める）
+   */
+  edges?: number[];
   /** この行で使っている列の数 */
   width: number;
 }

@@ -946,7 +946,11 @@ export class HistoryController implements vscode.Disposable {
       throw err;
     }
     if (request === this.lineageRequest && shown === this.daemon) {
-      this.post({ type: 'lineage', rows: Buffer.from(reply.bytes('rows')).toString('base64') });
+      this.post({
+        type: 'lineage',
+        rows: Buffer.from(reply.bytes('rows')).toString('base64'),
+        edges: Buffer.from(reply.bytes('edgeFrom')).toString('base64'),
+      });
     }
   }
 
@@ -984,7 +988,7 @@ export class HistoryController implements vscode.Disposable {
     ];
     const highlight: Item = {
       label: `${mark(this.highlighting)}Highlight Ancestors`,
-      description: 'Dim the commits that aren’t ancestors of the selected one',
+      description: 'Full color only for the selected commit’s ancestors',
     };
     const fold: Item = { label: `${mark(this.folding)}Fold Merged Branches`, description: 'Hide the commits a merge brought in' };
     const picked = await vscode.window.showQuickPick<Item>(

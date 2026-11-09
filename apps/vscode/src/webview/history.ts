@@ -16,6 +16,10 @@ import { openMessageEditor } from './messageEditor.ts';
 import { signatureMark } from './signature.ts';
 
 const ROW_HEIGHT = 24;
+/** 祖先の強調で、祖先でない点と線の不透明度（アプリと同じ） */
+const DIMMED_ALPHA = 0.18;
+/** 線を光らせないことを表す、光らせ始める行の値（コアの `lineage::NOT_LIT`） */
+const LINEAGE_NOT_LIT = 0xffffffff;
 /** shallow clone の帯の高さ */
 const BAND_HEIGHT = 36;
 const LANE_WIDTH = 14;
@@ -161,6 +165,8 @@ export function createHistoryView(): View {
   let hidden = new Set<HistoryItem>();
   /** 祖先の行のビットの列（目立たせないなら null） */
   let lineage: Uint8Array | null = null;
+  /** 線ごとの、光らせ始める行（`LINEAGE_NOT_LIT` なら光らせない。古いエンジンなら null で、線は行で決める） */
+  let lineageEdges: Uint32Array | null = null;
   /** 行。daemon の History では行の数だけの長さで、まだ届いていない行は空 */
   let rows: (RowData | undefined)[] = [];
   /** daemon の History（行の数が分かっていて、飛び飛びに頼む） */
@@ -238,7 +244,6 @@ export function createHistoryView(): View {
     const el = document.createElement('div');
     el.className = isSelected(index) ? 'row selected' : 'row';
     if (matchSet.has(index)) el.classList.add('match');
-    if (lineage && !((lineage[index >> 3] ?? 0) & (1 << (index & 7)))) el.classList.add('dim');
     el.style.top = `${index * ROW_HEIGHT}px`;
     el.dataset.index = String(index);
     // Webview の右クリックメニュー（package.json の webview/context）に渡す情報
@@ -260,7 +265,7 @@ export function createHistoryView(): View {
       el.draggable = true;
     }
 
-    el.append(drawGraph(row, graph));
+    el.append(drawGraph(row, index, graph));
     const text = document.createElement('div');
     text.className = 'text';
     for (const ref of hidden.has('refs') ? [] : row.refs) {
@@ -309,7 +314,28 @@ export function createHistoryView(): View {
     return el;
   }
 
-  function drawGraph(row: RowData, { width, centers }: GraphColumn): HTMLCanvasElement {
+  /** 祖先の強調で、`index` の行のコミットが祖先か（強調しないなら true） */
+  function isAncestor(index: number): boolean {
+    return !lineage || ((lineage[index >> 3] ?? 0) & (1 << (index & 7))) !== 0;
+  }
+
+  /**
+   * 祖先の強調で、`index` の行の i 番目の線分のうち光らせる部分（y の範囲。光らせないなら undefined）。アプリと同じく、
+   * 縦線は光らせ始める行の点から下を、曲線は全体を光らせるかまったく光らせない
+   */
+  function litPart(row: RowData, index: number, i: number): [number, number] | undefined {
+    const [y1, x2, y2] = row.graph.segs.slice(i * 5 + 1, i * 5 + 4) as [number, number, number];
+    const id = row.graph.edges?.[i];
+    if (!lineage) return [y1, y2];
+    // 線の番号がなければ（古いエンジン）、行が祖先かで決める
+    if (id === undefined || !lineageEdges) return isAncestor(index) ? [y1, y2] : undefined;
+    const from = lineageEdges[id] ?? LINEAGE_NOT_LIT;
+    if (from === LINEAGE_NOT_LIT || from > index) return undefined;
+    const vertical = row.graph.segs[i * 5] === x2;
+    return vertical && from === index ? [Math.max(y1, 1), Math.max(y2, 1)] : [y1, y2];
+  }
+
+  function drawGraph(row: RowData, index: number, { width, centers }: GraphColumn): HTMLCanvasElement {
     const canvas = document.createElement('canvas');
     const ratio = window.devicePixelRatio || 1;
     canvas.width = width * ratio;
@@ -322,9 +348,9 @@ export function createHistoryView(): View {
     const x = (col: number) => GRAPH_INSET / 2 + (centers[col] ?? col * LANE_WIDTH + LANE_WIDTH / 2);
     const y = (pos: number) => (pos * ROW_HEIGHT) / 2;
     const { segs } = row.graph;
-    for (let i = 0; i < segs.length; i += 5) {
-      const [x1, y1, x2, y2, color] = segs.slice(i, i + 5) as [number, number, number, number, number];
-      ctx.strokeStyle = colors[color % colors.length]!;
+    const stroke = (x1: number, y1: number, x2: number, y2: number, alpha: number) => {
+      if (y1 === y2) return;
+      ctx.globalAlpha = alpha;
       ctx.beginPath();
       ctx.moveTo(x(x1), y(y1));
       if (x1 === x2) {
@@ -335,7 +361,22 @@ export function createHistoryView(): View {
         ctx.bezierCurveTo(x(x1), mid, x(x2), mid, x(x2), y(y2));
       }
       ctx.stroke();
+    };
+    for (let i = 0; i < segs.length; i += 5) {
+      const [x1, y1, x2, y2, color] = segs.slice(i, i + 5) as [number, number, number, number, number];
+      ctx.strokeStyle = colors[color % colors.length]!;
+      const lit = litPart(row, index, i / 5);
+      if (!lit) {
+        stroke(x1, y1, x2, y2, DIMMED_ALPHA);
+      } else if (x1 === x2 && lit[0] > y1) {
+        // 縦線の光らない上の部分は薄く
+        stroke(x1, y1, x2, lit[0], DIMMED_ALPHA);
+        stroke(x1, lit[0], x2, y2, 1);
+      } else {
+        stroke(x1, y1, x2, y2, 1);
+      }
     }
+    ctx.globalAlpha = isAncestor(index) ? 1 : DIMMED_ALPHA;
     ctx.fillStyle = colors[row.graph.color % colors.length]!;
     ctx.beginPath();
     ctx.arc(x(row.graph.col), y(1), 4, 0, Math.PI * 2);
@@ -662,6 +703,7 @@ export function createHistoryView(): View {
     switch (message.type) {
       case 'lineage':
         lineage = message.rows ? Uint8Array.from(atob(message.rows), (c) => c.charCodeAt(0)) : null;
+        lineageEdges = message.rows && message.edges ? new Uint32Array(Uint8Array.from(atob(message.edges), (c) => c.charCodeAt(0)).buffer) : null;
         render();
         break;
       case 'historyDisplay':
@@ -670,6 +712,7 @@ export function createHistoryView(): View {
         break;
       case 'reset':
         lineage = null;
+        lineageEdges = null;
         // 形はこの後の form で送り直す（一致だけの History なら送らない）
         shallow = false;
         boundary = new Set();

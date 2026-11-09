@@ -48,7 +48,7 @@ export function readRows(reply: Reply): DaemonRow[] {
   const parentStarts = reply.u32('parentStarts');
   const parents = reply.u32('parents');
   const parentIds = reply.bytes('parentIds');
-  const graphs = graphRows(numbers, nodes, reply.u16('edges'), reply.u32('edges'));
+  const graphs = graphRows(numbers, nodes, reply.u16('edges'), reply.u32('edges'), reply.u32('edgeIds'));
   const rows: DaemonRow[] = [];
   for (let i = 0; i < numbers.length; i++) {
     const oid = oidAt(ids, i);
@@ -72,18 +72,20 @@ export function readRows(reply: Reply): DaemonRow[] {
 
 /**
  * 行ごとの線分。y は 0 = 行の上端、1 = 点、2 = 行の下端（`GraphBuilder` と同じ）。
- * 縦線は点から点まで、曲線は隣り合う 2 行の点をつなぐ（上の行で斜めに下端まで、下の行で点まで）
+ * 縦線は点から点まで、曲線は隣り合う 2 行の点をつなぐ（上の行で斜めに下端まで、下の行で点まで）。`edgeIds`（範囲で
+ * 頼んだときの、線のコアでの番号）があれば、線分ごとの番号を `GraphRow.edges` に入れる
  */
 export function graphRows(
   numbers: Uint32Array,
   nodes: Uint16Array,
   edges16: Uint16Array,
   edges32: Uint32Array,
+  edgeIds?: Uint32Array,
 ): GraphRow[] {
   const first = numbers[0] ?? 0;
   const rows: GraphRow[] = Array.from(numbers, (_, i) => {
     const col = nodes[i * NODE_WORDS + 2]!;
-    return { col, color: nodes[i * NODE_WORDS + 3]!, segs: [], width: col + 1 };
+    return { col, color: nodes[i * NODE_WORDS + 3]!, segs: [], width: col + 1, ...(edgeIds?.length ? { edges: [] } : {}) };
   });
   const count = edges32.length / EDGE_WORDS;
   for (let e = 0; e < count; e++) {
@@ -103,6 +105,7 @@ export function graphRows(
       } else {
         row.segs.push(laneEnd, 0, laneEnd, r === rowEnd ? 1 : 2, color);
       }
+      row.edges?.push(edgeIds![e]!);
       row.width = Math.max(row.width, laneStart + 1, laneEnd + 1);
     }
   }

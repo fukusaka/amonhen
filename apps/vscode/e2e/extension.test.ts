@@ -3506,8 +3506,11 @@ suite('Amon Hen in VSCode', () => {
         const row = rowOf(oid);
         return !!(Buffer.from(bits, 'base64')[row >> 3]! & (1 << (row & 7)));
       };
-      const { rows: bits } = await waitPosted('lineage', at, (m) => !!m.rows && isAncestor(m.rows, tip));
+      const { rows: bits, edges } = await waitPosted('lineage', at, (m) => !!m.rows && isAncestor(m.rows, tip));
       assert.ok(isAncestor(bits!, start));
+      // 線ごとに光らせるかも届き、行の線分にはその番号がある
+      assert.ok(edges && Buffer.from(edges, 'base64').length > 0);
+      assert.ok(rows.every((r) => r.graph.edges?.length === r.graph.segs.length / 5));
       assert.ok(!isAncestor(bits!, side));
       // 切る前に頼んだ分の答えが後から届くことがある。切った答え（null）を待つ
       at = posted.length;
