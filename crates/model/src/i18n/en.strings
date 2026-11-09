@@ -10,6 +10,7 @@
 "You have {count} local commits, so this makes a merge commit." = "You have {count} local commit, so this makes a merge commit.";
 "Your {count} local commits are replayed on top (their IDs change)." = "Your {count} local commit is replayed on top (its ID changes).";
 "and {count} more tags" = "and {count} more tag";
+"and {count} more branches" = "and {count} more branch";
 "{count} commits" = "{count} commit";
 "{count} commits selected" = "{count} commit selected";
 "{count} files have conflicts at {subject}. Resolve them in Working Copy, then Continue." = "{count} file has conflicts at {subject}. Resolve them in Working Copy, then Continue.";

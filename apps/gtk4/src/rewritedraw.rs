@@ -301,8 +301,9 @@ fn dimmed(c: &gdk::RGBA, alpha: f32) -> gdk::RGBA {
 /// 省いたコミットの行（線、y、数）。そこだけ線を点線にして「ほか n コミット」と書く。
 type Gap = (u8, f64, u64);
 
-/// 1 列を描く。lane 1 は右の線（いちばん下で lane 0 へ合流）。`highlight` は強調する上からの行数。`gaps` は
-/// 省いたところ、`base_note` は分かれたところに添える文（いつ分かれたか）。
+/// 1 列を描く。lane 1 から先は右の線（それぞれ、いちばん下で lane 0 へ合流。octopus merge ではいくつも）。
+/// `highlight` は強調する上からの行数。`gaps` は省いたところ、`base_note` は分かれたところに添える文（いつ
+/// 分かれたか）。`lane1_join` は merge コミットの行で、そこから右の線それぞれの先頭へ下りる。
 #[allow(clippy::too_many_arguments)]
 fn column(
     area: &gtk::DrawingArea,
@@ -353,18 +354,23 @@ fn column(
         cr.line_to(lane_x(lane), bottom);
         let _ = cr.stroke();
     };
-    let lane1: Vec<&Row> = rows.iter().filter(|r| r.lane == 1).collect();
-    if let (Some(first), Some(last)) = (lane1.first(), lane1.last()) {
+    // 右の線（octopus merge ではいくつも）は、それぞれいちばん下で左の線へ合流する。
+    let lanes = rows.iter().map(|r| r.lane).max().unwrap_or(1).max(1);
+    for lane in 1..=lanes {
+        let on: Vec<&Row> = rows.iter().filter(|r| r.lane == lane).collect();
+        let (Some(first), Some(last)) = (on.first(), on.last()) else {
+            continue;
+        };
         let last_y = gaps
             .iter()
-            .filter(|g| g.0 == 1)
+            .filter(|g| g.0 == lane)
             .map(|g| g.1)
             .fold(last.y, f64::max);
-        vertical(1, center(first.y), center(last_y));
-        cr.move_to(lane_x(1), center(last_y));
+        vertical(lane, center(first.y), center(last_y));
+        cr.move_to(lane_x(lane), center(last_y));
         // 制御点は macOS 版と同じ並び。
         cr.curve_to(
-            lane_x(1),
+            lane_x(lane),
             center(base_y) - 6.0,
             lane_x(0),
             center(last_y) + 8.0,
@@ -372,26 +378,26 @@ fn column(
             center(base_y),
         );
         let _ = cr.stroke();
+        // merge コミットから、その線へ曲がり、取り込む側の先端まで下りる（macOS 版と同じ）。
+        if let Some(join) = lane1_join {
+            cr.move_to(lane_x(0), center(join));
+            cr.curve_to(
+                lane_x(lane),
+                center(join),
+                lane_x(lane),
+                center(join),
+                lane_x(lane),
+                center(join) + ROW * 0.8,
+            );
+            cr.line_to(lane_x(lane), center(first.y));
+            let _ = cr.stroke();
+        }
     }
     if let Some(first) = rows.iter().find(|r| r.lane == 0) {
         vertical(0, center(first.y), center(base_y));
     }
-    // merge コミットから、すぐ右の線へ曲がり、取り込む側の先端まで下りる（macOS 版と同じ）。
-    if let (Some(join), Some(first)) = (lane1_join, lane1.first()) {
-        cr.move_to(lane_x(0), center(join));
-        cr.curve_to(
-            lane_x(1),
-            center(join),
-            lane_x(1),
-            center(join),
-            lane_x(1),
-            center(join) + ROW * 0.8,
-        );
-        cr.line_to(lane_x(1), center(first.y));
-        let _ = cr.stroke();
-    }
     // 点と件名、札。
-    let text_x = lane_x(1) + 14.0;
+    let text_x = lane_x(lanes) + 14.0;
     for (i, row) in rows.iter().enumerate() {
         row_at(
             area,
@@ -1148,6 +1154,360 @@ fn draw_pick(
                 };
                 if here {
                     out.insert(0, (current.to_owned(), "local".to_owned(), true));
+                }
+                out
+            },
+        );
+    }
+    arrow(area, cr, &fg);
+}
+
+/// octopus merge の絵に渡す、取り込む順と merge コミットの件名（シートで並べ替えるたびに）。
+pub type OctopusSetter = Rc<dyn Fn(Vec<String>, String)>;
+
+/// 線は 4 本まで、残りは「ほか n 本」（macOS 版の `OctopusDrawingView.maxLanes`）。
+const MAX_LANES: usize = 4;
+
+/// 描く取り込む側（並べた順、もう取り込んであるものは除く）と、描かないものの数。
+fn octopus_sides<'a>(d: &'a Value, order: &[String]) -> (Vec<&'a Value>, usize) {
+    let sides: Vec<&Value> = d["sides"].as_array().into_iter().flatten().collect();
+    let all: Vec<&Value> = order
+        .iter()
+        .filter_map(|rev| {
+            sides
+                .iter()
+                .find(|s| s["rev"].as_str() == Some(rev))
+                .copied()
+        })
+        .filter(|s| !s["tip"].is_null())
+        .collect();
+    let rest = all.len().saturating_sub(MAX_LANES);
+    (all.into_iter().take(MAX_LANES).collect(), rest)
+}
+
+fn octopus_rows(d: &Value, order: &[String]) -> usize {
+    let (shown, rest) = octopus_sides(d, order);
+    d["ours"].as_array().map_or(0, Vec::len)
+        + usize::from(d["oursMore"].as_u64().unwrap_or(0) > 0)
+        + shown
+            .iter()
+            .map(|s| 1 + usize::from(s["more"].as_u64().unwrap_or(0) > 0))
+            .sum::<usize>()
+        + usize::from(rest > 0)
+        + usize::from(!d["base"].is_null())
+}
+
+/// octopus merge の見込み（`octopusPreview` の答え）の絵（macOS 版の `OctopusDrawingView`）。描くものがなければ
+/// None。左が今: 今のブランチ（左の線）と、取り込むもの（並べた順に右の線。先端と、ほかにいくつあるか）が、
+/// すべてが分かれたところで合流する。右が後: 一番上の merge コミット（点線の丸）がすべての先端を親に持ち、今の
+/// ブランチの札がそこへ移る。
+pub fn for_octopus(info: &Value, current: &str) -> Option<(gtk::DrawingArea, OctopusSetter)> {
+    let d = &info["drawing"];
+    if d.is_null() {
+        return None;
+    }
+    let area = gtk::DrawingArea::new();
+    area.set_content_width((column_width(&area) * 2.0 + 24.0) as i32);
+    let state: Rc<RefCell<(Vec<String>, String)>> = Rc::default();
+    let s = state.clone();
+    let info = info.clone();
+    let current = current.to_owned();
+    let d = info["drawing"].clone();
+    area.set_draw_func(move |area, cr, _, _| {
+        let (order, subject) = &*s.borrow();
+        draw_octopus(area, cr, &info["drawing"], &current, order, subject);
+    });
+    let a = area.downgrade();
+    let set: OctopusSetter = Rc::new(move |order, subject| {
+        let Some(area) = a.upgrade() else { return };
+        // 右には merge コミットの 1 行が増える。
+        area.set_content_height(((octopus_rows(&d, &order) + 1) as f64 * ROW + 26.0) as i32);
+        state.replace((order, subject));
+        area.queue_draw();
+    });
+    Some((area, set))
+}
+
+fn draw_octopus(
+    area: &gtk::DrawingArea,
+    cr: &gtk::cairo::Context,
+    d: &Value,
+    current: &str,
+    order: &[String],
+    subject: &str,
+) {
+    let fg = area.color();
+    let labels = labels_of(d);
+    let ours = commits(&d["ours"]);
+    let base = (!d["base"].is_null()).then(|| {
+        (
+            d["base"]["oid"].as_str().unwrap_or_default().to_owned(),
+            d["base"]["subject"].as_str().unwrap_or_default().to_owned(),
+        )
+    });
+    let ours_tip = ours
+        .first()
+        .map(|c| c.0.clone())
+        .or_else(|| base.as_ref().map(|b| b.0.clone()));
+    let (shown, rest) = octopus_sides(d, order);
+    let tips: HashMap<String, String> = shown
+        .iter()
+        .filter_map(|s| {
+            Some((
+                s["tip"]["oid"].as_str()?.to_owned(),
+                s["rev"].as_str()?.to_owned(),
+            ))
+        })
+        .collect();
+    let heading = |text: &str, x: f64| {
+        text_at(area, cr, text, x, 2.0, &dimmed(&fg, 0.6), true, f64::MAX);
+    };
+    heading(&tr!("Now"), 4.0);
+    heading(&tr!("After the merge"), column_width(area) + 28.0);
+    for after in [false, true] {
+        let x = if after {
+            column_width(area) + 24.0
+        } else {
+            0.0
+        };
+        let mut y = TOP;
+        let mut rows = Vec::new();
+        let mut gaps = Vec::new();
+        let merge_y = y;
+        if after {
+            rows.push(Row {
+                subject: subject.to_owned(),
+                y,
+                is_new: true,
+                ..Default::default()
+            });
+            y += ROW;
+        }
+        with_gap(
+            &ours,
+            d["oursMore"].as_u64().unwrap_or(0),
+            d["oursMoreAt"].as_u64(),
+            0,
+            &mut y,
+            &mut gaps,
+            |(oid, subject), y| {
+                rows.push(Row {
+                    oid: oid.clone(),
+                    subject: subject.clone(),
+                    y,
+                    ..Default::default()
+                });
+            },
+        );
+        for (i, side) in shown.iter().enumerate() {
+            let lane = i as u8 + 1;
+            rows.push(Row {
+                oid: side["tip"]["oid"].as_str().unwrap_or_default().to_owned(),
+                subject: side["tip"]["subject"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+                lane,
+                y,
+                ..Default::default()
+            });
+            y += ROW;
+            let more = side["more"].as_u64().unwrap_or(0);
+            if more > 0 {
+                gaps.push((lane, y, more));
+                y += ROW;
+            }
+        }
+        if rest > 0 {
+            let text_x = x + 10.0 + shown.len() as f64 * LANE + 14.0;
+            text_at(
+                area,
+                cr,
+                &tr!("and {count} more branches", count = rest),
+                text_x,
+                y + 3.0,
+                &dimmed(&fg, 0.5),
+                false,
+                x + column_width(area) - text_x,
+            );
+            y += ROW;
+        }
+        column(
+            area,
+            cr,
+            x,
+            &rows,
+            y,
+            base.as_ref(),
+            &gaps,
+            0,
+            if after { None } else { split_note(&d["base"]) },
+            after.then_some(merge_y),
+            &|oid| {
+                let mut out: Vec<Label> = labels
+                    .get(oid)
+                    .into_iter()
+                    .flatten()
+                    .filter(|(n, _)| n != current)
+                    .map(|(n, k)| (n.clone(), k.clone(), false))
+                    .collect();
+                // タグ・コミットを取り込むときは、その名前を札に。
+                if let Some(rev) = tips.get(oid)
+                    && !out.iter().any(|l| &l.0 == rev)
+                {
+                    out.push((rev.clone(), "local".to_owned(), false));
+                }
+                let here = if after {
+                    oid.is_empty()
+                } else {
+                    ours_tip.as_deref() == Some(oid)
+                };
+                if here {
+                    out.insert(0, (current.to_owned(), "local".to_owned(), true));
+                }
+                out
+            },
+        );
+    }
+    arrow(area, cr, &fg);
+}
+
+/// History の編集の前と後（`rewritePreview` の答えの `editDrawing`）の絵（macOS 版の `EditDrawingView`）。描く
+/// ものがなければ None。左が今: 書き換わるコミットで、drop するものは中を抜いた点、まとめる・メッセージを変える・
+/// 止まるものには、そうと添える。右が後: できるコミット（′ 付き。まとめたものは 1 行、メッセージを変えたものは
+/// 新しい件名）。どちらも 1 本の線で、下に書き換えないコミット。
+pub fn for_edit(info: &Value) -> Option<gtk::DrawingArea> {
+    let d = &info["editDrawing"];
+    if d.is_null() {
+        return None;
+    }
+    let area = gtk::DrawingArea::new();
+    area.set_content_width((column_width(&area) * 2.0 + 24.0) as i32);
+    let count =
+        edit_rows(d, "before").max(edit_rows(d, "after")) + usize::from(!d["base"].is_null());
+    area.set_content_height((count as f64 * ROW + 26.0) as i32);
+    let d = d.clone();
+    let current = info["current"].as_str().map(str::to_owned);
+    area.set_draw_func(move |area, cr, _, _| draw_edit(area, cr, &d, current.as_deref()));
+    Some(area)
+}
+
+fn edit_rows(d: &Value, side: &str) -> usize {
+    d[side].as_array().map_or(0, Vec::len)
+        + usize::from(d[format!("{side}More")].as_u64().unwrap_or(0) > 0)
+}
+
+fn draw_edit(area: &gtk::DrawingArea, cr: &gtk::cairo::Context, d: &Value, current: Option<&str>) {
+    let fg = area.color();
+    let labels = labels_of(d);
+    let red = gdk::RGBA::new(0.89, 0.29, 0.29, 1.0);
+    let base = (!d["base"].is_null()).then(|| {
+        (
+            d["base"]["oid"].as_str().unwrap_or_default().to_owned(),
+            d["base"]["subject"].as_str().unwrap_or_default().to_owned(),
+        )
+    });
+    let heading = |text: &str, x: f64| {
+        text_at(area, cr, text, x, 2.0, &dimmed(&fg, 0.6), true, f64::MAX);
+    };
+    heading(&tr!("Now"), 4.0);
+    heading(&tr!("After the edit"), column_width(area) + 28.0);
+    // 下の書き換えないコミットは、左右で同じ高さに。
+    let base_y = TOP + edit_rows(d, "before").max(edit_rows(d, "after")) as f64 * ROW;
+    for after in [false, true] {
+        let x = if after {
+            column_width(area) + 24.0
+        } else {
+            0.0
+        };
+        let side = if after { "after" } else { "before" };
+        let steps: Vec<&Value> = d[side].as_array().into_iter().flatten().collect();
+        let items: Vec<(String, String)> = steps
+            .iter()
+            .map(|s| {
+                (
+                    s["oid"].as_str().unwrap_or_default().to_owned(),
+                    s["subject"].as_str().unwrap_or_default().to_owned(),
+                )
+            })
+            .collect();
+        let mut y = TOP;
+        let mut rows = Vec::new();
+        let mut gaps = Vec::new();
+        let mut i = 0;
+        with_gap(
+            &items,
+            d[format!("{side}More")].as_u64().unwrap_or(0),
+            d[format!("{side}MoreAt")].as_u64(),
+            0,
+            &mut y,
+            &mut gaps,
+            |(oid, subject), y| {
+                let step = steps[i];
+                i += 1;
+                let mut row = Row {
+                    oid: oid.clone(),
+                    subject: if after {
+                        format!("{subject}′")
+                    } else {
+                        subject.clone()
+                    },
+                    dim: !after,
+                    y,
+                    ..Default::default()
+                };
+                if after {
+                    let n = step["combined"].as_u64().unwrap_or(0);
+                    if n > 0 {
+                        row.note = Some((tr!("{count} commits in one", count = n + 1), None));
+                    }
+                } else {
+                    match step["action"].as_str().unwrap_or_default() {
+                        "drop" => {
+                            row.hollow = true;
+                            row.note = Some((tr!("dropped"), Some(red)));
+                        }
+                        "squash" | "fixup" => {
+                            row.note = Some((tr!("combined with the one below"), None));
+                        }
+                        "reword" => row.note = Some((tr!("new message"), None)),
+                        "edit" => row.note = Some((tr!("stops here"), None)),
+                        _ => {}
+                    }
+                }
+                rows.push(row);
+            },
+        );
+        let top = items.first().map(|c| c.0.clone());
+        let highlight = if after { items.len() } else { 0 };
+        column(
+            area,
+            cr,
+            x,
+            &rows,
+            base_y,
+            base.as_ref(),
+            &gaps,
+            highlight,
+            None,
+            None,
+            &|oid| {
+                // 今のブランチの札は、左右とも一番上に。ほかの札は左（書き換える前）と、下の書き換えないコミットに。
+                let mut out: Vec<Label> = Vec::new();
+                if top.as_deref() == Some(oid)
+                    && let Some(current) = current
+                {
+                    out.push((current.to_owned(), "local".to_owned(), true));
+                }
+                if !after || base.as_ref().is_some_and(|b| b.0 == oid) {
+                    out.extend(
+                        labels
+                            .get(oid)
+                            .into_iter()
+                            .flatten()
+                            .filter(|(n, _)| Some(n.as_str()) != current)
+                            .map(|(n, k)| (n.clone(), k.clone(), false)),
+                    );
                 }
                 out
             },

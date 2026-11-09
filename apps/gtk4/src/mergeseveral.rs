@@ -13,6 +13,7 @@ use gtk::{gdk, glib};
 use serde_json::{Value, json};
 
 use crate::actions::Actions;
+use crate::rewritedraw;
 use crate::sheets::{self, Response};
 
 /// 順に、コンフリクトする見込みのファイル（調べられなければ None）。
@@ -158,6 +159,15 @@ pub fn confirm(actions: &Rc<Actions>, sources: Vec<Source>, branch: Option<Strin
         );
         let list = OrderList::new(sources.clone());
         sheet.add(&list.scrolled);
+        // 前と後の絵（並べ替えると、線の順も変わる）。シートを出す前に読む（GNOME は開くときに大きくなった
+        // シートを拡大したままにする）。
+        let revs: Vec<String> = sources.iter().map(|s| s.rev.clone()).collect();
+        let octopus = sheets::run(&repo, json!({ "op": "octopusPreview", "theirs": revs })).await;
+        let drawing = rewritedraw::for_octopus(&octopus["info"], &target);
+        if let Some((area, _)) = &drawing {
+            sheet.add(area);
+        }
+        let set_drawing = drawing.map(|(_, set)| set);
         let label = sheets::forecast_label();
         sheet.add(&label);
         let put_last = gtk::Button::with_label("");
@@ -243,10 +253,11 @@ pub fn confirm(actions: &Rc<Actions>, sources: Vec<Source>, branch: Option<Strin
             Rc::new(move || {
                 let sources = list.sources();
                 let revs: Vec<String> = sources.iter().map(|s| s.rev.clone()).collect();
-                message.set_text(&tr!(
-                    "Message: {message}",
-                    message = merge_message(&sources, branch.as_deref())
-                ));
+                let text = merge_message(&sources, branch.as_deref());
+                if let Some(set) = &set_drawing {
+                    set(revs.clone(), text.clone());
+                }
+                message.set_text(&tr!("Message: {message}", message = text));
                 shown.replace(revs.clone());
                 if let Some(steps) = known.borrow().get(&revs).cloned() {
                     return show(steps);

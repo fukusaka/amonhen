@@ -1001,18 +1001,44 @@ impl Mode {
         for b in &self.buttons {
             b.set_sensitive(false);
         }
+        let mut preview = json!({ "op": "rewritePreview", "edit": command["edit"].clone() });
+        if let Some(on) = command.get("updateRefs") {
+            preview["updateRefs"] = on.clone();
+        }
         let weak = Rc::downgrade(self);
-        self.actions
-            .perform_in(self.repo.clone(), vec![command], move |reply| {
-                let Some(m) = weak.upgrade() else { return };
-                if reply["error"].is_string() || reply.is_null() {
+        glib::spawn_future_local(async move {
+            let Some(m) = weak.upgrade() else { return };
+            // 前と後の絵を見せて確かめる（merge を越える編集では描けないので、そのまま。macOS 版と同じ）。
+            let info = crate::sheets::run(&m.repo, preview).await["info"].clone();
+            if let Some(area) = crate::rewritedraw::for_edit(&info) {
+                let (lines, _) = crate::sheets::rewrite_lines(&info);
+                let sheet = crate::sheets::Sheet::new(
+                    crate::sheets::parent(&m.actions).as_ref(),
+                    &tr!("Apply These Changes?"),
+                    &lines.join(" "),
+                );
+                sheet.add(&area);
+                sheet.buttons(&tr!("Apply Changes"), false, None);
+                if sheet.run().await != crate::sheets::Response::Ok {
                     for b in &m.buttons {
                         b.set_sensitive(true);
                     }
-                } else {
-                    m.finish();
+                    return;
                 }
-            });
+            }
+            let weak = Rc::downgrade(&m);
+            m.actions
+                .perform_in(m.repo.clone(), vec![command], move |reply| {
+                    let Some(m) = weak.upgrade() else { return };
+                    if reply["error"].is_string() || reply.is_null() {
+                        for b in &m.buttons {
+                            b.set_sensitive(true);
+                        }
+                    } else {
+                        m.finish();
+                    }
+                });
+        });
     }
 
     fn finish(&self) {
