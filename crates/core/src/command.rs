@@ -2711,6 +2711,8 @@ impl Repository {
         // rebase のとき、確認のシートで前と後を描くための、載せ先で進んだコミット（新しい順）と、分かれたところ。
         let mut onto_commits: Vec<Oid> = Vec::new();
         let mut fork: Option<Oid> = None;
+        // History の編集のとき、確認のシートで前と後を描くための、書き換わるコミット（新しい順）と手順。
+        let mut edit_range: Option<(Vec<Oid>, &[rewrite::PlanStep])> = None;
         match (edit, onto) {
             (Some(edit), _) => {
                 self.load_history()?;
@@ -2746,6 +2748,14 @@ impl Repository {
                 } else {
                     let plan = rewrite::plan_rebase(&chain, edit, &[])?;
                     base = plan.base;
+                    if let HistoryEdit::Plan { steps } = edit {
+                        let before = chain
+                            .iter()
+                            .map(|c| c.oid)
+                            .take_while(|o| Some(*o) != base)
+                            .collect();
+                        edit_range = Some((before, steps));
+                    }
                     for line in plan.todo.lines() {
                         let mut words = line.split(' ');
                         let (Some(command), Some(oid)) =
@@ -2920,6 +2930,10 @@ impl Repository {
                 "labels": labels,
             });
         }
+        let edit_drawing = match edit_range {
+            Some((before, steps)) => self.edit_drawing(&before, steps, base)?,
+            None => serde_json::Value::Null,
+        };
         Ok(serde_json::json!({
             "moving": moving,
             "staying": staying,
@@ -2928,6 +2942,75 @@ impl Repository {
             "conflicts": conflicts,
             "updateRefs": { "configured": configured, "available": git_ok },
             "drawing": drawing,
+            "editDrawing": edit_drawing,
+        }))
+    }
+
+    /// History の編集の前と後（`RewritePreview` の `editDrawing`）。`before` は書き換わるコミット（新しい順）、
+    /// `steps` は手順（古い順）。`before`（`oid`・`subject`・`action`）と、`after`（できるコミット: 元のコミットの
+    /// `oid`、件名（reword・squash では新しいメッセージの 1 行目）、`combined`（まとめたコミットの数）、`action`）、
+    /// どちらも新しい順で長ければ真ん中を省き（`beforeMore`・`beforeMoreAt`・`afterMore`・`afterMoreAt`）、
+    /// `base`（書き換えない、いちばん新しいコミット。日時つき）と `labels`。
+    fn edit_drawing(
+        &self,
+        before: &[Oid],
+        steps: &[rewrite::PlanStep],
+        base: Option<Oid>,
+    ) -> Result<serde_json::Value> {
+        let step_of = |o: &Oid| steps.iter().find(|s| Oid::from_hex(&s.oid) == Some(*o));
+        let first_line = |m: &str| m.lines().next().unwrap_or_default().to_owned();
+        // できるコミット（古い順）: drop は消え、squash・fixup は 1 つ前にまとまる。
+        let mut groups: Vec<(Oid, Option<String>, usize, String)> = Vec::new();
+        for step in steps {
+            let Some(oid) = Oid::from_hex(&step.oid).filter(|o| before.contains(o)) else {
+                continue;
+            };
+            match step.action.as_str() {
+                "drop" => {}
+                "squash" | "fixup" if !groups.is_empty() => {
+                    let last = groups.last_mut().unwrap();
+                    last.2 += 1;
+                    if step.action == "squash"
+                        && let Some(message) = &step.message
+                    {
+                        last.1 = Some(first_line(message));
+                    }
+                }
+                action => groups.push((
+                    oid,
+                    (action == "reword")
+                        .then(|| step.message.as_deref().map(first_line))
+                        .flatten(),
+                    0,
+                    action.to_owned(),
+                )),
+            }
+        }
+        groups.reverse();
+        let (shown_before, before_more, before_at) = elide(before);
+        let (shown_after, after_more, after_at) = elide(&groups);
+        let mut ids = shown_before.clone();
+        ids.extend(shown_after.iter().map(|g| g.0));
+        ids.extend(base);
+        let (texts, labels) = self.drawing_texts(&ids)?;
+        let subject = |id: &Oid| texts.get(id).map(|t| t.0.clone()).unwrap_or_default();
+        Ok(serde_json::json!({
+            "before": shown_before.iter().map(|o| serde_json::json!({
+                "oid": o.to_string(), "subject": subject(o),
+                "action": step_of(o).map_or("pick", |s| s.action.as_str()),
+            })).collect::<Vec<_>>(),
+            "beforeMore": before_more,
+            "beforeMoreAt": before_at,
+            "after": shown_after.iter().map(|(o, new, combined, action)| serde_json::json!({
+                "oid": o.to_string(), "subject": new.clone().unwrap_or_else(|| subject(o)),
+                "combined": combined, "action": action,
+            })).collect::<Vec<_>>(),
+            "afterMore": after_more,
+            "afterMoreAt": after_at,
+            "base": base.map(|b| serde_json::json!({
+                "oid": b.to_string(), "subject": subject(&b), "time": texts.get(&b).map_or(0, |t| t.1),
+            })),
+            "labels": labels,
         }))
     }
 
@@ -6106,6 +6189,40 @@ mod tests {
         );
         assert_eq!(verified["info"]["checks"][1]["status"], "N");
         assert_eq!(extras["stats"][0]["added"], 1);
+    }
+
+    #[test]
+    fn draws_a_history_edit_before_and_after() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        let mut oids = Vec::new();
+        for name in ["w", "x", "y", "z"] {
+            std::fs::write(dir.join(name), format!("{name}\n")).unwrap();
+            git(dir, &["add", "."]);
+            git(dir, &["commit", "-q", "-m", &format!("add {name}")]);
+            oids.push(git(dir, &["rev-parse", "HEAD"]));
+        }
+        // w はそのまま、x に y をまとめ、z のメッセージを変える。
+        let json = serde_json::json!({"op": "rewritePreview", "edit": {"kind": "plan", "steps": [
+            {"oid": oids[0], "action": "pick"}, {"oid": oids[1], "action": "pick"},
+            {"oid": oids[2], "action": "squash", "message": "add x and y\n\nbody"},
+            {"oid": oids[3], "action": "reword", "message": "add z again"}]}});
+        let info = run(&repo, &json.to_string())["info"].clone();
+        let d = &info["editDrawing"];
+        let subjects = |list: &str| {
+            d[list]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|c| c["subject"].as_str().unwrap().to_owned())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(subjects("before"), ["add z", "add y", "add x"], "{d}");
+        assert_eq!(d["before"][1]["action"], "squash");
+        assert_eq!(subjects("after"), ["add z again", "add x and y"]);
+        assert_eq!(d["after"][1]["combined"], 1);
+        assert_eq!(d["base"]["subject"], "add w");
+        assert_eq!(d["labels"][0]["name"], "main");
     }
 
     #[test]
