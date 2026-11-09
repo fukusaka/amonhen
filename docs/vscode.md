@@ -74,9 +74,12 @@ is in [front.md](front.md), and the design in item 18 of
   `git check-mailmap`. When `.mailmap`, a config file or the file `mailmap.file` names changes (their modification
   times, read on each refresh; where `mailmap.file` points is asked of git only after a config file changes), History
   and the details it keeps are read again.
-- Range Diff (Compare with Previous Version on a local branch, and Range Diff… in the palette) shows a read-only
-  `amonhen:` document in `git range-diff`'s form. The engine runs the core's `previousVersion` and `rangeDiff`; the
-  git execution layer reads the branch's reflog (`git log -g`) and runs `git range-diff` itself.
+- Range Diff (Compare with Previous Version on a local branch, Range Diff in the palette, two commits selected in
+  History, and Compare with Current HEAD on a Reflog row) is a page of the main view, as in the app: the ranges on
+  top (editable), the pairs (= ! < >, Changes Only) on the left, and on the right the diff of diffs of a changed pair
+  or the commit of any other pair in the details pane. A Range Diff row shows in the sidebar while it is open. The
+  engine runs the core's `previousVersion` and `rangeDiff`; the git execution layer reads the branch's reflog
+  (`git log -g`) and runs `git range-diff` itself.
 - Features that came after the engine are built on the engine only (the core's commands through `run`); without it
   their sidebar rows and commands are hidden (the `amonhen.engine` context key).
 - Reflog, the sidebar's last row, opens a page of the main view with HEAD's reflog (the core's `reflog`) on the left
@@ -266,3 +269,4 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 55. Failures give the cause, with Details for the whole output
 - [x] 56. History: two-line rows (One Line per Commit), and Highlight Ancestors per line of the graph
 - [x] 57. History's details: the message in its own pane above the files, a divider to drag, and ⤢ to expand it
+- [x] 58. Range Diff as a page of the main view (pairs, diff of diffs, editable ranges), also from History and Reflog

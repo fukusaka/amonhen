@@ -40,7 +40,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Workspace の行でメインの表示を切り替える（Working Copy・History・Stashes・Reflog…） | ✓ | ✓ | ✓ | n/a | VSCode: Working Copy・History・Stashes と（エンジンがあれば）Reflog。Conflicts はコンフリクトがあるときだけで、押すと最初のファイルをマージエディタで開く。 |
 | コンフリクトがあるあいだ Conflicts の行と数 | ✓ | ✓ | ✓ | n/a | VSCode: Working Copy の中の Conflicts のグループ。 |
 | stash があるときだけ Stashes の行と数 | ✓ | ✓ | ✓ | n/a | VSCode: Stashes の節。 |
-| Range Diff を開いているあいだの Range Diff の行 | ✓ | ✓ | n/a | n/a | VSCode: Range Diff はエディターのタブで開く。 |
+| Range Diff を開いているあいだの Range Diff の行 | ✓ | ✓ | ✓ | n/a |  |
 | Branches・Remotes・Tags を絞り込む欄 | ✓ | ✓ | ✓ | n/a | VSCode: サイドバーの上の絞り込みのボタンで言葉を入れ、合うものを平らに並べる。 |
 | ブランチ・タグをいくつも選ぶ | ✓ | ✓ | ✓ | n/a | VSCode: Merge into Current Branch・Delete Branch・お気に入り・Archive が選んだものすべてに効く。 |
 | Pull Requests・Worktrees は中身があるときだけ出す | ✓ | ✓ | △ | n/a | VSCode: Worktrees だけ（GitHub は入れない）。 |
@@ -208,10 +208,10 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| Range Diff の表示（= ! < >・Changes Only・差分の差分） | ✓ | ✓ | △ | ✓ | VSCode: git の形の読むだけの文書。<br>CLI: `range-diff`。 |
+| Range Diff の表示（= ! < >・Changes Only・差分の差分） | ✓ | ✓ | ✓ | ✓ | CLI: `range-diff`。 |
 | Compare with Previous Version | ✓ | ✓ | ✓ | ✓ | CLI: `range-diff --previous`。 |
-| History の 2 つのコミット・Reflog の行を 2 つの版として比べる | ✓ | ✓ | △ | ✓ | VSCode: 代わりに Range Diff… で範囲を打ち込む。<br>CLI: どの範囲でも。 |
-| 範囲を直して比べ直す | ✓ | ✓ | △ | ✓ | VSCode: 開く前だけ。 |
+| History の 2 つのコミット・Reflog の行を 2 つの版として比べる | ✓ | ✓ | ✓ | ✓ | CLI: どの範囲でも。 |
+| 範囲を直して比べ直す | ✓ | ✓ | ✓ | ✓ |  |
 
 ## 6. Working Copy
 

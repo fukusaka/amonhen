@@ -1055,6 +1055,8 @@ First release.
   Commit in History Display brings back one line.
 - With the engine, Highlight Ancestors dims only the lines and dots that aren't the selected commit's ancestors.
 - The commit message gets its own pane above the files and diffs, with a divider to drag and ⤢ to fill the column.
+- Range Diff is a page of the main view, as in the app: the pairs on the left, the diff of diffs or the commit on the
+  right, and ranges you can edit and compare again. Reflog rows can be compared with the current HEAD.
 
 ### [0.2.6] - 2026-11-09
 
