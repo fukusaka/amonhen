@@ -871,7 +871,10 @@ fn pull_merge_subject(
     let Some(url) = value(&format!("remote.{remote}.url")) else {
         return Ok(None);
     };
-    Ok(Some(format!("Merge {what} of {}", fetched_url(&url))))
+    Ok(Some(format!(
+        "Merge {what} of {}",
+        fetched_url(&rewritten_url(&config, &url))
+    )))
 }
 
 /// git の merge コミットの件名で、取り込む先 `branch` の「into <branch>」を付けないか（`fmt-merge-msg.c`）。2.28 より前は
@@ -920,6 +923,38 @@ fn glob_matches(pattern: &str, text: &str) -> bool {
         }
     }
     go(pattern.as_bytes(), text.as_bytes())
+}
+
+/// `url.<base>.insteadOf` で書き換えた URL（`remote.c` の `alias_url`）。前が合うもののうちいちばん長いもの、同じ長さなら
+/// 先に現れた `<base>` のもの。
+fn rewritten_url(config: &[amonhen_model::ConfigEntry], url: &str) -> String {
+    // `<base>` は最初に現れた順。
+    let mut rewrites: Vec<(&str, Vec<&str>)> = Vec::new();
+    for entry in config {
+        // 節と名前は大文字小文字を区別しない（`git config --list` は小文字にする）。`<base>` はそのまま。
+        let key = entry.key.as_str();
+        let lower = key.to_ascii_lowercase();
+        if !(lower.starts_with("url.") && lower.ends_with(".insteadof") && key.len() > 14) {
+            continue;
+        }
+        let base = &key[4..key.len() - 10];
+        match rewrites.iter_mut().find(|(b, _)| *b == base) {
+            Some((_, values)) => values.push(&entry.value),
+            None => rewrites.push((base, vec![&entry.value])),
+        }
+    }
+    let mut longest: Option<(&str, usize)> = None;
+    for (base, values) in &rewrites {
+        for value in values {
+            if url.starts_with(value) && longest.is_none_or(|(_, len)| len < value.len()) {
+                longest = Some((base, value.len()));
+            }
+        }
+    }
+    match longest {
+        Some((base, len)) => format!("{base}{}", &url[len..]),
+        None => url.to_owned(),
+    }
 }
 
 /// git fetch が FETCH_HEAD に書く URL（`transport_anonymize_url` で利用者名とパスワードを除き、末尾の `/` と
@@ -5952,6 +5987,18 @@ mod tests {
         );
         git(dir, &["fetch", "-q"]);
         for branch in ["main", "work"] {
+            if branch == "work" {
+                // insteadOf で書き換える URL（件名には書き換えた後の URL）。
+                let base = format!("{}/", remote.path().display());
+                git(
+                    dir,
+                    &["config", &format!("url.{base}.insteadOf"), "amonhen-test:"],
+                );
+                git(
+                    dir,
+                    &["remote", "set-url", "origin", "amonhen-test:origin.git"],
+                );
+            }
             git(dir, &["switch", "-q", branch]);
             std::fs::write(dir.join(branch), "x\n").unwrap();
             git(dir, &["add", "."]);
@@ -5978,6 +6025,30 @@ mod tests {
         assert!(glob_matches("release/**", "release/1/hotfix"));
         assert!(glob_matches("ma?n", "main"));
         assert!(!glob_matches("main", "mainline"));
+    }
+
+    #[test]
+    fn urls_are_rewritten_by_the_longest_instead_of() {
+        use super::rewritten_url;
+        let entry = |key: &str, value: &str| amonhen_model::ConfigEntry {
+            scope: "local".into(),
+            origin: String::new(),
+            key: key.into(),
+            value: value.into(),
+        };
+        let config = [
+            entry("url.https://a.example/.insteadof", "gh:"),
+            entry("url.https://b.example/.insteadof", "gh:x/"),
+            entry("url.https://c.example/.insteadOf", "gh:"),
+            entry("url.https://d.example/.pushinsteadof", "gh:x/y"),
+        ];
+        assert_eq!(
+            rewritten_url(&config, "gh:x/y.git"),
+            "https://b.example/y.git"
+        );
+        // 同じ長さなら先に現れた <base>。
+        assert_eq!(rewritten_url(&config, "gh:z"), "https://a.example/z");
+        assert_eq!(rewritten_url(&config, "other:z"), "other:z");
     }
 
     #[test]
