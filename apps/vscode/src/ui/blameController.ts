@@ -3,6 +3,7 @@
  * 読む。コミットを決めなければ作業ツリーの内容で、作業中の変更や HEAD が動くたびに読み直す
  */
 import * as vscode from 'vscode';
+import { textSyntaxByLine } from '../daemon/diff.ts';
 import type { BlameCommit, BlameHostMessage, BlameWebviewMessage } from '../blame/protocol.ts';
 import { daemonFor } from '../daemon/connection.ts';
 import type { Repository, Section } from '../state/repository.ts';
@@ -94,6 +95,14 @@ export class BlameController implements vscode.Disposable {
       if (reply['ok'] !== true) throw new Error(String(reply['error'] ?? 'Can’t blame the file'));
       const info = reply['info'] as { commits?: BlameCommit[]; lines?: { c: number; t: string }[] } | undefined;
       send(info?.commits ?? [], info?.lines ?? [], false);
+      // 構文の色は後から（古いエンジンが断れば色なしのまま）
+      const texts = (info?.lines ?? []).map((l) => l.t);
+      if (texts.length > 0) {
+        const colored = await client.call({ op: 'textSyntax', path: target.path, text: texts.join('\n') }).catch(() => undefined);
+        if (colored && generation === this.generation) {
+          this.post({ type: 'blameSyntax', ...target, syntax: textSyntaxByLine(colored, texts) });
+        }
+      }
     } catch (err) {
       if (generation === this.generation) send([], [], false, err instanceof Error ? err.message : String(err));
     }

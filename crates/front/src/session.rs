@@ -25,6 +25,8 @@ pub struct Session {
     next: AtomicU64,
     histories: Mutex<Kept<Arc<HistorySnapshot>>>,
     diffs: Mutex<Kept<Arc<WorkingDiff>>>,
+    /// `commitDiff` の表示（`diffSyntax` で構文の色を頼む）。
+    views: Mutex<Kept<Arc<DiffView>>>,
     /// 相手が `hello` で伝えた言語（`Lang` の値）。答えのエラーの文に使う。伝えなければプロセスの既定。
     language: AtomicU8,
     /// 最後に始めた `historySearch` の途中の答え（History の番号・問い合わせ・分かった行・探し終えた割合）。
@@ -129,6 +131,7 @@ impl Session {
             next: AtomicU64::new(1),
             histories: Mutex::new(Kept::new()),
             diffs: Mutex::new(Kept::new()),
+            views: Mutex::new(Kept::new()),
             language: AtomicU8::new(i18n::current() as u8),
             search: Mutex::new(SearchPartial::default()),
         }
@@ -370,6 +373,26 @@ impl Session {
             // MARK: 差分
             "commitDiff" => self.commit_diff(request)?,
             "workingDiff" => self.working_diff(request)?,
+            // 構文の色付け。時間がかかることがあるので、FE は差分を色なしで先に出し、これを後から頼む。
+            "diffSyntax" => {
+                let spans = if request["diff"].is_null() {
+                    let id = u64_arg(request, "view")?;
+                    let view =
+                        self.views.lock().unwrap().get(id).ok_or_else(|| {
+                            tr!("Diff {id} no longer exists (reload it)", id = id)
+                        })?;
+                    view.syntax()
+                } else {
+                    self.diff(request)?.view.syntax()
+                };
+                syntax_records(&spans).finish(json!({"spans": spans.len()}))
+            }
+            "textSyntax" => {
+                let path = str_arg(request, "path")?;
+                let text = str_arg(request, "text")?;
+                let spans = amonhen_core::diff::text_syntax(path, text.as_bytes());
+                syntax_records(&spans).finish(json!({"spans": spans.len()}))
+            }
             "conflict" => {
                 let path = str_arg(request, "path")?;
                 let view = repo.conflict_view(path, &PROFILE)?;
@@ -584,12 +607,16 @@ impl Session {
             })
             .collect();
         let changes: Vec<Value> = changes.iter().flatten().map(change_json).collect();
-        Ok(diff_records(&view).finish(json!({
+        let reply = diff_records(&view).finish(json!({
             "files": files,
             "changes": changes,
             "selection": selection,
             "rows": view.rows.len(),
-        })))
+            "view": self.id(),
+        }));
+        let id = reply.json["view"].as_u64().unwrap_or_default();
+        self.views.lock().unwrap().insert(id, Arc::new(view));
+        Ok(reply)
     }
 
     fn working_diff(&self, request: &Value) -> Result<Reply> {
@@ -681,6 +708,18 @@ fn diff_records(view: &DiffView) -> Records {
         .put_slice("textLengths", &lengths)
         .put("text", &text)
         .put_slice("highlights", &highlights);
+    r
+}
+
+/// 構文の色の範囲: `spans` は 1 つ 16 バイト（row・start・end・kind の u32）。差分なら row は差分の行の番号で、
+/// start・end はその行の文字列での位置（FE の符号単位）。`textSyntax` なら row は 0 で、文の先頭からの UTF-16 の位置。
+fn syntax_records(spans: &[amonhen_layout::SyntaxSpan]) -> Records {
+    let flat: Vec<u32> = spans
+        .iter()
+        .flat_map(|s| [s.row, s.start, s.end, u32::from(s.kind)])
+        .collect();
+    let mut r = Records::new();
+    r.put_slice("spans", &flat);
     r
 }
 
@@ -879,6 +918,53 @@ mod tests {
                 json!({"op": "history", "tips": [second], "fold": true})
             ),
             2
+        );
+    }
+
+    /// コミットの差分と文の構文の色（diffSyntax・textSyntax）。差分なら行の番号と、その行の中の位置
+    #[test]
+    fn colors_a_commit_diff_and_a_text() {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "-q"]);
+        commit(dir.path(), "first");
+        std::fs::write(dir.path().join("a.rs"), "fn main() {}\n").unwrap();
+        git(dir.path(), &["add", "a.rs"]);
+        let id = commit(dir.path(), "add a.rs");
+        let backend = amonhen_backend_gix::GixBackend::open(dir.path()).unwrap();
+        let session = Session::new(Arc::new(Repository::new(backend)));
+        let call = |request: Value| session.handle(&request, &|| false).unwrap();
+        let diff = call(json!({"op": "commitDiff", "id": id}));
+        let view = diff.json["view"].as_u64().unwrap();
+        let reply = call(json!({"op": "diffSyntax", "view": view}));
+        let spans = reply.u32s("spans");
+        assert_eq!(
+            spans.len() as u64,
+            reply.json["spans"].as_u64().unwrap() * 4
+        );
+        // 見出し（FILE）、hunk、追加の行の順。追加の行の `fn` がキーワード
+        let rows = diff.u32s("rows");
+        let added = (0..rows.len() / 4)
+            .find(|&r| rows[r * 4] & 0xff == 1)
+            .unwrap() as u32;
+        let keyword = spans
+            .chunks(4)
+            .find(|s| s[0] == added && s[1] == 0)
+            .unwrap();
+        assert_eq!(
+            (keyword[2], keyword[3]),
+            (2, u32::from(amonhen_layout::SyntaxSpan::KEYWORD))
+        );
+
+        let text = call(json!({"op": "textSyntax", "path": "b.rs", "text": "let x = 1;\n"}));
+        let spans = text.u32s("spans");
+        assert!(
+            spans
+                .chunks(4)
+                .any(|s| s == [0, 0, 3, u32::from(amonhen_layout::SyntaxSpan::KEYWORD)])
+        );
+        assert_eq!(
+            call(json!({"op": "textSyntax", "path": "b.unknown", "text": "let x"})).json["spans"],
+            0
         );
     }
 }

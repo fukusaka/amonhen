@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import { groupChanges } from './state/changes.ts';
+import { openConflict } from './ui/diff.ts';
 import { setDaemonLanguage } from './daemon/client.ts';
 import { daemonPath, disposeDaemonClients, initDaemon } from './daemon/connection.ts';
 import { RepositoryManager } from './state/manager.ts';
@@ -104,6 +106,12 @@ export async function activate(
     manager.onDidChangeCurrent(updateDescription),
     registerContentProvider(manager),
     vscode.commands.registerCommand('amonhen.refresh', () => manager.current?.refresh()),
+    // サイドバーの Conflicts: 最初のコンフリクトのファイルをマージエディタで開く（アプリと同じ）
+    vscode.commands.registerCommand('amonhen.openFirstConflict', async () => {
+      const repo = manager.current;
+      const first = repo && groupChanges(repo.current.status?.entries ?? []).find(([group]) => group === 'conflicts')?.[1][0];
+      if (repo && first) await openConflict(repo.root, first, repo.current.sequence);
+    }),
     registerIgnoreCommand(manager),
     vscode.commands.registerCommand('amonhen.selectRepository', () => manager.pick()),
     vscode.commands.registerCommand('amonhen.open', () => show()),

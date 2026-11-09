@@ -37,7 +37,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| Workspace の行でメインの表示を切り替える（Working Copy・History・Stashes・Reflog…） | ✓ | ✓ | △ | n/a | VSCode: Working Copy・History・Stashes と（エンジンがあれば）Reflog。Conflicts はない。 |
+| Workspace の行でメインの表示を切り替える（Working Copy・History・Stashes・Reflog…） | ✓ | ✓ | ✓ | n/a | VSCode: Working Copy・History・Stashes と（エンジンがあれば）Reflog。Conflicts はコンフリクトがあるときだけで、押すと最初のファイルをマージエディタで開く。 |
 | コンフリクトがあるあいだ Conflicts の行と数 | ✓ | ✓ | ✓ | n/a | VSCode: Working Copy の中の Conflicts のグループ。 |
 | stash があるときだけ Stashes の行と数 | ✓ | ✓ | ✓ | n/a | VSCode: Stashes の節。 |
 | Range Diff を開いているあいだの Range Diff の行 | ✓ | ✓ | n/a | n/a | VSCode: Range Diff はエディターのタブで開く。 |
@@ -277,13 +277,13 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 選んだものの差分（範囲をまとめる・A..B / A...B・飛び飛び） | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。<br>CLI: `diff <rev> <rev>`。 |
 | 選んだものの操作（cherry-pick・revert・squash・ID のコピー） | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。<br>CLI: `amonhen run` から。 |
 | 署名のポップオーバー | ✓ | ✓ | ✓ | n/a | VSCode: 詳細の Signature の行（様子・説明・署名した人と鍵）。ポップオーバーはない。 |
-| 単語の強調と構文の色 | ✓ | ✓ | △ | n/a | VSCode: 単語だけ。 |
+| 単語の強調と構文の色 | ✓ | ✓ | ✓ | n/a | VSCode: 構文の色はエンジンがあれば、差分を出した後に付く。 |
 
 ## Blame・File History
 
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| Blame | ✓ | ✓ | △ | △ | VSCode: メインビューのページ。構文の色はない。<br>CLI: `amonhen run`（`blame`）から。 |
+| Blame | ✓ | ✓ | ✓ | △ | VSCode: メインビューのページ。<br>CLI: `amonhen run`（`blame`）から。 |
 | ファイルをコミットの版に戻す（この版・その前の版。選べば stage も） | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあるとき、History の詳細のファイルの右クリックから。Restore and Stage は 2 つめのボタン。<br>CLI: `restore --source <rev> [--staged]`。 |
 | File History | ✓ | ✓ | ✓ | △ | VSCode: メインビューのページ。エクスプローラー・エディターのタブ・コマンドパレット・メインビューのファイルから開く。<br>CLI: `amonhen run`（`fileHistory`）から。 |
 | リポジトリのタブの隣のタブに、リポジトリのツールバー付きで開く | ✓ | ✓ | n/a | n/a | GTK4: リポジトリのタブがほかの窓で前に出ているときは、ツールバーのない題だけの帯になる。 |
@@ -357,7 +357,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
 | 進行中の操作と Continue / Skip / Abort | ✓ | ✓ | ✓ | n/a | VSCode: サイドバーの行。 |
-| 失敗とその原因・Details | ✓ | ✓ | △ | n/a | VSCode: エラーの知らせだけ。 |
+| 失敗とその原因・Details | ✓ | ✓ | ✓ | n/a | VSCode: 知らせに原因（git の fatal:・error: の行）を出し、Details で全文と git の命令を出力パネルに出す。 |
 | 切れたつながりと Reconnect | ✓ | ✓ | n/a | n/a |  |
 | 終わった操作が何をしたか、数秒 | ✓ | ✓ | ✓ | n/a | VSCode: ステータスバーの文か、Undo 付きの知らせ。 |
 
@@ -365,7 +365,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| リモート・HEAD を動かす・消す操作の前のシート | ✓ | ✓ | △ | n/a | GTK4: 名前を入れるものもすべての確認も同じシート。macOS と同じく、入力がどこにあっても（ドロップダウンやラジオでも）Return で既定のボタンを押す。<br>VSCode: 消す・書き換える・Reset のときだけで、Fetch・Pull・Push・Merge・Checkout にはない。 |
+| リモート・HEAD を動かす・消す操作の前のシート | ✓ | ✓ | ✓ | n/a | GTK4: 名前を入れるものもすべての確認も同じシート。macOS と同じく、入力がどこにあっても（ドロップダウンやラジオでも）Return で既定のボタンを押す。<br>VSCode: modal と、Fetch・Pull・Push は QuickPick。Switch Branch… はアプリの切り替えと同じくすぐ切り替える。 |
 | git の操作の Undo（`undo.json`） | ✓ | ✓ | ✓ | ✓ |  |
 | 押せない部品はツールチップで理由を言う | ✓ | ✓ | n/a | n/a | VSCode: 使えないコマンドは出さない（when 句）。 |
 

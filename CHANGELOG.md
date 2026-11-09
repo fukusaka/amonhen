@@ -11,6 +11,8 @@ becomes the GitHub Release notes.
 
 #### Added
 
+- The engine is built with syntax highlighting (tree-sitter), and its front-end interface gives a diff's or a text's
+  syntax colors (`diffSyntax`, `textSyntax`).
 - A branch merged by a GitHub pull request (squash or rebase) gets the merged mark in the sidebar, says "Merged by
   pull request #123" in its popover, and is deleted with a plain confirmation naming the pull request.
 - Clean Up Branches… (Repository menu and the Branches heading) lists the branches merged into the default branch,
@@ -1035,6 +1037,9 @@ First release.
 
 #### Added
 
+- While there are conflicts, the sidebar shows Conflicts with their count; clicking it opens the first in the merge
+  editor.
+- With the engine, diffs in History and Working Copy and the lines in Blame get syntax colors.
 - The sidebar's Working Copy row says "some folders" in a sparse checkout.
 - Save as Patch asks for a version (`-v`), naming the files `v2-0001-…` and the subjects `[PATCH v2]`.
 - With the engine, Working Copy shows one HEAD → working tree diff with a check on each changed line and hunk;
@@ -1086,6 +1091,10 @@ First release.
 
 #### Changed
 
+- A failure's notification gives its cause (git's `fatal:` and `error:` lines), with Details for the whole output and
+  the git command.
+- Checkout, Merge, Cherry-pick, Revert and applying or popping a stash ask first, saying what happens (a tracking
+  branch, a detached HEAD, uncommitted changes coming along).
 - Working Copy's commit box is above the file list, as in the app.
 - Without the engine, a fetch or push that prints nothing for 120 seconds (usually a sign-in nobody sees) is
   stopped with an error saying so, as the engine does.

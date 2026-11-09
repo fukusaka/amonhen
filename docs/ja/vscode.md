@@ -252,3 +252,7 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 49. Working Copy: コミットの欄を一覧の上に
 - [x] 50. Save as Patch で版（-v）を尋ねる
 - [x] 51. 一部のフォルダだけのとき、Working Copy の行に出す
+- [x] 52. Checkout・Merge・Cherry-pick・Revert・Apply・Pop の前に確かめる
+- [x] 53. History と Working Copy の差分・Blame の構文の色（エンジンの tree-sitter）
+- [x] 54. コンフリクトがあるときのサイドバーの Workspace の Conflicts
+- [x] 55. 失敗は原因を出し、Details で全文を

@@ -1687,6 +1687,53 @@ async function pushSheetFlow(): Promise<void> {
   }
 }
 
+/**
+ * 構文の色: History の詳細のコミットの差分、Working Copy の差分、Blame の行に、エンジンの tree-sitter の色が後から
+ * 届く（TypeScript の `const` はキーワード）
+ */
+async function syntaxFlow(): Promise<void> {
+  const start = git('rev-parse', 'HEAD').trim();
+  const file = join(root, 'syn.ts');
+  const keyword = (line: { syntax?: [number, number, number][] } | undefined) => line?.syntax?.some((s) => s[0] === 0 && s[1] === 5 && s[2] === 1);
+  try {
+    writeFileSync(file, 'const a = 1;\n');
+    git('add', 'syn.ts');
+    git('commit', '-q', '-m', 'add syn.ts');
+    const oid = git('rev-parse', 'HEAD').trim();
+    const panel = await showView('amonhen.showHistory');
+    let mark = posted.length;
+    await panel.history.handle({ type: 'select', oid });
+    await waitPosted('details', mark, (m) => m.details.oid === oid);
+    await panel.history.handle({ type: 'commitDiff', oid, path: 'syn.ts' });
+    await waitPosted('commitDiff', mark, (m) => m.oid === oid && keyword(m.diff.hunks[0]?.lines[0]) === true);
+
+    // Working Copy の差分（追加した行）
+    writeFileSync(file, 'const a = 1;\nconst b = 2;\n');
+    const wc = (await showView('amonhen.showWorkingCopy')).workingCopy;
+    mark = posted.length;
+    await vscode.commands.executeCommand('amonhen.refresh');
+    await waitPosted('wcFiles', mark, (m) => m.files.some((f) => f.path === 'syn.ts'));
+    mark = posted.length;
+    await wc.handle({ type: 'wcSelect', group: 'unstaged', path: 'syn.ts' });
+    await waitPosted(
+      'wcDiff',
+      mark,
+      (m) => m.diff?.path === 'syn.ts' && m.diff.hunks.some((h) => h.lines.some((l) => l.kind === '+' && keyword(l))),
+    );
+
+    // Blame の行
+    mark = posted.length;
+    await vscode.commands.executeCommand('amonhen.blame', vscode.Uri.file(file));
+    const blame = await waitPosted('blameSyntax', mark, (m) => m.path === 'syn.ts');
+    assert.equal(blame.syntax.length, 2);
+    assert.ok(keyword({ syntax: blame.syntax[1] }), JSON.stringify(blame.syntax));
+  } finally {
+    git('reset', '-q', '--hard', start);
+    rmSync(file, { force: true });
+    await vscode.commands.executeCommand('amonhen.refresh');
+  }
+}
+
 async function orphanFlow(): Promise<void> {
   const repo = api.manager.current!;
   const branch = git('symbolic-ref', '--short', 'HEAD').trim();
@@ -2124,7 +2171,9 @@ async function stashFlow(): Promise<void> {
     // 新しい stash を確かめてから pop する
     git('stash', 'push', '-q', '-u', '-m', 'again');
     await vscode.commands.executeCommand('amonhen.refresh');
-    await withWindow({ showWarningMessage: async () => 'Pop' }, async () => vscode.commands.executeCommand('amonhen.stash.popLatest'));
+    await withWindow({ showInformationMessage: async (_m: string, ...rest: unknown[]) => (rest.includes('Pop') ? 'Pop' : undefined) }, async () =>
+      vscode.commands.executeCommand('amonhen.stash.popLatest'),
+    );
     assert.equal(git('stash', 'list').trim(), '');
     assert.equal(readFileSync(file, 'utf8').replaceAll('\r\n', '\n'), 'untracked\n');
   } finally {
@@ -2476,7 +2525,19 @@ async function reflogFlow(): Promise<void> {
     assert.equal(rev('HEAD'), lost);
 
     // Checkout（detached）と、History で見せる
-    await panel.reflog.handle({ type: 'reflogAction', action: 'checkout', oid: parent, selector: 'HEAD@{1}' });
+    // Checkout の前に確かめる（detached になる）
+    let checkoutAsked = '';
+    await withWindow(
+      {
+        showInformationMessage: async (message: string, ...rest: unknown[]) => {
+          if (!rest.includes('Checkout')) return undefined;
+          checkoutAsked = `${message} ${(rest[0] as { detail?: string }).detail ?? ''}`;
+          return 'Checkout';
+        },
+      },
+      async () => panel.reflog.handle({ type: 'reflogAction', action: 'checkout', oid: parent, selector: 'HEAD@{1}' }),
+    );
+    assert.match(checkoutAsked, /^Checkout [0-9a-f]{8}\? HEAD is detached/);
     assert.equal(rev('HEAD'), parent, lastErrors());
     assert.throws(() => git('symbolic-ref', '-q', 'HEAD'));
     git('switch', '-q', 'reflog-e2e');
@@ -2638,6 +2699,10 @@ async function conflictsWithoutMarkersFlow(): Promise<void> {
     assert.deepEqual(state('rerere.txt'), { markers: 0, rerere: true });
     assert.deepEqual(state('hand.txt'), { markers: 0, rerere: false });
     assert.deepEqual(state('open.txt'), { markers: 1, rerere: false });
+    // サイドバーの Workspace に、コンフリクトの数を添えた Conflicts の行が出る
+    const conflictsRow = api.sidebar.getChildren().find((n) => n.kind === 'conflicts');
+    assert.ok(conflictsRow, 'Conflicts の行');
+    assert.equal((api.sidebar.getTreeItem(conflictsRow) as vscode.TreeItem).description, '3');
 
     // Accept は、解決した内容が失われると確かめる（ここでは断る）
     let detail: string | undefined;
@@ -3561,6 +3626,10 @@ suite('Amon Hen in VSCode', () => {
     await waitPosted('reset', at);
     const head = git('rev-parse', 'HEAD').trim();
     await waitPosted('rows', at, (m) => m.rows.some((r) => r.oid === head));
+  });
+
+  test('colors diffs and Blame with the engine’s syntax highlighting', async () => {
+    await syntaxFlow();
   });
 
   test('creates an orphan branch, empty or keeping the files, through the daemon', async () => {
