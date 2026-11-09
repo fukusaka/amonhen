@@ -874,6 +874,54 @@ fn pull_merge_subject(
     Ok(Some(format!("Merge {what} of {}", fetched_url(&url))))
 }
 
+/// git の merge コミットの件名で、取り込む先 `branch` の「into <branch>」を付けないか（`fmt-merge-msg.c`）。2.28 より前は
+/// master だけ、2.28 は付けないことがない。2.29 からは `merge.suppressDest` の glob（空の値は、それまでのものを
+/// 消す）で、なければ master（2.30 からは main と master）。
+fn merge_dest_suppressed(ops: &dyn amonhen_model::Operations, branch: &str) -> Result<bool> {
+    let version = ops.git_version()?;
+    if let Some(v) = version {
+        if v < (2, 28, 0) {
+            return Ok(branch == "master");
+        }
+        if v < (2, 29, 0) {
+            return Ok(false);
+        }
+    }
+    let mut patterns: Option<Vec<String>> = None;
+    for entry in ops.config_list()? {
+        if entry.key.eq_ignore_ascii_case("merge.suppressDest") {
+            let list = patterns.get_or_insert_with(Vec::new);
+            if entry.value.is_empty() {
+                list.clear();
+            } else {
+                list.push(entry.value);
+            }
+        }
+    }
+    let patterns = patterns.unwrap_or_else(|| match version {
+        Some(v) if v < (2, 30, 0) => vec!["master".to_owned()],
+        _ => vec!["main".to_owned(), "master".to_owned()],
+    });
+    Ok(patterns.iter().any(|p| glob_matches(p, branch)))
+}
+
+/// git の `wildmatch(..., WM_PATHNAME)` のうち `*`・`?`（どちらも `/` は越えない）と `**`。ほかの字はそのまま比べる。
+fn glob_matches(pattern: &str, text: &str) -> bool {
+    fn go(p: &[u8], t: &[u8]) -> bool {
+        match p.first() {
+            None => t.is_empty(),
+            Some(b'*') if p.get(1) == Some(&b'*') => (0..=t.len()).any(|i| go(&p[2..], &t[i..])),
+            Some(b'*') => {
+                let end = t.iter().position(|&c| c == b'/').unwrap_or(t.len());
+                (0..=end).any(|i| go(&p[1..], &t[i..]))
+            }
+            Some(b'?') => t.first().is_some_and(|&c| c != b'/') && go(&p[1..], &t[1..]),
+            Some(&c) => t.first() == Some(&c) && go(&p[1..], &t[1..]),
+        }
+    }
+    go(pattern.as_bytes(), text.as_bytes())
+}
+
 /// git fetch が FETCH_HEAD に書く URL（`transport_anonymize_url` で利用者名とパスワードを除き、末尾の `/` と
 /// `.git` を落とす）。
 fn fetched_url(url: &str) -> String {
@@ -2456,7 +2504,7 @@ impl Repository {
         ids.extend(base);
         let (texts, labels) = self.drawing_texts(&ids)?;
         let commit = |id: &Oid| serde_json::json!({ "oid": id.to_string(), "subject": texts.get(id).map(|t| t.0.clone()) });
-        // git の merge コミットの件名（`Merge branch 'x'`。main・master に取り込むときは「into」を付けない）。
+        // git の merge コミットの件名（`Merge branch 'x'`。取り込む先によっては「into <branch>」を付けない）。
         let refs = self.load_refs()?;
         let kind = refs
             .refs
@@ -2474,7 +2522,9 @@ impl Repository {
             (None, Some(RefKind::Remote)) => format!("Merge remote-tracking branch '{theirs}'"),
             _ => format!("Merge commit '{theirs}'"),
         };
-        if let Some(branch) = current.filter(|b| ours == "HEAD" && b != "main" && b != "master") {
+        if let Some(branch) = current.filter(|_| ours == "HEAD")
+            && !merge_dest_suppressed(ops, &branch)?
+        {
             subject.push_str(&format!(" into {branch}"));
         }
         Ok(serde_json::json!({
@@ -5920,6 +5970,17 @@ mod tests {
     }
 
     #[test]
+    fn merge_dest_globs_follow_wildmatch() {
+        use super::glob_matches;
+        assert!(glob_matches("main", "main"));
+        assert!(glob_matches("release/*", "release/1.0"));
+        assert!(!glob_matches("release/*", "release/1/hotfix"));
+        assert!(glob_matches("release/**", "release/1/hotfix"));
+        assert!(glob_matches("ma?n", "main"));
+        assert!(!glob_matches("main", "mainline"));
+    }
+
+    #[test]
     fn fetched_urls_are_anonymized_and_trimmed() {
         use super::fetched_url;
         assert_eq!(
@@ -5962,7 +6023,16 @@ mod tests {
         assert_eq!(info["drawing"]["ours"][0]["subject"], "add d");
         assert_eq!(info["drawing"]["theirs"][0]["subject"], "add c");
         assert_eq!(info["drawing"]["base"]["subject"], "first");
-        assert_eq!(info["drawing"]["subject"], "Merge branch 'topic'");
+        // 2.30 より前の git は main に取り込むときも「into main」を付ける。
+        let into = if git_version() < (2, 30) {
+            " into main"
+        } else {
+            ""
+        };
+        assert_eq!(
+            info["drawing"]["subject"],
+            format!("Merge branch 'topic'{into}")
+        );
         // 取り込むものがない・fast-forward で済む。
         let none = run(&repo, r#"{"op":"mergePreview","theirs":"main~1"}"#);
         assert_eq!(none["info"]["upToDate"], true);
