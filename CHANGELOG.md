@@ -1069,6 +1069,8 @@ First release.
   in effect in bold.
 - Context menus use the app's names, such as Edit Message…, Combine with Older Commit…, Checkout as Local Branch… and
   Rename…, and items that ask first end with “…”.
+- When git or ssh asks for a user name, password or passphrase, VSCode's input box asks, as the app's dialog does;
+  fetch, pull and push that needed one used to fail.
 
 ### [0.2.6] - 2026-11-09
 

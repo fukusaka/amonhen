@@ -264,3 +264,4 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 59. Push のシートから、送る変更すべてやコミットひとつの差分を開く
 - [x] 60. Keys and Values の列を Combined / Levels で切り替える
 - [x] 61. 右クリックのメニューの名前をアプリに合わせる
+- [x] 62. パスワード・パスフレーズを VSCode の入力欄で尋ねる（askpass）

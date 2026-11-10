@@ -8,6 +8,7 @@
 import type { FileStat } from '../src/workingCopy/protocol.ts';
 import assert from 'node:assert/strict';
 import childProcess from 'node:child_process';
+import http from 'node:http';
 import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import * as vscode from 'vscode';
@@ -3216,6 +3217,50 @@ suite('Amon Hen in VSCode', () => {
     // エンジンの用意（置いたエンジンを一度起動する。macOS では OS の確認で数十秒かかることがある）が済むと、
     // サイドバーに Reflog が出る。後のテストがこの待ちを負わないよう、ここで待つ
     await until('サイドバーの Reflog', () => api.sidebar.getChildren().some((n) => n.kind === 'view' && n.view === 'reflog'), 50_000);
+  });
+
+  test('asks for the user name and password git wants in VSCode, through the daemon', async function () {
+    assert.ok(api.askpass(), 'askpass のスクリプト');
+    // http を使えない git（CI の最低版は curl なしで作る）では試せない
+    if (!readdirSync(git('--exec-path').trim()).some((f) => f.startsWith('git-remote-http'))) this.skip();
+    // 認証を求める HTTP のサーバー。答えが届いたかだけ見る（リポジトリはないので、届いた後は 404）
+    const seen: string[] = [];
+    const server = http.createServer((req, res) => {
+      const auth = req.headers.authorization;
+      if (auth) seen.push(Buffer.from(auth.replace(/^Basic /, ''), 'base64').toString('utf8'));
+      res.writeHead(auth ? 404 : 401, auth ? {} : { 'WWW-Authenticate': 'Basic realm="e2e"' }).end();
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
+    const port = (server.address() as { port: number }).port;
+    const asked: vscode.InputBoxOptions[] = [];
+    git('remote', 'add', 'e2e-auth', `http://127.0.0.1:${port}/r.git`);
+    git('config', 'credential.helper', '');
+    try {
+      await withWindow(
+        {
+          showInformationMessage: async (_m: string, ...rest: unknown[]) => (rest.includes('Fetch') ? 'Fetch' : undefined),
+          showQuickPick: async (items: readonly (vscode.QuickPickItem & { remote?: string })[]) => items.find((i) => i.remote === 'e2e-auth'),
+          showInputBox: async (options: vscode.InputBoxOptions) => {
+            asked.push(options);
+            return /^Username/.test(options.prompt ?? '') ? 'alice' : 'secret';
+          },
+          showErrorMessage: async () => undefined,
+        },
+        async () => vscode.commands.executeCommand('amonhen.fetch'),
+      );
+      assert.deepEqual(seen, ['alice:secret']);
+      assert.deepEqual(
+        asked.map((o) => [o.title, o.prompt, o.password]),
+        [
+          ['Amon Hen', `Username for 'http://127.0.0.1:${port}':`, false],
+          ['Amon Hen', `Password for 'http://alice@127.0.0.1:${port}':`, true],
+        ],
+      );
+    } finally {
+      git('remote', 'remove', 'e2e-auth');
+      git('config', '--unset', 'credential.helper');
+      server.close();
+    }
   });
 
   test('shows History, commit details and diffs through the daemon', async () => {

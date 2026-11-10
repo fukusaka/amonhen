@@ -5,6 +5,7 @@
  */
 import { execFile, spawn } from 'node:child_process';
 import { connect, type Socket } from 'node:net';
+import { askpass } from '../git/askpass.ts';
 
 /** 窓口の取り決めの版（`amonhen_front::VERSION`） */
 export const FRONT_VERSION = 5;
@@ -297,9 +298,14 @@ export function setFallbackGit(path: string | undefined): void {
   fallbackGit = path || undefined;
 }
 
-/** daemon に送る、この拡張の環境（`git.path` を `AMONHEN_FALLBACK_GIT` に入れて） */
+/** daemon に送る、この拡張の環境（`git.path` を `AMONHEN_FALLBACK_GIT` に、askpass を `AMONHEN_ASKPASS` に入れて） */
 function frontEnv(): string {
-  return clientEnv(fallbackGit ? { ...process.env, AMONHEN_FALLBACK_GIT: fallbackGit } : process.env);
+  const script = askpass();
+  return clientEnv({
+    ...process.env,
+    ...(fallbackGit ? { AMONHEN_FALLBACK_GIT: fallbackGit } : {}),
+    ...(script ? { AMONHEN_ASKPASS: script } : {}),
+  });
 }
 
 /**

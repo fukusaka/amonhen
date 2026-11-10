@@ -24,6 +24,7 @@ Clicking the Amon Hen icon in the activity bar opens the nav in the sidebar and 
 | Remotes / Tags / Stashes / Submodules | Fetched when expanded |
 | Reflog | With the engine. Selecting it shows every place HEAD has been in the main view |
 
+- When git or ssh asks for a user name, password or passphrase (fetch, pull, push), Amon Hen asks in VSCode's input box, as the app does in a dialog; passwords and passphrases are hidden. Cancel fails the operation.
 - Selecting a branch, remote branch or tag shows its history in the History of the main view.
 - Right-clicking a branch or tag offers Checkout… (Checkout as Local Branch… for a remote branch: creates a local branch that tracks it and switches to it), for a local branch that is not checked out Fast-Forward to Upstream (only behind it, as of the last Fetch; not for one checked out in another worktree) or Push to Upstream… (only ahead), Publish… for a local branch without an upstream, Merge into Current Branch…, Rebase Current Branch onto This…, Rename…, Delete…, New Branch (create one from there and switch to it), and New Tag (an annotated tag if you enter a message). Creation and deletion can be reverted with Undo.
 - With the engine, New Orphan Branch… (Command Palette, or the Branches group's right-click) switches to a branch with no history: Start Empty (`git switch --orphan`) or Keep the Files staged for its first commit (`git checkout --orphan`).
@@ -125,7 +126,6 @@ Undo in the nav reverts the last operation. It covers commits (including amend),
 
 - Only the range from HEAD up to the first merge commit can be edited in the History.
 - Push cannot be undone.
-- Push and fetch that prompt for authentication do not work (authentication must work through SSH keys or a credential helper).
 - Line-level staging does not take git filters such as autocrlf into account.
 - Diffs have no syntax highlighting.
 - External changes take about 1 second to show up (because it waits for notifications from the built-in Git extension).

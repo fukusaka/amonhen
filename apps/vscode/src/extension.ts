@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
 import { groupChanges } from './state/changes.ts';
+import { askpass, setAskpass } from './git/askpass.ts';
+import { startAskpass } from './ui/askpass.ts';
 import { openConflict } from './ui/diff.ts';
 import { setDaemonLanguage } from './daemon/client.ts';
 import { daemonPath, disposeDaemonClients, initDaemon } from './daemon/connection.ts';
@@ -55,10 +57,20 @@ export async function activate(
   dragAndDrop: SidebarDragAndDrop;
   /** 開いているメインビュー（e2e のテストが Webview の代わりにメッセージを入れる） */
   panel: () => MainPanel | undefined;
+  /** git と ssh に渡す askpass のスクリプト */
+  askpass: () => string | undefined;
 }> {
   initPreferences(context.globalState);
   const start = performance.now();
   const log = vscode.window.createOutputChannel('Amon Hen', { log: true });
+  // git と ssh が資格情報を尋ねたら、VSCode の入力欄で尋ねる（daemon につなぐ前に置く）
+  try {
+    const helper = await startAskpass();
+    setAskpass(helper.path);
+    context.subscriptions.push(helper, { dispose: () => setAskpass(undefined) });
+  } catch (err) {
+    log.warn(`No password prompt for git: ${err instanceof Error ? err.message : String(err)}`);
+  }
   // daemon が作るエラーの文を、VSCode の表示言語にする
   setDaemonLanguage(vscode.env.language);
   // 同梱のエンジンを置き場所に置く（裏で。使うときに待つ）
@@ -162,7 +174,7 @@ export async function activate(
   await manager.initialize();
   updateDescription();
   log.info(`activated in ${Math.round(performance.now() - start)}ms`);
-  return { manager, sidebar, dragAndDrop, panel: () => MainPanel.active };
+  return { manager, sidebar, dragAndDrop, panel: () => MainPanel.active, askpass: () => askpass() };
 }
 
 export function deactivate(): void {

@@ -24,6 +24,7 @@ VSCode 上で快適に Git を操作するための自分用の拡張。Marketpl
 | Remotes / Tags / Stashes / Submodules | 開いたときに取得する |
 | Reflog | エンジンがあるとき。選ぶと、HEAD が指してきたところをメインビューに出す |
 
+- git や ssh がユーザー名・パスワード・パスフレーズを尋ねたら（fetch・pull・push）、アプリのダイアログと同じく VSCode の入力欄で尋ねる。パスワードとパスフレーズは伏せる。キャンセルすると操作は失敗する。
 - ブランチ・リモートブランチ・タグを選ぶと、メインビューの History にその履歴が出る。
 - ブランチ・タグの右クリックで Checkout…（リモートブランチは Checkout as Local Branch…。追跡するローカルブランチを作って切り替える）、チェックアウトしていないローカルブランチなら Fast-Forward to Upstream（upstream より後ろにだけあるとき。最後の Fetch の時点。ほかの worktree でチェックアウト中のものは除く）か Push to Upstream…（先にだけあるとき）、upstream の無いローカルブランチなら Publish…、Merge into Current Branch…、Rebase Current Branch onto This…、Rename…、Delete…、New Branch（そこから作って切り替える）、New Tag（メッセージを入れれば annotated tag）。作成と削除は Undo で戻せる。
 - エンジンがあるとき、New Orphan Branch…（コマンドパレット、Branches のグループの右クリック）で履歴のないブランチに切り替える。Start Empty（`git switch --orphan`）か、今のファイルを最初のコミットのために stage して残す Keep the Files（`git checkout --orphan`）。
@@ -126,7 +127,6 @@ Apply Patch…、またはエクスプローラーで .patch・.diff・.mbox・.
 
 - History で編集できるのは、HEAD から最初の merge コミットまでの範囲だけ。
 - Push は Undo できない。
-- 認証の入力を求められる push・fetch はできない（SSH の鍵や credential helper で認証できる必要がある）。
 - 行単位の stage は、autocrlf などの git のフィルターを考慮しない。
 - 差分にシンタックスハイライトは付かない。
 - 外部での変更が反映されるまで約 1 秒かかる（組み込みの Git 拡張の通知を待っているため）。

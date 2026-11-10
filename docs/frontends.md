@@ -407,5 +407,5 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Through the shared daemon | ✓ | ✓ | ✓ | ✓ | CLI: `-C daemon:<path>`. |
 | Engine sent to a host when none fits | ✓ | ✓ | ✓ | ✓ | VSCode: The bundled engine is used on the host the extension runs on. |
 | Windows SSH hosts | ✓ | ✓ | ✓ | ✓ |  |
-| askpass dialog for passwords and passphrases | ✓ | ✓ | — | n/a | VSCode: Prompts are turned off (`GIT_TERMINAL_PROMPT=0`).<br>CLI: The dialog belongs to the apps. |
+| askpass dialog for passwords and passphrases | ✓ | ✓ | ✓ | n/a | VSCode: VSCode's input box, through a script the extension passes to git, ssh and the shared daemon.<br>CLI: The dialog belongs to the apps. |
 | Signature verification (this machine's keys or the host's) | ✓ | ✓ | — | △ | CLI: Checked in `show` and `refs --verify`; no choice. |

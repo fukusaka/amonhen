@@ -273,3 +273,4 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 59. The Push sheet opens the diff of all the changes to send, or of one commit
 - [x] 60. Keys and Values: Combined / Levels columns
 - [x] 61. Context menu items use the app's names
+- [x] 62. Ask for passwords and passphrases in VSCode's input box (askpass)
