@@ -924,8 +924,8 @@ impl Operations for RemoteOperations {
         self.op(Op::Resolve(rev.to_owned()))
     }
 
-    fn merge(&self, revs: &[String]) -> Result<Outcome> {
-        self.op(Op::Merge(revs.to_vec()))
+    fn merge(&self, revs: &[String], mode: amonhen_model::MergeMode) -> Result<Outcome> {
+        self.op(Op::Merge(revs.to_vec(), mode))
     }
 
     fn rebase(&self, onto: &str, update_refs: Option<bool>) -> Result<Outcome> {

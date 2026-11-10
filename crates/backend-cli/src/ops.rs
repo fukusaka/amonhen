@@ -1,9 +1,9 @@
 use amonhen_model::tr;
 use amonhen_model::{
     ApplyPatch, Archive, Bundle, BundlePreview, ConfigEntry, ContentsToFetch, Deepen, FormatPatch,
-    HeadState, Oid, Operations, Outcome, PatchFile, PullMode, RangePair, RefUpdate, RemoteChange,
-    RemoteCheck, RemoteEntry, ResetMode, Result, Sequence, SigningKey, WorktreeChange,
-    WorktreeChanges,
+    HeadState, MergeMode, Oid, Operations, Outcome, PatchFile, PullMode, RangePair, RefUpdate,
+    RemoteChange, RemoteCheck, RemoteEntry, ResetMode, Result, Sequence, SigningKey,
+    WorktreeChange, WorktreeChanges,
 };
 
 use crate::Git;
@@ -152,6 +152,21 @@ impl Git {
                 .env(format!("{key}_EMAIL"), "amonhen@localhost");
         }
         text(crate::run(cmd, None)?)
+    }
+
+    /// `git merge --squash …`（`args`）で取り込み、変更を 1 つのコミットにする（メッセージは git が書いた
+    /// `SQUASH_MSG` のまま）。コンフリクトすれば、そこで止まる（`Sequence::Squash`。解決してから続けるとコミットする）。
+    fn squash(&self, args: &[&str]) -> Result<Outcome> {
+        // 取り込めたときも `SQUASH_MSG` が残るので、`stoppable` は止まったと答える。コンフリクトだけを見分ける。
+        if self.stoppable(args, &[])? == Outcome::Conflict {
+            return Ok(Outcome::Conflict);
+        }
+        if !self.index_differs_from_head()? {
+            // 取り込むものがなかった（取り込み済み）。下書きが残っていれば消す。
+            let _ = std::fs::remove_file(self.git_dir()?.join("SQUASH_MSG"));
+            return Ok(Outcome::Done);
+        }
+        self.resume(&["commit", "--no-edit"], &[("GIT_EDITOR", "true")])
     }
 
     /// index が HEAD と違う（staged の変更かコンフリクトがある）。まだコミットがなければ真。
@@ -734,9 +749,18 @@ impl Operations for Git {
         Oid::from_hex(&text(out)?).ok_or_else(not_found)
     }
 
-    fn merge(&self, revs: &[String]) -> Result<Outcome> {
+    fn merge(&self, revs: &[String], mode: MergeMode) -> Result<Outcome> {
         let mut args = vec!["merge", "--no-edit"];
+        args.extend(match mode {
+            MergeMode::Git => None,
+            MergeMode::FastForwardOnly => Some("--ff-only"),
+            MergeMode::NoFastForward => Some("--no-ff"),
+            MergeMode::Squash => Some("--squash"),
+        });
         args.extend(revs.iter().map(String::as_str));
+        if mode == MergeMode::Squash {
+            return self.squash(&args);
+        }
         if revs.len() < 2 {
             return self.stoppable(&args, &[]);
         }
@@ -882,6 +906,8 @@ impl Operations for Git {
             Some(Sequence::CherryPick)
         } else if has("REVERT_HEAD") {
             Some(Sequence::Revert)
+        } else if has("SQUASH_MSG") {
+            Some(Sequence::Squash)
         } else {
             None
         })
@@ -905,18 +931,27 @@ impl Operations for Git {
     }
 
     fn abort(&self, sequence: Sequence) -> Result<()> {
+        if sequence == Sequence::Squash {
+            // 取り込む前に戻す（`SQUASH_MSG`・`MERGE_MSG` も消える。作業中の変更は残る）。
+            return self.write(&["reset", "--merge"]).map(drop);
+        }
         self.write(&[sequence.command(), "--abort"]).map(drop)
     }
 
     fn continue_sequence(&self, sequence: Sequence) -> Result<Outcome> {
-        // 続けるときにメッセージの編集画面を開かせない。
-        self.resume(
-            &[sequence.command(), "--continue"],
-            &[("GIT_EDITOR", "true")],
-        )
+        // 続けるときにメッセージの編集画面を開かせない。squash は、解決したものをコミットする。
+        let args: &[&str] = if sequence == Sequence::Squash {
+            &["commit", "--no-edit"]
+        } else {
+            &[sequence.command(), "--continue"]
+        };
+        self.resume(args, &[("GIT_EDITOR", "true")])
     }
 
     fn skip_sequence(&self, sequence: Sequence) -> Result<Outcome> {
+        if sequence == Sequence::Squash {
+            return Err(tr!("A squash merge has nothing to skip; continue or abort it").into());
+        }
         self.resume(&[sequence.command(), "--skip"], &[])
     }
 

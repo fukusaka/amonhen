@@ -1351,7 +1351,7 @@ mod tests {
 #[cfg(test)]
 mod ops_tests {
     use super::*;
-    use amonhen_model::{HeadState, Oid, Operations, Outcome, ResetMode, Sequence};
+    use amonhen_model::{HeadState, MergeMode, Oid, Operations, Outcome, ResetMode, Sequence};
 
     fn repo() -> (tempfile::TempDir, Git) {
         amonhen_model::testing::isolate_from_user_settings();
@@ -1446,10 +1446,16 @@ mod ops_tests {
         git.switch_branch("main").unwrap();
         commit_file(&tmp, &git, "a.txt", "main\n");
 
-        assert_eq!(git.merge(&revs(&["topic"])).unwrap(), Outcome::Conflict);
+        assert_eq!(
+            git.merge(&revs(&["topic"]), MergeMode::Git).unwrap(),
+            Outcome::Conflict
+        );
         assert_eq!(git.sequence_in_progress().unwrap(), Some(Sequence::Merge));
         // merge の途中に始めた merge・rebase は git が断る。コンフリクトではなく失敗で、途中の merge はそのまま。
-        for result in [git.merge(&revs(&["topic"])), git.rebase("topic", None)] {
+        for result in [
+            git.merge(&revs(&["topic"]), MergeMode::Git),
+            git.rebase("topic", None),
+        ] {
             let message = result.unwrap_err().to_string();
             assert!(message.contains("merge in progress"), "{message}");
         }
@@ -1518,7 +1524,10 @@ mod ops_tests {
     #[test]
     fn merges_several_branches_in_one_commit() {
         let (_tmp, git) = octopus_repo();
-        assert_eq!(git.merge(&revs(&["a", "b", "c"])).unwrap(), Outcome::Done);
+        assert_eq!(
+            git.merge(&revs(&["a", "b", "c"]), MergeMode::Git).unwrap(),
+            Outcome::Done
+        );
         let parents = text(git.read(&["log", "-1", "--format=%P"]).unwrap()).unwrap();
         assert_eq!(parents.split(' ').count(), 4);
     }
@@ -1527,7 +1536,7 @@ mod ops_tests {
     fn stops_at_a_conflict_in_the_last_branch_of_an_octopus() {
         let (_tmp, git) = octopus_repo();
         assert_eq!(
-            git.merge(&revs(&["a", "b", "x"])).unwrap(),
+            git.merge(&revs(&["a", "b", "x"]), MergeMode::Git).unwrap(),
             Outcome::Conflict
         );
         assert_eq!(git.sequence_in_progress().unwrap(), Some(Sequence::Merge));
@@ -1541,7 +1550,7 @@ mod ops_tests {
         // 作業中の変更（関係ないファイル）は残る。
         std::fs::write(tmp.path().join("c"), "edited").unwrap();
         let head = git.head_state().unwrap();
-        assert!(git.merge(&revs(&["a", "x", "b"])).is_err());
+        assert!(git.merge(&revs(&["a", "x", "b"]), MergeMode::Git).is_err());
         assert_eq!(git.head_state().unwrap(), head);
         assert_eq!(git.sequence_in_progress().unwrap(), None);
         let status = git.status().unwrap();
@@ -1555,7 +1564,7 @@ mod ops_tests {
         let (tmp, git) = octopus_repo();
         std::fs::write(tmp.path().join("c"), "staged").unwrap();
         git.stage(&["c"]).unwrap();
-        assert!(git.merge(&revs(&["a", "b"])).is_err());
+        assert!(git.merge(&revs(&["a", "b"]), MergeMode::Git).is_err());
         let staged = git.read(&["diff", "--cached", "--name-only"]).unwrap();
         assert_eq!(text(staged).unwrap(), "c", "staged の変更はそのまま");
     }
