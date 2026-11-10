@@ -159,12 +159,16 @@ pub fn confirm(actions: &Rc<Actions>, sources: Vec<Source>, branch: Option<Strin
         );
         let list = OrderList::new(sources.clone());
         sheet.add(&list.scrolled);
+        // 取り込み方（いくつもなので Fast-Forward Only はない。macOS 版と同じ）。
+        let modes = sheets::MergeModes::new(false);
+        sheet.add(&modes.row);
         // 前と後の絵（並べ替えると、線の順も変わる）。シートを出す前に読む（GNOME は開くときに大きくなった
         // シートを拡大したままにする）。
         let revs: Vec<String> = sources.iter().map(|s| s.rev.clone()).collect();
         let octopus = sheets::run(&repo, json!({ "op": "octopusPreview", "theirs": revs })).await;
         let drawing = rewritedraw::for_octopus(&octopus["info"], &target);
         if let Some((area, _)) = &drawing {
+            modes.hide_drawing_unless_git(area);
             sheet.add(area);
         }
         let set_drawing = drawing.map(|(_, set)| set);
@@ -289,9 +293,10 @@ pub fn confirm(actions: &Rc<Actions>, sources: Vec<Source>, branch: Option<Strin
         update();
         let response = sheet.run().await;
         let revs: Vec<String> = list.sources().into_iter().map(|s| s.rev).collect();
+        let mode = modes.mode();
         match response {
-            Response::Ok => merge(&actions, tree, revs, false),
-            Response::Other => merge(&actions, tree, revs, true),
+            Response::Ok => merge(&actions, tree, revs, false, mode),
+            Response::Other => merge(&actions, tree, revs, true, mode),
             Response::Cancel => {}
         }
     });
@@ -329,10 +334,19 @@ async fn predict(
 /// `revs` を merge する。1 つのコミットにまとめるのを git が断ったら（何も変わっていない）、1 つずつ merge
 /// するかを尋ねる。
 /// `tree` の worktree で（断られて尋ねるシートにも、その名前を書く）。
-fn merge(actions: &Rc<Actions>, tree: sheets::Target, revs: Vec<String>, one_by_one: bool) {
+fn merge(
+    actions: &Rc<Actions>,
+    tree: sheets::Target,
+    revs: Vec<String>,
+    one_by_one: bool,
+    mode: &'static str,
+) {
     let mut command = json!({ "op": "merge", "rev": revs });
     if one_by_one {
         command["oneByOne"] = json!(true);
+    }
+    if mode != "git" {
+        command["mode"] = json!(mode);
     }
     let a = actions.clone();
     // 1 つのコミットにまとめるのを断られたら、失敗は知らせずに、1 つずつ merge するかを尋ねる（macOS 版と同じ）。
@@ -354,7 +368,7 @@ fn merge(actions: &Rc<Actions>, tree: sheets::Target, revs: Vec<String>, one_by_
             );
             sheet.buttons(&tr!("Merge One by One"), false, None);
             if sheet.run().await == Response::Ok {
-                merge(&a, tree, revs, true);
+                merge(&a, tree, revs, true, mode);
             }
         });
     });

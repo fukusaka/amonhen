@@ -266,6 +266,8 @@ pub fn sequence_title(s: &Value) -> String {
         ("rebase", Some(b), Some(o)) => tr!("Rebasing {branch} onto {onto}", branch = b, onto = o),
         ("merge", Some(b), Some(f)) => tr!("Merging {from} into {branch}", from = f, branch = b),
         ("cherry-pick", Some(b), _) => tr!("Cherry-picking into {branch}", branch = b),
+        ("squash", Some(b), Some(f)) => tr!("Squashing {from} into {branch}", from = f, branch = b),
+        ("squash", _, _) => tr!("Squash in progress"),
         ("revert", Some(b), _) => tr!("Reverting in {branch}", branch = b),
         ("am", Some(b), _) => tr!("Applying patches to {branch}", branch = b),
         ("am", _, _) => tr!("Applying patches"),
@@ -788,6 +790,12 @@ mod tests {
         let s =
             serde_json::json!({ "kind": "merge", "branch": "main", "merging": ["a", "b", "c"] });
         assert_eq!(sequence_title(&s), "Merging a, b, and c into main");
+        let s = serde_json::json!({ "kind": "squash", "branch": "main", "from": "topic" });
+        assert_eq!(sequence_title(&s), "Squashing topic into main");
+        assert_eq!(
+            sequence_title(&serde_json::json!({ "kind": "squash" })),
+            "Squash in progress"
+        );
     }
 
     #[test]

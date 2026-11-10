@@ -1244,6 +1244,12 @@ fn pull_mode_tooltip(mode: &str) -> String {
 
 /// 取り込み方の一覧の行（[`PULL_MODES`] の順。それぞれにツールチップ）。
 fn pull_mode_factory() -> gtk::SignalListItemFactory {
+    mode_factory(&PULL_MODES, pull_mode_tooltip)
+}
+
+/// 取り込み方の一覧の行（`modes` の順。それぞれに `tooltip` のツールチップ）。
+fn mode_factory(modes: &[&'static str], tooltip: fn(&str) -> String) -> gtk::SignalListItemFactory {
+    let modes = modes.to_vec();
     let factory = gtk::SignalListItemFactory::new();
     factory.connect_setup(|_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
@@ -1253,7 +1259,7 @@ fn pull_mode_factory() -> gtk::SignalListItemFactory {
         label.set_xalign(0.0);
         item.set_child(Some(&label));
     });
-    factory.connect_bind(|_, item| {
+    factory.connect_bind(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
@@ -1264,13 +1270,99 @@ fn pull_mode_factory() -> gtk::SignalListItemFactory {
             return;
         };
         label.set_text(&text.string());
-        let mode = PULL_MODES
-            .get(item.position() as usize)
-            .copied()
-            .unwrap_or("merge");
-        label.set_tooltip_text(Some(&pull_mode_tooltip(mode)));
+        if let Some(mode) = modes.get(item.position() as usize) {
+            label.set_tooltip_text(Some(&tooltip(mode)));
+        }
     });
     factory
+}
+
+/// Merge の取り込み方（コアの `merge`・`mergeInto` の `mode`。macOS 版の `MergeMode`）。覚えず、毎回 git の設定から。
+const MERGE_MODES: [&str; 4] = ["git", "fastForwardOnly", "noFastForward", "squash"];
+
+fn merge_mode_title(mode: &str) -> String {
+    match mode {
+        "fastForwardOnly" => "Fast-Forward Only".to_owned(),
+        "noFastForward" => tr!("Always Create a Merge Commit"),
+        "squash" => tr!("Squash into One Commit"),
+        _ => tr!("Follow git’s settings"),
+    }
+}
+
+fn merge_mode_tooltip(mode: &str) -> String {
+    match mode {
+        "fastForwardOnly" => tr!(
+            "Only moves the branch forward; stops if the branches have diverged (git merge --ff-only)."
+        ),
+        "noFastForward" => {
+            tr!("Makes a merge commit even when the branch could move forward (git merge --no-ff).")
+        }
+        "squash" => tr!(
+            "Makes one ordinary commit with all the changes (git merge --squash, then commit). The branch isn’t marked as merged."
+        ),
+        _ => tr!(
+            "Uses merge.ff, as git merge in a terminal does: fast-forward when possible, otherwise a merge commit."
+        ),
+    }
+}
+
+/// Merge の確認に出す取り込み方の選ぶ欄（「取り込み方:」の行）。Fast-Forward Only は取り込むものが 1 つのときだけ
+/// （octopus は fast-forward できない）。最初は git の設定のとおり。選んだものは [`MergeModes::mode`] で読む。
+pub struct MergeModes {
+    pub row: gtk::Box,
+    pub dropdown: gtk::DropDown,
+    modes: Vec<&'static str>,
+}
+
+impl MergeModes {
+    pub fn new(single: bool) -> Self {
+        let modes: Vec<&'static str> = MERGE_MODES
+            .into_iter()
+            .filter(|m| single || *m != "fastForwardOnly")
+            .collect();
+        let titles: Vec<String> = modes.iter().map(|m| merge_mode_title(m)).collect();
+        let refs: Vec<&str> = titles.iter().map(String::as_str).collect();
+        let dropdown = gtk::DropDown::from_strings(&refs);
+        dropdown.set_list_factory(Some(&mode_factory(&modes, merge_mode_tooltip)));
+        let row = row(&tr!("Integrate with:"), &dropdown);
+        Self {
+            row,
+            dropdown,
+            modes,
+        }
+    }
+
+    /// 選んだ取り込み方。
+    pub fn mode(&self) -> &'static str {
+        self.modes
+            .get(self.dropdown.selected() as usize)
+            .copied()
+            .unwrap_or("git")
+    }
+
+    /// 前と後の絵は git の設定のとおりのときの形なので、ほかを選んだら `drawing` を隠す。
+    pub fn hide_drawing_unless_git(&self, drawing: &impl IsA<gtk::Widget>) {
+        let (drawing, modes) = (drawing.clone().upcast::<gtk::Widget>(), self.modes.clone());
+        self.dropdown.connect_selected_notify(move |d| {
+            drawing.set_visible(modes.get(d.selected() as usize) == Some(&"git"));
+        });
+    }
+}
+
+/// merge・mergeInto の命令に取り込み方を添える（git の設定のとおりなら何も足さない。macOS 版の `withMergeMode`）。
+pub fn with_merge_mode(commands: Vec<Value>, mode: &str) -> Vec<Value> {
+    if mode == "git" {
+        return commands;
+    }
+    commands
+        .into_iter()
+        .map(|mut c| {
+            if matches!(c["op"].as_str(), Some("merge" | "mergeInto")) {
+                c["mode"] = json!(mode);
+            }
+            c
+        })
+        .collect()
 }
 
 /// Pull の前に、取り込むコミットと取り込み方を見せる。上流がなければ、取り込み元のリモートのブランチを選び、それを
@@ -2258,6 +2350,14 @@ pub fn confirm_integrate(
     glib::spawn_future_local(async move {
         let repo = target.repo.clone();
         let sheet = target.sheet(parent(&actions).as_ref(), &title, &can_undo());
+        // merge なら取り込み方を選べる（macOS 版と同じ）。
+        let merging = commands
+            .iter()
+            .any(|c| matches!(c["op"].as_str(), Some("merge" | "mergeInto")));
+        let modes = merging.then(|| MergeModes::new(theirs.len() == 1));
+        if let Some(modes) = &modes {
+            sheet.add(&modes.row);
+        }
         // 1 つを merge するなら、前と後の絵（読んでからシートを出す。macOS 版と同じ）。
         if !estimate && let [rev] = theirs.as_slice() {
             let preview = run(
@@ -2274,6 +2374,9 @@ pub fn confirm_integrate(
             if let Some(drawing) =
                 crate::rewritedraw::for_merge(&preview, &into, tr!("After the merge"))
             {
+                if let Some(modes) = &modes {
+                    modes.hide_drawing_unless_git(&drawing);
+                }
                 sheet.add(&drawing);
             }
         }
@@ -2286,6 +2389,10 @@ pub fn confirm_integrate(
             show_forecast(&label, f.as_ref(), estimate || several);
         });
         if sheet.run().await == Response::Ok {
+            let commands = match &modes {
+                Some(modes) => with_merge_mode(commands, modes.mode()),
+                None => commands,
+            };
             actions.perform_in(target.repo, commands, |_| {});
         }
     });
@@ -2566,6 +2673,11 @@ fn integrate_sheet(
         if chooser {
             sheet.add(&picker);
         }
+        // merge なら取り込み方を選べる（相手は 1 つ。macOS 版と同じ）。
+        let modes = (!rebase).then(|| MergeModes::new(true));
+        if let Some(modes) = &modes {
+            sheet.add(&modes.row);
+        }
         // rebase なら、前と後の絵（今のブランチの rebase のとき）。
         let (drawing, set_drawing) = crate::rewritedraw::new();
         // merge なら、選んだ相手の前と後の絵（選び直すと替わる。macOS 版と同じ）。
@@ -2574,6 +2686,9 @@ fn integrate_sheet(
             sheet.add(&drawing);
         } else {
             sheet.add(&merge_box);
+        }
+        if let Some(modes) = &modes {
+            modes.hide_drawing_unless_git(&merge_box);
         }
         let forecast = forecast_label();
         sheet.add(&forecast);
@@ -2738,7 +2853,11 @@ fn integrate_sheet(
         } else {
             json!({ "op": "merge", "rev": rev })
         };
-        actions.perform_in(target.repo, vec![command], |_| {});
+        let commands = match &modes {
+            Some(modes) => with_merge_mode(vec![command], modes.mode()),
+            None => vec![command],
+        };
+        actions.perform_in(target.repo, commands, |_| {});
     });
 }
 
