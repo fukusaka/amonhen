@@ -553,6 +553,12 @@ fn row_at(
     layout.set_width(((right - x).max(0.0) * f64::from(pango::SCALE)) as i32);
     layout.set_ellipsize(pango::EllipsizeMode::End);
     let attrs = pango::AttrList::new();
+    // 強調する行は、件名だけ太字で（添える文はふつうの太さ）。
+    if highlighted || is_new {
+        let mut bold = pango::AttrInt::new_weight(pango::Weight::Bold);
+        bold.set_end_index(subject.len() as u32);
+        attrs.insert(bold);
+    }
     let c = note_color.unwrap_or_else(|| dimmed(&fg, 0.5));
     let to16 = |v: f32| (v.clamp(0.0, 1.0) * 65535.0) as u16;
     let mut fgattr =
