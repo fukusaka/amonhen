@@ -1408,7 +1408,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .milliseconds(300))
                     guard let self, !Task.isCancelled else { return }
-                    showPartialSearch(repository.searchPartial())
+                    // 絞り込みを出したまま元の History で探しているときは、行の番号が合わないので色は付けない。
+                    showPartialSearch(repository.searchPartial(), paint: self.history === base)
                 }
             }
             let result = await Task.detached(priority: .userInitiated) { Result { try base.search(query) } }.value
@@ -1518,9 +1519,9 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     }
 
     /// 走っている検索の、そこまでに分かった行に色を付け、件数と探し終えた割合を出す（選んでいる行は動かさない）。
-    private func showPartialSearch(_ partial: (rows: [Int], done: Float)) {
+    private func showPartialSearch(_ partial: (rows: [Int], done: Float), paint: Bool) {
         guard partial.done > 0 || !partial.rows.isEmpty else { return }
-        searchRowSet = Set(partial.rows)
+        if paint { searchRowSet = Set(partial.rows) }
         searchCount.stringValue = L("%d found · %d%%", partial.rows.count, Int(partial.done * 100))
         redrawText()
     }

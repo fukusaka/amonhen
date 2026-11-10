@@ -852,7 +852,10 @@ impl Inner {
                         count = rows.len(),
                         percent = (done * 100.0) as u32
                     ));
-                    this.view.set_matches(Rc::new(rows));
+                    // 絞り込みを出したまま元の History で探しているときは、行の番号が合わないので塗らない。
+                    if !this.filtered.get() {
+                        this.view.set_matches(Rc::new(rows));
+                    }
                 }
                 glib::ControlFlow::Continue
             });
