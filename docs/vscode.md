@@ -271,3 +271,6 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 57. History's details: the message in its own pane above the files, a divider to drag, and ⤢ to expand it
 - [x] 58. Range Diff as a page of the main view (pairs, diff of diffs, editable ranges), also from History and Reflog
 - [x] 59. The Push sheet opens the diff of all the changes to send, or of one commit
+- [x] 60. Keys and Values: Combined / Levels columns
+- [x] 61. Context menu items use the app's names
+- [x] 62. Ask for passwords and passphrases in VSCode's input box (askpass)

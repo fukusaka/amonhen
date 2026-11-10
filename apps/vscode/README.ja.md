@@ -24,8 +24,9 @@ VSCode 上で快適に Git を操作するための自分用の拡張。Marketpl
 | Remotes / Tags / Stashes / Submodules | 開いたときに取得する |
 | Reflog | エンジンがあるとき。選ぶと、HEAD が指してきたところをメインビューに出す |
 
+- git や ssh がユーザー名・パスワード・パスフレーズを尋ねたら（fetch・pull・push）、アプリのダイアログと同じく VSCode の入力欄で尋ねる。パスワードとパスフレーズは伏せる。キャンセルすると操作は失敗する。
 - ブランチ・リモートブランチ・タグを選ぶと、メインビューの History にその履歴が出る。
-- ブランチ・タグの右クリックで Checkout（リモートブランチなら追跡するローカルブランチを作って切り替える）、チェックアウトしていないローカルブランチなら Fast-Forward to Upstream（upstream より後ろにだけあるとき。最後の Fetch の時点。ほかの worktree でチェックアウト中のものは除く）か Push to Upstream（先にだけあるとき）、upstream の無いローカルブランチなら Publish Branch、Merge into Current Branch、Rebase Current Branch onto This、Rename Branch、Delete Branch、New Branch（そこから作って切り替える）、New Tag（メッセージを入れれば annotated tag）。作成と削除は Undo で戻せる。
+- ブランチ・タグの右クリックで Checkout…（リモートブランチは Checkout as Local Branch…。追跡するローカルブランチを作って切り替える）、チェックアウトしていないローカルブランチなら Fast-Forward to Upstream（upstream より後ろにだけあるとき。最後の Fetch の時点。ほかの worktree でチェックアウト中のものは除く）か Push to Upstream…（先にだけあるとき）、upstream の無いローカルブランチなら Publish…、Merge into Current Branch…、Rebase Current Branch onto This…、Rename…、Delete…、New Branch（そこから作って切り替える）、New Tag（メッセージを入れれば annotated tag）。作成と削除は Undo で戻せる。
 - エンジンがあるとき、New Orphan Branch…（コマンドパレット、Branches のグループの右クリック）で履歴のないブランチに切り替える。Start Empty（`git switch --orphan`）か、今のファイルを最初のコミットのために stage して残す Keep the Files（`git checkout --orphan`）。
 - ローカルブランチの右クリックの Compare with Previous Version で、最後の rebase・amend の前の版（reflog から）と比べ、`git range-diff` と同じ形の読み取り専用の文書に出す。パレットの「Amon Hen: Range Diff…」では、好きな 2 つの範囲を比べる。
 - エンジンがあるとき、Repository Settings（サイドバーの下）にこのリポジトリの git の設定がアプリと同じページで出る。行には効いている値、このリポジトリが上書きしている間の ↩︎、設定元、ⓘ（キー・ファイル・上書きしなければ効く値）があり、git の行にリポジトリを動かす git と形（shallow・partial・sparse・maintenance）が出る。Author and Signing に名前・メール・署名（OpenPGP・SSH・X.509。見つかった鍵から選ぶ）・mailmap、Commits にメッセージのテンプレート（なし・このリポジトリ専用（その場で書く）・ファイル）、Operations に Pull の取り込み方・fetch.prune・rebase.autoStash・rebase.updateRefs（git 2.38）・コンフリクトの書き方・rerere、Branches にほかのブランチを測る既定のブランチ、Working Copy に改行・実行ビット・`.git/info/exclude`、Fetching and Folders に shallow clone の取り足し・partial clone の全取得、一部のフォルダだけを取り出す（HEAD の木から選ぶ。sparse checkout、git 2.25）・すべてに戻す、git maintenance の切り替え（git 2.31）、Remotes にリモートの一覧（URL と指す先）と、URL の変更・fetch と別の push の URL・prune・つながるかの確かめ・名前の変更・削除・追加、Hooks and LFS にフックの一覧（いつ動くか・有効か。エディターで開く・雛形から作る）と Git LFS のパターン・ファイルの数、Keys and Values に git の設定の表（ページの行が聞くキー・このリポジトリで決めているキー・git が読むキーすべて。検索できる）と、効いている値・設定元、このリポジトリでのキーの変更・削除・追加がある。
@@ -34,14 +35,14 @@ VSCode 上で快適に Git を操作するための自分用の拡張。Marketpl
 - エンジンがあるとき、Branches はアプリと同じ並びになる。お気に入り（★。Move Up・Move Down in Favorites で決めた順）、今のブランチ（その積み重ねの根元ごと）と既定のブランチ、ほかは新しい順（`/` の名前はフォルダー、既定のブランチに取り込み済みなら「merged」）、畳んだ Inactive（90 日コミットがない）と Archived。ほかのブランチの上に積んだブランチは、その下に入れ子で出る。Add to Favorites・Archive はブランチのメニューにあり、git の設定に書くのでアプリと共有する。サイドバーの上の絞り込みのボタンで言葉を入れると、名前にどれも含むブランチ・リモートブランチ・タグだけを出す（Clear Filter で戻る）。ブランチ・タグをいくつも選ぶ（⇧・⌘ を押してクリック）と、今のブランチに 1 つのコミットで merge する、まとめて消す、まとめてお気に入り・アーカイブにする、ができる。
 - エンジンがあるとき、File History（エクスプローラー・エディターのタブ・メインビューのファイルの右クリック、コマンドパレットなら今のエディターのファイル）は、ファイルを変えたコミットを名前の変更も追って並べ（前の名前ごとに見出しを挟む）、選んだコミットの詳細をそのファイルの位置で開く。Merge Commits でマージも出す。ダブルクリックか Enter でそのコミットを History で選び、右クリックで Show in History・Copy Commit ID・Copy Path。
 - エンジンがあるとき、Blame（同じメニューから）は各行を最後に変えたコミットを出し、同じコミットの行をまとめて ID・作者・日時・件名を付ける。まだコミットしていない行はそう出す。コミットのファイル（History の詳細・File History）からならそのコミットの内容を、ほかは作業ツリーの内容を出し、書き換えると読み直す。行をダブルクリックすると、そのコミットを History で選ぶ。
-- エンジンがあるとき、History の詳細のファイルの右クリックに Restore This Version…・Restore the Version Before… も並ぶ。作業ツリーのファイルをその版にし（その版になければ消す）、Restore and Stage なら index にも入れる。作業ツリーのファイルは Undo で戻る。
+- エンジンがあるとき、History の詳細のファイルの右クリックに Restore This Version…・Restore Version Before This Commit… も並ぶ。作業ツリーのファイルをその版にし（その版になければ消す）、Restore and Stage なら index にも入れる。作業ツリーのファイルは Undo で戻る。
 - エンジンがあり worktree が 2 つ以上あるとき、Working Copy の下に変更の数と並ぶ。書き込む先（拡張が働くリポジトリ）は鉛筆、メインは家のアイコンで、変更のないものは No changes にまとまる。選ぶとそれを書き込む先にする。右クリックで Open in New Window・Reveal in File Manager・Open in Terminal・Copy Path・Remove Worktree…（先に尋ね、変更が消えるならそう言う）。New Worktree…（Working Copy・ブランチ・タグ、History のコミットから）はブランチと、メインの隣のフォルダーを作って書き込む先にする。Prune Worktrees はフォルダーの消えたものを片付ける。ほかの worktree が checkout しているブランチには ⌂ か ⑂ が付く。
 - エンジンがあるとき、worktree の右クリックに Lock…（理由は任意。git が prune・remove・move で消さない）・Unlock・Move…（`git worktree move`。書き込む先のものは除く）も並び、フォルダのなくなった worktree には Locate Moved Folder…（`git worktree repair`。git 2.29 から）がある。
-- エンジンがあるとき、タグにリモートでの様子（最後の Fetch の時点で、どのリモートにもない「not on any remote」、同じ名前の別のタグがある「different on」）と署名の印（アイコン。説明はツールチップ）が付く。タグの右クリックで Push Tag（まだないリモートへ）・Replace Tag on Remote…・Delete Tag…（Undo で戻せる）・Delete Tag from Remote…、リモートの右クリックで Rename…・Edit URL…・Prune・Remove…、Remotes の見出しの `+` でリモートを足せる。
+- エンジンがあるとき、タグにリモートでの様子（最後の Fetch の時点で、どのリモートにもない「not on any remote」、同じ名前の別のタグがある「different on」）と署名の印（アイコン。説明はツールチップ）が付く。タグの右クリックで Push Tag（まだないリモートへ）・Replace on Remote…・Delete…（Undo で戻せる）・Delete from Remote…、リモートの右クリックで Rename…・Edit URL…・Prune・Remove…、Remotes の見出しの `+` でリモートを足せる。
 - Stashes の節は stash があるときだけ出る。その見出しの `+` で、作業中の変更を stash する（untracked のファイルを含めるかを選べる）。stash を選ぶと中身を複数ファイル diff で開き、右クリックで Apply / Pop / Drop（Undo で戻せる）。Apply と Pop は stage していた状態も戻す。エンジンがあるとき、stash の行には untracked のファイルを含むかが付き、ツールチップに作ったときのブランチと、土台から HEAD がどれだけ動いたかが出る。Branch… はその土台にブランチを作って stash を当て、見出しの Pop Latest Stash… は確かめてから最新の stash を pop する。
 - エンジンがあるとき、Stash には Stash Only the Staged Changes（git 2.35 から）と Stash, Keeping the Staged Changes（`--keep-index`）も並び、Working Copy のファイルの右クリックにそのファイルだけの Stash… がある。
 - Reflog は HEAD の reflog を新しい順に並べ、右に選んだ行のコミットを出す。どのブランチからも辿れなくなったコミット（reset・rebase・amend で外れたもの）には「not on any branch」と付く。一覧の上の New Branch…・Checkout と、右クリック（New Tag・Reset Current Branch to Here…・Show in History・Copy Commit ID・Copy Name）で取り戻せる。
-- History のコミットの右クリックにも Checkout (Detached) と、エンジンがあれば Reset Current Branch to Here… がある。`git reset` と同じに Mixed・Soft・Hard を選ぶ。Hard は先に作業中の変更を stash に残し、Undo でブランチを戻せる。
+- History のコミットの右クリックにも Checkout (Detached)… と、エンジンがあれば Reset Current Branch to Here… がある。`git reset` と同じに Mixed・Soft・Hard を選ぶ。Hard は先に作業中の変更を stash に残し、Undo でブランチを戻せる。
 - Submodules は右クリックで Update（初期化して記録されているコミットに合わせる）と、別のウィンドウで開く。エンジンがあれば、行にアプリと同じ印（取り出していない・違うコミット・中の変更・コンフリクト）と URL・追うブランチが出て、メニューに Update…（中の submodule も・追うブランチの最新）・Edit URL…・Branch to Follow…・Remove… も並ぶ。グループには Update All・Update Submodules…・Sync URLs・Add Submodule…。
 - エンジンがあるとき、Clean Up Branches…（コマンドパレット、Branches の見出しの右クリック）は、既定のブランチに取り込んだもの、GitHub のプルリクエストでマージしたもの（`gh` があれば読む）、上流が消えたものを理由ごとの見出しの下に並べ、チェックしたままのものを消す。上流が消えたものは最初はチェックしない。Undo 1 回で設定ごと全部戻る。
 - エンジンがあるとき、GitHub のプルリクエストで（squash・rebase で）先端をマージしたブランチ（`gh` で読む）には、ふつうの取り込み済みと同じ `merged` が出て、ツールチップにプルリクエストの番号が出る。消すときの確認はプルリクエストの番号を添えた 1 回で、Undo で戻る。
@@ -88,8 +89,8 @@ HEAD から first-parent で辿れるコミット（最初の merge コミット
 
 | メニュー | 内容 |
 | --- | --- |
-| Reword… | メッセージを書き換える。編集欄は `⌘Enter` / `Ctrl+Enter` で保存、`Esc` で取り消し |
-| Squash into Parent… | 親コミットにまとめる。2 つのメッセージをつないだものを編集してから実行する |
+| Edit Message… | メッセージを書き換える。編集欄は `⌘Enter` / `Ctrl+Enter` で保存、`Esc` で取り消し |
+| Combine with Older Commit… | 親コミットにまとめる。2 つのメッセージをつないだものを編集してから実行する |
 | Fixup into Parent | 親コミットにまとめ、親のメッセージを残す |
 | Edit (Stop Here) | そのコミットで止める。直してコミット（amend）してから Continue |
 | Split… | そのコミットを取り消して変更を Working Copy に戻し、止める。分けてコミットしてから Continue |
@@ -126,7 +127,6 @@ Apply Patch…、またはエクスプローラーで .patch・.diff・.mbox・.
 
 - History で編集できるのは、HEAD から最初の merge コミットまでの範囲だけ。
 - Push は Undo できない。
-- 認証の入力を求められる push・fetch はできない（SSH の鍵や credential helper で認証できる必要がある）。
 - 行単位の stage は、autocrlf などの git のフィルターを考慮しない。
 - 差分にシンタックスハイライトは付かない。
 - 外部での変更が反映されるまで約 1 秒かかる（組み込みの Git 拡張の通知を待っているため）。

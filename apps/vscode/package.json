@@ -136,12 +136,12 @@
       },
       {
         "command": "amonhen.history.reword",
-        "title": "Reword…",
+        "title": "Edit Message…",
         "category": "Amon Hen"
       },
       {
         "command": "amonhen.history.squash",
-        "title": "Squash into Parent…",
+        "title": "Combine with Older Commit…",
         "category": "Amon Hen"
       },
       {
@@ -181,7 +181,7 @@
       },
       {
         "command": "amonhen.checkoutCommit",
-        "title": "Checkout (Detached)",
+        "title": "Checkout (Detached)…",
         "category": "Amon Hen"
       },
       {
@@ -211,17 +211,17 @@
       },
       {
         "command": "amonhen.tag.replace",
-        "title": "Replace Tag on Remote…",
+        "title": "Replace on Remote…",
         "category": "Amon Hen"
       },
       {
         "command": "amonhen.tag.delete",
-        "title": "Delete Tag…",
+        "title": "Delete…",
         "category": "Amon Hen"
       },
       {
         "command": "amonhen.tag.deleteFromRemote",
-        "title": "Delete Tag from Remote…",
+        "title": "Delete from Remote…",
         "category": "Amon Hen"
       },
       {
@@ -293,17 +293,17 @@
       },
       {
         "command": "amonhen.worktree.lock",
-        "title": "Lock Worktree…",
+        "title": "Lock…",
         "category": "Amon Hen"
       },
       {
         "command": "amonhen.worktree.unlock",
-        "title": "Unlock Worktree",
+        "title": "Unlock",
         "category": "Amon Hen"
       },
       {
         "command": "amonhen.worktree.move",
-        "title": "Move Worktree…",
+        "title": "Move…",
         "category": "Amon Hen"
       },
       {
@@ -334,7 +334,7 @@
       },
       {
         "command": "amonhen.restoreFile.versionBefore",
-        "title": "Restore the Version Before…",
+        "title": "Restore Version Before This Commit…",
         "category": "Amon Hen"
       },
       {
@@ -437,7 +437,7 @@
       },
       {
         "command": "amonhen.stash.branch",
-        "title": "Branch…",
+        "title": "New Branch…",
         "category": "Amon Hen"
       },
       {
@@ -525,22 +525,27 @@
       },
       {
         "command": "amonhen.nav.checkout",
-        "title": "Checkout",
+        "title": "Checkout…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.nav.checkoutAsLocal",
+        "title": "Checkout as Local Branch…",
         "category": "Amon Hen"
       },
       {
         "command": "amonhen.nav.merge",
-        "title": "Merge into Current Branch",
+        "title": "Merge into Current Branch…",
         "category": "Amon Hen"
       },
       {
         "command": "amonhen.nav.rebase",
-        "title": "Rebase Current Branch onto This",
+        "title": "Rebase Current Branch onto This…",
         "category": "Amon Hen"
       },
       {
         "command": "amonhen.nav.delete",
-        "title": "Delete Branch…",
+        "title": "Delete…",
         "category": "Amon Hen"
       },
       {
@@ -550,12 +555,12 @@
       },
       {
         "command": "amonhen.nav.push",
-        "title": "Push to Upstream",
+        "title": "Push to Upstream…",
         "category": "Amon Hen"
       },
       {
         "command": "amonhen.nav.publish",
-        "title": "Publish Branch…",
+        "title": "Publish…",
         "category": "Amon Hen"
       },
       {
@@ -606,7 +611,7 @@
       },
       {
         "command": "amonhen.renameBranch",
-        "title": "Rename Branch…",
+        "title": "Rename…",
         "category": "Amon Hen"
       },
       {
@@ -653,17 +658,17 @@
       },
       {
         "command": "amonhen.stash.apply",
-        "title": "Apply Stash",
+        "title": "Apply…",
         "category": "Amon Hen"
       },
       {
         "command": "amonhen.stash.pop",
-        "title": "Pop Stash",
+        "title": "Pop…",
         "category": "Amon Hen"
       },
       {
         "command": "amonhen.stash.drop",
-        "title": "Drop Stash…",
+        "title": "Drop…",
         "category": "Amon Hen"
       },
       {
@@ -673,27 +678,27 @@
       },
       {
         "command": "amonhen.history.selection.cherryPick",
-        "title": "Cherry-pick Selected Commits…",
+        "title": "Cherry-pick Commits…",
         "category": "Amon Hen"
       },
       {
         "command": "amonhen.history.selection.revert",
-        "title": "Revert Selected Commits…",
+        "title": "Revert Commits…",
         "category": "Amon Hen"
       },
       {
         "command": "amonhen.history.selection.savePatches",
-        "title": "Save Selected Commits as Patches…",
+        "title": "Save Commits as Patches…",
         "category": "Amon Hen"
       },
       {
         "command": "amonhen.history.selection.combine",
-        "title": "Combine Selected Commits…",
+        "title": "Combine Commits…",
         "category": "Amon Hen"
       },
       {
         "command": "amonhen.history.selection.merge",
-        "title": "Merge Selected Commits into Current Branch…",
+        "title": "Merge into Current Branch…",
         "category": "Amon Hen"
       },
       {
@@ -708,12 +713,12 @@
       },
       {
         "command": "amonhen.history.cherryPick",
-        "title": "Cherry-pick onto Current Branch",
+        "title": "Cherry-pick…",
         "category": "Amon Hen"
       },
       {
         "command": "amonhen.history.revert",
-        "title": "Revert",
+        "title": "Revert…",
         "category": "Amon Hen"
       },
       {
@@ -728,18 +733,18 @@
       },
       {
         "command": "amonhen.submodule.update",
-        "title": "Update Submodule",
+        "title": "Update",
         "category": "Amon Hen",
         "icon": "$(sync)"
       },
       {
         "command": "amonhen.submodule.open",
-        "title": "Open Submodule in New Window",
+        "title": "Open in New Window",
         "category": "Amon Hen"
       },
       {
         "command": "amonhen.submodule.updateWith",
-        "title": "Update Submodule…",
+        "title": "Update…",
         "category": "Amon Hen"
       },
       {
@@ -754,7 +759,7 @@
       },
       {
         "command": "amonhen.submodule.remove",
-        "title": "Remove Submodule…",
+        "title": "Remove…",
         "category": "Amon Hen"
       },
       {
@@ -797,17 +802,17 @@
       },
       {
         "command": "amonhen.subtree.pull",
-        "title": "Pull into Subtree…",
+        "title": "Pull…",
         "category": "Amon Hen"
       },
       {
         "command": "amonhen.subtree.push",
-        "title": "Push Subtree…",
+        "title": "Push…",
         "category": "Amon Hen"
       },
       {
         "command": "amonhen.subtree.split",
-        "title": "Split Subtree…",
+        "title": "Split…",
         "category": "Amon Hen"
       },
       {
@@ -1102,7 +1107,12 @@
         },
         {
           "command": "amonhen.nav.checkout",
-          "when": "view == amonhen.sidebar && viewItem =~ /^(branch(;\\w+)*|remoteBranch)$/ && !listMultiSelection",
+          "when": "view == amonhen.sidebar && viewItem =~ /^branch(;\\w+)*$/ && !listMultiSelection",
+          "group": "1_ref@1"
+        },
+        {
+          "command": "amonhen.nav.checkoutAsLocal",
+          "when": "view == amonhen.sidebar && viewItem == remoteBranch && !listMultiSelection",
           "group": "1_ref@1"
         },
         {
@@ -1400,6 +1410,10 @@
         },
         {
           "command": "amonhen.nav.checkout",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.nav.checkoutAsLocal",
           "when": "false"
         },
         {

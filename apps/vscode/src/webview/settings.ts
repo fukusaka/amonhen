@@ -10,6 +10,9 @@ import type { FetchingAction, SettingsFacts } from '../settings/protocol.ts';
 import type { HostMessage } from '../view/protocol.ts';
 import { el, getState, post, updateState, type View } from './api.ts';
 
+/** Keys and Values の Levels の列に並べる設定元（git が読む順） */
+const LEVELS = ['system', 'global', 'local', 'worktree'] as const;
+
 const PULL_LABELS: Record<PullMethod, string> = { merge: 'Merge', rebase: 'Rebase', ffOnly: 'Fast-forward' };
 
 export function createSettingsView(): View {
@@ -36,6 +39,8 @@ export function createSettingsView(): View {
   let entries: ConfigEntry[] = [];
   /** Keys and Values の出し方と絞り込み */
   let configMode: 'basic' | 'customized' | 'all' = 'customized';
+  /** 列はアプリと同じく、初めは Levels */
+  let configColumns = getState().configColumns ?? 'levels';
   let configFilter = '';
   /** 書きかけの exclude（読み直しで消さない） */
   let excludeDraft: string | undefined;
@@ -327,7 +332,8 @@ export function createSettingsView(): View {
 
   /**
    * Keys and Values（アプリの git の設定の表）。Basic はページの行が聞くキー（設定してあってもなくても）、
-   * Customized はこのリポジトリ（と worktree）で決めているキー、All は git が読むキーすべて
+   * Customized はこのリポジトリ（と worktree）で決めているキー、All は git が読むキーすべて。列は Combined（効いている値と
+   * 設定元）か Levels（設定元ごとの列。効いている段を太字に）
    */
   function configTable(): HTMLElement {
     const box = el('div');
@@ -345,6 +351,19 @@ export function createSettingsView(): View {
       },
     );
     mode.title = 'Basic: the settings the pages here ask about, set or not. Customized: the keys set in this repository or this worktree. All: every key git reads.';
+    const columns = select(
+      [
+        { value: 'combined', label: 'Combined' },
+        { value: 'levels', label: 'Levels' },
+      ],
+      configColumns,
+      (v) => {
+        configColumns = v as typeof configColumns;
+        updateState({ configColumns });
+        render();
+      },
+    );
+    columns.title = 'Combined: the value in effect and where it comes from. Levels: a column per source, the one in effect in bold.';
     const search = el('input');
     search.type = 'search';
     search.placeholder = 'Search by key or value';
@@ -354,8 +373,8 @@ export function createSettingsView(): View {
       fill();
       search.focus();
     });
-    bar.append(mode, search, button('Add…', { action: 'configEdit' }, 'Add a key to this repository'));
-    const table = el('table', 'settings-table');
+    bar.append(mode, columns, search, button('Add…', { action: 'configEdit' }, 'Add a key to this repository'));
+    const table = el('table', 'settings-table settings-config');
     const fill = () => {
       const lower = (k: string) => k.toLowerCase();
       const named = new Map<string, string>();
@@ -369,8 +388,16 @@ export function createSettingsView(): View {
         .map((key) => ({ key, e: config.effective(key) }))
         .filter(({ key, e }) => words.every((w) => key.toLowerCase().includes(w) || (e?.value.toLowerCase().includes(w) ?? false)))
         .sort((a, b) => a.key.localeCompare(b.key));
+      const levels = configColumns === 'levels';
+      // 段の列の見出しは設定元の言葉の文の頭だけ大文字に。ツールチップに git の呼び名
+      const levelHeads = LEVELS.map((s) => {
+        const label = scopeLabel(s);
+        const th = el('th', '', label[0]!.toUpperCase() + label.slice(1));
+        th.title = s;
+        return th;
+      });
       const head = el('tr');
-      for (const h of ['Key', 'Value in effect', 'Source', '']) head.append(el('th', '', h));
+      head.append(el('th', '', 'Key'), el('th', '', 'Value in effect'), ...(levels ? levelHeads : [el('th', '', 'Source')]), el('th'));
       table.replaceChildren(head);
       for (const { key, e } of rows) {
         const tr = el('tr');
@@ -385,19 +412,30 @@ export function createSettingsView(): View {
           remove.addEventListener('click', () => set([[key, null]]));
           actions.append(remove);
         }
-        tr.append(el('td', 'mono', key), value, source, actions);
+        const cells = levels
+          ? LEVELS.map((s) => {
+              const at = config.at(key, s);
+              const td = el('td', `mono${at && e?.scope === s ? ' in-effect' : ''}`, at?.value ?? '');
+              if (at) td.title = `${s} · ${at.origin.replace(/^file:/, '')}`;
+              return td;
+            })
+          : [source];
+        if (levels && e) value.title = `${scopeLabel(e.scope)} · ${e.origin.replace(/^file:/, '')}`;
+        tr.append(el('td', 'mono key', key), value, ...cells, actions);
         table.append(tr);
       }
       if (rows.length === 0) {
         const tr = el('tr');
         const td = el('td', 'muted', configMode === 'customized' && !configFilter ? 'Nothing is set in this repository' : 'No keys');
-        td.colSpan = 4;
+        td.colSpan = levels ? 7 : 4;
         tr.append(td);
         table.append(tr);
       }
     };
     fill();
-    box.append(bar, table);
+    const scroll = el('div', 'settings-config-scroll');
+    scroll.append(table);
+    box.append(bar, scroll);
     return box;
   }
 

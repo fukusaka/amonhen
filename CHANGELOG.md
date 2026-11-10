@@ -1068,6 +1068,12 @@ First release.
 - Range Diff is a page of the main view, as in the app: the pairs on the left, the diff of diffs or the commit on the
   right, and ranges you can edit and compare again. Reflog rows can be compared with the current HEAD.
 - The Push sheet opens the diff of all the changes to send, or of one commit, without closing.
+- Keys and Values switches between Combined and Levels, as in the app; Levels shows a column per source with the value
+  in effect in bold.
+- Context menus use the app's names, such as Edit Message…, Combine with Older Commit…, Checkout as Local Branch… and
+  Rename…, and items that ask first end with “…”.
+- When git or ssh asks for a user name, password or passphrase, VSCode's input box asks, as the app's dialog does;
+  fetch, pull and push that needed one used to fail.
 
 ### [0.2.6] - 2026-11-09
 

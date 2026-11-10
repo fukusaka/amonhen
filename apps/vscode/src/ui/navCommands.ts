@@ -44,6 +44,7 @@ export function registerNavCommands(manager: RepositoryManager, mergedBy: Merged
 
   return vscode.Disposable.from(
     command('amonhen.nav.checkout', (repo, ref) => checkoutRef(repo, ref)),
+    command('amonhen.nav.checkoutAsLocal', (repo, ref) => checkoutRef(repo, ref)),
     several(
       'amonhen.nav.merge',
       async (repo, ref, head) => {

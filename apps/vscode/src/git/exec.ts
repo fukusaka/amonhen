@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import { askpassEnv } from './askpass.ts';
 import { chooseGit, type GitChoice } from './choice.ts';
 
 export interface ExecOptions {
@@ -99,7 +100,7 @@ export class GitExecutor {
     return new Promise((resolve, reject) => {
       const child = spawn(git.path, fullArgs, {
         cwd: opts.cwd,
-        env: { ...process.env, ...BASE_ENV, ...opts.env },
+        env: { ...process.env, ...BASE_ENV, ...askpassEnv(), ...opts.env },
         // Windows でコンソールの窓を出さない
         windowsHide: true,
         // 止めるときに git が起動した ssh なども止められるよう、別のプロセスグループにする

@@ -14,6 +14,19 @@ test('ConfigView picks the value in effect, the override here and the one above'
   assert.deepEqual(c.origin('rerere.enabled'), { label: 'git’s default' });
 });
 
+test('ConfigView gives the value at each level, the last one written there', () => {
+  const c = new ConfigView([
+    entry('pull.rebase', 'false', 'system'),
+    entry('pull.rebase', 'true', 'global'),
+    entry('Pull.Rebase', 'merges', 'global'),
+    entry('pull.rebase', 'false', 'local'),
+  ]);
+  assert.equal(c.at('pull.rebase', 'system')?.value, 'false');
+  assert.equal(c.at('pull.rebase', 'global')?.value, 'merges');
+  assert.equal(c.at('pull.rebase', 'local')?.value, 'false');
+  assert.equal(c.at('pull.rebase', 'worktree'), undefined);
+});
+
 test('normalizedBool accepts git’s spellings', () => {
   assert.equal(normalizedBool('Yes'), 'true');
   assert.equal(normalizedBool('off'), 'false');

@@ -1778,6 +1778,31 @@ aside.details.single .file-diff:not(.current) {
   min-width: 12em;
 }
 
+/* Keys and Values の値の列は狭くてよい（Levels で列が増える）。それでも入らなければ横に送る */
+.settings-config-scroll {
+  overflow-x: auto;
+}
+
+.settings-config .mono {
+  min-width: 6em;
+}
+
+/* Keys and Values: キーとボタンは折り返さない（Levels で列が増えても読めるように） */
+.settings-config .key {
+  white-space: nowrap;
+  word-break: normal;
+  min-width: 0;
+}
+
+.settings-config .settings-actions {
+  white-space: nowrap;
+}
+
+/* Levels の列で、効いている段の値 */
+.settings-table .in-effect {
+  font-weight: bold;
+}
+
 .settings-table .muted {
   color: var(--vscode-descriptionForeground);
 }

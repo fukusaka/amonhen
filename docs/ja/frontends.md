@@ -150,7 +150,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Remotes: 表と、つながるか確かめるシート | ✓ | ✓ | ✓ | △ | VSCode: 表と行ごとのボタン（Edit URL…・Push URL…・Check・Prune・Rename…・Remove…）と Add…。値はシートでなく入力欄で聞く。<br>CLI: `amonhen run` から。 |
 | Hooks: 表・Enabled・スクリプト・Create Hook… | ✓ | ✓ | ✓ | △ | VSCode: Open で VSCode のエディターにスクリプトを開く。<br>CLI: `amonhen run` から。 |
 | LFS: 入っているか・パターン・Track Pattern…・ファイルの数 | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
-| Keys and Values（git config の表、Basic / Customized / All、Combined / Levels） | ✓ | ✓ | △ | △ | VSCode: Basic / Customized / All と検索、効いている値と設定元。値は入力欄で変える。Levels の列はない。<br>CLI: `amonhen run`（`configList`・`configSet`）から。 |
+| Keys and Values（git config の表、Basic / Customized / All、Combined / Levels） | ✓ | ✓ | ✓ | △ | VSCode: Basic / Customized / All、Combined / Levels と検索。値は入力欄で変える。<br>CLI: `amonhen run`（`configList`・`configSet`）から。 |
 | 要る git の版を添えて行を無効にする | ✓ | ✓ | ✓ | n/a | |
 | git の行にリポジトリの形（shallow・partial・sparse・maintenance） | ✓ | ✓ | ✓ | △ | CLI: `status` が shallow・partial・sparse を添える。 |
 | 取得とフォルダ: shallow clone の履歴を取り足す（数・日付まで・すべて） | ✓ | ✓ | ✓ | △ | CLI: `amonhen run`（`deepen`・`unshallow`）から。 |
@@ -349,7 +349,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 共有の操作の表（`crates/commands`）から作るメニュー | ✓ | ✓ | n/a | n/a | VSCode: VSCode のコマンドパレットと右クリックのメニューが代わり。 |
 | メニューバーなしで全部の操作に届く（≡） | ✓ | ✓ | ✓ | n/a | GTK4: ≡ のメニューに、メニューバーの File・Edit・View・Navigate・Commit・Window を macOS と同じ項目と並びで置き（Edit の取り消す・カット・コピーなどはフォーカスのある欄に効く）、その後に設定…・Amon Hen について・終了。<br>VSCode: コマンドパレットとコンテキストメニュー。 |
 | キーボードの近道 | ✓ | ✓ | n/a | n/a | GTK4: Linux のデスクトップやほかの操作が使うキーは違う: サイドバーを表示は F9（GNOME のユーティリティの欄のキー）。ブランチを絞り込む・親へ・子へ・New Tag にはない（GNOME が Ctrl+Alt+矢印と Ctrl+Alt+T を使い、HIG では Alt+Up が別の意味）。マージエディターの前・次のコンフリクトは Alt+Up・Down。<br>VSCode: VSCode のキー割り当てが代わり。拡張は割り当てを持たず、どのコマンドにも割り当てられる。 |
-| メニューと同じ名前のコンテキストメニュー | ✓ | ✓ | △ | n/a | VSCode: 名前がアプリと違う。 |
+| メニューと同じ名前のコンテキストメニュー | ✓ | ✓ | ✓ | n/a | VSCode: VSCode のメニューの項目は決まった文なので、アプリが入れる名前を除いた同じ言葉（Checkout main… は Checkout…、Delete main… は Delete…）。 |
 | キーボードの近道の窓 | — | ✓ | n/a | n/a | macOS: 代わりに macOS の App Shortcuts で変える。 |
 
 ## ステータスバー
@@ -407,5 +407,5 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 共有の daemon を通す | ✓ | ✓ | ✓ | ✓ | CLI: `-C daemon:<path>`。 |
 | 合うものがなければホストにエンジンを送る | ✓ | ✓ | ✓ | ✓ | VSCode: 拡張が動くホストで、同梱したエンジンを使う。 |
 | Windows の SSH 先 | ✓ | ✓ | ✓ | ✓ |  |
-| パスワード・パスフレーズを尋ねる askpass のダイアログ | ✓ | ✓ | — | n/a | VSCode: 尋ねるのを切っている（`GIT_TERMINAL_PROMPT=0`）。<br>CLI: ダイアログはアプリのもの。 |
-| 署名の確かめ（この機械か、ホストの鍵） | ✓ | ✓ | — | △ | CLI: `show`・`refs --verify` で確かめ、選択はない。 |
+| パスワード・パスフレーズを尋ねる askpass のダイアログ | ✓ | ✓ | ✓ | n/a | VSCode: VSCode の入力欄。拡張が git・ssh・共有の daemon に渡すスクリプトから尋ねる。<br>CLI: ダイアログはアプリのもの。 |
+| 署名の確かめ（この機械か、ホストの鍵） | ✓ | ✓ | n/a | △ | VSCode: 拡張は `ssh://` のリポジトリを開かない。Remote-SSH では拡張がホストで動くので、開くほかのリポジトリと同じく、git がホストの鍵で確かめる。<br>CLI: `show`・`refs --verify` で確かめ、選択はない。 |

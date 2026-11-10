@@ -150,7 +150,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Remotes: table and sheet with a connection check | ✓ | ✓ | ✓ | △ | VSCode: The table with a row of buttons (Edit URL…, Push URL…, Check, Prune, Rename…, Remove…) and Add…; the values are asked in input boxes, not a sheet.<br>CLI: Via `amonhen run`. |
 | Hooks: table, Enabled switch, script, Create Hook… | ✓ | ✓ | ✓ | △ | VSCode: Open opens the script in VSCode's editor.<br>CLI: Via `amonhen run`. |
 | LFS: installed, patterns, Track Pattern…, file count | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
-| Keys and Values (git config table, Basic / Customized / All, Combined / Levels) | ✓ | ✓ | △ | △ | VSCode: Basic / Customized / All and search, with the value in effect and its source; values are edited in an input box; no Levels columns.<br>CLI: Via `amonhen run` (`configList`, `configSet`). |
+| Keys and Values (git config table, Basic / Customized / All, Combined / Levels) | ✓ | ✓ | ✓ | △ | VSCode: Basic / Customized / All, Combined / Levels and search; values are edited in an input box.<br>CLI: Via `amonhen run` (`configList`, `configSet`). |
 | Rows disabled with the git version needed | ✓ | ✓ | ✓ | n/a | |
 | Repository's form on the git line (shallow, partial, sparse, maintenance) | ✓ | ✓ | ✓ | △ | CLI: `status` notes shallow, partial and sparse repositories. |
 | Fetching and Folders: fetch more of a shallow clone (a count, up to a date, all) | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run` (`deepen`, `unshallow`). |
@@ -349,7 +349,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Menus from the shared command table (`crates/commands`) | ✓ | ✓ | n/a | n/a | VSCode: VSCode's Command Palette and context menus. |
 | Every command reachable without a menu bar (≡) | ✓ | ✓ | ✓ | n/a | GTK4: The ≡ menu holds the menu bar's File, Edit, View, Navigate, Commit and Window menus with macOS's items and order (Edit's Undo, Cut, Copy… act on the focused field), then Settings…, About and Quit.<br>VSCode: Command Palette and context menus. |
 | Keyboard shortcuts | ✓ | ✓ | n/a | n/a | GTK4: Keys that Linux desktops or other commands take differ: Show Sidebar is F9 (GNOME's utility pane key); Filter Branches, Go to Parent / Child and New Tag have none (GNOME takes Ctrl+Alt+arrows and Ctrl+Alt+T, and the HIG gives Alt+Up another meaning); the merge editor's previous / next conflict is Alt+Up / Down.<br>VSCode: VSCode's keybindings; the extension contributes none, and any command can be bound. |
-| Context menus with the menu's names | ✓ | ✓ | △ | n/a | VSCode: Names differ from the apps. |
+| Context menus with the menu's names | ✓ | ✓ | ✓ | n/a | VSCode: The same words without the names the apps put in (Checkout… for Checkout main…, Delete… for Delete main…), since VSCode's menu items are fixed text. |
 | Keyboard shortcuts window | — | ✓ | n/a | n/a | macOS: macOS's App Shortcuts change them instead. |
 
 ## Status bar
@@ -407,5 +407,5 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Through the shared daemon | ✓ | ✓ | ✓ | ✓ | CLI: `-C daemon:<path>`. |
 | Engine sent to a host when none fits | ✓ | ✓ | ✓ | ✓ | VSCode: The bundled engine is used on the host the extension runs on. |
 | Windows SSH hosts | ✓ | ✓ | ✓ | ✓ |  |
-| askpass dialog for passwords and passphrases | ✓ | ✓ | — | n/a | VSCode: Prompts are turned off (`GIT_TERMINAL_PROMPT=0`).<br>CLI: The dialog belongs to the apps. |
-| Signature verification (this machine's keys or the host's) | ✓ | ✓ | — | △ | CLI: Checked in `show` and `refs --verify`; no choice. |
+| askpass dialog for passwords and passphrases | ✓ | ✓ | ✓ | n/a | VSCode: VSCode's input box, through a script the extension passes to git, ssh and the shared daemon.<br>CLI: The dialog belongs to the apps. |
+| Signature verification (this machine's keys or the host's) | ✓ | ✓ | n/a | △ | VSCode: The extension opens no `ssh://` repositories; under Remote-SSH it runs on the host, so git verifies there with the host's keys, as for any repository the extension opens.<br>CLI: Checked in `show` and `refs --verify`; no choice. |
