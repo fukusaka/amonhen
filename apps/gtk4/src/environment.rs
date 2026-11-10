@@ -756,18 +756,24 @@ pub fn page(s: &Rc<RepoSettings>) -> gtk::Widget {
     note.set_wrap(true);
     note.set_wrap_mode(gtk::pango::WrapMode::WordChar);
     b.append(&note);
-    // この機械で選んだ git（PATH のものでなければ、PATH の行にそれを書く）。
+    // この機械で選んだ git（PATH のものでなければ、PATH の行にそれを書く）。プログラムのページで選び直すので、
+    // ページを出すたびに読む（macOS 版は描くたびに読む）。
     let (repo, w) = (s.repo.clone(), Rc::downgrade(&table));
-    glib::spawn_future_local(async move {
-        let info = run_one(&repo, json!({"op": "machineGit"}))
-            .await
-            .unwrap_or_default();
-        let git = crate::programs::MachineGit::from_info(&info);
-        if let Some(t) = w.upgrade() {
-            t.chosen_git
-                .replace((git.source != "path" && !git.source.is_empty()).then_some(git.program));
-            t.rebuild();
-        }
+    b.connect_map(move |_| {
+        let (repo, w) = (repo.clone(), w.clone());
+        glib::spawn_future_local(async move {
+            let info = run_one(&repo, json!({"op": "machineGit"}))
+                .await
+                .unwrap_or_default();
+            let git = crate::programs::MachineGit::from_info(&info);
+            let chosen = (git.source != "path" && !git.source.is_empty()).then_some(git.program);
+            if let Some(t) = w.upgrade()
+                && *t.chosen_git.borrow() != chosen
+            {
+                t.chosen_git.replace(chosen);
+                t.rebuild();
+            }
+        });
     });
     table.settings.replace(Rc::downgrade(s));
     let w = Rc::downgrade(&table);
