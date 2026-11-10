@@ -533,6 +533,9 @@ extension Actions {
             // 今のブランチの rebase なら、前と後の絵、積み重ねたブランチ、コミットごとの見込みと、この操作だけ
             // 積み重ねたブランチを動かすかを出す。
             var panel: RewritePreviewPanel?
+            let merging = commands.contains { ["merge", "mergeInto"].contains($0["op"] as? String) }
+            var modePopup: NSPopUpButton?
+            var modeTarget: ClosureTarget?
             if estimate, ours == "HEAD", let rev = theirs.first {
                 let p = RewritePreviewPanel(actions: self)
                 p.onUpdate = { [weak alert] in alert?.layout() }
@@ -547,7 +550,26 @@ extension Actions {
                 if !estimate, theirs.count == 1, let rev = theirs.first {
                     drawing = mergeDrawing(await mergePreview(theirs: rev, ours: ours), theirs: rev, into: ours)
                 }
-                if let drawing {
+                // merge なら取り込み方を選べる。絵は git の設定のとおりのときの形なので、ほかを選んだら隠す。
+                if merging {
+                    let (row, popup) = Self.mergeModeRow(single: theirs.count == 1)
+                    modePopup = popup
+                    let stack = NSStackView(views: [row] + (drawing.map { [$0] } ?? []) + [label])
+                    stack.orientation = .vertical
+                    stack.alignment = .leading
+                    stack.spacing = 10
+                    stack.frame.size = stack.fittingSize
+                    alert.accessoryView = stack
+                    // 隠したら詰め、シートの大きさを合わせる。
+                    modeTarget = ClosureTarget { [weak drawing, weak stack, weak alert] in
+                        drawing?.isHidden = Self.mergeMode(popup) != .git
+                        stack?.layoutSubtreeIfNeeded()
+                        if let stack { stack.frame.size = stack.fittingSize }
+                        alert?.layout()
+                    }
+                    popup.target = modeTarget
+                    popup.action = #selector(ClosureTarget.fire)
+                } else if let drawing {
                     let stack = NSStackView(views: [drawing, label])
                     stack.orientation = .vertical
                     stack.alignment = .leading
@@ -563,7 +585,8 @@ extension Actions {
                 }
             }
             guard await present(alert) == .alertFirstButtonReturn else { return }
-            var commands = commands
+            withExtendedLifetime(modeTarget) {}
+            var commands = modePopup.map { Self.withMergeMode(commands, Self.mergeMode($0)) } ?? commands
             if let updateRefs = panel?.updateRefs, let i = commands.lastIndex(where: { $0["op"] as? String == "rebase" }) {
                 commands[i]["updateRefs"] = updateRefs
             }
@@ -813,6 +836,36 @@ extension Actions {
     /// シートに出す、コンフリクトの見込みの行。最初は「調べています」で、答えが来たら `show` で書き換える。高さは
     /// 3 行分に決めておく（答えが来てもシートの大きさを変えないため）。
     @MainActor
+    /// Merge の確認に出す取り込み方のポップアップ（「取り込み方:」の行）。Fast-Forward Only は取り込むものが 1 つの
+    /// ときだけ（octopus は fast-forward できない）。最初は git の設定のとおり。
+    static func mergeModeRow(single: Bool) -> (row: NSView, popup: NSPopUpButton) {
+        let popup = NSPopUpButton()
+        for mode in MergeMode.allCases where single || mode != .fastForwardOnly {
+            popup.addItem(withTitle: mode.title)
+            popup.lastItem?.representedObject = mode.rawValue
+            popup.lastItem?.toolTip = mode.toolTip
+        }
+        let row = NSStackView(views: [NSTextField(labelWithString: L("Integrate with:")), popup])
+        row.spacing = 6
+        return (row, popup)
+    }
+
+    /// ポップアップで選んだ取り込み方。
+    static func mergeMode(_ popup: NSPopUpButton) -> MergeMode {
+        (popup.selectedItem?.representedObject as? String).flatMap(MergeMode.init(rawValue:)) ?? .git
+    }
+
+    /// merge・mergeInto の命令に取り込み方を添える（git の設定のとおりなら何も足さない）。
+    static func withMergeMode(_ commands: [[String: Any]], _ mode: MergeMode) -> [[String: Any]] {
+        guard mode != .git else { return commands }
+        return commands.map { command in
+            guard ["merge", "mergeInto"].contains(command["op"] as? String) else { return command }
+            var command = command
+            command["mode"] = mode.rawValue
+            return command
+        }
+    }
+
     static func forecastLabel(width: CGFloat = 440) -> NSTextField {
         let label = NSTextField(wrappingLabelWithString: "\n\n")
         label.preferredMaxLayoutWidth = width
