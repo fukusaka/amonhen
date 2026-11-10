@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { drawingLines, previewLines, stackedAlternative, type RewritePreview } from '../src/history/rewritePreview.ts';
+import { drawingLines, forecastLine, previewLines, stackedAlternative, type RewritePreview } from '../src/history/rewritePreview.ts';
 
 const preview = (p: Partial<RewritePreview>): RewritePreview => ({ moving: [], staying: [], ...p });
 
@@ -86,4 +86,17 @@ test('draws the rebase before and after: the current and stacked branches move t
     '  ● Base',
   ]);
   assert.deepEqual(drawingLines({ moving: [], staying: [] }), []);
+});
+
+test('forecastLine says which files conflict, and that a rebase’s is an estimate', () => {
+  assert.equal(forecastLine([[]], false), 'No conflicts expected.');
+  assert.equal(
+    forecastLine([['b.txt', 'a.txt'], ['a.txt', 'd.txt', 'c.txt']], false),
+    '⚠︎ Conflicts expected in 4 files: a.txt, b.txt, c.txt, …',
+  );
+  assert.equal(
+    forecastLine([['a.txt']], true),
+    '⚠︎ Conflicts expected in 1 file: a.txt Rebase applies the commits one at a time, so this is only an estimate.',
+  );
+  assert.equal(forecastLine(undefined, true), 'Can’t check for conflicts ahead (needs git 2.38 or newer).');
 });

@@ -338,27 +338,31 @@ enum GitHub {
         return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// ブランチの直近のコミット（それぞれ `count` 個まで）の CI の状態（`ci` のとき）と、作者の GitHub のアバターの
-    /// URL（`authors` のとき。メールアドレス → URL）。GraphQL で 1 回に読む。GitHub にないブランチは飛ばす。
+    /// ブランチ `branches`（GitHub の先）とコミット `tips`（16 進。手元の先）から数えた直近のコミット（それぞれ `count`
+    /// 個まで）の CI の状態（`ci` のとき）と、作者の GitHub のアバターの URL（`authors` のとき。メールアドレス → URL）。
+    /// GraphQL で 1 回に読む。GitHub にないブランチ・コミット（push していない）は飛ばす。手元の先からも数えるのは、
+    /// 手元のブランチが遅れていると、GitHub の直近の `count` 個に History の行が 1 つも入らないため。
     static func commitStatuses(
-        _ repo: GitHubRepository, branches: [String], count: Int = 100, ci: Bool = true, authors: Bool = true
+        _ repo: GitHubRepository, branches: [String], tips: [String] = [], count: Int = 100, ci: Bool = true,
+        authors: Bool = true
     ) async throws -> (ci: [String: PullRequest.CI], avatars: [String: URL]) {
-        guard !branches.isEmpty, ci || authors else { return ([:], [:]) }
+        guard !branches.isEmpty || !tips.isEmpty, ci || authors else { return ([:], [:]) }
         // 要るものだけを頼む（量を減らす）。
         let wanted = ["oid", authors ? "author { email avatarUrl(size: 96) }" : nil, ci ? "statusCheckRollup { state }" : nil]
             .compactMap { $0 }.joined(separator: " ")
-        // ブランチごとに別名を付けて並べる（b0・b1 …）。
-        let fields = branches.indices.map { i in
+        let history = "... on Commit { history(first: \(count)) { nodes { \(wanted) } } }"
+        // ブランチ・コミットごとに別名を付けて並べる（b0・b1 …、c0・c1 …）。
+        let fields = branches.indices.map { "b\($0): ref(qualifiedName: $r\($0)) { target { \(history) } }" }
+            + tips.indices.map { "c\($0): object(oid: $o\($0)) { \(history) }" }
+        let variables = branches.indices.map { "$r\($0): String!" } + tips.indices.map { "$o\($0): GitObjectID!" }
+        let query = """
+            query($owner: String!, $name: String!, \(variables.joined(separator: ", "))) {
+              repository(owner: $owner, name: $name) { \(fields.joined(separator: "\n")) } }
             """
-            b\(i): ref(qualifiedName: $r\(i)) { target { ... on Commit { history(first: \(count)) { nodes {
-              \(wanted) } } } } }
-            """
-        }.joined(separator: "\n")
-        let variables = branches.indices.map { "$r\($0): String!" }.joined(separator: ", ")
-        let query = "query($owner: String!, $name: String!, \(variables)) { repository(owner: $owner, name: $name) { \(fields) } }"
         var args = ["api", "graphql", "-f", "query=\(query)", "-f", "owner=\(repo.owner)", "-f", "name=\(repo.name)"]
         if repo.host != "github.com" { args += ["--hostname", repo.host] }
         for (i, branch) in branches.enumerated() { args += ["-f", "r\(i)=refs/heads/\(branch)"] }
+        for (i, tip) in tips.enumerated() { args += ["-f", "o\(i)=\(tip)"] }
         let data = try await run(args)
         struct Node: Decodable {
             struct Author: Decodable { let email: String?; let avatarUrl: String? }
@@ -367,22 +371,25 @@ enum GitHub {
             let author: Author?
             let statusCheckRollup: Rollup?
         }
-        struct Ref: Decodable {
-            struct Target: Decodable {
-                struct History: Decodable { let nodes: [Node] }
-                let history: History?
-            }
-            let target: Target?
+        struct Commit: Decodable {
+            struct History: Decodable { let nodes: [Node] }
+            let history: History?
+        }
+        /// ブランチ（b…）は `target` の下に、コミット（c…）はそのまま `history` がある。
+        struct Field: Decodable {
+            let target: Commit?
+            let history: Commit.History?
+            var nodes: [Node] { (target?.history ?? history)?.nodes ?? [] }
         }
         struct Response: Decodable {
-            struct Body: Decodable { let repository: [String: Ref?]? }
+            struct Body: Decodable { let repository: [String: Field?]? }
             let data: Body?
         }
         let response = try JSONDecoder().decode(Response.self, from: data)
         var ci: [String: PullRequest.CI] = [:]
         var avatars: [String: URL] = [:]
-        for ref in (response.data?.repository ?? [:]).values {
-            for node in ref?.target?.history?.nodes ?? [] {
+        for field in (response.data?.repository ?? [:]).values {
+            for node in field?.nodes ?? [] {
                 if let state = node.statusCheckRollup?.state {
                     ci[node.oid] = switch state {
                     case "SUCCESS": .passing

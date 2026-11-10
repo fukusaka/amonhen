@@ -2209,7 +2209,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         let branches = Array(Set([editingBranch, Settings.gitHubCIDefaultBranch ? defaultBranch : nil].compactMap { $0 })).sorted()
         do {
             let (statuses, avatars) = try await GitHub.commitStatuses(
-                gitHub, branches: branches, count: Settings.gitHubCICommits, ci: ci, authors: authors)
+                gitHub, branches: branches, tips: ciTips(branches), count: Settings.gitHubCICommits, ci: ci, authors: authors)
             if ci {
                 history.ciStatus = Dictionary(uniqueKeysWithValues: statuses.compactMap { key, value in Data(hex: key).map { ($0, value) } })
             }
@@ -2220,6 +2220,21 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         } catch {
             EventLog.add(repo: window.title, L("Can’t read the CI status: %@", "\(error)"))
         }
+    }
+
+    /// CI の状態を読み始めるコミット（16 進）: ブランチの手元の先と、その上流（なければ GitHub のリモートの同じ名前）の先。
+    /// 手元が遅れていても History に出ている行に、手元が進んでいても push した分に印が付く。
+    private func ciTips(_ branches: [String]) -> [String] {
+        let items = latestRefs?.items ?? []
+        func target(_ kind: RefKind, _ name: String) -> Data? { items.first { $0.kind == kind && $0.name == name }?.target }
+        var tips: [Data] = []
+        for branch in branches {
+            let local = items.first { $0.kind == .local && $0.name == branch }
+            let upstream = local.flatMap { $0.gone ? nil : $0.detail } ?? gitHubRemote.map { "\($0)/\(branch)" }
+            tips += [local?.target, upstream.flatMap { target(.remote, $0) }].compactMap { $0 }
+        }
+        var seen = Set<Data>()
+        return tips.filter { seen.insert($0).inserted }.map { $0.map { String(format: "%02x", $0) }.joined() }
     }
 
     /// このウィンドウで GitHub のアバターの URL を読んだか。

@@ -4157,8 +4157,32 @@ impl Repository {
                 ..Default::default()
             }),
             Command::ChangeSubmodule { change } => {
+                if !matches!(change, amonhen_model::SubmoduleChange::Foreach { .. }) {
+                    ops.change_submodule(&change)?;
+                    return ok();
+                }
+                // foreach は、動かした命令の出力を返す（git を動かした側の Activity の記録から読む）。
+                let records = || match ops.activity() {
+                    Ok(remote) if !remote.is_empty() => remote,
+                    _ => amonhen_model::activity::entries(),
+                };
+                let before = records().last().map_or(0, |e| e.seq);
                 ops.change_submodule(&change)?;
-                ok()
+                let output = records()
+                    .into_iter()
+                    .rev()
+                    .find(|e| {
+                        e.seq > before
+                            && e.kind == "git"
+                            && e.label.starts_with("git submodule foreach")
+                    })
+                    .and_then(|e| e.output)
+                    .unwrap_or_default();
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::json!({ "output": output })),
+                    ..Default::default()
+                })
             }
             Command::Subtrees => Ok(Response {
                 ok: true,
@@ -9326,9 +9350,13 @@ mod tests {
         assert!(dir.join(".git/modules/lib").is_dir());
         assert!(dir.join("lib/.git").is_file());
         let r = change(
-            serde_json::json!({ "kind": "foreach", "command": "git log -1 --format=%s > ran.txt", "recursive": false }),
+            serde_json::json!({ "kind": "foreach", "command": "git log -1 --format=%s > ran.txt; echo ran in $sm_path", "recursive": false }),
         );
         assert_eq!(r["ok"], true, "{r}");
+        // 動かした命令の出力（git が書く Entering の行も）を返す
+        let output = r["info"]["output"].as_str().unwrap();
+        assert!(output.contains("Entering 'lib'"), "{output}");
+        assert!(output.contains("ran in lib"), "{output}");
         assert_eq!(
             std::fs::read_to_string(dir.join("lib/ran.txt"))
                 .unwrap()

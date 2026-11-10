@@ -88,6 +88,8 @@ writeFileSync(
     'telemetry.telemetryLevel': 'off',
     'chat.disableAIFeatures': true,
     'workbench.startupEditor': 'none',
+    // fsmonitor は試すテストでだけ点ける（リポジトリごとに常駐し、Windows では一時ディレクトリを消せなくなる）
+    'amonhen.fsmonitor': false,
     ...(gitPath ? { 'git.path': gitPath } : {}),
   }),
 );

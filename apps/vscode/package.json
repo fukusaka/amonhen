@@ -49,6 +49,12 @@
           "markdownDescription": "Use the shared daemon of Amon Hen’s engine (the same as the standalone app’s, bundled with the extension) for History, diffs and operations. It shares History, the search index and the Undo log with the app and the CLI. When off, the extension runs on its own git execution layer. Without an engine for this host’s OS and CPU, it runs on the git execution layer whatever this says.",
           "scope": "machine"
         },
+        "amonhen.fsmonitor": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Speed up status with git’s fsmonitor, as the standalone app does. On macOS and Windows a `git fsmonitor--daemon` runs for each repository; on Linux and the BSDs it uses Watchman through the engine, when Watchman is installed and git is 2.26 or newer. It isn’t written to the repository’s settings.",
+          "scope": "machine"
+        },
         "amonhen.daemon.path": {
           "type": "string",
           "default": "",

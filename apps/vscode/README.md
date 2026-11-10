@@ -47,7 +47,7 @@ Clicking the Amon Hen icon in the activity bar opens the nav in the sidebar and 
 - With the engine, Clean Up Branches… (Command Palette, or the Branches heading's right-click) lists the branches merged into the default branch, merged by a pull request on GitHub (read with `gh` when it's installed) or whose upstream is gone, under a heading per reason, and deletes the ones you keep checked; the last are left unchecked. One Undo brings them all back with their settings.
 - With the engine, a branch whose tip was merged by a pull request on GitHub (squash or rebase; read with `gh`) shows `merged` like any merged branch, with the pull request's number in its tooltip. Deleting it asks once, naming the pull request, and Undo brings it back.
 - With the engine, Delete Ignored Files… (Command Palette, or Working Copy's right-click) lists what `git clean -X` would delete, folders as one entry, and deletes the ones you keep chosen after asking; Undo can't bring them back.
-- A submodule that keeps its repository data in its own folder (cloned by hand, then added) has Move Repository Data into .git/modules (`git submodule absorbgitdirs`), and the Submodules group has Run in Each Submodule… (a shell command in each one's folder, optionally in nested ones too; only whether it worked is shown).
+- A submodule that keeps its repository data in its own folder (cloned by hand, then added) has Move Repository Data into .git/modules (`git submodule absorbgitdirs`), and the Submodules group has Run in Each Submodule… (a shell command in each one's folder, optionally in nested ones too; its output goes to the Amon Hen Submodules Output channel).
 - With the engine and a git that has `git subtree`, a Subtrees group lists the folders added with `git subtree`. Add Subtree… imports a repository's branch into a folder; a subtree's menu has Pull… (merge the branch into the folder), Push… (send the folder's commits to a branch) and Split… (a branch with only the folder's history). They start from the repository, branch and squash used last.
 - When multiple repositories are open, switch between them with a title button.
 
@@ -149,6 +149,7 @@ is chosen; if the chosen git isn't there, commands that run git stop with an err
 | --- | --- | --- |
 | `amonhen.daemon.enabled` | `true` | Use the engine's shared daemon. Off: the git execution layer only |
 | `amonhen.daemon.path` | `""` | An engine (`amonhen`) to use instead of the bundled one |
+| `amonhen.fsmonitor` | `true` | Speed up status with git's fsmonitor (macOS and Windows: `git fsmonitor--daemon`; Linux and the BSDs: Watchman through the engine, with git 2.26 or newer) |
 
 ## Install / update
 

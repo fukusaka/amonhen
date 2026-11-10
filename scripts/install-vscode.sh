@@ -43,4 +43,4 @@ trap 'rm -rf "$dir"' EXIT
 file=$(basename "$url" | sed 's/%2B/+/g')
 curl -fsSL -o "$dir/$file" "$url"
 "$code" --install-extension "$dir/$file" --force
-echo "インストールしました: $file。ウィンドウを再読み込みすると反映されます"
+echo "インストールしました: ${file}。ウィンドウを再読み込みすると反映されます"

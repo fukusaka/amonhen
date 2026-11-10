@@ -32,6 +32,10 @@ becomes the GitHub Release notes.
 - Renaming a repository group keeps its place, a Windows drive path remote is no longer shown as an SSH host, partial
   search results no longer mark the wrong rows while filtered, and SSH host settings no longer flash "git wasn't found"
   while connecting.
+- History shows the CI marks when the local branch is behind GitHub: they are read from the local and upstream tips,
+  not only from the newest commits of the branch on GitHub, which left an old local branch without any.
+- Run in Each Submodule… keeps what the command printed in Activity, and `amonhen submodule foreach` prints it; only
+  git's error output was kept before.
 
 ### [0.2.10] - 2026-11-09
 
@@ -1090,6 +1094,14 @@ First release.
   Rename…, and items that ask first end with “…”.
 - When git or ssh asks for a user name, password or passphrase, VSCode's input box asks, as the app's dialog does;
   fetch, pull and push that needed one used to fail.
+- Run in Each Submodule… shows what the command printed in an Output channel.
+- Rebasing a branch other than the current one, by dropping a branch on it, says whether conflicts are expected.
+- Status uses git's fsmonitor, as the app does (`amonhen.fsmonitor`, on by default).
+
+#### Fixed
+
+- `scripts/install-vscode.sh` no longer ends with "unbound variable" after installing when the shell's locale isn't
+  UTF-8.
 
 ### [0.2.6] - 2026-11-09
 
