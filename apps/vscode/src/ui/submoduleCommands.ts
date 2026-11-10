@@ -13,15 +13,24 @@ import type { Repository } from '../state/repository.ts';
 import type { Node, SidebarProvider } from './sidebar.ts';
 import { showError } from './stageCommands.ts';
 
-/** コアの命令を実行する。うまくいかなければ投げる */
-async function run(repo: Repository, command: Json, title: string): Promise<void> {
+/** コアの命令を実行し、返事を返す。うまくいかなければ投げる */
+async function call(repo: Repository, command: Json, title: string): Promise<Json> {
   const client = await daemonFor(repo.root);
   if (!client) throw new Error(`${title} needs the Amon Hen engine (amonhen.daemon.enabled)`);
   const reply = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title }, async () =>
     (await client.call({ op: 'run', command })).json,
   );
   if (reply['ok'] !== true) throw new Error(String(reply['error'] ?? `${title} failed`));
+  return reply;
 }
+
+/** コアの命令を実行する。うまくいかなければ投げる */
+async function run(repo: Repository, command: Json, title: string): Promise<void> {
+  await call(repo, command, title);
+}
+
+/** Run in Each Submodule の出力を出す出力パネル（アプリの Activity にあたる） */
+let foreachOutput: vscode.OutputChannel | undefined;
 
 /** Update… のしかた（git の既定はどちらもしない） */
 async function pickUpdateOptions(title: string): Promise<{ recursive: boolean; remote: boolean } | undefined> {
@@ -135,7 +144,7 @@ export function registerSubmoduleCommands(manager: RepositoryManager, sidebar: S
     onRow('amonhen.submodule.absorb', (repo, path) =>
       run(repo, { op: 'changeSubmodule', change: { kind: 'absorb', paths: [path] } }, `Move the repository data of ${path}`),
     ),
-    // それぞれの submodule の中でシェルの命令を動かす（git submodule foreach）。出力は出せない（コアは成否だけを返す）
+    // それぞれの submodule の中でシェルの命令を動かす（git submodule foreach）。出力は出力パネルに出す
     onRepo('amonhen.submodules.foreach', async (repo) => {
       const command = (
         await vscode.window.showInputBox({
@@ -154,7 +163,17 @@ export function registerSubmoduleCommands(manager: RepositoryManager, sidebar: S
         { title: 'Run in Each Submodule' },
       );
       if (!depth) return;
-      await run(repo, { op: 'changeSubmodule', change: { kind: 'foreach', command, recursive: depth.recursive } }, `Run ${command}`);
+      const reply = await call(
+        repo,
+        { op: 'changeSubmodule', change: { kind: 'foreach', command, recursive: depth.recursive } },
+        `Run ${command}`,
+      );
+      const output = String((reply['info'] as { output?: unknown } | undefined)?.output ?? '').trimEnd();
+      foreachOutput ??= vscode.window.createOutputChannel('Amon Hen Submodules');
+      foreachOutput.appendLine(`[${new Date().toLocaleString()}] git submodule foreach${depth.recursive ? ' --recursive' : ''} ${command}`);
+      foreachOutput.appendLine(output || '(no output)');
+      foreachOutput.appendLine('');
+      foreachOutput.show(true);
       vscode.window.setStatusBarMessage(`$(check) Ran ${command} in each submodule`, 5000);
     }),
     onRepo('amonhen.submodules.updateAll', (repo) => run(repo, { op: 'updateSubmodules', paths: [] }, 'Update all submodules')),

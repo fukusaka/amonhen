@@ -1257,11 +1257,19 @@ async function submoduleMoreFlow(): Promise<void> {
     assert.ok(existsSync(join(gitDir, 'modules', path)), lastErrors());
     assert.ok(statSync(join(root, path, '.git')).isFile(), '.git はファイル（gitdir: の指し先）になる');
 
+    // 命令の出力は出力パネルに出る（アプリの Activity にあたる）
+    const shown: string[] = [];
+    const channel = { appendLine: (line: string) => shown.push(line), show: () => {}, dispose: () => {} };
     await withWindow(
-      { showInputBox: inputs('git tag foreach-e2e'), showQuickPick: async (items: readonly vscode.QuickPickItem[]) => items[0] },
+      {
+        showInputBox: inputs('git tag foreach-e2e && echo tagged $sm_path'),
+        showQuickPick: async (items: readonly vscode.QuickPickItem[]) => items[0],
+        createOutputChannel: () => channel,
+      },
       async () => vscode.commands.executeCommand('amonhen.submodules.foreach'),
     );
     assert.equal(git('-C', path, 'tag', '--list', 'foreach-e2e').trim(), 'foreach-e2e', lastErrors());
+    assert.match(shown.join('\n'), new RegExp(`Entering '${path}'\\ntagged ${path}`), shown.join('\n'));
   } finally {
     git('reset', '-q', '--hard', start);
     rmSync(join(root, 'vendor'), { recursive: true, force: true });

@@ -1080,6 +1080,7 @@ First release.
   Rename…, and items that ask first end with “…”.
 - When git or ssh asks for a user name, password or passphrase, VSCode's input box asks, as the app's dialog does;
   fetch, pull and push that needed one used to fail.
+- Run in Each Submodule… shows what the command printed in an Output channel.
 
 ### [0.2.6] - 2026-11-09
 
