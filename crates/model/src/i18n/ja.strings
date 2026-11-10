@@ -522,7 +522,6 @@
 "Next Match (Enter, Ctrl+G)" = "次の一致（Enter・Ctrl+G）";
 "Show Only Matching Commits" = "一致したコミットだけを出す";
 "Search History (Ctrl+F)" = "History を検索（Ctrl+F）";
-"{count} matches" = "{count} 件";
 "No Matches" = "見つかりません";
 "Not committed yet" = "まだコミットしていない";
 "Double-click to show in History." = "ダブルクリックで History に表示";

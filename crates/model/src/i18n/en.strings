@@ -24,7 +24,6 @@
 "Fast-Forward Only can’t pull these: you have {count} local commits. Choose Merge or Rebase." = "Fast-Forward Only can’t pull these: you have a local commit. Choose Merge or Rebase.";
 "This pushes {count} commits to it and makes it the upstream." = "This pushes {count} commit to it and makes it the upstream.";
 "It has {count} commits that {branch} doesn’t (as of the last Fetch), so pushing would be refused. Make it the upstream and Pull first." = "It has {count} commit that {branch} doesn’t (as of the last Fetch), so pushing would be refused. Make it the upstream and Pull first.";
-"{count} matches" = "{count} match";
 "Staged {count} files" = "Staged {count} file";
 "Unstaged {count} files" = "Unstaged {count} file";
 "{count} commits ahead of upstream (Ctrl+Alt+P)" = "{count} commit ahead of upstream (Ctrl+Alt+P)";
