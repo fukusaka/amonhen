@@ -12,7 +12,7 @@ if [ -n "$expected" ]; then
     case "$out" in
     "amonhen $expected (build "*) ;;
     *)
-        echo "版が違う: $out（期待した版: $expected）" >&2
+        echo "版が違う: ${out}（期待した版: ${expected}）" >&2
         exit 1
         ;;
     esac
