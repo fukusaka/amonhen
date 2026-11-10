@@ -483,10 +483,29 @@ pub fn popup_returning(
             glib::ControlFlow::Continue
         });
     }
+    // 項目のアクションが出す先の部品を消す（サイドバーの行を作り直すなど）ときは、その前に外す（付いたまま
+    // 消えると GTK が警告し、落ちることもある）。
+    let parent = parent.as_ref().clone();
+    let weak = popover.downgrade();
+    let on_destroy = parent.connect_destroy(move |_| {
+        if let Some(p) = weak.upgrade().filter(|p| p.parent().is_some()) {
+            p.unparent();
+        }
+    });
+    let on_destroy = std::cell::RefCell::new(Some(on_destroy));
+    let parent = parent.downgrade();
     // 閉じたら外す（次は作り直す）。項目のアクションは閉じた後に呼ばれるので、外すのは少し後。
-    popover.connect_closed(|p| {
+    popover.connect_closed(move |p| {
         let p = p.clone();
-        glib::idle_add_local_once(move || p.unparent());
+        let (parent, id) = (parent.clone(), on_destroy.borrow_mut().take());
+        glib::idle_add_local_once(move || {
+            if let (Some(parent), Some(id)) = (parent.upgrade(), id) {
+                parent.disconnect(id);
+            }
+            if p.parent().is_some() {
+                p.unparent();
+            }
+        });
     });
     popover.popup();
     Some(popover)
