@@ -15,6 +15,8 @@ becomes the GitHub Release notes.
   says so, and why, where the after graph would be.
 - The merge commit the Pull sheet draws has the subject git pull writes (`Merge branch 'main' of <URL>`), and the
   Merge and Pull sheets add ` into <branch>` the way the git in use does, following `merge.suppressDest`.
+- Publish, Commit and Publish and Pull work on a branch whose upstream was deleted on the remote: they stopped with
+  "Can't read the status". Publish creates the branch again, and Pull asks which remote branch to pull from.
 
 ### [0.2.10] - 2026-11-09
 

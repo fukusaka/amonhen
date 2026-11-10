@@ -621,6 +621,9 @@ final class Actions {
                 do {
                     let status = try repository.loadStatus()
                     guard let upstream = status.upstream else { return .success((status, nil)) }
+                    // 上流が消えた（gone）なら、上流なしと同じく Publish に回す。
+                    let gone = try repository.loadRefs().items.contains { $0.kind == .local && $0.name == status.branch && $0.gone }
+                    if gone { return .success((status, nil)) }
                     let behind = try repository.info(["op": "between", "base": "HEAD", "tip": upstream, "limit": 1],
                                                      as: CommitRange.self).count
                     return .success((status, behind))
