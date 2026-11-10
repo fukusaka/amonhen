@@ -204,7 +204,8 @@ impl Purpose {
     }
 }
 
-/// テンプレートの中の `{{name}}`（前後の空白は許す）の位置と名前。
+/// テンプレートの中の `{{name}}`（前後の空白は許す）の位置と名前。名前でなければ 1 字先から探し直す（macOS 版の
+/// 正規表現 `\{\{\s*([a-z_]+)\s*\}\}` と同じく、`{{{diff}}}` は内側の `{{diff}}`）。
 fn placeholders(template: &str) -> Vec<(std::ops::Range<usize>, &str)> {
     let mut out = Vec::new();
     let mut at = 0;
@@ -218,7 +219,7 @@ fn placeholders(template: &str) -> Vec<(std::ops::Range<usize>, &str)> {
             out.push((open..close + 2, name));
             at = close + 2;
         } else {
-            at = after;
+            at = open + 1;
         }
     }
     out
@@ -324,6 +325,17 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out, "{\"a\": } {{X}}");
+    }
+
+    #[test]
+    fn triple_braces_fill_the_inner_variable() {
+        let v = vars(&[("diff", "D")]);
+        assert_eq!(
+            fill("{{{diff}}} {{{ diff }}}", &v, Purpose::ExplainCommit).unwrap(),
+            "{D} {D}"
+        );
+        let e = fill("{{{foo}}}", &v, Purpose::ExplainCommit).unwrap_err();
+        assert!(e.contains("{{foo}}"), "{e}");
     }
 
     #[test]
