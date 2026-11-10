@@ -18,6 +18,20 @@ becomes the GitHub Release notes.
   following `merge.suppressDest`.
 - Publish, Commit and Publish and Pull work on a branch whose upstream was deleted on the remote: they stopped with
   "Can't read the status". Publish creates the branch again, and Pull asks which remote branch to pull from.
+- GTK4 matches macOS in more places: app shortcuts work in the Activity and Settings windows, Refresh re-reads the
+  mailmap, and Settings re-read the chosen git and follow the worktree being edited.
+- GTK4 History uses one-line rows when author, date and ID are all hidden, its diff find no longer misses matches on
+  lines with characters such as `İ`, and Ctrl+G in a File History tab finds in that diff.
+- GTK4 sheets look like macOS: the drawings' arrow is centred, combined commits stay bold, highlights follow the accent
+  colour, the Apply Patches drawing is on top, and Return in Delete Ignored Items cancels.
+- GTK4 removes and prunes worktrees from the opened repository, so a worktree whose folder is gone can be removed.
+- macOS: the AI command no longer hangs on a lot of error output or freezes the window while sending a large prompt,
+  and runs in an empty folder of its own.
+- macOS: Shift+Return in the toolbar search searches the new text, Show Only Matching Commits no longer restarts a
+  running search, and the Cherry-pick and Fast-Forward sheets name the worktree only where it matters.
+- Renaming a repository group keeps its place, a Windows drive path remote is no longer shown as an SSH host, partial
+  search results no longer mark the wrong rows while filtered, and SSH host settings no longer flash "git wasn't found"
+  while connecting.
 
 ### [0.2.10] - 2026-11-09
 
