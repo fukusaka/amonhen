@@ -194,10 +194,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             sidebar.select(page: .history)
             history.search(query)
         }
-        toolbar.onSearchStep = { [weak self] step in
+        toolbar.onSearchStep = { [weak self] query, step in
             guard let self else { return }
             sidebar.select(page: .history)
-            history.moveToMatch(by: step)
+            history.search(query, step: step)
         }
         detail.onSearch = { [weak history] query in history?.search(query) }
         history.toolbarSearchShown = { [weak self] in self?.toolbarHasSearch ?? false }
@@ -1867,9 +1867,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             self?.window.makeKeyAndOrderFront(nil)
             self?.toolbar.onSearch?(query)
         }
-        mirror.onSearchStep = { [weak self] step in
+        mirror.onSearchStep = { [weak self] query, step in
             self?.window.makeKeyAndOrderFront(nil)
-            self?.toolbar.onSearchStep?(step)
+            self?.toolbar.onSearchStep?(query, step)
         }
         return mirror
     }

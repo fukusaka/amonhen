@@ -1303,6 +1303,12 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         searchSubmitted()
     }
 
+    /// ⇧↩（History とツールバーの検索欄）: 新しく打った問い合わせなら、まずそれで探す（前の問い合わせの結果の中を
+    /// 動かない）。同じなら `step` だけ一致を動く。
+    func search(_ query: String, step: Int) {
+        if query != searchQuery { search(query) } else { moveSearch(by: step) }
+    }
+
     @objc func findNext(_ sender: Any?) { moveSearch(by: 1) }
     @objc func findPrevious(_ sender: Any?) { moveSearch(by: -1) }
 
@@ -1310,9 +1316,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         guard control === searchField else { return false }
         switch selector {
         case #selector(NSResponder.insertNewline(_:)) where NSEvent.modifierFlags.contains(.shift):
-            // 新しく打った問い合わせなら、まずそれで探す（前の問い合わせの結果の中を動かない）。
-            let query = searchField.stringValue.trimmingCharacters(in: .whitespaces)
-            if query != searchQuery { searchSubmitted() } else { moveSearch(by: -1) }
+            search(searchField.stringValue.trimmingCharacters(in: .whitespaces), step: -1)
             return true
         case #selector(NSResponder.cancelOperation(_:)):
             searchField.stringValue = ""
@@ -1489,7 +1493,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     /// 検索欄に書いてある問い合わせ。History を読み直して結果を捨てても残る（Enter で探し直せる）。
     var searchText: String { searchField.stringValue.trimmingCharacters(in: .whitespaces) }
 
-    /// 検索で一致したコミットの次・前へ（⌘G・⌘⇧G、ツールバーの検索欄の ⇧↩）。探していなければ false。
+    /// 検索で一致したコミットの次・前へ（⌘G・⌘⇧G）。探していなければ false。
     @discardableResult
     func moveToMatch(by step: Int) -> Bool {
         guard searchQuery != nil else { return false }
