@@ -518,7 +518,7 @@ impl Details {
         let selection_title = label(&["title-4"]);
         let selection_note = label(&["dim-label", "caption"]);
         let pairs = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-        let selection_lines = label(&["caption"]);
+        let selection_lines = label(&[]);
         // 見出しと説明の右に、上の帯の右上のボタンを移せる場所（上の帯がボタンだけになるときに。macOS 版と同じく、
         // ボタンだけの空いた段を作らない）。
         let selection_text = gtk::Box::new(gtk::Orientation::Vertical, 6);
@@ -1180,11 +1180,20 @@ impl Details {
             });
             self.pairs.append(&links);
         }
+        // 短い ID は等幅で薄く、作者は小さく薄く（macOS 版と同じ）。
+        let esc = |s: &str| glib::markup_escape_text(s).to_string();
         let text: Vec<String> = lines
             .iter()
-            .map(|(id, subject, author)| format!("{id}  {subject}  — {author}"))
+            .map(|(id, subject, author)| {
+                format!(
+                    "<span size=\"small\" alpha=\"60%\"><tt>{}</tt></span>  {}  <span size=\"small\" alpha=\"60%\">— {}</span>",
+                    esc(id),
+                    esc(subject),
+                    esc(author)
+                )
+            })
             .collect();
-        self.selection_lines.set_text(&text.join("\n"));
+        self.selection_lines.set_markup(&text.join("\n"));
         self.find.refresh();
     }
 
