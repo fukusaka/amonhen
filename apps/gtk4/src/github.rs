@@ -596,16 +596,19 @@ pub async fn default_branch(repo: &GitHubRepository) -> Option<String> {
     gh_async(args, None).await.ok().filter(|b| !b.is_empty())
 }
 
-/// ブランチの直近のコミット（それぞれ `count` 個まで）の CI の状態（`ci` のとき）と、作者の GitHub のアバターの
-/// URL（`authors` のとき。メールアドレスの小文字 → URL）。GraphQL で 1 回に読む。GitHub にないブランチは飛ばす。
+/// ブランチ `branches`（GitHub の先）とコミット `tips`（16 進。手元の先）から数えた直近のコミット（それぞれ `count`
+/// 個まで）の CI の状態（`ci` のとき）と、作者の GitHub のアバターの URL（`authors` のとき。メールアドレスの小文字
+/// → URL）。GraphQL で 1 回に読む。GitHub にないブランチ・コミット（push していない）は飛ばす。手元の先からも数える
+/// のは、手元のブランチが遅れていると、GitHub の直近の `count` 個に History の行が 1 つも入らないため（macOS 版と同じ）。
 pub async fn commit_statuses(
     repo: &GitHubRepository,
     branches: &[String],
+    tips: &[String],
     count: u32,
     ci: bool,
     authors: bool,
 ) -> Result<(HashMap<Oid, Ci>, HashMap<String, String>), String> {
-    if branches.is_empty() || !(ci || authors) {
+    if (branches.is_empty() && tips.is_empty()) || !(ci || authors) {
         return Ok(Default::default());
     }
     // 要るものだけを頼む（量を減らす）。
@@ -618,17 +621,16 @@ pub async fn commit_statuses(
     .flatten()
     .collect::<Vec<_>>()
     .join(" ");
-    // ブランチごとに別名を付けて並べる（b0・b1 …）。
+    let history = format!("... on Commit {{ history(first: {count}) {{ nodes {{ {wanted} }} }} }}");
+    // ブランチ・コミットごとに別名を付けて並べる（b0・b1 …、c0・c1 …）。
     let fields = (0..branches.len())
-        .map(|i| {
-            format!(
-                "b{i}: ref(qualifiedName: $r{i}) {{ target {{ ... on Commit {{ history(first: {count}) {{ nodes {{\n  {wanted} }} }} }} }} }}"
-            )
-        })
+        .map(|i| format!("b{i}: ref(qualifiedName: $r{i}) {{ target {{ {history} }} }}"))
+        .chain((0..tips.len()).map(|i| format!("c{i}: object(oid: $o{i}) {{ {history} }}")))
         .collect::<Vec<_>>()
         .join("\n");
     let variables = (0..branches.len())
         .map(|i| format!("$r{i}: String!"))
+        .chain((0..tips.len()).map(|i| format!("$o{i}: GitObjectID!")))
         .collect::<Vec<_>>()
         .join(", ");
     let query = format!(
@@ -650,6 +652,9 @@ pub async fn commit_statuses(
     for (i, branch) in branches.iter().enumerate() {
         args.extend(["-f".into(), format!("r{i}=refs/heads/{branch}")]);
     }
+    for (i, tip) in tips.iter().enumerate() {
+        args.extend(["-f".into(), format!("o{i}={tip}")]);
+    }
     let out = gh_async(args, None).await?;
     let response: Value = serde_json::from_str(&out).map_err(|e| e.to_string())?;
     let mut statuses = HashMap::new();
@@ -659,11 +664,13 @@ pub async fn commit_statuses(
         .into_iter()
         .flat_map(|o| o.values())
     {
-        for node in r["target"]["history"]["nodes"]
-            .as_array()
-            .into_iter()
-            .flatten()
-        {
+        // ブランチ（b…）は `target` の下に、コミット（c…）はそのまま `history` がある。
+        let history = if r["target"].is_null() {
+            &r["history"]
+        } else {
+            &r["target"]["history"]
+        };
+        for node in history["nodes"].as_array().into_iter().flatten() {
             let Some(oid) = node["oid"].as_str().and_then(Oid::from_hex) else {
                 continue;
             };
@@ -846,7 +853,9 @@ impl Loader {
         self.loaded_at.set(Some(Instant::now()));
         let this = self.clone();
         glib::spawn_future_local(async move {
-            let github = of(&repo).await;
+            let found = of_remote(&repo).await;
+            let remote = found.as_ref().map(|(name, _)| name.clone());
+            let github = found.map(|(_, github)| github);
             this.github.replace(github.clone());
             // Open on GitHub・Create Pull Request… は、fork かどうかを gh に聞く前から使える（macOS 版と同じ）。
             this.actions.update_facts(|f| {
@@ -901,12 +910,19 @@ impl Loader {
             {
                 s.set_merged_pull_requests(merged);
             }
-            this.load_statuses(&github, &name).await;
+            this.load_statuses(&repo, &github, &name, remote.as_deref())
+                .await;
         });
     }
 
     /// 今のブランチと既定のブランチの、直近のコミットの CI の状態（History の行の印）と作者のアバター。
-    async fn load_statuses(&self, github: &GitHubRepository, name: &str) {
+    async fn load_statuses(
+        &self,
+        repo: &Arc<Repository>,
+        github: &GitHubRepository,
+        name: &str,
+        remote: Option<&str>,
+    ) {
         use crate::settings::{
             self, GITHUB_AVATARS, GITHUB_AVATARS_ONCE, GITHUB_CI_DEFAULT_BRANCH,
         };
@@ -937,7 +953,8 @@ impl Loader {
         branches.sort();
         branches.dedup();
         let count = settings::github_ci_commits();
-        match commit_statuses(github, &branches, count, ci, authors).await {
+        let tips = ci_tips(repo, &branches, remote).await;
+        match commit_statuses(github, &branches, &tips, count, ci, authors).await {
             Ok((statuses, avatars)) => {
                 if ci && let Some(view) = self.view.upgrade() {
                     view.set_ci(statuses);
@@ -952,6 +969,48 @@ impl Loader {
             }
         }
     }
+}
+
+/// CI の状態を読み始めるコミット（16 進）: ブランチの手元の先と、その上流（なければ GitHub のリモート `remote` の同じ
+/// 名前）の先。手元が遅れていても History に出ている行に、手元が進んでいても push した分に印が付く（macOS 版と同じ）。
+async fn ci_tips(repo: &Arc<Repository>, branches: &[String], remote: Option<&str>) -> Vec<String> {
+    use amonhen_model::RefKind;
+    let r = repo.clone();
+    let Ok(Ok(refs)) = gio::spawn_blocking(move || r.load_refs()).await else {
+        return Vec::new();
+    };
+    let entries = &refs.refs.entries;
+    let target = |kind: RefKind, name: &str| {
+        entries
+            .iter()
+            .find(|i| i.kind == kind && i.name == name)
+            .and_then(|i| i.target)
+    };
+    let mut tips = Vec::new();
+    for branch in branches {
+        let local = entries
+            .iter()
+            .find(|i| i.kind == RefKind::Local && &i.name == branch);
+        let upstream = match local {
+            Some(l) if l.gone => None,
+            Some(l) => l.detail.clone(),
+            None => None,
+        }
+        .or_else(|| remote.map(|r| format!("{r}/{branch}")));
+        for tip in [
+            local.and_then(|l| l.target),
+            upstream.and_then(|u| target(RefKind::Remote, &u)),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let tip = tip.to_string();
+            if !tips.contains(&tip) {
+                tips.push(tip);
+            }
+        }
+    }
+    tips
 }
 
 /// `actions` の窓の読み手。

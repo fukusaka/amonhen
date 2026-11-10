@@ -18,6 +18,8 @@ becomes the GitHub Release notes.
   following `merge.suppressDest`.
 - Publish, Commit and Publish and Pull work on a branch whose upstream was deleted on the remote: they stopped with
   "Can't read the status". Publish creates the branch again, and Pull asks which remote branch to pull from.
+- History shows the CI marks when the local branch is behind GitHub: they are read from the local and upstream tips,
+  not only from the newest commits of the branch on GitHub, which left an old local branch without any.
 
 ### [0.2.10] - 2026-11-09
 
