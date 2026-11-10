@@ -472,8 +472,15 @@ enum Assistant {
         let errorData = Task.detached(priority: .userInitiated) {
             errors.fileHandleForReading.readDataToEndOfFile()
         }
-        input.fileHandleForWriting.write(Data(prompt.utf8))
-        try? input.fileHandleForWriting.close()
+        // プロンプトも別のスレッドで書く（大きい差分だと、CLI が読むまで窓が止まる）。読まずに終わった CLI で
+        // SIGPIPE を受けて落ちないよう、書けなければエラーにする。
+        let writer = input.fileHandleForWriting
+        _ = fcntl(writer.fileDescriptor, F_SETNOSIGPIPE, 1)
+        let data = Data(prompt.utf8)
+        DispatchQueue.global(qos: .userInitiated).async {
+            try? writer.write(contentsOf: data)
+            try? writer.close()
+        }
 
         let reader = output.fileHandleForReading
         // 取り消したら（パネルを閉じたら）CLI を止める。読み終えるのを待たずに終わり、結果を覚えない。
