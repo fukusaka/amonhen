@@ -746,7 +746,7 @@ extension Actions {
     /// チェックアウトしていないブランチを上流まで進める前に確かめる（前と後の絵つき）。
     func fastForwardWithConfirmation(_ name: String, to upstream: String) {
         Task { @MainActor in
-            let alert = makeAlert(L("Fast-forward %@ to %@?", name, upstream), Self.canUndo)
+            let alert = makeAlert(L("Fast-forward %@ to %@?", name, upstream), Self.canUndo, named: false)
             alert.addButton(withTitle: "Fast-Forward")
             alert.addButton(withTitle: L("Cancel"))
             if let preview = await movePreview(from: name, to: upstream, branch: name), preview.drawing != nil {
@@ -1104,12 +1104,14 @@ extension Actions {
         }
     }
 
+    /// `named` が false なら worktree を書かない（作業ツリーによらない ref の操作。チェックアウトしていないブランチの
+    /// fast-forward など）。
     @MainActor
-    func makeAlert(_ title: String, _ message: String) -> NSAlert {
+    func makeAlert(_ title: String, _ message: String, named: Bool = true) -> NSAlert {
         let alert = NSAlert()
         alert.messageText = title
         // worktree が 2 つ以上あれば、どの worktree に対する操作かを書く（docs/ux.md の「Worktrees」）。
-        alert.informativeText = sheetMessage(message)
+        alert.informativeText = named ? sheetMessage(message) : message
         return alert
     }
 
