@@ -13,8 +13,9 @@ becomes the GitHub Release notes.
 
 - The Pull sheet no longer leaves a blank space when the chosen mode can't pull: it keeps the graph as it is now and
   says so, and why, where the after graph would be.
-- The merge commit the Pull sheet draws has the subject git pull writes (`Merge branch 'main' of <URL>`), and the
-  Merge and Pull sheets add ` into <branch>` the way the git in use does, following `merge.suppressDest`.
+- The merge commit the Pull sheet draws has the subject git pull writes (`Merge branch 'main' of <URL>`, with
+  `url.<base>.insteadOf` applied), and the Merge and Pull sheets add ` into <branch>` the way the git in use does,
+  following `merge.suppressDest`.
 - Publish, Commit and Publish and Pull work on a branch whose upstream was deleted on the remote: they stopped with
   "Can't read the status". Publish creates the branch again, and Pull asks which remote branch to pull from.
 
