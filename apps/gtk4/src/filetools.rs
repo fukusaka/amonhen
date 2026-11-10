@@ -645,8 +645,8 @@ impl FileHistoryView {
                     .retain(|(w, _)| w.upgrade().is_some() && !Weak::ptr_eq(w, &t))
             });
         });
-        // Ctrl+F・Ctrl+G・Ctrl+Shift+G: フォーカスが差分にあれば差分の中を探し、なければリポジトリのタブに切り替えて
-        // History を探す（macOS 版と同じ）。
+        // Ctrl+F・Ctrl+G・Ctrl+Shift+G: フォーカスが差分にあれば差分の中を探し（Ctrl+G は帯が閉じていれば開く。この
+        // タブは History の一致へ移れないので）、なければリポジトリのタブに切り替えて History を探す（macOS 版と同じ）。
         for (name, step) in [("find", 0), ("find-next", 1), ("find-previous", -1)] {
             let action = gio::SimpleAction::new(name, None);
             let t = Rc::downgrade(tab);
@@ -657,7 +657,7 @@ impl FileHistoryView {
                     let found = if step == 0 {
                         crate::difffind::find_in_focused(window)
                     } else {
-                        crate::difffind::find_next_in_focused(window, step)
+                        crate::difffind::find_next_opening(window, step)
                     };
                     if found {
                         return;
