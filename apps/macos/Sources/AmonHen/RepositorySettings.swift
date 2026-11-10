@@ -1723,9 +1723,17 @@ private struct TemplateRow: View {
         return L("None")
     }
 
+    /// 設定の値そのもの（共有のテンプレートの名前か、ファイルのパス）を言葉にする。ⓘ の「ここで上書きしなければ」に使う。
+    private func describeValue(_ value: String) -> String {
+        if value.isEmpty { return L("None") }
+        if templates.contains(where: { $0.name == value }) { return value }
+        if Self.isOwn(value, model) { return L("This repository’s own") }
+        return value
+    }
+
     var body: some View {
         SettingRow(model: model, question: L("Message template"), help: "",
-                   keys: [decidingKey, decidingKey == Self.libraryKey ? Self.fileKey : Self.libraryKey], describe: label) {
+                   keys: [decidingKey, decidingKey == Self.libraryKey ? Self.fileKey : Self.libraryKey], describe: describeValue) {
             Picker("", selection: Binding(get: { current }, set: { choose($0) })) {
                 Text(L("None")).tag("")
                 if !templates.isEmpty {
