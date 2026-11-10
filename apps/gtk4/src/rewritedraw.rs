@@ -280,16 +280,7 @@ fn draw(area: &gtk::DrawingArea, cr: &gtk::cairo::Context, info: &Value) {
         },
     );
     // 真ん中の矢印。
-    text_at(
-        area,
-        cr,
-        "→",
-        column_width(area) + 6.0,
-        TOP + (picks.len().saturating_sub(1)) as f64 * ROW / 2.0,
-        &dimmed(&fg, 0.4),
-        false,
-        f64::MAX,
-    );
+    arrow(area, cr, &fg, picks.len());
 }
 
 fn dimmed(c: &gdk::RGBA, alpha: f32) -> gdk::RGBA {
@@ -863,16 +854,7 @@ fn draw_move(area: &gtk::DrawingArea, cr: &gtk::cairo::Context, info: &Value, ho
         );
     }
     // 真ん中の矢印。
-    text_at(
-        area,
-        cr,
-        "→",
-        column_width(area) + 6.0,
-        TOP + (move_rows(d).saturating_sub(1)) as f64 * ROW / 2.0,
-        &dimmed(&fg, 0.4),
-        false,
-        f64::MAX,
-    );
+    arrow(area, cr, &fg, move_rows(d));
 }
 
 /// merge の見込み（`mergePreview` の答え）の絵。fast-forward なら ref が動く絵（[`new_move`]）、merge コミットを作るなら
@@ -925,19 +907,22 @@ fn merge_area(
     }
     let area = gtk::DrawingArea::new();
     area.set_content_width((column_width(&area) * 2.0 + 24.0) as i32);
-    let rows = |k: &str, more: &str| {
-        d[k].as_array().map_or(0, Vec::len) + usize::from(d[more].as_u64().unwrap_or(0) > 0)
-    };
-    let count =
-        rows("ours", "oursMore") + rows("theirs", "theirsMore") + usize::from(!d["base"].is_null());
     // 右には merge コミットの 1 行が増える。
-    area.set_content_height(((count + 1) as f64 * ROW + 26.0) as i32);
+    area.set_content_height(((merge_rows(d) + 1) as f64 * ROW + 26.0) as i32);
     let info = info.clone();
     let current = current.to_owned();
     area.set_draw_func(move |area, cr, _, _| {
         draw_merge(area, cr, &info, &current, &after_title, now_only)
     });
     Some(area)
+}
+
+/// merge の絵の左の行数（今のブランチ、取り込む側、分かれたところ）。
+fn merge_rows(d: &Value) -> usize {
+    let rows = |k: &str, more: &str| {
+        d[k].as_array().map_or(0, Vec::len) + usize::from(d[more].as_u64().unwrap_or(0) > 0)
+    };
+    rows("ours", "oursMore") + rows("theirs", "theirsMore") + usize::from(!d["base"].is_null())
 }
 
 /// merge の確認の、前と後の絵（docs/design.md の「Previewing graph changes」。macOS 版の `MergeDrawingView`）。左が今:
@@ -1057,7 +1042,7 @@ fn draw_merge(
             },
         );
     }
-    arrow(area, cr, &fg);
+    arrow(area, cr, &fg, merge_rows(d));
 }
 
 /// cherry-pick・revert の見込み（`pickPreview` の答え）の絵（macOS 版の `PickDrawingView`）。左が今の先端、右が後:
@@ -1187,7 +1172,12 @@ fn draw_pick(
             },
         );
     }
-    arrow(area, cr, &fg);
+    arrow(
+        area,
+        cr,
+        &fg,
+        picks.len() + usize::from(d["picksMore"].as_u64().unwrap_or(0) > 0),
+    );
 }
 
 /// octopus merge の絵に渡す、取り込む順と merge コミットの件名（シートで並べ替えるたびに）。
@@ -1397,7 +1387,7 @@ fn draw_octopus(
             },
         );
     }
-    arrow(area, cr, &fg);
+    arrow(area, cr, &fg, octopus_rows(d, order));
 }
 
 /// History の編集の前と後（`rewritePreview` の答えの `editDrawing`）の絵（macOS 版の `EditDrawingView`）。描く
@@ -1541,7 +1531,7 @@ fn draw_edit(area: &gtk::DrawingArea, cr: &gtk::cairo::Context, d: &Value, curre
             },
         );
     }
-    arrow(area, cr, &fg);
+    arrow(area, cr, &fg, edit_rows(d, "before"));
 }
 
 /// 絵の材料の `labels` を、コミットごとの（名前、種類）に。
@@ -1559,16 +1549,22 @@ fn labels_of(d: &Value) -> HashMap<String, Vec<(String, String)>> {
     labels
 }
 
-/// 真ん中の矢印。
-fn arrow(area: &gtk::DrawingArea, cr: &gtk::cairo::Context, fg: &gdk::RGBA) {
-    text_at(
-        area,
-        cr,
-        "→",
-        column_width(area) + 6.0,
-        TOP + ROW,
-        &dimmed(fg, 0.4),
-        false,
-        f64::MAX,
+/// 真ん中の矢印。左の `rows` 行の真ん中に、ふつうより大きな字で（macOS 版と同じ 15 pt）。
+fn arrow(area: &gtk::DrawingArea, cr: &gtk::cairo::Context, fg: &gdk::RGBA, rows: usize) {
+    let layout = area.create_pango_layout(Some("→"));
+    let mut font = area.pango_context().font_description().unwrap_or_default();
+    font.set_size(font.size() * 15 / 13);
+    layout.set_font_description(Some(&font));
+    let c = dimmed(fg, 0.4);
+    cr.set_source_rgba(
+        c.red().into(),
+        c.green().into(),
+        c.blue().into(),
+        c.alpha().into(),
     );
+    cr.move_to(
+        column_width(area) + 6.0,
+        TOP + rows.saturating_sub(1) as f64 * ROW / 2.0,
+    );
+    pangocairo::functions::show_layout(cr, &layout);
 }
