@@ -320,6 +320,9 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     private var searchRowSet: Set<Int> = []
     private var searchIndex: Int?
     private var searchTask: Task<Void, Never>?
+    /// 走っている検索（partial clone の中身の確認を含む）があるか。`searchGeneration` で、後から始めた検索と見分ける。
+    private var searchRunning = false
+    private var searchGeneration = 0
     /// 検索の前・次の一致へ移るボタンと、一致したコミットだけを出す切り替え。
     private let previousMatchButton = NSButton()
     private let nextMatchButton = NSButton()
@@ -1333,6 +1336,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         let query = searchField.stringValue.trimmingCharacters(in: .whitespaces)
         guard !query.isEmpty, let base = baseHistory ?? history else {
             searchTask?.cancel()
+            searchRunning = false
             repository.cancelSearch()
             searchQuery = nil
             // 一致だけを出していたら、元に戻す。
@@ -1354,7 +1358,9 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         searchTask?.cancel()
         searchSpinner.startAnimation(nil)
         searchCount.stringValue = ""
+        let generation = startSearch()
         searchTask = Task {
+            defer { self.endSearch(generation) }
             let result = await Task.detached(priority: .userInitiated) { Result { try base.contentsToFetch(query) } }.value
             guard !Task.isCancelled, (self.baseHistory ?? self.history) === base else { return }
             self.searchSpinner.stopAnimation(nil)
@@ -1405,8 +1411,9 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         searchSpinner.startAnimation(nil)
         searchCount.stringValue = ""
         let repository = self.repository
-        let matchOnly = matchOnlyButton.state == .on
+        let generation = startSearch()
         searchTask = Task {
+            defer { self.endSearch(generation) }
             // 内容の検索は大きな履歴では数分かかるので、分かった分から色を付け、件数と進み具合を出す。
             let partial = Task { [weak self] in
                 while !Task.isCancelled {
@@ -1431,7 +1438,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
                 self.selectAfterSearch = nil
                 return
             }
-            if matchOnly, !rows.isEmpty {
+            // 一致だけを出すかは、終わったときの切り替えで決める（探している間に押されても、この検索を活かす）。
+            if self.matchOnlyButton.state == .on, !rows.isEmpty {
                 let filtered = await Task.detached(priority: .userInitiated) {
                     repository.matchingHistory(of: base, rows: rows)
                 }.value
@@ -1466,7 +1474,21 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     @objc private func previousMatchClicked() { moveSearch(by: -1) }
     @objc private func nextMatchClicked() { moveSearch(by: 1) }
 
+    /// 検索を始めた印を付け、その番号を返す（`endSearch` に渡す）。
+    private func startSearch() -> Int {
+        searchGeneration += 1
+        searchRunning = true
+        return searchGeneration
+    }
+
+    /// `generation` の検索が終わった（後から別の検索が始まっていれば、そちらが走っている）。
+    private func endSearch(_ generation: Int) {
+        if generation == searchGeneration { searchRunning = false }
+    }
+
     @objc private func matchOnlyClicked() {
+        // 探している途中なら、その検索が終わったときに切り替えを見る（前の問い合わせで探し直して捨てない）。
+        if searchRunning { return updateMatchButtons() }
         guard let query = searchQuery, let base = baseHistory ?? history else {
             updateMatchButtons()
             return
