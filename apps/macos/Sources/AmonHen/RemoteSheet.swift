@@ -46,6 +46,11 @@ enum RemoteSheet {
         if lower.hasPrefix("/") || lower.hasPrefix("./") || lower.hasPrefix("../") || lower.hasPrefix("~") || lower.hasPrefix("file://") {
             return L("A path")
         }
+        // Windows のドライブ（C:/x・C:\x）は git でもパス。
+        let chars = Array(url.prefix(2))
+        if chars.count == 2, chars[0].isASCII, chars[0].isLetter, chars[1] == ":" {
+            return L("A path")
+        }
         if lower.hasPrefix("ssh://") || lower.hasPrefix("git+ssh://"), let host = URL(string: url)?.host {
             return L("SSH host %@", host)
         }
