@@ -548,7 +548,16 @@ fn handlers() -> Vec<(&'static str, Handler)> {
                 crate::worktrees::new_worktree(&p.actions, &p.worktrees, start);
             }),
         ),
-        ("prune-worktrees", run(json!({ "op": "worktreePrune" }))),
+        (
+            "prune-worktrees",
+            Box::new(|p| {
+                crate::worktrees::perform_in_opened(
+                    &p.actions,
+                    &p.worktrees,
+                    json!({ "op": "worktreePrune" }),
+                )
+            }),
+        ),
         ("set-upstream", Box::new(set_upstream)),
         (
             "new-tag",

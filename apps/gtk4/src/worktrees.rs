@@ -894,7 +894,7 @@ pub fn menu(
 
 /// worktree そのものの操作を、開いたリポジトリで実行して一覧を読み直す（書き込む先の worktree のフォルダがなくても
 /// 動き、相対パスはいつも同じ所から。macOS 版と同じ）。
-fn perform_in_opened(
+pub fn perform_in_opened(
     actions: &Rc<crate::actions::Actions>,
     worktrees: &Rc<Worktrees>,
     command: serde_json::Value,
@@ -1127,11 +1127,15 @@ async fn confirm_remove(
         return;
     }
     worktrees.forget(&info.key);
-    actions.perform(json!({
-        "op": "worktreeRemove",
-        "path": info.path,
-        "force": changes > 0 || info.locked.is_some(),
-    }));
+    perform_in_opened(
+        actions,
+        worktrees,
+        json!({
+            "op": "worktreeRemove",
+            "path": info.path,
+            "force": changes > 0 || info.locked.is_some(),
+        }),
+    );
 }
 
 /// Repository > New Worktree…: `start` からブランチを作り、それを checkout した worktree を新しいフォルダに作って、
