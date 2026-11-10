@@ -468,6 +468,10 @@ enum Assistant {
         process.standardOutput = output
         process.standardError = errors
         try process.run()
+        // エラーは別のスレッドで読む（終わってから読むと、たくさん書く CLI が詰まって止まる）。
+        let errorData = Task.detached(priority: .userInitiated) {
+            errors.fileHandleForReading.readDataToEndOfFile()
+        }
         input.fileHandleForWriting.write(Data(prompt.utf8))
         try? input.fileHandleForWriting.close()
 
@@ -503,8 +507,8 @@ enum Assistant {
             running.terminate()
         }
         process.waitUntilExit()
+        let errorText = String(decoding: await errorData.value, as: UTF8.self)
         try Task.checkCancellation()
-        let errorText = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
         let result = (collected.1 ?? collected.0).trimmingCharacters(in: .whitespacesAndNewlines)
         guard process.terminationStatus == 0, !result.isEmpty else {
             // CLI が出力の JSON に書いた失敗の文言（ログインしていない、など）を、stderr・終了コードより先に出す。
