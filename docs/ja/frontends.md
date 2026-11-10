@@ -168,7 +168,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Pull のシート（コミット・merge / rebase / ff-only・なければ上流） | ✓ | ✓ | ✓ | △ | VSCode: QuickPick。取り込み方ごとにここで何が起きるか、その下にコミット。コンフリクトの見込みはない。<br>CLI: `amonhen run` から。 |
 | Push のシート（注意・コミットと差分・lease 付きの Force Push） | ✓ | ✓ | ✓ | △ | VSCode: QuickPick。注意、送るコミット、上流から消えるコミット、Pull… か lease 付きの Force Push。送る変更すべてとそれぞれのコミットは、選ぶと差分を複数ファイルの diff エディタで開く（シートは閉じない）。<br>CLI: `amonhen run` から。 |
 | Publish（リモートと名前を選ぶ） | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
-| Merge（no-ff・squash の選択） | △ | △ | △ | △ | macOS: no-ff・squash の選択はない。<br>GTK4: no-ff・squash の選択はない。<br>VSCode: メニューかドラッグで、選択はない。<br>CLI: `amonhen run` から。 |
+| Merge（fast-forward だけ・no-ff・squash の選択） | ✓ | △ | ✓ | △ | GTK4: 取り込み方は選べない。<br>VSCode: 取り込み方を選ぶ一覧が確認を兼ねる。<br>CLI: `amonhen run` から（`mode`）。 |
 | いくつもを 1 つにマージ（順番・コンフリクトの見込み） | ✓ | ✓ | ✓ | △ | CLI: `merge-check` で確かめ、マージは `amonhen run` から。 |
 | 前と後を描く Rebase のシート | ✓ | ✓ | ✓ | △ | VSCode: ダイアログに、今と rebase の後のコミットをブランチの札と一緒に文で並べる。<br>CLI: `rewrite-preview` が出し、rebase は `amonhen run` から。 |
 | Stash（メッセージ・未追跡を含める） | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |

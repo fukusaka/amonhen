@@ -269,3 +269,4 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 64. ほかのブランチの rebase でコンフリクトの見込みを出す
 - [x] 65. status で git の fsmonitor を使う（`amonhen.fsmonitor`）
 - [x] 66. commit-graph を自動で書く（`amonhen.writeCommitGraph`）
+- [x] 67. Merge の取り込み方を選ぶ（fast-forward だけ・いつも merge コミット・squash）
