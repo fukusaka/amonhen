@@ -1632,7 +1632,7 @@ fn repository_settings(p: &Rc<Parts>) {
 }
 
 /// ショートカットの一覧（メニューごと。表の操作は表から。リポジトリのページからも使う）。
-pub fn show_shortcuts(parent: &gtk::ApplicationWindow) {
+pub fn show_shortcuts(parent: &impl IsA<gtk::Window>) {
     let accels = accels();
     // アプリに入れたキーの最初のもの（メニューに出るもの。タブの操作は `tabs::install_accels` が後から入れる）。
     let app = parent.application();
