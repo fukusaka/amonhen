@@ -275,7 +275,7 @@ extension Actions {
             let repository = self.repository
             // 上流がなければ、取り込み元を選ぶ（同じ名前のリモートのブランチを先に）。
             var sources: [String] = []
-            if state.status.upstream == nil {
+            if state.upstream == nil {
                 let refs = await Task.detached { try? repository.loadRefs() }.value
                 let remotes = refs?.items.filter { $0.kind == .remote && !$0.name.hasSuffix("/HEAD") }.map(\.name) ?? []
                 sources = remotes.filter { $0.split(separator: "/", maxSplits: 1).last.map(String.init) == branch }
@@ -284,7 +284,7 @@ extension Actions {
                     return await inform(L("No remote branch to pull from"), L("Fetch, or add a remote in Repository Settings."))
                 }
             }
-            let upstream = state.status.upstream
+            let upstream = state.upstream
             let (outgoing, incoming) = (state.outgoing, state.incoming)
             let changed = state.status.items.filter { $0.kind != .untracked }.count
             // git の設定（pull.rebase・pull.ff）が決める取り込み方。「git の設定に従う」の中身として見せる。
@@ -925,7 +925,7 @@ extension Actions {
 
     private struct SyncState {
         let status: WorkingStatus
-        /// 送るブランチとその上流（今のブランチなら status のもの、ほかのブランチなら ref から）。
+        /// 送るブランチとその上流（ref から。上流が消えていれば nil。ref になければ status のもの）。
         var branch: String?
         var upstream: String?
         /// 上流になくて手元にある（push で送る）。
@@ -988,7 +988,10 @@ extension Actions {
                 let refs = try repository.loadRefs()
                 let local = branch.flatMap { name in refs.items.first { $0.kind == .local && $0.name == name } }
                 let name = local?.name ?? status.branch
-                let upstream = local.map { $0.gone ? nil : $0.detail } ?? status.upstream
+                // 上流が消えた（gone）ブランチは、今のブランチでも上流なしとして扱う（Publish・Pull で取り込み元を選ぶ）。
+                // status は git と同じく、消えた上流もそのまま返す。
+                let entry = local ?? name.flatMap { name in refs.items.first { $0.kind == .local && $0.name == name } }
+                let upstream = entry.map { $0.gone ? nil : $0.detail } ?? status.upstream
                 let tipRef = local?.name ?? "HEAD"
                 guard let upstream else {
                     return SyncState(status: status, branch: name, upstream: nil, outgoing: .empty, incoming: .empty)

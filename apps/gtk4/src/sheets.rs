@@ -785,7 +785,17 @@ pub async fn sync_state(
     let name = local
         .map(|l| l.name.clone())
         .or_else(|| status.status.branch.clone());
-    let upstream = match local {
+    // 上流が消えた（gone）ブランチは、今のブランチでも上流なしとして扱う（Publish・Pull で取り込み元を選ぶ）。
+    // status は git と同じく、消えた上流もそのまま返す。
+    let entry = local.or_else(|| {
+        name.as_deref().and_then(|name| {
+            refs.refs
+                .entries
+                .iter()
+                .find(|i| i.kind == amonhen_model::RefKind::Local && i.name == name)
+        })
+    });
+    let upstream = match entry {
         Some(l) if l.gone => None,
         Some(l) => l.detail.clone(),
         None => status.status.upstream.clone(),
