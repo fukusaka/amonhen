@@ -1079,6 +1079,11 @@ First release.
 - When git or ssh asks for a user name, password or passphrase, VSCode's input box asks, as the app's dialog does;
   fetch, pull and push that needed one used to fail.
 
+#### Fixed
+
+- `scripts/install-vscode.sh` no longer ends with "unbound variable" after installing when the shell's locale isn't
+  UTF-8.
+
 ### [0.2.6] - 2026-11-09
 
 Working Copy matches the app: one diff with a check on each line and hunk, a file tree, and Commit's ▾ with Commit and
