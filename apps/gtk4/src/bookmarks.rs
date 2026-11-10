@@ -70,13 +70,17 @@ fn opt_str(v: &Value, key: &str) -> Option<String> {
 }
 
 impl Data {
-    /// グループの名前を変える（macOS 版と同じ）: 新しい名前のグループを（なければ終わりに）加え、中のリポジトリを
-    /// 移してから元のグループを消す。すでにある名前にすれば、そのグループに合わさる（同じ名前が 2 つにならない）。
+    /// グループの名前を変える（macOS 版と同じ）: 元のグループの場所で名前を変え、中のリポジトリを移す。
+    /// すでにある名前にすれば、そのグループに合わさる（同じ名前が 2 つにならない）。
     fn rename_group(&mut self, old: &str, new: &str) {
         if old == new {
             return;
         }
-        if !self.groups.iter().any(|g| g == new) {
+        if self.groups.iter().any(|g| g == new) {
+            self.groups.retain(|g| g != old);
+        } else if let Some(g) = self.groups.iter_mut().find(|g| *g == old) {
+            *g = new.to_owned();
+        } else {
             self.groups.push(new.to_owned());
         }
         for b in &mut self.items {
@@ -84,7 +88,6 @@ impl Data {
                 b.group = Some(new.to_owned());
             }
         }
-        self.groups.retain(|g| g != old);
     }
 
     /// macOS 版の JSON（Codable）から読む。
@@ -435,7 +438,7 @@ pub fn remove_group(name: &str) {
     });
 }
 
-/// グループの名前を変える（macOS 版と同じく、新しいグループに移してから元を消す）。
+/// グループの名前を変える（並びの場所はそのまま）。
 pub fn rename_group(old: &str, new: &str) {
     edit(|d| d.rename_group(old, new));
 }
@@ -1149,7 +1152,7 @@ mod tests {
         assert_eq!(data.groups, ["b", "c"]);
         assert!(data.items.iter().all(|b| b.group.as_deref() == Some("b")));
         data.rename_group("b", "d");
-        assert_eq!(data.groups, ["c", "d"]);
+        assert_eq!(data.groups, ["d", "c"]);
     }
 
     #[test]

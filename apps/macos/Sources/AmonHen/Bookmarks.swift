@@ -209,6 +209,22 @@ final class Bookmarks {
         }
     }
 
+    /// グループの名前を変える。元のグループの場所で名前を変え、中のリポジトリを移す。
+    /// すでにある名前にすれば、そのグループに合わさる。
+    func renameGroup(_ old: String, to new: String) {
+        guard old != new else { return }
+        edit { data in
+            if data.groups.contains(new) {
+                data.groups.removeAll { $0 == old }
+            } else if let i = data.groups.firstIndex(of: old) {
+                data.groups[i] = new
+            } else {
+                data.groups.append(new)
+            }
+            for i in data.items.indices where data.items[i].group == old { data.items[i].group = new }
+        }
+    }
+
     /// グループを消す（中のリポジトリはグループなしに戻す）。
     func removeGroup(_ name: String) {
         edit { data in
