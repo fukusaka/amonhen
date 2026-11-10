@@ -408,4 +408,4 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Engine sent to a host when none fits | ✓ | ✓ | ✓ | ✓ | VSCode: The bundled engine is used on the host the extension runs on. |
 | Windows SSH hosts | ✓ | ✓ | ✓ | ✓ |  |
 | askpass dialog for passwords and passphrases | ✓ | ✓ | ✓ | n/a | VSCode: VSCode's input box, through a script the extension passes to git, ssh and the shared daemon.<br>CLI: The dialog belongs to the apps. |
-| Signature verification (this machine's keys or the host's) | ✓ | ✓ | — | △ | CLI: Checked in `show` and `refs --verify`; no choice. |
+| Signature verification (this machine's keys or the host's) | ✓ | ✓ | n/a | △ | VSCode: The extension opens no `ssh://` repositories; under Remote-SSH it runs on the host, so git verifies there with the host's keys, as for any repository the extension opens.<br>CLI: Checked in `show` and `refs --verify`; no choice. |
