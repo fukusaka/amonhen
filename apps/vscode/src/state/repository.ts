@@ -226,6 +226,8 @@ export class Repository implements vscode.Disposable {
     }
     this.log.debug(`refresh ${Math.round(performance.now() - start)}ms changed=[${[...changed].join(',')}]`);
     this.fire(changed);
+    // 開いたときと、fetch・pull でリモートのブランチが動いたとき
+    if (changed.has('remotes')) this.updateCommitGraph();
     if (contentsChanged) {
       this._onDidChangeContents.fire();
     }
@@ -295,6 +297,33 @@ export class Repository implements vscode.Disposable {
   private async statusSince(generation: number): Promise<StatusResult | undefined> {
     const status = await this.backend.status();
     return generation === this.patchGeneration ? status : undefined;
+  }
+
+  /** commit-graph を書いている間に、もう一度呼ばれた */
+  private commitGraph = { running: false, again: false };
+
+  /**
+   * 設定（`amonhen.writeCommitGraph`）で選ばれていれば、commit-graph を裏で最新にする（アプリと同じ）。増えていなければ
+   * 何も書かない。書いている間に呼ばれたら、終わってからもう一度書き足す
+   */
+  private updateCommitGraph(): void {
+    if (!vscode.workspace.getConfiguration('amonhen').get<boolean>('writeCommitGraph', false)) return;
+    if (this.commitGraph.running) {
+      this.commitGraph.again = true;
+      return;
+    }
+    this.commitGraph = { running: true, again: false };
+    void this.backend
+      .updateCommitGraph()
+      .then(
+        (written) => written && this.log.info('Wrote the commit-graph'),
+        (err: unknown) => this.log.warn('Can’t write the commit-graph:', err),
+      )
+      .finally(() => {
+        const again = this.commitGraph.again;
+        this.commitGraph = { running: false, again: false };
+        if (again) this.updateCommitGraph();
+      });
   }
 
   private fire(changed: Set<Section>): void {

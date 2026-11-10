@@ -277,3 +277,4 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 63. Run in Each Submodule… shows the command's output
 - [x] 64. Rebasing another branch shows the conflict estimate
 - [x] 65. Status with git's fsmonitor (`amonhen.fsmonitor`)
+- [x] 66. Write the commit-graph automatically (`amonhen.writeCommitGraph`)

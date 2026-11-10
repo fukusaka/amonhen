@@ -49,6 +49,12 @@
           "markdownDescription": "Use the shared daemon of Amon Hen’s engine (the same as the standalone app’s, bundled with the extension) for History, diffs and operations. It shares History, the search index and the Undo log with the app and the CLI. When off, the extension runs on its own git execution layer. Without an engine for this host’s OS and CPU, it runs on the git execution layer whatever this says.",
           "scope": "machine"
         },
+        "amonhen.writeCommitGraph": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Write the commit-graph automatically, as the standalone app can: when a repository is opened and after fetch and pull, write it if it’s missing, or add the new commits. It speeds up History. It writes to `.git`, except in repositories `git maintenance` looks after.",
+          "scope": "machine"
+        },
         "amonhen.fsmonitor": {
           "type": "boolean",
           "default": true,

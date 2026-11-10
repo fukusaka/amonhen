@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
@@ -259,5 +259,31 @@ test('push without an upstream asks to publish, and publish prefers pushRemote a
     assert.deepEqual(await pushCurrent(backend), { remote: 'origin', branch: 'main' });
   } finally {
     rmSync(remote, { recursive: true, force: true });
+  }
+});
+
+test('writes the commit-graph, then adds new commits to it, but not where git maintenance looks after it', async () => {
+  const info = join(dir, '.git', 'objects', 'info');
+  assert.equal(await backend.updateCommitGraph(), true, '書き出した');
+  assert.ok(existsSync(join(info, 'commit-graph')));
+  commitFile('b.txt', 'b\n', 'more');
+  assert.equal(await backend.updateCommitGraph(), false, '書き足しただけ');
+  assert.ok(existsSync(join(info, 'commit-graphs', 'commit-graph-chain')), '--split の層');
+
+  // git maintenance に登録したリポジトリでは書かない（git が毎時書く）
+  rmSync(join(info, 'commit-graph'), { force: true });
+  rmSync(join(info, 'commit-graphs'), { recursive: true, force: true });
+  // ユーザー全体の設定は、GIT_CONFIG_GLOBAL（git 2.32 から）と HOME の .gitconfig（それより古い git）の両方で渡す
+  const home = mkdtempSync(join(tmpdir(), 'amonhen-home-'));
+  const global = join(home, '.gitconfig');
+  writeFileSync(global, `[maintenance]\n\trepo = ${dir.replaceAll('\\', '/')}\n`);
+  const before = { global: process.env['GIT_CONFIG_GLOBAL'], home: process.env['HOME'] };
+  Object.assign(process.env, { GIT_CONFIG_GLOBAL: global, HOME: home });
+  try {
+    assert.equal(await backend.updateCommitGraph(), false);
+    assert.ok(!existsSync(join(info, 'commit-graph')) && !existsSync(join(info, 'commit-graphs')));
+  } finally {
+    Object.assign(process.env, { GIT_CONFIG_GLOBAL: before.global, HOME: before.home });
+    rmSync(home, { recursive: true, force: true });
   }
 });

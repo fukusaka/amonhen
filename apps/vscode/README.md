@@ -149,6 +149,7 @@ is chosen; if the chosen git isn't there, commands that run git stop with an err
 | --- | --- | --- |
 | `amonhen.daemon.enabled` | `true` | Use the engine's shared daemon. Off: the git execution layer only |
 | `amonhen.daemon.path` | `""` | An engine (`amonhen`) to use instead of the bundled one |
+| `amonhen.writeCommitGraph` | `false` | Write the commit-graph when a repository is opened and after fetch and pull (not where `git maintenance` looks after it) |
 | `amonhen.fsmonitor` | `true` | Speed up status with git's fsmonitor (macOS and Windows: `git fsmonitor--daemon`; Linux and the BSDs: Watchman through the engine, with git 2.26 or newer) |
 
 ## Install / update
