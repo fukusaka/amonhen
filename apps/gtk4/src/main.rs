@@ -1368,10 +1368,15 @@ fn build_tab(
         a.refresh_undo();
         lf();
         // 設定のページを出していれば、すぐその worktree のものに作り直す（同じページのまま。macOS 版と同じ）。
+        // サイドバーのメニューから替えたときは、そのメニューを行から外し終えてから（`menu::popup` の外す処理は
+        // ふつうの idle なので、それより後の LOW で。先にサイドバーを作り直すと、メニューが付いたままの行が消えて落ちる）。
         if let Some(pages) = pg.upgrade()
             && pages.visible_child_name().as_deref() == Some("settings")
         {
-            let _ = WidgetExt::activate_action(&pages, "win.repository-settings", None);
+            glib::idle_add_local_full(glib::Priority::LOW, move || {
+                let _ = WidgetExt::activate_action(&pages, "win.repository-settings", None);
+                glib::ControlFlow::Break
+            });
         }
         let tx = edit_tx.clone();
         std::thread::spawn(move || reload_status(&repo, &tx));
