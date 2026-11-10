@@ -20,6 +20,8 @@ becomes the GitHub Release notes.
   "Can't read the status". Publish creates the branch again, and Pull asks which remote branch to pull from.
 - History shows the CI marks when the local branch is behind GitHub: they are read from the local and upstream tips,
   not only from the newest commits of the branch on GitHub, which left an old local branch without any.
+- Run in Each Submodule… keeps what the command printed in Activity, and `amonhen submodule foreach` prints it; only
+  git's error output was kept before.
 
 ### [0.2.10] - 2026-11-09
 
