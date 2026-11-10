@@ -2646,17 +2646,19 @@ pub fn show(
 ) {
     let Some(open) = open_of(slot) else { return };
     let current = open.1.borrow().clone();
-    if let Some(settings) = current.filter(|s| Arc::ptr_eq(&s.repo, &repo)) {
+    if let Some(settings) = current.as_ref().filter(|s| Arc::ptr_eq(&s.repo, &repo)) {
         settings.load();
         if let Some(page) = page {
             settings.select(page);
         }
         return;
     }
+    // worktree を替えて作り直すときは、出していたページのまま（macOS 版と同じ）。
+    let shown = current.and_then(|s| s.stack.visible_child_name());
     let settings = RepoSettings::new(repo, location, Level::Repository);
     settings.connect_change(move || on_change());
     settings.connect_operation(operate);
-    if let Some(page) = page {
+    if let Some(page) = page.or(shown.as_deref()) {
         settings.select(page);
     }
     if let Ok(script) = std::env::var("AMONHEN_SETTINGS_SCRIPT") {

@@ -1353,6 +1353,7 @@ fn build_tab(
         tx.clone(),
     );
     let rd = Rc::downgrade(&range_diff);
+    let pg = pages.downgrade();
     worktrees.connect_edit(move |repo| {
         wc.set_repo(repo.clone());
         st.set_repo(repo.clone());
@@ -1366,6 +1367,12 @@ fn build_tab(
         }
         a.refresh_undo();
         lf();
+        // 設定のページを出していれば、すぐその worktree のものに作り直す（同じページのまま。macOS 版と同じ）。
+        if let Some(pages) = pg.upgrade()
+            && pages.visible_child_name().as_deref() == Some("settings")
+        {
+            let _ = WidgetExt::activate_action(&pages, "win.repository-settings", None);
+        }
         let tx = edit_tx.clone();
         std::thread::spawn(move || reload_status(&repo, &tx));
     });
