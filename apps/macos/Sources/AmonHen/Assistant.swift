@@ -458,8 +458,12 @@ enum Assistant {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = args
-        // リポジトリの CLAUDE.md などを読ませないよう、空の場所で動かす。
-        process.currentDirectoryURL = FileManager.default.temporaryDirectory
+        // リポジトリの CLAUDE.md などを読ませないよう、空の場所で動かす（共有の一時フォルダではなく、毎回作って消す）。
+        let emptyDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("amonhen-assist-\(ProcessInfo.processInfo.processIdentifier)-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: emptyDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: emptyDir) }
+        process.currentDirectoryURL = emptyDir
         var env = ProcessInfo.processInfo.environment
         env["PATH"] = "\(NSHomeDirectory())/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:" + (env["PATH"] ?? "")
         process.environment = env
