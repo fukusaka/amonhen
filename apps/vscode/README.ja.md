@@ -149,6 +149,7 @@ History・検索の索引・Undo の記録を分け合う。Remote-SSH では、
 | --- | --- | --- |
 | `amonhen.daemon.enabled` | `true` | エンジンの共有の daemon を使う。切ると git 実行層だけで動く |
 | `amonhen.daemon.path` | `""` | 同梱のものの代わりに使うエンジン（`amonhen`）の場所 |
+| `amonhen.writeCommitGraph` | `false` | リポジトリを開いたときと fetch・pull の後に commit-graph を書く（`git maintenance` に任せたリポジトリでは書かない） |
 | `amonhen.fsmonitor` | `true` | git の fsmonitor で status を速くする（macOS と Windows は `git fsmonitor--daemon`、Linux と BSD はエンジンを通して Watchman を。git 2.26 以降） |
 
 ## インストール・更新

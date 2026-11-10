@@ -268,3 +268,4 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 63. Run in Each Submodule… の命令の出力を出す
 - [x] 64. ほかのブランチの rebase でコンフリクトの見込みを出す
 - [x] 65. status で git の fsmonitor を使う（`amonhen.fsmonitor`）
+- [x] 66. commit-graph を自動で書く（`amonhen.writeCommitGraph`）

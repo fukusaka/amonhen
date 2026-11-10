@@ -1098,7 +1098,7 @@ async function restoreFlow(): Promise<void> {
     await withWindow({ showWarningMessage: async () => 'Restore and Stage' }, async () =>
       vscode.commands.executeCommand('amonhen.restoreFile.versionBefore', { oid: head, path: 'restore-e2e.txt' }),
     );
-    assert.equal(git('diff', '--cached', '--name-only').trim(), 'restore-e2e.txt');
+    assert.equal(git('diff', '--cached', '--name-only').trim(), 'restore-e2e.txt', lastErrors());
   } finally {
     git('reset', '-q', '--hard', start);
     rmSync(path, { force: true });
@@ -3240,6 +3240,34 @@ suite('Amon Hen in VSCode', () => {
     // エンジンの用意（置いたエンジンを一度起動する。macOS では OS の確認で数十秒かかることがある）が済むと、
     // サイドバーに Reflog が出る。後のテストがこの待ちを負わないよう、ここで待つ
     await until('サイドバーの Reflog', () => api.sidebar.getChildren().some((n) => n.kind === 'view' && n.view === 'reflog'), 50_000);
+  });
+
+  test('writes the commit-graph when it’s on and the remote branches move', async () => {
+    const info = join(git('rev-parse', '--absolute-git-dir').trim(), 'objects', 'info');
+    const graph = () => existsSync(join(info, 'commit-graph')) || existsSync(join(info, 'commit-graphs', 'commit-graph-chain'));
+    const clear = () => {
+      rmSync(join(info, 'commit-graph'), { force: true });
+      rmSync(join(info, 'commit-graphs'), { recursive: true, force: true });
+    };
+    const config = () => vscode.workspace.getConfiguration('amonhen');
+    clear();
+    // fetch でリモートのブランチが動いた代わりに、リモートのブランチを足す
+    const [off, on] = ['refs/remotes/origin/commit-graph-off', 'refs/remotes/origin/commit-graph-on'];
+    try {
+      // 切ってあれば、リモートのブランチが動いても書かない
+      git('update-ref', off, 'HEAD');
+      await api.manager.current!.refresh();
+      assert.equal(graph(), false, '切ってあれば書かない');
+      await config().update('writeCommitGraph', true, vscode.ConfigurationTarget.Global);
+      git('update-ref', on, 'HEAD');
+      await api.manager.current!.refresh();
+      await until('commit-graph', () => graph(), undefined, lastErrors);
+    } finally {
+      await config().update('writeCommitGraph', false, vscode.ConfigurationTarget.Global);
+      for (const ref of [off, on]) git('update-ref', '-d', ref);
+      clear();
+      await api.manager.current!.refresh();
+    }
   });
 
   test('speeds up status with git’s fsmonitor when it’s on', async function () {

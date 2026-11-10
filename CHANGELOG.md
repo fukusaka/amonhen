@@ -1083,6 +1083,8 @@ First release.
 - Run in Each Submodule… shows what the command printed in an Output channel.
 - Rebasing a branch other than the current one, by dropping a branch on it, says whether conflicts are expected.
 - Status uses git's fsmonitor, as the app does (`amonhen.fsmonitor`, on by default).
+- `amonhen.writeCommitGraph` writes the commit-graph when a repository is opened and after fetch and pull, as the
+  app's Performance setting does (off by default).
 
 #### Fixed
 

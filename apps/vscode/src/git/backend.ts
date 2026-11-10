@@ -27,6 +27,7 @@ import type { HistoryEdit } from '../history/rebasePlan.ts';
 import type { PreviewTarget, RewritePreview } from '../history/rewritePreview.ts';
 import type { GitDirs } from './stamp.ts';
 import { fsmonitorArgs } from './fsmonitor.ts';
+import { samePath } from './worktrees.ts';
 import { conflictSides, parseStatus, STATUS_ARGS, type StatusResult } from './status.ts';
 
 export interface HeadState {
@@ -103,6 +104,11 @@ export interface RepositoryBackend {
   readonly root: string;
   readonly dirs: GitDirs;
   status(): Promise<StatusResult>;
+  /**
+   * commit-graph を最新にする（アプリの Settings > Performance の「commit-graph を自動で書く」）。なければ書き出し、
+   * あれば増えたコミットだけを書き足す（`--split`）。git maintenance に任せたリポジトリでは書かない。書き出したら true
+   */
+  updateCommitGraph(): Promise<boolean>;
   /** `refs/heads` などのパターンに一致する ref */
   refs(patterns: readonly string[]): Promise<Ref[]>;
   remotes(): Promise<Remote[]>;
@@ -325,6 +331,27 @@ export class CliBackend implements RepositoryBackend {
   async status(): Promise<StatusResult> {
     const fsmonitor = await fsmonitorArgs(() => this.read(['version']));
     return parseStatus(await this.read([...fsmonitor, ...STATUS_ARGS]));
+  }
+
+  async updateCommitGraph(): Promise<boolean> {
+    // `git maintenance register` は、作業ツリーの実体のパスをユーザー全体の設定に足す（git が毎時書く）
+    const registered = (await this.read(['config', '--global', '-z', '--get-all', 'maintenance.repo'], [0, 1]))
+      .split('\0')
+      .filter(Boolean);
+    if (registered.some((path) => samePath(path, this.root))) return false;
+    const info = join(this.dirs.commonDir, 'objects', 'info');
+    const exists = (path: string) =>
+      access(path).then(
+        () => true,
+        () => false,
+      );
+    const missing = !(await exists(join(info, 'commit-graph'))) && !(await exists(join(info, 'commit-graphs', 'commit-graph-chain')));
+    // 書き足しは増えた数に比例する（linux で 1 万 7 千コミットなら 2 秒）。変わったパスの Bloom フィルタも書き、
+    // パスでの履歴の検索を速くする。`--changed-paths`（2.27）・`--no-progress`（2.24）を知らない git では付けずに
+    const write = (extra: readonly string[]) =>
+      this.git.exec(['commit-graph', 'write', '--reachable', ...(missing ? [] : ['--split']), ...extra], { cwd: this.root });
+    await write(['--changed-paths', '--no-progress']).catch(() => write([]));
+    return missing;
   }
 
   async refs(patterns: readonly string[]): Promise<Ref[]> {
