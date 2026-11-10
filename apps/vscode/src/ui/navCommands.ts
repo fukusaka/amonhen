@@ -7,7 +7,9 @@ import type { Repository } from '../state/repository.ts';
 import { rebaseAction, runAction } from './dragDrop.ts';
 import type { Node } from './sidebar.ts';
 import { showError } from './stageCommands.ts';
+import type { MergeMode } from '../git/backend.ts';
 import { mergeBranches } from './mergeBranches.ts';
+import { pickMergeMode } from './mergeMode.ts';
 import { publish } from './syncCommands.ts';
 import { confirmOperation, uncommittedLine } from './confirm.ts';
 import { pushWithSheet } from './pushSheet.ts';
@@ -49,10 +51,12 @@ export function registerNavCommands(manager: RepositoryManager, mergedBy: Merged
       'amonhen.nav.merge',
       async (repo, ref, head) => {
         if (!head) return;
+        let mode: MergeMode | undefined;
         await runAction(repo, {
           label: `$(git-merge) Merge ${shortName(ref)} into ${shortName(head)}`,
-          confirm: () => confirmOperation(`Merge ${shortName(ref)} into ${shortName(head)}?`, ['You can undo this.'], 'Merge'),
-          run: () => mergeInto(repo.backend, repo.undo, ref, head),
+          // 取り込み方を選ぶことが確認になる
+          confirm: async () => (mode = await pickMergeMode(`Merge ${shortName(ref)} into ${shortName(head)}?`, true)) !== undefined,
+          run: () => mergeInto(repo.backend, repo.undo, ref, head, mode),
         });
       },
       // いくつも選んだら、Merge Branches… と同じく 1 つのコミットで（コンフリクトの見込みを見せてから）

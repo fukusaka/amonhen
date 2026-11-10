@@ -6,6 +6,7 @@
 import type {
   ApplyPatchOptions,
   FormatPatchOptions,
+  MergeMode,
   MergeResult,
   OneByOneResult,
   PushOptions,
@@ -67,12 +68,12 @@ export function withDaemonWrites(
     revert: via('revert', async (c, oid: string | readonly string[], isMerge: boolean) =>
       outcome(await run(c, { op: 'revert', oids: [oid].flat(), isMerge }, true)),
     ),
-    merge: via('merge', async (c, rev: string | readonly string[]) =>
-      outcome(await run(c, { op: 'merge', rev: typeof rev === 'string' ? rev : [...rev] }, true)) as MergeResult,
+    merge: via('merge', async (c, rev: string | readonly string[], mode: MergeMode = 'git') =>
+      outcome(await run(c, { op: 'merge', rev: typeof rev === 'string' ? rev : [...rev], mode }, true)) as MergeResult,
     ),
     // コアが 1 回の Undo で全部戻るように記録する
-    mergeOneByOne: via('mergeOneByOne', async (c, revs: readonly string[]): Promise<OneByOneResult> => {
-      const reply = await run(c, { op: 'merge', rev: [...revs], oneByOne: true }, true);
+    mergeOneByOne: via('mergeOneByOne', async (c, revs: readonly string[], mode: MergeMode = 'git'): Promise<OneByOneResult> => {
+      const reply = await run(c, { op: 'merge', rev: [...revs], oneByOne: true, mode }, true);
       const remaining = ((reply['info'] as Json | undefined)?.['remaining'] as string[] | undefined) ?? [];
       return { result: outcome(reply) as MergeResult, remaining };
     }),

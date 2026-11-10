@@ -10,6 +10,8 @@ import type { RepositoryManager } from '../state/manager.ts';
 import type { Repository } from '../state/repository.ts';
 import type { DragSource, DropTarget } from '../view/protocol.ts';
 import { forecastLine } from '../history/rewritePreview.ts';
+import type { MergeMode } from '../git/backend.ts';
+import { pickMergeMode } from './mergeMode.ts';
 import { confirmRewrite } from './rewriteConfirm.ts';
 import { sequenceRowName, type Node } from './sidebar.ts';
 import { showError } from './stageCommands.ts';
@@ -130,8 +132,13 @@ function dropActions(repo: Repository, source: DragSource, target: DropTarget): 
       return [];
     }
     const tgt = shortName(targetRef);
+    let mode: MergeMode | undefined;
     return [
-      { label: `$(git-merge) Merge ${src} into ${tgt}`, run: () => mergeInto(backend, undo, sourceRef, targetRef) },
+      {
+        label: `$(git-merge) Merge ${src} into ${tgt}`,
+        confirm: async () => (mode = await pickMergeMode(`Merge ${src} into ${tgt}?`, true)) !== undefined,
+        run: () => mergeInto(backend, undo, sourceRef, targetRef, mode),
+      },
       rebaseAction(repo, targetRef, sourceRef),
     ];
   }

@@ -2,7 +2,7 @@
  * git 実行層のインターフェース。状態管理層と UI 層はこれだけに依存する。
  * 計測して足りない箇所が出たら、その部分だけ別実装（WASM やネイティブ）に差し替える。
  */
-import { access, readFile, realpath, writeFile } from 'node:fs/promises';
+import { access, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { CatFileBatch, type GitObject } from './catFile.ts';
 import { ATTRIBUTES, lineEndingsOf, parseCheckAttr, parseEolConfig, toGitForm, type LineEndings } from './eol.ts';
@@ -44,7 +44,13 @@ export interface ConfigBackup {
   values: string[];
 }
 
-export type Sequence = 'merge' | 'rebase' | 'cherry-pick' | 'revert' | 'am';
+export type Sequence = 'merge' | 'rebase' | 'cherry-pick' | 'revert' | 'am' | 'squash';
+
+/**
+ * merge の取り込み方（コアの `mode` と同じ）。git は `merge.ff` のとおり、ほかは `--ff-only`・`--no-ff`、squash は
+ * `--squash` の後に git の SQUASH_MSG のままコミットする（コンフリクトすれば 'squash' の途中で止まる）
+ */
+export type MergeMode = 'git' | 'fastForwardOnly' | 'noFastForward' | 'squash';
 
 /** `git am` が止まっているパッチ */
 export interface AmState {
@@ -183,14 +189,14 @@ export interface RepositoryBackend {
   previousVersion(branch?: string): Promise<PreviousVersion | undefined>;
   /**
    * 現在のブランチに rev を merge する。いくつも渡せば 1 つのコミットにまとめる（octopus。`git merge a b c`）。
-   * octopus が途中で断ったら、作業ツリーと index を始める前に戻してから失敗する
+   * octopus が途中で断ったら、作業ツリーと index を始める前に戻してから失敗する。mode は取り込み方（既定は git の設定のとおり）
    */
-  merge(rev: string | readonly string[]): Promise<MergeResult>;
+  merge(rev: string | readonly string[], mode?: MergeMode): Promise<MergeResult>;
   /**
    * revs を 1 つずつ現在のブランチに merge する（それぞれが merge コミットになる）。コンフリクトで止まったら、
    * まだのものを返す
    */
-  mergeOneByOne(revs: readonly string[]): Promise<OneByOneResult>;
+  mergeOneByOne(revs: readonly string[], mode?: MergeMode): Promise<OneByOneResult>;
   /**
    * revs を ours（省略時は現在のブランチ）に merge したらコンフリクトするファイルを、revs の順に。いくつもあれば
    * octopus と同じく、前のものまでを合わせた結果に重ねて調べる。作業ツリーと index には触らない
@@ -648,17 +654,22 @@ export class CliBackend implements RepositoryBackend {
     }
   }
 
-  async merge(rev: string | readonly string[]): Promise<MergeResult> {
+  async merge(rev: string | readonly string[], mode: MergeMode = 'git'): Promise<MergeResult> {
     const revs = typeof rev === 'string' ? [rev] : rev;
+    const flag = { git: [], fastForwardOnly: ['--ff-only'], noFastForward: ['--no-ff'], squash: ['--squash'] }[mode];
+    const args = ['merge', '--no-edit', ...flag, ...revs];
+    if (mode === 'squash') {
+      return this.squash(args);
+    }
     if (revs.length < 2) {
-      return this.sequence(['merge', '--no-edit', ...revs]);
+      return this.sequence(args);
     }
     // octopus は、最後のもの以外でコンフリクトすると MERGE_HEAD を残さずに断る。git 2.37 より前は、そこまでに
     // 合わせた変更とコンフリクトを作業ツリーと index に残す（merge --abort も効かない）ので、新しい git と同じく
     // 元に戻す（作業中の変更は残る）。始める前に staged の変更があれば git は何もせずに断るので触らない
     const staged = await this.indexDiffersFromHead();
     try {
-      return await this.sequence(['merge', '--no-edit', ...revs]);
+      return await this.sequence(args);
     } catch (err) {
       if (!staged && (await this.indexDiffersFromHead())) {
         await this.git.exec(['reset', '--merge'], { cwd: this.root });
@@ -667,10 +678,28 @@ export class CliBackend implements RepositoryBackend {
     }
   }
 
-  async mergeOneByOne(revs: readonly string[]): Promise<OneByOneResult> {
+  /**
+   * `git merge --squash …`（args）で取り込み、変更を 1 つのコミットにする（メッセージは git が書いた SQUASH_MSG の
+   * まま）。コンフリクトすれば、そこで止まる（'squash'。解決してから続けるとコミットする）
+   */
+  private async squash(args: readonly string[]): Promise<MergeResult> {
+    // 取り込めても SQUASH_MSG が残るので、途中の操作があると見える。コンフリクトだけを見分ける
+    if ((await this.sequence(args)) === 'conflict') {
+      return 'conflict';
+    }
+    if (!(await this.indexDiffersFromHead())) {
+      // 取り込むものがなかった（取り込み済み）。下書きが残っていれば消す
+      await rm(join(this.dirs.gitDir, 'SQUASH_MSG'), { force: true });
+      return 'done';
+    }
+    await this.git.exec(['commit', '--no-edit'], { cwd: this.root, env: { GIT_EDITOR: 'true' } });
+    return 'done';
+  }
+
+  async mergeOneByOne(revs: readonly string[], mode: MergeMode = 'git'): Promise<OneByOneResult> {
     for (const [i, rev] of revs.entries()) {
       try {
-        if ((await this.merge(rev)) === 'conflict') {
+        if ((await this.merge(rev, mode)) === 'conflict') {
           return { result: 'conflict', remaining: revs.slice(i + 1) };
         }
       } catch (error) {
@@ -763,18 +792,28 @@ export class CliBackend implements RepositoryBackend {
     if (await exists(join(d, 'MERGE_HEAD'))) return 'merge';
     if (await exists(join(d, 'CHERRY_PICK_HEAD'))) return 'cherry-pick';
     if (await exists(join(d, 'REVERT_HEAD'))) return 'revert';
+    // `git merge --squash` がコンフリクトで止まった（MERGE_HEAD はない）
+    if (await exists(join(d, 'SQUASH_MSG'))) return 'squash';
     return undefined;
   }
 
   async abort(sequence: Sequence): Promise<void> {
-    await this.git.exec([sequence, '--abort'], { cwd: this.root });
+    // squash には `--abort` がない。取り込む前に戻す（SQUASH_MSG も消える。作業中の変更は残る）
+    await this.git.exec(sequence === 'squash' ? ['reset', '--merge'] : [sequence, '--abort'], { cwd: this.root });
   }
 
   continueSequence(sequence: Sequence): Promise<RebaseResult> {
+    // squash は、解決したものをコミットする（メッセージは SQUASH_MSG のまま）
+    if (sequence === 'squash') {
+      return this.stoppable(['commit', '--no-edit'], { GIT_EDITOR: 'true' }, true);
+    }
     return this.stoppable([sequence, '--continue'], undefined, true);
   }
 
   skipSequence(sequence: Sequence): Promise<RebaseResult> {
+    if (sequence === 'squash') {
+      return Promise.reject(new Error('A squash merge has nothing to skip; continue or abort it'));
+    }
     return this.stoppable([sequence, '--skip'], undefined, true);
   }
 

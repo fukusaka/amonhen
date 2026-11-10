@@ -7,7 +7,9 @@ import * as vscode from 'vscode';
 import type { RepositoryManager } from '../state/manager.ts';
 import { mergeInto, mergeSeveral, namesLabel, shortName } from '../state/operations.ts';
 import type { Repository } from '../state/repository.ts';
+import type { MergeMode } from '../git/backend.ts';
 import { runAction } from './dragDrop.ts';
+import { pickMergeMode } from './mergeMode.ts';
 
 interface RefItem extends vscode.QuickPickItem {
   ref: string;
@@ -58,9 +60,11 @@ export async function mergeBranches(repo: Repository, chosen?: readonly string[]
 async function mergeRevs(repo: Repository, revs: string[], head: string | undefined, target: string): Promise<void> {
   if (revs.length === 1 && head) {
     const [ref = ''] = revs;
+    let mode: MergeMode | undefined;
     await runAction(repo, {
       label: `$(git-merge) Merge ${shortName(ref)} into ${target}`,
-      run: () => mergeInto(repo.backend, repo.undo, ref, head),
+      confirm: async () => (mode = await pickMergeMode(`Merge ${shortName(ref)} into ${target}?`, true)) !== undefined,
+      run: () => mergeInto(repo.backend, repo.undo, ref, head, mode),
     });
     return;
   }
@@ -73,8 +77,11 @@ async function mergeRevs(repo: Repository, revs: string[], head: string | undefi
   const choice = await vscode.window.showQuickPick(choices(revs, target, steps), {
     placeHolder: advice(revs, target, steps),
   });
-  if (choice) {
-    await run(repo, choice.revs, choice.oneByOne, target);
+  if (!choice) return;
+  // いくつもなので Fast-Forward Only はない
+  const mode = await pickMergeMode(`${choice.oneByOne ? 'Merge one by one' : 'Merge'} into ${target}?`, false);
+  if (mode) {
+    await run(repo, choice.revs, choice.oneByOne, target, mode);
   }
 }
 
@@ -133,7 +140,7 @@ function conflictingIndexes(steps: string[][] | undefined): number[] {
 }
 
 /** merge する。1 つのコミットにまとめるのを git が断ったら（何も変わっていない）、1 つずつ merge するかを尋ねる */
-async function run(repo: Repository, revs: string[], oneByOne: boolean, target: string): Promise<void> {
+async function run(repo: Repository, revs: string[], oneByOne: boolean, target: string, mode: MergeMode): Promise<void> {
   const names = revs.map(shortName);
   let gaveUp = false;
   let remaining: string[] = [];
@@ -143,7 +150,7 @@ async function run(repo: Repository, revs: string[], oneByOne: boolean, target: 
       : `$(git-merge) Merge ${namesLabel(names)} into ${target}`,
     run: async () => {
       try {
-        const result = await mergeSeveral(repo.backend, repo.undo, revs, oneByOne);
+        const result = await mergeSeveral(repo.backend, repo.undo, revs, oneByOne, mode);
         remaining = result.remaining;
         return result.result;
       } catch (err) {
@@ -170,7 +177,7 @@ async function run(repo: Repository, revs: string[], oneByOne: boolean, target: 
       'Merge One by One',
     );
     if (answer === 'Merge One by One') {
-      await run(repo, revs, true, target);
+      await run(repo, revs, true, target, mode);
     }
   }
 }
