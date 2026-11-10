@@ -576,9 +576,18 @@ fn row_at(
     pangocairo::functions::show_layout(cr, &layout);
 }
 
+/// ローカルの札の青（macOS 版の `systemBlue`。アクセントカラーによらない）。
+const BLUE: gdk::RGBA = gdk::RGBA::new(0.21, 0.52, 0.89, 1.0);
+
+/// 強調する点と、これから作るコミットの丸の色（テーマのアクセントカラー。macOS 版の `controlAccentColor`）。
+/// 名前はテーマによって違う（libadwaita は `accent_bg_color`、1.6 からシステムのアクセントカラーに合う）。
+#[allow(deprecated)]
 fn accent(area: &gtk::DrawingArea) -> gdk::RGBA {
-    let _ = area;
-    gdk::RGBA::new(0.21, 0.52, 0.89, 1.0)
+    let style = area.style_context();
+    ["accent_bg_color", "theme_selected_bg_color"]
+        .iter()
+        .find_map(|name| style.lookup_color(name))
+        .unwrap_or(BLUE)
 }
 
 /// History と同じ色の札（ローカルは青、リモートは紫、一緒に動いたものは緑）。右端を返す。
@@ -595,7 +604,7 @@ fn pill(
     let color = match kind {
         "remote" => gdk::RGBA::new(0.57, 0.25, 0.67, 1.0),
         "moved" => gdk::RGBA::new(0.18, 0.62, 0.32, 1.0),
-        _ => accent(area),
+        _ => BLUE,
     };
     let layout = area.create_pango_layout(Some(name));
     let mut font = area.pango_context().font_description().unwrap_or_default();
