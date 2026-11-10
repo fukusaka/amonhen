@@ -710,7 +710,7 @@ extension Actions {
             let message = (revert ? L("Adds commits that undo them.") : L("Adds copies of them.")) + " " + Self.canUndo
             // 前と後の絵（今の先端の上に、作るコミット）。読んでからシートを出す。
             let drawing = pickDrawing(await pickPreview(oids: commits.map(\.hex), revert: revert), kind: revert ? .revert : .cherryPick)
-            let alert = makeAlert(title, sheetMessage(message))
+            let alert = makeAlert(title, message)
             alert.addButton(withTitle: revert ? "Revert" : "Cherry-pick")
             alert.addButton(withTitle: L("Cancel"))
             if let drawing {
