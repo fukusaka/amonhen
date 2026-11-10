@@ -846,7 +846,11 @@ impl RepoSettings {
             let w = Rc::downgrade(&this);
             shortcuts.add_shortcut(gtk::Shortcut::new(
                 gtk::ShortcutTrigger::parse_string(accel),
-                Some(gtk::CallbackAction::new(move |_, _| {
+                Some(gtk::CallbackAction::new(move |page, _| {
+                    // 窓全体で受けるので、ページを隠している間（History を出している・ほかの SSH 先）は効かせない。
+                    if !page.is_mapped() {
+                        return glib::Propagation::Proceed;
+                    }
                     if let Some(s) = w.upgrade() {
                         if redo { s.redo() } else { s.undo() }
                     }
