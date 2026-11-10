@@ -158,14 +158,18 @@ fn reports_progress_and_the_reason_when_the_daemon_goes_away() {
     git(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
     git(dir, &["commit", "-q", "--allow-empty", "-m", "first"]);
 
-    // 2 秒たったら daemon を止める（ネットワークが切れた代わり）。
+    // 印のファイルができたら daemon を止める（ネットワークが切れた代わり）。時間で止めると、混んだ機械では最初の
+    // 読み込みが済む前に止まる。テストが途中で落ちても待ち続けないよう、30 秒で諦める。
+    let stop = tmp.path().join("stop");
     let conn = Connection::spawn(
         "sh",
         &[
             "-c".to_owned(),
-            r#"(sleep 2; echo 'gone' >&2; kill $$) & exec "$0" --stdio "$1""#.to_owned(),
+            r#"(i=0; until [ -e "$2" ] || [ $i -ge 600 ]; do sleep 0.05; i=$((i+1)); done; echo 'gone' >&2; kill $$) & exec "$0" --stdio "$1""#
+                .to_owned(),
             env!("CARGO_BIN_EXE_amonhend").to_owned(),
             dir.display().to_string(),
+            stop.display().to_string(),
         ],
     )
     .unwrap();
@@ -173,6 +177,7 @@ fn reports_progress_and_the_reason_when_the_daemon_goes_away() {
     assert_eq!(repo.load_history().unwrap().graph.len(), 1);
     let state = repo.connection_state().unwrap();
     assert!(state.received > 0 && state.closed.is_none());
+    std::fs::write(&stop, "").unwrap();
 
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     let reason = loop {
