@@ -2034,7 +2034,8 @@ impl Inner {
                     &pr.head_ref_oid,
                     crate::github::target_of(&actions).map(|t| t.repo),
                 ) {
-                    crate::cipopover::show(anchor, None, pr.ci(), sha, github);
+                    let key = format!("pr{}", pr.number);
+                    crate::cipopover::show(anchor, None, pr.ci(), sha, &key, github);
                 }
             }
             _ => {}

@@ -54,28 +54,30 @@ fn install_css() {
 }
 
 thread_local! {
-    /// 出している吹き出しと、そのコミット。
+    /// 出している吹き出しと、その印（`show` の `key`）。
     static SHOWN: std::cell::RefCell<Option<(String, glib::WeakRef<gtk::Popover>)>> =
         const { std::cell::RefCell::new(None) };
-    /// 最後に閉じた吹き出しのコミットと、閉じた時刻。
+    /// 最後に閉じた吹き出しの印と、閉じた時刻。
     static CLOSED: std::cell::RefCell<Option<(String, std::time::Instant)>> =
         const { std::cell::RefCell::new(None) };
 }
 
-/// `anchor`（の `rect`）を指して、`sha` のコミットのチェックの吹き出しを出す。同じ印をもう一度押したら閉じるだけ
-/// （macOS 版の `CIPopoverPresenter` と同じ。押した瞬間に吹き出しが閉じ、すぐ出し直すと閉じられないように
-/// 見えるので、閉じてから 0.3 秒の間の同じ印は何もしない）。出したら、その吹き出し。
+/// `anchor`（の `rect`）を指して、`sha` のコミットのチェックの吹き出しを出す。同じ印（`key`）をもう一度押したら
+/// 閉じるだけ（macOS 版の `CIPopoverPresenter` と同じ。押した瞬間に吹き出しが閉じ、すぐ出し直すと閉じられない
+/// ように見えるので、閉じてから 0.3 秒の間の同じ印は何もしない）。`key` は History の行ならコミット、プルリクエスト
+/// の行なら `pr<番号>`（macOS 版と同じ。同じコミットでも別の印なら続けて開ける）。出したら、その吹き出し。
 pub fn show(
     anchor: &gtk::Widget,
     rect: Option<gtk::gdk::Rectangle>,
     status: Ci,
     sha: &str,
+    key: &str,
     repo: GitHubRepository,
 ) -> Option<gtk::Popover> {
     let open = SHOWN.with(|s| {
         s.borrow()
             .as_ref()
-            .filter(|(key, _)| key == sha)
+            .filter(|(shown, _)| shown == key)
             .and_then(|(_, p)| p.upgrade())
             .filter(|p| p.is_visible())
     });
@@ -84,8 +86,8 @@ pub fn show(
         return None;
     }
     let just_closed = CLOSED.with(|c| {
-        c.borrow().as_ref().is_some_and(|(key, at)| {
-            key == sha && at.elapsed() < std::time::Duration::from_millis(300)
+        c.borrow().as_ref().is_some_and(|(closed, at)| {
+            closed == key && at.elapsed() < std::time::Duration::from_millis(300)
         })
     });
     if just_closed {
@@ -146,9 +148,9 @@ pub fn show(
         popover.set_pointing_to(Some(&rect));
     }
     // 閉じたら外す（次は作り直す）。閉じたコミットと時刻を覚える。
-    let key = sha.to_owned();
+    let closed_key = key.to_owned();
     popover.connect_closed(move |p| {
-        CLOSED.with(|c| c.replace(Some((key.clone(), std::time::Instant::now()))));
+        CLOSED.with(|c| c.replace(Some((closed_key.clone(), std::time::Instant::now()))));
         SHOWN.with(|s| {
             let mut s = s.borrow_mut();
             if s.as_ref()
@@ -161,7 +163,7 @@ pub fn show(
         glib::idle_add_local_once(move || p.unparent());
     });
     popover.popup();
-    SHOWN.with(|s| s.replace(Some((sha.to_owned(), popover.downgrade()))));
+    SHOWN.with(|s| s.replace(Some((key.to_owned(), popover.downgrade()))));
 
     let sha = sha.to_owned();
     let (note, list) = (note.downgrade(), list.downgrade());

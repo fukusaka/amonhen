@@ -811,7 +811,8 @@ impl Loader {
         view.connect_ci(move |id, ci, rect| {
             let Some(loader) = weak.upgrade() else { return };
             if let (Some(view), Some(github)) = (loader.view.upgrade(), loader.github()) {
-                crate::cipopover::show(view.upcast_ref(), Some(rect), ci, &id.to_string(), github);
+                let sha = id.to_string();
+                crate::cipopover::show(view.upcast_ref(), Some(rect), ci, &sha, &sha, github);
             }
         });
         loader
