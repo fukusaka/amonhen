@@ -39,6 +39,8 @@ pub struct Parts {
     pub refs: Rc<RefCell<Option<Arc<RefsSnapshot>>>>,
     /// History・ref・status を読み直す。
     pub reload: Rc<dyn Fn()>,
+    /// Refresh を見張りに知らせる（Events の行と mailmap の確かめ）。
+    pub refreshed: Rc<dyn Fn()>,
     /// リポジトリを開く（この窓のタブか、新しい窓に）。
     pub open: crate::repobrowser::Open,
     /// History でそのコミットを選ぶ。
@@ -485,6 +487,7 @@ fn handlers() -> Vec<(&'static str, Handler)> {
             "refresh",
             Box::new(|p| {
                 (p.reload)();
+                (p.refreshed)();
                 crate::github::reload(&p.actions);
             }),
         ),
