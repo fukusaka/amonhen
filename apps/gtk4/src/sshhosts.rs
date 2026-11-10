@@ -830,14 +830,20 @@ impl SshHosts {
             }
             State::Connected(settings) => {
                 state.append(&label(&format!("● {}", tr!("Connected")), &["settings-ok"]));
-                let version = settings.state.borrow().git_version.clone();
-                state.append(&label(
-                    &version.map_or_else(
-                        || tr!("git wasn’t found on the host"),
-                        |v| format!("git {v}"),
-                    ),
-                    &["dim-label", "caption"],
-                ));
+                // 読み終わるまでは、git の版がなくても「ない」とは言わない。
+                let (version, read) = {
+                    let st = settings.state.borrow();
+                    (st.git_version.clone(), st.read_once)
+                };
+                if read {
+                    state.append(&label(
+                        &version.map_or_else(
+                            || tr!("git wasn’t found on the host"),
+                            |v| format!("git {v}"),
+                        ),
+                        &["dim-label", "caption"],
+                    ));
+                }
                 if settings.state.borrow().loaded && settings.state.borrow().git_version.is_none() {
                     state.append(&chosen_git_warning(settings));
                 }

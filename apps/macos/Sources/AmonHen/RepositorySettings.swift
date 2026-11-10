@@ -67,6 +67,8 @@ final class RepositorySettingsModel {
     var gitProblem: String?
     /// このリポジトリを扱う git の版（SSH 先なら SSH 先の git）。読めなければ nil。
     private(set) var gitVersion: String?
+    /// 最初の読み込みが終わった（読めなくても）。それまでは git の版がなくても「ない」とは言わない。
+    private(set) var readOnce = false
     /// rebase で積み重ねたブランチを一緒に動かせるか（git 2.38 から）。
     private(set) var updateRefsSupported = true
     /// `rr-cache` があるか（`rerere.enabled` が書かれていなければ、git はこれがあるとき rerere を使う）。
@@ -240,8 +242,10 @@ final class RepositorySettingsModel {
                     exclude = ignore.1
                 }
                 savedIgnore = ignore
+                readOnce = true
             } catch {
                 self.error = "\(error)"
+                readOnce = true
             }
         }
     }

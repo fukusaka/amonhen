@@ -94,6 +94,8 @@ pub(crate) struct State {
     /// リポジトリの形（shallow clone・partial clone・sparse checkout・maintenance）。このリポジトリの段だけ。
     pub form: Option<crate::repoform::Form>,
     pub loaded: bool,
+    /// 最初の読み込みが終わった（読めなくても）。それまでは git の版がなくても「ない」とは言わない。
+    pub read_once: bool,
 }
 
 /// 設定の書き換え 1 つ（`new` が None なら消す。`Some("")` は空の値を書く）。
@@ -940,7 +942,13 @@ impl RepoSettings {
             }
             match result {
                 Ok(loaded) => s.apply(loaded),
-                Err(e) => s.show_error(Some(&e)),
+                Err(e) => {
+                    s.show_error(Some(&e));
+                    if !s.state.borrow().read_once {
+                        s.state.borrow_mut().read_once = true;
+                        s.refresh();
+                    }
+                }
             }
             let after: Vec<AfterLoad> = s.after_load.take();
             for f in after {
@@ -1001,6 +1009,7 @@ impl RepoSettings {
                 )
             });
             st.loaded = true;
+            st.read_once = true;
         }
         self.refresh();
         if !self.signing_loaded.replace(true) {

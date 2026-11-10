@@ -374,9 +374,12 @@ private struct ConnectionPage: View {
         case let .connected(model):
             VStack(alignment: .leading, spacing: 2) {
                 Text("● " + L("Connected")).foregroundStyle(.green)
-                Text(model.gitVersion.map { "git \($0)" } ?? L("git wasn’t found on the host"))
-                    .font(.caption).foregroundStyle(.secondary)
-                if model.gitVersion == nil { ChosenGitWarning(model: model) }
+                // 読み終わるまでは、git の版がなくても「ない」とは言わない。
+                if model.readOnce {
+                    Text(model.gitVersion.map { "git \($0)" } ?? L("git wasn’t found on the host"))
+                        .font(.caption).foregroundStyle(.secondary)
+                    if model.gitVersion == nil { ChosenGitWarning(model: model) }
+                }
             }
         case let .failed(reason):
             VStack(alignment: .leading, spacing: 2) {
