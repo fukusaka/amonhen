@@ -1082,6 +1082,7 @@ First release.
   fetch, pull and push that needed one used to fail.
 - Run in Each Submodule… shows what the command printed in an Output channel.
 - Rebasing a branch other than the current one, by dropping a branch on it, says whether conflicts are expected.
+- Status uses git's fsmonitor, as the app does (`amonhen.fsmonitor`, on by default).
 
 ### [0.2.6] - 2026-11-09
 

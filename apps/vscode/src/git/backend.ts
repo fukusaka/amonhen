@@ -26,6 +26,7 @@ import {
 import type { HistoryEdit } from '../history/rebasePlan.ts';
 import type { PreviewTarget, RewritePreview } from '../history/rewritePreview.ts';
 import type { GitDirs } from './stamp.ts';
+import { fsmonitorArgs } from './fsmonitor.ts';
 import { conflictSides, parseStatus, STATUS_ARGS, type StatusResult } from './status.ts';
 
 export interface HeadState {
@@ -322,7 +323,8 @@ export class CliBackend implements RepositoryBackend {
   }
 
   async status(): Promise<StatusResult> {
-    return parseStatus(await this.read(STATUS_ARGS));
+    const fsmonitor = await fsmonitorArgs(() => this.read(['version']));
+    return parseStatus(await this.read([...fsmonitor, ...STATUS_ARGS]));
   }
 
   async refs(patterns: readonly string[]): Promise<Ref[]> {

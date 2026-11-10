@@ -267,3 +267,4 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 62. パスワード・パスフレーズを VSCode の入力欄で尋ねる（askpass）
 - [x] 63. Run in Each Submodule… の命令の出力を出す
 - [x] 64. ほかのブランチの rebase でコンフリクトの見込みを出す
+- [x] 65. status で git の fsmonitor を使う（`amonhen.fsmonitor`）

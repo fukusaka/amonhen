@@ -3242,6 +3242,35 @@ suite('Amon Hen in VSCode', () => {
     await until('サイドバーの Reflog', () => api.sidebar.getChildren().some((n) => n.kind === 'view' && n.view === 'reflog'), 50_000);
   });
 
+  test('speeds up status with git’s fsmonitor when it’s on', async function () {
+    // git の fsmonitor--daemon は macOS と Windows だけ（Linux・BSD は Watchman で、CI にはない）
+    if (process.platform !== 'darwin' && process.platform !== 'win32') this.skip();
+    const config = () => vscode.workspace.getConfiguration('amonhen');
+    const watching = () => {
+      try {
+        return git('fsmonitor--daemon', 'status').includes('watching');
+      } catch {
+        return false;
+      }
+    };
+    assert.equal(watching(), false, '切ってあれば常駐しない');
+    await config().update('fsmonitor', true, vscode.ConfigurationTarget.Global);
+    try {
+      // 点けると、status が fsmonitor--daemon を起こす
+      await until('fsmonitor--daemon', async () => {
+        await vscode.commands.executeCommand('amonhen.refresh');
+        return watching();
+      });
+    } finally {
+      await config().update('fsmonitor', false, vscode.ConfigurationTarget.Global);
+      try {
+        git('fsmonitor--daemon', 'stop');
+      } catch {
+        // 起きていなかった
+      }
+    }
+  });
+
   test('asks for the user name and password git wants in VSCode, through the daemon', async function () {
     assert.ok(api.askpass(), 'askpass のスクリプト');
     // http を使えない git（CI の最低版は curl なしで作る）では試せない

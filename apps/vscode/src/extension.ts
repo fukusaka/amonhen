@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { groupChanges } from './state/changes.ts';
 import { askpass, setAskpass } from './git/askpass.ts';
+import { setFsmonitor } from './git/fsmonitor.ts';
 import { startAskpass } from './ui/askpass.ts';
 import { openConflict } from './ui/diff.ts';
 import { setDaemonLanguage } from './daemon/client.ts';
@@ -75,6 +76,13 @@ export async function activate(
   setDaemonLanguage(vscode.env.language);
   // 同梱のエンジンを置き場所に置く（裏で。使うときに待つ）
   initDaemon(context.extensionPath, log);
+  // status で git の fsmonitor を使うか。Linux・BSD の Watchman の hook はエンジン（置き終えてから）
+  const updateFsmonitor = async () => {
+    const enabled = vscode.workspace.getConfiguration('amonhen').get<boolean>('fsmonitor', true);
+    setFsmonitor({ enabled });
+    setFsmonitor({ enabled, engine: await daemonPath().catch(() => undefined) });
+  };
+  void updateFsmonitor();
   const manager = new RepositoryManager(log);
   const sidebar = new SidebarProvider(manager);
   const dragAndDrop = new SidebarDragAndDrop(manager);
@@ -168,6 +176,9 @@ export async function activate(
     registerFileToolCommands(manager, (target) => show(target)),
     // エンジンを使えるときだけ出すもの（Reflog・Reset、タグとリモートのメニュー、worktree）
     vscode.workspace.onDidChangeConfiguration((e) => e.affectsConfiguration('amonhen.daemon') && void updateEngine()),
+    vscode.workspace.onDidChangeConfiguration(
+      (e) => (e.affectsConfiguration('amonhen.fsmonitor') || e.affectsConfiguration('amonhen.daemon')) && void updateFsmonitor(),
+    ),
   );
   void updateEngine();
 
