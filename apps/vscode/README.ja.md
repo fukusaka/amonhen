@@ -47,7 +47,7 @@ VSCode 上で快適に Git を操作するための自分用の拡張。Marketpl
 - エンジンがあるとき、Clean Up Branches…（コマンドパレット、Branches の見出しの右クリック）は、既定のブランチに取り込んだもの、GitHub のプルリクエストでマージしたもの（`gh` があれば読む）、上流が消えたものを理由ごとの見出しの下に並べ、チェックしたままのものを消す。上流が消えたものは最初はチェックしない。Undo 1 回で設定ごと全部戻る。
 - エンジンがあるとき、GitHub のプルリクエストで（squash・rebase で）先端をマージしたブランチ（`gh` で読む）には、ふつうの取り込み済みと同じ `merged` が出て、ツールチップにプルリクエストの番号が出る。消すときの確認はプルリクエストの番号を添えた 1 回で、Undo で戻る。
 - エンジンがあるとき、Delete Ignored Files…（コマンドパレット、Working Copy の右クリック）は `git clean -X` が消すもの（フォルダは 1 つ）を一覧し、選んだままのものを確かめてから消す。Undo では戻せない。
-- 自分のフォルダにデータを持つ submodule（手で clone してから足したもの）には Move Repository Data into .git/modules（`git submodule absorbgitdirs`）があり、Submodules のグループには Run in Each Submodule…（それぞれのフォルダでシェルの命令を動かす。中の submodule でも選べる。知らせるのは成否だけ）がある。
+- 自分のフォルダにデータを持つ submodule（手で clone してから足したもの）には Move Repository Data into .git/modules（`git submodule absorbgitdirs`）があり、Submodules のグループには Run in Each Submodule…（それぞれのフォルダでシェルの命令を動かす。中の submodule でも選べる。出力は出力パネルの Amon Hen Submodules に出る）がある。
 - エンジンがあり、git に `git subtree` があれば、`git subtree` で取り込んだフォルダが Subtrees に並ぶ。Add Subtree… でリポジトリのブランチをフォルダに取り込み、subtree の右クリックで Pull…（ブランチをフォルダに merge）・Push…（フォルダのコミットをブランチに送る）・Split…（フォルダの履歴だけのブランチ）。相手・ブランチ・squash は前に使ったものから始まる。
 - 複数のリポジトリを開いているときは、タイトルのボタンで切り替える。
 
@@ -149,6 +149,7 @@ History・検索の索引・Undo の記録を分け合う。Remote-SSH では、
 | --- | --- | --- |
 | `amonhen.daemon.enabled` | `true` | エンジンの共有の daemon を使う。切ると git 実行層だけで動く |
 | `amonhen.daemon.path` | `""` | 同梱のものの代わりに使うエンジン（`amonhen`）の場所 |
+| `amonhen.fsmonitor` | `true` | git の fsmonitor で status を速くする（macOS と Windows は `git fsmonitor--daemon`、Linux と BSD はエンジンを通して Watchman を。git 2.26 以降） |
 
 ## インストール・更新
 

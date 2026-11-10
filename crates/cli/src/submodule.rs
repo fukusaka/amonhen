@@ -79,7 +79,11 @@ pub fn submodule(args: &[String]) -> Result<ExitCode> {
     };
     let front = open_repository(&dir)?;
     if let Some(change) = change {
-        command(&*front, json!({"op": "changeSubmodule", "change": change}))?;
+        let r = command(&*front, json!({"op": "changeSubmodule", "change": change}))?;
+        // foreach は動かした命令の出力を出す（git submodule foreach と同じ）
+        if let Some(output) = r["info"]["output"].as_str().filter(|o| !o.is_empty()) {
+            println!("{output}");
+        }
         return Ok(ExitCode::SUCCESS);
     }
     let r = command(&*front, json!({"op": "submodules"}))?;

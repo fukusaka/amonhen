@@ -76,8 +76,8 @@ export function withDaemonWrites(
       const remaining = ((reply['info'] as Json | undefined)?.['remaining'] as string[] | undefined) ?? [];
       return { result: outcome(reply) as MergeResult, remaining };
     }),
-    predictMerge: via('predictMerge', async (c, revs: readonly string[]) => {
-      const reply = await run(c, { op: 'predictMerge', theirs: [...revs] }, false);
+    predictMerge: via('predictMerge', async (c, revs: readonly string[], ours?: string) => {
+      const reply = await run(c, { op: 'predictMerge', theirs: [...revs], ours: ours ?? null }, false);
       const steps = (reply['info'] as Json | undefined)?.['steps'] as { conflicts: string[] }[] | null | undefined;
       return steps ? steps.map((s) => s.conflicts) : undefined;
     }),

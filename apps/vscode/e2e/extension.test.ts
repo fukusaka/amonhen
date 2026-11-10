@@ -1257,11 +1257,19 @@ async function submoduleMoreFlow(): Promise<void> {
     assert.ok(existsSync(join(gitDir, 'modules', path)), lastErrors());
     assert.ok(statSync(join(root, path, '.git')).isFile(), '.git はファイル（gitdir: の指し先）になる');
 
+    // 命令の出力は出力パネルに出る（アプリの Activity にあたる）
+    const shown: string[] = [];
+    const channel = { appendLine: (line: string) => shown.push(line), show: () => {}, dispose: () => {} };
     await withWindow(
-      { showInputBox: inputs('git tag foreach-e2e'), showQuickPick: async (items: readonly vscode.QuickPickItem[]) => items[0] },
+      {
+        showInputBox: inputs('git tag foreach-e2e && echo tagged $sm_path'),
+        showQuickPick: async (items: readonly vscode.QuickPickItem[]) => items[0],
+        createOutputChannel: () => channel,
+      },
       async () => vscode.commands.executeCommand('amonhen.submodules.foreach'),
     );
     assert.equal(git('-C', path, 'tag', '--list', 'foreach-e2e').trim(), 'foreach-e2e', lastErrors());
+    assert.match(shown.join('\n'), new RegExp(`Entering '${path}'\\ntagged ${path}`), shown.join('\n'));
   } finally {
     git('reset', '-q', '--hard', start);
     rmSync(join(root, 'vendor'), { recursive: true, force: true });
@@ -3018,6 +3026,21 @@ async function rewriteFlow(label: string): Promise<void> {
         assert.deepEqual(first.buttons, ['Rebase']);
       }
 
+      // 今のブランチでないもの（mid）に onto を落として Rebase。見通しの代わりにコンフリクトの見込みを目安に出す（アプリと同じ）
+      const data = new vscode.DataTransfer();
+      data.set('application/vnd.code.tree.amonhen.sidebar', new vscode.DataTransferItem(node));
+      await withWindow(
+        { showQuickPick: async (items: readonly vscode.QuickPickItem[]) => items.find((i) => i.label.includes('Rebase')) },
+        () => api.dragAndDrop.handleDrop({ kind: 'branch', ref: { name: `refs/heads/${name('mid')}` } } as never, data),
+      );
+      const other = asked.at(-1)!;
+      assert.equal(other.message, `Rebase ${name('mid')} onto ${name('onto')}?`);
+      assert.match(
+        other.detail,
+        /^(No conflicts expected\. Rebase applies the commits one at a time, so this is only an estimate\.|Can’t check for conflicts ahead \(needs git 2\.38 or newer\)\.)\nYou can undo this\.$/,
+      );
+      assert.equal(rev(name('mid')), before.mid);
+
       // 今回だけ積み重ねたブランチも動かして rebase する
       answer = moveStacked('Rebase');
       await vscode.commands.executeCommand('amonhen.nav.rebase', node);
@@ -3217,6 +3240,35 @@ suite('Amon Hen in VSCode', () => {
     // エンジンの用意（置いたエンジンを一度起動する。macOS では OS の確認で数十秒かかることがある）が済むと、
     // サイドバーに Reflog が出る。後のテストがこの待ちを負わないよう、ここで待つ
     await until('サイドバーの Reflog', () => api.sidebar.getChildren().some((n) => n.kind === 'view' && n.view === 'reflog'), 50_000);
+  });
+
+  test('speeds up status with git’s fsmonitor when it’s on', async function () {
+    // git の fsmonitor--daemon は macOS と Windows だけ（Linux・BSD は Watchman で、CI にはない）
+    if (process.platform !== 'darwin' && process.platform !== 'win32') this.skip();
+    const config = () => vscode.workspace.getConfiguration('amonhen');
+    const watching = () => {
+      try {
+        return git('fsmonitor--daemon', 'status').includes('watching');
+      } catch {
+        return false;
+      }
+    };
+    assert.equal(watching(), false, '切ってあれば常駐しない');
+    await config().update('fsmonitor', true, vscode.ConfigurationTarget.Global);
+    try {
+      // 点けると、status が fsmonitor--daemon を起こす
+      await until('fsmonitor--daemon', async () => {
+        await vscode.commands.executeCommand('amonhen.refresh');
+        return watching();
+      });
+    } finally {
+      await config().update('fsmonitor', false, vscode.ConfigurationTarget.Global);
+      try {
+        git('fsmonitor--daemon', 'stop');
+      } catch {
+        // 起きていなかった
+      }
+    }
   });
 
   test('asks for the user name and password git wants in VSCode, through the daemon', async function () {

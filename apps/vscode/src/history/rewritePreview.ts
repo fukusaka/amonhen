@@ -133,3 +133,15 @@ export function drawingLines(p: RewritePreview): string[] {
     ...tail(stays),
   ];
 }
+
+/**
+ * merge したときのコンフリクトの見込み（`predictMerge` の答え）を 1 行に（アプリの確認の見込みの行と同じ）。
+ * `estimate` なら rebase のように 1 つずつ載せるので目安と添える
+ */
+export function forecastLine(steps: readonly (readonly string[])[] | undefined, estimate: boolean): string {
+  if (!steps) return 'Can’t check for conflicts ahead (needs git 2.38 or newer).';
+  const conflicts = [...new Set(steps.flat())].sort();
+  const names = conflicts.slice(0, 3).join(', ') + (conflicts.length > 3 ? ', …' : '');
+  const line = conflicts.length === 0 ? 'No conflicts expected.' : `⚠︎ Conflicts expected in ${conflicts.length} ${conflicts.length === 1 ? 'file' : 'files'}: ${names}`;
+  return estimate ? `${line} Rebase applies the commits one at a time, so this is only an estimate.` : line;
+}

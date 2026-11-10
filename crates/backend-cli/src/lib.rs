@@ -509,12 +509,20 @@ fn run(cmd: Command, input: Option<&[u8]>) -> Result<Vec<u8>> {
         })
         .map_err(explain_old_git);
     }
+    // `git submodule foreach` は、動かした命令の出力そのものが結果なので、標準出力も残す。
+    let foreach =
+        subcommand.as_deref() == Some("submodule") && cmd.get_args().any(|a| a == "foreach");
     amonhen_model::activity::track_with("git", &repo, label, |seq| {
         let (out, err) = spawn_with_stderr(cmd, input)?;
         // 成功しても hooks などが標準エラーに書いていれば、記録に残す（コミットの後に見せる）。
         let err = String::from_utf8_lossy(&err);
-        if !err.trim().is_empty() {
-            amonhen_model::activity::set_output(seq, err.trim());
+        let shown = if foreach {
+            format!("{}{err}", String::from_utf8_lossy(&out))
+        } else {
+            err.into_owned()
+        };
+        if !shown.trim().is_empty() {
+            amonhen_model::activity::set_output(seq, shown.trim());
         }
         Ok(out)
     })

@@ -274,3 +274,6 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 60. Keys and Values: Combined / Levels columns
 - [x] 61. Context menu items use the app's names
 - [x] 62. Ask for passwords and passphrases in VSCode's input box (askpass)
+- [x] 63. Run in Each Submodule… shows the command's output
+- [x] 64. Rebasing another branch shows the conflict estimate
+- [x] 65. Status with git's fsmonitor (`amonhen.fsmonitor`)
