@@ -258,7 +258,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | History of several selected refs | ✓ | ✓ | ✓ | ✓ | CLI: `log --branch` repeated. |
 | Commit menu: checkout, new branch or tag, cherry-pick, revert, copy ID | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Edit mode (keep, reword, squash, fixup, drop, edit; drag to reorder) | ✓ | ✓ | ✓ | △ | VSCode: With the engine; without it, one commit at a time.<br>CLI: Via `amonhen run`. |
-| Rewrite preview (stacked and pushed branches, expected conflicts) | ✓ | ✓ | △ | ✓ | VSCode: Through the daemon and for the current branch only.<br>CLI: `rewrite-preview`. |
+| Rewrite preview (stacked and pushed branches, expected conflicts) | ✓ | ✓ | ✓ | ✓ | VSCode: Through the daemon. Rebasing another branch gives the conflict estimate instead, as in the app.<br>CLI: `rewrite-preview`. |
 | Shortcuts: Edit Message…, Combine with Older…, Drop…, Combine N…, drag a commit | ✓ | ✓ | ✓ | △ | VSCode: With the engine they open the edit mode; without it they rewrite at once, and there's no Combine N Commits.<br>CLI: Via `amonhen run`. |
 | Split a commit | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Merges kept when editing (`--rebase-merges`) | ✓ | ✓ | ✓ | △ | VSCode: With the engine; without it, editing stops at the first merge.<br>CLI: Via `amonhen run`. |

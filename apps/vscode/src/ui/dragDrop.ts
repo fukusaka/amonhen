@@ -9,6 +9,7 @@ import { mergeInto, rebaseOnto, shortName, type OperationResult } from '../state
 import type { RepositoryManager } from '../state/manager.ts';
 import type { Repository } from '../state/repository.ts';
 import type { DragSource, DropTarget } from '../view/protocol.ts';
+import { forecastLine } from '../history/rewritePreview.ts';
 import { confirmRewrite } from './rewriteConfirm.ts';
 import { sequenceRowName, type Node } from './sidebar.ts';
 import { showError } from './stageCommands.ts';
@@ -81,11 +82,22 @@ export function rebaseAction(repo: Repository, target: string, onto: string): Ac
     label: `$(git-pull-request) Rebase ${tgt} onto ${src}`,
     confirm: async () => {
       const current = (await repo.backend.head()).branch === target;
+      // 今のブランチなら書き換えの見通し。ほかのブランチなら、merge したときのコンフリクトの見込みを目安に（アプリと同じ）
+      const note = current
+        ? undefined
+        : forecastLine(
+            await vscode.window.withProgress(
+              { location: vscode.ProgressLocation.Notification, title: 'Checking for conflicts…' },
+              () => repo.backend.predictMerge([onto], target).catch(() => undefined),
+            ),
+            true,
+          );
       const choice = await confirmRewrite(
         repo,
         `Rebase ${tgt} onto ${src}?`,
         'Rebase',
         current ? { onto } : undefined,
+        note,
       );
       updateRefs = choice?.updateRefs;
       return choice !== undefined;

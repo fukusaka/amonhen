@@ -258,7 +258,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 選んだいくつもの ref の History | ✓ | ✓ | ✓ | ✓ | CLI: `log --branch` を重ねる。 |
 | コミットのメニュー: checkout・新しいブランチやタグ・cherry-pick・revert・ID のコピー | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | 編集モード（keep・reword・squash・fixup・drop・edit、ドラッグで並べ替え） | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。ないときは 1 つずつ。<br>CLI: `amonhen run` から。 |
-| 書き換えの見込み（積み重ね・push 済みのブランチ、コンフリクトの見込み） | ✓ | ✓ | △ | ✓ | VSCode: daemon 越しで、今のブランチだけ。<br>CLI: `rewrite-preview`。 |
+| 書き換えの見込み（積み重ね・push 済みのブランチ、コンフリクトの見込み） | ✓ | ✓ | ✓ | ✓ | VSCode: daemon 越し。ほかのブランチの rebase では、アプリと同じく代わりにコンフリクトの見込みを出す。<br>CLI: `rewrite-preview`。 |
 | 近道: Edit Message…・Combine with Older…・Drop…・Combine N…・コミットのドラッグ | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあれば編集モードを開く。ないときはすぐ書き換え、Combine N Commits はない。<br>CLI: `amonhen run` から。 |
 | コミットを分ける | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | 編集でマージを保つ（`--rebase-merges`） | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。ないときは最初のマージで止まる。<br>CLI: `amonhen run` から。 |

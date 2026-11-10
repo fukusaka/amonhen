@@ -3026,6 +3026,21 @@ async function rewriteFlow(label: string): Promise<void> {
         assert.deepEqual(first.buttons, ['Rebase']);
       }
 
+      // 今のブランチでないもの（mid）に onto を落として Rebase。見通しの代わりにコンフリクトの見込みを目安に出す（アプリと同じ）
+      const data = new vscode.DataTransfer();
+      data.set('application/vnd.code.tree.amonhen.sidebar', new vscode.DataTransferItem(node));
+      await withWindow(
+        { showQuickPick: async (items: readonly vscode.QuickPickItem[]) => items.find((i) => i.label.includes('Rebase')) },
+        () => api.dragAndDrop.handleDrop({ kind: 'branch', ref: { name: `refs/heads/${name('mid')}` } } as never, data),
+      );
+      const other = asked.at(-1)!;
+      assert.equal(other.message, `Rebase ${name('mid')} onto ${name('onto')}?`);
+      assert.match(
+        other.detail,
+        /^(No conflicts expected\. Rebase applies the commits one at a time, so this is only an estimate\.|Can’t check for conflicts ahead \(needs git 2\.38 or newer\)\.)\nYou can undo this\.$/,
+      );
+      assert.equal(rev(name('mid')), before.mid);
+
       // 今回だけ積み重ねたブランチも動かして rebase する
       answer = moveStacked('Rebase');
       await vscode.commands.executeCommand('amonhen.nav.rebase', node);

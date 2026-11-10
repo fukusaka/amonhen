@@ -185,11 +185,11 @@ export interface RepositoryBackend {
    */
   mergeOneByOne(revs: readonly string[]): Promise<OneByOneResult>;
   /**
-   * revs を現在のブランチに merge したらコンフリクトするファイルを、revs の順に。いくつもあれば octopus と同じく、
-   * 前のものまでを合わせた結果に重ねて調べる。作業ツリーと index には触らない（`git merge-tree --write-tree`）。
-   * git が古くて調べられなければ undefined
+   * revs を ours（省略時は現在のブランチ）に merge したらコンフリクトするファイルを、revs の順に。いくつもあれば
+   * octopus と同じく、前のものまでを合わせた結果に重ねて調べる。作業ツリーと index には触らない
+   * （`git merge-tree --write-tree`）。git が古くて調べられなければ undefined
    */
-  predictMerge(revs: readonly string[]): Promise<string[][] | undefined>;
+  predictMerge(revs: readonly string[], ours?: string): Promise<string[][] | undefined>;
   /**
    * branch（省略時は現在のブランチ）を onto の上に rebase する。branch を指定すると checkout される。updateRefs は
    * 積み重ねたブランチを一緒に動かすかの、この操作だけの指定（なければ git の `rebase.updateRefs`）
@@ -651,9 +651,9 @@ export class CliBackend implements RepositoryBackend {
     return { result: 'done', remaining: [] };
   }
 
-  async predictMerge(revs: readonly string[]): Promise<string[][] | undefined> {
+  async predictMerge(revs: readonly string[], ours = 'HEAD'): Promise<string[][] | undefined> {
     const steps: string[][] = [];
-    let base = 'HEAD';
+    let base = ours;
     for (const [i, rev] of revs.entries()) {
       let out: string;
       try {

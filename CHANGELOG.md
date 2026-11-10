@@ -1081,6 +1081,7 @@ First release.
 - When git or ssh asks for a user name, password or passphrase, VSCode's input box asks, as the app's dialog does;
   fetch, pull and push that needed one used to fail.
 - Run in Each Submodule… shows what the command printed in an Output channel.
+- Rebasing a branch other than the current one, by dropping a branch on it, says whether conflicts are expected.
 
 ### [0.2.6] - 2026-11-09
 
