@@ -2071,18 +2071,22 @@ fn columns(text: &str) -> usize {
     })
 }
 
-/// `text` の中の `query` の位置（バイト）。大文字・小文字は区別しない（小文字にして長さが変わる文字があれば、
-/// 区別して探す）。
+/// `text` の中の `query` の位置（バイト）。大文字・小文字は区別しない（小文字にして長さが変わる文字（`İ`・
+/// ケルビン記号など）があれば、1 文字ずつ比べる）。
 fn find_all(text: &str, query: &str) -> Vec<(usize, usize)> {
     if query.is_empty() {
         return Vec::new();
     }
-    let (hay, needle) = (text.to_lowercase(), query.to_lowercase());
-    let (hay, needle) = if hay.len() == text.len() && needle.len() == query.len() {
-        (hay, needle)
-    } else {
-        (text.to_owned(), query.to_owned())
+    // 文字ごとに長さが変わらなければ、小文字にした文字列のバイトの位置がそのまま使える。
+    let same_len = |s: &str| {
+        s.is_ascii()
+            || s.chars()
+                .all(|c| c.to_lowercase().map(char::len_utf8).sum::<usize>() == c.len_utf8())
     };
+    if !same_len(text) || !same_len(query) {
+        return crate::messagefind::find_all(text, query);
+    }
+    let (hay, needle) = (text.to_lowercase(), query.to_lowercase());
     let mut out = Vec::new();
     let mut from = 0;
     while let Some(i) = hay[from..].find(&needle) {
@@ -2175,6 +2179,19 @@ pub(crate) fn syntax_color(kind: u8, fg: &gdk::RGBA) -> Option<(f32, f32, f32)> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finds_without_case_when_lowercasing_changes_the_length() {
+        assert_eq!(find_all("Fix the FIX", "fix"), vec![(0, 3), (8, 11)]);
+        // `İ` は小文字で 3 バイト、ケルビン記号は 1 バイトになる。
+        assert_eq!(find_all("İstanbul TODO", "todo"), vec![(10, 14)]);
+        assert_eq!(find_all("İstanbul", "istanbul"), vec![(0, 9)]);
+        assert_eq!(find_all("\u{212A}elvin todo", "TODO"), vec![(9, 13)]);
+        assert_eq!(find_all("todo", "\u{212A}"), Vec::new());
+        // 伸びる字と縮む字で長さの合計が変わらなくても、位置はずれない。
+        assert_eq!(find_all("İİ\u{212A} todo", "todo"), vec![(8, 12)]);
+        assert!(find_all("abc", "").is_empty());
+    }
 
     #[test]
     fn columns_count_tabs_and_wide_characters() {
