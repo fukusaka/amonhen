@@ -694,6 +694,11 @@ button.sheet-list-item:hover {
   padding: 1px 4px;
 }
 
+.editor button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .editor button.destructive {
   color: var(--vscode-button-foreground);
   background: var(--vscode-errorForeground);
@@ -776,7 +781,8 @@ button.sheet-list-item:hover {
 /* 外れる・消えるコミットは中を抜いた点、これから作るコミットは点線の丸 */
 .drawing-dot.hollow,
 .drawing-dot.new {
-  fill: none;
+  /* 線が中を通らないよう、背景で塗る */
+  fill: var(--vscode-editor-background);
   stroke: var(--vscode-descriptionForeground);
   stroke-width: 1.5;
 }
