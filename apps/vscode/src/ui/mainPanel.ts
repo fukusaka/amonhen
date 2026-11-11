@@ -38,6 +38,10 @@ export class MainPanel implements vscode.Disposable {
   /** 答えを待っている確認のシート */
   private readonly sheets = new Map<number, { resolve: (answer: SheetAnswer | undefined) => void; open?: (item: number) => void }>();
   private nextSheet = 1;
+  /** e2e が画面を押さずにシートに答える（あれば、シートを出さずにこれの答えを返す） */
+  answerSheet:
+    | ((sheet: Omit<Sheet, 'id'>, open?: (item: number) => void) => SheetAnswer | undefined | Promise<SheetAnswer | undefined>)
+    | undefined;
 
   /** 開いて、view を出す。ref を渡すと History にその ref の履歴を出す */
   static show(extensionUri: vscode.Uri, manager: RepositoryManager, view?: ViewName, ref?: string): MainPanel {
@@ -124,6 +128,7 @@ export class MainPanel implements vscode.Disposable {
    * （できていなければ、呼ぶ側はモーダルで確かめる）
    */
   async ask(sheet: Omit<Sheet, 'id'>, open?: (item: number) => void): Promise<SheetAnswer | undefined> {
+    if (this.answerSheet) return this.answerSheet(sheet, open);
     const id = this.nextSheet++;
     this.panel.reveal(undefined, false);
     return new Promise((resolve) => {

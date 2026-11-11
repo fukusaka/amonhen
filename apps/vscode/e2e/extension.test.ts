@@ -18,7 +18,8 @@ import type { SelectedLine } from '../src/diff/fileDiff.ts';
 import { settingsFile } from '../src/git/choice.ts';
 import { samePath } from '../src/git/worktrees.ts';
 import type { activate } from '../src/extension.ts';
-import type { HostMessage } from '../src/view/protocol.ts';
+import type { HostMessage, Sheet, SheetAnswer } from '../src/view/protocol.ts';
+import type { Drawing } from '../src/history/drawing.ts';
 
 type Api = Awaited<ReturnType<typeof activate>>;
 type Message<T extends HostMessage['type']> = Extract<HostMessage, { type: T }>;
@@ -35,6 +36,11 @@ const ext = vscode.extensions.getExtension<Api>('fukusaka.amonhen')!;
 const root = vscode.workspace.workspaceFolders![0]!.uri.fsPath;
 const spawned: Spawned[] = [];
 const posted: HostMessage[] = [];
+/** メインビューに重ねた確認のシート（画面を押さず、sheetAnswer で答える。既定は既定のボタンと、はじめに選んであるもの） */
+const sheets: Omit<Sheet, 'id'>[] = [];
+const pressDefault = (sheet: Omit<Sheet, 'id'>): SheetAnswer => ({ index: 0, choice: sheet.choice ?? 0 });
+type Answerer = (sheet: Omit<Sheet, 'id'>, open?: (item: number) => void) => SheetAnswer | undefined;
+let sheetAnswer: Answerer = pressDefault;
 /** 拡張が出したエラーの知らせ */
 const errors: string[] = [];
 let api: Api;
@@ -110,6 +116,10 @@ async function showView(command: 'amonhen.showWorkingCopy' | 'amonhen.showHistor
   const start = Date.now();
   await vscode.commands.executeCommand(command);
   const panel = await until('メインビュー', () => api.panel());
+  panel.answerSheet ??= (sheet, open) => {
+    sheets.push(sheet);
+    return sheetAnswer(sheet, open);
+  };
   // Webview に送るメッセージを記録する（コントローラーは panel.post を呼ぶたびに引く）
   if (!Object.hasOwn(panel, 'post')) {
     const post = panel.post.bind(panel);
@@ -1588,14 +1598,23 @@ async function pullSheetFlow(): Promise<void> {
     git('add', `${name}.txt`);
     git('commit', '-q', '-m', name);
   };
+  // メインビューに重ねた Pull のシートで、取り込み方（label）を選んで Pull を押す。押せない取り込み方では押せない
+  let seen: Omit<Sheet, 'id'> | undefined;
   const pull = (label: RegExp, source?: string) =>
-    withWindow(
-      {
-        ...fakeQuickPick((items) => items.find((i) => label.test(i.label))),
-        showQuickPick: async (items: readonly string[]) => items.find((i) => i === source),
-        showInformationMessage: async () => undefined,
+    withSheets(
+      (sheet) => {
+        seen = sheet;
+        const choice = (sheet.choices ?? []).findIndex((c) => label.test(c.label));
+        return choice < 0 || sheet.choices![choice]!.blocked ? undefined : { index: 0, choice };
       },
-      async () => vscode.commands.executeCommand('amonhen.pull'),
+      () =>
+        withWindow(
+          {
+            showQuickPick: async (items: readonly string[]) => items.find((i) => i === source),
+            showInformationMessage: async () => undefined,
+          },
+          async () => vscode.commands.executeCommand('amonhen.pull'),
+        ),
     );
   try {
     // pl-src に 2 つ進んだものを用意し、pl-remote から取れるようにする
@@ -1626,13 +1645,17 @@ async function pullSheetFlow(): Promise<void> {
     const before = git('rev-parse', 'pl-main').trim();
     await pull(/Fast-Forward Only/);
     assert.equal(git('rev-parse', 'pl-main').trim(), before, 'Fast-Forward Only は押せない');
-    const ff = pickSeen.find((i) => /Fast-Forward Only/.test(i.label))!;
-    assert.match(ff.label, /\$\(warning\)/);
-    assert.match(String(ff.detail), /can’t pull these: you have 1 local commit/);
-    assert.match(String(pickSeen.find((i) => /^\$\(repo-pull\) Rebase/.test(i.label))?.detail), /replayed on top/);
-    assert.ok(pickSeen.some((i) => i.label === '$(git-commit) pl-c'), '取り込むコミットが並ぶ');
+    const choices = seen?.choices ?? [];
+    const ff = choices.find((c) => /Fast-Forward Only/.test(c.label))!;
+    assert.ok(ff.blocked);
+    // 押せないわけは、絵の右に
+    assert.match(drawnText(ff.drawing), /can’t pull these: you have 1 local commit/);
+    const rebase = choices.find((c) => /^Rebase/.test(c.label));
+    assert.match(String(rebase?.lines?.join(' ')), /replayed on top/);
+    assert.match(drawnText(rebase?.drawing), /After the rebase:\n  pl-local′/);
+    assert.ok(seen?.lists?.[0]?.items.some((i) => i.label === 'pl-c'), '取り込むコミットが並ぶ');
 
-    await pull(/^\$\(repo-pull\) Rebase/);
+    await pull(/^Rebase/);
     await until('rebase が終わる', () => git('log', '-1', '--format=%s', 'pl-main').trim() === 'pl-local');
     assert.equal(git('rev-parse', 'pl-main~1').trim(), git('rev-parse', 'pl-src').trim(), lastErrors());
   } finally {
@@ -1658,10 +1681,21 @@ async function pushSheetFlow(): Promise<void> {
     git('commit', '-q', '-m', subject);
   };
   const inBare = (...args: string[]) => childProcess.execFileSync('git', args, { cwd: bare, encoding: 'utf8' });
-  const push = (label: RegExp, command = 'amonhen.push') =>
-    withWindow(
-      { ...fakeQuickPick((items) => items.find((i) => label.test(i.label))), showInformationMessage: async () => undefined },
-      async () => vscode.commands.executeCommand(command),
+  // メインビューに重ねた Push のシート。一覧の行（open）を押すと差分を開く。press はボタン。before は答える前に
+  let seen: Omit<Sheet, 'id'> | undefined;
+  const push = (action: { open?: RegExp; press?: string }, command = 'amonhen.push', before?: () => void) =>
+    withSheets(
+      (sheet, open) => {
+        seen = sheet;
+        before?.();
+        if (action.open) {
+          open?.((sheet.lists ?? []).flatMap((l) => l.items).findIndex((i) => action.open!.test(i.label)));
+          return undefined;
+        }
+        const index = sheet.buttons.indexOf(action.press ?? '');
+        return index < 0 ? undefined : { index, choice: 0 };
+      },
+      () => withWindow({ showInformationMessage: async () => undefined }, async () => vscode.commands.executeCommand(command)),
     );
   try {
     git('init', '-q', '--bare', bare);
@@ -1676,23 +1710,26 @@ async function pushSheetFlow(): Promise<void> {
     );
     // 送る変更すべての行とコミットの行は、差分を開く（送らない）
     const tabs = () => vscode.window.tabGroups.all.flatMap((g) => g.tabs).map((t) => t.label);
-    await push(/All changes to send/);
+    await push({ open: /^All changes to send/ });
     // 複数ファイルの diff エディタのタブは、名前の後ろにファイルの数が付く
     const opened = (title: string) => tabs().some((t) => t.startsWith(title));
     await until('送る変更すべての差分が開く', () => opened('All changes to send (2): ps-remote/ps-branch → ps-branch'));
-    await push(/^\$\(git-commit\) Add settings$/);
+    await push({ open: /^Add settings$/ });
     const settings = git('rev-parse', '--short=8', 'HEAD').trim();
     await until('コミットの差分が開く', () => opened(`${settings} Add settings`));
     assert.notEqual(inBare('rev-parse', 'ps-branch').trim(), git('rev-parse', 'HEAD').trim(), '差分を開くだけで送らない');
     await vscode.window.tabGroups.close(
       vscode.window.tabGroups.all.flatMap((g) => g.tabs).filter((t) => /^All changes to send|Add settings/.test(t.label)),
     );
-    await push(/^\$\(repo-push\) Push 2 commits/);
+    await push({ press: 'Push' });
     assert.equal(inBare('rev-parse', 'ps-branch').trim(), git('rev-parse', 'HEAD').trim(), lastErrors());
-    const labels = pickSeen.map((i) => i.label);
-    assert.ok(labels.includes('$(warning) 1 commit looks unfinished (fixup!, squash! or WIP).'), labels.join(' | '));
-    assert.ok(labels.includes('$(warning) Adds files that may hold secrets: .env'), labels.join(' | '));
-    assert.ok(labels.includes('$(git-commit) Add settings'));
+    assert.equal(seen?.title, 'Push 2 commits to ps-remote/ps-branch?');
+    const warnings = seen?.warnings ?? [];
+    assert.ok(warnings.includes('1 commit looks unfinished (fixup!, squash! or WIP).'), warnings.join(' | '));
+    assert.ok(warnings.includes('Adds files that may hold secrets: .env'), warnings.join(' | '));
+    assert.ok(seen?.lists?.[0]?.items.some((i) => i.label === 'Add settings'));
+    // 送った後の形: 上流の札が手元の先端へ
+    assert.match(drawnText(seen?.drawing), /After the push:\n  Add settings  \[ps-remote\/ps-branch/);
 
     // 上流が先に進む（別の場所からの push）。手元にも 1 つ
     const theirs = git('commit-tree', '-p', 'HEAD', '-m', 'theirs', `HEAD^{tree}`).trim();
@@ -1700,9 +1737,11 @@ async function pushSheetFlow(): Promise<void> {
     git('fetch', '-q', remote);
     commit('ps-b.txt', 'ours');
     await repo.refresh();
-    await push(/Force Push/);
-    assert.match(pickSeen.find((i) => /Force Push/.test(i.label))?.detail ?? '', /loses 1 commit\. Replaces ps-remote\/ps-branch only if it is still at/);
-    assert.ok(pickSeen.some((i) => i.label === '$(repo-pull) Pull…'));
+    await push({ press: 'Force Push' });
+    assert.match(seen?.lines.join('\n') ?? '', /loses 1 commit\. Replaces ps-remote\/ps-branch only if it is still at/);
+    assert.deepEqual(seen?.buttons, ['Pull…', 'Force Push']);
+    // 上流から消えるコミット
+    assert.match(drawnText(seen?.drawing), /After the force push:[^]*\n  theirs\n/);
     assert.equal(inBare('rev-parse', 'ps-branch').trim(), git('rev-parse', 'HEAD').trim(), lastErrors());
 
     // 見せた後に上流が動いていれば、Force Push は断られる
@@ -1711,17 +1750,8 @@ async function pushSheetFlow(): Promise<void> {
     git('fetch', '-q', remote);
     await repo.refresh();
     const errorsBefore = errors.length;
-    await withWindow(
-      {
-        ...fakeQuickPick((items) => {
-          // 見せた後に（選ぶ前に）上流が動く
-          git('push', '-q', '-f', remote, `${moved}:refs/heads/ps-branch`);
-          return items.find((i) => /Force Push/.test(i.label));
-        }),
-        showInformationMessage: async () => undefined,
-      },
-      async () => vscode.commands.executeCommand('amonhen.forcePush'),
-    );
+    // 見せた後に（選ぶ前に）上流が動く
+    await push({ press: 'Force Push' }, 'amonhen.forcePush', () => git('push', '-q', '-f', remote, `${moved}:refs/heads/ps-branch`));
     assert.equal(inBare('rev-parse', 'ps-branch').trim(), moved, `置き換えない（${lastErrors()}）`);
     assert.ok(errors.length > errorsBefore, 'push が断られたと知らせる');
   } finally {
@@ -1956,18 +1986,22 @@ async function pullRequestMarkFlow(): Promise<void> {
     assert.match(String(marked.tooltip), /Merged by pull request #77/);
 
     // 確認は 1 回だけで、プルリクエストの番号が出る
-    const asked: { message: string; detail?: string | undefined }[] = [];
-    await withWindow(
-      {
-        showWarningMessage: async (message: string, options: vscode.MessageOptions) => {
-          asked.push({ message, detail: options.detail });
-          return 'Delete';
+    // squash でまとめたので、ほかにないコミットがあり、メインビューに重ねたシートで消えるコミットを見せる
+    const asked: Asked[] = [];
+    await withSheets(sheetLikeModal(asked, () => 'Delete'), () =>
+      withWindow(
+        {
+          showWarningMessage: async (message: string, options: vscode.MessageOptions) => {
+            asked.push({ message, detail: options.detail ?? '', buttons: [] });
+            return 'Delete';
+          },
         },
-      },
-      async () => vscode.commands.executeCommand('amonhen.nav.delete', row()),
+        async () => vscode.commands.executeCommand('amonhen.nav.delete', row()),
+      ),
     );
     assert.equal(asked.length, 1, JSON.stringify(asked));
-    assert.match(asked[0]!.detail ?? '', /#77/);
+    assert.match(asked[0]!.detail, /#77/);
+    assert.match(drawnText(asked[0]!.drawing), /After deleting:/);
     assert.equal(git('branch', '--list', 'pm-squashed').trim(), '', lastErrors());
     await vscode.commands.executeCommand('amonhen.undo');
     await until('Undo で戻る', () => git('branch', '--list', 'pm-squashed').trim() !== '');
@@ -1987,14 +2021,14 @@ async function pullRequestMarkFlow(): Promise<void> {
     await withWindow(
       {
         showWarningMessage: async (message: string, options: vscode.MessageOptions) => {
-          asked.push({ message, detail: options.detail });
+          asked.push({ message, detail: options.detail ?? '', buttons: [] });
           return /aren’t merged/.test(message) ? 'Delete Anyway' : 'Delete';
         },
       },
       async () => vscode.commands.executeCommand('amonhen.nav.delete', squashed, [squashed, plain]),
     );
     assert.equal(asked.length, 2, JSON.stringify(asked));
-    assert.match(asked[0]!.detail ?? '', /pm-squashed \(merged by pull request #77\)/);
+    assert.match(asked[0]!.detail, /pm-squashed \(merged by pull request #77\)/);
     assert.match(asked[1]!.message, /^pm-plain has/);
     assert.equal(git('branch', '--list', 'pm-squashed', 'pm-plain').trim(), '', lastErrors());
   } finally {
@@ -2159,7 +2193,10 @@ async function historySelectionFlow(): Promise<void> {
     const again = await read(['s1', 's2', 's3', 's4']) as [number, number, number, number];
     await select(8, [again[3], again[1]]);
     await vscode.commands.executeCommand('amonhen.history.selection.cherryPick');
-    assert.ok(prompts.some((p) => p === 'Cherry-pick 2 commits onto sel-target?'), prompts.join(' / '));
+    // メインビューが開いているので、確かめるのは重ねたシート（作るコミットの絵つき）
+    const picked = sheets.at(-1);
+    assert.equal(picked?.title, 'Cherry-pick 2 commits onto sel-target?', prompts.join(' / '));
+    assert.match(drawnText(picked?.drawing), /After the cherry-pick:\n  s4′  \[sel-target\]\n  s2′\n/);
     assert.deepEqual(subjects(2), ['s4', 's2']);
     // 履歴には 1 回の操作として残り、Undo で戻る
     await repo.refresh();
@@ -2544,6 +2581,14 @@ async function reflogFlow(): Promise<void> {
     },
     showInformationMessage: async () => undefined,
   };
+  // メインビューが開いていれば、動かし方は Reset のシートで選ぶ（外れるコミットの絵つき）
+  const drawn: string[] = [];
+  const resetSheet = (sheet: Omit<Sheet, 'id'>): SheetAnswer => {
+    const modes = (sheet.choices ?? []).map((c) => c.label.split(':')[0]!);
+    asked.push({ message: sheet.title, buttons: modes });
+    drawn.push(drawnText(sheet.drawing));
+    return { index: 0, choice: modes.indexOf(answer) };
+  };
   try {
     let mark = posted.length;
     const panel = await showView('amonhen.showReflog');
@@ -2555,10 +2600,12 @@ async function reflogFlow(): Promise<void> {
 
     // Mixed: 外れたコミットの変更は作業ツリーに残り、そのコミットはどのブランチにもなくなる
     mark = posted.length;
-    await withWindow(stubs, async () => vscode.commands.executeCommand('amonhen.resetToCommit', { oid: parent }));
+    await withSheets(resetSheet, () => withWindow(stubs, async () => vscode.commands.executeCommand('amonhen.resetToCommit', { oid: parent })));
     assert.equal(rev('HEAD'), parent, lastErrors());
     assert.match(asked.at(-1)!.message, new RegExp(`^Reset reflog-e2e to ${parent.slice(0, 8)}( “.*”)?\\?$`));
-    assert.deepEqual(asked.at(-1)!.buttons, ['Mixed', 'Soft', 'Hard']);
+    assert.deepEqual(asked.at(-1)!.buttons, ['Soft', 'Mixed', 'Hard']);
+    // 前と後: 外れるコミット
+    assert.match(drawn.at(-1)!, /After the reset:\n  reflog e2e\n/);
     assert.equal(rev('HEAD'), parent);
     assert.equal(git('status', '--porcelain', '--', 'reflog-e2e.txt'), '?? reflog-e2e.txt\n');
     const after = await reflog(mark, (m) => m.entries[0]?.oid === parent);
@@ -2570,7 +2617,7 @@ async function reflogFlow(): Promise<void> {
     // Hard: 作業中の変更を stash に残してから、作業ツリーもそのコミットに合わせる
     writeFileSync(file, 'changed\n');
     answer = 'Hard';
-    await withWindow(stubs, async () => vscode.commands.executeCommand('amonhen.resetToCommit', { oid: parent }));
+    await withSheets(resetSheet, () => withWindow(stubs, async () => vscode.commands.executeCommand('amonhen.resetToCommit', { oid: parent })));
     assert.equal(rev('HEAD'), parent, lastErrors());
     assert.equal(existsSync(file), false);
     assert.match(git('stash', 'list', '-n', '1', '--format=%s'), /Before reset --hard to [0-9a-f]{8}/);
@@ -2630,6 +2677,53 @@ async function reflogFlow(): Promise<void> {
 }
 
 /** vscode.window の関数を fn のあいだだけ差し替える（ダイアログに答える） */
+/** 絵を、History と同じ並び（新しい順）の文にする: 列ごとに見出しと「件名  [札]」 */
+function drawnText(d: Drawing | undefined): string {
+  return (d?.columns ?? [])
+    .map((c) =>
+      [
+        `${c.heading}:`,
+        ...[...c.items, ...(c.base ? [c.base] : [])].map((i) =>
+          'subject' in i ? `  ${i.subject}${i.labels.length > 0 ? `  [${i.labels.map((l) => l.name).join(', ')}]` : ''}` : '  …',
+        ),
+        ...(c.message ? [`  ${c.message}`] : []),
+      ].join('\n'),
+    )
+    .join('\n');
+}
+
+interface Asked {
+  message: string;
+  detail: string;
+  buttons: string[];
+  drawing?: Drawing;
+}
+
+/** 確認のシートを modal と同じ形で asked に記録し、answer が選んだボタンを押す（なければやめる） */
+const sheetLikeModal =
+  (asked: Asked[], answer: (buttons: string[]) => string | undefined) =>
+  (sheet: Omit<Sheet, 'id'>): SheetAnswer | undefined => {
+    asked.push({
+      message: sheet.title,
+      detail: [...sheet.lines, ...(sheet.warnings ?? []).map((w) => `⚠︎ ${w}`)].join('\n'),
+      buttons: sheet.buttons,
+      drawing: sheet.drawing,
+    });
+    const index = sheet.buttons.indexOf(answer(sheet.buttons) ?? '');
+    return index < 0 ? undefined : { index, choice: sheet.choice ?? 0 };
+  };
+
+/** fn の間、確認のシートに answer で答える */
+async function withSheets<T>(answer: Answerer, fn: () => Promise<T>): Promise<T> {
+  const before = sheetAnswer;
+  sheetAnswer = answer;
+  try {
+    return await fn();
+  } finally {
+    sheetAnswer = before;
+  }
+}
+
 async function withWindow<T>(stubs: Record<string, unknown>, fn: () => Promise<T>): Promise<T> {
   const window = vscode.window as unknown as Record<string, unknown>;
   const originals = Object.fromEntries(Object.keys(stubs).map((k) => [k, window[k]]));
@@ -2985,7 +3079,7 @@ async function rewriteFlow(label: string): Promise<void> {
   await vscode.commands.executeCommand('amonhen.refresh');
   const before = { top: rev(name('top')), mid: rev(name('mid')) };
 
-  const asked: { message: string; detail: string; buttons: string[] }[] = [];
+  const asked: Asked[] = [];
   let answer: (buttons: string[]) => string | undefined = () => undefined;
   const stubs = {
     showWarningMessage: async (message: string, ...rest: unknown[]) => {
@@ -3003,7 +3097,8 @@ async function rewriteFlow(label: string): Promise<void> {
   // mid は「設定がオフ」か「git が古い」で動かない、と見通しに出る
   const stays = new RegExp(`${name('mid')} stays where it is \\((rebase\\.updateRefs is off|moving it needs git 2\\.38)\\)`);
   try {
-    await withWindow(stubs, async () => {
+    // エンジンがあれば、Rebase の確認はメインビューに重ねたシート（前と後の絵つき）
+    await withSheets(sheetLikeModal(asked, (buttons) => answer(buttons)), () => withWindow(stubs, async () => {
       // 右クリックの Rebase。やめれば何も変わらない
       const node = { kind: 'branch', ref: { name: `refs/heads/${name('onto')}` } };
       await vscode.commands.executeCommand('amonhen.nav.rebase', node);
@@ -3019,8 +3114,9 @@ async function rewriteFlow(label: string): Promise<void> {
         // コンフリクトの見込みは git 2.40 から
         assert.doesNotMatch(first.detail, /Conflicts expected/);
         // 前と後: 今のブランチは載せ直したコミットへ、載せ先の札はそのまま
-        assert.ok(first.detail.includes(`Now:\n  ○ ${name('two')}  [${name('top')}]\n  ○ ${name('one')}  [${name('mid')}]\n  ● ${name('onto')}  [${name('onto')}]`), first.detail);
-        assert.ok(first.detail.includes(`After the rebase:\n  ○ ${name('two')}′  [${name('top')}]`), first.detail);
+        const drawn = drawnText(first.drawing);
+        assert.ok(drawn.includes(`Now:\n  ${name('two')}  [${name('top')}]\n  ${name('one')}  [${name('mid')}]\n  ${name('onto')}  [${name('onto')}]`), drawn);
+        assert.ok(drawn.includes(`After the rebase:\n  ${name('two')}′  [${name('top')}]`), drawn);
       } else {
         assert.equal(first.detail, 'You can undo this.');
         assert.deepEqual(first.buttons, ['Rebase']);
@@ -3078,7 +3174,7 @@ async function rewriteFlow(label: string): Promise<void> {
       assert.equal(rev(name('mid')) !== before.mid, dropMoved, dropMoved ? 'mid も動く' : 'mid は残る');
       await vscode.commands.executeCommand('amonhen.undo');
       await until('drop の Undo', () => rev(name('top')) === before.top && rev(name('mid')) === before.mid, undefined, lastErrors);
-    });
+    }));
   } finally {
     git('switch', '-q', branch);
     git('branch', '-q', '-D', name('onto'), name('top'), name('mid'));
@@ -3103,8 +3199,11 @@ async function openedEditMode(trigger: () => PromiseLike<unknown>): Promise<Edit
 /** 編集モードの行を当てて、終わるまで待つ */
 async function applyEditMode(rows: readonly EditRow[], updateRefs?: boolean): Promise<void> {
   const at = posted.length;
-  await api.panel()!.history.handle({ type: 'editApply', steps: planSteps(rows), ...(updateRefs === undefined ? {} : { updateRefs }) });
-  assert.ok((await waitPosted('editApplied', at)).ok, '編集モードの Apply');
+  // Apply Changes の前の確認（前と後の絵）は、そのまま当てる（受け取ったところで返るので、終わるまで答え方を保つ）
+  await withSheets(pressDefault, async () => {
+    await api.panel()!.history.handle({ type: 'editApply', steps: planSteps(rows), ...(updateRefs === undefined ? {} : { updateRefs }) });
+    assert.ok((await waitPosted('editApplied', at)).ok, '編集モードの Apply');
+  });
 }
 
 /** ブランチの先頭のコミットの件名 */
