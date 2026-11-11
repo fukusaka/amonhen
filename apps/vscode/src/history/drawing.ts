@@ -4,7 +4,7 @@
  * 省いたところ・分かれたところを並べた列（Drawing）を作る。描くのは Webview（`webview/drawing.ts`）。vscode に
  * 依存しない
  */
-import type { DrawnCommit, RewritePreview } from './rewritePreview.ts';
+import type { DrawnCommit, EditStep, RewritePreview } from './rewritePreview.ts';
 
 /** 札。kind は `local`・`remote`・`moved`（一緒に動いた）。filled は動かす ref・今のブランチ（塗った札） */
 export interface DrawnLabel {
@@ -195,6 +195,42 @@ export function rebaseDrawing(p: RewritePreview): Drawing | undefined {
       },
     ],
   };
+}
+
+/**
+ * History の編集の前と後（アプリの EditDrawingView）。左は書き換わるコミットで、drop するものは中を抜いた点、まとめる・
+ * メッセージを変える・止まるものにはそうと添える。右はできるコミット（′ 付き）。下に書き換えないコミット
+ */
+export function editDrawing(p: RewritePreview): Drawing | undefined {
+  const d = p.editDrawing;
+  if (!d) return undefined;
+  const refs = refsOf(d.labels);
+  const notes: Record<string, Pick<DrawnRow, 'hollow' | 'note' | 'tone'>> = {
+    drop: { hollow: true, note: 'dropped', tone: 'red' },
+    squash: { note: 'combined with the one below' },
+    fixup: { note: 'combined with the one below' },
+    reword: { note: 'new message' },
+    edit: { note: 'stops here' },
+  };
+  const column = (after: boolean): DrawnColumn => {
+    const steps = after ? d.after : d.before;
+    const top = steps[0]?.oid;
+    // 今のブランチの札は左右とも一番上に。ほかの札は左（書き換える前）と、下の書き換えないコミットに
+    const labels = (oid: string, base = false): DrawnLabel[] => [
+      ...(oid === top && p.current ? [{ name: p.current, kind: 'local', filled: true }] : []),
+      ...(!after || base ? plain(refs(oid), p.current ?? undefined) : []),
+    ];
+    const row = (s: EditStep): DrawnRow =>
+      after
+        ? { subject: `${s.subject}′`, lane: 0, highlight: true, labels: labels(s.oid), note: s.combined ? `${s.combined + 1} commits in one` : undefined }
+        : { subject: s.subject, lane: 0, dim: true, labels: labels(s.oid), ...notes[s.action] };
+    return {
+      heading: after ? 'After the edit' : 'Now',
+      items: run(steps, after ? d.afterMore : d.beforeMore, after ? d.afterMoreAt : d.beforeMoreAt, 0, row),
+      base: d.base ? { subject: d.base.subject, lane: 0, dim: true, labels: labels(d.base.oid, true) } : undefined,
+    };
+  };
+  return { columns: [column(false), column(true)] };
 }
 
 export interface MoveOptions {

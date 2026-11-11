@@ -4,7 +4,7 @@ import { confirmOperation } from './confirm.ts';
 import type { RebaseResult } from '../git/backend.ts';
 import type { Commit } from '../git/log.ts';
 import { parseCommitObject } from '../git/commitObject.ts';
-import { pickDrawing, type Drawing, type PickPreview } from '../history/drawing.ts';
+import { editDrawing, pickDrawing, type Drawing, type PickPreview } from '../history/drawing.ts';
 import { applyPreset, type EditPreset, type PlanStep } from '../history/editPlan.ts';
 import type { HistoryEdit } from '../history/rebasePlan.ts';
 import { previewLines, stackedAlternative } from '../history/rewritePreview.ts';
@@ -119,6 +119,10 @@ export function registerHistoryCommands(): vscode.Disposable {
         return;
       }
       if (message.type === 'editApply') {
+        if (!(await confirmEdit(repo, message.steps, message.updateRefs))) {
+          panel.post({ type: 'editApplied', ok: false });
+          return;
+        }
         const label = `Edit ${message.steps.length} Commits`;
         const result = await execute(panel, repo, label, { kind: 'plan', steps: message.steps }, message.updateRefs);
         panel.post({ type: 'editApplied', ok: result !== undefined });
@@ -263,6 +267,19 @@ async function editMode(
   const started = preset ? applyPreset(rows, preset) : { rows };
   panel.post({ type: 'editMode', rows: started.rows, original: rows.map((r) => r.oid), ...(started.editMessageAt !== undefined ? { editMessageAt: started.editMessageAt } : {}) });
   return true;
+}
+
+/**
+ * Apply Changes の前に、アプリと同じく前と後の絵を見せて確かめる（メインビューに重ねたシートで）。描けない（merge を
+ * 越える編集・エンジンがない）ときは、これまでどおり確かめない
+ */
+async function confirmEdit(repo: Repository, steps: PlanStep[], updateRefs: boolean | undefined): Promise<boolean> {
+  const panel = MainPanel.active;
+  if (!panel?.canAsk) return true;
+  const preview = await repo.backend.rewritePreview({ edit: { kind: 'plan', steps } }, updateRefs).catch(() => undefined);
+  const drawing = preview && editDrawing(preview);
+  if (!drawing) return true;
+  return (await panel.ask({ title: 'Apply These Changes?', lines: previewLines(preview), drawing, buttons: ['Apply Changes'] })) !== undefined;
 }
 
 /** 編集モードの見通し（一緒に動くブランチ・push 済み・コンフリクトの見込み）を送る */

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+  editDrawing,
   mergeDrawing,
   moveDrawing,
   octopusDrawing,
@@ -165,4 +166,39 @@ test('octopusSubject names the merge commit as git does', () => {
     octopusSubject(['refs/heads/a', 'refs/tags/v1', 'refs/remotes/origin/x', 'abc123'], 'dev'),
     "Merge branch 'a', remote-tracking branch 'origin/x', tag 'v1'; commit 'abc123' into dev",
   );
+});
+
+test('editDrawing marks what each step does and puts the branch on top of both sides', () => {
+  const d = editDrawing({
+    moving: [],
+    staying: [],
+    current: 'topic',
+    editDrawing: {
+      before: [
+        { oid: 'c', subject: 'c', action: 'drop' },
+        { oid: 'b', subject: 'b', action: 'fixup' },
+        { oid: 'a', subject: 'a', action: 'pick' },
+      ],
+      beforeMore: 0,
+      after: [{ oid: 'a', subject: 'a', action: 'pick', combined: 1 }],
+      afterMore: 0,
+      base: c('m'),
+      labels: [
+        { oid: 'c', name: 'topic', kind: 'local' },
+        { oid: 'b', name: 'part', kind: 'local' },
+        { oid: 'm', name: 'main', kind: 'local' },
+      ],
+    },
+  });
+  const [now, after] = d!.columns;
+  assert.deepEqual(rows(now), ['0:c', '0:b', '0:a']);
+  assert.deepEqual(labels(now?.items[0]), ['*topic']);
+  assert.deepEqual(labels(now?.items[1]), ['part']);
+  assert.equal((now?.items[0] as DrawnRow).note, 'dropped');
+  assert.equal((now?.items[1] as DrawnRow).note, 'combined with the one below');
+  assert.deepEqual(rows(after), ['0:a′']);
+  assert.deepEqual(labels(after?.items[0]), ['*topic']);
+  assert.equal((after?.items[0] as DrawnRow).note, '2 commits in one');
+  assert.deepEqual(labels(after?.base), ['main']);
+  assert.equal(editDrawing({ moving: [], staying: [] }), undefined);
 });

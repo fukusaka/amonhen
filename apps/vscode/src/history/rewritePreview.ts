@@ -25,6 +25,29 @@ export interface RewritePreview {
   updateRefs?: { configured: boolean; available: boolean } | null;
   /** 前と後を描く材料（rebase のとき） */
   drawing?: RewriteDrawing | null;
+  /** History の編集の前と後を描く材料（merge を越える編集では描けないので null） */
+  editDrawing?: EditDrawing | null;
+}
+
+/** History の編集の 1 つ。action は git の命令（`pick`・`reword`・`squash`・`fixup`・`drop`・`edit`） */
+export interface EditStep {
+  oid: string;
+  subject: string;
+  action: string;
+  /** after だけ: まとめたコミットの数 */
+  combined?: number | null;
+}
+
+/** before は書き換わるコミット、after はできるコミット（どちらも新しい順、長ければ真ん中を省く） */
+export interface EditDrawing {
+  before: EditStep[];
+  beforeMore: number;
+  beforeMoreAt?: number | null;
+  after: EditStep[];
+  afterMore: number;
+  afterMoreAt?: number | null;
+  base?: DrawnCommit | null;
+  labels: { oid: string; name: string; kind: string }[];
 }
 
 export interface DrawnCommit {
