@@ -2007,6 +2007,33 @@ async function pullRequestMarkFlow(): Promise<void> {
     await until('Undo で戻る', () => git('branch', '--list', 'pm-squashed').trim() !== '');
     assert.equal(git('rev-parse', 'pm-squashed').trim(), tip);
 
+    // どこにも取り込まれていないブランチは、シートで消えるコミットを見せて Delete Anyway を聞き、もう一度は聞かない
+    git('switch', '-q', '-c', 'pm-lone');
+    writeFileSync(join(root, 'pm-lone.txt'), 'pm\n');
+    git('add', 'pm-lone.txt');
+    git('commit', '-q', '-m', 'pm-lone');
+    git('switch', '-q', branch);
+    await vscode.commands.executeCommand('amonhen.refresh');
+    await facts.reload();
+    const lone = await until('取り込んでいない行', () => row('pm-lone'));
+    asked.length = 0;
+    await withSheets(sheetLikeModal(asked, () => 'Delete Anyway'), () =>
+      withWindow(
+        {
+          showWarningMessage: async (message: string, options: vscode.MessageOptions) => {
+            asked.push({ message, detail: options.detail ?? '', buttons: [] });
+            return 'Delete Anyway';
+          },
+        },
+        async () => vscode.commands.executeCommand('amonhen.nav.delete', lone),
+      ),
+    );
+    assert.equal(asked.length, 1, JSON.stringify(asked));
+    assert.deepEqual(asked[0]!.buttons, ['Delete Anyway']);
+    assert.match(asked[0]!.detail, /go with the branch/);
+    assert.match(drawnText(asked[0]!.drawing), /After deleting:/);
+    assert.equal(git('branch', '--list', 'pm-lone').trim(), '', lastErrors());
+
     // 取り込んでいないものと一緒に選ぶと、確認にプルリクエストが添えられ、もう一度聞くのは取り込んでいないものだけ
     git('switch', '-q', '-c', 'pm-plain');
     writeFileSync(join(root, 'pm-plain.txt'), 'pm\n');
@@ -2034,7 +2061,7 @@ async function pullRequestMarkFlow(): Promise<void> {
   } finally {
     facts.readMerged = readMerged;
     await facts.readPullRequests(true);
-    for (const b of ['pm-squashed', 'pm-plain']) if (git('branch', '--list', b).trim()) git('branch', '-q', '-D', b);
+    for (const b of ['pm-squashed', 'pm-plain', 'pm-lone']) if (git('branch', '--list', b).trim()) git('branch', '-q', '-D', b);
     await repo.refresh();
   }
 }

@@ -14,6 +14,7 @@ import { publish } from './syncCommands.ts';
 import { confirmInSheet, confirmOperation, uncommittedLine } from './confirm.ts';
 import { moveDrawing, type Drawing, type MovePreview } from '../history/drawing.ts';
 import { pushWithSheet } from './pushSheet.ts';
+import { MainPanel } from './mainPanel.ts';
 
 /** ブランチ・リモートブランチ・タグのノードから ref を取り出す */
 function refOf(node: Node | undefined): string | undefined {
@@ -211,14 +212,18 @@ async function deleteBranch(repo: Repository, ref: string, mergedBy: MergedBy): 
   const pr = mergedBy(repo, name);
   const title = `Delete the branch ${name}?`;
   const detail = `${pr === undefined ? '' : `Merged by pull request #${pr}. `}You can undo this.`;
+  // シートに消えるコミットを描けば、アプリと同じくそこで Delete Anyway を聞き、git に断られてからもう一度は聞かない
+  const drawing = MainPanel.active?.canAsk ? await deleteDrawing(repo, ref) : undefined;
+  const anyway = drawing !== undefined && pr === undefined;
+  const lines = anyway ? [`Some commits are on no other branch; they go with the branch. ${detail}`] : [detail];
   const ok =
-    (await confirmInSheet(title, [detail], 'Delete', { drawing: () => deleteDrawing(repo, ref) })) ??
+    (await confirmInSheet(title, lines, anyway ? 'Delete Anyway' : 'Delete', { drawing: async () => drawing })) ??
     (await vscode.window.showWarningMessage(title, { modal: true, detail }, 'Delete')) === 'Delete';
   if (!ok) return;
   const remove = (force: boolean) =>
     repo.undo.record(`Delete ${name}`, [ref], 'keep', () => repo.backend.deleteBranch(name, force), { branches: [name] });
   try {
-    await remove(pr !== undefined);
+    await remove(pr !== undefined || anyway);
   } catch (err) {
     if (!notMerged(err)) {
       showError(err);
