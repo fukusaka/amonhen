@@ -105,16 +105,20 @@ export async function pullWithSheet(repo: Repository): Promise<void> {
   // 最初は git の設定に従う。それで押せなければ Merge
   const firstMode = describePull('git', situation).blocked ? 1 : 0;
   const panel = MainPanel.active;
-  const chosen = panel?.canAsk
+  const sheet = panel?.canAsk
     ? await askInSheet(panel, repo, { title, head, from, situation, incoming, outgoing, firstMode, labels: modeItems.map((i) => i.label) })
-    : await askInQuickPick(
-        title,
-        modeItems,
-        firstMode,
-        commitItems('Commits to pull', incoming),
-        commitItems(`Commits only in ${head}`, outgoing),
-        situation,
-      );
+    : null;
+  const chosen =
+    sheet !== null
+      ? sheet
+      : await askInQuickPick(
+          title,
+          modeItems,
+          firstMode,
+          commitItems('Commits to pull', incoming),
+          commitItems(`Commits only in ${head}`, outgoing),
+          situation,
+        );
   if (!chosen) return;
   const how = methodOf(chosen, situation);
   await runAction(repo, {
@@ -145,9 +149,9 @@ interface SheetInput {
 /**
  * メインビューに重ねたシートで選ばせる（アプリの Pull のシート）。取り込み方ごとに前と後の絵: 手元に新しいコミットが
  * なければ先へ進めるだけ、あれば merge は merge コミット、rebase は載せ直し。押せない取り込み方では、左に今だけを
- * 描き、右に押せないわけを書く
+ * 描き、右に押せないわけを書く。どの取り込み方も描けなければ（取り込むものがない・エンジンがない）null
  */
-async function askInSheet(panel: MainPanel, repo: Repository, i: SheetInput): Promise<PullMode | undefined> {
+async function askInSheet(panel: MainPanel, repo: Repository, i: SheetInput): Promise<PullMode | undefined | null> {
   const { situation: s } = i;
   const after = 'After the pull';
   const [move, merge, rebase] =
@@ -178,6 +182,7 @@ async function askInSheet(panel: MainPanel, repo: Repository, i: SheetInput): Pr
       ...(drawing ? { drawing } : {}),
     };
   });
+  if (!choices.some((c) => c.drawing)) return null;
   const opens: Commit[] = [];
   const list = (title: string, commits: readonly Commit[]): SheetList | undefined => {
     if (commits.length === 0) return undefined;

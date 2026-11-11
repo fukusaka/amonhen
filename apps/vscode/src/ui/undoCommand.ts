@@ -8,8 +8,7 @@ import type { RepositoryManager } from '../state/manager.ts';
 import { shortName } from '../state/operations.ts';
 import type { Repository } from '../state/repository.ts';
 import type { UndoEntry } from '../state/undo.ts';
-import { confirmOperation } from './confirm.ts';
-import { MainPanel } from './mainPanel.ts';
+import { confirmInSheet } from './confirm.ts';
 import { showError } from './stageCommands.ts';
 
 export function registerUndoCommand(manager: RepositoryManager): vscode.Disposable {
@@ -39,9 +38,9 @@ async function undoWithConfirmation(manager: RepositoryManager): Promise<void> {
   }
   const title = `Undo “${entry.label}”?`;
   // メインビューが開いていれば、アプリと同じく、ブランチが戻る前と後の絵を見せて確かめる
-  const ok = MainPanel.active?.canAsk
-    ? await confirmOperation(title, [undoWhat(entry)], 'Undo', { drawing: () => undoDrawing(repo, entry) })
-    : (await vscode.window.showWarningMessage(title, { modal: true, detail: undoWhat(entry) }, 'Undo')) === 'Undo';
+  const ok =
+    (await confirmInSheet(title, [undoWhat(entry)], 'Undo', { drawing: () => undoDrawing(repo, entry) })) ??
+    (await vscode.window.showWarningMessage(title, { modal: true, detail: undoWhat(entry) }, 'Undo')) === 'Undo';
   if (ok) await undo(manager, 1);
 }
 

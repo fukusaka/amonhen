@@ -82,19 +82,17 @@ async function resetToCommit(repo: Repository, ctx: CommitContext): Promise<void
 /**
  * Reset の動かし方を選ばせる。メインビューが開いていれば、アプリと同じくシートで: 前と後の絵（外れるコミット）、
  * 選んだ動かし方で今との違いがどこへ行くか、外れるコミットを上流が持っていれば、このあとの Push に Force Push が
- * 要ること。開いていなければモーダルのボタンで
+ * 要ること。開いていない・描けなければモーダルのボタンで
  */
 async function askResetMode(repo: Repository, ctx: CommitContext, branch: string): Promise<ResetMode | undefined> {
   const title = `Reset ${branch} to ${commitName(ctx)}?`;
   const panel = MainPanel.active;
-  if (panel?.canAsk) {
-    const current = repo.current.status?.branch.head;
-    const preview = await repo.backend.graphPreview<MovePreview>({
-      op: 'movePreview',
-      from: 'HEAD',
-      to: ctx.oid,
-      ...(current ? { branch: current } : {}),
-    });
+  const current = repo.current.status?.branch.head;
+  const preview = panel?.canAsk
+    ? await repo.backend.graphPreview<MovePreview>({ op: 'movePreview', from: 'HEAD', to: ctx.oid, ...(current ? { branch: current } : {}) })
+    : undefined;
+  const drawing = moveDrawing(preview, { moving: branch, kind: 'local', afterTitle: 'After the reset', lostNote: 'taken off' });
+  if (panel && preview && drawing) {
     const files = preview?.files ?? 0;
     const modes: [ResetMode, string, string][] = [
       ['soft', 'Soft: keep the changes staged', `The difference from now (${files} files) stays staged.`],
@@ -112,7 +110,7 @@ async function askResetMode(repo: Repository, ctx: CommitContext, branch: string
         preview && preview.upstreamHas > 0 && preview.upstream
           ? [`${preview.upstream} has commits this takes off, so pushing afterwards needs Force Push.`]
           : [],
-      drawing: moveDrawing(preview, { moving: branch, kind: 'local', afterTitle: 'After the reset', lostNote: 'taken off' }),
+      drawing,
       choices: modes.map(([, label, note]) => ({ label, lines: files > 0 ? [note] : [] })),
       choice: 1,
       buttons: ['Reset'],

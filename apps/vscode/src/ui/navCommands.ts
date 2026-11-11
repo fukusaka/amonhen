@@ -11,9 +11,8 @@ import type { MergeMode } from '../git/backend.ts';
 import { mergeBranches } from './mergeBranches.ts';
 import { pickMergeMode } from './mergeMode.ts';
 import { publish } from './syncCommands.ts';
-import { confirmOperation, uncommittedLine } from './confirm.ts';
+import { confirmInSheet, confirmOperation, uncommittedLine } from './confirm.ts';
 import { moveDrawing, type Drawing, type MovePreview } from '../history/drawing.ts';
-import { MainPanel } from './mainPanel.ts';
 import { pushWithSheet } from './pushSheet.ts';
 
 /** ブランチ・リモートブランチ・タグのノードから ref を取り出す */
@@ -162,14 +161,14 @@ async function deleteBranches(repo: Repository, refs: string[], mergedBy: Merged
 }
 
 /**
- * メインビューが開いていれば、アプリと同じく前と後の絵を見せて確かめる（先へ進めるだけで、Undo で戻せる。開いて
- * いなければ、これまでどおり確かめない）
+ * メインビューが開いていれば、アプリと同じく前と後の絵を見せて確かめる（先へ進めるだけで、Undo で戻せる。シートを
+ * 出せなければ、これまでどおり確かめない）
  */
 async function confirmFastForward(repo: Repository, ref: string): Promise<boolean> {
   const upstream = (repo.current.branches ?? []).find((b) => b.name === ref)?.upstream;
-  if (!upstream || !MainPanel.active?.canAsk) return true;
+  if (!upstream) return true;
   const name = shortName(ref);
-  return confirmOperation(`Fast-forward ${name} to ${shortName(upstream)}?`, ['You can undo this.'], 'Fast-Forward', {
+  const asked = await confirmInSheet(`Fast-forward ${name} to ${shortName(upstream)}?`, ['You can undo this.'], 'Fast-Forward', {
     drawing: async () =>
       moveDrawing(await repo.backend.graphPreview<MovePreview>({ op: 'movePreview', from: ref, to: upstream, branch: name }), {
         moving: name,
@@ -178,6 +177,7 @@ async function confirmFastForward(repo: Repository, ref: string): Promise<boolea
         lostNote: '',
       }),
   });
+  return asked ?? true;
 }
 
 /**
@@ -211,9 +211,9 @@ async function deleteBranch(repo: Repository, ref: string, mergedBy: MergedBy): 
   const pr = mergedBy(repo, name);
   const title = `Delete the branch ${name}?`;
   const detail = `${pr === undefined ? '' : `Merged by pull request #${pr}. `}You can undo this.`;
-  const ok = MainPanel.active?.canAsk
-    ? await confirmOperation(title, [detail], 'Delete', { drawing: () => deleteDrawing(repo, ref) })
-    : (await vscode.window.showWarningMessage(title, { modal: true, detail }, 'Delete')) === 'Delete';
+  const ok =
+    (await confirmInSheet(title, [detail], 'Delete', { drawing: () => deleteDrawing(repo, ref) })) ??
+    (await vscode.window.showWarningMessage(title, { modal: true, detail }, 'Delete')) === 'Delete';
   if (!ok) return;
   const remove = (force: boolean) =>
     repo.undo.record(`Delete ${name}`, [ref], 'keep', () => repo.backend.deleteBranch(name, force), { branches: [name] });

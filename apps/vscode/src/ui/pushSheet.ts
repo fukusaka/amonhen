@@ -159,19 +159,20 @@ export async function pushWithSheet(repo: Repository, request: PushRequest, publ
     : request.force
       ? `Force push ${name}?`
       : `Push ${plural(outgoing.length)} to ${upstream}?`;
-  // メインビューが開いていれば、アプリと同じく 1 枚のシートに（送った後の形の絵つき）
+  // メインビューが開いていて、送った後の形を描けるなら、アプリと同じく 1 枚のシートに（上流の札が手元の先端へ。
+  // Force Push なら上流から消えるコミットを赤で）
   const panel = MainPanel.active;
-  if (panel?.canAsk) {
-    const replacing = request.force || diverged;
-    const preview = await repo.backend.graphPreview<MovePreview>({ op: 'movePreview', from: upstreamRef, to: branch });
-    // 送った後の形（上流の札が手元の先端へ。Force Push なら上流から消えるコミットを赤で）
-    const drawing = moveDrawing(preview, {
-      moving: upstream,
-      kind: 'remote',
-      afterTitle: replacing ? 'After the force push' : 'After the push',
-      lostNote: `removed from ${upstream}`,
-      tone: 'red',
-    });
+  const replacing = request.force || diverged;
+  const drawing = panel?.canAsk
+    ? moveDrawing(await repo.backend.graphPreview<MovePreview>({ op: 'movePreview', from: upstreamRef, to: branch }), {
+        moving: upstream,
+        kind: 'remote',
+        afterTitle: replacing ? 'After the force push' : 'After the push',
+        lostNote: `removed from ${upstream}`,
+        tone: 'red',
+      })
+    : undefined;
+  if (panel && drawing) {
     const opens: (() => Promise<void>)[] = [];
     const list = (listTitle: string, commits: readonly Commit[], tone?: 'red'): SheetList | undefined => {
       if (commits.length === 0) return undefined;
@@ -192,7 +193,10 @@ export async function pushWithSheet(repo: Repository, request: PushRequest, publ
       {
         title,
         lines: diverged
-          ? ['Pull them first, or force push to replace them. Force Push can’t be undone.']
+          ? [
+              'Pull them first, or force push to replace them.',
+              `Force Push: ${upstream} loses ${plural(incoming.length)}.${lease} This can’t be undone.`,
+            ]
           : request.force
             ? [
                 (incoming.length > 0 ? `${upstream} loses ${plural(incoming.length)}.` : `It fails if ${upstream} has moved since you last fetched.`) +

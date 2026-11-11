@@ -1,6 +1,6 @@
 /**
  * Merge の取り込み方を選ばせる（アプリの Merge の確認の「取り込み方」）。選ぶことが確認になる。覚えず、毎回 git の
- * 設定のとおりから始める。メインビューが開いていれば、アプリと同じくシートで、git の設定のとおりのときの前と後の絵と
+ * 設定のとおりから始める。メインビューが開いていて絵を描ければ、アプリと同じくシートで、git の設定のとおりのときの前と後の絵と
  * コンフリクトの見込みを添える（ほかの取り込み方では絵を出さない）
  */
 import * as vscode from 'vscode';
@@ -72,8 +72,8 @@ async function mergePicture(t: MergeTarget): Promise<[Drawing | undefined, strin
 export async function pickMergeMode(title: string, single: boolean, target?: MergeTarget): Promise<MergeMode | undefined> {
   const items = MODES.filter((m) => single || m.mode !== 'fastForwardOnly');
   const panel = MainPanel.active;
-  if (panel?.canAsk) {
-    const [drawing, conflicts] = target ? await mergePicture(target) : [undefined, []];
+  const [drawing, conflicts] = panel?.canAsk && target ? await mergePicture(target) : [undefined, []];
+  if (panel && drawing) {
     const answer = await panel.ask({
       title,
       lines: ['You can undo this.'],
@@ -82,7 +82,7 @@ export async function pickMergeMode(title: string, single: boolean, target?: Mer
         label: m.label.replace(/^\$\([^)]*\) /, ''),
         lines: [m.detail ?? ''],
         // 絵は git の設定のとおりのときの形
-        ...(m.mode === 'git' && drawing ? { drawing } : {}),
+        ...(m.mode === 'git' ? { drawing } : {}),
       })),
       buttons: ['Merge'],
     });

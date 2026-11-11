@@ -225,17 +225,13 @@ async function askApply(
   subjects: string[] | undefined,
 ): Promise<string | undefined> {
   const panel = MainPanel.active;
-  if (subjects && panel?.canAsk) {
-    const [preview, head] = await Promise.all([
-      repo.backend.graphPreview<PickPreview>({ op: 'pickPreview', subjects }),
-      repo.backend.head(),
-    ]);
-    const answer = await panel.ask({
-      title,
-      lines: [how, ...list.split('\n'), status],
-      drawing: pickDrawing(preview, head.branch ? shortName(head.branch) : 'HEAD', 'patches'),
-      buttons,
-    });
+  const [preview, head] =
+    subjects && panel?.canAsk
+      ? await Promise.all([repo.backend.graphPreview<PickPreview>({ op: 'pickPreview', subjects }), repo.backend.head()])
+      : [];
+  const drawing = head && pickDrawing(preview, head.branch ? shortName(head.branch) : 'HEAD', 'patches');
+  if (panel && drawing) {
+    const answer = await panel.ask({ title, lines: [how, ...list.split('\n'), status], drawing, buttons });
     return answer && buttons[answer.index];
   }
   return vscode.window.showInformationMessage(title, { modal: true, detail: `${how}\n\n${list}\n\n${status}` }, ...buttons);

@@ -55,7 +55,8 @@ export async function confirmRewrite(
     });
   }
   const panel = MainPanel.active;
-  if (panel?.canAsk) {
+  const drawing = preview && rebaseDrawing(preview);
+  if (panel?.canAsk && drawing) {
     const answer = await panel.ask({
       title,
       lines: [
@@ -64,7 +65,7 @@ export async function confirmRewrite(
         ...(failure ? [`Couldn’t read what the rewrite will do (${failure}).`] : []),
         'You can undo this.',
       ],
-      drawing: preview && rebaseDrawing(preview),
+      drawing,
       buttons: items.map((i) => i.title),
     });
     const picked = answer && items[answer.index];
