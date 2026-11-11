@@ -594,6 +594,121 @@ button.secondary {
   padding: 4px 12px;
 }
 
+/* 確認のシート（前と後の絵つき） */
+
+.editor.sheet {
+  width: min(760px, 94vw);
+  gap: 10px;
+}
+
+.sheet-lines {
+  color: var(--vscode-descriptionForeground);
+  line-height: 1.5;
+}
+
+.sheet-lines .warning {
+  color: var(--vscode-editorWarning-foreground, var(--vscode-foreground));
+}
+
+.rewrite-drawing {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 4px;
+  background: var(--vscode-editor-background);
+  overflow-x: auto;
+}
+
+.drawing-column {
+  flex: 1;
+  min-width: 0;
+}
+
+.drawing-heading {
+  margin-bottom: 4px;
+  font-size: 0.9em;
+  font-weight: bold;
+  color: var(--vscode-descriptionForeground);
+}
+
+.drawing-arrow {
+  flex: none;
+  align-self: center;
+  font-size: 1.3em;
+  color: var(--vscode-descriptionForeground);
+}
+
+.drawing-body {
+  position: relative;
+}
+
+.drawing-graph {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: visible;
+}
+
+.drawing-line {
+  fill: none;
+  stroke: var(--vscode-descriptionForeground);
+  stroke-opacity: 0.5;
+  stroke-width: 2;
+}
+
+.drawing-line.dashed {
+  stroke-dasharray: 3 3;
+}
+
+.drawing-dot {
+  fill: var(--vscode-descriptionForeground);
+}
+
+.drawing-dot.dim {
+  fill-opacity: 0.5;
+}
+
+.drawing-dot.highlight {
+  fill: var(--vscode-focusBorder);
+}
+
+.drawing-row {
+  position: absolute;
+  right: 0;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  overflow: hidden;
+  font-size: 0.92em;
+}
+
+.drawing-row.gap,
+.drawing-subject.dim,
+.drawing-note {
+  color: var(--vscode-disabledForeground, var(--vscode-descriptionForeground));
+}
+
+.drawing-subject {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.drawing-subject.highlight {
+  font-weight: bold;
+}
+
+.drawing-note {
+  flex: none;
+  margin-left: 0.4em;
+}
+
+.ref.moved {
+  color: var(--vscode-editor-background);
+  background: var(--vscode-charts-green);
+}
+
 /* Working Copy */
 
 .working-copy .split {

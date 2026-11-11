@@ -1,11 +1,13 @@
 /**
  * Rebase と History の編集の前の確認。共有の daemon のコアから書き換える前の見通し（一緒に動くブランチ・残る
  * ブランチ・push 済みのブランチ・コンフリクトの見込み）を読み、modal の詳しい欄に出す。エンジンを使わないときは
- * 見通しなしで確かめる。積み重ねたブランチの扱いを今回だけ設定と逆にできるなら、そのボタンも出す
+ * 見通しなしで確かめる。積み重ねたブランチの扱いを今回だけ設定と逆にできるなら、そのボタンも出す。メインビューが
+ * 開いていれば、その上にシートを重ねて前と後を絵で描く（ネイティブのモーダルには絵を出せないので、文で描く）
  */
 import * as vscode from 'vscode';
 import { drawingLines, previewLines, stackedAlternative, type PreviewTarget } from '../history/rewritePreview.ts';
 import type { Repository } from '../state/repository.ts';
+import { MainPanel } from './mainPanel.ts';
 
 /** 選んだ答え。updateRefs は今回だけの指定（なければ git の `rebase.updateRefs` のとおり） */
 export interface RewriteChoice {
@@ -50,6 +52,22 @@ export async function confirmRewrite(
       title: alternative ? `${ok} (Move the Stacked Branches Too)` : `${ok} (Leave the Stacked Branches)`,
       updateRefs: alternative,
     });
+  }
+  const panel = MainPanel.active;
+  if (panel?.canAsk) {
+    const index = await panel.ask({
+      title,
+      lines: [
+        ...(note ? [note] : []),
+        ...(preview ? previewLines(preview) : []),
+        ...(failure ? [`Couldn’t read what the rewrite will do (${failure}).`] : []),
+        'You can undo this.',
+      ],
+      preview,
+      buttons: items.map((i) => i.title),
+    });
+    const picked = index === undefined ? undefined : items[index];
+    return picked ? { updateRefs: picked.updateRefs } : undefined;
   }
   const choice = await vscode.window.showWarningMessage(title, { modal: true, detail: lines.join('\n') }, ...items);
   return choice ? { updateRefs: choice.updateRefs } : undefined;

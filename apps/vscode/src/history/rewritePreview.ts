@@ -30,14 +30,21 @@ export interface RewritePreview {
 export interface DrawnCommit {
   oid: string;
   subject: string;
+  /** 分かれたところの author の日時（秒）。base だけ */
+  time?: number | null;
 }
 
 export interface RewriteDrawing {
   /** 載せ直すコミット（古い順） */
   picks: DrawnCommit[];
+  /** 省いた載せ直すコミットの数と、新しい順に並べたときの省いたところ */
+  picksMore?: number | null;
+  picksMoreAt?: number | null;
   /** 載せ先で進んだコミット（新しい順、先頭のいくつか）と、ほかにいくつあるか */
   onto: DrawnCommit[];
   ontoMore: number;
+  /** 載せ先で進んだコミットを省いたところ */
+  ontoMoreAt?: number | null;
   /** 分かれたところ */
   base?: DrawnCommit | null;
   /** コミットに付いているブランチ。kind は `local`・`remote` */

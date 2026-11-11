@@ -3,7 +3,7 @@ import { basename } from 'node:path';
 import * as vscode from 'vscode';
 import type { RepositoryManager } from '../state/manager.ts';
 import type { Repository } from '../state/repository.ts';
-import type { HostMessage, ViewName, WebviewMessage } from '../view/protocol.ts';
+import type { HostMessage, Sheet, ViewName, WebviewMessage } from '../view/protocol.ts';
 import { BlameController } from './blameController.ts';
 import { FileHistoryController } from './fileHistoryController.ts';
 import { HistoryController } from './historyController.ts';
@@ -35,6 +35,9 @@ export class MainPanel implements vscode.Disposable {
   private ready = false;
   /** 準備ができる前に求められた画面 */
   private pendingView: ViewName | undefined;
+  /** 答えを待っている確認のシート */
+  private readonly sheets = new Map<number, (index: number | undefined) => void>();
+  private nextSheet = 1;
 
   /** 開いて、view を出す。ref を渡すと History にその ref の履歴を出す */
   static show(extensionUri: vscode.Uri, manager: RepositoryManager, view?: ViewName, ref?: string): MainPanel {
@@ -115,6 +118,24 @@ export class MainPanel implements vscode.Disposable {
     }
   }
 
+  /**
+   * 確認のシートを重ねて、押したボタンの番号（buttons の順）を返す。やめたら undefined。準備ができていなければ
+   * undefined（呼ぶ側はモーダルで確かめる）
+   */
+  async ask(sheet: Omit<Sheet, 'id'>): Promise<number | undefined> {
+    const id = this.nextSheet++;
+    this.panel.reveal(undefined, false);
+    return new Promise((resolve) => {
+      this.sheets.set(id, resolve);
+      this.post({ type: 'sheet', id, ...sheet });
+    });
+  }
+
+  /** シートを出せるか（Webview の準備ができている） */
+  get canAsk(): boolean {
+    return this.ready;
+  }
+
   private watch(repo: Repository | undefined): void {
     this.repo = repo;
     this.panel.title = repo ? `Amon Hen: ${basename(repo.root)}` : 'Amon Hen';
@@ -147,6 +168,10 @@ export class MainPanel implements vscode.Disposable {
         this.settings.setRepository(this.repo);
         break;
       case 'view':
+        break;
+      case 'sheetAnswer':
+        this.sheets.get(message.id)?.(message.index);
+        this.sheets.delete(message.id);
         break;
       case 'wcSelect':
       case 'wcLayout':
@@ -194,6 +219,8 @@ export class MainPanel implements vscode.Disposable {
 
   dispose(): void {
     MainPanel.current = undefined;
+    for (const resolve of this.sheets.values()) resolve(undefined);
+    this.sheets.clear();
     vscode.Disposable.from(...this.disposables).dispose();
     this.panel.dispose();
   }
