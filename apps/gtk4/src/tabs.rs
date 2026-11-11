@@ -1497,6 +1497,69 @@ pub fn switch(tab: &Rc<Tab>, location: PathBuf) {
     reopen(tab, location, None);
 }
 
+/// Activity・Settings などアプリの窓に、アプリの操作のショートカット（New Tab・New Window・Open…・Clone…・
+/// Quick Open…・Repositories・Activity・Settings…・Keyboard Shortcuts・Minimize）を入れる。macOS 版ではこれらは
+/// `AppDelegate` に行くので、どの窓が前でも効く。`map` はその窓の `win` のアクション。
+pub fn add_app_window_actions(map: &impl IsA<gio::ActionMap>, window: &gtk::Window) {
+    type F = fn(&gtk::Window, &gtk::Application);
+    let actions: [(&str, F); 10] = [
+        ("new-tab", |_, app| {
+            show_home(app, front_window());
+        }),
+        ("new-window", |_, app| {
+            show_home(app, None);
+        }),
+        ("open", |_, app| {
+            show_home(app, front_window());
+        }),
+        ("repositories", |_, app| {
+            show_home(app, front_window());
+        }),
+        ("clone", |window, app| {
+            let a = app.clone();
+            crate::repos::clone(
+                window,
+                Rc::new(move |path| {
+                    // clone したものはブックマークにも入れる（リポジトリのタブと同じ）。
+                    crate::bookmarks::add(&path.to_string_lossy(), None);
+                    self::open(&a, path, Place::Tab)
+                }),
+            )
+        }),
+        ("quick-open", |window, app| {
+            let a = app.clone();
+            crate::quickopen::show(
+                Some(window),
+                Rc::new(move |location, place| self::open(&a, location, place)),
+            );
+        }),
+        ("activity", |window, _| match front_window() {
+            Some(host) => crate::activity::Activity::show(&host.window, crate::engine()),
+            None => window.error_bell(),
+        }),
+        ("settings", |window, _| crate::settings::show(window)),
+        ("shortcuts", |window, _| {
+            crate::appmenu::show_shortcuts(window)
+        }),
+        ("minimize", |window, _| window.minimize()),
+    ];
+    for (name, f) in actions {
+        let action = gio::SimpleAction::new(name, None);
+        let w = window.downgrade();
+        action.connect_activate(move |_, _| {
+            let Some(window) = w.upgrade() else { return };
+            let Some(app) = window
+                .application()
+                .or_else(|| gio::Application::default().and_downcast::<gtk::Application>())
+            else {
+                return;
+            };
+            f(&window, &app);
+        });
+        map.add_action(&action);
+    }
+}
+
 /// 最後に前にあったリポジトリの窓（なければ最初の窓）。
 pub fn front_window() -> Option<Rc<RepoWindow>> {
     let last = LAST.with(|l| l.borrow().upgrade());

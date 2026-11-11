@@ -39,6 +39,8 @@ pub struct Parts {
     pub refs: Rc<RefCell<Option<Arc<RefsSnapshot>>>>,
     /// History・ref・status を読み直す。
     pub reload: Rc<dyn Fn()>,
+    /// Refresh を見張りに知らせる（Events の行と mailmap の確かめ）。
+    pub refreshed: Rc<dyn Fn()>,
     /// リポジトリを開く（この窓のタブか、新しい窓に）。
     pub open: crate::repobrowser::Open,
     /// History でそのコミットを選ぶ。
@@ -485,6 +487,7 @@ fn handlers() -> Vec<(&'static str, Handler)> {
             "refresh",
             Box::new(|p| {
                 (p.reload)();
+                (p.refreshed)();
                 crate::github::reload(&p.actions);
             }),
         ),
@@ -545,7 +548,16 @@ fn handlers() -> Vec<(&'static str, Handler)> {
                 crate::worktrees::new_worktree(&p.actions, &p.worktrees, start);
             }),
         ),
-        ("prune-worktrees", run(json!({ "op": "worktreePrune" }))),
+        (
+            "prune-worktrees",
+            Box::new(|p| {
+                crate::worktrees::perform_in_opened(
+                    &p.actions,
+                    &p.worktrees,
+                    json!({ "op": "worktreePrune" }),
+                )
+            }),
+        ),
         ("set-upstream", Box::new(set_upstream)),
         (
             "new-tag",
@@ -1629,7 +1641,7 @@ fn repository_settings(p: &Rc<Parts>) {
 }
 
 /// ショートカットの一覧（メニューごと。表の操作は表から。リポジトリのページからも使う）。
-pub fn show_shortcuts(parent: &gtk::ApplicationWindow) {
+pub fn show_shortcuts(parent: &impl IsA<gtk::Window>) {
     let accels = accels();
     // アプリに入れたキーの最初のもの（メニューに出るもの。タブの操作は `tabs::install_accels` が後から入れる）。
     let app = parent.application();

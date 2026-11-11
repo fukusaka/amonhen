@@ -67,6 +67,8 @@ final class RepositorySettingsModel {
     var gitProblem: String?
     /// このリポジトリを扱う git の版（SSH 先なら SSH 先の git）。読めなければ nil。
     private(set) var gitVersion: String?
+    /// 最初の読み込みが終わった（読めなくても）。それまでは git の版がなくても「ない」とは言わない。
+    private(set) var readOnce = false
     /// rebase で積み重ねたブランチを一緒に動かせるか（git 2.38 から）。
     private(set) var updateRefsSupported = true
     /// `rr-cache` があるか（`rerere.enabled` が書かれていなければ、git はこれがあるとき rerere を使う）。
@@ -240,8 +242,10 @@ final class RepositorySettingsModel {
                     exclude = ignore.1
                 }
                 savedIgnore = ignore
+                readOnce = true
             } catch {
                 self.error = "\(error)"
+                readOnce = true
             }
         }
     }
@@ -1723,9 +1727,17 @@ private struct TemplateRow: View {
         return L("None")
     }
 
+    /// 設定の値そのもの（共有のテンプレートの名前か、ファイルのパス）を言葉にする。ⓘ の「ここで上書きしなければ」に使う。
+    private func describeValue(_ value: String) -> String {
+        if value.isEmpty { return L("None") }
+        if templates.contains(where: { $0.name == value }) { return value }
+        if Self.isOwn(value, model) { return L("This repository’s own") }
+        return value
+    }
+
     var body: some View {
         SettingRow(model: model, question: L("Message template"), help: "",
-                   keys: [decidingKey, decidingKey == Self.libraryKey ? Self.fileKey : Self.libraryKey], describe: label) {
+                   keys: [decidingKey, decidingKey == Self.libraryKey ? Self.fileKey : Self.libraryKey], describe: describeValue) {
             Picker("", selection: Binding(get: { current }, set: { choose($0) })) {
                 Text(L("None")).tag("")
                 if !templates.isEmpty {

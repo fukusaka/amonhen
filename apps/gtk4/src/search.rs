@@ -852,7 +852,10 @@ impl Inner {
                         count = rows.len(),
                         percent = (done * 100.0) as u32
                     ));
-                    this.view.set_matches(Rc::new(rows));
+                    // 絞り込みを出したまま元の History で探しているときは、行の番号が合わないので塗らない。
+                    if !this.filtered.get() {
+                        this.view.set_matches(Rc::new(rows));
+                    }
                 }
                 glib::ControlFlow::Continue
             });
@@ -977,7 +980,13 @@ impl Inner {
         if selected.is_some() {
             self.index.set(selected);
         }
-        let index = self.index.get().filter(|&i| i < total);
+        // まだどの一致にも移っていなければ（選び直さずに探し直したとき）、選んでいる行から下でいちばん近い一致
+        // （macOS 版の `runSearch` と同じ。macOS 版はいつも番目を出す）。
+        let index = self.index.get().filter(|&i| i < total).or_else(|| {
+            let from = self.view.selected().unwrap_or(0);
+            (total > 0).then(|| nearest_index(&matches, from, self.filtered.get()))
+        });
+        self.index.set(index);
         self.count.set_text(&count_text(index, total));
     }
 }
@@ -989,12 +998,19 @@ fn next_index(index: Option<usize>, step: i32, count: usize) -> usize {
     (from + i64::from(step)).rem_euclid(count) as usize
 }
 
+/// 選んでいる行 `from` から下で、いちばん近い一致の番目（なければ先頭）。一致だけを出しているなら行がそのまま番目。
+fn nearest_index(matches: &[u32], from: u32, filtered: bool) -> usize {
+    if filtered {
+        return (from as usize).min(matches.len().saturating_sub(1));
+    }
+    matches.iter().position(|&r| r >= from).unwrap_or(0)
+}
+
 /// 件数の欄の文字（macOS 版と同じく「N / M」か「No Matches」）。
 fn count_text(index: Option<usize>, total: usize) -> String {
     match index {
-        _ if total == 0 => tr!("No Matches"),
-        Some(i) => format!("{} / {total}", i + 1),
-        None => tr!("{count} matches", count = total),
+        Some(i) if total > 0 => format!("{} / {total}", i + 1),
+        _ => tr!("No Matches"),
     }
 }
 
@@ -1055,7 +1071,9 @@ fn focus_in_history(window: &gtk::Window, bar: &gtk::SearchBar) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{SCOPES, count_text, grouped, next_index, searches_contents, with_prefix};
+    use super::{
+        SCOPES, count_text, grouped, nearest_index, next_index, searches_contents, with_prefix,
+    };
 
     #[test]
     fn steps_from_the_last_visited_match() {
@@ -1064,6 +1082,16 @@ mod tests {
         assert_eq!(next_index(Some(0), 1, 3), 1);
         assert_eq!(next_index(Some(2), 1, 3), 0);
         assert_eq!(next_index(Some(0), -1, 3), 2);
+    }
+
+    #[test]
+    fn nearest_match_is_at_or_after_the_selection() {
+        assert_eq!(nearest_index(&[2, 5, 9], 0, false), 0);
+        assert_eq!(nearest_index(&[2, 5, 9], 5, false), 1);
+        assert_eq!(nearest_index(&[2, 5, 9], 6, false), 2);
+        assert_eq!(nearest_index(&[2, 5, 9], 10, false), 0);
+        assert_eq!(nearest_index(&[2, 5, 9], 1, true), 1);
+        assert_eq!(nearest_index(&[2, 5, 9], 7, true), 2);
     }
 
     #[test]

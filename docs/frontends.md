@@ -28,6 +28,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 - Files (the desktop's file manager) instead of Finder; external editors are found by their desktop entries.
 - The header bar shows icons only, with tooltips; toolbar customization has no icon/text choice.
 - History search is GNOME's search bar: a toggle in the header bar and Ctrl+F reveal a bar above History, and typing in History opens it with what was typed (type-to-search; not with Space, arrows or Ctrl/Alt keys). With a Japanese input method on, the first key stays Latin, because the input method only works once the field has focus; use Ctrl+F first to type Japanese.
+- A click outside an open popover (a CI popover, a menu) only closes it, as with any GTK popover; on macOS the same click also reaches what was clicked, so opening another popover takes one click there and two in GTK4.
 - Destructive confirmations: Cancel comes first and takes Return and Esc, and the destructive button is red; Cancel isn't highlighted.
 - Keyboard shortcuts that GNOME takes are moved or left out (see Keyboard shortcuts below).
 - A window lists the keyboard shortcuts, as GNOME apps have; macOS shows them in its menus.

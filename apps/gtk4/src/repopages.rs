@@ -285,6 +285,10 @@ pub(crate) fn remote_kind(url: &str) -> String {
     {
         return tr!("A path");
     }
+    // Windows のドライブ（C:/x・C:\x）は git でもパス。
+    if is_drive_path(url) {
+        return tr!("A path");
+    }
     let url_host = |rest: &str| {
         let authority = rest.split('/').next().unwrap_or_default();
         let host = authority.rsplit('@').next().unwrap_or_default();
@@ -313,6 +317,12 @@ pub(crate) fn remote_kind(url: &str) -> String {
     } else {
         tr!("Other")
     }
+}
+
+/// `C:/x`・`C:\x` の形（1 文字のドライブとコロン）か。
+fn is_drive_path(url: &str) -> bool {
+    let b = url.as_bytes();
+    b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':'
 }
 
 fn remove_remote(s: &Rc<RepoSettings>, name: String) {
@@ -1685,4 +1695,18 @@ fn track_pattern(s: &Rc<RepoSettings>) {
             );
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drive_paths_are_paths() {
+        assert_eq!(remote_kind("C:/src/x"), remote_kind("/src/x"));
+        assert_eq!(remote_kind("c:\\src\\x"), remote_kind("/src/x"));
+        assert_eq!(remote_kind("C:"), remote_kind("/src/x"));
+        assert_ne!(remote_kind("host:src/x"), remote_kind("/src/x"));
+        assert_ne!(remote_kind("me@h:src/x"), remote_kind("/src/x"));
+    }
 }

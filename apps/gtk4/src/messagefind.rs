@@ -362,7 +362,7 @@ impl MessageFind {
 }
 
 /// `text` の中の `query` の一致（大文字・小文字を区別しない。バイトの位置の始まりと終わり）。
-fn find_all(text: &str, query: &str) -> Vec<(usize, usize)> {
+pub(crate) fn find_all(text: &str, query: &str) -> Vec<(usize, usize)> {
     let fold = |c: char| c.to_lowercase().next().unwrap_or(c);
     let hay: Vec<(usize, char)> = text.char_indices().map(|(i, c)| (i, fold(c))).collect();
     let needle: Vec<char> = query.chars().map(fold).collect();

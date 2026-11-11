@@ -1188,10 +1188,7 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
                 // 同じ名前のままなら何もしない（下で元のグループを消すと、グループがなくなる）。
                 guard let self, let new = await self.ask(L("Rename Group"), message: L("Group name"), initial: name), new != name
                 else { return }
-                let members = Bookmarks.shared.data.items.filter { $0.group == name }.map(\.path)
-                Bookmarks.shared.addGroup(new)
-                for path in members { Bookmarks.shared.move(path, to: new) }
-                Bookmarks.shared.removeGroup(name)
+                Bookmarks.shared.renameGroup(name, to: new)
                 // 選んでいたグループなら、新しい名前のグループを選んだままに（「すべて」に戻さない）。
                 if self.category == .group(name) {
                     self.category = .group(new)

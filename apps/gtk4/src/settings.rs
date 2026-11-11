@@ -83,6 +83,8 @@ pub mod items {
     /// GitHub の CI の状態。
     pub const CI: u32 = 32;
     pub const ALL: u32 = REFS | AUTHOR | DATE | ID | SIGNATURE | CI;
+    /// 作者・日時の行に出すもの。
+    pub const META: u32 = AUTHOR | DATE | ID;
 }
 
 /// History の行に出す項目（[`items`] のビット）。
@@ -786,6 +788,8 @@ pub fn show(near: &impl IsA<gtk::Widget>) {
         }
     });
     actions.add_action(&close);
+    // アプリの操作のショートカット（Ctrl+Shift+O など。macOS 版ではどの窓からも効く）。
+    crate::tabs::add_app_window_actions(&actions, window.upcast_ref());
     window.insert_action_group("win", Some(&actions));
     window.set_display(&WidgetExt::display(near));
     // 大きさは覚えておく（macOS 版は位置も。GTK では窓の位置はウィンドウマネージャーが決める）。

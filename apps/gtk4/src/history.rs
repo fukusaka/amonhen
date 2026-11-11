@@ -128,10 +128,10 @@ impl Default for Display {
 }
 
 impl Display {
-    /// 1 行で出すか。作者・日時の行に出す項目が 1 つもなくても、行の高さは変えない（macOS 版と同じく、行の高さは
-    /// One Line per Commit だけで決まる）。
+    /// 実際に 1 行で出すか: 1 行にしたか、作者・日時の行に出す項目が 1 つもないとき（macOS 版の
+    /// `oneLineHistoryRows`）。
     fn compact(&self) -> bool {
-        self.one_line
+        self.one_line || self.items & items::META == 0
     }
 }
 
@@ -2285,6 +2285,19 @@ mod tests {
         assert_eq!(neighbor_chunks(9000.0, 1000.0, 10.0, 1000), vec![2]);
         assert_eq!(neighbor_chunks(0.0, 100.0, 10.0, 100), Vec::<u32>::new());
         assert_eq!(neighbor_chunks(0.0, 100.0, 10.0, 0), Vec::<u32>::new());
+    }
+
+    #[test]
+    fn rows_are_one_line_without_meta_items() {
+        let display = |one_line, items| Display {
+            one_line,
+            items,
+            highlight_ancestors: true,
+        };
+        assert!(!display(false, items::ALL).compact());
+        assert!(display(true, items::ALL).compact());
+        assert!(display(false, items::REFS | items::SIGNATURE | items::CI).compact());
+        assert!(!display(false, items::DATE).compact());
     }
 
     #[test]

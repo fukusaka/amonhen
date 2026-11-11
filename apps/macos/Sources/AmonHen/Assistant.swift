@@ -458,8 +458,12 @@ enum Assistant {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = args
-        // リポジトリの CLAUDE.md などを読ませないよう、空の場所で動かす。
-        process.currentDirectoryURL = FileManager.default.temporaryDirectory
+        // リポジトリの CLAUDE.md などを読ませないよう、空の場所で動かす（共有の一時フォルダではなく、毎回作って消す）。
+        let emptyDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("amonhen-assist-\(ProcessInfo.processInfo.processIdentifier)-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: emptyDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: emptyDir) }
+        process.currentDirectoryURL = emptyDir
         var env = ProcessInfo.processInfo.environment
         env["PATH"] = "\(NSHomeDirectory())/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:" + (env["PATH"] ?? "")
         process.environment = env
@@ -468,8 +472,19 @@ enum Assistant {
         process.standardOutput = output
         process.standardError = errors
         try process.run()
-        input.fileHandleForWriting.write(Data(prompt.utf8))
-        try? input.fileHandleForWriting.close()
+        // エラーは別のスレッドで読む（終わってから読むと、たくさん書く CLI が詰まって止まる）。
+        let errorData = Task.detached(priority: .userInitiated) {
+            errors.fileHandleForReading.readDataToEndOfFile()
+        }
+        // プロンプトも別のスレッドで書く（大きい差分だと、CLI が読むまで窓が止まる）。読まずに終わった CLI で
+        // SIGPIPE を受けて落ちないよう、書けなければエラーにする。
+        let writer = input.fileHandleForWriting
+        _ = fcntl(writer.fileDescriptor, F_SETNOSIGPIPE, 1)
+        let data = Data(prompt.utf8)
+        DispatchQueue.global(qos: .userInitiated).async {
+            try? writer.write(contentsOf: data)
+            try? writer.close()
+        }
 
         let reader = output.fileHandleForReading
         // 取り消したら（パネルを閉じたら）CLI を止める。読み終えるのを待たずに終わり、結果を覚えない。
@@ -503,8 +518,8 @@ enum Assistant {
             running.terminate()
         }
         process.waitUntilExit()
+        let errorText = String(decoding: await errorData.value, as: UTF8.self)
         try Task.checkCancellation()
-        let errorText = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
         let result = (collected.1 ?? collected.0).trimmingCharacters(in: .whitespacesAndNewlines)
         guard process.terminationStatus == 0, !result.isEmpty else {
             // CLI が出力の JSON に書いた失敗の文言（ログインしていない、など）を、stderr・終了コードより先に出す。

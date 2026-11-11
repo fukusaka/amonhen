@@ -1353,6 +1353,7 @@ fn build_tab(
         tx.clone(),
     );
     let rd = Rc::downgrade(&range_diff);
+    let pg = pages.downgrade();
     worktrees.connect_edit(move |repo| {
         wc.set_repo(repo.clone());
         st.set_repo(repo.clone());
@@ -1366,6 +1367,17 @@ fn build_tab(
         }
         a.refresh_undo();
         lf();
+        // 設定のページを出していれば、すぐその worktree のものに作り直す（同じページのまま。macOS 版と同じ）。
+        // サイドバーのメニューから替えたときは、そのメニューを行から外し終えてから（`menu::popup` の外す処理は
+        // ふつうの idle なので、それより後の LOW で。先にサイドバーを作り直すと、メニューが付いたままの行が消えて落ちる）。
+        if let Some(pages) = pg.upgrade()
+            && pages.visible_child_name().as_deref() == Some("settings")
+        {
+            glib::idle_add_local_full(glib::Priority::LOW, move || {
+                let _ = WidgetExt::activate_action(&pages, "win.repository-settings", None);
+                glib::ControlFlow::Break
+            });
+        }
         let tx = edit_tx.clone();
         std::thread::spawn(move || reload_status(&repo, &tx));
     });
@@ -1849,6 +1861,14 @@ fn build_tab(
         let (view, shaper) = (view.clone(), Rc::downgrade(&shaper));
         Rc::new(move |id| select_in_history(&view, id, &Rc::new(Cell::new(0)), &shaper))
     };
+    // 見張りからの変化の知らせ（裏の糸が受ける）。
+    let (changed_tx, changed_rx) = std::sync::mpsc::channel();
+    let refreshed: Rc<dyn Fn()> = {
+        let tx = changed_tx.clone();
+        Rc::new(move || {
+            let _ = tx.send(REFRESH);
+        })
+    };
     let buttons = appmenu::install(appmenu::Parts {
         app: app.clone(),
         anchor: tab.root.clone(),
@@ -1861,6 +1881,7 @@ fn build_tab(
         view: view.clone(),
         refs: refs.clone(),
         reload: reload.clone(),
+        refreshed,
         open: open_at,
         go_to,
         range_diff: range_diff_opener.clone(),
@@ -1968,8 +1989,7 @@ fn build_tab(
         });
     }
     let order = settings::history_order();
-    // 見張りからの変化の知らせ（裏の糸が受ける）。タブを閉じたら、知らせを受ける糸と下の受け手を止める。
-    let (changed_tx, changed_rx) = std::sync::mpsc::channel();
+    // タブを閉じたら、見張りの知らせを受ける糸と下の受け手を止める。
     {
         let (stop, rx) = (changed_tx.clone(), rx.clone());
         tab.connect_close(move || {
@@ -2826,6 +2846,10 @@ fn build_tab(
 /// 見張りの知らせの糸を止める知らせ（タブを閉じたとき）。
 const STOP: u32 = u32::MAX;
 
+/// View > Refresh の知らせ: 変化をすべて Events に書き、mailmap を確かめる（読み直しは Refresh がする。macOS 版の
+/// `refreshRepository` と同じ）。
+const REFRESH: u32 = 1 << 31;
+
 /// 詳細の欄をメッセージの高さに合わせる（40 から右の列の半分まで。残りは欄の中でスクロール。macOS 版と同じ）。
 /// 窓が開いた直後は大きさがまだ決まっていないので、決まったフレームで合わせる。
 fn fit_details(right: &gtk::Paned, details: Rc<Details>) {
@@ -3471,7 +3495,12 @@ fn load(
         if bits & STOP == STOP || tx.is_closed() {
             return;
         }
-        let changes = Changes(bits);
+        let changes = Changes(bits & !REFRESH);
+        let logged = if bits & REFRESH != 0 {
+            Changes(Changes::REFS.0 | Changes::INDEX.0 | Changes::WORKTREE.0 | Changes::CONFIG.0)
+        } else {
+            changes
+        };
         let mut what = Vec::new();
         for (bit, name) in [
             (Changes::REFS, "ref".to_owned()),
@@ -3479,13 +3508,13 @@ fn load(
             (Changes::WORKTREE, tr!("working tree")),
             (Changes::CONFIG, tr!("config")),
         ] {
-            if changes.contains(bit) {
+            if logged.contains(bit) {
                 what.push(name);
             }
         }
         if !what.is_empty() {
             // 裏のタブかは受け手が見る（作業ツリーの読み直しは前に出るまで待つ）。
-            let worktree = changes.contains(Changes::INDEX) || changes.contains(Changes::WORKTREE);
+            let worktree = logged.contains(Changes::INDEX) || logged.contains(Changes::WORKTREE);
             let text = tr!("Changed: {what}", what = what.join(&tr!(", ")));
             let _ = tx.send_blocking(Event::Changed(repo_name(&repo), text, worktree));
         }

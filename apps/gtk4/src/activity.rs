@@ -549,6 +549,8 @@ impl Activity {
             }
         });
         window.add_action(&close);
+        // アプリの操作のショートカット（Ctrl+,・Ctrl+Shift+O など。macOS 版ではどの窓からも効く）。
+        crate::tabs::add_app_window_actions(&window, window.upcast_ref());
         // どの窓のものでもない（アプリに 1 つ。macOS 版と同じ）。最初は開いた窓の画面に出す。
         window.set_display(&WidgetExt::display(parent));
         // 大きさは覚えておく（macOS 版は位置も。GTK では窓の位置はウィンドウマネージャーが決める）。

@@ -473,7 +473,14 @@ impl Actions {
                 .build();
             scrolled.add_css_class("frame");
             sheet.add(&scrolled);
-            sheet.buttons(&tr!("Delete"), true, None);
+            // 入力は Cancel に置く（Return で取り消す。macOS 版と同じ）。GTK のままでは一覧に入り、Return が効かない。
+            let cancel = sheet.button(&tr!("Cancel"), crate::sheets::Response::Cancel, None);
+            sheet.button(
+                &tr!("Delete"),
+                crate::sheets::Response::Ok,
+                Some(crate::sheets::Style::Destructive),
+            );
+            cancel.grab_focus();
             if sheet.run().await == crate::sheets::Response::Ok {
                 this.perform_in(
                     target.repo.clone(),

@@ -14,8 +14,8 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
     private let searchItem = NSSearchToolbarItem(itemIdentifier: .search)
     /// 検索欄で ⏎ を押した（History を探す）。
     var onSearch: ((String) -> Void)?
-    /// 検索欄で ⇧↩: 前の一致へ（-1）。
-    var onSearchStep: ((Int) -> Void)?
+    /// 検索欄で ⇧↩: 欄の問い合わせと、前の一致へ（-1）。
+    var onSearchStep: ((String, Int) -> Void)?
     private let undoItem = NSToolbarItem(itemIdentifier: .undo)
     /// Pull・Push は ▾ で選ばせず、押すと確認のシート（取り込み方もそこで選ぶ）。
     private let pushItem = NSToolbarItem(itemIdentifier: .push)
@@ -165,11 +165,12 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
     @objc private func searchSubmitted() {
         // ⇧↩ は前の一致へ（↩ は、同じ問い合わせなら次の一致へ）。ツールバーの検索欄はキーを横取りできないので、
         // 押されたときの修飾キーで見分ける。
+        let query = searchItem.searchField.stringValue.trimmingCharacters(in: .whitespaces)
         if let event = NSApp.currentEvent, event.type == .keyDown, event.modifierFlags.contains(.shift) {
-            onSearchStep?(-1)
+            onSearchStep?(query, -1)
             return
         }
-        onSearch?(searchItem.searchField.stringValue.trimmingCharacters(in: .whitespaces))
+        onSearch?(query)
     }
 
     @objc private func insertSearchPrefix(_ sender: NSMenuItem) {

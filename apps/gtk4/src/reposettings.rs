@@ -94,6 +94,8 @@ pub(crate) struct State {
     /// リポジトリの形（shallow clone・partial clone・sparse checkout・maintenance）。このリポジトリの段だけ。
     pub form: Option<crate::repoform::Form>,
     pub loaded: bool,
+    /// 最初の読み込みが終わった（読めなくても）。それまでは git の版がなくても「ない」とは言わない。
+    pub read_once: bool,
 }
 
 /// 設定の書き換え 1 つ（`new` が None なら消す。`Some("")` は空の値を書く）。
@@ -844,7 +846,11 @@ impl RepoSettings {
             let w = Rc::downgrade(&this);
             shortcuts.add_shortcut(gtk::Shortcut::new(
                 gtk::ShortcutTrigger::parse_string(accel),
-                Some(gtk::CallbackAction::new(move |_, _| {
+                Some(gtk::CallbackAction::new(move |page, _| {
+                    // 窓全体で受けるので、ページを隠している間（History を出している・ほかの SSH 先）は効かせない。
+                    if !page.is_mapped() {
+                        return glib::Propagation::Proceed;
+                    }
                     if let Some(s) = w.upgrade() {
                         if redo { s.redo() } else { s.undo() }
                     }
@@ -940,7 +946,13 @@ impl RepoSettings {
             }
             match result {
                 Ok(loaded) => s.apply(loaded),
-                Err(e) => s.show_error(Some(&e)),
+                Err(e) => {
+                    s.show_error(Some(&e));
+                    if !s.state.borrow().read_once {
+                        s.state.borrow_mut().read_once = true;
+                        s.refresh();
+                    }
+                }
             }
             let after: Vec<AfterLoad> = s.after_load.take();
             for f in after {
@@ -1001,6 +1013,7 @@ impl RepoSettings {
                 )
             });
             st.loaded = true;
+            st.read_once = true;
         }
         self.refresh();
         if !self.signing_loaded.replace(true) {
@@ -2637,17 +2650,19 @@ pub fn show(
 ) {
     let Some(open) = open_of(slot) else { return };
     let current = open.1.borrow().clone();
-    if let Some(settings) = current.filter(|s| Arc::ptr_eq(&s.repo, &repo)) {
+    if let Some(settings) = current.as_ref().filter(|s| Arc::ptr_eq(&s.repo, &repo)) {
         settings.load();
         if let Some(page) = page {
             settings.select(page);
         }
         return;
     }
+    // worktree を替えて作り直すときは、出していたページのまま（macOS 版と同じ）。
+    let shown = current.and_then(|s| s.stack.visible_child_name());
     let settings = RepoSettings::new(repo, location, Level::Repository);
     settings.connect_change(move || on_change());
     settings.connect_operation(operate);
-    if let Some(page) = page {
+    if let Some(page) = page.or(shown.as_deref()) {
         settings.select(page);
     }
     if let Ok(script) = std::env::var("AMONHEN_SETTINGS_SCRIPT") {

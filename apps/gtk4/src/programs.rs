@@ -196,27 +196,33 @@ pub fn page(s: &Rc<RepoSettings>) -> gtk::ScrolledWindow {
         rows.push(config_row(s, name, keys, found.clone()));
     }
     let widget = crate::reposettings::page(&[section(None, &rows)]);
-    // 候補は裏で探す（版を読むのにプログラムを動かすので）。探し終えたら欄を出し直す。
+    // 候補は裏で探す（版を読むのにプログラムを動かすので）。探し終えたら欄を出し直す。入れ替えたり消したりした
+    // プログラムを拾うよう、ページを出すたびに探す（macOS 版と同じ）。
     let (repo, w) = (s.repo.clone(), s.weak());
-    glib::spawn_future_local(async move {
-        let names = ["git", "gpg", "ssh-keygen", "gpgsm"];
-        let result = gtk::gio::spawn_blocking(move || {
-            names
-                .iter()
-                .map(|&name| {
-                    let info =
-                        crate::reposettings::call(&repo, &json!({"op": "programs", "name": name}))
-                            .unwrap_or_default();
-                    (name, candidates(&info))
-                })
-                .collect::<HashMap<_, _>>()
-        })
-        .await
-        .unwrap_or_default();
-        found.replace(result);
-        if let Some(s) = w.upgrade() {
-            s.refresh();
-        }
+    widget.connect_map(move |_| {
+        let (repo, w, found) = (repo.clone(), w.clone(), found.clone());
+        glib::spawn_future_local(async move {
+            let names = ["git", "gpg", "ssh-keygen", "gpgsm"];
+            let result = gtk::gio::spawn_blocking(move || {
+                names
+                    .iter()
+                    .map(|&name| {
+                        let info = crate::reposettings::call(
+                            &repo,
+                            &json!({"op": "programs", "name": name}),
+                        )
+                        .unwrap_or_default();
+                        (name, candidates(&info))
+                    })
+                    .collect::<HashMap<_, _>>()
+            })
+            .await
+            .unwrap_or_default();
+            found.replace(result);
+            if let Some(s) = w.upgrade() {
+                s.refresh();
+            }
+        });
     });
     widget
 }
@@ -439,6 +445,8 @@ fn git_row(
         revert.set_can_focus(chosen);
     });
     reload();
+    // ほかで選び直した・消えた git を拾うよう、ページを出すたびに読み直す（macOS 版と同じ）。
+    widget.connect_map(move |_| reload());
     widget.upcast()
 }
 
