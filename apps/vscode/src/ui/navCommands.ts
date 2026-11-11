@@ -55,7 +55,9 @@ export function registerNavCommands(manager: RepositoryManager, mergedBy: Merged
         await runAction(repo, {
           label: `$(git-merge) Merge ${shortName(ref)} into ${shortName(head)}`,
           // 取り込み方を選ぶことが確認になる
-          confirm: async () => (mode = await pickMergeMode(`Merge ${shortName(ref)} into ${shortName(head)}?`, true)) !== undefined,
+          confirm: async () =>
+            (mode = await pickMergeMode(`Merge ${shortName(ref)} into ${shortName(head)}?`, true, { repo, theirs: ref, ours: head })) !==
+            undefined,
           run: () => mergeInto(repo.backend, repo.undo, ref, head, mode),
         });
       },

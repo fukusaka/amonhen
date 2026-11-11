@@ -63,7 +63,8 @@ async function mergeRevs(repo: Repository, revs: string[], head: string | undefi
     let mode: MergeMode | undefined;
     await runAction(repo, {
       label: `$(git-merge) Merge ${shortName(ref)} into ${target}`,
-      confirm: async () => (mode = await pickMergeMode(`Merge ${shortName(ref)} into ${target}?`, true)) !== undefined,
+      confirm: async () =>
+        (mode = await pickMergeMode(`Merge ${shortName(ref)} into ${target}?`, true, { repo, theirs: ref, ours: head })) !== undefined,
       run: () => mergeInto(repo.backend, repo.undo, ref, head, mode),
     });
     return;
