@@ -101,6 +101,20 @@ export function openSheet(sheet: Sheet): void {
   };
   document.addEventListener('keydown', keys, true);
   document.body.append(overlay);
+  // 選び直してもシートの大きさが変わらないよう、絵の高さをいちばん高いものに合わせる（アプリと同じ）
+  if (sheet.choices?.some((c) => c.drawing)) {
+    const shown = choice;
+    let tallest = 0;
+    sheet.choices.forEach((_, i) => {
+      choice = i;
+      show();
+      tallest = Math.max(tallest, picture.scrollHeight);
+    });
+    choice = shown;
+    show();
+    // 低い画面では、これまでどおり絵の中でスクロールする
+    picture.style.minHeight = `min(${tallest}px, 40vh)`;
+  }
   (items[0]?.disabled ? cancel : items[0])?.focus();
   open = { id: sheet.id, close: () => answer() };
 }
