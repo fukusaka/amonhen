@@ -478,7 +478,7 @@ Drop the two lists, Staged and Unstaged, and put all changed files in one list, 
 | Amend | When turned on, fill in the previous message and show "the difference from HEAD" above the diff. Warn if already pushed |
 | hooks | Show the progress of pre-commit and other output in a sheet; on failure, keep the output and do not clear the message |
 | AI | "Suggest a message" (from the staged diff). See below |
-| Reason when disabled | When Commit cannot be clicked, show the reason next to the button ("No staged files") |
+| Reason when disabled | When Commit cannot be clicked, its tooltip says why ("No files are checked", "Write a commit message", "Committing…") |
 
 ### Fine-grained staging in the diff on the right
 

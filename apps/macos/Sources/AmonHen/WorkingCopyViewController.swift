@@ -968,6 +968,9 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         let count = stagedCount
         // コミットしている間は押せない（2 回目の ⌘↩ が、もう 1 つ git commit を始めないように）。
         commitButton.isEnabled = !committing && !(count == 0 && amend.state == .off) && !composedMessage.isEmpty
+        // 押せないときは、ツールチップでわけを言う（docs/ux.md の決まり）。
+        commitButton.toolTip = commitDisabledReason(staged: count, amend: amend.state == .on)
+            ?? L("Commit the checked files (⌘↩)")
         // ボタンの数や名前が変わると幅が変わるので、並べ直す。
         diffBar?.needsLayout = true
         commitButton.title = amend.state == .on ? "Amend Commit"
@@ -976,6 +979,15 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         let length = summary.stringValue.count
         summaryCount.stringValue = length == 0 ? "" : "\(length)"
         summaryCount.textColor = length > 72 ? .systemOrange : length > 50 ? .systemYellow : .tertiaryLabelColor
+    }
+
+    /// Commit を押せないわけ（押せるときは nil）。
+    private func commitDisabledReason(staged: Int, amend: Bool) -> String? {
+        if committing { return L("Committing…") }
+        var reasons: [String] = []
+        if staged == 0 && !amend { reasons.append(L("No files are checked")) }
+        if composedMessage.isEmpty { reasons.append(L("Write a commit message")) }
+        return reasons.isEmpty ? nil : reasons.joined(separator: "\n")
     }
 
     /// 次のコミットに含めるファイルの数。

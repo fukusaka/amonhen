@@ -832,6 +832,9 @@
 "Changes" = "変更";
 "Description (optional)" = "Description（任意）";
 "Commit the checked files (⌘↩)" = "チェックしたファイルをコミット（⌘↩）";
+"Committing…" = "コミットしています…";
+"No files are checked" = "チェックしたファイルがありません";
+"Write a commit message" = "コミットメッセージを書いてください";
 "Suggest a message with AI" = "AI でメッセージを提案";
 "AI: suggest a commit message from the staged changes" = "AI: stage 済みの変更からコミットメッセージを提案する";
 "Insert the message of a recent commit (⌥↑ and ⌥↓ in the Summary field also work)" = "最近のコミットのメッセージを入れる（件名の欄で ⌥↑・⌥↓ でも呼び出せる）";

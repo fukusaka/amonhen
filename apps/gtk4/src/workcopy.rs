@@ -3330,6 +3330,24 @@ impl Inner {
         let amend = self.amend.is_active();
         let can_commit = !self.is_committing() && has_message && (staged || amend);
         self.commit.set_sensitive(can_commit);
+        // 押せないときは、ツールチップでわけを言う（docs/ux.md の決まり。macOS 版と同じ）。
+        let mut reasons = Vec::new();
+        if self.is_committing() {
+            reasons.push(tr!("Committing…"));
+        } else {
+            if !staged && !amend {
+                reasons.push(tr!("No files are checked"));
+            }
+            if !has_message {
+                reasons.push(tr!("Write a commit message"));
+            }
+        }
+        let tooltip = if reasons.is_empty() {
+            tr!("Commit the checked files (Ctrl+Return)")
+        } else {
+            reasons.join("\n")
+        };
+        self.commit.set_tooltip_text(Some(&tooltip));
         // 含めるファイルの数も出す（macOS 版と同じ）。
         let label = match (amend, staged_files) {
             (true, _) => "Amend Commit".to_owned(),

@@ -231,7 +231,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Commit and Push, Amend | ✓ | ✓ | ✓ | △ | CLI: `commit -m … --amend`. |
 | Fixup / Squash Commit For | ✓ | ✓ | ✓ | n/a |  |
 | Hooks output sheet | ✓ | ✓ | ✓ | n/a |  |
-| Reason shown when Commit is disabled | — | — | △ | n/a | VSCode: A warning when committing is blocked. |
+| Reason shown when Commit is disabled | ✓ | ✓ | △ | n/a | macOS, GTK4: In the button's tooltip.<br>VSCode: A warning when committing is blocked. |
 | Combined HEAD → working tree diff with line and hunk checks | ✓ | ✓ | ✓ | ✓ | VSCode: With the engine; without it, line staging on separate unstaged and staged diffs.<br>CLI: `diff --combined`, `stage --rows`. |
 | Range selection in the gutter, J/K and ⌥J/⌥K | ✓ | ✓ | ✓ | n/a |  |
 | Unstaged / Staged switch for files that can't be overlaid | ✓ | ✓ | n/a | ✓ | VSCode: Always shown separately.<br>CLI: `diff --staged`. |
