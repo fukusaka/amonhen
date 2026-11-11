@@ -168,7 +168,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Pull sheet (commits, merge / rebase / ff-only, upstream when missing) | ✓ | ✓ | ✓ | △ | VSCode: A QuickPick: each way to integrate with what it does here, then the commits; no conflict forecast.<br>CLI: Via `amonhen run`. |
 | Push sheet (warnings, commits and diff, Force Push with lease) | ✓ | ✓ | ✓ | △ | VSCode: A QuickPick with the warnings, the commits to send and the ones the upstream would lose, Pull… or Force Push with lease. All changes to send and each commit open their diff in the multi-file diff editor, and the sheet stays open.<br>CLI: Via `amonhen run`. |
 | Publish (choose the remote and name) | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
-| Merge (no-ff / squash options) | △ | △ | △ | △ | macOS: No no-ff or squash choice.<br>GTK4: No no-ff or squash choice.<br>VSCode: Context menu or drag, no options.<br>CLI: Via `amonhen run`. |
+| Merge (fast-forward only / no-ff / squash options) | ✓ | ✓ | ✓ | △ | VSCode: A list to choose how to merge, which is the confirmation.<br>CLI: Via `amonhen run` (`mode`). |
 | Octopus merge of several (order, expected conflicts) | ✓ | ✓ | ✓ | △ | CLI: `merge-check` checks; the merge via `amonhen run`. |
 | Rebase sheet drawing before and after | ✓ | ✓ | ✓ | △ | VSCode: The dialog lists the commits now and after the rebase, with the branches, as text.<br>CLI: `rewrite-preview` prints it; the rebase via `amonhen run`. |
 | Stash (message, include untracked) | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |

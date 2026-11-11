@@ -3,7 +3,7 @@
  * 対象のブランチが checkout されていなければ、fast-forward で済むときは update-ref だけで処理し、
  * それ以外は checkout してから実行する。
  */
-import type { MergeResult, OneByOneResult, RepositoryBackend } from '../git/backend.ts';
+import type { MergeMode, MergeResult, OneByOneResult, RepositoryBackend } from '../git/backend.ts';
 import { splitRemoteRef } from '../git/refs.ts';
 import type { UndoLog } from './undo.ts';
 
@@ -13,27 +13,35 @@ export function shortName(ref: string): string {
   return ref.replace(/^refs\/(heads|remotes|tags)\//, '');
 }
 
-/** source（任意の ref）を target（`refs/heads/...`）に merge する */
+/**
+ * source（任意の ref）を target（`refs/heads/...`）に mode で merge する。checkout していないブランチを fast-forward
+ * だけで動かすのは、git の設定のとおりか Fast-Forward Only のとき（ほかは checkout して merge コミットや squash に）
+ */
 export async function mergeInto(
   backend: RepositoryBackend,
   undo: UndoLog,
   source: string,
   target: string,
+  mode: MergeMode = 'git',
 ): Promise<OperationResult> {
   const plan = await planUpdate(backend, source, target);
   if (plan.kind === 'up-to-date') {
     return 'up-to-date';
   }
-  const label =
-    plan.kind === 'fast-forward'
-      ? `Fast-forward ${shortName(target)} to ${shortName(source)}`
-      : `Merge ${shortName(source)} into ${shortName(target)}`;
+  // fast-forward だけと決めたのに進められなければ、checkout する前に断る
+  if (mode === 'fastForwardOnly' && plan.kind !== 'fast-forward') {
+    throw new Error(`${shortName(target)} can’t be fast-forwarded to ${shortName(source)}`);
+  }
+  const fastForward = plan.kind === 'fast-forward' && (mode === 'git' || mode === 'fastForwardOnly');
+  const label = fastForward
+    ? `Fast-forward ${shortName(target)} to ${shortName(source)}`
+    : `Merge ${shortName(source)} into ${shortName(target)}`;
   return undo.record(
     label,
     [target],
     'keep',
     async () => {
-      if (plan.kind === 'fast-forward' && !plan.checkedOut) {
+      if (fastForward && !plan.checkedOut) {
         // ほかの worktree でチェックアウト中なら断る（ref だけ動かすと、その作業ツリーとずれる）
         await backend.fastForward(target, plan.sourceOid, plan.targetOid);
         return 'done';
@@ -42,7 +50,7 @@ export async function mergeInto(
         await backend.switchTo({ branch: target, oid: plan.targetOid });
       }
       // 短い名前で渡すと、merge コミットのメッセージが git の通常どおり「Merge branch 'feature'」になる
-      return backend.merge(shortName(source));
+      return backend.merge(shortName(source), mode);
     },
     { skip: (r) => r === 'conflict' },
   );
@@ -62,6 +70,7 @@ export async function mergeSeveral(
   undo: UndoLog,
   revs: readonly string[],
   oneByOne: boolean,
+  mode: MergeMode = 'git',
 ): Promise<OneByOneResult> {
   const head = (await backend.head()).branch;
   const refs = head ? [head] : [];
@@ -69,12 +78,12 @@ export async function mergeSeveral(
   const names = revs.map(shortName);
   const label = `Merge ${namesLabel(names)}`;
   if (!oneByOne) {
-    const result = await undo.record(label, refs, 'keep', () => backend.merge(names), {
+    const result = await undo.record(label, refs, 'keep', () => backend.merge(names, mode), {
       skip: (r) => r === 'conflict',
     });
     return { result, remaining: [] };
   }
-  const result = await undo.record(label, refs, 'keep', () => backend.mergeOneByOne(names));
+  const result = await undo.record(label, refs, 'keep', () => backend.mergeOneByOne(names, mode));
   if (result.error) {
     throw result.error;
   }

@@ -37,6 +37,23 @@ pub enum PullMode {
     FastForwardOnly,
 }
 
+/// merge での取り込み方。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub enum MergeMode {
+    /// git の設定（`merge.ff`）に任せる。端末の `git merge` と同じ。
+    #[default]
+    Git,
+    /// fast-forward で済むときだけ取り込む（`--ff-only`）。
+    FastForwardOnly,
+    /// fast-forward で済むときも merge コミットを作る（`--no-ff`）。
+    NoFastForward,
+    /// 変更を 1 つのコミットにまとめて取り込む（`--squash` の後、SQUASH_MSG のままコミットする）。merge コミットでは
+    /// ないので、取り込んだブランチは取り込み済みにならない。
+    Squash,
+}
+
 /// shallow clone の履歴をどこまで取り足すか（`Operations::deepen`）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -319,6 +336,9 @@ pub enum Sequence {
     Revert,
     /// `git am`（メールのパッチを当てている途中）。
     Am,
+    /// `git merge --squash` がコンフリクトで止まった（`SQUASH_MSG` が残っている）。続けるのはコミット、やめるのは
+    /// `git reset --merge`（git にそれぞれの `--continue`・`--abort` はない）。
+    Squash,
 }
 
 impl Sequence {
@@ -329,6 +349,7 @@ impl Sequence {
             Sequence::CherryPick => "cherry-pick",
             Sequence::Revert => "revert",
             Sequence::Am => "am",
+            Sequence::Squash => "squash",
         }
     }
 }
@@ -678,9 +699,9 @@ pub trait Operations: Send + Sync {
     ) -> Result<Vec<crate::RangePair>>;
     /// 名前（`main`・`origin/main`・コミット ID など）が指すコミット。
     fn resolve(&self, rev: &str) -> Result<Oid>;
-    /// `revs` を今のブランチに merge する（2 つ以上なら 1 つのコミットにまとめる octopus）。octopus が途中で
-    /// 断ったら、作業ツリーと index を始める前に戻してからエラーを返す。
-    fn merge(&self, revs: &[String]) -> Result<Outcome>;
+    /// `revs` を今のブランチに `mode` で merge する（2 つ以上なら 1 つのコミットにまとめる octopus）。octopus が
+    /// 途中で断ったら、作業ツリーと index を始める前に戻してからエラーを返す。
+    fn merge(&self, revs: &[String], mode: MergeMode) -> Result<Outcome>;
     /// 今のブランチを `onto` へ載せ直す。`update_refs` は、積み重ねたブランチを一緒に動かすかのこの操作だけの指定
     /// （`--update-refs`・`--no-update-refs`、git 2.38 から）。`None` なら git の `rebase.updateRefs` のとおり。
     fn rebase(&self, onto: &str, update_refs: Option<bool>) -> Result<Outcome>;

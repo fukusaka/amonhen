@@ -124,11 +124,14 @@ pub enum Command {
     TagRemotes,
     /// 今のブランチに `rev` を merge する。`rev` が配列なら、すべてを 1 つのコミットにまとめる（octopus、
     /// `git merge a b c`）。`oneByOne` なら 1 つずつ merge する（merge コミットがいくつもできる。コンフリクトで
-    /// 止まったら、まだのものを `info.remaining` に返す）。どちらも Undo 1 回で戻る。
+    /// 止まったら、まだのものを `info.remaining` に返す）。どちらも Undo 1 回で戻る。`mode` は取り込み方（既定は git の
+    /// 設定のとおり。`fastForwardOnly`・`noFastForward`・`squash`）。
     Merge {
         rev: Revs,
         #[serde(default)]
         one_by_one: bool,
+        #[serde(default)]
+        mode: amonhen_model::MergeMode,
     },
     /// ブランチ `target` に `rev` を merge する。`target` を checkout していなくても、fast-forward で
     /// 済むならブランチだけ進める（`rev` が 1 つのとき）。そうでなければ checkout してから merge する。
@@ -137,6 +140,9 @@ pub enum Command {
         rev: Revs,
         #[serde(default)]
         one_by_one: bool,
+        /// `Merge` と同じ。fast-forward で済んでも、`noFastForward`・`squash` なら checkout してから merge する。
+        #[serde(default)]
+        mode: amonhen_model::MergeMode,
     },
     /// 今のブランチを `onto` の上に rebase する。
     Rebase {
@@ -1294,6 +1300,7 @@ impl Repository {
         label: &str,
         revs: &[String],
         one_by_one: bool,
+        mode: amonhen_model::MergeMode,
     ) -> Result<Response> {
         if revs.is_empty() {
             return Err(tr!("Nothing to merge").into());
@@ -1304,7 +1311,7 @@ impl Repository {
                 label,
                 &[],
                 false,
-                || ops.merge(revs),
+                || ops.merge(revs, mode),
                 |o| *o != Outcome::Done,
             )?;
             return Ok(Response {
@@ -1321,7 +1328,7 @@ impl Repository {
             false,
             || {
                 for (i, rev) in revs.iter().enumerate() {
-                    match ops.merge(std::slice::from_ref(rev)) {
+                    match ops.merge(std::slice::from_ref(rev), mode) {
                         Ok(Outcome::Done) => {}
                         Ok(outcome) => return Ok((outcome, revs[i + 1..].to_vec(), None)),
                         Err(e) => return Ok((Outcome::Stopped, revs[i..].to_vec(), Some(e))),
@@ -1707,6 +1714,18 @@ impl Repository {
                         "action": "merge",
                         "subject": message.lines().next().unwrap_or_default(),
                     });
+                }
+            }
+            Sequence::Squash => {
+                // `SQUASH_MSG` は取り込むコミットを新しい順に並べる（`commit <oid>`）。最初のものは取り込んだ先端なので、
+                // ブランチの先端ならその名前になる。
+                let tip = read("SQUASH_MSG").and_then(|m| {
+                    m.lines()
+                        .find_map(|l| l.strip_prefix("commit "))
+                        .and_then(|h| Oid::from_hex(h.trim()))
+                });
+                if let Some(tip) = tip {
+                    info["from"] = name_of(&tip).into();
                 }
             }
             Sequence::CherryPick | Sequence::Revert => {
@@ -3587,16 +3606,40 @@ impl Repository {
                 )?;
                 ok()
             }
-            Command::Merge { rev, one_by_one } => {
+            Command::Merge {
+                rev,
+                one_by_one,
+                mode,
+            } => {
                 let revs = rev.into_vec();
+                // fast-forward だけと決めたのに進められなければ、git に任せずに断る（git の文は Pull の「分かれている」と
+                // 同じ扱いになり、Pull を勧めてしまう）。取り込み済みなら git が「Already up to date」で済ませる。
+                if mode == amonhen_model::MergeMode::FastForwardOnly
+                    && let [rev] = revs.as_slice()
+                    && !ops.is_ancestor("HEAD", rev)?
+                    && !ops.is_ancestor(rev, "HEAD")?
+                {
+                    let head = ops.head_state()?.branch;
+                    let branch = head
+                        .as_deref()
+                        .map_or("HEAD", |b| b.trim_start_matches("refs/heads/"));
+                    return Err(tr!(
+                        "{branch} can’t be fast-forwarded to {rev}",
+                        branch = branch,
+                        rev = rev
+                    )
+                    .into());
+                }
                 let label = format!("Merge {}", names_label(&revs));
-                self.merge_revs(ops, undo, &label, &revs, one_by_one)
+                self.merge_revs(ops, undo, &label, &revs, one_by_one, mode)
             }
             Command::MergeInto {
                 target,
                 rev,
                 one_by_one,
+                mode,
             } => {
+                use amonhen_model::MergeMode;
                 let revs = rev.into_vec();
                 let current = ops.head_state()?.branch;
                 let full = heads(&target);
@@ -3612,9 +3655,24 @@ impl Repository {
                     )
                     .into());
                 }
+                let elsewhere = current.as_deref() != Some(full.as_str());
+                let fast_forward = match revs.as_slice() {
+                    [rev] => ops.is_ancestor(&full, rev)?,
+                    _ => false,
+                };
+                // fast-forward だけと決めたのに進められなければ、checkout する前に断る。
+                if mode == MergeMode::FastForwardOnly && elsewhere && !fast_forward {
+                    return Err(tr!(
+                        "{branch} can’t be fast-forwarded to {rev}",
+                        branch = target,
+                        rev = names_label(&revs)
+                    )
+                    .into());
+                }
                 if let [rev] = revs.as_slice()
-                    && current.as_deref() != Some(full.as_str())
-                    && ops.is_ancestor(&full, rev)?
+                    && elsewhere
+                    && fast_forward
+                    && matches!(mode, MergeMode::Git | MergeMode::FastForwardOnly)
                 {
                     let from = ops.resolve(&full)?;
                     let to = ops.resolve(rev)?;
@@ -3632,7 +3690,7 @@ impl Repository {
                     ops.switch_branch(&target)?;
                 }
                 let label = format!("Merge {} into {target}", names_label(&revs));
-                self.merge_revs(ops, undo, &label, &revs, one_by_one)
+                self.merge_revs(ops, undo, &label, &revs, one_by_one, mode)
             }
             Command::Rebase { onto, update_refs } => {
                 // 載せ直すコミット（onto..HEAD）に先頭があるブランチは、`rebase.updateRefs` が true なら git が
@@ -10249,6 +10307,123 @@ mod tests {
             .map(|e| e["path"].as_str().unwrap())
             .collect();
         assert_eq!(paths, ["README.ja", "README"], "{history}");
+    }
+
+    #[test]
+    fn merges_in_the_chosen_way() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        let parents = |rev: &str| {
+            git(dir, &["rev-list", "--parents", "-n", "1", rev])
+                .split(' ')
+                .count()
+                - 1
+        };
+        // topic は main の先にあり、fast-forward で済む。それでも merge コミットを作る
+        git(dir, &["switch", "-q", "-c", "topic"]);
+        commit_file(dir, "t.txt", "topic");
+        git(dir, &["switch", "-q", "main"]);
+        let r = run(
+            &repo,
+            r#"{"op":"merge","rev":"topic","mode":"noFastForward"}"#,
+        );
+        assert_eq!(r["outcome"], "done", "{r}");
+        assert_eq!(parents("HEAD"), 2);
+        run(&repo, r#"{"op":"undo"}"#);
+
+        // 分かれていれば、fast-forward だけでは取り込まない
+        commit_file(dir, "m.txt", "main");
+        let head = git(dir, &["rev-parse", "HEAD"]);
+        let r = run(
+            &repo,
+            r#"{"op":"merge","rev":"topic","mode":"fastForwardOnly"}"#,
+        );
+        assert_eq!(r["ok"], false, "{r}");
+        // Pull を勧める「分かれている」ではなく、merge の文で断る
+        assert_eq!(r["error"], "main can’t be fast-forwarded to topic", "{r}");
+        assert!(r["errorKind"].is_null(), "{r}");
+        assert_eq!(git(dir, &["rev-parse", "HEAD"]), head);
+
+        // squash は 1 つのコミット（親は 1 つ）にし、メッセージは git の SQUASH_MSG のまま
+        let r = run(&repo, r#"{"op":"merge","rev":"topic","mode":"squash"}"#);
+        assert_eq!(r["outcome"], "done", "{r}");
+        assert_eq!(parents("HEAD"), 1);
+        assert_eq!(git(dir, &["rev-parse", "HEAD~1"]), head);
+        assert!(
+            git(dir, &["log", "-1", "--format=%B"])
+                .starts_with("Squashed commit of the following:")
+        );
+        assert!(dir.join("t.txt").exists());
+        assert!(!dir.join(".git/SQUASH_MSG").exists());
+        assert!(run(&repo, r#"{"op":"sequence"}"#)["text"].is_null());
+        // Undo で取り込む前に戻る
+        run(&repo, r#"{"op":"undo"}"#);
+        assert_eq!(git(dir, &["rev-parse", "HEAD"]), head);
+    }
+
+    #[test]
+    fn stops_a_squash_merge_on_conflicts_and_continues_or_aborts_it() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        git(dir, &["switch", "-q", "-c", "topic"]);
+        commit_file(dir, "x.txt", "topic");
+        git(dir, &["switch", "-q", "main"]);
+        commit_file(dir, "x.txt", "main");
+        let head = git(dir, &["rev-parse", "HEAD"]);
+        let squash = || run(&repo, r#"{"op":"merge","rev":"topic","mode":"squash"}"#);
+        assert_eq!(squash()["outcome"], "conflict");
+        let sequence = run(&repo, r#"{"op":"sequence"}"#);
+        assert_eq!(sequence["text"], "squash", "{sequence}");
+        assert_eq!(sequence["info"]["from"], "topic", "{sequence}");
+        // やめれば取り込む前に戻る
+        run(&repo, r#"{"op":"abort"}"#);
+        assert_eq!(git(dir, &["rev-parse", "HEAD"]), head);
+        assert!(git(dir, &["status", "--porcelain"]).is_empty());
+        assert!(run(&repo, r#"{"op":"sequence"}"#)["text"].is_null());
+
+        // 解決して続ければ、1 つのコミットになる
+        assert_eq!(squash()["outcome"], "conflict");
+        std::fs::write(dir.join("x.txt"), "both").unwrap();
+        git(dir, &["add", "x.txt"]);
+        let r = run(&repo, r#"{"op":"continue"}"#);
+        assert_eq!(r["outcome"], "done", "{r}");
+        assert_eq!(git(dir, &["rev-parse", "HEAD~1"]), head);
+        assert!(run(&repo, r#"{"op":"sequence"}"#)["text"].is_null());
+    }
+
+    #[test]
+    fn merges_into_another_branch_in_the_chosen_way() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        git(dir, &["branch", "old"]);
+        commit_file(dir, "b.txt", "b");
+        // fast-forward で済んでも merge コミットにするなら、old を checkout して merge する
+        let r = run(
+            &repo,
+            r#"{"op":"mergeInto","target":"old","rev":"main","mode":"noFastForward"}"#,
+        );
+        assert_eq!(r["outcome"], "done", "{r}");
+        assert_eq!(git(dir, &["branch", "--show-current"]), "old");
+        assert_eq!(
+            git(dir, &["rev-list", "--parents", "-n", "1", "old"])
+                .split(' ')
+                .count(),
+            3
+        );
+
+        // fast-forward だけと決めて進められなければ、checkout せずに断る
+        git(dir, &["switch", "-q", "main"]);
+        commit_file(dir, "c.txt", "c");
+        git(dir, &["branch", "-q", "-f", "other", "HEAD~1"]);
+        git(dir, &["switch", "-q", "other"]);
+        commit_file(dir, "d.txt", "d");
+        git(dir, &["switch", "-q", "main"]);
+        let r = run(
+            &repo,
+            r#"{"op":"mergeInto","target":"other","rev":"main","mode":"fastForwardOnly"}"#,
+        );
+        assert_eq!(r["ok"], false, "{r}");
+        assert_eq!(git(dir, &["branch", "--show-current"]), "main");
     }
 
     #[test]

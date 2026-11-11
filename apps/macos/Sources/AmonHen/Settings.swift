@@ -440,6 +440,31 @@ enum PullMode: String, CaseIterable {
     static let methods: [PullMode] = [.merge, .rebase, .fastForwardOnly]
 }
 
+/// Merge の取り込み方（コアの `merge`・`mergeInto` の `mode`）。覚えず、毎回 git の設定から始める。
+enum MergeMode: String, CaseIterable {
+    /// git の設定（`merge.ff`）に任せる。端末の `git merge` と同じ。
+    case git
+    case fastForwardOnly, noFastForward, squash
+
+    var title: String {
+        switch self {
+        case .git: L("Follow git’s settings")
+        case .fastForwardOnly: "Fast-Forward Only"
+        case .noFastForward: L("Always Create a Merge Commit")
+        case .squash: L("Squash into One Commit")
+        }
+    }
+
+    var toolTip: String {
+        switch self {
+        case .git: L("Uses merge.ff, as git merge in a terminal does: fast-forward when possible, otherwise a merge commit.")
+        case .fastForwardOnly: L("Only moves the branch forward; stops if the branches have diverged (git merge --ff-only).")
+        case .noFastForward: L("Makes a merge commit even when the branch could move forward (git merge --no-ff).")
+        case .squash: L("Makes one ordinary commit with all the changes (git merge --squash, then commit). The branch isn’t marked as merged.")
+        }
+    }
+}
+
 /// Settings ウィンドウ（⌘,）の中身。開くたびに `Settings` から読み直し、変えたらすぐ書き戻す。
 @Observable
 final class SettingsModel {

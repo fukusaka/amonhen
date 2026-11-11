@@ -102,18 +102,36 @@ extension Actions {
             // 「最後に回す」は答えが来てから出すので、場所を取っておく（シートの大きさを変えないため）。隠す前に決める
             // （隠してから切り替えても、外した場所は戻らない）。
             stack.detachesHiddenViews = false
-            for view in [list.view, drawing, label, putLast, message].compactMap({ $0 }) { stack.addArrangedSubview(view) }
+            // 取り込み方（いくつもなので Fast-Forward Only はない）。絵は git の設定のとおりのときの形なので、ほかを
+            // 選んだら外して詰め、シートの大きさを合わせる（この欄は隠したものの場所を取っておくので、隠すのではなく外す）。
+            let (modeRow, modePopup) = Actions.mergeModeRow(single: false)
+            let modeTarget = ClosureTarget { [weak stack, weak alert] in
+                guard let stack, let drawing else { return }
+                if Actions.mergeMode(modePopup) == .git {
+                    if drawing.superview == nil { stack.insertArrangedSubview(drawing, at: 2) }
+                } else {
+                    stack.removeArrangedSubview(drawing)
+                    drawing.removeFromSuperview()
+                }
+                stack.layoutSubtreeIfNeeded()
+                stack.frame.size = stack.fittingSize
+                alert?.layout()
+            }
+            modePopup.target = modeTarget
+            modePopup.action = #selector(ClosureTarget.fire)
+            for view in [list.view, modeRow, drawing, label, putLast, message].compactMap({ $0 }) { stack.addArrangedSubview(view) }
             update()
             list.view.widthAnchor.constraint(equalToConstant: 420).isActive = true
             stack.layoutSubtreeIfNeeded()
             stack.frame.size = stack.fittingSize
             alert.accessoryView = stack
             let response = await present(alert)
-            withExtendedLifetime(putLastTarget) {}
+            withExtendedLifetime((putLastTarget, modeTarget)) {}
             let revs = list.sources.map(\.rev)
+            let mode = Actions.mergeMode(modePopup)
             switch response {
-            case .alertFirstButtonReturn: merge(revs, oneByOne: false)
-            case .alertThirdButtonReturn: merge(revs, oneByOne: true)
+            case .alertFirstButtonReturn: merge(revs, oneByOne: false, mode: mode)
+            case .alertThirdButtonReturn: merge(revs, oneByOne: true, mode: mode)
             default: break
             }
         }
@@ -121,9 +139,10 @@ extension Actions {
 
     /// `revs` を merge する。1 つのコミットにまとめるのを git が断ったら（何も変わっていない）、1 つずつ merge
     /// するかを尋ねる。
-    private func merge(_ revs: [String], oneByOne: Bool) {
+    private func merge(_ revs: [String], oneByOne: Bool, mode: MergeMode) {
         var command: [String: Any] = ["op": "merge", "rev": revs]
         if oneByOne { command["oneByOne"] = true }
+        if mode != .git { command["mode"] = mode.rawValue }
         perform(command, recover: { [weak self] failure in
             guard let self, !oneByOne, failure.kind == "octopus" else { return false }
             let alert = makeAlert(
@@ -131,7 +150,7 @@ extension Actions {
                 L("git stopped because one of them conflicts before the last, and nothing was changed. Merge them one by one instead? Each makes its own merge commit, and you resolve conflicts as they come. Undo puts them all back."))
             alert.addButton(withTitle: L("Merge One by One"))
             alert.addButton(withTitle: L("Cancel"))
-            if await present(alert) == .alertFirstButtonReturn { merge(revs, oneByOne: true) }
+            if await present(alert) == .alertFirstButtonReturn { merge(revs, oneByOne: true, mode: mode) }
             return true
         })
     }

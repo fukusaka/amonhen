@@ -9,6 +9,11 @@ becomes the GitHub Release notes.
 
 ### Unreleased
 
+#### Added
+
+- Merge chooses how to integrate in its confirmation: Follow git's settings, Fast-Forward Only, Always Create a Merge
+  Commit, or Squash into One Commit (committed right away; one that conflicts stops as Squash in progress).
+
 #### Fixed
 
 - The Pull sheet no longer leaves a blank space when the chosen mode can't pull: it keeps the graph as it is now and
@@ -1085,6 +1090,8 @@ First release.
 - Status uses git's fsmonitor, as the app does (`amonhen.fsmonitor`, on by default).
 - `amonhen.writeCommitGraph` writes the commit-graph when a repository is opened and after fetch and pull, as the
   app's Performance setting does (off by default).
+- Merge into Current Branch…, dropping a branch on a branch and Merge Branches… ask how to merge: following git's
+  settings, fast-forward only, always with a merge commit, or squashed into one commit, as in the app.
 
 #### Fixed
 

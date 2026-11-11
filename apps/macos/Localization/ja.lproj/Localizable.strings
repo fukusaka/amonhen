@@ -1902,3 +1902,11 @@
 "Push %@" = "%@ を Push";
 "Split %@" = "%@ を Split";
 "Create Pull Request" = "プルリクエストを作成";
+"Always Create a Merge Commit" = "いつも merge コミットを作る";
+"Squash into One Commit" = "1 つのコミットにまとめる（squash）";
+"Uses merge.ff, as git merge in a terminal does: fast-forward when possible, otherwise a merge commit." = "端末の git merge と同じく merge.ff に従います。fast-forward できればそうし、できなければ merge コミットを作ります。";
+"Only moves the branch forward; stops if the branches have diverged (git merge --ff-only)." = "ブランチを先へ進めるだけです。分かれていれば取り込みません（git merge --ff-only）。";
+"Makes a merge commit even when the branch could move forward (git merge --no-ff)." = "fast-forward できるときも merge コミットを作ります（git merge --no-ff）。";
+"Makes one ordinary commit with all the changes (git merge --squash, then commit). The branch isn’t marked as merged." = "変更をまとめて 1 つの普通のコミットにします（git merge --squash の後にコミット）。取り込んだブランチは取り込み済みになりません。";
+"Squashing %@ into %@" = "%1$@ を %2$@ に squash で取り込み中";
+"Squash in progress" = "squash の途中";

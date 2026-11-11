@@ -287,3 +287,51 @@ test('writes the commit-graph, then adds new commits to it, but not where git ma
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+test('merges in the chosen way: always with a merge commit, fast-forward only, or squashed', async () => {
+  const parents = (rev: string) => git('rev-list', '--parents', '-n', '1', rev).split(' ').length - 1;
+  git('switch', '-q', '-c', 'topic');
+  commitFile('t.txt', 't\n', 'topic');
+  git('switch', '-q', 'main');
+  // fast-forward で済んでも merge コミットを作る
+  assert.equal(await mergeInto(backend, undo, H('topic'), H('main'), 'noFastForward'), 'done');
+  assert.equal(parents('main'), 2);
+  git('reset', '-q', '--hard', 'HEAD~1');
+
+  // 分かれていれば、fast-forward だけでは取り込まない（checkout もしない）
+  commitFile('m.txt', 'm\n', 'main');
+  const head = git('rev-parse', 'HEAD');
+  await assert.rejects(mergeInto(backend, undo, H('topic'), H('main'), 'fastForwardOnly'), /can’t be fast-forwarded/);
+  git('switch', '-q', 'topic');
+  await assert.rejects(mergeInto(backend, undo, H('main'), H('topic'), 'fastForwardOnly'), /can’t be fast-forwarded/);
+  assert.equal(git('branch', '--show-current'), 'topic');
+  git('switch', '-q', 'main');
+
+  // squash は 1 つのコミット（親は 1 つ）にし、メッセージは git の SQUASH_MSG のまま
+  assert.equal(await mergeInto(backend, undo, H('topic'), H('main'), 'squash'), 'done');
+  assert.equal(parents('main'), 1);
+  assert.equal(git('rev-parse', 'HEAD~1'), head);
+  assert.match(git('log', '-1', '--format=%B'), /^Squashed commit of the following:/);
+  assert.equal(await backend.sequenceInProgress(), undefined);
+});
+
+test('stops a squash merge on conflicts, and continues or aborts it', async () => {
+  git('switch', '-q', '-c', 'topic');
+  commitFile('a.txt', 'topic\n', 'topic');
+  git('switch', '-q', 'main');
+  commitFile('a.txt', 'main\n', 'main');
+  const head = git('rev-parse', 'HEAD');
+  assert.equal(await backend.merge('topic', 'squash'), 'conflict');
+  assert.equal(await backend.sequenceInProgress(), 'squash');
+  await assert.rejects(backend.skipSequence('squash'), /nothing to skip/);
+  await backend.abort('squash');
+  assert.equal(await backend.sequenceInProgress(), undefined);
+  assert.equal(git('status', '--porcelain'), '');
+
+  assert.equal(await backend.merge('topic', 'squash'), 'conflict');
+  writeFileSync(join(dir, 'a.txt'), 'both\n');
+  git('add', 'a.txt');
+  assert.equal(await backend.continueSequence('squash'), 'done');
+  assert.equal(git('rev-parse', 'HEAD~1'), head);
+  assert.equal(await backend.sequenceInProgress(), undefined);
+});

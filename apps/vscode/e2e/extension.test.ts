@@ -3143,6 +3143,8 @@ async function mergeBranchesFlow(label: string): Promise<void> {
       if (options?.canPickMany) {
         return order.map((b) => list.find((i) => i.ref === `refs/heads/${b}`)!);
       }
+      // 3 つ目（取り込み方）は git の設定のとおり
+      if (list.some((i) => 'mode' in i)) return list.find((i) => i['mode'] === 'git');
       placeHolders.push(options?.placeHolder ?? '');
       return list.find((i) => choose(i.label));
     },
@@ -3240,6 +3242,64 @@ suite('Amon Hen in VSCode', () => {
     // エンジンの用意（置いたエンジンを一度起動する。macOS では OS の確認で数十秒かかることがある）が済むと、
     // サイドバーに Reflog が出る。後のテストがこの待ちを負わないよう、ここで待つ
     await until('サイドバーの Reflog', () => api.sidebar.getChildren().some((n) => n.kind === 'view' && n.view === 'reflog'), 50_000);
+  });
+
+  test('merges with a merge commit or squashed, and continues a squash that stopped on conflicts', async () => {
+    const repo = api.manager.current!;
+    const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+    const start = git('rev-parse', 'HEAD').trim();
+    const parents = () => git('rev-list', '--parents', '-n', '1', 'HEAD').trim().split(' ').length - 1;
+    const node = (b: string) => ({ kind: 'branch', ref: { name: `refs/heads/${b}` } });
+    const merge = (b: string, mode: string) =>
+      withWindow(
+        {
+          showQuickPick: async (items: readonly (vscode.QuickPickItem & { mode?: string })[]) => items.find((i) => i.mode === mode),
+          showInformationMessage: async () => undefined,
+          showWarningMessage: async () => undefined,
+        },
+        async () => vscode.commands.executeCommand('amonhen.nav.merge', node(b)),
+      );
+    git('switch', '-q', '-c', 'mm-topic');
+    writeFileSync(join(root, 'mm.txt'), 'topic\n');
+    git('add', 'mm.txt');
+    git('commit', '-q', '-m', 'mm topic');
+    git('switch', '-q', branch);
+    try {
+      await repo.refresh();
+      // fast-forward で済んでも merge コミットを作る
+      await merge('mm-topic', 'noFastForward');
+      await until('--no-ff', () => parents() === 2 && git('rev-parse', 'HEAD').trim(), undefined, lastErrors);
+      git('reset', '-q', '--hard', start);
+      // squash は 1 つの普通のコミット
+      await merge('mm-topic', 'squash');
+      await until('squash', () => git('log', '-1', '--format=%s').startsWith('Squashed commit of the following:'), undefined, lastErrors);
+      assert.equal(parents(), 1);
+      assert.equal(git('rev-parse', 'HEAD~1').trim(), start);
+      git('reset', '-q', '--hard', start);
+
+      // ぶつかれば Squash の途中で止まり、解決して Continue するとコミットになる
+      writeFileSync(join(root, 'mm.txt'), 'main\n');
+      git('add', 'mm.txt');
+      git('commit', '-q', '-m', 'mm main');
+      const head = git('rev-parse', 'HEAD').trim();
+      await repo.refresh();
+      await merge('mm-topic', 'squash');
+      await until('Squash の途中', async () => (await repo.backend.sequenceInProgress()) === 'squash', undefined, lastErrors);
+      await repo.refresh();
+      assert.ok(
+        api.sidebar.getChildren().some((n) => n.kind === 'sequence' && api.sidebar.getTreeItem(n).label === 'Squash in progress'),
+        'サイドバーの Squash の行',
+      );
+      writeFileSync(join(root, 'mm.txt'), 'both\n');
+      git('add', 'mm.txt');
+      await withWindow({ showInformationMessage: async () => undefined }, async () => vscode.commands.executeCommand('amonhen.continueSequence'));
+      await until('Continue', () => git('rev-parse', 'HEAD~1').trim() === head, undefined, lastErrors);
+      assert.equal(await repo.backend.sequenceInProgress(), undefined);
+    } finally {
+      git('reset', '-q', '--hard', start);
+      git('branch', '-q', '-D', 'mm-topic');
+      await repo.refresh();
+    }
   });
 
   test('writes the commit-graph when it’s on and the remote branches move', async () => {

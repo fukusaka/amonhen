@@ -1278,6 +1278,7 @@ mod tests {
         assert!(of(&facts, "apply-patch"));
         for (kind, skip) in [
             ("merge", false),
+            ("squash", false),
             ("revert", false),
             ("rebase", true),
             ("cherry-pick", true),

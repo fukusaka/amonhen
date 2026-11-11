@@ -1268,6 +1268,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         case let ("rebase", branch?, onto?): L("Rebasing %@ onto %@", branch, onto)
         case let ("merge", branch?, from?): L("Merging %@ into %@", from, branch)
         case let ("cherry-pick", branch?, _): L("Cherry-picking into %@", branch)
+        case let ("squash", branch?, from?): L("Squashing %@ into %@", from, branch)
+        case ("squash", _, _): L("Squash in progress")
         case let ("revert", branch?, _): L("Reverting in %@", branch)
         case let ("am", branch?, _): L("Applying patches to %@", branch)
         case ("am", _, _): L("Applying patches")
@@ -1922,17 +1924,17 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     @objc func mergeIntoCurrent(_ sender: Any?) {
         let current = editingBranch ?? "HEAD"
         Task { @MainActor in
-            guard let (rev, _) = await chooseRevision(
+            guard let (rev, _, mode) = await chooseRevision(
                 title: L("Merge into %@", current), message: L("The branch, tag or commit to merge in"), ok: "Merge",
                 forecast: .merge) else { return }
-            actions.perform(["op": "merge", "rev": rev])
+            actions.perform(Actions.withMergeMode([["op": "merge", "rev": rev]], mode)[0])
         }
     }
 
     @objc func rebaseCurrent(_ sender: Any?) {
         let current = editingBranch ?? "HEAD"
         Task { @MainActor in
-            guard let (rev, updateRefs) = await chooseRevision(
+            guard let (rev, updateRefs, _) = await chooseRevision(
                 title: L("Rebase %@", current), message: L("The branch, tag or commit to rebase onto"), ok: "Rebase",
                 forecast: .rebase) else { return }
             var command: [String: Any] = ["op": "rebase", "onto": rev]
@@ -2452,10 +2454,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     /// 今のブランチ以外のローカルブランチ、リモートブランチ、タグ。キャンセルなら nil。`forecast` なら、選ぶたびに
     /// コンフリクトするかを裏で調べて見せる。シートで出す（`runModal` の間は、裏で調べた答えを画面に戻せない）。
     /// rebase なら、前と後の絵とこの操作だけの「積み重ねたブランチも動かす」も出し、その指定（git の設定と同じなら
-    /// nil）も返す。
+    /// nil）も返す。merge なら取り込み方も選べ、それも返す。
     private func chooseRevision(
         title: String, message: String, ok: String, forecast: Forecast? = nil
-    ) async -> (rev: String, updateRefs: Bool?)? {
+    ) async -> (rev: String, updateRefs: Bool?, mode: MergeMode)? {
         var choices: [(title: String, rev: String)] = []
         // 今のブランチは書き込む先の worktree のもの（ほかの worktree を書き込む先にしていても、そのブランチ自身を
         // 出さず、開いた worktree のブランチは出す）。
@@ -2488,6 +2490,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         // 選び直すたびに調べる（答えは覚えておき、遅れて来た前の答えは捨てる）。
         var target: ClosureTarget?
         var panel: RewritePreviewPanel?
+        var modePopup: NSPopUpButton?
+        var modeTarget: ClosureTarget?
         if forecast == .rebase {
             let p = RewritePreviewPanel(actions: actions)
             let update = {
@@ -2573,7 +2577,20 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             target = ClosureTarget(update)
             popup.target = target
             popup.action = #selector(ClosureTarget.fire)
-            let stack = NSStackView(views: [popup, drawingBox, label])
+            // merge なら取り込み方も選べる。絵は git の設定のとおりのときの形なので、ほかを選んだら隠す。
+            var views: [NSView] = [popup]
+            if forecast == .merge {
+                let (row, modes) = Actions.mergeModeRow(single: true)
+                modePopup = modes
+                modeTarget = ClosureTarget {
+                    drawingBox.isHidden = Actions.mergeMode(modes) != .git
+                    relayout()
+                }
+                modes.target = modeTarget
+                modes.action = #selector(ClosureTarget.fire)
+                views.append(row)
+            }
+            let stack = NSStackView(views: views + [drawingBox, label])
             stack.orientation = .vertical
             stack.alignment = .leading
             stack.spacing = 8
@@ -2588,9 +2605,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         }
         alert.window.initialFirstResponder = popup
         let response = await alert.beginSheetModal(for: window)
-        withExtendedLifetime(target) {}
+        withExtendedLifetime((target, modeTarget)) {}
         guard response == .alertFirstButtonReturn, let item = popup.selectedItem else { return nil }
-        return (choices[item.tag].rev, panel?.updateRefs)
+        return (choices[item.tag].rev, panel?.updateRefs, modePopup.map(Actions.mergeMode) ?? .git)
     }
 
     /// メニューの項目とツールバーのボタンを使えるか。

@@ -34,7 +34,7 @@ pub use mailmap::{Mailmap, MailmapEntry};
 pub use oid::{Oid, OidMap, OidSet};
 pub use ops::{
     ApplyPatch, Archive, Bundle, BundlePreview, ConfigEntry, ContentsToFetch, Deepen, Directory,
-    DirectoryEntry, FormatPatch, HeadState, LogScope, MachineGit, Operations, Outcome,
+    DirectoryEntry, FormatPatch, HeadState, LogScope, MachineGit, MergeMode, Operations, Outcome,
     PartialClone, PatchFile, Program, PullMode, RefUpdate, RemoteChange, RemoteCheck, RemoteEntry,
     RepositoryForm, ResetMode, Sequence, SigningKey, SparseCheckout, StashOptions, SubmoduleChange,
     SubmoduleState, SubmoduleUpdate, Subtree, SubtreeOp, Subtrees, WorktreeChange, WorktreeChanges,

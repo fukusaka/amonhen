@@ -498,7 +498,7 @@ fn handle_op(backend: &dyn GitBackend, op: Op, cancel: &AtomicBool) -> Result<Ve
             encode(&ops.archive_contents_to_fetch(&rev, &paths, limit)?)
         }
         Op::Resolve(rev) => encode(&ops.resolve(&rev)?),
-        Op::Merge(revs) => encode(&ops.merge(&revs)?),
+        Op::Merge(revs, mode) => encode(&ops.merge(&revs, mode)?),
         Op::Rebase { onto, update_refs } => encode(&ops.rebase(&onto, update_refs)?),
         Op::CherryPick { oids, is_merge } => encode(&ops.cherry_pick(&oids, is_merge)?),
         Op::Revert { oids, is_merge } => encode(&ops.revert(&oids, is_merge)?),

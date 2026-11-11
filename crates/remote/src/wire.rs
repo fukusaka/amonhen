@@ -7,8 +7,9 @@ use std::sync::Arc;
 use amonhen_layout::{Pod, Slab};
 use amonhen_model::search::TextTerm;
 use amonhen_model::{
-    ApplyPatch, Archive, Bundle, CommitGraph, CommitText, Deepen, FormatPatch, HeadState, Oid,
-    PullMode, RefUpdate, RemoteChange, ResetMode, Result, Root, Sequence, WorktreeChange,
+    ApplyPatch, Archive, Bundle, CommitGraph, CommitText, Deepen, FormatPatch, HeadState,
+    MergeMode, Oid, PullMode, RefUpdate, RemoteChange, ResetMode, Result, Root, Sequence,
+    WorktreeChange,
 };
 use serde::{Deserialize, Serialize};
 
@@ -282,7 +283,7 @@ pub enum Op {
         picks: Vec<String>,
     },
     Resolve(String),
-    Merge(Vec<String>),
+    Merge(Vec<String>, MergeMode),
     Rebase {
         onto: String,
         update_refs: Option<bool>,

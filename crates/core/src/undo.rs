@@ -758,7 +758,7 @@ mod tests {
                 "Merge topic",
                 &[],
                 false,
-                || git.merge(&["topic".to_owned()]),
+                || git.merge(&["topic".to_owned()], amonhen_model::MergeMode::Git),
                 |o| *o != Outcome::Done,
             )
             .unwrap();
