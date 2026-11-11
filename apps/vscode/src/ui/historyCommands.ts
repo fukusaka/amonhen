@@ -4,6 +4,7 @@ import { confirmOperation } from './confirm.ts';
 import type { RebaseResult } from '../git/backend.ts';
 import type { Commit } from '../git/log.ts';
 import { parseCommitObject } from '../git/commitObject.ts';
+import { pickDrawing, type Drawing, type PickPreview } from '../history/drawing.ts';
 import { applyPreset, type EditPreset, type PlanStep } from '../history/editPlan.ts';
 import type { HistoryEdit } from '../history/rebasePlan.ts';
 import { previewLines, stackedAlternative } from '../history/rewritePreview.ts';
@@ -156,6 +157,7 @@ async function applyCommit(
         kind === 'cherry-pick' ? `Cherry-pick ${short(panel, oid)} onto ${onto}?` : `Revert ${short(panel, oid)} on ${onto}?`,
         [kind === 'cherry-pick' ? 'Adds a copy of it.' : 'Adds a commit that undoes it.', 'You can undo this.'],
         kind === 'cherry-pick' ? 'Cherry-pick' : 'Revert',
+        { drawing: () => pickPreview(repo, [oid], kind, onto) },
       ),
     run: async () => {
       const result = await repo.undo.record(
@@ -180,14 +182,15 @@ async function pickSelected(
   const branch = (await repo.backend.head()).branch;
   const onto = branch ? branch.replace(/^refs\/heads\//, '') : 'HEAD';
   const what = `${commits.length} commits`;
-  const answer = await vscode.window.showWarningMessage(
-    kind === 'cherry-pick' ? `Cherry-pick ${what} onto ${onto}?` : `Revert ${what} on ${onto}?`,
-    { modal: true, detail: `${kind === 'cherry-pick' ? 'Adds copies of them.' : 'Adds commits that undo them.'} You can undo this.` },
-    name,
-  );
-  if (answer !== name) return;
   // Cherry-pick は古い順、Revert は新しい順（アプリと同じ）
   const oids = (kind === 'cherry-pick' ? [...commits].reverse() : commits).map((c) => c.oid);
+  const ok = await confirmOperation(
+    kind === 'cherry-pick' ? `Cherry-pick ${what} onto ${onto}?` : `Revert ${what} on ${onto}?`,
+    [kind === 'cherry-pick' ? 'Adds copies of them.' : 'Adds commits that undo them.', 'You can undo this.'],
+    name,
+    { drawing: () => pickPreview(repo, oids, kind, onto) },
+  );
+  if (!ok) return;
   const isMerge = commits.some((c) => c.parents.length > 1);
   const label = `${name} ${what}`;
   await runAction(repo, {
@@ -203,6 +206,18 @@ async function pickSelected(
       return result === 'stopped' ? 'conflict' : result;
     },
   });
+}
+
+/** cherry-pick・revert で作るコミット（oids は当てる順）の前と後の絵 */
+async function pickPreview(
+  repo: Repository,
+  oids: readonly string[],
+  kind: 'cherry-pick' | 'revert',
+  onto: string,
+): Promise<Drawing | undefined> {
+  const revert = kind === 'revert';
+  const preview = await repo.backend.graphPreview<PickPreview>({ op: 'pickPreview', oids: [...oids], revert });
+  return pickDrawing(preview, onto, revert ? 'revert' : 'cherryPick');
 }
 
 function short(panel: HistoryController, oid: string): string {

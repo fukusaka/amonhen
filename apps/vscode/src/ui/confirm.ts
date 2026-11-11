@@ -3,10 +3,35 @@
  * かを見せてから行う。アプリのシートを VSCode の modal で）
  */
 import * as vscode from 'vscode';
+import type { Drawing } from '../history/drawing.ts';
 import type { Repository } from '../state/repository.ts';
+import { MainPanel } from './mainPanel.ts';
 
-/** title と lines（詳しい欄）を見せ、ok を押したら true */
-export async function confirmOperation(title: string, lines: readonly string[], ok: string): Promise<boolean> {
+/** シートで確かめるときに添えるもの */
+export interface SheetExtras {
+  /** 前と後の絵（読むのに時間がかかるので、シートを出すときだけ読む） */
+  drawing?: () => Promise<Drawing | undefined>;
+  /** ok が取り消せない操作 */
+  destructive?: boolean;
+}
+
+/**
+ * title と lines（詳しい欄）を見せ、ok を押したら true。extras があり、メインビューが開いていれば、アプリと同じく
+ * その上に重ねたシートで、前と後の絵を添えて確かめる
+ */
+export async function confirmOperation(title: string, lines: readonly string[], ok: string, extras?: SheetExtras): Promise<boolean> {
+  const panel = MainPanel.active;
+  if (extras && panel?.canAsk) {
+    const drawing = await extras.drawing?.();
+    const answer = await panel.ask({
+      title,
+      lines: lines.filter((l) => l),
+      ...(drawing ? { drawing } : {}),
+      buttons: [ok],
+      destructive: extras.destructive,
+    });
+    return answer !== undefined;
+  }
   const detail = lines.filter((l) => l).join('\n');
   const choice = await vscode.window.showInformationMessage(title, { modal: true, ...(detail ? { detail } : {}) }, ok);
   return choice === ok;
