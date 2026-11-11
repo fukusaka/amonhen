@@ -527,6 +527,9 @@
 "Double-click to show in History." = "ダブルクリックで History に表示";
 "This commit has no changes to the file" = "このコミットでの変更が見つかりません";
 "Commit the checked files (Ctrl+Return)" = "チェックしたファイルをコミット（Ctrl+Return）";
+"Committing…" = "コミットしています…";
+"No files are checked" = "チェックしたファイルがありません";
+"Write a commit message" = "コミットメッセージを書いてください";
 "Commit and Push (Ctrl+Shift+Return), Amend" = "Commit and Push（Ctrl+Shift+Return）、Amend";
 "Commit and Publish (Ctrl+Shift+Return), Amend" = "Commit and Publish（Ctrl+Shift+Return）、Amend";
 "Changes" = "変更";
