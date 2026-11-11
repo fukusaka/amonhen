@@ -5,6 +5,7 @@
  * 開いていれば、その上にシートを重ねて前と後を絵で描く（ネイティブのモーダルには絵を出せないので、文で描く）
  */
 import * as vscode from 'vscode';
+import { rebaseDrawing } from '../history/drawing.ts';
 import { drawingLines, previewLines, stackedAlternative, type PreviewTarget } from '../history/rewritePreview.ts';
 import type { Repository } from '../state/repository.ts';
 import { MainPanel } from './mainPanel.ts';
@@ -55,7 +56,7 @@ export async function confirmRewrite(
   }
   const panel = MainPanel.active;
   if (panel?.canAsk) {
-    const index = await panel.ask({
+    const answer = await panel.ask({
       title,
       lines: [
         ...(note ? [note] : []),
@@ -63,10 +64,10 @@ export async function confirmRewrite(
         ...(failure ? [`Couldn’t read what the rewrite will do (${failure}).`] : []),
         'You can undo this.',
       ],
-      preview,
+      drawing: preview && rebaseDrawing(preview),
       buttons: items.map((i) => i.title),
     });
-    const picked = index === undefined ? undefined : items[index];
+    const picked = answer && items[answer.index];
     return picked ? { updateRefs: picked.updateRefs } : undefined;
   }
   const choice = await vscode.window.showWarningMessage(title, { modal: true, detail: lines.join('\n') }, ...items);
