@@ -489,6 +489,8 @@ fn handlers() -> Vec<(&'static str, Handler)> {
                 (p.reload)();
                 (p.refreshed)();
                 crate::github::reload(&p.actions);
+                // 出しているリポジトリの設定も（macOS 版の ⌘R と同じ）。
+                crate::reposettings::reload_if_shown(&p.pages);
             }),
         ),
         // Navigate

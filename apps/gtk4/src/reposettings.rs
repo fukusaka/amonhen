@@ -2638,6 +2638,19 @@ pub fn select(slot: &gtk::Box, page: &str) {
     }
 }
 
+/// タブのページ（main.rs の `pages`）がリポジトリの設定を出していれば読み直す（端末などで変えた設定、Refresh）。
+pub fn reload_if_shown(pages: &gtk::Stack) {
+    if pages.visible_child_name().as_deref() != Some("settings") {
+        return;
+    }
+    let Some(slot) = pages.child_by_name("settings").and_downcast::<gtk::Box>() else {
+        return;
+    };
+    if let Some(settings) = open_of(&slot).and_then(|e| e.1.borrow().clone()) {
+        settings.load();
+    }
+}
+
 /// `slot`（[`page_slot`]）のリポジトリの設定のページを用意する（あれば読み直す。編集する worktree が替わって
 /// いれば作り直す）。ページへの切り替えは呼ぶ側。`page` を選ぶ。
 pub fn show(

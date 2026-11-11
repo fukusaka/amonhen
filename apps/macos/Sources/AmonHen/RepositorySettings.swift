@@ -2230,7 +2230,7 @@ final class RepositorySettingsPage: NSHostingController<AnyView> {
 
     @MainActor required dynamic init?(coder: NSCoder) { fatalError() }
 
-    /// 開くたびに読み直す（端末などで変えたかもしれない）。
+    /// 開くたびに読み直す（端末などで変えたかもしれない。出している間の変化は窓が読み直させる）。
     override func viewWillAppear() {
         super.viewWillAppear()
         model.load()
