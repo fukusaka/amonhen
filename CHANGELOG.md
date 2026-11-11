@@ -1107,6 +1107,9 @@ First release.
   app's Performance setting does (off by default).
 - Merge into Current Branch…, dropping a branch on a branch and Merge Branches… ask how to merge: following git's
   settings, fast-forward only, always with a merge commit, or squashed into one commit, as in the app.
+- With the main view open, confirmations that change the commit graph appear as a sheet over it with the app's
+  before-and-after drawing: Push, Force Push, Pull, Merge, Rebase, Reset, Cherry-pick, Revert, Fast-Forward, deleting
+  a branch, Undo, applying patches and History edits. Without it, they ask as before.
 
 #### Fixed
 
