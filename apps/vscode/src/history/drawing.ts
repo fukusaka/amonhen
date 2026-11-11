@@ -329,6 +329,31 @@ const pickTitles: Record<PickKind, string> = {
   patches: 'After applying the patches',
 };
 
+/**
+ * git が octopus merge のコミットに付ける件名（アプリの mergeMessage と同じ）。revs は完全な ref 名かコミット、into は
+ * 取り込む先のブランチの短い名前
+ */
+export function octopusSubject(revs: readonly string[], into: string | undefined): string {
+  const joined = (names: string[]) => {
+    const quoted = names.map((n) => `'${n}'`);
+    return quoted.length > 1 ? `${quoted.slice(0, -1).join(', ')} and ${quoted.at(-1)}` : (quoted[0] ?? '');
+  };
+  const kinds: [string, string, string][] = [
+    ['refs/heads/', 'branch', 'branches'],
+    ['refs/remotes/', 'remote-tracking branch', 'remote-tracking branches'],
+    ['refs/tags/', 'tag', 'tags'],
+  ];
+  const groups = kinds.flatMap(([prefix, one, many]) => {
+    const names = revs.filter((r) => r.startsWith(prefix)).map((r) => r.slice(prefix.length));
+    return names.length === 0 ? [] : [`${names.length === 1 ? one : many} ${joined(names)}`];
+  });
+  let text = `Merge ${groups.join(', ')}`;
+  const commits = revs.filter((r) => !kinds.some(([prefix]) => r.startsWith(prefix)));
+  if (commits.length > 0) text += `${groups.length === 0 ? '' : '; '}${commits.length === 1 ? 'commit' : 'commits'} ${joined(commits)}`;
+  if (into !== 'main' && into !== 'master') text += ` into ${into ?? 'HEAD'}`;
+  return text;
+}
+
 /** octopus merge で描く線の数（残りは「and n more branches」） */
 const MAX_LANES = 4;
 

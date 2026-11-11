@@ -80,7 +80,12 @@ async function mergeRevs(repo: Repository, revs: string[], head: string | undefi
   });
   if (!choice) return;
   // いくつもなので Fast-Forward Only はない
-  const mode = await pickMergeMode(`${choice.oneByOne ? 'Merge one by one' : 'Merge'} into ${target}?`, false);
+  // 1 つのコミットにまとめるなら、その前と後の絵を添える
+  const mode = await pickMergeMode(
+    `${choice.oneByOne ? 'Merge one by one' : 'Merge'} into ${target}?`,
+    false,
+    head && !choice.oneByOne ? { repo, theirs: choice.revs, ours: head } : undefined,
+  );
   if (mode) {
     await run(repo, choice.revs, choice.oneByOne, target, mode);
   }

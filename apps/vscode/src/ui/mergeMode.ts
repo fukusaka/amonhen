@@ -5,7 +5,14 @@
  */
 import * as vscode from 'vscode';
 import type { MergeMode } from '../git/backend.ts';
-import { mergeDrawing, type MergePreview } from '../history/drawing.ts';
+import {
+  mergeDrawing,
+  octopusDrawing,
+  octopusSubject,
+  type Drawing,
+  type MergePreview,
+  type OctopusPreview,
+} from '../history/drawing.ts';
 import { shortName } from '../state/operations.ts';
 import type { Repository } from '../state/repository.ts';
 import { MainPanel } from './mainPanel.ts';
@@ -37,11 +44,25 @@ const MODES: readonly ModeItem[] = [
   },
 ];
 
-/** 絵を描く材料: 取り込むもの（theirs）と取り込む先のブランチ（ours。`refs/heads/...`） */
+/** 絵を描く材料: 取り込むもの（theirs。いくつもなら 1 つのコミットにまとめる octopus）と取り込む先のブランチ（ours。`refs/heads/...`） */
 export interface MergeTarget {
   repo: Repository;
-  theirs: string;
+  theirs: string | readonly string[];
   ours: string;
+}
+
+/** 前と後の絵と、コンフリクトの見込みのファイル */
+async function mergePicture(t: MergeTarget): Promise<[Drawing | undefined, string[]]> {
+  const ours = shortName(t.ours);
+  if (typeof t.theirs !== 'string') {
+    const preview = await t.repo.backend.graphPreview<OctopusPreview>({ op: 'octopusPreview', theirs: [...t.theirs] });
+    return [octopusDrawing(preview, ours, t.theirs, octopusSubject(t.theirs, ours)), []];
+  }
+  const [preview, steps] = await Promise.all([
+    t.repo.backend.graphPreview<MergePreview>({ op: 'mergePreview', theirs: t.theirs, ours: t.ours }),
+    t.repo.backend.predictMerge([t.theirs], t.ours).catch(() => undefined),
+  ]);
+  return [mergeDrawing(preview, ours), steps?.[0] ?? []];
 }
 
 /**
@@ -52,14 +73,7 @@ export async function pickMergeMode(title: string, single: boolean, target?: Mer
   const items = MODES.filter((m) => single || m.mode !== 'fastForwardOnly');
   const panel = MainPanel.active;
   if (panel?.canAsk) {
-    const [preview, steps] = target
-      ? await Promise.all([
-          target.repo.backend.graphPreview<MergePreview>({ op: 'mergePreview', theirs: target.theirs, ours: target.ours }),
-          target.repo.backend.predictMerge([target.theirs], target.ours).catch(() => undefined),
-        ])
-      : [undefined, undefined];
-    const conflicts = steps?.[0] ?? [];
-    const drawing = target && mergeDrawing(preview, shortName(target.ours));
+    const [drawing, conflicts] = target ? await mergePicture(target) : [undefined, []];
     const answer = await panel.ask({
       title,
       lines: ['You can undo this.'],

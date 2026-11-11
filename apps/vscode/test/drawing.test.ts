@@ -4,6 +4,7 @@ import {
   mergeDrawing,
   moveDrawing,
   octopusDrawing,
+  octopusSubject,
   pickDrawing,
   rebaseDrawing,
   splitNote,
@@ -156,4 +157,12 @@ test('splitNote says how long ago the branches split', () => {
   const now = Date.UTC(2026, 10, 11);
   assert.equal(splitNote({ oid: 'b', subject: '', time: now / 1000 - 86_400 * 90 }, now), 'split off 3 mo. ago');
   assert.equal(splitNote({ oid: 'b', subject: '' }, now), undefined);
+});
+
+test('octopusSubject names the merge commit as git does', () => {
+  assert.equal(octopusSubject(['refs/heads/a', 'refs/heads/b', 'refs/heads/c'], 'main'), "Merge branches 'a', 'b' and 'c'");
+  assert.equal(
+    octopusSubject(['refs/heads/a', 'refs/tags/v1', 'refs/remotes/origin/x', 'abc123'], 'dev'),
+    "Merge branch 'a', remote-tracking branch 'origin/x', tag 'v1'; commit 'abc123' into dev",
+  );
 });
