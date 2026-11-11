@@ -2060,6 +2060,7 @@ fn build_tab(
     }
     let tab_weak = Rc::downgrade(&tab);
     let details_weak = Rc::downgrade(&details);
+    let pages_weak = pages.downgrade();
     // 開けたら File > Open Recent に出す（開けなかったものは覚えない。確認用の起動では、`--tab` のタブも覚え
     // ない。macOS 版と同じ）。
     let opened_path = path.clone();
@@ -2749,7 +2750,13 @@ fn build_tab(
                             spinner.start();
                         }
                     }
-                    Event::ConfigChanged => load_form(),
+                    Event::ConfigChanged => {
+                        load_form();
+                        // 出しているリポジトリの設定も（端末などで変えた設定・ブランチ・リモート。macOS 版と同じ）。
+                        if let Some(pages) = pages_weak.upgrade() {
+                            reposettings::reload_if_shown(&pages);
+                        }
+                    }
                     // History は作り直さず、行と詳細を読み直す（macOS 版の `checkMailmap`）。
                     Event::MailmapChanged => {
                         view.reload_rows();
@@ -3535,7 +3542,10 @@ fn load(
             // 設定が変わった（外での `git remote add`・上流の付け替えなど）: ref を読み直す（リモートと上流、
             // GitHub も。macOS 版と同じ）。
             let _ = tx.send_blocking(Event::Refs(refs));
-            // partial clone と sparse checkout は設定で変わる（macOS 版と同じ）。
+        }
+        if changes.contains(Changes::REFS) || changes.contains(Changes::CONFIG) {
+            // partial clone と sparse checkout は設定で、リポジトリの設定のページのブランチ・リモートは ref でも
+            // 変わる（macOS 版と同じ）。
             let _ = tx.send_blocking(Event::ConfigChanged);
         }
         if changes.contains(Changes::REFS)

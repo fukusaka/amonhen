@@ -16,6 +16,7 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- Repository settings that are showing read the configuration again when it changes outside the app or on Refresh.
 - The Pull sheet no longer leaves a blank space when the chosen mode can't pull: it keeps the graph as it is now and
   says so, and why, where the after graph would be.
 - The merge commit the Pull sheet draws has the subject git pull writes (`Merge branch 'main' of <URL>`, with

@@ -1664,6 +1664,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             refsChanged()
             // shallow の境界は fetch で、partial clone と sparse checkout は設定で変わる。
             loadForm()
+            // 出しているリポジトリの設定（端末などで変えた設定・ブランチ・リモート。⌘R もここを通る）。
+            if pages?.page == .settings { settings.model.load() }
             // push・fetch の後はプルリクエストも変わりうる（読みすぎないよう、間を空ける）。
             loadGitHub(force: false)
         }
