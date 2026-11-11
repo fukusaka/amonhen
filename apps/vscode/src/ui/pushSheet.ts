@@ -1,16 +1,20 @@
 /**
- * Push の前に、送るコミットを見せる（アプリの Push のシートを QuickPick で）。どこへ送るか、見ておくとよいこと、送る
+ * Push の前に、送るコミットを見せる（アプリの Push のシート。メインビューが開いていればその上に重ねたシートで、送った
+ * 後の形の絵つき。開いていなければ QuickPick で）。どこへ送るか、見ておくとよいこと、送る
  * コミットを並べ、Push の行で送る。上流が先に進んでいれば、同じ一覧で消えるコミットを見せ、Pull… か Force Push を
  * 選ばせる。Force Push は、ここで見せた上流のコミットのときだけ置き換える（`--force-with-lease=<ref>:<commit>`）。
  * 送る変更すべての行やコミットの行を選ぶと、その差分を標準の複数ファイル diff エディタで開く（シートは閉じない）
  */
 import * as vscode from 'vscode';
 import type { Commit } from '../git/log.ts';
+import { moveDrawing, type MovePreview } from '../history/drawing.ts';
 import { pushTarget, shortName } from '../state/operations.ts';
 import type { Repository } from '../state/repository.ts';
 import { pushWarnings } from '../sync/pushPlan.ts';
 import { openCommitChanges, openRangeChanges } from './commitChanges.ts';
+import type { SheetList } from '../view/protocol.ts';
 import { runAction } from './dragDrop.ts';
+import { MainPanel } from './mainPanel.ts';
 import { pullWithSheet } from './pullSheet.ts';
 import { showError } from './stageCommands.ts';
 
@@ -150,12 +154,67 @@ export async function pushWithSheet(repo: Repository, request: PushRequest, publ
             choice: 'push',
           },
         ];
-  const pick = vscode.window.createQuickPick<Item>();
-  pick.title = diverged
+  const title = diverged
     ? `${upstream} has ${plural(incoming.length)} you don’t have`
     : request.force
       ? `Force push ${name}?`
       : `Push ${plural(outgoing.length)} to ${upstream}?`;
+  // メインビューが開いていれば、アプリと同じく 1 枚のシートに（送った後の形の絵つき）
+  const panel = MainPanel.active;
+  if (panel?.canAsk) {
+    const replacing = request.force || diverged;
+    const preview = await repo.backend.graphPreview<MovePreview>({ op: 'movePreview', from: upstreamRef, to: branch });
+    // 送った後の形（上流の札が手元の先端へ。Force Push なら上流から消えるコミットを赤で）
+    const drawing = moveDrawing(preview, {
+      moving: upstream,
+      kind: 'remote',
+      afterTitle: replacing ? 'After the force push' : 'After the push',
+      lostNote: `removed from ${upstream}`,
+      tone: 'red',
+    });
+    const opens: (() => Promise<void>)[] = [];
+    const list = (listTitle: string, commits: readonly Commit[], tone?: 'red'): SheetList | undefined => {
+      if (commits.length === 0) return undefined;
+      const items = commits.slice(0, LISTED).map((c) => {
+        opens.push(() => openCommitChanges(repo, c));
+        return { label: c.subject, description: `${c.oid.slice(0, 8)} · ${c.author}`, open: true };
+      });
+      // 送る変更すべて（先頭の行）
+      if (!tone && all[0]?.open) {
+        opens.unshift(all[0].open);
+        items.unshift({ label: allTitle, description: `${upstream} → ${name}, all files`, open: true });
+      }
+      const rest = commits.length - LISTED;
+      return { title: `${listTitle} (${count(commits.length)})`, items, more: rest > 0 ? `… and ${count(rest)} more` : undefined, tone };
+    };
+    const lists = [list('Commits to send', outgoing), replacing ? list(`Commits ${upstream} will lose`, incoming, 'red') : undefined];
+    const answer = await panel.ask(
+      {
+        title,
+        lines: diverged
+          ? ['Pull them first, or force push to replace them. Force Push can’t be undone.']
+          : request.force
+            ? [
+                (incoming.length > 0 ? `${upstream} loses ${plural(incoming.length)}.` : `It fails if ${upstream} has moved since you last fetched.`) +
+                  lease +
+                  ' This can’t be undone.',
+              ]
+            : [],
+        warnings,
+        drawing,
+        lists: lists.filter((l) => l !== undefined),
+        buttons: diverged ? ['Pull…', 'Force Push'] : [replacing ? 'Force Push' : 'Push'],
+        destructive: request.force,
+      },
+      (item) => void opens[item]?.().catch(showError),
+    );
+    if (!answer) return;
+    if (diverged && answer.index === 0) await pullWithSheet(repo);
+    else await send();
+    return;
+  }
+  const pick = vscode.window.createQuickPick<Item>();
+  pick.title = title;
   pick.placeholder = diverged ? 'Pull them first, or force push to replace them' : `${name} → ${upstream}`;
   pick.matchOnDescription = false;
   // 差分を開いてもシートは閉じない
