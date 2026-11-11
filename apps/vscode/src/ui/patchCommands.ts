@@ -7,6 +7,8 @@ import * as vscode from 'vscode';
 import type { FormatPatchOptions, RebaseResult } from '../git/backend.ts';
 import { parsePatch, patchPaths, type PatchSummary } from '../git/patch.ts';
 import type { RepositoryManager } from '../state/manager.ts';
+import { pickDrawing, type PickPreview } from '../history/drawing.ts';
+import { shortName } from '../state/operations.ts';
 import type { Repository } from '../state/repository.ts';
 import { MainPanel } from './mainPanel.ts';
 import { showError } from './stageCommands.ts';
@@ -172,7 +174,7 @@ async function applyPatches(repo: Repository, uris: readonly vscode.Uri[]): Prom
     : 'Applies the changes to the working tree (git apply). You can undo this.';
   // 既定のボタンは git の既定（am は am.threeWay に任せ、apply は作業ツリーだけ）
   const buttons = mailbox ? ['Apply', 'Apply with 3-Way Merge'] : ['Apply', 'Apply and Stage', 'Apply with 3-Way Merge'];
-  const choice = await vscode.window.showInformationMessage(title, { modal: true, detail: `${how}\n\n${list}\n\n${status}` }, ...buttons);
+  const choice = await askApply(repo, title, how, list, status, buttons, mailbox ? summary.patches.map((p) => p.subject ?? '') : undefined);
   if (!choice) return;
   const threeWay = choice === 'Apply with 3-Way Merge';
   const label = mailbox
@@ -207,6 +209,36 @@ async function applyPatches(repo: Repository, uris: readonly vscode.Uri[]): Prom
   } else if (result) {
     void vscode.window.showWarningMessage(`${label}: Applied with conflicts. Resolve and stage them.`);
   }
+}
+
+/**
+ * 当てるかを確かめ、押したボタンを返す。コミットにするパッチ（git am）で、メインビューが開いていれば、アプリと同じく
+ * その上に重ねたシートで、作るコミットの前と後の絵を添える（subjects はパッチの件名、古い順）
+ */
+async function askApply(
+  repo: Repository,
+  title: string,
+  how: string,
+  list: string,
+  status: string,
+  buttons: string[],
+  subjects: string[] | undefined,
+): Promise<string | undefined> {
+  const panel = MainPanel.active;
+  if (subjects && panel?.canAsk) {
+    const [preview, head] = await Promise.all([
+      repo.backend.graphPreview<PickPreview>({ op: 'pickPreview', subjects }),
+      repo.backend.head(),
+    ]);
+    const answer = await panel.ask({
+      title,
+      lines: [how, ...list.split('\n'), status],
+      drawing: pickDrawing(preview, head.branch ? shortName(head.branch) : 'HEAD', 'patches'),
+      buttons,
+    });
+    return answer && buttons[answer.index];
+  }
+  return vscode.window.showInformationMessage(title, { modal: true, detail: `${how}\n\n${list}\n\n${status}` }, ...buttons);
 }
 
 function firstError(text: string): string {

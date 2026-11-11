@@ -614,6 +614,11 @@ button.secondary {
   line-height: 1.5;
 }
 
+/* パッチの一覧などの字下げを残す */
+.sheet-lines > div {
+  white-space: pre-wrap;
+}
+
 .sheet-lines .warning {
   color: var(--vscode-editorWarning-foreground, var(--vscode-foreground));
 }
