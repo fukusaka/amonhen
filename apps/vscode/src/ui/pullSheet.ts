@@ -161,7 +161,8 @@ async function askInSheet(panel: MainPanel, repo: Repository, i: SheetInput): Pr
         ? [await repo.backend.graphPreview<MovePreview>({ op: 'movePreview', from: 'HEAD', to: i.from, branch: i.head })]
         : await Promise.all([
             undefined,
-            repo.backend.graphPreview<MergePreview>({ op: 'mergePreview', theirs: i.from, ffSetting: 'pull.ff' }),
+            // merge コミットの件名を git pull と同じにするため、短い名前で（`Merge branch 'main' of <URL>`）
+            repo.backend.graphPreview<MergePreview>({ op: 'mergePreview', theirs: shortName(i.from), ffSetting: 'pull.ff' }),
             repo.backend.rewritePreview({ onto: i.from }).catch(() => undefined),
           ]);
   const forward = moveDrawing(move, { moving: i.head, kind: 'local', afterTitle: after, lostNote: '' });

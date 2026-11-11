@@ -58,8 +58,9 @@ async function mergePicture(t: MergeTarget): Promise<[Drawing | undefined, strin
     const preview = await t.repo.backend.graphPreview<OctopusPreview>({ op: 'octopusPreview', theirs: [...t.theirs] });
     return [octopusDrawing(preview, ours, t.theirs, octopusSubject(t.theirs, ours)), []];
   }
+  // merge コミットの件名を git と同じにするため、短い名前で（`Merge branch 'topic'`）
   const [preview, steps] = await Promise.all([
-    t.repo.backend.graphPreview<MergePreview>({ op: 'mergePreview', theirs: t.theirs, ours: t.ours }),
+    t.repo.backend.graphPreview<MergePreview>({ op: 'mergePreview', theirs: shortName(t.theirs), ours }),
     t.repo.backend.predictMerge([t.theirs], t.ours).catch(() => undefined),
   ]);
   return [mergeDrawing(preview, ours), steps?.[0] ?? []];
