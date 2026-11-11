@@ -598,7 +598,15 @@ button.secondary {
 
 .editor.sheet {
   width: min(760px, 94vw);
+  /* 画面に収め、はみ出すぶんは絵の中でスクロールする（ボタンはいつも見える） */
+  max-height: 80vh;
+  box-sizing: border-box;
   gap: 10px;
+  container-type: inline-size;
+}
+
+.editor.sheet > * {
+  flex: none;
 }
 
 .sheet-lines {
@@ -617,7 +625,28 @@ button.secondary {
   padding: 8px;
   border-radius: 4px;
   background: var(--vscode-editor-background);
-  overflow-x: auto;
+  overflow: auto;
+}
+
+.editor.sheet > .rewrite-drawing {
+  flex: 0 1 auto;
+  min-height: 0;
+}
+
+/* 狭いときは、今と後を縦に積む */
+@container (max-width: 520px) {
+  .rewrite-drawing {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .drawing-column {
+    flex: none;
+  }
+
+  .drawing-arrow {
+    transform: rotate(90deg);
+  }
 }
 
 .drawing-column {
