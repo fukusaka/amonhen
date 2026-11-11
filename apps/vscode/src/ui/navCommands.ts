@@ -12,6 +12,8 @@ import { mergeBranches } from './mergeBranches.ts';
 import { pickMergeMode } from './mergeMode.ts';
 import { publish } from './syncCommands.ts';
 import { confirmOperation, uncommittedLine } from './confirm.ts';
+import { moveDrawing, type Drawing, type MovePreview } from '../history/drawing.ts';
+import { MainPanel } from './mainPanel.ts';
 import { pushWithSheet } from './pushSheet.ts';
 
 /** ブランチ・リモートブランチ・タグのノードから ref を取り出す */
@@ -71,6 +73,7 @@ export function registerNavCommands(manager: RepositoryManager, mergedBy: Merged
     several('amonhen.nav.delete', (repo, ref) => deleteBranch(repo, ref, mergedBy), (repo, refs) => deleteBranches(repo, refs, mergedBy)),
     // チェックアウトしていないブランチを upstream と合わせる（最後の Fetch の時点）
     command('amonhen.nav.fastForward', async (repo, ref) => {
+      if (!(await confirmFastForward(repo, ref))) return;
       await runAction(repo, {
         label: `$(arrow-down) Fast-Forward ${shortName(ref)}`,
         run: async () => {
@@ -158,15 +161,60 @@ async function deleteBranches(repo: Repository, refs: string[], mergedBy: Merged
   }
 }
 
+/**
+ * メインビューが開いていれば、アプリと同じく前と後の絵を見せて確かめる（先へ進めるだけで、Undo で戻せる。開いて
+ * いなければ、これまでどおり確かめない）
+ */
+async function confirmFastForward(repo: Repository, ref: string): Promise<boolean> {
+  const upstream = (repo.current.branches ?? []).find((b) => b.name === ref)?.upstream;
+  if (!upstream || !MainPanel.active?.canAsk) return true;
+  const name = shortName(ref);
+  return confirmOperation(`Fast-forward ${name} to ${shortName(upstream)}?`, ['You can undo this.'], 'Fast-Forward', {
+    drawing: async () =>
+      moveDrawing(await repo.backend.graphPreview<MovePreview>({ op: 'movePreview', from: ref, to: upstream, branch: name }), {
+        moving: name,
+        kind: 'local',
+        afterTitle: 'After the fast-forward',
+        lostNote: '',
+      }),
+  });
+}
+
+/**
+ * 消すとたどれなくなるコミットの前と後の絵（今のブランチと上流のうち、取り込まれていないものが少ない方と比べて）。
+ * そういうコミットがなければ undefined
+ */
+async function deleteDrawing(repo: Repository, ref: string): Promise<Drawing | undefined> {
+  const name = shortName(ref);
+  const upstream = (repo.current.branches ?? []).find((b) => b.name === ref)?.upstream;
+  const previews = await Promise.all(
+    ['HEAD', ...(upstream ? [upstream] : [])].map((against) =>
+      repo.backend.graphPreview<MovePreview>({ op: 'deletePreview', branch: name, against }),
+    ),
+  );
+  const fewest = previews
+    .filter((p) => p !== undefined)
+    .sort((a, b) => a.lostCount - b.lostCount)[0];
+  if (!fewest || fewest.lostCount === 0) return undefined;
+  return moveDrawing(fewest, {
+    moving: name,
+    kind: 'local',
+    afterTitle: 'After deleting',
+    lostNote: 'goes with the branch',
+    tone: 'red',
+    removes: true,
+  });
+}
+
 async function deleteBranch(repo: Repository, ref: string, mergedBy: MergedBy): Promise<void> {
   const name = shortName(ref);
   const pr = mergedBy(repo, name);
-  const choice = await vscode.window.showWarningMessage(
-    `Delete the branch ${name}?`,
-    { modal: true, detail: `${pr === undefined ? '' : `Merged by pull request #${pr}. `}You can undo this.` },
-    'Delete',
-  );
-  if (choice !== 'Delete') return;
+  const title = `Delete the branch ${name}?`;
+  const detail = `${pr === undefined ? '' : `Merged by pull request #${pr}. `}You can undo this.`;
+  const ok = MainPanel.active?.canAsk
+    ? await confirmOperation(title, [detail], 'Delete', { drawing: () => deleteDrawing(repo, ref) })
+    : (await vscode.window.showWarningMessage(title, { modal: true, detail }, 'Delete')) === 'Delete';
+  if (!ok) return;
   const remove = (force: boolean) =>
     repo.undo.record(`Delete ${name}`, [ref], 'keep', () => repo.backend.deleteBranch(name, force), { branches: [name] });
   try {
