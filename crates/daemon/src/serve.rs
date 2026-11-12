@@ -471,9 +471,14 @@ fn prepared_history(shared: &Shared) -> Result<String> {
     let path = repo
         .cache_path()
         .ok_or_else(|| tr!("No place for the History cache"))?;
-    let written =
-        amonhen_core::cache::read(path).ok_or_else(|| tr!("Can’t write the History cache"))?;
-    if written.tips != snapshot.tips || written.head != snapshot.head {
+    // 書き込みはまとめているので、つないだ側が読む前に書いておく。
+    repo.flush_cache()?;
+    let written = amonhen_core::cache::read_state(path)
+        .ok_or_else(|| tr!("Can’t write the History cache"))?;
+    if written.tips != snapshot.tips
+        || written.head != snapshot.head
+        || written.rows != snapshot.graph.len() as u64
+    {
         return Err(tr!("Can’t write the History cache (it’s out of date)").into());
     }
     Ok(path.display().to_string())

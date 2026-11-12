@@ -74,7 +74,7 @@ Inherit all of the extension's requirements ("Overview" in vscode-amonhen's `doc
 │ projection Conversion to each FE's shape (only changed chunks, only once)     │
 │ backend    GitBackend: gix / git CLI / libgit2                               │
 │ platform   Platform: waking, credentials, SSH, storage (injected from the FE) │
-│ index   Persistent cache of commit info (mmap, same layout as in memory)      │
+│ index   Persistent cache of commit info (columns, oldest first, appended)     │
 │ graph   Incremental lane computation, recomputing only the difference        │
 │ diff    imara-diff, word diff, tree-sitter highlighting                       │
 │ watch   Watching with notify (FSEvents / inotify / ReadDirectoryChangesW)    │
@@ -146,7 +146,39 @@ To add later: `backend-git2/` (for mobile), bindings for Swift / Kotlin.
 - At connection time, the FE declares a `FrontendProfile` (string encoding, required columns, GPU vertex format, alignment). The projection layer converts to that shape chunk by chunk.
 - Only the visible range and the prefetch range are converted. Results are cached by "generation + chunk + format", and unchanged chunks are shared with the previous generation. Multiple FEs with the same format share them.
 - Conversion results are also written to the persistent cache per format, so the next launch only needs to mmap them. The internal persistent cache (things closed inside Rust, such as checkpoints and the ref index) may use rkyv, but the shape handed to FEs is defined by us (rkyv's layout is not documented across languages, and its strings are fixed to UTF-8).
-- The History cache file (`crates/core/src/cache.rs`) is named by the repository and by a fingerprint of its format: a hash of the sources that decide what it holds (`cache.rs`, `graph.rs`, `CommitGraph` and the `amonhen-layout` records), made by `crates/core/build.rs`. Builds of different formats that run side by side (a development build's daemon next to a release's) use different files instead of rewriting one another's, and a file of another format is never read. Files of the same repository in other formats are removed once they have not been written for 7 days.
+- The History cache (`crates/core/src/cache.rs`, a folder) is named by the repository and by a fingerprint of its format: a hash of the sources that decide what it holds (`cache.rs`, `graph.rs`, `CommitGraph` and the `amonhen-layout` records), made by `crates/core/build.rs`. Builds of different formats that run side by side (a development build's daemon next to a release's) use different folders instead of rewriting one another's, and a cache of another format is never read. Caches of the same repository in other formats (and files of the earlier single-file format) are removed once they have not been written for 7 days.
+
+### History persistent cache
+
+The cache must not cost more than the change it records. The first version held the commit table and the layout in one file, with rows numbered from the newest. A new commit at the top moved every row number, so each change of the starting points or HEAD rewrote the whole file. On linux (1,485,025 commits) that is 117 MB per change, and this repository's reflogs show 40–150 ref changes on a typical day (up to 520). At linux's size, that is 6–61 GB a day written to the SSD for a cache.
+
+Rules:
+
+- Writes are proportional to the change. A commit, amend, reset, fetch or push writes what it adds or removes, not the rest of History.
+- The UI never waits (within 8.3 ms from input to display). The first screen right after opening comes from the cache, as before.
+
+Layout on disk (one folder per repository, named as before by the repository and the format's fingerprint):
+
+- The commit table (ids, commit times, parents) is stored oldest first. Parents point at older rows, and older rows never move, so stored rows are never rewritten. New commits are appended. When commits disappear, the table is cut from the oldest row that disappeared and the rest is appended again.
+- The table is kept in the order History is shown in (date or topological). A change moves only the top few rows of the topological order too (0–9 rows in every case measured), so it is cut and appended in the same way. Switching the order rewrites the table once (54 MB on linux), as every row moves; a separate table of the topological order (4 bytes a row) would make that 6 MB, but would need History in date order in memory as well.
+- A small state file holds the starting points, HEAD, the shallow boundary, the order, the number of rows and the id of the last row (19 KB for linux's 952 refs). It is replaced atomically and is what makes a write count. The tables may be longer than the state says (a crash between appending and writing the state); the extra is cut on the next write. If a table is shorter, or the last id does not match, the cache is dropped and History is read from scratch. Before cutting rows, the state with the smaller count is written first.
+- Writes are gathered: the cache is written after 2 seconds without another change, and when the repository is closed. A rebase, or a fetch that moves many refs, becomes one write.
+- The daemon, the app and the CLI may read and write the same cache. A `lock` file is held exclusively while writing and shared while reading, and reading copies the tables out of the mapped files before letting go (a mapping left in place would fault once another process cut the file).
+- The layout is not stored. A full layout of linux takes 209–230 ms. Storing it, or only its checkpoints, would break the first rule: when a long branch appears or disappears, the lanes of nearly every checkpoint below it move (355–360 of 364 on linux, 1.8 MB), whatever the size of the branch.
+
+Measured writes on linux (`crates/core/examples/cache_writes.rs`): a commit, an amend, a rebase of 5 commits, a reset, a fetch, a new or deleted branch, a tag or a checkout writes 19–38 KB (the state file once or twice, and 0–6 rows of 36 bytes and their parents), against 117 MB before. A write takes 6–10 ms in the background, most of it comparing the ids on disk. A branch of 200 commits from 50,000 commits back, rebuilt after 2,000 newer commits arrived, cuts and appends 2,200 rows (0.08 MB). A tombstone bitmap would be no smaller until the removal is deeper than about 5,000 rows, so cutting is used.
+
+In memory, History stays newest first: the core and the FEs number rows from the top, and FEs receive the arrays as pointers. Reading flips the table, copying the columns on separate threads: 6 ms for linux. Laying out the first rows and marking the rest pending takes 5 ms more, so opening linux from the cache takes 11 ms, about what the first version took to read (8.1 ms for 1M commits).
+
+Layout after opening:
+
+- After reading the table, the core lays out the first rows (60 rows in 0.7 ms, 10,000 in 1.8 ms) and publishes History. The rest is laid out in the background and published again when it is done (about 0.2 seconds for linux, 12.5 ms for git).
+- Until then, rows below the laid-out part show their text with an empty graph column. The density display and the ancestor emphasis cover the laid-out part, and are drawn again when the rest arrives. A snapshot carries the number of laid-out rows next to the number of rows (the C ABI, GTK4 and the front's `historyGraph`).
+- Later changes are laid out incrementally as before, converging at the checkpoints held in memory.
+
+Through the shared daemon, the daemon writes the commit table and passes the layout in POSIX shared memory, as it does for diff contents. The app maps the table and the layout without computing the layout again, and nothing of the layout reaches the SSD.
+
+The bytes written are visible: Activity's Performance shows what the History cache wrote per repository (the last write and the total since launch), and Settings > Performance shows the size of the cache with a button to clear it.
 
 ### Zero-copy rules
 
@@ -173,7 +205,7 @@ In the same process, the number of writes is 0 for numeric columns, the graph an
 
 ### When moving to another process or remote
 
-- ② Local shared daemon (`amonhen --serve`): one per user, listening on a Unix domain socket. The daemon writes History to the persistent cache file, and the connecting side mmaps it. Diff file contents are passed in POSIX shared memory. Commands, and Working Copy operations that write Undo records, run in the daemon's core.
+- ② Local shared daemon (`amonhen --serve`): one per user, listening on a Unix domain socket. The daemon writes History's commit table to the persistent cache and passes the layout in shared memory, and the connecting side maps both ("History persistent cache"). Diff file contents are passed in POSIX shared memory. Commands, and Working Copy operations that write Undo records, run in the daemon's core.
   - SSH hosts can be opened too (`daemon:ssh://host/path`; the CLI's `-C ssh://…` always uses this). The local daemon prepares and connects to the engine (`amonhen --stdio`) on the SSH host, and shares that connection and the core (History, search index, diffs) among the clients that opened the same SSH host. Only work that touches git is requested from the SSH host (the same split as `ssh://…`, where the app opens the SSH host directly). If the connection has dropped, it reconnects the next time it is opened. In the CLI, the first connection takes 1.6 seconds, and 0.01 seconds from the second time (measured with a fake ssh treating the local machine as the SSH host).
   - Unix domain sockets rather than XPC: the same thing runs on Linux (also used by the VSCode extension and the CLI), and the round-trip delay is small enough, p50 0.08 ms for small requests (0.04 ms in the same process). Large data is not put on the socket but passed via file mmap and shared memory, so XPC's region handoff offers no advantage either.
   - The original plan (send requests and notifications over shared-memory rings too, waking with `os_sync_wake_by_address_any` only when asleep) was not built, because the measured socket delay turned out not to be a problem.
@@ -799,3 +831,4 @@ Extensions:
   edit with the same preview in a modal's detail, with a second button to move or keep the stacked branches this once;
   through the shared daemon its History edits go to the core's `rewrite`, and on the git execution layer it confirms
   without a preview.
+- [ ] 22. A History cache whose writes are proportional to the change (see "History persistent cache"): the commit table oldest first with appends and cuts, the topological order as a separate table, an atomic state file, gathered writes, the layout computed after opening and published progressively, the layout passed from the daemon in shared memory, the bytes written in Activity, and the cache's size and clearing in Settings > Performance

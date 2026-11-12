@@ -29,19 +29,27 @@ fn bench(c: &mut Criterion) {
     });
 
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("history.bin");
-    let history = CachedHistory {
+    let path = dir.path().join("history");
+    let entry = |graph| CachedHistory {
         tips: vec![old_g.ids()[0]],
         shallow: vec![],
         head: None,
         order: amonhen_model::HistoryOrder::Date,
-        graph: old_g.clone(),
-        layout: old.clone(),
+        graph,
     };
-    // 読み込みだけを選んで測るときのため、先に 1 回書いておく。
-    cache::write(&path, &history).unwrap();
-    c.bench_function("cache write 1M", |b| {
-        b.iter(|| cache::write(&path, &history).unwrap())
+    let (history, grown) = (entry(old_g.clone()), entry(g.clone()));
+    c.bench_function("cache write 1M from scratch", |b| {
+        b.iter(|| {
+            cache::remove(&path).unwrap();
+            cache::write(&path, history.entry()).unwrap()
+        })
+    });
+    // 10 コミット足して、また切る（2 回の書き込み）。
+    c.bench_function("cache write 1M: add 10 commits and cut them", |b| {
+        b.iter(|| {
+            cache::write(&path, grown.entry()).unwrap();
+            cache::write(&path, history.entry()).unwrap()
+        })
     });
     c.bench_function("cache read 1M", |b| {
         b.iter(|| cache::read(black_box(&path)).unwrap())

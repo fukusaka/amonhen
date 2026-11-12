@@ -90,45 +90,6 @@ pub struct GraphLayout {
 }
 
 impl GraphLayout {
-    /// 永続キャッシュから組み立てる。点・線の行やレーンが範囲外なら `None`。
-    pub(crate) fn from_parts(
-        nodes: Slab<Node>,
-        edges: Slab<Edge>,
-        lane_count: u16,
-        mainline: Slab<u8>,
-        checkpoints: Vec<Checkpoint>,
-    ) -> Option<Self> {
-        let rows = nodes.len() as u32;
-        let valid = mainline.len() == nodes.len()
-            && nodes
-                .iter()
-                .enumerate()
-                .all(|(i, n)| n.row == i as u32 && n.lane < lane_count)
-            && edges.iter().all(|e| {
-                e.row_start <= e.row_end
-                    && e.row_end < rows
-                    && e.lane_start < lane_count
-                    && e.lane_end < lane_count
-            })
-            && checkpoints
-                .iter()
-                .all(|c| c.row < rows.max(1) && c.edges_len <= edges.len());
-        if !valid {
-            return None;
-        }
-        let mut layout = Self {
-            laid_out: rows,
-            nodes,
-            edges,
-            lane_count,
-            mainline,
-            checkpoints,
-            buckets: Vec::new(),
-        };
-        layout.build_buckets();
-        Some(layout)
-    }
-
     /// `rows` の点に merge の印を付ける（折りたたみで親を落とした merge を、merge として扱うため）。
     pub(crate) fn mark_merges(&mut self, rows: &[u32]) {
         let mut nodes = self.nodes.to_vec();
