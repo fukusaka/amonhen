@@ -17,6 +17,8 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- macOS: History highlights the selected commit's ancestors in the same frame as the selection, without waiting for
+  the whole History (about 85 ms to 52 ms from the key on a 60Hz display, in large repositories too).
 - Activity's "History: input → display" no longer counts redraws that no input caused (a background reload
   was timed from the last click, seconds earlier).
 - Repository settings that are showing read the configuration again when it changes outside the app or on Refresh.
