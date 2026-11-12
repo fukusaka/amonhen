@@ -159,6 +159,11 @@ typedef struct {
   const AmonhenNode *nodes;
   const AmonhenEdge *edges;
   uint32_t edge_count;
+  /**
+   * 上からレイアウトの済んだ行の数（キャッシュから開いた直後は `row_count` より少なく、下の行は
+   * `Node::PENDING`）。
+   */
+  uint32_t laid_out_rows;
 } AmonhenHistoryView;
 
 /**

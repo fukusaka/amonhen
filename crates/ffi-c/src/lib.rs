@@ -101,6 +101,9 @@ pub struct AmonhenHistoryView {
     pub nodes: *const Node,
     pub edges: *const Edge,
     pub edge_count: u32,
+    /// 上からレイアウトの済んだ行の数（キャッシュから開いた直後は `row_count` より少なく、下の行は
+    /// `Node::PENDING`）。
+    pub laid_out_rows: u32,
 }
 
 #[repr(C)]
@@ -579,6 +582,7 @@ pub unsafe extern "C" fn amonhen_history_view(
         nodes: non_null(h.layout.nodes()),
         edges: non_null(h.layout.edges()),
         edge_count: h.layout.edges().len() as u32,
+        laid_out_rows: h.layout.laid_out(),
     }
 }
 
