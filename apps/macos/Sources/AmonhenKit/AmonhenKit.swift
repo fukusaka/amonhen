@@ -283,9 +283,9 @@ public final class History: @unchecked Sendable {
         }
     }
 
-    /// `row` 行目のコミットの祖先と、祖先をつなぐ線。History の大きさに比例した時間がかかるので、裏で呼ぶ。
+    /// `row` 行目のコミットの祖先と、祖先をつなぐ線。描く範囲だけ求める（`Lineage.extend(to:)`）ので、すぐ返る。
     public func lineage(of row: Int) -> Lineage {
-        Lineage(raw: amonhen_history_lineage(raw, UInt32(row)), history: self, row: row)
+        Lineage(raw: amonhen_lineage_window_new(raw, UInt32(row)), history: self, row: row)
     }
 
     /// `rows` に重なる線の添字。
@@ -348,10 +348,11 @@ public final class History: @unchecked Sendable {
 }
 
 /// History の連続した行の列。文字列はコアのメモリを直接指す。
-/// 選んだコミットの祖先（`History.lineage(of:)`）。どのスレッドから読んでもよい。
-public final class Lineage: @unchecked Sendable {
+/// 選んだコミットの祖先（`History.lineage(of:)`）。gitk と同じく、描く行まで求め、スクロールしたら続きから
+/// 伸ばす。行はトポロジー順（親は子より下）なので、求めた範囲の中は全体を求めたときと同じになる。
+/// メインスレッドで使う。
+public final class Lineage {
     let raw: OpaquePointer
-    let view: AmonhenLineageView
     /// 求めたときの History（行と線の添字はこの History のもの）。
     public let history: History
     /// 選んだコミットの行。
@@ -361,24 +362,32 @@ public final class Lineage: @unchecked Sendable {
         self.raw = raw
         self.history = history
         self.row = row
-        self.view = amonhen_lineage_view(raw)
     }
 
     deinit {
-        amonhen_lineage_free(raw)
+        amonhen_lineage_window_free(raw)
     }
 
-    /// `row` 行目のコミットが祖先か。
+    /// ここまで求めた行（含まない）。History の最後まで求めていれば `History.rowCount`。
+    public var end: Int { Int(amonhen_lineage_window_end(raw)) }
+
+    /// `end` 行の手前まで、ただし一度に `atMost` 行までを求める（求めてあれば何もしない）。かかる時間は伸ばした
+    /// 行の数に比例する。
+    public func extend(to end: Int, atMost: Int = .max) {
+        let current = self.end
+        guard end > current else { return }
+        amonhen_lineage_window_extend(raw, history.raw, UInt32(clamping: min(end, current + atMost)))
+    }
+
+    /// `row` 行目のコミットが祖先か（求めた範囲の外なら false）。
     public func contains(row: Int) -> Bool {
-        let word = row / 64
-        guard row >= 0, word < Int(view.row_word_count) else { return false }
-        return view.rows[word] & (1 << UInt64(row % 64)) != 0
+        row >= 0 && amonhen_lineage_window_contains(raw, UInt32(clamping: row))
     }
 
     /// `edge` 番目の線を光らせ始める行。光らせなければ nil。
     public func litFrom(edge: Int) -> UInt32? {
-        guard edge >= 0, edge < Int(view.edge_count) else { return nil }
-        let from = view.edge_from[edge]
+        guard edge >= 0 else { return nil }
+        let from = amonhen_lineage_window_edge_from(raw, UInt32(clamping: edge))
         return from == UInt32.max ? nil : from
     }
 }

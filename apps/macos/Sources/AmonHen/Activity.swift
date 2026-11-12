@@ -16,6 +16,32 @@ enum PerformanceLog {
     }
 }
 
+/// いま処理している入力（入力から表示までを測る起点）。`NSApp.currentEvent` は処理し終えた後も最後の入力を
+/// 指したままなので、裏の読み直しで描いても数秒前のクリックが起点になる。run loop が待ちに入ったら、そこまでの
+/// 入力は処理し終えたとみなして数えない。メインスレッドが止まって待ちに入らないあいだは、その入力のまま（遅れも測る）。
+enum InputEvent {
+    private static var handledUpTo: TimeInterval = 0
+    private static var observer: CFRunLoopObserver?
+
+    /// 今の描画を起こした入力の時刻。待ちに入った後の描画（入力によらない）なら nil。
+    static var timestamp: TimeInterval? {
+        if observer == nil { start() }
+        guard let event = NSApp.currentEvent, event.timestamp > handledUpTo else { return nil }
+        return event.timestamp
+    }
+
+    private static func start() {
+        // 表示の更新（Core Animation の commit）より後に動くよう、順番は最後にする。
+        let observer = CFRunLoopObserverCreateWithHandler(nil, CFRunLoopActivity.beforeWaiting.rawValue, true, .max) { _, _ in
+            MainActor.assumeIsolated {
+                if let event = NSApp.currentEvent { handledUpTo = max(handledUpTo, event.timestamp) }
+            }
+        }
+        CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
+        self.observer = observer
+    }
+}
+
 /// 内部の出来事（ファイルの変化の知らせ、読み直し）。Activity の Events に出す。
 enum EventLog {
     struct Event: Identifiable, Hashable {

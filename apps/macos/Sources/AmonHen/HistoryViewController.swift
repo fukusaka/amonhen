@@ -24,6 +24,14 @@ final class GraphView: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    /// Core Animation の反映を待たずに、描いたらすぐ出す（GPUI と同じく、描く経路はこの 1 本だけにする）。
+    func presentImmediately() {
+        metalLayer.presentsWithTransaction = false
+        // 画面の切り替えを待つ列に並べず、WindowServer が次に重ねるときに最新の絵を使わせる。並べると、毎フレーム
+        // 描くスクロールで列がたまり、表示まで 4 フレームかかった（linux で計測。切ると p50 10.7 ms）。
+        metalLayer.displaySyncEnabled = false
+    }
+
     override var isFlipped: Bool { true }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -167,6 +175,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     /// 件名などを描く。表のセルに文字を描かせると、速いスクロールでは CPU で描く分が間に合わない。
     private let textView = GraphView()
     private let text: TextRenderer
+    /// グラフと文字を描いて出す、ただ 1 本の描画のスレッド。
+    private let renderThread: HistoryRenderThread
     /// 行は 2 行: 1 行目に ref のラベルと件名、2 行目に作者・日時・短い ID。
     /// その行のグラフの右端から文字までの余白。
     private static let graphGap: CGFloat = 10
@@ -351,6 +361,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         self.repository = repository
         self.renderer = renderer
         self.text = text
+        // GraphRenderer と TextRenderer は同じ既定の GPU を使う。
+        renderThread = HistoryRenderThread(device: renderer.device)!
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -429,6 +441,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
 
         graphView.metalLayer.device = renderer.device
         textView.metalLayer.device = text.device
+        graphView.presentImmediately()
+        textView.presentImmediately()
         // 画面の倍率が変わったら、倍率込みで並べた行を捨てて描き直す。
         graphView.onScaleChange = { [weak self] in self?.redrawGraph() }
         textView.onScaleChange = { [weak self] in
@@ -897,13 +911,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         return history.row(of: id)
     }
 
-    /// 頼んだ祖先の計算の回数（古い結果を捨てるため）。
-    private var lineageRequest = 0
-
-    /// 選んだコミットの祖先を裏で求め、求まったらグラフを描き直す（linux で 10〜25 ms）。
+    /// 選んだコミットの祖先を強調する。
     private func updateLineage() {
-        lineageRequest += 1
-        let request = lineageRequest
         let row = tableView.selectedRow
         guard Settings.highlightAncestors, let history, row >= 0, row < history.rowCount else {
             if renderer.lineage != nil {
@@ -913,12 +922,9 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             return
         }
         if let current = renderer.lineage, current.history === history, current.row == row { return }
-        Task {
-            let lineage = await Task.detached(priority: .userInitiated) { history.lineage(of: row) }.value
-            guard request == lineageRequest else { return }
-            renderer.lineage = lineage
-            redrawGraph()
-        }
+        // 描く行の分だけ、描くときに求める（gitk と同じ）。選んだ入力と同じフレームに出る。
+        renderer.lineage = history.lineage(of: row)
+        redrawGraph()
     }
 
     /// バーの右端のボタン: 並び順・項目・1 行表示のメニューをボタンの下に出す。
@@ -965,7 +971,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     private func redrawText() {
         guard history != nil, textView.window != nil else { return }
         FrameProfile.measure("text: build") { buildText(scale: textView.metalLayer.contentsScale) }
-        FrameProfile.measure("text: submit") { text.draw(layer: textView.metalLayer, background: .zero) }
+        FrameProfile.measure("text: submit") { renderThread.submit(text.job(layer: textView.metalLayer, background: .zero)) }
     }
 
     /// 1 行・2 行の表示に合わせて、行の高さ（表とグラフで共通）を決める。
@@ -1239,7 +1245,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     private var lastGraphDraw: CFTimeInterval = 0
 
     private func updateLaneAnimation() {
-        guard renderer.isAnimating else {
+        guard renderer.isAnimating || renderer.lineagePending else {
             laneAnimation?.isPaused = true
             return
         }
@@ -1269,7 +1275,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         }
         // グラフのビューの上端が、表の座標でどこに当たるか。
         let scrollY = Float(tableView.convert(NSPoint(x: 0, y: 0), from: graphView).y)
-        let eventTime = pendingPresentStart ?? NSApp.currentEvent?.timestamp
+        let eventTime = pendingPresentStart ?? InputEvent.timestamp
         pendingPresentStart = nil
         let measurement = self.measurement
         var onCompleted: (@Sendable (CFTimeInterval) -> Void)?
@@ -1279,7 +1285,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             }
         }
         FrameProfile.measure("graph: total") {
-        renderer.draw(history: history, layer: graphView.metalLayer, scrollY: scrollY, onCompleted: onCompleted) {
+        renderThread.submit(renderer.job(
+            history: history, layer: graphView.metalLayer, scrollY: scrollY, onCompleted: onCompleted) {
             [weak self] presented in
             guard let eventTime, presented > 0 else { return }
             Task { @MainActor in
@@ -1287,7 +1294,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
                 measurement?.latency.append(presented - eventTime)
                 self?.onLatency?(presented - eventTime)
             }
-        }
+        })
         }
     }
 
