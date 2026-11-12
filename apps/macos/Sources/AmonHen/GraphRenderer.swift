@@ -53,6 +53,10 @@ final class GraphRenderer {
     private var instances: [Instance] = []
     /// 強調する祖先。描く History と同じものから求めたときだけ使う。
     var lineage: Lineage?
+    /// 祖先を描く行まで求め終わっていない（FE は求め終わるまで描き直す）。
+    private(set) var lineagePending = false
+    /// 1 フレームに伸ばす祖先の行数（linux で中央値 約 2 ms、最大 約 4 ms）。
+    private static let lineageRowsPerFrame = 150_000
     /// shallow clone の境界のコミットの行と、それを求めた History（History が替われば求め直す）。
     private weak var boundaryHistory: History?
     private var boundaryRows: Set<Int> = []
@@ -276,7 +280,7 @@ final class GraphRenderer {
                 retargetLanes(history: history, rows: rows)
                 if !animate { settleLanes() }
             }
-            buildInstances(history: history, rows: rows, scrollY: scrollY)
+            buildInstances(history: history, rows: rows, scrollY: scrollY, wholeLineage: !animate)
         }
 
         var uniforms = Uniforms(viewport: [Float(size.width), Float(size.height)], scale: scale)
@@ -313,12 +317,16 @@ final class GraphRenderer {
         return min(left, right)
     }
 
-    private func buildInstances(history: History, rows: Range<Int>, scrollY: Float) {
+    /// `wholeLineage` なら、祖先を描く行まで一度に求める（画像に描くときは次のフレームがない）。
+    private func buildInstances(history: History, rows: Range<Int>, scrollY: Float, wholeLineage: Bool) {
         let m = metrics
         let edgeIndices = FrameProfile.measure("graph: edge indices (FFI)") { history.edgeIndices(in: rows) }
-        let lineage = self.lineage.flatMap { $0.history === history ? $0 : nil }
-        // 祖先は描く行まで求める（スクロールしたら続きから）。
-        FrameProfile.measure("graph: lineage") { lineage?.extend(to: rows.upperBound) }
+        // 祖先は描く行まで求める（スクロールしたら続きから）。遠くへ飛んだときは 1 フレームに伸ばす行数を抑え
+        // （linux の端まで一度に伸ばすと 19 ms かかる）、描く行まで届くまでは強調せずに描いて、次のフレームで続ける。
+        let requested = self.lineage.flatMap { $0.history === history ? $0 : nil }
+        FrameProfile.measure("graph: lineage") { requested?.extend(to: rows.upperBound, atMost: wholeLineage ? .max : Self.lineageRowsPerFrame) }
+        let lineage = requested.flatMap { $0.end >= rows.upperBound ? $0 : nil }
+        lineagePending = requested != nil && lineage == nil
         // 行ごとの右端。幹線の点の分は必ず取る。
         rowExtents = [Float](repeating: laneX(0) + m.nodeRadius, count: rows.count)
         extentRows = rows

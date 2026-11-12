@@ -1231,7 +1231,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     private var lastGraphDraw: CFTimeInterval = 0
 
     private func updateLaneAnimation() {
-        guard renderer.isAnimating else {
+        guard renderer.isAnimating || renderer.lineagePending else {
             laneAnimation?.isPaused = true
             return
         }

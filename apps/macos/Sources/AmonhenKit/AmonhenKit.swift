@@ -368,10 +368,15 @@ public final class Lineage {
         amonhen_lineage_window_free(raw)
     }
 
-    /// `end` 行の手前まで求める（求めてあれば何もしない）。かかる時間は伸ばした行の数に比例する。
-    public func extend(to end: Int) {
-        guard end > Int(amonhen_lineage_window_end(raw)) else { return }
-        amonhen_lineage_window_extend(raw, history.raw, UInt32(clamping: end))
+    /// ここまで求めた行（含まない）。History の最後まで求めていれば `History.rowCount`。
+    public var end: Int { Int(amonhen_lineage_window_end(raw)) }
+
+    /// `end` 行の手前まで、ただし一度に `atMost` 行までを求める（求めてあれば何もしない）。かかる時間は伸ばした
+    /// 行の数に比例する。
+    public func extend(to end: Int, atMost: Int = .max) {
+        let current = self.end
+        guard end > current else { return }
+        amonhen_lineage_window_extend(raw, history.raw, UInt32(clamping: min(end, current + atMost)))
     }
 
     /// `row` 行目のコミットが祖先か（求めた範囲の外なら false）。
