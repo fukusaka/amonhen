@@ -71,8 +71,9 @@ pub struct LineageWindow {
     rows: Vec<u64>,
     /// 祖先の子が合流した線（親とレーン）と、そのうちいちばん上の合流の行。
     joins: HashMap<(u32, u16), u32>,
-    /// 求めた範囲に重なる線のうち、光るものの光らせ始める行。
-    lit_edges: HashMap<u32, u32>,
+    /// 線ごとの、光らせ始める行に 1 を足したもの（0 なら光らせない、まだ求めていない）。linux ではほとんどの線が
+    /// 光るので、表に入れるより線の数だけの列のほうが速い（0 で埋めた列は、触るまでメモリを取らない）。
+    lit_from: Vec<u32>,
 }
 
 impl LineageWindow {
@@ -86,7 +87,7 @@ impl LineageWindow {
             end: row,
             rows,
             joins: HashMap::new(),
-            lit_edges: HashMap::new(),
+            lit_from: Vec::new(),
         }
     }
 
@@ -118,6 +119,9 @@ impl LineageWindow {
         self.end = end;
         let lit = |r: u32| r >= self.start && self.rows[r as usize / 64] & (1 << (r % 64)) != 0;
         let edges = layout.edges();
+        if self.lit_from.len() != edges.len() {
+            self.lit_from = vec![0; edges.len()];
+        }
         let overlapping: Vec<u32> = layout.edges_in(from..end).collect();
         for &i in &overlapping {
             let e = &edges[i as usize];
@@ -132,11 +136,7 @@ impl LineageWindow {
         for &i in &overlapping {
             let e = &edges[i as usize];
             let lit_from = edge_from(e, lit, &self.joins);
-            if lit_from == NOT_LIT {
-                self.lit_edges.remove(&i);
-            } else {
-                self.lit_edges.insert(i, lit_from);
-            }
+            self.lit_from[i as usize] = lit_from.wrapping_add(1);
         }
     }
 
@@ -147,7 +147,9 @@ impl LineageWindow {
 
     /// `edge` 番目の線を光らせ始める行（光らせない、まだ求めていなければ `NOT_LIT`）。
     pub fn edge_from(&self, edge: u32) -> u32 {
-        self.lit_edges.get(&edge).copied().unwrap_or(NOT_LIT)
+        self.lit_from
+            .get(edge as usize)
+            .map_or(NOT_LIT, |&f| f.wrapping_sub(1))
     }
 }
 
