@@ -55,30 +55,122 @@ pub fn lineage(graph: &CommitGraph, layout: &GraphLayout, row: u32) -> Lineage {
             *j = (*j).min(e.row_end);
         }
     }
-    let edge_from = edges
-        .iter()
-        .map(|e| {
-            if lit(e.child) {
-                return e.row_start;
-            }
-            if e.kind & Edge::RIDER != 0 {
-                return NOT_LIT;
-            }
-            // 持ち主の線のレーン（親に届く部分は始まりのレーン、そうでなければ終わりのレーン）。
-            let lane = if e.row_end == e.parent {
-                e.lane_start
-            } else {
-                e.lane_end
-            };
-            match joins.get(&(e.parent, lane)) {
-                // 縦線は合流したところから。曲線は、合流がそれより上のときだけ。
-                Some(&j) if e.lane_start == e.lane_end && j < e.row_end => j.max(e.row_start),
-                Some(&j) if e.lane_start != e.lane_end && j <= e.row_start => e.row_start,
-                _ => NOT_LIT,
-            }
-        })
-        .collect();
+    let edge_from = edges.iter().map(|e| edge_from(e, lit, &joins)).collect();
     Lineage { rows, edge_from }
+}
+
+/// 選んだコミットの祖先を、描く範囲だけ求める（gitk と同じく、描く行まで求め、スクロールしたら続きから伸ばす）。
+/// 行はトポロジー順（親は子より下）なので、選んだ行から `end` までの祖先は、その間の行だけで決まる。線も、
+/// その範囲に重なるものはその範囲の合流だけで決まる（範囲より下の合流は範囲より下から光る）。
+pub struct LineageWindow {
+    /// 選んだ行。
+    start: u32,
+    /// ここまで求めた（含まない）。
+    end: u32,
+    /// 行ごとのビット（History 全体の大きさ。まだ求めていない行の親のビットも立つ）。
+    rows: Vec<u64>,
+    /// 祖先の子が合流した線（親とレーン）と、そのうちいちばん上の合流の行。
+    joins: HashMap<(u32, u16), u32>,
+    /// 求めた範囲に重なる線のうち、光るものの光らせ始める行。
+    lit_edges: HashMap<u32, u32>,
+}
+
+impl LineageWindow {
+    pub fn new(graph: &CommitGraph, row: u32) -> Self {
+        let mut rows = vec![0u64; graph.len().div_ceil(64)];
+        if (row as usize) < graph.len() {
+            rows[row as usize / 64] |= 1 << (row % 64);
+        }
+        Self {
+            start: row,
+            end: row,
+            rows,
+            joins: HashMap::new(),
+            lit_edges: HashMap::new(),
+        }
+    }
+
+    /// 選んだ行。
+    pub fn row(&self) -> u32 {
+        self.start
+    }
+
+    /// ここまで求めた（含まない）。
+    pub fn end(&self) -> u32 {
+        self.end
+    }
+
+    /// `end` 行の手前まで求める（求めてあれば何もしない）。かかる時間は伸ばした行と線の数に比例する。
+    pub fn extend(&mut self, graph: &CommitGraph, layout: &GraphLayout, end: u32) {
+        let end = end.min(graph.len() as u32);
+        if end <= self.end {
+            return;
+        }
+        let from = self.end;
+        for r in from as usize..end as usize {
+            if self.rows[r / 64] & (1 << (r % 64)) == 0 {
+                continue;
+            }
+            for &p in graph.parents(r) {
+                self.rows[p as usize / 64] |= 1 << (p % 64);
+            }
+        }
+        self.end = end;
+        let lit = |r: u32| r >= self.start && self.rows[r as usize / 64] & (1 << (r % 64)) != 0;
+        let edges = layout.edges();
+        let overlapping: Vec<u32> = layout.edges_in(from..end).collect();
+        for &i in &overlapping {
+            let e = &edges[i as usize];
+            if e.kind & Edge::RIDER != 0 && (from..end).contains(&e.child) && lit(e.child) {
+                let j = self
+                    .joins
+                    .entry((e.parent, e.lane_end))
+                    .or_insert(e.row_end);
+                *j = (*j).min(e.row_end);
+            }
+        }
+        for &i in &overlapping {
+            let e = &edges[i as usize];
+            let lit_from = edge_from(e, lit, &self.joins);
+            if lit_from == NOT_LIT {
+                self.lit_edges.remove(&i);
+            } else {
+                self.lit_edges.insert(i, lit_from);
+            }
+        }
+    }
+
+    /// `row` 行目のコミットが祖先か（求めた範囲の外なら false）。
+    pub fn contains(&self, row: u32) -> bool {
+        row >= self.start && row < self.end && self.rows[row as usize / 64] & (1 << (row % 64)) != 0
+    }
+
+    /// `edge` 番目の線を光らせ始める行（光らせない、まだ求めていなければ `NOT_LIT`）。
+    pub fn edge_from(&self, edge: u32) -> u32 {
+        self.lit_edges.get(&edge).copied().unwrap_or(NOT_LIT)
+    }
+}
+
+/// 線 `e` を光らせ始める行。`lit` は祖先か、`joins` は祖先の子の合流。
+fn edge_from(e: &Edge, lit: impl Fn(u32) -> bool, joins: &HashMap<(u32, u16), u32>) -> u32 {
+    if lit(e.child) {
+        return e.row_start;
+    }
+    if e.kind & Edge::RIDER != 0 {
+        return NOT_LIT;
+    }
+    // 持ち主の線のレーン（親に届く部分は始まりのレーン、そうでなければ終わりのレーン）。
+    let lane = if e.row_end == e.parent {
+        e.lane_start
+    } else {
+        e.lane_end
+    };
+    match joins.get(&(e.parent, lane)) {
+        // 縦線は合流したところから。曲線は、合流がそれより上のときだけ。
+        Some(&j) if e.lane_start == e.lane_end && j < e.row_end => j.max(e.row_start),
+        Some(&j) if e.lane_start != e.lane_end && j <= e.row_start => e.row_start,
+        _ => NOT_LIT,
+    }
 }
 
 /// `from` から `to` への、`HEAD~2^2~1` の形の道のり（`~n` は 1 つ目の親を n 回、`^k` は k 番目の親）。
@@ -282,6 +374,40 @@ mod tests {
         // merge を選べば、すべてが祖先。
         let all = lineage(&g, &l, 0);
         assert!(all.edge_from.iter().all(|&f| f != NOT_LIT));
+    }
+
+    #[test]
+    fn a_window_matches_the_whole_lineage_where_it_reaches() {
+        let (g, head) = crate::graph::synthetic::graph(3000, 7);
+        let l = layout(&g, head);
+        for row in [0, 17, 400, 1500, 2999] {
+            let whole = lineage(&g, &l, row);
+            let mut w = LineageWindow::new(&g, row);
+            // 少しずつ伸ばし、伸ばすたびに求めた範囲が全体と同じか確かめる。
+            for end in [row + 1, row + 40, row + 41, row + 700, 3000] {
+                w.extend(&g, &l, end);
+                for r in row..w.end() {
+                    assert_eq!(
+                        w.contains(r),
+                        whole.contains(r),
+                        "row {row} end {end} r {r}"
+                    );
+                }
+                for i in l.edges_in(row..w.end()) {
+                    let e = &l.edges()[i as usize];
+                    let expected = whole.edge_from[i as usize];
+                    let got = w.edge_from(i);
+                    // 求めた範囲より下から光る線は、範囲の中では光らない。
+                    let expected = if expected >= w.end() {
+                        NOT_LIT
+                    } else {
+                        expected
+                    };
+                    let got = if got >= w.end() { NOT_LIT } else { got };
+                    assert_eq!(got, expected, "row {row} end {end} {e:?}");
+                }
+            }
+        }
     }
 
     #[test]

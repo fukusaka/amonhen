@@ -317,6 +317,8 @@ final class GraphRenderer {
         let m = metrics
         let edgeIndices = FrameProfile.measure("graph: edge indices (FFI)") { history.edgeIndices(in: rows) }
         let lineage = self.lineage.flatMap { $0.history === history ? $0 : nil }
+        // 祖先は描く行まで求める（スクロールしたら続きから）。
+        FrameProfile.measure("graph: lineage") { lineage?.extend(to: rows.upperBound) }
         // 行ごとの右端。幹線の点の分は必ず取る。
         rowExtents = [Float](repeating: laneX(0) + m.nodeRadius, count: rows.count)
         extentRows = rows

@@ -897,13 +897,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         return history.row(of: id)
     }
 
-    /// 頼んだ祖先の計算の回数（古い結果を捨てるため）。
-    private var lineageRequest = 0
-
-    /// 選んだコミットの祖先を裏で求め、求まったらグラフを描き直す（linux で 10〜25 ms）。
+    /// 選んだコミットの祖先を強調する。
     private func updateLineage() {
-        lineageRequest += 1
-        let request = lineageRequest
         let row = tableView.selectedRow
         guard Settings.highlightAncestors, let history, row >= 0, row < history.rowCount else {
             if renderer.lineage != nil {
@@ -913,15 +908,9 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             return
         }
         if let current = renderer.lineage, current.history === history, current.row == row { return }
-        // 描き直すのは求まった後（入力を処理し終えた後）なので、選んだ入力を起点として持っていく。
-        let input = InputEvent.timestamp
-        Task {
-            let lineage = await Task.detached(priority: .userInitiated) { history.lineage(of: row) }.value
-            guard request == lineageRequest else { return }
-            renderer.lineage = lineage
-            if pendingPresentStart == nil { pendingPresentStart = input }
-            redrawGraph()
-        }
+        // 描く行の分だけ、描くときに求める（gitk と同じ）。選んだ入力と同じフレームに出る。
+        renderer.lineage = history.lineage(of: row)
+        redrawGraph()
     }
 
     /// バーの右端のボタン: 並び順・項目・1 行表示のメニューをボタンの下に出す。
