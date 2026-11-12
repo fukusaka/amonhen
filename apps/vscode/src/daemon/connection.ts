@@ -54,6 +54,17 @@ export async function daemonFor(root: string): Promise<DaemonClient | undefined>
   return client;
 }
 
+/** この窓の、daemon とのつながり（開き終えたものだけ。切れていれば、そのわけ） */
+export async function daemonConnections(): Promise<{ path: string; closed?: string }[]> {
+  const list = await Promise.all(
+    [...clients].map(async ([key, client]) => {
+      const c = await client.catch(() => undefined);
+      return c && { path: key.slice(key.indexOf('\n') + 1), ...(c.closed ? { closed: c.closed } : {}) };
+    }),
+  );
+  return list.filter((c) => c !== undefined);
+}
+
 /** 開いているつながりに、この拡張の環境を送り直す（`git.path` を変えたとき）。送れないつながりは、次に開くときに送る */
 export async function resendDaemonEnvironment(): Promise<void> {
   await Promise.all(

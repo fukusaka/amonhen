@@ -7,6 +7,8 @@ import type { HistoryEdit } from './rebasePlan.ts';
 export interface PreviewBranch {
   name: string;
   upstream?: string | null;
+  /** 上流が書き換えるコミットを持っている（書き換えた後の push には Force Push が要る）。moving だけ */
+  pushed?: boolean | null;
   /** 残る理由: `setting`（rebase.updateRefs がオフ）・`git`（git が古い）・`checkedOut`（ほかの worktree）・`off`（今回は動かさない） */
   reason?: string | null;
 }
@@ -17,8 +19,10 @@ export interface RewritePreview {
   /** 書き換えるコミットに先頭があるのに残るブランチ */
   staying: PreviewBranch[];
   current?: string | null;
-  /** 今のブランチの上流（あれば、書き換えた後の push には Force Push が要る） */
+  /** 今のブランチの上流 */
   currentUpstream?: string | null;
+  /** 今のブランチの上流が書き換えるコミットを持っている（書き換えた後の push には Force Push が要る） */
+  currentPushed?: boolean | null;
   /** コンフリクトしそうなコミットとファイル。調べられなければ null */
   conflicts?: { oid: string; files: string[] }[] | null;
   /** rebase.updateRefs の値（configured）と、git がそれをできるか（available、2.38 から） */
@@ -97,8 +101,8 @@ export function previewLines(p: RewritePreview): string[] {
     if (staying.length > 0) out.push(`${names(staying)} ${staying.length === 1 ? 'stays' : 'stay'} where ${staying.length === 1 ? 'it is' : 'they are'} (${why}).`);
   }
   const pushed = [
-    ...(p.currentUpstream && p.current ? [p.current] : []),
-    ...p.moving.filter((b) => b.upstream).map((b) => b.name),
+    ...(p.currentPushed && p.current ? [p.current] : []),
+    ...p.moving.filter((b) => b.pushed).map((b) => b.name),
   ];
   if (pushed.length > 0) {
     out.push(`${list(pushed)} ${pushed.length === 1 ? 'is' : 'are'} pushed, so pushing afterwards needs Force Push.`);

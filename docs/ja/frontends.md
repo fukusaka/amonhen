@@ -231,7 +231,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Commit and Push・Amend | ✓ | ✓ | ✓ | △ | CLI: `commit -m … --amend`。 |
 | Fixup / Squash Commit For | ✓ | ✓ | ✓ | n/a |  |
 | hooks の出力のシート | ✓ | ✓ | ✓ | n/a |  |
-| Commit が押せない理由を出す | ✓ | ✓ | △ | n/a | macOS・GTK4: ボタンのツールチップに。<br>VSCode: コミットできないときに注意を出す。 |
+| Commit が押せない理由を出す | ✓ | ✓ | ✓ | n/a | ボタンのツールチップに。 |
 | HEAD → 作業ツリーの 1 つの差分と、行・hunk のチェック | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあれば。なければ別々の未ステージ・ステージ済みの差分で行をステージ。<br>CLI: `diff --combined`・`stage --rows`。 |
 | 行の範囲の選択、J/K・⌥J/⌥K | ✓ | ✓ | ✓ | n/a |  |
 | 重ねられないファイルの Unstaged / Staged の切り替え | ✓ | ✓ | n/a | ✓ | VSCode: いつも別々に出す。<br>CLI: `diff --staged`。 |
@@ -341,7 +341,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Performance | ✓ | ✓ | n/a | n/a | VSCode: VSCode の出力（Amon Hen のログ）が代わり。 |
 | Events | ✓ | ✓ | n/a | n/a | VSCode: VSCode の出力（Amon Hen のログ）が代わり。 |
 | JSON で書き出す | ✓ | ✓ | n/a | n/a | VSCode: VSCode の出力（Amon Hen のログ）が代わり。 |
-| Daemon のタブ（起動・停止・つながり） | ✓ | ✓ | — | △ | CLI: `daemon status / start / stop`。 |
+| Daemon のタブ（起動・停止・つながり） | ✓ | ✓ | ✓ | △ | VSCode: メインビューのページ（サイドバーの ⋯ とコマンドパレットの Show Daemon）。窓のつながりは手元の daemon だけ。<br>CLI: `daemon status / start / stop`。 |
 
 ## 11. メニュー
 

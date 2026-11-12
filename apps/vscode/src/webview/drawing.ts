@@ -106,6 +106,8 @@ function column(c: DrawnColumn): HTMLElement {
       if (r.tone === 'red') note.classList.add('red');
       row.append(note);
     }
+    // 切れても読めるよう、件名と印の全文
+    row.title = r.note ? `${r.subject} — ${r.note}` : r.subject;
     body.append(row);
   });
   body.prepend(graph);
