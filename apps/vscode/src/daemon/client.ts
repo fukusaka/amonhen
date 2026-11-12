@@ -336,6 +336,11 @@ export function clientEnv(env: NodeJS.ProcessEnv = process.env, windows = proces
     .join('\0');
 }
 
+/** daemon を起動して、つながるまで待つ（もう動いていれば何もしない） */
+export async function startDaemon(daemon: string): Promise<void> {
+  (await connectOrLaunch(daemon, await socketPath(daemon))).destroy();
+}
+
 /** daemon への指示（`status` なら様子の JSON、`stop` で止める）。動いていなければ undefined */
 export async function controlDaemon(daemon: string, command: 'status' | 'stop'): Promise<string | undefined> {
   const socket = await tryConnect(await socketPath(daemon));

@@ -341,7 +341,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Performance | ✓ | ✓ | n/a | n/a | VSCode: VSCode の出力（Amon Hen のログ）が代わり。 |
 | Events | ✓ | ✓ | n/a | n/a | VSCode: VSCode の出力（Amon Hen のログ）が代わり。 |
 | JSON で書き出す | ✓ | ✓ | n/a | n/a | VSCode: VSCode の出力（Amon Hen のログ）が代わり。 |
-| Daemon のタブ（起動・停止・つながり） | ✓ | ✓ | — | △ | CLI: `daemon status / start / stop`。 |
+| Daemon のタブ（起動・停止・つながり） | ✓ | ✓ | ✓ | △ | VSCode: メインビューのページ（サイドバーの ⋯ とコマンドパレットの Show Daemon）。窓のつながりは手元の daemon だけ。<br>CLI: `daemon status / start / stop`。 |
 
 ## 11. メニュー
 

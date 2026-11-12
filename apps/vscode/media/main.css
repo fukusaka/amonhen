@@ -1884,6 +1884,56 @@ aside.details.single .file-diff:not(.current) {
   cursor: pointer;
 }
 
+/* Daemon（アプリの Activity の Daemon のタブ） */
+
+.daemon-content {
+  flex: 1;
+  overflow: auto;
+  padding: 16px 24px 24px;
+}
+
+.daemon-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.daemon-state {
+  flex: 1;
+  min-width: 0;
+}
+
+.daemon-headline {
+  font-weight: bold;
+  color: var(--vscode-descriptionForeground);
+}
+
+.daemon-headline.running,
+.daemon .settings-table .ok {
+  color: var(--vscode-testing-iconPassed, var(--vscode-charts-green));
+}
+
+.daemon .settings-table .error {
+  color: var(--vscode-errorForeground);
+}
+
+.daemon-detail {
+  margin-top: 2px;
+  font-size: 0.9em;
+  font-variant-numeric: tabular-nums;
+  word-break: break-all;
+}
+
+.daemon-detail.muted,
+.daemon .settings-table .muted {
+  color: var(--vscode-descriptionForeground);
+}
+
+.daemon h3 {
+  margin: 20px 0 6px;
+  font-size: 1em;
+}
+
 /* Repository Settings */
 
 .view.settings.active {

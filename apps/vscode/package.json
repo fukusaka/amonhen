@@ -471,6 +471,11 @@
         "category": "Amon Hen"
       },
       {
+        "command": "amonhen.showDaemon",
+        "title": "Show Daemon",
+        "category": "Amon Hen"
+      },
+      {
         "command": "amonhen.showRepositorySettings",
         "title": "Repository Settings",
         "category": "Amon Hen",
@@ -914,6 +919,11 @@
           "command": "amonhen.rebuildHistory",
           "when": "view == amonhen.sidebar && amonhen.engine",
           "group": "1_view@3"
+        },
+        {
+          "command": "amonhen.showDaemon",
+          "when": "view == amonhen.sidebar",
+          "group": "1_view@4"
         },
         {
           "command": "amonhen.forcePush",

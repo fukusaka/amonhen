@@ -1088,6 +1088,11 @@ First release.
 
 ### Unreleased
 
+#### Added
+
+- Show Daemon (the sidebar's ⋯) opens a page like the app's Activity > Daemon: the shared daemon's status with Start
+  and Stop, the repositories it has open and this window's connections to it.
+
 #### Changed
 
 - History's rows show the subject on one line and the author, date and ID on a second, as in the app; One Line per
