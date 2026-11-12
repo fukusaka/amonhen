@@ -857,16 +857,30 @@ impl Writer {
     }
 
     pub fn with_delay(path: PathBuf, delay: Duration, on_write: Option<OnWrite>) -> Self {
-        Self {
-            inner: Arc::new(WriterInner {
-                path,
-                delay,
-                pending: Mutex::default(),
-                wake: Condvar::new(),
-                on_write,
-                stats: Mutex::default(),
-            }),
-        }
+        let inner = Arc::new(WriterInner {
+            path,
+            delay,
+            pending: Mutex::default(),
+            wake: Condvar::new(),
+            on_write,
+            stats: Mutex::default(),
+        });
+        let mut writers = WRITERS.lock().unwrap();
+        writers.retain(|w| w.strong_count() > 0);
+        writers.push(Arc::downgrade(&inner));
+        drop(writers);
+        static AT_EXIT: std::sync::Once = std::sync::Once::new();
+        AT_EXIT.call_once(|| {
+            unsafe extern "C" {
+                fn atexit(f: extern "C" fn()) -> std::ffi::c_int;
+            }
+            extern "C" fn flush_at_exit() {
+                flush_all();
+            }
+            // SAFETY: 引数のない関数を渡すだけ。
+            unsafe { atexit(flush_at_exit) };
+        });
+        Self { inner }
     }
 
     pub fn path(&self) -> &Path {
@@ -896,19 +910,7 @@ impl Writer {
 
     /// 待っている書き込みがあれば、すぐ書く。書いている最中なら終わるまで待つ。
     pub fn flush(&self) -> Result<()> {
-        let mut pending = self.inner.pending.lock().unwrap();
-        while pending.writing {
-            pending = self.inner.wake.wait(pending).unwrap();
-        }
-        let Some((history, _)) = pending.next.take() else {
-            return Ok(());
-        };
-        pending.writing = true;
-        drop(pending);
-        let result = self.inner.write(history.as_ref());
-        self.inner.pending.lock().unwrap().writing = false;
-        self.inner.wake.notify_all();
-        result
+        self.inner.flush()
     }
 
     /// 待っている書き込みを捨て、キャッシュを消す。
@@ -929,7 +931,41 @@ impl Drop for Writer {
     }
 }
 
+/// 動いている `Writer`（プロセスが終わるときに、待っている書き込みを書く）。
+static WRITERS: Mutex<Vec<std::sync::Weak<WriterInner>>> = Mutex::new(Vec::new());
+
+/// どの `Writer` も、待っている書き込みをすぐ書く。プロセスが `exit` で終わるとき（アプリを終える、`--snapshot` など）に
+/// 呼ぶ（`Writer` は手放されないので、まとめて待っていた書き込みが失われる）。最初の `Writer` を作ったときに `atexit` に
+/// 登録する。
+pub fn flush_all() {
+    let writers: Vec<_> = WRITERS
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(std::sync::Weak::upgrade)
+        .collect();
+    for w in writers {
+        let _ = w.flush();
+    }
+}
+
 impl WriterInner {
+    fn flush(&self) -> Result<()> {
+        let mut pending = self.pending.lock().unwrap();
+        while pending.writing {
+            pending = self.wake.wait(pending).unwrap();
+        }
+        let Some((history, _)) = pending.next.take() else {
+            return Ok(());
+        };
+        pending.writing = true;
+        drop(pending);
+        let result = self.write(history.as_ref());
+        self.pending.lock().unwrap().writing = false;
+        self.wake.notify_all();
+        result
+    }
+
     fn write(&self, history: &dyn AsEntry) -> Result<()> {
         let written = write(&self.path, history.entry())?;
         {
@@ -1293,6 +1329,20 @@ mod tests {
         remove_all(dir.path()).unwrap();
         assert_eq!(total_size(dir.path()), 0);
         assert!(dir.path().join("assist").exists());
+    }
+
+    /// `flush_all`（プロセスが終わるとき）は、手放されていない `Writer` の待っている書き込みを書く。
+    #[test]
+    fn flush_all_writes_what_is_waiting() {
+        let (g, _) = synthetic::graph(100, 3);
+        let dir = tempfile::tempdir().unwrap();
+        let path = path_for(dir.path(), "/r");
+        let writer = Writer::with_delay(path.clone(), Duration::from_secs(3600), None);
+        writer.schedule(Arc::new(history(g.clone())));
+        assert!(read(&path, HistoryOrder::Date).is_none());
+        flush_all();
+        assert_eq!(read(&path, HistoryOrder::Date).unwrap().graph, g);
+        std::mem::forget(writer);
     }
 
     /// 同じリポジトリのほかの形式（と前の形式のファイル）は、7 日書かれていなければ消す。最近のもの（並んで動く
