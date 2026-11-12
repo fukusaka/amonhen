@@ -27,6 +27,9 @@ final class GraphView: NSView {
     /// Core Animation の反映を待たずに、描いたらすぐ出す（GPUI と同じく、描く経路はこの 1 本だけにする）。
     func presentImmediately() {
         metalLayer.presentsWithTransaction = false
+        // 画面の切り替えを待つ列に並べず、WindowServer が次に重ねるときに最新の絵を使わせる。並べると、毎フレーム
+        // 描くスクロールで列がたまり、表示まで 4 フレームかかった（linux で計測。切ると p50 10.7 ms）。
+        metalLayer.displaySyncEnabled = false
     }
 
     override var isFlipped: Bool { true }
