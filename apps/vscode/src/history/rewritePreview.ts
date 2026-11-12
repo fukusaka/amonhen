@@ -7,6 +7,8 @@ import type { HistoryEdit } from './rebasePlan.ts';
 export interface PreviewBranch {
   name: string;
   upstream?: string | null;
+  /** 上流が書き換えるコミットを持っている（書き換えた後の push には Force Push が要る）。moving だけ */
+  pushed?: boolean | null;
   /** 残る理由: `setting`（rebase.updateRefs がオフ）・`git`（git が古い）・`checkedOut`（ほかの worktree）・`off`（今回は動かさない） */
   reason?: string | null;
 }
@@ -17,27 +19,59 @@ export interface RewritePreview {
   /** 書き換えるコミットに先頭があるのに残るブランチ */
   staying: PreviewBranch[];
   current?: string | null;
-  /** 今のブランチの上流（あれば、書き換えた後の push には Force Push が要る） */
+  /** 今のブランチの上流 */
   currentUpstream?: string | null;
+  /** 今のブランチの上流が書き換えるコミットを持っている（書き換えた後の push には Force Push が要る） */
+  currentPushed?: boolean | null;
   /** コンフリクトしそうなコミットとファイル。調べられなければ null */
   conflicts?: { oid: string; files: string[] }[] | null;
   /** rebase.updateRefs の値（configured）と、git がそれをできるか（available、2.38 から） */
   updateRefs?: { configured: boolean; available: boolean } | null;
   /** 前と後を描く材料（rebase のとき） */
   drawing?: RewriteDrawing | null;
+  /** History の編集の前と後を描く材料（merge を越える編集では描けないので null） */
+  editDrawing?: EditDrawing | null;
+}
+
+/** History の編集の 1 つ。action は git の命令（`pick`・`reword`・`squash`・`fixup`・`drop`・`edit`） */
+export interface EditStep {
+  oid: string;
+  subject: string;
+  action: string;
+  /** after だけ: まとめたコミットの数 */
+  combined?: number | null;
+}
+
+/** before は書き換わるコミット、after はできるコミット（どちらも新しい順、長ければ真ん中を省く） */
+export interface EditDrawing {
+  before: EditStep[];
+  beforeMore: number;
+  beforeMoreAt?: number | null;
+  after: EditStep[];
+  afterMore: number;
+  afterMoreAt?: number | null;
+  base?: DrawnCommit | null;
+  labels: { oid: string; name: string; kind: string }[];
 }
 
 export interface DrawnCommit {
   oid: string;
   subject: string;
+  /** 分かれたところの author の日時（秒）。base だけ */
+  time?: number | null;
 }
 
 export interface RewriteDrawing {
   /** 載せ直すコミット（古い順） */
   picks: DrawnCommit[];
+  /** 省いた載せ直すコミットの数と、新しい順に並べたときの省いたところ */
+  picksMore?: number | null;
+  picksMoreAt?: number | null;
   /** 載せ先で進んだコミット（新しい順、先頭のいくつか）と、ほかにいくつあるか */
   onto: DrawnCommit[];
   ontoMore: number;
+  /** 載せ先で進んだコミットを省いたところ */
+  ontoMoreAt?: number | null;
   /** 分かれたところ */
   base?: DrawnCommit | null;
   /** コミットに付いているブランチ。kind は `local`・`remote` */
@@ -67,8 +101,8 @@ export function previewLines(p: RewritePreview): string[] {
     if (staying.length > 0) out.push(`${names(staying)} ${staying.length === 1 ? 'stays' : 'stay'} where ${staying.length === 1 ? 'it is' : 'they are'} (${why}).`);
   }
   const pushed = [
-    ...(p.currentUpstream && p.current ? [p.current] : []),
-    ...p.moving.filter((b) => b.upstream).map((b) => b.name),
+    ...(p.currentPushed && p.current ? [p.current] : []),
+    ...p.moving.filter((b) => b.pushed).map((b) => b.name),
   ];
   if (pushed.length > 0) {
     out.push(`${list(pushed)} ${pushed.length === 1 ? 'is' : 'are'} pushed, so pushing afterwards needs Force Push.`);

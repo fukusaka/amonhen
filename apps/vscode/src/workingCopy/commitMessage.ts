@@ -13,6 +13,19 @@ export function messageLength(text: string): number {
   return [...text].length;
 }
 
+/**
+ * Commit を押せないわけ（押せるときは undefined）。アプリと同じく、コミットしている間はそのこと、そうでなければ
+ * チェックしたファイルがない（Amend でないとき）・メッセージがないを改行でつなぐ
+ */
+export function commitDisabledReason(state: { staged: number; amend: boolean; summary: string; committing: boolean }): string | undefined {
+  if (state.committing) return 'Committing…';
+  const reasons = [
+    ...(state.staged === 0 && !state.amend ? ['No files are checked'] : []),
+    ...(!state.summary.trim() ? ['Write a commit message'] : []),
+  ];
+  return reasons.length > 0 ? reasons.join('\n') : undefined;
+}
+
 /** 長さの目安: 50 を超えると長め、72 を超えると長すぎ（git の慣習） */
 export function lengthLevel(length: number): 'ok' | 'long' | 'over' {
   return length > 72 ? 'over' : length > 50 ? 'long' : 'ok';

@@ -3,8 +3,12 @@
  * 戻すかを見せて確かめてから戻す（アプリと同じ）。Undo History… は記録を新しい順に並べ、選んだところまで戻す
  */
 import * as vscode from 'vscode';
+import { moveDrawing, type Drawing, type MovePreview } from '../history/drawing.ts';
 import type { RepositoryManager } from '../state/manager.ts';
+import { shortName } from '../state/operations.ts';
+import type { Repository } from '../state/repository.ts';
 import type { UndoEntry } from '../state/undo.ts';
+import { confirmInSheet } from './confirm.ts';
 import { showError } from './stageCommands.ts';
 
 export function registerUndoCommand(manager: RepositoryManager): vscode.Disposable {
@@ -32,8 +36,25 @@ async function undoWithConfirmation(manager: RepositoryManager): Promise<void> {
     void vscode.window.showInformationMessage('Nothing to Undo');
     return;
   }
-  const answer = await vscode.window.showWarningMessage(`Undo “${entry.label}”?`, { modal: true, detail: undoWhat(entry) }, 'Undo');
-  if (answer === 'Undo') await undo(manager, 1);
+  const title = `Undo “${entry.label}”?`;
+  // メインビューが開いていれば、アプリと同じく、ブランチが戻る前と後の絵を見せて確かめる
+  const ok =
+    (await confirmInSheet(title, [undoWhat(entry)], 'Undo', { drawing: () => undoDrawing(repo, entry) })) ??
+    (await vscode.window.showWarningMessage(title, { modal: true, detail: undoWhat(entry) }, 'Undo')) === 'Undo';
+  if (ok) await undo(manager, 1);
+}
+
+/** 戻すブランチ（今のブランチを先に。作られた・消されたブランチは描かない）の前と後の絵 */
+async function undoDrawing(repo: Repository, entry: UndoEntry): Promise<Drawing | undefined> {
+  if (entry.files || entry.stash || entry.rename) return undefined;
+  const moves = Object.entries(entry.after.refs).flatMap(([ref, now]) => {
+    const back = entry.before.refs[ref];
+    return now && back && now !== back && ref.startsWith('refs/heads/') ? [{ ref, now, back }] : [];
+  });
+  const move = moves.find((m) => m.ref === entry.after.head.branch) ?? moves[0];
+  if (!move) return undefined;
+  const preview = await repo.backend.graphPreview<MovePreview>({ op: 'movePreview', from: move.now, to: move.back });
+  return moveDrawing(preview, { moving: shortName(move.ref), kind: 'local', afterTitle: 'After the undo', lostNote: 'taken off' });
 }
 
 async function undoHistory(manager: RepositoryManager): Promise<void> {

@@ -35,7 +35,9 @@ export type WorkingCopyHostMessage =
   | { type: 'wcStats'; stats: FileStat[] }
   /** 一部のフォルダだけ取り出しているときの知らせ（ふつうは null） */
   | { type: 'wcSparse'; sparse: { cone: boolean; folders: string[] } | null }
-  | { type: 'wcCommitted' };
+  | { type: 'wcCommitted' }
+  /** コミットを始めた・終えた（成り行きによらず。その間は Commit を押せない） */
+  | { type: 'wcCommitting'; committing: boolean };
 
 export type WorkingCopyWebviewMessage =
   | { type: 'wcSelect'; group: ChangeGroup; path: string }

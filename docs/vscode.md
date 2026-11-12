@@ -87,6 +87,11 @@ is in [front.md](front.md), and the design in item 18 of
   "not on any branch". Its buttons and context menu create a branch or tag there, check it out (detached), reset to
   it, show it in History (switching to All Branches when the current scope lacks it, `historyRowOf`) and copy its ID
   or name. It reloads when HEAD moves.
+- Show Daemon (the sidebar's ⋯ and the command palette) opens a page of the main view like the app's Activity > Daemon:
+  whether the shared daemon is running (pid, version, uptime, connections, socket) with Start or Stop, the
+  repositories it has open (SSH traffic, connections, History, watching, search index) and this window's
+  connections to it. It reads `amonhen daemon status` every 2 seconds while shown. Stop disconnects the window's
+  repositories, and Start connects them again, as the app's Reconnect does.
 - Reset Current Branch to Here… (History's commit menu and Reflog) asks Mixed, Soft or Hard in a modal and runs the
   core's `reset`, which stashes uncommitted changes before a hard reset and records the Undo. Checkout (Detached)
   works on both paths.
@@ -103,6 +108,7 @@ is in [front.md](front.md), and the design in item 18 of
 - Implemented with `TreeDragAndDropController`. When a branch is dropped onto a branch, the user picks "Merge A into B" or "Rebase B onto A" in a QuickPick. Dropping onto a remote pushes.
 - If the drop target is not the current branch, check it out before running. If a fast-forward is enough, handle it with just `update-ref`, without a checkout.
 - Constraint: drag and drop does not work between a TreeView and a Webview. Reordering within the History is done entirely inside the Webview.
+- Confirmations that change the commit graph (Push, Force Push, Pull, Merge, Rebase, Reset, Cherry-pick, Revert, Fast-Forward, deleting a branch with commits no other branch has, Undo, applying patches as commits, and Apply Changes of a History edit) appear, while the main view is open, as a sheet over its Webview with the app's before-and-after drawing (docs/design.md, "Previewing graph changes"). The extension builds the drawing from the core's `movePreview`, `deletePreview`, `mergePreview`, `pickPreview`, `octopusPreview` and `rewritePreview` (`src/history/drawing.ts`), and the Webview only renders it. The sheet also holds what the app's sheet does: the way to integrate or reset as a choice (the drawing follows it), and the commits to send or pull, whose diff opens without closing it. Native modals can't show images and the extension can't open VSCode's modal editor, so without the main view (or the engine) these ask as before, in a modal or QuickPick, and Fast-Forward and Apply Changes don't ask.
 - A rebase (dropped, or from a branch's context menu) and every History edit are confirmed first, since they rewrite commits (docs/design.md, "Rewriting operations and stacked branches"). Through the shared daemon the modal's detail shows the core's `rewritePreview`: the stacked branches that move or stay and why, the pushed branches that will need Force Push, and the conflicts expected (git 2.40 or newer). When a stacked branch is affected and git is 2.38 or newer, a second button moves or keeps them this once, against `rebase.updateRefs` (`updateRefs` on the core's `rebase` and `rewrite`). The preview is for the current branch; rebasing another branch, or working on the git execution layer, confirms without one.
 - Merge Branches… in the Command Palette merges several branches, remote branches or tags into the current branch in one commit, as `git merge a b c` does (an octopus merge). They are picked in one QuickPick, in list order; a second QuickPick shows the conflicts expected for each, checked on top of the ones before (`predictMerge`; git 2.38 or newer), and offers to merge them in one commit, to put the one that conflicts before the last last, or to merge them one by one. git stops without recording conflicts when one before the last conflicts, so when it gives up the extension offers one by one again. One by one stops at a conflict and names the rest. Either way one Undo puts everything back: through the shared daemon the core records it (`merge` with an array, `oneByOne`); on the git execution layer the extension does, and puts the worktree back with `reset --merge` when git older than 2.37 leaves the part merged so far.
 
@@ -217,7 +223,7 @@ Bringing the UI into one Webview (see "Bringing the UI into one Webview"):
 
 Using the engine:
 
-- [ ] 12. History, diffs, the Working Copy and writes through the shared daemon. Tracked as item 18 of
+- [x] 12. History, diffs, the Working Copy and writes through the shared daemon. Tracked as item 18 of
   [design.md](design.md)
 
 Catching up with the macOS app (one feature per pull request, through the engine; [frontends.md](frontends.md) tracks
@@ -279,3 +285,4 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 65. Status with git's fsmonitor (`amonhen.fsmonitor`)
 - [x] 66. Write the commit-graph automatically (`amonhen.writeCommitGraph`)
 - [x] 67. Choose how to merge (fast-forward only, always a merge commit, squash)
+- [x] 68. The Daemon page (status, Start and Stop, connections), as the app's Activity > Daemon

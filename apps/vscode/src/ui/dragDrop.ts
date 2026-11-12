@@ -136,7 +136,8 @@ function dropActions(repo: Repository, source: DragSource, target: DropTarget): 
     return [
       {
         label: `$(git-merge) Merge ${src} into ${tgt}`,
-        confirm: async () => (mode = await pickMergeMode(`Merge ${src} into ${tgt}?`, true)) !== undefined,
+        confirm: async () =>
+          (mode = await pickMergeMode(`Merge ${src} into ${tgt}?`, true, { repo, theirs: sourceRef, ours: targetRef })) !== undefined,
         run: () => mergeInto(backend, undo, sourceRef, targetRef, mode),
       },
       rebaseAction(repo, targetRef, sourceRef),

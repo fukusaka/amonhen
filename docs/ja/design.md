@@ -394,7 +394,8 @@ rebase と History の編集（reword・squash・fixup・drop・edit・split・m
   - 書き換わるコミットと、その前と後の位置
   - 一緒に動くブランチと、動く先
   - 取り残されるブランチと、その理由（設定がオフ、git が古い、ここやほかの worktree でチェックアウト中）
-  - それらのブランチの上流（push 済みのブランチが動くと、force push が要る）
+  - それらのブランチの上流と、上流が書き換えるコミットを持つか（持てば、あとの push に force push が要る。古い
+    コミットしか持たない上流なら要らない）
   - コンフリクトの予測（`predictMerge`。rebase では目安）
 
   作業ツリー・index・ref には触らない。CLI でも同じものを出す（`--json` も）。

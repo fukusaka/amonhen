@@ -80,6 +80,10 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
   コミットを History と同じ詳細の欄に出す。どの ref からも辿れない行には「not on any branch」と付ける。ボタンと右クリック
   から、そこにブランチ・タグを作る、checkout する（detached）、そこへ reset する、History で見せる（今の範囲になければ
   All Branches にする。`historyRowOf`）、ID・名前をコピーする。HEAD が動いたら読み直す。
+- Show Daemon（サイドバーの ⋯ とコマンドパレット）は、アプリの Activity の Daemon と同じメインビューのページを開く。
+  共有の daemon が動いているか（pid・版・動いている時間・つながりの数・ソケット）と Start・Stop、daemon が開いている
+  リポジトリ（SSH の送受信量・つながり・History・監視・検索の索引）、この窓の daemon とのつながり。出している間は
+  `amonhen daemon status` を 2 秒ごとに読む。Stop で窓のリポジトリのつながりは切れ、Start でつなぎ直す（アプリの Reconnect と同じ）。
 - Reset Current Branch to Here…（History のコミットのメニューと Reflog）は、Mixed・Soft・Hard をモーダルで選んでもらい、
   コアの `reset` を使う。コアは hard の前に作業中の変更を stash に残し、Undo を記録する。Checkout (Detached) はどちらの
   経路でも動く。
@@ -96,6 +100,7 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
 - `TreeDragAndDropController` で実装する。ブランチをブランチにドロップしたら「Merge A into B」「Rebase B onto A」を QuickPick で選ばせる。リモートにドロップしたら push。
 - ドロップ先が現在のブランチでなければ checkout してから実行する。fast-forward で済む場合は checkout せず `update-ref` だけで処理する。
 - 制約: TreeView と Webview の間ではドラッグ＆ドロップできない。History 内の並べ替えは Webview の中で完結させる。
+- コミットグラフが変わる操作の確認（Push・Force Push・Pull・Merge・Rebase・Reset・Cherry-pick・Revert・Fast-Forward、ほかのブランチにないコミットのあるブランチの削除、Undo、パッチをコミットにする取り込み、History の編集の Apply Changes）は、メインビューが開いていれば、その Webview の上に重ねたシートで、アプリと同じ前と後の絵を添えて出す（docs/design.md の「コミットグラフの変化を見せる」）。絵はコアの `movePreview`・`deletePreview`・`mergePreview`・`pickPreview`・`octopusPreview`・`rewritePreview` から拡張が組み（`src/history/drawing.ts`）、Webview は描くだけ。シートにはアプリのシートと同じものも載せる: 取り込み方・Reset の動かし方は選ぶもの（選ぶと絵が替わる）、送る・取り込むコミットの一覧（押すとシートを閉じずに差分を開く）。ネイティブのモーダルには画像を出せず、VSCode のモーダルエディタは拡張から開けないので、メインビュー（またはエンジン）がなければこれまでどおりモーダルか QuickPick で確かめ、Fast-Forward と Apply Changes は確かめない。
 - rebase（ドロップ、またはブランチの右クリックから）と History の編集は、コミットを書き換えるので、いつも先に確かめる（docs/design.md の「書き換える操作と、積み重ねたブランチ」）。共有の daemon では、modal の詳しい欄にコアの `rewritePreview` を出す: 一緒に動く・残る積み重ねたブランチとその理由、あとの push に Force Push が要る push 済みのブランチ、コンフリクトの見込み（git 2.40 以降）。積み重ねたブランチに関わり、git が 2.38 以降なら、2 つ目のボタンでその操作だけ `rebase.updateRefs` と逆に動かす・動かさないを選べる（コアの `rebase`・`rewrite` の `updateRefs`）。見通しは今のブランチについてだけで、ほかのブランチの rebase と git 実行層では見通しなしで確かめる。
 - コマンドパレットの Merge Branches… で、いくつものブランチ・リモートブランチ・タグを `git merge a b c` と同じく 1 つのコミットで今のブランチに merge する（octopus）。1 つ目の QuickPick で一覧の順に選び、2 つ目の QuickPick に、前のものまでの結果に重ねて調べたそれぞれのコンフリクトの見込み（`predictMerge`。git 2.38 以降）を出して、1 つのコミットにまとめる・最後より前でぶつかるものを最後に回す・1 つずつ merge する、から選ばせる。最後より前のものがコンフリクトすると git はコンフリクトを残さずに止まるので、git が断ったら改めて 1 つずつを勧める。1 つずつはコンフリクトで止まり、残りを知らせる。どちらも Undo 1 回で全部戻る。共有の daemon ではコアが記録し（配列を渡す `merge`、`oneByOne`）、git 実行層では拡張が記録する。git 2.37 より前が途中まで合わせた変更を残したときは、`reset --merge` で戻す。
 
@@ -208,7 +213,7 @@ UI を 1 つの Webview にまとめる（「UI を 1 つの Webview にまと�
 
 エンジンを使う:
 
-- [ ] 12. History・差分・Working Copy・書き込みを共有の daemon で行う。
+- [x] 12. History・差分・Working Copy・書き込みを共有の daemon で行う。
   [design.md](design.md) の 18 で進める
 
 macOS アプリに追いつく（1 つの機能を 1 つの pull request で、エンジンを使って。まだ足りないものは
@@ -270,3 +275,4 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 65. status で git の fsmonitor を使う（`amonhen.fsmonitor`）
 - [x] 66. commit-graph を自動で書く（`amonhen.writeCommitGraph`）
 - [x] 67. Merge の取り込み方を選ぶ（fast-forward だけ・いつも merge コミット・squash）
+- [x] 68. Daemon のページ（様子・Start と Stop・つながり）。アプリの Activity の Daemon と同じ

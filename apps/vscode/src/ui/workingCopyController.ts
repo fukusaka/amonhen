@@ -132,7 +132,13 @@ export class WorkingCopyController implements vscode.Disposable {
   }
 
   private async commit(repo: Repository, message: string, amend: boolean, push: boolean): Promise<void> {
-    const result = await commitStaged(repo, message, amend);
+    this.post({ type: 'wcCommitting', committing: true });
+    let result: Awaited<ReturnType<typeof commitStaged>>;
+    try {
+      result = await commitStaged(repo, message, amend);
+    } finally {
+      this.post({ type: 'wcCommitting', committing: false });
+    }
     if (result.error) this.post({ type: 'wcCommitOutput', title: 'Couldn’t Commit', text: result.error });
     if (!result.committed) return;
     await setCommitDraft(repo.root, undefined);
@@ -313,6 +319,8 @@ export class WorkingCopyController implements vscode.Disposable {
     }
     const repo = this.repo;
     if (!repo) {
+      // コミットを頼まれていれば、Webview がコミット中のままにならないよう知らせる
+      if (message.type === 'wcCommit') this.post({ type: 'wcCommitting', committing: false });
       return;
     }
     if (message.type === 'wcDraft') {

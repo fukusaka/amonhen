@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   addTrailer,
+  commitDisabledReason,
   fixupSubjects,
   lengthLevel,
   longestLine,
@@ -53,4 +54,14 @@ test('fixup targets skip fixups, squashes and repeats, and stop at 15', () => {
   assert.deepEqual(fixupSubjects(['Two\n\nbody', 'fixup! One', 'squash! One', 'One', 'Two', '']), ['Two', 'One']);
   const many = Array.from({ length: 20 }, (_, i) => `c${i}`);
   assert.deepEqual(fixupSubjects(many), many.slice(0, 15));
+});
+
+test('commitDisabledReason says why Commit is disabled, as the app does', () => {
+  const state = { staged: 1, amend: false, summary: 'Fix', committing: false };
+  assert.equal(commitDisabledReason(state), undefined);
+  assert.equal(commitDisabledReason({ ...state, staged: 0 }), 'No files are checked');
+  assert.equal(commitDisabledReason({ ...state, staged: 0, amend: true }), undefined);
+  assert.equal(commitDisabledReason({ ...state, summary: '  ' }), 'Write a commit message');
+  assert.equal(commitDisabledReason({ ...state, staged: 0, summary: '' }), 'No files are checked\nWrite a commit message');
+  assert.equal(commitDisabledReason({ ...state, staged: 0, summary: '', committing: true }), 'Committing…');
 });
