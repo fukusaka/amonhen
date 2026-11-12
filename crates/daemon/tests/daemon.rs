@@ -545,7 +545,17 @@ fn shares_one_daemon_between_clients() {
                 .expect("両方に知らせが来ない"),
         );
     }
-    assert_eq!(rb.load_history().unwrap().graph.len(), 2);
+    let h = rb.load_history().unwrap();
+    assert_eq!(h.graph.len(), 2);
+    // レイアウトは daemon が計算して渡したもので、手元で計算したものと同じ。
+    assert!(h.layout.is_complete());
+    let head = h
+        .head
+        .and_then(|id| h.graph.ids().iter().position(|i| *i == id))
+        .map(|r| r as u32);
+    let local = amonhen_core::graph::layout(&h.graph, head);
+    assert_eq!(h.layout.nodes(), local.nodes());
+    assert_eq!(h.layout.edges(), local.edges());
 
     // History の作り直しは daemon のコアで行い、同じ 1 つのキャッシュを書き直す。
     let before = ra.load_history().unwrap();

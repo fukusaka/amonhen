@@ -20,8 +20,8 @@ type Writer = Arc<Mutex<Box<dyn Write + Send>>>;
 
 /// 手元の共有の daemon が、自分のコアでつないだ側を手伝う所。
 pub trait Host: Send + Sync {
-    /// History を用意して、その永続キャッシュのファイルを返す。
-    fn prepared_history(&self) -> Result<String>;
+    /// History を用意して、その永続キャッシュのフォルダとレイアウトを返す。
+    fn prepared_history(&self) -> Result<amonhen_model::PreparedHistory>;
     /// つないだ側のコアから任された処理を実行する。
     fn delegate(&self, request: &[u8]) -> Result<amonhen_model::Delegated>;
     /// このリポジトリのためにつないでいる SSH 先のエンジン（`ssh::RemoteEngine::describe`）。SSH 先でなければ None。
@@ -164,9 +164,9 @@ impl Server {
                     std::thread::spawn(move || {
                         let result = amonhen_model::process::with_client_env(&client_env, || {
                             i18n::with(lang, || match (request, &host) {
-                                (Request::PreparedHistory, Some(h)) => {
-                                    h.prepared_history().and_then(|p| encode(&Some(p)))
-                                }
+                                (Request::PreparedHistory, Some(h)) => h
+                                    .prepared_history()
+                                    .and_then(|p| encode(&Some(share_prepared(p)))),
                                 (Request::Delegate(bytes), Some(h)) => {
                                     h.delegate(&bytes.0).and_then(|d| encode(&share(d)))
                                 }
@@ -203,6 +203,24 @@ fn write_reply(writer: &Writer, id: u64, result: Result<Vec<u8>>, compress: bool
         Ok(payload) => frame::write_with(&mut *out, Kind::Ok, id, &payload, compress),
         Err(e) => frame::write_with(&mut *out, Kind::Err, id, e.to_string().as_bytes(), compress),
     };
+}
+
+/// 用意した History を送る形にする。レイアウトは共有メモリに置く（作れなければ送らず、つないだ側が計算する）。
+fn share_prepared(p: amonhen_model::PreparedHistory) -> crate::wire::PreparedReply {
+    let mut out = crate::wire::PreparedReply {
+        path: p.cache.display().to_string(),
+        ..Default::default()
+    };
+    #[cfg(all(unix, not(target_os = "android")))]
+    if let Some(layout) = p.layout
+        && let Ok((name, offsets)) =
+            crate::shm::publish(&[layout.nodes, layout.edges, layout.mainline])
+    {
+        out.region = Some(name);
+        out.parts = offsets;
+        out.lane_count = layout.lane_count;
+    }
+    out
 }
 
 /// 任せた処理の答えを送る形にする。大きなバイト列は共有メモリに置く（作れなければ、そのまま送る）。

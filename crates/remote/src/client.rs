@@ -602,13 +602,39 @@ impl GitBackend for RemoteBackend {
         })
     }
 
-    fn prepared_history(&self) -> Result<Option<std::path::PathBuf>> {
+    fn prepared_history(&self) -> Result<Option<amonhen_model::PreparedHistory>> {
         // SSH 先のファイルは手元で読めないので、手元の共有の daemon だけ。
         if !self.conn.is_local() {
             return Ok(None);
         }
-        let path: Option<String> = self.conn.call(&Request::PreparedHistory)?;
-        Ok(path.map(std::path::PathBuf::from))
+        let reply: Option<crate::wire::PreparedReply> =
+            self.conn.call(&Request::PreparedHistory)?;
+        let Some(reply) = reply else {
+            return Ok(None);
+        };
+        let layout = match &reply.region {
+            #[cfg(all(unix, not(target_os = "android")))]
+            Some(name) => {
+                let mut parts =
+                    crate::shm::parts(crate::shm::open(name)?, &reply.parts)?.into_iter();
+                match (parts.next(), parts.next(), parts.next()) {
+                    (Some(nodes), Some(edges), Some(mainline)) => {
+                        Some(amonhen_model::PreparedLayout {
+                            nodes,
+                            edges,
+                            mainline,
+                            lane_count: reply.lane_count,
+                        })
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        Ok(Some(amonhen_model::PreparedHistory {
+            cache: std::path::PathBuf::from(reply.path),
+            layout,
+        }))
     }
 
     fn delegate(&self, request: &[u8]) -> Result<Option<amonhen_model::Delegated>> {

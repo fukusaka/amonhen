@@ -90,6 +90,43 @@ pub struct GraphLayout {
 }
 
 impl GraphLayout {
+    /// 共有の daemon が計算したレイアウト（`PreparedLayout`）を、コピーせずに使う。`rows` 行の History のもので
+    /// なければ（点・線の行やレーンが範囲外）`None`。チェックポイントは持たない（このレイアウトから続きを
+    /// 計算するときは、最初から計算する）。
+    pub fn from_prepared(prepared: amonhen_model::PreparedLayout, rows: usize) -> Option<Self> {
+        let nodes = Slab::<Node>::from_blob(prepared.nodes)?;
+        let edges = Slab::<Edge>::from_blob(prepared.edges)?;
+        let mainline = Slab::<u8>::from_blob(prepared.mainline)?;
+        let lane_count = prepared.lane_count;
+        let n = rows as u32;
+        let valid = nodes.len() == rows
+            && mainline.len() == rows
+            && nodes
+                .iter()
+                .enumerate()
+                .all(|(i, node)| node.row == i as u32 && node.lane < lane_count)
+            && edges.iter().all(|e| {
+                e.row_start <= e.row_end
+                    && e.row_end < n
+                    && e.lane_start < lane_count
+                    && e.lane_end < lane_count
+            });
+        if !valid {
+            return None;
+        }
+        let mut layout = Self {
+            nodes,
+            edges,
+            lane_count,
+            mainline,
+            checkpoints: Vec::new(),
+            buckets: Vec::new(),
+            laid_out: n,
+        };
+        layout.build_buckets();
+        Some(layout)
+    }
+
     /// `rows` の点に merge の印を付ける（折りたたみで親を落とした merge を、merge として扱うため）。
     pub(crate) fn mark_merges(&mut self, rows: &[u32]) {
         let mut nodes = self.nodes.to_vec();
@@ -116,6 +153,15 @@ impl GraphLayout {
     /// レイアウトした行の数。すべての行をレイアウトしていれば点の数と同じ。
     pub fn laid_out(&self) -> u32 {
         self.laid_out
+    }
+
+    /// 点・線・幹線の印のバイト列（共有の daemon が、つないだ側に共有メモリで渡す）。
+    pub fn arrays(&self) -> [&[u8]; 3] {
+        [
+            self.nodes.as_bytes(),
+            self.edges.as_bytes(),
+            self.mainline.as_bytes(),
+        ]
     }
 
     /// すべての行をレイアウトした。

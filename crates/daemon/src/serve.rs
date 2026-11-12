@@ -429,7 +429,7 @@ fn connect_ssh(location: &str, options: &HostOptions) -> Result<Arc<amonhen_remo
 struct CoreHost(Arc<Shared>);
 
 impl amonhen_remote::Host for CoreHost {
-    fn prepared_history(&self) -> Result<String> {
+    fn prepared_history(&self) -> Result<amonhen_model::PreparedHistory> {
         prepared_history(&self.0)
     }
 
@@ -462,9 +462,9 @@ fn core(shared: &Shared) -> Result<&Arc<amonhen_core::Repository>> {
     Ok(shared.core.get().unwrap())
 }
 
-/// History を最新にして、その永続キャッシュのファイルを返す。ファイルが今の History と合わなければ（書けなかった）
-/// 断る（相手が古い History を読まないように）。
-fn prepared_history(shared: &Shared) -> Result<String> {
+/// History を最新にして、その永続キャッシュのフォルダとレイアウトを返す。キャッシュが今の History と合わなければ
+/// （書けなかった）断る（相手が古い History を読まないように）。
+fn prepared_history(shared: &Shared) -> Result<amonhen_model::PreparedHistory> {
     let _one_at_a_time = shared.history.lock().unwrap();
     let repo = core(shared)?;
     let snapshot = repo.load_history()?;
@@ -481,7 +481,13 @@ fn prepared_history(shared: &Shared) -> Result<String> {
     {
         return Err(tr!("Can’t write the History cache (it’s out of date)").into());
     }
-    Ok(path.display().to_string())
+    Ok(amonhen_model::PreparedHistory {
+        cache: path.to_path_buf(),
+        layout: snapshot
+            .layout
+            .is_complete()
+            .then(|| snapshot.prepared_layout()),
+    })
 }
 
 /// daemon の History のキャッシュの置き場所（アプリと同じフォルダ。名前はアプリのものと分ける）。

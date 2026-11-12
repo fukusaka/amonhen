@@ -254,6 +254,29 @@ impl HistorySnapshot {
     }
 }
 
+impl HistorySnapshot {
+    /// レイアウトの配列を、コピーせずに渡す形にする（共有の daemon が、つないだ側に渡す）。
+    pub fn prepared_layout(self: &Arc<Self>) -> amonhen_model::PreparedLayout {
+        /// スナップショットのレイアウトの配列の 1 つ（`GraphLayout::arrays` の添字）。
+        struct Array(Arc<HistorySnapshot>, usize);
+        impl AsRef<[u8]> for Array {
+            fn as_ref(&self) -> &[u8] {
+                self.0.layout.arrays()[self.1]
+            }
+        }
+        let blob = |i: usize| {
+            let len = self.layout.arrays()[i].len();
+            amonhen_layout::Blob::part(Arc::new(Array(self.clone(), i)), 0..len)
+        };
+        amonhen_model::PreparedLayout {
+            nodes: blob(0),
+            edges: blob(1),
+            mainline: blob(2),
+            lane_count: self.layout.lane_count(),
+        }
+    }
+}
+
 /// キャッシュから開いたとき、すぐレイアウトする行の数（linux で 1.8 ms）。残りは `load_history` で計算する。
 const FIRST_LAID_OUT_ROWS: u32 = 10_000;
 
@@ -623,10 +646,11 @@ impl Repository {
     /// 変わった所だけ計算し直す。
     pub fn load_history(&self) -> Result<Arc<HistorySnapshot>> {
         // 手元の共有の daemon が用意してくれるなら、レイアウトは計算せず、そのファイルを mmap する。
-        if let Some(path) = self.backend.prepared_history()? {
+        if let Some(prepared) = self.backend.prepared_history()? {
+            let path = &prepared.cache;
             if let Some(current) = self.history.load_full()
                 && current.layout.is_complete()
-                && let Some(state) = cache::read_state(&path)
+                && let Some(state) = cache::read_state(path)
                 && current.tips == state.tips
                 && current.head == state.head
                 && current.shallow == state.shallow
@@ -634,9 +658,23 @@ impl Repository {
             {
                 return Ok(current);
             }
-            let cached = cache::read(&path)
+            let cached = cache::read(path)
                 .ok_or_else(|| tr!("Can’t read the History the daemon prepared"))?;
-            return Ok(self.publish_cached(cached, true));
+            // daemon が計算したレイアウトを使う（並び順が同じなら。違えば、ここで計算する）。
+            let layout = prepared
+                .layout
+                .filter(|_| cached.order == self.history_order())
+                .and_then(|l| GraphLayout::from_prepared(l, cached.graph.len()));
+            return Ok(match layout {
+                Some(layout) => self.publish(
+                    cached.tips,
+                    cached.shallow,
+                    cached.head,
+                    cached.graph,
+                    layout,
+                ),
+                None => self.publish_cached(cached, true),
+            });
         }
         let tips = self.backend.tips()?;
         let head = self.backend.head()?;

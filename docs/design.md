@@ -176,7 +176,7 @@ Layout after opening:
 - Until then, rows below the laid-out part show their text with an empty graph column. The density display and the ancestor emphasis cover the laid-out part, and are drawn again when the rest arrives. A snapshot carries the number of laid-out rows next to the number of rows (the C ABI, GTK4 and the front's `historyGraph`).
 - Later changes are laid out incrementally as before, converging at the checkpoints held in memory.
 
-Through the shared daemon, the daemon writes the commit table and passes the layout in POSIX shared memory, as it does for diff contents. The app maps the table and the layout without computing the layout again, and nothing of the layout reaches the SSD.
+Through the shared daemon, the daemon writes the commit table and passes the layout in POSIX shared memory, as it does for diff contents. The app reads the table and maps the layout without computing it again, and nothing of the layout reaches the SSD. On linux, the CLI's `log` through the daemon takes 0.04 seconds, process start included.
 
 The bytes written are visible: Activity's Performance shows what the History cache wrote per repository (the last write and the total since launch), and Settings > Performance shows the size of the cache with a button to clear it.
 
