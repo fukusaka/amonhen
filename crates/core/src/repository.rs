@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use amonhen_layout::DiffRow;
+use amonhen_layout::{DiffRow, Node};
 use amonhen_model::{
     CommitGraph, ContentsToFetch, Eol, FileChange, GitBackend, HistoryOrder, LineEndings, Oid,
     OidMap, Refs, RepoPaths, Result, Status, StatusEntry, topo,
@@ -186,6 +186,7 @@ impl HistorySnapshot {
                         .get(start..end)
                         .unwrap_or(&[])
                         .iter()
+                        .filter(|node| node.flags & Node::PENDING == 0)
                         .map(|node| node.lane),
                 );
                 lanes.sort_unstable();

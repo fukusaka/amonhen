@@ -85,6 +85,8 @@ pub struct GraphLayout {
     pub(crate) checkpoints: Vec<Checkpoint>,
     /// `BUCKET_ROWS` 行ごとに、その範囲に重なる線の添字。
     buckets: Vec<Vec<u32>>,
+    /// レイアウトした行の数（`Layouter::partial`）。これより下の点は `Node::PENDING` で、線もない。
+    laid_out: u32,
 }
 
 impl GraphLayout {
@@ -115,6 +117,7 @@ impl GraphLayout {
             return None;
         }
         let mut layout = Self {
+            laid_out: rows,
             nodes,
             edges,
             lane_count,
@@ -147,6 +150,16 @@ impl GraphLayout {
 
     pub fn lane_count(&self) -> u16 {
         self.lane_count
+    }
+
+    /// レイアウトした行の数。すべての行をレイアウトしていれば点の数と同じ。
+    pub fn laid_out(&self) -> u32 {
+        self.laid_out
+    }
+
+    /// すべての行をレイアウトした。
+    pub fn is_complete(&self) -> bool {
+        self.laid_out as usize == self.nodes.len()
     }
 
     /// `rows` に重なる線の添字。
@@ -265,6 +278,83 @@ impl<'g> Layouter<'g> {
                 .into(),
             checkpoints: self.checkpoints,
             buckets: Vec::new(),
+            laid_out: self.row,
+        };
+        layout.build_buckets();
+        layout
+    }
+
+    /// ここまでのレイアウト。残りの行は `Node::PENDING` の点にし、まだ親に届いていない線は、レイアウトした最後の
+    /// 行で止める。全体を計算し終えるまでの間、上の方だけ先に見せるのに使う。
+    pub fn partial(&self) -> GraphLayout {
+        let graph = self.graph;
+        let rows = self.row;
+        let mut nodes = Vec::with_capacity(graph.len());
+        nodes.extend_from_slice(&self.nodes);
+        nodes.extend((rows..graph.len() as u32).map(|r| Node {
+            row: r,
+            lane: 0,
+            color: 0,
+            flags: Node::PENDING
+                | if graph.parents(r as usize).len() > 1 {
+                    Node::MERGE
+                } else {
+                    0
+                },
+            _pad: 0,
+        }));
+        let mut edges = self.edges.clone();
+        if let Some(last) = rows.checked_sub(1) {
+            let cut = |t: &Track, lane: u16, edges: &mut Vec<Edge>, rider: bool| {
+                let edge = |rows: (u32, u32), lanes: (u16, u16), rider: bool| Edge {
+                    row_start: rows.0,
+                    row_end: rows.1,
+                    lane_start: lanes.0,
+                    lane_end: lanes.1,
+                    color: t.color,
+                    kind: if t.first_parent {
+                        Edge::FIRST_PARENT
+                    } else {
+                        0
+                    } | if rider { Edge::RIDER } else { 0 },
+                    child: t.child_row,
+                    parent: t.target,
+                };
+                let (cr, cl) = (t.child_row, t.child_lane);
+                if cr >= last {
+                    return;
+                }
+                if rider || cl != lane {
+                    edges.push(edge((cr, cr + 1), (cl, lane), rider));
+                    if !rider && cr + 1 < last {
+                        edges.push(edge((cr + 1, last), (lane, lane), false));
+                    }
+                } else {
+                    edges.push(edge((cr, last), (lane, lane), false));
+                }
+            };
+            for (lane, t) in self.state.lanes.iter().enumerate() {
+                if let Some(t) = t {
+                    cut(t, lane as u16, &mut edges, false);
+                }
+            }
+            for (lane, t) in &self.state.riders {
+                cut(t, *lane, &mut edges, true);
+            }
+        }
+        let mut layout = GraphLayout {
+            nodes: nodes.into(),
+            edges: edges.into(),
+            lane_count: self.lane_count.max(self.state.lanes.len() as u16),
+            mainline: self
+                .mainline
+                .iter()
+                .map(|&m| u8::from(m))
+                .collect::<Vec<_>>()
+                .into(),
+            checkpoints: Vec::new(),
+            buckets: Vec::new(),
+            laid_out: rows,
         };
         layout.build_buckets();
         layout
@@ -486,6 +576,9 @@ pub fn relayout(
     graph: &CommitGraph,
     head_row: Option<u32>,
 ) -> GraphLayout {
+    if !old.is_complete() {
+        return layout(graph, head_row);
+    }
     relayout_inner(old, old_graph, graph, head_row).0
 }
 
@@ -568,7 +661,9 @@ fn splice(l: Layouter<'_>, old: &GraphLayout, k: usize, delta: i64) -> GraphLayo
             .into(),
         checkpoints,
         buckets: Vec::new(),
+        laid_out: 0,
     };
+    layout.laid_out = layout.nodes.len() as u32;
     layout.build_buckets();
     layout
 }
@@ -779,6 +874,58 @@ mod tests {
         let full = layout(&g, head);
         assert_eq!(streamed.nodes(), full.nodes());
         assert_eq!(streamed.edges(), full.edges());
+    }
+
+    /// 途中までのレイアウトは、全体のレイアウトをその行で切ったものと同じに見える。残りの点は `PENDING`。
+    #[test]
+    fn partial_layout_is_the_full_layout_cut_at_the_last_laid_out_row() {
+        let (g, head) = synthetic::graph(10_000, 13);
+        let full = layout(&g, head);
+        for k in [1u32, 2, 40, 4096, 9_000] {
+            let mut l = Layouter::new(&g, head);
+            l.advance(k);
+            let p = l.partial();
+            assert_eq!(p.laid_out(), k);
+            assert!(!p.is_complete());
+            assert_eq!(p.nodes().len(), g.len());
+            assert_eq!(&p.nodes()[..k as usize], &full.nodes()[..k as usize]);
+            for (r, n) in p.nodes().iter().enumerate().skip(k as usize) {
+                assert_eq!(n.row as usize, r);
+                assert_ne!(n.flags & Node::PENDING, 0);
+                assert_eq!(n.flags & Node::MERGE, full.nodes()[r].flags & Node::MERGE);
+            }
+            let last = k - 1;
+            let mut want: Vec<Edge> = full
+                .edges()
+                .iter()
+                .filter(|e| e.row_start < last)
+                .map(|e| Edge {
+                    row_end: e.row_end.min(last),
+                    ..*e
+                })
+                .collect();
+            let mut got = p.edges().to_vec();
+            let key = |e: &Edge| {
+                (
+                    e.row_start,
+                    e.row_end,
+                    e.lane_start,
+                    e.lane_end,
+                    e.child,
+                    e.parent,
+                )
+            };
+            want.sort_by_key(key);
+            got.sort_by_key(key);
+            let strip = |es: Vec<Edge>| -> Vec<_> { es.iter().map(key).collect() };
+            assert_eq!(strip(got.clone()), strip(want), "k = {k}");
+            assert!(
+                got.iter()
+                    .all(|e| e.lane_start < p.lane_count() && e.lane_end < p.lane_count())
+            );
+            let rest = layout(&g, head);
+            assert_eq!(relayout(&p, &g, &g, head).nodes(), rest.nodes());
+        }
     }
 
     #[test]

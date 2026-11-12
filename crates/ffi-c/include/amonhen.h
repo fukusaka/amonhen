@@ -117,6 +117,11 @@ typedef struct {
  * 未コミットの変更を表す仮の点。
  */
 #define AmonhenNode_WORKING_COPY (1 << 3)
+/**
+ * まだレイアウトしていない行（開いた直後、裏で計算している間）。レーンと色は決まっていないので描かない。
+ * `MERGE` は付いている。
+ */
+#define AmonhenNode_PENDING (1 << 4)
 
 /**
  * グラフの線 1 本。長い縦線も行ごとに分けず、区間 1 つで表す。

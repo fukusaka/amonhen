@@ -298,6 +298,9 @@ pub fn draw(
     let mut stubs: HashMap<(u16, bool), gsk::PathBuilder> = HashMap::new();
     let nodes = history.layout.nodes();
     for n in &nodes[rows.start as usize..rows.end as usize] {
+        if n.flags & amonhen_layout::Node::PENDING != 0 {
+            continue;
+        }
         let p = graphene::Point::new(lanes.x(n.lane, m), row_y(n.row));
         if let Some(x) = n
             .row

@@ -355,7 +355,7 @@ final class GraphRenderer {
             boundaryRows = Set(history.boundaryRows())
         }
         history.withNodes { nodes in
-            for n in nodes[rows] {
+            for n in nodes[rows] where n.flags & UInt16(AmonhenNode_PENDING) == 0 {
                 let p = SIMD2(laneX(n.lane), rowY(n.row, scrollY: scrollY))
                 let i = Int(n.row) - rows.lowerBound
                 if i >= 0, i < rowExtents.count { rowExtents[i] = max(rowExtents[i], p.x + m.nodeRadius) }
