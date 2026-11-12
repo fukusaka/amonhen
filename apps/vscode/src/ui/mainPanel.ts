@@ -5,6 +5,7 @@ import type { RepositoryManager } from '../state/manager.ts';
 import type { Repository } from '../state/repository.ts';
 import type { HostMessage, Sheet, SheetAnswer, ViewName, WebviewMessage } from '../view/protocol.ts';
 import { BlameController } from './blameController.ts';
+import { DaemonController } from './daemonController.ts';
 import { FileHistoryController } from './fileHistoryController.ts';
 import { HistoryController } from './historyController.ts';
 import { detailsLayout } from './preferences.ts';
@@ -15,7 +16,7 @@ import { showError } from './stageCommands.ts';
 import { WorkingCopyController } from './workingCopyController.ts';
 
 /**
- * メインビュー。エディタ領域の 1 つの Webview に、Working Copy・History・Reflog・Range Diff などを出す。
+ * メインビュー。エディタ領域の 1 つの Webview に、Working Copy・History・Reflog・Range Diff・Daemon などを出す。
  * どちらを出すかはサイドバーのナビで選ぶ。こちらは画面ごとのコントローラーにメッセージを振り分ける。
  */
 export class MainPanel implements vscode.Disposable {
@@ -28,6 +29,7 @@ export class MainPanel implements vscode.Disposable {
   readonly fileHistory: FileHistoryController;
   readonly blame: BlameController;
   readonly settings: SettingsController;
+  readonly daemon: DaemonController;
   private readonly panel: vscode.WebviewPanel;
   private readonly manager: RepositoryManager;
   private readonly disposables: vscode.Disposable[] = [];
@@ -89,6 +91,10 @@ export class MainPanel implements vscode.Disposable {
     this.fileHistory = new FileHistoryController((m) => this.post(m));
     this.blame = new BlameController((m) => this.post(m));
     this.settings = new SettingsController((m) => this.post(m));
+    this.daemon = new DaemonController(
+      (m) => this.post(m),
+      () => this.watch(this.repo),
+    );
     panel.iconPath = vscode.Uri.joinPath(extensionUri, 'media', 'amonhen.svg');
     panel.webview.html = html(panel.webview, extensionUri);
     this.disposables.push(
@@ -99,6 +105,7 @@ export class MainPanel implements vscode.Disposable {
       this.fileHistory,
       this.blame,
       this.settings,
+      this.daemon,
       panel.onDidDispose(() => this.dispose()),
       panel.webview.onDidReceiveMessage((m: WebviewMessage) => void this.onMessage(m).catch(showError)),
       manager.onDidChangeCurrent((r) => this.watch(r)),
@@ -174,6 +181,8 @@ export class MainPanel implements vscode.Disposable {
         this.settings.setRepository(this.repo);
         break;
       case 'view':
+        // Daemon は出している間だけ読み直す
+        this.daemon.setVisible(message.view === 'daemon');
         break;
       case 'sheetAnswer':
         this.sheets
@@ -222,6 +231,10 @@ export class MainPanel implements vscode.Disposable {
       case 'settingsSaveExclude':
       case 'settingsRun':
         await this.settings.handle(message);
+        break;
+      case 'daemonStart':
+      case 'daemonStop':
+        await this.daemon.handle(message);
         break;
       default:
         await this.history.handle(message);

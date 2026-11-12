@@ -9,7 +9,7 @@ import type { FileStat } from '../src/workingCopy/protocol.ts';
 import assert from 'node:assert/strict';
 import childProcess from 'node:child_process';
 import http from 'node:http';
-import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import * as vscode from 'vscode';
 import { DaemonClient } from '../src/daemon/client.ts';
@@ -112,7 +112,7 @@ function recordSpawns(): void {
   }
 }
 
-async function showView(command: 'amonhen.showWorkingCopy' | 'amonhen.showHistory' | 'amonhen.showReflog') {
+async function showView(command: 'amonhen.showWorkingCopy' | 'amonhen.showHistory' | 'amonhen.showReflog' | 'amonhen.showDaemon') {
   const start = Date.now();
   await vscode.commands.executeCommand(command);
   const panel = await until('メインビュー', () => api.panel());
@@ -231,6 +231,9 @@ async function workingCopyFlow(label: string): Promise<void> {
     const at = posted.length;
     await wc.handle({ type: 'wcCommit', message: `change three (${label})`, amend: false });
     await waitPosted('wcCommitted', at);
+    // コミットしている間は Commit を押せない（始めたことと終えたことを Webview に知らせる）
+    const committing = posted.slice(at).flatMap((m) => (m.type === 'wcCommitting' ? [m.committing] : []));
+    assert.deepEqual(committing, [true, false]);
     assert.equal(git('log', '-1', '--format=%s').trim(), `change three (${label})`);
     assert.equal(git('rev-parse', 'HEAD~').trim(), head);
     assert.equal(git('status', '--porcelain').trim(), '');
@@ -2585,6 +2588,50 @@ function inputs(...values: string[]): () => Promise<string | undefined> {
  * 出て、Undo で戻る。Hard は作業中の変更を先に stash に残す。Reflog の行のコミットを checkout（detached）し、
  * History で見せる。どれもコアの命令（daemon だけ）
  */
+/** Daemon: アプリの Daemon のタブと同じく、daemon の様子とこの窓のつながりを出し、出している間は読み直す */
+async function daemonFlow(): Promise<void> {
+  const mark = posted.length;
+  await showView('amonhen.showDaemon');
+  try {
+    const shown = await waitPosted('daemonStatus', mark, (m) => m.status !== undefined && m.connections.length > 0);
+    assert.equal(shown.enabled, true);
+    assert.ok(shown.status!.pid > 0);
+    const real = (p: string) => realpathSync.native(p);
+    assert.ok(
+      shown.status!.repos.some((r) => real(r.path) === real(root) && r.clients > 0),
+      JSON.stringify(shown.status!.repos),
+    );
+    assert.ok(
+      shown.connections.some((c) => real(c.path) === real(root) && c.closed === undefined),
+      JSON.stringify(shown.connections),
+    );
+    // 2 秒ごとに読み直す
+    const again = posted.length;
+    await waitPosted('daemonStatus', again);
+    // Stop でこの窓のつながりが切れ、Start でつなぎ直す（History も新しいつながりで読む）
+    const panel = await until('メインビュー', () => api.panel());
+    let mark2 = posted.length;
+    await panel.daemon.handle({ type: 'daemonStop' });
+    await waitPosted('daemonStatus', mark2, (m) => m.status === undefined && m.connections.some((c) => c.closed !== undefined));
+    mark2 = posted.length;
+    await panel.daemon.handle({ type: 'daemonStart' });
+    await waitPosted(
+      'daemonStatus',
+      mark2,
+      (m) =>
+        m.status !== undefined &&
+        m.connections.some((c) => real(c.path) === real(root) && c.closed === undefined) &&
+        m.status.repos.some((r) => real(r.path) === real(root) && r.clients > 0),
+    );
+  } finally {
+    await showView('amonhen.showHistory');
+  }
+  // ほかの画面に替えたら読み直さない
+  const hidden = posted.length;
+  await new Promise((r) => setTimeout(r, 2500));
+  assert.equal(posted.slice(hidden).filter((m) => m.type === 'daemonStatus').length, 0);
+}
+
 async function reflogFlow(): Promise<void> {
   const branch = git('symbolic-ref', '--short', 'HEAD').trim();
   const rev = (r: string) => git('rev-parse', r).trim();
@@ -3929,6 +3976,10 @@ suite('Amon Hen in VSCode', () => {
     await editFlow('daemon');
   });
 
+  test('shows the shared daemon and this window’s connections, as the app’s Daemon tab does', async () => {
+    await daemonFlow();
+  });
+
   test('shows the reflog and resets to a commit through the daemon', async () => {
     await reflogFlow();
   });
@@ -4147,6 +4198,11 @@ suite('Amon Hen in VSCode', () => {
       assert.equal(failed.title, 'Couldn’t Commit');
       assert.match(failed.text, /refused by the hook/);
       assert.ok(!posted.slice(at).some((m) => m.type === 'wcCommitted'));
+      // 断られても、コミット中のままにしない
+      assert.deepEqual(
+        posted.slice(at).flatMap((m) => (m.type === 'wcCommitting' ? [m.committing] : [])),
+        [true, false],
+      );
     } finally {
       rmSync(hook, { force: true });
       git('reset', '-q', '--hard', start);

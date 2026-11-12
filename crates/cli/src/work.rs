@@ -917,9 +917,9 @@ pub fn rewrite_preview(args: &[String]) -> Result<ExitCode> {
             out.push_str(&tr!("Stays: {name} ({why})", name = name, why = why));
             out.push('\n');
         }
-        let mut pushed: Vec<String> = info["currentUpstream"]
-            .as_str()
-            .and(info["current"].as_str())
+        let mut pushed: Vec<String> = (info["currentPushed"] == true)
+            .then_some(info["current"].as_str())
+            .flatten()
             .map(str::to_owned)
             .into_iter()
             .collect();
@@ -928,7 +928,7 @@ pub fn rewrite_preview(args: &[String]) -> Result<ExitCode> {
                 .as_array()
                 .into_iter()
                 .flatten()
-                .filter(|b| !b["upstream"].is_null())
+                .filter(|b| b["pushed"] == true)
                 .filter_map(|b| b["name"].as_str().map(str::to_owned)),
         );
         if !pushed.is_empty() {

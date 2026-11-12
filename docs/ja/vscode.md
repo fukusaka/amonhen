@@ -80,6 +80,10 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
   コミットを History と同じ詳細の欄に出す。どの ref からも辿れない行には「not on any branch」と付ける。ボタンと右クリック
   から、そこにブランチ・タグを作る、checkout する（detached）、そこへ reset する、History で見せる（今の範囲になければ
   All Branches にする。`historyRowOf`）、ID・名前をコピーする。HEAD が動いたら読み直す。
+- Show Daemon（サイドバーの ⋯ とコマンドパレット）は、アプリの Activity の Daemon と同じメインビューのページを開く。
+  共有の daemon が動いているか（pid・版・動いている時間・つながりの数・ソケット）と Start・Stop、daemon が開いている
+  リポジトリ（SSH の送受信量・つながり・History・監視・検索の索引）、この窓の daemon とのつながり。出している間は
+  `amonhen daemon status` を 2 秒ごとに読む。Stop で窓のリポジトリのつながりは切れ、Start でつなぎ直す（アプリの Reconnect と同じ）。
 - Reset Current Branch to Here…（History のコミットのメニューと Reflog）は、Mixed・Soft・Hard をモーダルで選んでもらい、
   コアの `reset` を使う。コアは hard の前に作業中の変更を stash に残し、Undo を記録する。Checkout (Detached) はどちらの
   経路でも動く。
@@ -209,7 +213,7 @@ UI を 1 つの Webview にまとめる（「UI を 1 つの Webview にまと�
 
 エンジンを使う:
 
-- [ ] 12. History・差分・Working Copy・書き込みを共有の daemon で行う。
+- [x] 12. History・差分・Working Copy・書き込みを共有の daemon で行う。
   [design.md](design.md) の 18 で進める
 
 macOS アプリに追いつく（1 つの機能を 1 つの pull request で、エンジンを使って。まだ足りないものは
@@ -271,3 +275,4 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 65. status で git の fsmonitor を使う（`amonhen.fsmonitor`）
 - [x] 66. commit-graph を自動で書く（`amonhen.writeCommitGraph`）
 - [x] 67. Merge の取り込み方を選ぶ（fast-forward だけ・いつも merge コミット・squash）
+- [x] 68. Daemon のページ（様子・Start と Stop・つながり）。アプリの Activity の Daemon と同じ

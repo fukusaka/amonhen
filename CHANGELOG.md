@@ -17,6 +17,8 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- Rebase and History edit confirmations say pushing afterwards needs Force Push only when the upstream has commits being
+  rewritten, not whenever the branch has an upstream.
 - Activity's "History: input → display" no longer counts redraws that no input caused (a background reload
   was timed from the last click, seconds earlier).
 - Repository settings that are showing read the configuration again when it changes outside the app or on Refresh.
@@ -1088,6 +1090,13 @@ First release.
 
 ### Unreleased
 
+#### Added
+
+- Show Daemon (the sidebar's ⋯) opens a page like the app's Activity > Daemon: the shared daemon's status with Start
+  and Stop, the repositories it has open and this window's connections to it.
+- When Commit can't be clicked, its tooltip says why (no files checked, no message, or a commit in progress), and it
+  stays disabled until a commit finishes.
+
 #### Changed
 
 - History's rows show the subject on one line and the author, date and ID on a second, as in the app; One Line per
@@ -1116,6 +1125,8 @@ First release.
 
 #### Fixed
 
+- A rebase or History edit says pushing afterwards needs Force Push only when the upstream has commits being rewritten.
+- In the History edit sheet's drawing, a long note no longer squeezes the subject away; the row's tooltip shows both.
 - `scripts/install-vscode.sh` no longer ends with "unbound variable" after installing when the shell's locale isn't
   UTF-8.
 
