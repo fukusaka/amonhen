@@ -180,7 +180,7 @@ Layout after opening:
 
 Through the shared daemon, the daemon writes the commit table and passes the layout in POSIX shared memory, as it does for diff contents. The app reads the table and maps the layout without computing it again, and nothing of the layout reaches the SSD. On linux, the CLI's `log` through the daemon takes 0.04 seconds, process start included.
 
-The bytes written are visible: Activity's Performance shows what the History cache wrote per repository (the last write and the total since launch), and Settings > Performance shows the size of the cache with a button to clear it.
+The bytes written are visible: Activity's Performance shows what the History cache wrote per repository (the last write and the total since launch), and Settings > Performance shows the size of the History cache and of the saved AI results, each with a button to clear it.
 
 ### Zero-copy rules
 

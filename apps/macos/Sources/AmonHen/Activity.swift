@@ -402,9 +402,7 @@ private struct HistoryTab: View {
 private struct PerformanceTab: View {
     let model: ActivityModel
 
-    private func bytes(_ n: UInt64) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(n), countStyle: .file)
-    }
+    private func bytes(_ n: UInt64) -> String { CacheFiles.format(Int64(n)) }
 
     private struct Row: Identifiable {
         let id: String
@@ -431,7 +429,7 @@ private struct PerformanceTab: View {
             Table(model.caches) {
                 TableColumn(L("Repository"), value: \.name)
                 TableColumn(L("Size")) { Text(bytes($0.info.size)).monospacedDigit() }.width(80)
-                TableColumn(L("Writes")) { Text("\($0.info.writes.count)").monospacedDigit() }.width(50)
+                TableColumn(L("Writes")) { Text("\($0.info.writes.count)").monospacedDigit() }.width(80)
                 TableColumn(L("Written")) { Text(bytes($0.info.writes.bytes)).monospacedDigit() }.width(80)
                 TableColumn(L("Last Write")) { r in
                     Text(r.info.writes.lastAt.map {

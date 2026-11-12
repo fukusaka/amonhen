@@ -749,6 +749,81 @@ private struct AppearanceSettings: View {
     }
 }
 
+/// キャッシュのファイルの大きさと消去（Settings > Performance）。
+enum CacheFiles {
+    /// History のキャッシュの置き場所: アプリのものと、共有の daemon のもの（snapshot 版では別のフォルダ）。
+    /// 中の `history-` で始まるもの（コアの `cache::total_size`・`cache::remove_all` と同じ）。
+    static var historyCaches: [URL] {
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        let dirs = Set([Bundle.main.bundleIdentifier ?? "io.github.fukusaka.amonhen", "io.github.fukusaka.amonhen"])
+            .map { caches.appendingPathComponent($0) }
+        return dirs.flatMap { dir in
+            ((try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? [])
+                .filter { $0.lastPathComponent.hasPrefix("history-") || $0.lastPathComponent == "history.bin" }
+        }
+    }
+
+    /// `urls`（ファイルかフォルダ）の大きさの合計。
+    static func size(of urls: [URL]) -> Int64 {
+        let keys: Set<URLResourceKey> = [.fileSizeKey, .isRegularFileKey]
+        return urls.reduce(0) { total, url in
+            let files = FileManager.default.enumerator(at: url, includingPropertiesForKeys: Array(keys))?
+                .compactMap { $0 as? URL } ?? [url]
+            return total + files.reduce(0) { sum, file in
+                guard let values = try? file.resourceValues(forKeys: keys), values.isRegularFile == true else { return sum }
+                return sum + Int64(values.fileSize ?? 0)
+            }
+        }
+    }
+
+    /// 大きさの表示（0 も「Zero KB」ではなく数で出す）。
+    static func format(_ bytes: Int64) -> String {
+        let f = ByteCountFormatter()
+        f.countStyle = .file
+        f.allowsNonnumericFormatting = false
+        return f.string(fromByteCount: bytes)
+    }
+
+    static func remove(_ urls: [URL]) throws {
+        for url in urls where FileManager.default.fileExists(atPath: url.path) {
+            try FileManager.default.removeItem(at: url)
+        }
+    }
+}
+
+/// キャッシュの行: 名前を左に、大きさと消すボタンを右に。大きさは、出すたびと消したあとに数え直す。
+private struct CacheRow: View {
+    let title: String
+    let note: String
+    let size: () -> Int64
+    let clear: () throws -> Void
+    @State private var bytes: Int64 = 0
+
+    var body: some View {
+        VStack(alignment: .leading) {
+            HStack {
+                Text(title)
+                Spacer()
+                Text(CacheFiles.format(bytes)).foregroundStyle(.secondary)
+                Button(L("Clear")) {
+                    do {
+                        try clear()
+                    } catch {
+                        let alert = NSAlert()
+                        alert.messageText = L("Can’t clear the cache")
+                        alert.informativeText = error.localizedDescription
+                        alert.runModal()
+                    }
+                    bytes = size()
+                }
+                .disabled(bytes == 0)
+            }
+            Note(note)
+        }
+        .onAppear { bytes = size() }
+    }
+}
+
 private struct PerformanceSettings: View {
     @Bindable var model: SettingsModel
     var body: some View {
@@ -761,6 +836,13 @@ private struct PerformanceSettings: View {
             }
             Section(L("Shared daemon")) {
                 Toggle(L("Open repositories through the shared daemon (SSH hosts too)"), isOn: $model.openThroughDaemon)
+            }
+            Section(L("Caches")) {
+                CacheRow(title: L("History"), note: L("Opens History right away next time. Cleared, it is read from git again."),
+                         size: { CacheFiles.size(of: CacheFiles.historyCaches) },
+                         clear: { try CacheFiles.remove(CacheFiles.historyCaches) })
+                CacheRow(title: L("AI Results"), note: L("Answers the same question again without asking the AI."),
+                         size: Assistant.cacheSize, clear: Assistant.clearCache)
             }
         }
         .formStyle(.grouped)

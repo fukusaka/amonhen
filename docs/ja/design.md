@@ -180,7 +180,7 @@ linux で測った書き込み（`crates/core/examples/cache_writes.rs`）: コ�
 
 共有の daemon を通すときは、daemon がコミットの表を書き、レイアウトは差分のファイルの中身と同じく POSIX の共有メモリで渡す。アプリは表を読み、レイアウトは写すだけで計算し直さない。レイアウトは SSD に書かない。linux で、daemon 越しの CLI の `log` は、プロセスの起動を含めて 0.04 秒。
 
-書いた量は見えるようにする。Activity の Performance に、History のキャッシュが書いた量をリポジトリごとに出し（最後の書き込みと、起動してからの合計）、Settings > Performance にキャッシュの大きさと消すボタンを置く。
+書いた量は見えるようにする。Activity の Performance に、History のキャッシュが書いた量をリポジトリごとに出し（最後の書き込みと、起動してからの合計）、Settings > Performance に History のキャッシュと AI の結果の大きさを 1 行ずつ出し、それぞれに消すボタンを置く。
 
 ### ゼロコピーの規則
 

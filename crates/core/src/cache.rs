@@ -744,6 +744,46 @@ pub fn size(path: &Path) -> u64 {
         .unwrap_or(0)
 }
 
+/// `dir`（`path_for` に渡すフォルダ）の、History のキャッシュすべて（どのリポジトリ・形式のものも）。
+fn all_in(dir: &Path) -> impl Iterator<Item = PathBuf> {
+    std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| {
+            e.file_name()
+                .to_str()
+                .is_some_and(|n| n.starts_with("history-") || n == "history.bin")
+        })
+        .map(|e| e.path())
+}
+
+/// `dir` の History のキャッシュの大きさの合計（Settings > Performance）。
+pub fn total_size(dir: &Path) -> u64 {
+    all_in(dir)
+        .map(|p| {
+            if p.is_dir() {
+                size(&p)
+            } else {
+                p.metadata().map_or(0, |m| m.len())
+            }
+        })
+        .sum()
+}
+
+/// `dir` の History のキャッシュをすべて消す（Settings > Performance）。開いているリポジトリは、次に History が
+/// 変わったときに書き直す。
+pub fn remove_all(dir: &Path) -> std::io::Result<()> {
+    for p in all_in(dir) {
+        if p.is_dir() {
+            remove(&p)?;
+        } else {
+            remove_file(&p)?;
+        }
+    }
+    Ok(())
+}
+
 /// キャッシュを消す（History を作り直すとき、Settings で消すとき）。
 pub fn remove(path: &Path) -> std::io::Result<()> {
     match std::fs::remove_dir_all(path) {
@@ -1236,6 +1276,23 @@ mod tests {
         drop(writer);
         assert_eq!(writes.lock().unwrap().len(), 2);
         assert_eq!(read(&path, HistoryOrder::Date).unwrap().graph, old);
+    }
+
+    /// Settings の大きさと消去は、どのリポジトリの History のキャッシュも数えて消し、ほかのものは残す。
+    #[test]
+    fn totals_and_removes_every_history_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let (g, _) = synthetic::graph(100, 1);
+        for key in ["/a", "/b"] {
+            write(&path_for(dir.path(), key), history(g.clone()).entry()).unwrap();
+        }
+        std::fs::write(dir.path().join("history-0123-old.bin"), [0; 10]).unwrap();
+        std::fs::create_dir(dir.path().join("assist")).unwrap();
+        let each = size(&path_for(dir.path(), "/a"));
+        assert_eq!(total_size(dir.path()), each * 2 + 10);
+        remove_all(dir.path()).unwrap();
+        assert_eq!(total_size(dir.path()), 0);
+        assert!(dir.path().join("assist").exists());
     }
 
     /// 同じリポジトリのほかの形式（と前の形式のファイル）は、7 日書かれていなければ消す。最近のもの（並んで動く

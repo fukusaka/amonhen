@@ -84,7 +84,7 @@ pub fn prompts() -> Prompts {
     Prompts::new(glib::user_config_dir().join("amonhen").join("prompts"))
 }
 
-fn cache() -> Cache {
+pub fn cache() -> Cache {
     Cache::new(glib::user_cache_dir().join("amonhen").join("assist"))
 }
 

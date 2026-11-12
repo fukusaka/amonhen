@@ -12,6 +12,7 @@ becomes the GitHub Release notes.
 #### Added
 
 - Activity's Performance shows what each open repository's History cache wrote since launch, and its size.
+- Settings > Performance shows the size of the History cache and of saved AI results, each with a Clear button.
 - When Commit can't be clicked, its tooltip says why: no files are checked, no message, or a commit in progress.
 - Merge chooses how to integrate in its confirmation: Follow git's settings, Fast-Forward Only, Always Create a Merge
   Commit, or Squash into One Commit (committed right away; one that conflicts stops as Squash in progress).

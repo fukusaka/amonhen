@@ -723,6 +723,12 @@
 "Writes" = "書いた回数";
 "Written" = "書いた量";
 "Last Write" = "最後の書き込み";
+"Caches" = "キャッシュ";
+"AI Results" = "AI の結果";
+"Clear" = "消す";
+"Opens History right away next time. Cleared, it is read from git again." = "次に開くとき History をすぐ出します。消すと git から読み直します。";
+"Answers the same question again without asking the AI." = "同じ問い合わせには、AI に聞かずに前の結果を出します。";
+"Can’t clear the cache" = "キャッシュを消せません";
 "What each open repository’s History cache wrote since the app started (through the shared daemon, what the daemon wrote). It writes only what changed." = "開いているリポジトリの History のキャッシュが、アプリを起動してから書いたもの（共有の daemon 越しなら、daemon が書いたもの）。変わった所だけを書く。";
 "File change notices and the reloads they cause (newest first, up to 500)." = "ファイルの変化の知らせと、それによる読み直し（新しい順に最大 500 件）。";
 "%ld s" = "%ld 秒";
