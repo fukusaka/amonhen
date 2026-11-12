@@ -209,7 +209,7 @@ UI を 1 つの Webview にまとめる（「UI を 1 つの Webview にまと�
 
 エンジンを使う:
 
-- [ ] 12. History・差分・Working Copy・書き込みを共有の daemon で行う。
+- [x] 12. History・差分・Working Copy・書き込みを共有の daemon で行う。
   [design.md](design.md) の 18 で進める
 
 macOS アプリに追いつく（1 つの機能を 1 つの pull request で、エンジンを使って。まだ足りないものは

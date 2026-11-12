@@ -218,7 +218,7 @@ Bringing the UI into one Webview (see "Bringing the UI into one Webview"):
 
 Using the engine:
 
-- [ ] 12. History, diffs, the Working Copy and writes through the shared daemon. Tracked as item 18 of
+- [x] 12. History, diffs, the Working Copy and writes through the shared daemon. Tracked as item 18 of
   [design.md](design.md)
 
 Catching up with the macOS app (one feature per pull request, through the engine; [frontends.md](frontends.md) tracks
