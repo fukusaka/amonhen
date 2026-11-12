@@ -10,7 +10,7 @@ use std::time::Instant;
 
 use amonhen_core::HistorySnapshot;
 use amonhen_core::lanes::{LaneMetrics, lane_positions};
-use amonhen_core::lineage::{Lineage, NOT_LIT};
+use amonhen_core::lineage::{LineageWindow, NOT_LIT};
 use amonhen_layout::Edge;
 use gtk::prelude::*;
 use gtk::{gdk, graphene, gsk};
@@ -217,7 +217,7 @@ pub fn draw(
     rows: Range<u32>,
     scroll_y: f32,
     m: &Metrics,
-    lineage: Option<&Lineage>,
+    lineage: Option<&LineageWindow>,
     boundary: &HashSet<u32>,
 ) -> Vec<f32> {
     let row_y = |row: u32| (row as f32 + 0.5) * m.row_height - scroll_y;
@@ -256,7 +256,7 @@ pub fn draw(
             alpha = 0.45;
         }
         // 祖先を強調するときは、光らない線（や縦線の光らない上の部分）を薄くする。
-        let from = lineage.map_or(e.row_start, |l| l.edge_from[i as usize]);
+        let from = lineage.map_or(e.row_start, |l| l.edge_from(i));
         if from == NOT_LIT {
             alpha *= DIMMED_ALPHA;
         } else if from > e.row_start && e.lane_start == e.lane_end {
