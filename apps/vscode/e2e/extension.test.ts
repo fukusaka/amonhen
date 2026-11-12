@@ -231,6 +231,9 @@ async function workingCopyFlow(label: string): Promise<void> {
     const at = posted.length;
     await wc.handle({ type: 'wcCommit', message: `change three (${label})`, amend: false });
     await waitPosted('wcCommitted', at);
+    // コミットしている間は Commit を押せない（始めたことと終えたことを Webview に知らせる）
+    const committing = posted.slice(at).flatMap((m) => (m.type === 'wcCommitting' ? [m.committing] : []));
+    assert.deepEqual(committing, [true, false]);
     assert.equal(git('log', '-1', '--format=%s').trim(), `change three (${label})`);
     assert.equal(git('rev-parse', 'HEAD~').trim(), head);
     assert.equal(git('status', '--porcelain').trim(), '');
@@ -4195,6 +4198,11 @@ suite('Amon Hen in VSCode', () => {
       assert.equal(failed.title, 'Couldn’t Commit');
       assert.match(failed.text, /refused by the hook/);
       assert.ok(!posted.slice(at).some((m) => m.type === 'wcCommitted'));
+      // 断られても、コミット中のままにしない
+      assert.deepEqual(
+        posted.slice(at).flatMap((m) => (m.type === 'wcCommitting' ? [m.committing] : [])),
+        [true, false],
+      );
     } finally {
       rmSync(hook, { force: true });
       git('reset', '-q', '--hard', start);

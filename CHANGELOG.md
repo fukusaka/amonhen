@@ -1092,6 +1092,8 @@ First release.
 
 - Show Daemon (the sidebar's ⋯) opens a page like the app's Activity > Daemon: the shared daemon's status with Start
   and Stop, the repositories it has open and this window's connections to it.
+- When Commit can't be clicked, its tooltip says why (no files checked, no message, or a commit in progress), and it
+  stays disabled until a commit finishes.
 
 #### Changed
 
