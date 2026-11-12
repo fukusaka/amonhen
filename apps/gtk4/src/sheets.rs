@@ -668,7 +668,7 @@ pub fn rewrite_lines(info: &Value) -> (Vec<String>, bool) {
         }
     }
     let mut pushed: Vec<String> = Vec::new();
-    if info["currentUpstream"].is_string()
+    if info["currentPushed"] == true
         && let Some(c) = info["current"].as_str()
     {
         pushed.push(c.to_owned());
@@ -676,7 +676,7 @@ pub fn rewrite_lines(info: &Value) -> (Vec<String>, bool) {
     pushed.extend(
         moving
             .iter()
-            .filter(|b| b["upstream"].is_string())
+            .filter(|b| b["pushed"] == true)
             .filter_map(|b| b["name"].as_str().map(str::to_owned)),
     );
     if !pushed.is_empty() {

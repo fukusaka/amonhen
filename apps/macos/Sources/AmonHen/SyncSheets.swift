@@ -44,6 +44,8 @@ nonisolated struct RewritePreview: Decodable, Sendable {
     struct Branch: Decodable, Sendable {
         let name: String
         let upstream: String?
+        /// 上流が書き換えるコミットを持っている（書き換えた後の push には Force Push が要る）。`moving` だけ。
+        var pushed: Bool? = nil
         let reason: String?
         let worktree: String?
     }
@@ -96,6 +98,8 @@ nonisolated struct RewritePreview: Decodable, Sendable {
     let staying: [Branch]
     let current: String?
     let currentUpstream: String?
+    /// 今のブランチの上流が書き換えるコミットを持っている（書き換えた後の push には Force Push が要る）。
+    var currentPushed: Bool? = nil
     /// 調べられなければ nil。
     let conflicts: [Conflict]?
     let updateRefs: UpdateRefs?
@@ -135,7 +139,7 @@ nonisolated struct RewritePreview: Decodable, Sendable {
         if !stay("git").isEmpty { out.append(L("%@ stays where it is (moving it needs git 2.38).", names(stay("git")))) }
         if !stay("checkedOut").isEmpty { out.append(L("%@ stays where it is (checked out in another worktree).", names(stay("checkedOut")))) }
         if !stay("off").isEmpty { out.append(L("%@ stays where it is (not moved this time).", names(stay("off")))) }
-        let pushed = ([currentUpstream.map { _ in current ?? "" }].compactMap { $0 } + moving.filter { $0.upstream != nil }.map(\.name))
+        let pushed = ((currentPushed == true ? [current ?? ""] : []) + moving.filter { $0.pushed == true }.map(\.name))
             .filter { !$0.isEmpty }
         if !pushed.isEmpty {
             let list = ListFormatter.localizedString(byJoining: pushed)

@@ -822,7 +822,9 @@ button.sheet-list-item:hover {
   color: var(--vscode-disabledForeground, var(--vscode-descriptionForeground));
 }
 
+/* 狭ければ印から先に詰め、それでも足りなければ件名も詰める（どちらもいくらかは残す）。全文は行のツールチップに出す */
 .drawing-subject {
+  min-width: 6em;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -832,8 +834,11 @@ button.sheet-list-item:hover {
 }
 
 .drawing-note {
-  flex: none;
+  flex: 0 1000 auto;
+  min-width: 3em;
   margin-left: 0.4em;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .ref.moved {
