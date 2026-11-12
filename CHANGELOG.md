@@ -1090,7 +1090,12 @@ First release.
 
 ## VSCode extension
 
-### Unreleased
+### [0.2.7] - 2026-11-13
+
+With the main view open, confirmations that change the commit graph appear as a sheet over it with the app's
+before-and-after drawing, and Merge asks how to integrate. History rows, Range Diff, Keys and Values and the context
+menus follow the app, Show Daemon opens the shared daemon's page, and credential prompts ask in an input box instead
+of failing.
 
 #### Added
 
