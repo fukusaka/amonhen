@@ -7,7 +7,11 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
-### Unreleased
+### [0.2.11] - 2026-11-13
+
+Merge asks how to integrate (following git's settings, fast-forward only, always a merge commit, or squashed), and
+Commit's tooltip says why it can't be clicked. Publish and Pull work on a branch whose upstream was deleted, the Pull
+sheet draws the merge commit git would write, and the GTK4 app matches macOS in more places.
 
 #### Added
 
