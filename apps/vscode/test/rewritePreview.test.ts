@@ -8,7 +8,7 @@ test('previewLines says which branches move or stay, which are pushed and what c
   assert.deepEqual(
     previewLines(
       preview({
-        moving: [{ name: 'a', upstream: 'origin/a' }, { name: 'b' }],
+        moving: [{ name: 'a', upstream: 'origin/a', pushed: true }, { name: 'b', upstream: 'origin/b', pushed: false }],
         staying: [
           { name: 'c', reason: 'setting' },
           { name: 'd', reason: 'git' },
@@ -17,6 +17,7 @@ test('previewLines says which branches move or stay, which are pushed and what c
         ],
         current: 'main',
         currentUpstream: 'origin/main',
+        currentPushed: true,
         conflicts: [{ oid: '0123456789abcdef', files: ['x', 'y', 'z', 'w'] }],
       }),
     ),
@@ -35,6 +36,8 @@ test('previewLines says which branches move or stay, which are pushed and what c
     ['⚠︎ Conflicts expected at 2 commits, first at aaaaaaaa: x'],
   );
   assert.deepEqual(previewLines(preview({ conflicts: [] })), ['No conflicts expected.']);
+  // 上流があっても、書き換えるコミットを持っていなければ Force Push は要らない
+  assert.deepEqual(previewLines(preview({ current: 'main', currentUpstream: 'origin/main', currentPushed: false })), []);
   // 調べられなければ（git が古い）コンフリクトの行はない
   assert.deepEqual(previewLines(preview({ conflicts: null })), []);
 });

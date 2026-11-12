@@ -17,6 +17,8 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- Rebase and History edit confirmations say pushing afterwards needs Force Push only when the upstream has commits being
+  rewritten, not whenever the branch has an upstream.
 - Repository settings that are showing read the configuration again when it changes outside the app or on Refresh.
 - The Pull sheet no longer leaves a blank space when the chosen mode can't pull: it keeps the graph as it is now and
   says so, and why, where the after graph would be.
@@ -1114,6 +1116,8 @@ First release.
 
 #### Fixed
 
+- A rebase or History edit says pushing afterwards needs Force Push only when the upstream has commits being rewritten.
+- In the History edit sheet's drawing, a long note no longer squeezes the subject away; the row's tooltip shows both.
 - `scripts/install-vscode.sh` no longer ends with "unbound variable" after installing when the shell's locale isn't
   UTF-8.
 
