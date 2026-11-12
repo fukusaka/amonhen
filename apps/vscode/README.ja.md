@@ -42,6 +42,7 @@ VSCode 上で快適に Git を操作するための自分用の拡張。Marketpl
 - Stashes の節は stash があるときだけ出る。その見出しの `+` で、作業中の変更を stash する（untracked のファイルを含めるかを選べる）。stash を選ぶと中身を複数ファイル diff で開き、右クリックで Apply / Pop / Drop（Undo で戻せる）。Apply と Pop は stage していた状態も戻す。エンジンがあるとき、stash の行には untracked のファイルを含むかが付き、ツールチップに作ったときのブランチと、土台から HEAD がどれだけ動いたかが出る。Branch… はその土台にブランチを作って stash を当て、見出しの Pop Latest Stash… は確かめてから最新の stash を pop する。
 - エンジンがあるとき、Stash には Stash Only the Staged Changes（git 2.35 から）と Stash, Keeping the Staged Changes（`--keep-index`）も並び、Working Copy のファイルの右クリックにそのファイルだけの Stash… がある。
 - Reflog は HEAD の reflog を新しい順に並べ、右に選んだ行のコミットを出す。どのブランチからも辿れなくなったコミット（reset・rebase・amend で外れたもの）には「not on any branch」と付く。一覧の上の New Branch…・Checkout と、右クリック（New Tag・Reset Current Branch to Here…・Show in History・Copy Commit ID・Copy Name）で取り戻せる。
+- サイドバーの ⋯ の Show Daemon は、アプリの Activity の Daemon と同じく共有の daemon の様子を出す。動いているかと Start・Stop、daemon が開いているリポジトリ、この窓の daemon とのつながり。
 - History のコミットの右クリックにも Checkout (Detached)… と、エンジンがあれば Reset Current Branch to Here… がある。`git reset` と同じに Mixed・Soft・Hard を選ぶ。Hard は先に作業中の変更を stash に残し、Undo でブランチを戻せる。
 - Submodules は右クリックで Update（初期化して記録されているコミットに合わせる）と、別のウィンドウで開く。エンジンがあれば、行にアプリと同じ印（取り出していない・違うコミット・中の変更・コンフリクト）と URL・追うブランチが出て、メニューに Update…（中の submodule も・追うブランチの最新）・Edit URL…・Branch to Follow…・Remove… も並ぶ。グループには Update All・Update Submodules…・Sync URLs・Add Submodule…。
 - エンジンがあるとき、Clean Up Branches…（コマンドパレット、Branches の見出しの右クリック）は、既定のブランチに取り込んだもの、GitHub のプルリクエストでマージしたもの（`gh` があれば読む）、上流が消えたものを理由ごとの見出しの下に並べ、チェックしたままのものを消す。上流が消えたものは最初はチェックしない。Undo 1 回で設定ごと全部戻る。

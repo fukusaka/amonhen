@@ -369,7 +369,8 @@ or split history in ways that are hard to see afterwards.
   - the branches that move, and where to;
   - the branches left behind, and why (the setting is off, git is too old, or the branch is checked out here or in
     another worktree);
-  - the upstream of each of those branches (a pushed branch that moves will need a force push);
+  - the upstream of each of those branches, and whether it has commits being rewritten (then pushing the branch
+    afterwards needs a force push; an upstream that has only older commits does not);
   - the conflict forecast (`predictMerge`; for a rebase, an estimate).
 
   It does not touch the worktree, the index or any ref. The CLI shows the same (`--json` too).

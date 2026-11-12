@@ -7,7 +7,7 @@ import type { Change, ChangeGroup } from '../state/changes.ts';
 import type { HostMessage } from '../view/protocol.ts';
 import type { DiffHunk, DiffLine, FileDiff, SelectedLine } from '../diff/fileDiff.ts';
 import type { Eol, LineEndings } from '../git/eol.ts';
-import { addTrailer, lengthLevel, longestLine, messageLength, splitMessage, withType } from '../workingCopy/commitMessage.ts';
+import { addTrailer, commitDisabledReason, lengthLevel, longestLine, messageLength, splitMessage, withType } from '../workingCopy/commitMessage.ts';
 import { filesUnder, filterByPath, makeFileTree, type FileDir, type FileLayout } from '../workingCopy/fileList.ts';
 import { el, post, type View } from './api.ts';
 import { lineKey, renderDiffBody } from './diffView.ts';
@@ -573,9 +573,15 @@ export function createWorkingCopyView(): View {
     return files.filter((f) => f.group === 'staged').length;
   }
 
+  /** コミットしている間（2 回目の ⌘↩ が、もう 1 つ git commit を始めないように） */
+  let committing = false;
+
   function updateCommitButton(): void {
     const staged = stagedCount();
-    commitButton.disabled = !subject.value.trim() || (!amend.checked && staged === 0);
+    const reason = commitDisabledReason({ staged, amend: amend.checked, summary: subject.value, committing });
+    commitButton.disabled = reason !== undefined;
+    // 押せないときは、ツールチップでわけを言う（アプリと同じ）
+    commitButton.title = reason ?? 'Commit the checked files (⌘↩)';
     commitButton.textContent = amend.checked
       ? 'Amend'
       : staged > 0
@@ -601,6 +607,8 @@ export function createWorkingCopyView(): View {
 
   function commit(push = false): void {
     if (commitButton.disabled) return;
+    committing = true;
+    updateCommitButton();
     post({ type: 'wcCommit', message: message(), amend: amend.checked, ...(push ? { push } : {}) });
   }
 
@@ -760,6 +768,10 @@ export function createWorkingCopyView(): View {
         clearTimeout(draftTimer);
         subject.value = m.summary;
         body.value = m.body;
+        updateCommitButton();
+        break;
+      case 'wcCommitting':
+        committing = m.committing;
         updateCommitButton();
         break;
       case 'wcCommitted':

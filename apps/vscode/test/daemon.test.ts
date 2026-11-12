@@ -4,7 +4,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpat
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { after, before, test } from 'node:test';
-import { Changes, clientEnv, controlDaemon, DaemonClient } from '../src/daemon/client.ts';
+import { Changes, clientEnv, controlDaemon, DaemonClient, startDaemon } from '../src/daemon/client.ts';
 import { readWorkingDiff, selectedRows } from '../src/daemon/diff.ts';
 import { platformName, prepareEngine } from '../src/daemon/engine.ts';
 import { readRows } from '../src/daemon/history.ts';
@@ -408,6 +408,27 @@ test('takes a new environment on an open connection from the next command', { sk
     delete process.env['AMONHEN_GIT'];
     client.dispose();
   }
+});
+
+test('starts, reports and stops the shared daemon for the Daemon page', { skip }, async () => {
+  await controlDaemon(daemon, 'stop').catch(() => undefined);
+  assert.equal(await controlDaemon(daemon, 'status'), undefined);
+  await startDaemon(daemon);
+  const client = await DaemonClient.open(daemon, repo);
+  try {
+    const status = JSON.parse((await controlDaemon(daemon, 'status')) ?? '{}') as {
+      pid?: number;
+      connections?: number;
+      repos?: { path: string; clients: number }[];
+    };
+    assert.ok(status.pid, JSON.stringify(status));
+    assert.equal(status.connections, 1);
+    assert.equal(status.repos?.find((r) => r.path === repo)?.clients, 1, JSON.stringify(status));
+  } finally {
+    client.dispose();
+  }
+  await controlDaemon(daemon, 'stop');
+  assert.equal(await controlDaemon(daemon, 'status'), undefined);
 });
 
 test('names the host platform like the engine files', () => {

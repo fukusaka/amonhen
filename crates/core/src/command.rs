@@ -405,10 +405,11 @@ pub enum Command {
     },
     /// 書き換える前の見通し（docs/design.md の「Rewriting operations and stacked branches」）。`edit` は History の
     /// 編集、`onto` は今のブランチをそこへ rebase すること（どちらか一方）。作業ツリー・index・ref には触らない。
-    /// `info`: `moving`（一緒に動くブランチ: name・upstream）、`staying`（書き換えるコミットに先頭があるのに残る
+    /// `info`: `moving`（一緒に動くブランチ: name・upstream・pushed）、`staying`（書き換えるコミットに先頭があるのに残る
     /// ブランチ: name・upstream・reason（`setting`: rebase.updateRefs がオフ、`git`: git が 2.38 より古い、
     /// `checkedOut`: ほかの worktree で checkout 中）・worktree）、`current`・`currentUpstream`（今のブランチと
-    /// 上流。上流があれば、書き換えた後の push には Force Push が要る）、`conflicts`（コンフリクトしそうな
+    /// 上流）、`pushed`・`currentPushed`（上流が書き換えるコミットを持っていて、書き換えた後の push には Force Push が
+    /// 要る）、`conflicts`（コンフリクトしそうな
     /// コミットとファイル: oid・files。調べられなければ null）。
     RewritePreview {
         #[serde(default)]
@@ -3046,6 +3047,31 @@ impl Repository {
             .find(|e| e.key.eq_ignore_ascii_case("rebase.updateRefs"))
             .is_some_and(|e| e.value.eq_ignore_ascii_case("true"));
         let setting = update_refs.unwrap_or(configured);
+        // 上流が書き換えるコミットを持っているか（持っていれば、書き換えた後の push には Force Push が要る）。
+        // 土台がない（root からの書き換え）ときは、持っているとみなす。
+        let pushed = |upstream: Option<&str>| -> Result<bool> {
+            let Some(upstream) = upstream else {
+                return Ok(false);
+            };
+            let tip = [RefKind::Remote, RefKind::Local].iter().find_map(|kind| {
+                refs.refs
+                    .entries
+                    .iter()
+                    .find(|e| e.kind == *kind && e.name == upstream)
+                    .and_then(|e| e.target)
+            });
+            let Some(tip) = tip else {
+                return Ok(false);
+            };
+            let Some(b) = base else {
+                return Ok(true);
+            };
+            Ok(self
+                .backend()
+                .commits_since(&[tip], &[b])?
+                .iter()
+                .any(|c| rewritten.contains(&c.id)))
+        };
         let mut moving = Vec::new();
         let mut staying = Vec::new();
         for entry in refs
@@ -3076,7 +3102,9 @@ impl Repository {
                 None
             };
             match reason {
-                None => moving.push(serde_json::json!({ "name": entry.name, "upstream": upstream })),
+                None => moving.push(serde_json::json!({
+                    "name": entry.name, "upstream": upstream, "pushed": pushed(upstream.as_deref())?,
+                })),
                 Some(reason) => staying.push(serde_json::json!({
                     "name": entry.name, "upstream": upstream, "reason": reason, "worktree": elsewhere,
                 })),
@@ -3137,6 +3165,7 @@ impl Repository {
                 "labels": labels,
             });
         }
+        let current_upstream = current.as_deref().and_then(upstream_of);
         let edit_drawing = match edit_range {
             Some((before, steps)) => self.edit_drawing(&before, steps, base)?,
             None => serde_json::Value::Null,
@@ -3145,7 +3174,8 @@ impl Repository {
             "moving": moving,
             "staying": staying,
             "current": current,
-            "currentUpstream": current.as_deref().and_then(upstream_of),
+            "currentUpstream": current_upstream,
+            "currentPushed": pushed(current_upstream.as_deref())?,
             "conflicts": conflicts,
             "updateRefs": { "configured": configured, "available": git_ok },
             "drawing": drawing,
@@ -6635,6 +6665,44 @@ mod tests {
         assert_eq!(d["after"][1]["combined"], 1);
         assert_eq!(d["base"]["subject"], "add w");
         assert_eq!(d["labels"][0]["name"], "main");
+    }
+
+    #[test]
+    fn a_preview_says_force_push_only_when_the_upstream_has_rewritten_commits() {
+        let (tmp, _) = setup();
+        let dir = tmp.path();
+        let mut oids = Vec::new();
+        for name in ["x", "y"] {
+            std::fs::write(dir.join(name), format!("{name}\n")).unwrap();
+            git(dir, &["add", "."]);
+            git(dir, &["commit", "-q", "-m", &format!("add {name}")]);
+            oids.push(git(dir, &["rev-parse", "HEAD"]));
+        }
+        // origin/main は x まで（y はまだ push していない）。
+        git(
+            dir,
+            &["remote", "add", "origin", "https://example.invalid/x.git"],
+        );
+        git(dir, &["update-ref", "refs/remotes/origin/main", &oids[0]]);
+        git(
+            dir,
+            &["branch", "-q", "--set-upstream-to=origin/main", "main"],
+        );
+        let reopened = Repository::new(GixBackend::open(dir).unwrap());
+        let preview = |steps: serde_json::Value| {
+            let json = serde_json::json!({"op": "rewritePreview", "edit": {"kind": "plan", "steps": steps}});
+            run(&reopened, &json.to_string())["info"].clone()
+        };
+        // y だけを書き換えるなら、上流は困らない。
+        let local = preview(serde_json::json!([
+            {"oid": oids[1], "action": "reword", "message": "add y again"}]));
+        assert_eq!(local["currentUpstream"], "origin/main", "{local}");
+        assert_eq!(local["currentPushed"], false, "{local}");
+        // x を書き換えると、上流にあるコミットが変わる。
+        let pushed = preview(serde_json::json!([
+            {"oid": oids[0], "action": "reword", "message": "add x again"},
+            {"oid": oids[1], "action": "pick"}]));
+        assert_eq!(pushed["currentPushed"], true, "{pushed}");
     }
 
     #[test]

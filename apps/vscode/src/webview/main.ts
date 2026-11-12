@@ -1,11 +1,12 @@
 /**
- * メインビュー。Working Copy・History・Reflog・Range Diff・File History・Blame などのどれかを出す。どれを出すかはサイドバーのナビ
+ * メインビュー。Working Copy・History・Reflog・Range Diff・File History・Blame・Daemon などのどれかを出す。どれを出すかはサイドバーのナビ
  * （File History・Blame はファイルの右クリック）で選ぶ。
  * どの画面も作っておき、表示だけを切り替えるので、切り替えたときに作り直さない。
  */
 import type { HostMessage, ViewName } from '../view/protocol.ts';
 import { el, getState, post, updateState, type View } from './api.ts';
 import { createBlameView } from './blame.ts';
+import { createDaemonView } from './daemon.ts';
 import { setDetailsLayout } from './details.ts';
 import { createFileHistoryView } from './fileHistory.ts';
 import { createHistoryView } from './history.ts';
@@ -23,6 +24,7 @@ const views: Record<ViewName, View> = {
   fileHistory: createFileHistoryView(),
   blame: createBlameView(),
   settings: createSettingsView(),
+  daemon: createDaemonView(),
 };
 
 const content = el('div', 'content');
