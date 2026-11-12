@@ -25,19 +25,49 @@ export interface RewritePreview {
   updateRefs?: { configured: boolean; available: boolean } | null;
   /** 前と後を描く材料（rebase のとき） */
   drawing?: RewriteDrawing | null;
+  /** History の編集の前と後を描く材料（merge を越える編集では描けないので null） */
+  editDrawing?: EditDrawing | null;
+}
+
+/** History の編集の 1 つ。action は git の命令（`pick`・`reword`・`squash`・`fixup`・`drop`・`edit`） */
+export interface EditStep {
+  oid: string;
+  subject: string;
+  action: string;
+  /** after だけ: まとめたコミットの数 */
+  combined?: number | null;
+}
+
+/** before は書き換わるコミット、after はできるコミット（どちらも新しい順、長ければ真ん中を省く） */
+export interface EditDrawing {
+  before: EditStep[];
+  beforeMore: number;
+  beforeMoreAt?: number | null;
+  after: EditStep[];
+  afterMore: number;
+  afterMoreAt?: number | null;
+  base?: DrawnCommit | null;
+  labels: { oid: string; name: string; kind: string }[];
 }
 
 export interface DrawnCommit {
   oid: string;
   subject: string;
+  /** 分かれたところの author の日時（秒）。base だけ */
+  time?: number | null;
 }
 
 export interface RewriteDrawing {
   /** 載せ直すコミット（古い順） */
   picks: DrawnCommit[];
+  /** 省いた載せ直すコミットの数と、新しい順に並べたときの省いたところ */
+  picksMore?: number | null;
+  picksMoreAt?: number | null;
   /** 載せ先で進んだコミット（新しい順、先頭のいくつか）と、ほかにいくつあるか */
   onto: DrawnCommit[];
   ontoMore: number;
+  /** 載せ先で進んだコミットを省いたところ */
+  ontoMoreAt?: number | null;
   /** 分かれたところ */
   base?: DrawnCommit | null;
   /** コミットに付いているブランチ。kind は `local`・`remote` */

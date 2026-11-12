@@ -5,6 +5,7 @@
 import * as vscode from 'vscode';
 import { confirmOperation, uncommittedLine } from './confirm.ts';
 import { daemonFor } from '../daemon/connection.ts';
+import { moveDrawing, type MovePreview } from '../history/drawing.ts';
 import type { RepositoryManager } from '../state/manager.ts';
 import type { Repository } from '../state/repository.ts';
 import { MainPanel } from './mainPanel.ts';
@@ -56,21 +57,7 @@ async function resetToCommit(repo: Repository, ctx: CommitContext): Promise<void
     return;
   }
   const branch = repo.current.status?.branch.head ?? 'HEAD';
-  const modes: Record<string, ResetMode> = { Mixed: 'mixed', Soft: 'soft', Hard: 'hard' };
-  const answer = await vscode.window.showWarningMessage(
-    `Reset ${branch} to ${commitName(ctx)}?`,
-    {
-      modal: true,
-      detail:
-        'Mixed keeps the changes of the commits taken off in the working tree, unstaged. ' +
-        'Soft keeps them staged. ' +
-        'Hard makes the index and the working tree match the commit; uncommitted changes are saved as a stash first ' +
-        '(untracked files are left alone).\n\n' +
-        'Undo puts the branch back, and the commits taken off stay in Reflog.',
-    },
-    ...Object.keys(modes),
-  );
-  const mode = answer ? modes[answer] : undefined;
+  const mode = await askResetMode(repo, ctx, branch);
   if (!mode) return;
   const label = `Reset (${mode}) to ${ctx.oid.slice(0, 8)}`;
   let stashed = false;
@@ -90,6 +77,61 @@ async function resetToCommit(repo: Repository, ctx: CommitContext): Promise<void
   if (choice === 'Undo') {
     await vscode.commands.executeCommand('amonhen.undo');
   }
+}
+
+/**
+ * Reset の動かし方を選ばせる。メインビューが開いていれば、アプリと同じくシートで: 前と後の絵（外れるコミット）、
+ * 選んだ動かし方で今との違いがどこへ行くか、外れるコミットを上流が持っていれば、このあとの Push に Force Push が
+ * 要ること。開いていない・描けなければモーダルのボタンで
+ */
+async function askResetMode(repo: Repository, ctx: CommitContext, branch: string): Promise<ResetMode | undefined> {
+  const title = `Reset ${branch} to ${commitName(ctx)}?`;
+  const panel = MainPanel.active;
+  const current = repo.current.status?.branch.head;
+  const preview = panel?.canAsk
+    ? await repo.backend.graphPreview<MovePreview>({ op: 'movePreview', from: 'HEAD', to: ctx.oid, ...(current ? { branch: current } : {}) })
+    : undefined;
+  const drawing = moveDrawing(preview, { moving: branch, kind: 'local', afterTitle: 'After the reset', lostNote: 'taken off' });
+  if (panel && preview && drawing) {
+    const files = preview?.files ?? 0;
+    const modes: [ResetMode, string, string][] = [
+      ['soft', 'Soft: keep the changes staged', `The difference from now (${files} files) stays staged.`],
+      ['mixed', 'Mixed: keep the changes in the working tree', `The difference from now (${files} files) stays in the working tree.`],
+      [
+        'hard',
+        'Hard: match the commit (uncommitted changes are stashed first)',
+        `The working tree matches the commit; the difference from now (${files} files) goes away (Undo brings it back).`,
+      ],
+    ];
+    const answer = await panel.ask({
+      title,
+      lines: ['Commits taken off stay in Reflog. You can undo this.'],
+      warnings:
+        preview && preview.upstreamHas > 0 && preview.upstream
+          ? [`${preview.upstream} has commits this takes off, so pushing afterwards needs Force Push.`]
+          : [],
+      drawing,
+      choices: modes.map(([, label, note]) => ({ label, lines: files > 0 ? [note] : [] })),
+      choice: 1,
+      buttons: ['Reset'],
+    });
+    return answer && modes[answer.choice]?.[0];
+  }
+  const modes: Record<string, ResetMode> = { Mixed: 'mixed', Soft: 'soft', Hard: 'hard' };
+  const answer = await vscode.window.showWarningMessage(
+    title,
+    {
+      modal: true,
+      detail:
+        'Mixed keeps the changes of the commits taken off in the working tree, unstaged. ' +
+        'Soft keeps them staged. ' +
+        'Hard makes the index and the working tree match the commit; uncommitted changes are saved as a stash first ' +
+        '(untracked files are left alone).\n\n' +
+        'Undo puts the branch back, and the commits taken off stay in Reflog.',
+    },
+    ...Object.keys(modes),
+  );
+  return answer ? modes[answer] : undefined;
 }
 
 /** Reflog の行のコミットを History で選ぶ */

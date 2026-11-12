@@ -594,6 +594,253 @@ button.secondary {
   padding: 4px 12px;
 }
 
+/* 確認のシート（前と後の絵つき） */
+
+.editor.sheet {
+  width: min(760px, 94vw);
+  /* 画面に収め、はみ出すぶんは絵の中でスクロールする（ボタンはいつも見える） */
+  max-height: 80vh;
+  box-sizing: border-box;
+  gap: 10px;
+  container-type: inline-size;
+}
+
+.editor.sheet > * {
+  flex: none;
+}
+
+.sheet-lines {
+  color: var(--vscode-descriptionForeground);
+  line-height: 1.5;
+}
+
+/* パッチの一覧などの字下げを残す */
+.sheet-lines > div {
+  white-space: pre-wrap;
+}
+
+.sheet-lines .warning {
+  color: var(--vscode-editorWarning-foreground, var(--vscode-foreground));
+}
+
+.rewrite-drawing {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 4px;
+  background: var(--vscode-editor-background);
+}
+
+.editor.sheet > .sheet-drawing {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow: auto;
+  border-radius: 4px;
+}
+
+.editor.sheet > .sheet-list {
+  flex: 0 1 auto;
+  min-height: 3em;
+  overflow: auto;
+}
+
+.sheet-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sheet-list-title {
+  margin-bottom: 2px;
+  font-weight: bold;
+  color: var(--vscode-descriptionForeground);
+}
+
+.sheet-list.red .sheet-list-title {
+  color: var(--vscode-errorForeground);
+}
+
+.sheet-list-item {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  padding: 1px 4px;
+  overflow: hidden;
+  border: none;
+  border-radius: 3px;
+  text-align: left;
+  white-space: nowrap;
+  color: var(--vscode-foreground);
+  background: transparent;
+  font: inherit;
+}
+
+button.sheet-list-item {
+  cursor: pointer;
+}
+
+button.sheet-list-item:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.sheet-list-item .label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sheet-list-item .description,
+.sheet-list-more {
+  flex: none;
+  color: var(--vscode-descriptionForeground);
+}
+
+.sheet-list-more {
+  padding: 1px 4px;
+}
+
+.editor button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.editor button.destructive {
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-errorForeground);
+}
+
+.drawing-message {
+  padding-top: 4px;
+  color: var(--vscode-editorWarning-foreground, var(--vscode-foreground));
+}
+
+/* 狭いときは、今と後を縦に積む */
+@container (max-width: 520px) {
+  .rewrite-drawing {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .drawing-column {
+    flex: none;
+  }
+
+  .drawing-arrow {
+    transform: rotate(90deg);
+  }
+}
+
+.drawing-column {
+  flex: 1;
+  min-width: 0;
+}
+
+.drawing-heading {
+  margin-bottom: 4px;
+  font-size: 0.9em;
+  font-weight: bold;
+  color: var(--vscode-descriptionForeground);
+}
+
+.drawing-arrow {
+  flex: none;
+  align-self: center;
+  font-size: 1.3em;
+  color: var(--vscode-descriptionForeground);
+}
+
+.drawing-body {
+  position: relative;
+}
+
+.drawing-graph {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: visible;
+}
+
+.drawing-line {
+  fill: none;
+  stroke: var(--vscode-descriptionForeground);
+  stroke-opacity: 0.5;
+  stroke-width: 2;
+}
+
+.drawing-line.dashed {
+  stroke-dasharray: 3 3;
+}
+
+.drawing-dot {
+  fill: var(--vscode-descriptionForeground);
+}
+
+.drawing-dot.dim {
+  fill-opacity: 0.5;
+}
+
+.drawing-dot.highlight {
+  fill: var(--vscode-focusBorder);
+}
+
+/* 外れる・消えるコミットは中を抜いた点、これから作るコミットは点線の丸 */
+.drawing-dot.hollow,
+.drawing-dot.new {
+  /* 線が中を通らないよう、背景で塗る */
+  fill: var(--vscode-editor-background);
+  stroke: var(--vscode-descriptionForeground);
+  stroke-width: 1.5;
+}
+
+.drawing-dot.new {
+  stroke: var(--vscode-focusBorder);
+  stroke-dasharray: 2 2;
+}
+
+.drawing-dot.red {
+  stroke: var(--vscode-errorForeground);
+}
+
+.drawing-note.red {
+  color: var(--vscode-errorForeground);
+}
+
+.drawing-row {
+  position: absolute;
+  right: 0;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  overflow: hidden;
+  font-size: 0.92em;
+}
+
+.drawing-row.gap,
+.drawing-subject.dim,
+.drawing-note {
+  color: var(--vscode-disabledForeground, var(--vscode-descriptionForeground));
+}
+
+.drawing-subject {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.drawing-subject.highlight {
+  font-weight: bold;
+}
+
+.drawing-note {
+  flex: none;
+  margin-left: 0.4em;
+}
+
+.ref.moved {
+  color: var(--vscode-editor-background);
+  background: var(--vscode-charts-green);
+}
+
 /* Working Copy */
 
 .working-copy .split {

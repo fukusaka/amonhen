@@ -3,7 +3,7 @@ import { basename } from 'node:path';
 import * as vscode from 'vscode';
 import type { RepositoryManager } from '../state/manager.ts';
 import type { Repository } from '../state/repository.ts';
-import type { HostMessage, ViewName, WebviewMessage } from '../view/protocol.ts';
+import type { HostMessage, Sheet, SheetAnswer, ViewName, WebviewMessage } from '../view/protocol.ts';
 import { BlameController } from './blameController.ts';
 import { FileHistoryController } from './fileHistoryController.ts';
 import { HistoryController } from './historyController.ts';
@@ -35,6 +35,13 @@ export class MainPanel implements vscode.Disposable {
   private ready = false;
   /** 準備ができる前に求められた画面 */
   private pendingView: ViewName | undefined;
+  /** 答えを待っている確認のシート */
+  private readonly sheets = new Map<number, { resolve: (answer: SheetAnswer | undefined) => void; open?: (item: number) => void }>();
+  private nextSheet = 1;
+  /** e2e が画面を押さずにシートに答える（あれば、シートを出さずにこれの答えを返す） */
+  answerSheet:
+    | ((sheet: Omit<Sheet, 'id'>, open?: (item: number) => void) => SheetAnswer | undefined | Promise<SheetAnswer | undefined>)
+    | undefined;
 
   /** 開いて、view を出す。ref を渡すと History にその ref の履歴を出す */
   static show(extensionUri: vscode.Uri, manager: RepositoryManager, view?: ViewName, ref?: string): MainPanel {
@@ -115,6 +122,26 @@ export class MainPanel implements vscode.Disposable {
     }
   }
 
+  /**
+   * 確認のシートを重ねて、押したボタンの番号（buttons の順）と選んでいたもの（choices の順）を返す。やめたら
+   * undefined。open は一覧の行（lists を通して数えた番号）を押したとき。準備ができているかは canAsk で確かめる
+   * （できていなければ、呼ぶ側はモーダルで確かめる）
+   */
+  async ask(sheet: Omit<Sheet, 'id'>, open?: (item: number) => void): Promise<SheetAnswer | undefined> {
+    if (this.answerSheet) return this.answerSheet(sheet, open);
+    const id = this.nextSheet++;
+    this.panel.reveal(undefined, false);
+    return new Promise((resolve) => {
+      this.sheets.set(id, { resolve, open });
+      this.post({ type: 'sheet', id, ...sheet });
+    });
+  }
+
+  /** シートを出せるか（Webview の準備ができている） */
+  get canAsk(): boolean {
+    return this.ready;
+  }
+
   private watch(repo: Repository | undefined): void {
     this.repo = repo;
     this.panel.title = repo ? `Amon Hen: ${basename(repo.root)}` : 'Amon Hen';
@@ -147,6 +174,15 @@ export class MainPanel implements vscode.Disposable {
         this.settings.setRepository(this.repo);
         break;
       case 'view':
+        break;
+      case 'sheetAnswer':
+        this.sheets
+          .get(message.id)
+          ?.resolve(message.index === undefined ? undefined : { index: message.index, choice: message.choice ?? 0 });
+        this.sheets.delete(message.id);
+        break;
+      case 'sheetOpen':
+        this.sheets.get(message.id)?.open?.(message.item);
         break;
       case 'wcSelect':
       case 'wcLayout':
@@ -194,6 +230,8 @@ export class MainPanel implements vscode.Disposable {
 
   dispose(): void {
     MainPanel.current = undefined;
+    for (const { resolve } of this.sheets.values()) resolve(undefined);
+    this.sheets.clear();
     vscode.Disposable.from(...this.disposables).dispose();
     this.panel.dispose();
   }

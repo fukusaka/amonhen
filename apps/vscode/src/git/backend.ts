@@ -106,6 +106,14 @@ export interface PushOptions {
   expect?: string;
 }
 
+/** グラフが変わる操作の見込みを読むコアの命令（docs/front.md の `run`） */
+export type GraphPreviewCommand =
+  | { op: 'movePreview'; from: string; to: string; branch?: string }
+  | { op: 'deletePreview'; branch: string; against: string }
+  | { op: 'mergePreview'; theirs: string; ours?: string; ffSetting?: string }
+  | { op: 'pickPreview'; oids?: string[]; revert?: boolean; subjects?: string[] }
+  | { op: 'octopusPreview'; theirs: string[] };
+
 export interface RepositoryBackend {
   readonly root: string;
   readonly dirs: GitDirs;
@@ -213,6 +221,11 @@ export interface RepositoryBackend {
    * daemon を使わないときは undefined
    */
   rewritePreview(target: PreviewTarget, updateRefs?: boolean): Promise<RewritePreview | undefined>;
+  /**
+   * グラフが変わる操作の見込み（コアの movePreview・deletePreview・mergePreview・pickPreview・octopusPreview。確認の
+   * シートの前と後の絵に使う）。共有の daemon のコアが調べる。daemon を使わない・読めないときは undefined
+   */
+  graphPreview<T>(command: GraphPreviewCommand): Promise<T | undefined>;
   /**
    * History の編集を共有の daemon のコアで行う（コアが Undo を記録する）。daemon を使わないときは undefined を返し、
    * 呼び出し側が git 実行層で行う
@@ -760,6 +773,10 @@ export class CliBackend implements RepositoryBackend {
 
   // 見通しとコアでの書き換えは、共有の daemon のコアが行う（`src/daemon/writes.ts`）
   async rewritePreview(_target: PreviewTarget, _updateRefs?: boolean): Promise<RewritePreview | undefined> {
+    return undefined;
+  }
+
+  async graphPreview<T>(_command: GraphPreviewCommand): Promise<T | undefined> {
     return undefined;
   }
 

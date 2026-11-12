@@ -5,6 +5,7 @@
  */
 import type {
   ApplyPatchOptions,
+  GraphPreviewCommand,
   FormatPatchOptions,
   MergeMode,
   MergeResult,
@@ -93,6 +94,11 @@ export function withDaemonWrites(
     rewritePreview: via('rewritePreview', async (c, target: PreviewTarget, updateRefs?: boolean) => {
       const reply = await run(c, { op: 'rewritePreview', ...target, updateRefs: updateRefs ?? null } as Json, false);
       return (reply['info'] as RewritePreview | undefined) ?? undefined;
+    }),
+    // 読めなくても操作はできる（絵なしで確かめる）
+    graphPreview: via('graphPreview', async (c, command: GraphPreviewCommand) => {
+      const reply = await run(c, command as unknown as Json, false).catch(() => undefined);
+      return reply?.['info'] ?? undefined;
     }),
     // History の編集は、コアが積み重ねたブランチ（rebase.updateRefs）も git と同じに扱い、Undo を記録する
     rewrite: via('rewrite', async (c, label: string, edit: HistoryEdit, updateRefs?: boolean) =>

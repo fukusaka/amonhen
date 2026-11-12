@@ -63,7 +63,8 @@ async function mergeRevs(repo: Repository, revs: string[], head: string | undefi
     let mode: MergeMode | undefined;
     await runAction(repo, {
       label: `$(git-merge) Merge ${shortName(ref)} into ${target}`,
-      confirm: async () => (mode = await pickMergeMode(`Merge ${shortName(ref)} into ${target}?`, true)) !== undefined,
+      confirm: async () =>
+        (mode = await pickMergeMode(`Merge ${shortName(ref)} into ${target}?`, true, { repo, theirs: ref, ours: head })) !== undefined,
       run: () => mergeInto(repo.backend, repo.undo, ref, head, mode),
     });
     return;
@@ -79,7 +80,12 @@ async function mergeRevs(repo: Repository, revs: string[], head: string | undefi
   });
   if (!choice) return;
   // いくつもなので Fast-Forward Only はない
-  const mode = await pickMergeMode(`${choice.oneByOne ? 'Merge one by one' : 'Merge'} into ${target}?`, false);
+  // 1 つのコミットにまとめるなら、その前と後の絵を添える
+  const mode = await pickMergeMode(
+    `${choice.oneByOne ? 'Merge one by one' : 'Merge'} into ${target}?`,
+    false,
+    head && !choice.oneByOne ? { repo, theirs: choice.revs, ours: head } : undefined,
+  );
   if (mode) {
     await run(repo, choice.revs, choice.oneByOne, target, mode);
   }
