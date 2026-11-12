@@ -608,55 +608,86 @@ pub unsafe extern "C" fn amonhen_history_edges_in(
     count
 }
 
-pub enum AmonhenLineage {}
+pub enum AmonhenLineageWindow {}
 
-/// 祖先の強調の結果（`amonhen_lineage_view` で読む）。
-#[repr(C)]
-pub struct AmonhenLineageView {
-    /// 行ごとのビット（64 行ずつ）。立っていれば、選んだコミット（を含む）の祖先。
-    pub rows: *const u64,
-    pub row_word_count: u32,
-    /// 線ごとの、光らせ始める行（`u32::MAX` なら光らせない）。添字は History の線と同じ。
-    pub edge_from: *const u32,
-    pub edge_count: u32,
-}
-
-/// `row` 行目のコミットとその祖先、祖先をつなぐ線（`amonhen_lineage_free` で解放する）。History の大きさに
-/// 比例した時間がかかる（linux で 10〜25 ms）ので、裏のスレッドで呼ぶ。
+/// `row` 行目のコミットの祖先を、描く範囲だけ求めるもの（`amonhen_lineage_window_extend` で伸ばし、
+/// `amonhen_lineage_window_free` で解放する）。まだ何も求めていない。
 ///
 /// # Safety
 /// `history` は有効なスナップショットであること。
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn amonhen_history_lineage(
+pub unsafe extern "C" fn amonhen_lineage_window_new(
     history_ptr: *const AmonhenHistory,
     row: u32,
-) -> *mut AmonhenLineage {
+) -> *mut AmonhenLineageWindow {
     let h = history(history_ptr);
-    let lineage = amonhen_core::lineage::lineage(&h.graph, &h.layout, row);
-    Box::into_raw(Box::new(lineage)).cast()
+    Box::into_raw(Box::new(amonhen_core::lineage::LineageWindow::new(
+        &h.graph, row,
+    )))
+    .cast()
 }
 
 /// # Safety
-/// `lineage` は有効であること。返したポインタは解放するまで有効。
+/// `window` は `amonhen_lineage_window_new` が返したもので、まだ解放していないこと。
+unsafe fn lineage_window<'a>(
+    window: *mut AmonhenLineageWindow,
+) -> &'a mut amonhen_core::lineage::LineageWindow {
+    unsafe { &mut *window.cast::<amonhen_core::lineage::LineageWindow>() }
+}
+
+/// `end` 行の手前まで求める。かかる時間は伸ばした行と線の数に比例する。
+///
+/// # Safety
+/// `history` は `window` を作ったときのスナップショット、`window` は有効であること。
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn amonhen_lineage_view(
-    lineage: *const AmonhenLineage,
-) -> AmonhenLineageView {
-    let l = unsafe { &*lineage.cast::<amonhen_core::lineage::Lineage>() };
-    AmonhenLineageView {
-        rows: non_null(&l.rows),
-        row_word_count: l.rows.len() as u32,
-        edge_from: non_null(&l.edge_from),
-        edge_count: l.edge_from.len() as u32,
-    }
+pub unsafe extern "C" fn amonhen_lineage_window_extend(
+    window: *mut AmonhenLineageWindow,
+    history_ptr: *const AmonhenHistory,
+    end: u32,
+) {
+    let h = history(history_ptr);
+    unsafe { lineage_window(window) }.extend(&h.graph, &h.layout, end);
+}
+
+/// ここまで求めた行（含まない）。
+///
+/// # Safety
+/// `window` は有効であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_lineage_window_end(window: *mut AmonhenLineageWindow) -> u32 {
+    unsafe { lineage_window(window) }.end()
+}
+
+/// `row` 行目のコミットが祖先か（求めた範囲の外なら false）。
+///
+/// # Safety
+/// `window` は有効であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_lineage_window_contains(
+    window: *mut AmonhenLineageWindow,
+    row: u32,
+) -> bool {
+    unsafe { lineage_window(window) }.contains(row)
+}
+
+/// `edge` 番目の線を光らせ始める行（`u32::MAX` なら光らせない）。
+///
+/// # Safety
+/// `window` は有効であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_lineage_window_edge_from(
+    window: *mut AmonhenLineageWindow,
+    edge: u32,
+) -> u32 {
+    unsafe { lineage_window(window) }.edge_from(edge)
 }
 
 /// # Safety
-/// `lineage` は `amonhen_history_lineage` が返したもので、まだ解放していないこと。
+/// `window` は `amonhen_lineage_window_new` が返したもので、まだ解放していないこと。
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn amonhen_lineage_free(lineage: *mut AmonhenLineage) {
-    if !lineage.is_null() {
-        drop(unsafe { Box::from_raw(lineage.cast::<amonhen_core::lineage::Lineage>()) });
+pub unsafe extern "C" fn amonhen_lineage_window_free(window: *mut AmonhenLineageWindow) {
+    if !window.is_null() {
+        drop(unsafe { Box::from_raw(window.cast::<amonhen_core::lineage::LineageWindow>()) });
     }
 }
 

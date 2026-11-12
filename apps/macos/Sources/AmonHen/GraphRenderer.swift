@@ -6,7 +6,7 @@ import QuartzCore
 /// History のグラフを Metal で描く。点・線・曲線を四角形のインスタンスにし、形は fragment
 /// シェーダーの SDF（境界までの距離）で描いて、解析的にアンチエイリアスする。描画命令は 1 回。
 final class GraphRenderer {
-    struct Instance {
+    nonisolated struct Instance {
         var a: SIMD2<Float>
         var b: SIMD2<Float>
         /// 線は太さ、点は半径。
@@ -21,7 +21,7 @@ final class GraphRenderer {
         static let curve: UInt32 = 2
     }
 
-    struct Uniforms {
+    nonisolated struct Uniforms {
         var viewport: SIMD2<Float>
         var scale: Float
         var pad: Float = 0
@@ -53,6 +53,10 @@ final class GraphRenderer {
     private var instances: [Instance] = []
     /// 強調する祖先。描く History と同じものから求めたときだけ使う。
     var lineage: Lineage?
+    /// 祖先を描く行まで求め終わっていない（FE は求め終わるまで描き直す）。
+    private(set) var lineagePending = false
+    /// 1 フレームに伸ばす祖先の行数（linux で中央値 約 2 ms、最大 約 4 ms）。
+    private static let lineageRowsPerFrame = 150_000
     /// shallow clone の境界のコミットの行と、それを求めた History（History が替われば求め直す）。
     private weak var boundaryHistory: History?
     private var boundaryRows: Set<Int> = []
@@ -239,6 +243,63 @@ final class GraphRenderer {
         }
     }
 
+    /// 描画のスレッドに渡す 1 枚を組み立てる（メインスレッド）。インスタンスの列まではここで作り、描き先への
+    /// 命令は描画のスレッドが作る。
+    func job(
+        history: History, layer: CAMetalLayer, scrollY: Float,
+        onCompleted: (@Sendable (_ gpuEnd: CFTimeInterval) -> Void)? = nil,
+        onPresented: (@Sendable (CFTimeInterval) -> Void)?
+    ) -> HistoryRenderThread.Job {
+        let size = layer.bounds.size
+        let rows = visibleRows(history: history, scrollY: scrollY, height: Float(size.height))
+        instances.removeAll(keepingCapacity: true)
+        if !rows.isEmpty {
+            FrameProfile.measure("graph: lane positions") { retargetLanes(history: history, rows: rows) }
+            buildInstances(history: history, rows: rows, scrollY: scrollY, wholeLineage: false)
+        }
+        drawnFrames += 1
+        let uniforms = Uniforms(viewport: [Float(size.width), Float(size.height)], scale: Float(layer.contentsScale))
+        return HistoryRenderThread.Job(
+            layer: layer, size: size,
+            encode: Self.encoder(instances: instances, uniforms: uniforms, palette: palette, pipeline: pipeline,
+                                 device: device, layer: layer),
+            onPresented: onPresented, onCompleted: onCompleted)
+    }
+
+    /// 描画のスレッドで、組み立てた列を描き先に描く命令を作る。
+    nonisolated private static func encoder(
+        instances: [Instance], uniforms: Uniforms, palette: [SIMD4<Float>], pipeline: MTLRenderPipelineState,
+        device: MTLDevice, layer: CAMetalLayer
+    ) -> (MTLTexture, MTLCommandBuffer, HistoryRenderThread) -> Void {
+        nonisolated(unsafe) let pipeline = pipeline, device = device, layer = layer
+        return { texture, commands, thread in
+            var uniforms = uniforms
+            let pass = MTLRenderPassDescriptor()
+            pass.colorAttachments[0].texture = texture
+            pass.colorAttachments[0].loadAction = .clear
+            pass.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
+            pass.colorAttachments[0].storeAction = .store
+            guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else { return }
+            if !instances.isEmpty {
+                let buffer = thread.buffer(
+                    for: layer, length: max(instances.count, 256) * MemoryLayout<Instance>.stride, device: device)
+                instances.withUnsafeBytes { buffer.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
+                encoder.setRenderPipelineState(pipeline)
+                encoder.setVertexBuffer(buffer, offset: 0, index: 0)
+                encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
+                encoder.setFragmentBuffer(buffer, offset: 0, index: 0)
+                encoder.setFragmentBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
+                palette.withUnsafeBytes {
+                    encoder.setFragmentBytes($0.baseAddress!, length: $0.count, index: 2)
+                }
+                var paletteCount = UInt32(palette.count)
+                encoder.setFragmentBytes(&paletteCount, length: 4, index: 3)
+                encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4, instanceCount: instances.count)
+            }
+            encoder.endEncoding()
+        }
+    }
+
     /// 画面に出さずに描いて画像にする（`--snapshot` で見た目を確かめるため）。
     func image(history: History, size: CGSize, scale: CGFloat, scrollY: Float) -> CGImage? {
         let width = Int(size.width * scale), height = Int(size.height * scale)
@@ -276,7 +337,7 @@ final class GraphRenderer {
                 retargetLanes(history: history, rows: rows)
                 if !animate { settleLanes() }
             }
-            buildInstances(history: history, rows: rows, scrollY: scrollY)
+            buildInstances(history: history, rows: rows, scrollY: scrollY, wholeLineage: !animate)
         }
 
         var uniforms = Uniforms(viewport: [Float(size.width), Float(size.height)], scale: scale)
@@ -313,10 +374,16 @@ final class GraphRenderer {
         return min(left, right)
     }
 
-    private func buildInstances(history: History, rows: Range<Int>, scrollY: Float) {
+    /// `wholeLineage` なら、祖先を描く行まで一度に求める（画像に描くときは次のフレームがない）。
+    private func buildInstances(history: History, rows: Range<Int>, scrollY: Float, wholeLineage: Bool) {
         let m = metrics
         let edgeIndices = FrameProfile.measure("graph: edge indices (FFI)") { history.edgeIndices(in: rows) }
-        let lineage = self.lineage.flatMap { $0.history === history ? $0 : nil }
+        // 祖先は描く行まで求める（スクロールしたら続きから）。遠くへ飛んだときは 1 フレームに伸ばす行数を抑え
+        // （linux の端まで一度に伸ばすと 19 ms かかる）、描く行まで届くまでは強調せずに描いて、次のフレームで続ける。
+        let requested = self.lineage.flatMap { $0.history === history ? $0 : nil }
+        FrameProfile.measure("graph: lineage") { requested?.extend(to: rows.upperBound, atMost: wholeLineage ? .max : Self.lineageRowsPerFrame) }
+        let lineage = requested.flatMap { $0.end >= rows.upperBound ? $0 : nil }
+        lineagePending = requested != nil && lineage == nil
         // 行ごとの右端。幹線の点の分は必ず取る。
         rowExtents = [Float](repeating: laneX(0) + m.nodeRadius, count: rows.count)
         extentRows = rows

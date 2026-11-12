@@ -21,6 +21,12 @@ becomes the GitHub Release notes.
 
 - Rebase and History edit confirmations say pushing afterwards needs Force Push only when the upstream has commits being
   rewritten, not whenever the branch has an upstream.
+- macOS: History highlights the selected commit's ancestors in the same frame as the selection, without waiting for
+  the whole History (about 85 ms to 52 ms from the key on a 60Hz display, in large repositories too).
+- macOS: History draws its graph and text on a render thread of their own, so the main thread does less while
+  scrolling and the ancestor highlight appears sooner.
+- Activity's "History: input → display" no longer counts redraws that no input caused (a background reload
+  was timed from the last click, seconds earlier).
 - History's cache no longer rewrites itself in full on every commit, fetch or checkout: it writes only what changed
   (about 20 KB instead of 117 MB on linux). Rows far down a large History get their graph a moment after opening.
 - Repository settings that are showing read the configuration again when it changes outside the app or on Refresh.

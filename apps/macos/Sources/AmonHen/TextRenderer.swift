@@ -161,7 +161,7 @@ final class GlyphAtlas {
 
 /// 色付きの四角形とグリフを、四角形のインスタンスとして 1 回の描画命令で描く。
 final class TextRenderer {
-    struct Instance {
+    nonisolated struct Instance {
         /// 描く位置と大きさ（ポイント、左上原点）。
         var rect: SIMD4<Float>
         /// アトラスの中の位置と大きさ（ピクセル）。
@@ -392,6 +392,48 @@ final class TextRenderer {
         } else {
             commands.present(drawable)
             commands.commit()
+        }
+    }
+
+    /// 積んだインスタンスを、描画のスレッドに渡す 1 枚にする（メインスレッド）。
+    func job(layer: CAMetalLayer, background: SIMD4<Float>) -> HistoryRenderThread.Job {
+        let size = layer.bounds.size
+        return HistoryRenderThread.Job(
+            layer: layer, size: size,
+            encode: Self.encoder(instances: instances, size: size, background: background, pipeline: pipeline,
+                                 atlas: atlas.texture, atlasSize: Float(GlyphAtlas.size), device: device, layer: layer),
+            onPresented: nil, onCompleted: nil)
+    }
+
+    /// 描画のスレッドで、積んだ列を描き先に描く命令を作る。
+    nonisolated private static func encoder(
+        instances: [Instance], size: CGSize, background: SIMD4<Float>, pipeline: MTLRenderPipelineState,
+        atlas: MTLTexture, atlasSize: Float, device: MTLDevice, layer: CAMetalLayer
+    ) -> (MTLTexture, MTLCommandBuffer, HistoryRenderThread) -> Void {
+        nonisolated(unsafe) let pipeline = pipeline, atlas = atlas, device = device, layer = layer
+        return { texture, commands, thread in
+            let pass = MTLRenderPassDescriptor()
+            pass.colorAttachments[0].texture = texture
+            pass.colorAttachments[0].loadAction = .clear
+            pass.colorAttachments[0].clearColor = MTLClearColor(
+                red: Double(background.x), green: Double(background.y), blue: Double(background.z),
+                alpha: Double(background.w))
+            pass.colorAttachments[0].storeAction = .store
+            guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else { return }
+            if !instances.isEmpty {
+                let buffer = thread.buffer(
+                    for: layer, length: max(instances.count, 1024) * MemoryLayout<Instance>.stride, device: device)
+                instances.withUnsafeBytes { buffer.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
+                var viewport = SIMD2<Float>(Float(size.width), Float(size.height))
+                var atlasSize = atlasSize
+                encoder.setRenderPipelineState(pipeline)
+                encoder.setVertexBuffer(buffer, offset: 0, index: 0)
+                encoder.setVertexBytes(&viewport, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
+                encoder.setVertexBytes(&atlasSize, length: 4, index: 2)
+                encoder.setFragmentTexture(atlas, index: 0)
+                encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4, instanceCount: instances.count)
+            }
+            encoder.endEncoding()
         }
     }
 
