@@ -17,6 +17,8 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- Activity's "History: input → display" no longer counts redraws that no input caused (a background reload
+  was timed from the last click, seconds earlier).
 - Repository settings that are showing read the configuration again when it changes outside the app or on Refresh.
 - The Pull sheet no longer leaves a blank space when the chosen mode can't pull: it keeps the graph as it is now and
   says so, and why, where the after graph would be.

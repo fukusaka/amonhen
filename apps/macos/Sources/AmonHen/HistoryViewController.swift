@@ -913,10 +913,13 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             return
         }
         if let current = renderer.lineage, current.history === history, current.row == row { return }
+        // 描き直すのは求まった後（入力を処理し終えた後）なので、選んだ入力を起点として持っていく。
+        let input = InputEvent.timestamp
         Task {
             let lineage = await Task.detached(priority: .userInitiated) { history.lineage(of: row) }.value
             guard request == lineageRequest else { return }
             renderer.lineage = lineage
+            if pendingPresentStart == nil { pendingPresentStart = input }
             redrawGraph()
         }
     }
@@ -1269,7 +1272,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         }
         // グラフのビューの上端が、表の座標でどこに当たるか。
         let scrollY = Float(tableView.convert(NSPoint(x: 0, y: 0), from: graphView).y)
-        let eventTime = pendingPresentStart ?? NSApp.currentEvent?.timestamp
+        let eventTime = pendingPresentStart ?? InputEvent.timestamp
         pendingPresentStart = nil
         let measurement = self.measurement
         var onCompleted: (@Sendable (CFTimeInterval) -> Void)?
