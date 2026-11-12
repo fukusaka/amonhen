@@ -522,6 +522,20 @@ fn common_rows(files: &Files, disk: Option<&State>, g: &CommitGraph) -> Option<u
     Some(common)
 }
 
+/// キャッシュのファイルの大きさの合計（バイト）。
+pub fn size(path: &Path) -> u64 {
+    std::fs::read_dir(path)
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter_map(|e| e.metadata().ok())
+                .filter(|m| m.is_file())
+                .map(|m| m.len())
+                .sum()
+        })
+        .unwrap_or(0)
+}
+
 /// キャッシュを消す（History を作り直すとき、Settings で消すとき）。
 pub fn remove(path: &Path) -> std::io::Result<()> {
     match std::fs::remove_dir_all(path) {
@@ -544,8 +558,26 @@ struct WriterInner {
     delay: Duration,
     pending: Mutex<Pending>,
     wake: Condvar,
-    /// 書き終えたときに呼ぶ（Activity に書いた量を出す）。
+    /// 書き終えたときに呼ぶ。
     on_write: Option<OnWrite>,
+    /// 起動してから書いたもの（Activity に出す）。
+    stats: Mutex<WriteStats>,
+}
+
+/// `Writer` が起動してから書いたもの。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WriteStats {
+    /// 書いた回数。
+    pub count: u64,
+    /// 書いたバイト数の合計。
+    pub bytes: u64,
+    /// 足した行・切った行の合計。
+    pub rows: u64,
+    pub cut: u64,
+    /// 最後に書いたバイト数と、その時刻（UNIX 時刻のミリ秒）。
+    pub last_bytes: u64,
+    pub last_at: Option<u64>,
 }
 
 #[derive(Default)]
@@ -584,12 +616,18 @@ impl Writer {
                 pending: Mutex::default(),
                 wake: Condvar::new(),
                 on_write,
+                stats: Mutex::default(),
             }),
         }
     }
 
     pub fn path(&self) -> &Path {
         &self.inner.path
+    }
+
+    /// 起動してから書いたもの。
+    pub fn stats(&self) -> WriteStats {
+        *self.inner.stats.lock().unwrap()
     }
 
     /// `history` を少し後に書く。
@@ -646,6 +684,18 @@ impl Drop for Writer {
 impl WriterInner {
     fn write(&self, history: &dyn AsEntry) -> Result<()> {
         let written = write(&self.path, history.entry())?;
+        {
+            let mut s = self.stats.lock().unwrap();
+            s.count += 1;
+            s.bytes += written.bytes;
+            s.rows += written.rows;
+            s.cut += written.cut;
+            s.last_bytes = written.bytes;
+            s.last_at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()
+                .map(|d| d.as_millis() as u64);
+        }
         if let Some(f) = &self.on_write {
             f(&written);
         }
@@ -897,6 +947,19 @@ mod tests {
         std::thread::sleep(Duration::from_millis(600));
         assert_eq!(writes.lock().unwrap().len(), 1);
         assert_eq!(read(&path).unwrap().graph, grown);
+
+        let stats = writer.stats();
+        assert_eq!((stats.count, stats.rows, stats.cut), (1, 1003, 0));
+        assert_eq!(stats.bytes, stats.last_bytes);
+        assert!(stats.last_at.is_some());
+        assert_eq!(
+            size(&path),
+            std::fs::read_dir(&path)
+                .unwrap()
+                .flatten()
+                .map(|e| e.metadata().unwrap().len())
+                .sum::<u64>()
+        );
 
         writer.schedule(Arc::new(history(old.clone())));
         drop(writer);

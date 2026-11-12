@@ -594,6 +594,12 @@
 "Undo this operation." = "この操作を戻す";
 "Undo the {count} latest operations, down to and including this one." = "この操作を含め、これより新しい {count} 個の操作を順に戻す";
 "The last 500 of each since the app started. Orange when p95 exceeds twice a frame (16.7 ms)." = "アプリを起動してからの直近 500 回ずつ。p95 が 1 フレームの倍（16.7 ms）を超えたら橙色。";
+"History Cache" = "History のキャッシュ";
+"Size" = "大きさ";
+"Writes" = "書いた回数";
+"Written" = "書いた量";
+"Last Write" = "最後の書き込み";
+"What each open repository’s History cache wrote since the app started (through the shared daemon, what the daemon wrote). It writes only what changed." = "開いているリポジトリの History のキャッシュが、アプリを起動してから書いたもの（共有の daemon 越しなら、daemon が書いたもの）。変わった所だけを書く。";
 "Performance" = "パフォーマンス";
 "Item" = "項目";
 "Count" = "回数";

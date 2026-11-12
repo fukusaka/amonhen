@@ -842,6 +842,12 @@ impl Repository {
     }
 
     /// History の永続キャッシュのファイル（あれば）。
+    /// History の永続キャッシュの大きさ（バイト）と、起動してから書いたもの。キャッシュを持たなければ `None`。
+    pub fn history_cache(&self) -> Option<(u64, cache::WriteStats)> {
+        let writer = self.cache.as_ref()?;
+        Some((cache::size(writer.path()), writer.stats()))
+    }
+
     pub fn cache_path(&self) -> Option<&std::path::Path> {
         self.cache.as_ref().map(cache::Writer::path)
     }

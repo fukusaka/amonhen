@@ -717,6 +717,9 @@ pub enum Command {
     HooksAndLfs,
     /// SSH 先の daemon の Activity の記録（`info.records`。手元のリポジトリなら空）。
     RemoteActivity,
+    /// History の永続キャッシュ（`info`: size（バイト）・writes（起動してから書いたもの: count・bytes・rows・cut・
+    /// lastBytes・lastAt）。キャッシュを持たなければ null）。共有の daemon 越しなら daemon が書いているもの。
+    HistoryCache,
     /// 走っている操作を取り消す（`remote` なら SSH 先の daemon の記録の番号）。
     CancelActivity {
         seq: u64,
@@ -3402,8 +3405,8 @@ impl Repository {
             .workdir
             .map(|w| w.to_string_lossy().into_owned())
             .unwrap_or_default();
-        // Activity が数秒ごとに daemon の記録を読む問い合わせは、記録しない（一覧がそれで埋まる）。
-        if name == "remoteActivity" {
+        // Activity が数秒ごとに読む問い合わせ（daemon の記録、キャッシュの書き込み）は、記録しない（一覧がそれで埋まる）。
+        if name == "remoteActivity" || name == "historyCache" {
             return self.run(command);
         }
         amonhen_model::activity::track("command", &repo, name, || self.run(command))
@@ -5052,6 +5055,14 @@ impl Repository {
             Command::RemoteActivity => Ok(Response {
                 ok: true,
                 info: Some(serde_json::json!({ "records": ops.activity()? })),
+                ..Default::default()
+            }),
+            Command::HistoryCache => Ok(Response {
+                ok: true,
+                info: Some(match self.history_cache() {
+                    Some((size, writes)) => serde_json::json!({ "size": size, "writes": writes }),
+                    None => serde_json::Value::Null,
+                }),
                 ..Default::default()
             }),
             Command::CancelActivity { seq, remote } => {
