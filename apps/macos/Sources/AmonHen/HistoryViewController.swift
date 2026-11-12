@@ -24,6 +24,11 @@ final class GraphView: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    /// Core Animation の反映を待たずに、描いたらすぐ出す（GPUI と同じく、描く経路はこの 1 本だけにする）。
+    func presentImmediately() {
+        metalLayer.presentsWithTransaction = false
+    }
+
     override var isFlipped: Bool { true }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -167,6 +172,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     /// 件名などを描く。表のセルに文字を描かせると、速いスクロールでは CPU で描く分が間に合わない。
     private let textView = GraphView()
     private let text: TextRenderer
+    /// グラフと文字を描いて出す、ただ 1 本の描画のスレッド。
+    private let renderThread: HistoryRenderThread
     /// 行は 2 行: 1 行目に ref のラベルと件名、2 行目に作者・日時・短い ID。
     /// その行のグラフの右端から文字までの余白。
     private static let graphGap: CGFloat = 10
@@ -351,6 +358,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         self.repository = repository
         self.renderer = renderer
         self.text = text
+        // GraphRenderer と TextRenderer は同じ既定の GPU を使う。
+        renderThread = HistoryRenderThread(device: renderer.device)!
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -429,6 +438,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
 
         graphView.metalLayer.device = renderer.device
         textView.metalLayer.device = text.device
+        graphView.presentImmediately()
+        textView.presentImmediately()
         // 画面の倍率が変わったら、倍率込みで並べた行を捨てて描き直す。
         graphView.onScaleChange = { [weak self] in self?.redrawGraph() }
         textView.onScaleChange = { [weak self] in
@@ -957,7 +968,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     private func redrawText() {
         guard history != nil, textView.window != nil else { return }
         FrameProfile.measure("text: build") { buildText(scale: textView.metalLayer.contentsScale) }
-        FrameProfile.measure("text: submit") { text.draw(layer: textView.metalLayer, background: .zero) }
+        FrameProfile.measure("text: submit") { renderThread.submit(text.job(layer: textView.metalLayer, background: .zero)) }
     }
 
     /// 1 行・2 行の表示に合わせて、行の高さ（表とグラフで共通）を決める。
@@ -1271,7 +1282,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             }
         }
         FrameProfile.measure("graph: total") {
-        renderer.draw(history: history, layer: graphView.metalLayer, scrollY: scrollY, onCompleted: onCompleted) {
+        renderThread.submit(renderer.job(
+            history: history, layer: graphView.metalLayer, scrollY: scrollY, onCompleted: onCompleted) {
             [weak self] presented in
             guard let eventTime, presented > 0 else { return }
             Task { @MainActor in
@@ -1279,7 +1291,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
                 measurement?.latency.append(presented - eventTime)
                 self?.onLatency?(presented - eventTime)
             }
-        }
+        })
         }
     }
 
