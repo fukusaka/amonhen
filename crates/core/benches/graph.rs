@@ -52,7 +52,7 @@ fn bench(c: &mut Criterion) {
         })
     });
     c.bench_function("cache read 1M", |b| {
-        b.iter(|| cache::read(black_box(&path)).unwrap())
+        b.iter(|| cache::read(black_box(&path), amonhen_model::HistoryOrder::Date).unwrap())
     });
 
     let l = layout(&old_g, old_head);

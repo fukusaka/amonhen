@@ -14,7 +14,7 @@ use amonhen_backend_gix::GixBackend;
 use amonhen_core::Repository;
 use amonhen_core::cache;
 use amonhen_core::graph::Layouter;
-use amonhen_model::HistoryOrder;
+use amonhen_model::{HistoryOrder, topo};
 
 fn git(repo: &str, args: &[&str]) -> String {
     let out = Command::new("git")
@@ -43,6 +43,7 @@ fn main() -> amonhen_model::Result<()> {
     let cache_dir = args.next().expect("キャッシュのフォルダを指定する");
     let detach_to = args.next();
     let file = Path::new(&cache_dir).join("history");
+    let order = std::cell::Cell::new(HistoryOrder::Date);
     cache::remove(&file)?;
     // 書き込みは自分で測るので、リポジトリにはキャッシュを持たせない。
     let repo = Repository::new(GixBackend::open(&path)?);
@@ -52,6 +53,10 @@ fn main() -> amonhen_model::Result<()> {
         let t = Instant::now();
         let h = repo.load_history()?;
         let load = t.elapsed();
+        let graph = match order.get() {
+            HistoryOrder::Date => h.graph.clone(),
+            o => topo::reorder(&h.graph, o),
+        };
         let t = Instant::now();
         let w = cache::write(
             &file,
@@ -59,19 +64,19 @@ fn main() -> amonhen_model::Result<()> {
                 tips: &h.tips,
                 shallow: &h.shallow,
                 head: h.head,
-                order: HistoryOrder::Date,
-                graph: &h.graph,
+                order: order.get(),
+                graph: &graph,
             },
         )?;
         let write = t.elapsed();
         let t = Instant::now();
-        let read = cache::read(&file).expect("読めない");
+        let read = cache::read(&file, order.get()).expect("読めない");
         let mut l = Layouter::new(&read.graph, None);
         l.advance(10_000);
         let open = t.elapsed();
         println!(
             "{name}\t{} 行\t読み直し {load:?}\t足した {} 行・切った {} 行・{} バイト（{write:?}）\t開く {open:?}",
-            h.graph.len(),
+            graph.len(),
             w.rows,
             w.cut,
             w.bytes,
@@ -127,11 +132,43 @@ fn main() -> amonhen_model::Result<()> {
     step("そのブランチを消す", &mut || {
         git(p, &["update-ref", "-d", "refs/heads/bench-topic"]);
     })?;
+    step("並び順を topo に", &mut || {
+        order.set(HistoryOrder::Topo)
+    })?;
+    step("topo でコミット 1 つ", &mut || {
+        let c = commit_on(p, "HEAD", "bench topo commit");
+        git(p, &["update-ref", "HEAD", &c]);
+    })?;
+    step("並び順を date に戻す", &mut || {
+        order.set(HistoryOrder::Date)
+    })?;
     if let Some(target) = &detach_to {
         step(&format!("{target} へ checkout（detach）"), &mut || {
             let c = git(p, &["rev-parse", &format!("{target}^{{commit}}")]);
             git(p, &["update-ref", "--no-deref", "HEAD", &c]);
         })?;
+    }
+    // 開く時間を、並び順ごとに繰り返し測る（読むだけと、上の方のレイアウトまで）。
+    for o in [HistoryOrder::Date, HistoryOrder::Topo] {
+        let (mut read, mut open) = (vec![], vec![]);
+        for _ in 0..30 {
+            let t = Instant::now();
+            let h = cache::read(&file, o).expect("読めない");
+            read.push(t.elapsed());
+            let mut l = Layouter::new(&h.graph, None);
+            l.advance(10_000);
+            open.push(t.elapsed());
+        }
+        read.sort();
+        open.sort();
+        println!(
+            "{} を開く（30 回）\t読む 最小 {:?}・中央 {:?}\t上の方のレイアウトまで 最小 {:?}・中央 {:?}",
+            o.name(),
+            read[0],
+            read[15],
+            open[0],
+            open[15]
+        );
     }
     Ok(())
 }

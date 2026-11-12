@@ -473,7 +473,7 @@ fn prepared_history(shared: &Shared) -> Result<amonhen_model::PreparedHistory> {
         .ok_or_else(|| tr!("No place for the History cache"))?;
     // 書き込みはまとめているので、つないだ側が読む前に書いておく。
     repo.flush_cache()?;
-    let written = amonhen_core::cache::read_state(path)
+    let written = amonhen_core::cache::read_state(path, repo.history_order())
         .ok_or_else(|| tr!("Can’t write the History cache"))?;
     if written.tips != snapshot.tips
         || written.head != snapshot.head

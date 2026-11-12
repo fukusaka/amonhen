@@ -637,7 +637,12 @@ impl Repository {
         if let Some(current) = self.history.load_full() {
             return Some(current);
         }
-        let cached = cache::read(self.cache_path()?)?;
+        let path = self.cache_path()?;
+        // 今の並び順の表がなければ、ほかの並び順のものを並べ直す。
+        let order = self.history_order();
+        let cached = [order, HistoryOrder::Date, HistoryOrder::Topo]
+            .into_iter()
+            .find_map(|o| cache::read(path, o))?;
         Some(self.publish_cached(cached, false))
     }
 
@@ -650,7 +655,7 @@ impl Repository {
             let path = &prepared.cache;
             if let Some(current) = self.history.load_full()
                 && current.layout.is_complete()
-                && let Some(state) = cache::read_state(path)
+                && let Some(state) = cache::read_state(path, self.history_order())
                 && current.tips == state.tips
                 && current.head == state.head
                 && current.shallow == state.shallow
@@ -658,7 +663,7 @@ impl Repository {
             {
                 return Ok(current);
             }
-            let cached = cache::read(path)
+            let cached = cache::read(path, self.history_order())
                 .ok_or_else(|| tr!("Can’t read the History the daemon prepared"))?;
             // daemon が計算したレイアウトを使う（並び順が同じなら。違えば、ここで計算する）。
             let layout = prepared

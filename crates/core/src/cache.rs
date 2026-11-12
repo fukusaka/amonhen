@@ -1,17 +1,23 @@
 //! History の永続キャッシュ。次の起動では、前回の History（コミットの表）をすぐ読む。レイアウトは持たない
 //! （開いてから計算する。`docs/design.md` の「History persistent cache」）。
 //!
-//! 形式: リポジトリごとに 1 つのフォルダに、コミットの表を列ごとのファイルにして古い方から並べる（`ids`・`times`・
-//! `ends`（行ごとの親の終わりの位置）・`parents`（親の行番号。古い方から数える））。古い行は動かないので、
-//! 書くときは前回と違う所から後ろだけを切って足す。`state` に起点・HEAD・行の数などを書き、丸ごと置き換える。
-//! `state` を書いたときに書き込みが済んだことになる（表が `state` より長ければ、余りは読まずに次に書くとき切る）。
+//! 形式: リポジトリごとに 1 つのフォルダに、コミットの表と、並び順ごとの表を置く。
+//! - コミットの表は列ごとのファイル（`ids`・`times`・`ends`（行ごとの親の終わりの位置）・`parents`（親の行番号））。
+//!   行は足すだけで動かさない（どの並び順の表からも同じ行番号で指す）。長さは `table` に書き、丸ごと置き換える。
+//! - 並び順の表（`date`・`topo`）は、その順に古い方から並べたコミットの表の行番号。書くときは前回と違う所から
+//!   後ろだけを切って足す。`state-date`・`state-topo` に、その History の起点・HEAD・行の数などを書き、丸ごと置き換える。
+//!   `state-*` を書いたときに書き込みが済んだことになる（表が長ければ、余りは読まずに次に書くとき切る）。
+//!
+//! 並び順を替えても、コミットの表は書かない（並び順の表を書くだけ）。どの並び順の表からも指されない行（amend や
+//! rebase で消えたコミット）が増えたら、今の並び順で作り直す（ほかの並び順の表は捨てる）。
 //!
 //! ほかのプロセス（共有の daemon とアプリ、CLI）と同時に読み書きするので、`lock` のファイルで書くときは
-//! 1 つだけ、読むときは書いていない間だけにする。読むときは写したファイルから、並びを逆にしてメモリにコピー
+//! 1 つだけ、読むときは書いていない間だけにする。読むときは写したファイルから、新しい方から並べてメモリにコピー
 //! する（写したままにしておくと、あとでほかのプロセスが切ったとき、そこに触れて落ちる）。
 
+use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
@@ -20,7 +26,7 @@ use amonhen_layout::Pod;
 use amonhen_model::{CommitGraph, HistoryOrder, Oid, Result};
 use memmap2::Mmap;
 
-const MAGIC: [u8; 8] = *b"AMONHIS2";
+const MAGIC: [u8; 8] = *b"AMONHIS3";
 /// 形式の指紋（キャッシュに書くものを決めるソースのハッシュ。`build.rs`）。フォルダの名前と `state` に入れ、違う
 /// 形式のものは読まない（作り直す）。並んで動く別の形式のビルドとは、別のフォルダを使う。
 const FORMAT: &str = env!("AMONHEN_CACHE_FORMAT");
@@ -31,6 +37,11 @@ const KEEP_OTHER_FORMATS_DAYS: u64 = 7;
 
 /// 変化のあと、この間ほかの変化がなければ書く（続けて起きる変化を 1 回の書き込みにまとめる）。
 pub const WRITE_DELAY: Duration = Duration::from_secs(2);
+
+/// どの並び順の表からも指されない行が、コミットの表のこの割合（分の 1）を超えたら作り直す。
+const GARBAGE_DIVISOR: usize = 5;
+
+const ORDERS: [HistoryOrder; 2] = [HistoryOrder::Date, HistoryOrder::Topo];
 
 /// `state` の `version`（形式の指紋の頭 8 文字）。
 fn version() -> u32 {
@@ -72,19 +83,25 @@ impl CachedHistory {
     }
 }
 
-/// `state` の中身（表のほかの部分）。
+/// `state-*` の中身（並び順の表のほかの部分）。
 #[derive(Clone, Debug, PartialEq)]
 pub struct State {
     pub tips: Vec<Oid>,
     pub shallow: Vec<Oid>,
     pub head: Option<Oid>,
     pub order: HistoryOrder,
-    /// 表の行の数。
+    /// 並び順の表の行の数。
     pub rows: u64,
-    /// 親の数（`parents` の長さ）。
-    parents: u64,
     /// 最後の（最も新しい）行の ID。表がこれと合わなければ使わない。
     last: Option<Oid>,
+}
+
+/// `table` の中身（コミットの表の長さ）。
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Table {
+    rows: u64,
+    /// 親の数（`parents` の長さ）。
+    parents: u64,
 }
 
 fn order_code(order: HistoryOrder) -> u32 {
@@ -158,27 +175,18 @@ fn bytes_of<T: Pod>(values: &[T]) -> &[u8] {
     unsafe { std::slice::from_raw_parts(values.as_ptr().cast(), std::mem::size_of_val(values)) }
 }
 
-/// `file` の先頭から `count` 個の `T` を読む。足りなければ `None`。
-fn read_array<T: Pod>(file: &mut File, count: usize) -> Option<Vec<T>> {
-    let bytes = count.checked_mul(size_of::<T>())?;
-    let mut values: Vec<T> = Vec::with_capacity(count);
-    // SAFETY: `T` は `Pod`（どのビット列も正しい値）。0 で埋めてから長さを決め、その領域に読み込む。
-    unsafe {
-        std::ptr::write_bytes(values.as_mut_ptr().cast::<u8>(), 0, bytes);
-        values.set_len(count);
-        let buf = std::slice::from_raw_parts_mut(values.as_mut_ptr().cast::<u8>(), bytes);
-        file.read_exact(buf).ok()?;
-    }
-    Some(values)
-}
-
-/// 読むために写したファイル。写すのは読むときの共有のロックの間だけ（書く側は排他のロックを取ってから切るので、
+/// 読むために写したファイル。写すのは共有か排他のロックの間だけ（書く側は排他のロックを取ってから切るので、
 /// 写している間に短くならない）。
 struct Mapped(Option<Mmap>);
 
 impl Mapped {
     fn open(path: &Path) -> Option<Self> {
-        let file = File::open(path).ok()?;
+        let file = match File::open(path) {
+            Ok(file) => file,
+            // まだ書いていない（行のない表）。
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Some(Self(None)),
+            Err(_) => return None,
+        };
         if file.metadata().ok()?.len() == 0 {
             return Some(Self(None));
         }
@@ -203,24 +211,35 @@ impl Mapped {
 
 /// キャッシュのフォルダの中のファイル。
 struct Files {
+    dir: PathBuf,
     ids: PathBuf,
     times: PathBuf,
     ends: PathBuf,
     parents: PathBuf,
-    state: PathBuf,
+    table: PathBuf,
     lock: PathBuf,
 }
 
 impl Files {
     fn new(dir: &Path) -> Self {
         Self {
+            dir: dir.to_path_buf(),
             ids: dir.join("ids"),
             times: dir.join("times"),
             ends: dir.join("ends"),
             parents: dir.join("parents"),
-            state: dir.join("state"),
+            table: dir.join("table"),
             lock: dir.join("lock"),
         }
+    }
+
+    /// 並び順の表。
+    fn order(&self, order: HistoryOrder) -> PathBuf {
+        self.dir.join(order.name())
+    }
+
+    fn state(&self, order: HistoryOrder) -> PathBuf {
+        self.dir.join(format!("state-{}", order.name()))
     }
 
     /// 書くときは `exclusive`、読むときは共有でロックする（手放すと外れる）。
@@ -238,19 +257,136 @@ impl Files {
         }
         Some(file)
     }
+
+    fn read_table(&self) -> Option<Table> {
+        let bytes = std::fs::read(&self.table).ok()?;
+        let (head, rest) = header(&bytes)?;
+        if head != b"table" || rest.len() != 16 {
+            return None;
+        }
+        Some(Table {
+            rows: u64::from_le_bytes(rest[..8].try_into().unwrap()),
+            parents: u64::from_le_bytes(rest[8..].try_into().unwrap()),
+        })
+    }
+
+    fn read_state(&self, order: HistoryOrder) -> Option<State> {
+        decode_state(&std::fs::read(self.state(order)).ok()?).filter(|s| s.order == order)
+    }
+
+    /// 写したコミットの表（`table` の長さまで）。
+    fn map_table(&self, table: Table) -> Option<MappedTable> {
+        Some(MappedTable {
+            table,
+            ids: Mapped::open(&self.ids)?,
+            times: Mapped::open(&self.times)?,
+            ends: Mapped::open(&self.ends)?,
+            parents: Mapped::open(&self.parents)?,
+        })
+    }
+
+    /// キャッシュを空にする（`lock` は残す）。
+    fn clear(&self) -> Result<()> {
+        // 先に `state-*` を消す（途中で落ちても、残った表を読まない）。
+        for order in ORDERS {
+            remove_file(&self.state(order))?;
+        }
+        for file in [
+            &self.table,
+            &self.ids,
+            &self.times,
+            &self.ends,
+            &self.parents,
+        ] {
+            remove_file(file)?;
+        }
+        for order in ORDERS {
+            remove_file(&self.order(order))?;
+        }
+        Ok(())
+    }
+}
+
+fn remove_file(path: &Path) -> std::io::Result<()> {
+    match std::fs::remove_file(path) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
+    }
+}
+
+struct MappedTable {
+    table: Table,
+    ids: Mapped,
+    times: Mapped,
+    ends: Mapped,
+    parents: Mapped,
+}
+
+/// コミットの表の列。
+struct Columns<'a> {
+    ids: &'a [Oid],
+    times: &'a [i64],
+    ends: &'a [u32],
+    parents: &'a [u32],
+}
+
+impl MappedTable {
+    fn columns(&self) -> Option<Columns<'_>> {
+        let n = usize::try_from(self.table.rows).ok()?;
+        let c = Columns {
+            ids: self.ids.array(n)?,
+            times: self.times.array(n)?,
+            ends: self.ends.array(n)?,
+            parents: self
+                .parents
+                .array(usize::try_from(self.table.parents).ok()?)?,
+        };
+        (c.ends.last().map_or(0, |&e| u64::from(e)) == self.table.parents).then_some(c)
+    }
+}
+
+impl Columns<'_> {
+    /// 行 `s` の親の行番号。
+    fn parents_of(&self, s: usize) -> Option<&[u32]> {
+        let start = if s == 0 { 0 } else { self.ends[s - 1] } as usize;
+        self.parents.get(start..self.ends[s] as usize)
+    }
+}
+
+/// 頭（`MAGIC`・形式・種類）を確かめて、残りを返す。種類は `table` か `state`。
+fn header(bytes: &[u8]) -> Option<(&[u8], &[u8])> {
+    let rest = bytes.strip_prefix(&MAGIC)?;
+    let (v, rest) = rest.split_first_chunk::<4>()?;
+    if u32::from_le_bytes(*v) != version() {
+        return None;
+    }
+    let (kind, rest) = rest.split_first_chunk::<5>()?;
+    Some((kind, rest))
+}
+
+fn encode_header(kind: &[u8; 5]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(128);
+    out.extend_from_slice(&MAGIC);
+    out.extend_from_slice(&version().to_le_bytes());
+    out.extend_from_slice(kind);
+    out
+}
+
+fn encode_table(t: Table) -> Vec<u8> {
+    let mut out = encode_header(b"table");
+    out.extend_from_slice(&t.rows.to_le_bytes());
+    out.extend_from_slice(&t.parents.to_le_bytes());
+    out
 }
 
 fn encode_state(s: &State) -> Vec<u8> {
-    let mut out = Vec::with_capacity(96 + 20 * (s.tips.len() + s.shallow.len()));
-    out.extend_from_slice(&MAGIC);
-    out.extend_from_slice(&version().to_le_bytes());
+    let mut out = encode_header(b"state");
     out.extend_from_slice(&order_code(s.order).to_le_bytes());
     out.push(u8::from(s.head.is_some()));
     out.extend_from_slice(&s.head.unwrap_or_default().0);
     out.push(u8::from(s.last.is_some()));
     out.extend_from_slice(&s.last.unwrap_or_default().0);
     out.extend_from_slice(&s.rows.to_le_bytes());
-    out.extend_from_slice(&s.parents.to_le_bytes());
     out.extend_from_slice(&(s.tips.len() as u32).to_le_bytes());
     out.extend_from_slice(&(s.shallow.len() as u32).to_le_bytes());
     for id in s.tips.iter().chain(&s.shallow) {
@@ -259,7 +395,7 @@ fn encode_state(s: &State) -> Vec<u8> {
     out
 }
 
-fn decode_state(mut bytes: &[u8]) -> Option<State> {
+fn decode_state(bytes: &[u8]) -> Option<State> {
     fn take<const N: usize>(bytes: &mut &[u8]) -> Option<[u8; N]> {
         let (head, rest) = bytes.split_first_chunk::<N>()?;
         *bytes = rest;
@@ -269,7 +405,8 @@ fn decode_state(mut bytes: &[u8]) -> Option<State> {
         let id = Oid(take::<20>(bytes)?);
         Some(present.then_some(id))
     }
-    if take::<8>(&mut bytes)? != MAGIC || u32::from_le_bytes(take(&mut bytes)?) != version() {
+    let (kind, mut bytes) = header(bytes)?;
+    if kind != b"state" {
         return None;
     }
     let order = order_from_code(u32::from_le_bytes(take(&mut bytes)?))?;
@@ -278,7 +415,6 @@ fn decode_state(mut bytes: &[u8]) -> Option<State> {
     let has_last = take::<1>(&mut bytes)?[0] != 0;
     let last = oid(&mut bytes, has_last)?;
     let rows = u64::from_le_bytes(take(&mut bytes)?);
-    let parents = u64::from_le_bytes(take(&mut bytes)?);
     let tip_count = u32::from_le_bytes(take(&mut bytes)?) as usize;
     let shallow_count = u32::from_le_bytes(take(&mut bytes)?) as usize;
     if bytes.len() != (tip_count + shallow_count) * 20 || has_last != (rows > 0) {
@@ -297,18 +433,14 @@ fn decode_state(mut bytes: &[u8]) -> Option<State> {
         head,
         order,
         rows,
-        parents,
         last,
     })
 }
 
-/// `state` を一時ファイルに書いてから置き換える（書きかけを読ませない）。書いたバイト数を返す。
-fn write_state(files: &Files, state: &State) -> Result<u64> {
-    let bytes = encode_state(state);
-    let tmp = files
-        .state
-        .with_extension(format!("tmp-{}", std::process::id()));
-    let result = std::fs::write(&tmp, &bytes).and_then(|()| std::fs::rename(&tmp, &files.state));
+/// 一時ファイルに書いてから置き換える（書きかけを読ませない）。書いたバイト数を返す。
+fn replace(path: &Path, bytes: &[u8]) -> Result<u64> {
+    let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
+    let result = std::fs::write(&tmp, bytes).and_then(|()| std::fs::rename(&tmp, path));
     if result.is_err() {
         let _ = std::fs::remove_file(&tmp);
     }
@@ -316,35 +448,30 @@ fn write_state(files: &Files, state: &State) -> Result<u64> {
     Ok(bytes.len() as u64)
 }
 
-/// `state` だけを読む（表は読まない。daemon が書いたものが今の History と合うかを確かめるのに使う）。
-pub fn read_state(path: &Path) -> Option<State> {
+/// `order` の `state` だけを読む（表は読まない。daemon が書いたものが今の History と合うかを確かめるのに使う）。
+pub fn read_state(path: &Path, order: HistoryOrder) -> Option<State> {
     let files = Files::new(path);
     let _lock = files.lock(false)?;
-    decode_state(&std::fs::read(&files.state).ok()?)
+    files.read_state(order)
 }
 
-/// 読めなければ（ない・壊れている・形式が古い）`None`。
-pub fn read(path: &Path) -> Option<CachedHistory> {
+/// `order` の History を読む。読めなければ（ない・壊れている・形式が古い）`None`。
+pub fn read(path: &Path, order: HistoryOrder) -> Option<CachedHistory> {
     let files = Files::new(path);
     let _lock = files.lock(false)?;
-    let state = decode_state(&std::fs::read(&files.state).ok()?)?;
-    let n = usize::try_from(state.rows).ok()?;
-    let (ids, times, ends, parents) = (
-        Mapped::open(&files.ids)?,
-        Mapped::open(&files.times)?,
-        Mapped::open(&files.ends)?,
-        Mapped::open(&files.parents)?,
-    );
-    let ids: &[Oid] = ids.array(n)?;
-    if ids.last().copied() != state.last {
+    let state = files.read_state(order)?;
+    let table = files.map_table(files.read_table()?)?;
+    let columns = table.columns()?;
+    let mapped = Mapped::open(&files.order(order))?;
+    let rows: &[u32] = mapped.array(usize::try_from(state.rows).ok()?)?;
+    let last = match rows.last() {
+        Some(&s) => Some(*columns.ids.get(s as usize)?),
+        None => None,
+    };
+    if last != state.last {
         return None;
     }
-    let graph = newest_first(
-        ids,
-        times.array(n)?,
-        ends.array(n)?,
-        parents.array(usize::try_from(state.parents).ok()?)?,
-    )?;
+    let graph = newest_first(&columns, rows)?;
     Some(CachedHistory {
         tips: state.tips,
         shallow: state.shallow,
@@ -354,172 +481,253 @@ pub fn read(path: &Path) -> Option<CachedHistory> {
     })
 }
 
-/// 古い方から並べた表を、新しい方から並べた表にする。親が自分より古い行を指していなければ `None`。
-fn newest_first(ids: &[Oid], times: &[i64], ends: &[u32], parents: &[u32]) -> Option<CommitGraph> {
-    let n = ids.len();
-    if ends.last().map_or(0, |&e| e as usize) != parents.len() {
-        return None;
-    }
+/// 並び順の表（古い方から並べた、コミットの表の行番号）の順に、新しい方から並べた表を作る。行番号が表の外、
+/// 同じ行が 2 度、表にない親、親が自分より新しい、のどれかがあれば `None`。
+fn newest_first(c: &Columns<'_>, rows: &[u32]) -> Option<CommitGraph> {
+    let m = rows.len();
     // 列ごとに別のスレッドでコピーする（linux の 150 万行で、1 つのスレッドなら 10 ms）。
     let (ids, times, links) = std::thread::scope(|s| {
-        let ids = s.spawn(|| ids.iter().rev().copied().collect::<Vec<_>>());
-        let times = s.spawn(|| times.iter().rev().copied().collect::<Vec<_>>());
+        let ids = s.spawn(|| {
+            rows.iter()
+                .rev()
+                .map(|&r| c.ids.get(r as usize).copied())
+                .collect::<Option<Vec<_>>>()
+        });
+        let times = s.spawn(|| {
+            rows.iter()
+                .rev()
+                .map(|&r| c.times.get(r as usize).copied())
+                .collect::<Option<Vec<_>>>()
+        });
         let links = (|| {
-            let mut offsets = Vec::with_capacity(n + 1);
-            let mut rows = Vec::with_capacity(parents.len());
+            // コミットの表の行から、新しい方から数えた行へ。
+            let mut row_of = vec![u32::MAX; c.ids.len()];
+            for (k, &r) in rows.iter().enumerate() {
+                let slot = row_of.get_mut(r as usize)?;
+                if *slot != u32::MAX {
+                    return None;
+                }
+                *slot = (m - 1 - k) as u32;
+            }
+            let mut offsets = Vec::with_capacity(m + 1);
+            let mut parents = Vec::with_capacity(m + m / 4);
             offsets.push(0u32);
-            for s in (0..n).rev() {
-                let start = if s == 0 { 0 } else { ends[s - 1] } as usize;
-                for &p in parents.get(start..ends[s] as usize)? {
-                    if p as usize >= s {
+            for (i, &r) in rows.iter().rev().enumerate() {
+                for &p in c.parents_of(r as usize)? {
+                    let q = *row_of.get(p as usize)?;
+                    if q == u32::MAX || q as usize <= i {
                         return None;
                     }
-                    rows.push((n - 1 - p as usize) as u32);
+                    parents.push(q);
                 }
-                offsets.push(rows.len() as u32);
+                offsets.push(parents.len() as u32);
             }
-            Some((offsets, rows))
+            Some((offsets, parents))
         })();
         (ids.join().unwrap(), times.join().unwrap(), links)
     });
-    let (offsets, rows) = links?;
-    CommitGraph::from_parts(ids.into(), times.into(), offsets.into(), rows.into())
+    let (offsets, parents) = links?;
+    CommitGraph::from_parts(ids?.into(), times?.into(), offsets.into(), parents.into())
 }
 
 /// 書いたもの。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Written {
-    /// 書いたバイト数（表に足した分と `state`）。
+    /// 書いたバイト数（表に足した分と `table`・`state`）。
     pub bytes: u64,
-    /// 足した行の数。
+    /// 並び順の表に足した行の数。
     pub rows: u64,
-    /// 切った行の数。
+    /// 並び順の表から切った行の数。
     pub cut: u64,
 }
 
-/// キャッシュを `h` にする。前回と同じ所（古い方から一致する行）は書かず、違う所から後ろを切って足す。
+/// キャッシュの `h.order` の History を `h` にする。並び順の表は前回と同じ所（古い方から一致する行）は書かず、
+/// 違う所から後ろを切って足す。コミットの表には、まだないコミットだけ足す。
 pub fn write(path: &Path, h: Entry<'_>) -> Result<Written> {
     std::fs::create_dir_all(path)?;
     let files = Files::new(path);
     let _lock = files
         .lock(true)
         .ok_or_else(|| std::io::Error::other("can’t lock the History cache"))?;
-    let result = write_locked(&files, h);
-    if result.is_ok() {
-        prune_other_formats(path);
+    let mut written = Written::default();
+    // 合わない所があったり、使わない行が増えたりしたら、空にしてもう一度書く。
+    if !write_locked(&files, h, &mut written)? {
+        files.clear()?;
+        write_locked(&files, h, &mut written)?;
     }
-    result
+    prune_other_formats(path);
+    Ok(written)
 }
 
-fn write_locked(files: &Files, h: Entry<'_>) -> Result<Written> {
+/// 書けたら `true`。キャッシュを作り直すべきなら（コミットの表が壊れている、表のコミットの親が違う、使わない行が
+/// 多い）`false`。
+fn write_locked(files: &Files, h: Entry<'_>, written: &mut Written) -> Result<bool> {
     let g = h.graph;
     let n = g.len();
-    let disk = std::fs::read(&files.state)
-        .ok()
-        .and_then(|b| decode_state(&b));
-    let on_disk = disk.as_ref().map_or(0, |s| s.rows as usize);
-    // 古い方から一致する行の数。
-    let common = common_rows(files, disk.as_ref(), g).unwrap_or(0);
-    let mut written = Written::default();
-    // 切る前に、残す行の数の `state` を書く（切ってから落ちても、`state` が表より長くならない）。
-    let kept_parents = if common == 0 {
-        0
-    } else {
-        let mut ends = File::open(&files.ends)?;
-        ends.seek(SeekFrom::Start((common as u64 - 1) * 4))?;
-        u64::from(
-            read_array::<u32>(&mut ends, 1).ok_or_else(|| {
-                std::io::Error::other("the History cache is shorter than its state")
-            })?[0],
-        )
-    };
-    if common < on_disk {
-        written.bytes += write_state(
-            files,
-            &State {
-                rows: common as u64,
-                parents: kept_parents,
-                last: common.checked_sub(1).map(|s| g.ids()[n - 1 - s]),
-                ..disk.clone().unwrap()
-            },
-        )?;
-        written.cut = (on_disk - common) as u64;
-    }
-
-    // 古い方から数えた行 `s` は、新しい方から数えると `n - 1 - s`。
-    let added: Vec<usize> = (common..n).map(|s| n - 1 - s).collect();
-    let ids: Vec<Oid> = added.iter().map(|&r| g.ids()[r]).collect();
-    let times: Vec<i64> = added.iter().map(|&r| g.commit_times()[r]).collect();
-    let mut parents = Vec::new();
-    let mut ends = Vec::with_capacity(added.len());
-    let mut end = kept_parents as u32;
-    for &r in &added {
-        for &p in g.parents(r) {
-            parents.push((n - 1 - p as usize) as u32);
+    let table = match files.read_table() {
+        Some(table) => table,
+        None => {
+            // 初めて書く（か、作り直す途中で落ちた）。
+            files.clear()?;
+            Table::default()
         }
+    };
+    let Some(mapped) = files.map_table(table) else {
+        return Ok(false);
+    };
+    let Some(c) = mapped.columns() else {
+        return Ok(false);
+    };
+    let state = files.read_state(h.order);
+    let order = Mapped::open(&files.order(h.order)).unwrap_or(Mapped(None));
+    let old: &[u32] = state
+        .as_ref()
+        .and_then(|s| order.array(usize::try_from(s.rows).ok()?))
+        .unwrap_or_default();
+    // 並び順の表の、古い方から一致する行の数。
+    let common = old
+        .iter()
+        .zip(g.ids().iter().rev())
+        .take_while(|&(&s, id)| c.ids.get(s as usize) == Some(id))
+        .count();
+    if common < old.len() {
+        // 切る前に、残す行の数の `state` を書く（切ってから落ちても、`state` が表より長くならない）。
+        written.bytes += replace(
+            &files.state(h.order),
+            &encode_state(&State {
+                rows: common as u64,
+                last: common.checked_sub(1).map(|k| g.ids()[n - 1 - k]),
+                ..state.clone().unwrap()
+            }),
+        )?;
+        written.cut = (old.len() - common) as u64;
+    }
+    // 古い方から数えた行ごとの、コミットの表の行。
+    let mut rows = old[..common].to_vec();
+    // 表にあるのに、並び順の表の残す所から指されていない行（切った行、ほかの並び順だけの行、使わない行）。
+    let mut known = HashMap::new();
+    if common < n {
+        let mut used = vec![false; c.ids.len()];
+        for &s in &rows {
+            used[s as usize] = true;
+        }
+        known.extend(
+            used.iter()
+                .enumerate()
+                .filter(|&(_, &u)| !u)
+                .map(|(s, _)| (c.ids[s], s as u32)),
+        );
+    }
+    let (mut ids, mut times, mut ends, mut parents) = (vec![], vec![], vec![], vec![]);
+    let mut next = table.rows as u32;
+    let mut end = table.parents as u32;
+    for k in common..n {
+        let r = n - 1 - k;
+        let ours = g.parents(r).iter().map(|&p| rows[n - 1 - p as usize]);
+        if let Some(&s) = known.get(&g.ids()[r]) {
+            // 表にあるコミットは、親も同じでなければならない（shallow の境界が変わったなど。作り直す）。
+            if !c
+                .parents_of(s as usize)
+                .is_some_and(|stored| stored.iter().copied().eq(ours))
+            {
+                return Ok(false);
+            }
+            rows.push(s);
+            continue;
+        }
+        parents.extend(ours);
+        ids.push(g.ids()[r]);
+        times.push(g.commit_times()[r]);
         end += g.parents(r).len() as u32;
         ends.push(end);
+        rows.push(next);
+        next += 1;
     }
+    drop(mapped);
+    // コミットの表に足す（`table` より後ろに書きかけが残っていれば切る）。
     for (file, keep, bytes) in [
-        (&files.ids, common * 20, bytes_of(&ids)),
-        (&files.times, common * 8, bytes_of(&times)),
-        (&files.ends, common * 4, bytes_of(&ends)),
-        (
-            &files.parents,
-            kept_parents as usize * 4,
-            bytes_of(&parents),
-        ),
+        (&files.ids, table.rows * 20, bytes_of(&ids)),
+        (&files.times, table.rows * 8, bytes_of(&times)),
+        (&files.ends, table.rows * 4, bytes_of(&ends)),
+        (&files.parents, table.parents * 4, bytes_of(&parents)),
     ] {
-        let mut f = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(file)?;
-        f.set_len(keep as u64)?;
-        f.seek(SeekFrom::End(0))?;
-        f.write_all(bytes)?;
+        append(file, keep, bytes)?;
         written.bytes += bytes.len() as u64;
     }
-    written.rows = added.len() as u64;
-    written.bytes += write_state(
-        files,
-        &State {
+    if !ids.is_empty() {
+        written.bytes += replace(
+            &files.table,
+            &encode_table(Table {
+                rows: u64::from(next),
+                parents: u64::from(end),
+            }),
+        )?;
+    }
+    append(
+        &files.order(h.order),
+        common as u64 * 4,
+        bytes_of(&rows[common..]),
+    )?;
+    written.bytes += (n - common) as u64 * 4;
+    written.rows = (n - common) as u64;
+    written.bytes += replace(
+        &files.state(h.order),
+        &encode_state(&State {
             tips: h.tips.to_vec(),
             shallow: h.shallow.to_vec(),
             head: h.head,
             order: h.order,
             rows: n as u64,
-            parents: u64::from(end),
             last: g.ids().first().copied(),
-        },
+        }),
     )?;
-    Ok(written)
+    Ok(!too_much_garbage(files, h.order)?)
 }
 
-/// 表の古い方から、`g` と一致する行の数。`ids` を少しずつ読んで比べる。
-fn common_rows(files: &Files, disk: Option<&State>, g: &CommitGraph) -> Option<usize> {
-    let disk = disk?;
-    let on_disk = usize::try_from(disk.rows).ok()?;
-    let limit = on_disk.min(g.len());
-    let mut file = File::open(&files.ids).ok()?;
-    // 1 回に読む行の数（1 MB 余り）。
-    const CHUNK: usize = 1 << 16;
-    let mut theirs = g.ids().iter().rev();
-    let mut common = 0;
-    while common < limit {
-        let count = CHUNK.min(limit - common);
-        let ours: Vec<Oid> = read_array(&mut file, count)?;
-        let same = ours
-            .iter()
-            .zip(theirs.by_ref())
-            .take_while(|(a, b)| a == b)
-            .count();
-        common += same;
-        if same < count {
-            break;
+/// `file` を `keep` バイトにしてから `bytes` を足す。
+fn append(file: &Path, keep: u64, bytes: &[u8]) -> Result<()> {
+    let mut f = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(file)?;
+    if f.metadata()?.len() != keep {
+        f.set_len(keep)?;
+    }
+    f.seek(SeekFrom::Start(keep))?;
+    f.write_all(bytes)?;
+    Ok(())
+}
+
+/// どの並び順の表からも指されない行が、コミットの表の `GARBAGE_DIVISOR` 分の 1 を超えたか。
+fn too_much_garbage(files: &Files, active: HistoryOrder) -> Result<bool> {
+    let Some(table) = files.read_table() else {
+        return Ok(false);
+    };
+    let total = table.rows as usize;
+    let Some(active_rows) = files.read_state(active).map(|s| s.rows as usize) else {
+        return Ok(false);
+    };
+    // 今の並び順だけで十分に使っていれば、ほかの表を読むまでもない。
+    if total - total.min(active_rows) <= total / GARBAGE_DIVISOR {
+        return Ok(false);
+    }
+    let mut used = vec![false; total];
+    for order in ORDERS {
+        let Some(state) = files.read_state(order) else {
+            continue;
+        };
+        let Some(mapped) = Mapped::open(&files.order(order)) else {
+            continue;
+        };
+        for &s in mapped.array::<u32>(state.rows as usize).unwrap_or_default() {
+            if let Some(u) = used.get_mut(s as usize) {
+                *u = true;
+            }
         }
     }
-    Some(common)
+    let unused = used.iter().filter(|&&u| !u).count();
+    Ok(unused > total / GARBAGE_DIVISOR)
 }
 
 /// キャッシュのファイルの大きさの合計（バイト）。
@@ -753,41 +961,25 @@ mod tests {
 
     /// `g` の先頭のコミットの上に、新しいコミットを `n` 個積んだ表。
     fn on_top(g: &CommitGraph, n: u8) -> CommitGraph {
+        on_top_tagged(g, n, 0)
+    }
+
+    fn new_id(tag: u8, i: u8) -> Oid {
+        let mut id = [0; 20];
+        (id[0], id[1], id[2]) = (0xee, tag, i);
+        Oid(id)
+    }
+
+    /// `on_top` の、`tag` ごとに別のコミットのもの。
+    fn on_top_tagged(g: &CommitGraph, n: u8, tag: u8) -> CommitGraph {
         let mut b = amonhen_model::CommitGraphBuilder::default();
         for i in 0..n {
             let parent = if i + 1 < n {
-                Oid([
-                    0xee,
-                    i + 1,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                ])
+                new_id(tag, i + 1)
             } else {
                 g.ids()[0]
             };
-            b.push(
-                Oid([
-                    0xee, i, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                ]),
-                0,
-                [parent],
-            );
+            b.push(new_id(tag, i), 0, [parent]);
         }
         for r in 0..g.len() {
             b.push(
@@ -795,6 +987,33 @@ mod tests {
                 g.commit_times()[r],
                 g.parents(r).iter().map(|&p| g.ids()[p as usize]),
             );
+        }
+        b.build()
+    }
+
+    /// `g` の行 `at` から出る `n` 個のコミットの枝を、行 `at` のすぐ上に並べた表。
+    fn with_branch_at(g: &CommitGraph, at: usize, n: u8) -> CommitGraph {
+        let mut b = amonhen_model::CommitGraphBuilder::default();
+        let old = |b: &mut amonhen_model::CommitGraphBuilder, r: usize| {
+            b.push(
+                g.ids()[r],
+                g.commit_times()[r],
+                g.parents(r).iter().map(|&p| g.ids()[p as usize]),
+            );
+        };
+        for r in 0..at {
+            old(&mut b, r);
+        }
+        for i in 0..n {
+            let parent = if i + 1 < n {
+                new_id(0xbb, i + 1)
+            } else {
+                g.ids()[at]
+            };
+            b.push(new_id(0xbb, i), g.commit_times()[at], [parent]);
+        }
+        for r in at..g.len() {
+            old(&mut b, r);
         }
         b.build()
     }
@@ -808,7 +1027,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = path_for(dir.path(), "/r");
         write(&path, h.entry()).unwrap();
-        assert_eq!(read(&path).unwrap(), h);
+        assert_eq!(read(&path, HistoryOrder::Date).unwrap(), h);
     }
 
     #[test]
@@ -825,8 +1044,8 @@ mod tests {
         };
         let w = write(&path, h.entry()).unwrap();
         assert_eq!((w.rows, w.cut), (10_000, 0));
-        assert_eq!(read(&path).unwrap(), h);
-        let state = read_state(&path).unwrap();
+        assert_eq!(read(&path, HistoryOrder::Topo).unwrap(), h);
+        let state = read_state(&path, HistoryOrder::Topo).unwrap();
         assert_eq!((state.tips, state.head), (h.tips.clone(), h.head));
     }
 
@@ -847,20 +1066,72 @@ mod tests {
         let w = write(&path, history(grown.clone()).entry()).unwrap();
         assert_eq!((w.rows, w.cut), (30, 0));
         assert!(w.bytes < 30 * 40 + 200, "{w:?}");
-        assert_eq!(read(&path).unwrap().graph, grown);
+        assert_eq!(read(&path, HistoryOrder::Date).unwrap().graph, grown);
 
         // 上の 30 行が消え、別の 5 行になった（reset して別のコミット）。
         let other = on_top(&old, 5);
         assert_eq!(&other.ids()[5..], old.ids());
         let w = write(&path, history(other.clone()).entry()).unwrap();
         assert_eq!((w.rows, w.cut), (5, 30));
-        assert_eq!(read(&path).unwrap().graph, other);
+        assert_eq!(read(&path, HistoryOrder::Date).unwrap().graph, other);
 
-        // ずっと下の行（古い方から 4,999 行目）が消えた（作り直された枝）。そこから上をすべて書き直す。
-        let keep = old.retain(&(0..old.len()).map(|r| r != 15_000).collect::<Vec<_>>());
-        let w = write(&path, history(keep.clone()).entry()).unwrap();
-        assert_eq!((w.cut, w.rows), (20_005 - 4_999, 19_999 - 4_999));
-        assert_eq!(read(&path).unwrap().graph, keep);
+        // ずっと下の枝（古い方から 5,000 行目のあたり）が消えた（ブランチを消した）。並び順の表はそこから上を
+        // 書き直すが、コミットはどれも表にあるので、コミットの表には足さない。
+        let branched = with_branch_at(&old, 15_000, 3);
+        write(&path, history(branched.clone()).entry()).unwrap();
+        assert_eq!(read(&path, HistoryOrder::Date).unwrap().graph, branched);
+        let w = write(&path, history(old.clone()).entry()).unwrap();
+        assert_eq!((w.cut, w.rows), (20_003 - 5_000, 20_000 - 5_000));
+        assert!(w.bytes < 15_000 * 4 + 200, "{w:?}");
+        assert_eq!(read(&path, HistoryOrder::Date).unwrap().graph, old);
+    }
+
+    /// 並び順を替えても、コミットの表は書かない。どちらの並び順も読める。
+    #[test]
+    fn switching_the_order_writes_only_the_order_table() {
+        let (date, _) = synthetic::graph(20_000, 6);
+        let topo = amonhen_model::topo::reorder(&date, HistoryOrder::Topo);
+        assert_ne!(topo.ids(), date.ids());
+        let dir = tempfile::tempdir().unwrap();
+        let path = path_for(dir.path(), "/r");
+        write(&path, history(date.clone()).entry()).unwrap();
+        let topo_history = CachedHistory {
+            order: HistoryOrder::Topo,
+            ..history(topo.clone())
+        };
+        let w = write(&path, topo_history.entry()).unwrap();
+        assert_eq!(w.rows, 20_000);
+        assert!(w.bytes < 20_000 * 4 + 200, "{w:?}");
+        assert_eq!(read(&path, HistoryOrder::Topo).unwrap(), topo_history);
+        assert_eq!(read(&path, HistoryOrder::Date).unwrap().graph, date);
+        // 戻しても同じ。
+        let w = write(&path, history(date.clone()).entry()).unwrap();
+        assert_eq!((w.rows, w.cut), (0, 0));
+    }
+
+    /// どの並び順からも指されない行が増えたら、今の並び順で作り直す。親が前と違うコミットがあっても作り直す。
+    #[test]
+    fn rebuilds_when_unused_rows_pile_up_or_parents_differ() {
+        let (old, _) = synthetic::graph(1000, 7);
+        let dir = tempfile::tempdir().unwrap();
+        let path = path_for(dir.path(), "/r");
+        write(&path, history(old.clone()).entry()).unwrap();
+        // amend を繰り返す（上の 5 行が毎回別のコミットになる）。
+        let mut rebuilt = false;
+        for i in 0..60u8 {
+            let g = on_top_tagged(&old, 5, i);
+            let w = write(&path, history(g.clone()).entry()).unwrap();
+            rebuilt |= w.rows == 1005;
+            assert_eq!(read(&path, HistoryOrder::Date).unwrap().graph, g);
+        }
+        assert!(rebuilt);
+        assert!(size(&path) < 1005 * 40 * 2, "{}", size(&path));
+
+        // 親が違う（shallow の境界が変わったなど）。
+        let cut = old.retain(&(0..old.len()).map(|r| r != 500).collect::<Vec<_>>());
+        let w = write(&path, history(cut.clone()).entry()).unwrap();
+        assert_eq!(w.rows, 999);
+        assert_eq!(read(&path, HistoryOrder::Date).unwrap().graph, cut);
     }
 
     /// `state` より長い表（足してから `state` を書くまでに落ちた）は、`state` の所まで読み、次に書くとき切る。
@@ -873,22 +1144,22 @@ mod tests {
         let path = path_for(dir.path(), "/r");
         write(&path, history(grown.clone()).entry()).unwrap();
         let files = Files::new(&path);
-        let state = std::fs::read(&files.state).unwrap();
+        let state = std::fs::read(files.state(HistoryOrder::Date)).unwrap();
         write(&path, history(graph.clone()).entry()).unwrap();
-        let short_state = std::fs::read(&files.state).unwrap();
+        let short_state = std::fs::read(files.state(HistoryOrder::Date)).unwrap();
 
         // 長い表と短い state。
         write(&path, history(grown.clone()).entry()).unwrap();
-        std::fs::write(&files.state, &short_state).unwrap();
-        assert_eq!(read(&path).unwrap().graph, graph);
+        std::fs::write(files.state(HistoryOrder::Date), &short_state).unwrap();
+        assert_eq!(read(&path, HistoryOrder::Date).unwrap().graph, graph);
         let w = write(&path, history(grown.clone()).entry()).unwrap();
         assert_eq!((w.rows, w.cut), (10, 0));
-        assert_eq!(read(&path).unwrap().graph, grown);
+        assert_eq!(read(&path, HistoryOrder::Date).unwrap().graph, grown);
 
         // 短い表と長い state。
         let ids = std::fs::read(&files.ids).unwrap();
         std::fs::write(&files.ids, &ids[..ids.len() - 20]).unwrap();
-        assert!(read(&path).is_none());
+        assert!(read(&path, HistoryOrder::Date).is_none());
         std::fs::write(&files.ids, &ids).unwrap();
 
         // 最後の行が合わない。
@@ -896,13 +1167,13 @@ mod tests {
         let len = wrong.len();
         wrong[len - 1] ^= 0xff;
         std::fs::write(&files.ids, &wrong).unwrap();
-        assert!(read(&path).is_none());
+        assert!(read(&path, HistoryOrder::Date).is_none());
 
         // 形式が違う。
         let mut old = state.clone();
         old[8] ^= 0xff;
-        std::fs::write(&files.state, &old).unwrap();
-        assert!(read(&path).is_none());
+        std::fs::write(files.state(HistoryOrder::Date), &old).unwrap();
+        assert!(read(&path, HistoryOrder::Date).is_none());
     }
 
     /// 同じキャッシュを同時に書いても、読み書きしても壊れない（共有の daemon とアプリ、1 つのプロセスの中の
@@ -920,7 +1191,7 @@ mod tests {
                     for j in 0..5 {
                         let g = if (i + j) % 2 == 0 { small } else { big };
                         write(path, history(g.clone()).entry()).unwrap();
-                        let read = read(path).unwrap().graph;
+                        let read = read(path, HistoryOrder::Date).unwrap().graph;
                         assert!(read == *small || read == *big);
                     }
                 });
@@ -946,7 +1217,7 @@ mod tests {
         writer.schedule(Arc::new(history(grown.clone())));
         std::thread::sleep(Duration::from_millis(600));
         assert_eq!(writes.lock().unwrap().len(), 1);
-        assert_eq!(read(&path).unwrap().graph, grown);
+        assert_eq!(read(&path, HistoryOrder::Date).unwrap().graph, grown);
 
         let stats = writer.stats();
         assert_eq!((stats.count, stats.rows, stats.cut), (1, 1003, 0));
@@ -964,7 +1235,7 @@ mod tests {
         writer.schedule(Arc::new(history(old.clone())));
         drop(writer);
         assert_eq!(writes.lock().unwrap().len(), 2);
-        assert_eq!(read(&path).unwrap().graph, old);
+        assert_eq!(read(&path, HistoryOrder::Date).unwrap().graph, old);
     }
 
     /// 同じリポジトリのほかの形式（と前の形式のファイル）は、7 日書かれていなければ消す。最近のもの（並んで動く
