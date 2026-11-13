@@ -16,6 +16,22 @@ pub struct Delegated {
     pub parts: Vec<amonhen_layout::Blob>,
 }
 
+/// 手元の共有の daemon が用意した History（`GitBackend::prepared_history`）。
+pub struct PreparedHistory {
+    /// 永続キャッシュのフォルダ（コミットの表）。
+    pub cache: std::path::PathBuf,
+    /// daemon が計算したレイアウト。渡せなければ（共有メモリが使えない）`None` で、つないだ側が計算する。
+    pub layout: Option<PreparedLayout>,
+}
+
+/// daemon が計算したレイアウトの配列（`amonhen-layout` の `Node`・`Edge` と、幹線の印 1 行 1 バイト）。
+pub struct PreparedLayout {
+    pub nodes: amonhen_layout::Blob,
+    pub edges: amonhen_layout::Blob,
+    pub mainline: amonhen_layout::Blob,
+    pub lane_count: u16,
+}
+
 /// git の操作。デスクトップは gix ＋ `git` の spawn、モバイルは gix ＋ libgit2 で実装する。
 ///
 /// 書き込み系の操作は、実装を足すときにここへ加える。
@@ -212,10 +228,10 @@ pub trait GitBackend: Send + Sync {
     }
 
     /// 件名・作者・日時だけを読む（History の行に出す分）。daemon 越しでは本文を送らずに済む。
-    /// History を別の所（手元の共有の daemon）で用意してもらえるなら、その永続キャッシュのファイル。つないだ側は
-    /// レイアウトを計算せず、このファイルを mmap して使う（同じ Mac の上なので、中身はコピーせずに共有される）。
-    /// 用意してもらえなければ `None`。
-    fn prepared_history(&self) -> Result<Option<std::path::PathBuf>> {
+    /// History を別の所（手元の共有の daemon）で用意してもらえるなら、その永続キャッシュのフォルダと、計算した
+    /// レイアウト（共有メモリ）。つないだ側はコミットの表を読み、レイアウトは計算しない。用意してもらえなければ
+    /// `None`。
+    fn prepared_history(&self) -> Result<Option<PreparedHistory>> {
         Ok(None)
     }
 

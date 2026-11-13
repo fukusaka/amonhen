@@ -1115,7 +1115,88 @@ impl Activity {
             &tr!("The last 500 of each since the app started. Orange when p95 exceeds twice a frame (16.7 ms)."),
             &["dim-label", "caption"],
         ));
+        // History のキャッシュ: リポジトリごとの大きさと、起動してから書いたもの（macOS 版と同じ）。
+        let cache_title = label(&tr!("History Cache"), &["heading"]);
+        cache_title.set_margin_top(6);
+        perf.append(&cache_title);
+        let (cache_scrolled, cache_list) = list();
+        cache_list.add_css_class("zebra");
+        cache_scrolled.set_vexpand(false);
+        cache_scrolled.set_min_content_height(110);
+        let (cache_header, _) = column_header(&[
+            (tr!("Repository").as_str(), 0),
+            (tr!("Size").as_str(), 90),
+            (tr!("Writes").as_str(), 60),
+            (tr!("Written").as_str(), 90),
+            (tr!("Last Write").as_str(), 170),
+        ]);
+        perf.append(&cache_header);
+        perf.append(&cache_scrolled);
+        perf.append(&label(
+            &tr!("What each open repository’s History cache wrote since the app started (through the shared daemon, what the daemon wrote). It writes only what changed."),
+            &["dim-label", "caption"],
+        ));
         stack.add_titled(&perf, Some("performance"), &tr!("Performance"));
+        let refresh_caches = {
+            let entries = entries.clone();
+            let loading = Rc::new(std::cell::Cell::new(false));
+            let tick = std::cell::Cell::new(0u32);
+            move || {
+                tick.set(tick.get() + 1);
+                // 2 秒ごと（0.5 秒ごとに呼ばれる）。同じ場所を開いたタブは 1 つにまとめる。
+                if loading.get() || tick.get() % 4 != 1 {
+                    return;
+                }
+                let mut seen = std::collections::HashSet::new();
+                let shown: Vec<Entry> = entries
+                    .borrow()
+                    .iter()
+                    .filter(|e| seen.insert(e.location.clone()))
+                    .cloned()
+                    .collect();
+                loading.set(true);
+                let (cache_list, loading) = (cache_list.clone(), loading.clone());
+                glib::spawn_future_local(async move {
+                    let mut rows = Vec::new();
+                    for entry in shown {
+                        let asked = entry.repo.clone();
+                        let reply: Value = gio::spawn_blocking(move || {
+                            serde_json::from_str(&asked.run_json(r#"{"op":"historyCache"}"#))
+                                .unwrap_or_default()
+                        })
+                        .await
+                        .unwrap_or_default();
+                        let info = &reply["info"];
+                        if info.is_object() {
+                            rows.push((entry.name.clone(), info.clone()));
+                        }
+                    }
+                    loading.set(false);
+                    cache_list.remove_all();
+                    for (name, info) in rows {
+                        let w = &info["writes"];
+                        let size =
+                            |v: &Value| glib::format_size(v.as_u64().unwrap_or(0)).to_string();
+                        let last = match w["lastAt"].as_i64() {
+                            Some(at) => format!("{} · {}", size(&w["lastBytes"]), time(at)),
+                            None => "—".to_owned(),
+                        };
+                        cache_list.append(&row(&[
+                            (&name, 0, &[]),
+                            (&size(&info["size"]), 90, &["numeric"]),
+                            (
+                                &w["count"].as_u64().unwrap_or(0).to_string(),
+                                60,
+                                &["numeric"],
+                            ),
+                            (&size(&w["bytes"]), 90, &["numeric"]),
+                            (&last, 170, &["numeric"]),
+                        ]));
+                    }
+                });
+            }
+        };
+        refreshers.push(Box::new(refresh_caches));
         let refresh_perf = {
             let perf_list = perf_list.clone();
             let last = std::cell::Cell::new(0);

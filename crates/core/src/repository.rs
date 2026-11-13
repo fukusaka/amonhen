@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use amonhen_layout::DiffRow;
+use amonhen_layout::{DiffRow, Node};
 use amonhen_model::{
     CommitGraph, ContentsToFetch, Eol, FileChange, GitBackend, HistoryOrder, LineEndings, Oid,
     OidMap, Refs, RepoPaths, Result, Status, StatusEntry, topo,
@@ -13,6 +13,7 @@ use arc_swap::ArcSwapOption;
 
 use crate::cache::{self, CachedHistory};
 use crate::diff::{self, DiffView, FileDiff};
+use crate::graph::Layouter;
 use crate::graph::{self, GraphLayout};
 use crate::undo::UndoLog;
 
@@ -186,6 +187,7 @@ impl HistorySnapshot {
                         .get(start..end)
                         .unwrap_or(&[])
                         .iter()
+                        .filter(|node| node.flags & Node::PENDING == 0)
                         .map(|node| node.lane),
                 );
                 lanes.sort_unstable();
@@ -252,6 +254,50 @@ impl HistorySnapshot {
     }
 }
 
+impl HistorySnapshot {
+    /// レイアウトの配列を、コピーせずに渡す形にする（共有の daemon が、つないだ側に渡す）。
+    pub fn prepared_layout(self: &Arc<Self>) -> amonhen_model::PreparedLayout {
+        /// スナップショットのレイアウトの配列の 1 つ（`GraphLayout::arrays` の添字）。
+        struct Array(Arc<HistorySnapshot>, usize);
+        impl AsRef<[u8]> for Array {
+            fn as_ref(&self) -> &[u8] {
+                self.0.layout.arrays()[self.1]
+            }
+        }
+        let blob = |i: usize| {
+            let len = self.layout.arrays()[i].len();
+            amonhen_layout::Blob::part(Arc::new(Array(self.clone(), i)), 0..len)
+        };
+        amonhen_model::PreparedLayout {
+            nodes: blob(0),
+            edges: blob(1),
+            mainline: blob(2),
+            lane_count: self.layout.lane_count(),
+        }
+    }
+}
+
+/// キャッシュから開いたとき、すぐレイアウトする行の数（linux で 1.8 ms）。残りは `load_history` で計算する。
+const FIRST_LAID_OUT_ROWS: u32 = 10_000;
+
+/// 永続キャッシュに書く History（書くまで持っておく）。
+struct ToCache {
+    snapshot: Arc<HistorySnapshot>,
+    order: HistoryOrder,
+}
+
+impl cache::AsEntry for ToCache {
+    fn entry(&self) -> cache::Entry<'_> {
+        cache::Entry {
+            tips: &self.snapshot.tips,
+            shallow: &self.snapshot.shallow,
+            head: self.snapshot.head,
+            order: self.order,
+            graph: &self.snapshot.graph,
+        }
+    }
+}
+
 /// 1 つのリポジトリの状態。読み取りはロックなしで、最新のスナップショットを取るだけ。
 pub struct Repository {
     backend: Box<dyn GitBackend>,
@@ -261,7 +307,8 @@ pub struct Repository {
     generation: AtomicU64,
     /// 検索のたびに進める。進んだら、走っている検索はやめる。
     search_generation: AtomicU64,
-    cache_path: Option<PathBuf>,
+    /// History の永続キャッシュ（`with_cache`）。書き込みはまとめる。
+    cache: Option<cache::Writer>,
     undo: OnceLock<UndoLog>,
     /// 署名の検証の結果（`%G?`）。コミットもタグのオブジェクトも変わらないので、一度検証したら ID で覚えて
     /// おく。検証する側を変えたら捨てる（番号を進め、変える前に始めた検証の結果は覚えない）。
@@ -309,7 +356,7 @@ impl Repository {
             search_partial: Default::default(),
             contents_counted: Default::default(),
             contents_limit: CONTENTS_FETCH_LIMIT,
-            cache_path: None,
+            cache: None,
             undo: OnceLock::new(),
             signatures: Default::default(),
             verifier: Default::default(),
@@ -337,24 +384,14 @@ impl Repository {
             let graph = topo::reorder(&current.graph, order);
             let head_row = Self::head_row(&graph, current.head);
             let layout = graph::layout(&graph, head_row);
-            let cached = CachedHistory {
-                tips: current.tips.clone(),
-                shallow: current.shallow.clone(),
-                head: current.head,
-                order,
+            let snapshot = self.publish(
+                current.tips.clone(),
+                current.shallow.clone(),
+                current.head,
                 graph,
                 layout,
-            };
-            if let Some(path) = &self.cache_path {
-                let _ = cache::write(path, &cached);
-            }
-            self.publish(
-                cached.tips,
-                cached.shallow,
-                cached.head,
-                cached.graph,
-                cached.layout,
             );
+            self.schedule_cache(snapshot, order);
         }
         Ok(())
     }
@@ -365,21 +402,39 @@ impl Repository {
     }
 
     /// キャッシュから読んだ History を公開する。並び順が今のものと違えば（別の順で書いたキャッシュ）、並べ直す。
-    fn publish_cached(&self, cached: CachedHistory) -> Arc<HistorySnapshot> {
+    /// `full` でなければ、レイアウトは上の `FIRST_LAID_OUT_ROWS` 行だけにして、すぐ見せる（残りは次の
+    /// `load_history` で計算する）。
+    fn publish_cached(&self, cached: CachedHistory, full: bool) -> Arc<HistorySnapshot> {
         let order = self.history_order();
-        if cached.order == order {
-            return self.publish(
-                cached.tips,
-                cached.shallow,
-                cached.head,
-                cached.graph,
-                cached.layout,
-            );
-        }
-        let graph = topo::reorder(&cached.graph, order);
+        let graph = if cached.order == order {
+            cached.graph
+        } else {
+            topo::reorder(&cached.graph, order)
+        };
         let head_row = Self::head_row(&graph, cached.head);
-        let layout = graph::layout(&graph, head_row);
+        let layout = if full {
+            graph::layout(&graph, head_row)
+        } else {
+            let mut l = Layouter::new(&graph, head_row);
+            l.advance(FIRST_LAID_OUT_ROWS);
+            if l.is_done() { l.finish() } else { l.partial() }
+        };
         self.publish(cached.tips, cached.shallow, cached.head, graph, layout)
+    }
+
+    /// `snapshot` を永続キャッシュに書く（少し後にまとめて）。
+    fn schedule_cache(&self, snapshot: Arc<HistorySnapshot>, order: HistoryOrder) {
+        if let Some(writer) = &self.cache {
+            writer.schedule(Arc::new(ToCache { snapshot, order }));
+        }
+    }
+
+    /// 待っている永続キャッシュの書き込みを、すぐ書く（共有の daemon が、つないだ側に読ませる前に）。
+    pub fn flush_cache(&self) -> Result<()> {
+        match &self.cache {
+            Some(writer) => writer.flush(),
+            None => Ok(()),
+        }
     }
 
     /// 署名を手元で検証するもの（`None` ならリポジトリのある側の git で検証する）。変えると、覚えていた
@@ -544,10 +599,10 @@ impl Repository {
         Ok(self.undo.get_or_init(|| UndoLog::new(self.backend.files())))
     }
 
-    /// History を `cache_path` に永続化する。
+    /// History を `cache_path`（`cache::path_for` のフォルダ）に永続化する。
     pub fn with_cache(backend: impl GitBackend + 'static, cache_path: PathBuf) -> Self {
         Self {
-            cache_path: Some(cache_path),
+            cache: Some(cache::Writer::new(cache_path)),
             ..Self::new(backend)
         }
     }
@@ -576,13 +631,19 @@ impl Repository {
     }
 
     /// 永続キャッシュから前回の History を公開する。まだ何も公開していないときだけ。
-    /// mmap するだけなので速い。この後 `load_history` で最新にする。
+    /// 表を読み、上の方だけレイアウトするので速い（linux で 10 ms ほど）。この後 `load_history` で最新にし、
+    /// レイアウトも終える。
     pub fn load_cached_history(&self) -> Option<Arc<HistorySnapshot>> {
         if let Some(current) = self.history.load_full() {
             return Some(current);
         }
-        let cached = cache::read(self.cache_path.as_deref()?)?;
-        Some(self.publish_cached(cached))
+        let path = self.cache_path()?;
+        // 今の並び順の表がなければ、ほかの並び順のものを並べ直す。
+        let order = self.history_order();
+        let cached = [order, HistoryOrder::Date, HistoryOrder::Topo]
+            .into_iter()
+            .find_map(|o| cache::read(path, o))?;
+        Some(self.publish_cached(cached, false))
     }
 
     /// History を読み直して公開する。起点と HEAD が前回と同じなら何もしない。
@@ -590,17 +651,35 @@ impl Repository {
     /// 変わった所だけ計算し直す。
     pub fn load_history(&self) -> Result<Arc<HistorySnapshot>> {
         // 手元の共有の daemon が用意してくれるなら、レイアウトは計算せず、そのファイルを mmap する。
-        if let Some(path) = self.backend.prepared_history()? {
-            let cached = cache::read(&path)
-                .ok_or_else(|| tr!("Can’t read the History the daemon prepared"))?;
+        if let Some(prepared) = self.backend.prepared_history()? {
+            let path = &prepared.cache;
             if let Some(current) = self.history.load_full()
-                && current.tips == cached.tips
-                && current.head == cached.head
-                && current.shallow == cached.shallow
+                && current.layout.is_complete()
+                && let Some(state) = cache::read_state(path, self.history_order())
+                && current.tips == state.tips
+                && current.head == state.head
+                && current.shallow == state.shallow
+                && current.graph.len() as u64 == state.rows
             {
                 return Ok(current);
             }
-            return Ok(self.publish_cached(cached));
+            let cached = cache::read(path, self.history_order())
+                .ok_or_else(|| tr!("Can’t read the History the daemon prepared"))?;
+            // daemon が計算したレイアウトを使う（並び順が同じなら。違えば、ここで計算する）。
+            let layout = prepared
+                .layout
+                .filter(|_| cached.order == self.history_order())
+                .and_then(|l| GraphLayout::from_prepared(l, cached.graph.len()));
+            return Ok(match layout {
+                Some(layout) => self.publish(
+                    cached.tips,
+                    cached.shallow,
+                    cached.head,
+                    cached.graph,
+                    layout,
+                ),
+                None => self.publish_cached(cached, true),
+            });
         }
         let tips = self.backend.tips()?;
         let head = self.backend.head()?;
@@ -615,6 +694,17 @@ impl Repository {
             && current.tips == tips
             && current.head == head
         {
+            if !current.layout.is_complete() {
+                // キャッシュから開いた直後。残りの行をレイアウトする。
+                let head_row = Self::head_row(&current.graph, head);
+                return Ok(self.publish(
+                    tips,
+                    shallow,
+                    head,
+                    current.graph.clone(),
+                    graph::layout(&current.graph, head_row),
+                ));
+            }
             // 行の索引を裏のスレッドで作っておく（サイドバーから History の行に飛ぶときに使う）。
             current.rows();
             return Ok(current.clone());
@@ -646,26 +736,9 @@ impl Repository {
             Some(old) => graph::relayout(&old.layout, &old.graph, &graph, head_row),
             None => graph::layout(&graph, head_row),
         };
-        if let Some(path) = &self.cache_path {
-            let cached = CachedHistory {
-                tips,
-                shallow,
-                head,
-                order,
-                graph,
-                layout,
-            };
-            // キャッシュを書けなくても History は使える。次の起動が遅くなるだけ。
-            let _ = cache::write(path, &cached);
-            return Ok(self.publish(
-                cached.tips,
-                cached.shallow,
-                cached.head,
-                cached.graph,
-                cached.layout,
-            ));
-        }
-        Ok(self.publish(tips, shallow, head, graph, layout))
+        let snapshot = self.publish(tips, shallow, head, graph, layout);
+        self.schedule_cache(snapshot.clone(), order);
+        Ok(snapshot)
     }
 
     /// History を最初から作り直して公開する（永続キャッシュを捨て、前回の History から引き継がない）。手元の共有の
@@ -673,11 +746,8 @@ impl Repository {
     pub fn rebuild_history(&self) -> Result<Arc<HistorySnapshot>> {
         self.delegate_done(&crate::delegate::Request::RebuildHistory)?;
         self.history.store(None);
-        if let Some(path) = &self.cache_path {
-            match std::fs::remove_file(path) {
-                Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
-                _ => {}
-            }
+        if let Some(writer) = &self.cache {
+            writer.discard()?;
         }
         self.load_history()
     }
@@ -777,8 +847,14 @@ impl Repository {
     }
 
     /// History の永続キャッシュのファイル（あれば）。
+    /// History の永続キャッシュの大きさ（バイト）と、起動してから書いたもの。キャッシュを持たなければ `None`。
+    pub fn history_cache(&self) -> Option<(u64, cache::WriteStats)> {
+        let writer = self.cache.as_ref()?;
+        Some((cache::size(writer.path()), writer.stats()))
+    }
+
     pub fn cache_path(&self) -> Option<&std::path::Path> {
-        self.cache_path.as_deref()
+        self.cache.as_ref().map(cache::Writer::path)
     }
 
     /// `snapshot` の `rows` の行（検索で一致したコミット）だけの History。一致しないコミットは飛ばし、線は最初の親を
@@ -1948,14 +2024,17 @@ mod tests {
         git(&dir, &["init", "-q"]);
         git(&dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
         git(&dir, &["commit", "--allow-empty", "-q", "-m", "first"]);
-        let cache = tmp.path().join("cache/history.bin");
+        let cache = tmp.path().join("cache/history");
 
         let repo = Repository::with_cache(GixBackend::open(&dir).unwrap(), cache.clone());
         assert!(repo.load_cached_history().is_none());
         let loaded = repo.load_history().unwrap();
+        // 書き込みはまとめるので、すぐには書かない。閉じるときに書く。
+        assert!(!cache.exists());
+        drop(repo);
         assert!(cache.exists());
 
-        // 次の起動。
+        // 次の起動。キャッシュの History は、上の方だけレイアウトしてすぐ見せる（この大きさなら全体）。
         let repo = Repository::with_cache(GixBackend::open(&dir).unwrap(), cache.clone());
         let cached = repo.load_cached_history().unwrap();
         assert_eq!(cached.graph, loaded.graph);
@@ -1968,19 +2047,18 @@ mod tests {
         git(&dir, &["commit", "--allow-empty", "-q", "-m", "second"]);
         let updated = repo.load_history().unwrap();
         assert_eq!((updated.generation, updated.graph.len()), (2, 2));
+        repo.flush_cache().unwrap();
         let repo = Repository::with_cache(GixBackend::open(&dir).unwrap(), cache.clone());
         assert_eq!(repo.load_cached_history().unwrap().graph.len(), 2);
 
         // 作り直すと、前回のものを引き継がずに作り、キャッシュも書き直す。
         let cached = repo.load_history().unwrap();
-        // 壊れたキャッシュに差し替える（その場で書き換えると、mmap している `cached` まで壊れる）。
-        let broken = tmp.path().join("broken.bin");
-        std::fs::write(&broken, b"broken").unwrap();
-        std::fs::rename(&broken, &cache).unwrap();
+        std::fs::write(cache.join("state"), b"broken").unwrap();
         let rebuilt = repo.rebuild_history().unwrap();
         assert!(!Arc::ptr_eq(&rebuilt, &cached));
         assert_eq!(rebuilt.graph, cached.graph);
         assert!(rebuilt.generation > cached.generation);
+        repo.flush_cache().unwrap();
         let repo = Repository::with_cache(GixBackend::open(&dir).unwrap(), cache);
         assert_eq!(repo.load_cached_history().unwrap().graph.len(), 2);
     }
@@ -2209,7 +2287,7 @@ mod tests {
             &["clone", "-q", "--depth", "1", &url, "shallow"],
         );
         let dir = tmp.path().join("shallow");
-        let cache = tmp.path().join("cache/history.bin");
+        let cache = tmp.path().join("cache/history");
 
         let repo = Repository::with_cache(GixBackend::open(&dir).unwrap(), cache.clone());
         let history = repo.load_history().unwrap();
@@ -2221,6 +2299,7 @@ mod tests {
 
         // アプリを閉じているあいだに深くしても、次の起動で作り直す（キャッシュは先に見せてよい）。
         git(&dir, &["fetch", "-q", "--unshallow"]);
+        drop(repo);
         let repo = Repository::with_cache(GixBackend::open(&dir).unwrap(), cache);
         assert_eq!(repo.load_cached_history().unwrap().graph.len(), 2);
         let history = repo.load_history().unwrap();

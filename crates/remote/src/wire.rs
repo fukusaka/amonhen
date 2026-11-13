@@ -54,8 +54,8 @@ pub enum Request {
     },
     /// → `RepoPaths`
     Paths,
-    /// → `Option<String>`: 共有の daemon が History を用意した永続キャッシュのファイル（用意できない daemon なら
-    /// `None`）。手元の共有の daemon でだけ使う。
+    /// → `Option<PreparedReply>`: 共有の daemon が History を用意した永続キャッシュのフォルダと、レイアウト（用意
+    /// できない daemon なら `None`）。手元の共有の daemon でだけ使う。
     PreparedHistory,
     /// → `DelegateReply`: コアの処理を daemon のコアに任せる（中身の形はコアが決める）。手元の共有の daemon でだけ
     /// 使う。
@@ -464,6 +464,17 @@ pub enum Notification {
 pub struct Bytes(#[serde(with = "serde_bytes")] pub Vec<u8>);
 
 /// コミットの本文。範囲は `raw` の中のバイト位置。
+/// 共有の daemon が用意した History（`Request::PreparedHistory` の答え）。
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct PreparedReply {
+    /// 永続キャッシュのフォルダ。
+    pub path: String,
+    /// レイアウトを置いた共有メモリの領域の名前と、点・線・幹線の印の（始め、終わり）。置けなければ `None`。
+    pub region: Option<String>,
+    pub parts: Vec<(u64, u64)>,
+    pub lane_count: u16,
+}
+
 /// 任せた処理の答え。大きなバイト列は共有メモリの領域（`region` の名前と各部分の位置）で渡す。共有メモリを
 /// 作れなかったときだけ、`inline` に入れて送る。
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

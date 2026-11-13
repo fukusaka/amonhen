@@ -95,9 +95,12 @@ private func makeRepo() throws -> URL {
         try? FileManager.default.removeItem(at: dir)
         try? FileManager.default.removeItem(at: cache)
     }
-    let first = try Repository(path: dir.path, cacheDirectory: cache)
-    #expect(first.loadCachedHistory() == nil)
-    _ = try first.loadHistory()
+    do {
+        let first = try Repository(path: dir.path, cacheDirectory: cache)
+        #expect(first.loadCachedHistory() == nil)
+        _ = try first.loadHistory()
+        // キャッシュの書き込みはまとめるので、閉じるとき（`first` を手放すとき）に書く。
+    }
 
     let second = try Repository(path: dir.path, cacheDirectory: cache)
     let cached = try #require(second.loadCachedHistory())
