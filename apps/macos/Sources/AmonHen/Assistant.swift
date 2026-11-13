@@ -387,6 +387,12 @@ enum Assistant {
             .appendingPathComponent("assist")
     }
 
+    /// 覚えている返事の大きさの合計（Settings > Performance）。
+    static func cacheSize() -> Int64 { CacheFiles.size(of: [cacheDirectory]) }
+
+    /// 覚えている返事をすべて忘れる（Settings > Performance）。
+    static func clearCache() throws { try CacheFiles.remove([cacheDirectory]) }
+
     // MARK: - 実行
 
     /// `purpose` のプロンプトに `variables` を差し込んで送り、返事を流しながら `onText` に渡す（それまでの全文）。

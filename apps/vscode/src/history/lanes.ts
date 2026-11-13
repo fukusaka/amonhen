@@ -40,7 +40,7 @@ export function lanePositions(
   };
   for (const row of rows) {
     if (!row) continue;
-    mark(row.col, ACTIVE);
+    if (!row.pending) mark(row.col, ACTIVE);
     for (let i = 0; i < row.segs.length; i += 5) {
       mark(row.segs[i]!, PASS);
       mark(row.segs[i + 2]!, PASS);

@@ -134,7 +134,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 目的ごとの AI のプロンプト（編集・既定に戻す・試す） | ✓ | ✓ | — | n/a |  |
 | Performance: commit-graph・共有の daemon | ✓ | ✓ | ✓ | n/a | VSCode: VSCode の設定の `amonhen.writeCommitGraph`・`amonhen.daemon.enabled`・`amonhen.daemon.path`。 |
 | Performance: fsmonitor | ✓ | ✓ | ✓ | n/a | GTK4: Linux・BSD では、エンジンを git の fsmonitor の hook（`amonhen fsmonitor-watchman`）にして Watchman を使う。Watchman がないか、git が 2.26 より古い（hook の版 2 がない）と押せない。<br>VSCode: VSCode の設定の `amonhen.fsmonitor`（既定はオン）。 |
-| Performance: 永続キャッシュの場所・大きさ・消す | — | — | — | △ | CLI: `log --rebuild`・`daemon rebuild`。 |
+| Performance: 永続キャッシュの場所・大きさ・消す | ✓ | ✓ | — | △ | History と AI の結果を 1 行ずつ、大きさと「消す」。CLI: `log --rebuild`・`daemon rebuild`。 |
 | 設定の変更の Undo・Redo | △ | △ | n/a | n/a | macOS: Git のページとリポジトリの設定だけ。<br>GTK4: Git のページとリポジトリの設定だけ。 |
 
 ## 4. リポジトリの設定
@@ -339,6 +339,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Operations（git の命令・出力・進み具合・取り消し） | ✓ | ✓ | △ | △ | VSCode: Output のチャンネルの記録だけ。<br>CLI: `amonhen run`（`remoteActivity`・`cancelActivity`）から。 |
 | History（操作ログ・ここまで戻す） | ✓ | ✓ | △ | △ | VSCode: Undo History… が Undo の記録を並べ、選んだところまで戻す。ほかの Activity はない。<br>CLI: `undo --list` が記録を出す。 |
 | Performance | ✓ | ✓ | n/a | n/a | VSCode: VSCode の出力（Amon Hen のログ）が代わり。 |
+| History のキャッシュの書き込み（リポジトリごとの大きさ・回数・量・最後の書き込み） | ✓ | ✓ | — | △ | CLI: `amonhen run`（`historyCache`）。 |
 | Events | ✓ | ✓ | n/a | n/a | VSCode: VSCode の出力（Amon Hen のログ）が代わり。 |
 | JSON で書き出す | ✓ | ✓ | n/a | n/a | VSCode: VSCode の出力（Amon Hen のログ）が代わり。 |
 | Daemon のタブ（起動・停止・つながり） | ✓ | ✓ | ✓ | △ | VSCode: メインビューのページ（サイドバーの ⋯ とコマンドパレットの Show Daemon）。窓のつながりは手元の daemon だけ。<br>CLI: `daemon status / start / stop`。 |

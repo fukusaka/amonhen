@@ -11,6 +11,8 @@ becomes the GitHub Release notes.
 
 #### Added
 
+- Activity's Performance shows what each open repository's History cache wrote since launch, and its size.
+- Settings > Performance shows the size of the History cache and of saved AI results, each with a Clear button.
 - When Commit can't be clicked, its tooltip says why: no files are checked, no message, or a commit in progress.
 - Merge chooses how to integrate in its confirmation: Follow git's settings, Fast-Forward Only, Always Create a Merge
   Commit, or Squash into One Commit (committed right away; one that conflicts stops as Squash in progress).
@@ -21,10 +23,14 @@ becomes the GitHub Release notes.
   rewritten, not whenever the branch has an upstream.
 - macOS: History highlights the selected commit's ancestors in the same frame as the selection, without waiting for
   the whole History (about 85 ms to 52 ms from the key on a 60Hz display, in large repositories too).
+- GTK4 History highlights the selected commit's ancestors in the frame after the selection, without computing the
+  whole History in the background first (about 33 ms to 16 ms from the key, in large repositories too).
 - macOS: History draws its graph and text on a render thread of their own, so the main thread does less while
   scrolling and the ancestor highlight appears sooner.
 - Activity's "History: input → display" no longer counts redraws that no input caused (a background reload
   was timed from the last click, seconds earlier).
+- History's cache no longer rewrites itself in full on every commit, fetch or checkout: it writes only what changed
+  (about 20 KB instead of 117 MB on linux). Rows far down a large History get their graph a moment after opening.
 - Repository settings that are showing read the configuration again when it changes outside the app or on Refresh.
 - The Pull sheet no longer leaves a blank space when the chosen mode can't pull: it keeps the graph as it is now and
   says so, and why, where the after graph would be.
