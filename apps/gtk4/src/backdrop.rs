@@ -462,10 +462,23 @@ fn redraw(widget: &gtk::Widget) {
 
 /// 1 つの窓の規則。
 fn rules(id: u32, b: &Backdrop, (width, height): (i32, i32)) -> String {
-    if b.style == Style::System {
-        return String::new();
-    }
     let w = format!("window.amonhen-bd-{id}");
+    // 読む面の中（一覧・差分・文字の欄など）は自分では塗らず、下の 1 つの色（Single では地）を見せる。
+    let panes = format!(
+        "{w} .amonhen-pages .view, {w} .amonhen-pages list, {w} .amonhen-pages listview, \
+         {w} .amonhen-pages columnview, {w} .amonhen-pages scrolledwindow, {w} .amonhen-pages viewport, \
+         {w} .amonhen-pages textview, {w} .amonhen-pages textview > text, {w} .amonhen-pages paned, \
+         {w} .amonhen-pages stack, {w} .amonhen-pages .amonhen-merge, {w} .amonhen-merge .view, \
+         {w} .amonhen-merge textview > text, {w} .amonhen-merge scrolledwindow \
+         {{ background-color: transparent; background-image: none; }}\n"
+    );
+    // 読む面（右のページとステータスバー、マージの窓）の色。
+    let opaque =
+        format!("{w} .amonhen-pages, {w} .amonhen-merge {{ background-color: @view_bg_color; }}\n");
+    if b.style == Style::System {
+        // 窓・見出しの帯・サイドバーはふだんのまま、読む面だけ 1 つの色にそろえる。
+        return opaque + &panes;
+    }
     let picture = b
         .image
         .as_deref()
@@ -540,21 +553,15 @@ fn rules(id: u32, b: &Backdrop, (width, height): (i32, i32)) -> String {
          {w} .amonhen-sidebar .view, {w} .amonhen-sidebar list {{ background-color: transparent; background-image: none; }}\n"
     ));
     match b.style {
-        // 読む面（右のページとステータスバー）は 1 つの不透明な色。
-        Style::Chrome => css.push_str(&format!(
-            "{w} .amonhen-pages, {w} .amonhen-merge {{ background-color: @view_bg_color; }}\n"
-        )),
+        // 読む面は 1 つの不透明な色。
+        Style::Chrome => css.push_str(&opaque),
         // 読む面は自分では塗らない（地が見える）。
         Style::Single => css.push_str(&format!(
-            "{w} .amonhen-pages, {w} .amonhen-pages .view, {w} .amonhen-pages list, {w} .amonhen-pages listview, \
-             {w} .amonhen-pages columnview, {w} .amonhen-pages scrolledwindow, {w} .amonhen-pages viewport, \
-             {w} .amonhen-pages textview, {w} .amonhen-pages textview > text, {w} .amonhen-pages paned, \
-             {w} .amonhen-pages stack, {w} .amonhen-pages .amonhen-merge, {w} .amonhen-merge .view, \
-             {w} .amonhen-merge textview > text, {w} .amonhen-merge scrolledwindow \
-             {{ background-color: transparent; background-image: none; }}\n"
+            "{w} .amonhen-pages {{ background-color: transparent; background-image: none; }}\n"
         )),
         Style::System => {}
     }
+    css.push_str(&panes);
     css
 }
 

@@ -140,7 +140,7 @@ pub fn backdrop_section(
             syncing.set(true);
             style.set_selected(Style::ALL.iter().position(|s| *s == b.style).unwrap_or(0) as u32);
             note.set_text(&match b.style {
-                Style::System => tr!("The usual look: each pane keeps its own color."),
+                Style::System => tr!("The usual look. The lists and diffs share one opaque color."),
                 Style::Chrome => tr!(
                     "The sidebar and toolbar show the image or what is behind the window. The lists and diffs share one opaque color."
                 ),

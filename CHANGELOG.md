@@ -25,6 +25,7 @@ becomes the GitHub Release notes.
   theme imported from its JSON.
 - GTK4: Settings > Theme has the same window background and syntax themes, and the repository list's Window
   Background… overrides it per repository.
+- GTK4: in the System window background, the lists, diffs and commit form share one color.
 
 #### Fixed
 

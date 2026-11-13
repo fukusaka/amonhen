@@ -419,7 +419,8 @@ bookmark (the repository list's context menu, Window Background…).
 - **GTK4.** The same settings under the same keys (`gtk.ini`, and the bookmark's `backdrop`), applied with CSS: each
   window gets a class of its own, the window itself draws the color, the image (`background-size: cover`, or its
   natural size in a corner, shrunk to fit) and the layer over it, and the header bar, tab bar, sidebar and pages are made
-  transparent or opaque by style. A window shows the background of its front tab's repository; the merge editor's own
+  transparent or opaque by style. In System only the pages change: they share `@view_bg_color` (GTK keeps its header
+  bar across the whole window, so the sidebar does not run to the top). A window shows the background of its front tab's repository; the merge editor's own
   window follows the window it was opened from. A see-through window needs a compositor (`gdk::Display::is_composited`;
   without one it stays opaque), and since GNOME cannot blur what is behind, the see-through sidebar is denser (85%).
   On GNOME's Wayland session the presentation time did not change with any style (`--measure-scroll`, 3000 commits:

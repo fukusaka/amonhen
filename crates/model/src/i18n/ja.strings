@@ -2282,7 +2282,7 @@
 "Tint the toolbar" = "ツールバーに色を付ける";
 "Toolbar color" = "ツールバーの色";
 "Toolbar tint" = "ツールバーの色の濃さ";
-"The usual look: each pane keeps its own color." = "ふだんの見た目です。面はそれぞれの色です。";
+"The usual look. The lists and diffs share one opaque color." = "ふだんの見た目です。一覧と差分は不透明な 1 つの色です。";
 "The sidebar and toolbar show the image or what is behind the window. The lists and diffs share one opaque color." = "サイドバーとツールバーに背景画像か窓の後ろが見えます。一覧と差分は不透明な 1 つの色です。";
 "One layer under the whole window. The lists and diffs paint nothing, and the colors of changes and selections stay opaque." = "窓全体の下に 1 枚の地を敷きます。一覧と差分は自分では塗らず、変更の行と選択の色は不透明のままです。";
 "Syntax Colors" = "構文の色";
