@@ -1219,10 +1219,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     @objc private func backdropSettingChanged() { applyBackdrop() }
 
-    /// 窓の背景を、アプリの設定に合わせる。
+    /// 窓の背景を、アプリの設定（リポジトリの上書きがあればそれ）に合わせる。
     func applyBackdrop() {
         guard let host = backdropHost, let split = mainSplit, let pages else { return }
-        let settings = BackdropSettings.app
+        let settings = BackdropSettings.resolved(for: location)
         BackdropSettings.set(settings, for: window)
         if let item = split.splitViewItems.first, (item.behavior == .sidebar) != (settings.style == .system) {
             let collapsed = item.isCollapsed

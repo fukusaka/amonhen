@@ -73,7 +73,7 @@ struct BackdropSections: View {
     }
 }
 
-/// Theme: 窓の背景と構文の色（アプリ全体）。
+/// Theme: 窓の背景と構文の色（アプリ全体。リポジトリごとの背景は、リポジトリの一覧の右クリックから）。
 struct ThemeSettings: View {
     @Bindable var model: SettingsModel
 
@@ -167,5 +167,49 @@ private struct ThemePreview: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(nsColor: .textBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+}
+
+/// このリポジトリの窓の背景（リポジトリの一覧の右クリック「Window Background…」）。アプリの設定を使うか、上書きするか。
+struct RepositoryBackdropView: View {
+    let location: String
+    let title: String
+    let onClose: () -> Void
+    @State private var override: Bool
+    @State private var settings: BackdropSettings
+
+    init(location: String, title: String, onClose: @escaping () -> Void) {
+        self.location = location
+        self.title = title
+        self.onClose = onClose
+        let own = Bookmarks.shared.bookmark(location)?.backdrop
+        _override = State(initialValue: own != nil)
+        _settings = State(initialValue: own ?? BackdropSettings.app)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Form {
+                Section {
+                    Toggle(L("Use a different background for %@", title), isOn: $override)
+                    Note(L("Otherwise this window follows Settings > Theme."))
+                }
+                if override { BackdropSections(settings: $settings) }
+            }
+            .formStyle(.grouped)
+            HStack {
+                Spacer()
+                Button(L("Done")) { onClose() }.keyboardShortcut(.defaultAction)
+            }
+            .padding()
+        }
+        // Form は自分の高さを持たないので、シートの高さを決めておく（溢れたら Form の中で送る）。
+        .frame(width: 520, height: !override ? 200 : settings.style == .system ? 330 : 560)
+        .onChange(of: override) { save() }
+        .onChange(of: settings) { save() }
+    }
+
+    private func save() {
+        Bookmarks.shared.setBackdrop(location, override ? settings : nil)
     }
 }

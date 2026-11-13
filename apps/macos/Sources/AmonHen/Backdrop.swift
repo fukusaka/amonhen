@@ -102,6 +102,11 @@ struct BackdropSettings: Codable, Hashable {
         }
     }
 
+    /// `location` の窓で使う設定（リポジトリの上書きがあればそれ）。
+    static func resolved(for location: String) -> BackdropSettings {
+        Bookmarks.shared.bookmark(location)?.backdrop ?? app
+    }
+
     /// 読む面に敷く色（`chrome` は不透明、`single` は塗らない、`system` は面ごとの色のまま）。
     var paneColor: NSColor? {
         switch style {

@@ -1935,6 +1935,9 @@
 "Dark" = "暗い";
 "Light" = "明るい";
 "Couldn’t read %@: %@" = "%1$@ を読めませんでした: %2$@";
+"Use a different background for %@" = "%@ は別の背景にする";
+"Otherwise this window follows Settings > Theme." = "しなければ、この窓は Settings > Theme に従います。";
+"Window Background…" = "窓の背景…";
 "Theme" = "テーマ";
 "Placement" = "置き方";
 "Fill the Window" = "窓いっぱい";
