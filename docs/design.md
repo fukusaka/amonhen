@@ -376,6 +376,15 @@ bookmark (the repository list's context menu, Window Background…).
   read from its JSON (JSONC comments and trailing commas, `include` merged up to 4 levels); each of the core's 14 kinds
   takes the color of the most specific TextMate scope in its list (for example `keyword.control`, then `keyword`), so
   the colors are close but not exact. Imported themes are kept in the app's settings.
+- **GTK4.** The same settings under the same keys (`gtk.ini`, and the bookmark's `backdrop`), applied with CSS: each
+  window gets a class of its own, the window itself draws the color, the image (`background-size: cover`, or its
+  natural size in a corner, shrunk to fit) and the layer over it, and the header bar, tab bar, sidebar and pages are made
+  transparent or opaque by style. A window shows the background of its front tab's repository; the merge editor's own
+  window follows the window it was opened from. A see-through window needs a compositor (`gdk::Display::is_composited`;
+  without one it stays opaque), and since GNOME cannot blur what is behind, the see-through sidebar is denser (85%).
+  On GNOME's Wayland session the presentation time did not change with any style (`--measure-scroll`, 3000 commits:
+  p50 33.3 ms, two frames, in every style; the main thread 1.3–1.6 ms per frame), since the compositor composites every
+  window either way.
 
 ## Rewriting operations and stacked branches
 

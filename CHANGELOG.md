@@ -19,6 +19,8 @@ becomes the GitHub Release notes.
   override it from the repository list's context menu.
 - macOS: syntax colors come from a theme, chosen for the light and dark appearance: built-in themes or a VSCode color
   theme imported from its JSON.
+- GTK4: Settings > Theme has the same window background and syntax themes, and the repository list's Window
+  Background… overrides it per repository.
 
 #### Fixed
 
