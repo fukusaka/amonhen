@@ -207,6 +207,7 @@ fn write_reply(writer: &Writer, id: u64, result: Result<Vec<u8>>, compress: bool
 
 /// 用意した History を送る形にする。レイアウトは共有メモリに置く（作れなければ送らず、つないだ側が計算する）。
 fn share_prepared(p: amonhen_model::PreparedHistory) -> crate::wire::PreparedReply {
+    #[cfg_attr(not(all(unix, not(target_os = "android"))), allow(unused_mut))]
     let mut out = crate::wire::PreparedReply {
         path: p.cache.display().to_string(),
         ..Default::default()
