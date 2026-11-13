@@ -9,9 +9,10 @@ becomes the GitHub Release notes.
 
 ### [0.2.11] - 2026-11-13
 
-Merge asks how to integrate (following git's settings, fast-forward only, always a merge commit, or squashed), and
-Commit's tooltip says why it can't be clicked. Publish and Pull work on a branch whose upstream was deleted, the Pull
-sheet draws the merge commit git would write, and the GTK4 app matches macOS in more places.
+History's cache writes only what changed instead of the whole History, and the selected commit's ancestors light up
+sooner, in large repositories too. Merge asks how to integrate (following git's settings, fast-forward only, always a
+merge commit, or squashed), and Commit's tooltip says why it can't be clicked. Publish and Pull work on a branch whose
+upstream was deleted, and the GTK4 app matches macOS in more places.
 
 #### Added
 
