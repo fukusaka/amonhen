@@ -114,7 +114,8 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         scrollView.contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(
             self, selector: #selector(redraw), name: NSView.boundsDidChangeNotification, object: scrollView.contentView)
-        // 構文の色を変えたら、見えている差分だけ描き直す。
+        // 背景・構文の色を変えたら、見えている差分だけ描き直す。
+        NotificationCenter.default.addObserver(self, selector: #selector(redrawIfShown), name: .backdropApplied, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(redrawIfShown), name: .syntaxThemeChanged, object: nil)
         textView.metalLayer.device = renderer.device
         // 画面の倍率が変わったら、倍率込みで並べた文字（行、行番号、見出し、チェックの印）を全部捨てて描き直す。
@@ -745,7 +746,7 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
     func overlay() -> (CGImage, NSView)? {
         buildInstances()
         let scale = view.window?.backingScaleFactor ?? 2
-        return renderer.image(size: textView.bounds.size, scale: scale, background: NSColor.textBackgroundColor.rgba)
+        return renderer.image(size: textView.bounds.size, scale: scale, background: backdrop.diffBackground)
             .map { ($0, textView) }
     }
 
@@ -757,8 +758,11 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
 
     @objc private func redraw() {
         buildInstances()
-        renderer.draw(layer: textView.metalLayer, background: NSColor.textBackgroundColor.rgba)
+        renderer.draw(layer: textView.metalLayer, background: backdrop.diffBackground)
     }
+
+    /// この窓の背景の設定（差分の地・帯の色）。
+    fileprivate var backdrop: BackdropSettings { BackdropSettings.of(view.window) }
 
     private func buildInstances() {
         let scale = view.window?.backingScaleFactor ?? 2
@@ -914,7 +918,8 @@ extension DiffViewController {
     ) {
         let r = all[row]
         let width = textView.bounds.width
-        renderer.addRect(CGRect(x: 0, y: top, width: width, height: lineHeight), color: NSColor.windowBackgroundColor.rgba)
+        let band = backdrop.bandColor
+        renderer.addRect(CGRect(x: 0, y: top, width: width, height: lineHeight), color: band)
         renderer.addRect(CGRect(x: 0, y: top + lineHeight - 1, width: width, height: 1), color: NSColor.separatorColor.rgba)
         let small = NSFont.systemFont(ofSize: 11) as CTFont
         let bold = NSFont.boldSystemFont(ofSize: 11) as CTFont
@@ -957,7 +962,7 @@ extension DiffViewController {
             if 24 + line.width > countsX - 8 {
                 renderer.addRect(
                     CGRect(x: countsX - 8, y: top, width: width - countsX + 8, height: lineHeight - 1),
-                    color: NSColor.windowBackgroundColor.rgba)
+                    color: band)
             }
         }
         var x = countsX
@@ -972,7 +977,7 @@ extension DiffViewController {
             renderer.addLine(check, origin: CGPoint(x: box.midX - check.width / 2, y: baseline), color: NSColor.white.rgba, scale: scale)
         } else {
             renderer.addRect(box, color: NSColor.secondaryLabelColor.rgba)
-            renderer.addRect(box.insetBy(dx: 1, dy: 1), color: NSColor.windowBackgroundColor.rgba)
+            renderer.addRect(box.insetBy(dx: 1, dy: 1), color: backdrop.boxColor)
         }
         renderer.addLine(label, origin: CGPoint(x: box.maxX + 5, y: baseline), color: NSColor.secondaryLabelColor.rgba, scale: scale)
     }
@@ -1003,7 +1008,7 @@ extension DiffViewController {
         let box = CGRect(x: 5, y: top + (lineHeight - size) / 2, width: size, height: size)
         if state == .off {
             renderer.addRect(box, color: NSColor.secondaryLabelColor.rgba)
-            renderer.addRect(box.insetBy(dx: 1, dy: 1), color: NSColor.textBackgroundColor.rgba)
+            renderer.addRect(box.insetBy(dx: 1, dy: 1), color: backdrop.boxColor)
             return
         }
         renderer.addRect(box, color: NSColor.controlAccentColor.rgba)

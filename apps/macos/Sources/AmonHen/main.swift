@@ -115,7 +115,11 @@ final class PageViewController: NSViewController {
         view.addSubview(next.view)
         current = next
         self.page = page
+        onShow?(next.view)
     }
+
+    /// 画面を出した（背景の型に合わせて中の背景を消す）。
+    var onShow: ((NSView) -> Void)?
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {

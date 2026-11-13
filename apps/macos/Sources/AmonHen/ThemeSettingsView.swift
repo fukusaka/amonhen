@@ -2,12 +2,84 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Theme: 構文の色。
+/// 窓の背景の設定の欄（Settings > Theme と、リポジトリごとの上書きのシートで同じ）。
+struct BackdropSections: View {
+    @Binding var settings: BackdropSettings
+
+    var body: some View {
+        Section(L("Window Background")) {
+            Picker(L("Style"), selection: $settings.style) {
+                ForEach(BackdropStyle.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            Note(note)
+            if settings.style != .system {
+                LabeledContent(L("Image")) {
+                    HStack {
+                        Text(settings.image.map { ($0 as NSString).lastPathComponent } ?? L("None (see through the window)"))
+                            .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                        Button(L("Choose…")) { chooseImage() }
+                        if settings.image != nil {
+                            Button(L("Remove")) { settings.image = nil }
+                        }
+                    }
+                }
+                if settings.image != nil {
+                    Picker(L("Placement"), selection: $settings.imagePlacement) {
+                        ForEach(BackdropImagePlacement.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                }
+            }
+            if settings.style == .single {
+                LabeledContent(L("Content opacity")) {
+                    HStack {
+                        Slider(value: $settings.contentOpacity, in: 0.4...1, step: 0.05)
+                        Text("\(Int((settings.contentOpacity * 100).rounded()))%").monospacedDigit().frame(width: 40)
+                    }
+                }
+            }
+            if settings.style != .system {
+                Toggle(L("Tint the toolbar"), isOn: Binding(
+                    get: { settings.toolbarColor != nil },
+                    set: { settings.toolbarColor = $0 ? (settings.toolbarColor ?? NSColor.controlAccentColor.hex) : nil }))
+                if let hex = settings.toolbarColor {
+                    ColorPicker(L("Toolbar color"), selection: Binding(
+                        get: { Color(nsColor: NSColor(hex: hex) ?? .controlAccentColor) },
+                        set: { settings.toolbarColor = NSColor($0).hex }), supportsOpacity: false)
+                    LabeledContent(L("Toolbar tint")) {
+                        HStack {
+                            Slider(value: $settings.toolbarOpacity, in: 0.1...1, step: 0.05)
+                            Text("\(Int((settings.toolbarOpacity * 100).rounded()))%").monospacedDigit().frame(width: 40)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var note: String {
+        switch settings.style {
+        case .system: L("macOS’s look: the sidebar is glass, and each pane keeps its own color.")
+        case .chrome: L("The sidebar and toolbar show the image or what is behind the window. The lists and diffs share one opaque color.")
+        case .single: L("One layer under the whole window. The lists and diffs paint nothing, and the colors of changes and selections stay opaque.")
+        }
+    }
+
+    private func chooseImage() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        settings.image = url.path
+    }
+}
+
+/// Theme: 窓の背景と構文の色（アプリ全体）。
 struct ThemeSettings: View {
     @Bindable var model: SettingsModel
 
     var body: some View {
         Form {
+            BackdropSections(settings: $model.backdrop)
             SyntaxThemeSection(model: model)
         }
         .formStyle(.grouped)

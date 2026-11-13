@@ -520,6 +520,7 @@ final class SettingsModel {
     }
     var assistantLanguage = Settings.assistantLanguage { didSet { Settings.assistantLanguage = assistantLanguage } }
     var assistantVersion: String?
+    var backdrop = BackdropSettings.app { didSet { if backdrop != oldValue { BackdropSettings.app = backdrop } } }
     var syntaxThemeLight = Settings.syntaxThemeLight { didSet { Settings.syntaxThemeLight = syntaxThemeLight } }
     var syntaxThemeDark = Settings.syntaxThemeDark { didSet { Settings.syntaxThemeDark = syntaxThemeDark } }
     var importedThemes = SyntaxTheme.imported { didSet { SyntaxTheme.imported = importedThemes } }
