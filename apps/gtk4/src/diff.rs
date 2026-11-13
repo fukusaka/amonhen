@@ -1864,10 +1864,12 @@ impl DiffWidget {
         let fg = self.color();
         let dark = fg.red() > 0.5;
         if opaque {
+            // 窓に 1 枚の地を敷いていれば、地と同じ濃さ（`backdrop.rs`）。
+            let alpha = crate::backdrop::of(self).band_alpha().unwrap_or(1.0);
             let base = if dark {
-                gdk::RGBA::new(0.14, 0.14, 0.15, 1.0)
+                gdk::RGBA::new(0.14, 0.14, 0.15, alpha)
             } else {
-                gdk::RGBA::WHITE
+                gdk::RGBA::new(1.0, 1.0, 1.0, alpha)
             };
             snapshot.append_color(&base, &graphene::Rect::new(0.0, top, width, rh));
         }

@@ -11,6 +11,7 @@ mod archive;
 mod askpass;
 mod assist;
 mod avatars;
+mod backdrop;
 mod bookmarks;
 mod branchswitcher;
 mod bundle;
@@ -377,6 +378,7 @@ fn main() -> glib::ExitCode {
     // Settings > Performance の fsmonitor を status に効かせる。
     settings::apply_fsmonitor();
     theme::watch_settings();
+    backdrop::connect_changed(tabs::apply_backdrops);
     // コアが作る文（エラーなど）の言語。Linux の慣習どおり LC_ALL・LC_MESSAGES・LANG から。
     amonhen_model::i18n::set_default(amonhen_model::i18n::Lang::from_env());
     let mut args = match parse_args() {
@@ -1139,6 +1141,9 @@ fn build_tab(
     // （macOS 版と同じ）。
     let statusbar = statusbar::StatusBar::new();
     let right_side = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    // 窓の背景の型で、読む面として塗る・塗らない（`backdrop.rs`）。
+    right_side.add_css_class("amonhen-pages");
+    sidebar.root.add_css_class("amonhen-sidebar");
     pages.set_vexpand(true);
     right_side.append(&pages);
     right_side.append(&statusbar.root);
@@ -3717,10 +3722,13 @@ fn snapshot(window: &gtk::Window, png: &Path) -> Result<(), String> {
     // 窓そのものの paintable は空になるので、窓の部品（見出しと中身）を順に描く。
     let snap = gtk::Snapshot::new();
     snap.scale(scale, scale);
-    snap.append_color(
-        &window_background(window),
-        &graphene::Rect::new(0.0, 0.0, w, h),
-    );
+    // 窓の背景（CSS で窓そのものに描く色・画像・1 枚の地。部品を順に描くだけでは入らない）。
+    if !backdrop::snapshot_background(window, &snap, w, h) {
+        snap.append_color(
+            &window_background(window),
+            &graphene::Rect::new(0.0, 0.0, w, h),
+        );
+    }
     let mut child = window.first_child();
     while let Some(widget) = child {
         if let Some(bounds) = widget.compute_bounds(window) {

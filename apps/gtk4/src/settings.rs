@@ -679,7 +679,7 @@ pub fn show(near: &impl IsA<gtk::Widget>) {
         &tr!("Appearance"),
     );
 
-    // Theme（`themesettings.rs`）: 構文の色。
+    // Theme（`themesettings.rs`）: 窓の背景と構文の色。
     stack.add_titled(
         &page(&crate::themesettings::sections()),
         Some("theme"),

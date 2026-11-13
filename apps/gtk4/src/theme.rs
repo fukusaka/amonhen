@@ -137,6 +137,17 @@ pub fn parse_hex(hex: &str) -> Option<(f32, f32, f32)> {
     Some((c(16), c(8), c(0)))
 }
 
+/// `#rrggbb` に。
+pub fn to_hex(rgba: &gdk::RGBA) -> String {
+    let c = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+    format!(
+        "#{:02x}{:02x}{:02x}",
+        c(rgba.red()),
+        c(rgba.green()),
+        c(rgba.blue())
+    )
+}
+
 /// 内蔵のテーマ（どれも MIT などで公開された配色。macOS 版と同じ色）。
 pub fn built_in() -> Vec<SyntaxTheme> {
     vec![

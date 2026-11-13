@@ -503,6 +503,8 @@ pub fn show_in_window(editor: &Rc<Editor>, parent: &gtk::Window) {
     if let Some(app) = parent.application() {
         window.set_application(Some(&app));
     }
+    // 窓の背景は、開いたリポジトリの窓に合わせる（macOS 版と同じ）。
+    crate::backdrop::follow(&window, parent);
     // Ctrl+W（`win.close`）で閉じ（保存していない Result は下で確かめる）、Ctrl+M（`win.minimize`）でしまう
     // （macOS 版の閉じられる・しまえる窓の ⌘W・⌘M）。
     let actions = gio::SimpleActionGroup::new();
@@ -920,6 +922,8 @@ impl Editor {
         bar_area.set_child(Some(&bar));
         bar_area.add_overlay(&watch);
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        // 別の窓に入れたとき、窓の背景の型で塗る・塗らない（`backdrop.rs`）。
+        root.add_css_class("amonhen-merge");
         root.append(&bar_area);
         // マーカーの残っていないファイル（rerere が解決を当てた、ほかのエディタで直した）の案内。
         let mut banner_forget = None;
