@@ -935,7 +935,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         rightController.addChild(editor)
         rightView.content = editor.view
         embeddedEditor = editor
-        Backdrop.clearBackgrounds(in: editor.view, clear: BackdropSettings.of(view.window).style != .system)
+        Backdrop.clearBackgrounds(in: editor.view, clear: true)
     }
 
     private func unembed() {

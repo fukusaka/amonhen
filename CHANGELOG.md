@@ -19,6 +19,8 @@ becomes the GitHub Release notes.
 - macOS: Settings > Theme sets the window background: System, Sidebar and Toolbar Only (the lists and diffs one opaque
   color), or One Layer for the Whole Window, with an optional background image and toolbar tint; a repository can
   override it from the repository list's context menu.
+- macOS: the window takes macOS's standard layout: the sidebar runs to the top with the Sidebar and Repositories buttons
+  over it, and the toolbar, lists, diffs and commit form share one color instead of four different greys.
 - macOS: syntax colors come from a theme, chosen for the light and dark appearance: built-in themes or a VSCode color
   theme imported from its JSON.
 - GTK4: Settings > Theme has the same window background and syntax themes, and the repository list's Window

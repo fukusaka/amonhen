@@ -58,7 +58,7 @@ struct BackdropSections: View {
 
     private var note: String {
         switch settings.style {
-        case .system: L("macOS’s look: the sidebar is glass, and each pane keeps its own color.")
+        case .system: L("macOS’s look: the sidebar is glass. The lists and diffs share one opaque color.")
         case .chrome: L("The sidebar and toolbar show the image or what is behind the window. The lists and diffs share one opaque color.")
         case .single: L("One layer under the whole window. The lists and diffs paint nothing, and the colors of changes and selections stay opaque.")
         }

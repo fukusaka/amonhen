@@ -947,8 +947,8 @@ private final class ConflictBand: NSView {
     override var isFlipped: Bool { true }
 
     override func draw(_ dirtyRect: NSRect) {
-        // 窓に 1 枚の地を敷いていれば塗らない（`chrome` は読む面と同じ色）。
-        (BackdropSettings.of(window).paneColor ?? .windowBackgroundColor).setFill()
+        // 読む面と同じ色（窓に 1 枚の地を敷いていれば塗らない）。
+        BackdropSettings.of(window).paneColor.setFill()
         bounds.fill(using: .copy)
         arrows.removeAll()
         guard let owner else { return }
@@ -1094,8 +1094,8 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate {
         BackdropSettings.set(settings, for: window)
         host.apply(settings)
         editor.view.wantsLayer = true
-        editor.view.layer?.backgroundColor = settings.paneColor?.cgColor
-        Backdrop.clearBackgrounds(in: editor.view, clear: settings.style != .system)
+        editor.view.layer?.backgroundColor = settings.paneColor.cgColor
+        Backdrop.clearBackgrounds(in: editor.view, clear: true)
         func redraw(_ view: NSView) {
             view.needsDisplay = true
             view.subviews.forEach(redraw)
