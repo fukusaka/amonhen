@@ -1581,7 +1581,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             // --merge-editor PATH で、そのファイルのマージエディタを開いて撮る。
             let mergePath = AppDelegate.option("--merge-editor")
             if let mergePath {
-                MergeEditorWindowController.show(path: mergePath, repository: repository, actions: actions)
+                MergeEditorWindowController.show(path: mergePath, repository: repository, actions: actions, from: window)
             }
             // --merge-sheet A,B,… で、いくつものブランチを merge するシートを開いて撮る。
             let mergeSheet = AppDelegate.option("--merge-sheet")?.split(separator: ",").map(String.init)

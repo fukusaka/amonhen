@@ -915,7 +915,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             // 編集中の内容のまま、別ウィンドウに移す。
             unembed()
             mergeEditors[editor.path] = nil
-            MergeEditorWindowController.show(editor, actions: actions)
+            MergeEditorWindowController.show(editor, actions: actions, from: view.window)
             diffView.show(nil, message: L("The merge editor is open in a separate window"))
         }
         editor.onResolved = { [weak self, weak editor] in
@@ -935,6 +935,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         rightController.addChild(editor)
         rightView.content = editor.view
         embeddedEditor = editor
+        Backdrop.clearBackgrounds(in: editor.view, clear: BackdropSettings.of(view.window).style != .system)
     }
 
     private func unembed() {
