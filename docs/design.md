@@ -389,16 +389,22 @@ Implemented by the FE and passed to the core.
 The macOS app's look of the window as a whole is a setting (Settings > Theme), with a per-repository override kept in the
 bookmark (the repository list's context menu, Window Background…).
 
-- **Styles.** System is macOS's look: the sidebar is glass and each pane keeps its own color. Sidebar and Toolbar Only
-  shows what is behind the window (or an image) in the sidebar and toolbar only, and gives the lists and diffs one
+- **Styles.** System is macOS's standard window: the glass sidebar runs to the top of the window with the Sidebar and
+  Repositories buttons over it, the toolbar sits over the content in the content's color, and the lists, diffs and
+  commit form share one opaque color (`textBackgroundColor`). Before, each pane kept its own color, and the window
+  color (tinted by the wallpaper since macOS 26) sat next to the neutral diff, so four greys stood side by side.
+  Sidebar and Toolbar Only shows what is behind the window (or an image) in the sidebar and toolbar only, and gives the lists and diffs one
   opaque color (`textBackgroundColor`), so reading areas never show through. One Layer for the Whole Window lays one
   layer under everything and has the panes paint nothing; the layer is `textBackgroundColor` at the content opacity
   (40–100%). In every style, the colors of changed lines and selections stay opaque.
 - **Structure.** `BackdropHostController` holds the window's content: behind it a `NSVisualEffectView` (behind the
-  window) or the image, the layer, and a band under the toolbar for its tint. In the two other styles the content
-  extends under the toolbar (`fullSizeContentView`), the sidebar is a plain split item instead of the glass sidebar
-  item, and the panes' scroll views, tables and text views stop drawing their backgrounds (remembered, and put back
-  for System). The diff's Metal layer clears to the layer's color, or to transparent for one layer. The merge editor's
+  window) or the image, the layer, and a band under the toolbar for its tint. The content extends under the toolbar
+  (`fullSizeContentView`) in every style, and the panes' scroll views, tables and text views stop drawing their
+  backgrounds (remembered, and put back for the sidebar in System). System keeps the glass sidebar item at full height
+  (the toolbar's `sidebarTrackingSeparator` puts the first two buttons over it, so the sidebar is at least 240 pt wide)
+  and hides the window title (the repository's name is in the toolbar); the pages leave the toolbar's height at their
+  top (the safe area, which also follows the tab bar). In the two other styles the content starts below the toolbar,
+  and the sidebar is a plain split item instead of the glass sidebar item. The diff's Metal layer clears to the layer's color, or to transparent for one layer. The merge editor's
   own window takes the background of the repository window it was opened from.
 - **Image.** It fills the window (cropped to keep its aspect) or sits at its natural size in a corner, shrunk to fit.
   With an image the window stays opaque. A see-through window (no image) is composited by WindowServer with what is

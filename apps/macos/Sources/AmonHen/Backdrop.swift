@@ -17,7 +17,7 @@ final class MainSplitViewController: NSSplitViewController {
 
 /// 窓の背景の型。
 enum BackdropStyle: String, CaseIterable, Codable, Hashable {
-    /// macOS の既定のまま（サイドバーはガラス、ほかの面はそれぞれの色）。
+    /// macOS の既定の窓（サイドバーはガラス、ツールバーは標準）。読む面（一覧・差分・Commit の欄）は 1 つの色。
     case system
     /// サイドバーとツールバーだけ透け、読む面（一覧・差分）は 1 つの色。
     case chrome
@@ -107,13 +107,9 @@ struct BackdropSettings: Codable, Hashable {
         Bookmarks.shared.bookmark(location)?.backdrop ?? app
     }
 
-    /// 読む面に敷く色（`chrome` は不透明、`single` は塗らない、`system` は面ごとの色のまま）。
-    var paneColor: NSColor? {
-        switch style {
-        case .system: nil
-        case .chrome: .textBackgroundColor
-        case .single: .clear
-        }
+    /// 読む面に敷く色（`system`・`chrome` は不透明な 1 つの色、`single` は塗らない）。
+    var paneColor: NSColor {
+        style == .single ? .clear : .textBackgroundColor
     }
 
     /// 差分の地（Metal で塗る色）。
@@ -124,15 +120,14 @@ struct BackdropSettings: Codable, Hashable {
     /// 差分のファイル名の帯。`single` では地と同じ濃さをもう 1 枚重ねる（上に留まった帯が下の行を隠す）。
     var bandColor: SIMD4<Float> {
         switch style {
-        case .system: NSColor.windowBackgroundColor.rgba
-        case .chrome: (NSColor.textBackgroundColor.blended(withFraction: 0.05, of: .labelColor) ?? .textBackgroundColor).rgba
+        case .system, .chrome: (NSColor.textBackgroundColor.blended(withFraction: 0.05, of: .labelColor) ?? .textBackgroundColor).rgba
         case .single: NSColor.textBackgroundColor.withAlphaComponent(contentOpacity).rgba
         }
     }
 
     /// 差分の中の小さな枠（チェックボックス）の中の色。
     var boxColor: SIMD4<Float> {
-        style == .system ? NSColor.windowBackgroundColor.rgba : NSColor.textBackgroundColor.rgba
+        NSColor.textBackgroundColor.rgba
     }
 
     /// 窓ごとの設定（差分などが自分の窓から引く）。
@@ -191,7 +186,7 @@ private final class TintView: NSView {
 }
 
 /// 窓の中身の土台: 背景の層（窓の後ろ・画像・地・ツールバーの帯）を敷き、その上に中身（分割ビュー）を載せる。
-/// `system` 以外では窓をタイトルバーの下まで広げ、ツールバーの下にも同じ層が見えるようにする。
+/// 窓はタイトルバーの下まで広げる。`system` 以外では、ツールバーの下にも同じ層が見えるようにする。
 final class BackdropHostController: NSViewController {
     let content: NSViewController
     private let behind = NSVisualEffectView()
@@ -223,7 +218,7 @@ final class BackdropHostController: NSViewController {
         view = root
     }
 
-    /// ツールバー（タイトルバー）の高さ。`system` では中身がその下から始まるので 0。
+    /// ツールバー（タイトルバー）の高さ。`system` では中身を窓の上端から始め、中の面が自分でツールバーを避けるので 0。
     private var titlebarHeight: CGFloat {
         guard let window = view.window, settings.style != .system else { return 0 }
         return max(0, view.bounds.height - window.contentLayoutRect.maxY)
@@ -277,21 +272,19 @@ final class BackdropHostController: NSViewController {
 
 /// 窓と面の背景を、型に合わせて切り替える。
 @MainActor enum Backdrop {
-    /// 窓の形: `system` 以外は中身をタイトルバーの下まで広げる。窓を透けるようにするのは、背景画像がなく窓の後ろを
-    /// 見せるときだけ（透ける窓は WindowServer が重ねるので、表示までが 1 フレームの半分ほど遅れる。計測済み）。
+    /// 窓の形: 中身をタイトルバーの下まで広げる。`system` は macOS の標準の窓と同じく、サイドバーが窓の上端まで伸び、
+    /// ツールバーは中身の上に乗る（窓のタイトルは出さない。リポジトリの名前はツールバーにある）。窓を透けるようにするのは、
+    /// 背景画像がなく窓の後ろを見せるときだけ（透ける窓は WindowServer が重ねるので、表示までが 1 フレームの半分ほど遅れる。
+    /// 計測済み）。
     static func prepare(window: NSWindow, style: BackdropStyle, seeThrough: Bool) {
-        let custom = style != .system
-        if window.styleMask.contains(.fullSizeContentView) != custom {
-            // 切り替えると AppKit は中身の大きさを保って窓を縮める・伸ばすので、窓の枠を戻す。
+        if !window.styleMask.contains(.fullSizeContentView) {
+            // 切り替えると AppKit は中身の大きさを保って窓を縮めるので、窓の枠を戻す。
             let frame = window.frame
-            if custom {
-                window.styleMask.insert(.fullSizeContentView)
-            } else {
-                window.styleMask.remove(.fullSizeContentView)
-            }
+            window.styleMask.insert(.fullSizeContentView)
             window.setFrame(frame, display: true)
         }
-        window.titlebarAppearsTransparent = custom
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = style == .system ? .hidden : .visible
         window.isOpaque = !seeThrough
         window.backgroundColor = seeThrough ? .clear : .windowBackgroundColor
     }
