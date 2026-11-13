@@ -114,6 +114,8 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         scrollView.contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(
             self, selector: #selector(redraw), name: NSView.boundsDidChangeNotification, object: scrollView.contentView)
+        // 構文の色を変えたら、見えている差分だけ描き直す。
+        NotificationCenter.default.addObserver(self, selector: #selector(redrawIfShown), name: .syntaxThemeChanged, object: nil)
         textView.metalLayer.device = renderer.device
         // 画面の倍率が変わったら、倍率込みで並べた文字（行、行番号、見出し、チェックの印）を全部捨てて描き直す。
         // 1 つでも残すと、前の倍率のグリフで描かれて崩れる（行番号で起きていた）。
@@ -748,6 +750,10 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
     }
 
     fileprivate func redrawFocus() { redraw() }
+
+    @objc private func redrawIfShown() {
+        if isViewLoaded, view.window != nil { redraw() }
+    }
 
     @objc private func redraw() {
         buildInstances()

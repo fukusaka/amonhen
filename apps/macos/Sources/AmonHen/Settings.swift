@@ -321,6 +321,23 @@ enum Settings {
     /// History の行を実際に 1 行で出すか: 設定で 1 行にしたか、作者・日時の行に出す項目が 1 つもないとき。
     static var oneLineHistoryRows: Bool { compactHistoryRows || !historyItems.hasMeta }
 
+    /// 構文の色のテーマ（明るい外観・暗い外観で別。`SyntaxTheme` の名前）。変えたら `syntaxThemeChanged` を知らせる。
+    static var syntaxThemeLight: String {
+        get { UserDefaults.standard.string(forKey: "syntaxThemeLight") ?? SyntaxTheme.system.name }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "syntaxThemeLight")
+            NotificationCenter.default.post(name: .syntaxThemeChanged, object: nil)
+        }
+    }
+
+    static var syntaxThemeDark: String {
+        get { UserDefaults.standard.string(forKey: "syntaxThemeDark") ?? SyntaxTheme.system.name }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "syntaxThemeDark")
+            NotificationCenter.default.post(name: .syntaxThemeChanged, object: nil)
+        }
+    }
+
     /// History の並び順（既定は日付順）。変えたら `historyOrderChanged` を知らせる。
     static var historyOrder: HistoryOrder {
         get { UserDefaults.standard.string(forKey: "historyOrder").flatMap(HistoryOrder.init(name:)) ?? .date }
@@ -503,6 +520,9 @@ final class SettingsModel {
     }
     var assistantLanguage = Settings.assistantLanguage { didSet { Settings.assistantLanguage = assistantLanguage } }
     var assistantVersion: String?
+    var syntaxThemeLight = Settings.syntaxThemeLight { didSet { Settings.syntaxThemeLight = syntaxThemeLight } }
+    var syntaxThemeDark = Settings.syntaxThemeDark { didSet { Settings.syntaxThemeDark = syntaxThemeDark } }
+    var importedThemes = SyntaxTheme.imported { didSet { SyntaxTheme.imported = importedThemes } }
     var checkRemoteSignaturesLocally = Settings.checkRemoteSignaturesLocally {
         didSet { Settings.checkRemoteSignaturesLocally = checkRemoteSignaturesLocally }
     }
@@ -891,6 +911,7 @@ final class SettingsWindowController: NSWindowController {
         add(L("SSH Hosts"), "network", SSHHostsSettings(model: model))
         add(L("Accounts"), "person.crop.circle", AccountsSettings(model: model))
         add(L("Appearance"), "paintbrush", AppearanceSettings(model: model))
+        add(L("Theme"), "swatchpalette", ThemeSettings(model: model))
         add(L("Diff & Merge"), "arrow.triangle.merge", DiffMergeSettings(model: model))
         add("AI", "sparkles", AISettings(model: model))
         add(L("Performance"), "speedometer", PerformanceSettings(model: model))
