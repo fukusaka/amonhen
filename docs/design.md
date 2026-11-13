@@ -350,6 +350,33 @@ Implemented by the FE and passed to the core.
 - File contents share the `Arc<[u8]>` decoded by gix across diff computation, highlighting and display.
 - Text selection, copy, search, the right-click menu and hunk / line-level staging are implemented by our own code.
 
+## Window background and themes
+
+The macOS app's look of the window as a whole is a setting (Settings > Theme), with a per-repository override kept in the
+bookmark (the repository list's context menu, Window Background…).
+
+- **Styles.** System is macOS's look: the sidebar is glass and each pane keeps its own color. Sidebar and Toolbar Only
+  shows what is behind the window (or an image) in the sidebar and toolbar only, and gives the lists and diffs one
+  opaque color (`textBackgroundColor`), so reading areas never show through. One Layer for the Whole Window lays one
+  layer under everything and has the panes paint nothing; the layer is `textBackgroundColor` at the content opacity
+  (40–100%). In every style, the colors of changed lines and selections stay opaque.
+- **Structure.** `BackdropHostController` holds the window's content: behind it a `NSVisualEffectView` (behind the
+  window) or the image, the layer, and a band under the toolbar for its tint. In the two other styles the content
+  extends under the toolbar (`fullSizeContentView`), the sidebar is a plain split item instead of the glass sidebar
+  item, and the panes' scroll views, tables and text views stop drawing their backgrounds (remembered, and put back
+  for System). The diff's Metal layer clears to the layer's color, or to transparent for one layer. The merge editor's
+  own window takes the background of the repository window it was opened from.
+- **Image.** It fills the window (cropped to keep its aspect) or sits at its natural size in a corner, shrunk to fit.
+  With an image the window stays opaque. A see-through window (no image) is composited by WindowServer with what is
+  behind it, which added about 4 ms from a scroll step to the frame being presented (p50 9.6 → 13.9 ms,
+  `--measure-scroll`, 3007 commits, release build on macOS 26), while the main thread and GPU times did not change;
+  with an image it is 9.9 ms.
+- **Syntax colors.** A theme is chosen for the light and the dark appearance separately: System (the system colors
+  used so far), seven built-in themes (Solarized, Gruvbox, Tomorrow, Nord) or a VSCode color theme. A VSCode theme is
+  read from its JSON (JSONC comments and trailing commas, `include` merged up to 4 levels); each of the core's 14 kinds
+  takes the color of the most specific TextMate scope in its list (for example `keyword.control`, then `keyword`), so
+  the colors are close but not exact. Imported themes are kept in the app's settings.
+
 ## Rewriting operations and stacked branches
 
 A rebase and the History edits (reword, squash, fixup, drop, edit, split, move) rewrite commits. A branch whose tip is
