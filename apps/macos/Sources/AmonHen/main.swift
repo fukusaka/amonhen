@@ -335,7 +335,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return connect(location: location, debug: debug, tabWith: tabWith, failed: error)
             }
             NSAlert(error: error).runModal()
-            showHomeIfNothingOpen()
             return nil
         }
     }
@@ -394,7 +393,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         tab.onClose = { [weak self, weak tab] in
             self?.connecting.removeAll { $0 === tab }
-            self?.showHomeIfNothingOpen()
         }
         connecting.append(tab)
         replacing?.close()
@@ -461,15 +459,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.onShowRepositories = { [weak self] in self?.showHome() }
         window.onReconnect = { [weak self, weak window] in
             guard let self, let window else { return }
-            // 同じ場所につなぎ直すタブに置き換える（閉じたときにリポジトリのページを出さないよう、先に置く）。
+            // 同じ場所につなぎ直すタブに置き換える。
             // 出していたページは、つないだタブでも出す。
             connect(location: window.location, debug: false, tabWith: window.window, replacing: window.window,
                     page: window.shownPage)
         }
         window.onClose = { [weak self, weak window] in
+            // 最後のリポジトリを閉じても、ほかの窓を出さない（macOS のふつうの動き。Dock を押すとリポジトリのページを出す）。
             self?.windows.removeAll { $0 === window }
-            // 最後のリポジトリを閉じたら、終わらずにリポジトリのページを出す。
-            self?.showHomeIfNothingOpen()
         }
         windows.append(window)
         RepositoryList.touch(window.location)
