@@ -3,7 +3,7 @@
 #![allow(clippy::disallowed_methods)] // テストの git などはそのまま起動する
 #![cfg(unix)]
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc;
 use std::time::Duration;
@@ -534,10 +534,7 @@ fn shares_one_daemon_between_clients() {
     assert_eq!(ra.load_history().unwrap().graph.len(), 1);
     assert_eq!(rb.load_history().unwrap().graph.len(), 1);
     // History は daemon が 1 つだけ作ってファイルに書き、どちらもそれを読む。
-    let caches: Vec<_> = walk(&home)
-        .into_iter()
-        .filter(|p| p.to_string_lossy().contains("history-"))
-        .collect();
+    let caches = history_caches(&home);
     assert_eq!(caches.len(), 1, "{caches:?}");
 
     git(&dir, &["commit", "-q", "--allow-empty", "-m", "second"]);
@@ -548,17 +545,24 @@ fn shares_one_daemon_between_clients() {
                 .expect("両方に知らせが来ない"),
         );
     }
-    assert_eq!(rb.load_history().unwrap().graph.len(), 2);
+    let h = rb.load_history().unwrap();
+    assert_eq!(h.graph.len(), 2);
+    // レイアウトは daemon が計算して渡したもので、手元で計算したものと同じ。
+    assert!(h.layout.is_complete());
+    let head = h
+        .head
+        .and_then(|id| h.graph.ids().iter().position(|i| *i == id))
+        .map(|r| r as u32);
+    let local = amonhen_core::graph::layout(&h.graph, head);
+    assert_eq!(h.layout.nodes(), local.nodes());
+    assert_eq!(h.layout.edges(), local.edges());
 
     // History の作り直しは daemon のコアで行い、同じ 1 つのキャッシュを書き直す。
     let before = ra.load_history().unwrap();
     let rebuilt = ra.rebuild_history().unwrap();
     assert_eq!(rebuilt.graph, before.graph);
     assert!(rebuilt.generation > before.generation);
-    let caches: Vec<_> = walk(&home)
-        .into_iter()
-        .filter(|p| p.to_string_lossy().contains("history-"))
-        .collect();
+    let caches = history_caches(&home);
     assert_eq!(caches.len(), 1, "{caches:?}");
     assert_eq!(rb.load_history().unwrap().graph.len(), 2);
 
@@ -651,6 +655,24 @@ fn shares_one_daemon_between_clients() {
         .status()
         .unwrap();
     assert!(second.success());
+}
+
+/// `home` の下の History のキャッシュ（フォルダ 1 つが 1 つのキャッシュ）。
+fn history_caches(home: &Path) -> Vec<PathBuf> {
+    let mut caches: Vec<PathBuf> = walk(home)
+        .into_iter()
+        .filter_map(|p| {
+            p.ancestors()
+                .find(|a| {
+                    a.file_name()
+                        .is_some_and(|n| n.to_string_lossy().starts_with("history-"))
+                })
+                .map(Path::to_path_buf)
+        })
+        .collect();
+    caches.sort();
+    caches.dedup();
+    caches
 }
 
 fn walk(dir: &Path) -> Vec<std::path::PathBuf> {

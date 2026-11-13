@@ -805,7 +805,13 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         let first = self.history == nil || resetScroll
         // 前の表示を、新しい表示へ短く溶かして入れ替える（ほかのプログラムの変化で読み直したとき。自分で範囲を
         // 変えたときは待たせない）。グラフと文字は Core Animation のトランザクションの中で出すので、一緒に溶ける。
-        if !first, history.generation != self.history?.generation, let layer = view.layer {
+        // キャッシュから開いた直後の History に、残りのレイアウトが届いただけ（行は同じで、グラフが足されるだけ）なら
+        // 溶かさない。前に出ていない窓ではアニメーションが進まず、グラフの欠けた前の見た目のまま残る。
+        let layoutCompleted = self.history.map { old in
+            old.laidOutRows < old.rowCount && old.rowCount == history.rowCount
+                && old.commitID(row: 0) == history.commitID(row: 0)
+        } ?? false
+        if !first, !layoutCompleted, history.generation != self.history?.generation, let layer = view.layer {
             let fade = CATransition()
             fade.type = .fade
             fade.duration = 0.15

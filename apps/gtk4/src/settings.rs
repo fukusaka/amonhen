@@ -438,6 +438,55 @@ fn accounts() -> adw::Clamp {
     )])
 }
 
+/// キャッシュの行: 名前を左に、大きさと消すボタンを右に（macOS 版の `CacheRow`）。大きさは、ページを出すたびと
+/// 消したあとに数え直す。
+fn cache_row(
+    title: &str,
+    size: impl Fn() -> u64 + 'static,
+    clear: impl Fn() -> std::io::Result<()> + 'static,
+) -> gtk::Box {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    let name = gtk::Label::new(Some(title));
+    name.set_xalign(0.0);
+    name.set_hexpand(true);
+    let amount = gtk::Label::new(None);
+    amount.add_css_class("dim-label");
+    let button = gtk::Button::with_label(&tr!("Clear"));
+    row.append(&name);
+    row.append(&amount);
+    row.append(&button);
+    let refresh = {
+        let (amount, button) = (amount.downgrade(), button.downgrade());
+        Rc::new(move || {
+            let bytes = size();
+            if let (Some(amount), Some(button)) = (amount.upgrade(), button.upgrade()) {
+                amount.set_text(&glib::format_size(bytes));
+                button.set_sensitive(bytes > 0);
+            }
+        })
+    };
+    refresh();
+    row.connect_map({
+        let refresh = refresh.clone();
+        move |_| refresh()
+    });
+    button.connect_clicked(move |b| {
+        if let Err(e) = clear() {
+            let parent = b.root().and_downcast::<gtk::Window>();
+            glib::spawn_future_local(async move {
+                crate::sheets::alert(
+                    parent.as_ref(),
+                    &tr!("Can’t clear the cache"),
+                    &e.to_string(),
+                )
+                .await;
+            });
+        }
+        refresh();
+    });
+    row
+}
+
 /// 見出しと、枠で囲んだ行の一覧（macOS 版の `.grouped` の Form の Section。説明も 1 行として中に入る）。
 fn section(title: Option<&str>, items: &[gtk::Widget]) -> gtk::Box {
     crate::reposettings::section(title, items)
@@ -740,6 +789,37 @@ pub fn show(near: &impl IsA<gtk::Widget>) {
                     &tr!("Open repositories through the shared daemon (SSH hosts too)"),
                 )
                 .upcast()],
+            ),
+            section(
+                Some(&tr!("Caches")),
+                &[
+                    cache_row(
+                        &tr!("History"),
+                        || {
+                            amonhen_remote::local::cache_dir()
+                                .map_or(0, |d| amonhen_core::cache::total_size(&d))
+                        },
+                        || match amonhen_remote::local::cache_dir() {
+                            Some(d) => amonhen_core::cache::remove_all(&d),
+                            None => Ok(()),
+                        },
+                    )
+                    .upcast(),
+                    note(&tr!(
+                        "Opens History right away next time. Cleared, it is read from git again."
+                    ))
+                    .upcast(),
+                    cache_row(
+                        &tr!("AI Results"),
+                        || crate::assist::cache().size(),
+                        || crate::assist::cache().clear(),
+                    )
+                    .upcast(),
+                    note(&tr!(
+                        "Answers the same question again without asking the AI."
+                    ))
+                    .upcast(),
+                ],
             ),
         ]),
         Some("performance"),

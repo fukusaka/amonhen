@@ -267,6 +267,9 @@ public final class History: @unchecked Sendable {
     public var generation: UInt64 { view.generation }
     public var rowCount: Int { Int(view.row_count) }
     public var laneCount: Int { Int(view.lane_count) }
+    /// 上からレイアウトの済んだ行の数。キャッシュから開いた直後は `rowCount` より少ない（残りは裏で計算し、
+    /// 終わると History を出し直す）。
+    public var laidOutRows: Int { Int(view.laid_out_rows) }
     public var edgeCount: Int { Int(view.edge_count) }
 
     /// 行ごとの点（コピーしない）。

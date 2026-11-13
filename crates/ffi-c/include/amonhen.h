@@ -117,6 +117,11 @@ typedef struct {
  * 未コミットの変更を表す仮の点。
  */
 #define AmonhenNode_WORKING_COPY (1 << 3)
+/**
+ * まだレイアウトしていない行（開いた直後、裏で計算している間）。レーンと色は決まっていないので描かない。
+ * `MERGE` は付いている。
+ */
+#define AmonhenNode_PENDING (1 << 4)
 
 /**
  * グラフの線 1 本。長い縦線も行ごとに分けず、区間 1 つで表す。
@@ -154,6 +159,11 @@ typedef struct {
   const AmonhenNode *nodes;
   const AmonhenEdge *edges;
   uint32_t edge_count;
+  /**
+   * 上からレイアウトの済んだ行の数（キャッシュから開いた直後は `row_count` より少なく、下の行は
+   * `Node::PENDING`）。
+   */
+  uint32_t laid_out_rows;
 } AmonhenHistoryView;
 
 /**

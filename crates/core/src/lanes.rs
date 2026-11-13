@@ -7,6 +7,8 @@
 
 use std::ops::Range;
 
+use amonhen_layout::Node;
+
 use crate::graph::GraphLayout;
 
 /// レーンの幅の決め方（単位は FE の座標、macOS ならポイント）。
@@ -54,7 +56,9 @@ fn lane_widths(layout: &GraphLayout, rows: Range<u32>, m: &LaneMetrics) -> Vec<f
     activity[0] = ACTIVE;
     let rows = rows.start..rows.end.min(layout.nodes().len() as u32);
     for n in &layout.nodes()[rows.start as usize..rows.end as usize] {
-        activity[n.lane as usize] = ACTIVE;
+        if n.flags & Node::PENDING == 0 {
+            activity[n.lane as usize] = ACTIVE;
+        }
     }
     for i in layout.edges_in(rows.clone()) {
         let e = &layout.edges()[i as usize];

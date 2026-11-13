@@ -392,11 +392,13 @@ export function createHistoryView(): View {
         stroke(x1, y1, x2, y2, 1);
       }
     }
-    ctx.globalAlpha = isAncestor(index) ? 1 : DIMMED_ALPHA;
-    ctx.fillStyle = colors[row.graph.color % colors.length]!;
-    ctx.beginPath();
-    ctx.arc(x(row.graph.col), y(1), 4, 0, Math.PI * 2);
-    ctx.fill();
+    if (!row.graph.pending) {
+      ctx.globalAlpha = isAncestor(index) ? 1 : DIMMED_ALPHA;
+      ctx.fillStyle = colors[row.graph.color % colors.length]!;
+      ctx.beginPath();
+      ctx.arc(x(row.graph.col), y(1), 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
     return canvas;
   }
 
