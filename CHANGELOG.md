@@ -19,6 +19,8 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- GTK4 on Wayland: A tab dropped outside the app's windows (on the desktop or another app's window) opens in a new
+  window instead of going back; Esc still cancels the drag.
 - Rebase and History edit confirmations say pushing afterwards needs Force Push only when the upstream has commits being
   rewritten, not whenever the branch has an upstream.
 - macOS: History highlights the selected commit's ancestors in the same frame as the selection, without waiting for
