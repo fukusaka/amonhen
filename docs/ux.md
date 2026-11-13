@@ -93,7 +93,7 @@ Extend today's "Repositories…" (a list in the order opened) into the equivalen
 The list appears in two places, with the same contents and operations (`RepositoryBrowser`):
 
 - **The repository page**, a tab with no repository open (`RepositoryHome.swift`). ⌘T, ⌘N, ⌘O and ⌘⇧R show it, and so
-  does launching or closing the last repository with nothing open. On the left are categories: All, Favorites, Places
+  does launching with nothing open, or clicking the Dock icon with no window showing. On the left are categories: All, Favorites, Places
   (This Mac and one entry per SSH host) and the manual groups (shown once one exists), each with a count. Under each place are its folders to
   scan (🔍; only these are searched, on that machine: SSH hosts are searched by the engine there with
   `amonhen find-repositories`) and the folders of the other repositories (opened or added by hand), as a tree of the

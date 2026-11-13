@@ -17,6 +17,11 @@ becomes the GitHub Release notes.
 - Merge chooses how to integrate in its confirmation: Follow git's settings, Fast-Forward Only, Always Create a Merge
   Commit, or Squash into One Commit (committed right away; one that conflicts stops as Squash in progress).
 
+#### Changed
+
+- macOS: Closing the last repository no longer opens the repository page in a new window; the app stays with no
+  window, as Mac apps do, and the Dock icon brings the page back.
+
 #### Fixed
 
 - GTK4 on Wayland: A tab dropped outside the app's windows (on the desktop or another app's window) opens in a new
