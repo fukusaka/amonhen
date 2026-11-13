@@ -58,7 +58,7 @@ typedef struct AmonhenDiff AmonhenDiff;
  */
 typedef struct AmonhenHistory AmonhenHistory;
 
-typedef struct AmonhenLineage AmonhenLineage;
+typedef struct AmonhenLineageWindow AmonhenLineageWindow;
 
 /**
  * ref の一覧。
@@ -117,6 +117,11 @@ typedef struct {
  * 未コミットの変更を表す仮の点。
  */
 #define AmonhenNode_WORKING_COPY (1 << 3)
+/**
+ * まだレイアウトしていない行（開いた直後、裏で計算している間）。レーンと色は決まっていないので描かない。
+ * `MERGE` は付いている。
+ */
+#define AmonhenNode_PENDING (1 << 4)
 
 /**
  * グラフの線 1 本。長い縦線も行ごとに分けず、区間 1 つで表す。
@@ -154,23 +159,12 @@ typedef struct {
   const AmonhenNode *nodes;
   const AmonhenEdge *edges;
   uint32_t edge_count;
+  /**
+   * 上からレイアウトの済んだ行の数（キャッシュから開いた直後は `row_count` より少なく、下の行は
+   * `Node::PENDING`）。
+   */
+  uint32_t laid_out_rows;
 } AmonhenHistoryView;
-
-/**
- * 祖先の強調の結果（`amonhen_lineage_view` で読む）。
- */
-typedef struct {
-  /**
-   * 行ごとのビット（64 行ずつ）。立っていれば、選んだコミット（を含む）の祖先。
-   */
-  const uint64_t *rows;
-  uint32_t row_word_count;
-  /**
-   * 線ごとの、光らせ始める行（`u32::MAX` なら光らせない）。添字は History の線と同じ。
-   */
-  const uint32_t *edge_from;
-  uint32_t edge_count;
-} AmonhenLineageView;
 
 /**
  * レーンの幅の決め方（`amonhen_history_lane_positions`）。単位は FE の座標。
@@ -699,26 +693,54 @@ uint32_t amonhen_history_edges_in(const AmonhenHistory *history_ptr,
                                   uint32_t capacity);
 
 /**
- * `row` 行目のコミットとその祖先、祖先をつなぐ線（`amonhen_lineage_free` で解放する）。History の大きさに
- * 比例した時間がかかる（linux で 10〜25 ms）ので、裏のスレッドで呼ぶ。
+ * `row` 行目のコミットの祖先を、描く範囲だけ求めるもの（`amonhen_lineage_window_extend` で伸ばし、
+ * `amonhen_lineage_window_free` で解放する）。まだ何も求めていない。
  *
  * # Safety
  * `history` は有効なスナップショットであること。
  */
-AmonhenLineage *amonhen_history_lineage(const AmonhenHistory *history_ptr,
-                                        uint32_t row);
+AmonhenLineageWindow *amonhen_lineage_window_new(const AmonhenHistory *history_ptr,
+                                                 uint32_t row);
+
+/**
+ * `end` 行の手前まで求める。かかる時間は伸ばした行と線の数に比例する。
+ *
+ * # Safety
+ * `history` は `window` を作ったときのスナップショット、`window` は有効であること。
+ */
+void amonhen_lineage_window_extend(AmonhenLineageWindow *window,
+                                   const AmonhenHistory *history_ptr,
+                                   uint32_t end);
+
+/**
+ * ここまで求めた行（含まない）。
+ *
+ * # Safety
+ * `window` は有効であること。
+ */
+uint32_t amonhen_lineage_window_end(AmonhenLineageWindow *window);
+
+/**
+ * `row` 行目のコミットが祖先か（求めた範囲の外なら false）。
+ *
+ * # Safety
+ * `window` は有効であること。
+ */
+bool amonhen_lineage_window_contains(AmonhenLineageWindow *window, uint32_t row);
+
+/**
+ * `edge` 番目の線を光らせ始める行（`u32::MAX` なら光らせない）。
+ *
+ * # Safety
+ * `window` は有効であること。
+ */
+uint32_t amonhen_lineage_window_edge_from(AmonhenLineageWindow *window, uint32_t edge);
 
 /**
  * # Safety
- * `lineage` は有効であること。返したポインタは解放するまで有効。
+ * `window` は `amonhen_lineage_window_new` が返したもので、まだ解放していないこと。
  */
-AmonhenLineageView amonhen_lineage_view(const AmonhenLineage *lineage);
-
-/**
- * # Safety
- * `lineage` は `amonhen_history_lineage` が返したもので、まだ解放していないこと。
- */
-void amonhen_lineage_free(AmonhenLineage *lineage);
+void amonhen_lineage_window_free(AmonhenLineageWindow *window);
 
 /**
  * `start..end` 行を表示するときの、レーンごとの中心の横位置（魚眼）を `out` に書く。見えている範囲に点の

@@ -21,6 +21,8 @@ export interface GraphRow {
   edges?: number[];
   /** この行で使っている列の数 */
   width: number;
+  /** まだレイアウトしていない行（daemon が開いた直後、裏で計算している間）。点を描かず、`col` は使わない */
+  pending?: boolean;
 }
 
 export class GraphBuilder {

@@ -23,7 +23,9 @@ pub mod testing;
 mod text;
 pub mod topo;
 
-pub use backend::{ConnectionState, Delegated, Error, GitBackend, Result};
+pub use backend::{
+    ConnectionState, Delegated, Error, GitBackend, PreparedHistory, PreparedLayout, Result,
+};
 pub use bundle_file::{BundleInfo, parse_bundle_header};
 pub use change::{ChangeKind, FileChange};
 pub use eol::{Eol, LineEndings};

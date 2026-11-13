@@ -134,7 +134,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | AI prompts per purpose (edit, Restore Default, Try) | ✓ | ✓ | — | n/a |  |
 | Performance: commit-graph, shared daemon | ✓ | ✓ | ✓ | n/a | VSCode: `amonhen.writeCommitGraph`, `amonhen.daemon.enabled` and `amonhen.daemon.path` as VSCode settings. |
 | Performance: fsmonitor | ✓ | ✓ | ✓ | n/a | GTK4: On Linux and the BSDs, uses Watchman through the engine as git's fsmonitor hook (`amonhen fsmonitor-watchman`); disabled when Watchman isn't installed or git is older than 2.26 (hook protocol 2).<br>VSCode: `amonhen.fsmonitor` as a VSCode setting, on by default. |
-| Performance: persistent cache location, size, clearing | — | — | — | △ | CLI: `log --rebuild`, `daemon rebuild`. |
+| Performance: persistent cache location, size, clearing | ✓ | ✓ | — | △ | History and AI results, one row each with its size and Clear. CLI: `log --rebuild`, `daemon rebuild`. |
 | Undo / Redo of settings changes | △ | △ | n/a | n/a | macOS: Git pages and repository settings only.<br>GTK4: Git pages and repository settings only. |
 
 ## 4. Repository settings
@@ -339,6 +339,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Operations (git commands, output, progress, cancel) | ✓ | ✓ | △ | △ | VSCode: An Output channel log only.<br>CLI: Via `amonhen run` (`remoteActivity`, `cancelActivity`). |
 | History (operation log, Undo to Here) | ✓ | ✓ | △ | △ | VSCode: Undo History… lists the Undo log and undoes down to the chosen one; no other activity.<br>CLI: `undo --list` shows the log. |
 | Performance | ✓ | ✓ | n/a | n/a | VSCode: VSCode's Output channel (the Amon Hen log). |
+| History cache writes (size, count, bytes, last write per repository) | ✓ | ✓ | — | △ | CLI: Via `amonhen run` (`historyCache`). |
 | Events | ✓ | ✓ | n/a | n/a | VSCode: VSCode's Output channel (the Amon Hen log). |
 | Export as JSON | ✓ | ✓ | n/a | n/a | VSCode: VSCode's Output channel (the Amon Hen log). |
 | Daemon tab (start, stop, connections) | ✓ | ✓ | ✓ | △ | VSCode: A page of the main view (Show Daemon in the sidebar's ⋯ and the command palette); the window's connections are to the local daemon only.<br>CLI: `daemon status / start / stop`. |

@@ -16,6 +16,32 @@ enum PerformanceLog {
     }
 }
 
+/// いま処理している入力（入力から表示までを測る起点）。`NSApp.currentEvent` は処理し終えた後も最後の入力を
+/// 指したままなので、裏の読み直しで描いても数秒前のクリックが起点になる。run loop が待ちに入ったら、そこまでの
+/// 入力は処理し終えたとみなして数えない。メインスレッドが止まって待ちに入らないあいだは、その入力のまま（遅れも測る）。
+enum InputEvent {
+    private static var handledUpTo: TimeInterval = 0
+    private static var observer: CFRunLoopObserver?
+
+    /// 今の描画を起こした入力の時刻。待ちに入った後の描画（入力によらない）なら nil。
+    static var timestamp: TimeInterval? {
+        if observer == nil { start() }
+        guard let event = NSApp.currentEvent, event.timestamp > handledUpTo else { return nil }
+        return event.timestamp
+    }
+
+    private static func start() {
+        // 表示の更新（Core Animation の commit）より後に動くよう、順番は最後にする。
+        let observer = CFRunLoopObserverCreateWithHandler(nil, CFRunLoopActivity.beforeWaiting.rawValue, true, .max) { _, _ in
+            MainActor.assumeIsolated {
+                if let event = NSApp.currentEvent { handledUpTo = max(handledUpTo, event.timestamp) }
+            }
+        }
+        CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
+        self.observer = observer
+    }
+}
+
 /// 内部の出来事（ファイルの変化の知らせ、読み直し）。Activity の Events に出す。
 enum EventLog {
     struct Event: Identifiable, Hashable {
@@ -68,6 +94,25 @@ struct ActivityRepository: Identifiable, Hashable {
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
 
+/// リポジトリの History の永続キャッシュ（`historyCache` の `info`）。Performance に出す。
+nonisolated struct HistoryCacheInfo: Decodable, Sendable {
+    struct Writes: Decodable, Sendable {
+        let count: UInt64
+        let bytes: UInt64
+        let lastBytes: UInt64
+        let lastAt: Double?
+    }
+    let size: UInt64
+    let writes: Writes
+}
+
+/// Performance の History のキャッシュの行（リポジトリごと）。
+struct HistoryCacheRow: Identifiable {
+    let id: String
+    let name: String
+    let info: HistoryCacheInfo
+}
+
 /// 操作ログ（`undoLog` の `info`）。
 nonisolated struct UndoLogResponse: Decodable, Sendable {
     struct Entry: Decodable, Sendable { let label: String; let time: Double }
@@ -98,12 +143,17 @@ final class ActivityModel {
     var daemonChecked = false
     @ObservationIgnored private var daemonLoadedAt = Date.distantPast
     @ObservationIgnored private var loadingDaemon = false
+    /// リポジトリごとの History のキャッシュ（大きさと、起動してから書いたもの）。
+    var caches: [HistoryCacheRow] = []
+    @ObservationIgnored private var cachesLoadedAt = Date.distantPast
+    @ObservationIgnored private var loadingCaches = false
 
     func refresh() {
         let remote = remoteRecords.values.flatMap { $0 }
         records = (ActivityRecord.all() + remote).sorted { $0.started < $1.started }
         loadRemoteRecords()
         loadDaemon()
+        loadCaches()
         events = EventLog.events
         metrics = PerformanceLog.samples.map { ($0.key, $0.value) }.sorted { $0.name < $1.name }
         repositories = listRepositories()
@@ -144,6 +194,29 @@ final class ActivityModel {
             remoteRecords = loaded
             remoteLoadedAt = Date()
             loadingRemote = false
+        }
+    }
+
+    /// 開いているリポジトリの History のキャッシュを読む（2 秒ごと。同じ場所を開いた窓は 1 つにまとめる）。daemon
+    /// 越しなら daemon が書いているもの。
+    private func loadCaches() {
+        guard !loadingCaches, Date().timeIntervalSince(cachesLoadedAt) > 2 else { return }
+        var seen = Set<String>()
+        let entries = repositories.filter { seen.insert($0.location.isEmpty ? $0.key : $0.location).inserted }
+        loadingCaches = true
+        Task {
+            var rows: [HistoryCacheRow] = []
+            for entry in entries {
+                let repository = entry.repository
+                if let info = try? await Task.detached(priority: .utility, operation: {
+                    try repository.info(["op": "historyCache"], as: HistoryCacheInfo.self)
+                }).value {
+                    rows.append(HistoryCacheRow(id: entry.key, name: entry.name, info: info))
+                }
+            }
+            caches = rows
+            cachesLoadedAt = Date()
+            loadingCaches = false
         }
     }
 
@@ -355,6 +428,8 @@ private struct HistoryTab: View {
 private struct PerformanceTab: View {
     let model: ActivityModel
 
+    private func bytes(_ n: UInt64) -> String { CacheFiles.format(Int64(n)) }
+
     private struct Row: Identifiable {
         let id: String
         let count: Int, p50: Double, p95: Double, max: Double, last: Double
@@ -376,6 +451,20 @@ private struct PerformanceTab: View {
                 TableColumn(L("Last ms")) { Text(ms($0.last)).monospacedDigit() }.width(60)
             }
             Text(L("The last 500 of each since the app started. Orange when p95 exceeds twice a frame (16.7 ms).")).font(.caption).foregroundStyle(.secondary)
+            Text(L("History Cache")).font(.subheadline.bold()).padding(.top, 6)
+            Table(model.caches) {
+                TableColumn(L("Repository"), value: \.name)
+                TableColumn(L("Size")) { Text(bytes($0.info.size)).monospacedDigit() }.width(80)
+                TableColumn(L("Writes")) { Text("\($0.info.writes.count)").monospacedDigit() }.width(80)
+                TableColumn(L("Written")) { Text(bytes($0.info.writes.bytes)).monospacedDigit() }.width(80)
+                TableColumn(L("Last Write")) { r in
+                    Text(r.info.writes.lastAt.map {
+                        "\(bytes(r.info.writes.lastBytes)) · \(timeFormatter.string(from: Date(timeIntervalSince1970: $0 / 1000)))"
+                    } ?? "—").monospacedDigit()
+                }.width(min: 120, ideal: 150)
+            }
+            .frame(height: 120)
+            Text(L("What each open repository’s History cache wrote since the app started (through the shared daemon, what the daemon wrote). It writes only what changed.")).font(.caption).foregroundStyle(.secondary)
         }
         .padding()
     }

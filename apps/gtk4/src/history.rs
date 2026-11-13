@@ -10,7 +10,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
-use amonhen_core::lineage::Lineage;
+use amonhen_core::lineage::LineageWindow;
 use amonhen_core::{HistorySnapshot, RefsSnapshot, Repository};
 use amonhen_model::{Oid, RefKind, tr};
 use amonhen_projection::{FrontendProfile, HistoryChunk};
@@ -34,6 +34,8 @@ type CiCallback = Rc<dyn Fn(Oid, Ci, gdk::Rectangle)>;
 const CI_SPACE: f32 = 18.0;
 
 const CHUNK_ROWS: u32 = 256;
+/// 1 フレームに伸ばす祖先の行数（linux で中央値 約 2 ms、最大 約 4 ms。macOS 版と同じ）。
+const LINEAGE_ROWS_PER_FRAME: u32 = 150_000;
 /// 持っておくチャンクの数（見えている所に近いものから）。
 const KEPT_CHUNKS: usize = 24;
 /// グラフの列の幅の上限（macOS 版の `GraphRenderer.Metrics.maxWidth`）。
@@ -198,8 +200,11 @@ pub struct State {
     metrics: Metrics,
     display: Display,
     /// 選んだコミットの祖先（History の世代、行、結果）。
-    lineage: Option<(u64, u32, Rc<Lineage>)>,
-    lineage_request: u64,
+    /// 強調する祖先（History の世代、選んだ行、描く行まで求めたもの）。gitk と同じく、描く行の分だけ求め、
+    /// スクロールしたら続きから伸ばす（macOS 版の `Lineage`）。
+    lineage: Option<(u64, u32, LineageWindow)>,
+    /// 祖先を描く行まで求め終わっていない（求め終わるまで次のフレームでも描く）。
+    lineage_pending: bool,
     /// 署名の検証の結果（コミットごと）と、検証している途中のもの。
     signatures: HashMap<Oid, Status>,
     verifying: HashSet<Oid>,
@@ -872,52 +877,35 @@ impl HistoryView {
         self.queue_draw();
     }
 
-    /// 選んだコミットの祖先を裏で求め、求まったらグラフを描き直す。
+    /// 選んだコミットの祖先を強調する。求めるのは描くときに、描く行の分だけ（選んだ入力と同じフレームに出る）。
     fn update_lineage(&self) {
-        let (history, row, request) = {
-            let mut st = self.state();
-            st.lineage_request += 1;
-            let target = st
-                .history
-                .clone()
-                .zip(st.selected)
-                .filter(|_| st.display.highlight_ancestors);
-            let Some((history, row)) = target else {
-                if st.lineage.take().is_some() {
-                    drop(st);
-                    self.queue_draw();
-                }
-                return;
-            };
-            if st
-                .lineage
-                .as_ref()
-                .is_some_and(|(g, r, _)| *g == history.generation && *r == row)
-            {
-                return;
+        let mut st = self.state();
+        let target = st
+            .history
+            .clone()
+            .zip(st.selected)
+            .filter(|_| st.display.highlight_ancestors);
+        let Some((history, row)) = target else {
+            if st.lineage.take().is_some() {
+                drop(st);
+                self.queue_draw();
             }
-            (history, row, st.lineage_request)
+            return;
         };
-        let weak = self.downgrade();
-        let generation = history.generation;
-        glib::spawn_future_local(async move {
-            let Ok(lineage) = gio::spawn_blocking(move || {
-                amonhen_core::lineage::lineage(&history.graph, &history.layout, row)
-            })
-            .await
-            else {
-                return;
-            };
-            let Some(view) = weak.upgrade() else { return };
-            {
-                let mut st = view.state();
-                if st.lineage_request != request {
-                    return;
-                }
-                st.lineage = Some((generation, row, Rc::new(lineage)));
-            }
-            view.queue_draw();
-        });
+        if st
+            .lineage
+            .as_ref()
+            .is_some_and(|(g, r, _)| *g == history.generation && *r == row)
+        {
+            return;
+        }
+        st.lineage = Some((
+            history.generation,
+            row,
+            LineageWindow::new(&history.graph, row),
+        ));
+        drop(st);
+        self.queue_draw();
     }
 
     /// 見えている署名を、スクロールが落ち着いてから 8 件ずつ裏で検証し、終わった分から色を付ける
@@ -1767,6 +1755,23 @@ impl HistoryView {
                 }
             }
             snapshot.push_clip(&graphene::Rect::new(0.0, 0.0, max_graph, height));
+            // 祖先は描く行まで求める（スクロールしたら続きから）。遠くへ飛んだときは 1 フレームに伸ばす行数を
+            // 抑え（linux の端まで一度に伸ばすと 20 ms かかる）、描く行まで届くまでは強調せずに描いて、次のフレームで
+            // 続ける（macOS 版と同じ）。
+            let requested = st.lineage.is_some();
+            let lineage = match st
+                .lineage
+                .as_mut()
+                .filter(|(g, _, _)| *g == history.generation)
+            {
+                Some((_, _, w)) => {
+                    let end = last.min(w.end().saturating_add(LINEAGE_ROWS_PER_FRAME));
+                    w.extend(&history.graph, &history.layout, end);
+                    Some(&*w).filter(|w| w.end() >= last)
+                }
+                None => None,
+            };
+            st.lineage_pending = requested && lineage.is_none();
             let extents = graph::draw(
                 snapshot,
                 &history,
@@ -1774,14 +1779,11 @@ impl HistoryView {
                 first..last,
                 scroll_y,
                 &st.metrics,
-                st.lineage
-                    .as_ref()
-                    .filter(|(g, _, _)| *g == history.generation)
-                    .map(|(_, _, l)| &**l),
+                lineage,
                 &st.boundary,
             );
             snapshot.pop();
-            if st.lanes.animating && st.tick.is_none() {
+            if (st.lanes.animating || st.lineage_pending) && st.tick.is_none() {
                 let weak = self.downgrade();
                 st.tick = Some(self.add_tick_callback(move |_, _| {
                     let Some(view) = weak.upgrade() else {
@@ -1789,7 +1791,7 @@ impl HistoryView {
                     };
                     view.queue_draw();
                     let mut st = view.state();
-                    if st.lanes.animating {
+                    if st.lanes.animating || st.lineage_pending {
                         glib::ControlFlow::Continue
                     } else {
                         st.tick = None;

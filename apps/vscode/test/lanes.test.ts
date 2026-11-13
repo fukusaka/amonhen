@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { GraphBuilder, type GraphRow } from '../src/history/graph.ts';
+import { graphRows } from '../src/daemon/history.ts';
 import { type LaneMetrics, lanePositions } from '../src/history/lanes.ts';
 
 const M: LaneMetrics = { full: 14, thin: 3, minFull: 7, minThin: 0, available: 10_000 };
@@ -73,4 +74,26 @@ test('squeezes lines first, then commits, to fit the column', () => {
   const w = widths(tiny.centers);
   assert.ok(w.every((x) => Math.abs(x) < 1e-9 || x >= 7 - 1e-9), String(w));
   assert.ok(tiny.width <= 116 + 1e-9, String(tiny.width));
+});
+
+test('rows not laid out yet take no lane and draw no commit', () => {
+  // daemon が開いた直後の、まだレイアウトしていない行（`col` は 0 だが使わない）
+  const rows: GraphRow[] = [
+    { col: 2, color: 1, segs: [], width: 3 },
+    { col: 0, color: 0, segs: [], width: 0, pending: true },
+  ];
+  const { centers } = lanePositions(rows, M);
+  // 幹線（0）は必ず広く取り、2 は点のあるレーン。1 は何もないので幅を取らない
+  assert.deepEqual(widths(centers), [14, 0, 14]);
+  assert.deepEqual(widths(lanePositions([rows[1]!], M).centers), [14]);
+});
+
+test('a row the daemon has not laid out yet is marked pending', () => {
+  // 点 2 つ（row u32・lane u16・color u16・flags u16・空き u16）。2 つ目は `Node::PENDING`（1 << 4）と MERGE
+  const nodes = new Uint16Array([0, 0, 1, 7, 0, 0, 1, 0, 0, 0, (1 << 4) | 1, 0]);
+  const [laid, pending] = graphRows(new Uint32Array([0, 1]), nodes, new Uint16Array(), new Uint32Array());
+  assert.equal(laid!.pending, undefined);
+  assert.equal(laid!.col, 1);
+  assert.equal(pending!.pending, true);
+  assert.equal(pending!.width, 0);
 });

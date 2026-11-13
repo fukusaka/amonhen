@@ -8,6 +8,8 @@ import type { Reply } from './client.ts';
 
 /** 点: row u32・lane u16・color u16・flags u16・空き u16（12 バイト） */
 const NODE_WORDS = 6;
+/** 点の flags の、まだレイアウトしていない行（コアの `Node::PENDING`） */
+const NODE_PENDING = 1 << 4;
 /** 線: rowStart u32・rowEnd u32・laneStart u16・laneEnd u16・color u16・kind u16・child u32・parent u32（24 バイト） */
 const EDGE_WORDS = 6;
 
@@ -85,7 +87,15 @@ export function graphRows(
   const first = numbers[0] ?? 0;
   const rows: GraphRow[] = Array.from(numbers, (_, i) => {
     const col = nodes[i * NODE_WORDS + 2]!;
-    return { col, color: nodes[i * NODE_WORDS + 3]!, segs: [], width: col + 1, ...(edgeIds?.length ? { edges: [] } : {}) };
+    const pending = (nodes[i * NODE_WORDS + 4]! & NODE_PENDING) !== 0;
+    return {
+      col,
+      color: nodes[i * NODE_WORDS + 3]!,
+      segs: [],
+      width: pending ? 0 : col + 1,
+      ...(edgeIds?.length ? { edges: [] } : {}),
+      ...(pending ? { pending } : {}),
+    };
   });
   const count = edges32.length / EDGE_WORDS;
   for (let e = 0; e < count; e++) {

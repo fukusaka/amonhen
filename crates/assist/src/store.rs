@@ -90,6 +90,26 @@ impl Cache {
             let _ = std::fs::rename(&temp, &path);
         }
     }
+
+    /// 覚えている返事の大きさの合計（Settings > Performance）。
+    pub fn size(&self) -> u64 {
+        std::fs::read_dir(&self.dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|e| e.metadata().ok())
+            .filter(|m| m.is_file())
+            .map(|m| m.len())
+            .sum()
+    }
+
+    /// 覚えている返事をすべて忘れる（Settings > Performance）。
+    pub fn clear(&self) -> std::io::Result<()> {
+        match std::fs::remove_dir_all(&self.dir) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        }
+    }
 }
 
 /// SHA-256 の 16 進（リポジトリのプロンプトの許可と、キャッシュの鍵に使う）。
@@ -169,6 +189,19 @@ fn sha256(data: &[u8]) -> [u8; 32] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cache_reports_its_size_and_clears() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::new(dir.path().join("assist"));
+        assert_eq!(cache.size(), 0);
+        cache.put("a", "12345");
+        cache.put("b", "678");
+        assert_eq!(cache.size(), 8);
+        cache.clear().unwrap();
+        assert_eq!((cache.size(), cache.get("a")), (0, None));
+        cache.clear().unwrap();
+    }
 
     #[test]
     fn sha256_matches_known_values() {
