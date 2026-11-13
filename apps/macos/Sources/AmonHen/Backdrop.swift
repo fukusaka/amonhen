@@ -26,9 +26,24 @@ enum BackdropStyle: String, CaseIterable, Codable, Hashable {
 
     var title: String {
         switch self {
-        case .system: L("System")
-        case .chrome: L("Sidebar and Toolbar Only")
-        case .single: L("One Layer for the Whole Window")
+        case .system: L("Nowhere (System)")
+        case .chrome: L("Sidebar and Toolbar")
+        case .single: L("Whole Window")
+        }
+    }
+}
+
+/// 背景に見せるもの。
+enum BackdropSource: String, CaseIterable, Codable, Hashable {
+    /// 窓の後ろ（デスクトップや後ろの窓が、ぼかされて見える）。
+    case behind
+    /// 選んだ画像（窓は不透明のまま）。
+    case image
+
+    var title: String {
+        switch self {
+        case .behind: L("Behind the Window")
+        case .image: L("Image")
         }
     }
 }
@@ -53,8 +68,11 @@ enum BackdropImagePlacement: String, CaseIterable, Codable, Hashable {
 
 /// 窓の背景の設定。アプリの設定（Settings > Theme）と、リポジトリごとの上書き（ブックマーク）で同じ形。
 struct BackdropSettings: Codable, Hashable {
+    /// 背景を見せる場所。
     var style: BackdropStyle = .system
-    /// 背景画像のパス（なければ窓の後ろが透ける）。
+    /// 背景に見せるもの。
+    var source = BackdropSource.behind
+    /// 背景画像のパス（窓の後ろに切り替えても覚えておく）。
     var image: String?
     var imagePlacement = BackdropImagePlacement.fill
     /// 1 枚の地の濃さ（0.4〜1）。1 なら背景画像も窓の後ろも見えない。
@@ -71,6 +89,8 @@ struct BackdropSettings: Codable, Hashable {
         let d = BackdropSettings()
         style = try c.decodeIfPresent(BackdropStyle.self, forKey: .style) ?? d.style
         image = try c.decodeIfPresent(String.self, forKey: .image)
+        // 見せるものを分ける前の記録は、画像があれば画像。
+        source = try c.decodeIfPresent(BackdropSource.self, forKey: .source) ?? (image == nil ? .behind : .image)
         imagePlacement = try c.decodeIfPresent(BackdropImagePlacement.self, forKey: .imagePlacement) ?? d.imagePlacement
         contentOpacity = try c.decodeIfPresent(Double.self, forKey: .contentOpacity) ?? d.contentOpacity
         toolbarColor = try c.decodeIfPresent(String.self, forKey: .toolbarColor)
@@ -84,6 +104,7 @@ struct BackdropSettings: Codable, Hashable {
             var s = BackdropSettings()
             s.style = d.string(forKey: "backdropStyle").flatMap(BackdropStyle.init(rawValue:)) ?? .system
             s.image = d.string(forKey: "backdropImage").flatMap { $0.isEmpty ? nil : $0 }
+            s.source = d.string(forKey: "backdropSource").flatMap(BackdropSource.init(rawValue:)) ?? (s.image == nil ? .behind : .image)
             s.imagePlacement = d.string(forKey: "backdropImagePlacement").flatMap(BackdropImagePlacement.init(rawValue:)) ?? .fill
             if d.object(forKey: "backdropContentOpacity") != nil { s.contentOpacity = d.double(forKey: "backdropContentOpacity") }
             s.toolbarColor = d.string(forKey: "backdropToolbarColor").flatMap { $0.isEmpty ? nil : $0 }
@@ -93,6 +114,7 @@ struct BackdropSettings: Codable, Hashable {
         set {
             let d = UserDefaults.standard
             d.set(newValue.style.rawValue, forKey: "backdropStyle")
+            d.set(newValue.source.rawValue, forKey: "backdropSource")
             d.set(newValue.image, forKey: "backdropImage")
             d.set(newValue.imagePlacement.rawValue, forKey: "backdropImagePlacement")
             d.set(newValue.contentOpacity, forKey: "backdropContentOpacity")
@@ -237,7 +259,7 @@ final class BackdropHostController: NSViewController {
         self.settings = settings
         guard let window = view.window else { return }
         let custom = settings.style != .system
-        let picture = custom ? settings.image.flatMap(loadImage) : nil
+        let picture = custom && settings.source == .image ? settings.image.flatMap(loadImage) : nil
         Backdrop.prepare(window: window, style: settings.style, seeThrough: custom && picture == nil)
         image.image = picture
         image.isHidden = picture == nil
