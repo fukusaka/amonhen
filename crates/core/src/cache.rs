@@ -643,7 +643,8 @@ fn write_locked(files: &Files, h: Entry<'_>, written: &mut Written) -> Result<bo
         rows.push(next);
         next += 1;
     }
-    drop(mapped);
+    // 写したままでは、Windows では切れない（長さを変えられない）。
+    drop((mapped, order));
     // コミットの表に足す（`table` より後ろに書きかけが残っていれば切る）。
     for (file, keep, bytes) in [
         (&files.ids, table.rows * 20, bytes_of(&ids)),
@@ -1345,6 +1346,20 @@ mod tests {
         std::mem::forget(writer);
     }
 
+    /// ファイルかフォルダの更新時刻を `t` にする（Windows では書ける形で、フォルダはフォルダとして開く）。
+    fn set_modified(path: &Path, t: std::time::SystemTime) {
+        let mut options = OpenOptions::new();
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            // FILE_FLAG_BACKUP_SEMANTICS
+            options.write(true).custom_flags(0x0200_0000);
+        }
+        #[cfg(not(windows))]
+        options.read(true);
+        options.open(path).unwrap().set_modified(t).unwrap();
+    }
+
     /// 同じリポジトリのほかの形式（と前の形式のファイル）は、7 日書かれていなければ消す。最近のもの（並んで動く
     /// 別のビルドが使っている）・ほかのリポジトリのものは残す。
     #[test]
@@ -1375,7 +1390,7 @@ mod tests {
             std::fs::write(&file, b"").unwrap();
             if old {
                 for f in [&file, entry] {
-                    File::open(f).unwrap().set_modified(week_ago).unwrap();
+                    set_modified(f, week_ago);
                 }
             }
         }
