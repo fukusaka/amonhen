@@ -67,6 +67,8 @@ pub enum Kind {
     Person,
     /// paintbrush（設定の Appearance）
     Brush,
+    /// swatchpalette（設定の Theme）
+    Palette,
     /// speedometer（設定の Performance）
     Speedometer,
     /// apple.terminal（パスを選ぶシートの実行ファイル）
@@ -464,6 +466,16 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.quad_to(6.6, 14.4, 8.4, 12.6);
             p.quad_to(9.0, 11.8, 8.6, 11.4);
             p.close();
+        }
+        Kind::Palette => {
+            // 絵の具の板（丸と親指の穴）と、3 つの絵の具。
+            p.add_circle(&point(8.0, 8.0), 6.3);
+            p.add_circle(&point(9.9, 10.7), 1.3);
+            let paint = gsk::PathBuilder::new();
+            for (x, y) in [(4.9_f32, 7.6_f32), (6.6, 4.6), (10.1, 4.6), (11.6, 7.6)] {
+                paint.add_circle(&point(x, y), 1.05);
+            }
+            fill = Some(paint);
         }
         Kind::Speedometer => {
             // 下の開いた丸と、針と、目盛り。

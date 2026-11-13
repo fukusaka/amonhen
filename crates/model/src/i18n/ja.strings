@@ -2248,3 +2248,14 @@
 "Makes one ordinary commit with all the changes (git merge --squash, then commit). The branch isn’t marked as merged." = "変更をまとめて 1 つの普通のコミットにします（git merge --squash の後にコミット）。取り込んだブランチは取り込み済みになりません。";
 "Squashing {from} into {branch}" = "{from} を {branch} に squash で取り込み中";
 "Squash in progress" = "squash の途中";
+
+/* GTK4 の FE: 構文の色（Settings > Theme） */
+"Theme" = "テーマ";
+"Syntax Colors" = "構文の色";
+"Light appearance" = "明るい外観";
+"Dark appearance" = "暗い外観";
+"Import VSCode Theme…" = "VSCode のテーマを読み込む…";
+"Reads tokenColors from a VSCode color theme (.json). Scopes map to Amon Hen’s 14 kinds, so colors are close but not exact." = "VSCode の配色テーマ（.json）の tokenColors を読みます。スコープを Amon Hen の 14 種類に当てはめるので、色は近いものになります。";
+"Dark" = "暗い";
+"Light" = "明るい";
+"Couldn’t read {file}: {error}" = "{file} を読めませんでした: {error}";

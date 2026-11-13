@@ -18,7 +18,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use amonhen_core::diff::{DiffView, StackedDiff};
-use amonhen_layout::{DiffRow, SyntaxSpan};
+use amonhen_layout::DiffRow;
 use amonhen_model::tr;
 use amonhen_projection::FrontendProfile;
 use gtk::glib::Properties;
@@ -180,6 +180,8 @@ pub struct State {
     collapsed: Vec<bool>,
     view: Option<Arc<View>>,
     rows: HashMap<u32, RowText>,
+    /// `rows` を作ったときの構文のテーマ（変えたら作り直す）。
+    theme_generation: u32,
     font: Option<pango::FontDescription>,
     row_height: f32,
     /// 等幅の文字 1 つの幅。
@@ -1663,8 +1665,9 @@ impl DiffWidget {
         let count = view.view.rows.len() as u32;
         let first = ((scroll_y / rh).floor().max(0.0) as u32).min(count);
         let last = (((scroll_y + height) / rh).ceil() as u32 + 1).min(count);
-        if st.rows.len() > 4096 {
+        if st.rows.len() > 4096 || st.theme_generation != crate::theme::generation() {
             st.rows.clear();
+            st.theme_generation = crate::theme::generation();
         }
         let secondary = gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), fg.alpha() * 0.5);
         let left = if st.checks {
@@ -2148,32 +2151,9 @@ fn rgb_attr((r, g, b): (f32, f32, f32)) -> pango::AttrColor {
     )
 }
 
-/// 構文の種類ごとの色（macOS 版の `SyntaxColors` と同じ割り当て）。`None` は本文の色のまま。
+/// 構文の種類ごとの色（Settings > Theme で選んだテーマ）。`None` は本文の色のまま。
 pub(crate) fn syntax_color(kind: u8, fg: &gdk::RGBA) -> Option<(f32, f32, f32)> {
-    let dark = fg.red() > 0.5;
-    let pick =
-        |light: (f32, f32, f32), dark_: (f32, f32, f32)| Some(if dark { dark_ } else { light });
-    let pink = pick((0.80, 0.18, 0.45), (1.0, 0.45, 0.65));
-    let red = pick((0.77, 0.16, 0.16), (1.0, 0.45, 0.40));
-    let gray = pick((0.45, 0.45, 0.48), (0.60, 0.60, 0.64));
-    let purple = pick((0.50, 0.25, 0.75), (0.78, 0.55, 1.0));
-    let blue = pick((0.10, 0.40, 0.85), (0.40, 0.65, 1.0));
-    let teal = pick((0.10, 0.55, 0.60), (0.35, 0.80, 0.85));
-    let cyan = pick((0.10, 0.50, 0.70), (0.40, 0.80, 0.95));
-    let orange = pick((0.80, 0.45, 0.05), (1.0, 0.65, 0.30));
-    let brown = pick((0.55, 0.40, 0.25), (0.80, 0.65, 0.45));
-    match kind {
-        SyntaxSpan::KEYWORD | SyntaxSpan::TAG | SyntaxSpan::VARIABLE => pink,
-        SyntaxSpan::STRING => red,
-        SyntaxSpan::COMMENT => gray,
-        SyntaxSpan::NUMBER | SyntaxSpan::CONSTANT => purple,
-        SyntaxSpan::FUNCTION => blue,
-        SyntaxSpan::TYPE => teal,
-        SyntaxSpan::PROPERTY => cyan,
-        SyntaxSpan::ATTRIBUTE | SyntaxSpan::ESCAPE => orange,
-        SyntaxSpan::MODULE => brown,
-        _ => None,
-    }
+    crate::theme::syntax_color(kind, fg)
 }
 
 #[cfg(test)]

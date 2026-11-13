@@ -72,6 +72,8 @@ mod subtreesheet;
 mod tabs;
 mod tagsign;
 mod templates;
+mod theme;
+mod themesettings;
 mod titles;
 mod toolbar;
 mod workcopy;
@@ -374,6 +376,7 @@ fn main() -> glib::ExitCode {
     sshhosts::load();
     // Settings > Performance の fsmonitor を status に効かせる。
     settings::apply_fsmonitor();
+    theme::watch_settings();
     // コアが作る文（エラーなど）の言語。Linux の慣習どおり LC_ALL・LC_MESSAGES・LANG から。
     amonhen_model::i18n::set_default(amonhen_model::i18n::Lang::from_env());
     let mut args = match parse_args() {
