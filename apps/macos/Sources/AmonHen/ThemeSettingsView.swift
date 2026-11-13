@@ -8,19 +8,21 @@ struct BackdropSections: View {
 
     var body: some View {
         Section(L("Window Background")) {
-            Picker(L("Style"), selection: $settings.style) {
+            Picker(L("Show the background in"), selection: $settings.style) {
                 ForEach(BackdropStyle.allCases, id: \.self) { Text($0.title).tag($0) }
             }
-            Note(note)
             if settings.style != .system {
+                Picker(L("Background"), selection: $settings.source) {
+                    ForEach(BackdropSource.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+            }
+            Note(note)
+            if settings.style != .system, settings.source == .image {
                 LabeledContent(L("Image")) {
                     HStack {
-                        Text(settings.image.map { ($0 as NSString).lastPathComponent } ?? L("None (see through the window)"))
+                        Text(settings.image.map { ($0 as NSString).lastPathComponent } ?? L("None"))
                             .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                         Button(L("Choose…")) { chooseImage() }
-                        if settings.image != nil {
-                            Button(L("Remove")) { settings.image = nil }
-                        }
                     }
                 }
                 if settings.image != nil {
@@ -57,10 +59,12 @@ struct BackdropSections: View {
     }
 
     private var note: String {
-        switch settings.style {
-        case .system: L("macOS’s look: the sidebar is glass. The lists and diffs share one opaque color.")
-        case .chrome: L("The sidebar and toolbar show the image or what is behind the window. The lists and diffs share one opaque color.")
-        case .single: L("One layer under the whole window. The lists and diffs paint nothing, and the colors of changes and selections stay opaque.")
+        switch (settings.style, settings.source) {
+        case (.system, _): L("macOS’s standard window. Nothing shows through; the lists and diffs share one opaque color.")
+        case (.chrome, .behind): L("The sidebar and toolbar show the desktop and windows behind, blurred. The lists and diffs share one opaque color.")
+        case (.chrome, .image): L("The sidebar and toolbar show the image; the window stays opaque. The lists and diffs share one opaque color.")
+        case (.single, .behind): L("The whole window shows the desktop and windows behind, blurred, under the lists and diffs at the content opacity.")
+        case (.single, .image): L("The whole window shows the image, under the lists and diffs at the content opacity; the window stays opaque.")
         }
     }
 
@@ -204,7 +208,7 @@ struct RepositoryBackdropView: View {
             .padding()
         }
         // Form は自分の高さを持たないので、シートの高さを決めておく（溢れたら Form の中で送る）。
-        .frame(width: 520, height: !override ? 200 : settings.style == .system ? 330 : 560)
+        .frame(width: 520, height: !override ? 200 : settings.style == .system ? 330 : 600)
         .onChange(of: override) { save() }
         .onChange(of: settings) { save() }
     }

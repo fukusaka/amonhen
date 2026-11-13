@@ -16,9 +16,9 @@ becomes the GitHub Release notes.
 - When Commit can't be clicked, its tooltip says why: no files are checked, no message, or a commit in progress.
 - Merge chooses how to integrate in its confirmation: Follow git's settings, Fast-Forward Only, Always Create a Merge
   Commit, or Squash into One Commit (committed right away; one that conflicts stops as Squash in progress).
-- macOS: Settings > Theme sets the window background: System, Sidebar and Toolbar Only (the lists and diffs one opaque
-  color), or One Layer for the Whole Window, with an optional background image and toolbar tint; a repository can
-  override it from the repository list's context menu.
+- macOS: Settings > Theme sets the window background in two choices: where it shows (Nowhere, Sidebar and Toolbar, or
+  Whole Window) and what it is (behind the window, or an image), with a toolbar tint; a repository can override it from
+  the repository list's context menu.
 - macOS: the window takes macOS's standard layout: the sidebar runs to the top with the Sidebar and Repositories buttons
   over it, and the toolbar, lists, diffs and commit form share one color instead of four different greys.
 - macOS: syntax colors come from a theme, chosen for the light and dark appearance: built-in themes or a VSCode color
