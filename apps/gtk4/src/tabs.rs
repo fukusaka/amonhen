@@ -622,7 +622,17 @@ thread_local! {
     static RESTORING: Cell<bool> = const { Cell::new(false) };
     /// エラーのタブの Try Again から開き直している途中（開けなくても、エラーのタブを残す）。
     static RETRYING: Cell<bool> = const { Cell::new(false) };
+    /// つかんで運んでいるタブ（外したページと元の TabView）。
+    static DRAGGING: RefCell<Option<(adw::TabPage, adw::TabView)>> = const { RefCell::new(None) };
+    /// 運んでいるタブが、この app の窓の上にあるか。
+    static DRAG_INSIDE: Cell<bool> = const { Cell::new(false) };
+    /// 運ぶのが取り消されたあとに Esc を離した（Esc でやめた）。
+    static DRAG_ESCAPED: Cell<bool> = const { Cell::new(false) };
 }
+
+/// 取り消されたドラッグが Esc によるものかを見分けるために待つ時間。Esc でやめると、取り消しのすぐあとに
+/// Esc を離した知らせが届く（落としたときは届かない）。
+const DRAG_ESCAPE_WAIT: std::time::Duration = std::time::Duration::from_millis(300);
 
 /// 確認用の起動（`--snapshot`・`--measure-scroll`）では、開いている窓とタブを覚えない。
 pub fn set_check_run() {
@@ -767,7 +777,57 @@ impl RepoWindow {
             }
             glib::Propagation::Stop
         });
-        // 窓の外に落とされた: 新しい窓を作り、そこに入れる。
+        // 窓の外に落とした: Wayland では、落とした先（デスクトップ・ほかのアプリの窓）が受け取らないと、
+        // AdwTabView は取り消されたと見て元の窓に戻す（新しい窓を作る `create-window` は、受け取り手がいない
+        // ときや上の帯・Dock に落としたときだけ）。窓の外で取り消されて戻ってきたら、新しい窓に移す。
+        // Esc でやめたときは戻したまま（macOS 版のタブと同じ）。
+        let motion = gtk::DropControllerMotion::new();
+        motion.connect_enter(|_, _, _| DRAG_INSIDE.with(|i| i.set(true)));
+        motion.connect_leave(|_| DRAG_INSIDE.with(|i| i.set(false)));
+        window.add_controller(motion);
+        let keys = gtk::EventControllerKey::new();
+        keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+        keys.connect_key_released(|_, key, _, _| {
+            if key == gtk::gdk::Key::Escape {
+                DRAG_ESCAPED.with(|e| e.set(true));
+            }
+        });
+        window.add_controller(keys);
+        let weak = Rc::downgrade(&this);
+        view.connect_page_detached(move |view, page, _| {
+            // こちらで閉じる・移すときは運んでいない。
+            if weak
+                .upgrade()
+                .is_some_and(|this| this.closing.borrow().is_some())
+            {
+                return;
+            }
+            DRAGGING.with(|d| d.replace(Some((page.clone(), view.clone()))));
+            // 窓の外から運び始めると、窓に入った知らせは来ない。入るまでは外にいるとする。
+            DRAG_INSIDE.with(|i| i.set(false));
+        });
+        let weak = Rc::downgrade(&this);
+        view.connect_page_attached(move |view, page, _| {
+            let back = DRAGGING
+                .with(|d| d.take())
+                .is_some_and(|(p, v)| &p == page && &v == view);
+            if !back || DRAG_INSIDE.with(Cell::get) || view.n_pages() <= 1 {
+                return;
+            }
+            DRAG_ESCAPED.with(|e| e.set(false));
+            let (weak, page) = (weak.clone(), page.clone());
+            glib::timeout_add_local_once(DRAG_ESCAPE_WAIT, move || {
+                if DRAG_ESCAPED.with(Cell::get) {
+                    return;
+                }
+                let Some(this) = weak.upgrade() else { return };
+                // Window > Move Tab to New Window と同じ。
+                if let Some(tab) = this.tab_of(&page.child()) {
+                    tab.group.activate_action("move-tab-to-new-window", None);
+                }
+            });
+        });
+        // 窓の外（上の帯・Dock など）に落とされた: 新しい窓を作り、そこに入れる。
         view.connect_create_window(|view| {
             let app = view
                 .root()
