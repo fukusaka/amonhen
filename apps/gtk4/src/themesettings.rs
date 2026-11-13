@@ -8,7 +8,7 @@ use amonhen_model::tr;
 use gtk::prelude::*;
 use gtk::{gdk, gio, glib, pango};
 
-use crate::backdrop::{Backdrop, Placement, Style};
+use crate::backdrop::{Backdrop, Placement, Source, Style};
 use crate::settings;
 use crate::theme::{self, SyntaxTheme};
 
@@ -53,7 +53,7 @@ fn percent_scale(min: f64, value: f64) -> (gtk::Box, gtk::Scale) {
     (b, scale)
 }
 
-/// 窓の背景の欄（型・説明・背景画像・置き方・中身の濃さ・見出しの帯の色）。`get` で今の設定を読み、`set` で書く。
+/// 窓の背景の欄（見せる場所・見せるもの・説明・背景画像・置き方・中身の濃さ・見出しの帯の色）。`get` で今の設定を読み、`set` で書く。
 /// 返す `refresh` は、ほかの所で設定が変わったときに欄を合わせ直す。
 pub fn backdrop_section(
     get: Rc<dyn Fn() -> Backdrop>,
@@ -62,7 +62,11 @@ pub fn backdrop_section(
     let styles: Vec<String> = Style::ALL.iter().map(|s| s.title()).collect();
     let refs: Vec<&str> = styles.iter().map(String::as_str).collect();
     let style = gtk::DropDown::from_strings(&refs);
-    let style_row = row(&tr!("Style"), &style);
+    let style_row = row(&tr!("Show the background in"), &style);
+    let sources: Vec<String> = Source::ALL.iter().map(|s| s.title()).collect();
+    let refs: Vec<&str> = sources.iter().map(String::as_str).collect();
+    let source = gtk::DropDown::from_strings(&refs);
+    let source_row = row(&tr!("Background"), &source);
     let note = settings::note("");
 
     let image_name = gtk::Label::new(None);
@@ -70,11 +74,9 @@ pub fn backdrop_section(
     image_name.set_ellipsize(pango::EllipsizeMode::Middle);
     image_name.set_max_width_chars(28);
     let choose = gtk::Button::with_label(&tr!("Choose…"));
-    let remove = gtk::Button::with_label(&tr!("Remove"));
     let image_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     image_box.append(&image_name);
     image_box.append(&choose);
-    image_box.append(&remove);
     let image_row = row(&tr!("Image"), &image_box);
 
     let placements: Vec<String> = Placement::ALL.iter().map(|p| p.title()).collect();
@@ -98,6 +100,7 @@ pub fn backdrop_section(
         Some(&tr!("Window Background")),
         &[
             style_row.clone().upcast(),
+            source_row.clone().upcast(),
             note.clone().upcast(),
             image_row.clone().upcast(),
             placement_row.clone().upcast(),
@@ -111,11 +114,11 @@ pub fn backdrop_section(
     // 欄を今の設定に合わせる（合わせている間の変化は、設定に書き戻さない）。
     let syncing = Rc::new(std::cell::Cell::new(false));
     let refresh: Rc<dyn Fn()> = {
-        let (style, note, image_name, remove, placement) = (
+        let (style, source, note, image_name, placement) = (
             style.clone(),
+            source.clone(),
             note.clone(),
             image_name.clone(),
-            remove.clone(),
             placement.clone(),
         );
         let (opacity, tint, color, tint_opacity) = (
@@ -124,7 +127,8 @@ pub fn backdrop_section(
             color.clone(),
             tint_opacity.clone(),
         );
-        let (image_row, placement_row, opacity_row) = (
+        let (source_row, image_row, placement_row, opacity_row) = (
+            source_row.clone(),
             image_row.clone(),
             placement_row.clone(),
             opacity_row.clone(),
@@ -139,13 +143,21 @@ pub fn backdrop_section(
             let b = get();
             syncing.set(true);
             style.set_selected(Style::ALL.iter().position(|s| *s == b.style).unwrap_or(0) as u32);
-            note.set_text(&match b.style {
-                Style::System => tr!("The usual look. The lists and diffs share one opaque color."),
-                Style::Chrome => tr!(
-                    "The sidebar and toolbar show the image or what is behind the window. The lists and diffs share one opaque color."
+            source
+                .set_selected(Source::ALL.iter().position(|s| *s == b.source).unwrap_or(0) as u32);
+            note.set_text(&match (b.style, b.source) {
+                (Style::System, _) => tr!("The usual look. Nothing shows through; the lists and diffs share one opaque color."),
+                (Style::Chrome, Source::Behind) => tr!(
+                    "The sidebar and header bar show the desktop and windows behind. The lists and diffs share one opaque color."
                 ),
-                Style::Single => tr!(
-                    "One layer under the whole window. The lists and diffs paint nothing, and the colors of changes and selections stay opaque."
+                (Style::Chrome, Source::Image) => tr!(
+                    "The sidebar and header bar show the image; the window stays opaque. The lists and diffs share one opaque color."
+                ),
+                (Style::Single, Source::Behind) => tr!(
+                    "The whole window shows the desktop and windows behind, under the lists and diffs at the content opacity."
+                ),
+                (Style::Single, Source::Image) => tr!(
+                    "The whole window shows the image, under the lists and diffs at the content opacity; the window stays opaque."
                 ),
             });
             image_name.set_text(&match &b.image {
@@ -153,9 +165,8 @@ pub fn backdrop_section(
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_else(|| path.clone()),
-                None => tr!("None (see through the window)"),
+                None => tr!("None"),
             });
-            remove.set_visible(b.image.is_some());
             placement.set_selected(
                 Placement::ALL
                     .iter()
@@ -179,8 +190,10 @@ pub fn backdrop_section(
                 tint_opacity.set_value(b.toolbar_opacity);
             }
             let custom = b.style != Style::System;
-            show_row(&image_row, custom);
-            show_row(&placement_row, custom && b.image.is_some());
+            let image = custom && b.source == Source::Image;
+            show_row(&source_row, custom);
+            show_row(&image_row, image);
+            show_row(&placement_row, image && b.image.is_some());
             show_row(&opacity_row, b.style == Style::Single);
             show_row(&tint_row, custom);
             show_row(&color_row, custom && b.toolbar_color.is_some());
@@ -206,6 +219,11 @@ pub fn backdrop_section(
     style.connect_selected_notify(move |d| {
         let s = Style::ALL[d.selected() as usize];
         c(&|b| b.style = s);
+    });
+    let c = change.clone();
+    source.connect_selected_notify(move |d| {
+        let s = Source::ALL[d.selected() as usize];
+        c(&|b| b.source = s);
     });
     let c = change.clone();
     placement.connect_selected_notify(move |d| {
@@ -241,8 +259,6 @@ pub fn backdrop_section(
             }
         });
     });
-    let c = change.clone();
-    remove.connect_clicked(move |_| c(&|b| b.image = None));
     let c = change.clone();
     choose.connect_clicked(move |button| {
         let parent = button.root().and_downcast::<gtk::Window>();

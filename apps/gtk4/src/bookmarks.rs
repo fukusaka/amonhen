@@ -1159,11 +1159,14 @@ mod tests {
 
     #[test]
     fn reads_and_writes_the_window_background() {
-        use crate::backdrop::{Placement, Style};
-        let text = r##"{"groups":[],"items":[{"backdrop":{"contentOpacity":0.6,"image":"/i.png","imagePlacement":"bottomRight","style":"single","toolbarColor":"#3b5bdb","toolbarOpacity":0.35},"favorite":false,"path":"/a"}],"scanRoots":[]}"##;
+        use crate::backdrop::{Placement, Source, Style};
+        let text = r##"{"groups":[],"items":[{"backdrop":{"contentOpacity":0.6,"image":"/i.png","imagePlacement":"bottomRight","source":"behind","style":"single","toolbarColor":"#3b5bdb","toolbarOpacity":0.35},"favorite":false,"path":"/a"}],"scanRoots":[]}"##;
         let data = Data::from_json(&serde_json::from_str(text).unwrap());
         let backdrop = data.items[0].backdrop.clone().unwrap();
         assert_eq!(backdrop.style, Style::Single);
+        // 窓の後ろを見せていても、画像のパスは覚えている。
+        assert_eq!(backdrop.source, Source::Behind);
+        assert_eq!(backdrop.image.as_deref(), Some("/i.png"));
         assert_eq!(backdrop.placement, Placement::BottomRight);
         assert_eq!(backdrop.content_opacity, 0.6);
         assert_eq!(data.to_json(), serde_json::from_str::<Value>(text).unwrap());

@@ -19,6 +19,7 @@ use crate::settings;
 
 const STYLE: &str = "backdropStyle";
 const IMAGE: &str = "backdropImage";
+const SOURCE: &str = "backdropSource";
 const IMAGE_PLACEMENT: &str = "backdropImagePlacement";
 const CONTENT_OPACITY: &str = "backdropContentOpacity";
 const TOOLBAR_COLOR: &str = "backdropToolbarColor";
@@ -61,9 +62,50 @@ impl Style {
 
     pub fn title(self) -> String {
         match self {
-            Style::System => tr!("System"),
-            Style::Chrome => tr!("Sidebar and Toolbar Only"),
-            Style::Single => tr!("One Layer for the Whole Window"),
+            Style::System => tr!("Nowhere (System)"),
+            Style::Chrome => tr!("Sidebar and Toolbar"),
+            Style::Single => tr!("Whole Window"),
+        }
+    }
+}
+
+/// 背景に見せるもの。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Source {
+    /// 窓の後ろ（合成があれば、デスクトップや後ろの窓が見える）。
+    #[default]
+    Behind,
+    /// 選んだ画像（窓は不透明のまま）。
+    Image,
+}
+
+impl Source {
+    pub const ALL: [Source; 2] = [Source::Behind, Source::Image];
+
+    fn raw(self) -> &'static str {
+        match self {
+            Source::Behind => "behind",
+            Source::Image => "image",
+        }
+    }
+
+    fn from_raw(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|v| v.raw() == s)
+    }
+
+    /// 見せるものを分ける前の記録は、画像があれば画像。
+    fn or_from(raw: Option<&str>, image: &Option<String>) -> Self {
+        raw.and_then(Self::from_raw).unwrap_or(if image.is_some() {
+            Source::Image
+        } else {
+            Source::Behind
+        })
+    }
+
+    pub fn title(self) -> String {
+        match self {
+            Source::Behind => tr!("Behind the Window"),
+            Source::Image => tr!("Image"),
         }
     }
 }
@@ -128,8 +170,11 @@ impl Placement {
 /// 窓の背景の設定。アプリの設定と、リポジトリごとの上書きで同じ形。
 #[derive(Clone, Debug, PartialEq)]
 pub struct Backdrop {
+    /// 背景を見せる場所。
     pub style: Style,
-    /// 背景画像のパス（なければ窓の後ろが透ける）。
+    /// 背景に見せるもの。
+    pub source: Source,
+    /// 背景画像のパス（窓の後ろに切り替えても覚えておく）。
     pub image: Option<String>,
     pub placement: Placement,
     /// 1 枚の地の濃さ（0.4〜1）。
@@ -143,6 +188,7 @@ impl Default for Backdrop {
     fn default() -> Self {
         Self {
             style: Style::System,
+            source: Source::Behind,
             image: None,
             placement: Placement::Fill,
             content_opacity: 0.8,
@@ -162,11 +208,13 @@ impl Backdrop {
                 .unwrap_or(default)
         };
         let text = |key: &str| settings::string(key).filter(|s| !s.is_empty());
+        let image = text(IMAGE);
         Self {
             style: text(STYLE)
                 .and_then(|s| Style::from_raw(&s))
                 .unwrap_or(d.style),
-            image: text(IMAGE),
+            source: Source::or_from(text(SOURCE).as_deref(), &image),
+            image,
             placement: text(IMAGE_PLACEMENT)
                 .and_then(|s| Placement::from_raw(&s))
                 .unwrap_or(d.placement),
@@ -185,6 +233,9 @@ impl Backdrop {
         };
         if old.style != self.style {
             set(STYLE, Some(self.style.raw().into()));
+        }
+        if old.source != self.source {
+            set(SOURCE, Some(self.source.raw().into()));
         }
         if old.image != self.image {
             set(IMAGE, self.image.clone());
@@ -212,6 +263,7 @@ impl Backdrop {
     pub fn to_json(&self) -> Value {
         let mut m = Map::new();
         m.insert("style".into(), json!(self.style.raw()));
+        m.insert("source".into(), json!(self.source.raw()));
         m.insert("imagePlacement".into(), json!(self.placement.raw()));
         m.insert("contentOpacity".into(), json!(self.content_opacity));
         m.insert("toolbarOpacity".into(), json!(self.toolbar_opacity));
@@ -228,12 +280,14 @@ impl Backdrop {
     pub fn from_json(v: &Value) -> Option<Self> {
         let d = Self::default();
         v.as_object()?;
+        let image = v["image"].as_str().map(str::to_owned);
         Some(Self {
             style: v["style"]
                 .as_str()
                 .and_then(Style::from_raw)
                 .unwrap_or(d.style),
-            image: v["image"].as_str().map(str::to_owned),
+            source: Source::or_from(v["source"].as_str(), &image),
+            image,
             placement: v["imagePlacement"]
                 .as_str()
                 .and_then(Placement::from_raw)
@@ -242,6 +296,13 @@ impl Backdrop {
             toolbar_color: v["toolbarColor"].as_str().map(str::to_owned),
             toolbar_opacity: v["toolbarOpacity"].as_f64().unwrap_or(d.toolbar_opacity),
         })
+    }
+
+    /// 窓に描く画像（見せるものが画像のときだけ）。
+    fn shown_image(&self) -> Option<&str> {
+        (self.source == Source::Image)
+            .then_some(self.image.as_deref())
+            .flatten()
     }
 
     /// 差分の見出し（スクロールしても上に残る帯）の地。`None` はこれまでどおり（不透明）。
@@ -480,8 +541,7 @@ fn rules(id: u32, b: &Backdrop, (width, height): (i32, i32)) -> String {
         return opaque + &panes;
     }
     let picture = b
-        .image
-        .as_deref()
+        .shown_image()
         .and_then(|path| image_size(path).map(|size| (path, size)));
     let see_through = picture.is_none() && can_see_through();
     let mut css = String::new();
@@ -581,8 +641,7 @@ pub fn snapshot_background(window: &gtk::Window, snapshot: &gtk::Snapshot, w: f3
     let (view, base) = (color("view_bg_color"), color("window_bg_color"));
     let bounds = graphene::Rect::new(0.0, 0.0, w, h);
     let picture = b
-        .image
-        .as_deref()
+        .shown_image()
         .and_then(|path| gdk::Texture::from_filename(path).ok());
     let with_alpha = |c: gdk::RGBA, a: f32| gdk::RGBA::new(c.red(), c.green(), c.blue(), a);
     let ground = with_alpha(view, b.content_opacity as f32);
