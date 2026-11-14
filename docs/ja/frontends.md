@@ -94,7 +94,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 手で作るグループ・行を Favorites やグループへドラッグ | △ | △ | n/a | n/a | macOS: グループそのものはドラッグで並べ替えられない。<br>GTK4: グループそのものはドラッグで並べ替えられない。 |
 | 状態の列（ブランチ・変更・ahead/behind・最後のコミット・開いた時）、並べ替え、列の順の入れ替え | ✓ | ✓ | n/a | n/a |  |
 | お気に入り・表示名・色のラベル | ✓ | ✓ | n/a | n/a |  |
-| タブ・窓で開く、Finder（ファイル）・Terminal | △ | △ | n/a | n/a | macOS: Open in Editor はない。<br>GTK4: Open in Editor はない。 |
+| タブ・窓で開く、Finder（ファイル）・Terminal・エディタ | ✓ | ✓ | n/a | n/a | GTK4: 知っているコードエディタと「その他…」で選んだプログラム以外は、inode/directory を宣言しているアプリだけがフォルダを開く。 |
 | 選んだリポジトリを Fetch | ✓ | ✓ | n/a | n/a |  |
 | Quick Open（あいまい検索） | ✓ | ✓ | n/a | n/a |  |
 | ツールバーのリポジトリ名で切り替える | ✓ | ✓ | ✓ | n/a | VSCode: Select Repository でワークスペースのリポジトリから選ぶ。 |

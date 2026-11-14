@@ -94,7 +94,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Manual groups; rows dragged onto Favorites or a group | △ | △ | n/a | n/a | macOS: Groups themselves can't be reordered by dragging.<br>GTK4: Groups themselves can't be reordered by dragging. |
 | Status columns (branch, changes, ahead/behind, last commit, opened), sortable and reorderable | ✓ | ✓ | n/a | n/a |  |
 | Favorites, display name, color label | ✓ | ✓ | n/a | n/a |  |
-| Open in a tab or window; Finder / Files, Terminal | △ | △ | n/a | n/a | macOS: No Open in Editor.<br>GTK4: No Open in Editor. |
+| Open in a tab or window; Finder / Files, Terminal, Editor | ✓ | ✓ | n/a | n/a | GTK4: An app other than a known code editor or a program chosen with Other… opens a folder only if it declares inode/directory. |
 | Fetch the selected repositories | ✓ | ✓ | n/a | n/a |  |
 | Quick Open (fuzzy search) | ✓ | ✓ | n/a | n/a |  |
 | Repository name in the toolbar switches the repository | ✓ | ✓ | ✓ | n/a | VSCode: Select Repository picks among workspace repositories. |
