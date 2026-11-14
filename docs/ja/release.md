@@ -10,6 +10,8 @@
   Linux x86_64・Linux aarch64）と zip（Windows x86_64・aarch64）を Release に載せる。タグは `Cargo.toml` の
   `workspace.package.version` と一致させ、タグのコミットで CI が通っていて、`CHANGELOG.md` にその版の節があること
   （見出しのすぐ下に短い要約の段落を書く。要約が、CHANGELOG 全体へのリンクと一緒に Release の説明になる）。
+  確かめが通ると、作って署名する前に、環境 `release-approval` の承認を待つ（承認者がワークフローの実行の画面で
+  承認する）。`vscode-v*` のタグも同じ。snapshot は待たない。
 - 作るのは `.github/workflows/build.yml`: エンジンは OS と CPU ごとにそのマシンで作り、配る前にその場で一度動かして
   確かめる（`scripts/check-engine.sh`）。GTK4 のアプリは Linux の CPU ごとに Ubuntu 24.04 で作り、SSH 先に送る Linux のエンジンを入れる
   （`scripts/package-gtk4.sh`）。アプリは macOS で並べてコンパイルし（`scripts/compile-app.sh`）、最後に
@@ -58,6 +60,9 @@ gh attestation verify Amon-Hen-0.2.0.zip --repo fukusaka/amonhen
 ```
 
 ## 署名と公証（macOS）
+
+署名と公証の secret は環境 `release` に置き、使えるのは `main` と `v*`・`vscode-v*` のタグだけにしている。正式版は、
+それを読むビルドが始まる前に、環境 `release-approval`（secret は置かない。承認者はリポジトリの持ち主）の承認も要る。
 
 環境 `release` の secret に Developer ID Application の証明書と App Store Connect の API キーがあれば、アプリと
 macOS のエンジンを Developer ID で署名し、Apple の公証に出す（アプリには結果を綴じ込む）。ブラウザで取っても

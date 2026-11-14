@@ -36,10 +36,22 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: scripts/require-ci.sh "$GITHUB_SHA"
 
-  # 署名の鍵を使うので、タグと CI を確かめてから作る。
+  # 正式版は、署名の鍵を使う前に承認を待つ（環境 release-approval の Required reviewers。secret は置かない）。
+  # snapshot も使う環境 release に承認者を置くと main への push のたびに止まるので、承認だけを別の環境にする。
+  approve:
+    name: Approve the release
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: release-approval
+    permissions: {}
+    steps:
+      - run: echo "Approved $GITHUB_REF_NAME"
+
+  # 署名の鍵を使うので、タグと CI を確かめ、承認を得てから作る。
   build:
     name: Build
-    needs: check
+    needs: approve
     # actionlint がまだ $/ の書き方を読めないので、./ で呼ぶ。
     uses: ./.github/workflows/build.yml # zizmor: ignore[self-repository]
     permissions:
