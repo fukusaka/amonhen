@@ -1,0 +1,14 @@
+# ワークフローの action を新しい版に上げる PR を作る（SHA で固定しているので、自動では上がらない）。
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    # ワークフローと、.github/actions の自前の action。
+    directories: ['/', '/.github/actions/*']
+    schedule:
+      interval: weekly
+    # 出たばかりの版は待つ（乗っ取られた版がすぐ取り下げられることがあるので）。
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ['*']
