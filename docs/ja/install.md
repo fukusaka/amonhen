@@ -57,11 +57,11 @@ Windows では、`amonhen-<版>-windows-<CPU>.zip` を取ってきて展開し�
 
 ## VSCode 拡張
 
-1. `amonhen-vscode-<版>.vsix` を取ってきます。
+1. `amonhen-<版>.vsix` を取ってきます（snapshot は `amonhen-vscode-<版>.vsix`）。
 2. 入れます。
 
    ```sh
-   code --install-extension amonhen-vscode-<版>.vsix
+   code --install-extension amonhen-<版>.vsix
    ```
 
 3. VSCode のウィンドウを再読み込みします。
@@ -121,7 +121,7 @@ gh attestation verify <ファイル> --repo fukusaka/amonhen
 - **アプリ**: macOS 14.4 以降、Apple シリコンの Mac。
 - **GTK4 のアプリ**: Linux（x86_64・arm64）で GTK 4.14 以降（Ubuntu 24.04・Debian 13 以降）。
 - **コマンドと VSCode 拡張**: Apple シリコンの macOS、Linux（x86_64・arm64、ディストリビューションは問いません）、
-  Windows（x86_64・arm64）。
+  Windows（x86_64・arm64）。拡張には VSCode 1.120 以降が要ります。
 - `git` 2.23 以降が入っている必要があります（Mac でも SSH 先でも）。サポートが続いている Ubuntu・Debian・RHEL と、
   Xcode の git はどれも満たします。より新しい git の機能（commit-graph の変更のあったパスの Bloom フィルタなど）は、
   そこの git にあれば使い、なければ古いやり方で行います。git の操作が失敗したとき、git が 2.23 より古ければ、
