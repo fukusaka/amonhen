@@ -305,11 +305,21 @@ fn syntax_section() -> gtk::Box {
     failure.add_css_class("settings-error");
     failure.set_visible(false);
     let imported = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    // 差分は、テーマに関係なく標準の色を使う（構文の色はテーマのまま）。
+    let standard = gtk::Switch::new();
+    standard.set_valign(gtk::Align::Center);
+    standard.set_active(settings::bool(theme::DIFF_STANDARD_COLORS));
+    standard.connect_active_notify(|s| {
+        if s.is_active() != settings::bool(theme::DIFF_STANDARD_COLORS) {
+            settings::set_bool(theme::DIFF_STANDARD_COLORS, s.is_active());
+        }
+    });
     let section = crate::reposettings::section(
-        Some(&tr!("Syntax Colors")),
+        Some(&tr!("Color Theme")),
         &[
             row(&tr!("Light appearance"), &light).upcast(),
             row(&tr!("Dark appearance"), &dark).upcast(),
+            row(&tr!("Use standard colors for diffs"), &standard).upcast(),
             preview.clone().upcast(),
             import.clone().upcast(),
             failure.clone().upcast(),
@@ -458,7 +468,10 @@ fn syntax_section() -> gtk::Box {
     settings::connect_changed_while(&section, move |key| {
         if matches!(
             key,
-            theme::SYNTAX_THEME_LIGHT | theme::SYNTAX_THEME_DARK | theme::IMPORTED_SYNTAX_THEMES
+            theme::SYNTAX_THEME_LIGHT
+                | theme::SYNTAX_THEME_DARK
+                | theme::IMPORTED_SYNTAX_THEMES
+                | theme::DIFF_STANDARD_COLORS
         ) {
             r();
         }
@@ -519,6 +532,36 @@ fn preview_markup() -> String {
             )),
             None => out.push_str(&text),
         }
+    }
+    // 差分の色の見本（削除と追加の行、変わった単語）。
+    let span = |kind: theme::DiffColor, text: &str| {
+        let c = theme::diff_color(kind, &fg);
+        let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+        format!(
+            "<span background=\"#{:02x}{:02x}{:02x}\" bgalpha=\"{}%\">{text}</span>",
+            byte(c.red()),
+            byte(c.green()),
+            byte(c.blue()),
+            ((c.alpha() * 100.0).round() as u32).max(1)
+        )
+    };
+    for (sign, number, line, word) in [
+        (
+            "-",
+            "10",
+            theme::DiffColor::Removed,
+            theme::DiffColor::RemovedWord,
+        ),
+        (
+            "+",
+            "25",
+            theme::DiffColor::Added,
+            theme::DiffColor::AddedWord,
+        ),
+    ] {
+        let inner = format!("{sign}     let limit = {};          ", span(word, number));
+        out.push('\n');
+        out.push_str(&span(line, &inner));
     }
     out
 }

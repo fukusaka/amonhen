@@ -22,6 +22,8 @@ use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
 use serde_json::{Value, json};
 
+use crate::theme::DiffColor;
+
 use crate::actions::Actions;
 
 /// 欄の一方の中身（すべてのコンフリクトをその側にした文章と、各コンフリクトの行範囲）。
@@ -77,10 +79,13 @@ struct Pane {
     scrolled: gtk::ScrolledWindow,
     /// 構文の色付けを頼んだ回数（解析している間に書き換わったら、古い結果を捨てる）。
     syntax_generation: Rc<Cell<u64>>,
+    /// コンフリクトを塗る色合い。
+    color: DiffColor,
 }
 
 impl Pane {
-    fn new(title: &str, editable: bool, color: &str) -> Self {
+    /// `color` はコンフリクトを塗る色合い（配色テーマの差分の色。濃さはここで決める）。
+    fn new(title: &str, editable: bool, color: DiffColor) -> Self {
         let label = gtk::Label::new(Some(title));
         label.set_xalign(0.0);
         // 小さな太字で、薄く（macOS 版と同じ）。
@@ -96,24 +101,9 @@ impl Pane {
             .left_margin(4)
             .build();
         let buffer = view.buffer();
-        let rgba = |alpha: f32| {
-            let mut c = gdk::RGBA::parse(color).unwrap_or(gdk::RGBA::BLACK);
-            c.set_alpha(alpha);
-            c
-        };
-        buffer.create_tag(
-            Some("conflict"),
-            &[("paragraph-background-rgba", &rgba(0.12))],
-        );
-        buffer.create_tag(
-            Some("selected"),
-            &[("paragraph-background-rgba", &rgba(0.32))],
-        );
-        // 解決済みのコンフリクトは、背景をごく薄くする（macOS 版と同じ）。
-        buffer.create_tag(
-            Some("resolved"),
-            &[("paragraph-background-rgba", &rgba(0.05))],
-        );
+        for name in ["conflict", "selected", "resolved"] {
+            buffer.create_tag(Some(name), &[]);
+        }
         let scrolled = gtk::ScrolledWindow::builder()
             .child(&view)
             .vexpand(true)
@@ -122,11 +112,27 @@ impl Pane {
         let root = gtk::Box::new(gtk::Orientation::Vertical, 2);
         root.append(&label);
         root.append(&scrolled);
-        Self {
+        let pane = Self {
             root,
             view,
             scrolled,
             syntax_generation: Rc::default(),
+            color,
+        };
+        pane.tint();
+        pane
+    }
+
+    /// コンフリクトの地を、今の配色テーマで塗り直す（解決済みのものは、ごく薄く。macOS 版と同じ）。
+    fn tint(&self) {
+        let hue = crate::theme::diff_color_now(self.color);
+        let table = self.view.buffer().tag_table();
+        for (name, alpha) in [("conflict", 0.12), ("selected", 0.32), ("resolved", 0.05)] {
+            if let Some(tag) = table.lookup(name) {
+                let mut c = hue;
+                c.set_alpha(alpha);
+                tag.set_paragraph_background_rgba(Some(&c));
+            }
         }
     }
 
@@ -672,10 +678,15 @@ impl Editor {
         without_markers: Option<String>,
         rerere: bool,
     ) -> Rc<Self> {
-        let current = Pane::new(&tr!("Current (your branch)"), false, "#3584e4");
-        let result_pane = Pane::new(&tr!("Result (editable)"), true, "#e01b24");
-        let incoming = Pane::new(&tr!("Incoming (being merged in)"), false, "#2ec27e");
-        let base = Pane::new(&tr!("Base (common ancestor)"), false, "#9a9996");
+        // 欄の色合いは配色テーマの差分の色（Result のコンフリクトは削除の色。macOS 版と同じ）。
+        let current = Pane::new(&tr!("Current (your branch)"), false, DiffColor::Current);
+        let result_pane = Pane::new(&tr!("Result (editable)"), true, DiffColor::Removed);
+        let incoming = Pane::new(
+            &tr!("Incoming (being merged in)"),
+            false,
+            DiffColor::Incoming,
+        );
+        let base = Pane::new(&tr!("Base (common ancestor)"), false, DiffColor::Base);
         let has_base = sides[2].is_some();
 
         let position = gtk::Label::new(None);
@@ -1154,6 +1165,7 @@ impl Editor {
                 });
         }
         Self::connect_bands(&this);
+        Self::follow_theme(&this);
         this
     }
 
@@ -1599,11 +1611,12 @@ impl Editor {
         let mut arrows = self.arrows[index].borrow_mut();
         arrows.clear();
         let Some(side) = side else { return };
-        let color = if ours {
-            (0.21, 0.52, 0.89)
+        let hue = crate::theme::diff_color_now(if ours {
+            DiffColor::Current
         } else {
-            (0.18, 0.76, 0.49)
-        };
+            DiffColor::Incoming
+        });
+        let color = (hue.red() as f64, hue.green() as f64, hue.blue() as f64);
         let conflicts = self.conflicts.borrow();
         let original_of = self.original_of.borrow();
         let layout = pangocairo::functions::create_layout(cr);
@@ -1672,6 +1685,45 @@ impl Editor {
             .iter()
             .find(|(ax, ay, w, h, _)| x >= *ax && x < ax + w && y >= *ay && y < ay + h)
             .map(|a| a.4)
+    }
+
+    /// 配色テーマ・外観が変わったら、欄のコンフリクトと帯を塗り直す。
+    fn follow_theme(this: &Rc<Self>) {
+        let retint = {
+            let weak = Rc::downgrade(this);
+            move || {
+                let Some(this) = weak.upgrade() else { return };
+                for pane in [&this.current, &this.result, &this.incoming, &this.base] {
+                    pane.tint();
+                }
+                for band in &this.bands {
+                    band.queue_draw();
+                }
+            }
+        };
+        let r = retint.clone();
+        crate::settings::connect_changed_while(&this.root, move |key| {
+            if matches!(
+                key,
+                crate::theme::SYNTAX_THEME_LIGHT
+                    | crate::theme::SYNTAX_THEME_DARK
+                    | crate::theme::IMPORTED_SYNTAX_THEMES
+                    | crate::theme::DIFF_STANDARD_COLORS
+            ) {
+                r();
+            }
+        });
+        let weak = this.root.downgrade();
+        let id = adw::StyleManager::default().connect_dark_notify(move |_| retint());
+        // 欄がなくなったら、外観の知らせを外す。
+        let id = RefCell::new(Some(id));
+        weak.upgrade().inspect(|root| {
+            root.connect_destroy(move |_| {
+                if let Some(id) = id.borrow_mut().take() {
+                    adw::StyleManager::default().disconnect(id);
+                }
+            });
+        });
     }
 
     fn connect_bands(this: &Rc<Self>) {

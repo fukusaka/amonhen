@@ -16,11 +16,65 @@ use crate::settings;
 pub const SYNTAX_THEME_LIGHT: &str = "syntaxThemeLight";
 pub const SYNTAX_THEME_DARK: &str = "syntaxThemeDark";
 pub const IMPORTED_SYNTAX_THEMES: &str = "importedSyntaxThemes";
+/// 差分の色は、テーマに関係なく標準の色を使う（構文の色はテーマのまま）。
+pub const DIFF_STANDARD_COLORS: &str = "diffStandardColors";
+
+/// 差分の色の種類（macOS 版の `DiffColor`）。テーマの `colors` の鍵（`#rrggbbaa`）と、テーマが持たないときの
+/// 標準の色。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DiffColor {
+    /// 追加・削除の行の地。
+    Added,
+    Removed,
+    /// 変わった単語の地。
+    AddedWord,
+    RemovedWord,
+    /// hunk の見出しの行の地。
+    Hunk,
+    /// コンフリクトの Current・Incoming・共通の祖先の行と、マーカーの行の地。マージエディタも同じ色合い。
+    Current,
+    Incoming,
+    Base,
+    Marker,
+}
+
+impl DiffColor {
+    pub fn key(self) -> &'static str {
+        match self {
+            DiffColor::Added => "diffAdded",
+            DiffColor::Removed => "diffRemoved",
+            DiffColor::AddedWord => "diffAddedWord",
+            DiffColor::RemovedWord => "diffRemovedWord",
+            DiffColor::Hunk => "diffHunk",
+            DiffColor::Current => "conflictCurrent",
+            DiffColor::Incoming => "conflictIncoming",
+            DiffColor::Base => "conflictBase",
+            DiffColor::Marker => "conflictMarker",
+        }
+    }
+
+    /// これまでの色。
+    pub fn standard(self) -> gdk::RGBA {
+        let (r, g, b, a) = match self {
+            DiffColor::Added => (0.2, 0.7, 0.3, 0.16),
+            DiffColor::Removed => (0.9, 0.25, 0.25, 0.16),
+            DiffColor::AddedWord => (0.2, 0.7, 0.3, 0.35),
+            DiffColor::RemovedWord => (0.9, 0.25, 0.25, 0.35),
+            DiffColor::Hunk => (0.3, 0.5, 0.9, 0.10),
+            DiffColor::Current => (0.3, 0.5, 0.9, 0.18),
+            DiffColor::Incoming => (0.2, 0.7, 0.3, 0.18),
+            DiffColor::Base => (0.5, 0.5, 0.5, 0.18),
+            DiffColor::Marker => (1.0, 0.58, 0.0, 0.14),
+        };
+        gdk::RGBA::new(r, g, b, a)
+    }
+}
 
 /// System（これまでの色）の名前。
 pub const SYSTEM: &str = "System";
 
-/// 構文の色のテーマ。種類（`keyword` など）→ `#rrggbb`。ない種類は本文の色。
+/// 構文の色のテーマ。種類（`keyword` など）→ `#rrggbb`。ない種類は本文の色。差分の色（[`DiffColor`] の鍵 →
+/// `#rrggbbaa`）も同じ表に入れ、ないものは標準の色。
 #[derive(Clone, Debug, PartialEq)]
 pub struct SyntaxTheme {
     pub name: String,
@@ -48,15 +102,17 @@ pub const KINDS: [(&str, u8); 14] = [
 ];
 
 impl SyntaxTheme {
-    fn new(name: &str, dark: bool, hex: [&str; 14]) -> Self {
+    fn new(name: &str, dark: bool, hex: [&str; 14], diff: [&str; 5]) -> Self {
+        let mut colors: HashMap<String, String> = KINDS
+            .iter()
+            .zip(hex)
+            .map(|((kind, _), hex)| ((*kind).into(), hex.into()))
+            .collect();
+        colors.extend(diff_colors(diff));
         Self {
             name: name.into(),
             dark,
-            colors: KINDS
-                .iter()
-                .zip(hex)
-                .map(|((kind, _), hex)| ((*kind).into(), hex.into()))
-                .collect(),
+            colors,
         }
     }
 
@@ -69,6 +125,11 @@ impl SyntaxTheme {
     }
 
     /// 種類の色（`None` は本文の色のまま）。`dark` は今の外観が暗いか（System の色を選ぶため）。
+    /// 差分の色（テーマが持たなければ `None`）。
+    pub fn diff_color(&self, kind: DiffColor) -> Option<gdk::RGBA> {
+        self.colors.get(kind.key()).and_then(|hex| parse_rgba(hex))
+    }
+
     pub fn color(&self, kind: u8, dark: bool) -> Option<(f32, f32, f32)> {
         if self.name == SYSTEM && self.colors.is_empty() {
             return system_color(kind, dark);
@@ -137,6 +198,55 @@ pub fn parse_hex(hex: &str) -> Option<(f32, f32, f32)> {
     Some((c(16), c(8), c(0)))
 }
 
+/// `#rrggbb` か `#rrggbbaa`（透明度も）から。
+pub fn parse_rgba(hex: &str) -> Option<gdk::RGBA> {
+    let s = hex.trim().trim_start_matches('#');
+    let (r, g, b) = parse_hex(hex)?;
+    let a = match s.len() {
+        8 => u8::from_str_radix(&s[6..8], 16).ok()? as f32 / 255.0,
+        _ => 1.0,
+    };
+    Some(gdk::RGBA::new(r, g, b, a))
+}
+
+/// 内蔵のテーマの差分の色: そのテーマの緑・赤・青・灰・橙（`[added, removed, blue, gray, orange]`）に、標準の色と同じ
+/// 濃さを付ける（macOS 版の `diffColors` と同じ）。
+fn diff_colors([added, removed, blue, gray, orange]: [&str; 5]) -> Vec<(String, String)> {
+    [
+        (DiffColor::Added, added, "29"),
+        (DiffColor::Removed, removed, "29"),
+        (DiffColor::AddedWord, added, "61"),
+        (DiffColor::RemovedWord, removed, "61"),
+        (DiffColor::Hunk, blue, "1a"),
+        (DiffColor::Current, blue, "2e"),
+        (DiffColor::Incoming, added, "2e"),
+        (DiffColor::Base, gray, "2e"),
+        (DiffColor::Marker, orange, "24"),
+    ]
+    .into_iter()
+    .map(|(kind, hex, alpha)| (kind.key().to_owned(), format!("{hex}{alpha}")))
+    .collect()
+}
+
+/// VSCode の色（`#rgb`・`#rgba`・`#rrggbb`・`#rrggbbaa`）を `#rrggbb` か `#rrggbbaa` に。読めなければ `None`。
+pub fn normalized_hex(value: &str) -> Option<String> {
+    let s = value.trim().strip_prefix('#')?;
+    if !s.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    match s.len() {
+        3 | 4 => Some(format!(
+            "#{}",
+            s.chars()
+                .flat_map(|c| [c, c])
+                .collect::<String>()
+                .to_lowercase()
+        )),
+        6 | 8 => Some(format!("#{}", s.to_lowercase())),
+        _ => None,
+    }
+}
+
 /// `#rrggbb` に。
 pub fn to_hex(rgba: &gdk::RGBA) -> String {
     let c = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
@@ -158,6 +268,7 @@ pub fn built_in() -> Vec<SyntaxTheme> {
                 "#859900", "#2aa198", "#93a1a1", "#d33682", "#268bd2", "#b58900", "#cb4b16",
                 "#268bd2", "#b58900", "#268bd2", "#657b83", "#b58900", "#dc322f", "#6c71c4",
             ],
+            ["#859900", "#dc322f", "#268bd2", "#93a1a1", "#cb4b16"],
         ),
         SyntaxTheme::new(
             "Solarized Dark",
@@ -166,6 +277,7 @@ pub fn built_in() -> Vec<SyntaxTheme> {
                 "#859900", "#2aa198", "#586e75", "#d33682", "#268bd2", "#b58900", "#cb4b16",
                 "#268bd2", "#b58900", "#268bd2", "#839496", "#b58900", "#dc322f", "#6c71c4",
             ],
+            ["#859900", "#dc322f", "#268bd2", "#586e75", "#cb4b16"],
         ),
         SyntaxTheme::new(
             "Gruvbox Light",
@@ -174,6 +286,7 @@ pub fn built_in() -> Vec<SyntaxTheme> {
                 "#9d0006", "#79740e", "#928374", "#8f3f71", "#79740e", "#b57614", "#8f3f71",
                 "#076678", "#427b58", "#9d0006", "#af3a03", "#076678", "#af3a03", "#427b58",
             ],
+            ["#79740e", "#9d0006", "#076678", "#928374", "#af3a03"],
         ),
         SyntaxTheme::new(
             "Gruvbox Dark",
@@ -182,6 +295,7 @@ pub fn built_in() -> Vec<SyntaxTheme> {
                 "#fb4934", "#b8bb26", "#928374", "#d3869b", "#b8bb26", "#fabd2f", "#d3869b",
                 "#83a598", "#8ec07c", "#fb4934", "#fe8019", "#83a598", "#fe8019", "#8ec07c",
             ],
+            ["#b8bb26", "#fb4934", "#83a598", "#928374", "#fe8019"],
         ),
         SyntaxTheme::new(
             "Tomorrow",
@@ -190,6 +304,7 @@ pub fn built_in() -> Vec<SyntaxTheme> {
                 "#8959a8", "#718c00", "#8e908c", "#f5871f", "#4271ae", "#c99e00", "#f5871f",
                 "#c82829", "#f5871f", "#c82829", "#3e999f", "#c82829", "#f5871f", "#3e999f",
             ],
+            ["#718c00", "#c82829", "#4271ae", "#8e908c", "#f5871f"],
         ),
         SyntaxTheme::new(
             "Tomorrow Night",
@@ -198,6 +313,7 @@ pub fn built_in() -> Vec<SyntaxTheme> {
                 "#b294bb", "#b5bd68", "#969896", "#de935f", "#81a2be", "#f0c674", "#de935f",
                 "#cc6666", "#de935f", "#cc6666", "#8abeb7", "#cc6666", "#de935f", "#8abeb7",
             ],
+            ["#b5bd68", "#cc6666", "#81a2be", "#969896", "#de935f"],
         ),
         SyntaxTheme::new(
             "Nord",
@@ -206,6 +322,7 @@ pub fn built_in() -> Vec<SyntaxTheme> {
                 "#81a1c1", "#a3be8c", "#616e88", "#b48ead", "#88c0d0", "#8fbcbb", "#b48ead",
                 "#88c0d0", "#d08770", "#81a1c1", "#81a1c1", "#d8dee9", "#ebcb8b", "#8fbcbb",
             ],
+            ["#a3be8c", "#bf616a", "#81a1c1", "#616e88", "#d08770"],
         ),
     ]
 }
@@ -245,8 +362,9 @@ pub fn selected(dark: bool) -> String {
 }
 
 thread_local! {
-    /// 選んだテーマ（明るい・暗い）。設定が変わるまで覚えておく（描くたびに JSON を読まない）。
-    static CURRENT: RefCell<Option<[SyntaxTheme; 2]>> = const { RefCell::new(None) };
+    /// 選んだテーマ（明るい・暗い）と、差分を標準の色にするか。設定が変わるまで覚えておく（描くたびに JSON を
+    /// 読まない）。
+    static CURRENT: RefCell<Option<([SyntaxTheme; 2], bool)>> = const { RefCell::new(None) };
     /// テーマを変えた回数（差分の色付けした行のキャッシュを捨てる目印）。
     static GENERATION: Cell<u32> = const { Cell::new(0) };
 }
@@ -256,12 +374,12 @@ pub fn generation() -> u32 {
     GENERATION.with(Cell::get)
 }
 
-/// 種類の色（`None` は本文の色のまま）。`fg` は本文の色（明るければ暗い外観）。
-pub fn syntax_color(kind: u8, fg: &gdk::RGBA) -> Option<(f32, f32, f32)> {
+/// 今の外観で選んだテーマで `f` を呼ぶ。`fg` は本文の色（明るければ暗い外観）。
+fn with_current<T>(fg: &gdk::RGBA, f: impl FnOnce(&SyntaxTheme, bool, bool) -> T) -> T {
     let dark = fg.red() > 0.5;
     CURRENT.with(|c| {
         let mut c = c.borrow_mut();
-        let themes = c.get_or_insert_with(|| {
+        let (themes, standard) = c.get_or_insert_with(|| {
             let find = |dark: bool| {
                 let name = selected(dark);
                 all()
@@ -269,9 +387,37 @@ pub fn syntax_color(kind: u8, fg: &gdk::RGBA) -> Option<(f32, f32, f32)> {
                     .find(|t| t.name == name)
                     .unwrap_or_else(SyntaxTheme::system)
             };
-            [find(false), find(true)]
+            (
+                [find(false), find(true)],
+                settings::bool(DIFF_STANDARD_COLORS),
+            )
         });
-        themes[usize::from(dark)].color(kind, dark)
+        f(&themes[usize::from(dark)], dark, *standard)
+    })
+}
+
+/// 種類の色（`None` は本文の色のまま）。`fg` は本文の色（明るければ暗い外観）。
+pub fn syntax_color(kind: u8, fg: &gdk::RGBA) -> Option<(f32, f32, f32)> {
+    with_current(fg, |theme, dark, _| theme.color(kind, dark))
+}
+
+/// 差分の色を、アプリの今の外観（明るい・暗い）で（本文の色を知らない所から。マージエディタの欄など）。
+pub fn diff_color_now(kind: DiffColor) -> gdk::RGBA {
+    let fg = if adw::StyleManager::default().is_dark() {
+        gdk::RGBA::WHITE
+    } else {
+        gdk::RGBA::BLACK
+    };
+    diff_color(kind, &fg)
+}
+
+/// 差分の色。今の外観で選んだテーマの色で、テーマが持たない色と、設定で標準の色にしたときは標準の色。
+pub fn diff_color(kind: DiffColor, fg: &gdk::RGBA) -> gdk::RGBA {
+    with_current(fg, |theme, _, standard| {
+        (!standard)
+            .then(|| theme.diff_color(kind))
+            .flatten()
+            .unwrap_or_else(|| kind.standard())
     })
 }
 
@@ -280,7 +426,7 @@ pub fn watch_settings() {
     settings::connect_changed(|key| {
         if matches!(
             key,
-            SYNTAX_THEME_LIGHT | SYNTAX_THEME_DARK | IMPORTED_SYNTAX_THEMES
+            SYNTAX_THEME_LIGHT | SYNTAX_THEME_DARK | IMPORTED_SYNTAX_THEMES | DIFF_STANDARD_COLORS
         ) {
             CURRENT.with(|c| c.borrow_mut().take());
             GENERATION.with(|g| g.set(g.get() + 1));
@@ -400,6 +546,38 @@ pub fn import_vscode(path: &Path) -> Result<SyntaxTheme, String> {
                 colors.insert(kind.to_owned(), scopes[hit].clone());
                 break;
             }
+        }
+    }
+    // 差分の色（`colors` にあるものだけ。なければ標準の色）。行の地がなければ、変わった文字の地を使う（VSCode と
+    // 同じ）。
+    let ui = &json["colors"];
+    let hex = |key: &str| ui[key].as_str().and_then(normalized_hex);
+    let diff = [
+        (
+            DiffColor::Added,
+            hex("diffEditor.insertedLineBackground")
+                .or_else(|| hex("diffEditor.insertedTextBackground")),
+        ),
+        (
+            DiffColor::Removed,
+            hex("diffEditor.removedLineBackground")
+                .or_else(|| hex("diffEditor.removedTextBackground")),
+        ),
+        (
+            DiffColor::AddedWord,
+            hex("diffEditor.insertedTextBackground"),
+        ),
+        (
+            DiffColor::RemovedWord,
+            hex("diffEditor.removedTextBackground"),
+        ),
+        (DiffColor::Current, hex("merge.currentContentBackground")),
+        (DiffColor::Incoming, hex("merge.incomingContentBackground")),
+        (DiffColor::Base, hex("merge.commonContentBackground")),
+    ];
+    for (kind, value) in diff {
+        if let Some(value) = value {
+            colors.insert(kind.key().to_owned(), value);
         }
     }
     let name = json["name"].as_str().map(str::to_owned).unwrap_or_else(|| {
@@ -535,10 +713,64 @@ mod tests {
 
     #[test]
     fn built_in_themes_cover_every_kind() {
+        let diff = [
+            DiffColor::Added,
+            DiffColor::Removed,
+            DiffColor::AddedWord,
+            DiffColor::RemovedWord,
+            DiffColor::Hunk,
+            DiffColor::Current,
+            DiffColor::Incoming,
+            DiffColor::Base,
+            DiffColor::Marker,
+        ];
         for theme in built_in() {
             for (_, kind) in KINDS {
                 assert!(theme.color(kind, theme.dark).is_some(), "{}", theme.name);
             }
+            // 差分の色も、標準の色と同じ濃さで持つ。
+            for kind in diff {
+                let color = theme
+                    .diff_color(kind)
+                    .unwrap_or_else(|| panic!("{} {:?}", theme.name, kind));
+                assert!(
+                    (color.alpha() - kind.standard().alpha()).abs() < 0.05,
+                    "{} {:?}",
+                    theme.name,
+                    kind
+                );
+            }
         }
+    }
+
+    #[test]
+    fn imports_diff_colors_and_falls_back_to_the_text_background() {
+        let dir = std::env::temp_dir().join(format!("amonhen-theme-diff-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("t.json"),
+            r##"{"type": "light", "colors": {
+                "diffEditor.insertedTextBackground": "#9bb95533",
+                "diffEditor.removedLineBackground": "#f00a",
+                "diffEditor.removedTextBackground": "#ff000066",
+                "merge.currentContentBackground": "#40c8ae80",
+                "merge.incomingContentBackground": "not a color"
+            }}"##,
+        )
+        .unwrap();
+        let theme = import_vscode(&dir.join("t.json")).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        // 行の地がなければ、変わった文字の地。短い書き方は伸ばす。
+        assert_eq!(theme.colors["diffAdded"], "#9bb95533");
+        assert_eq!(theme.colors["diffAddedWord"], "#9bb95533");
+        assert_eq!(theme.colors["diffRemoved"], "#ff0000aa");
+        assert_eq!(theme.colors["diffRemovedWord"], "#ff000066");
+        assert_eq!(theme.colors["conflictCurrent"], "#40c8ae80");
+        // 読めない色と、ない色は持たない（標準の色になる）。
+        assert!(!theme.colors.contains_key("conflictIncoming"));
+        assert!(!theme.colors.contains_key("diffHunk"));
+        let alpha = theme.diff_color(DiffColor::Removed).unwrap().alpha();
+        assert!((alpha - 0xaa as f32 / 255.0).abs() < 0.001);
+        assert_eq!(theme.diff_color(DiffColor::Marker), None);
     }
 }
