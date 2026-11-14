@@ -56,7 +56,8 @@ GTK4 のアプリ（`apps/gtk4`）: `amonhen-gtk <repo> --snapshot out.png` は�
 設計は [vscode.md](vscode.md)。
 
 エンジンはリポジトリのルートで作る（`cargo build -p amonhen-cli`。テストはそれを使う）。`bin/` に同梱するエンジンは、
-ルートで `scripts/build-engine.sh`、`apps/vscode` で `scripts/bundle-engine.sh` を実行して写す。
+ルートで `scripts/build-engine.sh` と `scripts/third-party-notices.sh`、`apps/vscode` で `scripts/bundle-engine.sh` を実行して写す
+（ライセンスと `dist/THIRD-PARTY-NOTICES.md` も拡張のフォルダに写す）。
 
 ```sh
 cd apps/vscode
@@ -91,6 +92,12 @@ VSCode で F5 を押すと、拡張を読み込んだウィンドウが開く。
 | `src/diff/` | 行単位の差分と、選んだ変更だけを当てる処理 |
 | `src/state/` | 状態管理層。リポジトリごとのキャッシュと更新 |
 | `src/history/`, `src/workingCopy/`, `src/view/` | メインビューの各画面と拡張ホストの間のメッセージ、History のグラフと rebase の組み立て |
+| `src/blame/`, `src/fileHistory/`, `src/reflog/`, `src/rangeDiff/`, `src/daemonStatus/` | メインビューのそれぞれのページ（Blame・File History・Reflog・Range Diff・Daemon）と拡張ホストの間のメッセージ |
+| `src/settings/` | Repository Settings。ページと行、config のファイルから決まる効いている値、フック |
+| `src/sync/` | Fetch・Pull・Push の確認の決まり（prune、取り込み方、送る前の注意） |
+| `src/branch/` | Switch Branch の決まり（最近のブランチを上に、リモートのブランチ、打った名前で新しく） |
+| `src/bundle/` | Export Archive と bundle の操作の決まり |
+| `src/failure/` | 失敗の知らせ。git の出力から原因、全文は Details |
 | `src/ui/` | サイドバーのナビ、メインビューのパネルと画面ごとのコントローラー、コマンド |
 | `src/webview/` | メインビューの Webview（Working Copy、History、差分の描画） |
 | `test/` | `node --test` で動くテスト。git 実行層は一時ディレクトリの実リポジトリで確かめる |
