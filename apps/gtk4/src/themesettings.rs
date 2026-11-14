@@ -159,10 +159,10 @@ pub fn backdrop_section(
             note.set_text(&match b.style {
                 Style::System => tr!("The usual window. Nothing shows through."),
                 Style::Chrome => tr!(
-                    "The desktop and windows behind show through the sidebar and header bar. The lists and diffs stay opaque. GNOME can’t blur them."
+                    "The desktop and windows behind show through the sidebar and header bar. The lists and diffs stay opaque."
                 ),
                 Style::Single => tr!(
-                    "The desktop and windows behind show through the whole window. Changed lines and selections stay opaque. GNOME can’t blur them."
+                    "The desktop and windows behind show through the whole window. Changed lines and selections stay opaque."
                 ),
             });
             image_name.set_text(&match &b.image {

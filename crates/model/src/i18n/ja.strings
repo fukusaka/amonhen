@@ -2286,8 +2286,8 @@
 "Toolbar color" = "ツールバーの色";
 "Toolbar tint" = "ツールバーの色の濃さ";
 "The usual window. Nothing shows through." = "ふだんの窓です。どこも透けません。";
-"The desktop and windows behind show through the sidebar and header bar. The lists and diffs stay opaque. GNOME can’t blur them." = "サイドバーと見出しの帯に、デスクトップや後ろの窓が透けます。一覧と差分は不透明のままです。GNOME ではぼかせません。";
-"The desktop and windows behind show through the whole window. Changed lines and selections stay opaque. GNOME can’t blur them." = "窓全体に、デスクトップや後ろの窓が透けます。変更の行と選択は不透明のままです。GNOME ではぼかせません。";
+"The desktop and windows behind show through the sidebar and header bar. The lists and diffs stay opaque." = "サイドバーと見出しの帯に、デスクトップや後ろの窓が透けます。一覧と差分は不透明のままです。";
+"The desktop and windows behind show through the whole window. Changed lines and selections stay opaque." = "窓全体に、デスクトップや後ろの窓が透けます。変更の行と選択は不透明のままです。";
 "Laid thinly over the whole window, on top of the lists and diffs." = "窓全体に、一覧と差分の上から薄く重ねます。";
 "Syntax Colors" = "構文の色";
 "Light appearance" = "明るい外観";
