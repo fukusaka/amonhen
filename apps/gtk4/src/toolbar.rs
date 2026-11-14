@@ -32,12 +32,16 @@ const SPACE: &str = "space";
 const SPLIT: &str = "|";
 /// 伸縮するスペース（いくつでも入れられる）。
 const FLEX: &str = "~";
+/// サイドバーの上と中身の上の境目（macOS 版の sidebarTrackingSeparator）。前のものはサイドバーの上の見出しに置く。
+/// 1 つだけで、外せない。
+const EDGE: &str = "|sidebar";
 
 /// macOS 版の既定の並び（サイドバーの切り替え・Repositories・リポジトリの名前・Branch・Fetch・Pull・Push、
 /// Merge・Rebase、Stash・Pop、右に Activity・Refresh・Undo・検索）。
 const DEFAULT: &[&str] = &[
     "sidebar",
     "repositories",
+    EDGE,
     "repository",
     "branch",
     "fetch",
@@ -84,9 +88,14 @@ const PALETTE: &[&str] = &[
 /// 並びの 1 つ。
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Entry {
-    Item { id: String, shown: bool },
+    Item {
+        id: String,
+        shown: bool,
+    },
     Space,
     Flex,
+    /// サイドバーの上と中身の上の境目。
+    Edge,
 }
 
 /// パレットに出す名前（macOS 版の paletteLabel。操作の名前は英語のまま）。
@@ -117,7 +126,7 @@ fn name(id: &str) -> String {
 }
 
 fn known(id: &str) -> bool {
-    DEFAULT.contains(&id) && id != SPACE && id != FLEX || OPTIONAL.contains(&id)
+    DEFAULT.contains(&id) && id != SPACE && id != FLEX && id != EDGE || OPTIONAL.contains(&id)
 }
 
 /// 既定の並び（足せるボタンは、出さないものとして後ろに）。
@@ -132,6 +141,8 @@ fn parse(text: &str) -> Vec<Entry> {
         match part {
             SPACE => entries.push(Entry::Space),
             FLEX | SPLIT => entries.push(Entry::Flex),
+            EDGE if !entries.contains(&Entry::Edge) => entries.push(Entry::Edge),
+            EDGE => {}
             _ => {
                 let (id, shown) = match part.strip_prefix('-') {
                     Some(id) => (id, false),
@@ -149,10 +160,20 @@ fn parse(text: &str) -> Vec<Entry> {
             }
         }
     }
+    // 境目のない並び（前の版）は、先頭のサイドバーの切り替えと Repositories の後に境目を置く（macOS 版の既定と同じ）。
+    if !entries.contains(&Entry::Edge) {
+        let at = entries
+            .iter()
+            .take_while(
+                |e| matches!(e, Entry::Item { id, .. } if id == "sidebar" || id == "repositories"),
+            )
+            .count();
+        entries.insert(at, Entry::Edge);
+    }
     for id in DEFAULT
         .iter()
         .chain(OPTIONAL)
-        .filter(|id| **id != SPACE && **id != FLEX)
+        .filter(|id| **id != SPACE && **id != FLEX && **id != EDGE)
     {
         if !entries
             .iter()
@@ -175,6 +196,7 @@ fn format(entries: &[Entry]) -> String {
             Entry::Item { id, shown: false } => format!("-{id}"),
             Entry::Space => SPACE.to_owned(),
             Entry::Flex => FLEX.to_owned(),
+            Entry::Edge => EDGE.to_owned(),
         })
         .collect::<Vec<_>>()
         .join(",")
@@ -224,14 +246,14 @@ enum Dragged {
     Default,
 }
 
-/// 見出しに出ているもの（出すボタンとスペース）の、並びの中の位置。
+/// 見出しに出ているもの（出すボタンとスペース、境目）の、並びの中の位置。
 fn shown_on(all: &[Entry]) -> Vec<usize> {
     all.iter()
         .enumerate()
         .filter(|(_, e)| {
             matches!(
                 e,
-                Entry::Space | Entry::Flex | Entry::Item { shown: true, .. }
+                Entry::Space | Entry::Flex | Entry::Edge | Entry::Item { shown: true, .. }
             )
         })
         .map(|(i, _)| i)
@@ -349,18 +371,23 @@ fn text_button(icon_name: &str, label: &str, action: &str, tip: &str) -> gtk::Bu
     button
 }
 
-/// 見出しの 1 列: 動かさないメニュー（`lead`・`trail`）の間に、並べ替えられる項目（`items`）。
+/// 見出しの列: サイドバーの上の見出しに、動かさないメニュー（`lead`）と境目より前の項目（`side`）。中身の上の
+/// 見出しに、境目より後の項目（`items`）と動かさないメニュー（`trail`）。
 pub struct Bar {
     pub lead: gtk::Box,
+    pub side: gtk::Box,
     pub items: gtk::Box,
     pub trail: gtk::Box,
 }
 
 impl Bar {
-    /// `header` の真ん中を、窓のボタンも含めた 1 列にする（ドラッグと右クリックは見出しのまま）。
-    pub fn new(header: &gtk::HeaderBar) -> Self {
+    /// サイドバーの上の見出し（`side_header`）と中身の上の見出し（`header`）の真ん中を、窓のボタンも含めたそれぞれ
+    /// 1 列にする（ドラッグと右クリックは見出しのまま）。GNOME の分けた見出しの形（サイドバーが窓の上端まで伸びる）。
+    pub fn new(side_header: &gtk::HeaderBar, header: &gtk::HeaderBar) -> Self {
         let horizontal = || gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        let (row, lead, items, trail) = (horizontal(), horizontal(), horizontal(), horizontal());
+        let (side_row, lead, side) = (horizontal(), horizontal(), horizontal());
+        let (row, items, trail) = (horizontal(), horizontal(), horizontal());
+        side_row.set_hexpand(true);
         row.set_hexpand(true);
         items.set_hexpand(true);
         let controls = |side| {
@@ -372,19 +399,27 @@ impl Bar {
                 .build();
             controls
         };
-        row.append(&controls(gtk::PackType::Start));
-        row.append(&lead);
+        side_row.append(&controls(gtk::PackType::Start));
+        side_row.append(&lead);
+        side_row.append(&side);
         row.append(&items);
         row.append(&trail);
         row.append(&controls(gtk::PackType::End));
+        side_header.set_show_title_buttons(false);
+        side_header.set_title_widget(Some(&side_row));
         header.set_show_title_buttons(false);
         header.set_title_widget(Some(&row));
-        Self { lead, items, trail }
+        Self {
+            lead,
+            side,
+            items,
+            trail,
+        }
     }
 }
 
-/// ボタンを作り、`row`（見出しの列）に設定の並びで入れる。並びが変わったら入れ直す。
-pub fn install(row: &gtk::Box, given: Given) {
+/// ボタンを作り、設定の並びで入れる（境目より前は `side`、後は `row`）。並びが変わったら入れ直す。
+pub fn install(side: &gtk::Box, row: &gtk::Box, given: Given) {
     let mut buttons: HashMap<&'static str, gtk::Widget> = HashMap::new();
     // サイドバーの切り替え（F9。macOS 版のツールバーの toggleSidebar）。状態はアクションと揃う。
     let sidebar = gtk::ToggleButton::new();
@@ -538,24 +573,26 @@ pub fn install(row: &gtk::Box, given: Given) {
         space
     };
     let fill = {
-        let row = row.downgrade();
+        let (side, row) = (side.downgrade(), row.downgrade());
         let repository = given.repository.clone();
         let placed = placed.clone();
         let title = given.title.clone();
         move || {
-            let Some(row) = row.upgrade() else {
+            let (Some(side), Some(row)) = (side.upgrade(), row.upgrade()) else {
                 return;
             };
             let customizing = customizing();
-            while let Some(child) = row.first_child() {
-                child.set_can_target(true);
-                row.remove(&child);
-            }
-            // カスタマイズの間は、枠を出す。
-            if customizing {
-                row.add_css_class("toolbar-customizing");
-            } else {
-                row.remove_css_class("toolbar-customizing");
+            for row in [&side, &row] {
+                while let Some(child) = row.first_child() {
+                    child.set_can_target(true);
+                    row.remove(&child);
+                }
+                // カスタマイズの間は、枠を出す。
+                if customizing {
+                    row.add_css_class("toolbar-customizing");
+                } else {
+                    row.remove_css_class("toolbar-customizing");
+                }
             }
             let all = entries();
             let shown = all
@@ -566,8 +603,14 @@ pub fn install(row: &gtk::Box, given: Given) {
                 .clone()
                 .or_else(|| (!shown).then(|| repository.clone()));
             let mut now = Vec::new();
+            // 境目までは、サイドバーの上の見出しに入れる。
+            let mut target = side.clone();
             for (index, entry) in all.iter().enumerate() {
                 let widget: gtk::Widget = match entry {
+                    Entry::Edge => {
+                        target = row.clone();
+                        continue;
+                    }
                     Entry::Space => {
                         let space = gtk::Box::new(gtk::Orientation::Horizontal, 0);
                         space.set_width_request(8);
@@ -592,9 +635,10 @@ pub fn install(row: &gtk::Box, given: Given) {
                 };
                 // カスタマイズの間は押せない（見出しの列がドラッグを受ける）。
                 widget.set_can_target(!customizing);
-                row.append(&widget);
+                target.append(&widget);
                 now.push((widget, index));
                 if *entry == Entry::Flex
+                    && target == row
                     && let Some(middle) = middle.take()
                 {
                     row.append(&middle);
@@ -611,8 +655,11 @@ pub fn install(row: &gtk::Box, given: Given) {
     };
     fill();
     let fill = Rc::new(fill);
-    drag_from(row, &placed);
-    drop_on(row.upcast_ref(), &placed);
+    // 2 つの列は左右に並ぶので、位置は列をまたいで数える（中身の上の列は、境目の分 1 つ後ろ）。
+    for (b, offset) in [(side, 0), (row, 1)] {
+        drag_from(b, &placed);
+        drop_on(b.upcast_ref(), &placed, offset);
+    }
     // タブの見出しがある間だけ見る（閉じたタブのボタンを持ち続けない）。
     let f = fill.clone();
     crate::settings::connect_changed_while(row, move |key| {
@@ -709,8 +756,8 @@ fn drag_from(b: &gtk::Box, placed: &Placed) {
     b.add_controller(source);
 }
 
-/// `w` に落とせるようにする。
-fn drop_on(w: &gtk::Widget, placed: &Placed) {
+/// `w` に落とせるようにする。`offset` は落とした位置に足す数（境目より後の列は 1）。
+fn drop_on(w: &gtk::Widget, placed: &Placed, offset: usize) {
     let target = gtk::DropTarget::new(
         Dragged::static_type(),
         gdk::DragAction::MOVE | gdk::DragAction::COPY,
@@ -721,7 +768,7 @@ fn drop_on(w: &gtk::Widget, placed: &Placed) {
         let (Ok(dragged), Some(w)) = (value.get::<Dragged>(), target.widget()) else {
             return false;
         };
-        save(&dropped(&entries(), &dragged, slot_at(&w, &p, x)));
+        save(&dropped(&entries(), &dragged, slot_at(&w, &p, x) + offset));
         true
     });
     w.add_controller(target);
@@ -953,7 +1000,7 @@ fn palette() -> gtk::Widget {
             Entry::Item { id, shown: true } => id.as_str(),
             Entry::Space => SPACE,
             Entry::Flex => FLEX,
-            Entry::Item { shown: false, .. } => continue,
+            Entry::Item { shown: false, .. } | Entry::Edge => continue,
         };
         set.append(&preview(id));
     }
@@ -1031,41 +1078,64 @@ mod tests {
     #[test]
     fn an_order_saved_with_the_old_boundary_keeps_its_place() {
         let e = parse("fetch,|,~,undo");
-        assert_eq!(shown(&e), ["fetch", FLEX, FLEX, "undo"]);
-        assert_eq!(shown(&parse(&format(&e))), ["fetch", FLEX, FLEX, "undo"]);
+        assert_eq!(shown(&e), [EDGE, "fetch", FLEX, FLEX, "undo"]);
+        assert_eq!(
+            shown(&parse(&format(&e))),
+            [EDGE, "fetch", FLEX, FLEX, "undo"]
+        );
+    }
+
+    #[test]
+    fn an_order_without_the_sidebar_edge_gets_it_after_the_sidebar_buttons() {
+        // 境目を足す前の版の既定の並び: サイドバーの切り替えと Repositories の後に入る（macOS 版の既定と同じ）。
+        let e = parse("sidebar,repositories,repository,branch,~,undo");
+        assert_eq!(
+            shown(&e),
+            [
+                "sidebar",
+                "repositories",
+                EDGE,
+                "repository",
+                "branch",
+                FLEX,
+                "undo"
+            ]
+        );
+        // 境目は 1 つだけ。
+        let twice = parse("fetch,|sidebar,pull,|sidebar");
+        assert_eq!(twice.iter().filter(|x| **x == Entry::Edge).count(), 1);
+        assert_eq!(shown(&twice), ["fetch", EDGE, "pull"]);
     }
 
     #[test]
     fn unknown_and_missing_items_are_fixed() {
         let e = parse("push,nothing,push,space");
+        assert_eq!(e[0], Entry::Edge);
         assert_eq!(
-            e[0],
+            e[1],
             Entry::Item {
                 id: "push".into(),
                 shown: true
             }
         );
-        assert_eq!(e[1], Entry::Space);
+        assert_eq!(e[2], Entry::Space);
         // 載っていないボタンは、出さないものとして後ろに。
         assert!(
-            e[2..]
+            e[3..]
                 .iter()
                 .all(|x| matches!(x, Entry::Item { shown: false, .. }))
         );
-        assert_eq!(e.len(), 2 + (DEFAULT.len() - 3 - 1) + OPTIONAL.len());
+        // 既定の並びのうち、スペース 2 つ・伸縮するスペース・境目・push の分を除いたもの。
+        assert_eq!(e.len(), 3 + (DEFAULT.len() - 4 - 1) + OPTIONAL.len());
     }
 
     #[test]
     fn the_default_starts_like_macos() {
-        let ids: Vec<String> = default_entries()
-            .into_iter()
-            .take(4)
-            .filter_map(|e| match e {
-                Entry::Item { id, shown: true } => Some(id),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(ids, ["sidebar", "repositories", "repository", "branch"]);
+        let all = default_entries();
+        assert_eq!(
+            &shown(&all)[..5],
+            ["sidebar", "repositories", EDGE, "repository", "branch"]
+        );
     }
 
     /// 見出しに出ている並び。
@@ -1075,7 +1145,8 @@ mod tests {
             .map(|i| match &all[i] {
                 Entry::Item { id, .. } => id.clone(),
                 Entry::Flex => FLEX.to_owned(),
-                _ => SPACE.to_owned(),
+                Entry::Edge => EDGE.to_owned(),
+                Entry::Space => SPACE.to_owned(),
             })
             .collect()
     }
@@ -1083,15 +1154,24 @@ mod tests {
     #[test]
     fn dropping_from_the_palette_adds_or_moves() {
         let all = parse("fetch,pull,~,undo");
-        // 足す。
-        let after = dropped(&all, &Dragged::Add("terminal".into()), 1);
-        assert_eq!(shown(&after), ["fetch", "terminal", "pull", FLEX, "undo"]);
+        // 足す（境目の後の 2 番目）。
+        let after = dropped(&all, &Dragged::Add("terminal".into()), 2);
+        assert_eq!(
+            shown(&after),
+            [EDGE, "fetch", "terminal", "pull", FLEX, "undo"]
+        );
         // 見出しにあるものは、そこから移る。
-        let after = dropped(&all, &Dragged::Add("fetch".into()), 4);
-        assert_eq!(shown(&after), ["pull", FLEX, "undo", "fetch"]);
+        let after = dropped(&all, &Dragged::Add("fetch".into()), 5);
+        assert_eq!(shown(&after), [EDGE, "pull", FLEX, "undo", "fetch"]);
         // スペースはいくつでも。
-        let after = dropped(&all, &Dragged::Add(SPACE.into()), 0);
-        assert_eq!(shown(&after), [SPACE, "fetch", "pull", FLEX, "undo"]);
+        let after = dropped(&all, &Dragged::Add(SPACE.into()), 1);
+        assert_eq!(shown(&after), [EDGE, SPACE, "fetch", "pull", FLEX, "undo"]);
+        // 境目より前（サイドバーの上）にも入れられる。
+        let after = dropped(&all, &Dragged::Add("terminal".into()), 0);
+        assert_eq!(
+            shown(&after),
+            ["terminal", EDGE, "fetch", "pull", FLEX, "undo"]
+        );
         // 知らないものは入れない。
         assert_eq!(dropped(&all, &Dragged::Add("x".into()), 0), all);
         // 既定のセット。
@@ -1101,11 +1181,14 @@ mod tests {
     #[test]
     fn moving_within_the_toolbar_counts_the_slot_without_the_item() {
         let all = parse("fetch,pull,push,~,undo");
-        let after = dropped(&all, &Dragged::Move(0), 2);
-        assert_eq!(shown(&after), ["pull", "fetch", "push", FLEX, "undo"]);
+        let after = dropped(&all, &Dragged::Move(1), 3);
+        assert_eq!(shown(&after), [EDGE, "pull", "fetch", "push", FLEX, "undo"]);
         // 終わりより先は終わりに。
-        let after = dropped(&all, &Dragged::Move(0), usize::MAX);
-        assert_eq!(shown(&after), ["pull", "push", FLEX, "undo", "fetch"]);
+        let after = dropped(&all, &Dragged::Move(1), usize::MAX);
+        assert_eq!(shown(&after), [EDGE, "pull", "push", FLEX, "undo", "fetch"]);
+        // 境目をまたいで、サイドバーの上へ。
+        let after = dropped(&all, &Dragged::Move(3), 0);
+        assert_eq!(shown(&after), ["push", EDGE, "fetch", "pull", FLEX, "undo"]);
     }
 
     #[test]
@@ -1118,18 +1201,21 @@ mod tests {
         assert_eq!(flexes(&added), 3);
         assert_eq!(parse(&format(&added)), added);
         // どれでも動かせて、どれでも外せる。
-        let moved = dropped(&added, &Dragged::Move(3), 1);
-        assert_eq!(shown(&moved), [FLEX, FLEX, "fetch", "pull", "undo", FLEX]);
-        let none = removed(&removed(&removed(&added, 5), 3), 0);
+        let moved = dropped(&added, &Dragged::Move(4), 1);
+        assert_eq!(
+            shown(&moved),
+            [FLEX, FLEX, EDGE, "fetch", "pull", "undo", FLEX]
+        );
+        let none = removed(&removed(&removed(&added, 6), 4), 0);
         assert_eq!(flexes(&none), 0);
     }
 
     #[test]
     fn dragging_out_removes() {
         let all = parse("fetch,space,pull,~");
-        assert_eq!(shown(&removed(&all, 1)), ["fetch", "pull", FLEX]);
-        let after = removed(&all, 0);
-        assert_eq!(shown(&after), [SPACE, "pull", FLEX]);
+        assert_eq!(shown(&removed(&all, 2)), [EDGE, "fetch", "pull", FLEX]);
+        let after = removed(&all, 1);
+        assert_eq!(shown(&after), [EDGE, SPACE, "pull", FLEX]);
         // 外したボタンは、出さないものとして残る（パレットからまた足せる）。
         assert!(after.contains(&Entry::Item {
             id: "fetch".into(),
@@ -1141,10 +1227,10 @@ mod tests {
     fn the_old_order_gets_search_at_the_end() {
         assert_eq!(
             shown(&from_v2("fetch,|,refresh,-undo")),
-            ["fetch", FLEX, "refresh", "search"]
+            [EDGE, "fetch", FLEX, "refresh", "search"]
         );
         assert_eq!(
-            shown(&default_entries())[13..],
+            shown(&default_entries())[14..],
             [FLEX, "activity", "refresh", "undo", "search"]
         );
     }

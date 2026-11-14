@@ -30,6 +30,8 @@ pub struct Parts {
     pub anchor: gtk::Box,
     /// タブのアクション（`win.*`）。
     pub group: gio::SimpleActionGroup,
+    /// サイドバーの上の見出しと、中身の上の見出し。
+    pub side_header: gtk::HeaderBar,
     pub header: gtk::HeaderBar,
     pub actions: Rc<Actions>,
     pub pages: gtk::Stack,
@@ -188,7 +190,7 @@ impl Buttons {
     /// 押せるかはこのタブのものに合わせ続ける。リポジトリの名前と検索は、リポジトリのタブに切り替えてから開く。
     /// リポジトリのタブがほかの窓で前にあっても、閉じた後でも、そのタブに付いたまま。
     pub fn mirror(&self, tool: &Rc<crate::tabs::Tab>) {
-        let header = &tool.header;
+        let (side_header, header) = (&tool.side_header, &tool.header);
         let bind = |from: &gtk::Widget, to: &gtk::Widget, names: &[&str]| {
             for name in names {
                 from.bind_property(name, to, name).sync_create().build();
@@ -203,7 +205,7 @@ impl Buttons {
         }
         retitle_on_show(&repository, &self.actions);
         crate::menu::tooltips_on_show(&repository);
-        let bar = crate::toolbar::Bar::new(header);
+        let bar = crate::toolbar::Bar::new(side_header, header);
         bar.lead.append(&repository);
 
         // リポジトリの名前（下にブランチ名）。押すとリポジトリのタブに切り替えて、一覧を出す。
@@ -305,6 +307,7 @@ impl Buttons {
             }
         });
         crate::toolbar::install(
+            &bar.side,
             &bar.items,
             crate::toolbar::Given {
                 repository: name.upcast(),
@@ -773,7 +776,7 @@ pub fn install(parts: Parts) -> Buttons {
         .header
         .title_widget()
         .expect("リポジトリの名前のボタン");
-    let bar = crate::toolbar::Bar::new(&parts.header);
+    let bar = crate::toolbar::Bar::new(&parts.side_header, &parts.header);
     bar.lead.append(&repository);
 
     // ツールバー（macOS 版の既定の並び: Branch・Fetch・Pull・Push、Merge・Rebase、Stash・Pop、
@@ -794,6 +797,7 @@ pub fn install(parts: Parts) -> Buttons {
     let (push, push_count, push_icon) = count_button(icon::Kind::Push, "win.push");
     // ボタンの並びは View > Customize Toolbar… で変えられる（`toolbar.rs`）。
     crate::toolbar::install(
+        &bar.side,
         &bar.items,
         crate::toolbar::Given {
             repository: name.clone(),
@@ -864,6 +868,7 @@ pub fn install(parts: Parts) -> Buttons {
 /// リポジトリの名前は「Choose a Repository」、ブランチは「—」で、どちらも押せない。`title` は見出しの真ん中に出す。
 /// 主メニューのボタンを返す。
 pub fn install_home(
+    side_header: &gtk::HeaderBar,
     header: &gtk::HeaderBar,
     group: &gio::SimpleActionGroup,
     anchor: &gtk::Box,
@@ -877,7 +882,7 @@ pub fn install_home(
         popover.set_halign(gtk::Align::Start);
     }
     crate::menu::tooltips_on_show(&repository);
-    let bar = crate::toolbar::Bar::new(header);
+    let bar = crate::toolbar::Bar::new(side_header, header);
     bar.lead.append(&repository);
 
     let name = gtk::Label::new(Some(&tr!("Choose a Repository")));
@@ -913,6 +918,7 @@ pub fn install_home(
     search.set_tooltip_text(Some(&tr!("Search History (Ctrl+F)")));
     search.set_sensitive(false);
     crate::toolbar::install(
+        &bar.side,
         &bar.items,
         crate::toolbar::Given {
             repository: name_button.upcast(),
