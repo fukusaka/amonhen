@@ -31,15 +31,18 @@ How releases are made, and signing, notarization and build provenance attestatio
 
 | Channel | When it is built | Version |
 | --- | --- | --- |
-| stable | On pushing a `vscode-v*` tag (separate from the app and engine's `v*`) | `0.0.2` |
-| snapshot | Whenever CI passes on main (put on the same `snapshot` pre-release as the app and engine) | `0.0.3-snapshot.<number of apps/vscode commits since the last release>+<sha>` |
+| stable | On pushing a `vscode-v*` tag (separate from the app and engine's `v*`) | `x.y.z` |
+| snapshot | Whenever CI passes on main (put on the same `snapshot` pre-release as the app and engine) | `x.y.(z+1)-snapshot.<number of apps/vscode commits since the last release>+<sha>` |
 
-A snapshot is treated as a pre-release of the next patch, so installing a stable release is judged newer than the snapshot.
+A snapshot is treated as a pre-release of the next patch (or of the version itself between bumping it and tagging it), so installing a stable release is judged newer than the snapshot.
+
+The engines bundled in a stable `.vsix` are built in snapshot mode (`vscode-release.yml`), since the extension is released
+apart from the engine: they carry a snapshot version, and the macOS one is still signed with Developer ID and notarized.
 
 Steps to cut a stable release:
 
 1. In the "VSCode extension" section of [CHANGELOG.md](../CHANGELOG.md), change `Unreleased` to a heading with the version and date being released, write a short summary under it, and commit it
-2. Include `npm version patch --no-git-tag-version` in the same commit as 1.
+2. Include `(cd apps/vscode && npm version patch --no-git-tag-version)` in the same commit as 1.
 3. Push to main, and once CI has passed: `git tag vscode-v<version> && git push origin vscode-v<version>` (the release
    checks that CI passed on the tagged commit and takes the notes from that CHANGELOG section)
 
