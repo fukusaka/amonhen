@@ -1,5 +1,5 @@
 //! コミットの作者・コミッターのアバター（macOS 版の `Avatars`）。GitHub で分かったアバターの URL があればそれを、
-//! なければ Gravatar（メールアドレスの MD5 で引く。送るのはハッシュだけ）を読む。読んだ画像はアプリが動いている
+//! なければ Gravatar（メールアドレスの SHA-256 で引く。送るのはハッシュだけ）を読む。読んだ画像はアプリが動いている
 //! 間だけ覚え（macOS 版と同じ）、取れなかったものは何度も取りに行かない。読むのは出すときだけ（詳細の欄）、裏で
 //! （`curl`）。読み終えたら知らせ、出している所が描き直す。
 
@@ -100,7 +100,7 @@ pub fn texture(email: &str) -> Option<gdk::Texture> {
         // GitHub のアバターを知っていればそれを、なければ Gravatar（登録していない人は、ハッシュから作る模様）。
         // 高解像度の画面のため 2 倍の大きさで取る。
         Ok(c.github.get(&key).cloned().unwrap_or_else(|| {
-            let hash = glib::compute_checksum_for_string(glib::ChecksumType::Md5, &key)
+            let hash = glib::compute_checksum_for_string(glib::ChecksumType::Sha256, &key)
                 .map(|h| h.to_string())
                 .unwrap_or_default();
             format!("https://www.gravatar.com/avatar/{hash}?s=96&d=identicon")

@@ -117,7 +117,7 @@ enum Settings {
         UserDefaults.standard.set(all, forKey: hostOptionsKey)
     }
 
-    /// コミットの詳細に作者・コミッターの Gravatar のアバターを出すか（既定は出す。メールアドレスの MD5 を
+    /// コミットの詳細に作者・コミッターの Gravatar のアバターを出すか（既定は出す。メールアドレスの SHA-256 を
     /// gravatar.com に送る）。変えたら `commitMessageStyleChanged` を知らせる。
     static var showAvatars: Bool {
         get { UserDefaults.standard.object(forKey: "showAvatars") as? Bool ?? true }

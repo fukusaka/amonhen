@@ -1,7 +1,7 @@
 import AppKit
 import CryptoKit
 
-/// Gravatar のアバター。メールアドレスの MD5 で引き、読み終えたら `onLoad` を呼ぶ（描き直すため）。
+/// Gravatar のアバター。メールアドレスの SHA-256 で引き、読み終えたら `onLoad` を呼ぶ（描き直すため）。
 /// 読んだ画像はアプリが動いている間だけ覚える。Gravatar に送るのはメールアドレスのハッシュだけ。
 @MainActor
 final class Avatars {
@@ -47,7 +47,7 @@ final class Avatars {
         if let image = images[key] { return image }
         guard Settings.showAvatars, !key.isEmpty, !loading.contains(key), !failed.contains(key) else { return nil }
         loading.insert(key)
-        let hash = Insecure.MD5.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
+        let hash = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
         // GitHub のアバターを知っていればそれを、なければ Gravatar（登録していない人は、ハッシュから作る模様）。
         // 高解像度の画面のため 2 倍の大きさで取る。
         guard let url = gitHub[key] ?? URL(string: "https://www.gravatar.com/avatar/\(hash)?s=96&d=identicon") else { return nil }
