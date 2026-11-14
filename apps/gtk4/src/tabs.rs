@@ -1652,9 +1652,7 @@ fn teardown(tab: &Rc<Tab>) {
     }
 }
 
-/// タブを閉じる。窓の最後のタブなら窓を閉じる。ただし、ほかに窓がなくて最後のリポジトリを閉じるときは、終わらずに
-/// リポジトリのページを新しい窓で出す（macOS 版と同じく、ページの窓の大きさで。先に出してから閉じるので、最後の窓を
-/// 閉じたことにならない）。
+/// タブを閉じる。窓の最後のタブなら窓を閉じる。
 pub fn close_tab(tab: &Rc<Tab>) {
     let Some(host) = tab.host() else { return };
     // マージエディタの Result を保存していなければ、捨てて閉じてよいかを確かめる（macOS 版と同じ）。
@@ -1669,32 +1667,15 @@ pub fn close_tab(tab: &Rc<Tab>) {
         });
         return;
     }
-    // 最後のリポジトリを閉じたら、File History・Blame のタブが残っていても Repositories を出す（macOS 版と同じ）。
-    let only_tools = !tab.is_home()
-        && !tab.is_tool()
-        && WINDOWS.with(|w| {
-            w.borrow()
-                .iter()
-                .flat_map(|h| h.tabs())
-                .all(|t| Rc::ptr_eq(&t, tab) || t.is_tool())
-        });
-    let app = tab.window().and_then(|w| w.application());
+    // 窓の最後のタブを閉じたら、その窓を閉じる（最後の窓ならアプリが終わる。窓の × と同じ）。ほかの窓や
+    // Repositories は出さず、File History・Blame のタブが残るならそのまま残す（macOS 版と同じ）。
     if host.tabs.borrow().len() <= 1 {
-        let alone = WINDOWS.with(|w| w.borrow().len() <= 1);
-        if ((alone && !tab.is_home()) || only_tools)
-            && let Some(app) = &app
-        {
-            show_home(app, None);
-        }
         host.window.close();
         return;
     }
     detach(&host, tab);
     teardown(tab);
     save();
-    if only_tools && let Some(app) = &app {
-        show_home(app, None);
-    }
 }
 
 /// 終える前に、保存していないもの（マージエディタの Result）を捨ててよいかを確かめる（macOS 版と同じく 1 度だけ。
@@ -1786,8 +1767,7 @@ fn install_actions(tab: &Rc<Tab>) {
             show_home(&app, Some(host));
         }
     });
-    // File > Close（Ctrl+W）: タブを閉じる（最後のタブなら窓を閉じる。最後のリポジトリならリポジトリのページを出す。
-    // macOS 版と同じ）。
+    // File > Close（Ctrl+W）: タブを閉じる（最後のタブなら窓を閉じる）。
     add("close", close_tab);
     // Window > Minimize（Ctrl+M）・Zoom・Bring All to Front（macOS 版と同じ）。
     add("minimize", |tab| {

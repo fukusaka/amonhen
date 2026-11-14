@@ -19,6 +19,8 @@ becomes the GitHub Release notes.
 
 #### Changed
 
+- GTK4: Closing a window's last tab closes the window, and the app quits with its last window, as with the window's
+  close button; the repository page no longer opens in a new window, and File History and Blame tabs stay open.
 - macOS: Closing the last repository no longer opens the repository page in a new window; the app stays with no
   window, as Mac apps do, and the Dock icon brings the page back.
 
