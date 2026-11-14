@@ -67,12 +67,10 @@ fn reads_history_through_the_c_abi() {
         assert!(!chunk.is_null());
         let c = amonhen_chunk_view(chunk);
         assert_eq!(c.row_count, 2);
-        assert!(!c.subjects.is_null());
-        let s = *c.subjects;
-        let bytes = std::slice::from_raw_parts(
-            (*c.bases.add(s.buf as usize)).add(s.off as usize),
-            s.len() as usize,
-        );
+        // 列は空なら NULL なので、確かめてから読む。
+        let s = *c.subjects.as_ref().expect("subjects");
+        let base = *c.bases.add(s.buf as usize).as_ref().expect("bases");
+        let bytes = std::slice::from_raw_parts(base.add(s.off as usize), s.len() as usize);
         assert_eq!(bytes, b"second");
 
         amonhen_chunk_free(chunk);
@@ -192,7 +190,11 @@ fn shows_the_files_a_commit_changed_and_their_diffs() {
         let head = amonhen_history_view(history);
         let refs = amonhen_refs_load(repo);
         assert!(!refs.is_null());
-        let target = (*amonhen_refs_view(refs).entries).target;
+        let target = amonhen_refs_view(refs)
+            .entries
+            .as_ref()
+            .expect("entries")
+            .target;
         assert_eq!(amonhen_history_row_of(history, target.as_ptr()), 0);
         assert_eq!(head.row_count, 2);
 
@@ -200,7 +202,7 @@ fn shows_the_files_a_commit_changed_and_their_diffs() {
         assert!(!changes.is_null());
         let cv = amonhen_changes_view(changes);
         assert_eq!(cv.count, 1);
-        let e = &*cv.entries;
+        let e = cv.entries.as_ref().expect("entries");
         assert_eq!(
             std::slice::from_raw_parts(cv.strings.add(e.path_off as usize), e.path_len as usize),
             b"a.txt"
