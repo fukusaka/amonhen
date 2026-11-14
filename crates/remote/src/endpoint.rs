@@ -132,7 +132,8 @@ mod imp {
     use interprocess::local_socket::{GenericNamespaced, ListenerOptions, Stream};
     use interprocess::os::windows::local_socket::ListenerOptionsExt;
     use interprocess::os::windows::security_descriptor::SecurityDescriptor;
-    use std::io;
+    use std::io::{self, Read, Write};
+    use std::sync::Arc;
 
     const PIPE_PREFIX: &str = r"\\.\pipe\";
 
@@ -163,11 +164,31 @@ mod imp {
             .map(|n| n.into_owned())
     }
 
+    /// 読む側と書く側で 1 つのストリームを共有する（`&Stream` が読み書きできる）。Unix の `try_clone` と同じく、
+    /// 片方を手放しても接続は閉じない。
+    struct Shared(Arc<Stream>);
+
+    impl Read for Shared {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            (&*self.0).read(buf)
+        }
+    }
+
+    impl Write for Shared {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            (&*self.0).write(buf)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            (&*self.0).flush()
+        }
+    }
+
     fn duplex(stream: Stream) -> Duplex {
-        let (reader, writer) = stream.split();
+        let stream = Arc::new(stream);
         Duplex {
-            reader: Box::new(reader),
-            writer: Box::new(writer),
+            reader: Box::new(Shared(stream.clone())),
+            writer: Box::new(Shared(stream)),
         }
     }
 
