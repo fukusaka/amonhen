@@ -7,6 +7,7 @@
 use amonhen_model::tr;
 use std::cell::RefCell;
 use std::ffi::{CStr, CString, c_char};
+use std::mem::MaybeUninit;
 use std::sync::Arc;
 
 use amonhen_backend_gix::GixBackend;
@@ -242,6 +243,54 @@ macro_rules! oid {
     ($ptr:expr) => {
         Oid(*handle!($ptr, [u8; 20]))
     };
+}
+
+/// 読む配列（`$count` 個）。個数が 0 なら NULL でもよく、空になる。個数があるのに NULL なら `handle!` と同じく
+/// 関数から返す。
+macro_rules! array {
+    ($ptr:expr, $count:expr) => {{
+        let count = $count as usize;
+        if count == 0 {
+            &[][..]
+        } else if $ptr.is_null() {
+            set_error(concat!("NULL was passed as ", stringify!($ptr)));
+            return Fallback::fallback();
+        } else {
+            unsafe { std::slice::from_raw_parts($ptr, count) }
+        }
+    }};
+}
+
+/// コミットの ID（20 バイト）が `$count` 個並んだ配列。NULL の扱いは `array!` と同じ。
+macro_rules! oids {
+    ($ptr:expr, $count:expr) => {
+        array!($ptr.cast::<[u8; 20]>(), $count)
+            .iter()
+            .map(|id| Oid(*id))
+            .collect::<Vec<Oid>>()
+    };
+}
+
+/// 書く先の配列（`capacity` 個）。NULL なら 0 個として扱う（全体の数だけ返す）。
+///
+/// # Safety
+/// NULL でなければ、`capacity` 個の `T` を書ける領域であること。
+unsafe fn out_slice<'a, T>(out: *mut T, capacity: usize) -> &'a mut [MaybeUninit<T>] {
+    if out.is_null() || capacity == 0 {
+        &mut []
+    } else {
+        unsafe { std::slice::from_raw_parts_mut(out.cast(), capacity) }
+    }
+}
+
+/// 書く先（1 個）に `value` を書く。NULL なら書かない。
+///
+/// # Safety
+/// NULL でなければ、`T` を書ける領域であること。
+unsafe fn put<T>(out: *mut T, value: T) {
+    if let Some(out) = unsafe { out.cast::<MaybeUninit<T>>().as_mut() } {
+        out.write(value);
+    }
 }
 
 fn into_history(snapshot: Arc<HistorySnapshot>) -> *const AmonhenHistory {
@@ -722,10 +771,11 @@ pub unsafe extern "C" fn amonhen_history_edges_in(
     out: *mut u32,
     capacity: u32,
 ) -> u32 {
+    let out = unsafe { out_slice(out, capacity as usize) };
     let mut count = 0;
     for i in history!(history_ptr).layout.edges_in(start..end) {
-        if count < capacity {
-            unsafe { out.add(count as usize).write(i) };
+        if let Some(slot) = out.get_mut(count as usize) {
+            slot.write(i);
         }
         count += 1;
     }
@@ -865,12 +915,11 @@ pub unsafe extern "C" fn amonhen_history_lane_positions(
     };
     let (positions, total) =
         amonhen_core::lanes::lane_positions(&history!(history_ptr).layout, start..end, &m);
-    for (i, x) in positions.iter().take(capacity as usize).enumerate() {
-        unsafe { out.add(i).write(*x) };
+    let out = unsafe { out_slice(out, capacity as usize) };
+    for (slot, x) in out.iter_mut().zip(&positions) {
+        slot.write(*x);
     }
-    if !width.is_null() {
-        unsafe { width.write(total) };
-    }
+    unsafe { put(width, total) };
     positions.len() as u32
 }
 
@@ -927,8 +976,8 @@ pub unsafe extern "C" fn amonhen_history_contents_to_fetch(
     match result {
         Ok(Some(need)) => {
             unsafe {
-                count.write(need.count as u32);
-                more.write(need.more);
+                put(count, need.count as u32);
+                put(more, need.more);
             }
             1
         }
@@ -951,7 +1000,7 @@ pub unsafe extern "C" fn amonhen_search_partial(
     done: *mut f32,
 ) -> *mut AmonhenRows {
     let (rows, fraction) = repo!(repo_ptr).search_partial();
-    unsafe { done.write(fraction) };
+    unsafe { put(done, fraction) };
     Box::into_raw(Box::new(rows)).cast()
 }
 
@@ -1440,10 +1489,8 @@ pub unsafe extern "C" fn amonhen_stacked_view(
     encoding: AmonhenEncoding,
 ) -> *mut AmonhenDiff {
     let s = handle!(stacked, amonhen_core::diff::StackedDiff);
-    let collapsed: Vec<bool> = (0..count as usize)
-        .map(|i| unsafe { *collapsed.add(i) })
-        .collect();
-    Box::into_raw(Box::new(s.view(&collapsed, &profile(encoding)))).cast()
+    let collapsed = array!(collapsed, count);
+    Box::into_raw(Box::new(s.view(collapsed, &profile(encoding)))).cast()
 }
 
 /// History で選んだコミット（`rows` は行、順不同）の全ファイルの差分（`amonhen_stacked_free` で解放する）。
@@ -1463,22 +1510,20 @@ pub unsafe extern "C" fn amonhen_selection_diff(
     pair: u8,
     kind: *mut u8,
 ) -> *mut AmonhenStacked {
-    let rows: Vec<u32> = (0..count as usize)
-        .map(|i| unsafe { *rows.add(i) })
-        .collect();
+    let rows = array!(rows, count);
     let pair = match pair {
         1 => amonhen_core::PairMode::Reverse,
         2 => amonhen_core::PairMode::MergeBase,
         _ => amonhen_core::PairMode::Forward,
     };
-    match repo!(repo_ptr).selection_diff(history!(history_ptr), &rows, pair) {
+    match repo!(repo_ptr).selection_diff(history!(history_ptr), rows, pair) {
         Ok((selection, stacked)) => {
             let k = match selection {
                 amonhen_core::Selection::Range { .. } => 0,
                 amonhen_core::Selection::Pair { .. } => 1,
                 amonhen_core::Selection::Each(_) => 2,
             };
-            unsafe { *kind = k };
+            unsafe { put(kind, k) };
             Box::into_raw(Box::new(stacked)).cast()
         }
         Err(e) => {
@@ -1578,11 +1623,7 @@ pub unsafe extern "C" fn amonhen_text_syntax(
     len: usize,
 ) -> *mut AmonhenSyntax {
     let path = str_arg(path).unwrap_or_default();
-    let text = if len == 0 {
-        &[][..]
-    } else {
-        unsafe { std::slice::from_raw_parts(text, len) }
-    };
+    let text = array!(text, len);
     Box::into_raw(Box::new(amonhen_core::diff::text_syntax(path, text))).cast()
 }
 
@@ -1617,9 +1658,13 @@ pub unsafe extern "C" fn amonhen_history_commit_id(
     row: u32,
     out: *mut u8,
 ) -> bool {
+    let Some(out) = (unsafe { out.cast::<MaybeUninit<[u8; 20]>>().as_mut() }) else {
+        set_error("NULL was passed as out");
+        return false;
+    };
     match history!(history_ptr).graph.ids().get(row as usize) {
         Some(id) => {
-            unsafe { out.cast::<[u8; 20]>().write(id.0) };
+            out.write(id.0);
             true
         }
         None => false,
@@ -1885,8 +1930,15 @@ pub unsafe extern "C" fn amonhen_working_diff_free(diff: *mut AmonhenWorkingDiff
 }
 
 fn paths<'a>(paths: *const *const c_char, count: u32) -> Result<Vec<&'a str>, StrArgError> {
-    (0..count as usize)
-        .map(|i| str_arg(unsafe { *paths.add(i) }))
+    if count == 0 {
+        return Ok(Vec::new());
+    }
+    if paths.is_null() {
+        return Err(StrArgError::Null);
+    }
+    unsafe { std::slice::from_raw_parts(paths, count as usize) }
+        .iter()
+        .map(|&p| str_arg(p))
         .collect()
 }
 
@@ -1944,9 +1996,7 @@ pub unsafe extern "C" fn amonhen_stage_rows(
     count: u32,
 ) -> bool {
     let d = handle!(diff, WorkingDiff);
-    let rows: Vec<usize> = (0..count as usize)
-        .map(|i| unsafe { *rows.add(i) } as usize)
-        .collect();
+    let rows: Vec<usize> = array!(rows, count).iter().map(|&r| r as usize).collect();
     done(repo!(repo_ptr).stage_rows(d, &rows))
 }
 
@@ -1963,9 +2013,7 @@ pub unsafe extern "C" fn amonhen_set_rows_staged(
     staged: bool,
 ) -> bool {
     let d = handle!(diff, WorkingDiff);
-    let rows: Vec<usize> = (0..count as usize)
-        .map(|i| unsafe { *rows.add(i) } as usize)
-        .collect();
+    let rows: Vec<usize> = array!(rows, count).iter().map(|&r| r as usize).collect();
     done(repo!(repo_ptr).set_rows_staged(d, &rows, staged))
 }
 
@@ -2153,9 +2201,7 @@ pub unsafe extern "C" fn amonhen_discard_rows(
     count: u32,
 ) -> bool {
     let d = handle!(diff, WorkingDiff);
-    let rows: Vec<usize> = (0..count as usize)
-        .map(|i| unsafe { *rows.add(i) } as usize)
-        .collect();
+    let rows: Vec<usize> = array!(rows, count).iter().map(|&r| r as usize).collect();
     done(repo!(repo_ptr).discard_rows(d, &rows))
 }
 
@@ -2215,11 +2261,9 @@ pub unsafe extern "C" fn amonhen_repo_connection(
     let Some(state) = repo!(repo_ptr).connection_state() else {
         return -1;
     };
-    if !received.is_null() {
-        unsafe { *received = state.received };
-    }
-    if !sent.is_null() {
-        unsafe { *sent = state.sent };
+    unsafe {
+        put(received, state.received);
+        put(sent, state.sent);
     }
     i32::from(state.closed.is_some())
 }
@@ -2314,9 +2358,7 @@ pub unsafe extern "C" fn amonhen_history_filtered(
     tips: *const u8,
     count: u32,
 ) -> *const AmonhenHistory {
-    let tips: Vec<Oid> = (0..count as usize)
-        .map(|i| Oid(unsafe { *tips.add(i * 20).cast::<[u8; 20]>() }))
-        .collect();
+    let tips = oids!(tips, count);
     match repo!(repo_ptr).history_filtered(&tips) {
         Ok(s) => into_history(s),
         Err(e) => {
@@ -2342,13 +2384,8 @@ pub unsafe extern "C" fn amonhen_history_folded(
     expanded: *const u8,
     expanded_count: u32,
 ) -> *const AmonhenHistory {
-    let read = |ptr: *const u8, n: u32| -> Vec<Oid> {
-        (0..n as usize)
-            .map(|i| Oid(unsafe { *ptr.add(i * 20).cast::<[u8; 20]>() }))
-            .collect()
-    };
-    let tips = (!all).then(|| read(tips, count));
-    let expanded = read(expanded, expanded_count);
+    let tips = if all { None } else { Some(oids!(tips, count)) };
+    let expanded = oids!(expanded, expanded_count);
     match repo!(repo_ptr).history_folded(tips.as_deref(), &expanded) {
         Ok(s) => into_history(s),
         Err(e) => {
@@ -2395,8 +2432,9 @@ pub unsafe extern "C" fn amonhen_history_boundary_rows(
     capacity: u32,
 ) -> u32 {
     let rows = history!(history_ptr).boundary_rows();
-    for (i, row) in rows.iter().take(capacity as usize).enumerate() {
-        unsafe { out.add(i).write(*row) };
+    let out = unsafe { out_slice(out, capacity as usize) };
+    for (slot, row) in out.iter_mut().zip(&rows) {
+        slot.write(*row);
     }
     rows.len() as u32
 }
@@ -2413,11 +2451,10 @@ pub unsafe extern "C" fn amonhen_history_density(
     out: *mut f32,
 ) -> u32 {
     let density = history!(history_ptr).density(buckets as usize);
-    for (i, [f, a]) in density.iter().enumerate() {
-        unsafe {
-            *out.add(i * 2) = *f;
-            *out.add(i * 2 + 1) = *a;
-        }
+    let out = unsafe { out_slice(out, buckets as usize * 2) };
+    for ([slot_f, slot_a], [f, a]) in out.as_chunks_mut::<2>().0.iter_mut().zip(&density) {
+        slot_f.write(*f);
+        slot_a.write(*a);
     }
     density.len() as u32
 }
@@ -2434,11 +2471,7 @@ pub unsafe extern "C" fn amonhen_history_matching(
     rows: *const u32,
     count: u32,
 ) -> *const AmonhenHistory {
-    let rows = if count == 0 {
-        &[][..]
-    } else {
-        unsafe { std::slice::from_raw_parts(rows, count as usize) }
-    };
+    let rows = array!(rows, count);
     into_history(repo!(repo_ptr).history_matching(history!(history_ptr), rows))
 }
 

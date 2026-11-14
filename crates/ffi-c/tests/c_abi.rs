@@ -62,6 +62,21 @@ fn reads_history_through_the_c_abi() {
             amonhen_history_edges_in(history, 0, 2, out.as_mut_ptr(), 4),
             1
         );
+        // 書く先が NULL なら書かずに数だけ、読む配列が NULL で個数があれば失敗。
+        assert_eq!(
+            amonhen_history_edges_in(history, 0, 2, std::ptr::null_mut(), 4),
+            1
+        );
+        assert_eq!(
+            amonhen_history_boundary_rows(history, std::ptr::null_mut(), 4),
+            0
+        );
+        assert!(!amonhen_history_commit_id(history, 0, std::ptr::null_mut()));
+        assert!(amonhen_history_matching(repo, history, std::ptr::null(), 1).is_null());
+        assert!(amonhen_history_filtered(repo, std::ptr::null(), 1).is_null());
+        let none = amonhen_history_matching(repo, history, std::ptr::null(), 0);
+        assert_eq!(amonhen_history_view(none).row_count, 0);
+        amonhen_history_release(none);
 
         let chunk = amonhen_history_chunk(repo, history, 0, 2, AmonhenEncoding::Utf16);
         assert!(!chunk.is_null());
