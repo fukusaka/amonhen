@@ -96,10 +96,11 @@ struct SyntaxThemeSection: View {
     @State private var failure: String?
 
     var body: some View {
-        Section(L("Syntax Colors")) {
+        Section(L("Color Theme")) {
             Picker(L("Light appearance"), selection: $model.syntaxThemeLight) { options(dark: false) }
             Picker(L("Dark appearance"), selection: $model.syntaxThemeDark) { options(dark: true) }
-            ThemePreview(light: model.syntaxThemeLight, dark: model.syntaxThemeDark)
+            Toggle(L("Use standard colors for diffs"), isOn: $model.diffStandardColors)
+            ThemePreview(light: model.syntaxThemeLight, dark: model.syntaxThemeDark, standardDiff: model.diffStandardColors)
             HStack {
                 Button(L("Import VSCode Theme…")) { importTheme() }
                 Spacer()
@@ -149,6 +150,8 @@ struct SyntaxThemeSection: View {
 private struct ThemePreview: View {
     let light: String
     let dark: String
+    /// 差分の色は標準の色（テーマの色にしない）。
+    let standardDiff: Bool
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
@@ -160,10 +163,22 @@ private struct ThemePreview: View {
             ("10", "number"), (";\n    ", nil), ("println!", "function"), ("(", nil), ("\"top {}\\n\"", "string"),
             (", ", nil), ("self", "constant"), (".", nil), ("count", "property"), (")\n}", nil),
         ]
-        parts.reduce(Text("")) { text, part in
+        let code = parts.reduce(Text("")) { text, part in
             let kind = part.1.flatMap { name in SyntaxTheme.kinds.first { $0.0 == name }?.1 }
             let color = kind.map { Color(nsColor: theme.color($0)) } ?? .primary
             return text + Text(part.0).foregroundColor(color)
+        }
+        // 差分の色の見本（削除と追加の行、変わった単語）。
+        let diff = { (kind: DiffColor) in Color(nsColor: standardDiff ? kind.standard : theme.diffColor(kind)) }
+        let line = { (sign: String, before: String, word: String, line: DiffColor, strong: DiffColor) in
+            HStack(spacing: 0) { Text(sign + " " + before); Text(word).background(diff(strong)); Text(";") }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(diff(line))
+        }
+        VStack(alignment: .leading, spacing: 0) {
+            code.padding(.bottom, 6)
+            line("-", "    let limit = ", "10", .removed, .removedWord)
+            line("+", "    let limit = ", "25", .added, .addedWord)
         }
         .font(.system(size: 12, design: .monospaced))
         .padding(8)
