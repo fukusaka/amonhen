@@ -1706,6 +1706,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         if let workdir = repository.workdir, entry.item.worktreeState != "D", entry.item.indexState != "D" {
             let url = URL(fileURLWithPath: workdir).appendingPathComponent(path)
             add(Titles.showInFinder) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+            add(L("Open in Editor")) { ExternalEditor.open([url]) }
+            menu.items.last?.toolTip = ExternalEditor.toolTip
             add(L("Open with Default App")) { NSWorkspace.shared.open(url) }
         }
     }

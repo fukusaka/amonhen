@@ -1443,7 +1443,11 @@ impl Inner {
                 .is_some_and(|s| !s.contains(&path));
         if unchecked {
             // sparse checkout で取り出していないフォルダのファイル。項目は出すが、押せないわけを添える（macOS 版と同じ）。
-            for title in [tr!("Show in Files"), tr!("Open with Default App")] {
+            for title in [
+                tr!("Show in Files"),
+                tr!("Open in Editor"),
+                tr!("Open with Default App"),
+            ] {
                 items.push(menu::disabled_hint(
                     title,
                     tr!("This folder isn’t checked out"),
@@ -1464,6 +1468,19 @@ impl Inner {
                     |_| {},
                 );
             }));
+            let (w, f) = (this.list.downgrade(), file.clone());
+            items.push(menu::hint(
+                tr!("Open in Editor"),
+                crate::editor::tooltip(),
+                move || {
+                    let window = w
+                        .upgrade()
+                        .and_then(|w| w.root())
+                        .and_downcast::<gtk::Window>();
+                    let path = f.path().into_iter().collect::<Vec<_>>();
+                    crate::editor::open(&path, None, window.as_ref());
+                },
+            ));
             let w = this.list.downgrade();
             items.push(menu::action(tr!("Open with Default App"), move || {
                 let window = w
