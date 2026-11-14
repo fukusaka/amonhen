@@ -495,7 +495,7 @@ pub fn show_in_window(editor: &Rc<Editor>, parent: &gtk::Window) {
         .title(format!("Merge — {}", editor.path))
         .default_width(1300)
         .default_height(820)
-        .child(&editor.root)
+        .child(&crate::backdrop::host(&editor.root))
         .build();
     // リポジトリの窓とは別の窓にする（macOS 版と同じ）。リポジトリの窓を閉じても道連れにしない（道連れだと
     // close-request が来ないので、保存していない Result を確かめずに失う）。アプリにも入れて、この窓が開いている

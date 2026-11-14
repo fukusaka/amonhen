@@ -698,7 +698,7 @@ impl RepoWindow {
             .title("Amon Hen")
             .default_width(1440)
             .default_height(820 + 46)
-            .child(&body)
+            .child(&crate::backdrop::host(&body))
             .build();
         let id = NEXT_ID.with(|n| n.replace(n.get() + 1));
         let this = Rc::new(Self {

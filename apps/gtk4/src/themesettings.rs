@@ -8,7 +8,7 @@ use amonhen_model::tr;
 use gtk::prelude::*;
 use gtk::{gdk, gio, glib, pango};
 
-use crate::backdrop::{Backdrop, Placement, Source, Style};
+use crate::backdrop::{Backdrop, Placement, Style};
 use crate::settings;
 use crate::theme::{self, SyntaxTheme};
 
@@ -32,9 +32,9 @@ fn row(title: &str, widget: &impl IsA<gtk::Widget>) -> gtk::Box {
     b
 }
 
-/// 0.4〜1 などの割合を選ぶ横棒と、その %。
-fn percent_scale(min: f64, value: f64) -> (gtk::Box, gtk::Scale) {
-    let scale = gtk::Scale::with_range(gtk::Orientation::Horizontal, min, 1.0, 0.05);
+/// `min`〜`max` の割合を選ぶ横棒と、その %。
+fn percent_scale(min: f64, max: f64, value: f64) -> (gtk::Box, gtk::Scale) {
+    let scale = gtk::Scale::with_range(gtk::Orientation::Horizontal, min, max, 0.05);
     scale.set_value(value);
     scale.set_width_request(200);
     scale.set_draw_value(false);
@@ -53,8 +53,8 @@ fn percent_scale(min: f64, value: f64) -> (gtk::Box, gtk::Scale) {
     (b, scale)
 }
 
-/// 窓の背景の欄（見せる場所・見せるもの・説明・背景画像・置き方・中身の濃さ・見出しの帯の色）。`get` で今の設定を読み、`set` で書く。
-/// 返す `refresh` は、ほかの所で設定が変わったときに欄を合わせ直す。
+/// 窓の背景の欄。macOS 版と同じく互いに独立した 3 つの節（窓の透過・背景画像・ツールバー）を縦に並べる。
+/// `get` で今の設定を読み、`set` で書く。返す `refresh` は、ほかの所で設定が変わったときに欄を合わせ直す。
 pub fn backdrop_section(
     get: Rc<dyn Fn() -> Backdrop>,
     set: Rc<dyn Fn(Backdrop)>,
@@ -62,11 +62,9 @@ pub fn backdrop_section(
     let styles: Vec<String> = Style::ALL.iter().map(|s| s.title()).collect();
     let refs: Vec<&str> = styles.iter().map(String::as_str).collect();
     let style = gtk::DropDown::from_strings(&refs);
-    let style_row = row(&tr!("Show the background in"), &style);
-    let sources: Vec<String> = Source::ALL.iter().map(|s| s.title()).collect();
-    let refs: Vec<&str> = sources.iter().map(String::as_str).collect();
-    let source = gtk::DropDown::from_strings(&refs);
-    let source_row = row(&tr!("Background"), &source);
+    let style_row = row(&tr!("See through in"), &style);
+    let (transparency_box, transparency) = percent_scale(0.1, 0.9, get().transparency);
+    let transparency_row = row(&tr!("Transparency"), &transparency_box);
     let note = settings::note("");
 
     let image_name = gtk::Label::new(None);
@@ -74,18 +72,19 @@ pub fn backdrop_section(
     image_name.set_ellipsize(pango::EllipsizeMode::Middle);
     image_name.set_max_width_chars(28);
     let choose = gtk::Button::with_label(&tr!("Choose…"));
+    let remove = gtk::Button::with_label(&tr!("Remove"));
     let image_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     image_box.append(&image_name);
     image_box.append(&choose);
+    image_box.append(&remove);
     let image_row = row(&tr!("Image"), &image_box);
-
     let placements: Vec<String> = Placement::ALL.iter().map(|p| p.title()).collect();
     let refs: Vec<&str> = placements.iter().map(String::as_str).collect();
     let placement = gtk::DropDown::from_strings(&refs);
-    let placement_row = row(&tr!("Placement"), &placement);
-
-    let (opacity_box, opacity) = percent_scale(0.4, get().content_opacity);
-    let opacity_row = row(&tr!("Content opacity"), &opacity_box);
+    let placement_row = row(&tr!("Position"), &placement);
+    let (image_transparency_box, image_transparency) =
+        percent_scale(0.5, 0.95, get().image_transparency);
+    let image_transparency_row = row(&tr!("Transparency"), &image_transparency_box);
 
     let tint = gtk::Switch::new();
     tint.set_valign(gtk::Align::Center);
@@ -93,71 +92,77 @@ pub fn backdrop_section(
     let color = gtk::ColorDialogButton::new(Some(gtk::ColorDialog::new()));
     color.dialog().unwrap().set_with_alpha(false);
     let color_row = row(&tr!("Toolbar color"), &color);
-    let (tint_box, tint_opacity) = percent_scale(0.1, get().toolbar_opacity);
+    let (tint_box, tint_opacity) = percent_scale(0.1, 1.0, get().toolbar_opacity);
     let tint_opacity_row = row(&tr!("Toolbar tint"), &tint_box);
 
-    let section = crate::reposettings::section(
-        Some(&tr!("Window Background")),
+    let column = gtk::Box::new(gtk::Orientation::Vertical, 18);
+    column.append(&crate::reposettings::section(
+        Some(&tr!("Window Transparency")),
         &[
             style_row.clone().upcast(),
-            source_row.clone().upcast(),
+            transparency_row.clone().upcast(),
             note.clone().upcast(),
+        ],
+    ));
+    column.append(&crate::reposettings::section(
+        Some(&tr!("Background Image")),
+        &[
             image_row.clone().upcast(),
             placement_row.clone().upcast(),
-            opacity_row.clone().upcast(),
+            image_transparency_row.clone().upcast(),
+            settings::note(&tr!(
+                "Laid thinly over the whole window, on top of the lists and diffs."
+            ))
+            .upcast(),
+        ],
+    ));
+    column.append(&crate::reposettings::section(
+        Some(&tr!("Toolbar")),
+        &[
             tint_row.clone().upcast(),
             color_row.clone().upcast(),
             tint_opacity_row.clone().upcast(),
         ],
-    );
+    ));
 
     // 欄を今の設定に合わせる（合わせている間の変化は、設定に書き戻さない）。
     let syncing = Rc::new(std::cell::Cell::new(false));
     let refresh: Rc<dyn Fn()> = {
-        let (style, source, note, image_name, placement) = (
+        let (style, transparency, note, image_name, remove, placement) = (
             style.clone(),
-            source.clone(),
+            transparency.clone(),
             note.clone(),
             image_name.clone(),
+            remove.clone(),
             placement.clone(),
         );
-        let (opacity, tint, color, tint_opacity) = (
-            opacity.clone(),
+        let (image_transparency, tint, color, tint_opacity) = (
+            image_transparency.clone(),
             tint.clone(),
             color.clone(),
             tint_opacity.clone(),
         );
-        let (source_row, image_row, placement_row, opacity_row) = (
-            source_row.clone(),
-            image_row.clone(),
+        let (transparency_row, placement_row, image_transparency_row) = (
+            transparency_row.clone(),
             placement_row.clone(),
-            opacity_row.clone(),
+            image_transparency_row.clone(),
         );
-        let (tint_row, color_row, tint_opacity_row) = (
-            tint_row.clone(),
-            color_row.clone(),
-            tint_opacity_row.clone(),
-        );
+        let (color_row, tint_opacity_row) = (color_row.clone(), tint_opacity_row.clone());
         let (get, syncing) = (get.clone(), syncing.clone());
         Rc::new(move || {
             let b = get();
             syncing.set(true);
             style.set_selected(Style::ALL.iter().position(|s| *s == b.style).unwrap_or(0) as u32);
-            source
-                .set_selected(Source::ALL.iter().position(|s| *s == b.source).unwrap_or(0) as u32);
-            note.set_text(&match (b.style, b.source) {
-                (Style::System, _) => tr!("The usual look. Nothing shows through; the lists and diffs share one opaque color."),
-                (Style::Chrome, Source::Behind) => tr!(
-                    "The sidebar and header bar show the desktop and windows behind. The lists and diffs share one opaque color."
+            if (transparency.value() - b.transparency).abs() > 1e-6 {
+                transparency.set_value(b.transparency);
+            }
+            note.set_text(&match b.style {
+                Style::System => tr!("The usual window. Nothing shows through."),
+                Style::Chrome => tr!(
+                    "The desktop and windows behind show through the sidebar and header bar. The lists and diffs stay opaque. GNOME can’t blur them."
                 ),
-                (Style::Chrome, Source::Image) => tr!(
-                    "The sidebar and header bar show the image; the window stays opaque. The lists and diffs share one opaque color."
-                ),
-                (Style::Single, Source::Behind) => tr!(
-                    "The whole window shows the desktop and windows behind, under the lists and diffs at the content opacity."
-                ),
-                (Style::Single, Source::Image) => tr!(
-                    "The whole window shows the image, under the lists and diffs at the content opacity; the window stays opaque."
+                Style::Single => tr!(
+                    "The desktop and windows behind show through the whole window. Changed lines and selections stay opaque. GNOME can’t blur them."
                 ),
             });
             image_name.set_text(&match &b.image {
@@ -173,8 +178,8 @@ pub fn backdrop_section(
                     .position(|p| *p == b.placement)
                     .unwrap_or(0) as u32,
             );
-            if (opacity.value() - b.content_opacity).abs() > 1e-6 {
-                opacity.set_value(b.content_opacity);
+            if (image_transparency.value() - b.image_transparency).abs() > 1e-6 {
+                image_transparency.set_value(b.image_transparency);
             }
             tint.set_active(b.toolbar_color.is_some());
             if let Some(rgba) = b
@@ -189,15 +194,12 @@ pub fn backdrop_section(
             if (tint_opacity.value() - b.toolbar_opacity).abs() > 1e-6 {
                 tint_opacity.set_value(b.toolbar_opacity);
             }
-            let custom = b.style != Style::System;
-            let image = custom && b.source == Source::Image;
-            show_row(&source_row, custom);
-            show_row(&image_row, image);
-            show_row(&placement_row, image && b.image.is_some());
-            show_row(&opacity_row, b.style == Style::Single);
-            show_row(&tint_row, custom);
-            show_row(&color_row, custom && b.toolbar_color.is_some());
-            show_row(&tint_opacity_row, custom && b.toolbar_color.is_some());
+            show_row(&transparency_row, b.style != Style::System);
+            remove.set_visible(b.image.is_some());
+            show_row(&placement_row, b.image.is_some());
+            show_row(&image_transparency_row, b.image.is_some());
+            show_row(&color_row, b.toolbar_color.is_some());
+            show_row(&tint_opacity_row, b.toolbar_color.is_some());
             syncing.set(false);
         })
     };
@@ -221,9 +223,9 @@ pub fn backdrop_section(
         c(&|b| b.style = s);
     });
     let c = change.clone();
-    source.connect_selected_notify(move |d| {
-        let s = Source::ALL[d.selected() as usize];
-        c(&|b| b.source = s);
+    transparency.connect_value_changed(move |s| {
+        let v = (s.value() * 20.0).round() / 20.0;
+        c(&|b| b.transparency = v);
     });
     let c = change.clone();
     placement.connect_selected_notify(move |d| {
@@ -231,9 +233,9 @@ pub fn backdrop_section(
         c(&|b| b.placement = p);
     });
     let c = change.clone();
-    opacity.connect_value_changed(move |s| {
+    image_transparency.connect_value_changed(move |s| {
         let v = (s.value() * 20.0).round() / 20.0;
-        c(&|b| b.content_opacity = v);
+        c(&|b| b.image_transparency = v);
     });
     let c = change.clone();
     tint_opacity.connect_value_changed(move |s| {
@@ -260,6 +262,8 @@ pub fn backdrop_section(
         });
     });
     let c = change.clone();
+    remove.connect_clicked(move |_| c(&|b| b.image = None));
+    let c = change.clone();
     choose.connect_clicked(move |button| {
         let parent = button.root().and_downcast::<gtk::Window>();
         let c = c.clone();
@@ -284,7 +288,7 @@ pub fn backdrop_section(
         });
     });
     refresh();
-    (section, refresh)
+    (column, refresh)
 }
 
 /// Settings > Theme のページの節（窓の背景、構文の色）。

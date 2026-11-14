@@ -1,47 +1,50 @@
-//! 窓の背景（macOS 版の `Backdrop.swift`）: 型（System・Sidebar and Toolbar Only・One Layer for the Whole
-//! Window）、背景画像とその置き方、見出しの帯の色。アプリの設定（Settings > Theme、`gtk.ini` の鍵は macOS 版の
-//! UserDefaults と同じ）と、リポジトリごとの上書き（ブックマークの `backdrop`。形は macOS 版と同じ）。
+//! 窓の背景（macOS 版の `Backdrop.swift`）: 窓の後ろを透かす場所（なし・サイドバーとツールバー・窓全体）と
+//! その透過率、背景画像とその位置・透過率、見出しの帯の色。3 つは互いに独立。アプリの設定（Settings > Theme、
+//! `gtk.ini` の鍵は macOS 版の UserDefaults と同じ）と、リポジトリごとの上書き（ブックマークの `backdrop`。形は
+//! macOS 版と同じ）。
 //!
-//! 当て方: 窓ごとに CSS の組（`amonhen-bd-<番号>`）を付け、窓の背景（色・画像・1 枚の地）を窓そのものに描き、
-//! 中の面（見出しの帯・サイドバー・一覧・差分）の背景を型に合わせて消す・不透明にする。規則は全部の窓の分を
-//! 1 つの CssProvider にまとめる。窓を透かす（画像なし）のは合成のある画面だけで、画像があれば窓は不透明のまま
-//! （macOS 版と同じ。透ける窓は合成で表示が遅れる）。
+//! 当て方: 窓ごとに CSS の組（`amonhen-bd-<番号>`）を付け、透かす地を窓そのものに描き、中の面（見出しの帯・
+//! サイドバー・一覧・差分）の背景を型に合わせて消す・不透明にする。規則は全部の窓の分を 1 つの CssProvider に
+//! まとめる。窓を透かすのは合成のある画面だけ。GNOME には後ろをぼかす仕組みがないので、ぼかしの値は覚えておく
+//! だけ（macOS 版と同じ記録にするため）。背景画像は窓の中身の上に重ねた `GtkPicture`（`host`）に出す。
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 
 use amonhen_model::tr;
 use gtk::prelude::*;
-use gtk::{gdk, gio, glib, graphene};
+use gtk::{gdk, glib, graphene};
 use serde_json::{Map, Value, json};
 
 use crate::settings;
 
 const STYLE: &str = "backdropStyle";
+const TRANSPARENCY: &str = "backdropTransparency";
+const BLUR: &str = "backdropBlur";
 const IMAGE: &str = "backdropImage";
-const SOURCE: &str = "backdropSource";
 const IMAGE_PLACEMENT: &str = "backdropImagePlacement";
-const CONTENT_OPACITY: &str = "backdropContentOpacity";
+const IMAGE_TRANSPARENCY: &str = "backdropImageTransparency";
 const TOOLBAR_COLOR: &str = "backdropToolbarColor";
 const TOOLBAR_OPACITY: &str = "backdropToolbarOpacity";
-const KEYS: [&str; 6] = [
+const KEYS: [&str; 8] = [
     STYLE,
+    TRANSPARENCY,
+    BLUR,
     IMAGE,
     IMAGE_PLACEMENT,
-    CONTENT_OPACITY,
+    IMAGE_TRANSPARENCY,
     TOOLBAR_COLOR,
     TOOLBAR_OPACITY,
 ];
 
-/// 窓の背景の型。
+/// 窓の後ろ（デスクトップや後ろの窓）を透かす場所。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Style {
-    /// これまでの見た目（面ごとの色）。
+    /// どこも透かさない。ふだんの窓で、読む面（一覧・差分・Commit の欄）は 1 つの色。
     #[default]
     System,
-    /// サイドバーと見出しの帯だけ透け、読む面（一覧・差分）は 1 つの不透明な色。
+    /// サイドバーと見出しの帯だけ透かし、読む面（一覧・差分）は不透明な 1 つの色。
     Chrome,
-    /// 窓全体に地を 1 枚敷き、どの面も自分では塗らない。読む面の濃さは `content_opacity`。
+    /// 窓全体を透かす。どの面も自分では塗らず、窓に敷いた 1 枚の地が透け具合を決める。
     Single,
 }
 
@@ -62,50 +65,9 @@ impl Style {
 
     pub fn title(self) -> String {
         match self {
-            Style::System => tr!("Nowhere (System)"),
+            Style::System => tr!("Nowhere (Standard)"),
             Style::Chrome => tr!("Sidebar and Toolbar"),
             Style::Single => tr!("Whole Window"),
-        }
-    }
-}
-
-/// 背景に見せるもの。
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Source {
-    /// 窓の後ろ（合成があれば、デスクトップや後ろの窓が見える）。
-    #[default]
-    Behind,
-    /// 選んだ画像（窓は不透明のまま）。
-    Image,
-}
-
-impl Source {
-    pub const ALL: [Source; 2] = [Source::Behind, Source::Image];
-
-    fn raw(self) -> &'static str {
-        match self {
-            Source::Behind => "behind",
-            Source::Image => "image",
-        }
-    }
-
-    fn from_raw(s: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|v| v.raw() == s)
-    }
-
-    /// 見せるものを分ける前の記録は、画像があれば画像。
-    fn or_from(raw: Option<&str>, image: &Option<String>) -> Self {
-        raw.and_then(Self::from_raw).unwrap_or(if image.is_some() {
-            Source::Image
-        } else {
-            Source::Behind
-        })
-    }
-
-    pub fn title(self) -> String {
-        match self {
-            Source::Behind => tr!("Behind the Window"),
-            Source::Image => tr!("Image"),
         }
     }
 }
@@ -156,13 +118,15 @@ impl Placement {
         }
     }
 
-    fn css_position(self) -> &'static str {
+    /// 画像の横・縦の寄せ方。
+    fn align(self) -> (gtk::Align, gtk::Align) {
+        use gtk::Align::{End, Fill, Start};
         match self {
-            Placement::Fill => "center",
-            Placement::TopLeft => "left top",
-            Placement::TopRight => "right top",
-            Placement::BottomLeft => "left bottom",
-            Placement::BottomRight => "right bottom",
+            Placement::Fill => (Fill, Fill),
+            Placement::TopLeft => (Start, Start),
+            Placement::TopRight => (End, Start),
+            Placement::BottomLeft => (Start, End),
+            Placement::BottomRight => (End, End),
         }
     }
 }
@@ -170,15 +134,17 @@ impl Placement {
 /// 窓の背景の設定。アプリの設定と、リポジトリごとの上書きで同じ形。
 #[derive(Clone, Debug, PartialEq)]
 pub struct Backdrop {
-    /// 背景を見せる場所。
+    /// 窓の後ろを透かす場所。
     pub style: Style,
-    /// 背景に見せるもの。
-    pub source: Source,
-    /// 背景画像のパス（窓の後ろに切り替えても覚えておく）。
+    /// 透かす場所の透過率（0.1〜0.9）。地を `1 - transparency` の濃さで敷く。
+    pub transparency: f64,
+    /// ぼかしの強さ（0〜1）。GNOME ではぼかせないので、macOS 版と同じ記録にするために覚えておくだけ。
+    pub blur: f64,
+    /// 背景画像のパス。透かす場所とは別に、窓の中身の上に薄く重ねる。
     pub image: Option<String>,
     pub placement: Placement,
-    /// 1 枚の地の濃さ（0.4〜1）。
-    pub content_opacity: f64,
+    /// 背景画像の透過率（0.5〜0.95）。
+    pub image_transparency: f64,
     /// 見出しの帯に敷く色（`#rrggbb`）。
     pub toolbar_color: Option<String>,
     pub toolbar_opacity: f64,
@@ -188,10 +154,11 @@ impl Default for Backdrop {
     fn default() -> Self {
         Self {
             style: Style::System,
-            source: Source::Behind,
+            transparency: 0.4,
+            blur: 0.4,
             image: None,
             placement: Placement::Fill,
-            content_opacity: 0.8,
+            image_transparency: 0.85,
             toolbar_color: None,
             toolbar_opacity: 0.35,
         }
@@ -208,17 +175,17 @@ impl Backdrop {
                 .unwrap_or(default)
         };
         let text = |key: &str| settings::string(key).filter(|s| !s.is_empty());
-        let image = text(IMAGE);
         Self {
             style: text(STYLE)
                 .and_then(|s| Style::from_raw(&s))
                 .unwrap_or(d.style),
-            source: Source::or_from(text(SOURCE).as_deref(), &image),
-            image,
+            transparency: number(TRANSPARENCY, d.transparency),
+            blur: number(BLUR, d.blur),
+            image: text(IMAGE),
             placement: text(IMAGE_PLACEMENT)
                 .and_then(|s| Placement::from_raw(&s))
                 .unwrap_or(d.placement),
-            content_opacity: number(CONTENT_OPACITY, d.content_opacity),
+            image_transparency: number(IMAGE_TRANSPARENCY, d.image_transparency),
             toolbar_color: text(TOOLBAR_COLOR),
             toolbar_opacity: number(TOOLBAR_OPACITY, d.toolbar_opacity),
         }
@@ -234,8 +201,11 @@ impl Backdrop {
         if old.style != self.style {
             set(STYLE, Some(self.style.raw().into()));
         }
-        if old.source != self.source {
-            set(SOURCE, Some(self.source.raw().into()));
+        if old.transparency != self.transparency {
+            set(TRANSPARENCY, Some(self.transparency.to_string()));
+        }
+        if old.blur != self.blur {
+            set(BLUR, Some(self.blur.to_string()));
         }
         if old.image != self.image {
             set(IMAGE, self.image.clone());
@@ -243,8 +213,11 @@ impl Backdrop {
         if old.placement != self.placement {
             set(IMAGE_PLACEMENT, Some(self.placement.raw().into()));
         }
-        if old.content_opacity != self.content_opacity {
-            set(CONTENT_OPACITY, Some(self.content_opacity.to_string()));
+        if old.image_transparency != self.image_transparency {
+            set(
+                IMAGE_TRANSPARENCY,
+                Some(self.image_transparency.to_string()),
+            );
         }
         if old.toolbar_color != self.toolbar_color {
             set(TOOLBAR_COLOR, self.toolbar_color.clone());
@@ -263,9 +236,10 @@ impl Backdrop {
     pub fn to_json(&self) -> Value {
         let mut m = Map::new();
         m.insert("style".into(), json!(self.style.raw()));
-        m.insert("source".into(), json!(self.source.raw()));
+        m.insert("transparency".into(), json!(self.transparency));
+        m.insert("blur".into(), json!(self.blur));
         m.insert("imagePlacement".into(), json!(self.placement.raw()));
-        m.insert("contentOpacity".into(), json!(self.content_opacity));
+        m.insert("imageTransparency".into(), json!(self.image_transparency));
         m.insert("toolbarOpacity".into(), json!(self.toolbar_opacity));
         if let Some(image) = &self.image {
             m.insert("image".into(), json!(image));
@@ -280,40 +254,36 @@ impl Backdrop {
     pub fn from_json(v: &Value) -> Option<Self> {
         let d = Self::default();
         v.as_object()?;
-        let image = v["image"].as_str().map(str::to_owned);
         Some(Self {
             style: v["style"]
                 .as_str()
                 .and_then(Style::from_raw)
                 .unwrap_or(d.style),
-            source: Source::or_from(v["source"].as_str(), &image),
-            image,
+            transparency: v["transparency"].as_f64().unwrap_or(d.transparency),
+            blur: v["blur"].as_f64().unwrap_or(d.blur),
+            image: v["image"].as_str().map(str::to_owned),
             placement: v["imagePlacement"]
                 .as_str()
                 .and_then(Placement::from_raw)
                 .unwrap_or(d.placement),
-            content_opacity: v["contentOpacity"].as_f64().unwrap_or(d.content_opacity),
+            image_transparency: v["imageTransparency"]
+                .as_f64()
+                .unwrap_or(d.image_transparency),
             toolbar_color: v["toolbarColor"].as_str().map(str::to_owned),
             toolbar_opacity: v["toolbarOpacity"].as_f64().unwrap_or(d.toolbar_opacity),
         })
     }
 
-    /// 窓に描く画像（見せるものが画像のときだけ）。
-    fn shown_image(&self) -> Option<&str> {
-        (self.source == Source::Image)
-            .then_some(self.image.as_deref())
-            .flatten()
+    /// 透かす地の濃さ。
+    fn ground_alpha(&self) -> f64 {
+        1.0 - self.transparency
     }
 
     /// 差分の見出し（スクロールしても上に残る帯）の地。`None` はこれまでどおり（不透明）。
     pub fn band_alpha(&self) -> Option<f32> {
-        (self.style == Style::Single).then_some(self.content_opacity as f32)
+        (self.style == Style::Single).then_some(self.ground_alpha() as f32)
     }
 }
-
-/// 画像なしのサイドバーとツールバーだけ透過で、窓の地の濃さ。GNOME には後ろをぼかす仕組みがないので、
-/// 後ろの窓の文字が読みの邪魔にならない程度に濃くする（macOS 版はぼかしたガラス）。
-const CHROME_SEE_THROUGH: f32 = 0.85;
 
 /// 窓ごとの当てた設定。
 struct Entry {
@@ -322,18 +292,69 @@ struct Entry {
     backdrop: Backdrop,
     /// この窓の背景に合わせる窓（マージエディタの別の窓は、開いたリポジトリの窓に合わせる）。
     source: Option<glib::WeakRef<gtk::Window>>,
-    /// 隅に置いた画像を縮める大きさを決めたときの窓の大きさ（変われば規則を作り直す）。
-    size: Cell<(i32, i32)>,
 }
 
 thread_local! {
     static ENTRIES: RefCell<Vec<Entry>> = const { RefCell::new(Vec::new()) };
     static NEXT_ID: Cell<u32> = const { Cell::new(1) };
     static PROVIDER: RefCell<Option<gtk::CssProvider>> = const { RefCell::new(None) };
-    /// 画像の大きさ（パス → 点。読めなければ None）。
-    static IMAGE_SIZES: RefCell<HashMap<String, Option<(i32, i32)>>> = RefCell::default();
     /// 規則を作り直す予定（続けて変わったときは 1 回にまとめる）。
     static PENDING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// 背景画像の層の印（`host` の重ねた `GtkPicture`）。
+const IMAGE_LAYER: &str = "amonhen-bd-image";
+
+/// 窓の中身 `child` を、背景画像を上に重ねる層で包む（窓の `child` にはこれを置く）。画像はクリックを受けない。
+pub fn host(child: &impl IsA<gtk::Widget>) -> gtk::Overlay {
+    let overlay = gtk::Overlay::new();
+    overlay.set_child(Some(child));
+    let picture = gtk::Picture::new();
+    picture.add_css_class(IMAGE_LAYER);
+    picture.set_can_target(false);
+    picture.set_can_focus(false);
+    picture.set_can_shrink(true);
+    picture.set_visible(false);
+    overlay.add_overlay(&picture);
+    overlay
+}
+
+/// 窓の背景画像の層（`host` で包んでいなければ None）。
+fn image_layer(window: &gtk::Window) -> Option<gtk::Picture> {
+    let overlay = window.child().and_downcast::<gtk::Overlay>()?;
+    let mut child = overlay.first_child();
+    while let Some(c) = child {
+        if c.has_css_class(IMAGE_LAYER) {
+            return c.downcast().ok();
+        }
+        child = c.next_sibling();
+    }
+    None
+}
+
+/// 背景画像の層を設定に合わせる。
+fn show_image(window: &gtk::Window, b: &Backdrop) {
+    let Some(picture) = image_layer(window) else {
+        return;
+    };
+    let path = b.image.as_deref();
+    picture.set_visible(path.is_some());
+    let Some(path) = path else {
+        picture.set_filename(None::<&str>);
+        return;
+    };
+    if picture.file().and_then(|f| f.path()).as_deref() != Some(std::path::Path::new(path)) {
+        picture.set_filename(Some(path));
+    }
+    let (h, v) = b.placement.align();
+    picture.set_halign(h);
+    picture.set_valign(v);
+    picture.set_content_fit(if b.placement == Placement::Fill {
+        gtk::ContentFit::Cover
+    } else {
+        gtk::ContentFit::ScaleDown
+    });
+    picture.set_opacity(1.0 - b.image_transparency);
 }
 
 /// 窓に当てている設定（なければ System）。
@@ -375,13 +396,11 @@ pub fn apply(window: &impl IsA<gtk::Window>, backdrop: Backdrop) {
         }
         let id = NEXT_ID.with(|n| n.replace(n.get() + 1));
         window.add_css_class(&format!("amonhen-bd-{id}"));
-        watch_size(window);
         e.push(Entry {
             window: window.downgrade(),
             id,
             backdrop,
             source: None,
-            size: Cell::new((0, 0)),
         });
         true
     });
@@ -395,34 +414,15 @@ pub fn follow(window: &impl IsA<gtk::Window>, source: &impl IsA<gtk::Window>) {
     let window = window.upcast_ref::<gtk::Window>();
     let id = NEXT_ID.with(|n| n.replace(n.get() + 1));
     window.add_css_class(&format!("amonhen-bd-{id}"));
-    watch_size(window);
     ENTRIES.with(|e| {
         e.borrow_mut().push(Entry {
             window: window.downgrade(),
             id,
             backdrop: Backdrop::default(),
             source: Some(source.upcast_ref::<gtk::Window>().downgrade()),
-            size: Cell::new((0, 0)),
         })
     });
     schedule();
-}
-
-/// 大きさが変わったら、隅に置いた大きな画像を縮め直す（そのときだけ規則を作り直す）。
-fn watch_size(window: &gtk::Window) {
-    let check = |w: &gtk::Window| {
-        let needs = ENTRIES.with(|e| {
-            e.borrow().iter().any(|x| {
-                x.window.upgrade().as_ref() == Some(w) && x.size.get() != (w.width(), w.height())
-            })
-        });
-        if needs {
-            schedule();
-        }
-    };
-    window.connect_default_width_notify(check);
-    window.connect_default_height_notify(check);
-    window.connect_maximized_notify(check);
 }
 
 /// 設定・ブックマークが変わったら、窓の背景を当て直す `f` を呼ぶ（起動したときに一度、窓の側から登録する）。
@@ -457,15 +457,6 @@ fn can_see_through() -> bool {
     gdk::Display::default().is_some_and(|d| d.is_rgba() && d.is_composited())
 }
 
-fn image_size(path: &str) -> Option<(i32, i32)> {
-    IMAGE_SIZES.with(|s| {
-        *s.borrow_mut().entry(path.to_owned()).or_insert_with(|| {
-            let texture = gdk::Texture::from_filename(path).ok()?;
-            Some((texture.width(), texture.height()))
-        })
-    })
-}
-
 fn rebuild() {
     let mut css = String::new();
     ENTRIES.with(|e| {
@@ -486,8 +477,8 @@ fn rebuild() {
             let Some(window) = x.window.upgrade() else {
                 continue;
             };
-            x.size.set((window.width(), window.height()));
-            css.push_str(&rules(id, &backdrop, (window.width(), window.height())));
+            css.push_str(&rules(id, &backdrop));
+            show_image(&window, &backdrop);
         }
     });
     PROVIDER.with(|p| {
@@ -522,7 +513,7 @@ fn redraw(widget: &gtk::Widget) {
 }
 
 /// 1 つの窓の規則。
-fn rules(id: u32, b: &Backdrop, (width, height): (i32, i32)) -> String {
+fn rules(id: u32, b: &Backdrop) -> String {
     let w = format!("window.amonhen-bd-{id}");
     // 読む面の中（一覧・差分・文字の欄など）は自分では塗らず、下の 1 つの色（Single では地）を見せる。
     let panes = format!(
@@ -540,56 +531,17 @@ fn rules(id: u32, b: &Backdrop, (width, height): (i32, i32)) -> String {
         // 窓・見出しの帯・サイドバーはふだんのまま、読む面だけ 1 つの色にそろえる。
         return opaque + &panes;
     }
-    let picture = b
-        .shown_image()
-        .and_then(|path| image_size(path).map(|size| (path, size)));
-    let see_through = picture.is_none() && can_see_through();
     let mut css = String::new();
-    // 窓そのもの: 地の色と画像（1 枚の地は、画像の上に地を重ねる）。
-    let ground = format!("alpha(@view_bg_color, {:.3})", b.content_opacity);
-    let color = match (b.style, see_through) {
-        (Style::Single, true) => ground.clone(),
-        (Style::Single, false) if picture.is_none() => "@view_bg_color".to_owned(),
-        (Style::Chrome, true) => format!("alpha(@window_bg_color, {CHROME_SEE_THROUGH})"),
-        _ => "@window_bg_color".to_owned(),
+    // 窓そのもの: 透かす地（合成がなければ不透明）。
+    let ground = if can_see_through() {
+        format!("alpha(@view_bg_color, {:.3})", b.ground_alpha())
+    } else {
+        "@view_bg_color".to_owned()
     };
-    let mut images = Vec::new();
-    let mut sizes = Vec::new();
-    let mut positions = Vec::new();
-    if b.style == Style::Single && picture.is_some() {
-        images.push(format!("linear-gradient({ground}, {ground})"));
-        sizes.push("100% 100%".to_owned());
-        positions.push("center".to_owned());
-    }
-    if let Some((path, (iw, ih))) = picture {
-        let uri = gio::File::for_path(path).uri();
-        images.push(format!("url(\"{}\")", uri.replace('"', "%22")));
-        sizes.push(if b.placement == Placement::Fill {
-            "cover".to_owned()
-        } else {
-            // 元の大きさ。窓より大きければ比を保って縮める。
-            let scale = 1f64
-                .min(width.max(1) as f64 / iw.max(1) as f64)
-                .min(height.max(1) as f64 / ih.max(1) as f64);
-            format!(
-                "{}px {}px",
-                (iw as f64 * scale).round(),
-                (ih as f64 * scale).round()
-            )
-        });
-        positions.push(b.placement.css_position().to_owned());
-    }
-    css.push_str(&format!("{w} {{ background-color: {color};"));
-    if !images.is_empty() {
-        css.push_str(&format!(
-            " background-image: {}; background-size: {}; background-position: {}; background-repeat: no-repeat;",
-            images.join(", "),
-            sizes.join(", "),
-            positions.join(", ")
-        ));
-    }
-    css.push_str(" }\n");
-    // 見出しの帯とタブの帯: 窓の背景を見せる（色を付けるなら、その色を重ねる）。
+    css.push_str(&format!(
+        "{w} {{ background-color: {ground}; background-image: none; }}\n"
+    ));
+    // 見出しの帯とタブの帯: 地を見せる（色を付けるなら、その色を重ねる）。
     let tint = b
         .toolbar_color
         .as_deref()
@@ -625,55 +577,24 @@ fn rules(id: u32, b: &Backdrop, (width, height): (i32, i32)) -> String {
     css
 }
 
-/// `--snapshot` 用に、窓の背景（CSS で窓に描いているもの）を `snapshot` に描く。System なら何もせず false。
+/// `--snapshot` 用に、窓の背景（CSS で窓に描いている地）を `snapshot` に描く。System なら何もせず false。
+/// 背景画像は窓の中身の上の部品なので、中身と一緒に描かれる。
 pub fn snapshot_background(window: &gtk::Window, snapshot: &gtk::Snapshot, w: f32, h: f32) -> bool {
     let b = of(window);
     if b.style == Style::System {
         return false;
     }
     #[allow(deprecated)]
-    let color = |name: &str| {
-        window
-            .style_context()
-            .lookup_color(name)
-            .unwrap_or(gdk::RGBA::WHITE)
+    let view = window
+        .style_context()
+        .lookup_color("view_bg_color")
+        .unwrap_or(gdk::RGBA::WHITE);
+    let alpha = if can_see_through() {
+        b.ground_alpha() as f32
+    } else {
+        1.0
     };
-    let (view, base) = (color("view_bg_color"), color("window_bg_color"));
-    let bounds = graphene::Rect::new(0.0, 0.0, w, h);
-    let picture = b
-        .shown_image()
-        .and_then(|path| gdk::Texture::from_filename(path).ok());
-    let with_alpha = |c: gdk::RGBA, a: f32| gdk::RGBA::new(c.red(), c.green(), c.blue(), a);
-    let ground = with_alpha(view, b.content_opacity as f32);
-    let see_through = picture.is_none() && can_see_through();
-    let fill = match (b.style, see_through) {
-        (Style::Single, true) => ground,
-        (Style::Single, false) if picture.is_none() => view,
-        (Style::Chrome, true) => with_alpha(base, CHROME_SEE_THROUGH),
-        _ => base,
-    };
-    snapshot.append_color(&fill, &bounds);
-    if let Some(texture) = picture {
-        let (iw, ih) = (texture.width() as f32, texture.height() as f32);
-        let scale = if b.placement == Placement::Fill {
-            (w / iw).max(h / ih)
-        } else {
-            1f32.min(w / iw).min(h / ih)
-        };
-        let (sw, sh) = (iw * scale, ih * scale);
-        let (x, y) = match b.placement {
-            Placement::Fill => ((w - sw) / 2.0, (h - sh) / 2.0),
-            Placement::TopLeft => (0.0, 0.0),
-            Placement::TopRight => (w - sw, 0.0),
-            Placement::BottomLeft => (0.0, h - sh),
-            Placement::BottomRight => (w - sw, h - sh),
-        };
-        snapshot.push_clip(&bounds);
-        snapshot.append_texture(&texture, &graphene::Rect::new(x, y, sw, sh));
-        snapshot.pop();
-        if b.style == Style::Single {
-            snapshot.append_color(&ground, &bounds);
-        }
-    }
+    let fill = gdk::RGBA::new(view.red(), view.green(), view.blue(), alpha);
+    snapshot.append_color(&fill, &graphene::Rect::new(0.0, 0.0, w, h));
     true
 }

@@ -1159,22 +1159,24 @@ mod tests {
 
     #[test]
     fn reads_and_writes_the_window_background() {
-        use crate::backdrop::{Placement, Source, Style};
-        let text = r##"{"groups":[],"items":[{"backdrop":{"contentOpacity":0.6,"image":"/i.png","imagePlacement":"bottomRight","source":"behind","style":"single","toolbarColor":"#3b5bdb","toolbarOpacity":0.35},"favorite":false,"path":"/a"}],"scanRoots":[]}"##;
+        use crate::backdrop::{Placement, Style};
+        let text = r##"{"groups":[],"items":[{"backdrop":{"blur":0.2,"image":"/i.png","imagePlacement":"bottomRight","imageTransparency":0.9,"style":"single","toolbarColor":"#3b5bdb","toolbarOpacity":0.35,"transparency":0.6},"favorite":false,"path":"/a"}],"scanRoots":[]}"##;
         let data = Data::from_json(&serde_json::from_str(text).unwrap());
         let backdrop = data.items[0].backdrop.clone().unwrap();
         assert_eq!(backdrop.style, Style::Single);
-        // 窓の後ろを見せていても、画像のパスは覚えている。
-        assert_eq!(backdrop.source, Source::Behind);
+        assert_eq!(backdrop.transparency, 0.6);
+        // GNOME ではぼかさないが、macOS 版と同じ記録にするので覚えておく。
+        assert_eq!(backdrop.blur, 0.2);
         assert_eq!(backdrop.image.as_deref(), Some("/i.png"));
         assert_eq!(backdrop.placement, Placement::BottomRight);
-        assert_eq!(backdrop.content_opacity, 0.6);
+        assert_eq!(backdrop.image_transparency, 0.9);
         assert_eq!(data.to_json(), serde_json::from_str::<Value>(text).unwrap());
         // 後から足した項目がない記録（macOS 版の古い形）も読める。
         let old = r#"{"items":[{"backdrop":{"style":"chrome"},"favorite":false,"path":"/b"}]}"#;
         let data = Data::from_json(&serde_json::from_str(old).unwrap());
         let backdrop = data.items[0].backdrop.clone().unwrap();
         assert_eq!(backdrop.style, Style::Chrome);
+        assert_eq!(backdrop.transparency, 0.4);
         assert_eq!(backdrop.placement, Placement::Fill);
     }
 
