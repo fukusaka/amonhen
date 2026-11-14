@@ -7,7 +7,12 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
-### Unreleased
+### [0.2.11] - 2026-11-13
+
+History's cache writes only what changed instead of the whole History, and the selected commit's ancestors light up
+sooner, in large repositories too. Merge asks how to integrate (following git's settings, fast-forward only, always a
+merge commit, or squashed), and Commit's tooltip says why it can't be clicked. Publish and Pull work on a branch whose
+upstream was deleted, and the GTK4 app matches macOS in more places.
 
 #### Added
 
@@ -1107,7 +1112,12 @@ First release.
 
 ## VSCode extension
 
-### Unreleased
+### [0.2.7] - 2026-11-13
+
+With the main view open, confirmations that change the commit graph appear as a sheet over it with the app's
+before-and-after drawing, and Merge asks how to integrate. History rows, Range Diff, Keys and Values and the context
+menus follow the app, Show Daemon opens the shared daemon's page, and credential prompts ask in an input box instead
+of failing.
 
 #### Added
 
