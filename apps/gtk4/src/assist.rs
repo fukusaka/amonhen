@@ -2,7 +2,7 @@
 //! 確認・返事を流しながら見せる部品（[`ResultView`]・[`Panel`]）と、Settings の AI のタブ。
 //!
 //! 設定は `gtk.ini` の、macOS 版の UserDefaults と同じ名前の鍵（`assistant`・`assistantModel.<CLI>`・
-//! `assistantLanguage`・`trustedPrompts`・`assistantRepositories`）。利用者のプロンプトは
+//! `assistantLanguage`・`approvedPromptHashes`・`assistantRepositories`）。利用者のプロンプトは
 //! `~/.config/amonhen/prompts/<用途>.md`、返事のキャッシュは `~/.cache/amonhen/assist`。
 
 use std::cell::{Cell, RefCell};
@@ -24,7 +24,8 @@ use crate::settings;
 /// 使う CLI（`none` か CLI の名前。既定は使わない）。
 pub const ASSISTANT: &str = "assistant";
 const LANGUAGE: &str = "assistantLanguage";
-const TRUSTED: &str = "trustedPrompts";
+/// 使ってよいと答えたプロンプト: パス → そのときの中身のハッシュ。
+const APPROVED_PROMPT_HASHES: &str = "approvedPromptHashes";
 const REPOSITORIES: &str = "assistantRepositories";
 
 fn model_key(cli: Cli) -> String {
@@ -276,10 +277,10 @@ async fn template(
     else {
         return user();
     };
-    let mut trusted = table(TRUSTED);
+    let mut approved_hashes = table(APPROVED_PROMPT_HASHES);
     let hash = amonhen_assist::sha256_hex(text.as_bytes());
     let path_text = path.to_string_lossy().into_owned();
-    if trusted.get(&path_text).and_then(Value::as_str) == Some(hash.as_str()) {
+    if approved_hashes.get(&path_text).and_then(Value::as_str) == Some(hash.as_str()) {
         return text;
     }
     let shown: String = text.chars().take(1500).collect();
@@ -303,8 +304,8 @@ async fn template(
     if sheet.run().await != crate::sheets::Response::Ok {
         return user();
     }
-    trusted.insert(path_text, Value::String(hash));
-    set_table(TRUSTED, trusted);
+    approved_hashes.insert(path_text, Value::String(hash));
+    set_table(APPROVED_PROMPT_HASHES, approved_hashes);
     text
 }
 

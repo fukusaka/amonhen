@@ -310,17 +310,18 @@ enum Assistant {
     /// 見せて確かめる（許可はパスと中身のハッシュで覚える）。断られたら利用者のものを使う。
     private static func prompt(_ purpose: AssistPurpose, workdir: String?) -> String {
         guard let (path, text) = repositoryPrompt(purpose, workdir: workdir) else { return userPrompt(purpose) }
-        var trusted = UserDefaults.standard.dictionary(forKey: "trustedPrompts") as? [String: String] ?? [:]
+        // 使ってよいと答えたプロンプト: パス → そのときの中身のハッシュ。
+        var approvedHashes = UserDefaults.standard.dictionary(forKey: "approvedPromptHashes") as? [String: String] ?? [:]
         let hash = sha256(text)
-        if trusted[path] == hash { return text }
+        if approvedHashes[path] == hash { return text }
         let alert = NSAlert()
         alert.messageText = L("Use the repository’s prompt?")
         alert.informativeText = "\(path)\n\n" + String(text.prefix(1500))
         alert.addButton(withTitle: L("Use"))
         alert.addButton(withTitle: L("Don’t Use (Use My Prompt)"))
         guard alert.runModal() == .alertFirstButtonReturn else { return userPrompt(purpose) }
-        trusted[path] = hash
-        UserDefaults.standard.set(trusted, forKey: "trustedPrompts")
+        approvedHashes[path] = hash
+        UserDefaults.standard.set(approvedHashes, forKey: "approvedPromptHashes")
         return text
     }
 
