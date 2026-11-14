@@ -1156,9 +1156,15 @@ fn build_tab(
     body.set_vexpand(true);
     // サイドバーの上の見出しにボタンが乗るので、macOS 版と同じく 240 より狭くしない。
     sidebar.root.set_width_request(240);
-    // 窓の上の段を、このサイドバーの幅で分ける（`tabs.rs`）。
+    // 窓の上の段を、このサイドバーの幅で分ける（`tabs.rs`）。仕切りの位置ではなく、サイドバーに割り当てた幅を
+    // 見る（仕切りを最小の幅より狭い所までドラッグすると、位置だけが小さくなる）。高さのない描く部品を置き、その幅が
+    // 変わったら知らせを受ける。
+    let width_probe = gtk::DrawingArea::new();
+    width_probe.set_content_height(0);
+    width_probe.set_can_target(false);
+    sidebar.root.append(&width_probe);
     tab.sidebar
-        .replace(Some((sidebar.root.clone().upcast(), body.clone())));
+        .replace(Some((sidebar.root.clone().upcast(), width_probe)));
     // daemon 越し・SSH 先は、つながるまで「つないでいます」を出す（開けなかったら、エラーと Try Again）。
     let content = gtk::Stack::new();
     content.set_vexpand(true);

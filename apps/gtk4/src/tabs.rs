@@ -32,8 +32,9 @@ pub struct Tab {
     /// 分ける（GNOME の分けた見出しの形。macOS 版と同じく、サイドバーが窓の上端まで伸びる）。
     pub side_header: gtk::HeaderBar,
     pub header: gtk::HeaderBar,
-    /// サイドバーとその仕切り（リポジトリのタブだけ）。窓の上の段を、サイドバーの幅で分ける。
-    pub sidebar: RefCell<Option<(gtk::Widget, gtk::Paned)>>,
+    /// サイドバーと、その割り当てられた幅を知らせる部品（リポジトリのタブだけ）。窓の上の段を、サイドバーの幅で
+    /// 分ける。
+    pub sidebar: RefCell<Option<(gtk::Widget, gtk::DrawingArea)>>,
     /// このタブのアクション（`win.*`）。
     pub group: gio::SimpleActionGroup,
     /// リポジトリの名前（タブと窓の名前）。
@@ -753,26 +754,30 @@ impl RepoWindow {
                 }
             }
         };
-        let Some((sidebar, paned)) = tab.sidebar.borrow().clone() else {
+        let Some((sidebar, probe)) = tab.sidebar.borrow().clone() else {
             fit_to(None);
             return;
         };
         let fit = {
-            let (sidebar, paned) = (sidebar.downgrade(), paned.downgrade());
+            let (sidebar, probe) = (sidebar.downgrade(), probe.downgrade());
             move || {
-                let (Some(sidebar), Some(paned)) = (sidebar.upgrade(), paned.upgrade()) else {
+                let (Some(sidebar), Some(probe)) = (sidebar.upgrade(), probe.upgrade()) else {
                     return;
                 };
-                fit_to(sidebar.is_visible().then(|| paned.position()));
+                // まだ割り当てていなければ、サイドバーの最小の幅。
+                let width = Some(probe.width())
+                    .filter(|w| *w > 0)
+                    .unwrap_or(sidebar.width_request());
+                fit_to(sidebar.is_visible().then_some(width));
             }
         };
         fit();
         let fit = Rc::new(fit);
         let f = fit.clone();
-        let by_width = paned.connect_position_notify(move |_| f());
+        let by_width = probe.connect_resize(move |_, _, _| f());
         let by_shown = sidebar.connect_visible_notify(move |_| fit());
         self.side_watch.replace(vec![
-            (paned.upcast::<glib::Object>().downgrade(), by_width),
+            (probe.upcast::<glib::Object>().downgrade(), by_width),
             (sidebar.upcast::<glib::Object>().downgrade(), by_shown),
         ]);
     }
