@@ -214,6 +214,8 @@ final class BackdropHostController: NSViewController {
     private let ground = TintView()
     private let band = TintView()
     private(set) var settings = BackdropSettings()
+    /// 窓のタイトルを出さない（リポジトリの窓は、名前をツールバーに出す）。
+    var hidesTitle = true
     private var loadedImage: (path: String, image: NSImage?)?
 
     init(content: NSViewController) {
@@ -262,7 +264,7 @@ final class BackdropHostController: NSViewController {
         self.settings = settings
         guard let window = view.window else { return }
         let custom = settings.style != .system
-        Backdrop.prepare(window: window, seeThrough: custom)
+        Backdrop.prepare(window: window, seeThrough: custom, hidesTitle: hidesTitle)
         Backdrop.setBlur(window: window, radius: settings.blurRadius)
         ground.isHidden = !custom
         ground.color = settings.groundColor
@@ -295,13 +297,123 @@ final class BackdropHostController: NSViewController {
     }
 }
 
+/// リポジトリのタブと同じ帯に並ぶ窓（Blame・File History のタブ、つないでいる間のタブ、リポジトリのページ）の背景。
+/// リポジトリの窓と同じ形にするので、タブを切り替えても見た目が変わらない: 窓をツールバーの下まで広げ、中身は
+/// ツールバーの下から置き、面は 1 つの色にする（`system` ではツールバーの下も同じ色、`chrome` ではツールバーが透ける）。
+@MainActor final class BackdropTab: NSObject {
+    private weak var window: NSWindow?
+    private let host: BackdropHostController
+    private let page = BackdropPage()
+    private let settings: () -> BackdropSettings
+
+    /// `window` の中身をこの背景にする（窓の大きさは、この後で決める）。`settings` は当てる設定で、アプリの設定か
+    /// `source`（開いたリポジトリの窓）が変わったら当て直す。
+    init(window: NSWindow, source: NSWindow? = nil, settings: @escaping () -> BackdropSettings) {
+        self.window = window
+        self.settings = settings
+        host = BackdropHostController(content: page)
+        host.hidesTitle = false
+        super.init()
+        window.contentViewController = host
+        apply()
+        NotificationCenter.default.addObserver(self, selector: #selector(apply), name: .backdropChanged, object: nil)
+        if let source {
+            NotificationCenter.default.addObserver(self, selector: #selector(apply), name: .backdropApplied, object: source)
+        }
+    }
+
+    /// 中身にする。
+    func show(_ controller: NSViewController) {
+        page.show(controller)
+    }
+
+    /// 中身にする（ビューだけのとき）。
+    func show(_ view: NSView) {
+        page.show(view)
+    }
+
+    @objc private func apply() {
+        guard let window else { return }
+        let settings = settings()
+        BackdropSettings.set(settings, for: window)
+        host.apply(settings)
+        page.paint(settings)
+        NotificationCenter.default.post(name: .backdropApplied, object: window)
+    }
+}
+
+/// 窓の背景に合わせて自分の中も変える中身（`BackdropTab` に置いたもの。リポジトリのページの左の木など）。
+@MainActor protocol BackdropFollowing: AnyObject {
+    func followBackdrop(_ settings: BackdropSettings)
+}
+
+/// `BackdropTab` の中身の土台: 中身をツールバーの下から置き、その下に面の色を敷く。
+private final class BackdropPage: NSViewController {
+    private let pane = TintView()
+    private var content: NSView?
+    /// ツールバーの下も面の色で塗る（`system`）。
+    private var underToolbar = true
+    /// 当てた設定（後から置いた中身にも伝える）。
+    private var settings: BackdropSettings?
+
+    override func loadView() {
+        let root = LayoutView(frame: NSRect(x: 0, y: 0, width: 1200, height: 780))
+        root.onLayout = { [weak self] in self?.layoutPane() }
+        root.addSubview(pane)
+        view = root
+    }
+
+    func show(_ controller: NSViewController) {
+        children.forEach { $0.removeFromParent() }
+        addChild(controller)
+        place(controller.view)
+        if let settings { (controller as? BackdropFollowing)?.followBackdrop(settings) }
+    }
+
+    func show(_ view: NSView) {
+        children.forEach { $0.removeFromParent() }
+        place(view)
+    }
+
+    private func place(_ next: NSView) {
+        content?.removeFromSuperview()
+        content = next
+        next.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(next)
+        NSLayoutConstraint.activate([
+            next.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            next.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            next.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            next.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        // 面は自分では塗らず、下の 1 つの色を見せる（リポジトリの窓のページと同じ）。
+        Backdrop.clearBackgrounds(in: next, clear: true)
+    }
+
+    func paint(_ settings: BackdropSettings) {
+        _ = view
+        self.settings = settings
+        pane.color = settings.paneColor
+        underToolbar = settings.style == .system
+        layoutPane()
+        if let content { Backdrop.clearBackgrounds(in: content, clear: true) }
+        for child in children { (child as? BackdropFollowing)?.followBackdrop(settings) }
+    }
+
+    private func layoutPane() {
+        let bounds = view.bounds
+        let top = underToolbar ? 0 : view.safeAreaInsets.top
+        pane.frame = NSRect(x: 0, y: 0, width: bounds.width, height: max(0, bounds.height - top))
+    }
+}
+
 /// 窓と面の背景を、型に合わせて切り替える。
 @MainActor enum Backdrop {
     /// 窓の形: どの型も macOS の標準の窓と同じく、中身をタイトルバーの下まで広げ、サイドバーが窓の上端まで伸び、
-    /// ツールバーは中身の上に乗る（窓のタイトルは出さない。リポジトリの名前はツールバーにある）。型が変えるのは透け方だけ。
+    /// ツールバーは中身の上に乗る（リポジトリの窓はタイトルを出さない。名前はツールバーにある）。型が変えるのは透け方だけ。
     /// 窓を透けるようにするのは、窓の後ろを透かすときだけ（透ける窓は WindowServer が重ねるので、表示までが 1 フレームの
     /// 半分ほど遅れる。計測済み）。
-    static func prepare(window: NSWindow, seeThrough: Bool) {
+    static func prepare(window: NSWindow, seeThrough: Bool, hidesTitle: Bool = true) {
         if !window.styleMask.contains(.fullSizeContentView) {
             // 切り替えると AppKit は中身の大きさを保って窓を縮めるので、窓の枠を戻す。
             let frame = window.frame
@@ -309,7 +421,7 @@ final class BackdropHostController: NSViewController {
             window.setFrame(frame, display: true)
         }
         window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
+        window.titleVisibility = hidesTitle ? .hidden : .visible
         window.isOpaque = !seeThrough
         window.backgroundColor = seeThrough ? .clear : .windowBackgroundColor
     }

@@ -135,6 +135,8 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
     enum OpenMode { case here, newTab, newWindow }
 
     let style: Style
+    /// 左の木の地（サイドバーの素材）。
+    private var sidebarMaterial: NSVisualEffectView?
     /// リポジトリを開く。AppDelegate・RepositoryWindow が設定する。
     var onOpen: ((String, OpenMode) -> Void)?
     /// ツールバーの一覧の「すべてのリポジトリ…」: ページを出す。
@@ -473,9 +475,18 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         sideScroll.documentView = sidebar
         sideScroll.hasVerticalScroller = true
         sideScroll.drawsBackground = false
-        let left = NSVisualEffectView()
-        left.material = .sidebar
-        left.blendingMode = .behindWindow
+        // 左の地はサイドバーの素材。窓の後ろを透かすときは隠して、窓の地を見せる（`followBackdrop`）。
+        let left = NSView()
+        let material = NSVisualEffectView()
+        material.material = .sidebar
+        material.blendingMode = .behindWindow
+        sidebarMaterial = material
+        material.translatesAutoresizingMaskIntoConstraints = false
+        left.addSubview(material)
+        NSLayoutConstraint.activate([
+            material.topAnchor.constraint(equalTo: left.topAnchor), material.bottomAnchor.constraint(equalTo: left.bottomAnchor),
+            material.leadingAnchor.constraint(equalTo: left.leadingAnchor), material.trailingAnchor.constraint(equalTo: left.trailingAnchor),
+        ])
         let leftBar = NSStackView(views: [addButton ?? NSView(), scanning, NSView()])
         leftBar.spacing = 6
         for v in [sideScroll, leftBar] as [NSView] {
@@ -1666,5 +1677,12 @@ enum RemoteHome {
                 RepositoryBrowser.bookmarksChanged()
             }
         }
+    }
+}
+
+extension RepositoryBrowser: BackdropFollowing {
+    /// 窓の後ろを透かすときは、リポジトリの窓のサイドバーと同じく、左の木も透かす。
+    func followBackdrop(_ settings: BackdropSettings) {
+        sidebarMaterial?.isHidden = settings.style != .system
     }
 }

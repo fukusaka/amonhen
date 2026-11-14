@@ -10,6 +10,8 @@ final class ConnectingTab: NSObject, NSWindowDelegate {
     let window: NSWindow
     /// リポジトリのタブと同じツールバー（タブを切り替えてもタブの並びの位置が動かないように）。
     private let toolbar = MainToolbar()
+    /// 窓の背景（替わるリポジトリの窓と同じ設定）。
+    private var backdrop: BackdropTab?
     /// 閉じられた（取り消された）。つないだ結果は捨てる。
     private(set) var isClosed = false
     /// 「もう一度」。
@@ -32,6 +34,7 @@ final class ConnectingTab: NSObject, NSWindowDelegate {
         window.delegate = self
         window.toolbar = toolbar.toolbar
         toolbar.showUnopened(window.title)
+        backdrop = BackdropTab(window: window) { BackdropSettings.resolved(for: location) }
         // 位置と大きさはリポジトリのウィンドウのものを借りる（記録はしない。同じ名前で記録できるのは 1 つだけで、
         // 替わるリポジトリのウィンドウが記録する）。
         window.setContentSize(NSSize(width: 1440, height: 820))
@@ -106,7 +109,7 @@ final class ConnectingTab: NSObject, NSWindowDelegate {
             stack.widthAnchor.constraint(lessThanOrEqualToConstant: 560),
             stack.leadingAnchor.constraint(greaterThanOrEqualTo: content.leadingAnchor, constant: 20),
         ])
-        window.contentView = content
+        backdrop?.show(content)
     }
 
     @objc private func close() {

@@ -438,7 +438,11 @@ bookmark (the repository list's context menu, Window Background…).
   240 pt wide. The see-through styles use a plain split item instead, because the macOS 26 glass sidebar does not show
   what is behind the window. The pages leave the toolbar's height at their top (the safe area, which also follows the
   tab bar). The diff's Metal layer clears to the layer's color, or to transparent for one layer. The merge editor's own
-  window takes the background of the repository window it was opened from.
+  window takes the background of the repository window it was opened from. The other windows in the repository tabs'
+  group (Blame and File History, a repository being connected, and Repositories) take the same shape through
+  `BackdropTab`, so switching tabs does not change the look: Blame and File History follow the repository window they
+  were opened from, a connecting tab its repository's setting, and Repositories the app's setting. They keep their
+  window titles.
 - **Image.** It is laid thinly over the whole window, on top of the lists and diffs, and never takes clicks. It fills
   the window (cropped to keep its aspect) or sits at its natural size in a corner, shrunk to fit.
 - **Cost.** A see-through window is composited by WindowServer with what is behind it. From a scroll step to the frame
@@ -455,6 +459,8 @@ bookmark (the repository list's context menu, Window Background…).
   made transparent or opaque by style. In Nowhere only the pages change: they share `@view_bg_color` (GTK keeps its
   header bar across the whole window, so the sidebar does not run to the top). The image is a `GtkPicture` laid over the
   window's content (`backdrop::host`, which takes no clicks; cover, or its natural size in a corner, shrunk to fit).
+  The front tab's header bar sits at the top of that content instead of being the window's titlebar, so the image
+  covers it too, as it covers the toolbar on macOS.
   A window shows the background of its front tab's repository; the merge editor's own window follows the window it was
   opened from. A see-through window needs a compositor (`gdk::Display::is_composited`; without one it stays opaque).
   GNOME cannot blur what is behind, so Blur is kept only to share the record with the macOS app and is not shown in
