@@ -120,7 +120,7 @@ Keep the path short (`C:\src`). Set Windows Update's active hours wide enough th
 `~/.ssh/config`:
 
 ```
-Host winpc
+Host windows-pc
   HostName <the reserved address>
   User <the Windows user name>
   IdentityFile ~/.ssh/id_windows
@@ -130,7 +130,7 @@ Host winpc
 `IdentitiesOnly` keeps ssh from offering other keys first. If `ControlMaster` is on for all hosts, a check right after
 changing sshd may reuse an old connection: add `-o ControlMaster=no -o ControlPath=none`.
 
-- VSCode: Remote-SSH: Connect to Host, `winpc`, platform Windows. Open `C:\src\amonhen`.
+- VSCode: Remote-SSH: Connect to Host, `windows-pc`, platform Windows. Open `C:\src\amonhen`.
 - Remote Desktop: the Windows App from the App Store, with the address, the Microsoft account's email address and its
   password.
 
@@ -139,7 +139,7 @@ changing sshd may reuse an old connection: add `-o ControlMaster=no -o ControlPa
 A script with quotes and pipes survives ssh unchanged when it is sent as `-EncodedCommand` (base64 of UTF-16LE):
 
 ```sh
-ssh winpc "powershell -NoProfile -NonInteractive -EncodedCommand $(iconv -f UTF-8 -t UTF-16LE check.ps1 | base64)"
+ssh windows-pc "powershell -NoProfile -NonInteractive -EncodedCommand $(iconv -f UTF-8 -t UTF-16LE check.ps1 | base64)"
 ```
 
 - `powershell -Command -` (reading the script from standard input) hangs over ssh.
@@ -211,9 +211,9 @@ The script is too long for `-EncodedCommand` (the command line is limited to 327
 clone or copy it over:
 
 ```sh
-ssh winpc 'git -C C:\src\amonhen pull -q; pwsh -NoProfile -ExecutionPolicy Bypass -File C:\src\amonhen\scripts\check-windows.ps1 snapshot'
-scp scripts/install-engine.ps1 scripts/check-windows.ps1 winpc:
-ssh winpc 'powershell -NoProfile -ExecutionPolicy Bypass -File check-windows.ps1 -Release v0.2.4'
+ssh windows-pc 'git -C C:\src\amonhen pull -q; pwsh -NoProfile -ExecutionPolicy Bypass -File C:\src\amonhen\scripts\check-windows.ps1 snapshot'
+scp scripts/install-engine.ps1 scripts/check-windows.ps1 windows-pc:
+ssh windows-pc 'powershell -NoProfile -ExecutionPolicy Bypass -File check-windows.ps1 -Release v0.2.4'
 ```
 
 `-Release` takes `stable` (the default), `snapshot` or a tag; `-ExpectVersion` overrides the version expected from the
