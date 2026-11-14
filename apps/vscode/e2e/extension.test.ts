@@ -2161,6 +2161,33 @@ async function historySelectionFlow(): Promise<void> {
       return answer.view;
     }
   };
+  /** History を読み直したことを示すメッセージ（選んだ行は消える） */
+  const reloaded = (m: HostMessage) => m.type === 'reset' || (m.type === 'rows' && m.total !== undefined);
+  // 選んだ後、コマンドを動かす前後に History を読み直すと、選んだ行は消え、コマンドは何もしない（いくつも選んだ
+  // ときだけ動く）。done が答えを返すまで待ち、その前に読み直したら、落ち着いてから選び直して動かし直す
+  const onSelection = async <T>(
+    token: number,
+    rows: number[],
+    what: string,
+    run: () => PromiseLike<unknown>,
+    done: (since: number) => T | undefined | false | Promise<T | undefined | false>,
+  ): Promise<{ value: T; since: number }> => {
+    for (;;) {
+      await select(token, rows);
+      // 選んだ答えより後に来たものを見る（答えを受け取ってから戻るまでに、読み直しが来ていることもある）
+      let since = posted.length;
+      while (since > 0 && !(posted[since - 1]!.type === 'selection' && (posted[since - 1] as Message<'selection'>).token === token)) since--;
+      await run();
+      const value = await until<T | 'reloaded'>(
+        what,
+        async () => (await done(since)) || (posted.slice(since).some(reloaded) ? 'reloaded' as const : undefined),
+        undefined,
+        () => [posted.slice(since).map((m) => m.type).join(', ') || 'なし', lastErrors()].join('、'),
+      );
+      if (value !== 'reloaded') return { value, since };
+      await settled();
+    }
+  };
   try {
     const base = git('rev-parse', 'HEAD').trim();
     git('switch', '-q', '-c', 'sel-base');
@@ -2226,15 +2253,20 @@ async function historySelectionFlow(): Promise<void> {
     assert.equal(each.files.length, 3);
 
     // ID はまとめてコピーできる（新しい順）
-    await select(6, [s4, s2]);
-    await vscode.commands.executeCommand('amonhen.history.selection.copyIds');
-    assert.equal(await vscode.env.clipboard.readText(), [git('rev-parse', 'sel-base').trim(), git('rev-parse', 'sel-base~2').trim()].join('\n'));
+    const ids = [git('rev-parse', 'sel-base').trim(), git('rev-parse', 'sel-base~2').trim()].join('\n');
+    await onSelection(6, [s4, s2], 'コピーした ID', async () => {
+      await vscode.env.clipboard.writeText('');
+      await vscode.commands.executeCommand('amonhen.history.selection.copyIds');
+    }, async () => (await vscode.env.clipboard.readText()) === ids);
 
     // 2 つは、それぞれを先端とする 2 つの版として Range Diff で比べられる
-    await select(7, [s4, s2]);
-    const compareAt = posted.length;
-    await vscode.commands.executeCommand('amonhen.history.selection.rangeDiff');
-    const compared = await waitPosted('rangeDiff', compareAt, (m) => m.pairs !== null);
+    const { value: compared, since: compareAt } = await onSelection(
+      7,
+      [s4, s2],
+      'rangeDiff のメッセージ',
+      () => vscode.commands.executeCommand('amonhen.history.selection.rangeDiff'),
+      (since) => posted.slice(since).find((m): m is Message<'rangeDiff'> => m.type === 'rangeDiff' && m.pairs !== null),
+    );
     const [newer, older] = [git('rev-parse', 'sel-base').trim(), git('rev-parse', 'sel-base~2').trim()];
     assert.deepEqual(compared.ranges, [`${older}...${newer}`]);
     await waitPosted('show', compareAt, (m) => m.view === 'rangeDiff');
@@ -2252,8 +2284,9 @@ async function historySelectionFlow(): Promise<void> {
     await vscode.commands.executeCommand('amonhen.refresh');
     await panel.history.handle({ type: 'scope', scope: 'all' });
     const again = await read(['s1', 's2', 's3', 's4']) as [number, number, number, number];
-    await select(8, [again[3], again[1]]);
-    await vscode.commands.executeCommand('amonhen.history.selection.cherryPick');
+    await onSelection(8, [again[3], again[1]], 'cherry-pick したコミット',
+      () => vscode.commands.executeCommand('amonhen.history.selection.cherryPick'),
+      () => subjects(2).join('\n') === 's4\ns2');
     // メインビューが開いているので、確かめるのは重ねたシート（作るコミットの絵つき）
     const picked = sheets.at(-1);
     assert.equal(picked?.title, 'Cherry-pick 2 commits onto sel-target?', prompts.join(' / '));
@@ -2268,18 +2301,20 @@ async function historySelectionFlow(): Promise<void> {
     git('switch', '-q', 'sel-base');
     await vscode.commands.executeCommand('amonhen.refresh');
     const onBase = await read(['s3', 's4']) as [number, number];
-    await select(9, onBase);
-    await vscode.commands.executeCommand('amonhen.history.selection.revert');
+    await onSelection(9, onBase, 'Revert したコミット',
+      () => vscode.commands.executeCommand('amonhen.history.selection.revert'),
+      () => subjects(1)[0] === 'Revert "s3"');
     assert.deepEqual(subjects(2), ['Revert "s3"', 'Revert "s4"']);
     git('reset', '-q', '--hard', 'HEAD~2');
     await vscode.commands.executeCommand('amonhen.refresh');
 
     // 続いたコミットを、メッセージを編集して 1 つにする
     const combine = await read(['s3', 's4']) as [number, number];
-    await select(10, combine);
     const before = git('rev-parse', 'HEAD~2').trim();
     // 編集モードを、新しいほうを古いほうにまとめて開く
-    const combined = await openedEditMode(() => vscode.commands.executeCommand('amonhen.history.selection.combine'));
+    const { value: combined } = await onSelection(10, combine, '編集モード',
+      () => vscode.commands.executeCommand('amonhen.history.selection.combine'),
+      (since) => posted.slice(since).find((m): m is Message<'editMode'> => m.type === 'editMode')?.rows);
     assert.deepEqual(combined.map((r) => [r.oid, r.action]), [
       [git('rev-parse', 'HEAD').trim(), 'squash'],
       [git('rev-parse', 'HEAD~1').trim(), 'pick'],
