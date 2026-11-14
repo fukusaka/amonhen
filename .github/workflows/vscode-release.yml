@@ -6,19 +6,26 @@ on:
   push:
     tags: ['vscode-v*']
 
-permissions:
-  contents: write
-  # ビルドの由来の証明（artifact attestations）。gh attestation verify で確かめられる。
-  id-token: write
-  attestations: write
-  # CI の結果を読む。
-  actions: read
+permissions: {}
+
+# 同じタグを打ち直したときに、2 つの Release を並べて作らない（途中のものは止めずに、終わってから次を流す）。
+concurrency:
+  group: vscode-release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   check:
+    name: Check the tag
     runs-on: ubuntu-latest
+    # scripts/require-ci.sh は CI を最大 60 分待つ。
+    timeout-minutes: 70
+    permissions:
+      contents: read # タグのコミットを取ってくる
+      actions: read # CI の結果を読む
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: タグと package.json の version が一致するか
         run: test "${GITHUB_REF_NAME#vscode-v}" = "$(node -p "require('./apps/vscode/package.json').version")"
       - name: CHANGELOG にこの版の節があるか
@@ -26,44 +33,83 @@ jobs:
       - name: このコミットで CI が通っているか
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: scripts/require-ci.sh "$GITHUB_SHA"
 
+  # 署名の鍵を使うので、タグと CI を確かめてから作る。
   build:
-    uses: ./.github/workflows/build.yml
+    name: Build
+    needs: check
+    # actionlint がまだ $/ の書き方を読めないので、./ で呼ぶ。
+    uses: ./.github/workflows/build.yml # zizmor: ignore[self-repository]
+    permissions:
+      contents: read # コミットを取ってくる
     with:
       # 同梱するエンジンの版は snapshot の版（エンジンの正式版とは別に出すので）。
       mode: snapshot
       notarize: true
       app: false
-    secrets: inherit
 
-  # 鍵は持たない（npm の依存を動かすので）。
-  publish:
-    needs: [check, build]
+  # 拡張に、いま作ったエンジンを同梱して .vsix にする。npm の依存を動かすので、鍵も書き込みの権限も持たせない。
+  # 配るものを作るので、npm のキャッシュは使わない。
+  package:
+    name: Package the extension
+    needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read # コミットを取ってくる
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release
           path: dist
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-          cache: npm
-          cache-dependency-path: apps/vscode/package-lock.json
+          package-manager-cache: false
       - working-directory: apps/vscode
         run: |
           npm ci
           scripts/bundle-engine.sh
           npx @vscode/vsce package --skip-license
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vsix
+          path: apps/vscode/*.vsix
+          # Release に載せるまでの受け渡しだけなので、長く残さない。
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    name: Publish
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # Release を作る
+      # ビルドの由来の証明（artifact attestations）。gh attestation verify で確かめられる。
+      id-token: write # 証明に署名する
+      attestations: write # 証明を載せる
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: vsix
+          path: dist
       # .vsix に、このタグのこの CI で作ったことの証明を付ける。
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: apps/vscode/*.vsix
+          subject-path: dist/*.vsix
       - env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           scripts/changelog-notes.sh "VSCode extension" "${GITHUB_REF_NAME#vscode-v}" > notes.md
-          gh release create "$GITHUB_REF_NAME" apps/vscode/*.vsix --title "VSCode $GITHUB_REF_NAME" \
+          gh release create "$GITHUB_REF_NAME" dist/*.vsix --title "VSCode $GITHUB_REF_NAME" \
             --notes-file notes.md --verify-tag --latest=false

@@ -1,0 +1,43 @@
+# ワークフローの action、Rust の crate、VSCode 拡張の npm のパッケージを新しい版に上げる PR を作る（action は SHA で
+# 固定しているので、自動では上がらない）。脆弱性のある依存を直す PR は、リポジトリの設定（Dependabot security updates）
+# で別に作られる。
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    # ワークフローと、.github/actions の自前の action。
+    directories: ['/', '/.github/actions/*']
+    schedule:
+      interval: weekly
+    # 出たばかりの版は待つ（乗っ取られた版がすぐ取り下げられることがあるので）。
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ['*']
+  # ルートの workspace と、GTK4 のアプリ（apps/gtk4。別の workspace で Cargo.lock も別）。
+  - package-ecosystem: cargo
+    directories: ['/', '/apps/gtk4']
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      crates:
+        patterns: ['*']
+  # VSCode 拡張（apps/vscode）。
+  - package-ecosystem: npm
+    directory: /apps/vscode
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      npm:
+        patterns: ['*']
+    ignore:
+      # 対応する VSCode の最低の版（package.json の engines.vscode）に合わせる。上げるときは engines と一緒に手で。
+      - dependency-name: '@types/vscode'
+        update-types: ['version-update:semver-major', 'version-update:semver-minor']
+      # VSCode の拡張ホストの Node.js の版に合わせる。
+      - dependency-name: '@types/node'
+        update-types: ['version-update:semver-major']

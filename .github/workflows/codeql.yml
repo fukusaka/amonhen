@@ -1,0 +1,57 @@
+name: CodeQL
+
+# コードの脆弱性を CodeQL で調べ、結果を Security の Code scanning に載せる。GitHub の既定の設定（default setup）
+# では Swift を `swift build` だけで作ろうとして失敗する（先に scripts/build-core.sh で Rust のコアと生成するヘッダーを
+# 作る必要がある）ので、ここで手順を決める。Rust（ルートと apps/gtk4）、TypeScript（apps/vscode）と Actions は
+# ビルドせずに調べる。
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # 依存や CodeQL の規則が新しくなったときのために、週に 1 回も流す。
+    - cron: '23 4 * * 1'
+
+permissions: {}
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { language: actions, build-mode: none, runner: ubuntu-latest }
+          - { language: javascript-typescript, build-mode: none, runner: ubuntu-latest }
+          - { language: rust, build-mode: none, runner: ubuntu-latest }
+          - { language: swift, build-mode: manual, runner: macos-latest }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read # コミットを取ってくる
+      security-events: write # 結果を Code scanning に載せる
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Swift: Rust のコアと C のヘッダーは、CodeQL がビルドを見張り始める前に作る（Rust は別に調べる）。
+      - if: matrix.language == 'swift'
+        run: |
+          rustup toolchain install stable --profile minimal && rustup default stable
+          scripts/build-core.sh
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+      # CodeQL はビルドを x86_64 の tracer の下で動かすので、swift build も既定では x86_64 向けに組み、arm64 の
+      # Rust のコアとリンクできない。CodeQL が見るのはこのビルドなので、arm64 向けと決めて組む。
+      - if: matrix.language == 'swift'
+        working-directory: apps/macos
+        run: swift build --arch arm64 --product AmonHen
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          category: /language:${{ matrix.language }}

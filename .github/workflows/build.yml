@@ -1,6 +1,6 @@
 name: Build
 
-# 配るものを作る（snapshot.yml・release.yml・vscode-release.yml から呼ぶ）。時間のかかるコンパイルは OS と CPU ごとに
+# 配るものを作る（ci.yml の snapshot・release.yml・vscode-release.yml から呼ぶ）。時間のかかるコンパイルは OS と CPU ごとに
 # そのマシンで並べて走らせ、作ったエンジンはその場で動かして確かめる。最後に macOS でアプリを組み立てて署名する。
 #
 #   engines（Linux x86_64・aarch64、Windows x86_64・aarch64）──┬─▶ gtk（Linux x86_64・aarch64: GTK4 のアプリ）──┐
@@ -11,6 +11,8 @@ name: Build
 #
 # 成果物 release: dist/ のアプリの zip、GTK4 のアプリの tar.gz（amonhen-gtk-*）、エンジンの tar.gz・zip、
 # dist/engine/（拡張に同梱するエンジン）、dist/THIRD-PARTY-NOTICES.md（依存のライセンスの一覧）。
+#
+# 配るものなので、キャッシュは使わない（ほかの実行が書いたキャッシュを読むと、それに中身を左右されうる）。
 on:
   workflow_call:
     inputs:
@@ -36,8 +38,11 @@ on:
       zip:
         value: ${{ jobs.package.outputs.zip }}
 
+permissions: {}
+
 jobs:
   engines:
+    name: Engine (${{ matrix.platform }})
     strategy:
       fail-fast: false
       matrix:
@@ -47,36 +52,44 @@ jobs:
           - { platform: windows-x86_64, runner: windows-latest, target: x86_64-pc-windows-msvc }
           - { platform: windows-aarch64, runner: windows-11-arm, target: aarch64-pc-windows-msvc }
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read # コミットを取ってくる
     defaults:
       run:
         shell: bash
+    env:
+      MODE: ${{ inputs.mode }}
+      PLATFORM: ${{ matrix.platform }}
+      TARGET: ${{ matrix.target }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref }}
           # snapshot の版は、前のリリースからのコミット数を数える。
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
-        with:
-          targets: ${{ matrix.target }}
+          persist-credentials: false
+      # runner の rustup で、その時点の stable を入れる。
+      - run: rustup toolchain install stable --profile minimal --target "$TARGET" && rustup default stable
       # Linux 用は musl で静的リンクする（C の部分は musl-gcc で）。
       - if: runner.os == 'Linux'
         run: sudo apt-get update -q && sudo apt-get install -y -q musl-tools
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          key: ${{ matrix.platform }}
       - run: |
-          version=$(scripts/version.sh "${{ inputs.mode }}")
-          AMONHEN_ENGINE_PLATFORMS=${{ matrix.platform }} scripts/build-engine.sh "$version"
-          scripts/check-engine.sh dist/engine/amonhen-${{ matrix.platform }}* "$version"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+          version=$(scripts/version.sh "$MODE")
+          AMONHEN_ENGINE_PLATFORMS=$PLATFORM scripts/build-engine.sh "$version"
+          scripts/check-engine.sh dist/engine/amonhen-"$PLATFORM"* "$version"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: engine-${{ matrix.platform }}
           path: dist/engine/
+          # Release に載せるまでの受け渡しだけなので、長く残さない。
+          retention-days: 7
+          if-no-files-found: error
 
   # GTK4 のアプリ（apps/gtk4）を Linux の CPU ごとにそのマシンで作り、同じ CPU 向けに作ったエンジンを SSH 先に送る
   # ために入れる（GTK は同梱しないので、GTK 4.14 の Ubuntu 24.04 で作る）。拡張の正式版（app が false）では作らない。
   gtk:
+    name: GTK4 app (${{ matrix.arch }})
     needs: engines
     if: inputs.app
     strategy:
@@ -86,73 +99,95 @@ jobs:
           - { arch: x86_64, runner: ubuntu-24.04 }
           - { arch: aarch64, runner: ubuntu-24.04-arm }
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read # コミットを取ってくる
+    env:
+      MODE: ${{ inputs.mode }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 0
-      - uses: ./.github/actions/apt-install
-        with:
-          packages: libgtk-4-dev libadwaita-1-dev
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: apps/gtk4
-          key: gtk-${{ matrix.arch }}
+          persist-credentials: false
+      # 配るものなので、.deb のキャッシュ（.github/actions/apt-install）も使わない。
+      - run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends libgtk-4-dev libadwaita-1-dev
+      # runner の rustup で、その時点の stable を入れる。
+      - run: rustup toolchain install stable --profile minimal && rustup default stable
       # SSH 先に送るエンジン（Linux の 2 つ。SSH 先の CPU は手元と違うことがある）。
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: engine-linux-*
           merge-multiple: true
           path: dist/engine
-      - run: scripts/package-gtk4.sh "$(scripts/version.sh "${{ inputs.mode }}")"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - run: scripts/package-gtk4.sh "$(scripts/version.sh "$MODE")"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: gtk-${{ matrix.arch }}
           path: dist/amonhen-gtk-*.tar.gz
+          # Release に載せるまでの受け渡しだけなので、長く残さない。
+          retention-days: 7
+          if-no-files-found: error
 
   compile:
+    name: Compile (macOS)
     runs-on: macos-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read # コミットを取ってくる
+    env:
+      MODE: ${{ inputs.mode }}
+      APP: ${{ inputs.app }}
     outputs:
       version: ${{ steps.compile.outputs.version }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+          persist-credentials: false
+      # runner の rustup で、その時点の stable を入れる。
+      - run: rustup toolchain install stable --profile minimal && rustup default stable
       # 依存のライセンスの一覧（アプリ・エンジンの tar.gz・zip・.vsix に同梱する）。
-      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
         with:
           tool: cargo-about
       - run: scripts/third-party-notices.sh
       - id: compile
         run: |
-          version=$(scripts/version.sh "${{ inputs.mode }}")
+          version=$(scripts/version.sh "$MODE")
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          if [ "${{ inputs.app }}" = true ]; then
-            scripts/compile-app.sh "${{ inputs.mode }}"
+          if [ "$APP" = true ]; then
+            scripts/compile-app.sh "$MODE"
           else
             AMONHEN_ENGINE_PLATFORMS=darwin-aarch64 scripts/build-engine.sh "$version"
           fi
           scripts/check-engine.sh dist/engine/amonhen-darwin-aarch64 "$version"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: compiled
           path: |
             dist/bin/
             dist/engine/
             dist/THIRD-PARTY-NOTICES.md
+          # Release に載せるまでの受け渡しだけなので、長く残さない。
+          retention-days: 7
+          if-no-files-found: error
 
   package:
     needs: [engines, compile, gtk]
     # gtk は拡張の正式版では飛ばすので、飛ばしたときも進める。
     if: ${{ !cancelled() && needs.engines.result == 'success' && needs.compile.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.gtk.result) }}
-    # 署名と公証の鍵は、環境 release の secret に置く（この仕事だけが読める）。
+    name: Package, sign and notarize
+    # 署名と公証の鍵は、環境 release の secret に置く（この仕事だけが読める）。呼ぶ側からは渡さない（環境の secret は
+    # 呼ぶ側では読めず、環境を指定したこのジョブで直に読む）。
     environment: release
     runs-on: macos-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read # コミットを取ってくる
     env:
+      MODE: ${{ inputs.mode }}
       AMONHEN_CERT_P12: ${{ secrets.AMONHEN_CERT_P12 }}
       AMONHEN_CERT_PASSWORD: ${{ secrets.AMONHEN_CERT_PASSWORD }}
       AMONHEN_CERT_NAME: ${{ secrets.AMONHEN_CERT_NAME }}
@@ -163,21 +198,22 @@ jobs:
     outputs:
       zip: ${{ steps.package.outputs.zip }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 0
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: compiled
           path: dist
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: engine-*
           merge-multiple: true
           path: dist/engine
       - if: inputs.app
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: gtk-*
           merge-multiple: true
@@ -185,14 +221,17 @@ jobs:
       - run: scripts/import-signing-certificate.sh
       - id: package
         if: inputs.app
-        run: echo "zip=$(scripts/package-app.sh "${{ inputs.mode }}" | tail -1)" >> "$GITHUB_OUTPUT"
+        run: echo "zip=$(scripts/package-app.sh "$MODE" | tail -1)" >> "$GITHUB_OUTPUT"
+      # 誰の署名か（ダウンロードしなくても、ここで確かめられるように）。
+      - if: inputs.app
+        run: codesign -dvv dist/*.app 2>&1 | grep -E '^(Identifier|Authority|TeamIdentifier|Timestamp)='
       # エンジンだけのとき: macOS のものを署名して公証に出す（単体の実行ファイルには結果を綴じ込めないので、出すだけ）。
       - if: ${{ !inputs.app }}
         run: |
           chmod 755 dist/engine/amonhen-*
           scripts/codesign.sh dist/engine/amonhen-darwin-aarch64
           scripts/notarize.sh --engines dist/engine/amonhen-darwin-aarch64
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release
           path: |
@@ -200,3 +239,6 @@ jobs:
             dist/*.tar.gz
             dist/engine/
             dist/THIRD-PARTY-NOTICES.md
+          # Release に載せるまでの受け渡しだけなので、長く残さない。
+          retention-days: 7
+          if-no-files-found: error
