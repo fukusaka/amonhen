@@ -50,6 +50,7 @@ fn reads_history_through_the_c_abi() {
         assert!(amonhen_history_acquire(repo).is_null());
 
         let history = amonhen_history_load(repo);
+        assert!(!history.is_null());
         let view = amonhen_history_view(history);
         assert_eq!(
             (view.generation, view.row_count, view.edge_count),
@@ -63,8 +64,10 @@ fn reads_history_through_the_c_abi() {
         );
 
         let chunk = amonhen_history_chunk(repo, history, 0, 2, AmonhenEncoding::Utf16);
+        assert!(!chunk.is_null());
         let c = amonhen_chunk_view(chunk);
         assert_eq!(c.row_count, 2);
+        assert!(!c.subjects.is_null());
         let s = *c.subjects;
         let bytes = std::slice::from_raw_parts(
             (*c.bases.add(s.buf as usize)).add(s.off as usize),
@@ -100,11 +103,13 @@ fn shows_the_cached_history_on_the_next_open() {
     let cache = CString::new(tmp.path().join("cache").to_str().unwrap()).unwrap();
     unsafe {
         let repo = amonhen_repo_open(path.as_ptr(), cache.as_ptr());
+        assert!(!repo.is_null());
         assert!(amonhen_history_load_cached(repo).is_null());
         amonhen_history_release(amonhen_history_load(repo));
         amonhen_repo_free(repo);
 
         let repo = amonhen_repo_open(path.as_ptr(), cache.as_ptr());
+        assert!(!repo.is_null());
         let cached = amonhen_history_load_cached(repo);
         assert!(!cached.is_null());
         assert_eq!(amonhen_history_view(cached).row_count, 1);
@@ -125,8 +130,11 @@ fn lists_refs_and_finds_their_rows() {
     unsafe {
         let path = CString::new(dir.to_str().unwrap()).unwrap();
         let repo = amonhen_repo_open(path.as_ptr(), std::ptr::null());
+        assert!(!repo.is_null());
         let history = amonhen_history_load(repo);
+        assert!(!history.is_null());
         let refs = amonhen_refs_load(repo);
+        assert!(!refs.is_null());
         let v = amonhen_refs_view(refs);
         assert_eq!(v.count, 2);
         let text = |off: u32, len: u32| {
@@ -151,6 +159,7 @@ fn lists_refs_and_finds_their_rows() {
         assert_eq!(amonhen_history_row_of(history, [0u8; 20].as_ptr()), -1);
 
         let again = amonhen_refs_load(repo);
+        assert!(!again.is_null());
         assert_eq!(
             amonhen_refs_view(again).generation,
             v.generation,
@@ -177,14 +186,18 @@ fn shows_the_files_a_commit_changed_and_their_diffs() {
     unsafe {
         let path = CString::new(dir.to_str().unwrap()).unwrap();
         let repo = amonhen_repo_open(path.as_ptr(), std::ptr::null());
+        assert!(!repo.is_null());
         let history = amonhen_history_load(repo);
+        assert!(!history.is_null());
         let head = amonhen_history_view(history);
         let refs = amonhen_refs_load(repo);
+        assert!(!refs.is_null());
         let target = (*amonhen_refs_view(refs).entries).target;
         assert_eq!(amonhen_history_row_of(history, target.as_ptr()), 0);
         assert_eq!(head.row_count, 2);
 
         let changes = amonhen_commit_changes(repo, target.as_ptr());
+        assert!(!changes.is_null());
         let cv = amonhen_changes_view(changes);
         assert_eq!(cv.count, 1);
         let e = &*cv.entries;
@@ -195,6 +208,7 @@ fn shows_the_files_a_commit_changed_and_their_diffs() {
         assert_eq!((e.kind, e.old_path_len), (2, u32::MAX));
 
         let diff = amonhen_file_diff(repo, changes, 0, AmonhenEncoding::Utf8);
+        assert!(!diff.is_null());
         let dv = amonhen_diff_view(diff);
         assert_eq!(
             (dv.row_count, dv.added, dv.removed, dv.binary),
@@ -218,5 +232,45 @@ fn shows_the_files_a_commit_changed_and_their_diffs() {
         amonhen_refs_release(refs);
         amonhen_history_release(history);
         amonhen_repo_free(repo);
+    }
+}
+
+/// NULL のハンドル・文字列・ID を渡しても落ちず、失敗（NULL・false・0・空のビュー）と理由を返す。
+#[test]
+fn null_arguments_fail_instead_of_crashing() {
+    let null_repo = std::ptr::null::<AmonhenRepo>();
+    let null_history = std::ptr::null::<AmonhenHistory>();
+    unsafe {
+        assert!(amonhen_repo_open(std::ptr::null(), std::ptr::null()).is_null());
+        assert!(
+            CStr::from_ptr(amonhen_last_error())
+                .to_str()
+                .unwrap()
+                .contains("NULL")
+        );
+        assert!(amonhen_history_load(null_repo).is_null());
+        assert!(
+            CStr::from_ptr(amonhen_last_error())
+                .to_str()
+                .unwrap()
+                .contains("repo_ptr")
+        );
+        assert_eq!(amonhen_history_view(null_history).row_count, 0);
+        assert_eq!(amonhen_history_row_of(null_history, [0u8; 20].as_ptr()), -1);
+        assert!(
+            amonhen_history_chunk(null_repo, null_history, 0, 1, AmonhenEncoding::Utf8).is_null()
+        );
+        assert_eq!(amonhen_chunk_view(std::ptr::null()).row_count, 0);
+        assert_eq!(amonhen_refs_view(std::ptr::null()).count, 0);
+        assert!(amonhen_commit_changes(null_repo, std::ptr::null()).is_null());
+        assert_eq!(amonhen_changes_view(std::ptr::null()).count, 0);
+        assert_eq!(amonhen_diff_view(std::ptr::null()).row_count, 0);
+        assert_eq!(amonhen_stacked_count(std::ptr::null()), 0);
+        assert!(!amonhen_lineage_window_contains(std::ptr::null_mut(), 0));
+        assert_eq!(
+            amonhen_lineage_window_edge_from(std::ptr::null_mut(), 0),
+            u32::MAX
+        );
+        assert!(!amonhen_commit(null_repo, std::ptr::null(), false));
     }
 }
