@@ -23,6 +23,8 @@ becomes the GitHub Release notes.
   over it, and the toolbar, lists, diffs and commit form share one color instead of four different greys.
 - macOS: syntax colors come from a theme, chosen for the light and dark appearance: built-in themes or a VSCode color
   theme imported from its JSON.
+- The color theme also sets the diff's colors (added and removed lines and words, hunk headers, conflicts and the merge
+  editor), from the built-in themes or a VSCode theme; Use standard colors for diffs keeps the usual ones.
 - GTK4: Settings > Theme has the same window transparency (without blur), background image, toolbar tint and syntax
   themes, and the repository list's Window Background… overrides them per repository.
 - GTK4: in the standard window, the lists, diffs and commit form share one color.

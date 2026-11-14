@@ -454,6 +454,15 @@ bookmark (the repository list's context menu, Window Background…).
   read from its JSON (JSONC comments and trailing commas, `include` merged up to 4 levels); each of the core's 14 kinds
   takes the color of the most specific TextMate scope in its list (for example `keyword.control`, then `keyword`), so
   the colors are close but not exact. Imported themes are kept in the app's settings.
+- **Diff colors.** The same theme (Settings > Theme > Color Theme) also carries the diff's colors: the added and
+  removed lines and words, the hunk header, and a conflict's Current, Incoming, Base and marker lines. The merge
+  editor takes its hues from the conflict colors. They sit in the theme's `colors` next to the syntax kinds, as
+  `#rrggbbaa` under `diffAdded`, `diffRemoved`, `diffAddedWord`, `diffRemovedWord`, `diffHunk`, `conflictCurrent`,
+  `conflictIncoming`, `conflictBase` and `conflictMarker`. The built-in themes give each its own green, red, blue,
+  gray and orange at the standard colors' opacity. A VSCode theme gives `diffEditor.inserted*` / `removed*`
+  (`LineBackground`, falling back to `TextBackground` as VSCode does) and `merge.*ContentBackground`. A color a theme
+  lacks keeps the standard one, and Use standard colors for diffs keeps them all standard while syntax colors still
+  follow the theme.
 - **GTK4.** The same settings under the same keys (`gtk.ini`, and the bookmark's `backdrop`), applied with CSS: each
   window gets a class of its own, the window itself draws the layer, and the header bar, tab bar, sidebar and pages are
   made transparent or opaque by style. In Nowhere only the pages change: they share `@view_bg_color`. The header is
