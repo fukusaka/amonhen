@@ -615,6 +615,9 @@ pub struct RepoWindow {
     shown: RefCell<Weak<Tab>>,
     /// タブが 1 つでもタブの帯を出す（View > Show Tab Bar。帯のタブをつかんでほかの窓に移せる。macOS 版と同じ）。
     tab_bar: Cell<bool>,
+    /// 前のタブの見出しの帯を入れる所。窓のタイトルバーにせず中身の上端に置くので、背景画像が見出しの帯にも
+    /// かかる（macOS 版はツールバーの下まで画像を重ねる）。
+    header_slot: gtk::Box,
     /// 最後にフォーカスのあった、メニューの外の部品（Edit の Copy などを渡す先）。
     /// 出している Repository Settings のページ。
     settings_page: RefCell<glib::WeakRef<gtk::Widget>>,
@@ -686,7 +689,9 @@ impl RepoWindow {
         bar.set_view(Some(&view));
         // タブが 1 つなら帯を隠す（View > Show Tab Bar で出す）。
         bar.set_autohide(true);
+        let header_slot = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        body.append(&header_slot);
         body.append(&bar);
         body.append(&view);
         // タブの帯の「+」（macOS 版と同じく、開くリポジトリを選んで新しいタブに）。
@@ -710,6 +715,8 @@ impl RepoWindow {
             .default_height(820 + 46)
             .child(&crate::backdrop::host(&body))
             .build();
+        // 見出しの帯は中身の上端に置くので、GTK の既定のタイトルバーは出さない（空の部品にする）。
+        window.set_titlebar(Some(&gtk::Box::new(gtk::Orientation::Horizontal, 0)));
         let id = NEXT_ID.with(|n| n.replace(n.get() + 1));
         let this = Rc::new(Self {
             window: window.clone(),
@@ -721,6 +728,7 @@ impl RepoWindow {
             installed: RefCell::default(),
             shown: RefCell::default(),
             tab_bar: Cell::new(false),
+            header_slot,
             last_focus: RefCell::default(),
             settings_page: RefCell::default(),
         });
@@ -1024,14 +1032,15 @@ impl RepoWindow {
         // 作ってある。macOS 版と同じく、リポジトリのタブがほかの窓で前にあっても使える）。
         let owner = tab.owner();
         let header = tab.header.clone();
-        // ほかの窓の見出しになっていれば外す（タブを窓の間で移したとき）。
-        if let Some(other) = header.root().and_downcast::<gtk::Window>()
-            && other != *self.window.upcast_ref::<gtk::Window>()
-        {
-            other.set_titlebar(None::<&gtk::Widget>);
-        }
-        if self.window.titlebar().as_ref() != Some(header.upcast_ref::<gtk::Widget>()) {
-            self.window.set_titlebar(Some(&header));
+        if header.parent().as_ref() != Some(self.header_slot.upcast_ref::<gtk::Widget>()) {
+            // ほかの窓の見出しになっていれば外す（タブを窓の間で移したとき）。
+            if let Some(other) = header.parent().and_downcast::<gtk::Box>() {
+                other.remove(&header);
+            }
+            while let Some(old) = self.header_slot.first_child() {
+                self.header_slot.remove(&old);
+            }
+            self.header_slot.append(&header);
         }
         // 窓の背景は、前のタブのリポジトリの設定（macOS 版はタブがそれぞれの窓なので、リポジトリごと）。
         crate::backdrop::apply(
