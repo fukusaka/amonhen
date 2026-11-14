@@ -136,12 +136,112 @@ pub extern "C" fn amonhen_last_error() -> *const c_char {
     LAST_ERROR.with(|last| last.borrow().as_ptr())
 }
 
-fn repo<'a>(repo: *const AmonhenRepo) -> &'a Repository {
-    unsafe { &*repo.cast::<Repository>() }
+/// 引数に NULL を渡されたときに返すもの（失敗を表す値。ビューは何もない空のもの）。
+trait Fallback {
+    fn fallback() -> Self;
 }
 
-fn history<'a>(history: *const AmonhenHistory) -> &'a HistorySnapshot {
-    unsafe { &*history.cast::<HistorySnapshot>() }
+impl<T> Fallback for *mut T {
+    fn fallback() -> Self {
+        std::ptr::null_mut()
+    }
+}
+
+impl<T> Fallback for *const T {
+    fn fallback() -> Self {
+        std::ptr::null()
+    }
+}
+
+impl Fallback for () {
+    fn fallback() -> Self {}
+}
+
+impl Fallback for bool {
+    fn fallback() -> Self {
+        false
+    }
+}
+
+impl Fallback for u32 {
+    fn fallback() -> Self {
+        0
+    }
+}
+
+impl Fallback for u64 {
+    fn fallback() -> Self {
+        0
+    }
+}
+
+impl Fallback for i32 {
+    fn fallback() -> Self {
+        -1
+    }
+}
+
+impl Fallback for i64 {
+    fn fallback() -> Self {
+        -1
+    }
+}
+
+/// ビューは数と NULL のポインタだけの `#[repr(C)]` の構造体なので、すべて 0 のものが空のビューになる。
+macro_rules! empty_view {
+    ($($view:ty),* $(,)?) => {
+        $(impl Fallback for $view {
+            fn fallback() -> Self {
+                // SAFETY: 整数・bool・生のポインタだけでできていて、すべて 0 は有効な値（0 個・NULL）。
+                unsafe { std::mem::zeroed() }
+            }
+        })*
+    };
+}
+
+empty_view!(
+    AmonhenHistoryView,
+    AmonhenChunkView,
+    AmonhenRowsView,
+    AmonhenRefsView,
+    AmonhenChangesView,
+    AmonhenDiffView,
+    AmonhenSyntaxView,
+    AmonhenStatusView,
+    AmonhenLineEndings,
+);
+
+/// ハンドル（`ptr` が指す `ty`）を参照に戻す。NULL なら理由を残し、関数から `Fallback` の値を返す（呼ぶ側の
+/// 確かめ忘れで、プロセスごと落ちないように）。NULL でなければ、有効なハンドルであることは呼ぶ側の約束。
+macro_rules! handle {
+    ($ptr:expr, $ty:ty) => {
+        match unsafe { $ptr.cast::<$ty>().as_ref() } {
+            Some(value) => value,
+            None => {
+                set_error(concat!("NULL was passed as ", stringify!($ptr)));
+                return Fallback::fallback();
+            }
+        }
+    };
+}
+
+macro_rules! repo {
+    ($ptr:expr) => {
+        handle!($ptr, Repository)
+    };
+}
+
+macro_rules! history {
+    ($ptr:expr) => {
+        handle!($ptr, HistorySnapshot)
+    };
+}
+
+/// コミットの ID（20 バイト）の引数。NULL なら `handle!` と同じく関数から返す。
+macro_rules! oid {
+    ($ptr:expr) => {
+        Oid(*handle!($ptr, [u8; 20]))
+    };
 }
 
 fn into_history(snapshot: Arc<HistorySnapshot>) -> *const AmonhenHistory {
@@ -166,8 +266,32 @@ fn non_null<T>(slice: &[T]) -> *const T {
     }
 }
 
-fn str_arg<'a>(s: *const c_char) -> Result<&'a str, std::str::Utf8Error> {
-    unsafe { CStr::from_ptr(s) }.to_str()
+/// 文字列の引数が読めなかった理由。
+#[derive(Debug)]
+enum StrArgError {
+    Null,
+    Utf8(std::str::Utf8Error),
+}
+
+impl std::fmt::Display for StrArgError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Null => f.write_str("NULL was passed as a string"),
+            Self::Utf8(e) => e.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for StrArgError {}
+
+/// NUL 終端の UTF-8 の引数。NULL なら読まずに失敗にする。
+fn str_arg<'a>(s: *const c_char) -> Result<&'a str, StrArgError> {
+    if s.is_null() {
+        return Err(StrArgError::Null);
+    }
+    unsafe { CStr::from_ptr(s) }
+        .to_str()
+        .map_err(StrArgError::Utf8)
 }
 
 /// SSH 先ごとの選択（`HostOptions` の JSON）。NULL か空なら何も選んでいない。
@@ -450,7 +574,7 @@ pub unsafe extern "C" fn amonhen_repo_free(repo: *mut AmonhenRepo) {
 pub unsafe extern "C" fn amonhen_history_load(
     repo_ptr: *const AmonhenRepo,
 ) -> *const AmonhenHistory {
-    match repo(repo_ptr).load_history() {
+    match repo!(repo_ptr).load_history() {
         Ok(snapshot) => into_history(snapshot),
         Err(e) => {
             set_error(e);
@@ -478,7 +602,7 @@ pub unsafe extern "C" fn amonhen_history_set_order(
             return false;
         }
     };
-    match repo(repo_ptr).set_history_order(order) {
+    match repo!(repo_ptr).set_history_order(order) {
         Ok(()) => true,
         Err(e) => {
             set_error(e);
@@ -496,7 +620,7 @@ pub unsafe extern "C" fn amonhen_history_set_order(
 pub unsafe extern "C" fn amonhen_history_rebuild(
     repo_ptr: *const AmonhenRepo,
 ) -> *const AmonhenHistory {
-    match repo(repo_ptr).rebuild_history() {
+    match repo!(repo_ptr).rebuild_history() {
         Ok(snapshot) => into_history(snapshot),
         Err(e) => {
             set_error(e);
@@ -514,7 +638,7 @@ pub unsafe extern "C" fn amonhen_history_rebuild(
 pub unsafe extern "C" fn amonhen_history_load_cached(
     repo_ptr: *const AmonhenRepo,
 ) -> *const AmonhenHistory {
-    repo(repo_ptr)
+    repo!(repo_ptr)
         .load_cached_history()
         .map_or(std::ptr::null(), into_history)
 }
@@ -526,7 +650,7 @@ pub unsafe extern "C" fn amonhen_history_load_cached(
 /// `repo` は有効なリポジトリであること。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amonhen_repo_mailmap_fingerprint(repo_ptr: *const AmonhenRepo) -> u64 {
-    repo(repo_ptr).mailmap_fingerprint()
+    repo!(repo_ptr).mailmap_fingerprint()
 }
 
 /// commit-graph を最新にする（`git commit-graph write --reachable`）。なければ全体を書き出して 1、
@@ -537,7 +661,7 @@ pub unsafe extern "C" fn amonhen_repo_mailmap_fingerprint(repo_ptr: *const Amonh
 /// `repo` は有効なリポジトリであること。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amonhen_repo_update_commit_graph(repo_ptr: *const AmonhenRepo) -> i32 {
-    match repo(repo_ptr).update_commit_graph() {
+    match repo!(repo_ptr).update_commit_graph() {
         Ok(written) => i32::from(written),
         Err(e) => {
             set_error(e);
@@ -554,7 +678,7 @@ pub unsafe extern "C" fn amonhen_repo_update_commit_graph(repo_ptr: *const Amonh
 pub unsafe extern "C" fn amonhen_history_acquire(
     repo_ptr: *const AmonhenRepo,
 ) -> *const AmonhenHistory {
-    repo(repo_ptr)
+    repo!(repo_ptr)
         .history()
         .map_or(std::ptr::null(), into_history)
 }
@@ -574,7 +698,7 @@ pub unsafe extern "C" fn amonhen_history_release(history: *const AmonhenHistory)
 pub unsafe extern "C" fn amonhen_history_view(
     history_ptr: *const AmonhenHistory,
 ) -> AmonhenHistoryView {
-    let h = history(history_ptr);
+    let h = history!(history_ptr);
     AmonhenHistoryView {
         generation: h.generation,
         row_count: h.layout.nodes().len() as u32,
@@ -599,7 +723,7 @@ pub unsafe extern "C" fn amonhen_history_edges_in(
     capacity: u32,
 ) -> u32 {
     let mut count = 0;
-    for i in history(history_ptr).layout.edges_in(start..end) {
+    for i in history!(history_ptr).layout.edges_in(start..end) {
         if count < capacity {
             unsafe { out.add(count as usize).write(i) };
         }
@@ -620,19 +744,25 @@ pub unsafe extern "C" fn amonhen_lineage_window_new(
     history_ptr: *const AmonhenHistory,
     row: u32,
 ) -> *mut AmonhenLineageWindow {
-    let h = history(history_ptr);
+    let h = history!(history_ptr);
     Box::into_raw(Box::new(amonhen_core::lineage::LineageWindow::new(
         &h.graph, row,
     )))
     .cast()
 }
 
-/// # Safety
-/// `window` は `amonhen_lineage_window_new` が返したもので、まだ解放していないこと。
-unsafe fn lineage_window<'a>(
-    window: *mut AmonhenLineageWindow,
-) -> &'a mut amonhen_core::lineage::LineageWindow {
-    unsafe { &mut *window.cast::<amonhen_core::lineage::LineageWindow>() }
+/// `window`（`amonhen_lineage_window_new` が返したもの）を書き換えられる参照に戻す。NULL なら `handle!` と
+/// 同じく関数から返す。
+macro_rules! lineage_window {
+    ($ptr:expr) => {
+        match unsafe { $ptr.cast::<amonhen_core::lineage::LineageWindow>().as_mut() } {
+            Some(window) => window,
+            None => {
+                set_error(concat!("NULL was passed as ", stringify!($ptr)));
+                return Fallback::fallback();
+            }
+        }
+    };
 }
 
 /// `end` 行の手前まで求める。かかる時間は伸ばした行と線の数に比例する。
@@ -645,8 +775,8 @@ pub unsafe extern "C" fn amonhen_lineage_window_extend(
     history_ptr: *const AmonhenHistory,
     end: u32,
 ) {
-    let h = history(history_ptr);
-    unsafe { lineage_window(window) }.extend(&h.graph, &h.layout, end);
+    let h = history!(history_ptr);
+    lineage_window!(window).extend(&h.graph, &h.layout, end);
 }
 
 /// ここまで求めた行（含まない）。
@@ -655,7 +785,7 @@ pub unsafe extern "C" fn amonhen_lineage_window_extend(
 /// `window` は有効であること。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amonhen_lineage_window_end(window: *mut AmonhenLineageWindow) -> u32 {
-    unsafe { lineage_window(window) }.end()
+    lineage_window!(window).end()
 }
 
 /// `row` 行目のコミットが祖先か（求めた範囲の外なら false）。
@@ -667,7 +797,7 @@ pub unsafe extern "C" fn amonhen_lineage_window_contains(
     window: *mut AmonhenLineageWindow,
     row: u32,
 ) -> bool {
-    unsafe { lineage_window(window) }.contains(row)
+    lineage_window!(window).contains(row)
 }
 
 /// `edge` 番目の線を光らせ始める行（`u32::MAX` なら光らせない）。
@@ -679,7 +809,12 @@ pub unsafe extern "C" fn amonhen_lineage_window_edge_from(
     window: *mut AmonhenLineageWindow,
     edge: u32,
 ) -> u32 {
-    unsafe { lineage_window(window) }.edge_from(edge)
+    // NULL なら、光らせない（`u32::MAX`）。
+    if window.is_null() {
+        set_error("NULL was passed as window");
+        return u32::MAX;
+    }
+    lineage_window!(window).edge_from(edge)
 }
 
 /// # Safety
@@ -729,7 +864,7 @@ pub unsafe extern "C" fn amonhen_history_lane_positions(
         available: metrics.available,
     };
     let (positions, total) =
-        amonhen_core::lanes::lane_positions(&history(history_ptr).layout, start..end, &m);
+        amonhen_core::lanes::lane_positions(&history!(history_ptr).layout, start..end, &m);
     for (i, x) in positions.iter().take(capacity as usize).enumerate() {
         unsafe { out.add(i).write(*x) };
     }
@@ -758,9 +893,10 @@ pub unsafe extern "C" fn amonhen_history_search(
     history_ptr: *const AmonhenHistory,
     query: *const c_char,
 ) -> *mut AmonhenRows {
+    let (repo, history) = (repo!(repo_ptr), history!(history_ptr));
     let result = str_arg(query)
         .map_err(Into::into)
-        .and_then(|q| repo(repo_ptr).search_history(history(history_ptr), q));
+        .and_then(|q| repo.search_history(history, q));
     match result {
         Ok(rows) => Box::into_raw(Box::new(rows)).cast(),
         Err(e) => {
@@ -784,9 +920,10 @@ pub unsafe extern "C" fn amonhen_history_contents_to_fetch(
     count: *mut u32,
     more: *mut bool,
 ) -> i32 {
+    let (repo, history) = (repo!(repo_ptr), history!(history_ptr));
     let result = str_arg(query)
         .map_err(Into::into)
-        .and_then(|q| repo(repo_ptr).count_contents_to_fetch(history(history_ptr), q));
+        .and_then(|q| repo.count_contents_to_fetch(history, q));
     match result {
         Ok(Some(need)) => {
             unsafe {
@@ -813,7 +950,7 @@ pub unsafe extern "C" fn amonhen_search_partial(
     repo_ptr: *const AmonhenRepo,
     done: *mut f32,
 ) -> *mut AmonhenRows {
-    let (rows, fraction) = repo(repo_ptr).search_partial();
+    let (rows, fraction) = repo!(repo_ptr).search_partial();
     unsafe { done.write(fraction) };
     Box::into_raw(Box::new(rows)).cast()
 }
@@ -824,14 +961,14 @@ pub unsafe extern "C" fn amonhen_search_partial(
 /// `repo` は有効であること。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amonhen_search_cancel(repo_ptr: *const AmonhenRepo) {
-    repo(repo_ptr).cancel_search();
+    repo!(repo_ptr).cancel_search();
 }
 
 /// # Safety
 /// `rows` は有効であること。返したポインタは解放するまで有効。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amonhen_rows_view(rows: *const AmonhenRows) -> AmonhenRowsView {
-    let rows = unsafe { &*rows.cast::<Vec<u32>>() };
+    let rows = handle!(rows, Vec<u32>);
     AmonhenRowsView {
         rows: rows.as_ptr(),
         count: rows.len() as u32,
@@ -859,7 +996,7 @@ pub unsafe extern "C" fn amonhen_history_chunk(
     count: u32,
     encoding: AmonhenEncoding,
 ) -> *mut AmonhenChunk {
-    match repo(repo_ptr).history_chunk(history(history_ptr), start, count, &profile(encoding)) {
+    match repo!(repo_ptr).history_chunk(history!(history_ptr), start, count, &profile(encoding)) {
         Ok(chunk) => Box::into_raw(Box::new(chunk)).cast(),
         Err(e) => {
             set_error(e);
@@ -872,7 +1009,7 @@ pub unsafe extern "C" fn amonhen_history_chunk(
 /// `chunk` は有効であること。返したポインタは解放するまで有効。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amonhen_chunk_view(chunk: *const AmonhenChunk) -> AmonhenChunkView {
-    let c = unsafe { &*chunk.cast::<HistoryChunk>() };
+    let c = handle!(chunk, HistoryChunk);
     AmonhenChunkView {
         start_row: c.start_row,
         row_count: c.len() as u32,
@@ -903,8 +1040,8 @@ pub unsafe extern "C" fn amonhen_history_row_of(
     history_ptr: *const AmonhenHistory,
     oid: *const u8,
 ) -> i64 {
-    let id = Oid(unsafe { *oid.cast::<[u8; 20]>() });
-    history(history_ptr).row_of(&id).map_or(-1, i64::from)
+    let id = oid!(oid);
+    history!(history_ptr).row_of(&id).map_or(-1, i64::from)
 }
 
 /// ref の 1 項目。文字列は `AmonhenRefsView::strings` の中の UTF-8。
@@ -1000,7 +1137,7 @@ impl RefsHandle {
 /// `repo` は有効なリポジトリであること。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amonhen_refs_load(repo_ptr: *const AmonhenRepo) -> *const AmonhenRefs {
-    match repo(repo_ptr).load_refs() {
+    match repo!(repo_ptr).load_refs() {
         Ok(snapshot) => Arc::into_raw(Arc::new(RefsHandle::new(snapshot))).cast(),
         Err(e) => {
             set_error(e);
@@ -1022,7 +1159,7 @@ pub unsafe extern "C" fn amonhen_refs_release(refs: *const AmonhenRefs) {
 /// `refs` は有効であること。返したポインタは手放すまで有効。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amonhen_refs_view(refs: *const AmonhenRefs) -> AmonhenRefsView {
-    let r = unsafe { &*refs.cast::<RefsHandle>() };
+    let r = handle!(refs, RefsHandle);
     AmonhenRefsView {
         generation: r.snapshot.generation,
         entries: r.entries.as_ptr(),
@@ -1062,14 +1199,14 @@ pub unsafe extern "C" fn amonhen_repo_watch(
     // daemon 越しなら daemon の知らせを使う。止めたら（`amonhen_watch_free`）呼ばない。
     let active = Arc::new(std::sync::atomic::AtomicBool::new(true));
     let (remote_context, remote_active) = (context.clone(), active.clone());
-    if repo(repo_ptr).subscribe_changes(Box::new(move |bits| {
+    if repo!(repo_ptr).subscribe_changes(Box::new(move |bits| {
         if remote_active.load(std::sync::atomic::Ordering::Relaxed) {
             callback(remote_context.0, bits);
         }
     })) {
         return Box::into_raw(Box::new(WatchHandle::Remote(active))).cast();
     }
-    let watcher = Watcher::new(repo(repo_ptr).paths(), move |changes| {
+    let watcher = Watcher::new(repo!(repo_ptr).paths(), move |changes| {
         callback(context.0, changes.0);
     });
     match watcher {
@@ -1129,8 +1266,8 @@ pub unsafe extern "C" fn amonhen_commit_changes(
     repo_ptr: *const AmonhenRepo,
     commit: *const u8,
 ) -> *mut AmonhenChanges {
-    let id = Oid(unsafe { *commit.cast::<[u8; 20]>() });
-    changes_handle(repo(repo_ptr).commit_changes(&id))
+    let id = oid!(commit);
+    changes_handle(repo!(repo_ptr).commit_changes(&id))
 }
 
 /// stash（20 バイト）の中身。untracked のファイルを含めていればそれも（`amonhen_changes_free` で解放する）。
@@ -1142,8 +1279,8 @@ pub unsafe extern "C" fn amonhen_stash_changes(
     repo_ptr: *const AmonhenRepo,
     stash: *const u8,
 ) -> *mut AmonhenChanges {
-    let id = Oid(unsafe { *stash.cast::<[u8; 20]>() });
-    changes_handle(repo(repo_ptr).stash_changes(&id))
+    let id = oid!(stash);
+    changes_handle(repo!(repo_ptr).stash_changes(&id))
 }
 
 /// コミット `base`（20 バイト。NULL なら全ファイルの追加）から `tip`（20 バイト）への変更で変わったファイル。
@@ -1157,9 +1294,13 @@ pub unsafe extern "C" fn amonhen_range_changes(
     base: *const u8,
     tip: *const u8,
 ) -> *mut AmonhenChanges {
-    let base = (!base.is_null()).then(|| Oid(unsafe { *base.cast::<[u8; 20]>() }));
-    let tip = Oid(unsafe { *tip.cast::<[u8; 20]>() });
-    changes_handle(repo(repo_ptr).changes_between(base.as_ref(), &tip))
+    let base = if base.is_null() {
+        None
+    } else {
+        Some(oid!(base))
+    };
+    let tip = oid!(tip);
+    changes_handle(repo!(repo_ptr).changes_between(base.as_ref(), &tip))
 }
 
 fn changes_handle(result: amonhen_model::Result<Vec<FileChange>>) -> *mut AmonhenChanges {
@@ -1209,7 +1350,7 @@ fn changes_handle(result: amonhen_model::Result<Vec<FileChange>>) -> *mut Amonhe
 pub unsafe extern "C" fn amonhen_changes_view(
     changes: *const AmonhenChanges,
 ) -> AmonhenChangesView {
-    let c = unsafe { &*changes.cast::<ChangesHandle>() };
+    let c = handle!(changes, ChangesHandle);
     AmonhenChangesView {
         entries: c.entries.as_ptr(),
         count: c.entries.len() as u32,
@@ -1252,12 +1393,12 @@ pub unsafe extern "C" fn amonhen_file_diff(
     index: u32,
     encoding: AmonhenEncoding,
 ) -> *mut AmonhenDiff {
-    let c = unsafe { &*changes.cast::<ChangesHandle>() };
+    let c = handle!(changes, ChangesHandle);
     let Some(change) = c.changes.get(index as usize) else {
         set_error(tr!("File index out of range"));
         return std::ptr::null_mut();
     };
-    match repo(repo_ptr).file_diff(change, &profile(encoding)) {
+    match repo!(repo_ptr).file_diff(change, &profile(encoding)) {
         Ok(view) => Box::into_raw(Box::new(view)).cast(),
         Err(e) => {
             set_error(e);
@@ -1276,8 +1417,8 @@ pub unsafe extern "C" fn amonhen_stacked_diff(
     repo_ptr: *const AmonhenRepo,
     changes: *const AmonhenChanges,
 ) -> *mut AmonhenStacked {
-    let c = unsafe { &*changes.cast::<ChangesHandle>() };
-    match repo(repo_ptr).stacked_diff(&c.changes) {
+    let c = handle!(changes, ChangesHandle);
+    match repo!(repo_ptr).stacked_diff(&c.changes) {
         Ok(s) => Box::into_raw(Box::new(s)).cast(),
         Err(e) => {
             set_error(e);
@@ -1298,7 +1439,7 @@ pub unsafe extern "C" fn amonhen_stacked_view(
     count: u32,
     encoding: AmonhenEncoding,
 ) -> *mut AmonhenDiff {
-    let s = unsafe { &*stacked.cast::<amonhen_core::diff::StackedDiff>() };
+    let s = handle!(stacked, amonhen_core::diff::StackedDiff);
     let collapsed: Vec<bool> = (0..count as usize)
         .map(|i| unsafe { *collapsed.add(i) })
         .collect();
@@ -1330,7 +1471,7 @@ pub unsafe extern "C" fn amonhen_selection_diff(
         2 => amonhen_core::PairMode::MergeBase,
         _ => amonhen_core::PairMode::Forward,
     };
-    match repo(repo_ptr).selection_diff(history(history_ptr), &rows, pair) {
+    match repo!(repo_ptr).selection_diff(history!(history_ptr), &rows, pair) {
         Ok((selection, stacked)) => {
             let k = match selection {
                 amonhen_core::Selection::Range { .. } => 0,
@@ -1353,7 +1494,7 @@ pub unsafe extern "C" fn amonhen_selection_diff(
 /// `stacked` は有効であること。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amonhen_stacked_count(stacked: *const AmonhenStacked) -> u32 {
-    unsafe { &*stacked.cast::<amonhen_core::diff::StackedDiff>() }
+    handle!(stacked, amonhen_core::diff::StackedDiff)
         .files
         .len() as u32
 }
@@ -1371,7 +1512,7 @@ pub unsafe extern "C" fn amonhen_stacked_free(stacked: *mut AmonhenStacked) {
 /// `diff` は有効であること。返したポインタは解放するまで有効。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amonhen_diff_view(diff: *const AmonhenDiff) -> AmonhenDiffView {
-    diff_view(unsafe { &*diff.cast::<DiffView>() })
+    diff_view(handle!(diff, DiffView))
 }
 
 fn diff_view(d: &DiffView) -> AmonhenDiffView {
@@ -1411,7 +1552,7 @@ pub struct AmonhenSyntaxView {
 /// `diff` は `amonhen_file_diff`・`amonhen_conflict_view` が返したもので、まだ解放していないこと。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amonhen_diff_syntax(diff: *const AmonhenDiff) -> *mut AmonhenSyntax {
-    let spans = unsafe { &*diff.cast::<DiffView>() }.syntax();
+    let spans = handle!(diff, DiffView).syntax();
     Box::into_raw(Box::new(spans)).cast()
 }
 
@@ -1421,7 +1562,7 @@ pub unsafe extern "C" fn amonhen_diff_syntax(diff: *const AmonhenDiff) -> *mut A
 pub unsafe extern "C" fn amonhen_working_diff_syntax(
     diff: *const AmonhenWorkingDiff,
 ) -> *mut AmonhenSyntax {
-    let spans = unsafe { &*diff.cast::<WorkingDiff>() }.view.syntax();
+    let spans = handle!(diff, WorkingDiff).view.syntax();
     Box::into_raw(Box::new(spans)).cast()
 }
 
@@ -1449,7 +1590,7 @@ pub unsafe extern "C" fn amonhen_text_syntax(
 /// `syntax` は有効であること。返したポインタは解放するまで有効。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amonhen_syntax_view(syntax: *const AmonhenSyntax) -> AmonhenSyntaxView {
-    let spans = unsafe { &*syntax.cast::<Vec<SyntaxSpan>>() };
+    let spans = handle!(syntax, Vec<SyntaxSpan>);
     AmonhenSyntaxView {
         spans: spans.as_ptr(),
         span_count: spans.len() as u32,
@@ -1476,7 +1617,7 @@ pub unsafe extern "C" fn amonhen_history_commit_id(
     row: u32,
     out: *mut u8,
 ) -> bool {
-    match history(history_ptr).graph.ids().get(row as usize) {
+    match history!(history_ptr).graph.ids().get(row as usize) {
         Some(id) => {
             unsafe { out.cast::<[u8; 20]>().write(id.0) };
             true
@@ -1531,7 +1672,7 @@ struct StatusHandle {
 /// `repo` は有効なリポジトリであること。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amonhen_status_load(repo_ptr: *const AmonhenRepo) -> *const AmonhenStatus {
-    let snapshot = match repo(repo_ptr).load_status() {
+    let snapshot = match repo!(repo_ptr).load_status() {
         Ok(s) => s,
         Err(e) => {
             set_error(e);
@@ -1591,7 +1732,7 @@ pub unsafe extern "C" fn amonhen_status_release(status: *const AmonhenStatus) {
 /// `status` は有効であること。返したポインタは手放すまで有効。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amonhen_status_view(status: *const AmonhenStatus) -> AmonhenStatusView {
-    let s = unsafe { &*status.cast::<StatusHandle>() };
+    let s = handle!(status, StatusHandle);
     AmonhenStatusView {
         generation: s.snapshot.generation,
         entries: s.entries.as_ptr(),
@@ -1619,12 +1760,12 @@ pub unsafe extern "C" fn amonhen_working_diff(
     staged: bool,
     encoding: AmonhenEncoding,
 ) -> *mut AmonhenWorkingDiff {
-    let s = unsafe { &*status.cast::<StatusHandle>() };
+    let s = handle!(status, StatusHandle);
     let Some(entry) = s.snapshot.status.entries.get(index as usize) else {
         set_error(tr!("File index out of range"));
         return std::ptr::null_mut();
     };
-    match repo(repo_ptr).working_diff(entry, staged, &profile(encoding)) {
+    match repo!(repo_ptr).working_diff(entry, staged, &profile(encoding)) {
         Ok(d) => Box::into_raw(Box::new(d)).cast(),
         Err(e) => {
             set_error(e);
@@ -1646,12 +1787,12 @@ pub unsafe extern "C" fn amonhen_working_diff_combined(
     index: u32,
     encoding: AmonhenEncoding,
 ) -> *mut AmonhenWorkingDiff {
-    let s = unsafe { &*status.cast::<StatusHandle>() };
+    let s = handle!(status, StatusHandle);
     let Some(entry) = s.snapshot.status.entries.get(index as usize) else {
         set_error(tr!("File index out of range"));
         return std::ptr::null_mut();
     };
-    match repo(repo_ptr).working_diff_combined(entry, &profile(encoding)) {
+    match repo!(repo_ptr).working_diff_combined(entry, &profile(encoding)) {
         Ok(Some(d)) => Box::into_raw(Box::new(d)).cast(),
         Ok(None) => {
             set_error("");
@@ -1686,7 +1827,7 @@ pub struct AmonhenLineEndings {
 pub unsafe extern "C" fn amonhen_working_diff_line_endings(
     diff: *const AmonhenWorkingDiff,
 ) -> AmonhenLineEndings {
-    let d = unsafe { &*diff.cast::<WorkingDiff>() };
+    let d = handle!(diff, WorkingDiff);
     match &d.line_endings {
         Some(le) => AmonhenLineEndings {
             present: true,
@@ -1716,7 +1857,7 @@ pub unsafe extern "C" fn amonhen_working_diff_line_endings(
 pub unsafe extern "C" fn amonhen_working_diff_line_ending_rule(
     diff: *const AmonhenWorkingDiff,
 ) -> *mut c_char {
-    let d = unsafe { &*diff.cast::<WorkingDiff>() };
+    let d = handle!(diff, WorkingDiff);
     d.line_endings
         .as_ref()
         .filter(|le| !le.rule.is_empty())
@@ -1730,7 +1871,7 @@ pub unsafe extern "C" fn amonhen_working_diff_line_ending_rule(
 pub unsafe extern "C" fn amonhen_working_diff_view(
     diff: *const AmonhenWorkingDiff,
 ) -> AmonhenDiffView {
-    let d = unsafe { &*diff.cast::<WorkingDiff>() };
+    let d = handle!(diff, WorkingDiff);
     diff_view(&d.view)
 }
 
@@ -1743,7 +1884,7 @@ pub unsafe extern "C" fn amonhen_working_diff_free(diff: *mut AmonhenWorkingDiff
     }
 }
 
-fn paths<'a>(paths: *const *const c_char, count: u32) -> Result<Vec<&'a str>, std::str::Utf8Error> {
+fn paths<'a>(paths: *const *const c_char, count: u32) -> Result<Vec<&'a str>, StrArgError> {
     (0..count as usize)
         .map(|i| str_arg(unsafe { *paths.add(i) }))
         .collect()
@@ -1770,7 +1911,7 @@ pub unsafe extern "C" fn amonhen_stage(
     count: u32,
 ) -> bool {
     match paths(paths_ptr, count) {
-        Ok(p) => done(repo(repo_ptr).stage(&p)),
+        Ok(p) => done(repo!(repo_ptr).stage(&p)),
         Err(e) => done(Err(e.into())),
     }
 }
@@ -1786,7 +1927,7 @@ pub unsafe extern "C" fn amonhen_unstage(
     count: u32,
 ) -> bool {
     match paths(paths_ptr, count) {
-        Ok(p) => done(repo(repo_ptr).unstage(&p)),
+        Ok(p) => done(repo!(repo_ptr).unstage(&p)),
         Err(e) => done(Err(e.into())),
     }
 }
@@ -1802,11 +1943,11 @@ pub unsafe extern "C" fn amonhen_stage_rows(
     rows: *const u32,
     count: u32,
 ) -> bool {
-    let d = unsafe { &*diff.cast::<WorkingDiff>() };
+    let d = handle!(diff, WorkingDiff);
     let rows: Vec<usize> = (0..count as usize)
         .map(|i| unsafe { *rows.add(i) } as usize)
         .collect();
-    done(repo(repo_ptr).stage_rows(d, &rows))
+    done(repo!(repo_ptr).stage_rows(d, &rows))
 }
 
 /// `amonhen_working_diff_combined` の差分の `rows` 行目の変更を、`staged` なら index に入れ、そうでなければ外す。
@@ -1821,11 +1962,11 @@ pub unsafe extern "C" fn amonhen_set_rows_staged(
     count: u32,
     staged: bool,
 ) -> bool {
-    let d = unsafe { &*diff.cast::<WorkingDiff>() };
+    let d = handle!(diff, WorkingDiff);
     let rows: Vec<usize> = (0..count as usize)
         .map(|i| unsafe { *rows.add(i) } as usize)
         .collect();
-    done(repo(repo_ptr).set_rows_staged(d, &rows, staged))
+    done(repo!(repo_ptr).set_rows_staged(d, &rows, staged))
 }
 
 /// stage した変更をコミットする。`amend` なら直前のコミットを作り直す。
@@ -1839,7 +1980,7 @@ pub unsafe extern "C" fn amonhen_commit(
     amend: bool,
 ) -> bool {
     match str_arg(message) {
-        Ok(m) => done(repo(repo_ptr).commit(m, amend)),
+        Ok(m) => done(repo!(repo_ptr).commit(m, amend)),
         Err(e) => done(Err(e.into())),
     }
 }
@@ -1856,7 +1997,7 @@ pub unsafe extern "C" fn amonhen_command(
     command: *const c_char,
 ) -> *mut c_char {
     let response = match str_arg(command) {
-        Ok(json) => repo(repo_ptr).run_json(json),
+        Ok(json) => repo!(repo_ptr).run_json(json),
         Err(e) => format!(r#"{{"ok":false,"error":"{e}"}}"#),
     };
     CString::new(response).unwrap_or_default().into_raw()
@@ -2011,11 +2152,11 @@ pub unsafe extern "C" fn amonhen_discard_rows(
     rows: *const u32,
     count: u32,
 ) -> bool {
-    let d = unsafe { &*diff.cast::<WorkingDiff>() };
+    let d = handle!(diff, WorkingDiff);
     let rows: Vec<usize> = (0..count as usize)
         .map(|i| unsafe { *rows.add(i) } as usize)
         .collect();
-    done(repo(repo_ptr).discard_rows(d, &rows))
+    done(repo!(repo_ptr).discard_rows(d, &rows))
 }
 
 /// 作業ツリーのルート（`amonhen_string_free` で解放する）。bare リポジトリなら NULL。
@@ -2024,7 +2165,7 @@ pub unsafe extern "C" fn amonhen_discard_rows(
 /// `repo` は有効なリポジトリであること。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amonhen_repo_workdir(repo_ptr: *const AmonhenRepo) -> *mut c_char {
-    repo(repo_ptr)
+    repo!(repo_ptr)
         .paths()
         .workdir
         .and_then(|p| CString::new(p.display().to_string()).ok())
@@ -2043,7 +2184,7 @@ pub unsafe extern "C" fn amonhen_repo_set_local_signature_check(
 ) {
     static VERIFIER: std::sync::OnceLock<Arc<amonhen_backend_cli::LocalVerifier>> =
         std::sync::OnceLock::new();
-    let repo = repo(repo_ptr);
+    let repo = repo!(repo_ptr);
     if repo.connection_state().is_none() {
         return;
     }
@@ -2071,7 +2212,7 @@ pub unsafe extern "C" fn amonhen_repo_connection(
     received: *mut u64,
     sent: *mut u64,
 ) -> i32 {
-    let Some(state) = repo(repo_ptr).connection_state() else {
+    let Some(state) = repo!(repo_ptr).connection_state() else {
         return -1;
     };
     if !received.is_null() {
@@ -2089,7 +2230,7 @@ pub unsafe extern "C" fn amonhen_repo_connection(
 /// `repo` は有効なリポジトリであること。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amonhen_repo_remote_engine(repo_ptr: *const AmonhenRepo) -> *mut c_char {
-    repo(repo_ptr)
+    repo!(repo_ptr)
         .connection_state()
         .and_then(|s| s.engine)
         .and_then(|e| CString::new(e).ok())
@@ -2104,7 +2245,7 @@ pub unsafe extern "C" fn amonhen_repo_remote_engine(repo_ptr: *const AmonhenRepo
 pub unsafe extern "C" fn amonhen_repo_disconnect_reason(
     repo_ptr: *const AmonhenRepo,
 ) -> *mut c_char {
-    repo(repo_ptr)
+    repo!(repo_ptr)
         .connection_state()
         .and_then(|s| s.closed)
         .and_then(|r| CString::new(r.replace('\0', " ")).ok())
@@ -2122,9 +2263,10 @@ pub unsafe extern "C" fn amonhen_conflict_view(
     path: *const c_char,
     encoding: AmonhenEncoding,
 ) -> *mut AmonhenDiff {
+    let repo = repo!(repo_ptr);
     let result = str_arg(path)
         .map_err(Into::into)
-        .and_then(|p| repo(repo_ptr).conflict_view(p, &profile(encoding)));
+        .and_then(|p| repo.conflict_view(p, &profile(encoding)));
     match result {
         Ok(view) => Box::into_raw(Box::new(view)).cast(),
         Err(e) => {
@@ -2175,7 +2317,7 @@ pub unsafe extern "C" fn amonhen_history_filtered(
     let tips: Vec<Oid> = (0..count as usize)
         .map(|i| Oid(unsafe { *tips.add(i * 20).cast::<[u8; 20]>() }))
         .collect();
-    match repo(repo_ptr).history_filtered(&tips) {
+    match repo!(repo_ptr).history_filtered(&tips) {
         Ok(s) => into_history(s),
         Err(e) => {
             set_error(e);
@@ -2207,7 +2349,7 @@ pub unsafe extern "C" fn amonhen_history_folded(
     };
     let tips = (!all).then(|| read(tips, count));
     let expanded = read(expanded, expanded_count);
-    match repo(repo_ptr).history_folded(tips.as_deref(), &expanded) {
+    match repo!(repo_ptr).history_folded(tips.as_deref(), &expanded) {
         Ok(s) => into_history(s),
         Err(e) => {
             set_error(e);
@@ -2225,7 +2367,7 @@ pub unsafe extern "C" fn amonhen_history_hidden(
     history_ptr: *const AmonhenHistory,
     row: u32,
 ) -> u32 {
-    history(history_ptr)
+    history!(history_ptr)
         .folded
         .get(row as usize)
         .copied()
@@ -2238,7 +2380,7 @@ pub unsafe extern "C" fn amonhen_history_hidden(
 /// `history` は有効な History であること。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amonhen_history_is_shallow(history_ptr: *const AmonhenHistory) -> bool {
-    !history(history_ptr).shallow.is_empty()
+    !history!(history_ptr).shallow.is_empty()
 }
 
 /// shallow clone の境界のコミット（親を取得していない）の行を、昇順に `out` へ最大 `capacity` 個書き、全体の
@@ -2252,7 +2394,7 @@ pub unsafe extern "C" fn amonhen_history_boundary_rows(
     out: *mut u32,
     capacity: u32,
 ) -> u32 {
-    let rows = history(history_ptr).boundary_rows();
+    let rows = history!(history_ptr).boundary_rows();
     for (i, row) in rows.iter().take(capacity as usize).enumerate() {
         unsafe { out.add(i).write(*row) };
     }
@@ -2270,7 +2412,7 @@ pub unsafe extern "C" fn amonhen_history_density(
     buckets: u32,
     out: *mut f32,
 ) -> u32 {
-    let density = history(history_ptr).density(buckets as usize);
+    let density = history!(history_ptr).density(buckets as usize);
     for (i, [f, a]) in density.iter().enumerate() {
         unsafe {
             *out.add(i * 2) = *f;
@@ -2297,7 +2439,7 @@ pub unsafe extern "C" fn amonhen_history_matching(
     } else {
         unsafe { std::slice::from_raw_parts(rows, count as usize) }
     };
-    into_history(repo(repo_ptr).history_matching(history(history_ptr), rows))
+    into_history(repo!(repo_ptr).history_matching(history!(history_ptr), rows))
 }
 
 /// 手元の共有の daemon の様子（JSON。`amonhen_string_free` で解放する）。動いていなければ NULL。
