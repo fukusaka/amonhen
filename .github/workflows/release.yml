@@ -6,19 +6,26 @@ on:
   push:
     tags: ['v[0-9]*']
 
-permissions:
-  contents: write
-  # ビルドの由来の証明（artifact attestations）。gh attestation verify で確かめられる。
-  id-token: write
-  attestations: write
-  # CI の結果を読む。
-  actions: read
+permissions: {}
+
+# 同じタグを打ち直したときに、2 つの Release を並べて作らない（途中のものは止めずに、終わってから次を流す）。
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   check:
+    name: Check the tag
     runs-on: ubuntu-latest
+    # scripts/require-ci.sh は CI を最大 60 分待つ。
+    timeout-minutes: 70
+    permissions:
+      contents: read # タグのコミットを取ってくる
+      actions: read # CI の結果を読む
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: タグと Cargo.toml の version が一致するか
         run: test "${GITHUB_REF_NAME#v}" = "$(scripts/version.sh stable)"
       - name: CHANGELOG にこの版の節があるか
@@ -26,21 +33,36 @@ jobs:
       - name: このコミットで CI が通っているか
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: scripts/require-ci.sh "$GITHUB_SHA"
 
+  # 署名の鍵を使うので、タグと CI を確かめてから作る。
   build:
-    uses: ./.github/workflows/build.yml
+    name: Build
+    needs: check
+    # actionlint がまだ $/ の書き方を読めないので、./ で呼ぶ。
+    uses: ./.github/workflows/build.yml # zizmor: ignore[self-repository]
+    permissions:
+      contents: read # コミットを取ってくる
     with:
       mode: stable
       notarize: true
-    secrets: inherit
 
   publish:
-    needs: [check, build]
+    name: Publish
+    needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # Release を作る
+      # ビルドの由来の証明（artifact attestations）。gh attestation verify で確かめられる。
+      id-token: write # 証明に署名する
+      attestations: write # 証明を載せる
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release
           path: dist
@@ -53,6 +75,7 @@ jobs:
       # アプリの zip、GTK4 のアプリの tar.gz（Linux）、エンジンだけの tar.gz（macOS・Linux）と zip（Windows）。
       - env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           ZIP: ${{ needs.build.outputs.zip }}
         run: |
           scripts/changelog-notes.sh "App and engine" "${GITHUB_REF_NAME#v}" > notes.md
