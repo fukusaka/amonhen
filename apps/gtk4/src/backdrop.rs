@@ -561,7 +561,7 @@ fn rules(id: u32, b: &Backdrop) -> String {
     ));
     // サイドバー: どちらの型でも透ける。
     css.push_str(&format!(
-        "{w} .amonhen-sidebar, {w} .amonhen-sidebar .navigation-sidebar, {w} .amonhen-sidebar scrolledwindow, \
+        "{w} .amonhen-side-top, {w} .amonhen-sidebar, {w} .amonhen-sidebar .navigation-sidebar, {w} .amonhen-sidebar scrolledwindow, \
          {w} .amonhen-sidebar .view, {w} .amonhen-sidebar list {{ background-color: transparent; background-image: none; }}\n"
     ));
     match b.style {

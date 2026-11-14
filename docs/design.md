@@ -456,8 +456,14 @@ bookmark (the repository list's context menu, Window Background…).
   the colors are close but not exact. Imported themes are kept in the app's settings.
 - **GTK4.** The same settings under the same keys (`gtk.ini`, and the bookmark's `backdrop`), applied with CSS: each
   window gets a class of its own, the window itself draws the layer, and the header bar, tab bar, sidebar and pages are
-  made transparent or opaque by style. In Nowhere only the pages change: they share `@view_bg_color` (GTK keeps its
-  header bar across the whole window, so the sidebar does not run to the top). The image is a `GtkPicture` laid over the
+  made transparent or opaque by style. In Nowhere only the pages change: they share `@view_bg_color`. The header is
+  split the GNOME way, so the sidebar runs to the top as on macOS: a header bar over the sidebar (window controls on
+  the left, the Repository menu, and the toolbar items before the sidebar edge, Sidebar and Repositories by default)
+  and one over the content, with the tab bar under the content's header only. The part over the sidebar follows the
+  sidebar's width and color (`@sidebar_bg_color`); with the sidebar hidden it is only as wide as its buttons and the
+  tab bar spans the window. The sidebar edge is an entry in the toolbar order (macOS's `sidebarTrackingSeparator`),
+  added after Sidebar and Repositories to orders saved before it, and Customize Toolbar moves items across it. The
+  sidebar is at least 240 px wide, as on macOS. The image is a `GtkPicture` laid over the
   window's content (`backdrop::host`, which takes no clicks; cover, or its natural size in a corner, shrunk to fit).
   The front tab's header bar sits at the top of that content instead of being the window's titlebar, so the image
   covers it too, as it covers the toolbar on macOS.

@@ -28,8 +28,13 @@ type FrontCallback = Rc<dyn Fn()>;
 pub struct Tab {
     /// タブの中身（窓の TabView のページ）。
     pub root: gtk::Box,
-    /// このタブの見出しの帯（前にあるときだけ窓に付ける）。
+    /// このタブの見出しの帯（前にあるときだけ窓に付ける）。サイドバーの上（`side_header`）と中身の上（`header`）に
+    /// 分ける（GNOME の分けた見出しの形。macOS 版と同じく、サイドバーが窓の上端まで伸びる）。
+    pub side_header: gtk::HeaderBar,
     pub header: gtk::HeaderBar,
+    /// サイドバーと、その割り当てられた幅を知らせる部品（リポジトリのタブだけ）。窓の上の段を、サイドバーの幅で
+    /// 分ける。
+    pub sidebar: RefCell<Option<(gtk::Widget, gtk::DrawingArea)>>,
     /// このタブのアクション（`win.*`）。
     pub group: gio::SimpleActionGroup,
     /// リポジトリの名前（タブと窓の名前）。
@@ -72,13 +77,17 @@ impl Tab {
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
         root.set_hexpand(true);
         root.set_vexpand(true);
+        let side_header = gtk::HeaderBar::new();
         let header = gtk::HeaderBar::new();
         let group = gio::SimpleActionGroup::new();
         root.insert_action_group("win", Some(&group));
+        side_header.insert_action_group("win", Some(&group));
         header.insert_action_group("win", Some(&group));
         let tab = Rc::new(Self {
             root,
+            side_header,
             header,
+            sidebar: RefCell::default(),
             group,
             name: name.to_owned(),
             location: location.to_owned(),
@@ -599,6 +608,42 @@ pub fn apply_backdrops() {
     }
 }
 
+/// 見出しの帯を窓の入れ所に入れる（ほかの窓の見出しになっていれば外す。タブを窓の間で移したとき）。
+fn place(slot: &gtk::Box, header: &gtk::HeaderBar) {
+    if header.parent().as_ref() == Some(slot.upcast_ref::<gtk::Widget>()) {
+        return;
+    }
+    if let Some(other) = header.parent().and_downcast::<gtk::Box>() {
+        other.remove(header);
+    }
+    while let Some(old) = slot.first_child() {
+        slot.remove(&old);
+    }
+    slot.append(header);
+}
+
+/// サイドバーの上の列の見た目（一度だけ入れる）: サイドバーと同じ色で、見出しの帯は色を付けない。
+fn install_side_css() {
+    thread_local! {
+        static DONE: Cell<bool> = const { Cell::new(false) };
+    }
+    if DONE.with(|d| d.replace(true)) {
+        return;
+    }
+    let provider = gtk::CssProvider::new();
+    provider.load_from_string(
+        ".amonhen-side-top, .amonhen-sidebar { background-color: @sidebar_bg_color; } \
+         .amonhen-side-top headerbar { background: none; box-shadow: none; }",
+    );
+    if let Some(display) = gtk::gdk::Display::default() {
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
+}
+
 /// リポジトリのタブを並べる窓。
 pub struct RepoWindow {
     pub window: gtk::ApplicationWindow,
@@ -616,8 +661,15 @@ pub struct RepoWindow {
     /// タブが 1 つでもタブの帯を出す（View > Show Tab Bar。帯のタブをつかんでほかの窓に移せる。macOS 版と同じ）。
     tab_bar: Cell<bool>,
     /// 前のタブの見出しの帯を入れる所。窓のタイトルバーにせず中身の上端に置くので、背景画像が見出しの帯にも
-    /// かかる（macOS 版はツールバーの下まで画像を重ねる）。
+    /// かかる（macOS 版はツールバーの下まで画像を重ねる）。見出しの段はサイドバーの上（`side_slot`）と中身の上
+    /// （`header_slot`）に、タブの帯の段はサイドバーの上の余白（`side_spacer`）とタブの帯に分ける。サイドバーの上の
+    /// 2 つはサイドバーの幅で、色もサイドバーと同じなので、サイドバーが窓の上端まで伸び、タブの帯は中身の上にだけ
+    /// 出る（macOS 版と同じ）。サイドバーを隠すと余白はなくなり、タブの帯は窓の幅いっぱいになる。
+    side_slot: gtk::Box,
+    side_spacer: gtk::Box,
     header_slot: gtk::Box,
+    /// 前のタブのサイドバーの幅と見え方を見ている（タブを替えたら外す）。
+    side_watch: RefCell<Vec<(glib::WeakRef<glib::Object>, glib::SignalHandlerId)>>,
     /// 最後にフォーカスのあった、メニューの外の部品（Edit の Copy などを渡す先）。
     /// 出している Repository Settings のページ。
     settings_page: RefCell<glib::WeakRef<gtk::Widget>>,
@@ -680,6 +732,55 @@ pub fn set_restoring(yes: bool) {
 }
 
 impl RepoWindow {
+    /// 窓の上の段のサイドバーの上の列を、前のタブのサイドバーに合わせ続ける（幅と色。サイドバーを隠したタブ・
+    /// サイドバーのないタブでは、ボタンの分の幅で、見出しの色）。
+    fn follow_sidebar(&self, tab: &Tab) {
+        for (object, id) in self.side_watch.take() {
+            if let Some(object) = object.upgrade() {
+                object.disconnect(id);
+            }
+        }
+        let (slot, spacer) = (self.side_slot.clone(), self.side_spacer.clone());
+        // サイドバーの幅（隠しているときは `None`）に合わせる。
+        let fit_to = move |width: Option<i32>| {
+            slot.set_width_request(width.unwrap_or(-1));
+            spacer.set_width_request(width.unwrap_or(0));
+            spacer.set_visible(width.is_some());
+            for part in [&slot, &spacer] {
+                if width.is_some() {
+                    part.add_css_class("amonhen-side-top");
+                } else {
+                    part.remove_css_class("amonhen-side-top");
+                }
+            }
+        };
+        let Some((sidebar, probe)) = tab.sidebar.borrow().clone() else {
+            fit_to(None);
+            return;
+        };
+        let fit = {
+            let (sidebar, probe) = (sidebar.downgrade(), probe.downgrade());
+            move || {
+                let (Some(sidebar), Some(probe)) = (sidebar.upgrade(), probe.upgrade()) else {
+                    return;
+                };
+                // まだ割り当てていなければ、サイドバーの最小の幅。
+                let width = Some(probe.width())
+                    .filter(|w| *w > 0)
+                    .unwrap_or(sidebar.width_request());
+                fit_to(sidebar.is_visible().then_some(width));
+            }
+        };
+        fit();
+        let fit = Rc::new(fit);
+        let f = fit.clone();
+        let by_width = probe.connect_resize(move |_, _, _| f());
+        let by_shown = sidebar.connect_visible_notify(move |_| fit());
+        self.side_watch.replace(vec![
+            (probe.upcast::<glib::Object>().downgrade(), by_width),
+            (sidebar.upcast::<glib::Object>().downgrade(), by_shown),
+        ]);
+    }
     /// 空の窓を作る（タブは [`add`] で足す）。
     pub fn new(app: &gtk::Application) -> Rc<Self> {
         let view = adw::TabView::new();
@@ -689,10 +790,23 @@ impl RepoWindow {
         bar.set_view(Some(&view));
         // タブが 1 つなら帯を隠す（View > Show Tab Bar で出す）。
         bar.set_autohide(true);
+        install_side_css();
+        let side_slot = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        // 中のツールバーの列が広がろうとしても、サイドバーの幅より広げない（余りは中身の上の見出しへ）。
+        side_slot.set_hexpand(false);
         let header_slot = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        header_slot.set_hexpand(true);
+        let headers = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        headers.append(&side_slot);
+        headers.append(&header_slot);
+        let side_spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        bar.set_hexpand(true);
+        let tab_row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        tab_row.append(&side_spacer);
+        tab_row.append(&bar);
         let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        body.append(&header_slot);
-        body.append(&bar);
+        body.append(&headers);
+        body.append(&tab_row);
         body.append(&view);
         // タブの帯の「+」（macOS 版と同じく、開くリポジトリを選んで新しいタブに）。
         let plus = gtk::Button::new();
@@ -728,7 +842,10 @@ impl RepoWindow {
             installed: RefCell::default(),
             shown: RefCell::default(),
             tab_bar: Cell::new(false),
+            side_spacer,
+            side_slot,
             header_slot,
+            side_watch: RefCell::default(),
             last_focus: RefCell::default(),
             settings_page: RefCell::default(),
         });
@@ -1031,17 +1148,9 @@ impl RepoWindow {
         // 見出しの帯: タブごとに持つ（File History・Blame のタブは、リポジトリのタブと同じツールバーを自分の帯に
         // 作ってある。macOS 版と同じく、リポジトリのタブがほかの窓で前にあっても使える）。
         let owner = tab.owner();
-        let header = tab.header.clone();
-        if header.parent().as_ref() != Some(self.header_slot.upcast_ref::<gtk::Widget>()) {
-            // ほかの窓の見出しになっていれば外す（タブを窓の間で移したとき）。
-            if let Some(other) = header.parent().and_downcast::<gtk::Box>() {
-                other.remove(&header);
-            }
-            while let Some(old) = self.header_slot.first_child() {
-                self.header_slot.remove(&old);
-            }
-            self.header_slot.append(&header);
-        }
+        place(&self.side_slot, &tab.side_header);
+        place(&self.header_slot, &tab.header);
+        self.follow_sidebar(tab);
         // 窓の背景は、前のタブのリポジトリの設定（macOS 版はタブがそれぞれの窓なので、リポジトリごと）。
         crate::backdrop::apply(
             &self.window,
@@ -1411,20 +1520,20 @@ pub fn show_home(app: &gtk::Application, host: Option<Rc<RepoWindow>>) -> Rc<Rep
         host
     });
     let tab = Tab::new("Repositories", "", Rc::default());
-    let title = gtk::Label::new(Some("Repositories"));
-    title.add_css_class("title");
-    let subtitle = gtk::Label::new(Some(&tr!("Choose a repository to open")));
-    subtitle.add_css_class("subtitle");
-    let titles = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    titles.set_valign(gtk::Align::Center);
-    titles.append(&title);
-    titles.append(&subtitle);
+    // 題と説明の 2 行（macOS 版の窓の題と副題）。GNOME の部品なので、見出しの帯の高さはほかのタブと同じ（自前で
+    // ラベルを積むと高くなり、タブを切り替えるとタブの帯の位置がずれる）。
+    let titles = adw::WindowTitle::new("Repositories", &tr!("Choose a repository to open"));
     // 見出しはリポジトリのタブと同じ Repository のメニュー・ツールバー・主メニュー（リポジトリへの操作は、このタブに
     // アクションがないので押せない。macOS 版で Repositories の窓が前にあっても、メニューバーとツールバーはそのままなの
     // と同じ）。History の表示は設定なので、ここでも変えられる。
     crate::historydisplay::install_actions(&tab.group);
-    let primary =
-        crate::appmenu::install_home(&tab.header, &tab.group, &tab.root, titles.upcast_ref());
+    let primary = crate::appmenu::install_home(
+        &tab.side_header,
+        &tab.header,
+        &tab.group,
+        &tab.root,
+        titles.upcast_ref(),
+    );
     // 開くときに、View > Show Tab Bar の名前を合わせる（リポジトリのタブと同じく、帯を出していれば Hide Tab Bar）。
     crate::appmenu::retitle_on_show_with(&primary, |button, model| {
         let Some(window) = button.root().and_downcast::<gtk::ApplicationWindow>() else {
