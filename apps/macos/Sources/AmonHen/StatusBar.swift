@@ -49,9 +49,18 @@ final class StatusBarController: NSViewController {
         stack.layoutSubtreeIfNeeded()
         let height = stack.arrangedSubviews.isEmpty ? 0 : stack.fittingSize.height
         stack.frame = NSRect(x: 0, y: 0, width: bounds.width, height: height)
-        // ツールバーの下に潜る窓（`system` の型）では、中身はツールバーの下から（上の帯は読む面と同じ色のまま見える）。
+        // 窓はツールバーの下に潜るので、中身はツールバーの下から。
         let top = view.safeAreaInsets.top
         content.view.frame = NSRect(x: 0, y: height, width: bounds.width, height: max(0, bounds.height - height - top))
+    }
+
+    /// 読む面（中身と行）を塗る。`underToolbar` ならツールバーの下の帯も同じ色（透かさないとき）、でなければ帯は塗らずに
+    /// 下の背景の層を見せる。
+    func paint(_ color: NSColor, underToolbar: Bool) {
+        for v in [view, stack, content.view] { v.wantsLayer = true }
+        view.layer?.backgroundColor = (underToolbar ? color : .clear).cgColor
+        stack.layer?.backgroundColor = color.cgColor
+        content.view.layer?.backgroundColor = color.cgColor
     }
 
     /// `row` の行を出す（同じ種類の前の行は置き換える）。

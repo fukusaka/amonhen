@@ -7,64 +7,52 @@ struct BackdropSections: View {
     @Binding var settings: BackdropSettings
 
     var body: some View {
-        Section(L("Window Background")) {
-            Picker(L("Show the background in"), selection: $settings.style) {
+        // 3 つは互いに独立: 窓の後ろを透かす・背景画像を重ねる・ツールバーに色を付ける。
+        Section(L("Window Transparency")) {
+            Picker(L("See through in"), selection: $settings.style) {
                 ForEach(BackdropStyle.allCases, id: \.self) { Text($0.title).tag($0) }
             }
             if settings.style != .system {
-                Picker(L("Background"), selection: $settings.source) {
-                    ForEach(BackdropSource.allCases, id: \.self) { Text($0.title).tag($0) }
+                Percent(L("Transparency"), value: $settings.transparency, in: 0.1...0.9)
+                Percent(L("Blur"), value: $settings.blur, in: 0...1)
+            }
+            Note(transparencyNote)
+        }
+        Section(L("Background Image")) {
+            LabeledContent(L("Image")) {
+                HStack {
+                    Text(settings.image.map { ($0 as NSString).lastPathComponent } ?? L("None"))
+                        .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                    Button(L("Choose…")) { chooseImage() }
+                    if settings.image != nil { Button(L("Remove")) { settings.image = nil } }
                 }
             }
-            Note(note)
-            if settings.style != .system, settings.source == .image {
-                LabeledContent(L("Image")) {
-                    HStack {
-                        Text(settings.image.map { ($0 as NSString).lastPathComponent } ?? L("None"))
-                            .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                        Button(L("Choose…")) { chooseImage() }
-                    }
+            if settings.image != nil {
+                Picker(L("Position"), selection: $settings.imagePlacement) {
+                    ForEach(BackdropImagePlacement.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
-                if settings.image != nil {
-                    Picker(L("Placement"), selection: $settings.imagePlacement) {
-                        ForEach(BackdropImagePlacement.allCases, id: \.self) { Text($0.title).tag($0) }
-                    }
-                }
+                Percent(L("Transparency"), value: $settings.imageTransparency, in: 0.5...0.95)
             }
-            if settings.style == .single {
-                LabeledContent(L("Content opacity")) {
-                    HStack {
-                        Slider(value: $settings.contentOpacity, in: 0.4...1, step: 0.05)
-                        Text("\(Int((settings.contentOpacity * 100).rounded()))%").monospacedDigit().frame(width: 40)
-                    }
-                }
-            }
-            if settings.style != .system {
-                Toggle(L("Tint the toolbar"), isOn: Binding(
-                    get: { settings.toolbarColor != nil },
-                    set: { settings.toolbarColor = $0 ? (settings.toolbarColor ?? NSColor.controlAccentColor.hex) : nil }))
-                if let hex = settings.toolbarColor {
-                    ColorPicker(L("Toolbar color"), selection: Binding(
-                        get: { Color(nsColor: NSColor(hex: hex) ?? .controlAccentColor) },
-                        set: { settings.toolbarColor = NSColor($0).hex }), supportsOpacity: false)
-                    LabeledContent(L("Toolbar tint")) {
-                        HStack {
-                            Slider(value: $settings.toolbarOpacity, in: 0.1...1, step: 0.05)
-                            Text("\(Int((settings.toolbarOpacity * 100).rounded()))%").monospacedDigit().frame(width: 40)
-                        }
-                    }
-                }
+            Note(L("Laid thinly over the whole window, on top of the lists and diffs."))
+        }
+        Section(L("Toolbar")) {
+            Toggle(L("Tint the toolbar"), isOn: Binding(
+                get: { settings.toolbarColor != nil },
+                set: { settings.toolbarColor = $0 ? (settings.toolbarColor ?? NSColor.controlAccentColor.hex) : nil }))
+            if let hex = settings.toolbarColor {
+                ColorPicker(L("Toolbar color"), selection: Binding(
+                    get: { Color(nsColor: NSColor(hex: hex) ?? .controlAccentColor) },
+                    set: { settings.toolbarColor = NSColor($0).hex }), supportsOpacity: false)
+                Percent(L("Toolbar tint"), value: $settings.toolbarOpacity, in: 0.1...1)
             }
         }
     }
 
-    private var note: String {
-        switch (settings.style, settings.source) {
-        case (.system, _): L("macOS’s standard window. Nothing shows through; the lists and diffs share one opaque color.")
-        case (.chrome, .behind): L("The sidebar and toolbar show the desktop and windows behind, blurred. The lists and diffs share one opaque color.")
-        case (.chrome, .image): L("The sidebar and toolbar show the image; the window stays opaque. The lists and diffs share one opaque color.")
-        case (.single, .behind): L("The whole window shows the desktop and windows behind, blurred, under the lists and diffs at the content opacity.")
-        case (.single, .image): L("The whole window shows the image, under the lists and diffs at the content opacity; the window stays opaque.")
+    private var transparencyNote: String {
+        switch settings.style {
+        case .system: L("macOS’s standard window. Nothing shows through.")
+        case .chrome: L("The desktop and windows behind show through the sidebar and toolbar. The lists and diffs stay opaque.")
+        case .single: L("The desktop and windows behind show through the whole window. Changed lines and selections stay opaque.")
         }
     }
 
@@ -74,6 +62,28 @@ struct BackdropSections: View {
         panel.canChooseDirectories = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
         settings.image = url.path
+    }
+}
+
+/// 割合の滑り棒（右に % を出す）。
+private struct Percent: View {
+    let title: String
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+
+    init(_ title: String, value: Binding<Double>, in range: ClosedRange<Double>) {
+        self.title = title
+        _value = value
+        self.range = range
+    }
+
+    var body: some View {
+        LabeledContent(title) {
+            HStack {
+                Slider(value: $value, in: range, step: 0.05)
+                Text("\(Int((value * 100).rounded()))%").monospacedDigit().frame(width: 40)
+            }
+        }
     }
 }
 
@@ -208,7 +218,7 @@ struct RepositoryBackdropView: View {
             .padding()
         }
         // Form は自分の高さを持たないので、シートの高さを決めておく（溢れたら Form の中で送る）。
-        .frame(width: 520, height: !override ? 200 : settings.style == .system ? 330 : 600)
+        .frame(width: 520, height: !override ? 200 : 600)
         .onChange(of: override) { save() }
         .onChange(of: settings) { save() }
     }
