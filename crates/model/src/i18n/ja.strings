@@ -2285,15 +2285,10 @@
 "Tint the toolbar" = "ツールバーに色を付ける";
 "Toolbar color" = "ツールバーの色";
 "Toolbar tint" = "ツールバーの色の濃さ";
-"The usual window. Nothing shows through." = "ふだんの窓です。どこも透けません。";
-"The desktop and windows behind show through the sidebar and header bar. The lists and diffs stay opaque." = "サイドバーと見出しの帯に、デスクトップや後ろの窓が透けます。一覧と差分は不透明のままです。";
-"The desktop and windows behind show through the whole window. Changed lines and selections stay opaque." = "窓全体に、デスクトップや後ろの窓が透けます。変更の行と選択は不透明のままです。";
-"Laid thinly over the whole window, on top of the lists and diffs." = "窓全体に、一覧と差分の上から薄く重ねます。";
 "Syntax Colors" = "構文の色";
 "Light appearance" = "明るい外観";
 "Dark appearance" = "暗い外観";
 "Import VSCode Theme…" = "VSCode のテーマを読み込む…";
-"Reads tokenColors from a VSCode color theme (.json). Scopes map to Amon Hen’s 14 kinds, so colors are close but not exact." = "VSCode の配色テーマ（.json）の tokenColors を読みます。スコープを Amon Hen の 14 種類に当てはめるので、色は近いものになります。";
 "Dark" = "暗い";
 "Light" = "明るい";
 "Couldn’t read {file}: {error}" = "{file} を読めませんでした: {error}";

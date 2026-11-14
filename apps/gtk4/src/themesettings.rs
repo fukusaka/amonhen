@@ -65,7 +65,6 @@ pub fn backdrop_section(
     let style_row = row(&tr!("See through in"), &style);
     let (transparency_box, transparency) = percent_scale(0.1, 0.9, get().transparency);
     let transparency_row = row(&tr!("Transparency"), &transparency_box);
-    let note = settings::note("");
 
     let image_name = gtk::Label::new(None);
     image_name.add_css_class("dim-label");
@@ -101,7 +100,6 @@ pub fn backdrop_section(
         &[
             style_row.clone().upcast(),
             transparency_row.clone().upcast(),
-            note.clone().upcast(),
         ],
     ));
     column.append(&crate::reposettings::section(
@@ -110,10 +108,6 @@ pub fn backdrop_section(
             image_row.clone().upcast(),
             placement_row.clone().upcast(),
             image_transparency_row.clone().upcast(),
-            settings::note(&tr!(
-                "Laid thinly over the whole window, on top of the lists and diffs."
-            ))
-            .upcast(),
         ],
     ));
     column.append(&crate::reposettings::section(
@@ -128,10 +122,9 @@ pub fn backdrop_section(
     // 欄を今の設定に合わせる（合わせている間の変化は、設定に書き戻さない）。
     let syncing = Rc::new(std::cell::Cell::new(false));
     let refresh: Rc<dyn Fn()> = {
-        let (style, transparency, note, image_name, remove, placement) = (
+        let (style, transparency, image_name, remove, placement) = (
             style.clone(),
             transparency.clone(),
-            note.clone(),
             image_name.clone(),
             remove.clone(),
             placement.clone(),
@@ -156,15 +149,6 @@ pub fn backdrop_section(
             if (transparency.value() - b.transparency).abs() > 1e-6 {
                 transparency.set_value(b.transparency);
             }
-            note.set_text(&match b.style {
-                Style::System => tr!("The usual window. Nothing shows through."),
-                Style::Chrome => tr!(
-                    "The desktop and windows behind show through the sidebar and header bar. The lists and diffs stay opaque."
-                ),
-                Style::Single => tr!(
-                    "The desktop and windows behind show through the whole window. Changed lines and selections stay opaque."
-                ),
-            });
             image_name.set_text(&match &b.image {
                 Some(path) => std::path::Path::new(path)
                     .file_name()
@@ -328,10 +312,6 @@ fn syntax_section() -> gtk::Box {
             row(&tr!("Dark appearance"), &dark).upcast(),
             preview.clone().upcast(),
             import.clone().upcast(),
-            settings::note(&tr!(
-                "Reads tokenColors from a VSCode color theme (.json). Scopes map to Amon Hen’s 14 kinds, so colors are close but not exact."
-            ))
-            .upcast(),
             failure.clone().upcast(),
             imported.clone().upcast(),
         ],
