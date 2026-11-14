@@ -26,6 +26,9 @@ becomes the GitHub Release notes.
 - GTK4: Settings > Theme has the same window transparency (without blur), background image, toolbar tint and syntax
   themes, and the repository list's Window Background… overrides them per repository.
 - GTK4: in the standard window, the lists, diffs and commit form share one color.
+- macOS: Blame, File History, connecting and Repositories tabs follow the window background, so switching tabs keeps
+  the same look.
+- GTK4: the background image covers the header bar too.
 
 #### Changed
 
