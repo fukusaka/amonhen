@@ -25,7 +25,7 @@ amonhen-daemon = { path = "crates/daemon" }
 amonhen-front = { path = "crates/front" }
 amonhen-commands = { path = "crates/commands" }
 amonhen-assist = { path = "crates/assist" }
-gix = { version = "0.89", default-features = false, features = ["sha1", "max-performance-safe", "revision", "attributes", "blob-diff", "mailmap"] }
+gix = { version = "0.90", default-features = false, features = ["sha1", "max-performance", "revision", "attributes", "blob-diff", "mailmap"] }
 
 [profile.release]
 lto = "thin"
