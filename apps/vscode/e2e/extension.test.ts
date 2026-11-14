@@ -138,9 +138,40 @@ async function showView(command: 'amonhen.showWorkingCopy' | 'amonhen.showHistor
 function recordErrors(): void {
   const show = vscode.window.showErrorMessage.bind(vscode.window) as (message: string, ...rest: unknown[]) => Thenable<unknown>;
   (vscode.window as { showErrorMessage: unknown }).showErrorMessage = (message: string, ...rest: unknown[]) => {
-    errors.push(message);
+    errors.push(message.includes('index.lock') ? `${message}（${lockHolders(message)}）` : message);
     return show(message, ...rest);
   };
+}
+
+/**
+ * index の鍵とぶつかったときの、その場の様子（鍵のファイルと、動いている git）。CI でまれに落ちる件で、
+ * 鍵を持っていたのが誰かを残す
+ */
+function lockHolders(message: string): string {
+  const lock = /'([^']*index\.lock)'/.exec(message)?.[1];
+  let file = '鍵のファイルの場所が分かりません';
+  if (lock) {
+    try {
+      const stat = statSync(lock);
+      file = `鍵は ${Math.round(Date.now() - stat.mtimeMs)} ms 前から`;
+    } catch {
+      file = '鍵はもうありません';
+    }
+  }
+  let processes: string;
+  try {
+    processes =
+      process.platform === 'win32'
+        ? childProcess.execFileSync('tasklist', ['/v', '/fi', 'imagename eq git.exe'], { encoding: 'utf8' })
+        : childProcess
+            .execFileSync('ps', ['-axww', '-o', 'pid=,ppid=,etime=,command='], { encoding: 'utf8' })
+            .split('\n')
+            .filter((line) => /\bgit\b/.test(line) && !/ ps |fsmonitor--daemon/.test(line))
+            .join('\n');
+  } catch (e) {
+    processes = `一覧を取れません: ${e}`;
+  }
+  return `${file}。動いている git: ${processes.trim() || 'なし'}`;
 }
 
 /** daemon の様子（`amonhen daemon status --json`）。動いていなければ undefined */
