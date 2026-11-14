@@ -229,6 +229,8 @@ pub static COMMANDS: &[Command] = &[
         .localized()
         .key("Primary+Semicolon"),
     command("open-in-terminal", "Open in Terminal").localized(),
+    // 開くのは Settings > General の External Editor。
+    command("open-in-editor", "Open in Editor").localized(),
     // GTK の FE では「Show in Files」と呼ぶ（名前は FE が替える。id は同じ）。
     command("reveal-in-files", "Show in Finder").localized(),
     // アプリ
@@ -337,7 +339,10 @@ pub static SECTIONS: &[Section] = &[
     section(Menu::Repository, &["undo"]),
     section(Menu::Repository, &["repository-settings"]),
     section(Menu::Repository, &["create-pull-request", "open-on-github"]),
-    section(Menu::Repository, &["open-in-terminal", "reveal-in-files"]),
+    section(
+        Menu::Repository,
+        &["open-in-terminal", "open-in-editor", "reveal-in-files"],
+    ),
     section(Menu::Commit, &["commit", "commit-and-push", "stage-all"]),
     section(Menu::Commit, &["save-patch", "export-archive"]),
     section(Menu::Window, &["repositories", "activity"]),

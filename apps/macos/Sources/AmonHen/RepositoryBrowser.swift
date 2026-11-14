@@ -1321,6 +1321,8 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
                 NSWorkspace.shared.open(
                     [URL(fileURLWithPath: path)], withApplicationAt: terminal, configuration: NSWorkspace.OpenConfiguration())
             }
+            add(L("Open in Editor")) { [weak self] in ExternalEditor.openFolder(path, in: self?.view.window) }
+            menu.items.last?.toolTip = ExternalEditor.toolTip
         }
         if style == .page, let title = removeTitle {
             menu.addItem(.separator())

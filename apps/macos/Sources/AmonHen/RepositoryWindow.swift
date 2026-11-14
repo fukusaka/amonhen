@@ -819,6 +819,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
         case .terminal:
             openTerminal(at: path)
+        case .editor:
+            openEditor(at: path)
         case .remove:
             removeWorktree(info)
         case .prune:
@@ -2487,6 +2489,16 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             [URL(fileURLWithPath: path)], withApplicationAt: terminal, configuration: NSWorkspace.OpenConfiguration())
     }
 
+    /// 書き込む先の worktree を、Settings > General の External Editor で開く。
+    @objc func openInEditor(_ sender: Any?) {
+        openEditor(at: editing.path)
+    }
+
+    private func openEditor(at path: String) {
+        guard isLocal else { return NSSound.beep() }
+        if let message = ExternalEditor.openFolder(path) { showFailure(message, title: L("Couldn’t Open in Editor")) }
+    }
+
     @objc func revealInFinder(_ sender: Any?) {
         guard isLocal else { return NSSound.beep() }
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: editing.path)])
@@ -2696,7 +2708,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             return editingBranch != nil
         case #selector(commitChanges(_:)), #selector(commitAndPush(_:)): return showsWorkingCopy && workingCopy.canCommit
         case #selector(stageAllChanges(_:)): return showsWorkingCopy && workingCopy.canStageAll
-        case #selector(openInTerminal(_:)), #selector(revealInFinder(_:)): return isLocal
+        case #selector(openInTerminal(_:)), #selector(openInEditor(_:)), #selector(revealInFinder(_:)): return isLocal
         case #selector(openOnGitHub(_:)): return gitHub != nil
         case #selector(createPullRequest(_:)): return editingBranch.map { sidebar.canCreatePullRequest(from: $0) } ?? false
         default: return true
@@ -2770,6 +2782,8 @@ extension RepositoryWindow {
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         switch item.action {
+        case #selector(openInEditor(_:)):
+            item.toolTip = ExternalEditor.toolTip
         case #selector(undoOperation(_:)):
             item.title = undoLabel.map { "Undo \($0)…" } ?? Commands.undo.title
         case #selector(push(_:)):
@@ -2793,6 +2807,8 @@ extension RepositoryWindow {
     }
 
     func validateToolbarItem(_ item: NSToolbarItem) -> Bool {
-        validate(item.action)
+        // どのエディタで開くかは Settings で変わる。
+        if item.action == #selector(openInEditor(_:)) { item.toolTip = ExternalEditor.toolTip }
+        return validate(item.action)
     }
 }

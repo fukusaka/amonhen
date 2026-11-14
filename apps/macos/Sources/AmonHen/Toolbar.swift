@@ -225,7 +225,7 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, .more, .repositories, .repository, .branch, .search, .fetch, .pull, .push, .merge, .rebase, .stash, .pop, .newBranch, .activity, .refresh, .undo, .terminal, .finder,
+        [.toggleSidebar, .sidebarTrackingSeparator, .more, .repositories, .repository, .branch, .search, .fetch, .pull, .push, .merge, .rebase, .stash, .pop, .newBranch, .activity, .refresh, .undo, .terminal, .editor, .finder,
          .space, .flexibleSpace]
     }
 
@@ -275,6 +275,9 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
         case .terminal:
             (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), L("Terminal"), "terminal",
                                                   #selector(RepositoryWindow.openInTerminal(_:)), L("Open in Terminal"))
+        case .editor:
+            (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), L("Editor"), "chevron.left.forwardslash.chevron.right",
+                                                  #selector(RepositoryWindow.openInEditor(_:)), ExternalEditor.toolTip)
         case .finder:
             (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), "Finder", "folder",
                                                   #selector(RepositoryWindow.revealInFinder(_:)), Titles.showInFinder)
@@ -297,7 +300,7 @@ extension MainToolbar {
         Commands.quickOpen, nil,
         Commands.newWorktree, Commands.pruneWorktrees, nil,
         Commands.createPullRequest, Commands.openOnGitHub, nil,
-        Commands.openInTerminal, Commands.revealInFinder, nil,
+        Commands.openInTerminal, Commands.openInEditor, Commands.revealInFinder, nil,
         Commands.rebuildHistory, nil,
         Commands.repositorySettings, Commands.activity, Commands.settings,
     ]
@@ -313,7 +316,7 @@ extension MainToolbar {
         item.image = NSImage(systemSymbolName: "line.3.horizontal", accessibilityDescription: L("More"))
         item.label = L("More")
         item.paletteLabel = L("More")
-        item.toolTip = L("Worktrees, pull requests, Terminal and Finder, History, settings")
+        item.toolTip = L("Worktrees, pull requests, Terminal, Editor and Finder, History, settings")
         return item
     }
 
@@ -346,6 +349,7 @@ extension NSToolbarItem.Identifier {
     static let refresh = Self("refresh")
     static let undo = Self("undo")
     static let terminal = Self("terminal")
+    static let editor = Self("editor")
     static let finder = Self("finder")
     static let activity = Self("activity")
     static let branch = Self("branch")

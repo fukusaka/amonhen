@@ -405,6 +405,7 @@
 "Find in History…" = "History を検索…";
 "Repository Settings" = "リポジトリの設定";
 "Open in Terminal" = "ターミナルで開く";
+"Open in Editor" = "エディタで開く";
 "Show in Finder" = "Finder に表示";
 "Settings…" = "設定…";
 
