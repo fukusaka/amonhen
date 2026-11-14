@@ -24,3 +24,20 @@ updates:
     groups:
       crates:
         patterns: ['*']
+  # VSCode 拡張（apps/vscode）。
+  - package-ecosystem: npm
+    directory: /apps/vscode
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      npm:
+        patterns: ['*']
+    ignore:
+      # 対応する VSCode の最低の版（package.json の engines.vscode）に合わせる。上げるときは engines と一緒に手で。
+      - dependency-name: '@types/vscode'
+        update-types: ['version-update:semver-major', 'version-update:semver-minor']
+      # VSCode の拡張ホストの Node.js の版に合わせる。
+      - dependency-name: '@types/node'
+        update-types: ['version-update:semver-major']
