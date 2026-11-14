@@ -188,6 +188,48 @@ pub fn display_name(path: &str) -> String {
         .map_or_else(|| path.to_owned(), |n| n.to_string_lossy().into_owned())
 }
 
+/// Open in Editor のツールチップ（どのエディタで開くか）。
+pub fn tooltip() -> String {
+    tr!("Opens in {app}", app = chosen_name())
+}
+
+/// フォルダ（リポジトリ・worktree）を選んだエディタで開く。開けなければ、そのわけ（macOS 版の `openFolder`）。
+/// 知っているコードエディタはどれもフォルダを開ける。Other… で選んだ実行ファイルには、そのままパスを渡す。ほか
+/// （テキストエディタ）は、フォルダを開けると宣言しているもの（`inode/directory`）だけ。
+pub fn open_folder(dir: &std::path::Path) -> Result<(), String> {
+    let Some(app) = chosen() else {
+        return Err(tr!(
+            "No editor is installed. Choose one in Settings > General."
+        ));
+    };
+    let folder = gio::content_type_from_mime_type("inode/directory");
+    let opens_folders = KNOWN.iter().any(|(id, _)| *id == app.id)
+        || std::path::Path::new(&app.id).is_absolute()
+        || gio::AppInfo::all_for_type(folder.as_deref().unwrap_or("inode/directory"))
+            .iter()
+            .any(|a| a.id().as_deref() == Some(app.id.as_str()));
+    if !opens_folders {
+        return Err(tr!(
+            "{app} can’t open folders. Choose a code editor in Settings > General.",
+            app = app.name
+        ));
+    }
+    let context = gdk::Display::default().map(|d| d.app_launch_context());
+    app.info
+        .launch(&[gio::File::for_path(dir)], context.as_ref())
+        .map_err(|e| e.to_string())
+}
+
+/// [`open_folder`] で開けなかったわけを、`parent` の上の知らせで。
+pub fn open_folder_in(parent: Option<&gtk::Window>, dir: &std::path::Path) {
+    if let Err(message) = open_folder(dir) {
+        let parent = parent.cloned();
+        glib::spawn_future_local(async move {
+            crate::sheets::alert(parent.as_ref(), &tr!("Couldn’t Open in Editor"), &message).await;
+        });
+    }
+}
+
 /// ファイルをエディタで開く（`app` がなければ選んだもの。それもなければ、そのファイルの既定のアプリ）。
 pub fn open(files: &[std::path::PathBuf], app: Option<App>, parent: Option<&gtk::Window>) {
     let files: Vec<gio::File> = files.iter().map(gio::File::for_path).collect();

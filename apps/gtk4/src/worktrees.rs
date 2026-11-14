@@ -824,7 +824,7 @@ impl Worktrees {
     }
 }
 
-/// サイドバーの worktree の右クリック: Edit This Worktree・Show in Files・Open in Terminal（フォルダがあるときだけ。
+/// サイドバーの worktree の右クリック: Edit This Worktree・Show in Files・Open in Terminal・Open in Editor（フォルダがあるときだけ。
 /// 手元のものだけ）、メインでなければ Remove Worktree…（フォルダがなければ Prune Worktrees）。
 pub fn menu(
     actions: &Rc<crate::actions::Actions>,
@@ -854,6 +854,15 @@ pub fn menu(
                     window.error_bell();
                 }
             }));
+            let (a, p) = (actions.clone(), path.clone());
+            items.push(menu::hint(
+                tr!("Open in Editor"),
+                crate::editor::tooltip(),
+                move || {
+                    let window = a.window().map(|w| w.upcast::<gtk::Window>());
+                    crate::editor::open_folder_in(window.as_ref(), std::path::Path::new(&p))
+                },
+            ));
         }
     }
     // メインの worktree は消せないので出さない。開いたリポジトリの worktree には出し、選ぶと消さずに音を鳴らす
