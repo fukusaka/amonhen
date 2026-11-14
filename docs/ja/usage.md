@@ -7,11 +7,11 @@
 
 ## アプリ
 
-- 起動するとリポジトリの一覧（File > Repositories…、⇧⌘O）が出る。開いたことのあるリポジトリが新しい順に並び、Add Repository… で加え、Remove で外す（フォルダには触れない）。File > Open…（⌘O）でほかのリポジトリを別のウィンドウで開く。最後のウィンドウを閉じてもアプリは窓のないまま残り、Dock のアイコンを押すと一覧が出る。
+- 起動するとリポジトリのページ（Window > Repositories、⇧⌘R。File > 開く…、⌘O でも出る）が出る。左に「すべて」「お気に入り」「場所」と自分のグループ、右にリポジトリが並び、列（名前・ブランチ・状態・最後のコミット・開いた日時）で並べ替えられる。「追加」（＋）か「場所」の見出しの右クリックに「手元のリポジトリを追加…」「SSH 接続を追加…」があり、「一覧から外す」で外す（フォルダには触れない）。File > Quick Open…（⇧⌘O）でリポジトリを名前で探して開く。最後のウィンドウを閉じてもアプリは窓のないまま残り、Dock のアイコンを押すと一覧が出る。
 - サイドバー: Working Copy / History、ブランチ（フォルダ・上流との差 ↑↓・gone）、リモート、タグ、stash、サブモジュール。右クリックで checkout・merge・rebase・チェックアウトしていないブランチと上流を合わせる（後ろにだけあれば Fast-Forward、先にだけあれば Push、上流がなければ Publish）・作成・名前の変更・削除・stash の操作・サブモジュールの更新と別ウィンドウ。ブランチを別のブランチにドロップすると merge / rebase（fast-forward で済めば checkout しない）、リモートにドロップすると push。
 - ツールバー: Fetch・Pull・Push・Stash・Undo。履歴の書き換え・変更の破棄・stash の削除などは Undo で戻せる（CLI・VSCode 拡張と記録を共有する）。
-- Working Copy: ファイルはパスの一覧かディレクトリの木で表示（一覧の上で切り替え）。差分の行をクリックで選び（hunk の見出しで hunk 全体、Shift で範囲、⌘ で追加）、Stage Lines / Discard Lines。Space・Enter で stage / unstage。Summary と Description を書いて ⌘↩ でコミット。コンフリクトはコンフリクトごとに Use Current / Use Incoming / Use Both、または Merge Editor…（3 ペインのマージエディタ）。
-- History: グラフ付きの一覧（件名とブランチ・タグのラベル、その下に作者・日時・ID）。右クリックでコミットの編集（Edit Message・Squash・Fixup・Edit・Split・Drop）、cherry-pick・revert、パッチとして保存（Save as Patch…。いくつか選べばひと続きに）、ブランチ・タグの作成。ドラッグで並べ替え。上部で All Branches / Current Branch / 選んだ ref を切り替える。⌘F でコミットを検索（Enter・⌘G で次へ、⇧Enter・⇧⌘G で前へ。一致したコミットだけを出すこともできる）。
+- Working Copy: ファイルは「リスト」（パス）・「ツリー」（フォルダ）・「ファイル名」で表示（一覧の上で切り替え）。差分の行をクリックで選び（hunk の見出しで hunk 全体、Shift で範囲、⌘ で追加）、Stage Lines / Discard Lines。Space・Enter で stage / unstage。Summary と Description を書いて ⌘↩ でコミット。コンフリクトしたファイルは、一覧の下に 3 ペインのマージエディタが開く。コンフリクトごとに「Current を採用」「Incoming を採用」「両方を採用」（base があれば「Base を採用」も）、ファイル全体を片側にするなら「手元のファイルを使う」「取り込む側のファイルを使う」、終えたら「解決済みにする」。
+- History: グラフ付きの一覧（件名とブランチ・タグのラベル、その下に作者・日時・ID）。右クリックでコミットの編集: 「メッセージを編集…」「1 つ古いコミットとまとめる…」「Drop…」はその変更を付けて編集モードを開き、「ここからコミットを編集…」はそのコミットから編集モードを開く（コミットごとに「そのまま」「メッセージを編集」「古い方とまとめる」「古い方とまとめる（古い方のメッセージ）」「Drop」「止めてファイルを直す」を選び、行をドラッグで並べ替え、「変更を実行」で 1 回の rebase としてまとめて行う。merge はそのまま作り直す）。Split… はコミットで止めて、その変更を分けてコミットする。ほかに cherry-pick・revert、パッチとして保存（Save as Patch…。いくつか選べばひと続きに）、ブランチ・タグの作成。ドラッグで並べ替え。上部で All Branches / Current Branch / 選んだ ref を切り替える。⌘F でコミットを検索（Enter・⌘G で次へ、⇧Enter・⇧⌘G で前へ。一致したコミットだけを出すこともできる）。
 - Range Diff: ローカルブランチの右クリックの「前の版と比べる」（または Repository > 前の版と比べる）で、最後の rebase・コミットの編集・amend の前の版と比べる（`git range-diff` と同じ）: = 同じ、! 変わった（2 つのパッチの差分つき）、< 消えた、> 足された。History で選んだ 2 つのコミットや Reflog の行とも比べられる。
 - パッチ: Repository > Apply Patch…、または .patch・.diff・.mbox・.eml のファイルをウィンドウにドロップすると、何を変えるかとそのまま当たるかを見せてから、メールの形のパッチはコミットとして（`git am`）、diff は作業ツリーに（`git apply`）当てる。am がパッチで止まったら、ツールバーの下の帯に理由と、3-way merge で当て直す・Continue・Skip・Abort が出る。どちらも Undo で戻せる。CLI には `amonhen format-patch`・`amonhen am`・`amonhen apply` がある。
 - アーカイブ: Commit > Export Archive…、または History のコミットやサイドバーのブランチ・タグの右クリックの Export Archive… で、そのコミットのファイルを zip・tar.gz・tar のファイルに書き出す（`git archive`。何を外すかは `.gitattributes` に従う）。1 つのフォルダだけにもできる。CLI では `amonhen archive`。
@@ -28,7 +28,7 @@
 
 ## SSH 先のリポジトリ
 
-リポジトリの一覧の Add Remote Repository… で接続先とパスを入れるか、`AmonHen ssh://[user@]host[:port]/path/to/repo`（ホームからなら `/~/src/repo`）。鍵か ssh-agent でパスワードなしにつながること。SSH 先では git の処理だけを `amonhen --stdio` が行う。SSH 先の `PATH` に同じビルドの `amonhen` があるか、同じビルドのものが前に置かれていればそれを使い、なければ同梱のエンジン（Linux x86_64・aarch64、macOS arm64、Windows x86_64・arm64）を `~/.local/share/amonhen/engine/<中身のハッシュ>/` に送り込む（送ったら中身を確かめる。`AMONHEN_PUSH=0` で送らない、`AMONHEN_REMOTE_ENGINE` で場所を指定）。
+リポジトリのページの「SSH 接続を追加…」で接続先とパスを入れるか、`AmonHen ssh://[user@]host[:port]/path/to/repo`（ホームからなら `/~/src/repo`）。鍵か ssh-agent でパスワードなしにつながること。SSH 先では git の処理だけを `amonhen --stdio` が行う。SSH 先の `PATH` に同じビルドの `amonhen` があるか、同じビルドのものが前に置かれていればそれを使い、なければ同梱のエンジン（Linux x86_64・aarch64、macOS arm64、Windows x86_64・arm64）を `~/.local/share/amonhen/engine/<中身のハッシュ>/` に送り込む（送ったら中身を確かめる。`AMONHEN_PUSH=0` で送らない、`AMONHEN_REMOTE_ENGINE` で場所を指定）。
 
 Windows の SSH 先（その OpenSSH サーバ）にもつながり、既定のシェルは cmd.exe・PowerShell・pwsh のどれでもよい。ドライブの上のパスは `ssh://host/C:/src/repo`、ホームからなら `/~/src/repo`。エンジンは scp で `%LOCALAPPDATA%\amonhen\engine\<中身のハッシュ>\` に送り、既定のシェルが起動する。SSH 先のことは Windows PowerShell（Windows 10・11 にはいつもある）で読む。SSH 先の環境変数のページのログインシェルのスイッチは、Windows の SSH 先には当てはまらない。
 
@@ -40,7 +40,7 @@ Amon Hen は、設定 > Git > プログラムで選んだ git を動かす。選
 
 ## 共有の daemon
 
-Settings > パフォーマンスの「リポジトリを共有の daemon 越しに開く」か、一覧の右クリックの Open via Daemon で、手元の共有の daemon 越しに開く（`daemon:/path`・`daemon:ssh://host/path`）。CLI・VSCode 拡張と History・検索の索引・SSH のつながりを共有する。様子は Window > Activity の Daemon のタブか `amonhen daemon status`。
+Settings > パフォーマンスの「リポジトリを共有の daemon 越しに開く（SSH 先も）」か、リポジトリのページの右クリックの「共有の daemon 越しに開く」で、手元の共有の daemon 越しに開く（`daemon:/path`・`daemon:ssh://host/path`）。CLI・VSCode 拡張と History・検索の索引・SSH のつながりを共有する。様子は Window > Activity の Daemon のタブか `amonhen daemon status`。
 
 ## CLI
 
