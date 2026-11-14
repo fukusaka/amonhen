@@ -366,7 +366,7 @@ impl Git {
 
     /// 書き込み系。
     pub fn write(&self, args: &[&str]) -> Result<Vec<u8>> {
-        run(self.command(args), None)
+        retry_on_index_lock(args, || run(self.command(args), None))
     }
 
     /// 読み取り系で、標準入力を渡す。
@@ -378,7 +378,7 @@ impl Git {
 
     /// 書き込み系で、標準入力を渡す。
     pub fn write_with_input(&self, args: &[&str], input: &[u8]) -> Result<Vec<u8>> {
-        run(self.command(args), Some(input))
+        retry_on_index_lock(args, || run(self.command(args), Some(input)))
     }
 
     /// 読み取り系の `git log` で、出力を 1 行ずつ `on_line` に渡す（結果がなかなか出ない `log -G` でも、取り消しに応え、見つかった
@@ -444,6 +444,49 @@ impl Git {
         }
         Ok(())
     }
+}
+
+/// index の鍵を待つ長さ。ほかの git（エディタや利用者の端末の `git status` が index を書き残す、など）が一瞬だけ
+/// 持っている鍵とぶつかったら、この長さまで待ってやり直す。
+const INDEX_LOCK_WAIT: Duration = Duration::from_secs(1);
+
+/// 「index.lock: File exists」で失敗したら、少し待ってやり直す。やり直すのは、始めに index の鍵を取り、取れなければ
+/// 何も変えずに止まる命令だけ（rebase のように途中まで進んでから止まるものは、やり直すと別の失敗になる）。
+fn retry_on_index_lock(args: &[&str], mut run: impl FnMut() -> Result<Vec<u8>>) -> Result<Vec<u8>> {
+    let retries = args.iter().find(|a| !a.starts_with('-')).is_some_and(|a| {
+        [
+            "add",
+            "apply",
+            "checkout",
+            "commit",
+            "mv",
+            "read-tree",
+            "reset",
+            "restore",
+            "rm",
+            "switch",
+            "update-index",
+        ]
+        .contains(a)
+    });
+    let start = Instant::now();
+    let mut wait = Duration::from_millis(50);
+    loop {
+        match run() {
+            Err(e)
+                if retries && index_locked(&e.to_string()) && start.elapsed() < INDEX_LOCK_WAIT =>
+            {
+                std::thread::sleep(wait);
+                wait = (wait * 2).min(Duration::from_millis(200));
+            }
+            result => return result,
+        }
+    }
+}
+
+/// ほかの git が index の鍵を持っていて失敗した。
+fn index_locked(message: &str) -> bool {
+    message.contains("index.lock") && message.contains("File exists")
 }
 
 /// git を実行し、Activity に記録する（どのリポジトリで、何を、どれだけかかったか）。
@@ -1098,6 +1141,29 @@ mod tests {
             git.write(args).unwrap();
         }
         (tmp, git)
+    }
+
+    #[test]
+    fn waits_for_an_index_lock_another_git_holds_briefly() {
+        let (tmp, git) = repo();
+        std::fs::write(tmp.path().join("a.txt"), "1\n").unwrap();
+        let lock = tmp.path().join(".git/index.lock");
+        std::fs::write(&lock, "").unwrap();
+        let held = lock.clone();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            std::fs::remove_file(held).unwrap();
+        });
+        git.write(&["add", "a.txt"]).unwrap();
+        release.join().unwrap();
+        let staged = git.read(&["diff", "--cached", "--name-only"]).unwrap();
+        assert_eq!(String::from_utf8_lossy(&staged).trim(), "a.txt");
+        // 鍵が残ったままなら、待つのをやめて失敗を返す。
+        std::fs::write(&lock, "").unwrap();
+        let start = Instant::now();
+        let error = git.write(&["rm", "--cached", "-q", "a.txt"]).unwrap_err();
+        assert!(index_locked(&error.to_string()), "{error}");
+        assert!(start.elapsed() < Duration::from_secs(3));
     }
 
     #[test]

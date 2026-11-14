@@ -24,6 +24,8 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- Stage, Restore, Commit and other index writes wait up to a second when another git (an editor's `git status`, say)
+  briefly holds `index.lock`, instead of failing with "File exists".
 - GTK4 on Wayland: A tab dropped outside the app's windows (on the desktop or another app's window) opens in a new
   window instead of going back; Esc still cancels the drag.
 - Rebase and History edit confirmations say pushing afterwards needs Force Push only when the upstream has commits being
