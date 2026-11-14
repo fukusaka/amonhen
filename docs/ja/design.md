@@ -9,14 +9,14 @@ VSCode 拡張の Amon Hen と同じ操作感を、VSCode の UI 部品の制約�
 | 方針 | 内容 |
 | --- | --- |
 | 速度 | 入力から表示まで 1 フレーム（120Hz で 8.3 ms）以内。UI スレッドで git を待たない |
-| 構成 | コアロジックは Rust、UI は各 OS のネイティブ。まず macOS（AppKit）だけ |
+| 構成 | コアロジックは Rust、UI は各 OS のネイティブ。まず macOS（AppKit）。その後 GTK4 のアプリ（`apps/gtk4`）と VSCode 拡張（`apps/vscode`）も作った |
 | 使い回し | コアは macOS / iOS / Windows / Linux / Android で動かす。FE に渡すデータの形式は FE ごとに最適なものを選べる |
 | 妥協しない | SwiftUI・Qt・WebView は重い画面に使わない。History と差分は自前で描画する |
-| 段階的に広げる | コアは同一プロセス・ローカル daemon・SSH 越しのどれでも動く形にしておき、最初は同一プロセスだけ作る |
+| 段階的に広げる | コアは同一プロセス・ローカル daemon・SSH 越しのどれでも動く形にしておく。最初は同一プロセスだけ作り、今は手元の共有の daemon（`amonhen --serve`）と SSH 先のエンジン（`amonhen --stdio`）もある |
 
 ### 要件
 
-拡張の要件（vscode-amonhen の `docs/design.md` の「概要」）をすべて引き継ぎ、以下を足す。
+拡張の要件（vscode-amonhen の `docs/design.md` の「概要」。今は [vscode.md](vscode.md)）をすべて引き継ぎ、以下を足す。
 
 | 要件 | 区分 |
 | --- | --- |
@@ -32,7 +32,7 @@ VSCode 拡張の Amon Hen と同じ操作感を、VSCode の UI 部品の制約�
 
 ### 非目標
 
-- macOS 以外の FE（コアと抽象化は最初から対応させ、全ターゲットのビルドを CI で通すが、FE は当面作らない）
+- macOS 以外の FE（コアと抽象化は最初から対応させ、全ターゲットのビルドを CI で通すが、FE は当面作らない）。その後、GTK4 のアプリ（`apps/gtk4`。Linux・BSD が本命）と VSCode 拡張（`apps/vscode`）は作った。iOS・Android・Windows のネイティブの FE はまだ作っていない
 - Qt・Electron・Tauri・Flutter による実装（検討の上で外した）
 - 全画面を Metal で描くこと（入力欄・設定・ダイアログは標準部品）
 
@@ -43,14 +43,14 @@ VSCode 拡張の Amon Hen と同じ操作感を、VSCode の UI 部品の制約�
 | コア | Rust | GC 停止がなく、メモリ配置を制御できる |
 | git の読み取り | gix（gitoxide）を同一プロセスで | spawn のコスト（1 回 約 6 ms）とパイプのコピーをなくす。commit-graph を直接読める |
 | git の書き込み | デスクトップは `git` を spawn、iOS / Android は gix と libgit2 | rebase・merge・push などは本家に任せて正しさと互換性を保つ。モバイルでは git を起動できない。`GitBackend` で差し替える。git は 2.23 以降（`git switch`）。より新しい git の機能は、あるときだけ使い、なければ古いやり方に戻す（`amonhen-backend-cli` の `MIN_GIT_VERSION`・`git_version`） |
-| 非同期 | tokio（I/O・プロセス）＋ rayon（CPU） | 古い要求は即キャンセルする |
+| 非同期 | 案: tokio（I/O・プロセス）＋ rayon（CPU）。作ったもの: 裏の処理とプロセスはふつうのスレッド（`std::thread`）、rayon はコミットを並列に読む `backend-gix` だけ（tokio は使っていない） | 古い要求は即キャンセルする（検索は `Repository::search_history_until`、daemon への要求は番号で） |
 | 差分 | imara-diff、色付けは tree-sitter | 色付けは後追いで、まず色なしで即表示 |
-| 橋渡し | C ABI（cbindgen）を土台に、UniFFI（Swift / Kotlin）、Linux・Windows は Rust から直接 | 操作系は型安全に、行データはゼロコピーで |
-| OS の機能 | `Platform` トレイトで FE から注入。ファイル監視は notify | メインスレッドの起こし方・認証情報・SSH・保存先を OS ごとに差し替える |
+| 橋渡し | C ABI（`crates/ffi-c`。ヘッダー `include/amonhen.h` は cbindgen で生成）。操作は JSON の命令としてここを通す（`amonhen_command`）。GTK4 は Rust からコアを直接使い、CLI と VSCode 拡張は FE 向けの窓口（`crates/front`）を使う。（作らなかった: UniFFI） | 行データはゼロコピーで、命令はどの FE でも同じ形 |
+| OS の機能 | 案: `Platform` トレイトで FE から注入（その形では作らなかった。「Platform」）。ファイル監視は notify（`crates/watch`） | メインスレッドの起こし方・認証情報・SSH・保存先を OS ごとに差し替える |
 | UI の骨格・重い画面 | AppKit | 表示行の使い回し、描画範囲、レイヤーを直接制御できる |
 | UI の周辺 | SwiftUI（`NSHostingView` で埋め込む） | 設定・ダイアログ・Welcome を手早く作る |
 | GPU | History と差分表示を Metal で描く（文字のグリフアトラスを共有）。ほかは Core Animation と標準部品 | History のラベル用に Metal の文字描画は必ず作るので、差分表示でも使い回す |
-| 最初の FE | macOS 14.4 以降、Apple Silicon | `os_sync_wait_on_address`、`NSView.displayLink` を使う |
+| 最初の FE | macOS 14.4 以降、Apple Silicon | `NSView.displayLink` を使う（`os_sync_wait_on_address` は共有メモリのリングのためのもので、リングは作らなかった） |
 | コアのビルド対象 | `aarch64-apple-darwin`、`aarch64-apple-ios`、`x86_64` / `aarch64-pc-windows-msvc`、`x86_64` / `aarch64-unknown-linux-gnu`、`aarch64-linux-android` | コアに OS 固有のコードが紛れ込むのを CI で防ぐ |
 
 ## 全体構成
@@ -65,7 +65,7 @@ VSCode 拡張の Amon Hen と同じ操作感を、VSCode の UI 部品の制約�
 │ Swift の薄い層: 見えている行だけ読む → 描く / 操作を Intent として送る       │
 └──────────────▲───────────────────────────────────────────────┬───────────────┘
                │ 変更通知（変わった行の範囲） / 行データ（ゼロコピー）│ Intent
-┌──────────────┴────────── CoreClient（通信手段を抽象化）──────────▼───────────────┐
+┌──────────────┴────── 通信（RemoteBackend・amonhen-front）──────▼───────────────┐
 │ ① 同一プロセス: C ABI ② 手元の daemon: ソケット＋共有メモリ ③ SSH: stdio     │
 └──────────────▲───────────────────────────────────────────────┬───────────────┘
 ┌──────────────┴──────────────────── Rust コア ─────────────────▼───────────────┐
@@ -82,6 +82,8 @@ VSCode 拡張の Amon Hen と同じ操作感を、VSCode の UI 部品の制約�
 │ search  log・pickaxe 検索（rayon で並列）                                    │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
+
+作ったものでは、箱はコードに次のように当たる。`CoreClient` はない。macOS のアプリ（C ABI 越し）と GTK4 のアプリ（Rust から）は自分のプロセスにコアを持ち、`daemon:`・`ssh://` の場所なら、コアが `GitBackend` の裏の `RemoteBackend` で共有の daemon や SSH 先のエンジンにつなぎ、命令は daemon のコアに任せる（`GitBackend::delegate`）。CLI と VSCode 拡張は `amonhen-front` を通る（同じプロセスなら `InProcess`、または共有の daemon の FE 向けの窓口）。`platform` の行は作らなかった（「Platform」）。index は History のキャッシュ（`crates/core/src/cache.rs`）、graph は `graph.rs` と `lanes.rs`、oplog は `undo.rs`、search は文字の索引（`amonhen_model::search::TextIndex`）と内容の `git log -G` で、rayon は使わない。
 
 ### 画面構成
 
@@ -110,7 +112,7 @@ UI と操作の見直し（タブ、ブックマーク、設定、ツールバ�
 
 ### リポジトリ構成
 
-拡張（vscode-amonhen）とは別のこのリポジトリで作る。
+このリポジトリで作る。VSCode 拡張は、もとは別のリポジトリ（vscode-amonhen）だったが、履歴ごと `apps/vscode` に取り込んだ。
 
 ```
 crates/
@@ -126,26 +128,31 @@ crates/
   remote/            daemon との通信（フレーム・要求の形）、RemoteBackend、Server、共有の daemon につなぐ・
                      共有メモリ（local・shm）、SSH で送り込む（ssh）
   daemon/            daemon（エンジン amonhen の --stdio: SSH 先、--serve: 手元の共有の daemon）
+  front/             FE 向けの窓口（命令と答えは JSON、大きなデータはレコード。docs/front.md）。同じプロセスでも daemon 越しでも
   ffi-c/             C ABI ＋ cbindgen のヘッダー
   cli/               CLI（amonhen）
+  commands/          FE に共通の操作の表（メニュー・ツールバー・ショートカット）
+  assist/            手元の CLI（Claude Code・Codex）による AI の呼び出し、プロンプト、結果のキャッシュ
 apps/
   macos/             SwiftPM のパッケージ（AmonhenKit と、AppKit のアプリ）
+  gtk4/              GTK4 のアプリ（gtk4-rs。Cargo の workspace は別）
+  vscode/            VSCode 拡張（TypeScript）
 ```
-後で足すもの: `backend-git2/`（モバイル向け）、Swift / Kotlin 向けのバインディング。
+後で足すもの: `backend-git2/`（モバイル向け）、Swift / Kotlin 向けのバインディング（作らなかった: C ABI と JSON の命令で済ませている）。
 ## データ設計
 
 ### 不変のスナップショット
 
 - コアは状態が変わるたびに新しいスナップショットを作り、`arc-swap` で公開する。公開したものは書き換えない。UI の読み取りにロックは要らない。
-- 行データは 4096 行ごとのチャンクに分け、変わったチャンクだけ作り直す（残りは前の世代と共有）。
+- 行データは 4096 行ごとのチャンクに分け、変わったチャンクだけ作り直す（残りは前の世代と共有）。（作らなかった: History のスナップショットはコミットの表とレイアウトの全体を持ち、変化したら前の History の仕事を使って新しいものを作る。走査は既知のコミットで止まり、レイアウトは 4096 行ごとのチェックポイントで収束する。行の文字はスナップショットに入れず、FE が 256 行ずつ頼む。）
 - 各スナップショットは `generation` を持つ。UI は世代番号で古いデータでの描画を検出する。
 
 ### 内部モデルとプロジェクション
 
 - 内部モデルは git の処理と計算に都合の良い形だけを持ち、FE を知らない。文字列は gix が展開した `Arc<[u8]>` を位置と長さで参照し、コピーしない。
-- FE は接続時に `FrontendProfile`（文字列の符号化・必要な列・GPU の頂点形式・配置の揃え方）を宣言する。プロジェクション層がその形にチャンク単位で変換する。
-- 変換するのは見えている範囲と先読みの範囲だけ。結果は「世代＋チャンク＋形式」でキャッシュし、変わっていないチャンクは前の世代と共有する。同じ形式の FE が複数あれば共有する。
-- 変換結果は形式ごとに永続キャッシュにも書き、次の起動では mmap するだけにする。内部の永続キャッシュ（チェックポイント、ref の索引など Rust の中で閉じるもの）は rkyv を使ってもよいが、FE に渡す形は自前で定義する（rkyv は配置が言語をまたいで文書化されておらず、文字列も UTF-8 固定のため）。
+- FE は接続時に `FrontendProfile`（文字列の符号化・必要な列・GPU の頂点形式・配置の揃え方）を宣言する。プロジェクション層がその形にチャンク単位で変換する。作ったものでは、文字列の符号化・列・ページ境界への揃えを持ち（GPU の頂点形式はない）、`MACOS`（UTF-16）、`GTK` と `WEB`（UTF-8。FE 向けの窓口用）の 3 つがある。ページ境界への揃えは宣言だけで、まだ何も使っていない。
+- 変換するのは見えている範囲と先読みの範囲だけ。結果は「世代＋チャンク＋形式」でキャッシュし、変わっていないチャンクは前の世代と共有する。同じ形式の FE が複数あれば共有する。（作らなかった: コアは頼まれた開始と数の `HistoryChunk` をその場で作り（`Repository::history_chunk`）、チャンクは FE がそれぞれ持つ。macOS と GTK4 のアプリは見えている所に近い 24 個。）
+- 変換結果は形式ごとに永続キャッシュにも書き、次の起動では mmap するだけにする。内部の永続キャッシュ（チェックポイント、ref の索引など Rust の中で閉じるもの）は rkyv を使ってもよいが、FE に渡す形は自前で定義する（rkyv は配置が言語をまたいで文書化されておらず、文字列も UTF-8 固定のため）。（作らなかった: 永続キャッシュが持つのはコミットの表（ID・コミットの時刻・親）と並び順ごとの表を、ふつうの列のファイルにしたものだけで、変換の結果・レイアウト・チェックポイントは持たない。rkyv は使っていない。）
 - History のキャッシュ（`crates/core/src/cache.rs`、フォルダ）の名前は、リポジトリと形式の指紋で決める。形式の指紋は中身を決めるソース（`cache.rs`、`graph.rs`、`CommitGraph`、amonhen-layout のレコード）のハッシュで、`crates/core/build.rs` が作る。並んで動く形式の違うビルド（開発中のビルドの daemon とリリースの daemon など）は、互いのキャッシュを書き換えずに別のフォルダを使い、ほかの形式のキャッシュを読むこともない。同じリポジトリのほかの形式のキャッシュ（と、前の 1 つのファイルの形式）は、7 日書かれていなければ消す。
 
 ### History の永続キャッシュ
@@ -188,7 +195,7 @@ linux で測った書き込み（`crates/core/examples/cache_writes.rs`）: コ�
 - データは列ごとの配列（SoA）で持つ。FE が列を選ぶのはポインタを選ぶだけで、詰め直さない。
 - 文字列は「ASCII なら共通のバイト列、それ以外だけ FE の好む符号化」に統一する。ASCII はそのまま UTF-8 でも Latin-1 でもあるので、大半の文字列（ハッシュ、パス、英語のメッセージ、ブランチ名）は全 FE でコピーなし。変換が要るのは ASCII 以外の文字列を UTF-16 系の FE に渡すときだけで、展開済みバッファから FE 向けの領域へ直接 1 回だけ書く。
 - 参照はポインタではなく領域の先頭からのオフセットで持つ（共有メモリ・ファイル・ネットワークでそのまま通用させるため）。別プロセス・リモートでは、連続した領域に集める処理と符号化の変換を同時に行い、書き込みを 1 回にする。
-- チャンクの領域は全 FE でページ境界に揃えて確保する（`MTLBuffer(bytesNoCopy:)`、`VK_EXT_external_memory_host` でそのまま GPU に見せるため）。独立 GPU では PCIe 越しの転送 1 回だけは避けられない。
+- チャンクの領域は全 FE でページ境界に揃えて確保する（`MTLBuffer(bytesNoCopy:)`、`VK_EXT_external_memory_host` でそのまま GPU に見せるため）。独立 GPU では PCIe 越しの転送 1 回だけは避けられない。（作らなかった: コアの配列をそのまま GPU に見せる FE はない。macOS のアプリは見えている行のインスタンスを毎フレーム書く。「描画（Metal）」）
 - 原理的に残る処理は「git オブジェクトの展開」と「描画」だけ。どちらも 1 回きりにしてキャッシュする。
 
 | FE | 文字列 | コピーなしの受け渡し | 描画 |
@@ -197,13 +204,16 @@ linux で測った書き込み（`crates/core/examples/cache_writes.rs`）: コ�
 | Windows | ASCII＋UTF-16 | UTF-16 はそのまま `PCWSTR`。ASCII は描画時に見えている行だけスタック上で広げる | Direct2D / D3D ＋ DirectWrite |
 | Linux | UTF-8 | UI も Rust（gtk-rs）で書き、FFI なしで参照する | GTK4（GSK）/ Vulkan |
 | Android | ASCII（Latin-1）＋UTF-16 | JNI の `NewDirectByteBuffer`。Java の `String` は作らず、バッファを参照する `CharSequence` を描画 API に渡す | Compose / Canvas、必要なら Vulkan |
-| VSCode / Web | UTF-16 または UTF-8 | daemon 経由の `ArrayBuffer`、または WASM のメモリを直接参照 | Canvas / WebGL |
+| VSCode / Web | UTF-16 または UTF-8 | daemon 経由の `ArrayBuffer`、または WASM のメモリを直接参照（WASM は作らなかった。拡張は FE 向けの窓口から UTF-8 のレコードを読む） | Canvas / WebGL |
 
 同一プロセスでの書き込み回数は、数値の列・グラフ・ASCII の文字列が全 FE で 0 回、ASCII 以外の文字列が UTF-8 の FE で 0 回・UTF-16 系の FE で 1 回（変わったときだけ）になる。
 
 ### 変更通知
 
-- コアの作業スレッドから SPSC のリングバッファ（`rtrb`）にイベントを積み、`Platform` から受け取った waker で FE のメインスレッドを起こす。macOS / iOS は `DispatchSource`（`.data_add`）で、合図が自動でまとまるので UI の更新は 1 フレームに 1 回で済む。ほかの OS は `PostMessage`（Windows）、GLib のメインループ（Linux）、Looper / Handler（Android）。
+- コアの作業スレッドから SPSC のリングバッファ（`rtrb`）にイベントを積み、`Platform` から受け取った waker で FE のメインスレッドを起こす。macOS / iOS は `DispatchSource`（`.data_add`）で、合図が自動でまとまるので UI の更新は 1 フレームに 1 回で済む。ほかの OS は `PostMessage`（Windows）、GLib のメインループ（Linux）、Looper / Handler（Android）。（作らなかった: リングも waker も。）
+- 作ったもの: 監視（`amonhen-watch`、notify）が短い間の変化をまとめ、変わった種類（ref・index・作業ツリー・設定）を、自分のスレッドから FE のコールバックで知らせる。daemon 越しなら daemon の知らせが代わりになる（`subscribe_changes`。FE 向けの窓口では通知のフレーム `{"changes": <ビット>}`）。
+  - macOS: C ABI の `amonhen_repo_watch` を AmonhenKit の `RepositoryWatch` が包み、コールバックからメインアクターに移って（`Task { @MainActor }`）読み直す。
+  - GTK4: コールバックはビットをチャンネルでリポジトリの読み込みのスレッドに送り、そのスレッドがたまった分をまとめて読み直し、結果をメインループに渡す。
 
 ### 別プロセス・リモートにするとき
 
@@ -321,12 +331,15 @@ iOS / Android では `git` を起動できないので、git の操作をトレ�
 | `GixBackend` | 読み取りは全 OS。書き込みも gix が対応した操作から順に移す |
 | `CliBackend` | デスクトップでの書き込み（rebase・merge・push）。正しさを優先 |
 | `Git2Backend`（libgit2） | モバイルで gix が未対応の書き込み（merge・push など）を補う |
+| `RemoteBackend` | 共有の daemon 越し・SSH 先（`crates/remote/src/client.rs`）。向こうに頼み、向こうは自分のバックエンドで動かす |
+
+作ったものでは、読み取りと書き込みは別のトレイトにした。`GitBackend`（`crates/model/src/backend.rs`）は読み取りで、`GixBackend`（`crates/backend-gix`）と `RemoteBackend` が実装する。書き込み・ネットワークなど git が要るものは `Operations`（`crates/model/src/ops.rs`）で、`git` を spawn する `amonhen_backend_cli::Git`（`CliBackend` の役目。その名前のものはない）と、daemon 越しの `RemoteOperations` が実装する。`Git2Backend` は作らなかった。
 
 非対話 rebase も、デスクトップは `GIT_SEQUENCE_EDITOR` で todo を差し込む方式、モバイルは gix / libgit2 でコミットを積み直す方式と、バックエンドごとに実装する。
 
 ### Platform
 
-FE が実装してコアに渡す。
+FE が実装してコアに渡す。（案のとおりには作らなかった: `crates/platform` の `Platform` トレイトは `waker` と `cache_dir` だけで、実装するものも呼ぶものもない。）
 
 | 機能 | macOS / iOS | Windows | Linux | Android |
 | --- | --- | --- | --- | --- |
@@ -336,10 +349,18 @@ FE が実装してコアに渡す。
 | SSH | OS の ssh / russh（iOS） | OS の ssh | OS の ssh | russh |
 | 保存先 | `~/Library/Caches/<バンドル ID>` など | `%LOCALAPPDATA%` | `$XDG_CACHE_HOME` | アプリの cache ディレクトリ |
 
+作ったものでの実際:
+
+- メインスレッドの起こし方: コールバックはコアや監視のスレッドから来て、FE がそれぞれ自分でメインスレッドに移る（「変更通知」）。
+- ファイル監視: `amonhen-watch`（notify）を FE が直接使う。
+- 認証情報: git の credential helper そのもの。git やそれが動かす ssh がパスワードやパスフレーズを尋ねるときは、`amonhen-backend-cli` が `GIT_ASKPASS`・`SSH_ASKPASS` を、`AMONHEN_ASKPASS` で渡された FE のダイアログ（macOS のアプリの `amonhen-askpass`、GTK4 のアプリの `--askpass`）に向ける。
+- SSH: OS の `ssh`（と `scp`）を `crates/remote` が使い回しの接続（ControlMaster）で動かす。`AMONHEN_SSH` で差し替えられる。
+- 保存先: `amonhen_remote::local::cache_dir` が決め、アプリ・CLI・daemon で同じ（`~/Library/Caches/io.github.fukusaka.amonhen`、`%LOCALAPPDATA%\amonhen\cache`、`$XDG_CACHE_HOME/amonhen`）。
+
 ### バインディング
 
 - C ABI（`cbindgen` でヘッダーを生成）がすべての土台。速さが要る経路（行データ・グラフ・通知）はここを通す。
-- UniFFI で Swift（macOS / iOS）と Kotlin（Android）向けの型付き API を生成する。
+- UniFFI で Swift（macOS / iOS）と Kotlin（Android）向けの型付き API を生成する。（作らなかった: 操作は JSON の命令として C ABI を通し（`amonhen_command`。コアの `run_json`）、残りは AmonhenKit が Swift で手で包む。）
 - Linux（gtk-rs）と Windows（windows-rs で UI も Rust にする場合）は Rust から直接使う。
 
 ## History のグラフ
@@ -355,23 +376,23 @@ FE が実装してコアに渡す。
 ### 描画（Metal）
 
 - 点・線・曲線・ラベルの背景を四角形のインスタンスとして、1 回の描画命令で描く。形は fragment シェーダーの SDF で描き、解析的にアンチエイリアスする。
-- インスタンスは表示範囲 ± 数画面分を GPU に置き、スクロールでは定数バッファのオフセットだけを変える。
+- インスタンスは表示範囲 ± 数画面分を GPU に置き、スクロールでは定数バッファのオフセットだけを変える。（作らなかった。後で: 毎フレーム、見えている行の分だけインスタンス（数 KB）を作り直し、3 つのバッファに順に書く。GPU が読んでいるものに書かないため。）
 - グラフと文字は、専用の描画のスレッド（`HistoryRenderThread`）で描いて出す。メインスレッドは描くもの（インスタンス）を渡すだけで、描画先を取り、描き、出すのはそのスレッドだけ。Core Animation の反映を待たず（`presentsWithTransaction` を切る）、画面の切り替えを待つ列にも並べない（`displaySyncEnabled` を切る）。`CAMetalLayer.maximumDrawableCount = 3`（2 だと 120Hz で速くスクロールしたときに描画先を待った）。測った値は計測の記録にある。
 
 ### 入力
 
-- `scrollWheel` を直接受け、イベントのタイムスタンプと速度から表示時刻の位置を予測して描く。慣性は `momentumPhase` に従う。
-- 当たり判定は行 = `y / 行の高さ`、レーン = `x / レーンの幅` で O(1)。
+- `scrollWheel` を直接受け、イベントのタイムスタンプと速度から表示時刻の位置を予測して描く。慣性は `momentumPhase` に従う。（作らなかった: スクロールは慣性も含めて標準の `NSScrollView` と `NSTableView` のもの。Metal のレイヤーはクリップビューの位置に付いていき、今の位置で描く。）
+- 当たり判定は行 = `y / 行の高さ`、レーン = `x / レーンの幅` で O(1)。（作ったものでは、行は表が求める（`row(at:)`、行の高さは一定）。レーンは魚眼でそれぞれ幅が違い（`GraphRenderer.laneX`）、レーンでの当たり判定はしていない。）
 
 ### 表現の工夫
 
 - 幹線を太く、枝を細く描く。
-- ホバーしたコミットの祖先の道筋を強調し、ほかを薄くする（祖先判定は Rust でビット集合を作り、GPU にはテクスチャ 1 枚で渡す）。
-- ブランチに焦点を当てるモード、マージ済みブランチの折りたたみ。
-- レーンが多いときは未使用レーンを詰め、ホバー位置の周辺を魚眼で広げる。
-- 未コミットの変更を先頭の点線の仮ノードで、stash を専用の形で、ahead / behind の区間を色分けで示す。
-- レイアウトが変わったら新旧をコミット ID で対応付け、頂点シェーダーで位置を補間してアニメーションする。
-- スクロールバーにグラフの密度（コミットの頻度、ブランチの活動量）を描く。
+- ホバーしたコミットの祖先の道筋を強調し、ほかを薄くする（祖先判定は Rust でビット集合を作り、GPU にはテクスチャ 1 枚で渡す）。作ったもの: ホバーではなく選んだコミットで（ホバーのたびには重い）、描く行の分だけ求め（`LineageWindow`。計測の記録）、テクスチャではなくインスタンスごとの不透明度にする。
+- ブランチに焦点を当てるモード、マージ済みブランチの折りたたみ。History を ref の履歴に絞る（ref を押す）ことと、折りたたみ（`crates/core/src/fold.rs`）として作った。
+- レーンが多いときは未使用レーンを詰め、ホバー位置の周辺を魚眼で広げる。作ったものでは、魚眼はホバー位置ではなく見えている範囲に従う（`crates/core/src/lanes.rs`。計測の記録）。
+- 未コミットの変更を先頭の点線の仮ノードで、stash を専用の形で、ahead / behind の区間を色分けで示す。（作らなかった。）
+- レイアウトが変わったら新旧をコミット ID で対応付け、頂点シェーダーで位置を補間してアニメーションする。（この形では作らなかった: 見えている範囲が変わったとき、レーンの位置とグラフの列の幅を約 0.15 秒で動かす。補間は CPU で行う。）
+- スクロールバーにグラフの密度（コミットの頻度、ブランチの活動量）を描く。History の右端の帯として作った（実装順序の 13）。
 
 ## 差分表示
 
@@ -380,7 +401,7 @@ FE が実装してコアに渡す。
   2. CTRun からグリフ番号・位置・フォントを取り出す。
   3. 未登録のグリフだけ `CTFontDrawGlyphs` でラスタライズしてアトラスに足す（OS と同じ描画処理なので見た目が揃う）。絵文字はカラーのアトラスに分ける。
   4. グリフ 1 つを四角形のインスタンス 1 つとして、1 回の描画命令で描く。横位置は 1/4 ピクセル単位に丸める。
-- CTLine は「世代＋行番号」でキャッシュし、スクロールでは History と同じく定数のオフセットだけを変える。
+- CTLine は「世代＋行番号」でキャッシュし、スクロールでは History と同じく定数のオフセットだけを変える。作ったものでは、並べた行は表示中の差分の行ごとに持ち（差分か画面の倍率が変われば捨てる）、History と同じく毎フレーム見えている行のグリフのインスタンスを書き直す。
 - ファイル内容は gix が展開した `Arc<[u8]>` を差分計算・色付け・表示で共有する。
 - テキスト選択・コピー・検索・右クリックメニュー・hunk / 行単位の stage を自前で実装する。
 
@@ -546,14 +567,14 @@ rebase と History の編集（reword・squash・fixup・drop・edit・split・m
 | --- | --- |
 | 起動して History を表示 | 数 ms（永続キャッシュあり） |
 | 130 万コミット（linux）の全レイアウト | 裏で 100 ms 前後 |
-| スクロール中の GPU へのデータ転送 | 定数 1 つ |
-| 1 フレームの描画命令 | History は 1 回 |
+| スクロール中の GPU へのデータ転送 | 定数 1 つ（届いていない: 見えている行のインスタンス、数 KB を毎フレーム書く） |
+| 1 フレームの描画命令 | History は 1 回（今は 2 回: グラフと文字は別のレイヤーで、それぞれ 1 回） |
 | 入力から GPU が描き終えるまで | 8.3 ms 以内（表示はさらに WindowServer の合成で 2 フレーム後） |
 | Rust と Swift の境界のコスト | 1 フレームあたり µs 未満 |
 
-- Rust は criterion、Swift は `os_signpost` ＋ Instruments で計測する。
-- 入力イベントのタイムスタンプから `MTLDrawable.addPresentedHandler` の表示時刻までを常に計測し、デバッグ表示に出す。
-- CI で linux・chromium 規模のリポジトリを使い、起動時間・フレーム落ち・入力遅延の悪化を検出する。
+- Rust は criterion、Swift は `os_signpost` ＋ Instruments で計測する。作ったものでは、Rust は `crates/*/examples` の例でも測り、アプリは自分で測る: `--measure-scroll` と `--measure-select N`、1 フレームの中の処理ごとの時間（`FrameProfile`）。
+- 入力イベントのタイムスタンプから `MTLDrawable.addPresentedHandler` の表示時刻までを常に計測し、デバッグ表示に出す（`--show-latency` でウィンドウのタイトルの下に出す）。
+- CI で linux・chromium 規模のリポジトリを使い、起動時間・フレーム落ち・入力遅延の悪化を検出する。（作らなかった: CI では動かさず、下の計測の記録は手で測ったもの。）
 - `CFString` の NoCopy が実際にコピーしていないことを確かめる。`apps/macos/Tests` で、UTF-16 は `CFStringGetCharactersPtr` が元の配列を返すこと、ASCII は元のバッファを書き換えると内容も変わることをテストしている。短い ASCII 文字列は CoreFoundation が tagged pointer（ポインタの値に文字を埋め込む）にするので参照はしないが、ヒープ確保もないので問題ない。
 
 ### 計測の記録
@@ -567,7 +588,7 @@ linux（1,485,021 コミット、ref 952 個、Apple Silicon、release ビルド
 | グラフのレイアウト（レーン 671 本） | 0.23 s |
 | 起点が変わらないときの読み直し | 9 ms |
 | 1 コミット足した後の読み直し | 139 ms |
-| アプリで開いて History を表示（キャッシュあり、102 MB） | 18 ms |
+| アプリで開いて History を表示（最初の 1 つのファイルの形式のキャッシュあり、102 MB） | 18 ms（今の形式では、コアで読んで上の行をレイアウトするまで 9.8〜11.6 ms。「History の永続キャッシュ」） |
 | 同上（キャッシュなし） | 2.4 s |
 | スクロール中のメインスレッドの処理 p50 / p95 | 2.0 / 2.6 ms（フレーム落ち 0） |
 
@@ -629,7 +650,7 @@ History 画面のスクロール（`AmonHen <repo> --measure-scroll`、600 フ�
 | coreutils | 1.9 / 2.5 ms | 2.2 / 2.8 ms | 33.3 ms | 0 |
 | android/development | 2.2 / 4.2 ms | 2.3 / 4.2 ms | 33.3 ms | 0 |
 
-- 表示までは 2 フレーム。ウィンドウ表示では、WindowServer が次の vsync で合成し、その次の vsync で画面に出るので、アプリ側では縮められない。`presentsWithTransaction` の有無でも変わらなかったので、表とグラフを同じフレームで動かせる有効の方を使う。
+- 表示までは 2 フレーム。ウィンドウ表示では、WindowServer が次の vsync で合成し、その次の vsync で画面に出るので、アプリ側では縮められない。`presentsWithTransaction` の有無でも変わらなかったので、最初は表とグラフを同じフレームで動かせる有効の方を使った。今は下の描画のスレッドが、これを切り、`displaySyncEnabled` も切って出す（`presentImmediately`）。
 - History のグラフと文字は、1 本の描画のスレッド（`HistoryRenderThread`。Chrome のコンポジタや Flutter のラスタのスレッドと同じ分け方）で描くようにした。メインスレッドは描くもの（インスタンスの列）を組み立てて渡すだけで、描き先を取り、命令を作り、画面に出すのはそのスレッドだけで行う。`presentsWithTransaction` は使わず、画面の切り替えを待つ列に並ばないよう `displaySyncEnabled` を切る。linux で 1 フレームに 40 行なら、メインスレッドは p50 2.5 ms（表と一緒に出すと 3.9 ms）で、絵が WindowServer に届くまで p50 10.7 ms。この時刻は WindowServer が受け取った時刻で、光る時刻ではない（60Hz の切り替えにそろうのは 7〜42% で、表と一緒に出すとすべてそろう）。表と一緒に出す目印の層と比べると、グラフと文字は表と同時か、18〜27% のフレームで 1 フレーム先に出て、遅れることはない。メインスレッドからすぐ出すと描き先を待って止まり（1 フレーム p50 13.3 ms）、切り替えを待つ列に並べると画面に出るまで 4 フレームかかった。
 - 最大値（8〜12 ms）は、新しいチャンクの件名を同期で読む瞬間だった。裏で読んで前後のチャンクも先読みするようにして、p95 2.0 ms・最大 2.6 ms になった。
 - linux（140 万コミット）、120Hz のディスプレイ、1 フレームに 40 行ずつの速いスクロールでは、表のセル（NSTextField）を CPU で描く処理が CA のコミットの約 6 割を占め、600 フレームのうち表示できたのは 532（49 フレーム落ち）だった。描画先を 3 枚にし、件名・作者・日時をグラフと同じく Metal で描く（差分表示と共有するグリフアトラス、行ごとに並べたグリフをキャッシュ）ようにして、599 フレーム表示（1 フレーム落ち）、メインスレッドの処理は p50 2.1 / p95 2.5 ms になった。
@@ -659,7 +680,7 @@ daemon 越し（`cargo run --release -p amonhen-remote --example daemon_cost -- 
 - 転送量を減らした後（通信路の上の大きさ）: チャンク 502 KB → 13 KB、変わったファイルと最初の差分 127 KB → 56 KB、件名の検索 1.37 GB → 5 MB。History の初回は 47 MB（コミット ID はほとんど縮まない）で、以後は手元のキャッシュから差分だけ。
 - 圧縮は zstd ではなく LZ4（`lz4_flex`、Rust だけで書かれている）にした。zstd は C のコードを含み、全ターゲットの型検査と Linux 用の静的リンクで C コンパイラが要るため。
 - エンジンの置き場所はどのマシンでも同じ形にする: `${XDG_DATA_HOME:-~/.local/share}/amonhen/engine/<中身のハッシュ>/amonhen`（版ごとに並べて置け、隣の `engines` に SSH 先に送るほかの OS と CPU のものも置く）、`current` がいちばん新しい版を指し、`~/.local/bin/amonhen` が `current/amonhen` を指す。アプリ（起動するたびに裏で）・`scripts/install-app.sh`・tar.gz を展開した人は `amonhen install` で自分を置き、今の `current` より古くなければ `current` を向け直す（`0.1.0` < `0.1.1-snapshot.N` < `0.1.1`）。共有の daemon は `amonhen engine` が出すもの（`current` が同じビルドならそれ、違えば自分）で起動するので、どの FE が先に起動しても同じ daemon になる（`crates/cli/src/install.rs`）。開発中のアプリからは置かない。
-- SSH 先で動くのはエンジン（`amonhen`。CLI と daemon を兼ねる 1 つの実行ファイル）で、x86_64 と aarch64 の Linux 向けは musl で静的リンクしたもの（`scripts/build-engine.sh`、リンクは zig、5〜6 MB）。使う順は `AMONHEN_REMOTE_ENGINE` で指定したもの → SSH 先の `PATH` の `amonhen`（同じビルドなら）→ そこに置いてある同じビルドのもの（エンジンのフォルダの `build` にビルドの指紋を置く。送ったときと `amonhen install` が書くので、ほかの機械や VSCode 拡張が置いたものも、手元のエンジンを読まず送らずに使う）→ 前に送ったもの（中身が同じ）→ 送り込む（`AMONHEN_PUSH=0` で止める）。送るのは、同梱の SSH 先の OS と CPU 向けのもの、SSH 先が手元と同じ種類なら動いているエンジンのうち、このビルドのもの。送る先は `~/.local/share/amonhen/engine/<中身のハッシュ>/amonhen`（手元の置き場所と同じ形）で、書いたら SSH 先で `sha1sum`・`shasum` で中身を確かめる。ほかの版は消さず（違う版の Amon Hen が同じ SSH 先を使っても取り合いにならない）、使うたびに `used` の印を更新し、30 日使われていないものだけを片付ける。使っているエンジンと用意のしかたは `amonhen daemon status` と Activity に出す（VSCode の Remote-SSH・Zed のリモート開発と同じ形）。
+- SSH 先で動くのはエンジン（`amonhen`。CLI と daemon を兼ねる 1 つの実行ファイル）で、x86_64 と aarch64 の Linux 向けは musl で静的リンクしたもの（`scripts/build-engine.sh`、リンクは zig、5〜6 MB）。使う順は `AMONHEN_REMOTE_ENGINE` で指定したもの → SSH 先の `PATH` の `amonhen`（同じビルドなら）→ そこに置いてある同じビルドのもの（エンジンのフォルダの `build` にビルドの指紋を置く。送ったときと `amonhen install` が書くので、ほかの機械や VSCode 拡張が置いたものも、手元のエンジンを読まず送らずに使う）→ 前に送ったもの（中身が同じ）→ 送り込む（`AMONHEN_PUSH=0` で止める）。送るのは、同梱の SSH 先の OS と CPU 向けのもの、SSH 先が手元と同じ種類なら動いているエンジンのうち、このビルドのもの。送る先は `${XDG_DATA_HOME:-~/.local/share}/amonhen/engine/<中身のハッシュ>/amonhen`（手元の置き場所と同じ形）で、書いたら SSH 先で `sha1sum`・`shasum` で中身を確かめる。ほかの版は消さず（違う版の Amon Hen が同じ SSH 先を使っても取り合いにならない）、使うたびに `used` の印を更新し、30 日使われていないものだけを片付ける。使っているエンジンと用意のしかたは `amonhen daemon status` と Activity に出す（VSCode の Remote-SSH・Zed のリモート開発と同じ形）。
 - 一緒に動くビルド: FE・共有の daemon・SSH 先のエンジンは、同じビルドどうしだけがつながる。ビルドの指紋（`amonhen_remote::BUILD_ID`）はワークスペースのソース（`crates/*/src` の下のすべて、各 crate の `Cargo.toml` と `build.rs`、ルートの `Cargo.toml` と `Cargo.lock`。改行は LF にそろえて読む）のハッシュで、`crates/remote/build.rs` が作る。`amonhen --version`（`(build …)`）、共有の daemon のソケットの名前、送る前に確かめるエンジンの中の印、挨拶に入れる。前は手で上げる通信の形の版を使っていたが、並んで進むブランチが違う形に同じ数を取り（#62 と #63 がどちらも 30）、上げ忘れると違う形を通してしまった。同じリリースのアプリ・VSCode 拡張・エンジンは同じソースから作るので、今までどおり 1 つの daemon を使う。ソースの違うビルドは、それぞれの daemon・SSH 先のそれぞれのエンジンで並んで動く。
 
 構文の色付け（`cargo run --release -p amonhen-syntax --example highlight -- <file>`、linux のファイル）:
@@ -678,7 +699,7 @@ History の行の文字（件名・作者・日時）のメモリ:
 - 256 行ずつのチャンクで読み、見えている所に近い 24 個（約 6,000 行）だけを覚える。遠いものは捨て、戻ってきたら読み直す（1 チャンク数 ms、裏で）。チャンクはコミットのオブジェクトの中身を指しているので、全部持つと linux では数 GB になる。
 - linux を上から下まで速くスクロールしたときの物理メモリ（`footprint`）は、捨てないと 8 秒で 4 GB まで増え続けたが、捨てるようにして 300〜380 MB で止まる。スクロールの速さは変わらない（メインスレッド p50 1.14 ms）。
 
-永続キャッシュ（`crates/core/src/cache.rs`）:
+永続キャッシュ（`crates/core/src/cache.rs`）。コミットの表とレイアウトを持っていた、最初の 1 つのファイルの形式のもの（今の形式とその値は「History の永続キャッシュ」）:
 
 | 項目 | 時間 |
 | --- | --- |
@@ -687,10 +708,10 @@ History の行の文字（件名・作者・日時）のメモリ:
 | android/development を開いて History を表示（キャッシュあり） | 3〜4 ms |
 | 同上（キャッシュなし、裏で読んで表示） | 約 400 ms |
 
-- 起点と HEAD が前回と同じなら、走査もレイアウトもしない（コミットは不変なので History も同じ）。
+- 起点と HEAD が前回と同じなら、走査はしない（コミットは不変なので History も同じ）。今はレイアウトを保存しないので、開いたときに上の行をレイアウトし、残りは裏で行う。
 - shallow clone では、境界のコミット（`.git/shallow`）を git と同じく親のないコミットとして読む。境界は History とそのキャッシュに持ち、変われば（`git fetch --deepen`・`--unshallow`）History を最初から読む。起点は動かなくても、前回の境界のコミットに親ができているため。根のコミットが `.git/shallow` に残っていても（`--deepen` で根に届くと git は残す）、取得していない親はないので境界に数えない。取り足すのはコアの `deepen`（`commits` なら `git fetch --deepen=<n>`、`since` なら `--shallow-since`）・`unshallow` の命令で、既定のリモートから Fetch と同じく動かす。shallow clone でなければ断り、Undo には記録しない。FE には `HistorySnapshot::boundary_rows`（FFI の `amonhen_history_boundary_rows`、FE 向けの窓口の `boundaryRows`）と、`commitInfo` の `parentsNotFetched` で伝える。
 - リポジトリの形はコアの `repositoryForm` で読む: shallow（`GitBackend::shallow`）、partial clone（`extensions.partialClone`、なければ `remote.<name>.partialclonefilter` のある remote を promisor とし、その filter。git 2.23 は `core.partialclonefilter` に書いた）、sparse checkout（`core.sparseCheckout`、cone mode は `core.sparseCheckoutCone`、フォルダは `info/sparse-checkout` から読む）、`git maintenance` に登録してあるか（作業ツリーのパスがユーザーの `maintenance.repo` にあるか）。`Operations::repository_form` が git を動かす機械で読むので、daemon 越しでも同じ。`fetchAllContents` は filter の設定を消して `git fetch --refetch`（git 2.36 から）を動かし、失敗したら filter を戻す。git 2.23 の形の `extensions.partialClone` は `remote.<name>.promisor` に移す。`sparseCheckout` は、外れるファイルに変更があれば断ってから `git sparse-checkout set --cone --stdin`（2.35 から。それより前は先に `init --cone`。2.25 から）。`treeFolders` は、フォルダを選ぶために HEAD のフォルダを読む（`git ls-tree`）。`maintenance` は、git を動かす機械で `git maintenance start`（入れる）か `git maintenance unregister`（切る。予定は登録したほかのリポジトリが使うので残す。start が書いた `maintenance.auto=false` は外し、commit などの後の git の自動の手入れが動くように戻す）を動かす。git 2.31 から（launchd は 2.31 から）。登録していないリポジトリを外すのは何もしない（新しい git は断る）。
-- 読み込み時間の大半は検査と索引の組み立て。mmap 自体はほぼ 0。必要なら索引もキャッシュに入れる。
+- 最初の形式では、読み込み時間の大半は検査と索引の組み立てで、mmap 自体はほぼ 0 だった。今の形式は、代わりに写したファイルから列をコピーする（「History の永続キャッシュ」）。
 
 Working Copy の status（`crates/core/examples/status.rs`、2 回目以降）:
 
@@ -708,20 +729,20 @@ Working Copy の status（`crates/core/examples/status.rs`、2 回目以降）:
 
 - linux（148 万コミット、線 174 万本）で、選んだコミットの祖先と光らせる線を History 全体について求めるのに 9〜25 ms。カーソルを合わせるたびに求めるには重いので、選んだときだけにしている。
 - macOS と GTK4 のアプリは、描く行の分だけ求める（`LineageWindow`。gitk が描く行ごとに聞くのと同じ）。行はトポロジー順なので、描く最後の行までの祖先はその間の行だけで、その範囲に重なる線はその範囲の合流だけで決まる。コミットを選んだらその場で見えている行の分を求めて同じフレームで描き、スクロールしたら続きから伸ばす。遠くへ飛んだときは 1 フレームに 15 万行（約 2 ms、最大 4 ms）までしか伸ばさず、描く行まで届くまでは強調せずに描く（linux の端まで一度に伸ばすと 20 ms かかる）。光らせる線は線の数だけの列に持つ（0 で埋めた列は、触るまでメモリを取らない）。linux ではほとんどの線が光り、表に入れると 20 万行で 11〜31 ms かかった。
-- 以前は History 全体を裏で求め、求まったら描いていた。キーから強調が画面に出るまで 60Hz の画面（m1max）で 83〜86 ms かかり、その大半はメインスレッドの次のフレームを 2 回待つ時間だった（macOS 26 では、キーの処理中にメインキューに頼んだ仕事は次のフレームまで動かない）。描く行の分をキーの処理の中で求めると 52 ms（↓キー 20 回を 3 周した中央値。小さいリポジトリでも linux でも同じ）。GTK4 も History 全体を裏のスレッドで求めていた。Ubuntu 24.04（GNOME の Wayland、60Hz）で、キーから強調を含むフレームが出るまで 6 万コミットで 32.5 ms、60 万コミットで 32.9 ms だったのが、15.5 ms・16.1 ms になった（↓キー 20 回を 3 周した中央値、`GdkFrameTimings`）。スクロールは変わらない（メインスレッド p50 1.46 ms、表示まで 33.3 ms）。
+- 以前は History 全体を裏で求め、求まったら描いていた。キーから強調が画面に出るまで 60Hz の画面（M1 Max の Mac）で 83〜86 ms かかり、その大半はメインスレッドの次のフレームを 2 回待つ時間だった（macOS 26 では、キーの処理中にメインキューに頼んだ仕事は次のフレームまで動かない）。描く行の分をキーの処理の中で求めると 52 ms（↓キー 20 回を 3 周した中央値。小さいリポジトリでも linux でも同じ）。GTK4 も History 全体を裏のスレッドで求めていた。Ubuntu 24.04（GNOME の Wayland、60Hz）で、キーから強調を含むフレームが出るまで 6 万コミットで 32.5 ms、60 万コミットで 32.9 ms だったのが、15.5 ms・16.1 ms になった（↓キー 20 回を 3 周した中央値、`GdkFrameTimings`）。スクロールは変わらない（メインスレッド p50 1.46 ms、表示まで 33.3 ms）。
 - GTK4 は、macOS のような専用の描画のスレッドでは描かない（2026-11-14 に検討して見送った）。GTK のウィジェットはメインスレッドのもので、描く時期も出す時期もそこの frame clock が決め、別のスレッドから出す口はない。グラフを裏のスレッドでテクスチャに描いても、メインスレッドが軽くなるだけで、出るのは次のフレームのまま。強調はすでにそこ（約 16 ms）で出ている。`GtkGraphicsOffload`（GTK 4.14 から）は dmabuf を Wayland の subsurface に渡して GTK の合成を飛ばすが、渡すのはやはりメインスレッドのフレームの中。macOS の形にできるのは、`wl_surface` から自前の subsurface を作り、別のスレッドで EGL・Vulkan で描いて出す手だけで、Wayland 専用（X11 などは別に作る）になり、合成器ごとの違いや、文字・選択と足並みをそろえることも自分で抱える。それに比べて得るものが小さい。再開するなら、まずその subsurface の小さな試しで、Wayland で何 ms 縮むかを測る。
-- 線は子と親の行を持つ（`Edge::child`・`Edge::parent`、合流する線は `Edge::RIDER`）。線が 16 バイトから 24 バイトになり、linux のキャッシュは 103 MB から 117 MB になった（形式 2）。読み込み・書き込みの時間はほぼ変わらない。
+- 線は子と親の行を持つ（`Edge::child`・`Edge::parent`、合流する線は `Edge::RIDER`）。線が 16 バイトから 24 バイトになり、linux のキャッシュは 103 MB から 117 MB になった（レイアウトを保存していた、前の 1 つのファイルのキャッシュの形式 2。今のキャッシュは線を持たない）。読み込み・書き込みの時間はほぼ変わらない。
 - 同じ親を待つ線は、レーンの持ち主の縦線を共有する。合流した子だけが祖先なら、縦線は合流したところから下だけを光らせる（描くときに 2 つに分ける）。
 - 描くのは見えている範囲の線だけなので、速いスクロールのメインスレッドの時間は変わらない（p50 1.07 ms）。
 
 linux（148 万コミット）では、1 行を横切る線が中央値で 365 本、最大のレーン番号は中央値で 452（`crates/core/examples/layout.rs`）。トポロジー順（`git log --topo-order` と同じ並べ方）でも 303 本・637 で、並べ方では解決しない。そこで、見えている範囲に点のあるレーンだけを広く取り、線だけのレーンは細く薄い帯に詰め、何もないレーンは幅 0 にする（魚眼）。範囲が変わったときのレーンの動きは約 0.15 秒のアニメーションでつなぐ。行の文字はその行のグラフ（点と、その行を通る線。そのフレームに描いた位置）のすぐ右から始め、文字の左端は行ごとに違う（グラフから離れない）。グラフの列の幅も見えているレーンに要る分だけ取り（上限 120 pt）、広がるときはレーンと同じ速さで、狭まるときはゆっくり動かし、スクロール中にヘッダーが左右に揺れないようにする。
 
-実際のリポジトリ（`crates/core/examples/layout.rs`）では、coreutils（30,176 コミット）で 1.2 ms、android/development（34,261 コミット、起点 318 個）で 17 ms。後者はリリースブランチが多くレーンが 673 本まで広がるので、未使用レーンを詰める・魚眼で広げるなどの表現の工夫（実装順序の 13）が要る。
+実際のリポジトリ（`crates/core/examples/layout.rs`）では、coreutils（30,176 コミット）で 1.2 ms、android/development（34,261 コミット、起点 318 個）で 17 ms。後者はリリースブランチが多くレーンが 673 本まで広がるので、未使用レーンを詰める・魚眼で広げるなどの表現の工夫が要った。これは済んでいる（実装順序の 13。上に書いたもの）。
 
 ## 配布
 
 - arm64 の `.app` を GitHub Releases に置く。拡張と同じく `v*` タグの push で GitHub Actions がビルドして添付し、main への push で `snapshot` の pre-release を作り直す。
-- 署名は自己署名のコード署名用証明書で行う。ad-hoc 署名だとビルドのたびに身元が変わり、macOS のアクセス許可（フォルダへのアクセス、キーチェーンなど）が更新のたびにリセットされるため。証明書と秘密鍵は GitHub Actions の secret に置く。
+- 署名は GitHub Actions の secret に置いた証明書で行う。ad-hoc 署名だとビルドのたびに身元が変わり、macOS のアクセス許可（フォルダへのアクセス、キーチェーンなど）が更新のたびにリセットされるため。最初は自己署名のコード署名用証明書だったが、今は Developer ID Application の証明書で、正式版は公証もする（下）。
 - アプリ名は `Amon Hen`、バンドル ID は `io.github.fukusaka.amonhen`。バンドル ID は設定・キャッシュ・アクセス許可のひも付け先なので変えない。snapshot 版は `Amon Hen Snapshot`（`io.github.fukusaka.amonhen.snapshot`）にして、正式版と並べて入れられるようにする。
 - `.app` の組み立ては `scripts/build-app.sh [stable|snapshot]`（`dist/` に zip）。証明書は secret の `AMONHEN_CERT_P12`・`AMONHEN_CERT_PASSWORD`・`AMONHEN_CERT_NAME` から CI の一時キーチェーンに入れる（`scripts/import-signing-certificate.sh`）。
 - インストール・更新は `scripts/install-app.sh [--user|--system|--dir <フォルダ>] [stable|snapshot]`。`curl` で取得して（`gh` はいらない。clone せずに `curl … | sh` でも動く）`/Applications` に置く（`--user` なら `~/Applications`、`--dir` なら指定したフォルダ。どれも付けなければ今入っているところ）。quarantine 属性は付かず、アプリは公証もしてある。
@@ -730,9 +751,9 @@ linux（148 万コミット）では、1 行を横切る線が中央値で 365 �
 
 ## 既存の拡張との関係
 
-- 拡張は今のまま保守する。Standalone は別製品として作る。
-- 設計の考え方（spawn を減らす、分割取得、楽観的更新、Undo の操作ログ、非対話 rebase の todo 生成）はそのまま移す。非対話 rebase の手順（vscode-amonhen の `src/history/rebasePlan.ts`）は Rust に移植する。
-- daemon ができたら、拡張の git 実行層・状態管理層を daemon への接続に置き換えることを検討する（Remote-SSH では SSH 先で `amonhend --stdio` を起動する）。
+- 拡張は今のまま保守する。Standalone は別製品として作る。その後、拡張は履歴ごとこのリポジトリに取り込んだ（`apps/vscode`。設計は [vscode.md](vscode.md)）。
+- 設計の考え方（spawn を減らす、分割取得、楽観的更新、Undo の操作ログ、非対話 rebase の todo 生成）はそのまま移す。非対話 rebase の手順（今は `apps/vscode/src/history/rebasePlan.ts`）は Rust に移植する。
+- daemon ができたら、拡張の git 実行層・状態管理層を daemon への接続に置き換えることを検討する（Remote-SSH では SSH 先で `amonhend --stdio` を起動する）。作ったもの（実装順序の 18）: 拡張はエンジンを同梱し、既定では History・差分・操作を共有の daemon の FE 向けの窓口で行う（`amonhen --serve`。Remote-SSH では拡張ホスト・エンジン・git がどれも SSH 先で動くので、`--stdio` は使わない）。合うエンジンがないか `amonhen.daemon.enabled` を切ったときは、拡張自身の git 実行層で動く。`amonhend` は開発と試験用の daemon だけの実行ファイルとして残っている（`crates/daemon/src/main.rs`）。
 
 ## リスクと検証
 
@@ -740,10 +761,10 @@ linux（148 万コミット）では、1 行を横切る線が中央値で 365 �
 | --- | --- |
 | gix が書き込み系・特殊な設定（reftable、sparse checkout、partial clone など）に追いつかない | 読み取りだけ gix、書き込みは git。読めない場合は git の spawn に落とす経路を残す |
 | 自前の差分表示で日本語入力・選択・アクセシビリティの作り込みが重い | 入力欄は標準の `NSTextView`。差分表示は読み取り専用にして、`NSAccessibility` は行単位で提供する |
-| UniFFI と C ABI の二本立てで境界が複雑になる | 行データ以外は UniFFI に寄せ、C ABI は History・差分・status の行取得だけにする |
+| UniFFI と C ABI の二本立てで境界が複雑になる | 行データ以外は UniFFI に寄せ、C ABI は History・差分・status の行取得だけにする。（UniFFI は使わなかった: 行データ以外は JSON の命令として C ABI を通す） |
 | プロジェクションの形式が増えるとテストの組み合わせが増える | 形式ごとに「内部モデルから変換 → 元に戻して比較」するテストを用意する。試作では macOS の形式だけ実装する |
-| モバイルで gix・libgit2 の書き込みが git と食い違う | 同じ操作を CliBackend と比べるテストを用意する。未対応の操作はモバイルでは出さない |
-| 共有メモリ・リングバッファでのメモリ安全性 | Swift 側は範囲を限定した API で包み、Rust 側は Miri と AddressSanitizer で境界をテストする |
+| モバイルで gix・libgit2 の書き込みが git と食い違う | 同じ操作を git CLI（`amonhen_backend_cli::Git`）と比べるテストを用意する。未対応の操作はモバイルでは出さない |
+| 共有メモリ・リングバッファでのメモリ安全性（リングは作らなかった） | Swift 側は範囲を限定した API で包み、Rust 側は Miri と AddressSanitizer で境界をテストする |
 | macOS 14.4 未満の端末 | 対象外とする |
 
 ## 実装順序
@@ -768,15 +789,15 @@ linux（148 万コミット）では、1 行を横切る線が中央値で 365 �
 - [x] 11. コミット編集（reword / squash / fixup / drop / reorder / split）とドラッグ＆ドロップ
 - [x] 12. 3-way マージ（コンフリクトごと・ファイルごとの解決、3 ペインのマージエディタ）
 - [x] 13. グラフ表現の工夫（祖先の強調、折りたたみ、魚眼、アニメーション、密度表示）。魚眼（`crates/core/src/lanes.rs`）、レーンの動きのアニメーション、選んだコミットの祖先の強調（`crates/core/src/lineage.rs`）、マージ済みブランチの折りたたみ（`crates/core/src/fold.rs`。各先端から最初の親だけを辿った幹を残し、取り込んだ側の数を merge の行に出す。右クリックで merge ごとに開く。View > Fold Merged Branches）、History の右端の密度の帯（区間ごとのコミットの頻度とブランチの活動量、見えている範囲の枠、押すとそこへ飛ぶ）も済み。linux（148 万コミット）で折りたたみとレイアウトが 47 ms（7.7 万行に）、密度が 10 ms（`crates/core/examples/fold.rs`）
-- [x] 14. 配布（GitHub Actions、snapshot、自己署名、install.sh）
+- [x] 14. 配布（GitHub Actions、snapshot、自己署名、install.sh）。今の署名は Developer ID で、正式版は公証する
 
 拡張:
 
 - [x] 15. CLI（`amonhen`、`crates/cli`）。UI なしでコアを使う。`amonhen [<path>]`・`amonhen open <path|ssh://…>` でアプリのタブに開く（アプリはフォルダと `amonhen://open?location=…` を受け取る）、`amonhen log`（コアのレイアウトで罫線のグラフ、点か曲線のあるレーンだけ列を取り、線が通るだけのレーンは ┆ にまとめる。`--fold`・`--branch`・検索の書き方）、`amonhen undo`（`--list`・`--peek`。アプリと同じ操作ログ）、`amonhen merge-file`（Magic Merge。残れば終了コード 1 で git の mergetool に使える）。History はアプリの永続キャッシュから始めるので、linux（148 万コミット）でも log が 85 ms。`scripts/install-app.sh` が `~/.local/bin/amonhen` にリンクを作る。コアでできることは CLI からすべて使える（VSCode 拡張やほかの FE が通る道を、先に CLI で通して確かめる）: `status`・`diff`（stage していない・`--staged`・`--combined` で行ごとの stage の印、コミット 1 つ・2 つ）・`show`・`stage`/`unstage`（`--rows` で差分の行ごと）・`discard`（行ごとにも。Undo できる）・`commit`・`refs`・`watch`（つないだまま変化の知らせを受ける）・`clone`・`run`（`run_json` の命令をそのまま。引数がなければ標準入力の 1 行 1 命令に 1 行ずつ答える、拡張が CLI を窓口にする形の試作）。どれも `--json` で FE が読む形を出す。`crates/cli/tests/cli.rs` で、手元で直接・`daemon:`・`ssh://`（偽の ssh）の 3 つの開き方に同じ命令を流し、同じに動くことを確かめる
-- [x] 16. 手元の共有の daemon（当初は XPC＋共有メモリの案。Unix ドメインソケット＋共有メモリにした。理由は「別プロセス・リモートにするとき」）。段階的に進める: ① 手元に常駐する共有の daemon（`amonhend --serve`、`crates/daemon/src/serve.rs`）。利用者ごとに 1 つ、Unix ドメインソケット（`$TMPDIR/amonhend-<ビルドの指紋の頭 8 文字>.sock`、0600）で待ち、つないだ相手が最初に送るパスのリポジトリを開く。同じリポジトリの `GitBackend` と監視はつないでいる相手のあいだで共有し、変化は全員に知らせる。だれもつないでいない状態が 10 分続いたら終わり、使うときにまた起動される。つなぐときに FE の環境のうち git・ssh が使うもの（`PATH`・`AMONHEN_ASKPASS`・SSH の agent・`GIT_*`）を送り、daemon はそのつながりの git・ssh をその環境で動かすので、どの FE が先に daemon を起動したかで変わらない（`amonhen_model::process::ClientEnv`）。通信は SSH と同じフレームで、圧縮はしない。アプリの `daemon:/path` と CLI の `-C daemon:/path` がこれを使う。手元のリポジトリを daemon 越しに開く: Settings > パフォーマンスの切り替え（いつも）、リポジトリの一覧の右クリックの Open via Daemon（1 つだけ）、`amonhen open --daemon`。様子を見る: `amonhen daemon status [--json]`・`start`・`stop`（つなぐときに最初に送るものを `\0status`・`\0stop` にすると、リポジトリではなく daemon への指示になる）と、Window > Activity の Daemon のタブ（daemon のプロセス・開いているリポジトリごとのつながり・History・監視・検索の索引と、このアプリの daemon とのつながりの送受信量）。linux で、2 回目からの `amonhen log` は同一プロセスと同じ 0.09 秒（初回は daemon の起動と全コミットの受け渡しで 1.7 秒）、は済み。往復の遅れは小さな要求で p50 0.08 ms（同一プロセス 0.04 ms）、256 行のチャンクは同じ 2 ms（`crates/daemon/examples/latency.rs`）で、ロジックを daemon に移しても遅くならないので、設計どおり順に移す。② History（読み込み・レイアウト）を daemon で作る: daemon がリポジトリごとに 1 つだけ作って永続キャッシュのファイルに書き、つないだ側にはその場所を返す（`Request::PreparedHistory`、`GitBackend::prepared_history`）。つないだ側はレイアウトを計算せず、ファイルを mmap して使うので、中身はコピーせずにページキャッシュで共有される（実質の共有メモリ）。書き換えは名前の付け替えなので、読んでいる途中のものは壊れない。FE は変えずに済む。linux で `amonhen log` は 2 回目から 0.12 秒（同一プロセス 0.09 秒）、daemon の再起動後 0.17 秒、初回（daemon が作って書く）2.3 秒、は済み。③ 操作を daemon に移す: `run_json` の命令（操作・Undo・設定・Magic Merge など）と、Undo の記録を書く Working Copy の操作（コミット、変更を捨てる）は、手元の共有の daemon につないでいれば daemon のコアで実行する（`GitBackend::delegate`、`Request::Delegate`、`crates/core/src/delegate.rs`）。操作と Undo の記録が 1 か所になる（2 つのコアが同じ記録のファイルを別々に書き換えない）。行ごとの stage は記録を書かず、git の処理はもともと daemon で動くので任せない。daemon の記録を読む・取り消す命令だけは手元で実行する、は済み。手元のリポジトリを daemon 越しに開くのは、今は Settings で選ぶ（既定は開かない）。差分も daemon で計算して 1 回の往復で返し、ファイルの中身は共有メモリで渡す（`crates/remote/src/shm.rs`。daemon が POSIX の共有メモリの 1 つの領域に並べて書き、ソケットでは領域の名前と各部分の位置だけを送る。受け取った側は読むだけで写し、`amonhen_layout::Blob` としてコピーせずに表示まで使う）。linux で p50 1.6 ms・p95 6.3 ms・最大 17 ms（同一プロセス 1.4・5.3・15 ms、ファイルごとに中身を取りに行く前の形 1.7・8.3・27 ms、ソケットで中身を送る形 1.6・9.2・34 ms）、は済み。Working Copy の status は git がもともと daemon で動いていて差がない（124 ms）。History の検索（件名・作者名・ID）は、件名と作者名を初めて探すときに全部読んで索引（`amonhen_model::search::TextIndex`）に置き、次からはそれを探すだけにする（毎回 git から読み直していたのが遅さのほとんどだった）。コミットが増えたら前の索引から引き継いで増えた分だけ読む。手元のコア・SSH 先の daemon・共有の daemon で同じものを使い、共有の daemon では同じリポジトリの相手のあいだで索引と数えたコミットを共有し、最後の相手が離れても 10 分は残す。linux で 1 回の検索が 1.1 秒 → 6〜31 ms（初回は索引を作るので 1.4 秒、索引は約 100 MB）、`amonhen log -C daemon:… <query>` は 2 回目から 0.1 秒（`crates/core/examples/search.rs`）。SQLite の全文検索（FTS5 の trigram）も比べたが、まれな語でだけ速く（0.5 ms）、索引が 950 MB・作るのに 22 秒かかるので採らなかった。一致したコミットの間は、↩・⇧↩（History とツールバーの検索欄）、⌘G・⌘⇧G（どの欄にいても。差分・詳細の欄の中を探しているときはそちら）、件数の横の ∧ ∨ で移る。件数の横の切り替えで、一致したコミットだけを出せる（`CommitGraph::retain_linked`。一致しないコミットは飛ばし、線は最初の親をたどって次に一致したコミットへつなぐ。linux で fix の 24.9 万件のレイアウトまで 49 ms）。History の作り直し: Repository > Rebuild History、`amonhen log --rebuild`、`amonhen daemon rebuild [<path>|ssh://…]`（`Repository::rebuild_history`。永続キャッシュを捨て、前回の History から引き継がずに作る。共有の daemon 越しなら daemon のコアに作り直させ、そのファイルを読み直す）
-- [x] 17. SSH 越しの daemon と手元の複製。段階 A0（コアのファイル操作を `RepoFiles` に）・A（`amonhen-remote` と `amonhend`、手元の子プロセスでの確認）・B（アプリから `daemon:/path` で開く。amonhend はアプリに同梱）・C（`ssh://host/path` で、SSH 先の OS と CPU に合う amonhend を `~/.cache/amonhen/` に送り込んで起動する。チャンクは件名などだけ、件名の検索は daemon の側、大きなフレームは LZ4 で圧縮）・D（リポジトリの一覧の「Add Remote…」、つなぐ間の接続中のウィンドウ、初回の読み込みの受信量、切れたときの帯と「つなぎ直す」）は済み。実際の SSH 先（Linux x86_64）でも開けることを確かめた
-- [x] 18. VSCode 拡張からの daemon 利用。先にやること: CLI の `log --json`・`diff --json` は大きなデータを JSON にしていて、拡張が本来通る道（`repr(C)` のレコードと文字列表を `ArrayBuffer`・WASM のメモリでコピーせずに読む）を通していない。CLI にレコードをそのまま出す口（例: `amonhen log --records <file>`、VSCode 向けのプロファイル）を足し、linux で JSON と比べて（書き出し・大きさ・Node での読み込みの時間とメモリ）から、つなぎ方（CLI をはさむ・napi・WASM）を決める。計測（linux の 148 万コミット、`crates/core/examples/transport.rs` と Node 26）: 画面 1 枚分（256 行の点・線・ID・件名・作者・日時）は JSON が作る 0.51 ms・82 KB・Node で読む 0.18 ms、レコードが作る 0.013 ms・54 KB・読む 0.16 ms（文字列にする分が大半）で、どちらでも足りる。全行（点・線・ID）は JSON が作る 1.1 秒・137 MB・読む 0.53 秒・ヒープ +386 MB、レコードが作る 7.8 ms・89 MB・読む（型付き配列で見るだけ）0.001 ms。別スレッドへの受け渡し（webview の postMessage と同じ構造化複製）は、全行で JSON のオブジェクト 1.1 秒、ArrayBuffer の複製 12 ms、移す 0.75 ms。よって、大きなデータはレコード（ArrayBuffer）、命令は JSON にする。つなぎ方は、コアを残らず共有の daemon に移し、拡張は TypeScript で daemon の FE 向けの窓口に直接つなぐ（napi は使わない。コアが daemon にあれば napi に残る利点は mmap・共有メモリだけで、webview へはどのみちプロセス間のコピーになる）。① FE 向けの窓口（`crates/front`、`docs/front.md`）は済み: 命令と答えは JSON、大きなデータは `repr(C)` のレコード、フレームは daemon と同じ（圧縮なし）、つないで最初に `\u0001` ＋場所を送る。History と Working Copy の差分は番号で持ち、検索は相手ごとに取り消せる（`Repository::search_history_until`）。CLI はすべての命令をこの窓口で通す（手元は同じプロセスの `InProcess`、`daemon:`・`ssh://` は daemon）。linux で、daemon 越しの `amonhen log -n 30` は 2 回目から 0.03 秒（同じプロセスで毎回開くと 0.09 秒）、`log fix` の検索は 2 回目から 0.05 秒（同 1.5 秒）。② 拡張の TS のつなぐ側（vscode-amonhen の `src/daemon/`。`amonhend --socket` でソケットの場所を聞き、いなければ起動する）は済み。③ 設定 `amonhen.daemon.path` があれば、History（グラフはコアのレイアウトを行ごとの線分に直す）・コミットの詳細と差分・Working Copy の差分・行単位の stage と破棄を daemon で行う、は済み（Extension Development Host で ktor を開いて確かめた）。④ Undo の記録はもともと共通（コアと拡張が同じ `<git_dir>/amonhen/undo.json` を同じ形で読み書きする）で、daemon で捨てた行を拡張の Undo で戻せることを試験で確かめた。⑤ 書き込み（コミット・ファイル単位の stage・ブランチとタグ・merge・rebase・cherry-pick・revert・stash・fetch・push・続ける／中止／飛ばす・サブモジュール）は daemon のコアの命令で行う（vscode-amonhen の `src/daemon/writes.ts`。拡張の git 実行層の書き込みを置き換え、読み取りと拡張に固有の手順（untracked を消す破棄・index の書き込み・rebase の todo）は git 実行層のまま）、は済み。コアが Undo を記録する操作は、拡張では記録しない（`AsyncLocalStorage` で伝える）。拡張の Undo の記録が中身を覚えたままにしていて、アプリ・CLI・daemon が書いた記録を見落とし、次の保存で消していたので、毎回読み直すようにした（コアはもとから毎回読む）。⑥ 配り方を整理した: エンジンは CLI と daemon を兼ねる 1 つの実行ファイル `amonhen`（darwin-aarch64・musl の linux-x86_64・linux-aarch64。リリースに tar.gz を載せる）、置き場所はどのマシンでも `~/.local/share/amonhen`（`amonhen install`・`amonhen engine`）、SSH 先にも同じ形で置く。拡張は 3 つのエンジンを同梱した共通の .vsix 1 つ（約 8 MB）で、起動時に合うものを置き場所に置き、設定なしで共有の daemon を使う（`amonhen.daemon.enabled` で切れる。合うエンジンがなければ git 実行層で動く）。拡張の CI がスタンドアロン版のリリースを読むには、非公開のリポジトリなので読める鍵（`AMONHEN_STANDALONE_TOKEN`）が要る。⑦ Remote-SSH: 拡張の daemon まわりの試験を、Remote-SSH の先と同じ手元の Linux のマシン（x86_64、Node 24）で、配る Linux 用のエンジンで流して通した（ソケットは `$XDG_RUNTIME_DIR`、共有メモリは `/dev/shm`）。Windows: 共有の daemon は名前付きパイプで待つ（git の fsmonitor・VSCode・Docker と同じ使い分け。`crates/remote/src/endpoint.rs`、`interprocess` crate。重ねた I/O で読み書きを同時にでき、名前に利用者の SID のハッシュとビルドの指紋を入れ、権限は自分の SID だけ、最初の作成は `FILE_FLAG_FIRST_PIPE_INSTANCE`）。共有メモリは後で（Node は使えず、Rust の FE で効く。取り決めはもう両方に対応）。エンジンの置き場所は `%LOCALAPPDATA%\amonhen`（`current` はハッシュを書いたファイル、CLI は `bin\amonhen.exe` に写す）、History のキャッシュは `%LOCALAPPDATA%\amonhen\cache`。Windows 用のエンジン（x86_64・aarch64）は CI の Windows のマシンで作り（`.github/workflows/windows-engine.yml`）、リリースに zip で載せ、.vsix に同梱する。CI の Windows のテストで、共有の daemon 越しの CLI（`works_through_the_shared_daemon_on_every_platform`）を流す。Remote-SSH の画面でも確かめた（Extension Development Host を手元の Linux のマシンに Remote-SSH でつなぎ、拡張が SSH 先で同梱の Linux 用エンジンを置き場所に置いて `~/.local/bin/amonhen` を張り、`$XDG_RUNTIME_DIR` の共有の daemon で toybox の History・コミットの詳細・差分を出した）。Windows は CI の Windows のマシンで、共有の daemon 越しの CLI の試験が名前付きパイプの上で通った。拡張の試験は CI で macOS・Ubuntu・Windows のすべてで流す（Windows では、git の返す `C:/…` のパスをその OS の形にそろえ、止めた直後の git がつかんでいる一時ディレクトリは待って消し直す）。Windows の実機（x64、Windows 11 Pro。[windows.md](windows.md)）で確かめた。VSCode の拡張が同梱のエンジンを `%LOCALAPPDATA%\amonhen` に置き、名前付きパイプの共有の daemon（CLI と共有）で History、コミットの詳細と差分、Working Copy の行単位の stage、commit と Undo を行えた。見つかった 3 つの問題は直した。コンソールを持たない daemon が git や ssh を起動するたびにコンソールの窓が一瞬開いていた（起動はすべて `CREATE_NO_WINDOW` を付ける。`amonhen_model::process::command`）。Working Copy の差分が git の改行の変換を無視していて、`core.autocrlf=true` では変えたファイルがすべて全体の書き換えに見え、行単位の stage で index に CR が入っていた（作業ツリーを git に入れる形で読む。gix の filter pipeline で、git の組み込みのフィルターだけをかける。行単位の破棄はほかの行のバイトを変えない。SSH 先で変換するため protocol を 18 に上げた）。拡張のテストが、常駐の `git cat-file` が終わる前に一時的なリポジトリを消していて、Windows では消せなかった。次: WASM（エンジンがない環境で、コアを WASM で動かす。wasm32-wasip1 にビルドでき、Node の `node:wasi` で動いたが、gix がパックを mmap で読むので WASI では読めない。git の読み書きを拡張の git 実行層に任せる形が本命）
-- [ ] 19. ほかの OS の FE（iOS / Linux / Android / Windows）。プロジェクションの形式と Platform の実装、モバイルは Git2Backend を足す。Linux（GTK4、`apps/gtk4`、gtk4-rs。Linux に固有のところはないので BSD でも動き、GTK の動く Windows・macOS でも動く（そちらはそれぞれのネイティブの FE を配る）。ルートの workspace に GTK が要らないよう、別の Cargo の workspace にする）: 着手。手元のリポジトリを開いて History を出す（グラフは GSK のパスで、色と太さごとにまとめて描く。ref のラベル・件名・作者・日時・ID は Pango。見えている行だけを 1 つの `GtkScrollable` のウィジェットが描き、件名などは `FrontendProfile::GTK` で 256 行ずつ裏で読み、見えている所に近い 24 チャンクだけを持つ）。クリックとキーでの選択、同じアニメーションの魚眼のレーン、同じ永続キャッシュ、ref が変わったら読み直す（`amonhen-watch`）。コミットを選ぶと、macOS 版の「詳細」の並びで詳細を出す（上に作者とコミッター、英語の見出しの表（Commit・Parent・Child・Rev・Signature・Refs・Branches・Tags・Previous Tag・Pushed・Merged）、件名・本文・notes。`commit_info` を先に出し、`commit_extras` は届いたら足す。欄は中身の高さに合わせ、右の列の半分まで）と全ファイルの差分（`selection_diff`。History と同じく見えている行だけを描く。変わった単語の強調と構文の色は、位置がもう UTF-8 のバイトなので、そのまま Pango の属性にする。ファイルの見出しをクリックすると畳む）を出す。サイドバー（`GtkTreeListModel` の `GtkListView` なので、見えている行の部品しか作らない）: Workspace（Working Copy と変更のあるファイルの数、History）、Branches（`feature/x` のような名前はフォルダにまとめる。今のブランチは太字、上流との ↑↓、gone）、Remotes（リモートごと、その中もフォルダ）、Tags（多ければ最初は閉じる）、Stashes（メッセージで）、Submodules。アイコンは GSK のパスで文字の色に描く（アイコンのテーマにブランチやタグのものがないことがあるため）。ref を選ぶと、History でそのコミットを選ぶ（行の索引は初回に裏で作る）。ref の右クリックで、macOS 版と同じ操作を出す（ローカルブランチ: チェックアウト・merge・rebase・上流への push・新しいブランチやタグ・名前の変更・削除。リモートブランチ: ローカルブランチとしてチェックアウト・merge・rebase・新しいブランチ。タグ: merge・新しいブランチ。stash: apply・pop・drop。サブモジュール: 更新）。ブランチかタグをローカルブランチに落とすと merge と rebase、ローカルブランチをリモートかリモートブランチに落とすと push と強制 push（確かめてから）。操作はコアの命令（`run_json`）を裏で実行し、失敗とコンフリクトを知らせ、History・ref・status を読み直す。取り消す（見出しのボタン。入力欄が使わないときは Ctrl+Z も）は、次に取り消す操作を説明に出す。メニューの項目は、名前・並び・区切りを macOS 版と同じ（英語）にし、置き場所は GNOME に合わせる: 見出しの左の「Repository」のボタンが macOS の Repository メニュー（Fetch・Pull・Pull With・Push・Force Push (with Lease)…・New Branch…・Rename Branch…・Set Upstream…・New Tag…・Merge…・Rebase…（macOS 版と同じく一覧から選ぶ）・Continue・Skip・Abort・Stash…・Pop Stash・Undo・Rebuild History・Open in Terminal・Reveal in Files）、右端の主メニュー（≡）に File・View・Navigate・Commit を同じ名前のサブメニューで入れ、最後に Settings・Activity・Keyboard Shortcuts・About Amon Hen。項目は窓のアクションで、ショートカットは ⌘ を Ctrl に、⌃・⌥ を Alt に読み替える（Ctrl+O・Ctrl+1・Ctrl+2・Ctrl+R・Ctrl+Shift+B・Ctrl+Shift+H・Alt+↑↓・Ctrl+Alt+F・L・P・B・M・R・S・Z・A・Ctrl+Return・Ctrl+,）。Ubuntu が全体で使うキー（New Tag の Ctrl+Alt+T）は外す。一覧は `GtkShortcutsWindow`。見出しには macOS 版のツールバーの既定のボタンも同じ並びで置く（今のブランチの名前とメニューの Branch、Fetch、メニューと上流との ↓・↑ の数の付いた Pull と Push、Merge、Rebase、Stash、Pop、右に Refresh と Undo。説明も同じ）。アイコンは文字の色で描く。リポジトリは、パス、`daemon:/path`（手元の共有の daemon。`~/.local/share/amonhen/current` のエンジンか PATH の `amonhen` で起動する）、`ssh://host/path`（SSH 先の daemon。送り込むエンジンは `AMONHEN_ENGINES` か、実行ファイルの隣の `engines`（macOS 版の Resources/engines と同じ）から。History は場所ごとに手元にキャッシュする）のどれでも、起動の引数か File > Add Remote… で開ける。daemon 越しなら、ファイルの監視ではなく daemon の知らせで読み直す。macOS から SSH で Linux の大きなリポジトリを開き、History・詳細・差分が出た。History の検索は macOS 版のツールバーの検索の欄と同じ動きで、GNOME の形の検索バーとして History の上に出す（見出しの検索のボタンか Ctrl+F）。Enter でコアの検索の書き方で探し（`search_history`、裏で）、一致した行を塗り、何番目 / 全体を出し、Enter・Shift+Enter（Ctrl+G・Ctrl+Shift+G）で一致の間を移る。History が新しくなったら探し直す。∧∨ の右の切り替えで、macOS 版と同じく一致したコミットだけを出す（`history_matching`。first-parent をたどって次の一致につなぐ）。探すのはいつも元の History。サイドバーの右クリックも macOS 版と同じ項目（Checkout main・Merge X into Y・Rebase Y onto X・New Branch from X…・サブモジュールの Open X in New Window など）で、メニューのモデルから作る `GtkPopoverMenu`。History のコミットを右クリックすると、そのコミットを選んで macOS 版と同じコミットのメニューを出す（New Branch at・New Tag at・Checkout (Detached)、merge でないコミットには Edit Message…・Squash into Parent…・Fixup into Parent・Edit (Stop Here)・Split…・Drop（確かめてから）、Cherry-pick・Revert、Copy Commit ID）。コアの `rewrite`・`commitMessage`・`squashMessage` を、macOS 版と同じダイアログで使う。コミットは複数選べる（Ctrl+クリック・Shift+クリック・Shift+↑↓）。そのときは詳細の欄に、選んだ数、差分の取り方（続いていれば一番古いものの親からの 1 つの差分、離れた 2 つなら A..B と、向きの入れ替え・merge-base からへの切り替え、とびとびならコミットごとの差分をファイルごとに）、各コミットの 1 行を出し、差分は `selection_diff` から。右クリックは macOS 版と同じく Cherry-pick N Commits・Revert N Commits・Squash N Commits…（続いていて merge を含まないとき）・Copy Commit IDs・Copy Short IDs。Working Copy（History と並ぶページで、サイドバーで切り替える）: コミットメッセージ（件名・本文・直前のコミットの修正。修正なら HEAD のメッセージを入れる）、変更のあるファイルの一覧（次のコミットに含めるかのチェック。index の状態そのもので、一部だけなら混在の印。コンフリクトが先）、選んだファイルの差分。差分は HEAD と作業ツリーの 1 本の差分に、変更の行ごとに index に入っているかの印を付ける（`working_diff_combined`。印のクリックでその行を含める・外し、クリック・Shift・Ctrl や hunk の見出しで選んだ行をボタンで含める・外す・破棄する）。そう表せないファイルは、作業ツリーの側と stage 済みの側を切り替える。index か作業ツリーが変わったら status を読み直す。文言は macOS 版と同じ（Summary・Amend・Commit / Amend Commit と Commit and Push・Amend Last Commit、Changes と含める数 / 全体、Unstaged / Staged、Stage Lines / Unstage Lines、Discard Lines / Discard File）。ファイルごとに行数（`workingStats`）と、マウスを載せたときに変更を捨てるボタン（確かめてから。untracked は削除で、Undo では戻せない）を出し、パスで絞り込める。一覧は macOS 版と同じく、パスの一覧、ディレクトリの木（子が 1 つだけのディレクトリは名前をつないで 1 段にし、クリックで畳む）、ファイル名を先に親のディレクトリを薄く、のどれかで見せる。コンフリクトのファイルは、マーカー付きの中身（`conflict_view`。Current と Incoming を色分け）と Take Current File・Take Incoming File・Open Merge Editor・Mark Resolved（コンフリクトが残っていれば確かめてから）を出す。マージエディタは macOS 版と同じく別の窓で、Current・Result（編集できる。今の作業ツリーの内容から始める）・Incoming を並べ、共通の祖先（diff3）があれば Base を左端に出せる。コンフリクトはどの欄でも色を付け、解決済みのものは左右の欄で薄くし、欄のスクロールはコンフリクトの位置で揃える。選んだコンフリクト（∧∨ か Ctrl+Alt+↑↓、欄のクリックで選ぶ）を Accept Current・Accept Incoming・Accept Both・Accept Base で解き、✨ Magic Merge はコアの規則で解けるものを解く。どれも Result の変わった所だけを置き換えるので、Ctrl+Z で 1 つずつ戻せる。開いたときに、間違えようのないコンフリクト（両側が同じ、片側だけが変えた）を解く（Settings > Git で切れる）。Save（Ctrl+S）と Save & Mark Resolved（Ctrl+Return。コンフリクトが残っていれば確かめてから）は `saveMerge` で書き、保存していない変更があれば閉じる前に確かめる。コンフリクトの計算は文字だけを扱うのでアプリの中で `amonhen_core::conflict` で行い、両側は `mergeSides` で読むので、daemon 越しでも使える。`--snapshot out.png` と `--measure-scroll`。macOS の GTK で測った値（linux の 148 万コミット、1 フレームに 40 行）: History の snapshot は p50 3.2 / p95 4.1 ms で、グラフは約 0.1 ms、残りのほとんどは新しく見えた行の Pango の shaping（メインスレッド）。cairo の描画器ではメインスレッドが 1 フレーム p50 5.7 / p95 6.8 ms で 60 Hz（600 フレーム中 11 フレームを落とした）。macOS の GL の描画器は処理の量によらず半分の速さになるので、GPU の描画器は本物の Linux で測る必要がある。Ubuntu 24.04（GTK 4.14、GNOME on Xorg、NVIDIA RTX 5060 Ti、60 Hz。24.8 万コミットのリポジトリ、1 フレームに 40 行）では、既定の描画器でメインスレッドが 1 フレーム p50 1.6 / p95 2.2 ms（History の snapshot は p50 1.1 ms）で、vulkan・ngl・cairo でもほぼ同じ。600 フレーム中 約 220 フレームを落とすが、1 フレームに 1 行（仕事は 0.8 ms）でも同じだけ落とすので、アプリではなく X11 のセッションのフレームの同期による。同じマシンの Wayland のセッションでは、フレームをほとんど落とさない: 既定の描画器（ngl）で、1 フレームに 40 行ならメインスレッドが p50 1.5 / p95 2.2 ms、600 フレーム中 2 フレームを落とした（1 行なら 0.6 / 1.0 ms で落としたのは 0）。ngl・cairo もほぼ同じで、vulkan は 40 行で p50 2.5 / p95 3.6 ms、落としたのは 0（1 行では最初に 146 ms 止まり、19 フレームを落とした）。200%（Wayland は拡大率をコンポジタから受け取るので、Xwayland で `GDK_SCALE=2`。窓は 1920×1080 の画面いっぱいで、100% の 1280×760 の窓の約 2 倍のピクセル）で 1 フレームに 40 行なら、cairo が p50 1.7 / p95 2.5 ms、vulkan が p50 2.3 / p95 3.9 ms で、どちらも 100% とほぼ同じ。この CPU（Ryzen 9 9950X3D）では cairo のソフトウェアの描画は 2 倍のピクセルでも増えず、vulkan は CPU の仕事が多く、最初に 1 回止まる（191 ms）。cairo ではアプリは GPU を使わない（`nvidia-smi` の一覧に出ない。CPU で共有メモリに描き、mutter が GPU に上げる）ので、メインスレッドの時間には、ngl・vulkan では GPU が描く時間が、cairo ではコンポジタが上げる手間が入っていない。フレームの始まり（スクロールを進めた時点）から、コンポジタが知らせる画面に出た時刻（`GdkFrameTimings` の presentation time）までは、どの描画器でも同じフレーム数になる: Wayland で p50 33.3 ms（2 フレーム）、p95 は ngl 33.7・vulkan 33.9・cairo 34.4 ms。Xwayland の 200% では 3 つとも約 48.6 ms（3 フレーム）。遅れを決めるのはコンポジタの流れで、アプリの描き方ではない（macOS 版も WindowServer を通して 2 フレーム）。アプリでは描画器を決めず、GTK に任せる（`GSK_RENDERER` で替えられる）。Ubuntu のフォントは macOS より大きく、大きさがピクセルで決まっているので、History の行の高さはフォントから決め、小さくするフォントも同じ単位で縮める。History と差分はテーマの `view` の背景を使い、暗いテーマでも読めるようにした。Blame と File History は macOS 版と同じくリポジトリのタブの隣のタブで開き、同じツールバーが付く（リポジトリのタブを閉じても残る）。History の差分のファイルの見出し（Blame at <コミット>・File History）と Working Copy のファイルの右クリック（Blame・File History）から開く。Blame は同じコミットの行をまとめ、まとまりの 1 行目に ID・作者・日時、2 行目に件名を出し、まとまりごとに背景を交互に変える。File History は、ファイルを変えたコミット（名前の変更も追う）と、そのコミットでのファイルの差分。どちらも `GtkListView` で、行をダブルクリックするとそのコミットを History で選ぶ。Activity（主メニューか Ctrl+Alt+A）は macOS 版と同じタブの窓で、開いている間は 1 秒ごとに読み直し、中身が変わったときだけ作り直す: Operations（`amonhen_model::activity` の git の起動とコアの命令、daemon 越しなら `remoteActivity` で裏で読んだ daemon の分も。新しい順で ✓・✗・●（実行中。進み具合と取り消すボタン）、種類・失敗だけ・文字で絞り込み、JSON に書き出せる）、History（Undo の記録。一番新しいものに Undo、ほかに「ここまで戻す」）、Performance（History・status の読み直しと差分の読み込みの回数・p50・p95・最大・直近）、Events（監視が知らせた ref・index・作業ツリーの変化）、Daemon（共有の daemon の pid・版・動いている時間・つながり・リポジトリと、起動・停止）。Settings（主メニューか Ctrl+,）は macOS 版と同じタブ（General、Git（すべてのリポジトリの段の Repository Settings の画面。Programs・Environment Variables も）、SSH Hosts、Accounts、Appearance、Diff & Merge、AI、Performance）で、同じ鍵を使う。`~/.config/amonhen/gtk.ini`（GLib の KeyFile。GSettings はスキーマを入れる必要があり、展開しただけの実行ファイルにはない）に置き、Working Copy の一覧の見せ方も覚えて次の窓で使う。配布: `scripts/package-gtk4.sh` が Linux で `dist/amonhen-gtk-<版>-linux-<arch>.tar.gz` を作る（実行ファイル、SSH 先に送る `dist/engine` の Linux のエンジン、`.desktop`、アイコン、`install.sh`。`install.sh` は `~/.local` に置き、デスクトップのアプリの一覧に出し、同梱のエンジンを共有の daemon 用に置く）。GTK は同梱しないので、GTK 4.14 以降が要る（Ubuntu 24.04・Debian 13 以降）。CI は Ubuntu 24.04 でパッケージまで作り、正式版と snapshot に x86_64・aarch64 の分を載せる（`build.yml` の `gtk`。版は About に出す）。その後 macOS 版に近づけた: メニューとショートカットは共有のコマンドの表（`crates/commands`。すべての操作をつないだ）、確認とステータスバー、Push・Pull・Fetch のシート、History の表示の選択と編集モード（書き換えの見通し付き）、サイドバーの並べ方（お気に入り・積み重ね・アーカイブ・絞り込み・タグ・リモート）、Stashes・Reflog・Range Diff・パッチ・Repository Settings・Repositories と Quick Open・タブ・worktree・GitHub（CI の印・アバター・プルリクエスト）・AI（`crates/assist`、Claude Code か Codex）。FE ごとに何があるかは [frontends.md](frontends.md)。
+- [x] 16. 手元の共有の daemon（当初は XPC＋共有メモリの案。Unix ドメインソケット＋共有メモリにした。理由は「別プロセス・リモートにするとき」）。段階的に進める: ① 手元に常駐する共有の daemon（最初は `amonhend --serve`、今はエンジンの `amonhen --serve`。`crates/daemon/src/serve.rs`）。利用者ごとに 1 つ、Unix ドメインソケット（`$TMPDIR/amonhend-<ビルドの指紋の頭 8 文字>.sock`、0600）で待ち、つないだ相手が最初に送るパスのリポジトリを開く。同じリポジトリの `GitBackend` と監視はつないでいる相手のあいだで共有し、変化は全員に知らせる。だれもつないでいない状態が 10 分続いたら終わり、使うときにまた起動される。つなぐときに FE の環境のうち git・ssh が使うもの（`PATH`・`AMONHEN_ASKPASS`・SSH の agent・`GIT_*`）を送り、daemon はそのつながりの git・ssh をその環境で動かすので、どの FE が先に daemon を起動したかで変わらない（`amonhen_model::process::ClientEnv`）。通信は SSH と同じフレームで、圧縮はしない。アプリの `daemon:/path` と CLI の `-C daemon:/path` がこれを使う。手元のリポジトリを daemon 越しに開く: Settings > パフォーマンスの切り替え（いつも）、リポジトリの一覧の右クリックの Open via Daemon（1 つだけ）、`amonhen open --daemon`。様子を見る: `amonhen daemon status [--json]`・`start`・`stop`（つなぐときに最初に送るものを `\0status`・`\0stop` にすると、リポジトリではなく daemon への指示になる）と、Window > Activity の Daemon のタブ（daemon のプロセス・開いているリポジトリごとのつながり・History・監視・検索の索引と、このアプリの daemon とのつながりの送受信量）。linux で、2 回目からの `amonhen log` は同一プロセスと同じ 0.09 秒（初回は daemon の起動と全コミットの受け渡しで 1.7 秒）、は済み。往復の遅れは小さな要求で p50 0.08 ms（同一プロセス 0.04 ms）、256 行のチャンクは同じ 2 ms（`crates/daemon/examples/latency.rs`）で、ロジックを daemon に移しても遅くならないので、設計どおり順に移す。② History（読み込み・レイアウト）を daemon で作る: daemon がリポジトリごとに 1 つだけ作って永続キャッシュのファイルに書き、つないだ側にはその場所を返す（`Request::PreparedHistory`、`GitBackend::prepared_history`）。つないだ側はレイアウトを計算せず、ファイルを mmap して使うので、中身はコピーせずにページキャッシュで共有される（実質の共有メモリ）。書き換えは名前の付け替えなので、読んでいる途中のものは壊れない。FE は変えずに済む。linux で `amonhen log` は 2 回目から 0.12 秒（同一プロセス 0.09 秒）、daemon の再起動後 0.17 秒、初回（daemon が作って書く）2.3 秒、は済み（最初の 1 つのファイルのキャッシュのときの話。今はファイルにはコミットの表だけを持ち、名前の付け替えではなく足していき、レイアウトは POSIX の共有メモリで来る。「History の永続キャッシュ」）。③ 操作を daemon に移す: `run_json` の命令（操作・Undo・設定・Magic Merge など）と、Undo の記録を書く Working Copy の操作（コミット、変更を捨てる）は、手元の共有の daemon につないでいれば daemon のコアで実行する（`GitBackend::delegate`、`Request::Delegate`、`crates/core/src/delegate.rs`）。操作と Undo の記録が 1 か所になる（2 つのコアが同じ記録のファイルを別々に書き換えない）。行ごとの stage は記録を書かず、git の処理はもともと daemon で動くので任せない。daemon の記録を読む・取り消す命令だけは手元で実行する、は済み。手元のリポジトリを daemon 越しに開くのは、今は Settings で選ぶ（既定は開かない）。差分も daemon で計算して 1 回の往復で返し、ファイルの中身は共有メモリで渡す（`crates/remote/src/shm.rs`。daemon が POSIX の共有メモリの 1 つの領域に並べて書き、ソケットでは領域の名前と各部分の位置だけを送る。受け取った側は読むだけで写し、`amonhen_layout::Blob` としてコピーせずに表示まで使う）。linux で p50 1.6 ms・p95 6.3 ms・最大 17 ms（同一プロセス 1.4・5.3・15 ms、ファイルごとに中身を取りに行く前の形 1.7・8.3・27 ms、ソケットで中身を送る形 1.6・9.2・34 ms）、は済み。Working Copy の status は git がもともと daemon で動いていて差がない（124 ms）。History の検索（件名・作者名・ID）は、件名と作者名を初めて探すときに全部読んで索引（`amonhen_model::search::TextIndex`）に置き、次からはそれを探すだけにする（毎回 git から読み直していたのが遅さのほとんどだった）。コミットが増えたら前の索引から引き継いで増えた分だけ読む。手元のコア・SSH 先の daemon・共有の daemon で同じものを使い、共有の daemon では同じリポジトリの相手のあいだで索引と数えたコミットを共有し、最後の相手が離れても 10 分は残す。linux で 1 回の検索が 1.1 秒 → 6〜31 ms（初回は索引を作るので 1.4 秒、索引は約 100 MB）、`amonhen log -C daemon:… <query>` は 2 回目から 0.1 秒（`crates/core/examples/search.rs`）。SQLite の全文検索（FTS5 の trigram）も比べたが、まれな語でだけ速く（0.5 ms）、索引が 950 MB・作るのに 22 秒かかるので採らなかった。一致したコミットの間は、↩・⇧↩（History とツールバーの検索欄）、⌘G・⌘⇧G（どの欄にいても。差分・詳細の欄の中を探しているときはそちら）、件数の横の ∧ ∨ で移る。件数の横の切り替えで、一致したコミットだけを出せる（`CommitGraph::retain_linked`。一致しないコミットは飛ばし、線は最初の親をたどって次に一致したコミットへつなぐ。linux で fix の 24.9 万件のレイアウトまで 49 ms）。History の作り直し: Repository > Rebuild History、`amonhen log --rebuild`、`amonhen daemon rebuild [<path>|ssh://…]`（`Repository::rebuild_history`。永続キャッシュを捨て、前回の History から引き継がずに作る。共有の daemon 越しなら daemon のコアに作り直させ、そのファイルを読み直す）
+- [x] 17. SSH 越しの daemon と手元の複製。段階 A0（コアのファイル操作を `RepoFiles` に）・A（`amonhen-remote` と `amonhend`、手元の子プロセスでの確認）・B（アプリから `daemon:/path` で開く。amonhend はアプリに同梱。今はエンジンの `amonhen`）・C（`ssh://host/path` で、SSH 先の OS と CPU に合う amonhend を `~/.cache/amonhen/` に送り込んで起動する。今はエンジンの `amonhen` を `${XDG_DATA_HOME:-~/.local/share}/amonhen/engine/<中身のハッシュ>` に送り、前の置き場所は片付けるだけ。チャンクは件名などだけ、件名の検索は daemon の側、大きなフレームは LZ4 で圧縮）・D（リポジトリの一覧の「Add Remote…」、つなぐ間の接続中のウィンドウ、初回の読み込みの受信量、切れたときの帯と「つなぎ直す」）は済み。実際の SSH 先（Linux x86_64）でも開けることを確かめた
+- [x] 18. VSCode 拡張からの daemon 利用。先にやること: CLI の `log --json`・`diff --json` は大きなデータを JSON にしていて、拡張が本来通る道（`repr(C)` のレコードと文字列表を `ArrayBuffer`・WASM のメモリでコピーせずに読む）を通していない。CLI にレコードをそのまま出す口（例: `amonhen log --records <file>`、VSCode 向けのプロファイル）を足し、linux で JSON と比べて（書き出し・大きさ・Node での読み込みの時間とメモリ）から、つなぎ方（CLI をはさむ・napi・WASM）を決める。計測（linux の 148 万コミット、`crates/core/examples/transport.rs` と Node 26）: 画面 1 枚分（256 行の点・線・ID・件名・作者・日時）は JSON が作る 0.51 ms・82 KB・Node で読む 0.18 ms、レコードが作る 0.013 ms・54 KB・読む 0.16 ms（文字列にする分が大半）で、どちらでも足りる。全行（点・線・ID）は JSON が作る 1.1 秒・137 MB・読む 0.53 秒・ヒープ +386 MB、レコードが作る 7.8 ms・89 MB・読む（型付き配列で見るだけ）0.001 ms。別スレッドへの受け渡し（webview の postMessage と同じ構造化複製）は、全行で JSON のオブジェクト 1.1 秒、ArrayBuffer の複製 12 ms、移す 0.75 ms。よって、大きなデータはレコード（ArrayBuffer）、命令は JSON にする。つなぎ方は、コアを残らず共有の daemon に移し、拡張は TypeScript で daemon の FE 向けの窓口に直接つなぐ（napi は使わない。コアが daemon にあれば napi に残る利点は mmap・共有メモリだけで、webview へはどのみちプロセス間のコピーになる）。① FE 向けの窓口（`crates/front`、`docs/front.md`）は済み: 命令と答えは JSON、大きなデータは `repr(C)` のレコード、フレームは daemon と同じ（圧縮なし）、つないで最初に `\u0001` ＋場所を送る。History と Working Copy の差分は番号で持ち、検索は相手ごとに取り消せる（`Repository::search_history_until`）。CLI はすべての命令をこの窓口で通す（手元は同じプロセスの `InProcess`、`daemon:`・`ssh://` は daemon）。linux で、daemon 越しの `amonhen log -n 30` は 2 回目から 0.03 秒（同じプロセスで毎回開くと 0.09 秒）、`log fix` の検索は 2 回目から 0.05 秒（同 1.5 秒）。② 拡張の TS のつなぐ側（vscode-amonhen の `src/daemon/`、今は `apps/vscode/src/daemon/`。`amonhend --socket`（今はエンジンの `amonhen --socket`）でソケットの場所を聞き、いなければ起動する）は済み。③ 設定 `amonhen.daemon.path` があれば、History（グラフはコアのレイアウトを行ごとの線分に直す）・コミットの詳細と差分・Working Copy の差分・行単位の stage と破棄を daemon で行う、は済み（Extension Development Host で ktor を開いて確かめた）。④ Undo の記録はもともと共通（コアと拡張が同じ `<git_dir>/amonhen/undo.json` を同じ形で読み書きする）で、daemon で捨てた行を拡張の Undo で戻せることを試験で確かめた。⑤ 書き込み（コミット・ファイル単位の stage・ブランチとタグ・merge・rebase・cherry-pick・revert・stash・fetch・push・続ける／中止／飛ばす・サブモジュール）は daemon のコアの命令で行う（vscode-amonhen の `src/daemon/writes.ts`。今は `apps/vscode` にある。拡張の git 実行層の書き込みを置き換え、読み取りと拡張に固有の手順（untracked を消す破棄・index の書き込み・rebase の todo）は git 実行層のまま）、は済み。コアが Undo を記録する操作は、拡張では記録しない（`AsyncLocalStorage` で伝える）。拡張の Undo の記録が中身を覚えたままにしていて、アプリ・CLI・daemon が書いた記録を見落とし、次の保存で消していたので、毎回読み直すようにした（コアはもとから毎回読む）。⑥ 配り方を整理した: エンジンは CLI と daemon を兼ねる 1 つの実行ファイル `amonhen`（darwin-aarch64・musl の linux-x86_64・linux-aarch64。リリースに tar.gz を載せる）、置き場所はどのマシンでも `~/.local/share/amonhen`（`amonhen install`・`amonhen engine`）、SSH 先にも同じ形で置く。拡張は 3 つのエンジンを同梱した共通の .vsix 1 つ（約 8 MB）で、起動時に合うものを置き場所に置き、設定なしで共有の daemon を使う（`amonhen.daemon.enabled` で切れる。合うエンジンがなければ git 実行層で動く）。拡張の CI がスタンドアロン版のリリースを読むには、非公開のリポジトリなので読める鍵（`AMONHEN_STANDALONE_TOKEN`）が要る。（今は要らない: 拡張はこのリポジトリの `apps/vscode` になり、`dist/engine` で作ったエンジンを同梱する。）⑦ Remote-SSH: 拡張の daemon まわりの試験を、Remote-SSH の先と同じ手元の Linux のマシン（x86_64、Node 24）で、配る Linux 用のエンジンで流して通した（ソケットは `$XDG_RUNTIME_DIR`、共有メモリは `/dev/shm`）。Windows: 共有の daemon は名前付きパイプで待つ（git の fsmonitor・VSCode・Docker と同じ使い分け。`crates/remote/src/endpoint.rs`、`interprocess` crate。重ねた I/O で読み書きを同時にでき、名前に利用者の SID のハッシュとビルドの指紋を入れ、権限は自分の SID だけ、最初の作成は `FILE_FLAG_FIRST_PIPE_INSTANCE`）。共有メモリは後で（Node は使えず、Rust の FE で効く。取り決めはもう両方に対応）。エンジンの置き場所は `%LOCALAPPDATA%\amonhen`（`current` はハッシュを書いたファイル、CLI は `bin\amonhen.exe` に写す）、History のキャッシュは `%LOCALAPPDATA%\amonhen\cache`。Windows 用のエンジン（x86_64・aarch64）は CI の Windows のマシンで作り（当時は `.github/workflows/windows-engine.yml`、今は `build.yml` で、どのエンジンもその OS と CPU のマシンで作る）、リリースに zip で載せ、.vsix に同梱する。CI の Windows のテストで、共有の daemon 越しの CLI（`works_through_the_shared_daemon_on_every_platform`）を流す。Remote-SSH の画面でも確かめた（Extension Development Host を手元の Linux のマシンに Remote-SSH でつなぎ、拡張が SSH 先で同梱の Linux 用エンジンを置き場所に置いて `~/.local/bin/amonhen` を張り、`$XDG_RUNTIME_DIR` の共有の daemon で toybox の History・コミットの詳細・差分を出した）。Windows は CI の Windows のマシンで、共有の daemon 越しの CLI の試験が名前付きパイプの上で通った。拡張の試験は CI で macOS・Ubuntu・Windows のすべてで流す（Windows では、git の返す `C:/…` のパスをその OS の形にそろえ、止めた直後の git がつかんでいる一時ディレクトリは待って消し直す）。Windows の実機（x64、Windows 11 Pro。[windows.md](windows.md)）で確かめた。VSCode の拡張が同梱のエンジンを `%LOCALAPPDATA%\amonhen` に置き、名前付きパイプの共有の daemon（CLI と共有）で History、コミットの詳細と差分、Working Copy の行単位の stage、commit と Undo を行えた。見つかった 3 つの問題は直した。コンソールを持たない daemon が git や ssh を起動するたびにコンソールの窓が一瞬開いていた（起動はすべて `CREATE_NO_WINDOW` を付ける。`amonhen_model::process::command`）。Working Copy の差分が git の改行の変換を無視していて、`core.autocrlf=true` では変えたファイルがすべて全体の書き換えに見え、行単位の stage で index に CR が入っていた（作業ツリーを git に入れる形で読む。gix の filter pipeline で、git の組み込みのフィルターだけをかける。行単位の破棄はほかの行のバイトを変えない。SSH 先で変換するため protocol を 18 に上げた）。拡張のテストが、常駐の `git cat-file` が終わる前に一時的なリポジトリを消していて、Windows では消せなかった。次: WASM（エンジンがない環境で、コアを WASM で動かす。wasm32-wasip1 にビルドでき、Node の `node:wasi` で動いたが、gix がパックを mmap で読むので WASI では読めない。git の読み書きを拡張の git 実行層に任せる形が本命）
+- [ ] 19. ほかの OS の FE（iOS / Linux / Android / Windows）。プロジェクションの形式と Platform の実装、モバイルは Git2Backend を足す。Linux（GTK4、`apps/gtk4`、gtk4-rs。Linux に固有のところはないので BSD でも動き、GTK の動く Windows・macOS でも動く（そちらはそれぞれのネイティブの FE を配る）。ルートの workspace に GTK が要らないよう、別の Cargo の workspace にする）: 着手。手元のリポジトリを開いて History を出す（グラフは GSK のパスで、色と太さごとにまとめて描く。ref のラベル・件名・作者・日時・ID は Pango。見えている行だけを 1 つの `GtkScrollable` のウィジェットが描き、件名などは `FrontendProfile::GTK` で 256 行ずつ裏で読み、見えている所に近い 24 チャンクだけを持つ）。クリックとキーでの選択、同じアニメーションの魚眼のレーン、同じ永続キャッシュ、ref が変わったら読み直す（`amonhen-watch`）。コミットを選ぶと、macOS 版の「詳細」の並びで詳細を出す（上に作者とコミッター、英語の見出しの表（Commit・Parent・Child・Rev・Signature・Refs・Branches・Tags・Previous Tag・Pushed・Merged）、件名・本文・notes。`commit_info` を先に出し、`commit_extras` は届いたら足す。欄は中身の高さに合わせ、右の列の半分まで）と全ファイルの差分（`selection_diff`。History と同じく見えている行だけを描く。変わった単語の強調と構文の色は、位置がもう UTF-8 のバイトなので、そのまま Pango の属性にする。ファイルの見出しをクリックすると畳む）を出す。サイドバー（`GtkTreeListModel` の `GtkListView` なので、見えている行の部品しか作らない）: Workspace（Working Copy と変更のあるファイルの数、History）、Branches（`feature/x` のような名前はフォルダにまとめる。今のブランチは太字、上流との ↑↓、gone）、Remotes（リモートごと、その中もフォルダ）、Tags（多ければ最初は閉じる）、Stashes（メッセージで）、Submodules。アイコンは GSK のパスで文字の色に描く（アイコンのテーマにブランチやタグのものがないことがあるため）。ref を選ぶと、History でそのコミットを選ぶ（行の索引は初回に裏で作る）。ref の右クリックで、macOS 版と同じ操作を出す（ローカルブランチ: チェックアウト・merge・rebase・上流への push・新しいブランチやタグ・名前の変更・削除。リモートブランチ: ローカルブランチとしてチェックアウト・merge・rebase・新しいブランチ。タグ: merge・新しいブランチ。stash: apply・pop・drop。サブモジュール: 更新）。ブランチかタグをローカルブランチに落とすと merge と rebase、ローカルブランチをリモートかリモートブランチに落とすと push と強制 push（確かめてから）。操作はコアの命令（`run_json`）を裏で実行し、失敗とコンフリクトを知らせ、History・ref・status を読み直す。取り消す（見出しのボタン。入力欄が使わないときは Ctrl+Z も）は、次に取り消す操作を説明に出す。メニューの項目は、名前・並び・区切りを macOS 版と同じ（英語）にし、置き場所は GNOME に合わせる: 見出しの左の「Repository」のボタンが macOS の Repository メニュー（Fetch・Pull・Pull With・Push・Force Push (with Lease)…・New Branch…・Rename Branch…・Set Upstream…・New Tag…・Merge…・Rebase…（macOS 版と同じく一覧から選ぶ）・Continue・Skip・Abort・Stash…・Pop Stash・Undo・Rebuild History・Open in Terminal・Reveal in Files）、右端の主メニュー（≡）に File・View・Navigate・Commit を同じ名前のサブメニューで入れ、最後に Settings・Activity・Keyboard Shortcuts・About Amon Hen。項目は窓のアクションで、ショートカットは ⌘ を Ctrl に、⌃・⌥ を Alt に読み替える（Ctrl+O・Ctrl+1・Ctrl+2・Ctrl+R・Ctrl+Shift+B・Ctrl+Shift+H・Alt+↑↓・Ctrl+Alt+F・L・P・B・M・R・S・Z・A・Ctrl+Return・Ctrl+,）。Ubuntu が全体で使うキー（New Tag の Ctrl+Alt+T）は外す。一覧は `GtkShortcutsWindow`。見出しには macOS 版のツールバーの既定のボタンも同じ並びで置く（今のブランチの名前とメニューの Branch、Fetch、メニューと上流との ↓・↑ の数の付いた Pull と Push、Merge、Rebase、Stash、Pop、右に Refresh と Undo。説明も同じ）。アイコンは文字の色で描く。リポジトリは、パス、`daemon:/path`（手元の共有の daemon。`~/.local/share/amonhen/current` のエンジンか PATH の `amonhen` で起動する）、`ssh://host/path`（SSH 先の daemon。送り込むエンジンは `AMONHEN_ENGINES` か、実行ファイルの隣の `engines`（macOS 版の Resources/engines と同じ）から。History は場所ごとに手元にキャッシュする）のどれでも、起動の引数か File > Add Remote… で開ける。daemon 越しなら、ファイルの監視ではなく daemon の知らせで読み直す。macOS から SSH で Linux の大きなリポジトリを開き、History・詳細・差分が出た。History の検索は macOS 版のツールバーの検索の欄と同じ動きで、GNOME の形の検索バーとして History の上に出す（見出しの検索のボタンか Ctrl+F）。Enter でコアの検索の書き方で探し（`search_history`、裏で）、一致した行を塗り、何番目 / 全体を出し、Enter・Shift+Enter（Ctrl+G・Ctrl+Shift+G）で一致の間を移る。History が新しくなったら探し直す。∧∨ の右の切り替えで、macOS 版と同じく一致したコミットだけを出す（`history_matching`。first-parent をたどって次の一致につなぐ）。探すのはいつも元の History。サイドバーの右クリックも macOS 版と同じ項目（Checkout main・Merge X into Y・Rebase Y onto X・New Branch from X…・サブモジュールの Open X in New Window など）で、メニューのモデルから作る `GtkPopoverMenu`。History のコミットを右クリックすると、そのコミットを選んで macOS 版と同じコミットのメニューを出す（New Branch at・New Tag at・Checkout (Detached)、merge でないコミットには Edit Message…・Squash into Parent…・Fixup into Parent・Edit (Stop Here)・Split…・Drop（確かめてから）、Cherry-pick・Revert、Copy Commit ID）。コアの `rewrite`・`commitMessage`・`squashMessage` を、macOS 版と同じダイアログで使う。コミットは複数選べる（Ctrl+クリック・Shift+クリック・Shift+↑↓）。そのときは詳細の欄に、選んだ数、差分の取り方（続いていれば一番古いものの親からの 1 つの差分、離れた 2 つなら A..B と、向きの入れ替え・merge-base からへの切り替え、とびとびならコミットごとの差分をファイルごとに）、各コミットの 1 行を出し、差分は `selection_diff` から。右クリックは macOS 版と同じく Cherry-pick N Commits・Revert N Commits・Squash N Commits…（続いていて merge を含まないとき）・Copy Commit IDs・Copy Short IDs。Working Copy（History と並ぶページで、サイドバーで切り替える）: コミットメッセージ（件名・本文・直前のコミットの修正。修正なら HEAD のメッセージを入れる）、変更のあるファイルの一覧（次のコミットに含めるかのチェック。index の状態そのもので、一部だけなら混在の印。コンフリクトが先）、選んだファイルの差分。差分は HEAD と作業ツリーの 1 本の差分に、変更の行ごとに index に入っているかの印を付ける（`working_diff_combined`。印のクリックでその行を含める・外し、クリック・Shift・Ctrl や hunk の見出しで選んだ行をボタンで含める・外す・破棄する）。そう表せないファイルは、作業ツリーの側と stage 済みの側を切り替える。index か作業ツリーが変わったら status を読み直す。文言は macOS 版と同じ（Summary・Amend・Commit / Amend Commit と Commit and Push・Amend Last Commit、Changes と含める数 / 全体、Unstaged / Staged、Stage Lines / Unstage Lines、Discard Lines / Discard File）。ファイルごとに行数（`workingStats`）と、マウスを載せたときに変更を捨てるボタン（確かめてから。untracked は削除で、Undo では戻せない）を出し、パスで絞り込める。一覧は macOS 版と同じく、パスの一覧、ディレクトリの木（子が 1 つだけのディレクトリは名前をつないで 1 段にし、クリックで畳む）、ファイル名を先に親のディレクトリを薄く、のどれかで見せる。コンフリクトのファイルは、マーカー付きの中身（`conflict_view`。Current と Incoming を色分け）と Take Current File・Take Incoming File・Open Merge Editor・Mark Resolved（コンフリクトが残っていれば確かめてから）を出す。マージエディタは macOS 版と同じく別の窓で、Current・Result（編集できる。今の作業ツリーの内容から始める）・Incoming を並べ、共通の祖先（diff3）があれば Base を左端に出せる。コンフリクトはどの欄でも色を付け、解決済みのものは左右の欄で薄くし、欄のスクロールはコンフリクトの位置で揃える。選んだコンフリクト（∧∨ か Ctrl+Alt+↑↓、欄のクリックで選ぶ）を Accept Current・Accept Incoming・Accept Both・Accept Base で解き、✨ Magic Merge はコアの規則で解けるものを解く。どれも Result の変わった所だけを置き換えるので、Ctrl+Z で 1 つずつ戻せる。開いたときに、間違えようのないコンフリクト（両側が同じ、片側だけが変えた）を解く（Settings > Git で切れる）。Save（Ctrl+S）と Save & Mark Resolved（Ctrl+Return。コンフリクトが残っていれば確かめてから）は `saveMerge` で書き、保存していない変更があれば閉じる前に確かめる。コンフリクトの計算は文字だけを扱うのでアプリの中で `amonhen_core::conflict` で行い、両側は `mergeSides` で読むので、daemon 越しでも使える。`--snapshot out.png` と `--measure-scroll`。macOS の GTK で測った値（linux の 148 万コミット、1 フレームに 40 行）: History の snapshot は p50 3.2 / p95 4.1 ms で、グラフは約 0.1 ms、残りのほとんどは新しく見えた行の Pango の shaping（メインスレッド）。cairo の描画器ではメインスレッドが 1 フレーム p50 5.7 / p95 6.8 ms で 60 Hz（600 フレーム中 11 フレームを落とした）。macOS の GL の描画器は処理の量によらず半分の速さになるので、GPU の描画器は本物の Linux で測る必要がある。Ubuntu 24.04（GTK 4.14、GNOME on Xorg、NVIDIA RTX 5060 Ti、60 Hz。24.8 万コミットのリポジトリ、1 フレームに 40 行）では、既定の描画器でメインスレッドが 1 フレーム p50 1.6 / p95 2.2 ms（History の snapshot は p50 1.1 ms）で、vulkan・ngl・cairo でもほぼ同じ。600 フレーム中 約 220 フレームを落とすが、1 フレームに 1 行（仕事は 0.8 ms）でも同じだけ落とすので、アプリではなく X11 のセッションのフレームの同期による。同じマシンの Wayland のセッションでは、フレームをほとんど落とさない: 既定の描画器（ngl）で、1 フレームに 40 行ならメインスレッドが p50 1.5 / p95 2.2 ms、600 フレーム中 2 フレームを落とした（1 行なら 0.6 / 1.0 ms で落としたのは 0）。ngl・cairo もほぼ同じで、vulkan は 40 行で p50 2.5 / p95 3.6 ms、落としたのは 0（1 行では最初に 146 ms 止まり、19 フレームを落とした）。200%（Wayland は拡大率をコンポジタから受け取るので、Xwayland で `GDK_SCALE=2`。窓は 1920×1080 の画面いっぱいで、100% の 1280×760 の窓の約 2 倍のピクセル）で 1 フレームに 40 行なら、cairo が p50 1.7 / p95 2.5 ms、vulkan が p50 2.3 / p95 3.9 ms で、どちらも 100% とほぼ同じ。この CPU（Ryzen 9 9950X3D）では cairo のソフトウェアの描画は 2 倍のピクセルでも増えず、vulkan は CPU の仕事が多く、最初に 1 回止まる（191 ms）。cairo ではアプリは GPU を使わない（`nvidia-smi` の一覧に出ない。CPU で共有メモリに描き、mutter が GPU に上げる）ので、メインスレッドの時間には、ngl・vulkan では GPU が描く時間が、cairo ではコンポジタが上げる手間が入っていない。フレームの始まり（スクロールを進めた時点）から、コンポジタが知らせる画面に出た時刻（`GdkFrameTimings` の presentation time）までは、どの描画器でも同じフレーム数になる: Wayland で p50 33.3 ms（2 フレーム）、p95 は ngl 33.7・vulkan 33.9・cairo 34.4 ms。Xwayland の 200% では 3 つとも約 48.6 ms（3 フレーム）。遅れを決めるのはコンポジタの流れで、アプリの描き方ではない（macOS 版も WindowServer を通して 2 フレーム）。アプリでは描画器を決めず、GTK に任せる（`GSK_RENDERER` で替えられる）。Ubuntu のフォントは macOS より大きく、大きさがピクセルで決まっているので、History の行の高さはフォントから決め、小さくするフォントも同じ単位で縮める。History と差分はテーマの `view` の背景を使い、暗いテーマでも読めるようにした。Blame と File History は macOS 版と同じくリポジトリのタブの隣のタブで開き、同じツールバーが付く（リポジトリのタブを閉じても残る）。History の差分のファイルの見出し（Blame at <コミット>・File History）と Working Copy のファイルの右クリック（Blame・File History）から開く。Blame は同じコミットの行をまとめ、まとまりの 1 行目に ID・作者・日時、2 行目に件名を出し、まとまりごとに背景を交互に変える。File History は、ファイルを変えたコミット（名前の変更も追う）と、そのコミットでのファイルの差分。どちらも `GtkListView` で、行をダブルクリックするとそのコミットを History で選ぶ。Activity（主メニューか Ctrl+Alt+A）は macOS 版と同じタブの窓で、開いている間は 1 秒ごとに読み直し、中身が変わったときだけ作り直す: Operations（`amonhen_model::activity` の git の起動とコアの命令、daemon 越しなら `remoteActivity` で裏で読んだ daemon の分も。新しい順で ✓・✗・●（実行中。進み具合と取り消すボタン）、種類・失敗だけ・文字で絞り込み、JSON に書き出せる）、History（Undo の記録。一番新しいものに Undo、ほかに「ここまで戻す」）、Performance（History・status の読み直しと差分の読み込みの回数・p50・p95・最大・直近）、Events（監視が知らせた ref・index・作業ツリーの変化）、Daemon（共有の daemon の pid・版・動いている時間・つながり・リポジトリと、起動・停止）。Settings（主メニューか Ctrl+,）は macOS 版と同じタブ（General、Git（すべてのリポジトリの段の Repository Settings の画面。Programs・Environment Variables も）、SSH Hosts、Accounts、Appearance、Theme、Diff & Merge、AI、Performance）で、同じ鍵を使う。`~/.config/amonhen/gtk.ini`（GLib の KeyFile。GSettings はスキーマを入れる必要があり、展開しただけの実行ファイルにはない）に置き、Working Copy の一覧の見せ方も覚えて次の窓で使う。配布: `scripts/package-gtk4.sh` が Linux で `dist/amonhen-gtk-<版>-linux-<arch>.tar.gz` を作る（実行ファイル、SSH 先に送る `dist/engine` の Linux のエンジン、`.desktop`、アイコン、`install.sh`。`install.sh` は `~/.local` に置き、デスクトップのアプリの一覧に出し、同梱のエンジンを共有の daemon 用に置く）。GTK は同梱しないので、GTK 4.14 以降が要る（Ubuntu 24.04・Debian 13 以降）。CI は Ubuntu 24.04 でパッケージまで作り、正式版と snapshot に x86_64・aarch64 の分を載せる（`build.yml` の `gtk`。版は About に出す）。その後 macOS 版に近づけた: メニューとショートカットは共有のコマンドの表（`crates/commands`。すべての操作をつないだ）、確認とステータスバー、Push・Pull・Fetch のシート、History の表示の選択と編集モード（書き換えの見通し付き）、サイドバーの並べ方（お気に入り・積み重ね・アーカイブ・絞り込み・タグ・リモート）、Stashes・Reflog・Range Diff・パッチ・Repository Settings・Repositories と Quick Open・タブ・worktree・GitHub（CI の印・アバター・プルリクエスト）・AI（`crates/assist`、Claude Code か Codex）・窓の背景と構文の色（「窓の背景とテーマ」）。FE ごとに何があるかは [frontends.md](frontends.md)。
 - [x] 20. ブランチの操作。済み: サイドバーの Branches を探しやすく並べる（お気に入り ★ をドラッグで決めた順に、今のブランチをその土台ごと、既定のブランチ、動いているブランチを新しい順に `/` のフォルダで、そのあとに畳んだ Inactive と Archived）、ほかのブランチの上に積んだブランチをその下に入れ子で出す（↳。土台は、上流に当たる手元のブランチ、なければ先端から first-parent を辿って最初に当たるブランチ。先端がそこにあるもの、または push したブランチで固有のコミットがそこにあるもの。固有のコミットは first-parent の鎖のうち作った点（reflog）より新しいもので、土台が後から進んでも積んだほうと取り違えない。既定のブランチの履歴はどのブランチの印にもしない。push したブランチもほかと同じように積まれる。`crates/core/src/branches.rs`、`{"op":"branchGroups"}`）、行の右端の印（既定のブランチに取り込み済み、上流が gone、ほかの worktree でチェックアウト中、↑↓、編集中）を押すと意味と次の一手（ブランチを消す、アーカイブ、worktree を開く）の吹き出し、アーカイブとお気に入りは git の設定に記録（`branch.<name>.amonhenArchived`・`amonhenPinned`）、上流と分かれたブランチを選ぶと History に上流も一緒に出す、git の `rebase.updateRefs` が true なら、rebase と History の編集で、今のブランチの下に積んだブランチも一緒に動かす（rebase は git に任せ、History の編集では todo に `update-ref` の行を入れる。git 2.38 から。ここやほかの worktree でチェックアウト中のブランチは、git と同じく動かさない。Undo ではそれらも戻し、チェックアウトしていない ref は 1 つの `update-ref --stdin` のトランザクションでまとめて書く。ブランチの改名は逆向きの改名で戻すので、設定と reflog も戻る）、merge・pull・rebase でコンフリクトするファイルを前もって見せる（`predictMerge`。`git merge-tree --write-tree --name-only` で、作業ツリーと index には触らない。Pull のシートでは両方に新しいコミットがあるとき、Merge…・Rebase… のシートでは選び直すたび、ブランチの吹き出しでは既定のブランチへのマージを開いたときに 1 回だけ調べる。rebase は最後の結果での目安。git が 2.38 より古ければできないので、分からないと出す。`amonhen merge-check` からも。linux で 1 回 50〜90 ms）、いくつものブランチ・タグ・コミットを `git merge a b c` と同じく 1 つのコミットで merge する（octopus。サイドバーか History で複数の行を選んだ「N 個を … に merge…」から、merge する順に並べたシートを出す。順はドラッグで変えられ、それぞれのコンフリクトの見込みを前のものまでの結果に重ねて調べ（配列を渡した `predictMerge`。ここまでの結果を ref のない仮のコミットにして merge-tree）、git が書くメッセージも見せる。最後より前のものがコンフリクトすると git はコンフリクトを残さずに止まるので、シートでそれを最後に回すか、1 つずつ merge することを勧め（`oneByOne`。1 つずつ merge のコミットにし、コンフリクトで止まったら残りを知らせる。Undo 1 回で全部戻る）、それでも git が断ったら 1 つずつを改めて勧める。git 2.37 より前は、断ったときにそこまで合わせた変更を作業ツリーに残し、`merge --abort` に要る MERGE_HEAD もないので、新しい git と同じくバックエンドが `reset --merge` で戻す。no-ff・squash は 1 つの merge と同じく git の設定に任せる。`amonhen merge-check a b c` からも）、サイドバーで選んだいくつものブランチをまとめてアーカイブ・削除、`origin/HEAD`・`main`・`master` のないリポジトリのための、リポジトリごとの既定のブランチ（`amonhen.defaultBranch`。リポジトリの設定の Branches）、「ブランチを片付ける…」（Repository メニューと Branches の見出しのメニュー。`branchCleanup`・`deleteBranches`）: 既定のブランチに取り込み済みのもの、GitHub で Squash か Rebase で PR がマージされたもの（アプリが `gh pr list --state merged` でマージ済みの PR を読み、head のブランチを名前と先端で突き合わせる。PR の番号を添え、`-D` で消す）、上流が消えて取り込んでいないもの（選ばずに置く。`-D`）を、理由ごとの見出しの下に並べた 1 つのシート。今のブランチ・お気に入り・worktree が使っているもの・既定のブランチと、その先端で作ってまだコミットしていないもの（reflog で見分けるので、fast-forward で取り込んだものは並ぶ）は除く。選んだものをまとめて消し、Undo 1 回で全部戻る（上流の片付けそのものは git の `fetch.prune` かリモートの Prune）、同じ PR（開いている PR と一緒に、30 秒に 1 回まで読む）で、そのブランチにサイドバーの取り込み済みの印を付け、吹き出しに「プルリクエスト #123 でマージ済み」と出し、消すときはその PR を添えたふつうの確認にする（`pullRequests` を渡した `branchGroups`）
 - [x] 21. 書き換える操作と、積み重ねたブランチ（「書き換える操作と、積み重ねたブランチ」）。済み: Amon Hen が自分で `rebase.updateRefs` を有効にするのをやめた。ユーザー（この Mac の `--global`。リポジトリの行を「すべてのリポジトリに設定」で）とリポジトリ（リポジトリの Settings の画面。書くのは `--local` だけで、ユーザーの `--global` が効いているときは札でそう示す。`{"op":"gitVersion"}` と、`"scope":"global"` 付きの `configSet`）の 2 段の設定。git 2.38 より古ければ、見つかった版を添えて選べなくする。リポジトリの設定をシートからサイドバーの Workspace の Settings の画面へ移し、使う人から作り直した（ux.md の 4 章、U20）。`rewritePreview` の命令（動くブランチと残るブランチと理由、その上流、コミットごとのコンフリクトの見込み。見込みは各コミットを `merge-tree --merge-base` で順に当てて調べる。git 2.40 から）を作り、History の編集モードと Rebase のシートに出した。`amonhen rewrite-preview`。Rebase のシートに、History と同じ描き方で前と後を並べ、「積み重ねたブランチも一緒に動かす」をその操作だけで選べるようにした（`rebase`・`rewrite`・`rewritePreview` の `updateRefs`。git の `--update-refs`・`--no-update-refs`）。編集モードのステータスバーにも同じチェックボックス（編集モードそのものが前後の絵の代わり）。VSCode 拡張も、Rebase と History の編集の前に、同じ見通しを modal の詳しい欄に出して確かめ、積み重ねたブランチをその操作だけ動かす・動かさないを 2 つ目のボタンで選べる。共有の daemon では History の編集もコアの `rewrite` で行い、git 実行層では見通しなしで確かめる。
-- [ ] 22. 書き込みが変化の量に比例する History のキャッシュ（「History の永続キャッシュ」）: 古い方から並べて足して切るコミットの表、別の表にしたトポロジー順、丸ごと置き換える状態のファイル、まとめた書き込み、開いたあとに計算して少しずつ公開するレイアウト、daemon からは共有メモリで渡すレイアウト、Activity に出す書いた量、Settings > Performance のキャッシュの大きさと消去
+- [x] 22. 書き込みが変化の量に比例する History のキャッシュ（「History の永続キャッシュ」）: 古い方から並べて足して切るコミットの表、別の表にしたトポロジー順、丸ごと置き換える状態のファイル、まとめた書き込み、開いたあとに計算して少しずつ公開するレイアウト、daemon からは共有メモリで渡すレイアウト、Activity に出す書いた量、Settings > Performance のキャッシュの大きさと消去
