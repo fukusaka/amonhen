@@ -128,7 +128,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Accounts: GitHub (CI status, avatars) | ✓ | ✓ | — | n/a |  |
 | Appearance: History order, one line, row items, avatars | ✓ | ✓ | n/a | n/a |  |
 | Appearance: theme, fonts, graph colors | — | — | n/a | n/a |  |
-| Theme: window background (style, image, toolbar tint, per repository) | ✓ | — | n/a | n/a |  |
+| Theme: window background (transparency and blur, image, toolbar tint, per repository) | ✓ | — | n/a | n/a |  |
 | Theme: syntax colors (built-in themes, VSCode themes) | ✓ | — | n/a | n/a |  |
 | Diff & Merge: resolve unambiguous conflicts on open | ✓ | ✓ | n/a | n/a |  |
 | Diff & Merge: unified/split, whitespace, context, wrap, tab width | — | — | — | n/a |  |

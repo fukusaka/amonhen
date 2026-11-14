@@ -389,34 +389,41 @@ Implemented by the FE and passed to the core.
 The macOS app's look of the window as a whole is a setting (Settings > Theme), with a per-repository override kept in the
 bookmark (the repository list's context menu, Window Background…).
 
-- **Two choices.** The setting is split in two: where the background shows, and what it is. "See-through" used to
-  mean both the desktop behind the window and a chosen image, which was hard to follow.
-  - **Show the background in** (`style`): Nowhere (System), Sidebar and Toolbar, or Whole Window.
-  - **Background** (`source`): Behind the Window (the desktop and windows behind, blurred) or Image (drawn inside the
-    window, which stays opaque). The image's path is kept when switching to Behind the Window. A record without
-    `source` (written before the split) uses Image if it has an image.
-- **Where.** Nowhere (System) is macOS's standard window: the glass sidebar runs to the top of the window with the
+- **Three independent choices.** Showing what is behind the window, a background image and a toolbar tint are set
+  separately, since each is a different thing to the user. An earlier version split the setting into "where the
+  background shows" and "what it is" (behind the window or an image), which was hard to follow.
+  - **Window Transparency.** See through in (`style`): Nowhere (Standard), Sidebar and Toolbar, or Whole Window, with
+    Transparency (`transparency`, 10–90%) and Blur (`blur`, 0–100%). The place applies only to this.
+  - **Background Image** (`image`): Position (fill, or a corner) and Transparency (`imageTransparency`, 50–95%).
+  - **Toolbar**: a tint color and its strength.
+- **Where.** Nowhere (Standard) is macOS's standard window: the glass sidebar runs to the top of the window with the
   Sidebar and Repositories buttons over it, the toolbar sits over the content in the content's color, and the lists,
   diffs and commit form share one opaque color (`textBackgroundColor`). Before, each pane kept its own color, and the
   window color (tinted by the wallpaper since macOS 26) sat next to the neutral diff, so four greys stood side by side.
-  Sidebar and Toolbar shows the background in the sidebar and toolbar only, and gives the lists and diffs one opaque
-  color (`textBackgroundColor`), so reading areas never show through. Whole Window lays one layer under everything and
-  has the panes paint nothing; the layer is `textBackgroundColor` at the content opacity (40–100%). In every case, the
-  colors of changed lines and selections stay opaque.
-- **Structure.** `BackdropHostController` holds the window's content: behind it a `NSVisualEffectView` (behind the
-  window) or the image, the layer, and a band under the toolbar for its tint. The content extends under the toolbar
-  (`fullSizeContentView`) in every style, and the panes' scroll views, tables and text views stop drawing their
-  backgrounds (remembered, and put back for the sidebar in System). System keeps the glass sidebar item at full height
-  (the toolbar's `sidebarTrackingSeparator` puts the first two buttons over it, so the sidebar is at least 240 pt wide)
-  and hides the window title (the repository's name is in the toolbar); the pages leave the toolbar's height at their
-  top (the safe area, which also follows the tab bar). In the two other styles the content starts below the toolbar,
-  and the sidebar is a plain split item instead of the glass sidebar item. The diff's Metal layer clears to the layer's color, or to transparent for one layer. The merge editor's
-  own window takes the background of the repository window it was opened from.
-- **Image.** It fills the window (cropped to keep its aspect) or sits at its natural size in a corner, shrunk to fit.
-  With an image the window stays opaque. A see-through window (no image) is composited by WindowServer with what is
-  behind it, which added about 4 ms from a scroll step to the frame being presented (p50 9.6 → 13.9 ms,
-  `--measure-scroll`, 3007 commits, release build on macOS 26), while the main thread and GPU times did not change;
-  with an image it is 9.9 ms.
+  Sidebar and Toolbar lets what is behind the window show through the sidebar and toolbar only, and gives the lists and
+  diffs one opaque color, so reading areas never show through. Whole Window lays one layer under everything and has the
+  panes paint nothing. The layer is `textBackgroundColor` at 1 − Transparency. In every case, the colors of changed
+  lines and selections stay opaque, and the layout is the same as Nowhere's.
+- **Blur.** WindowServer blurs the window through the private `CGSSetWindowBackgroundBlurRadius` (radius = Blur × 50),
+  the way terminal emulators do it. It has no tint, so Transparency is exactly how much shows through. Both functions
+  are looked up at run time (present on macOS 26 and 27); if they are missing, the window shows through without blur.
+  `NSVisualEffectView` was tried first, but its materials are tinted and nearly opaque, so 90% hardly looked
+  transparent, and fading the material weakened the blur.
+- **Structure.** `BackdropHostController` holds the window's content: under it the layer, over it the image and a band
+  at the toolbar's height for its tint. The content extends under the toolbar (`fullSizeContentView`) in every style,
+  the window title is hidden (the repository's name is in the toolbar), and the panes' scroll views, tables and text
+  views stop drawing their backgrounds (remembered, and put back for the sidebar in Nowhere). Nowhere keeps the glass
+  sidebar item; the toolbar's `sidebarTrackingSeparator` puts the first two buttons over the sidebar, so it is at least
+  240 pt wide. The see-through styles use a plain split item instead, because the macOS 26 glass sidebar does not show
+  what is behind the window. The pages leave the toolbar's height at their top (the safe area, which also follows the
+  tab bar). The diff's Metal layer clears to the layer's color, or to transparent for one layer. The merge editor's own
+  window takes the background of the repository window it was opened from.
+- **Image.** It is laid thinly over the whole window, on top of the lists and diffs, and never takes clicks. It fills
+  the window (cropped to keep its aspect) or sits at its natural size in a corner, shrunk to fit.
+- **Cost.** A see-through window is composited by WindowServer with what is behind it. From a scroll step to the frame
+  being presented (p50 / p95, `--measure-scroll`, release build on macOS 26): Nowhere 2.9 / 14.7 ms, see-through
+  without blur 9.9 / 13.8 ms, Blur 40% 12.9 / 18.5 ms, Blur 100% 13.2 / 18.5 ms. Seeing through already exceeds the
+  8.3 ms frame and blur adds about 3 ms, so Nowhere is the default and the cost is paid only by choosing it.
 - **Syntax colors.** A theme is chosen for the light and the dark appearance separately: System (the system colors
   used so far), seven built-in themes (Solarized, Gruvbox, Tomorrow, Nord) or a VSCode color theme. A VSCode theme is
   read from its JSON (JSONC comments and trailing commas, `include` merged up to 4 levels); each of the core's 14 kinds
