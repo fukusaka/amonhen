@@ -73,7 +73,7 @@ History と差分は番号（`history`・`diff`）で持つ。FE がスクロー
 | `discardRows` | diff・rows（unstaged の差分の行） | | |
 | `commit` | message・amend? | output（hooks が書いたもの） | |
 | `run` | command（`crates/core/src/command.rs` の命令。checkout・merge・rebase・fetch・push・stash・undo・blame・設定など） | その命令の答え（ok・error ほか） | |
-| `connection` | | sent・received・closed（SSH 先のつながり。手元なら null） | |
+| `connection` | | sent・received・closed・engine（SSH 先のつながりと、そこで使っているエンジンとその用意のしかた。手元なら null） | |
 
 差分の行のレコード: rows（差分の行 × 行の数）・textLengths u32・text（UTF-8）・highlights（行・始め・終わりの u32 × 3。変わった単語のバイト位置）。`commitDiff` は、ファイルごとに見出しの行（kind 8、text はパス、old・new は削除・追加の行数）から始まる。`workingDiff` の行の番号（0 始まり）が、`stageRows`・`discardRows` の rows で指す番号。
 

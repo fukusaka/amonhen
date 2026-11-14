@@ -58,7 +58,9 @@ The GTK4 app (`apps/gtk4`): `amonhen-gtk <repo> --snapshot out.png` writes the w
 The design is in [vscode.md](vscode.md).
 
 The engine is built from the repository root (`cargo build -p amonhen-cli`; tests find it there). To bundle the
-engines into `bin/`, run `scripts/build-engine.sh` at the root, then `scripts/bundle-engine.sh` in `apps/vscode`.
+engines into `bin/`, run `scripts/build-engine.sh` and `scripts/third-party-notices.sh` at the root, then
+`scripts/bundle-engine.sh` in `apps/vscode` (it also copies the licenses and `dist/THIRD-PARTY-NOTICES.md` into the
+extension's folder).
 
 ```sh
 cd apps/vscode
@@ -94,6 +96,12 @@ Directories under `apps/vscode`:
 | `src/diff/` | Line-level diffs, and applying only the selected changes |
 | `src/state/` | The state management layer. Per-repository caches and updates |
 | `src/history/`, `src/workingCopy/`, `src/view/` | Messages between each screen of the main view and the extension host, the History graph and building rebases |
+| `src/blame/`, `src/fileHistory/`, `src/reflog/`, `src/rangeDiff/`, `src/daemonStatus/` | Messages between those pages of the main view and the extension host (Blame, File History, Reflog, Range Diff, Daemon) |
+| `src/settings/` | Repository Settings: its pages and rows, the effective values from the config files, and the hooks |
+| `src/sync/` | The rules of the Fetch, Pull and Push confirmations (prune, how to integrate, warnings before pushing) |
+| `src/branch/` | The rules of Switch Branch (recent branches first, remote branches, a new one from a typed name) |
+| `src/bundle/` | The rules of Export Archive and the bundle commands |
+| `src/failure/` | Failure notices: the cause from git's output, the whole output in Details |
 | `src/ui/` | The sidebar nav, the main view panel and per-screen controllers, commands |
 | `src/webview/` | The main view's Webview (Working Copy, History, diff rendering) |
 | `test/` | Tests run with `node --test`. The git execution layer is checked against real repositories in temporary directories |

@@ -121,7 +121,7 @@ git clone https://github.com/fukusaka/amonhen.git C:\src\amonhen
 `~/.ssh/config`:
 
 ```
-Host winpc
+Host windows-pc
   HostName <予約したアドレス>
   User <Windows の利用者名>
   IdentityFile ~/.ssh/id_windows
@@ -131,7 +131,7 @@ Host winpc
 `IdentitiesOnly` で、ほかの鍵を先に出さないようにする。すべてのホストで `ControlMaster` を使っていると、sshd を変えた
 直後の確認が古い接続を使い回すことがある。`-o ControlMaster=no -o ControlPath=none` を付ける。
 
-- VSCode: 「Remote-SSH: Connect to Host」で `winpc`、OS は Windows。`C:\src\amonhen` を開く。
+- VSCode: 「Remote-SSH: Connect to Host」で `windows-pc`、OS は Windows。`C:\src\amonhen` を開く。
 - リモート デスクトップ: App Store の Windows App で、アドレス、Microsoft アカウントのメールアドレスとパスワード。
 
 ## ssh で確認を流す
@@ -139,7 +139,7 @@ Host winpc
 引用符やパイプを含むスクリプトは、`-EncodedCommand`（UTF-16LE の base64）で送れば ssh を通っても崩れない。
 
 ```sh
-ssh winpc "powershell -NoProfile -NonInteractive -EncodedCommand $(iconv -f UTF-8 -t UTF-16LE check.ps1 | base64)"
+ssh windows-pc "powershell -NoProfile -NonInteractive -EncodedCommand $(iconv -f UTF-8 -t UTF-16LE check.ps1 | base64)"
 ```
 
 - `powershell -Command -`（スクリプトを標準入力から読む）は ssh 越しでは止まる。
@@ -210,9 +210,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e-windows.ps1 -Des
 スクリプトが `-EncodedCommand` には長すぎる（コマンドラインは 32767 文字まで）ので、clone から動かすか、写して動かす。
 
 ```sh
-ssh winpc 'git -C C:\src\amonhen pull -q; pwsh -NoProfile -ExecutionPolicy Bypass -File C:\src\amonhen\scripts\check-windows.ps1 snapshot'
-scp scripts/install-engine.ps1 scripts/check-windows.ps1 winpc:
-ssh winpc 'powershell -NoProfile -ExecutionPolicy Bypass -File check-windows.ps1 -Release v0.2.4'
+ssh windows-pc 'git -C C:\src\amonhen pull -q; pwsh -NoProfile -ExecutionPolicy Bypass -File C:\src\amonhen\scripts\check-windows.ps1 snapshot'
+scp scripts/install-engine.ps1 scripts/check-windows.ps1 windows-pc:
+ssh windows-pc 'powershell -NoProfile -ExecutionPolicy Bypass -File check-windows.ps1 -Release v0.2.4'
 ```
 
 `-Release` は `stable`（既定）・`snapshot`・タグ。`-ExpectVersion` で zip の名前から読む版の代わりを指定し、

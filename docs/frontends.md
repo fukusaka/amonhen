@@ -115,7 +115,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | General: terminal and diff tool | — | — | n/a | n/a |  |
 | Git: machine-wide pages (Author and Signing, Commits, Operations, Working Copy, Keys and Values) | ✓ | ✓ | — | △ | CLI: Via `amonhen run`. |
 | Git > Commits: shared message template library | ✓ | ✓ | — | — |  |
-| Git > Programs: git, gpg, ssh-keygen, gpgsm | ✓ | ✓ | n/a | △ | VSCode: VSCode's `git.path` picks git (the extension follows it); gpg and ssh-keygen come from git's settings.<br>CLI: Via `amonhen run` (`programs`, `setMachineGit`). |
+| Git > Programs: git, gpg, ssh-keygen, gpgsm | ✓ | ✓ | n/a | △ | VSCode: The extension runs the git chosen here for the machine, and VSCode's `git.path` only when none is chosen; gpg and ssh-keygen come from git's settings.<br>CLI: Via `amonhen run` (`programs`, `setMachineGit`). |
 | Git > Environment Variables of this machine (pass, masked secrets) | ✓ | ✓ | n/a | n/a | VSCode: VSCode's own environment, which the extension passes to the daemon. |
 | Environment Variables: use the login shell's (Read Again, SSH agent) | ✓ | — | n/a | n/a | GTK4: Left out: Linux sessions already carry it.<br>VSCode: VSCode's own environment, which the extension passes to the daemon. |
 | SSH Hosts: hosts with + / −, unreachable dimmed | ✓ | ✓ | n/a | n/a | VSCode: Remote-SSH takes this role. |
@@ -127,8 +127,8 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Path picker in columns for a host or this machine | ✓ | ✓ | n/a | n/a |  |
 | Accounts: GitHub (CI status, avatars) | ✓ | ✓ | — | n/a |  |
 | Appearance: History order, one line, row items, avatars | ✓ | ✓ | n/a | n/a |  |
-| Appearance: theme, fonts, graph colors | — | — | n/a | n/a |  |
-| Theme: window background (transparency and blur, image, toolbar tint, per repository) | ✓ | ✓ | n/a | n/a | GTK4: no blur (GTK can't ask the compositor for it). |
+| Appearance: fonts, graph colors | — | — | n/a | n/a |  |
+| Theme: window background (transparency and blur, image, toolbar tint, per repository) | ✓ | ✓ | n/a | n/a | GTK4: No blur (GNOME can't blur what is behind the window); a see-through window needs a compositor. |
 | Theme: syntax colors (built-in themes, VSCode themes) | ✓ | ✓ | n/a | n/a |  |
 | Diff & Merge: resolve unambiguous conflicts on open | ✓ | ✓ | n/a | n/a |  |
 | Diff & Merge: unified/split, whitespace, context, wrap, tab width | — | — | — | n/a |  |
@@ -221,7 +221,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
 | One checkbox list (☑ ▣ ☐, header and folder checks) | ✓ | ✓ | ✓ | n/a | VSCode: Separate Staged and Changes groups. |
-| List / Tree / Flat | ✓ | ✓ | ✓ | n/a |  |
+| List / Tree / File Name | ✓ | ✓ | ✓ | n/a |  |
 | Filter on paths | ✓ | ✓ | ✓ | n/a |  |
 | Per-row +/− counts and Discard on hover | ✓ | ✓ | ✓ | △ | VSCode: Counts need the engine.<br>CLI: `diff --stat`. |
 | Space toggles, ⌫ discards | ✓ | ✓ | ✓ | n/a |  |
@@ -389,7 +389,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| English UI with a Japanese translation | ✓ | ✓ | — | ✓ | VSCode: English only, not translated. |
+| English UI with a Japanese translation | ✓ | ✓ | — | ✓ | VSCode: The extension's own text is English only; the engine's messages follow VSCode's display language. |
 
 ## 14. Worktrees
 

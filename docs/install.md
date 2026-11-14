@@ -57,11 +57,11 @@ except the `PATH`.
 
 ## VSCode extension
 
-1. Download `amonhen-vscode-<version>.vsix`.
+1. Download `amonhen-<version>.vsix` (the snapshot is `amonhen-vscode-<version>.vsix`).
 2. Install it:
 
    ```sh
-   code --install-extension amonhen-vscode-<version>.vsix
+   code --install-extension amonhen-<version>.vsix
    ```
 
 3. Reload the VSCode window.
@@ -121,7 +121,7 @@ gh attestation verify <file> --repo fukusaka/amonhen
 - **App**: macOS 14.4 or later on Apple silicon.
 - **GTK4 app**: Linux (x86_64 or arm64) with GTK 4.14 or later (Ubuntu 24.04, Debian 13 or later).
 - **Command line and VSCode extension**: macOS on Apple silicon, Linux (x86_64 or arm64, any distribution), or Windows
-  (x86_64 or arm64).
+  (x86_64 or arm64). The extension needs VSCode 1.120 or later.
 - `git` 2.23 or later must be installed, on the Mac and on SSH hosts alike (it covers the git of every Ubuntu,
   Debian and RHEL release still supported, and of Xcode). Features of newer git (such as changed-path Bloom filters
   for commit-graph) are used when the git there has them, with the older way otherwise. When a git command fails and

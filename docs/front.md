@@ -73,7 +73,7 @@ History and diffs are held by number (`history`, `diff`). Even if History is ref
 | `discardRows` | diff, rows (lines of an unstaged diff) | | |
 | `commit` | message, amend? | output (what hooks wrote) | |
 | `run` | command (a command of `crates/core/src/command.rs`: checkout, merge, rebase, fetch, push, stash, undo, blame, settings and more) | that command's reply (ok, error and others) | |
-| `connection` | | sent, received, closed (the SSH host connection; null if local) | |
+| `connection` | | sent, received, closed, engine (the SSH host connection, and the engine used there and how it was set up; null if local) | |
 
 Diff line records: rows (diff line × number of rows), textLengths u32, text (UTF-8), highlights (row, start, end as u32 × 3; byte positions of changed words). `commitDiff` starts each file with a header line (kind 8, text is the path, old and new are the numbers of removed and added lines). The line numbers (0-based) of `workingDiff` are the numbers that the rows of `stageRows` and `discardRows` refer to.
 
