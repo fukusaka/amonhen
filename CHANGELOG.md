@@ -40,6 +40,7 @@ becomes the GitHub Release notes.
   close button; the repository page no longer opens in a new window, and File History and Blame tabs stay open.
 - macOS: Closing the last repository no longer opens the repository page in a new window; the app stays with no
   window, as Mac apps do, and the Dock icon brings the page back.
+- Avatars are looked up on Gravatar by the SHA-256 of the email address instead of its MD5.
 
 #### Fixed
 
