@@ -912,6 +912,8 @@ pub fn customize(parent: &gtk::Window) {
         .valign(gtk::Align::Start)
         .child(&palette())
         .build();
+    // 見出しの帯は窓の中身の上端にあるので、その下から出す（見出しに項目を落とせるように）。
+    revealer.set_margin_top(headers_bottom(&overlay));
     overlay.add_overlay(&revealer);
     // 窓を閉じたら（Done を押さずに）カスタマイズを終える。
     revealer.connect_unrealize(|r| {
@@ -944,6 +946,30 @@ fn overlay_of(window: &gtk::Window) -> Option<gtk::Overlay> {
 }
 
 const OVERLAY_NAME: &str = "toolbar-palette-layer";
+
+/// `overlay` の中の、出している見出しの帯の下端（なければ 0）。
+fn headers_bottom(overlay: &gtk::Overlay) -> i32 {
+    fn visit(widget: &gtk::Widget, overlay: &gtk::Overlay, bottom: &mut f32) {
+        if widget.is::<gtk::HeaderBar>() {
+            if widget.is_mapped()
+                && let Some(r) = widget.compute_bounds(overlay)
+            {
+                *bottom = bottom.max(r.y() + r.height());
+            }
+            return;
+        }
+        let mut child = widget.first_child();
+        while let Some(c) = child {
+            visit(&c, overlay, bottom);
+            child = c.next_sibling();
+        }
+    }
+    let mut bottom = 0f32;
+    if let Some(child) = overlay.child() {
+        visit(&child, overlay, &mut bottom);
+    }
+    bottom.ceil() as i32
+}
 
 /// パレットを畳んで外し、カスタマイズを終える。
 fn close_palette(revealer: &gtk::Revealer) {
