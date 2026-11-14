@@ -338,6 +338,15 @@ enum Settings {
         }
     }
 
+    /// 差分の色は、テーマに関係なく標準の色を使う（構文の色はテーマのまま）。
+    static var diffStandardColors: Bool {
+        get { UserDefaults.standard.bool(forKey: "diffStandardColors") }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "diffStandardColors")
+            NotificationCenter.default.post(name: .syntaxThemeChanged, object: nil)
+        }
+    }
+
     /// History の並び順（既定は日付順）。変えたら `historyOrderChanged` を知らせる。
     static var historyOrder: HistoryOrder {
         get { UserDefaults.standard.string(forKey: "historyOrder").flatMap(HistoryOrder.init(name:)) ?? .date }
@@ -524,6 +533,7 @@ final class SettingsModel {
     var syntaxThemeLight = Settings.syntaxThemeLight { didSet { Settings.syntaxThemeLight = syntaxThemeLight } }
     var syntaxThemeDark = Settings.syntaxThemeDark { didSet { Settings.syntaxThemeDark = syntaxThemeDark } }
     var importedThemes = SyntaxTheme.imported { didSet { SyntaxTheme.imported = importedThemes } }
+    var diffStandardColors = Settings.diffStandardColors { didSet { Settings.diffStandardColors = diffStandardColors } }
     var checkRemoteSignaturesLocally = Settings.checkRemoteSignaturesLocally {
         didSet { Settings.checkRemoteSignaturesLocally = checkRemoteSignaturesLocally }
     }

@@ -26,6 +26,8 @@ use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 use gtk::{gdk, gio, glib, graphene, gsk, pango};
 
+use crate::theme::DiffColor;
+
 /// 左の行番号の列と本文の間の余白。
 const GUTTER_GAP: f32 = 12.0;
 const TEXT_INSET: f32 = 8.0;
@@ -1603,21 +1605,26 @@ impl DiffWidget {
             }
         }
         if let Some(ranges) = view.highlights.get(&index) {
-            let (r, g, b) = if row.kind == DiffRow::ADDED {
-                (0.2, 0.7, 0.3)
-            } else {
-                (0.9, 0.25, 0.25)
-            };
+            // 変わった単語の色は配色テーマから（`theme.rs`）。
+            let word = crate::theme::diff_color(
+                if row.kind == DiffRow::ADDED {
+                    DiffColor::AddedWord
+                } else {
+                    DiffColor::RemovedWord
+                },
+                &fg,
+            );
+            let channel = |v: f32| (v.clamp(0.0, 1.0) * 65535.0) as u16;
             for &(start, end) in ranges {
                 let mut a = pango::AttrColor::new_background(
-                    (r * 65535.0) as u16,
-                    (g * 65535.0) as u16,
-                    (b * 65535.0) as u16,
+                    channel(word.red()),
+                    channel(word.green()),
+                    channel(word.blue()),
                 );
                 a.set_start_index(start);
                 a.set_end_index(end);
                 attrs.insert(a);
-                let mut alpha = pango::AttrInt::new_background_alpha((0.35 * 65535.0) as u16);
+                let mut alpha = pango::AttrInt::new_background_alpha(channel(word.alpha()));
                 alpha.set_start_index(start);
                 alpha.set_end_index(end);
                 attrs.insert(alpha);
@@ -1709,20 +1716,23 @@ impl DiffWidget {
                     &graphene::Rect::new(0.0, top, (text_x - 6.0).max(0.0), rh),
                 );
             }
+            // 行の地は配色テーマの差分の色（`theme.rs`。標準はコンフリクトの Current が青・Incoming が緑・共通の
+            // 祖先が灰色・マーカーが橙で、macOS 版と同じ）。
             let background = match row.kind {
-                DiffRow::ADDED => Some(gdk::RGBA::new(0.2, 0.7, 0.3, 0.16)),
-                DiffRow::REMOVED => Some(gdk::RGBA::new(0.9, 0.25, 0.25, 0.16)),
-                DiffRow::HUNK => Some(gdk::RGBA::new(0.3, 0.5, 0.9, 0.10)),
-                // コンフリクト: Current（自分の側）は青・Incoming（取り込む側）は緑・共通の祖先は灰色・マーカーは
-                // 橙（macOS 版と同じ）。
-                DiffRow::OURS => Some(gdk::RGBA::new(0.3, 0.5, 0.9, 0.18)),
-                DiffRow::THEIRS => Some(gdk::RGBA::new(0.2, 0.7, 0.3, 0.18)),
-                DiffRow::BASE => Some(gdk::RGBA::new(0.5, 0.5, 0.5, 0.18)),
-                DiffRow::MARKER => Some(gdk::RGBA::new(1.0, 0.58, 0.0, 0.14)),
+                DiffRow::ADDED => Some(DiffColor::Added),
+                DiffRow::REMOVED => Some(DiffColor::Removed),
+                DiffRow::HUNK => Some(DiffColor::Hunk),
+                DiffRow::OURS => Some(DiffColor::Current),
+                DiffRow::THEIRS => Some(DiffColor::Incoming),
+                DiffRow::BASE => Some(DiffColor::Base),
+                DiffRow::MARKER => Some(DiffColor::Marker),
                 _ => None,
             };
-            if let Some(bg) = background {
-                snapshot.append_color(&bg, &graphene::Rect::new(0.0, top, width, rh));
+            if let Some(kind) = background {
+                snapshot.append_color(
+                    &crate::theme::diff_color(kind, &fg),
+                    &graphene::Rect::new(0.0, top, width, rh),
+                );
             }
             let line = &st.rows[&index];
             let (_, h) = line.text.pixel_size();

@@ -787,15 +787,12 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
 
     private func draw(_ diff: FileDiff, rows: Range<Int>, origin: CGPoint, scale: CGFloat) {
         let ascent = CTFontGetAscent(font)
-        let added = NSColor.systemGreen.withAlphaComponent(0.16).rgba
-        let removed = NSColor.systemRed.withAlphaComponent(0.16).rgba
-        let hunk = NSColor.systemBlue.withAlphaComponent(0.10).rgba
-        let strongAdded = NSColor.systemGreen.withAlphaComponent(0.38).rgba
-        let strongRemoved = NSColor.systemRed.withAlphaComponent(0.38).rgba
-        let ours = NSColor.systemBlue.withAlphaComponent(0.18).rgba
-        let theirs = NSColor.systemGreen.withAlphaComponent(0.18).rgba
-        let base = NSColor.systemGray.withAlphaComponent(0.18).rgba
-        let marker = NSColor.systemOrange.withAlphaComponent(0.14).rgba
+        // 差分の色は配色テーマから（テーマが持たなければ、設定で標準にしていれば、標準の色）。
+        let colors = SyntaxColors.diff
+        func color(_ kind: DiffColor) -> SIMD4<Float> { (colors[kind] ?? kind.standard).rgba }
+        let added = color(.added), removed = color(.removed), hunk = color(.hunk)
+        let strongAdded = color(.addedWord), strongRemoved = color(.removedWord)
+        let ours = color(.current), theirs = color(.incoming), base = color(.base), marker = color(.marker)
         let text = NSColor.labelColor.rgba
         let secondary = NSColor.secondaryLabelColor.rgba
         let width = textView.bounds.width

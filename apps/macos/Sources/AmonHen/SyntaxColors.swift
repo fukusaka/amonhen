@@ -23,7 +23,51 @@ enum SyntaxColors {
     }
 }
 
-/// 構文の色のテーマ。種類ごとの色（なければ文字の色）。
+/// 差分の色の種類。テーマの `colors` の鍵（`#rrggbbaa`）と、テーマが持たないときの標準の色。
+enum DiffColor: String, CaseIterable {
+    /// 追加・削除の行の地。
+    case added = "diffAdded", removed = "diffRemoved"
+    /// 変わった単語の地。
+    case addedWord = "diffAddedWord", removedWord = "diffRemovedWord"
+    /// hunk の見出しの行の地。
+    case hunk = "diffHunk"
+    /// コンフリクトの Current・Incoming・共通の祖先の行と、マーカーの行の地。マージエディタも同じ色合い。
+    case current = "conflictCurrent", incoming = "conflictIncoming", base = "conflictBase", marker = "conflictMarker"
+
+    /// これまでの色（システムの色。明るい・暗いで OS が変える）。
+    var standard: NSColor {
+        switch self {
+        case .added: NSColor.systemGreen.withAlphaComponent(0.16)
+        case .removed: NSColor.systemRed.withAlphaComponent(0.16)
+        case .addedWord: NSColor.systemGreen.withAlphaComponent(0.38)
+        case .removedWord: NSColor.systemRed.withAlphaComponent(0.38)
+        case .hunk: NSColor.systemBlue.withAlphaComponent(0.10)
+        case .current: NSColor.systemBlue.withAlphaComponent(0.18)
+        case .incoming: NSColor.systemGreen.withAlphaComponent(0.18)
+        case .base: NSColor.systemGray.withAlphaComponent(0.18)
+        case .marker: NSColor.systemOrange.withAlphaComponent(0.14)
+        }
+    }
+}
+
+extension SyntaxColors {
+    /// 差分の色（外観に合わせて変わる）。明るい・暗い外観で選んだテーマの色で、テーマが持たない色と、設定で標準の
+    /// 色にしたときは標準の色。
+    static var diff: [DiffColor: NSColor] {
+        if Settings.diffStandardColors { return Dictionary(uniqueKeysWithValues: DiffColor.allCases.map { ($0, $0.standard) }) }
+        let light = SyntaxTheme.named(Settings.syntaxThemeLight) ?? .system
+        let dark = SyntaxTheme.named(Settings.syntaxThemeDark) ?? .system
+        return Dictionary(uniqueKeysWithValues: DiffColor.allCases.map { kind in
+            let l = light.diffColor(kind), d = dark.diffColor(kind)
+            if l == d { return (kind, l) }
+            return (kind, NSColor(name: nil) { appearance in
+                appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? d : l
+            })
+        })
+    }
+}
+
+/// 構文の色のテーマ。種類ごとの色（なければ文字の色）と、差分の色（なければ標準の色）。
 struct SyntaxTheme: Codable, Hashable {
     var name: String
     /// 暗い外観向けか（一覧で明るい・暗いに分けて出す）。
@@ -49,6 +93,11 @@ struct SyntaxTheme: Codable, Hashable {
         return colors[name].flatMap(NSColor.init(hex:)) ?? .labelColor
     }
 
+    /// 差分の色（テーマが持たなければ標準の色）。
+    func diffColor(_ kind: DiffColor) -> NSColor {
+        colors[kind.rawValue].flatMap(NSColor.init(hex:)) ?? kind.standard
+    }
+
     private static let systemColors: [Int32: NSColor] = [
         AmonhenSyntaxSpan_KEYWORD: .systemPink, AmonhenSyntaxSpan_STRING: .systemRed, AmonhenSyntaxSpan_COMMENT: .systemGray,
         AmonhenSyntaxSpan_NUMBER: .systemPurple, AmonhenSyntaxSpan_FUNCTION: .systemBlue, AmonhenSyntaxSpan_TYPE: .systemTeal,
@@ -57,26 +106,43 @@ struct SyntaxTheme: Codable, Hashable {
         AmonhenSyntaxSpan_VARIABLE: .systemPink, AmonhenSyntaxSpan_ESCAPE: .systemOrange, AmonhenSyntaxSpan_MODULE: .systemBrown,
     ]
 
-    private static func theme(_ name: String, dark: Bool, _ hex: [String]) -> SyntaxTheme {
-        SyntaxTheme(name: name, dark: dark, colors: Dictionary(uniqueKeysWithValues: zip(kinds.map(\.0), hex)))
+    private static func theme(_ name: String, dark: Bool, _ hex: [String], diff: [String: String]) -> SyntaxTheme {
+        SyntaxTheme(name: name, dark: dark, colors: Dictionary(uniqueKeysWithValues: zip(kinds.map(\.0), hex)).merging(diff) { $1 })
+    }
+
+    /// 内蔵のテーマの差分の色: そのテーマの緑・赤・青・灰・橙に、標準の色と同じ濃さを付ける。
+    static func diffColors(added: String, removed: String, blue: String, gray: String, orange: String) -> [String: String] {
+        [
+            DiffColor.added.rawValue: added + "29", DiffColor.removed.rawValue: removed + "29",
+            DiffColor.addedWord.rawValue: added + "61", DiffColor.removedWord.rawValue: removed + "61",
+            DiffColor.hunk.rawValue: blue + "1a", DiffColor.current.rawValue: blue + "2e",
+            DiffColor.incoming.rawValue: added + "2e", DiffColor.base.rawValue: gray + "2e", DiffColor.marker.rawValue: orange + "24",
+        ]
     }
 
     /// 内蔵のテーマ（どれも MIT などで公開された配色）。並びは kinds の順。
     static let builtIn: [SyntaxTheme] = [
         theme("Solarized Light", dark: false, ["#859900", "#2aa198", "#93a1a1", "#d33682", "#268bd2", "#b58900", "#cb4b16",
-                                                "#268bd2", "#b58900", "#268bd2", "#657b83", "#b58900", "#dc322f", "#6c71c4"]),
+                                                "#268bd2", "#b58900", "#268bd2", "#657b83", "#b58900", "#dc322f", "#6c71c4"],
+              diff: diffColors(added: "#859900", removed: "#dc322f", blue: "#268bd2", gray: "#93a1a1", orange: "#cb4b16")),
         theme("Solarized Dark", dark: true, ["#859900", "#2aa198", "#586e75", "#d33682", "#268bd2", "#b58900", "#cb4b16",
-                                              "#268bd2", "#b58900", "#268bd2", "#839496", "#b58900", "#dc322f", "#6c71c4"]),
+                                              "#268bd2", "#b58900", "#268bd2", "#839496", "#b58900", "#dc322f", "#6c71c4"],
+              diff: diffColors(added: "#859900", removed: "#dc322f", blue: "#268bd2", gray: "#586e75", orange: "#cb4b16")),
         theme("Gruvbox Light", dark: false, ["#9d0006", "#79740e", "#928374", "#8f3f71", "#79740e", "#b57614", "#8f3f71",
-                                              "#076678", "#427b58", "#9d0006", "#af3a03", "#076678", "#af3a03", "#427b58"]),
+                                              "#076678", "#427b58", "#9d0006", "#af3a03", "#076678", "#af3a03", "#427b58"],
+              diff: diffColors(added: "#79740e", removed: "#9d0006", blue: "#076678", gray: "#928374", orange: "#af3a03")),
         theme("Gruvbox Dark", dark: true, ["#fb4934", "#b8bb26", "#928374", "#d3869b", "#b8bb26", "#fabd2f", "#d3869b",
-                                            "#83a598", "#8ec07c", "#fb4934", "#fe8019", "#83a598", "#fe8019", "#8ec07c"]),
+                                            "#83a598", "#8ec07c", "#fb4934", "#fe8019", "#83a598", "#fe8019", "#8ec07c"],
+              diff: diffColors(added: "#b8bb26", removed: "#fb4934", blue: "#83a598", gray: "#928374", orange: "#fe8019")),
         theme("Tomorrow", dark: false, ["#8959a8", "#718c00", "#8e908c", "#f5871f", "#4271ae", "#c99e00", "#f5871f",
-                                         "#c82829", "#f5871f", "#c82829", "#3e999f", "#c82829", "#f5871f", "#3e999f"]),
+                                         "#c82829", "#f5871f", "#c82829", "#3e999f", "#c82829", "#f5871f", "#3e999f"],
+              diff: diffColors(added: "#718c00", removed: "#c82829", blue: "#4271ae", gray: "#8e908c", orange: "#f5871f")),
         theme("Tomorrow Night", dark: true, ["#b294bb", "#b5bd68", "#969896", "#de935f", "#81a2be", "#f0c674", "#de935f",
-                                              "#cc6666", "#de935f", "#cc6666", "#8abeb7", "#cc6666", "#de935f", "#8abeb7"]),
+                                              "#cc6666", "#de935f", "#cc6666", "#8abeb7", "#cc6666", "#de935f", "#8abeb7"],
+              diff: diffColors(added: "#b5bd68", removed: "#cc6666", blue: "#81a2be", gray: "#969896", orange: "#de935f")),
         theme("Nord", dark: true, ["#81a1c1", "#a3be8c", "#616e88", "#b48ead", "#88c0d0", "#8fbcbb", "#b48ead",
-                                    "#88c0d0", "#d08770", "#81a1c1", "#81a1c1", "#d8dee9", "#ebcb8b", "#8fbcbb"]),
+                                    "#88c0d0", "#d08770", "#81a1c1", "#81a1c1", "#d8dee9", "#ebcb8b", "#8fbcbb"],
+              diff: diffColors(added: "#a3be8c", removed: "#bf616a", blue: "#81a1c1", gray: "#616e88", orange: "#d08770")),
     ]
 
     /// 読み込んだテーマ（VSCode のテーマから。`importedSyntaxThemes` に JSON で置く）。
@@ -145,8 +211,34 @@ extension SyntaxTheme {
                 }
             }
         }
+        // 差分の色（`colors` にあるものだけ。なければ標準の色）。行の地がなければ、変わった文字の地を使う（VSCode と同じ）。
+        let ui = json["colors"] as? [String: Any] ?? [:]
+        func hex(_ key: String) -> String? { (ui[key] as? String).flatMap(Self.normalizedHex) }
+        let diff: [(DiffColor, String?)] = [
+            (.added, hex("diffEditor.insertedLineBackground") ?? hex("diffEditor.insertedTextBackground")),
+            (.removed, hex("diffEditor.removedLineBackground") ?? hex("diffEditor.removedTextBackground")),
+            (.addedWord, hex("diffEditor.insertedTextBackground")),
+            (.removedWord, hex("diffEditor.removedTextBackground")),
+            (.current, hex("merge.currentContentBackground")),
+            (.incoming, hex("merge.incomingContentBackground")),
+            (.base, hex("merge.commonContentBackground")),
+        ]
+        for case let (kind, value?) in diff { colors[kind.rawValue] = value }
         let name = json["name"] as? String ?? url.deletingPathExtension().lastPathComponent
         return SyntaxTheme(name: name, dark: dark, colors: colors)
+    }
+
+    /// VSCode の色（`#rgb`・`#rgba`・`#rrggbb`・`#rrggbbaa`）を `#rrggbb` か `#rrggbbaa` にする。読めなければ nil。
+    static func normalizedHex(_ value: String) -> String? {
+        var s = value.trimmingCharacters(in: .whitespaces)
+        guard s.hasPrefix("#") else { return nil }
+        s.removeFirst()
+        guard s.allSatisfy(\.isHexDigit) else { return nil }
+        switch s.count {
+        case 3, 4: return "#" + s.map { "\($0)\($0)" }.joined().lowercased()
+        case 6, 8: return "#" + s.lowercased()
+        default: return nil
+        }
     }
 
     private static func loadVSCode(_ url: URL, depth: Int) throws -> [String: Any] {

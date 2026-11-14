@@ -222,6 +222,8 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
         // Settings > AI で CLI を選び直したら、開いたままのエディタでも出す・隠す。
         NotificationCenter.default.addObserver(
             self, selector: #selector(updateAssistantButtons), name: .assistantChanged, object: nil)
+        // 配色テーマを変えたら、コンフリクトの色を塗り直す。
+        NotificationCenter.default.addObserver(self, selector: #selector(themeChanged), name: .syntaxThemeChanged, object: nil)
         note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         note.textColor = .secondaryLabelColor
         // 文が長くてもボタンを押し出さないよう、メモの方を切り詰める。
@@ -443,6 +445,11 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
         refresh()
     }
 
+    @objc private func themeChanged() {
+        guard isViewLoaded else { return }
+        refresh()
+    }
+
     private func refresh() {
         position.stringValue = conflicts.isEmpty ? L("No conflicts") : L("Conflict %ld of %ld", selected + 1, conflicts.count)
         for b in [previousButton, nextButton, magicButton] + acceptButtons { b.isEnabled = !conflicts.isEmpty }
@@ -453,10 +460,13 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
         // 解決済み（Result に残っていない）のコンフリクトは、左右の欄で薄くする。
         let live = Set(originalOf.compactMap { $0 })
         let chosen = conflicts.isEmpty ? nil : originalOf[selected]
-        highlight(current, regions: sides.current?.regions ?? [], live: live, selected: chosen, color: .systemBlue)
-        highlight(incoming, regions: sides.incoming?.regions ?? [], live: live, selected: chosen, color: .systemGreen)
-        highlight(base, regions: sides.base?.regions ?? [], live: live, selected: chosen, color: .systemGray)
-        highlight(result, regions: conflicts.map(\.lines), live: nil, selected: conflicts.isEmpty ? nil : selected, color: .systemRed)
+        // 色合いは配色テーマの差分の色から（濃さはここで決める）。Result のコンフリクトは削除の色。
+        let colors = SyntaxColors.diff
+        func hue(_ kind: DiffColor) -> NSColor { colors[kind] ?? kind.standard }
+        highlight(current, regions: sides.current?.regions ?? [], live: live, selected: chosen, color: hue(.current))
+        highlight(incoming, regions: sides.incoming?.regions ?? [], live: live, selected: chosen, color: hue(.incoming))
+        highlight(base, regions: sides.base?.regions ?? [], live: live, selected: chosen, color: hue(.base))
+        highlight(result, regions: conflicts.map(\.lines), live: nil, selected: conflicts.isEmpty ? nil : selected, color: hue(.removed))
         leftBand.needsDisplay = true
         rightBand.needsDisplay = true
     }
@@ -953,7 +963,7 @@ private final class ConflictBand: NSView {
         arrows.removeAll()
         guard let owner else { return }
         let sideText = owner.sideText(side), result = owner.resultText
-        let color: NSColor = side == .ours ? .systemBlue : .systemGreen
+        let color = SyntaxColors.diff[side == .ours ? .current : .incoming] ?? (side == .ours ? DiffColor.current : .incoming).standard
         for region in owner.bandRegions(side) {
             let s0 = owner.y(ofLine: region.side.lowerBound, in: sideText)
             let s1 = max(s0 + 2, owner.y(ofLine: region.side.upperBound, in: sideText))
