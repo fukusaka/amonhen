@@ -9,7 +9,7 @@ VSCode 上で快適に Git を操作するための自分用の拡張。Amon Hen
 
 | 要件 | 区分 |
 | --- | --- |
-| サイドバー（Branches / Remotes / Tags / Stashes / Submodules） | 必須 |
+| サイドバー（Branches / Remotes / Tags / Stashes / Submodules / Subtrees） | 必須 |
 | ブランチのドラッグ＆ドロップで merge / rebase / push | 必須 |
 | コミットを柔軟に編集できる（reword / squash / fixup / drop / reorder / split） | 必須 |
 | 差分ビューから hunk・行単位で細かくコミットを作れる | 必須 |
@@ -76,7 +76,7 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
   ではブランチの reflog（`git log -g`）を読んで `git range-diff` を自分で動かす。
 - エンジンのあとに足した機能は、エンジンだけで作る（`run` でコアの命令を使う）。エンジンがなければ、その行とコマンドは
   出さない（コンテキストキー `amonhen.engine`）。
-- サイドバーのいちばん下の Reflog は、メインビューのページを開く。左に HEAD の reflog（コアの `reflog`）、右に選んだ行の
+- サイドバーのセクションの下の Reflog は、メインビューのページを開く。左に HEAD の reflog（コアの `reflog`）、右に選んだ行の
   コミットを History と同じ詳細の欄に出す。どの ref からも辿れない行には「not on any branch」と付ける。ボタンと右クリック
   から、そこにブランチ・タグを作る、checkout する（detached）、そこへ reset する、History で見せる（今の範囲になければ
   All Branches にする。`historyRowOf`）、ID・名前をコピーする。HEAD が動いたら読み直す。
@@ -92,7 +92,10 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
 
 ### サイドバー
 
-- 独自の View Container に TreeView を置く。項目は Working Copy / Branches / Remotes / Tags / Stashes / Submodules。
+- 独自の View Container に TreeView を置く。項目は Working Copy（worktree が 2 つ以上あれば、その下に worktree）/ History /
+  Conflicts（コンフリクトがある間）/ 途中の merge・rebase / Branches / Remotes / Tags / Stashes（stash があるとき）/
+  Submodules / Subtrees（エンジンが `git subtree` を見つけたとき）、続いて Range Diff（開いている間）、Reflog と
+  Repository Settings（エンジンがあるとき）。
 - 状態変化の検知は `vscode.git` の `onDidChange` に任せ、自前の file watcher は持たない。
 
 ### ドラッグ＆ドロップによる merge / rebase / push
@@ -101,7 +104,7 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
 - ドロップ先が現在のブランチでなければ checkout してから実行する。fast-forward で済む場合は checkout せず `update-ref` だけで処理する。
 - 制約: TreeView と Webview の間ではドラッグ＆ドロップできない。History 内の並べ替えは Webview の中で完結させる。
 - コミットグラフが変わる操作の確認（Push・Force Push・Pull・Merge・Rebase・Reset・Cherry-pick・Revert・Fast-Forward、ほかのブランチにないコミットのあるブランチの削除、Undo、パッチをコミットにする取り込み、History の編集の Apply Changes）は、メインビューが開いていれば、その Webview の上に重ねたシートで、アプリと同じ前と後の絵を添えて出す（docs/design.md の「コミットグラフの変化を見せる」）。絵はコアの `movePreview`・`deletePreview`・`mergePreview`・`pickPreview`・`octopusPreview`・`rewritePreview` から拡張が組み（`src/history/drawing.ts`）、Webview は描くだけ。シートにはアプリのシートと同じものも載せる: 取り込み方・Reset の動かし方は選ぶもの（選ぶと絵が替わる）、送る・取り込むコミットの一覧（押すとシートを閉じずに差分を開く）。ネイティブのモーダルには画像を出せず、VSCode のモーダルエディタは拡張から開けないので、メインビュー（またはエンジン）がなければこれまでどおりモーダルか QuickPick で確かめ、Fast-Forward と Apply Changes は確かめない。
-- rebase（ドロップ、またはブランチの右クリックから）と History の編集は、コミットを書き換えるので、いつも先に確かめる（docs/design.md の「書き換える操作と、積み重ねたブランチ」）。共有の daemon では、modal の詳しい欄にコアの `rewritePreview` を出す: 一緒に動く・残る積み重ねたブランチとその理由、あとの push に Force Push が要る push 済みのブランチ、コンフリクトの見込み（git 2.40 以降）。積み重ねたブランチに関わり、git が 2.38 以降なら、2 つ目のボタンでその操作だけ `rebase.updateRefs` と逆に動かす・動かさないを選べる（コアの `rebase`・`rewrite` の `updateRefs`）。見通しは今のブランチについてだけで、ほかのブランチの rebase と git 実行層では見通しなしで確かめる。
+- rebase（ドロップ、またはブランチの右クリックから）と History の編集は、コミットを書き換えるので、いつも先に確かめる（docs/design.md の「書き換える操作と、積み重ねたブランチ」）。共有の daemon では、確認にコアの `rewritePreview` を出す: 一緒に動く・残る積み重ねたブランチとその理由、あとの push に Force Push が要る push 済みのブランチ、コンフリクトの見込み（git 2.40 以降）。メインビューが開いていれば、上と同じくその上に重ねたシートで前と後の絵を添えて出し（`src/ui/rewriteConfirm.ts`）、なければ modal の詳しい欄に出す。積み重ねたブランチに関わり、git が 2.38 以降なら、2 つ目のボタンでその操作だけ `rebase.updateRefs` と逆に動かす・動かさないを選べる（コアの `rebase`・`rewrite` の `updateRefs`）。見通しは今のブランチについてだけで、ほかのブランチの rebase は、代わりに merge したときのコンフリクトの見込み（`predictMerge`。git 2.38 以降、どちらの経路でも）を添えて modal で確かめる。git 実行層では、今のブランチの rebase は見通しなしで確かめる。
 - コマンドパレットの Merge Branches… で、いくつものブランチ・リモートブランチ・タグを `git merge a b c` と同じく 1 つのコミットで今のブランチに merge する（octopus）。1 つ目の QuickPick で一覧の順に選び、2 つ目の QuickPick に、前のものまでの結果に重ねて調べたそれぞれのコンフリクトの見込み（`predictMerge`。git 2.38 以降）を出して、1 つのコミットにまとめる・最後より前でぶつかるものを最後に回す・1 つずつ merge する、から選ばせる。最後より前のものがコンフリクトすると git はコンフリクトを残さずに止まるので、git が断ったら改めて 1 つずつを勧める。1 つずつはコンフリクトで止まり、残りを知らせる。どちらも Undo 1 回で全部戻る。共有の daemon ではコアが記録し（配列を渡す `merge`、`oneByOne`）、git 実行層では拡張が記録する。git 2.37 より前が途中まで合わせた変更を残したときは、`reset --merge` で戻す。
 
 ### コミットの柔軟な編集
@@ -151,7 +154,7 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
 ステップ 1〜5 では、Working Copy をサイドバーの TreeView と標準 diff エディタで、History をエディタ領域の Webview で作った。表現がまったく違う部品に分かれているため、Working Copy と History を同じ画面の中で切り替える操作感にならなかった。そこで UI 層を作り直し、エディタ領域の 1 つの Webview（メインビュー）にまとめる。git 実行層・状態管理層・Undo・rebase の仕組みはそのまま使う。
 
 - メインビューは左にナビ（Working Copy / History / Branches / Remotes / Tags / Stashes）、右に内容を出す。切り替えは Webview の中だけで行い、拡張ホストとの往復を待たない。
-- 差分は Webview の中に描く。軽さを優先してシンタックスハイライトは付けず、単語単位の差分の強調と、hunk・行の選択による stage / unstage を持たせる。差分の計算と index への書き込みは拡張ホスト側（`src/diff/lineDiff.ts`）で行う。
+- 差分は Webview の中に描き、単語単位の差分の強調と、hunk・行の選択による stage / unstage を持たせる。エンジンがあれば、差分と Blame にコアの tree-sitter による構文の色を付ける（`diffSyntax`・`textSyntax`。差分を出したあとに頼む）。git 実行層では付かない。差分の計算と index への書き込みは拡張ホスト側（`src/diff/lineDiff.ts`）で行う。
 - コミット欄は複数行のメッセージと amend を扱う。
 - History の詳細にも同じ差分の部品を使い、変更ファイルの差分をスクロールで続けて見られるようにする。
 - ブランチのドラッグ＆ドロップ（merge / rebase / push）はナビの中で行う。
@@ -167,7 +170,7 @@ git 実行層では、小さな git コマンドの所要時間は、ほぼプ�
 - `git cat-file --batch` を常駐させ、オブジェクト取得のたびに spawn しない（`--batch-command` は git 2.36 からで、サポートする最低の版より新しい）。cat-file は index を最初の 1 回しか読まないので、`:path` を問い合わせる前に index の更新時刻を確かめ、変わっていれば起動し直す。
 - ref・config・stash の変化は `.git` 内のファイル（`HEAD`、`refs/` 以下のディレクトリ、`packed-refs`、`reftable/tables.list`、`config`、`logs/refs/stash`）の更新時刻で検知し、spawn しない。git は ref を lock ファイルの rename で更新するので、ディレクトリの更新時刻で足りる。
 - 変化があった部分だけ取り直す。ref は ahead/behind も含めて `for-each-ref` 1 回で取る。worktree の変化は検知できないので status は毎回取る。独立したコマンドは並列で実行する。
-- Tags / Stashes / Submodules は展開されるまで取得しない。TreeView は前回との差分を取り、変わったノードだけ更新する。
+- Tags / Submodules は展開されるまで取得しない。Stashes は stash があるときだけ出すので、stash の一覧は先に読む（`git stash list` は軽い）。TreeView は前回との差分を取り、変わったノードだけ更新する。
 - stage / unstage などは先に UI へ反映し、git の結果で確定させる（楽観的更新）。
 - esbuild で 1 ファイルに bundle し、実行時の依存パッケージは持たない。Webview は React を使わず、仮想スクロールとグラフの canvas 描画で軽くする。
 - git コマンドと再描画の所要時間を Output に記録し、「通常のリポジトリでサイドバーの更新は 30 ms 以内」を目安に計測しながら作る。

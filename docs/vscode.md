@@ -10,7 +10,7 @@ distributed through GitHub Releases.
 
 | Requirement | Category |
 | --- | --- |
-| Sidebar (Branches / Remotes / Tags / Stashes / Submodules) | Required |
+| Sidebar (Branches / Remotes / Tags / Stashes / Submodules / Subtrees) | Required |
 | Merge / rebase / push by dragging and dropping branches | Required |
 | Flexible commit editing (reword / squash / fixup / drop / reorder / split) | Required |
 | Building commits finely, by hunk and by line, from the diff view | Required |
@@ -82,7 +82,7 @@ is in [front.md](front.md), and the design in item 18 of
   (`git log -g`) and runs `git range-diff` itself.
 - Features that came after the engine are built on the engine only (the core's commands through `run`); without it
   their sidebar rows and commands are hidden (the `amonhen.engine` context key).
-- Reflog, the sidebar's last row, opens a page of the main view with HEAD's reflog (the core's `reflog`) on the left
+- Reflog, a sidebar row below the sections, opens a page of the main view with HEAD's reflog (the core's `reflog`) on the left
   and the selected entry's commit on the right, in the same details pane as History. Entries no ref reaches are marked
   "not on any branch". Its buttons and context menu create a branch or tag there, check it out (detached), reset to
   it, show it in History (switching to All Branches when the current scope lacks it, `historyRowOf`) and copy its ID
@@ -100,7 +100,10 @@ is in [front.md](front.md), and the design in item 18 of
 
 ### Sidebar
 
-- Put a TreeView in a custom View Container. The items are Working Copy / Branches / Remotes / Tags / Stashes / Submodules.
+- Put a TreeView in a custom View Container. The items are Working Copy (with the worktrees under it when there are
+  two or more) / History / Conflicts (while there are conflicts) / the merge or rebase in progress / Branches / Remotes /
+  Tags / Stashes (when there are stashes) / Submodules / Subtrees (when the engine finds `git subtree`), then Range Diff
+  (while it is open), Reflog and Repository Settings (with the engine).
 - Leave detection of state changes to `vscode.git`'s `onDidChange`, and do not keep our own file watcher.
 
 ### Merge / rebase / push by drag and drop
@@ -109,7 +112,7 @@ is in [front.md](front.md), and the design in item 18 of
 - If the drop target is not the current branch, check it out before running. If a fast-forward is enough, handle it with just `update-ref`, without a checkout.
 - Constraint: drag and drop does not work between a TreeView and a Webview. Reordering within the History is done entirely inside the Webview.
 - Confirmations that change the commit graph (Push, Force Push, Pull, Merge, Rebase, Reset, Cherry-pick, Revert, Fast-Forward, deleting a branch with commits no other branch has, Undo, applying patches as commits, and Apply Changes of a History edit) appear, while the main view is open, as a sheet over its Webview with the app's before-and-after drawing (docs/design.md, "Previewing graph changes"). The extension builds the drawing from the core's `movePreview`, `deletePreview`, `mergePreview`, `pickPreview`, `octopusPreview` and `rewritePreview` (`src/history/drawing.ts`), and the Webview only renders it. The sheet also holds what the app's sheet does: the way to integrate or reset as a choice (the drawing follows it), and the commits to send or pull, whose diff opens without closing it. Native modals can't show images and the extension can't open VSCode's modal editor, so without the main view (or the engine) these ask as before, in a modal or QuickPick, and Fast-Forward and Apply Changes don't ask.
-- A rebase (dropped, or from a branch's context menu) and every History edit are confirmed first, since they rewrite commits (docs/design.md, "Rewriting operations and stacked branches"). Through the shared daemon the modal's detail shows the core's `rewritePreview`: the stacked branches that move or stay and why, the pushed branches that will need Force Push, and the conflicts expected (git 2.40 or newer). When a stacked branch is affected and git is 2.38 or newer, a second button moves or keeps them this once, against `rebase.updateRefs` (`updateRefs` on the core's `rebase` and `rewrite`). The preview is for the current branch; rebasing another branch, or working on the git execution layer, confirms without one.
+- A rebase (dropped, or from a branch's context menu) and every History edit are confirmed first, since they rewrite commits (docs/design.md, "Rewriting operations and stacked branches"). Through the shared daemon the confirmation shows the core's `rewritePreview`: the stacked branches that move or stay and why, the pushed branches that will need Force Push, and the conflicts expected (git 2.40 or newer). While the main view is open it is a sheet over it with the before-and-after drawing, as above (`src/ui/rewriteConfirm.ts`); otherwise the preview goes in a modal's detail. When a stacked branch is affected and git is 2.38 or newer, a second button moves or keeps them this once, against `rebase.updateRefs` (`updateRefs` on the core's `rebase` and `rewrite`). The preview is for the current branch; rebasing another branch confirms in a modal with the conflicts expected if it were merged instead (`predictMerge`, git 2.38 or newer, on both paths), and on the git execution layer the current branch's rebase confirms without a preview.
 - Merge Branches… in the Command Palette merges several branches, remote branches or tags into the current branch in one commit, as `git merge a b c` does (an octopus merge). They are picked in one QuickPick, in list order; a second QuickPick shows the conflicts expected for each, checked on top of the ones before (`predictMerge`; git 2.38 or newer), and offers to merge them in one commit, to put the one that conflicts before the last last, or to merge them one by one. git stops without recording conflicts when one before the last conflicts, so when it gives up the extension offers one by one again. One by one stops at a conflict and names the rest. Either way one Undo puts everything back: through the shared daemon the core records it (`merge` with an array, `oneByOne`); on the git execution layer the extension does, and puts the worktree back with `reset --merge` when git older than 2.37 leaves the part merged so far.
 
 ### Flexible commit editing
@@ -160,7 +163,7 @@ is in [front.md](front.md), and the design in item 18 of
 In steps 1–5, the Working Copy was built with a sidebar TreeView and the standard diff editor, and the History with a Webview in the editor area. Because they were split across components with completely different presentations, switching between Working Copy and History did not feel like moving within one screen. So the UI layer is rebuilt and brought into a single Webview in the editor area (the main view). The git execution layer, the state management layer, Undo and the rebase machinery are used as they are.
 
 - The main view shows the nav (Working Copy / History / Branches / Remotes / Tags / Stashes) on the left and the contents on the right. Switching happens entirely inside the Webview, without waiting for a round trip to the extension host.
-- Diffs are drawn inside the Webview. Favoring lightness, there is no syntax highlighting; it has word-level diff highlighting and stage / unstage by selecting hunks and lines. Computing diffs and writing to the index are done on the extension host side (`src/diff/lineDiff.ts`).
+- Diffs are drawn inside the Webview, with word-level diff highlighting and stage / unstage by selecting hunks and lines. With the engine, diffs and Blame get syntax colors from the core's tree-sitter (`diffSyntax`, `textSyntax`), asked for after the diff is shown; there are none on the git execution layer. Computing diffs and writing to the index are done on the extension host side (`src/diff/lineDiff.ts`).
 - The commit form handles multi-line messages and amend.
 - The History details use the same diff component, so the diffs of the changed files can be read continuously by scrolling.
 - Drag and drop of branches (merge / rebase / push) is done within the nav.
@@ -176,7 +179,7 @@ On the git execution layer, the time taken by a small git command is almost enti
 - Keep `git cat-file --batch` resident, rather than spawning for each object fetch (`--batch-command` needs git 2.36, newer than the supported minimum). cat-file reads the index only once, at the start, so before querying `:path`, check the index's modification time and restart it if it has changed.
 - Detect changes to refs, config and stashes by the modification times of files in `.git` (`HEAD`, the directories under `refs/`, `packed-refs`, `reftable/tables.list`, `config`, `logs/refs/stash`), without spawning. git updates refs by renaming lock files, so directory modification times are enough.
 - Re-fetch only what changed. Refs, including ahead/behind, are fetched with a single `for-each-ref`. Worktree changes cannot be detected, so status is fetched every time. Independent commands run in parallel.
-- Tags / Stashes / Submodules are not fetched until expanded. The TreeView diffs against the previous result and updates only the nodes that changed.
+- Tags / Submodules are not fetched until expanded. The stash list is read anyway (`git stash list` is light), since Stashes shows only when there are stashes. The TreeView diffs against the previous result and updates only the nodes that changed.
 - Operations such as stage / unstage are reflected in the UI first and confirmed by git's result (optimistic updates).
 - Bundle into a single file with esbuild, with no runtime dependency packages. The Webview does not use React, and stays light with virtual scrolling and canvas rendering of the graph.
 - Record the time taken by git commands and redraws in Output, and build while measuring against the target of "sidebar updates within 30 ms on a typical repository".
