@@ -792,6 +792,8 @@ impl RepoWindow {
         bar.set_autohide(true);
         install_side_css();
         let side_slot = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        // 中のツールバーの列が広がろうとしても、サイドバーの幅より広げない（余りは中身の上の見出しへ）。
+        side_slot.set_hexpand(false);
         let header_slot = gtk::Box::new(gtk::Orientation::Vertical, 0);
         header_slot.set_hexpand(true);
         let headers = gtk::Box::new(gtk::Orientation::Horizontal, 0);

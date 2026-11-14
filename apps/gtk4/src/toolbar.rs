@@ -388,6 +388,8 @@ impl Bar {
         let (side_row, lead, side) = (horizontal(), horizontal(), horizontal());
         let (row, items, trail) = (horizontal(), horizontal(), horizontal());
         side_row.set_hexpand(true);
+        // 項目のない所にも落とせるように、左の列も見出しの残りの幅いっぱいにする（右の列と同じ）。
+        side.set_hexpand(true);
         row.set_hexpand(true);
         items.set_hexpand(true);
         let controls = |side| {
