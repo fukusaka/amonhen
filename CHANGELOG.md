@@ -29,6 +29,8 @@ becomes the GitHub Release notes.
 - macOS: Blame, File History, connecting and Repositories tabs follow the window background, so switching tabs keeps
   the same look.
 - GTK4: the background image covers the header bar too.
+- GTK4: the sidebar runs to the top of the window under its own header bar (Repository, Sidebar and Repositories), and
+  the tab bar sits over the content only, as on macOS.
 
 #### Changed
 
