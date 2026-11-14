@@ -7,7 +7,7 @@ extension Notification.Name {
     static let backdropApplied = Notification.Name("backdropApplied")
 }
 
-/// 窓の外側の分割。サイドバーがふつうの項目のとき（macOS の既定以外の背景）も、サイドバーの開け閉めを効かせる。
+/// 窓の外側の分割。サイドバーがふつうの項目のとき（窓の後ろを透かすとき）も、サイドバーの開け閉めを効かせる。
 final class MainSplitViewController: NSSplitViewController {
     override func toggleSidebar(_ sender: Any?) {
         guard let item = splitViewItems.first, item.behavior != .sidebar else { return super.toggleSidebar(sender) }
@@ -15,35 +15,20 @@ final class MainSplitViewController: NSSplitViewController {
     }
 }
 
-/// 窓の背景の型。
+/// 窓の後ろ（デスクトップや後ろの窓）を透かす場所。
 enum BackdropStyle: String, CaseIterable, Codable, Hashable {
-    /// macOS の既定の窓（サイドバーはガラス、ツールバーは標準）。読む面（一覧・差分・Commit の欄）は 1 つの色。
+    /// どこも透かさない。macOS の既定の窓（サイドバーはガラス、ツールバーは標準）。読む面（一覧・差分・Commit の欄）は 1 つの色。
     case system
-    /// サイドバーとツールバーだけ透け、読む面（一覧・差分）は 1 つの色。
+    /// サイドバーとツールバーだけ透かし、読む面（一覧・差分）は不透明な 1 つの色。
     case chrome
-    /// 窓全体に地を 1 枚敷き、どの面も自分では塗らない。読む面の濃さは `contentOpacity`。
+    /// 窓全体を透かす。どの面も自分では塗らず、窓全体に敷いた 1 枚の地が透け具合を決める。
     case single
 
     var title: String {
         switch self {
-        case .system: L("Nowhere (System)")
+        case .system: L("Nowhere (Standard)")
         case .chrome: L("Sidebar and Toolbar")
         case .single: L("Whole Window")
-        }
-    }
-}
-
-/// 背景に見せるもの。
-enum BackdropSource: String, CaseIterable, Codable, Hashable {
-    /// 窓の後ろ（デスクトップや後ろの窓が、ぼかされて見える）。
-    case behind
-    /// 選んだ画像（窓は不透明のまま）。
-    case image
-
-    var title: String {
-        switch self {
-        case .behind: L("Behind the Window")
-        case .image: L("Image")
         }
     }
 }
@@ -68,15 +53,17 @@ enum BackdropImagePlacement: String, CaseIterable, Codable, Hashable {
 
 /// 窓の背景の設定。アプリの設定（Settings > Theme）と、リポジトリごとの上書き（ブックマーク）で同じ形。
 struct BackdropSettings: Codable, Hashable {
-    /// 背景を見せる場所。
+    /// 窓の後ろを透かす場所。
     var style: BackdropStyle = .system
-    /// 背景に見せるもの。
-    var source = BackdropSource.behind
-    /// 背景画像のパス（窓の後ろに切り替えても覚えておく）。
+    /// 透かす場所の透過率（0.1〜0.9）。地を `1 - transparency` の濃さで敷く。
+    var transparency = 0.4
+    /// 透かした先（デスクトップや後ろの窓）のぼかしの強さ（0〜1。0 はぼかさない）。
+    var blur = 0.4
+    /// 背景画像のパス。透かす場所とは別に、窓全体の中身の上に薄く重ねる。
     var image: String?
     var imagePlacement = BackdropImagePlacement.fill
-    /// 1 枚の地の濃さ（0.4〜1）。1 なら背景画像も窓の後ろも見えない。
-    var contentOpacity = 0.8
+    /// 背景画像の透過率（0.5〜0.95）。
+    var imageTransparency = 0.85
     /// ツールバーに敷く色（`#rrggbb`、なければ地と同じ）。
     var toolbarColor: String?
     var toolbarOpacity = 0.35
@@ -88,11 +75,11 @@ struct BackdropSettings: Codable, Hashable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = BackdropSettings()
         style = try c.decodeIfPresent(BackdropStyle.self, forKey: .style) ?? d.style
+        transparency = try c.decodeIfPresent(Double.self, forKey: .transparency) ?? d.transparency
+        blur = try c.decodeIfPresent(Double.self, forKey: .blur) ?? d.blur
         image = try c.decodeIfPresent(String.self, forKey: .image)
-        // 見せるものを分ける前の記録は、画像があれば画像。
-        source = try c.decodeIfPresent(BackdropSource.self, forKey: .source) ?? (image == nil ? .behind : .image)
         imagePlacement = try c.decodeIfPresent(BackdropImagePlacement.self, forKey: .imagePlacement) ?? d.imagePlacement
-        contentOpacity = try c.decodeIfPresent(Double.self, forKey: .contentOpacity) ?? d.contentOpacity
+        imageTransparency = try c.decodeIfPresent(Double.self, forKey: .imageTransparency) ?? d.imageTransparency
         toolbarColor = try c.decodeIfPresent(String.self, forKey: .toolbarColor)
         toolbarOpacity = try c.decodeIfPresent(Double.self, forKey: .toolbarOpacity) ?? d.toolbarOpacity
     }
@@ -103,10 +90,11 @@ struct BackdropSettings: Codable, Hashable {
             let d = UserDefaults.standard
             var s = BackdropSettings()
             s.style = d.string(forKey: "backdropStyle").flatMap(BackdropStyle.init(rawValue:)) ?? .system
+            if d.object(forKey: "backdropTransparency") != nil { s.transparency = d.double(forKey: "backdropTransparency") }
+            if d.object(forKey: "backdropBlur") != nil { s.blur = d.double(forKey: "backdropBlur") }
             s.image = d.string(forKey: "backdropImage").flatMap { $0.isEmpty ? nil : $0 }
-            s.source = d.string(forKey: "backdropSource").flatMap(BackdropSource.init(rawValue:)) ?? (s.image == nil ? .behind : .image)
             s.imagePlacement = d.string(forKey: "backdropImagePlacement").flatMap(BackdropImagePlacement.init(rawValue:)) ?? .fill
-            if d.object(forKey: "backdropContentOpacity") != nil { s.contentOpacity = d.double(forKey: "backdropContentOpacity") }
+            if d.object(forKey: "backdropImageTransparency") != nil { s.imageTransparency = d.double(forKey: "backdropImageTransparency") }
             s.toolbarColor = d.string(forKey: "backdropToolbarColor").flatMap { $0.isEmpty ? nil : $0 }
             if d.object(forKey: "backdropToolbarOpacity") != nil { s.toolbarOpacity = d.double(forKey: "backdropToolbarOpacity") }
             return s
@@ -114,10 +102,11 @@ struct BackdropSettings: Codable, Hashable {
         set {
             let d = UserDefaults.standard
             d.set(newValue.style.rawValue, forKey: "backdropStyle")
-            d.set(newValue.source.rawValue, forKey: "backdropSource")
+            d.set(newValue.transparency, forKey: "backdropTransparency")
+            d.set(newValue.blur, forKey: "backdropBlur")
             d.set(newValue.image, forKey: "backdropImage")
             d.set(newValue.imagePlacement.rawValue, forKey: "backdropImagePlacement")
-            d.set(newValue.contentOpacity, forKey: "backdropContentOpacity")
+            d.set(newValue.imageTransparency, forKey: "backdropImageTransparency")
             d.set(newValue.toolbarColor, forKey: "backdropToolbarColor")
             d.set(newValue.toolbarOpacity, forKey: "backdropToolbarOpacity")
             NotificationCenter.default.post(name: .backdropChanged, object: nil)
@@ -127,6 +116,16 @@ struct BackdropSettings: Codable, Hashable {
     /// `location` の窓で使う設定（リポジトリの上書きがあればそれ）。
     static func resolved(for location: String) -> BackdropSettings {
         Bookmarks.shared.bookmark(location)?.backdrop ?? app
+    }
+
+    /// 透かす場所に敷く地の色（`1 - transparency` の濃さ）。ぼかしは窓そのものにかけるので、色を足さない。
+    var groundColor: NSColor {
+        NSColor.textBackgroundColor.withAlphaComponent(1 - transparency)
+    }
+
+    /// 窓の後ろのぼかしの半径（点）。強さ 1 で 50（kitty・WezTerm などの端末で使われる値の範囲）。
+    var blurRadius: Int {
+        style == .system ? 0 : Int((blur * 50).rounded())
     }
 
     /// 読む面に敷く色（`system`・`chrome` は不透明な 1 つの色、`single` は塗らない）。
@@ -143,7 +142,7 @@ struct BackdropSettings: Codable, Hashable {
     var bandColor: SIMD4<Float> {
         switch style {
         case .system, .chrome: (NSColor.textBackgroundColor.blended(withFraction: 0.05, of: .labelColor) ?? .textBackgroundColor).rgba
-        case .single: NSColor.textBackgroundColor.withAlphaComponent(contentOpacity).rgba
+        case .single: groundColor.rgba
         }
     }
 
@@ -207,11 +206,10 @@ private final class TintView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
-/// 窓の中身の土台: 背景の層（窓の後ろ・画像・地・ツールバーの帯）を敷き、その上に中身（分割ビュー）を載せる。
-/// 窓はタイトルバーの下まで広げる。`system` 以外では、ツールバーの下にも同じ層が見えるようにする。
+/// 窓の中身の土台: 透かすときは地を敷き、その上に中身（分割ビュー）、さらに上に背景画像とツールバーの色を薄く重ねる
+/// （マウスは下に通す）。窓はタイトルバーの下まで広げる。`system` 以外では、ツールバーの下にも地が見える。
 final class BackdropHostController: NSViewController {
     let content: NSViewController
-    private let behind = NSVisualEffectView()
     private let image = FillImageView()
     private let ground = TintView()
     private let band = TintView()
@@ -228,46 +226,51 @@ final class BackdropHostController: NSViewController {
     override func loadView() {
         let root = LayoutView(frame: NSRect(x: 0, y: 0, width: 1440, height: 820))
         root.onLayout = { [weak self] in self?.layoutContent() }
-        behind.blendingMode = .behindWindow
-        behind.material = .underWindowBackground
-        behind.state = .followsWindowActiveState
-        for v in [behind, image, ground, band] as [NSView] {
+        ground.isHidden = true
+        root.addSubview(ground)
+        addChild(content)
+        root.addSubview(content.view)
+        for v in [image, band] as [NSView] {
             v.isHidden = true
             root.addSubview(v)
         }
-        addChild(content)
-        root.addSubview(content.view)
         view = root
     }
 
-    /// ツールバー（タイトルバー）の高さ。`system` では中身を窓の上端から始め、中の面が自分でツールバーを避けるので 0。
-    private var titlebarHeight: CGFloat {
-        guard let window = view.window, settings.style != .system else { return 0 }
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        if let window = view.window { Backdrop.setBlur(window: window, radius: settings.blurRadius) }
+    }
+
+    /// ツールバーの色を重ねる帯の高さ（ツールバーの高さ）。
+    private var toolbarHeight: CGFloat {
+        guard let window = view.window else { return 0 }
         return max(0, view.bounds.height - window.contentLayoutRect.maxY)
     }
 
     private func layoutContent() {
         let bounds = view.bounds
-        let top = titlebarHeight
-        for v in [behind, ground] as [NSView] { v.frame = bounds }
+        ground.frame = bounds
         image.frame = Self.frame(of: image.image, placement: settings.imagePlacement, in: bounds)
-        band.frame = NSRect(x: 0, y: bounds.height - top, width: bounds.width, height: top)
-        content.view.frame = NSRect(x: 0, y: 0, width: bounds.width, height: bounds.height - top)
+        let bandHeight = toolbarHeight
+        band.frame = NSRect(x: 0, y: bounds.height - bandHeight, width: bounds.width, height: bandHeight)
+        // 中身は窓の上端から（中の面が自分でツールバーを避ける）。
+        content.view.frame = bounds
     }
 
     func apply(_ settings: BackdropSettings) {
         self.settings = settings
         guard let window = view.window else { return }
         let custom = settings.style != .system
-        let picture = custom && settings.source == .image ? settings.image.flatMap(loadImage) : nil
-        Backdrop.prepare(window: window, style: settings.style, seeThrough: custom && picture == nil)
+        Backdrop.prepare(window: window, seeThrough: custom)
+        Backdrop.setBlur(window: window, radius: settings.blurRadius)
+        ground.isHidden = !custom
+        ground.color = settings.groundColor
+        let picture = settings.image.flatMap(loadImage)
         image.image = picture
         image.isHidden = picture == nil
-        behind.isHidden = !custom || picture != nil
-        behind.material = settings.style == .chrome ? .sidebar : .underWindowBackground
-        ground.isHidden = settings.style != .single
-        ground.color = NSColor.textBackgroundColor.withAlphaComponent(settings.contentOpacity)
-        let tint = custom ? settings.toolbarColor.flatMap(NSColor.init(hex:)) : nil
+        image.alphaValue = 1 - settings.imageTransparency
+        let tint = settings.toolbarColor.flatMap(NSColor.init(hex:))
         band.isHidden = tint == nil
         band.color = tint?.withAlphaComponent(settings.toolbarOpacity) ?? .clear
         view.needsLayout = true
@@ -294,11 +297,11 @@ final class BackdropHostController: NSViewController {
 
 /// 窓と面の背景を、型に合わせて切り替える。
 @MainActor enum Backdrop {
-    /// 窓の形: 中身をタイトルバーの下まで広げる。`system` は macOS の標準の窓と同じく、サイドバーが窓の上端まで伸び、
-    /// ツールバーは中身の上に乗る（窓のタイトルは出さない。リポジトリの名前はツールバーにある）。窓を透けるようにするのは、
-    /// 背景画像がなく窓の後ろを見せるときだけ（透ける窓は WindowServer が重ねるので、表示までが 1 フレームの半分ほど遅れる。
-    /// 計測済み）。
-    static func prepare(window: NSWindow, style: BackdropStyle, seeThrough: Bool) {
+    /// 窓の形: どの型も macOS の標準の窓と同じく、中身をタイトルバーの下まで広げ、サイドバーが窓の上端まで伸び、
+    /// ツールバーは中身の上に乗る（窓のタイトルは出さない。リポジトリの名前はツールバーにある）。型が変えるのは透け方だけ。
+    /// 窓を透けるようにするのは、窓の後ろを透かすときだけ（透ける窓は WindowServer が重ねるので、表示までが 1 フレームの
+    /// 半分ほど遅れる。計測済み）。
+    static func prepare(window: NSWindow, seeThrough: Bool) {
         if !window.styleMask.contains(.fullSizeContentView) {
             // 切り替えると AppKit は中身の大きさを保って窓を縮めるので、窓の枠を戻す。
             let frame = window.frame
@@ -306,9 +309,26 @@ final class BackdropHostController: NSViewController {
             window.setFrame(frame, display: true)
         }
         window.titlebarAppearsTransparent = true
-        window.titleVisibility = style == .system ? .hidden : .visible
+        window.titleVisibility = .hidden
         window.isOpaque = !seeThrough
         window.backgroundColor = seeThrough ? .clear : .windowBackgroundColor
+    }
+
+    private typealias SetBlurRadius = @convention(c) (UInt32, Int, Int) -> Int32
+    private typealias DefaultConnection = @convention(c) () -> UInt32
+    /// 窓の後ろをぼかす WindowServer の関数（非公開。iTerm2・kitty・WezTerm なども使う）。公開の NSVisualEffectView は
+    /// ぼかしに素材の色を必ずかぶせ、ぼかしだけを強めたり、色を抜いて透かしたりできない。見つからない版では、ぼかさずに透かす。
+    private static let blurFunctions: (DefaultConnection, SetBlurRadius)? = {
+        guard let handle = dlopen(nil, RTLD_NOW),
+              let connection = dlsym(handle, "CGSDefaultConnectionForThread"),
+              let setRadius = dlsym(handle, "CGSSetWindowBackgroundBlurRadius") else { return nil }
+        return (unsafeBitCast(connection, to: DefaultConnection.self), unsafeBitCast(setRadius, to: SetBlurRadius.self))
+    }()
+
+    /// 窓の後ろのぼかしの半径を決める（0 でぼかさない）。窓が画面に出る前は番号がないので、出たときにもう一度呼ぶ。
+    static func setBlur(window: NSWindow, radius: Int) {
+        guard window.windowNumber > 0, let (connection, setRadius) = blurFunctions else { return }
+        _ = setRadius(connection(), window.windowNumber, radius)
     }
 
     /// 面の中の背景（表・一覧・文字の欄・スクロール）を消す・戻す。消す前の値は覚えておき、`system` に戻すときに戻す。

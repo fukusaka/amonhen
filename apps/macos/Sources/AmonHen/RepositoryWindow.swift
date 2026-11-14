@@ -1208,11 +1208,12 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     private var mainSplit: MainSplitViewController?
     private var backdropHost: BackdropHostController?
 
-    /// サイドバーの分割の項目。macOS の既定の型ではサイドバーの項目（ガラス）、ほかの型では背景の層が透けるふつうの項目。
+    /// サイドバーの分割の項目（どの型も窓の上端まで伸びる）。透かさないときはサイドバーの項目（ガラス）。透かすときは
+    /// ふつうの項目にする（macOS 26 からのガラスのサイドバーは窓の中の絵をぼかして描くので、窓の後ろが透けない）。
     private static func sidebarItem(for sidebar: NSViewController, style: BackdropStyle) -> NSSplitViewItem {
         let item = style == .system ? NSSplitViewItem(sidebarWithViewController: sidebar) : NSSplitViewItem(viewController: sidebar)
-        // `system` ではサイドバーの上に信号のボタン・Sidebar・Repositories が並ぶので、それが収まる幅にする。
-        item.minimumThickness = style == .system ? 240 : 180
+        // サイドバーの上に信号のボタン・Sidebar・Repositories が並ぶので、それが収まる幅にする。
+        item.minimumThickness = 240
         item.maximumThickness = 400
         item.canCollapse = true
         return item
@@ -1235,10 +1236,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             if !collapsed { split.splitView.setPosition(width, ofDividerAt: 0) }
         }
         host.apply(settings)
-        for view in [pages.view, statusBar.view] {
-            view.wantsLayer = true
-            view.layer?.backgroundColor = settings.paneColor.cgColor
-        }
+        statusBar.paint(settings.paneColor, underToolbar: settings.style == .system)
         // 読む面はどの型でも自分では塗らず、下の 1 つの色を見せる。サイドバーは `system` ではガラスのまま。
         Backdrop.clearBackgrounds(in: sidebar.view, clear: settings.style != .system)
         for view in [pages.view, statusBar.view] { Backdrop.clearBackgrounds(in: view, clear: true) }
