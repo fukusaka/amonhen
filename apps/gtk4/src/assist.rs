@@ -2,7 +2,7 @@
 //! 確認・返事を流しながら見せる部品（[`ResultView`]・[`Panel`]）と、Settings の AI のタブ。
 //!
 //! 設定は `gtk.ini` の、macOS 版の UserDefaults と同じ名前の鍵（`assistant`・`assistantModel.<CLI>`・
-//! `assistantLanguage`・`trustedPrompts`・`assistantRepositories`）。利用者のプロンプトは
+//! `assistantLanguage`・`approvedPromptHashes`・`assistantRepositories`）。利用者のプロンプトは
 //! `~/.config/amonhen/prompts/<用途>.md`、返事のキャッシュは `~/.cache/amonhen/assist`。
 
 use std::cell::{Cell, RefCell};
@@ -25,7 +25,7 @@ use crate::settings;
 pub const ASSISTANT: &str = "assistant";
 const LANGUAGE: &str = "assistantLanguage";
 /// 使ってよいと答えたプロンプト: パス → そのときの中身のハッシュ。
-const APPROVED_PROMPT_HASHES: &str = "trustedPrompts";
+const APPROVED_PROMPT_HASHES: &str = "approvedPromptHashes";
 const REPOSITORIES: &str = "assistantRepositories";
 
 fn model_key(cli: Cli) -> String {
