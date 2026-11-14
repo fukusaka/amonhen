@@ -115,7 +115,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | General: 端末と diff のツール | — | — | n/a | n/a |  |
 | Git: 機械全体のページ（Author and Signing・Commits・Operations・Working Copy・Keys and Values） | ✓ | ✓ | — | △ | CLI: `amonhen run` から。 |
 | Git > Commits: 共有のメッセージのテンプレート | ✓ | ✓ | — | — |  |
-| Git > Programs: git・gpg・ssh-keygen・gpgsm | ✓ | ✓ | n/a | △ | VSCode: git は VSCode の `git.path` で選ぶ（拡張はそれに従う）。gpg・ssh-keygen は git の設定で決まる。<br>CLI: `amonhen run`（`programs`・`setMachineGit`）から。 |
+| Git > Programs: git・gpg・ssh-keygen・gpgsm | ✓ | ✓ | n/a | △ | VSCode: 拡張は、ここで機械に選んだ git を動かし、選んでいなければ VSCode の `git.path`。gpg・ssh-keygen は git の設定で決まる。<br>CLI: `amonhen run`（`programs`・`setMachineGit`）から。 |
 | Git > この機械の Environment Variables（渡す・秘密を隠す） | ✓ | ✓ | n/a | n/a | VSCode: VSCode の環境が代わり（拡張はそれを daemon に渡す）。 |
 | Environment Variables: ログインシェルのものを使う（Read Again・SSH agent） | ✓ | — | n/a | n/a | GTK4: 外した。Linux のセッションはすでに持っている。<br>VSCode: VSCode の環境が代わり（拡張はそれを daemon に渡す）。 |
 | SSH Hosts: + / − の付いたホスト、届かないものは薄く | ✓ | ✓ | n/a | n/a | VSCode: Remote-SSH が受け持つ。 |
@@ -127,8 +127,8 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | ホスト・この機械の列で選ぶパスのシート | ✓ | ✓ | n/a | n/a |  |
 | Accounts: GitHub（CI の状態・アバター） | ✓ | ✓ | — | n/a |  |
 | Appearance: History の順・1 行・行の項目・アバター | ✓ | ✓ | n/a | n/a |  |
-| Appearance: テーマ・フォント・グラフの色 | — | — | n/a | n/a |  |
-| Theme: 窓の背景（透過とぼかし・背景画像・ツールバーの色・リポジトリごと） | ✓ | ✓ | n/a | n/a | GTK4: ぼかしはない（GTK からコンポジタに頼めない）。 |
+| Appearance: フォント・グラフの色 | — | — | n/a | n/a |  |
+| Theme: 窓の背景（透過とぼかし・背景画像・ツールバーの色・リポジトリごと） | ✓ | ✓ | n/a | n/a | GTK4: ぼかしはない（GNOME では窓の後ろをぼかせない）。透かすにはコンポジタが要る。 |
 | Theme: 構文の色（内蔵のテーマ・VSCode のテーマ） | ✓ | ✓ | n/a | n/a |  |
 | Diff & Merge: 開いたときに迷わないコンフリクトを解く | ✓ | ✓ | n/a | n/a |  |
 | Diff & Merge: unified/split・空白・前後の行・折り返し・タブの幅 | — | — | — | n/a |  |
@@ -221,7 +221,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
 | 1 つのチェックボックスの一覧（☑ ▣ ☐、見出し・フォルダーのチェック） | ✓ | ✓ | ✓ | n/a | VSCode: Staged と Changes が別のグループ。 |
-| List / Tree / Flat | ✓ | ✓ | ✓ | n/a |  |
+| List / Tree / File Name | ✓ | ✓ | ✓ | n/a |  |
 | パスで絞り込む | ✓ | ✓ | ✓ | n/a |  |
 | 行ごとの +/− の数と、ホバーで Discard | ✓ | ✓ | ✓ | △ | VSCode: 行数はエンジンがあるときだけ。<br>CLI: `diff --stat`。 |
 | Space で切り替え、⌫ で捨てる | ✓ | ✓ | ✓ | n/a |  |
@@ -389,7 +389,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| 英語の UI と日本語の訳 | ✓ | ✓ | — | ✓ | VSCode: 英語だけで、訳していない。 |
+| 英語の UI と日本語の訳 | ✓ | ✓ | — | ✓ | VSCode: 拡張そのものの文は英語だけで、訳していない。エンジンのメッセージは VSCode の表示言語に従う。 |
 
 ## 14. Worktree
 
