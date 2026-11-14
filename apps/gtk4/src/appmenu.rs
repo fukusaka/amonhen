@@ -604,6 +604,7 @@ fn handlers() -> Vec<(&'static str, Handler)> {
         ),
         ("repository-settings", Box::new(repository_settings)),
         ("open-in-terminal", Box::new(open_in_terminal)),
+        ("open-in-editor", Box::new(open_in_editor)),
         (
             "open-on-github",
             Box::new(|p| crate::github::open_on_github(&p.actions, head_branch(p))),
@@ -1025,8 +1026,11 @@ fn table_sections(menu: Menu) -> gio::Menu {
     for section in amonhen_commands::menu(menu) {
         let items = gio::Menu::new();
         for c in section.iter().filter(|c| !PENDING.contains(&c.id)) {
-            // 表の説明は項目のツールチップに（macOS 版と同じ）。
-            let tip = c.tooltip.map(amonhen_model::i18n::translate);
+            // 表の説明は項目のツールチップに（macOS 版と同じ）。Open in Editor は、どのエディタで開くか。
+            let tip = match c.id {
+                "open-in-editor" => Some(crate::editor::tooltip().into()),
+                _ => c.tooltip.map(amonhen_model::i18n::translate),
+            };
             // Show Sidebar は、印を付けずに名前を Hide Sidebar・Show Sidebar と替える（macOS 版と同じ）。状態を持つ
             // `win.show-sidebar`（ツールバーの切り替えのボタン）は印が付くので、状態のない方を出し、キーは名前の
             // 横に出すだけ（受けるのは `win.show-sidebar`）。
@@ -1566,6 +1570,27 @@ fn open_in_terminal(p: &Rc<Parts>) {
     };
     if !terminal_at(&dir) {
         p.window().error_bell();
+    }
+}
+
+/// 書き込む先の worktree を、Settings > General の External Editor で開く（開けなければ帯で知らせる）。
+fn open_in_editor(p: &Rc<Parts>) {
+    let Some(dir) = local_workdir(p) else {
+        return p.window().error_bell();
+    };
+    if let Err(message) = crate::editor::open_folder(&dir) {
+        let actions = p.actions.clone();
+        glib::spawn_future_local(async move {
+            actions
+                .fail(crate::statusbar::Failure {
+                    message,
+                    kind: None,
+                    path: None,
+                    command: None,
+                    heading: Some(tr!("Couldn’t Open in Editor")),
+                })
+                .await;
+        });
     }
 }
 

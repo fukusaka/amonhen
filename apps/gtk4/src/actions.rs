@@ -1122,6 +1122,7 @@ pub fn enabled(f: &Facts) -> Vec<(&'static str, bool)> {
         ("commit-and-push", commit),
         ("stage-all", f.working_copy && f.can_stage_all),
         ("open-in-terminal", f.local),
+        ("open-in-editor", f.local),
         ("reveal-in-files", f.local),
         ("open-on-github", f.github),
         // 既定のブランチからは作らない（fork から元のリポジトリへ出すときを除く。macOS 版と同じ）。
@@ -1396,9 +1397,13 @@ mod tests {
         for name in names {
             assert!(!of(&facts, name), "{name}");
         }
-        assert!(of(&facts, "open-in-terminal") && of(&facts, "reveal-in-files"));
+        for name in ["open-in-terminal", "open-in-editor", "reveal-in-files"] {
+            assert!(of(&facts, name), "{name}");
+        }
         facts.local = false;
-        assert!(!of(&facts, "open-in-terminal") && !of(&facts, "reveal-in-files"));
+        for name in ["open-in-terminal", "open-in-editor", "reveal-in-files"] {
+            assert!(!of(&facts, name), "{name}");
+        }
         facts.github = true;
         facts.gh = true;
         facts.stash = true;

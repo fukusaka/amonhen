@@ -2608,6 +2608,12 @@ pub fn row_items(
                 w.error_bell();
             }
         }));
+        let (w, p) = (window.clone(), path.to_owned());
+        items.push(menu::hint(
+            tr!("Open in Editor"),
+            crate::editor::tooltip(),
+            move || crate::editor::open_folder_in(Some(&w), std::path::Path::new(&p)),
+        ));
     }
     items
 }

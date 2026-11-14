@@ -405,6 +405,7 @@
 "Find in History…" = "History を検索…";
 "Repository Settings" = "リポジトリの設定";
 "Open in Terminal" = "ターミナルで開く";
+"Open in Editor" = "エディタで開く";
 "Show in Finder" = "Finder に表示";
 "Settings…" = "設定…";
 
@@ -1777,11 +1778,15 @@
 "Edit Shared Template…" = "共有のテンプレートを編集…";
 "Edit for This Repository" = "このリポジトリ用に編集";
 
-/* GTK4: 外部のエディタ（Settings > General、フックの編集） */
+/* GTK4: 外部のエディタ（Settings > General、フックの編集、Open in Editor） */
 "Editor" = "エディタ";
 "External Editor" = "外部エディタ";
 "Choose the app to open files in." = "ファイルを開くアプリを選びます。";
 "Edit in {app}" = "{app} で編集";
+"Opens in {app}" = "{app} で開きます";
+"Couldn’t Open in Editor" = "エディタで開けませんでした";
+"{app} can’t open folders. Choose a code editor in Settings > General." = "{app} はフォルダを開けません。設定 > 一般でコードエディタを選んでください。";
+"No editor is installed. Choose one in Settings > General." = "エディタが入っていません。設定 > 一般で選んでください。";
 "Edit With" = "編集";
 
 /* GTK4: サイドバーのタグの署名の印と吹き出し */

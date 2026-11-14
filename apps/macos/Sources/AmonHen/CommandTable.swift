@@ -169,6 +169,9 @@ enum CommandTable {
     static let openInTerminal = Entry(
         id: "open-in-terminal", title: "Open in Terminal", localized: true, key: "", modifiers: [.command],
         toolTip: nil, app: false)
+    static let openInEditor = Entry(
+        id: "open-in-editor", title: "Open in Editor", localized: true, key: "", modifiers: [.command],
+        toolTip: nil, app: false)
     static let revealInFiles = Entry(
         id: "reveal-in-files", title: "Show in Finder", localized: true, key: "", modifiers: [.command],
         toolTip: nil, app: false)
@@ -204,7 +207,7 @@ enum CommandTable {
         [undo],
         [repositorySettings],
         [createPullRequest, openOnGithub],
-        [openInTerminal, revealInFiles],
+        [openInTerminal, openInEditor, revealInFiles],
     ]
     static let commitMenu: [[Entry]] = [
         [commit, commitAndPush, stageAll],

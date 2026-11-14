@@ -136,7 +136,7 @@
 "Find in the diff (⌘F)" = "差分の中を探す（⌘F）";
 "Go to HEAD (⌘⇧H)" = "HEAD へ移動（⌘⇧H）";
 "More" = "その他";
-"Worktrees, pull requests, Terminal and Finder, History, settings" = "worktree・プルリクエスト・ターミナルと Finder・History・設定";
+"Worktrees, pull requests, Terminal, Editor and Finder, History, settings" = "worktree・プルリクエスト・ターミナル・エディタ・Finder・History・設定";
 "Rename Branch…" = "ブランチの名前を変える…";
 "Checkout %@…" = "%@ を Checkout…";
 "Checkout %@ as Local Branch…" = "%@ をローカルブランチとして Checkout…";
@@ -323,6 +323,7 @@
 "Rename" = "名前を変更";
 "Name shown in the list (leave empty for the folder name)" = "一覧に出す名前（空にするとフォルダの名前）";
 "Open in Terminal" = "ターミナルで開く";
+"Open in Editor" = "エディタで開く";
 "Searches %@" = "%@ を探す";
 "The status isn’t read until you open it" = "開くまで状態は読みません";
 "Changes %ld" = "変更 %ld";
@@ -1147,6 +1148,10 @@
 "The worktree you edit: commits and staging go here" = "書き込む先の worktree（コミットや stage はここに入る）";
 "In the worktree “%@” (read only here)" = "worktree「%@」のファイル（ここでは見るだけ）";
 "Edit in %@" = "%@ で編集";
+"Opens in %@" = "%@ で開きます";
+"Couldn’t Open in Editor" = "エディタで開けませんでした";
+"%@ can’t open folders. Choose a code editor in Settings > General." = "%@ はフォルダを開けません。設定 > 一般でコードエディタを選んでください。";
+"No editor is installed. Choose one in Settings > General." = "エディタが入っていません。設定 > 一般で選んでください。";
 "Edit in the worktree “%@”?" = "worktree「%@」で編集しますか？";
 "Staging, committing and the other changes then go to %@ (branch %@)." = "このあとの stage・コミットなどは、%1$@（ブランチ %2$@）に対して行います。";
 "Checked out in the worktree “%@” (%@)" = "worktree「%1$@」（%2$@）で checkout されています";

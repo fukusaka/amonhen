@@ -95,6 +95,7 @@ enum Commands {
     static let findInHistory = Command(CommandTable.findInHistory, action: #selector(RepositoryWindow.findInHistory(_:)))
     static let repositorySettings = Command(CommandTable.repositorySettings, action: #selector(RepositoryWindow.showRepositorySettings(_:)))
     static let openInTerminal = Command(CommandTable.openInTerminal, action: #selector(RepositoryWindow.openInTerminal(_:)))
+    static let openInEditor = Command(CommandTable.openInEditor, action: #selector(RepositoryWindow.openInEditor(_:)))
     static let revealInFinder = Command(CommandTable.revealInFiles, action: #selector(RepositoryWindow.revealInFinder(_:)))
     static let quickOpen = Command(CommandTable.quickOpen, action: #selector(AppDelegate.quickOpen(_:)))
     static let repositories = Command(CommandTable.repositories, action: #selector(AppDelegate.showRepositories(_:)))
@@ -153,6 +154,7 @@ enum Commands {
         findInHistory,
         repositorySettings,
         openInTerminal,
+        openInEditor,
         revealInFinder,
         quickOpen,
         repositories,

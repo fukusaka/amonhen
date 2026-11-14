@@ -123,7 +123,7 @@ Settings… に置くのは、Amon Hen 自身が決めることと、機械ご�
 
 | タブ | 項目 |
 | --- | --- |
-| General | 開いたリポジトリをブックマークに入れる。自動で fetch（しない、または 5・15・30・60 分ごと。開いているすべてのリポジトリに 1 つの間隔）。外部エディタ（自動＝入っているコードエディタの最初のもの、なければ既定のテキストエディタ。入っているエディタ。「その他…」で任意のアプリ） |
+| General | 開いたリポジトリをブックマークに入れる。自動で fetch（しない、または 5・15・30・60 分ごと。開いているすべてのリポジトリに 1 つの間隔）。外部エディタ（自動＝入っているコードエディタの最初のもの、なければ既定のテキストエディタ。入っているエディタ。「その他…」で任意のアプリ。エディタで開く・「… で編集」が使い、フォルダを開けないエディタなら、渡さずにそう知らせる） |
 | Git | 機械ごとの git の設定。リポジトリの設定の画面（4 章）を「すべてのリポジトリ」の段で開いたもので、同じページの一覧と同じ行を持ち、その機械の `--global` に書く。ページは、作者と署名、コミット（テンプレートの選択と、その下に共有のテンプレートの一覧。名前と ＋／−、本文はシートで「編集…」）、操作、Working Copy（リポジトリの exclude の代わりに「どこでも無視する」`core.excludesFile`）、プログラム（git・gpg・ssh-keygen・gpgsm を同じ形で選ぶ。「自動」は PATH の先頭で、出どころと版を添える。見つかったものは Homebrew 2.56.0・Apple 2.54.0 のように。「その他…」でパス。git はその機械の Amon Hen の設定 `~/.config/amonhen/settings.json` に置き、そこの CLI・共有の daemon・VSCode 拡張も従う。選んだ git がなければ行の下に出し、別の git で動かさずに git を動かす操作を止める。SSH 先のプログラムのページは、SSH 先のファイルに書く。ほかは `gpg.program`・`gpg.ssh.program`・`gpg.x509.program` に書く）、環境変数（この Mac で git と ssh に渡すもの。ログインシェルのものを使うか（端末が開くときと同じ形で読む）と、読んだ時刻・読み直す・SSH の agent の有無。変数を値と並べた表で、git と ssh がいつも使うものはチェックが入って外せず、ほかはチェックすれば渡し（`AMONHEN_PASS_ENV`）、渡せないものは理由を出す。その下に選んだ値の全体を、PATH のようなものは 1 か所ずつ、使われる git の場所を添えて。名前が秘密らしい変数の値は、表でも、その下でも「表示」を押すまで伏せ、検索では名前だけを見る。名前を英字と数字以外で語に区切り、TOKEN・SECRET・PASSWORD・PASSWD・CREDENTIAL・PRIVATE を含む語、AUTH か PASS そのものの語、KEY で終わる語（APIKEY も）があれば秘密らしいとする。ただし `SSH_AUTH_SOCK` と `AMONHEN_PASS_ENV` は除く。変えるとすぐ効き、共有の daemon にも届く。git の設定ではなく Amon Hen の設定）、キーと値。リポジトリにしかないページ（ブランチ、リモート、Hooks・LFS）は出ない。各行の設定元は「git の既定」か「すべてのリポジトリ」で、↩︎ と ⓘ はリポジトリのページと同じ。内部では、この段のためにアプリが持つ空のリポジトリを握り、その local の値は見ない |
 | SSH Hosts | Amon Hen が知っている SSH 先の一覧と、＋／−（`~/.ssh/config` と known_hosts から選ぶか名前を書いて加える、忘れる）。選んだ SSH 先のページを 2 つ目の一覧に: 接続（ホスト、状態と接続の確認、エンジン、署名の検証、探すフォルダ）と、そこにあるすべてのリポジトリに効く Git のページ（SSH 先の `--global` に書く）。3 列。下の「SSH Hosts」を見ること |
 | Accounts | GitHub: History の CI の状態とアバター、読むブランチとコミット数、アバターの URL を 1 回だけ読む。後に GitHub・GitLab などのアカウント（後述）。トークンはキーチェーン |
@@ -333,7 +333,7 @@ SSH 先のリポジトリでは、「すべてのリポジトリ」は SSH 先�
 - 今のブランチに上流がない（そのリモートブランチが消えた）ときは、Push を Publish と見せ（ツールバー・Repository メニュー・Commit and Publish）、送り先のリモートを `branch.<name>.pushRemote`・`remote.pushDefault`・リモートが 1 つならそれ・origin の順で選んだ状態から選ばせ、そこでの名前も決めさせる。送ったものが上流になる。そのリモートブランチがもうあれば、そう伝えて代わりにそれを上流にする（ブランチにないコミットがあれば、先に Pull するよう伝える）。
 - チェックアウトしていないローカルブランチは、右クリックで上流と合わせる（最後の Fetch の時点）: 上流より後ろにだけあれば Fast-Forward（checkout せずに進め、Undo に記録する。ほかの worktree でチェックアウト中のものは除き、その worktree を開く項目を出す）、先にだけあれば Push、上流がなければ Publish。分かれていれば checkout して merge か rebase をする。Fetch がひとりでにブランチを進めることはしない。
 - Refresh は残す。変更は自動で検知するが、ネットワーク上のファイルシステム・SSH 先・ほかのツールが `.git` を直接書き換えたときなど、検知が漏れる場面で確実に揃えるため。押したら読み直しの間だけボタンを回す。
-- `allowsUserCustomization = true` にする。足し引きできる項目: サイドバーの切り替え、その他（≡）、Repositories、Repository（名前）、Branch（切り替え）、検索、Fetch、Pull、Push、Merge、Rebase、Stash、Pop、Branch（HEAD から新しいブランチ、⌥⌘B）、Activity、再読み込み、Undo、ターミナル、Finder、空白。
+- `allowsUserCustomization = true` にする。足し引きできる項目: サイドバーの切り替え、その他（≡）、Repositories、Repository（名前）、Branch（切り替え）、検索、Fetch、Pull、Push、Merge、Rebase、Stash、Pop、Branch（HEAD から新しいブランチ、⌥⌘B）、Activity、再読み込み、Undo、ターミナル、エディタ、Finder、空白。
 - ahead/behind は Push・Pull のバッジ（macOS 26 以降）とブランチ名の横の両方に出す。
 - 使えないときは無効にし、ツールチップに理由（「上流がありません」「コンフリクトの解決中です」）。
 - ブランチの削除と stash の drop は先に確かめる（どちらも Undo で戻せる）。今のブランチにも上流にも取り込まれていないコミットがあるブランチは、それをシートに並べ、「それでも削除」（git の `-D`）で消す（1 本でも、まとめて消すときも）。
@@ -602,7 +602,7 @@ Staged / Unstaged の 2 群をやめ、変更のあるファイルを 1 つの�
   あとは数えず、あとで中身を取っても filter を書き戻さない。
 - sparse checkout: サイドバーの Working Copy の行に小さなフォルダの印を出し、Working Copy の変更の一覧の上に
   「一部のフォルダだけ取り出し中（2）」と出す。押すと「取得とフォルダ」を開く。コミットの差分では、取り出していない
-  フォルダのファイルの「Finder に表示」「既定のアプリで開く」を、「取り出していないフォルダです」と添えて選べなくする。
+  フォルダのファイルの「Finder に表示」「エディタで開く」「既定のアプリで開く」を、「取り出していないフォルダです」と添えて選べなくする。
 - git maintenance: 「取得とフォルダ」のスイッチで、リポジトリを登録する（`git maintenance start`）か外す。git は
   毎時 prefetch（`refs/prefetch/` に取る。History には出さない）と commit-graph の書き出しをするので、アプリの
   commit-graph の書き出し（Settings > Performance）は、登録したリポジトリには書かない。外すときは、start が書いた
@@ -779,7 +779,7 @@ Window > Activity（⌥⌘A）。ツールバーのスピナーからも開く�
 | 編集 | 取り消す ⌘Z、やり直す ⌘⇧Z（テキストと設定のページの取り消しで、git の操作は戻さない）。カット、コピー、ペースト、すべてを選択。検索… ⌘F、次を検索 ⌘G、前を検索 ⌘⇧G、History を検索… ⌘⇧F |
 | 表示 | Working Copy ⌘1、History ⌘2、Stashes ⌘4、Reflog ⌘5。再読み込み ⌘R、History を作り直す。サイドバーを表示 ⌃⌘S、タブバーを表示 ⌘⇧T。History の表示のメニュー: 並び順（日付順・トポロジー順）、表示項目（ブランチとタグ・作者・日時・コミット ID・署名・CI の状態）、コミットを 1 行で表示、merge したブランチを畳む、祖先を強調、コミットの詳細（コミットメッセージを等幅で表示・アバターを表示・全ファイルを 1 つの差分に並べる・変更ファイルをツリーで表示） |
 | 移動 | ブランチを切り替える… ⌘⇧B、ブランチを絞り込む… ⌥⌘F、HEAD へ移動 ⌘⇧H、親へ移動 ⌥⌘↓、子へ移動 ⌥⌘↑ |
-| Repository | Fetch… ⌃⌘F、Pull… ⌃⌘L、Push… ⌃⌘P（上流のないブランチでは Publish…）、Force Push…。New Branch… ⌥⌘B、履歴のない新しいブランチ…（空から（`git switch --orphan`）、または今のファイルを stage したまま残す（`git checkout --orphan`））、ブランチの名前を変える…、上流を設定…、ブランチを片付ける…（既定のブランチに取り込み済みのもの、GitHub の PR でマージ済みのもの、上流が消えたものを、理由ごとの見出しの下に並べた 1 つのシート。上流が消えただけのものは選ばずに置く。Branches の見出しのメニューからも。Undo 1 回）、New Tag… ⌥⌘T。新しい worktree…、worktree を Prune、リモートを追加…、submodule を追加…、submodule を Update…、subtree を追加…。Merge… ⌥⌘M、Rebase… ⌥⌘R、前の版と比べる、パッチを当てる…、リポジトリを bundle として保存…、bundle から取り込む…。Continue、Skip、Abort。Stash… ⌥⌘S、Pop… ⌥⌘⇧S、ignore されたファイルを削除…（`git clean -X` が消すものを一覧で見せ（フォルダは 1 つに）、赤いボタンで消す）。Undo… ⌥⌘Z（戻せる操作があれば Undo <操作>…）。リポジトリの設定 ⌘;。プルリクエストを作成…、GitHub で開く。ターミナルで開く、Finder に表示 |
+| Repository | Fetch… ⌃⌘F、Pull… ⌃⌘L、Push… ⌃⌘P（上流のないブランチでは Publish…）、Force Push…。New Branch… ⌥⌘B、履歴のない新しいブランチ…（空から（`git switch --orphan`）、または今のファイルを stage したまま残す（`git checkout --orphan`））、ブランチの名前を変える…、上流を設定…、ブランチを片付ける…（既定のブランチに取り込み済みのもの、GitHub の PR でマージ済みのもの、上流が消えたものを、理由ごとの見出しの下に並べた 1 つのシート。上流が消えただけのものは選ばずに置く。Branches の見出しのメニューからも。Undo 1 回）、New Tag… ⌥⌘T。新しい worktree…、worktree を Prune、リモートを追加…、submodule を追加…、submodule を Update…、subtree を追加…。Merge… ⌥⌘M、Rebase… ⌥⌘R、前の版と比べる、パッチを当てる…、リポジトリを bundle として保存…、bundle から取り込む…。Continue、Skip、Abort。Stash… ⌥⌘S、Pop… ⌥⌘⇧S、ignore されたファイルを削除…（`git clean -X` が消すものを一覧で見せ（フォルダは 1 つに）、赤いボタンで消す）。Undo… ⌥⌘Z（戻せる操作があれば Undo <操作>…）。リポジトリの設定 ⌘;。プルリクエストを作成…、GitHub で開く。ターミナルで開く、エディタで開く、Finder に表示 |
 | Commit | Commit ⌘↩、Commit and Push ⌘⇧↩（上流がなければ Commit and Publish…）、Stage All。パッチとして保存…、アーカイブとして書き出す… |
 | ウインドウ | 最小化 ⌘M、拡大／縮小。次のタブを表示 ⌘⇧]、前のタブを表示 ⌘⇧[、タブを新規ウインドウに移動、すべてのウインドウを結合、タブをウインドウに移動 ▸（ほかのウインドウのタブへ）。Repositories ⌘⇧R、Activity ⌥⌘A。すべてを手前に移動 |
 | ヘルプ | 標準の検索欄だけ |
@@ -792,7 +792,7 @@ Window > Activity（⌥⌘A）。ツールバーのスピナーからも開く�
 - View メニューは History の表示メニュー（並び順・表示項目・1 行表示・畳む・祖先の強調と、コミットの詳細: 等幅のメッセージ・アバター・全ファイルを 1 つの差分に・ファイルをツリーで）と同じもの。History のバーのボタンとヘッダーも同じメニューを出す。
 - 使えない項目は消さずに無効にする（ある場所を覚えられるように）。
 - **ステータスバー**。ウィンドウの下（ページの下）の 1 本に、今どうなっているかを集める: merge・rebase・cherry-pick の途中（Continue・Skip・Abort）、失敗（原因・次の一手・詳細）、接続が切れた、終わった操作が何をしたかの一言（数秒、「main を origin/main に Push しました」）。失敗は、あとの操作が成功すれば消える。GTK4 ではアクションバーが同じ役。
-- メニューバーにあるものは、すべてウィンドウの中からも届くようにする（GTK4 の FE がメニューバーなしで同じウィンドウを持てるように）: ツールバーのサイドバーの切り替え、≡（その他: Quick Open・New Worktree・Prune Worktrees・プルリクエストを作成・GitHub で開く・ターミナルで開く・Finder に表示・History を作り直す・リポジトリの設定・Activity・設定。GTK4 の ≡ と同じ並び）、Refresh ▾（History を作り直す）、History のバー（HEAD へ移動・表示のメニュー）、コミットの差分の上の検索ボタン。
+- メニューバーにあるものは、すべてウィンドウの中からも届くようにする（GTK4 の FE がメニューバーなしで同じウィンドウを持てるように）: ツールバーのサイドバーの切り替え、≡（その他: Quick Open・New Worktree・Prune Worktrees・プルリクエストを作成・GitHub で開く・ターミナルで開く・エディタで開く・Finder に表示・History を作り直す・リポジトリの設定・Activity・設定。GTK4 の ≡ と同じ並び）、Refresh ▾（History を作り直す）、History のバー（HEAD へ移動・表示のメニュー）、コミットの差分の上の検索ボタン。
 - git の操作の Undo は Repository > Undo（⌥⌘Z）に置き、Edit の ⌘Z（テキストの取り消し）とは分ける。⌘Z で思わぬ git の操作が戻らないように。
 
 ### 確認と文言
@@ -887,7 +887,7 @@ git の考え方と、アプリが守ること:
   （スキャンで見つかったものも）。worktree のフォルダを開いたら（CLI・Finder）、そのリポジトリのタブを、その
   worktree を書き込む先にして開く。CLI は git と同じく実行した worktree に対して働き、`amonhen worktree` は
   `git worktree` と同じ並び（list・add・remove・prune）。
-- New Worktree…（ブランチかコミットから、フォルダを選んで）、Remove Worktree、Prune、Finder で表示、ターミナルで開く。
+- New Worktree…（ブランチかコミットから、フォルダを選んで）、Remove Worktree、Prune、Finder で表示、ターミナルで開く、エディタで開く。
 - ロック…（理由をつけて。git が prune・削除・移動をしない）とロックを外す、移す…（`git worktree move`）、フォルダが見つからない worktree には 移したフォルダを探す…（今の場所を渡して `git worktree repair`。git 2.29 から）。
 
 ## 実装の順序

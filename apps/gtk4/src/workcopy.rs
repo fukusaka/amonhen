@@ -2691,6 +2691,19 @@ impl Inner {
                     |_| {},
                 );
             }));
+            let (w, f) = (this.list.downgrade(), file.clone());
+            items.push(crate::menu::hint(
+                tr!("Open in Editor"),
+                crate::editor::tooltip(),
+                move || {
+                    let window = w
+                        .upgrade()
+                        .and_then(|w| w.root())
+                        .and_downcast::<gtk::Window>();
+                    let path = f.path().into_iter().collect::<Vec<_>>();
+                    crate::editor::open(&path, None, window.as_ref());
+                },
+            ));
             let w = this.list.downgrade();
             items.push(action(tr!("Open with Default App"), move || {
                 let window = w

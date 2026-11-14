@@ -372,7 +372,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private var worktreeChanges: [String: Int] = [:]
     /// worktree を選んだ（書き込む先にする）。
     var onSelectWorktree: ((String) -> Void)?
-    enum WorktreeAction { case reveal, terminal, remove, prune, lock, unlock, move, locate }
+    enum WorktreeAction { case reveal, terminal, editor, remove, prune, lock, unlock, move, locate }
     var onWorktreeAction: ((String, WorktreeAction) -> Void)?
     /// worktree のフォルダがこの Mac にあるか（SSH 先・daemon 越しなら、Finder・ターミナルでは開けないので出さない）。
     var worktreesAreLocal = true
@@ -1323,6 +1323,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 if worktreesAreLocal {
                     menu.addItem(ClosureMenuItem(title: L("Show in Finder")) { [weak self] in self?.onWorktreeAction?(path, .reveal) })
                     menu.addItem(ClosureMenuItem(title: L("Open in Terminal")) { [weak self] in self?.onWorktreeAction?(path, .terminal) })
+                    let editor = ClosureMenuItem(title: L("Open in Editor")) { [weak self] in self?.onWorktreeAction?(path, .editor) }
+                    editor.toolTip = ExternalEditor.toolTip
+                    menu.addItem(editor)
                 }
             }
             if !w.main {

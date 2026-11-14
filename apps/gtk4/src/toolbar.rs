@@ -60,7 +60,7 @@ const DEFAULT: &[&str] = &[
     "search",
 ];
 /// 既定では出さないボタン（macOS 版のツールバーに足せるもの）。
-const OPTIONAL: &[&str] = &["new-branch", "terminal", "files"];
+const OPTIONAL: &[&str] = &["new-branch", "terminal", "editor", "files"];
 /// パレットの並び（macOS 版の `toolbarAllowedItemIdentifiers` の順。≡ は動かさないので除く）。
 const PALETTE: &[&str] = &[
     "sidebar",
@@ -80,6 +80,7 @@ const PALETTE: &[&str] = &[
     "refresh",
     "undo",
     "terminal",
+    "editor",
     "files",
     SPACE,
     FLEX,
@@ -115,6 +116,7 @@ fn name(id: &str) -> String {
         "pop" => "Pop".to_owned(),
         "repositories" => "Repositories".to_owned(),
         "terminal" => tr!("Terminal"),
+        "editor" => tr!("Editor"),
         "files" => tr!("Files"),
         "activity" => "Activity".to_owned(),
         "refresh" => tr!("Refresh"),
@@ -516,6 +518,15 @@ pub fn install(side: &gtk::Box, row: &gtk::Box, given: Given) {
         )
         .upcast(),
     );
+    // どのエディタで開くかは Settings で変わるので、出すたびにツールチップを直す。
+    let editor = text_button(
+        "accessories-text-editor-symbolic",
+        &tr!("Editor"),
+        "win.open-in-editor",
+        &crate::editor::tooltip(),
+    );
+    editor.connect_map(|b| b.set_tooltip_text(Some(&crate::editor::tooltip())));
+    buttons.insert("editor", editor.upcast());
     buttons.insert(
         "files",
         icon_button(
@@ -850,6 +861,9 @@ fn preview(id: &str) -> gtk::Widget {
         (None, "repositories") => set_icon_or_label(&button, "view-grid-symbolic", "Repositories"),
         (None, "terminal") => {
             set_icon_or_label(&button, "utilities-terminal-symbolic", &tr!("Terminal"));
+        }
+        (None, "editor") => {
+            set_icon_or_label(&button, "accessories-text-editor-symbolic", &tr!("Editor"));
         }
         // リポジトリの名前。
         _ => {

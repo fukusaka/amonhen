@@ -1890,10 +1890,13 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
                 menu.addItem(ClosureMenuItem(title: L("Show in Finder")) {
                     NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: full)])
                 })
+                let editor = ClosureMenuItem(title: L("Open in Editor")) { ExternalEditor.open([URL(fileURLWithPath: full)]) }
+                editor.toolTip = ExternalEditor.toolTip
+                menu.addItem(editor)
                 menu.addItem(ClosureMenuItem(title: L("Open with Default App")) { NSWorkspace.shared.open(URL(fileURLWithPath: full)) })
             } else if let sparse, !sparse.contains(path) {
                 // sparse checkout で取り出していないフォルダのファイル。項目は出すが、押せないわけを添える。
-                for title in [L("Show in Finder"), L("Open with Default App")] {
+                for title in [L("Show in Finder"), L("Open in Editor"), L("Open with Default App")] {
                     let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
                     item.toolTip = L("This folder isn’t checked out")
                     menu.addItem(item)
