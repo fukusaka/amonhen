@@ -356,7 +356,7 @@ FE が実装してコアに渡す。
 
 - 点・線・曲線・ラベルの背景を四角形のインスタンスとして、1 回の描画命令で描く。形は fragment シェーダーの SDF で描き、解析的にアンチエイリアスする。
 - インスタンスは表示範囲 ± 数画面分を GPU に置き、スクロールでは定数バッファのオフセットだけを変える。
-- `CAMetalLayer.maximumDrawableCount = 2`。入力を受けたら次の vsync を待たずに描いて表示する。
+- グラフと文字は、専用の描画のスレッド（`HistoryRenderThread`）で描いて出す。メインスレッドは描くもの（インスタンス）を渡すだけで、描画先を取り、描き、出すのはそのスレッドだけ。Core Animation の反映を待たず（`presentsWithTransaction` を切る）、画面の切り替えを待つ列にも並べない（`displaySyncEnabled` を切る）。`CAMetalLayer.maximumDrawableCount = 3`（2 だと 120Hz で速くスクロールしたときに描画先を待った）。測った値は計測の記録にある。
 
 ### 入力
 

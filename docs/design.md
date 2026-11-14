@@ -356,7 +356,7 @@ Implemented by the FE and passed to the core.
 
 - Dots, lines, curves and label backgrounds are drawn as quad instances in a single draw call. Shapes are drawn with SDFs in the fragment shader and antialiased analytically.
 - Instances for the visible range ± a few screens are kept on the GPU, and scrolling only changes the offset in the constant buffer.
-- `CAMetalLayer.maximumDrawableCount = 2`. On input, draw and present without waiting for the next vsync.
+- The graph and text are drawn and presented on a render thread of their own (`HistoryRenderThread`): the main thread hands over the instances, and only that thread takes drawables, encodes and presents. Presents do not wait for Core Animation (`presentsWithTransaction` off) or queue for the refresh (`displaySyncEnabled` off). `CAMetalLayer.maximumDrawableCount = 3`; with 2, fast scrolling at 120Hz waited for drawables. Measurements are in the measurement log.
 
 ### Input
 
