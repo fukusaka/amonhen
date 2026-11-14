@@ -16,19 +16,22 @@ Clicking the Amon Hen icon in the activity bar opens the nav in the sidebar and 
 
 | Item | Description |
 | --- | --- |
-| Title buttons | Fetch (fetch from all remotes), Pull (bring the upstream into the current branch), Push (to the upstream; when the current branch has none, the button is Publish Branch instead: choose the remote and the name there, and it becomes the upstream), Undo… (says what it puts back and asks first). Under `…`: New Branch, Stash Changes, Open Amon Hen, Refresh, Force Push, Undo History… (the operations you can undo, newest first; choosing one undoes it and those after it) |
-| Working Copy | The number of changes. Selecting it shows the Working Copy in the main view |
+| Title buttons | Fetch (fetch from all remotes), Pull (bring the upstream into the current branch), Push (to the upstream; when the current branch has none, the button is Publish Branch instead: choose the remote and the name there, and it becomes the upstream), Undo… (says what it puts back and asks first), Select Repository (when several are open) and the filter (Filter Branches, Remotes and Tags…; Clear Filter while filtered). Under `⋯`: Switch Branch…, New Branch…, Open Amon Hen, Refresh, Rebuild History (with the engine), Show Daemon, Stash Changes…, Force Push, Undo History… (the operations you can undo, newest first; choosing one undoes it and those after it), Save Repository as Bundle… and Fetch from Bundle… (with the engine), and Clone from Bundle… |
+| Working Copy | The number of changes. Selecting it shows the Working Copy in the main view. With two or more worktrees, they are listed under it |
 | History | The current branch. Selecting it shows the History in the main view |
+| Conflicts | While there are conflicts, with their count. Selecting it opens the first in the merge editor |
 | Merge / rebase in progress | A row like "Rebase in progress (2/5)". Continue / Skip / Abort |
 | Branches | `feature/x` is grouped into folders. ✓ on the current branch, the difference from the upstream (↑↓), and gone if the upstream has been deleted |
-| Remotes / Tags / Stashes / Submodules | Fetched when expanded |
+| Remotes / Tags / Stashes / Submodules / Subtrees | Fetched when expanded. Stashes only while there are stashes; Subtrees with the engine and a git that has `git subtree` |
+| Range Diff | While a range diff is open. Selecting it shows it in the main view |
 | Reflog | With the engine. Selecting it shows every place HEAD has been in the main view |
+| Repository Settings | With the engine. Selecting it shows this repository's git settings in the main view |
 
 - When git or ssh asks for a user name, password or passphrase (fetch, pull, push), Amon Hen asks in VSCode's input box, as the app does in a dialog; passwords and passphrases are hidden. Cancel fails the operation.
 - Selecting a branch, remote branch or tag shows its history in the History of the main view.
 - Right-clicking a branch or tag offers Checkout… (Checkout as Local Branch… for a remote branch: creates a local branch that tracks it and switches to it), for a local branch that is not checked out Fast-Forward to Upstream (only behind it, as of the last Fetch; not for one checked out in another worktree) or Push to Upstream… (only ahead), Publish… for a local branch without an upstream, Merge into Current Branch… (choose how: following git's settings, fast-forward only, always with a merge commit, or squashed into one commit), Rebase Current Branch onto This…, Rename…, Delete…, New Branch (create one from there and switch to it), and New Tag (an annotated tag if you enter a message). Creation and deletion can be reverted with Undo.
 - With the engine, New Orphan Branch… (Command Palette, or the Branches group's right-click) switches to a branch with no history: Start Empty (`git switch --orphan`) or Keep the Files staged for its first commit (`git checkout --orphan`).
-- Right-click a local branch and choose Compare with Previous Version to compare it with its version before the last rebase or amend (from its reflog), as `git range-diff` does, in a read-only document. "Amon Hen: Range Diff…" in the command palette compares any two ranges.
+- Right-click a local branch and choose Compare with Previous Version to compare it with its version before the last rebase or amend (from its reflog), as `git range-diff` does, in a page of the main view; a Range Diff row stays in the sidebar while it is open. "Amon Hen: Range Diff" in the command palette starts from the current branch's previous version, and the ranges at the top of the page can be changed to compare any two.
 - With the engine, Repository Settings (at the bottom of the sidebar) shows this repository's git settings in pages, as the app does. Each row has the value in effect, ↩︎ while this repository overrides it, where the value comes from, and ⓘ (the key, the file and the value without the override); the git line names the git that runs the repository and its form (shallow, partial, sparse, maintenance). Author and Signing has the name, the email, signing (OpenPGP, SSH or X.509) with a key chosen from those found, and the mailmap; Commits sets the message template (none, this repository's own, written there, or a file); Operations has how Pull brings changes in, fetch.prune, rebase.autoStash, rebase.updateRefs (git 2.38), the conflict style and rerere; Branches chooses the default branch the others are measured against; Working Copy has line endings, the executable bit and `.git/info/exclude`; Fetching and Folders fetches more of a shallow clone or all of a partial clone, checks out only some folders (picked from HEAD's tree; sparse checkout, git 2.25) or all of them again, and turns git maintenance on or off (git 2.31); Remotes lists the remotes with their URLs and where they point, and edits, prunes, checks the connection to, renames, removes and adds them, with a push URL apart from the fetch URL; Hooks and LFS lists the hooks with when they run and whether they are enabled (opened in the editor, or created from a skeleton) and Git LFS's patterns and file count; Keys and Values is git's config as a table (the keys the pages ask about, those set in this repository, or every key git reads; searchable), with each value in effect and its source, to edit, remove or add keys in this repository.
 - With the engine, a shallow clone's History is labelled Shallow, marks the commits where it stops with ⋯ and ends with a band to Fetch More… (100, 1,000 or 10,000 commits, another count, or up to a date) or Fetch All; a partial clone is labelled Partial, which fetches all the contents it left out (git 2.36 and later) after asking. The same are in the Command Palette.
 - With the engine, signed commits in History have a mark for their signature (as in the app: green for Verified, yellow when the key's trust isn't set or the signer isn't the committer, red for a bad signature or revoked key), and the details show the signature with its explanation, signer and key, and the commit's children. The HEAD button above History, and Go to Parent / Go to Child on a commit's menu, move to those commits.
@@ -67,12 +70,14 @@ Dropping a branch, remote branch or tag from the nav onto another item in the na
 
 ### Working Copy
 
-The Conflicts / Staged / Changes files are on the left, the commit form below them, and the diff of the selected file on the right. The diff is laid out hunk by hunk, with changed parts highlighted word by word.
+The commit form is at the top left, the Conflicts / Staged / Changes files below it, and the diff of the selected file on the right. The diff is laid out hunk by hunk, with changed parts highlighted word by word.
 
+- With the engine, a file's staged and unstaged changes are one diff against HEAD, with a check on each changed line and hunk: checking stages it, unchecking unstages it.
 - Click diff lines to select them (Shift+click for a range), and Stage N Lines stages only the selected lines. For a file in Staged, the same operation unstages.
+- Above the list, filter the files by path and show them as a List (paths), a Tree (folders) or by Name (the file name first, its folder dimmed).
 - You can also use Stage Hunk per hunk, Stage File, `+` / `−` in the list, and Stage All. In the list, select with the up and down keys and stage / unstage with Space or Enter.
 - For files in Changes, you can discard changes with ↺ in the list, Discard File, Discard Hunk, and Discard N Lines. Untracked files are deleted. Discarded content can be restored with Undo.
-- The commit form has a Summary and a Description (multiple lines). Turning on Amend fills in the message of the previous commit. You can also commit with `⌘Enter` / `Ctrl+Enter`.
+- The commit form has a Summary and a Description (multiple lines). Turning on Amend fills in the message of the previous commit. You can also commit with `⌘Enter` / `Ctrl+Enter`. Recent… inserts the message of a recent commit (⌥↑ / ⌥↓ in the Summary), and Insert… a Conventional Commits type, Co-authored-by or Signed-off-by. The ▾ next to Commit has Commit and Push (`⌘⇧Enter`), Fixup Commit For… and Squash Commit For….
 - For a conflicted file, you can choose Open in Merge Editor (the standard 3-way merge editor), Accept Current, Accept Incoming, and Mark as Resolved. A file deleted on one side can also be resolved with Accept. When marking as resolved, you are asked to confirm if markers remain. A conflicted file with no markers left (git's rerere applied an earlier resolution, or another editor resolved it) shows ✓ with "no markers" or "rerere", leads with Mark as Resolved, and the Conflicts heading can mark all of them resolved at once; Accept asks before replacing such a resolution.
 - With the engine, right-clicking a conflicted file that rerere resolved offers Forget Resolution, which puts the conflict markers back (Undo takes the file back), and Repository Settings > Operations has Forget All… to forget every remembered resolution.
 
@@ -86,10 +91,11 @@ The commit list and graph are on the left, and the details of the selected commi
 - The details show the full message, branches and tags, author and date, commit ID, parent commits (click to move to that commit), the changed files, and the diff of each file. Diffs are loaded for the files that come into view. A merge commit shows the diff against its first parent.
 - Each file's Open, Open All, and double-click / Enter in the list also open it in the standard diff editor.
 
-Commits reachable from HEAD by first-parent (up to just before the first merge commit) can be edited by right-clicking. Each is done with a non-interactive rebase and can be reverted with Undo. Working changes are stashed and restored automatically. Each edit, like a rebase, asks first; with the engine the question says which stacked branches (branches whose tip is among the rewritten commits) move or stay, which pushed branches will need Force Push, and which commits are expected to conflict, and a second button moves or keeps the stacked branches this time only.
+Commits reachable from HEAD by first-parent can be edited by right-clicking. With the engine, Edit Commits from Here… opens History's edit mode: choose Keep, Edit Message, Combine with Older, Combine with Older, Keep Its Message, Drop or Stop to Change Files for each commit and drag rows to reorder them, then Apply Changes runs it all as one rebase; it reaches past merges, which are recreated as they were (git's `--rebase-merges`), and Edit Message…, Combine with Older Commit…, Fixup into Parent, Edit (Stop Here) and Drop… open it with that change marked. Without the engine, only the range up to just before the first merge commit can be edited, one change at a time. Each is done with a non-interactive rebase and can be reverted with Undo. Working changes are stashed and restored automatically. Each edit, like a rebase, asks first; with the engine the question says which stacked branches (branches whose tip is among the rewritten commits) move or stay, which pushed branches will need Force Push, and which commits are expected to conflict, and a second button moves or keeps the stacked branches this time only.
 
 | Menu | Description |
 | --- | --- |
+| Edit Commits from Here… | With the engine. Open the edit mode from that commit to HEAD |
 | Edit Message… | Rewrite the message. In the edit field, save with `⌘Enter` / `Ctrl+Enter` and cancel with `Esc` |
 | Combine with Older Commit… | Combine into the parent commit. Edit the two messages joined together, then run it |
 | Fixup into Parent | Combine into the parent commit, keeping the parent's message |
@@ -125,10 +131,9 @@ Undo in the nav reverts the last operation. It covers commits (including amend),
 
 ### Current limitations
 
-- Only the range from HEAD up to the first merge commit can be edited in the History.
+- Without the engine, only the range from HEAD up to the first merge commit can be edited in the History.
 - Push cannot be undone.
-- Line-level staging does not take git filters such as autocrlf into account.
-- Diffs have no syntax highlighting.
+- Without the engine, diffs have no syntax highlighting.
 - External changes take about 1 second to show up (because it waits for notifications from the built-in Git extension).
 
 ## Engine and settings
@@ -155,11 +160,11 @@ is chosen; if the chosen git isn't there, commands that run git stop with an err
 
 ## Install / update
 
-Download `amonhen-vscode-<version>.vsix` from [Releases](https://github.com/fukusaka/amonhen/releases) (stable:
-`vscode-v<version>`; latest main: `snapshot`) and install it, then reload the window:
+Download `amonhen-<version>.vsix` from [Releases](https://github.com/fukusaka/amonhen/releases) (stable:
+`vscode-v<version>`; latest main: `snapshot`, where it is `amonhen-vscode-<version>.vsix`) and install it, then reload the window:
 
 ```sh
-code --install-extension amonhen-vscode-<version>.vsix
+code --install-extension amonhen-<version>.vsix
 ```
 
 For a Remote-SSH host, run it in the integrated terminal of the connected window.

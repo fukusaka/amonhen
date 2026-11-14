@@ -16,19 +16,22 @@ VSCode 上で快適に Git を操作するための自分用の拡張。Marketpl
 
 | 項目 | 内容 |
 | --- | --- |
-| タイトルのボタン | Fetch（すべてのリモートから取得）、Pull（現在のブランチに upstream を取り込む）、Push（upstream へ。現在のブランチに upstream が無ければ、ボタンは Publish Branch になり、リモートとそこでの名前を選んで送り、upstream にする）、Undo…（何を戻すかを見せて確かめる）。`…` の中に New Branch、Stash Changes、Open Amon Hen、Refresh、Force Push、Undo History…（Undo できる操作を新しい順に並べ、選んだものとその後のものを戻す） |
-| Working Copy | 変更の数。選ぶとメインビューに Working Copy を出す |
+| タイトルのボタン | Fetch（すべてのリモートから取得）、Pull（現在のブランチに upstream を取り込む）、Push（upstream へ。現在のブランチに upstream が無ければ、ボタンは Publish Branch になり、リモートとそこでの名前を選んで送り、upstream にする）、Undo…（何を戻すかを見せて確かめる）、Select Repository（いくつも開いているとき）、絞り込み（Filter Branches, Remotes and Tags…。絞り込んでいる間は Clear Filter）。`⋯` の中に Switch Branch…、New Branch…、Open Amon Hen、Refresh、Rebuild History（エンジンがあるとき）、Show Daemon、Stash Changes…、Force Push、Undo History…（Undo できる操作を新しい順に並べ、選んだものとその後のものを戻す）、Save Repository as Bundle… と Fetch from Bundle…（エンジンがあるとき）、Clone from Bundle… |
+| Working Copy | 変更の数。選ぶとメインビューに Working Copy を出す。worktree が 2 つ以上あれば、その下に並べる |
 | History | 現在のブランチ。選ぶとメインビューに History を出す |
+| Conflicts | コンフリクトがある間だけ、数を添えて出す。選ぶと最初のファイルをマージエディタで開く |
 | merge / rebase の途中 | 「Rebase in progress (2/5)」のような行。Continue / Skip / Abort |
 | Branches | `feature/x` はフォルダにまとめる。現在のブランチに ✓、upstream との差（↑↓）、upstream が消えていれば gone |
-| Remotes / Tags / Stashes / Submodules | 開いたときに取得する |
+| Remotes / Tags / Stashes / Submodules / Subtrees | 開いたときに取得する。Stashes は stash がある間だけ、Subtrees はエンジンがあり git に `git subtree` があるとき |
+| Range Diff | Range Diff を開いている間だけ。選ぶとメインビューに出す |
 | Reflog | エンジンがあるとき。選ぶと、HEAD が指してきたところをメインビューに出す |
+| Repository Settings | エンジンがあるとき。選ぶと、このリポジトリの git の設定をメインビューに出す |
 
 - git や ssh がユーザー名・パスワード・パスフレーズを尋ねたら（fetch・pull・push）、アプリのダイアログと同じく VSCode の入力欄で尋ねる。パスワードとパスフレーズは伏せる。キャンセルすると操作は失敗する。
 - ブランチ・リモートブランチ・タグを選ぶと、メインビューの History にその履歴が出る。
 - ブランチ・タグの右クリックで Checkout…（リモートブランチは Checkout as Local Branch…。追跡するローカルブランチを作って切り替える）、チェックアウトしていないローカルブランチなら Fast-Forward to Upstream（upstream より後ろにだけあるとき。最後の Fetch の時点。ほかの worktree でチェックアウト中のものは除く）か Push to Upstream…（先にだけあるとき）、upstream の無いローカルブランチなら Publish…、Merge into Current Branch…（取り込み方を選ぶ: git の設定のとおり・fast-forward だけ・いつも merge コミット・1 つのコミットにまとめる）、Rebase Current Branch onto This…、Rename…、Delete…、New Branch（そこから作って切り替える）、New Tag（メッセージを入れれば annotated tag）。作成と削除は Undo で戻せる。
 - エンジンがあるとき、New Orphan Branch…（コマンドパレット、Branches のグループの右クリック）で履歴のないブランチに切り替える。Start Empty（`git switch --orphan`）か、今のファイルを最初のコミットのために stage して残す Keep the Files（`git checkout --orphan`）。
-- ローカルブランチの右クリックの Compare with Previous Version で、最後の rebase・amend の前の版（reflog から）と比べ、`git range-diff` と同じ形の読み取り専用の文書に出す。パレットの「Amon Hen: Range Diff…」では、好きな 2 つの範囲を比べる。
+- ローカルブランチの右クリックの Compare with Previous Version で、最後の rebase・amend の前の版（reflog から）と比べ、`git range-diff` と同じ形でメインビューのページに出す。開いている間、サイドバーに Range Diff の行が残る。パレットの「Amon Hen: Range Diff」は今のブランチの前の版との比較から始まり、ページの上の範囲を直せば好きな 2 つの範囲を比べられる。
 - エンジンがあるとき、Repository Settings（サイドバーの下）にこのリポジトリの git の設定がアプリと同じページで出る。行には効いている値、このリポジトリが上書きしている間の ↩︎、設定元、ⓘ（キー・ファイル・上書きしなければ効く値）があり、git の行にリポジトリを動かす git と形（shallow・partial・sparse・maintenance）が出る。Author and Signing に名前・メール・署名（OpenPGP・SSH・X.509。見つかった鍵から選ぶ）・mailmap、Commits にメッセージのテンプレート（なし・このリポジトリ専用（その場で書く）・ファイル）、Operations に Pull の取り込み方・fetch.prune・rebase.autoStash・rebase.updateRefs（git 2.38）・コンフリクトの書き方・rerere、Branches にほかのブランチを測る既定のブランチ、Working Copy に改行・実行ビット・`.git/info/exclude`、Fetching and Folders に shallow clone の取り足し・partial clone の全取得、一部のフォルダだけを取り出す（HEAD の木から選ぶ。sparse checkout、git 2.25）・すべてに戻す、git maintenance の切り替え（git 2.31）、Remotes にリモートの一覧（URL と指す先）と、URL の変更・fetch と別の push の URL・prune・つながるかの確かめ・名前の変更・削除・追加、Hooks and LFS にフックの一覧（いつ動くか・有効か。エディターで開く・雛形から作る）と Git LFS のパターン・ファイルの数、Keys and Values に git の設定の表（ページの行が聞くキー・このリポジトリで決めているキー・git が読むキーすべて。検索できる）と、効いている値・設定元、このリポジトリでのキーの変更・削除・追加がある。
 - エンジンがあるとき、shallow clone の History には Shallow の札が付き、履歴が止まるコミットに ⋯ の印、最後に Fetch More…（100・1,000・10,000 コミット、ほかの数、日付まで）・Fetch All の帯が出る。partial clone には Partial の札が付き、押すと確かめてから取らずにおいた中身をすべて取る（git 2.36 から）。同じものはコマンドパレットにもある。
 - エンジンがあるとき、History の署名したコミットに署名の印が付き（アプリと同じく、Verified は緑、鍵の信用度が決まっていない・署名者がコミッターと違うときは黄、不正な署名・失効した鍵は赤）、詳細に署名（説明・署名した人・鍵）と子のコミットが出る。History の上の HEAD のボタンと、コミットのメニューの Go to Parent・Go to Child で、そのコミットに移る。
@@ -67,12 +70,14 @@ VSCode 上で快適に Git を操作するための自分用の拡張。Marketpl
 
 ### Working Copy
 
-左に Conflicts / Staged / Changes のファイル、下にコミット欄、右に選んだファイルの差分が出る。差分は hunk ごとに並び、変わった部分は単語単位で強調する。
+左の上にコミット欄、その下に Conflicts / Staged / Changes のファイル、右に選んだファイルの差分が出る。差分は hunk ごとに並び、変わった部分は単語単位で強調する。
 
+- エンジンがあるとき、ファイルの stage した変更としていない変更を HEAD との 1 つの差分に出し、変わった行と hunk ごとにチェックを付ける。チェックを入れると stage、外すと unstage する。
 - 差分の行をクリックで選び（Shift+クリックで範囲）、Stage N Lines で選んだ行だけを stage する。Staged のファイルでは同じ操作で unstage になる。
+- 一覧の上で、パスでファイルを絞り込み、List（パス）・Tree（フォルダ）・Name（ファイル名を先に、フォルダは薄く）で見せ方を切り替える。
 - hunk ごとの Stage Hunk、Stage File、一覧の `+` / `−`、Stage All でもできる。一覧では上下キーで選び、Space か Enter で stage / unstage する。
 - Changes のファイルは、一覧の ↺、Discard File、Discard Hunk、Discard N Lines で変更を破棄できる。untracked のファイルは消す。破棄した内容は Undo で戻せる。
-- コミット欄は Summary と Description（複数行）。Amend にすると直前のコミットのメッセージが入る。`⌘Enter` / `Ctrl+Enter` でもコミットできる。
+- コミット欄は Summary と Description（複数行）。Amend にすると直前のコミットのメッセージが入る。`⌘Enter` / `Ctrl+Enter` でもコミットできる。Recent… で最近のコミットのメッセージを（Summary では ⌥↑ / ⌥↓）、Insert… で Conventional Commits の種類・Co-authored-by・Signed-off-by を入れる。Commit の隣の ▾ に Commit and Push（`⌘⇧Enter`）、Fixup Commit For…、Squash Commit For… がある。
 - コンフリクトしたファイルでは、Open in Merge Editor（標準の 3-way マージエディタ）、Accept Current、Accept Incoming、Mark as Resolved を選べる。片側で削除されたファイルも Accept で解決できる。解決済みにするとき、マーカーが残っていれば確認する。マーカーの残っていないファイル（git の rerere が前の解決を当てた、ほかのエディタで直した）は ✓ と「マーカーなし」か「rerere」を出して Mark as Resolved を先に勧め、Conflicts の見出しからまとめて解決済みにできる。そうしたファイルで Accept を選ぶと、解決した内容を置き換える前に確認する。
 - エンジンがあるとき、rerere が解決したコンフリクトのファイルの右クリックに Forget Resolution があり、コンフリクトのマーカーに戻す（Undo でファイルは戻る）。Repository Settings > Operations の Forget All… で、覚えた解決をすべて忘れる。
 
@@ -86,10 +91,11 @@ VSCode 上で快適に Git を操作するための自分用の拡張。Marketpl
 - 詳細には、メッセージ全体、ブランチやタグ、作者と日時、コミット ID、親コミット（クリックでそのコミットへ移る）、変更ファイルと、ファイルごとの差分が並ぶ。差分は画面に入ったファイルから読み込む。merge コミットは最初の親との差分。
 - 各ファイルの Open、Open All、一覧のダブルクリック・Enter で、標準の diff エディタでも開ける。
 
-HEAD から first-parent で辿れるコミット（最初の merge コミットの手前まで）は、右クリックで編集できる。どれも非対話の rebase で行い、Undo で戻せる。作業中の変更は自動で退避して戻す。編集は rebase と同じく先に確かめる。エンジンを使っていれば、積み重ねたブランチ（書き換えるコミットに先頭があるブランチ）のうち一緒に動くもの・残るもの、あとの push に Force Push が要る push 済みのブランチ、コンフリクトしそうなコミットを確認に出し、2 つ目のボタンでその回だけ積み重ねたブランチを動かす・動かさないを選べる。
+HEAD から first-parent で辿れるコミットは、右クリックで編集できる。エンジンがあるとき、Edit Commits from Here… で History の編集モードを開く。コミットごとに Keep・Edit Message・Combine with Older・Combine with Older, Keep Its Message・Drop・Stop to Change Files を選び、行をドラッグして並べ替え、Apply Changes で 1 回の rebase としてまとめて行う。merge も越え、merge はそのまま作り直す（git の `--rebase-merges`）。Edit Message…・Combine with Older Commit…・Fixup into Parent・Edit (Stop Here)・Drop… も、その変更を付けて編集モードを開く。エンジンがなければ、編集できるのは最初の merge コミットの手前までで、1 つずつ行う。どれも非対話の rebase で行い、Undo で戻せる。作業中の変更は自動で退避して戻す。編集は rebase と同じく先に確かめる。エンジンを使っていれば、積み重ねたブランチ（書き換えるコミットに先頭があるブランチ）のうち一緒に動くもの・残るもの、あとの push に Force Push が要る push 済みのブランチ、コンフリクトしそうなコミットを確認に出し、2 つ目のボタンでその回だけ積み重ねたブランチを動かす・動かさないを選べる。
 
 | メニュー | 内容 |
 | --- | --- |
+| Edit Commits from Here… | エンジンがあるとき。そのコミットから HEAD までの編集モードを開く |
 | Edit Message… | メッセージを書き換える。編集欄は `⌘Enter` / `Ctrl+Enter` で保存、`Esc` で取り消し |
 | Combine with Older Commit… | 親コミットにまとめる。2 つのメッセージをつないだものを編集してから実行する |
 | Fixup into Parent | 親コミットにまとめ、親のメッセージを残す |
@@ -126,10 +132,9 @@ Apply Patch…、またはエクスプローラーで .patch・.diff・.mbox・.
 
 ### 今の制限
 
-- History で編集できるのは、HEAD から最初の merge コミットまでの範囲だけ。
+- エンジンがなければ、History で編集できるのは HEAD から最初の merge コミットまでの範囲だけ。
 - Push は Undo できない。
-- 行単位の stage は、autocrlf などの git のフィルターを考慮しない。
-- 差分にシンタックスハイライトは付かない。
+- エンジンがなければ、差分にシンタックスハイライトは付かない。
 - 外部での変更が反映されるまで約 1 秒かかる（組み込みの Git 拡張の通知を待っているため）。
 
 ## エンジンと設定
@@ -155,11 +160,11 @@ History・検索の索引・Undo の記録を分け合う。Remote-SSH では、
 
 ## インストール・更新
 
-[Releases](https://github.com/fukusaka/amonhen/releases) から `amonhen-vscode-<版>.vsix` を取ってきて（正式版は
-`vscode-v<版>`、main の最新は `snapshot`）入れ、ウィンドウを再読み込みする:
+[Releases](https://github.com/fukusaka/amonhen/releases) から `amonhen-<版>.vsix` を取ってきて（正式版は
+`vscode-v<版>`、main の最新は `snapshot` で、そこでは `amonhen-vscode-<版>.vsix`）入れ、ウィンドウを再読み込みする:
 
 ```sh
-code --install-extension amonhen-vscode-<版>.vsix
+code --install-extension amonhen-<版>.vsix
 ```
 
 Remote-SSH の接続先に入れるときは、つないだウィンドウの統合ターミナルで実行する。
