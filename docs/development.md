@@ -21,6 +21,14 @@ cargo build -p amonhen-cli && (cd apps/vscode && npm ci && npm test)   # VSCode 
 scripts/package-gtk4.sh          # GTK4 app into dist/amonhen-gtk-<version>-linux-<arch>.tar.gz (on Linux; includes dist/engine's Linux engines if built)
 ```
 
+After changing a workflow in `.github/workflows` (or an action in `.github/actions`), check it with
+[actionlint](https://github.com/rhysd/actionlint) and [zizmor](https://docs.zizmor.sh)
+(`brew install actionlint zizmor`):
+
+```sh
+actionlint && zizmor --persona=pedantic .
+```
+
 A development build (the app run from `apps/macos/.build`, or `target/*/amonhen`) looks for the engines only inside its
 own checkout: `dist/engine` for the engines to send to SSH hosts, and `target/release/amonhen` for the shared daemon. In
 a worktree, build them there; it never picks up the main checkout's, which may be another build.

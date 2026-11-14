@@ -21,6 +21,14 @@ cargo build -p amonhen-cli && (cd apps/vscode && npm ci && npm test)   # VSCode 
 scripts/package-gtk4.sh          # GTK4 のアプリを dist/amonhen-gtk-<版>-linux-<arch>.tar.gz に（Linux で。dist/engine の Linux のエンジンがあれば入れる）
 ```
 
+`.github/workflows` のワークフロー（か `.github/actions` の action）を変えたら、
+[actionlint](https://github.com/rhysd/actionlint) と [zizmor](https://docs.zizmor.sh)（`brew install actionlint zizmor`）で
+確かめる。
+
+```sh
+actionlint && zizmor --persona=pedantic .
+```
+
 開発中のビルド（`apps/macos/.build` から起動したアプリ、`target/*/amonhen`）は、エンジンを自分のチェックアウトの
 中だけで探す。SSH 先へ送るエンジンは `dist/engine`、共有の daemon は `target/release/amonhen`。worktree ではそこで
 作る。別のビルドかもしれない本体のチェックアウトのものは拾わない。
