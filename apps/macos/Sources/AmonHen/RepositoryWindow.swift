@@ -142,11 +142,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     }
 
     private func assemble() {
-        let split = NSSplitViewController()
-        let sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
-        sidebarItem.minimumThickness = 180
-        sidebarItem.maximumThickness = 400
-        split.addSplitViewItem(sidebarItem)
+        let split = MainSplitViewController()
+        split.addSplitViewItem(Self.sidebarItem(for: sidebar, style: .system))
+        mainSplit = split
         // 左に History、右に選んだコミットの詳細（上から、メッセージとメタ情報、変更ファイル、差分）。
         let content = NSSplitViewController()
         content.splitView.isVertical = true
@@ -165,7 +163,13 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         let status = StatusBarController(content: pages)
         statusBar = status
         split.addSplitViewItem(NSSplitViewItem(viewController: status))
-        window.contentViewController = split
+        // 背景の層の上に分割ビューを載せる（docs/design.md の「Window background」）。
+        let host = BackdropHostController(content: split)
+        backdropHost = host
+        window.contentViewController = host
+        applyBackdrop()
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(backdropSettingChanged), name: .backdropChanged, object: nil)
 
         history.onEditCommits = { [weak self] start, preset in self?.editCommits(from: start, preset: preset) }
         history.onSelectCommit = { [weak self] commit in
@@ -1201,6 +1205,45 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     /// ウィンドウの下のステータスバー（途中の操作・失敗・接続・終わった操作の一言）。
     private var statusBar: StatusBarController!
+    private var mainSplit: MainSplitViewController?
+    private var backdropHost: BackdropHostController?
+
+    /// サイドバーの分割の項目（どの型も窓の上端まで伸びる）。透かさないときはサイドバーの項目（ガラス）。透かすときは
+    /// ふつうの項目にする（macOS 26 からのガラスのサイドバーは窓の中の絵をぼかして描くので、窓の後ろが透けない）。
+    private static func sidebarItem(for sidebar: NSViewController, style: BackdropStyle) -> NSSplitViewItem {
+        let item = style == .system ? NSSplitViewItem(sidebarWithViewController: sidebar) : NSSplitViewItem(viewController: sidebar)
+        // サイドバーの上に信号のボタン・Sidebar・Repositories が並ぶので、それが収まる幅にする。
+        item.minimumThickness = 240
+        item.maximumThickness = 400
+        item.canCollapse = true
+        return item
+    }
+
+    @objc private func backdropSettingChanged() { applyBackdrop() }
+
+    /// 窓の背景を、アプリの設定（リポジトリの上書きがあればそれ）に合わせる。
+    func applyBackdrop() {
+        guard let host = backdropHost, let split = mainSplit, let pages else { return }
+        let settings = BackdropSettings.resolved(for: location)
+        BackdropSettings.set(settings, for: window)
+        if let item = split.splitViewItems.first, (item.behavior == .sidebar) != (settings.style == .system) {
+            let collapsed = item.isCollapsed
+            let width = sidebar.view.frame.width
+            split.removeSplitViewItem(item)
+            let next = Self.sidebarItem(for: sidebar, style: settings.style)
+            next.isCollapsed = collapsed
+            split.insertSplitViewItem(next, at: 0)
+            if !collapsed { split.splitView.setPosition(width, ofDividerAt: 0) }
+        }
+        host.apply(settings)
+        statusBar.paint(settings.paneColor, underToolbar: settings.style == .system)
+        // 読む面はどの型でも自分では塗らず、下の 1 つの色を見せる。サイドバーは `system` ではガラスのまま。
+        Backdrop.clearBackgrounds(in: sidebar.view, clear: settings.style != .system)
+        for view in [pages.view, statusBar.view] { Backdrop.clearBackgrounds(in: view, clear: true) }
+        pages.onShow = { view in Backdrop.clearBackgrounds(in: view, clear: true) }
+        NotificationCenter.default.post(name: .backdropApplied, object: window)
+    }
+
     /// 途中の操作の行を作ったか（ボタンとラベルは作り直さず、中身だけ書き換える）。
     private var sequenceRowShown = false
     private let sequenceLabel = NSTextField(labelWithString: "")
@@ -1535,7 +1578,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             // --merge-editor PATH で、そのファイルのマージエディタを開いて撮る。
             let mergePath = AppDelegate.option("--merge-editor")
             if let mergePath {
-                MergeEditorWindowController.show(path: mergePath, repository: repository, actions: actions)
+                MergeEditorWindowController.show(path: mergePath, repository: repository, actions: actions, from: window)
             }
             // --merge-sheet A,B,… で、いくつものブランチを merge するシートを開いて撮る。
             let mergeSheet = AppDelegate.option("--merge-sheet")?.split(separator: ",").map(String.init)

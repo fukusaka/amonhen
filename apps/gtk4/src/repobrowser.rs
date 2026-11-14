@@ -2592,6 +2592,10 @@ pub fn row_items(
             }
         });
     }));
+    let (w, p) = (window.clone(), path.to_owned());
+    items.push(menu::action(tr!("Window Background…"), move || {
+        crate::themesettings::show_repository(&w, &p)
+    }));
     if !amonhen_remote::location::is_remote(path) {
         items.push(Item::Separator);
         let (w, p) = (window.clone(), path.to_owned());

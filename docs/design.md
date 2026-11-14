@@ -384,6 +384,63 @@ Implemented by the FE and passed to the core.
 - File contents share the `Arc<[u8]>` decoded by gix across diff computation, highlighting and display.
 - Text selection, copy, search, the right-click menu and hunk / line-level staging are implemented by our own code.
 
+## Window background and themes
+
+The macOS app's look of the window as a whole is a setting (Settings > Theme), with a per-repository override kept in the
+bookmark (the repository list's context menu, Window Background…).
+
+- **Three independent choices.** Showing what is behind the window, a background image and a toolbar tint are set
+  separately, since each is a different thing to the user. An earlier version split the setting into "where the
+  background shows" and "what it is" (behind the window or an image), which was hard to follow.
+  - **Window Transparency.** See through in (`style`): Nowhere (Standard), Sidebar and Toolbar, or Whole Window, with
+    Transparency (`transparency`, 10–90%) and Blur (`blur`, 0–100%). The place applies only to this.
+  - **Background Image** (`image`): Position (fill, or a corner) and Transparency (`imageTransparency`, 50–95%).
+  - **Toolbar**: a tint color and its strength.
+- **Where.** Nowhere (Standard) is macOS's standard window: the glass sidebar runs to the top of the window with the
+  Sidebar and Repositories buttons over it, the toolbar sits over the content in the content's color, and the lists,
+  diffs and commit form share one opaque color (`textBackgroundColor`). Before, each pane kept its own color, and the
+  window color (tinted by the wallpaper since macOS 26) sat next to the neutral diff, so four greys stood side by side.
+  Sidebar and Toolbar lets what is behind the window show through the sidebar and toolbar only, and gives the lists and
+  diffs one opaque color, so reading areas never show through. Whole Window lays one layer under everything and has the
+  panes paint nothing. The layer is `textBackgroundColor` at 1 − Transparency. In every case, the colors of changed
+  lines and selections stay opaque, and the layout is the same as Nowhere's.
+- **Blur.** WindowServer blurs the window through the private `CGSSetWindowBackgroundBlurRadius` (radius = Blur × 50),
+  the way terminal emulators do it. It has no tint, so Transparency is exactly how much shows through. Both functions
+  are looked up at run time (present on macOS 26 and 27); if they are missing, the window shows through without blur.
+  `NSVisualEffectView` was tried first, but its materials are tinted and nearly opaque, so 90% hardly looked
+  transparent, and fading the material weakened the blur.
+- **Structure.** `BackdropHostController` holds the window's content: under it the layer, over it the image and a band
+  at the toolbar's height for its tint. The content extends under the toolbar (`fullSizeContentView`) in every style,
+  the window title is hidden (the repository's name is in the toolbar), and the panes' scroll views, tables and text
+  views stop drawing their backgrounds (remembered, and put back for the sidebar in Nowhere). Nowhere keeps the glass
+  sidebar item; the toolbar's `sidebarTrackingSeparator` puts the first two buttons over the sidebar, so it is at least
+  240 pt wide. The see-through styles use a plain split item instead, because the macOS 26 glass sidebar does not show
+  what is behind the window. The pages leave the toolbar's height at their top (the safe area, which also follows the
+  tab bar). The diff's Metal layer clears to the layer's color, or to transparent for one layer. The merge editor's own
+  window takes the background of the repository window it was opened from.
+- **Image.** It is laid thinly over the whole window, on top of the lists and diffs, and never takes clicks. It fills
+  the window (cropped to keep its aspect) or sits at its natural size in a corner, shrunk to fit.
+- **Cost.** A see-through window is composited by WindowServer with what is behind it. From a scroll step to the frame
+  being presented (p50 / p95, `--measure-scroll`, release build on macOS 26): Nowhere 2.9 / 14.7 ms, see-through
+  without blur 9.9 / 13.8 ms, Blur 40% 12.9 / 18.5 ms, Blur 100% 13.2 / 18.5 ms. Seeing through already exceeds the
+  8.3 ms frame and blur adds about 3 ms, so Nowhere is the default and the cost is paid only by choosing it.
+- **Syntax colors.** A theme is chosen for the light and the dark appearance separately: System (the system colors
+  used so far), seven built-in themes (Solarized, Gruvbox, Tomorrow, Nord) or a VSCode color theme. A VSCode theme is
+  read from its JSON (JSONC comments and trailing commas, `include` merged up to 4 levels); each of the core's 14 kinds
+  takes the color of the most specific TextMate scope in its list (for example `keyword.control`, then `keyword`), so
+  the colors are close but not exact. Imported themes are kept in the app's settings.
+- **GTK4.** The same settings under the same keys (`gtk.ini`, and the bookmark's `backdrop`), applied with CSS: each
+  window gets a class of its own, the window itself draws the layer, and the header bar, tab bar, sidebar and pages are
+  made transparent or opaque by style. In Nowhere only the pages change: they share `@view_bg_color` (GTK keeps its
+  header bar across the whole window, so the sidebar does not run to the top). The image is a `GtkPicture` laid over the
+  window's content (`backdrop::host`, which takes no clicks; cover, or its natural size in a corner, shrunk to fit).
+  A window shows the background of its front tab's repository; the merge editor's own window follows the window it was
+  opened from. A see-through window needs a compositor (`gdk::Display::is_composited`; without one it stays opaque).
+  GNOME cannot blur what is behind, so Blur is kept only to share the record with the macOS app and is not shown in
+  Settings. On GNOME's Wayland session the presentation time did not change with any combination (`--measure-scroll`,
+  3000 commits: p50 33.3 ms, two frames, for Nowhere, see-through in either place, the image, and both; the main
+  thread 1.4–1.6 ms per frame), since the compositor composites every window either way.
+
 ## Rewriting operations and stacked branches
 
 A rebase and the History edits (reword, squash, fixup, drop, edit, split, move) rewrite commits. A branch whose tip is

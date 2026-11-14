@@ -5,7 +5,7 @@ import AppKit
 /// 使えるかどうかも `RepositoryWindow.validateToolbarItem` で決める。
 final class MainToolbar: NSObject, NSToolbarDelegate {
     /// 並びを変えたら名前を変える（保存した並びに新しい項目が出てこないため）。
-    let toolbar = NSToolbar(identifier: "main.v5")
+    let toolbar = NSToolbar(identifier: "main.v6")
     private let repositoryItem = NSToolbarItem(itemIdentifier: .repository)
     private let repositoryButton = NSButton()
     private let branchItem = NSToolbarItem(itemIdentifier: .branch)
@@ -220,12 +220,12 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .repositories, .repository, .branch, .fetch, .pull, .push, .space, .merge, .rebase, .space, .stash, .pop,
+        [.toggleSidebar, .repositories, .sidebarTrackingSeparator, .repository, .branch, .fetch, .pull, .push, .space, .merge, .rebase, .space, .stash, .pop,
          .flexibleSpace, .activity, .refresh, .undo, .search, .more]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .more, .repositories, .repository, .branch, .search, .fetch, .pull, .push, .merge, .rebase, .stash, .pop, .newBranch, .activity, .refresh, .undo, .terminal, .finder,
+        [.toggleSidebar, .sidebarTrackingSeparator, .more, .repositories, .repository, .branch, .search, .fetch, .pull, .push, .merge, .rebase, .stash, .pop, .newBranch, .activity, .refresh, .undo, .terminal, .finder,
          .space, .flexibleSpace]
     }
 

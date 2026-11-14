@@ -2261,3 +2261,36 @@
 "Makes one ordinary commit with all the changes (git merge --squash, then commit). The branch isn’t marked as merged." = "変更をまとめて 1 つの普通のコミットにします（git merge --squash の後にコミット）。取り込んだブランチは取り込み済みになりません。";
 "Squashing {from} into {branch}" = "{from} を {branch} に squash で取り込み中";
 "Squash in progress" = "squash の途中";
+
+/* GTK4 の FE: 窓の背景と構文の色（Settings > Theme） */
+"Theme" = "テーマ";
+"System" = "システム";
+"Nowhere (Standard)" = "なし（標準）";
+"Sidebar and Toolbar" = "サイドバーとツールバー";
+"Whole Window" = "窓全体";
+"Window Background" = "窓の背景";
+"Window Background…" = "窓の背景…";
+"Window Transparency" = "窓の透過";
+"See through in" = "透過する場所";
+"Transparency" = "透過率";
+"Background Image" = "背景画像";
+"Image" = "画像";
+"Position" = "位置";
+"Fill the Window" = "窓いっぱい";
+"Top Left" = "左上";
+"Top Right" = "右上";
+"Bottom Left" = "左下";
+"Bottom Right" = "右下";
+"Toolbar" = "ツールバー";
+"Tint the toolbar" = "ツールバーに色を付ける";
+"Toolbar color" = "ツールバーの色";
+"Toolbar tint" = "ツールバーの色の濃さ";
+"Syntax Colors" = "構文の色";
+"Light appearance" = "明るい外観";
+"Dark appearance" = "暗い外観";
+"Import VSCode Theme…" = "VSCode のテーマを読み込む…";
+"Dark" = "暗い";
+"Light" = "明るい";
+"Couldn’t read {file}: {error}" = "{file} を読めませんでした: {error}";
+"Use a different background for {name}" = "{name} は別の背景にする";
+"Otherwise this window follows Settings > Theme." = "しなければ、この窓は Settings > Theme に従います。";

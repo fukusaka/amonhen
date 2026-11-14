@@ -13,6 +13,8 @@ struct Bookmark: Codable, Hashable {
     var color: String?
     /// 開いている間、何分ごとに自動で fetch するか（なければしない）。
     var autoFetch: Int?
+    /// 窓の背景の上書き（なければアプリの設定）。
+    var backdrop: BackdropSettings?
 }
 
 /// リポジトリを探すフォルダ。この Mac のパスか、SSH 先のフォルダ（`ssh://host/path`。SSH 先のエンジンが探す）。
@@ -176,6 +178,10 @@ final class Bookmarks {
     func toggleFavorite(_ path: String) { update(path) { $0.favorite.toggle() } }
     func setColor(_ path: String, _ color: String?) { update(path) { $0.color = color } }
     func setAutoFetch(_ path: String, minutes: Int?) { update(path) { $0.autoFetch = minutes } }
+    func setBackdrop(_ path: String, _ settings: BackdropSettings?) {
+        update(path) { $0.backdrop = settings }
+        NotificationCenter.default.post(name: .backdropChanged, object: nil)
+    }
 
     /// 色ラベルの名前と色（Finder のタグの並び）。
     static let colors: [(name: String, title: String, color: NSColor)] = [

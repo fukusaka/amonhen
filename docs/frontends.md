@@ -128,6 +128,8 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Accounts: GitHub (CI status, avatars) | ✓ | ✓ | — | n/a |  |
 | Appearance: History order, one line, row items, avatars | ✓ | ✓ | n/a | n/a |  |
 | Appearance: theme, fonts, graph colors | — | — | n/a | n/a |  |
+| Theme: window background (transparency and blur, image, toolbar tint, per repository) | ✓ | ✓ | n/a | n/a | GTK4: no blur (GTK can't ask the compositor for it). |
+| Theme: syntax colors (built-in themes, VSCode themes) | ✓ | ✓ | n/a | n/a |  |
 | Diff & Merge: resolve unambiguous conflicts on open | ✓ | ✓ | n/a | n/a |  |
 | Diff & Merge: unified/split, whitespace, context, wrap, tab width | — | — | — | n/a |  |
 | AI: backend, CLI location and version, model, language, per-repository permission | ✓ | ✓ | — | n/a | Neither app reads the CLI's login state; a missing CLI says to install it and sign in. |

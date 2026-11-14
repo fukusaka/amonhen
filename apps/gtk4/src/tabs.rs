@@ -586,6 +586,19 @@ fn edit_abilities(focus: &gtk::Widget) -> [bool; 6] {
     [in_settings, in_settings, false, false, false, select_all]
 }
 
+/// 設定・ブックマークが変わったら、どの窓の背景も、前のタブのリポジトリの設定で当て直す。
+pub fn apply_backdrops() {
+    let windows: Vec<Rc<RepoWindow>> = WINDOWS.with(|w| w.borrow().clone());
+    for w in windows {
+        if let Some(tab) = w.shown.borrow().upgrade() {
+            crate::backdrop::apply(
+                &w.window,
+                crate::backdrop::Backdrop::resolved(&tab.location),
+            );
+        }
+    }
+}
+
 /// リポジトリのタブを並べる窓。
 pub struct RepoWindow {
     pub window: gtk::ApplicationWindow,
@@ -695,7 +708,7 @@ impl RepoWindow {
             .title("Amon Hen")
             .default_width(1440)
             .default_height(820 + 46)
-            .child(&body)
+            .child(&crate::backdrop::host(&body))
             .build();
         let id = NEXT_ID.with(|n| n.replace(n.get() + 1));
         let this = Rc::new(Self {
@@ -1020,6 +1033,11 @@ impl RepoWindow {
         if self.window.titlebar().as_ref() != Some(header.upcast_ref::<gtk::Widget>()) {
             self.window.set_titlebar(Some(&header));
         }
+        // 窓の背景は、前のタブのリポジトリの設定（macOS 版はタブがそれぞれの窓なので、リポジトリごと）。
+        crate::backdrop::apply(
+            &self.window,
+            crate::backdrop::Backdrop::resolved(&tab.location),
+        );
         self.window.set_title(Some(&tab.window_title()));
         let names: Vec<String> = tab
             .group

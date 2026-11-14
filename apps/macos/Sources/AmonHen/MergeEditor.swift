@@ -947,8 +947,9 @@ private final class ConflictBand: NSView {
     override var isFlipped: Bool { true }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.windowBackgroundColor.setFill()
-        bounds.fill()
+        // 読む面と同じ色（窓に 1 枚の地を敷いていれば塗らない）。
+        BackdropSettings.of(window).paneColor.setFill()
+        bounds.fill(using: .copy)
         arrows.removeAll()
         guard let owner else { return }
         let sideText = owner.sideText(side), result = owner.resultText
@@ -1007,6 +1008,8 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate {
     private static var open: [String: MergeEditorWindowController] = [:]
     private var editor: MergeEditorViewController
     private let actions: Actions
+    /// 開いたリポジトリの窓（背景をそれに合わせる）。
+    private weak var source: NSWindow?
 
     /// `open` の鍵: 作業ツリー（SSH 先などで分からなければリポジトリそのもの）とパス。
     static func key(path: String, repository: Repository) -> String {
@@ -1033,14 +1036,15 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate {
         controller.close()
     }
 
-    static func show(path: String, repository: Repository, actions: Actions) {
+    static func show(path: String, repository: Repository, actions: Actions, from source: NSWindow?) {
         if let existing = open[key(path: path, repository: repository)] {
             existing.window?.makeKeyAndOrderFront(nil)
             return
         }
         Task {
             do {
-                show(try await MergeEditorViewController.load(path: path, repository: repository, actions: actions), actions: actions)
+                show(try await MergeEditorViewController.load(path: path, repository: repository, actions: actions),
+                     actions: actions, from: source)
             } catch {
                 NSAlert(error: error).runModal()
             }
@@ -1048,8 +1052,8 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// 埋め込んでいたエディタを、編集中の内容のまま別ウィンドウに移す。
-    static func show(_ editor: MergeEditorViewController, actions: Actions) {
-        let controller = MergeEditorWindowController(editor: editor, actions: actions)
+    static func show(_ editor: MergeEditorViewController, actions: Actions, from source: NSWindow?) {
+        let controller = MergeEditorWindowController(editor: editor, actions: actions, source: source)
         open[editor.windowKey] = controller
         controller.showWindow(nil)
     }
@@ -1062,19 +1066,41 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate {
         return rep
     }
 
-    private init(editor: MergeEditorViewController, actions: Actions) {
+    private init(editor: MergeEditorViewController, actions: Actions, source: NSWindow?) {
         self.editor = editor
         self.actions = actions
+        self.source = source
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1300, height: 820),
             styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "Merge — \(editor.path)"
         super.init(window: window)
         adopt(editor)
-        window.contentViewController = editor
+        window.contentViewController = BackdropHostController(content: editor)
         window.setContentSize(NSSize(width: 1300, height: 820))
         window.center()
         window.delegate = self
+        applyBackdrop()
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(sourceBackdropApplied), name: .backdropApplied, object: source)
+    }
+
+    @objc private func sourceBackdropApplied() { applyBackdrop() }
+
+    /// 窓の背景を、開いたリポジトリの窓に合わせる（その窓を閉じた後は、そのときのまま）。
+    private func applyBackdrop() {
+        guard let window, let host = window.contentViewController as? BackdropHostController else { return }
+        let settings = source.map { BackdropSettings.of($0) } ?? BackdropSettings.of(window)
+        BackdropSettings.set(settings, for: window)
+        host.apply(settings)
+        editor.view.wantsLayer = true
+        editor.view.layer?.backgroundColor = settings.paneColor.cgColor
+        Backdrop.clearBackgrounds(in: editor.view, clear: true)
+        func redraw(_ view: NSView) {
+            view.needsDisplay = true
+            view.subviews.forEach(redraw)
+        }
+        redraw(editor.view)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -1097,8 +1123,9 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate {
                 let next = try await editor.reloaded()
                 let frame = window?.frame
                 adopt(next)
-                window?.contentViewController = next
+                window?.contentViewController = BackdropHostController(content: next)
                 if let frame { window?.setFrame(frame, display: true) }
+                applyBackdrop()
             } catch {
                 NSAlert(error: error).runModal()
             }

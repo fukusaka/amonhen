@@ -495,7 +495,7 @@ pub fn show_in_window(editor: &Rc<Editor>, parent: &gtk::Window) {
         .title(format!("Merge — {}", editor.path))
         .default_width(1300)
         .default_height(820)
-        .child(&editor.root)
+        .child(&crate::backdrop::host(&editor.root))
         .build();
     // リポジトリの窓とは別の窓にする（macOS 版と同じ）。リポジトリの窓を閉じても道連れにしない（道連れだと
     // close-request が来ないので、保存していない Result を確かめずに失う）。アプリにも入れて、この窓が開いている
@@ -503,6 +503,8 @@ pub fn show_in_window(editor: &Rc<Editor>, parent: &gtk::Window) {
     if let Some(app) = parent.application() {
         window.set_application(Some(&app));
     }
+    // 窓の背景は、開いたリポジトリの窓に合わせる（macOS 版と同じ）。
+    crate::backdrop::follow(&window, parent);
     // Ctrl+W（`win.close`）で閉じ（保存していない Result は下で確かめる）、Ctrl+M（`win.minimize`）でしまう
     // （macOS 版の閉じられる・しまえる窓の ⌘W・⌘M）。
     let actions = gio::SimpleActionGroup::new();
@@ -920,6 +922,8 @@ impl Editor {
         bar_area.set_child(Some(&bar));
         bar_area.add_overlay(&watch);
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        // 別の窓に入れたとき、窓の背景の型で塗る・塗らない（`backdrop.rs`）。
+        root.add_css_class("amonhen-merge");
         root.append(&bar_area);
         // マーカーの残っていないファイル（rerere が解決を当てた、ほかのエディタで直した）の案内。
         let mut banner_forget = None;

@@ -25,6 +25,8 @@ pub struct Bookmark {
     pub color: Option<String>,
     /// 開いている間、何分ごとに自動で fetch するか（macOS 版の設定。この FE では使わないが、書き戻すときに残す）。
     pub auto_fetch: Option<i64>,
+    /// 窓の背景の上書き（なければアプリの設定。macOS 版と同じ形）。
+    pub backdrop: Option<crate::backdrop::Backdrop>,
 }
 
 /// リポジトリを探すフォルダ。手元のパスか、SSH 先のフォルダ（`ssh://host/path`。SSH 先のエンジンが探す）。
@@ -111,6 +113,7 @@ impl Data {
                     favorite: b["favorite"].as_bool().unwrap_or(false),
                     color: opt_str(b, "color"),
                     auto_fetch: b["autoFetch"].as_i64(),
+                    backdrop: crate::backdrop::Backdrop::from_json(&b["backdrop"]),
                 })
             })
             .collect();
@@ -152,6 +155,9 @@ impl Data {
                 }
                 if let Some(minutes) = b.auto_fetch {
                     m.insert("autoFetch".into(), json!(minutes));
+                }
+                if let Some(backdrop) = &b.backdrop {
+                    m.insert("backdrop".into(), backdrop.to_json());
                 }
                 Value::Object(m)
             })
@@ -408,6 +414,15 @@ pub fn set_favorite(path: &str, yes: bool) {
 
 pub fn set_color(path: &str, color: Option<&str>) {
     update(path, |b| b.color = color.map(str::to_owned));
+}
+
+/// `path` の窓の背景の上書き（なければアプリの設定に従う）。
+pub fn backdrop(path: &str) -> Option<crate::backdrop::Backdrop> {
+    bookmark(path).and_then(|b| b.backdrop)
+}
+
+pub fn set_backdrop(path: &str, backdrop: Option<crate::backdrop::Backdrop>) {
+    update(path, |b| b.backdrop = backdrop);
 }
 
 pub fn rename(path: &str, name: Option<String>) {
@@ -1140,6 +1155,29 @@ mod tests {
         assert_eq!(data.items[0].auto_fetch, Some(15));
         assert_eq!(data.scan_roots[0].depth, 2);
         assert_eq!(data.to_json(), serde_json::from_str::<Value>(text).unwrap());
+    }
+
+    #[test]
+    fn reads_and_writes_the_window_background() {
+        use crate::backdrop::{Placement, Style};
+        let text = r##"{"groups":[],"items":[{"backdrop":{"blur":0.2,"image":"/i.png","imagePlacement":"bottomRight","imageTransparency":0.9,"style":"single","toolbarColor":"#3b5bdb","toolbarOpacity":0.35,"transparency":0.6},"favorite":false,"path":"/a"}],"scanRoots":[]}"##;
+        let data = Data::from_json(&serde_json::from_str(text).unwrap());
+        let backdrop = data.items[0].backdrop.clone().unwrap();
+        assert_eq!(backdrop.style, Style::Single);
+        assert_eq!(backdrop.transparency, 0.6);
+        // GNOME ではぼかさないが、macOS 版と同じ記録にするので覚えておく。
+        assert_eq!(backdrop.blur, 0.2);
+        assert_eq!(backdrop.image.as_deref(), Some("/i.png"));
+        assert_eq!(backdrop.placement, Placement::BottomRight);
+        assert_eq!(backdrop.image_transparency, 0.9);
+        assert_eq!(data.to_json(), serde_json::from_str::<Value>(text).unwrap());
+        // 後から足した項目がない記録（macOS 版の古い形）も読める。
+        let old = r#"{"items":[{"backdrop":{"style":"chrome"},"favorite":false,"path":"/b"}]}"#;
+        let data = Data::from_json(&serde_json::from_str(old).unwrap());
+        let backdrop = data.items[0].backdrop.clone().unwrap();
+        assert_eq!(backdrop.style, Style::Chrome);
+        assert_eq!(backdrop.transparency, 0.4);
+        assert_eq!(backdrop.placement, Placement::Fill);
     }
 
     #[test]

@@ -1,5 +1,6 @@
 import AmonhenKit
 import AppKit
+import SwiftUI
 
 /// 開いたことのあるリポジトリの一覧（新しく開いた順）。UserDefaults に置く。
 enum RepositoryList {
@@ -974,6 +975,19 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         return await alert.beginSheetModal(for: window)
     }
 
+    /// このリポジトリの窓の背景を、アプリの設定から変えるシート。
+    private func showBackdrop(for path: String) {
+        guard let window = view.window else { return }
+        let sheet = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
+        let host = NSHostingController(rootView: RepositoryBackdropView(
+            location: path, title: Bookmarks.shared.displayName(path)
+        ) { [weak window, weak sheet] in
+            if let sheet { window?.endSheet(sheet) }
+        })
+        sheet.contentViewController = host
+        window.beginSheet(sheet)
+    }
+
     /// 名前を聞く。Cancel なら nil。空なら nil（`allowEmpty` なら ""。空にして元に戻すとき）。
     private func ask(_ title: String, message: String, initial: String, allowEmpty: Bool = false) async -> String? {
         let alert = NSAlert()
@@ -1287,6 +1301,7 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
             ) else { return }
             Bookmarks.shared.rename(path, to: name.isEmpty ? nil : name)
         } }
+        add(L("Window Background…")) { [weak self] in self?.showBackdrop(for: path) }
         if !RepositoryLocation.isRemote(path) {
             menu.addItem(.separator())
             add(L("Show in Finder")) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }

@@ -234,7 +234,7 @@ pub fn connect_changed_while(owner: &impl IsA<glib::Object>, f: impl Fn(&str) + 
 }
 
 /// 項目の下に添える説明（macOS 版の `Note`。項目の名前の左端にそろえる）。
-fn note(text: &str) -> gtk::Label {
+pub(crate) fn note(text: &str) -> gtk::Label {
     let l = gtk::Label::new(Some(text));
     l.set_xalign(0.0);
     l.set_wrap(true);
@@ -728,6 +728,13 @@ pub fn show(near: &impl IsA<gtk::Widget>) {
         &tr!("Appearance"),
     );
 
+    // Theme（`themesettings.rs`）: 窓の背景と構文の色。
+    stack.add_titled(
+        &page(&crate::themesettings::sections()),
+        Some("theme"),
+        &tr!("Theme"),
+    );
+
     // Diff & Merge
     stack.add_titled(
         &page(&[section(
@@ -904,6 +911,7 @@ fn tab_bar(stack: &gtk::Stack) -> gtk::Box {
         ("ssh-hosts", Kind::Remote),
         ("accounts", Kind::Person),
         ("appearance", Kind::Brush),
+        ("theme", Kind::Palette),
         ("diff-merge", Kind::Merge),
         ("ai", Kind::Sparkles),
         ("performance", Kind::Speedometer),
