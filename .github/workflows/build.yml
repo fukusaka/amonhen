@@ -1,6 +1,6 @@
 name: Build
 
-# 配るものを作る（snapshot.yml・release.yml・vscode-release.yml から呼ぶ）。時間のかかるコンパイルは OS と CPU ごとに
+# 配るものを作る（ci.yml の snapshot・release.yml・vscode-release.yml から呼ぶ）。時間のかかるコンパイルは OS と CPU ごとに
 # そのマシンで並べて走らせ、作ったエンジンはその場で動かして確かめる。最後に macOS でアプリを組み立てて署名する。
 #
 #   engines（Linux x86_64・aarch64、Windows x86_64・aarch64）──┬─▶ gtk（Linux x86_64・aarch64: GTK4 のアプリ）──┐

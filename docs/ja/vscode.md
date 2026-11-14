@@ -188,7 +188,7 @@ git 実行層では、小さな git コマンドの所要時間は、ほぼプ�
 - 正式版: ルートの `.github/workflows/vscode-release.yml`。`vscode-v*` タグ（アプリ・エンジンは `v*`）の push で、
   エンジン（Windows も）を作り、macOS のものは Developer ID で署名して公証に出し、`scripts/bundle-engine.sh` で同梱して `vsce package`、ビルドの由来の証明を付けて
   Release を作る。
-- snapshot: ルートの `.github/workflows/snapshot.yml`。main の CI が通るたびに、`scripts/snapshot-version.mjs` が
+- snapshot: ルートの `.github/workflows/ci.yml` の snapshot のジョブ。main の CI が通るたびに、`scripts/snapshot-version.mjs` が
   `<次の patch>-snapshot.<前回リリースからの apps/vscode のコミット数>+<sha>` を作り、エンジンを同梱した `.vsix` を
   アプリ・エンジンと同じ `snapshot` という pre-release に載せる。SemVer の比較では正式版より古いので、正式版を入れると
   上書きされる。

@@ -198,7 +198,7 @@ On the git execution layer, the time taken by a small git command is almost enti
   `v*`), build the engines (including Windows), sign the macOS one with Developer ID and
   submit it for notarization, bundle them with `scripts/bundle-engine.sh`, `vsce package`, attach a
   build provenance attestation, and create the Release.
-- snapshot: the root `.github/workflows/snapshot.yml`. Whenever CI passes on main, `scripts/snapshot-version.mjs` produces
+- snapshot: the snapshot jobs of the root `.github/workflows/ci.yml`. Whenever CI passes on main, `scripts/snapshot-version.mjs` produces
   `<next patch>-snapshot.<number of apps/vscode commits since the last release>+<sha>`, and the `.vsix` with the
   engines bundled goes on the same `snapshot` pre-release as the app and the engine. Under SemVer comparison it is older
   than the stable release, so installing the stable release overwrites it.
