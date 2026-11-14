@@ -1520,14 +1520,9 @@ pub fn show_home(app: &gtk::Application, host: Option<Rc<RepoWindow>>) -> Rc<Rep
         host
     });
     let tab = Tab::new("Repositories", "", Rc::default());
-    let title = gtk::Label::new(Some("Repositories"));
-    title.add_css_class("title");
-    let subtitle = gtk::Label::new(Some(&tr!("Choose a repository to open")));
-    subtitle.add_css_class("subtitle");
-    let titles = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    titles.set_valign(gtk::Align::Center);
-    titles.append(&title);
-    titles.append(&subtitle);
+    // 題と説明の 2 行（macOS 版の窓の題と副題）。GNOME の部品なので、見出しの帯の高さはほかのタブと同じ（自前で
+    // ラベルを積むと高くなり、タブを切り替えるとタブの帯の位置がずれる）。
+    let titles = adw::WindowTitle::new("Repositories", &tr!("Choose a repository to open"));
     // 見出しはリポジトリのタブと同じ Repository のメニュー・ツールバー・主メニュー（リポジトリへの操作は、このタブに
     // アクションがないので押せない。macOS 版で Repositories の窓が前にあっても、メニューバーとツールバーはそのままなの
     // と同じ）。History の表示は設定なので、ここでも変えられる。
