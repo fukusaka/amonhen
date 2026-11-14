@@ -42,6 +42,8 @@ class FileToolViewController: NSViewController {
 final class FileToolWindowController: NSWindowController {
     private var toolbar: MainToolbar?
     private var forwarder: RepositoryForwarder?
+    /// 窓の背景（開いたリポジトリの窓に合わせる）。
+    private var backdrop: BackdropTab?
     /// 何のタブか（同じものを開き直したら、前のタブを閉じて入れ替える）。
     private var key = ""
 
@@ -55,9 +57,15 @@ final class FileToolWindowController: NSWindowController {
         tool.onHeadingChange = { [weak window] in window?.title = $0 }
         window.title = tool.heading
         window.tab.title = tool.tabTitle
-        window.contentViewController = tool
+        // 窓の背景は、開いたリポジトリの窓に合わせる（その窓を閉じた後は、アプリの設定）。
+        let source = repository?.window
+        let backdrop = BackdropTab(window: window, source: source) {
+            source.map { BackdropSettings.of($0) } ?? .app
+        }
+        backdrop.show(tool)
         window.setContentSize(NSSize(width: 1200, height: 780))
         let controller = FileToolWindowController(window: window)
+        controller.backdrop = backdrop
         controller.key = key
         controller.toolbar = toolbar
         window.toolbar = toolbar?.toolbar

@@ -9,6 +9,8 @@ final class RepositoryHomeWindow: NSObject, NSWindowDelegate {
     /// リポジトリのタブと同じツールバー（タブを切り替えてもタブの並びの位置が動かないように）。リポジトリへの操作は
     /// 届け先がないので押せない。
     private let toolbar = MainToolbar()
+    /// 窓の背景（アプリの設定。リポジトリのタブと同じ形）。
+    private var backdrop: BackdropTab?
     /// 閉じた（AppDelegate が手放す）。
     var onClose: (() -> Void)?
 
@@ -21,7 +23,9 @@ final class RepositoryHomeWindow: NSObject, NSWindowDelegate {
         window.subtitle = L("Choose a repository to open")
         window.isReleasedWhenClosed = false
         window.delegate = self
-        window.contentViewController = browser
+        let backdrop = BackdropTab(window: window) { .app }
+        backdrop.show(browser)
+        self.backdrop = backdrop
         window.toolbar = toolbar.toolbar
         toolbar.showNoRepository()
         window.setContentSize(NSSize(width: 1100, height: 700))
