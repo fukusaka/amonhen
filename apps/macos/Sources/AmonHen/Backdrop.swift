@@ -342,12 +342,19 @@ final class BackdropHostController: NSViewController {
     }
 }
 
+/// 窓の背景に合わせて自分の中も変える中身（`BackdropTab` に置いたもの。リポジトリのページの左の木など）。
+@MainActor protocol BackdropFollowing: AnyObject {
+    func followBackdrop(_ settings: BackdropSettings)
+}
+
 /// `BackdropTab` の中身の土台: 中身をツールバーの下から置き、その下に面の色を敷く。
 private final class BackdropPage: NSViewController {
     private let pane = TintView()
     private var content: NSView?
     /// ツールバーの下も面の色で塗る（`system`）。
     private var underToolbar = true
+    /// 当てた設定（後から置いた中身にも伝える）。
+    private var settings: BackdropSettings?
 
     override func loadView() {
         let root = LayoutView(frame: NSRect(x: 0, y: 0, width: 1200, height: 780))
@@ -360,6 +367,7 @@ private final class BackdropPage: NSViewController {
         children.forEach { $0.removeFromParent() }
         addChild(controller)
         place(controller.view)
+        if let settings { (controller as? BackdropFollowing)?.followBackdrop(settings) }
     }
 
     func show(_ view: NSView) {
@@ -384,10 +392,12 @@ private final class BackdropPage: NSViewController {
 
     func paint(_ settings: BackdropSettings) {
         _ = view
+        self.settings = settings
         pane.color = settings.paneColor
         underToolbar = settings.style == .system
         layoutPane()
         if let content { Backdrop.clearBackgrounds(in: content, clear: true) }
+        for child in children { (child as? BackdropFollowing)?.followBackdrop(settings) }
     }
 
     private func layoutPane() {
