@@ -287,6 +287,8 @@ jobs:
           scripts/bundle-engine.sh
           version=$(node scripts/snapshot-version.mjs)
           npm pkg set version="$version"
+          # vsce は --out のフォルダを作らない。
+          mkdir -p ../../dist/vsix
           npx @vscode/vsce package --skip-license --out "../../dist/vsix/amonhen-vscode-$version.vsix"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
