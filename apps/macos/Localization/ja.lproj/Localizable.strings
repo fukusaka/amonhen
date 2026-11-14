@@ -1940,15 +1940,10 @@
 "Tint the toolbar" = "ツールバーに色を付ける";
 "Toolbar color" = "ツールバーの色";
 "Toolbar tint" = "ツールバーの色の濃さ";
-"macOS’s standard window. Nothing shows through." = "macOS の標準の窓です。どこも透けません。";
-"The desktop and windows behind show through the sidebar and toolbar. The lists and diffs stay opaque." = "サイドバーとツールバーに、デスクトップや後ろの窓が透けます。一覧と差分は透けません。";
-"The desktop and windows behind show through the whole window. Changed lines and selections stay opaque." = "窓全体に、デスクトップや後ろの窓が透けます。変更行と選択の色は透けません。";
-"Laid thinly over the whole window, on top of the lists and diffs." = "窓全体に、一覧や差分の上から薄く重ねます。";
 "Syntax Colors" = "構文の色";
 "Light appearance" = "明るい外観";
 "Dark appearance" = "暗い外観";
 "Import VSCode Theme…" = "VSCode のテーマを読み込む…";
-"Reads tokenColors from a VSCode color theme (.json). Scopes map to Amon Hen’s 14 kinds, so colors are close but not exact." = "VSCode の配色テーマ（.json）の tokenColors を読みます。スコープを Amon Hen の 14 種類に当てはめるので、色は近いものになります。";
 "Dark" = "暗い";
 "Light" = "明るい";
 "Couldn’t read %@: %@" = "%1$@ を読めませんでした: %2$@";

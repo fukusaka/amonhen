@@ -16,7 +16,6 @@ struct BackdropSections: View {
                 Percent(L("Transparency"), value: $settings.transparency, in: 0.1...0.9)
                 Percent(L("Blur"), value: $settings.blur, in: 0...1)
             }
-            Note(transparencyNote)
         }
         Section(L("Background Image")) {
             LabeledContent(L("Image")) {
@@ -33,7 +32,6 @@ struct BackdropSections: View {
                 }
                 Percent(L("Transparency"), value: $settings.imageTransparency, in: 0.5...0.95)
             }
-            Note(L("Laid thinly over the whole window, on top of the lists and diffs."))
         }
         Section(L("Toolbar")) {
             Toggle(L("Tint the toolbar"), isOn: Binding(
@@ -45,14 +43,6 @@ struct BackdropSections: View {
                     set: { settings.toolbarColor = NSColor($0).hex }), supportsOpacity: false)
                 Percent(L("Toolbar tint"), value: $settings.toolbarOpacity, in: 0.1...1)
             }
-        }
-    }
-
-    private var transparencyNote: String {
-        switch settings.style {
-        case .system: L("macOS’s standard window. Nothing shows through.")
-        case .chrome: L("The desktop and windows behind show through the sidebar and toolbar. The lists and diffs stay opaque.")
-        case .single: L("The desktop and windows behind show through the whole window. Changed lines and selections stay opaque.")
         }
     }
 
@@ -114,7 +104,6 @@ struct SyntaxThemeSection: View {
                 Button(L("Import VSCode Theme…")) { importTheme() }
                 Spacer()
             }
-            Note(L("Reads tokenColors from a VSCode color theme (.json). Scopes map to Amon Hen’s 14 kinds, so colors are close but not exact."))
             if let failure { Note(failure).foregroundStyle(.red) }
             ForEach(model.importedThemes, id: \.name) { theme in
                 HStack {
