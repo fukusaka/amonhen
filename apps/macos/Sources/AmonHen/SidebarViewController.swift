@@ -1365,7 +1365,17 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             if let remote = node.remote {
                 menu.addItem(ClosureMenuItem(title: L("Rename…")) { [weak self] in self?.onRemoteAction?(remote, .edit) })
                 menu.addItem(ClosureMenuItem(title: L("Edit URL…")) { [weak self] in self?.onRemoteAction?(remote, .edit) })
-                menu.addItem(ClosureMenuItem(title: "Prune") { actions.perform(["op": "changeRemote", "change": ["kind": "prune", "name": remote]]) })
+                menu.addItem(ClosureMenuItem(title: "Prune…") { [weak self] in
+                    // Prune もリモートと話す（消えたブランチを読む）ので、先に聞く。
+                    self?.confirmDestructive(
+                        L("Prune %@?", remote),
+                        message: L("Removes the remote-tracking branches whose branches are gone from %@ (git remote prune).", remote)
+                            + " " + Actions.cantUndo,
+                        ok: "Prune", destructive: false
+                    ) {
+                        actions.perform(["op": "changeRemote", "change": ["kind": "prune", "name": remote]])
+                    }
+                })
                 menu.addItem(.separator())
                 menu.addItem(ClosureMenuItem(title: L("Remove…")) { [weak self] in self?.onRemoteAction?(remote, .remove) })
                 return
@@ -1497,14 +1507,14 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             // 上流と合わせる（最後の Fetch の時点）。チェックアウト中のブランチはツールバーの Pull・Push で。分かれていれば
             // チェックアウトして merge か rebase をする（上の Checkout）。
             if !RepositoryWindow.isPublished(item) {
-                add("Publish \(name)…") { actions.publishWithConfirmation(branch: name) }
+                add(L("Publish %@…", name)) { actions.publishWithConfirmation(branch: name) }
                 menu.addItem(.separator())
             } else if name != headBranch, let upstream = item.detail, (item.ahead == 0) != (item.behind == 0) {
                 if item.ahead > 0 {
                     add(Titles.push(name, to: upstream)) { actions.pushWithConfirmation(branch: name) }
                 } else if otherWorktree(using: name) == nil {
                     // ほかの worktree でチェックアウト中なら動かせない（その作業ツリーとずれる）。上の Open Worktree から。
-                    add("Fast-Forward \(name) to \(upstream)…") {
+                    add(L("Fast-Forward %@ to %@…", name, upstream)) {
                         actions.fastForwardWithConfirmation(name, to: upstream)
                     }
                 }
@@ -1611,8 +1621,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             if !onRemote.isEmpty { deletes.append((remote, onRemote)) }
         }
         for (remote, tags) in pushes {
-            add(tags.count == 1 ? "Push \(tags[0]) to \(remote)" : L("Push %ld Tags to %@", tags.count, remote)) {
-                actions.perform(["op": "pushTags", "remote": remote, "names": tags])
+            add(tags.count == 1 ? Titles.push(tags[0], to: remote) : L("Push %ld Tags to %@…", tags.count, remote)) { [weak self] in
+                self?.confirmPushTags(tags, to: remote)
             }
         }
         for (remote, tags) in replaces {
@@ -1640,6 +1650,18 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                     actions.perform(["op": "pushTags", "remote": remote, "names": tags, "delete": true])
                 }
             }
+        }
+    }
+
+    /// タグをリモートへ送る前に確かめる（リモートと話す操作は先に聞く。送ったものは Undo では戻せない）。
+    private func confirmPushTags(_ tags: [String], to remote: String) {
+        confirmDestructive(
+            tags.count == 1 ? L("Push %@ to %@?", tags[0], remote) : L("Push %ld tags to %@?", tags.count, remote),
+            message: tags.joined(separator: "\n") + "\n\n"
+                + L("Everyone who fetches from %@ gets them.", remote) + " " + Actions.cantUndo,
+            ok: "Push", destructive: false
+        ) { [weak self] in
+            self?.actions?.perform(["op": "pushTags", "remote": remote, "names": tags])
         }
     }
 
@@ -1726,7 +1748,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         popover.delegate = self
         popover.contentViewController = TagStatusPopover(
             item: item, mark: mark, rows: rows,
-            onPush: { remote in actions.perform(["op": "pushTags", "remote": remote, "names": [item.name]]) },
+            onPush: { [weak self] remote in self?.confirmPushTags([item.name], to: remote) },
             onReplace: { [weak self] remote in self?.confirmReplace([item.name], on: remote, actions: actions) })
         popover.show(relativeTo: view.bounds, of: view, preferredEdge: .maxY)
         statusPopover = popover
