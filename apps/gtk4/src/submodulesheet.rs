@@ -67,22 +67,25 @@ pub fn add(actions: &Rc<Actions>) {
                 "Clones the repository into a folder of this one and records it in .gitmodules (git submodule add). Commit to keep it."
             ),
         );
-        let url = entry("", &tr!("Repository URL"));
-        let path = entry("", &tr!("Folder"));
-        let branch = entry("", &tr!("Branch to follow (optional)"));
-        let fields = gtk::Box::new(gtk::Orientation::Vertical, 8);
-        for e in [&url, &path, &branch] {
-            fields.append(e);
-        }
-        sheet.add(&fields);
+        let url = entry("", "");
+        let path = entry("", "");
+        let branch = entry("", &tr!("(optional)"));
+        sheets::form(
+            &sheet,
+            &[
+                (tr!("Repository URL"), url.upcast_ref()),
+                (tr!("Folder"), path.upcast_ref()),
+                (tr!("Branch to follow"), branch.upcast_ref()),
+            ],
+        );
+        // フォルダは空なら URL から決める（git の既定）。その名前を欄の薄い文字で見せる。
         let p = path.downgrade();
         url.connect_changed(move |url| {
             let Some(path) = p.upgrade() else { return };
-            let name = default_path(&url.text());
-            let hint = if name.is_empty() { tr!("Folder") } else { name };
-            path.set_placeholder_text(Some(&hint));
+            path.set_placeholder_text(Some(&default_path(&url.text())));
         });
-        sheet.buttons(&tr!("Add"), false, None);
+        let add = sheet.buttons(&tr!("Add"), false, None);
+        sheets::require(&[&url], &add);
         url.grab_focus();
         if sheet.run().await != Response::Ok {
             return;

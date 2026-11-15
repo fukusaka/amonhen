@@ -385,6 +385,44 @@ pub fn row(name: &str, widget: &impl IsA<gtk::Widget>) -> gtk::Box {
     b
 }
 
+/// 入力欄の表: ラベルを左に、欄を右に（リモートのシートと同じ形。macOS 版の `AlertForm.grid`）。ラベルが空の行
+/// （チェックボックスなど）は、欄の列にそろえて置く。
+pub fn form(sheet: &Sheet, rows: &[(String, &gtk::Widget)]) {
+    // 表にして、ラベルの列の幅をそろえ、欄はどれも残りの幅いっぱいに（行ごとに長さが違わないように）。
+    let grid = gtk::Grid::new();
+    grid.set_row_spacing(8);
+    grid.set_column_spacing(8);
+    for (i, (label, widget)) in rows.iter().enumerate() {
+        let l = gtk::Label::new(Some(label));
+        l.set_xalign(1.0);
+        grid.attach(&l, 0, i as i32, 1, 1);
+        if widget.is::<gtk::Entry>() {
+            widget.set_hexpand(true);
+        }
+        grid.attach(*widget, 1, i as i32, 1, 1);
+    }
+    sheet.add(&grid);
+}
+
+/// `fields` のどれかが空のあいだ、`button` を押せなくする（空のまま押して何も起きない、をなくす。macOS 版と同じ）。
+pub fn require(fields: &[&gtk::Entry], button: &gtk::Button) {
+    let weak_fields: Vec<glib::WeakRef<gtk::Entry>> =
+        fields.iter().map(|e| e.downgrade()).collect();
+    let weak = button.downgrade();
+    let update = Rc::new(move || {
+        let Some(button) = weak.upgrade() else { return };
+        let filled = weak_fields
+            .iter()
+            .all(|e| e.upgrade().is_some_and(|e| !e.text().trim().is_empty()));
+        button.set_sensitive(filled);
+    });
+    update();
+    for field in fields {
+        let u = update.clone();
+        field.connect_changed(move |_| u());
+    }
+}
+
 /// 「Undo で戻せます」の文。
 pub fn can_undo() -> String {
     tr!("You can Undo this (Ctrl+Alt+Z).")
