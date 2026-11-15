@@ -1363,8 +1363,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             // 見出しそのもの（`Remotes/x` のようなブランチのフォルダは、同じ名前でも見出しではない）。
             let isGroup = groups.contains { $0 === node }
             if let remote = node.remote {
-                menu.addItem(ClosureMenuItem(title: L("Rename…")) { [weak self] in self?.onRemoteAction?(remote, .edit) })
-                menu.addItem(ClosureMenuItem(title: L("Edit URL…")) { [weak self] in self?.onRemoteAction?(remote, .edit) })
+                // 名前も URL も同じシートで変える（設定のリモートの行と同じ 1 項目）。
+                menu.addItem(ClosureMenuItem(title: L("Edit…")) { [weak self] in self?.onRemoteAction?(remote, .edit) })
                 menu.addItem(ClosureMenuItem(title: "Prune…") { [weak self] in
                     // Prune もリモートと話す（消えたブランチを読む）ので、先に聞く。
                     self?.confirmDestructive(
