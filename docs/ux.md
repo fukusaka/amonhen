@@ -877,6 +877,8 @@ Make every operation available from the menus. Shortcuts do not follow other cli
   In Japanese, git's verbs stay in English, capitalized in titles, menus and buttons ("feature を Merge しますか？") and
   lower case when a description talks about git itself; a title reads target, then verb ("vendor/tree を Pull"), removing
   is 削除, adding is 追加, and an optional field says （任意）.
+- **Fields** in a sheet are labeled on the left, as in the remote and SSH sheets, with the default shown faintly in
+  an empty field, and the button stays disabled until the required fields are filled.
 - **Red** is only for what can't be undone (Force Push, deleting or replacing tags on a remote, deleting an
   untracked file, removing a worktree with uncommitted changes, closing the merge editor without saving); Return
   doesn't press it. "…" is only on items that open a sheet.

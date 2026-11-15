@@ -928,32 +928,25 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         let alert = NSAlert()
         alert.messageText = L("New Worktree")
         alert.informativeText = L("Creates a branch from %@ and checks it out in a new folder.", Actions.shownStart(start))
-        let branch = NSTextField(string: "")
-        branch.placeholderString = L("Branch name")
-        let folder = NSTextField(string: "")
-        folder.placeholderString = L("Folder")
-        // スタックの中では frame の幅は効かない（制約がないと幅が 2pt に潰れる）。
-        for field in [branch, folder] { field.widthAnchor.constraint(equalToConstant: 360).isActive = true }
-        let stack = NSStackView(views: [branch, folder])
-        stack.orientation = .vertical
-        stack.spacing = 8
-        stack.frame = NSRect(x: 0, y: 0, width: 360, height: 56)
-        alert.accessoryView = stack
+        let branch = AlertForm.field()
+        let folder = AlertForm.field()
+        alert.accessoryView = AlertForm.grid([(L("Branch name"), branch), (L("Folder"), folder)])
         alert.window.initialFirstResponder = branch
         // フォルダの既定は、リポジトリの隣の「<名前>-<ブランチ>」（git の worktree でよくある置き方）。
         let parent = (base as NSString).deletingLastPathComponent, repoName = (base as NSString).lastPathComponent
         let target = ClosureTarget {
             let name = branch.stringValue.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "/", with: "-")
-            folder.placeholderString = name.isEmpty ? L("Folder")
+            folder.placeholderString = name.isEmpty ? ""
                 : (parent as NSString).appendingPathComponent("\(repoName)-\(name)")
         }
         NotificationCenter.default.addObserver(forName: NSControl.textDidChangeNotification, object: branch, queue: .main) { _ in
             MainActor.assumeIsolated { target.fire() }
         }
-        alert.addButton(withTitle: L("Create"))
+        let watching = AlertForm.require([branch], for: alert.addButton(withTitle: L("Create")))
         alert.addButton(withTitle: L("Cancel"))
         alert.beginSheetModal(for: window) { [weak self] response in
             withExtendedLifetime(target) {}
+            AlertForm.release(watching)
             guard let self, response == .alertFirstButtonReturn else { return }
             let name = branch.stringValue.trimmingCharacters(in: .whitespaces)
             guard !name.isEmpty else { return NSSound.beep() }
