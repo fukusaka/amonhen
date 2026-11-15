@@ -684,7 +684,6 @@
 "── Suggestion ──" = "── 提案 ──";
 "Put in the AI’s suggestion (⌘Z to undo)." = "AI の提案を入れました（⌘Z で戻せる）";
 "Mark Resolved" = "解決済みにする";
-"Close Without Saving" = "保存せずに閉じる";
 
 /* FileTools.swift */
 "Not committed yet" = "まだコミットしていない";

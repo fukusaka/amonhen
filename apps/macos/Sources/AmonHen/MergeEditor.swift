@@ -1165,7 +1165,7 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate {
         let alert = NSAlert()
         alert.messageText = L("Close without saving?")
         alert.informativeText = L("Your changes to Result are lost.")
-        let close = alert.addButton(withTitle: L("Close Without Saving"))
+        let close = alert.addButton(withTitle: L("Close"))
         close.markDestructive()
         alert.addButton(withTitle: L("Cancel")).keyEquivalent = "\r"
         return await alert.beginSheetModal(for: window) == .alertFirstButtonReturn
@@ -1175,7 +1175,7 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate {
         guard editor.hasUnsavedChanges, !discardConfirmed else { return true }
         Task { @MainActor in
             guard await actions.confirm(
-                L("Close without saving?"), message: L("Your changes to Result are lost."), ok: L("Close Without Saving"),
+                L("Close without saving?"), message: L("Your changes to Result are lost."), ok: L("Close"),
                 destructive: true, in: sender) else { return }
             discardConfirmed = true
             sender.performClose(nil)
