@@ -430,7 +430,7 @@ pub fn open_window(workdir: Option<&Path>, path: &str) -> Option<gtk::Window> {
     })
 }
 
-/// 保存していない Result を捨てて閉じてよいかを、`window` のシートで確かめる（赤い「Close Without Saving」。
+/// 保存していない Result を捨てて閉じてよいかを、`window` のシートで確かめる（赤い「Close」。
 /// Return は Cancel。macOS 版と同じ）。別の窓のマージエディタ、リポジトリのタブ・窓を閉じるとき、終えるときに。
 pub async fn confirm_discarding(window: &impl IsA<gtk::Window>) -> bool {
     let sheet = crate::sheets::Sheet::unnamed(
@@ -438,7 +438,7 @@ pub async fn confirm_discarding(window: &impl IsA<gtk::Window>) -> bool {
         &tr!("Close without saving?"),
         &tr!("Your changes to Result are lost."),
     );
-    sheet.buttons(&tr!("Close Without Saving"), true, None);
+    sheet.buttons(&tr!("Close"), true, None);
     sheet.run().await == crate::sheets::Response::Ok
 }
 
