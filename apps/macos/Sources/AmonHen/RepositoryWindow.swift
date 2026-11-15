@@ -921,12 +921,12 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         // 下で開いたリポジトリから作るので、書き込む先の HEAD は ID で渡す。
         var start = startPoint
         if start == "HEAD", editing !== opened, let head = editingRefs?.head {
-            start = String(head.map { String(format: "%02x", $0) }.joined().prefix(12))
+            start = head.map { String(format: "%02x", $0) }.joined()
         }
         let base = opened.path
         let alert = NSAlert()
         alert.messageText = L("New Worktree")
-        alert.informativeText = L("Creates a branch from %@ and checks it out in a new folder.", start)
+        alert.informativeText = L("Creates a branch from %@ and checks it out in a new folder.", Actions.shownStart(start))
         let branch = NSTextField(string: "")
         branch.placeholderString = L("Branch name")
         let folder = NSTextField(string: "")
@@ -1999,7 +1999,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     /// ブランチ（なければその HEAD）。
     private var startPoint: String {
         if pages?.page == .history, let selectedCommit {
-            return String(selectedCommit.map { String(format: "%02x", $0) }.joined().prefix(12))
+            // 全桁で渡し、見せるときに短くする（Actions.shownStart。題の ID はどこでも 8 桁）。
+            return selectedCommit.map { String(format: "%02x", $0) }.joined()
         }
         return editingBranch ?? "HEAD"
     }
