@@ -2310,3 +2310,4 @@
 "Push to {remote}…" = "{remote} に Push…";
 "No remote to publish to. Add one in Repository > Add Remote…." = "Publish する先のリモートがありません。Repository > リモートを追加… で追加してください。";
 "Couldn’t read History" = "History を読めませんでした";
+"Merge them one by one (a merge commit for each)" = "1 つずつ merge する（それぞれ merge のコミットを作る）";
