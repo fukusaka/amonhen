@@ -316,6 +316,7 @@
 "There is already a hook named {name}" = "{name} というフックはすでにある";
 "No SSH agent is set (SSH_AUTH_SOCK), so keys that need a passphrase can’t be used" = "SSH の agent が決まっていない（SSH_AUTH_SOCK）ので、パスフレーズのある鍵を使えません";
 "The SSH agent ({path}) isn’t running, so keys that need a passphrase can’t be used" = "SSH の agent（{path}）がいないので、パスフレーズのある鍵を使えません";
+"The engine to start as the shared daemon ({path}) isn’t there" = "共有の daemon として起動するエンジン（{path}）がありません";
 "The engine to start as the shared daemon ({path}) is a different build of Amon Hen" = "共有の daemon として起動するエンジン（{path}）は、Amon Hen の別のビルドのものです";
 "The shared daemon’s socket path is too long ({length} bytes, at most {max}): {path}. Set AMONHEN_DAEMON_DIR to a shorter folder" = "共有の daemon のソケットのパスが長すぎます（{length} バイト、{max} まで）: {path}。AMONHEN_DAEMON_DIR を短いフォルダにしてください";
 "Not a name of an environment variable" = "環境変数の名前ではありません";
@@ -1349,7 +1350,7 @@
 "{remote}: has it" = "{remote}: ある";
 "{remote}: has a different tag with this name" = "{remote}: 同じ名前の別のタグ";
 "{remote}: doesn’t have it" = "{remote}: ない";
-"Push {count} Tags to {remote}" = "{count} 個のタグを {remote} に Push";
+"Push {count} Tags to {remote}…" = "{count} 個のタグを {remote} に Push…";
 "Replace {tag} on {remote}…" = "{remote} の {tag} を置き換える…";
 "Replace {count} Tags on {remote}…" = "{remote} の {count} 個のタグを置き換える…";
 "Delete tag {name}?" = "タグ {name} を削除しますか？";
@@ -2300,3 +2301,15 @@
 "Couldn’t read {file}: {error}" = "{file} を読めませんでした: {error}";
 "Use a different background for {name}" = "{name} は別の背景にする";
 "Otherwise this window follows Settings > Theme." = "しなければ、この窓は Settings > Theme に従います。";
+"Push {count} tags to {remote}?" = "{count} 個のタグを {remote} に Push しますか？";
+"Everyone who fetches from {remote} gets them." = "{remote} から fetch する人みんなに届きます。";
+"Prune {remote}?" = "{remote} を Prune しますか？";
+"Removes the remote-tracking branches whose branches are gone from {remote} (git remote prune)." = "{remote} で消えたブランチの、手元の写し（リモートのブランチ）を消します（git remote prune）。";
+"Fast-Forward {name} to {upstream}…" = "{name} を {upstream} まで Fast-Forward…";
+"Publish {name}…" = "{name} を Publish…";
+"Push to {remote}…" = "{remote} に Push…";
+"No remote to publish to. Add one in Repository > Add Remote…." = "Publish する先のリモートがありません。Repository > リモートを追加… で追加してください。";
+"Couldn’t read History" = "History を読めませんでした";
+"Merge them one by one (a merge commit for each)" = "1 つずつ merge する（それぞれ merge のコミットを作る）";
+"(optional)" = "（任意）";
+"Branch to follow" = "追うブランチ";

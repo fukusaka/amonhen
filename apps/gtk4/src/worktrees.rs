@@ -1171,31 +1171,34 @@ pub fn new_worktree(
             &tr!("New Worktree"),
             &tr!(
                 "Creates a branch from {start} and checks it out in a new folder.",
-                start = &start
+                start = crate::titles::shown_start(&start)
             ),
         );
         let branch = gtk::Entry::new();
-        branch.set_placeholder_text(Some(&tr!("Branch name")));
         branch.set_activates_default(true);
+        branch.set_width_chars(40);
         let folder = gtk::Entry::new();
-        folder.set_placeholder_text(Some(&tr!("Folder")));
         folder.set_activates_default(true);
-        let fields = gtk::Box::new(gtk::Orientation::Vertical, 8);
-        fields.append(&branch);
-        fields.append(&folder);
-        sheet.add(&fields);
+        crate::sheets::form(
+            &sheet,
+            &[
+                (tr!("Branch name"), branch.upcast_ref()),
+                (tr!("Folder"), folder.upcast_ref()),
+            ],
+        );
         let f = folder.downgrade();
         branch.connect_changed(move |branch| {
             let Some(folder) = f.upgrade() else { return };
             let name = branch.text().trim().replace('/', "-");
             let hint = if name.is_empty() {
-                tr!("Folder")
+                String::new()
             } else {
                 format!("{parent}/{repo_name}-{name}")
             };
             folder.set_placeholder_text(Some(&hint));
         });
-        sheet.buttons(&tr!("Create"), false, None);
+        let create = sheet.buttons(&tr!("Create"), false, None);
+        crate::sheets::require(&[&branch], &create);
         branch.grab_focus();
         if sheet.run().await != Response::Ok {
             return;

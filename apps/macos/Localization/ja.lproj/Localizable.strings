@@ -1344,7 +1344,7 @@
 "Reset %@ to %@?" = "%@ を %@ に Reset しますか？";
 
 // タグの push と削除（サイドバーの Tags の右クリック）
-"Push %ld Tags to %@" = "%ld 個のタグを %@ に Push";
+"Push %ld Tags to %@…" = "%ld 個のタグを %@ に Push…";
 "Delete %ld Tags…" = "%ld 個のタグを削除…";
 "Delete tag %@?" = "タグ %@ を削除しますか？";
 "Delete %ld tags?" = "%ld 個のタグを削除しますか？";
@@ -1962,3 +1962,15 @@
 "Top Right" = "右上";
 "Bottom Left" = "左下";
 "Bottom Right" = "右下";
+"Push %ld tags to %@?" = "%1$ld 個のタグを %2$@ に Push しますか？";
+"Everyone who fetches from %@ gets them." = "%@ から fetch する人みんなに届きます。";
+"Fast-Forward %@ to %@…" = "%1$@ を %2$@ まで Fast-Forward…";
+"Publish %@…" = "%@ を Publish…";
+"Prune %@?" = "%@ を Prune しますか？";
+"Removes the remote-tracking branches whose branches are gone from %@ (git remote prune)." = "%@ で消えたブランチの、手元の写し（リモートのブランチ）を消します（git remote prune）。";
+"Push to %@…" = "%@ に Push…";
+"Couldn’t read History" = "History を読めませんでした";
+"No remote to publish to. Add one in Repository > Add Remote…." = "Publish する先のリモートがありません。Repository > リモートを追加… で追加してください。";
+"Merge them one by one (a merge commit for each)" = "1 つずつ merge する（それぞれ merge のコミットを作る）";
+"(optional)" = "（任意）";
+"Branch to follow" = "追うブランチ";

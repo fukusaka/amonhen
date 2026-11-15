@@ -7,6 +7,24 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
+### Unreleased
+
+#### Changed
+
+- Pushing a tag and a remote's Prune ask first, like every other operation that talks to a remote.
+- macOS: buttons for what can't be undone are red with white text (Force Push's included), instead of dark red text.
+- The submodule, subtree and New Worktree sheets label their fields on the left and enable their button once the
+  required fields are filled; Merge One by One became a checkbox in the merge sheet.
+- Publish is disabled when the repository has no remote, and a remote's Rename… and Edit URL… are one Edit….
+
+#### Fixed
+
+- Long branch names no longer overlap in the Reset, Merge and Rebase drawings, and on macOS the merge editor's own
+  window no longer puts its title bar buttons over the conflict count.
+- Alerts for a repository that can't be opened or read have a title, commit IDs in New Branch, New Tag and New
+  Worktree have 8 characters, and a few menu items left in English are translated.
+- Starting the shared daemon from a missing engine says it isn't there instead of calling it another build.
+
 ### [0.2.11] - 2026-11-13
 
 History's cache writes only what changed instead of the whole History, and the selected commit's ancestors light up

@@ -29,7 +29,8 @@ extension Actions {
                 L("This makes one merge commit with all of them as parents, as git merge does with several branches. Drag to change the order. Undo puts it back."))
             alert.addButton(withTitle: "Merge")
             alert.addButton(withTitle: L("Cancel"))
-            alert.addButton(withTitle: L("Merge One by One"))
+            // 1 つずつ merge するかは、3 つ目のボタンではなく選ぶもの（ボタンが 3 つだと縦に並び、Cancel が真ん中に来る）。
+            let oneByOne = NSButton(checkboxWithTitle: L("Merge them one by one (a merge commit for each)"), target: nil, action: nil)
 
             let list = MergeOrderList(sources: sources)
             let label = Actions.forecastLabel(width: 420)
@@ -119,7 +120,7 @@ extension Actions {
             }
             modePopup.target = modeTarget
             modePopup.action = #selector(ClosureTarget.fire)
-            for view in [list.view, modeRow, drawing, label, putLast, message].compactMap({ $0 }) { stack.addArrangedSubview(view) }
+            for view in [list.view, modeRow, drawing, label, putLast, oneByOne, message].compactMap({ $0 }) { stack.addArrangedSubview(view) }
             update()
             list.view.widthAnchor.constraint(equalToConstant: 420).isActive = true
             stack.layoutSubtreeIfNeeded()
@@ -129,11 +130,7 @@ extension Actions {
             withExtendedLifetime((putLastTarget, modeTarget)) {}
             let revs = list.sources.map(\.rev)
             let mode = Actions.mergeMode(modePopup)
-            switch response {
-            case .alertFirstButtonReturn: merge(revs, oneByOne: false, mode: mode)
-            case .alertThirdButtonReturn: merge(revs, oneByOne: true, mode: mode)
-            default: break
-            }
+            if response == .alertFirstButtonReturn { merge(revs, oneByOne: oneByOne.state == .on, mode: mode) }
         }
     }
 

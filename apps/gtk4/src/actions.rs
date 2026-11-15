@@ -36,6 +36,8 @@ pub struct Actions {
     /// 今のブランチを送るのが Publish かどうかが変わったら呼ぶ（Commit ▾ のツールチップ）。
     on_publishes: RefCell<Vec<Callback>>,
     on_failure: RefCell<Option<FailureCallback>>,
+    /// リポジトリにリモートがあるかが変わった（ツールバーの Push のツールチップを言い直す）。
+    on_no_remote: RefCell<Option<Rc<dyn Fn()>>>,
     on_done: RefCell<Option<DoneCallback>>,
     /// 操作がコンフリクトや途中で止まった（Working Copy で最初のコンフリクトを開く）。
     on_stop: RefCell<Option<Callback>>,
@@ -79,6 +81,7 @@ impl Actions {
             on_repo: RefCell::default(),
             on_publishes: RefCell::default(),
             on_failure: RefCell::default(),
+            on_no_remote: RefCell::default(),
             on_done: RefCell::default(),
             on_stop: RefCell::default(),
             head: RefCell::default(),
@@ -173,6 +176,28 @@ impl Actions {
     pub fn update_facts(&self, f: impl FnOnce(&mut Facts)) {
         f(&mut self.facts.borrow_mut());
         apply_facts(&self.group, &self.facts.borrow());
+    }
+
+    /// リポジトリにリモートがない（Publish の先がない。サイドバーがタグのリモートと一緒に読む）。
+    pub fn no_remote(&self) -> bool {
+        self.facts.borrow().no_remote
+    }
+
+    /// リモートがないかを入れる（変わったら Push を押せるかとツールチップを直す）。
+    pub fn set_no_remote(&self, none: bool) {
+        if self.facts.borrow().no_remote == none {
+            return;
+        }
+        self.update_facts(|f| f.no_remote = none);
+        let f = self.on_no_remote.borrow().clone();
+        if let Some(f) = f {
+            f();
+        }
+    }
+
+    /// リモートがあるかが変わったら `f` を呼ぶ。
+    pub fn connect_no_remote(&self, f: impl Fn() + 'static) {
+        self.on_no_remote.replace(Some(Rc::new(f)));
     }
 
     /// 既定のブランチの、手元のブランチとしての名前（サイドバーが読んでいれば）。
@@ -1034,6 +1059,8 @@ pub struct Facts {
     pub default_branch: Option<String>,
     /// 今のブランチの（上流に送れるか、上流より先にあるコミットの数）。ブランチの項目がなければ None。
     pub tracking: Option<(bool, u32)>,
+    /// リポジトリにリモートがない（Publish できない）。
+    pub no_remote: bool,
     /// stash がある。
     pub stash: bool,
     /// submodule がある（Update Submodules… に要る）。
@@ -1095,11 +1122,11 @@ pub fn enabled(f: &Facts) -> Vec<(&'static str, bool)> {
         ("skip", skip),
         ("save-patch", f.patch),
         ("apply-patch", idle),
-        // 送るものがなければ押せない（理由はツールバーのツールチップ）。上流のないブランチは Publish。
+        // 送るものがなければ押せない（理由はツールバーのツールチップ）。上流のないブランチは Publish（リモートが要る）。
         (
             "push",
             f.tracking
-                .is_some_and(|(published, ahead)| !published || ahead > 0),
+                .is_some_and(|(published, ahead)| if published { ahead > 0 } else { !f.no_remote }),
         ),
         (
             "force-push",

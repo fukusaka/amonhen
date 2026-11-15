@@ -338,7 +338,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if isRestoring {
                 return connect(location: location, debug: debug, tabWith: tabWith, failed: error)
             }
-            NSAlert(error: error).runModal()
+            // 題を付けて、何を開けなかったかを言う（エラーの文だけだと、git・gix の英語が題になる）。
+            let alert = NSAlert()
+            alert.messageText = L("Couldn’t open %@", (location as NSString).lastPathComponent)
+            alert.informativeText = "\(location)\n\n\(error.localizedDescription)"
+            alert.runModal()
             return nil
         }
     }

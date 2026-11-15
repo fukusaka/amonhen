@@ -30,15 +30,6 @@ enum SubtreeSheet {
         return field
     }
 
-    private static func stack(_ views: [NSView]) -> NSStackView {
-        let stack = NSStackView(views: views)
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 8
-        stack.frame = NSRect(x: 0, y: 0, width: 360, height: stack.fittingSize.height)
-        return stack
-    }
-
     private static func squashBox(_ on: Bool) -> NSButton {
         let box = NSButton(checkboxWithTitle: L("Squash its history into one commit (--squash)"), target: nil, action: nil)
         box.state = on ? .on : .off
@@ -54,23 +45,24 @@ enum SubtreeSheet {
         let alert = NSAlert()
         alert.messageText = L("Add Subtree")
         alert.informativeText = actions.sheetMessage(L("Brings another repository’s branch into a folder of this one as a commit (git subtree add). Pull and Push later use the same repository and branch."))
-        let url = field("", placeholder: L("Repository URL"))
-        let ref = field("", placeholder: L("Branch or tag"))
-        let dir = field("", placeholder: L("Folder"))
+        let url = AlertForm.field()
+        let ref = AlertForm.field()
+        let dir = AlertForm.field()
         let squash = squashBox(false)
-        alert.accessoryView = stack([url, ref, dir, squash])
+        alert.accessoryView = AlertForm.grid([(L("Repository URL"), url), (L("Branch or tag"), ref), (L("Folder"), dir), ("", squash)])
         alert.window.initialFirstResponder = url
+        // フォルダは空なら URL から決める。その名前を欄の薄い文字で見せる。
         let target = ClosureTarget {
-            let name = SubmoduleSheet.defaultPath(for: url.stringValue)
-            dir.placeholderString = name.isEmpty ? L("Folder") : name
+            dir.placeholderString = SubmoduleSheet.defaultPath(for: url.stringValue)
         }
         NotificationCenter.default.addObserver(forName: NSControl.textDidChangeNotification, object: url, queue: .main) { _ in
             MainActor.assumeIsolated { target.fire() }
         }
-        alert.addButton(withTitle: L("Add"))
+        let watching = AlertForm.require([url, ref], for: alert.addButton(withTitle: L("Add")))
         alert.addButton(withTitle: L("Cancel"))
         alert.beginSheetModal(for: window) { response in
             withExtendedLifetime(target) {}
+            AlertForm.release(watching)
             guard response == .alertFirstButtonReturn else { return }
             let u = trimmed(url), r = trimmed(ref)
             var d = trimmed(dir)
@@ -87,14 +79,15 @@ enum SubtreeSheet {
         alert.informativeText = actions.sheetMessage(push
             ? L("Sends the commits that changed this folder to the repository’s branch, as that repository’s own history (git subtree push).")
             : L("Merges the repository’s branch into this folder (git subtree pull). Conflicts stop it like a merge."))
-        let url = field(subtree.url ?? "", placeholder: L("Repository URL"))
-        let ref = field((push ? subtree.pushRef ?? subtree.ref : subtree.ref) ?? "", placeholder: L("Branch or tag"))
+        let url = AlertForm.field(subtree.url ?? "")
+        let ref = AlertForm.field((push ? subtree.pushRef ?? subtree.ref : subtree.ref) ?? "")
         let squash = squashBox(subtree.squash ?? false)
-        alert.accessoryView = stack(push ? [url, ref] : [url, ref, squash])
+        alert.accessoryView = AlertForm.grid([(L("Repository URL"), url), (L("Branch or tag"), ref)] + (push ? [] : [("", squash)]))
         alert.window.initialFirstResponder = url.stringValue.isEmpty ? url : ref
-        alert.addButton(withTitle: push ? "Push" : "Pull")
+        let watching = AlertForm.require([url, ref], for: alert.addButton(withTitle: push ? "Push" : "Pull"))
         alert.addButton(withTitle: L("Cancel"))
         alert.beginSheetModal(for: window) { response in
+            AlertForm.release(watching)
             guard response == .alertFirstButtonReturn else { return }
             let u = trimmed(url), r = trimmed(ref)
             guard !u.isEmpty, !r.isEmpty else { return NSSound.beep() }

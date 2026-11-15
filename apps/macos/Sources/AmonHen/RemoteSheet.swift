@@ -29,8 +29,7 @@ enum RemoteSheet {
         alert.informativeText = L("This removes the remote’s settings and its remote-tracking branches (%@/…). The remote repository isn’t touched.", name) + " " + Actions.cantUndo
         // 戻せないので、赤く、↩ では押せない（↩ は Cancel）。
         let delete = alert.addButton(withTitle: L("Remove"))
-        delete.hasDestructiveAction = true
-        delete.keyEquivalent = ""
+        delete.markDestructive()
         alert.addButton(withTitle: L("Cancel")).keyEquivalent = "\r"
         guard let window else { return alert.runModal() == .alertFirstButtonReturn }
         return await alert.beginSheetModal(for: window) == .alertFirstButtonReturn

@@ -138,8 +138,9 @@ class GraphDrawingView: NSView {
             circle.fill()
         }
         var x = textX
-        for (name, kind, current) in labels {
-            x = drawLabel(name, kind: kind, current: current, at: NSPoint(x: x, y: dot.y + 3)) + 4
+        // 札は列の中に収める: 長い名前は真ん中を省き、入りきらない札は描かない（隣の列や件名に重ねない）。
+        for (name, kind, current) in labels where width - x > 40 {
+            x = drawLabel(name, kind: kind, current: current, at: NSPoint(x: x, y: dot.y + 3), maxWidth: width - x - 24) + 4
         }
         let attributes: [NSAttributedString.Key: Any] = [
             .font: highlighted || isNew ? NSFont.boldSystemFont(ofSize: NSFont.smallSystemFontSize) : NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
@@ -152,25 +153,32 @@ class GraphDrawingView: NSView {
             noteAttributes[.font] = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
             text.append(NSAttributedString(string: " — " + note, attributes: noteAttributes))
         }
-        text.draw(with: NSRect(x: x, y: dot.y + 4, width: max(0, width - x), height: Self.rowHeight),
+        // 札で埋まったら件名は描かない（幅 0 でも文字は描かれ、札に重なる）。
+        guard width - x > 20 else { return }
+        text.draw(with: NSRect(x: x, y: dot.y + 4, width: width - x, height: Self.rowHeight),
                   options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
     }
 
     /// History と同じ色の札（ローカルは青、リモートは紫、一緒に動いたものは緑）。右端を返す。
-    func drawLabel(_ name: String, kind: String, current: Bool, at point: NSPoint) -> CGFloat {
+    func drawLabel(_ name: String, kind: String, current: Bool, at point: NSPoint, maxWidth: CGFloat = .greatestFiniteMagnitude) -> CGFloat {
         let color: NSColor = switch kind {
         case "remote": .systemPurple
         case "moved": .systemGreen
         default: .systemBlue
         }
         let font = current ? NSFont.boldSystemFont(ofSize: NSFont.smallSystemFontSize - 1) : NSFont.systemFont(ofSize: NSFont.smallSystemFontSize - 1)
-        let text = NSAttributedString(string: name, attributes: [.font: font, .foregroundColor: current ? NSColor.white : color])
+        let style = NSMutableParagraphStyle()
+        style.lineBreakMode = .byTruncatingMiddle
+        let text = NSAttributedString(string: name, attributes: [.font: font, .foregroundColor: current ? NSColor.white : color,
+                                                                 .paragraphStyle: style])
         let size = text.size()
-        let rect = NSRect(x: point.x, y: point.y, width: size.width + 10, height: size.height + 2)
+        let textWidth = min(size.width, max(0, maxWidth - 10))
+        let rect = NSRect(x: point.x, y: point.y, width: textWidth + 10, height: size.height + 2)
         let pill = NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4)
         (current ? color : color.withAlphaComponent(0.16)).setFill()
         pill.fill()
-        text.draw(at: NSPoint(x: rect.minX + 5, y: rect.minY + 1))
+        text.draw(with: NSRect(x: rect.minX + 5, y: rect.minY + 1, width: textWidth, height: size.height),
+                  options: [.usesLineFragmentOrigin])
         return rect.maxX
     }
 }

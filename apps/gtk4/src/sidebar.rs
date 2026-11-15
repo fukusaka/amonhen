@@ -2185,6 +2185,10 @@ impl Inner {
             inner.facts_pending.set(inner.facts_pending.get() - 1);
             if inner.loading_tags.get() == token {
                 let tags = TagRemotes::from(&reply["info"]);
+                // タグのリモートの様子は、すべてのリモートを並べる（ないなら Publish の先がない）。
+                if let (Some(t), Some(actions)) = (&tags, inner.actions.borrow().clone()) {
+                    actions.set_no_remote(t.remotes.is_empty());
+                }
                 if tags.is_some() && tags != *inner.tags.borrow() {
                     inner.tags.replace(tags);
                     inner.rebuild(false);

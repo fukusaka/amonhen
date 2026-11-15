@@ -164,10 +164,9 @@ final class Actions {
         alert.messageText = title
         alert.informativeText = message
         let button = alert.addButton(withTitle: ok)
-        button.hasDestructiveAction = destructive
         alert.addButton(withTitle: L("Cancel"))
         if destructive {
-            button.keyEquivalent = ""
+            button.markDestructive()
             alert.buttons[1].keyEquivalent = "\r"
         }
         if let host { return await alert.beginSheetModal(for: host) == .alertFirstButtonReturn }
@@ -412,8 +411,7 @@ final class Actions {
             scroll.borderType = .bezelBorder
             alert.accessoryView = scroll
             let delete = alert.addButton(withTitle: L("Delete"))
-            delete.hasDestructiveAction = true
-            delete.keyEquivalent = ""
+            delete.markDestructive()
             alert.addButton(withTitle: L("Cancel")).keyEquivalent = "\r"
             guard await present(alert) == .alertFirstButtonReturn else { return }
             perform(["op": "deleteIgnored", "paths": paths])
@@ -646,3 +644,12 @@ final class Actions {
     }
 }
 
+extension NSButton {
+    /// 戻せない操作のボタン（docs/ux.md の赤）: 地を赤くして白い文字にし、↩ では押せなくする。
+    /// `hasDestructiveAction` だと、シートの中で OS が暗い赤の地に赤い文字で描いて読みにくく、
+    /// ウィンドウの中のボタンでは灰色のままになる。
+    func markDestructive() {
+        bezelColor = .systemRed
+        keyEquivalent = ""
+    }
+}

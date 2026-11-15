@@ -93,7 +93,7 @@ final class TagStatusPopover: NSViewController {
         let buttons = NSStackView()
         buttons.spacing = 8
         for row in rows where row.state == .missing {
-            buttons.addArrangedSubview(ClosureButton(title: "Push to \(row.remote)") { [weak self] in
+            buttons.addArrangedSubview(ClosureButton(title: L("Push to %@…", row.remote)) { [weak self] in
                 self?.dismiss(nil)
                 self?.onPush(row.remote)
             })

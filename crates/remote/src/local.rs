@@ -250,6 +250,14 @@ fn launch(daemon: &str, endpoint: &str) -> Result<()> {
     // 別のビルドのエンジンは、このソケットで待っても挨拶で断るだけなので、起動する前に断る（開発中に古い
     // target/release/amonhen を起動していた）。`PATH` から探す名前（`amonhen`）のときは確かめない。
     let path = Path::new(daemon);
+    // ないファイルを「別のビルド」とは言わない（置き場所を間違えたのか、消えたのかが分からなくなる）。
+    if path.is_absolute() && !path.is_file() {
+        return Err(tr!(
+            "The engine to start as the shared daemon ({path}) isn’t there",
+            path = daemon
+        )
+        .into());
+    }
     if path.is_absolute() && !crate::engines::is_this_build(path) {
         return Err(tr!(
             "The engine to start as the shared daemon ({path}) is a different build of Amon Hen",
@@ -360,6 +368,15 @@ mod tests {
         std::fs::write(&other, b"amonhen-build=0000000000000000;").unwrap();
         let err = super::launch(other.to_str().unwrap(), "unused").unwrap_err();
         assert!(err.to_string().contains("different build"), "{err}");
+    }
+
+    /// ないエンジンは、別のビルドではなく、ないと言う。
+    #[test]
+    fn says_when_the_engine_is_not_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("amonhen");
+        let err = super::launch(missing.to_str().unwrap(), "unused").unwrap_err();
+        assert!(err.to_string().contains("isn’t there"), "{err}");
     }
 
     /// ソケットのパスが長すぎるときは、長さと直し方を出して断る。

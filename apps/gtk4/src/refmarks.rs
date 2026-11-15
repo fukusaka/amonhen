@@ -242,8 +242,8 @@ pub fn tag(actions: &Rc<Actions>, item: &RefEntry, known: &Known, anchor: &gtk::
     for remote in &remotes {
         if tags.state(&item.name, remote) == Some(TagState::Missing) {
             let (a, name, r) = (actions.clone(), item.name.clone(), remote.clone());
-            p.button(&format!("Push to {remote}"), move || {
-                a.perform(json!({ "op": "pushTags", "remote": r, "names": [name] }))
+            p.button(&tr!("Push to {remote}…", remote = remote), move || {
+                crate::refops::confirm_push_tags(&a, std::slice::from_ref(&name), &r)
             });
         }
     }

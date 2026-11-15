@@ -11,7 +11,7 @@ use gtk::prelude::*;
 use serde_json::{Value, json};
 
 use crate::actions::Actions;
-use crate::sheets::{self, Response, Sheet, Target};
+use crate::sheets::{self, Response, Target};
 
 fn entry(value: &str, placeholder: &str) -> gtk::Entry {
     let e = gtk::Entry::new();
@@ -43,14 +43,6 @@ fn bell(actions: &Actions) {
     }
 }
 
-fn fields(sheet: &Sheet, widgets: &[&gtk::Widget]) {
-    let b = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    for w in widgets {
-        b.append(*w);
-    }
-    sheet.add(&b);
-}
-
 /// Add Subtree…: 別のリポジトリの ref を、このリポジトリのフォルダに取り込む。squash の既定は git と同じくオフ。
 pub fn add(actions: &Rc<Actions>) {
     let Some(target) = Target::current(actions) else {
@@ -66,27 +58,27 @@ pub fn add(actions: &Rc<Actions>) {
                 "Brings another repository’s branch into a folder of this one as a commit (git subtree add). Pull and Push later use the same repository and branch."
             ),
         );
-        let url = entry("", &tr!("Repository URL"));
-        let rev = entry("", &tr!("Branch or tag"));
-        let dir = entry("", &tr!("Folder"));
+        let url = entry("", "");
+        let rev = entry("", "");
+        let dir = entry("", "");
         let squash = squash_box(false);
-        fields(
+        sheets::form(
             &sheet,
             &[
-                url.upcast_ref(),
-                rev.upcast_ref(),
-                dir.upcast_ref(),
-                squash.upcast_ref(),
+                (tr!("Repository URL"), url.upcast_ref()),
+                (tr!("Branch or tag"), rev.upcast_ref()),
+                (tr!("Folder"), dir.upcast_ref()),
+                (String::new(), squash.upcast_ref()),
             ],
         );
+        // フォルダは空なら URL から決める。その名前を欄の薄い文字で見せる。
         let d = dir.downgrade();
         url.connect_changed(move |url| {
             let Some(dir) = d.upgrade() else { return };
-            let name = crate::submodulesheet::default_path(&url.text());
-            let hint = if name.is_empty() { tr!("Folder") } else { name };
-            dir.set_placeholder_text(Some(&hint));
+            dir.set_placeholder_text(Some(&crate::submodulesheet::default_path(&url.text())));
         });
-        sheet.buttons(&tr!("Add"), false, None);
+        let add = sheet.buttons(&tr!("Add"), false, None);
+        sheets::require(&[&url, &rev], &add);
         url.grab_focus();
         if sheet.run().await != Response::Ok {
             return;
@@ -133,29 +125,24 @@ pub fn pull_or_push(actions: &Rc<Actions>, subtree: &Subtree, push: bool) {
             )
         };
         let sheet = target.sheet(sheets::parent(&actions).as_ref(), &title, &message);
-        let url = entry(
-            subtree.url.as_deref().unwrap_or_default(),
-            &tr!("Repository URL"),
-        );
+        let url = entry(subtree.url.as_deref().unwrap_or_default(), "");
         let known = if push {
             subtree.push_ref.as_ref().or(subtree.ref_.as_ref())
         } else {
             subtree.ref_.as_ref()
         };
-        let rev = entry(
-            known.map(String::as_str).unwrap_or_default(),
-            &tr!("Branch or tag"),
-        );
+        let rev = entry(known.map(String::as_str).unwrap_or_default(), "");
         let squash = squash_box(subtree.squash.unwrap_or(false));
-        if push {
-            fields(&sheet, &[url.upcast_ref(), rev.upcast_ref()]);
-        } else {
-            fields(
-                &sheet,
-                &[url.upcast_ref(), rev.upcast_ref(), squash.upcast_ref()],
-            );
+        let mut rows = vec![
+            (tr!("Repository URL"), url.upcast_ref::<gtk::Widget>()),
+            (tr!("Branch or tag"), rev.upcast_ref()),
+        ];
+        if !push {
+            rows.push((String::new(), squash.upcast_ref()));
         }
-        sheet.buttons(if push { "Push" } else { "Pull" }, false, None);
+        sheets::form(&sheet, &rows);
+        let ok = sheet.buttons(if push { "Push" } else { "Pull" }, false, None);
+        sheets::require(&[&url, &rev], &ok);
         if url.text().is_empty() {
             url.grab_focus();
         } else {

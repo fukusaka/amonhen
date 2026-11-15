@@ -179,11 +179,15 @@ pub fn confirm(actions: &Rc<Actions>, sources: Vec<Source>, branch: Option<Strin
         // 答えが来るまでは見えないようにして、場所は取っておく（シートの大きさを変えないため）。
         hide_keeping_space(&put_last, true);
         sheet.add(&put_last);
+        // 1 つずつ merge するかは、3 つ目のボタンではなく選ぶもの（macOS 版と同じ。ボタンは 2 つ）。
+        let one_by_one =
+            gtk::CheckButton::with_label(&tr!("Merge them one by one (a merge commit for each)"));
+        sheet.add(&one_by_one);
         let message = sheets::note("");
         message.set_lines(2);
         message.set_ellipsize(gtk::pango::EllipsizeMode::End);
         sheet.add(&message);
-        sheet.buttons("Merge", false, Some(&tr!("Merge One by One")));
+        sheet.buttons("Merge", false, None);
 
         // 順を変えるたびに調べる（答えは順ごとに覚えておき、遅れて来た前の答えは捨てる）。
         let known: Rc<RefCell<HashMap<Vec<String>, Option<Steps>>>> = Rc::default();
@@ -295,9 +299,8 @@ pub fn confirm(actions: &Rc<Actions>, sources: Vec<Source>, branch: Option<Strin
         let revs: Vec<String> = list.sources().into_iter().map(|s| s.rev).collect();
         let mode = modes.mode();
         match response {
-            Response::Ok => merge(&actions, tree, revs, false, mode),
-            Response::Other => merge(&actions, tree, revs, true, mode),
-            Response::Cancel => {}
+            Response::Ok => merge(&actions, tree, revs, one_by_one.is_active(), mode),
+            Response::Other | Response::Cancel => {}
         }
     });
 }

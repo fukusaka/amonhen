@@ -55,22 +55,23 @@ enum SubmoduleSheet {
         let alert = NSAlert()
         alert.messageText = L("Add Submodule")
         alert.informativeText = actions.sheetMessage(L("Clones the repository into a folder of this one and records it in .gitmodules (git submodule add). Commit to keep it."))
-        let url = field("", placeholder: L("Repository URL"))
-        let path = field("", placeholder: L("Folder"))
-        let branch = field("", placeholder: L("Branch to follow (optional)"))
-        alert.accessoryView = stack([url, path, branch], height: 88)
+        let url = AlertForm.field()
+        let path = AlertForm.field()
+        let branch = AlertForm.field(placeholder: L("(optional)"))
+        alert.accessoryView = AlertForm.grid([(L("Repository URL"), url), (L("Folder"), path), (L("Branch to follow"), branch)])
         alert.window.initialFirstResponder = url
+        // フォルダは空なら URL から決める（git の既定）。その名前を欄の薄い文字で見せる。
         let target = ClosureTarget {
-            let name = defaultPath(for: url.stringValue)
-            path.placeholderString = name.isEmpty ? L("Folder") : name
+            path.placeholderString = defaultPath(for: url.stringValue)
         }
         NotificationCenter.default.addObserver(forName: NSControl.textDidChangeNotification, object: url, queue: .main) { _ in
             MainActor.assumeIsolated { target.fire() }
         }
-        alert.addButton(withTitle: L("Add"))
+        let watching = AlertForm.require([url], for: alert.addButton(withTitle: L("Add")))
         alert.addButton(withTitle: L("Cancel"))
         alert.beginSheetModal(for: window) { response in
             withExtendedLifetime(target) {}
+            AlertForm.release(watching)
             guard response == .alertFirstButtonReturn else { return }
             let u = url.stringValue.trimmingCharacters(in: .whitespaces)
             var p = path.stringValue.trimmingCharacters(in: .whitespaces)

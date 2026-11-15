@@ -216,6 +216,9 @@ final class BackdropHostController: NSViewController {
     private(set) var settings = BackdropSettings()
     /// 窓のタイトルを出さない（リポジトリの窓は、名前をツールバーに出す）。
     var hidesTitle = true
+    /// 中身をタイトルバーの下から始める（ツールバーのない窓。中身を窓の上端からにすると、閉じる・しまう・広げるの
+    /// ボタンが中身の左上に重なる）。
+    var insetsContent = false
     private var loadedImage: (path: String, image: NSImage?)?
 
     init(content: NSViewController) {
@@ -256,8 +259,9 @@ final class BackdropHostController: NSViewController {
         image.frame = Self.frame(of: image.image, placement: settings.imagePlacement, in: bounds)
         let bandHeight = toolbarHeight
         band.frame = NSRect(x: 0, y: bounds.height - bandHeight, width: bounds.width, height: bandHeight)
-        // 中身は窓の上端から（中の面が自分でツールバーを避ける）。
-        content.view.frame = bounds
+        // 中身は窓の上端から（中の面が自分でツールバーを避ける）。ツールバーのない窓は、タイトルバーの下から。
+        let top = insetsContent ? view.safeAreaInsets.top : 0
+        content.view.frame = NSRect(x: 0, y: 0, width: bounds.width, height: max(0, bounds.height - top))
     }
 
     func apply(_ settings: BackdropSettings) {

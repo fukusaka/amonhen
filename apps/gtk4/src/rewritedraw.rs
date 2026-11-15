@@ -527,8 +527,16 @@ fn row_at(
         let _ = cr.fill();
     }
     let mut x = text_x;
+    // 札は列の中に収める: 長い名前は真ん中を省き、入りきらない札は描かない（隣の列や件名に重ねない。macOS 版と同じ）。
     for (name, kind, current) in labels {
-        x = pill(area, cr, name, kind, *current, x, y + 3.0) + 4.0;
+        if right - x <= 40.0 {
+            break;
+        }
+        x = pill(area, cr, name, kind, *current, x, y + 3.0, right - x - 24.0) + 4.0;
+    }
+    // 札で埋まったら件名は描かない。
+    if right - x <= 20.0 {
+        return;
     }
     let color = if dim { dimmed(&fg, 0.45) } else { fg };
     let Some((note, note_color)) = note else {
@@ -600,6 +608,7 @@ fn pill(
     current: bool,
     x: f64,
     y: f64,
+    max_width: f64,
 ) -> f64 {
     let color = match kind {
         "remote" => gdk::RGBA::new(0.57, 0.25, 0.67, 1.0),
@@ -614,6 +623,9 @@ fn pill(
         font.set_weight(pango::Weight::Bold);
     }
     layout.set_font_description(Some(&font));
+    // 入りきらなければ、真ん中を省く。
+    layout.set_width((((max_width - 10.0).max(0.0)) * f64::from(pango::SCALE)) as i32);
+    layout.set_ellipsize(pango::EllipsizeMode::Middle);
     let (w, h) = layout.pixel_size();
     let (w, h) = (f64::from(w) + 10.0, f64::from(h) + 2.0);
     let fill = if current { color } else { dimmed(&color, 0.16) };

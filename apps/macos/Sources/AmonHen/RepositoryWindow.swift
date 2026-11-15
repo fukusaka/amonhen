@@ -677,7 +677,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         stashes.currentBranch = branch
         editing.actions.currentBranch = branch
         let current = latestRefs?.items.first { $0.kind == .local && $0.name == branch }
-        toolbar.setTracking(ahead: current?.ahead ?? 0, behind: current?.behind ?? 0, published: current.map(Self.isPublished) ?? true)
+        toolbar.setTracking(ahead: current?.ahead ?? 0, behind: current?.behind ?? 0, published: current.map(Self.isPublished) ?? true,
+                            hasRemote: hasRemotes)
         // タブの名前の ↑↓ も、● と同じく書き込む先の worktree のもの。
         tracking = (current?.ahead ?? 0, current?.behind ?? 0)
         updateTabTitle()
@@ -921,38 +922,31 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         // 下で開いたリポジトリから作るので、書き込む先の HEAD は ID で渡す。
         var start = startPoint
         if start == "HEAD", editing !== opened, let head = editingRefs?.head {
-            start = String(head.map { String(format: "%02x", $0) }.joined().prefix(12))
+            start = head.map { String(format: "%02x", $0) }.joined()
         }
         let base = opened.path
         let alert = NSAlert()
         alert.messageText = L("New Worktree")
-        alert.informativeText = L("Creates a branch from %@ and checks it out in a new folder.", start)
-        let branch = NSTextField(string: "")
-        branch.placeholderString = L("Branch name")
-        let folder = NSTextField(string: "")
-        folder.placeholderString = L("Folder")
-        // スタックの中では frame の幅は効かない（制約がないと幅が 2pt に潰れる）。
-        for field in [branch, folder] { field.widthAnchor.constraint(equalToConstant: 360).isActive = true }
-        let stack = NSStackView(views: [branch, folder])
-        stack.orientation = .vertical
-        stack.spacing = 8
-        stack.frame = NSRect(x: 0, y: 0, width: 360, height: 56)
-        alert.accessoryView = stack
+        alert.informativeText = L("Creates a branch from %@ and checks it out in a new folder.", Actions.shownStart(start))
+        let branch = AlertForm.field()
+        let folder = AlertForm.field()
+        alert.accessoryView = AlertForm.grid([(L("Branch name"), branch), (L("Folder"), folder)])
         alert.window.initialFirstResponder = branch
         // フォルダの既定は、リポジトリの隣の「<名前>-<ブランチ>」（git の worktree でよくある置き方）。
         let parent = (base as NSString).deletingLastPathComponent, repoName = (base as NSString).lastPathComponent
         let target = ClosureTarget {
             let name = branch.stringValue.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "/", with: "-")
-            folder.placeholderString = name.isEmpty ? L("Folder")
+            folder.placeholderString = name.isEmpty ? ""
                 : (parent as NSString).appendingPathComponent("\(repoName)-\(name)")
         }
         NotificationCenter.default.addObserver(forName: NSControl.textDidChangeNotification, object: branch, queue: .main) { _ in
             MainActor.assumeIsolated { target.fire() }
         }
-        alert.addButton(withTitle: L("Create"))
+        let watching = AlertForm.require([branch], for: alert.addButton(withTitle: L("Create")))
         alert.addButton(withTitle: L("Cancel"))
         alert.beginSheetModal(for: window) { [weak self] response in
             withExtendedLifetime(target) {}
+            AlertForm.release(watching)
             guard let self, response == .alertFirstButtonReturn else { return }
             let name = branch.stringValue.trimmingCharacters(in: .whitespaces)
             guard !name.isEmpty else { return NSSound.beep() }
@@ -1013,8 +1007,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         let cancel = alert.addButton(withTitle: L("Cancel"))
         // 作業中の変更があれば、消えたら戻せない（赤く、↩ では押せない）。
         if changes > 0 {
-            button.hasDestructiveAction = true
-            button.keyEquivalent = ""
+            button.markDestructive()
             cancel.keyEquivalent = "\r"
         }
         alert.beginSheetModal(for: window) { [weak self] response in
@@ -1066,7 +1059,12 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         let started = Date()
         history.load { [weak self] error in
             self?.history.loadingMessage = nil
-            if let error, self?.isDisconnected != true { NSAlert(error: error).runModal() }
+            if let self, let error, !isDisconnected {
+                let alert = NSAlert()
+                alert.messageText = L("Couldn’t read History")
+                alert.informativeText = error.localizedDescription
+                alert.beginSheetModal(for: window)
+            }
             NSLog("History を最新にするまで %.0f ms", Date().timeIntervalSince(started) * 1000)
             if error == nil { self?.updateCommitGraph() }
         }
@@ -1152,6 +1150,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     private var tracking = (ahead: 0, behind: 0)
     /// 書き込む先のブランチが上流を持つか（Publish でないか）と、送るコミットの数。ブランチがなければ nil。
     private var pushState: (published: Bool, ahead: Int)?
+    /// リモートがあるか（なければ Publish の先がない。タグのリモートの様子と一緒に読む）。
+    private var hasRemotes = true
 
     /// タブの名前に、未コミットの変更（●）と上流との差（↑↓）を添える。ウィンドウのタイトルは変えない。
     private func updateTabTitle() {
@@ -1796,7 +1796,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 history.show(refs: refs)
                 let current = refs.items.first { $0.kind == .local && $0.name == refs.headBranch }
                 toolbar.setTracking(ahead: current?.ahead ?? 0, behind: current?.behind ?? 0,
-                                    published: current.map(Self.isPublished) ?? true)
+                                    published: current.map(Self.isPublished) ?? true, hasRemote: hasRemotes)
                 workingCopy.publishesBranch = !(current.map(Self.isPublished) ?? true)
                 toolbar.setBranch(refs.headBranch)
                 // 最近切り替えたブランチには、書き込む先の worktree のブランチを覚える。
@@ -1818,6 +1818,11 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 try? repository.info(["op": "tagRemotes"], as: TagRemotes.self)
             }).value else { return }
             sidebar.show(tagRemotes: remotes)
+            let has = !remotes.remotes.isEmpty
+            if has != hasRemotes {
+                hasRemotes = has
+                updateEditingBranch()
+            }
         }
     }
 
@@ -1994,7 +1999,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     /// ブランチ（なければその HEAD）。
     private var startPoint: String {
         if pages?.page == .history, let selectedCommit {
-            return String(selectedCommit.map { String(format: "%02x", $0) }.joined().prefix(12))
+            // 全桁で渡し、見せるときに短くする（Actions.shownStart。題の ID はどこでも 8 桁）。
+            return selectedCommit.map { String(format: "%02x", $0) }.joined()
         }
         return editingBranch ?? "HEAD"
     }
@@ -2693,8 +2699,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         case #selector(skipSequence(_:)): return sequence.map { $0.hasPrefix("rebase") || $0 == "cherry-pick" || $0 == "am" } ?? false
         case #selector(savePatch(_:)): return pages?.page == .history && history.selectedCommitsForPatch != nil
         case #selector(applyPatch(_:)): return sequence == nil
-        // 送るものがなければ押せない（理由はツールバーのツールチップ）。上流のないブランチは Publish。
-        case #selector(push(_:)): return pushState.map { !$0.published || $0.ahead > 0 } ?? false
+        // 送るものがなければ押せない（理由はツールバーのツールチップ）。上流のないブランチは Publish（リモートが要る）。
+        case #selector(push(_:)): return pushState.map { $0.published ? $0.ahead > 0 : hasRemotes } ?? false
         case #selector(forcePush(_:)): return pushState?.published ?? false
         case #selector(pull(_:)): return editingBranch != nil && sequence == nil
         case #selector(mergeIntoCurrent(_:)), #selector(rebaseCurrent(_:)): return latestRefs != nil && sequence == nil

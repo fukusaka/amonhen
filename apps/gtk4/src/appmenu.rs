@@ -4,7 +4,7 @@
 //! Activity・Keyboard Shortcuts・About を最後に置く。項目は窓のアクション（`win.<id>`）。表にあってこの FE に
 //! まだ機能のない操作は [`PENDING`] に並べ、メニューに出さない。
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -81,6 +81,8 @@ pub struct Buttons {
     search: gtk::Widget,
     /// File History・Blame のタブの見出しの Push のアイコン（このタブのものと一緒に替える）。
     mirror_push_icons: Rc<RefCell<Vec<glib::WeakRef<icon::Icon>>>>,
+    /// Push のツールチップの元（上流があるか、先にある・遅れている数）。リモートの有無が後から分かったら言い直す。
+    push_state: Rc<Cell<(bool, u32, u32)>>,
 }
 
 impl Buttons {
@@ -152,21 +154,13 @@ impl Buttons {
             .borrow_mut()
             .retain(|w| w.upgrade().inspect(|i| i.set(push_kind, false)).is_some());
         // 送るものがなければ押せない。理由はツールチップに（macOS 版と同じ）。
-        self.push.set_tooltip_text(Some(&if !published {
-            tr!("Publish — choose the remote to create this branch on first (Ctrl+Alt+P)")
-        } else if ahead > 0 {
-            tr!(
-                "{count} commits ahead of upstream (Ctrl+Alt+P)",
-                count = ahead
-            )
-        } else if behind > 0 {
-            tr!(
-                "Nothing to push. Pull the {count} new commits first.",
-                count = behind
-            )
-        } else {
-            tr!("Nothing to push")
-        }));
+        self.push_state.set((published, ahead, behind));
+        self.push.set_tooltip_text(Some(&push_tooltip(
+            published,
+            ahead,
+            behind,
+            self.actions.no_remote(),
+        )));
         // 使えるかは、ref から決まるものをまとめて（`actions::enabled`）。
         self.actions.update_facts(|f| {
             f.refs = true;
@@ -548,7 +542,7 @@ fn handlers() -> Vec<(&'static str, Handler)> {
                     && p.worktrees.editing_key() != p.worktrees.opened_key()
                     && let Some(head) = p.refs.borrow().as_ref().and_then(|r| r.refs.head)
                 {
-                    start = head.to_string()[..12].to_owned();
+                    start = head.to_string();
                 }
                 crate::worktrees::new_worktree(&p.actions, &p.worktrees, start);
             }),
@@ -845,6 +839,22 @@ pub fn install(parts: Parts) -> Buttons {
             })
         });
     });
+    // リモートの有無は ref より後に分かる（サイドバーがタグのリモートと一緒に読む）ので、分かったら言い直す。
+    let push_state: Rc<Cell<(bool, u32, u32)>> = Rc::new(Cell::new((true, 0, 0)));
+    {
+        let (weak, state, a) = (
+            push.downgrade(),
+            push_state.clone(),
+            Rc::downgrade(&parts.actions),
+        );
+        parts.actions.connect_no_remote(move || {
+            let (Some(push), Some(a)) = (weak.upgrade(), a.upgrade()) else {
+                return;
+            };
+            let (published, ahead, behind) = state.get();
+            push.set_tooltip_text(Some(&push_tooltip(published, ahead, behind, a.no_remote())));
+        });
+    }
     Buttons {
         repository,
         primary,
@@ -860,6 +870,28 @@ pub fn install(parts: Parts) -> Buttons {
         name_tooltip: Rc::default(),
         search: parts.search.clone(),
         mirror_push_icons: Rc::default(),
+        push_state,
+    }
+}
+
+/// ツールバーの Push のツールチップ（押せないときはその理由。macOS 版の `setTracking` と同じ）。
+fn push_tooltip(published: bool, ahead: u32, behind: u32, no_remote: bool) -> String {
+    if !published && no_remote {
+        tr!("No remote to publish to. Add one in Repository > Add Remote….")
+    } else if !published {
+        tr!("Publish — choose the remote to create this branch on first (Ctrl+Alt+P)")
+    } else if ahead > 0 {
+        tr!(
+            "{count} commits ahead of upstream (Ctrl+Alt+P)",
+            count = ahead
+        )
+    } else if behind > 0 {
+        tr!(
+            "Nothing to push. Pull the {count} new commits first.",
+            count = behind
+        )
+    } else {
+        tr!("Nothing to push")
     }
 }
 
@@ -1314,7 +1346,8 @@ fn selected_commit(p: &Parts) -> Option<Oid> {
 /// 新しいブランチ・タグの起点。History で選んでいるコミットがあればそれ、なければ今のブランチ。
 fn start_point(p: &Parts) -> String {
     match selected_commit(p) {
-        Some(id) => id.to_string()[..12].to_owned(),
+        // 全桁で渡し、見せるときに短くする（`titles::shown_start`。題の ID はどこでも 8 桁。macOS 版と同じ）。
+        Some(id) => id.to_string(),
         None => head_branch(p).unwrap_or_else(|| "HEAD".into()),
     }
 }
