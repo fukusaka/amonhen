@@ -1013,8 +1013,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         let cancel = alert.addButton(withTitle: L("Cancel"))
         // 作業中の変更があれば、消えたら戻せない（赤く、↩ では押せない）。
         if changes > 0 {
-            button.hasDestructiveAction = true
-            button.keyEquivalent = ""
+            button.markDestructive()
             cancel.keyEquivalent = "\r"
         }
         alert.beginSheetModal(for: window) { [weak self] response in

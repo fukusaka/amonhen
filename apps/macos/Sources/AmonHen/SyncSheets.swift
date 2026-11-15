@@ -248,8 +248,7 @@ extension Actions {
                 let cancel = alert.addButton(withTitle: L("Cancel"))
                 // Force Push は戻せない（赤く、↩ では押せない。PushSheet と同じ）。
                 if force || diverged {
-                    okButton.hasDestructiveAction = true
-                    okButton.keyEquivalent = ""
+                    okButton.markDestructive()
                     cancel.keyEquivalent = "\r"
                 }
                 if diverged { alert.addButton(withTitle: "Pull…") }

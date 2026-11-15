@@ -1158,8 +1158,7 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate {
         alert.messageText = L("Close without saving?")
         alert.informativeText = L("Your changes to Result are lost.")
         let close = alert.addButton(withTitle: L("Close Without Saving"))
-        close.hasDestructiveAction = true
-        close.keyEquivalent = ""
+        close.markDestructive()
         alert.addButton(withTitle: L("Cancel")).keyEquivalent = "\r"
         return await alert.beginSheetModal(for: window) == .alertFirstButtonReturn
     }

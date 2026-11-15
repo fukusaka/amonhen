@@ -1840,8 +1840,8 @@ private struct OperationsPage: View {
                             alert.messageText = L("Forget All Recorded Resolutions?")
                             alert.informativeText = L("git rerere then no longer reuses the resolutions it recorded in this repository.") + " " + Actions.cantUndo
                             let forget = alert.addButton(withTitle: L("Forget All"))
-                            forget.hasDestructiveAction = true
-                            alert.addButton(withTitle: L("Cancel"))
+                            forget.markDestructive()
+                            alert.addButton(withTitle: L("Cancel")).keyEquivalent = "\r"
                             if alert.runModal() == .alertFirstButtonReturn { model.perform([["op": "forgetAllResolutions"]]) }
                         }
                     }

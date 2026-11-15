@@ -107,8 +107,8 @@ final class PushSheet: NSObject, NSTableViewDataSource, NSTableViewDelegate {
         cancel.keyEquivalent = "\u{1b}"
         let okButton = NSButton(title: ok, target: self, action: #selector(okClicked))
         // 消えるものがある実行（Force Push）は ↩ では押せない。分岐のときは ↩ が Pull…。
-        okButton.keyEquivalent = destructive ? "" : "\r"
-        okButton.hasDestructiveAction = destructive
+        okButton.keyEquivalent = "\r"
+        if destructive { okButton.markDestructive() }
         let otherButton = other.map { NSButton(title: $0, target: self, action: #selector(otherClicked)) }
         if destructive { otherButton?.keyEquivalent = "\r" }
         let buttons = NSStackView(views: [NSView(), cancel] + (otherButton.map { [$0] } ?? []) + [okButton])
