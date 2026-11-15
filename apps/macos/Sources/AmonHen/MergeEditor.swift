@@ -1086,7 +1086,7 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate {
         window.title = "Merge — \(editor.path)"
         super.init(window: window)
         adopt(editor)
-        window.contentViewController = BackdropHostController(content: editor)
+        window.contentViewController = Self.host(editor)
         window.setContentSize(NSSize(width: 1300, height: 820))
         window.center()
         window.delegate = self
@@ -1115,6 +1115,14 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    /// 窓の中身。ツールバーのない窓なので、タイトル（Merge — パス）を出し、中身はタイトルバーの下から。
+    private static func host(_ editor: MergeEditorViewController) -> BackdropHostController {
+        let host = BackdropHostController(content: editor)
+        host.hidesTitle = false
+        host.insetsContent = true
+        return host
+    }
+
     /// `editor` をこのウィンドウのエディタにする。
     private func adopt(_ editor: MergeEditorViewController) {
         self.editor = editor
@@ -1133,7 +1141,7 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate {
                 let next = try await editor.reloaded()
                 let frame = window?.frame
                 adopt(next)
-                window?.contentViewController = BackdropHostController(content: next)
+                window?.contentViewController = Self.host(next)
                 if let frame { window?.setFrame(frame, display: true) }
                 applyBackdrop()
             } catch {
