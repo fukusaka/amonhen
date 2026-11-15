@@ -2308,3 +2308,4 @@
 "Fast-Forward {name} to {upstream}…" = "{name} を {upstream} まで Fast-Forward…";
 "Publish {name}…" = "{name} を Publish…";
 "Push to {remote}…" = "{remote} に Push…";
+"No remote to publish to. Add one in Repository > Add Remote…." = "Publish する先のリモートがありません。Repository > リモートを追加… で追加してください。";
