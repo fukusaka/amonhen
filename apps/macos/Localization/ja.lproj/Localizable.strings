@@ -1970,3 +1970,4 @@
 "Removes the remote-tracking branches whose branches are gone from %@ (git remote prune)." = "%@ で消えたブランチの、手元の写し（リモートのブランチ）を消します（git remote prune）。";
 "Push to %@…" = "%@ に Push…";
 "Couldn’t read History" = "History を読めませんでした";
+"No remote to publish to. Add one in Repository > Add Remote…." = "Publish する先のリモートがありません。Repository > リモートを追加… で追加してください。";

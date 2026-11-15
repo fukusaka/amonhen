@@ -1507,8 +1507,11 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             // 上流と合わせる（最後の Fetch の時点）。チェックアウト中のブランチはツールバーの Pull・Push で。分かれていれば
             // チェックアウトして merge か rebase をする（上の Checkout）。
             if !RepositoryWindow.isPublished(item) {
-                add(L("Publish %@…", name)) { actions.publishWithConfirmation(branch: name) }
-                menu.addItem(.separator())
+                // リモートがなければ Publish の先がないので出さない（docs/ux.md: することがないものはダイアログにしない）。
+                if !remoteNames.isEmpty {
+                    add(L("Publish %@…", name)) { actions.publishWithConfirmation(branch: name) }
+                    menu.addItem(.separator())
+                }
             } else if name != headBranch, let upstream = item.detail, (item.ahead == 0) != (item.behind == 0) {
                 if item.ahead > 0 {
                     add(Titles.push(name, to: upstream)) { actions.pushWithConfirmation(branch: name) }

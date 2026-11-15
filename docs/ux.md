@@ -868,8 +868,9 @@ Make every operation available from the menus. Shortcuts do not follow other cli
 - **The same operation asks the same way** from the toolbar, the menu bar, a context menu, a drag or a page's own
   button. A sidebar Merge or Rebase shows the same sheet as the toolbar's, without the choice of what to merge.
 - **One sheet per operation**, attached to the window; never an app-modal alert. Anything to choose before running
-  (the upstream, Soft / Mixed / Hard, the message) is in that sheet. "Nothing to push" and "No branch is checked
-  out" are not dialogs: the control is disabled and its tooltip says why.
+  (the upstream, Soft / Mixed / Hard, the message) is in that sheet. "Nothing to push", "No branch is checked
+  out" and "No remote to publish to" are not dialogs: the control is disabled and its tooltip says why. What is
+  known only after looking (no branches to clean up, no ignored files) is said in the sheet that looked.
 - **Words.** The title is one question starting with the verb and naming the target ("Delete feature?"). The
   message is at most two sentences and ends with either "You can Undo this (⌥⌘Z)." or "This can't be undone.". The
   button repeats the title's verb, never "OK". A failure is titled "Couldn't <operation>".

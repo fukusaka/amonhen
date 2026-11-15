@@ -200,7 +200,8 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
 
     /// 今のブランチが上流より先（push できる）・後ろ（pull できる）にあるコミットの数を、ボタンのバッジに出す。
     /// 上流がなければ（`published` が false）、Push は送り先を選んで初めて送る Publish になる。
-    func setTracking(ahead: Int, behind: Int, published: Bool = true) {
+    /// `hasRemote` が false なら、Publish の先がない（押せず、ツールチップで言う）。
+    func setTracking(ahead: Int, behind: Int, published: Bool = true, hasRemote: Bool = true) {
         let push = published ? "Push" : "Publish"
         if #available(macOS 26.0, *) {
             pushItem.label = push
@@ -212,11 +213,12 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
             pullItem.label = behind > 0 ? "Pull ↓\(behind)" : "Pull"
         }
         pushItem.image = NSImage(systemSymbolName: published ? "arrow.up.circle" : "icloud.and.arrow.up", accessibilityDescription: push)
-        pushItem.toolTip = !published ? L("Publish — choose the remote to create this branch on first (⌃⌘P)")
+        pushItem.toolTip = !published && !hasRemote ? L("No remote to publish to. Add one in Repository > Add Remote….")
+            : !published ? L("Publish — choose the remote to create this branch on first (⌃⌘P)")
             : ahead > 0 ? L("%ld commits ahead of upstream (⌃⌘P)", ahead)
             : behind > 0 ? L("Nothing to push. Pull the %ld new commits first.", behind) : L("Nothing to push")
         pullItem.toolTip = behind > 0 ? L("%ld commits behind upstream (⌃⌘L)", behind) : L("Pull (⌃⌘L)")
-        for m in mirrors.allObjects { m.setTracking(ahead: ahead, behind: behind, published: published) }
+        for m in mirrors.allObjects { m.setTracking(ahead: ahead, behind: behind, published: published, hasRemote: hasRemote) }
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
