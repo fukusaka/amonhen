@@ -2309,3 +2309,4 @@
 "Publish {name}…" = "{name} を Publish…";
 "Push to {remote}…" = "{remote} に Push…";
 "No remote to publish to. Add one in Repository > Add Remote…." = "Publish する先のリモートがありません。Repository > リモートを追加… で追加してください。";
+"Couldn’t read History" = "History を読めませんでした";

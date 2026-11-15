@@ -2807,8 +2807,15 @@ fn build_tab(
                         }
                         // 閉じた後に前にある窓（最後のタブなら、新しく出したリポジトリのページの窓）に出す。
                         let window = tabs::front_window().map(|h| h.window.clone());
+                        // 題を付けて、何を開けなかったかを言う（エラーの文だけだと、git・gix の英語が題になる。
+                        // macOS 版と同じ）。
+                        let name = opened_path.file_name().map_or_else(
+                            || opened_path.display().to_string(),
+                            |n| n.to_string_lossy().into_owned(),
+                        );
                         gtk::AlertDialog::builder()
-                            .message(&e)
+                            .message(tr!("Couldn’t open {name}", name = name))
+                            .detail(format!("{}\n\n{e}", opened_path.display()))
                             .modal(true)
                             .build()
                             .show(window.as_ref());
@@ -2857,7 +2864,8 @@ fn build_tab(
                             && !repo.connection_state().is_some_and(|s| s.closed.is_some())
                         {
                             gtk::AlertDialog::builder()
-                                .message(&e)
+                                .message(tr!("Couldn’t read History"))
+                                .detail(&e)
                                 .modal(true)
                                 .build()
                                 .show(win_of().as_ref());
