@@ -1350,7 +1350,7 @@
 "{remote}: has it" = "{remote}: ある";
 "{remote}: has a different tag with this name" = "{remote}: 同じ名前の別のタグ";
 "{remote}: doesn’t have it" = "{remote}: ない";
-"Push {count} Tags to {remote}" = "{count} 個のタグを {remote} に Push";
+"Push {count} Tags to {remote}…" = "{count} 個のタグを {remote} に Push…";
 "Replace {tag} on {remote}…" = "{remote} の {tag} を置き換える…";
 "Replace {count} Tags on {remote}…" = "{remote} の {count} 個のタグを置き換える…";
 "Delete tag {name}?" = "タグ {name} を削除しますか？";
@@ -2301,3 +2301,10 @@
 "Couldn’t read {file}: {error}" = "{file} を読めませんでした: {error}";
 "Use a different background for {name}" = "{name} は別の背景にする";
 "Otherwise this window follows Settings > Theme." = "しなければ、この窓は Settings > Theme に従います。";
+"Push {count} tags to {remote}?" = "{count} 個のタグを {remote} に Push しますか？";
+"Everyone who fetches from {remote} gets them." = "{remote} から fetch する人みんなに届きます。";
+"Prune {remote}?" = "{remote} を Prune しますか？";
+"Removes the remote-tracking branches whose branches are gone from {remote} (git remote prune)." = "{remote} で消えたブランチの、手元の写し（リモートのブランチ）を消します（git remote prune）。";
+"Fast-Forward {name} to {upstream}…" = "{name} を {upstream} まで Fast-Forward…";
+"Publish {name}…" = "{name} を Publish…";
+"Push to {remote}…" = "{remote} に Push…";

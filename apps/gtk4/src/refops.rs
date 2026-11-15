@@ -88,7 +88,7 @@ pub fn menu(
                 rebase(&mut items);
                 items.push(Item::Separator);
             }
-            items.extend(sync_items(actions, entry, is_head));
+            items.extend(sync_items(actions, entry, is_head, known));
             items.extend(favorite_items(actions, &name, known));
             items.push(new_branch(actions, &name));
             items.push(new_tag(actions, &name));
@@ -187,7 +187,7 @@ pub fn menu(
 }
 
 /// Remotes の見出しとその下のリモート（docs/ux.md の 4.5 のリモート: リポジトリの設定のページと同じ操作）。
-/// 見出しは Add Remote…、リモートは Rename…・Edit URL…（どちらも同じシート）・Prune・Remove…。
+/// 見出しは Add Remote…、リモートは Edit…・Prune…・Remove…（設定のリモートの行と同じ。macOS 版と同じ）。
 fn remote_menu(actions: &Rc<Actions>, data: &Data) -> Vec<Item> {
     // subtree と Subtrees の見出し（macOS 版と同じ）。
     if let sidebar::Item::Subtree(subtree) = &data.item {
@@ -212,25 +212,32 @@ fn remote_menu(actions: &Rc<Actions>, data: &Data) -> Vec<Item> {
         })];
     }
     if let Some(remote) = &data.remote {
-        let edit = |title: String| {
-            let (a, r) = (actions.clone(), remote.clone());
-            menu::action(title, move || crate::remotesheet::edit(&a, &r))
-        };
         let (a, r) = (actions.clone(), remote.clone());
-        let prune = menu::action("Prune", move || {
-            a.perform(json!({ "op": "changeRemote", "change": { "kind": "prune", "name": r } }))
+        let edit = menu::action(tr!("Edit…"), move || crate::remotesheet::edit(&a, &r));
+        // Prune もリモートと話す（消えたブランチを読む）ので、先に聞く。
+        let (a, r) = (actions.clone(), remote.clone());
+        let prune = menu::action("Prune…", move || {
+            sheets::confirm_ref_then(
+                &a,
+                tr!("Prune {remote}?", remote = r),
+                format!(
+                    "{} {}",
+                    tr!(
+                        "Removes the remote-tracking branches whose branches are gone from {remote} (git remote prune).",
+                        remote = r
+                    ),
+                    sheets::cant_undo()
+                ),
+                "Prune".to_owned(),
+                false,
+                vec![json!({ "op": "changeRemote", "change": { "kind": "prune", "name": r } })],
+            )
         });
         let (a, r) = (actions.clone(), remote.clone());
         let remove = menu::action(tr!("Remove…"), move || {
             crate::remotesheet::confirm_remove(&a, &r)
         });
-        return vec![
-            edit(tr!("Rename…")),
-            edit(tr!("Edit URL…")),
-            prune,
-            Item::Separator,
-            remove,
-        ];
+        return vec![edit, prune, Item::Separator, remove];
     }
     if matches!(data.item, sidebar::Item::Group) && data.title == "Branches" {
         let a = actions.clone();
@@ -276,7 +283,12 @@ fn remote_menu(actions: &Rc<Actions>, data: &Data) -> Vec<Item> {
 /// 上流と合わせる（最後の Fetch の時点）。上流がなければ Publish、遅れているだけなら Fast-Forward（チェックアウト
 /// しないで進める）、先にあるだけなら Push。チェックアウト中のブランチはツールバーの Pull・Push で。分かれていれば
 /// チェックアウトして merge か rebase をする（上の Checkout）。
-fn sync_items(actions: &Rc<Actions>, entry: &amonhen_model::RefEntry, is_head: bool) -> Vec<Item> {
+fn sync_items(
+    actions: &Rc<Actions>,
+    entry: &amonhen_model::RefEntry,
+    is_head: bool,
+    known: &Known,
+) -> Vec<Item> {
     let name = entry.name.clone();
     let mut items = Vec::new();
     match &entry.detail {
@@ -294,16 +306,23 @@ fn sync_items(actions: &Rc<Actions>, entry: &amonhen_model::RefEntry, is_head: b
                 // から（macOS 版と同じ）。
                 let (n, u) = (name.clone(), upstream.to_owned());
                 items.push(menu::action(
-                    format!("Fast-Forward {name} to {upstream}…"),
+                    tr!(
+                        "Fast-Forward {name} to {upstream}…",
+                        name = name,
+                        upstream = upstream
+                    ),
                     move || sheets::fast_forward(&a, &n, &u),
                 ));
             }
         }
+        // リモートがなければ Publish の先がないので出さない（macOS 版と同じ）。
+        _ if known.remote_names().is_empty() => return items,
         _ => {
             let a = actions.clone();
-            items.push(menu::action(format!("Publish {name}…"), move || {
-                sheets::publish(&a, &name, None)
-            }));
+            items.push(menu::action(
+                tr!("Publish {name}…", name = name),
+                move || sheets::publish(&a, &name, None),
+            ));
         }
     }
     items.push(Item::Separator);
@@ -492,17 +511,16 @@ fn tag_items(actions: &Rc<Actions>, names: &[String], known: &Known) -> Vec<Item
     let mut items = Vec::new();
     for (remote, tags) in &pushes {
         let title = if tags.len() == 1 {
-            format!("Push {} to {remote}", tags[0])
+            titles::push(&tags[0], remote)
         } else {
             tr!(
-                "Push {count} Tags to {remote}",
+                "Push {count} Tags to {remote}…",
                 count = tags.len(),
                 remote = remote
             )
         };
-        let command = json!({ "op": "pushTags", "remote": remote, "names": tags });
-        let a = actions.clone();
-        items.push(menu::action(title, move || a.perform(command.clone())));
+        let (a, t, r) = (actions.clone(), tags.clone(), remote.clone());
+        items.push(menu::action(title, move || confirm_push_tags(&a, &t, &r)));
     }
     for (remote, tags) in &replaces {
         let title = if tags.len() == 1 {
@@ -610,6 +628,40 @@ fn tag_items(actions: &Rc<Actions>, names: &[String], known: &Known) -> Vec<Item
         }));
     }
     items
+}
+
+/// タグをリモートへ送る前に確かめる（リモートと話す操作は先に聞く。送ったものは Undo では戻せない。macOS 版と同じ）。
+pub fn confirm_push_tags(actions: &Rc<Actions>, tags: &[String], remote: &str) {
+    let title = if tags.len() == 1 {
+        tr!(
+            "Push {branch} to {target}?",
+            branch = tags[0],
+            target = remote
+        )
+    } else {
+        tr!(
+            "Push {count} tags to {remote}?",
+            count = tags.len(),
+            remote = remote
+        )
+    };
+    let message = format!(
+        "{}\n\n{} {}",
+        tags.join("\n"),
+        tr!(
+            "Everyone who fetches from {remote} gets them.",
+            remote = remote
+        ),
+        sheets::cant_undo()
+    );
+    sheets::confirm_ref_then(
+        actions,
+        title,
+        message,
+        "Push".to_owned(),
+        false,
+        vec![json!({ "op": "pushTags", "remote": remote, "names": tags })],
+    );
 }
 
 /// リモートにある同じ名前の別のタグを、手元のもので置き換える前に確かめる（戻せないので赤いボタン）。
