@@ -1171,7 +1171,7 @@ pub fn new_worktree(
             &tr!("New Worktree"),
             &tr!(
                 "Creates a branch from {start} and checks it out in a new folder.",
-                start = &start
+                start = crate::titles::shown_start(&start)
             ),
         );
         let branch = gtk::Entry::new();

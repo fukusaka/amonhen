@@ -542,7 +542,7 @@ fn handlers() -> Vec<(&'static str, Handler)> {
                     && p.worktrees.editing_key() != p.worktrees.opened_key()
                     && let Some(head) = p.refs.borrow().as_ref().and_then(|r| r.refs.head)
                 {
-                    start = head.to_string()[..12].to_owned();
+                    start = head.to_string();
                 }
                 crate::worktrees::new_worktree(&p.actions, &p.worktrees, start);
             }),
@@ -1346,7 +1346,8 @@ fn selected_commit(p: &Parts) -> Option<Oid> {
 /// 新しいブランチ・タグの起点。History で選んでいるコミットがあればそれ、なければ今のブランチ。
 fn start_point(p: &Parts) -> String {
     match selected_commit(p) {
-        Some(id) => id.to_string()[..12].to_owned(),
+        // 全桁で渡し、見せるときに短くする（`titles::shown_start`。題の ID はどこでも 8 桁。macOS 版と同じ）。
+        Some(id) => id.to_string(),
         None => head_branch(p).unwrap_or_else(|| "HEAD".into()),
     }
 }
