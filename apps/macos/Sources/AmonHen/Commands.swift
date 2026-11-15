@@ -204,4 +204,14 @@ enum Titles {
 
     /// 短いコミット ID の桁（どこでも同じ）。
     nonisolated static let shortIDLength = 8
+
+    /// メニューに出す名前の文字数の上限（長いブランチ名でメニューが窓ほどの幅にならないように）。
+    nonisolated static let menuNameLength = 40
+
+    /// メニューの項目に入れる名前: 長ければ真ん中を「…」で省く（頭と末尾は残す。コピーするのは全文）。
+    nonisolated static func menuName(_ name: String) -> String {
+        guard name.count > menuNameLength else { return name }
+        let head = (menuNameLength - 1) / 2, tail = menuNameLength - 1 - head
+        return String(name.prefix(head)) + "…" + String(name.suffix(tail))
+    }
 }

@@ -1923,7 +1923,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         // このコミットを指すブランチ・タグの名前（リモートブランチは origin/ を付けたまま）。
         for label in (refLabels[id] ?? []).prefix(5) {
             let name = label.name
-            add(label.kind == .tag ? L("Copy Tag Name “%@”", name) : L("Copy Branch Name “%@”", name)) {
+            let shown = Titles.menuName(name)
+            add(label.kind == .tag ? L("Copy Tag Name “%@”", shown) : L("Copy Branch Name “%@”", shown)) {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(name, forType: .string)
             }
