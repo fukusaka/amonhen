@@ -1969,3 +1969,4 @@
 "Prune %@?" = "%@ を Prune しますか？";
 "Removes the remote-tracking branches whose branches are gone from %@ (git remote prune)." = "%@ で消えたブランチの、手元の写し（リモートのブランチ）を消します（git remote prune）。";
 "Push to %@…" = "%@ に Push…";
+"Couldn’t read History" = "History を読めませんでした";

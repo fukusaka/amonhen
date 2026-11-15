@@ -1066,7 +1066,12 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         let started = Date()
         history.load { [weak self] error in
             self?.history.loadingMessage = nil
-            if let error, self?.isDisconnected != true { NSAlert(error: error).runModal() }
+            if let self, let error, !isDisconnected {
+                let alert = NSAlert()
+                alert.messageText = L("Couldn’t read History")
+                alert.informativeText = error.localizedDescription
+                alert.beginSheetModal(for: window)
+            }
             NSLog("History を最新にするまで %.0f ms", Date().timeIntervalSince(started) * 1000)
             if error == nil { self?.updateCommitGraph() }
         }
