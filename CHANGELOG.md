@@ -16,6 +16,9 @@ becomes the GitHub Release notes.
 - The submodule, subtree and New Worktree sheets label their fields on the left and enable their button once the
   required fields are filled; Merge One by One became a checkbox in the merge sheet.
 - Publish is disabled when the repository has no remote, and a remote's Rename… and Edit URL… are one Edit….
+- In the before-and-after drawings, branch labels that don't fit on a commit's line wrap onto up to three lines
+  below it instead of being left out, with the rest gathered into a "+n" label that lists them in its tooltip; a very
+  tall drawing scrolls inside the sheet.
 
 #### Fixed
 
@@ -1155,6 +1158,13 @@ First release.
 - Repositories on SSH hosts through a daemon on the host.
 
 ## VSCode extension
+
+### Unreleased
+
+#### Changed
+
+- In the before-and-after drawings, long branch labels wrap onto up to three lines below the commit instead of
+  pushing its subject out of view, with the rest gathered into a "+n" label that lists them in its tooltip.
 
 ### [0.2.7] - 2026-11-13
 
