@@ -366,6 +366,8 @@ pub struct Input<'a> {
     pub status: Option<&'a StatusSnapshot>,
     /// パスの絞り込み。
     pub filter: &'a str,
+    /// sparse checkout なら、その説明（一覧の上に出す。GTK4 版の Working Copy の見出しの注記）。
+    pub sparse: Option<&'a str>,
     /// ファイルごとの行数（追加, 削除。バイナリは None）。読めていなければ空。
     pub stats: &'a std::collections::HashMap<String, (Option<u64>, Option<u64>)>,
     /// 木で畳んでいるディレクトリ。
@@ -571,7 +573,17 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
             .content(TextBlock::new().text(title))
             .tooltip(tip)
     };
-    let filter = Grid::new()
+    let sparse_note: View = match input.sparse {
+        Some(note) => TextBlock::new()
+            .text(note.to_owned())
+            .font_size(12.0)
+            .opacity(0.65)
+            .text_wrapping(TextWrapping::Wrap)
+            .margin(Thickness::new(0.0, 0.0, 0.0, 4.0))
+            .into(),
+        None => View::empty(),
+    };
+    let filter_row = Grid::new()
         .columns([
             GridLength::Star(1.0),
             GridLength::Auto,
@@ -579,7 +591,6 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
             GridLength::Auto,
         ])
         .margin(Thickness::new(0.0, 0.0, 0.0, 6.0))
-        .grid_row(3)
         .children((
             TextBox::new()
                 .text(input.filter)
@@ -600,6 +611,10 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
                 )),
             )]),
         ));
+    // sparse checkout の注記は、絞り込みの欄の上。
+    let filter = StackPanel::new()
+        .grid_row(3)
+        .children((sparse_note, filter_row));
     let indent = |depth: usize| Thickness::new(18.0 * depth as f64, 0.0, 0.0, 0.0);
     let rows = rows(&entries, input.layout, input.collapsed)
         .into_iter()

@@ -17,6 +17,54 @@ use windows_reactor::TreeNode;
 /// Inactive とみなす日数（最後のコミットからこれだけ経ったブランチ）。
 const STALE_DAYS: i64 = 90;
 
+/// リポジトリの形（`repositoryForm` の答えのうち、印に使うもの。GTK4 版の `repoform::Form`）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RepositoryForm {
+    pub shallow: bool,
+    /// partial clone なら取らずにおいたもの（`blob:none` など）。
+    pub partial: Option<String>,
+    /// sparse checkout なら 1 文の説明（Working Copy の一覧の上に出す）。
+    pub sparse: Option<String>,
+}
+
+impl RepositoryForm {
+    pub fn from_info(info: &Value) -> Self {
+        let sparse = info["sparse"].as_object().map(|s| {
+            let cone = s.get("cone").and_then(Value::as_bool).unwrap_or(false);
+            let folders = s
+                .get("folders")
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len);
+            if !cone {
+                amonhen_model::tr!(
+                    "Sparse checkout: only the files matching its patterns are checked out."
+                )
+            } else {
+                match folders {
+                    0 => amonhen_model::tr!(
+                        "Sparse checkout: only the files at the top are checked out."
+                    ),
+                    1 => amonhen_model::tr!("Sparse checkout: only 1 folder is checked out."),
+                    n => amonhen_model::tr!(
+                        "Sparse checkout: only {count} folders are checked out.",
+                        count = n
+                    ),
+                }
+            }
+        });
+        Self {
+            shallow: info["shallow"].as_bool().unwrap_or(false),
+            partial: info["partial"].as_object().map(|p| {
+                p.get("filter")
+                    .and_then(Value::as_str)
+                    .unwrap_or("?")
+                    .to_owned()
+            }),
+            sparse,
+        }
+    }
+}
+
 /// ブランチ 1 本の分け方（`branchGroups` の 1 件）。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Branch {
@@ -76,15 +124,30 @@ pub fn parse_ref_key(key: &str) -> Option<(u8, &str)> {
 /// サイドバーの木。`refs` がまだなければ Workspace だけ。
 /// `range_diff` なら、Workspace に Range Diff の行を出す（開いている間だけ）。
 /// `worktrees` は worktree の行（キーと見出し。2 つ以上あるときだけ Workspace の下に Worktrees を出す）。
+/// `form` はリポジトリの形の印（History の行の後ろ・Working Copy の行の後ろ。GTK4 版の `history_marks` と
+/// sparse checkout の印）。
 pub fn nodes(
     refs: Option<&Refs>,
     groups: Option<&BranchGroups>,
     range_diff: bool,
     worktrees: &[(String, String)],
+    form: &RepositoryForm,
 ) -> Vec<TreeNode> {
+    let mut history = String::from("History");
+    if form.shallow {
+        history.push_str("  ✂");
+    }
+    if form.partial.is_some() {
+        history.push_str("  ☁");
+    }
+    let working = if form.sparse.is_some() {
+        "Working Copy  ⊟"
+    } else {
+        "Working Copy"
+    };
     let mut workspace = vec![
-        TreeNode::new("page:working-copy", "Working Copy"),
-        TreeNode::new("page:history", "History"),
+        TreeNode::new("page:working-copy", working),
+        TreeNode::new("page:history", history),
     ];
     let Some(refs) = refs else {
         return vec![group("workspace", "Workspace", workspace).expanded(true)];

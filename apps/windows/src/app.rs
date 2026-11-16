@@ -117,6 +117,8 @@ struct Root {
     reflog_selected: Option<usize>,
     /// worktree（`worktrees` の答え。開いたリポジトリのもの）。
     worktrees: Vec<WorktreeInfo>,
+    /// リポジトリの形（shallow・partial clone、sparse checkout の印）。
+    form: sidebar::RepositoryForm,
     /// Working Copy のパスの絞り込み。
     working_filter: String,
     /// Working Copy の木で畳んでいるディレクトリ。
@@ -425,6 +427,8 @@ enum Message {
     Confirm(Arc<Repository>, String, String, String, Value),
     /// Working Copy のパスの絞り込み。
     WorkingFilter(String),
+    /// リポジトリの形を読んだ。
+    Form(sidebar::RepositoryForm),
     /// New Orphan Branch の「今のファイルを残す」。
     OrphanKeep(bool),
     /// ignore されたファイルを読んだ（`ignoredFiles` の答え）。
@@ -593,6 +597,7 @@ impl Component for Root {
             stash: None,
             worktrees: Vec::new(),
             working_filter: String::new(),
+            form: Default::default(),
             working_layout: crate::workcopy::Layout::from_name(
                 &crate::prefs::string(crate::prefs::WORKING_COPY_LAYOUT).unwrap_or_default(),
             ),
@@ -653,6 +658,14 @@ impl Component for Root {
                 // ブランチの分け方は ref が変わるたびに読み直す（数十 ms かかるので裏で）。
                 load_groups(repo, context);
                 load_recent_messages(r.clone(), context);
+                // リポジトリの形（unshallow・sparse checkout の切り替えも ref・status の変化のときに読み直す）。
+                let f = r.clone();
+                context.spawn_background(move |_| {
+                    let reply: Value =
+                        serde_json::from_str(&f.run_json(r#"{"op":"repositoryForm"}"#))
+                            .unwrap_or_default();
+                    Message::Form(sidebar::RepositoryForm::from_info(&reply["info"]))
+                });
                 load_worktrees(r, context);
                 // Reflog を出していれば読み直す（HEAD が動くと ref も変わる）。
                 if self.page == Page::Reflog {
@@ -2863,6 +2876,7 @@ impl Component for Root {
                 }
             }
             Message::WorkingFilter(text) => self.working_filter = text,
+            Message::Form(form) => self.form = form,
             Message::IgnoredLoaded(repo, reply) => {
                 let paths: Vec<String> = reply["info"]["paths"]
                     .as_array()
@@ -3247,6 +3261,7 @@ impl Component for Root {
                             .iter()
                             .map(|w| (format!("worktree:{}", w.path), w.title()))
                             .collect::<Vec<_>>(),
+                        &self.form,
                     )),
                 Grid::new()
                     .element_ref(&self.sidebar_menu_host)
@@ -5778,6 +5793,7 @@ impl Root {
             crate::workcopy::Input {
                 status: self.status.as_deref(),
                 filter: &self.working_filter,
+                sparse: self.form.sparse.as_deref(),
                 layout: self.working_layout,
                 collapsed: &self.working_collapsed,
                 layout_clicks: self.layout_clicks,
