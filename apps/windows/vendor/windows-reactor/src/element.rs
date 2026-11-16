@@ -787,6 +787,14 @@ impl CommandBarCommand {
         Self::Separator { key: key.into() }
     }
 
+    /// Makes a button enabled or disabled (separators are returned unchanged).
+    pub fn enabled(mut self, value: bool) -> Self {
+        if let Self::Button { enabled, .. } = &mut self {
+            *enabled = value;
+        }
+        self
+    }
+
     pub(crate) fn key(&self) -> &Key {
         match self {
             Self::Button { key, .. } | Self::Separator { key } => key,
@@ -802,7 +810,8 @@ impl CommandBarCommand {
                 enabled,
             } => {
                 let callback = on_click.clone();
-                let clicked = label.clone();
+                // Report the button's key, so buttons with the same label can be told apart.
+                let clicked = key.text();
                 let button = AppBarButton::new()
                     .label(label)
                     .is_enabled(enabled)
