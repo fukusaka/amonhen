@@ -1,8 +1,9 @@
-//! Windows のアプリ（WinUI 3）。左にサイドバー（TreeView: Workspace・Branches・Remotes・Tags・あるときだけ
-//! Stashes と Submodules）、右に History（SwapChainPanel に Direct2D で描く）。macOS 版の窓の骨格に合わせる。
+//! Windows のアプリ（WinUI 3）。左にサイドバー（`sidebar.rs`）、まん中に History、右に選んだコミットの詳細（上）と
+//! 全ファイルを並べた差分（下）。GTK4 版・macOS 版の History の画面と同じ並び。History と差分は SwapChainPanel に
+//! Direct2D で描く。
 //!
-//! 部品は windows-reactor で宣言的に作る。reactor が出していない入力（ホイール・キー・押した位置）は、History を
-//! 包む Grid の生の WinUI のオブジェクト（`request_native_element`）に、`amonhen-win-xaml` の型で直に付ける。
+//! 部品は windows-reactor で宣言的に作る。reactor が出していない入力（ホイール・キー・押した位置）は、History と
+//! 差分を包む Grid の生の WinUI のオブジェクト（`request_native_element`）に、`amonhen-win-xaml` の型で直に付ける。
 //! WinUI のハンドラーは `Send` でなければならないので何も持たず、UI のスレッドの `HISTORY` から描き手を取る。
 
 use std::cell::RefCell;
@@ -10,25 +11,25 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
-use amonhen_core::RefsSnapshot;
-use amonhen_core::Repository;
+use amonhen_core::{RefsSnapshot, Repository};
 use amonhen_model::RefEntry;
 use amonhen_win_xaml as xaml;
+use serde_json::Value;
 use windows::Win32::Foundation::WAIT_OBJECT_0;
 use windows::Win32::System::Threading::WaitForSingleObjectEx;
 use windows_core_reactor::{IInspectable, Interface as _, Ref};
 use windows_reactor::*;
 
-use crate::render::{ROW_HEIGHT, Surface};
+use crate::render::{DIFF_ROW_HEIGHT, Options, ROW_HEIGHT, Renderer, Surface};
 use crate::sidebar::{self, BranchGroups};
 use crate::{Args, Session};
 
 thread_local! {
     /// 根の部品に渡す引数（`Component::Input` は比べられる値でなければならないので、ここに置く）。
     static ARGS: RefCell<Option<(Args, Instant)>> = const { RefCell::new(None) };
-    /// History の描き手。
+    /// History と差分の描き手。
     static HISTORY: RefCell<Option<Rc<RefCell<HistoryView>>>> = const { RefCell::new(None) };
-    /// History に付けたイベント（持っている間だけ届く）。
+    /// History と差分に付けたイベント（持っている間だけ届く）。
     static REVOKERS: RefCell<Vec<windows_core_reactor::EventRevoker>> =
         const { RefCell::new(Vec::new()) };
 }
@@ -50,15 +51,20 @@ fn with_history(f: impl FnOnce(&mut HistoryView)) {
 struct Root {
     panel: ElementRef<SwapChainPanel>,
     area: ElementRef<Grid>,
+    diff_panel: ElementRef<SwapChainPanel>,
+    diff_area: ElementRef<Grid>,
     refs: Option<Arc<RefsSnapshot>>,
     /// ローカルブランチの分け方（コアの `branchGroups`）。
     groups: Option<BranchGroups>,
+    /// 選んだコミットの詳細（`commit_info` の答え）。
+    info: Option<Value>,
     error: Option<String>,
 }
 
 enum Message {
     Refs(Arc<RefsSnapshot>, Arc<Repository>),
     Groups(Option<BranchGroups>),
+    Commit(Value),
     /// サイドバーの項目を選んだ（項目のキー）。
     Invoked(String),
     Failed(String),
@@ -72,8 +78,11 @@ impl Component for Root {
         Self {
             panel: ElementRef::new(),
             area: ElementRef::new(),
+            diff_panel: ElementRef::new(),
+            diff_area: ElementRef::new(),
             refs: None,
             groups: None,
+            info: None,
             error: None,
         }
     }
@@ -94,6 +103,7 @@ impl Component for Root {
                     self.groups = groups;
                 }
             }
+            Message::Commit(info) => self.info = Some(info),
             Message::Failed(e) => self.error = Some(e),
             Message::Invoked(key) => {
                 if let Some(entry) = self.entry(&key)
@@ -112,8 +122,15 @@ impl Component for Root {
             .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
             .unwrap_or_else(|| args.repo.display().to_string());
         context.window_title(name);
-        let (panel, area, sender) = (self.panel.clone(), self.area.clone(), context.sender());
+        let refs = (
+            self.panel.clone(),
+            self.area.clone(),
+            self.diff_panel.clone(),
+            self.diff_area.clone(),
+        );
+        let sender = context.sender();
         context.use_effect("history", (), move || {
+            let (panel, area, diff_panel, diff_area) = refs;
             let (args, started) = ARGS.with(|a| a.borrow().clone()).expect("args");
             let session = match Session::new(&args, "app", started, Arc::new(|| {})) {
                 Ok(s) => s,
@@ -129,19 +146,46 @@ impl Component for Root {
                 options: args.options,
                 attached: false,
                 input_requested: false,
+                diff: DiffPane {
+                    panel: diff_panel.clone(),
+                    area: diff_area,
+                    surface: None,
+                    scale: 1.0,
+                    attached: false,
+                    input_requested: false,
+                    scroll_y: 0.0,
+                    dirty: true,
+                },
                 sender,
                 refs_sent: None,
+                selected: None,
+                shown: None,
             }));
             HISTORY.with(|h| *h.borrow_mut() = Some(view.clone()));
-            let observation = panel.observe_surface(|event| {
+            let history = panel.observe_surface(|event| {
                 with_history(|h| {
                     if let Err(e) = h.on_event(event) {
                         h.sender.send(Message::Failed(e));
                     }
                 })
             });
+            let diff = diff_panel.observe_surface(|event| {
+                with_history(|h| {
+                    if let SwapChainPanelEvent::Metrics {
+                        width,
+                        height,
+                        scale_x,
+                        ..
+                    } = event
+                        && let Err(e) = h.diff.resize(&h.session.renderer, width, height, scale_x)
+                    {
+                        h.sender.send(Message::Failed(e));
+                    }
+                })
+            });
             Some(Box::new(move || {
-                drop(observation);
+                drop(history);
+                drop(diff);
                 REVOKERS.with(|r| r.borrow_mut().clear());
                 HISTORY.with(|h| h.borrow_mut().take());
             }))
@@ -155,11 +199,32 @@ impl Component for Root {
                 self.groups.as_ref(),
             ));
         let history: View = match &self.error {
-            Some(e) => TextBlock::new().text(e.clone()).margin(16.0).into(),
+            Some(e) => TextBlock::new()
+                .text(e.clone())
+                .text_wrapping(TextWrapping::Wrap)
+                .margin(16.0)
+                .into(),
             None => SwapChainPanel::new().element_ref(&self.panel).into(),
         };
+        let right = Grid::new()
+            .rows([GridLength::Pixel(240.0), GridLength::Star(1.0)])
+            .grid_column(2)
+            .children((
+                ScrollViewer::new()
+                    .grid_row(0)
+                    .content(details(self.info.as_ref())),
+                Grid::new()
+                    .background(Brush::Solid(Color::transparent()))
+                    .element_ref(&self.diff_area)
+                    .grid_row(1)
+                    .children((SwapChainPanel::new().element_ref(&self.diff_panel),)),
+            ));
         Grid::new()
-            .columns([GridLength::Pixel(260.0), GridLength::Star(1.0)])
+            .columns([
+                GridLength::Pixel(260.0),
+                GridLength::Star(1.0),
+                GridLength::Star(1.0),
+            ])
             .children((
                 sidebar,
                 Grid::new()
@@ -167,6 +232,7 @@ impl Component for Root {
                     .element_ref(&self.area)
                     .grid_column(1)
                     .children((history,)),
+                right,
             ))
     }
 }
@@ -184,16 +250,223 @@ impl Root {
     }
 }
 
+/// `+0900` のようなタイムゾーンを秒にする。
+fn tz_seconds(tz: &str) -> i64 {
+    let sign = if tz.starts_with('-') { -1 } else { 1 };
+    let digits = tz.trim_start_matches(['+', '-']);
+    let (h, m) = (
+        digits
+            .get(..2)
+            .and_then(|h| h.parse::<i64>().ok())
+            .unwrap_or(0),
+        digits
+            .get(2..4)
+            .and_then(|m| m.parse::<i64>().ok())
+            .unwrap_or(0),
+    );
+    sign * (h * 3600 + m * 60)
+}
+
+/// 作者・コミッターの 1 行（名前 <メール>  日時 タイムゾーン）。
+fn person(info: &Value, role: &str) -> String {
+    let name = info[role].as_str().unwrap_or_default();
+    let email = info[format!("{role}Email")].as_str().unwrap_or_default();
+    let tz = info[format!("{role}Tz")].as_str().unwrap_or_default();
+    let time = info[format!("{role}Time")].as_i64().unwrap_or(0);
+    format!(
+        "{name} <{email}>  {} {tz}",
+        crate::render::date(time + tz_seconds(tz))
+    )
+}
+
+/// コミットの詳細（作者、コミッター、Commit・Parent・Refs の表、件名と本文）。
+fn details(info: Option<&Value>) -> View {
+    let Some(info) = info else {
+        return TextBlock::new().margin(12.0).into();
+    };
+    let secondary = Brush::Solid(Color::argb(0x99, 0x1c, 0x1c, 0x1f));
+    let line = |label: &str, value: String| {
+        TextBlock::new()
+            .text(format!("{label}  {value}"))
+            .font_size(12.0)
+            .is_text_selection_enabled(true)
+            .text_wrapping(TextWrapping::Wrap)
+            .foreground(secondary)
+    };
+    let mut rows: Vec<View> = vec![line("Author", person(info, "author")).into()];
+    if info["committer"] != info["author"] || info["committerTime"] != info["authorTime"] {
+        rows.push(line("Committer", person(info, "committer")).into());
+    }
+    rows.push(
+        line(
+            "Commit",
+            info["oid"].as_str().unwrap_or_default().to_owned(),
+        )
+        .into(),
+    );
+    let list = |key: &str| -> Vec<String> {
+        info[key]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let parents = list("parents");
+    if !parents.is_empty() {
+        let short: Vec<String> = parents
+            .iter()
+            .map(|p| p[..p.len().min(10)].to_owned())
+            .collect();
+        let label = if parents.len() > 1 {
+            "Parents"
+        } else {
+            "Parent"
+        };
+        rows.push(line(label, short.join("  ")).into());
+    }
+    let refs = list("refs");
+    if !refs.is_empty() {
+        rows.push(line("Refs", refs.join(", ")).into());
+    }
+    let message = info["message"].as_str().unwrap_or_default().trim_end();
+    let (subject, body) = message.split_once('\n').unwrap_or((message, ""));
+    rows.push(
+        TextBlock::new()
+            .text(subject)
+            .font_size(14.0)
+            .font_weight(FontWeight::SEMI_BOLD)
+            .is_text_selection_enabled(true)
+            .text_wrapping(TextWrapping::Wrap)
+            .margin(Thickness::new(0.0, 8.0, 0.0, 0.0))
+            .into(),
+    );
+    let body = body.trim();
+    if !body.is_empty() {
+        rows.push(
+            TextBlock::new()
+                .text(body)
+                .font_size(13.0)
+                .is_text_selection_enabled(true)
+                .text_wrapping(TextWrapping::Wrap)
+                .into(),
+        );
+    }
+    StackPanel::new()
+        .spacing(4.0)
+        .margin(Thickness::new(14.0, 10.0, 14.0, 10.0))
+        .children((View::keyed_fragment(rows.into_iter().enumerate()),))
+}
+
+/// SwapChainPanel に swap chain をつなぐ（reactor が使う windows-core の型で渡す）。受け付けられたら `true`。
+fn attach_chain(panel: &ElementRef<SwapChainPanel>, surface: &Surface) -> Result<bool, String> {
+    use windows::core::Interface as _;
+    let raw = surface
+        .chain
+        .cast::<windows::core::IUnknown>()
+        .map_err(|e| e.to_string())?
+        .into_raw();
+    // SAFETY: 同じ COM のオブジェクトを、reactor が使う windows-core の型で持ち直すだけ。
+    let unknown = unsafe { windows_core_reactor::IUnknown::from_raw(raw) };
+    Ok(panel.request_set_swap_chain(unknown, |result| {
+        if let Err(e) = result {
+            eprintln!("SwapChainPanel に swap chain をつなげない: {e:?}");
+        }
+    }))
+}
+
+/// 大きさが変わった swap chain を作り直す（なければ作る）。
+fn resize_surface(
+    surface: &mut Option<Surface>,
+    renderer: &Renderer,
+    (width, height, scale): (f64, f64, f32),
+    options: Options,
+) -> Result<(), String> {
+    let (w, h) = (
+        (width * scale as f64).round() as u32,
+        (height * scale as f64).round() as u32,
+    );
+    match surface.as_mut() {
+        Some(s) => s.resize(renderer, w, h).map_err(|e| e.to_string())?,
+        None => {
+            *surface = Some(
+                Surface::for_composition(renderer, w, h, options)
+                    .map_err(|e| format!("swap chain を作れない: {e}"))?,
+            );
+        }
+    }
+    surface
+        .as_ref()
+        .expect("surface")
+        .set_scale(scale)
+        .map_err(|e| e.to_string())
+}
+
+/// 差分の欄。
+struct DiffPane {
+    panel: ElementRef<SwapChainPanel>,
+    area: ElementRef<Grid>,
+    surface: Option<Surface>,
+    scale: f32,
+    attached: bool,
+    input_requested: bool,
+    scroll_y: f32,
+    dirty: bool,
+}
+
+impl DiffPane {
+    fn resize(
+        &mut self,
+        renderer: &Renderer,
+        width: f64,
+        height: f64,
+        scale: f32,
+    ) -> Result<(), String> {
+        self.scale = scale;
+        // 差分は History の後に描くので、前のフレームを待たない。
+        let options = Options {
+            waitable: false,
+            sync: 1,
+            tearing: false,
+        };
+        resize_surface(&mut self.surface, renderer, (width, height, scale), options)?;
+        if !self.attached {
+            self.attached = attach_chain(&self.panel, self.surface.as_ref().expect("surface"))?;
+        }
+        self.dirty = true;
+        Ok(())
+    }
+
+    fn height(&self) -> f32 {
+        self.surface
+            .as_ref()
+            .map_or(0.0, |s| s.height as f32 / self.scale)
+    }
+
+    fn scroll_by(&mut self, dy: f32, rows: usize) {
+        let max = (rows as f32 * DIFF_ROW_HEIGHT - self.height()).max(0.0);
+        self.scroll_y = (self.scroll_y + dy).clamp(0.0, max);
+        self.dirty = true;
+    }
+}
+
 struct HistoryView {
     session: Session,
     panel: ElementRef<SwapChainPanel>,
     area: ElementRef<Grid>,
-    options: crate::render::Options,
+    options: Options,
     attached: bool,
     input_requested: bool,
+    diff: DiffPane,
     sender: LocalSender<Message>,
     /// サイドバーに送った ref（同じものは送り直さない）。
     refs_sent: Option<Arc<RefsSnapshot>>,
+    /// 詳細と差分を読みに行った選択。
+    selected: Option<u32>,
+    /// 詳細と差分を出しているコミットの行。
+    shown: Option<u32>,
 }
 
 impl HistoryView {
@@ -207,41 +480,15 @@ impl HistoryView {
             } => {
                 let s = &mut self.session;
                 s.scale = scale_x;
-                let (w, h) = (
-                    (width * scale_x as f64).round() as u32,
-                    (height * scale_x as f64).round() as u32,
-                );
-                match s.surface.as_mut() {
-                    Some(surface) => surface
-                        .resize(&s.renderer, w, h)
-                        .map_err(|e| e.to_string())?,
-                    None => {
-                        s.surface = Some(
-                            Surface::for_composition(&s.renderer, w, h, self.options)
-                                .map_err(|e| format!("swap chain を作れない: {e}"))?,
-                        );
-                    }
-                }
-                let surface = s.surface.as_ref().expect("surface");
-                surface.set_scale(scale_x).map_err(|e| e.to_string())?;
+                resize_surface(
+                    &mut s.surface,
+                    &s.renderer,
+                    (width, height, scale_x),
+                    self.options,
+                )?;
                 if !self.attached {
-                    self.attached = true;
-                    use windows::core::Interface as _;
-                    let raw = surface
-                        .chain
-                        .cast::<windows::core::IUnknown>()
-                        .map_err(|e| e.to_string())?
-                        .into_raw();
-                    // SAFETY: 同じ COM のオブジェクトを、reactor が使う windows-core の型で持ち直すだけ。
-                    let unknown = unsafe { windows_core_reactor::IUnknown::from_raw(raw) };
-                    let accepted = self.panel.request_set_swap_chain(unknown, |result| {
-                        if let Err(e) = result {
-                            eprintln!("SwapChainPanel に swap chain をつなげない: {e:?}");
-                        }
-                    });
-                    if !accepted {
-                        self.attached = false;
-                    }
+                    self.attached =
+                        attach_chain(&self.panel, s.surface.as_ref().expect("surface"))?;
                 }
                 s.invalidate();
             }
@@ -253,14 +500,10 @@ impl HistoryView {
     /// 届いたものを取り込み、描くものがあれば描く。
     fn render(&mut self) -> Result<(), String> {
         if !self.input_requested {
-            self.input_requested = self.area.request_native_element(|result| match result {
-                Ok(element) => {
-                    if let Err(e) = attach_input(&element) {
-                        eprintln!("History に入力を付けられない: {e}");
-                    }
-                }
-                Err(e) => eprintln!("History の部品を取れない: {e:?}"),
-            });
+            self.input_requested = request_input(&self.area, Target::History);
+        }
+        if !self.diff.input_requested {
+            self.diff.input_requested = request_input(&self.diff.area, Target::Diff);
         }
         let s = &mut self.session;
         s.poll()?;
@@ -272,6 +515,43 @@ impl HistoryView {
         {
             self.refs_sent = Some(refs.clone());
             self.sender.send(Message::Refs(refs.clone(), repo));
+        }
+        // 開いて最初は HEAD のコミットを選ぶ（ref が届いてから）。
+        if s.selected.is_none()
+            && let Some(row) = s
+                .data
+                .refs
+                .as_ref()
+                .and_then(|r| r.refs.head)
+                .and_then(|head| s.data.row_of(&head))
+        {
+            s.reveal(row);
+        }
+        // 選んだコミットが変わったら、詳細と差分を読む。
+        if s.selected != self.selected {
+            self.selected = s.selected;
+            if let Some(row) = s.selected {
+                s.data.want_commit(row);
+            }
+        }
+        if let Some(commit) = &s.data.commit
+            && self.shown != Some(commit.row)
+        {
+            self.shown = Some(commit.row);
+            self.sender.send(Message::Commit(commit.info.clone()));
+            s.renderer.forget_diff();
+            self.diff.scroll_y = 0.0;
+            self.diff.dirty = true;
+        }
+        if self.diff.dirty
+            && let Some(surface) = self.diff.surface.as_mut()
+        {
+            let view = s.data.commit.as_ref().map(|c| &c.diff);
+            s.renderer
+                .draw_diff(surface, view, self.diff.scroll_y, self.diff.scale)
+                .map_err(|e| format!("差分を描けない: {e}"))?;
+            surface.present().map_err(|e| format!("出せない: {e}"))?;
+            self.diff.dirty = false;
         }
         if !s.needs_frame() {
             return Ok(());
@@ -293,19 +573,45 @@ impl HistoryView {
             self.session.reveal(row);
         }
     }
+
+    fn diff_rows(&self) -> usize {
+        self.session
+            .data
+            .commit
+            .as_ref()
+            .map_or(0, |c| c.diff.rows.len())
+    }
 }
 
-/// History を包む Grid に、押す・ホイール・キーを付け、キーを受けられるようにする。
-fn attach_input(element: &IInspectable) -> windows_core_reactor::Result<()> {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Target {
+    History,
+    Diff,
+}
+
+/// `area` の生の要素に入力を付ける（まだ載っていなければ `false`、次のフレームでまた試す）。
+fn request_input(area: &ElementRef<Grid>, target: Target) -> bool {
+    area.request_native_element(move |result| match result {
+        Ok(element) => {
+            if let Err(e) = attach_input(&element, target) {
+                eprintln!("入力を付けられない: {e}");
+            }
+        }
+        Err(e) => eprintln!("部品を取れない: {e:?}"),
+    })
+}
+
+/// History か差分を包む Grid に、押す・ホイール・キーを付け、キーを受けられるようにする。
+fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor::Result<()> {
     let ui: xaml::UIElement = element.cast()?;
     ui.SetIsTabStop(true)?;
     let mut revokers = Vec::new();
 
-    let target = ui.clone();
+    let source = ui.clone();
     revokers.push(
         ui.PointerPressed(move |_, args: Ref<xaml::PointerRoutedEventArgs>| {
             let Some(args) = args.as_ref() else { return };
-            let Ok(point) = args.GetCurrentPoint(&target) else {
+            let Ok(point) = args.GetCurrentPoint(&source) else {
                 return;
             };
             let (Ok(position), Ok(properties)) = (point.Position(), point.Properties()) else {
@@ -314,18 +620,20 @@ fn attach_input(element: &IInspectable) -> windows_core_reactor::Result<()> {
             if !properties.IsLeftButtonPressed().unwrap_or(false) {
                 return;
             }
-            let _ = target.Focus(xaml::FocusState::Pointer);
-            with_history(|h| {
-                if let Some(row) = h.session.row_at(position.Y) {
-                    h.session.select(row);
-                }
-            });
+            let _ = source.Focus(xaml::FocusState::Pointer);
+            if target == Target::History {
+                with_history(|h| {
+                    if let Some(row) = h.session.row_at(position.Y) {
+                        h.session.select(row);
+                    }
+                });
+            }
             let _ = args.SetHandled(true);
         })?,
     );
 
     revokers.push(
-        ui.PointerWheelChanged(|_, args: Ref<xaml::PointerRoutedEventArgs>| {
+        ui.PointerWheelChanged(move |_, args: Ref<xaml::PointerRoutedEventArgs>| {
             let Some(args) = args.as_ref() else { return };
             let Ok(properties) = args
                 .GetCurrentPoint(None::<&xaml::UIElement>)
@@ -336,29 +644,53 @@ fn attach_input(element: &IInspectable) -> windows_core_reactor::Result<()> {
             if properties.IsHorizontalMouseWheel().unwrap_or(false) {
                 return;
             }
-            let delta = properties.MouseWheelDelta().unwrap_or(0) as f32;
-            with_history(|h| {
-                h.session
-                    .scroll_by(-delta / 120.0 * WHEEL_ROWS * ROW_HEIGHT)
+            let notches = -(properties.MouseWheelDelta().unwrap_or(0) as f32) / 120.0;
+            with_history(|h| match target {
+                Target::History => h.session.scroll_by(notches * WHEEL_ROWS * ROW_HEIGHT),
+                Target::Diff => {
+                    let rows = h.diff_rows();
+                    h.diff
+                        .scroll_by(notches * WHEEL_ROWS * DIFF_ROW_HEIGHT, rows);
+                }
             });
             let _ = args.SetHandled(true);
         })?,
     );
 
-    revokers.push(ui.KeyDown(|_, args: Ref<xaml::KeyRoutedEventArgs>| {
+    revokers.push(ui.KeyDown(move |_, args: Ref<xaml::KeyRoutedEventArgs>| {
         let Some(args) = args.as_ref() else { return };
         let Ok(key) = args.Key() else { return };
         let handled = std::cell::Cell::new(true);
-        with_history(|h| {
-            let s = &mut h.session;
-            match key {
-                xaml::VirtualKey::Up => s.move_selection(-1),
-                xaml::VirtualKey::Down => s.move_selection(1),
-                xaml::VirtualKey::PageUp => s.move_selection(-s.page_rows()),
-                xaml::VirtualKey::PageDown => s.move_selection(s.page_rows()),
-                xaml::VirtualKey::Home => s.move_selection(-(s.data.row_count() as i64)),
-                xaml::VirtualKey::End => s.move_selection(s.data.row_count() as i64),
-                _ => handled.set(false),
+        with_history(|h| match target {
+            Target::History => {
+                let s = &mut h.session;
+                match key {
+                    xaml::VirtualKey::Up => s.move_selection(-1),
+                    xaml::VirtualKey::Down => s.move_selection(1),
+                    xaml::VirtualKey::PageUp => s.move_selection(-s.page_rows()),
+                    xaml::VirtualKey::PageDown => s.move_selection(s.page_rows()),
+                    xaml::VirtualKey::Home => s.move_selection(-(s.data.row_count() as i64)),
+                    xaml::VirtualKey::End => s.move_selection(s.data.row_count() as i64),
+                    _ => handled.set(false),
+                }
+            }
+            Target::Diff => {
+                let rows = h.diff_rows();
+                let page = (h.diff.height() - DIFF_ROW_HEIGHT).max(DIFF_ROW_HEIGHT);
+                let total = rows as f32 * DIFF_ROW_HEIGHT;
+                let dy = match key {
+                    xaml::VirtualKey::Up => -DIFF_ROW_HEIGHT,
+                    xaml::VirtualKey::Down => DIFF_ROW_HEIGHT,
+                    xaml::VirtualKey::PageUp => -page,
+                    xaml::VirtualKey::PageDown | xaml::VirtualKey::Space => page,
+                    xaml::VirtualKey::Home => -total,
+                    xaml::VirtualKey::End => total,
+                    _ => {
+                        handled.set(false);
+                        0.0
+                    }
+                };
+                h.diff.scroll_by(dy, rows);
             }
         });
         if handled.get() {

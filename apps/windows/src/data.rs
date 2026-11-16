@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 use amonhen_backend_gix::GixBackend;
+use amonhen_core::diff::DiffView;
 use amonhen_core::{HistorySnapshot, RefsSnapshot, Repository};
 use amonhen_layout::StrRef;
 use amonhen_model::{RefKind, Refs};
@@ -51,19 +52,38 @@ impl Chunk {
         self.0.author_times[i]
     }
 
-    /// `s` を UTF-16 で `out` に足す。ASCII はここで広げ、それ以外はコアが詰めた UTF-16 をそのまま写す。
+    /// `s` を UTF-16 で `out` に足す。
     pub fn push_utf16(&self, s: StrRef, out: &mut Vec<u16>) {
-        let bytes = self.0.bytes(s);
-        if s.is_ascii() {
-            out.extend(bytes.iter().map(|&b| b as u16));
-        } else {
-            // SAFETY: ASCII 以外は 0 番の `Vec<u16>` の中を、偶数のバイト位置から指す。
-            let units = unsafe {
-                std::slice::from_raw_parts(bytes.as_ptr().cast::<u16>(), bytes.len() / 2)
-            };
-            out.extend_from_slice(units);
-        }
+        push_utf16(self.0.bytes(s), s.is_ascii(), out);
     }
+}
+
+/// コアが `PROFILE` で詰めた文字列を UTF-16 で `out` に足す。ASCII はここで広げ、それ以外はコアが詰めた UTF-16 を
+/// そのまま写す。
+pub fn push_utf16(bytes: &[u8], ascii: bool, out: &mut Vec<u16>) {
+    if ascii {
+        out.extend(bytes.iter().map(|&b| b as u16));
+    } else if bytes.as_ptr().align_offset(2) == 0 {
+        // SAFETY: ASCII 以外はコアの `Vec<u16>` の中を、偶数のバイト位置から指す。
+        let units =
+            unsafe { std::slice::from_raw_parts(bytes.as_ptr().cast::<u16>(), bytes.len() / 2) };
+        out.extend_from_slice(units);
+    } else {
+        out.extend(
+            bytes
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|&c| u16::from_ne_bytes(c)),
+        );
+    }
+}
+
+/// 選んだコミットの詳細（`commit_info` の答え）と、全ファイルを並べた差分。
+pub struct CommitShown {
+    pub row: u32,
+    pub info: serde_json::Value,
+    pub diff: DiffView,
 }
 
 /// History の行に付ける ref の名前（ブランチ・リモートブランチ・タグ）。
@@ -81,6 +101,7 @@ pub type Labels = HashMap<u32, Vec<RefLabel>>;
 enum Event {
     History(Arc<Repository>, Arc<HistorySnapshot>),
     Refs(u64, Arc<RefsSnapshot>, Labels),
+    Commit(u64, Box<CommitShown>),
     Chunk(u64, u32, Chunk),
     Failed(String),
 }
@@ -90,6 +111,10 @@ pub struct Data {
     pub refs: Option<Arc<RefsSnapshot>>,
     /// 今の History の行の、ref のラベル。
     pub labels: Labels,
+    /// 選んだコミットの詳細と差分（届いたもの）。
+    pub commit: Option<Box<CommitShown>>,
+    /// 読んでいるコミットの行（届いたものがこれと違えば捨てる）。
+    commit_wanted: Option<u32>,
     pub chunks: HashMap<u32, Rc<Chunk>>,
     repo: Option<Arc<Repository>>,
     loading: HashSet<u32>,
@@ -133,6 +158,8 @@ impl Data {
             history: None,
             refs: None,
             labels: HashMap::new(),
+            commit: None,
+            commit_wanted: None,
             chunks: HashMap::new(),
             repo: None,
             loading: HashSet::new(),
@@ -158,6 +185,8 @@ impl Data {
                     self.repo = Some(repo);
                     self.history = Some(history);
                     self.labels.clear();
+                    self.commit = None;
+                    self.commit_wanted = None;
                     self.chunks.clear();
                     self.loading.clear();
                     changed = true;
@@ -184,10 +213,51 @@ impl Data {
                     self.refs = Some(refs);
                     changed = true;
                 }
+                Event::Commit(generation, shown) => {
+                    if self
+                        .history
+                        .as_ref()
+                        .is_some_and(|h| h.generation == generation)
+                        && self.commit_wanted == Some(shown.row)
+                    {
+                        self.commit = Some(shown);
+                        changed = true;
+                    }
+                }
                 Event::Failed(e) => return Err(e),
             }
         }
         Ok(changed)
+    }
+
+    /// 行 `row` のコミットの詳細と差分を裏で読む（同じ行を読んでいれば何もしない）。
+    pub fn want_commit(&mut self, row: u32) {
+        if self.commit_wanted == Some(row) {
+            return;
+        }
+        let (Some(repo), Some(history)) = (self.repo.clone(), self.history.clone()) else {
+            return;
+        };
+        let Some(&id) = history.graph.ids().get(row as usize) else {
+            return;
+        };
+        self.commit_wanted = Some(row);
+        let (tx, wake) = (self.tx.clone(), self.wake.clone());
+        std::thread::spawn(move || {
+            let load = || -> Result<CommitShown, String> {
+                let info = repo.commit_info(&id).map_err(|e| e.to_string())?;
+                let changes = repo.commit_changes(&id).map_err(|e| e.to_string())?;
+                let stacked = repo.stacked_diff(&changes).map_err(|e| e.to_string())?;
+                let diff = stacked.view(&[], &PROFILE);
+                Ok(CommitShown { row, info, diff })
+            };
+            let event = match load() {
+                Ok(shown) => Event::Commit(history.generation, Box::new(shown)),
+                Err(e) => Event::Failed(format!("コミットを読めない: {e}")),
+            };
+            let _ = tx.send(event);
+            wake();
+        });
     }
 
     pub fn repo(&self) -> Option<Arc<Repository>> {

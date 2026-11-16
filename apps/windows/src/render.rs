@@ -60,6 +60,15 @@ const LABEL_TEXT: D2D1_COLOR_F = rgba(0.11, 0.11, 0.12, 0.9);
 /// チェックアウト中のブランチのラベルの枠。
 const LABEL_HEAD: D2D1_COLOR_F = rgba(0.16, 0.60, 0.30, 0.9);
 const LABEL_HEIGHT: f32 = 17.0;
+/// 差分の行の高さ（DIP）と、行番号の列の幅。
+pub const DIFF_ROW_HEIGHT: f32 = 18.0;
+const DIFF_NUMBER_WIDTH: f32 = 44.0;
+const DIFF_TEXT_INSET: f32 = 10.0;
+const DIFF_ADDED: D2D1_COLOR_F = rgba(0.16, 0.60, 0.30, 0.16);
+const DIFF_REMOVED: D2D1_COLOR_F = rgba(0.85, 0.20, 0.20, 0.14);
+const DIFF_HUNK: D2D1_COLOR_F = rgba(0.0, 0.47, 0.84, 0.07);
+const DIFF_FILE: D2D1_COLOR_F = rgba(0.11, 0.11, 0.12, 0.07);
+const DIFF_GUTTER: D2D1_COLOR_F = rgba(0.11, 0.11, 0.12, 0.035);
 const LABEL_PADDING: f32 = 6.0;
 const LABEL_GAP: f32 = 4.0;
 /// ラベルを並べる幅の上限（文字の幅に対する割合）。残りは件名に回す。
@@ -242,6 +251,11 @@ pub struct Renderer {
     /// ラベルの文字（名前ごと）と、その幅。
     labels: HashMap<String, (IDWriteTextLayout, f32)>,
     label_format: IDWriteTextFormat,
+    /// 差分の文字（等幅）と、見出しの文字。
+    code_format: IDWriteTextFormat,
+    file_format: IDWriteTextFormat,
+    /// 差分の行の文字の形（今の差分の行ごと。差分が替わったら捨てる）。
+    diff_rows: HashMap<u32, IDWriteTextLayout>,
     history: Option<Arc<HistorySnapshot>>,
     /// `AMONHEN_PROFILE` があれば、段階ごとの時間（ms）を残す。段階の間で `Flush` して、溜めた描画も
     /// その段階に数える（その分だけ全体は遅くなる）。
@@ -313,6 +327,26 @@ impl Renderer {
             let subject_format = format(13.0)?;
             let meta_format = format(11.0)?;
             let label_format = format(11.0)?;
+            let code_format = dwrite.CreateTextFormat(
+                w!("Cascadia Mono"),
+                None,
+                DWRITE_FONT_WEIGHT_NORMAL,
+                DWRITE_FONT_STYLE_NORMAL,
+                DWRITE_FONT_STRETCH_NORMAL,
+                12.0,
+                w!("ja-jp"),
+            )?;
+            code_format.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP)?;
+            let file_format = dwrite.CreateTextFormat(
+                w!("Segoe UI"),
+                None,
+                DWRITE_FONT_WEIGHT_SEMI_BOLD,
+                DWRITE_FONT_STYLE_NORMAL,
+                DWRITE_FONT_STRETCH_NORMAL,
+                12.0,
+                w!("ja-jp"),
+            )?;
+            file_format.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP)?;
             let brush = d2d.CreateSolidColorBrush(&FOREGROUND, None)?;
             let base: &ID2D1Factory = &d2d_factory;
             let round = base.CreateStrokeStyle(
@@ -344,6 +378,9 @@ impl Renderer {
                 rows: HashMap::new(),
                 labels: HashMap::new(),
                 label_format,
+                code_format,
+                file_format,
+                diff_rows: HashMap::new(),
                 history: None,
                 profile: std::env::var_os("AMONHEN_PROFILE").map(|_| Vec::new()),
             })
@@ -637,6 +674,144 @@ impl Renderer {
         Ok(())
     }
 
+    /// 差分が替わった（取っておいた行の文字を捨てる）。
+    pub fn forget_diff(&mut self) {
+        self.diff_rows.clear();
+    }
+
+    /// 差分を描く（`scroll_y` から画面 1 つ分）。`view` がなければ空の地だけ。
+    pub fn draw_diff(
+        &mut self,
+        surface: &mut Surface,
+        view: Option<&amonhen_core::diff::DiffView>,
+        scroll_y: f32,
+        scale: f32,
+    ) -> Result<()> {
+        let target = surface.target(self, scale)?;
+        let width = surface.width as f32 / scale;
+        let height = surface.height as f32 / scale;
+        unsafe {
+            self.d2d.SetTarget(&target);
+            self.d2d.SetDpi(96.0 * scale, 96.0 * scale);
+            self.d2d.BeginDraw();
+            self.d2d.Clear(Some(&BACKGROUND));
+        }
+        let result = match view {
+            Some(view) => self.draw_diff_rows(view, scroll_y, width, height),
+            None => Ok(()),
+        };
+        unsafe { self.d2d.EndDraw(None, None)? };
+        result
+    }
+
+    fn draw_diff_rows(
+        &mut self,
+        view: &amonhen_core::diff::DiffView,
+        scroll_y: f32,
+        width: f32,
+        height: f32,
+    ) -> Result<()> {
+        use amonhen_layout::DiffRow;
+        let count = view.rows.len() as u32;
+        let first = ((scroll_y / DIFF_ROW_HEIGHT).floor().max(0.0) as u32).min(count);
+        let last = (((scroll_y + height) / DIFF_ROW_HEIGHT).ceil() as u32 + 1).min(count);
+        if self.diff_rows.len() > 2048 {
+            self.diff_rows.clear();
+        }
+        let text_x = DIFF_NUMBER_WIDTH * 2.0 + DIFF_TEXT_INSET;
+        for i in first..last {
+            let row = &view.rows[i as usize];
+            let top = i as f32 * DIFF_ROW_HEIGHT - scroll_y;
+            let rect = |left: f32, right: f32| D2D_RECT_F {
+                left,
+                top,
+                right,
+                bottom: top + DIFF_ROW_HEIGHT,
+            };
+            let file = row.kind == DiffRow::FILE;
+            let fill = match row.kind {
+                DiffRow::ADDED => Some(DIFF_ADDED),
+                DiffRow::REMOVED => Some(DIFF_REMOVED),
+                DiffRow::HUNK => Some(DIFF_HUNK),
+                DiffRow::FILE => Some(DIFF_FILE),
+                _ => None,
+            };
+            unsafe {
+                if !file {
+                    self.brush.SetColor(&DIFF_GUTTER);
+                    self.d2d
+                        .FillRectangle(&rect(0.0, DIFF_NUMBER_WIDTH * 2.0), &self.brush);
+                }
+                if let Some(fill) = fill {
+                    self.brush.SetColor(&fill);
+                    self.d2d.FillRectangle(&rect(0.0, width), &self.brush);
+                }
+            }
+            if !self.diff_rows.contains_key(&i) {
+                let mut text = Vec::with_capacity(128);
+                crate::data::push_utf16(
+                    view.strings.bytes(row.text),
+                    row.text.is_ascii(),
+                    &mut text,
+                );
+                if file {
+                    text.extend(format!("    +{}  −{}", row.new_no, row.old_no).encode_utf16());
+                }
+                let format = if file {
+                    &self.file_format
+                } else {
+                    &self.code_format
+                };
+                let layout = unsafe {
+                    self.dwrite
+                        .CreateTextLayout(&text, format, 100_000.0, DIFF_ROW_HEIGHT)?
+                };
+                self.diff_rows.insert(i, layout);
+            }
+            let layout = &self.diff_rows[&i];
+            unsafe {
+                self.brush.SetColor(&FOREGROUND);
+                let x = if file { DIFF_TEXT_INSET } else { text_x };
+                self.d2d.DrawTextLayout(
+                    point(x, top + 1.0),
+                    layout,
+                    &self.brush,
+                    D2D1_DRAW_TEXT_OPTIONS_CLIP,
+                );
+            }
+            if !file && row.kind != DiffRow::HUNK {
+                self.draw_number(row.old_no, 0.0, top)?;
+                self.draw_number(row.new_no, DIFF_NUMBER_WIDTH, top)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// 行番号（0 なら書かない）を、`x` から幅 `DIFF_NUMBER_WIDTH` の列に右寄せで書く。
+    fn draw_number(&self, number: u32, x: f32, top: f32) -> Result<()> {
+        if number == 0 {
+            return Ok(());
+        }
+        let text: Vec<u16> = number.to_string().encode_utf16().collect();
+        unsafe {
+            let layout = self.dwrite.CreateTextLayout(
+                &text,
+                &self.meta_format,
+                DIFF_NUMBER_WIDTH - 6.0,
+                DIFF_ROW_HEIGHT,
+            )?;
+            layout.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING)?;
+            self.brush.SetColor(&SECONDARY);
+            self.d2d.DrawTextLayout(
+                point(x, top + 2.0),
+                &layout,
+                &self.brush,
+                D2D1_DRAW_TEXT_OPTIONS_NONE,
+            );
+        }
+        Ok(())
+    }
+
     /// ラベルの文字の形と幅（作ったものは名前ごとに取っておく）。
     fn label(&mut self, name: &str) -> Result<(IDWriteTextLayout, f32)> {
         if let Some(found) = self.labels.get(name) {
@@ -728,7 +903,7 @@ impl Renderer {
 }
 
 /// 地方時の秒を `YYYY-MM-DD HH:MM` にする（Howard Hinnant の civil_from_days）。
-fn date(local: i64) -> String {
+pub fn date(local: i64) -> String {
     let days = local.div_euclid(86400);
     let secs = local.rem_euclid(86400);
     let z = days + 719_468;
