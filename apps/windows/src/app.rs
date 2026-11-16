@@ -139,14 +139,31 @@ enum Dialog {
         repo: Arc<Repository>,
         title: String,
         mode: usize,
+        /// 上流がなければ、取り込み元のリモートのブランチ（同じ名前のものから）と選んだもの。
+        branch: String,
+        sources: Vec<String>,
+        source: usize,
     },
-    /// Push の確認（上流へ送る）。
+    /// Push の確認（上流へ送る）。`replace` なら Force Push（上流が `expect` のときだけ置き換える）。`diverged` は、
+    /// 上流に手元にないコミットがあるので、Pull… か Force Push を選んでもらう。
     Push {
         repo: Arc<Repository>,
         title: String,
+        message: String,
         remote: String,
         branch: String,
         remote_branch: String,
+        replace: bool,
+        diverged: bool,
+        expect: Option<String>,
+    },
+    /// 上流のないブランチを初めて送る（Publish。GTK4 版の `sheets::publish_in`）。
+    Publish {
+        repo: Arc<Repository>,
+        branch: String,
+        remotes: Vec<String>,
+        remote: usize,
+        name: String,
     },
     /// 新しいブランチの名前を聞く（`start` から作って切り替える）。
     NewBranch {
@@ -240,6 +257,11 @@ enum Message {
     SidebarMenu(String),
     /// Stashes の一覧で選んだ行。
     StashSelected(Option<usize>),
+    /// Pull の取り込み元・Publish の送り先のリモートを選んだ。
+    PullSource(Option<usize>),
+    PublishRemote(Option<usize>),
+    /// Publish の送り先を調べ終えた（そのブランチがリモートにあれば、送るコミットと取り込んでいないコミットの数）。
+    PublishChecked(Arc<Repository>, String, String, String, Option<(u64, u64)>),
     /// 編集するリモートを読んだ（なければ None）。
     RemoteLoaded(Arc<Repository>, Option<(String, String, String)>),
     /// リモートのシートの欄（0 は名前、1 は fetch、2 は push の URL）。
@@ -366,10 +388,82 @@ impl Component for Root {
             Message::BranchName(name) => match &mut self.dialog {
                 Some(Dialog::NewBranch { name: current, .. })
                 | Some(Dialog::Rename { name: current, .. })
-                | Some(Dialog::StashBranch { name: current, .. }) => *current = name,
+                | Some(Dialog::StashBranch { name: current, .. })
+                | Some(Dialog::Publish { name: current, .. }) => *current = name,
                 _ => {}
             },
-            Message::Command(id) if id == "push" => self.push(),
+            Message::Command(id) if id == "push" => self.push(false),
+            Message::Command(id) if id == "force-push" => self.push(true),
+            Message::PullSource(Some(index)) => {
+                if let Some(Dialog::Pull { source, .. }) = &mut self.dialog {
+                    *source = index;
+                }
+            }
+            Message::PublishRemote(Some(index)) => {
+                if let Some(Dialog::Publish { remote, .. }) = &mut self.dialog {
+                    *remote = index;
+                }
+            }
+            Message::PullSource(None) | Message::PublishRemote(None) => {}
+            Message::PublishChecked(repo, branch, remote, remote_branch, exists) => {
+                let push = json!({
+                    "op": "push", "remote": remote, "branch": branch, "remoteBranch": remote_branch,
+                    "force": false, "setUpstream": true,
+                });
+                let there = format!("{remote}/{remote_branch}");
+                let set_upstream = vec![
+                    json!({ "op": "configSet", "key": format!("branch.{branch}.remote"), "value": remote }),
+                    json!({ "op": "configSet", "key": format!("branch.{branch}.merge"), "value": format!("refs/heads/{remote_branch}") }),
+                ];
+                // GTK4 版と同じ: 送り先にもうそのブランチがあれば、作るのではなくそれを上流にする。
+                match exists {
+                    None => {
+                        self.busy = Some("Publish…".to_owned());
+                        perform(context, repo, push, "Publish".to_owned());
+                    }
+                    Some((_, incoming)) if incoming > 0 => {
+                        self.dialog = Some(Dialog::Confirm {
+                            repo,
+                            title: tr!("{target} already exists", target = &there),
+                            message: tr!(
+                                "It has {count} commits that {branch} doesn’t (as of the last Fetch), so pushing would be refused. Make it the upstream and Pull first.",
+                                count = incoming,
+                                branch = &branch
+                            ),
+                            button: tr!("Set Upstream"),
+                            command: Value::Array(set_upstream),
+                        })
+                    }
+                    Some((outgoing, _)) => {
+                        let (message, button, command) = if outgoing > 0 {
+                            (
+                                tr!(
+                                    "This pushes {count} commits to it and makes it the upstream.",
+                                    count = outgoing
+                                ),
+                                "Push".to_owned(),
+                                push,
+                            )
+                        } else {
+                            (
+                                tr!(
+                                    "It is the same as {branch}. This makes it the upstream.",
+                                    branch = &branch
+                                ),
+                                tr!("Set Upstream"),
+                                Value::Array(set_upstream),
+                            )
+                        };
+                        self.dialog = Some(Dialog::Confirm {
+                            repo,
+                            title: tr!("{target} already exists", target = &there),
+                            message,
+                            button,
+                            command,
+                        })
+                    }
+                }
+            }
             Message::PullMode(index) => {
                 if let (Some(Dialog::Pull { mode, .. }), Some(index)) = (&mut self.dialog, index) {
                     *mode = index;
@@ -485,9 +579,10 @@ impl Component for Root {
                         ..
                     }),
                     ContentDialogResult::Primary,
-                ) => {
-                    perform(context, repo, command, button);
-                }
+                ) => match command {
+                    Value::Array(commands) => perform_all(context, repo, commands, button),
+                    command => perform(context, repo, command, button),
+                },
                 (
                     Some(Dialog::Reset {
                         repo, oid, mode, ..
@@ -572,14 +667,82 @@ impl Component for Root {
                 (Some(Dialog::Checkout { repo, command, .. }), ContentDialogResult::Primary) => {
                     perform(context, repo, command, "Checkout".to_owned());
                 }
-                (Some(Dialog::Pull { repo, mode, .. }), ContentDialogResult::Primary) => {
-                    self.busy = Some("Pull…".to_owned());
-                    perform(
-                        context,
+                (
+                    Some(Dialog::Pull {
                         repo,
-                        json!({ "op": "pull", "mode": PULL_MODES[mode] }),
-                        "Pull".to_owned(),
-                    );
+                        mode,
+                        branch,
+                        sources,
+                        source,
+                        ..
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    self.busy = Some("Pull…".to_owned());
+                    let pull = json!({ "op": "pull", "mode": PULL_MODES[mode] });
+                    // 上流がなければ、選んだリモートのブランチを上流にしてから取り込む（GTK4 版と同じ）。
+                    let commands = match sources.get(source).and_then(|s| s.split_once('/')) {
+                        Some((remote, name)) => vec![
+                            json!({ "op": "configSet", "key": format!("branch.{branch}.remote"), "value": remote }),
+                            json!({ "op": "configSet", "key": format!("branch.{branch}.merge"), "value": format!("refs/heads/{name}") }),
+                            pull,
+                        ],
+                        None => vec![pull],
+                    };
+                    perform_all(context, repo, commands, "Pull".to_owned());
+                }
+                (
+                    Some(Dialog::Publish {
+                        repo,
+                        branch,
+                        remotes,
+                        remote,
+                        name,
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    let (Some(remote), remote_branch) =
+                        (remotes.get(remote).cloned(), name.trim().to_owned())
+                    else {
+                        return;
+                    };
+                    if remote_branch.is_empty() {
+                        return;
+                    }
+                    // その名前のブランチがもうリモートにあるか（最後の Fetch の時点）と、離れ具合を裏で調べる。
+                    let there = format!("{remote}/{remote_branch}");
+                    let exists = self.refs.as_ref().is_some_and(|r| {
+                        r.refs
+                            .entries
+                            .iter()
+                            .any(|e| e.kind == amonhen_model::RefKind::Remote && e.name == there)
+                    });
+                    context.spawn_background(move |_| {
+                        let count = |base: &str, tip: &str| -> u64 {
+                            let command =
+                                json!({ "op": "between", "base": base, "tip": tip, "limit": 1 });
+                            let reply: Value =
+                                serde_json::from_str(&repo.run_json(&command.to_string()))
+                                    .unwrap_or_default();
+                            reply["info"]["count"].as_u64().unwrap_or(0)
+                        };
+                        let counts =
+                            exists.then(|| (count(&there, &branch), count(&branch, &there)));
+                        Message::PublishChecked(repo, branch, remote, remote_branch, counts)
+                    });
+                }
+                (
+                    Some(Dialog::Push {
+                        repo,
+                        diverged: true,
+                        ..
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    // 上流に手元にないコミットがある: Pull… を選んだ。閉じたダイアログを同じ更新で開き直すと
+                    // reactor は開いたままとみなして出さないので、閉じた後の知らせで開く。
+                    let _ = repo;
+                    context.spawn_background(|_| Message::Command("pull".to_owned()));
                 }
                 (
                     Some(Dialog::Push {
@@ -587,19 +750,28 @@ impl Component for Root {
                         remote,
                         branch,
                         remote_branch,
+                        replace,
+                        diverged,
+                        expect,
                         ..
                     }),
-                    ContentDialogResult::Primary,
-                ) => {
-                    self.busy = Some("Push…".to_owned());
+                    result,
+                ) if (result == ContentDialogResult::Primary && !diverged)
+                    || (result == ContentDialogResult::Secondary && diverged) =>
+                {
+                    // 上流が先に進んでいるときは、Force Push は 2 つ目のボタン（Enter では押せない）。
+                    let replace = replace || diverged;
+                    self.busy = Some(if replace { "Force Push…" } else { "Push…" }.to_owned());
                     perform(
                         context,
                         repo,
                         json!({
                             "op": "push", "remote": remote, "branch": branch,
-                            "remoteBranch": remote_branch, "force": false, "setUpstream": false,
+                            "remoteBranch": remote_branch, "force": replace,
+                            "expect": if replace { expect } else { None },
+                            "setUpstream": false,
                         }),
-                        "Push".to_owned(),
+                        if replace { "Force Push" } else { "Push" }.to_owned(),
                     );
                 }
                 (
@@ -1414,8 +1586,26 @@ impl Root {
                         .text(message.clone())
                         .text_wrapping(TextWrapping::Wrap),
                 ),
-            Some(Dialog::Pull { title, mode, .. }) => {
+            Some(Dialog::Pull {
+                title,
+                mode,
+                sources,
+                source,
+                ..
+            }) => {
                 let modes: Vec<String> = PULL_MODES.iter().map(|m| pull_mode_title(m)).collect();
+                // 上流がなければ、取り込み元を選ぶ欄を先に。
+                let from: View = if sources.is_empty() {
+                    View::empty()
+                } else {
+                    StackPanel::new().spacing(6.0).children((
+                        TextBlock::new().text(tr!("From:")),
+                        ComboBox::new()
+                            .items_source(sources.clone())
+                            .selected_index(*source)
+                            .on_selection_changed(context.callback(Message::PullSource)),
+                    ))
+                };
                 dialog
                     .is_open(true)
                     .title(title.clone())
@@ -1423,6 +1613,7 @@ impl Root {
                     .close_button_text(tr!("Cancel"))
                     .content(
                         StackPanel::new().spacing(6.0).children((
+                            from,
                             TextBlock::new().text(tr!("Integrate with:")),
                             ComboBox::new()
                                 .items_source(modes)
@@ -1431,12 +1622,62 @@ impl Root {
                         )),
                     )
             }
-            Some(Dialog::Push { title, .. }) => dialog
+            Some(Dialog::Push {
+                title,
+                message,
+                replace,
+                diverged,
+                ..
+            }) => {
+                let dialog = dialog
+                    .is_open(true)
+                    .title(title.clone())
+                    .close_button_text(tr!("Cancel"));
+                // 分かれていれば Pull…（Enter）と Force Push、でなければ Push か Force Push（GTK4 版と同じ並び）。
+                let dialog = if *diverged {
+                    dialog
+                        .primary_button_text("Pull…")
+                        .secondary_button_text("Force Push")
+                } else {
+                    dialog.primary_button_text(if *replace { "Force Push" } else { "Push" })
+                };
+                dialog.content(
+                    TextBlock::new()
+                        .text(message.clone())
+                        .text_wrapping(TextWrapping::Wrap),
+                )
+            }
+            Some(Dialog::Publish {
+                branch,
+                remotes,
+                remote,
+                name,
+                ..
+            }) => dialog
                 .is_open(true)
-                .title(title.clone())
-                .primary_button_text("Push")
+                .title(tr!("Publish {branch}?", branch = branch))
+                .primary_button_text("Publish")
                 .close_button_text(tr!("Cancel"))
-                .content(TextBlock::new()),
+                .is_primary_button_enabled(!name.trim().is_empty())
+                .content(
+                    StackPanel::new().spacing(6.0).children((
+                        TextBlock::new()
+                            .text(tr!(
+                                "This creates the branch on the remote and makes it the upstream (where Pull and Push go from now on)."
+                            ))
+                            .text_wrapping(TextWrapping::Wrap),
+                        TextBlock::new().text(tr!("Remote")),
+                        ComboBox::new()
+                            .items_source(remotes.clone())
+                            .selected_index(*remote)
+                            .on_selection_changed(context.callback(Message::PublishRemote)),
+                        TextBlock::new().text(tr!("Name there")),
+                        TextBox::new()
+                            .element_ref(&self.dialog_input)
+                            .text(name.clone())
+                            .on_text_changed(context.callback(Message::BranchName)),
+                    )),
+                ),
             Some(Dialog::Fetch { remotes, from, .. }) => {
                 // GTK4 版の `sheets::fetch` と同じ: リモートが 1 つならその名前を見出しに、2 つ以上なら選ぶ。
                 let title = match remotes.as_slice() {
@@ -1964,58 +2205,178 @@ impl Root {
             .find(|e| e.kind == amonhen_model::RefKind::Local && e.name == head)
     }
 
-    /// Repository > Pull…: 上流から取り込む（GTK4 版の `sheets::pull_in` の見出しと取り込み方）。上流のない
-    /// ブランチの取り込み元の選択と、前後の絵はまだない。
+    /// Repository > Pull…: 上流から取り込む（GTK4 版の `sheets::pull_in` の見出しと取り込み方）。上流がなければ、
+    /// 取り込み元のリモートのブランチ（同じ名前のものから）を選び、それを上流にして取り込む。前後の絵はまだない。
     fn pull(&mut self) {
-        let (Some(repo), Some(entry)) = (self.repo.clone(), self.head_entry()) else {
+        let (Some(repo), Some(entry)) = (self.repo.clone(), self.head_entry().cloned()) else {
             return beep();
         };
-        let Some(upstream) = entry.detail.clone().filter(|_| !entry.gone) else {
-            return beep();
-        };
-        let title = if entry.behind > 0 {
-            tr!(
-                "Pull {count} commits from {upstream}?",
-                count = entry.behind,
-                upstream = upstream
-            )
-        } else {
-            tr!("Pull from {upstream}?", upstream = upstream)
+        let branch = entry.name.clone();
+        let (title, sources) = match entry.detail.clone().filter(|_| !entry.gone) {
+            Some(upstream) if entry.behind > 0 => (
+                tr!(
+                    "Pull {count} commits from {upstream}?",
+                    count = entry.behind,
+                    upstream = upstream
+                ),
+                Vec::new(),
+            ),
+            Some(upstream) => (
+                tr!("Pull from {upstream}?", upstream = upstream),
+                Vec::new(),
+            ),
+            None => {
+                let remotes: Vec<String> = self
+                    .refs
+                    .as_ref()
+                    .map(|r| {
+                        r.refs
+                            .entries
+                            .iter()
+                            .filter(|e| {
+                                e.kind == amonhen_model::RefKind::Remote
+                                    && !e.name.ends_with("/HEAD")
+                            })
+                            .map(|e| e.name.clone())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let same = |n: &String| n.split_once('/').is_some_and(|(_, b)| b == branch);
+                let mut sources: Vec<String> =
+                    remotes.iter().filter(|n| same(n)).cloned().collect();
+                sources.extend(remotes.iter().filter(|n| !same(n)).cloned());
+                if sources.is_empty() {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("No remote branch to pull from"),
+                        message: tr!("Fetch, or add a remote in Repository Settings."),
+                    });
+                    return;
+                }
+                (tr!("Pull into {branch}?", branch = &branch), sources)
+            }
         };
         self.dialog = Some(Dialog::Pull {
             repo,
             title,
             mode: 0,
+            branch,
+            sources,
+            source: 0,
         });
     }
 
-    /// Repository > Push…: 上流へ送る（GTK4 版の `sheets::push`）。送るものがない・上流が先に進んでいるときは音で
-    /// 知らせる（Force Push・Publish はまだない）。
-    fn push(&mut self) {
-        let (Some(repo), Some(entry)) = (self.repo.clone(), self.head_entry()) else {
+    /// Repository > Push…・Force Push…（GTK4 版の `sheets::push_in`）。上流がなければ Publish。上流が先に進んで
+    /// いれば、Pull… か Force Push を選んでもらう。Force Push は、最後の Fetch の時点の上流のときだけ置き換える。
+    /// 送るコミットの一覧・前後の絵・注意はまだない。
+    fn push(&mut self, force: bool) {
+        let (Some(repo), Some(entry)) = (self.repo.clone(), self.head_entry().cloned()) else {
             return beep();
         };
+        let branch = entry.name.clone();
         let Some(upstream) = entry.detail.clone().filter(|_| !entry.gone) else {
-            return beep();
+            return self.publish(repo, branch);
         };
-        if entry.ahead == 0 || entry.behind > 0 {
+        let (outgoing, incoming) = (u64::from(entry.ahead), u64::from(entry.behind));
+        let diverged = !force && incoming > 0;
+        if !(force || diverged || outgoing > 0) || (diverged && outgoing == 0) {
             return beep();
         }
+        let (title, message) = if diverged {
+            (
+                tr!(
+                    "{upstream} has {count} commits you don’t have",
+                    upstream = &upstream,
+                    count = incoming
+                ),
+                tr!("Pull them first, or force push to replace them. Force Push can’t be undone."),
+            )
+        } else if force {
+            (
+                tr!("Force push {branch}?", branch = &branch),
+                if incoming > 0 {
+                    tr!(
+                        "{upstream} loses {count} commits. This can’t be undone.",
+                        upstream = &upstream,
+                        count = incoming
+                    )
+                } else {
+                    tr!(
+                        "It fails if {upstream} has moved since you last fetched.",
+                        upstream = &upstream
+                    )
+                },
+            )
+        } else {
+            (
+                tr!(
+                    "Push {count} commits to {upstream}?",
+                    count = outgoing,
+                    upstream = &upstream
+                ),
+                String::new(),
+            )
+        };
+        // 置き換えてよいのは、最後の Fetch の時点の上流（そのあと誰かが送っていれば断られる）。
+        let expect = self.refs.as_ref().and_then(|r| {
+            r.refs
+                .entries
+                .iter()
+                .find(|e| e.kind == amonhen_model::RefKind::Remote && e.name == upstream)
+                .and_then(|e| e.target)
+                .map(|t| t.to_string())
+        });
         let (remote, remote_branch) = upstream
             .split_once('/')
             .map(|(r, b)| (r.to_owned(), b.to_owned()))
             .unwrap_or_default();
         self.dialog = Some(Dialog::Push {
             repo,
-            title: tr!(
-                "Push {count} commits to {upstream}?",
-                count = entry.ahead,
-                upstream = upstream
-            ),
+            title,
+            message,
             remote,
-            branch: entry.name.clone(),
+            branch,
             remote_branch,
+            replace: force,
+            diverged,
+            expect,
         });
+    }
+
+    /// 上流のないブランチを初めて送る前に、送り先のリモートとそこでの名前を聞く（GTK4 版の `publish_in`。
+    /// 既定のリモートは、1 つならそれ、なければ origin）。
+    fn publish(&mut self, repo: Arc<Repository>, branch: String) {
+        let mut remotes: Vec<String> = self
+            .refs
+            .as_ref()
+            .map(|r| {
+                r.refs
+                    .entries
+                    .iter()
+                    .filter(|e| e.kind == amonhen_model::RefKind::Remote)
+                    .filter_map(|e| e.name.split_once('/').map(|(r, _)| r.to_owned()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        remotes.sort();
+        remotes.dedup();
+        if remotes.is_empty() {
+            self.dialog = Some(Dialog::Failed {
+                title: tr!("Can’t Publish"),
+                message: tr!(
+                    "This repository has no remotes. Add one in Repository > Add Remote…."
+                ),
+            });
+            return;
+        }
+        let remote = remotes.iter().position(|r| r == "origin").unwrap_or(0);
+        self.dialog = Some(Dialog::Publish {
+            repo,
+            name: branch.clone(),
+            branch,
+            remotes,
+            remote,
+        });
+        self.dialog_inputs += 1;
     }
 
     /// 窓の下のステータスバー: 走っている操作（なければ今のブランチ）。

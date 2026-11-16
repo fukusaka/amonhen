@@ -21,6 +21,7 @@ pub const IMPLEMENTED: &[&str] = &[
     "fetch",
     "pull",
     "push",
+    "force-push",
     "new-branch",
     "merge",
     "rebase",
