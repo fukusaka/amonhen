@@ -57,7 +57,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Merged-by-pull-request mark on a branch (squash or rebase on GitHub) | ✓ | ✓ | — | ✓ | △ | VSCode: With the engine; the number is in the row's tooltip. CLI: Via `amonhen run` (`branchGroups` with `pullRequests`); the apps and VSCode read merged pull requests with gh. |
 | Favorites reordered by dragging | ✓ | ✓ | — | ✓ | n/a | VSCode: Move Up and Move Down in Favorites on the menu (a drop on a branch offers Merge and Rebase). |
 | Branch menu: checkout, rename, delete (Delete Anyway when unmerged) | ✓ | ✓ | ✓ | ✓ | △ | macOS: Set Upstream is only in the Repository menu.<br>GTK4: Set Upstream is only in the Repository menu.<br>CLI: Via `amonhen run`. |
-| Sync a branch that is not checked out (Fast-Forward, Push, Publish) | ✓ | ✓ | — | ✓ | △ | CLI: Via `amonhen run`. |
+| Sync a branch that is not checked out (Fast-Forward, Push, Publish) | ✓ | ✓ | △ | ✓ | △ | CLI: Via `amonhen run`.<br>Windows: Windows: No before-and-after drawing for Fast-Forward. |
 | Tags listed | ✓ | ✓ | ✓ | ✓ | ✓ |  |
 | Tag marks for remotes (missing, different) with a popover | ✓ | ✓ | — | ✓ | △ | VSCode: In the row's description, each remote's state in the tooltip (no popover).<br>CLI: Via `amonhen run` (`tagRemotes`). |
 | Tag signature marks | ✓ | ✓ | — | ✓ | ✓ | VSCode: The row's icon, explained in the tooltip.<br>CLI: `refs --verify`. |

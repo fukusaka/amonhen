@@ -1847,6 +1847,43 @@ impl Component for Root {
                     self.reset(oid.to_owned());
                 } else if let Some(name) = key.strip_prefix("delete-branch:") {
                     self.check_delete(context, name.to_owned());
+                } else if let Some(name) = key.strip_prefix("push-branch:") {
+                    let entry = self.refs.as_ref().and_then(|r| {
+                        r.refs
+                            .entries
+                            .iter()
+                            .find(|e| e.kind == amonhen_model::RefKind::Local && e.name == name)
+                            .cloned()
+                    });
+                    match entry {
+                        Some(entry) => self.push_branch(entry, false),
+                        None => beep(),
+                    }
+                } else if let Some(name) = key.strip_prefix("fast-forward:") {
+                    // チェックアウトしないで上流まで進める（GTK4 版の `sheets::fast_forward`。前後の絵はまだない）。
+                    let upstream =
+                        self.refs
+                            .as_ref()
+                            .and_then(|r| {
+                                r.refs.entries.iter().find(|e| {
+                                    e.kind == amonhen_model::RefKind::Local && e.name == name
+                                })
+                            })
+                            .and_then(|e| e.detail.clone())
+                            .unwrap_or_default();
+                    if let Some(repo) = self.repo.clone() {
+                        self.dialog = Some(Dialog::Confirm {
+                            repo,
+                            title: tr!(
+                                "Fast-forward {branch} to {upstream}?",
+                                branch = name,
+                                upstream = &upstream
+                            ),
+                            message: tr!("You can Undo this (Ctrl+Alt+Z)."),
+                            button: "Fast-Forward".to_owned(),
+                            command: json!({ "op": "fastForward", "branch": name }),
+                        });
+                    }
                 } else if let Some(name) = key.strip_prefix("rename:") {
                     if let Some(repo) = self.repo.clone() {
                         self.dialog = Some(Dialog::Rename {
@@ -4198,6 +4235,7 @@ impl Root {
                 items.push(merge);
                 items.push(rebase);
                 items.push(MenuItem::separator("-integrate"));
+                items.extend(self.sync_items(entry));
             }
             RefKind::Remote => {
                 items.push(MenuItem::item(
@@ -4245,6 +4283,63 @@ impl Root {
                 tr!("Delete {name}…", name = name),
             ));
         }
+        items
+    }
+
+    /// チェックアウトしていないブランチを上流と合わせる項目（GTK4 版の `refops::sync_items`。最後の Fetch の
+    /// 時点）: 上流がなければ Publish、遅れているだけなら Fast-Forward（チェックアウトしないで進める）、先にある
+    /// だけなら Push。分かれていればチェックアウトして merge か rebase をする（上の項目）。
+    fn sync_items(&self, entry: &RefEntry) -> Vec<MenuItem> {
+        let name = &entry.name;
+        let mut items = Vec::new();
+        match &entry.detail {
+            Some(upstream) if !entry.gone => {
+                if (entry.ahead == 0) == (entry.behind == 0) {
+                    return items;
+                }
+                if entry.ahead > 0 {
+                    items.push(MenuItem::item(
+                        format!("push-branch:{name}"),
+                        tr!(
+                            "Push {branch} to {target}…",
+                            branch = name,
+                            target = upstream
+                        ),
+                    ));
+                } else if !self
+                    .worktrees
+                    .iter()
+                    .any(|w| w.branch.as_deref() == Some(name.as_str()))
+                {
+                    // ほかの worktree が checkout しているなら動かせない（その作業ツリーとずれる）。
+                    items.push(MenuItem::item(
+                        format!("fast-forward:{name}"),
+                        tr!(
+                            "Fast-Forward {name} to {upstream}…",
+                            name = name,
+                            upstream = upstream
+                        ),
+                    ));
+                }
+            }
+            _ => {
+                // リモートがなければ Publish の先がないので出さない（GTK4 版と同じ）。
+                let has_remote = self.refs.as_ref().is_some_and(|r| {
+                    r.refs
+                        .entries
+                        .iter()
+                        .any(|e| e.kind == amonhen_model::RefKind::Remote)
+                });
+                if !has_remote {
+                    return items;
+                }
+                items.push(MenuItem::item(
+                    format!("push-branch:{name}"),
+                    tr!("Publish {name}…", name = name),
+                ));
+            }
+        }
+        items.push(MenuItem::separator("-sync"));
         items
     }
 
@@ -4435,7 +4530,15 @@ impl Root {
     /// いれば、Pull… か Force Push を選んでもらう。Force Push は、最後の Fetch の時点の上流のときだけ置き換える。
     /// 送るコミットの一覧・前後の絵・注意はまだない。
     fn push(&mut self, force: bool) {
-        let (Some(repo), Some(entry)) = (self.repo.clone(), self.head_entry().cloned()) else {
+        match self.head_entry().cloned() {
+            Some(entry) => self.push_branch(entry, force),
+            None => beep(),
+        }
+    }
+
+    /// ブランチ `entry` を上流へ送る（上流がなければ Publish）。チェックアウトしていないブランチもサイドバーから。
+    fn push_branch(&mut self, entry: RefEntry, force: bool) {
+        let Some(repo) = self.repo.clone() else {
             return beep();
         };
         let branch = entry.name.clone();
