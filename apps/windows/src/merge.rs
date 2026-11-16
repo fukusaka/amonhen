@@ -25,6 +25,9 @@ pub struct State {
     pub note: String,
     /// ファイルの改行が CRLF か（Result の欄から戻る文字の改行を、これに揃える）。
     pub crlf: bool,
+    /// Result の欄に打ったままの文字（None なら `result` を出す）。揃えた値で欄を書き直すと、打つたびにカーソルが
+    /// 先頭に戻るので、打っている間は欄の文字をそのまま返す。
+    pub typed: Option<String>,
 }
 
 impl State {
@@ -37,6 +40,7 @@ impl State {
             selected: 0,
             note: String::new(),
             crlf: false,
+            typed: None,
         }
     }
 
@@ -46,6 +50,7 @@ impl State {
             Ok(info) => {
                 let text = |k: &str| info[k]["text"].as_str().unwrap_or_default().to_owned();
                 self.result = info["result"].as_str().unwrap_or_default().to_owned();
+                self.typed = None;
                 self.crlf = self.result.contains("\r\n");
                 self.saved = self.result.clone();
                 self.sides = Some(Ok((text("current"), text("incoming"))));
@@ -69,6 +74,7 @@ impl State {
 
     /// Result の欄で書き換えた文字を取り込む。WinUI の TextBox は改行を `\r` で返すので、ファイルの改行に戻す。
     pub fn edit(&mut self, text: &str) {
+        self.typed = Some(text.to_owned());
         let text = text.replace("\r\n", "\n").replace('\r', "\n");
         self.result = if self.crlf {
             text.replace('\n', "\r\n")
@@ -91,6 +97,7 @@ impl State {
     pub fn accept(&mut self, choice: Choice) {
         if let Some(text) = conflict::resolve(self.result.as_bytes(), self.selected, choice) {
             self.result = String::from_utf8_lossy(&text).into_owned();
+            self.typed = None;
             self.clamp();
             self.note.clear();
         }
@@ -101,6 +108,7 @@ impl State {
         let (merged, solved) = conflict::magic(self.result.as_bytes(), MagicRules::All, None);
         if solved > 0 {
             self.result = String::from_utf8_lossy(&merged).into_owned();
+            self.typed = None;
             self.clamp();
         }
         // Undo は 1 つずつではなく、Result の欄の Ctrl+Z でまとめて戻る（GTK4 版の文言の後半は当てはまらない）。
@@ -243,7 +251,12 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 .grid_row(1)
                 .children((
                     pane(tr!("Current (your branch)"), current, 0, false),
-                    pane(tr!("Result (editable)"), &state.result, 1, true),
+                    pane(
+                        tr!("Result (editable)"),
+                        state.typed.as_deref().unwrap_or(&state.result),
+                        1,
+                        true,
+                    ),
                     pane(tr!("Incoming (being merged in)"), incoming, 2, false),
                 ))
         }
