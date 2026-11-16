@@ -965,6 +965,16 @@ impl Component for Root {
                 self.write_repo_settings(Vec::new(), context);
             }
             Message::Command(id) if id == "stash" => self.ask_stash(Vec::new()),
+            Message::Command(id) if id == "am-three-way" => {
+                if let Some(repo) = self.repo.clone() {
+                    perform(
+                        context,
+                        repo,
+                        json!({ "op": "amThreeWay" }),
+                        tr!("Retry with 3-Way Merge"),
+                    );
+                }
+            }
             Message::Command(id)
                 if matches!(
                     id.as_str(),
@@ -6717,6 +6727,14 @@ impl Root {
                 sequence: sequence
                     .as_ref()
                     .map(|(t, d, skip)| (t.as_str(), d.as_str(), *skip)),
+                // 止まった git am: コンフリクトがなく、まだ 3-way でやり直していなければ（GTK4 版の `retry`）。
+                retry_three_way: self.sequence.as_ref().is_some_and(|s| {
+                    s["kind"] == "am"
+                        && conflicts == 0
+                        && s["threeWay"].as_bool() != Some(true)
+                        && s["retried"].as_bool() != Some(true)
+                        && s["empty"].as_bool() != Some(true)
+                }),
             },
             callbacks,
         );

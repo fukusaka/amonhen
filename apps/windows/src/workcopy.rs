@@ -389,6 +389,8 @@ pub struct Input<'a> {
     pub amend: bool,
     /// 途中の操作（1 行目の見出し、2 行目の説明、Skip できるか）。あれば上に帯を出す。
     pub sequence: Option<(&'a str, &'a str, bool)>,
+    /// 止まった git am を 3-way マージでやり直せるか（帯に Retry with 3-Way Merge を出す。GTK4 版と同じ条件）。
+    pub retry_three_way: bool,
 }
 
 /// 画面が受ける操作。
@@ -842,7 +844,13 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
                                 .spacing(6.0)
                                 .grid_column(1)
                                 .children((
-                                    button("continue", "Continue", true),
+                                    if input.retry_three_way {
+                                        button("am-three-way", &tr!("Retry with 3-Way Merge"), true)
+                                    } else {
+                                        View::empty()
+                                    },
+                                    // やり直せるうちは Continue を押せない（解くものが残っている。GTK4 版と同じ）。
+                                    button("continue", "Continue", !input.retry_three_way),
                                     button("skip", "Skip", skip),
                                     button("abort", "Abort", true),
                                 )),
