@@ -21,6 +21,7 @@ pub const IMPLEMENTED: &[&str] = &[
     "fetch",
     "pull",
     "push",
+    "new-branch",
 ];
 
 /// 項目の名前（GTK4 版の `appmenu::title` と同じ）。

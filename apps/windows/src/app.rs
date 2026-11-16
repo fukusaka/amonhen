@@ -92,6 +92,9 @@ struct Root {
     working_file: Option<String>,
     /// 走っている操作（ステータスバーに出す）。
     busy: Option<String>,
+    /// ダイアログの入力の欄（Enter で既定のボタンを押す）と、開いた回数（開いた後にキーを付ける）。
+    dialog_input: ElementRef<TextBox>,
+    dialog_inputs: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -130,6 +133,19 @@ enum Dialog {
         remote: String,
         branch: String,
         remote_branch: String,
+    },
+    /// 新しいブランチの名前を聞く（`start` から作って切り替える）。
+    NewBranch {
+        repo: Arc<Repository>,
+        start: String,
+        name: String,
+    },
+    /// Checkout の確認（GTK4 版の `sheets::checkout`）。
+    Checkout {
+        repo: Arc<Repository>,
+        title: String,
+        message: String,
+        command: Value,
     },
     /// Working Copy のファイルの変更を捨てる（untracked なら消す）確認。
     Discard {
@@ -180,6 +196,8 @@ enum Message {
     DiscardFile(String),
     /// Working Copy の一覧で選んだファイル（何番目か）。
     WorkingFile(Option<usize>),
+    /// 新しいブランチの名前が変わった。
+    BranchName(String),
     /// Pull のダイアログで、取り込み方を選んだ。
     PullMode(Option<usize>),
     /// Fetch のダイアログに出すリモート（なければ空）。
@@ -225,6 +243,8 @@ impl Component for Root {
             search_opened: 0,
             working_file: None,
             busy: None,
+            dialog_input: ElementRef::new(),
+            dialog_inputs: 0,
         }
     }
 
@@ -249,6 +269,21 @@ impl Component for Root {
             Message::Failed(e) => self.error = Some(e),
             Message::Command(id) if id == "undo" => self.undo(context),
             Message::Command(id) if id == "pull" => self.pull(),
+            Message::Command(id) if id == "new-branch" => {
+                // 選んでいるコミットから（なければ今のブランチから。GTK4 版の `start_point`）。
+                let start = self
+                    .selected
+                    .as_ref()
+                    .map(|(id, _)| id.clone())
+                    .or_else(|| self.refs.as_ref()?.refs.head_branch.clone())
+                    .unwrap_or_else(|| "HEAD".to_owned());
+                self.new_branch(start);
+            }
+            Message::BranchName(name) => {
+                if let Some(Dialog::NewBranch { name: current, .. }) = &mut self.dialog {
+                    *current = name;
+                }
+            }
             Message::Command(id) if id == "push" => self.push(),
             Message::PullMode(index) => {
                 if let (Some(Dialog::Pull { mode, .. }), Some(index)) = (&mut self.dialog, index) {
@@ -318,6 +353,20 @@ impl Component for Root {
             Message::DialogClosed(result) => match (self.dialog.take(), result) {
                 (Some(Dialog::Undo { repo, .. }), ContentDialogResult::Primary) => {
                     perform(context, repo, json!({ "op": "undo" }), tr!("Couldn’t Undo"));
+                }
+                (Some(Dialog::NewBranch { repo, start, name }), ContentDialogResult::Primary) => {
+                    let name = name.trim().to_owned();
+                    if !name.is_empty() {
+                        perform(
+                            context,
+                            repo,
+                            json!({ "op": "createBranch", "name": name, "start": start, "checkout": true }),
+                            tr!("Create"),
+                        );
+                    }
+                }
+                (Some(Dialog::Checkout { repo, command, .. }), ContentDialogResult::Primary) => {
+                    perform(context, repo, command, "Checkout".to_owned());
                 }
                 (Some(Dialog::Pull { repo, mode, .. }), ContentDialogResult::Primary) => {
                     self.busy = Some("Pull…".to_owned());
@@ -495,6 +544,14 @@ impl Component for Root {
             Message::HistoryMenu(key) => {
                 if let Some(text) = key.strip_prefix("copy:") {
                     copy_text(text);
+                } else if let Some(name) = key.strip_prefix("checkout:") {
+                    self.checkout(CheckoutTarget::Branch(name.to_owned()));
+                } else if let Some(name) = key.strip_prefix("track:") {
+                    self.checkout(CheckoutTarget::Track(name.to_owned()));
+                } else if let Some(oid) = key.strip_prefix("detach:") {
+                    self.checkout(CheckoutTarget::Detach(oid.to_owned()));
+                } else if let Some(oid) = key.strip_prefix("branch:") {
+                    self.new_branch(oid.to_owned());
                 }
             }
             Message::Performed(failed) => {
@@ -714,6 +771,22 @@ impl Component for Root {
                 // いて、外すと止まる）。
                 self.working_copy_view(context),
             ));
+        // ダイアログの入力の欄: フォーカスを入れ、Enter で既定のボタン（ContentDialog は Enter を既定のボタンに
+        // 回さない）。
+        if self.dialog_inputs > 0 {
+            let input = self.dialog_input.clone();
+            context.use_effect("dialog-input", self.dialog_inputs, move || {
+                let _ = input.request_focus();
+                let _ = input.request_native_element(|result| {
+                    if let Ok(element) = result
+                        && let Err(e) = attach_enter(&element)
+                    {
+                        eprintln!("入力の欄にキーを付けられない: {e}");
+                    }
+                });
+                None
+            });
+        }
         let dialog = self.dialog_view(context);
         Grid::new()
             .element_ref(&self.root)
@@ -763,6 +836,33 @@ impl Root {
                 .content(
                     TextBlock::new()
                         .text(what.clone())
+                        .text_wrapping(TextWrapping::Wrap),
+                ),
+            Some(Dialog::NewBranch { start, name, .. }) => dialog
+                .is_open(true)
+                .title(tr!("New Branch from {name}", name = shown_start(start)))
+                .primary_button_text(tr!("Create"))
+                .close_button_text(tr!("Cancel"))
+                .is_primary_button_enabled(!name.trim().is_empty())
+                .content(
+                    StackPanel::new().spacing(6.0).children((
+                        TextBlock::new()
+                            .text(tr!("Name of the branch. It is checked out."))
+                            .text_wrapping(TextWrapping::Wrap),
+                        TextBox::new()
+                            .element_ref(&self.dialog_input)
+                            .text(name.clone())
+                            .on_text_changed(context.callback(Message::BranchName)),
+                    )),
+                ),
+            Some(Dialog::Checkout { title, message, .. }) => dialog
+                .is_open(true)
+                .title(title.clone())
+                .primary_button_text("Checkout")
+                .close_button_text(tr!("Cancel"))
+                .content(
+                    TextBlock::new()
+                        .text(message.clone())
                         .text_wrapping(TextWrapping::Wrap),
                 ),
             Some(Dialog::Pull { title, mode, .. }) => {
@@ -860,6 +960,71 @@ impl Root {
                         .is_text_selection_enabled(true),
                 ),
         }
+    }
+
+    fn new_branch(&mut self, start: String) {
+        let Some(repo) = self.repo.clone() else {
+            return beep();
+        };
+        self.dialog = Some(Dialog::NewBranch {
+            repo,
+            start,
+            name: String::new(),
+        });
+        self.dialog_inputs += 1;
+    }
+
+    /// Checkout の確認を出す（GTK4 版の `sheets::checkout` の見出しと説明。作業中の変更も持って行くと添える）。
+    fn checkout(&mut self, target: CheckoutTarget) {
+        let Some(repo) = self.repo.clone() else {
+            return beep();
+        };
+        let (title, command, line) = match &target {
+            CheckoutTarget::Branch(name) => (
+                tr!("Checkout {name}?", name = name),
+                json!({ "op": "checkout", "branch": name }),
+                String::new(),
+            ),
+            CheckoutTarget::Track(remote) => (
+                tr!("Checkout {name}?", name = remote),
+                json!({ "op": "track", "remoteBranch": remote }),
+                tr!(
+                    "Creates {local} tracking {remote}.",
+                    local = remote.split_once('/').map_or(remote.as_str(), |(_, b)| b),
+                    remote = remote
+                ),
+            ),
+            CheckoutTarget::Detach(oid) => (
+                tr!("Checkout {name}?", name = &oid[..oid.len().min(8)]),
+                json!({ "op": "detach", "oid": oid }),
+                tr!("HEAD is detached (on no branch)."),
+            ),
+        };
+        let changed = self.status.as_ref().map_or(0, |s| {
+            s.status
+                .entries
+                .iter()
+                .filter(|e| e.kind != amonhen_model::StatusKind::Untracked)
+                .count()
+        });
+        let mut lines = vec![line];
+        if changed > 0 {
+            lines.push(tr!(
+                "{count} files with uncommitted changes come along.",
+                count = changed
+            ));
+        }
+        let message = lines
+            .into_iter()
+            .filter(|l| !l.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ");
+        self.dialog = Some(Dialog::Checkout {
+            repo,
+            title,
+            message,
+            command,
+        });
     }
 
     /// 今のブランチの、ref の一覧の行（上流は `detail`、上流との差は `ahead`・`behind`）。
@@ -1002,7 +1167,41 @@ impl Root {
         let Some((id, labels)) = &self.selected else {
             return Vec::new();
         };
-        let mut items = vec![MenuItem::item(format!("copy:{id}"), tr!("Copy Commit ID"))];
+        let head = self.refs.as_ref().and_then(|r| r.refs.head_branch.clone());
+        let mut items = Vec::new();
+        // Checkout: このコミットを指すローカルブランチ（今のブランチは除く）、リモートブランチ、なければコミット。
+        let mut checkouts = 0;
+        for label in labels.iter().take(5) {
+            match label.kind {
+                amonhen_model::RefKind::Local if Some(&label.name) != head.as_ref() => {
+                    items.push(MenuItem::item(
+                        format!("checkout:{}", label.name),
+                        tr!("Checkout {name}…", name = label.name),
+                    ));
+                    checkouts += 1;
+                }
+                amonhen_model::RefKind::Remote => {
+                    items.push(MenuItem::item(
+                        format!("track:{}", label.name),
+                        tr!("Checkout {name} as Local Branch…", name = label.name),
+                    ));
+                    checkouts += 1;
+                }
+                _ => {}
+            }
+        }
+        if checkouts == 0 && !labels.iter().any(|l| Some(&l.name) == head.as_ref()) {
+            items.push(MenuItem::item(
+                format!("detach:{id}"),
+                tr!("Checkout {name}…", name = &id[..8]),
+            ));
+        }
+        items.push(MenuItem::item(
+            format!("branch:{id}"),
+            tr!("New Branch from {name}…", name = &id[..8]),
+        ));
+        items.push(MenuItem::separator("-copy"));
+        items.push(MenuItem::item(format!("copy:{id}"), tr!("Copy Commit ID")));
         // このコミットを指すブランチ・タグの名前（リモートブランチは origin/ を付けたまま。5 つまで）。
         for label in labels.iter().take(5) {
             let name = &label.name;
@@ -1026,6 +1225,21 @@ impl Root {
             .iter()
             .find(|e| e.kind as u8 == kind && e.name == name)
     }
+}
+
+/// 切り替える先（GTK4 版の `sheets::CheckoutTarget`）。
+enum CheckoutTarget {
+    Branch(String),
+    /// リモートのブランチを追跡するローカルブランチを作って切り替える。
+    Track(String),
+    /// コミットを detached HEAD で。
+    Detach(String),
+}
+
+/// 見出しに出す起点（全桁のコミット ID なら 8 桁に。GTK4 版の `titles::shown_start`）。
+fn shown_start(rev: &str) -> &str {
+    let full = matches!(rev.len(), 40 | 64) && rev.bytes().all(|b| b.is_ascii_hexdigit());
+    if full { &rev[..8] } else { rev }
 }
 
 /// Pull の取り込み方（GTK4 版の `PULL_MODES`。Settings の Pull の既定と同じ名前）。
@@ -1844,6 +2058,24 @@ fn attach_search_keys(element: &IInspectable) -> windows_core_reactor::Result<()
         let _ = args.SetHandled(true);
         with_history(|h| {
             h.sender.send(message);
+        });
+    })?;
+    REVOKERS.with(|r| r.borrow_mut().push(revoker));
+    Ok(())
+}
+
+/// ダイアログの入力の欄の Enter で、既定のボタンを押したことにする。
+fn attach_enter(element: &IInspectable) -> windows_core_reactor::Result<()> {
+    let ui: xaml::UIElement = element.cast()?;
+    let revoker = ui.PreviewKeyDown(|_, args: Ref<xaml::KeyRoutedEventArgs>| {
+        let Some(args) = args.as_ref() else { return };
+        if args.Key().ok() != Some(xaml::VirtualKey::Enter) {
+            return;
+        }
+        let _ = args.SetHandled(true);
+        with_history(|h| {
+            h.sender
+                .send(Message::DialogClosed(ContentDialogResult::Primary));
         });
     })?;
     REVOKERS.with(|r| r.borrow_mut().push(revoker));
