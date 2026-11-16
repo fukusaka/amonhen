@@ -33,6 +33,130 @@ pub fn visible<'a>(entries: &'a [StatusEntry], filter: &str) -> Vec<&'a StatusEn
         .collect()
 }
 
+/// 一覧の見せ方（GTK4 版・macOS 版と同じ 3 つ。設定に覚える名前は `list`・`tree`・`flat`）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Layout {
+    /// パスの一覧。
+    List,
+    /// ディレクトリの木。
+    Tree,
+    /// ファイル名を先に、親のディレクトリを薄く。
+    Flat,
+}
+
+impl Layout {
+    pub fn name(self) -> &'static str {
+        match self {
+            Layout::List => "list",
+            Layout::Tree => "tree",
+            Layout::Flat => "flat",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Self {
+        match name {
+            "tree" => Layout::Tree,
+            "flat" => Layout::Flat,
+            _ => Layout::List,
+        }
+    }
+}
+
+/// 一覧の 1 行: ディレクトリ（木のときだけ）か、ファイル。
+pub enum Row<'a> {
+    Dir {
+        name: String,
+        path: String,
+        depth: usize,
+        /// 中の（コンフリクト以外の）ファイルのパスと、すべて含めているか・一部でも含めているか。
+        files: Vec<String>,
+        all: bool,
+        some: bool,
+    },
+    File {
+        entry: &'a StatusEntry,
+        depth: usize,
+    },
+}
+
+/// 一覧の行（`entries` は絞り込んだもの）。木では、ディレクトリの行と、その中のファイル（コンフリクトを先に）。
+/// 子が 1 つのディレクトリだけなら名前をつなぐ（GTK4 版の `tree`）。
+pub fn rows<'a>(entries: &[&'a StatusEntry], layout: Layout) -> Vec<Row<'a>> {
+    if layout != Layout::Tree {
+        return entries
+            .iter()
+            .map(|e| Row::File { entry: e, depth: 0 })
+            .collect();
+    }
+    #[derive(Default)]
+    struct Dir<'a> {
+        dirs: std::collections::BTreeMap<String, Dir<'a>>,
+        files: Vec<&'a StatusEntry>,
+    }
+    let mut root = Dir::default();
+    for e in entries {
+        let mut dir = &mut root;
+        let parts: Vec<&str> = e.path.split('/').collect();
+        for part in &parts[..parts.len() - 1] {
+            dir = dir.dirs.entry((*part).to_owned()).or_default();
+        }
+        dir.files.push(e);
+    }
+    /// `dir` の行を `out` に足し、中の（コンフリクト以外の）ファイルを返す。
+    fn walk<'a>(
+        dir: &Dir<'a>,
+        prefix: &str,
+        depth: usize,
+        out: &mut Vec<Row<'a>>,
+    ) -> Vec<&'a StatusEntry> {
+        let mut inside_all = Vec::new();
+        for (name, child) in &dir.dirs {
+            let (mut name, mut child) = (name.clone(), child);
+            while child.files.is_empty() && child.dirs.len() == 1 {
+                let (n, c) = child.dirs.iter().next().expect("one");
+                name = format!("{name}/{n}");
+                child = c;
+            }
+            let path = if prefix.is_empty() {
+                name.clone()
+            } else {
+                format!("{prefix}/{name}")
+            };
+            let at = out.len();
+            out.push(Row::Dir {
+                name,
+                path: path.clone(),
+                depth,
+                files: Vec::new(),
+                all: false,
+                some: false,
+            });
+            let inside = walk(child, &path, depth + 1, out);
+            if let Row::Dir {
+                files, all, some, ..
+            } = &mut out[at]
+            {
+                *files = inside.iter().map(|e| e.path.clone()).collect();
+                *all = !inside.is_empty() && inside.iter().all(|e| included(e));
+                *some = inside.iter().any(|e| e.is_staged());
+            }
+            inside_all.extend(inside);
+        }
+        let mut files = dir.files.clone();
+        files.sort_by_key(|e| (e.kind != StatusKind::Unmerged, &e.path));
+        for e in files {
+            if e.kind != StatusKind::Unmerged {
+                inside_all.push(e);
+            }
+            out.push(Row::File { entry: e, depth });
+        }
+        inside_all
+    }
+    let mut out = Vec::new();
+    walk(&root, "", 0, &mut out);
+    out
+}
+
 /// `.gitignore` の中身に `pattern` の行を足したもの（もうあれば None。GTK4 版の `with_ignore_pattern`）。改行は
 /// ファイルに合わせる（Windows では CRLF のことが多い）。
 pub fn with_ignore_pattern(gitignore: &str, pattern: &str) -> Option<String> {
@@ -215,6 +339,10 @@ pub struct Input<'a> {
     pub filter: &'a str,
     /// ファイルごとの行数（追加, 削除。バイナリは None）。読めていなければ空。
     pub stats: &'a std::collections::HashMap<String, (Option<u64>, Option<u64>)>,
+    /// 一覧の見せ方と、切り替えのボタンを押した回数（押すたびにボタンを作り直し、押したままのボタンを
+    /// もう一度押しても外れないようにする）。
+    pub layout: Layout,
+    pub layout_clicks: u64,
     /// 一覧を包む Grid（Space・Delete のキーを付ける）。
     pub list_host: &'a ElementRef<Grid>,
     /// 最近のコミットの（メッセージ, 作者, メール）。新しい順。
@@ -239,6 +367,10 @@ pub struct Callbacks<'a> {
     pub stage: Box<dyn Fn(String) -> Callback<bool> + 'a>,
     pub selected: Callback<Option<usize>>,
     pub filter: Callback<String>,
+    /// 一覧の見せ方を替える。
+    pub layout: Box<dyn Fn(Layout) -> Callback<bool> + 'a>,
+    /// ディレクトリの中のファイルをまとめて含める（true）・外す（false）。
+    pub stage_all: Box<dyn Fn(Vec<String>, bool) -> Callback<bool> + 'a>,
     /// 最近のメッセージ・「+」のメニューで選んだ項目のキー。
     pub message_menu: Callback<String>,
     pub amend: Callback<bool>,
@@ -378,16 +510,90 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
                     callbacks.message_menu.clone(),
                 )),
         ));
-    let filter = TextBox::new()
-        .text(input.filter)
-        .placeholder_text(tr!("Filter"))
+    // 絞り込みと、一覧の見せ方の切り替え（GTK4 版の一覧の上の 3 つのボタン）。
+    let layout_button = |layout: Layout, title: &str, tip: String, column: i32| -> View {
+        ToggleButton::new()
+            .is_checked(input.layout == layout)
+            .on_is_checked_changed((callbacks.layout)(layout))
+            .margin(Thickness::new(4.0, 0.0, 0.0, 0.0))
+            .grid_column(column)
+            .content(TextBlock::new().text(title))
+            .tooltip(tip)
+    };
+    let filter = Grid::new()
+        .columns([
+            GridLength::Star(1.0),
+            GridLength::Auto,
+            GridLength::Auto,
+            GridLength::Auto,
+        ])
         .margin(Thickness::new(0.0, 0.0, 0.0, 6.0))
         .grid_row(3)
-        .on_text_changed(callbacks.filter);
-    let rows = entries.iter().map(|entry| {
+        .children((
+            TextBox::new()
+                .text(input.filter)
+                .placeholder_text(tr!("Filter"))
+                .grid_column(0)
+                .on_text_changed(callbacks.filter),
+            View::keyed_fragment([(
+                input.layout_clicks,
+                View::fragment((
+                    layout_button(Layout::List, "☰", tr!("Show files as a list of paths"), 1),
+                    layout_button(Layout::Tree, "🗀", tr!("Show files as a directory tree"), 2),
+                    layout_button(
+                        Layout::Flat,
+                        "🗎",
+                        tr!("Show the file name first and the parent directory dimmed"),
+                        3,
+                    ),
+                )),
+            )]),
+        ));
+    let indent = |depth: usize| Thickness::new(18.0 * depth as f64, 0.0, 0.0, 0.0);
+    let rows = rows(&entries, input.layout).into_iter().map(|row| {
+        let (entry, depth) = match row {
+            Row::Dir {
+                name,
+                path,
+                depth,
+                files,
+                all,
+                some,
+            } => {
+                // 一部だけ含めているディレクトリは、薄いチェック（reactor の CheckBox に 3 つ目の状態がない）。
+                let check = CheckBox::new()
+                    .is_checked(some)
+                    .is_enabled(!files.is_empty())
+                    .on_is_checked_changed((callbacks.stage_all)(files, !all))
+                    .opacity(if some && !all { 0.5 } else { 1.0 })
+                    .grid_column(0);
+                let row = Grid::new()
+                    .columns([GridLength::Auto, GridLength::Star(1.0)])
+                    .margin(indent(depth))
+                    .children((
+                        check,
+                        TextBlock::new()
+                            .text(format!("🗀  {name}"))
+                            .opacity(0.8)
+                            .vertical_alignment(VerticalAlignment::Center)
+                            .text_trimming(TextTrimming::CharacterEllipsis)
+                            .grid_column(1),
+                    ));
+                let key = format!("dir:{path}");
+                return (key.clone(), ListViewItem::new().tag(key).content(row));
+            }
+            Row::File { entry, depth } => (entry, depth),
+        };
+        let (parent, file) = entry.path.rsplit_once('/').unwrap_or(("", &entry.path));
+        let shown = match input.layout {
+            Layout::List => entry.path.as_str(),
+            _ => file,
+        };
         let label = match &entry.orig_path {
-            Some(from) => format!("{}  {from} → {}", mark(entry), entry.path),
-            None => format!("{}  {}", mark(entry), entry.path),
+            Some(from) if input.layout == Layout::List => {
+                format!("{}  {from} → {}", mark(entry), entry.path)
+            }
+            _ => format!("{}  {shown}", mark(entry)),
         };
         // 行数（+ 追加 − 削除。0 の側は出さない。行数のないバイナリは薄く「bin」。GTK4 版の `fill_counts`）。
         let counts = input
@@ -422,6 +628,28 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
                     count(removed, "−", Color::rgb(0xcf, 0x22, 0x2e), 3),
                 ))
             });
+        // File Name: 親のディレクトリを、名前の後ろに薄く。
+        let name: View = if input.layout == Layout::Flat && !parent.is_empty() {
+            StackPanel::new()
+                .orientation(Orientation::Horizontal)
+                .spacing(8.0)
+                .vertical_alignment(VerticalAlignment::Center)
+                .grid_column(1)
+                .children((
+                    TextBlock::new().text(label),
+                    TextBlock::new()
+                        .text(parent.to_owned())
+                        .opacity(0.5)
+                        .text_trimming(TextTrimming::CharacterEllipsis),
+                ))
+        } else {
+            TextBlock::new()
+                .text(label)
+                .vertical_alignment(VerticalAlignment::Center)
+                .text_trimming(TextTrimming::CharacterEllipsis)
+                .grid_column(1)
+                .into()
+        };
         let row = Grid::new()
             .columns([
                 GridLength::Auto,
@@ -429,16 +657,13 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
                 GridLength::Auto,
                 GridLength::Auto,
             ])
+            .margin(indent(depth))
             .children((
                 CheckBox::new()
                     .is_checked(included(entry))
                     .on_is_checked_changed((callbacks.stage)(entry.path.clone()))
                     .grid_column(0),
-                TextBlock::new()
-                    .text(label)
-                    .vertical_alignment(VerticalAlignment::Center)
-                    .text_trimming(TextTrimming::CharacterEllipsis)
-                    .grid_column(1),
+                name,
                 counts,
             ));
         // 右クリック: Blame・File History（git がまだ知らない untracked のファイルにはない）と、変更を捨てる（untracked
@@ -501,7 +726,7 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
         .element_ref(input.list_host)
         .grid_row(4)
         .children((View::keyed_fragment([(
-            format!("{generation}:{}", input.filter),
+            format!("{generation}:{}:{}", input.filter, input.layout.name()),
             list,
         )]),));
     // 途中の操作の帯: 何の途中かと、Continue・Skip（1 つずつ当てていく操作だけ）・Abort（GTK4 版のメニューの

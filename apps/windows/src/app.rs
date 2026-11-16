@@ -119,6 +119,9 @@ struct Root {
     worktrees: Vec<WorktreeInfo>,
     /// Working Copy のパスの絞り込み。
     working_filter: String,
+    /// Working Copy の一覧の見せ方と、切り替えのボタンを押した回数。
+    working_layout: crate::workcopy::Layout,
+    layout_clicks: u64,
     /// Working Copy のファイルごとの行数（`workingStats`。status が替わるたびに読み直す）。
     working_stats: std::collections::HashMap<String, (Option<u64>, Option<u64>)>,
     /// 最近のコミットの（メッセージ, 作者, メール）。最近のメッセージと Co-authored-by の候補。
@@ -403,6 +406,10 @@ enum Message {
     Confirm(Arc<Repository>, String, String, String, Value),
     /// Working Copy のパスの絞り込み。
     WorkingFilter(String),
+    /// Working Copy の一覧の見せ方を替える。
+    WorkingLayout(crate::workcopy::Layout),
+    /// ディレクトリの中のファイルをまとめて含める・外す。
+    StageAll(Vec<String>, bool),
     /// Working Copy のファイルごとの行数を読んだ（読んだ status の generation と、パスごとの行数）。
     WorkingStats(
         u64,
@@ -559,6 +566,10 @@ impl Component for Root {
             stash: None,
             worktrees: Vec::new(),
             working_filter: String::new(),
+            working_layout: crate::workcopy::Layout::from_name(
+                &crate::prefs::string(crate::prefs::WORKING_COPY_LAYOUT).unwrap_or_default(),
+            ),
+            layout_clicks: 0,
             working_stats: Default::default(),
             draft_key: None,
             push_after_commit: false,
@@ -1760,9 +1771,14 @@ impl Component for Root {
                 // 一覧は status が替わるたびに作り直すので、選び直しの知らせ（None）は無視して前の選択を保つ。
                 if let Some(index) = index {
                     let path = self.status.as_ref().and_then(|s| {
-                        crate::workcopy::visible(&s.status.entries, &self.working_filter)
-                            .get(index)
-                            .map(|e| e.path.clone())
+                        let visible =
+                            crate::workcopy::visible(&s.status.entries, &self.working_filter);
+                        match crate::workcopy::rows(&visible, self.working_layout).get(index) {
+                            Some(crate::workcopy::Row::File { entry, .. }) => {
+                                Some(entry.path.clone())
+                            }
+                            _ => None,
+                        }
                     });
                     self.working_file = path;
                     self.load_working_diff();
@@ -2668,6 +2684,29 @@ impl Component for Root {
                 }
             }
             Message::WorkingFilter(text) => self.working_filter = text,
+            Message::WorkingLayout(layout) => {
+                self.layout_clicks += 1;
+                if layout != self.working_layout {
+                    self.working_layout = layout;
+                    let _ =
+                        crate::prefs::set_string(crate::prefs::WORKING_COPY_LAYOUT, layout.name());
+                }
+            }
+            Message::StageAll(paths, include) => {
+                let Some(repo) = self.repo.clone() else {
+                    return;
+                };
+                context.spawn_background(move |_| {
+                    let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
+                    let result = if include {
+                        repo.stage(&paths)
+                    } else {
+                        repo.unstage(&paths)
+                    };
+                    with_status_reload();
+                    Message::Performed(result.err().map(|e| (tr!("Couldn’t Stage"), e.to_string())))
+                });
+            }
             Message::WorkingStats(generation, stats) => {
                 // 読む間に status が替わっていれば捨てる（替わった分が別に届く）。
                 if self.status.as_ref().map(|s| s.generation) == Some(generation) {
@@ -5197,6 +5236,10 @@ impl Root {
             }),
             selected: context.callback(Message::WorkingFile),
             filter: context.callback(Message::WorkingFilter),
+            layout: Box::new(|layout| context.callback(move |_| Message::WorkingLayout(layout))),
+            stage_all: Box::new(|paths: Vec<String>, include: bool| {
+                context.callback(move |_| Message::StageAll(paths.clone(), include))
+            }),
             message_menu: context.callback(Message::CommitTextMenu),
             amend: context.callback(Message::Amend),
             file_menu: Box::new(|path: String| {
@@ -5225,6 +5268,8 @@ impl Root {
             crate::workcopy::Input {
                 status: self.status.as_deref(),
                 filter: &self.working_filter,
+                layout: self.working_layout,
+                layout_clicks: self.layout_clicks,
                 stats: &self.working_stats,
                 list_host: &self.working_list,
                 recent: &self.recent_messages,

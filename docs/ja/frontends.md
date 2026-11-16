@@ -220,8 +220,8 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
-| 1 つのチェックボックスの一覧（☑ ▣ ☐、見出し・フォルダーのチェック） | ✓ | ✓ | △ | ✓ | n/a | VSCode: Staged と Changes が別のグループ。<br>Windows: ファイルごとのチェック。見出し・フォルダのチェックはない。 |
-| List / Tree / File Name | ✓ | ✓ | — | ✓ | n/a |  |
+| 1 つのチェックボックスの一覧（☑ ▣ ☐、見出し・フォルダーのチェック） | ✓ | ✓ | △ | ✓ | n/a | VSCode: Staged と Changes が別のグループ。<br>Windows: ファイルとフォルダのチェック（一部だけ含めるフォルダは薄いチェック）。見出しのチェックはない。 |
+| List / Tree / File Name | ✓ | ✓ | △ | ✓ | n/a | Windows: Windows: 木のフォルダはまだ畳めない。 |
 | パスで絞り込む | ✓ | ✓ | ✓ | ✓ | n/a |  |
 | 行ごとの +/− の数と、ホバーで Discard | ✓ | ✓ | △ | ✓ | △ | VSCode: 行数はエンジンがあるときだけ。<br>CLI: `diff --stat`。<br>Windows: Windows: 行数だけ。Discard は右クリックと Delete。 |
 | Space で切り替え、⌫ で捨てる | ✓ | ✓ | ✓ | ✓ | n/a |  |

@@ -220,8 +220,8 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
-| One checkbox list (☑ ▣ ☐, header and folder checks) | ✓ | ✓ | △ | ✓ | n/a | VSCode: Separate Staged and Changes groups.<br>Windows: A checkbox per file; no header or folder checks. |
-| List / Tree / File Name | ✓ | ✓ | — | ✓ | n/a |  |
+| One checkbox list (☑ ▣ ☐, header and folder checks) | ✓ | ✓ | △ | ✓ | n/a | VSCode: Separate Staged and Changes groups.<br>Windows: Per-file and folder checks (a dimmed check for partly included folders); no header check. |
+| List / Tree / File Name | ✓ | ✓ | △ | ✓ | n/a | Windows: Windows: Folders in the tree can't be collapsed yet. |
 | Filter on paths | ✓ | ✓ | ✓ | ✓ | n/a |  |
 | Per-row +/− counts and Discard on hover | ✓ | ✓ | △ | ✓ | △ | VSCode: Counts need the engine.<br>CLI: `diff --stat`.<br>Windows: Windows: Counts only; Discard is in the right-click and Delete. |
 | Space toggles, ⌫ discards | ✓ | ✓ | ✓ | ✓ | n/a |  |

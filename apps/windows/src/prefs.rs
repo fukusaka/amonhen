@@ -8,6 +8,8 @@ use serde_json::{Map, Value};
 
 /// マージエディタを開いたときに、間違えようのないコンフリクトを解く（既定は解く）。
 pub const AUTO_MAGIC_MERGE: &str = "autoMagicMerge";
+/// Working Copy の一覧の見せ方（`list`・`tree`・`flat`）。
+pub const WORKING_COPY_LAYOUT: &str = "workingCopyLayout";
 /// File History に merge コミットも出す（既定は出さない）。
 pub const FILE_HISTORY_MERGES: &str = "fileHistoryMerges";
 
