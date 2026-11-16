@@ -38,6 +38,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "amonhen-commands"
+version = "0.2.11"
+
+[[package]]
 name = "amonhen-core"
 version = "0.2.11"
 dependencies = [
@@ -142,6 +146,7 @@ name = "amonhen-win"
 version = "0.1.0"
 dependencies = [
  "amonhen-backend-gix",
+ "amonhen-commands",
  "amonhen-core",
  "amonhen-layout",
  "amonhen-model",

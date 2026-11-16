@@ -10,6 +10,7 @@ mod app;
 mod data;
 mod listen;
 mod measure;
+mod menus;
 mod render;
 mod sidebar;
 mod win32;

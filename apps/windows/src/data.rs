@@ -198,13 +198,20 @@ pub struct Data {
     tx: Sender<Event>,
     rx: Receiver<Event>,
     wake: Wake,
+    changed_tx: Sender<u32>,
 }
+
+/// 変化の知らせのビットのうち、History を作り直す頼み（`amonhen_watch::Changes` が使わない上のビット）。
+const REBUILD: u32 = 1 << 31;
 
 impl Data {
     /// `path` を裏のスレッドで開き、前回の History をすぐ送ってから最新を読む。
     pub fn open(path: PathBuf, wake: Wake) -> Self {
         let (tx, rx) = channel();
         let (thread_tx, thread_wake) = (tx.clone(), wake.clone());
+        // 変化の知らせ（`amonhen_watch::Changes` のビット）。見張りのほか、Refresh などで自分でも送る。
+        let (changed_tx, changed_rx) = channel::<u32>();
+        let watch_tx = changed_tx.clone();
         std::thread::spawn(move || {
             let send = |e| {
                 let _ = thread_tx.send(e);
@@ -237,9 +244,8 @@ impl Data {
             // ref が変わったら History と ref を、設定が変わったら ref を読み直す（GTK4 版の `watch` と同じ）。
             // 知らせは監視のスレッドから来るので、このスレッドで受けて読む。読み直しの失敗は出さない（macOS 版と
             // 同じく、開いて最初の読み込みだけ）。
-            let (changed_tx, changed_rx) = channel::<u32>();
             let _watcher = match amonhen_watch::Watcher::new(repo.paths(), move |changes| {
-                let _ = changed_tx.send(changes.0);
+                let _ = watch_tx.send(changes.0);
             }) {
                 Ok(w) => w,
                 Err(e) => {
@@ -254,7 +260,16 @@ impl Data {
                     bits |= more;
                 }
                 let changes = amonhen_watch::Changes(bits);
-                if changes.contains(amonhen_watch::Changes::REFS) {
+                if bits & REBUILD != 0 {
+                    // History の永続キャッシュを捨てて作り直す（View > Rebuild History）。
+                    match repo.rebuild_history() {
+                        Ok(h) => {
+                            history = h;
+                            send(Event::History(repo.clone(), history.clone()));
+                        }
+                        Err(e) => eprintln!("History を作り直せない: {e}"),
+                    }
+                } else if changes.contains(amonhen_watch::Changes::REFS) {
                     match repo.load_history() {
                         Ok(h) => {
                             history = h;
@@ -290,7 +305,21 @@ impl Data {
             tx,
             rx,
             wake,
+            changed_tx,
         }
+    }
+
+    /// History と ref を読み直す（View > Refresh）。
+    pub fn reload(&self) {
+        let all = amonhen_watch::Changes::REFS.0 | amonhen_watch::Changes::CONFIG.0;
+        let _ = self.changed_tx.send(all);
+    }
+
+    /// History の永続キャッシュを捨てて作り直し、ref も読み直す（View > Rebuild History）。
+    pub fn rebuild(&self) {
+        let _ = self
+            .changed_tx
+            .send(REBUILD | amonhen_watch::Changes::CONFIG.0);
     }
 
     /// 届いたものを取り込む。History が替わったか、チャンクが届いたら `true`。

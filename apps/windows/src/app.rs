@@ -67,6 +67,8 @@ enum Message {
     Commit(Value, Option<Value>),
     /// サイドバーの項目を選んだ（項目のキー）。
     Invoked(String),
+    /// メニューの操作を選んだ（操作の id）。
+    Command(String),
     Failed(String),
 }
 
@@ -105,6 +107,7 @@ impl Component for Root {
             }
             Message::Commit(info, extras) => self.info = Some((info, extras)),
             Message::Failed(e) => self.error = Some(e),
+            Message::Command(id) => with_history(|h| h.command(&id)),
             Message::Invoked(key) => {
                 if let Some(entry) = self.entry(&key)
                     && let Some(target) = entry.target
@@ -219,7 +222,9 @@ impl Component for Root {
                     .grid_row(1)
                     .children((SwapChainPanel::new().element_ref(&self.diff_panel),)),
             ));
-        Grid::new()
+        let menu_bar = crate::menus::menu_bar(|| context.callback(Message::Command));
+        let body = Grid::new()
+            .grid_row(1)
             .columns([
                 GridLength::Pixel(260.0),
                 GridLength::Star(1.0),
@@ -233,7 +238,10 @@ impl Component for Root {
                     .grid_column(1)
                     .children((history,)),
                 right,
-            ))
+            ));
+        Grid::new()
+            .rows([GridLength::Auto, GridLength::Star(1.0)])
+            .children((menu_bar, body))
     }
 }
 
@@ -696,6 +704,45 @@ impl HistoryView {
     fn select_commit(&mut self, id: &amonhen_model::Oid) {
         if let Some(row) = self.session.data.row_of(id) {
             self.session.reveal(row);
+        }
+    }
+
+    /// メニューの操作（`menus::IMPLEMENTED` のもの）。
+    fn command(&mut self, id: &str) {
+        let s = &mut self.session;
+        match id {
+            "refresh" => s.data.reload(),
+            "rebuild-history" => s.data.rebuild(),
+            "go-to-head" => {
+                if let Some(head) = s.data.refs.as_ref().and_then(|r| r.refs.head) {
+                    self.select_commit(&head);
+                }
+            }
+            // 選んでいるコミットの最初の親・最初の子へ（GTK4 版の `go_to_relative`）。
+            "go-to-parent" => {
+                let parent = s.selected.and_then(|row| {
+                    let history = s.data.history.as_ref()?;
+                    history.graph.parents(row as usize).first().copied()
+                });
+                if let Some(row) = parent {
+                    s.reveal(row);
+                }
+            }
+            "go-to-child" => {
+                let child = s
+                    .data
+                    .commit
+                    .as_ref()
+                    .and_then(|c| c.extras.as_ref())
+                    .and_then(|e| e["children"][0].as_str())
+                    .and_then(amonhen_model::Oid::from_hex);
+                if let Some(child) = child {
+                    self.select_commit(&child);
+                }
+            }
+            // History しかまだないので、出しているまま。
+            "show-history" => {}
+            _ => {}
         }
     }
 
