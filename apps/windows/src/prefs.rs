@@ -32,11 +32,28 @@ pub fn bool(key: &str) -> bool {
         .unwrap_or(key == AUTO_MAGIC_MERGE)
 }
 
+pub fn string(key: &str) -> Option<String> {
+    VALUES.with(|v| {
+        v.borrow()
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    })
+}
+
 /// 書いて保存する（書けなければ理由）。
 pub fn set_bool(key: &str, value: bool) -> Result<(), String> {
+    set(key, Value::Bool(value))
+}
+
+pub fn set_string(key: &str, value: &str) -> Result<(), String> {
+    set(key, Value::String(value.to_owned()))
+}
+
+fn set(key: &str, value: Value) -> Result<(), String> {
     let text = VALUES.with(|v| {
         let mut v = v.borrow_mut();
-        v.insert(key.to_owned(), Value::Bool(value));
+        v.insert(key.to_owned(), value);
         serde_json::to_string_pretty(&*v).unwrap_or_default()
     });
     let path = path().ok_or("no settings folder")?;

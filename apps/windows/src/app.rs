@@ -239,6 +239,14 @@ enum Dialog {
         cover: bool,
         version: String,
     },
+    /// `rev` の時点のファイルを書き出す（GTK4 版の `archive::export`）。形と先頭のフォルダを選んでから、保存する
+    /// ファイルを選ぶ。1 つのフォルダだけを書き出すこと、partial clone の中身を先に取る確認はまだない。
+    Archive {
+        repo: Arc<Repository>,
+        rev: String,
+        format: usize,
+        top: String,
+    },
     /// 作業中の変更を stash する（GTK4 版の `Actions::stash_paths`）。`paths` があればそのファイルだけ。
     Stash {
         repo: Arc<Repository>,
@@ -366,6 +374,8 @@ enum Message {
     CloseActivity,
     /// まとめるときのメッセージの初期値を読んだ（コミット、メッセージ）。
     SquashText(String, Result<String, String>),
+    /// 書き出す形を選んだ。
+    ArchiveFormat(Option<usize>),
     /// パッチのダイアログの選択（`single`・`cover`）。
     PatchOption(&'static str, bool),
     /// Stash のダイアログの選択（`all`・`staged`・`keep-index`・`untracked`）。
@@ -536,7 +546,10 @@ impl Component for Root {
                 })
                 | Some(Dialog::Patch {
                     version: current, ..
-                }) => *current = name.replace("\r\n", "\n").replace('\r', "\n"),
+                })
+                | Some(Dialog::Archive { top: current, .. }) => {
+                    *current = name.replace("\r\n", "\n").replace('\r', "\n")
+                }
                 _ => {}
             },
             Message::Command(id) if id == "push" => self.push(false),
@@ -1039,6 +1052,51 @@ impl Component for Root {
                         if let Some(first) = reply["info"]["files"][0].as_str() {
                             crate::files::reveal(std::path::Path::new(first));
                         }
+                        Message::Performed(None)
+                    });
+                }
+                (
+                    Some(Dialog::Archive {
+                        repo,
+                        rev,
+                        format,
+                        top,
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    let picked = ARCHIVE_FORMATS[format.min(ARCHIVE_FORMATS.len() - 1)];
+                    let _ = crate::prefs::set_string(ARCHIVE_FORMAT, picked);
+                    let prefix = top.trim().trim_matches('/').to_owned();
+                    let stem = if prefix.is_empty() {
+                        "archive"
+                    } else {
+                        prefix.as_str()
+                    };
+                    let Some(path) = crate::files::save_file(
+                        &tr!("Export Archive"),
+                        &format!("{stem}.{picked}"),
+                        picked,
+                        picked,
+                    ) else {
+                        return;
+                    };
+                    let command = json!({
+                        "op": "archive",
+                        "rev": rev,
+                        "format": picked,
+                        "prefix": if prefix.is_empty() { String::new() } else { format!("{prefix}/") },
+                        "paths": [],
+                        "file": path.to_string_lossy(),
+                    });
+                    // 書けたら、そのファイルをエクスプローラーで見せる（GTK4 版と同じ）。
+                    context.spawn_background(move |_| {
+                        let reply: Value =
+                            serde_json::from_str(&repo.run_json(&command.to_string()))
+                                .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+                        if let Some(e) = reply["error"].as_str() {
+                            return Message::Performed(Some((tr!("Export Archive"), e.to_owned())));
+                        }
+                        crate::files::reveal(&path);
                         Message::Performed(None)
                     });
                 }
@@ -1574,6 +1632,32 @@ impl Component for Root {
                             version: String::new(),
                         });
                     }
+                } else if let Some(rest) = key.strip_prefix("archive:") {
+                    // `archive:<rev>:<既定の名前>`（タグ・ブランチの名前、なければ短い ID）。
+                    if let (Some(repo), Some((rev, label))) =
+                        (self.repo.clone(), rest.split_once(':'))
+                    {
+                        let base = repo
+                            .paths()
+                            .workdir
+                            .and_then(|w| w.file_name().map(|n| n.to_string_lossy().into_owned()))
+                            .unwrap_or_default();
+                        let top = archive_name(&if base.is_empty() {
+                            label.to_owned()
+                        } else {
+                            format!("{base}-{label}")
+                        });
+                        let remembered = crate::prefs::string(ARCHIVE_FORMAT).unwrap_or_default();
+                        self.dialog = Some(Dialog::Archive {
+                            repo,
+                            rev: rev.to_owned(),
+                            format: ARCHIVE_FORMATS
+                                .iter()
+                                .position(|f| *f == remembered)
+                                .unwrap_or(0),
+                            top,
+                        });
+                    }
                 } else if let Some(oid) = key.strip_prefix("drop:") {
                     if let Some(repo) = self.repo.clone() {
                         let short = &oid[..oid.len().min(8)];
@@ -1782,6 +1866,12 @@ impl Component for Root {
                 }
                 _ => {}
             },
+            Message::ArchiveFormat(Some(index)) => {
+                if let Some(Dialog::Archive { format, .. }) = &mut self.dialog {
+                    *format = index;
+                }
+            }
+            Message::ArchiveFormat(None) => {}
             Message::PatchOption(option, on) => {
                 if let Some(Dialog::Patch { single, cover, .. }) = &mut self.dialog {
                     match option {
@@ -2682,6 +2772,30 @@ impl Root {
                         TextBox::new()
                             .text(version.clone())
                             .placeholder_text("1")
+                            .on_text_changed(context.callback(Message::BranchName)),
+                    )),
+                ),
+            Some(Dialog::Archive { format, top, .. }) => dialog
+                .is_open(true)
+                .title(tr!("Export Archive"))
+                .primary_button_text(tr!("Export…"))
+                .close_button_text(tr!("Cancel"))
+                .content(
+                    StackPanel::new().spacing(6.0).children((
+                        TextBlock::new()
+                            .text(tr!(
+                                "The files of this commit, as git archive writes them; .gitattributes decides what is left out (export-ignore)."
+                            ))
+                            .text_wrapping(TextWrapping::Wrap),
+                        TextBlock::new().text(tr!("Format:")),
+                        ComboBox::new()
+                            .items_source(ARCHIVE_FORMATS.to_vec())
+                            .selected_index(*format)
+                            .on_selection_changed(context.callback(Message::ArchiveFormat)),
+                        TextBlock::new().text(tr!("Top folder:")),
+                        TextBox::new()
+                            .text(top.clone())
+                            .placeholder_text(tr!("None"))
                             .on_text_changed(context.callback(Message::BranchName)),
                     )),
                 ),
@@ -4154,10 +4268,24 @@ impl Root {
             items.push(MenuItem::item(format!("split:{id}"), "Split…"));
         }
         // マージはパッチにできない（git format-patch は飛ばす）。
+        items.push(MenuItem::separator("-patch"));
         if !merge {
-            items.push(MenuItem::separator("-patch"));
             items.push(MenuItem::item(format!("patch:{id}"), tr!("Save as Patch…")));
         }
+        // 既定の名前はタグ、なければローカルブランチ、なければ短い ID（GTK4 版の `archive_label`）。
+        let label = labels
+            .iter()
+            .find(|l| l.kind == amonhen_model::RefKind::Tag)
+            .or_else(|| {
+                labels
+                    .iter()
+                    .find(|l| l.kind == amonhen_model::RefKind::Local)
+            })
+            .map_or_else(|| id[..8].to_owned(), |l| l.name.clone());
+        items.push(MenuItem::item(
+            format!("archive:{id}:{label}"),
+            tr!("Export Archive…"),
+        ));
         items.push(MenuItem::separator("-copy"));
         items.push(MenuItem::item(format!("copy:{id}"), tr!("Copy Commit ID")));
         // このコミットを指すブランチ・タグの名前（リモートブランチは origin/ を付けたまま。5 つまで）。
@@ -4201,6 +4329,29 @@ fn shown_start(rev: &str) -> &str {
 }
 
 /// Pull の取り込み方（GTK4 版の `PULL_MODES`。Settings の Pull の既定と同じ名前）。
+/// 書き出せる形（コアの `archive` の `format`）。先頭が既定（GTK4 版と同じ）。
+const ARCHIVE_FORMATS: [&str; 3] = ["zip", "tar.gz", "tar"];
+/// 前の形を覚えておく鍵（GTK4 版と同じ）。
+const ARCHIVE_FORMAT: &str = "archiveFormat";
+
+/// ファイル名と先頭のフォルダに使える名前（`/` と空白などは `-` に。GTK4 版の `archive::file_name`）。
+fn archive_name(text: &str) -> String {
+    let mut out = String::new();
+    for c in text.chars() {
+        if c.is_alphanumeric() || matches!(c, '.' | '_' | '-') {
+            out.push(c);
+        } else if !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    let trimmed = out.trim_matches(|c| c == '-' || c == '.');
+    if trimmed.is_empty() {
+        "archive".to_owned()
+    } else {
+        trimmed.to_owned()
+    }
+}
+
 /// パッチの形と送り状を覚えておく鍵（GTK4 版と同じ）。
 const PATCH_SINGLE_FILE: &str = "patchSingleFile";
 const PATCH_COVER_LETTER: &str = "patchCoverLetter";
