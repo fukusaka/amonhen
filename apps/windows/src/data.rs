@@ -79,6 +79,50 @@ pub fn push_utf16(bytes: &[u8], ascii: bool, out: &mut Vec<u16>) {
     }
 }
 
+/// 差分の欄に描くもの（コミットの全ファイルの差分か、Working Copy の 1 ファイルの差分）。
+#[derive(Clone, Copy)]
+pub struct DiffContent<'a> {
+    pub view: &'a DiffView,
+    pub highlights: &'a HashMap<u32, Vec<(u32, u32)>>,
+    pub syntax: &'a HashMap<u32, Vec<(u32, u32, u8)>>,
+}
+
+/// 行ごとの、変わった単語の範囲。
+fn highlights_of(view: &DiffView) -> HashMap<u32, Vec<(u32, u32)>> {
+    let mut out: HashMap<u32, Vec<(u32, u32)>> = HashMap::new();
+    for h in &view.highlights {
+        out.entry(h.row).or_default().push((h.start, h.end));
+    }
+    out
+}
+
+/// 行ごとの構文の色（ファイル全体を解析するので、裏のスレッドで呼ぶ）。
+fn syntax_of(view: &DiffView) -> HashMap<u32, Vec<(u32, u32, u8)>> {
+    let mut out: HashMap<u32, Vec<(u32, u32, u8)>> = HashMap::new();
+    for s in view.syntax() {
+        out.entry(s.row).or_default().push((s.start, s.end, s.kind));
+    }
+    out
+}
+
+/// Working Copy で選んだファイルの差分（HEAD と作業ツリーの 1 本の差分か、片側の差分）。
+pub struct WorkingShown {
+    pub path: String,
+    pub diff: amonhen_core::WorkingDiff,
+    pub highlights: HashMap<u32, Vec<(u32, u32)>>,
+    pub syntax: HashMap<u32, Vec<(u32, u32, u8)>>,
+}
+
+impl WorkingShown {
+    pub fn content(&self) -> DiffContent<'_> {
+        DiffContent {
+            view: &self.diff.view,
+            highlights: &self.highlights,
+            syntax: &self.syntax,
+        }
+    }
+}
+
 /// 選んだコミットの詳細（`commit_info` の答え）と、全ファイルを並べた差分。
 pub struct CommitShown {
     pub row: u32,
@@ -114,6 +158,14 @@ impl CommitShown {
         };
         shown.index_highlights();
         shown
+    }
+
+    pub fn content(&self) -> DiffContent<'_> {
+        DiffContent {
+            view: &self.diff,
+            highlights: &self.highlights,
+            syntax: &self.syntax,
+        }
     }
 
     fn index_highlights(&mut self) {
@@ -172,6 +224,7 @@ enum Event {
     Syntax(u64, u32, u32, HashMap<u32, Vec<(u32, u32, u8)>>),
     Extras(u64, u32, serde_json::Value),
     Status(Arc<StatusSnapshot>),
+    Working(Box<WorkingShown>),
     Chunk(u64, u32, Chunk),
     Failed(String),
 }
@@ -181,6 +234,11 @@ pub struct Data {
     pub refs: Option<Arc<RefsSnapshot>>,
     /// Working Copy の変更（index と作業ツリー）。
     pub status: Option<Arc<StatusSnapshot>>,
+    /// Working Copy で選んだファイルの差分（届いたもの）と、読んでいるファイル。
+    pub working: Option<Box<WorkingShown>>,
+    working_wanted: Option<String>,
+    /// 差分が届いた（見たら `false` に戻す）。
+    pub working_changed: bool,
     /// 今の History の行の、ref のラベル。
     pub labels: Labels,
     /// 選んだコミットの詳細と差分（届いたもの）。
@@ -314,6 +372,9 @@ impl Data {
             history: None,
             refs: None,
             status: None,
+            working: None,
+            working_wanted: None,
+            working_changed: false,
             labels: HashMap::new(),
             commit: None,
             commit_wanted: None,
@@ -335,6 +396,45 @@ impl Data {
     pub fn reload(&self) {
         let all = amonhen_watch::Changes::REFS.0 | amonhen_watch::Changes::CONFIG.0;
         let _ = self.changed_tx.send(all);
+    }
+
+    /// Working Copy のファイルの差分を裏で読む。1 本の差分で表せれば HEAD と作業ツリーの差分、表せなければ変更の
+    /// ある側（両方なら作業ツリーの側）。`None` なら出さない。
+    pub fn want_working(&mut self, entry: Option<amonhen_model::StatusEntry>) {
+        let Some(entry) = entry else {
+            self.working_wanted = None;
+            self.working = None;
+            self.working_changed = true;
+            return;
+        };
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+        self.working_wanted = Some(entry.path.clone());
+        let (tx, wake) = (self.tx.clone(), self.wake.clone());
+        std::thread::spawn(move || {
+            let diff = match repo.working_diff_combined(&entry, &PROFILE).ok().flatten() {
+                Some(diff) => Ok(diff),
+                None => repo.working_diff(&entry, !entry.is_unstaged(), &PROFILE),
+            };
+            let event = match diff {
+                Ok(diff) => {
+                    let (highlights, syntax) = (highlights_of(&diff.view), syntax_of(&diff.view));
+                    Event::Working(Box::new(WorkingShown {
+                        path: entry.path.clone(),
+                        diff,
+                        highlights,
+                        syntax,
+                    }))
+                }
+                Err(e) => {
+                    eprintln!("{} の差分を読めない: {e}", entry.path);
+                    return;
+                }
+            };
+            let _ = tx.send(event);
+            wake();
+        });
     }
 
     /// Working Copy の status を読み直す（stage・コミットの後。見張りが拾う前に出す）。
@@ -437,6 +537,13 @@ impl Data {
                             _ => self.early_extras = Some((row, extras)),
                         }
                         self.extras_changed = true;
+                        changed = true;
+                    }
+                }
+                Event::Working(shown) => {
+                    if self.working_wanted.as_deref() == Some(shown.path.as_str()) {
+                        self.working = Some(shown);
+                        self.working_changed = true;
                         changed = true;
                     }
                 }

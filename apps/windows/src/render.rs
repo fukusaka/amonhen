@@ -689,7 +689,7 @@ impl Renderer {
     pub fn draw_diff(
         &mut self,
         surface: &mut Surface,
-        commit: Option<&crate::data::CommitShown>,
+        content: Option<crate::data::DiffContent>,
         scroll_y: f32,
         scale: f32,
     ) -> Result<()> {
@@ -702,8 +702,8 @@ impl Renderer {
             self.d2d.BeginDraw();
             self.d2d.Clear(Some(&BACKGROUND));
         }
-        let result = match commit {
-            Some(commit) => self.draw_diff_rows(commit, scroll_y, width, height),
+        let result = match content {
+            Some(content) => self.draw_diff_rows(content, scroll_y, width, height),
             None => Ok(()),
         };
         unsafe { self.d2d.EndDraw(None, None)? };
@@ -712,13 +712,13 @@ impl Renderer {
 
     fn draw_diff_rows(
         &mut self,
-        commit: &crate::data::CommitShown,
+        commit: crate::data::DiffContent,
         scroll_y: f32,
         width: f32,
         height: f32,
     ) -> Result<()> {
         use amonhen_layout::DiffRow;
-        let view = &commit.diff;
+        let view = commit.view;
         let count = view.rows.len() as u32;
         let first = ((scroll_y / DIFF_ROW_HEIGHT).floor().max(0.0) as u32).min(count);
         let last = (((scroll_y + height) / DIFF_ROW_HEIGHT).ceil() as u32 + 1).min(count);

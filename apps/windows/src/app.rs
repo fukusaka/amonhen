@@ -78,8 +78,8 @@ struct Root {
     summary: String,
     description: String,
     committing: bool,
-    /// Working Copy の一覧で選んでいるファイル（何番目か。差分は次の段で出す）。
-    working_file: Option<usize>,
+    /// Working Copy の一覧で選んでいるファイル（パス）。
+    working_file: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -183,8 +183,8 @@ impl Component for Root {
             Message::Commit(info, extras) => self.info = Some((info, extras)),
             Message::Failed(e) => self.error = Some(e),
             Message::Command(id) if id == "undo" => self.undo(context),
-            Message::Command(id) if id == "show-working-copy" => self.page = Page::WorkingCopy,
-            Message::Command(id) if id == "show-history" => self.page = Page::History,
+            Message::Command(id) if id == "show-working-copy" => self.show_page(Page::WorkingCopy),
+            Message::Command(id) if id == "show-history" => self.show_page(Page::History),
             Message::Command(id) => with_history(|h| h.command(&id)),
             Message::UndoPeek(repo, peek) => match peek {
                 Some((label, what)) => self.dialog = Some(Dialog::Undo { repo, label, what }),
@@ -199,7 +199,11 @@ impl Component for Root {
             }
             Message::Selected(selected) => self.selected = selected,
             Message::OpenHistoryMenu => self.menu_request += 1,
-            Message::Status(status) => self.status = Some(status),
+            Message::Status(status) => {
+                self.status = Some(status);
+                // 選んでいるファイルの差分も読み直す（stage で行の印が、外での変更で中身が変わる）。
+                self.load_working_diff();
+            }
             Message::Summary(text) => self.summary = text,
             Message::Description(text) => self.description = text,
             Message::Stage(path, include) => {
@@ -226,7 +230,18 @@ impl Component for Root {
                     Message::Committed(repo.commit(&message, false).err().map(|e| e.to_string()))
                 });
             }
-            Message::WorkingFile(index) => self.working_file = index,
+            Message::WorkingFile(index) => {
+                // 一覧は status が替わるたびに作り直すので、選び直しの知らせ（None）は無視して前の選択を保つ。
+                if let Some(index) = index {
+                    let path = self
+                        .status
+                        .as_ref()
+                        .and_then(|s| s.status.entries.get(index))
+                        .map(|e| e.path.clone());
+                    self.working_file = path;
+                    self.load_working_diff();
+                }
+            }
             Message::Committed(failed) => {
                 self.committing = false;
                 match failed {
@@ -252,8 +267,10 @@ impl Component for Root {
                     self.dialog = Some(Dialog::Failed { title, message });
                 }
             }
-            Message::Invoked(key) if key == "page:working-copy" => self.page = Page::WorkingCopy,
-            Message::Invoked(key) if key == "page:history" => self.page = Page::History,
+            Message::Invoked(key) if key == "page:working-copy" => {
+                self.show_page(Page::WorkingCopy)
+            }
+            Message::Invoked(key) if key == "page:history" => self.show_page(Page::History),
             Message::Invoked(key) => {
                 if let Some(entry) = self.entry(&key)
                     && let Some(target) = entry.target
@@ -313,6 +330,7 @@ impl Component for Root {
                 context_at: None,
                 menu_requested: false,
                 menu_ready: false,
+                working_page: false,
             }));
             HISTORY.with(|h| *h.borrow_mut() = Some(view.clone()));
             let history = panel.observe_surface(|event| {
@@ -369,7 +387,14 @@ impl Component for Root {
             None => SwapChainPanel::new().element_ref(&self.panel).into(),
         };
         let right = Grid::new()
-            .rows([GridLength::Pixel(240.0), GridLength::Star(1.0)])
+            .rows([
+                GridLength::Pixel(if self.page == Page::WorkingCopy {
+                    0.0
+                } else {
+                    240.0
+                }),
+                GridLength::Star(1.0),
+            ])
             .grid_column(2)
             .children((
                 ScrollViewer::new()
@@ -464,6 +489,25 @@ impl Root {
         }
     }
 
+    fn show_page(&mut self, page: Page) {
+        self.page = page;
+        with_history(|h| h.set_working_page(page == Page::WorkingCopy));
+    }
+
+    /// Working Copy で選んでいるファイルの差分を読む（なくなっていれば消す）。
+    fn load_working_diff(&self) {
+        let entry = self.working_file.as_ref().and_then(|path| {
+            self.status
+                .as_ref()?
+                .status
+                .entries
+                .iter()
+                .find(|e| &e.path == path)
+                .cloned()
+        });
+        with_history(|h| h.session.data.want_working(entry));
+    }
+
     fn working_copy_view(&self, context: &ViewContext<Self>) -> View {
         if self.page != Page::WorkingCopy {
             return View::empty();
@@ -486,10 +530,10 @@ impl Root {
             },
             callbacks,
         );
+        // まん中の列だけを覆う。右の列は差分の欄（詳細の行は畳む）。
         Border::new()
             .background(Brush::Solid(Color::rgb(0xff, 0xff, 0xff)))
             .grid_column(1)
-            .grid_column_span(2)
             .content(view)
     }
 
@@ -912,6 +956,8 @@ struct HistoryView {
     menu_requested: bool,
     /// メニューを作り直した（次のフレームで開く）。
     menu_ready: bool,
+    /// Working Copy を出している（差分の欄は選んだファイルの差分）。
+    working_page: bool,
 }
 
 impl HistoryView {
@@ -1034,8 +1080,13 @@ impl HistoryView {
             self.sender
                 .send(Message::Commit(commit.info.clone(), commit.extras.clone()));
         }
-        if std::mem::take(&mut s.data.syntax_changed) {
+        if std::mem::take(&mut s.data.syntax_changed) && !self.working_page {
             s.renderer.forget_diff();
+            self.diff.dirty = true;
+        }
+        if std::mem::take(&mut s.data.working_changed) && self.working_page {
+            s.renderer.forget_diff();
+            self.diff.scroll_y = 0.0;
             self.diff.dirty = true;
         }
         if self.diff.dirty
@@ -1044,7 +1095,11 @@ impl HistoryView {
             s.renderer
                 .draw_diff(
                     surface,
-                    s.data.commit.as_deref(),
+                    if self.working_page {
+                        s.data.working.as_deref().map(|w| w.content())
+                    } else {
+                        s.data.commit.as_deref().map(|c| c.content())
+                    },
                     self.diff.scroll_y,
                     self.diff.scale,
                 )
@@ -1144,11 +1199,22 @@ impl HistoryView {
     }
 
     fn diff_rows(&self) -> usize {
-        self.session
-            .data
-            .commit
-            .as_ref()
-            .map_or(0, |c| c.diff.rows.len())
+        let data = &self.session.data;
+        if self.working_page {
+            data.working.as_ref().map_or(0, |w| w.diff.view.rows.len())
+        } else {
+            data.commit.as_ref().map_or(0, |c| c.diff.rows.len())
+        }
+    }
+
+    /// 差分の欄に出すもの（History の選んだコミットか、Working Copy の選んだファイル）を替える。
+    fn set_working_page(&mut self, working: bool) {
+        if self.working_page != working {
+            self.working_page = working;
+            self.session.renderer.forget_diff();
+            self.diff.scroll_y = 0.0;
+            self.diff.dirty = true;
+        }
     }
 }
 
