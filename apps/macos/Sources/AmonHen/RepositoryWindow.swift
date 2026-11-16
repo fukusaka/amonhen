@@ -1121,10 +1121,12 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         }
     }
 
-    /// 署名を検証する側か検証の設定が変わった。コアと画面が覚えていた結果を捨て、見えているものを検証し直す
-    /// （手元のリポジトリでは検証する側は変わらず、コアの結果は設定を書いたときに捨てている）。
+    /// 署名を検証する側か検証の設定が変わった。コアと画面が覚えていた結果を捨て、見えているものを検証し直す。
+    /// 設定はほかのリポジトリや Settings > Git・SSH Hosts で書いたかもしれない（コアが捨てるのは書いたリポジトリの
+    /// 分だけ）ので、この窓のコアの分もここで捨てる。
     @objc private func signatureCheckChanged() {
         repository.setLocalSignatureCheck(Settings.sshHost(of: location).map(Settings.checkSignaturesLocally(on:)) ?? Settings.checkRemoteSignaturesLocally)
+        repository.forgetSignatures()
         updateSignaturePlace()
         history.forgetSignatures()
         sidebar.forgetSignatures()

@@ -1019,6 +1019,9 @@ fn build_tab(
                     return;
                 };
                 sshhosts::apply_signature_check(&repo, &location);
+                // 設定はほかのリポジトリや Settings > Git・SSH Hosts で書いたかもしれない（コアが捨てるのは書いた
+                // リポジトリの分だけ）ので、このリポジトリのコアの分もここで捨てる。
+                repo.forget_signatures();
                 details.set_location(&location);
                 if let Some(stashes) = st.upgrade() {
                     stashes.set_location(&location);

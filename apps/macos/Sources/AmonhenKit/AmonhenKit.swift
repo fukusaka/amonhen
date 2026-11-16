@@ -123,6 +123,11 @@ public final class Repository: @unchecked Sendable {
         }
     }
 
+    /// 覚えていた署名の検証の結果を捨てる（ほかの所で検証の設定 `gpg.*` を書いたとき）。
+    public func forgetSignatures() {
+        amonhen_repo_forget_signatures(raw)
+    }
+
     /// daemon 越しのリポジトリのコミットの署名を、手元の鍵で検証するか（false なら SSH 先の git と鍵で）。
     /// 手元のリポジトリには効かない。変えると、コアが覚えていた検証の結果は捨てる。
     public func setLocalSignatureCheck(_ local: Bool) {
