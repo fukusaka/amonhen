@@ -914,6 +914,34 @@ fn saves_and_applies_patches_directly_through_the_daemon_and_over_ssh() {
     }
 }
 
+/// SSH 先にエンジンを送るときは聞く。端末がなく `--send-engine` もなければ、送らずにやめる（理由に印は出さない）。
+#[cfg(unix)]
+#[test]
+fn asks_before_sending_the_engine_over_ssh() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "-q"]);
+    git(&repo, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    git(&repo, &["commit", "-q", "--allow-empty", "-m", "first"]);
+    let env = Env::new(tmp.path());
+    let at = format!("ssh://dev{}", repo.display());
+    let out = env
+        .asking(&["log", "-C", &at])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{text}");
+    assert!(
+        text.contains("needs to send its engine") && !text.contains("[amonhen:"),
+        "{text}"
+    );
+    assert!(!tmp.path().join("remote-home/.local/share/amonhen").exists());
+    let shown = env.ok(&["log", "-C", &at]);
+    assert!(shown.contains("first"), "{shown}");
+}
+
 #[cfg(unix)]
 /// 試験の中だけで動く環境（ホーム・共有の daemon のソケット・偽の ssh）。
 struct Env {
@@ -963,6 +991,14 @@ impl Env {
     }
 
     fn command(&self, args: &[&str]) -> Command {
+        // 端末がないので、SSH 先にエンジンを送ってよいかは聞けない。聞かずに送る（`--` より前に）。
+        let mut all = vec!["--send-engine"];
+        all.extend_from_slice(args);
+        self.asking(&all)
+    }
+
+    /// `--send-engine` なしで（送るなら利用者に聞く）。
+    fn asking(&self, args: &[&str]) -> Command {
         let mut c = Command::new(env!("CARGO_BIN_EXE_amonhen"));
         c.args(args)
             .env("AMONHEN_LANG", "en")

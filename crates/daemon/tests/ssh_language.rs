@@ -75,7 +75,8 @@ fn errors_from_an_ssh_host_opened_without_the_daemon_follow_the_app_language() {
         dir: bundled,
         local: None,
         remote_engine: None,
-        push: None,
+        // 聞く相手がいないので、聞かずに送る。
+        push: Some(true),
     };
     let target = ssh::Target::parse(&format!("ssh://dev{}", repo_dir.display())).unwrap();
     // アプリは起動したときに `amonhen_set_language` で既定の言語を決め、そのまま SSH 先につなぐ。
