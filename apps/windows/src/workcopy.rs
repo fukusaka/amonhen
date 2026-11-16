@@ -818,44 +818,50 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
                     .on_click((callbacks.sequence)(key))
                     .content(TextBlock::new().text(title))
             };
+            let text = StackPanel::new()
+                .spacing(2.0)
+                .vertical_alignment(VerticalAlignment::Center)
+                .grid_column(0)
+                .children((
+                    TextBlock::new().text(title),
+                    TextBlock::new()
+                        .text(detail)
+                        .font_size(12.0)
+                        .opacity(0.75)
+                        .text_wrapping(TextWrapping::Wrap),
+                ));
+            let buttons = |column: i32| {
+                StackPanel::new()
+                    .orientation(Orientation::Horizontal)
+                    .spacing(6.0)
+                    .horizontal_alignment(HorizontalAlignment::Right)
+                    .grid_column(column)
+                    .children((
+                        if input.retry_three_way {
+                            button("am-three-way", &tr!("Retry with 3-Way Merge"), true)
+                        } else {
+                            View::empty()
+                        },
+                        // やり直せるうちは Continue を押せない（解くものが残っている。GTK4 版と同じ）。
+                        button("continue", "Continue", !input.retry_three_way),
+                        button("skip", "Skip", skip),
+                        button("abort", "Abort", true),
+                    ))
+            };
+            // ボタンが 4 つになると見出しが隠れるので、そのときはボタンを下の段に置く。
+            let content: View = if input.retry_three_way {
+                StackPanel::new().spacing(6.0).children((text, buttons(0)))
+            } else {
+                Grid::new()
+                    .columns([GridLength::Star(1.0), GridLength::Auto])
+                    .children((text, buttons(1)))
+            };
             Border::new()
                 .background(Brush::Solid(Color::rgb(0xff, 0xf4, 0xce)))
                 .padding(Thickness::new(10.0, 6.0, 10.0, 6.0))
                 .margin(Thickness::new(0.0, 0.0, 0.0, 8.0))
                 .grid_row(0)
-                .content(
-                    Grid::new()
-                        .columns([GridLength::Star(1.0), GridLength::Auto])
-                        .children((
-                            StackPanel::new()
-                                .spacing(2.0)
-                                .vertical_alignment(VerticalAlignment::Center)
-                                .grid_column(0)
-                                .children((
-                                    TextBlock::new().text(title),
-                                    TextBlock::new()
-                                        .text(detail)
-                                        .font_size(12.0)
-                                        .opacity(0.75)
-                                        .text_wrapping(TextWrapping::Wrap),
-                                )),
-                            StackPanel::new()
-                                .orientation(Orientation::Horizontal)
-                                .spacing(6.0)
-                                .grid_column(1)
-                                .children((
-                                    if input.retry_three_way {
-                                        button("am-three-way", &tr!("Retry with 3-Way Merge"), true)
-                                    } else {
-                                        View::empty()
-                                    },
-                                    // やり直せるうちは Continue を押せない（解くものが残っている。GTK4 版と同じ）。
-                                    button("continue", "Continue", !input.retry_three_way),
-                                    button("skip", "Skip", skip),
-                                    button("abort", "Abort", true),
-                                )),
-                        )),
-                )
+                .content(content)
         }
         None => View::empty(),
     };
