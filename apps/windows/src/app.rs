@@ -81,6 +81,13 @@ struct Root {
     description: String,
     committing: bool,
     amend: bool,
+    /// History の検索の欄（出しているか、問い合わせ、件数の文字）。
+    search_open: bool,
+    query: String,
+    search_status: String,
+    search_box: ElementRef<TextBox>,
+    /// 検索の欄を開いた回数（開いた後にフォーカスとキーを付ける）。
+    search_opened: u64,
     /// Working Copy の一覧で選んでいるファイル（パス）。
     working_file: Option<String>,
 }
@@ -136,6 +143,13 @@ enum Message {
     CommitChanges,
     /// コミットが終わった（失敗ならその文）。
     Committed(Option<String>),
+    /// 検索の欄の問い合わせが変わった。
+    Query(String),
+    /// 検索の欄で Enter（`true` なら Shift+Enter で前へ）。
+    SearchSubmit(bool),
+    CloseSearch,
+    /// 件数の文字（「N / M」「No Matches」）。
+    SearchStatus(String),
     /// Amend を切り替えた。
     Amend(bool),
     /// Amend にしたときの、HEAD のメッセージ（件名と本文）。
@@ -176,6 +190,11 @@ impl Component for Root {
             description: String::new(),
             committing: false,
             amend: false,
+            search_open: false,
+            query: String::new(),
+            search_status: String::new(),
+            search_box: ElementRef::new(),
+            search_opened: 0,
             working_file: None,
         }
     }
@@ -202,6 +221,27 @@ impl Component for Root {
             Message::Command(id) if id == "undo" => self.undo(context),
             Message::Command(id) if id == "show-working-copy" => self.show_page(Page::WorkingCopy),
             Message::Command(id) if id == "show-history" => self.show_page(Page::History),
+            Message::Command(id) if id == "find-in-history" => {
+                // History に移って、その検索の欄へ（GTK4 版・macOS 版と同じ）。
+                self.show_page(Page::History);
+                if self.search_open {
+                    let _ = self.search_box.request_focus();
+                } else {
+                    self.search_open = true;
+                    self.search_opened += 1;
+                }
+            }
+            Message::Query(text) => self.query = text,
+            Message::SearchSubmit(backwards) => {
+                let query = self.query.trim().to_owned();
+                with_history(|h| h.search(query, backwards));
+            }
+            Message::CloseSearch => {
+                self.search_open = false;
+                self.search_status.clear();
+                with_history(|h| h.search(String::new(), false));
+            }
+            Message::SearchStatus(text) => self.search_status = text,
             Message::Command(id) => with_history(|h| h.command(&id)),
             Message::UndoPeek(repo, peek) => match peek {
                 Some((label, what)) => self.dialog = Some(Dialog::Undo { repo, label, what }),
@@ -414,6 +454,7 @@ impl Component for Root {
                 menu_requested: false,
                 menu_ready: false,
                 working_page: false,
+                last_query: None,
             }));
             HISTORY.with(|h| *h.borrow_mut() = Some(view.clone()));
             let history = panel.observe_surface(|event| {
@@ -491,6 +532,42 @@ impl Component for Root {
             ));
         let menu_bar = crate::menus::menu_bar(|| context.callback(Message::Command));
         let toolbar = crate::menus::toolbar(context.callback(Message::Command));
+        // 検索の欄を開いたら、フォーカスを入れて Enter・Esc を受ける（描き直した後に）。
+        if self.search_opened > 0 {
+            let search_box = self.search_box.clone();
+            context.use_effect("search-box", self.search_opened, move || {
+                let _ = search_box.request_focus();
+                let _ = search_box.request_native_element(|result| {
+                    if let Ok(element) = result
+                        && let Err(e) = attach_search_keys(&element)
+                    {
+                        eprintln!("検索の欄にキーを付けられない: {e}");
+                    }
+                });
+                None
+            });
+        }
+        let search_bar: View = if self.search_open {
+            Grid::new()
+                .columns([GridLength::Star(1.0), GridLength::Auto])
+                .margin(Thickness::new(8.0, 4.0, 8.0, 4.0))
+                .grid_row(0)
+                .children((
+                    TextBox::new()
+                        .element_ref(&self.search_box)
+                        .text(self.query.clone())
+                        .placeholder_text(tr!("Search"))
+                        .on_text_changed(context.callback(Message::Query))
+                        .grid_column(0),
+                    TextBlock::new()
+                        .text(self.search_status.clone())
+                        .margin(Thickness::new(8.0, 0.0, 4.0, 0.0))
+                        .vertical_alignment(VerticalAlignment::Center)
+                        .grid_column(1),
+                ))
+        } else {
+            View::empty()
+        };
         let body = Grid::new()
             .grid_row(2)
             .columns([
@@ -501,13 +578,19 @@ impl Component for Root {
             .children((
                 sidebar,
                 Grid::new()
-                    .background(Brush::Solid(Color::transparent()))
-                    .element_ref(&self.area)
+                    .rows([GridLength::Auto, GridLength::Star(1.0)])
                     .grid_column(1)
-                    .children((history,))
-                    .menu(Menu::new(
-                        self.history_menu(),
-                        context.callback(Message::HistoryMenu),
+                    .children((
+                        search_bar,
+                        Grid::new()
+                            .background(Brush::Solid(Color::transparent()))
+                            .element_ref(&self.area)
+                            .grid_row(1)
+                            .children((history,))
+                            .menu(Menu::new(
+                                self.history_menu(),
+                                context.callback(Message::HistoryMenu),
+                            )),
                     )),
                 right,
                 // Working Copy は History の上に重ねる（History の描画は SwapChainPanel の毎フレームの知らせで回って
@@ -1082,6 +1165,8 @@ struct HistoryView {
     menu_ready: bool,
     /// Working Copy を出している（差分の欄は選んだファイルの差分）。
     working_page: bool,
+    /// 最後に探した問い合わせ（同じなら Enter で次の一致へ）。
+    last_query: Option<String>,
 }
 
 impl HistoryView {
@@ -1188,6 +1273,26 @@ impl HistoryView {
                 s.data.want_commit(row);
             }
         }
+        // 検索の答え: 選んでいる行から下で最初の一致を選び、件数を出す（GTK4 版の `nearest_index`）。
+        if let Some(done) = self.session.data.search.take() {
+            let s = &mut self.session;
+            let status = match done {
+                crate::data::SearchDone::Found(_) if s.data.matches.is_empty() => {
+                    tr!("No Matches")
+                }
+                crate::data::SearchDone::Found(_) => {
+                    let from = s.selected.unwrap_or(0);
+                    let matches = &s.data.matches;
+                    let index = matches.iter().position(|&r| r >= from).unwrap_or(0);
+                    let (row, total) = (matches[index], matches.len());
+                    s.reveal(row);
+                    format!("{} / {total}", index + 1)
+                }
+                crate::data::SearchDone::Failed(_, e) => e,
+            };
+            s.invalidate();
+            self.sender.send(Message::SearchStatus(status));
+        }
         if std::mem::take(&mut self.menu_ready) {
             self.open_context_menu();
         }
@@ -1254,6 +1359,37 @@ impl HistoryView {
             std::process::exit(0);
         }
         Ok(())
+    }
+
+    /// History を探す。同じ問い合わせをもう探してあれば、選んでいる行から次（`backwards` なら前）の一致へ。空なら
+    /// 一致を消す。
+    fn search(&mut self, query: String, backwards: bool) {
+        let s = &mut self.session;
+        if query.is_empty() {
+            self.last_query = None;
+            s.data.matches.clear();
+            s.invalidate();
+            return;
+        }
+        if self.last_query.as_deref() == Some(query.as_str()) && !s.data.matches.is_empty() {
+            let matches = &s.data.matches;
+            let from = s.selected.unwrap_or(0);
+            let index = if backwards {
+                matches
+                    .iter()
+                    .rposition(|&r| r < from)
+                    .unwrap_or(matches.len() - 1)
+            } else {
+                matches.iter().position(|&r| r > from).unwrap_or(0)
+            };
+            let (row, total) = (matches[index], matches.len());
+            s.reveal(row);
+            self.sender
+                .send(Message::SearchStatus(format!("{} / {total}", index + 1)));
+            return;
+        }
+        self.last_query = Some(query.clone());
+        s.data.search(query);
     }
 
     /// 頼まれた右クリックのメニューを、押した位置で開く（メニューは選んだ行のものに作り直してある）。
@@ -1356,6 +1492,31 @@ impl HistoryView {
 enum Target {
     History,
     Diff,
+}
+
+/// 検索の欄のキー: Enter で探す（同じ問い合わせなら次へ）、Shift+Enter で前へ、Esc で閉じる（GTK4 版と同じ）。
+fn attach_search_keys(element: &IInspectable) -> windows_core_reactor::Result<()> {
+    let ui: xaml::UIElement = element.cast()?;
+    let revoker = ui.PreviewKeyDown(|_, args: Ref<xaml::KeyRoutedEventArgs>| {
+        let Some(args) = args.as_ref() else { return };
+        let Ok(key) = args.Key() else { return };
+        let message = match key {
+            xaml::VirtualKey::Enter => {
+                let shift =
+                    xaml::InputKeyboardSource::GetKeyStateForCurrentThread(xaml::VirtualKey::Shift)
+                        .is_ok_and(|s| s.contains(xaml::CoreVirtualKeyStates::Down));
+                Message::SearchSubmit(shift)
+            }
+            xaml::VirtualKey::Escape => Message::CloseSearch,
+            _ => return,
+        };
+        let _ = args.SetHandled(true);
+        with_history(|h| {
+            h.sender.send(message);
+        });
+    })?;
+    REVOKERS.with(|r| r.borrow_mut().push(revoker));
+    Ok(())
 }
 
 /// 窓の根に、メニューのショートカットを付ける。メニューの項目の KeyboardAccelerator は、TreeView・ListView に

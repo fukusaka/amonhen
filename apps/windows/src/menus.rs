@@ -17,6 +17,7 @@ pub const IMPLEMENTED: &[&str] = &[
     "go-to-parent",
     "go-to-child",
     "undo",
+    "find-in-history",
 ];
 
 /// 項目の名前（GTK4 版の `appmenu::title` と同じ）。

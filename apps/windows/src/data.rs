@@ -209,6 +209,12 @@ fn send_syntax(
     });
 }
 
+/// 届いた検索の答え。
+pub enum SearchDone {
+    Found(String),
+    Failed(String, String),
+}
+
 /// History の行に付ける ref の名前（ブランチ・リモートブランチ・タグ）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RefLabel {
@@ -229,6 +235,8 @@ enum Event {
     Extras(u64, u32, serde_json::Value),
     Status(Arc<StatusSnapshot>),
     Working(Box<WorkingShown>),
+    /// History の検索の答え（History の世代、問い合わせ、一致した行）。
+    Search(u64, String, Result<Vec<u32>, String>),
     Chunk(u64, u32, Chunk),
     Failed(String),
 }
@@ -245,6 +253,12 @@ pub struct Data {
     pub working_changed: bool,
     /// 今の History の行の、ref のラベル。
     pub labels: Labels,
+    /// History の検索で一致した行（昇順）。描くときに塗る。
+    pub matches: Vec<u32>,
+    /// 探している問い合わせ。
+    searching: Option<String>,
+    /// 届いた検索の答え（見たら取る）。
+    pub search: Option<SearchDone>,
     /// 選んだコミットの詳細と差分（届いたもの）。
     pub commit: Option<Box<CommitShown>>,
     /// 読んでいるコミットの行（届いたものがこれと違えば捨てる）。
@@ -380,6 +394,9 @@ impl Data {
             working_wanted: None,
             working_changed: false,
             labels: HashMap::new(),
+            matches: Vec::new(),
+            searching: None,
+            search: None,
             commit: None,
             commit_wanted: None,
             syntax_changed: false,
@@ -400,6 +417,22 @@ impl Data {
     pub fn reload(&self) {
         let all = amonhen_watch::Changes::REFS.0 | amonhen_watch::Changes::CONFIG.0;
         let _ = self.changed_tx.send(all);
+    }
+
+    /// History を `query`（コアの問い合わせの書き方）で探す。答えは `search` に届く。
+    pub fn search(&mut self, query: String) {
+        let (Some(repo), Some(history)) = (self.repo.clone(), self.history.clone()) else {
+            return;
+        };
+        self.searching = Some(query.clone());
+        let (tx, wake) = (self.tx.clone(), self.wake.clone());
+        std::thread::spawn(move || {
+            let rows = repo
+                .search_history(&history, &query)
+                .map_err(|e| e.to_string());
+            let _ = tx.send(Event::Search(history.generation, query, rows));
+            wake();
+        });
     }
 
     /// Working Copy のファイルの差分を裏で読む。1 本の差分で表せれば HEAD と作業ツリーの差分、表せなければ変更の
@@ -497,6 +530,8 @@ impl Data {
                     self.history = Some(history);
                     self.history_changed = true;
                     self.labels.clear();
+                    // 行の番号が変わるので、検索の一致も捨てる（探し直すのは FE）。
+                    self.matches.clear();
                     self.commit = None;
                     self.commit_wanted = None;
                     self.chunks.clear();
@@ -568,6 +603,26 @@ impl Data {
                             _ => self.early_extras = Some((row, extras)),
                         }
                         self.extras_changed = true;
+                        changed = true;
+                    }
+                }
+                Event::Search(generation, query, rows) => {
+                    let current = self
+                        .history
+                        .as_ref()
+                        .is_some_and(|h| h.generation == generation);
+                    if current && self.searching.as_deref() == Some(query.as_str()) {
+                        self.searching = None;
+                        self.search = Some(match rows {
+                            Ok(rows) => {
+                                self.matches = rows;
+                                SearchDone::Found(query)
+                            }
+                            Err(e) => {
+                                self.matches.clear();
+                                SearchDone::Failed(query, e)
+                            }
+                        });
                         changed = true;
                     }
                 }

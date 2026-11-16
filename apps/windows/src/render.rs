@@ -50,6 +50,8 @@ const PALETTE: [[f32; 3]; 8] = [
 const BACKGROUND: D2D1_COLOR_F = rgba(1.0, 1.0, 1.0, 1.0);
 const FOREGROUND: D2D1_COLOR_F = rgba(0.11, 0.11, 0.12, 1.0);
 const SECONDARY: D2D1_COLOR_F = rgba(0.11, 0.11, 0.12, 0.6);
+/// 検索で一致した行の背景。
+const MATCH: D2D1_COLOR_F = rgba(1.0, 0.80, 0.0, 0.22);
 /// 選んだ行の背景（Windows の既定のアクセントの色を薄く）。
 const SELECTION: D2D1_COLOR_F = rgba(0.0, 0.47, 0.84, 0.16);
 /// ref のラベル（ローカルブランチ・リモートブランチ・タグ）の地の色と、文字の色。
@@ -495,6 +497,23 @@ impl Renderer {
         let screen = last - first;
         data.want(first.saturating_sub(screen)..(last + screen).min(count));
 
+        // 検索で一致した行の背景（見えている分だけ）。
+        let from = data.matches.partition_point(|&r| r < first);
+        for &row in data.matches[from..].iter().take_while(|&&r| r < last) {
+            let top = row as f32 * ROW_HEIGHT - scroll_y;
+            unsafe {
+                self.brush.SetColor(&MATCH);
+                self.d2d.FillRectangle(
+                    &D2D_RECT_F {
+                        left: 0.0,
+                        top,
+                        right: width,
+                        bottom: top + ROW_HEIGHT,
+                    },
+                    &self.brush,
+                );
+            }
+        }
         // 選んだ行の背景（グラフの下に敷く）。
         if let Some(row) = selected.filter(|r| (first..last).contains(r)) {
             let top = row as f32 * ROW_HEIGHT - scroll_y;
