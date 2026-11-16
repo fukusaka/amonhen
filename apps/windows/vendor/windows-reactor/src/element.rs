@@ -695,7 +695,7 @@ impl MenuItem {
     }
 }
 
-/// A context menu whose click callback receives the selected item's label.
+/// A context menu whose click callback receives the selected item's key.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Menu {
     pub(crate) items: Vec<MenuItem>,
@@ -703,7 +703,7 @@ pub struct Menu {
 }
 
 impl Menu {
-    /// Creates a menu and a callback that receives the selected item's label.
+    /// Creates a menu and a callback that receives the selected item's key.
     pub fn new(
         items: impl IntoIterator<Item = MenuItem>,
         on_click: impl IntoPayloadCallback<String>,

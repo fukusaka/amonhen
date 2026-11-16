@@ -421,13 +421,18 @@ fn build_menu_items(
 ) -> Result<(), RuntimeError> {
     for item in items {
         let native: MenuFlyoutItemBase = match item {
-            MenuItem::Item { label, enabled, .. } => {
+            MenuItem::Item {
+                key,
+                label,
+                enabled,
+            } => {
                 let item = MenuFlyoutItem::new().map_err(native_error)?;
                 item.SetText(label).map_err(native_error)?;
                 item.cast::<IControl>()
                     .and_then(|control| control.SetIsEnabled(*enabled))
                     .map_err(native_error)?;
-                let label = label.clone();
+                // Report the item's key, so items with the same label can be told apart.
+                let key = key.text();
                 let sink = sink.clone();
                 revokers.push(
                     item.Click(move |_, _| {
@@ -435,7 +440,7 @@ fn build_menu_items(
                             owner,
                             EventId::OwnedMenuItemInvoked,
                             revision,
-                            EventPayload::String(label.clone()),
+                            EventPayload::String(key.clone()),
                         );
                     })
                     .map_err(native_error)?,
