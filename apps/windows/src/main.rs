@@ -11,6 +11,7 @@ mod app;
 mod blame;
 mod data;
 mod filehistory;
+mod files;
 mod listen;
 mod measure;
 mod menus;

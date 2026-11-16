@@ -230,6 +230,15 @@ enum Dialog {
         message: String,
         squash: bool,
     },
+    /// コミット（古い順）をパッチにする（GTK4 版の `patches::save`）。形・送り状・版を選んでから、書き出す場所を選ぶ。
+    Patch {
+        repo: Arc<Repository>,
+        oids: Vec<String>,
+        /// 1 つの mbox にまとめる（でなければ 1 コミット 1 ファイル）。
+        single: bool,
+        cover: bool,
+        version: String,
+    },
     /// 作業中の変更を stash する（GTK4 版の `Actions::stash_paths`）。`paths` があればそのファイルだけ。
     Stash {
         repo: Arc<Repository>,
@@ -357,6 +366,8 @@ enum Message {
     CloseActivity,
     /// まとめるときのメッセージの初期値を読んだ（コミット、メッセージ）。
     SquashText(String, Result<String, String>),
+    /// パッチのダイアログの選択（`single`・`cover`）。
+    PatchOption(&'static str, bool),
     /// Stash のダイアログの選択（`all`・`staged`・`keep-index`・`untracked`）。
     StashOption(&'static str, bool),
     /// Repository Settings: 設定を読んだ・欄を書き換えた・ボタン。
@@ -522,6 +533,9 @@ impl Component for Root {
                 })
                 | Some(Dialog::Reword {
                     message: current, ..
+                })
+                | Some(Dialog::Patch {
+                    version: current, ..
                 }) => *current = name.replace("\r\n", "\n").replace('\r', "\n"),
                 _ => {}
             },
@@ -957,6 +971,76 @@ impl Component for Root {
                         }),
                         label.clone(),
                     );
+                }
+                (
+                    Some(Dialog::Patch {
+                        repo,
+                        oids,
+                        single,
+                        cover,
+                        version,
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    let _ = crate::prefs::set_bool(PATCH_SINGLE_FILE, single);
+                    let _ = crate::prefs::set_bool(PATCH_COVER_LETTER, cover);
+                    let title = if oids.len() == 1 {
+                        tr!("Save as Patch")
+                    } else {
+                        tr!("Save {count} Commits as Patches", count = oids.len())
+                    };
+                    let mut command =
+                        json!({ "op": "formatPatch", "oids": oids, "coverLetter": cover });
+                    if let Ok(v) = version.trim().parse::<u32>()
+                        && v > 1
+                    {
+                        command["reroll"] = json!(v);
+                    }
+                    if single {
+                        // ファイルの名前は最初のコミットの件名から（git format-patch と同じ考え）。
+                        let subject = self
+                            .info
+                            .as_ref()
+                            .filter(|(info, _)| {
+                                info["oid"].as_str() == oids.first().map(String::as_str)
+                            })
+                            .and_then(|(info, _)| {
+                                info["message"].as_str()?.lines().next().map(str::to_owned)
+                            })
+                            .unwrap_or_else(|| "patches".to_owned());
+                        let Some(path) = crate::files::save_file(
+                            &title,
+                            &format!("{}.mbox", patch_file_name(&subject)),
+                            "mbox",
+                            "mbox",
+                        ) else {
+                            return;
+                        };
+                        command["file"] = json!(path.to_string_lossy());
+                    } else {
+                        let Some(path) = crate::files::pick_folder(
+                            &tr!(
+                                "Choose the folder for the patches. Files with the same names are replaced."
+                            ),
+                            &tr!("Save"),
+                        ) else {
+                            return;
+                        };
+                        command["dir"] = json!(path.to_string_lossy());
+                    }
+                    // 書いたら、最初のファイルをエクスプローラーで見せる（GTK4 版と同じ）。
+                    context.spawn_background(move |_| {
+                        let reply: Value =
+                            serde_json::from_str(&repo.run_json(&command.to_string()))
+                                .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+                        if let Some(e) = reply["error"].as_str() {
+                            return Message::Performed(Some((title, e.to_owned())));
+                        }
+                        if let Some(first) = reply["info"]["files"][0].as_str() {
+                            crate::files::reveal(std::path::Path::new(first));
+                        }
+                        Message::Performed(None)
+                    });
                 }
                 (Some(Dialog::CloseMerge), ContentDialogResult::Primary) => {
                     self.merge = None;
@@ -1480,6 +1564,16 @@ impl Component for Root {
                             Message::SquashText(oid, message)
                         });
                     }
+                } else if let Some(oid) = key.strip_prefix("patch:") {
+                    if let Some(repo) = self.repo.clone() {
+                        self.dialog = Some(Dialog::Patch {
+                            repo,
+                            oids: vec![oid.to_owned()],
+                            single: crate::prefs::bool(PATCH_SINGLE_FILE),
+                            cover: crate::prefs::bool(PATCH_COVER_LETTER),
+                            version: String::new(),
+                        });
+                    }
                 } else if let Some(oid) = key.strip_prefix("drop:") {
                     if let Some(repo) = self.repo.clone() {
                         let short = &oid[..oid.len().min(8)];
@@ -1688,6 +1782,14 @@ impl Component for Root {
                 }
                 _ => {}
             },
+            Message::PatchOption(option, on) => {
+                if let Some(Dialog::Patch { single, cover, .. }) = &mut self.dialog {
+                    match option {
+                        "single" => *single = on,
+                        _ => *cover = on,
+                    }
+                }
+            }
             Message::StashOption(option, on) => {
                 if let Some(Dialog::Stash {
                     staged,
@@ -2541,6 +2643,45 @@ impl Root {
                             .text_wrapping(TextWrapping::Wrap)
                             .height(200.0)
                             .text(message.clone())
+                            .on_text_changed(context.callback(Message::BranchName)),
+                    )),
+                ),
+            Some(Dialog::Patch {
+                oids,
+                single,
+                cover,
+                version,
+                ..
+            }) => dialog
+                .is_open(true)
+                .title(if oids.len() == 1 {
+                    tr!("Save as Patch")
+                } else {
+                    tr!("Save {count} Commits as Patches", count = oids.len())
+                })
+                .primary_button_text(tr!("Save…"))
+                .close_button_text(tr!("Cancel"))
+                .content(
+                    StackPanel::new().spacing(6.0).children((
+                        TextBlock::new()
+                            .text(tr!("Numbering, recipients and sign-offs follow git’s format.* settings."))
+                            .text_wrapping(TextWrapping::Wrap),
+                        RadioButtons::new()
+                            .items_source(vec![tr!("One file per commit"), tr!("One mbox file")])
+                            .selected_index(usize::from(*single))
+                            .on_selection_changed(context.callback(|i: Option<usize>| {
+                                Message::PatchOption("single", i == Some(1))
+                            })),
+                        CheckBox::new()
+                            .is_checked(*cover)
+                            .on_is_checked_changed(
+                                context.callback(|v| Message::PatchOption("cover", v)),
+                            )
+                            .content(TextBlock::new().text(tr!("Cover letter"))),
+                        TextBlock::new().text(tr!("Version (-v):")),
+                        TextBox::new()
+                            .text(version.clone())
+                            .placeholder_text("1")
                             .on_text_changed(context.callback(Message::BranchName)),
                     )),
                 ),
@@ -4012,6 +4153,11 @@ impl Root {
             items.push(MenuItem::item(format!("drop:{id}"), "Drop…"));
             items.push(MenuItem::item(format!("split:{id}"), "Split…"));
         }
+        // マージはパッチにできない（git format-patch は飛ばす）。
+        if !merge {
+            items.push(MenuItem::separator("-patch"));
+            items.push(MenuItem::item(format!("patch:{id}"), tr!("Save as Patch…")));
+        }
         items.push(MenuItem::separator("-copy"));
         items.push(MenuItem::item(format!("copy:{id}"), tr!("Copy Commit ID")));
         // このコミットを指すブランチ・タグの名前（リモートブランチは origin/ を付けたまま。5 つまで）。
@@ -4055,6 +4201,28 @@ fn shown_start(rev: &str) -> &str {
 }
 
 /// Pull の取り込み方（GTK4 版の `PULL_MODES`。Settings の Pull の既定と同じ名前）。
+/// パッチの形と送り状を覚えておく鍵（GTK4 版と同じ）。
+const PATCH_SINGLE_FILE: &str = "patchSingleFile";
+const PATCH_COVER_LETTER: &str = "patchCoverLetter";
+
+/// git format-patch と同じ考えのファイル名（英数字と . _ のほかは - にまとめる。GTK4 版の `file_name`）。
+fn patch_file_name(subject: &str) -> String {
+    let mut out = String::new();
+    for c in subject.chars() {
+        if c.is_ascii_alphanumeric() || c == '.' || c == '_' {
+            out.push(c);
+        } else if !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    let trimmed = out.trim_matches(|c| c == '-' || c == '.');
+    if trimmed.is_empty() {
+        "patches".to_owned()
+    } else {
+        trimmed.chars().take(52).collect()
+    }
+}
+
 /// Reset の動かし方（Soft・Mixed・Hard の順）。
 const RESET_MODES: [&str; 3] = ["soft", "mixed", "hard"];
 

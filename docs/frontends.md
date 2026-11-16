@@ -296,7 +296,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
-| Save as Patch (per commit or mbox, cover letter, -v) | ✓ | ✓ | — | ✓ | ✓ | CLI: `format-patch`. |
+| Save as Patch (per commit or mbox, cover letter, -v) | ✓ | ✓ | △ | ✓ | ✓ | CLI: `format-patch`.<br>Windows: One commit at a time from its menu. |
 | Apply Patch (am / apply, preview, 3-way, --index) | ✓ | ✓ | — | ✓ | ✓ | CLI: `am`, `apply` (`--check`). |
 | Drop patch files on the window | ✓ | ✓ | — | ✓ | n/a | VSCode: From the Explorer's context menu. |
 | Export Archive (zip / tar.gz / tar, top folder, one folder) | ✓ | ✓ | — | ✓ | ✓ | VSCode: With the engine; a branch's or tag's right-click, a commit's in History, or the command palette for HEAD.<br>CLI: `archive`. |
