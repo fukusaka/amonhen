@@ -41,9 +41,11 @@ pub struct State {
     pub selected: Option<usize>,
 }
 
-pub struct Callbacks {
+pub struct Callbacks<'a> {
     pub selected: Callback<Option<usize>>,
     pub close: Callback<()>,
+    /// 行の右クリックのメニュー（`blame:<oid>`）。
+    pub menu: Box<dyn Fn() -> Callback<String> + 'a>,
 }
 
 pub fn view(state: &State, callbacks: Callbacks) -> View {
@@ -104,6 +106,14 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                         .text(e.subject.clone())
                         .text_trimming(TextTrimming::CharacterEllipsis),
                     TextBlock::new().text(meta).font_size(11.0).opacity(0.7),
+                ));
+                // そのコミットの時点の Blame（GTK4 版の変更ファイルのメニューと同じ）。
+                let row = row.menu(Menu::new(
+                    [MenuItem::item(
+                        format!("blame:{}", e.oid),
+                        tr!("Blame at {commit}", commit = &e.oid[..e.oid.len().min(8)]),
+                    )],
+                    (callbacks.menu)(),
                 ));
                 (
                     e.oid.clone(),

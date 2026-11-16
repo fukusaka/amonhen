@@ -7,6 +7,7 @@
 //! [--tearing] [--profile] [--out <file>]`、`amonhen-win --listen <file>`（実のマウスの基準、`listen.rs`）
 
 mod app;
+mod blame;
 mod data;
 mod filehistory;
 mod listen;

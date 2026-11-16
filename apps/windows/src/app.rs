@@ -107,6 +107,9 @@ struct Root {
     stash: Option<String>,
     /// File History の画面（パス、読んだコミット、選んでいる行）。
     file_history: Option<crate::filehistory::State>,
+    /// Blame の画面（パス、コミット、読んだ行）。閉じたら前の画面（File History なら File History）に戻る。
+    blame: Option<crate::blame::State>,
+    blame_from: Page,
     /// ダイアログの入力の欄（Enter で既定のボタンを押す）と、開いた回数（開いた後にキーを付ける）。
     dialog_input: ElementRef<TextBox>,
     dialog_inputs: u64,
@@ -118,6 +121,7 @@ enum Page {
     WorkingCopy,
     Stashes,
     FileHistory,
+    Blame,
 }
 
 /// 窓に重ねるダイアログ（macOS 版のシート、GTK4 版の `sheets`）。
@@ -265,6 +269,13 @@ enum Message {
     FileHistoryLoaded(String, Result<Vec<crate::filehistory::Entry>, String>),
     FileHistorySelected(Option<usize>),
     CloseFileHistory,
+    /// File History の行の右クリック（`blame:<oid>`）。
+    FileHistoryMenu(String),
+    /// Blame を開く（パス、コミット。なければ作業ツリー）・読み終えた・閉じる・行の右クリック。
+    OpenBlame(String, Option<String>),
+    BlameLoaded(String, Option<String>, Result<crate::blame::Data, String>),
+    CloseBlame,
+    BlameMenu(String),
     /// Working Copy のファイルの右クリック（パス、項目のキー）。
     WorkingFileMenu(String, String),
     /// Pull の取り込み元・Publish の送り先のリモートを選んだ。
@@ -345,6 +356,8 @@ impl Component for Root {
             sidebar_key: None,
             stash: None,
             file_history: None,
+            blame: None,
+            blame_from: Page::History,
             sidebar_request: 0,
             page: Page::History,
             repo: None,
@@ -1149,6 +1162,7 @@ impl Component for Root {
             Message::Invoked(key) if key == "page:stashes" => self.show_page(Page::Stashes),
             Message::WorkingFileMenu(path, key) => match key.as_str() {
                 "history" => self.update(Message::OpenFileHistory(path), context),
+                "blame" => self.update(Message::OpenBlame(path, None), context),
                 _ => self.update(Message::DiscardFile(path), context),
             },
             Message::OpenFileHistory(path) => {
@@ -1194,6 +1208,65 @@ impl Component for Root {
                     self.show_file_change(&entry);
                 }
             }
+            Message::FileHistoryMenu(key) => {
+                if let Some(oid) = key.strip_prefix("blame:") {
+                    let path = self.file_history.as_ref().and_then(|state| {
+                        let entries = state.entries.as_ref()?.as_ref().ok()?;
+                        Some(entries.iter().find(|e| e.oid == oid)?.path.clone())
+                    });
+                    if let Some(path) = path {
+                        self.update(Message::OpenBlame(path, Some(oid.to_owned())), context);
+                    }
+                }
+            }
+            Message::OpenBlame(path, rev) => {
+                let Some(repo) = self.repo.clone() else {
+                    return beep();
+                };
+                if self.page != Page::Blame {
+                    self.blame_from = self.page;
+                }
+                self.blame = Some(crate::blame::State {
+                    path: path.clone(),
+                    rev: rev.clone(),
+                    data: None,
+                });
+                self.page = Page::Blame;
+                context.spawn_background(move |_| {
+                    let command = json!({ "op": "blame", "path": &path, "rev": &rev });
+                    let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
+                        .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+                    let data = match reply["error"].as_str() {
+                        Some(e) => Err(e.to_owned()),
+                        None => Ok(crate::blame::data_of(&reply["info"])),
+                    };
+                    Message::BlameLoaded(path, rev, data)
+                });
+            }
+            Message::BlameLoaded(path, rev, data) => {
+                if let Some(state) = self.blame.as_mut()
+                    && state.path == path
+                    && state.rev == rev
+                {
+                    state.data = Some(data);
+                }
+            }
+            Message::CloseBlame => {
+                self.blame = None;
+                self.page = self.blame_from;
+            }
+            Message::BlameMenu(key) => {
+                if let Some(oid) = key.strip_prefix("copy:") {
+                    copy_text(oid);
+                } else if let Some(oid) = key.strip_prefix("show:")
+                    && let Some(id) = amonhen_model::Oid::from_hex(oid)
+                {
+                    // History に戻ってそのコミットを選ぶ。
+                    self.blame = None;
+                    self.show_page(Page::History);
+                    with_history(|h| h.select_commit(&id));
+                }
+            }
             Message::CloseFileHistory => {
                 self.file_history = None;
                 self.show_page(Page::History);
@@ -1207,7 +1280,7 @@ impl Component for Root {
             }
             Message::Invoked(key) => {
                 // Stashes・File History の画面からは History に戻ってそのコミットへ。
-                if matches!(self.page, Page::Stashes | Page::FileHistory) {
+                if matches!(self.page, Page::Stashes | Page::FileHistory | Page::Blame) {
                     self.show_page(Page::History);
                 }
                 if let Some(entry) = self.entry(&key)
@@ -1447,6 +1520,7 @@ impl Component for Root {
                 self.working_copy_view(context),
                 self.stashes_view(context),
                 self.file_history_view(context),
+                self.blame_view(context),
             ));
         // ダイアログの入力の欄: フォーカスを入れ、Enter で既定のボタン（ContentDialog は Enter を既定のボタンに
         // 回さない）。
@@ -2474,7 +2548,7 @@ impl Root {
                 if let Some(target) = stash {
                     h.session.data.want_stash(target);
                 }
-            } else if matches!(from, Page::Stashes | Page::FileHistory) {
+            } else if matches!(from, Page::Stashes | Page::FileHistory | Page::Blame) {
                 // History で選んでいるコミットを読み直す。
                 h.reload_selected();
             }
@@ -2498,11 +2572,31 @@ impl Root {
             crate::filehistory::Callbacks {
                 selected: context.callback(Message::FileHistorySelected),
                 close: context.callback(|()| Message::CloseFileHistory),
+                menu: Box::new(|| context.callback(Message::FileHistoryMenu)),
             },
         );
         Border::new()
             .background(Brush::Solid(Color::rgb(0xff, 0xff, 0xff)))
             .grid_column(1)
+            .content(view)
+    }
+
+    fn blame_view(&self, context: &ViewContext<Self>) -> View {
+        let (Page::Blame, Some(state)) = (self.page, &self.blame) else {
+            return View::empty();
+        };
+        let view = crate::blame::view(
+            state,
+            crate::blame::Callbacks {
+                close: context.callback(|()| Message::CloseBlame),
+                menu: Box::new(|| context.callback(Message::BlameMenu)),
+            },
+        );
+        // コードの幅が要るので、History と右の列の両方を覆う。
+        Border::new()
+            .background(Brush::Solid(Color::rgb(0xff, 0xff, 0xff)))
+            .grid_column(1)
+            .grid_column_span(2)
             .content(view)
     }
 

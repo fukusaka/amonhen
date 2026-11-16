@@ -129,10 +129,14 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
                     .text_trimming(TextTrimming::CharacterEllipsis)
                     .grid_column(1),
             ));
-        // 右クリック: File History（git がまだ知らない untracked のファイルにはない）と、変更を捨てる（untracked
+        // 右クリック: Blame・File History（git がまだ知らない untracked のファイルにはない）と、変更を捨てる（untracked
         // なら消す。確かめてから。コンフリクトのファイルには出さない）。GTK4 版の `connect_file_menu` と同じ。
         let mut items = Vec::new();
         if entry.kind != StatusKind::Untracked {
+            // 作業ツリーで消したファイルには Blame はない。
+            if entry.worktree != b'D' {
+                items.push(MenuItem::item("blame", "Blame"));
+            }
             items.push(MenuItem::item("history", "File History"));
         }
         if entry.kind != StatusKind::Unmerged && entry.is_unstaged() {

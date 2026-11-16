@@ -1,0 +1,176 @@
+//! Blame の画面: ファイルの各行を最後に変えたコミット。同じコミットの行をまとめ、まとまりの 1 行目に ID・作者・
+//! 日時、2 行目に件名を出し、まとまりごとに背景を交互に変える（GTK4 版の `filetools.rs` の Blame、macOS 版の
+//! `FileTools.swift` と同じ）。GTK4 版・macOS 版はタブにするが、ここではまだ History と右の列の場所に重ねる。
+//! 行の右クリックで、そのコミットを History に出す（GTK4 版はダブルクリック）。
+
+use amonhen_model::tr;
+use serde_json::Value;
+use windows_reactor::*;
+
+/// `blame` の答えを並べ直したもの。
+pub struct Data {
+    /// (oid, 作者, 時刻, 件名)。
+    pub commits: Vec<(String, String, i64, String)>,
+    /// 行ごとの (コミットの番号, 中身)。
+    pub lines: Vec<(usize, String)>,
+}
+
+pub fn data_of(info: &Value) -> Data {
+    let commits = info["commits"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|c| {
+            (
+                c["oid"].as_str().unwrap_or_default().to_owned(),
+                c["author"].as_str().unwrap_or_default().to_owned(),
+                c["time"].as_i64().unwrap_or_default(),
+                c["summary"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect();
+    let lines = info["lines"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|l| {
+            (
+                l["c"].as_u64().unwrap_or_default() as usize,
+                l["t"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect();
+    Data { commits, lines }
+}
+
+pub struct State {
+    pub path: String,
+    /// コミット（なければ作業ツリー）。
+    pub rev: Option<String>,
+    pub data: Option<Result<Data, String>>,
+}
+
+pub struct Callbacks<'a> {
+    pub close: Callback<()>,
+    /// 行の右クリックのメニュー（`show:<oid>`・`copy:<oid>`）。
+    pub menu: Box<dyn Fn() -> Callback<String> + 'a>,
+}
+
+pub fn view(state: &State, callbacks: Callbacks) -> View {
+    let mut title = format!("Blame — {}", state.path);
+    if let Some(rev) = &state.rev {
+        title.push_str(&format!(" @ {}", &rev[..8.min(rev.len())]));
+    }
+    let head = Grid::new()
+        .columns([GridLength::Star(1.0), GridLength::Auto])
+        .margin(Thickness::new(10.0, 6.0, 8.0, 6.0))
+        .grid_row(0)
+        .children((
+            TextBlock::new()
+                .text(title)
+                .font_size(14.0)
+                .vertical_alignment(VerticalAlignment::Center)
+                .text_trimming(TextTrimming::CharacterEllipsis)
+                .grid_column(0),
+            Button::new()
+                .on_click(callbacks.close)
+                .grid_column(1)
+                .content(TextBlock::new().text(tr!("Close"))),
+        ));
+    let body: View = match &state.data {
+        None => TextBlock::new()
+            .text(tr!("Loading…"))
+            .opacity(0.6)
+            .margin(16.0)
+            .into(),
+        Some(Err(e)) => TextBlock::new()
+            .text(e.clone())
+            .text_wrapping(TextWrapping::Wrap)
+            .margin(16.0)
+            .into(),
+        Some(Ok(data)) => {
+            let digits = data.lines.len().to_string().len();
+            let (mut block, mut offset, mut previous) = (0usize, 0usize, usize::MAX);
+            let mut rows = Vec::with_capacity(data.lines.len());
+            for (i, (commit, text)) in data.lines.iter().enumerate() {
+                if *commit != previous {
+                    if i > 0 {
+                        block += 1;
+                    }
+                    offset = 0;
+                    previous = *commit;
+                } else {
+                    offset += 1;
+                }
+                let Some((oid, author, time, summary)) = data.commits.get(*commit) else {
+                    continue;
+                };
+                let committed = oid.bytes().any(|b| b != b'0');
+                // まとまりの 1 行目に ID・作者・日時、2 行目に件名。
+                let info = match (committed, offset) {
+                    (false, 0) => tr!("Not committed yet"),
+                    (true, 0) => format!(
+                        "{}  {author}  {}",
+                        &oid[..8.min(oid.len())],
+                        crate::render::local_date(*time)
+                    ),
+                    (true, 1) => summary.clone(),
+                    _ => String::new(),
+                };
+                let background = if block % 2 == 1 {
+                    Color::rgb(0xf3, 0xf3, 0xf3)
+                } else {
+                    Color::rgb(0xff, 0xff, 0xff)
+                };
+                let row = Grid::new()
+                    .columns([
+                        GridLength::Pixel(300.0),
+                        GridLength::Pixel(8.0 * digits as f64 + 12.0),
+                        GridLength::Star(1.0),
+                    ])
+                    .background(Brush::Solid(background))
+                    .children((
+                        TextBlock::new()
+                            .text(info)
+                            .font_size(11.0)
+                            .opacity(if offset == 0 { 0.75 } else { 0.5 })
+                            .text_trimming(TextTrimming::CharacterEllipsis)
+                            .vertical_alignment(VerticalAlignment::Center)
+                            .margin(Thickness::new(6.0, 0.0, 6.0, 0.0))
+                            .grid_column(0),
+                        TextBlock::new()
+                            .text(format!("{:>digits$}", i + 1))
+                            .font_size(12.0)
+                            .opacity(0.5)
+                            .horizontal_alignment(HorizontalAlignment::Right)
+                            .vertical_alignment(VerticalAlignment::Center)
+                            .margin(Thickness::new(0.0, 0.0, 8.0, 0.0))
+                            .grid_column(1),
+                        TextBlock::new()
+                            .text(text.replace('\t', "    "))
+                            .font_size(12.0)
+                            .vertical_alignment(VerticalAlignment::Center)
+                            .grid_column(2),
+                    ));
+                // まだコミットしていない行は History に出せない。
+                let row: View = if committed {
+                    row.menu(Menu::new(
+                        [
+                            MenuItem::item(format!("show:{oid}"), tr!("Show in History")),
+                            MenuItem::item(format!("copy:{oid}"), tr!("Copy Commit ID")),
+                        ],
+                        (callbacks.menu)(),
+                    ))
+                } else {
+                    row
+                };
+                rows.push(Border::new().height(20.0).content(row));
+            }
+            let rows = View::keyed_fragment(rows.into_iter().enumerate());
+            ScrollViewer::new().content(StackPanel::new().children((rows,)))
+        }
+    };
+    Grid::new()
+        .rows([GridLength::Auto, GridLength::Star(1.0)])
+        .children((head, Border::new().grid_row(1).content(body)))
+}
