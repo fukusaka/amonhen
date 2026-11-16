@@ -547,6 +547,8 @@ enum Message {
     StashOption(&'static str, bool),
     /// Repository Settings: 設定を読んだ・欄を書き換えた・ボタン。
     RepoSettingsLoaded(Vec<crate::reposettings::Entry>),
+    /// Repository Settings の `.gitignore` と `.git/info/exclude` を読んだ。
+    RepoIgnoreLoaded(String, String),
     RepoSettingsField(&'static str, String),
     RepoSettingsButton(String),
     /// 解決済みにする前に、残っているコンフリクトを数えた（パス、数）。
@@ -2864,6 +2866,13 @@ impl Component for Root {
                     state.load(entries);
                 }
             }
+            Message::RepoIgnoreLoaded(gitignore, exclude) => {
+                if let Some(state) = self.repo_settings.as_mut() {
+                    state.gitignore = gitignore;
+                    state.exclude_saved = exclude.clone();
+                    state.exclude = Some(exclude);
+                }
+            }
             Message::RepoSettingsField(field, text) => {
                 if let Some(state) = self.repo_settings.as_mut() {
                     match field {
@@ -2871,6 +2880,8 @@ impl Component for Root {
                         "email" => state.email = text,
                         "query" => state.query = text,
                         "key" => state.new_key = text,
+                        // 打ったまま持つ（揃えた値で欄を書き直すと、カーソルが先頭に戻る）。改行は書くときに揃える。
+                        "exclude" => state.exclude = Some(text),
                         _ => state.new_value = text,
                     }
                 }
@@ -2887,7 +2898,20 @@ impl Component for Root {
                         "value": (!value.is_empty()).then_some(value),
                     })
                 };
-                let commands = if key == "close" {
+                if key == "exclude-revert" {
+                    state.exclude = Some(state.exclude_saved.clone());
+                    return;
+                }
+                let commands = if key == "exclude-save" {
+                    // TextBox は改行を `\r` で返すので、ファイルの改行（LF）に揃える。
+                    let text =
+                        crate::reposettings::lf(state.exclude.as_deref().unwrap_or_default());
+                    vec![json!({
+                        "op": "saveIgnoreFiles",
+                        "gitignore": state.gitignore,
+                        "exclude": text,
+                    })]
+                } else if key == "close" {
                     self.repo_settings = None;
                     self.page = self.repo_settings_from;
                     return;
@@ -3065,6 +3089,7 @@ impl Component for Root {
                     let Some((_, _, _, key, options, default)) =
                         crate::reposettings::operation_rows()
                             .into_iter()
+                            .chain(crate::reposettings::working_copy_rows())
                             .find(|r| r.0 == id)
                     else {
                         return;
@@ -5609,6 +5634,23 @@ impl Root {
                 serde_json::from_str(&repo.run_json(r#"{"op":"configList"}"#)).unwrap_or_default();
             Message::RepoSettingsLoaded(crate::reposettings::entries_of(&reply["info"]))
         });
+        // .git/info/exclude も（読めなければ欄を出さない。空として書くと中身を失う）。
+        if let Some(repo) = self.repo.clone() {
+            context.spawn_background(move |_| {
+                let files: Value = serde_json::from_str(&repo.run_json(r#"{"op":"ignoreFiles"}"#))
+                    .unwrap_or_default();
+                match (
+                    files["info"]["gitignore"].as_str(),
+                    files["info"]["exclude"].as_str(),
+                ) {
+                    (Some(g), Some(e)) => Message::RepoIgnoreLoaded(g.to_owned(), e.to_owned()),
+                    _ => Message::Performed(Some((
+                        tr!("Repository Settings"),
+                        files["error"].as_str().unwrap_or("ignoreFiles").to_owned(),
+                    ))),
+                }
+            });
+        }
     }
 
     fn repo_settings_view(&self, context: &ViewContext<Self>) -> View {

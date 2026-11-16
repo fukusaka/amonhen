@@ -38,6 +38,10 @@ pub struct State {
     pub query: String,
     pub new_key: String,
     pub new_value: String,
+    /// `.git/info/exclude` の中身（読むまでは None）と、読んだ・書いた中身、`.gitignore`（書くときに一緒に渡す）。
+    pub exclude: Option<String>,
+    pub exclude_saved: String,
+    pub gitignore: String,
 }
 
 impl State {
@@ -49,6 +53,9 @@ impl State {
             query: String::new(),
             new_key: String::new(),
             new_value: String::new(),
+            exclude: None,
+            exclude_saved: String::new(),
+            gitignore: String::new(),
         }
     }
 
@@ -164,6 +171,37 @@ pub fn operation_rows() -> Vec<OperationRow> {
             "false",
         ),
     ]
+}
+
+/// Working Copy の行（GTK4 版の `working_copy_page`。形は `operation_rows` と同じ）。
+pub fn working_copy_rows() -> Vec<OperationRow> {
+    vec![
+        (
+            "core.autocrlf",
+            tr!("Line endings"),
+            String::new(),
+            "core.autocrlf",
+            vec![
+                ("false", tr!("Keep as committed")),
+                ("true", tr!("CRLF in the working tree, LF in commits")),
+                ("input", tr!("LF in commits, no change on checkout")),
+            ],
+            "false",
+        ),
+        (
+            "core.fileMode",
+            tr!("Track changes to the executable bit"),
+            String::new(),
+            "core.fileMode",
+            vec![("true", tr!("On")), ("false", tr!("Off"))],
+            "true",
+        ),
+    ]
+}
+
+/// 改行を LF に揃える（WinUI の TextBox は `\r` で返す）。
+pub fn lf(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
 }
 
 /// git の真偽値を `true`・`false` に揃える（`yes`・`on`・`1` も真）。
@@ -330,7 +368,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 .unwrap_or(0),
         ),
     )];
-    for (id, title, help, key, options, default) in operation_rows() {
+    let row_of = |(id, title, help, key, options, default): OperationRow| {
         let value = state
             .effective(key)
             .map_or_else(|| default.to_owned(), |(v, _)| v.to_owned());
@@ -340,7 +378,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
             value.to_lowercase()
         };
         let selected = options.iter().position(|(v, _)| *v == value).unwrap_or(0);
-        operations.push((
+        (
             id.to_owned(),
             choice_row(
                 id,
@@ -350,8 +388,45 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 options.into_iter().map(|(_, l)| l).collect(),
                 selected,
             ),
-        ));
-    }
+        )
+    };
+    operations.extend(operation_rows().into_iter().map(row_of));
+    let working_copy: Vec<(String, View)> = working_copy_rows().into_iter().map(row_of).collect();
+    // このリポジトリだけで無視するパターン（.git/info/exclude）。
+    let exclude: View = match &state.exclude {
+        None => TextBlock::new().text(tr!("Loading…")).opacity(0.6).into(),
+        Some(text) => {
+            let dirty = lf(text) != state.exclude_saved;
+            StackPanel::new().spacing(6.0).children((
+                TextBlock::new()
+                    .text(tr!(
+                        ".git/info/exclude, one pattern per line. Shared patterns go in .gitignore."
+                    ))
+                    .font_size(12.0)
+                    .opacity(0.65)
+                    .text_wrapping(TextWrapping::Wrap),
+                TextBox::new()
+                    .text(text.clone())
+                    .accepts_return(true)
+                    .min_height(140.0)
+                    .on_text_changed((callbacks.field)("exclude")),
+                StackPanel::new()
+                    .orientation(Orientation::Horizontal)
+                    .spacing(8.0)
+                    .horizontal_alignment(HorizontalAlignment::Right)
+                    .children((
+                        Button::new()
+                            .is_enabled(dirty)
+                            .on_click((callbacks.button)("exclude-revert".to_owned()))
+                            .content(TextBlock::new().text(tr!("Revert"))),
+                        Button::new()
+                            .is_enabled(dirty)
+                            .on_click((callbacks.button)("exclude-save".to_owned()))
+                            .content(TextBlock::new().text(tr!("Save"))),
+                    )),
+            ))
+        }
+    };
     let author_changed = state.at("local", "user.name").unwrap_or_default() != state.name
         || state.at("local", "user.email").unwrap_or_default() != state.email;
     // Keys and Values: キーごとに効いている値（最後のもの）。探す文字があれば、キーか値に含むものだけ。
@@ -459,6 +534,17 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                     .horizontal_alignment(HorizontalAlignment::Left)
                     .spacing(12.0)
                     .children((View::keyed_fragment(operations),)),
+                heading("Working Copy".to_owned()),
+                StackPanel::new()
+                    .max_width(560.0)
+                    .horizontal_alignment(HorizontalAlignment::Left)
+                    .spacing(12.0)
+                    .children((View::keyed_fragment(working_copy),)),
+                heading(tr!("Ignore in this repository only")),
+                StackPanel::new()
+                    .max_width(560.0)
+                    .horizontal_alignment(HorizontalAlignment::Left)
+                    .children((exclude,)),
                 heading(tr!("Keys and Values")),
                 TextBox::new()
                     .text(state.query.clone())
