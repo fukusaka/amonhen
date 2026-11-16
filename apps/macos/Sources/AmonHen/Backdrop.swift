@@ -9,9 +9,54 @@ extension Notification.Name {
 
 /// 窓の外側の分割。サイドバーがふつうの項目のとき（窓の後ろを透かすとき）も、サイドバーの開け閉めを効かせる。
 final class MainSplitViewController: NSSplitViewController {
+    override init(nibName nibNameOrNil: NSNib.Name?, bundle nibBundleOrNil: Bundle?) {
+        super.init(nibName: nibNameOrNil, bundle: nibBundleOrNil)
+        let split = MainSplitView()
+        split.isVertical = true
+        split.dividerStyle = .thin
+        splitView = split
+    }
+
+    required init?(coder: NSCoder) { super.init(coder: coder) }
+
+    /// サイドバーの仕切りの線を、ツールバーの下からにする（窓の後ろを透かすとき）。
+    var dividerStopsAtToolbar: Bool {
+        get { (splitView as? MainSplitView)?.dividerStopsAtToolbar ?? false }
+        set { (splitView as? MainSplitView)?.dividerStopsAtToolbar = newValue }
+    }
+
     override func toggleSidebar(_ sender: Any?) {
         guard let item = splitViewItems.first, item.behavior != .sidebar else { return super.toggleSidebar(sender) }
         item.animator().isCollapsed.toggle()
+    }
+}
+
+/// 窓の外側の分割のビュー。窓の後ろを透かすとき、サイドバーとツールバーは 1 つながりの透けた面なので、
+/// 仕切りの線をツールバーの中（窓の上端まで）には引かない。
+final class MainSplitView: NSSplitView {
+    var dividerStopsAtToolbar = false {
+        didSet { if dividerStopsAtToolbar != oldValue { needsDisplay = true } }
+    }
+    private var drawnInset: CGFloat = 0
+
+    override func layout() {
+        super.layout()
+        // ツールバーの高さが変わったら（タブバーの出し入れなど）、線を引き直す。
+        if dividerStopsAtToolbar, safeAreaInsets.top != drawnInset { needsDisplay = true }
+    }
+
+    override func drawDivider(in rect: NSRect) {
+        guard dividerStopsAtToolbar else { return super.drawDivider(in: rect) }
+        drawnInset = safeAreaInsets.top
+        var rect = rect
+        let limit = isFlipped ? bounds.minY + drawnInset : bounds.maxY - drawnInset
+        if isFlipped {
+            let top = max(rect.minY, limit)
+            rect = NSRect(x: rect.minX, y: top, width: rect.width, height: max(0, rect.maxY - top))
+        } else {
+            rect.size.height = max(0, min(rect.maxY, limit) - rect.minY)
+        }
+        if rect.height > 0 { super.drawDivider(in: rect) }
     }
 }
 

@@ -1237,6 +1237,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             split.insertSplitViewItem(next, at: 0)
             if !collapsed { split.splitView.setPosition(width, ofDividerAt: 0) }
         }
+        split.dividerStopsAtToolbar = settings.style != .system
         host.apply(settings)
         statusBar.paint(settings.paneColor, underToolbar: settings.style == .system)
         // 読む面はどの型でも自分では塗らず、下の 1 つの色を見せる。サイドバーは `system` ではガラスのまま。

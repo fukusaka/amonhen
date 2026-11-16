@@ -25,6 +25,8 @@ becomes the GitHub Release notes.
 #### Fixed
 
 - The confirmation for closing the merge editor without saving keeps its buttons side by side.
+- macOS: in a see-through window, the sidebar's divider line stops below the toolbar instead of running up to the
+  window's top edge.
 - A long branch name no longer widens History's context menu: its Copy Branch Name item cuts the name in the middle.
 - Long branch names no longer overlap in the Reset, Merge and Rebase drawings, and on macOS the merge editor's own
   window no longer puts its title bar buttons over the conflict count.
