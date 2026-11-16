@@ -336,6 +336,14 @@ enum Dialog {
         name: String,
         reason: String,
     },
+    /// worktree のフォルダを移す（`repair` なら、手で移した先を教えてつなぎ直す）。GTK4 版の `move_to`・`locate`。
+    WorktreeFolder {
+        repo: Arc<Repository>,
+        path: String,
+        name: String,
+        to: String,
+        repair: bool,
+    },
     /// パッチを当てる前の確認（GTK4 版の `patches::confirm`）。mbox ならパッチごとにコミットにする（git am）、
     /// でなければ作業ツリーに入れる（git apply）。前後の絵はまだない。
     ApplyPatch {
@@ -743,7 +751,10 @@ impl Component for Root {
                 | Some(Dialog::FetchBundle { name: current, .. })
                 | Some(Dialog::LockWorktree {
                     reason: current, ..
-                }) => *current = name.replace("\r\n", "\n").replace('\r', "\n"),
+                })
+                | Some(Dialog::WorktreeFolder { to: current, .. }) => {
+                    *current = name.replace("\r\n", "\n").replace('\r', "\n")
+                }
                 _ => {}
             },
             Message::Command(id) if id == "push" => self.push(false),
@@ -1140,6 +1151,15 @@ impl Component for Root {
                     };
                     Message::RangePrevious(request, found)
                 });
+            }
+            // Refresh: History と一緒に、worktree・ブランチの分け方も読み直す（フォルダを手で動かした worktree など、
+            // ref の変わらない変化）。
+            Message::Command(id) if id == "refresh" => {
+                if let Some(repo) = self.repo.clone() {
+                    load_groups(repo.clone(), context);
+                    load_worktrees(repo, context);
+                }
+                with_history(|h| h.command(&id));
             }
             Message::Command(id) => with_history(|h| h.command(&id)),
             Message::UndoPeek(repo, peek) => match peek {
@@ -1589,6 +1609,33 @@ impl Component for Root {
                         json!({ "op": "worktreeLock", "path": path, "reason": (!text.is_empty()).then_some(text) }),
                         tr!("Lock"),
                     );
+                }
+                (
+                    Some(Dialog::WorktreeFolder {
+                        repo,
+                        path,
+                        to,
+                        repair,
+                        ..
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    let to = to.trim().to_owned();
+                    if to.is_empty() {
+                        return beep();
+                    }
+                    let (command, title) = if repair {
+                        (
+                            json!({ "op": "worktreeRepair", "paths": [to] }),
+                            tr!("Reconnect"),
+                        )
+                    } else {
+                        (
+                            json!({ "op": "worktreeMove", "path": path, "to": to }),
+                            tr!("Move"),
+                        )
+                    };
+                    perform(context, repo, command, title);
                 }
                 (Some(Dialog::CloseMerge), ContentDialogResult::Primary) => {
                     self.merge = None;
@@ -2275,6 +2322,22 @@ impl Component for Root {
                             path: path.to_owned(),
                             name,
                             reason: String::new(),
+                        });
+                        self.dialog_inputs += 1;
+                    }
+                } else if let Some(rest) = key
+                    .strip_prefix("wt-move:")
+                    .map(|p| (p, false))
+                    .or_else(|| key.strip_prefix("wt-locate:").map(|p| (p, true)))
+                {
+                    let (path, repair) = rest;
+                    if let Some(repo) = self.repo.clone() {
+                        self.dialog = Some(Dialog::WorktreeFolder {
+                            repo,
+                            path: path.to_owned(),
+                            name: worktree_name(path),
+                            to: path.to_owned(),
+                            repair,
                         });
                         self.dialog_inputs += 1;
                     }
@@ -4078,6 +4141,35 @@ impl Root {
                             .on_text_changed(context.callback(Message::BranchName)),
                     )),
                 ),
+            Some(Dialog::WorktreeFolder {
+                name, to, repair, ..
+            }) => dialog
+                .is_open(true)
+                .title(if *repair {
+                    tr!("Locate the Worktree “{name}”", name = name)
+                } else {
+                    tr!("Move the Worktree “{name}”", name = name)
+                })
+                .primary_button_text(if *repair { tr!("Reconnect") } else { tr!("Move") })
+                .close_button_text(tr!("Cancel"))
+                .is_primary_button_enabled(!to.trim().is_empty())
+                .content(
+                    StackPanel::new().spacing(6.0).children((
+                        TextBlock::new()
+                            .text(if *repair {
+                                tr!(
+                                    "If you moved its folder yourself, give where it is now, and git reconnects it (git worktree repair)."
+                                )
+                            } else {
+                                tr!("Moves the folder and tells git where it is now (git worktree move).")
+                            })
+                            .text_wrapping(TextWrapping::Wrap),
+                        TextBox::new()
+                            .element_ref(&self.dialog_input)
+                            .text(to.clone())
+                            .on_text_changed(context.callback(Message::BranchName)),
+                    )),
+                ),
             Some(Dialog::CloseMerge) => dialog
                 .is_open(true)
                 .title(tr!("Close without saving?"))
@@ -4742,14 +4834,28 @@ impl Root {
             let mut items = vec![MenuItem::item(format!("copy:{path}"), tr!("Copy Path"))];
             if w.prunable {
                 items.push(MenuItem::separator("-prune"));
+                // フォルダを手で移したなら、つながりを直せる（git worktree repair。GTK4 版と同じ）。
+                items.push(MenuItem::item(
+                    format!("wt-locate:{path}"),
+                    tr!("Locate Moved Folder…"),
+                ));
                 items.push(MenuItem::item("prune-worktrees", tr!("Prune Worktrees")));
             } else if !w.main {
                 items.push(MenuItem::separator("-lock"));
-                items.push(if w.locked {
-                    MenuItem::item(format!("wt-unlock:{path}"), tr!("Unlock"))
+                if w.locked {
+                    items.push(MenuItem::item(format!("wt-unlock:{path}"), tr!("Unlock")));
                 } else {
-                    MenuItem::item(format!("wt-lock:{path}"), tr!("Lock…"))
-                });
+                    items.push(MenuItem::item(format!("wt-lock:{path}"), tr!("Lock…")));
+                    // 開いているリポジトリの worktree は移さない（窓が古いパスを指したままになる）。
+                    let opened = self
+                        .repo
+                        .as_ref()
+                        .and_then(|r| r.paths().workdir)
+                        .is_some_and(|d| same_path(&d.display().to_string(), path));
+                    if !opened {
+                        items.push(MenuItem::item(format!("wt-move:{path}"), tr!("Move…")));
+                    }
+                }
                 items.push(MenuItem::separator("-remove"));
                 items.push(MenuItem::item(
                     format!("wt-remove:{path}"),
@@ -6396,6 +6502,12 @@ fn load_groups(repo: Arc<Repository>, context: &ComponentContext<Root>) {
         let reply = serde_json::from_str(&reply).unwrap_or_default();
         Message::Groups(BranchGroups::from_reply(&reply))
     });
+}
+
+/// 同じパスか（区切りの向きと大文字小文字を区別しない。Windows のパス）。
+fn same_path(a: &str, b: &str) -> bool {
+    let norm = |p: &str| p.replace('\\', "/").trim_end_matches('/').to_lowercase();
+    norm(a) == norm(b)
 }
 
 /// worktree の一覧を裏で読む。
