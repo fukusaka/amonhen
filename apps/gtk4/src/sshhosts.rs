@@ -129,7 +129,13 @@ pub fn connecting<T>(
 /// エンジンを送ってよいかを聞き（メインの糸）、答えを設定に残す。送るなら Some（今後も聞かないなら Some(true)）、
 /// 送らないなら None（その SSH 先の送り込みを切る）。
 async fn ask_send_engine(host: &str, consent: &amonhen_remote::ssh::EngineConsent) -> Option<bool> {
-    let parent = crate::tabs::front_window().map(|w| w.window.clone());
+    // 今前にある窓に付ける（設定の窓からつないだなら設定の窓。リポジトリの窓に付けると、それが前に出て設定の窓が
+    // 隠れる）。
+    let parent = gtk::Window::list_toplevels()
+        .into_iter()
+        .filter_map(|w| w.downcast::<gtk::Window>().ok())
+        .find(|w| w.is_active() && w.is_visible())
+        .or_else(|| crate::tabs::front_window().map(|w| w.window.clone().upcast()));
     let title = if consent.update {
         tr!("Send a new version of the engine to {host}?", host = host)
     } else {
