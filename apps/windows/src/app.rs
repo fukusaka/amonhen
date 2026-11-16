@@ -34,6 +34,12 @@ thread_local! {
     static HISTORY_ELEMENT: RefCell<Option<xaml::UIElement>> = const { RefCell::new(None) };
     /// History から外した右クリックのメニュー（外している間、WinUI は自分では開かない）。
     static HISTORY_FLYOUT: RefCell<Option<xaml::FlyoutBase>> = const { RefCell::new(None) };
+    /// サイドバーの木の生の要素と、右クリックで開く位置（キーボードで開いたときは項目そのものに出す）。
+    static SIDEBAR_ELEMENT: RefCell<Option<xaml::UIElement>> = const { RefCell::new(None) };
+    /// サイドバーのメニューを付けておく、押されない空の Grid。
+    static SIDEBAR_MENU_HOST: RefCell<Option<xaml::UIElement>> = const { RefCell::new(None) };
+    static SIDEBAR_AT: RefCell<Option<(xaml::UIElement, Option<xaml::Point>)>> =
+        const { RefCell::new(None) };
     /// History と差分に付けたイベント（持っている間だけ届く）。
     static REVOKERS: RefCell<Vec<windows_core_reactor::EventRevoker>> =
         const { RefCell::new(Vec::new()) };
@@ -72,6 +78,11 @@ struct Root {
     selected: Option<(String, Vec<crate::data::RefLabel>)>,
     /// History の右クリックのメニューを開いた回数（変わったら、描き直した後に開く）。
     menu_request: u64,
+    /// サイドバーの木と、右クリックした項目のキー・開いた回数（History と同じく、作り直してから開く）。
+    sidebar_tree: ElementRef<Grid>,
+    sidebar_menu_host: ElementRef<Grid>,
+    sidebar_key: Option<String>,
+    sidebar_request: u64,
     /// 出している画面（サイドバーの Workspace）。
     page: Page,
     repo: Option<Arc<Repository>>,
@@ -201,6 +212,8 @@ enum Message {
     HistoryMenu(String),
     /// History の右クリックのメニューを開く（選んだ行のメニューに作り直してから）。
     OpenHistoryMenu,
+    /// サイドバーの項目を右クリックした（項目のキー）。
+    SidebarMenu(String),
     Status(Arc<StatusSnapshot>),
     /// Working Copy の件名・本文が変わった。
     Summary(String),
@@ -263,6 +276,10 @@ impl Component for Root {
             dialog: None,
             selected: None,
             menu_request: 0,
+            sidebar_tree: ElementRef::new(),
+            sidebar_menu_host: ElementRef::new(),
+            sidebar_key: None,
+            sidebar_request: 0,
             page: Page::History,
             repo: None,
             status: None,
@@ -551,6 +568,15 @@ impl Component for Root {
             },
             Message::Selected(selected) => self.selected = selected,
             Message::OpenHistoryMenu => self.menu_request += 1,
+            Message::SidebarMenu(key) => {
+                // 操作のない項目（見出し・Workspace のページ）では開かない。
+                self.sidebar_key = Some(key);
+                if self.sidebar_menu().is_empty() {
+                    self.sidebar_key = None;
+                } else {
+                    self.sidebar_request += 1;
+                }
+            }
             Message::Status(status) => {
                 self.status = Some(status);
                 // 選んでいるファイルの差分も読み直す（stage で行の印が、外での変更で中身が変わる）。
@@ -672,6 +698,10 @@ impl Component for Root {
                     self.pick(oid.to_owned(), true);
                 } else if let Some(oid) = key.strip_prefix("reset:") {
                     self.reset(oid.to_owned());
+                } else if let Some(rev) = key.strip_prefix("merge:") {
+                    self.integrate(rev.to_owned(), false);
+                } else if let Some(rev) = key.strip_prefix("rebase:") {
+                    self.integrate(rev.to_owned(), true);
                 }
             }
             Message::Performed(failed) => {
@@ -707,10 +737,12 @@ impl Component for Root {
             self.area.clone(),
             self.diff_panel.clone(),
             self.diff_area.clone(),
+            self.sidebar_tree.clone(),
+            self.sidebar_menu_host.clone(),
         );
         let sender = context.sender();
         context.use_effect("history", (), move || {
-            let (panel, area, diff_panel, diff_area) = refs;
+            let (panel, area, diff_panel, diff_area, sidebar, sidebar_menu_host) = refs;
             let (args, started) = ARGS.with(|a| a.borrow().clone()).expect("args");
             let session = match Session::new(&args, "app", started, Arc::new(|| {})) {
                 Ok(s) => s,
@@ -723,6 +755,11 @@ impl Component for Root {
                 session,
                 root,
                 root_input: false,
+                sidebar,
+                sidebar_menu_host,
+                sidebar_input: false,
+                sidebar_host_input: false,
+                sidebar_menu_ready: false,
                 panel: panel.clone(),
                 area,
                 options: args.options,
@@ -789,12 +826,35 @@ impl Component for Root {
             });
         }
 
-        let sidebar = TreeView::new()
-            .on_item_invoked(context.callback(Message::Invoked))
+        // サイドバーの右クリック: メニューを押した項目のものに作り直した後、次のフレームで開く。
+        if self.sidebar_request > 0 {
+            context.use_effect("sidebar-menu", self.sidebar_request, || {
+                with_history(|h| h.sidebar_menu_ready = true);
+                None
+            });
+        }
+        // 木（TreeView）には参照を付けられないので、包む Grid に右クリックを付ける。メニューは押されない空の
+        // Grid に付けておき、そこから取って開く（右クリックした所に付けると、WinUI が作り直す前のメニューを開く）。
+        let sidebar = Grid::new()
+            .element_ref(&self.sidebar_tree)
             .grid_column(0)
-            .nodes(sidebar::nodes(
-                self.refs.as_ref().map(|r| &r.refs),
-                self.groups.as_ref(),
+            .children((
+                TreeView::new()
+                    .on_item_invoked(context.callback(Message::Invoked))
+                    .nodes(sidebar::nodes(
+                        self.refs.as_ref().map(|r| &r.refs),
+                        self.groups.as_ref(),
+                    )),
+                Grid::new()
+                    .element_ref(&self.sidebar_menu_host)
+                    .width(0.0)
+                    .height(0.0)
+                    .horizontal_alignment(HorizontalAlignment::Left)
+                    .vertical_alignment(VerticalAlignment::Top)
+                    .menu(Menu::new(
+                        self.sidebar_menu(),
+                        context.callback(Message::HistoryMenu),
+                    )),
             ));
         let history: View = match &self.error {
             Some(e) => TextBlock::new()
@@ -1266,6 +1326,92 @@ impl Root {
             button: if revert { "Revert" } else { "Cherry-pick" }.to_owned(),
             command: json!({ "op": op, "oids": [oid], "isMerge": merge }),
         });
+    }
+
+    /// 決まった相手との Merge・Rebase の確認（サイドバーの右クリックから。GTK4 版の `sheets::integrate`）。
+    fn integrate(&mut self, rev: String, rebase: bool) {
+        let Some(repo) = self.repo.clone() else {
+            return beep();
+        };
+        self.dialog = Some(Dialog::Integrate {
+            repo,
+            rebase,
+            current: self.head_name(),
+            choices: vec![(rev.clone(), rev)],
+            chooser: false,
+            chosen: 0,
+            mode: 0,
+        });
+    }
+
+    /// サイドバーの右クリックのメニュー（GTK4 版の `refops::menu` のうち、動く操作だけ）。項目のキーは History の
+    /// 右クリックと同じ形（`Message::HistoryMenu` で受ける）。
+    fn sidebar_menu(&self) -> Vec<MenuItem> {
+        use amonhen_model::RefKind;
+        let Some(entry) = self.sidebar_key.as_deref().and_then(|k| self.entry(k)) else {
+            return Vec::new();
+        };
+        let name = entry.name.as_str();
+        let current = self.head_name();
+        let is_head = entry.kind == RefKind::Local
+            && self
+                .refs
+                .as_ref()
+                .and_then(|r| r.refs.head_branch.as_deref())
+                == Some(name);
+        let mut items = Vec::new();
+        let copy = match entry.kind {
+            RefKind::Local | RefKind::Remote => tr!("Copy Branch Name"),
+            RefKind::Tag => tr!("Copy Tag Name"),
+            RefKind::Stash => return items,
+            _ => tr!("Copy Name"),
+        };
+        items.push(MenuItem::item(format!("copy:{name}"), copy));
+        if !matches!(entry.kind, RefKind::Local | RefKind::Remote | RefKind::Tag) {
+            return items;
+        }
+        items.push(MenuItem::separator("-copy"));
+        let merge = MenuItem::item(
+            format!("merge:{name}"),
+            tr!("Merge {rev} into {target}…", rev = name, target = &current),
+        );
+        let rebase = MenuItem::item(
+            format!("rebase:{name}"),
+            tr!("Rebase {target} onto {rev}…", target = &current, rev = name),
+        );
+        match entry.kind {
+            RefKind::Local if !is_head => {
+                items.push(MenuItem::item(
+                    format!("checkout:{name}"),
+                    tr!("Checkout {name}…", name = name),
+                ));
+                items.push(merge);
+                items.push(rebase);
+                items.push(MenuItem::separator("-integrate"));
+            }
+            RefKind::Remote => {
+                items.push(MenuItem::item(
+                    format!("track:{name}"),
+                    tr!("Checkout {name} as Local Branch…", name = name),
+                ));
+                items.push(merge);
+                items.push(rebase);
+                items.push(MenuItem::separator("-integrate"));
+            }
+            RefKind::Tag => items.push(merge),
+            _ => {}
+        }
+        items.push(MenuItem::item(
+            format!("branch:{name}"),
+            tr!("New Branch from {name}…", name = name),
+        ));
+        if entry.kind == RefKind::Local {
+            items.push(MenuItem::item(
+                format!("tag:{name}"),
+                tr!("New Tag at {name}…", name = name),
+            ));
+        }
+        items
     }
 
     /// 「Reset <今のブランチ> to <コミット>…」の確認（GTK4 版の `commitops::ask_reset`）。
@@ -2085,6 +2231,13 @@ struct HistoryView {
     context_at: Option<xaml::Point>,
     /// 開くのを頼んだ（開くまで頼み直さない）。
     menu_requested: bool,
+    /// サイドバーの木（右クリックを付ける）と、付けたか、メニューを作り直し終えたか。
+    sidebar: ElementRef<Grid>,
+    /// サイドバーのメニューを付けておく、押されない空の Grid。
+    sidebar_menu_host: ElementRef<Grid>,
+    sidebar_input: bool,
+    sidebar_host_input: bool,
+    sidebar_menu_ready: bool,
     /// メニューを作り直した（次のフレームで開く）。
     menu_ready: bool,
     /// Working Copy を出している（差分の欄は選んだファイルの差分）。
@@ -2140,6 +2293,31 @@ impl HistoryView {
         }
         if !self.diff.input_requested {
             self.diff.input_requested = request_input(&self.diff.area, Target::Diff);
+        }
+        if !self.sidebar_input {
+            self.sidebar_input = self.sidebar.request_native_element(|result| match result {
+                Ok(element) => {
+                    if let Err(e) = attach_sidebar(&element) {
+                        eprintln!("サイドバーに右クリックを付けられない: {e}");
+                    }
+                }
+                Err(e) => eprintln!("サイドバーを取れない: {e:?}"),
+            });
+        }
+        if !self.sidebar_host_input {
+            self.sidebar_host_input =
+                self.sidebar_menu_host
+                    .request_native_element(|result| match result {
+                        Ok(element) => {
+                            if let Ok(ui) = element.cast::<xaml::UIElement>() {
+                                SIDEBAR_MENU_HOST.with(|e| *e.borrow_mut() = Some(ui));
+                            }
+                        }
+                        Err(e) => eprintln!("サイドバーのメニューの置き場を取れない: {e:?}"),
+                    });
+        }
+        if std::mem::take(&mut self.sidebar_menu_ready) {
+            open_sidebar_menu();
         }
         let s = &mut self.session;
         if STATUS_RELOAD.swap(false, std::sync::atomic::Ordering::AcqRel) {
@@ -2503,6 +2681,74 @@ fn attach_shortcuts(element: &IInspectable) -> windows_core_reactor::Result<()> 
     })?;
     REVOKERS.with(|r| r.borrow_mut().push(revoker));
     Ok(())
+}
+
+/// サイドバーの木に右クリックを付ける。押した所から親をたどって木の項目（`DataContext` が TreeViewNode）を探し、
+/// そのキーを知らせる。メニューは押した項目のものに作り直してから開く（WinUI が今のメニューを開かないよう、
+/// 扱ったことにする）。
+fn attach_sidebar(element: &IInspectable) -> windows_core_reactor::Result<()> {
+    let ui: xaml::UIElement = element.cast()?;
+    SIDEBAR_ELEMENT.with(|e| *e.borrow_mut() = Some(ui.clone()));
+    let source = ui.clone();
+    let revoker = ui.ContextRequested(move |_, args: Ref<xaml::ContextRequestedEventArgs>| {
+        let Some(args) = args.as_ref() else { return };
+        let _ = args.SetHandled(true);
+        let Ok(original) = args.OriginalSource() else {
+            return;
+        };
+        let Some((item, key)) = tree_item_key(&original) else {
+            return;
+        };
+        let mut at = xaml::Point::default();
+        let place = if args.TryGetPosition(&source, &mut at).unwrap_or(false) {
+            (source.clone(), Some(at))
+        } else {
+            (item, None)
+        };
+        SIDEBAR_AT.with(|a| *a.borrow_mut() = Some(place));
+        with_history(|h| {
+            h.sender.send(Message::SidebarMenu(key));
+        });
+    })?;
+    REVOKERS.with(|r| r.borrow_mut().push(revoker));
+    Ok(())
+}
+
+/// `from` から親へたどり、木の項目の要素とそのキーを返す。
+fn tree_item_key(from: &IInspectable) -> Option<(xaml::UIElement, String)> {
+    let mut node: xaml::DependencyObject = from.cast().ok()?;
+    for _ in 0..32 {
+        if let Ok(element) = node.cast::<xaml::FrameworkElement>()
+            && let Ok(context) = element.DataContext()
+            && let Ok(unknown) = context.cast::<windows_core_reactor::IUnknown>()
+            && let Some(key) = windows_reactor::tree_node_key_by_identity(unknown.as_raw() as usize)
+        {
+            return Some((element.cast().ok()?, key));
+        }
+        node = xaml::VisualTreeHelper::GetParent(&node).ok()?;
+    }
+    None
+}
+
+/// 作り直したサイドバーのメニューを、右クリックした所で開く。
+fn open_sidebar_menu() {
+    let (Some(element), Some((target, at))) = (
+        SIDEBAR_MENU_HOST.with(|e| e.borrow().clone()),
+        SIDEBAR_AT.with(|a| a.borrow_mut().take()),
+    ) else {
+        return;
+    };
+    let open = || -> windows_core_reactor::Result<()> {
+        let flyout = element.ContextFlyout()?;
+        let options = xaml::FlyoutShowOptions::new()?;
+        if let Some(at) = at {
+            options.SetPosition(Some(at))?;
+        }
+        flyout.ShowAtWithOptions(&target, &options)
+    };
+    if let Err(e) = open() {
+        eprintln!("サイドバーのメニューを開けない: {e}");
+    }
 }
 
 /// `area` の生の要素に入力を付ける（まだ載っていなければ `false`、次のフレームでまた試す）。
