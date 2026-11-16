@@ -300,7 +300,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Apply Patch (am / apply, preview, 3-way, --index) | ✓ | ✓ | △ | ✓ | ✓ | CLI: `am`, `apply` (`--check`).<br>Windows: No before/after drawing. |
 | Drop patch files on the window | ✓ | ✓ | — | ✓ | n/a | VSCode: From the Explorer's context menu. |
 | Export Archive (zip / tar.gz / tar, top folder, one folder) | ✓ | ✓ | △ | ✓ | ✓ | VSCode: With the engine; a branch's or tag's right-click, a commit's in History, or the command palette for HEAD.<br>CLI: `archive`.<br>Windows: Format and top folder from a commit's menu; not one folder. |
-| Save as Bundle (all, some refs, after a base) | ✓ | ✓ | — | ✓ | ✓ | VSCode: With the engine; the selected branches' and tags' right-click, or the sidebar's ⋯ for the whole repository.<br>CLI: `bundle create`. |
+| Save as Bundle (all, some refs, after a base) | ✓ | ✓ | △ | ✓ | ✓ | VSCode: With the engine; the selected branches' and tags' right-click, or the sidebar's ⋯ for the whole repository.<br>CLI: `bundle create`.<br>Windows: No partial-clone confirmation. |
 | Clone from a bundle file (branch when no HEAD) | ✓ | ✓ | — | ✓ | ✓ | VSCode: The sidebar's ⋯ and the welcome view; then open the clone, in a new window or in the workspace.<br>CLI: `clone <file> [-b <branch>]`. |
 | Fetch from Bundle (under a name, prerequisites checked) | ✓ | ✓ | — | ✓ | ✓ | VSCode: With the engine; the sidebar's ⋯.<br>CLI: `bundle fetch`. |
 | Stopped `am` with Retry with 3-Way, Skip, Abort, Continue | ✓ | ✓ | — | ✓ | ✓ | VSCode: In a sidebar row.<br>CLI: `am --continue / --skip / --abort / --retry-3way`. |

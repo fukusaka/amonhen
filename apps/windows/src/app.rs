@@ -247,6 +247,18 @@ enum Dialog {
         format: usize,
         top: String,
     },
+    /// `refs`（空なら HEAD とすべてのブランチ・タグ）を bundle に書く（GTK4 版の `bundle::save`）。入れる範囲を
+    /// 選んでから、コミットの数を確かめ、保存するファイルを選ぶ。partial clone の中身を先に取る確認はまだない。
+    Bundle {
+        repo: Arc<Repository>,
+        refs: Vec<String>,
+        /// 見せる名前と、既定のファイル名に使う名前。
+        what: String,
+        label: String,
+        /// ある基点より後だけ（`base`）。
+        newer: bool,
+        base: String,
+    },
     /// パッチを当てる前の確認（GTK4 版の `patches::confirm`）。mbox ならパッチごとにコミットにする（git am）、
     /// でなければ作業ツリーに入れる（git apply）。前後の絵はまだない。
     ApplyPatch {
@@ -389,6 +401,10 @@ enum Message {
     CloseActivity,
     /// まとめるときのメッセージの初期値を読んだ（コミット、メッセージ）。
     SquashText(String, Result<String, String>),
+    /// bundle に入るコミットを数えた（`bundlePreview` の答えと、書く命令）。
+    BundlePreview(Arc<Repository>, String, Value, Value),
+    /// bundle の範囲（全体か、基点より後か）を選んだ。
+    BundleNewer(bool),
     /// 当てるパッチを読んだ（パス、`readPatch` の答え）。
     PatchRead(Arc<Repository>, Vec<String>, Value),
     /// パッチを当てるダイアログの選択（`three-way`・`index`）。
@@ -566,7 +582,8 @@ impl Component for Root {
                 | Some(Dialog::Patch {
                     version: current, ..
                 })
-                | Some(Dialog::Archive { top: current, .. }) => {
+                | Some(Dialog::Archive { top: current, .. })
+                | Some(Dialog::Bundle { base: current, .. }) => {
                     *current = name.replace("\r\n", "\n").replace('\r', "\n")
                 }
                 _ => {}
@@ -749,6 +766,9 @@ impl Component for Root {
                     Some(name) => self.stash_action("pop", name),
                     None => beep(),
                 }
+            }
+            Message::Command(id) if id == "save-bundle" => {
+                self.ask_bundle(Vec::new(), String::new(), "all".to_owned())
             }
             Message::Command(id) if id == "apply-patch" => {
                 let Some(repo) = self.repo.clone() else {
@@ -1159,6 +1179,31 @@ impl Component for Root {
                         })
                     };
                     perform(context, repo, command, "Apply".to_owned());
+                }
+                (
+                    Some(Dialog::Bundle {
+                        repo,
+                        refs,
+                        label,
+                        newer,
+                        base,
+                        ..
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    let base = base.trim().to_owned();
+                    let bases: Vec<String> = if newer && !base.is_empty() {
+                        vec![base]
+                    } else {
+                        Vec::new()
+                    };
+                    let command = json!({ "op": "bundlePreview", "refs": refs, "bases": bases });
+                    context.spawn_background(move |_| {
+                        let preview: Value =
+                            serde_json::from_str(&repo.run_json(&command.to_string()))
+                                .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+                        Message::BundlePreview(repo, label, preview, command)
+                    });
                 }
                 (Some(Dialog::CloseMerge), ContentDialogResult::Primary) => {
                     self.merge = None;
@@ -1692,6 +1737,11 @@ impl Component for Root {
                             version: String::new(),
                         });
                     }
+                } else if let Some(rest) = key.strip_prefix("bundle:") {
+                    // `bundle:<完全な ref の名前>:<名前>`（サイドバーのブランチ・タグ）。
+                    if let Some((full, name)) = rest.split_once(':') {
+                        self.ask_bundle(vec![full.to_owned()], name.to_owned(), name.to_owned());
+                    }
                 } else if let Some(rest) = key.strip_prefix("archive:") {
                     // `archive:<rev>:<既定の名前>`（タグ・ブランチの名前、なければ短い ID）。
                     if let (Some(repo), Some((rev, label))) =
@@ -1932,6 +1982,59 @@ impl Component for Root {
                 }
             }
             Message::ArchiveFormat(None) => {}
+            Message::BundleNewer(on) => {
+                if let Some(Dialog::Bundle { newer, .. }) = &mut self.dialog {
+                    *newer = on;
+                }
+            }
+            Message::BundlePreview(repo, label, preview, command) => {
+                if preview["ok"] != true {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("Can’t Save the Bundle"),
+                        message: preview["error"].as_str().unwrap_or_default().to_owned(),
+                    });
+                    return;
+                }
+                let info = &preview["info"];
+                let commits = info["commits"].as_u64().unwrap_or(0);
+                if commits == 0 {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("Nothing to Save"),
+                        message: tr!("There are no commits to put in the bundle."),
+                    });
+                    return;
+                }
+                if info["beyondShallow"] == true {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("Can’t Save the Bundle"),
+                        message: tr!(
+                            "This shallow clone doesn’t have all the history the bundle needs. Fetch more history, or choose a newer base."
+                        ),
+                    });
+                    return;
+                }
+                // 入るコミットの数は、保存する場所を選ぶ窓の題に（GTK4 版と同じ）。
+                let Some(path) = crate::files::save_file(
+                    &tr!("{count} commits", count = commits),
+                    &format!("{label}.bundle"),
+                    "bundle",
+                    "bundle",
+                ) else {
+                    return;
+                };
+                let mut command = command;
+                command["op"] = json!("bundle");
+                command["file"] = json!(path.to_string_lossy());
+                context.spawn_background(move |_| {
+                    let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
+                        .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+                    if let Some(e) = reply["error"].as_str() {
+                        return Message::Performed(Some((tr!("Save as Bundle"), e.to_owned())));
+                    }
+                    crate::files::reveal(&path);
+                    Message::Performed(None)
+                });
+            }
             Message::PatchRead(repo, paths, reply) => {
                 let summary = &reply["info"];
                 let patches = summary["patches"].as_array().cloned().unwrap_or_default();
@@ -2998,6 +3101,41 @@ impl Root {
                         )),
                     )
             }
+            Some(Dialog::Bundle {
+                what, newer, base, ..
+            }) => dialog
+                .is_open(true)
+                .title(tr!("Save as Bundle"))
+                .primary_button_text(tr!("Save…"))
+                .close_button_text(tr!("Cancel"))
+                // 「後だけ」を選んで基点が空なら押せない（黙って全体を保存しない。GTK4 版と同じ）。
+                .is_primary_button_enabled(!*newer || !base.trim().is_empty())
+                .content(
+                    StackPanel::new().spacing(6.0).children((
+                        TextBlock::new()
+                            .text(tr!(
+                                "{what}, in one file that git can clone or fetch from (git bundle).",
+                                what = what
+                            ))
+                            .text_wrapping(TextWrapping::Wrap),
+                        RadioButtons::new()
+                            .items_source(vec![tr!("All history"), tr!("Only commits after:")])
+                            .selected_index(usize::from(*newer))
+                            .on_selection_changed(
+                                context.callback(|i: Option<usize>| Message::BundleNewer(i == Some(1))),
+                            ),
+                        TextBox::new()
+                            .text(base.clone())
+                            .placeholder_text(tr!("Tag, branch or commit"))
+                            .is_enabled(*newer)
+                            .on_text_changed(context.callback(Message::BranchName)),
+                        TextBlock::new()
+                            .text(tr!("Whoever receives the bundle needs that commit already."))
+                            .font_size(12.0)
+                            .opacity(0.6)
+                            .text_wrapping(TextWrapping::Wrap),
+                    )),
+                ),
             Some(Dialog::CloseMerge) => dialog
                 .is_open(true)
                 .title(tr!("Close without saving?"))
@@ -3521,6 +3659,16 @@ impl Root {
         items.push(MenuItem::item(
             format!("branch:{name}"),
             tr!("New Branch from {name}…", name = name),
+        ));
+        // bundle に書く（GTK4 版の `save_bundle`。ブランチ・リモートのブランチ・タグ 1 つ）。
+        let full = match entry.kind {
+            RefKind::Local => format!("refs/heads/{name}"),
+            RefKind::Remote => format!("refs/remotes/{name}"),
+            _ => format!("refs/tags/{name}"),
+        };
+        items.push(MenuItem::item(
+            format!("bundle:{full}:{name}"),
+            tr!("Save as Bundle…"),
         ));
         if entry.kind == RefKind::Local {
             items.push(MenuItem::item(
@@ -4101,6 +4249,36 @@ impl Root {
             .grid_column(1)
             .grid_column_span(2)
             .content(view)
+    }
+
+    /// Save as Bundle のダイアログを出す（`refs` が空なら HEAD とすべてのブランチ・タグ。`names` は見せる名前、
+    /// `label` は既定のファイル名に使う）。
+    fn ask_bundle(&mut self, refs: Vec<String>, names: String, label: String) {
+        let Some(repo) = self.repo.clone() else {
+            return beep();
+        };
+        let base = repo
+            .paths()
+            .workdir
+            .and_then(|w| w.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .unwrap_or_default();
+        let label = archive_name(&if base.is_empty() {
+            label
+        } else {
+            format!("{base}-{label}")
+        });
+        self.dialog = Some(Dialog::Bundle {
+            repo,
+            refs,
+            what: if names.is_empty() {
+                tr!("HEAD and all branches and tags")
+            } else {
+                names
+            },
+            label,
+            newer: false,
+            base: String::new(),
+        });
     }
 
     /// Stash のダイアログを出す（`paths` があればそのファイルだけ。untracked のファイルを選んでいれば、最初から

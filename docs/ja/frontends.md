@@ -300,7 +300,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Apply Patch（am / apply・下見・3-way・--index） | ✓ | ✓ | △ | ✓ | ✓ | CLI: `am`・`apply`（`--check`）。<br>Windows: 前後の絵はない。 |
 | パッチのファイルを窓に落とす | ✓ | ✓ | — | ✓ | n/a | VSCode: エクスプローラーのメニューから。 |
 | Export Archive（zip・tar.gz・tar、先頭のフォルダ、1 つのフォルダ） | ✓ | ✓ | △ | ✓ | ✓ | VSCode: エンジンがあれば。ブランチ・タグの右クリック、History のコミットの右クリック、HEAD はコマンドパレットから。<br>CLI: `archive`。<br>Windows: コミットの右クリックから、形と先頭のフォルダ。1 つのフォルダだけは選べない。 |
-| Save as Bundle（すべて・一部の ref・基点より後） | ✓ | ✓ | — | ✓ | ✓ | VSCode: エンジンがあれば。選んだブランチ・タグの右クリック、リポジトリ全体はサイドバーの ⋯ から。<br>CLI: `bundle create`。 |
+| Save as Bundle（すべて・一部の ref・基点より後） | ✓ | ✓ | △ | ✓ | ✓ | VSCode: エンジンがあれば。選んだブランチ・タグの右クリック、リポジトリ全体はサイドバーの ⋯ から。<br>CLI: `bundle create`。<br>Windows: partial clone の確認はない。 |
 | bundle のファイルから clone（HEAD がなければブランチを選ぶ） | ✓ | ✓ | — | ✓ | ✓ | VSCode: サイドバーの ⋯ と最初の画面から。clone したものを開く・新しい窓で開く・ワークスペースに足す。<br>CLI: `clone <file> [-b <branch>]`。 |
 | Fetch from Bundle（名前の下に、前提のコミットを確かめて） | ✓ | ✓ | — | ✓ | ✓ | VSCode: エンジンがあれば。サイドバーの ⋯ から。<br>CLI: `bundle fetch`。 |
 | 止まった `am` と Retry with 3-Way・Skip・Abort・Continue | ✓ | ✓ | — | ✓ | ✓ | VSCode: サイドバーの行に出る。<br>CLI: `am --continue / --skip / --abort / --retry-3way`。 |

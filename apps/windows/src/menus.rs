@@ -35,6 +35,7 @@ pub const IMPLEMENTED: &[&str] = &[
     "pop-stash",
     "compare-with-previous",
     "apply-patch",
+    "save-bundle",
 ];
 
 /// 項目の名前（GTK4 版の `appmenu::title` と同じ）。
