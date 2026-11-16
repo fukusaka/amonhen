@@ -247,6 +247,21 @@ enum Dialog {
         format: usize,
         top: String,
     },
+    /// パッチを当てる前の確認（GTK4 版の `patches::confirm`）。mbox ならパッチごとにコミットにする（git am）、
+    /// でなければ作業ツリーに入れる（git apply）。前後の絵はまだない。
+    ApplyPatch {
+        repo: Arc<Repository>,
+        paths: Vec<String>,
+        mailbox: bool,
+        title: String,
+        what: String,
+        /// パッチとファイルの一覧（件名・作者、ファイルごとの印と増減）。
+        list: String,
+        /// そのまま当たるか（当たらなければその理由）。
+        applies: Result<(), String>,
+        three_way: bool,
+        index: bool,
+    },
     /// 作業中の変更を stash する（GTK4 版の `Actions::stash_paths`）。`paths` があればそのファイルだけ。
     Stash {
         repo: Arc<Repository>,
@@ -374,6 +389,10 @@ enum Message {
     CloseActivity,
     /// まとめるときのメッセージの初期値を読んだ（コミット、メッセージ）。
     SquashText(String, Result<String, String>),
+    /// 当てるパッチを読んだ（パス、`readPatch` の答え）。
+    PatchRead(Arc<Repository>, Vec<String>, Value),
+    /// パッチを当てるダイアログの選択（`three-way`・`index`）。
+    ApplyOption(&'static str, bool),
     /// 書き出す形を選んだ。
     ArchiveFormat(Option<usize>),
     /// パッチのダイアログの選択（`single`・`cover`）。
@@ -730,6 +749,26 @@ impl Component for Root {
                     Some(name) => self.stash_action("pop", name),
                     None => beep(),
                 }
+            }
+            Message::Command(id) if id == "apply-patch" => {
+                let Some(repo) = self.repo.clone() else {
+                    return beep();
+                };
+                let paths: Vec<String> = crate::files::open_files(&tr!(
+                    "Choose patch files (.patch, .diff, .mbox, .eml)."
+                ))
+                .into_iter()
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect();
+                if paths.is_empty() {
+                    return;
+                }
+                context.spawn_background(move |_| {
+                    let command = json!({ "op": "readPatch", "paths": &paths });
+                    let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
+                        .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+                    Message::PatchRead(repo, paths, reply)
+                });
             }
             Message::Command(id) if id == "activity" => {
                 if self.page != Page::Activity {
@@ -1099,6 +1138,27 @@ impl Component for Root {
                         crate::files::reveal(&path);
                         Message::Performed(None)
                     });
+                }
+                (
+                    Some(Dialog::ApplyPatch {
+                        repo,
+                        paths,
+                        mailbox,
+                        three_way,
+                        index,
+                        ..
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    let command = if mailbox {
+                        json!({ "op": "am", "paths": paths, "threeWay": three_way })
+                    } else {
+                        json!({
+                            "op": "applyPatch", "paths": paths,
+                            "index": index, "threeWay": three_way,
+                        })
+                    };
+                    perform(context, repo, command, "Apply".to_owned());
                 }
                 (Some(Dialog::CloseMerge), ContentDialogResult::Primary) => {
                     self.merge = None;
@@ -1872,6 +1932,87 @@ impl Component for Root {
                 }
             }
             Message::ArchiveFormat(None) => {}
+            Message::PatchRead(repo, paths, reply) => {
+                let summary = &reply["info"];
+                let patches = summary["patches"].as_array().cloned().unwrap_or_default();
+                let empty = patches
+                    .iter()
+                    .all(|p| p["files"].as_array().is_none_or(|f| f.is_empty()));
+                if reply["ok"].as_bool() != Some(true) || empty {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("Can’t Read the Patch"),
+                        message: reply["error"].as_str().map_or_else(
+                            || tr!("There are no changes in the patch."),
+                            str::to_owned,
+                        ),
+                    });
+                    return;
+                }
+                let mailbox = summary["kind"].as_str() == Some("mailbox");
+                let branch = self.head_name();
+                let (title, what) = if mailbox {
+                    let title = match &patches[..] {
+                        [one] => tr!(
+                            "Apply “{subject}”?",
+                            subject = one["subject"].as_str().unwrap_or_default()
+                        ),
+                        _ => tr!("Apply {count} Patches?", count = patches.len()),
+                    };
+                    (
+                        title,
+                        tr!(
+                            "Each patch becomes a commit on {branch} (git am).",
+                            branch = branch
+                        ),
+                    )
+                } else {
+                    let names: Vec<String> = paths
+                        .iter()
+                        .map(|p| {
+                            std::path::Path::new(p)
+                                .file_name()
+                                .map_or_else(|| p.clone(), |n| n.to_string_lossy().into_owned())
+                        })
+                        .collect();
+                    let title = match &names[..] {
+                        [one] => tr!("Apply {name}?", name = one),
+                        _ => tr!("Apply {count} Patches?", count = names.len()),
+                    };
+                    (
+                        title,
+                        tr!("The changes go into the working tree (git apply)."),
+                    )
+                };
+                let applies = if summary["applies"].as_bool() == Some(true) {
+                    Ok(())
+                } else {
+                    Err(patch_error_line(
+                        summary["error"].as_str().unwrap_or_default(),
+                    ))
+                };
+                self.dialog = Some(Dialog::ApplyPatch {
+                    repo,
+                    paths,
+                    mailbox,
+                    title,
+                    what,
+                    list: patch_list(&patches),
+                    applies,
+                    three_way: mailbox && summary["threeWay"].as_bool() == Some(true),
+                    index: false,
+                });
+            }
+            Message::ApplyOption(option, on) => {
+                if let Some(Dialog::ApplyPatch {
+                    three_way, index, ..
+                }) = &mut self.dialog
+                {
+                    match option {
+                        "three-way" => *three_way = on,
+                        _ => *index = on,
+                    }
+                }
+            }
             Message::PatchOption(option, on) => {
                 if let Some(Dialog::Patch { single, cover, .. }) = &mut self.dialog {
                     match option {
@@ -2799,6 +2940,64 @@ impl Root {
                             .on_text_changed(context.callback(Message::BranchName)),
                     )),
                 ),
+            Some(Dialog::ApplyPatch {
+                mailbox,
+                title,
+                what,
+                list,
+                applies,
+                three_way,
+                index,
+                ..
+            }) => {
+                let status = match applies {
+                    Ok(()) => tr!("Applies cleanly."),
+                    Err(reason) => tr!("Doesn’t apply cleanly: {reason}", reason = reason),
+                };
+                let check = |key: &'static str, label: String, on: bool| -> View {
+                    CheckBox::new()
+                        .is_checked(on)
+                        .on_is_checked_changed(context.callback(move |v| Message::ApplyOption(key, v)))
+                        .content(TextBlock::new().text(label))
+                };
+                dialog
+                    .is_open(true)
+                    .title(title.clone())
+                    .primary_button_text(tr!("Apply"))
+                    .close_button_text(tr!("Cancel"))
+                    .content(
+                        StackPanel::new().spacing(6.0).children((
+                            TextBlock::new()
+                                .text(format!("{what} {}", tr!("You can Undo this (Ctrl+Alt+Z).")))
+                                .text_wrapping(TextWrapping::Wrap),
+                            ScrollViewer::new().max_height(180.0).content(
+                                TextBlock::new()
+                                    .text(list.clone())
+                                    .font_size(12.0)
+                                    .is_text_selection_enabled(true),
+                            ),
+                            TextBlock::new()
+                                .text(status)
+                                .font_size(12.0)
+                                .foreground_optional(
+                                    applies
+                                        .is_err()
+                                        .then_some(Brush::Solid(Color::rgb(0xc4, 0x6a, 0x00))),
+                                )
+                                .text_wrapping(TextWrapping::Wrap),
+                            if *mailbox {
+                                View::empty()
+                            } else {
+                                check("index", tr!("Stage the changes too (--index)"), *index)
+                            },
+                            check(
+                                "three-way",
+                                tr!("3-way merge where it doesn’t apply"),
+                                *three_way,
+                            ),
+                        )),
+                    )
+            }
             Some(Dialog::CloseMerge) => dialog
                 .is_open(true)
                 .title(tr!("Close without saving?"))
@@ -4350,6 +4549,64 @@ fn archive_name(text: &str) -> String {
     } else {
         trimmed.to_owned()
     }
+}
+
+/// 当てるパッチの一覧（件名・作者、その下にファイルごとの印と増減。GTK4 版の `list_markup` の文字だけの形）。
+fn patch_list(patches: &[Value]) -> String {
+    let mut out = Vec::new();
+    for patch in patches {
+        let subject = patch["subject"].as_str().unwrap_or_default();
+        let files = patch["files"].as_array().cloned().unwrap_or_default();
+        if subject.is_empty() && files.is_empty() {
+            continue;
+        }
+        if !subject.is_empty() {
+            let mut line = subject.to_owned();
+            if let Some(author) = patch["author"]
+                .as_str()
+                .or_else(|| patch["authorEmail"].as_str())
+            {
+                line.push_str(&format!("  ({author})"));
+            }
+            out.push(line);
+        }
+        for file in &files {
+            let path = file["path"].as_str().unwrap_or_default();
+            let name = match file["oldPath"].as_str() {
+                Some(old) => format!("{old} → {path}"),
+                None => path.to_owned(),
+            };
+            let change = if file["binary"].as_bool() == Some(true) {
+                "bin".to_owned()
+            } else {
+                format!(
+                    "+{} −{}",
+                    file["added"].as_u64().unwrap_or(0),
+                    file["removed"].as_u64().unwrap_or(0)
+                )
+            };
+            let mark = match file["status"].as_str() {
+                Some("added") => "A",
+                Some("deleted") => "D",
+                Some("renamed") => "R",
+                Some("copied") => "C",
+                _ => "M",
+            };
+            out.push(format!("  {mark} {name}  {change}"));
+        }
+    }
+    out.join("\n")
+}
+
+/// git の答えの最初の `error:` の行（なければ最初の行。GTK4 版の `first_line`）。
+fn patch_error_line(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    lines
+        .iter()
+        .find_map(|l| l.strip_prefix("error:").map(str::trim))
+        .or_else(|| lines.first().copied())
+        .unwrap_or_default()
+        .to_owned()
 }
 
 /// パッチの形と送り状を覚えておく鍵（GTK4 版と同じ）。
