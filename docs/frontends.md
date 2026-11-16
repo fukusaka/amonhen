@@ -151,8 +151,8 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | rerere: forget one resolution (merge editor), forget all (Repository Settings) | ✓ | ✓ | — | ✓ | △ | VSCode: Forget Resolution on a Working Copy conflict that rerere resolved (VSCode's merge editor is its own); Forget All… under Repository Settings > Operations.<br>CLI: Via `amonhen run` (`forgetResolution`, `forgetAllResolutions`). |
 | Working Copy: line endings, file mode, `.git/info/exclude` editor | ✓ | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Remotes: table and sheet with a connection check | ✓ | ✓ | — | ✓ | △ | VSCode: The table with a row of buttons (Edit URL…, Push URL…, Check, Prune, Rename…, Remove…) and Add…; the values are asked in input boxes, not a sheet.<br>CLI: Via `amonhen run`. |
-| Hooks: table, Enabled switch, script, Create Hook… | ✓ | ✓ | — | ✓ | △ | VSCode: Open opens the script in VSCode's editor.<br>CLI: Via `amonhen run`. |
-| LFS: installed, patterns, Track Pattern…, file count | ✓ | ✓ | — | ✓ | △ | CLI: Via `amonhen run`. |
+| Hooks: table, Enabled switch, script, Create Hook… | ✓ | ✓ | △ | ✓ | △ | VSCode: Open opens the script in VSCode's editor.<br>CLI: Via `amonhen run`.<br>Windows: Windows: The script is shown, not opened in an editor; hooks can't be disabled on Windows. |
+| LFS: installed, patterns, Track Pattern…, file count | ✓ | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Keys and Values (git config table, Basic / Customized / All, Combined / Levels) | ✓ | ✓ | △ | ✓ | △ | VSCode: Basic / Customized / All, Combined / Levels and search; values are edited in an input box.<br>CLI: Via `amonhen run` (`configList`, `configSet`).<br>Windows: Search, add and remove in this repository; no Basic / All or Levels. |
 | Rows disabled with the git version needed | ✓ | ✓ | — | ✓ | n/a | |
 | Repository's form on the git line (shallow, partial, sparse, maintenance) | ✓ | ✓ | — | ✓ | △ | CLI: `status` notes shallow, partial and sparse repositories. |

@@ -42,6 +42,17 @@ pub struct State {
     pub exclude: Option<String>,
     pub exclude_saved: String,
     pub gitignore: String,
+    /// フック（名前と、有効＝実行の許可）。読むまでは None。
+    pub hooks: Option<Vec<(String, bool)>>,
+    /// 中身を見ているフック（名前と中身）。
+    pub hook_script: Option<(String, String)>,
+    /// Create Hook で選んでいる番号（`missing_hooks` の中）。
+    pub new_hook: usize,
+    /// LFS: 入っているか、追跡するパターン、LFS のファイルの数、足すパターン。
+    pub lfs: bool,
+    pub lfs_patterns: Vec<String>,
+    pub lfs_files: Option<u64>,
+    pub new_pattern: String,
 }
 
 impl State {
@@ -56,6 +67,13 @@ impl State {
             exclude: None,
             exclude_saved: String::new(),
             gitignore: String::new(),
+            hooks: None,
+            hook_script: None,
+            new_hook: 0,
+            lfs: false,
+            lfs_patterns: Vec::new(),
+            lfs_files: None,
+            new_pattern: String::new(),
         }
     }
 
@@ -76,6 +94,41 @@ impl State {
             .map(|e| (e.value.as_str(), e.scope.as_str()))
     }
 
+    /// `hooksAndLfs` の答え（info）を取り込む。
+    pub fn load_hooks(&mut self, info: &Value) {
+        self.hooks = Some(
+            info["hooks"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|h| {
+                    (
+                        h["name"].as_str().unwrap_or_default().to_owned(),
+                        h["enabled"].as_bool().unwrap_or(false),
+                    )
+                })
+                .collect(),
+        );
+        self.lfs = info["lfs"].as_bool().unwrap_or(false);
+        self.lfs_patterns = info["lfsPatterns"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|p| p.as_str().map(str::to_owned))
+            .collect();
+        self.lfs_files = info["lfsFiles"].as_u64();
+    }
+
+    /// まだないフック（Create Hook で選べるもの）。
+    pub fn missing_hooks(&self) -> Vec<&'static str> {
+        let present = self.hooks.as_deref().unwrap_or_default();
+        HOOK_NAMES
+            .iter()
+            .copied()
+            .filter(|n| !present.iter().any(|(p, _)| p == n))
+            .collect()
+    }
+
     /// 読んだ値を Author の欄に入れる。
     pub fn load(&mut self, entries: Vec<Entry>) {
         self.entries = Some(entries);
@@ -94,6 +147,62 @@ pub fn scope_label(scope: &str) -> String {
         "worktree" => tr!("this worktree"),
         "system" => tr!("system-wide"),
         other => other.to_owned(),
+    }
+}
+
+/// git が呼ぶフックの名前（GTK4 版の `HOOK_NAMES`）。
+const HOOK_NAMES: &[&str] = &[
+    "applypatch-msg",
+    "pre-applypatch",
+    "post-applypatch",
+    "pre-commit",
+    "pre-merge-commit",
+    "prepare-commit-msg",
+    "commit-msg",
+    "post-commit",
+    "pre-rebase",
+    "post-checkout",
+    "post-merge",
+    "pre-push",
+    "pre-receive",
+    "update",
+    "proc-receive",
+    "post-receive",
+    "post-update",
+    "reference-transaction",
+    "push-to-checkout",
+    "pre-auto-gc",
+    "post-rewrite",
+    "sendemail-validate",
+    "fsmonitor-watchman",
+    "p4-changelist",
+    "p4-prepare-changelist",
+    "p4-post-changelist",
+    "p4-pre-submit",
+    "post-index-change",
+];
+
+/// フックが動くとき（GTK4 版の `hook_when`）。
+fn hook_when(hook: &str) -> String {
+    match hook {
+        "pre-commit" => tr!("Before a commit"),
+        "pre-merge-commit" => tr!("Before a merge commit"),
+        "prepare-commit-msg" => tr!("Before the message is edited"),
+        "commit-msg" => tr!("On the commit message"),
+        "post-commit" => tr!("After a commit"),
+        "pre-rebase" => tr!("Before a rebase"),
+        "post-checkout" => tr!("After a checkout"),
+        "post-merge" => tr!("After a merge"),
+        "pre-push" => tr!("Before a push"),
+        "pre-auto-gc" => tr!("Before an automatic gc"),
+        "post-rewrite" => tr!("After commits are rewritten"),
+        "applypatch-msg" | "pre-applypatch" | "post-applypatch" => tr!("Around git am"),
+        "post-index-change" => tr!("After the index changes"),
+        "fsmonitor-watchman" => tr!("For fsmonitor"),
+        "reference-transaction" => tr!("When refs change"),
+        "push-to-checkout" | "pre-receive" | "update" | "post-receive" | "post-update"
+        | "proc-receive" | "sendemail-validate" => tr!("On the receiving side"),
+        _ => String::new(),
     }
 }
 
@@ -261,6 +370,8 @@ pub struct Callbacks<'a> {
     pub button: Box<dyn Fn(String) -> Callback<()> + 'a>,
     /// Operations の選ぶ欄（行の id と、選んだ番号）。
     pub choice: Box<dyn Fn(&'static str) -> Callback<Option<usize>> + 'a>,
+    /// フックの有効の切り替え（フックの名前ごと）。
+    pub toggle: Box<dyn Fn(String) -> Callback<bool> + 'a>,
 }
 
 pub fn view(state: &State, callbacks: Callbacks) -> View {
@@ -427,6 +538,157 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
             ))
         }
     };
+    // Hooks: 名前・いつ動くか・有効（実行の許可）と、中身を見るボタン。
+    let hooks: View = match &state.hooks {
+        None => TextBlock::new().text(tr!("Loading…")).opacity(0.6).into(),
+        Some(list) => {
+            let rows = list.iter().map(|(name, enabled)| {
+                let row = Grid::new()
+                    .columns([
+                        GridLength::Pixel(200.0),
+                        GridLength::Pixel(220.0),
+                        GridLength::Auto,
+                        GridLength::Auto,
+                    ])
+                    .children((
+                        TextBlock::new()
+                            .text(name.clone())
+                            .vertical_alignment(VerticalAlignment::Center)
+                            .grid_column(0),
+                        TextBlock::new()
+                            .text(hook_when(name))
+                            .font_size(12.0)
+                            .opacity(0.6)
+                            .vertical_alignment(VerticalAlignment::Center)
+                            .grid_column(1),
+                        // Windows の git は実行の許可にかかわらずフックを動かすので、切り替えられない。
+                        CheckBox::new()
+                            .is_checked(*enabled)
+                            .is_enabled(false)
+                            .on_is_checked_changed((callbacks.toggle)(name.clone()))
+                            .grid_column(2)
+                            .content(TextBlock::new().text(tr!("Enabled")))
+                            .tooltip(tr!(
+                                "Hooks can’t be disabled on Windows (git runs them whatever their permissions)"
+                            )),
+                        Button::new()
+                            .on_click((callbacks.button)(format!("hook-show:{name}")))
+                            .grid_column(3)
+                            .content(TextBlock::new().text(tr!("Show"))),
+                    ));
+                (name.clone(), Border::new().min_height(32.0).content(row))
+            });
+            let missing = state.missing_hooks();
+            let create = StackPanel::new()
+                .orientation(Orientation::Horizontal)
+                .spacing(8.0)
+                .margin(Thickness::new(0.0, 8.0, 0.0, 0.0))
+                .children((
+                    ComboBox::new()
+                        .items_source(
+                            missing
+                                .iter()
+                                .map(|n| match hook_when(n) {
+                                    w if w.is_empty() => (*n).to_owned(),
+                                    w => format!("{n} — {w}"),
+                                })
+                                .collect::<Vec<_>>(),
+                        )
+                        .selected_index(state.new_hook.min(missing.len().saturating_sub(1)))
+                        .is_enabled(!missing.is_empty())
+                        .on_selection_changed((callbacks.choice)("hook-new")),
+                    Button::new()
+                        .is_enabled(!missing.is_empty())
+                        .on_click((callbacks.button)("hook-create".to_owned()))
+                        .content(TextBlock::new().text(tr!("Create Hook…")))
+                        .tooltip(tr!(
+                            "Puts a #!/bin/sh skeleton in place and makes it executable."
+                        )),
+                ));
+            let script: View = match &state.hook_script {
+                Some((name, text)) => StackPanel::new()
+                    .spacing(4.0)
+                    .margin(Thickness::new(0.0, 8.0, 0.0, 0.0))
+                    .children((
+                        TextBlock::new().text(name.clone()).opacity(0.75),
+                        Border::new()
+                            .background(Brush::Solid(Color::rgb(0xf6, 0xf6, 0xf6)))
+                            .padding(Thickness::new(8.0, 6.0, 8.0, 6.0))
+                            .content(
+                                TextBlock::new()
+                                    .text(text.clone())
+                                    .font_size(12.0)
+                                    .is_text_selection_enabled(true)
+                                    .text_wrapping(TextWrapping::Wrap),
+                            ),
+                    )),
+                None => View::empty(),
+            };
+            let empty: View = if list.is_empty() {
+                TextBlock::new()
+                    .text(tr!("No hooks. .sample files aren’t counted."))
+                    .opacity(0.6)
+                    .into()
+            } else {
+                View::empty()
+            };
+            StackPanel::new().children((empty, View::keyed_fragment(rows), create, script))
+        }
+    };
+    // LFS: 入っているか、追跡するパターン（− で外す）、足すパターン。
+    let lfs_status = if state.lfs {
+        match state.lfs_files {
+            Some(n) => tr!("Installed. {count} files are in LFS.", count = n),
+            None => tr!("Installed (filter.lfs is set)"),
+        }
+    } else {
+        tr!("Not installed. Install it with your package manager (git-lfs) and git lfs install.")
+    };
+    let patterns = state.lfs_patterns.iter().map(|p| {
+        (
+            p.clone(),
+            StackPanel::new()
+                .orientation(Orientation::Horizontal)
+                .spacing(8.0)
+                .children((
+                    TextBlock::new()
+                        .text(p.clone())
+                        .vertical_alignment(VerticalAlignment::Center),
+                    Button::new()
+                        .on_click((callbacks.button)(format!("lfs-untrack:{p}")))
+                        .content(TextBlock::new().text("−").font_size(12.0))
+                        .tooltip(tr!("Remove")),
+                )),
+        )
+    });
+    let lfs = StackPanel::new().spacing(6.0).children((
+        TextBlock::new()
+            .text(lfs_status)
+            .text_wrapping(TextWrapping::Wrap),
+        if state.lfs_patterns.is_empty() {
+            TextBlock::new()
+                .text(tr!("No LFS patterns in .gitattributes."))
+                .opacity(0.6)
+                .into()
+        } else {
+            View::empty()
+        },
+        View::keyed_fragment(patterns),
+        StackPanel::new()
+            .orientation(Orientation::Horizontal)
+            .spacing(8.0)
+            .children((
+                TextBox::new()
+                    .text(state.new_pattern.clone())
+                    .placeholder_text("*.psd")
+                    .width(200.0)
+                    .on_text_changed((callbacks.field)("lfs")),
+                Button::new()
+                    .is_enabled(state.lfs && !state.new_pattern.trim().is_empty())
+                    .on_click((callbacks.button)("lfs-track".to_owned()))
+                    .content(TextBlock::new().text(tr!("Track Pattern…"))),
+            )),
+    ));
     let author_changed = state.at("local", "user.name").unwrap_or_default() != state.name
         || state.at("local", "user.email").unwrap_or_default() != state.email;
     // Keys and Values: キーごとに効いている値（最後のもの）。探す文字があれば、キーか値に含むものだけ。
@@ -545,6 +807,16 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                     .max_width(560.0)
                     .horizontal_alignment(HorizontalAlignment::Left)
                     .children((exclude,)),
+                heading("Hooks".to_owned()),
+                StackPanel::new()
+                    .max_width(720.0)
+                    .horizontal_alignment(HorizontalAlignment::Left)
+                    .children((hooks,)),
+                heading("LFS".to_owned()),
+                StackPanel::new()
+                    .max_width(560.0)
+                    .horizontal_alignment(HorizontalAlignment::Left)
+                    .children((lfs,)),
                 heading(tr!("Keys and Values")),
                 TextBox::new()
                     .text(state.query.clone())

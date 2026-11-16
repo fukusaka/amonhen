@@ -547,6 +547,12 @@ enum Message {
     StashOption(&'static str, bool),
     /// Repository Settings: 設定を読んだ・欄を書き換えた・ボタン。
     RepoSettingsLoaded(Vec<crate::reposettings::Entry>),
+    /// Repository Settings のフックの有効を切り替えた。
+    HookEnabled(String, bool),
+    /// Repository Settings のフック・LFS を読んだ（`hooksAndLfs` の info）。
+    RepoHooksLoaded(Value),
+    /// Repository Settings で見るフックの中身を読んだ（名前と中身）。
+    HookScript(String, String),
     /// Repository Settings の `.gitignore` と `.git/info/exclude` を読んだ。
     RepoIgnoreLoaded(String, String),
     RepoSettingsField(&'static str, String),
@@ -2865,12 +2871,45 @@ impl Component for Root {
                 if let Some(state) = self.repo_settings.as_mut() {
                     state.load(entries);
                 }
+                // フック・LFS・exclude も、書いた後に読み直す（同時に読むと、書く前のものが届く）。
+                self.load_repo_files(context);
+            }
+            Message::RepoHooksLoaded(info) => {
+                if let Some(state) = self.repo_settings.as_mut() {
+                    state.load_hooks(&info);
+                }
+            }
+            Message::HookScript(name, text) => {
+                if let Some(state) = self.repo_settings.as_mut() {
+                    state.hook_script = Some((name, text));
+                }
+            }
+            Message::HookEnabled(name, on) => {
+                let current = self
+                    .repo_settings
+                    .as_ref()
+                    .and_then(|s| s.hooks.as_ref())
+                    .and_then(|h| h.iter().find(|(n, _)| *n == name))
+                    .map(|(_, e)| *e);
+                if current != Some(on) {
+                    self.write_repo_settings(
+                        vec![json!({ "op": "setHookEnabled", "name": name, "enabled": on })],
+                        context,
+                    );
+                }
             }
             Message::RepoIgnoreLoaded(gitignore, exclude) => {
                 if let Some(state) = self.repo_settings.as_mut() {
+                    // 書きかけ（読んだものと違う）なら、欄はそのまま。
+                    let editing = state.exclude.as_deref().is_some_and(|t| {
+                        crate::reposettings::lf(t) != state.exclude_saved
+                            && crate::reposettings::lf(t) != exclude
+                    });
                     state.gitignore = gitignore;
                     state.exclude_saved = exclude.clone();
-                    state.exclude = Some(exclude);
+                    if !editing {
+                        state.exclude = Some(exclude);
+                    }
                 }
             }
             Message::RepoSettingsField(field, text) => {
@@ -2882,6 +2921,7 @@ impl Component for Root {
                         "key" => state.new_key = text,
                         // 打ったまま持つ（揃えた値で欄を書き直すと、カーソルが先頭に戻る）。改行は書くときに揃える。
                         "exclude" => state.exclude = Some(text),
+                        "lfs" => state.new_pattern = text,
                         _ => state.new_value = text,
                     }
                 }
@@ -2898,11 +2938,43 @@ impl Component for Root {
                         "value": (!value.is_empty()).then_some(value),
                     })
                 };
+                if let Some(name) = key.strip_prefix("hook-show:") {
+                    let (Some(repo), name) = (self.repo.clone(), name.to_owned()) else {
+                        return;
+                    };
+                    context.spawn_background(move |_| {
+                        let command = json!({ "op": "hook", "name": &name });
+                        let reply: Value =
+                            serde_json::from_str(&repo.run_json(&command.to_string()))
+                                .unwrap_or_default();
+                        let text = reply["info"]["text"]
+                            .as_str()
+                            .or(reply["text"].as_str())
+                            .unwrap_or_default()
+                            .to_owned();
+                        Message::HookScript(name, text)
+                    });
+                    return;
+                }
                 if key == "exclude-revert" {
                     state.exclude = Some(state.exclude_saved.clone());
                     return;
                 }
-                let commands = if key == "exclude-save" {
+                let commands = if key == "hook-create" {
+                    let missing = state.missing_hooks();
+                    let Some(name) =
+                        missing.get(state.new_hook.min(missing.len().saturating_sub(1)))
+                    else {
+                        return;
+                    };
+                    vec![json!({ "op": "createHook", "name": name })]
+                } else if let Some(pattern) = key.strip_prefix("lfs-untrack:") {
+                    vec![json!({ "op": "lfsTrack", "pattern": pattern, "track": false })]
+                } else if key == "lfs-track" {
+                    let pattern = state.new_pattern.trim().to_owned();
+                    state.new_pattern.clear();
+                    vec![json!({ "op": "lfsTrack", "pattern": pattern, "track": true })]
+                } else if key == "exclude-save" {
                     // TextBox は改行を `\r` で返すので、ファイルの改行（LF）に揃える。
                     let text =
                         crate::reposettings::lf(state.exclude.as_deref().unwrap_or_default());
@@ -3074,6 +3146,11 @@ impl Component for Root {
                 }
             }
             Message::WorkingFilter(text) => self.working_filter = text,
+            Message::RepoSettingsChoice("hook-new", Some(index)) => {
+                if let Some(state) = self.repo_settings.as_mut() {
+                    state.new_hook = index;
+                }
+            }
             Message::RepoSettingsChoice(id, Some(index)) => {
                 let Some(state) = self.repo_settings.as_ref() else {
                     return;
@@ -5634,6 +5711,18 @@ impl Root {
                 serde_json::from_str(&repo.run_json(r#"{"op":"configList"}"#)).unwrap_or_default();
             Message::RepoSettingsLoaded(crate::reposettings::entries_of(&reply["info"]))
         });
+    }
+
+    /// Repository Settings のフック・LFS と、`.gitignore`・`.git/info/exclude` を裏で読む。
+    fn load_repo_files(&self, context: &ComponentContext<Self>) {
+        // フックと LFS も。
+        if let Some(repo) = self.repo.clone() {
+            context.spawn_background(move |_| {
+                let reply: Value = serde_json::from_str(&repo.run_json(r#"{"op":"hooksAndLfs"}"#))
+                    .unwrap_or_default();
+                Message::RepoHooksLoaded(reply["info"].clone())
+            });
+        }
         // .git/info/exclude も（読めなければ欄を出さない。空として書くと中身を失う）。
         if let Some(repo) = self.repo.clone() {
             context.spawn_background(move |_| {
@@ -5666,6 +5755,9 @@ impl Root {
                 }),
                 choice: Box::new(|id: &'static str| {
                     context.callback(move |i: Option<usize>| Message::RepoSettingsChoice(id, i))
+                }),
+                toggle: Box::new(|name: String| {
+                    context.callback(move |on| Message::HookEnabled(name.clone(), on))
                 }),
             },
         );
