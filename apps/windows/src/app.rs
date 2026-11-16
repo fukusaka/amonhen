@@ -110,6 +110,8 @@ struct Root {
     /// Blame の画面（パス、コミット、読んだ行）。閉じたら前の画面（File History なら File History）に戻る。
     blame: Option<crate::blame::State>,
     blame_from: Page,
+    /// 途中の操作（`sequence` の答えの info）。なければ None。
+    sequence: Option<Value>,
     /// ダイアログの入力の欄（Enter で既定のボタンを押す）と、開いた回数（開いた後にキーを付ける）。
     dialog_input: ElementRef<TextBox>,
     dialog_inputs: u64,
@@ -195,6 +197,8 @@ enum Dialog {
         stash: String,
         name: String,
     },
+    /// コンフリクトが残っているファイルを解決済みにしてよいか。
+    MarkResolved { path: String, count: u64 },
     /// ブランチの名前を変える（GTK4 版の `refops::ask_rename_branch`）。
     Rename {
         repo: Arc<Repository>,
@@ -278,6 +282,10 @@ enum Message {
     BlameMenu(String),
     /// Working Copy のファイルの右クリック（パス、項目のキー）。
     WorkingFileMenu(String, String),
+    /// 途中の操作を読んだ。
+    Sequence(Option<Value>),
+    /// 解決済みにする前に、残っているコンフリクトを数えた（パス、数）。
+    ConflictCounted(String, u64),
     /// Pull の取り込み元・Publish の送り先のリモートを選んだ。
     PullSource(Option<usize>),
     PublishRemote(Option<usize>),
@@ -358,6 +366,7 @@ impl Component for Root {
             file_history: None,
             blame: None,
             blame_from: Page::History,
+            sequence: None,
             sidebar_request: 0,
             page: Page::History,
             repo: None,
@@ -567,6 +576,18 @@ impl Component for Root {
                 with_history(|h| h.search(String::new(), false));
             }
             Message::SearchStatus(text) => self.search_status = text,
+            Message::Command(id) if matches!(id.as_str(), "continue" | "skip" | "abort") => {
+                let Some(repo) = self.repo.clone() else {
+                    return beep();
+                };
+                let title = match id.as_str() {
+                    "continue" => "Continue",
+                    "skip" => "Skip",
+                    _ => "Abort",
+                };
+                self.busy = Some(format!("{title}…"));
+                perform(context, repo, json!({ "op": id }), title.to_owned());
+            }
             Message::Command(id) => with_history(|h| h.command(&id)),
             Message::UndoPeek(repo, peek) => match peek {
                 Some((label, what)) => self.dialog = Some(Dialog::Undo { repo, label, what }),
@@ -676,6 +697,9 @@ impl Component for Root {
                             tr!("Create"),
                         );
                     }
+                }
+                (Some(Dialog::MarkResolved { path, .. }), ContentDialogResult::Primary) => {
+                    self.update(Message::Stage(path, true), context);
                 }
                 (Some(Dialog::Rename { repo, from, name }), ContentDialogResult::Primary) => {
                     let to = name.trim().to_owned();
@@ -917,6 +941,15 @@ impl Component for Root {
             }
             Message::Status(status) => {
                 self.status = Some(status);
+                // 途中の操作も読み直す（merge・rebase などは status と一緒に変わる）。
+                if let Some(repo) = self.repo.clone() {
+                    context.spawn_background(move |_| {
+                        let reply: Value =
+                            serde_json::from_str(&repo.run_json(r#"{"op":"sequence"}"#))
+                                .unwrap_or_default();
+                        Message::Sequence((!reply["text"].is_null()).then(|| reply["info"].clone()))
+                    });
+                }
                 // 選んでいるファイルの差分も読み直す（stage で行の印が、外での変更で中身が変わる）。
                 self.load_working_diff();
             }
@@ -1160,6 +1193,42 @@ impl Component for Root {
             }
             Message::Invoked(key) if key == "page:history" => self.show_page(Page::History),
             Message::Invoked(key) if key == "page:stashes" => self.show_page(Page::Stashes),
+            Message::Sequence(sequence) => self.sequence = sequence,
+            Message::ConflictCounted(path, count) => {
+                if count == 0 {
+                    self.update(Message::Stage(path, true), context);
+                } else {
+                    self.dialog = Some(Dialog::MarkResolved { path, count });
+                }
+            }
+            Message::WorkingFileMenu(path, key) if key == "take-ours" || key == "take-theirs" => {
+                // 片側のファイルそのものを取る（git checkout --ours・--theirs と同じ。GTK4 版の `take_side`）。
+                if let Some(repo) = self.repo.clone() {
+                    let ours = key == "take-ours";
+                    perform(
+                        context,
+                        repo,
+                        json!({ "op": "takeSide", "path": path, "ours": ours }),
+                        if ours {
+                            tr!("Take Current File")
+                        } else {
+                            tr!("Take Incoming File")
+                        },
+                    );
+                }
+            }
+            Message::WorkingFileMenu(path, key) if key == "resolved" => {
+                // マーカーが残っていれば、確かめてから（GTK4 版の `mark_resolved`）。
+                if let Some(repo) = self.repo.clone() {
+                    context.spawn_background(move |_| {
+                        let command = json!({ "op": "conflictCount", "path": &path });
+                        let reply: Value =
+                            serde_json::from_str(&repo.run_json(&command.to_string()))
+                                .unwrap_or_default();
+                        Message::ConflictCounted(path, reply["info"]["count"].as_u64().unwrap_or(0))
+                    });
+                }
+            }
             Message::WorkingFileMenu(path, key) => match key.as_str() {
                 "history" => self.update(Message::OpenFileHistory(path), context),
                 "blame" => self.update(Message::OpenBlame(path, None), context),
@@ -1695,6 +1764,20 @@ impl Root {
                             .text(name.clone())
                             .on_text_changed(context.callback(Message::BranchName)),
                     )),
+                ),
+            Some(Dialog::MarkResolved { path, count }) => dialog
+                .is_open(true)
+                .title(tr!(
+                    "Mark {path} as resolved with {count} conflicts left?",
+                    path = path,
+                    count = count
+                ))
+                .primary_button_text(tr!("Mark Resolved"))
+                .close_button_text(tr!("Cancel"))
+                .content(
+                    TextBlock::new()
+                        .text(tr!("The conflict markers stay in the file."))
+                        .text_wrapping(TextWrapping::Wrap),
                 ),
             Some(Dialog::Rename { from, name, .. }) => dialog
                 .is_open(true)
@@ -2725,7 +2808,25 @@ impl Root {
             file_menu: Box::new(|path: String| {
                 context.callback(move |key| Message::WorkingFileMenu(path.clone(), key))
             }),
+            sequence: Box::new(|key: &'static str| {
+                context.callback(move |()| Message::Command(key.to_owned()))
+            }),
         };
+        // 途中の操作の帯の見出しと説明（コンフリクトの数は status から）。
+        let conflicts = self.status.as_ref().map_or(0, |s| {
+            s.status
+                .entries
+                .iter()
+                .filter(|e| e.kind == amonhen_model::StatusKind::Unmerged)
+                .count()
+        });
+        let sequence = self.sequence.as_ref().map(|s| {
+            (
+                crate::sequence::title(s),
+                crate::sequence::detail(s, conflicts),
+                crate::sequence::can_skip(s),
+            )
+        });
         let view = crate::workcopy::view(
             crate::workcopy::Input {
                 status: self.status.as_deref(),
@@ -2733,6 +2834,9 @@ impl Root {
                 description: &self.description,
                 committing: self.committing,
                 amend: self.amend,
+                sequence: sequence
+                    .as_ref()
+                    .map(|(t, d, skip)| (t.as_str(), d.as_str(), *skip)),
             },
             callbacks,
         );

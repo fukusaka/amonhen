@@ -14,6 +14,7 @@ mod listen;
 mod measure;
 mod menus;
 mod render;
+mod sequence;
 mod sidebar;
 mod stashes;
 mod win32;

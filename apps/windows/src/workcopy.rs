@@ -27,6 +27,8 @@ pub struct Input<'a> {
     pub committing: bool,
     /// 直前のコミットをやり直す（Amend）。
     pub amend: bool,
+    /// 途中の操作（1 行目の見出し、2 行目の説明、Skip できるか）。あれば上に帯を出す。
+    pub sequence: Option<(&'a str, &'a str, bool)>,
 }
 
 /// 画面が受ける操作。
@@ -40,6 +42,8 @@ pub struct Callbacks<'a> {
     pub amend: Callback<bool>,
     /// パスのファイルの右クリックのメニュー（File History・Discard File。押した項目のキー）。
     pub file_menu: Box<dyn Fn(String) -> Callback<String> + 'a>,
+    /// 途中の操作の帯のボタン（`continue`・`skip`・`abort`）。
+    pub sequence: Box<dyn Fn(&'static str) -> Callback<()> + 'a>,
 }
 
 /// 一覧の 1 行の印（M・A・D・R・?・U）。作業ツリー側に変更があればそちら、なければ index 側。
@@ -68,7 +72,7 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
     let entries: &[StatusEntry] = input.status.map_or(&[], |s| &s.status.entries);
     let staged = entries.iter().filter(|e| e.is_staged()).count();
     // 件名と本文（macOS 版と同じく、件名は 1 行、本文は空なら薄く「Description (optional)」）。
-    let message = StackPanel::new().spacing(6.0).grid_row(0).children((
+    let message = StackPanel::new().spacing(6.0).grid_row(1).children((
         TextBox::new()
             .text(input.summary)
             .placeholder_text("Summary")
@@ -94,7 +98,7 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
     let commit = Grid::new()
         .columns([GridLength::Star(1.0), GridLength::Auto, GridLength::Auto])
         .margin(Thickness::new(0.0, 8.0, 0.0, 8.0))
-        .grid_row(1)
+        .grid_row(2)
         .children((
             TextBlock::new()
                 .text(format!("{staged} / {}", entries.len()))
@@ -132,6 +136,13 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
         // 右クリック: Blame・File History（git がまだ知らない untracked のファイルにはない）と、変更を捨てる（untracked
         // なら消す。確かめてから。コンフリクトのファイルには出さない）。GTK4 版の `connect_file_menu` と同じ。
         let mut items = Vec::new();
+        // コンフリクトのファイル: 片側のファイルを取る・解決済みにする（GTK4 版の差分の上のボタンと同じ）。
+        if entry.kind == StatusKind::Unmerged {
+            items.push(MenuItem::item("take-ours", tr!("Take Current File")));
+            items.push(MenuItem::item("take-theirs", tr!("Take Incoming File")));
+            items.push(MenuItem::item("resolved", tr!("Mark Resolved")));
+            items.push(MenuItem::separator("-conflict"));
+        }
         if entry.kind != StatusKind::Untracked {
             // 作業ツリーで消したファイルには Blame はない。
             if entry.worktree != b'D' {
@@ -162,10 +173,60 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
     // 作り直して避ける（替わるのは stage・コミット・外での変更のとき）。
     let generation = input.status.map_or(0, |s| s.generation);
     let list = Border::new()
-        .grid_row(2)
+        .grid_row(3)
         .content(View::keyed_fragment([(generation, list)]));
+    // 途中の操作の帯: 何の途中かと、Continue・Skip（1 つずつ当てていく操作だけ）・Abort（GTK4 版のメニューの
+    // 使えるかと同じ）。
+    let band: View = match input.sequence {
+        Some((title, detail, skip)) => {
+            let button = |key: &'static str, title: &str, enabled: bool| {
+                Button::new()
+                    .is_enabled(enabled)
+                    .on_click((callbacks.sequence)(key))
+                    .content(TextBlock::new().text(title))
+            };
+            Border::new()
+                .background(Brush::Solid(Color::rgb(0xff, 0xf4, 0xce)))
+                .padding(Thickness::new(10.0, 6.0, 10.0, 6.0))
+                .margin(Thickness::new(0.0, 0.0, 0.0, 8.0))
+                .grid_row(0)
+                .content(
+                    Grid::new()
+                        .columns([GridLength::Star(1.0), GridLength::Auto])
+                        .children((
+                            StackPanel::new()
+                                .spacing(2.0)
+                                .vertical_alignment(VerticalAlignment::Center)
+                                .grid_column(0)
+                                .children((
+                                    TextBlock::new().text(title),
+                                    TextBlock::new()
+                                        .text(detail)
+                                        .font_size(12.0)
+                                        .opacity(0.75)
+                                        .text_wrapping(TextWrapping::Wrap),
+                                )),
+                            StackPanel::new()
+                                .orientation(Orientation::Horizontal)
+                                .spacing(6.0)
+                                .grid_column(1)
+                                .children((
+                                    button("continue", "Continue", true),
+                                    button("skip", "Skip", skip),
+                                    button("abort", "Abort", true),
+                                )),
+                        )),
+                )
+        }
+        None => View::empty(),
+    };
     Grid::new()
-        .rows([GridLength::Auto, GridLength::Auto, GridLength::Star(1.0)])
+        .rows([
+            GridLength::Auto,
+            GridLength::Auto,
+            GridLength::Auto,
+            GridLength::Star(1.0),
+        ])
         .margin(Thickness::new(14.0, 10.0, 14.0, 0.0))
-        .children((message, commit, list))
+        .children((band, message, commit, list))
 }
