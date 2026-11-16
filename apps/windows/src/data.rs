@@ -84,6 +84,10 @@ pub struct CommitShown {
     pub row: u32,
     pub info: serde_json::Value,
     pub diff: DiffView,
+    /// 差分の行ごとの、変わった単語の範囲（UTF-16 の位置）。
+    pub highlights: HashMap<u32, Vec<(u32, u32)>>,
+    /// 差分の行ごとの構文の色（範囲と種類）。ファイル全体を解析するので、差分より後に届く。
+    pub syntax: HashMap<u32, Vec<(u32, u32, u8)>>,
 }
 
 /// History の行に付ける ref の名前（ブランチ・リモートブランチ・タグ）。
@@ -102,6 +106,7 @@ enum Event {
     History(Arc<Repository>, Arc<HistorySnapshot>),
     Refs(u64, Arc<RefsSnapshot>, Labels),
     Commit(u64, Box<CommitShown>),
+    Syntax(u64, u32, HashMap<u32, Vec<(u32, u32, u8)>>),
     Chunk(u64, u32, Chunk),
     Failed(String),
 }
@@ -115,6 +120,8 @@ pub struct Data {
     pub commit: Option<Box<CommitShown>>,
     /// 読んでいるコミットの行（届いたものがこれと違えば捨てる）。
     commit_wanted: Option<u32>,
+    /// 出している差分に構文の色が届いた（描き直す。見たら `false` に戻す）。
+    pub syntax_changed: bool,
     pub chunks: HashMap<u32, Rc<Chunk>>,
     repo: Option<Arc<Repository>>,
     loading: HashSet<u32>,
@@ -160,6 +167,7 @@ impl Data {
             labels: HashMap::new(),
             commit: None,
             commit_wanted: None,
+            syntax_changed: false,
             chunks: HashMap::new(),
             repo: None,
             loading: HashSet::new(),
@@ -224,6 +232,19 @@ impl Data {
                         changed = true;
                     }
                 }
+                Event::Syntax(generation, row, syntax) => {
+                    if let Some(commit) = &mut self.commit
+                        && commit.row == row
+                        && self
+                            .history
+                            .as_ref()
+                            .is_some_and(|h| h.generation == generation)
+                    {
+                        commit.syntax = syntax;
+                        self.syntax_changed = true;
+                        changed = true;
+                    }
+                }
                 Event::Failed(e) => return Err(e),
             }
         }
@@ -244,19 +265,47 @@ impl Data {
         self.commit_wanted = Some(row);
         let (tx, wake) = (self.tx.clone(), self.wake.clone());
         std::thread::spawn(move || {
-            let load = || -> Result<CommitShown, String> {
+            let load = || -> Result<(CommitShown, amonhen_core::diff::StackedDiff), String> {
                 let info = repo.commit_info(&id).map_err(|e| e.to_string())?;
                 let changes = repo.commit_changes(&id).map_err(|e| e.to_string())?;
                 let stacked = repo.stacked_diff(&changes).map_err(|e| e.to_string())?;
                 let diff = stacked.view(&[], &PROFILE);
-                Ok(CommitShown { row, info, diff })
+                let mut highlights: HashMap<u32, Vec<(u32, u32)>> = HashMap::new();
+                for h in &diff.highlights {
+                    highlights.entry(h.row).or_default().push((h.start, h.end));
+                }
+                let shown = CommitShown {
+                    row,
+                    info,
+                    diff,
+                    highlights,
+                    syntax: HashMap::new(),
+                };
+                Ok((shown, stacked))
             };
-            let event = match load() {
-                Ok(shown) => Event::Commit(history.generation, Box::new(shown)),
-                Err(e) => Event::Failed(format!("コミットを読めない: {e}")),
+            let (shown, stacked) = match load() {
+                Ok(shown) => shown,
+                Err(e) => {
+                    let _ = tx.send(Event::Failed(format!("コミットを読めない: {e}")));
+                    return wake();
+                }
             };
-            let _ = tx.send(event);
+            // 差分を先に出し、構文の色は後から（ファイル全体を解析するので時間がかかることがある）。
+            let _ = tx.send(Event::Commit(history.generation, Box::new(shown)));
             wake();
+            // 同じ行の並びの表示をもう一度作って解析する（ファイルの中身は共有したまま）。
+            let spans = stacked.view(&[], &PROFILE).syntax();
+            let mut syntax: HashMap<u32, Vec<(u32, u32, u8)>> = HashMap::new();
+            for s in spans {
+                syntax
+                    .entry(s.row)
+                    .or_default()
+                    .push((s.start, s.end, s.kind));
+            }
+            if !syntax.is_empty() {
+                let _ = tx.send(Event::Syntax(history.generation, row, syntax));
+                wake();
+            }
         });
     }
 

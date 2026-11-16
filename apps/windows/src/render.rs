@@ -64,9 +64,12 @@ const LABEL_HEIGHT: f32 = 17.0;
 pub const DIFF_ROW_HEIGHT: f32 = 18.0;
 const DIFF_NUMBER_WIDTH: f32 = 44.0;
 const DIFF_TEXT_INSET: f32 = 10.0;
-const DIFF_ADDED: D2D1_COLOR_F = rgba(0.16, 0.60, 0.30, 0.16);
-const DIFF_REMOVED: D2D1_COLOR_F = rgba(0.85, 0.20, 0.20, 0.14);
-const DIFF_HUNK: D2D1_COLOR_F = rgba(0.0, 0.47, 0.84, 0.07);
+// 差分の色（GTK4 版・macOS 版の標準の色と同じ）。
+const DIFF_ADDED: D2D1_COLOR_F = rgba(0.2, 0.7, 0.3, 0.16);
+const DIFF_REMOVED: D2D1_COLOR_F = rgba(0.9, 0.25, 0.25, 0.16);
+const DIFF_ADDED_WORD: D2D1_COLOR_F = rgba(0.2, 0.7, 0.3, 0.35);
+const DIFF_REMOVED_WORD: D2D1_COLOR_F = rgba(0.9, 0.25, 0.25, 0.35);
+const DIFF_HUNK: D2D1_COLOR_F = rgba(0.3, 0.5, 0.9, 0.10);
 const DIFF_FILE: D2D1_COLOR_F = rgba(0.11, 0.11, 0.12, 0.07);
 const DIFF_GUTTER: D2D1_COLOR_F = rgba(0.11, 0.11, 0.12, 0.035);
 const LABEL_PADDING: f32 = 6.0;
@@ -256,6 +259,8 @@ pub struct Renderer {
     file_format: IDWriteTextFormat,
     /// 差分の行の文字の形（今の差分の行ごと。差分が替わったら捨てる）。
     diff_rows: HashMap<u32, IDWriteTextLayout>,
+    /// 構文の種類ごとの文字の色。
+    syntax_brushes: HashMap<u8, ID2D1SolidColorBrush>,
     history: Option<Arc<HistorySnapshot>>,
     /// `AMONHEN_PROFILE` があれば、段階ごとの時間（ms）を残す。段階の間で `Flush` して、溜めた描画も
     /// その段階に数える（その分だけ全体は遅くなる）。
@@ -381,6 +386,7 @@ impl Renderer {
                 code_format,
                 file_format,
                 diff_rows: HashMap::new(),
+                syntax_brushes: HashMap::new(),
                 history: None,
                 profile: std::env::var_os("AMONHEN_PROFILE").map(|_| Vec::new()),
             })
@@ -683,7 +689,7 @@ impl Renderer {
     pub fn draw_diff(
         &mut self,
         surface: &mut Surface,
-        view: Option<&amonhen_core::diff::DiffView>,
+        commit: Option<&crate::data::CommitShown>,
         scroll_y: f32,
         scale: f32,
     ) -> Result<()> {
@@ -696,8 +702,8 @@ impl Renderer {
             self.d2d.BeginDraw();
             self.d2d.Clear(Some(&BACKGROUND));
         }
-        let result = match view {
-            Some(view) => self.draw_diff_rows(view, scroll_y, width, height),
+        let result = match commit {
+            Some(commit) => self.draw_diff_rows(commit, scroll_y, width, height),
             None => Ok(()),
         };
         unsafe { self.d2d.EndDraw(None, None)? };
@@ -706,12 +712,13 @@ impl Renderer {
 
     fn draw_diff_rows(
         &mut self,
-        view: &amonhen_core::diff::DiffView,
+        commit: &crate::data::CommitShown,
         scroll_y: f32,
         width: f32,
         height: f32,
     ) -> Result<()> {
         use amonhen_layout::DiffRow;
+        let view = &commit.diff;
         let count = view.rows.len() as u32;
         let first = ((scroll_y / DIFF_ROW_HEIGHT).floor().max(0.0) as u32).min(count);
         let last = (((scroll_y + height) / DIFF_ROW_HEIGHT).ceil() as u32 + 1).min(count);
@@ -766,9 +773,39 @@ impl Renderer {
                     self.dwrite
                         .CreateTextLayout(&text, format, 100_000.0, DIFF_ROW_HEIGHT)?
                 };
+                if let Some(spans) = commit.syntax.get(&i) {
+                    for &(start, end, kind) in spans {
+                        let Some(brush) = self.syntax_brush(kind)? else {
+                            continue;
+                        };
+                        let range = DWRITE_TEXT_RANGE {
+                            startPosition: start,
+                            length: end.saturating_sub(start),
+                        };
+                        unsafe { layout.SetDrawingEffect(&brush, range)? };
+                    }
+                }
                 self.diff_rows.insert(i, layout);
             }
             let layout = &self.diff_rows[&i];
+            // 削除行と追加行の組の中で、変わった単語の地。
+            if let Some(ranges) = commit.highlights.get(&i) {
+                let fill = if row.kind == DiffRow::REMOVED {
+                    DIFF_REMOVED_WORD
+                } else {
+                    DIFF_ADDED_WORD
+                };
+                for &(start, end) in ranges {
+                    let (left, right) = (x_of(layout, start)?, x_of(layout, end)?);
+                    unsafe {
+                        self.brush.SetColor(&fill);
+                        self.d2d.FillRectangle(
+                            &rect(text_x + left, text_x + right.max(left + 2.0)),
+                            &self.brush,
+                        );
+                    }
+                }
+            }
             unsafe {
                 self.brush.SetColor(&FOREGROUND);
                 let x = if file { DIFF_TEXT_INSET } else { text_x };
@@ -785,6 +822,29 @@ impl Renderer {
             }
         }
         Ok(())
+    }
+
+    /// 構文の種類の文字の色（GTK4 版の System のテーマの明るい外観と同じ。ない種類は本文の色）。
+    fn syntax_brush(&mut self, kind: u8) -> Result<Option<ID2D1SolidColorBrush>> {
+        use amonhen_layout::SyntaxSpan;
+        if let Some(brush) = self.syntax_brushes.get(&kind) {
+            return Ok(Some(brush.clone()));
+        }
+        let (r, g, b) = match kind {
+            SyntaxSpan::KEYWORD | SyntaxSpan::TAG | SyntaxSpan::VARIABLE => (0.80, 0.18, 0.45),
+            SyntaxSpan::STRING => (0.77, 0.16, 0.16),
+            SyntaxSpan::COMMENT => (0.45, 0.45, 0.48),
+            SyntaxSpan::NUMBER | SyntaxSpan::CONSTANT => (0.50, 0.25, 0.75),
+            SyntaxSpan::FUNCTION => (0.10, 0.40, 0.85),
+            SyntaxSpan::TYPE => (0.10, 0.55, 0.60),
+            SyntaxSpan::PROPERTY => (0.10, 0.50, 0.70),
+            SyntaxSpan::ATTRIBUTE | SyntaxSpan::ESCAPE => (0.80, 0.45, 0.05),
+            SyntaxSpan::MODULE => (0.55, 0.40, 0.25),
+            _ => return Ok(None),
+        };
+        let brush = unsafe { self.d2d.CreateSolidColorBrush(&rgba(r, g, b, 1.0), None)? };
+        self.syntax_brushes.insert(kind, brush.clone());
+        Ok(Some(brush))
     }
 
     /// 行番号（0 なら書かない）を、`x` から幅 `DIFF_NUMBER_WIDTH` の列に右寄せで書く。
@@ -943,4 +1003,12 @@ pub fn profile_summary(frames: &[[f64; 5]]) -> String {
         ));
     }
     lines.join("\n")
+}
+
+/// 文字の形の中で、`position`（UTF-16 の位置）の文字の左端の x。
+fn x_of(layout: &IDWriteTextLayout, position: u32) -> Result<f32> {
+    let (mut x, mut y) = (0.0, 0.0);
+    let mut metrics = DWRITE_HIT_TEST_METRICS::default();
+    unsafe { layout.HitTestTextPosition(position, false, &mut x, &mut y, &mut metrics)? };
+    Ok(x)
 }

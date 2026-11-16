@@ -543,12 +543,20 @@ impl HistoryView {
             self.diff.scroll_y = 0.0;
             self.diff.dirty = true;
         }
+        if std::mem::take(&mut s.data.syntax_changed) {
+            s.renderer.forget_diff();
+            self.diff.dirty = true;
+        }
         if self.diff.dirty
             && let Some(surface) = self.diff.surface.as_mut()
         {
-            let view = s.data.commit.as_ref().map(|c| &c.diff);
             s.renderer
-                .draw_diff(surface, view, self.diff.scroll_y, self.diff.scale)
+                .draw_diff(
+                    surface,
+                    s.data.commit.as_deref(),
+                    self.diff.scroll_y,
+                    self.diff.scale,
+                )
                 .map_err(|e| format!("差分を描けない: {e}"))?;
             surface.present().map_err(|e| format!("出せない: {e}"))?;
             self.diff.dirty = false;
