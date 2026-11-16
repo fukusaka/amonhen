@@ -30,6 +30,10 @@ thread_local! {
     static ARGS: RefCell<Option<(Args, Instant)>> = const { RefCell::new(None) };
     /// History と差分の描き手。
     static HISTORY: RefCell<Option<Rc<RefCell<HistoryView>>>> = const { RefCell::new(None) };
+    /// History を包む生の要素（右クリックのメニューを自分で開く）。
+    static HISTORY_ELEMENT: RefCell<Option<xaml::UIElement>> = const { RefCell::new(None) };
+    /// History から外した右クリックのメニュー（外している間、WinUI は自分では開かない）。
+    static HISTORY_FLYOUT: RefCell<Option<xaml::FlyoutBase>> = const { RefCell::new(None) };
     /// History と差分に付けたイベント（持っている間だけ届く）。
     static REVOKERS: RefCell<Vec<windows_core_reactor::EventRevoker>> =
         const { RefCell::new(Vec::new()) };
@@ -62,6 +66,10 @@ struct Root {
     error: Option<String>,
     /// 出している確認・知らせのダイアログ。
     dialog: Option<Dialog>,
+    /// History で選んでいるコミット（ID と、指している ref）。右クリックのメニューを作る。
+    selected: Option<(String, Vec<crate::data::RefLabel>)>,
+    /// History の右クリックのメニューを開いた回数（変わったら、描き直した後に開く）。
+    menu_request: u64,
 }
 
 /// 窓に重ねるダイアログ（macOS 版のシート、GTK4 版の `sheets`）。
@@ -87,6 +95,12 @@ enum Message {
     Command(String),
     /// `undoPeek` の答え（戻せるものがなければ `None`）。
     UndoPeek(Arc<Repository>, Option<(String, String)>),
+    /// History で選んでいるコミットが変わった。
+    Selected(Option<(String, Vec<crate::data::RefLabel>)>),
+    /// History の右クリックのメニューの項目を選んだ（項目のキー）。
+    HistoryMenu(String),
+    /// History の右クリックのメニューを開く（選んだ行のメニューに作り直してから）。
+    OpenHistoryMenu,
     /// ダイアログを閉じた（押したボタン）。
     DialogClosed(ContentDialogResult),
     /// 書き込む操作が終わった（失敗ならそのダイアログの見出しと文）。
@@ -109,6 +123,8 @@ impl Component for Root {
             info: None,
             error: None,
             dialog: None,
+            selected: None,
+            menu_request: 0,
         }
     }
 
@@ -141,6 +157,13 @@ impl Component for Root {
                     (self.dialog.take(), result)
                 {
                     perform(context, repo, json!({ "op": "undo" }), tr!("Couldn’t Undo"));
+                }
+            }
+            Message::Selected(selected) => self.selected = selected,
+            Message::OpenHistoryMenu => self.menu_request += 1,
+            Message::HistoryMenu(key) => {
+                if let Some(text) = key.strip_prefix("copy:") {
+                    copy_text(text);
                 }
             }
             Message::Performed(failed) => {
@@ -203,6 +226,9 @@ impl Component for Root {
                 refs_sent: None,
                 selected: None,
                 shown: None,
+                context_at: None,
+                menu_requested: false,
+                menu_ready: false,
             }));
             HISTORY.with(|h| *h.borrow_mut() = Some(view.clone()));
             let history = panel.observe_surface(|event| {
@@ -233,6 +259,15 @@ impl Component for Root {
                 HISTORY.with(|h| h.borrow_mut().take());
             }))
         });
+
+        // 右クリック: メニューを選んだ行のものに作り直した後（この描き直しの後）に、押した位置で開く。
+        if self.menu_request > 0 {
+            // effect の時点では WinUI のメニューはまだ入れ替わっていないので、次のフレームで開く。
+            context.use_effect("history-menu", self.menu_request, || {
+                with_history(|h| h.menu_ready = true);
+                None
+            });
+        }
 
         let sidebar = TreeView::new()
             .on_item_invoked(context.callback(Message::Invoked))
@@ -277,7 +312,11 @@ impl Component for Root {
                     .background(Brush::Solid(Color::transparent()))
                     .element_ref(&self.area)
                     .grid_column(1)
-                    .children((history,)),
+                    .children((history,))
+                    .menu(Menu::new(
+                        self.history_menu(),
+                        context.callback(Message::HistoryMenu),
+                    )),
                 right,
             ));
         let dialog = self.dialog_view(context);
@@ -338,6 +377,26 @@ impl Root {
         }
     }
 
+    /// History の右クリックのメニュー（GTK4 版の `commitops::menu`、macOS 版の `HistoryViewController` と同じ並び）。
+    /// まだ動かない操作は出さない。右クリックは先に行を選ぶので、選んでいるコミットのメニューになる。
+    fn history_menu(&self) -> Vec<MenuItem> {
+        let Some((id, labels)) = &self.selected else {
+            return Vec::new();
+        };
+        let mut items = vec![MenuItem::item(format!("copy:{id}"), tr!("Copy Commit ID"))];
+        // このコミットを指すブランチ・タグの名前（リモートブランチは origin/ を付けたまま。5 つまで）。
+        for label in labels.iter().take(5) {
+            let name = &label.name;
+            let title = if label.kind == amonhen_model::RefKind::Tag {
+                tr!("Copy Tag Name “{name}”", name = name)
+            } else {
+                tr!("Copy Branch Name “{name}”", name = name)
+            };
+            items.push(MenuItem::item(format!("copy:{name}"), title));
+        }
+        items
+    }
+
     /// サイドバーの項目のキーが指す ref。
     fn entry(&self, key: &str) -> Option<&RefEntry> {
         let (kind, name) = sidebar::parse_ref_key(key)?;
@@ -365,6 +424,39 @@ fn perform(context: &ComponentContext<Root>, repo: Arc<Repository>, command: Val
             .unwrap_or_else(|e| json!({ "error": e.to_string() }));
         Message::Performed(reply["error"].as_str().map(|e| (title, e.to_owned())))
     });
+}
+
+/// 文字をクリップボードに入れる。
+fn copy_text(text: &str) {
+    use windows::Win32::Foundation::{HANDLE, HGLOBAL};
+    use windows::Win32::System::DataExchange::{
+        CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
+    };
+    use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock};
+    const CF_UNICODETEXT: u32 = 13;
+    let units: Vec<u16> = text.encode_utf16().chain([0]).collect();
+    // SAFETY: 確保した大きさの中に書き、クリップボードに渡したら持ち主はクリップボードになる。
+    unsafe {
+        // 窓を渡さずに開くと、空にしたときに持ち主がなくなり、`SetClipboardData` が失敗する。
+        let window = windows::Win32::UI::Input::KeyboardAndMouse::GetActiveWindow();
+        if let Err(e) = OpenClipboard(Some(window)) {
+            eprintln!("クリップボードを開けない: {e}");
+            return;
+        }
+        let _ = EmptyClipboard();
+        if let Ok(memory) = GlobalAlloc(GMEM_MOVEABLE, units.len() * 2) {
+            let target = GlobalLock(memory).cast::<u16>();
+            if !target.is_null() {
+                std::ptr::copy_nonoverlapping(units.as_ptr(), target, units.len());
+                let _ = GlobalUnlock(memory);
+                if let Err(e) = SetClipboardData(CF_UNICODETEXT, Some(HANDLE(memory.0))) {
+                    eprintln!("クリップボードに入れられない: {e}");
+                }
+            }
+            let _: HGLOBAL = memory;
+        }
+        let _ = CloseClipboard();
+    }
 }
 
 /// `+0900` のようなタイムゾーンを秒にする。
@@ -688,6 +780,12 @@ struct HistoryView {
     selected: Option<u32>,
     /// 詳細と差分を出しているコミットの行。
     shown: Option<u32>,
+    /// 右クリックのメニューを開く位置（History の中の DIP）。
+    context_at: Option<xaml::Point>,
+    /// 開くのを頼んだ（開くまで頼み直さない）。
+    menu_requested: bool,
+    /// メニューを作り直した（次のフレームで開く）。
+    menu_ready: bool,
 }
 
 impl HistoryView {
@@ -753,12 +851,33 @@ impl HistoryView {
         {
             s.reveal(row);
         }
-        // 選んだコミットが変わったら、詳細と差分を読む。
+        // 選んだコミットが変わったら、詳細と差分を読む。右クリックのメニューにも知らせる。
         if s.selected != self.selected {
             self.selected = s.selected;
+            let selected = s.selected.and_then(|row| {
+                let id = s
+                    .data
+                    .history
+                    .as_ref()?
+                    .graph
+                    .ids()
+                    .get(row as usize)?
+                    .to_string();
+                Some((id, s.data.labels.get(&row).cloned().unwrap_or_default()))
+            });
+            self.sender.send(Message::Selected(selected));
             if let Some(row) = s.selected {
                 s.data.want_commit(row);
             }
+        }
+        if std::mem::take(&mut self.menu_ready) {
+            self.open_context_menu();
+        }
+        let s = &mut self.session;
+        // 右クリックで頼まれていれば、選んだ行を知らせた後に開いてもらう（知らせが先に届く）。
+        if self.context_at.is_some() && !self.menu_requested {
+            self.menu_requested = true;
+            self.sender.send(Message::OpenHistoryMenu);
         }
         if let Some(commit) = &s.data.commit
             && self.shown != Some(commit.row)
@@ -808,6 +927,37 @@ impl HistoryView {
             std::process::exit(0);
         }
         Ok(())
+    }
+
+    /// 頼まれた右クリックのメニューを、押した位置で開く（メニューは選んだ行のものに作り直してある）。
+    fn open_context_menu(&mut self) {
+        self.menu_requested = false;
+        let Some(at) = self.context_at.take() else {
+            return;
+        };
+        let Some(element) = HISTORY_ELEMENT.with(|e| e.borrow().clone()) else {
+            return;
+        };
+        let open = || -> windows_core_reactor::Result<()> {
+            // reactor が作り直したメニューは要素に付き直しているので、外してから開く（付いていなければ前のもの）。
+            let flyout = match element.ContextFlyout() {
+                Ok(flyout) => {
+                    element.SetContextFlyout(None::<&xaml::FlyoutBase>)?;
+                    HISTORY_FLYOUT.with(|f| *f.borrow_mut() = Some(flyout.clone()));
+                    flyout
+                }
+                Err(_) => match HISTORY_FLYOUT.with(|f| f.borrow().clone()) {
+                    Some(flyout) => flyout,
+                    None => return Ok(()),
+                },
+            };
+            let options = xaml::FlyoutShowOptions::new()?;
+            options.SetPosition(Some(at))?;
+            flyout.ShowAtWithOptions(&element, &options)
+        };
+        if let Err(e) = open() {
+            eprintln!("右クリックのメニューを開けない: {e}");
+        }
     }
 
     fn select_commit(&mut self, id: &amonhen_model::Oid) {
@@ -898,17 +1048,29 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
             let (Ok(position), Ok(properties)) = (point.Position(), point.Properties()) else {
                 return;
             };
-            if !properties.IsLeftButtonPressed().unwrap_or(false) {
+            let left = properties.IsLeftButtonPressed().unwrap_or(false);
+            let right = properties.IsRightButtonPressed().unwrap_or(false);
+            if !left && !right {
                 return;
             }
             let _ = source.Focus(xaml::FocusState::Pointer);
+            // 右クリック: WinUI が今のメニュー（選び直す前の行のもの）を開かないよう、要素から外しておく。
+            if right
+                && target == Target::History
+                && let Ok(flyout) = source.ContextFlyout()
+            {
+                let _ = source.SetContextFlyout(None::<&xaml::FlyoutBase>);
+                HISTORY_FLYOUT.with(|f| *f.borrow_mut() = Some(flyout));
+            }
             with_history(|h| match target {
+                // 右クリックも、先にその行を選ぶ（メニューはそのコミットのもの）。
                 Target::History => {
                     if let Some(row) = h.session.row_at(position.Y) {
                         h.session.select(row);
                     }
                 }
                 // ファイルの見出しを押すと、そのファイルを畳む・開く。
+                Target::Diff if !left => {}
                 Target::Diff => {
                     let row = ((h.diff.scroll_y + position.Y) / DIFF_ROW_HEIGHT).floor();
                     if row >= 0.0 && h.session.data.toggle_file(row as usize) {
@@ -918,9 +1080,39 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                     }
                 }
             });
-            let _ = args.SetHandled(true);
+            // 右クリックは扱ったことにしない（WinUI が右クリックのメニューを開く）。
+            if left {
+                let _ = args.SetHandled(true);
+            }
         })?,
     );
+
+    if target == Target::History {
+        HISTORY_ELEMENT.with(|e| *e.borrow_mut() = Some(ui.clone()));
+        // 右クリックで選び直す前のメニューが開かないよう、押したときにメニューを外してある。ここで位置を覚え、選んだ
+        // 行のメニューに作り直してから開く（キーボードで開くときは、付いたままのメニューを WinUI が開く）。
+        let source = ui.clone();
+        revokers.push(ui.ContextRequested(
+            move |_, args: Ref<xaml::ContextRequestedEventArgs>| {
+                let Some(args) = args.as_ref() else { return };
+                let _ = args.SetHandled(true);
+                let mut at = xaml::Point::default();
+                let pointer = args.TryGetPosition(&source, &mut at).unwrap_or(false);
+                with_history(|h| {
+                    if !pointer {
+                        // キーボード（アプリケーションキー・Shift+F10）: 選んでいる行の左の辺り。
+                        let s = &h.session;
+                        let Some(row) = s.selected else { return };
+                        at = xaml::Point {
+                            X: 40.0,
+                            Y: s.row_top(row) + ROW_HEIGHT / 2.0,
+                        };
+                    }
+                    h.context_at = Some(at);
+                });
+            },
+        )?);
+    }
 
     revokers.push(
         ui.PointerWheelChanged(move |_, args: Ref<xaml::PointerRoutedEventArgs>| {

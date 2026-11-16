@@ -238,6 +238,11 @@ impl Session {
         self.dirty = true;
     }
 
+    /// 行の上の端の、窓の中の高さ（DIP）。
+    pub fn row_top(&self, row: u32) -> f32 {
+        row as f32 * ROW_HEIGHT - self.scroll_y
+    }
+
     /// 窓の中の高さ `y`（DIP）にある行。
     pub fn row_at(&self, y: f32) -> Option<u32> {
         let row = ((self.scroll_y + y) / ROW_HEIGHT).floor();
