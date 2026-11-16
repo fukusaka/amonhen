@@ -341,9 +341,9 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Operations (git commands, output, progress, cancel) | ✓ | ✓ | △ | △ | △ | VSCode: An Output channel log only.<br>CLI: Via `amonhen run` (`remoteActivity`, `cancelActivity`).<br>Windows: Commands, duration and errors; no output or cancel. |
 | History (operation log, Undo to Here) | ✓ | ✓ | ✓ | △ | △ | VSCode: Undo History… lists the Undo log and undoes down to the chosen one; no other activity.<br>CLI: `undo --list` shows the log. |
 | Performance | ✓ | ✓ | — | n/a | n/a | VSCode: VSCode's Output channel (the Amon Hen log). |
-| History cache writes (size, count, bytes, last write per repository) | ✓ | ✓ | — | — | △ | CLI: Via `amonhen run` (`historyCache`). |
+| History cache writes (size, count, bytes, last write per repository) | ✓ | ✓ | △ | — | △ | CLI: Via `amonhen run` (`historyCache`).<br>Windows: Windows: The open repository only. |
 | Events | ✓ | ✓ | — | n/a | n/a | VSCode: VSCode's Output channel (the Amon Hen log). |
-| Export as JSON | ✓ | ✓ | — | n/a | n/a | VSCode: VSCode's Output channel (the Amon Hen log). |
+| Export as JSON | ✓ | ✓ | ✓ | n/a | n/a | VSCode: VSCode's Output channel (the Amon Hen log). |
 | Daemon tab (start, stop, connections) | ✓ | ✓ | — | ✓ | △ | VSCode: A page of the main view (Show Daemon in the sidebar's ⋯ and the command palette); the window's connections are to the local daemon only.<br>CLI: `daemon status / start / stop`. |
 
 ## 11. Menus

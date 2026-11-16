@@ -1,7 +1,8 @@
 //! Activity の画面（GTK4 版の `activity.rs`、macOS 版の `Activity.swift` のタブのうち Operations と History）:
 //! Operations は実行した git とコアの命令（`amonhen_model::activity` の記録。新しい順）、History は Undo できる
 //! 操作（`undoLog`）と「ここまで戻す」。開いている間は 0.5 秒ごとに読み直す。GTK4 版・macOS 版は別の窓にするが、
-//! ここではまだ History と右の列の場所に重ねる。Performance・Events・Daemon のタブはまだない。
+//! ここではまだ History と右の列の場所に重ねる。History Cache のタブ（開いているリポジトリだけ）と JSON への書き出しもある。
+//! Performance・Events・Daemon のタブはまだない。
 
 use amonhen_model::tr;
 use serde_json::Value;
@@ -16,6 +17,8 @@ pub struct State {
     pub records: Vec<amonhen_model::activity::Record>,
     /// `undoLog` の答えの entries（新しい順）。
     pub undo: Vec<Value>,
+    /// 開いているリポジトリの名前と `historyCache` の答えの info（History のキャッシュの書き込み）。
+    pub cache: Option<(String, Value)>,
 }
 
 impl State {
@@ -24,6 +27,7 @@ impl State {
             tab: 0,
             records: Vec::new(),
             undo: Vec::new(),
+            cache: None,
         };
         state.refresh();
         state
@@ -43,6 +47,26 @@ pub struct Callbacks<'a> {
     /// History の Undo・Undo to Here（戻す数）。
     pub undo: Box<dyn Fn(usize) -> Callback<()> + 'a>,
     pub close: Callback<()>,
+    /// Operations の記録を JSON に書き出す。
+    pub export: Callback<()>,
+}
+
+/// バイト数を読みやすく（GTK4 版の `glib::format_size` に近い形）。
+fn size(bytes: u64) -> String {
+    const UNITS: [&str; 4] = ["kB", "MB", "GB", "TB"];
+    if bytes < 1000 {
+        return format!("{bytes} bytes");
+    }
+    let mut value = bytes as f64;
+    let mut unit = "";
+    for u in UNITS {
+        value /= 1000.0;
+        unit = u;
+        if value < 1000.0 {
+            break;
+        }
+    }
+    format!("{value:.1} {unit}")
 }
 
 /// UNIX 時刻のミリ秒を、この機械の時刻の `HH:MM:SS.mmm` に。
@@ -74,15 +98,31 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 .margin(Thickness::new(0.0, 0.0, 16.0, 0.0))
                 .grid_column(0),
             RadioButtons::new()
-                .items_source(vec![tr!("Operations"), "History".to_owned()])
+                .items_source(vec![
+                    tr!("Operations"),
+                    "History".to_owned(),
+                    tr!("History Cache"),
+                ])
                 .selected_index(state.tab)
-                .max_columns(2)
+                .max_columns(3)
                 .on_selection_changed(callbacks.tab)
                 .grid_column(1),
-            Button::new()
-                .on_click(callbacks.close)
+            StackPanel::new()
+                .orientation(Orientation::Horizontal)
+                .spacing(8.0)
                 .grid_column(2)
-                .content(TextBlock::new().text(tr!("Close"))),
+                .children((
+                    if state.tab == 0 {
+                        Button::new()
+                            .on_click(callbacks.export)
+                            .content(TextBlock::new().text(tr!("Export JSON…")))
+                    } else {
+                        View::empty()
+                    },
+                    Button::new()
+                        .on_click(callbacks.close)
+                        .content(TextBlock::new().text(tr!("Close"))),
+                )),
         ));
     let body: View = if state.tab == 0 {
         let rows = state.records.iter().map(|r| {
@@ -152,6 +192,64 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
             .grid_row(1)
             .margin(Thickness::new(12.0, 0.0, 12.0, 8.0))
             .content(StackPanel::new().children((View::keyed_fragment(rows),)))
+    } else if state.tab == 2 {
+        // History のキャッシュ（GTK4 版の Activity の History Cache）: 大きさと、この起動での書き込み。
+        let body: View = match &state.cache {
+            None => TextBlock::new().text(tr!("Loading…")).opacity(0.6).into(),
+            Some((name, info)) => {
+                let writes = &info["writes"];
+                let last = match writes["lastAt"].as_i64() {
+                    Some(at) => format!(
+                        "{} · {}",
+                        size(writes["lastBytes"].as_u64().unwrap_or(0)),
+                        time(at as u64)
+                    ),
+                    None => "—".to_owned(),
+                };
+                let cell = |text: String, column: i32| {
+                    TextBlock::new()
+                        .text(text)
+                        .font_size(12.0)
+                        .grid_column(column)
+                };
+                let heading = |text: String, column: i32| {
+                    TextBlock::new()
+                        .text(text)
+                        .font_size(12.0)
+                        .opacity(0.6)
+                        .grid_column(column)
+                };
+                let columns = || {
+                    [
+                        GridLength::Star(1.0),
+                        GridLength::Pixel(100.0),
+                        GridLength::Pixel(70.0),
+                        GridLength::Pixel(100.0),
+                        GridLength::Pixel(200.0),
+                    ]
+                };
+                StackPanel::new().spacing(4.0).children((
+                    Grid::new().columns(columns()).children((
+                        heading(tr!("Repository"), 0),
+                        heading(tr!("Size"), 1),
+                        heading(tr!("Writes"), 2),
+                        heading(tr!("Written"), 3),
+                        heading(tr!("Last Write"), 4),
+                    )),
+                    Grid::new().columns(columns()).children((
+                        cell(name.clone(), 0),
+                        cell(size(info["size"].as_u64().unwrap_or(0)), 1),
+                        cell(writes["count"].as_u64().unwrap_or(0).to_string(), 2),
+                        cell(size(writes["bytes"].as_u64().unwrap_or(0)), 3),
+                        cell(last, 4),
+                    )),
+                ))
+            }
+        };
+        StackPanel::new()
+            .grid_row(1)
+            .margin(Thickness::new(12.0, 0.0, 12.0, 8.0))
+            .children((body,))
     } else {
         let rows = state.undo.iter().enumerate().map(|(i, e)| {
             let ms = e["time"].as_f64().unwrap_or(0.0) as u64;

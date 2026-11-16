@@ -524,6 +524,10 @@ enum Message {
     ActivityUndoLog(Vec<Value>),
     ActivityUndo(usize),
     ActivityTick,
+    /// Activity の Operations の記録を JSON に書き出す。
+    ActivityExport,
+    /// Activity の History のキャッシュを読んだ（リポジトリの名前と `historyCache` の info）。
+    ActivityCache(String, Value),
     CloseActivity,
     /// まとめるときのメッセージの初期値を読んだ（コミット、メッセージ）。
     SquashText(String, Result<String, String>),
@@ -2613,6 +2617,50 @@ impl Component for Root {
                     state.tab = tab;
                 }
                 self.load_undo_log(context);
+                if tab == 2
+                    && let Some(repo) = self.repo.clone()
+                {
+                    let name = repo
+                        .paths()
+                        .workdir
+                        .and_then(|w| w.file_name().map(|n| n.to_string_lossy().into_owned()))
+                        .unwrap_or_default();
+                    context.spawn_background(move |_| {
+                        let reply: Value =
+                            serde_json::from_str(&repo.run_json(r#"{"op":"historyCache"}"#))
+                                .unwrap_or_default();
+                        Message::ActivityCache(name, reply["info"].clone())
+                    });
+                }
+            }
+            Message::ActivityCache(name, info) => {
+                if let Some(state) = self.activity.as_mut() {
+                    state.cache = Some((name, info));
+                }
+            }
+            Message::ActivityExport => {
+                // 題は付けない（GTK4 版・macOS 版と同じ）。
+                let Some(path) =
+                    crate::files::save_file("", "amonhen-activity.json", "JSON", "json")
+                else {
+                    return;
+                };
+                let records: Vec<Value> = amonhen_model::activity::entries()
+                    .into_iter()
+                    .map(|e| {
+                        json!({
+                            "seq": e.seq, "kind": e.kind, "repo": e.repo, "label": e.label,
+                            "started": e.started, "duration": e.duration, "ok": e.ok, "error": e.error,
+                        })
+                    })
+                    .collect();
+                let text = serde_json::to_string_pretty(&records).unwrap_or_default();
+                if let Err(e) = std::fs::write(&path, text) {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("Export JSON…").trim_end_matches('…').to_owned(),
+                        message: e.to_string(),
+                    });
+                }
             }
             Message::ActivityTab(None) => {}
             Message::SquashText(oid, message) => match (self.repo.clone(), message) {
@@ -5990,6 +6038,7 @@ impl Root {
                 tab: context.callback(Message::ActivityTab),
                 undo: Box::new(|n| context.callback(move |()| Message::ActivityUndo(n))),
                 close: context.callback(|()| Message::CloseActivity),
+                export: context.callback(|()| Message::ActivityExport),
             },
         );
         Border::new()
