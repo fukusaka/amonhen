@@ -48,3 +48,8 @@ features = [
 lto = "thin"
 codegen-units = 1
 debug = "line-tables-only"
+
+# windows-reactor は crates.io の 0.100.0 をそのまま vendor/ に置き、足りない所（部品の生の WinUI のオブジェクトを
+# 取る口など）を手で足して使う。変えた所はこのディレクトリの git の履歴で追える。
+[patch.crates-io]
+windows-reactor = { path = "vendor/windows-reactor" }
