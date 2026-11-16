@@ -222,6 +222,14 @@ enum Dialog {
         stash: String,
         name: String,
     },
+    /// コミットのメッセージを書き直す（Edit Message…）か、1 つ古いコミットとまとめる（Combine with Older
+    /// Commit…）。`squash` なら後者。GTK4 版は編集モードを開くが、ここではすぐ書き換える。
+    Reword {
+        repo: Arc<Repository>,
+        oid: String,
+        message: String,
+        squash: bool,
+    },
     /// 作業中の変更を stash する（GTK4 版の `Actions::stash_paths`）。`paths` があればそのファイルだけ。
     Stash {
         repo: Arc<Repository>,
@@ -347,6 +355,8 @@ enum Message {
     ActivityUndo(usize),
     ActivityTick,
     CloseActivity,
+    /// まとめるときのメッセージの初期値を読んだ（コミット、メッセージ）。
+    SquashText(String, Result<String, String>),
     /// Stash のダイアログの選択（`all`・`staged`・`keep-index`・`untracked`）。
     StashOption(&'static str, bool),
     /// Repository Settings: 設定を読んだ・欄を書き換えた・ボタン。
@@ -509,7 +519,10 @@ impl Component for Root {
                 | Some(Dialog::Publish { name: current, .. })
                 | Some(Dialog::Stash {
                     message: current, ..
-                }) => *current = name,
+                })
+                | Some(Dialog::Reword {
+                    message: current, ..
+                }) => *current = name.replace("\r\n", "\n").replace('\r', "\n"),
                 _ => {}
             },
             Message::Command(id) if id == "push" => self.push(false),
@@ -919,6 +932,30 @@ impl Component for Root {
                             "paths": paths,
                         }),
                         "Stash".to_owned(),
+                    );
+                }
+                (
+                    Some(Dialog::Reword {
+                        repo,
+                        oid,
+                        message,
+                        squash,
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    let (kind, label) = if squash {
+                        ("squash", tr!("Combine with Older"))
+                    } else {
+                        ("reword", tr!("Edit Message"))
+                    };
+                    perform(
+                        context,
+                        repo,
+                        json!({
+                            "op": "rewrite", "label": label,
+                            "edit": { "kind": kind, "oid": oid, "message": message },
+                        }),
+                        label.clone(),
                     );
                 }
                 (Some(Dialog::CloseMerge), ContentDialogResult::Primary) => {
@@ -1409,6 +1446,75 @@ impl Component for Root {
                     // History に戻ってそのコミットを選ぶ（Reflog から）。
                     self.show_page(Page::History);
                     with_history(|h| h.select_commit(&id));
+                } else if let Some(oid) = key.strip_prefix("reword:") {
+                    // 出している詳細のメッセージから（右クリックは先にその行を選ぶ）。
+                    let message = self
+                        .info
+                        .as_ref()
+                        .filter(|(info, _)| info["oid"].as_str() == Some(oid))
+                        .and_then(|(info, _)| info["message"].as_str().map(str::to_owned));
+                    match (self.repo.clone(), message) {
+                        (Some(repo), Some(message)) => {
+                            self.dialog = Some(Dialog::Reword {
+                                repo,
+                                oid: oid.to_owned(),
+                                message: message.trim_end().to_owned(),
+                                squash: false,
+                            });
+                            self.dialog_inputs += 1;
+                        }
+                        _ => beep(),
+                    }
+                } else if let Some(oid) = key.strip_prefix("squash:") {
+                    if let Some(repo) = self.repo.clone() {
+                        let oid = oid.to_owned();
+                        context.spawn_background(move |_| {
+                            let command = json!({ "op": "squashMessage", "oid": &oid });
+                            let reply: Value =
+                                serde_json::from_str(&repo.run_json(&command.to_string()))
+                                    .unwrap_or_default();
+                            let message = match reply["error"].as_str() {
+                                Some(e) => Err(e.to_owned()),
+                                None => Ok(reply["text"].as_str().unwrap_or_default().to_owned()),
+                            };
+                            Message::SquashText(oid, message)
+                        });
+                    }
+                } else if let Some(oid) = key.strip_prefix("drop:") {
+                    if let Some(repo) = self.repo.clone() {
+                        let short = &oid[..oid.len().min(8)];
+                        self.dialog = Some(Dialog::Confirm {
+                            repo,
+                            title: tr!("Drop {name}?", name = short),
+                            message: tr!("You can Undo this (Ctrl+Alt+Z)."),
+                            button: "Drop".to_owned(),
+                            command: json!({
+                                "op": "rewrite", "label": format!("Drop {short}"),
+                                "edit": { "kind": "drop", "oid": oid },
+                            }),
+                        });
+                    }
+                } else if let Some(oid) = key.strip_prefix("split:") {
+                    if let Some(repo) = self.repo.clone() {
+                        // 止めてから Working Copy で分けてコミットする（GTK4 版の Split…）。
+                        let short = &oid[..oid.len().min(8)];
+                        self.dialog = Some(Dialog::Confirm {
+                            repo,
+                            title: tr!("Split {commit}?", commit = short),
+                            message: format!(
+                                "{} {}",
+                                tr!(
+                                    "Its changes go back to the working tree; commit them in parts, then Continue."
+                                ),
+                                tr!("You can Undo this (Ctrl+Alt+Z).")
+                            ),
+                            button: "Split".to_owned(),
+                            command: json!({
+                                "op": "rewrite", "label": format!("Split {short}"),
+                                "edit": { "kind": "split", "oid": oid },
+                            }),
+                        });
+                    }
                 } else if let Some(range) = key.strip_prefix("rangediff:") {
                     self.open_ranges(vec![range.to_owned()], String::new(), context);
                 } else if let Some(rev) = key.strip_prefix("merge:") {
@@ -1564,6 +1670,24 @@ impl Component for Root {
                 self.load_undo_log(context);
             }
             Message::ActivityTab(None) => {}
+            Message::SquashText(oid, message) => match (self.repo.clone(), message) {
+                (Some(repo), Ok(message)) => {
+                    self.dialog = Some(Dialog::Reword {
+                        repo,
+                        oid,
+                        message,
+                        squash: true,
+                    });
+                    self.dialog_inputs += 1;
+                }
+                (_, Err(message)) => {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("Combine with Older"),
+                        message,
+                    })
+                }
+                _ => {}
+            },
             Message::StashOption(option, on) => {
                 if let Some(Dialog::Stash {
                     staged,
@@ -2387,6 +2511,39 @@ impl Root {
                         )),
                     )
             }
+            Some(Dialog::Reword {
+                oid,
+                message,
+                squash,
+                ..
+            }) => dialog
+                .is_open(true)
+                .title(if *squash {
+                    tr!("Combine with Older Commit…").trim_end_matches('…').to_owned()
+                } else {
+                    tr!("Edit Message")
+                })
+                .primary_button_text(if *squash { "Combine" } else { "Save" })
+                .close_button_text(tr!("Cancel"))
+                .is_primary_button_enabled(!message.trim().is_empty())
+                .content(
+                    StackPanel::new().spacing(6.0).children((
+                        TextBlock::new()
+                            .text(format!(
+                                "{} · {}",
+                                &oid[..oid.len().min(8)],
+                                tr!("You can Undo this (Ctrl+Alt+Z).")
+                            ))
+                            .opacity(0.7)
+                            .text_wrapping(TextWrapping::Wrap),
+                        TextBox::new()
+                            .accepts_return(true)
+                            .text_wrapping(TextWrapping::Wrap)
+                            .height(200.0)
+                            .text(message.clone())
+                            .on_text_changed(context.callback(Message::BranchName)),
+                    )),
+                ),
             Some(Dialog::CloseMerge) => dialog
                 .is_open(true)
                 .title(tr!("Close without saving?"))
@@ -3840,6 +3997,21 @@ impl Root {
             format!("revert:{id}"),
             tr!("Revert {id}…", id = &id[..8]),
         ));
+        // コミットの書き換え（GTK4 版の編集モードへの近道。マージには出さない）。
+        let merge = self.info.as_ref().is_some_and(|(info, _)| {
+            info["oid"].as_str() == Some(id.as_str())
+                && info["parents"].as_array().is_some_and(|p| p.len() > 1)
+        });
+        if !merge {
+            items.push(MenuItem::separator("-edit"));
+            items.push(MenuItem::item(format!("reword:{id}"), tr!("Edit Message…")));
+            items.push(MenuItem::item(
+                format!("squash:{id}"),
+                tr!("Combine with Older Commit…"),
+            ));
+            items.push(MenuItem::item(format!("drop:{id}"), "Drop…"));
+            items.push(MenuItem::item(format!("split:{id}"), "Split…"));
+        }
         items.push(MenuItem::separator("-copy"));
         items.push(MenuItem::item(format!("copy:{id}"), tr!("Copy Commit ID")));
         // このコミットを指すブランチ・タグの名前（リモートブランチは origin/ を付けたまま。5 つまで）。
