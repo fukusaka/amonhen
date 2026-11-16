@@ -181,6 +181,12 @@ enum Dialog {
     },
     /// 操作の失敗。
     Failed { title: String, message: String },
+    /// 履歴のない新しいブランチ（GTK4 版の `new_orphan_branch`）。`keep` は今のファイルを残すか。
+    NewOrphan {
+        repo: Arc<Repository>,
+        name: String,
+        keep: bool,
+    },
     /// ignore されたファイルを消す（git clean -X）。消すものを先に一覧で見せる（GTK4 版の `delete_ignored_files`）。
     DeleteIgnored {
         repo: Arc<Repository>,
@@ -419,6 +425,8 @@ enum Message {
     Confirm(Arc<Repository>, String, String, String, Value),
     /// Working Copy のパスの絞り込み。
     WorkingFilter(String),
+    /// New Orphan Branch の「今のファイルを残す」。
+    OrphanKeep(bool),
     /// ignore されたファイルを読んだ（`ignoredFiles` の答え）。
     IgnoredLoaded(Arc<Repository>, Value),
     /// Clean Up Branches の候補を読んだ（`branchCleanup` の答え）。
@@ -676,6 +684,7 @@ impl Component for Root {
             }
             Message::BranchName(name) => match &mut self.dialog {
                 Some(Dialog::NewBranch { name: current, .. })
+                | Some(Dialog::NewOrphan { name: current, .. })
                 | Some(Dialog::Rename { name: current, .. })
                 | Some(Dialog::StashBranch { name: current, .. })
                 | Some(Dialog::Publish { name: current, .. })
@@ -903,6 +912,22 @@ impl Component for Root {
                     folder: String::new(),
                 });
                 self.dialog_inputs += 1;
+            }
+            Message::Command(id) if id == "new-orphan-branch" => {
+                let Some(repo) = self.repo.clone() else {
+                    return beep();
+                };
+                self.dialog = Some(Dialog::NewOrphan {
+                    repo,
+                    name: String::new(),
+                    keep: false,
+                });
+                self.dialog_inputs += 1;
+            }
+            Message::OrphanKeep(on) => {
+                if let Some(Dialog::NewOrphan { keep, .. }) = &mut self.dialog {
+                    *keep = on;
+                }
             }
             Message::Command(id) if id == "prune-worktrees" => {
                 let Some(repo) = self.repo.clone() else {
@@ -1149,6 +1174,18 @@ impl Component for Root {
                     let commands =
                         remote_changes(original.as_ref(), name.trim(), fetch.trim(), push.trim());
                     perform_all(context, repo, commands, title);
+                }
+                (Some(Dialog::NewOrphan { repo, name, keep }), ContentDialogResult::Primary) => {
+                    let name = name.trim().to_owned();
+                    if name.is_empty() {
+                        return beep();
+                    }
+                    perform(
+                        context,
+                        repo,
+                        json!({ "op": "createOrphanBranch", "name": name, "keepFiles": keep }),
+                        tr!("Create"),
+                    );
                 }
                 (Some(Dialog::DeleteIgnored { repo, paths }), ContentDialogResult::Primary) => {
                     perform(
@@ -4131,6 +4168,32 @@ impl Root {
                             .children((head, picker, modes)),
                     )
             }
+            Some(Dialog::NewOrphan { name, keep, .. }) => dialog
+                .is_open(true)
+                .title(tr!("New Orphan Branch"))
+                .primary_button_text(tr!("Create"))
+                .close_button_text(tr!("Cancel"))
+                .is_primary_button_enabled(!name.trim().is_empty())
+                .content(
+                    StackPanel::new().spacing(8.0).children((
+                        TextBlock::new()
+                            .text(tr!(
+                                "A branch with no history. It is checked out, and is created by its first commit."
+                            ))
+                            .text_wrapping(TextWrapping::Wrap),
+                        TextBox::new()
+                            .element_ref(&self.dialog_input)
+                            .text(name.clone())
+                            .placeholder_text(tr!("Name of the branch"))
+                            .on_text_changed(context.callback(Message::BranchName)),
+                        CheckBox::new()
+                            .is_checked(*keep)
+                            .on_is_checked_changed(context.callback(Message::OrphanKeep))
+                            .content(TextBlock::new().text(tr!(
+                                "Keep the current files, staged for the first commit"
+                            ))),
+                    )),
+                ),
             Some(Dialog::DeleteIgnored { paths, .. }) => dialog
                 .is_open(true)
                 .title(tr!("Delete {count} Ignored Items?", count = paths.len()))

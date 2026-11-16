@@ -34,6 +34,7 @@ pub const IMPLEMENTED: &[&str] = &[
     "stash",
     "pop-stash",
     "delete-ignored-files",
+    "new-orphan-branch",
     "compare-with-previous",
     "apply-patch",
     "save-bundle",

@@ -165,7 +165,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
-| New Orphan Branch (empty, or keeping the files) | ✓ | ✓ | — | ✓ | △ | VSCode: The Command Palette and the Branches group's right-click.<br>CLI: Via `amonhen run` (`createOrphanBranch`). |
+| New Orphan Branch (empty, or keeping the files) | ✓ | ✓ | ✓ | ✓ | △ | VSCode: The Command Palette and the Branches group's right-click.<br>CLI: Via `amonhen run` (`createOrphanBranch`). |
 | Branch switcher (fuzzy search, recent, tracking or new branch) | ✓ | ✓ | — | ✓ | △ | VSCode: Switch Branch… (a QuickPick) in the sidebar's ⋯, the Branches heading and the command palette; no shortcut, as ⌘⇧B is VSCode's build task.<br>CLI: Via `amonhen run`. |
 | Fetch sheet (all or one remote, prune shown) | ✓ | ✓ | △ | ✓ | △ | VSCode: A modal with one remote, a QuickPick of all or one with several.<br>CLI: Via `amonhen run`.<br>Windows: All or one remote; prune isn't shown. |
 | Pull sheet (commits, merge / rebase / ff-only, upstream when missing) | ✓ | ✓ | △ | ✓ | △ | VSCode: A QuickPick: each way to integrate with what it does here, then the commits; no conflict forecast.<br>CLI: Via `amonhen run`.<br>Windows: Merge / rebase / ff-only and the upstream when missing; no commit list. |
