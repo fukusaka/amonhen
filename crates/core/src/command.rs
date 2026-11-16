@@ -476,6 +476,9 @@ pub enum Command {
     VerifySignatures {
         oids: Vec<String>,
     },
+    /// 覚えていた署名の検証の結果を捨てる。ほかのリポジトリや機械の段（`--global`）で検証の設定 `gpg.*` を
+    /// 書いたとき（このリポジトリで書いた分は `configSet` が捨てる）。
+    ForgetSignatures,
     /// タグの署名（`info`: `tags` に `names` と同じ順で name・id（注釈付きのタグのオブジェクト。軽量タグは
     /// null）・signed（gpg・ssh・x509、署名がなければ null）・taggerEmail・message（署名を除いたメッセージ）・
     /// signature（検証の結果。署名がなければ null））。署名のあるものだけを検証し、一度検証したものは覚えている。
@@ -4560,6 +4563,10 @@ impl Repository {
                 text: Some(ops.resolve(&rev)?.to_string()),
                 ..Default::default()
             }),
+            Command::ForgetSignatures => {
+                self.forget_signatures();
+                ok()
+            }
             Command::CommitExtras { oid: o } => Ok(Response {
                 ok: true,
                 info: Some(self.commit_extras(&oid(&o)?)?),
@@ -6454,6 +6461,10 @@ mod tests {
         );
         assert_eq!(statuses(&repo, head), ['G']);
         assert_eq!(count(), 2);
+        // ほかの所（機械の段など）で書いたときは、FE が頼んで捨てる。
+        run(&repo, r#"{"op":"forgetSignatures"}"#);
+        assert_eq!(statuses(&repo, head), ['G']);
+        assert_eq!(count(), 3);
     }
 
     #[test]
