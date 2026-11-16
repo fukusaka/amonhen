@@ -215,7 +215,7 @@ export class HistoryController implements vscode.Disposable {
     this.signatures.clear();
     this.extras.clear();
     const daemon = this.daemon;
-    if (daemon) void this.verifyRows(daemon, oids).catch(() => undefined);
+    if (daemon) void this.verifyRows(daemon, oids, true).catch(() => undefined);
     if (this.selectedOid) void this.sendDetails(this.selectedOid).catch(() => undefined);
   }
 
@@ -509,10 +509,16 @@ export class HistoryController implements vscode.Disposable {
     this.post({ type: 'form', shallow, boundary: shallow ? daemon.boundary! : [], ...(partial ? { partial } : {}) });
   }
 
-  /** 行の署名を確かめて印を送る（一度確かめたものは覚えている。コアも覚えている） */
-  private async verifyRows(daemon: DaemonHistory, oids: readonly string[]): Promise<void> {
+  /**
+   * 行の署名を確かめて印を送る（一度確かめたものは覚えている。コアも覚えている）。`reset` なら Webview の前の印を
+   * 捨てさせる（署名が無効・なしになった行の印は送る分に含まれないため）
+   */
+  private async verifyRows(daemon: DaemonHistory, oids: readonly string[], reset = false): Promise<void> {
     const todo = oids.filter((o) => !this.signatures.has(o));
-    if (todo.length === 0) return;
+    if (todo.length === 0) {
+      if (reset) this.post({ type: 'signatures', marks: {}, reset });
+      return;
+    }
     const reply = (await daemon.client.call({ op: 'run', command: { op: 'verifySignatures', oids: todo } })).json;
     if (reply['ok'] !== true) return;
     const info = reply['info'] as { checks?: (SignatureCheck & { committerEmail?: string })[] } | undefined;
@@ -524,7 +530,7 @@ export class HistoryController implements vscode.Disposable {
       this.signatures.set(oid, view);
       if (view) marks[oid] = view;
     });
-    if (Object.keys(marks).length > 0) this.post({ type: 'signatures', marks });
+    if (reset || Object.keys(marks).length > 0) this.post({ type: 'signatures', marks, ...(reset ? { reset } : {}) });
   }
 
   /**
