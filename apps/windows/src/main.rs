@@ -11,6 +11,7 @@ mod data;
 mod listen;
 mod measure;
 mod render;
+mod sidebar;
 mod win32;
 mod winui;
 
@@ -247,6 +248,15 @@ impl Session {
             self.scroll_to(top + ROW_HEIGHT - self.height());
         }
         self.dirty = true;
+    }
+
+    /// 行を選び、見えていなければ真ん中に出す（サイドバーで ref を選んだとき）。
+    pub fn reveal(&mut self, row: u32) {
+        let top = row as f32 * ROW_HEIGHT;
+        if top < self.scroll_y || top + ROW_HEIGHT > self.scroll_y + self.height() {
+            self.scroll_to(top - (self.height() - ROW_HEIGHT) / 2.0);
+        }
+        self.select(row);
     }
 
     /// 選んだ行を `delta` 行動かす（何も選んでいなければ先頭）。

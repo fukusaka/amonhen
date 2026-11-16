@@ -6,13 +6,13 @@
 //! WinUI のハンドラーは `Send` でなければならないので何も持たず、UI のスレッドの `HISTORY` から描き手を取る。
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
 use amonhen_core::RefsSnapshot;
-use amonhen_model::{RefEntry, RefKind};
+use amonhen_core::Repository;
+use amonhen_model::RefEntry;
 use amonhen_win_xaml as xaml;
 use windows::Win32::Foundation::WAIT_OBJECT_0;
 use windows::Win32::System::Threading::WaitForSingleObjectEx;
@@ -20,6 +20,7 @@ use windows_core_reactor::{IInspectable, Interface as _, Ref};
 use windows_reactor::*;
 
 use crate::render::{ROW_HEIGHT, Surface};
+use crate::sidebar::{self, BranchGroups};
 use crate::{Args, Session};
 
 thread_local! {
@@ -50,11 +51,14 @@ struct Root {
     panel: ElementRef<SwapChainPanel>,
     area: ElementRef<Grid>,
     refs: Option<Arc<RefsSnapshot>>,
+    /// ローカルブランチの分け方（コアの `branchGroups`）。
+    groups: Option<BranchGroups>,
     error: Option<String>,
 }
 
 enum Message {
-    Refs(Arc<RefsSnapshot>),
+    Refs(Arc<RefsSnapshot>, Arc<Repository>),
+    Groups(Option<BranchGroups>),
     /// サイドバーの項目を選んだ（項目のキー）。
     Invoked(String),
     Failed(String),
@@ -69,13 +73,27 @@ impl Component for Root {
             panel: ElementRef::new(),
             area: ElementRef::new(),
             refs: None,
+            groups: None,
             error: None,
         }
     }
 
-    fn update(&mut self, message: Message, _context: &ComponentContext<Self>) {
+    fn update(&mut self, message: Message, context: &ComponentContext<Self>) {
         match message {
-            Message::Refs(refs) => self.refs = Some(refs),
+            Message::Refs(refs, repo) => {
+                self.refs = Some(refs);
+                // ブランチの分け方は ref が変わるたびに読み直す（数十 ms かかるので裏で）。
+                context.spawn_background(move |_| {
+                    let reply = repo.run_json(r#"{"op":"branchGroups"}"#);
+                    let reply = serde_json::from_str(&reply).unwrap_or_default();
+                    Message::Groups(BranchGroups::from_reply(&reply))
+                });
+            }
+            Message::Groups(groups) => {
+                if groups.is_some() {
+                    self.groups = groups;
+                }
+            }
             Message::Failed(e) => self.error = Some(e),
             Message::Invoked(key) => {
                 if let Some(entry) = self.entry(&key)
@@ -132,7 +150,10 @@ impl Component for Root {
         let sidebar = TreeView::new()
             .on_item_invoked(context.callback(Message::Invoked))
             .grid_column(0)
-            .nodes(self.sidebar_nodes());
+            .nodes(sidebar::nodes(
+                self.refs.as_ref().map(|r| &r.refs),
+                self.groups.as_ref(),
+            ));
         let history: View = match &self.error {
             Some(e) => TextBlock::new().text(e.clone()).margin(16.0).into(),
             None => SwapChainPanel::new().element_ref(&self.panel).into(),
@@ -153,7 +174,7 @@ impl Component for Root {
 impl Root {
     /// サイドバーの項目のキーが指す ref。
     fn entry(&self, key: &str) -> Option<&RefEntry> {
-        let (kind, name) = parse_ref_key(key)?;
+        let (kind, name) = sidebar::parse_ref_key(key)?;
         self.refs
             .as_ref()?
             .refs
@@ -161,132 +182,6 @@ impl Root {
             .iter()
             .find(|e| e.kind as u8 == kind && e.name == name)
     }
-
-    fn sidebar_nodes(&self) -> Vec<TreeNode> {
-        let mut groups = vec![
-            TreeNode::new("group:workspace", "Workspace")
-                .expanded(true)
-                .children([
-                    TreeNode::new("page:working-copy", "Working Copy"),
-                    TreeNode::new("page:history", "History"),
-                ]),
-        ];
-        let Some(refs) = &self.refs else {
-            return groups;
-        };
-        let refs = &refs.refs;
-        let of = |kind: RefKind| refs.entries.iter().filter(move |e| e.kind == kind);
-        let head = refs.head_branch.as_deref();
-        groups.push(
-            TreeNode::new("group:branches", "Branches")
-                .expanded(true)
-                .children(folders(
-                    "branches",
-                    of(RefKind::Local).map(|e| (e.name.as_str(), ref_key(e), branch_text(e, head))),
-                )),
-        );
-        // リモートはリモートの名前ごとのフォルダにする。
-        groups.push(
-            TreeNode::new("group:remotes", "Remotes")
-                .expanded(true)
-                .children(folders(
-                    "remotes",
-                    of(RefKind::Remote).map(|e| (e.name.as_str(), ref_key(e), leaf(&e.name))),
-                )),
-        );
-        groups.push(TreeNode::new("group:tags", "Tags").children(folders(
-            "tags",
-            of(RefKind::Tag).map(|e| (e.name.as_str(), ref_key(e), leaf(&e.name))),
-        )));
-        let stashes: Vec<TreeNode> = of(RefKind::Stash)
-            .map(|e| {
-                let text = e.detail.clone().unwrap_or_else(|| e.name.clone());
-                TreeNode::new(ref_key(e), text)
-            })
-            .collect();
-        if !stashes.is_empty() {
-            groups.push(TreeNode::new("group:stashes", "Stashes").children(stashes));
-        }
-        let submodules: Vec<TreeNode> = of(RefKind::Submodule)
-            .map(|e| TreeNode::new(ref_key(e), e.name.clone()))
-            .collect();
-        if !submodules.is_empty() {
-            groups.push(TreeNode::new("group:submodules", "Submodules").children(submodules));
-        }
-        groups
-    }
-}
-
-fn ref_key(entry: &RefEntry) -> String {
-    format!("ref:{}:{}", entry.kind as u8, entry.name)
-}
-
-fn parse_ref_key(key: &str) -> Option<(u8, &str)> {
-    let rest = key.strip_prefix("ref:")?;
-    let (kind, name) = rest.split_once(':')?;
-    Some((kind.parse().ok()?, name))
-}
-
-/// 名前の最後の部分（フォルダの中で見せる名前）。
-fn leaf(name: &str) -> String {
-    name.rsplit('/').next().unwrap_or(name).to_string()
-}
-
-/// ローカルブランチの行の文字: チェックアウト中なら ✓、上流との差（↑↓）、上流がなくなっていれば gone。
-fn branch_text(entry: &RefEntry, head: Option<&str>) -> String {
-    let mut text = leaf(&entry.name);
-    if head == Some(entry.name.as_str()) {
-        text = format!("✓ {text}");
-    }
-    if entry.ahead > 0 {
-        text.push_str(&format!("  ↑{}", entry.ahead));
-    }
-    if entry.behind > 0 {
-        text.push_str(&format!("  ↓{}", entry.behind));
-    }
-    if entry.gone {
-        text.push_str("  gone");
-    }
-    text
-}
-
-/// `feature/x` のような名前をフォルダにまとめる（フォルダが先、それぞれ名前順）。
-fn folders<'a>(
-    prefix: &str,
-    items: impl Iterator<Item = (&'a str, String, String)>,
-) -> Vec<TreeNode> {
-    #[derive(Default)]
-    struct Folder {
-        folders: BTreeMap<String, Folder>,
-        leaves: Vec<(String, String)>,
-    }
-    fn build(path: &str, folder: Folder) -> Vec<TreeNode> {
-        let mut nodes: Vec<TreeNode> = folder
-            .folders
-            .into_iter()
-            .map(|(name, child)| {
-                let path = format!("{path}/{name}");
-                TreeNode::new(format!("folder:{path}"), name).children(build(&path, child))
-            })
-            .collect();
-        nodes.extend(
-            folder
-                .leaves
-                .into_iter()
-                .map(|(key, text)| TreeNode::new(key, text)),
-        );
-        nodes
-    }
-    let mut root = Folder::default();
-    for (name, key, text) in items {
-        let mut folder = &mut root;
-        let parts: Vec<&str> = name.split('/').collect();
-        for part in &parts[..parts.len() - 1] {
-            folder = folder.folders.entry((*part).to_string()).or_default();
-        }
-        folder.leaves.push((key, text));
-    }
-    build(prefix, root)
 }
 
 struct HistoryView {
@@ -369,14 +264,14 @@ impl HistoryView {
         }
         let s = &mut self.session;
         s.poll()?;
-        if let Some(refs) = &s.data.refs
+        if let (Some(refs), Some(repo)) = (&s.data.refs, s.data.repo())
             && !self
                 .refs_sent
                 .as_ref()
                 .is_some_and(|sent| Arc::ptr_eq(sent, refs))
         {
             self.refs_sent = Some(refs.clone());
-            self.sender.send(Message::Refs(refs.clone()));
+            self.sender.send(Message::Refs(refs.clone(), repo));
         }
         if !s.needs_frame() {
             return Ok(());
@@ -395,7 +290,7 @@ impl HistoryView {
 
     fn select_commit(&mut self, id: &amonhen_model::Oid) {
         if let Some(row) = self.session.data.row_of(id) {
-            self.session.select(row);
+            self.session.reveal(row);
         }
     }
 }

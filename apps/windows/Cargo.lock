@@ -108,6 +108,7 @@ dependencies = [
  "amonhen-projection",
  "amonhen-remote",
  "amonhen-win-xaml",
+ "serde_json",
  "windows",
  "windows-core 0.100.0",
  "windows-core 0.62.2",

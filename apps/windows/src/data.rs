@@ -190,6 +190,10 @@ impl Data {
         Ok(changed)
     }
 
+    pub fn repo(&self) -> Option<Arc<Repository>> {
+        self.repo.clone()
+    }
+
     /// コミットの行（今の History の）。
     pub fn row_of(&self, id: &amonhen_model::Oid) -> Option<u32> {
         self.history.as_ref()?.row_of(id)
