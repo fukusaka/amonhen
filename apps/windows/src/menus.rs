@@ -22,6 +22,8 @@ pub const IMPLEMENTED: &[&str] = &[
     "pull",
     "push",
     "new-branch",
+    "merge",
+    "rebase",
 ];
 
 /// 項目の名前（GTK4 版の `appmenu::title` と同じ）。

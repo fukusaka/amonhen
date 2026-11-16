@@ -157,6 +157,26 @@ enum Dialog {
         message: String,
         command: Value,
     },
+    /// 今のブランチを `oid` に動かす（GTK4 版の `commitops::ask_reset`。動かし方は Soft・Mixed・Hard、既定は
+    /// Mixed）。前後の絵・今との違いの行き先・Force Push の注意はまだない。
+    Reset {
+        repo: Arc<Repository>,
+        title: String,
+        oid: String,
+        mode: usize,
+    },
+    /// Merge・Rebase（GTK4 版の `sheets::integrate_sheet`）。`choices` は名前と rev。2 つ以上なら相手を選ぶ。
+    /// merge なら取り込み方も選ぶ。前後の絵・コンフリクトの見込みはまだない。
+    Integrate {
+        repo: Arc<Repository>,
+        rebase: bool,
+        current: String,
+        choices: Vec<(String, String)>,
+        /// 相手を選ぶ欄を出す（メニューから）。でなければ `choices` の最初の相手を問う。
+        chooser: bool,
+        chosen: usize,
+        mode: usize,
+    },
     /// Working Copy のファイルの変更を捨てる（untracked なら消す）確認。
     Discard {
         repo: Arc<Repository>,
@@ -214,6 +234,10 @@ enum Message {
     Remotes(Arc<Repository>, Vec<String>),
     /// Fetch のダイアログで、取るリモートを選んだ（0 はすべて）。
     FetchFrom(Option<usize>),
+    /// Reset の動かし方・Merge の相手・Merge の取り込み方を選んだ。
+    ResetMode(Option<usize>),
+    IntegrateRev(Option<usize>),
+    MergeMode(Option<usize>),
     /// ダイアログを閉じた（押したボタン）。
     DialogClosed(ContentDialogResult),
     /// 書き込む操作が終わった（失敗ならそのダイアログの見出しと文）。
@@ -327,6 +351,25 @@ impl Component for Root {
                     });
                 }
             }
+            Message::ResetMode(Some(index)) => {
+                if let Some(Dialog::Reset { mode, .. }) = &mut self.dialog {
+                    *mode = index;
+                }
+            }
+            Message::IntegrateRev(Some(index)) => {
+                if let Some(Dialog::Integrate { chosen, .. }) = &mut self.dialog {
+                    *chosen = index;
+                }
+            }
+            Message::MergeMode(Some(index)) => {
+                if let Some(Dialog::Integrate { mode, .. }) = &mut self.dialog {
+                    *mode = index;
+                }
+            }
+            Message::ResetMode(None) | Message::IntegrateRev(None) | Message::MergeMode(None) => {}
+            Message::Command(id) if id == "merge" || id == "rebase" => {
+                self.integrate_choosing(id == "rebase")
+            }
             Message::FetchFrom(index) => {
                 if let (Some(Dialog::Fetch { from, .. }), Some(index)) = (&mut self.dialog, index) {
                     *from = index;
@@ -393,6 +436,46 @@ impl Component for Root {
                     ContentDialogResult::Primary,
                 ) => {
                     perform(context, repo, command, button);
+                }
+                (
+                    Some(Dialog::Reset {
+                        repo, oid, mode, ..
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    let mode = RESET_MODES[mode];
+                    perform(
+                        context,
+                        repo,
+                        json!({ "op": "reset", "oid": oid, "mode": mode }),
+                        "Reset".to_owned(),
+                    );
+                }
+                (
+                    Some(Dialog::Integrate {
+                        repo,
+                        rebase,
+                        choices,
+                        chosen,
+                        mode,
+                        ..
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    let Some((_, rev)) = choices.get(chosen) else {
+                        return;
+                    };
+                    let (command, button) = if rebase {
+                        (json!({ "op": "rebase", "onto": rev }), "Rebase")
+                    } else {
+                        let mut command = json!({ "op": "merge", "rev": rev });
+                        if MERGE_MODES[mode] != "git" {
+                            command["mode"] = json!(MERGE_MODES[mode]);
+                        }
+                        (command, "Merge")
+                    };
+                    self.busy = Some(format!("{button}…"));
+                    perform(context, repo, command, button.to_owned());
                 }
                 (Some(Dialog::Checkout { repo, command, .. }), ContentDialogResult::Primary) => {
                     perform(context, repo, command, "Checkout".to_owned());
@@ -587,6 +670,8 @@ impl Component for Root {
                     self.pick(oid.to_owned(), false);
                 } else if let Some(oid) = key.strip_prefix("revert:") {
                     self.pick(oid.to_owned(), true);
+                } else if let Some(oid) = key.strip_prefix("reset:") {
+                    self.reset(oid.to_owned());
                 }
             }
             Message::Performed(failed) => {
@@ -1009,6 +1094,109 @@ impl Root {
                             .text_wrapping(TextWrapping::Wrap),
                     )
             }
+            Some(Dialog::Reset { title, mode, .. }) => {
+                let modes = vec![
+                    tr!("Soft: keep the changes staged"),
+                    tr!("Mixed: keep the changes in the working tree"),
+                    tr!("Hard: match the commit (uncommitted changes are stashed first)"),
+                ];
+                dialog
+                    .is_open(true)
+                    .title(title.clone())
+                    .primary_button_text("Reset")
+                    .close_button_text(tr!("Cancel"))
+                    .content(
+                        StackPanel::new().spacing(6.0).children((
+                            TextBlock::new()
+                                .text(format!(
+                                    "{} {}",
+                                    tr!("Commits taken off stay in Reflog."),
+                                    tr!("You can Undo this (Ctrl+Alt+Z).")
+                                ))
+                                .text_wrapping(TextWrapping::Wrap),
+                            RadioButtons::new()
+                                .items_source(modes)
+                                .selected_index(*mode)
+                                .on_selection_changed(context.callback(Message::ResetMode)),
+                        )),
+                    )
+            }
+            Some(Dialog::Integrate {
+                rebase,
+                current,
+                choices,
+                chooser,
+                chosen,
+                mode,
+                ..
+            }) => {
+                // 相手が決まっていれば問いの見出し、選ぶなら「X に merge する」（GTK4 版と同じ）。
+                let chooser = *chooser;
+                let title = match (chooser, *rebase) {
+                    (true, true) => tr!("Rebase {name}", name = current),
+                    (true, false) => tr!("Merge into {name}", name = current),
+                    (false, true) => tr!(
+                        "Rebase {target} onto {rev}?",
+                        target = current,
+                        rev = choices.first().map_or("", |c| c.0.as_str())
+                    ),
+                    (false, false) => tr!(
+                        "Merge {rev} into {target}?",
+                        rev = choices.first().map_or("", |c| c.0.as_str()),
+                        target = current
+                    ),
+                };
+                // 選ぶ欄（なければ Undo の文）と、merge なら取り込み方。
+                let (head, picker): (View, View) = if chooser {
+                    (
+                        TextBlock::new()
+                            .text(if *rebase {
+                                tr!("The branch, tag or commit to rebase onto")
+                            } else {
+                                tr!("The branch, tag or commit to merge in")
+                            })
+                            .into(),
+                        ComboBox::new()
+                            .items_source(choices.iter().map(|c| c.0.clone()).collect::<Vec<_>>())
+                            .selected_index(*chosen)
+                            .min_width(320.0)
+                            .on_selection_changed(context.callback(Message::IntegrateRev))
+                            .into(),
+                    )
+                } else {
+                    (
+                        TextBlock::new()
+                            .text(tr!("You can Undo this (Ctrl+Alt+Z)."))
+                            .text_wrapping(TextWrapping::Wrap)
+                            .into(),
+                        View::empty(),
+                    )
+                };
+                let modes: View = if *rebase {
+                    View::empty()
+                } else {
+                    ComboBox::new()
+                        .items_source(
+                            MERGE_MODES
+                                .iter()
+                                .map(|m| merge_mode_title(m))
+                                .collect::<Vec<_>>(),
+                        )
+                        .selected_index(*mode)
+                        .on_selection_changed(context.callback(Message::MergeMode))
+                        .into()
+                };
+                dialog
+                    .is_open(true)
+                    .title(title)
+                    .primary_button_text(if *rebase { "Rebase" } else { "Merge" })
+                    .close_button_text(tr!("Cancel"))
+                    .content(
+                        StackPanel::new()
+                            .spacing(6.0)
+                            .children((head, picker, modes)),
+                    )
+            }
             Some(Dialog::Failed { title, message }) => dialog
                 .is_open(true)
                 .title(title.clone())
@@ -1077,6 +1265,67 @@ impl Root {
             message,
             button: if revert { "Revert" } else { "Cherry-pick" }.to_owned(),
             command: json!({ "op": op, "oids": [oid], "isMerge": merge }),
+        });
+    }
+
+    /// 「Reset <今のブランチ> to <コミット>…」の確認（GTK4 版の `commitops::ask_reset`）。
+    fn reset(&mut self, oid: String) {
+        let Some(repo) = self.repo.clone() else {
+            return beep();
+        };
+        let branch = self.head_name();
+        self.dialog = Some(Dialog::Reset {
+            repo,
+            title: tr!("Reset {branch} to {id}?", branch = branch, id = &oid[..8]),
+            oid,
+            mode: 1,
+        });
+    }
+
+    /// 今のブランチの名前（detached なら HEAD）。
+    fn head_name(&self) -> String {
+        self.refs
+            .as_ref()
+            .and_then(|r| r.refs.head_branch.clone())
+            .unwrap_or_else(|| "HEAD".to_owned())
+    }
+
+    /// Repository > Merge…・Rebase…: 相手を選んでから（GTK4 版の `appmenu::merge_or_rebase`）。選べるのは History
+    /// で選んでいるコミット（HEAD でなければ）、ローカル・リモートのブランチ、タグ（今のブランチは除く）。
+    fn integrate_choosing(&mut self, rebase: bool) {
+        let (Some(repo), Some(refs)) = (self.repo.clone(), self.refs.clone()) else {
+            return beep();
+        };
+        let mut choices = Vec::new();
+        let head = refs.refs.head.map(|h| h.to_string());
+        if let Some((id, _)) = &self.selected
+            && Some(id) != head.as_ref()
+        {
+            choices.push((tr!("Selected Commit {id}", id = &id[..8]), id.clone()));
+        }
+        for kind in [
+            amonhen_model::RefKind::Local,
+            amonhen_model::RefKind::Remote,
+            amonhen_model::RefKind::Tag,
+        ] {
+            for e in refs.refs.entries.iter().filter(|e| e.kind == kind) {
+                if Some(&e.name) != refs.refs.head_branch.as_ref() {
+                    choices.push((e.name.clone(), e.name.clone()));
+                }
+            }
+        }
+        if choices.is_empty() {
+            return beep();
+        }
+        // メニューからは、相手が 1 つでも選ぶ欄を出す（GTK4 版と同じ）。
+        self.dialog = Some(Dialog::Integrate {
+            repo,
+            rebase,
+            current: self.head_name(),
+            choices,
+            chooser: true,
+            chosen: 0,
+            mode: 0,
         });
     }
 
@@ -1310,6 +1559,14 @@ impl Root {
             format!("tag:{id}"),
             tr!("New Tag at {name}…", name = &id[..8]),
         ));
+        items.push(MenuItem::item(
+            format!("reset:{id}"),
+            tr!(
+                "Reset {branch} to {id}…",
+                branch = self.head_name(),
+                id = &id[..8]
+            ),
+        ));
         items.push(MenuItem::separator("-pick"));
         items.push(MenuItem::item(
             format!("cherry-pick:{id}"),
@@ -1362,6 +1619,21 @@ fn shown_start(rev: &str) -> &str {
 }
 
 /// Pull の取り込み方（GTK4 版の `PULL_MODES`。Settings の Pull の既定と同じ名前）。
+/// Reset の動かし方（Soft・Mixed・Hard の順）。
+const RESET_MODES: [&str; 3] = ["soft", "mixed", "hard"];
+
+/// Merge の取り込み方（GTK4 版の `MERGE_MODES`。相手が 1 つなので Fast-Forward Only も選べる）。
+const MERGE_MODES: [&str; 4] = ["git", "fastForwardOnly", "noFastForward", "squash"];
+
+fn merge_mode_title(mode: &str) -> String {
+    match mode {
+        "fastForwardOnly" => "Fast-Forward Only".to_owned(),
+        "noFastForward" => tr!("Always Create a Merge Commit"),
+        "squash" => tr!("Squash into One Commit"),
+        _ => tr!("Follow git’s settings"),
+    }
+}
+
 const PULL_MODES: [&str; 4] = ["git", "merge", "rebase", "fastForwardOnly"];
 
 fn pull_mode_title(mode: &str) -> String {
