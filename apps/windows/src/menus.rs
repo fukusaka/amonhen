@@ -139,6 +139,15 @@ pub fn toolbar(on_click: Callback<String>) -> View {
         .owned_commands(commands, [], on_click)
 }
 
+/// 押したキーに当たる、この FE で動く操作（メニューの項目のショートカット）。
+pub fn command_for(pressed: MenuShortcut) -> Option<&'static str> {
+    amonhen_commands::COMMANDS
+        .iter()
+        .filter(|c| IMPLEMENTED.contains(&c.id))
+        .find(|c| c.shortcut.and_then(shortcut) == Some(pressed))
+        .map(|c| c.id)
+}
+
 /// 表のショートカット（`Primary+Shift+B` の形）を Windows のキーにする。`Primary` は Ctrl、macOS の ⌃（`Control`）
 /// と ⌥（`Alt`）はどちらも Alt（GTK4 版と同じ読み替え）。知らないキーなら `None`。
 pub fn shortcut(text: &str) -> Option<MenuShortcut> {

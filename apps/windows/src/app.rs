@@ -54,6 +54,8 @@ fn with_history(f: impl FnOnce(&mut HistoryView)) {
 }
 
 struct Root {
+    /// 窓の根の Grid（メニューのショートカットを、フォーカスのある部品より先に受ける）。
+    root: ElementRef<Grid>,
     panel: ElementRef<SwapChainPanel>,
     area: ElementRef<Grid>,
     diff_panel: ElementRef<SwapChainPanel>,
@@ -142,6 +144,7 @@ impl Component for Root {
 
     fn create(_input: &(), _context: &ComponentContext<Self>) -> Self {
         Self {
+            root: ElementRef::new(),
             panel: ElementRef::new(),
             area: ElementRef::new(),
             diff_panel: ElementRef::new(),
@@ -288,6 +291,7 @@ impl Component for Root {
             .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
             .unwrap_or_else(|| args.repo.display().to_string());
         context.window_title(name);
+        let root = self.root.clone();
         let refs = (
             self.panel.clone(),
             self.area.clone(),
@@ -307,6 +311,8 @@ impl Component for Root {
             };
             let view = Rc::new(RefCell::new(HistoryView {
                 session,
+                root,
+                root_input: false,
                 panel: panel.clone(),
                 area,
                 options: args.options,
@@ -433,6 +439,7 @@ impl Component for Root {
             ));
         let dialog = self.dialog_view(context);
         Grid::new()
+            .element_ref(&self.root)
             .rows([GridLength::Auto, GridLength::Auto, GridLength::Star(1.0)])
             .children((menu_bar, toolbar, body, dialog))
     }
@@ -935,6 +942,9 @@ impl DiffPane {
 
 struct HistoryView {
     session: Session,
+    root: ElementRef<Grid>,
+    /// 根にショートカットを付けた（付けるのを頼んだ）。
+    root_input: bool,
     panel: ElementRef<SwapChainPanel>,
     area: ElementRef<Grid>,
     options: Options,
@@ -992,6 +1002,16 @@ impl HistoryView {
     fn render(&mut self) -> Result<(), String> {
         if !self.input_requested {
             self.input_requested = request_input(&self.area, Target::History);
+        }
+        if !self.root_input {
+            self.root_input = self.root.request_native_element(|result| match result {
+                Ok(element) => {
+                    if let Err(e) = attach_shortcuts(&element) {
+                        eprintln!("ショートカットを付けられない: {e}");
+                    }
+                }
+                Err(e) => eprintln!("窓の根を取れない: {e:?}"),
+            });
         }
         if !self.diff.input_requested {
             self.diff.input_requested = request_input(&self.diff.area, Target::Diff);
@@ -1222,6 +1242,38 @@ impl HistoryView {
 enum Target {
     History,
     Diff,
+}
+
+/// 窓の根に、メニューのショートカットを付ける。メニューの項目の KeyboardAccelerator は、TreeView・ListView に
+/// フォーカスがあると届かない（その部品がキーを先に使う）ので、根の PreviewKeyDown で先に受けて操作を送る。
+fn attach_shortcuts(element: &IInspectable) -> windows_core_reactor::Result<()> {
+    let ui: xaml::UIElement = element.cast()?;
+    let revoker = ui.PreviewKeyDown(|_, args: Ref<xaml::KeyRoutedEventArgs>| {
+        let Some(args) = args.as_ref() else { return };
+        let Ok(key) = args.Key() else { return };
+        let down = |key: xaml::VirtualKey| {
+            xaml::InputKeyboardSource::GetKeyStateForCurrentThread(key)
+                .is_ok_and(|s| s.contains(xaml::CoreVirtualKeyStates::Down))
+        };
+        let pressed = MenuShortcut {
+            key: key.0 as u16,
+            control: down(xaml::VirtualKey::Control),
+            shift: down(xaml::VirtualKey::Shift),
+            alt: down(xaml::VirtualKey::Menu),
+        };
+        // 修飾キーなしのキー（文字の入力・矢印）は部品に任せる。
+        if !pressed.control && !pressed.alt {
+            return;
+        }
+        if let Some(id) = crate::menus::command_for(pressed) {
+            let _ = args.SetHandled(true);
+            with_history(|h| {
+                h.sender.send(Message::Command(id.to_owned()));
+            });
+        }
+    })?;
+    REVOKERS.with(|r| r.borrow_mut().push(revoker));
+    Ok(())
 }
 
 /// `area` の生の要素に入力を付ける（まだ載っていなければ `false`、次のフレームでまた試す）。
