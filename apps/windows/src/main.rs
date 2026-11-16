@@ -6,6 +6,7 @@
 //! [--draw-on-input] [--raw-input] [--child-hwnd] [--keep-presenting] [--no-waitable] [--sync <n>]
 //! [--tearing] [--profile] [--out <file>]`、`amonhen-win --listen <file>`（実のマウスの基準、`listen.rs`）
 
+mod activity;
 mod app;
 mod blame;
 mod data;

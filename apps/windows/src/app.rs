@@ -36,6 +36,8 @@ thread_local! {
     static HISTORY_FLYOUT: RefCell<Option<xaml::FlyoutBase>> = const { RefCell::new(None) };
     /// サイドバーの木の生の要素と、右クリックで開く位置（キーボードで開いたときは項目そのものに出す）。
     static SIDEBAR_ELEMENT: RefCell<Option<xaml::UIElement>> = const { RefCell::new(None) };
+    /// Activity を開いている間、読み直しを頼んだ最後の時刻（0.5 秒ごとに頼む）。
+    static ACTIVITY_TICK: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
     /// サイドバーのメニューを付けておく、押されない空の Grid。
     static SIDEBAR_MENU_HOST: RefCell<Option<xaml::UIElement>> = const { RefCell::new(None) };
     static SIDEBAR_AT: RefCell<Option<(xaml::UIElement, Option<xaml::Point>)>> =
@@ -110,6 +112,9 @@ struct Root {
     /// Blame の画面（パス、コミット、読んだ行）。閉じたら前の画面（File History なら File History）に戻る。
     blame: Option<crate::blame::State>,
     blame_from: Page,
+    /// Activity の画面と、閉じたら戻る画面。
+    activity: Option<crate::activity::State>,
+    activity_from: Page,
     /// Settings の画面と、閉じたら戻る画面。
     settings: Option<crate::settingsview::State>,
     settings_from: Page,
@@ -131,6 +136,7 @@ enum Page {
     Blame,
     Merge,
     Settings,
+    Activity,
 }
 
 /// 窓に重ねるダイアログ（macOS 版のシート、GTK4 版の `sheets`）。
@@ -304,6 +310,12 @@ enum Message {
     SettingsSaveGit,
     SettingsToggle(&'static str, bool),
     CloseSettings,
+    /// Activity: タブを選んだ・Undo の記録を読んだ・戻す数を選んだ・読み直す時刻・閉じる。
+    ActivityTab(Option<usize>),
+    ActivityUndoLog(Vec<Value>),
+    ActivityUndo(usize),
+    ActivityTick,
+    CloseActivity,
     /// 解決済みにする前に、残っているコンフリクトを数えた（パス、数）。
     ConflictCounted(String, u64),
     /// Pull の取り込み元・Publish の送り先のリモートを選んだ。
@@ -389,6 +401,8 @@ impl Component for Root {
             sequence: None,
             merge: None,
             settings: None,
+            activity: None,
+            activity_from: Page::History,
             settings_from: Page::History,
             sidebar_request: 0,
             page: Page::History,
@@ -610,6 +624,15 @@ impl Component for Root {
                 };
                 self.busy = Some(format!("{title}…"));
                 perform(context, repo, json!({ "op": id }), title.to_owned());
+            }
+            Message::Command(id) if id == "activity" => {
+                if self.page != Page::Activity {
+                    self.activity_from = self.page;
+                }
+                self.activity = Some(crate::activity::State::new());
+                self.page = Page::Activity;
+                ACTIVITY_TICK.with(|t| t.set(Some(Instant::now())));
+                self.load_undo_log(context);
             }
             Message::Command(id) if id == "settings" => {
                 let Some(repo) = self.repo.clone() else {
@@ -1288,6 +1311,55 @@ impl Component for Root {
                 }
             }
             Message::MergeButton(key) => self.merge_button(key, context),
+            Message::ActivityTab(Some(tab)) => {
+                if let Some(state) = self.activity.as_mut() {
+                    state.tab = tab;
+                }
+                self.load_undo_log(context);
+            }
+            Message::ActivityTab(None) => {}
+            Message::ActivityUndoLog(entries) => {
+                if let Some(state) = self.activity.as_mut() {
+                    state.undo = entries;
+                }
+            }
+            Message::ActivityTick => {
+                if let Some(state) = self.activity.as_mut() {
+                    state.refresh();
+                    if state.tab == 1 {
+                        self.load_undo_log(context);
+                    }
+                }
+            }
+            Message::ActivityUndo(count) => {
+                let Some(repo) = self.repo.clone() else {
+                    return;
+                };
+                let label = self
+                    .activity
+                    .as_ref()
+                    .and_then(|s| s.undo.first())
+                    .and_then(|e| e["label"].as_str())
+                    .unwrap_or_default()
+                    .to_owned();
+                // 戻す前に確かめる（GTK4 版と同じ）。
+                self.dialog = Some(Dialog::Confirm {
+                    repo,
+                    title: if count == 1 {
+                        tr!("Undo “{label}”?", label = label)
+                    } else {
+                        tr!("Undo the last {count} operations?", count = count)
+                    },
+                    message: tr!("Returns HEAD and the branches to where they were."),
+                    button: "Undo".to_owned(),
+                    command: Value::Array(vec![json!({ "op": "undo" }); count]),
+                });
+            }
+            Message::CloseActivity => {
+                self.activity = None;
+                ACTIVITY_TICK.with(|t| t.set(None));
+                self.page = self.activity_from;
+            }
             Message::SettingsGit(name, email) => {
                 if let Some(state) = self.settings.as_mut() {
                     state.git = Some([(name.clone(), name), (email.clone(), email)]);
@@ -1744,6 +1816,7 @@ impl Component for Root {
                 self.blame_view(context),
                 self.merge_view(context),
                 self.settings_view(context),
+                self.activity_view(context),
             ));
         // ダイアログの入力の欄: フォーカスを入れ、Enter で既定のボタン（ContentDialog は Enter を既定のボタンに
         // 回さない）。
@@ -2888,6 +2961,43 @@ impl Root {
         }
     }
 
+    /// Activity の History のタブの中身（Undo できる操作）を裏で読む。
+    fn load_undo_log(&self, context: &ComponentContext<Self>) {
+        let (Some(repo), Some(1)) = (self.repo.clone(), self.activity.as_ref().map(|s| s.tab))
+        else {
+            return;
+        };
+        context.spawn_background(move |_| {
+            let reply: Value =
+                serde_json::from_str(&repo.run_json(r#"{"op":"undoLog"}"#)).unwrap_or_default();
+            Message::ActivityUndoLog(
+                reply["info"]["entries"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default(),
+            )
+        });
+    }
+
+    fn activity_view(&self, context: &ViewContext<Self>) -> View {
+        let (Page::Activity, Some(state)) = (self.page, &self.activity) else {
+            return View::empty();
+        };
+        let view = crate::activity::view(
+            state,
+            crate::activity::Callbacks {
+                tab: context.callback(Message::ActivityTab),
+                undo: Box::new(|n| context.callback(move |()| Message::ActivityUndo(n))),
+                close: context.callback(|()| Message::CloseActivity),
+            },
+        );
+        Border::new()
+            .background(Brush::Solid(Color::rgb(0xff, 0xff, 0xff)))
+            .grid_column(1)
+            .grid_column_span(2)
+            .content(view)
+    }
+
     fn settings_view(&self, context: &ViewContext<Self>) -> View {
         let (Page::Settings, Some(state)) = (self.page, &self.settings) else {
             return View::empty();
@@ -3827,6 +3937,13 @@ impl HistoryView {
         }
         if std::mem::take(&mut self.sidebar_menu_ready) {
             open_sidebar_menu();
+        }
+        // Activity を開いている間は 0.5 秒ごとに読み直してもらう（GTK4 版と同じ間隔）。
+        if let Some(last) = ACTIVITY_TICK.with(|t| t.get())
+            && last.elapsed() >= std::time::Duration::from_millis(500)
+        {
+            ACTIVITY_TICK.with(|t| t.set(Some(Instant::now())));
+            self.sender.send(Message::ActivityTick);
         }
         let s = &mut self.session;
         if STATUS_RELOAD.swap(false, std::sync::atomic::Ordering::AcqRel) {
