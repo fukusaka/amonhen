@@ -119,6 +119,8 @@ struct Root {
     worktrees: Vec<WorktreeInfo>,
     /// Working Copy のパスの絞り込み。
     working_filter: String,
+    /// Working Copy の木で畳んでいるディレクトリ。
+    working_collapsed: std::collections::HashSet<String>,
     /// Working Copy の一覧の見せ方と、切り替えのボタンを押した回数。
     working_layout: crate::workcopy::Layout,
     layout_clicks: u64,
@@ -570,6 +572,7 @@ impl Component for Root {
                 &crate::prefs::string(crate::prefs::WORKING_COPY_LAYOUT).unwrap_or_default(),
             ),
             layout_clicks: 0,
+            working_collapsed: Default::default(),
             working_stats: Default::default(),
             draft_key: None,
             push_after_commit: false,
@@ -1773,13 +1776,31 @@ impl Component for Root {
                     let path = self.status.as_ref().and_then(|s| {
                         let visible =
                             crate::workcopy::visible(&s.status.entries, &self.working_filter);
-                        match crate::workcopy::rows(&visible, self.working_layout).get(index) {
+                        match crate::workcopy::rows(
+                            &visible,
+                            self.working_layout,
+                            &self.working_collapsed,
+                        )
+                        .get(index)
+                        {
                             Some(crate::workcopy::Row::File { entry, .. }) => {
-                                Some(entry.path.clone())
+                                Some(Ok(entry.path.clone()))
                             }
-                            _ => None,
+                            Some(crate::workcopy::Row::Dir { path, .. }) => Some(Err(path.clone())),
+                            None => None,
                         }
                     });
+                    // ディレクトリの行を選んだら、畳む・開く（差分は前のファイルのまま）。
+                    let path = match path {
+                        Some(Err(dir)) => {
+                            if !self.working_collapsed.remove(&dir) {
+                                self.working_collapsed.insert(dir);
+                            }
+                            return;
+                        }
+                        Some(Ok(path)) => Some(path),
+                        None => None,
+                    };
                     self.working_file = path;
                     self.load_working_diff();
                 }
@@ -5269,6 +5290,7 @@ impl Root {
                 status: self.status.as_deref(),
                 filter: &self.working_filter,
                 layout: self.working_layout,
+                collapsed: &self.working_collapsed,
                 layout_clicks: self.layout_clicks,
                 stats: &self.working_stats,
                 list_host: &self.working_list,
