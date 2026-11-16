@@ -188,6 +188,8 @@ pub struct Data {
     pub syntax_changed: bool,
     /// 時間のかかる詳細が届いた（見たら `false` に戻す）。
     pub extras_changed: bool,
+    /// History が替わった（行の番号が変わる。見たら `false` に戻す）。
+    pub history_changed: bool,
     /// 差分より先に届いた、時間のかかる詳細。
     early_extras: Option<(u32, serde_json::Value)>,
     pub chunks: HashMap<u32, Rc<Chunk>>,
@@ -220,13 +222,56 @@ impl Data {
                 Err(e) => return send(Event::Failed(format!("History を読めない: {e}"))),
             };
             send(Event::History(repo.clone(), history.clone()));
-            // 行の索引（`row_of`）もここで作っておく（150 万コミットで 80 ms ほど）。
-            match repo.load_refs() {
+            let refs = |history: &HistorySnapshot| match repo.load_refs() {
                 Ok(refs) => {
-                    let labels = labels(&history, &refs.refs);
-                    send(Event::Refs(history.generation, refs, labels));
+                    // 行の索引（`row_of`）もここで作っておく（150 万コミットで 80 ms ほど）。
+                    let labels = labels(history, &refs.refs);
+                    Some(Event::Refs(history.generation, refs, labels))
                 }
-                Err(e) => send(Event::Failed(format!("ref を読めない: {e}"))),
+                Err(e) => Some(Event::Failed(format!("ref を読めない: {e}"))),
+            };
+            if let Some(event) = refs(&history) {
+                send(event);
+            }
+
+            // ref が変わったら History と ref を、設定が変わったら ref を読み直す（GTK4 版の `watch` と同じ）。
+            // 知らせは監視のスレッドから来るので、このスレッドで受けて読む。読み直しの失敗は出さない（macOS 版と
+            // 同じく、開いて最初の読み込みだけ）。
+            let (changed_tx, changed_rx) = channel::<u32>();
+            let _watcher = match amonhen_watch::Watcher::new(repo.paths(), move |changes| {
+                let _ = changed_tx.send(changes.0);
+            }) {
+                Ok(w) => w,
+                Err(e) => {
+                    eprintln!("リポジトリを見張れない: {e}");
+                    return;
+                }
+            };
+            let mut history = history;
+            while let Ok(mut bits) = changed_rx.recv() {
+                // まとめて来た知らせは 1 回の読み直しにする。
+                while let Ok(more) = changed_rx.try_recv() {
+                    bits |= more;
+                }
+                let changes = amonhen_watch::Changes(bits);
+                if changes.contains(amonhen_watch::Changes::REFS) {
+                    match repo.load_history() {
+                        Ok(h) => {
+                            history = h;
+                            send(Event::History(repo.clone(), history.clone()));
+                        }
+                        Err(e) => eprintln!("History を読み直せない: {e}"),
+                    }
+                }
+                if (changes.contains(amonhen_watch::Changes::REFS)
+                    || changes.contains(amonhen_watch::Changes::CONFIG))
+                    && let Some(event) = refs(&history)
+                {
+                    match event {
+                        Event::Failed(e) => eprintln!("{e}"),
+                        event => send(event),
+                    }
+                }
             }
         });
         Self {
@@ -237,6 +282,7 @@ impl Data {
             commit_wanted: None,
             syntax_changed: false,
             extras_changed: false,
+            history_changed: false,
             early_extras: None,
             chunks: HashMap::new(),
             repo: None,
@@ -262,6 +308,7 @@ impl Data {
                     }
                     self.repo = Some(repo);
                     self.history = Some(history);
+                    self.history_changed = true;
                     self.labels.clear();
                     self.commit = None;
                     self.commit_wanted = None;

@@ -17,6 +17,7 @@ amonhen-layout = { path = "../../crates/layout" }
 amonhen-model = { path = "../../crates/model" }
 amonhen-projection = { path = "../../crates/projection" }
 amonhen-remote = { path = "../../crates/remote" }
+amonhen-watch = { path = "../../crates/watch" }
 amonhen-win-xaml = { path = "xaml" }
 serde_json = "1"
 windows-core = "0.62"

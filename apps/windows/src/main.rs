@@ -139,8 +139,11 @@ pub struct Session {
     pub surface: Option<Surface>,
     pub scale: f32,
     scroll_y: f32,
-    /// 選んだ行。
+    /// 選んだ行と、そのコミット（History が替わったら、同じコミットの行を選び直す）。
     pub selected: Option<u32>,
+    selected_id: Option<amonhen_model::Oid>,
+    /// 直前の `poll` で History が替わった。
+    pub history_replaced: bool,
     dirty: bool,
     measure: Option<Measure>,
     input: Option<InputLatency>,
@@ -167,6 +170,8 @@ impl Session {
             scale: 1.0,
             scroll_y: 0.0,
             selected: None,
+            selected_id: None,
+            history_replaced: false,
             dirty: true,
             measure: args.measure.map(Measure::new),
             input: args.measure_input.map(InputLatency::new),
@@ -241,6 +246,11 @@ impl Session {
     pub fn select(&mut self, row: u32) {
         let row = row.min(self.data.row_count().saturating_sub(1));
         self.selected = Some(row);
+        self.selected_id = self
+            .data
+            .history
+            .as_ref()
+            .and_then(|h| h.graph.ids().get(row as usize).copied());
         let top = row as f32 * ROW_HEIGHT;
         if top < self.scroll_y {
             self.scroll_to(top);
@@ -327,6 +337,15 @@ impl Session {
     pub fn poll(&mut self) -> Result<(), String> {
         if self.data.poll()? {
             self.dirty = true;
+        }
+        self.history_replaced = std::mem::take(&mut self.data.history_changed);
+        if self.history_replaced {
+            // 同じコミットを選び直す（なくなっていれば選ばない）。スクロールの位置は行の番号のまま。
+            self.selected = self.selected_id.and_then(|id| self.data.row_of(&id));
+            if self.selected.is_none() {
+                self.selected_id = None;
+            }
+            self.scroll_by(0.0);
         }
         Ok(())
     }

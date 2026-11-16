@@ -147,6 +147,7 @@ dependencies = [
  "amonhen-model",
  "amonhen-projection",
  "amonhen-remote",
+ "amonhen-watch",
  "amonhen-win-xaml",
  "serde_json",
  "windows",

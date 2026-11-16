@@ -620,6 +620,11 @@ impl HistoryView {
             self.refs_sent = Some(refs.clone());
             self.sender.send(Message::Refs(refs.clone(), repo));
         }
+        // History が替わったら、選んでいる行の番号も変わる（同じコミットでも読み直す。差分も変わりうる）。
+        if s.history_replaced {
+            self.selected = None;
+            self.shown = None;
+        }
         // 開いて最初は HEAD のコミットを選ぶ（ref が届いてから）。
         if s.selected.is_none()
             && let Some(row) = s
