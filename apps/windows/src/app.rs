@@ -153,6 +153,15 @@ enum Dialog {
         /// ブランチではなくタグを作る（New Tag at …）。
         tag: bool,
     },
+    /// リモートの追加（`original` が None）・編集（GTK4 版の `remotesheet::present`）。接続の確かめはまだない。
+    Remote {
+        repo: Arc<Repository>,
+        /// 編集するリモート（名前、fetch の URL、push の URL）。
+        original: Option<(String, String, String)>,
+        name: String,
+        fetch: String,
+        push: String,
+    },
     /// ブランチの名前を変える（GTK4 版の `refops::ask_rename_branch`）。
     Rename {
         repo: Arc<Repository>,
@@ -220,6 +229,10 @@ enum Message {
     OpenHistoryMenu,
     /// サイドバーの項目を右クリックした（項目のキー）。
     SidebarMenu(String),
+    /// 編集するリモートを読んだ（なければ None）。
+    RemoteLoaded(Arc<Repository>, Option<(String, String, String)>),
+    /// リモートのシートの欄（0 は名前、1 は fetch、2 は push の URL）。
+    RemoteField(usize, String),
     /// 消すブランチを調べ終えた（名前、ほかのブランチにないコミットの数と一覧、または調べられなかった理由）。
     DeleteChecked(Arc<Repository>, String, Result<(u64, Vec<String>), String>),
     Status(Arc<StatusSnapshot>),
@@ -502,6 +515,25 @@ impl Component for Root {
                     self.busy = Some(format!("{button}…"));
                     perform(context, repo, command, button.to_owned());
                 }
+                (
+                    Some(Dialog::Remote {
+                        repo,
+                        original,
+                        name,
+                        fetch,
+                        push,
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    let title = if original.is_some() {
+                        tr!("Edit Remote")
+                    } else {
+                        tr!("Add Remote")
+                    };
+                    let commands =
+                        remote_changes(original.as_ref(), name.trim(), fetch.trim(), push.trim());
+                    perform_all(context, repo, commands, title);
+                }
                 (Some(Dialog::Rename { repo, from, name }), ContentDialogResult::Primary) => {
                     let to = name.trim().to_owned();
                     if !to.is_empty() && to != from {
@@ -587,6 +619,33 @@ impl Component for Root {
             },
             Message::Selected(selected) => self.selected = selected,
             Message::OpenHistoryMenu => self.menu_request += 1,
+            Message::RemoteLoaded(repo, found) => match found {
+                Some((name, fetch, push)) => {
+                    // push の URL は、fetch と違うときだけ欄に出す（同じなら空。GTK4 版と同じ）。
+                    let shown_push = if push != fetch {
+                        push.clone()
+                    } else {
+                        String::new()
+                    };
+                    self.dialog = Some(Dialog::Remote {
+                        repo,
+                        original: Some((name.clone(), fetch.clone(), push)),
+                        name,
+                        fetch,
+                        push: shown_push,
+                    });
+                    self.dialog_inputs += 1;
+                }
+                None => beep(),
+            },
+            Message::RemoteField(index, text) => {
+                if let Some(Dialog::Remote {
+                    name, fetch, push, ..
+                }) = &mut self.dialog
+                {
+                    *[name, fetch, push].into_iter().nth(index).expect("field") = text;
+                }
+            }
             Message::DeleteChecked(repo, name, checked) => match checked {
                 Err(message) => {
                     self.dialog = Some(Dialog::Failed {
@@ -781,6 +840,83 @@ impl Component for Root {
                             ),
                             button: tr!("Delete"),
                             command: json!({ "op": "deleteTag", "name": name }),
+                        });
+                    }
+                } else if key == "remote-add" {
+                    if let Some(repo) = self.repo.clone() {
+                        // 1 つもなければ origin から（GTK4 版と同じ）。
+                        let none = !self.refs.as_ref().is_some_and(|r| {
+                            r.refs
+                                .entries
+                                .iter()
+                                .any(|e| e.kind == amonhen_model::RefKind::Remote)
+                        });
+                        self.dialog = Some(Dialog::Remote {
+                            repo,
+                            original: None,
+                            name: if none {
+                                "origin".to_owned()
+                            } else {
+                                String::new()
+                            },
+                            fetch: String::new(),
+                            push: String::new(),
+                        });
+                        self.dialog_inputs += 1;
+                    }
+                } else if let Some(remote) = key.strip_prefix("remote-edit:") {
+                    if let Some(repo) = self.repo.clone() {
+                        let remote = remote.to_owned();
+                        context.spawn_background(move |_| {
+                            let reply: Value =
+                                serde_json::from_str(&repo.run_json(r#"{"op":"remotes"}"#))
+                                    .unwrap_or_default();
+                            let found = reply["info"]["remotes"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .find(|r| r["name"].as_str() == Some(remote.as_str()))
+                                .map(|r| {
+                                    let s = |k: &str| r[k].as_str().unwrap_or_default().to_owned();
+                                    (s("name"), s("fetchUrl"), s("pushUrl"))
+                                });
+                            Message::RemoteLoaded(repo, found)
+                        });
+                    }
+                } else if let Some(remote) = key.strip_prefix("remote-prune:") {
+                    if let Some(repo) = self.repo.clone() {
+                        // GTK4 版の `refops::remote_menu` の Prune（リモートと話すので先に聞く）。
+                        self.dialog = Some(Dialog::Confirm {
+                            repo,
+                            title: tr!("Prune {remote}?", remote = remote),
+                            message: format!(
+                                "{} {}",
+                                tr!(
+                                    "Removes the remote-tracking branches whose branches are gone from {remote} (git remote prune).",
+                                    remote = remote
+                                ),
+                                tr!("This can’t be undone.")
+                            ),
+                            button: "Prune".to_owned(),
+                            command: json!({ "op": "changeRemote", "change": { "kind": "prune", "name": remote } }),
+                        });
+                    }
+                } else if let Some(remote) = key.strip_prefix("remote-remove:") {
+                    if let Some(repo) = self.repo.clone() {
+                        // GTK4 版の `remotesheet::ask_remove`。
+                        self.dialog = Some(Dialog::Confirm {
+                            repo,
+                            title: tr!("Remove {name}?", name = remote),
+                            message: format!(
+                                "{} {}",
+                                tr!(
+                                    "This removes the remote’s settings and its remote-tracking branches ({name}/…). The remote repository isn’t touched.",
+                                    name = remote
+                                ),
+                                tr!("This can’t be undone.")
+                            ),
+                            button: tr!("Remove"),
+                            command: json!({ "op": "changeRemote", "change": { "kind": "remove", "name": remote } }),
                         });
                     }
                 } else if let Some(rev) = key.strip_prefix("merge:") {
@@ -1145,6 +1281,52 @@ impl Root {
                             .on_text_changed(context.callback(Message::BranchName)),
                     )),
                 ),
+            Some(Dialog::Remote {
+                original,
+                name,
+                fetch,
+                push,
+                ..
+            }) => {
+                let field = |label: String, text: &str, index: usize, placeholder: String| {
+                    StackPanel::new().spacing(2.0).children((
+                        TextBlock::new().text(label),
+                        TextBox::new()
+                            .text(text)
+                            .placeholder_text(placeholder)
+                            .min_width(360.0)
+                            .on_text_changed(
+                                context.callback(move |t| Message::RemoteField(index, t)),
+                            ),
+                    ))
+                };
+                dialog
+                    .is_open(true)
+                    .title(if original.is_some() {
+                        tr!("Edit Remote")
+                    } else {
+                        tr!("Add Remote")
+                    })
+                    .primary_button_text(tr!("Save"))
+                    .close_button_text(tr!("Cancel"))
+                    .is_primary_button_enabled(!name.trim().is_empty() && !fetch.trim().is_empty())
+                    .content(
+                        StackPanel::new().spacing(8.0).children((
+                            StackPanel::new().spacing(2.0).children((
+                                TextBlock::new().text(tr!("Name")),
+                                TextBox::new()
+                                    .element_ref(&self.dialog_input)
+                                    .text(name.clone())
+                                    .min_width(360.0)
+                                    .on_text_changed(
+                                        context.callback(|t| Message::RemoteField(0, t)),
+                                    ),
+                            )),
+                            field(tr!("Fetch URL"), fetch, 1, String::new()),
+                            field(tr!("Push URL"), push, 2, tr!("Same as the fetch URL")),
+                        )),
+                    )
+            }
             Some(Dialog::Rename { from, name, .. }) => dialog
                 .is_open(true)
                 .title(tr!("Rename {name}", name = from))
@@ -1503,6 +1685,22 @@ impl Root {
     /// 右クリックと同じ形（`Message::HistoryMenu` で受ける）。
     fn sidebar_menu(&self) -> Vec<MenuItem> {
         use amonhen_model::RefKind;
+        // リモートと Remotes の見出し（GTK4 版の `refops::remote_menu`）。
+        match self.sidebar_key.as_deref() {
+            Some("group:remotes") => {
+                return vec![MenuItem::item("remote-add", tr!("Add Remote…"))];
+            }
+            Some(key) if key.starts_with("folder:remotes/") => {
+                let remote = &key["folder:remotes/".len()..];
+                return vec![
+                    MenuItem::item(format!("remote-edit:{remote}"), tr!("Edit…")),
+                    MenuItem::item(format!("remote-prune:{remote}"), "Prune…"),
+                    MenuItem::separator("-remove"),
+                    MenuItem::item(format!("remote-remove:{remote}"), tr!("Remove…")),
+                ];
+            }
+            _ => {}
+        }
         let Some(entry) = self.sidebar_key.as_deref().and_then(|k| self.entry(k)) else {
             return Vec::new();
         };
@@ -1983,6 +2181,68 @@ fn perform(context: &ComponentContext<Root>, repo: Arc<Repository>, command: Val
             .unwrap_or_else(|e| json!({ "error": e.to_string() }));
         Message::Performed(reply["error"].as_str().map(|e| (title, e.to_owned())))
     });
+}
+
+/// 命令を順に裏で実行する（失敗したらそこで止める）。
+fn perform_all(
+    context: &ComponentContext<Root>,
+    repo: Arc<Repository>,
+    commands: Vec<Value>,
+    title: String,
+) {
+    context.spawn_background(move |_| {
+        for command in commands {
+            let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
+                .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+            if let Some(e) = reply["error"].as_str() {
+                return Message::Performed(Some((title, e.to_owned())));
+            }
+        }
+        Message::Performed(None)
+    });
+}
+
+/// リモートのシートで書く命令（`changeRemote` の列。GTK4 版の `remotesheet::changes`）。`original` が None なら
+/// 新しいリモート。
+fn remote_changes(
+    original: Option<&(String, String, String)>,
+    name: &str,
+    fetch: &str,
+    push: &str,
+) -> Vec<Value> {
+    let mut out = Vec::new();
+    match original {
+        Some((old_name, old_fetch, old_push)) => {
+            if old_name != name {
+                out.push(json!({ "kind": "rename", "from": old_name, "to": name }));
+            }
+            if old_fetch != fetch {
+                out.push(json!({ "kind": "setUrl", "name": name, "url": fetch }));
+            }
+            let had_push = if old_push != old_fetch {
+                old_push.as_str()
+            } else {
+                ""
+            };
+            if had_push != push {
+                let url = if push.is_empty() {
+                    Value::Null
+                } else {
+                    json!(push)
+                };
+                out.push(json!({ "kind": "setPushUrl", "name": name, "url": url }));
+            }
+        }
+        None => {
+            out.push(json!({ "kind": "add", "name": name, "url": fetch }));
+            if !push.is_empty() {
+                out.push(json!({ "kind": "setPushUrl", "name": name, "url": push }));
+            }
+        }
+    }
+    out.into_iter()
+        .map(|change| json!({ "op": "changeRemote", "change": change }))
+        .collect()
 }
 
 /// 文字をクリップボードに入れる。
