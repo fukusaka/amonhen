@@ -965,6 +965,38 @@ impl Component for Root {
                 self.write_repo_settings(Vec::new(), context);
             }
             Message::Command(id) if id == "stash" => self.ask_stash(Vec::new()),
+            Message::Command(id)
+                if matches!(
+                    id.as_str(),
+                    "open-in-terminal" | "open-in-editor" | "reveal-in-files"
+                ) =>
+            {
+                let Some(dir) = self.repo.as_ref().and_then(|r| r.paths().workdir) else {
+                    return beep();
+                };
+                // エディタは起動を待つので裏で（code.cmd がすぐ返す）。
+                if id == "open-in-editor" {
+                    context.spawn_background(move |_| {
+                        if crate::files::open_editor(&dir) {
+                            Message::Performed(None)
+                        } else {
+                            Message::Performed(Some((
+                                tr!("Couldn’t Open in Editor"),
+                                tr!("Couldn’t open {name}", name = "code"),
+                            )))
+                        }
+                    });
+                    return;
+                }
+                let opened = if id == "open-in-terminal" {
+                    crate::files::open_terminal(&dir)
+                } else {
+                    crate::files::open_folder(&dir)
+                };
+                if !opened {
+                    beep();
+                }
+            }
             Message::Command(id) if id == "delete-ignored-files" => {
                 if let Some(repo) = self.repo.clone() {
                     context.spawn_background(move |_| {

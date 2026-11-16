@@ -102,3 +102,49 @@ pub fn reveal(path: &std::path::Path) {
         .arg(format!("/select,{}", path.display()))
         .spawn();
 }
+
+/// フォルダをエクスプローラーで開く（Repository > Show in Files）。
+// エクスプローラーの窓を出すのが目的なので、process::command（窓を出さない）は使わない。
+#[allow(clippy::disallowed_methods)]
+pub fn open_folder(path: &std::path::Path) -> bool {
+    std::process::Command::new("explorer.exe")
+        .arg(path)
+        .spawn()
+        .is_ok()
+}
+
+/// フォルダでターミナルを開く（Repository > Open in Terminal）。Windows Terminal があればそれ、なければ新しい
+/// コンソールの cmd。
+// ターミナルの窓を出すのが目的なので、process::command（窓を出さない）は使わない。
+#[allow(clippy::disallowed_methods)]
+pub fn open_terminal(path: &std::path::Path) -> bool {
+    use std::os::windows::process::CommandExt;
+    /// 新しいコンソールを作る（CREATE_NEW_CONSOLE）。
+    const NEW_CONSOLE: u32 = 0x0000_0010;
+    if std::process::Command::new("wt.exe")
+        .arg("-d")
+        .arg(path)
+        .spawn()
+        .is_ok()
+    {
+        return true;
+    }
+    std::process::Command::new("cmd.exe")
+        .arg("/K")
+        .current_dir(path)
+        .creation_flags(NEW_CONSOLE)
+        .spawn()
+        .is_ok()
+}
+
+/// フォルダをエディタで開く（Repository > Open in Editor）。VS Code の `code` が PATH にあればそれ（GTK4 版・
+/// macOS 版はエディタを選べるが、ここではまだ VS Code だけ）。
+pub fn open_editor(path: &std::path::Path) -> bool {
+    // `code` は code.cmd なので cmd に起動させる（コンソールの窓は出さない）。
+    amonhen_model::process::command("cmd.exe")
+        .arg("/C")
+        .arg("code")
+        .arg(path)
+        .status()
+        .is_ok_and(|s| s.success())
+}

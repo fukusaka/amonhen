@@ -42,6 +42,9 @@ pub const IMPLEMENTED: &[&str] = &[
     "fetch-bundle",
     "new-worktree",
     "prune-worktrees",
+    "open-in-terminal",
+    "open-in-editor",
+    "reveal-in-files",
 ];
 
 /// 項目の名前（GTK4 版の `appmenu::title` と同じ）。
