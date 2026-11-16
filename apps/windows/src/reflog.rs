@@ -36,7 +36,8 @@ pub fn entries_of(info: &Value) -> Vec<Entry> {
 }
 
 /// 行の右クリックのメニュー（GTK4 版の `ReflogView::menu`）。キーは History の右クリックと同じ形。
-pub fn menu_items(entry: &Entry, branch: &str) -> Vec<MenuItem> {
+/// `head` は今の HEAD（一番上の行のコミット）。ほかの行なら、それと比べる（Range Diff）。
+pub fn menu_items(entry: &Entry, branch: &str, head: Option<&str>) -> Vec<MenuItem> {
     let hex = &entry.new;
     let short = &hex[..hex.len().min(8)];
     let mut items = vec![
@@ -57,6 +58,13 @@ pub fn menu_items(entry: &Entry, branch: &str) -> Vec<MenuItem> {
             tr!("Reset {branch} to {id}…", branch = branch, id = short),
         ),
     ];
+    if let Some(head) = head.filter(|h| *h != hex) {
+        items.push(MenuItem::separator("-range"));
+        items.push(MenuItem::item(
+            format!("rangediff:{hex}...{head}"),
+            tr!("Compare with Current HEAD (Range Diff)"),
+        ));
+    }
     if entry.reachable {
         items.push(MenuItem::separator("-show"));
         items.push(MenuItem::item(
@@ -147,7 +155,10 @@ pub fn view(
                         .opacity(0.6),
                 )),
         ));
-        let row = row.menu(Menu::new(menu_items(e, branch), (callbacks.menu)()));
+        let row = row.menu(Menu::new(
+            menu_items(e, branch, entries.first().map(|f| f.new.as_str())),
+            (callbacks.menu)(),
+        ));
         (
             format!("{}{}", e.selector, e.new),
             ListViewItem::new().content(row),

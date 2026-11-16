@@ -33,6 +33,7 @@ pub const IMPLEMENTED: &[&str] = &[
     "repository-settings",
     "stash",
     "pop-stash",
+    "compare-with-previous",
 ];
 
 /// 項目の名前（GTK4 版の `appmenu::title` と同じ）。

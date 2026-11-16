@@ -74,7 +74,12 @@ pub fn parse_ref_key(key: &str) -> Option<(u8, &str)> {
 }
 
 /// サイドバーの木。`refs` がまだなければ Workspace だけ。
-pub fn nodes(refs: Option<&Refs>, groups: Option<&BranchGroups>) -> Vec<TreeNode> {
+/// `range_diff` なら、Workspace に Range Diff の行を出す（開いている間だけ）。
+pub fn nodes(
+    refs: Option<&Refs>,
+    groups: Option<&BranchGroups>,
+    range_diff: bool,
+) -> Vec<TreeNode> {
     let mut workspace = vec![
         TreeNode::new("page:working-copy", "Working Copy"),
         TreeNode::new("page:history", "History"),
@@ -88,6 +93,9 @@ pub fn nodes(refs: Option<&Refs>, groups: Option<&BranchGroups>) -> Vec<TreeNode
     let stashes = of(RefKind::Stash).count();
     if stashes > 0 {
         workspace.push(TreeNode::new("page:stashes", format!("Stashes  {stashes}")));
+    }
+    if range_diff {
+        workspace.push(TreeNode::new("page:range-diff", "Range Diff"));
     }
     // いつも Workspace の最後に出す（GTK4 版と同じ）。
     workspace.push(TreeNode::new("page:reflog", "Reflog"));

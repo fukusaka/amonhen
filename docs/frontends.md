@@ -41,7 +41,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Workspace rows switch the main view (Working Copy, History, Stashes, Reflog…) | ✓ | ✓ | △ | ✓ | n/a | VSCode: Working Copy, History, Stashes and (with the engine) Reflog; Conflicts while there are conflicts, opening the first in the merge editor.<br>Windows: Working Copy, History, Stashes and Reflog. |
 | Conflicts row with a count while there are conflicts | ✓ | ✓ | — | ✓ | n/a | VSCode: A Conflicts group inside the Working Copy view. |
 | Stashes row with a count only when there are stashes | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: The Stashes section. |
-| Range Diff row while a range diff is open | ✓ | ✓ | — | ✓ | n/a |  |
+| Range Diff row while a range diff is open | ✓ | ✓ | ✓ | ✓ | n/a |  |
 | Filter field over Branches, Remotes and Tags | ✓ | ✓ | — | ✓ | n/a | VSCode: The filter button on the sidebar's title asks for the words; the matches are listed flat. |
 | Several branches or tags selected at once | ✓ | ✓ | — | ✓ | n/a | VSCode: Merge into Current Branch, Delete Branch, favorites and Archive act on all of them. |
 | Pull Requests and Worktrees shown only when not empty | ✓ | ✓ | — | △ | n/a | VSCode: Worktrees only (GitHub is left out). |
@@ -211,10 +211,10 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
-| Range Diff view (= ! < >, Changes Only, diff of diffs) | ✓ | ✓ | — | ✓ | ✓ | CLI: `range-diff`. |
-| Compare with Previous Version | ✓ | ✓ | — | ✓ | ✓ | CLI: `range-diff --previous`. |
-| Two History commits or a Reflog entry compared as two versions | ✓ | ✓ | — | ✓ | ✓ | CLI: Any ranges. |
-| Editable ranges | ✓ | ✓ | — | ✓ | ✓ |  |
+| Range Diff view (= ! < >, Changes Only, diff of diffs) | ✓ | ✓ | △ | ✓ | ✓ | CLI: `range-diff`.<br>Windows: No Changes Only. |
+| Compare with Previous Version | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `range-diff --previous`. |
+| Two History commits or a Reflog entry compared as two versions | ✓ | ✓ | △ | ✓ | ✓ | CLI: Any ranges.<br>Windows: From a Reflog entry only. |
+| Editable ranges | ✓ | ✓ | ✓ | ✓ | ✓ |  |
 
 ## 6. Working Copy
 

@@ -105,6 +105,9 @@ struct Root {
     working_file: Option<String>,
     /// 走っている操作（ステータスバーに出す）。
     busy: Option<String>,
+    /// Range Diff の画面（開いている間だけ。サイドバーに行を出す）と、比べた回数（古い答えを捨てる）。
+    range_diff: Option<crate::rangediff::State>,
+    range_request: u64,
     /// Reflog の画面の行（読むまでは None）と、選んでいる行。
     reflog: Option<Vec<crate::reflog::Entry>>,
     reflog_selected: Option<usize>,
@@ -145,6 +148,7 @@ enum Page {
     Activity,
     RepoSettings,
     Reflog,
+    RangeDiff,
 }
 
 /// 窓に重ねるダイアログ（macOS 版のシート、GTK4 版の `sheets`）。
@@ -298,6 +302,13 @@ enum Message {
     OpenHistoryMenu,
     /// サイドバーの項目を右クリックした（項目のキー）。
     SidebarMenu(String),
+    /// Range Diff: 前の版を探した（範囲と説明、なければ説明だけ）・比べた・選んだ・範囲を書き換えた・比べ直す・閉じる。
+    RangePrevious(u64, Result<(Vec<String>, String), String>),
+    RangeDiffLoaded(u64, Result<Vec<crate::rangediff::Pair>, String>),
+    RangeDiffSelected(Option<usize>),
+    RangeDiffRanges(String),
+    RangeDiffCompare,
+    CloseRangeDiff,
     /// Reflog を読んだ・一覧で選んだ。
     ReflogLoaded(Vec<crate::reflog::Entry>),
     ReflogSelected(Option<usize>),
@@ -422,6 +433,8 @@ impl Component for Root {
             sidebar_key: None,
             stash: None,
             reflog: None,
+            range_diff: None,
+            range_request: 0,
             reflog_selected: None,
             file_history: None,
             blame: None,
@@ -722,6 +735,54 @@ impl Component for Root {
                             .to_owned()
                     };
                     Message::SettingsGit(value("user.name"), value("user.email"))
+                });
+            }
+            Message::Command(id) if id == "compare-with-previous" => {
+                let Some(repo) = self.repo.clone() else {
+                    return beep();
+                };
+                let branch = self.refs.as_ref().and_then(|r| r.refs.head_branch.clone());
+                self.range_request += 1;
+                let request = self.range_request;
+                let mut state = crate::rangediff::State::new();
+                state.summary = tr!("Looking for the previous version…");
+                self.range_diff = Some(state);
+                self.show_page(Page::RangeDiff);
+                context.spawn_background(move |_| {
+                    let command = json!({ "op": "previousVersion", "branch": &branch });
+                    let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
+                        .unwrap_or_default();
+                    let previous = &reply["info"]["previous"];
+                    let found = if let Some(e) = reply["error"].as_str() {
+                        Err(e.to_owned())
+                    } else if previous.is_object() {
+                        let ranges = previous["ranges"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|r| r.as_str().map(str::to_owned))
+                            .collect();
+                        let time = previous["time"].as_i64().unwrap_or_default();
+                        Ok((
+                            ranges,
+                            tr!(
+                                "{selector} → {branch} · {message} · {time}",
+                                selector = previous["selector"].as_str().unwrap_or_default(),
+                                branch = previous["branch"].as_str().unwrap_or_default(),
+                                message = previous["message"].as_str().unwrap_or_default(),
+                                time = crate::render::local_date(time),
+                            ),
+                        ))
+                    } else {
+                        Ok((
+                            Vec::new(),
+                            tr!(
+                                "{branch} hasn’t been rewritten (nothing in its reflog)",
+                                branch = branch.as_deref().unwrap_or("HEAD")
+                            ),
+                        ))
+                    };
+                    Message::RangePrevious(request, found)
                 });
             }
             Message::Command(id) => with_history(|h| h.command(&id)),
@@ -1348,6 +1409,8 @@ impl Component for Root {
                     // History に戻ってそのコミットを選ぶ（Reflog から）。
                     self.show_page(Page::History);
                     with_history(|h| h.select_commit(&id));
+                } else if let Some(range) = key.strip_prefix("rangediff:") {
+                    self.open_ranges(vec![range.to_owned()], String::new(), context);
                 } else if let Some(rev) = key.strip_prefix("merge:") {
                     self.integrate(rev.to_owned(), false);
                 } else if let Some(rev) = key.strip_prefix("rebase:") {
@@ -1365,6 +1428,74 @@ impl Component for Root {
             }
             Message::Invoked(key) if key == "page:history" => self.show_page(Page::History),
             Message::Invoked(key) if key == "page:stashes" => self.show_page(Page::Stashes),
+            Message::Invoked(key) if key == "page:range-diff" => self.show_page(Page::RangeDiff),
+            Message::RangePrevious(request, found) => {
+                if request != self.range_request {
+                    return;
+                }
+                match found {
+                    Ok((ranges, summary)) if !ranges.is_empty() => {
+                        self.open_ranges(ranges, summary, context)
+                    }
+                    Ok((_, summary)) | Err(summary) => {
+                        if let Some(state) = self.range_diff.as_mut() {
+                            state.error = Some(summary);
+                        }
+                    }
+                }
+            }
+            Message::RangeDiffLoaded(request, pairs) => {
+                if request != self.range_request {
+                    return;
+                }
+                if let Some(state) = self.range_diff.as_mut() {
+                    match pairs {
+                        Ok(pairs) => {
+                            // 最初の変わった組を選ぶ（なければ先頭）。
+                            let first = pairs
+                                .iter()
+                                .position(|p| p.status == "changed")
+                                .or((!pairs.is_empty()).then_some(0));
+                            state.pairs = Some(pairs);
+                            state.error = None;
+                            self.update(Message::RangeDiffSelected(first), context);
+                        }
+                        Err(e) => state.error = Some(e),
+                    }
+                }
+            }
+            Message::RangeDiffSelected(index) => {
+                let Some(state) = self.range_diff.as_mut() else {
+                    return;
+                };
+                state.selected = index;
+                // 変わった組は差分の差分を重ねて出す。ほかはそのコミットの中身を右の列に。
+                let oid = state
+                    .selected_pair()
+                    .filter(|p| p.status != "changed")
+                    .and_then(|p| p.new.as_ref().or(p.old.as_ref()))
+                    .and_then(|s| amonhen_model::Oid::from_hex(&s.oid));
+                if let Some(id) = oid {
+                    with_history(|h| h.session.data.want_commit_id(id));
+                }
+            }
+            Message::RangeDiffRanges(text) => {
+                if let Some(state) = self.range_diff.as_mut() {
+                    state.ranges = text;
+                }
+            }
+            Message::RangeDiffCompare => {
+                let ranges: Vec<String> = self.range_diff.as_ref().map_or_else(Vec::new, |s| {
+                    s.ranges.split_whitespace().map(str::to_owned).collect()
+                });
+                if !ranges.is_empty() {
+                    self.open_ranges(ranges, String::new(), context);
+                }
+            }
+            Message::CloseRangeDiff => {
+                self.range_diff = None;
+                self.show_page(Page::History);
+            }
             Message::Invoked(key) if key == "page:reflog" => {
                 self.show_page(Page::Reflog);
                 self.load_reflog(context);
@@ -1765,7 +1896,11 @@ impl Component for Root {
                 // Stashes・File History の画面からは History に戻ってそのコミットへ。
                 if matches!(
                     self.page,
-                    Page::Stashes | Page::FileHistory | Page::Blame | Page::Reflog
+                    Page::Stashes
+                        | Page::FileHistory
+                        | Page::Blame
+                        | Page::Reflog
+                        | Page::RangeDiff
                 ) {
                     self.show_page(Page::History);
                 }
@@ -1898,6 +2033,7 @@ impl Component for Root {
                     .nodes(sidebar::nodes(
                         self.refs.as_ref().map(|r| &r.refs),
                         self.groups.as_ref(),
+                        self.range_diff.is_some(),
                     )),
                 Grid::new()
                     .element_ref(&self.sidebar_menu_host)
@@ -2006,6 +2142,7 @@ impl Component for Root {
                 self.working_copy_view(context),
                 self.stashes_view(context),
                 self.reflog_view(context),
+                self.range_diff_view(context),
                 self.file_history_view(context),
                 self.blame_view(context),
                 self.merge_view(context),
@@ -3128,7 +3265,7 @@ impl Root {
                 }
             } else if matches!(
                 from,
-                Page::Stashes | Page::FileHistory | Page::Blame | Page::Reflog
+                Page::Stashes | Page::FileHistory | Page::Blame | Page::Reflog | Page::RangeDiff
             ) {
                 // History で選んでいるコミットを読み直す。
                 h.reload_selected();
@@ -3376,6 +3513,72 @@ impl Root {
             untracked,
         });
         self.dialog_inputs += 1;
+    }
+
+    /// `ranges`（git range-diff と同じ形）で比べる。`summary` は範囲の下に出す説明。
+    fn open_ranges(
+        &mut self,
+        ranges: Vec<String>,
+        summary: String,
+        context: &ComponentContext<Self>,
+    ) {
+        let Some(repo) = self.repo.clone() else {
+            return beep();
+        };
+        self.range_request += 1;
+        let request = self.range_request;
+        let state = self
+            .range_diff
+            .get_or_insert_with(crate::rangediff::State::new);
+        state.ranges = ranges
+            .iter()
+            .map(|r| crate::rangediff::shorten(r))
+            .collect::<Vec<_>>()
+            .join(" ");
+        state.summary = summary;
+        state.pairs = None;
+        state.error = None;
+        state.selected = None;
+        if self.page != Page::RangeDiff {
+            self.show_page(Page::RangeDiff);
+        }
+        context.spawn_background(move |_| {
+            let command = json!({ "op": "rangeDiff", "ranges": ranges });
+            let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
+                .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+            let pairs = match reply["error"].as_str() {
+                Some(e) => Err(e.to_owned()),
+                None => Ok(crate::rangediff::pairs_of(&reply["info"])),
+            };
+            Message::RangeDiffLoaded(request, pairs)
+        });
+    }
+
+    fn range_diff_view(&self, context: &ViewContext<Self>) -> View {
+        let (Page::RangeDiff, Some(state)) = (self.page, &self.range_diff) else {
+            return View::empty();
+        };
+        let list = Border::new()
+            .background(Brush::Solid(Color::rgb(0xff, 0xff, 0xff)))
+            .grid_column(1)
+            .content(crate::rangediff::view(
+                state,
+                crate::rangediff::Callbacks {
+                    ranges: context.callback(Message::RangeDiffRanges),
+                    compare: context.callback(|()| Message::RangeDiffCompare),
+                    selected: context.callback(Message::RangeDiffSelected),
+                    close: context.callback(|()| Message::CloseRangeDiff),
+                },
+            ));
+        // 変わった組は、右の列に差分の差分を重ねる。
+        let diff: View = match state.selected_pair().filter(|p| p.status == "changed") {
+            Some(pair) => Border::new()
+                .background(Brush::Solid(Color::rgb(0xff, 0xff, 0xff)))
+                .grid_column(2)
+                .content(crate::rangediff::diff_view(pair)),
+            None => View::empty(),
+        };
+        View::fragment((list, diff))
     }
 
     /// HEAD の reflog を裏で読む（GTK4 版と同じく 500 行まで）。
