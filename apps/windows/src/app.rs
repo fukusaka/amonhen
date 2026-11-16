@@ -90,6 +90,8 @@ struct Root {
     search_opened: u64,
     /// Working Copy の一覧で選んでいるファイル（パス）。
     working_file: Option<String>,
+    /// 走っている操作（ステータスバーに出す）。
+    busy: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -109,6 +111,12 @@ enum Dialog {
     },
     /// 操作の失敗。
     Failed { title: String, message: String },
+    /// Fetch の確認（リモートが 2 つ以上なら、どこから取るかを選ぶ。0 はすべて）。
+    Fetch {
+        repo: Arc<Repository>,
+        remotes: Vec<String>,
+        from: usize,
+    },
     /// Working Copy のファイルの変更を捨てる（untracked なら消す）確認。
     Discard {
         repo: Arc<Repository>,
@@ -158,6 +166,10 @@ enum Message {
     DiscardFile(String),
     /// Working Copy の一覧で選んだファイル（何番目か）。
     WorkingFile(Option<usize>),
+    /// Fetch のダイアログに出すリモート（なければ空）。
+    Remotes(Arc<Repository>, Vec<String>),
+    /// Fetch のダイアログで、取るリモートを選んだ（0 はすべて）。
+    FetchFrom(Option<usize>),
     /// ダイアログを閉じた（押したボタン）。
     DialogClosed(ContentDialogResult),
     /// 書き込む操作が終わった（失敗ならそのダイアログの見出しと文）。
@@ -196,6 +208,7 @@ impl Component for Root {
             search_box: ElementRef::new(),
             search_opened: 0,
             working_file: None,
+            busy: None,
         }
     }
 
@@ -219,6 +232,38 @@ impl Component for Root {
             Message::Commit(info, extras) => self.info = Some((info, extras)),
             Message::Failed(e) => self.error = Some(e),
             Message::Command(id) if id == "undo" => self.undo(context),
+            Message::Command(id) if id == "fetch" => {
+                let Some(repo) = self.repo.clone() else {
+                    return beep();
+                };
+                context.spawn_background(move |_| {
+                    let reply: Value = serde_json::from_str(&repo.run_json(r#"{"op":"remotes"}"#))
+                        .unwrap_or_default();
+                    let remotes = reply["info"]["remotes"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|r| r["name"].as_str().map(str::to_owned))
+                        .collect();
+                    Message::Remotes(repo, remotes)
+                });
+            }
+            Message::Remotes(repo, remotes) => {
+                if remotes.is_empty() {
+                    beep();
+                } else {
+                    self.dialog = Some(Dialog::Fetch {
+                        repo,
+                        remotes,
+                        from: 0,
+                    });
+                }
+            }
+            Message::FetchFrom(index) => {
+                if let (Some(Dialog::Fetch { from, .. }), Some(index)) = (&mut self.dialog, index) {
+                    *from = index;
+                }
+            }
             Message::Command(id) if id == "show-working-copy" => self.show_page(Page::WorkingCopy),
             Message::Command(id) if id == "show-history" => self.show_page(Page::History),
             Message::Command(id) if id == "find-in-history" => {
@@ -250,6 +295,23 @@ impl Component for Root {
             Message::DialogClosed(result) => match (self.dialog.take(), result) {
                 (Some(Dialog::Undo { repo, .. }), ContentDialogResult::Primary) => {
                     perform(context, repo, json!({ "op": "undo" }), tr!("Couldn’t Undo"));
+                }
+                (
+                    Some(Dialog::Fetch {
+                        repo,
+                        remotes,
+                        from,
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    let remote = from.checked_sub(1).and_then(|i| remotes.get(i).cloned());
+                    self.busy = Some("Fetch…".to_owned());
+                    perform(
+                        context,
+                        repo,
+                        json!({ "op": "fetch", "remote": remote }),
+                        "Fetch".to_owned(),
+                    );
                 }
                 (
                     Some(Dialog::Discard {
@@ -383,6 +445,7 @@ impl Component for Root {
                 }
             }
             Message::Performed(failed) => {
+                self.busy = None;
                 if let Some((title, message)) = failed {
                     self.dialog = Some(Dialog::Failed { title, message });
                 }
@@ -601,8 +664,13 @@ impl Component for Root {
         let dialog = self.dialog_view(context);
         Grid::new()
             .element_ref(&self.root)
-            .rows([GridLength::Auto, GridLength::Auto, GridLength::Star(1.0)])
-            .children((menu_bar, toolbar, body, dialog))
+            .rows([
+                GridLength::Auto,
+                GridLength::Auto,
+                GridLength::Star(1.0),
+                GridLength::Auto,
+            ])
+            .children((menu_bar, toolbar, body, self.status_bar(), dialog))
     }
 }
 
@@ -644,6 +712,35 @@ impl Root {
                         .text(what.clone())
                         .text_wrapping(TextWrapping::Wrap),
                 ),
+            Some(Dialog::Fetch { remotes, from, .. }) => {
+                // GTK4 版の `sheets::fetch` と同じ: リモートが 1 つならその名前を見出しに、2 つ以上なら選ぶ。
+                let title = match remotes.as_slice() {
+                    [only] => tr!("Fetch from {remote}?", remote = only),
+                    _ => tr!("Fetch?"),
+                };
+                let content: View = if remotes.len() > 1 {
+                    let mut choices = vec![tr!(
+                        "All Remotes ({names})",
+                        names = amonhen_model::i18n::list(remotes)
+                    )];
+                    choices.extend(remotes.iter().cloned());
+                    StackPanel::new().spacing(6.0).children((
+                        TextBlock::new().text(tr!("From:")),
+                        ComboBox::new()
+                            .items_source(choices)
+                            .selected_index(*from)
+                            .on_selection_changed(context.callback(Message::FetchFrom)),
+                    ))
+                } else {
+                    TextBlock::new().into()
+                };
+                dialog
+                    .is_open(true)
+                    .title(title)
+                    .primary_button_text("Fetch")
+                    .close_button_text(tr!("Cancel"))
+                    .content(content)
+            }
             Some(Dialog::Discard {
                 path, untracked, ..
             }) => {
@@ -687,6 +784,24 @@ impl Root {
                         .is_text_selection_enabled(true),
                 ),
         }
+    }
+
+    /// 窓の下のステータスバー: 走っている操作（なければ今のブランチ）。
+    fn status_bar(&self) -> View {
+        let text = match &self.busy {
+            Some(busy) => busy.clone(),
+            None => self
+                .refs
+                .as_ref()
+                .and_then(|r| r.refs.head_branch.clone())
+                .unwrap_or_default(),
+        };
+        TextBlock::new()
+            .text(text)
+            .font_size(12.0)
+            .margin(Thickness::new(12.0, 3.0, 12.0, 4.0))
+            .grid_row(3)
+            .into()
     }
 
     fn show_page(&mut self, page: Page) {
