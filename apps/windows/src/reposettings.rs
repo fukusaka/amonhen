@@ -901,6 +901,67 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
             )),
         own_editor,
     ));
+    // Remotes: 名前と URL（git の設定の `remote.<名前>.url`）、編集・Prune・削除（サイドバーのリモートの右クリックと
+    // 同じ操作。GTK4 版の Remotes の表。つながるかの確かめはまだない）。
+    let mut remotes: Vec<(String, String)> = Vec::new();
+    for e in entries {
+        let key = e.key.to_lowercase();
+        if key.starts_with("remote.") && key.ends_with(".url") {
+            // 名前は大文字小文字を残す（キーの元の綴りから）。
+            let name = &e.key["remote.".len()..e.key.len() - ".url".len()];
+            match remotes.iter_mut().find(|(n, _)| n == name) {
+                Some(r) => r.1 = e.value.clone(),
+                None => remotes.push((name.to_owned(), e.value.clone())),
+            }
+        }
+    }
+    let remote_rows = remotes.iter().map(|(name, url)| {
+        let button = |key: String, label: String| {
+            Button::new()
+                .on_click((callbacks.button)(key))
+                .content(TextBlock::new().text(label).font_size(12.0))
+        };
+        (
+            name.clone(),
+            Grid::new()
+                .columns([
+                    GridLength::Pixel(120.0),
+                    GridLength::Star(1.0),
+                    GridLength::Auto,
+                ])
+                .min_height(32.0)
+                .children((
+                    TextBlock::new()
+                        .text(name.clone())
+                        .vertical_alignment(VerticalAlignment::Center)
+                        .grid_column(0),
+                    TextBlock::new()
+                        .text(url.clone())
+                        .font_size(12.0)
+                        .opacity(0.75)
+                        .is_text_selection_enabled(true)
+                        .text_trimming(TextTrimming::CharacterEllipsis)
+                        .vertical_alignment(VerticalAlignment::Center)
+                        .grid_column(1),
+                    StackPanel::new()
+                        .orientation(Orientation::Horizontal)
+                        .spacing(6.0)
+                        .grid_column(2)
+                        .children((
+                            button(format!("remote-edit:{name}"), tr!("Edit…")),
+                            button(format!("remote-prune:{name}"), "Prune…".to_owned()),
+                            button(format!("remote-remove:{name}"), tr!("Remove…")),
+                        )),
+                )),
+        )
+    });
+    let remotes_view = StackPanel::new().spacing(2.0).children((
+        View::keyed_fragment(remote_rows),
+        Button::new()
+            .margin(Thickness::new(0.0, 6.0, 0.0, 0.0))
+            .on_click((callbacks.button)("remote-add".to_owned()))
+            .content(TextBlock::new().text(tr!("Add Remote…"))),
+    ));
     // Branches: 既定のブランチ（GTK4 版の `branches_page`）。
     let chosen = state.at("local", DEFAULT_BRANCH);
     let values = default_branch_values(state);
@@ -1071,6 +1132,11 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                         .max_width(560.0)
                         .horizontal_alignment(HorizontalAlignment::Left)
                         .children((commits,)),
+                    heading("Remotes".to_owned()),
+                    StackPanel::new()
+                        .max_width(720.0)
+                        .horizontal_alignment(HorizontalAlignment::Left)
+                        .children((remotes_view,)),
                     heading("Branches".to_owned()),
                     StackPanel::new()
                         .max_width(560.0)

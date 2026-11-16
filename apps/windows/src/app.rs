@@ -2444,6 +2444,10 @@ impl Component for Root {
             }
             Message::Performed(failed) => {
                 self.busy = None;
+                // Repository Settings を出していれば読み直す（リモートの編集などは設定を書く）。
+                if self.repo_settings.is_some() {
+                    self.write_repo_settings(Vec::new(), context);
+                }
                 // worktree も読み直す（`git worktree add` は作っている間ロックするので、ref が変わったときに読んだ
                 // ものはロック中のことがある）。
                 // ブランチの分け方も（お気に入り・アーカイブは git の設定だけが変わり、ref は変わらない）。
@@ -3013,6 +3017,11 @@ impl Component for Root {
                             .to_owned();
                         Message::HookScript(name, text)
                     });
+                    return;
+                }
+                // リモートの操作は、サイドバーのリモートの右クリックと同じ（`Message::HistoryMenu`）。
+                if key.starts_with("remote-") {
+                    self.update(Message::HistoryMenu(key), context);
                     return;
                 }
                 if key == "template-revert" {
