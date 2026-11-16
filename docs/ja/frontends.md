@@ -223,7 +223,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 1 つのチェックボックスの一覧（☑ ▣ ☐、見出し・フォルダーのチェック） | ✓ | ✓ | △ | ✓ | n/a | VSCode: Staged と Changes が別のグループ。<br>Windows: ファイルごとのチェック。見出し・フォルダのチェックはない。 |
 | List / Tree / File Name | ✓ | ✓ | — | ✓ | n/a |  |
 | パスで絞り込む | ✓ | ✓ | ✓ | ✓ | n/a |  |
-| 行ごとの +/− の数と、ホバーで Discard | ✓ | ✓ | — | ✓ | △ | VSCode: 行数はエンジンがあるときだけ。<br>CLI: `diff --stat`。 |
+| 行ごとの +/− の数と、ホバーで Discard | ✓ | ✓ | △ | ✓ | △ | VSCode: 行数はエンジンがあるときだけ。<br>CLI: `diff --stat`。<br>Windows: Windows: 行数だけ。Discard は右クリックと Delete。 |
 | Space で切り替え、⌫ で捨てる | ✓ | ✓ | ✓ | ✓ | n/a |  |
 | 上のコミットの欄、50/72 の数と本文の目安の線 | ✓ | ✓ | △ | ✓ | n/a | VSCode: 列が 72 文字より狭いので、目安の線の代わりに、72 を超える本文の行の長さを出す。<br>Windows: 件名と本文。数と目安の線はない。 |
 | リポジトリごとの下書き、テンプレートから始める | ✓ | ✓ | △ | ✓ | n/a | VSCode: `commit.template` だけで、共有のテンプレートは使わない。<br>Windows: Windows: `commit.template` だけで、共有のテンプレートはまだない。 |

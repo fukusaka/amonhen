@@ -119,6 +119,8 @@ struct Root {
     worktrees: Vec<WorktreeInfo>,
     /// Working Copy のパスの絞り込み。
     working_filter: String,
+    /// Working Copy のファイルごとの行数（`workingStats`。status が替わるたびに読み直す）。
+    working_stats: std::collections::HashMap<String, (Option<u64>, Option<u64>)>,
     /// 最近のコミットの（メッセージ, 作者, メール）。最近のメッセージと Co-authored-by の候補。
     recent_messages: Vec<(String, String, String)>,
     /// Stashes の画面で選んでいる stash の名前。
@@ -401,6 +403,11 @@ enum Message {
     Confirm(Arc<Repository>, String, String, String, Value),
     /// Working Copy のパスの絞り込み。
     WorkingFilter(String),
+    /// Working Copy のファイルごとの行数を読んだ（読んだ status の generation と、パスごとの行数）。
+    WorkingStats(
+        u64,
+        std::collections::HashMap<String, (Option<u64>, Option<u64>)>,
+    ),
     /// Working Copy の一覧のキー（true は Delete・Backspace で捨てる、false は Space で含める・外す）。
     WorkingKey(bool),
     /// 下書きのない worktree を開いたときに読んだテンプレート（下書きの鍵と中身）。
@@ -552,6 +559,7 @@ impl Component for Root {
             stash: None,
             worktrees: Vec::new(),
             working_filter: String::new(),
+            working_stats: Default::default(),
             draft_key: None,
             push_after_commit: false,
             recent_messages: Vec::new(),
@@ -1623,6 +1631,27 @@ impl Component for Root {
                 }
             }
             Message::Status(status) => {
+                // 行数は裏で読む（数がなくても一覧は先に出す。GTK4 版の `load_stats`）。
+                if let Some(repo) = self.repo.clone() {
+                    let generation = status.generation;
+                    context.spawn_background(move |_| {
+                        let reply: Value =
+                            serde_json::from_str(&repo.run_json(r#"{"op":"workingStats"}"#))
+                                .unwrap_or_default();
+                        let stats = reply["info"]["stats"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|s| {
+                                Some((
+                                    s["path"].as_str()?.to_owned(),
+                                    (s["added"].as_u64(), s["removed"].as_u64()),
+                                ))
+                            })
+                            .collect();
+                        Message::WorkingStats(generation, stats)
+                    });
+                }
                 self.status = Some(status);
                 // 途中の操作も読み直す（merge・rebase などは status と一緒に変わる）。
                 if let Some(repo) = self.repo.clone() {
@@ -2639,6 +2668,12 @@ impl Component for Root {
                 }
             }
             Message::WorkingFilter(text) => self.working_filter = text,
+            Message::WorkingStats(generation, stats) => {
+                // 読む間に status が替わっていれば捨てる（替わった分が別に届く）。
+                if self.status.as_ref().map(|s| s.generation) == Some(generation) {
+                    self.working_stats = stats;
+                }
+            }
             Message::WorkingKey(discard) => {
                 // 選んでいるファイル（GTK4 版・macOS 版の一覧のキーと同じ）。
                 let entry = self.working_file.as_ref().and_then(|path| {
@@ -5190,6 +5225,7 @@ impl Root {
             crate::workcopy::Input {
                 status: self.status.as_deref(),
                 filter: &self.working_filter,
+                stats: &self.working_stats,
                 list_host: &self.working_list,
                 recent: &self.recent_messages,
                 summary: &self.summary,

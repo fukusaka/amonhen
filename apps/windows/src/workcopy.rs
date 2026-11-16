@@ -213,6 +213,8 @@ pub struct Input<'a> {
     pub status: Option<&'a StatusSnapshot>,
     /// パスの絞り込み。
     pub filter: &'a str,
+    /// ファイルごとの行数（追加, 削除。バイナリは None）。読めていなければ空。
+    pub stats: &'a std::collections::HashMap<String, (Option<u64>, Option<u64>)>,
     /// 一覧を包む Grid（Space・Delete のキーを付ける）。
     pub list_host: &'a ElementRef<Grid>,
     /// 最近のコミットの（メッセージ, 作者, メール）。新しい順。
@@ -387,8 +389,46 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
             Some(from) => format!("{}  {from} → {}", mark(entry), entry.path),
             None => format!("{}  {}", mark(entry), entry.path),
         };
+        // 行数（+ 追加 − 削除。0 の側は出さない。行数のないバイナリは薄く「bin」。GTK4 版の `fill_counts`）。
+        let counts = input
+            .stats
+            .get(&entry.path)
+            .map_or_else(View::empty, |&(added, removed)| {
+                let count = |n: Option<u64>, mark: &str, color: Color, column: i32| -> View {
+                    match n.filter(|&n| n > 0) {
+                        Some(n) => TextBlock::new()
+                            .text(format!("{mark}{n}"))
+                            .font_size(11.0)
+                            .foreground(Brush::Solid(color))
+                            .vertical_alignment(VerticalAlignment::Center)
+                            .margin(Thickness::new(6.0, 0.0, 0.0, 0.0))
+                            .grid_column(column)
+                            .into(),
+                        None => View::empty(),
+                    }
+                };
+                if added.is_none() && removed.is_none() {
+                    return TextBlock::new()
+                        .text("bin")
+                        .font_size(11.0)
+                        .opacity(0.5)
+                        .vertical_alignment(VerticalAlignment::Center)
+                        .margin(Thickness::new(6.0, 0.0, 0.0, 0.0))
+                        .grid_column(2)
+                        .into();
+                }
+                View::fragment((
+                    count(added, "+", Color::rgb(0x1a, 0x7f, 0x37), 2),
+                    count(removed, "−", Color::rgb(0xcf, 0x22, 0x2e), 3),
+                ))
+            });
         let row = Grid::new()
-            .columns([GridLength::Auto, GridLength::Star(1.0)])
+            .columns([
+                GridLength::Auto,
+                GridLength::Star(1.0),
+                GridLength::Auto,
+                GridLength::Auto,
+            ])
             .children((
                 CheckBox::new()
                     .is_checked(included(entry))
@@ -399,6 +439,7 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
                     .vertical_alignment(VerticalAlignment::Center)
                     .text_trimming(TextTrimming::CharacterEllipsis)
                     .grid_column(1),
+                counts,
             ));
         // 右クリック: Blame・File History（git がまだ知らない untracked のファイルにはない）と、変更を捨てる（untracked
         // なら消す。確かめてから。コンフリクトのファイルには出さない）。GTK4 版の `connect_file_menu` と同じ。
