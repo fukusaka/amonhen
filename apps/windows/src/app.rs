@@ -80,6 +80,7 @@ struct Root {
     summary: String,
     description: String,
     committing: bool,
+    amend: bool,
     /// Working Copy の一覧で選んでいるファイル（パス）。
     working_file: Option<String>,
 }
@@ -101,6 +102,12 @@ enum Dialog {
     },
     /// 操作の失敗。
     Failed { title: String, message: String },
+    /// Working Copy のファイルの変更を捨てる（untracked なら消す）確認。
+    Discard {
+        repo: Arc<Repository>,
+        path: String,
+        untracked: bool,
+    },
 }
 
 enum Message {
@@ -129,6 +136,12 @@ enum Message {
     CommitChanges,
     /// コミットが終わった（失敗ならその文）。
     Committed(Option<String>),
+    /// Amend を切り替えた。
+    Amend(bool),
+    /// Amend にしたときの、HEAD のメッセージ（件名と本文）。
+    HeadCommitText(String),
+    /// Working Copy のファイルの右クリックのメニューの Discard File（パス）。
+    DiscardFile(String),
     /// Working Copy の一覧で選んだファイル（何番目か）。
     WorkingFile(Option<usize>),
     /// ダイアログを閉じた（押したボタン）。
@@ -162,6 +175,7 @@ impl Component for Root {
             summary: String::new(),
             description: String::new(),
             committing: false,
+            amend: false,
             working_file: None,
         }
     }
@@ -193,13 +207,32 @@ impl Component for Root {
                 Some((label, what)) => self.dialog = Some(Dialog::Undo { repo, label, what }),
                 None => beep(),
             },
-            Message::DialogClosed(result) => {
-                if let (Some(Dialog::Undo { repo, .. }), ContentDialogResult::Primary) =
-                    (self.dialog.take(), result)
-                {
+            Message::DialogClosed(result) => match (self.dialog.take(), result) {
+                (Some(Dialog::Undo { repo, .. }), ContentDialogResult::Primary) => {
                     perform(context, repo, json!({ "op": "undo" }), tr!("Couldn’t Undo"));
                 }
-            }
+                (
+                    Some(Dialog::Discard {
+                        repo,
+                        path,
+                        untracked,
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    let op = if untracked {
+                        "deleteUntracked"
+                    } else {
+                        "discard"
+                    };
+                    perform(
+                        context,
+                        repo,
+                        json!({ "op": op, "paths": [path] }),
+                        "Discard File".to_owned(),
+                    );
+                }
+                _ => {}
+            },
             Message::Selected(selected) => self.selected = selected,
             Message::OpenHistoryMenu => self.menu_request += 1,
             Message::Status(status) => {
@@ -228,9 +261,52 @@ impl Component for Root {
                     return;
                 };
                 let message = crate::workcopy::message(&self.summary, &self.description);
+                let amend = self.amend;
                 self.committing = true;
                 context.spawn_background(move |_| {
-                    Message::Committed(repo.commit(&message, false).err().map(|e| e.to_string()))
+                    Message::Committed(repo.commit(&message, amend).err().map(|e| e.to_string()))
+                });
+            }
+            Message::Amend(amend) => {
+                self.amend = amend;
+                // Amend にして欄が空なら、HEAD のメッセージを入れる（GTK4 版の `fill_head_message`）。
+                if amend
+                    && self.summary.is_empty()
+                    && self.description.is_empty()
+                    && let Some(repo) = self.repo.clone()
+                {
+                    context.spawn_background(move |_| {
+                        let reply: Value = serde_json::from_str(
+                            &repo.run_json(r#"{"op":"commitMessage","oid":"HEAD"}"#),
+                        )
+                        .unwrap_or_default();
+                        Message::HeadCommitText(
+                            reply["text"].as_str().unwrap_or_default().to_owned(),
+                        )
+                    });
+                }
+            }
+            Message::HeadCommitText(text) => {
+                if self.amend && self.summary.is_empty() && self.description.is_empty() {
+                    let text = text.trim();
+                    let (summary, body) = text.split_once('\n').unwrap_or((text, ""));
+                    self.summary = summary.trim().to_owned();
+                    self.description = body.trim().to_owned();
+                }
+            }
+            Message::DiscardFile(path) => {
+                let (Some(repo), Some(status)) = (self.repo.clone(), self.status.as_ref()) else {
+                    return;
+                };
+                let untracked = status
+                    .status
+                    .entries
+                    .iter()
+                    .any(|e| e.path == path && e.kind == amonhen_model::StatusKind::Untracked);
+                self.dialog = Some(Dialog::Discard {
+                    repo,
+                    path,
+                    untracked,
                 });
             }
             Message::WorkingFile(index) => {
@@ -251,6 +327,7 @@ impl Component for Root {
                     None => {
                         self.summary.clear();
                         self.description.clear();
+                        self.amend = false;
                     }
                     Some(message) => {
                         self.dialog = Some(Dialog::Failed {
@@ -483,6 +560,38 @@ impl Root {
                         .text(what.clone())
                         .text_wrapping(TextWrapping::Wrap),
                 ),
+            Some(Dialog::Discard {
+                path, untracked, ..
+            }) => {
+                // GTK4 版の `discard_file` と同じ文: untracked は消す（戻せない）、それ以外は Undo で戻せる。
+                let (title, text, button) = if *untracked {
+                    (
+                        tr!("Delete {path}?", path = path),
+                        format!(
+                            "{} {}",
+                            tr!("It’s untracked."),
+                            tr!("This can’t be undone.")
+                        ),
+                        tr!("Delete"),
+                    )
+                } else {
+                    (
+                        tr!("Discard changes to {path}?", path = path),
+                        tr!("You can Undo this (Ctrl+Alt+Z)."),
+                        "Discard".to_owned(),
+                    )
+                };
+                dialog
+                    .is_open(true)
+                    .title(title)
+                    .primary_button_text(button)
+                    .close_button_text(tr!("Cancel"))
+                    .content(
+                        TextBlock::new()
+                            .text(text)
+                            .text_wrapping(TextWrapping::Wrap),
+                    )
+            }
             Some(Dialog::Failed { title, message }) => dialog
                 .is_open(true)
                 .title(title.clone())
@@ -527,6 +636,10 @@ impl Root {
                 context.callback(move |include| Message::Stage(path.clone(), include))
             }),
             selected: context.callback(Message::WorkingFile),
+            amend: context.callback(Message::Amend),
+            file_menu: Box::new(|path: String| {
+                context.callback(move |_| Message::DiscardFile(path.clone()))
+            }),
         };
         let view = crate::workcopy::view(
             crate::workcopy::Input {
@@ -534,6 +647,7 @@ impl Root {
                 summary: &self.summary,
                 description: &self.description,
                 committing: self.committing,
+                amend: self.amend,
             },
             callbacks,
         );

@@ -25,6 +25,8 @@ pub struct Input<'a> {
     pub description: &'a str,
     /// コミットしている最中（Commit を押せない）。
     pub committing: bool,
+    /// 直前のコミットをやり直す（Amend）。
+    pub amend: bool,
 }
 
 /// 画面が受ける操作。
@@ -35,6 +37,9 @@ pub struct Callbacks<'a> {
     /// パスのファイルを含める（true）・外す（false）。
     pub stage: Box<dyn Fn(String) -> Callback<bool> + 'a>,
     pub selected: Callback<Option<usize>>,
+    pub amend: Callback<bool>,
+    /// パスのファイルの右クリックのメニュー（Discard File）。
+    pub file_menu: Box<dyn Fn(String) -> Callback<String> + 'a>,
 }
 
 /// 一覧の 1 行の印（M・A・D・R・?・U）。作業ツリー側に変更があればそちら、なければ index 側。
@@ -76,9 +81,18 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
             .height(80.0)
             .on_text_changed(callbacks.description),
     ));
-    let can_commit = !input.committing && staged > 0 && !input.summary.trim().is_empty();
+    // Amend なら含めるファイルがなくても押せる（メッセージだけ直す。macOS 版と同じ）。
+    let can_commit =
+        !input.committing && (staged > 0 || input.amend) && !input.summary.trim().is_empty();
+    // 含めるファイルの数も出す（GTK4 版・macOS 版と同じ）。
+    let label = match (input.amend, staged) {
+        (true, _) => "Amend Commit".to_owned(),
+        (false, 0) => "Commit".to_owned(),
+        (false, 1) => "Commit 1 File".to_owned(),
+        (false, n) => format!("Commit {n} Files"),
+    };
     let commit = Grid::new()
-        .columns([GridLength::Star(1.0), GridLength::Auto])
+        .columns([GridLength::Star(1.0), GridLength::Auto, GridLength::Auto])
         .margin(Thickness::new(0.0, 8.0, 0.0, 8.0))
         .grid_row(1)
         .children((
@@ -86,11 +100,16 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
                 .text(format!("{staged} / {}", entries.len()))
                 .vertical_alignment(VerticalAlignment::Center)
                 .grid_column(0),
+            CheckBox::new()
+                .is_checked(input.amend)
+                .on_is_checked_changed(callbacks.amend)
+                .grid_column(1)
+                .content(TextBlock::new().text("Amend")),
             Button::new()
                 .is_enabled(can_commit)
                 .on_click(callbacks.commit)
-                .grid_column(1)
-                .content(TextBlock::new().text("Commit")),
+                .grid_column(2)
+                .content(TextBlock::new().text(label)),
         ));
     let rows = entries.iter().map(|entry| {
         let label = match &entry.orig_path {
@@ -110,6 +129,15 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
                     .text_trimming(TextTrimming::CharacterEllipsis)
                     .grid_column(1),
             ));
+        // 右クリック: 変更を捨てる（untracked なら消す。確かめてから）。コンフリクトのファイルには出さない。
+        let row: View = if entry.kind == StatusKind::Unmerged || !entry.is_unstaged() {
+            row
+        } else {
+            row.menu(Menu::new(
+                [MenuItem::item("discard", "Discard File")],
+                (callbacks.file_menu)(entry.path.clone()),
+            ))
+        };
         (
             entry.path.clone(),
             ListViewItem::new().tag(entry.path.clone()).content(row),
