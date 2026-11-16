@@ -18,6 +18,11 @@ const FILTER: &[&str] = &[
     "Microsoft.UI.Xaml.FrameworkElement",
     "Microsoft.UI.Xaml.Controls.Primitives.FlyoutBase",
     "Microsoft.UI.Xaml.Controls.Primitives.FlyoutShowOptions",
+    // サイドバーの右クリックで、押した所から親をたどって木の項目（DataContext が TreeViewNode）を探す。
+    "Microsoft.UI.Xaml.DependencyObject",
+    "Microsoft.UI.Xaml.Media.VisualTreeHelper",
+    "Microsoft.UI.Xaml.Media.IVisualTreeHelperStatics::{GetParent}",
+    "Microsoft.UI.Xaml.IFrameworkElement::{DataContext}",
     // ハンドラーの型は丸ごと（`new` が要る）。
     "Microsoft.UI.Xaml.Input.KeyEventHandler",
     "Microsoft.UI.Xaml.Input.PointerEventHandler",
