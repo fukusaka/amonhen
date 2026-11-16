@@ -304,6 +304,10 @@ pub enum Command {
         node: NodeId,
         completion: Callback<Result<bool, RuntimeError>>,
     },
+    NativeElement {
+        node: NodeId,
+        completion: Callback<Result<windows_core::IInspectable, RuntimeError>>,
+    },
     InitializeWebView2 {
         node: NodeId,
         completion: Callback<Result<windows_core::IUnknown, RuntimeError>>,

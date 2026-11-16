@@ -47,6 +47,13 @@ impl<R: NativeRuntime> Pump<R> {
                     }
                     commands.push(Command::Focus { node, completion });
                 }
+                ImperativeRequest::NativeElement { node, completion } => {
+                    if self.tree.try_native(node).is_none() {
+                        _ = completion.call(Err(RuntimeError::MissingNode(node)));
+                        continue;
+                    }
+                    commands.push(Command::NativeElement { node, completion });
+                }
                 ImperativeRequest::InitializeWebView2 { node, completion } => {
                     if self.tree.try_native(node).is_none() {
                         _ = completion.call(Err(RuntimeError::MissingNode(node)));

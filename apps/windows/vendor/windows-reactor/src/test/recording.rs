@@ -711,6 +711,12 @@ impl RecordingRuntime {
                     .ok_or(RuntimeError::MissingNode(*node))?;
                 _ = completion.call(Ok(true));
             }
+            Command::NativeElement { node, completion } => {
+                self.nodes
+                    .get(node)
+                    .ok_or(RuntimeError::MissingNode(*node))?;
+                _ = completion.call(Err(RuntimeError::UnsupportedKind));
+            }
             Command::InitializeWebView2 { node, completion } => {
                 let recorded = self
                     .nodes

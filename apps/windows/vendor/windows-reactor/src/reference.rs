@@ -252,6 +252,30 @@ impl<T: ReferenceControl> ElementRef<T> {
     pub(crate) fn binding(&self) -> NativeElementRef {
         NativeElementRef(Rc::clone(&self.target))
     }
+
+    /// Hands the published WinUI element (`Microsoft.UI.Xaml.UIElement`) to `completion`, for what
+    /// the declarative schema does not cover yet (more events, properties). Changes made to it
+    /// directly are not known to Reactor, so they must not conflict with properties it sets.
+    #[must_use = "false means the reference is currently unbound"]
+    pub fn request_native_element(
+        &self,
+        completion: impl Fn(Result<windows_core::IInspectable, IntegrationError>) + 'static,
+    ) -> bool {
+        let Some(binding) = self.target.borrow().binding.clone() else {
+            return false;
+        };
+        binding.endpoint.enqueue(NativeWork {
+            identity: binding.identity,
+            work: ImperativeRequest::NativeElement {
+                node: binding.node,
+                completion: Callback::new(
+                    move |result: Result<windows_core::IInspectable, RuntimeError>| {
+                        completion(result.map_err(IntegrationError::from_runtime));
+                    },
+                ),
+            },
+        })
+    }
 }
 
 impl<T: FocusControl> ElementRef<T> {
@@ -811,6 +835,10 @@ pub(crate) enum ImperativeRequest {
         node: NodeId,
         completion: Callback<Result<bool, RuntimeError>>,
     },
+    NativeElement {
+        node: NodeId,
+        completion: Callback<Result<windows_core::IInspectable, RuntimeError>>,
+    },
     InitializeWebView2 {
         node: NodeId,
         completion: Callback<Result<windows_core::IUnknown, RuntimeError>>,
@@ -855,6 +883,9 @@ impl ImperativeRequest {
     pub(crate) fn complete_unavailable(self) {
         match self {
             Self::Focus { node, completion } => {
+                _ = completion.call(Err(RuntimeError::MissingNode(node)));
+            }
+            Self::NativeElement { node, completion } => {
                 _ = completion.call(Err(RuntimeError::MissingNode(node)));
             }
             Self::InitializeWebView2 { node, completion } => {

@@ -1494,6 +1494,14 @@ impl WinUiRuntime {
                 });
                 _ = completion.call(result);
             }
+            Command::NativeElement { node, completion } => {
+                let result = self.ui_element(*node).and_then(|element| {
+                    element
+                        .cast::<windows_core::IInspectable>()
+                        .map_err(native_error)
+                });
+                _ = completion.call(result);
+            }
             Command::InitializeWebView2 { node, completion } => {
                 let Some(Handle::WebView2(control)) = self.handles.get(node) else {
                     _ = completion.call(Err(if self.contains(*node) {
