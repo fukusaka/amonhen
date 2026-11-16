@@ -2,7 +2,7 @@ import AppKit
 
 /// 確認のシートに埋め込む、コミットグラフの前と後の絵の共通の部品（rebase の `RewriteDrawingView` と、ref を動かす
 /// `MoveDrawingView`）。History と同じく新しいものが上で、線・点・ブランチの札・件名で描く。
-class GraphDrawingView: NSView {
+class GraphDrawingView: NSView, NSViewToolTipOwner {
     /// 描く 1 行。lane 0 は左の線、lane 1 は右の線。`hollow` は中を抜いた点、`note` は件名の後ろに添える文。
     struct GraphRow {
         let commit: RewritePreview.Drawing.Commit
@@ -35,11 +35,160 @@ class GraphDrawingView: NSView {
         let lane: Int
         let y: CGFloat
         let count: Int
+        /// 「ほか n コミット」の代わりに書く文（octopus の「ほか n 本」）。
+        var text: String?
+    }
+
+    /// 札の折り返しで伸びた高さを、列ごとに覚える（`labelExtraHeight` が測るときだけ使う）。
+    private var measuring = false
+    private var extras: [CGFloat] = []
+
+    /// 札を折り返して伸びる高さ（いちばん伸びる列の分）。描くのと同じ道筋を、描かずに通って測る。
+    func labelExtraHeight() -> CGFloat {
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: 1, pixelsHigh: 1, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+            isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
+        else { return 0 }
+        NSGraphicsContext.saveGraphicsState()
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        measuring = true
+        defer { measuring = false }
+        extras = []
+        drawContent()
+        return extras.max() ?? 0
+    }
+
+    /// 絵の高さの上限。これより高い絵は、絵の中でスクロールする（シートが画面からはみ出さないように）。
+    static let maxHeight: CGFloat = 360
+    /// 絵の全体の高さと、スクロールした量。
+    private var fullHeight: CGFloat = 0
+    private var scrollOffset: CGFloat = 0
+    /// 「+n」の札のツールチップ（省いた札の名前）。
+    private var tips: [NSView.ToolTipTag: String] = [:]
+
+    func view(_ view: NSView, stringForToolTip tag: NSView.ToolTipTag, point: NSPoint, userData data: UnsafeMutableRawPointer?) -> String {
+        tips[tag] ?? ""
+    }
+
+    /// 絵の全体の高さ `height` を覚え、見せる高さ（上限まで）を返す。
+    func capped(_ height: CGFloat) -> CGFloat {
+        fullHeight = height
+        return min(height, Self.maxHeight)
+    }
+
+    /// 絵の中身を描く（上が 0。スクロールした分は `draw` がずらす）。
+    func drawContent() {}
+
+    override func draw(_ dirtyRect: NSRect) {
+        removeAllToolTips()
+        tips = [:]
+        let overflow = max(0, fullHeight - bounds.height)
+        scrollOffset = min(max(0, scrollOffset), overflow)
+        NSGraphicsContext.saveGraphicsState()
+        // 上限を超えた分は描かない（macOS 14 からは、枠の外にも描けてしまう）。
+        NSBezierPath(rect: bounds).addClip()
+        let shift = NSAffineTransform()
+        shift.translateX(by: 0, yBy: -scrollOffset)
+        shift.concat()
+        drawContent()
+        NSGraphicsContext.restoreGraphicsState()
+        guard overflow > 0 else { return }
+        // スクロールできることが分かるよう、右端に細いつまみ。
+        let knob = max(24, bounds.height * bounds.height / fullHeight)
+        let y = (bounds.height - knob) * scrollOffset / overflow
+        NSColor.tertiaryLabelColor.setFill()
+        NSBezierPath(roundedRect: NSRect(x: bounds.maxX - 5, y: y, width: 4, height: knob), xRadius: 2, yRadius: 2).fill()
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        let overflow = fullHeight - bounds.height
+        guard overflow > 0 else { return super.scrollWheel(with: event) }
+        let delta = event.hasPreciseScrollingDeltas ? event.scrollingDeltaY : event.scrollingDeltaY * Self.rowHeight
+        scrollOffset = min(max(0, scrollOffset - delta), overflow)
+        needsDisplay = true
+    }
+
+    /// 「+n」の札に、省いた札の名前をツールチップで出す（`rect` は絵の中身の座標）。
+    private func addTip(_ text: String, at rect: NSRect) {
+        guard !measuring else { return }
+        let tag = addToolTip(rect.offsetBy(dx: 0, dy: -scrollOffset), owner: self, userData: nil)
+        tips[tag] = text
+    }
+
+    /// 1 行の並べ方。札と件名を文のように左から並べ、入らなければ次の段へ折り返す（札は省かず、1 つの札だけで
+    /// 段に入らないときだけ真ん中を省く）。件名も残りが狭ければ次の段へ。
+    struct RowLayout {
+        struct Pill {
+            let name: String
+            let kind: String
+            let current: Bool
+            let x: CGFloat
+            let line: Int
+            let maxWidth: CGFloat
+        }
+
+        var pills: [Pill] = []
+        /// 段に入りきらずに「+n」の札にまとめた札の名前。
+        var hidden: [String] = []
+        var subjectX: CGFloat = 0
+        var subjectLine = 0
+        var lines: Int { (pills.map(\.line) + [subjectLine]).max()! + 1 }
+    }
+
+    /// 折り返した段の間隔。
+    static let lineStep: CGFloat = 19
+    /// 件名に少なくとも残す幅（これより狭ければ件名は次の段へ）。
+    static let subjectMinWidth: CGFloat = 120
+    /// 札を並べる段の上限。入らない札は、最後の段の「+n」の札にまとめる。
+    static let maxLabelLines = 3
+
+    func layoutRow(textX: CGFloat, right: CGFloat, labels: [(String, String, Bool)], subjectWidth: CGFloat) -> RowLayout {
+        var layout = RowLayout()
+        var x = textX
+        var line = 0
+        let room = right - textX
+        for (name, kind, current) in labels {
+            let width = min(labelWidth(name, current: current), room)
+            if x > textX, x + width > right {
+                line += 1
+                x = textX
+            }
+            layout.pills.append(.init(name: name, kind: kind, current: current, x: x, line: line, maxWidth: room))
+            x += width + 4
+        }
+        // 段の上限を超えたら、超えた札と、「+n」の札が入るまで最後の段の札を、まとめる。
+        if line >= Self.maxLabelLines {
+            let last = Self.maxLabelLines - 1
+            var hidden = layout.pills.filter { $0.line > last }
+            layout.pills.removeAll { $0.line > last }
+            func end() -> CGFloat {
+                layout.pills.last.map { $0.x + min(labelWidth($0.name, current: $0.current), room) + 4 } ?? textX
+            }
+            while let tail = layout.pills.last, tail.line == last,
+                  end() + labelWidth("+\(hidden.count + 1)", current: false) > right {
+                hidden.insert(tail, at: 0)
+                layout.pills.removeLast()
+            }
+            let more = layout.pills.last?.line == last ? end() : textX
+            layout.pills.append(.init(name: "+\(hidden.count)", kind: "more", current: false, x: more, line: last, maxWidth: room))
+            layout.hidden = hidden.map(\.name)
+            line = last
+            x = more + labelWidth("+\(hidden.count)", current: false) + 4
+        }
+        if x > textX, right - x < min(subjectWidth, Self.subjectMinWidth) {
+            line += 1
+            x = textX
+        }
+        layout.subjectX = x
+        layout.subjectLine = line
+        return layout
     }
 
     /// 1 列を描く。`rows` の lane 1 から先は右の線（それぞれ、いちばん下で lane 0 へ合流。octopus merge では
     /// いくつも）。`highlightTop` は強調する上からの行数。`gaps` は省いたところ、`baseNote` は分かれたところに
     /// 添える文（いつ分かれたか）。`lane1JoinsAt` は merge コミットの行で、そこから右の線それぞれの先頭へ下りる。
+    /// 札が折り返した行は下へ伸び、その下の行・省いたところ・分かれたところは、その分だけ下がる。
     func drawColumn(
         x: CGFloat, rows: [GraphRow], baseY: CGFloat,
         base: RewritePreview.Drawing.Commit?, gaps: [Gap] = [], highlightTop: Int = 0, baseNote: String? = nil,
@@ -47,6 +196,38 @@ class GraphDrawingView: NSView {
     ) {
         let laneX = { (lane: Int) in x + 10 + CGFloat(lane) * Self.laneWidth }
         let lanes = max(1, rows.map(\.lane).max() ?? 1)
+        let textX = laneX(lanes) + 14
+        // 右端は、スクロールのつまみの分を空ける。
+        let right = x + Self.columnWidth - 8
+        // 先に各行を並べ、折り返した段の分だけ、下にあるものを下げる。
+        func subjectWidth(_ subject: String, bold: Bool) -> CGFloat {
+            let font = bold ? NSFont.boldSystemFont(ofSize: NSFont.smallSystemFontSize) : NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
+            return NSString(string: subject).size(withAttributes: [.font: font]).width
+        }
+        let layouts = rows.enumerated().map { i, row in
+            layoutRow(textX: textX, right: right, labels: labels(row.commit.oid),
+                      subjectWidth: subjectWidth(row.commit.subject, bold: i < highlightTop || row.isNew))
+        }
+        let baseLayout = base.map { layoutRow(textX: textX, right: right, labels: labels($0.oid), subjectWidth: subjectWidth($0.subject, bold: false)) }
+        let grows = zip(rows, layouts).map { ($0.y, CGFloat($1.lines - 1) * Self.lineStep) }.filter { $0.1 > 0 }
+        let shift = { (y: CGFloat) in y + grows.filter { $0.0 < y }.reduce(0) { $0 + $1.1 } }
+        let baseGrows = CGFloat((baseLayout?.lines ?? 1) - 1) * Self.lineStep
+        if measuring {
+            extras.append(grows.reduce(0) { $0 + $1.1 } + baseGrows)
+            return
+        }
+        let rows = rows.map { row in
+            var moved = GraphRow(commit: row.commit, lane: row.lane, dim: row.dim, y: shift(row.y))
+            moved.hollow = row.hollow
+            moved.note = row.note
+            moved.noteColor = row.noteColor
+            moved.isNew = row.isNew
+            return moved
+        }
+        let gaps = gaps.map { Gap(lane: $0.lane, y: shift($0.y), count: $0.count, text: $0.text) }
+        let baseY = shift(baseY)
+        let lane1JoinsAt = lane1JoinsAt.map(shift)
+
         let center = { (y: CGFloat) in y + Self.rowHeight / 2 }
         let solid = NSBezierPath()
         solid.lineWidth = 2
@@ -93,18 +274,18 @@ class GraphDrawingView: NSView {
         // 点と件名、札。
         for (i, row) in rows.enumerated() {
             let highlighted = i < highlightTop
-            drawRow(at: NSPoint(x: laneX(row.lane), y: row.y), textX: laneX(lanes) + 14, width: x + Self.columnWidth,
-                    subject: row.commit.subject, dim: row.dim, highlighted: highlighted, labels: labels(row.commit.oid),
+            drawRow(at: NSPoint(x: laneX(row.lane), y: row.y), layout: layouts[i], right: right,
+                    subject: row.commit.subject, dim: row.dim, highlighted: highlighted,
                     hollow: row.hollow, note: row.note, noteColor: row.noteColor, isNew: row.isNew)
         }
         for gap in gaps {
-            NSString(string: L("and %ld more", gap.count)).draw(
-                at: NSPoint(x: laneX(lanes) + 14, y: gap.y + 3),
+            NSString(string: gap.text ?? L("and %ld more", gap.count)).draw(
+                at: NSPoint(x: textX, y: gap.y + 3),
                 withAttributes: [.font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize), .foregroundColor: NSColor.tertiaryLabelColor])
         }
-        if let base {
-            drawRow(at: NSPoint(x: laneX(0), y: baseY), textX: laneX(lanes) + 14, width: x + Self.columnWidth, subject: base.subject,
-                    dim: true, highlighted: false, labels: labels(base.oid), note: baseNote)
+        if let base, let baseLayout {
+            drawRow(at: NSPoint(x: laneX(0), y: baseY), layout: baseLayout, right: right, subject: base.subject,
+                    dim: true, highlighted: false, note: baseNote)
         }
     }
 
@@ -116,10 +297,10 @@ class GraphDrawingView: NSView {
         return L("split off %@", formatter.localizedString(for: Date(timeIntervalSince1970: TimeInterval(time)), relativeTo: Date()))
     }
 
-    /// 1 行を描く。`hollow` なら中を抜いた点（外れる・消えるコミット）、`note` は件名の後ろに `noteColor` で添える。
-    func drawRow(at dot: NSPoint, textX: CGFloat, width: CGFloat, subject: String, dim: Bool, highlighted: Bool,
-                 labels: [(String, String, Bool)], hollow: Bool = false, note: String? = nil, noteColor: NSColor? = nil,
-                 isNew: Bool = false) {
+    /// 1 行を描く（並べ方は `layout`）。`hollow` なら中を抜いた点（外れる・消えるコミット）、`note` は件名の後ろに
+    /// `noteColor` で添える。
+    func drawRow(at dot: NSPoint, layout: RowLayout, right: CGFloat, subject: String, dim: Bool, highlighted: Bool,
+                 hollow: Bool = false, note: String? = nil, noteColor: NSColor? = nil, isNew: Bool = false) {
         let r: CGFloat = highlighted || isNew ? 5 : 4
         let circle = NSBezierPath(ovalIn: NSRect(x: dot.x - r, y: dot.y + Self.rowHeight / 2 - r, width: r * 2, height: r * 2))
         let dotColor = highlighted ? NSColor.controlAccentColor : dim ? NSColor.tertiaryLabelColor : NSColor.secondaryLabelColor
@@ -137,10 +318,12 @@ class GraphDrawingView: NSView {
             dotColor.setFill()
             circle.fill()
         }
-        var x = textX
-        // 札は列の中に収める: 長い名前は真ん中を省き、入りきらない札は描かない（隣の列や件名に重ねない）。
-        for (name, kind, current) in labels where width - x > 40 {
-            x = drawLabel(name, kind: kind, current: current, at: NSPoint(x: x, y: dot.y + 3), maxWidth: width - x - 24) + 4
+        for pill in layout.pills {
+            let point = NSPoint(x: pill.x, y: dot.y + 3 + CGFloat(pill.line) * Self.lineStep)
+            let end = drawLabel(pill.name, kind: pill.kind, current: pill.current, at: point, maxWidth: pill.maxWidth)
+            if pill.kind == "more" {
+                addTip(layout.hidden.joined(separator: "\n"), at: NSRect(x: point.x, y: point.y, width: end - point.x, height: Self.lineStep))
+            }
         }
         let attributes: [NSAttributedString.Key: Any] = [
             .font: highlighted || isNew ? NSFont.boldSystemFont(ofSize: NSFont.smallSystemFontSize) : NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
@@ -153,23 +336,33 @@ class GraphDrawingView: NSView {
             noteAttributes[.font] = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
             text.append(NSAttributedString(string: " — " + note, attributes: noteAttributes))
         }
-        // 札で埋まったら件名は描かない（幅 0 でも文字は描かれ、札に重なる）。
-        guard width - x > 20 else { return }
-        text.draw(with: NSRect(x: x, y: dot.y + 4, width: width - x, height: Self.rowHeight),
+        let y = dot.y + 4 + CGFloat(layout.subjectLine) * Self.lineStep
+        text.draw(with: NSRect(x: layout.subjectX, y: y, width: right - layout.subjectX, height: Self.rowHeight),
                   options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
     }
 
-    /// History と同じ色の札（ローカルは青、リモートは紫、一緒に動いたものは緑）。右端を返す。
+    private static func labelFont(current: Bool) -> NSFont {
+        current ? NSFont.boldSystemFont(ofSize: NSFont.smallSystemFontSize - 1) : NSFont.systemFont(ofSize: NSFont.smallSystemFontSize - 1)
+    }
+
+    /// 札の幅（省かずに描いたとき）。
+    func labelWidth(_ name: String, current: Bool) -> CGFloat {
+        NSString(string: name).size(withAttributes: [.font: Self.labelFont(current: current)]).width + 10
+    }
+
+    /// History と同じ色の札（ローカルは青、リモートは紫、一緒に動いたものは緑）。右端を返す。`maxWidth` に入らなければ
+    /// 真ん中を省く。
     func drawLabel(_ name: String, kind: String, current: Bool, at point: NSPoint, maxWidth: CGFloat = .greatestFiniteMagnitude) -> CGFloat {
         let color: NSColor = switch kind {
         case "remote": .systemPurple
         case "moved": .systemGreen
+        case "more": .secondaryLabelColor
         default: .systemBlue
         }
-        let font = current ? NSFont.boldSystemFont(ofSize: NSFont.smallSystemFontSize - 1) : NSFont.systemFont(ofSize: NSFont.smallSystemFontSize - 1)
         let style = NSMutableParagraphStyle()
         style.lineBreakMode = .byTruncatingMiddle
-        let text = NSAttributedString(string: name, attributes: [.font: font, .foregroundColor: current ? NSColor.white : color,
+        let text = NSAttributedString(string: name, attributes: [.font: Self.labelFont(current: current),
+                                                                 .foregroundColor: current ? NSColor.white : color,
                                                                  .paragraphStyle: style])
         let size = text.size()
         let textWidth = min(size.width, max(0, maxWidth - 10))
@@ -198,10 +391,10 @@ final class RewriteDrawingView: GraphDrawingView {
     override var intrinsicContentSize: NSSize {
         guard let d = preview?.drawing else { return NSSize(width: Self.columnWidth * 2 + 24, height: 0) }
         let rows = d.picks.count + ((d.picksMore ?? 0) > 0 ? 1 : 0) + d.onto.count + (d.ontoMore > 0 ? 1 : 0) + 1
-        return NSSize(width: Self.columnWidth * 2 + 24, height: CGFloat(rows) * Self.rowHeight + 26)
+        return NSSize(width: Self.columnWidth * 2 + 24, height: capped(CGFloat(rows) * Self.rowHeight + 26 + labelExtraHeight()))
     }
 
-    override func draw(_ dirtyRect: NSRect) {
+    override func drawContent() {
         guard let preview, let d = preview.drawing else { return }
         let headingAttributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.boldSystemFont(ofSize: NSFont.smallSystemFontSize), .foregroundColor: NSColor.secondaryLabelColor,
