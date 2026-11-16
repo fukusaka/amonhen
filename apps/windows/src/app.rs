@@ -13,8 +13,9 @@ use std::time::Instant;
 
 use amonhen_core::{RefsSnapshot, Repository};
 use amonhen_model::RefEntry;
+use amonhen_model::tr;
 use amonhen_win_xaml as xaml;
-use serde_json::Value;
+use serde_json::{Value, json};
 use windows::Win32::Foundation::WAIT_OBJECT_0;
 use windows::Win32::System::Threading::WaitForSingleObjectEx;
 use windows_core_reactor::{IInspectable, Interface as _, Ref};
@@ -59,6 +60,21 @@ struct Root {
     /// 選んだコミットの詳細（`commit_info` の答え）と、時間のかかる分（`commit_extras`）。
     info: Option<(Value, Option<Value>)>,
     error: Option<String>,
+    /// 出している確認・知らせのダイアログ。
+    dialog: Option<Dialog>,
+}
+
+/// 窓に重ねるダイアログ（macOS 版のシート、GTK4 版の `sheets`）。
+#[derive(Clone)]
+enum Dialog {
+    /// Undo の確認（`undoPeek` の名前と、何が戻るか）。
+    Undo {
+        repo: Arc<Repository>,
+        label: String,
+        what: String,
+    },
+    /// 操作の失敗。
+    Failed { title: String, message: String },
 }
 
 enum Message {
@@ -69,6 +85,12 @@ enum Message {
     Invoked(String),
     /// メニューの操作を選んだ（操作の id）。
     Command(String),
+    /// `undoPeek` の答え（戻せるものがなければ `None`）。
+    UndoPeek(Arc<Repository>, Option<(String, String)>),
+    /// ダイアログを閉じた（押したボタン）。
+    DialogClosed(ContentDialogResult),
+    /// 書き込む操作が終わった（失敗ならそのダイアログの見出しと文）。
+    Performed(Option<(String, String)>),
     Failed(String),
 }
 
@@ -86,6 +108,7 @@ impl Component for Root {
             groups: None,
             info: None,
             error: None,
+            dialog: None,
         }
     }
 
@@ -107,7 +130,24 @@ impl Component for Root {
             }
             Message::Commit(info, extras) => self.info = Some((info, extras)),
             Message::Failed(e) => self.error = Some(e),
+            Message::Command(id) if id == "undo" => self.undo(context),
             Message::Command(id) => with_history(|h| h.command(&id)),
+            Message::UndoPeek(repo, peek) => match peek {
+                Some((label, what)) => self.dialog = Some(Dialog::Undo { repo, label, what }),
+                None => beep(),
+            },
+            Message::DialogClosed(result) => {
+                if let (Some(Dialog::Undo { repo, .. }), ContentDialogResult::Primary) =
+                    (self.dialog.take(), result)
+                {
+                    perform(context, repo, json!({ "op": "undo" }), tr!("Couldn’t Undo"));
+                }
+            }
+            Message::Performed(failed) => {
+                if let Some((title, message)) = failed {
+                    self.dialog = Some(Dialog::Failed { title, message });
+                }
+            }
             Message::Invoked(key) => {
                 if let Some(entry) = self.entry(&key)
                     && let Some(target) = entry.target
@@ -239,13 +279,64 @@ impl Component for Root {
                     .children((history,)),
                 right,
             ));
+        let dialog = self.dialog_view(context);
         Grid::new()
             .rows([GridLength::Auto, GridLength::Star(1.0)])
-            .children((menu_bar, body))
+            .children((menu_bar, body, dialog))
     }
 }
 
 impl Root {
+    /// Repository > Undo…: 最後の操作を見せて、確かめてから戻す（GTK4 版の `sheets::undo`）。
+    fn undo(&self, context: &ComponentContext<Self>) {
+        let mut repo = None;
+        with_history(|h| repo = h.session.data.repo());
+        let Some(repo) = repo else { return beep() };
+        context.spawn_background(move |_| {
+            let peek: Value =
+                serde_json::from_str(&repo.run_json(r#"{"op":"undoPeek"}"#)).unwrap_or_default();
+            let found = peek["label"].as_str().map(|label| {
+                let what = match peek["info"]["kind"].as_str() {
+                    Some("files") => {
+                        tr!("Puts the files back as they were. HEAD and the index stay.")
+                    }
+                    Some("stash") => tr!("Brings back the dropped stash."),
+                    Some("rename") => tr!("Gives the branch its earlier name back."),
+                    _ => tr!("Returns HEAD and the branches to where they were."),
+                };
+                (label.to_owned(), what)
+            });
+            Message::UndoPeek(repo, found)
+        });
+    }
+
+    fn dialog_view(&self, context: &ViewContext<Self>) -> View {
+        let dialog = ContentDialog::new().on_closed(context.callback(Message::DialogClosed));
+        match &self.dialog {
+            None => dialog.is_open(false).into(),
+            Some(Dialog::Undo { label, what, .. }) => dialog
+                .is_open(true)
+                .title(tr!("Undo “{label}”?", label = label))
+                .primary_button_text("Undo")
+                .close_button_text(tr!("Cancel"))
+                .content(
+                    TextBlock::new()
+                        .text(what.clone())
+                        .text_wrapping(TextWrapping::Wrap),
+                ),
+            Some(Dialog::Failed { title, message }) => dialog
+                .is_open(true)
+                .title(title.clone())
+                .close_button_text("OK")
+                .content(
+                    TextBlock::new()
+                        .text(message.clone())
+                        .text_wrapping(TextWrapping::Wrap)
+                        .is_text_selection_enabled(true),
+                ),
+        }
+    }
+
     /// サイドバーの項目のキーが指す ref。
     fn entry(&self, key: &str) -> Option<&RefEntry> {
         let (kind, name) = sidebar::parse_ref_key(key)?;
@@ -256,6 +347,23 @@ impl Root {
             .iter()
             .find(|e| e.kind as u8 == kind && e.name == name)
     }
+}
+
+/// 押せない・戻すものがないときの音（macOS 版の `NSSound.beep`、GTK4 版の `error_bell`）。
+fn beep() {
+    use windows::Win32::System::Diagnostics::Debug::MessageBeep;
+    use windows::Win32::UI::WindowsAndMessaging::MB_OK;
+    // SAFETY: 音を鳴らすだけ。
+    let _ = unsafe { MessageBeep(MB_OK) };
+}
+
+/// 書き込む操作を裏で実行する。終わると `Performed`（変化は見張りが拾って読み直す）。`title` は失敗の見出し。
+fn perform(context: &ComponentContext<Root>, repo: Arc<Repository>, command: Value, title: String) {
+    context.spawn_background(move |_| {
+        let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
+            .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+        Message::Performed(reply["error"].as_str().map(|e| (title, e.to_owned())))
+    });
 }
 
 /// `+0900` のようなタイムゾーンを秒にする。
