@@ -1168,6 +1168,11 @@ First release.
 - Repository Settings > Author and Signing has Allowed signers, the file (`gpg.ssh.allowedSignersFile`) for verifying
   SSH signatures; changing a `gpg.*` setting there verifies the shown signatures again.
 
+#### Changed
+
+- A signed commit whose signature can't be verified shows No key in History and the details, as the app does, instead
+  of no mark; only signed rows are verified.
+
 ### [0.2.7] - 2026-11-13
 
 With the main view open, confirmations that change the commit graph appear as a sheet over it with the app's

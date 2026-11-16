@@ -77,6 +77,8 @@ test('reads History rows and the graph through the daemon', { skip }, async () =
     assert.equal(rows[0]!.oid, git('rev-parse', 'HEAD').trim());
     // merge は 2 つの親を持ち、topic の側は別のレーンに出る
     assert.equal(rows[0]!.parents.length, 2);
+    // 署名の有無（コミットの gpgsig）も届き、署名のない行は確かめない
+    assert.ok(rows.every((r) => r.signed === false));
     assert.notEqual(rows[2]!.graph.col, rows[1]!.graph.col);
     assert.ok(rows.every((r) => r.graph.segs.length % 5 === 0));
     assert.ok(rows[0]!.graph.segs.length > 0);
