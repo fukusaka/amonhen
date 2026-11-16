@@ -113,6 +113,8 @@ struct Root {
     reflog_selected: Option<usize>,
     /// worktree（`worktrees` の答え。開いたリポジトリのもの）。
     worktrees: Vec<WorktreeInfo>,
+    /// Working Copy のパスの絞り込み。
+    working_filter: String,
     /// Stashes の画面で選んでいる stash の名前。
     stash: Option<String>,
     /// File History の画面（パス、読んだコミット、選んでいる行）。
@@ -389,6 +391,8 @@ enum Message {
     Worktrees(Vec<WorktreeInfo>),
     /// 裏で調べてから確かめる（題、説明、ボタン、命令）。
     Confirm(Arc<Repository>, String, String, String, Value),
+    /// Working Copy のパスの絞り込み。
+    WorkingFilter(String),
     /// Reflog を読んだ・一覧で選んだ。
     ReflogLoaded(Vec<crate::reflog::Entry>),
     ReflogSelected(Option<usize>),
@@ -531,6 +535,7 @@ impl Component for Root {
             sidebar_key: None,
             stash: None,
             worktrees: Vec::new(),
+            working_filter: String::new(),
             reflog: None,
             range_diff: None,
             range_request: 0,
@@ -1677,11 +1682,11 @@ impl Component for Root {
             Message::WorkingFile(index) => {
                 // 一覧は status が替わるたびに作り直すので、選び直しの知らせ（None）は無視して前の選択を保つ。
                 if let Some(index) = index {
-                    let path = self
-                        .status
-                        .as_ref()
-                        .and_then(|s| s.status.entries.get(index))
-                        .map(|e| e.path.clone());
+                    let path = self.status.as_ref().and_then(|s| {
+                        crate::workcopy::visible(&s.status.entries, &self.working_filter)
+                            .get(index)
+                            .map(|e| e.path.clone())
+                    });
                     self.working_file = path;
                     self.load_working_diff();
                 }
@@ -2575,6 +2580,12 @@ impl Component for Root {
                     });
                 }
             }
+            Message::WorkingFileMenu(_, key) if key.starts_with("ignore:") => {
+                if let Some(repo) = self.repo.clone() {
+                    add_to_gitignore(context, repo, key["ignore:".len()..].to_owned());
+                }
+            }
+            Message::WorkingFilter(text) => self.working_filter = text,
             Message::WorkingFileMenu(path, key) => match key.as_str() {
                 "history" => self.update(Message::OpenFileHistory(path), context),
                 "blame" => self.update(Message::OpenBlame(path, None), context),
@@ -4924,6 +4935,7 @@ impl Root {
                 context.callback(move |include| Message::Stage(path.clone(), include))
             }),
             selected: context.callback(Message::WorkingFile),
+            filter: context.callback(Message::WorkingFilter),
             amend: context.callback(Message::Amend),
             file_menu: Box::new(|path: String| {
                 context.callback(move |key| Message::WorkingFileMenu(path.clone(), key))
@@ -4950,6 +4962,7 @@ impl Root {
         let view = crate::workcopy::view(
             crate::workcopy::Input {
                 status: self.status.as_deref(),
+                filter: &self.working_filter,
                 summary: &self.summary,
                 description: &self.description,
                 committing: self.committing,
@@ -5332,6 +5345,34 @@ fn beep() {
 }
 
 /// 書き込む操作を裏で実行する。終わると `Performed`（変化は見張りが拾って読み直す）。`title` は失敗の見出し。
+/// `pattern` を作業ツリーの直下の .gitignore の最後に足す（コアで読み書きするので、SSH 先でも同じ。GTK4 版の
+/// `add_to_gitignore`）。
+fn add_to_gitignore(context: &ComponentContext<Root>, repo: Arc<Repository>, pattern: String) {
+    context.spawn_background(move |_| {
+        let title = tr!("Add “{pattern}” to .gitignore", pattern = &pattern);
+        let files: Value =
+            serde_json::from_str(&repo.run_json(r#"{"op":"ignoreFiles"}"#)).unwrap_or_default();
+        // 読めなければ書かない（空として書くと、.gitignore と info/exclude の中身を失う）。
+        let (Some(current), Some(exclude)) = (
+            files["info"]["gitignore"].as_str(),
+            files["info"]["exclude"].as_str(),
+        ) else {
+            let e = files["error"]
+                .as_str()
+                .map_or_else(|| tr!("The operation failed"), str::to_owned);
+            return Message::Performed(Some((title, e)));
+        };
+        let Some(gitignore) = crate::workcopy::with_ignore_pattern(current, &pattern) else {
+            return Message::Performed(None);
+        };
+        let command =
+            json!({ "op": "saveIgnoreFiles", "gitignore": gitignore, "exclude": exclude });
+        let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
+            .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+        Message::Performed(reply["error"].as_str().map(|e| (title, e.to_owned())))
+    });
+}
+
 fn perform(context: &ComponentContext<Root>, repo: Arc<Repository>, command: Value, title: String) {
     context.spawn_background(move |_| {
         let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))

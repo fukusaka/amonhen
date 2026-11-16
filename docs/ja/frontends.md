@@ -222,7 +222,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
 | 1 つのチェックボックスの一覧（☑ ▣ ☐、見出し・フォルダーのチェック） | ✓ | ✓ | △ | ✓ | n/a | VSCode: Staged と Changes が別のグループ。<br>Windows: ファイルごとのチェック。見出し・フォルダのチェックはない。 |
 | List / Tree / File Name | ✓ | ✓ | — | ✓ | n/a |  |
-| パスで絞り込む | ✓ | ✓ | — | ✓ | n/a |  |
+| パスで絞り込む | ✓ | ✓ | ✓ | ✓ | n/a |  |
 | 行ごとの +/− の数と、ホバーで Discard | ✓ | ✓ | — | ✓ | △ | VSCode: 行数はエンジンがあるときだけ。<br>CLI: `diff --stat`。 |
 | Space で切り替え、⌫ で捨てる | ✓ | ✓ | — | ✓ | n/a |  |
 | 上のコミットの欄、50/72 の数と本文の目安の線 | ✓ | ✓ | △ | ✓ | n/a | VSCode: 列が 72 文字より狭いので、目安の線の代わりに、72 を超える本文の行の長さを出す。<br>Windows: 件名と本文。数と目安の線はない。 |
@@ -233,13 +233,13 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Commit and Push・Amend | ✓ | ✓ | △ | ✓ | △ | CLI: `commit -m … --amend`。<br>Windows: Amend だけ。 |
 | Fixup / Squash Commit For | ✓ | ✓ | — | ✓ | n/a |  |
 | hooks の出力のシート | ✓ | ✓ | — | ✓ | n/a |  |
-| Commit が押せない理由を出す | ✓ | ✓ | — | ✓ | n/a | ボタンのツールチップに。 |
+| Commit が押せない理由を出す | ✓ | ✓ | ✓ | ✓ | n/a | ボタンのツールチップに。 |
 | HEAD → 作業ツリーの 1 つの差分と、行・hunk のチェック | ✓ | ✓ | △ | ✓ | ✓ | VSCode: エンジンがあれば。なければ別々の未ステージ・ステージ済みの差分で行をステージ。<br>CLI: `diff --combined`・`stage --rows`。<br>Windows: 行のチェック。hunk のチェックはない。 |
 | 行の範囲の選択、J/K・⌥J/⌥K | ✓ | ✓ | — | ✓ | n/a |  |
 | 重ねられないファイルの Unstaged / Staged の切り替え | ✓ | ✓ | — | n/a | ✓ | VSCode: いつも別々に出す。<br>CLI: `diff --staged`。 |
 | 差分の表示の選択（unified/split・空白・前後の行・折り返し） | — | — | — | — | n/a |  |
 | 行・hunk・ファイルを捨てる（Undo できる） | ✓ | ✓ | △ | ✓ | ✓ | CLI: `discard --rows`。<br>Windows: ファイルだけ。 |
-| Add to .gitignore | ✓ | ✓ | — | ✓ | n/a |  |
+| Add to .gitignore | ✓ | ✓ | ✓ | ✓ | n/a |  |
 | コンフリクトのファイルからマージエディターを開く | ✓ | ✓ | △ | ✓ | n/a | macOS, GTK4: UTF-8 でないファイルは開かない。片側を選ぶ。<br>VSCode: VSCode のマージエディターを開く。<br>Windows: ファイルの右クリックから。 |
 | 一部のフォルダだけを取り出しているとき、一覧の上に知らせる | ✓ | ✓ | — | ✓ | △ | CLI: `status` が sparse checkout を添える。 |
 

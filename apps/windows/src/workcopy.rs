@@ -18,8 +18,59 @@ pub fn message(summary: &str, description: &str) -> String {
     }
 }
 
+/// パスの絞り込みに合うファイル（大文字小文字を区別しない。空なら全部）。一覧の行の番号はこの並びの番号。
+pub fn visible<'a>(entries: &'a [StatusEntry], filter: &str) -> Vec<&'a StatusEntry> {
+    let filter = filter.trim().to_lowercase();
+    entries
+        .iter()
+        .filter(|e| {
+            filter.is_empty()
+                || e.path.to_lowercase().contains(&filter)
+                || e.orig_path
+                    .as_ref()
+                    .is_some_and(|p| p.to_lowercase().contains(&filter))
+        })
+        .collect()
+}
+
+/// `.gitignore` の中身に `pattern` の行を足したもの（もうあれば None。GTK4 版の `with_ignore_pattern`）。改行は
+/// ファイルに合わせる（Windows では CRLF のことが多い）。
+pub fn with_ignore_pattern(gitignore: &str, pattern: &str) -> Option<String> {
+    if gitignore.lines().any(|l| l.trim() == pattern) {
+        return None;
+    }
+    let newline = if gitignore.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    let mut text = gitignore.to_owned();
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push_str(newline);
+    }
+    text.push_str(pattern);
+    text.push_str(newline);
+    Some(text)
+}
+
+/// untracked のファイルを .gitignore に足すときのパターン（そのパスと、拡張子があれば `*.ext`）。
+fn ignore_patterns(path: &str) -> Vec<String> {
+    let mut patterns = vec![path.to_owned()];
+    let name = path.rsplit('/').next().unwrap_or(path);
+    // `.env` のように名前だけのものに拡張子はない（GTK4 版・macOS 版と同じ）。
+    if let Some((stem, ext)) = name.rsplit_once('.')
+        && !stem.is_empty()
+        && !ext.is_empty()
+    {
+        patterns.push(format!("*.{ext}"));
+    }
+    patterns
+}
+
 pub struct Input<'a> {
     pub status: Option<&'a StatusSnapshot>,
+    /// パスの絞り込み。
+    pub filter: &'a str,
     /// 件名と本文。
     pub summary: &'a str,
     pub description: &'a str,
@@ -39,6 +90,7 @@ pub struct Callbacks<'a> {
     /// パスのファイルを含める（true）・外す（false）。
     pub stage: Box<dyn Fn(String) -> Callback<bool> + 'a>,
     pub selected: Callback<Option<usize>>,
+    pub filter: Callback<String>,
     pub amend: Callback<bool>,
     /// パスのファイルの右クリックのメニュー（File History・Discard File。押した項目のキー）。
     pub file_menu: Box<dyn Fn(String) -> Callback<String> + 'a>,
@@ -69,8 +121,9 @@ fn included(entry: &StatusEntry) -> bool {
 }
 
 pub fn view(input: Input, callbacks: Callbacks) -> View {
-    let entries: &[StatusEntry] = input.status.map_or(&[], |s| &s.status.entries);
-    let staged = entries.iter().filter(|e| e.is_staged()).count();
+    let all: &[StatusEntry] = input.status.map_or(&[], |s| &s.status.entries);
+    let staged = all.iter().filter(|e| e.is_staged()).count();
+    let entries = visible(all, input.filter);
     // 件名と本文（macOS 版と同じく、件名は 1 行、本文は空なら薄く「Description (optional)」）。
     let message = StackPanel::new().spacing(6.0).grid_row(1).children((
         TextBox::new()
@@ -86,8 +139,25 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
             .on_text_changed(callbacks.description),
     ));
     // Amend なら含めるファイルがなくても押せる（メッセージだけ直す。macOS 版と同じ）。
-    let can_commit =
-        !input.committing && (staged > 0 || input.amend) && !input.summary.trim().is_empty();
+    let has_message = !input.summary.trim().is_empty();
+    let can_commit = !input.committing && (staged > 0 || input.amend) && has_message;
+    // 押せないときは、ツールチップでわけを言う（docs/ux.md の決まり。GTK4 版・macOS 版と同じ）。
+    let mut reasons = Vec::new();
+    if input.committing {
+        reasons.push(tr!("Committing…"));
+    } else {
+        if staged == 0 && !input.amend {
+            reasons.push(tr!("No files are checked"));
+        }
+        if !has_message {
+            reasons.push(tr!("Write a commit message"));
+        }
+    }
+    let commit_tip = if reasons.is_empty() {
+        tr!("Commit the checked files (Ctrl+Return)")
+    } else {
+        reasons.join("\n")
+    };
     // 含めるファイルの数も出す（GTK4 版・macOS 版と同じ）。
     let label = match (input.amend, staged) {
         (true, _) => "Amend Commit".to_owned(),
@@ -101,9 +171,10 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
         .grid_row(2)
         .children((
             TextBlock::new()
-                .text(format!("{staged} / {}", entries.len()))
+                .text(format!("{staged} / {}", all.len()))
                 .vertical_alignment(VerticalAlignment::Center)
-                .grid_column(0),
+                .grid_column(0)
+                .tooltip(tr!("Files in the next commit / changed files")),
             CheckBox::new()
                 .is_checked(input.amend)
                 .on_is_checked_changed(callbacks.amend)
@@ -113,8 +184,15 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
                 .is_enabled(can_commit)
                 .on_click(callbacks.commit)
                 .grid_column(2)
-                .content(TextBlock::new().text(label)),
+                .content(TextBlock::new().text(label))
+                .tooltip(commit_tip),
         ));
+    let filter = TextBox::new()
+        .text(input.filter)
+        .placeholder_text(tr!("Filter"))
+        .margin(Thickness::new(0.0, 0.0, 0.0, 6.0))
+        .grid_row(3)
+        .on_text_changed(callbacks.filter);
     let rows = entries.iter().map(|entry| {
         let label = match &entry.orig_path {
             Some(from) => format!("{}  {from} → {}", mark(entry), entry.path),
@@ -143,6 +221,16 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
             items.push(MenuItem::item("take-theirs", tr!("Take Incoming File")));
             items.push(MenuItem::item("resolved", tr!("Mark Resolved")));
             items.push(MenuItem::separator("-conflict"));
+        }
+        // untracked のファイルにはまだ履歴がない。代わりに .gitignore に足せる（GTK4 版と同じ）。
+        if entry.kind == StatusKind::Untracked {
+            for pattern in ignore_patterns(&entry.path) {
+                items.push(MenuItem::item(
+                    format!("ignore:{pattern}"),
+                    tr!("Add “{pattern}” to .gitignore", pattern = &pattern),
+                ));
+            }
+            items.push(MenuItem::separator("-ignore"));
         }
         if entry.kind != StatusKind::Untracked {
             // 作業ツリーで消したファイルには Blame はない。
@@ -177,10 +265,12 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
         .collection_slot(ListViewSlot::Items, rows);
     // reactor の ListView は、キーつきの項目を消すと、その場所が空いたまま残る。status が替わるたびに一覧ごと
     // 作り直して避ける（替わるのは stage・コミット・外での変更のとき）。
+    // 絞り込みを変えたときも作り直す。
     let generation = input.status.map_or(0, |s| s.generation);
-    let list = Border::new()
-        .grid_row(3)
-        .content(View::keyed_fragment([(generation, list)]));
+    let list = Border::new().grid_row(4).content(View::keyed_fragment([(
+        format!("{generation}:{}", input.filter),
+        list,
+    )]));
     // 途中の操作の帯: 何の途中かと、Continue・Skip（1 つずつ当てていく操作だけ）・Abort（GTK4 版のメニューの
     // 使えるかと同じ）。
     let band: View = match input.sequence {
@@ -231,8 +321,34 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
             GridLength::Auto,
             GridLength::Auto,
             GridLength::Auto,
+            GridLength::Auto,
             GridLength::Star(1.0),
         ])
         .margin(Thickness::new(14.0, 10.0, 14.0, 0.0))
-        .children((band, message, commit, list))
+        .children((band, message, commit, filter, list))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ignore_pattern_keeps_line_endings() {
+        assert_eq!(
+            with_ignore_pattern("a\r\nb", "*.log").as_deref(),
+            Some("a\r\nb\r\n*.log\r\n")
+        );
+        assert_eq!(
+            with_ignore_pattern("a\n", "*.log").as_deref(),
+            Some("a\n*.log\n")
+        );
+        assert_eq!(with_ignore_pattern("", "x").as_deref(), Some("x\n"));
+        assert_eq!(with_ignore_pattern("*.log\r\n", "*.log"), None);
+    }
+
+    #[test]
+    fn ignore_patterns_add_the_extension() {
+        assert_eq!(ignore_patterns("src/a.log"), ["src/a.log", "*.log"]);
+        assert_eq!(ignore_patterns(".env"), [".env"]);
+    }
 }
