@@ -2305,18 +2305,67 @@ impl RepoSettings {
             &tr!("Choose a mailmap file"),
             "~",
         )
+        .widget
+        .upcast()
     }
 
     /// SSH の署名を検証する公開鍵の一覧（`gpg.ssh.allowedSignersFile`）。署名の形式によらず出す（ほかの人の
     /// SSH の署名を検証するのにも使う）。
+    ///
+    /// 署名をこの機械の鍵で検証する SSH 先では、この行の設定を読まない（docs/design.md の「Where to verify」）ので、
+    /// そう書き添えて SSH Hosts へ案内する。
     fn allowed_signers_row(self: &Rc<Self>) -> gtk::Widget {
-        self.config_file_row(
+        let row = self.config_file_row(
             "gpg.ssh.allowedSignersFile",
             &tr!("Allowed signers"),
             &tr!("Public keys trusted to verify SSH signatures."),
             &tr!("Choose an allowed signers file"),
             "~/.ssh",
-        )
+        );
+        let Some(host) = self.host.clone() else {
+            return row.widget.upcast();
+        };
+        let note = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        let text = label(
+            &format!(
+                "⚠ {}",
+                tr!(
+                    "Signatures on this host are checked with this computer’s keys, so this setting isn’t used. Set it in Settings > Git on this computer, or choose The host’s git and keys for Verify with in Settings > SSH Hosts."
+                )
+            ),
+            &["settings-warning"],
+        );
+        text.set_wrap(true);
+        text.set_margin_start(8);
+        note.append(&text);
+        let open = gtk::Button::with_label(&tr!("Open SSH Hosts"));
+        open.add_css_class("flat");
+        open.set_halign(gtk::Align::Start);
+        let page = format!("ssh-hosts/{host}/connection");
+        open.connect_clicked(move |b| {
+            crate::settings::show(b);
+            crate::settings::select(&page);
+        });
+        note.append(&open);
+        row.below.append(&note);
+        let location = format!("ssh://{host}/");
+        note.set_visible(crate::sshhosts::checks_signatures_locally(&location));
+        let weak = note.downgrade();
+        crate::settings::connect_changed_while(&note, move |key| {
+            if key != crate::sshhosts::SIGNATURE_BY_HOST
+                && key != crate::settings::CHECK_REMOTE_SIGNATURES_LOCALLY
+            {
+                return;
+            }
+            // 写し（`sshhosts::load`）は設定を書いた後に作り直すので、それを待つ。
+            let (weak, location) = (weak.clone(), location.clone());
+            glib::idle_add_local_once(move || {
+                if let Some(note) = weak.upgrade() {
+                    note.set_visible(crate::sshhosts::checks_signatures_locally(&location));
+                }
+            });
+        });
+        row.widget.upcast()
     }
 
     /// ファイルのパスを入れる設定（なし／そのファイル／ファイル…）。git が読むファイルなので、SSH 先の
@@ -2328,7 +2377,7 @@ impl RepoSettings {
         help: &str,
         message: &str,
         home: &'static str,
-    ) -> gtk::Widget {
+    ) -> Row {
         const PICK: &str = "file";
         let label_of = |path: &str| {
             if path.is_empty() {
@@ -2382,7 +2431,7 @@ impl RepoSettings {
                 &current,
             );
         });
-        row.widget.upcast()
+        row
     }
 
     /// ファイルを選んでもらう（git が読むファイルなので、その機械のもの。SSH 先なら、そのエンジンで中を読む）。

@@ -1483,17 +1483,40 @@ private struct AllowedSignersRow: View {
         path.isEmpty ? L("None") : L("File: %@", (path as NSString).abbreviatingWithTildeInPath)
     }
 
+    /// 署名をこの Mac の鍵で検証する SSH 先（そこではこの行の設定を読まない。docs/design.md の「Where to verify」）。
+    /// SSH Hosts で検証する側を変えたら読み直す。
+    @State private var hostCheckedHere: String?
+
+    private func readHostCheckedHere() {
+        hostCheckedHere = model.host.flatMap { Settings.checkSignaturesLocally(on: $0) ? $0 : nil }
+    }
+
     var body: some View {
-        SettingRow(model: model, question: L("Allowed signers"), help: help, keys: [Self.key], describe: label) {
-            Picker("", selection: Binding(get: { current }, set: { choose($0) })) {
-                Text(L("None")).tag("")
-                if !current.isEmpty { Text(label(current)).tag(current) }
-                Divider()
-                Text(L("A file…")).tag(Self.pickFile)
+        VStack(alignment: .leading, spacing: 0) {
+            SettingRow(model: model, question: L("Allowed signers"), help: help, keys: [Self.key], describe: label) {
+                Picker("", selection: Binding(get: { current }, set: { choose($0) })) {
+                    Text(L("None")).tag("")
+                    if !current.isEmpty { Text(label(current)).tag(current) }
+                    Divider()
+                    Text(L("A file…")).tag(Self.pickFile)
+                }
+                .labelsHidden()
+                .frame(maxWidth: 320)
             }
-            .labelsHidden()
-            .frame(maxWidth: 320)
+            if let host = hostCheckedHere {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("⚠ " + L("Signatures on this host are checked with this Mac’s keys, so this setting isn’t used. Set it in Settings > Git on this Mac, or choose The host’s git and keys for Verify with in Settings > SSH Hosts."))
+                        .foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                    Button(L("Open SSH Hosts")) {
+                        SettingsWindowController.shared.show(tab: L("SSH Hosts"), host: host)
+                    }
+                    .buttonStyle(.link)
+                }
+                .padding(.horizontal, 8).padding(.bottom, 6)
+            }
         }
+        .onAppear(perform: readHostCheckedHere)
+        .onReceive(NotificationCenter.default.publisher(for: .signatureCheckChanged)) { _ in readHostCheckedHere() }
     }
 
     private func choose(_ value: String) {

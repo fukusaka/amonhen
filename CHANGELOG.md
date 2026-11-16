@@ -12,7 +12,8 @@ becomes the GitHub Release notes.
 #### Added
 
 - Repository Settings > Author and Signing has Allowed signers, the file (`gpg.ssh.allowedSignersFile`) for verifying
-  SSH signatures; changing a `gpg.*` setting there verifies the shown signatures again.
+  SSH signatures; changing a `gpg.*` setting there verifies the shown signatures again. For an SSH host whose
+  signatures are verified with this Mac's keys, the row notes that it isn't used there.
 
 #### Changed
 

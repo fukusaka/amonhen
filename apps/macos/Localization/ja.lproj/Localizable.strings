@@ -1588,6 +1588,8 @@
 "Allowed signers" = "許可する署名者";
 "Public keys trusted to verify SSH signatures." = "SSH の署名の検証で信用する公開鍵です。";
 "Choose an allowed signers file" = "許可する署名者のファイルを選ぶ";
+"Signatures on this host are checked with this Mac’s keys, so this setting isn’t used. Set it in Settings > Git on this Mac, or choose The host’s git and keys for Verify with in Settings > SSH Hosts." = "この SSH 先の署名はこの Mac の鍵で検証するので、ここでの設定は使われません。この Mac の設定 > Git で設定するか、設定 > SSH ホストの「検証に使う鍵」を「SSH 先の git と鍵」にしてください。";
+"Open SSH Hosts" = "SSH ホストを開く";
 "The mailmap changed. Showing the names again." = "mailmap が変わったので、名前を出し直しました。";
 
 /* Range Diff */
