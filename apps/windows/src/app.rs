@@ -139,6 +139,16 @@ enum Dialog {
         repo: Arc<Repository>,
         start: String,
         name: String,
+        /// ブランチではなくタグを作る（New Tag at …）。
+        tag: bool,
+    },
+    /// 確かめてから命令を実行する（Cherry-pick・Revert など。GTK4 版の `sheets::pick` ほか）。
+    Confirm {
+        repo: Arc<Repository>,
+        title: String,
+        message: String,
+        button: String,
+        command: Value,
     },
     /// Checkout の確認（GTK4 版の `sheets::checkout`）。
     Checkout {
@@ -354,16 +364,35 @@ impl Component for Root {
                 (Some(Dialog::Undo { repo, .. }), ContentDialogResult::Primary) => {
                     perform(context, repo, json!({ "op": "undo" }), tr!("Couldn’t Undo"));
                 }
-                (Some(Dialog::NewBranch { repo, start, name }), ContentDialogResult::Primary) => {
+                (
+                    Some(Dialog::NewBranch {
+                        repo,
+                        start,
+                        name,
+                        tag,
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
                     let name = name.trim().to_owned();
                     if !name.is_empty() {
-                        perform(
-                            context,
-                            repo,
-                            json!({ "op": "createBranch", "name": name, "start": start, "checkout": true }),
-                            tr!("Create"),
-                        );
+                        let command = if tag {
+                            json!({ "op": "createTag", "name": name, "target": start, "message": null })
+                        } else {
+                            json!({ "op": "createBranch", "name": name, "start": start, "checkout": true })
+                        };
+                        perform(context, repo, command, tr!("Create"));
                     }
+                }
+                (
+                    Some(Dialog::Confirm {
+                        repo,
+                        command,
+                        button,
+                        ..
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    perform(context, repo, command, button);
                 }
                 (Some(Dialog::Checkout { repo, command, .. }), ContentDialogResult::Primary) => {
                     perform(context, repo, command, "Checkout".to_owned());
@@ -552,6 +581,12 @@ impl Component for Root {
                     self.checkout(CheckoutTarget::Detach(oid.to_owned()));
                 } else if let Some(oid) = key.strip_prefix("branch:") {
                     self.new_branch(oid.to_owned());
+                } else if let Some(oid) = key.strip_prefix("tag:") {
+                    self.ask_name(oid.to_owned(), true);
+                } else if let Some(oid) = key.strip_prefix("cherry-pick:") {
+                    self.pick(oid.to_owned(), false);
+                } else if let Some(oid) = key.strip_prefix("revert:") {
+                    self.pick(oid.to_owned(), true);
                 }
             }
             Message::Performed(failed) => {
@@ -838,16 +873,41 @@ impl Root {
                         .text(what.clone())
                         .text_wrapping(TextWrapping::Wrap),
                 ),
-            Some(Dialog::NewBranch { start, name, .. }) => dialog
+            Some(Dialog::Confirm {
+                title,
+                message,
+                button,
+                ..
+            }) => dialog
                 .is_open(true)
-                .title(tr!("New Branch from {name}", name = shown_start(start)))
+                .title(title.clone())
+                .primary_button_text(button.clone())
+                .close_button_text(tr!("Cancel"))
+                .content(
+                    TextBlock::new()
+                        .text(message.clone())
+                        .text_wrapping(TextWrapping::Wrap),
+                ),
+            Some(Dialog::NewBranch {
+                start, name, tag, ..
+            }) => dialog
+                .is_open(true)
+                .title(if *tag {
+                    tr!("New Tag at {name}", name = shown_start(start))
+                } else {
+                    tr!("New Branch from {name}", name = shown_start(start))
+                })
                 .primary_button_text(tr!("Create"))
                 .close_button_text(tr!("Cancel"))
                 .is_primary_button_enabled(!name.trim().is_empty())
                 .content(
                     StackPanel::new().spacing(6.0).children((
                         TextBlock::new()
-                            .text(tr!("Name of the branch. It is checked out."))
+                            .text(if *tag {
+                                tr!("Name of the tag.")
+                            } else {
+                                tr!("Name of the branch. It is checked out.")
+                            })
                             .text_wrapping(TextWrapping::Wrap),
                         TextBox::new()
                             .element_ref(&self.dialog_input)
@@ -963,6 +1023,11 @@ impl Root {
     }
 
     fn new_branch(&mut self, start: String) {
+        self.ask_name(start, false);
+    }
+
+    /// 新しいブランチ（`tag` ならタグ）の名前を聞く。
+    fn ask_name(&mut self, start: String, tag: bool) {
         let Some(repo) = self.repo.clone() else {
             return beep();
         };
@@ -970,8 +1035,49 @@ impl Root {
             repo,
             start,
             name: String::new(),
+            tag,
         });
         self.dialog_inputs += 1;
+    }
+
+    /// Cherry-pick・Revert の確認（GTK4 版の `sheets::pick`: 今のブランチに足す。前後の絵はまだない）。
+    fn pick(&mut self, oid: String, revert: bool) {
+        let Some(repo) = self.repo.clone() else {
+            return beep();
+        };
+        let onto = self
+            .refs
+            .as_ref()
+            .and_then(|r| r.refs.head_branch.clone())
+            .unwrap_or_else(|| "HEAD".to_owned());
+        let what = oid[..8].to_owned();
+        let title = if revert {
+            tr!("Revert {what} on {onto}?", what = what, onto = onto)
+        } else {
+            tr!("Cherry-pick {what} onto {onto}?", what = what, onto = onto)
+        };
+        let message = format!(
+            "{} {}",
+            if revert {
+                tr!("Adds commits that undo them.")
+            } else {
+                tr!("Adds copies of them.")
+            },
+            tr!("You can Undo this (Ctrl+Alt+Z).")
+        );
+        // マージかは、出している詳細の親の数で（同じコミットのとき）。
+        let merge = self.info.as_ref().is_some_and(|(info, _)| {
+            info["oid"].as_str() == Some(oid.as_str())
+                && info["parents"].as_array().is_some_and(|p| p.len() > 1)
+        });
+        let op = if revert { "revert" } else { "cherryPick" };
+        self.dialog = Some(Dialog::Confirm {
+            repo,
+            title,
+            message,
+            button: if revert { "Revert" } else { "Cherry-pick" }.to_owned(),
+            command: json!({ "op": op, "oids": [oid], "isMerge": merge }),
+        });
     }
 
     /// Checkout の確認を出す（GTK4 版の `sheets::checkout` の見出しと説明。作業中の変更も持って行くと添える）。
@@ -1199,6 +1305,19 @@ impl Root {
         items.push(MenuItem::item(
             format!("branch:{id}"),
             tr!("New Branch from {name}…", name = &id[..8]),
+        ));
+        items.push(MenuItem::item(
+            format!("tag:{id}"),
+            tr!("New Tag at {name}…", name = &id[..8]),
+        ));
+        items.push(MenuItem::separator("-pick"));
+        items.push(MenuItem::item(
+            format!("cherry-pick:{id}"),
+            tr!("Cherry-pick {id}…", id = &id[..8]),
+        ));
+        items.push(MenuItem::item(
+            format!("revert:{id}"),
+            tr!("Revert {id}…", id = &id[..8]),
         ));
         items.push(MenuItem::separator("-copy"));
         items.push(MenuItem::item(format!("copy:{id}"), tr!("Copy Commit ID")));
