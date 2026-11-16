@@ -456,4 +456,6 @@ pub enum OwnedMenuKind {
     ButtonFlyout,
     DropDownButtonFlyout,
     MenuBarItem,
+    /// Any other element: the menu opens on right-click (`UIElement.ContextFlyout`).
+    ContextFlyout,
 }

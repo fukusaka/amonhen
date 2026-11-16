@@ -2299,6 +2299,14 @@ impl WinUiRuntime {
                                 .and_then(|items| items.Clear())
                                 .map_err(native_error)?;
                         }
+                        OwnedMenuKind::ContextFlyout => {
+                            if let Ok(element) = self.ui_element(previous.target) {
+                                element
+                                    .cast::<IUIElement>()
+                                    .and_then(|e| e.SetContextFlyout(None::<&FlyoutBase>))
+                                    .map_err(native_error)?;
+                            }
+                        }
                     }
                 }
                 let Some(items) = items else {
@@ -2320,6 +2328,22 @@ impl WinUiRuntime {
                         self.ui_element(*target)?
                             .cast::<IButton>()
                             .and_then(|button| button.SetFlyout(&flyout))
+                            .map_err(native_error)?;
+                        Some(flyout)
+                    }
+                    OwnedMenuKind::ContextFlyout => {
+                        let flyout = MenuFlyout::new().map_err(native_error)?;
+                        build_menu_items(
+                            items,
+                            *owner,
+                            *revision,
+                            &sink,
+                            &flyout.Items().map_err(native_error)?,
+                            &mut revokers,
+                        )?;
+                        self.ui_element(*target)?
+                            .cast::<IUIElement>()
+                            .and_then(|element| element.SetContextFlyout(&flyout))
                             .map_err(native_error)?;
                         Some(flyout)
                     }

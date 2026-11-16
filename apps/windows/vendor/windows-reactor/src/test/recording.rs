@@ -975,11 +975,12 @@ impl RecordingRuntime {
                     .ok_or(RuntimeError::MissingNode(*target))?
                     .kind;
                 let expected = match kind {
-                    OwnedMenuKind::ButtonFlyout => MountedKind::Button,
-                    OwnedMenuKind::DropDownButtonFlyout => MountedKind::DropDownButton,
-                    OwnedMenuKind::MenuBarItem => MountedKind::MenuBarItem,
+                    OwnedMenuKind::ButtonFlyout => Some(MountedKind::Button),
+                    OwnedMenuKind::DropDownButtonFlyout => Some(MountedKind::DropDownButton),
+                    OwnedMenuKind::MenuBarItem => Some(MountedKind::MenuBarItem),
+                    OwnedMenuKind::ContextFlyout => target_kind,
                 };
-                if target_kind != Some(expected) {
+                if target_kind.is_none() || target_kind != expected {
                     return Err(RuntimeError::UnsupportedKind);
                 }
                 if let Some(items) = items {
