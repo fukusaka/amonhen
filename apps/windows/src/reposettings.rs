@@ -55,6 +55,9 @@ pub struct State {
     pub new_pattern: String,
     /// リポジトリの形（`repositoryForm` の info。読むまでは None）。
     pub form: Option<Value>,
+    /// ローカルのブランチ（名前の順）と、判定した既定のブランチ（Branches の既定のブランチの選ぶ欄）。
+    pub local_branches: Vec<String>,
+    pub detected_base: Option<String>,
 }
 
 impl State {
@@ -77,6 +80,8 @@ impl State {
             lfs_files: None,
             new_pattern: String::new(),
             form: None,
+            local_branches: Vec::new(),
+            detected_base: None,
         }
     }
 
@@ -283,6 +288,21 @@ pub fn operation_rows() -> Vec<OperationRow> {
             "false",
         ),
     ]
+}
+
+/// Branches の既定のブランチのキー（Amon Hen の設定。なければ判定したもの）。
+pub const DEFAULT_BRANCH: &str = "amonhen.defaultBranch";
+
+/// 既定のブランチの選ぶ欄の値（先頭は「判定したもの」で空）。
+pub fn default_branch_values(state: &State) -> Vec<String> {
+    let mut values = vec![String::new()];
+    values.extend(state.local_branches.iter().cloned());
+    if let Some(chosen) = state.at("local", DEFAULT_BRANCH)
+        && !state.local_branches.iter().any(|b| b == chosen)
+    {
+        values.push(chosen.to_owned());
+    }
+    values
 }
 
 /// Working Copy の行（GTK4 版の `working_copy_page`。形は `operation_rows` と同じ）。
@@ -799,6 +819,68 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 .children((View::keyed_fragment(rows),))
         }
     };
+    // Branches: 既定のブランチ（GTK4 版の `branches_page`）。
+    let chosen = state.at("local", DEFAULT_BRANCH);
+    let values = default_branch_values(state);
+    let labels: Vec<String> = values
+        .iter()
+        .map(|v| {
+            if v.is_empty() {
+                match &state.detected_base {
+                    Some(b) => tr!("Detected ({branch})", branch = b),
+                    None => tr!("Detected (none)"),
+                }
+            } else {
+                v.clone()
+            }
+        })
+        .collect();
+    let selected = values
+        .iter()
+        .position(|v| Some(v.as_str()) == chosen)
+        .unwrap_or(0);
+    let missing = chosen.filter(|c| !state.local_branches.iter().any(|b| b == c));
+    let branches = StackPanel::new().spacing(2.0).children((
+        TextBlock::new().text(tr!("Default branch")),
+        StackPanel::new()
+            .orientation(Orientation::Horizontal)
+            .spacing(8.0)
+            .children((
+                ComboBox::new()
+                    .items_source(labels)
+                    .selected_index(selected)
+                    .on_selection_changed((callbacks.choice)("default-branch")),
+                TextBlock::new()
+                    .text(if chosen.is_none() {
+                        tr!("detected")
+                    } else {
+                        tr!("this repository")
+                    })
+                    .font_size(12.0)
+                    .opacity(0.6)
+                    .vertical_alignment(VerticalAlignment::Center),
+            )),
+        TextBlock::new()
+            .text(tr!(
+                "Branches measures the others against it. Detected from origin/HEAD, main or master; choose one when there is none."
+            ))
+            .font_size(12.0)
+            .opacity(0.65)
+            .text_wrapping(TextWrapping::Wrap),
+        match missing {
+            Some(c) => TextBlock::new()
+                .text(format!(
+                    "⚠ {}",
+                    tr!(
+                        "There is no branch named {branch}, so the detected branch is used.",
+                        branch = c
+                    )
+                ))
+                .font_size(12.0)
+                .into(),
+            None => View::empty(),
+        },
+    ));
     let author_changed = state.at("local", "user.name").unwrap_or_default() != state.name
         || state.at("local", "user.email").unwrap_or_default() != state.email;
     // Keys and Values: キーごとに効いている値（最後のもの）。探す文字があれば、キーか値に含むものだけ。
@@ -902,6 +984,11 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                                 .on_click((callbacks.button)("author".to_owned()))
                                 .content(TextBlock::new().text(tr!("Save"))),
                         )),
+                    heading("Branches".to_owned()),
+                    StackPanel::new()
+                        .max_width(560.0)
+                        .horizontal_alignment(HorizontalAlignment::Left)
+                        .children((branches,)),
                     heading("Operations".to_owned()),
                     StackPanel::new()
                         .max_width(560.0)

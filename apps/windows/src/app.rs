@@ -549,6 +549,8 @@ enum Message {
     RepoSettingsLoaded(Vec<crate::reposettings::Entry>),
     /// Repository Settings のフックの有効を切り替えた。
     HookEnabled(String, bool),
+    /// Repository Settings の既定のブランチを判定した。
+    RepoDetectedBase(Option<String>),
     /// Repository Settings のリポジトリの形を読んだ（`repositoryForm` の info）。
     RepoFormLoaded(Value),
     /// Repository Settings のフック・LFS を読んだ（`hooksAndLfs` の info）。
@@ -2872,6 +2874,20 @@ impl Component for Root {
             Message::RepoSettingsLoaded(entries) => {
                 if let Some(state) = self.repo_settings.as_mut() {
                     state.load(entries);
+                    let mut locals: Vec<String> = self
+                        .refs
+                        .as_ref()
+                        .map(|r| {
+                            r.refs
+                                .entries
+                                .iter()
+                                .filter(|e| e.kind == amonhen_model::RefKind::Local)
+                                .map(|e| e.name.clone())
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    locals.sort();
+                    state.local_branches = locals;
                 }
                 // フック・LFS・exclude も、書いた後に読み直す（同時に読むと、書く前のものが届く）。
                 self.load_repo_files(context);
@@ -2897,6 +2913,11 @@ impl Component for Root {
                         vec![json!({ "op": "maintenance", "on": on })],
                         context,
                     );
+                }
+            }
+            Message::RepoDetectedBase(base) => {
+                if let Some(state) = self.repo_settings.as_mut() {
+                    state.detected_base = base;
                 }
             }
             Message::RepoFormLoaded(info) => {
@@ -3192,6 +3213,28 @@ impl Component for Root {
                 }
             }
             Message::WorkingFilter(text) => self.working_filter = text,
+            Message::RepoSettingsChoice("default-branch", Some(index)) => {
+                let Some(state) = self.repo_settings.as_ref() else {
+                    return;
+                };
+                let values = crate::reposettings::default_branch_values(state);
+                let Some(value) = values.get(index) else {
+                    return;
+                };
+                let now = state
+                    .at("local", crate::reposettings::DEFAULT_BRANCH)
+                    .unwrap_or_default();
+                if value != now {
+                    self.write_repo_settings(
+                        vec![json!({
+                            "op": "configSet",
+                            "key": crate::reposettings::DEFAULT_BRANCH,
+                            "value": (!value.is_empty()).then_some(value),
+                        })],
+                        context,
+                    );
+                }
+            }
             Message::RepoSettingsChoice("hook-new", Some(index)) => {
                 if let Some(state) = self.repo_settings.as_mut() {
                     state.new_hook = index;
@@ -5761,6 +5804,14 @@ impl Root {
 
     /// Repository Settings のフック・LFS と、`.gitignore`・`.git/info/exclude` を裏で読む。
     fn load_repo_files(&self, context: &ComponentContext<Self>) {
+        // 判定した既定のブランチ（`branchGroups` の base）。
+        if let Some(repo) = self.repo.clone() {
+            context.spawn_background(move |_| {
+                let reply: Value = serde_json::from_str(&repo.run_json(r#"{"op":"branchGroups"}"#))
+                    .unwrap_or_default();
+                Message::RepoDetectedBase(reply["info"]["base"].as_str().map(str::to_owned))
+            });
+        }
         // リポジトリの形（shallow・partial・maintenance）も。
         if let Some(repo) = self.repo.clone() {
             context.spawn_background(move |_| {
