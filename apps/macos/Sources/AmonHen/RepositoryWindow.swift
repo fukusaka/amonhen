@@ -68,9 +68,11 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         guard RepositoryLocation.isRemote(location) else {
             return try Repository(path: location, cacheDirectory: cacheDirectory)
         }
-        // SSH 先ごとの選択（エンジンと git）も渡す。
-        let repository = try Repository(location: location, daemon: daemon, daemons: daemons, cacheDirectory: cacheDirectory,
-                                        hostOptions: Settings.hostOptionsJSON(for: location))
+        // SSH 先ごとの選択（エンジンと git）も渡す。エンジンを送るなら、先に利用者に聞く。
+        let repository = try EngineConsent.connecting(location) { options in
+            try Repository(location: location, daemon: daemon, daemons: daemons, cacheDirectory: cacheDirectory,
+                           hostOptions: options)
+        }
         // 署名をどこで検証するかは、何かを読む前に渡す（後で渡すと、開いてすぐ読んだ詳細だけ SSH 先の鍵で検証される）。
         repository.setLocalSignatureCheck(Settings.checksSignaturesLocally(at: location))
         return repository
