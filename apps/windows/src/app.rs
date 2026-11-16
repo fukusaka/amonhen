@@ -185,6 +185,14 @@ enum Dialog {
     },
     /// 操作の失敗。
     Failed { title: String, message: String },
+    /// ファイルをある版に戻す（GTK4 版の `restoresheet::ask`）。
+    Restore {
+        repo: Arc<Repository>,
+        title: String,
+        rev: String,
+        paths: Vec<String>,
+        staged: bool,
+    },
     /// ブランチの切り替え（GTK4 版の `branchswitcher`）: 打った問い合わせと、選んでいる候補。
     Switcher {
         repo: Arc<Repository>,
@@ -440,6 +448,8 @@ enum Message {
     SidebarFilter(String),
     /// リポジトリの形を読んだ。
     Form(sidebar::RepositoryForm),
+    /// 戻したファイルを stage もする。
+    RestoreStaged(bool),
     /// ブランチの切り替えで候補を選んだ。
     SwitcherSelect(Option<usize>),
     /// New Orphan Branch の「今のファイルを残す」。
@@ -1250,6 +1260,23 @@ impl Component for Root {
                         }
                         None => beep(),
                     }
+                }
+                (
+                    Some(Dialog::Restore {
+                        repo,
+                        rev,
+                        paths,
+                        staged,
+                        ..
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    perform(
+                        context,
+                        repo,
+                        json!({ "op": "restoreFiles", "rev": rev, "paths": paths, "staged": staged }),
+                        tr!("Restore"),
+                    );
                 }
                 (Some(Dialog::NewOrphan { repo, name, keep }), ContentDialogResult::Primary) => {
                     let name = name.trim().to_owned();
@@ -3127,6 +3154,57 @@ impl Component for Root {
                     self.show_file_change(&entry);
                 }
             }
+            Message::FileHistoryMenu(key) if key.starts_with("restore") => {
+                // ファイルをその版（その前の版）に戻す（GTK4 版の `restoresheet::ask`）。
+                let before = key.starts_with("restore-before:");
+                let oid = key.split_once(':').map_or("", |(_, o)| o).to_owned();
+                let (Some(repo), Some(state)) = (self.repo.clone(), self.file_history.as_ref())
+                else {
+                    return beep();
+                };
+                let at = state
+                    .entries
+                    .as_ref()
+                    .and_then(|e| e.as_ref().ok())
+                    .and_then(|e| e.iter().find(|e| e.oid == oid))
+                    .map_or_else(|| state.path.clone(), |e| e.path.clone());
+                // 前の版に戻すときは、そのコミットでの名前と今の名前の両方（名前を変えていれば今の名前は消える）。
+                let mut paths = vec![at];
+                if before && !paths.contains(&state.path) {
+                    paths.push(state.path.clone());
+                }
+                let short = &oid[..oid.len().min(8)];
+                let title = if before {
+                    tr!(
+                        "Restore {path} as It Was Before {commit}?",
+                        path = &state.path,
+                        commit = short
+                    )
+                } else {
+                    tr!(
+                        "Restore {path} as It Is in {commit}?",
+                        path = &state.path,
+                        commit = short
+                    )
+                };
+                let rev = if before {
+                    format!("{oid}^")
+                } else {
+                    oid.clone()
+                };
+                self.dialog = Some(Dialog::Restore {
+                    repo,
+                    title,
+                    rev,
+                    paths,
+                    staged: false,
+                });
+            }
+            Message::RestoreStaged(on) => {
+                if let Some(Dialog::Restore { staged, .. }) = &mut self.dialog {
+                    *staged = on;
+                }
+            }
             Message::FileHistoryMenu(key) => {
                 if let Some(oid) = key.strip_prefix("blame:") {
                     let path = self.file_history.as_ref().and_then(|state| {
@@ -4353,6 +4431,24 @@ impl Root {
                         )),
                     )
             }
+            Some(Dialog::Restore { title, staged, .. }) => dialog
+                .is_open(true)
+                .title(title.clone())
+                .primary_button_text(tr!("Restore"))
+                .close_button_text(tr!("Cancel"))
+                .content(
+                    StackPanel::new().spacing(8.0).children((
+                        TextBlock::new()
+                            .text(tr!(
+                                "Replaces the file in the working tree with that version (git restore); a file that version doesn’t have is deleted. Undo brings back the file as it is now."
+                            ))
+                            .text_wrapping(TextWrapping::Wrap),
+                        CheckBox::new()
+                            .is_checked(*staged)
+                            .on_is_checked_changed(context.callback(Message::RestoreStaged))
+                            .content(TextBlock::new().text(tr!("Stage it too"))),
+                    )),
+                ),
             Some(Dialog::NewOrphan { name, keep, .. }) => dialog
                 .is_open(true)
                 .title(tr!("New Orphan Branch"))
