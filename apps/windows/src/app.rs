@@ -110,6 +110,8 @@ struct Root {
     /// Blame の画面（パス、コミット、読んだ行）。閉じたら前の画面（File History なら File History）に戻る。
     blame: Option<crate::blame::State>,
     blame_from: Page,
+    /// マージエディタ（閉じたら Working Copy に戻る）。
+    merge: Option<crate::merge::State>,
     /// 途中の操作（`sequence` の答えの info）。なければ None。
     sequence: Option<Value>,
     /// ダイアログの入力の欄（Enter で既定のボタンを押す）と、開いた回数（開いた後にキーを付ける）。
@@ -124,6 +126,7 @@ enum Page {
     Stashes,
     FileHistory,
     Blame,
+    Merge,
 }
 
 /// 窓に重ねるダイアログ（macOS 版のシート、GTK4 版の `sheets`）。
@@ -197,6 +200,8 @@ enum Dialog {
         stash: String,
         name: String,
     },
+    /// 保存していない Result を捨てて、マージエディタを閉じてよいか。
+    CloseMerge,
     /// コンフリクトが残っているファイルを解決済みにしてよいか。
     MarkResolved { path: String, count: u64 },
     /// ブランチの名前を変える（GTK4 版の `refops::ask_rename_branch`）。
@@ -284,6 +289,11 @@ enum Message {
     WorkingFileMenu(String, String),
     /// 途中の操作を読んだ。
     Sequence(Option<Value>),
+    /// マージエディタを開く（パス）・読み終えた・ボタン・Result を書き換えた。
+    OpenMerge(String),
+    MergeLoaded(String, Result<Value, String>),
+    MergeButton(&'static str),
+    MergeResult(String),
     /// 解決済みにする前に、残っているコンフリクトを数えた（パス、数）。
     ConflictCounted(String, u64),
     /// Pull の取り込み元・Publish の送り先のリモートを選んだ。
@@ -367,6 +377,7 @@ impl Component for Root {
             blame: None,
             blame_from: Page::History,
             sequence: None,
+            merge: None,
             sidebar_request: 0,
             page: Page::History,
             repo: None,
@@ -697,6 +708,10 @@ impl Component for Root {
                             tr!("Create"),
                         );
                     }
+                }
+                (Some(Dialog::CloseMerge), ContentDialogResult::Primary) => {
+                    self.merge = None;
+                    self.page = Page::WorkingCopy;
                 }
                 (Some(Dialog::MarkResolved { path, .. }), ContentDialogResult::Primary) => {
                     self.update(Message::Stage(path, true), context);
@@ -1194,6 +1209,36 @@ impl Component for Root {
             Message::Invoked(key) if key == "page:history" => self.show_page(Page::History),
             Message::Invoked(key) if key == "page:stashes" => self.show_page(Page::Stashes),
             Message::Sequence(sequence) => self.sequence = sequence,
+            Message::OpenMerge(path) => {
+                let Some(repo) = self.repo.clone() else {
+                    return beep();
+                };
+                self.merge = Some(crate::merge::State::new(path.clone()));
+                self.page = Page::Merge;
+                context.spawn_background(move |_| {
+                    let command = json!({ "op": "mergeSides", "path": &path });
+                    let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
+                        .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+                    let info = match reply["error"].as_str() {
+                        Some(e) => Err(e.to_owned()),
+                        None => Ok(reply["info"].clone()),
+                    };
+                    Message::MergeLoaded(path, info)
+                });
+            }
+            Message::MergeLoaded(path, info) => {
+                if let Some(state) = self.merge.as_mut()
+                    && state.path == path
+                {
+                    state.load(info);
+                }
+            }
+            Message::MergeResult(text) => {
+                if let Some(state) = self.merge.as_mut() {
+                    state.edit(&text);
+                }
+            }
+            Message::MergeButton(key) => self.merge_button(key, context),
             Message::ConflictCounted(path, count) => {
                 if count == 0 {
                     self.update(Message::Stage(path, true), context);
@@ -1232,6 +1277,7 @@ impl Component for Root {
             Message::WorkingFileMenu(path, key) => match key.as_str() {
                 "history" => self.update(Message::OpenFileHistory(path), context),
                 "blame" => self.update(Message::OpenBlame(path, None), context),
+                "merge-editor" => self.update(Message::OpenMerge(path), context),
                 _ => self.update(Message::DiscardFile(path), context),
             },
             Message::OpenFileHistory(path) => {
@@ -1590,6 +1636,7 @@ impl Component for Root {
                 self.stashes_view(context),
                 self.file_history_view(context),
                 self.blame_view(context),
+                self.merge_view(context),
             ));
         // ダイアログの入力の欄: フォーカスを入れ、Enter で既定のボタン（ContentDialog は Enter を既定のボタンに
         // 回さない）。
@@ -1764,6 +1811,16 @@ impl Root {
                             .text(name.clone())
                             .on_text_changed(context.callback(Message::BranchName)),
                     )),
+                ),
+            Some(Dialog::CloseMerge) => dialog
+                .is_open(true)
+                .title(tr!("Close without saving?"))
+                .primary_button_text(tr!("Close"))
+                .close_button_text(tr!("Cancel"))
+                .content(
+                    TextBlock::new()
+                        .text(tr!("Your changes to Result are lost."))
+                        .text_wrapping(TextWrapping::Wrap),
                 ),
             Some(Dialog::MarkResolved { path, count }) => dialog
                 .is_open(true)
@@ -2661,6 +2718,84 @@ impl Root {
         Border::new()
             .background(Brush::Solid(Color::rgb(0xff, 0xff, 0xff)))
             .grid_column(1)
+            .content(view)
+    }
+
+    /// マージエディタのボタン（GTK4 版の `merge::Editor` の帯と同じ）。
+    fn merge_button(&mut self, key: &str, context: &ComponentContext<Self>) {
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+        let Some(state) = self.merge.as_mut() else {
+            return;
+        };
+        match key {
+            "accept-ours" => state.accept(amonhen_core::conflict::Choice::Ours),
+            "accept-theirs" => state.accept(amonhen_core::conflict::Choice::Theirs),
+            "accept-both" => state.accept(amonhen_core::conflict::Choice::Both),
+            "magic" => state.magic(),
+            "previous" => state.step(false),
+            "next" => state.step(true),
+            "save" => {
+                state.saved = state.result.clone();
+                let command = json!({
+                    "op": "saveMerge", "path": state.path, "text": state.result, "stage": false,
+                });
+                perform(context, repo, command, tr!("Save"));
+            }
+            "resolve" => {
+                let command = json!({
+                    "op": "saveMerge", "path": state.path, "text": state.result, "stage": true,
+                });
+                let count = state.conflicts();
+                if count == 0 {
+                    // 保存して解決済みにしたら閉じる。
+                    perform(context, repo, command, tr!("Save & Mark Resolved"));
+                    self.merge = None;
+                    self.page = Page::WorkingCopy;
+                } else {
+                    // コンフリクトが残っていれば確かめる（GTK4 版の `save_and_resolve`）。
+                    state.saved = state.result.clone();
+                    self.dialog = Some(Dialog::Confirm {
+                        repo,
+                        title: tr!(
+                            "Mark {path} as resolved with {count} conflicts left?",
+                            path = &state.path,
+                            count = count
+                        ),
+                        message: tr!("The conflict markers stay in the file."),
+                        button: tr!("Mark Resolved"),
+                        command,
+                    });
+                }
+            }
+            "close" => {
+                if state.dirty() {
+                    self.dialog = Some(Dialog::CloseMerge);
+                } else {
+                    self.merge = None;
+                    self.page = Page::WorkingCopy;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn merge_view(&self, context: &ViewContext<Self>) -> View {
+        let (Page::Merge, Some(state)) = (self.page, &self.merge) else {
+            return View::empty();
+        };
+        let view = crate::merge::view(
+            state,
+            crate::merge::Callbacks {
+                button: Box::new(|key| context.callback(move |()| Message::MergeButton(key))),
+                result: context.callback(Message::MergeResult),
+            },
+        );
+        Border::new()
+            .background(Brush::Solid(Color::rgb(0xff, 0xff, 0xff)))
+            .grid_column(1)
+            .grid_column_span(2)
             .content(view)
     }
 

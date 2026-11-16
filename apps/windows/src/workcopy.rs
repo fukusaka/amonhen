@@ -138,6 +138,7 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
         let mut items = Vec::new();
         // コンフリクトのファイル: 片側のファイルを取る・解決済みにする（GTK4 版の差分の上のボタンと同じ）。
         if entry.kind == StatusKind::Unmerged {
+            items.push(MenuItem::item("merge-editor", tr!("Merge Editor")));
             items.push(MenuItem::item("take-ours", tr!("Take Current File")));
             items.push(MenuItem::item("take-theirs", tr!("Take Incoming File")));
             items.push(MenuItem::item("resolved", tr!("Mark Resolved")));

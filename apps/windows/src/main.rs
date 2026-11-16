@@ -13,6 +13,7 @@ mod filehistory;
 mod listen;
 mod measure;
 mod menus;
+mod merge;
 mod render;
 mod sequence;
 mod sidebar;
