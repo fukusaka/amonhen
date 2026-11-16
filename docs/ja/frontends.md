@@ -110,7 +110,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
 | General: 開いたリポジトリをブックマークする | ✓ | ✓ | — | n/a | n/a |  |
 | General: 起動時に開き直す・既定はタブか窓か | — | — | — | n/a | n/a | macOS: いつも開き直し、切り替えはない。<br>GTK4: いつも開き直し、切り替えはない。 |
-| General: 自動で fetch | ✓ | ✓ | — | n/a | n/a | VSCode: VSCode の `git.autofetch` が代わり。 |
+| General: 自動で fetch | ✓ | ✓ | ✓ | n/a | n/a | VSCode: VSCode の `git.autofetch` が代わり。<br>Windows: Windows: 失敗はステータスバーに添える。 |
 | General: 外のエディター | ✓ | ✓ | — | n/a | n/a | GTK4: コードエディターは desktop のエントリーで macOS 版と同じ順に探す。なければテキストエディター（オフィスのアプリは選ばない）。Other… ではプログラムを選ぶ。 |
 | General: 端末と diff のツール | — | — | — | n/a | n/a |  |
 | Git: 機械全体のページ（Author and Signing・Commits・Operations・Working Copy・Keys and Values） | ✓ | ✓ | △ | — | △ | CLI: `amonhen run` から。<br>Windows: すべてのリポジトリの名前とメールだけ。 |

@@ -10,13 +10,20 @@ pub struct State {
     pub git: Option<[(String, String); 2]>,
     pub auto_magic_merge: bool,
     pub file_history_merges: bool,
+    /// 自動の fetch の間隔（分。0 はしない）。
+    pub auto_fetch: u32,
 }
+
+/// 自動の fetch の間隔の選べる値（GTK4 版・macOS 版と同じ）。
+pub const AUTO_FETCH_CHOICES: [u32; 5] = [0, 5, 15, 30, 60];
 
 pub struct Callbacks<'a> {
     pub field: Box<dyn Fn(usize) -> Callback<String> + 'a>,
     pub save_git: Callback<()>,
     pub toggle: Box<dyn Fn(&'static str) -> Callback<bool> + 'a>,
     pub close: Callback<()>,
+    /// 自動の fetch の間隔を選んだ（`AUTO_FETCH_CHOICES` の番号）。
+    pub auto_fetch: Callback<Option<usize>>,
 }
 
 fn heading(text: String) -> TextBlock {
@@ -80,6 +87,35 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
             .horizontal_alignment(HorizontalAlignment::Left)
             .margin(Thickness::new(24.0, 0.0, 24.0, 24.0))
             .children((
+                heading(tr!("General")),
+                StackPanel::new()
+                    .orientation(Orientation::Horizontal)
+                    .spacing(12.0)
+                    .children((
+                        TextBlock::new()
+                            .text(tr!("Fetch automatically"))
+                            .vertical_alignment(VerticalAlignment::Center),
+                        ComboBox::new()
+                            .items_source(
+                                AUTO_FETCH_CHOICES
+                                    .iter()
+                                    .map(|&m| {
+                                        if m == 0 {
+                                            tr!("Never")
+                                        } else {
+                                            tr!("Every {count} minutes", count = m)
+                                        }
+                                    })
+                                    .collect::<Vec<_>>(),
+                            )
+                            .selected_index(
+                                AUTO_FETCH_CHOICES
+                                    .iter()
+                                    .position(|&m| m == state.auto_fetch)
+                                    .unwrap_or(0),
+                            )
+                            .on_selection_changed(callbacks.auto_fetch),
+                    )),
                 heading("Git".to_owned()),
                 git,
                 heading(tr!("Diff & Merge")),

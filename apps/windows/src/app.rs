@@ -38,6 +38,9 @@ thread_local! {
     static SIDEBAR_ELEMENT: RefCell<Option<xaml::UIElement>> = const { RefCell::new(None) };
     /// Activity を開いている間、読み直しを頼んだ最後の時刻（0.5 秒ごとに頼む）。
     static ACTIVITY_TICK: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
+    /// 自動の fetch の間隔（分。0 はしない）と、最後に数え始めた時。
+    static AUTO_FETCH: std::cell::Cell<(u32, Instant)> =
+        std::cell::Cell::new((crate::prefs::auto_fetch_minutes(), Instant::now()));
     /// サイドバーのメニューを付けておく、押されない空の Grid。
     static SIDEBAR_MENU_HOST: RefCell<Option<xaml::UIElement>> = const { RefCell::new(None) };
     static SIDEBAR_AT: RefCell<Option<(xaml::UIElement, Option<xaml::Point>)>> =
@@ -121,6 +124,8 @@ struct Root {
     form: sidebar::RepositoryForm,
     /// サイドバーの絞り込み（Branches・Remotes・Tags）。
     sidebar_filter: String,
+    /// ステータスバーに添える知らせ（自動の fetch の失敗など）。
+    status_note: Option<String>,
     /// Working Copy のパスの絞り込み。
     working_filter: String,
     /// Working Copy の木で畳んでいるディレクトリ。
@@ -524,6 +529,12 @@ enum Message {
     ActivityUndoLog(Vec<Value>),
     ActivityUndo(usize),
     ActivityTick,
+    /// 自動の fetch の間隔を選んだ（Settings）。
+    SettingsAutoFetch(Option<usize>),
+    /// 自動の fetch の時が来た。
+    AutoFetch,
+    /// 自動の fetch が終わった（失敗なら理由）。
+    AutoFetched(Option<String>),
     /// Activity の Operations の記録を JSON に書き出す。
     ActivityExport,
     /// Activity の History のキャッシュを読んだ（リポジトリの名前と `historyCache` の info）。
@@ -648,6 +659,7 @@ impl Component for Root {
             stash: None,
             worktrees: Vec::new(),
             working_filter: String::new(),
+            status_note: None,
             sidebar_filter: String::new(),
             form: Default::default(),
             working_layout: crate::workcopy::Layout::from_name(
@@ -1098,6 +1110,7 @@ impl Component for Root {
                     git: None,
                     auto_magic_merge: crate::prefs::bool(crate::prefs::AUTO_MAGIC_MERGE),
                     file_history_merges: crate::prefs::bool(crate::prefs::FILE_HISTORY_MERGES),
+                    auto_fetch: crate::prefs::auto_fetch_minutes(),
                 });
                 self.page = Page::Settings;
                 // `--global` の段の値（いくつもあれば最後のもの。git と同じ）。
@@ -3236,6 +3249,50 @@ impl Component for Root {
                     })
                     .collect();
                 perform_all(context, repo, commands, tr!("Save"));
+            }
+            Message::SettingsAutoFetch(Some(index)) => {
+                let minutes = crate::settingsview::AUTO_FETCH_CHOICES
+                    .get(index)
+                    .copied()
+                    .unwrap_or(0);
+                if self.settings.as_ref().map(|s| s.auto_fetch) == Some(minutes) {
+                    return;
+                }
+                if let Err(e) =
+                    crate::prefs::set_string(crate::prefs::AUTO_FETCH_MINUTES, &minutes.to_string())
+                {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("Save"),
+                        message: e,
+                    });
+                }
+                if let Some(state) = self.settings.as_mut() {
+                    state.auto_fetch = minutes;
+                }
+                // 間隔を変えたら、そこから数え直す（GTK4 版・macOS 版と同じ）。
+                AUTO_FETCH.with(|a| a.set((minutes, Instant::now())));
+            }
+            Message::SettingsAutoFetch(None) => {}
+            Message::AutoFetch => {
+                // 聞かずにすべてのリモートから（GTK4 版と同じ）。ほかの操作の最中なら見送る。
+                if let (Some(repo), None) = (self.repo.clone(), &self.busy) {
+                    context.spawn_background(move |_| {
+                        let reply: Value =
+                            serde_json::from_str(&repo.run_json(r#"{"op":"fetch"}"#))
+                                .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+                        Message::AutoFetched(reply["error"].as_str().map(str::to_owned))
+                    });
+                }
+            }
+            Message::AutoFetched(error) => {
+                // 失敗はステータスバーに（次に成功するまで。GTK4 版はステータスバーの失敗の知らせ）。
+                self.status_note = error.map(|e| {
+                    format!(
+                        "{}: {}",
+                        tr!("Couldn’t Fetch Automatically"),
+                        e.lines().next().unwrap_or_default()
+                    )
+                });
             }
             Message::SettingsToggle(key, value) => {
                 if let Err(e) = crate::prefs::set_bool(key, value) {
@@ -5778,7 +5835,7 @@ impl Root {
 
     /// 窓の下のステータスバー: 走っている操作（なければ今のブランチ）。
     fn status_bar(&self) -> View {
-        let text = match &self.busy {
+        let mut text = match &self.busy {
             Some(busy) => busy.clone(),
             None => self
                 .refs
@@ -5786,6 +5843,9 @@ impl Root {
                 .and_then(|r| r.refs.head_branch.clone())
                 .unwrap_or_default(),
         };
+        if let Some(note) = &self.status_note {
+            text.push_str(&format!("  ·  {note}"));
+        }
         TextBlock::new()
             .text(text)
             .font_size(12.0)
@@ -6059,6 +6119,7 @@ impl Root {
                 save_git: context.callback(|()| Message::SettingsSaveGit),
                 toggle: Box::new(|key| context.callback(move |v| Message::SettingsToggle(key, v))),
                 close: context.callback(|()| Message::CloseSettings),
+                auto_fetch: context.callback(Message::SettingsAutoFetch),
             },
         );
         Border::new()
@@ -7631,6 +7692,13 @@ impl HistoryView {
         }
         if std::mem::take(&mut self.sidebar_menu_ready) {
             open_sidebar_menu();
+        }
+        // 自動の fetch（Settings > General で決めた間隔）。
+        let (minutes, since) = AUTO_FETCH.with(|a| a.get());
+        if minutes > 0 && since.elapsed() >= std::time::Duration::from_secs(u64::from(minutes) * 60)
+        {
+            AUTO_FETCH.with(|a| a.set((minutes, Instant::now())));
+            self.sender.send(Message::AutoFetch);
         }
         // Activity を開いている間は 0.5 秒ごとに読み直してもらう（GTK4 版と同じ間隔）。
         if let Some(last) = ACTIVITY_TICK.with(|t| t.get())

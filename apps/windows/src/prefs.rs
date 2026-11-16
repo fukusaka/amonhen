@@ -8,6 +8,8 @@ use serde_json::{Map, Value};
 
 /// マージエディタを開いたときに、間違えようのないコンフリクトを解く（既定は解く）。
 pub const AUTO_MAGIC_MERGE: &str = "autoMagicMerge";
+/// 自動の fetch の間隔（分。0 はしない。GTK4 版・macOS 版と同じ鍵）。
+pub const AUTO_FETCH_MINUTES: &str = "autoFetchMinutes";
 /// Working Copy の一覧の見せ方（`list`・`tree`・`flat`）。
 pub const WORKING_COPY_LAYOUT: &str = "workingCopyLayout";
 /// File History に merge コミットも出す（既定は出さない）。
@@ -90,4 +92,11 @@ pub fn draft_key(workdir: &std::path::Path) -> String {
         .map(|b| format!("{b:02x}"))
         .collect();
     format!("commitDraft.{hex}")
+}
+
+/// 自動の fetch の間隔（分。0 はしない）。
+pub fn auto_fetch_minutes() -> u32 {
+    string(AUTO_FETCH_MINUTES)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0)
 }
