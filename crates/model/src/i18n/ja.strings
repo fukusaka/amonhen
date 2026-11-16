@@ -1559,9 +1559,9 @@
 "The amonhen on the host’s PATH" = "SSH 先の PATH の amonhen";
 "The one Amon Hen sends" = "Amon Hen が送り込むもの";
 "Uses the amonhen installed on the host. It must be this build." = "SSH 先に入っている amonhen を使います。このビルドのものである必要があります。";
-"Uses the one Amon Hen sent to the host, sending it first when there is none." = "Amon Hen が SSH 先に送ったものを使います。なければ先に送ります。";
+"Uses the one Amon Hen sent to the host, sending one when there is none (whether to ask first is chosen below)." = "Amon Hen が SSH 先に送ったものを使います。なければ送ります（送る前に聞くかは下で選びます）。";
 "Uses this path on the host." = "SSH 先のこのパスのものを使います。";
-"The amonhen on the host’s PATH if it is this build, else one sent earlier, else Amon Hen sends one." = "SSH 先の PATH の amonhen がこのビルドならそれ、なければ前に送ったもの、それもなければ送り込みます。";
+"The amonhen on the host’s PATH if it is this build, else one sent earlier, else the one Amon Hen sends." = "SSH 先の PATH の amonhen がこのビルドならそれ、なければ前に送ったもの、それもなければ Amon Hen が送るもの。";
 "Engine to use" = "使うエンジン";
 "When none fits" = "合うものがないとき";
 "Ask before sending one" = "送る前に聞く";

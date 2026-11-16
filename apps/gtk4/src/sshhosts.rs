@@ -1452,11 +1452,13 @@ fn engine_choice(session: &Rc<HostSession>) -> Vec<gtk::Widget> {
     let help = match options.engine.as_deref() {
         Some("installed") => tr!("Uses the amonhen installed on the host. It must be this build."),
         Some("sent") => {
-            tr!("Uses the one Amon Hen sent to the host, sending it first when there is none.")
+            tr!(
+                "Uses the one Amon Hen sent to the host, sending one when there is none (whether to ask first is chosen below)."
+            )
         }
         Some(p) if is_engine_path(p) => tr!("Uses this path on the host."),
         _ => tr!(
-            "The amonhen on the host’s PATH if it is this build, else one sent earlier, else Amon Hen sends one."
+            "The amonhen on the host’s PATH if it is this build, else one sent earlier, else the one Amon Hen sends."
         ),
     };
     // 合うものがないとき: 送る前に聞く（既定）・聞かずに送る・送らない。

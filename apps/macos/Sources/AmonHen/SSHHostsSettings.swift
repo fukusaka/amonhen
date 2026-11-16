@@ -450,9 +450,9 @@ private struct EngineChoice: View {
     private var help: String {
         switch options.engine {
         case "installed": L("Uses the amonhen installed on the host. It must be this build.")
-        case "sent": L("Uses the one Amon Hen sent to the host, sending it first when there is none.")
+        case "sent": L("Uses the one Amon Hen sent to the host, sending one when there is none (whether to ask first is chosen below).")
         case let path? where HostPath.isAbsolute(path): L("Uses this path on the host.")
-        default: L("The amonhen on the host’s PATH if it is this build, else one sent earlier, else Amon Hen sends one.")
+        default: L("The amonhen on the host’s PATH if it is this build, else one sent earlier, else the one Amon Hen sends.")
         }
     }
 
