@@ -105,6 +105,9 @@ struct Root {
     working_file: Option<String>,
     /// 走っている操作（ステータスバーに出す）。
     busy: Option<String>,
+    /// Reflog の画面の行（読むまでは None）と、選んでいる行。
+    reflog: Option<Vec<crate::reflog::Entry>>,
+    reflog_selected: Option<usize>,
     /// Stashes の画面で選んでいる stash の名前。
     stash: Option<String>,
     /// File History の画面（パス、読んだコミット、選んでいる行）。
@@ -141,6 +144,7 @@ enum Page {
     Settings,
     Activity,
     RepoSettings,
+    Reflog,
 }
 
 /// 窓に重ねるダイアログ（macOS 版のシート、GTK4 版の `sheets`）。
@@ -294,6 +298,9 @@ enum Message {
     OpenHistoryMenu,
     /// サイドバーの項目を右クリックした（項目のキー）。
     SidebarMenu(String),
+    /// Reflog を読んだ・一覧で選んだ。
+    ReflogLoaded(Vec<crate::reflog::Entry>),
+    ReflogSelected(Option<usize>),
     /// Stashes の一覧で選んだ行。
     StashSelected(Option<usize>),
     /// File History を開く（パス）・読み終えた・一覧で選んだ・閉じる。
@@ -414,6 +421,8 @@ impl Component for Root {
             sidebar_menu_host: ElementRef::new(),
             sidebar_key: None,
             stash: None,
+            reflog: None,
+            reflog_selected: None,
             file_history: None,
             blame: None,
             blame_from: Page::History,
@@ -456,6 +465,10 @@ impl Component for Root {
                     let reply = serde_json::from_str(&reply).unwrap_or_default();
                     Message::Groups(BranchGroups::from_reply(&reply))
                 });
+                // Reflog を出していれば読み直す（HEAD が動くと ref も変わる）。
+                if self.page == Page::Reflog {
+                    self.load_reflog(context);
+                }
             }
             Message::Groups(groups) => {
                 if groups.is_some() {
@@ -1329,6 +1342,12 @@ impl Component for Root {
                     && let Some(op) = op.strip_prefix("stash-")
                 {
                     self.stash_action(op, name.to_owned());
+                } else if let Some(oid) = key.strip_prefix("show:")
+                    && let Some(id) = amonhen_model::Oid::from_hex(oid)
+                {
+                    // History に戻ってそのコミットを選ぶ（Reflog から）。
+                    self.show_page(Page::History);
+                    with_history(|h| h.select_commit(&id));
                 } else if let Some(rev) = key.strip_prefix("merge:") {
                     self.integrate(rev.to_owned(), false);
                 } else if let Some(rev) = key.strip_prefix("rebase:") {
@@ -1346,6 +1365,36 @@ impl Component for Root {
             }
             Message::Invoked(key) if key == "page:history" => self.show_page(Page::History),
             Message::Invoked(key) if key == "page:stashes" => self.show_page(Page::Stashes),
+            Message::Invoked(key) if key == "page:reflog" => {
+                self.show_page(Page::Reflog);
+                self.load_reflog(context);
+            }
+            Message::ReflogLoaded(entries) => {
+                // 選んでいた行は、同じ動きを選び直す（なければ先頭。GTK4 版の `show`）。
+                let previous = self
+                    .reflog_selected
+                    .and_then(|i| self.reflog.as_ref()?.get(i).cloned());
+                let row = previous
+                    .and_then(|p| {
+                        entries.iter().position(|e| {
+                            e.new == p.new && e.time == p.time && e.message == p.message
+                        })
+                    })
+                    .or((!entries.is_empty()).then_some(0));
+                self.reflog = Some(entries);
+                self.update(Message::ReflogSelected(row), context);
+            }
+            Message::ReflogSelected(index) => {
+                self.reflog_selected = index;
+                let id = index
+                    .and_then(|i| self.reflog.as_ref()?.get(i))
+                    .and_then(|e| amonhen_model::Oid::from_hex(&e.new));
+                if let Some(id) = id
+                    && self.page == Page::Reflog
+                {
+                    with_history(|h| h.session.data.want_commit_id(id));
+                }
+            }
             Message::Sequence(sequence) => self.sequence = sequence,
             Message::OpenMerge(path) => {
                 let Some(repo) = self.repo.clone() else {
@@ -1714,7 +1763,10 @@ impl Component for Root {
             }
             Message::Invoked(key) => {
                 // Stashes・File History の画面からは History に戻ってそのコミットへ。
-                if matches!(self.page, Page::Stashes | Page::FileHistory | Page::Blame) {
+                if matches!(
+                    self.page,
+                    Page::Stashes | Page::FileHistory | Page::Blame | Page::Reflog
+                ) {
                     self.show_page(Page::History);
                 }
                 if let Some(entry) = self.entry(&key)
@@ -1953,6 +2005,7 @@ impl Component for Root {
                 // いて、外すと止まる）。
                 self.working_copy_view(context),
                 self.stashes_view(context),
+                self.reflog_view(context),
                 self.file_history_view(context),
                 self.blame_view(context),
                 self.merge_view(context),
@@ -3073,7 +3126,10 @@ impl Root {
                 if let Some(target) = stash {
                     h.session.data.want_stash(target);
                 }
-            } else if matches!(from, Page::Stashes | Page::FileHistory | Page::Blame) {
+            } else if matches!(
+                from,
+                Page::Stashes | Page::FileHistory | Page::Blame | Page::Reflog
+            ) {
                 // History で選んでいるコミットを読み直す。
                 h.reload_selected();
             }
@@ -3320,6 +3376,41 @@ impl Root {
             untracked,
         });
         self.dialog_inputs += 1;
+    }
+
+    /// HEAD の reflog を裏で読む（GTK4 版と同じく 500 行まで）。
+    fn load_reflog(&self, context: &ComponentContext<Self>) {
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+        context.spawn_background(move |_| {
+            let reply: Value =
+                serde_json::from_str(&repo.run_json(r#"{"op":"reflog","limit":500}"#))
+                    .unwrap_or_default();
+            Message::ReflogLoaded(crate::reflog::entries_of(&reply["info"]))
+        });
+    }
+
+    fn reflog_view(&self, context: &ViewContext<Self>) -> View {
+        let (Page::Reflog, Some(entries)) = (self.page, &self.reflog) else {
+            return View::empty();
+        };
+        let view = crate::reflog::view(
+            entries,
+            self.reflog_selected,
+            &self.head_name(),
+            crate::reflog::Callbacks {
+                selected: context.callback(Message::ReflogSelected),
+                menu: Box::new(|| context.callback(Message::HistoryMenu)),
+                button: Box::new(|key: String| {
+                    context.callback(move |()| Message::HistoryMenu(key.clone()))
+                }),
+            },
+        );
+        Border::new()
+            .background(Brush::Solid(Color::rgb(0xff, 0xff, 0xff)))
+            .grid_column(1)
+            .content(view)
     }
 
     /// stash の一覧（新しい順）。

@@ -89,6 +89,8 @@ pub fn nodes(refs: Option<&Refs>, groups: Option<&BranchGroups>) -> Vec<TreeNode
     if stashes > 0 {
         workspace.push(TreeNode::new("page:stashes", format!("Stashes  {stashes}")));
     }
+    // いつも Workspace の最後に出す（GTK4 版と同じ）。
+    workspace.push(TreeNode::new("page:reflog", "Reflog"));
     let mut out = vec![group("workspace", "Workspace", workspace).expanded(true)];
 
     let locals: Vec<&RefEntry> = of(RefKind::Local).collect();

@@ -38,7 +38,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
-| Workspace の行でメインの表示を切り替える（Working Copy・History・Stashes・Reflog…） | ✓ | ✓ | △ | ✓ | n/a | VSCode: Working Copy・History・Stashes と（エンジンがあれば）Reflog。Conflicts はコンフリクトがあるときだけで、押すと最初のファイルをマージエディタで開く。<br>Windows: Working Copy・History・Stashes。 |
+| Workspace の行でメインの表示を切り替える（Working Copy・History・Stashes・Reflog…） | ✓ | ✓ | △ | ✓ | n/a | VSCode: Working Copy・History・Stashes と（エンジンがあれば）Reflog。Conflicts はコンフリクトがあるときだけで、押すと最初のファイルをマージエディタで開く。<br>Windows: Working Copy・History・Stashes・Reflog。 |
 | コンフリクトがあるあいだ Conflicts の行と数 | ✓ | ✓ | — | ✓ | n/a | VSCode: Working Copy の中の Conflicts のグループ。 |
 | stash があるときだけ Stashes の行と数 | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: Stashes の節。 |
 | Range Diff を開いているあいだの Range Diff の行 | ✓ | ✓ | — | ✓ | n/a |  |
@@ -198,8 +198,8 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
-| 「どのブランチにもない」の付いた Reflog の表示 | ✓ | ✓ | — | ✓ | △ | VSCode: エンジンがあるときだけ。<br>CLI: `amonhen run` から。 |
-| Reflog の操作（New Branch・Checkout・New Tag・Reset・Show in History・Copy） | ✓ | ✓ | — | ✓ | △ | CLI: `amonhen run` から。 |
+| 「どのブランチにもない」の付いた Reflog の表示 | ✓ | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるときだけ。<br>CLI: `amonhen run` から。 |
+| Reflog の操作（New Branch・Checkout・New Tag・Reset・Show in History・Copy） | ✓ | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 
 ## 5c. Reset
 

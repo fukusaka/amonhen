@@ -16,6 +16,7 @@ mod measure;
 mod menus;
 mod merge;
 mod prefs;
+mod reflog;
 mod render;
 mod reposettings;
 mod sequence;

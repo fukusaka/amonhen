@@ -705,6 +705,16 @@ impl Data {
     /// stash `id` の詳細と中身（`stash_changes`: 作業ツリーと index の変更、untracked のファイル）を裏で読む
     /// （Stashes の画面。History の行ではないので、複数選んだときと同じ鍵を使う）。
     pub fn want_stash(&mut self, id: amonhen_model::Oid) {
+        self.want_oid(id, true);
+    }
+
+    /// History の行ではないコミット `id` の詳細と差分を裏で読む（Reflog。どのブランチにもないコミットもある）。
+    pub fn want_commit_id(&mut self, id: amonhen_model::Oid) {
+        self.want_oid(id, false);
+    }
+
+    /// `want_stash`・`want_commit_id` の中身（`stash` なら stash の中身、でなければコミットの変更）。
+    fn want_oid(&mut self, id: amonhen_model::Oid, stash: bool) {
         let (Some(repo), Some(history)) = (self.repo.clone(), self.history.clone()) else {
             return;
         };
@@ -717,7 +727,12 @@ impl Data {
         std::thread::spawn(move || {
             let load = || -> Result<CommitShown, String> {
                 let info = repo.commit_info(&id).map_err(|e| e.to_string())?;
-                let changes = repo.stash_changes(&id).map_err(|e| e.to_string())?;
+                let changes = if stash {
+                    repo.stash_changes(&id)
+                } else {
+                    repo.commit_changes(&id)
+                }
+                .map_err(|e| e.to_string())?;
                 let stacked = repo.stacked_diff(&changes).map_err(|e| e.to_string())?;
                 Ok(CommitShown::new(key, info, Arc::new(stacked)))
             };
