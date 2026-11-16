@@ -11,7 +11,8 @@ becomes the GitHub Release notes.
 
 #### Changed
 
-- The History search field's ▾ menu can put in `commit:` to search by commit ID.
+- History search: `author:` also matches the email, `committer:` searches by committer and `message:` searches the whole
+  message (it used to be another name for `subject:`). The search field's ▾ menu puts in these and `commit:`, `subject:`.
 - Pushing a tag and a remote's Prune ask first, like every other operation that talks to a remote.
 - macOS: buttons for what can't be undone are red with white text (Force Push's included), instead of dark red text.
 - The submodule, subtree and New Worktree sheets label their fields on the left and enable their button once the
@@ -1155,6 +1156,13 @@ First release.
 - Repositories on SSH hosts through a daemon on the host.
 
 ## VSCode extension
+
+### Unreleased
+
+#### Changed
+
+- History search with the engine: `author:` also matches the email, `committer:` searches by committer and `message:`
+  searches the whole message.
 
 ### [0.2.7] - 2026-11-13
 

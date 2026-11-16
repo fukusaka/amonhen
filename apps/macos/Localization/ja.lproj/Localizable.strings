@@ -935,7 +935,10 @@
 "Search History" = "History を検索";
 "Search" = "検索";
 "Search by Author (author:)" = "作者で探す（author:）";
+"Search by Committer (committer:)" = "コミッターで探す（committer:）";
 "Search by Commit ID (commit:)" = "コミットの ID で探す（commit:）";
+"Search by Subject (subject:)" = "件名で探す（subject:）";
+"Search by Message (message:)" = "メッセージで探す（message:）";
 "Search by Path (path:)" = "パスで探す（path:）";
 "Search by Contents (contents:)" = "内容で探す（contents:）";
 "Committed After (after:)" = "この日時より後（after:）";
@@ -1026,7 +1029,7 @@
 /* HistoryViewController.swift */
 "Message" = "メッセージ";
 "Search (author:, path:, contents: also work)" = "検索（author: path: contents: も使える）";
-"Words match the subject, author and ID. Spaces mean AND, “or” means OR, and parentheses group.\nauthor:name  subject:text  commit:ID  path:path  contents:\"diff text\"\nExample: path:fs/ (author:linus or author:greg)" = "語は件名・作者・ID から探す。空白で区切ると AND、or で OR、括弧でまとめる。\nauthor:名前  subject:件名  commit:ID  path:パス  contents:\"差分の文字列\"\n例: path:fs/ (author:linus or author:greg)";
+"Words match the subject, author and ID. Spaces mean AND, “or” means OR, and parentheses group.\nauthor:name  committer:name  subject:text  message:text  commit:ID  path:path  contents:\"diff text\"\nExample: path:fs/ (author:linus or author:greg)" = "語は件名・作者・ID から探す。空白で区切ると AND、or で OR、括弧でまとめる。\nauthor:名前  committer:名前  subject:件名  message:メッセージ  commit:ID  path:パス  contents:\"差分の文字列\"\n例: path:fs/ (author:linus or author:greg)";
 "Previous Match (⇧↩, ⌘⇧G)" = "前の一致（⇧↩・⌘⇧G）";
 "Next Match (↩, ⌘G)" = "次の一致（↩・⌘G）";
 "Show Only Matching Commits" = "一致したコミットだけを出す";

@@ -456,7 +456,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         scopePopup.controlSize = .small
         updateScopePopup()
         searchField.placeholderString = L("Search (author:, path:, contents: also work)")
-        searchField.toolTip = L("Words match the subject, author and ID. Spaces mean AND, “or” means OR, and parentheses group.\nauthor:name  subject:text  commit:ID  path:path  contents:\"diff text\"\nExample: path:fs/ (author:linus or author:greg)")
+        searchField.toolTip = L("Words match the subject, author and ID. Spaces mean AND, “or” means OR, and parentheses group.\nauthor:name  committer:name  subject:text  message:text  commit:ID  path:path  contents:\"diff text\"\nExample: path:fs/ (author:linus or author:greg)")
         searchField.controlSize = .small
         searchField.sendsWholeSearchString = true
         searchField.delegate = self

@@ -328,7 +328,7 @@ SSH 先のリポジトリでは、「すべてのリポジトリ」は SSH 先�
 | 状態 | Activity | 実行中の操作の数とスピナー。押すと Activity | — |
 | | Refresh | History・ブランチ・Working Copy を読み直す（⌘R） | History を作り直す（History のキャッシュを捨てて作り直す。共有の daemon 越しなら daemon の分も） |
 | | Undo | 操作の名前と何を戻すか（HEAD とブランチ・ファイル・stash・ブランチの名前）を見せて確かめてから戻す。消したブランチは設定（上流・アーカイブ・お気に入り）ごと戻る | —（操作ログは Activity） |
-| 検索 | 検索欄（`NSSearchToolbarItem`） | History を検索（編集 > History を検索…、⌘⇧F） | 書き方を入れる: 作者で探す（`author:`）、コミットの ID で探す（`commit:`）、パスで探す（`path:`）、内容で探す（`contents:`、pickaxe）、この日時より後（`after:`）、この日時より前（`before:`） |
+| 検索 | 検索欄（`NSSearchToolbarItem`） | History を検索（編集 > History を検索…、⌘⇧F） | 書き方を入れる: 作者で探す（`author:`）、コミッターで探す（`committer:`）、コミットの ID で探す（`commit:`）、件名で探す（`subject:`）、メッセージで探す（`message:`）、パスで探す（`path:`）、内容で探す（`contents:`、pickaxe）、この日時より後（`after:`）、この日時より前（`before:`） |
 
 - 今のブランチに上流がない（そのリモートブランチが消えた）ときは、Push を Publish と見せ（ツールバー・Repository メニュー・Commit and Publish）、送り先のリモートを `branch.<name>.pushRemote`・`remote.pushDefault`・リモートが 1 つならそれ・origin の順で選んだ状態から選ばせ、そこでの名前も決めさせる。送ったものが上流になる。そのリモートブランチがもうあれば、そう伝えて代わりにそれを上流にする（ブランチにないコミットがあれば、先に Pull するよう伝える）。
 - チェックアウトしていないローカルブランチは、右クリックで上流と合わせる（最後の Fetch の時点）: 上流より後ろにだけあれば Fast-Forward（checkout せずに進め、Undo に記録する。ほかの worktree でチェックアウト中のものは除き、その worktree を開く項目を出す）、先にだけあれば Push、上流がなければ Publish。分かれていれば checkout して merge か rebase をする。Fetch がひとりでにブランチを進めることはしない。
