@@ -1,10 +1,12 @@
-//! Windows の FE の試作（`docs/design.md` の 19）。History を Direct2D / DirectWrite で描き、ウィンドウの作り方
-//! （素の Win32 と、WinUI 3 の SwapChainPanel）で、起動の速さと画面に出るまでの遅れを比べる。
+//! Windows の FE（`docs/design.md` の 19）。窓と部品は WinUI 3（windows-reactor、`app.rs`）、History は
+//! Direct2D / DirectWrite で描く。`--host win32|winui` は、窓の作りを比べた試作（起動の速さと画面に出るまでの
+//! 遅れを測る）。
 //!
-//! `amonhen-win <repo> [--host win32|winui] [--measure-scroll [--scroll-rows <n>] | --measure-input <n>]
+//! `amonhen-win <repo> [--host app|win32|winui] [--measure-scroll [--scroll-rows <n>] | --measure-input <n>]
 //! [--draw-on-input] [--raw-input] [--child-hwnd] [--keep-presenting] [--no-waitable] [--sync <n>]
 //! [--tearing] [--profile] [--out <file>]`、`amonhen-win --listen <file>`（実のマウスの基準、`listen.rs`）
 
+mod app;
 mod data;
 mod listen;
 mod measure;
@@ -41,7 +43,7 @@ fn parse() -> Result<Args, String> {
     let mut args = std::env::args().skip(1);
     let mut parsed = Args {
         repo: PathBuf::from("."),
-        host: "win32".into(),
+        host: "app".into(),
         measure: None,
         measure_input: None,
         draw_on_input: false,
@@ -109,6 +111,7 @@ fn main() {
         }
     };
     let result = match args.host.as_str() {
+        "app" => app::run(args, started),
         "win32" => win32::run(args, started),
         "winui" => winui::run(args, started),
         other => Err(format!("知らない --host: {other}")),
@@ -135,6 +138,8 @@ pub struct Session {
     pub surface: Option<Surface>,
     pub scale: f32,
     scroll_y: f32,
+    /// 選んだ行。
+    pub selected: Option<u32>,
     dirty: bool,
     measure: Option<Measure>,
     input: Option<InputLatency>,
@@ -160,6 +165,7 @@ impl Session {
             surface: None,
             scale: 1.0,
             scroll_y: 0.0,
+            selected: None,
             dirty: true,
             measure: args.measure.map(Measure::new),
             input: args.measure_input.map(InputLatency::new),
@@ -222,6 +228,43 @@ impl Session {
     pub fn scroll_to(&mut self, y: f32) {
         self.scroll_y = y.clamp(0.0, self.max_scroll());
         self.dirty = true;
+    }
+
+    /// 窓の中の高さ `y`（DIP）にある行。
+    pub fn row_at(&self, y: f32) -> Option<u32> {
+        let row = ((self.scroll_y + y) / ROW_HEIGHT).floor();
+        (row >= 0.0 && (row as u32) < self.data.row_count()).then_some(row as u32)
+    }
+
+    /// 行を選び、見える所までスクロールする。
+    pub fn select(&mut self, row: u32) {
+        let row = row.min(self.data.row_count().saturating_sub(1));
+        self.selected = Some(row);
+        let top = row as f32 * ROW_HEIGHT;
+        if top < self.scroll_y {
+            self.scroll_to(top);
+        } else if top + ROW_HEIGHT > self.scroll_y + self.height() {
+            self.scroll_to(top + ROW_HEIGHT - self.height());
+        }
+        self.dirty = true;
+    }
+
+    /// 選んだ行を `delta` 行動かす（何も選んでいなければ先頭）。
+    pub fn move_selection(&mut self, delta: i64) {
+        let count = self.data.row_count();
+        if count == 0 {
+            return;
+        }
+        let row = match self.selected {
+            Some(row) => (row as i64 + delta).clamp(0, count as i64 - 1) as u32,
+            None => 0,
+        };
+        self.select(row);
+    }
+
+    /// 1 画面分の行の数。
+    pub fn page_rows(&self) -> i64 {
+        ((self.height() / ROW_HEIGHT) as i64 - 1).max(1)
     }
 
     pub fn page(&self) -> f32 {
@@ -293,7 +336,13 @@ impl Session {
         };
         let surface = self.surface.as_mut().expect("surface");
         self.renderer
-            .draw(surface, &mut self.data, self.scroll_y, self.scale)
+            .draw(
+                surface,
+                &mut self.data,
+                self.scroll_y,
+                self.scale,
+                self.selected,
+            )
             .map_err(|e| format!("描けない: {e}"))?;
         surface.present().map_err(|e| format!("出せない: {e}"))?;
         if let Some(input) = &mut self.input {

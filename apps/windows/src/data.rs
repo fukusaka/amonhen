@@ -10,8 +10,9 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 use amonhen_backend_gix::GixBackend;
-use amonhen_core::{HistorySnapshot, Repository};
+use amonhen_core::{HistorySnapshot, RefsSnapshot, Repository};
 use amonhen_layout::StrRef;
+use amonhen_model::{RefKind, Refs};
 use amonhen_projection::{ColumnSet, FrontendProfile, HistoryChunk, StringEncoding};
 
 pub const CHUNK_ROWS: u32 = 256;
@@ -65,14 +66,30 @@ impl Chunk {
     }
 }
 
+/// History の行に付ける ref の名前（ブランチ・リモートブランチ・タグ）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RefLabel {
+    pub name: String,
+    pub kind: RefKind,
+    /// チェックアウト中のブランチ。
+    pub head: bool,
+}
+
+/// 行ごとのラベル。行の番号は `generation` の History のもの。
+pub type Labels = HashMap<u32, Vec<RefLabel>>;
+
 enum Event {
     History(Arc<Repository>, Arc<HistorySnapshot>),
+    Refs(u64, Arc<RefsSnapshot>, Labels),
     Chunk(u64, u32, Chunk),
     Failed(String),
 }
 
 pub struct Data {
     pub history: Option<Arc<HistorySnapshot>>,
+    pub refs: Option<Arc<RefsSnapshot>>,
+    /// 今の History の行の、ref のラベル。
+    pub labels: Labels,
     pub chunks: HashMap<u32, Rc<Chunk>>,
     repo: Option<Arc<Repository>>,
     loading: HashSet<u32>,
@@ -98,13 +115,24 @@ impl Data {
             if let Some(cached) = repo.load_cached_history() {
                 send(Event::History(repo.clone(), cached));
             }
-            match repo.load_history() {
-                Ok(history) => send(Event::History(repo, history)),
-                Err(e) => send(Event::Failed(format!("History を読めない: {e}"))),
+            let history = match repo.load_history() {
+                Ok(history) => history,
+                Err(e) => return send(Event::Failed(format!("History を読めない: {e}"))),
+            };
+            send(Event::History(repo.clone(), history.clone()));
+            // 行の索引（`row_of`）もここで作っておく（150 万コミットで 80 ms ほど）。
+            match repo.load_refs() {
+                Ok(refs) => {
+                    let labels = labels(&history, &refs.refs);
+                    send(Event::Refs(history.generation, refs, labels));
+                }
+                Err(e) => send(Event::Failed(format!("ref を読めない: {e}"))),
             }
         });
         Self {
             history: None,
+            refs: None,
+            labels: HashMap::new(),
             chunks: HashMap::new(),
             repo: None,
             loading: HashSet::new(),
@@ -129,6 +157,7 @@ impl Data {
                     }
                     self.repo = Some(repo);
                     self.history = Some(history);
+                    self.labels.clear();
                     self.chunks.clear();
                     self.loading.clear();
                     changed = true;
@@ -144,10 +173,26 @@ impl Data {
                         changed = true;
                     }
                 }
+                Event::Refs(generation, refs, labels) => {
+                    if self
+                        .history
+                        .as_ref()
+                        .is_some_and(|h| h.generation == generation)
+                    {
+                        self.labels = labels;
+                    }
+                    self.refs = Some(refs);
+                    changed = true;
+                }
                 Event::Failed(e) => return Err(e),
             }
         }
         Ok(changed)
+    }
+
+    /// コミットの行（今の History の）。
+    pub fn row_of(&self, id: &amonhen_model::Oid) -> Option<u32> {
+        self.history.as_ref()?.row_of(id)
     }
 
     pub fn row_count(&self) -> u32 {
@@ -210,4 +255,27 @@ fn open(path: &Path) -> Result<Repository, String> {
         Some(dir) => Repository::with_cache(backend, amonhen_core::cache::path_for(&dir, &key)),
         None => Repository::new(backend),
     })
+}
+
+/// ref を行ごとのラベルにする。チェックアウト中のブランチ、ローカルブランチ、リモートブランチ、タグの順。
+fn labels(history: &HistorySnapshot, refs: &Refs) -> Labels {
+    let mut labels = Labels::new();
+    for entry in &refs.entries {
+        if !matches!(entry.kind, RefKind::Local | RefKind::Remote | RefKind::Tag) {
+            continue;
+        }
+        let Some(row) = entry.target.as_ref().and_then(|t| history.row_of(t)) else {
+            continue;
+        };
+        let head = entry.kind == RefKind::Local && refs.head_branch.as_deref() == Some(&entry.name);
+        labels.entry(row).or_default().push(RefLabel {
+            name: entry.name.clone(),
+            kind: entry.kind,
+            head,
+        });
+    }
+    for row in labels.values_mut() {
+        row.sort_by_key(|l| (!l.head, l.kind as u8));
+    }
+    labels
 }

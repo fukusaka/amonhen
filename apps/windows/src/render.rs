@@ -50,6 +50,20 @@ const PALETTE: [[f32; 3]; 8] = [
 const BACKGROUND: D2D1_COLOR_F = rgba(1.0, 1.0, 1.0, 1.0);
 const FOREGROUND: D2D1_COLOR_F = rgba(0.11, 0.11, 0.12, 1.0);
 const SECONDARY: D2D1_COLOR_F = rgba(0.11, 0.11, 0.12, 0.6);
+/// 選んだ行の背景（Windows の既定のアクセントの色を薄く）。
+const SELECTION: D2D1_COLOR_F = rgba(0.0, 0.47, 0.84, 0.16);
+/// ref のラベル（ローカルブランチ・リモートブランチ・タグ）の地の色と、文字の色。
+const LABEL_LOCAL: D2D1_COLOR_F = rgba(0.16, 0.60, 0.30, 0.18);
+const LABEL_REMOTE: D2D1_COLOR_F = rgba(0.0, 0.47, 0.84, 0.16);
+const LABEL_TAG: D2D1_COLOR_F = rgba(0.85, 0.55, 0.0, 0.20);
+const LABEL_TEXT: D2D1_COLOR_F = rgba(0.11, 0.11, 0.12, 0.9);
+/// チェックアウト中のブランチのラベルの枠。
+const LABEL_HEAD: D2D1_COLOR_F = rgba(0.16, 0.60, 0.30, 0.9);
+const LABEL_HEIGHT: f32 = 17.0;
+const LABEL_PADDING: f32 = 6.0;
+const LABEL_GAP: f32 = 4.0;
+/// ラベルを並べる幅の上限（文字の幅に対する割合）。残りは件名に回す。
+const LABEL_SHARE: f32 = 0.6;
 
 const fn rgba(r: f32, g: f32, b: f32, a: f32) -> D2D1_COLOR_F {
     D2D1_COLOR_F { r, g, b, a }
@@ -225,6 +239,9 @@ pub struct Renderer {
     /// UTC から地方時への差（秒）。
     utc_offset: i64,
     rows: HashMap<u32, RowText>,
+    /// ラベルの文字（名前ごと）と、その幅。
+    labels: HashMap<String, (IDWriteTextLayout, f32)>,
+    label_format: IDWriteTextFormat,
     history: Option<Arc<HistorySnapshot>>,
     /// `AMONHEN_PROFILE` があれば、段階ごとの時間（ms）を残す。段階の間で `Flush` して、溜めた描画も
     /// その段階に数える（その分だけ全体は遅くなる）。
@@ -295,6 +312,7 @@ impl Renderer {
             };
             let subject_format = format(13.0)?;
             let meta_format = format(11.0)?;
+            let label_format = format(11.0)?;
             let brush = d2d.CreateSolidColorBrush(&FOREGROUND, None)?;
             let base: &ID2D1Factory = &d2d_factory;
             let round = base.CreateStrokeStyle(
@@ -324,6 +342,8 @@ impl Renderer {
                 tearing_supported,
                 utc_offset: -(tz.Bias as i64) * 60,
                 rows: HashMap::new(),
+                labels: HashMap::new(),
+                label_format,
                 history: None,
                 profile: std::env::var_os("AMONHEN_PROFILE").map(|_| Vec::new()),
             })
@@ -367,13 +387,14 @@ impl Renderer {
         self.tearing_supported
     }
 
-    /// 見えている行（`scroll_y` から画面 1 つ分）を描く。`scale` は DIP あたりの画素。
+    /// 見えている行（`scroll_y` から画面 1 つ分）を描く。`scale` は DIP あたりの画素。`selected` は選んだ行。
     pub fn draw(
         &mut self,
         surface: &mut Surface,
         data: &mut Data,
         scroll_y: f32,
         scale: f32,
+        selected: Option<u32>,
     ) -> Result<()> {
         let target = surface.target(self, scale)?;
         let width = surface.width as f32 / scale;
@@ -385,7 +406,7 @@ impl Renderer {
             self.d2d.Clear(Some(&BACKGROUND));
         }
         let mut stages = [0.0; 5];
-        let result = self.draw_history(data, scroll_y, width, height, &mut stages);
+        let result = self.draw_history(data, scroll_y, width, height, selected, &mut stages);
         let t = std::time::Instant::now();
         unsafe { self.d2d.EndDraw(None, None)? };
         stages[4] = t.elapsed().as_secs_f64() * 1000.0;
@@ -401,6 +422,7 @@ impl Renderer {
         scroll_y: f32,
         width: f32,
         height: f32,
+        selected: Option<u32>,
         stages: &mut [f64; 5],
     ) -> Result<()> {
         let profiling = self.profile.is_some();
@@ -426,6 +448,23 @@ impl Renderer {
         // 前後 1 画面分も読んでおく。
         let screen = last - first;
         data.want(first.saturating_sub(screen)..(last + screen).min(count));
+
+        // 選んだ行の背景（グラフの下に敷く）。
+        if let Some(row) = selected.filter(|r| (first..last).contains(r)) {
+            let top = row as f32 * ROW_HEIGHT - scroll_y;
+            unsafe {
+                self.brush.SetColor(&SELECTION);
+                self.d2d.FillRectangle(
+                    &D2D_RECT_F {
+                        left: 0.0,
+                        top,
+                        right: width,
+                        bottom: top + ROW_HEIGHT,
+                    },
+                    &self.brush,
+                );
+            }
+        }
 
         // グラフ。レーンが少なければ狭く（History 全体のレーンの数で決め、スクロールで変えない）。
         let lanes = history.layout.lane_count() as f32;
@@ -456,14 +495,29 @@ impl Renderer {
                 self.rows.insert(row, text);
                 stages[2] += made.elapsed().as_secs_f64() * 1000.0;
             }
-            let line = &self.rows[&row];
             let top = row as f32 * ROW_HEIGHT - scroll_y;
+            // ref のラベルを件名の前に並べる。
+            let mut subject_x = text_x;
+            if let Some(labels) = data.labels.get(&row) {
+                let limit = text_x + text_width * LABEL_SHARE;
+                for label in labels {
+                    let (layout, w) = self.label(&label.name)?;
+                    let pill = w + LABEL_PADDING * 2.0;
+                    if subject_x + pill > limit {
+                        break;
+                    }
+                    self.draw_label(label, &layout, subject_x, top + 2.0, pill)?;
+                    subject_x += pill + LABEL_GAP;
+                }
+            }
+            let line = &self.rows[&row];
             unsafe {
-                line.subject.SetMaxWidth(text_width)?;
+                line.subject
+                    .SetMaxWidth((text_x + text_width - subject_x).max(0.0))?;
                 line.meta.SetMaxWidth(text_width)?;
                 self.brush.SetColor(&FOREGROUND);
                 self.d2d.DrawTextLayout(
-                    point(text_x, top + 2.0),
+                    point(subject_x, top + 2.0),
                     &line.subject,
                     &self.brush,
                     D2D1_DRAW_TEXT_OPTIONS_NONE,
@@ -579,6 +633,68 @@ impl Renderer {
                 );
             }
             self.d2d.PopAxisAlignedClip();
+        }
+        Ok(())
+    }
+
+    /// ラベルの文字の形と幅（作ったものは名前ごとに取っておく）。
+    fn label(&mut self, name: &str) -> Result<(IDWriteTextLayout, f32)> {
+        if let Some(found) = self.labels.get(name) {
+            return Ok(found.clone());
+        }
+        if self.labels.len() > 2048 {
+            self.labels.clear();
+        }
+        let text: Vec<u16> = name.encode_utf16().collect();
+        let layout = unsafe {
+            self.dwrite
+                .CreateTextLayout(&text, &self.label_format, 10000.0, LABEL_HEIGHT)?
+        };
+        let mut metrics = DWRITE_TEXT_METRICS::default();
+        unsafe { layout.GetMetrics(&mut metrics)? };
+        let made = (layout, metrics.widthIncludingTrailingWhitespace.ceil());
+        self.labels.insert(name.to_string(), made.clone());
+        Ok(made)
+    }
+
+    fn draw_label(
+        &self,
+        label: &crate::data::RefLabel,
+        layout: &IDWriteTextLayout,
+        x: f32,
+        y: f32,
+        width: f32,
+    ) -> Result<()> {
+        use amonhen_model::RefKind;
+        let fill = match label.kind {
+            RefKind::Local => LABEL_LOCAL,
+            RefKind::Remote => LABEL_REMOTE,
+            _ => LABEL_TAG,
+        };
+        let rect = D2D1_ROUNDED_RECT {
+            rect: D2D_RECT_F {
+                left: x,
+                top: y,
+                right: x + width,
+                bottom: y + LABEL_HEIGHT,
+            },
+            radiusX: 4.0,
+            radiusY: 4.0,
+        };
+        unsafe {
+            self.brush.SetColor(&fill);
+            self.d2d.FillRoundedRectangle(&rect, &self.brush);
+            if label.head {
+                self.brush.SetColor(&LABEL_HEAD);
+                self.d2d.DrawRoundedRectangle(&rect, &self.brush, 1.2, None);
+            }
+            self.brush.SetColor(&LABEL_TEXT);
+            self.d2d.DrawTextLayout(
+                point(x + LABEL_PADDING, y + 1.0),
+                layout,
+                &self.brush,
+                D2D1_DRAW_TEXT_OPTIONS_NONE,
+            );
         }
         Ok(())
     }
