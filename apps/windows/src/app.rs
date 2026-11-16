@@ -93,6 +93,8 @@ struct Root {
     summary: String,
     /// 下書きを覚える鍵（開いている worktree のもの）。
     draft_key: Option<String>,
+    /// コミットできたら、ref を読み直したところで push する（Commit and Push）。
+    push_after_commit: bool,
     description: String,
     committing: bool,
     amend: bool,
@@ -547,6 +549,7 @@ impl Component for Root {
             worktrees: Vec::new(),
             working_filter: String::new(),
             draft_key: None,
+            push_after_commit: false,
             recent_messages: Vec::new(),
             reflog: None,
             range_diff: None,
@@ -589,6 +592,10 @@ impl Component for Root {
                 self.refs = Some(refs);
                 self.repo = Some(repo.clone());
                 self.switch_draft(&repo, context);
+                // Commit and Push: コミットした後の ref で push する。
+                if std::mem::take(&mut self.push_after_commit) {
+                    self.push_committed(context);
+                }
                 // worktree も読み直す（作る・消す・ブランチを替えると ref も変わる）。
                 let r = repo.clone();
                 // ブランチの分け方は ref が変わるたびに読み直す（数十 ms かかるので裏で）。
@@ -1737,8 +1744,10 @@ impl Component for Root {
                         if let Some(key) = &self.draft_key {
                             let _ = crate::prefs::remove(key);
                         }
+                        // push は、コミットで動いた ref を読み直してから（`Message::Refs`）。
                     }
                     Some(message) => {
+                        self.push_after_commit = false;
                         self.dialog = Some(Dialog::Failed {
                             title: tr!("Couldn’t Commit"),
                             message,
@@ -4364,6 +4373,32 @@ impl Root {
         });
     }
 
+    /// Commit and Push のあとの push（GTK4 版の `push_after_commit`）: 上流があって先に進んでいなければ、聞かずに
+    /// 送る。上流がない・上流が先に進んでいるときは、Push と同じく聞く。
+    fn push_committed(&mut self, context: &ComponentContext<Root>) {
+        let (Some(repo), Some(entry)) = (self.repo.clone(), self.head_entry().cloned()) else {
+            return beep();
+        };
+        let upstream = entry.detail.clone().filter(|_| !entry.gone);
+        let Some((remote, remote_branch)) = upstream
+            .as_deref()
+            .filter(|_| entry.behind == 0 && entry.ahead > 0)
+            .and_then(|u| u.split_once('/'))
+        else {
+            return self.push(false);
+        };
+        self.busy = Some("Push…".to_owned());
+        perform(
+            context,
+            repo,
+            json!({
+                "op": "push", "remote": remote, "branch": entry.name,
+                "remoteBranch": remote_branch, "force": false, "setUpstream": false,
+            }),
+            "Push".to_owned(),
+        );
+    }
+
     /// 上流のないブランチを初めて送る前に、送り先のリモートとそこでの名前を聞く（GTK4 版の `publish_in`。
     /// 既定のリモートは、1 つならそれ、なければ origin）。
     fn publish(&mut self, repo: Arc<Repository>, branch: String) {
@@ -5008,7 +5043,20 @@ impl Root {
 
     /// 最近のメッセージ・「+」のメニューの項目を選んだ（GTK4 版の `MessageAids`）。
     fn message_menu(&mut self, key: &str, context: &ComponentContext<Root>) {
-        if let Some(t) = key.strip_prefix("type:") {
+        if key == "commit-push" {
+            self.push_after_commit = true;
+            self.update(Message::CommitChanges, context);
+        } else if key == "amend" {
+            self.update(Message::Amend(true), context);
+        } else if let Some(subject) = key.strip_prefix("fixup:") {
+            // fixup! は件名だけ（元のメッセージを残す）、squash! は本文に書き足せる（GTK4 版と同じ）。
+            self.summary = format!("fixup! {subject}");
+            self.description.clear();
+            self.amend = false;
+        } else if let Some(subject) = key.strip_prefix("squash:") {
+            self.summary = format!("squash! {subject}");
+            self.amend = false;
+        } else if let Some(t) = key.strip_prefix("type:") {
             // 件名の先頭を `type: ` にする（もう型があれば置き換える）。
             self.summary = format!(
                 "{t}: {}",

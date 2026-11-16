@@ -164,6 +164,51 @@ fn insert_menu(recent: &[(String, String, String)]) -> Vec<MenuItem> {
     ]
 }
 
+/// Commit ▾ のメニュー（GTK4 版の Commit の横の ▾ と `install_fixups`）: Commit and Push・Amend Last Commit と、
+/// 最近のコミットの件名への Fixup Commit For・Squash Commit For。
+fn commit_menu(recent: &[(String, String, String)], can_commit: bool) -> Vec<MenuItem> {
+    let mut items = vec![
+        if can_commit {
+            MenuItem::item("commit-push", "Commit and Push")
+        } else {
+            MenuItem::disabled("commit-push", "Commit and Push")
+        },
+        MenuItem::item("amend", "Amend Last Commit"),
+    ];
+    let mut subjects: Vec<&str> = Vec::new();
+    for (message, _, _) in recent {
+        let subject = message.lines().next().unwrap_or_default();
+        // fixup! を重ねない（rebase --autosquash は元のコミットの件名で探す）。
+        if subject.is_empty()
+            || subject.starts_with("fixup! ")
+            || subject.starts_with("squash! ")
+            || subjects.contains(&subject)
+        {
+            continue;
+        }
+        subjects.push(subject);
+        if subjects.len() == 15 {
+            break;
+        }
+    }
+    if !subjects.is_empty() {
+        items.push(MenuItem::separator("-fixup"));
+        for (key, title) in [
+            ("fixup", "Fixup Commit For"),
+            ("squash", "Squash Commit For"),
+        ] {
+            items.push(MenuItem::submenu(
+                key,
+                title,
+                subjects
+                    .iter()
+                    .map(|s| MenuItem::item(format!("{key}:{s}"), *s)),
+            ));
+        }
+    }
+    items
+}
+
 pub struct Input<'a> {
     pub status: Option<&'a StatusSnapshot>,
     /// パスの絞り込み。
@@ -294,7 +339,12 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
         (false, n) => format!("Commit {n} Files"),
     };
     let commit = Grid::new()
-        .columns([GridLength::Star(1.0), GridLength::Auto, GridLength::Auto])
+        .columns([
+            GridLength::Star(1.0),
+            GridLength::Auto,
+            GridLength::Auto,
+            GridLength::Auto,
+        ])
         .margin(Thickness::new(0.0, 8.0, 0.0, 8.0))
         .grid_row(2)
         .children((
@@ -314,6 +364,15 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
                 .grid_column(2)
                 .content(TextBlock::new().text(label))
                 .tooltip(commit_tip),
+            Button::new()
+                .margin(Thickness::new(2.0, 0.0, 0.0, 0.0))
+                .grid_column(3)
+                .content(TextBlock::new().text("▾"))
+                .tooltip(tr!("Commit and Push (Ctrl+Shift+Return), Amend"))
+                .menu(Menu::new(
+                    commit_menu(input.recent, can_commit),
+                    callbacks.message_menu.clone(),
+                )),
         ));
     let filter = TextBox::new()
         .text(input.filter)
