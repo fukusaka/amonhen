@@ -255,6 +255,10 @@ pub struct Data {
     pub labels: Labels,
     /// History の検索で一致した行（昇順）。描くときに塗る。
     pub matches: Vec<u32>,
+    /// History で複数選んでいる行（昇順。2 つ以上のときだけ）。描くときに塗る。
+    pub multi: Vec<u32>,
+    /// 複数選んだときの読み込みの番号（`commit_wanted` の鍵の上位ビットを立てて使う）。
+    selection_seq: u32,
     /// 探している問い合わせ。
     searching: Option<String>,
     /// 届いた検索の答え（見たら取る）。
@@ -395,6 +399,8 @@ impl Data {
             working_changed: false,
             labels: HashMap::new(),
             matches: Vec::new(),
+            multi: Vec::new(),
+            selection_seq: 0,
             searching: None,
             search: None,
             commit: None,
@@ -532,6 +538,7 @@ impl Data {
                     self.labels.clear();
                     // 行の番号が変わるので、検索の一致も捨てる（探し直すのは FE）。
                     self.matches.clear();
+                    self.multi.clear();
                     self.commit = None;
                     self.commit_wanted = None;
                     self.chunks.clear();
@@ -692,6 +699,61 @@ impl Data {
             let _ = tx.send(Event::Commit(generation, Box::new(shown)));
             wake();
             send_syntax(tx, wake, generation, row, 0, stacked, collapsed);
+        });
+    }
+
+    /// 複数選んだ行（`rows`、昇順で 2 つ以上）の差分と、詳細の欄の見出しを裏で読む（GTK4 版と同じく、コアの
+    /// `selection_diff` が範囲・2 つ・とびとびで差分の取り方を決める）。
+    pub fn want_selection(&mut self, rows: Vec<u32>) {
+        let (Some(repo), Some(history)) = (self.repo.clone(), self.history.clone()) else {
+            return;
+        };
+        self.selection_seq = self.selection_seq.wrapping_add(1) & 0x7fff_ffff;
+        let key = 0x8000_0000 | self.selection_seq;
+        self.commit_wanted = Some(key);
+        self.early_extras = None;
+        let generation = history.generation;
+        let (tx, wake) = (self.tx.clone(), self.wake.clone());
+        std::thread::spawn(move || {
+            let load = || -> Result<CommitShown, String> {
+                let (selection, stacked) = repo
+                    .selection_diff(&history, &rows, amonhen_core::PairMode::Forward)
+                    .map_err(|e| e.to_string())?;
+                let kind = match selection {
+                    amonhen_core::Selection::Range { .. } => "range",
+                    amonhen_core::Selection::Pair { .. } => "pair",
+                    amonhen_core::Selection::Each(_) => "each",
+                };
+                // 各コミットの 1 行（短い ID・件名・作者。多ければ 20 まで）。
+                let ids = history.graph.ids();
+                let lines: Vec<serde_json::Value> = rows
+                    .iter()
+                    .take(20)
+                    .filter_map(|&r| ids.get(r as usize))
+                    .map(|id| {
+                        let info = repo.commit_info(id).unwrap_or_default();
+                        let message = info["message"].as_str().unwrap_or_default();
+                        let subject = message.lines().next().unwrap_or_default();
+                        let hex = id.to_string();
+                        serde_json::json!([&hex[..8], subject, info["author"]])
+                    })
+                    .collect();
+                let info = serde_json::json!({ "selection": {
+                    "kind": kind, "count": rows.len(), "lines": lines,
+                }});
+                Ok(CommitShown::new(key, info, Arc::new(stacked)))
+            };
+            let shown = match load() {
+                Ok(shown) => shown,
+                Err(e) => {
+                    let _ = tx.send(Event::Failed(format!("差分を読めない: {e}")));
+                    return wake();
+                }
+            };
+            let (stacked, collapsed) = (shown.stacked.clone(), shown.collapsed.clone());
+            let _ = tx.send(Event::Commit(generation, Box::new(shown)));
+            wake();
+            send_syntax(tx, wake, generation, key, 0, stacked, collapsed);
         });
     }
 

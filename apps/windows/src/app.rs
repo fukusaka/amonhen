@@ -455,6 +455,7 @@ impl Component for Root {
                 menu_ready: false,
                 working_page: false,
                 last_query: None,
+                multi_sent: Vec::new(),
             }));
             HISTORY.with(|h| *h.borrow_mut() = Some(view.clone()));
             let history = panel.observe_surface(|event| {
@@ -865,6 +866,9 @@ fn details(info: Option<(&Value, Option<&Value>)>) -> View {
     let Some((info, extras)) = info else {
         return TextBlock::new().margin(12.0).into();
     };
+    if !info["selection"].is_null() {
+        return selection_details(&info["selection"]);
+    }
     let secondary = Brush::Solid(Color::argb(0x99, 0x1c, 0x1c, 0x1f));
     let line = |label: &str, value: String| {
         TextBlock::new()
@@ -998,6 +1002,55 @@ fn details(info: Option<(&Value, Option<&Value>)>) -> View {
                 .font_size(13.0)
                 .is_text_selection_enabled(true)
                 .text_wrapping(TextWrapping::Wrap)
+                .into(),
+        );
+    }
+    StackPanel::new()
+        .spacing(4.0)
+        .margin(Thickness::new(14.0, 10.0, 14.0, 10.0))
+        .children((View::keyed_fragment(rows.into_iter().enumerate()),))
+}
+
+/// 複数のコミットを選んだときの見出し（GTK4 版の `show_selection`）: 数、差分の取り方の説明、各コミットの 1 行。
+fn selection_details(selection: &Value) -> View {
+    let count = selection["count"].as_u64().unwrap_or(0);
+    let note = match selection["kind"].as_str() {
+        Some("range") => tr!(
+            "They are consecutive, so this is the diff from the parent of the oldest to the newest (the same as squashing them into one)."
+        ),
+        Some("pair") => tr!(
+            "Two non-consecutive commits, so this is the diff from the older to the newer (A..B)."
+        ),
+        _ => tr!(
+            "They are not contiguous, so each commit’s diff is listed file by file (headed by the path and short ID)."
+        ),
+    };
+    let secondary = Brush::Solid(Color::argb(0x99, 0x1c, 0x1c, 0x1f));
+    let mut rows: Vec<View> = vec![
+        TextBlock::new()
+            .text(tr!("{count} commits selected", count = count))
+            .font_size(14.0)
+            .font_weight(FontWeight::SEMI_BOLD)
+            .into(),
+        TextBlock::new()
+            .text(note)
+            .font_size(12.0)
+            .text_wrapping(TextWrapping::Wrap)
+            .foreground(secondary)
+            .into(),
+    ];
+    for line in selection["lines"].as_array().into_iter().flatten() {
+        let text = format!(
+            "{}  {}  — {}",
+            line[0].as_str().unwrap_or_default(),
+            line[1].as_str().unwrap_or_default(),
+            line[2].as_str().unwrap_or_default()
+        );
+        rows.push(
+            TextBlock::new()
+                .text(text)
+                .font_size(12.0)
+                .text_trimming(TextTrimming::CharacterEllipsis)
                 .into(),
         );
     }
@@ -1167,6 +1220,8 @@ struct HistoryView {
     working_page: bool,
     /// 最後に探した問い合わせ（同じなら Enter で次の一致へ）。
     last_query: Option<String>,
+    /// 差分を読みに行った複数選択。
+    multi_sent: Vec<u32>,
 }
 
 impl HistoryView {
@@ -1254,8 +1309,18 @@ impl HistoryView {
         {
             s.reveal(row);
         }
+        // 複数選んだ行が変わったら、まとめた差分を読む。
+        if s.data.multi != self.multi_sent {
+            self.multi_sent = s.data.multi.clone();
+            if self.multi_sent.len() > 1 {
+                s.data.want_selection(self.multi_sent.clone());
+            } else {
+                // 1 つに戻った: その行を読み直す。
+                self.selected = None;
+            }
+        }
         // 選んだコミットが変わったら、詳細と差分を読む。右クリックのメニューにも知らせる。
-        if s.selected != self.selected {
+        if s.selected != self.selected && s.data.multi.is_empty() {
             self.selected = s.selected;
             let selected = s.selected.and_then(|row| {
                 let id = s
@@ -1597,7 +1662,21 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                 // 右クリックも、先にその行を選ぶ（メニューはそのコミットのもの）。
                 Target::History => {
                     if let Some(row) = h.session.row_at(position.Y) {
-                        h.session.select(row);
+                        // Ctrl+クリックで足す・外す、Shift+クリックで範囲（右クリックは 1 つを選び直さない）。
+                        let down = |key: xaml::VirtualKey| {
+                            xaml::InputKeyboardSource::GetKeyStateForCurrentThread(key)
+                                .is_ok_and(|s| s.contains(xaml::CoreVirtualKeyStates::Down))
+                        };
+                        let ctrl = down(xaml::VirtualKey::Control);
+                        let shift = down(xaml::VirtualKey::Shift);
+                        if right && h.session.data.multi.contains(&row) {
+                        } else if left && ctrl {
+                            h.session.toggle_select(row);
+                        } else if left && shift {
+                            h.session.select_range(row);
+                        } else {
+                            h.session.select(row);
+                        }
                     }
                 }
                 Target::Diff if !left => {}

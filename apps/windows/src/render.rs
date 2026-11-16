@@ -514,6 +514,26 @@ impl Renderer {
                 );
             }
         }
+        // 複数選んだ行の背景。
+        let from = data.multi.partition_point(|&r| r < first);
+        for &row in data.multi[from..].iter().take_while(|&&r| r < last) {
+            if Some(row) == selected {
+                continue;
+            }
+            let top = row as f32 * ROW_HEIGHT - scroll_y;
+            unsafe {
+                self.brush.SetColor(&SELECTION);
+                self.d2d.FillRectangle(
+                    &D2D_RECT_F {
+                        left: 0.0,
+                        top,
+                        right: width,
+                        bottom: top + ROW_HEIGHT,
+                    },
+                    &self.brush,
+                );
+            }
+        }
         // 選んだ行の背景（グラフの下に敷く）。
         if let Some(row) = selected.filter(|r| (first..last).contains(r)) {
             let top = row as f32 * ROW_HEIGHT - scroll_y;

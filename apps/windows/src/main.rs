@@ -250,8 +250,9 @@ impl Session {
         (row >= 0.0 && (row as u32) < self.data.row_count()).then_some(row as u32)
     }
 
-    /// 行を選び、見える所までスクロールする。
+    /// 行を選び、見える所までスクロールする（複数選んでいれば、1 つに戻す）。
     pub fn select(&mut self, row: u32) {
+        self.data.multi.clear();
         let row = row.min(self.data.row_count().saturating_sub(1));
         self.selected = Some(row);
         self.selected_id = self
@@ -275,6 +276,44 @@ impl Session {
             self.scroll_to(top - (self.height() - ROW_HEIGHT) / 2.0);
         }
         self.select(row);
+    }
+
+    /// Ctrl+クリック: `row` を選んだ中に足す・外す。1 つになったら、ふつうの選択に戻す。
+    pub fn toggle_select(&mut self, row: u32) {
+        let mut rows = std::mem::take(&mut self.data.multi);
+        if rows.is_empty()
+            && let Some(current) = self.selected
+        {
+            rows.push(current);
+        }
+        match rows.binary_search(&row) {
+            Ok(i) => {
+                rows.remove(i);
+            }
+            Err(i) => rows.insert(i, row),
+        }
+        match rows.as_slice() {
+            [] => {}
+            [only] => self.select(*only),
+            _ => {
+                self.select(row);
+                self.data.multi = rows;
+            }
+        }
+        self.dirty = true;
+    }
+
+    /// Shift+クリック: 選んでいる行から `row` までを選ぶ。
+    pub fn select_range(&mut self, row: u32) {
+        let Some(anchor) = self.selected else {
+            return self.select(row);
+        };
+        let rows: Vec<u32> = (anchor.min(row)..=anchor.max(row)).collect();
+        self.select(row);
+        if rows.len() > 1 {
+            self.data.multi = rows;
+        }
+        self.dirty = true;
     }
 
     /// 選んだ行を `delta` 行動かす（何も選んでいなければ先頭）。
