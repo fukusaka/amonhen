@@ -105,6 +105,7 @@ fn main() {
         }
         return;
     }
+    amonhen_model::i18n::set_default(language());
     let args = match parse() {
         Ok(a) => a,
         Err(e) => {
@@ -411,4 +412,20 @@ impl Session {
         }
         Ok(false)
     }
+}
+
+/// アプリの言語: `AMONHEN_LANG` があればそれ、なければ Windows の表示の言語（`GetUserDefaultUILanguage` の言語の名前）。
+fn language() -> amonhen_model::i18n::Lang {
+    use amonhen_model::i18n::Lang;
+    use windows::Win32::Globalization::{GetUserDefaultUILanguage, LCIDToLocaleName};
+    if let Some(lang) = std::env::var("AMONHEN_LANG").ok().filter(|v| !v.is_empty()) {
+        return Lang::parse(&lang);
+    }
+    let mut name = [0u16; 85];
+    // SAFETY: 名前を書く先の大きさを渡すだけ。
+    let len = unsafe { LCIDToLocaleName(GetUserDefaultUILanguage() as u32, Some(&mut name), 0) };
+    if len <= 1 {
+        return Lang::En;
+    }
+    Lang::parse(&String::from_utf16_lossy(&name[..len as usize - 1]))
 }
