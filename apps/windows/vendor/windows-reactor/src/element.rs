@@ -355,6 +355,15 @@ impl Key {
     pub(crate) fn position(value: usize) -> Self {
         Self(KeyKind::Position(value))
     }
+
+    /// The key as text, as reported by tree view invocation.
+    pub(crate) fn text(&self) -> String {
+        match &self.0 {
+            KeyKind::Integer(value) => value.to_string(),
+            KeyKind::String(value) => value.to_string(),
+            KeyKind::Position(value) => value.to_string(),
+        }
+    }
 }
 
 impl From<u64> for Key {

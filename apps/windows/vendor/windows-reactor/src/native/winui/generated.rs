@@ -6221,6 +6221,20 @@ pub fn subscribe_event(
         (Handle::TreeView(value), EventId::TreeViewItemInvoked) => {
             value.ItemInvoked(move |_, args| {
                 if let Some(args) = args.as_ref() {
+                    // Report the node's key; fall back to its text for nodes Reactor did not build.
+                    if let Some(key) = args
+                        .InvokedItem()
+                        .ok()
+                        .and_then(|node| super::tree_node_key(&node))
+                    {
+                        sink.enqueue(
+                            node,
+                            EventId::TreeViewItemInvoked,
+                            revision,
+                            EventPayload::Str(key),
+                        );
+                        return;
+                    }
                     match args
                         .InvokedItem()
                         .and_then(|node| node.cast::<ITreeViewNode>())

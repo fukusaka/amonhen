@@ -488,8 +488,46 @@ fn set_rich_edit_text(control: &bindings::RichEditBox, value: &str) -> Result<()
     write.and(restore)
 }
 
+thread_local! {
+    /// Keys of the published tree view nodes, by native node identity, so invocation can report
+    /// the key rather than the displayed text.
+    static TREE_NODE_KEYS: RefCell<HashMap<usize, String>> = RefCell::new(HashMap::new());
+}
+
+fn tree_node_identity(node: &impl Interface) -> Option<usize> {
+    node.cast::<windows_core::IUnknown>()
+        .ok()
+        .map(|unknown| unknown.as_raw() as usize)
+}
+
+/// The key of an invoked tree view node.
+fn tree_node_key(node: &impl Interface) -> Option<String> {
+    let identity = tree_node_identity(node)?;
+    TREE_NODE_KEYS.with(|keys| keys.borrow().get(&identity).cloned())
+}
+
+fn forget_tree_node_keys(node: &TreeViewNode) {
+    if let Some(identity) = tree_node_identity(node) {
+        TREE_NODE_KEYS.with(|keys| keys.borrow_mut().remove(&identity));
+    }
+    if let Ok(children) = node.Children()
+        && let Ok(size) = children.Size()
+    {
+        for i in 0..size {
+            if let Ok(child) = children.GetAt(i) {
+                forget_tree_node_keys(&child);
+            }
+        }
+    }
+}
+
 fn build_tree_node(definition: &TreeNode) -> Result<TreeViewNode, RuntimeError> {
     let node = TreeViewNode::new().map_err(native_error)?;
+    if let Some(identity) = tree_node_identity(&node) {
+        TREE_NODE_KEYS.with(|keys| {
+            keys.borrow_mut().insert(identity, definition.key.text());
+        });
+    }
     let content: windows_core::IInspectable =
         windows_reference::IReference::from(windows_core::HSTRING::from(&definition.text)).into();
     node.SetContent(&content).map_err(native_error)?;
@@ -2332,6 +2370,9 @@ impl WinUiRuntime {
                     return Err(RuntimeError::UnsupportedKind);
                 };
                 let roots = tree.RootNodes().map_err(native_error)?;
+                for i in 0..roots.Size().map_err(native_error)? {
+                    forget_tree_node_keys(&roots.GetAt(i).map_err(native_error)?);
+                }
                 roots.Clear().map_err(native_error)?;
                 for node in nodes {
                     let node = build_tree_node(node)?;
