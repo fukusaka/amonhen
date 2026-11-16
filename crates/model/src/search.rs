@@ -1,4 +1,4 @@
-//! コミットの本文（件名・作者・ID）での検索。手元のコアと daemon で同じものを使う。
+//! コミットの本文（件名・メッセージ・作者・コミッター・ID）での検索。手元のコアと daemon で同じものを使う。
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -10,11 +10,23 @@ use crate::{CommitText, Mailmap, Oid, Result};
 pub enum TextField {
     /// 件名・作者名・コミット ID の先頭のどれか。
     Any,
-    /// 作者名。mailmap があれば、置き換えた名前と記録された名前のどちらかに合えばよい。
+    /// 作者の名前かメール。mailmap があれば、置き換えた名前と記録された名前のどちらかに合えばよい。
     Author,
     Subject,
     /// コミット ID の先頭（16 進数 4 文字以上）。
     Commit,
+    /// コミッターの名前かメール（作者と同じく mailmap も当てる）。索引にはないので、探すたびにコミットを読む。
+    Committer,
+    /// メッセージの全体（件名と本文。トレーラーも）。索引にはないので、探すたびにコミットを読む。
+    Message,
+}
+
+impl TextField {
+    /// 件名と作者の索引（`TextIndex`）で探せる。そうでなければ、探すたびにコミットを読む（本文を索引に持つと、
+    /// linux で数百 MB になる）。
+    pub fn indexed(self) -> bool {
+        !matches!(self, Self::Committer | Self::Message)
+    }
 }
 
 /// 1 つの条件。`needle` は小文字にしたもの（大文字・小文字を区別しない）。
@@ -57,9 +69,18 @@ fn id_matches(id: &Oid, needle: &str) -> bool {
     })
 }
 
-/// 作者（記録された `name`・`email`）が `needle` に合うか。mailmap があれば、置き換えた名前にも合わせる。
-fn author_matches(needle: &str, name: &[u8], email: &[u8], mailmap: Option<&Mailmap>) -> bool {
+/// 作者やコミッター（記録された `name`・`email`）が `needle` に合うか。`author:`・`committer:` は git の
+/// `--author` と同じく名前とメールのどちらでも、ただの語（`TextField::Any`）は名前だけ（`.com` などで全部に
+/// 合わないように）。mailmap があれば、置き換えた名前にも合わせる。
+fn person_matches(
+    field: TextField,
+    needle: &str,
+    name: &[u8],
+    email: &[u8],
+    mailmap: Option<&Mailmap>,
+) -> bool {
     contains(name, needle)
+        || (field != TextField::Any && contains(email, needle))
         || mailmap
             .and_then(|m| m.lookup(name, email))
             .and_then(|e| e.new_name.as_deref())
@@ -68,18 +89,28 @@ fn author_matches(needle: &str, name: &[u8], email: &[u8], mailmap: Option<&Mail
 
 /// `text`（ID は `id`）が `term` に合うか。
 pub fn matches(term: &TextTerm, text: &CommitText, id: &Oid, mailmap: Option<&Mailmap>) -> bool {
-    let author = || {
-        author_matches(
-            &term.needle,
-            text.author_name(),
-            text.author_email(),
-            mailmap,
-        )
-    };
-    matches_parts(term, text.subject(), &author, id)
+    match term.field {
+        TextField::Committer => text.committer_name_email().is_some_and(|(name, email)| {
+            person_matches(term.field, &term.needle, name, email, mailmap)
+        }),
+        TextField::Message => contains(text.message(), &term.needle),
+        _ => {
+            let author = || {
+                person_matches(
+                    term.field,
+                    &term.needle,
+                    text.author_name(),
+                    text.author_email(),
+                    mailmap,
+                )
+            };
+            matches_parts(term, text.subject(), &author, id)
+        }
+    }
 }
 
-/// `author` は、作者が `term` の文字を含むか（作者を見る条件のときだけ呼ぶ）。
+/// `author` は、作者が `term` の文字を含むか（作者を見る条件のときだけ呼ぶ）。索引にない条件（`indexed` でない
+/// もの）は合わない。
 fn matches_parts(term: &TextTerm, subject: &[u8], author: &dyn Fn() -> bool, id: &Oid) -> bool {
     let n = term.needle.as_str();
     match term.field {
@@ -87,6 +118,7 @@ fn matches_parts(term: &TextTerm, subject: &[u8], author: &dyn Fn() -> bool, id:
         TextField::Subject => contains(subject, n),
         TextField::Commit => id_matches(id, n),
         TextField::Any => contains(subject, n) || author() || id_matches(id, n),
+        TextField::Committer | TextField::Message => false,
     }
 }
 
@@ -264,7 +296,9 @@ impl TextIndex {
                 TextField::Author | TextField::Any => self
                     .people
                     .iter()
-                    .map(|(name, email)| author_matches(&term.needle, name, email, mailmap))
+                    .map(|(name, email)| {
+                        person_matches(term.field, &term.needle, name, email, mailmap)
+                    })
                     .collect(),
                 _ => Vec::new(),
             })
@@ -318,7 +352,40 @@ pub struct TextIndexCache(Mutex<Option<Arc<TextIndex>>>);
 
 impl TextIndexCache {
     /// `ids` を探す。覚えている索引が同じ `ids` のものならそれを、違えば前のものから引き継いで作り直してから。
+    /// 索引にない条件（`TextField::indexed` でないもの）は、コミットを読みながら探す（`scan`）。
     pub fn search(
+        &self,
+        ids: &[Oid],
+        terms: &[TextTerm],
+        mailmap: Option<&Mailmap>,
+        read: &(dyn Fn(&[Oid]) -> Result<Vec<CommitText>> + Sync),
+        cancelled: &(dyn Fn() -> bool + Sync),
+    ) -> Result<Vec<Vec<u64>>> {
+        let (indexed, scanned): (Vec<usize>, Vec<usize>) =
+            (0..terms.len()).partition(|&k| terms[k].field.indexed());
+        let mut sets = vec![Vec::new(); terms.len()];
+        if !indexed.is_empty() {
+            let part: Vec<TextTerm> = indexed.iter().map(|&k| terms[k].clone()).collect();
+            for (k, words) in indexed
+                .iter()
+                .zip(self.search_index(ids, &part, mailmap, read, cancelled)?)
+            {
+                sets[*k] = words;
+            }
+        }
+        if !scanned.is_empty() {
+            let part: Vec<TextTerm> = scanned.iter().map(|&k| terms[k].clone()).collect();
+            for (k, words) in scanned
+                .iter()
+                .zip(scan(ids, &part, mailmap, read, cancelled)?)
+            {
+                sets[*k] = words;
+            }
+        }
+        Ok(sets)
+    }
+
+    fn search_index(
         &self,
         ids: &[Oid],
         terms: &[TextTerm],
@@ -546,6 +613,75 @@ mod tests {
             scan(&ids, &terms[..1], Some(&mailmap), &read, &never).unwrap()[0],
             found_words(&odd),
         );
+    }
+
+    /// コミットのオブジェクトそのもの（ヘッダー・署名・本文つき）。
+    fn object(id: &Oid) -> CommitText {
+        let i = id.0[1];
+        let header = format!(
+            "tree 0000000000000000000000000000000000000000\n\
+             author Alice <alice@example.com> 1700000000 +0900\n\
+             committer {} <{}@example.org> 1700000000 +0900\n\
+             gpgsig -----BEGIN PGP SIGNATURE-----\n \n abc\n -----END PGP SIGNATURE-----\n\n",
+            if i.is_multiple_of(2) { "Carol" } else { "Dave" },
+            if i.is_multiple_of(2) { "carol" } else { "dave" },
+        );
+        let subject = format!("Fix {i}");
+        let body = if i == 3 {
+            "\n\nReported-by: Eve <eve@example.net>\n"
+        } else {
+            "\n"
+        };
+        let raw = format!("{header}{subject}{body}").into_bytes();
+        let start = header.len() as u32;
+        let subject = start..start + subject.len() as u32;
+        let name = raw.windows(5).position(|w| w == b"Alice").unwrap() as u32;
+        CommitText {
+            subject,
+            author_name: name..name + 5,
+            author_email: name + 7..name + 24,
+            raw: Arc::new(raw),
+            author_time: 0,
+            signature: 0,
+        }
+    }
+
+    #[test]
+    fn finds_by_the_author_email_the_committer_and_the_whole_message() {
+        let read =
+            |ids: &[Oid]| -> Result<Vec<CommitText>> { Ok(ids.iter().map(object).collect()) };
+        let never = || false;
+        let ids: Vec<Oid> = (0..10).map(oid).collect();
+        assert_eq!(
+            object(&oid(3)).committer_name_email().unwrap(),
+            (&b"Dave"[..], &b"dave@example.org"[..])
+        );
+        let terms = [
+            TextTerm::new(TextField::Author, "alice@example"),
+            TextTerm::new(TextField::Any, "alice@example"),
+            TextTerm::new(TextField::Committer, "carol"),
+            TextTerm::new(TextField::Committer, "DAVE@example.org"),
+            TextTerm::new(TextField::Message, "reported-by: eve"),
+            TextTerm::new(TextField::Subject, "reported-by"),
+            TextTerm::new(TextField::Message, "fix 7"),
+            TextTerm::new(TextField::Message, "PGP"),
+        ];
+        let cache = TextIndexCache::default();
+        let found = cache.search(&ids, &terms, None, &read, &never).unwrap();
+        let all: Vec<usize> = (0..10).collect();
+        assert_eq!(rows(&found[0], 10), all, "author: はメールでも合う");
+        assert!(rows(&found[1], 10).is_empty(), "ただの語はメールを見ない");
+        assert_eq!(rows(&found[2], 10), vec![0, 2, 4, 6, 8]);
+        assert_eq!(rows(&found[3], 10), vec![1, 3, 5, 7, 9]);
+        assert_eq!(rows(&found[4], 10), vec![3], "本文のトレーラー");
+        assert!(rows(&found[5], 10).is_empty(), "subject: は件名だけ");
+        assert_eq!(rows(&found[6], 10), vec![7], "message: は件名も含む");
+        assert!(rows(&found[7], 10).is_empty(), "ヘッダーの署名は見ない");
+
+        // History の行の分だけ（コミットのオブジェクトでない本文）では、本文とコミッターは合わない。
+        let summary = text(&oid(1));
+        assert!(summary.message().is_empty());
+        assert!(summary.committer_name_email().is_none());
     }
 
     fn found_words(rows: &[usize]) -> Vec<u64> {

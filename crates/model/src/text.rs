@@ -63,6 +63,37 @@ impl CommitText {
         &self.raw[self.author_email.start as usize..self.author_email.end as usize]
     }
 
+    /// コミットのオブジェクトのヘッダー（メッセージの前の空行まで）とメッセージ。`raw` がコミットのオブジェクト
+    /// でなければ（daemon から History の行の分だけを受け取ったもの）None。
+    fn split_object(&self) -> Option<(&[u8], &[u8])> {
+        let raw = self.raw.as_slice();
+        if !raw.starts_with(b"tree ") {
+            return None;
+        }
+        // 署名などの複数行のヘッダーは続きの行が空白で始まるので、最初の空行がヘッダーの終わり。
+        match raw.windows(2).position(|w| w == b"\n\n") {
+            Some(end) => Some((&raw[..end], &raw[end + 2..])),
+            None => Some((raw, &[])),
+        }
+    }
+
+    /// メッセージの全体（件名と本文）。`raw` がコミットのオブジェクトでなければ空。
+    pub fn message(&self) -> &[u8] {
+        self.split_object().map_or(&[], |(_, message)| message)
+    }
+
+    /// 記録されたコミッターの名前とメール。`raw` がコミットのオブジェクトでなければ None。
+    pub fn committer_name_email(&self) -> Option<(&[u8], &[u8])> {
+        let (headers, _) = self.split_object()?;
+        let line = headers
+            .split(|&b| b == b'\n')
+            .find_map(|line| line.strip_prefix(b"committer "))?;
+        // `名前 <メール> 時刻 時差`。
+        let close = line.iter().rposition(|&b| b == b'>')?;
+        let open = line[..close].iter().rposition(|&b| b == b'<')?;
+        Some((line[..open].trim_ascii(), &line[open + 1..close]))
+    }
+
     /// 作者の名前とメール。mailmap があれば置き換えたもの（`Mailmap::map`）。
     pub fn author<'a>(
         &'a self,

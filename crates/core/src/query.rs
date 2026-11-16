@@ -5,6 +5,7 @@
 //! author:linus or author:greg
 //! (path:fs/ or path:mm/) contents:"spin_lock"
 //! commit:3857c2f subject:"Merge tag"
+//! message:"Reported-by: syzbot" committer:akpm@linux-foundation.org
 //! contents:kmalloc after:"1 year ago" before:2026-01-01
 //! ```
 //!
@@ -16,10 +17,15 @@ use amonhen_model::tr;
 pub enum Field {
     /// 件名・作者名・コミット ID の先頭のどれか。
     Any,
+    /// 作者の名前かメール。
     Author,
     Subject,
     /// コミット ID の先頭。
     Commit,
+    /// コミッターの名前かメール。
+    Committer,
+    /// メッセージの全体（件名と本文）。
+    Message,
     /// そのパス（の下）を変えたコミット。
     Path,
     /// 差分に、その文字列を含む行があるコミット。同じ AND に `path:` があれば、そのパスの差分だけを探す
@@ -36,7 +42,12 @@ impl Field {
     pub fn is_textual(&self) -> bool {
         matches!(
             self,
-            Self::Any | Self::Author | Self::Subject | Self::Commit
+            Self::Any
+                | Self::Author
+                | Self::Subject
+                | Self::Commit
+                | Self::Committer
+                | Self::Message
         )
     }
 
@@ -184,7 +195,9 @@ fn term(word: &str) -> Term {
     if let Some((key, value)) = word.split_once(':') {
         let field = match key.to_ascii_lowercase().as_str() {
             "author" => Some(Field::Author),
-            "subject" | "message" => Some(Field::Subject),
+            "subject" => Some(Field::Subject),
+            "message" | "body" => Some(Field::Message),
+            "committer" => Some(Field::Committer),
             "commit" | "id" => Some(Field::Commit),
             "path" | "file" => Some(Field::Path),
             "contents" | "content" => Some(Field::Contents),

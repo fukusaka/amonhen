@@ -319,7 +319,7 @@ public final class History: @unchecked Sendable {
         return width
     }
 
-    /// `query` に合うコミットの行（昇順）。構文は `author:` `subject:` `commit:` `path:` `contents:` `after:`
+    /// `query` に合うコミットの行（昇順）。構文は `author:` `committer:` `subject:` `message:` `commit:` `path:` `contents:` `after:`
     /// `before:` と AND（空白）・OR・括弧。すべてのコミットを読むので裏のスレッドで呼ぶ。取り消されたら投げる。
     /// 走っているあいだ、分かった分は `Repository.searchPartial()` で読める。
     public func search(_ query: String) throws -> [Int] {
