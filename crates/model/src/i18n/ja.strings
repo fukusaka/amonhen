@@ -1127,6 +1127,11 @@
 "Mailmap file" = "mailmap のファイル";
 "Read after the repository’s .mailmap." = "リポジトリの .mailmap の後に読みます。";
 "Choose a mailmap file" = "mailmap のファイルを選ぶ";
+"Allowed signers" = "許可する署名者";
+"Public keys trusted to verify SSH signatures." = "SSH の署名の検証で信用する公開鍵です。";
+"Choose an allowed signers file" = "許可する署名者のファイルを選ぶ";
+"Signatures on this host are checked with this computer’s keys, so this setting isn’t used. Set it in Settings > Git on this computer, or choose The host’s git and keys for Verify with in Settings > SSH Hosts." = "この SSH 先の署名はこのコンピューターの鍵で検証するので、ここでの設定は使われません。このコンピューターの設定 > Git で設定するか、設定 > SSH ホストの「検証に使う鍵」を「SSH 先の git と鍵」にしてください。";
+"Open SSH Hosts" = "SSH ホストを開く";
 "A file…" = "ファイル…";
 "Choose" = "選ぶ";
 "A path" = "パス";

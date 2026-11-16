@@ -145,8 +145,8 @@ export type HistoryHostMessage =
   | { type: 'commitDiff'; oid: string; path: string; diff: FileDiff }
   /** `last` はまとめる範囲のいちばん新しいコミット（combine のとき。`oid` がいちばん古い） */
   | { type: 'editMessage'; oid: string; last?: string; kind: MessageEdit; title: string; message: string }
-  /** 行の署名の印（届いた行の分。署名のないコミットは含まない） */
-  | { type: 'signatures'; marks: Record<string, SignatureView> }
+  /** 行の署名の印（届いた行の分。署名のないコミットは含まない）。`reset` なら前の印を捨ててから（検証の設定が変わった） */
+  | { type: 'signatures'; marks: Record<string, SignatureView>; reset?: boolean }
   /** 詳細の残り（署名・子のコミット） */
   | { type: 'detailsExtras'; extras: DetailsExtras }
   /**

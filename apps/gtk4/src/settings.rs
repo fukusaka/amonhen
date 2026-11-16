@@ -140,6 +140,16 @@ fn save(file: &glib::KeyFile) {
     }
 }
 
+/// 聞き手に渡す、設定ファイルにない知らせ: git の署名の検証の設定（`gpg.*`）を書いた（macOS 版は
+/// `signatureCheckChanged` を知らせる）。
+pub const SIGNATURE_CONFIG: &str = "\u{1}signatureConfig";
+
+/// 署名の検証の設定（`gpg.ssh.allowedSignersFile`・`gpg.minTrustLevel` など）を書いた。窓は覚えていた検証の
+/// 結果を捨てて検証し直す。
+pub fn signature_config_changed() {
+    changed(SIGNATURE_CONFIG);
+}
+
 fn changed(key: &str) {
     // 持ち主がなくなった聞き手は外す（設定の窓・Repository Settings を開くたびに足されるので）。
     let watchers: Vec<Watcher> = WATCHERS.with(|w| {

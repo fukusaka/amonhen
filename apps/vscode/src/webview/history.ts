@@ -824,6 +824,7 @@ export function createHistoryView(): View {
         }
         break;
       case 'signatures':
+        if (message.reset) signatures.clear();
         for (const [oid, view] of Object.entries(message.marks)) signatures.set(oid, view);
         break;
       case 'selection':

@@ -449,6 +449,13 @@ impl Repository {
         signatures.1.clear();
     }
 
+    /// 覚えていた検証の結果を捨てる（検証の設定 `gpg.*` を書いたとき。鍵や信用度が変わったかもしれない）。
+    pub fn forget_signatures(&self) {
+        let mut signatures = self.signatures.lock().unwrap();
+        signatures.0 += 1;
+        signatures.1.clear();
+    }
+
     /// 今の検証する側の番号と、手元で検証するもの。
     fn signature_checker(&self) -> (u64, Option<Arc<dyn amonhen_model::SignatureVerifier>>) {
         let signatures = self.signatures.lock().unwrap();

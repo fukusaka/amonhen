@@ -9,6 +9,12 @@ becomes the GitHub Release notes.
 
 ### Unreleased
 
+#### Added
+
+- Repository Settings > Author and Signing has Allowed signers, the file (`gpg.ssh.allowedSignersFile`) for verifying
+  SSH signatures; changing a `gpg.*` setting there verifies the shown signatures again. For an SSH host whose
+  signatures are verified with this Mac's keys, the row notes that it isn't used there.
+
 #### Changed
 
 - History search: `author:` also matches the email, `committer:` searches by committer and `message:` searches the whole
@@ -1163,12 +1169,19 @@ First release.
 
 ### Unreleased
 
+#### Added
+
+- Repository Settings > Author and Signing has Allowed signers, the file (`gpg.ssh.allowedSignersFile`) for verifying
+  SSH signatures; changing a `gpg.*` setting there verifies the shown signatures again.
+
 #### Changed
 
 - In the before-and-after drawings, long branch labels wrap onto up to three lines below the commit instead of
   pushing its subject out of view, with the rest gathered into a "+n" label that lists them in its tooltip.
 - History search with the engine: `author:` also matches the email, `committer:` searches by committer and `message:`
   searches the whole message. The search field shows how to write a search, like the app's.
+- A signed commit whose signature can't be verified shows No key in History and the details, as the app does, instead
+  of no mark; only signed rows are verified.
 
 ### [0.2.7] - 2026-11-13
 

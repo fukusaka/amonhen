@@ -48,6 +48,7 @@ import { editableChain, refLabels, worktreeLabels } from '../history/rows.ts';
 import { scopeRefs } from '../history/scope.ts';
 import type { Repository, Section } from '../state/repository.ts';
 import { openCommitChanges, openCommitFile } from './commitChanges.ts';
+import { onDidChangeSignatureConfig } from './signatureConfig.ts';
 import { showError } from './stageCommands.ts';
 
 /** 1 回に読み込むコミットの数 */
@@ -166,6 +167,8 @@ export class HistoryController implements vscode.Disposable {
   private readonly signatures = new Map<string, SignatureView | null>();
   /** 詳細の残り（署名・子のコミット）。子は増えるので、History を読み直したら捨てる */
   private readonly extras = new Map<string, DetailsExtras>();
+  /** 詳細を読んだコミットの署名の種類（`gpg`・`ssh`・`x509`。署名がなければ null） */
+  private readonly signedKinds = new Map<string, string | null>();
   /** 共有の daemon で History を読むとき（設定 `amonhen.daemon.path`）、出している History */
   private daemon: DaemonHistory | undefined;
   /** 一致だけの History を出しているとき、もとの History */
@@ -200,8 +203,23 @@ export class HistoryController implements vscode.Disposable {
   /** ref をまだ読み終えていない読み直しの数（その間の ref の知らせは、その読み直しが拾う） */
   private readingRefs = 0;
 
+  /** 署名の検証の設定（`gpg.*`）の知らせ */
+  private readonly signatureConfigListener: vscode.Disposable;
+
   constructor(post: (message: HistoryHostMessage) => void) {
     this.post = post;
+    this.signatureConfigListener = onDidChangeSignatureConfig(() => this.forgetSignatures());
+  }
+
+  /** 検証の設定が変わった。覚えていた検証の結果を捨て、確かめた行と出している詳細を確かめ直す（コアは設定を書いたときに捨てている） */
+  private forgetSignatures(): void {
+    // 印を出していた行は署名がある（古いエンジンで署名の有無を知らない行は印なしだった）
+    const rows = [...this.signatures].map(([oid, view]) => ({ oid, ...(view ? { signed: true } : {}) }));
+    this.signatures.clear();
+    this.extras.clear();
+    const daemon = this.daemon;
+    if (daemon) void this.verifyRows(daemon, rows, true).catch(() => undefined);
+    if (this.selectedOid) void this.sendDetails(this.selectedOid).catch(() => undefined);
   }
 
   /**
@@ -494,22 +512,34 @@ export class HistoryController implements vscode.Disposable {
     this.post({ type: 'form', shallow, boundary: shallow ? daemon.boundary! : [], ...(partial ? { partial } : {}) });
   }
 
-  /** 行の署名を確かめて印を送る（一度確かめたものは覚えている。コアも覚えている） */
-  private async verifyRows(daemon: DaemonHistory, oids: readonly string[]): Promise<void> {
-    const todo = oids.filter((o) => !this.signatures.has(o));
-    if (todo.length === 0) return;
-    const reply = (await daemon.client.call({ op: 'run', command: { op: 'verifySignatures', oids: todo } })).json;
+  /**
+   * 行の署名を確かめて印を送る（一度確かめたものは覚えている。コアも覚えている）。`reset` なら Webview の前の印を
+   * 捨てさせる（署名が無効・なしになった行の印は送る分に含まれないため）
+   */
+  private async verifyRows(
+    daemon: DaemonHistory,
+    rows: readonly { oid: string; signed?: boolean }[],
+    reset = false,
+  ): Promise<void> {
+    const todo = rows.filter((r) => !this.signatures.has(r.oid));
+    if (todo.length === 0) {
+      if (reset) this.post({ type: 'signatures', marks: {}, reset });
+      return;
+    }
+    const reply = (await daemon.client.call({ op: 'run', command: { op: 'verifySignatures', oids: todo.map((r) => r.oid) } }))
+      .json;
     if (reply['ok'] !== true) return;
     const info = reply['info'] as { checks?: (SignatureCheck & { committerEmail?: string })[] } | undefined;
     const checks = info?.checks ?? [];
     const marks: Record<string, SignatureView> = {};
-    todo.forEach((oid, i) => {
+    todo.forEach(({ oid, signed }, i) => {
       const check = checks[i];
-      const view = check && check.status !== 'N' ? signatureView(check, check.committerEmail ?? '') : null;
+      // 署名があるのに確かめられなければ（N）No key（アプリと同じ）。署名の有無を知らない行（古いエンジン）の N は印なし
+      const view = check && (check.status !== 'N' || signed) ? signatureView(check, check.committerEmail ?? '') : null;
       this.signatures.set(oid, view);
       if (view) marks[oid] = view;
     });
-    if (Object.keys(marks).length > 0) this.post({ type: 'signatures', marks });
+    if (reset || Object.keys(marks).length > 0) this.post({ type: 'signatures', marks, ...(reset ? { reset } : {}) });
   }
 
   /**
@@ -530,9 +560,13 @@ export class HistoryController implements vscode.Disposable {
     if (reply['ok'] !== true) return undefined;
     const info = reply['info'] as { signature?: SignatureCheck | null; children?: string[] } | undefined;
     const committer = this.details.get(oid)?.committer.email ?? '';
+    // 署名があるのに確かめられなければ（N か結果なし）No key（アプリと同じ）
+    const signed = this.signedKinds.get(oid);
+    const check = info?.signature && info.signature.status !== 'N' ? info.signature : signed ? { status: 'N' } : undefined;
+    const signature = check ? signatureView(check, committer) : undefined;
     const extras: DetailsExtras = {
       oid,
-      ...(info?.signature && info.signature.status !== 'N' ? { signature: signatureView(info.signature, committer) } : {}),
+      ...(signature ? { signature } : {}),
       children: info?.children ?? [],
     };
     this.extras.set(oid, extras);
@@ -592,6 +626,8 @@ export class HistoryController implements vscode.Disposable {
     if (info.json['ok'] !== true || !i) {
       throw new Error(String(info.json['error'] ?? 'Can’t read the commit'));
     }
+    this.signedKinds.set(oid, typeof i['signed'] === 'string' ? i['signed'] : null);
+    if (this.signedKinds.size > DETAILS_CACHE) this.signedKinds.delete(this.signedKinds.keys().next().value!);
     const index = new Map<number, DiffLine>();
     const split = splitCommitDiff(diff, index);
     for (const [path, d] of split) {
@@ -1106,6 +1142,7 @@ export class HistoryController implements vscode.Disposable {
    */
   private async loadRange(daemon: DaemonHistory, start: number, count: number): Promise<void> {
     let rows: RowData[] = [];
+    let toVerify: { oid: string; signed?: boolean }[] = [];
     const generation = this.generation;
     try {
       const reply = await daemon.client.call({ op: 'historyRows', history: daemon.history, start, count });
@@ -1118,6 +1155,8 @@ export class HistoryController implements vscode.Disposable {
         this.known.set(r.oid, { oid: r.oid, parents: r.parentOids, author: r.author, email: '', date: r.date, subject: r.subject });
       }
       rows = toRowData(page, this.labels, this.chain);
+      // 署名のある行だけ確かめる（アプリと同じ）。署名の欄を返さない古いエンジンなら全部の行
+      toVerify = page.filter((r) => r.signed !== false).map((r) => ({ oid: r.oid, signed: r.signed }));
       rows.forEach((row, i) => {
         const hidden = daemon.folded?.[start + i];
         if (hidden) row.hidden = hidden;
@@ -1131,7 +1170,7 @@ export class HistoryController implements vscode.Disposable {
     }
     this.post({ type: 'rows', start, rows, done: true, total: daemon.rows });
     // 届けた行の署名を、裏で確かめて印を送る
-    void this.verifyRows(daemon, rows.map((r) => r.oid)).catch(() => undefined);
+    void this.verifyRows(daemon, toVerify).catch(() => undefined);
   }
 
   private async loadMore(): Promise<void> {
@@ -1183,6 +1222,7 @@ export class HistoryController implements vscode.Disposable {
   }
 
   dispose(): void {
+    this.signatureConfigListener.dispose();
     clearTimeout(this.resetTimer);
     this.searchAbort?.abort();
     this.repoListener?.dispose();

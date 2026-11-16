@@ -4938,6 +4938,11 @@ impl Repository {
                     (None, false) => ops.config_set(&key, value.as_deref())?,
                     (None, true) => ops.config_set_global(&key, value.as_deref())?,
                 }
+                // 検証の設定（`gpg.ssh.allowedSignersFile`・`gpg.minTrustLevel` など）を変えたら、覚えていた
+                // 検証の結果を捨てる（次に頼まれたら検証し直す）。
+                if key.to_ascii_lowercase().starts_with("gpg.") {
+                    self.forget_signatures();
+                }
                 ok()
             }
             Command::SyncDefaults => {
@@ -6427,6 +6432,28 @@ mod tests {
             )],
         );
         assert_eq!(statuses(&repo, head), ['N']);
+    }
+
+    #[test]
+    fn forgets_signature_results_when_the_verification_config_changes() {
+        let (tmp, repo) = setup();
+        let head = Oid::from_hex(&git(tmp.path(), &["rev-parse", "HEAD"])).unwrap();
+        let local = std::sync::Arc::new(AlwaysGood(Default::default()));
+        repo.set_signature_verifier(Some(local.clone()));
+        let count = || local.0.load(std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(statuses(&repo, head), ['G']);
+        assert_eq!(count(), 1);
+        // 検証に関わらない設定では、覚えた結果を使う。
+        run(&repo, r#"{"op":"configSet","key":"user.name","value":"x"}"#);
+        assert_eq!(statuses(&repo, head), ['G']);
+        assert_eq!(count(), 1);
+        // allowed signers（`gpg.*`）を変えたら、検証し直す。
+        run(
+            &repo,
+            r#"{"op":"configSet","key":"gpg.ssh.allowedSignersFile","value":"/nonexistent"}"#,
+        );
+        assert_eq!(statuses(&repo, head), ['G']);
+        assert_eq!(count(), 2);
     }
 
     #[test]

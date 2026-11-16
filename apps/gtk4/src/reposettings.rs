@@ -1190,6 +1190,14 @@ impl RepoSettings {
             match &result {
                 Ok(()) => {
                     s.writes.set(s.writes.get() + 1);
+                    // 検証の設定を変えたら、覚えていた検証の結果を捨てて検証し直す（すべての窓。「すべての
+                    // リポジトリ」の段の書き換えはどのリポジトリにも効く）。
+                    if changes
+                        .iter()
+                        .any(|c| c.key.to_ascii_lowercase().starts_with("gpg."))
+                    {
+                        crate::settings::signature_config_changed();
+                    }
                     // 新しい書き換えの記録は書けたものだけ（失敗した書き換えを Undo に残さない）。
                     if record == Record::New {
                         s.redo.borrow_mut().clear();
@@ -2059,7 +2067,11 @@ impl RepoSettings {
             ),
             section(
                 Some(&tr!("Signing")),
-                &[self.signing_row(), self.signing_key_row()],
+                &[
+                    self.signing_row(),
+                    self.signing_key_row(),
+                    self.allowed_signers_row(),
+                ],
             ),
             section(
                 Some("mailmap"),
@@ -2284,10 +2296,88 @@ impl RepoSettings {
         row.widget.upcast()
     }
 
-    /// mailmap のファイル（`mailmap.file`）。リポジトリの `.mailmap` の後に読む。git が読むファイルなので、SSH 先の
-    /// リポジトリなら SSH 先のパスを入れる。
+    /// mailmap のファイル（`mailmap.file`）。リポジトリの `.mailmap` の後に読む。
     fn mailmap_file_row(self: &Rc<Self>) -> gtk::Widget {
-        const KEY: &str = "mailmap.file";
+        self.config_file_row(
+            "mailmap.file",
+            &tr!("Mailmap file"),
+            &tr!("Read after the repository’s .mailmap."),
+            &tr!("Choose a mailmap file"),
+            "~",
+        )
+        .widget
+        .upcast()
+    }
+
+    /// SSH の署名を検証する公開鍵の一覧（`gpg.ssh.allowedSignersFile`）。署名の形式によらず出す（ほかの人の
+    /// SSH の署名を検証するのにも使う）。
+    ///
+    /// 署名をこの機械の鍵で検証する SSH 先では、この行の設定を読まない（docs/design.md の「Where to verify」）ので、
+    /// そう書き添えて SSH Hosts へ案内する。
+    fn allowed_signers_row(self: &Rc<Self>) -> gtk::Widget {
+        let row = self.config_file_row(
+            "gpg.ssh.allowedSignersFile",
+            &tr!("Allowed signers"),
+            &tr!("Public keys trusted to verify SSH signatures."),
+            &tr!("Choose an allowed signers file"),
+            "~/.ssh",
+        );
+        let Some(host) = self.host.clone() else {
+            return row.widget.upcast();
+        };
+        let note = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        let text = label(
+            &format!(
+                "⚠ {}",
+                tr!(
+                    "Signatures on this host are checked with this computer’s keys, so this setting isn’t used. Set it in Settings > Git on this computer, or choose The host’s git and keys for Verify with in Settings > SSH Hosts."
+                )
+            ),
+            &["settings-warning"],
+        );
+        text.set_wrap(true);
+        text.set_margin_start(8);
+        note.append(&text);
+        let open = gtk::Button::with_label(&tr!("Open SSH Hosts"));
+        open.add_css_class("flat");
+        open.set_halign(gtk::Align::Start);
+        let page = format!("ssh-hosts/{host}/connection");
+        open.connect_clicked(move |b| {
+            crate::settings::show(b);
+            crate::settings::select(&page);
+        });
+        note.append(&open);
+        row.below.append(&note);
+        let location = format!("ssh://{host}/");
+        note.set_visible(crate::sshhosts::checks_signatures_locally(&location));
+        let weak = note.downgrade();
+        crate::settings::connect_changed_while(&note, move |key| {
+            if key != crate::sshhosts::SIGNATURE_BY_HOST
+                && key != crate::settings::CHECK_REMOTE_SIGNATURES_LOCALLY
+            {
+                return;
+            }
+            // 写し（`sshhosts::load`）は設定を書いた後に作り直すので、それを待つ。
+            let (weak, location) = (weak.clone(), location.clone());
+            glib::idle_add_local_once(move || {
+                if let Some(note) = weak.upgrade() {
+                    note.set_visible(crate::sshhosts::checks_signatures_locally(&location));
+                }
+            });
+        });
+        row.widget.upcast()
+    }
+
+    /// ファイルのパスを入れる設定（なし／そのファイル／ファイル…）。git が読むファイルなので、SSH 先の
+    /// リポジトリなら SSH 先のパスを入れる。`home` は、まだ決めていないときに選び始める場所。
+    fn config_file_row(
+        self: &Rc<Self>,
+        key: &'static str,
+        question: &str,
+        help: &str,
+        message: &str,
+        home: &'static str,
+    ) -> Row {
         const PICK: &str = "file";
         let label_of = |path: &str| {
             if path.is_empty() {
@@ -2297,44 +2387,40 @@ impl RepoSettings {
             }
         };
         let row = self.row(
-            &tr!("Mailmap file"),
-            &tr!("Read after the repository’s .mailmap."),
-            fixed_keys(&[KEY]),
+            question,
+            help,
+            fixed_keys(&[key]),
             Rc::new(move |_, v| label_of(v)),
             None,
         );
         let w = self.weak();
+        let (title, message) = (question.to_owned(), message.to_owned());
         let picker = Picker::new(move |value| {
             let Some(s) = w.upgrade() else { return };
-            let current = s.effective(KEY).map(|e| e.value).unwrap_or_default();
+            let current = s.effective(key).map(|e| e.value).unwrap_or_default();
             if s.quiet() || value == current {
                 return;
             }
             if value == PICK {
                 let initial = if current.is_empty() {
-                    "~".to_owned()
+                    home.to_owned()
                 } else {
                     current
                 };
                 let w = s.weak();
-                s.choose_file(
-                    &tr!("Mailmap file"),
-                    &tr!("Choose a mailmap file"),
-                    initial,
-                    move |path| {
-                        if let Some(s) = w.upgrade() {
-                            s.write(vec![(KEY.to_owned(), Some(path))]);
-                        }
-                    },
-                );
+                s.choose_file(&title, &message, initial, move |path| {
+                    if let Some(s) = w.upgrade() {
+                        s.write(vec![(key.to_owned(), Some(path))]);
+                    }
+                });
             } else if value.is_empty() {
                 // 上の段で決めたものを消すことはできないので、ここでは上書きを消す（上の段にあればそれが効く）。
-                s.write(vec![(KEY.to_owned(), None)]);
+                s.write(vec![(key.to_owned(), None)]);
             }
         });
         row.control.append(&picker.button);
         self.on_refresh(move |s| {
-            let current = s.effective(KEY).map(|e| e.value).unwrap_or_default();
+            let current = s.effective(key).map(|e| e.value).unwrap_or_default();
             let mut items = vec![(String::new(), tr!("None"))];
             if !current.is_empty() {
                 items.push((current.clone(), label_of(&current)));
@@ -2345,7 +2431,7 @@ impl RepoSettings {
                 &current,
             );
         });
-        row.widget.upcast()
+        row
     }
 
     /// ファイルを選んでもらう（git が読むファイルなので、その機械のもの。SSH 先なら、そのエンジンで中を読む）。
