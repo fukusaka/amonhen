@@ -155,7 +155,12 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
             if !items.is_empty() {
                 items.push(MenuItem::separator("-discard"));
             }
+
             items.push(MenuItem::item("discard", "Discard File"));
+        }
+        // このファイルの変更だけを stash する（GTK4 版の Working Copy の右クリックと同じ）。
+        if entry.kind != StatusKind::Unmerged {
+            items.push(MenuItem::item("stash", "Stash…"));
         }
         let row: View = if items.is_empty() {
             row

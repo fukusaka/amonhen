@@ -214,6 +214,15 @@ enum Dialog {
         stash: String,
         name: String,
     },
+    /// 作業中の変更を stash する（GTK4 版の `Actions::stash_paths`）。`paths` があればそのファイルだけ。
+    Stash {
+        repo: Arc<Repository>,
+        paths: Vec<String>,
+        message: String,
+        staged: bool,
+        keep_index: bool,
+        untracked: bool,
+    },
     /// 保存していない Result を捨てて、マージエディタを閉じてよいか。
     CloseMerge,
     /// コンフリクトが残っているファイルを解決済みにしてよいか。
@@ -320,6 +329,8 @@ enum Message {
     ActivityUndo(usize),
     ActivityTick,
     CloseActivity,
+    /// Stash のダイアログの選択（`all`・`staged`・`keep-index`・`untracked`）。
+    StashOption(&'static str, bool),
     /// Repository Settings: 設定を読んだ・欄を書き換えた・ボタン。
     RepoSettingsLoaded(Vec<crate::reposettings::Entry>),
     RepoSettingsField(&'static str, String),
@@ -469,7 +480,10 @@ impl Component for Root {
                 Some(Dialog::NewBranch { name: current, .. })
                 | Some(Dialog::Rename { name: current, .. })
                 | Some(Dialog::StashBranch { name: current, .. })
-                | Some(Dialog::Publish { name: current, .. }) => *current = name,
+                | Some(Dialog::Publish { name: current, .. })
+                | Some(Dialog::Stash {
+                    message: current, ..
+                }) => *current = name,
                 _ => {}
             },
             Message::Command(id) if id == "push" => self.push(false),
@@ -643,6 +657,14 @@ impl Component for Root {
                 self.page = Page::RepoSettings;
                 self.write_repo_settings(Vec::new(), context);
             }
+            Message::Command(id) if id == "stash" => self.ask_stash(Vec::new()),
+            Message::Command(id) if id == "pop-stash" => {
+                // いちばん新しい stash を Pop（確かめてから。GTK4 版の `pop_stash`）。
+                match self.stash_entries().first().map(|e| e.name.clone()) {
+                    Some(name) => self.stash_action("pop", name),
+                    None => beep(),
+                }
+            }
             Message::Command(id) if id == "activity" => {
                 if self.page != Page::Activity {
                     self.activity_from = self.page;
@@ -798,6 +820,32 @@ impl Component for Root {
                             tr!("Create"),
                         );
                     }
+                }
+                (
+                    Some(Dialog::Stash {
+                        repo,
+                        paths,
+                        message,
+                        staged,
+                        keep_index,
+                        untracked,
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    let text = message.trim().to_owned();
+                    perform(
+                        context,
+                        repo,
+                        json!({
+                            "op": "stashPush",
+                            "message": (!text.is_empty()).then_some(text),
+                            "includeUntracked": untracked,
+                            "keepIndex": keep_index,
+                            "staged": staged,
+                            "paths": paths,
+                        }),
+                        "Stash".to_owned(),
+                    );
                 }
                 (Some(Dialog::CloseMerge), ContentDialogResult::Primary) => {
                     self.merge = None;
@@ -1336,6 +1384,28 @@ impl Component for Root {
                 self.load_undo_log(context);
             }
             Message::ActivityTab(None) => {}
+            Message::StashOption(option, on) => {
+                if let Some(Dialog::Stash {
+                    staged,
+                    keep_index,
+                    untracked,
+                    ..
+                }) = &mut self.dialog
+                {
+                    match option {
+                        "all" if on => *staged = false,
+                        "staged" if on => {
+                            // stage した変更だけのときは、ほかの選び方は git が受けない。
+                            *staged = true;
+                            *keep_index = false;
+                            *untracked = false;
+                        }
+                        "keep-index" => *keep_index = on,
+                        "untracked" => *untracked = on,
+                        _ => {}
+                    }
+                }
+            }
             Message::RepoSettingsLoaded(entries) => {
                 if let Some(state) = self.repo_settings.as_mut() {
                     state.load(entries);
@@ -1525,6 +1595,7 @@ impl Component for Root {
                 "history" => self.update(Message::OpenFileHistory(path), context),
                 "blame" => self.update(Message::OpenBlame(path, None), context),
                 "merge-editor" => self.update(Message::OpenMerge(path), context),
+                "stash" => self.ask_stash(vec![path]),
                 _ => self.update(Message::DiscardFile(path), context),
             },
             Message::OpenFileHistory(path) => {
@@ -2063,6 +2134,69 @@ impl Root {
                             .on_text_changed(context.callback(Message::BranchName)),
                     )),
                 ),
+            Some(Dialog::Stash {
+                paths,
+                message,
+                staged,
+                keep_index,
+                untracked,
+                ..
+            }) => {
+                let title = match &paths[..] {
+                    [] => tr!("Stash Changes"),
+                    [one] => tr!(
+                        "Stash Changes in {name}",
+                        name = one.rsplit('/').next().unwrap_or(one)
+                    ),
+                    many => tr!("Stash Changes in {count} Files", count = many.len()),
+                };
+                let check = |key: &'static str, label: String, on: bool, enabled: bool| {
+                    CheckBox::new()
+                        .is_checked(on)
+                        .is_enabled(enabled)
+                        .on_is_checked_changed(context.callback(move |v| Message::StashOption(key, v)))
+                        .content(TextBlock::new().text(label))
+                };
+                dialog
+                    .is_open(true)
+                    .title(title)
+                    .primary_button_text("Stash")
+                    .close_button_text(tr!("Cancel"))
+                    .content(
+                        StackPanel::new().spacing(6.0).children((
+                            TextBlock::new().text(tr!("Message (optional)")),
+                            TextBox::new()
+                                .element_ref(&self.dialog_input)
+                                .text(message.clone())
+                                .on_text_changed(context.callback(Message::BranchName)),
+                            // すべてか stage した変更だけか（GTK4 版はラジオボタン）。
+                            RadioButtons::new()
+                                .items_source(vec![
+                                    tr!("All changes"),
+                                    tr!("Only the staged changes"),
+                                ])
+                                .selected_index(usize::from(*staged))
+                                .on_selection_changed(context.callback(|i: Option<usize>| {
+                                    Message::StashOption(
+                                        if i == Some(1) { "staged" } else { "all" },
+                                        true,
+                                    )
+                                })),
+                            check(
+                                "keep-index",
+                                tr!("Keep the staged changes in the working tree (--keep-index)"),
+                                *keep_index,
+                                !*staged,
+                            ),
+                            check(
+                                "untracked",
+                                tr!("Include untracked files"),
+                                *untracked,
+                                !*staged,
+                            ),
+                        )),
+                    )
+            }
             Some(Dialog::CloseMerge) => dialog
                 .is_open(true)
                 .title(tr!("Close without saving?"))
@@ -3163,6 +3297,29 @@ impl Root {
             .grid_column(1)
             .grid_column_span(2)
             .content(view)
+    }
+
+    /// Stash のダイアログを出す（`paths` があればそのファイルだけ。untracked のファイルを選んでいれば、最初から
+    /// 含める。含めないと git が断る。GTK4 版と同じ）。
+    fn ask_stash(&mut self, paths: Vec<String>) {
+        let Some(repo) = self.repo.clone() else {
+            return beep();
+        };
+        let untracked = self.status.as_ref().is_some_and(|s| {
+            s.status
+                .entries
+                .iter()
+                .any(|e| e.kind == amonhen_model::StatusKind::Untracked && paths.contains(&e.path))
+        });
+        self.dialog = Some(Dialog::Stash {
+            repo,
+            paths,
+            message: String::new(),
+            staged: false,
+            keep_index: false,
+            untracked,
+        });
+        self.dialog_inputs += 1;
     }
 
     /// stash の一覧（新しい順）。

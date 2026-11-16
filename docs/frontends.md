@@ -174,10 +174,10 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Merge (fast-forward only / no-ff / squash options) | ✓ | ✓ | ✓ | ✓ | △ | VSCode: A list to choose how to merge, which is the confirmation.<br>CLI: Via `amonhen run` (`mode`). |
 | Octopus merge of several (order, expected conflicts) | ✓ | ✓ | — | ✓ | △ | CLI: `merge-check` checks; the merge via `amonhen run`. |
 | Rebase sheet drawing before and after | ✓ | ✓ | — | ✓ | △ | VSCode: The dialog lists the commits now and after the rebase, with the branches, as text.<br>CLI: `rewrite-preview` prints it; the rebase via `amonhen run`. |
-| Stash (message, include untracked) | ✓ | ✓ | — | ✓ | △ | CLI: Via `amonhen run`. |
-| Stash: only the staged changes, keep the index, selected files | ✓ | ✓ | — | ✓ | △ | VSCode: With the engine, the Stash list has the first two, and a Working Copy file's right-click has Stash… for that file.<br>CLI: Via `amonhen run` (`stashPush` with `staged`, `keepIndex`, `paths`). |
+| Stash (message, include untracked) | ✓ | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
+| Stash: only the staged changes, keep the index, selected files | ✓ | ✓ | ✓ | ✓ | △ | VSCode: With the engine, the Stash list has the first two, and a Working Copy file's right-click has Stash… for that file.<br>CLI: Via `amonhen run` (`stashPush` with `staged`, `keepIndex`, `paths`). |
 | Delete ignored files (listed first) | ✓ | ✓ | — | ✓ | △ | VSCode: The Command Palette and Working Copy's right-click; the list is a pick list, all chosen at first.<br>CLI: Via `amonhen run` (`ignoredFiles`, `deleteIgnored`). |
-| Pop the latest stash (asks first) | ✓ | ✓ | — | ✓ | △ | VSCode: Pop Latest Stash… on the Stashes header and in the Command Palette (a row's Pop doesn't ask).<br>CLI: Via `amonhen run`. |
+| Pop the latest stash (asks first) | ✓ | ✓ | ✓ | ✓ | △ | VSCode: Pop Latest Stash… on the Stashes header and in the Command Palette (a row's Pop doesn't ask).<br>CLI: Via `amonhen run`. |
 | Activity spinner and count | ✓ | ✓ | △ | ✓ | n/a | VSCode: VSCode's progress notifications.<br>Windows: The status bar names what runs. |
 | Refresh and Rebuild History | ✓ | ✓ | ✓ | ✓ | △ | VSCode: Rebuild History in the sidebar's ⋯ and the command palette, with the engine.<br>CLI: `log --rebuild`, `daemon rebuild`. |
 | Undo the last operation (asks, names what it puts back) | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: The title's Undo and the Command Palette ask; a notification's Undo, pressed right after the operation, doesn't.<br>CLI: `undo` (`--peek` to see it first). |
