@@ -651,11 +651,7 @@ impl Component for Root {
                 // worktree も読み直す（作る・消す・ブランチを替えると ref も変わる）。
                 let r = repo.clone();
                 // ブランチの分け方は ref が変わるたびに読み直す（数十 ms かかるので裏で）。
-                context.spawn_background(move |_| {
-                    let reply = repo.run_json(r#"{"op":"branchGroups"}"#);
-                    let reply = serde_json::from_str(&reply).unwrap_or_default();
-                    Message::Groups(BranchGroups::from_reply(&reply))
-                });
+                load_groups(repo, context);
                 load_recent_messages(r.clone(), context);
                 load_worktrees(r, context);
                 // Reflog を出していれば読み直す（HEAD が動くと ref も変わる）。
@@ -1935,6 +1931,30 @@ impl Component for Root {
                     self.reset(oid.to_owned());
                 } else if let Some(name) = key.strip_prefix("delete-branch:") {
                     self.check_delete(context, name.to_owned());
+                } else if let Some(name) = key.strip_prefix("favorite:") {
+                    if let Some(repo) = self.repo.clone() {
+                        let commands = self.favorite_commands(name);
+                        perform_all(context, repo, commands, tr!("Add to Favorites"));
+                    }
+                } else if let Some(name) = key.strip_prefix("archive:") {
+                    if let Some(repo) = self.repo.clone() {
+                        let archived = self
+                            .groups
+                            .as_ref()
+                            .and_then(|g| g.branches.get(name))
+                            .is_some_and(|b| b.archived);
+                        let value = if archived { json!(null) } else { json!("true") };
+                        perform_all(
+                            context,
+                            repo,
+                            vec![json!({
+                                "op": "configSet",
+                                "key": format!("branch.{name}.amonhenArchived"),
+                                "value": value,
+                            })],
+                            tr!("Archive"),
+                        );
+                    }
                 } else if let Some(name) = key.strip_prefix("push-branch:") {
                     let entry = self.refs.as_ref().and_then(|r| {
                         r.refs
@@ -2240,7 +2260,9 @@ impl Component for Root {
                 self.busy = None;
                 // worktree も読み直す（`git worktree add` は作っている間ロックするので、ref が変わったときに読んだ
                 // ものはロック中のことがある）。
+                // ブランチの分け方も（お気に入り・アーカイブは git の設定だけが変わり、ref は変わらない）。
                 if let Some(repo) = self.repo.clone() {
+                    load_groups(repo.clone(), context);
                     load_worktrees(repo, context);
                 }
                 if let Some((title, message)) = failed {
@@ -4573,6 +4595,24 @@ impl Root {
                 tr!("New Tag at {name}…", name = name),
             ));
             items.push(MenuItem::item(format!("rename:{name}"), tr!("Rename…")));
+            // お気に入りとアーカイブ（git の設定に書く。GTK4 版の `favorite_items`）。
+            let branch = self.groups.as_ref().and_then(|g| g.branches.get(name));
+            items.push(MenuItem::item(
+                format!("favorite:{name}"),
+                if branch.is_some_and(|b| b.pinned.is_some()) {
+                    tr!("Remove from Favorites")
+                } else {
+                    tr!("Add to Favorites")
+                },
+            ));
+            items.push(MenuItem::item(
+                format!("archive:{name}"),
+                if branch.is_some_and(|b| b.archived) {
+                    tr!("Unarchive")
+                } else {
+                    tr!("Archive")
+                },
+            ));
             if !is_head {
                 items.push(MenuItem::item(
                     format!("delete-branch:{name}"),
@@ -4588,6 +4628,48 @@ impl Root {
             ));
         }
         items
+    }
+
+    /// `name` をお気に入りに入れる・外す命令（GTK4 版の `favorite_commands`。外すときは残りの順を詰める）。
+    fn favorite_commands(&self, name: &str) -> Vec<Value> {
+        let mut pinned: Vec<(&String, i64)> = self
+            .groups
+            .as_ref()
+            .map(|g| {
+                g.branches
+                    .iter()
+                    .filter_map(|(n, b)| Some((n, b.pinned?)))
+                    .collect()
+            })
+            .unwrap_or_default();
+        pinned.sort_by_key(|(n, rank)| (*rank, n.to_string()));
+        let mut order: Vec<String> = pinned.into_iter().map(|(n, _)| n.clone()).collect();
+        let order_commands = |order: &[String]| -> Vec<Value> {
+            order
+                .iter()
+                .enumerate()
+                .map(|(i, n)| {
+                    json!({
+                        "op": "configSet",
+                        "key": format!("branch.{n}.amonhenPinned"),
+                        "value": (i + 1).to_string(),
+                    })
+                })
+                .collect()
+        };
+        if order.iter().any(|n| n == name) {
+            order.retain(|n| n != name);
+            let mut commands = order_commands(&order);
+            commands.push(json!({
+                "op": "configSet",
+                "key": format!("branch.{name}.amonhenPinned"),
+                "value": null,
+            }));
+            commands
+        } else {
+            order.push(name.to_owned());
+            order_commands(&order)
+        }
     }
 
     /// チェックアウトしていないブランチを上流と合わせる項目（GTK4 版の `refops::sync_items`。最後の Fetch の
@@ -6044,6 +6126,15 @@ fn load_recent_messages(repo: Arc<Repository>, context: &ComponentContext<Root>)
                 .collect()
         });
         Message::RecentMessages(recent)
+    });
+}
+
+/// ブランチの分け方（`branchGroups`）を裏で読む。
+fn load_groups(repo: Arc<Repository>, context: &ComponentContext<Root>) {
+    context.spawn_background(move |_| {
+        let reply = repo.run_json(r#"{"op":"branchGroups"}"#);
+        let reply = serde_json::from_str(&reply).unwrap_or_default();
+        Message::Groups(BranchGroups::from_reply(&reply))
     });
 }
 
