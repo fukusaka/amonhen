@@ -259,6 +259,13 @@ enum Dialog {
         newer: bool,
         base: String,
     },
+    /// bundle のブランチを `refs/remotes/<名前>/*` に取り込む（GTK4 版の `bundle::fetch`）。
+    FetchBundle {
+        repo: Arc<Repository>,
+        file: String,
+        message: String,
+        name: String,
+    },
     /// パッチを当てる前の確認（GTK4 版の `patches::confirm`）。mbox ならパッチごとにコミットにする（git am）、
     /// でなければ作業ツリーに入れる（git apply）。前後の絵はまだない。
     ApplyPatch {
@@ -403,6 +410,8 @@ enum Message {
     SquashText(String, Result<String, String>),
     /// bundle に入るコミットを数えた（`bundlePreview` の答えと、書く命令）。
     BundlePreview(Arc<Repository>, String, Value, Value),
+    /// 取り込む bundle を調べた（ファイル、`bundleCheck` の答え）。
+    BundleChecked(Arc<Repository>, String, Value),
     /// bundle の範囲（全体か、基点より後か）を選んだ。
     BundleNewer(bool),
     /// 当てるパッチを読んだ（パス、`readPatch` の答え）。
@@ -583,7 +592,8 @@ impl Component for Root {
                     version: current, ..
                 })
                 | Some(Dialog::Archive { top: current, .. })
-                | Some(Dialog::Bundle { base: current, .. }) => {
+                | Some(Dialog::Bundle { base: current, .. })
+                | Some(Dialog::FetchBundle { name: current, .. }) => {
                     *current = name.replace("\r\n", "\n").replace('\r', "\n")
                 }
                 _ => {}
@@ -769,6 +779,25 @@ impl Component for Root {
             }
             Message::Command(id) if id == "save-bundle" => {
                 self.ask_bundle(Vec::new(), String::new(), "all".to_owned())
+            }
+            Message::Command(id) if id == "fetch-bundle" => {
+                let Some(repo) = self.repo.clone() else {
+                    return beep();
+                };
+                let Some(file) = crate::files::open_files(&tr!(
+                    "Choose a bundle file (git bundle) to fetch from."
+                ))
+                .into_iter()
+                .next()
+                .map(|p| p.to_string_lossy().into_owned()) else {
+                    return;
+                };
+                context.spawn_background(move |_| {
+                    let command = json!({ "op": "bundleCheck", "file": &file });
+                    let check: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
+                        .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+                    Message::BundleChecked(repo, file, check)
+                });
             }
             Message::Command(id) if id == "apply-patch" => {
                 let Some(repo) = self.repo.clone() else {
@@ -1204,6 +1233,22 @@ impl Component for Root {
                                 .unwrap_or_else(|e| json!({ "error": e.to_string() }));
                         Message::BundlePreview(repo, label, preview, command)
                     });
+                }
+                (
+                    Some(Dialog::FetchBundle {
+                        repo, file, name, ..
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    let name = name.trim().to_owned();
+                    if !name.is_empty() {
+                        perform(
+                            context,
+                            repo,
+                            json!({ "op": "fetchBundle", "file": file, "name": name }),
+                            "Fetch".to_owned(),
+                        );
+                    }
                 }
                 (Some(Dialog::CloseMerge), ContentDialogResult::Primary) => {
                     self.merge = None;
@@ -1982,6 +2027,65 @@ impl Component for Root {
                 }
             }
             Message::ArchiveFormat(None) => {}
+            Message::BundleChecked(repo, file, check) => {
+                if check["ok"] != true {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("Can’t Fetch the Bundle"),
+                        message: check["error"].as_str().unwrap_or_default().to_owned(),
+                    });
+                    return;
+                }
+                let info = &check["info"];
+                let missing = info["missing"].as_u64().unwrap_or(0);
+                if missing > 0 {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("Can’t Fetch the Bundle"),
+                        message: tr!(
+                            "This repository lacks {count} commits the bundle needs (it has only the commits after them).",
+                            count = missing
+                        ),
+                    });
+                    return;
+                }
+                let branches: Vec<String> = info["refs"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|r| r.as_str()?.strip_prefix("refs/heads/").map(str::to_owned))
+                    .collect();
+                if branches.is_empty() {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("Nothing to Fetch"),
+                        message: tr!("The bundle has no branches."),
+                    });
+                    return;
+                }
+                let mut shown = branches
+                    .iter()
+                    .take(5)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                if branches.len() > 5 {
+                    shown.push_str(", …");
+                }
+                let message = tr!(
+                    "{file} has {count} branches ({names}). They are fetched under the name below, like a remote’s branches; tags aren’t fetched.",
+                    file = std::path::Path::new(&file)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                    count = branches.len(),
+                    names = shown
+                );
+                self.dialog = Some(Dialog::FetchBundle {
+                    repo,
+                    file,
+                    message,
+                    name: info["name"].as_str().unwrap_or("bundle").to_owned(),
+                });
+                self.dialog_inputs += 1;
+            }
             Message::BundleNewer(on) => {
                 if let Some(Dialog::Bundle { newer, .. }) = &mut self.dialog {
                     *newer = on;
@@ -3134,6 +3238,24 @@ impl Root {
                             .font_size(12.0)
                             .opacity(0.6)
                             .text_wrapping(TextWrapping::Wrap),
+                    )),
+                ),
+            Some(Dialog::FetchBundle { message, name, .. }) => dialog
+                .is_open(true)
+                .title(tr!("Fetch from Bundle"))
+                .primary_button_text("Fetch")
+                .close_button_text(tr!("Cancel"))
+                .is_primary_button_enabled(!name.trim().is_empty())
+                .content(
+                    StackPanel::new().spacing(6.0).children((
+                        TextBlock::new()
+                            .text(message.clone())
+                            .text_wrapping(TextWrapping::Wrap),
+                        TextBlock::new().text(tr!("Name:")),
+                        TextBox::new()
+                            .element_ref(&self.dialog_input)
+                            .text(name.clone())
+                            .on_text_changed(context.callback(Message::BranchName)),
                     )),
                 ),
             Some(Dialog::CloseMerge) => dialog
