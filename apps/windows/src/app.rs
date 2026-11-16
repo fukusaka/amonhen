@@ -263,8 +263,9 @@ impl Component for Root {
                     .children((SwapChainPanel::new().element_ref(&self.diff_panel),)),
             ));
         let menu_bar = crate::menus::menu_bar(|| context.callback(Message::Command));
+        let toolbar = crate::menus::toolbar(context.callback(Message::Command));
         let body = Grid::new()
-            .grid_row(1)
+            .grid_row(2)
             .columns([
                 GridLength::Pixel(260.0),
                 GridLength::Star(1.0),
@@ -281,8 +282,8 @@ impl Component for Root {
             ));
         let dialog = self.dialog_view(context);
         Grid::new()
-            .rows([GridLength::Auto, GridLength::Star(1.0)])
-            .children((menu_bar, body, dialog))
+            .rows([GridLength::Auto, GridLength::Auto, GridLength::Star(1.0)])
+            .children((menu_bar, toolbar, body, dialog))
     }
 }
 

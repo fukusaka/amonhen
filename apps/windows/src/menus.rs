@@ -3,8 +3,8 @@
 
 use amonhen_commands::{Command, Menu};
 use windows_reactor::{
-    Callback, GridChildExt, MenuBar, MenuBarItem, MenuBarSlot, MenuExt, MenuItem, MenuShortcut,
-    SlotsControl, View,
+    Callback, CommandBar, CommandBarCommand, GridChildExt, MenuBar, MenuBarItem, MenuBarSlot,
+    MenuExt, MenuItem, MenuShortcut, SlotsControl, Symbol, View,
 };
 
 /// この FE で動く操作。
@@ -73,6 +73,69 @@ pub fn menu_bar(on_click: impl Fn() -> Callback<String>) -> View {
     MenuBar::new()
         .grid_row(0)
         .collection_slot(MenuBarSlot::Items, bar)
+}
+
+/// ツールバーの並び（macOS 版の既定の並び、GTK4 版の `toolbar::DEFAULT`）と印。`None` は区切り。
+const TOOLBAR: &[Option<(&str, Symbol)>] = &[
+    Some(("sidebar", Symbol::OpenPane)),
+    Some(("repositories", Symbol::Library)),
+    None,
+    Some(("branch", Symbol::Switch)),
+    Some(("fetch", Symbol::Download)),
+    Some(("pull", Symbol::Import)),
+    Some(("push", Symbol::Upload)),
+    None,
+    Some(("merge", Symbol::Shuffle)),
+    Some(("rebase", Symbol::Sort)),
+    None,
+    Some(("stash", Symbol::Save)),
+    Some(("pop", Symbol::OpenFile)),
+    None,
+    Some(("activity", Symbol::Clock)),
+    Some(("refresh", Symbol::Refresh)),
+    Some(("undo", Symbol::Undo)),
+    Some(("search", Symbol::Find)),
+];
+
+/// ツールバーのボタンの名前（GTK4 版の `toolbar::name`。操作の名前は英語のまま）。
+fn toolbar_name(id: &str) -> String {
+    match id {
+        "sidebar" => amonhen_model::tr!("Show Sidebar"),
+        "search" => amonhen_model::tr!("Search"),
+        "refresh" => amonhen_model::tr!("Refresh"),
+        "repositories" => "Repositories".to_owned(),
+        _ => {
+            let mut name = id.to_owned();
+            name[..1].make_ascii_uppercase();
+            name
+        }
+    }
+}
+
+/// ツールバーのボタンが押す操作（表の id）。
+fn toolbar_command(id: &str) -> &str {
+    match id {
+        "branch" => "switch-branch",
+        "pop" => "pop-stash",
+        "sidebar" => "show-sidebar",
+        "search" => "find-in-history",
+        _ => id,
+    }
+}
+
+/// ツールバー（CommandBar）。押すと `on_click` が操作の id を受ける。まだ動かない操作のボタンは押せない。
+pub fn toolbar(on_click: Callback<String>) -> View {
+    let commands = TOOLBAR.iter().enumerate().map(|(i, entry)| match entry {
+        None => CommandBarCommand::separator(format!("-{i}")),
+        Some((id, icon)) => {
+            let command = toolbar_command(id);
+            CommandBarCommand::button_with_icon(command, toolbar_name(id), *icon)
+                .enabled(IMPLEMENTED.contains(&command))
+        }
+    });
+    CommandBar::new()
+        .grid_row(1)
+        .owned_commands(commands, [], on_click)
 }
 
 /// 表のショートカット（`Primary+Shift+B` の形）を Windows のキーにする。`Primary` は Ctrl、macOS の ⌃（`Control`）
