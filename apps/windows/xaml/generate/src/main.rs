@@ -15,6 +15,9 @@ const FILTER: &[&str] = &[
     "Microsoft.UI.Input.PointerPoint",
     "Microsoft.UI.Input.PointerPointProperties",
     "Microsoft.UI.Input.InputKeyboardSource",
+    "Microsoft.UI.Xaml.FrameworkElement",
+    "Microsoft.UI.Xaml.Controls.Primitives.FlyoutBase",
+    "Microsoft.UI.Xaml.Controls.Primitives.FlyoutShowOptions",
     // ハンドラーの型は丸ごと（`new` が要る）。
     "Microsoft.UI.Xaml.Input.KeyEventHandler",
     "Microsoft.UI.Xaml.Input.PointerEventHandler",
@@ -27,10 +30,19 @@ const FILTER: &[&str] = &[
     "Microsoft.UI.Input.IPointerPointStatics::{}",
     "Microsoft.UI.Input.IInputKeyboardSourceStatics2::{}",
     "Microsoft.UI.Input.IInputKeyboardSourceStatics3::{}",
+    "Microsoft.UI.Xaml.IFrameworkElementFactory::{}",
+    "Microsoft.UI.Xaml.IFrameworkElementStatics::{}",
+    "Microsoft.UI.Xaml.Controls.Primitives.IFlyoutBaseFactory::{}",
+    "Microsoft.UI.Xaml.Controls.Primitives.IFlyoutBaseStatics::{}",
+    "Microsoft.UI.Xaml.Controls.Primitives.IFlyoutBaseStatics2::{}",
+    // 右クリックのメニューを開く位置を渡すために作る。
+    "Microsoft.UI.Xaml.Controls.Primitives.IFlyoutShowOptionsFactory::{CreateInstance}",
     "Microsoft.UI.Xaml.IUIElement::{KeyDown,remove_KeyDown,PointerPressed,remove_PointerPressed,\
      PointerMoved,remove_PointerMoved,PointerReleased,remove_PointerReleased,PointerWheelChanged,\
      remove_PointerWheelChanged,DoubleTapped,remove_DoubleTapped,ContextRequested,remove_ContextRequested,\
-     IsTabStop,put_IsTabStop,Focus,CapturePointer,ReleasePointerCapture}",
+     IsTabStop,put_IsTabStop,Focus,CapturePointer,ReleasePointerCapture,ContextFlyout,put_ContextFlyout}",
+    "Microsoft.UI.Xaml.Controls.Primitives.IFlyoutBase::{ShowAt,ShowAtWithOptions,Hide}",
+    "Microsoft.UI.Xaml.Controls.Primitives.IFlyoutShowOptions::{put_Position}",
     "Microsoft.UI.Xaml.IRoutedEventArgs::{OriginalSource}",
     "Microsoft.UI.Xaml.Input.IKeyRoutedEventArgs::{Key,OriginalKey,Handled,put_Handled}",
     "Microsoft.UI.Xaml.Input.IPointerRoutedEventArgs::{GetCurrentPoint,KeyModifiers,Pointer,Handled,put_Handled}",

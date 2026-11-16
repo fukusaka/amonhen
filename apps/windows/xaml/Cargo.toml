@@ -10,3 +10,4 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 windows-core = "0.100"
+windows-reference = "0.100"

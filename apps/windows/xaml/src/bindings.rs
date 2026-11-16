@@ -346,6 +346,161 @@ impl windows_core::RuntimeName for DoubleTappedRoutedEventArgs {
 unsafe impl Send for DoubleTappedRoutedEventArgs {}
 unsafe impl Sync for DoubleTappedRoutedEventArgs {}
 #[repr(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FlyoutBase(windows_core::IUnknown);
+windows_core::imp::interface_hierarchy!(
+    FlyoutBase,
+    windows_core::IUnknown,
+    windows_core::IInspectable
+);
+windows_core::imp::required_hierarchy!(FlyoutBase, DependencyObject);
+impl FlyoutBase {
+    pub fn ShowAt<P0>(&self, placementtarget: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<FrameworkElement>,
+    {
+        unsafe {
+            (windows_core::Interface::vtable(self).ShowAt)(
+                windows_core::Interface::as_raw(self),
+                placementtarget.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn ShowAtWithOptions<P0, P1>(
+        &self,
+        placementtarget: P0,
+        showoptions: P1,
+    ) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<DependencyObject>,
+        P1: windows_core::Param<FlyoutShowOptions>,
+    {
+        unsafe {
+            (windows_core::Interface::vtable(self).ShowAtWithOptions)(
+                windows_core::Interface::as_raw(self),
+                placementtarget.param().abi(),
+                showoptions.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn Hide(&self) -> windows_core::Result<()> {
+        unsafe {
+            (windows_core::Interface::vtable(self).Hide)(windows_core::Interface::as_raw(self)).ok()
+        }
+    }
+    fn IFlyoutBaseFactory<R, F: FnOnce(&IFlyoutBaseFactory) -> windows_core::Result<R>>(
+        callback: F,
+    ) -> windows_core::Result<R> {
+        static SHARED: windows_core::imp::FactoryCache<FlyoutBase, IFlyoutBaseFactory> =
+            windows_core::imp::FactoryCache::new();
+        SHARED.call(callback)
+    }
+    fn IFlyoutBaseStatics<R, F: FnOnce(&IFlyoutBaseStatics) -> windows_core::Result<R>>(
+        callback: F,
+    ) -> windows_core::Result<R> {
+        static SHARED: windows_core::imp::FactoryCache<FlyoutBase, IFlyoutBaseStatics> =
+            windows_core::imp::FactoryCache::new();
+        SHARED.call(callback)
+    }
+    fn IFlyoutBaseStatics2<R, F: FnOnce(&IFlyoutBaseStatics2) -> windows_core::Result<R>>(
+        callback: F,
+    ) -> windows_core::Result<R> {
+        static SHARED: windows_core::imp::FactoryCache<FlyoutBase, IFlyoutBaseStatics2> =
+            windows_core::imp::FactoryCache::new();
+        SHARED.call(callback)
+    }
+}
+impl windows_core::RuntimeType for FlyoutBase {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_class::<Self, IFlyoutBase>();
+}
+unsafe impl windows_core::Interface for FlyoutBase {
+    type Vtable = <IFlyoutBase as windows_core::Interface>::Vtable;
+    const IID: windows_core::GUID = <IFlyoutBase as windows_core::Interface>::IID;
+}
+impl windows_core::RuntimeName for FlyoutBase {
+    const NAME: &'static str = "Microsoft.UI.Xaml.Controls.Primitives.FlyoutBase";
+}
+unsafe impl Send for FlyoutBase {}
+unsafe impl Sync for FlyoutBase {}
+#[repr(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FlyoutShowOptions(windows_core::IUnknown);
+windows_core::imp::interface_hierarchy!(
+    FlyoutShowOptions,
+    windows_core::IUnknown,
+    windows_core::IInspectable
+);
+impl FlyoutShowOptions {
+    pub fn SetPosition(&self, value: Option<Point>) -> windows_core::Result<()> {
+        let value__ = value.map(<windows_reference::IReference<Point> as From<_>>::from);
+        unsafe {
+            (windows_core::Interface::vtable(self).SetPosition)(
+                windows_core::Interface::as_raw(self),
+                windows_core::Param::param(value__.as_ref()).abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn new() -> windows_core::Result<Self> {
+        Self::IFlyoutShowOptionsFactory(|this| unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).CreateInstance)(
+                windows_core::Interface::as_raw(this),
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        })
+    }
+    pub fn compose<T>(compose: T) -> windows_core::Result<Self>
+    where
+        T: windows_core::Compose,
+    {
+        Self::IFlyoutShowOptionsFactory(|this| unsafe {
+            let (derived__, base__) = windows_core::Compose::compose(compose);
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).CreateInstance)(
+                windows_core::Interface::as_raw(this),
+                core::mem::transmute_copy(&derived__),
+                base__ as *mut _ as _,
+                &mut result__,
+            )
+            .ok()?;
+            let _ = &derived__;
+            windows_core::imp::Type::from_abi(result__)
+        })
+    }
+    fn IFlyoutShowOptionsFactory<
+        R,
+        F: FnOnce(&IFlyoutShowOptionsFactory) -> windows_core::Result<R>,
+    >(
+        callback: F,
+    ) -> windows_core::Result<R> {
+        static SHARED: windows_core::imp::FactoryCache<
+            FlyoutShowOptions,
+            IFlyoutShowOptionsFactory,
+        > = windows_core::imp::FactoryCache::new();
+        SHARED.call(callback)
+    }
+}
+impl windows_core::RuntimeType for FlyoutShowOptions {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_class::<Self, IFlyoutShowOptions>();
+}
+unsafe impl windows_core::Interface for FlyoutShowOptions {
+    type Vtable = <IFlyoutShowOptions as windows_core::Interface>::Vtable;
+    const IID: windows_core::GUID = <IFlyoutShowOptions as windows_core::Interface>::IID;
+}
+impl windows_core::RuntimeName for FlyoutShowOptions {
+    const NAME: &'static str = "Microsoft.UI.Xaml.Controls.Primitives.FlyoutShowOptions";
+}
+unsafe impl Send for FlyoutShowOptions {}
+unsafe impl Sync for FlyoutShowOptions {}
+#[repr(transparent)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct FocusState(pub i32);
 impl FocusState {
@@ -363,6 +518,334 @@ impl windows_core::RuntimeType for FocusState {
     const NAME: windows_core::imp::ConstBuffer =
         windows_core::imp::ConstBuffer::from_slice(b"Microsoft.UI.Xaml.FocusState");
 }
+#[repr(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FrameworkElement(windows_core::IUnknown);
+windows_core::imp::interface_hierarchy!(
+    FrameworkElement,
+    windows_core::IUnknown,
+    windows_core::IInspectable
+);
+windows_core::imp::required_hierarchy!(FrameworkElement, UIElement, DependencyObject);
+impl FrameworkElement {
+    pub fn ContextFlyout(&self) -> windows_core::Result<FlyoutBase> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).ContextFlyout)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetContextFlyout<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<FlyoutBase>,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetContextFlyout)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn IsTabStop(&self) -> windows_core::Result<bool> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).IsTabStop)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub fn SetIsTabStop(&self, value: bool) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetIsTabStop)(
+                windows_core::Interface::as_raw(this),
+                value,
+            )
+            .ok()
+        }
+    }
+    pub fn KeyDown<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(windows_core::Ref<windows_core::IInspectable>, windows_core::Ref<KeyRoutedEventArgs>)
+            + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        let handler = <KeyEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).KeyDown)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemoveKeyDown,
+            ))
+        }
+    }
+    pub fn PointerPressed<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(
+                windows_core::Ref<windows_core::IInspectable>,
+                windows_core::Ref<PointerRoutedEventArgs>,
+            ) + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        let handler = <PointerEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).PointerPressed)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemovePointerPressed,
+            ))
+        }
+    }
+    pub fn PointerMoved<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(
+                windows_core::Ref<windows_core::IInspectable>,
+                windows_core::Ref<PointerRoutedEventArgs>,
+            ) + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        let handler = <PointerEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).PointerMoved)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemovePointerMoved,
+            ))
+        }
+    }
+    pub fn PointerReleased<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(
+                windows_core::Ref<windows_core::IInspectable>,
+                windows_core::Ref<PointerRoutedEventArgs>,
+            ) + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        let handler = <PointerEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).PointerReleased)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemovePointerReleased,
+            ))
+        }
+    }
+    pub fn PointerWheelChanged<F>(
+        &self,
+        handler: F,
+    ) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(
+                windows_core::Ref<windows_core::IInspectable>,
+                windows_core::Ref<PointerRoutedEventArgs>,
+            ) + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        let handler = <PointerEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).PointerWheelChanged)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemovePointerWheelChanged,
+            ))
+        }
+    }
+    pub fn DoubleTapped<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(
+                windows_core::Ref<windows_core::IInspectable>,
+                windows_core::Ref<DoubleTappedRoutedEventArgs>,
+            ) + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        let handler = <DoubleTappedEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).DoubleTapped)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemoveDoubleTapped,
+            ))
+        }
+    }
+    pub fn ContextRequested<F>(
+        &self,
+        handler: F,
+    ) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(windows_core::Ref<UIElement>, windows_core::Ref<ContextRequestedEventArgs>)
+            + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        let handler =
+            <TypedEventHandler<UIElement, ContextRequestedEventArgs>>::new(move |a0, a1| {
+                handler(a0, a1);
+                Ok(())
+            });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).ContextRequested)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemoveContextRequested,
+            ))
+        }
+    }
+    pub fn CapturePointer<P0>(&self, value: P0) -> windows_core::Result<bool>
+    where
+        P0: windows_core::Param<Pointer>,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).CapturePointer)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub fn ReleasePointerCapture<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<Pointer>,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).ReleasePointerCapture)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn Focus(&self, value: FocusState) -> windows_core::Result<bool> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Focus)(
+                windows_core::Interface::as_raw(this),
+                value,
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    fn IFrameworkElementFactory<
+        R,
+        F: FnOnce(&IFrameworkElementFactory) -> windows_core::Result<R>,
+    >(
+        callback: F,
+    ) -> windows_core::Result<R> {
+        static SHARED: windows_core::imp::FactoryCache<FrameworkElement, IFrameworkElementFactory> =
+            windows_core::imp::FactoryCache::new();
+        SHARED.call(callback)
+    }
+    fn IFrameworkElementStatics<
+        R,
+        F: FnOnce(&IFrameworkElementStatics) -> windows_core::Result<R>,
+    >(
+        callback: F,
+    ) -> windows_core::Result<R> {
+        static SHARED: windows_core::imp::FactoryCache<FrameworkElement, IFrameworkElementStatics> =
+            windows_core::imp::FactoryCache::new();
+        SHARED.call(callback)
+    }
+}
+impl windows_core::RuntimeType for FrameworkElement {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_class::<Self, IFrameworkElement>();
+}
+unsafe impl windows_core::Interface for FrameworkElement {
+    type Vtable = <IFrameworkElement as windows_core::Interface>::Vtable;
+    const IID: windows_core::GUID = <IFrameworkElement as windows_core::Interface>::IID;
+}
+impl windows_core::RuntimeName for FrameworkElement {
+    const NAME: &'static str = "Microsoft.UI.Xaml.FrameworkElement";
+}
+unsafe impl Send for FrameworkElement {}
+unsafe impl Sync for FrameworkElement {}
 windows_core::imp::define_interface!(
     IContextRequestedEventArgs,
     IContextRequestedEventArgs_Vtbl,
@@ -444,6 +927,200 @@ pub struct IDoubleTappedRoutedEventArgs_Vtbl {
         *mut core::ffi::c_void,
         *mut Point,
     ) -> windows_core::HRESULT,
+}
+windows_core::imp::define_interface!(
+    IFlyoutBase,
+    IFlyoutBase_Vtbl,
+    0xbb6603bf_744d_5c31_a87d_744394634d77
+);
+impl windows_core::RuntimeType for IFlyoutBase {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer = windows_core::imp::ConstBuffer::from_slice(
+        b"Microsoft.UI.Xaml.Controls.Primitives.IFlyoutBase",
+    );
+}
+#[repr(C)]
+pub struct IFlyoutBase_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+    Placement: usize,
+    SetPlacement: usize,
+    Target: usize,
+    AllowFocusOnInteraction: usize,
+    SetAllowFocusOnInteraction: usize,
+    LightDismissOverlayMode: usize,
+    SetLightDismissOverlayMode: usize,
+    AllowFocusWhenDisabled: usize,
+    SetAllowFocusWhenDisabled: usize,
+    ShowMode: usize,
+    SetShowMode: usize,
+    InputDevicePrefersPrimaryCommands: usize,
+    AreOpenCloseAnimationsEnabled: usize,
+    SetAreOpenCloseAnimationsEnabled: usize,
+    ShouldConstrainToRootBounds: usize,
+    SetShouldConstrainToRootBounds: usize,
+    IsConstrainedToRootBounds: usize,
+    ElementSoundMode: usize,
+    SetElementSoundMode: usize,
+    OverlayInputPassThroughElement: usize,
+    SetOverlayInputPassThroughElement: usize,
+    IsOpen: usize,
+    XamlRoot: usize,
+    SetXamlRoot: usize,
+    Opened: usize,
+    RemoveOpened: usize,
+    Closed: usize,
+    RemoveClosed: usize,
+    Opening: usize,
+    RemoveOpening: usize,
+    Closing: usize,
+    RemoveClosing: usize,
+    pub ShowAt: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+    pub ShowAtWithOptions: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut core::ffi::c_void,
+        *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+    pub Hide: unsafe extern "system" fn(*mut core::ffi::c_void) -> windows_core::HRESULT,
+}
+windows_core::imp::define_interface!(
+    IFlyoutBaseFactory,
+    IFlyoutBaseFactory_Vtbl,
+    0x006d738f_7c91_5ef3_8a80_a548108dab8b
+);
+impl windows_core::RuntimeType for IFlyoutBaseFactory {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer = windows_core::imp::ConstBuffer::from_slice(
+        b"Microsoft.UI.Xaml.Controls.Primitives.IFlyoutBaseFactory",
+    );
+}
+#[repr(C)]
+pub struct IFlyoutBaseFactory_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+}
+windows_core::imp::define_interface!(
+    IFlyoutBaseStatics,
+    IFlyoutBaseStatics_Vtbl,
+    0x63ee628e_d2e3_5515_aea4_e461088c0c4e
+);
+impl windows_core::RuntimeType for IFlyoutBaseStatics {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer = windows_core::imp::ConstBuffer::from_slice(
+        b"Microsoft.UI.Xaml.Controls.Primitives.IFlyoutBaseStatics",
+    );
+}
+#[repr(C)]
+pub struct IFlyoutBaseStatics_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+}
+windows_core::imp::define_interface!(
+    IFlyoutBaseStatics2,
+    IFlyoutBaseStatics2_Vtbl,
+    0x2403cd2c_a6b8_5dc2_be3b_2a4bdd072ef1
+);
+impl windows_core::RuntimeType for IFlyoutBaseStatics2 {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer = windows_core::imp::ConstBuffer::from_slice(
+        b"Microsoft.UI.Xaml.Controls.Primitives.IFlyoutBaseStatics2",
+    );
+}
+#[repr(C)]
+pub struct IFlyoutBaseStatics2_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+}
+windows_core::imp::define_interface!(
+    IFlyoutShowOptions,
+    IFlyoutShowOptions_Vtbl,
+    0x30774a93_2803_50d3_b406_904aec3e175d
+);
+impl windows_core::RuntimeType for IFlyoutShowOptions {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer = windows_core::imp::ConstBuffer::from_slice(
+        b"Microsoft.UI.Xaml.Controls.Primitives.IFlyoutShowOptions",
+    );
+}
+#[repr(C)]
+pub struct IFlyoutShowOptions_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+    Position: usize,
+    pub SetPosition: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+}
+windows_core::imp::define_interface!(
+    IFlyoutShowOptionsFactory,
+    IFlyoutShowOptionsFactory_Vtbl,
+    0x17426d30_70d9_54d7_bd39_e7c4c940c0f4
+);
+impl windows_core::RuntimeType for IFlyoutShowOptionsFactory {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer = windows_core::imp::ConstBuffer::from_slice(
+        b"Microsoft.UI.Xaml.Controls.Primitives.IFlyoutShowOptionsFactory",
+    );
+}
+#[repr(C)]
+pub struct IFlyoutShowOptionsFactory_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+    pub CreateInstance: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut core::ffi::c_void,
+        *mut *mut core::ffi::c_void,
+        *mut *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+}
+windows_core::imp::define_interface!(
+    IFrameworkElement,
+    IFrameworkElement_Vtbl,
+    0xfe08f13d_dc6a_5495_ad44_c2d8d21863b0
+);
+impl windows_core::RuntimeType for IFrameworkElement {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"Microsoft.UI.Xaml.IFrameworkElement");
+}
+#[repr(C)]
+pub struct IFrameworkElement_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+}
+windows_core::imp::define_interface!(
+    IFrameworkElementFactory,
+    IFrameworkElementFactory_Vtbl,
+    0xbd3f2272_3efa_5f92_b759_90b1cc3e784c
+);
+impl windows_core::RuntimeType for IFrameworkElementFactory {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"Microsoft.UI.Xaml.IFrameworkElementFactory");
+}
+#[repr(C)]
+pub struct IFrameworkElementFactory_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+}
+windows_core::imp::define_interface!(
+    IFrameworkElementStatics,
+    IFrameworkElementStatics_Vtbl,
+    0x894e2704_14e7_569a_b21e_afc7df7145a1
+);
+impl windows_core::RuntimeType for IFrameworkElementStatics {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"Microsoft.UI.Xaml.IFrameworkElementStatics");
+}
+#[repr(C)]
+pub struct IFrameworkElementStatics_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
 }
 windows_core::imp::define_interface!(
     IInputKeyboardSource,
@@ -764,8 +1441,14 @@ pub struct IUIElement_Vtbl {
     ManipulationMode: usize,
     SetManipulationMode: usize,
     PointerCaptures: usize,
-    ContextFlyout: usize,
-    SetContextFlyout: usize,
+    pub ContextFlyout: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+    pub SetContextFlyout: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
     CompositeMode: usize,
     SetCompositeMode: usize,
     Lights: usize,
@@ -1782,6 +2465,28 @@ windows_core::imp::interface_hierarchy!(
 );
 windows_core::imp::required_hierarchy!(UIElement, DependencyObject);
 impl UIElement {
+    pub fn ContextFlyout(&self) -> windows_core::Result<FlyoutBase> {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).ContextFlyout)(
+                windows_core::Interface::as_raw(self),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetContextFlyout<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<FlyoutBase>,
+    {
+        unsafe {
+            (windows_core::Interface::vtable(self).SetContextFlyout)(
+                windows_core::Interface::as_raw(self),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
     pub fn IsTabStop(&self) -> windows_core::Result<bool> {
         unsafe {
             let mut result__ = core::mem::zeroed();
