@@ -181,6 +181,12 @@ enum Dialog {
     },
     /// 操作の失敗。
     Failed { title: String, message: String },
+    /// Clean Up Branches（GTK4 版の `clean_up_branches`）: `branchCleanup` の答えのブランチと、消すか。
+    CleanUp {
+        repo: Arc<Repository>,
+        base: String,
+        branches: Vec<(Value, bool)>,
+    },
     /// Fetch の確認（リモートが 2 つ以上なら、どこから取るかを選ぶ。0 はすべて）。
     Fetch {
         repo: Arc<Repository>,
@@ -408,6 +414,10 @@ enum Message {
     Confirm(Arc<Repository>, String, String, String, Value),
     /// Working Copy のパスの絞り込み。
     WorkingFilter(String),
+    /// Clean Up Branches の候補を読んだ（`branchCleanup` の答え）。
+    CleanUpLoaded(Arc<Repository>, Value),
+    /// Clean Up Branches のブランチのチェック。
+    CleanUpCheck(usize, bool),
     /// Working Copy の一覧の見せ方を替える。
     WorkingLayout(crate::workcopy::Layout),
     /// ディレクトリの中のファイルをまとめて含める・外す。
@@ -1122,6 +1132,22 @@ impl Component for Root {
                     let commands =
                         remote_changes(original.as_ref(), name.trim(), fetch.trim(), push.trim());
                     perform_all(context, repo, commands, title);
+                }
+                (Some(Dialog::CleanUp { repo, branches, .. }), ContentDialogResult::Primary) => {
+                    // まとめて消す（Undo は 1 回でまとめて戻す）。
+                    let chosen: Vec<Value> = branches
+                        .iter()
+                        .filter(|(_, on)| *on)
+                        .map(|(b, _)| json!({ "name": b["name"], "force": b["force"] }))
+                        .collect();
+                    if !chosen.is_empty() {
+                        perform(
+                            context,
+                            repo,
+                            json!({ "op": "deleteBranches", "branches": chosen }),
+                            tr!("Clean Up Branches"),
+                        );
+                    }
                 }
                 (Some(Dialog::StashBranch { repo, stash, name }), ContentDialogResult::Primary) => {
                     let branch = name.trim().to_owned();
@@ -1906,6 +1932,17 @@ impl Component for Root {
                             ),
                             button: tr!("Delete"),
                             command: json!({ "op": "deleteTag", "name": name }),
+                        });
+                    }
+                } else if key == "clean-up-branches" {
+                    // 消してよいブランチの候補（GitHub のプルリクエストはまだ読まない）。
+                    if let Some(repo) = self.repo.clone() {
+                        context.spawn_background(move |_| {
+                            let command = json!({ "op": "branchCleanup", "pullRequests": [] });
+                            let reply: Value =
+                                serde_json::from_str(&repo.run_json(&command.to_string()))
+                                    .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+                            Message::CleanUpLoaded(repo, reply)
                         });
                     }
                 } else if key == "remote-add" {
@@ -2742,6 +2779,45 @@ impl Component for Root {
                 }
             }
             Message::WorkingFilter(text) => self.working_filter = text,
+            Message::CleanUpLoaded(repo, reply) => {
+                if let Some(error) = reply["error"].as_str() {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("Clean Up Branches"),
+                        message: error.to_owned(),
+                    });
+                    return;
+                }
+                let info = &reply["info"];
+                let base = info["base"].as_str().unwrap_or("main").to_owned();
+                let branches: Vec<(Value, bool)> = info["branches"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|b| (b.clone(), b["checked"] == true))
+                    .collect();
+                self.dialog = Some(if branches.is_empty() {
+                    Dialog::Failed {
+                        title: tr!("No Branches to Clean Up"),
+                        message: tr!(
+                            "No branch is merged into {base}, merged by a pull request, or left without its upstream.",
+                            base = base
+                        ),
+                    }
+                } else {
+                    Dialog::CleanUp {
+                        repo,
+                        base,
+                        branches,
+                    }
+                });
+            }
+            Message::CleanUpCheck(index, on) => {
+                if let Some(Dialog::CleanUp { branches, .. }) = &mut self.dialog
+                    && let Some(b) = branches.get_mut(index)
+                {
+                    b.1 = on;
+                }
+            }
             Message::WorkingLayout(layout) => {
                 self.layout_clicks += 1;
                 if layout != self.working_layout {
@@ -4007,6 +4083,91 @@ impl Root {
                             .children((head, picker, modes)),
                     )
             }
+            Some(Dialog::CleanUp {
+                base, branches, ..
+            }) => {
+                // 理由ごとに見出しを付けて並べる（GTK4 版と同じ）。
+                let mut rows: Vec<(String, View)> = Vec::new();
+                for (reason, title) in [
+                    ("merged", tr!("Merged into {base}", base = base)),
+                    (
+                        "pullRequest",
+                        tr!("Merged by a pull request (squash or rebase)"),
+                    ),
+                    (
+                        "gone",
+                        tr!("Upstream gone, not merged (their own commits go with them)"),
+                    ),
+                ] {
+                    let group: Vec<(usize, &(Value, bool))> = branches
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, (b, _))| b["reason"] == reason)
+                        .collect();
+                    if group.is_empty() {
+                        continue;
+                    }
+                    rows.push((
+                        format!("h:{reason}"),
+                        TextBlock::new()
+                            .text(title)
+                            .font_size(12.0)
+                            .opacity(0.6)
+                            .margin(Thickness::new(0.0, 6.0, 0.0, 0.0))
+                            .into(),
+                    ));
+                    for (i, (b, on)) in group {
+                        let mut label = b["name"].as_str().unwrap_or_default().to_owned();
+                        if let Some(n) = b["pullRequest"].as_u64() {
+                            label.push_str(&format!("  #{n}"));
+                        }
+                        if reason == "gone"
+                            && let Some(u) = b["upstream"].as_str()
+                        {
+                            label.push_str(&format!("  ({u})"));
+                        }
+                        rows.push((
+                            format!("b:{i}"),
+                            CheckBox::new()
+                                .is_checked(*on)
+                                .on_is_checked_changed(
+                                    context.callback(move |v| Message::CleanUpCheck(i, v)),
+                                )
+                                .content(TextBlock::new().text(label)),
+                        ));
+                    }
+                }
+                let count = branches.iter().filter(|(_, on)| *on).count();
+                let button = if count == 1 {
+                    tr!("Delete 1 Branch")
+                } else {
+                    tr!("Delete {count} Branches", count = count)
+                };
+                dialog
+                    .is_open(true)
+                    .title(tr!("Clean Up Branches"))
+                    .primary_button_text(button)
+                    .is_primary_button_enabled(count > 0)
+                    .close_button_text(tr!("Cancel"))
+                    .content(
+                        StackPanel::new().spacing(4.0).children((
+                            TextBlock::new()
+                                .text(format!(
+                                    "{} {}",
+                                    tr!(
+                                        "Delete the checked branches. The current branch, favorites and branches used by a worktree aren’t listed."
+                                    ),
+                                    tr!("You can Undo this (Ctrl+Alt+Z).")
+                                ))
+                                .text_wrapping(TextWrapping::Wrap),
+                            ScrollViewer::new().max_height(280.0).content(
+                                StackPanel::new()
+                                    .spacing(2.0)
+                                    .children((View::keyed_fragment(rows),)),
+                            ),
+                        )),
+                    )
+            }
             Some(Dialog::Failed { title, message }) => dialog
                 .is_open(true)
                 .title(title.clone())
@@ -4181,6 +4342,12 @@ impl Root {
         }
         // リモートと Remotes の見出し（GTK4 版の `refops::remote_menu`）。
         match self.sidebar_key.as_deref() {
+            Some("group:branches") => {
+                return vec![MenuItem::item(
+                    "clean-up-branches",
+                    tr!("Clean Up Branches…"),
+                )];
+            }
             Some("group:remotes") => {
                 return vec![MenuItem::item("remote-add", tr!("Add Remote…"))];
             }
