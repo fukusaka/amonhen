@@ -71,6 +71,9 @@ const DIFF_ADDED_WORD: D2D1_COLOR_F = rgba(0.2, 0.7, 0.3, 0.35);
 const DIFF_REMOVED_WORD: D2D1_COLOR_F = rgba(0.9, 0.25, 0.25, 0.35);
 const DIFF_HUNK: D2D1_COLOR_F = rgba(0.3, 0.5, 0.9, 0.10);
 const DIFF_FILE: D2D1_COLOR_F = rgba(0.11, 0.11, 0.12, 0.07);
+/// Working Copy の差分の、行ごとの含める印の列の幅。
+pub const DIFF_MARK_WIDTH: f32 = 22.0;
+const DIFF_MARK: D2D1_COLOR_F = rgba(0.0, 0.47, 0.84, 1.0);
 const DIFF_GUTTER: D2D1_COLOR_F = rgba(0.11, 0.11, 0.12, 0.035);
 const LABEL_PADDING: f32 = 6.0;
 const LABEL_GAP: f32 = 4.0;
@@ -725,7 +728,9 @@ impl Renderer {
         if self.diff_rows.len() > 2048 {
             self.diff_rows.clear();
         }
-        let text_x = DIFF_NUMBER_WIDTH * 2.0 + DIFF_TEXT_INSET;
+        // 行ごとの含める印（Working Copy の 1 本の差分）があれば、その列の右から行番号。
+        let left = if commit.marks { DIFF_MARK_WIDTH } else { 0.0 };
+        let text_x = left + DIFF_NUMBER_WIDTH * 2.0 + DIFF_TEXT_INSET;
         for i in first..last {
             let row = &view.rows[i as usize];
             let top = i as f32 * DIFF_ROW_HEIGHT - scroll_y;
@@ -747,7 +752,7 @@ impl Renderer {
                 if !file {
                     self.brush.SetColor(&DIFF_GUTTER);
                     self.d2d
-                        .FillRectangle(&rect(0.0, DIFF_NUMBER_WIDTH * 2.0), &self.brush);
+                        .FillRectangle(&rect(0.0, left + DIFF_NUMBER_WIDTH * 2.0), &self.brush);
                 }
                 if let Some(fill) = fill {
                     self.brush.SetColor(&fill);
@@ -826,8 +831,11 @@ impl Renderer {
                 );
             }
             if !file && row.kind != DiffRow::HUNK {
-                self.draw_number(row.old_no, 0.0, top)?;
-                self.draw_number(row.new_no, DIFF_NUMBER_WIDTH, top)?;
+                self.draw_number(row.old_no, left, top)?;
+                self.draw_number(row.new_no, left + DIFF_NUMBER_WIDTH, top)?;
+            }
+            if commit.marks && matches!(row.kind, DiffRow::ADDED | DiffRow::REMOVED) {
+                self.draw_mark(row.flags & DiffRow::STAGED != 0, top)?;
             }
         }
         Ok(())
@@ -854,6 +862,41 @@ impl Renderer {
         let brush = unsafe { self.d2d.CreateSolidColorBrush(&rgba(r, g, b, 1.0), None)? };
         self.syntax_brushes.insert(kind, brush.clone());
         Ok(Some(brush))
+    }
+
+    /// 行を次のコミットに含めているかの印（含めていれば塗った四角にチェック、いなければ枠だけ）。
+    fn draw_mark(&self, staged: bool, top: f32) -> Result<()> {
+        let size = 12.0;
+        let (x, y) = (
+            (DIFF_MARK_WIDTH - size) / 2.0,
+            top + (DIFF_ROW_HEIGHT - size) / 2.0,
+        );
+        let rect = D2D1_ROUNDED_RECT {
+            rect: D2D_RECT_F {
+                left: x,
+                top: y,
+                right: x + size,
+                bottom: y + size,
+            },
+            radiusX: 2.5,
+            radiusY: 2.5,
+        };
+        unsafe {
+            if staged {
+                self.brush.SetColor(&DIFF_MARK);
+                self.d2d.FillRoundedRectangle(&rect, &self.brush);
+                self.brush.SetColor(&BACKGROUND);
+                let a = point(x + 2.8, y + 6.2);
+                let b = point(x + 5.2, y + 8.8);
+                let c = point(x + 9.4, y + 3.6);
+                self.d2d.DrawLine(a, b, &self.brush, 1.6, &self.round);
+                self.d2d.DrawLine(b, c, &self.brush, 1.6, &self.round);
+            } else {
+                self.brush.SetColor(&SECONDARY);
+                self.d2d.DrawRoundedRectangle(&rect, &self.brush, 1.0, None);
+            }
+        }
+        Ok(())
     }
 
     /// 行番号（0 なら書かない）を、`x` から幅 `DIFF_NUMBER_WIDTH` の列に右寄せで書く。

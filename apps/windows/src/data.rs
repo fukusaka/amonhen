@@ -85,6 +85,8 @@ pub struct DiffContent<'a> {
     pub view: &'a DiffView,
     pub highlights: &'a HashMap<u32, Vec<(u32, u32)>>,
     pub syntax: &'a HashMap<u32, Vec<(u32, u32, u8)>>,
+    /// 行ごとに次のコミットに含めるかの印を出す（Working Copy の 1 本の差分）。
+    pub marks: bool,
 }
 
 /// 行ごとの、変わった単語の範囲。
@@ -108,7 +110,7 @@ fn syntax_of(view: &DiffView) -> HashMap<u32, Vec<(u32, u32, u8)>> {
 /// Working Copy で選んだファイルの差分（HEAD と作業ツリーの 1 本の差分か、片側の差分）。
 pub struct WorkingShown {
     pub path: String,
-    pub diff: amonhen_core::WorkingDiff,
+    pub diff: Arc<amonhen_core::WorkingDiff>,
     pub highlights: HashMap<u32, Vec<(u32, u32)>>,
     pub syntax: HashMap<u32, Vec<(u32, u32, u8)>>,
 }
@@ -119,6 +121,7 @@ impl WorkingShown {
             view: &self.diff.view,
             highlights: &self.highlights,
             syntax: &self.syntax,
+            marks: self.diff.combined.is_some(),
         }
     }
 }
@@ -165,6 +168,7 @@ impl CommitShown {
             view: &self.diff,
             highlights: &self.highlights,
             syntax: &self.syntax,
+            marks: false,
         }
     }
 
@@ -422,7 +426,7 @@ impl Data {
                     let (highlights, syntax) = (highlights_of(&diff.view), syntax_of(&diff.view));
                     Event::Working(Box::new(WorkingShown {
                         path: entry.path.clone(),
-                        diff,
+                        diff: Arc::new(diff),
                         highlights,
                         syntax,
                     }))
@@ -434,6 +438,33 @@ impl Data {
             };
             let _ = tx.send(event);
             wake();
+        });
+    }
+
+    /// Working Copy の差分の `row` 行目（変更の行）を、次のコミットに含める・外す（今と逆にする）。終わったら status を
+    /// 読み直し、差分も読み直される。
+    pub fn toggle_working_row(&self, row: usize) {
+        let Some(working) = &self.working else { return };
+        let Some(staged) = working
+            .diff
+            .combined
+            .as_ref()
+            .and_then(|c| c.get(row).copied())
+        else {
+            return;
+        };
+        let (Some(repo), diff, changed) = (
+            self.repo.clone(),
+            working.diff.clone(),
+            self.changed_tx.clone(),
+        ) else {
+            return;
+        };
+        std::thread::spawn(move || {
+            if let Err(e) = repo.set_rows_staged(&diff, &[row], !staged) {
+                eprintln!("行を含められない: {e}");
+            }
+            let _ = changed.send(amonhen_watch::Changes::INDEX.0);
         });
     }
 
