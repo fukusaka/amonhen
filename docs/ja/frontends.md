@@ -147,7 +147,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Author and Signing（署名の選択・集めた鍵・mailmap） | ✓ | ✓ | △ | ✓ | △ | VSCode: 鍵は今の形式のものだけを集める。<br>CLI: `amonhen run`（`signingKeys`・`configSet`）から。<br>Windows: 名前とメールだけ。 |
 | Commits: メッセージのテンプレート（なし・共有・独自・ファイル） | ✓ | ✓ | — | △ | △ | VSCode: なし・このリポジトリ専用（その場で書く）・ファイル。共有のテンプレートはない。<br>CLI: `amonhen run` から。 |
 | Branches: 既定のブランチを選ぶ | ✓ | ✓ | — | ✓ | △ | CLI: `amonhen run` から。 |
-| Operations: pull・fetch.prune・autostash・updateRefs・コンフリクトの書き方・rerere | ✓ | ✓ | — | ✓ | △ | CLI: `amonhen run` から。 |
+| Operations: pull・fetch.prune・autostash・updateRefs・コンフリクトの書き方・rerere | ✓ | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | rerere: 1 つの解決を忘れる（マージエディタ）・すべて忘れる（リポジトリの設定） | ✓ | ✓ | — | ✓ | △ | VSCode: rerere が解決したコンフリクトの Working Copy の右クリックに Forget Resolution（マージエディタは VSCode のもの）、Repository Settings > Operations に Forget All…。<br>CLI: `amonhen run`（`forgetResolution`・`forgetAllResolutions`）から。 |
 | Working Copy: 改行・実行ビット・`.git/info/exclude` の編集 | ✓ | ✓ | — | ✓ | △ | CLI: `amonhen run` から。 |
 | Remotes: 表と、つながるか確かめるシート | ✓ | ✓ | — | ✓ | △ | VSCode: 表と行ごとのボタン（Edit URL…・Push URL…・Check・Prune・Rename…・Remove…）と Add…。値はシートでなく入力欄で聞く。<br>CLI: `amonhen run` から。 |

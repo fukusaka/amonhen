@@ -90,11 +90,139 @@ pub fn scope_label(scope: &str) -> String {
     }
 }
 
+/// Operations の行（GTK4 版の `operations_page`）: (id, 見出し, 説明, キー, 選べる値と言葉, 値がないときの値)。
+/// pull は `pull.rebase` と `pull.ff` の 2 つで決まるので、別に扱う（`pull_method`）。
+pub type OperationRow = (
+    &'static str,
+    String,
+    String,
+    &'static str,
+    Vec<(&'static str, String)>,
+    &'static str,
+);
+
+pub fn operation_rows() -> Vec<OperationRow> {
+    let on_off = || vec![("true", tr!("On")), ("false", tr!("Off"))];
+    vec![
+        (
+            "fetch.prune",
+            tr!("Remove remote-tracking branches deleted on the remote"),
+            String::new(),
+            "fetch.prune",
+            on_off(),
+            "false",
+        ),
+        (
+            "rebase.autoStash",
+            tr!("Stash changes before rebasing"),
+            tr!("History edits always stash, whatever this says."),
+            "rebase.autoStash",
+            on_off(),
+            "false",
+        ),
+        (
+            "rebase.updateRefs",
+            tr!("Move stacked branches along when rebasing or editing History"),
+            tr!("Branches whose tips are among the rewritten commits. Undo puts them back."),
+            "rebase.updateRefs",
+            vec![
+                ("false", tr!("Leave them")),
+                ("true", tr!("Move them along")),
+            ],
+            "false",
+        ),
+        (
+            "merge.conflictStyle",
+            tr!("How conflicts are written in files"),
+            tr!(
+                "With the base (diff3, zdiff3), the merge editor resolves one-sided conflicts by itself."
+            ),
+            "merge.conflictStyle",
+            vec![
+                ("merge", tr!("Both sides")),
+                ("diff3", tr!("Both sides and the common base")),
+                ("zdiff3", tr!("Both sides and the base, shortened")),
+            ],
+            "merge",
+        ),
+        (
+            "rerere.enabled",
+            tr!("Reuse how conflicts were resolved before"),
+            tr!(
+                "When the same conflict comes back, git puts the earlier resolution in the file (rerere)."
+            ),
+            "rerere.enabled",
+            on_off(),
+            "false",
+        ),
+        (
+            "rerere.autoUpdate",
+            tr!("Stage files resolved that way"),
+            tr!("Only while the switch above is on."),
+            "rerere.autoUpdate",
+            on_off(),
+            "false",
+        ),
+    ]
+}
+
+/// git の真偽値を `true`・`false` に揃える（`yes`・`on`・`1` も真）。
+fn normalize_bool(value: &str) -> String {
+    match value.to_lowercase().as_str() {
+        "true" | "yes" | "on" | "1" => "true".to_owned(),
+        "false" | "no" | "off" | "0" | "" => "false".to_owned(),
+        other => other.to_owned(),
+    }
+}
+
+/// pull の取り込み方（`merge`・`rebase`・`ffOnly`。GTK4 版の `pull_row` の `method`）。
+pub fn pull_method(state: &State) -> &'static str {
+    if state
+        .effective("pull.ff")
+        .is_some_and(|(v, _)| v.eq_ignore_ascii_case("only"))
+    {
+        return "ffOnly";
+    }
+    match state
+        .effective("pull.rebase")
+        .map(|(v, _)| v.to_lowercase())
+    {
+        Some(r) if ["true", "yes", "on", "1", "merges", "interactive"].contains(&r.as_str()) => {
+            "rebase"
+        }
+        _ => "merge",
+    }
+}
+
+/// pull の取り込み方を `method` にする命令（GTK4 版と同じく、`pull.rebase` をいつも書いて曖昧さをなくす）。
+pub fn pull_commands(state: &State, method: &str) -> Vec<Value> {
+    let set = |key: &str, value: Option<&str>| serde_json::json!({ "op": "configSet", "key": key, "value": value });
+    let mut commands = Vec::new();
+    if state
+        .at("local", "pull.ff")
+        .is_some_and(|v| v.eq_ignore_ascii_case("only"))
+        && method != "ffOnly"
+    {
+        commands.push(set("pull.ff", None));
+    }
+    match method {
+        "rebase" => commands.push(set("pull.rebase", Some("true"))),
+        "ffOnly" => {
+            commands.push(set("pull.rebase", Some("false")));
+            commands.push(set("pull.ff", Some("only")));
+        }
+        _ => commands.push(set("pull.rebase", Some("false"))),
+    }
+    commands
+}
+
 pub struct Callbacks<'a> {
     /// 欄（`name`・`email`・`query`・`key`・`value`）。
     pub field: Box<dyn Fn(&'static str) -> Callback<String> + 'a>,
     /// ボタン（`author`・`add`・`remove:<key>`・`close`）。
     pub button: Box<dyn Fn(String) -> Callback<()> + 'a>,
+    /// Operations の選ぶ欄（行の id と、選んだ番号）。
+    pub choice: Box<dyn Fn(&'static str) -> Callback<Option<usize>> + 'a>,
 }
 
 pub fn view(state: &State, callbacks: Callbacks) -> View {
@@ -146,6 +274,84 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 .on_text_changed((callbacks.field)(field)),
         ))
     };
+    // Operations: 行ごとに選ぶ欄と、効いている値の設定元（このリポジトリで上書きしていなければ）。
+    let choice_row = |id: &'static str,
+                      title: String,
+                      help: String,
+                      keys: &[&str],
+                      labels: Vec<String>,
+                      selected: usize| {
+        let source = keys
+            .iter()
+            .find_map(|k| state.effective(k))
+            .map(|(_, scope)| scope_label(scope))
+            .unwrap_or_else(|| tr!("git’s default"));
+        StackPanel::new().spacing(2.0).children((
+            TextBlock::new()
+                .text(title)
+                .text_wrapping(TextWrapping::Wrap),
+            StackPanel::new()
+                .orientation(Orientation::Horizontal)
+                .spacing(8.0)
+                .children((
+                    ComboBox::new()
+                        .items_source(labels)
+                        .selected_index(selected)
+                        .on_selection_changed((callbacks.choice)(id)),
+                    TextBlock::new()
+                        .text(source)
+                        .font_size(12.0)
+                        .opacity(0.6)
+                        .vertical_alignment(VerticalAlignment::Center),
+                )),
+            if help.is_empty() {
+                View::empty()
+            } else {
+                TextBlock::new()
+                    .text(help)
+                    .font_size(12.0)
+                    .opacity(0.65)
+                    .text_wrapping(TextWrapping::Wrap)
+                    .into()
+            },
+        ))
+    };
+    let pull = ["merge", "rebase", "ffOnly"];
+    let mut operations = vec![(
+        "pull".to_owned(),
+        choice_row(
+            "pull",
+            tr!("When pulling, how are the changes brought in?"),
+            String::new(),
+            &["pull.ff", "pull.rebase"],
+            vec![tr!("Merge"), tr!("Rebase"), tr!("Fast-forward")],
+            pull.iter()
+                .position(|m| *m == pull_method(state))
+                .unwrap_or(0),
+        ),
+    )];
+    for (id, title, help, key, options, default) in operation_rows() {
+        let value = state
+            .effective(key)
+            .map_or_else(|| default.to_owned(), |(v, _)| v.to_owned());
+        let value = if options.iter().any(|(v, _)| *v == "true") {
+            normalize_bool(&value)
+        } else {
+            value.to_lowercase()
+        };
+        let selected = options.iter().position(|(v, _)| *v == value).unwrap_or(0);
+        operations.push((
+            id.to_owned(),
+            choice_row(
+                id,
+                title,
+                help,
+                &[key],
+                options.into_iter().map(|(_, l)| l).collect(),
+                selected,
+            ),
+        ));
+    }
     let author_changed = state.at("local", "user.name").unwrap_or_default() != state.name
         || state.at("local", "user.email").unwrap_or_default() != state.email;
     // Keys and Values: キーごとに効いている値（最後のもの）。探す文字があれば、キーか値に含むものだけ。
@@ -247,6 +453,12 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                             .on_click((callbacks.button)("author".to_owned()))
                             .content(TextBlock::new().text(tr!("Save"))),
                     )),
+                heading("Operations".to_owned()),
+                StackPanel::new()
+                    .max_width(560.0)
+                    .horizontal_alignment(HorizontalAlignment::Left)
+                    .spacing(12.0)
+                    .children((View::keyed_fragment(operations),)),
                 heading(tr!("Keys and Values")),
                 TextBox::new()
                     .text(state.query.clone())

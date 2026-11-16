@@ -452,6 +452,8 @@ enum Message {
     Confirm(Arc<Repository>, String, String, String, Value),
     /// Working Copy のパスの絞り込み。
     WorkingFilter(String),
+    /// Repository Settings の Operations の選ぶ欄（行の id と、選んだ番号）。
+    RepoSettingsChoice(&'static str, Option<usize>),
     /// サイドバーの絞り込み。
     SidebarFilter(String),
     /// リポジトリの形を読んだ。
@@ -3048,6 +3050,43 @@ impl Component for Root {
                 }
             }
             Message::WorkingFilter(text) => self.working_filter = text,
+            Message::RepoSettingsChoice(id, Some(index)) => {
+                let Some(state) = self.repo_settings.as_ref() else {
+                    return;
+                };
+                let commands = if id == "pull" {
+                    let method = ["merge", "rebase", "ffOnly"][index.min(2)];
+                    // 作り直した欄が今の値を知らせてきたときは書かない。
+                    if method == crate::reposettings::pull_method(state) {
+                        return;
+                    }
+                    crate::reposettings::pull_commands(state, method)
+                } else {
+                    let Some((_, _, _, key, options, default)) =
+                        crate::reposettings::operation_rows()
+                            .into_iter()
+                            .find(|r| r.0 == id)
+                    else {
+                        return;
+                    };
+                    let Some((value, _)) = options.get(index) else {
+                        return;
+                    };
+                    let now = state
+                        .effective(key)
+                        .map_or(default, |(v, _)| v)
+                        .to_lowercase();
+                    let same = now == *value
+                        || (*value == "true" && ["yes", "on", "1"].contains(&now.as_str()))
+                        || (*value == "false" && ["no", "off", "0", ""].contains(&now.as_str()));
+                    if same {
+                        return;
+                    }
+                    vec![json!({ "op": "configSet", "key": key, "value": value })]
+                };
+                self.write_repo_settings(commands, context);
+            }
+            Message::RepoSettingsChoice(_, None) => {}
             Message::SidebarFilter(text) => self.sidebar_filter = text,
             Message::Form(form) => self.form = form,
             Message::IgnoredLoaded(repo, reply) => {
@@ -5582,6 +5621,9 @@ impl Root {
                 field: Box::new(|f| context.callback(move |t| Message::RepoSettingsField(f, t))),
                 button: Box::new(|k: String| {
                     context.callback(move |()| Message::RepoSettingsButton(k.clone()))
+                }),
+                choice: Box::new(|id: &'static str| {
+                    context.callback(move |i: Option<usize>| Message::RepoSettingsChoice(id, i))
                 }),
             },
         );
