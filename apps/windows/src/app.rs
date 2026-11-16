@@ -11,7 +11,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
-use amonhen_core::{RefsSnapshot, Repository};
+use amonhen_core::{RefsSnapshot, Repository, StatusSnapshot};
 use amonhen_model::RefEntry;
 use amonhen_model::tr;
 use amonhen_win_xaml as xaml;
@@ -70,6 +70,22 @@ struct Root {
     selected: Option<(String, Vec<crate::data::RefLabel>)>,
     /// History の右クリックのメニューを開いた回数（変わったら、描き直した後に開く）。
     menu_request: u64,
+    /// 出している画面（サイドバーの Workspace）。
+    page: Page,
+    repo: Option<Arc<Repository>>,
+    status: Option<Arc<StatusSnapshot>>,
+    /// Working Copy のコミットの件名と本文。
+    summary: String,
+    description: String,
+    committing: bool,
+    /// Working Copy の一覧で選んでいるファイル（何番目か。差分は次の段で出す）。
+    working_file: Option<usize>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Page {
+    History,
+    WorkingCopy,
 }
 
 /// 窓に重ねるダイアログ（macOS 版のシート、GTK4 版の `sheets`）。
@@ -101,6 +117,18 @@ enum Message {
     HistoryMenu(String),
     /// History の右クリックのメニューを開く（選んだ行のメニューに作り直してから）。
     OpenHistoryMenu,
+    Status(Arc<StatusSnapshot>),
+    /// Working Copy の件名・本文が変わった。
+    Summary(String),
+    Description(String),
+    /// ファイルを次のコミットに含める・外す。
+    Stage(String, bool),
+    /// Working Copy の Commit を押した。
+    CommitChanges,
+    /// コミットが終わった（失敗ならその文）。
+    Committed(Option<String>),
+    /// Working Copy の一覧で選んだファイル（何番目か）。
+    WorkingFile(Option<usize>),
     /// ダイアログを閉じた（押したボタン）。
     DialogClosed(ContentDialogResult),
     /// 書き込む操作が終わった（失敗ならそのダイアログの見出しと文）。
@@ -125,6 +153,13 @@ impl Component for Root {
             dialog: None,
             selected: None,
             menu_request: 0,
+            page: Page::History,
+            repo: None,
+            status: None,
+            summary: String::new(),
+            description: String::new(),
+            committing: false,
+            working_file: None,
         }
     }
 
@@ -132,6 +167,7 @@ impl Component for Root {
         match message {
             Message::Refs(refs, repo) => {
                 self.refs = Some(refs);
+                self.repo = Some(repo.clone());
                 // ブランチの分け方は ref が変わるたびに読み直す（数十 ms かかるので裏で）。
                 context.spawn_background(move |_| {
                     let reply = repo.run_json(r#"{"op":"branchGroups"}"#);
@@ -147,6 +183,8 @@ impl Component for Root {
             Message::Commit(info, extras) => self.info = Some((info, extras)),
             Message::Failed(e) => self.error = Some(e),
             Message::Command(id) if id == "undo" => self.undo(context),
+            Message::Command(id) if id == "show-working-copy" => self.page = Page::WorkingCopy,
+            Message::Command(id) if id == "show-history" => self.page = Page::History,
             Message::Command(id) => with_history(|h| h.command(&id)),
             Message::UndoPeek(repo, peek) => match peek {
                 Some((label, what)) => self.dialog = Some(Dialog::Undo { repo, label, what }),
@@ -161,6 +199,49 @@ impl Component for Root {
             }
             Message::Selected(selected) => self.selected = selected,
             Message::OpenHistoryMenu => self.menu_request += 1,
+            Message::Status(status) => self.status = Some(status),
+            Message::Summary(text) => self.summary = text,
+            Message::Description(text) => self.description = text,
+            Message::Stage(path, include) => {
+                let Some(repo) = self.repo.clone() else {
+                    return;
+                };
+                context.spawn_background(move |_| {
+                    let result = if include {
+                        repo.stage(&[&path])
+                    } else {
+                        repo.unstage(&[&path])
+                    };
+                    with_status_reload();
+                    Message::Performed(result.err().map(|e| (tr!("Couldn’t Stage"), e.to_string())))
+                });
+            }
+            Message::CommitChanges => {
+                let Some(repo) = self.repo.clone() else {
+                    return;
+                };
+                let message = crate::workcopy::message(&self.summary, &self.description);
+                self.committing = true;
+                context.spawn_background(move |_| {
+                    Message::Committed(repo.commit(&message, false).err().map(|e| e.to_string()))
+                });
+            }
+            Message::WorkingFile(index) => self.working_file = index,
+            Message::Committed(failed) => {
+                self.committing = false;
+                match failed {
+                    None => {
+                        self.summary.clear();
+                        self.description.clear();
+                    }
+                    Some(message) => {
+                        self.dialog = Some(Dialog::Failed {
+                            title: tr!("Couldn’t Commit"),
+                            message,
+                        })
+                    }
+                }
+            }
             Message::HistoryMenu(key) => {
                 if let Some(text) = key.strip_prefix("copy:") {
                     copy_text(text);
@@ -171,6 +252,8 @@ impl Component for Root {
                     self.dialog = Some(Dialog::Failed { title, message });
                 }
             }
+            Message::Invoked(key) if key == "page:working-copy" => self.page = Page::WorkingCopy,
+            Message::Invoked(key) if key == "page:history" => self.page = Page::History,
             Message::Invoked(key) => {
                 if let Some(entry) = self.entry(&key)
                     && let Some(target) = entry.target
@@ -224,6 +307,7 @@ impl Component for Root {
                 },
                 sender,
                 refs_sent: None,
+                status_sent: None,
                 selected: None,
                 shown: None,
                 context_at: None,
@@ -318,6 +402,9 @@ impl Component for Root {
                         context.callback(Message::HistoryMenu),
                     )),
                 right,
+                // Working Copy は History の上に重ねる（History の描画は SwapChainPanel の毎フレームの知らせで回って
+                // いて、外すと止まる）。
+                self.working_copy_view(context),
             ));
         let dialog = self.dialog_view(context);
         Grid::new()
@@ -377,6 +464,35 @@ impl Root {
         }
     }
 
+    fn working_copy_view(&self, context: &ViewContext<Self>) -> View {
+        if self.page != Page::WorkingCopy {
+            return View::empty();
+        }
+        let callbacks = crate::workcopy::Callbacks {
+            summary: context.callback(Message::Summary),
+            description: context.callback(Message::Description),
+            commit: context.callback(|()| Message::CommitChanges),
+            stage: Box::new(|path: String| {
+                context.callback(move |include| Message::Stage(path.clone(), include))
+            }),
+            selected: context.callback(Message::WorkingFile),
+        };
+        let view = crate::workcopy::view(
+            crate::workcopy::Input {
+                status: self.status.as_deref(),
+                summary: &self.summary,
+                description: &self.description,
+                committing: self.committing,
+            },
+            callbacks,
+        );
+        Border::new()
+            .background(Brush::Solid(Color::rgb(0xff, 0xff, 0xff)))
+            .grid_column(1)
+            .grid_column_span(2)
+            .content(view)
+    }
+
     /// History の右クリックのメニュー（GTK4 版の `commitops::menu`、macOS 版の `HistoryViewController` と同じ並び）。
     /// まだ動かない操作は出さない。右クリックは先に行を選ぶので、選んでいるコミットのメニューになる。
     fn history_menu(&self) -> Vec<MenuItem> {
@@ -408,6 +524,14 @@ impl Root {
             .find(|e| e.kind as u8 == kind && e.name == name)
     }
 }
+
+/// Working Copy の status を読み直してもらう（裏のスレッドから。描き手は UI のスレッドにいるので、知らせだけ送る）。
+fn with_status_reload() {
+    STATUS_RELOAD.store(true, std::sync::atomic::Ordering::Release);
+}
+
+/// 裏のスレッドが頼んだ status の読み直し（UI のスレッドの描くついでに見る）。
+static STATUS_RELOAD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// 押せない・戻すものがないときの音（macOS 版の `NSSound.beep`、GTK4 版の `error_bell`）。
 fn beep() {
@@ -776,6 +900,8 @@ struct HistoryView {
     sender: LocalSender<Message>,
     /// サイドバーに送った ref（同じものは送り直さない）。
     refs_sent: Option<Arc<RefsSnapshot>>,
+    /// Working Copy に送った status。
+    status_sent: Option<Arc<StatusSnapshot>>,
     /// 詳細と差分を読みに行った選択。
     selected: Option<u32>,
     /// 詳細と差分を出しているコミットの行。
@@ -825,6 +951,9 @@ impl HistoryView {
             self.diff.input_requested = request_input(&self.diff.area, Target::Diff);
         }
         let s = &mut self.session;
+        if STATUS_RELOAD.swap(false, std::sync::atomic::Ordering::AcqRel) {
+            s.data.reload_status();
+        }
         s.poll()?;
         if let (Some(refs), Some(repo)) = (&s.data.refs, s.data.repo())
             && !self
@@ -834,6 +963,15 @@ impl HistoryView {
         {
             self.refs_sent = Some(refs.clone());
             self.sender.send(Message::Refs(refs.clone(), repo));
+        }
+        if let Some(status) = &s.data.status
+            && !self
+                .status_sent
+                .as_ref()
+                .is_some_and(|sent| Arc::ptr_eq(sent, status))
+        {
+            self.status_sent = Some(status.clone());
+            self.sender.send(Message::Status(status.clone()));
         }
         // History が替わったら、選んでいる行の番号も変わる（同じコミットでも読み直す。差分も変わりうる）。
         if s.history_replaced {

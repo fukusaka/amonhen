@@ -15,6 +15,7 @@ mod render;
 mod sidebar;
 mod win32;
 mod winui;
+mod workcopy;
 
 use std::path::PathBuf;
 use std::time::Instant;

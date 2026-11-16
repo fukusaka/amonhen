@@ -11,7 +11,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 
 use amonhen_backend_gix::GixBackend;
 use amonhen_core::diff::{DiffView, StackedDiff};
-use amonhen_core::{HistorySnapshot, RefsSnapshot, Repository};
+use amonhen_core::{HistorySnapshot, RefsSnapshot, Repository, StatusSnapshot};
 use amonhen_layout::StrRef;
 use amonhen_model::{RefKind, Refs};
 use amonhen_projection::{ColumnSet, FrontendProfile, HistoryChunk, StringEncoding};
@@ -171,6 +171,7 @@ enum Event {
     Commit(u64, Box<CommitShown>),
     Syntax(u64, u32, u32, HashMap<u32, Vec<(u32, u32, u8)>>),
     Extras(u64, u32, serde_json::Value),
+    Status(Arc<StatusSnapshot>),
     Chunk(u64, u32, Chunk),
     Failed(String),
 }
@@ -178,6 +179,8 @@ enum Event {
 pub struct Data {
     pub history: Option<Arc<HistorySnapshot>>,
     pub refs: Option<Arc<RefsSnapshot>>,
+    /// Working Copy の変更（index と作業ツリー）。
+    pub status: Option<Arc<StatusSnapshot>>,
     /// 今の History の行の、ref のラベル。
     pub labels: Labels,
     /// 選んだコミットの詳細と差分（届いたもの）。
@@ -240,6 +243,16 @@ impl Data {
             if let Some(event) = refs(&history) {
                 send(event);
             }
+            let status = || match repo.load_status() {
+                Ok(status) => Some(Event::Status(status)),
+                Err(e) => {
+                    eprintln!("status を読めない: {e}");
+                    None
+                }
+            };
+            if let Some(event) = status() {
+                send(event);
+            }
 
             // ref が変わったら History と ref を、設定が変わったら ref を読み直す（GTK4 版の `watch` と同じ）。
             // 知らせは監視のスレッドから来るので、このスレッドで受けて読む。読み直しの失敗は出さない（macOS 版と
@@ -287,11 +300,20 @@ impl Data {
                         event => send(event),
                     }
                 }
+                // ref・index・作業ツリーが変わったら、Working Copy の status も。
+                if (changes.contains(amonhen_watch::Changes::REFS)
+                    || changes.contains(amonhen_watch::Changes::INDEX)
+                    || changes.contains(amonhen_watch::Changes::WORKTREE))
+                    && let Some(event) = status()
+                {
+                    send(event);
+                }
             }
         });
         Self {
             history: None,
             refs: None,
+            status: None,
             labels: HashMap::new(),
             commit: None,
             commit_wanted: None,
@@ -313,6 +335,11 @@ impl Data {
     pub fn reload(&self) {
         let all = amonhen_watch::Changes::REFS.0 | amonhen_watch::Changes::CONFIG.0;
         let _ = self.changed_tx.send(all);
+    }
+
+    /// Working Copy の status を読み直す（stage・コミットの後。見張りが拾う前に出す）。
+    pub fn reload_status(&self) {
+        let _ = self.changed_tx.send(amonhen_watch::Changes::INDEX.0);
     }
 
     /// History の永続キャッシュを捨てて作り直し、ref も読み直す（View > Rebuild History）。
@@ -410,6 +437,16 @@ impl Data {
                             _ => self.early_extras = Some((row, extras)),
                         }
                         self.extras_changed = true;
+                        changed = true;
+                    }
+                }
+                Event::Status(status) => {
+                    if !self
+                        .status
+                        .as_ref()
+                        .is_some_and(|s| Arc::ptr_eq(s, &status))
+                    {
+                        self.status = Some(status);
                         changed = true;
                     }
                 }
