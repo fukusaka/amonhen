@@ -425,8 +425,32 @@ fn build_menu_items(
                 key,
                 label,
                 enabled,
+                shortcut,
             } => {
                 let item = MenuFlyoutItem::new().map_err(native_error)?;
+                if let Some(shortcut) = shortcut {
+                    let accelerator = KeyboardAccelerator::new().map_err(native_error)?;
+                    accelerator
+                        .SetKey(VirtualKey(i32::from(shortcut.key)))
+                        .map_err(native_error)?;
+                    let mut modifiers = 0;
+                    if shortcut.control {
+                        modifiers |= VirtualKeyModifiers::Control.0;
+                    }
+                    if shortcut.shift {
+                        modifiers |= VirtualKeyModifiers::Shift.0;
+                    }
+                    if shortcut.alt {
+                        modifiers |= VirtualKeyModifiers::Menu.0;
+                    }
+                    accelerator
+                        .SetModifiers(VirtualKeyModifiers(modifiers))
+                        .map_err(native_error)?;
+                    item.cast::<IUIElement>()
+                        .and_then(|element| element.KeyboardAccelerators())
+                        .and_then(|values| values.Append(&accelerator))
+                        .map_err(native_error)?;
+                }
                 item.SetText(label).map_err(native_error)?;
                 item.cast::<IControl>()
                     .and_then(|control| control.SetIsEnabled(*enabled))

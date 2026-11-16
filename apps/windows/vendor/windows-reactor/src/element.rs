@@ -633,6 +633,18 @@ pub trait FlyoutExt: Into<View> + Sized {
 
 impl<T> FlyoutExt for T where T: Into<View> {}
 
+/// A keyboard shortcut of a menu item: a Windows virtual-key code and modifiers.
+///
+/// WinUI shows it next to the label and invokes the item when it is pressed while the menu is in
+/// the window (for example, in a menu bar).
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub struct MenuShortcut {
+    pub key: u16,
+    pub control: bool,
+    pub shift: bool,
+    pub alt: bool,
+}
+
 /// A keyed item in a context menu.
 #[derive(Clone, Debug, PartialEq)]
 pub enum MenuItem {
@@ -640,6 +652,7 @@ pub enum MenuItem {
         key: Key,
         label: String,
         enabled: bool,
+        shortcut: Option<MenuShortcut>,
     },
     Separator {
         key: Key,
@@ -658,7 +671,16 @@ impl MenuItem {
             key: key.into(),
             label: label.into(),
             enabled: true,
+            shortcut: None,
         }
+    }
+
+    /// Adds a keyboard shortcut to a command item (other items are returned unchanged).
+    pub fn with_shortcut(mut self, value: MenuShortcut) -> Self {
+        if let Self::Item { shortcut, .. } = &mut self {
+            *shortcut = Some(value);
+        }
+        self
     }
 
     /// Creates a disabled command item.
@@ -667,6 +689,7 @@ impl MenuItem {
             key: key.into(),
             label: label.into(),
             enabled: false,
+            shortcut: None,
         }
     }
 
