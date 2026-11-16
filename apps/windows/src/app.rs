@@ -549,6 +549,8 @@ enum Message {
     RepoSettingsLoaded(Vec<crate::reposettings::Entry>),
     /// Repository Settings のフックの有効を切り替えた。
     HookEnabled(String, bool),
+    /// Repository Settings の専用のテンプレートを読んだ（中身、置き場所）。
+    RepoTemplateLoaded(Option<String>, String),
     /// Repository Settings の既定のブランチを判定した。
     RepoDetectedBase(Option<String>),
     /// Repository Settings のリポジトリの形を読んだ（`repositoryForm` の info）。
@@ -2915,6 +2917,21 @@ impl Component for Root {
                     );
                 }
             }
+            Message::RepoTemplateLoaded(text, path) => {
+                if let Some(state) = self.repo_settings.as_mut() {
+                    let text = text.unwrap_or_default();
+                    // 書きかけなら欄はそのまま。
+                    let editing = state.template.as_deref().is_some_and(|t| {
+                        crate::reposettings::lf(t) != state.template_saved
+                            && crate::reposettings::lf(t) != text
+                    });
+                    state.template_saved = text.clone();
+                    state.template_path = path;
+                    if !editing {
+                        state.template = Some(text);
+                    }
+                }
+            }
             Message::RepoDetectedBase(base) => {
                 if let Some(state) = self.repo_settings.as_mut() {
                     state.detected_base = base;
@@ -2963,6 +2980,7 @@ impl Component for Root {
                         // 打ったまま持つ（揃えた値で欄を書き直すと、カーソルが先頭に戻る）。改行は書くときに揃える。
                         "exclude" => state.exclude = Some(text),
                         "lfs" => state.new_pattern = text,
+                        "template" => state.template = Some(text),
                         _ => state.new_value = text,
                     }
                 }
@@ -2997,6 +3015,10 @@ impl Component for Root {
                     });
                     return;
                 }
+                if key == "template-revert" {
+                    state.template = Some(state.template_saved.clone());
+                    return;
+                }
                 if key == "exclude-revert" {
                     state.exclude = Some(state.exclude_saved.clone());
                     return;
@@ -3023,7 +3045,11 @@ impl Component for Root {
                     }
                     return;
                 }
-                let commands = if let Some(n) = key.strip_prefix("deepen:") {
+                let commands = if key == "template-save" {
+                    let text =
+                        crate::reposettings::lf(state.template.as_deref().unwrap_or_default());
+                    vec![json!({ "op": "saveCommitTemplate", "text": text })]
+                } else if let Some(n) = key.strip_prefix("deepen:") {
                     vec![json!({ "op": "deepen", "commits": n.parse::<u64>().unwrap_or(100) })]
                 } else if key == "unshallow" {
                     vec![json!({ "op": "unshallow" })]
@@ -3213,6 +3239,44 @@ impl Component for Root {
                 }
             }
             Message::WorkingFilter(text) => self.working_filter = text,
+            Message::RepoSettingsChoice("template", Some(index)) => {
+                let Some(state) = self.repo_settings.as_ref() else {
+                    return;
+                };
+                if index == crate::reposettings::template_choice(state) && index != 2 {
+                    return;
+                }
+                let key = crate::reposettings::TEMPLATE_KEY;
+                let commands = match index {
+                    0 => vec![json!({ "op": "configSet", "key": key, "value": null })],
+                    // 専用のファイルがまだなければ空で作る（commit.template もそれを向く）。あれば向け直すだけ。
+                    1 if state.template_path.is_empty() => {
+                        vec![json!({ "op": "saveCommitTemplate", "text": "" })]
+                    }
+                    1 => {
+                        vec![json!({ "op": "configSet", "key": key, "value": state.template_path })]
+                    }
+                    _ => {
+                        // 作り直した欄が今の値を知らせてきたときは、選び直さない。
+                        if crate::reposettings::template_choice(state) == 2 {
+                            return;
+                        }
+                        let Some(path) =
+                            crate::files::open_files(&tr!("Choose a commit message template file"))
+                                .into_iter()
+                                .next()
+                        else {
+                            return;
+                        };
+                        vec![json!({
+                            "op": "configSet",
+                            "key": key,
+                            "value": path.display().to_string().replace('\\', "/"),
+                        })]
+                    }
+                };
+                self.write_repo_settings(commands, context);
+            }
             Message::RepoSettingsChoice("default-branch", Some(index)) => {
                 let Some(state) = self.repo_settings.as_ref() else {
                     return;
@@ -5804,6 +5868,21 @@ impl Root {
 
     /// Repository Settings のフック・LFS と、`.gitignore`・`.git/info/exclude` を裏で読む。
     fn load_repo_files(&self, context: &ComponentContext<Self>) {
+        // このリポジトリ専用のテンプレート。
+        if let Some(repo) = self.repo.clone() {
+            context.spawn_background(move |_| {
+                let reply: Value =
+                    serde_json::from_str(&repo.run_json(r#"{"op":"commitTemplate"}"#))
+                        .unwrap_or_default();
+                Message::RepoTemplateLoaded(
+                    reply["info"]["text"].as_str().map(str::to_owned),
+                    reply["info"]["path"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_owned(),
+                )
+            });
+        }
         // 判定した既定のブランチ（`branchGroups` の base）。
         if let Some(repo) = self.repo.clone() {
             context.spawn_background(move |_| {

@@ -58,6 +58,10 @@ pub struct State {
     /// ローカルのブランチ（名前の順）と、判定した既定のブランチ（Branches の既定のブランチの選ぶ欄）。
     pub local_branches: Vec<String>,
     pub detected_base: Option<String>,
+    /// このリポジトリ専用のテンプレート（`commitTemplate`）: 打ったままの中身、読んだ・書いた中身、置き場所。
+    pub template: Option<String>,
+    pub template_saved: String,
+    pub template_path: String,
 }
 
 impl State {
@@ -82,6 +86,9 @@ impl State {
             form: None,
             local_branches: Vec::new(),
             detected_base: None,
+            template: None,
+            template_saved: String::new(),
+            template_path: String::new(),
         }
     }
 
@@ -288,6 +295,25 @@ pub fn operation_rows() -> Vec<OperationRow> {
             "false",
         ),
     ]
+}
+
+/// メッセージのテンプレートのファイル（git の `commit.template`）。
+pub const TEMPLATE_KEY: &str = "commit.template";
+
+/// テンプレートの選び方（GTK4 版の `template_choice` のうち、共有のテンプレートを除く）: 0 はなし、1 はこのリポジトリ
+/// 専用、2 はほかのファイル。
+pub fn template_choice(state: &State) -> usize {
+    match state.effective(TEMPLATE_KEY).map(|(v, _)| v) {
+        None | Some("") => 0,
+        Some(path) if is_own_template(path) => 1,
+        Some(_) => 2,
+    }
+}
+
+/// このリポジトリ専用のテンプレート（`<git dir>/amonhen/commit-template`）か。
+pub fn is_own_template(path: &str) -> bool {
+    path.replace('\\', "/")
+        .ends_with("/amonhen/commit-template")
 }
 
 /// Branches の既定のブランチのキー（Amon Hen の設定。なければ判定したもの）。
@@ -819,6 +845,62 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 .children((View::keyed_fragment(rows),))
         }
     };
+    // Commits: メッセージのテンプレート（GTK4 版の `commits_page`。Settings の共有のテンプレートはまだない）。
+    let choice = template_choice(state);
+    let file_label = match state.effective(TEMPLATE_KEY) {
+        Some((path, _)) if choice == 2 => tr!("File: {path}", path = path),
+        _ => tr!("File…"),
+    };
+    let template_source = state
+        .effective(TEMPLATE_KEY)
+        .map(|(_, scope)| scope_label(scope))
+        .unwrap_or_else(|| tr!("git’s default"));
+    let own_editor: View = match (&state.template, choice) {
+        (Some(text), 1) => {
+            let dirty = lf(text) != state.template_saved;
+            StackPanel::new().spacing(6.0).children((
+                TextBox::new()
+                    .text(text.clone())
+                    .accepts_return(true)
+                    .min_height(120.0)
+                    .width(520.0)
+                    .on_text_changed((callbacks.field)("template")),
+                StackPanel::new()
+                    .orientation(Orientation::Horizontal)
+                    .spacing(8.0)
+                    .horizontal_alignment(HorizontalAlignment::Right)
+                    .children((
+                        Button::new()
+                            .is_enabled(dirty)
+                            .on_click((callbacks.button)("template-revert".to_owned()))
+                            .content(TextBlock::new().text(tr!("Revert"))),
+                        Button::new()
+                            .is_enabled(dirty)
+                            .on_click((callbacks.button)("template-save".to_owned()))
+                            .content(TextBlock::new().text(tr!("Save"))),
+                    )),
+            ))
+        }
+        _ => View::empty(),
+    };
+    let commits = StackPanel::new().spacing(4.0).children((
+        TextBlock::new().text(tr!("Message template")),
+        StackPanel::new()
+            .orientation(Orientation::Horizontal)
+            .spacing(8.0)
+            .children((
+                ComboBox::new()
+                    .items_source(vec![tr!("None"), tr!("This repository’s own"), file_label])
+                    .selected_index(choice)
+                    .on_selection_changed((callbacks.choice)("template")),
+                TextBlock::new()
+                    .text(template_source)
+                    .font_size(12.0)
+                    .opacity(0.6)
+                    .vertical_alignment(VerticalAlignment::Center),
+            )),
+        own_editor,
+    ));
     // Branches: 既定のブランチ（GTK4 版の `branches_page`）。
     let chosen = state.at("local", DEFAULT_BRANCH);
     let values = default_branch_values(state);
@@ -984,6 +1066,11 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                                 .on_click((callbacks.button)("author".to_owned()))
                                 .content(TextBlock::new().text(tr!("Save"))),
                         )),
+                    heading("Commits".to_owned()),
+                    StackPanel::new()
+                        .max_width(560.0)
+                        .horizontal_alignment(HorizontalAlignment::Left)
+                        .children((commits,)),
                     heading("Branches".to_owned()),
                     StackPanel::new()
                         .max_width(560.0)

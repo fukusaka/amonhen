@@ -145,7 +145,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
 | Settings page (pages, git line, source / ↩︎ / ⓘ per row) | ✓ | ✓ | △ | ✓ | n/a | VSCode: Repository Settings in the main view (with the engine), this repository only.<br>Windows: Author and Keys and Values on one page, without the source / ↩︎ / ⓘ per row. |
 | Author and Signing (signing choice, collected keys, mailmap) | ✓ | ✓ | △ | ✓ | △ | VSCode: Keys are collected for the current format only.<br>CLI: Via `amonhen run` (`signingKeys`, `configSet`).<br>Windows: The name and email only. |
-| Commits: message template (none, shared, own, file) | ✓ | ✓ | — | △ | △ | VSCode: None, this repository's own (edited there) or a file; no shared templates.<br>CLI: Via `amonhen run`. |
+| Commits: message template (none, shared, own, file) | ✓ | ✓ | △ | △ | △ | VSCode: None, this repository's own (edited there) or a file; no shared templates.<br>CLI: Via `amonhen run`.<br>Windows: Windows: None, this repository's own (edited there) or a file; no shared templates yet. |
 | Branches: default branch override | ✓ | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Operations: pull, fetch.prune, autostash, updateRefs, conflict style, rerere | ✓ | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | rerere: forget one resolution (merge editor), forget all (Repository Settings) | ✓ | ✓ | — | ✓ | △ | VSCode: Forget Resolution on a Working Copy conflict that rerere resolved (VSCode's merge editor is its own); Forget All… under Repository Settings > Operations.<br>CLI: Via `amonhen run` (`forgetResolution`, `forgetAllResolutions`). |
