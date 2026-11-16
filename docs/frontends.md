@@ -44,7 +44,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Range Diff row while a range diff is open | ✓ | ✓ | ✓ | ✓ | n/a |  |
 | Filter field over Branches, Remotes and Tags | ✓ | ✓ | — | ✓ | n/a | VSCode: The filter button on the sidebar's title asks for the words; the matches are listed flat. |
 | Several branches or tags selected at once | ✓ | ✓ | — | ✓ | n/a | VSCode: Merge into Current Branch, Delete Branch, favorites and Archive act on all of them. |
-| Pull Requests and Worktrees shown only when not empty | ✓ | ✓ | — | △ | n/a | VSCode: Worktrees only (GitHub is left out). |
+| Pull Requests and Worktrees shown only when not empty | ✓ | ✓ | △ | △ | n/a | VSCode: Worktrees only (GitHub is left out).<br>Windows: Worktrees only, in their own group. |
 
 ## Sidebar
 
@@ -395,12 +395,12 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
-| Worktrees with change counts | ✓ | ✓ | — | ✓ | ✓ | CLI: `worktree list --changes`. |
+| Worktrees with change counts | ✓ | ✓ | △ | ✓ | ✓ | CLI: `worktree list --changes`.<br>Windows: A sidebar group without change counts. |
 | The edited worktree (✎) and switching it | ✓ | ✓ | — | ✓ | n/a | VSCode: Switches the repository the extension works on; one outside the workspace isn't added to the Source Control view.<br>CLI: Works on the worktree it runs in. |
-| New Worktree… (from a branch or commit) | ✓ | ✓ | — | ✓ | ✓ |  |
-| Remove Worktree (asks, `--force` with changes) | ✓ | ✓ | — | ✓ | ✓ |  |
-| Lock and unlock, move, locate a moved folder (repair) | ✓ | ✓ | — | ✓ | ✓ | VSCode: The worktree's right-click; the worktree being edited moves only after switching to another.<br>CLI: `worktree lock`, `unlock`, `move`, `repair`. |
-| Prune worktrees | ✓ | ✓ | — | ✓ | ✓ |  |
+| New Worktree… (from a branch or commit) | ✓ | ✓ | ✓ | ✓ | ✓ |  |
+| Remove Worktree (asks, `--force` with changes) | ✓ | ✓ | ✓ | ✓ | ✓ |  |
+| Lock and unlock, move, locate a moved folder (repair) | ✓ | ✓ | △ | ✓ | ✓ | VSCode: The worktree's right-click; the worktree being edited moves only after switching to another.<br>CLI: `worktree lock`, `unlock`, `move`, `repair`.<br>Windows: Lock and unlock only. |
+| Prune worktrees | ✓ | ✓ | ✓ | ✓ | ✓ |  |
 | A worktree's folder opens its repository with it edited | ✓ | ✓ | — | ✓ | n/a | VSCode: Opening the folder works on that worktree, with the others listed. |
 
 ## SSH hosts, shared daemon, askpass

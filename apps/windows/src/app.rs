@@ -111,6 +111,8 @@ struct Root {
     /// Reflog の画面の行（読むまでは None）と、選んでいる行。
     reflog: Option<Vec<crate::reflog::Entry>>,
     reflog_selected: Option<usize>,
+    /// worktree（`worktrees` の答え。開いたリポジトリのもの）。
+    worktrees: Vec<WorktreeInfo>,
     /// Stashes の画面で選んでいる stash の名前。
     stash: Option<String>,
     /// File History の画面（パス、読んだコミット、選んでいる行）。
@@ -266,6 +268,21 @@ enum Dialog {
         message: String,
         name: String,
     },
+    /// 新しい worktree（GTK4 版の `worktrees::new_worktree`）: `start` からブランチを作って新しいフォルダに checkout
+    /// する。フォルダの既定は、リポジトリの隣の「<名前>-<ブランチ>」。
+    NewWorktree {
+        repo: Arc<Repository>,
+        start: String,
+        branch: String,
+        folder: String,
+    },
+    /// worktree をロックする（理由は任意）。
+    LockWorktree {
+        repo: Arc<Repository>,
+        path: String,
+        name: String,
+        reason: String,
+    },
     /// パッチを当てる前の確認（GTK4 版の `patches::confirm`）。mbox ならパッチごとにコミットにする（git am）、
     /// でなければ作業ツリーに入れる（git apply）。前後の絵はまだない。
     ApplyPatch {
@@ -368,6 +385,10 @@ enum Message {
     RangeDiffRanges(String),
     RangeDiffCompare,
     CloseRangeDiff,
+    /// worktree を読んだ。
+    Worktrees(Vec<WorktreeInfo>),
+    /// 裏で調べてから確かめる（題、説明、ボタン、命令）。
+    Confirm(Arc<Repository>, String, String, String, Value),
     /// Reflog を読んだ・一覧で選んだ。
     ReflogLoaded(Vec<crate::reflog::Entry>),
     ReflogSelected(Option<usize>),
@@ -412,6 +433,8 @@ enum Message {
     BundlePreview(Arc<Repository>, String, Value, Value),
     /// 取り込む bundle を調べた（ファイル、`bundleCheck` の答え）。
     BundleChecked(Arc<Repository>, String, Value),
+    /// 新しい worktree の欄（0 はブランチ、1 はフォルダ）。
+    WorktreeField(usize, String),
     /// bundle の範囲（全体か、基点より後か）を選んだ。
     BundleNewer(bool),
     /// 当てるパッチを読んだ（パス、`readPatch` の答え）。
@@ -507,6 +530,7 @@ impl Component for Root {
             sidebar_menu_host: ElementRef::new(),
             sidebar_key: None,
             stash: None,
+            worktrees: Vec::new(),
             reflog: None,
             range_diff: None,
             range_request: 0,
@@ -547,12 +571,15 @@ impl Component for Root {
             Message::Refs(refs, repo) => {
                 self.refs = Some(refs);
                 self.repo = Some(repo.clone());
+                // worktree も読み直す（作る・消す・ブランチを替えると ref も変わる）。
+                let r = repo.clone();
                 // ブランチの分け方は ref が変わるたびに読み直す（数十 ms かかるので裏で）。
                 context.spawn_background(move |_| {
                     let reply = repo.run_json(r#"{"op":"branchGroups"}"#);
                     let reply = serde_json::from_str(&reply).unwrap_or_default();
                     Message::Groups(BranchGroups::from_reply(&reply))
                 });
+                load_worktrees(r, context);
                 // Reflog を出していれば読み直す（HEAD が動くと ref も変わる）。
                 if self.page == Page::Reflog {
                     self.load_reflog(context);
@@ -593,9 +620,10 @@ impl Component for Root {
                 })
                 | Some(Dialog::Archive { top: current, .. })
                 | Some(Dialog::Bundle { base: current, .. })
-                | Some(Dialog::FetchBundle { name: current, .. }) => {
-                    *current = name.replace("\r\n", "\n").replace('\r', "\n")
-                }
+                | Some(Dialog::FetchBundle { name: current, .. })
+                | Some(Dialog::LockWorktree {
+                    reason: current, ..
+                }) => *current = name.replace("\r\n", "\n").replace('\r', "\n"),
                 _ => {}
             },
             Message::Command(id) if id == "push" => self.push(false),
@@ -776,6 +804,36 @@ impl Component for Root {
                     Some(name) => self.stash_action("pop", name),
                     None => beep(),
                 }
+            }
+            Message::Command(id) if id == "new-worktree" => {
+                let Some(repo) = self.repo.clone() else {
+                    return beep();
+                };
+                // 選んでいるコミットから（なければ今のブランチから。New Branch と同じ）。
+                let start = self
+                    .selected
+                    .as_ref()
+                    .map(|(id, _)| id.clone())
+                    .or_else(|| self.refs.as_ref()?.refs.head_branch.clone())
+                    .unwrap_or_else(|| "HEAD".to_owned());
+                self.dialog = Some(Dialog::NewWorktree {
+                    repo,
+                    start,
+                    branch: String::new(),
+                    folder: String::new(),
+                });
+                self.dialog_inputs += 1;
+            }
+            Message::Command(id) if id == "prune-worktrees" => {
+                let Some(repo) = self.repo.clone() else {
+                    return beep();
+                };
+                perform(
+                    context,
+                    repo,
+                    json!({ "op": "worktreePrune" }),
+                    tr!("Prune Worktrees"),
+                );
             }
             Message::Command(id) if id == "save-bundle" => {
                 self.ask_bundle(Vec::new(), String::new(), "all".to_owned())
@@ -1249,6 +1307,44 @@ impl Component for Root {
                             "Fetch".to_owned(),
                         );
                     }
+                }
+                (
+                    Some(Dialog::NewWorktree {
+                        repo,
+                        start,
+                        branch,
+                        folder,
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    let name = branch.trim().to_owned();
+                    if name.is_empty() {
+                        return beep();
+                    }
+                    let mut path = folder.trim().to_owned();
+                    if path.is_empty() {
+                        path = default_worktree_folder(&repo, &name);
+                    }
+                    perform(
+                        context,
+                        repo,
+                        json!({ "op": "worktreeAdd", "path": path, "newBranch": name, "start": start }),
+                        tr!("New Worktree"),
+                    );
+                }
+                (
+                    Some(Dialog::LockWorktree {
+                        repo, path, reason, ..
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    let text = reason.trim().to_owned();
+                    perform(
+                        context,
+                        repo,
+                        json!({ "op": "worktreeLock", "path": path, "reason": (!text.is_empty()).then_some(text) }),
+                        tr!("Lock"),
+                    );
                 }
                 (Some(Dialog::CloseMerge), ContentDialogResult::Primary) => {
                     self.merge = None;
@@ -1782,6 +1878,30 @@ impl Component for Root {
                             version: String::new(),
                         });
                     }
+                } else if let Some(path) = key.strip_prefix("wt-remove:") {
+                    self.ask_remove_worktree(path.to_owned(), context);
+                } else if let Some(path) = key.strip_prefix("wt-lock:") {
+                    if let Some(repo) = self.repo.clone() {
+                        let name = worktree_name(path);
+                        self.dialog = Some(Dialog::LockWorktree {
+                            repo,
+                            path: path.to_owned(),
+                            name,
+                            reason: String::new(),
+                        });
+                        self.dialog_inputs += 1;
+                    }
+                } else if let Some(path) = key.strip_prefix("wt-unlock:") {
+                    if let Some(repo) = self.repo.clone() {
+                        perform(
+                            context,
+                            repo,
+                            json!({ "op": "worktreeUnlock", "path": path }),
+                            tr!("Unlock"),
+                        );
+                    }
+                } else if key == "prune-worktrees" {
+                    self.update(Message::Command(key), context);
                 } else if let Some(rest) = key.strip_prefix("bundle:") {
                     // `bundle:<完全な ref の名前>:<名前>`（サイドバーのブランチ・タグ）。
                     if let Some((full, name)) = rest.split_once(':') {
@@ -1858,6 +1978,11 @@ impl Component for Root {
             }
             Message::Performed(failed) => {
                 self.busy = None;
+                // worktree も読み直す（`git worktree add` は作っている間ロックするので、ref が変わったときに読んだ
+                // ものはロック中のことがある）。
+                if let Some(repo) = self.repo.clone() {
+                    load_worktrees(repo, context);
+                }
                 if let Some((title, message)) = failed {
                     self.dialog = Some(Dialog::Failed { title, message });
                 }
@@ -2085,6 +2210,21 @@ impl Component for Root {
                     name: info["name"].as_str().unwrap_or("bundle").to_owned(),
                 });
                 self.dialog_inputs += 1;
+            }
+            Message::Worktrees(list) => self.worktrees = list,
+            Message::Confirm(repo, title, message, button, command) => {
+                self.dialog = Some(Dialog::Confirm {
+                    repo,
+                    title,
+                    message,
+                    button,
+                    command,
+                })
+            }
+            Message::WorktreeField(index, text) => {
+                if let Some(Dialog::NewWorktree { branch, folder, .. }) = &mut self.dialog {
+                    *[branch, folder].into_iter().nth(index).expect("field") = text;
+                }
             }
             Message::BundleNewer(on) => {
                 if let Some(Dialog::Bundle { newer, .. }) = &mut self.dialog {
@@ -2698,6 +2838,11 @@ impl Component for Root {
                         self.refs.as_ref().map(|r| &r.refs),
                         self.groups.as_ref(),
                         self.range_diff.is_some(),
+                        &self
+                            .worktrees
+                            .iter()
+                            .map(|w| (format!("worktree:{}", w.path), w.title()))
+                            .collect::<Vec<_>>(),
                     )),
                 Grid::new()
                     .element_ref(&self.sidebar_menu_host)
@@ -3258,6 +3403,70 @@ impl Root {
                             .on_text_changed(context.callback(Message::BranchName)),
                     )),
                 ),
+            Some(Dialog::NewWorktree {
+                repo,
+                start,
+                branch,
+                folder,
+            }) => {
+                let field = |label: String, text: &str, index: usize, placeholder: String| {
+                    StackPanel::new().spacing(2.0).children((
+                        TextBlock::new().text(label),
+                        TextBox::new()
+                            .text(text)
+                            .placeholder_text(placeholder)
+                            .on_text_changed(context.callback(move |t| Message::WorktreeField(index, t))),
+                    ))
+                };
+                let hint = if branch.trim().is_empty() {
+                    String::new()
+                } else {
+                    default_worktree_folder(repo, branch.trim())
+                };
+                dialog
+                    .is_open(true)
+                    .title(tr!("New Worktree"))
+                    .primary_button_text(tr!("Create"))
+                    .close_button_text(tr!("Cancel"))
+                    .is_primary_button_enabled(!branch.trim().is_empty())
+                    .content(
+                        StackPanel::new().spacing(8.0).children((
+                            TextBlock::new()
+                                .text(tr!(
+                                    "Creates a branch from {start} and checks it out in a new folder.",
+                                    start = shown_start(start)
+                                ))
+                                .text_wrapping(TextWrapping::Wrap),
+                            StackPanel::new().spacing(2.0).children((
+                                TextBlock::new().text(tr!("Branch name")),
+                                TextBox::new()
+                                    .element_ref(&self.dialog_input)
+                                    .text(branch.clone())
+                                    .on_text_changed(context.callback(|t| Message::WorktreeField(0, t))),
+                            )),
+                            field(tr!("Folder"), folder, 1, hint),
+                        )),
+                    )
+            }
+            Some(Dialog::LockWorktree { name, reason, .. }) => dialog
+                .is_open(true)
+                .title(tr!("Lock the Worktree “{name}”?", name = name))
+                .primary_button_text(tr!("Lock"))
+                .close_button_text(tr!("Cancel"))
+                .content(
+                    StackPanel::new().spacing(6.0).children((
+                        TextBlock::new()
+                            .text(tr!(
+                                "git then won’t prune, remove or move it, for example while it is on a disk that isn’t always connected (git worktree lock)."
+                            ))
+                            .text_wrapping(TextWrapping::Wrap),
+                        TextBox::new()
+                            .element_ref(&self.dialog_input)
+                            .text(reason.clone())
+                            .placeholder_text(tr!("Reason (optional)"))
+                            .on_text_changed(context.callback(Message::BranchName)),
+                    )),
+                ),
             Some(Dialog::CloseMerge) => dialog
                 .is_open(true)
                 .title(tr!("Close without saving?"))
@@ -3709,6 +3918,34 @@ impl Root {
     /// 右クリックと同じ形（`Message::HistoryMenu` で受ける）。
     fn sidebar_menu(&self) -> Vec<MenuItem> {
         use amonhen_model::RefKind;
+        // worktree の行（GTK4 版の `worktrees::menu` のうち、編集する worktree を替える以外）。
+        if let Some(path) = self
+            .sidebar_key
+            .as_deref()
+            .and_then(|k| k.strip_prefix("worktree:"))
+        {
+            let Some(w) = self.worktrees.iter().find(|w| w.path == path) else {
+                return Vec::new();
+            };
+            let mut items = vec![MenuItem::item(format!("copy:{path}"), tr!("Copy Path"))];
+            if w.prunable {
+                items.push(MenuItem::separator("-prune"));
+                items.push(MenuItem::item("prune-worktrees", tr!("Prune Worktrees")));
+            } else if !w.main {
+                items.push(MenuItem::separator("-lock"));
+                items.push(if w.locked {
+                    MenuItem::item(format!("wt-unlock:{path}"), tr!("Unlock"))
+                } else {
+                    MenuItem::item(format!("wt-lock:{path}"), tr!("Lock…"))
+                });
+                items.push(MenuItem::separator("-remove"));
+                items.push(MenuItem::item(
+                    format!("wt-remove:{path}"),
+                    tr!("Remove Worktree…"),
+                ));
+            }
+            return items;
+        }
         // リモートと Remotes の見出し（GTK4 版の `refops::remote_menu`）。
         match self.sidebar_key.as_deref() {
             Some("group:remotes") => {
@@ -4373,6 +4610,45 @@ impl Root {
             .content(view)
     }
 
+    /// worktree を消す前に、残っている変更を数えてから確かめる（GTK4 版の `confirm_remove`）。
+    fn ask_remove_worktree(&mut self, path: String, context: &ComponentContext<Self>) {
+        let Some(repo) = self.repo.clone() else {
+            return beep();
+        };
+        let locked = self.worktrees.iter().any(|w| w.path == path && w.locked);
+        context.spawn_background(move |_| {
+            let command = json!({ "op": "worktreeChanges", "paths": [&path], "fresh": true });
+            let reply: Value =
+                serde_json::from_str(&repo.run_json(&command.to_string())).unwrap_or_default();
+            let changes = reply["info"]["worktrees"][0]["count"].as_u64().unwrap_or(0);
+            let name = worktree_name(&path);
+            let message = if changes > 0 {
+                format!(
+                    "{} {}",
+                    tr!(
+                        "{path} has uncommitted changes in {count} files. They are lost with the folder. The branch stays.",
+                        path = &path,
+                        count = changes
+                    ),
+                    tr!("This can’t be undone.")
+                )
+            } else {
+                format!(
+                    "{} {}",
+                    tr!("Removes the folder {path}. The branch stays.", path = &path),
+                    tr!("This can’t be undone.")
+                )
+            };
+            Message::Confirm(
+                repo,
+                tr!("Remove the worktree “{name}”?", name = name),
+                message,
+                tr!("Remove Worktree"),
+                json!({ "op": "worktreeRemove", "path": path, "force": changes > 0 || locked }),
+            )
+        });
+    }
+
     /// Save as Bundle のダイアログを出す（`refs` が空なら HEAD とすべてのブランチ・タグ。`names` は見せる名前、
     /// `label` は既定のファイル名に使う）。
     fn ask_bundle(&mut self, refs: Vec<String>, names: String, label: String) {
@@ -4907,6 +5183,88 @@ fn patch_error_line(text: &str) -> String {
         .or_else(|| lines.first().copied())
         .unwrap_or_default()
         .to_owned()
+}
+
+/// worktree 1 つ（`worktrees` の答えの 1 つ）。
+#[derive(Clone)]
+pub struct WorktreeInfo {
+    pub path: String,
+    pub branch: Option<String>,
+    pub locked: bool,
+    pub prunable: bool,
+    pub main: bool,
+}
+
+impl WorktreeInfo {
+    fn list(info: &Value) -> Vec<Self> {
+        info["worktrees"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|w| w["bare"].as_bool() != Some(true))
+            .map(|w| Self {
+                path: w["path"].as_str().unwrap_or_default().to_owned(),
+                branch: w["branch"].as_str().map(str::to_owned),
+                locked: !w["locked"].is_null() && w["locked"] != false,
+                prunable: !w["prunable"].is_null() && w["prunable"] != false,
+                main: w["main"].as_bool() == Some(true),
+            })
+            .collect()
+    }
+
+    /// サイドバーの見出し（フォルダの名前とブランチ。ロック・なくなったフォルダは、細いサイドバーでも切れない
+    /// よう前に印をつける）。
+    fn title(&self) -> String {
+        let mut text = String::new();
+        if self.prunable {
+            text.push_str("⚠ ");
+        }
+        if self.locked {
+            text.push_str("🔒 ");
+        }
+        text.push_str(&worktree_name(&self.path));
+        if let Some(branch) = &self.branch {
+            text.push_str(&format!("  {branch}"));
+        }
+        text
+    }
+}
+
+/// worktree の一覧を裏で読む。
+fn load_worktrees(repo: Arc<Repository>, context: &ComponentContext<Root>) {
+    context.spawn_background(move |_| {
+        let reply: Value =
+            serde_json::from_str(&repo.run_json(r#"{"op":"worktrees"}"#)).unwrap_or_default();
+        Message::Worktrees(WorktreeInfo::list(&reply["info"]))
+    });
+}
+
+/// worktree のフォルダの名前。
+fn worktree_name(path: &str) -> String {
+    path.trim_end_matches(['/', '\\'])
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(path)
+        .to_owned()
+}
+
+/// 新しい worktree のフォルダの既定: リポジトリの隣の「<名前>-<ブランチ>」（GTK4 版と同じ）。
+fn default_worktree_folder(repo: &Repository, branch: &str) -> String {
+    let Some(workdir) = repo.paths().workdir else {
+        return String::new();
+    };
+    let name = workdir
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let parent = workdir
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_default();
+    parent
+        .join(format!("{name}-{}", branch.replace('/', "-")))
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// パッチの形と送り状を覚えておく鍵（GTK4 版と同じ）。

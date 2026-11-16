@@ -75,10 +75,12 @@ pub fn parse_ref_key(key: &str) -> Option<(u8, &str)> {
 
 /// サイドバーの木。`refs` がまだなければ Workspace だけ。
 /// `range_diff` なら、Workspace に Range Diff の行を出す（開いている間だけ）。
+/// `worktrees` は worktree の行（キーと見出し。2 つ以上あるときだけ Workspace の下に Worktrees を出す）。
 pub fn nodes(
     refs: Option<&Refs>,
     groups: Option<&BranchGroups>,
     range_diff: bool,
+    worktrees: &[(String, String)],
 ) -> Vec<TreeNode> {
     let mut workspace = vec![
         TreeNode::new("page:working-copy", "Working Copy"),
@@ -100,6 +102,18 @@ pub fn nodes(
     // いつも Workspace の最後に出す（GTK4 版と同じ）。
     workspace.push(TreeNode::new("page:reflog", "Reflog"));
     let mut out = vec![group("workspace", "Workspace", workspace).expanded(true)];
+    if worktrees.len() > 1 {
+        out.push(
+            group(
+                "worktrees",
+                "Worktrees",
+                worktrees
+                    .iter()
+                    .map(|(key, text)| TreeNode::new(key.as_str(), text.as_str())),
+            )
+            .expanded(true),
+        );
+    }
 
     let locals: Vec<&RefEntry> = of(RefKind::Local).collect();
     let branches = branch_rows(&locals, head, groups);

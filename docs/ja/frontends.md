@@ -44,7 +44,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Range Diff を開いているあいだの Range Diff の行 | ✓ | ✓ | ✓ | ✓ | n/a |  |
 | Branches・Remotes・Tags を絞り込む欄 | ✓ | ✓ | — | ✓ | n/a | VSCode: サイドバーの上の絞り込みのボタンで言葉を入れ、合うものを平らに並べる。 |
 | ブランチ・タグをいくつも選ぶ | ✓ | ✓ | — | ✓ | n/a | VSCode: Merge into Current Branch・Delete Branch・お気に入り・Archive が選んだものすべてに効く。 |
-| Pull Requests・Worktrees は中身があるときだけ出す | ✓ | ✓ | — | △ | n/a | VSCode: Worktrees だけ（GitHub は入れない）。 |
+| Pull Requests・Worktrees は中身があるときだけ出す | ✓ | ✓ | △ | △ | n/a | VSCode: Worktrees だけ（GitHub は入れない）。<br>Windows: Worktrees だけ（独立した群）。 |
 
 ## サイドバー
 
@@ -395,12 +395,12 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
-| worktree と変更の数 | ✓ | ✓ | — | ✓ | ✓ | CLI: `worktree list --changes`。 |
+| worktree と変更の数 | ✓ | ✓ | △ | ✓ | ✓ | CLI: `worktree list --changes`。<br>Windows: サイドバーの群で、変更の数はまだない。 |
 | 書き込む先の worktree（✎）と切り替え | ✓ | ✓ | — | ✓ | n/a | VSCode: 拡張が働くリポジトリを切り替える。ワークスペースの外のものはソース管理のビューには足さない。<br>CLI: 動かした worktree で働く。 |
-| New Worktree…（ブランチ・コミットから） | ✓ | ✓ | — | ✓ | ✓ |  |
-| Remove Worktree（尋ね、変更があれば `--force`） | ✓ | ✓ | — | ✓ | ✓ |  |
-| ロックと解除・移動・移したフォルダを探す（repair） | ✓ | ✓ | — | ✓ | ✓ | VSCode: worktree の右クリックから。書き込む先の worktree は、ほかに切り替えてから移す。<br>CLI: `worktree lock`・`unlock`・`move`・`repair`。 |
-| worktree の Prune | ✓ | ✓ | — | ✓ | ✓ |  |
+| New Worktree…（ブランチ・コミットから） | ✓ | ✓ | ✓ | ✓ | ✓ |  |
+| Remove Worktree（尋ね、変更があれば `--force`） | ✓ | ✓ | ✓ | ✓ | ✓ |  |
+| ロックと解除・移動・移したフォルダを探す（repair） | ✓ | ✓ | △ | ✓ | ✓ | VSCode: worktree の右クリックから。書き込む先の worktree は、ほかに切り替えてから移す。<br>CLI: `worktree lock`・`unlock`・`move`・`repair`。<br>Windows: ロックと解除だけ。 |
+| worktree の Prune | ✓ | ✓ | ✓ | ✓ | ✓ |  |
 | worktree のフォルダーを開くと、そのリポジトリでそれを書き込む先にする | ✓ | ✓ | — | ✓ | n/a | VSCode: フォルダーを開くとその worktree で働き、ほかの worktree も並ぶ。 |
 
 ## SSH 先・共有の daemon・askpass
