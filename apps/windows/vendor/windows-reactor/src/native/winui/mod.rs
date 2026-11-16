@@ -529,6 +529,13 @@ fn tree_node_identity(node: &impl Interface) -> Option<usize> {
         .map(|unknown| unknown.as_raw() as usize)
 }
 
+/// The key of a published tree view node, given the address of its `IUnknown` (its COM
+/// identity). Lets an app map a node it found itself (for example the `DataContext` of a tree
+/// view item under the pointer) back to the key it gave the node.
+pub fn tree_node_key_by_identity(identity: usize) -> Option<String> {
+    TREE_NODE_KEYS.with(|keys| keys.borrow().get(&identity).cloned())
+}
+
 /// The key of an invoked tree view node.
 fn tree_node_key(node: &impl Interface) -> Option<String> {
     let identity = tree_node_identity(node)?;
