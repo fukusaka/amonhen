@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 use amonhen_backend_gix::GixBackend;
-use amonhen_core::diff::DiffView;
+use amonhen_core::diff::{DiffView, StackedDiff};
 use amonhen_core::{HistorySnapshot, RefsSnapshot, Repository};
 use amonhen_layout::StrRef;
 use amonhen_model::{RefKind, Refs};
@@ -88,6 +88,69 @@ pub struct CommitShown {
     pub highlights: HashMap<u32, Vec<(u32, u32)>>,
     /// 差分の行ごとの構文の色（範囲と種類）。ファイル全体を解析するので、差分より後に届く。
     pub syntax: HashMap<u32, Vec<(u32, u32, u8)>>,
+    /// 時間のかかる詳細（`commit_extras` の答え。署名・子・含むブランチとタグなど）。後から届く。
+    pub extras: Option<serde_json::Value>,
+    /// 全ファイルの差分（畳むファイルを変えたら、ここから表示を作り直す）。
+    pub stacked: Arc<StackedDiff>,
+    /// ファイルごとに畳んでいるか（コミットの変更ファイルの順）。
+    pub collapsed: Vec<bool>,
+    /// 表示を作り直した回数（古い表示の構文の色を捨てるため）。
+    version: u32,
+}
+
+impl CommitShown {
+    fn new(row: u32, info: serde_json::Value, stacked: Arc<StackedDiff>) -> Self {
+        let collapsed = vec![false; stacked.files.len()];
+        let mut shown = Self {
+            row,
+            info,
+            diff: stacked.view(&collapsed, &PROFILE),
+            highlights: HashMap::new(),
+            syntax: HashMap::new(),
+            extras: None,
+            stacked,
+            collapsed,
+            version: 0,
+        };
+        shown.index_highlights();
+        shown
+    }
+
+    fn index_highlights(&mut self) {
+        self.highlights.clear();
+        for h in &self.diff.highlights {
+            self.highlights
+                .entry(h.row)
+                .or_default()
+                .push((h.start, h.end));
+        }
+    }
+}
+
+/// 構文の色を裏で求めて送る（`version` の表示のもの）。
+fn send_syntax(
+    tx: Sender<Event>,
+    wake: Wake,
+    generation: u64,
+    row: u32,
+    version: u32,
+    stacked: Arc<StackedDiff>,
+    collapsed: Vec<bool>,
+) {
+    std::thread::spawn(move || {
+        // 同じ行の並びの表示をもう一度作って解析する（ファイルの中身は共有したまま）。
+        let mut syntax: HashMap<u32, Vec<(u32, u32, u8)>> = HashMap::new();
+        for s in stacked.view(&collapsed, &PROFILE).syntax() {
+            syntax
+                .entry(s.row)
+                .or_default()
+                .push((s.start, s.end, s.kind));
+        }
+        if !syntax.is_empty() {
+            let _ = tx.send(Event::Syntax(generation, row, version, syntax));
+            wake();
+        }
+    });
 }
 
 /// History の行に付ける ref の名前（ブランチ・リモートブランチ・タグ）。
@@ -106,7 +169,8 @@ enum Event {
     History(Arc<Repository>, Arc<HistorySnapshot>),
     Refs(u64, Arc<RefsSnapshot>, Labels),
     Commit(u64, Box<CommitShown>),
-    Syntax(u64, u32, HashMap<u32, Vec<(u32, u32, u8)>>),
+    Syntax(u64, u32, u32, HashMap<u32, Vec<(u32, u32, u8)>>),
+    Extras(u64, u32, serde_json::Value),
     Chunk(u64, u32, Chunk),
     Failed(String),
 }
@@ -122,6 +186,10 @@ pub struct Data {
     commit_wanted: Option<u32>,
     /// 出している差分に構文の色が届いた（描き直す。見たら `false` に戻す）。
     pub syntax_changed: bool,
+    /// 時間のかかる詳細が届いた（見たら `false` に戻す）。
+    pub extras_changed: bool,
+    /// 差分より先に届いた、時間のかかる詳細。
+    early_extras: Option<(u32, serde_json::Value)>,
     pub chunks: HashMap<u32, Rc<Chunk>>,
     repo: Option<Arc<Repository>>,
     loading: HashSet<u32>,
@@ -168,6 +236,8 @@ impl Data {
             commit: None,
             commit_wanted: None,
             syntax_changed: false,
+            extras_changed: false,
+            early_extras: None,
             chunks: HashMap::new(),
             repo: None,
             loading: HashSet::new(),
@@ -228,13 +298,20 @@ impl Data {
                         .is_some_and(|h| h.generation == generation)
                         && self.commit_wanted == Some(shown.row)
                     {
+                        let mut shown = shown;
+                        if let Some((row, extras)) = self.early_extras.take()
+                            && row == shown.row
+                        {
+                            shown.extras = Some(extras);
+                        }
                         self.commit = Some(shown);
                         changed = true;
                     }
                 }
-                Event::Syntax(generation, row, syntax) => {
+                Event::Syntax(generation, row, version, syntax) => {
                     if let Some(commit) = &mut self.commit
                         && commit.row == row
+                        && commit.version == version
                         && self
                             .history
                             .as_ref()
@@ -242,6 +319,21 @@ impl Data {
                     {
                         commit.syntax = syntax;
                         self.syntax_changed = true;
+                        changed = true;
+                    }
+                }
+                Event::Extras(generation, row, extras) => {
+                    let current = self
+                        .history
+                        .as_ref()
+                        .is_some_and(|h| h.generation == generation);
+                    if current && self.commit_wanted == Some(row) {
+                        match &mut self.commit {
+                            Some(commit) if commit.row == row => commit.extras = Some(extras),
+                            // 差分より先に届いた。差分が届いたときに足す。
+                            _ => self.early_extras = Some((row, extras)),
+                        }
+                        self.extras_changed = true;
                         changed = true;
                     }
                 }
@@ -263,27 +355,26 @@ impl Data {
             return;
         };
         self.commit_wanted = Some(row);
+        self.early_extras = None;
+        let generation = history.generation;
+        // 時間のかかる詳細は別のスレッドで（差分を待たせない）。
+        let (extras_repo, extras_tx, extras_wake) =
+            (repo.clone(), self.tx.clone(), self.wake.clone());
+        std::thread::spawn(move || {
+            if let Ok(extras) = extras_repo.commit_extras(&id) {
+                let _ = extras_tx.send(Event::Extras(generation, row, extras));
+                extras_wake();
+            }
+        });
         let (tx, wake) = (self.tx.clone(), self.wake.clone());
         std::thread::spawn(move || {
-            let load = || -> Result<(CommitShown, amonhen_core::diff::StackedDiff), String> {
+            let load = || -> Result<CommitShown, String> {
                 let info = repo.commit_info(&id).map_err(|e| e.to_string())?;
                 let changes = repo.commit_changes(&id).map_err(|e| e.to_string())?;
                 let stacked = repo.stacked_diff(&changes).map_err(|e| e.to_string())?;
-                let diff = stacked.view(&[], &PROFILE);
-                let mut highlights: HashMap<u32, Vec<(u32, u32)>> = HashMap::new();
-                for h in &diff.highlights {
-                    highlights.entry(h.row).or_default().push((h.start, h.end));
-                }
-                let shown = CommitShown {
-                    row,
-                    info,
-                    diff,
-                    highlights,
-                    syntax: HashMap::new(),
-                };
-                Ok((shown, stacked))
+                Ok(CommitShown::new(row, info, Arc::new(stacked)))
             };
-            let (shown, stacked) = match load() {
+            let shown = match load() {
                 Ok(shown) => shown,
                 Err(e) => {
                     let _ = tx.send(Event::Failed(format!("コミットを読めない: {e}")));
@@ -291,22 +382,47 @@ impl Data {
                 }
             };
             // 差分を先に出し、構文の色は後から（ファイル全体を解析するので時間がかかることがある）。
-            let _ = tx.send(Event::Commit(history.generation, Box::new(shown)));
+            let (stacked, collapsed) = (shown.stacked.clone(), shown.collapsed.clone());
+            let _ = tx.send(Event::Commit(generation, Box::new(shown)));
             wake();
-            // 同じ行の並びの表示をもう一度作って解析する（ファイルの中身は共有したまま）。
-            let spans = stacked.view(&[], &PROFILE).syntax();
-            let mut syntax: HashMap<u32, Vec<(u32, u32, u8)>> = HashMap::new();
-            for s in spans {
-                syntax
-                    .entry(s.row)
-                    .or_default()
-                    .push((s.start, s.end, s.kind));
-            }
-            if !syntax.is_empty() {
-                let _ = tx.send(Event::Syntax(history.generation, row, syntax));
-                wake();
-            }
+            send_syntax(tx, wake, generation, row, 0, stacked, collapsed);
         });
+    }
+
+    /// 差分の `diff_row` 行目（ファイルの見出し）のファイルを畳む・開く。見出しでなければ何もしない。
+    pub fn toggle_file(&mut self, diff_row: usize) -> bool {
+        let Some(generation) = self.history.as_ref().map(|h| h.generation) else {
+            return false;
+        };
+        let Some(commit) = self.commit.as_mut() else {
+            return false;
+        };
+        let rows = &commit.diff.rows;
+        if rows
+            .get(diff_row)
+            .is_none_or(|r| r.kind != amonhen_layout::DiffRow::FILE)
+        {
+            return false;
+        }
+        let file = rows[..diff_row]
+            .iter()
+            .filter(|r| r.kind == amonhen_layout::DiffRow::FILE)
+            .count();
+        commit.collapsed[file] = !commit.collapsed[file];
+        commit.diff = commit.stacked.view(&commit.collapsed, &PROFILE);
+        commit.index_highlights();
+        commit.syntax.clear();
+        commit.version += 1;
+        send_syntax(
+            self.tx.clone(),
+            self.wake.clone(),
+            generation,
+            commit.row,
+            commit.version,
+            commit.stacked.clone(),
+            commit.collapsed.clone(),
+        );
+        true
     }
 
     pub fn repo(&self) -> Option<Arc<Repository>> {

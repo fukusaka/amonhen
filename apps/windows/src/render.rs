@@ -756,6 +756,15 @@ impl Renderer {
             }
             if !self.diff_rows.contains_key(&i) {
                 let mut text = Vec::with_capacity(128);
+                if file {
+                    // 畳んだファイルは ▸、開いているファイルは ▾（見出しを押すと切り替わる）。
+                    let mark = if row.flags & DiffRow::COLLAPSED != 0 {
+                        "▸ "
+                    } else {
+                        "▾ "
+                    };
+                    text.extend(mark.encode_utf16());
+                }
                 crate::data::push_utf16(
                     view.strings.bytes(row.text),
                     row.text.is_ascii(),

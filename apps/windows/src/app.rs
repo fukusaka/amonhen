@@ -56,15 +56,15 @@ struct Root {
     refs: Option<Arc<RefsSnapshot>>,
     /// ローカルブランチの分け方（コアの `branchGroups`）。
     groups: Option<BranchGroups>,
-    /// 選んだコミットの詳細（`commit_info` の答え）。
-    info: Option<Value>,
+    /// 選んだコミットの詳細（`commit_info` の答え）と、時間のかかる分（`commit_extras`）。
+    info: Option<(Value, Option<Value>)>,
     error: Option<String>,
 }
 
 enum Message {
     Refs(Arc<RefsSnapshot>, Arc<Repository>),
     Groups(Option<BranchGroups>),
-    Commit(Value),
+    Commit(Value, Option<Value>),
     /// サイドバーの項目を選んだ（項目のキー）。
     Invoked(String),
     Failed(String),
@@ -103,7 +103,7 @@ impl Component for Root {
                     self.groups = groups;
                 }
             }
-            Message::Commit(info) => self.info = Some(info),
+            Message::Commit(info, extras) => self.info = Some((info, extras)),
             Message::Failed(e) => self.error = Some(e),
             Message::Invoked(key) => {
                 if let Some(entry) = self.entry(&key)
@@ -212,7 +212,7 @@ impl Component for Root {
             .children((
                 ScrollViewer::new()
                     .grid_row(0)
-                    .content(details(self.info.as_ref())),
+                    .content(details(self.info.as_ref().map(|(i, e)| (i, e.as_ref())))),
                 Grid::new()
                     .background(Brush::Solid(Color::transparent()))
                     .element_ref(&self.diff_area)
@@ -280,8 +280,8 @@ fn person(info: &Value, role: &str) -> String {
 }
 
 /// コミットの詳細（作者、コミッター、Commit・Parent・Refs の表、件名と本文）。
-fn details(info: Option<&Value>) -> View {
-    let Some(info) = info else {
+fn details(info: Option<(&Value, Option<&Value>)>) -> View {
+    let Some((info, extras)) = info else {
         return TextBlock::new().margin(12.0).into();
     };
     let secondary = Brush::Solid(Color::argb(0x99, 0x1c, 0x1c, 0x1f));
@@ -327,9 +327,75 @@ fn details(info: Option<&Value>) -> View {
         };
         rows.push(line(label, short.join("  ")).into());
     }
+    let strings = |v: &Value| -> Vec<String> {
+        v.as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    if let Some(extras) = extras {
+        let children = strings(&extras["children"]);
+        if !children.is_empty() {
+            let short: Vec<String> = children
+                .iter()
+                .map(|c| c[..c.len().min(10)].to_owned())
+                .collect();
+            let label = if children.len() > 1 {
+                "Children"
+            } else {
+                "Child"
+            };
+            rows.push(line(label, short.join("  ")).into());
+        }
+        if let Some(rev) = extras["headRev"].as_str().filter(|r| !r.is_empty()) {
+            rows.push(line("Rev", rev.to_owned()).into());
+        }
+    }
+    if let Some(status) = signature_status(info, extras) {
+        rows.push(line("Signature", status).into());
+    }
     let refs = list("refs");
     if !refs.is_empty() {
         rows.push(line("Refs", refs.join(", ")).into());
+    }
+    if let Some(extras) = extras {
+        for tag in extras["tagObjects"].as_array().into_iter().flatten() {
+            let name = tag["name"].as_str().unwrap_or_default();
+            let text = match tag["subject"].as_str().filter(|s| !s.is_empty()) {
+                Some(subject) => format!("{name} — {subject}"),
+                None if tag["id"].is_null() => format!("{name} (lightweight tag)"),
+                None => name.to_owned(),
+            };
+            rows.push(line("Tag", text).into());
+        }
+        let branches = strings(&extras["branches"]);
+        if !branches.is_empty() {
+            rows.push(line("Branches", branches.join(", ")).into());
+        }
+        let count = extras["tagCount"].as_u64().unwrap_or(0) as usize;
+        if count > 0 {
+            let tags = strings(&extras["tags"]);
+            let mut text = tags.iter().take(12).cloned().collect::<Vec<_>>().join(", ");
+            if count > 12 {
+                text.push_str(&format!(" and {} more tags", count - 12));
+            }
+            rows.push(line("Tags", text).into());
+        }
+        if let Some(previous) = extras["previousTag"].as_str() {
+            rows.push(line("Previous Tag", previous.to_owned()).into());
+        }
+        if !extras["originUrl"].is_null() {
+            let remote = strings(&extras["remoteBranches"]);
+            let text = if remote.is_empty() {
+                "Not pushed (not on any remote branch)".to_owned()
+            } else {
+                remote.join(", ")
+            };
+            rows.push(line("Pushed", text).into());
+        }
     }
     let message = info["message"].as_str().unwrap_or_default().trim_end();
     let (subject, body) = message.split_once('\n').unwrap_or((message, ""));
@@ -358,6 +424,44 @@ fn details(info: Option<&Value>) -> View {
         .spacing(4.0)
         .margin(Thickness::new(14.0, 10.0, 14.0, 10.0))
         .children((View::keyed_fragment(rows.into_iter().enumerate()),))
+}
+
+/// 署名の行の文字（署名がなければ `None`）。言葉は GTK4 版の `signature::Status::label` と同じ（署名者の
+/// メールとコミッターの照合はまだしない）。検証の結果は時間のかかる分で届く。
+fn signature_status(info: &Value, extras: Option<&Value>) -> Option<String> {
+    let kind = info["signed"].as_str();
+    let check = extras.map(|e| &e["signature"]).filter(|s| !s.is_null());
+    if kind.is_none() && check.is_none() {
+        return None;
+    }
+    let label = match (extras, check) {
+        (None, _) => "Checking…",
+        (Some(_), None) => "No key",
+        (Some(_), Some(check)) => match check["status"].as_str().unwrap_or_default() {
+            "G" | "U" => {
+                let trust = check["trust"].as_str().unwrap_or_default().to_lowercase();
+                let trusted = kind == Some("ssh")
+                    || matches!(trust.as_str(), "ultimate" | "full" | "fully" | "marginal");
+                if check["status"] == "U" || !trusted {
+                    "Untrusted key"
+                } else {
+                    "Verified"
+                }
+            }
+            "X" | "Y" => "Expired",
+            "R" => "Revoked key",
+            "B" => "Bad signature",
+            "V" => "Can’t verify",
+            _ => "No key",
+        },
+    };
+    let signer = check
+        .and_then(|c| c["signer"].as_str())
+        .filter(|s| !s.is_empty());
+    Some(match signer {
+        Some(signer) => format!("{label} — {signer}"),
+        None => label.to_owned(),
+    })
 }
 
 /// SwapChainPanel に swap chain をつなぐ（reactor が使う windows-core の型で渡す）。受け付けられたら `true`。
@@ -538,10 +642,18 @@ impl HistoryView {
             && self.shown != Some(commit.row)
         {
             self.shown = Some(commit.row);
-            self.sender.send(Message::Commit(commit.info.clone()));
+            s.data.extras_changed = false;
+            self.sender
+                .send(Message::Commit(commit.info.clone(), commit.extras.clone()));
             s.renderer.forget_diff();
             self.diff.scroll_y = 0.0;
             self.diff.dirty = true;
+        }
+        if std::mem::take(&mut s.data.extras_changed)
+            && let Some(commit) = &s.data.commit
+        {
+            self.sender
+                .send(Message::Commit(commit.info.clone(), commit.extras.clone()));
         }
         if std::mem::take(&mut s.data.syntax_changed) {
             s.renderer.forget_diff();
@@ -629,13 +741,22 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                 return;
             }
             let _ = source.Focus(xaml::FocusState::Pointer);
-            if target == Target::History {
-                with_history(|h| {
+            with_history(|h| match target {
+                Target::History => {
                     if let Some(row) = h.session.row_at(position.Y) {
                         h.session.select(row);
                     }
-                });
-            }
+                }
+                // ファイルの見出しを押すと、そのファイルを畳む・開く。
+                Target::Diff => {
+                    let row = ((h.diff.scroll_y + position.Y) / DIFF_ROW_HEIGHT).floor();
+                    if row >= 0.0 && h.session.data.toggle_file(row as usize) {
+                        h.session.renderer.forget_diff();
+                        let rows = h.diff_rows();
+                        h.diff.scroll_by(0.0, rows);
+                    }
+                }
+            });
             let _ = args.SetHandled(true);
         })?,
     );
