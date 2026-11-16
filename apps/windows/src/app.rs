@@ -549,6 +549,8 @@ enum Message {
     RepoSettingsLoaded(Vec<crate::reposettings::Entry>),
     /// Repository Settings のフックの有効を切り替えた。
     HookEnabled(String, bool),
+    /// Repository Settings のリポジトリの形を読んだ（`repositoryForm` の info）。
+    RepoFormLoaded(Value),
     /// Repository Settings のフック・LFS を読んだ（`hooksAndLfs` の info）。
     RepoHooksLoaded(Value),
     /// Repository Settings で見るフックの中身を読んだ（名前と中身）。
@@ -2884,6 +2886,24 @@ impl Component for Root {
                     state.hook_script = Some((name, text));
                 }
             }
+            Message::HookEnabled(name, on) if name == "maintenance" => {
+                let now = self
+                    .repo_settings
+                    .as_ref()
+                    .and_then(|s| s.form.as_ref())
+                    .is_some_and(|f| f["maintenance"].as_bool() == Some(true));
+                if now != on {
+                    self.write_repo_settings(
+                        vec![json!({ "op": "maintenance", "on": on })],
+                        context,
+                    );
+                }
+            }
+            Message::RepoFormLoaded(info) => {
+                if let Some(state) = self.repo_settings.as_mut() {
+                    state.form = Some(info);
+                }
+            }
             Message::HookEnabled(name, on) => {
                 let current = self
                     .repo_settings
@@ -2960,7 +2980,33 @@ impl Component for Root {
                     state.exclude = Some(state.exclude_saved.clone());
                     return;
                 }
-                let commands = if key == "hook-create" {
+                if key == "fetch-all-contents" {
+                    // 大きなリポジトリでは長くかかるので、先に聞く（GTK4 版と同じ）。
+                    let remote = state
+                        .form
+                        .as_ref()
+                        .and_then(|f| f["partial"]["remote"].as_str())
+                        .unwrap_or("origin")
+                        .to_owned();
+                    if let Some(repo) = self.repo.clone() {
+                        self.dialog = Some(Dialog::Confirm {
+                            repo,
+                            title: tr!("Fetch All Contents?"),
+                            message: tr!(
+                                "Fetches the contents of every file in the history from {remote} (git fetch --refetch). In a large repository this can take long and use a lot of disk. Afterwards it’s no longer a partial clone.",
+                                remote = remote
+                            ),
+                            button: tr!("Fetch All Contents"),
+                            command: json!({ "op": "fetchAllContents" }),
+                        });
+                    }
+                    return;
+                }
+                let commands = if let Some(n) = key.strip_prefix("deepen:") {
+                    vec![json!({ "op": "deepen", "commits": n.parse::<u64>().unwrap_or(100) })]
+                } else if key == "unshallow" {
+                    vec![json!({ "op": "unshallow" })]
+                } else if key == "hook-create" {
                     let missing = state.missing_hooks();
                     let Some(name) =
                         missing.get(state.new_hook.min(missing.len().saturating_sub(1)))
@@ -5715,6 +5761,15 @@ impl Root {
 
     /// Repository Settings のフック・LFS と、`.gitignore`・`.git/info/exclude` を裏で読む。
     fn load_repo_files(&self, context: &ComponentContext<Self>) {
+        // リポジトリの形（shallow・partial・maintenance）も。
+        if let Some(repo) = self.repo.clone() {
+            context.spawn_background(move |_| {
+                let reply: Value =
+                    serde_json::from_str(&repo.run_json(r#"{"op":"repositoryForm"}"#))
+                        .unwrap_or_default();
+                Message::RepoFormLoaded(reply["info"].clone())
+            });
+        }
         // フックと LFS も。
         if let Some(repo) = self.repo.clone() {
             context.spawn_background(move |_| {

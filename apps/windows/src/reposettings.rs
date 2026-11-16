@@ -53,6 +53,8 @@ pub struct State {
     pub lfs_patterns: Vec<String>,
     pub lfs_files: Option<u64>,
     pub new_pattern: String,
+    /// リポジトリの形（`repositoryForm` の info。読むまでは None）。
+    pub form: Option<Value>,
 }
 
 impl State {
@@ -74,6 +76,7 @@ impl State {
             lfs_patterns: Vec::new(),
             lfs_files: None,
             new_pattern: String::new(),
+            form: None,
         }
     }
 
@@ -689,6 +692,113 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                     .content(TextBlock::new().text(tr!("Track Pattern…"))),
             )),
     ));
+    // Fetching and Folders: shallow clone の続きを取る、partial clone の中身をすべて取る、git maintenance（GTK4 版の
+    // `repoform::fetching_page`。sparse checkout のフォルダを選ぶのはまだ）。
+    let fetching: View = match &state.form {
+        None => TextBlock::new().text(tr!("Loading…")).opacity(0.6).into(),
+        Some(form) => {
+            let action_row = |title: String, help: String, buttons: Vec<(String, String)>| {
+                let buttons = buttons.into_iter().map(|(key, label)| {
+                    (
+                        key.clone(),
+                        Button::new()
+                            .on_click((callbacks.button)(key))
+                            .content(TextBlock::new().text(label)),
+                    )
+                });
+                StackPanel::new().spacing(4.0).children((
+                    TextBlock::new()
+                        .text(title)
+                        .text_wrapping(TextWrapping::Wrap),
+                    TextBlock::new()
+                        .text(help)
+                        .font_size(12.0)
+                        .opacity(0.65)
+                        .text_wrapping(TextWrapping::Wrap),
+                    StackPanel::new()
+                        .orientation(Orientation::Horizontal)
+                        .spacing(8.0)
+                        .children((View::keyed_fragment(buttons),)),
+                ))
+            };
+            let mut rows: Vec<(String, View)> = Vec::new();
+            if form["shallow"].as_bool() == Some(true) {
+                rows.push((
+                    "shallow".to_owned(),
+                    action_row(
+                        tr!("Older history isn’t fetched (shallow clone)"),
+                        tr!("Fetch more of it from the remote, as at the end of History."),
+                        vec![
+                            ("deepen:100".to_owned(), tr!("100 Commits")),
+                            ("deepen:1000".to_owned(), tr!("1,000 Commits")),
+                            ("unshallow".to_owned(), tr!("Fetch All")),
+                        ],
+                    ),
+                ));
+            }
+            if let Some(partial) = form["partial"].as_object() {
+                let remote = partial
+                    .get("remote")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let filter = partial.get("filter").and_then(Value::as_str).unwrap_or("?");
+                let can = form["canFetchAllContents"].as_bool().unwrap_or(true);
+                rows.push((
+                    "partial".to_owned(),
+                    action_row(
+                        tr!(
+                            "Partial clone: file contents are fetched when needed ({filter})",
+                            filter = filter
+                        ),
+                        tr!(
+                            "Diffs, blame and contents: searches fetch what they need from {remote}.",
+                            remote = remote
+                        ),
+                        if can {
+                            vec![("fetch-all-contents".to_owned(), tr!("Fetch All Contents…"))]
+                        } else {
+                            Vec::new()
+                        },
+                    ),
+                ));
+            }
+            if rows.is_empty() {
+                rows.push((
+                    "full".to_owned(),
+                    TextBlock::new()
+                        .text(tr!("This repository has all of its history and contents."))
+                        .opacity(0.65)
+                        .into(),
+                ));
+            }
+            if form["canMaintain"].as_bool().unwrap_or(true) {
+                let on = form["maintenance"].as_bool() == Some(true);
+                rows.push((
+                    "maintenance".to_owned(),
+                    StackPanel::new()
+                        .spacing(4.0)
+                        .children((
+                            CheckBox::new()
+                                .is_checked(on)
+                                .on_is_checked_changed((callbacks.toggle)("maintenance".to_owned()))
+                                .content(TextBlock::new().text(tr!(
+                                    "Keep this repository maintained in the background"
+                                ))),
+                            TextBlock::new()
+                                .text(tr!(
+                                    "Every hour git prefetches and writes the commit-graph; it’s set in your global git config and systemd or cron (git maintenance)."
+                                ))
+                                .font_size(12.0)
+                                .opacity(0.65)
+                                .text_wrapping(TextWrapping::Wrap),
+                        )),
+                ));
+            }
+            StackPanel::new()
+                .spacing(12.0)
+                .children((View::keyed_fragment(rows),))
+        }
+    };
     let author_changed = state.at("local", "user.name").unwrap_or_default() != state.name
         || state.at("local", "user.email").unwrap_or_default() != state.email;
     // Keys and Values: キーごとに効いている値（最後のもの）。探す文字があれば、キーか値に含むものだけ。
@@ -777,36 +887,44 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
         StackPanel::new()
             .margin(Thickness::new(24.0, 0.0, 24.0, 24.0))
             .children((
-                heading(tr!("Author")),
-                StackPanel::new()
-                    .max_width(560.0)
-                    .horizontal_alignment(HorizontalAlignment::Left)
-                    .spacing(8.0)
-                    .children((
-                        field(tr!("Name"), "user.name", "name", &state.name),
-                        field(tr!("Email"), "user.email", "email", &state.email),
-                        Button::new()
-                            .is_enabled(author_changed)
-                            .on_click((callbacks.button)("author".to_owned()))
-                            .content(TextBlock::new().text(tr!("Save"))),
-                    )),
-                heading("Operations".to_owned()),
-                StackPanel::new()
-                    .max_width(560.0)
-                    .horizontal_alignment(HorizontalAlignment::Left)
-                    .spacing(12.0)
-                    .children((View::keyed_fragment(operations),)),
-                heading("Working Copy".to_owned()),
-                StackPanel::new()
-                    .max_width(560.0)
-                    .horizontal_alignment(HorizontalAlignment::Left)
-                    .spacing(12.0)
-                    .children((View::keyed_fragment(working_copy),)),
+                // 子の数がタプルの上限を超えないよう、前半を 1 つにまとめる。
+                StackPanel::new().children((
+                    heading(tr!("Author")),
+                    StackPanel::new()
+                        .max_width(560.0)
+                        .horizontal_alignment(HorizontalAlignment::Left)
+                        .spacing(8.0)
+                        .children((
+                            field(tr!("Name"), "user.name", "name", &state.name),
+                            field(tr!("Email"), "user.email", "email", &state.email),
+                            Button::new()
+                                .is_enabled(author_changed)
+                                .on_click((callbacks.button)("author".to_owned()))
+                                .content(TextBlock::new().text(tr!("Save"))),
+                        )),
+                    heading("Operations".to_owned()),
+                    StackPanel::new()
+                        .max_width(560.0)
+                        .horizontal_alignment(HorizontalAlignment::Left)
+                        .spacing(12.0)
+                        .children((View::keyed_fragment(operations),)),
+                    heading("Working Copy".to_owned()),
+                    StackPanel::new()
+                        .max_width(560.0)
+                        .horizontal_alignment(HorizontalAlignment::Left)
+                        .spacing(12.0)
+                        .children((View::keyed_fragment(working_copy),)),
+                )),
                 heading(tr!("Ignore in this repository only")),
                 StackPanel::new()
                     .max_width(560.0)
                     .horizontal_alignment(HorizontalAlignment::Left)
                     .children((exclude,)),
+                heading(tr!("Fetching and Folders")),
+                StackPanel::new()
+                    .max_width(560.0)
+                    .horizontal_alignment(HorizontalAlignment::Left)
+                    .children((fetching,)),
                 heading("Hooks".to_owned()),
                 StackPanel::new()
                     .max_width(720.0)
