@@ -1,0 +1,12 @@
+# windows-reactor が出していない WinUI 3（Microsoft.UI.Xaml）の型。`generate/` で Windows App SDK の winmd から
+# 作る。windows-reactor と同じ windows-core（0.100）を使うので、本体（windows 0.62）とは別の crate にする。
+[package]
+name = "amonhen-win-xaml"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+windows-core = "0.100"

@@ -107,11 +107,19 @@ dependencies = [
  "amonhen-model",
  "amonhen-projection",
  "amonhen-remote",
+ "amonhen-win-xaml",
  "windows",
  "windows-core 0.100.0",
  "windows-core 0.62.2",
  "windows-numerics 0.3.1",
  "windows-reactor",
+]
+
+[[package]]
+name = "amonhen-win-xaml"
+version = "0.1.0"
+dependencies = [
+ "windows-core 0.100.0",
 ]
 
 [[package]]
@@ -2108,8 +2116,6 @@ dependencies = [
 [[package]]
 name = "windows-reactor"
 version = "0.100.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e3f0c06995fb2b791584562e32c76d4fed2241d0460a82c3fcdf30a32beadc3"
 dependencies = [
  "rustc-hash",
  "windows-collections 0.100.0",
