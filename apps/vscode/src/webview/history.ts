@@ -89,10 +89,16 @@ export function createHistoryView(): View {
   search.hidden = true;
   const searchInput = el('input');
   searchInput.type = 'search';
-  searchInput.placeholder = 'Search';
+  // 書き方はアプリの検索欄と同じ説明を出す（欄の中と吹き出し）
+  searchInput.placeholder = 'Search (author:, path:, contents: also work)';
   searchInput.setAttribute('aria-label', 'Search History');
-  searchInput.title =
-    'Words, author:, subject:, commit:, path:, contents:, after:, before:, AND, OR and ( ).\nEnter: next match, Shift+Enter: previous match, Escape: clear';
+  searchInput.title = [
+    'Words match the subject, author and ID. Spaces mean AND, “or” means OR, and parentheses group.',
+    'author:name  committer:name  subject:text  message:text  commit:ID',
+    'path:path  contents:"diff text"  after:date  before:date',
+    'Example: path:fs/ (author:linus or author:greg)',
+    'Enter: next match, Shift+Enter: previous match, Escape: clear',
+  ].join('\n');
   const searchCount = el('span', 'search-count');
   const previousMatch = el('button', 'icon-button', '∧');
   previousMatch.title = 'Previous Match (Shift+Enter)';
