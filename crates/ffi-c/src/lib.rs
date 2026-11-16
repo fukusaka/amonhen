@@ -930,7 +930,7 @@ pub struct AmonhenRowsView {
 }
 
 /// `query` に合うコミットの行（昇順、`amonhen_rows_free` で解放する）。構文は `amonhen-core` の
-/// `query`（`author:` `subject:` `commit:` `path:` `contents:` `after:` `before:`、AND・OR・括弧）。すべてのコミットを読むので
+/// `query`（`author:` `committer:` `subject:` `message:` `commit:` `path:` `contents:` `after:` `before:`、AND・OR・括弧）。すべてのコミットを読むので
 /// 裏のスレッドで呼ぶ（linux の 148 万コミットで約 1.2 秒）。新しい検索を始めるか `amonhen_search_cancel` を
 /// 呼ぶと、走っている検索は NULL を返す。
 ///
