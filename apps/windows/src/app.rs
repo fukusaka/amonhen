@@ -112,6 +112,9 @@ struct Root {
     /// Blame の画面（パス、コミット、読んだ行）。閉じたら前の画面（File History なら File History）に戻る。
     blame: Option<crate::blame::State>,
     blame_from: Page,
+    /// Repository Settings の画面と、閉じたら戻る画面。
+    repo_settings: Option<crate::reposettings::State>,
+    repo_settings_from: Page,
     /// Activity の画面と、閉じたら戻る画面。
     activity: Option<crate::activity::State>,
     activity_from: Page,
@@ -137,6 +140,7 @@ enum Page {
     Merge,
     Settings,
     Activity,
+    RepoSettings,
 }
 
 /// 窓に重ねるダイアログ（macOS 版のシート、GTK4 版の `sheets`）。
@@ -316,6 +320,10 @@ enum Message {
     ActivityUndo(usize),
     ActivityTick,
     CloseActivity,
+    /// Repository Settings: 設定を読んだ・欄を書き換えた・ボタン。
+    RepoSettingsLoaded(Vec<crate::reposettings::Entry>),
+    RepoSettingsField(&'static str, String),
+    RepoSettingsButton(String),
     /// 解決済みにする前に、残っているコンフリクトを数えた（パス、数）。
     ConflictCounted(String, u64),
     /// Pull の取り込み元・Publish の送り先のリモートを選んだ。
@@ -402,6 +410,8 @@ impl Component for Root {
             merge: None,
             settings: None,
             activity: None,
+            repo_settings: None,
+            repo_settings_from: Page::History,
             activity_from: Page::History,
             settings_from: Page::History,
             sidebar_request: 0,
@@ -624,6 +634,14 @@ impl Component for Root {
                 };
                 self.busy = Some(format!("{title}…"));
                 perform(context, repo, json!({ "op": id }), title.to_owned());
+            }
+            Message::Command(id) if id == "repository-settings" => {
+                if self.page != Page::RepoSettings {
+                    self.repo_settings_from = self.page;
+                }
+                self.repo_settings = Some(crate::reposettings::State::new());
+                self.page = Page::RepoSettings;
+                self.write_repo_settings(Vec::new(), context);
             }
             Message::Command(id) if id == "activity" => {
                 if self.page != Page::Activity {
@@ -1318,6 +1336,58 @@ impl Component for Root {
                 self.load_undo_log(context);
             }
             Message::ActivityTab(None) => {}
+            Message::RepoSettingsLoaded(entries) => {
+                if let Some(state) = self.repo_settings.as_mut() {
+                    state.load(entries);
+                }
+            }
+            Message::RepoSettingsField(field, text) => {
+                if let Some(state) = self.repo_settings.as_mut() {
+                    match field {
+                        "name" => state.name = text,
+                        "email" => state.email = text,
+                        "query" => state.query = text,
+                        "key" => state.new_key = text,
+                        _ => state.new_value = text,
+                    }
+                }
+            }
+            Message::RepoSettingsButton(key) => {
+                let Some(state) = self.repo_settings.as_mut() else {
+                    return;
+                };
+                // 空にした値は、この段から消す（GTK4 版と同じ）。
+                let set = |key: &str, value: &str| {
+                    let value = value.trim();
+                    json!({
+                        "op": "configSet", "key": key,
+                        "value": (!value.is_empty()).then_some(value),
+                    })
+                };
+                let commands = if key == "close" {
+                    self.repo_settings = None;
+                    self.page = self.repo_settings_from;
+                    return;
+                } else if key == "author" {
+                    let mut commands = Vec::new();
+                    for (k, now) in [("user.name", &state.name), ("user.email", &state.email)] {
+                        if state.at("local", k).unwrap_or_default() != now.as_str() {
+                            commands.push(set(k, now));
+                        }
+                    }
+                    commands
+                } else if key == "add" {
+                    let command = set(state.new_key.trim(), &state.new_value);
+                    state.new_key.clear();
+                    state.new_value.clear();
+                    vec![command]
+                } else if let Some(k) = key.strip_prefix("remove:") {
+                    vec![json!({ "op": "configSet", "key": k, "value": null })]
+                } else {
+                    return;
+                };
+                self.write_repo_settings(commands, context);
+            }
             Message::ActivityUndoLog(entries) => {
                 if let Some(state) = self.activity.as_mut() {
                     state.undo = entries;
@@ -1817,6 +1887,7 @@ impl Component for Root {
                 self.merge_view(context),
                 self.settings_view(context),
                 self.activity_view(context),
+                self.repo_settings_view(context),
             ));
         // ダイアログの入力の欄: フォーカスを入れ、Enter で既定のボタン（ContentDialog は Enter を既定のボタンに
         // 回さない）。
@@ -2959,6 +3030,45 @@ impl Root {
             }
             _ => {}
         }
+    }
+
+    /// Repository Settings: `commands` を順に書いてから（失敗したらそこで止めて知らせる）、設定を読み直す。
+    fn write_repo_settings(&self, commands: Vec<Value>, context: &ComponentContext<Self>) {
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+        context.spawn_background(move |_| {
+            for command in commands {
+                let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
+                    .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+                if let Some(e) = reply["error"].as_str() {
+                    return Message::Performed(Some((tr!("Repository Settings"), e.to_owned())));
+                }
+            }
+            let reply: Value =
+                serde_json::from_str(&repo.run_json(r#"{"op":"configList"}"#)).unwrap_or_default();
+            Message::RepoSettingsLoaded(crate::reposettings::entries_of(&reply["info"]))
+        });
+    }
+
+    fn repo_settings_view(&self, context: &ViewContext<Self>) -> View {
+        let (Page::RepoSettings, Some(state)) = (self.page, &self.repo_settings) else {
+            return View::empty();
+        };
+        let view = crate::reposettings::view(
+            state,
+            crate::reposettings::Callbacks {
+                field: Box::new(|f| context.callback(move |t| Message::RepoSettingsField(f, t))),
+                button: Box::new(|k: String| {
+                    context.callback(move |()| Message::RepoSettingsButton(k.clone()))
+                }),
+            },
+        );
+        Border::new()
+            .background(Brush::Solid(Color::rgb(0xff, 0xff, 0xff)))
+            .grid_column(1)
+            .grid_column_span(2)
+            .content(view)
     }
 
     /// Activity の History のタブの中身（Undo できる操作）を裏で読む。

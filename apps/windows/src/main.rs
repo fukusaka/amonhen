@@ -17,6 +17,7 @@ mod menus;
 mod merge;
 mod prefs;
 mod render;
+mod reposettings;
 mod sequence;
 mod settingsview;
 mod sidebar;

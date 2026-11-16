@@ -30,6 +30,7 @@ pub const IMPLEMENTED: &[&str] = &[
     "abort",
     "settings",
     "activity",
+    "repository-settings",
 ];
 
 /// 項目の名前（GTK4 版の `appmenu::title` と同じ）。
