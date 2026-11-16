@@ -144,6 +144,8 @@ struct Root {
     /// ダイアログの入力の欄（Enter で既定のボタンを押す）と、開いた回数（開いた後にキーを付ける）。
     dialog_input: ElementRef<TextBox>,
     dialog_inputs: u64,
+    /// Working Copy の一覧を包む Grid（Space で含める・外す、Delete・Backspace で捨てる）。
+    working_list: ElementRef<Grid>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -399,6 +401,8 @@ enum Message {
     Confirm(Arc<Repository>, String, String, String, Value),
     /// Working Copy のパスの絞り込み。
     WorkingFilter(String),
+    /// Working Copy の一覧のキー（true は Delete・Backspace で捨てる、false は Space で含める・外す）。
+    WorkingKey(bool),
     /// 下書きのない worktree を開いたときに読んだテンプレート（下書きの鍵と中身）。
     CommitTemplate(String, String),
     /// 最近のコミットのメッセージを読んだ。
@@ -583,6 +587,7 @@ impl Component for Root {
             busy: None,
             dialog_input: ElementRef::new(),
             dialog_inputs: 0,
+            working_list: ElementRef::new(),
         }
     }
 
@@ -2634,6 +2639,29 @@ impl Component for Root {
                 }
             }
             Message::WorkingFilter(text) => self.working_filter = text,
+            Message::WorkingKey(discard) => {
+                // 選んでいるファイル（GTK4 版・macOS 版の一覧のキーと同じ）。
+                let entry = self.working_file.as_ref().and_then(|path| {
+                    self.status
+                        .as_ref()?
+                        .status
+                        .entries
+                        .iter()
+                        .find(|e| &e.path == path)
+                        .cloned()
+                });
+                let Some(entry) = entry else {
+                    return beep();
+                };
+                if !discard {
+                    let include = !crate::workcopy::included(&entry);
+                    self.update(Message::Stage(entry.path, include), context);
+                } else if entry.kind != amonhen_model::StatusKind::Unmerged && entry.is_unstaged() {
+                    self.update(Message::DiscardFile(entry.path), context);
+                } else {
+                    beep();
+                }
+            }
             Message::RecentMessages(recent) => self.recent_messages = recent,
             Message::CommitTextMenu(key) => self.message_menu(&key, context),
             Message::WorkingFileMenu(path, key) => match key.as_str() {
@@ -3020,6 +3048,18 @@ impl Component for Root {
                 self.activity_view(context),
                 self.repo_settings_view(context),
             ));
+        // Working Copy の一覧のキー: 画面を出すたびに Grid が作り直されるので、そのたびに付ける。
+        let host = self.working_list.clone();
+        context.use_effect("working-keys", self.page == Page::WorkingCopy, move || {
+            let _ = host.request_native_element(|result| {
+                if let Ok(element) = result
+                    && let Err(e) = attach_working_keys(&element)
+                {
+                    eprintln!("Working Copy の一覧にキーを付けられない: {e}");
+                }
+            });
+            None
+        });
         // ダイアログの入力の欄: フォーカスを入れ、Enter で既定のボタン（ContentDialog は Enter を既定のボタンに
         // 回さない）。
         if self.dialog_inputs > 0 {
@@ -5150,6 +5190,7 @@ impl Root {
             crate::workcopy::Input {
                 status: self.status.as_deref(),
                 filter: &self.working_filter,
+                list_host: &self.working_list,
                 recent: &self.recent_messages,
                 summary: &self.summary,
                 description: &self.description,
@@ -6538,6 +6579,26 @@ fn attach_enter(element: &IInspectable) -> windows_core_reactor::Result<()> {
         with_history(|h| {
             h.sender
                 .send(Message::DialogClosed(ContentDialogResult::Primary));
+        });
+    })?;
+    REVOKERS.with(|r| r.borrow_mut().push(revoker));
+    Ok(())
+}
+
+/// Working Copy の一覧のキー（GTK4 版・macOS 版と同じ）: Space で含める・外す、Delete・Backspace で捨てる。
+/// ListView が先に使うキーなので、包んだ Grid の PreviewKeyDown で受ける。
+fn attach_working_keys(element: &IInspectable) -> windows_core_reactor::Result<()> {
+    let ui: xaml::UIElement = element.cast()?;
+    let revoker = ui.PreviewKeyDown(|_, args: Ref<xaml::KeyRoutedEventArgs>| {
+        let Some(args) = args.as_ref() else { return };
+        let discard = match args.Key() {
+            Ok(xaml::VirtualKey::Space) => false,
+            Ok(xaml::VirtualKey::Delete | xaml::VirtualKey::Back) => true,
+            _ => return,
+        };
+        let _ = args.SetHandled(true);
+        with_history(|h| {
+            h.sender.send(Message::WorkingKey(discard));
         });
     })?;
     REVOKERS.with(|r| r.borrow_mut().push(revoker));

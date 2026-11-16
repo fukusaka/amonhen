@@ -213,6 +213,8 @@ pub struct Input<'a> {
     pub status: Option<&'a StatusSnapshot>,
     /// パスの絞り込み。
     pub filter: &'a str,
+    /// 一覧を包む Grid（Space・Delete のキーを付ける）。
+    pub list_host: &'a ElementRef<Grid>,
     /// 最近のコミットの（メッセージ, 作者, メール）。新しい順。
     pub recent: &'a [(String, String, String)],
     /// 件名と本文。
@@ -262,7 +264,7 @@ fn mark(entry: &StatusEntry) -> char {
 }
 
 /// 次のコミットに含めているか（stage 済みで、作業ツリーに残りがない）。
-fn included(entry: &StatusEntry) -> bool {
+pub fn included(entry: &StatusEntry) -> bool {
     entry.is_staged() && !entry.is_unstaged()
 }
 
@@ -454,10 +456,13 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
     // 作り直して避ける（替わるのは stage・コミット・外での変更のとき）。
     // 絞り込みを変えたときも作り直す。
     let generation = input.status.map_or(0, |s| s.generation);
-    let list = Border::new().grid_row(4).content(View::keyed_fragment([(
-        format!("{generation}:{}", input.filter),
-        list,
-    )]));
+    let list = Grid::new()
+        .element_ref(input.list_host)
+        .grid_row(4)
+        .children((View::keyed_fragment([(
+            format!("{generation}:{}", input.filter),
+            list,
+        )]),));
     // 途中の操作の帯: 何の途中かと、Continue・Skip（1 つずつ当てていく操作だけ）・Abort（GTK4 版のメニューの
     // 使えるかと同じ）。
     let band: View = match input.sequence {
