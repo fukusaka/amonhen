@@ -79,7 +79,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 別の窓（New Window） | ✓ | ✓ | — | n/a | n/a |  |
 | 起動時に窓とタブを戻す | ✓ | ✓ | — | n/a | n/a |  |
 | SSH・daemon のリポジトリのつなぎ中のタブ（Cancel・Try Again） | ✓ | ✓ | — | n/a | n/a |  |
-| 題に未コミットの ● と ahead/behind | ✓ | ✓ | — | n/a | n/a | GTK4: タブの名前に出る。 |
+| 題に未コミットの ● と ahead/behind | ✓ | ✓ | ✓ | n/a | n/a | GTK4: タブの名前に出る。<br>Windows: Windows: 窓のタイトルに（タブはまだない）。 |
 | 最後の窓を閉じてもアプリは終わらない | ✓ | — | — | n/a | n/a | GTK4: GNOME のアプリと同じく終わる。 |
 
 ## 2. ブックマーク（リポジトリの一覧）

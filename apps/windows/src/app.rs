@@ -3852,7 +3852,25 @@ impl Component for Root {
             .ok()
             .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
             .unwrap_or_else(|| args.repo.display().to_string());
-        context.window_title(name);
+        // 未コミットの変更（●）と上流との差（↑↓）を添える（GTK4 版・macOS 版はタブの名前に。ここはタブがないので窓の
+        // 名前に）。
+        let mut title = name;
+        if self
+            .status
+            .as_ref()
+            .is_some_and(|s| !s.status.entries.is_empty())
+        {
+            title.push_str(" ●");
+        }
+        if let Some(head) = self.head_entry() {
+            if head.ahead > 0 {
+                title.push_str(&format!(" ↑{}", head.ahead));
+            }
+            if head.behind > 0 {
+                title.push_str(&format!(" ↓{}", head.behind));
+            }
+        }
+        context.window_title(title);
         let root = self.root.clone();
         let refs = (
             self.panel.clone(),

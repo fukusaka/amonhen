@@ -79,7 +79,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Separate windows (New Window) | ✓ | ✓ | — | n/a | n/a |  |
 | Open windows and tabs restored at launch | ✓ | ✓ | — | n/a | n/a |  |
 | Connecting tab for SSH and daemon repositories (Cancel, Try Again) | ✓ | ✓ | — | n/a | n/a |  |
-| Title shows uncommitted ● and ahead/behind | ✓ | ✓ | — | n/a | n/a | GTK4: On the tab names. |
+| Title shows uncommitted ● and ahead/behind | ✓ | ✓ | ✓ | n/a | n/a | GTK4: On the tab names.<br>Windows: Windows: On the window title (there are no tabs yet). |
 | App keeps running after its last window closes | ✓ | — | — | n/a | n/a | GTK4: Quits, as GNOME apps do. |
 
 ## 2. Bookmarks (the repository list)
