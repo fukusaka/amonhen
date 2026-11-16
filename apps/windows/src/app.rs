@@ -105,6 +105,8 @@ struct Root {
     busy: Option<String>,
     /// Stashes の画面で選んでいる stash の名前。
     stash: Option<String>,
+    /// File History の画面（パス、読んだコミット、選んでいる行）。
+    file_history: Option<crate::filehistory::State>,
     /// ダイアログの入力の欄（Enter で既定のボタンを押す）と、開いた回数（開いた後にキーを付ける）。
     dialog_input: ElementRef<TextBox>,
     dialog_inputs: u64,
@@ -115,6 +117,7 @@ enum Page {
     History,
     WorkingCopy,
     Stashes,
+    FileHistory,
 }
 
 /// 窓に重ねるダイアログ（macOS 版のシート、GTK4 版の `sheets`）。
@@ -257,6 +260,13 @@ enum Message {
     SidebarMenu(String),
     /// Stashes の一覧で選んだ行。
     StashSelected(Option<usize>),
+    /// File History を開く（パス）・読み終えた・一覧で選んだ・閉じる。
+    OpenFileHistory(String),
+    FileHistoryLoaded(String, Result<Vec<crate::filehistory::Entry>, String>),
+    FileHistorySelected(Option<usize>),
+    CloseFileHistory,
+    /// Working Copy のファイルの右クリック（パス、項目のキー）。
+    WorkingFileMenu(String, String),
     /// Pull の取り込み元・Publish の送り先のリモートを選んだ。
     PullSource(Option<usize>),
     PublishRemote(Option<usize>),
@@ -334,6 +344,7 @@ impl Component for Root {
             sidebar_menu_host: ElementRef::new(),
             sidebar_key: None,
             stash: None,
+            file_history: None,
             sidebar_request: 0,
             page: Page::History,
             repo: None,
@@ -1136,6 +1147,57 @@ impl Component for Root {
             }
             Message::Invoked(key) if key == "page:history" => self.show_page(Page::History),
             Message::Invoked(key) if key == "page:stashes" => self.show_page(Page::Stashes),
+            Message::WorkingFileMenu(path, key) => match key.as_str() {
+                "history" => self.update(Message::OpenFileHistory(path), context),
+                _ => self.update(Message::DiscardFile(path), context),
+            },
+            Message::OpenFileHistory(path) => {
+                let Some(repo) = self.repo.clone() else {
+                    return beep();
+                };
+                self.file_history = Some(crate::filehistory::State {
+                    path: path.clone(),
+                    entries: None,
+                    selected: None,
+                });
+                self.show_page(Page::FileHistory);
+                context.spawn_background(move |_| {
+                    let command = json!({ "op": "fileHistory", "path": &path, "merges": false });
+                    let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
+                        .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+                    let entries = match reply["error"].as_str() {
+                        Some(e) => Err(e.to_owned()),
+                        None => Ok(crate::filehistory::entries_of(&reply["info"])),
+                    };
+                    Message::FileHistoryLoaded(path, entries)
+                });
+            }
+            Message::FileHistoryLoaded(path, entries) => {
+                if let Some(state) = self.file_history.as_mut()
+                    && state.path == path
+                {
+                    // 読んだら、いちばん新しいコミットを選ぶ（GTK4 版と同じ）。
+                    let first = entries.as_ref().ok().and_then(|e| e.first().cloned());
+                    state.entries = Some(entries);
+                    state.selected = first.is_some().then_some(0);
+                    if let Some(first) = first {
+                        self.show_file_change(&first);
+                    }
+                }
+            }
+            Message::FileHistorySelected(index) => {
+                let entry = self.file_history.as_mut().and_then(|state| {
+                    state.selected = index;
+                    state.entries.as_ref()?.as_ref().ok()?.get(index?).cloned()
+                });
+                if let Some(entry) = entry {
+                    self.show_file_change(&entry);
+                }
+            }
+            Message::CloseFileHistory => {
+                self.file_history = None;
+                self.show_page(Page::History);
+            }
             Message::StashSelected(index) => {
                 let entry = index.and_then(|i| self.stash_entries().get(i).map(|e| (*e).clone()));
                 self.stash = entry.as_ref().map(|e| e.name.clone());
@@ -1144,8 +1206,8 @@ impl Component for Root {
                 }
             }
             Message::Invoked(key) => {
-                // Stashes の画面からは History に戻ってそのコミットへ。
-                if self.page == Page::Stashes {
+                // Stashes・File History の画面からは History に戻ってそのコミットへ。
+                if matches!(self.page, Page::Stashes | Page::FileHistory) {
                     self.show_page(Page::History);
                 }
                 if let Some(entry) = self.entry(&key)
@@ -1384,6 +1446,7 @@ impl Component for Root {
                 // いて、外すと止まる）。
                 self.working_copy_view(context),
                 self.stashes_view(context),
+                self.file_history_view(context),
             ));
         // ダイアログの入力の欄: フォーカスを入れ、Enter で既定のボタン（ContentDialog は Enter を既定のボタンに
         // 回さない）。
@@ -2411,11 +2474,36 @@ impl Root {
                 if let Some(target) = stash {
                     h.session.data.want_stash(target);
                 }
-            } else if from == Page::Stashes {
+            } else if matches!(from, Page::Stashes | Page::FileHistory) {
                 // History で選んでいるコミットを読み直す。
                 h.reload_selected();
             }
         });
+    }
+
+    /// File History で選んだコミットでの、そのファイルの差分を右の列に出す。
+    fn show_file_change(&self, entry: &crate::filehistory::Entry) {
+        if let Some(id) = amonhen_model::Oid::from_hex(&entry.oid) {
+            let path = entry.path.clone();
+            with_history(|h| h.session.data.want_file_change(id, path));
+        }
+    }
+
+    fn file_history_view(&self, context: &ViewContext<Self>) -> View {
+        let (Page::FileHistory, Some(state)) = (self.page, &self.file_history) else {
+            return View::empty();
+        };
+        let view = crate::filehistory::view(
+            state,
+            crate::filehistory::Callbacks {
+                selected: context.callback(Message::FileHistorySelected),
+                close: context.callback(|()| Message::CloseFileHistory),
+            },
+        );
+        Border::new()
+            .background(Brush::Solid(Color::rgb(0xff, 0xff, 0xff)))
+            .grid_column(1)
+            .content(view)
     }
 
     /// stash の一覧（新しい順）。
@@ -2541,7 +2629,7 @@ impl Root {
             selected: context.callback(Message::WorkingFile),
             amend: context.callback(Message::Amend),
             file_menu: Box::new(|path: String| {
-                context.callback(move |_| Message::DiscardFile(path.clone()))
+                context.callback(move |key| Message::WorkingFileMenu(path.clone(), key))
             }),
         };
         let view = crate::workcopy::view(

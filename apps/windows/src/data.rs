@@ -735,6 +735,44 @@ impl Data {
         });
     }
 
+    /// コミット `id` での、ファイル `path` の差分と詳細を裏で読む（File History。名前を変えたコミットなら変える前の
+    /// 名前でも探す）。History の行ではないので、複数選んだときと同じ鍵を使う。
+    pub fn want_file_change(&mut self, id: amonhen_model::Oid, path: String) {
+        let (Some(repo), Some(history)) = (self.repo.clone(), self.history.clone()) else {
+            return;
+        };
+        self.selection_seq = self.selection_seq.wrapping_add(1) & 0x7fff_ffff;
+        let key = 0x8000_0000 | self.selection_seq;
+        self.commit_wanted = Some(key);
+        self.early_extras = None;
+        let generation = history.generation;
+        let (tx, wake) = (self.tx.clone(), self.wake.clone());
+        std::thread::spawn(move || {
+            let load = || -> Result<CommitShown, String> {
+                let info = repo.commit_info(&id).map_err(|e| e.to_string())?;
+                let changes: Vec<_> = repo
+                    .commit_changes(&id)
+                    .map_err(|e| e.to_string())?
+                    .into_iter()
+                    .filter(|c| c.path == path || c.old_path.as_deref() == Some(path.as_str()))
+                    .collect();
+                let stacked = repo.stacked_diff(&changes).map_err(|e| e.to_string())?;
+                Ok(CommitShown::new(key, info, Arc::new(stacked)))
+            };
+            let shown = match load() {
+                Ok(shown) => shown,
+                Err(e) => {
+                    let _ = tx.send(Event::Failed(format!("差分を読めない: {e}")));
+                    return wake();
+                }
+            };
+            let (stacked, collapsed) = (shown.stacked.clone(), shown.collapsed.clone());
+            let _ = tx.send(Event::Commit(generation, Box::new(shown)));
+            wake();
+            send_syntax(tx, wake, generation, key, 0, stacked, collapsed);
+        });
+    }
+
     /// 複数選んだ行（`rows`、昇順で 2 つ以上）の差分と、詳細の欄の見出しを裏で読む（GTK4 版と同じく、コアの
     /// `selection_diff` が範囲・2 つ・とびとびで差分の取り方を決める）。
     pub fn want_selection(&mut self, rows: Vec<u32>) {

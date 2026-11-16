@@ -8,6 +8,7 @@
 
 mod app;
 mod data;
+mod filehistory;
 mod listen;
 mod measure;
 mod menus;

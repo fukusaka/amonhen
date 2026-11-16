@@ -1053,6 +1053,16 @@ impl Renderer {
     }
 }
 
+/// UTC の秒を、この機械の時間帯で `YYYY-MM-DD HH:MM` にする（History の行と同じ書き方）。
+pub fn local_date(utc: i64) -> String {
+    let mut tz = TIME_ZONE_INFORMATION::default();
+    // SAFETY: 書き込む先は手元の構造体。
+    unsafe {
+        GetTimeZoneInformation(&mut tz);
+    }
+    date(utc - i64::from(tz.Bias) * 60)
+}
+
 /// 地方時の秒を `YYYY-MM-DD HH:MM` にする（Howard Hinnant の civil_from_days）。
 pub fn date(local: i64) -> String {
     let days = local.div_euclid(86400);
