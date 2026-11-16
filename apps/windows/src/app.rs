@@ -119,6 +119,8 @@ struct Root {
     worktrees: Vec<WorktreeInfo>,
     /// リポジトリの形（shallow・partial clone、sparse checkout の印）。
     form: sidebar::RepositoryForm,
+    /// サイドバーの絞り込み（Branches・Remotes・Tags）。
+    sidebar_filter: String,
     /// Working Copy のパスの絞り込み。
     working_filter: String,
     /// Working Copy の木で畳んでいるディレクトリ。
@@ -434,6 +436,8 @@ enum Message {
     Confirm(Arc<Repository>, String, String, String, Value),
     /// Working Copy のパスの絞り込み。
     WorkingFilter(String),
+    /// サイドバーの絞り込み。
+    SidebarFilter(String),
     /// リポジトリの形を読んだ。
     Form(sidebar::RepositoryForm),
     /// ブランチの切り替えで候補を選んだ。
@@ -606,6 +610,7 @@ impl Component for Root {
             stash: None,
             worktrees: Vec::new(),
             working_filter: String::new(),
+            sidebar_filter: String::new(),
             form: Default::default(),
             working_layout: crate::workcopy::Layout::from_name(
                 &crate::prefs::string(crate::prefs::WORKING_COPY_LAYOUT).unwrap_or_default(),
@@ -2349,6 +2354,21 @@ impl Component for Root {
             }
             Message::Invoked(key) if key == "page:history" => self.show_page(Page::History),
             Message::Invoked(key) if key == "page:stashes" => self.show_page(Page::Stashes),
+            // Conflicts: Working Copy で最初のコンフリクトのファイルを開く（GTK4 版と同じ）。
+            Message::Invoked(key) if key == "page:conflicts" => {
+                self.show_page(Page::WorkingCopy);
+                let first = self.status.as_ref().and_then(|s| {
+                    s.status
+                        .entries
+                        .iter()
+                        .find(|e| e.kind == amonhen_model::StatusKind::Unmerged)
+                        .map(|e| e.path.clone())
+                });
+                if let Some(path) = first {
+                    self.working_file = Some(path);
+                    self.load_working_diff();
+                }
+            }
             Message::Invoked(key) if key == "page:range-diff" => self.show_page(Page::RangeDiff),
             Message::RangePrevious(request, found) => {
                 if request != self.range_request {
@@ -2938,6 +2958,7 @@ impl Component for Root {
                 }
             }
             Message::WorkingFilter(text) => self.working_filter = text,
+            Message::SidebarFilter(text) => self.sidebar_filter = text,
             Message::Form(form) => self.form = form,
             Message::IgnoredLoaded(repo, reply) => {
                 let paths: Vec<String> = reply["info"]["paths"]
@@ -3308,11 +3329,27 @@ impl Component for Root {
         }
         // 木（TreeView）には参照を付けられないので、包む Grid に右クリックを付ける。メニューは押されない空の
         // Grid に付けておき、そこから取って開く（右クリックした所に付けると、WinUI が作り直す前のメニューを開く）。
+        // 絞り込みの欄（Branches・Remotes・Tags。GTK4 版の Filter branches）。
+        let conflicts = self.status.as_ref().map_or(0, |s| {
+            s.status
+                .entries
+                .iter()
+                .filter(|e| e.kind == amonhen_model::StatusKind::Unmerged)
+                .count()
+        });
         let sidebar = Grid::new()
             .element_ref(&self.sidebar_tree)
+            .rows([GridLength::Auto, GridLength::Star(1.0)])
             .grid_column(0)
             .children((
+                TextBox::new()
+                    .text(self.sidebar_filter.clone())
+                    .placeholder_text(tr!("Filter branches"))
+                    .margin(Thickness::new(8.0, 6.0, 8.0, 4.0))
+                    .grid_row(0)
+                    .on_text_changed(context.callback(Message::SidebarFilter)),
                 TreeView::new()
+                    .grid_row(1)
                     .on_item_invoked(context.callback(Message::Invoked))
                     .nodes(sidebar::nodes(
                         self.refs.as_ref().map(|r| &r.refs),
@@ -3324,9 +3361,12 @@ impl Component for Root {
                             .map(|w| (format!("worktree:{}", w.path), w.title()))
                             .collect::<Vec<_>>(),
                         &self.form,
+                        conflicts,
+                        &self.sidebar_filter,
                     )),
                 Grid::new()
                     .element_ref(&self.sidebar_menu_host)
+                    .grid_row(1)
                     .width(0.0)
                     .height(0.0)
                     .horizontal_alignment(HorizontalAlignment::Left)

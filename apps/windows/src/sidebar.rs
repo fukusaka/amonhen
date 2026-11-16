@@ -14,6 +14,11 @@ use amonhen_model::{RefEntry, RefKind, Refs};
 use serde_json::Value;
 use windows_reactor::TreeNode;
 
+thread_local! {
+    /// 絞り込んでいる間（フォルダを開いて、合うものを見せる）。`nodes` が作る間だけ。
+    static EXPAND: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// Inactive とみなす日数（最後のコミットからこれだけ経ったブランチ）。
 const STALE_DAYS: i64 = 90;
 
@@ -132,6 +137,8 @@ pub fn nodes(
     range_diff: bool,
     worktrees: &[(String, String)],
     form: &RepositoryForm,
+    conflicts: usize,
+    filter: &str,
 ) -> Vec<TreeNode> {
     let mut history = String::from("History");
     if form.shallow {
@@ -149,8 +156,39 @@ pub fn nodes(
         TreeNode::new("page:working-copy", working),
         TreeNode::new("page:history", history),
     ];
+    // コンフリクトのファイルがあるときだけ、History の下に数を添えて（GTK4 版と同じ）。
+    if conflicts > 0 {
+        workspace.push(TreeNode::new(
+            "page:conflicts",
+            format!("Conflicts  {conflicts}"),
+        ));
+    }
     let Some(refs) = refs else {
         return vec![group("workspace", "Workspace", workspace).expanded(true)];
+    };
+    // 絞り込み: ブランチ・リモートのブランチ・タグを、名前にすべての語を含むものだけに（大文字小文字を区別しない。
+    // GTK4 版の `set_filter`）。
+    let words: Vec<String> = filter.split_whitespace().map(str::to_lowercase).collect();
+    EXPAND.with(|e| e.set(!words.is_empty()));
+    let filtered;
+    let refs = if words.is_empty() {
+        refs
+    } else {
+        filtered = Refs {
+            entries: refs
+                .entries
+                .iter()
+                .filter(|e| {
+                    !matches!(e.kind, RefKind::Local | RefKind::Remote | RefKind::Tag) || {
+                        let name = e.name.to_lowercase();
+                        words.iter().all(|w| name.contains(w.as_str()))
+                    }
+                })
+                .cloned()
+                .collect(),
+            ..refs.clone()
+        };
+        &filtered
     };
     let of = |kind: RefKind| refs.entries.iter().filter(move |e| e.kind == kind);
     let head = refs.head_branch.as_deref();
@@ -197,7 +235,9 @@ pub fn nodes(
     by_remote.sort_by(|a, b| a.0.cmp(b.0));
     if !by_remote.is_empty() {
         let remotes = by_remote.into_iter().map(|(remote, nodes)| {
-            TreeNode::new(format!("folder:remotes/{remote}"), remote).children(nodes)
+            TreeNode::new(format!("folder:remotes/{remote}"), remote)
+                .children(nodes)
+                .expanded(EXPAND.with(|e| e.get()))
         });
         out.push(group("remotes", "Remotes", remotes).expanded(true));
     }
@@ -289,7 +329,9 @@ impl Tree {
                 TreeItem::Leaf(node) => node,
                 TreeItem::Folder(name, tree) => {
                     let path = format!("{path}/{name}");
-                    TreeNode::new(format!("folder:{path}"), name).children(tree.into_nodes(&path))
+                    TreeNode::new(format!("folder:{path}"), name)
+                        .children(tree.into_nodes(&path))
+                        .expanded(EXPAND.with(|e| e.get()))
                 }
             })
             .collect()
