@@ -50,10 +50,26 @@ pub fn set_string(key: &str, value: &str) -> Result<(), String> {
     set(key, Value::String(value.to_owned()))
 }
 
+/// 鍵ごと消す（なければ何もしない）。
+pub fn remove(key: &str) -> Result<(), String> {
+    if VALUES.with(|v| !v.borrow().contains_key(key)) {
+        return Ok(());
+    }
+    write(|v| {
+        v.remove(key);
+    })
+}
+
 fn set(key: &str, value: Value) -> Result<(), String> {
+    write(|v| {
+        v.insert(key.to_owned(), value);
+    })
+}
+
+fn write(change: impl FnOnce(&mut Map<String, Value>)) -> Result<(), String> {
     let text = VALUES.with(|v| {
         let mut v = v.borrow_mut();
-        v.insert(key.to_owned(), value);
+        change(&mut v);
         serde_json::to_string_pretty(&*v).unwrap_or_default()
     });
     let path = path().ok_or("no settings folder")?;
@@ -61,4 +77,15 @@ fn set(key: &str, value: Value) -> Result<(), String> {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
     std::fs::write(path, text).map_err(|e| e.to_string())
+}
+
+/// コミットのメッセージの下書きを覚える鍵（worktree ごと。GTK4 版と同じ形）。
+pub fn draft_key(workdir: &std::path::Path) -> String {
+    let hex: String = workdir
+        .display()
+        .to_string()
+        .bytes()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    format!("commitDraft.{hex}")
 }

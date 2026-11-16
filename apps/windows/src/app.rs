@@ -91,6 +91,8 @@ struct Root {
     status: Option<Arc<StatusSnapshot>>,
     /// Working Copy のコミットの件名と本文。
     summary: String,
+    /// 下書きを覚える鍵（開いている worktree のもの）。
+    draft_key: Option<String>,
     description: String,
     committing: bool,
     amend: bool,
@@ -395,6 +397,8 @@ enum Message {
     Confirm(Arc<Repository>, String, String, String, Value),
     /// Working Copy のパスの絞り込み。
     WorkingFilter(String),
+    /// 下書きのない worktree を開いたときに読んだテンプレート（下書きの鍵と中身）。
+    CommitTemplate(String, String),
     /// 最近のコミットのメッセージを読んだ。
     RecentMessages(Vec<(String, String, String)>),
     /// 最近のメッセージ・「+」のメニューの項目。
@@ -542,6 +546,7 @@ impl Component for Root {
             stash: None,
             worktrees: Vec::new(),
             working_filter: String::new(),
+            draft_key: None,
             recent_messages: Vec::new(),
             reflog: None,
             range_diff: None,
@@ -583,6 +588,7 @@ impl Component for Root {
             Message::Refs(refs, repo) => {
                 self.refs = Some(refs);
                 self.repo = Some(repo.clone());
+                self.switch_draft(&repo, context);
                 // worktree も読み直す（作る・消す・ブランチを替えると ref も変わる）。
                 let r = repo.clone();
                 // ブランチの分け方は ref が変わるたびに読み直す（数十 ms かかるので裏で）。
@@ -1618,8 +1624,30 @@ impl Component for Root {
                 // 選んでいるファイルの差分も読み直す（stage で行の印が、外での変更で中身が変わる）。
                 self.load_working_diff();
             }
-            Message::Summary(text) => self.summary = text,
-            Message::Description(text) => self.description = text,
+            Message::Summary(text) => {
+                if text != self.summary {
+                    self.summary = text;
+                    self.store_draft();
+                }
+            }
+            Message::Description(text) => {
+                if text != self.description {
+                    self.description = text;
+                    self.store_draft();
+                }
+            }
+            Message::CommitTemplate(key, text) => {
+                // 読む間にほかの worktree に替えた・打ち始めた・Amend にしたなら入れない。
+                if self.draft_key.as_deref() == Some(key.as_str())
+                    && self.summary.is_empty()
+                    && self.description.is_empty()
+                    && !self.amend
+                {
+                    let (s, b) = text.split_once('\n').unwrap_or((&text, ""));
+                    self.summary = s.to_owned();
+                    self.description = b.trim_matches('\n').to_owned();
+                }
+            }
             Message::Stage(path, include) => {
                 let Some(repo) = self.repo.clone() else {
                     return;
@@ -1706,6 +1734,9 @@ impl Component for Root {
                         self.summary.clear();
                         self.description.clear();
                         self.amend = false;
+                        if let Some(key) = &self.draft_key {
+                            let _ = crate::prefs::remove(key);
+                        }
                     }
                     Some(message) => {
                         self.dialog = Some(Dialog::Failed {
@@ -4933,6 +4964,48 @@ impl Root {
         with_history(|h| h.session.data.want_working(entry));
     }
 
+    /// 欄の中身を、開いている worktree の下書きとして覚える（どちらも空なら消す。GTK4 版の `save_draft`）。
+    fn store_draft(&self) {
+        let Some(key) = &self.draft_key else {
+            return;
+        };
+        let result = if self.summary.trim().is_empty() && self.description.trim().is_empty() {
+            crate::prefs::remove(key)
+        } else {
+            crate::prefs::set_string(key, &json!([self.summary, self.description]).to_string())
+        };
+        if let Err(e) = result {
+            eprintln!("下書きを覚えられない: {e}");
+        }
+    }
+
+    /// 開いた worktree が替わったら、その下書きを入れる。なければ欄を空にして、テンプレート（`commit.template`）を
+    /// 裏で読んで入れる（GTK4 版の `restore_draft_or_template`）。前の worktree の下書きは打つたびに覚えてある。
+    fn switch_draft(&mut self, repo: &Arc<Repository>, context: &ComponentContext<Root>) {
+        let Some(workdir) = repo.paths().workdir else {
+            return;
+        };
+        let key = crate::prefs::draft_key(&workdir);
+        if self.draft_key.as_deref() == Some(key.as_str()) {
+            return;
+        }
+        self.draft_key = Some(key.clone());
+        self.amend = false;
+        let draft = crate::prefs::string(&key)
+            .and_then(|d| serde_json::from_str::<(String, String)>(&d).ok());
+        if let Some((summary, description)) = draft {
+            self.summary = summary;
+            self.description = description;
+            return;
+        }
+        self.summary.clear();
+        self.description.clear();
+        let repo = repo.clone();
+        context.spawn_background(move |_| {
+            Message::CommitTemplate(key, commit_template(&repo, &workdir).unwrap_or_default())
+        });
+    }
+
     /// 最近のメッセージ・「+」のメニューの項目を選んだ（GTK4 版の `MessageAids`）。
     fn message_menu(&mut self, key: &str, context: &ComponentContext<Root>) {
         if let Some(t) = key.strip_prefix("type:") {
@@ -5308,6 +5381,48 @@ impl WorktreeInfo {
         }
         text
     }
+}
+
+/// `commit.template` の中身（# の行を除く）。このリポジトリ専用のもの（Settings で書いたもの）はコアから、
+/// ほかは手元で読む。
+fn commit_template(repo: &Repository, workdir: &std::path::Path) -> Option<String> {
+    let config: Value =
+        serde_json::from_str(&repo.run_json(r#"{"op":"configList"}"#)).unwrap_or_default();
+    let path = config["info"]["entries"]
+        .as_array()?
+        .iter()
+        .rev()
+        .find(|e| {
+            e["key"]
+                .as_str()
+                .is_some_and(|k| k.eq_ignore_ascii_case("commit.template"))
+        })?["value"]
+        .as_str()?
+        .to_owned();
+    if path.is_empty() {
+        return None;
+    }
+    let text = if path
+        .replace('\\', "/")
+        .ends_with("/amonhen/commit-template")
+    {
+        let reply: Value =
+            serde_json::from_str(&repo.run_json(r#"{"op":"commitTemplate"}"#)).ok()?;
+        reply["info"]["text"].as_str()?.to_owned()
+    } else {
+        let file = match path.strip_prefix("~/") {
+            Some(rest) => std::env::var_os("USERPROFILE")
+                .map(std::path::PathBuf::from)?
+                .join(rest),
+            None if std::path::Path::new(&path).is_absolute() => path.into(),
+            None => workdir.join(&path),
+        };
+        std::fs::read_to_string(file).ok()?
+    };
+    let lines: Vec<&str> = text.lines().filter(|l| !l.starts_with('#')).collect();
+    let text = lines.join("\n");
+    let text = text.trim();
+    (!text.is_empty()).then(|| text.to_owned())
 }
 
 /// 最近のコミット 30 個のメッセージと作者を裏で読む（最近のメッセージと Co-authored-by の候補。GTK4 版と同じ）。

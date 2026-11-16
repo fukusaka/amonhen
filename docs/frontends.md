@@ -226,7 +226,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Per-row +/− counts and Discard on hover | ✓ | ✓ | — | ✓ | △ | VSCode: Counts need the engine.<br>CLI: `diff --stat`. |
 | Space toggles, ⌫ discards | ✓ | ✓ | — | ✓ | n/a |  |
 | Commit box on top with 50/72 counter and body guide | ✓ | ✓ | △ | ✓ | n/a | VSCode: A description line over 72 is counted instead of a guide (the column is narrower than 72 characters).<br>Windows: Summary and description; no counter or guide. |
-| Draft per repository, starting from the template | ✓ | ✓ | — | ✓ | n/a | VSCode: `commit.template` only, not the shared template library. |
+| Draft per repository, starting from the template | ✓ | ✓ | △ | ✓ | n/a | VSCode: `commit.template` only, not the shared template library.<br>Windows: Windows: `commit.template` only, not the shared templates. |
 | Recent messages (⌥↑ / ⌥↓, list) | ✓ | ✓ | △ | ✓ | n/a | Windows: Windows: The list only. |
 | Insert Conventional types, Co-authored-by, Signed-off-by | ✓ | ✓ | ✓ | ✓ | n/a |  |
 | `#issue` completion | ✓ | ✓ | — | — | n/a |  |
