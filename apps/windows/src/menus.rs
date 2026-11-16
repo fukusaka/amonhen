@@ -3,8 +3,8 @@
 
 use amonhen_commands::{Command, Menu};
 use windows_reactor::{
-    Callback, GridChildExt, MenuBar, MenuBarItem, MenuBarSlot, MenuExt, MenuItem, SlotsControl,
-    View,
+    Callback, GridChildExt, MenuBar, MenuBarItem, MenuBarSlot, MenuExt, MenuItem, MenuShortcut,
+    SlotsControl, View,
 };
 
 /// この FE で動く操作。
@@ -51,7 +51,13 @@ pub fn menu_bar(on_click: impl Fn() -> Callback<String>) -> View {
             if !items.is_empty() {
                 items.push(MenuItem::separator(format!("-{i}")));
             }
-            items.extend(shown.into_iter().map(|c| MenuItem::item(c.id, title(c))));
+            items.extend(shown.into_iter().map(|c| {
+                let item = MenuItem::item(c.id, title(c));
+                match c.shortcut.and_then(shortcut) {
+                    Some(s) => item.with_shortcut(s),
+                    None => item,
+                }
+            }));
         }
         if items.is_empty() {
             continue;
@@ -66,4 +72,68 @@ pub fn menu_bar(on_click: impl Fn() -> Callback<String>) -> View {
     MenuBar::new()
         .grid_row(0)
         .collection_slot(MenuBarSlot::Items, bar)
+}
+
+/// 表のショートカット（`Primary+Shift+B` の形）を Windows のキーにする。`Primary` は Ctrl、macOS の ⌃（`Control`）
+/// と ⌥（`Alt`）はどちらも Alt（GTK4 版と同じ読み替え）。知らないキーなら `None`。
+pub fn shortcut(text: &str) -> Option<MenuShortcut> {
+    let mut parts: Vec<&str> = text.split('+').collect();
+    let key = parts.pop()?;
+    let mut out = MenuShortcut {
+        key: virtual_key(key)?,
+        ..MenuShortcut::default()
+    };
+    for m in parts {
+        match m {
+            "Primary" => out.control = true,
+            "Shift" => out.shift = true,
+            "Control" | "Alt" => out.alt = true,
+            _ => return None,
+        }
+    }
+    Some(out)
+}
+
+/// キーの名前の仮想キー（`VK_*`）。
+fn virtual_key(key: &str) -> Option<u16> {
+    let bytes = key.as_bytes();
+    Some(match key {
+        "Return" => 0x0D,
+        "Left" => 0x25,
+        "Up" => 0x26,
+        "Right" => 0x27,
+        "Down" => 0x28,
+        "Comma" => 0xBC,
+        "Semicolon" => 0xBA,
+        _ if bytes.len() == 1 && bytes[0].is_ascii_alphanumeric() => {
+            u16::from(bytes[0].to_ascii_uppercase())
+        }
+        _ if key.starts_with('F') => {
+            let n: u16 = key[1..].parse().ok()?;
+            if !(1..=24).contains(&n) {
+                return None;
+            }
+            0x70 + n - 1
+        }
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_table_shortcuts() {
+        let s = shortcut("Primary+Shift+H").unwrap();
+        assert_eq!(
+            (s.key, s.control, s.shift, s.alt),
+            (0x48, true, true, false)
+        );
+        let s = shortcut("Primary+Alt+Down").unwrap();
+        assert_eq!((s.key, s.control, s.alt), (0x28, true, true));
+        assert_eq!(shortcut("Primary+2").unwrap().key, 0x32);
+        assert_eq!(shortcut("F9").unwrap().key, 0x78);
+        assert!(shortcut("Primary+Tab").is_none());
+    }
 }
