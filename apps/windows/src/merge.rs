@@ -50,6 +50,18 @@ impl State {
                 self.saved = self.result.clone();
                 self.sides = Some(Ok((text("current"), text("incoming"))));
                 self.selected = 0;
+                // 開いたときに、間違えようのないコンフリクトを解く（設定。GTK4 版と同じく、保存はしない）。
+                if crate::prefs::bool(crate::prefs::AUTO_MAGIC_MERGE) {
+                    let (merged, solved) =
+                        conflict::magic(self.result.as_bytes(), MagicRules::Safe, None);
+                    if solved > 0 {
+                        self.result = String::from_utf8_lossy(&merged).into_owned();
+                        self.note = tr!(
+                            "Resolved {count} when opened (Ctrl+Z to undo).",
+                            count = solved
+                        );
+                    }
+                }
             }
             Err(e) => self.sides = Some(Err(e)),
         }

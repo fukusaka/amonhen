@@ -110,6 +110,9 @@ struct Root {
     /// Blame の画面（パス、コミット、読んだ行）。閉じたら前の画面（File History なら File History）に戻る。
     blame: Option<crate::blame::State>,
     blame_from: Page,
+    /// Settings の画面と、閉じたら戻る画面。
+    settings: Option<crate::settingsview::State>,
+    settings_from: Page,
     /// マージエディタ（閉じたら Working Copy に戻る）。
     merge: Option<crate::merge::State>,
     /// 途中の操作（`sequence` の答えの info）。なければ None。
@@ -127,6 +130,7 @@ enum Page {
     FileHistory,
     Blame,
     Merge,
+    Settings,
 }
 
 /// 窓に重ねるダイアログ（macOS 版のシート、GTK4 版の `sheets`）。
@@ -294,6 +298,12 @@ enum Message {
     MergeLoaded(String, Result<Value, String>),
     MergeButton(&'static str),
     MergeResult(String),
+    /// Settings: git の名前とメールを読んだ・欄を書き換えた・保存・チェックを替えた・閉じる。
+    SettingsGit(String, String),
+    SettingsField(usize, String),
+    SettingsSaveGit,
+    SettingsToggle(&'static str, bool),
+    CloseSettings,
     /// 解決済みにする前に、残っているコンフリクトを数えた（パス、数）。
     ConflictCounted(String, u64),
     /// Pull の取り込み元・Publish の送り先のリモートを選んだ。
@@ -378,6 +388,8 @@ impl Component for Root {
             blame_from: Page::History,
             sequence: None,
             merge: None,
+            settings: None,
+            settings_from: Page::History,
             sidebar_request: 0,
             page: Page::History,
             repo: None,
@@ -598,6 +610,43 @@ impl Component for Root {
                 };
                 self.busy = Some(format!("{title}…"));
                 perform(context, repo, json!({ "op": id }), title.to_owned());
+            }
+            Message::Command(id) if id == "settings" => {
+                let Some(repo) = self.repo.clone() else {
+                    return beep();
+                };
+                if self.page != Page::Settings {
+                    self.settings_from = self.page;
+                }
+                self.settings = Some(crate::settingsview::State {
+                    git: None,
+                    auto_magic_merge: crate::prefs::bool(crate::prefs::AUTO_MAGIC_MERGE),
+                    file_history_merges: crate::prefs::bool(crate::prefs::FILE_HISTORY_MERGES),
+                });
+                self.page = Page::Settings;
+                // `--global` の段の値（いくつもあれば最後のもの。git と同じ）。
+                context.spawn_background(move |_| {
+                    let reply: Value =
+                        serde_json::from_str(&repo.run_json(r#"{"op":"configList"}"#))
+                            .unwrap_or_default();
+                    let value = |key: &str| {
+                        reply["info"]["entries"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .rev()
+                            .find(|e| {
+                                e["scope"].as_str() == Some("global")
+                                    && e["key"]
+                                        .as_str()
+                                        .is_some_and(|k| k.eq_ignore_ascii_case(key))
+                            })
+                            .and_then(|e| e["value"].as_str())
+                            .unwrap_or_default()
+                            .to_owned()
+                    };
+                    Message::SettingsGit(value("user.name"), value("user.email"))
+                });
             }
             Message::Command(id) => with_history(|h| h.command(&id)),
             Message::UndoPeek(repo, peek) => match peek {
@@ -1239,6 +1288,62 @@ impl Component for Root {
                 }
             }
             Message::MergeButton(key) => self.merge_button(key, context),
+            Message::SettingsGit(name, email) => {
+                if let Some(state) = self.settings.as_mut() {
+                    state.git = Some([(name.clone(), name), (email.clone(), email)]);
+                }
+            }
+            Message::SettingsField(index, text) => {
+                if let Some(field) = self
+                    .settings
+                    .as_mut()
+                    .and_then(|s| s.git.as_mut())
+                    .and_then(|g| g.get_mut(index))
+                {
+                    field.1 = text;
+                }
+            }
+            Message::SettingsSaveGit => {
+                let (Some(repo), Some(git)) = (
+                    self.repo.clone(),
+                    self.settings.as_mut().and_then(|s| s.git.as_mut()),
+                ) else {
+                    return;
+                };
+                // 変えた項目だけを書く（空にしたら消す）。
+                let commands: Vec<Value> = ["user.name", "user.email"]
+                    .iter()
+                    .zip(git.iter_mut())
+                    .filter(|(_, (read, now))| read != now)
+                    .map(|(key, (read, now))| {
+                        let value = now.trim().to_owned();
+                        *read = now.clone();
+                        json!({
+                            "op": "configSet", "key": key, "scope": "global",
+                            "value": (!value.is_empty()).then_some(value),
+                        })
+                    })
+                    .collect();
+                perform_all(context, repo, commands, tr!("Save"));
+            }
+            Message::SettingsToggle(key, value) => {
+                if let Err(e) = crate::prefs::set_bool(key, value) {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("Save"),
+                        message: e,
+                    });
+                }
+                if let Some(state) = self.settings.as_mut() {
+                    match key {
+                        crate::prefs::AUTO_MAGIC_MERGE => state.auto_magic_merge = value,
+                        _ => state.file_history_merges = value,
+                    }
+                }
+            }
+            Message::CloseSettings => {
+                self.settings = None;
+                self.page = self.settings_from;
+            }
             Message::ConflictCounted(path, count) => {
                 if count == 0 {
                     self.update(Message::Stage(path, true), context);
@@ -1290,8 +1395,9 @@ impl Component for Root {
                     selected: None,
                 });
                 self.show_page(Page::FileHistory);
+                let merges = crate::prefs::bool(crate::prefs::FILE_HISTORY_MERGES);
                 context.spawn_background(move |_| {
-                    let command = json!({ "op": "fileHistory", "path": &path, "merges": false });
+                    let command = json!({ "op": "fileHistory", "path": &path, "merges": merges });
                     let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
                         .unwrap_or_else(|e| json!({ "error": e.to_string() }));
                     let entries = match reply["error"].as_str() {
@@ -1637,6 +1743,7 @@ impl Component for Root {
                 self.file_history_view(context),
                 self.blame_view(context),
                 self.merge_view(context),
+                self.settings_view(context),
             ));
         // ダイアログの入力の欄: フォーカスを入れ、Enter で既定のボタン（ContentDialog は Enter を既定のボタンに
         // 回さない）。
@@ -2779,6 +2886,26 @@ impl Root {
             }
             _ => {}
         }
+    }
+
+    fn settings_view(&self, context: &ViewContext<Self>) -> View {
+        let (Page::Settings, Some(state)) = (self.page, &self.settings) else {
+            return View::empty();
+        };
+        let view = crate::settingsview::view(
+            state,
+            crate::settingsview::Callbacks {
+                field: Box::new(|i| context.callback(move |t| Message::SettingsField(i, t))),
+                save_git: context.callback(|()| Message::SettingsSaveGit),
+                toggle: Box::new(|key| context.callback(move |v| Message::SettingsToggle(key, v))),
+                close: context.callback(|()| Message::CloseSettings),
+            },
+        );
+        Border::new()
+            .background(Brush::Solid(Color::rgb(0xff, 0xff, 0xff)))
+            .grid_column(1)
+            .grid_column_span(2)
+            .content(view)
     }
 
     fn merge_view(&self, context: &ViewContext<Self>) -> View {
