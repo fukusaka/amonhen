@@ -19,6 +19,8 @@ pub const IMPLEMENTED: &[&str] = &[
     "undo",
     "find-in-history",
     "fetch",
+    "pull",
+    "push",
 ];
 
 /// 項目の名前（GTK4 版の `appmenu::title` と同じ）。

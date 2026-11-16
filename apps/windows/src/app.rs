@@ -117,6 +117,20 @@ enum Dialog {
         remotes: Vec<String>,
         from: usize,
     },
+    /// Pull の確認（上流から取り込む。取り込み方を選ぶ）。
+    Pull {
+        repo: Arc<Repository>,
+        title: String,
+        mode: usize,
+    },
+    /// Push の確認（上流へ送る）。
+    Push {
+        repo: Arc<Repository>,
+        title: String,
+        remote: String,
+        branch: String,
+        remote_branch: String,
+    },
     /// Working Copy のファイルの変更を捨てる（untracked なら消す）確認。
     Discard {
         repo: Arc<Repository>,
@@ -166,6 +180,8 @@ enum Message {
     DiscardFile(String),
     /// Working Copy の一覧で選んだファイル（何番目か）。
     WorkingFile(Option<usize>),
+    /// Pull のダイアログで、取り込み方を選んだ。
+    PullMode(Option<usize>),
     /// Fetch のダイアログに出すリモート（なければ空）。
     Remotes(Arc<Repository>, Vec<String>),
     /// Fetch のダイアログで、取るリモートを選んだ（0 はすべて）。
@@ -232,6 +248,13 @@ impl Component for Root {
             Message::Commit(info, extras) => self.info = Some((info, extras)),
             Message::Failed(e) => self.error = Some(e),
             Message::Command(id) if id == "undo" => self.undo(context),
+            Message::Command(id) if id == "pull" => self.pull(),
+            Message::Command(id) if id == "push" => self.push(),
+            Message::PullMode(index) => {
+                if let (Some(Dialog::Pull { mode, .. }), Some(index)) = (&mut self.dialog, index) {
+                    *mode = index;
+                }
+            }
             Message::Command(id) if id == "fetch" => {
                 let Some(repo) = self.repo.clone() else {
                     return beep();
@@ -295,6 +318,36 @@ impl Component for Root {
             Message::DialogClosed(result) => match (self.dialog.take(), result) {
                 (Some(Dialog::Undo { repo, .. }), ContentDialogResult::Primary) => {
                     perform(context, repo, json!({ "op": "undo" }), tr!("Couldn’t Undo"));
+                }
+                (Some(Dialog::Pull { repo, mode, .. }), ContentDialogResult::Primary) => {
+                    self.busy = Some("Pull…".to_owned());
+                    perform(
+                        context,
+                        repo,
+                        json!({ "op": "pull", "mode": PULL_MODES[mode] }),
+                        "Pull".to_owned(),
+                    );
+                }
+                (
+                    Some(Dialog::Push {
+                        repo,
+                        remote,
+                        branch,
+                        remote_branch,
+                        ..
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    self.busy = Some("Push…".to_owned());
+                    perform(
+                        context,
+                        repo,
+                        json!({
+                            "op": "push", "remote": remote, "branch": branch,
+                            "remoteBranch": remote_branch, "force": false, "setUpstream": false,
+                        }),
+                        "Push".to_owned(),
+                    );
                 }
                 (
                     Some(Dialog::Fetch {
@@ -712,6 +765,29 @@ impl Root {
                         .text(what.clone())
                         .text_wrapping(TextWrapping::Wrap),
                 ),
+            Some(Dialog::Pull { title, mode, .. }) => {
+                let modes: Vec<String> = PULL_MODES.iter().map(|m| pull_mode_title(m)).collect();
+                dialog
+                    .is_open(true)
+                    .title(title.clone())
+                    .primary_button_text("Pull")
+                    .close_button_text(tr!("Cancel"))
+                    .content(
+                        StackPanel::new().spacing(6.0).children((
+                            TextBlock::new().text(tr!("Integrate with:")),
+                            ComboBox::new()
+                                .items_source(modes)
+                                .selected_index(*mode)
+                                .on_selection_changed(context.callback(Message::PullMode)),
+                        )),
+                    )
+            }
+            Some(Dialog::Push { title, .. }) => dialog
+                .is_open(true)
+                .title(title.clone())
+                .primary_button_text("Push")
+                .close_button_text(tr!("Cancel"))
+                .content(TextBlock::new()),
             Some(Dialog::Fetch { remotes, from, .. }) => {
                 // GTK4 版の `sheets::fetch` と同じ: リモートが 1 つならその名前を見出しに、2 つ以上なら選ぶ。
                 let title = match remotes.as_slice() {
@@ -784,6 +860,69 @@ impl Root {
                         .is_text_selection_enabled(true),
                 ),
         }
+    }
+
+    /// 今のブランチの、ref の一覧の行（上流は `detail`、上流との差は `ahead`・`behind`）。
+    fn head_entry(&self) -> Option<&RefEntry> {
+        let refs = &self.refs.as_ref()?.refs;
+        let head = refs.head_branch.as_deref()?;
+        refs.entries
+            .iter()
+            .find(|e| e.kind == amonhen_model::RefKind::Local && e.name == head)
+    }
+
+    /// Repository > Pull…: 上流から取り込む（GTK4 版の `sheets::pull_in` の見出しと取り込み方）。上流のない
+    /// ブランチの取り込み元の選択と、前後の絵はまだない。
+    fn pull(&mut self) {
+        let (Some(repo), Some(entry)) = (self.repo.clone(), self.head_entry()) else {
+            return beep();
+        };
+        let Some(upstream) = entry.detail.clone().filter(|_| !entry.gone) else {
+            return beep();
+        };
+        let title = if entry.behind > 0 {
+            tr!(
+                "Pull {count} commits from {upstream}?",
+                count = entry.behind,
+                upstream = upstream
+            )
+        } else {
+            tr!("Pull from {upstream}?", upstream = upstream)
+        };
+        self.dialog = Some(Dialog::Pull {
+            repo,
+            title,
+            mode: 0,
+        });
+    }
+
+    /// Repository > Push…: 上流へ送る（GTK4 版の `sheets::push`）。送るものがない・上流が先に進んでいるときは音で
+    /// 知らせる（Force Push・Publish はまだない）。
+    fn push(&mut self) {
+        let (Some(repo), Some(entry)) = (self.repo.clone(), self.head_entry()) else {
+            return beep();
+        };
+        let Some(upstream) = entry.detail.clone().filter(|_| !entry.gone) else {
+            return beep();
+        };
+        if entry.ahead == 0 || entry.behind > 0 {
+            return beep();
+        }
+        let (remote, remote_branch) = upstream
+            .split_once('/')
+            .map(|(r, b)| (r.to_owned(), b.to_owned()))
+            .unwrap_or_default();
+        self.dialog = Some(Dialog::Push {
+            repo,
+            title: tr!(
+                "Push {count} commits to {upstream}?",
+                count = entry.ahead,
+                upstream = upstream
+            ),
+            remote,
+            branch: entry.name.clone(),
+            remote_branch,
+        });
     }
 
     /// 窓の下のステータスバー: 走っている操作（なければ今のブランチ）。
@@ -886,6 +1025,18 @@ impl Root {
             .entries
             .iter()
             .find(|e| e.kind as u8 == kind && e.name == name)
+    }
+}
+
+/// Pull の取り込み方（GTK4 版の `PULL_MODES`。Settings の Pull の既定と同じ名前）。
+const PULL_MODES: [&str; 4] = ["git", "merge", "rebase", "fastForwardOnly"];
+
+fn pull_mode_title(mode: &str) -> String {
+    match mode {
+        "git" => tr!("Follow git’s settings"),
+        "rebase" => "Rebase".to_owned(),
+        "fastForwardOnly" => "Fast-Forward Only".to_owned(),
+        _ => "Merge".to_owned(),
     }
 }
 
