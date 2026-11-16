@@ -115,6 +115,8 @@ struct Root {
     worktrees: Vec<WorktreeInfo>,
     /// Working Copy のパスの絞り込み。
     working_filter: String,
+    /// 最近のコミットの（メッセージ, 作者, メール）。最近のメッセージと Co-authored-by の候補。
+    recent_messages: Vec<(String, String, String)>,
     /// Stashes の画面で選んでいる stash の名前。
     stash: Option<String>,
     /// File History の画面（パス、読んだコミット、選んでいる行）。
@@ -393,6 +395,10 @@ enum Message {
     Confirm(Arc<Repository>, String, String, String, Value),
     /// Working Copy のパスの絞り込み。
     WorkingFilter(String),
+    /// 最近のコミットのメッセージを読んだ。
+    RecentMessages(Vec<(String, String, String)>),
+    /// 最近のメッセージ・「+」のメニューの項目。
+    CommitTextMenu(String),
     /// Reflog を読んだ・一覧で選んだ。
     ReflogLoaded(Vec<crate::reflog::Entry>),
     ReflogSelected(Option<usize>),
@@ -536,6 +542,7 @@ impl Component for Root {
             stash: None,
             worktrees: Vec::new(),
             working_filter: String::new(),
+            recent_messages: Vec::new(),
             reflog: None,
             range_diff: None,
             range_request: 0,
@@ -584,6 +591,7 @@ impl Component for Root {
                     let reply = serde_json::from_str(&reply).unwrap_or_default();
                     Message::Groups(BranchGroups::from_reply(&reply))
                 });
+                load_recent_messages(r.clone(), context);
                 load_worktrees(r, context);
                 // Reflog を出していれば読み直す（HEAD が動くと ref も変わる）。
                 if self.page == Page::Reflog {
@@ -2586,6 +2594,8 @@ impl Component for Root {
                 }
             }
             Message::WorkingFilter(text) => self.working_filter = text,
+            Message::RecentMessages(recent) => self.recent_messages = recent,
+            Message::CommitTextMenu(key) => self.message_menu(&key, context),
             Message::WorkingFileMenu(path, key) => match key.as_str() {
                 "history" => self.update(Message::OpenFileHistory(path), context),
                 "blame" => self.update(Message::OpenBlame(path, None), context),
@@ -4923,6 +4933,61 @@ impl Root {
         with_history(|h| h.session.data.want_working(entry));
     }
 
+    /// 最近のメッセージ・「+」のメニューの項目を選んだ（GTK4 版の `MessageAids`）。
+    fn message_menu(&mut self, key: &str, context: &ComponentContext<Root>) {
+        if let Some(t) = key.strip_prefix("type:") {
+            // 件名の先頭を `type: ` にする（もう型があれば置き換える）。
+            self.summary = format!(
+                "{t}: {}",
+                crate::workcopy::without_commit_type(&self.summary)
+            );
+        } else if let Some(line) = key.strip_prefix("trailer:") {
+            if let Some(body) = crate::workcopy::with_trailer(&self.description, line) {
+                self.description = body;
+            }
+        } else if key == "signoff" {
+            let Some(repo) = self.repo.clone() else {
+                return beep();
+            };
+            context.spawn_background(move |_| {
+                let config: Value = serde_json::from_str(&repo.run_json(r#"{"op":"configList"}"#))
+                    .unwrap_or_default();
+                let value = |key: &str| {
+                    config["info"]["entries"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .rev()
+                        .find(|e| {
+                            e["key"]
+                                .as_str()
+                                .is_some_and(|k| k.eq_ignore_ascii_case(key))
+                        })
+                        .and_then(|e| e["value"].as_str().map(str::to_owned))
+                };
+                match (value("user.name"), value("user.email")) {
+                    (Some(name), Some(email)) => {
+                        Message::CommitTextMenu(format!("trailer:Signed-off-by: {name} <{email}>"))
+                    }
+                    // user.name か user.email がなければ、音で知らせる（GTK4 版・macOS 版と同じ）。
+                    _ => Message::CommitTextMenu("beep".to_owned()),
+                }
+            });
+        } else if let Some(index) = key.strip_prefix("recent:") {
+            if let Some((message, _, _)) = index
+                .parse::<usize>()
+                .ok()
+                .and_then(|i| self.recent_messages.get(i))
+            {
+                let (s, b) = message.split_once('\n').unwrap_or((message, ""));
+                self.summary = s.to_owned();
+                self.description = b.trim().to_owned();
+            }
+        } else if key == "beep" {
+            beep();
+        }
+    }
+
     fn working_copy_view(&self, context: &ViewContext<Self>) -> View {
         if self.page != Page::WorkingCopy {
             return View::empty();
@@ -4936,6 +5001,7 @@ impl Root {
             }),
             selected: context.callback(Message::WorkingFile),
             filter: context.callback(Message::WorkingFilter),
+            message_menu: context.callback(Message::CommitTextMenu),
             amend: context.callback(Message::Amend),
             file_menu: Box::new(|path: String| {
                 context.callback(move |key| Message::WorkingFileMenu(path.clone(), key))
@@ -4963,6 +5029,7 @@ impl Root {
             crate::workcopy::Input {
                 status: self.status.as_deref(),
                 filter: &self.working_filter,
+                recent: &self.recent_messages,
                 summary: &self.summary,
                 description: &self.description,
                 committing: self.committing,
@@ -5241,6 +5308,29 @@ impl WorktreeInfo {
         }
         text
     }
+}
+
+/// 最近のコミット 30 個のメッセージと作者を裏で読む（最近のメッセージと Co-authored-by の候補。GTK4 版と同じ）。
+fn load_recent_messages(repo: Arc<Repository>, context: &ComponentContext<Root>) {
+    context.spawn_background(move |_| {
+        let recent = repo.history().map_or_else(Vec::new, |history| {
+            history
+                .graph
+                .ids()
+                .iter()
+                .take(30)
+                .filter_map(|id| {
+                    let info = repo.commit_info(id).ok()?;
+                    Some((
+                        info["message"].as_str()?.trim().to_owned(),
+                        info["author"].as_str().unwrap_or_default().to_owned(),
+                        info["authorEmail"].as_str().unwrap_or_default().to_owned(),
+                    ))
+                })
+                .collect()
+        });
+        Message::RecentMessages(recent)
+    });
 }
 
 /// worktree の一覧を裏で読む。

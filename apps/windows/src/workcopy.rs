@@ -67,10 +67,109 @@ fn ignore_patterns(path: &str) -> Vec<String> {
     patterns
 }
 
+/// Conventional Commits の型（GTK4 版・macOS 版と同じ並び）。
+const TYPES: [&str; 11] = [
+    "feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "ci", "chore", "revert",
+];
+
+/// 件名の先頭の `type(scope)!: ` を外したもの（`^[a-z]+(\([^)]*\))?!?:\s*`。GTK4 版・macOS 版と同じ）。
+pub fn without_commit_type(subject: &str) -> &str {
+    let rest = subject.trim_start_matches(|c: char| c.is_ascii_lowercase());
+    if rest.len() == subject.len() {
+        return subject;
+    }
+    let rest = match rest.strip_prefix('(') {
+        Some(scope) => match scope.split_once(')') {
+            Some((_, after)) => after,
+            None => return subject,
+        },
+        None => rest,
+    };
+    let rest = rest.strip_prefix('!').unwrap_or(rest);
+    rest.strip_prefix(':')
+        .map_or(subject, |after| after.trim_start())
+}
+
+/// 本文の末尾にトレーラーを足したもの（もうあれば None。前の行がトレーラーでなければ空行で分ける）。
+pub fn with_trailer(body: &str, line: &str) -> Option<String> {
+    if body.contains(line) {
+        return None;
+    }
+    let body = body.trim();
+    let last = body.lines().last().unwrap_or_default();
+    let last_is_trailer = last.split_once(": ").is_some_and(|(k, _)| {
+        !k.is_empty() && k.chars().all(|c| c.is_ascii_alphabetic() || c == '-')
+    });
+    Some(if body.is_empty() {
+        line.to_owned()
+    } else if last_is_trailer {
+        format!("{body}\n{line}")
+    } else {
+        format!("{body}\n\n{line}")
+    })
+}
+
+/// 最近のメッセージ（`recent:<番号>`。同じメッセージは 1 つに）。
+fn recent_menu(recent: &[(String, String, String)]) -> Vec<MenuItem> {
+    let mut seen: Vec<&str> = Vec::new();
+    let mut items = Vec::new();
+    for (i, (message, _, _)) in recent.iter().enumerate() {
+        if seen.contains(&message.as_str()) {
+            continue;
+        }
+        seen.push(message);
+        let subject: String = message
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .chars()
+            .take(80)
+            .collect();
+        items.push(MenuItem::item(format!("recent:{i}"), subject));
+    }
+    if items.is_empty() {
+        items.push(MenuItem::disabled("recent-none", tr!("Not loaded yet")));
+    }
+    items
+}
+
+/// 「+」のメニュー（GTK4 版の `insert_menu`）: Conventional Commits の型と Co-authored-by は下のメニュー、
+/// Signed-off-by はそのまま。
+fn insert_menu(recent: &[(String, String, String)]) -> Vec<MenuItem> {
+    let types = TYPES
+        .iter()
+        .map(|t| MenuItem::item(format!("type:{t}"), format!("{t}:")));
+    let mut authors = Vec::new();
+    let mut seen: Vec<String> = Vec::new();
+    for (_, author, email) in recent {
+        if email.is_empty() || seen.contains(&email.to_lowercase()) {
+            continue;
+        }
+        seen.push(email.to_lowercase());
+        authors.push(MenuItem::item(
+            format!("trailer:Co-authored-by: {author} <{email}>"),
+            format!("{author} <{email}>"),
+        ));
+    }
+    if authors.is_empty() {
+        authors.push(MenuItem::disabled(
+            "authors-none",
+            tr!("Recent authors aren’t loaded yet"),
+        ));
+    }
+    vec![
+        MenuItem::submenu("types", tr!("Conventional Commits Type"), types),
+        MenuItem::submenu("authors", "Co-authored-by", authors),
+        MenuItem::item("signoff", tr!("Signed-off-by (Me)")),
+    ]
+}
+
 pub struct Input<'a> {
     pub status: Option<&'a StatusSnapshot>,
     /// パスの絞り込み。
     pub filter: &'a str,
+    /// 最近のコミットの（メッセージ, 作者, メール）。新しい順。
+    pub recent: &'a [(String, String, String)],
     /// 件名と本文。
     pub summary: &'a str,
     pub description: &'a str,
@@ -91,6 +190,8 @@ pub struct Callbacks<'a> {
     pub stage: Box<dyn Fn(String) -> Callback<bool> + 'a>,
     pub selected: Callback<Option<usize>>,
     pub filter: Callback<String>,
+    /// 最近のメッセージ・「+」のメニューで選んだ項目のキー。
+    pub message_menu: Callback<String>,
     pub amend: Callback<bool>,
     /// パスのファイルの右クリックのメニュー（File History・Discard File。押した項目のキー）。
     pub file_menu: Box<dyn Fn(String) -> Callback<String> + 'a>,
@@ -125,11 +226,38 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
     let staged = all.iter().filter(|e| e.is_staged()).count();
     let entries = visible(all, input.filter);
     // 件名と本文（macOS 版と同じく、件名は 1 行、本文は空なら薄く「Description (optional)」）。
+    // ボタンに付けたメニューは、押すと開く（Button.Flyout）。
+    let menu_button = |title: &str, tip: String, items: Vec<MenuItem>, column: i32| -> View {
+        Button::new()
+            .margin(Thickness::new(4.0, 0.0, 0.0, 0.0))
+            .grid_column(column)
+            .content(TextBlock::new().text(title))
+            .tooltip(tip)
+            .menu(Menu::new(items, callbacks.message_menu.clone()))
+    };
+    let summary = Grid::new()
+        .columns([GridLength::Star(1.0), GridLength::Auto, GridLength::Auto])
+        .children((
+            TextBox::new()
+                .text(input.summary)
+                .placeholder_text("Summary")
+                .grid_column(0)
+                .on_text_changed(callbacks.summary),
+            menu_button(
+                "🕘",
+                tr!("Recent commit messages"),
+                recent_menu(input.recent),
+                1,
+            ),
+            menu_button(
+                "+",
+                tr!("Insert a Conventional Commits type, Co-authored-by or Signed-off-by"),
+                insert_menu(input.recent),
+                2,
+            ),
+        ));
     let message = StackPanel::new().spacing(6.0).grid_row(1).children((
-        TextBox::new()
-            .text(input.summary)
-            .placeholder_text("Summary")
-            .on_text_changed(callbacks.summary),
+        summary,
         TextBox::new()
             .text(input.description)
             .placeholder_text(tr!("Description (optional)"))
@@ -344,6 +472,22 @@ mod tests {
         );
         assert_eq!(with_ignore_pattern("", "x").as_deref(), Some("x\n"));
         assert_eq!(with_ignore_pattern("*.log\r\n", "*.log"), None);
+    }
+
+    #[test]
+    fn commit_types_and_trailers() {
+        assert_eq!(without_commit_type("feat(ui)!: add"), "add");
+        assert_eq!(without_commit_type("Add: x"), "Add: x");
+        assert_eq!(with_trailer("", "A: b").as_deref(), Some("A: b"));
+        assert_eq!(
+            with_trailer("Body", "A: b").as_deref(),
+            Some("Body\n\nA: b")
+        );
+        assert_eq!(
+            with_trailer("x\n\nA: b", "C: d").as_deref(),
+            Some("x\n\nA: b\nC: d")
+        );
+        assert_eq!(with_trailer("A: b", "A: b"), None);
     }
 
     #[test]
