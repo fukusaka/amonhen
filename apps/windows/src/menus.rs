@@ -30,6 +30,7 @@ pub const IMPLEMENTED: &[&str] = &[
     "abort",
     "settings",
     "activity",
+    "repositories",
     "repository-settings",
     "stash",
     "pop-stash",

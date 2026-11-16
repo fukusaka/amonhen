@@ -54,6 +54,12 @@ thread_local! {
 const WHEEL_ROWS: f32 = 3.0;
 
 pub fn run(args: Args, started: Instant) -> Result<(), String> {
+    // Repositories の「開いた日時」・すべての一覧に出す（まだどこにもなければブックマークにも入れる）。
+    if let Ok(path) = std::path::absolute(&args.repo)
+        && path.join(".git").exists()
+    {
+        crate::repositories::record_opened(&path);
+    }
     ARGS.with(|a| *a.borrow_mut() = Some((args, started)));
     App::run_component::<Root>(()).map_err(|e| format!("WinUI を始められない: {e}"))
 }
@@ -147,6 +153,10 @@ struct Root {
     /// Repository Settings の画面と、閉じたら戻る画面。
     repo_settings: Option<crate::reposettings::State>,
     repo_settings_from: Page,
+    /// Repositories の画面と、閉じたら戻る画面・リポジトリの一覧を包む Grid（ダブルクリック・Enter を付ける）。
+    repositories: Option<crate::repositories::State>,
+    repositories_from: Page,
+    repositories_list: ElementRef<Grid>,
     /// Activity の画面と、閉じたら戻る画面。
     activity: Option<crate::activity::State>,
     activity_from: Page,
@@ -175,6 +185,7 @@ enum Page {
     Settings,
     Activity,
     RepoSettings,
+    Repositories,
     Reflog,
     RangeDiff,
 }
@@ -377,6 +388,11 @@ enum Dialog {
     CloseMerge,
     /// コンフリクトが残っているファイルを解決済みにしてよいか。
     MarkResolved { path: String, count: u64 },
+    /// Repositories のグループを作る（リポジトリがあればそこに移す）。
+    NewGroup {
+        location: Option<String>,
+        name: String,
+    },
     /// ブランチの名前を変える（GTK4 版の `refops::ask_rename_branch`）。
     Rename {
         repo: Arc<Repository>,
@@ -544,6 +560,8 @@ enum Message {
     /// Activity の History のキャッシュを読んだ（リポジトリの名前と `historyCache` の info）。
     ActivityCache(String, Value),
     CloseActivity,
+    /// Repositories の操作。
+    Repos(crate::repositories::Event),
     /// まとめるときのメッセージの初期値を読んだ（コミット、メッセージ）。
     SquashText(String, Result<String, String>),
     /// bundle に入るコミットを数えた（`bundlePreview` の答えと、書く命令）。
@@ -689,6 +707,9 @@ impl Component for Root {
             repo_settings: None,
             repo_settings_from: Page::History,
             activity_from: Page::History,
+            repositories: None,
+            repositories_from: Page::History,
+            repositories_list: ElementRef::new(),
             settings_from: Page::History,
             sidebar_request: 0,
             page: Page::History,
@@ -771,6 +792,7 @@ impl Component for Root {
                 | Some(Dialog::NewOrphan { name: current, .. })
                 | Some(Dialog::Switcher { query: current, .. })
                 | Some(Dialog::Rename { name: current, .. })
+                | Some(Dialog::NewGroup { name: current, .. })
                 | Some(Dialog::StashBranch { name: current, .. })
                 | Some(Dialog::Publish { name: current, .. })
                 | Some(Dialog::Stash {
@@ -1134,6 +1156,19 @@ impl Component for Root {
                     let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
                         .unwrap_or_else(|e| json!({ "error": e.to_string() }));
                     Message::PatchRead(repo, paths, reply)
+                });
+            }
+            Message::Command(id) if id == "repositories" => {
+                if self.page != Page::Repositories {
+                    self.repositories_from = self.page;
+                }
+                let (state, roots) = crate::repositories::State::new();
+                self.repositories = Some(state);
+                self.page = Page::Repositories;
+                context.spawn_background(move |_| {
+                    Message::Repos(crate::repositories::Event::Scanned(
+                        crate::repositories::scan(roots),
+                    ))
                 });
             }
             Message::Command(id) if id == "activity" => {
@@ -1731,6 +1766,11 @@ impl Component for Root {
                 }
                 (Some(Dialog::MarkResolved { path, .. }), ContentDialogResult::Primary) => {
                     self.update(Message::Stage(path, true), context);
+                }
+                (Some(Dialog::NewGroup { location, name }), ContentDialogResult::Primary) => {
+                    if let Some(state) = self.repositories.as_mut() {
+                        state.add_group(&name, location.as_deref());
+                    }
                 }
                 (Some(Dialog::Rename { repo, from, name }), ContentDialogResult::Primary) => {
                     let to = name.trim().to_owned();
@@ -3262,6 +3302,41 @@ impl Component for Root {
                     command: Value::Array(vec![json!({ "op": "undo" }); count]),
                 });
             }
+            Message::Repos(event) => {
+                use crate::repositories::Action;
+                let Some(state) = self.repositories.as_mut() else {
+                    return;
+                };
+                match state.handle(event) {
+                    Action::None => {}
+                    Action::Close => {
+                        self.repositories = None;
+                        self.page = self.repositories_from;
+                    }
+                    Action::Scan(roots) => {
+                        context.spawn_background(move |_| {
+                            Message::Repos(crate::repositories::Event::Scanned(
+                                crate::repositories::scan(roots),
+                            ))
+                        });
+                    }
+                    Action::Peek(locations) if locations.is_empty() => {}
+                    Action::Peek(locations) => {
+                        context.spawn_background(move |_| {
+                            Message::Repos(crate::repositories::Event::Peeked(
+                                crate::repositories::peek(locations),
+                            ))
+                        });
+                    }
+                    Action::NewGroup(location) => {
+                        self.dialog = Some(Dialog::NewGroup {
+                            location,
+                            name: String::new(),
+                        });
+                        self.dialog_inputs += 1;
+                    }
+                }
+            }
             Message::CloseActivity => {
                 self.activity = None;
                 ACTIVITY_TICK.with(|t| t.set(None));
@@ -4124,6 +4199,7 @@ impl Component for Root {
                 self.merge_view(context),
                 self.settings_view(context),
                 self.activity_view(context),
+                self.repositories_view(context),
                 self.repo_settings_view(context),
             ));
         // Working Copy の一覧のキー: 画面を出すたびに Grid が作り直されるので、そのたびに付ける。
@@ -4138,6 +4214,22 @@ impl Component for Root {
             });
             None
         });
+        // Repositories の一覧のダブルクリック・Enter で開く（画面を出すたびに Grid が作り直される）。
+        let host = self.repositories_list.clone();
+        context.use_effect(
+            "repositories-open",
+            self.page == Page::Repositories,
+            move || {
+                let _ = host.request_native_element(|result| {
+                    if let Ok(element) = result
+                        && let Err(e) = attach_repositories_open(&element)
+                    {
+                        eprintln!("Repositories の一覧に開く操作を付けられない: {e}");
+                    }
+                });
+                None
+            },
+        );
         // ダイアログの入力の欄: フォーカスを入れ、Enter で既定のボタン（ContentDialog は Enter を既定のボタンに
         // 回さない）。
         if self.dialog_inputs > 0 {
@@ -4698,6 +4790,21 @@ impl Root {
                     TextBlock::new()
                         .text(tr!("The conflict markers stay in the file."))
                         .text_wrapping(TextWrapping::Wrap),
+                ),
+            Some(Dialog::NewGroup { name, .. }) => dialog
+                .is_open(true)
+                .title(tr!("New Group"))
+                .primary_button_text(tr!("Add"))
+                .close_button_text(tr!("Cancel"))
+                .is_primary_button_enabled(!name.trim().is_empty())
+                .content(
+                    StackPanel::new().spacing(6.0).children((
+                        TextBlock::new().text(tr!("Group name")),
+                        TextBox::new()
+                            .element_ref(&self.dialog_input)
+                            .text(name.clone())
+                            .on_text_changed(context.callback(Message::BranchName)),
+                    )),
                 ),
             Some(Dialog::Rename { from, name, .. }) => dialog
                 .is_open(true)
@@ -6185,6 +6292,37 @@ impl Root {
         });
     }
 
+    fn repositories_view(&self, context: &ViewContext<Self>) -> View {
+        use crate::repositories::Event;
+        let (Page::Repositories, Some(state)) = (self.page, &self.repositories) else {
+            return View::empty();
+        };
+        let view = crate::repositories::view(
+            state,
+            crate::repositories::Callbacks {
+                category: context.callback(|i| Message::Repos(Event::Category(i))),
+                selected: context.callback(|i| Message::Repos(Event::Selected(i))),
+                filter: context.callback(|t| Message::Repos(Event::Filter(t))),
+                menu: Box::new(|| context.callback(|id| Message::Repos(Event::Menu(id)))),
+                button: Box::new(|key| {
+                    context.callback(move |()| {
+                        Message::Repos(match key {
+                            "add-repository" => Event::AddRepository,
+                            "add-scan-folder" => Event::AddScanFolder,
+                            _ => Event::Close,
+                        })
+                    })
+                }),
+                list_host: &self.repositories_list,
+            },
+        );
+        Border::new()
+            .background(Brush::Solid(Color::rgb(0xff, 0xff, 0xff)))
+            .grid_column(1)
+            .grid_column_span(2)
+            .content(view)
+    }
+
     fn activity_view(&self, context: &ViewContext<Self>) -> View {
         let (Page::Activity, Some(state)) = (self.page, &self.activity) else {
             return View::empty();
@@ -7307,7 +7445,7 @@ fn remote_changes(
 }
 
 /// 文字をクリップボードに入れる。
-fn copy_text(text: &str) {
+pub(crate) fn copy_text(text: &str) {
     use windows::Win32::Foundation::{HANDLE, HGLOBAL};
     use windows::Win32::System::DataExchange::{
         CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
@@ -8178,6 +8316,28 @@ fn attach_working_keys(element: &IInspectable) -> windows_core_reactor::Result<(
         });
     })?;
     REVOKERS.with(|r| r.borrow_mut().push(revoker));
+    Ok(())
+}
+
+/// Repositories の一覧: ダブルクリックと Enter で、選んでいるリポジトリを開く（GTK4 版と同じ）。
+fn attach_repositories_open(element: &IInspectable) -> windows_core_reactor::Result<()> {
+    let ui: xaml::UIElement = element.cast()?;
+    let open = || {
+        with_history(|h| {
+            h.sender
+                .send(Message::Repos(crate::repositories::Event::Open));
+        });
+    };
+    let keys = ui.PreviewKeyDown(move |_, args: Ref<xaml::KeyRoutedEventArgs>| {
+        let Some(args) = args.as_ref() else { return };
+        if args.Key().ok() != Some(xaml::VirtualKey::Enter) {
+            return;
+        }
+        let _ = args.SetHandled(true);
+        open();
+    })?;
+    let taps = ui.DoubleTapped(move |_, _| open())?;
+    REVOKERS.with(|r| r.borrow_mut().extend([keys, taps]));
     Ok(())
 }
 

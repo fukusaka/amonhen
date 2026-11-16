@@ -22,6 +22,7 @@ mod rangediff;
 mod reflog;
 mod render;
 mod reposettings;
+mod repositories;
 mod sequence;
 mod settingsview;
 mod sidebar;
