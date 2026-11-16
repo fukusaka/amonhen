@@ -9,6 +9,7 @@
 mod activity;
 mod app;
 mod blame;
+mod branchswitcher;
 mod data;
 mod filehistory;
 mod files;

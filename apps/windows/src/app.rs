@@ -183,6 +183,13 @@ enum Dialog {
     },
     /// 操作の失敗。
     Failed { title: String, message: String },
+    /// ブランチの切り替え（GTK4 版の `branchswitcher`）: 打った問い合わせと、選んでいる候補。
+    Switcher {
+        repo: Arc<Repository>,
+        query: String,
+        selected: usize,
+        recent: Vec<String>,
+    },
     /// 履歴のない新しいブランチ（GTK4 版の `new_orphan_branch`）。`keep` は今のファイルを残すか。
     NewOrphan {
         repo: Arc<Repository>,
@@ -429,6 +436,8 @@ enum Message {
     WorkingFilter(String),
     /// リポジトリの形を読んだ。
     Form(sidebar::RepositoryForm),
+    /// ブランチの切り替えで候補を選んだ。
+    SwitcherSelect(Option<usize>),
     /// New Orphan Branch の「今のファイルを残す」。
     OrphanKeep(bool),
     /// ignore されたファイルを読んだ（`ignoredFiles` の答え）。
@@ -649,6 +658,13 @@ impl Component for Root {
                 self.refs = Some(refs);
                 self.repo = Some(repo.clone());
                 self.switch_draft(&repo, context);
+                // 最近切り替えたブランチを覚える（ブランチの切り替えの並び）。
+                if let (Some(workdir), Some(head)) = (
+                    repo.paths().workdir,
+                    self.refs.as_ref().and_then(|r| r.refs.head_branch.clone()),
+                ) {
+                    crate::branchswitcher::remember(&workdir.display().to_string(), &head);
+                }
                 // Commit and Push: コミットした後の ref で push する。
                 if std::mem::take(&mut self.push_after_commit) {
                     self.push_committed(context);
@@ -694,6 +710,7 @@ impl Component for Root {
             Message::BranchName(name) => match &mut self.dialog {
                 Some(Dialog::NewBranch { name: current, .. })
                 | Some(Dialog::NewOrphan { name: current, .. })
+                | Some(Dialog::Switcher { query: current, .. })
                 | Some(Dialog::Rename { name: current, .. })
                 | Some(Dialog::StashBranch { name: current, .. })
                 | Some(Dialog::Publish { name: current, .. })
@@ -921,6 +938,30 @@ impl Component for Root {
                     folder: String::new(),
                 });
                 self.dialog_inputs += 1;
+            }
+            Message::Command(id) if id == "switch-branch" => {
+                let Some(repo) = self.repo.clone() else {
+                    return beep();
+                };
+                let recent = repo
+                    .paths()
+                    .workdir
+                    .map(|w| crate::branchswitcher::recent(&w.display().to_string()))
+                    .unwrap_or_default();
+                self.dialog = Some(Dialog::Switcher {
+                    repo,
+                    query: String::new(),
+                    selected: 0,
+                    recent,
+                });
+                self.dialog_inputs += 1;
+            }
+            Message::SwitcherSelect(index) => {
+                if let (Some(Dialog::Switcher { selected, .. }), Some(index)) =
+                    (&mut self.dialog, index)
+                {
+                    *selected = index;
+                }
             }
             Message::Command(id) if id == "new-orphan-branch" => {
                 let Some(repo) = self.repo.clone() else {
@@ -1183,6 +1224,27 @@ impl Component for Root {
                     let commands =
                         remote_changes(original.as_ref(), name.trim(), fetch.trim(), push.trim());
                     perform_all(context, repo, commands, title);
+                }
+                (
+                    Some(Dialog::Switcher {
+                        repo,
+                        query,
+                        selected,
+                        recent,
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    let Some(refs) = self.refs.as_ref() else {
+                        return beep();
+                    };
+                    let shown = crate::branchswitcher::candidates(&refs.refs, &recent, &query);
+                    // 打ち替えて候補が減っていれば、先頭。
+                    match shown.get(selected).or(shown.first()) {
+                        Some(choice) => {
+                            perform(context, repo, choice.command(), tr!("Switch Branch"))
+                        }
+                        None => beep(),
+                    }
                 }
                 (Some(Dialog::NewOrphan { repo, name, keep }), ContentDialogResult::Primary) => {
                     let name = name.trim().to_owned();
@@ -4203,6 +4265,52 @@ impl Root {
                         StackPanel::new()
                             .spacing(6.0)
                             .children((head, picker, modes)),
+                    )
+            }
+            Some(Dialog::Switcher {
+                query,
+                selected,
+                recent,
+                ..
+            }) => {
+                let shown = self
+                    .refs
+                    .as_ref()
+                    .map(|r| crate::branchswitcher::candidates(&r.refs, recent, query))
+                    .unwrap_or_default();
+                let selected = (*selected).min(shown.len().saturating_sub(1));
+                let rows = shown.iter().map(|c| {
+                    let key = c.label(&[]);
+                    (
+                        key.clone(),
+                        ListViewItem::new()
+                            .tag(key)
+                            .content(TextBlock::new().text(c.label(recent))),
+                    )
+                });
+                // 打つたびに一覧ごと作り直す（reactor の ListView は消した項目の場所が空いたまま残る）。
+                let list = ListView::new()
+                    .selected_index((!shown.is_empty()).then_some(selected))
+                    .on_selection_changed(context.callback(Message::SwitcherSelect))
+                    .collection_slot(ListViewSlot::Items, rows);
+                dialog
+                    .is_open(true)
+                    .title(tr!("Switch Branch"))
+                    .primary_button_text(tr!("Switch"))
+                    .close_button_text(tr!("Cancel"))
+                    .is_primary_button_enabled(!shown.is_empty())
+                    .content(
+                        StackPanel::new().spacing(6.0).width(420.0).children((
+                            TextBox::new()
+                                .element_ref(&self.dialog_input)
+                                .text(query.clone())
+                                .placeholder_text(tr!("Branch name"))
+                                .on_text_changed(context.callback(Message::BranchName)),
+                            ScrollViewer::new().height(300.0).content(View::keyed_fragment([(
+                                query.clone(),
+                                list,
+                            )])),
+                        )),
                     )
             }
             Some(Dialog::NewOrphan { name, keep, .. }) => dialog
