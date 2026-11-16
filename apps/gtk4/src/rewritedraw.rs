@@ -17,6 +17,166 @@ const LANE: f64 = 14.0;
 /// 列の幅（macOS 版の 330 pt。ふつうの字 13 pt に対する幅なので、字の大きさに合わせて広げる）。
 const COLUMN: f64 = 330.0;
 const TOP: f64 = 22.0;
+/// 札が折り返した段の間隔の最小（macOS 版の間隔。字が大きければ、その高さに合わせて広げる）。
+const LINE_STEP: f64 = 19.0;
+/// 件名に少なくとも残す幅（これより狭ければ件名は次の段へ。macOS 版と同じ）。
+const SUBJECT_MIN: f64 = 120.0;
+/// 札を並べる段の上限（macOS 版と同じ）。入らない札は、最後の段の「+n」の札にまとめる。
+const MAX_LABEL_LINES: usize = 3;
+/// 絵の高さの上限（macOS 版の 360 pt を字の大きさに合わせて広げる）。これより高い絵は、絵の中でスクロールする。
+const MAX_HEIGHT: f64 = 360.0;
+/// 絵の高さとスクロールを覚えておく、絵の部品のデータの名前。
+const FIT: &str = "amonhen-drawing-fit";
+
+/// 絵の高さ（行の分と、札の折り返しで伸びた分）、スクロールした量、「+n」の札のツールチップ（絵の中身の座標）。
+#[derive(Default)]
+struct Fit {
+    rows: f64,
+    extra: f64,
+    offset: f64,
+    tips: Vec<((f64, f64, f64, f64), String)>,
+}
+
+impl Fit {
+    fn full(&self) -> f64 {
+        self.rows + self.extra
+    }
+}
+
+thread_local! {
+    /// 描いている絵の、列ごとの伸びた高さ。
+    static EXTRAS: RefCell<Vec<f64>> = const { RefCell::new(Vec::new()) };
+}
+
+fn fit_of(area: &gtk::DrawingArea) -> Rc<RefCell<Fit>> {
+    // SAFETY: FIT には、この部品が Rc<RefCell<Fit>> だけを置く。
+    unsafe {
+        if let Some(p) = area.data::<Rc<RefCell<Fit>>>(FIT) {
+            return p.as_ref().clone();
+        }
+        let fit: Rc<RefCell<Fit>> = Rc::default();
+        area.set_data(FIT, fit.clone());
+        fit
+    }
+}
+
+/// 見せる高さの上限。
+fn max_height(area: &gtk::DrawingArea) -> f64 {
+    (MAX_HEIGHT * column_width(area) / COLUMN).round()
+}
+
+/// 絵の高さを、上限までにして決める。
+fn apply_height(area: &gtk::DrawingArea) {
+    let full = fit_of(area).borrow().full();
+    let shown = full.min(max_height(area)).round() as i32;
+    if area.content_height() != shown {
+        area.set_content_height(shown);
+    }
+}
+
+/// 絵の行の分の高さを決める（札の折り返しで伸びる分は `fitted` が足す）。
+fn set_height(area: &gtk::DrawingArea, rows_height: f64) {
+    fit_of(area).borrow_mut().rows = rows_height;
+    apply_height(area);
+}
+
+/// 絵を描く手順（同じものを、出す前に測るのにも使う）。
+type Painter = Rc<dyn Fn(&gtk::DrawingArea, &gtk::cairo::Context)>;
+
+fn install(area: &gtk::DrawingArea, painter: &Painter) {
+    let p = painter.clone();
+    area.set_draw_func(move |area, cr, w, h| {
+        let fit = fit_of(area);
+        let overflow = (fit.borrow().full() - f64::from(h)).max(0.0);
+        let offset = fit.borrow().offset.clamp(0.0, overflow);
+        fit.borrow_mut().offset = offset;
+        cr.save().ok();
+        cr.translate(0.0, -offset);
+        fitted(area, || p(area, cr));
+        cr.restore().ok();
+        if overflow > 0.0 {
+            // スクロールできることが分かるよう、右端に細いつまみ（macOS 版と同じ）。
+            let (w, h) = (f64::from(w), f64::from(h));
+            let full = fit.borrow().full();
+            let knob = (h * h / full).max(24.0);
+            let y = (h - knob) * offset / overflow;
+            let c = dimmed(&area.color(), 0.35);
+            cr.set_source_rgba(
+                c.red().into(),
+                c.green().into(),
+                c.blue().into(),
+                c.alpha().into(),
+            );
+            rounded(cr, w - 5.0, y, 4.0, knob, 2.0);
+            let _ = cr.fill();
+        }
+    });
+    // 上限を超えた絵は、ホイールとタッチパッドで絵の中をスクロールする。
+    let scroll = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
+    scroll.connect_scroll(|c, _, dy| {
+        let Some(area) = c.widget().and_downcast::<gtk::DrawingArea>() else {
+            return gtk::glib::Propagation::Proceed;
+        };
+        let fit = fit_of(&area);
+        let overflow = fit.borrow().full() - f64::from(area.content_height());
+        if overflow <= 0.0 {
+            return gtk::glib::Propagation::Proceed;
+        }
+        let step = if c.unit() == gdk::ScrollUnit::Wheel {
+            ROW * 2.0
+        } else {
+            1.0
+        };
+        let offset = (fit.borrow().offset + dy * step).clamp(0.0, overflow);
+        fit.borrow_mut().offset = offset;
+        area.queue_draw();
+        gtk::glib::Propagation::Stop
+    });
+    area.add_controller(scroll);
+    // 「+n」の札に、省いた札の名前を出す。
+    area.set_has_tooltip(true);
+    area.connect_query_tooltip(|area, x, y, _, tooltip| {
+        let fit = fit_of(area);
+        let fit = fit.borrow();
+        let (x, y) = (f64::from(x), f64::from(y) + fit.offset);
+        let tip = fit
+            .tips
+            .iter()
+            .find(|((tx, ty, tw, th), _)| x >= *tx && x <= tx + tw && y >= *ty && y <= ty + th);
+        match tip {
+            Some((_, text)) => {
+                tooltip.set_text(Some(text));
+                true
+            }
+            None => false,
+        }
+    });
+}
+
+/// 出す前に一度描かずに通して、札の折り返しで伸びる高さに合わせておく（シートを出してから伸びると、窓の大きさが
+/// 追いつかないことがある）。
+fn measure(area: &gtk::DrawingArea, painter: &Painter) {
+    let Ok(surface) = gtk::cairo::ImageSurface::create(gtk::cairo::Format::ARgb32, 1, 1) else {
+        return;
+    };
+    let Ok(cr) = gtk::cairo::Context::new(&surface) else {
+        return;
+    };
+    fitted(area, || painter(area, &cr));
+}
+
+/// 描いて、札が折り返して伸びた分（いちばん伸びた列）に高さを合わせる。
+fn fitted(area: &gtk::DrawingArea, draw: impl FnOnce()) {
+    EXTRAS.with(|e| e.borrow_mut().clear());
+    fit_of(area).borrow_mut().tips.clear();
+    draw();
+    let extra = EXTRAS.with(|e| e.borrow().iter().copied().fold(0.0, f64::max));
+    let fit = fit_of(area);
+    if (fit.borrow().extra - extra).abs() > 0.5 {
+        fit.borrow_mut().extra = extra;
+        apply_height(area);
+    }
+}
 
 /// 字の大きさに合わせた列の幅（件名が macOS 版と同じだけ入る）。
 fn column_width(area: &gtk::DrawingArea) -> f64 {
@@ -58,7 +218,8 @@ pub fn new() -> (gtk::DrawingArea, Setter) {
     area.set_visible(false);
     let info: Rc<RefCell<Value>> = Rc::default();
     let i = info.clone();
-    area.set_draw_func(move |area, cr, _, _| draw(area, cr, &i.borrow()));
+    let painter: Painter = Rc::new(move |area, cr| draw(area, cr, &i.borrow()));
+    install(&area, &painter);
     let a = area.downgrade();
     let set: Setter = Rc::new(move |value: &Value| {
         let Some(area) = a.upgrade() else { return };
@@ -72,7 +233,8 @@ pub fn new() -> (gtk::DrawingArea, Setter) {
         let onto = d["onto"].as_array().map_or(0, Vec::len);
         let more = |k: &str| usize::from(d[k].as_u64().unwrap_or(0) > 0);
         let rows = picks + more("picksMore") + onto + more("ontoMore") + 1;
-        area.set_content_height((rows as f64 * ROW + 26.0) as i32);
+        set_height(&area, rows as f64 * ROW + 26.0);
+        measure(&area, &painter);
         area.set_visible(true);
         area.queue_draw();
     });
@@ -290,7 +452,9 @@ fn dimmed(c: &gdk::RGBA, alpha: f32) -> gdk::RGBA {
 }
 
 /// 省いたコミットの行（線、y、数）。そこだけ線を点線にして「ほか n コミット」と書く。
+/// 線が `MORE_BRANCHES` なら、線は引かずに「ほか n 本」と書く（octopus merge）。
 type Gap = (u8, f64, u64);
+const MORE_BRANCHES: u8 = u8::MAX;
 
 /// 1 列を描く。lane 1 から先は右の線（それぞれ、いちばん下で lane 0 へ合流。octopus merge ではいくつも）。
 /// `highlight` は強調する上からの行数。`gaps` は省いたところ、`base_note` は分かれたところに添える文（いつ
@@ -312,6 +476,38 @@ fn column(
     let fg = area.color();
     let lane_x = |lane: u8| x + 10.0 + f64::from(lane) * LANE;
     let center = |y: f64| y + ROW / 2.0;
+    let lanes = rows.iter().map(|r| r.lane).max().unwrap_or(1).max(1);
+    let text_x = lane_x(lanes) + 14.0;
+    // 右端は、スクロールのつまみの分を空ける（macOS 版と同じ）。
+    let right = x + column_width(area) - 8.0;
+    // 先に各行を並べ、札が折り返した段の分だけ、下にあるものを下げる（macOS 版と同じ）。
+    let layouts: Vec<RowLayout> = rows
+        .iter()
+        .enumerate()
+        .map(|(i, r)| {
+            let bold = i < highlight || r.is_new;
+            layout_row(area, text_x, right, labels(&r.oid), &r.subject, bold)
+        })
+        .collect();
+    let base_layout =
+        base.map(|(oid, subject)| layout_row(area, text_x, right, labels(oid), subject, false));
+    let grows: Vec<(f64, f64)> = rows
+        .iter()
+        .zip(&layouts)
+        .map(|(r, l)| (r.y, l.grows()))
+        .filter(|g| g.1 > 0.0)
+        .collect();
+    let shift = |y: f64| y + grows.iter().filter(|g| g.0 < y).map(|g| g.1).sum::<f64>();
+    let base_grows = base_layout.as_ref().map_or(0.0, RowLayout::grows);
+    EXTRAS.with(|e| {
+        e.borrow_mut()
+            .push(grows.iter().map(|g| g.1).sum::<f64>() + base_grows)
+    });
+    let rows: Vec<(&Row, f64)> = rows.iter().map(|r| (r, shift(r.y))).collect();
+    let gaps: Vec<Gap> = gaps.iter().map(|&(l, y, n)| (l, shift(y), n)).collect();
+    let gaps = &gaps[..];
+    let base_y = shift(base_y);
+    let lane1_join = lane1_join.map(shift);
     // 線。
     cr.set_line_width(2.0);
     let line = dimmed(&fg, 0.4);
@@ -346,18 +542,21 @@ fn column(
         let _ = cr.stroke();
     };
     // 右の線（octopus merge ではいくつも）は、それぞれいちばん下で左の線へ合流する。
-    let lanes = rows.iter().map(|r| r.lane).max().unwrap_or(1).max(1);
     for lane in 1..=lanes {
-        let on: Vec<&Row> = rows.iter().filter(|r| r.lane == lane).collect();
-        let (Some(first), Some(last)) = (on.first(), on.last()) else {
+        let on: Vec<f64> = rows
+            .iter()
+            .filter(|r| r.0.lane == lane)
+            .map(|r| r.1)
+            .collect();
+        let (Some(&first), Some(&last)) = (on.first(), on.last()) else {
             continue;
         };
         let last_y = gaps
             .iter()
             .filter(|g| g.0 == lane)
             .map(|g| g.1)
-            .fold(last.y, f64::max);
-        vertical(lane, center(first.y), center(last_y));
+            .fold(last, f64::max);
+        vertical(lane, center(first), center(last_y));
         cr.move_to(lane_x(lane), center(last_y));
         // 制御点は macOS 版と同じ並び。
         cr.curve_to(
@@ -380,61 +579,158 @@ fn column(
                 lane_x(lane),
                 center(join) + ROW * 0.8,
             );
-            cr.line_to(lane_x(lane), center(first.y));
+            cr.line_to(lane_x(lane), center(first));
             let _ = cr.stroke();
         }
     }
-    if let Some(first) = rows.iter().find(|r| r.lane == 0) {
-        vertical(0, center(first.y), center(base_y));
+    if let Some(first) = rows.iter().find(|r| r.0.lane == 0) {
+        vertical(0, center(first.1), center(base_y));
     }
     // 点と件名、札。
-    let text_x = lane_x(lanes) + 14.0;
-    for (i, row) in rows.iter().enumerate() {
+    for (i, ((row, y), layout)) in rows.iter().zip(&layouts).enumerate() {
         row_at(
             area,
             cr,
             lane_x(row.lane),
-            row.y,
-            text_x,
-            x + column_width(area),
+            *y,
+            layout,
+            right,
             &row.subject,
             row.dim,
             i < highlight,
-            &labels(&row.oid),
             row.hollow,
             row.note.as_ref(),
             row.is_new,
         );
     }
-    for &(_, y, count) in gaps {
+    for &(lane, y, count) in gaps {
+        let text = if lane == MORE_BRANCHES {
+            tr!("and {count} more branches", count = count)
+        } else {
+            tr!("and {count} more", count = count)
+        };
         text_at(
             area,
             cr,
-            &tr!("and {count} more", count = count),
+            &text,
             text_x,
             y + 3.0,
             &dimmed(&fg, 0.5),
             false,
-            x + column_width(area) - text_x,
+            right - text_x,
         );
     }
-    if let Some((oid, subject)) = base {
+    if let (Some((_, subject)), Some(layout)) = (base, &base_layout) {
         let note = base_note.map(|n| (n, None));
         row_at(
             area,
             cr,
             lane_x(0),
             base_y,
-            text_x,
-            x + column_width(area),
+            layout,
+            right,
             subject,
             true,
             false,
-            &labels(oid),
             false,
             note.as_ref(),
             false,
         );
+    }
+}
+
+/// 1 行の並べ方。札と件名を文のように左から並べ、入らなければ次の段へ折り返す（札は省かず、1 つの札だけで
+/// 段に入らないときだけ真ん中を省く）。件名も残りが狭ければ次の段へ（macOS 版と同じ）。
+struct RowLayout {
+    /// 札と、その x・段・入る幅。
+    pills: Vec<(Label, f64, usize, f64)>,
+    /// 段に入りきらずに「+n」の札にまとめた札の名前。
+    hidden: Vec<String>,
+    subject_x: f64,
+    subject_line: usize,
+    /// 段の間隔。
+    step: f64,
+}
+
+impl RowLayout {
+    fn lines(&self) -> usize {
+        self.pills
+            .iter()
+            .map(|p| p.2)
+            .chain([self.subject_line])
+            .max()
+            .unwrap_or(0)
+            + 1
+    }
+
+    /// 折り返して伸びる高さ。
+    fn grows(&self) -> f64 {
+        (self.lines() - 1) as f64 * self.step
+    }
+}
+
+fn layout_row(
+    area: &gtk::DrawingArea,
+    text_x: f64,
+    right: f64,
+    labels: Vec<Label>,
+    subject: &str,
+    bold: bool,
+) -> RowLayout {
+    let room = right - text_x;
+    let mut x = text_x;
+    let mut line = 0;
+    let mut pills = Vec::new();
+    for label in labels {
+        let width = pill_width(area, &label.0, label.2).min(room);
+        if x > text_x && x + width > right {
+            line += 1;
+            x = text_x;
+        }
+        pills.push((label, x, line, room));
+        x += width + 4.0;
+    }
+    // 段の上限を超えたら、超えた札と、「+n」の札が入るまで最後の段の札を、まとめる（macOS 版と同じ）。
+    let mut hidden = Vec::new();
+    if line >= MAX_LABEL_LINES {
+        let last = MAX_LABEL_LINES - 1;
+        let at = pills.iter().position(|p| p.2 > last).unwrap_or(pills.len());
+        hidden = pills.split_off(at);
+        let end = |pills: &Vec<(Label, f64, usize, f64)>| {
+            pills.last().map_or(text_x, |p| {
+                p.1 + pill_width(area, &p.0.0, p.0.2).min(room) + 4.0
+            })
+        };
+        while pills.last().is_some_and(|p| p.2 == last)
+            && end(&pills) + pill_width(area, &format!("+{}", hidden.len() + 1), false) > right
+        {
+            hidden.insert(0, pills.pop().unwrap());
+        }
+        let more_x = if pills.last().is_some_and(|p| p.2 == last) {
+            end(&pills)
+        } else {
+            text_x
+        };
+        let more = format!("+{}", hidden.len());
+        x = more_x + pill_width(area, &more, false) + 4.0;
+        pills.push(((more, "more".to_owned(), false), more_x, last, room));
+        line = last;
+    }
+    let (subject_width, subject_height) = small_layout(area, subject, bold).pixel_size();
+    let subject_width = f64::from(subject_width);
+    // 段の間隔は、札と件名の高さに少し空きを足したもの。
+    let pill_height = f64::from(pill_layout(area, "Ag", false).pixel_size().1) + 2.0;
+    let step = (pill_height.max(f64::from(subject_height)) + 3.0).max(LINE_STEP);
+    if x > text_x && right - x < subject_width.min(SUBJECT_MIN) {
+        line += 1;
+        x = text_x;
+    }
+    RowLayout {
+        pills,
+        hidden: hidden.into_iter().map(|p| p.0.0).collect(),
+        subject_x: x,
+        subject_line: line,
+        step,
     }
 }
 
@@ -479,12 +775,11 @@ fn row_at(
     cr: &gtk::cairo::Context,
     dot_x: f64,
     y: f64,
-    text_x: f64,
+    layout: &RowLayout,
     right: f64,
     subject: &str,
     dim: bool,
     highlighted: bool,
-    labels: &[Label],
     hollow: bool,
     note: Option<&(String, Option<gdk::RGBA>)>,
     is_new: bool,
@@ -526,18 +821,19 @@ fn row_at(
     } else {
         let _ = cr.fill();
     }
-    let mut x = text_x;
-    // 札は列の中に収める: 長い名前は真ん中を省き、入りきらない札は描かない（隣の列や件名に重ねない。macOS 版と同じ）。
-    for (name, kind, current) in labels {
-        if right - x <= 40.0 {
-            break;
+    for ((name, kind, current), x, line, room) in &layout.pills {
+        let top = y + 3.0 + *line as f64 * layout.step;
+        let end = pill(area, cr, name, kind, *current, *x, top, *room);
+        if kind == "more" {
+            let h = layout.step;
+            fit_of(area)
+                .borrow_mut()
+                .tips
+                .push(((*x, top, end - x, h), layout.hidden.join("\n")));
         }
-        x = pill(area, cr, name, kind, *current, x, y + 3.0, right - x - 24.0) + 4.0;
     }
-    // 札で埋まったら件名は描かない。
-    if right - x <= 20.0 {
-        return;
-    }
+    let x = layout.subject_x;
+    let y = y + layout.subject_line as f64 * layout.step;
     let color = if dim { dimmed(&fg, 0.45) } else { fg };
     let Some((note, note_color)) = note else {
         text_at(
@@ -613,16 +909,10 @@ fn pill(
     let color = match kind {
         "remote" => gdk::RGBA::new(0.57, 0.25, 0.67, 1.0),
         "moved" => gdk::RGBA::new(0.18, 0.62, 0.32, 1.0),
+        "more" => dimmed(&area.color(), 0.7),
         _ => BLUE,
     };
-    let layout = area.create_pango_layout(Some(name));
-    let mut font = area.pango_context().font_description().unwrap_or_default();
-    // macOS 版と同じ割合（ふつうの字 13 pt に対して 10 pt）。
-    font.set_size(font.size() * 10 / 13);
-    if current {
-        font.set_weight(pango::Weight::Bold);
-    }
-    layout.set_font_description(Some(&font));
+    let layout = pill_layout(area, name, current);
     // 入りきらなければ、真ん中を省く。
     layout.set_width((((max_width - 10.0).max(0.0)) * f64::from(pango::SCALE)) as i32);
     layout.set_ellipsize(pango::EllipsizeMode::Middle);
@@ -649,6 +939,36 @@ fn pill(
     x + w
 }
 
+fn pill_layout(area: &gtk::DrawingArea, name: &str, current: bool) -> pango::Layout {
+    let layout = area.create_pango_layout(Some(name));
+    let mut font = area.pango_context().font_description().unwrap_or_default();
+    // macOS 版と同じ割合（ふつうの字 13 pt に対して 10 pt）。
+    font.set_size(font.size() * 10 / 13);
+    if current {
+        font.set_weight(pango::Weight::Bold);
+    }
+    layout.set_font_description(Some(&font));
+    layout
+}
+
+/// 札の幅（省かずに描いたとき）。
+fn pill_width(area: &gtk::DrawingArea, name: &str, current: bool) -> f64 {
+    f64::from(pill_layout(area, name, current).pixel_size().0) + 10.0
+}
+
+/// 小さな字（件名）の並べ方。
+fn small_layout(area: &gtk::DrawingArea, text: &str, bold: bool) -> pango::Layout {
+    let layout = area.create_pango_layout(Some(text));
+    let mut font = area.pango_context().font_description().unwrap_or_default();
+    // macOS 版と同じ割合（ふつうの字 13 pt に対して小さな字 11 pt）。件名が列に収まるように。
+    font.set_size(font.size() * 11 / 13);
+    if bold {
+        font.set_weight(pango::Weight::Bold);
+    }
+    layout.set_font_description(Some(&font));
+    layout
+}
+
 fn rounded(cr: &gtk::cairo::Context, x: f64, y: f64, w: f64, h: f64, r: f64) {
     use std::f64::consts::{FRAC_PI_2, PI};
     cr.new_sub_path();
@@ -671,14 +991,7 @@ fn text_at(
     bold: bool,
     width: f64,
 ) {
-    let layout = area.create_pango_layout(Some(text));
-    let mut font = area.pango_context().font_description().unwrap_or_default();
-    // macOS 版と同じ割合（ふつうの字 13 pt に対して小さな字 11 pt）。件名が列に収まるように。
-    font.set_size(font.size() * 11 / 13);
-    if bold {
-        font.set_weight(pango::Weight::Bold);
-    }
-    layout.set_font_description(Some(&font));
+    let layout = small_layout(area, text, bold);
     if width.is_finite() {
         layout.set_width((width * f64::from(pango::SCALE)) as i32);
         layout.set_ellipsize(pango::EllipsizeMode::End);
@@ -718,7 +1031,8 @@ pub fn new_move(how: Move) -> (gtk::DrawingArea, Setter) {
     let info: Rc<RefCell<Value>> = Rc::default();
     let i = info.clone();
     let how = Rc::new(how);
-    area.set_draw_func(move |area, cr, _, _| draw_move(area, cr, &i.borrow(), &how));
+    let painter: Painter = Rc::new(move |area, cr| draw_move(area, cr, &i.borrow(), &how));
+    install(&area, &painter);
     let a = area.downgrade();
     let set: Setter = Rc::new(move |value: &Value| {
         let Some(area) = a.upgrade() else { return };
@@ -728,7 +1042,8 @@ pub fn new_move(how: Move) -> (gtk::DrawingArea, Setter) {
             area.set_visible(false);
             return;
         }
-        area.set_content_height((move_rows(d) as f64 * ROW + 26.0) as i32);
+        set_height(&area, move_rows(d) as f64 * ROW + 26.0);
+        measure(&area, &painter);
         area.set_visible(true);
         area.queue_draw();
     });
@@ -935,12 +1250,13 @@ fn merge_area(
     let area = gtk::DrawingArea::new();
     area.set_content_width((column_width(&area) * 2.0 + 24.0) as i32);
     // 右には merge コミットの 1 行が増える。
-    area.set_content_height(((merge_rows(d) + 1) as f64 * ROW + 26.0) as i32);
+    set_height(&area, (merge_rows(d) + 1) as f64 * ROW + 26.0);
     let info = info.clone();
     let current = current.to_owned();
-    area.set_draw_func(move |area, cr, _, _| {
-        draw_merge(area, cr, &info, &current, &after_title, now_only)
-    });
+    let painter: Painter =
+        Rc::new(move |area, cr| draw_merge(area, cr, &info, &current, &after_title, now_only));
+    install(&area, &painter);
+    measure(&area, &painter);
     Some(area)
 }
 
@@ -1093,10 +1409,12 @@ pub fn for_pick(info: &Value, current: &str, kind: PickKind) -> Option<gtk::Draw
     let picks = d["picks"].as_array().map_or(0, Vec::len)
         + usize::from(d["picksMore"].as_u64().unwrap_or(0) > 0);
     let head = d["head"].as_array().map_or(0, Vec::len);
-    area.set_content_height(((picks + head) as f64 * ROW + 26.0) as i32);
+    set_height(&area, (picks + head) as f64 * ROW + 26.0);
     let info = info.clone();
     let current = current.to_owned();
-    area.set_draw_func(move |area, cr, _, _| draw_pick(area, cr, &info, &current, kind));
+    let painter: Painter = Rc::new(move |area, cr| draw_pick(area, cr, &info, &current, kind));
+    install(&area, &painter);
+    measure(&area, &painter);
     Some(area)
 }
 
@@ -1258,16 +1576,18 @@ pub fn for_octopus(info: &Value, current: &str) -> Option<(gtk::DrawingArea, Oct
     let info = info.clone();
     let current = current.to_owned();
     let d = info["drawing"].clone();
-    area.set_draw_func(move |area, cr, _, _| {
+    let painter: Painter = Rc::new(move |area, cr| {
         let (order, subject) = &*s.borrow();
-        draw_octopus(area, cr, &info["drawing"], &current, order, subject);
+        draw_octopus(area, cr, &info["drawing"], &current, order, subject)
     });
+    install(&area, &painter);
     let a = area.downgrade();
     let set: OctopusSetter = Rc::new(move |order, subject| {
         let Some(area) = a.upgrade() else { return };
         // 右には merge コミットの 1 行が増える。
-        area.set_content_height(((octopus_rows(&d, &order) + 1) as f64 * ROW + 26.0) as i32);
+        set_height(&area, (octopus_rows(&d, &order) + 1) as f64 * ROW + 26.0);
         state.replace((order, subject));
+        measure(&area, &painter);
         area.queue_draw();
     });
     Some((area, set))
@@ -1364,17 +1684,8 @@ fn draw_octopus(
             }
         }
         if rest > 0 {
-            let text_x = x + 10.0 + shown.len() as f64 * LANE + 14.0;
-            text_at(
-                area,
-                cr,
-                &tr!("and {count} more branches", count = rest),
-                text_x,
-                y + 3.0,
-                &dimmed(&fg, 0.5),
-                false,
-                x + column_width(area) - text_x,
-            );
+            // 線は引かず、文だけ（札が折り返した行の下では、その分だけ下がる）。
+            gaps.push((MORE_BRANCHES, y, rest as u64));
             y += ROW;
         }
         column(
@@ -1430,10 +1741,12 @@ pub fn for_edit(info: &Value) -> Option<gtk::DrawingArea> {
     area.set_content_width((column_width(&area) * 2.0 + 24.0) as i32);
     let count =
         edit_rows(d, "before").max(edit_rows(d, "after")) + usize::from(!d["base"].is_null());
-    area.set_content_height((count as f64 * ROW + 26.0) as i32);
+    set_height(&area, count as f64 * ROW + 26.0);
     let d = d.clone();
     let current = info["current"].as_str().map(str::to_owned);
-    area.set_draw_func(move |area, cr, _, _| draw_edit(area, cr, &d, current.as_deref()));
+    let painter: Painter = Rc::new(move |area, cr| draw_edit(area, cr, &d, current.as_deref()));
+    install(&area, &painter);
+    measure(&area, &painter);
     Some(area)
 }
 

@@ -514,6 +514,9 @@ or split history in ways that are hard to see afterwards.
   - the labels of the branches that move are drawn moving;
   - the labels of the branches left behind stay on the old commits, with the reason;
   - for a pushed branch, `origin/<branch>` stays on the old commit;
+  - labels that don't fit on a commit's line wrap onto the lines below it (the subject too, when little room is
+    left), up to three lines; the rest are gathered into a "+n" label whose tooltip lists them, and only a single
+    label wider than the column is shortened. A drawing taller than 360 pt scrolls inside itself;
   - the conflict forecast goes underneath.
 
   A checkbox, "Also move the stacked branches", starts from the setting and applies to this operation only

@@ -23,10 +23,10 @@ final class EditDrawingView: GraphDrawingView {
 
     override var intrinsicContentSize: NSSize {
         let count = max(rows(before: true), rows(before: false)) + (drawing.base == nil ? 0 : 1)
-        return NSSize(width: Self.columnWidth * 2 + 24, height: CGFloat(count) * Self.rowHeight + 26)
+        return NSSize(width: Self.columnWidth * 2 + 24, height: capped(CGFloat(count) * Self.rowHeight + 26 + labelExtraHeight()))
     }
 
-    override func draw(_ dirtyRect: NSRect) {
+    override func drawContent() {
         let d = drawing
         let headingAttributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.boldSystemFont(ofSize: NSFont.smallSystemFontSize), .foregroundColor: NSColor.secondaryLabelColor,

@@ -89,10 +89,10 @@ final class MoveDrawingView: GraphDrawingView {
 
     override var intrinsicContentSize: NSSize {
         guard let d = preview?.drawing else { return NSSize(width: Self.columnWidth * 2 + 24, height: 0) }
-        return NSSize(width: Self.columnWidth * 2 + 24, height: CGFloat(rowCount(d)) * Self.rowHeight + 26)
+        return NSSize(width: Self.columnWidth * 2 + 24, height: capped(CGFloat(rowCount(d)) * Self.rowHeight + 26 + labelExtraHeight()))
     }
 
-    override func draw(_ dirtyRect: NSRect) {
+    override func drawContent() {
         guard let d = preview?.drawing else { return }
         let headingAttributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.boldSystemFont(ofSize: NSFont.smallSystemFontSize), .foregroundColor: NSColor.secondaryLabelColor,
