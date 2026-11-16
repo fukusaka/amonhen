@@ -33,6 +33,7 @@ pub const IMPLEMENTED: &[&str] = &[
     "repository-settings",
     "stash",
     "pop-stash",
+    "delete-ignored-files",
     "compare-with-previous",
     "apply-patch",
     "save-bundle",

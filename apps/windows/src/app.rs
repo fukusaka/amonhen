@@ -181,6 +181,11 @@ enum Dialog {
     },
     /// 操作の失敗。
     Failed { title: String, message: String },
+    /// ignore されたファイルを消す（git clean -X）。消すものを先に一覧で見せる（GTK4 版の `delete_ignored_files`）。
+    DeleteIgnored {
+        repo: Arc<Repository>,
+        paths: Vec<String>,
+    },
     /// Clean Up Branches（GTK4 版の `clean_up_branches`）: `branchCleanup` の答えのブランチと、消すか。
     CleanUp {
         repo: Arc<Repository>,
@@ -414,6 +419,8 @@ enum Message {
     Confirm(Arc<Repository>, String, String, String, Value),
     /// Working Copy のパスの絞り込み。
     WorkingFilter(String),
+    /// ignore されたファイルを読んだ（`ignoredFiles` の答え）。
+    IgnoredLoaded(Arc<Repository>, Value),
     /// Clean Up Branches の候補を読んだ（`branchCleanup` の答え）。
     CleanUpLoaded(Arc<Repository>, Value),
     /// Clean Up Branches のブランチのチェック。
@@ -861,6 +868,16 @@ impl Component for Root {
                 self.write_repo_settings(Vec::new(), context);
             }
             Message::Command(id) if id == "stash" => self.ask_stash(Vec::new()),
+            Message::Command(id) if id == "delete-ignored-files" => {
+                if let Some(repo) = self.repo.clone() {
+                    context.spawn_background(move |_| {
+                        let reply: Value =
+                            serde_json::from_str(&repo.run_json(r#"{"op":"ignoredFiles"}"#))
+                                .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+                        Message::IgnoredLoaded(repo, reply)
+                    });
+                }
+            }
             Message::Command(id) if id == "pop-stash" => {
                 // いちばん新しい stash を Pop（確かめてから。GTK4 版の `pop_stash`）。
                 match self.stash_entries().first().map(|e| e.name.clone()) {
@@ -1132,6 +1149,14 @@ impl Component for Root {
                     let commands =
                         remote_changes(original.as_ref(), name.trim(), fetch.trim(), push.trim());
                     perform_all(context, repo, commands, title);
+                }
+                (Some(Dialog::DeleteIgnored { repo, paths }), ContentDialogResult::Primary) => {
+                    perform(
+                        context,
+                        repo,
+                        json!({ "op": "deleteIgnored", "paths": paths }),
+                        tr!("Delete"),
+                    );
                 }
                 (Some(Dialog::CleanUp { repo, branches, .. }), ContentDialogResult::Primary) => {
                     // まとめて消す（Undo は 1 回でまとめて戻す）。
@@ -2779,6 +2804,29 @@ impl Component for Root {
                 }
             }
             Message::WorkingFilter(text) => self.working_filter = text,
+            Message::IgnoredLoaded(repo, reply) => {
+                let paths: Vec<String> = reply["info"]["paths"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|p| p.as_str().map(str::to_owned))
+                    .collect();
+                self.dialog = Some(if let Some(error) = reply["error"].as_str() {
+                    Dialog::Failed {
+                        title: tr!("Delete Ignored Files…")
+                            .trim_end_matches('…')
+                            .to_owned(),
+                        message: error.to_owned(),
+                    }
+                } else if paths.is_empty() {
+                    Dialog::Failed {
+                        title: tr!("No Ignored Files"),
+                        message: tr!("Nothing in the working tree matches .gitignore."),
+                    }
+                } else {
+                    Dialog::DeleteIgnored { repo, paths }
+                });
+            }
             Message::CleanUpLoaded(repo, reply) => {
                 if let Some(error) = reply["error"].as_str() {
                     self.dialog = Some(Dialog::Failed {
@@ -4083,6 +4131,32 @@ impl Root {
                             .children((head, picker, modes)),
                     )
             }
+            Some(Dialog::DeleteIgnored { paths, .. }) => dialog
+                .is_open(true)
+                .title(tr!("Delete {count} Ignored Items?", count = paths.len()))
+                .primary_button_text(tr!("Delete"))
+                .close_button_text(tr!("Cancel"))
+                .content(
+                    StackPanel::new().spacing(8.0).children((
+                        TextBlock::new()
+                            .text(format!(
+                                "{} {}",
+                                tr!(
+                                    "These are removed from the working tree (git clean -X); folders go with everything in them."
+                                ),
+                                tr!("This can’t be undone.")
+                            ))
+                            .text_wrapping(TextWrapping::Wrap),
+                        // パスを選んで写せる（長いパスは折り返す。GTK4 版と同じ）。
+                        ScrollViewer::new().max_height(160.0).content(
+                            TextBlock::new()
+                                .text(paths.join("\n"))
+                                .font_size(12.0)
+                                .text_wrapping(TextWrapping::Wrap)
+                                .is_text_selection_enabled(true),
+                        ),
+                    )),
+                ),
             Some(Dialog::CleanUp {
                 base, branches, ..
             }) => {
