@@ -923,6 +923,8 @@ fn asks_before_sending_the_engine_over_ssh() {
     std::fs::create_dir(&repo).unwrap();
     git(&repo, &["init", "-q"]);
     git(&repo, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    git(&repo, &["config", "user.name", "a"]);
+    git(&repo, &["config", "user.email", "a@example.com"]);
     git(&repo, &["commit", "-q", "--allow-empty", "-m", "first"]);
     let env = Env::new(tmp.path());
     let at = format!("ssh://dev{}", repo.display());
