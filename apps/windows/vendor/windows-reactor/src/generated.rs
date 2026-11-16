@@ -9690,6 +9690,14 @@ impl MountedPropsExt for MountedProps {
                 );
             }
             Self::TextBox(values) => {
+                // AcceptsReturn は Text より先に（後にすると、WinUI は入れた文字の改行から後を捨てる）。
+                visit(
+                    PropertyId::TextBoxAcceptsReturn,
+                    match &values.accepts_return {
+                        Property::Inherited => None,
+                        Property::Set(value) => Some(PropertyValueRef::Bool(*value)),
+                    },
+                );
                 visit(
                     PropertyId::TextBoxText,
                     match &values.text {
@@ -9707,13 +9715,6 @@ impl MountedPropsExt for MountedProps {
                 visit(
                     PropertyId::TextBoxIsEnabled,
                     match &values.is_enabled {
-                        Property::Inherited => None,
-                        Property::Set(value) => Some(PropertyValueRef::Bool(*value)),
-                    },
-                );
-                visit(
-                    PropertyId::TextBoxAcceptsReturn,
-                    match &values.accepts_return {
                         Property::Inherited => None,
                         Property::Set(value) => Some(PropertyValueRef::Bool(*value)),
                     },
