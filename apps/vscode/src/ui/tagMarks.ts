@@ -7,6 +7,7 @@ import { daemonFor } from '../daemon/connection.ts';
 import type { SignatureCheck } from '../git/signature.ts';
 import type { TagRemotes } from '../git/tagRemotes.ts';
 import type { Repository, Section } from '../state/repository.ts';
+import { onDidChangeSignatureConfig } from './signatureConfig.ts';
 
 /** コアの `tagSignatures` の 1 件。`signed` がなければ署名のないタグ（軽量タグも） */
 export interface TagSignature {
@@ -31,6 +32,10 @@ export class TagMarks implements vscode.Disposable {
 
   private readonly _onDidChange = new vscode.EventEmitter<void>();
   readonly onDidChange = this._onDidChange.event;
+  /** 署名の検証の設定（`gpg.*`）が変わったら、タグの署名を確かめ直す（読むたびにすべて確かめる） */
+  private readonly signatureConfigListener = onDidChangeSignatureConfig(() => {
+    if (this.wanted) this.schedule(0);
+  });
 
   /** タグのリモートでの様子（まだ読んでいなければ undefined） */
   get remotes(): TagRemotes | undefined {
@@ -114,6 +119,7 @@ export class TagMarks implements vscode.Disposable {
   }
 
   dispose(): void {
+    this.signatureConfigListener.dispose();
     clearTimeout(this.timer);
     this.repoListener?.dispose();
     this._onDidChange.dispose();

@@ -48,6 +48,7 @@ import { editableChain, refLabels, worktreeLabels } from '../history/rows.ts';
 import { scopeRefs } from '../history/scope.ts';
 import type { Repository, Section } from '../state/repository.ts';
 import { openCommitChanges, openCommitFile } from './commitChanges.ts';
+import { onDidChangeSignatureConfig } from './signatureConfig.ts';
 import { showError } from './stageCommands.ts';
 
 /** 1 回に読み込むコミットの数 */
@@ -200,8 +201,22 @@ export class HistoryController implements vscode.Disposable {
   /** ref をまだ読み終えていない読み直しの数（その間の ref の知らせは、その読み直しが拾う） */
   private readingRefs = 0;
 
+  /** 署名の検証の設定（`gpg.*`）の知らせ */
+  private readonly signatureConfigListener: vscode.Disposable;
+
   constructor(post: (message: HistoryHostMessage) => void) {
     this.post = post;
+    this.signatureConfigListener = onDidChangeSignatureConfig(() => this.forgetSignatures());
+  }
+
+  /** 検証の設定が変わった。覚えていた検証の結果を捨て、確かめた行と出している詳細を確かめ直す（コアは設定を書いたときに捨てている） */
+  private forgetSignatures(): void {
+    const oids = [...this.signatures.keys()];
+    this.signatures.clear();
+    this.extras.clear();
+    const daemon = this.daemon;
+    if (daemon) void this.verifyRows(daemon, oids).catch(() => undefined);
+    if (this.selectedOid) void this.sendDetails(this.selectedOid).catch(() => undefined);
   }
 
   /**
@@ -1183,6 +1198,7 @@ export class HistoryController implements vscode.Disposable {
   }
 
   dispose(): void {
+    this.signatureConfigListener.dispose();
     clearTimeout(this.resetTimer);
     this.searchAbort?.abort();
     this.repoListener?.dispose();
