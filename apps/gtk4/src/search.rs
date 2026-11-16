@@ -2,7 +2,7 @@
 //! 欄を出す（GNOME の検索バー）。Enter で探し、一致した行を塗って件数を出し、選んでいる行より後の最初の一致を
 //! 選ぶ。同じ問い合わせなら Enter で次へ、Shift+Enter で前へ（Ctrl+G・Ctrl+Shift+G でも）。書き方はコアの
 //! `query`（`author:`・`subject:`・`commit:`・`path:`・`contents:`・`after:`・`before:`、AND・OR・括弧）。
-//! 欄の中の虫眼鏡（▾ 付き）のメニューで、作者・パス・内容・日時で探す書き方を入れる（macOS 版と同じ）。
+//! 欄の中の虫眼鏡（▾ 付き）のメニューで、作者・コミットの ID・パス・内容・日時で探す書き方を入れる（macOS 版と同じ）。
 //! partial clone で中身を探す前は、手元にない中身の数を出して断る。探している間は、分かった分から塗って件数と
 //! 進み具合を出す（macOS 版と同じ）。
 //! 一致したコミットだけを出す切り替え（macOS 版と同じ）を入れると、一致したものだけの History
@@ -120,7 +120,7 @@ impl Search {
             ))
             .hexpand(true)
             .build();
-        // ▾: 作者・パス・内容・日時で探す書き方を入れる（macOS 版の検索の欄の ▾ のメニューと同じ）。
+        // ▾: 作者・コミットの ID・パス・内容・日時で探す書き方を入れる（macOS 版の検索の欄の ▾ のメニューと同じ）。
         let scopes = gio::Menu::new();
         for (title, prefix) in SCOPES {
             scopes.append(
@@ -1042,8 +1042,9 @@ fn grouped(n: usize) -> String {
 }
 
 /// 検索の欄の ▾ のメニュー（題と入れる書き方。macOS 版と同じ順）。
-const SCOPES: [(&str, &str); 5] = [
+const SCOPES: [(&str, &str); 6] = [
     ("Search by Author (author:)", "author:"),
+    ("Search by Commit ID (commit:)", "commit:"),
     ("Search by Path (path:)", "path:"),
     ("Search by Contents (contents:)", "contents:"),
     ("Committed After (after:)", "after:"),

@@ -935,6 +935,7 @@
 "Search History" = "History を検索";
 "Search" = "検索";
 "Search by Author (author:)" = "作者で探す（author:）";
+"Search by Commit ID (commit:)" = "コミットの ID で探す（commit:）";
 "Search by Path (path:)" = "パスで探す（path:）";
 "Search by Contents (contents:)" = "内容で探す（contents:）";
 "Committed After (after:)" = "この日時より後（after:）";
