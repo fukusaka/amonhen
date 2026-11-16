@@ -12,6 +12,10 @@ pub struct State {
     pub file_history_merges: bool,
     /// 自動の fetch の間隔（分。0 はしない）。
     pub auto_fetch: u32,
+    pub write_commit_graph: bool,
+    pub use_fsmonitor: bool,
+    /// History のキャッシュの大きさ（バイト。読むまでは None）。
+    pub cache_size: Option<u64>,
 }
 
 /// 自動の fetch の間隔の選べる値（GTK4 版・macOS 版と同じ）。
@@ -24,6 +28,25 @@ pub struct Callbacks<'a> {
     pub close: Callback<()>,
     /// 自動の fetch の間隔を選んだ（`AUTO_FETCH_CHOICES` の番号）。
     pub auto_fetch: Callback<Option<usize>>,
+    /// History のキャッシュを消す。
+    pub clear_cache: Callback<()>,
+}
+
+/// バイト数を読みやすく。
+fn size(bytes: u64) -> String {
+    if bytes < 1000 {
+        return format!("{bytes} bytes");
+    }
+    let mut value = bytes as f64;
+    let mut unit = "";
+    for u in ["kB", "MB", "GB", "TB"] {
+        value /= 1000.0;
+        unit = u;
+        if value < 1000.0 {
+            break;
+        }
+    }
+    format!("{value:.1} {unit}")
 }
 
 fn heading(text: String) -> TextBlock {
@@ -31,6 +54,14 @@ fn heading(text: String) -> TextBlock {
         .text(text)
         .font_size(15.0)
         .margin(Thickness::new(0.0, 16.0, 0.0, 6.0))
+}
+
+fn note(text: String) -> TextBlock {
+    TextBlock::new()
+        .text(text)
+        .font_size(12.0)
+        .opacity(0.65)
+        .text_wrapping(TextWrapping::Wrap)
 }
 
 pub fn view(state: &State, callbacks: Callbacks) -> View {
@@ -130,6 +161,42 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                     state.file_history_merges,
                     tr!("Show merge commits"),
                 ),
+                // Performance（GTK4 版の Performance のタブのうち、Windows 版にあるもの）。
+                heading(tr!("Performance")),
+                check(
+                    crate::prefs::WRITE_COMMIT_GRAPH,
+                    state.write_commit_graph,
+                    tr!("Write commit-graph automatically"),
+                ),
+                note(tr!(
+                    "Writes to .git, except in repositories git maintenance looks after."
+                )),
+                check(
+                    crate::prefs::USE_FSMONITOR,
+                    state.use_fsmonitor,
+                    tr!("Speed up status with fsmonitor"),
+                ),
+                note(tr!("A git fsmonitor--daemon runs for each repository.")),
+                StackPanel::new()
+                    .orientation(Orientation::Horizontal)
+                    .spacing(12.0)
+                    .margin(Thickness::new(0.0, 8.0, 0.0, 0.0))
+                    .children((
+                        TextBlock::new()
+                            .text(format!(
+                                "{}: {}",
+                                tr!("History"),
+                                state.cache_size.map(size).unwrap_or_else(|| "…".to_owned())
+                            ))
+                            .vertical_alignment(VerticalAlignment::Center),
+                        Button::new()
+                            .is_enabled(state.cache_size.is_some_and(|n| n > 0))
+                            .on_click(callbacks.clear_cache)
+                            .content(TextBlock::new().text(tr!("Clear"))),
+                    )),
+                note(tr!(
+                    "Opens History right away next time. Cleared, it is read from git again."
+                )),
             )),
     );
     Grid::new()

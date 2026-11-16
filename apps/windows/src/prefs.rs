@@ -8,6 +8,10 @@ use serde_json::{Map, Value};
 
 /// マージエディタを開いたときに、間違えようのないコンフリクトを解く（既定は解く）。
 pub const AUTO_MAGIC_MERGE: &str = "autoMagicMerge";
+/// リポジトリを開いたときに commit-graph を書き出す・書き足す（既定はしない。GTK4 版・macOS 版と同じ鍵）。
+pub const WRITE_COMMIT_GRAPH: &str = "writeCommitGraph";
+/// status で git の fsmonitor を使う（既定は使わない。GTK4 版・macOS 版と同じ鍵）。
+pub const USE_FSMONITOR: &str = "useFSMonitor";
 /// 自動の fetch の間隔（分。0 はしない。GTK4 版・macOS 版と同じ鍵）。
 pub const AUTO_FETCH_MINUTES: &str = "autoFetchMinutes";
 /// Working Copy の一覧の見せ方（`list`・`tree`・`flat`）。

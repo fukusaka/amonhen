@@ -134,9 +134,9 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Diff & Merge: unified/split・空白・前後の行・折り返し・タブの幅 | — | — | — | — | n/a |  |
 | AI: 使う AI・CLI の場所と版・モデル・言語・リポジトリごとの許可 | ✓ | ✓ | — | — | n/a | どちらのアプリも CLI のログインの状態は読まない。CLI がなければ、入れてサインインするよう案内する。 |
 | 目的ごとの AI のプロンプト（編集・既定に戻す・試す） | ✓ | ✓ | — | — | n/a |  |
-| Performance: commit-graph・共有の daemon | ✓ | ✓ | — | ✓ | n/a | VSCode: VSCode の設定の `amonhen.writeCommitGraph`・`amonhen.daemon.enabled`・`amonhen.daemon.path`。 |
-| Performance: fsmonitor | ✓ | ✓ | — | ✓ | n/a | GTK4: Linux・BSD では、エンジンを git の fsmonitor の hook（`amonhen fsmonitor-watchman`）にして Watchman を使う。Watchman がないか、git が 2.26 より古い（hook の版 2 がない）と押せない。<br>VSCode: VSCode の設定の `amonhen.fsmonitor`（既定はオン）。 |
-| Performance: 永続キャッシュの場所・大きさ・消す | ✓ | ✓ | — | — | △ | History と AI の結果を 1 行ずつ、大きさと「消す」。CLI: `log --rebuild`・`daemon rebuild`。 |
+| Performance: commit-graph・共有の daemon | ✓ | ✓ | △ | ✓ | n/a | VSCode: VSCode の設定の `amonhen.writeCommitGraph`・`amonhen.daemon.enabled`・`amonhen.daemon.path`。<br>Windows: Windows: commit-graph だけ。共有の daemon はない。 |
+| Performance: fsmonitor | ✓ | ✓ | ✓ | ✓ | n/a | GTK4: Linux・BSD では、エンジンを git の fsmonitor の hook（`amonhen fsmonitor-watchman`）にして Watchman を使う。Watchman がないか、git が 2.26 より古い（hook の版 2 がない）と押せない。<br>VSCode: VSCode の設定の `amonhen.fsmonitor`（既定はオン）。 |
+| Performance: 永続キャッシュの場所・大きさ・消す | ✓ | ✓ | △ | — | △ | History と AI の結果を 1 行ずつ、大きさと「消す」。CLI: `log --rebuild`・`daemon rebuild`。<br>Windows: Windows: 大きさと消去。置き場所は出さない。 |
 | 設定の変更の Undo・Redo | △ | △ | — | n/a | n/a | macOS: Git のページとリポジトリの設定だけ。<br>GTK4: Git のページとリポジトリの設定だけ。 |
 
 ## 4. リポジトリの設定

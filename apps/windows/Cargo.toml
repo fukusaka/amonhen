@@ -11,6 +11,7 @@ publish = false
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+amonhen-backend-cli = { path = "../../crates/backend-cli" }
 amonhen-backend-gix = { path = "../../crates/backend-gix" }
 amonhen-commands = { path = "../../crates/commands" }
 amonhen-core = { path = "../../crates/core", features = ["syntax"] }

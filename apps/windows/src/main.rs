@@ -120,6 +120,8 @@ fn main() {
         return;
     }
     amonhen_model::i18n::set_default(language());
+    // status で git の fsmonitor を使うか（Settings > Performance。変えたら Settings が渡し直す）。
+    amonhen_backend_cli::set_fsmonitor(prefs::bool(prefs::USE_FSMONITOR));
     let args = match parse() {
         Ok(a) => a,
         Err(e) => {

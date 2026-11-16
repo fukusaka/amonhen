@@ -531,6 +531,10 @@ enum Message {
     ActivityTick,
     /// 自動の fetch の間隔を選んだ（Settings）。
     SettingsAutoFetch(Option<usize>),
+    /// History のキャッシュの大きさを読んだ。
+    CacheSize(u64),
+    /// History のキャッシュを消す。
+    ClearCache,
     /// 自動の fetch の時が来た。
     AutoFetch,
     /// 自動の fetch が終わった（失敗なら理由）。
@@ -1111,6 +1115,15 @@ impl Component for Root {
                     auto_magic_merge: crate::prefs::bool(crate::prefs::AUTO_MAGIC_MERGE),
                     file_history_merges: crate::prefs::bool(crate::prefs::FILE_HISTORY_MERGES),
                     auto_fetch: crate::prefs::auto_fetch_minutes(),
+                    write_commit_graph: crate::prefs::bool(crate::prefs::WRITE_COMMIT_GRAPH),
+                    use_fsmonitor: crate::prefs::bool(crate::prefs::USE_FSMONITOR),
+                    cache_size: None,
+                });
+                context.spawn_background(|_| {
+                    Message::CacheSize(
+                        amonhen_remote::local::cache_dir()
+                            .map_or(0, |d| amonhen_core::cache::total_size(&d)),
+                    )
                 });
                 self.page = Page::Settings;
                 // `--global` の段の値（いくつもあれば最後のもの。git と同じ）。
@@ -3273,6 +3286,25 @@ impl Component for Root {
                 AUTO_FETCH.with(|a| a.set((minutes, Instant::now())));
             }
             Message::SettingsAutoFetch(None) => {}
+            Message::CacheSize(bytes) => {
+                if let Some(state) = self.settings.as_mut() {
+                    state.cache_size = Some(bytes);
+                }
+            }
+            Message::ClearCache => {
+                // 開いているリポジトリの分も消える（次に開くとき git から読み直す。GTK4 版と同じ）。
+                context.spawn_background(|_| {
+                    if let Some(dir) = amonhen_remote::local::cache_dir()
+                        && let Err(e) = amonhen_core::cache::remove_all(&dir)
+                    {
+                        return Message::Performed(Some((tr!("Clear"), e.to_string())));
+                    }
+                    Message::CacheSize(
+                        amonhen_remote::local::cache_dir()
+                            .map_or(0, |d| amonhen_core::cache::total_size(&d)),
+                    )
+                });
+            }
             Message::AutoFetch => {
                 // 聞かずにすべてのリモートから（GTK4 版と同じ）。ほかの操作の最中なら見送る。
                 if let (Some(repo), None) = (self.repo.clone(), &self.busy) {
@@ -3295,6 +3327,9 @@ impl Component for Root {
                 });
             }
             Message::SettingsToggle(key, value) => {
+                if key == crate::prefs::USE_FSMONITOR {
+                    amonhen_backend_cli::set_fsmonitor(value);
+                }
                 if let Err(e) = crate::prefs::set_bool(key, value) {
                     self.dialog = Some(Dialog::Failed {
                         title: tr!("Save"),
@@ -3304,6 +3339,8 @@ impl Component for Root {
                 if let Some(state) = self.settings.as_mut() {
                     match key {
                         crate::prefs::AUTO_MAGIC_MERGE => state.auto_magic_merge = value,
+                        crate::prefs::WRITE_COMMIT_GRAPH => state.write_commit_graph = value,
+                        crate::prefs::USE_FSMONITOR => state.use_fsmonitor = value,
                         _ => state.file_history_merges = value,
                     }
                 }
@@ -6120,6 +6157,7 @@ impl Root {
                 toggle: Box::new(|key| context.callback(move |v| Message::SettingsToggle(key, v))),
                 close: context.callback(|()| Message::CloseSettings),
                 auto_fetch: context.callback(Message::SettingsAutoFetch),
+                clear_cache: context.callback(|()| Message::ClearCache),
             },
         );
         Border::new()
@@ -6495,6 +6533,16 @@ impl Root {
         }
         self.draft_key = Some(key.clone());
         self.amend = false;
+        // Settings > Performance: commit-graph がなければ書き出し、あれば増えた分を書き足す（開いた worktree が
+        // 替わったとき。GTK4 版はリポジトリを開いたとき）。
+        if crate::prefs::bool(crate::prefs::WRITE_COMMIT_GRAPH) {
+            let repo = repo.clone();
+            std::thread::spawn(move || {
+                if let Err(e) = repo.update_commit_graph() {
+                    eprintln!("commit-graph を書き出せない: {e}");
+                }
+            });
+        }
         let draft = crate::prefs::string(&key)
             .and_then(|d| serde_json::from_str::<(String, String)>(&d).ok());
         if let Some((summary, description)) = draft {
