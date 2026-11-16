@@ -1162,7 +1162,7 @@ First release.
 #### Changed
 
 - History search with the engine: `author:` also matches the email, `committer:` searches by committer and `message:`
-  searches the whole message.
+  searches the whole message. The search field shows how to write a search, like the app's.
 
 ### [0.2.7] - 2026-11-13
 
