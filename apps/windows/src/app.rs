@@ -153,6 +153,12 @@ enum Dialog {
         /// ブランチではなくタグを作る（New Tag at …）。
         tag: bool,
     },
+    /// ブランチの名前を変える（GTK4 版の `refops::ask_rename_branch`）。
+    Rename {
+        repo: Arc<Repository>,
+        from: String,
+        name: String,
+    },
     /// 確かめてから命令を実行する（Cherry-pick・Revert など。GTK4 版の `sheets::pick` ほか）。
     Confirm {
         repo: Arc<Repository>,
@@ -214,6 +220,8 @@ enum Message {
     OpenHistoryMenu,
     /// サイドバーの項目を右クリックした（項目のキー）。
     SidebarMenu(String),
+    /// 消すブランチを調べ終えた（名前、ほかのブランチにないコミットの数と一覧、または調べられなかった理由）。
+    DeleteChecked(Arc<Repository>, String, Result<(u64, Vec<String>), String>),
     Status(Arc<StatusSnapshot>),
     /// Working Copy の件名・本文が変わった。
     Summary(String),
@@ -330,11 +338,11 @@ impl Component for Root {
                     .unwrap_or_else(|| "HEAD".to_owned());
                 self.new_branch(start);
             }
-            Message::BranchName(name) => {
-                if let Some(Dialog::NewBranch { name: current, .. }) = &mut self.dialog {
-                    *current = name;
-                }
-            }
+            Message::BranchName(name) => match &mut self.dialog {
+                Some(Dialog::NewBranch { name: current, .. })
+                | Some(Dialog::Rename { name: current, .. }) => *current = name,
+                _ => {}
+            },
             Message::Command(id) if id == "push" => self.push(),
             Message::PullMode(index) => {
                 if let (Some(Dialog::Pull { mode, .. }), Some(index)) = (&mut self.dialog, index) {
@@ -494,6 +502,17 @@ impl Component for Root {
                     self.busy = Some(format!("{button}…"));
                     perform(context, repo, command, button.to_owned());
                 }
+                (Some(Dialog::Rename { repo, from, name }), ContentDialogResult::Primary) => {
+                    let to = name.trim().to_owned();
+                    if !to.is_empty() && to != from {
+                        perform(
+                            context,
+                            repo,
+                            json!({ "op": "renameBranch", "from": from, "to": to }),
+                            tr!("Rename"),
+                        );
+                    }
+                }
                 (Some(Dialog::Checkout { repo, command, .. }), ContentDialogResult::Primary) => {
                     perform(context, repo, command, "Checkout".to_owned());
                 }
@@ -568,6 +587,46 @@ impl Component for Root {
             },
             Message::Selected(selected) => self.selected = selected,
             Message::OpenHistoryMenu => self.menu_request += 1,
+            Message::DeleteChecked(repo, name, checked) => match checked {
+                Err(message) => {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("Couldn’t check the branches"),
+                        message,
+                    })
+                }
+                Ok((count, commits)) => {
+                    // GTK4 版の `sheets::delete_branches`: ほかのブランチにないコミットがあれば並べ、Delete Anyway で消す。
+                    let mut message = String::new();
+                    if count > 0 {
+                        message.push_str(&tr!(
+                            "Some commits are on no other branch; they go with the branch."
+                        ));
+                        message.push(' ');
+                    }
+                    message.push_str(&tr!("You can Undo this (Ctrl+Alt+Z)."));
+                    if count > 0 {
+                        message.push_str(&format!(
+                            "\n\n{}\n{}",
+                            tr!("Commits only on {branch}", branch = &name),
+                            commits.join("\n")
+                        ));
+                        if count > commits.len() as u64 {
+                            message.push_str("\n…");
+                        }
+                    }
+                    self.dialog = Some(Dialog::Confirm {
+                        repo,
+                        title: tr!("Delete {name}?", name = &name),
+                        message,
+                        button: if count > 0 {
+                            tr!("Delete Anyway")
+                        } else {
+                            tr!("Delete")
+                        },
+                        command: json!({ "op": "deleteBranch", "name": name, "force": count > 0 }),
+                    });
+                }
+            },
             Message::SidebarMenu(key) => {
                 // 操作のない項目（見出し・Workspace のページ）では開かない。
                 self.sidebar_key = Some(key);
@@ -698,6 +757,32 @@ impl Component for Root {
                     self.pick(oid.to_owned(), true);
                 } else if let Some(oid) = key.strip_prefix("reset:") {
                     self.reset(oid.to_owned());
+                } else if let Some(name) = key.strip_prefix("delete-branch:") {
+                    self.check_delete(context, name.to_owned());
+                } else if let Some(name) = key.strip_prefix("rename:") {
+                    if let Some(repo) = self.repo.clone() {
+                        self.dialog = Some(Dialog::Rename {
+                            repo,
+                            from: name.to_owned(),
+                            name: name.to_owned(),
+                        });
+                        self.dialog_inputs += 1;
+                    }
+                } else if let Some(name) = key.strip_prefix("delete-tag:") {
+                    if let Some(repo) = self.repo.clone() {
+                        // GTK4 版の `refops::tag_items` の Delete。リモートのタグは残る。
+                        self.dialog = Some(Dialog::Confirm {
+                            repo,
+                            title: tr!("Delete tag {name}?", name = name),
+                            message: format!(
+                                "{} {}",
+                                tr!("The remotes keep theirs."),
+                                tr!("You can Undo this (Ctrl+Alt+Z).")
+                            ),
+                            button: tr!("Delete"),
+                            command: json!({ "op": "deleteTag", "name": name }),
+                        });
+                    }
                 } else if let Some(rev) = key.strip_prefix("merge:") {
                     self.integrate(rev.to_owned(), false);
                 } else if let Some(rev) = key.strip_prefix("rebase:") {
@@ -1060,6 +1145,23 @@ impl Root {
                             .on_text_changed(context.callback(Message::BranchName)),
                     )),
                 ),
+            Some(Dialog::Rename { from, name, .. }) => dialog
+                .is_open(true)
+                .title(tr!("Rename {name}", name = from))
+                .primary_button_text(tr!("Rename"))
+                .close_button_text(tr!("Cancel"))
+                .is_primary_button_enabled(!name.trim().is_empty() && name.trim() != from)
+                .content(
+                    StackPanel::new().spacing(6.0).children((
+                        TextBlock::new()
+                            .text(tr!("New name of the branch."))
+                            .text_wrapping(TextWrapping::Wrap),
+                        TextBox::new()
+                            .element_ref(&self.dialog_input)
+                            .text(name.clone())
+                            .on_text_changed(context.callback(Message::BranchName)),
+                    )),
+                ),
             Some(Dialog::Checkout { title, message, .. }) => dialog
                 .is_open(true)
                 .title(title.clone())
@@ -1328,6 +1430,59 @@ impl Root {
         });
     }
 
+    /// ブランチを消す前に、今のブランチ（上流があり、そちらの方が少なければ上流）にないコミットを調べる（GTK4 版の
+    /// `sheets::unique_commits`）。プルリクエストでマージ済みかはまだ見ない。
+    fn check_delete(&mut self, context: &ComponentContext<Self>, name: String) {
+        let Some(repo) = self.repo.clone() else {
+            return beep();
+        };
+        let upstream = self
+            .refs
+            .as_ref()
+            .and_then(|r| {
+                r.refs
+                    .entries
+                    .iter()
+                    .find(|e| e.kind == amonhen_model::RefKind::Local && e.name == name)
+            })
+            .and_then(|e| if e.gone { None } else { e.detail.clone() });
+        context.spawn_background(move |_| {
+            let between = |base: &str| -> Result<(u64, Vec<String>), String> {
+                let command = json!({ "op": "between", "base": base, "tip": &name, "limit": 30 });
+                let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
+                    .map_err(|e| e.to_string())?;
+                if reply["ok"].as_bool() != Some(true) {
+                    return Err(reply["error"]
+                        .as_str()
+                        .map_or_else(|| tr!("Couldn’t check the branches"), str::to_owned));
+                }
+                let info = &reply["info"];
+                let commits = info["commits"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|c| {
+                        let oid = c["oid"].as_str().unwrap_or_default();
+                        format!(
+                            "{}  {}",
+                            &oid[..oid.len().min(8)],
+                            c["subject"].as_str().unwrap_or_default()
+                        )
+                    })
+                    .collect();
+                Ok((info["count"].as_u64().unwrap_or(0), commits))
+            };
+            let checked = between("HEAD").and_then(|head| match upstream {
+                Some(u) if head.0 > 0 => {
+                    let up = between(&u)?;
+                    Ok(if up.0 < head.0 { up } else { head })
+                }
+                _ => Ok(head),
+            });
+            Message::DeleteChecked(repo, name, checked)
+        });
+    }
+
     /// 決まった相手との Merge・Rebase の確認（サイドバーの右クリックから。GTK4 版の `sheets::integrate`）。
     fn integrate(&mut self, rev: String, rebase: bool) {
         let Some(repo) = self.repo.clone() else {
@@ -1409,6 +1564,20 @@ impl Root {
             items.push(MenuItem::item(
                 format!("tag:{name}"),
                 tr!("New Tag at {name}…", name = name),
+            ));
+            items.push(MenuItem::item(format!("rename:{name}"), tr!("Rename…")));
+            if !is_head {
+                items.push(MenuItem::item(
+                    format!("delete-branch:{name}"),
+                    tr!("Delete {name}…", name = name),
+                ));
+            }
+        }
+        if entry.kind == RefKind::Tag {
+            items.push(MenuItem::separator("-tag"));
+            items.push(MenuItem::item(
+                format!("delete-tag:{name}"),
+                tr!("Delete {name}…", name = name),
             ));
         }
         items
