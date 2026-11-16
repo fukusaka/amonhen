@@ -13,6 +13,7 @@ mod measure;
 mod menus;
 mod render;
 mod sidebar;
+mod stashes;
 mod win32;
 mod winui;
 mod workcopy;

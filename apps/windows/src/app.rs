@@ -103,6 +103,8 @@ struct Root {
     working_file: Option<String>,
     /// 走っている操作（ステータスバーに出す）。
     busy: Option<String>,
+    /// Stashes の画面で選んでいる stash の名前。
+    stash: Option<String>,
     /// ダイアログの入力の欄（Enter で既定のボタンを押す）と、開いた回数（開いた後にキーを付ける）。
     dialog_input: ElementRef<TextBox>,
     dialog_inputs: u64,
@@ -112,6 +114,7 @@ struct Root {
 enum Page {
     History,
     WorkingCopy,
+    Stashes,
 }
 
 /// 窓に重ねるダイアログ（macOS 版のシート、GTK4 版の `sheets`）。
@@ -161,6 +164,12 @@ enum Dialog {
         name: String,
         fetch: String,
         push: String,
+    },
+    /// stash から新しいブランチを作る（`git stash branch`。GTK4 版の `stashes::branch`）。
+    StashBranch {
+        repo: Arc<Repository>,
+        stash: String,
+        name: String,
     },
     /// ブランチの名前を変える（GTK4 版の `refops::ask_rename_branch`）。
     Rename {
@@ -229,6 +238,8 @@ enum Message {
     OpenHistoryMenu,
     /// サイドバーの項目を右クリックした（項目のキー）。
     SidebarMenu(String),
+    /// Stashes の一覧で選んだ行。
+    StashSelected(Option<usize>),
     /// 編集するリモートを読んだ（なければ None）。
     RemoteLoaded(Arc<Repository>, Option<(String, String, String)>),
     /// リモートのシートの欄（0 は名前、1 は fetch、2 は push の URL）。
@@ -300,6 +311,7 @@ impl Component for Root {
             sidebar_tree: ElementRef::new(),
             sidebar_menu_host: ElementRef::new(),
             sidebar_key: None,
+            stash: None,
             sidebar_request: 0,
             page: Page::History,
             repo: None,
@@ -353,7 +365,8 @@ impl Component for Root {
             }
             Message::BranchName(name) => match &mut self.dialog {
                 Some(Dialog::NewBranch { name: current, .. })
-                | Some(Dialog::Rename { name: current, .. }) => *current = name,
+                | Some(Dialog::Rename { name: current, .. })
+                | Some(Dialog::StashBranch { name: current, .. }) => *current = name,
                 _ => {}
             },
             Message::Command(id) if id == "push" => self.push(),
@@ -533,6 +546,17 @@ impl Component for Root {
                     let commands =
                         remote_changes(original.as_ref(), name.trim(), fetch.trim(), push.trim());
                     perform_all(context, repo, commands, title);
+                }
+                (Some(Dialog::StashBranch { repo, stash, name }), ContentDialogResult::Primary) => {
+                    let branch = name.trim().to_owned();
+                    if !branch.is_empty() {
+                        perform(
+                            context,
+                            repo,
+                            json!({ "op": "stashBranch", "name": stash, "branch": branch }),
+                            tr!("Create"),
+                        );
+                    }
                 }
                 (Some(Dialog::Rename { repo, from, name }), ContentDialogResult::Primary) => {
                     let to = name.trim().to_owned();
@@ -919,6 +943,10 @@ impl Component for Root {
                             command: json!({ "op": "changeRemote", "change": { "kind": "remove", "name": remote } }),
                         });
                     }
+                } else if let Some((op, name)) = key.split_once(':')
+                    && let Some(op) = op.strip_prefix("stash-")
+                {
+                    self.stash_action(op, name.to_owned());
                 } else if let Some(rev) = key.strip_prefix("merge:") {
                     self.integrate(rev.to_owned(), false);
                 } else if let Some(rev) = key.strip_prefix("rebase:") {
@@ -935,7 +963,19 @@ impl Component for Root {
                 self.show_page(Page::WorkingCopy)
             }
             Message::Invoked(key) if key == "page:history" => self.show_page(Page::History),
+            Message::Invoked(key) if key == "page:stashes" => self.show_page(Page::Stashes),
+            Message::StashSelected(index) => {
+                let entry = index.and_then(|i| self.stash_entries().get(i).map(|e| (*e).clone()));
+                self.stash = entry.as_ref().map(|e| e.name.clone());
+                if let Some(target) = entry.and_then(|e| e.target) {
+                    with_history(|h| h.session.data.want_stash(target));
+                }
+            }
             Message::Invoked(key) => {
+                // Stashes の画面からは History に戻ってそのコミットへ。
+                if self.page == Page::Stashes {
+                    self.show_page(Page::History);
+                }
                 if let Some(entry) = self.entry(&key)
                     && let Some(target) = entry.target
                 {
@@ -1171,6 +1211,7 @@ impl Component for Root {
                 // Working Copy は History の上に重ねる（History の描画は SwapChainPanel の毎フレームの知らせで回って
                 // いて、外すと止まる）。
                 self.working_copy_view(context),
+                self.stashes_view(context),
             ));
         // ダイアログの入力の欄: フォーカスを入れ、Enter で既定のボタン（ContentDialog は Enter を既定のボタンに
         // 回さない）。
@@ -1327,6 +1368,25 @@ impl Root {
                         )),
                     )
             }
+            Some(Dialog::StashBranch { stash, name, .. }) => dialog
+                .is_open(true)
+                .title(tr!("New Branch from {name}", name = stash))
+                .primary_button_text(tr!("Create"))
+                .close_button_text(tr!("Cancel"))
+                .is_primary_button_enabled(!name.trim().is_empty())
+                .content(
+                    StackPanel::new().spacing(6.0).children((
+                        TextBlock::new()
+                            .text(tr!(
+                                "Created where the stash was made, checked out, and the stash applied there (then dropped)."
+                            ))
+                            .text_wrapping(TextWrapping::Wrap),
+                        TextBox::new()
+                            .element_ref(&self.dialog_input)
+                            .text(name.clone())
+                            .on_text_changed(context.callback(Message::BranchName)),
+                    )),
+                ),
             Some(Dialog::Rename { from, name, .. }) => dialog
                 .is_open(true)
                 .title(tr!("Rename {name}", name = from))
@@ -1977,8 +2037,119 @@ impl Root {
     }
 
     fn show_page(&mut self, page: Page) {
+        let from = self.page;
         self.page = page;
-        with_history(|h| h.set_working_page(page == Page::WorkingCopy));
+        let stash = self
+            .stash
+            .as_deref()
+            .and_then(|name| self.stash_entries().iter().find(|e| e.name == name)?.target);
+        with_history(|h| {
+            h.set_working_page(page == Page::WorkingCopy);
+            if page == Page::Stashes {
+                // 選んでいた stash を出し直す。
+                if let Some(target) = stash {
+                    h.session.data.want_stash(target);
+                }
+            } else if from == Page::Stashes {
+                // History で選んでいるコミットを読み直す。
+                h.reload_selected();
+            }
+        });
+    }
+
+    /// stash の一覧（新しい順）。
+    fn stash_entries(&self) -> Vec<&RefEntry> {
+        self.refs.as_ref().map_or_else(Vec::new, |r| {
+            r.refs
+                .entries
+                .iter()
+                .filter(|e| e.kind == amonhen_model::RefKind::Stash)
+                .collect()
+        })
+    }
+
+    /// stash の操作（GTK4 版の `sheets::pop`・`stashes::confirm_drop`・`stashes::branch`）。`op` は apply・pop・
+    /// drop・branch。
+    fn stash_action(&mut self, op: &str, name: String) {
+        let Some(repo) = self.repo.clone() else {
+            return beep();
+        };
+        let message = self
+            .stash_entries()
+            .iter()
+            .find(|e| e.name == name)
+            .and_then(|e| e.detail.clone());
+        let mut text = message.map(|m| format!("“{m}”\n")).unwrap_or_default();
+        let undo = tr!("You can Undo this (Ctrl+Alt+Z).");
+        self.dialog = Some(match op {
+            "apply" | "pop" => {
+                let pop = op == "pop";
+                let what = if pop {
+                    tr!("Applies it to the working tree and removes it from the list.")
+                } else {
+                    tr!("Applies it to the working tree. It stays in the list.")
+                };
+                text.push_str(&format!("{what} {undo}"));
+                Dialog::Confirm {
+                    repo,
+                    title: if pop {
+                        tr!("Pop {name}?", name = &name)
+                    } else {
+                        tr!("Apply the stash {name}?", name = &name)
+                    },
+                    message: text,
+                    button: if pop { "Pop" } else { "Apply" }.to_owned(),
+                    command: json!({ "op": "stashApply", "name": name, "pop": pop }),
+                }
+            }
+            "drop" => {
+                text.push_str(&undo);
+                Dialog::Confirm {
+                    repo,
+                    title: tr!("Drop {name}?", name = &name),
+                    message: text,
+                    button: "Drop".to_owned(),
+                    command: json!({ "op": "stashDrop", "name": name }),
+                }
+            }
+            "branch" => {
+                self.dialog_inputs += 1;
+                Dialog::StashBranch {
+                    repo,
+                    stash: name,
+                    name: String::new(),
+                }
+            }
+            _ => return,
+        });
+    }
+
+    fn stashes_view(&self, context: &ViewContext<Self>) -> View {
+        if self.page != Page::Stashes {
+            return View::empty();
+        }
+        let stashes = self.stash_entries();
+        let selected = self.stash.as_deref();
+        let callbacks = crate::stashes::Callbacks {
+            selected: context.callback(Message::StashSelected),
+            button: Box::new(move |op: &'static str| {
+                let name = selected.unwrap_or_default().to_owned();
+                context.callback(move |()| Message::HistoryMenu(format!("{op}:{name}")))
+            }),
+            menu: Box::new(|| context.callback(Message::HistoryMenu)),
+        };
+        let view = crate::stashes::view(
+            &stashes,
+            selected,
+            self.refs
+                .as_ref()
+                .and_then(|r| r.refs.head_branch.as_deref()),
+            callbacks,
+        );
+        Border::new()
+            .background(Brush::Solid(Color::rgb(0xff, 0xff, 0xff)))
+            .grid_column(1)
+            .content(view)
     }
 
     /// Working Copy で選んでいるファイルの差分を読む（なくなっていれば消す）。
@@ -3018,6 +3189,12 @@ impl HistoryView {
         } else {
             data.commit.as_ref().map_or(0, |c| c.diff.rows.len())
         }
+    }
+
+    /// 選んでいるコミットの詳細と差分を読み直す（Stashes の画面から戻ったとき）。
+    fn reload_selected(&mut self) {
+        self.selected = None;
+        self.multi_sent.clear();
     }
 
     /// 差分の欄に出すもの（History の選んだコミットか、Working Copy の選んだファイル）を替える。

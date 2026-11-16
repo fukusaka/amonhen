@@ -702,6 +702,39 @@ impl Data {
         });
     }
 
+    /// stash `id` の詳細と中身（`stash_changes`: 作業ツリーと index の変更、untracked のファイル）を裏で読む
+    /// （Stashes の画面。History の行ではないので、複数選んだときと同じ鍵を使う）。
+    pub fn want_stash(&mut self, id: amonhen_model::Oid) {
+        let (Some(repo), Some(history)) = (self.repo.clone(), self.history.clone()) else {
+            return;
+        };
+        self.selection_seq = self.selection_seq.wrapping_add(1) & 0x7fff_ffff;
+        let key = 0x8000_0000 | self.selection_seq;
+        self.commit_wanted = Some(key);
+        self.early_extras = None;
+        let generation = history.generation;
+        let (tx, wake) = (self.tx.clone(), self.wake.clone());
+        std::thread::spawn(move || {
+            let load = || -> Result<CommitShown, String> {
+                let info = repo.commit_info(&id).map_err(|e| e.to_string())?;
+                let changes = repo.stash_changes(&id).map_err(|e| e.to_string())?;
+                let stacked = repo.stacked_diff(&changes).map_err(|e| e.to_string())?;
+                Ok(CommitShown::new(key, info, Arc::new(stacked)))
+            };
+            let shown = match load() {
+                Ok(shown) => shown,
+                Err(e) => {
+                    let _ = tx.send(Event::Failed(format!("stash を読めない: {e}")));
+                    return wake();
+                }
+            };
+            let (stacked, collapsed) = (shown.stacked.clone(), shown.collapsed.clone());
+            let _ = tx.send(Event::Commit(generation, Box::new(shown)));
+            wake();
+            send_syntax(tx, wake, generation, key, 0, stacked, collapsed);
+        });
+    }
+
     /// 複数選んだ行（`rows`、昇順で 2 つ以上）の差分と、詳細の欄の見出しを裏で読む（GTK4 版と同じく、コアの
     /// `selection_diff` が範囲・2 つ・とびとびで差分の取り方を決める）。
     pub fn want_selection(&mut self, rows: Vec<u32>) {
