@@ -1563,7 +1563,14 @@
 "Uses this path on the host." = "SSH 先のこのパスのものを使います。";
 "The amonhen on the host’s PATH if it is this build, else one sent earlier, else Amon Hen sends one." = "SSH 先の PATH の amonhen がこのビルドならそれ、なければ前に送ったもの、それもなければ送り込みます。";
 "Engine to use" = "使うエンジン";
-"Send one when none fits" = "合うものがなければ送り込む";
+"When none fits" = "合うものがないとき";
+"Ask before sending one" = "送る前に聞く";
+"Send one without asking" = "聞かずに送る";
+"Don’t send one" = "送らない";
+"Send the engine to {host}?" = "{host} にエンジンを送りますか？";
+"Send a new version of the engine to {host}?" = "{host} にエンジンの新しい版を送りますか？";
+"To open repositories on this host, Amon Hen puts its engine (amonhen, {size} MB, {platform}) on the host and runs it there. If you don’t send it, Amon Hen won’t send one to this host until you turn it back on in Settings > SSH Hosts." = "このホストのリポジトリを開くために、Amon Hen はエンジン（amonhen、{size} MB、{platform}）をホストに置いて動かします。送らない場合、設定 > SSH ホストで戻すまで、このホストにはエンジンを送りません。";
+"Send without asking to this host from now on" = "今後このホストには聞かずに送る";
 "The git chosen in Programs is {git}." = "プログラムで選んだ git は {git} です。";
 "Use the git on the PATH" = "PATH の git に戻す";
 "Use the login shell’s environment variables" = "ログインシェルの環境変数を使う";
@@ -2320,3 +2327,5 @@
 "Merge them one by one (a merge commit for each)" = "1 つずつ merge する（それぞれ merge のコミットを作る）";
 "(optional)" = "（任意）";
 "Branch to follow" = "追うブランチ";
+"Send" = "送る";
+"Don’t Send" = "送らない";
