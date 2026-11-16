@@ -1083,6 +1083,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         } catch {
             NSLog("リポジトリを監視できない: \(error)")
         }
+        // 署名を検証する側（SSH 先のリポジトリ）か、検証の設定（`gpg.*`。手元のリポジトリも）が変わったら検証し直す。
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(signatureCheckChanged), name: .signatureCheckChanged, object: nil)
         watchConnection()
         if debug { startDebugOptions() }
     }
@@ -1094,8 +1097,6 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     /// daemon 越しなら、初めての読み込みの進み具合と、接続が切れたことを出す。
     private func watchConnection() {
         guard RepositoryLocation.isRemote(location) else { return }
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(signatureCheckChanged), name: .signatureCheckChanged, object: nil)
         updateConnection()
         connectionTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.updateConnection() }
@@ -1120,7 +1121,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         }
     }
 
-    /// 署名を検証する側が変わった。コアと画面が覚えていた結果を捨て、見えているものを検証し直す。
+    /// 署名を検証する側か検証の設定が変わった。コアと画面が覚えていた結果を捨て、見えているものを検証し直す
+    /// （手元のリポジトリでは検証する側は変わらず、コアの結果は設定を書いたときに捨てている）。
     @objc private func signatureCheckChanged() {
         repository.setLocalSignatureCheck(Settings.sshHost(of: location).map(Settings.checkSignaturesLocally(on:)) ?? Settings.checkRemoteSignaturesLocally)
         updateSignaturePlace()

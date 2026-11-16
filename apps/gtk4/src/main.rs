@@ -991,8 +991,8 @@ fn build_tab(
     pages.add_named(&range_diff.root, Some(rangediff::PAGE));
     let sidebar = Rc::new(Sidebar::new());
     sidebar.set_location(&text);
-    // 署名を検証する側（Settings > SSH Hosts）が変わった: コアと画面が覚えていた結果を捨て、見えているものを
-    // 検証し直す（macOS 版の `signatureCheckChanged`）。
+    // 署名を検証する側（Settings > SSH Hosts）か、検証の設定（`gpg.*`）が変わった: コアと画面が覚えていた結果を
+    // 捨て、見えているものを検証し直す（macOS 版の `signatureCheckChanged`）。
     {
         let (v, d, s, location) = (
             view.downgrade(),
@@ -1003,7 +1003,7 @@ fn build_tab(
         let (st, rd) = (Rc::downgrade(&stashes), Rc::downgrade(&range_diff));
         // History の表がある間だけ見る（閉じたタブの分を残さない）。
         settings::connect_changed_while(&view, move |key| {
-            if key != sshhosts::SIGNATURE_BY_HOST {
+            if key != sshhosts::SIGNATURE_BY_HOST && key != settings::SIGNATURE_CONFIG {
                 return;
             }
             let (v, d, s, location) = (v.clone(), d.clone(), s.clone(), location.clone());

@@ -1585,6 +1585,9 @@
 "Mailmap file" = "mailmap のファイル";
 "Read after the repository’s .mailmap." = "リポジトリの .mailmap の後に読みます。";
 "Choose a mailmap file" = "mailmap のファイルを選ぶ";
+"Allowed signers" = "許可する署名者";
+"Public keys trusted to verify SSH signatures." = "SSH の署名の検証で信用する公開鍵です。";
+"Choose an allowed signers file" = "許可する署名者のファイルを選ぶ";
 "The mailmap changed. Showing the names again." = "mailmap が変わったので、名前を出し直しました。";
 
 /* Range Diff */

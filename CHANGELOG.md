@@ -9,6 +9,11 @@ becomes the GitHub Release notes.
 
 ### Unreleased
 
+#### Added
+
+- Repository Settings > Author and Signing has Allowed signers, the file (`gpg.ssh.allowedSignersFile`) for verifying
+  SSH signatures; changing a `gpg.*` setting there verifies the shown signatures again.
+
 #### Changed
 
 - Pushing a tag and a remote's Prune ask first, like every other operation that talks to a remote.
@@ -1155,6 +1160,13 @@ First release.
 - Repositories on SSH hosts through a daemon on the host.
 
 ## VSCode extension
+
+### Unreleased
+
+#### Added
+
+- Repository Settings > Author and Signing has Allowed signers, the file (`gpg.ssh.allowedSignersFile`) for verifying
+  SSH signatures; changing a `gpg.*` setting there verifies the shown signatures again.
 
 ### [0.2.7] - 2026-11-13
 
