@@ -199,18 +199,26 @@ fn scrolling_is_measured_without_a_terminal() {
     assert_eq!(m.incomplete_frames, 0);
 }
 
+/// 区切りの線で分けた `index` 番目の列（右の空白は除く）。
+fn column(line: &str, index: usize) -> Option<String> {
+    line.split('│').nth(index).map(|c| c.trim_end().to_owned())
+}
+
 /// 幅があれば、History の右に選んでいるコミットの詳細と差分が並ぶ
 #[test]
 fn details_sit_beside_history_when_wide() {
     let dir = tempfile::tempdir().unwrap();
     changed(dir.path());
-    let text = amonhen_tui::snapshot(open(dir.path()), 120, 20, clock(), "").unwrap();
+    let text = amonhen_tui::snapshot(open(dir.path()), 160, 20, clock(), "").unwrap();
     println!("{text}");
     let lines: Vec<&str> = text.lines().collect();
-    // 左が History、区切りの右が詳細。
-    let right = |line: &str| line.split_once('│').map(|(_, r)| r.to_owned());
-    let details: Vec<String> = lines.iter().filter_map(|l| right(l)).collect();
-    assert!(lines[1].starts_with("◉  [main] Take the lane from the trunk"));
+    // 左からサイドバー、History、詳細。
+    let details: Vec<String> = lines.iter().filter_map(|l| column(l, 2)).collect();
+    assert!(
+        column(lines[1], 1)
+            .unwrap()
+            .starts_with("◉  [main] Take the lane from the trunk")
+    );
     assert_eq!(details[0], "Take the lane from the trunk");
     assert_eq!(details[2], "The first lane was always 0.");
     assert_eq!(details[4], "Author   Ann <ann@example.com>");
@@ -266,15 +274,14 @@ fn dirty(dir: &Path) {
 fn working_copy_lists_files_beside_the_diff() {
     let dir = tempfile::tempdir().unwrap();
     dirty(dir.path());
-    let text = amonhen_tui::snapshot(open(dir.path()), 120, 12, clock(), "1").unwrap();
+    let text = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "1").unwrap();
     println!("{text}");
     let lines: Vec<&str> = text.lines().collect();
-    assert!(lines[0].ends_with("main   1 Changes (3)   2 History"));
-    let (list, diff): (Vec<&str>, Vec<&str>) = lines[1..8]
-        .iter()
-        .map(|l| l.split_once('│').unwrap())
-        .map(|(l, d)| (l.trim_end(), d))
-        .unzip();
+    // サイドバーの Changes の行に、変わったファイルの数。
+    assert!(column(lines[2], 0).unwrap().starts_with("  Changes"));
+    assert!(column(lines[2], 0).unwrap().ends_with(" 3"));
+    let list: Vec<String> = lines[1..8].iter().filter_map(|l| column(l, 1)).collect();
+    let diff: Vec<String> = lines[1..8].iter().filter_map(|l| column(l, 2)).collect();
     // stage の印（まだ・済み）、状態の 1 文字、パス。
     assert_eq!(
         list[..3],
@@ -291,7 +298,7 @@ fn working_copy_lists_files_beside_the_diff() {
 fn space_stages_and_unstages_the_file() {
     let dir = tempfile::tempdir().unwrap();
     dirty(dir.path());
-    let staged = amonhen_tui::snapshot(open(dir.path()), 120, 12, clock(), "1 ").unwrap();
+    let staged = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "1 ").unwrap();
     println!("{staged}");
     // 一覧の印が替わり、差分の行に stage 済みの印がつく。
     assert!(staged.contains("[x] M lane.rs"));
@@ -305,7 +312,7 @@ fn space_stages_and_unstages_the_file() {
         String::from_utf8_lossy(&out.stdout).into_owned()
     };
     assert_eq!(index(dir.path()), "lane.rs\nstaged.txt\n");
-    let unstaged = amonhen_tui::snapshot(open(dir.path()), 120, 12, clock(), "1 ").unwrap();
+    let unstaged = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "1 ").unwrap();
     assert!(unstaged.contains("[ ] M lane.rs"));
     assert_eq!(index(dir.path()), "staged.txt\n");
 }
@@ -453,4 +460,56 @@ fn amend_rewrites_the_last_commit() {
         "Start again\n"
     );
     assert_eq!(git_out(dir.path(), &["status", "--porcelain"]), "");
+}
+
+/// サイドバー: Workspace の行と、Branches・Tags。ref を開くと、History でそのコミットを選ぶ
+#[test]
+fn sidebar_lists_refs_and_jumps_to_them() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    let text = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "").unwrap();
+    println!("{text}");
+    let side: Vec<String> = text.lines().skip(1).filter_map(|l| column(l, 0)).collect();
+    assert_eq!(
+        side[..8],
+        [
+            "Workspace",
+            "  Changes",
+            "  History",
+            "Branches",
+            "● main",
+            "  topic",
+            "Tags",
+            "  v1"
+        ]
+    );
+    // `0` でサイドバーへ。History の 2 つ下が topic。Enter で、そのコミットを選ぶ。
+    let jumped = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jj\n").unwrap();
+    println!("{jumped}");
+    assert!(jumped.contains("3/5"));
+    let details: Vec<String> = jumped.lines().filter_map(|l| column(l, 2)).collect();
+    assert_eq!(details[0], "日本語の件名のコミット");
+    // Changes の行を開くと、Working Copy。
+    let changes = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0k\n").unwrap();
+    assert!(changes.contains("No changes"));
+}
+
+/// 狭ければ、サイドバーは `0` で呼んだときだけ出る
+#[test]
+fn sidebar_opens_on_demand_when_narrow() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    let text = amonhen_tui::snapshot(open(dir.path()), 64, 10, clock(), "0").unwrap();
+    println!("{text}");
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines[1], "Workspace");
+    assert_eq!(lines[5], "● main");
+    let back = amonhen_tui::snapshot(open(dir.path()), 64, 10, clock(), "0jj\n").unwrap();
+    println!("{back}");
+    assert!(
+        back.lines()
+            .nth(3)
+            .unwrap()
+            .contains("[topic] 日本語の件名のコミット")
+    );
 }

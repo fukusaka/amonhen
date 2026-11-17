@@ -11,6 +11,7 @@ mod diff;
 mod editor;
 mod history;
 mod loader;
+mod sidebar;
 mod terminal;
 
 use std::io::Write;
@@ -198,11 +199,12 @@ pub fn measure_scroll(
         },
     )?;
     terminal.draw(|frame| app.draw(frame))?;
+    let column = app.main_column();
     let wheel = |kind| {
         Event::Input(Input::Mouse(MouseEvent {
             kind,
-            // History の上（詳細と並んでいても、左が History）。
-            column: 1,
+            // History の上（サイドバーの右、詳細の左）。
+            column,
             row: rows / 2,
             modifiers: KeyModifiers::NONE,
         }))

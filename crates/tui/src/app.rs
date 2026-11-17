@@ -20,6 +20,7 @@ use crate::details::Details;
 use crate::diff::{PAN, Theme};
 use crate::history::{History, WHEEL_ROWS};
 use crate::loader::{Loaded, Loader, Request};
+use crate::sidebar::{self, Picked, Sidebar};
 
 pub enum Event {
     Input(Input),
@@ -40,6 +41,7 @@ enum View {
 /// キーが届く所: メインの画面の一覧（History・変わったファイル）か、その横（詳細・差分）。
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Focus {
+    Sidebar,
     Main,
     Side,
     /// コミットメッセージの欄（Working Copy の一覧の下）。
@@ -48,6 +50,7 @@ enum Focus {
 
 /// 画面の割り方（一番上と一番下の行を除いた所）。
 struct Layout {
+    sidebar: Option<Rect>,
     main: Option<Rect>,
     side: Option<Rect>,
 }
@@ -62,6 +65,7 @@ pub struct App {
     history: History,
     details: Details,
     changes: Changes,
+    sidebar: Sidebar,
     view: View,
     focus: Focus,
     /// リポジトリ・ref・History を読んでいる。
@@ -92,7 +96,9 @@ pub struct App {
 /// 一番上の行（リポジトリとブランチ）と一番下の行（案内）を除いた所に、History と詳細を出す。
 const BARS: u16 = 2;
 /// これ以上の幅なら、History の右に詳細を並べる。狭ければ、詳細は History の所に開く（Enter）。
-const SIDE_BY_SIDE: u16 = 120;
+const SIDE_BY_SIDE: u16 = 116;
+/// これ以上の幅なら、左にサイドバーを出す。狭ければ、呼んだとき（`0`）だけメインの画面の所に出す。
+const SIDEBAR_FROM: u16 = 100;
 /// 並べたときの History の幅は全体の 5 分の 2（少なくともこの幅）。
 const HISTORY_MIN: u16 = 60;
 
@@ -103,6 +109,7 @@ impl App {
             history: History::default(),
             details: Details::default(),
             changes: Changes::default(),
+            sidebar: Sidebar::default(),
             view: View::History,
             focus: Focus::Main,
             opening: false,
@@ -149,6 +156,7 @@ impl App {
         self.size = (cols, rows);
         self.history.set_height(rows.saturating_sub(BARS));
         self.changes.set_height(rows.saturating_sub(BARS));
+        self.sidebar.set_height(rows.saturating_sub(BARS));
         // 詳細の幅は、並べても開いても、キーの届く所によらない。
         let layout = self.layout();
         let details = layout.side.or(layout.main).unwrap_or_default();
@@ -160,21 +168,41 @@ impl App {
     fn layout(&self) -> Layout {
         let (cols, rows) = self.size;
         let height = rows.saturating_sub(BARS);
-        if cols >= SIDE_BY_SIDE {
-            let left = (cols / 5 * 2).max(HISTORY_MIN);
-            // 間に区切りの 1 列。
+        // 狭ければ、サイドバーは呼んだときだけ、メインの画面の所に出す。
+        if cols < SIDEBAR_FROM && self.focus == Focus::Sidebar {
             return Layout {
-                main: Some(Rect::new(0, 1, left, height)),
-                side: Some(Rect::new(left + 1, 1, cols - left - 1, height)),
+                sidebar: Some(Rect::new(0, 1, cols, height)),
+                main: None,
+                side: None,
             };
         }
-        let all = Some(Rect::new(0, 1, cols, height));
+        let (sidebar, x) = match cols >= SIDEBAR_FROM {
+            // サイドバーの右に、区切りの 1 列。
+            true => (
+                Some(Rect::new(0, 1, sidebar::WIDTH, height)),
+                sidebar::WIDTH + 1,
+            ),
+            false => (None, 0),
+        };
+        let rest = cols - x;
+        if rest >= SIDE_BY_SIDE {
+            let left = (rest / 5 * 2).max(HISTORY_MIN);
+            // 間に区切りの 1 列。
+            return Layout {
+                sidebar,
+                main: Some(Rect::new(x, 1, left, height)),
+                side: Some(Rect::new(x + left + 1, 1, rest - left - 1, height)),
+            };
+        }
+        let all = Some(Rect::new(x, 1, rest, height));
         match self.focus {
-            Focus::Main | Focus::Message => Layout {
+            Focus::Sidebar | Focus::Main | Focus::Message => Layout {
+                sidebar,
                 main: all,
                 side: None,
             },
             Focus::Side => Layout {
+                sidebar,
                 main: None,
                 side: all,
             },
@@ -197,6 +225,11 @@ impl App {
 
     pub fn error(&self) -> Option<&str> {
         self.error.as_deref()
+    }
+
+    /// メインの画面の中の 1 列（計測で、そこにホイールを送る）。
+    pub fn main_column(&self) -> u16 {
+        self.layout().main.map_or(0, |at| at.x + 1)
     }
 
     pub fn history_rows(&self) -> u32 {
@@ -241,13 +274,27 @@ impl App {
                             .unwrap_or_default();
                         self.branch = refs["headBranch"].as_str().map(str::to_owned);
                         self.head = refs["head"].as_str().map(str::to_owned);
+                        // 読み直したら、選んでいたコミットを選び直す。
+                        let selected = self.history.selected_id();
                         self.history.opened(&refs, &history);
+                        self.sidebar.set_refs(&refs);
+                        if let Some(id) = selected {
+                            self.send(Request::RowOf {
+                                history: self.history.id().clone(),
+                                id: id.to_string(),
+                            });
+                        }
                         self.opening = false;
                         if std::mem::take(&mut self.reopen) {
                             self.open();
                         }
                     }
                     Loaded::Rows { start, reply } => self.history.loaded(start, &reply),
+                    Loaded::RowOf(row) => {
+                        if let Some(row) = row {
+                            self.history.select(row);
+                        }
+                    }
                     Loaded::Commit { id, result } => {
                         if let Some(request) = self.details.loaded(&id, result, &self.clock) {
                             self.send(request);
@@ -352,7 +399,7 @@ impl App {
         }
         let control = key.modifiers.contains(KeyModifiers::CONTROL);
         // 詳細・差分が、一覧の所に開いている（並んでいない）。
-        let covering = self.layout().main.is_none();
+        let covering = self.focus == Focus::Side && self.layout().main.is_none();
         // エラーは、次のキーまで出しておく。
         self.dirty |= self.error.take().is_some() | self.notice.take().is_some();
         // 確かめている間は、`y`（か Enter）で行い、ほかのキーでやめる。
@@ -372,11 +419,19 @@ impl App {
             KeyCode::Char('c') if control => self.quit = true,
             KeyCode::Char('q') if !covering => self.quit = true,
             KeyCode::Tab | KeyCode::BackTab => {
+                // サイドバーが出ていれば、そこも回る。
+                let sidebar = self.size.0 >= SIDEBAR_FROM;
                 self.focus = match self.focus {
+                    Focus::Sidebar => Focus::Main,
                     Focus::Main | Focus::Message => Focus::Side,
+                    Focus::Side if sidebar => Focus::Sidebar,
                     Focus::Side => Focus::Main,
                 };
                 self.dirty = true;
+            }
+            KeyCode::Char('0') => {
+                self.dirty |= self.focus != Focus::Sidebar;
+                self.focus = Focus::Sidebar;
             }
             KeyCode::Char('1') => self.show(View::Changes),
             KeyCode::Char('2') => self.show(View::History),
@@ -387,6 +442,7 @@ impl App {
                     (View::Changes, Focus::Main) => self.changes_key(key.code, control),
                     (View::Changes, Focus::Side) => self.changes_diff_key(key.code, control),
                     (_, Focus::Message) => false,
+                    (_, Focus::Sidebar) => self.sidebar_key(key.code, control),
                 }
             }
         }
@@ -397,6 +453,48 @@ impl App {
         self.dirty |= self.view != view || self.focus != Focus::Main;
         self.view = view;
         self.focus = Focus::Main;
+        self.sidebar.show_view(view == View::Changes);
+    }
+
+    fn sidebar_key(&mut self, code: KeyCode, control: bool) -> bool {
+        let page = self.sidebar.page();
+        match code {
+            KeyCode::Char('d') if control => self.sidebar.move_selection(page / 2),
+            KeyCode::Char('u') if control => self.sidebar.move_selection(-page / 2),
+            KeyCode::Char('j') | KeyCode::Down => self.sidebar.move_selection(1),
+            KeyCode::Char('k') | KeyCode::Up => self.sidebar.move_selection(-1),
+            KeyCode::PageDown => self.sidebar.move_selection(page),
+            KeyCode::PageUp => self.sidebar.move_selection(-page),
+            KeyCode::Char('g') | KeyCode::Home => self.sidebar.move_selection(i64::MIN / 2),
+            KeyCode::Char('G') | KeyCode::End => self.sidebar.move_selection(i64::MAX / 2),
+            KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
+                self.pick();
+                true
+            }
+            KeyCode::Esc => {
+                self.focus = Focus::Main;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// サイドバーで選んでいる行を開く: メインの画面を替えるか、ref のコミットを History で選ぶ。
+    fn pick(&mut self) {
+        match self.sidebar.picked() {
+            Some(Picked::Changes) => self.show(View::Changes),
+            Some(Picked::History) => self.show(View::History),
+            Some(Picked::Commit(id)) => {
+                self.view = View::History;
+                self.focus = Focus::Main;
+                self.send(Request::RowOf {
+                    history: self.history.id().clone(),
+                    id,
+                });
+            }
+            None => {}
+        }
+        self.dirty = true;
     }
 
     /// メッセージの欄でのキー: Esc と Tab で一覧へ、`Ctrl-s`（か Alt-Enter）でコミット、ほかは入力。
@@ -449,6 +547,10 @@ impl App {
                     self.send(request);
                 }
                 false
+            }
+            KeyCode::Char('h') | KeyCode::Left => {
+                self.focus = Focus::Sidebar;
+                true
             }
             KeyCode::Char('c') if self.changes.has_message_field() => {
                 self.focus = Focus::Message;
@@ -552,6 +654,10 @@ impl App {
             KeyCode::PageUp => self.history.move_selection(-page),
             KeyCode::Char('g') | KeyCode::Home => self.history.select(0),
             KeyCode::Char('G') | KeyCode::End => self.history.select(u32::MAX),
+            KeyCode::Char('h') | KeyCode::Left => {
+                self.focus = Focus::Sidebar;
+                true
+            }
             KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
                 self.focus = Focus::Side;
                 true
@@ -604,7 +710,19 @@ impl App {
         };
         let click = matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left));
         let history = self.view == View::History;
-        let changed = if let Some(area) = inside(layout.main) {
+        let changed = if let Some(area) = inside(layout.sidebar) {
+            match wheel {
+                Some(rows) => self.sidebar.scroll(rows),
+                None if click => {
+                    self.focus = Focus::Sidebar;
+                    if self.sidebar.click(mouse.row - area.y) {
+                        self.pick();
+                    }
+                    true
+                }
+                None => false,
+            }
+        } else if let Some(area) = inside(layout.main) {
             match wheel {
                 Some(rows) if history => self.history.scroll(rows),
                 Some(rows) => self.changes.scroll_list(rows),
@@ -674,13 +792,14 @@ impl App {
                 )
                 .0;
         }
-        // メインの画面の切り替え（数字のキー）。今の画面は太字。
+        // サイドバーが出ていなければ、メインの画面の切り替え（数字のキー）を並べる。今の画面は太字。
+        let tabs = self.layout().sidebar.is_none();
         let changes = match self.changes.count() {
             0 => tr!("1 Changes"),
             count => tr!("1 Changes ({count})", count = count),
         };
         for (view, label) in [(View::Changes, changes), (View::History, tr!("2 History"))] {
-            if x + 3 >= area.right() {
+            if !tabs || x + 3 >= area.right() {
                 break;
             }
             let style = match self.view == view {
@@ -706,6 +825,17 @@ impl App {
         }
 
         let layout = self.layout();
+        if let Some(at) = layout.sidebar {
+            self.sidebar
+                .draw(at, buf, self.focus == Focus::Sidebar, self.changes.count());
+            // メインの画面と並べたときは、間に区切りの線。
+            if at.right() < area.right() {
+                let line = Style::new().fg(Color::Indexed(238));
+                for y in at.y..at.bottom() {
+                    buf[(at.right(), y)].set_char('│').set_style(line);
+                }
+            }
+        }
         let focused = self.focus == Focus::Main;
         if let Some(at) = layout.main {
             match self.view {
@@ -719,7 +849,7 @@ impl App {
         }
         if let Some(at) = layout.side {
             // 一覧と並べたときは、間に区切りの線。
-            if at.x > area.x {
+            if layout.main.is_some() {
                 let line = Style::new().fg(Color::Indexed(if focused { 238 } else { 244 }));
                 for y in at.y..at.bottom() {
                     buf[(at.x - 1, y)].set_char('│').set_style(line);
@@ -742,6 +872,11 @@ impl App {
             (View::Changes, Focus::Main) => self.changes.list_position(),
             (View::Changes, Focus::Side) => self.changes.diff_position(),
             (_, Focus::Message) => self.changes.list_position(),
+            (View::History, Focus::Sidebar) => (
+                (self.history.selected() + 1).min(self.history.total()),
+                self.history.total(),
+            ),
+            (View::Changes, Focus::Sidebar) => self.changes.list_position(),
         };
         let position = format!("{at}/{of}");
         let position_x = area
@@ -792,6 +927,7 @@ impl App {
                         tr!("j/k line   [/] hunk   Space stage/unstage   d discard   Esc back")
                     }
                     (_, Focus::Message) => tr!("Ctrl-s commit   Esc back"),
+                    (_, Focus::Sidebar) => tr!("j/k move   Enter open   Esc back   q quit"),
                 };
                 buf.set_stringn(
                     area.x + 1,

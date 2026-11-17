@@ -21,6 +21,8 @@ pub enum Request {
         start: u32,
         count: u32,
     },
+    /// コミット（16 進の ID）が History の何行目か。
+    RowOf { history: Value, id: String },
     /// コミットの詳細（作者・メッセージなど）と差分。`id` は 16 進の ID。
     Commit { id: String },
     /// 差分の構文の色。`of` は `{"view": …}`（`commitDiff` の答えのもの）か `{"diff": …}`（`workingDiff` の
@@ -63,6 +65,8 @@ pub enum Loaded {
         start: u32,
         reply: Reply,
     },
+    /// コミットの行（History になければ `None`）。
+    RowOf(Option<u32>),
     Commit {
         id: String,
         /// `commitInfo` の `info` と、`commitDiff` の答え。だめなら理由。
@@ -106,7 +110,7 @@ impl Loader {
 
     pub fn send(&self, request: Request) {
         let to = match request {
-            Request::Open | Request::Rows { .. } => &self.rows,
+            Request::Open | Request::Rows { .. } | Request::RowOf { .. } => &self.rows,
             Request::Commit { .. } | Request::Syntax { .. } => &self.details,
             Request::Status
             | Request::WorkingDiff { .. }
@@ -158,6 +162,13 @@ fn load(front: &dyn Front, request: Request) -> Result<Loaded> {
                 "op": "historyRows", "history": history, "start": start, "count": count,
             }))?,
         },
+        Request::RowOf { history, id } => Loaded::RowOf(
+            front
+                .call(json!({"op": "historyRowOf", "history": history, "id": id}))
+                .ok()
+                .and_then(|r| r.json["row"].as_u64())
+                .map(|row| row as u32),
+        ),
         Request::Commit { id } => {
             let result = commit(front, &id).map_err(|e| e.to_string());
             Loaded::Commit { id, result }

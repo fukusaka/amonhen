@@ -138,6 +138,11 @@ impl History {
         self.total
     }
 
+    /// 窓口での History の番号。
+    pub fn id(&self) -> &Value {
+        &self.id
+    }
+
     /// 選んでいるコミット（その行がまだ届いていなければ `None`）。
     pub fn selected_id(&self) -> Option<Oid> {
         let window = self.window.as_ref()?;
