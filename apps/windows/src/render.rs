@@ -347,6 +347,8 @@ pub struct Renderer {
     lineage: Option<(u64, u32, amonhen_core::lineage::LineageWindow)>,
     /// 祖先が描く行まで届いていない（次のフレームで続ける）。
     pub lineage_pending: bool,
+    /// shallow clone の境界のコミットの行（History の世代ごと）。
+    boundary: (u64, std::collections::HashSet<u32>),
     /// `rows` を作ったときの行の項目（変わったら作り直す）。
     rows_items: u32,
     /// ラベルの文字（名前ごと）と、その幅。
@@ -481,6 +483,7 @@ impl Renderer {
                 rows: HashMap::new(),
                 lineage: None,
                 lineage_pending: false,
+                boundary: (u64::MAX, std::collections::HashSet::new()),
                 rows_items: items::ALL,
                 labels: HashMap::new(),
                 label_format,
@@ -688,6 +691,12 @@ impl Renderer {
             .as_ref()
             .map(|(_, _, w)| w)
             .filter(|w| w.end() >= last);
+        if self.boundary.0 != history.generation {
+            self.boundary = (
+                history.generation,
+                history.boundary_rows().into_iter().collect(),
+            );
+        }
         self.draw_graph(
             &history,
             first..last,
@@ -918,6 +927,24 @@ impl Renderer {
             let nodes = history.layout.nodes();
             for n in &nodes[rows.start as usize..rows.end as usize] {
                 let dimmed = lineage.is_some_and(|l| !l.contains(n.row));
+                // shallow clone の境界のコミット（親はあるが取っていない）は、点から下へ短い点線（GTK4 版・
+                // macOS 版の `unfetched_stub`。行の下半分に、点の縁から 3.5 離して 4 ずつ）。
+                if self.boundary.1.contains(&n.row) {
+                    let alpha = if dimmed { DIMMED_ALPHA } else { 1.0 } * 0.8;
+                    self.brush.SetColor(&palette(n.color, alpha));
+                    let mut y = NODE_RADIUS + 3.5;
+                    while y <= row_height() / 2.0 + 1.0 {
+                        self.d2d.FillEllipse(
+                            &D2D1_ELLIPSE {
+                                point: point(x(n.lane), row_y(n.row) + y),
+                                radiusX: 1.1,
+                                radiusY: 1.1,
+                            },
+                            &self.brush,
+                        );
+                        y += 4.0;
+                    }
+                }
                 self.brush
                     .SetColor(&palette(n.color, if dimmed { DIMMED_ALPHA } else { 1.0 }));
                 self.d2d.FillEllipse(
