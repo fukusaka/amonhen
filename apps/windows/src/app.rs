@@ -1782,6 +1782,7 @@ impl Component for Root {
                     git: None,
                     auto_magic_merge: crate::prefs::bool(crate::prefs::AUTO_MAGIC_MERGE),
                     file_history_merges: crate::prefs::bool(crate::prefs::FILE_HISTORY_MERGES),
+                    auto_bookmark: crate::prefs::bool(crate::prefs::AUTO_BOOKMARK),
                     auto_fetch: crate::prefs::auto_fetch_minutes(),
                     write_commit_graph: crate::prefs::bool(crate::prefs::WRITE_COMMIT_GRAPH),
                     use_fsmonitor: crate::prefs::bool(crate::prefs::USE_FSMONITOR),
@@ -4809,6 +4810,7 @@ impl Component for Root {
                         crate::prefs::AUTO_MAGIC_MERGE => state.auto_magic_merge = value,
                         crate::prefs::WRITE_COMMIT_GRAPH => state.write_commit_graph = value,
                         crate::prefs::USE_FSMONITOR => state.use_fsmonitor = value,
+                        crate::prefs::AUTO_BOOKMARK => state.auto_bookmark = value,
                         _ => state.file_history_merges = value,
                     }
                 }

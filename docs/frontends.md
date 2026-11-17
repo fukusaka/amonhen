@@ -108,7 +108,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
-| General: bookmark opened repositories | ✓ | ✓ | △ | n/a | n/a | Windows: Always on; no switch. |
+| General: bookmark opened repositories | ✓ | ✓ | ✓ | n/a | n/a |  |
 | General: reopen at launch, tab or window by default | — | — | — | n/a | n/a | macOS: Always reopens; no switch.<br>GTK4: Always reopens; no switch. |
 | General: fetch automatically | ✓ | ✓ | ✓ | n/a | n/a | VSCode: VSCode's own `git.autofetch`.<br>Windows: Windows: A failure is added to the status bar. |
 | General: external editor | ✓ | ✓ | ✓ | n/a | n/a | GTK4: Code editors are found by their desktop entries, in the macOS order; the fallback is a text editor, never an office app; Other… takes a program.<br>Windows: Known code editors are found in their install folders or by their launchers on PATH, in the macOS order; the fallback is Notepad, which can't open folders; Other… takes a program. |

@@ -18,6 +18,8 @@ pub const AUTO_FETCH_MINUTES: &str = "autoFetchMinutes";
 pub const WORKING_COPY_LAYOUT: &str = "workingCopyLayout";
 /// File History に merge コミットも出す（既定は出さない）。
 pub const FILE_HISTORY_MERGES: &str = "fileHistoryMerges";
+/// 開いたリポジトリを Repositories のブックマークに入れる（既定は入れる。GTK4 版・macOS 版と同じ鍵）。
+pub const AUTO_BOOKMARK: &str = "autoBookmark";
 
 thread_local! {
     static VALUES: RefCell<Map<String, Value>> = RefCell::new(load());
@@ -37,7 +39,7 @@ fn load() -> Map<String, Value> {
 pub fn bool(key: &str) -> bool {
     VALUES
         .with(|v| v.borrow().get(key).and_then(Value::as_bool))
-        .unwrap_or(key == AUTO_MAGIC_MERGE)
+        .unwrap_or(key == AUTO_MAGIC_MERGE || key == AUTO_BOOKMARK)
 }
 
 pub fn string(key: &str) -> Option<String> {

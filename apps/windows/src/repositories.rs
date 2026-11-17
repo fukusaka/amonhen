@@ -184,7 +184,11 @@ pub fn record_opened(path: &Path) {
         .flatten()
         .filter_map(|r| r["path"].as_str())
         .any(|root| key(&location).starts_with(&(key(&expand(root).display().to_string()) + "/")));
-    if !scanned && item(&data, &location).is_none() {
+    // 開いたものをブックマークに入れるか（Settings > General）。開いた日時と最近のものは、いつも覚える。
+    if crate::prefs::bool(crate::prefs::AUTO_BOOKMARK)
+        && !scanned
+        && item(&data, &location).is_none()
+    {
         let _ = edit(|d| update(d, &location, |_| {}));
     }
 }

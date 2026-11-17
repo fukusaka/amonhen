@@ -10,6 +10,8 @@ pub struct State {
     pub git: Option<[(String, String); 2]>,
     pub auto_magic_merge: bool,
     pub file_history_merges: bool,
+    /// 開いたリポジトリをブックマークに入れる。
+    pub auto_bookmark: bool,
     /// 自動の fetch の間隔（分。0 はしない）。
     pub auto_fetch: u32,
     pub write_commit_graph: bool,
@@ -343,6 +345,15 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
             .on_is_checked_changed((callbacks.toggle)(key))
             .content(TextBlock::new().text(label))
     };
+    // General の終わり（GTK4 版の General のチェック）。
+    let bookmark = check(
+        crate::prefs::AUTO_BOOKMARK,
+        state.auto_bookmark,
+        tr!("Bookmark repositories you open"),
+    );
+    let bookmark = Border::new()
+        .margin(Thickness::new(0.0, 8.0, 0.0, 0.0))
+        .content(bookmark);
     let body = ScrollViewer::new().grid_row(1).content(
         StackPanel::new()
             .max_width(560.0)
@@ -394,6 +405,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                                 .on_selection_changed(callbacks.editor)
                         })]),
                     )),
+                bookmark,
                 heading("Git".to_owned()),
                 StackPanel::new().children((git, shared_templates, env)),
                 heading(tr!("Diff & Merge")),
@@ -402,12 +414,14 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                     state.auto_magic_merge,
                     tr!("Resolve unambiguous conflicts when the merge editor opens"),
                 ),
-                heading("File History".to_owned()),
-                check(
-                    crate::prefs::FILE_HISTORY_MERGES,
-                    state.file_history_merges,
-                    tr!("Show merge commits"),
-                ),
+                StackPanel::new().children((
+                    heading("File History".to_owned()),
+                    check(
+                        crate::prefs::FILE_HISTORY_MERGES,
+                        state.file_history_merges,
+                        tr!("Show merge commits"),
+                    ),
+                )),
                 // Performance（GTK4 版の Performance のタブのうち、Windows 版にあるもの）。
                 heading(tr!("Performance")),
                 check(
