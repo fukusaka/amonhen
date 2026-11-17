@@ -124,6 +124,8 @@ struct Root {
     integrate_drawing: Option<(String, Value, Value)>,
     /// いくつもの merge の、順ごとのコンフリクトの見込み（調べた順と答え。答えが None なら調べられなかった）。
     merge_several_steps: Option<(Vec<String>, Option<crate::merge_several::Steps>)>,
+    /// いくつもの merge の前と後の絵（`octopusPreview` の答え。順は描くときに渡す）。
+    merge_several_drawing: Option<Value>,
     /// stash の詳しい中身（名前 → 中身。ref が変わるたびに読み直す）。
     stash_details: std::collections::HashMap<String, crate::stashes::Detail>,
     /// ほかの worktree の変更の数（パス → 数）。
@@ -944,6 +946,7 @@ enum Message {
     MergeSeveralSteps(Vec<String>, Option<crate::merge_several::Steps>),
     MergeSeveralMode(Option<usize>),
     MergeSeveralReordered(Vec<String>),
+    MergeSeveralDrawn(Value),
     MergeSeveralPutLast(usize),
     MergeSeveralOneByOne(bool),
     /// ダイアログを閉じた（押したボタン）。
@@ -1023,6 +1026,7 @@ impl Component for Root {
             pull_drawings: None,
             integrate_drawing: None,
             merge_several_steps: None,
+            merge_several_drawing: None,
             submodules: Value::Null,
             subtrees: Value::Null,
             repositories: None,
@@ -1443,6 +1447,11 @@ impl Component for Root {
                 }
             }
             Message::ResetMode(None) | Message::IntegrateRev(None) | Message::MergeMode(None) => {}
+            Message::MergeSeveralDrawn(info) => {
+                if matches!(self.dialog, Some(Dialog::MergeSeveral { .. })) {
+                    self.merge_several_drawing = Some(info);
+                }
+            }
             Message::MergeSeveralSteps(revs, answer) => {
                 self.merge_several_steps = Some((revs, answer));
             }
@@ -4005,6 +4014,26 @@ impl Component for Root {
             Message::ConfirmWithDrawing(dialog) => self.dialog = Some(*dialog),
             Message::OperationFailed(repo, failure) => {
                 self.update(Message::Performed(None), context);
+                // いくつもを 1 つのコミットにまとめるのを git が断ったら（何も変わっていない）、失敗は知らせずに、
+                // 1 つずつ merge するかを尋ねる（GTK4 版の `mergeseveral::merge`）。
+                if failure.kind.as_deref() == Some("octopus")
+                    && let Some(command) = failure.command.as_ref()
+                    && command["op"] == "merge"
+                    && command["oneByOne"] != true
+                {
+                    let mut command = command.clone();
+                    command["oneByOne"] = json!(true);
+                    self.dialog = Some(Dialog::Confirm {
+                        repo,
+                        title: tr!("Can’t Merge Them in One Commit"),
+                        message: tr!(
+                            "git stopped because one of them conflicts before the last, and nothing was changed. Merge them one by one instead? Each makes its own merge commit, and you resolve conflicts as they come. Undo puts them all back."
+                        ),
+                        button: tr!("Merge One by One"),
+                        command,
+                    });
+                    return;
+                }
                 // 取り消したときは知らせない（GTK4 版は帯を出してすぐ消す）。
                 if !failure.cancelled() {
                     self.dialog = Some(Dialog::Failure { repo, failure });
@@ -7541,6 +7570,20 @@ impl Root {
                     None => View::empty(),
                 };
                 let message = crate::merge_several::merge_message(sources, branch.as_deref());
+                // 前と後の絵（取り込み方が git の設定のとおりのときだけ。GTK4 版と同じ）。
+                let drawing = self
+                    .merge_several_drawing
+                    .as_ref()
+                    .filter(|_| SEVERAL_MERGE_MODES.get(*mode) == Some(&"git"))
+                    .and_then(|info| {
+                        crate::drawing::for_octopus(
+                            info,
+                            branch.as_deref().unwrap_or("HEAD"),
+                            &revs,
+                            &message,
+                        )
+                    })
+                    .unwrap_or_else(View::empty);
                 dialog
                     .is_open(true)
                     .title(tr!(
@@ -7573,6 +7616,7 @@ impl Root {
                                 )
                                 .selected_index(*mode)
                                 .on_selection_changed(context.callback(Message::MergeSeveralMode)),
+                            drawing,
                             forecast_view(&forecast, conflicts),
                             put_last_view,
                             CheckBox::new()
@@ -8299,6 +8343,16 @@ impl Root {
             }
             return;
         }
+        // 前と後の絵（並べ替えると、線の順も変わる。答えは最初の順で 1 度だけ読む。GTK4 版と同じ）。
+        self.merge_several_drawing = None;
+        let revs: Vec<String> = sources.iter().map(|s| s.rev.clone()).collect();
+        let git = repo.clone();
+        context.spawn_background(move |_| {
+            let query = json!({ "op": "octopusPreview", "theirs": revs });
+            let reply: Value =
+                serde_json::from_str(&git.run_json(&query.to_string())).unwrap_or_default();
+            Message::MergeSeveralDrawn(reply["info"].clone())
+        });
         self.dialog = Some(Dialog::MergeSeveral {
             repo,
             branch: refs.and_then(|r| r.head_branch.clone()),

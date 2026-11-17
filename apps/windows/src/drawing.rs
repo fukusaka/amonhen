@@ -1058,3 +1058,181 @@ pub fn for_pick(info: &Value, current: &str, kind: PickKind) -> Option<View> {
     let picks = picks.len() + usize::from(picks_more > 0);
     Some(finish(c, picks + head.len(), picks))
 }
+
+/// 線は 4 本まで、残りは「ほか n 本」（GTK4 版・macOS 版の `maxLanes`）。
+const MAX_LANES: usize = 4;
+
+/// 描く取り込む側（並べた順、もう取り込んであるものは除く）と、描かないものの数。
+fn octopus_sides<'a>(d: &'a Value, order: &[String]) -> (Vec<&'a Value>, usize) {
+    let sides: Vec<&Value> = d["sides"].as_array().into_iter().flatten().collect();
+    let all: Vec<&Value> = order
+        .iter()
+        .filter_map(|rev| {
+            sides
+                .iter()
+                .find(|s| s["rev"].as_str() == Some(rev))
+                .copied()
+        })
+        .filter(|s| !s["tip"].is_null())
+        .collect();
+    let rest = all.len().saturating_sub(MAX_LANES);
+    (all.into_iter().take(MAX_LANES).collect(), rest)
+}
+
+fn octopus_rows(d: &Value, order: &[String]) -> usize {
+    let (shown, rest) = octopus_sides(d, order);
+    d["ours"].as_array().map_or(0, Vec::len)
+        + usize::from(d["oursMore"].as_u64().unwrap_or(0) > 0)
+        + shown
+            .iter()
+            .map(|s| 1 + usize::from(s["more"].as_u64().unwrap_or(0) > 0))
+            .sum::<usize>()
+        + usize::from(rest > 0)
+        + usize::from(!d["base"].is_null())
+}
+
+/// octopus merge の見込み（`octopusPreview` の答え）の絵（GTK4 版の `draw_octopus`）。`order` は取り込む順、
+/// `subject` は merge コミットの件名。左が今: 今のブランチ（左の線）と、取り込むもの（並べた順に右の線。先端と、
+/// ほかにいくつあるか）が、すべてが分かれたところで合流する。右が後: 一番上の merge コミット（点線の丸）が
+/// すべての先端を親に持ち、今のブランチの札がそこへ移る。描くものがなければ None。
+pub fn for_octopus(info: &Value, current: &str, order: &[String], subject: &str) -> Option<View> {
+    let d = &info["drawing"];
+    if d.is_null() {
+        return None;
+    }
+    let labels = labels_of(d);
+    let ours = commits(&d["ours"]);
+    let base = (!d["base"].is_null()).then(|| {
+        (
+            d["base"]["oid"].as_str().unwrap_or_default().to_owned(),
+            d["base"]["subject"].as_str().unwrap_or_default().to_owned(),
+        )
+    });
+    let ours_tip = ours
+        .first()
+        .map(|c| c.0.clone())
+        .or_else(|| base.as_ref().map(|b| b.0.clone()));
+    let (shown, rest) = octopus_sides(d, order);
+    let tips: HashMap<String, String> = shown
+        .iter()
+        .filter_map(|s| {
+            Some((
+                s["tip"]["oid"].as_str()?.to_owned(),
+                s["rev"].as_str()?.to_owned(),
+            ))
+        })
+        .collect();
+    let mut c = Canvas2 { items: Vec::new() };
+    c.text(&tr!("Now"), 4.0, 2.0, alpha(FG, 0.6), true, COLUMN, 11.0);
+    c.text(
+        &tr!("After the merge"),
+        COLUMN + 28.0,
+        2.0,
+        alpha(FG, 0.6),
+        true,
+        COLUMN,
+        11.0,
+    );
+    for after in [false, true] {
+        let x = if after { COLUMN + 24.0 } else { 0.0 };
+        let mut y = TOP;
+        let mut rows = Vec::new();
+        let mut gaps = Vec::new();
+        let merge_y = y;
+        if after {
+            rows.push(Row {
+                subject: subject.to_owned(),
+                y,
+                is_new: true,
+                ..Default::default()
+            });
+            y += ROW;
+        }
+        with_gap(
+            &ours,
+            d["oursMore"].as_u64().unwrap_or(0),
+            d["oursMoreAt"].as_u64(),
+            0,
+            &mut y,
+            &mut gaps,
+            |(oid, subject), y| {
+                rows.push(Row {
+                    oid: oid.clone(),
+                    subject: subject.clone(),
+                    y,
+                    ..Default::default()
+                });
+            },
+        );
+        for (i, side) in shown.iter().enumerate() {
+            let lane = i as u8 + 1;
+            rows.push(Row {
+                oid: side["tip"]["oid"].as_str().unwrap_or_default().to_owned(),
+                subject: side["tip"]["subject"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+                lane,
+                y,
+                ..Default::default()
+            });
+            y += ROW;
+            let more = side["more"].as_u64().unwrap_or(0);
+            if more > 0 {
+                gaps.push((lane, y, more));
+                y += ROW;
+            }
+        }
+        if rest > 0 {
+            let text_x = x + 10.0 + shown.len() as f64 * LANE + 14.0;
+            c.text(
+                &tr!("and {count} more branches", count = rest),
+                text_x,
+                y + 2.0,
+                alpha(FG, 0.5),
+                false,
+                x + COLUMN - text_x,
+                11.0,
+            );
+            y += ROW;
+        }
+        column(
+            &mut c,
+            x,
+            &rows,
+            y,
+            base.as_ref(),
+            &gaps,
+            0,
+            if after { None } else { split_note(&d["base"]) },
+            after.then_some(merge_y),
+            &|oid| {
+                let mut out: Vec<Label> = labels
+                    .get(oid)
+                    .into_iter()
+                    .flatten()
+                    .filter(|(n, _)| n != current)
+                    .map(|(n, k)| (n.clone(), k.clone(), false))
+                    .collect();
+                // タグ・コミットを取り込むときは、その名前を札に。
+                if let Some(rev) = tips.get(oid)
+                    && !out.iter().any(|l| &l.0 == rev)
+                {
+                    out.push((rev.clone(), "local".to_owned(), false));
+                }
+                let here = if after {
+                    oid.is_empty()
+                } else {
+                    ours_tip.as_deref() == Some(oid)
+                };
+                if here {
+                    out.insert(0, (current.to_owned(), "local".to_owned(), true));
+                }
+                out
+            },
+        );
+    }
+    let rows = octopus_rows(d, order);
+    // 右には merge コミットの 1 行が増える。
+    Some(finish(c, rows + 1, rows))
+}

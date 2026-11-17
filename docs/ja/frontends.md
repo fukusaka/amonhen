@@ -172,7 +172,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Push のシート（注意・コミットと差分・lease 付きの Force Push） | ✓ | ✓ | △ | ✓ | △ | VSCode: QuickPick。注意、送るコミット、上流から消えるコミット、Pull… か lease 付きの Force Push。送る変更すべてとそれぞれのコミットは、選ぶと差分を複数ファイルの diff エディタで開く（シートは閉じない）。<br>CLI: `amonhen run` から。<br>Windows: 注意、lease つきの Force Push、上流が進んでいれば Pull…、送るコミットと上流が失うコミット。送る中身の差分はない。 |
 | Publish（リモートと名前を選ぶ） | ✓ | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | Merge（fast-forward だけ・no-ff・squash の選択） | ✓ | ✓ | ✓ | ✓ | △ | VSCode: 取り込み方を選ぶ一覧が確認を兼ねる。<br>CLI: `amonhen run` から（`mode`）。 |
-| いくつもを 1 つにマージ（順番・コンフリクトの見込み） | ✓ | ✓ | △ | ✓ | △ | CLI: `merge-check` で確かめ、マージは `amonhen run` から。<br>Windows: History で選んだものから: 順（ドラッグ）・ぶつかる見込みと「最後に回す」・取り込み方・1 つずつ・メッセージ。絵はなく、git が断ったときに 1 つずつを勧めない。 |
+| いくつもを 1 つにマージ（順番・コンフリクトの見込み） | ✓ | ✓ | △ | ✓ | △ | CLI: `merge-check` で確かめ、マージは `amonhen run` から。<br>Windows: History で選んだものから: 順（ドラッグ）・ぶつかる見込みと「最後に回す」・取り込み方・1 つずつ・メッセージ・前と後の絵、git が断ったら 1 つずつを勧める。ドラッグは未確認。 |
 | 前と後を描く Rebase のシート | ✓ | ✓ | ✓ | ✓ | △ | VSCode: ダイアログに、今と rebase の後のコミットをブランチの札と一緒に文で並べる。<br>CLI: `rewrite-preview` が出し、rebase は `amonhen run` から。 |
 | Stash（メッセージ・未追跡を含める） | ✓ | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | Stash: stage した変更だけ・index を残す・選んだファイルだけ | ✓ | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき、Stash の一覧に前の 2 つ、Working Copy のファイルの右クリックにそのファイルの Stash…。<br>CLI: `amonhen run`（`stashPush` の `staged`・`keepIndex`・`paths`）から。 |
