@@ -535,6 +535,12 @@ enum Dialog {
         button: String,
         command: Value,
     },
+    /// partial clone で、手元にない中身を先にまとめて取ってよいか（GTK4 版の archive・bundle の確かめるシート）。
+    FetchFirst {
+        message: String,
+        button: String,
+        then: PendingSave,
+    },
     /// Checkout の確認（GTK4 版の `sheets::checkout`）。
     Checkout {
         repo: Arc<Repository>,
@@ -772,6 +778,8 @@ enum Message {
     /// まとめるときのメッセージの初期値を読んだ（コミット、メッセージ）。
     SquashText(String, Result<String, String>),
     /// bundle に入るコミットを数えた（`bundlePreview` の答えと、書く命令）。
+    /// archive・bundle を書く前に、手元にない中身の数を調べた（なければ None）。
+    SaveChecked(PendingSave, Option<String>),
     BundlePreview(Arc<Repository>, String, Value, Value),
     /// 取り込む bundle を調べた（ファイル、`bundleCheck` の答え）。
     BundleChecked(Arc<Repository>, String, Value),
@@ -2116,6 +2124,9 @@ impl Component for Root {
                         perform(context, repo, command, tr!("Create"));
                     }
                 }
+                (Some(Dialog::FetchFirst { then, .. }), ContentDialogResult::Primary) => {
+                    self.save(then, context);
+                }
                 (
                     Some(Dialog::Confirm {
                         repo,
@@ -2508,32 +2519,23 @@ impl Component for Root {
                         .to_owned();
                     let paths: Vec<String> =
                         (!folder.is_empty()).then_some(folder).into_iter().collect();
-                    let Some(path) = crate::files::save_file(
-                        &tr!("Export Archive"),
-                        &format!("{stem}.{picked}"),
-                        picked,
-                        picked,
-                    ) else {
-                        return;
+                    let save = PendingSave::Archive {
+                        repo: repo.clone(),
+                        name: format!("{stem}.{picked}"),
+                        command: json!({
+                            "op": "archive",
+                            "rev": rev,
+                            "format": picked,
+                            "prefix": if prefix.is_empty() { String::new() } else { format!("{prefix}/") },
+                            "paths": paths,
+                        }),
                     };
-                    let command = json!({
-                        "op": "archive",
-                        "rev": rev,
-                        "format": picked,
-                        "prefix": if prefix.is_empty() { String::new() } else { format!("{prefix}/") },
-                        "paths": paths,
-                        "file": path.to_string_lossy(),
-                    });
-                    // 書けたら、そのファイルをエクスプローラーで見せる（GTK4 版と同じ）。
+                    // partial clone で手元にない中身があれば、先にまとめて取ることを確かめる（GTK4 版と同じ）。
+                    let check = json!({ "op": "archiveContents", "rev": rev, "paths": paths });
                     context.spawn_background(move |_| {
-                        let reply: Value =
-                            serde_json::from_str(&repo.run_json(&command.to_string()))
-                                .unwrap_or_else(|e| json!({ "error": e.to_string() }));
-                        if let Some(e) = reply["error"].as_str() {
-                            return Message::Performed(Some((tr!("Export Archive"), e.to_owned())));
-                        }
-                        crate::files::reveal(&path);
-                        Message::Performed(None)
+                        let need: Value = serde_json::from_str(&repo.run_json(&check.to_string()))
+                            .unwrap_or_default();
+                        Message::SaveChecked(save, missing_count(&need["info"], "count"))
                     });
                 }
                 (
@@ -4224,28 +4226,46 @@ impl Component for Root {
                     });
                     return;
                 }
-                // 入るコミットの数は、保存する場所を選ぶ窓の題に（GTK4 版と同じ）。
-                let Some(path) = crate::files::save_file(
-                    &tr!("{count} commits", count = commits),
-                    &format!("{label}.bundle"),
-                    "bundle",
-                    "bundle",
-                ) else {
-                    return;
-                };
                 let mut command = command;
                 command["op"] = json!("bundle");
-                command["file"] = json!(path.to_string_lossy());
-                context.spawn_background(move |_| {
-                    let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
-                        .unwrap_or_else(|e| json!({ "error": e.to_string() }));
-                    if let Some(e) = reply["error"].as_str() {
-                        return Message::Performed(Some((tr!("Save as Bundle"), e.to_owned())));
-                    }
-                    crate::files::reveal(&path);
-                    Message::Performed(None)
-                });
+                let save = PendingSave::Bundle {
+                    repo,
+                    label,
+                    commits,
+                    command,
+                };
+                self.update(
+                    Message::SaveChecked(save, missing_count(info, "contents")),
+                    context,
+                );
             }
+            // 手元にない中身があれば先に確かめ、なければそのまま保存する場所を選ぶ。
+            Message::SaveChecked(save, missing) => match missing {
+                Some(count) => {
+                    let (message, button) = match &save {
+                        PendingSave::Archive { .. } => (
+                            tr!(
+                                "This is a partial clone: the contents of {count} files in the archive aren’t here yet. They are fetched from the remote in one go before the archive is written.",
+                                count = count
+                            ),
+                            tr!("Fetch and Export"),
+                        ),
+                        PendingSave::Bundle { .. } => (
+                            tr!(
+                                "This is a partial clone: the contents of {count} files in the bundle aren’t here yet. They are fetched from the remote in one go before the bundle is written.",
+                                count = count
+                            ),
+                            tr!("Fetch and Save"),
+                        ),
+                    };
+                    self.dialog = Some(Dialog::FetchFirst {
+                        message,
+                        button,
+                        then: save,
+                    });
+                }
+                None => self.save(save, context),
+            },
             Message::PatchRead(repo, paths, reply) => {
                 let summary = &reply["info"];
                 let patches = summary["patches"].as_array().cloned().unwrap_or_default();
@@ -6030,6 +6050,52 @@ impl Component for Root {
 }
 
 impl Root {
+    /// 保存する場所を選んで archive・bundle を書き、書けたらエクスプローラーで見せる（GTK4 版と同じ）。
+    fn save(&mut self, save: PendingSave, context: &ComponentContext<Self>) {
+        let (repo, mut command, path, title) = match save {
+            PendingSave::Archive {
+                repo,
+                name,
+                command,
+            } => {
+                let picked = command["format"].as_str().unwrap_or("zip").to_owned();
+                let Some(path) =
+                    crate::files::save_file(&tr!("Export Archive"), &name, &picked, &picked)
+                else {
+                    return;
+                };
+                (repo, command, path, tr!("Export Archive"))
+            }
+            PendingSave::Bundle {
+                repo,
+                label,
+                commits,
+                command,
+            } => {
+                // 入るコミットの数は、保存する場所を選ぶ窓の題に（GTK4 版と同じ）。
+                let Some(path) = crate::files::save_file(
+                    &tr!("{count} commits", count = commits),
+                    &format!("{label}.bundle"),
+                    "bundle",
+                    "bundle",
+                ) else {
+                    return;
+                };
+                (repo, command, path, tr!("Save as Bundle"))
+            }
+        };
+        command["file"] = json!(path.to_string_lossy());
+        context.spawn_background(move |_| {
+            let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
+                .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+            if let Some(e) = reply["error"].as_str() {
+                return Message::Performed(Some((title, e.to_owned())));
+            }
+            crate::files::reveal(&path);
+            Message::Performed(None)
+        });
+    }
+
     /// Repository > Undo…: 最後の操作を見せて、確かめてから戻す（GTK4 版の `sheets::undo`）。
     fn undo(&self, context: &ComponentContext<Self>) {
         let mut repo = None;
@@ -6065,6 +6131,18 @@ impl Root {
                 .content(
                     TextBlock::new()
                         .text(what.clone())
+                        .text_wrapping(TextWrapping::Wrap),
+                ),
+            Some(Dialog::FetchFirst {
+                message, button, ..
+            }) => dialog
+                .is_open(true)
+                .title(tr!("Fetch File Contents First?"))
+                .primary_button_text(button.clone())
+                .close_button_text(tr!("Cancel"))
+                .content(
+                    TextBlock::new()
+                        .text(message.clone())
                         .text_wrapping(TextWrapping::Wrap),
                 ),
             Some(Dialog::Confirm {
@@ -10556,6 +10634,35 @@ fn shown_start(rev: &str) -> &str {
 }
 
 /// Pull の取り込み方（GTK4 版の `PULL_MODES`。Settings の Pull の既定と同じ名前）。
+/// 保存する場所を選んでから書く archive・bundle（コアの命令。`file` は選んだ場所で埋める）。
+#[derive(Clone)]
+enum PendingSave {
+    Archive {
+        repo: Arc<Repository>,
+        name: String,
+        command: Value,
+    },
+    Bundle {
+        repo: Arc<Repository>,
+        label: String,
+        commits: u64,
+        command: Value,
+    },
+}
+
+/// partial clone で手元にない中身の数（`archiveContents`・`bundlePreview` の答え。数え切れなければ「n+」）。0 なら
+/// None。
+fn missing_count(info: &Value, key: &str) -> Option<String> {
+    let count = info[key].as_u64().unwrap_or(0);
+    (count > 0).then(|| {
+        if info["more"] == true {
+            format!("{count}+")
+        } else {
+            count.to_string()
+        }
+    })
+}
+
 /// 書き出せる形（コアの `archive` の `format`）。先頭が既定（GTK4 版と同じ）。
 const ARCHIVE_FORMATS: [&str; 3] = ["zip", "tar.gz", "tar"];
 /// 前の形を覚えておく鍵（GTK4 版と同じ）。
