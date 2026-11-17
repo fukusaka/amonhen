@@ -21,8 +21,17 @@ const FILTER: &[&str] = &[
     // サイドバーの右クリックで、押した所から親をたどって木の項目（DataContext が TreeViewNode）を探す。
     "Microsoft.UI.Xaml.DependencyObject",
     "Microsoft.UI.Xaml.Media.VisualTreeHelper",
-    "Microsoft.UI.Xaml.Media.IVisualTreeHelperStatics::{GetParent}",
-    "Microsoft.UI.Xaml.IFrameworkElement::{DataContext}",
+    "Microsoft.UI.Xaml.Media.IVisualTreeHelperStatics::{GetParent,GetChild,GetChildrenCount}",
+    "Microsoft.UI.Xaml.IFrameworkElement::{DataContext,Tag}",
+    // Repositories の一覧で選んだ行（複数）。
+    "Microsoft.UI.Xaml.Controls.ListViewBase",
+    "Microsoft.UI.Xaml.Controls.IListViewBase::{SelectedItems}",
+    "Microsoft.UI.Xaml.Controls.IListViewBaseFactory::{}",
+    "Microsoft.UI.Xaml.Controls.IListViewBaseStatics::{}",
+    "Microsoft.UI.Xaml.Controls.IItemsControlFactory::{}",
+    "Microsoft.UI.Xaml.Controls.IItemsControlStatics::{}",
+    "Microsoft.UI.Xaml.Controls.Primitives.ISelectorStatics::{}",
+    "Microsoft.UI.Xaml.Controls.Primitives.ISelectorFactory::{}",
     // 等幅の字（Control に付けると、中の TextBlock が継ぐ。reactor の部品には字体の指定がない）。
     "Microsoft.UI.Xaml.Media.FontFamily",
     "Microsoft.UI.Xaml.Media.IFontFamilyFactory::{CreateInstanceWithName}",

@@ -167,6 +167,7 @@ dependencies = [
 name = "amonhen-win-xaml"
 version = "0.1.0"
 dependencies = [
+ "windows-collections 0.100.0",
  "windows-core 0.100.0",
  "windows-reference",
 ]
