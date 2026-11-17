@@ -193,6 +193,12 @@ pub struct Measure {
     pub max_bytes: u64,
     /// 文字がまだ届いていない行を含んだフレームの数。
     pub incomplete_frames: usize,
+    /// 時間の内訳（µs）: イベントの処理（届いた答えを入れる所を含む）、セルを組み立てる、前のフレームとの差を
+    /// 取って書き出す。それぞれの中央値と、最も遅いフレームでの値。
+    pub median_parts_us: [u64; 3],
+    pub slowest_parts_us: [u64; 3],
+    /// 最も遅いフレームで、ワーカーから届いた答えの数。
+    pub slowest_replies: usize,
 }
 
 /// 出したバイト数を数えるだけの出力先。
@@ -243,6 +249,7 @@ pub fn measure_scroll(
         }))
     };
     let mut times = Vec::with_capacity(frames);
+    let mut parts: Vec<([u64; 3], usize)> = Vec::with_capacity(frames);
     let mut sizes = Vec::with_capacity(frames);
     let mut incomplete = 0;
     let mut down = true;
@@ -258,18 +265,44 @@ pub fn measure_scroll(
         } else {
             MouseEventKind::ScrollUp
         }));
+        let mut replies = 0;
         while let Ok(event) = rx.try_recv() {
             app.handle(event);
+            replies += 1;
         }
+        let handled = start.elapsed();
+        let mut built = Duration::ZERO;
         if app.take_dirty() {
-            terminal.draw(|frame| app.draw(frame))?;
+            terminal.draw(|frame| {
+                let before = Instant::now();
+                app.draw(frame);
+                built = before.elapsed();
+            })?;
         }
         let spent = start.elapsed();
+        let micros = |d: Duration| d.as_micros() as u64;
+        parts.push((
+            [
+                micros(handled),
+                micros(built),
+                micros(spent.saturating_sub(handled + built)),
+            ],
+            replies,
+        ));
         times.push(spent.as_micros() as u64);
         sizes.push(written.load(Ordering::Relaxed) - before);
         incomplete += usize::from(app.last_frame_incomplete());
         std::thread::sleep(interval.saturating_sub(spent));
     }
+    // 最も遅いフレームの内訳（並べ替える前に探す）。
+    let slowest = (0..times.len()).max_by_key(|&i| times[i]).unwrap_or(0);
+    let (slowest_parts_us, slowest_replies) = parts.get(slowest).copied().unwrap_or_default();
+    let median_of = |part: usize| {
+        let mut values: Vec<u64> = parts.iter().map(|p| p.0[part]).collect();
+        values.sort_unstable();
+        values.get(values.len() / 2).copied().unwrap_or(0)
+    };
+    let median_parts_us = [median_of(0), median_of(1), median_of(2)];
     times.sort_unstable();
     let at = |q: f64| times[((times.len() - 1) as f64 * q) as usize];
     Ok(Measure {
@@ -281,6 +314,9 @@ pub fn measure_scroll(
         mean_bytes: sizes.iter().sum::<u64>() / sizes.len().max(1) as u64,
         max_bytes: sizes.iter().copied().max().unwrap_or(0),
         incomplete_frames: incomplete,
+        median_parts_us,
+        slowest_parts_us,
+        slowest_replies,
     })
 }
 

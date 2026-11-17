@@ -104,7 +104,7 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
         println!(
             "{}",
             tr!(
-                "{cols}x{rows}, {commits} commits, {frames} frames\nframe time: median {median} µs, 95% {p95} µs, max {max} µs\nframe bytes: mean {mean}, max {max_bytes}\nframes with rows not loaded yet: {incomplete}",
+                "{cols}x{rows}, {commits} commits, {frames} frames\nframe time: median {median} µs, 95% {p95} µs, max {max} µs\nframe bytes: mean {mean}, max {max_bytes}\nframes with rows not loaded yet: {incomplete}\nparts (events / build / diff and write): median {m0} / {m1} / {m2} µs, slowest frame {s0} / {s1} / {s2} µs with {replies} replies",
                 cols = size.0,
                 rows = size.1,
                 commits = m.rows,
@@ -115,6 +115,13 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
                 mean = m.mean_bytes,
                 max_bytes = m.max_bytes,
                 incomplete = m.incomplete_frames,
+                m0 = m.median_parts_us[0],
+                m1 = m.median_parts_us[1],
+                m2 = m.median_parts_us[2],
+                s0 = m.slowest_parts_us[0],
+                s1 = m.slowest_parts_us[1],
+                s2 = m.slowest_parts_us[2],
+                replies = m.slowest_replies,
             )
         );
         return Ok(ExitCode::SUCCESS);
