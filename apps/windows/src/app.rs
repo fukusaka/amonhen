@@ -682,6 +682,10 @@ enum Message {
     /// Settings > Git > Environment Variables: 渡すかの切り替えと、探す文字。
     SettingsEnv(String, bool),
     SettingsEnvQuery(String),
+    /// Settings > Git の共有のテンプレート: 書き換え（番号、0 は名前・1 は本文、文字）、足す、外す。
+    SettingsTemplate(usize, usize, String),
+    SettingsTemplateAdd,
+    SettingsTemplateRemove(usize),
     /// History のキャッシュの大きさを読んだ。
     CacheSize(u64),
     /// History のキャッシュを消す。
@@ -1771,6 +1775,7 @@ impl Component for Root {
                     },
                     env_added: crate::settingsview::env_added_names(),
                     env_query: String::new(),
+                    templates: crate::templates::all(),
                 });
                 context.spawn_background(|_| {
                     Message::CacheSize(
@@ -4723,6 +4728,38 @@ impl Component for Root {
                 );
                 crate::settingsview::apply_env_added();
             }
+            Message::SettingsTemplate(i, field, text) => {
+                // 書き換えるたびに保存する（GTK4 版はシートで書いて保存）。WinUI の欄は改行を `\r` で返す。
+                if let Some(state) = self.settings.as_mut()
+                    && let Some(t) = state.templates.get_mut(i)
+                {
+                    let text = text.replace("\r\n", "\n").replace('\r', "\n");
+                    if field == 0 {
+                        t.name = text;
+                    } else {
+                        t.text = text;
+                    }
+                    crate::templates::save(&state.templates);
+                }
+            }
+            Message::SettingsTemplateAdd => {
+                if let Some(state) = self.settings.as_mut() {
+                    state.templates.push(crate::templates::Template {
+                        id: crate::templates::new_id(),
+                        name: String::new(),
+                        text: String::new(),
+                    });
+                    crate::templates::save(&state.templates);
+                }
+            }
+            Message::SettingsTemplateRemove(i) => {
+                if let Some(state) = self.settings.as_mut()
+                    && i < state.templates.len()
+                {
+                    state.templates.remove(i);
+                    crate::templates::save(&state.templates);
+                }
+            }
             Message::SettingsEnvQuery(text) => {
                 if let Some(state) = self.settings.as_mut() {
                     state.env_query = text;
@@ -4796,10 +4833,35 @@ impl Component for Root {
                 let Some(state) = self.repo_settings.as_ref() else {
                     return;
                 };
-                if index == crate::reposettings::template_choice(state) && index != 2 {
+                let names = crate::templates::names();
+                let now = crate::reposettings::template_choice(state, &names);
+                if index == now && index != 2 {
                     return;
                 }
                 let key = crate::reposettings::TEMPLATE_KEY;
+                let library = crate::templates::LIBRARY_KEY;
+                // 共有のテンプレートを選んだら名前を書き、このリポジトリのファイルの選びは消す（GTK4 版と同じ）。
+                if let Some(name) = index.checked_sub(3).and_then(|i| names.get(i)) {
+                    let mut commands =
+                        vec![json!({ "op": "configSet", "key": library, "value": name })];
+                    if state.at("local", key).is_some() {
+                        commands.push(json!({ "op": "configSet", "key": key, "value": null }));
+                    }
+                    self.write_repo_settings(commands, context);
+                    return;
+                }
+                // ほかを選んだら、このリポジトリの共有のテンプレートの選びを消す。すべてのリポジトリの段で選んでいて
+                // 「なし」にするなら、空で打ち消す。
+                let mut clear_library = Vec::new();
+                if state.at("local", library).is_some_and(|v| !v.is_empty()) {
+                    clear_library.push(json!({ "op": "configSet", "key": library, "value": null }));
+                }
+                if index == 0
+                    && state.at("local", library).is_none()
+                    && state.effective(library).is_some_and(|(v, _)| !v.is_empty())
+                {
+                    clear_library.push(json!({ "op": "configSet", "key": library, "value": "" }));
+                }
                 let commands = match index {
                     0 => vec![json!({ "op": "configSet", "key": key, "value": null })],
                     // 専用のファイルがまだなければ空で作る（commit.template もそれを向く）。あれば向け直すだけ。
@@ -4811,7 +4873,7 @@ impl Component for Root {
                     }
                     _ => {
                         // 作り直した欄が今の値を知らせてきたときは、選び直さない。
-                        if crate::reposettings::template_choice(state) == 2 {
+                        if now == 2 {
                             return;
                         }
                         let Some(path) =
@@ -4828,6 +4890,8 @@ impl Component for Root {
                         })]
                     }
                 };
+                let mut commands = commands;
+                commands.extend(clear_library);
                 self.write_repo_settings(commands, context);
             }
             Message::RepoSettingsChoice("default-branch", Some(index)) => {
@@ -9042,6 +9106,13 @@ impl Root {
                     context.callback(move |on| Message::SettingsEnv(name.clone(), on))
                 }),
                 env_query: context.callback(Message::SettingsEnvQuery),
+                template: Box::new(|i, field| {
+                    context.callback(move |text| Message::SettingsTemplate(i, field, text))
+                }),
+                template_add: context.callback(|()| Message::SettingsTemplateAdd),
+                template_remove: Box::new(|i| {
+                    context.callback(move |()| Message::SettingsTemplateRemove(i))
+                }),
             },
         );
         Border::new()
@@ -9440,8 +9511,13 @@ impl Root {
         self.summary.clear();
         self.description.clear();
         let repo = repo.clone();
+        // 共有のテンプレートの一覧は設定（この糸のもの）から先に読んでおく。
+        let library = crate::templates::all();
         context.spawn_background(move |_| {
-            Message::CommitTemplate(key, commit_template(&repo, &workdir).unwrap_or_default())
+            Message::CommitTemplate(
+                key,
+                commit_template(&repo, &workdir, &library).unwrap_or_default(),
+            )
         });
     }
 
@@ -9920,25 +9996,58 @@ impl WorktreeInfo {
     }
 }
 
-/// `commit.template` の中身（# の行を除く）。このリポジトリ専用のもの（Settings で書いたもの）はコアから、
-/// ほかは手元で読む。
-fn commit_template(repo: &Repository, workdir: &std::path::Path) -> Option<String> {
+/// コミット欄に入れるテンプレート（# の行を除く）: 共有のテンプレート（`amonhen.commitTemplate`。`commit.template` の
+/// ファイルがリポジトリに近い段で決まっていればそちら。GTK4 版と同じ決め方）か、`commit.template` の中身。この
+/// リポジトリ専用のもの（Settings で書いたもの）はコアから、ほかは手元で読む。
+fn commit_template(
+    repo: &Repository,
+    workdir: &std::path::Path,
+    library: &[crate::templates::Template],
+) -> Option<String> {
     let config: Value =
         serde_json::from_str(&repo.run_json(r#"{"op":"configList"}"#)).unwrap_or_default();
-    let path = config["info"]["entries"]
-        .as_array()?
-        .iter()
-        .rev()
-        .find(|e| {
-            e["key"]
-                .as_str()
-                .is_some_and(|k| k.eq_ignore_ascii_case("commit.template"))
-        })?["value"]
-        .as_str()?
-        .to_owned();
-    if path.is_empty() {
-        return None;
-    }
+    let entries = config["info"]["entries"].as_array()?;
+    let entry = |key: &str| {
+        entries
+            .iter()
+            .rev()
+            .find(|e| {
+                e["key"]
+                    .as_str()
+                    .is_some_and(|k| k.eq_ignore_ascii_case(key))
+            })
+            .map(|e| {
+                (
+                    e["scope"].as_str().unwrap_or_default().to_owned(),
+                    e["value"].as_str().unwrap_or_default().to_owned(),
+                )
+            })
+    };
+    let file = entry("commit.template").filter(|(_, v)| !v.is_empty());
+    let shared = entry(crate::templates::LIBRARY_KEY)
+        .filter(|(scope, _)| {
+            !crate::templates::shared_yields(scope, file.as_ref().map(|(s, _)| s.as_str()))
+        })
+        .and_then(|(_, name)| {
+            library
+                .iter()
+                .find(|t| t.name == name)
+                .map(|t| t.text.clone())
+        });
+    let text = match (shared, file) {
+        (Some(text), _) => text,
+        (None, Some((_, path))) => file_template(repo, workdir, &path)?,
+        (None, None) => return None,
+    };
+    let lines: Vec<&str> = text.lines().filter(|l| !l.starts_with('#')).collect();
+    let text = lines.join("\n");
+    let text = text.trim();
+    (!text.is_empty()).then(|| text.to_owned())
+}
+
+/// `commit.template` のファイルの中身。
+fn file_template(repo: &Repository, workdir: &std::path::Path, path: &str) -> Option<String> {
+    let path = path.to_owned();
     let text = if path
         .replace('\\', "/")
         .ends_with("/amonhen/commit-template")
@@ -9956,10 +10065,7 @@ fn commit_template(repo: &Repository, workdir: &std::path::Path) -> Option<Strin
         };
         std::fs::read_to_string(file).ok()?
     };
-    let lines: Vec<&str> = text.lines().filter(|l| !l.starts_with('#')).collect();
-    let text = lines.join("\n");
-    let text = text.trim();
-    (!text.is_empty()).then(|| text.to_owned())
+    Some(text)
 }
 
 /// 最近のコミット 30 個のメッセージと作者を裏で読む（最近のメッセージと Co-authored-by の候補。GTK4 版と同じ）。

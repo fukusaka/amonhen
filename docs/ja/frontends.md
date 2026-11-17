@@ -114,7 +114,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | General: 外のエディター | ✓ | ✓ | ✓ | n/a | n/a | GTK4: コードエディターは desktop のエントリーで macOS 版と同じ順に探す。なければテキストエディター（オフィスのアプリは選ばない）。Other… ではプログラムを選ぶ。<br>Windows: 知っているコードエディタはインストール先か PATH の起動用のスクリプトから、macOS 版の順に探す。なければメモ帳（フォルダは開けない）。その他… で実行ファイルを選べる。 |
 | General: 端末と diff のツール | — | — | — | n/a | n/a |  |
 | Git: 機械全体のページ（Author and Signing・Commits・Operations・Working Copy・Keys and Values） | ✓ | ✓ | △ | — | △ | CLI: `amonhen run` から。<br>Windows: すべてのリポジトリの名前とメールだけ。 |
-| Git > Commits: 共有のメッセージのテンプレート | ✓ | ✓ | — | — | — |  |
+| Git > Commits: 共有のメッセージのテンプレート | ✓ | ✓ | ✓ | — | — | Windows: Settings の 1 ページでその場で書く（シートはない） |
 | Git > Programs: git・gpg・ssh-keygen・gpgsm | ✓ | ✓ | — | n/a | △ | VSCode: 拡張は、ここで機械に選んだ git を動かし、選んでいなければ VSCode の `git.path`。gpg・ssh-keygen は git の設定で決まる。<br>CLI: `amonhen run`（`programs`・`setMachineGit`）から。 |
 | Git > この機械の Environment Variables（渡す・秘密を隠す） | ✓ | ✓ | ✓ | n/a | n/a | VSCode: VSCode の環境が代わり（拡張はそれを daemon に渡す）。<br>Windows: Settings の 1 ページの Git の下。Passed / All の切り替えと値の詳細はない |
 | Environment Variables: ログインシェルのものを使う（Read Again・SSH agent） | ✓ | — | — | n/a | n/a | GTK4: 外した。Linux のセッションはすでに持っている。<br>VSCode: VSCode の環境が代わり（拡張はそれを daemon に渡す）。 |
@@ -145,7 +145,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
 | 設定のページ（ページの一覧・git の行・行ごとの出どころ・↩︎・ⓘ） | ✓ | ✓ | △ | ✓ | n/a | VSCode: メインビューの Repository Settings（エンジンがあるとき）で、このリポジトリの設定だけ。<br>Windows: Author と Keys and Values を 1 つのページに。行ごとの設定元・↩︎・ⓘ はない。 |
 | Author and Signing（署名の選択・集めた鍵・mailmap） | ✓ | ✓ | △ | ✓ | △ | VSCode: 鍵は今の形式のものだけを集める。<br>CLI: `amonhen run`（`signingKeys`・`configSet`）から。<br>Windows: 名前とメールだけ。 |
-| Commits: メッセージのテンプレート（なし・共有・独自・ファイル） | ✓ | ✓ | △ | △ | △ | VSCode: なし・このリポジトリ専用（その場で書く）・ファイル。共有のテンプレートはない。<br>CLI: `amonhen run` から。<br>Windows: Windows: なし・このリポジトリ専用（その場で書く）・ファイル。共有のテンプレートはまだない。 |
+| Commits: メッセージのテンプレート（なし・共有・独自・ファイル） | ✓ | ✓ | ✓ | △ | △ | VSCode: なし・このリポジトリ専用（その場で書く）・ファイル。共有のテンプレートはない。<br>CLI: `amonhen run` から。 |
 | Branches: 既定のブランチを選ぶ | ✓ | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | Operations: pull・fetch.prune・autostash・updateRefs・コンフリクトの書き方・rerere | ✓ | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | rerere: 1 つの解決を忘れる（マージエディタ）・すべて忘れる（リポジトリの設定） | ✓ | ✓ | ✓ | ✓ | △ | VSCode: rerere が解決したコンフリクトの Working Copy の右クリックに Forget Resolution（マージエディタは VSCode のもの）、Repository Settings > Operations に Forget All…。<br>CLI: `amonhen run`（`forgetResolution`・`forgetAllResolutions`）から。 |
@@ -226,7 +226,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 行ごとの +/− の数と、ホバーで Discard | ✓ | ✓ | △ | ✓ | △ | VSCode: 行数はエンジンがあるときだけ。<br>CLI: `diff --stat`。<br>Windows: Windows: 行数だけ。Discard は右クリックと Delete。 |
 | Space で切り替え、⌫ で捨てる | ✓ | ✓ | ✓ | ✓ | n/a |  |
 | 上のコミットの欄、50/72 の数と本文の目安の線 | ✓ | ✓ | △ | ✓ | n/a | VSCode: 列が 72 文字より狭いので、目安の線の代わりに、72 を超える本文の行の長さを出す。<br>Windows: 件名と本文、件名の文字数（50 を超えたら黄、72 を超えたら橙）。本文の 72 桁の目安の線はない（等幅のフォントがまだない）。 |
-| リポジトリごとの下書き、テンプレートから始める | ✓ | ✓ | △ | ✓ | n/a | VSCode: `commit.template` だけで、共有のテンプレートは使わない。<br>Windows: Windows: `commit.template` だけで、共有のテンプレートはまだない。 |
+| リポジトリごとの下書き、テンプレートから始める | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: `commit.template` だけで、共有のテンプレートは使わない。 |
 | 最近のメッセージ（⌥↑ / ⌥↓・一覧） | ✓ | ✓ | ✓ | ✓ | n/a |  |
 | Conventional の種類・Co-authored-by・Signed-off-by を入れる | ✓ | ✓ | ✓ | ✓ | n/a |  |
 | `#issue` の補完 | ✓ | ✓ | — | — | n/a |  |

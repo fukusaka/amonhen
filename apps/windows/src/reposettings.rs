@@ -310,10 +310,17 @@ pub fn operation_rows() -> Vec<OperationRow> {
 /// メッセージのテンプレートのファイル（git の `commit.template`）。
 pub const TEMPLATE_KEY: &str = "commit.template";
 
-/// テンプレートの選び方（GTK4 版の `template_choice` のうち、共有のテンプレートを除く）: 0 はなし、1 はこのリポジトリ
-/// 専用、2 はほかのファイル。
-pub fn template_choice(state: &State) -> usize {
-    match state.effective(TEMPLATE_KEY).map(|(v, _)| v) {
+/// テンプレートの選び方（GTK4 版の `template_choice`）: 0 はなし、1 はこのリポジトリ専用、2 はほかのファイル、3 から
+/// 先は共有のテンプレート（`names` の順）。
+pub fn template_choice(state: &State, names: &[String]) -> usize {
+    let file = state.effective(TEMPLATE_KEY).filter(|(v, _)| !v.is_empty());
+    if let Some((shared, scope)) = state.effective(crate::templates::LIBRARY_KEY)
+        && let Some(i) = names.iter().position(|n| n == shared)
+        && !crate::templates::shared_yields(scope, file.map(|(_, s)| s))
+    {
+        return 3 + i;
+    }
+    match file.map(|(v, _)| v) {
         None | Some("") => 0,
         Some(path) if is_own_template(path) => 1,
         Some(_) => 2,
@@ -997,16 +1004,20 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 .children((View::keyed_fragment(rows),))
         }
     };
-    // Commits: メッセージのテンプレート（GTK4 版の `commits_page`。Settings の共有のテンプレートはまだない）。
-    let choice = template_choice(state);
+    // Commits: メッセージのテンプレート（GTK4 版の `commits_page`）。共有のもの（Settings > Git で書いたもの）も選べる。
+    let names = crate::templates::names();
+    let choice = template_choice(state, &names);
     let file_label = match state.effective(TEMPLATE_KEY) {
         Some((path, _)) if choice == 2 => tr!("File: {path}", path = path),
         _ => tr!("File…"),
     };
-    let template_source = state
-        .effective(TEMPLATE_KEY)
-        .map(|(_, scope)| scope_label(scope))
-        .unwrap_or_else(|| tr!("git’s default"));
+    let template_source = if choice >= 3 {
+        state.effective(crate::templates::LIBRARY_KEY)
+    } else {
+        state.effective(TEMPLATE_KEY)
+    }
+    .map(|(_, scope)| scope_label(scope))
+    .unwrap_or_else(|| tr!("git’s default"));
     let own_editor: View = match (&state.template, choice) {
         (Some(text), 1) => {
             let dirty = lf(text) != state.template_saved;
@@ -1042,7 +1053,11 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
             .spacing(8.0)
             .children((
                 ComboBox::new()
-                    .items_source(vec![tr!("None"), tr!("This repository’s own"), file_label])
+                    .items_source({
+                        let mut items = vec![tr!("None"), tr!("This repository’s own"), file_label];
+                        items.extend(names.iter().cloned());
+                        items
+                    })
                     .selected_index(choice)
                     .on_selection_changed((callbacks.choice)("template")),
                 TextBlock::new()

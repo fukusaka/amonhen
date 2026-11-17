@@ -29,6 +29,7 @@ mod settingsview;
 mod sidebar;
 mod signature;
 mod stashes;
+mod templates;
 mod win32;
 mod winui;
 mod workcopy;

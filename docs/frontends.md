@@ -114,7 +114,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | General: external editor | ✓ | ✓ | ✓ | n/a | n/a | GTK4: Code editors are found by their desktop entries, in the macOS order; the fallback is a text editor, never an office app; Other… takes a program.<br>Windows: Known code editors are found in their install folders or by their launchers on PATH, in the macOS order; the fallback is Notepad, which can't open folders; Other… takes a program. |
 | General: terminal and diff tool | — | — | — | n/a | n/a |  |
 | Git: machine-wide pages (Author and Signing, Commits, Operations, Working Copy, Keys and Values) | ✓ | ✓ | △ | — | △ | CLI: Via `amonhen run`.<br>Windows: The name and email for all repositories only. |
-| Git > Commits: shared message template library | ✓ | ✓ | — | — | — |  |
+| Git > Commits: shared message template library | ✓ | ✓ | ✓ | — | — | Windows: Edited inline in the one Settings page (no sheet) |
 | Git > Programs: git, gpg, ssh-keygen, gpgsm | ✓ | ✓ | — | n/a | △ | VSCode: The extension runs the git chosen here for the machine, and VSCode's `git.path` only when none is chosen; gpg and ssh-keygen come from git's settings.<br>CLI: Via `amonhen run` (`programs`, `setMachineGit`). |
 | Git > Environment Variables of this machine (pass, masked secrets) | ✓ | ✓ | ✓ | n/a | n/a | VSCode: VSCode's own environment, which the extension passes to the daemon.<br>Windows: In the one Settings page under Git; no Passed / All switch or value detail |
 | Environment Variables: use the login shell's (Read Again, SSH agent) | ✓ | — | — | n/a | n/a | GTK4: Left out: Linux sessions already carry it.<br>VSCode: VSCode's own environment, which the extension passes to the daemon. |
@@ -145,7 +145,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
 | Settings page (pages, git line, source / ↩︎ / ⓘ per row) | ✓ | ✓ | △ | ✓ | n/a | VSCode: Repository Settings in the main view (with the engine), this repository only.<br>Windows: Author and Keys and Values on one page, without the source / ↩︎ / ⓘ per row. |
 | Author and Signing (signing choice, collected keys, mailmap) | ✓ | ✓ | △ | ✓ | △ | VSCode: Keys are collected for the current format only.<br>CLI: Via `amonhen run` (`signingKeys`, `configSet`).<br>Windows: The name and email only. |
-| Commits: message template (none, shared, own, file) | ✓ | ✓ | △ | △ | △ | VSCode: None, this repository's own (edited there) or a file; no shared templates.<br>CLI: Via `amonhen run`.<br>Windows: Windows: None, this repository's own (edited there) or a file; no shared templates yet. |
+| Commits: message template (none, shared, own, file) | ✓ | ✓ | ✓ | △ | △ | VSCode: None, this repository's own (edited there) or a file; no shared templates.<br>CLI: Via `amonhen run`. |
 | Branches: default branch override | ✓ | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Operations: pull, fetch.prune, autostash, updateRefs, conflict style, rerere | ✓ | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | rerere: forget one resolution (merge editor), forget all (Repository Settings) | ✓ | ✓ | ✓ | ✓ | △ | VSCode: Forget Resolution on a Working Copy conflict that rerere resolved (VSCode's merge editor is its own); Forget All… under Repository Settings > Operations.<br>CLI: Via `amonhen run` (`forgetResolution`, `forgetAllResolutions`). |
@@ -226,7 +226,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Per-row +/− counts and Discard on hover | ✓ | ✓ | △ | ✓ | △ | VSCode: Counts need the engine.<br>CLI: `diff --stat`.<br>Windows: Windows: Counts only; Discard is in the right-click and Delete. |
 | Space toggles, ⌫ discards | ✓ | ✓ | ✓ | ✓ | n/a |  |
 | Commit box on top with 50/72 counter and body guide | ✓ | ✓ | △ | ✓ | n/a | VSCode: A description line over 72 is counted instead of a guide (the column is narrower than 72 characters).<br>Windows: Summary and description with the summary's length (yellow over 50, orange over 72); no 72-column guide in the description (no monospaced font yet). |
-| Draft per repository, starting from the template | ✓ | ✓ | △ | ✓ | n/a | VSCode: `commit.template` only, not the shared template library.<br>Windows: Windows: `commit.template` only, not the shared templates. |
+| Draft per repository, starting from the template | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: `commit.template` only, not the shared template library. |
 | Recent messages (⌥↑ / ⌥↓, list) | ✓ | ✓ | ✓ | ✓ | n/a |  |
 | Insert Conventional types, Co-authored-by, Signed-off-by | ✓ | ✓ | ✓ | ✓ | n/a |  |
 | `#issue` completion | ✓ | ✓ | — | — | n/a |  |

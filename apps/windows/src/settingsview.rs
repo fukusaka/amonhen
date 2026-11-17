@@ -25,6 +25,8 @@ pub struct State {
     pub env: Vec<(String, String)>,
     pub env_added: Vec<String>,
     pub env_query: String,
+    /// 共有のコミットのメッセージのテンプレート（Git > Commits の Shared Templates）。
+    pub templates: Vec<crate::templates::Template>,
 }
 
 /// 足した名前の設定の鍵（GTK4 版・macOS 版と同じ）。
@@ -133,6 +135,10 @@ pub struct Callbacks<'a> {
     pub env: Box<dyn Fn(String) -> Callback<bool> + 'a>,
     /// 環境変数を探す文字。
     pub env_query: Callback<String>,
+    /// 共有のテンプレート: 名前（0）・本文（1）の書き換え、足す、外す。
+    pub template: Box<dyn Fn(usize, usize) -> Callback<String> + 'a>,
+    pub template_add: Callback<()>,
+    pub template_remove: Box<dyn Fn(usize) -> Callback<()> + 'a>,
 }
 
 /// バイト数を読みやすく。
@@ -242,8 +248,54 @@ fn environment(state: &State, callbacks: &Callbacks) -> View {
         ))
 }
 
+/// Git > Commits の Shared Templates（GTK4 版の `templates::section`）: 名前と本文を並べ、＋で足し、−で外す。
+/// リポジトリは Repository Settings の Commits で 1 つを選ぶ。
+fn templates(state: &State, callbacks: &Callbacks) -> View {
+    let rows = state.templates.iter().enumerate().map(|(i, t)| {
+        (
+            t.id.clone(),
+            StackPanel::new()
+                .spacing(4.0)
+                .margin(Thickness::new(0.0, 0.0, 0.0, 8.0))
+                .children((
+                    Grid::new()
+                        .columns([GridLength::Star(1.0), GridLength::Auto])
+                        .column_spacing(6.0)
+                        .children((
+                            TextBox::new()
+                                .text(t.name.clone())
+                                .placeholder_text(tr!("Name"))
+                                .on_text_changed((callbacks.template)(i, 0))
+                                .grid_column(0),
+                            Button::new()
+                                .on_click((callbacks.template_remove)(i))
+                                .grid_column(1)
+                                .content(TextBlock::new().text("−")),
+                        )),
+                    TextBox::new()
+                        .text(t.text.clone())
+                        .placeholder_text(tr!("Message"))
+                        .accepts_return(true)
+                        .min_height(70.0)
+                        .on_text_changed((callbacks.template)(i, 1)),
+                )),
+        )
+    });
+    StackPanel::new()
+        .spacing(4.0)
+        .margin(Thickness::new(0.0, 12.0, 0.0, 0.0))
+        .children((
+            TextBlock::new().text(tr!("Shared Templates")),
+            View::keyed_fragment(rows),
+            Button::new()
+                .on_click(callbacks.template_add.clone())
+                .content(TextBlock::new().text("+")),
+        ))
+}
+
 pub fn view(state: &State, callbacks: Callbacks) -> View {
     let env = environment(state, &callbacks);
+    let shared_templates = templates(state, &callbacks);
     let head = Grid::new()
         .columns([GridLength::Star(1.0), GridLength::Auto])
         .margin(Thickness::new(10.0, 6.0, 8.0, 6.0))
@@ -343,7 +395,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                         })]),
                     )),
                 heading("Git".to_owned()),
-                StackPanel::new().children((git, env)),
+                StackPanel::new().children((git, shared_templates, env)),
                 heading(tr!("Diff & Merge")),
                 check(
                     crate::prefs::AUTO_MAGIC_MERGE,
