@@ -423,6 +423,7 @@
 "Pattern" = "パターン";
 "Track Pattern…" = "パターンを追跡…";
 "Track Pattern" = "パターンを追跡";
+"Track" = "追跡";
 "Files matching the pattern are stored in LFS from now on (git lfs track)." = "このパターンに合うファイルを、これから LFS に置きます（git lfs track）。";
 ".git/info/exclude, one pattern per line. Shared patterns go in .gitignore." = ".git/info/exclude。1 行に 1 つ。共有するパターンは .gitignore に書きます。";
 "Shared templates live in Settings > Git and are Amon Hen’s. This repository’s own is a file under .git/amonhen that commit.template points to, so git in a terminal uses it too." = "共有のテンプレートは設定 > Git にあり、Amon Hen のものです。このリポジトリ専用のものは .git/amonhen の下のファイルで、commit.template がそれを指すので、端末の git も使います。";

@@ -146,12 +146,15 @@ final class Actions {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = message
-        alert.addButton(withTitle: ok)
+        let button = alert.addButton(withTitle: ok)
         alert.addButton(withTitle: L("Cancel"))
         let field = NSTextField(string: initial)
         field.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
         alert.accessoryView = field
         alert.window.initialFirstResponder = field
+        // 名前のない枝やタグは作れないので、空のあいだは押せなくする。
+        let watching = AlertForm.require([field], for: button)
+        defer { AlertForm.release(watching) }
         guard await present(alert) == .alertFirstButtonReturn else { return nil }
         let value = field.stringValue.trimmingCharacters(in: .whitespaces)
         return value.isEmpty ? nil : value
@@ -272,11 +275,11 @@ final class Actions {
             stack.frame = NSRect(x: 0, y: 0, width: 320, height: stack.fittingSize.height)
             alert.accessoryView = stack
             alert.window.initialFirstResponder = name
-            alert.addButton(withTitle: L("Create"))
+            let watching = AlertForm.require([name], for: alert.addButton(withTitle: L("Create")))
+            defer { AlertForm.release(watching) }
             alert.addButton(withTitle: L("Cancel"))
             guard await present(alert) == .alertFirstButtonReturn else { return }
             let branch = name.stringValue.trimmingCharacters(in: .whitespaces)
-            guard !branch.isEmpty else { return NSSound.beep() }
             perform(["op": "createOrphanBranch", "name": branch, "keepFiles": keep.state == .on])
         }
     }

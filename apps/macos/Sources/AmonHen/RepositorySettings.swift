@@ -2180,14 +2180,16 @@ private struct HooksLFSPage: View {
         let alert = NSAlert()
         alert.messageText = L("Track Pattern")
         alert.informativeText = L("Files matching the pattern are stored in LFS from now on (git lfs track).")
-        alert.addButton(withTitle: "OK")
+        let button = alert.addButton(withTitle: L("Track"))
         alert.addButton(withTitle: L("Cancel"))
         let field = NSTextField(string: "")
         field.placeholderString = "*.psd"
         field.frame = NSRect(x: 0, y: 0, width: 300, height: 24)
         alert.accessoryView = field
         alert.window.initialFirstResponder = field
+        let watching = AlertForm.require([field], for: button)
         Task { @MainActor in
+            defer { AlertForm.release(watching) }
             guard await Self.ask(alert) == .alertFirstButtonReturn else { return }
             let pattern = field.stringValue.trimmingCharacters(in: .whitespaces)
             if !pattern.isEmpty { model.lfsTrack(pattern, true) }
