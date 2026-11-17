@@ -1249,3 +1249,40 @@ fn blame_from_a_commits_file() {
     let back = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "\t]L\x1b").unwrap();
     assert!(back.contains("◉  [main] Take the lane from the trunk"));
 }
+
+/// History の `F` は選んでいるコミットを親にまとめ、`X` は消す（どちらも先に確かめ、Undo で戻る）
+#[test]
+fn fixup_and_drop_rewrite_history() {
+    let dir = tempfile::tempdir().unwrap();
+    git(dir.path(), BASE, &["init", "-q", "-b", "main"]);
+    for (i, name) in ["one", "two", "three"].iter().enumerate() {
+        std::fs::write(dir.path().join(format!("{name}.txt")), name).unwrap();
+        git(dir.path(), BASE, &["add", "."]);
+        git(
+            dir.path(),
+            BASE + DAY * i as i64,
+            &["commit", "-q", "-m", name],
+        );
+    }
+    let subjects = || git_out(dir.path(), &["log", "--format=%s"]);
+    let front = || {
+        amonhen_model::testing::isolate_from_user_settings();
+        open(dir.path())
+    };
+    // 一番上（three）を親（two）にまとめる。
+    let asked = amonhen_tui::snapshot(front(), 140, 10, clock(), "F").unwrap();
+    println!("{asked}");
+    assert!(asked.contains("“three” into its parent? Undo brings it back.   y fix up   n cancel"));
+    amonhen_tui::snapshot(front(), 140, 10, clock(), "Fy").unwrap();
+    assert_eq!(subjects(), "two\none\n");
+    assert!(dir.path().join("three.txt").exists());
+    // Undo で戻る。
+    amonhen_tui::snapshot(front(), 140, 10, clock(), "uy").unwrap();
+    assert_eq!(subjects(), "three\ntwo\none\n");
+    // 2 行目（two）を消す。
+    let asked = amonhen_tui::snapshot(front(), 140, 10, clock(), "jX").unwrap();
+    assert!(asked.contains("“two”? Undo brings it back.   y drop   n cancel"));
+    amonhen_tui::snapshot(front(), 140, 10, clock(), "jXy").unwrap();
+    assert_eq!(subjects(), "three\none\n");
+    assert!(!dir.path().join("two.txt").exists());
+}

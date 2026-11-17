@@ -172,6 +172,9 @@ pub struct App {
     workdir: Option<String>,
     /// メッセージをエディタで開く（`Ctrl-e`。端末を渡してから）。
     edit_message: bool,
+    /// メッセージを書き換えるコミット（16 進の ID）と、届いたら今のメッセージ（届くまで `None`）。届いたら
+    /// エディタで開き、閉じたら書き換える。
+    rewording: Option<(String, Option<String>)>,
     branch: Option<String>,
     clock: Clock,
     size: (u16, u16),
@@ -239,6 +242,7 @@ impl App {
             name: String::new(),
             workdir: None,
             edit_message: false,
+            rewording: None,
             branch: None,
             clock,
             size: (0, 0),
@@ -360,12 +364,49 @@ impl App {
 
     /// メッセージをエディタで開くなら、今のメッセージと作業ツリーの場所（聞いたら、なかったことにする）。
     pub fn take_edit_message(&mut self) -> Option<(String, Option<String>)> {
+        // コミットのメッセージの書き換えは、今のメッセージが届いてから。
+        if let Some((_, Some(message))) = &self.rewording
+            && !self.edit_message
+        {
+            self.edit_message = true;
+            return Some((message.clone(), self.workdir.clone()));
+        }
+        if self.rewording.is_some() {
+            return None;
+        }
         std::mem::take(&mut self.edit_message)
             .then(|| (self.changes.message.text(), self.workdir.clone()))
     }
 
     /// エディタを閉じた後のメッセージ。だめなら理由を出し、メッセージはそのまま。
     pub fn message_edited(&mut self, edited: Result<String>) {
+        self.edit_message = false;
+        // コミットのメッセージを書き換えていたなら、変わっていれば書き換える。
+        if let Some((oid, before)) = self.rewording.take() {
+            self.dirty = true;
+            match edited {
+                Ok(text) => {
+                    let lines: Vec<&str> = text.lines().filter(|l| !l.starts_with('#')).collect();
+                    let message = lines.join("\n").trim().to_owned();
+                    if message.is_empty() {
+                        self.error = Some(tr!("The message is empty; the commit is unchanged"));
+                    } else if Some(message.as_str()) == before.as_deref().map(str::trim) {
+                        self.notice = Some(tr!("The message is unchanged"));
+                    } else {
+                        self.run(
+                            "rewrite",
+                            tr!("Editing the message…"),
+                            json!({
+                                "op": "rewrite", "label": "Edit Message",
+                                "edit": {"kind": "reword", "oid": oid, "message": message},
+                            }),
+                        );
+                    }
+                }
+                Err(error) => self.error = Some(error.to_string()),
+            }
+            return;
+        }
         match edited {
             // `#` で始まる行は、git と同じくコメント。
             Ok(text) => {
@@ -570,6 +611,20 @@ impl App {
                             Err(error) => {
                                 self.push_after_commit = false;
                                 self.error = Some(error);
+                            }
+                        }
+                    }
+                    Loaded::Message(message) if self.rewording.is_some() => {
+                        // 書き換えるコミットの今のメッセージ: エディタで開く（`take_edit_message`）。
+                        match message {
+                            Some(message) => {
+                                if let Some(rewording) = &mut self.rewording {
+                                    rewording.1 = Some(message);
+                                }
+                            }
+                            None => {
+                                self.rewording = None;
+                                self.error = Some(tr!("Can’t read the commit’s message"));
                             }
                         }
                     }
@@ -980,7 +1035,7 @@ impl App {
             }
             "apply" => self.notice = Some(tr!("Applied the stash")),
             "drop" => self.notice = Some(tr!("Dropped the stash")),
-            "merge" | "rebase" | "continue" | "skip" | "cherryPick" | "revert" => {
+            "merge" | "rebase" | "continue" | "skip" | "cherryPick" | "revert" | "rewrite" => {
                 // コンフリクトで止まったら、Working Copy で解決する。
                 match reply["outcome"].as_str() {
                     Some("conflict") => {
@@ -1122,6 +1177,40 @@ impl App {
         };
         let (id, subject) = (id.to_string(), subject.to_owned());
         let short = id[..id.len().min(8)].to_owned();
+        // メッセージの書き換えは、今のメッセージを読んでからエディタで開く。
+        if code == KeyCode::Char('e') {
+            self.rewording = Some((id.clone(), None));
+            self.send(Request::Message { id });
+            return true;
+        }
+        let rewrite = |label: &str, kind: &str| Request::Run {
+            name: "rewrite",
+            command: json!({"op": "rewrite", "label": label, "edit": {"kind": kind, "oid": id}}),
+        };
+        if code == KeyCode::Char('F') {
+            self.confirm = Some((
+                tr!(
+                    "Fix up {commit} “{subject}” into its parent? Undo brings it back.",
+                    commit = short,
+                    subject = subject
+                ),
+                tr!("fix up"),
+                rewrite("Fixup into Parent", "fixup"),
+            ));
+            return true;
+        }
+        if code == KeyCode::Char('X') {
+            self.confirm = Some((
+                tr!(
+                    "Drop {commit} “{subject}”? Undo brings it back.",
+                    commit = short,
+                    subject = subject
+                ),
+                tr!("drop"),
+                rewrite("Drop", "drop"),
+            ));
+            return true;
+        }
         self.confirm = Some(match code {
             KeyCode::Char('y') => (
                 tr!(
@@ -1500,6 +1589,8 @@ impl App {
                 ("n N", tr!("Next and previous match")),
                 ("y v", tr!("Cherry-pick, revert the selected commit")),
                 ("c", tr!("Check out the selected commit (detached HEAD)")),
+                ("e", tr!("Edit the commit's message in git's editor")),
+                ("F X", tr!("Fix up into the parent; drop the commit")),
                 ("Esc", tr!("Clear the search")),
             ],
             (View::Reflog, Focus::Main) => vec![
@@ -1850,7 +1941,7 @@ impl App {
                 true
             }
             // 選んでいるコミットを今のブランチに持ってくる・打ち消す・そこをチェックアウトする（先に確かめる）。
-            KeyCode::Char('y' | 'v' | 'c') => self.ask_commit_operation(code),
+            KeyCode::Char('y' | 'v' | 'c' | 'e' | 'F' | 'X') => self.ask_commit_operation(code),
             KeyCode::Char('n') => self.history.next_match(true),
             KeyCode::Char('N') => self.history.next_match(false),
             KeyCode::Esc => self.clear_search(),
