@@ -158,7 +158,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | git の行にリポジトリの形（shallow・partial・sparse・maintenance） | ✓ | ✓ | — | ✓ | △ | CLI: `status` が shallow・partial・sparse を添える。 |
 | 取得とフォルダ: shallow clone の履歴を取り足す（数・日付まで・すべて） | ✓ | ✓ | ✓ | ✓ | △ | CLI: `amonhen run`（`deepen`・`unshallow`）から。<br>Windows: 日付は YYYY-MM-DD で打つ（暦はない） |
 | 取得とフォルダ: partial clone の中身をすべて取る（git 2.36） | ✓ | ✓ | ✓ | ✓ | △ | CLI: `amonhen run`（`fetchAllContents`）から。 |
-| 取得とフォルダ: sparse checkout のフォルダを HEAD の木から選ぶ（git 2.25） | ✓ | ✓ | — | ✓ | △ | VSCode: フォルダは HEAD の木を一覧でたどって選ぶ。<br>CLI: `amonhen run`（`sparseCheckout`・`treeFolders`）から。 |
+| 取得とフォルダ: sparse checkout のフォルダを HEAD の木から選ぶ（git 2.25） | ✓ | ✓ | ✓ | ✓ | △ | VSCode: フォルダは HEAD の木を一覧でたどって選ぶ。<br>CLI: `amonhen run`（`sparseCheckout`・`treeFolders`）から。<br>Windows: フォルダは HEAD の木を一覧でたどって選ぶ（↑ と →） |
 | 取得とフォルダ: git maintenance の切り替え（git 2.31） | ✓ | ✓ | ✓ | ✓ | △ | CLI: `amonhen run`（`maintenance`）から。 |
 
 ## 5. ツールバー

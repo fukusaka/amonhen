@@ -468,6 +468,16 @@ enum Dialog {
         checks: Vec<(String, bool)>,
         kind: FormKind,
     },
+    /// HEAD の木からフォルダを選んで、sparse checkout で取り出すフォルダに足す（GTK4 版の `add_folder`）。
+    TreeFolder {
+        repo: Arc<Repository>,
+        /// 見ているフォルダ（`/` から）と、その中のフォルダ（読むまでは None）。
+        path: String,
+        entries: Option<Result<Vec<String>, String>>,
+        selected: Option<usize>,
+        /// 今取り出しているフォルダ（空なら sparse checkout を始める）。
+        existing: Vec<String>,
+    },
     /// Repositories の行の表示名を変える。
     RenameRepository { location: String, name: String },
     /// Repositories のグループを作る（リポジトリがあればそこに移す）。
@@ -753,6 +763,11 @@ enum Message {
     RemoteLoaded(Arc<Repository>, Option<(String, String, String)>),
     /// リモートのシートの欄（0 は名前、1 は fetch、2 は push の URL）。
     RemoteField(usize, String),
+    /// フォルダを選ぶダイアログ: 読んだ中身、選んだ行、選んだフォルダに入る、上に戻る。
+    TreeFolderLoaded(String, Result<Vec<String>, String>),
+    TreeFolderSelect(Option<usize>),
+    TreeFolderOpen,
+    TreeFolderUp,
     /// リモートの fetch の URL につないで確かめる。
     RemoteCheck,
     /// 接続の確認の結果（確かめた URL、つながったか、言葉）。
@@ -2312,6 +2327,35 @@ impl Component for Root {
                     None => beep(),
                 },
                 (
+                    Some(Dialog::TreeFolder {
+                        repo,
+                        path,
+                        entries,
+                        selected,
+                        existing,
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    // 選んだ行のフォルダ（選んでいなければ、見ているフォルダ。根は選べない）。
+                    let chosen = match selected
+                        .and_then(|i| entries.as_ref()?.as_ref().ok()?.get(i).cloned())
+                    {
+                        Some(name) => format!("{}/{name}", path.trim_end_matches('/')),
+                        None => path,
+                    };
+                    let chosen = chosen.trim_start_matches('/').to_owned();
+                    if chosen.is_empty() {
+                        return beep();
+                    }
+                    if existing.contains(&chosen) {
+                        return;
+                    }
+                    let mut folders = existing;
+                    folders.push(chosen);
+                    let command = json!({ "op": "sparseCheckout", "folders": folders });
+                    perform(context, repo, command, tr!("Check Out One More Folder"));
+                }
+                (
                     Some(Dialog::RenameRepository { location, name }),
                     ContentDialogResult::Primary,
                 ) => {
@@ -2522,6 +2566,54 @@ impl Component for Root {
                     }
                     *[name, fetch, push].into_iter().nth(index).expect("field") = text;
                 }
+            }
+            Message::TreeFolderLoaded(at, entries) => {
+                if let Some(Dialog::TreeFolder {
+                    path,
+                    entries: shown,
+                    selected,
+                    ..
+                }) = &mut self.dialog
+                    && *path == at
+                {
+                    *shown = Some(entries);
+                    *selected = None;
+                }
+            }
+            Message::TreeFolderSelect(index) => {
+                if let Some(Dialog::TreeFolder { selected, .. }) = &mut self.dialog {
+                    *selected = index;
+                }
+            }
+            Message::TreeFolderOpen | Message::TreeFolderUp => {
+                let up = matches!(message, Message::TreeFolderUp);
+                let Some(Dialog::TreeFolder {
+                    repo,
+                    path,
+                    entries,
+                    selected,
+                    ..
+                }) = &mut self.dialog
+                else {
+                    return;
+                };
+                let next = if up {
+                    match path.trim_end_matches('/').rsplit_once('/') {
+                        Some((parent, _)) if !parent.is_empty() => parent.to_owned(),
+                        _ => "/".to_owned(),
+                    }
+                } else {
+                    let Some(name) =
+                        selected.and_then(|i| entries.as_ref()?.as_ref().ok()?.get(i).cloned())
+                    else {
+                        return;
+                    };
+                    format!("{}/{name}", path.trim_end_matches('/'))
+                };
+                *path = next.clone();
+                *entries = None;
+                *selected = None;
+                load_tree_folders(repo.clone(), next, context);
             }
             Message::RemoteCheck => {
                 // 保存する前に、fetch の URL につないで確かめる（GTK4 版の Check Connection。コアの `checkRemote`）。
@@ -3976,6 +4068,62 @@ impl Component for Root {
                         "value": (!value.is_empty()).then_some(value),
                     })
                 };
+                // sparse checkout: すべてのフォルダを取り出す（確かめる）・フォルダを外す・足す。
+                if key == "sparse-all" {
+                    let Some(repo) = self.repo.clone() else {
+                        return beep();
+                    };
+                    self.dialog = Some(Dialog::Confirm {
+                        repo,
+                        title: tr!("Check Out All Folders?"),
+                        message: tr!(
+                            "Every folder is checked out again (git sparse-checkout disable). In a large repository this can take long and use a lot of disk."
+                        ),
+                        button: tr!("Check Out All"),
+                        command: json!({ "op": "disableSparseCheckout" }),
+                    });
+                    return;
+                }
+                let sparse_folders = || -> Vec<String> {
+                    state
+                        .form
+                        .as_ref()
+                        .and_then(|f| f["sparse"]["folders"].as_array().cloned())
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|v| v.as_str().map(str::to_owned))
+                        .collect()
+                };
+                if let Some(folder) = key.strip_prefix("sparse-remove:") {
+                    let Some(repo) = self.repo.clone() else {
+                        return beep();
+                    };
+                    let rest: Vec<String> = sparse_folders()
+                        .into_iter()
+                        .filter(|f| f != folder)
+                        .collect();
+                    let command = json!({ "op": "sparseCheckout", "folders": rest });
+                    return perform(context, repo, command, tr!("Stop checking out this folder"));
+                }
+                if key == "sparse-add" {
+                    let Some(repo) = self.repo.clone() else {
+                        return beep();
+                    };
+                    let existing = if state.form.as_ref().is_some_and(|f| f["sparse"].is_object()) {
+                        sparse_folders()
+                    } else {
+                        Vec::new()
+                    };
+                    load_tree_folders(repo.clone(), "/".to_owned(), context);
+                    self.dialog = Some(Dialog::TreeFolder {
+                        repo,
+                        path: "/".to_owned(),
+                        entries: None,
+                        selected: None,
+                        existing,
+                    });
+                    return;
+                }
                 // 覚えた解決をすべて忘れる（戻せないので確かめる。GTK4 版の `forget_resolutions_row`）。
                 if key == "forget-resolutions" {
                     let Some(repo) = self.repo.clone() else {
@@ -5893,6 +6041,82 @@ impl Root {
                             .spacing(6.0)
                             .width(440.0)
                             .children((View::keyed_fragment(rows),)),
+                    )
+            }
+            Some(Dialog::TreeFolder {
+                path,
+                entries,
+                selected,
+                existing,
+                ..
+            }) => {
+                let first = existing.is_empty();
+                let body: View = match entries {
+                    None => TextBlock::new().text(tr!("Loading…")).opacity(0.6).into(),
+                    Some(Err(e)) => TextBlock::new()
+                        .text(e.clone())
+                        .text_wrapping(TextWrapping::Wrap)
+                        .into(),
+                    Some(Ok(names)) => {
+                        let rows = names.iter().map(|n| {
+                            (
+                                n.clone(),
+                                ListViewItem::new()
+                                    .tag(n.clone())
+                                    .content(TextBlock::new().text(format!("📁 {n}"))),
+                            )
+                        });
+                        // 読み直すたびに一覧ごと作り直す（reactor の ListView は消した項目の場所が残る）。
+                        View::keyed_fragment([(
+                            path.clone(),
+                            ListView::new()
+                                .height(240.0)
+                                .selected_index(*selected)
+                                .on_selection_changed(context.callback(Message::TreeFolderSelect))
+                                .collection_slot(ListViewSlot::Items, rows),
+                        )])
+                    }
+                };
+                let can_open = selected.is_some();
+                dialog
+                    .is_open(true)
+                    .title(if first {
+                        tr!("Check Out Only Some Folders")
+                    } else {
+                        tr!("Check Out One More Folder")
+                    })
+                    .primary_button_text(tr!("Choose"))
+                    .close_button_text(tr!("Cancel"))
+                    .is_primary_button_enabled(selected.is_some() || path != "/")
+                    .content(
+                        StackPanel::new().spacing(6.0).width(440.0).children((
+                            TextBlock::new()
+                                .text(if first {
+                                    tr!(
+                                        "Only this folder is checked out, with the files at the top. Others are removed from disk until you check them out again; add more folders here later."
+                                    )
+                                } else {
+                                    tr!("Folders in the latest commit, including ones not checked out.")
+                                })
+                                .text_wrapping(TextWrapping::Wrap),
+                            StackPanel::new()
+                                .orientation(Orientation::Horizontal)
+                                .spacing(6.0)
+                                .children((
+                                    Button::new()
+                                        .is_enabled(path != "/")
+                                        .on_click(context.callback(|()| Message::TreeFolderUp))
+                                        .content(TextBlock::new().text("↑")),
+                                    Button::new()
+                                        .is_enabled(can_open)
+                                        .on_click(context.callback(|()| Message::TreeFolderOpen))
+                                        .content(TextBlock::new().text("→")),
+                                    TextBlock::new()
+                                        .text(path.clone())
+                                        .vertical_alignment(VerticalAlignment::Center),
+                                )),
+                            body,
+                        )),
                     )
             }
             Some(Dialog::RenameRepository { name, .. }) => dialog
@@ -10064,6 +10288,25 @@ fn attach_chain(panel: &ElementRef<SwapChainPanel>, surface: &Surface) -> Result
             eprintln!("SwapChainPanel に swap chain をつなげない: {e:?}");
         }
     }))
+}
+
+/// HEAD の木の `path` にあるフォルダを裏で読む（コアの `treeFolders`）。
+fn load_tree_folders(repo: Arc<Repository>, path: String, context: &ComponentContext<Root>) {
+    context.spawn_background(move |_| {
+        let command = json!({ "op": "treeFolders", "path": &path });
+        let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
+            .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+        let entries = match reply["error"].as_str() {
+            Some(e) => Err(e.to_owned()),
+            None => Ok(reply["info"]["entries"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|e| e["name"].as_str().map(str::to_owned))
+                .collect()),
+        };
+        Message::TreeFolderLoaded(path, entries)
+    });
 }
 
 /// フックの置き場所（GTK4 版の `hooks_directory`）: `core.hooksPath` がなければ $GIT_COMMON_DIR/hooks、相対なら

@@ -865,6 +865,110 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                         .into(),
                 ));
             }
+            // 取り出すフォルダ（sparse checkout。GTK4 版の `folders_section`）。作業ツリーのあるリポジトリだけ。
+            if form["workingTree"].as_bool() != Some(false) {
+                let can = form["canSparseCheckout"].as_bool().unwrap_or(true);
+                let check_out_all = || -> Vec<(String, String)> {
+                    if can {
+                        vec![("sparse-all".to_owned(), tr!("Check Out All Folders…"))]
+                    } else {
+                        Vec::new()
+                    }
+                };
+                let strings = |v: &Value| -> Vec<String> {
+                    v.as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|s| s.as_str().map(str::to_owned))
+                        .collect()
+                };
+                match form["sparse"].as_object() {
+                    Some(sparse) if sparse.get("cone").and_then(Value::as_bool) == Some(true) => {
+                        let folders = strings(sparse.get("folders").unwrap_or(&Value::Null));
+                        // `git clone --sparse` の直後は、最上位のファイルだけでフォルダはない。
+                        let (title, help) = if folders.is_empty() {
+                            (
+                                tr!("Only the files at the top are checked out"),
+                                tr!("Add the folders to check out with +."),
+                            )
+                        } else {
+                            (
+                                tr!("Only these folders are checked out"),
+                                tr!(
+                                    "Files at the top, and directly in the folders above these, are checked out too."
+                                ),
+                            )
+                        };
+                        rows.push(("sparse".to_owned(), action_row(title, help, check_out_all())));
+                        for folder in &folders {
+                            rows.push((
+                                format!("sparse-folder:{folder}"),
+                                StackPanel::new()
+                                    .orientation(Orientation::Horizontal)
+                                    .spacing(8.0)
+                                    .children((
+                                        TextBlock::new()
+                                            .text(folder.clone())
+                                            .is_text_selection_enabled(true)
+                                            .vertical_alignment(VerticalAlignment::Center),
+                                        Button::new()
+                                            .is_enabled(can)
+                                            .on_click(
+                                                (callbacks.button)(format!("sparse-remove:{folder}")),
+                                            )
+                                            .content(TextBlock::new().text("−"))
+                                            .tooltip(tr!("Stop checking out this folder")),
+                                    )),
+                            ));
+                        }
+                        rows.push((
+                            "sparse-add".to_owned(),
+                            Button::new()
+                                .is_enabled(can)
+                                .on_click((callbacks.button)("sparse-add".to_owned()))
+                                .content(TextBlock::new().text("+"))
+                                .tooltip(tr!("Check out one more folder")),
+                        ));
+                    }
+                    Some(sparse) => {
+                        // cone mode でないパターンは変えない（git 2.37 から非推奨）。やめることだけできる。
+                        rows.push((
+                            "sparse".to_owned(),
+                            action_row(
+                                tr!("Only the files matching these patterns are checked out"),
+                                tr!("The patterns aren’t in cone mode, so Amon Hen doesn’t change them."),
+                                check_out_all(),
+                            ),
+                        ));
+                        for pattern in strings(sparse.get("folders").unwrap_or(&Value::Null)) {
+                            rows.push((
+                                format!("sparse-pattern:{pattern}"),
+                                TextBlock::new()
+                                    .text(pattern)
+                                    .is_text_selection_enabled(true)
+                                    .into(),
+                            ));
+                        }
+                    }
+                    None => rows.push((
+                        "sparse".to_owned(),
+                        action_row(
+                            tr!("All folders are checked out"),
+                            tr!(
+                                "In a large repository, you can check out only the folders you work in (sparse checkout)."
+                            ),
+                            if can {
+                                vec![(
+                                    "sparse-add".to_owned(),
+                                    tr!("Check Out Only Some Folders…"),
+                                )]
+                            } else {
+                                Vec::new()
+                            },
+                        ),
+                    )),
+                }
+            }
             if form["canMaintain"].as_bool().unwrap_or(true) {
                 let on = form["maintenance"].as_bool() == Some(true);
                 rows.push((
