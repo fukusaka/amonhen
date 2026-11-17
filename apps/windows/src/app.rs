@@ -842,6 +842,10 @@ enum Message {
     Query(String),
     /// 検索の欄で Enter（`true` なら Shift+Enter で前へ）。
     SearchSubmit(bool),
+    /// 窓に落としたもの。
+    Dropped(DroppedData),
+    /// パッチのファイルを当てる（読んで、何を変えるかを見せてから）。
+    ApplyPatches(Vec<String>),
     /// 詳細だけを右の列いっぱいに広げる（⤢）。
     ExpandDetails(bool),
     /// 一致したコミットだけを出すか。
@@ -1852,18 +1856,37 @@ impl Component for Root {
                 });
             }
             Message::Command(id) if id == "apply-patch" => {
-                let Some(repo) = self.repo.clone() else {
+                if self.repo.is_none() {
                     return beep();
-                };
+                }
                 let paths: Vec<String> = crate::files::open_files(&tr!(
                     "Choose patch files (.patch, .diff, .mbox, .eml)."
                 ))
                 .into_iter()
                 .map(|p| p.to_string_lossy().into_owned())
                 .collect();
-                if paths.is_empty() {
-                    return;
+                if !paths.is_empty() {
+                    self.update(Message::ApplyPatches(paths), context);
                 }
+            }
+            // 窓に落としたファイル: すべてパッチなら当てる（GTK4 版・macOS 版の `install_drop`。merge などの途中や、
+            // パッチでないものが混じっていれば受けない）。
+            Message::Dropped(data) => {
+                let DroppedData::StorageItems(items) = data else {
+                    return beep();
+                };
+                let paths: Vec<String> = items.into_iter().map(|i| i.path).collect();
+                if self.sequence.is_some() || !crate::patch_files::all_patches(&paths) {
+                    return beep();
+                }
+                self.update(Message::ApplyPatches(paths), context);
+            }
+            // パッチのファイルを読んで、何を変えるかと当たるかを見せてから当てる（名前の順につなぐ）。
+            Message::ApplyPatches(mut paths) => {
+                let Some(repo) = self.repo.clone() else {
+                    return beep();
+                };
+                paths.sort_by(|a, b| crate::patch_files::natural(a, b));
                 context.spawn_background(move |_| {
                     let command = json!({ "op": "readPatch", "paths": &paths });
                     let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
@@ -5810,7 +5833,6 @@ impl Component for Root {
         };
         let working_copy = self.working_copy_view(context);
         let body = Grid::new()
-            .grid_row(2)
             .columns([
                 GridLength::Pixel(260.0),
                 GridLength::Star(1.0),
@@ -5918,7 +5940,21 @@ impl Component for Root {
                 GridLength::Star(1.0),
                 GridLength::Auto,
             ])
-            .children((menu_bar, toolbar, body, self.status_bar(context), dialog))
+            .children((
+                menu_bar,
+                toolbar,
+                // パッチのファイルを落とせる（GTK4 版・macOS 版と同じく窓のどこにでも）。
+                Border::new()
+                    .grid_row(2)
+                    .drop_policy(
+                        DragDropPolicy::new()
+                            .storage_items(DragDropAction::new(DragDropOperation::Copy)),
+                    )
+                    .on_drop(context.callback(Message::Dropped))
+                    .content(body),
+                self.status_bar(context),
+                dialog,
+            ))
     }
 }
 
