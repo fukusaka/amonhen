@@ -154,6 +154,7 @@ Where the time goes (the same Mac, this repository, 200 × 60 with the sidebar, 
 
 - Building the cells takes a median of 1.1 to 1.2 ms and diffing and writing the frame 0.5 ms; handling the wheel event is a few µs. Of the build, History's 58 rows take about 0.6 ms (10 µs a row), the details 0.4 ms and the sidebar 0.16 ms, though only History changes on a scroll step. Packing the graph into columns is 6 to 8 µs of it.
 - Keeping the sidebar's and the details' cells from the last frame and copying them when nothing in them changed was tried: the build fell to about 0.8 ms and the whole frame from 1.6 to 1.5 ms. That is too little for a second copy of the state to keep in step, so it was not kept.
+- Within a History row, writing the labels, subject, author and date is nearly all of the time (about 0.45 ms a frame); building the graph line and its cells is under 0.05 ms. Writing ASCII strings straight into the cells instead of through `set_stringn` was tried and changed nothing measurable (1.5 to 1.8 ms a frame, the same spread as before), so it was not kept either. The measurement sleeps 8 ms between frames, so each frame starts with cold caches, as real scrolling does.
 - The slowest frames (8 to 24 ms) are not one part: in some runs the time is in the build, in others in the diff and write, with no worker reply handled in that frame. That looks like the thread being descheduled, but it is not confirmed.
 - So the 1 ms target still needs T1b: not rebuilding and not diffing what did not move.
 
