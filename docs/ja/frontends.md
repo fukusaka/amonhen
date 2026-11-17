@@ -427,4 +427,4 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 - ステータスバー: 一番下の行に、merge・rebase・cherry-pick・revert の途中の状態と、続ける・飛ばす・やめる。
 - SSH 先・共有の daemon・askpass: CLI と同じく `ssh://` と `daemon:` の場所を開く（まだ試していない）。askpass は Unix で。
 - Reflog: HEAD の記録と、選んだコミットの詳細、そこへの新しいブランチ。ほかの ref・reset・ファイルを戻す・比べるはない。
-- ないもの: タブと窓、リポジトリの一覧、Settings と Repository Settings、Reset、Range Diff、Blame と File History、パッチ、AI、Activity、GitHub、worktree、差分の文字の選択。
+- ないもの: タブと窓、リポジトリの一覧、Settings と Repository Settings、Range Diff、Blame と File History、パッチ、AI、Activity、GitHub、worktree、差分の文字の選択。
