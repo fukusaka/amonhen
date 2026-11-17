@@ -29,6 +29,26 @@ use crate::data::{Chunk, Data};
 /// History を 1 行で出すか（View の One Line per Commit。GTK4 版の `Display::one_line`）。
 static ONE_LINE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// 選んだコミットの祖先を強調するか（View の Highlight Ancestors。GTK4 版の `Display::highlight_ancestors`）。
+static HIGHLIGHT_ANCESTORS: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(true);
+
+pub fn highlight_ancestors() -> bool {
+    HIGHLIGHT_ANCESTORS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn set_highlight_ancestors(value: bool) {
+    HIGHLIGHT_ANCESTORS.store(value, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// 描く線と、その描く範囲（始まりの行、終わりの行）。
+type EdgeSpan<'a> = (&'a Edge, u32, u32);
+
+/// 祖先を強調するときの、ほかの点と線の不透明度（GTK4 版・macOS 版と同じ）。
+const DIMMED_ALPHA: f32 = 0.18;
+/// 祖先を 1 フレームに伸ばす行数の上限（GTK4 版と同じ。遠くへ飛んだとき、届くまでは強調せずに描く）。
+const LINEAGE_ROWS_PER_FRAME: u32 = 150_000;
+
 /// History の行に出す項目（View の Branches and Tags・Author・Date・Commit ID・Signature。GTK4 版の
 /// `settings::items` と同じビット。CI の状態はこの FE にない）。
 pub mod items {
@@ -323,6 +343,10 @@ pub struct Renderer {
     /// UTC から地方時への差（秒）。
     utc_offset: i64,
     rows: HashMap<u32, RowText>,
+    /// 選んだコミットの祖先（History の世代、選んだ行、求めた範囲）。
+    lineage: Option<(u64, u32, amonhen_core::lineage::LineageWindow)>,
+    /// 祖先が描く行まで届いていない（次のフレームで続ける）。
+    pub lineage_pending: bool,
     /// `rows` を作ったときの行の項目（変わったら作り直す）。
     rows_items: u32,
     /// ラベルの文字（名前ごと）と、その幅。
@@ -455,6 +479,8 @@ impl Renderer {
                 tearing_supported,
                 utc_offset: -(tz.Bias as i64) * 60,
                 rows: HashMap::new(),
+                lineage: None,
+                lineage_pending: false,
                 rows_items: items::ALL,
                 labels: HashMap::new(),
                 label_format,
@@ -627,7 +653,43 @@ impl Renderer {
             .clamp(40.0, GRAPH_WIDTH)
             .min(width * 0.4);
         let mut t = std::time::Instant::now();
-        self.draw_graph(&history, first..last, scroll_y, graph_width, height)?;
+        // 祖先は描く行まで求める（スクロールしたら続きから。GTK4 版の `update_lineage` と描くときの伸ばし方）。
+        let target = selected.filter(|_| highlight_ancestors());
+        match target {
+            None => self.lineage = None,
+            Some(row) => {
+                if !self
+                    .lineage
+                    .as_ref()
+                    .is_some_and(|(g, r, _)| *g == history.generation && *r == row)
+                {
+                    self.lineage = Some((
+                        history.generation,
+                        row,
+                        amonhen_core::lineage::LineageWindow::new(&history.graph, row),
+                    ));
+                }
+            }
+        }
+        let lineage = self.lineage.as_mut().map(|(_, _, w)| {
+            let end = last.min(w.end().saturating_add(LINEAGE_ROWS_PER_FRAME));
+            w.extend(&history.graph, &history.layout, end);
+            w
+        });
+        self.lineage_pending = lineage.as_ref().is_some_and(|w| w.end() < last);
+        let lineage = self
+            .lineage
+            .as_ref()
+            .map(|(_, _, w)| w)
+            .filter(|w| w.end() >= last);
+        self.draw_graph(
+            &history,
+            first..last,
+            scroll_y,
+            graph_width,
+            height,
+            lineage,
+        )?;
         stages[0] = lap(&mut t);
         if profiling {
             unsafe { self.d2d.Flush(None, None)? };
@@ -751,6 +813,7 @@ impl Renderer {
         scroll_y: f32,
         graph_width: f32,
         height: f32,
+        lineage: Option<&amonhen_core::lineage::LineageWindow>,
     ) -> Result<()> {
         let metrics = LaneMetrics {
             full: LANE_WIDTH,
@@ -771,16 +834,35 @@ impl Renderer {
         };
         let row_y = |row: u32| (row as f32 + 0.5) * row_height() - scroll_y;
 
-        // 色と太さが同じ線を 1 つのパスにまとめる。
-        let mut groups: HashMap<(u16, bool), Vec<&Edge>> = HashMap::new();
+        // 色と太さと薄さが同じ線を 1 つのパスにまとめる。祖先を強調するときは、光らない線（や縦線の光らない上の
+        // 部分）を薄くする（GTK4 版の `graph::draw`）。線は (始まりの行, 終わりの行) を描く範囲として持つ。
+        let mut groups: HashMap<(u16, bool, bool), Vec<EdgeSpan>> = HashMap::new();
         let edges = history.layout.edges();
         for i in history.layout.edges_in(rows.clone()) {
             let e = &edges[i as usize];
             let first_parent = e.kind & Edge::FIRST_PARENT != 0;
-            groups
-                .entry((e.color % PALETTE.len() as u16, first_parent))
-                .or_default()
-                .push(e);
+            let color = e.color % PALETTE.len() as u16;
+            let from = lineage.map_or(e.row_start, |l| l.edge_from(i));
+            if from == amonhen_core::lineage::NOT_LIT {
+                groups
+                    .entry((color, first_parent, true))
+                    .or_default()
+                    .push((e, e.row_start, e.row_end));
+            } else if from > e.row_start && e.lane_start == e.lane_end {
+                groups
+                    .entry((color, first_parent, true))
+                    .or_default()
+                    .push((e, e.row_start, from));
+                groups
+                    .entry((color, first_parent, false))
+                    .or_default()
+                    .push((e, from, e.row_end));
+            } else {
+                groups
+                    .entry((color, first_parent, false))
+                    .or_default()
+                    .push((e, e.row_start, e.row_end));
+            }
         }
         unsafe {
             self.d2d.PushAxisAlignedClip(
@@ -792,12 +874,12 @@ impl Renderer {
                 },
                 D2D1_ANTIALIAS_MODE_ALIASED,
             );
-            for ((color, first_parent), edges) in groups {
+            for ((color, first_parent, dimmed), edges) in groups {
                 let geometry = self.d2d_factory.CreatePathGeometry()?;
                 let sink = geometry.Open()?;
-                for e in edges {
-                    let (ax, ay) = (x(e.lane_start), row_y(e.row_start));
-                    let (bx, by) = (x(e.lane_end), row_y(e.row_end));
+                for (e, start, end) in edges {
+                    let (ax, ay) = (x(e.lane_start), row_y(start));
+                    let (bx, by) = (x(e.lane_end), row_y(end));
                     if e.lane_start == e.lane_end {
                         // 何十万行にまたがる線もあるので、見えている所に切り詰めてから渡す（Direct2D は
                         // 画面の外の分まで輪郭を作る）。
@@ -817,7 +899,8 @@ impl Renderer {
                     sink.EndFigure(D2D1_FIGURE_END_OPEN);
                 }
                 sink.Close()?;
-                self.brush.SetColor(&palette(color, 1.0));
+                self.brush
+                    .SetColor(&palette(color, if dimmed { DIMMED_ALPHA } else { 1.0 }));
                 let width = if first_parent {
                     FIRST_PARENT_WIDTH
                 } else {
@@ -828,7 +911,9 @@ impl Renderer {
             }
             let nodes = history.layout.nodes();
             for n in &nodes[rows.start as usize..rows.end as usize] {
-                self.brush.SetColor(&palette(n.color, 1.0));
+                let dimmed = lineage.is_some_and(|l| !l.contains(n.row));
+                self.brush
+                    .SetColor(&palette(n.color, if dimmed { DIMMED_ALPHA } else { 1.0 }));
                 self.d2d.FillEllipse(
                     &D2D1_ELLIPSE {
                         point: point(x(n.lane), row_y(n.row)),

@@ -134,6 +134,7 @@ fn main() {
     settingsview::apply_env_added();
     render::set_one_line(prefs::bool(prefs::COMPACT_HISTORY_ROWS));
     render::set_history_items(prefs::history_items());
+    render::set_highlight_ancestors(prefs::bool(prefs::HIGHLIGHT_ANCESTORS));
     let args = match parse() {
         Ok(a) => a,
         Err(e) => {
@@ -459,7 +460,8 @@ impl Session {
         if let Some(input) = &mut self.input {
             input.presented(&surface.chain);
         }
-        self.dirty = false;
+        // 祖先が描く行まで届いていなければ、次のフレームで続ける。
+        self.dirty = self.renderer.lineage_pending;
 
         let ready = self.data.has_rows(self.visible());
         if ready && !self.first_paint {

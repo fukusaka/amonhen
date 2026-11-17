@@ -177,6 +177,15 @@ pub fn menu_bar(on_click: impl Fn() -> Callback<String>) -> View {
                 "one-line-history",
                 format!("{mark}{}", amonhen_model::tr!("One Line per Commit")),
             ));
+            let mark = if crate::render::highlight_ancestors() {
+                "✓ "
+            } else {
+                ""
+            };
+            items.push(MenuItem::item(
+                "highlight-ancestors",
+                format!("{mark}{}", amonhen_model::tr!("Highlight Ancestors")),
+            ));
             items.push(MenuItem::separator("-toolbar"));
             items.push(MenuItem::item(
                 "customize-toolbar",

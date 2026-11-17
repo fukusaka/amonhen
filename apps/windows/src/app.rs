@@ -1495,6 +1495,17 @@ impl Component for Root {
                 }
                 with_history(|h| h.session.set_display(|| crate::render::set_one_line(value)));
             }
+            // View の Highlight Ancestors（GTK4 版の History の見せ方）。
+            Message::Command(id) if id == "highlight-ancestors" => {
+                let value = !crate::render::highlight_ancestors();
+                if let Err(e) = crate::prefs::set_bool(crate::prefs::HIGHLIGHT_ANCESTORS, value) {
+                    eprintln!("祖先の強調を覚えられない: {e}");
+                }
+                with_history(|h| {
+                    crate::render::set_highlight_ancestors(value);
+                    h.session.invalidate();
+                });
+            }
             // View の行に出す項目（GTK4 版の History の見せ方の項目）。
             Message::Command(id) if id.starts_with("history-item-") => {
                 let bit = match id.as_str() {
