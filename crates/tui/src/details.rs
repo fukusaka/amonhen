@@ -798,7 +798,7 @@ mod tests {
             assert!(out.status.success(), "git {args:?}");
             String::from_utf8_lossy(&out.stdout).trim().to_owned()
         };
-        git(&["init", "-q", "-b", "main"]);
+        git(&["init", "-q"]);
         std::fs::write(dir.path().join("a.rs"), "// 日本語\nlet lane = 0;\n").unwrap();
         git(&["add", "."]);
         git(&["commit", "-q", "-m", "Start"]);
