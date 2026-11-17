@@ -182,6 +182,29 @@ jobs:
       # 配る形（tar.gz）にまとめられるか。エンジンは入れない（リリースでは scripts/build-engine.sh の分を入れる）。
       - run: scripts/package-gtk4.sh
 
+  # Windows のアプリ（apps/windows。WinUI 3 を Rust から使う。windows-rs が要るので別の workspace）。画面は要らない。
+  windows-app:
+    name: Windows app
+    runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read # コミットを取ってくる
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # runner の rustup で、その時点の stable を入れる。
+      - run: rustup toolchain install stable --profile minimal --component clippy,rustfmt && rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: apps/windows
+      - run: cargo fmt --check
+        working-directory: apps/windows
+      - run: cargo clippy --all-targets -- -D warnings
+        working-directory: apps/windows
+      - run: cargo test
+        working-directory: apps/windows
+
   # 配るものに入る依存が、許したライセンスだけか（deny.toml）。
   licenses:
     name: Licenses
