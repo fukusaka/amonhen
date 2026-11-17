@@ -513,3 +513,44 @@ fn sidebar_opens_on_demand_when_narrow() {
             .contains("[topic] 日本語の件名のコミット")
     );
 }
+
+/// `/` で History を検索し、合った行を選ぶ。`n` `N` で次と前、Esc でやめる
+#[test]
+fn slash_searches_history() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    // 打っている間は、一番下の行に語が出る。
+    let typing = amonhen_tui::snapshot(open(dir.path()), 80, 9, clock(), "/vers").unwrap();
+    println!("{typing}");
+    assert!(typing.lines().last().unwrap().starts_with(" /vers"));
+    // Enter で検索: 合った行（Bump the version）を選ぶ。
+    let found = amonhen_tui::snapshot(open(dir.path()), 80, 9, clock(), "/version\n").unwrap();
+    println!("{found}");
+    let last = found.lines().last().unwrap();
+    assert!(last.starts_with(" /version: 1/1"), "{last}");
+    assert!(last.ends_with("2/5"));
+    // 作者で検索すると、すべての行が合う。`n` で次へ、`N` で前へ（端では回る）。
+    let all = amonhen_tui::snapshot(open(dir.path()), 80, 9, clock(), "/author:Ann\nnn").unwrap();
+    assert!(all.lines().last().unwrap().starts_with(" /author:Ann: 3/5"));
+    let wrapped =
+        amonhen_tui::snapshot(open(dir.path()), 80, 9, clock(), "/author:Ann\nN").unwrap();
+    assert!(
+        wrapped
+            .lines()
+            .last()
+            .unwrap()
+            .starts_with(" /author:Ann: 5/5")
+    );
+    // 合う行がなければ 0。Esc で検索をやめる。
+    let none =
+        amonhen_tui::snapshot(open(dir.path()), 80, 9, clock(), "/nothing-like-this\n").unwrap();
+    assert!(
+        none.lines()
+            .last()
+            .unwrap()
+            .starts_with(" /nothing-like-this: 0")
+    );
+    let cleared =
+        amonhen_tui::snapshot(open(dir.path()), 80, 9, clock(), "/version\n\x1b").unwrap();
+    assert!(cleared.lines().last().unwrap().contains("/ search"));
+}

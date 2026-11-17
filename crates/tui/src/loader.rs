@@ -3,6 +3,7 @@
 //! ワーカーは 2 つ。History の行と、コミットの詳細。大きなコミットの差分を待つ間も、行は読める。
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
 
 use amonhen_front::{Front, Reply};
@@ -20,6 +21,12 @@ pub enum Request {
         history: Value,
         start: u32,
         count: u32,
+    },
+    /// History を検索する（書き方は `crates/core/src/query.rs`）。`cancelled` が true になったら取り消す。
+    Search {
+        history: Value,
+        query: String,
+        cancelled: Arc<AtomicBool>,
     },
     /// コミット（16 進の ID）が History の何行目か。
     RowOf { history: Value, id: String },
@@ -65,6 +72,11 @@ pub enum Loaded {
         start: u32,
         reply: Reply,
     },
+    /// 検索に合った行（上から順）。だめなら理由。
+    Search {
+        query: String,
+        result: std::result::Result<Vec<u32>, String>,
+    },
     /// コミットの行（History になければ `None`）。
     RowOf(Option<u32>),
     Commit {
@@ -96,6 +108,7 @@ pub struct Loader {
     rows: Sender<Request>,
     details: Sender<Request>,
     work: Sender<Request>,
+    search: Sender<Request>,
 }
 
 impl Loader {
@@ -104,13 +117,15 @@ impl Loader {
         Self {
             rows: worker("amonhen-tui-rows", front.clone(), events.clone()),
             details: worker("amonhen-tui-details", front.clone(), events.clone()),
-            work: worker("amonhen-tui-work", front, events),
+            work: worker("amonhen-tui-work", front.clone(), events.clone()),
+            search: worker("amonhen-tui-search", front, events),
         }
     }
 
     pub fn send(&self, request: Request) {
         let to = match request {
             Request::Open | Request::Rows { .. } | Request::RowOf { .. } => &self.rows,
+            Request::Search { .. } => &self.search,
             Request::Commit { .. } | Request::Syntax { .. } => &self.details,
             Request::Status
             | Request::WorkingDiff { .. }
@@ -162,6 +177,20 @@ fn load(front: &dyn Front, request: Request) -> Result<Loaded> {
                 "op": "historyRows", "history": history, "start": start, "count": count,
             }))?,
         },
+        Request::Search {
+            history,
+            query,
+            cancelled,
+        } => {
+            let result = front
+                .call_until(
+                    json!({"op": "historySearch", "history": history, "query": query}),
+                    &|| cancelled.load(Ordering::Relaxed),
+                )
+                .map(|r| r.u32s("rows"))
+                .map_err(|e| e.to_string());
+            Loaded::Search { query, result }
+        }
         Request::RowOf { history, id } => Loaded::RowOf(
             front
                 .call(json!({"op": "historyRowOf", "history": history, "id": id}))

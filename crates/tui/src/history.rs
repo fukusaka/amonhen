@@ -97,6 +97,8 @@ pub struct History {
     /// 行を出す所の高さ（最後に知らされた大きさ）。
     height: u32,
     incomplete: bool,
+    /// 検索に合った行（上から順）。検索していなければ空。
+    matches: Vec<u32>,
 }
 
 impl History {
@@ -106,6 +108,8 @@ impl History {
         self.total = history["rows"].as_u64().unwrap_or(0) as u32;
         self.head_row = history["headRow"].as_u64().map(|r| r as u32);
         self.window = None;
+        // 行の番号が変わるので、検索の結果は捨てる（検索し直すのは呼ぶ側）。
+        self.matches.clear();
         self.labels.clear();
         let head = refs["headBranch"].as_str();
         for e in refs["entries"].as_array().into_iter().flatten() {
@@ -136,6 +140,46 @@ impl History {
 
     pub fn total(&self) -> u32 {
         self.total
+    }
+
+    /// 検索に合った行を入れる。選んでいる行か、その下の最初の行（なければ一番上の行）を選ぶ。
+    pub fn set_matches(&mut self, rows: Vec<u32>) {
+        self.matches = rows;
+        let at = self.matches.partition_point(|&r| r < self.selected);
+        if let Some(&row) = self.matches.get(at).or(self.matches.first()) {
+            self.select(row);
+        }
+    }
+
+    pub fn clear_matches(&mut self) -> bool {
+        let had = !self.matches.is_empty();
+        self.matches.clear();
+        had
+    }
+
+    /// 選んでいる行が何番目に合った行か（合った行でなければ `None`）と、合った行の数。
+    pub fn match_position(&self) -> (Option<usize>, usize) {
+        (
+            self.matches
+                .binary_search(&self.selected)
+                .ok()
+                .map(|i| i + 1),
+            self.matches.len(),
+        )
+    }
+
+    /// 次（`forward`）か前の合った行を選ぶ。端では反対の端へ回る。
+    pub fn next_match(&mut self, forward: bool) -> bool {
+        let row = if forward {
+            let at = self.matches.partition_point(|&r| r <= self.selected);
+            self.matches.get(at).or(self.matches.first())
+        } else {
+            let at = self.matches.partition_point(|&r| r < self.selected);
+            at.checked_sub(1)
+                .and_then(|i| self.matches.get(i))
+                .or(self.matches.last())
+        };
+        row.copied().is_some_and(|row| self.select(row))
     }
 
     /// 窓口での History の番号。
@@ -336,7 +380,12 @@ impl History {
             }
             if x < text_end {
                 let subject = fit(window.string(i, 0), usize::from(text_end - x));
-                buf.set_string(x, y, subject, Style::new());
+                // 検索に合った行は、件名に色をつける。
+                let style = match self.matches.binary_search(&row) {
+                    Ok(_) => Style::new().fg(Color::Yellow),
+                    Err(_) => Style::new(),
+                };
+                buf.set_string(x, y, subject, style);
             }
             if wide {
                 let dim = Style::new().fg(DIM);

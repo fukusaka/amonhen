@@ -1,6 +1,7 @@
 //! 状態と、イベントの処理と、画面の組み立て。
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 
 use amonhen_front::Front;
@@ -80,6 +81,10 @@ pub struct App {
     committing: bool,
     /// 済んだことの知らせ（次のキーまで出す）。
     notice: Option<String>,
+    /// 検索の語を打っている（`/`）。
+    typing_query: Option<String>,
+    /// 今の検索: 語と、動いている検索を取り消す印（結果が届いたら `None`）。
+    search: Option<(String, Option<Arc<AtomicBool>>)>,
     theme: Theme,
     /// リポジトリの名前（作業ツリーのフォルダ名）。
     name: String,
@@ -118,6 +123,8 @@ impl App {
             head: None,
             committing: false,
             notice: None,
+            typing_query: None,
+            search: None,
             theme: Theme::detect(),
             name: String::new(),
             branch: None,
@@ -278,6 +285,10 @@ impl App {
                         let selected = self.history.selected_id();
                         self.history.opened(&refs, &history);
                         self.sidebar.set_refs(&refs);
+                        // 検索していたら、新しい History で検索し直す。
+                        if let Some((query, _)) = self.search.clone() {
+                            self.start_search(query);
+                        }
                         if let Some(id) = selected {
                             self.send(Request::RowOf {
                                 history: self.history.id().clone(),
@@ -290,6 +301,21 @@ impl App {
                         }
                     }
                     Loaded::Rows { start, reply } => self.history.loaded(start, &reply),
+                    Loaded::Search { query, result } => {
+                        // 取り消した検索（語を替えた・やめた）の答えは捨てる。
+                        if let Some((current, running)) = &mut self.search
+                            && *current == query
+                            && running.take().is_some()
+                        {
+                            match result {
+                                Ok(rows) => self.history.set_matches(rows),
+                                Err(error) => {
+                                    self.search = None;
+                                    self.error = Some(error);
+                                }
+                            }
+                        }
+                    }
                     Loaded::RowOf(row) => {
                         if let Some(row) = row {
                             self.history.select(row);
@@ -410,6 +436,27 @@ impl App {
             self.dirty = true;
             return;
         }
+        // 検索の語を打っている間は、Enter で検索、Esc でやめる。
+        if let Some(query) = &mut self.typing_query {
+            self.dirty = true;
+            match key.code {
+                KeyCode::Enter => {
+                    let query = self.typing_query.take().unwrap_or_default();
+                    if query.trim().is_empty() {
+                        self.clear_search();
+                    } else {
+                        self.start_search(query);
+                    }
+                }
+                KeyCode::Esc => self.typing_query = None,
+                KeyCode::Backspace => {
+                    query.pop();
+                }
+                KeyCode::Char(ch) if !control => query.push(ch),
+                _ => {}
+            }
+            return;
+        }
         // メッセージを書いている間は、文字のキーはすべて入力。
         if self.focus == Focus::Message && !(control && key.code == KeyCode::Char('c')) {
             self.message_key(key);
@@ -454,6 +501,30 @@ impl App {
         self.view = view;
         self.focus = Focus::Main;
         self.sidebar.show_view(view == View::Changes);
+    }
+
+    /// History を検索する。動いている検索は取り消す。
+    fn start_search(&mut self, query: String) {
+        self.cancel_search();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        self.send(Request::Search {
+            history: self.history.id().clone(),
+            query: query.clone(),
+            cancelled: cancelled.clone(),
+        });
+        self.search = Some((query, Some(cancelled)));
+    }
+
+    fn cancel_search(&mut self) {
+        if let Some((_, Some(running))) = &self.search {
+            running.store(true, Ordering::Relaxed);
+        }
+    }
+
+    fn clear_search(&mut self) -> bool {
+        self.cancel_search();
+        let had = self.search.take().is_some();
+        self.history.clear_matches() || had
     }
 
     fn sidebar_key(&mut self, code: KeyCode, control: bool) -> bool {
@@ -654,6 +725,15 @@ impl App {
             KeyCode::PageUp => self.history.move_selection(-page),
             KeyCode::Char('g') | KeyCode::Home => self.history.select(0),
             KeyCode::Char('G') | KeyCode::End => self.history.select(u32::MAX),
+            KeyCode::Char('/') => {
+                // 前の語から直せるよう、入れておく。
+                self.typing_query =
+                    Some(self.search.as_ref().map_or(String::new(), |s| s.0.clone()));
+                true
+            }
+            KeyCode::Char('n') => self.history.next_match(true),
+            KeyCode::Char('N') => self.history.next_match(false),
+            KeyCode::Esc => self.clear_search(),
             KeyCode::Char('h') | KeyCode::Left => {
                 self.focus = Focus::Sidebar;
                 true
@@ -906,15 +986,36 @@ impl App {
             (None, Some(error)) => {
                 buf.set_stringn(area.x + 1, y, error, room, Style::new().fg(Color::Red));
             }
+            (None, None) if self.typing_query.is_some() => {
+                let query = self.typing_query.as_deref().unwrap_or("");
+                let x = buf
+                    .set_stringn(area.x + 1, y, format!("/{query}"), room, Style::new())
+                    .0;
+                cursor = Some((x.min(position_x.saturating_sub(1)), y));
+            }
             (None, None) if self.notice.is_some() => {
                 let notice = self.notice.as_deref().unwrap_or("");
                 buf.set_stringn(area.x + 1, y, notice, room, Style::new().fg(Color::Green));
             }
             (None, None) => {
                 let hints = match (self.view, self.focus) {
-                    (View::History, Focus::Main) => {
-                        tr!("j/k move   g/G top/bottom   Enter details   q quit")
-                    }
+                    (View::History, Focus::Main) => match &self.search {
+                        // 検索している間は、語と、合った行のうち何番目か。
+                        Some((query, running)) => {
+                            let (at, of) = self.history.match_position();
+                            let found = match (running, at) {
+                                (Some(_), _) => tr!("searching…"),
+                                (None, Some(at)) => format!("{at}/{of}"),
+                                (None, None) => of.to_string(),
+                            };
+                            tr!(
+                                "/{query}: {found}   n/N next/previous   Esc clear",
+                                query = query,
+                                found = found
+                            )
+                        }
+                        None => tr!("j/k move   / search   Enter details   0 sidebar   q quit"),
+                    },
                     (View::History, Focus::Side) => {
                         tr!("j/k scroll   [/] file   h/l pan   Esc back")
                     }
