@@ -418,9 +418,9 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 `amonhen tui` (`crates/tui`) is in its first stages and has no column in the tables above yet; it gets one when its features settle. What it has today, by the chapters above ([tui.md](tui.md) has the details and what is left):
 
-- Sidebar: Workspace rows, Branches (current marked, ahead and behind), Remotes, Tags and Stashes in flat lists, with a filter. No folders, favorites, worktrees, submodules or context menus; operations are keys.
+- Sidebar: Workspace rows, Branches (current marked, ahead and behind), Remotes, Tags, Stashes and Worktrees (listed only) in flat lists, with a filter. No folders, favorites, submodules or context menus; operations are keys.
 - Toolbar: fetch, pull (git's configured mode only), push to the upstream (no force push or publish), new branch, stash (no message or untracked files), pop, undo, merge and rebase from the sidebar. Confirmations and names are asked on the bottom line, not in sheets.
-- Stashes: apply, pop and drop from the sidebar; a stash's diff is not shown.
+- Stashes: apply, pop and drop from the sidebar; Enter shows a stash's diff.
 - Working Copy: one list with a check per file, the HEAD-to-working-tree diff with staged marks, staging by file, hunk, line and a range of lines, discard, the message with commit and amend and git's editor (no Commit and Push), conflicts shown with markers and resolved by side per conflict or per file (no base side, no Magic Merge, no merge editor).
 - History: the graph on one line per commit, ref labels, search with matches colored and stepped through (no partial results, no matches-only view), ancestor emphasis by dimming rows, one selected commit (no multi-selection, folding, density band, edit mode or commit menu).
 - History's right column: message, author and date, committer when different, ID and parents, changed files, the unified diff with changed words and syntax colors. No signatures, tags, notes or the detailed table.
