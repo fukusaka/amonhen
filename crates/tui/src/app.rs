@@ -21,6 +21,7 @@ use crate::Result;
 use crate::changes::Changes;
 use crate::details::Details;
 use crate::diff::{PAN, Theme};
+use crate::fileview::FileView;
 use crate::history::{History, WHEEL_ROWS};
 use crate::loader::{Loaded, Loader, Request};
 use crate::reflog::Reflog;
@@ -44,6 +45,8 @@ enum View {
     Changes,
     History,
     Reflog,
+    /// 1 つのファイルの Blame か File History（Working Copy の一覧から開く）。
+    File,
 }
 
 impl View {
@@ -52,6 +55,8 @@ impl View {
             View::Changes => Picked::Changes,
             View::History => Picked::History,
             View::Reflog => Picked::Reflog,
+            // Working Copy から開く画面。
+            View::File => Picked::Changes,
         }
     }
 }
@@ -101,6 +106,7 @@ pub struct App {
     /// サイドバーで開いた stash（詳細の枠に、History の選択の代わりに出す）。
     pinned: Option<Oid>,
     reflog: Reflog,
+    file: FileView,
     view: View,
     focus: Focus,
     /// リポジトリ・ref・History を読んでいる。
@@ -193,6 +199,7 @@ impl App {
             sidebar: Sidebar::default(),
             pinned: None,
             reflog: Reflog::default(),
+            file: FileView::default(),
             view: View::History,
             focus: Focus::Main,
             opening: false,
@@ -269,6 +276,7 @@ impl App {
         self.changes.set_height(rows.saturating_sub(BARS));
         self.sidebar.set_height(rows.saturating_sub(BARS));
         self.reflog.set_height(rows.saturating_sub(BARS));
+        self.file.set_height(rows.saturating_sub(BARS));
         // 詳細の幅は、並べても開いても、キーの届く所によらない。
         let layout = self.layout();
         let details = layout.side.or(layout.main).unwrap_or_default();
@@ -477,6 +485,15 @@ impl App {
                             }
                         }
                     }
+                    Loaded::File {
+                        path,
+                        blame,
+                        result,
+                    } => {
+                        if let Some(error) = self.file.set(&path, blame, result) {
+                            self.error = Some(error);
+                        }
+                    }
                     Loaded::Reflog(reply) => {
                         if let Some(error) = self.reflog.set(reply) {
                             self.error = Some(error);
@@ -598,11 +615,15 @@ impl App {
             && let Some(id) = match self.view {
                 View::History => self.pinned.or(self.history.selected_id()),
                 View::Reflog => self.reflog.selected_id(),
+                View::File => self.file.selected_id(),
                 View::Changes => None,
             }
         {
             let stash = self.view == View::History && self.pinned == Some(id);
             self.dirty |= self.details.want(id, stash);
+        }
+        if let Some(request) = self.file.request() {
+            self.send(request);
         }
         if let Some(request) = self.reflog.request(self.view == View::Reflog) {
             self.send(request);
@@ -868,9 +889,10 @@ impl App {
             _ => {
                 self.dirty |= match (self.view, self.focus) {
                     (View::History, Focus::Main) => self.history_key(key.code, control),
-                    (View::History | View::Reflog, Focus::Side) => {
+                    (View::History | View::Reflog | View::File, Focus::Side) => {
                         self.details_key(key.code, control)
                     }
+                    (View::File, Focus::Main) => self.file_key(key.code, control),
                     (View::Reflog, Focus::Main) => self.reflog_key(key.code, control),
                     (View::Changes, Focus::Main) => self.changes_key(key.code, control),
                     (View::Changes, Focus::Side) => self.changes_diff_key(key.code, control),
@@ -1139,7 +1161,7 @@ impl App {
         let id = match self.view {
             View::History => self.history.selected_id(),
             View::Reflog => self.reflog.selected_id(),
-            View::Changes => None,
+            View::Changes | View::File => None,
         };
         let Some(id) = id.map(|id| id.to_string()) else {
             return;
@@ -1194,6 +1216,7 @@ impl App {
             let id = match self.view {
                 View::History => self.history.selected_id()?.to_string(),
                 View::Reflog => self.reflog.selected_id()?.to_string(),
+                View::File => self.file.selected_id()?.to_string(),
                 View::Changes => self.head.clone()?,
             };
             let short = id[..id.len().min(8)].to_owned();
@@ -1352,6 +1375,41 @@ impl App {
         self.history.clear_matches() || had
     }
 
+    fn file_key(&mut self, code: KeyCode, control: bool) -> bool {
+        let page = self.file.page();
+        match code {
+            KeyCode::Char('d') if control => self.file.move_selection(page / 2),
+            KeyCode::Char('u') if control => self.file.move_selection(-page / 2),
+            KeyCode::Char('j') | KeyCode::Down => self.file.move_selection(1),
+            KeyCode::Char('k') | KeyCode::Up => self.file.move_selection(-1),
+            KeyCode::PageDown | KeyCode::Char(' ') => self.file.move_selection(page),
+            KeyCode::PageUp => self.file.move_selection(-page),
+            KeyCode::Char('g') | KeyCode::Home => self.file.select(0),
+            KeyCode::Char('G') | KeyCode::End => self.file.select(usize::MAX),
+            KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
+                self.focus = Focus::Side;
+                true
+            }
+            // その行のコミットを、History で選ぶ。
+            KeyCode::Char('H') => {
+                if let Some(id) = self.file.selected_id() {
+                    self.view = View::History;
+                    self.sidebar.show_view(Picked::History);
+                    self.send(Request::RowOf {
+                        history: self.history.id().clone(),
+                        id: id.to_string(),
+                    });
+                }
+                true
+            }
+            KeyCode::Esc | KeyCode::Backspace => {
+                self.show(View::Changes);
+                true
+            }
+            _ => false,
+        }
+    }
+
     fn reflog_key(&mut self, code: KeyCode, control: bool) -> bool {
         let page = self.reflog.page();
         match code {
@@ -1446,7 +1504,14 @@ impl App {
                 ("g G", tr!("Top and bottom")),
                 ("Enter", tr!("Go to the details")),
             ],
-            (View::History | View::Reflog, Focus::Side) => vec![
+            (View::File, Focus::Main) => vec![
+                ("j k", tr!("Move")),
+                ("g G", tr!("Top and bottom")),
+                ("Enter", tr!("Go to the commit's details")),
+                ("H", tr!("Select the commit in History")),
+                ("Esc", tr!("Go back to the Working Copy")),
+            ],
+            (View::History | View::Reflog | View::File, Focus::Side) => vec![
                 ("j k", tr!("Scroll")),
                 ("[ ]", tr!("Previous and next file")),
                 ("h l", tr!("Pan long lines")),
@@ -1456,6 +1521,7 @@ impl App {
                 ("j k", tr!("Move")),
                 ("Space", tr!("Stage or unstage the file")),
                 ("d", tr!("Discard the file's changes")),
+                ("B L", tr!("Blame, File History of the file")),
                 (
                     "o t",
                     tr!("Take the current or the incoming side of a conflicted file"),
@@ -1616,6 +1682,15 @@ impl App {
                 self.focus = Focus::Sidebar;
                 true
             }
+            // 選んでいるファイルの Blame・File History を開く。
+            KeyCode::Char('B' | 'L') => match self.changes.selected_path() {
+                Some(path) => {
+                    self.file.open(path, code == KeyCode::Char('B'));
+                    self.view = View::File;
+                    true
+                }
+                None => false,
+            },
             // コンフリクトのあるファイルを、片側にして解決済みにする（先に確かめる）。
             KeyCode::Char('o' | 't') if self.changes.conflicted_path().is_some() => {
                 let ours = code == KeyCode::Char('o');
@@ -1847,6 +1922,7 @@ impl App {
                 Some(rows) => match view {
                     View::History => self.history.scroll(rows),
                     View::Reflog => self.reflog.scroll(rows),
+                    View::File => self.file.scroll(rows),
                     View::Changes => self.changes.scroll_list(rows),
                 },
                 None if click => {
@@ -1855,6 +1931,7 @@ impl App {
                     let selected = match view {
                         View::History => self.history.click(line),
                         View::Reflog => self.reflog.click(line),
+                        View::File => self.file.click(line),
                         // 一覧の下は、メッセージの欄。
                         View::Changes if line >= self.changes.list_height() => {
                             self.focus = Focus::Message;
@@ -1984,6 +2061,7 @@ impl App {
             match self.view {
                 View::History => self.history.draw(at, buf, self.clock.now, focused),
                 View::Reflog => self.reflog.draw(at, buf, self.clock.now, focused),
+                View::File => self.file.draw(at, buf, self.clock.now, focused),
                 View::Changes => {
                     cursor = self
                         .changes
@@ -2000,7 +2078,7 @@ impl App {
                 }
             }
             match self.view {
-                View::History | View::Reflog => {
+                View::History | View::Reflog | View::File => {
                     self.details.draw(at, buf, &self.clock, &self.theme);
                 }
                 View::Changes => self.changes.draw_diff(at, buf, &self.theme, !focused),
@@ -2014,7 +2092,8 @@ impl App {
                 (self.history.selected() + 1).min(self.history.total()),
                 self.history.total(),
             ),
-            (View::History | View::Reflog, Focus::Side) => self.details.position(),
+            (View::History | View::Reflog | View::File, Focus::Side) => self.details.position(),
+            (View::File, Focus::Main | Focus::Sidebar) => self.file.position(),
             (View::Reflog, Focus::Main | Focus::Sidebar) => self.reflog.position(),
             (View::Changes, Focus::Main) => self.changes.list_position(),
             (View::Changes, Focus::Side) => self.changes.diff_position(),
@@ -2190,7 +2269,13 @@ impl App {
                         }
                         None => tr!("j/k move   / search   Enter details   0 sidebar   q quit"),
                     },
-                    (View::History | View::Reflog, Focus::Side) => {
+                    (View::File, Focus::Main) => {
+                        tr!(
+                            "{title}   j/k move   Enter details   H in History   Esc back",
+                            title = self.file.title()
+                        )
+                    }
+                    (View::History | View::Reflog | View::File, Focus::Side) => {
                         tr!("j/k scroll   [/] file   h/l pan   Esc back")
                     }
                     (View::Reflog, Focus::Main) => {

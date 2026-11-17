@@ -610,6 +610,11 @@ impl Changes {
         Ok(Some((target, request)))
     }
 
+    /// 選んでいるファイルのパス。
+    pub fn selected_path(&self) -> Option<&str> {
+        self.selected_entry().map(|e| e.path.as_str())
+    }
+
     /// 選んでいるファイルがコンフリクトしていれば、そのパス。
     pub fn conflicted_path(&self) -> Option<&str> {
         self.selected_entry()

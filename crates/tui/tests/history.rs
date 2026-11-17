@@ -1189,3 +1189,38 @@ fn commit_and_push() {
     let nothing = amonhen_tui::snapshot(front(), 120, 14, clock(), "1\x10").unwrap();
     assert!(nothing.contains("Write a commit message first"));
 }
+
+/// Working Copy の `B` で、選んでいるファイルの Blame。`L` で File History
+#[test]
+fn blame_and_file_history_of_a_file() {
+    let dir = tempfile::tempdir().unwrap();
+    changed(dir.path());
+    // lane.rs をもう一度書き換える（Working Copy に出るように）。
+    std::fs::write(
+        dir.path().join("lane.rs"),
+        "fn lane() -> u32 {\n    let lane = trunk();\n    lane + 1\n}\n",
+    )
+    .unwrap();
+    let blame = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "1B").unwrap();
+    println!("{blame}");
+    let list: Vec<String> = blame.lines().skip(1).filter_map(|l| column(l, 1)).collect();
+    // 1 行目は最初のコミット、2 行目は書き換えたコミット、3 行目はまだコミットしていない。
+    assert!(list[0].ends_with("fn lane() -> u32 {"), "{list:?}");
+    assert!(list[0].contains("Ann"));
+    assert!(list[1].ends_with("    let lane = trunk();"));
+    assert!(list[2].starts_with("not committed"));
+    assert!(blame.lines().last().unwrap().contains("Blame: lane.rs"));
+    // 2 行目を選ぶと、そのコミットの詳細。
+    let picked = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "1Bj").unwrap();
+    let details: Vec<String> = picked.lines().filter_map(|l| column(l, 2)).collect();
+    assert_eq!(details[0], "Take the lane from the trunk");
+    // File History: 変えたコミットが新しい順に。
+    let log = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "1L").unwrap();
+    println!("{log}");
+    let list: Vec<String> = log.lines().skip(1).filter_map(|l| column(l, 1)).collect();
+    assert!(list[0].starts_with("Take the lane from the trunk"));
+    assert!(list[1].starts_with("Start"));
+    // Esc で Working Copy に戻る。
+    let back = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "1L\x1b").unwrap();
+    assert!(back.contains("[ ] M lane.rs"));
+}

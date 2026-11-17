@@ -11,6 +11,7 @@ mod changes;
 mod details;
 mod diff;
 mod editor;
+mod fileview;
 mod history;
 mod loader;
 mod reflog;

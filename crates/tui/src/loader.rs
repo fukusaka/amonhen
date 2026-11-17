@@ -42,6 +42,8 @@ pub enum Request {
     Status,
     /// HEAD の reflog。
     Reflog,
+    /// ファイルの Blame（`blame`）か、そのファイルを変えたコミット。
+    File { path: String, blame: bool },
     /// 作業ツリーのファイルの差分。`serial` は、どの回の `status` に対するものか。`unstaged` は、stage して
     /// いない変更があるか（行ごとの印つきの差分が出せないときに、どちらを出すか）。
     WorkingDiff {
@@ -103,6 +105,12 @@ pub enum Loaded {
         id: String,
         reply: Option<Reply>,
     },
+    /// `blame` か `fileHistory` の答え。だめなら理由。
+    File {
+        path: String,
+        blame: bool,
+        result: std::result::Result<Value, String>,
+    },
     /// `reflog` の答え。だめなら理由。
     Reflog(std::result::Result<Value, String>),
     /// `status` の答え。だめなら理由。
@@ -157,6 +165,7 @@ impl Loader {
             Request::Commit { .. } | Request::Syntax { .. } => &self.details,
             Request::Status
             | Request::Reflog
+            | Request::File { .. }
             | Request::WorkingDiff { .. }
             | Request::Stage { .. }
             | Request::StageRows { .. }
@@ -253,6 +262,18 @@ fn load(front: &dyn Front, request: Request) -> Result<Loaded> {
             Loaded::Syntax {
                 id,
                 reply: front.call(of).ok(),
+            }
+        }
+        Request::File { path, blame } => {
+            let command = match blame {
+                true => json!({"op": "blame", "path": path}),
+                false => json!({"op": "fileHistory", "path": path, "limit": 500}),
+            };
+            let result = run(front, command).map_err(|e| e.to_string());
+            Loaded::File {
+                path,
+                blame,
+                result,
             }
         }
         Request::Reflog => {
