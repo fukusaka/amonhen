@@ -43,6 +43,8 @@ thread_local! {
         std::cell::Cell::new((Instant::now(), Instant::now()));
     /// 今のブランチの名前（終わった操作の一言に使う。ref を読むたびに書く）。
     static HEAD_NAME: RefCell<String> = const { RefCell::new(String::new()) };
+    /// Push の画面を出しているか（出していれば、Enter で既定のボタンを押せるか。Force Push は押せない）。
+    static PUSH_KEYS: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
     /// 終わった操作の一言を消す時刻。
     static FLASH_UNTIL: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
     /// Activity を開いている間、読み直しを頼んだ最後の時刻（0.5 秒ごとに頼む）。
@@ -119,6 +121,8 @@ struct Root {
     /// Pull で手元に新しいコミットがないときの、先へ進める前と後の絵と、Push で送った後の形の絵（`movePreview` の
     /// 答え）。
     sync_drawing: Option<Value>,
+    /// Push の画面で選んでいる行（0 は送る変更すべて。`push_rows` の位置）。
+    push_row: Option<usize>,
     /// Pull で両方に新しいコミットがあるときの、取り込み方ごとの前と後の絵。
     pull_drawings: Option<PullDrawings>,
     /// Merge・Rebase の確認の前と後の絵（相手の rev と `mergePreview`・`rewritePreview` の答え）。
@@ -797,6 +801,8 @@ enum Message {
     RecallRecent(isize),
     /// Pull・Push のダイアログのコミットの一覧を読んだ。
     SyncLists(Vec<SyncList>, Vec<String>, Option<Value>),
+    /// Push の画面で行を選んだ。
+    PushRow(Option<usize>),
     /// Pull の取り込み方ごとの前と後の絵を読んだ。
     PullDrawn(Box<PullDrawings>),
     /// Merge・Rebase の確認の前と後の絵を読んだ（相手の rev と `mergePreview`・`rewritePreview` の答え）。
@@ -1024,6 +1030,7 @@ impl Component for Root {
             multi: Vec::new(),
             sync_warnings: Vec::new(),
             sync_drawing: None,
+            push_row: None,
             pull_drawings: None,
             integrate_drawing: None,
             merge_several_steps: None,
@@ -1073,6 +1080,15 @@ impl Component for Root {
     }
 
     fn update(&mut self, message: Message, context: &ComponentContext<Self>) {
+        // Push の画面を閉じたら、右の列を元の画面のものに戻す。
+        if matches!(message, Message::DialogClosed(_))
+            && matches!(self.dialog, Some(Dialog::Push { .. }))
+        {
+            self.push_row = None;
+            let page = self.page;
+            self.show_page(page);
+            with_history(|h| h.reload_selected());
+        }
         match message {
             Message::Refs(refs, repo) => {
                 HEAD_NAME
@@ -1207,8 +1223,13 @@ impl Component for Root {
                     self.sync_lists = lists;
                     self.sync_warnings = warnings;
                     self.sync_drawing = drawing;
+                    // Push は、送る変更すべてを右の列に出しておく（macOS 版の PushSheet と同じ）。
+                    if matches!(self.dialog, Some(Dialog::Push { .. })) {
+                        self.select_push_row(Some(0));
+                    }
                 }
             }
+            Message::PushRow(index) => self.select_push_row(index),
             Message::Submodules(states) => self.submodules = states,
             Message::Subtrees(info) => self.subtrees = info,
             Message::FormField(index, text) => {
@@ -6197,6 +6218,8 @@ impl Component for Root {
                 self.activity_view(context),
                 self.repositories_view(context),
                 self.repo_settings_view(context),
+                // Push の確認は、どの画面の上にも重ねる。
+                self.push_view(context),
             ));
         // Working Copy の一覧のキー: 画面を出すたびに Grid が作り直されるので、そのたびに付ける。
         let host = self.working_list.clone();
@@ -7334,60 +7357,8 @@ impl Root {
                         )),
                     )
             }
-            Some(Dialog::Push {
-                title,
-                message,
-                replace,
-                diverged,
-                remote,
-                remote_branch,
-                ..
-            }) => {
-                // 送った後の形（Force Push なら、上流から消えるコミットを赤で。GTK4 版と同じ）。
-                let upstream = format!("{remote}/{remote_branch}");
-                let drawing = self
-                    .sync_drawing
-                    .as_ref()
-                    .and_then(|preview| {
-                        crate::drawing::for_move(
-                            preview,
-                            &crate::drawing::Move {
-                                moving: upstream.clone(),
-                                kind: "remote",
-                                after_title: if *replace || *diverged {
-                                    tr!("After the force push")
-                                } else {
-                                    tr!("After the push")
-                                },
-                                lost_note: tr!("removed from {upstream}", upstream = &upstream),
-                                lost_red: true,
-                                removes: false,
-                            },
-                        )
-                    })
-                    .unwrap_or_else(View::empty);
-                let dialog = dialog
-                    .is_open(true)
-                    .title(title.clone())
-                    .close_button_text(tr!("Cancel"));
-                // 分かれていれば Pull…（Enter）と Force Push、でなければ Push か Force Push（GTK4 版と同じ並び）。
-                let dialog = if *diverged {
-                    dialog
-                        .primary_button_text("Pull…")
-                        .secondary_button_text("Force Push")
-                } else {
-                    dialog.primary_button_text(if *replace { "Force Push" } else { "Push" })
-                };
-                dialog.content(
-                    StackPanel::new().spacing(6.0).children((
-                        TextBlock::new()
-                            .text(message.clone())
-                            .text_wrapping(TextWrapping::Wrap),
-                        drawing,
-                        self.sync_lists_view(),
-                    )),
-                )
-            }
+            // Push は窓の中の画面に出す（`push_view`。右の列に中身を出すため）。
+            Some(Dialog::Push { .. }) => dialog.is_open(false).into(),
             Some(Dialog::Publish {
                 branch,
                 remotes,
@@ -10151,6 +10122,300 @@ impl Root {
             ))
     }
 
+    /// Push の画面の行: 送る変更すべて、送るコミット、上流から消えるコミットの見出しとそのコミット（macOS 版の
+    /// PushSheet の `rows`）。
+    fn push_rows(&self) -> Vec<PushRow> {
+        let mut rows = Vec::new();
+        let mut lists = self.sync_lists.iter();
+        if let Some(send) = lists.next() {
+            rows.push(PushRow::All(send.count));
+            rows.extend(
+                send.commits
+                    .iter()
+                    .map(|c| PushRow::Commit(c.clone(), false)),
+            );
+        }
+        for lost in lists.filter(|l| l.count > 0) {
+            rows.push(PushRow::Heading(lost.count));
+            rows.extend(
+                lost.commits
+                    .iter()
+                    .map(|c| PushRow::Commit(c.clone(), true)),
+            );
+        }
+        rows
+    }
+
+    /// Push の画面で行を選び、その中身を右の列に出す（見出しは選べない）。
+    fn select_push_row(&mut self, index: Option<usize>) {
+        let Some(Dialog::Push {
+            remote,
+            branch,
+            remote_branch,
+            ..
+        }) = &self.dialog
+        else {
+            return;
+        };
+        let rows = self.push_rows();
+        let Some(row) = index.and_then(|i| rows.get(i)) else {
+            return;
+        };
+        let target = |kind: amonhen_model::RefKind, name: &str| {
+            self.refs
+                .as_ref()?
+                .refs
+                .entries
+                .iter()
+                .find(|e| e.kind == kind && e.name == name)?
+                .target
+        };
+        match row {
+            PushRow::Heading(_) => return,
+            PushRow::All(count) => {
+                let upstream = format!("{remote}/{remote_branch}");
+                let Some(tip) = target(amonhen_model::RefKind::Local, branch) else {
+                    return;
+                };
+                let base = target(amonhen_model::RefKind::Remote, &upstream);
+                let lines: Vec<[String; 3]> = self
+                    .sync_lists
+                    .first()
+                    .map(|l| {
+                        l.commits
+                            .iter()
+                            .map(|(oid, subject, author, _)| {
+                                [
+                                    oid[..oid.len().min(8)].to_owned(),
+                                    subject.clone(),
+                                    author.clone(),
+                                ]
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let title = tr!("All changes to send ({count})", count = count);
+                let note = tr!("From upstream to HEAD, all files");
+                with_history(|h| {
+                    h.set_working_page(false);
+                    h.session.data.want_range(base, tip, title, note, lines);
+                });
+            }
+            PushRow::Commit((oid, ..), _) => {
+                let Some(id) = amonhen_model::Oid::from_hex(oid) else {
+                    return;
+                };
+                with_history(|h| {
+                    h.set_working_page(false);
+                    h.session.data.want_commit_id(id);
+                });
+            }
+        }
+        self.push_row = index;
+    }
+
+    /// Push の確認（macOS 版の PushSheet）: 上に題・説明・注意・送った後の形、左に送るコミット（一番上は送る変更
+    /// すべて。Force Push と分岐では上流から消えるコミットも）、下にボタン。選んだものの中身は右の列（History の
+    /// 詳細と同じ表示）に出す。ContentDialog には右の列を入れられないので、Stashes などと同じく窓の中に出す。
+    fn push_view(&self, context: &ViewContext<Self>) -> View {
+        let Some(Dialog::Push {
+            title,
+            message,
+            replace,
+            diverged,
+            remote,
+            remote_branch,
+            ..
+        }) = &self.dialog
+        else {
+            PUSH_KEYS.with(|k| k.set(None));
+            return View::empty();
+        };
+        // Enter は Push か（分かれていれば）Pull…。Force Push は Enter では押せない（macOS 版と同じ）。
+        PUSH_KEYS.with(|k| k.set(Some(*diverged || !*replace)));
+        let upstream = format!("{remote}/{remote_branch}");
+        let drawing = self.sync_drawing.as_ref().and_then(|preview| {
+            crate::drawing::for_move(
+                preview,
+                &crate::drawing::Move {
+                    moving: upstream.clone(),
+                    kind: "remote",
+                    after_title: if *replace || *diverged {
+                        tr!("After the force push")
+                    } else {
+                        tr!("After the push")
+                    },
+                    lost_note: tr!("removed from {upstream}", upstream = &upstream),
+                    lost_red: true,
+                    removes: false,
+                },
+            )
+        });
+        let warnings: Vec<(String, View)> = self
+            .sync_warnings
+            .iter()
+            .enumerate()
+            .map(|(i, w)| {
+                (
+                    format!("warning{i}"),
+                    TextBlock::new()
+                        .text(format!("⚠︎ {w}"))
+                        .text_wrapping(TextWrapping::Wrap)
+                        .foreground(Brush::Solid(Color::rgb(0x9c, 0x6a, 0x00)))
+                        .into(),
+                )
+            })
+            .collect();
+        // 上の帯は、ある物だけを鍵付きで並べる（空の場所を挟むと、後から絵が届いたときに reactor が差し込む位置を
+        // 誤る）。
+        let mut band: Vec<(String, View)> = vec![(
+            "title".to_owned(),
+            TextBlock::new()
+                .text(title.clone())
+                .font_size(15.0)
+                .font_weight(FontWeight::SEMI_BOLD)
+                .text_wrapping(TextWrapping::Wrap)
+                .into(),
+        )];
+        if !message.is_empty() {
+            band.push((
+                "message".to_owned(),
+                TextBlock::new()
+                    .text(message.clone())
+                    .font_size(12.0)
+                    .opacity(0.7)
+                    .text_wrapping(TextWrapping::Wrap)
+                    .into(),
+            ));
+        }
+        band.extend(warnings);
+        if let Some(drawing) = drawing {
+            band.push(("drawing".to_owned(), drawing));
+        }
+        let top = StackPanel::new()
+            .spacing(4.0)
+            .margin(Thickness::new(14.0, 10.0, 14.0, 8.0))
+            .children((View::keyed_fragment(band),));
+        let red = Color::rgb(0xc0, 0x1c, 0x28);
+        let rows = self.push_rows();
+        let items = rows.iter().enumerate().map(|(i, row)| {
+            let (first, second, bold, lost) = match row {
+                PushRow::All(count) => (
+                    tr!("All changes to send ({count})", count = count),
+                    tr!("From upstream to HEAD, all files"),
+                    true,
+                    false,
+                ),
+                PushRow::Heading(count) => (
+                    tr!("Commits upstream will lose ({count})", count = count),
+                    String::new(),
+                    true,
+                    true,
+                ),
+                PushRow::Commit((oid, subject, author, time), lost) => (
+                    subject.clone(),
+                    format!(
+                        "{} · {author} · {}",
+                        &oid[..oid.len().min(8)],
+                        crate::stashes::ago(*time)
+                    ),
+                    false,
+                    *lost,
+                ),
+            };
+            let first = TextBlock::new()
+                .text(first)
+                .text_trimming(TextTrimming::CharacterEllipsis);
+            let first = if bold {
+                first.font_weight(FontWeight::SEMI_BOLD)
+            } else {
+                first
+            };
+            let first = if lost {
+                first.foreground(Brush::Solid(red))
+            } else {
+                first
+            };
+            let second: View = if second.is_empty() {
+                View::empty()
+            } else {
+                TextBlock::new()
+                    .text(second)
+                    .font_size(11.0)
+                    .opacity(0.6)
+                    .text_trimming(TextTrimming::CharacterEllipsis)
+                    .into()
+            };
+            (
+                format!("{i}"),
+                ListViewItem::new()
+                    .tag(format!("{i}"))
+                    .content(StackPanel::new().spacing(1.0).children((first, second))),
+            )
+        });
+        let list = ListView::new()
+            .selected_index(self.push_row)
+            .on_selection_changed(context.callback(Message::PushRow))
+            .collection_slot(ListViewSlot::Items, items);
+        // 行の数が変わったら一覧ごと作り直す（reactor の ListView は消した項目の場所が空いたまま残る）。
+        let list = Border::new()
+            .grid_row(1)
+            .content(View::keyed_fragment([(format!("{}", rows.len()), list)]));
+        // 下: キャンセル、（分かれていれば Pull…）、Push か Force Push。Force Push は戻せないので、目立たせない。
+        let destructive = *replace || *diverged;
+        let force = *replace;
+        let ok = Button::new().on_click(context.callback(move |()| {
+            Message::DialogClosed(if destructive && !force {
+                ContentDialogResult::Secondary
+            } else {
+                ContentDialogResult::Primary
+            })
+        }));
+        let ok = if destructive {
+            ok
+        } else {
+            ok.style(ButtonStyle::Accent)
+        };
+        let ok = ok.content(TextBlock::new().text(if destructive { "Force Push" } else { "Push" }));
+        let pull: View = if *diverged {
+            Button::new()
+                .on_click(
+                    context.callback(|()| Message::DialogClosed(ContentDialogResult::Primary)),
+                )
+                .style(ButtonStyle::Accent)
+                .content(TextBlock::new().text("Pull…"))
+        } else {
+            View::empty()
+        };
+        let buttons = StackPanel::new()
+            .orientation(Orientation::Horizontal)
+            .horizontal_alignment(HorizontalAlignment::Right)
+            .spacing(8.0)
+            .margin(Thickness::new(14.0, 8.0, 14.0, 10.0))
+            .grid_row(2)
+            .children((
+                Button::new()
+                    .on_click(
+                        context.callback(|()| Message::DialogClosed(ContentDialogResult::None)),
+                    )
+                    .content(TextBlock::new().text(tr!("Cancel"))),
+                pull,
+                ok,
+            ));
+        Border::new()
+            .background(Brush::Solid(Color::rgb(0xff, 0xff, 0xff)))
+            .grid_column(1)
+            .content(
+                Grid::new()
+                    .rows([GridLength::Auto, GridLength::Star(1.0), GridLength::Auto])
+                    .children((
+                        ScrollViewer::new().max_height(360.0).content(top),
+                        list,
+                        buttons,
+                    )),
+            )
+    }
+
     fn show_page(&mut self, page: Page) {
         let from = self.page;
         self.page = page;
@@ -12229,7 +12494,21 @@ fn details(info: Option<(&Value, Option<&Value>)>) -> View {
 /// 複数のコミットを選んだときの見出し（GTK4 版の `show_selection`）: 数、差分の取り方の説明、各コミットの 1 行。
 fn selection_details(selection: &Value) -> View {
     let count = selection["count"].as_u64().unwrap_or(0);
-    let note = match selection["kind"].as_str() {
+    // Push で送る変更すべてには、題と説明が付いてくる。
+    let title = selection["title"].as_str().map_or_else(
+        || tr!("{count} commits selected", count = count),
+        str::to_owned,
+    );
+    let note = match selection["note"].as_str() {
+        Some(note) => note.to_owned(),
+        None => selection_note(selection),
+    };
+    selection_view(selection, title, note)
+}
+
+/// 複数のコミットを選んだときの、差分の取り方の説明。
+fn selection_note(selection: &Value) -> String {
+    match selection["kind"].as_str() {
         Some("range") => tr!(
             "They are consecutive, so this is the diff from the parent of the oldest to the newest (the same as squashing them into one)."
         ),
@@ -12239,11 +12518,15 @@ fn selection_details(selection: &Value) -> View {
         _ => tr!(
             "They are not contiguous, so each commit’s diff is listed file by file (headed by the path and short ID)."
         ),
-    };
+    }
+}
+
+/// 複数のコミットの見出し: 題、説明、各コミットの 1 行。
+fn selection_view(selection: &Value, title: String, note: String) -> View {
     let secondary = Brush::Solid(Color::argb(0x99, 0x1c, 0x1c, 0x1f));
     let mut rows: Vec<View> = vec![
         TextBlock::new()
-            .text(tr!("{count} commits selected", count = count))
+            .text(title)
             .font_size(14.0)
             .font_weight(FontWeight::SEMI_BOLD)
             .into(),
@@ -13157,6 +13440,16 @@ pub struct PullDrawings {
     forecast: Option<Value>,
 }
 
+/// Push の画面の行。
+enum PushRow {
+    /// 送る変更すべて（送るコミットの数）。
+    All(u64),
+    /// 上流から消えるコミットの見出し（数）。選べない。
+    Heading(u64),
+    /// コミット（oid, 件名, 作者, 時刻）と、上流から消えるものか。
+    Commit((String, String, String, i64), bool),
+}
+
 /// Pull・Push のダイアログのコミットの一覧の 1 つ（コアの `between` の答え）。
 #[derive(Clone)]
 struct SyncList {
@@ -13386,6 +13679,25 @@ fn attach_shortcuts(element: &IInspectable) -> windows_core_reactor::Result<()> 
             shift: down(xaml::VirtualKey::Shift),
             alt: down(xaml::VirtualKey::Menu),
         };
+        // Push の画面: Enter で既定のボタン、Esc でキャンセル（ダイアログと同じ）。
+        if !pressed.control
+            && !pressed.alt
+            && !pressed.shift
+            && let Some(enter) = PUSH_KEYS.with(std::cell::Cell::get)
+        {
+            let result = match key {
+                xaml::VirtualKey::Escape => Some(ContentDialogResult::None),
+                xaml::VirtualKey::Enter if enter => Some(ContentDialogResult::Primary),
+                _ => None,
+            };
+            if let Some(result) = result {
+                let _ = args.SetHandled(true);
+                with_history(|h| {
+                    h.sender.send(Message::DialogClosed(result));
+                });
+                return;
+            }
+        }
         // 修飾キーなしのキー（文字の入力・矢印）は部品に任せる。
         if !pressed.control && !pressed.alt {
             return;

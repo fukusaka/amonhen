@@ -1274,6 +1274,51 @@ impl Data {
         });
     }
 
+    /// `base` から `tip` までの変更すべてを裏で読む（Push で送る変更すべて。macOS 版の PushSheet の range）。
+    /// 詳細の欄の見出しは `title`・`note` と、コミットの 1 行（短い ID・件名・作者）の `lines`。
+    pub fn want_range(
+        &mut self,
+        base: Option<amonhen_model::Oid>,
+        tip: amonhen_model::Oid,
+        title: String,
+        note: String,
+        lines: Vec<[String; 3]>,
+    ) {
+        let (Some(repo), Some(history)) = (self.repo.clone(), self.history.clone()) else {
+            return;
+        };
+        self.selection_seq = self.selection_seq.wrapping_add(1) & 0x7fff_ffff;
+        let key = 0x8000_0000 | self.selection_seq;
+        self.commit_wanted = Some(key);
+        self.early_extras = None;
+        let generation = history.generation;
+        let (tx, wake) = (self.tx.clone(), self.wake.clone());
+        std::thread::spawn(move || {
+            let load = || -> Result<CommitShown, String> {
+                let changes = repo
+                    .changes_between(base.as_ref(), &tip)
+                    .map_err(|e| e.to_string())?;
+                let stacked = repo.stacked_diff(&changes).map_err(|e| e.to_string())?;
+                let info = serde_json::json!({ "selection": {
+                    "kind": "range", "count": lines.len(), "lines": lines,
+                    "title": title, "note": note,
+                }});
+                Ok(CommitShown::new(key, info, Arc::new(stacked)))
+            };
+            let shown = match load() {
+                Ok(shown) => shown,
+                Err(e) => {
+                    let _ = tx.send(Event::Failed(format!("差分を読めない: {e}")));
+                    return wake();
+                }
+            };
+            let (stacked, collapsed) = (shown.stacked.clone(), shown.collapsed.clone());
+            let _ = tx.send(Event::Commit(generation, Box::new(shown)));
+            wake();
+            send_syntax(tx, wake, generation, key, 0, stacked, collapsed);
+        });
+    }
+
     /// 複数選んだ行（`rows`、昇順で 2 つ以上）の差分と、詳細の欄の見出しを裏で読む（GTK4 版と同じく、コアの
     /// `selection_diff` が範囲・2 つ・とびとびで差分の取り方を決める）。
     pub fn want_selection(&mut self, rows: Vec<u32>) {
