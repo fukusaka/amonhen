@@ -349,6 +349,8 @@ enum Dialog {
         name: String,
         fetch: String,
         push: String,
+        /// 接続の確認の結果（つながったか、まだなら None）と言葉。確かめていなければ None。
+        check: Option<(Option<bool>, String)>,
     },
     /// stash から新しいブランチを作る（`git stash branch`。GTK4 版の `stashes::branch`）。
     StashBranch {
@@ -747,6 +749,10 @@ enum Message {
     RemoteLoaded(Arc<Repository>, Option<(String, String, String)>),
     /// リモートのシートの欄（0 は名前、1 は fetch、2 は push の URL）。
     RemoteField(usize, String),
+    /// リモートの fetch の URL につないで確かめる。
+    RemoteCheck,
+    /// 接続の確認の結果（確かめた URL、つながったか、言葉）。
+    RemoteChecked(String, bool, String),
     /// 消すブランチを調べ終えた（名前、ほかのブランチにないコミットの数と一覧、または調べられなかった理由）。
     DeleteChecked(Arc<Repository>, String, Result<(u64, Vec<String>), String>),
     Status(Arc<StatusSnapshot>),
@@ -1787,6 +1793,7 @@ impl Component for Root {
                         name,
                         fetch,
                         push,
+                        ..
                     }),
                     ContentDialogResult::Primary,
                 ) => {
@@ -2479,6 +2486,7 @@ impl Component for Root {
                         name,
                         fetch,
                         push: shown_push,
+                        check: None,
                     });
                     self.dialog_inputs += 1;
                 }
@@ -2486,10 +2494,64 @@ impl Component for Root {
             },
             Message::RemoteField(index, text) => {
                 if let Some(Dialog::Remote {
-                    name, fetch, push, ..
+                    name,
+                    fetch,
+                    push,
+                    check,
+                    ..
                 }) = &mut self.dialog
                 {
+                    // fetch の URL を変えたら、前の確認の結果は消す。
+                    if index == 1 && *fetch != text {
+                        *check = None;
+                    }
                     *[name, fetch, push].into_iter().nth(index).expect("field") = text;
+                }
+            }
+            Message::RemoteCheck => {
+                // 保存する前に、fetch の URL につないで確かめる（GTK4 版の Check Connection。コアの `checkRemote`）。
+                if let Some(Dialog::Remote {
+                    repo, fetch, check, ..
+                }) = &mut self.dialog
+                {
+                    let url = fetch.trim().to_owned();
+                    if url.is_empty() {
+                        return beep();
+                    }
+                    *check = Some((None, tr!("Connecting…")));
+                    let repo = repo.clone();
+                    context.spawn_background(move |_| {
+                        let command = json!({ "op": "checkRemote", "url": &url });
+                        let reply: Value =
+                            serde_json::from_str(&repo.run_json(&command.to_string()))
+                                .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+                        let result = if reply["ok"].as_bool() == Some(true) {
+                            let info = &reply["info"];
+                            let mut text = tr!(
+                                "Reachable: {branches} branches, {tags} tags",
+                                branches = info["branches"].as_u64().unwrap_or(0),
+                                tags = info["tags"].as_u64().unwrap_or(0)
+                            );
+                            if let Some(head) = info["head"].as_str() {
+                                text.push_str(&tr!(", HEAD at {head}", head = head));
+                            }
+                            (true, text)
+                        } else {
+                            (
+                                false,
+                                reply["error"].as_str().unwrap_or_default().to_owned(),
+                            )
+                        };
+                        Message::RemoteChecked(url, result.0, result.1)
+                    });
+                }
+            }
+            Message::RemoteChecked(url, ok, text) => {
+                // 確かめている間に URL を変えていなければ、結果を出す。
+                if let Some(Dialog::Remote { fetch, check, .. }) = &mut self.dialog
+                    && fetch.trim() == url
+                {
+                    *check = Some((Some(ok), text));
                 }
             }
             Message::DeleteChecked(repo, name, checked) => match checked {
@@ -2990,6 +3052,7 @@ impl Component for Root {
                             },
                             fetch: String::new(),
                             push: String::new(),
+                            check: None,
                         });
                         self.dialog_inputs += 1;
                     }
@@ -5218,8 +5281,29 @@ impl Root {
                 name,
                 fetch,
                 push,
+                check,
                 ..
             }) => {
+                // 接続の確認の結果（つながれば緑、だめなら赤）。
+                let result: View = match check {
+                    None => View::empty(),
+                    Some((ok, text)) => {
+                        let mut block = TextBlock::new()
+                            .text(text.clone())
+                            .font_size(12.0)
+                            .text_wrapping(TextWrapping::Wrap)
+                            .is_text_selection_enabled(true)
+                            .max_width(360.0)
+                            .vertical_alignment(VerticalAlignment::Center);
+                        block = match ok {
+                            Some(true) => block.foreground(Brush::Solid(Color::rgb(0x2b, 0x9a, 0x45))),
+                            Some(false) => block.foreground(Brush::Solid(Color::rgb(0xc4, 0x2b, 0x1c))),
+                            None => block.opacity(0.6),
+                        };
+                        block.into()
+                    }
+                };
+                let checking = matches!(check, Some((None, _)));
                 let field = |label: String, text: &str, index: usize, placeholder: String| {
                     StackPanel::new().spacing(2.0).children((
                         TextBlock::new().text(label),
@@ -5256,6 +5340,16 @@ impl Root {
                             )),
                             field(tr!("Fetch URL"), fetch, 1, String::new()),
                             field(tr!("Push URL"), push, 2, tr!("Same as the fetch URL")),
+                            StackPanel::new()
+                                .orientation(Orientation::Horizontal)
+                                .spacing(10.0)
+                                .children((
+                                    Button::new()
+                                        .is_enabled(!fetch.trim().is_empty() && !checking)
+                                        .on_click(context.callback(|()| Message::RemoteCheck))
+                                        .content(TextBlock::new().text(tr!("Check Connection"))),
+                                    result,
+                                )),
                         )),
                     )
             }
