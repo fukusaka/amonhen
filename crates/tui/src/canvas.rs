@@ -24,6 +24,8 @@ pub struct Canvas<W: Write> {
     /// 端末にまだ何も出していない（次のフレームはすべて書く）。
     blank: bool,
     cursor_shown: bool,
+    /// 端末が左右の余白（DECSLRM）を持つ。あれば、幅いっぱいでない所も端末にスクロールさせる。
+    margins: bool,
 }
 
 impl<W: Write> Canvas<W> {
@@ -36,7 +38,13 @@ impl<W: Write> Canvas<W> {
             blank: true,
             // 端末を取るときに隠してある。
             cursor_shown: false,
+            margins: false,
         }
+    }
+
+    /// 端末が左右の余白（DECSLRM）を持つかどうかを教える（端末に問い合わせた結果）。
+    pub fn set_margins(&mut self, margins: bool) {
+        self.margins = margins;
     }
 
     /// 出力先（端末の設定を替える列を書くのに）。
@@ -158,19 +166,24 @@ impl<W: Write> Canvas<W> {
 }
 
 impl<W: Write> Canvas<W> {
-    /// 端末に、`area` の行を `lines` 行スクロールさせ（正なら上へ）、`shown` も同じにする。幅いっぱいでない所や、
-    /// ずれが高さ以上のときは、何もしない（スクロール領域は、行の全体を動かす）。
+    /// 端末に、`area` を `lines` 行スクロールさせ（正なら上へ）、`shown` も同じにする。ずれが高さ以上のときは、
+    /// 何もしない。スクロール領域は行の全体を動かすので、幅いっぱいでない所は、端末が左右の余白を持つときだけ。
     fn scroll(&mut self, area: Rect, lines: i32) -> std::io::Result<()> {
         let all = self.shown.area;
         let count = lines.unsigned_abs() as usize;
         let height = usize::from(area.height);
-        if area.x != 0
-            || area.width != all.width
+        let full = area.x == 0 && area.width == all.width;
+        if !(full || self.margins)
+            || area.width == 0
+            || area.right() > all.width
             || area.bottom() > all.height
             || count == 0
             || count >= height
         {
             return Ok(());
+        }
+        if !full {
+            return self.scroll_within(area, lines);
         }
         // 行の範囲を決め（DECSTBM、1 から数える）、その中をスクロールし（SU・SD）、範囲を戻す。空いた行は今の
         // 背景色で埋まるので、先に属性を戻しておく。範囲を決めるとカーソルが動くが、書くたびに位置を決め直す。
@@ -192,6 +205,47 @@ impl<W: Write> Canvas<W> {
         } else {
             rows.rotate_right(count * width);
             rows[..count * width].fill(Cell::default());
+        }
+        Ok(())
+    }
+
+    /// 幅いっぱいでない `area` を、左右の余白を使ってスクロールさせる（`scroll` が確かめた後に呼ぶ）。
+    fn scroll_within(&mut self, area: Rect, lines: i32) -> std::io::Result<()> {
+        let all = self.shown.area;
+        let count = lines.unsigned_abs() as usize;
+        // 左右の余白を使うモードにし（DECLRMM）、行の範囲と左右の余白を決め（DECSTBM・DECSLRM）、その中を
+        // スクロールして、すべて戻す。モードを入れたままにすると `CSI s`（カーソルの保存）の意味が変わるので、
+        // 使う間だけ入れる。
+        write!(
+            self.backend,
+            "\x1b[m\x1b[?69h\x1b[{};{}r\x1b[{};{}s\x1b[{}{}\x1b[r\x1b[1;{}s\x1b[?69l",
+            area.y + 1,
+            area.bottom(),
+            area.x + 1,
+            area.right(),
+            count,
+            if lines > 0 { 'S' } else { 'T' },
+            all.width
+        )?;
+        let width = usize::from(all.width);
+        let (left, right) = (usize::from(area.x), usize::from(area.right()));
+        let row = |y: u16| usize::from(y) * width;
+        // 行ごとに、`area` の中のセルだけを動かす。空いた行は、何もないセル。
+        let ys: Vec<u16> = if lines > 0 {
+            (area.y..area.bottom()).collect()
+        } else {
+            (area.y..area.bottom()).rev().collect()
+        };
+        for y in ys {
+            let from = i32::from(y) + lines;
+            if (i32::from(area.y)..i32::from(area.bottom())).contains(&from) {
+                let (to, from) = (row(y), row(from as u16));
+                for x in left..right {
+                    self.shown.content[to + x] = self.shown.content[from + x].clone();
+                }
+            } else {
+                self.shown.content[row(y) + left..row(y) + right].fill(Cell::default());
+            }
         }
         Ok(())
     }
@@ -302,6 +356,9 @@ mod tests {
         at: (usize, usize),
         /// スクロールする行の範囲（上と、下の次）。
         region: (usize, usize),
+        /// 左右の余白を使うモード（DECLRMM）と、余白（左と、右の次）。
+        margin_mode: bool,
+        margins: (usize, usize),
     }
 
     impl Model {
@@ -312,6 +369,8 @@ mod tests {
                 cells: vec![' '; cols * rows],
                 at: (0, 0),
                 region: (0, rows),
+                margin_mode: false,
+                margins: (0, cols),
             }
         }
 
@@ -332,6 +391,12 @@ mod tests {
                     }
                     params.push(ch);
                 };
+                if params == "?69" {
+                    // 切ると、余白も戻る。
+                    self.margin_mode = end == 'h';
+                    self.margins = (0, self.cols);
+                    continue;
+                }
                 if params.starts_with('?') {
                     continue;
                 }
@@ -348,17 +413,31 @@ mod tests {
                         self.region = (top - 1, number().unwrap_or(self.rows));
                         self.at = (0, 0);
                     }
+                    's' => {
+                        assert!(self.margin_mode, "CSI s saves the cursor outside DECLRMM");
+                        let left = number().unwrap_or(1);
+                        self.margins = (left - 1, number().unwrap_or(self.cols));
+                        self.at = (0, 0);
+                    }
                     'S' | 'T' => {
-                        let count = number().unwrap_or(1) * self.cols;
-                        let rows =
-                            &mut self.cells[self.region.0 * self.cols..self.region.1 * self.cols];
-                        let len = rows.len();
-                        if end == 'S' {
-                            rows.rotate_left(count);
-                            rows[len - count..].fill(' ');
-                        } else {
-                            rows.rotate_right(count);
-                            rows[..count].fill(' ');
+                        // 行の範囲と左右の余白の中だけが動く。
+                        let count = number().unwrap_or(1);
+                        let (top, bottom) = self.region;
+                        let (left, right) = self.margins;
+                        let cols = self.cols;
+                        let ys: Vec<usize> = match end {
+                            'S' => (top..bottom).collect(),
+                            _ => (top..bottom).rev().collect(),
+                        };
+                        for y in ys {
+                            let from = match end {
+                                'S' => Some(y + count).filter(|&f| f < bottom),
+                                _ => y.checked_sub(count).filter(|&f| f >= top),
+                            };
+                            for x in left..right {
+                                self.cells[y * cols + x] =
+                                    from.map_or(' ', |f| self.cells[f * cols + x]);
+                            }
                         }
                     }
                     'm' => {}
@@ -421,13 +500,69 @@ mod tests {
         // 行数が違っていても（2 行と言われたが、1 行）、画面は合う。
         frame(&mut canvas, 41, 2);
         frame(&mut canvas, 41, -1);
-        // 幅いっぱいでない所は、スクロールさせない。
+        // 幅いっぱいでない所は、端末が左右の余白を持たなければ、スクロールさせない。
         let narrow = Rect::new(2, 1, COLS - 2, 6);
         canvas
             .draw((COLS, 8), &[narrow], &[(narrow, 1)], |_, _| None)
             .unwrap();
         let written = out.take();
         assert!(!written.contains('r'), "{written:?}");
+    }
+
+    /// 端末が左右の余白を持つなら、ほかのペインと並ぶ所も端末にスクロールさせる。隣は動かない
+    #[test]
+    fn areas_beside_others_scroll_with_margins() {
+        const COLS: u16 = 16;
+        let out = Written::default();
+        let mut canvas = Canvas::new(out.clone());
+        canvas.set_margins(true);
+        let mut model = Model::new(usize::from(COLS), 8);
+        // 左に 4 桁の動かない列、区切りの 1 桁、その右に `top` 行目からの中身。
+        let list = Rect::new(5, 1, COLS - 5, 6);
+        let mut frame = |canvas: &mut Canvas<Written>, top: u32, hint: i32| {
+            canvas
+                .draw((COLS, 8), &[list], &[(list, hint)], |buf, all| {
+                    if all {
+                        buf.set_string(0, 0, "top bar", Style::new());
+                        buf.set_string(0, 7, "bottom bar", Style::new());
+                        for y in 1..7 {
+                            buf.set_string(0, y, format!("s{y}  |"), Style::new());
+                        }
+                    }
+                    for y in 0..6 {
+                        buf.set_string(
+                            5,
+                            1 + y,
+                            format!("line {}", top + u32::from(y)),
+                            Style::new(),
+                        );
+                    }
+                    None
+                })
+                .unwrap();
+            let written = out.take();
+            model.feed(&written);
+            assert_eq!(model.text(), text(canvas), "top {top}, hint {hint}");
+            assert!(!model.margin_mode && model.margins == (0, usize::from(COLS)));
+            written
+        };
+        frame(&mut canvas, 10, 0);
+        let written = frame(&mut canvas, 12, 2);
+        assert!(
+            written.contains("\x1b[?69h\x1b[2;7r\x1b[6;16s\x1b[2S\x1b[r\x1b[1;16s\x1b[?69l"),
+            "{written:?}"
+        );
+        assert_eq!(written.matches("line").count(), 2, "{written:?}");
+        // 隣の列は書き直さない。
+        assert!(!written.contains("s1"), "{written:?}");
+        let written = frame(&mut canvas, 9, -3);
+        assert_eq!(written.matches("line").count(), 3, "{written:?}");
+        frame(&mut canvas, 10, 4);
+        frame(&mut canvas, 60, 50);
+        // 余白を持たない端末では、スクロールさせずに書く。
+        canvas.set_margins(false);
+        let written = frame(&mut canvas, 61, 1);
+        assert!(!written.contains("\x1b[?69h"), "{written:?}");
     }
 
     /// 全角の文字が半角になったら、後ろのセルも書き直す。大きさが変わったら、すべて描き直す
