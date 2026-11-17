@@ -13706,6 +13706,14 @@ fn retry_splitters() {
 /// 境目のつまみに、押す・動かす・離すを付ける。押したら指を捕まえ、動かすたびに新しい幅・高さを送る。
 fn attach_splitter(element: &IInspectable, split: Split) -> windows_core_reactor::Result<()> {
     let ui: xaml::UIElement = element.cast()?;
+    // 指を載せたら、動かせる向きの矢印のカーソル。
+    let shape = if split == Split::Details {
+        xaml::InputSystemCursorShape::SizeNorthSouth
+    } else {
+        xaml::InputSystemCursorShape::SizeWestEast
+    };
+    let cursor: xaml::InputCursor = xaml::InputSystemCursor::Create(shape)?.cast()?;
+    ui.SetProtectedCursor(&cursor)?;
     let source = ui.clone();
     let pressed = ui.PointerPressed(move |_, args: Ref<xaml::PointerRoutedEventArgs>| {
         let Some(args) = args.as_ref() else { return };
