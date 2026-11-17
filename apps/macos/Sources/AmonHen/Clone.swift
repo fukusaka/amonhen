@@ -300,7 +300,7 @@ enum CloneSheet {
                 depth: choice == .recentHistory ? depth.selectedTag() : nil,
                 sparse: sparse.isEnabled && sparse.state == .on,
                 branch: branch.isHidden ? nil : branch.titleOfSelectedItem, submodules: submodules.state == .on,
-                onCloned: onCloned)
+                window: window, onCloned: onCloned)
             return false
         }
     }
@@ -325,7 +325,7 @@ enum CloneSheet {
     /// clone している間は、進み具合の小さなウィンドウを出す。`sparse` なら、clone の後で取り出すフォルダを選んで
     /// もらってから開く（取り消したら根のファイルだけのまま。フォルダは Settings の「取得とフォルダ」で足せる）。
     private static func run(url: String, dest: String, filter: String?, depth: Int?, sparse: Bool, branch: String?,
-                            submodules: Bool, onCloned: @escaping (String) -> Void) {
+                            submodules: Bool, window: NSWindow?, onCloned: @escaping (String) -> Void) {
         let panel = progressPanel(L("Cloning %@…", url))
         RunningOperations.begin()
         Task {
@@ -343,10 +343,7 @@ enum CloneSheet {
                 }
             } catch {
                 panel.close()
-                let alert = NSAlert(error: error)
-                alert.messageText = L("Couldn’t clone")
-                alert.informativeText = "\(error)"
-                alert.runModal()
+                Actions.showFailure(L("Couldn’t clone"), error, in: window)
             }
         }
     }

@@ -729,7 +729,6 @@
 "Clear" = "消す";
 "Opens History right away next time. Cleared, it is read from git again." = "次に開くとき History をすぐ出します。消すと git から読み直します。";
 "Answers the same question again without asking the AI." = "同じ問い合わせには、AI に聞かずに前の結果を出します。";
-"Can’t clear the cache" = "キャッシュを消せません";
 "What each open repository’s History cache wrote since the app started (through the shared daemon, what the daemon wrote). It writes only what changed." = "開いているリポジトリの History のキャッシュが、アプリを起動してから書いたもの（共有の daemon 越しなら、daemon が書いたもの）。変わった所だけを書く。";
 "File change notices and the reloads they cause (newest first, up to 500)." = "ファイルの変化の知らせと、それによる読み直し（新しい順に最大 500 件）。";
 "%ld s" = "%ld 秒";
@@ -814,7 +813,6 @@
 "Stopped partway" = "途中で止まりました";
 "Check Working Copy, then Continue." = "Working Copy で確かめてから Continue してください。";
 "The operation failed" = "操作に失敗しました";
-"Can’t Read" = "読み込めません";
 "Edit Message" = "メッセージを編集";
 "Change" = "変更";
 "Message (optional)" = "メッセージ（任意）";
@@ -1992,3 +1990,13 @@
 "Merge them one by one (a merge commit for each)" = "1 つずつ merge する（それぞれ merge のコミットを作る）";
 "(optional)" = "（任意）";
 "Branch to follow" = "追うブランチ";
+
+/* 失敗の知らせ（docs/ux.md: 「Couldn’t <操作>」） */
+"Couldn’t read the commits to edit" = "編集するコミットを読めませんでした";
+"Couldn’t clear the cache" = "キャッシュを消せませんでした";
+"Couldn’t list the ignored files" = "ignore されたファイルを読めませんでした";
+"Couldn’t list the branches to clean up" = "片付けるブランチを読めませんでした";
+"Couldn’t start the shared daemon" = "共有の daemon を起動できませんでした";
+"Couldn’t resolve the conflict" = "コンフリクトを解決できませんでした";
+"Couldn’t open %@ in the merge editor" = "%@ をマージエディタで開けませんでした";
+"Couldn’t reload %@" = "%@ を読み直せませんでした";

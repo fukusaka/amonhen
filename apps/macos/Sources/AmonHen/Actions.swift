@@ -136,6 +136,15 @@ final class Actions {
         }
     }
 
+    /// 失敗を知らせる（docs/ux.md: 題は「Couldn’t <操作>」、窓があればそのシートで）。
+    @MainActor
+    static func showFailure(_ title: String, _ error: Error, in window: NSWindow?) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = "\(error)"
+        if let window { alert.beginSheetModal(for: window) } else { alert.runModal() }
+    }
+
     /// 確認の文の終わりに置く定型（docs/ux.md の「Confirmations and wording」）。この 2 つ以外の言い方はしない。
     static let canUndo = L("You can Undo this (⌥⌘Z).")
     static let cantUndo = L("This can’t be undone.")
@@ -207,7 +216,7 @@ final class Actions {
             let json = try Repository.json(command)
             return try await Task.detached { try repository.run(json: json).text }.value
         } catch {
-            await alert(L("Can’t Read"), "\(error)")
+            await alert(L("Couldn’t read the commits to edit"), "\(error)")
             return nil
         }
     }
@@ -393,7 +402,7 @@ final class Actions {
                     try repository.info(["op": "ignoredFiles"], as: Ignored.self)
                 }.value.paths
             } catch {
-                NSAlert(error: error).runModal()
+                Self.showFailure(L("Couldn’t list the ignored files"), error, in: window)
                 return
             }
             let alert = makeAlert(paths.isEmpty ? L("No Ignored Files") : L("Delete %ld Ignored Items?", paths.count),
@@ -457,7 +466,7 @@ final class Actions {
                     return try repository.info(["op": "branchCleanup", "pullRequests": prs], as: Cleanup.self)
                 }.value
             } catch {
-                NSAlert(error: error).runModal()
+                Self.showFailure(L("Couldn’t list the branches to clean up"), error, in: window)
                 return
             }
             let base = cleanup.base ?? "main"
