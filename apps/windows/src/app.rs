@@ -92,6 +92,8 @@ struct Root {
     diff_file: Option<crate::data::DiffFile>,
     /// Working Copy の差分で右クリックした行（その行か hunk の行）と、含めている行があるか。
     diff_rows: Option<(Vec<usize>, bool)>,
+    /// 署名のあるタグの状態と署名者（サイドバーの印とタグのメニュー）。
+    tag_signatures: std::collections::HashMap<String, (crate::signature::Status, String)>,
     /// 始めた clone が sparse か（終わったら、取り出すフォルダを尋ねる）。
     clone_sparse: bool,
     refs: Option<Arc<RefsSnapshot>>,
@@ -709,6 +711,8 @@ enum Message {
     WorktreeCounts(Vec<(String, u64)>),
     /// タグのリモートでの様子を読んだ（`tagRemotes` の info）。
     TagRemotes(Value),
+    /// タグの署名（名前 → 状態と署名者）。
+    TagSignatures(std::collections::HashMap<String, (crate::signature::Status, String)>),
     /// submodule の様子を読んだ。
     Submodules(Value),
     /// subtree を読んだ（`subtrees` の info）。
@@ -836,6 +840,7 @@ impl Component for Root {
             diff_area: ElementRef::new(),
             diff_file: None,
             diff_rows: None,
+            tag_signatures: std::collections::HashMap::new(),
             clone_sparse: false,
             refs: None,
             groups: None,
@@ -995,7 +1000,38 @@ impl Component for Root {
                     self.load_reflog(context);
                 }
             }
-            Message::TagRemotes(info) => self.tag_remotes = info,
+            Message::TagRemotes(info) => {
+                self.tag_remotes = info;
+                // タグの署名も（署名のあるものだけをコアが検証し、覚えている）。
+                if let (Some(repo), Some(refs)) = (self.repo.clone(), self.refs.as_ref()) {
+                    let names: Vec<String> = refs
+                        .refs
+                        .entries
+                        .iter()
+                        .filter(|e| e.kind == amonhen_model::RefKind::Tag)
+                        .map(|e| e.name.clone())
+                        .collect();
+                    if !names.is_empty() {
+                        context.spawn_background(move |_| {
+                            let command = json!({ "op": "tagSignatures", "names": names });
+                            let reply: Value =
+                                serde_json::from_str(&repo.run_json(&command.to_string()))
+                                    .unwrap_or_default();
+                            let found = reply["info"]["tags"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .filter_map(|t| {
+                                    let name = t["name"].as_str()?.to_owned();
+                                    Some((name, crate::signature::of_tag(t)?))
+                                })
+                                .collect();
+                            Message::TagSignatures(found)
+                        });
+                    }
+                }
+            }
+            Message::TagSignatures(found) => self.tag_signatures = found,
             Message::StashDetails(details) => self.stash_details = details,
             Message::Done(text) => {
                 // 終わった後の読み直しは同じ（`Performed`）。一言は 5 秒（GTK4 版と同じ）。
@@ -5304,6 +5340,7 @@ impl Component for Root {
                             form: &self.form,
                             conflicts,
                             tag_remotes: &self.tag_remotes,
+                            tag_signatures: &self.tag_signatures,
                             submodules: &self.submodules,
                             subtrees: &self.subtrees["subtrees"],
                         },
@@ -7830,15 +7867,23 @@ impl Root {
                 ));
             }
         }
-        // リモートごとの様子（GTK4 版はタグの印のポップオーバーに出す）。
-        let mut items: Vec<MenuItem> = remotes
-            .iter()
-            .map(|(remote, _)| {
+        // 署名の様子とリモートごとの様子（GTK4 版はタグの印のポップオーバーに出す）。
+        let signature = self.tag_signatures.get(name).map(|(status, signer)| {
+            let text = if signer.is_empty() {
+                format!("Signature: {}", status.label())
+            } else {
+                format!("Signature: {} — {signer}", status.label())
+            };
+            MenuItem::disabled("-signature", text)
+        });
+        let mut items: Vec<MenuItem> = signature
+            .into_iter()
+            .chain(remotes.iter().map(|(remote, _)| {
                 MenuItem::disabled(
                     format!("-state:{remote}"),
                     crate::sidebar::tag_state_text(&self.tag_remotes, name, remote),
                 )
-            })
+            }))
             .collect();
         if !items.is_empty() {
             items.push(MenuItem::separator("-states"));

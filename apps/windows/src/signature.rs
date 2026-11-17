@@ -200,6 +200,26 @@ fn trust_text(trust: &str) -> String {
     }
 }
 
+/// コアの `tagSignatures` の 1 件の状態（GTK4 版の `tagsign::Status::of`）と署名者。署名のないタグ・軽量タグは
+/// None。
+pub fn of_tag(tag: &Value) -> Option<(Status, String)> {
+    let kind = tag["signed"].as_str()?;
+    let check = &tag["signature"];
+    let status = if check.is_null() {
+        Status::NoKey
+    } else {
+        Status::new(
+            Some(check),
+            tag["taggerEmail"].as_str().unwrap_or_default(),
+            Some(kind),
+        )
+    };
+    Some((
+        status,
+        check["signer"].as_str().unwrap_or_default().to_owned(),
+    ))
+}
+
 /// 詳細の署名（状態、検証の結果、種類）。署名がなければ None。検証の結果は時間のかかる分（`extras`）で届く。
 pub fn of<'a>(
     info: &'a Value,

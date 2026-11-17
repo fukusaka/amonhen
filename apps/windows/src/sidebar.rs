@@ -135,6 +135,8 @@ pub struct Marks<'a> {
     pub submodules: &'a serde_json::Value,
     /// subtree（コアの `subtrees` の info の `subtrees`）。
     pub subtrees: &'a serde_json::Value,
+    /// 署名のあるタグの状態と署名者（コアの `tagSignatures`）。
+    pub tag_signatures: &'a std::collections::HashMap<String, (crate::signature::Status, String)>,
 }
 
 /// サイドバーの木。`refs` がまだなければ Workspace だけ。
@@ -156,6 +158,7 @@ pub fn nodes(
         tag_remotes,
         submodules: submodule_states,
         subtrees,
+        tag_signatures,
     } = marks;
     let mut history = String::from("History");
     if form.shallow {
@@ -263,9 +266,22 @@ pub fn nodes(
     let mut tags = Tree::default();
     for e in of(RefKind::Tag) {
         let parts: Vec<&str> = e.name.split('/').collect();
-        let title = match tag_mark(tag_remotes, &e.name) {
-            Some(mark) => format!("{}  {mark}", parts[parts.len() - 1]),
-            None => parts[parts.len() - 1].to_owned(),
+        // 署名の印（検証できた署名は 🔏、それ以外の署名は 🔓。GTK4 版・macOS 版は状態の色の印）と、リモートの印。
+        let signature = tag_signatures.get(&e.name).map(|(status, _)| {
+            if matches!(status, crate::signature::Status::Verified(_)) {
+                "🔏"
+            } else {
+                "🔓"
+            }
+        });
+        let shown: Vec<&str> = signature
+            .into_iter()
+            .chain(tag_mark(tag_remotes, &e.name))
+            .collect();
+        let title = if shown.is_empty() {
+            parts[parts.len() - 1].to_owned()
+        } else {
+            format!("{}  {}", parts[parts.len() - 1], shown.join(" "))
         };
         tags.insert(&parts, TreeNode::new(ref_key(e), title));
     }
