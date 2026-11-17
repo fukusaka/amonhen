@@ -296,6 +296,11 @@ impl Details {
         self.scroll.pan(delta)
     }
 
+    /// 差分を横に動かしてあるか。
+    pub fn panned(&self) -> bool {
+        self.scroll.left > 0
+    }
+
     /// 今見ているファイルのパスと、出しているコミット。ファイルは、見えている最初の見出しのもの。見出しが
     /// 見えていなければ、上にある最後の見出しのもの（それもなければ最初のファイル）。
     pub fn current_file(&self) -> Option<(&str, Oid)> {

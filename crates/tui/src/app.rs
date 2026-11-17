@@ -1683,7 +1683,7 @@ impl App {
                 ("j k", tr!("Scroll")),
                 ("[ ]", tr!("Previous and next file")),
                 ("B L", tr!("Blame, File History of the file in view")),
-                ("h l", tr!("Pan long lines")),
+                ("h l", tr!("Pan long lines; h at the left edge goes back")),
                 ("Esc", tr!("Go back to History")),
             ],
             (View::Changes, Focus::Main) | (_, Focus::Message) => vec![
@@ -1720,7 +1720,7 @@ impl App {
                     "o t b",
                     tr!("In a conflict: take current, incoming, or both"),
                 ),
-                ("h l", tr!("Pan long lines")),
+                ("h l", tr!("Pan long lines; h at the left edge goes back")),
                 ("Esc", tr!("Go back to the list")),
             ],
         };
@@ -1935,7 +1935,13 @@ impl App {
             KeyCode::Char('g') | KeyCode::Home => self.changes.cursor_to(0),
             KeyCode::Char('G') | KeyCode::End => self.changes.cursor_to(u32::MAX),
             KeyCode::Char('l') | KeyCode::Right => self.changes.pan(PAN),
-            KeyCode::Char('h') | KeyCode::Left => self.changes.pan(-PAN),
+            // 左の端にいるなら、動かさずに一覧へ戻る。
+            KeyCode::Char('h') | KeyCode::Left => {
+                if !self.changes.pan(-PAN) {
+                    self.focus = Focus::Main;
+                }
+                true
+            }
             // 行の範囲: `v` で始まりを決め、動かした所までを選ぶ。もう一度で、やめる。
             KeyCode::Char('v') => self.changes.toggle_mark(),
             KeyCode::Esc if self.changes.has_mark() => self.changes.toggle_mark(),
@@ -2054,7 +2060,10 @@ impl App {
             KeyCode::Char('g') | KeyCode::Home => Some(self.details.scroll_to(0)),
             KeyCode::Char('G') | KeyCode::End => Some(self.details.scroll_to(u32::MAX)),
             KeyCode::Char('l') | KeyCode::Right => Some(self.details.pan(PAN)),
-            KeyCode::Char('h') | KeyCode::Left => Some(self.details.pan(-PAN)),
+            // 左の端にいるなら、動かさずに一覧へ戻る（下で）。
+            KeyCode::Char('h') | KeyCode::Left if self.details.panned() => {
+                Some(self.details.pan(-PAN))
+            }
             KeyCode::Char(']') => Some(self.details.jump_file(true)),
             KeyCode::Char('[') => Some(self.details.jump_file(false)),
             _ => None,
@@ -2081,7 +2090,7 @@ impl App {
                     None => false,
                 }
             }
-            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace => {
+            KeyCode::Esc | KeyCode::Char('q' | 'h') | KeyCode::Backspace | KeyCode::Left => {
                 self.focus = Focus::Main;
                 true
             }

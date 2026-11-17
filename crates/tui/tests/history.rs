@@ -640,6 +640,27 @@ fn space_opens_like_enter() {
     assert_eq!(shot("0gj "), shot("0gj\n"));
 }
 
+/// `l` で右の枠へ入り、`h` で戻る。横に動かしてあれば、`h` はまず左へ戻す
+#[test]
+fn h_goes_back_from_the_right_pane() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    let shot = |keys: &str| amonhen_tui::snapshot(open(dir.path()), 80, 30, clock(), keys).unwrap();
+    // 狭いので、詳細は History の所に開く。
+    assert_ne!(shot("jl"), shot("j"));
+    assert_eq!(shot("jlh"), shot("j"));
+    // 右へ動かしてからの `h` は、詳細のまま左へ戻す。次の `h` で History へ。
+    assert_eq!(shot("jllh"), shot("jl"));
+    assert_eq!(shot("jllhh"), shot("j"));
+    // Working Copy の差分でも同じ。
+    let dir = tempfile::tempdir().unwrap();
+    two_lines(dir.path());
+    let shot = |keys: &str| amonhen_tui::snapshot(open(dir.path()), 80, 12, clock(), keys).unwrap();
+    assert_ne!(shot("1l"), shot("1"));
+    assert_eq!(shot("1lh"), shot("1"));
+    assert_eq!(shot("1llh"), shot("1l"));
+}
+
 /// 上流のあるリポジトリ: 空のリモートに main を push してから、手元で 1 つ進める。
 fn with_remote(dir: &Path) -> std::path::PathBuf {
     let remote = dir.join("origin.git");

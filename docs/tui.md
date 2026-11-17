@@ -60,7 +60,7 @@ The core gets no terminal code, and `amonhen-front` gets no new commands for the
 - `commitDiff` and `workingDiff` return line records and a text table; the TUI keeps the reply and draws the visible lines from it without building a string per line.
 - Changed words use the `highlights` section. Syntax colors are asked for after the diff is shown (`diffSyntax`) and painted when they arrive. Positions in both are UTF-16 units within the line, as the window gives them to every front end.
 - The details load on their own worker, apart from History's rows, so a large commit's diff doesn't hold up scrolling. One request is in flight; when it returns and the selection has moved on, the reply is dropped and the selected commit is asked for.
-- Long lines are cut at the pane's edge and the diff pans sideways (`h` `l`); tabs advance to multiples of 8, as `git diff` shows them in a terminal.
+- Long lines are cut at the pane's edge and the diff pans sideways (`h` `l`; at the left edge `h` goes back to the list); tabs advance to multiples of 8, as `git diff` shows them in a terminal.
 - Colors follow the terminal, not the theme chosen in the apps (that theme is the apps' setting, not the core's, and a terminal already has a palette its user picked). Syntax kinds and the `+` `-` signs use the terminal's 16 colors. The backgrounds of added and removed lines and of changed words are fixed 256-color tints, a dark set or a light set chosen from `COLORFGBG` (dark when the terminal doesn't say).
 - Unified view only at first. Side by side needs about 160 columns and comes later.
 
