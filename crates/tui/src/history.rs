@@ -99,6 +99,10 @@ pub struct History {
     incomplete: bool,
     /// 検索に合った行（上から順）。検索していなければ空。
     matches: Vec<u32>,
+    /// 祖先を強調しているコミットの行と、その祖先（行ごとに 1 ビット）。
+    lineage: Option<(u32, Vec<u64>)>,
+    /// 祖先を頼んで、答えを待っている。
+    lineage_loading: bool,
 }
 
 impl History {
@@ -110,6 +114,7 @@ impl History {
         self.window = None;
         // 行の番号が変わるので、検索の結果は捨てる（検索し直すのは呼ぶ側）。
         self.matches.clear();
+        self.lineage = None;
         self.labels.clear();
         let head = refs["headBranch"].as_str();
         for e in refs["entries"].as_array().into_iter().flatten() {
@@ -180,6 +185,33 @@ impl History {
                 .or(self.matches.last())
         };
         row.copied().is_some_and(|row| self.select(row))
+    }
+
+    /// 選んでいるコミットの祖先がまだなら、頼む中身（答えを待っている間は、次を頼まない）。
+    pub fn lineage_request(&mut self) -> Option<Request> {
+        if self.lineage_loading
+            || self.total == 0
+            || self.id.is_null()
+            || self.lineage.as_ref().is_some_and(|l| l.0 == self.selected)
+        {
+            return None;
+        }
+        self.lineage_loading = true;
+        Some(Request::Lineage {
+            history: self.id.clone(),
+            row: self.selected,
+        })
+    }
+
+    /// 祖先が届いた。待つ間に選択が動いていたら捨てる（`lineage_request` が次を頼む）。
+    pub fn set_lineage(&mut self, row: u32, bits: Option<Vec<u64>>) {
+        self.lineage_loading = false;
+        self.lineage = match bits {
+            Some(bits) if row == self.selected => Some((row, bits)),
+            // 取れなかった行は、頼み直さない。
+            None if row == self.selected => Some((row, Vec::new())),
+            _ => self.lineage.take(),
+        };
     }
 
     /// 窓口での History の番号。
@@ -339,6 +371,12 @@ impl History {
             area.right()
         };
 
+        // 選んでいるコミットの祖先でない行は薄くする（祖先がまだ届いていなければ、薄くしない）。
+        let lineage = self
+            .lineage
+            .as_ref()
+            .filter(|l| l.0 == self.selected && !l.1.is_empty())
+            .map(|l| l.1.as_slice());
         for row in rows {
             let y = area.y + (row - self.top) as u16;
             let Some(i) = window.index(row) else {
@@ -394,6 +432,16 @@ impl History {
                 let date = ago(now, window.times[i]);
                 let pad = DATE_WIDTH.saturating_sub(date.width() as u16);
                 buf.set_string(date_x + pad, y, date, dim);
+            }
+            if let Some(bits) = lineage
+                && bits
+                    .get((row / 64) as usize)
+                    .is_none_or(|word| word & (1 << (row % 64)) == 0)
+            {
+                buf.set_style(
+                    Rect::new(area.x, y, area.width, 1),
+                    Style::new().add_modifier(Modifier::DIM),
+                );
             }
             if row == self.selected {
                 buf.set_style(

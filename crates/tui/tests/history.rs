@@ -554,3 +554,24 @@ fn slash_searches_history() {
         amonhen_tui::snapshot(open(dir.path()), 80, 9, clock(), "/version\n\x1b").unwrap();
     assert!(cleared.lines().last().unwrap().contains("/ search"));
 }
+
+/// 選んでいるコミットの祖先でない行は薄くなる
+#[test]
+fn rows_outside_the_selected_commits_ancestry_are_dimmed() {
+    use ratatui_core::style::Modifier;
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    let dim = |keys: &str| -> Vec<bool> {
+        let frame = amonhen_tui::frame(open(dir.path()), 64, 8, clock(), keys).unwrap();
+        // 件名のあたりのセルで見る。
+        (1..6)
+            .map(|y| frame[(8, y)].modifier.contains(Modifier::DIM))
+            .collect()
+    };
+    // マージを選んでいる間は、すべてが祖先。
+    assert_eq!(dim(""), [false; 5]);
+    // 「Bump the version」の祖先は、main の側の 2 つ。マージと topic のコミットは薄くなる。
+    assert_eq!(dim("j"), [true, false, true, false, false]);
+    // topic のコミットの祖先は、分かれる前の 2 つ。
+    assert_eq!(dim("jj"), [true, true, false, false, false]);
+}

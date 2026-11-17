@@ -22,6 +22,7 @@ use std::time::{Duration, Instant};
 
 use amonhen_front::Front;
 use ratatui_core::backend::TestBackend;
+use ratatui_core::buffer::Buffer;
 use ratatui_core::layout::Rect;
 use ratatui_core::terminal::{Terminal, TerminalOptions, Viewport};
 use ratatui_crossterm::CrosstermBackend;
@@ -106,6 +107,31 @@ pub fn snapshot(
     clock: Clock,
     keys: &str,
 ) -> Result<String> {
+    let buffer = frame(front, cols, rows, clock, keys)?;
+    let mut out = String::new();
+    for y in 0..rows {
+        let mut line = String::new();
+        // 全角の文字は 2 セルを使う（後ろのセルは空）。
+        let mut x = 0;
+        while x < cols {
+            let symbol = buffer[(x, y)].symbol();
+            line.push_str(symbol);
+            x += (symbol.width() as u16).max(1);
+        }
+        out.push_str(line.trim_end());
+        out.push('\n');
+    }
+    Ok(out)
+}
+
+/// 1 フレームをセルのまま（文字と、色などの見た目。テストで見た目を確かめるのに）。`keys` は `snapshot` と同じ。
+pub fn frame(
+    front: Arc<dyn Front>,
+    cols: u16,
+    rows: u16,
+    clock: Clock,
+    keys: &str,
+) -> Result<Buffer> {
     let (tx, rx) = mpsc::channel();
     let mut app = App::new(front, tx, clock);
     app.resize(cols, rows);
@@ -129,21 +155,7 @@ pub fn snapshot(
     }
     let mut terminal = Terminal::new(TestBackend::new(cols, rows))?;
     terminal.draw(|frame| app.draw(frame))?;
-    let buffer = terminal.backend().buffer();
-    let mut out = String::new();
-    for y in 0..rows {
-        let mut line = String::new();
-        // 全角の文字は 2 セルを使う（後ろのセルは空）。
-        let mut x = 0;
-        while x < cols {
-            let symbol = buffer[(x, y)].symbol();
-            line.push_str(symbol);
-            x += (symbol.width() as u16).max(1);
-        }
-        out.push_str(line.trim_end());
-        out.push('\n');
-    }
-    Ok(out)
+    Ok(terminal.backend().buffer().clone())
 }
 
 /// `--measure-scroll` の結果。

@@ -316,6 +316,7 @@ impl App {
                             }
                         }
                     }
+                    Loaded::Lineage { row, bits } => self.history.set_lineage(row, bits),
                     Loaded::RowOf(row) => {
                         if let Some(row) = row {
                             self.history.select(row);
@@ -400,6 +401,9 @@ impl App {
     fn request(&mut self) {
         // 見える範囲が動いたら、足りない行を頼む。
         if let Some(request) = self.history.request() {
+            self.send(request);
+        }
+        if let Some(request) = self.history.lineage_request() {
             self.send(request);
         }
         let side = self.layout().side.is_some();

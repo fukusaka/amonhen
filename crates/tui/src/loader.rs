@@ -28,6 +28,8 @@ pub enum Request {
         query: String,
         cancelled: Arc<AtomicBool>,
     },
+    /// `row` 行目のコミットの祖先。
+    Lineage { history: Value, row: u32 },
     /// コミット（16 進の ID）が History の何行目か。
     RowOf { history: Value, id: String },
     /// コミットの詳細（作者・メッセージなど）と差分。`id` は 16 進の ID。
@@ -77,6 +79,11 @@ pub enum Loaded {
         query: String,
         result: std::result::Result<Vec<u32>, String>,
     },
+    /// `row` 行目のコミットの祖先（行ごとに 1 ビット）。取れなければ `None`。
+    Lineage {
+        row: u32,
+        bits: Option<Vec<u64>>,
+    },
     /// コミットの行（History になければ `None`）。
     RowOf(Option<u32>),
     Commit {
@@ -124,7 +131,10 @@ impl Loader {
 
     pub fn send(&self, request: Request) {
         let to = match request {
-            Request::Open | Request::Rows { .. } | Request::RowOf { .. } => &self.rows,
+            Request::Open
+            | Request::Rows { .. }
+            | Request::RowOf { .. }
+            | Request::Lineage { .. } => &self.rows,
             Request::Search { .. } => &self.search,
             Request::Commit { .. } | Request::Syntax { .. } => &self.details,
             Request::Status
@@ -191,6 +201,13 @@ fn load(front: &dyn Front, request: Request) -> Result<Loaded> {
                 .map_err(|e| e.to_string());
             Loaded::Search { query, result }
         }
+        Request::Lineage { history, row } => Loaded::Lineage {
+            row,
+            bits: front
+                .call(json!({"op": "historyLineage", "history": history, "row": row}))
+                .ok()
+                .map(|r| r.items::<u64>("rows")),
+        },
         Request::RowOf { history, id } => Loaded::RowOf(
             front
                 .call(json!({"op": "historyRowOf", "history": history, "id": id}))
