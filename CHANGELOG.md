@@ -1175,7 +1175,11 @@ First release.
 
 ## VSCode extension
 
-### Unreleased
+### [0.2.8] - 2026-11-18
+
+History search with the engine can match the author's email, the committer and the whole message, and Repository
+Settings sets the allowed signers file for SSH signatures. The before-and-after drawings wrap long branch labels, and
+a signature that can't be verified shows No key.
 
 #### Added
 
