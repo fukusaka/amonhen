@@ -119,21 +119,28 @@ pub fn menu_bar(on_click: impl Fn() -> Callback<String>) -> View {
                 }
             }));
         }
-        // View の終わりに History の並び順（GTK4 版の View の History の見せ方）と Customize Toolbar…（GTK4 版の
-        // View のメニュー）。並び順の項目は選んでいる方に印を付けない: メニューバーの項目を開いている間に
-        // 作り直すと、WinUI が前の項目を残して二重に並べる。
+        // View の終わりに History の並び順（GTK4 版の View の History の見せ方。選んでいる方に ✓）と
+        // Customize Toolbar…（GTK4 版の View のメニュー）。
         if menu == Menu::View {
             if !items.is_empty() {
                 items.push(MenuItem::separator("-order"));
             }
-            items.push(MenuItem::item(
-                "history-order-date",
-                amonhen_model::tr!("Date Order"),
-            ));
-            items.push(MenuItem::item(
-                "history-order-topo",
-                amonhen_model::tr!("Topological Order"),
-            ));
+            let order = crate::prefs::history_order();
+            for (id, value, title) in [
+                (
+                    "history-order-date",
+                    amonhen_model::HistoryOrder::Date,
+                    amonhen_model::tr!("Date Order"),
+                ),
+                (
+                    "history-order-topo",
+                    amonhen_model::HistoryOrder::Topo,
+                    amonhen_model::tr!("Topological Order"),
+                ),
+            ] {
+                let mark = if order == value { "✓ " } else { "" };
+                items.push(MenuItem::item(id, format!("{mark}{title}")));
+            }
             items.push(MenuItem::separator("-toolbar"));
             items.push(MenuItem::item(
                 "customize-toolbar",
