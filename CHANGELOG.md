@@ -7,7 +7,11 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
-### Unreleased
+### [0.2.12] - 2026-11-18
+
+History search can match the author's email, the committer and the whole message. Amon Hen asks before sending its
+engine to an SSH host, Repository Settings sets the allowed signers file for SSH signatures, and the before-and-after
+drawings wrap long branch labels instead of leaving them out.
 
 #### Added
 
