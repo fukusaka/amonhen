@@ -4,7 +4,7 @@
 
 A front end that runs in a terminal: `amonhen tui`. It is for the places the apps don't reach (an SSH session, a machine without a desktop, a terminal pane beside an editor) and it keeps the same aim as the apps: nothing on screen waits for git.
 
-Status: stage T1 is built (History, scrolling, `--snapshot`, `--measure-scroll`). The rest is design.
+Status: stages T1 and T2 are built (History, the selected commit's details and diff, scrolling, `--snapshot`, `--measure-scroll`). The rest is design.
 
 ## Overview
 
@@ -57,8 +57,10 @@ The core gets no terminal code, and `amonhen-front` gets no new commands for the
 ### Diffs
 
 - `commitDiff` and `workingDiff` return line records and a text table; the TUI keeps the reply and draws the visible lines from it without building a string per line.
-- Changed words use the `highlights` section. Syntax colors are asked for after the diff is shown (`diffSyntax`) and painted when they arrive.
-- Colors are 24-bit when the terminal says it has them (`COLORTERM`), otherwise the nearest of 256. Whether they follow the diff and syntax theme chosen in the apps or the terminal's own palette is to settle in T2 (the theme is the apps' setting today, not the core's).
+- Changed words use the `highlights` section. Syntax colors are asked for after the diff is shown (`diffSyntax`) and painted when they arrive. Positions in both are UTF-16 units within the line, as the window gives them to every front end.
+- The details load on their own worker, apart from History's rows, so a large commit's diff doesn't hold up scrolling. One request is in flight; when it returns and the selection has moved on, the reply is dropped and the selected commit is asked for.
+- Long lines are cut at the pane's edge and the diff pans sideways (`h` `l`); tabs advance to multiples of 8, as `git diff` shows them in a terminal.
+- Colors follow the terminal, not the theme chosen in the apps (that theme is the apps' setting, not the core's, and a terminal already has a palette its user picked). Syntax kinds and the `+` `-` signs use the terminal's 16 colors. The backgrounds of added and removed lines and of changed words are fixed 256-color tints, a dark set or a light set chosen from `COLORFGBG` (dark when the terminal doesn't say).
 - Unified view only at first. Side by side needs about 160 columns and comes later.
 
 ### Changes
@@ -83,7 +85,7 @@ The core gets no terminal code, and `amonhen-front` gets no new commands for the
  Rebase 3/7 · 2 conflicts   c continue  s skip  a abort                    ? help  : commands
 ```
 
-- Three columns when the terminal is wide enough (about 140 columns and up): the sidebar, the main view, the details. Narrower, the details open in place of the main view (Enter to go in, Esc to come back); narrower still (under about 80), the sidebar opens over the main view on demand.
+- Three columns when the terminal is wide enough (about 140 columns and up): the sidebar, the main view, the details. Narrower, the details open in place of the main view (Enter to go in, Esc to come back); narrower still (under about 80), the sidebar opens over the main view on demand. Until the sidebar exists (T4), History and the details sit side by side from 120 columns, History taking two fifths (60 columns at least).
 - The sidebar has the same sections as the apps (Workspace rows that switch the main view, then Branches, Remotes, Tags, Worktrees), with the filter field.
 - The top line is the repository, the current branch with ahead and behind, and what is running. The bottom line is the state of a merge, rebase or cherry-pick with its actions, and otherwise hints for the focused pane.
 - Working Copy is the apps' single list with a check per file (Space stages or unstages), the diff on the right with staging by hunk and by line (`stageRows`, `discardRows`), and the message field under the list.
@@ -92,6 +94,7 @@ The core gets no terminal code, and `amonhen-front` gets no new commands for the
 ## Keys
 
 - Moving: arrows and `j` `k`, `g` `G`, PageUp and PageDown, `Ctrl-d` `Ctrl-u`; `Tab` and `Shift-Tab` between panes; `1`…`5` for the Workspace rows.
+- In the details: `[` `]` to the previous and next file, `h` `l` (and the left and right arrows) to pan the diff, Esc back to History.
 - `/` search (History, or the filter in the sidebar), `n` `N` next and previous match.
 - `:` opens the command list: every operation in the shared table (`amonhen-commands`) that the TUI has, filtered as you type, with its key beside it. `?` lists the keys of the focused pane.
 - Operations have single keys where the apps have toolbar buttons (`f` fetch, `p` pull, `P` push, `b` branch, `m` merge, `r` rebase, `s` stash, `u` undo) and go through a sheet when the apps do.
@@ -119,7 +122,7 @@ The targets of [design.md](design.md) apply up to the point the TUI controls: th
 | Launch to the first screen of History | A few ms more than `amonhen log` (same persistent cache) |
 
 - `amonhen tui --measure-scroll` scrolls History through the real event path with the output going to a counter, and prints the time and the bytes per frame (the apps' flag of the same name).
-- `amonhen tui --snapshot <file>` draws one frame into ratatui's test backend and writes it as text, with `--size <cols>x<rows>`. Tests compare such frames; CI needs no terminal.
+- `amonhen tui --snapshot <file>` draws one frame into ratatui's test backend and writes it as text, with `--size <cols>x<rows>` and, to reach another screen first, `--keys <keys>` (one key per character; a newline is Enter, a tab is Tab). Tests compare such frames; CI needs no terminal.
 - criterion benches for building a frame and packing the graph into cells are not written yet.
 
 ### Measurement log
@@ -135,6 +138,15 @@ T1, a release build on an Apple Silicon Mac, the linux repository (1,485,021 com
 - A scroll step repaints almost every cell, because every row moves. Sending the terminal a scroll of the History region and only the rows that come into view would cut both the bytes and the time. ratatui's `Terminal` keeps the previous frame to itself, so this needs our own frame output over `ratatui-core`'s buffers (T1b).
 - `--snapshot` of the first screen takes 0.34 s on linux with the cache warm (the whole process, most of it opening the repository), not yet compared with `amonhen log`.
 
+T2, the same Mac, this repository (3,438 commits), with the details beside History at 200 × 60:
+
+| Size | Frame time (median / 95% / max) | Bytes per frame (mean / max) | Frames with rows missing |
+| --- | --- | --- | --- |
+| 200 × 60 | 1.62 ms / 2.93 ms / 19.3 ms | 5,786 / 8,743 | 0 |
+| 100 × 40 | 0.90 ms / 1.38 ms / 17.5 ms | 4,741 / 7,978 | 0 |
+
+- Not comparable with the T1 rows (a different repository, and at 200 × 60 History is now 80 columns wide). The slowest frames are still over 8.3 ms and still unprofiled. Scrolling the diff itself is not measured yet.
+
 ## Distribution
 
 - The TUI ships inside the engine for every target the engine is built for. crossterm talks to the Windows console directly, so the Windows engines get it too.
@@ -145,7 +157,7 @@ T1, a release build on an Apple Silicon Mac, the linux repository (1,485,021 com
 
 - [x] T1. `crates/tui`, the event loop, `amonhen tui`, History (graph, labels, subject, author, date), scrolling with the row window, `amonhen-projection::terminal` shared with `amonhen log`, `--snapshot` and `--measure-scroll`. The speed, the one-line graph and the engine's size measured on the linux repository (see the measurement log)
 - [ ] T1b. Our own frame output with terminal scroll regions, so a scroll step sends only the rows that come into view; profile the slowest frames; criterion benches
-- [ ] T2. Commit details and the diff (file list, unified diff, changed words, syntax colors), the narrow layouts
+- [x] T2. Commit details and the diff (file list, unified diff, changed words, syntax colors), the narrow layouts
 - [ ] T3. Working Copy: the list, staging by file, hunk and line, discard, the message field and the editor, commit and amend; change notifications
 - [ ] T4. The sidebar (Branches, Remotes, Tags, the filter), History by ref, search, ancestor emphasis, the command list and help
 - [ ] T5. Operations with their sheets (fetch, pull, push, branch, checkout, merge, rebase, stash, reset, undo), askpass, what is running; the key and the setting that turn mouse capture off, suspend (`Ctrl-z`), the kitty keyboard protocol
