@@ -142,6 +142,8 @@ pub struct App {
     head: Option<String>,
     /// コミットを作っている。
     committing: bool,
+    /// コミットができたら push する（Commit and Push。状態を読み直してから、push を確かめる）。
+    push_after_commit: bool,
     /// 済んだことの知らせ（次のキーまで出す）。
     notice: Option<String>,
     /// 検索の語を打っている（`/`）。
@@ -214,6 +216,7 @@ impl App {
             remotes: Vec::new(),
             head: None,
             committing: false,
+            push_after_commit: false,
             notice: None,
             typing_query: None,
             typing_filter: None,
@@ -504,6 +507,10 @@ impl App {
                             (kind.to_owned(), progress)
                         });
                         self.changes.status(&status);
+                        // Commit and Push: コミットの後の状態（上流より進んだ数）が届いたら、push を確かめる。
+                        if !self.committing && std::mem::take(&mut self.push_after_commit) {
+                            self.ask_push();
+                        }
                     }
                     Loaded::Ran { name, result } => self.ran(name, result),
                     Loaded::Status(Err(error)) => {
@@ -537,7 +544,10 @@ impl App {
                                 self.changes.refresh();
                                 self.open();
                             }
-                            Err(error) => self.error = Some(error),
+                            Err(error) => {
+                                self.push_after_commit = false;
+                                self.error = Some(error);
+                            }
                         }
                     }
                     Loaded::Message(message) => {
@@ -790,11 +800,25 @@ impl App {
             KeyCode::Char('R') if self.view != View::Changes && self.focus == Focus::Main => {
                 self.ask_reset();
             }
-            KeyCode::Char('s') if !control && self.focus != Focus::Side => self.run(
-                "stash",
-                tr!("Stashing…"),
-                json!({"op": "stashPush", "message": null, "includeUntracked": false}),
-            ),
+            // stash する前に、何を含めるかを選ばせる。
+            KeyCode::Char('s') if !control && self.focus != Focus::Side => {
+                let stash = |untracked: bool, keep_index: bool| Request::Run {
+                    name: "stash",
+                    command: json!({
+                        "op": "stashPush", "message": null,
+                        "includeUntracked": untracked, "keepIndex": keep_index,
+                    }),
+                };
+                self.choices = Some((
+                    tr!("Stash the working changes?"),
+                    vec![
+                        ('y', tr!("tracked files"), stash(false, false)),
+                        ('u', tr!("with untracked files"), stash(true, false)),
+                        ('k', tr!("keep what is staged"), stash(false, true)),
+                    ],
+                ));
+                self.dirty = true;
+            }
             KeyCode::Char('S') if self.focus != Focus::Side => match self.stash.clone() {
                 Some(name) => self.run(
                     "pop",
@@ -1439,6 +1463,7 @@ impl App {
                 ),
                 ("a", tr!("Amend the last commit")),
                 ("Ctrl-s", tr!("Commit")),
+                ("Ctrl-p", tr!("Commit, then push")),
             ],
             (View::Changes, Focus::Side) => vec![
                 ("j k", tr!("Move by line")),
@@ -1533,6 +1558,11 @@ impl App {
         match key.code {
             KeyCode::Esc | KeyCode::Tab | KeyCode::BackTab => self.focus = Focus::Main,
             KeyCode::Char('s') if control => self.commit(),
+            KeyCode::Char('p') if control => {
+                self.push_after_commit = true;
+                self.commit();
+                self.push_after_commit &= self.committing;
+            }
             KeyCode::Char('e') if control => self.edit_message = true,
             KeyCode::Enter if alt => self.commit(),
             KeyCode::Char(_) if control || alt => {}
@@ -1616,6 +1646,13 @@ impl App {
             }
             KeyCode::Char('s') if control => {
                 self.commit();
+                true
+            }
+            KeyCode::Char('p') if control => {
+                self.push_after_commit = true;
+                self.commit();
+                // コミットできなかったら、push もしない。
+                self.push_after_commit &= self.committing;
                 true
             }
             KeyCode::Char('d') => {
@@ -2162,7 +2199,9 @@ impl App {
                     (View::Changes, Focus::Side) => {
                         tr!("j/k line   [/] hunk   Space stage/unstage   d discard   Esc back")
                     }
-                    (_, Focus::Message) => tr!("Ctrl-s commit   Ctrl-e editor   Esc back"),
+                    (_, Focus::Message) => {
+                        tr!("Ctrl-s commit   Ctrl-p commit and push   Ctrl-e editor   Esc back")
+                    }
                     (_, Focus::Sidebar) => {
                         tr!("j/k move   Enter open   / filter   ? keys   Esc back   q quit")
                     }

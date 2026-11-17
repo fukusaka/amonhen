@@ -797,7 +797,11 @@ fn stash_and_pop() {
     let dir = tempfile::tempdir().unwrap();
     two_lines(dir.path());
     let read = |dir: &Path| std::fs::read_to_string(dir.join("a.txt")).unwrap();
-    let stashed = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "s").unwrap();
+    let asked = amonhen_tui::snapshot(open(dir.path()), 120, 10, clock(), "s").unwrap();
+    assert!(asked.contains(
+        "Stash the working changes?   y tracked files   u with untracked files   k keep what is staged   n cancel"
+    ));
+    let stashed = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "sy").unwrap();
     println!("{stashed}");
     assert!(stashed.contains("Stashed"));
     assert_eq!(read(dir.path()), "one\ntwo\nthree\nfour\n");
@@ -1141,4 +1145,47 @@ fn details_list_the_refs_at_the_commit() {
     assert!(refs.contains("main") && refs.contains("v1"), "{refs}");
     // 署名のないコミットには、署名の行がない。
     assert!(!details.iter().any(|l| l.starts_with("Signed")));
+}
+
+/// `s` の `u` は、追跡していないファイルも stash に入れる
+#[test]
+fn stash_can_include_untracked_files() {
+    let dir = tempfile::tempdir().unwrap();
+    two_lines(dir.path());
+    std::fs::write(dir.path().join("new.txt"), "new\n").unwrap();
+    amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "sy").unwrap();
+    assert!(dir.path().join("new.txt").exists());
+    amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "S").unwrap();
+    amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "su").unwrap();
+    assert!(!dir.path().join("new.txt").exists());
+    assert_eq!(git_out(dir.path(), &["status", "--porcelain"]), "");
+}
+
+/// `Ctrl-p` は、コミットしてから push を確かめる
+#[test]
+fn commit_and_push() {
+    let dir = tempfile::tempdir().unwrap();
+    let work = with_remote(dir.path());
+    git(&work, BASE, &["push", "-q"]);
+    std::fs::write(work.join("a.txt"), "one\n").unwrap();
+    let front = || {
+        amonhen_model::testing::isolate_from_user_settings();
+        open(&work)
+    };
+    // 新しいファイルを stage し、メッセージを書いて Ctrl-p。
+    let asked = amonhen_tui::snapshot(front(), 120, 14, clock(), "1 cAdd a file\x10").unwrap();
+    println!("{asked}");
+    assert_eq!(
+        git_out(&work, &["log", "-1", "--format=%s"]),
+        "Add a file\n"
+    );
+    assert!(asked.contains("Push main to origin/main (1 commit)?   y push   n cancel"));
+    let remote = dir.path().join("origin.git");
+    assert_eq!(
+        git_out(&remote, &["log", "-1", "--format=%s", "main"]),
+        "Ahead of the remote\n"
+    );
+    // メッセージがなければ、コミットも push もしない。
+    let nothing = amonhen_tui::snapshot(front(), 120, 14, clock(), "1\x10").unwrap();
+    assert!(nothing.contains("Write a commit message first"));
 }
