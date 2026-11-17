@@ -616,6 +616,13 @@ pub fn set_tooltip_text(
     }
 }
 
+/// Shows a check box (or toggle button) the app found itself as neither checked nor unchecked.
+/// Its declared `is_checked` stays as it was, so the app recreates the element (for example under
+/// a new key) when the state should change again.
+pub fn set_check_mixed(element: &windows_core::IInspectable) -> windows_core::Result<()> {
+    element.cast::<IToggleButton>()?.SetIsChecked(None)
+}
+
 /// The key of an invoked tree view node.
 fn tree_node_key(node: &impl Interface) -> Option<String> {
     let identity = tree_node_identity(node)?;

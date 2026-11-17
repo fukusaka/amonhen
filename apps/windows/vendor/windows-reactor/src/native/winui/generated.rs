@@ -5350,12 +5350,8 @@ pub fn subscribe_event(
                         revision,
                         EventPayload::Bool(value),
                     ),
-                    Err(error) => sink.error(
-                        node,
-                        EventId::CheckBoxIsCheckedChanged,
-                        revision,
-                        native_error(error),
-                    ),
+                    // Neither checked nor unchecked (set by `set_check_mixed`): not a bool to report.
+                    Err(_) => {}
                 }
             });
             let token = object
