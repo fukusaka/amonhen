@@ -25,6 +25,8 @@ struct Row {
     y: f64,
     hollow: bool,
     note: Option<(String, Option<Color>)>,
+    /// これから作るコミット（点線の丸）。
+    is_new: bool,
 }
 
 /// 札（名前、種類 `local`・`remote`・`moved`、今のブランチか）。
@@ -110,6 +112,18 @@ impl Canvas2 {
             let next = at(f64::from(i) / f64::from(steps));
             self.line(last, next, color, width);
             last = next;
+        }
+    }
+
+    /// 点線の丸（これから作るコミット。短い線を円に沿って一つおきに）。
+    fn dashed_ring(&mut self, (x, y): (f64, f64), r: f64, color: Color) {
+        let steps = 12;
+        let at = |i: i32| {
+            let a = std::f64::consts::TAU * f64::from(i) / f64::from(steps);
+            (x + r * a.cos(), y + r * a.sin())
+        };
+        for i in (0..steps).step_by(2) {
+            self.line(at(i), at(i + 1), color, 1.5);
         }
     }
 
@@ -254,6 +268,7 @@ fn column(
     gaps: &[Gap],
     highlight: usize,
     base_note: Option<String>,
+    lane1_join: Option<f64>,
     labels: &dyn Fn(&str) -> Vec<Label>,
 ) {
     let lane_x = |lane: u8| x + 10.0 + f64::from(lane) * LANE;
@@ -299,6 +314,28 @@ fn column(
             line,
             2.0,
         );
+        // merge コミットから、その線へ曲がり、取り込む側の先端まで下りる（GTK4 版・macOS 版と同じ）。
+        if let Some(join) = lane1_join {
+            let bend = center(join) + ROW * 0.8;
+            c.curve(
+                [
+                    (lane_x(0), center(join)),
+                    (lane_x(lane), center(join)),
+                    (lane_x(lane), center(join)),
+                    (lane_x(lane), bend),
+                ],
+                line,
+                2.0,
+            );
+            if center(first.y) > bend {
+                c.line(
+                    (lane_x(lane), bend),
+                    (lane_x(lane), center(first.y)),
+                    line,
+                    2.0,
+                );
+            }
+        }
     }
     if let Some(first) = rows.iter().find(|r| r.lane == 0) {
         vertical(c, 0, center(first.y), center(base_y));
@@ -314,8 +351,9 @@ fn column(
                   highlighted: bool,
                   labels: &[Label],
                   hollow: bool,
-                  note: Option<&(String, Option<Color>)>| {
-        let r = if highlighted { 5.0 } else { 4.0 };
+                  note: Option<&(String, Option<Color>)>,
+                  is_new: bool| {
+        let r = if highlighted || is_new { 5.0 } else { 4.0 };
         let dot = if highlighted {
             BLUE
         } else if dim {
@@ -328,7 +366,12 @@ fn column(
         } else {
             dot
         };
-        c.dot((lane_x(lane), center(y)), r, dot, hollow);
+        if is_new {
+            c.dashed_ring((lane_x(lane), center(y)), r, BLUE);
+        } else {
+            c.dot((lane_x(lane), center(y)), r, dot, hollow);
+        }
+        let highlighted = highlighted || is_new;
         let mut tx = text_x;
         // 札は列の中に収める（入りきらない札は描かない）。
         for (name, kind, current) in labels {
@@ -379,6 +422,7 @@ fn column(
             &labels(&row.oid),
             row.hollow,
             row.note.as_ref(),
+            row.is_new,
         );
     }
     for &(_, y, count) in gaps {
@@ -404,6 +448,7 @@ fn column(
             &labels(oid),
             false,
             note.as_ref(),
+            false,
         );
     }
 }
@@ -510,6 +555,7 @@ pub fn for_move(info: &Value, how: &Move) -> Option<View> {
                     y,
                     hollow: after,
                     note: after.then(|| (how.lost_note.clone(), how.lost_red.then_some(RED))),
+                    is_new: false,
                 });
             },
         );
@@ -525,6 +571,7 @@ pub fn for_move(info: &Value, how: &Move) -> Option<View> {
             &gaps,
             if after { gained.len() } else { 0 },
             split,
+            None,
             &|oid| {
                 let mut out: Vec<Label> = labels
                     .get(oid)
@@ -657,6 +704,7 @@ pub fn for_rewrite(info: &Value) -> Option<View> {
         &gaps,
         0,
         split_note(&d["base"]),
+        None,
         &|oid| {
             // 左には今のブランチの札をすべて（動くものも、まだ元のところにある）。
             labels
@@ -717,6 +765,7 @@ pub fn for_rewrite(info: &Value) -> Option<View> {
         &after_gaps,
         picks.len(),
         None,
+        None,
         &|oid| {
             let mut out: Vec<Label> = Vec::new();
             // 今のブランチは先頭の A′ へ、一緒に動くブランチは、元の先頭に対応する A′ へ。
@@ -744,4 +793,143 @@ pub fn for_rewrite(info: &Value) -> Option<View> {
     let more = |k: &str| usize::from(d[k].as_u64().unwrap_or(0) > 0);
     let rows = picks.len() + more("picksMore") + onto.len() + more("ontoMore") + 1;
     Some(finish(c, rows, picks.len()))
+}
+
+/// merge の見込み（`mergePreview` の答え）の絵（GTK4 版の `rewritedraw::for_merge`）。fast-forward なら ref が動く絵
+/// （[`for_move`]）。merge コミットを作るなら、左が今: 今のブランチ（左の線）と取り込む側（右の線）が、分かれた
+/// ところで合流する。右が後: 一番上に、これから作る merge コミット（点線の丸）が両方の先端を親に持ち、今の
+/// ブランチの札がそこへ移る。描くものがなければ None。
+pub fn for_merge(info: &Value, current: &str, after_title: String) -> Option<View> {
+    if info["fastForward"].as_bool() == Some(true) {
+        return for_move(
+            &info["move"],
+            &Move {
+                moving: current.to_owned(),
+                kind: "local",
+                after_title,
+                lost_note: String::new(),
+                lost_red: false,
+                removes: false,
+            },
+        );
+    }
+    let d = &info["drawing"];
+    if d.is_null() {
+        return None;
+    }
+    let labels = labels_of(d);
+    let ours = commits(&d["ours"]);
+    let theirs = commits(&d["theirs"]);
+    let base = (!d["base"].is_null()).then(|| {
+        (
+            d["base"]["oid"].as_str().unwrap_or_default().to_owned(),
+            d["base"]["subject"].as_str().unwrap_or_default().to_owned(),
+        )
+    });
+    let ours_tip = ours
+        .first()
+        .map(|c| c.0.clone())
+        .or_else(|| base.as_ref().map(|b| b.0.clone()));
+    let mut c = Canvas2 { items: Vec::new() };
+    c.text(&tr!("Now"), 4.0, 2.0, alpha(FG, 0.6), true, COLUMN, 11.0);
+    c.text(
+        &after_title,
+        COLUMN + 28.0,
+        2.0,
+        alpha(FG, 0.6),
+        true,
+        COLUMN,
+        11.0,
+    );
+    for after in [false, true] {
+        let x = if after { COLUMN + 24.0 } else { 0.0 };
+        let mut y = TOP;
+        let mut rows = Vec::new();
+        let mut gaps = Vec::new();
+        // 右の一番上に、これから作る merge コミット。
+        let merge_y = y;
+        if after {
+            rows.push(Row {
+                subject: d["subject"].as_str().unwrap_or_default().to_owned(),
+                y,
+                is_new: true,
+                ..Default::default()
+            });
+            y += ROW;
+        }
+        with_gap(
+            &ours,
+            d["oursMore"].as_u64().unwrap_or(0),
+            d["oursMoreAt"].as_u64(),
+            0,
+            &mut y,
+            &mut gaps,
+            |(oid, subject), y| {
+                rows.push(Row {
+                    oid: oid.clone(),
+                    subject: subject.clone(),
+                    y,
+                    ..Default::default()
+                });
+            },
+        );
+        with_gap(
+            &theirs,
+            d["theirsMore"].as_u64().unwrap_or(0),
+            d["theirsMoreAt"].as_u64(),
+            1,
+            &mut y,
+            &mut gaps,
+            |(oid, subject), y| {
+                rows.push(Row {
+                    oid: oid.clone(),
+                    subject: subject.clone(),
+                    lane: 1,
+                    y,
+                    ..Default::default()
+                });
+            },
+        );
+        column(
+            &mut c,
+            x,
+            &rows,
+            y,
+            base.as_ref(),
+            &gaps,
+            0,
+            if after { None } else { split_note(&d["base"]) },
+            after.then_some(merge_y),
+            &|oid| {
+                let mut out: Vec<Label> = labels
+                    .get(oid)
+                    .into_iter()
+                    .flatten()
+                    .filter(|(n, _)| n != current)
+                    .map(|(n, k)| (n.clone(), k.clone(), false))
+                    .collect();
+                // 今のブランチの札は、左では今の先端、右では merge コミットに、塗った札で。
+                let here = if after {
+                    oid.is_empty()
+                } else {
+                    ours_tip.as_deref() == Some(oid)
+                };
+                if here {
+                    out.insert(0, (current.to_owned(), "local".to_owned(), true));
+                }
+                out
+            },
+        );
+    }
+    let rows = merge_rows(d);
+    // 右には merge コミットの 1 行が増える。
+    Some(finish(c, rows + 1, rows))
+}
+
+/// merge の絵の左の行数（今のブランチ、取り込む側、分かれたところ）。
+fn merge_rows(d: &Value) -> usize {
+    let rows = |k: &str, more: &str| {
+        d[k].as_array().map_or(0, Vec::len) + usize::from(d[more].as_u64().unwrap_or(0) > 0)
+    };
+    rows("ours", "oursMore") + rows("theirs", "theirsMore") + usize::from(!d["base"].is_null())
 }

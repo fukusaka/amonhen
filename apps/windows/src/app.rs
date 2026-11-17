@@ -118,7 +118,9 @@ struct Root {
     sync_warnings: Vec<String>,
     /// Pull で手元に新しいコミットがないときの、先へ進める前と後の絵（`movePreview` の答え）。
     sync_drawing: Option<Value>,
-    /// Rebase の確認の前と後の絵（相手の rev と `rewritePreview` の答え）。
+    /// Pull で両方に新しいコミットがあるときの、取り込み方ごとの前と後の絵。
+    pull_drawings: Option<PullDrawings>,
+    /// Merge・Rebase の確認の前と後の絵（相手の rev と `mergePreview`・`rewritePreview` の答え）。
     integrate_drawing: Option<(String, Value)>,
     /// stash の詳しい中身（名前 → 中身。ref が変わるたびに読み直す）。
     stash_details: std::collections::HashMap<String, crate::stashes::Detail>,
@@ -577,7 +579,7 @@ enum Dialog {
         mode: usize,
     },
     /// Merge・Rebase（GTK4 版の `sheets::integrate_sheet`）。`choices` は名前と rev。2 つ以上なら相手を選ぶ。
-    /// merge なら取り込み方も選ぶ。前後の絵は rebase だけ、コンフリクトの見込みはまだない。
+    /// merge なら取り込み方も選ぶ。コンフリクトの見込みはまだない。
     Integrate {
         repo: Arc<Repository>,
         rebase: bool,
@@ -779,7 +781,9 @@ enum Message {
     RecallRecent(isize),
     /// Pull・Push のダイアログのコミットの一覧を読んだ。
     SyncLists(Vec<SyncList>, Vec<String>, Option<Value>),
-    /// Rebase の確認の前と後の絵を読んだ（相手の rev と `rewritePreview` の答え）。
+    /// Pull の取り込み方ごとの前と後の絵を読んだ。
+    PullDrawn(Box<PullDrawings>),
+    /// Merge・Rebase の確認の前と後の絵を読んだ（相手の rev と `mergePreview`・`rewritePreview` の答え）。
     IntegrateDrawn(String, Value),
     /// stash の詳しい中身を読んだ。
     StashDetails(std::collections::HashMap<String, crate::stashes::Detail>),
@@ -996,6 +1000,7 @@ impl Component for Root {
             multi: Vec::new(),
             sync_warnings: Vec::new(),
             sync_drawing: None,
+            pull_drawings: None,
             integrate_drawing: None,
             submodules: Value::Null,
             subtrees: Value::Null,
@@ -1400,6 +1405,11 @@ impl Component for Root {
                     *chosen = index;
                 }
                 self.load_integrate_drawing(context);
+            }
+            Message::PullDrawn(drawings) => {
+                if matches!(self.dialog, Some(Dialog::Pull { .. })) {
+                    self.pull_drawings = Some(*drawings);
+                }
             }
             Message::IntegrateDrawn(rev, info) => {
                 if matches!(self.dialog, Some(Dialog::Integrate { .. })) {
@@ -3889,6 +3899,7 @@ impl Component for Root {
                     self.open_ranges(vec![range.to_owned()], String::new(), context);
                 } else if let Some(rev) = key.strip_prefix("merge:") {
                     self.integrate(rev.to_owned(), false);
+                    self.load_integrate_drawing(context);
                 } else if let Some(rev) = key.strip_prefix("rebase:") {
                     self.integrate(rev.to_owned(), true);
                     self.load_integrate_drawing(context);
@@ -7067,6 +7078,20 @@ impl Root {
                 source,
                 ..
             }) => {
+                // 選んだ取り込み方の絵（git の設定のとおりなら、その設定の取り込み方。押せないときは出さない）。
+                let method = match PULL_MODES.get(*mode).copied() {
+                    Some("git") => self.pull_drawings.as_ref().and_then(|p| {
+                        (!p.refused).then_some(p.by_git.as_str())
+                    }),
+                    other => other,
+                };
+                let diverged = self.pull_drawings.as_ref().and_then(|p| match method {
+                    Some("rebase") => crate::drawing::for_rewrite(&p.rebase),
+                    Some("merge") => {
+                        crate::drawing::for_merge(&p.merge, branch, tr!("After the pull"))
+                    }
+                    _ => None,
+                });
                 let drawing = self
                     .sync_drawing
                     .as_ref()
@@ -7083,6 +7108,7 @@ impl Root {
                             },
                         )
                     })
+                    .or(diverged)
                     .unwrap_or_else(View::empty);
                 let modes: Vec<String> = PULL_MODES.iter().map(|m| pull_mode_title(m)).collect();
                 // 上流がなければ、取り込み元を選ぶ欄を先に。
@@ -7354,14 +7380,24 @@ impl Root {
                         View::empty(),
                     )
                 };
-                // rebase なら、選んだ相手の前と後の絵（選び直すと替わる。GTK4 版と同じ）。
+                // 選んだ相手の前と後の絵（選び直すと替わる）。merge は、取り込み方が git の設定のとおりのときだけ
+                // （GTK4 版と同じ）。
                 let rev = choices.get(*chosen).map(|c| c.1.as_str());
+                let drawing = self
+                    .integrate_drawing
+                    .as_ref()
+                    .filter(|(r, _)| Some(r.as_str()) == rev)
+                    .filter(|_| *rebase || MERGE_MODES.get(*mode) == Some(&"git"))
+                    .and_then(|(_, info)| {
+                        if *rebase {
+                            crate::drawing::for_rewrite(info)
+                        } else {
+                            crate::drawing::for_merge(info, current, tr!("After the merge"))
+                        }
+                    })
+                    .unwrap_or_else(View::empty);
                 let modes: View = if *rebase {
-                    self.integrate_drawing
-                        .as_ref()
-                        .filter(|(r, _)| Some(r.as_str()) == rev)
-                        .and_then(|(_, info)| crate::drawing::for_rewrite(info))
-                        .unwrap_or_else(View::empty)
+                    View::empty()
                 } else {
                     ComboBox::new()
                         .items_source(
@@ -7382,7 +7418,7 @@ impl Root {
                     .content(
                         StackPanel::new()
                             .spacing(6.0)
-                            .children((head, picker, modes)),
+                            .children((head, picker, modes, drawing)),
                     )
             }
             Some(Dialog::Clone {
@@ -7960,12 +7996,12 @@ impl Root {
         });
     }
 
-    /// Rebase の確認に出す前と後の絵を裏で読む（選んだ相手の `rewritePreview`）。
+    /// Merge・Rebase の確認に出す前と後の絵を裏で読む（選んだ相手の `mergePreview`・`rewritePreview`）。
     fn load_integrate_drawing(&mut self, context: &ComponentContext<Self>) {
         self.integrate_drawing = None;
         let Some(Dialog::Integrate {
             repo,
-            rebase: true,
+            rebase,
             choices,
             chosen,
             ..
@@ -7976,9 +8012,13 @@ impl Root {
         let Some((_, rev)) = choices.get(*chosen) else {
             return;
         };
-        let (repo, rev) = (repo.clone(), rev.clone());
+        let (repo, rev, rebase) = (repo.clone(), rev.clone(), *rebase);
         context.spawn_background(move |_| {
-            let query = json!({ "op": "rewritePreview", "onto": &rev });
+            let query = if rebase {
+                json!({ "op": "rewritePreview", "onto": &rev })
+            } else {
+                json!({ "op": "mergePreview", "theirs": &rev })
+            };
             let reply: Value =
                 serde_json::from_str(&repo.run_json(&query.to_string())).unwrap_or_default();
             Message::IntegrateDrawn(rev, reply["info"].clone())
@@ -9045,6 +9085,7 @@ impl Root {
         self.sync_lists.clear();
         self.sync_warnings.clear();
         self.sync_drawing = None;
+        self.pull_drawings = None;
         // Push の注意を出すための、上流と送るブランチのコミット。
         let mut push_range: Option<(String, amonhen_model::Oid, amonhen_model::Oid)> = None;
         // 手元に新しいコミットがない Pull は、どの取り込み方でも先へ進めるだけなので、その絵（GTK4 版と同じ）。
@@ -9061,6 +9102,25 @@ impl Root {
                     fast_forward = Some(json!({
                         "op": "movePreview", "from": "HEAD", "to": &upstream, "branch": &entry.name,
                     }));
+                } else if entry.ahead > 0 && entry.behind > 0 {
+                    // 両方に新しいコミットがあれば、merge と rebase の絵（GTK4 版の `pull_in`）。
+                    let (repo, upstream) = (repo.clone(), upstream.clone());
+                    context.spawn_background(move |_| {
+                        let ask = |query: Value| -> Value {
+                            serde_json::from_str::<Value>(&repo.run_json(&query.to_string()))
+                                .unwrap_or_default()["info"]
+                                .clone()
+                        };
+                        let defaults = ask(json!({ "op": "syncDefaults" }));
+                        Message::PullDrawn(Box::new(PullDrawings {
+                            by_git: defaults["pull"].as_str().unwrap_or("merge").to_owned(),
+                            refused: defaults["pullRefuses"].is_string(),
+                            merge: ask(json!({
+                                "op": "mergePreview", "theirs": &upstream, "ffSetting": "pull.ff",
+                            })),
+                            rebase: ask(json!({ "op": "rewritePreview", "onto": &upstream })),
+                        }))
+                    });
                 }
                 (
                     repo.clone(),
@@ -9266,8 +9326,8 @@ impl Root {
     }
 
     /// Repository > Pull…: 上流から取り込む（GTK4 版の `sheets::pull_in` の見出しと取り込み方）。上流がなければ、
-    /// 取り込み元のリモートのブランチ（同じ名前のものから）を選び、それを上流にして取り込む。前後の絵は、手元に
-    /// 新しいコミットがないとき（先へ進めるだけ）のものだけ。
+    /// 取り込み元のリモートのブランチ（同じ名前のものから）を選び、それを上流にして取り込む。前後の絵は、選んだ
+    /// 取り込み方のもの（先へ進めるだけなら、どの取り込み方でも同じ）。
     fn pull(&mut self) {
         let (Some(repo), Some(entry)) = (self.repo.clone(), self.head_entry().cloned()) else {
             return beep();
@@ -12531,6 +12591,17 @@ fn push_warnings(
         out.push(tr!("Adds {count} binary files.", count = binaries));
     }
     out
+}
+
+/// Pull で両方に新しいコミットがあるときの、取り込み方ごとの前と後の絵の材料。
+pub struct PullDrawings {
+    /// git の設定のとおりのときの取り込み方（`syncDefaults` の `pull`）と、取り込み方が決まっていないので git が
+    /// 断るか。
+    by_git: String,
+    refused: bool,
+    /// `mergePreview`・`rewritePreview` の答え。
+    merge: Value,
+    rebase: Value,
 }
 
 /// Pull・Push のダイアログのコミットの一覧の 1 つ（コアの `between` の答え）。
